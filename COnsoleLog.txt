@@ -1,0 +1,917 @@
+[PROXY-MQTT] ↑ Payload:
+{
+  "up_status_info": {
+    "charger_status": 0,
+    "mower_status": 0,
+    "mower_info": 0,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 0,
+    "mower_error": 0
+  }
+}
+[TCP]  RECV  192.168.0.232:65367 (176B) type=0x30
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":0,"mower_status":0,"mower_info":0,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":0,"mower_error":0}}
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+[PROXY-MQTT] ↑ Payload:
+{
+  "up_status_info": {
+    "charger_status": 0,
+    "mower_status": 0,
+    "mower_info": 0,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 0,
+    "mower_error": 0
+  }
+}
+[TCP]  RECV  192.168.0.232:65367 (176B) type=0x30
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":0,"mower_status":0,"mower_info":0,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":0,"mower_error":0}}
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+[PROXY-MQTT] ↑ Payload:
+{
+  "up_status_info": {
+    "charger_status": 0,
+    "mower_status": 0,
+    "mower_info": 0,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 0,
+    "mower_error": 0
+  }
+}
+[TCP]  RECV  192.168.0.232:65367 (176B) type=0x30
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":0,"mower_status":0,"mower_info":0,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":0,"mower_error":0}}
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+[PROXY-MQTT] ↑ Payload:
+{
+  "up_status_info": {
+    "charger_status": 0,
+    "mower_status": 0,
+    "mower_info": 0,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 0,
+    "mower_error": 0
+  }
+}
+[TCP]  RECV  192.168.0.232:65367 (176B) type=0x30
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":0,"mower_status":0,"mower_info":0,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":0,"mower_error":0}}
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+[PROXY-MQTT] ↑ Payload:
+{
+  "up_status_info": {
+    "charger_status": 0,
+    "mower_status": 0,
+    "mower_info": 0,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 0,
+    "mower_error": 0
+  }
+}
+[TCP]  RECV  192.168.0.232:65367 (176B) type=0x30
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":0,"mower_status":0,"mower_info":0,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":0,"mower_error":0}}
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+[PROXY-MQTT] ↑ Payload:
+{
+  "up_status_info": {
+    "charger_status": 0,
+    "mower_status": 0,
+    "mower_info": 0,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 0,
+    "mower_error": 0
+  }
+}
+[TCP]  RECV  192.168.0.232:65367 (176B) type=0x30
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":0,"mower_status":0,"mower_info":0,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":0,"mower_error":0}}
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+[PROXY-MQTT] ↑ Payload:
+{
+  "up_status_info": {
+    "charger_status": 0,
+    "mower_status": 0,
+    "mower_info": 0,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 0,
+    "mower_error": 0
+  }
+}
+[TCP]  RECV  192.168.0.232:65367 (176B) type=0x30
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":0,"mower_status":0,"mower_info":0,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":0,"mower_error":0}}
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+[PROXY-MQTT] ↑ Payload:
+{
+  "up_status_info": {
+    "charger_status": 0,
+    "mower_status": 0,
+    "mower_info": 0,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 0,
+    "mower_error": 0
+  }
+}
+[TCP]  RECV  192.168.0.232:65367 (176B) type=0x30
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":0,"mower_status":0,"mower_info":0,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":0,"mower_error":0}}
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+[PROXY-MQTT] ↑ Payload:
+{
+  "up_status_info": {
+    "charger_status": 0,
+    "mower_status": 0,
+    "mower_info": 0,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 0,
+    "mower_error": 0
+  }
+}
+[TCP]  RECV  192.168.0.232:65367 (176B) type=0x30
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":0,"mower_status":0,"mower_info":0,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":0,"mower_error":0}}
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+[PROXY-MQTT] ↑ Payload:
+{
+  "up_status_info": {
+    "charger_status": 0,
+    "mower_status": 0,
+    "mower_info": 0,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 0,
+    "mower_error": 0
+  }
+}
+[TCP]  RECV  192.168.0.232:65367 (176B) type=0x30
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":0,"mower_status":0,"mower_info":0,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":0,"mower_error":0}}
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+[PROXY-MQTT] ↑ Payload:
+{
+  "up_status_info": {
+    "charger_status": 0,
+    "mower_status": 0,
+    "mower_info": 0,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 0,
+    "mower_error": 0
+  }
+}
+[TCP]  RECV  192.168.0.232:65367 (176B) type=0x30
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":0,"mower_status":0,"mower_info":0,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":0,"mower_error":0}}
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+[PROXY-MQTT] ↑ Payload:
+{
+  "up_status_info": {
+    "charger_status": 0,
+    "mower_status": 0,
+    "mower_info": 0,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 0,
+    "mower_error": 0
+  }
+}
+[TCP]  RECV  192.168.0.232:65367 (176B) type=0x30
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":0,"mower_status":0,"mower_info":0,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":0,"mower_error":0}}
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+[PROXY-MQTT] ↑ Payload:
+{
+  "up_status_info": {
+    "charger_status": 0,
+    "mower_status": 0,
+    "mower_info": 0,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 0,
+    "mower_error": 0
+  }
+}
+[TCP]  RECV  192.168.0.232:65367 (176B) type=0x30
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":0,"mower_status":0,"mower_info":0,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":0,"mower_error":0}}
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+[PROXY-MQTT] ↑ Payload:
+{
+  "up_status_info": {
+    "charger_status": 0,
+    "mower_status": 0,
+    "mower_info": 0,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 0,
+    "mower_error": 0
+  }
+}
+[REQ] POST /api/nova-user/equipment/getEquipmentBySN {"sn":"LFIC1230700004","deviceType":"charger"}
+
+[PROXY-HTTP] ──────────────────────────────────────
+[PROXY-HTTP] >>> POST /api/nova-user/equipment/getEquipmentBySN
+[PROXY-HTTP] >>> Body:
+{
+  "sn": "LFIC1230700004",
+  "deviceType": "charger"
+}
+[PROXY-HTTP] >>> Authorization: ac60796a-a676-43d8-9c76-dba61f...
+[PROXY-HTTP] <<< 200 OK
+[PROXY-HTTP] <<< Body:
+{
+  "success": true,
+  "code": 200,
+  "message": "request success",
+  "value": {
+    "equipmentId": 755,
+    "email": "",
+    "deviceType": "charger",
+    "sn": "LFIC1230700004",
+    "equipmentCode": "LFIC1230700004",
+    "equipmentName": "LFIC1230700004",
+    "equipmentType": "LFIC1",
+    "userId": 0,
+    "sysVersion": "v0.3.6",
+    "period": "2029-02-22 00:00:00",
+    "status": 1,
+    "activationTime": "2026-02-21 18:32:12",
+    "importTime": "2023-08-23 18:22:48",
+    "batteryState": null,
+    "macAddress": "48:27:E2:1B:A4:0A",
+    "chargerAddress": 718,
+    "chargerChannel": 16,
+    "account": "li9hep19",
+    "password": "jzd4wac6"
+  },
+  "dateline": 1771852365054
+}
+[PROXY-HTTP] ──────────────────────────────────────
+
+[TCP]  RECV  192.168.0.232:65367 (176B) type=0x30
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":0,"mower_status":0,"mower_info":0,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":0,"mower_error":0}}
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+[PROXY-MQTT] ↑ Payload:
+{
+  "up_status_info": {
+    "charger_status": 0,
+    "mower_status": 0,
+    "mower_info": 0,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 0,
+    "mower_error": 0
+  }
+}
+[TCP]  RECV  192.168.0.232:65367 (176B) type=0x30
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":0,"mower_status":0,"mower_info":0,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":0,"mower_error":0}}
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+[PROXY-MQTT] ↑ Payload:
+{
+  "up_status_info": {
+    "charger_status": 0,
+    "mower_status": 0,
+    "mower_info": 0,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 0,
+    "mower_error": 0
+  }
+}
+[TCP]  RECV  192.168.0.232:65367 (176B) type=0x30
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":0,"mower_status":0,"mower_info":0,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":0,"mower_error":0}}
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+[PROXY-MQTT] ↑ Payload:
+{
+  "up_status_info": {
+    "charger_status": 0,
+    "mower_status": 0,
+    "mower_info": 0,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 0,
+    "mower_error": 0
+  }
+}
+[TCP]  RECV  192.168.0.232:65367 (176B) type=0x30
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":0,"mower_status":0,"mower_info":0,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":0,"mower_error":0}}
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+[PROXY-MQTT] ↑ Payload:
+{
+  "up_status_info": {
+    "charger_status": 0,
+    "mower_status": 0,
+    "mower_info": 0,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 0,
+    "mower_error": 0
+  }
+}
+[TCP]  RECV  192.168.0.232:65367 (176B) type=0x30
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":0,"mower_status":0,"mower_info":0,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":0,"mower_error":0}}
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+[PROXY-MQTT] ↑ Payload:
+{
+  "up_status_info": {
+    "charger_status": 0,
+    "mower_status": 0,
+    "mower_info": 0,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 0,
+    "mower_error": 0
+  }
+}
+[TCP]  RECV  192.168.0.232:65367 (176B) type=0x30
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":0,"mower_status":0,"mower_info":0,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":0,"mower_error":0}}
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+[PROXY-MQTT] ↑ Payload:
+{
+  "up_status_info": {
+    "charger_status": 0,
+    "mower_status": 0,
+    "mower_info": 0,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 0,
+    "mower_error": 0
+  }
+}
+[TCP]  RECV  192.168.0.232:65367 (176B) type=0x30
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":0,"mower_status":0,"mower_info":0,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":0,"mower_error":0}}
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+[PROXY-MQTT] ↑ Payload:
+{
+  "up_status_info": {
+    "charger_status": 0,
+    "mower_status": 0,
+    "mower_info": 0,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 0,
+    "mower_error": 0
+  }
+}
+[TCP]  RECV  192.168.0.232:65367 (176B) type=0x30
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":0,"mower_status":0,"mower_info":0,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":0,"mower_error":0}}
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+[PROXY-MQTT] ↑ Payload:
+{
+  "up_status_info": {
+    "charger_status": 0,
+    "mower_status": 0,
+    "mower_info": 0,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 0,
+    "mower_error": 0
+  }
+}
+[TCP]  RECV  192.168.0.232:65367 (176B) type=0x30
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":0,"mower_status":0,"mower_info":0,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":0,"mower_error":0}}
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+[PROXY-MQTT] ↑ Payload:
+{
+  "up_status_info": {
+    "charger_status": 0,
+    "mower_status": 0,
+    "mower_info": 0,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 0,
+    "mower_error": 0
+  }
+}
+[TCP]  RECV  192.168.0.232:65367 (176B) type=0x30
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":0,"mower_status":0,"mower_info":0,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":0,"mower_error":0}}
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+[PROXY-MQTT] ↑ Payload:
+{
+  "up_status_info": {
+    "charger_status": 0,
+    "mower_status": 0,
+    "mower_info": 0,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 0,
+    "mower_error": 0
+  }
+}
+[TCP]  RECV  192.168.0.232:65367 (176B) type=0x30
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":0,"mower_status":0,"mower_info":0,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":0,"mower_error":0}}
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+[PROXY-MQTT] ↑ Payload:
+{
+  "up_status_info": {
+    "charger_status": 0,
+    "mower_status": 0,
+    "mower_info": 0,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 0,
+    "mower_error": 0
+  }
+}
+[TCP]  RECV  192.168.0.232:65367 (176B) type=0x30
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":0,"mower_status":0,"mower_info":0,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":0,"mower_error":0}}
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+[PROXY-MQTT] ↑ Payload:
+{
+  "up_status_info": {
+    "charger_status": 0,
+    "mower_status": 0,
+    "mower_info": 0,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 0,
+    "mower_error": 0
+  }
+}
+[TCP]  RECV  192.168.0.232:65367 (176B) type=0x30
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":0,"mower_status":0,"mower_info":0,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":0,"mower_error":0}}
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+[PROXY-MQTT] ↑ Payload:
+{
+  "up_status_info": {
+    "charger_status": 0,
+    "mower_status": 0,
+    "mower_info": 0,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 0,
+    "mower_error": 0
+  }
+}
+[TCP]  RECV  192.168.0.232:65367 (176B) type=0x30
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":0,"mower_status":0,"mower_info":0,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":0,"mower_error":0}}
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+[PROXY-MQTT] ↑ Payload:
+{
+  "up_status_info": {
+    "charger_status": 0,
+    "mower_status": 0,
+    "mower_info": 0,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 0,
+    "mower_error": 0
+  }
+}
+[TCP]  RECV  192.168.0.232:65367 (176B) type=0x30
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":0,"mower_status":0,"mower_info":0,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":0,"mower_error":0}}
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+[PROXY-MQTT] ↑ Payload:
+{
+  "up_status_info": {
+    "charger_status": 0,
+    "mower_status": 0,
+    "mower_info": 0,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 0,
+    "mower_error": 0
+  }
+}
+[TCP]  RECV  192.168.0.232:65367 (176B) type=0x30
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":0,"mower_status":0,"mower_info":0,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":0,"mower_error":0}}
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+[PROXY-MQTT] ↑ Payload:
+{
+  "up_status_info": {
+    "charger_status": 0,
+    "mower_status": 0,
+    "mower_info": 0,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 0,
+    "mower_error": 0
+  }
+}
+[TCP]  RECV  192.168.0.232:65367 (176B) type=0x30
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":0,"mower_status":0,"mower_info":0,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":0,"mower_error":0}}
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+[PROXY-MQTT] ↑ Payload:
+{
+  "up_status_info": {
+    "charger_status": 0,
+    "mower_status": 0,
+    "mower_info": 0,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 0,
+    "mower_error": 0
+  }
+}
+[TCP]  RECV  192.168.0.232:65367 (176B) type=0x30
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":0,"mower_status":0,"mower_info":0,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":0,"mower_error":0}}
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+[PROXY-MQTT] ↑ Payload:
+{
+  "up_status_info": {
+    "charger_status": 0,
+    "mower_status": 0,
+    "mower_info": 0,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 0,
+    "mower_error": 0
+  }
+}
+[TCP]  RECV  192.168.0.232:65367 (2B) type=0xe0
+[TCP]  DESTROY→END 192.168.0.232:65367 (flushing CONNACK)
+[TCP]  END   192.168.0.232:65367
+[MQTT] DISCONNECT clientId="ESP32_1bA408" sn=LFIC1230700004
+[PROXY-MQTT] ↑ Upstream sluiten voor clientId="ESP32_1bA408"
+[PROXY-MQTT] ↑ Upstream CLOSED voor clientId="ESP32_1bA408"
+[TCP]  CLOSE 192.168.0.232:65367 hadError=false
+[REQ] POST /api/nova-user/equipment/bindingEquipment {"sn":"LFIC1230700004","appUserId":86,"userCustomDeviceName":"Charging station","chargerChannel":15,"wifiName":"ABERSONPLEIN-IoT","wifiPassword":"ramonvanbruggen"}
+
+[PROXY-HTTP] ──────────────────────────────────────
+[PROXY-HTTP] >>> POST /api/nova-user/equipment/bindingEquipment
+[PROXY-HTTP] >>> Body:
+{
+  "sn": "LFIC1230700004",
+  "appUserId": 86,
+  "userCustomDeviceName": "Charging station",
+  "chargerChannel": 15,
+  "wifiName": "ABERSONPLEIN-IoT",
+  "wifiPassword": "ramonvanbruggen"
+}
+[PROXY-HTTP] >>> Authorization: ac60796a-a676-43d8-9c76-dba61f...
+[PROXY-HTTP] <<< 200 OK
+[PROXY-HTTP] <<< Body:
+{
+  "success": true,
+  "code": 200,
+  "message": "request success",
+  "value": null,
+  "dateline": 1771852444910
+}
+[PROXY-HTTP] ──────────────────────────────────────
+
+[REQ] POST /api/nova-user/equipment/userEquipmentList {"appUserId":86,"pageSize":10,"pageNo":1}
+
+[PROXY-HTTP] ──────────────────────────────────────
+[PROXY-HTTP] >>> POST /api/nova-user/equipment/userEquipmentList
+[PROXY-HTTP] >>> Body:
+{
+  "appUserId": 86,
+  "pageSize": 10,
+  "pageNo": 1
+}
+[PROXY-HTTP] >>> Authorization: ac60796a-a676-43d8-9c76-dba61f...
+[PROXY-HTTP] <<< 200 OK
+[PROXY-HTTP] <<< Body:
+{
+  "success": true,
+  "code": 200,
+  "message": "request success",
+  "value": {
+    "pageNo": 1,
+    "pageSize": 10,
+    "totalSize": 1,
+    "totalPage": 1,
+    "pageList": [
+      {
+        "equipmentId": 755,
+        "email": "ramonvanbruggen@gmail.com",
+        "deviceType": "charger",
+        "sn": "LFIC1230700004",
+        "equipmentCode": "LFIC1230700004",
+        "equipmentName": "LFIC1230700004",
+        "equipmentNickName": "Charging station",
+        "equipmentType": "LFIC1",
+        "sysVersion": "v0.3.6",
+        "period": "2029-02-22 00:00:00",
+        "status": 1,
+        "activationTime": "2026-02-21 18:32:12",
+        "importTime": "2023-08-23 18:22:48",
+        "batteryState": null,
+        "videoTutorial": "https://novabot-storage.s3.us-east-2.amazonaws.com/install_charger.mp4",
+        "macAddress": "48:27:E2:1B:A4:0A",
+        "chargerAddress": 718,
+        "chargerChannel": 15,
+        "account": "li9hep19",
+        "password": "jzd4wac6",
+        "wifiName": "ABERSONPLEIN-IoT",
+        "wifiPassword": "ramonvanbruggen",
+        "model": "N1000",
+        "photoId": null,
+        "photoType": null,
+        "photoDownload": null,
+        "photoTime": null
+      }
+    ]
+  },
+  "dateline": 1771852445032
+}
+[PROXY-HTTP] ──────────────────────────────────────
+
+[TCP]  OPEN  192.168.0.232:61557
+[TCP]  DATA  192.168.0.232:61557 (42B) first20=102800044d51545404820078000c45535033325f
+[TCP]  CONNACK→ 192.168.0.232:61557 (vroeg, synchroon)
+[TCP]  WRITE-INTERCEPT geïnstalleerd 192.168.0.232:61557
+[TCP]  RECV  192.168.0.232:61557 (42B) type=0x10
+[MQTT] CONNECT   DEV clientId="ESP32_1bA408" sn=LFIC1230700004 mac=? user="LFIC1230700004"
+[MQTT] ESP32 AP-MAC hint: ??:??:??:1B:A4:09  (verbind met AP en run: arp -a)
+[MQTT] READY    clientId="ESP32_1bA408"
+[PROXY-MQTT] ↑ Upstream verbinding openen voor clientId="ESP32_1bA408" user="LFIC1230700004"
+[TCP]  WRITE 192.168.0.232:61557 (1B) type=0x20
+[TCP]  WRITE 192.168.0.232:61557 (1B) type=0x02
+[TCP]  WRITE 192.168.0.232:61557 (1B) type=0x00
+[TCP]  WRITE 192.168.0.232:61557 (1B) type=0x00
+[TCP]  RECV  192.168.0.232:61557 (36B) type=0x82
+[TCP]  WRITE 192.168.0.232:61557 (1B) type=0x90
+[TCP]  WRITE 192.168.0.232:61557 (1B) type=0x03
+[TCP]  WRITE 192.168.0.232:61557 (2B) type=0x36
+[TCP]  WRITE 192.168.0.232:61557 (1B) type=0x01
+[MQTT] SUBSCRIBE ESP32_1bA408 -> [Dart/Send_mqtt/LFIC1230700004]
+[PROXY-MQTT] ↑ SUBSCRIBE upstream clientId="ESP32_1bA408" topic="Dart/Send_mqtt/LFIC1230700004"
+[PROXY-MQTT] ↑ Upstream CONNECTED voor clientId="ESP32_1bA408"
+[TCP]  RECV  192.168.0.232:61557 (176B) type=0x30
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":0,"mower_status":0,"mower_info":0,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":0,"mower_error":0}}
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+[PROXY-MQTT] ↑ Payload:
+{
+  "up_status_info": {
+    "charger_status": 0,
+    "mower_status": 0,
+    "mower_info": 0,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 0,
+    "mower_error": 0
+  }
+}
+[TCP]  RECV  192.168.0.232:61557 (176B) type=0x30
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":0,"mower_status":0,"mower_info":0,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":0,"mower_error":0}}
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+[PROXY-MQTT] ↑ Payload:
+{
+  "up_status_info": {
+    "charger_status": 0,
+    "mower_status": 0,
+    "mower_info": 0,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 0,
+    "mower_error": 0
+  }
+}
+[TCP]  RECV  192.168.0.232:61557 (176B) type=0x30
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":0,"mower_status":0,"mower_info":0,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":0,"mower_error":0}}
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+[PROXY-MQTT] ↑ Payload:
+{
+  "up_status_info": {
+    "charger_status": 0,
+    "mower_status": 0,
+    "mower_info": 0,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 0,
+    "mower_error": 0
+  }
+}
+[TCP]  RECV  192.168.0.232:61557 (176B) type=0x30
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":0,"mower_status":0,"mower_info":0,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":0,"mower_error":0}}
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+[PROXY-MQTT] ↑ Payload:
+{
+  "up_status_info": {
+    "charger_status": 0,
+    "mower_status": 0,
+    "mower_info": 0,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 0,
+    "mower_error": 0
+  }
+}
+[TCP]  RECV  192.168.0.232:61557 (176B) type=0x30
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":0,"mower_status":0,"mower_info":0,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":0,"mower_error":0}}
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+[PROXY-MQTT] ↑ Payload:
+{
+  "up_status_info": {
+    "charger_status": 0,
+    "mower_status": 0,
+    "mower_info": 0,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 0,
+    "mower_error": 0
+  }
+}
+[TCP]  RECV  192.168.0.232:61557 (176B) type=0x30
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":0,"mower_status":0,"mower_info":0,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":0,"mower_error":0}}
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+[PROXY-MQTT] ↑ Payload:
+{
+  "up_status_info": {
+    "charger_status": 0,
+    "mower_status": 0,
+    "mower_info": 0,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 0,
+    "mower_error": 0
+  }
+}
+[TCP]  RECV  192.168.0.232:61557 (184B) type=0x30
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":268435713,"mower_status":0,"mower_info":0,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":0,"mower_error":0}}
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+[PROXY-MQTT] ↑ Payload:
+{
+  "up_status_info": {
+    "charger_status": 268435713,
+    "mower_status": 0,
+    "mower_info": 0,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 0,
+    "mower_error": 0
+  }
+}
+[TCP]  RECV  192.168.0.232:61557 (184B) type=0x30
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":268435713,"mower_status":0,"mower_info":0,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":0,"mower_error":0}}
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+[PROXY-MQTT] ↑ Payload:
+{
+  "up_status_info": {
+    "charger_status": 268435713,
+    "mower_status": 0,
+    "mower_info": 0,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 0,
+    "mower_error": 0
+  }
+}
+[TCP]  RECV  192.168.0.232:61557 (184B) type=0x30
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":268435713,"mower_status":0,"mower_info":0,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":0,"mower_error":2}}
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+[PROXY-MQTT] ↑ Payload:
+{
+  "up_status_info": {
+    "charger_status": 268435713,
+    "mower_status": 0,
+    "mower_info": 0,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 0,
+    "mower_error": 2
+  }
+}
+[TCP]  RECV  192.168.0.232:61557 (184B) type=0x30
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":268435713,"mower_status":0,"mower_info":0,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":0,"mower_error":3}}
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+[PROXY-MQTT] ↑ Payload:
+{
+  "up_status_info": {
+    "charger_status": 268435713,
+    "mower_status": 0,
+    "mower_info": 0,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 0,
+    "mower_error": 3
+  }
+}
+[TCP]  RECV  192.168.0.232:61557 (184B) type=0x30
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":268435713,"mower_status":0,"mower_info":0,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":0,"mower_error":4}}
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+[PROXY-MQTT] ↑ Payload:
+{
+  "up_status_info": {
+    "charger_status": 268435713,
+    "mower_status": 0,
+    "mower_info": 0,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 0,
+    "mower_error": 4
+  }
+}
+[TCP]  RECV  192.168.0.232:61557 (184B) type=0x30
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":285212929,"mower_status":0,"mower_info":0,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":0,"mower_error":5}}
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+[PROXY-MQTT] ↑ Payload:
+{
+  "up_status_info": {
+    "charger_status": 285212929,
+    "mower_status": 0,
+    "mower_info": 0,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 0,
+    "mower_error": 5
+  }
+}
+[TCP]  RECV  192.168.0.232:61557 (184B) type=0x30
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":285212929,"mower_status":0,"mower_info":0,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":0,"mower_error":6}}
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+[PROXY-MQTT] ↑ Payload:
+{
+  "up_status_info": {
+    "charger_status": 285212929,
+    "mower_status": 0,
+    "mower_info": 0,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 0,
+    "mower_error": 6
+  }
+}
+[TCP]  RECV  192.168.0.232:61557 (184B) type=0x30
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":234881281,"mower_status":0,"mower_info":0,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":0,"mower_error":7}}
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+[PROXY-MQTT] ↑ Payload:
+{
+  "up_status_info": {
+    "charger_status": 234881281,
+    "mower_status": 0,
+    "mower_info": 0,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 0,
+    "mower_error": 7
+  }
+}
+[TCP]  RECV  192.168.0.232:61557 (184B) type=0x30
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":234881281,"mower_status":0,"mower_info":0,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":0,"mower_error":8}}
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+[PROXY-MQTT] ↑ Payload:
+{
+  "up_status_info": {
+    "charger_status": 234881281,
+    "mower_status": 0,
+    "mower_info": 0,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 0,
+    "mower_error": 8
+  }
+}
+[TCP]  RECV  192.168.0.232:61557 (184B) type=0x30
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":285212929,"mower_status":0,"mower_info":0,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":0,"mower_error":9}}
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+[PROXY-MQTT] ↑ Payload:
+{
+  "up_status_info": {
+    "charger_status": 285212929,
+    "mower_status": 0,
+    "mower_info": 0,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 0,
+    "mower_error": 9
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(strings:*)",
+      "Bash(npm install:*)",
+      "Bash(npx tsc:*)",
+      "Bash(chmod:*)",
+      "Bash(node:*)",
+      "Bash(system_profiler:*)",
+      "Bash(wdutil info:*)",
+      "Bash(otool:*)",
+      "Bash(objdump:*)",
+      "Bash(python3:*)",
+      "Bash(__NEW_LINE_186c3274c8a7971a__ strings -n 4 /Users/rvbcrs/GitHub/Novabot/NOVABOT_2.3.8_APKPure/lib/arm64-v8a/libapp.so)",
+      "Read(//Users/rvbcrs/GitHub/Novabot/**)",
+      "Bash(openssl x509:*)"
+    ]
+  }
+}

@@ -1,0 +1,10 @@
+node_modules/
+dist/
+
+# Nooit committen — bevat private keys en database
+certs/
+novabot.db
+storage/
+
+# Env met secrets
+.env
