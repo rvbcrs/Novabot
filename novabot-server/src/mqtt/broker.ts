@@ -4,6 +4,7 @@ import { db } from '../db/database.js';
 import { DeviceRegistryRow } from '../types/index.js';
 import { startMqttBridge } from '../proxy/mqttBridge.js';
 import { tryDecrypt } from './decrypt.js';
+import { startHomeAssistantBridge, forwardToHomeAssistant, publishDeviceOnline, publishDeviceOffline } from './homeassistant.js';
 
 const PROXY_MODE = process.env.PROXY_MODE ?? 'local';
 
@@ -13,8 +14,6 @@ const MAC_SEP_RE  = /([0-9A-Fa-f]{2}[:\-]){5}[0-9A-Fa-f]{2}/;
 const MAC_FLAT_RE = /(?<![0-9A-Fa-f])([0-9A-Fa-f]{12})(?![0-9A-Fa-f])/;
 // Serienummer patroon: bijv. LFIC1230700004 of LFIN...
 const SN_RE       = /LFI[A-Z][0-9]+/;
-// ESP32 default client ID: "ESP32_XXXXXX" waarbij XXXXXX de laatste 3 bytes van het WiFi-MAC zijn
-const ESP32_RE    = /ESP32_([0-9A-Fa-f]{6})$/i;
 
 /**
  * Sanitize MQTT CONNECT packet Connect Flags byte.
@@ -65,9 +64,7 @@ function sanitizeConnectFlags(buf: Buffer): void {
 
   if (!willFlag && (willQos || willRetain)) {
     // Clear Will QoS (bits 3-4) and Will Retain (bit 5) — mask = ~(0x18 | 0x20) = ~0x38 = 0xC7
-    const fixed = flags & 0xC7;
-    console.log(`[TCP]  CONNECT-FIX: Connect Flags 0x${flags.toString(16).padStart(2, '0')} -> 0x${fixed.toString(16).padStart(2, '0')} (cleared Will QoS/Retain with Will Flag=0)`);
-    buf[connectFlagsOffset] = fixed;
+    buf[connectFlagsOffset] = flags & 0xC7;
   }
 }
 
@@ -154,15 +151,6 @@ export async function startMqttBroker(): Promise<void> {
       console.log(`[MQTT] CONNECT   ${clientType} clientId="${clientId}" sn=${sn ?? '?'} mac=${mac ?? '?'} user="${user}"`);
     }
 
-    if (!mac && !isAppClient) {
-      const esp32Match = ESP32_RE.exec(clientId);
-      if (esp32Match) {
-        const last3 = esp32Match[1].toUpperCase().match(/.{2}/g)!.join(':');
-        const apByte = (parseInt(last3.slice(-2), 16) + 1).toString(16).padStart(2, '0').toUpperCase();
-        console.log(`[MQTT] ESP32 AP-MAC hint: ??:??:??:${last3.slice(0, -2)}${apByte}  (verbind met AP en run: arp -a)`);
-      }
-    }
-
     upsertDevice(clientId, sn, mac, user || null);
 
     // Sla credentials op zodat de MQTT bridge ze kan doorsturen naar upstream
@@ -172,29 +160,18 @@ export async function startMqttBroker(): Promise<void> {
     if (sn) {
       if (!onlineBySn.has(sn)) onlineBySn.set(sn, new Set());
       onlineBySn.get(sn)!.add(clientId);
+      publishDeviceOnline(sn);
     }
 
     (callback as Function)(null, true);
   };
 
-  broker.on('client', (client: Client) => {
-    // Fires na succesvolle CONNACK — bevestigt dat verbinding compleet is
-    console.log(`[MQTT] READY    clientId="${client.id}"`);
-  });
-
-  // Fires als een client een protocol-fout maakt (na TCP connect, voor of tijdens MQTT session)
   broker.on('clientError', (client: Client, err: Error) => {
     console.error(`[MQTT] ERROR    clientId="${client.id}" err=${err.message}`);
   });
 
-  // Fires bij verbindingsfout vóór/tijdens MQTT session setup (bijv. bad packet, auth crash)
   (broker as any).on('connectionError', (client: Client, err: Error) => {
     console.error(`[MQTT] CONN-ERR clientId="${client?.id ?? '?'}" err=${err.message}`);
-  });
-
-  // Fires als een client de keepalive deadline overschrijdt
-  broker.on('keepaliveTimeout', (client: Client) => {
-    console.warn(`[MQTT] KEEPALIVE-TIMEOUT clientId="${client.id}"`);
   });
 
   broker.on('clientDisconnect', (client: Client) => {
@@ -205,6 +182,7 @@ export async function startMqttBroker(): Promise<void> {
       .get(client.id) as { sn: string | null } | undefined;
     if (row?.sn) {
       onlineBySn.get(row.sn)?.delete(client.id);
+      if (!isDeviceOnline(row.sn)) publishDeviceOffline(row.sn);
       console.log(`[MQTT] DISCONNECT clientId="${client.id}" sn=${row.sn}`);
     } else {
       console.log(`[MQTT] DISCONNECT clientId="${client.id}"`);
@@ -229,7 +207,7 @@ export async function startMqttBroker(): Promise<void> {
       if (decrypted) {
         console.log(`[MQTT] PUBLISH  ${client.id} ${direction} ${packet.topic}  [AES] ${decrypted}`);
       } else {
-        console.log(`[MQTT] PUBLISH  ${client.id} ${direction} ${packet.topic}  [AES-FAIL] (${payloadBuf.length}B) hex=${payloadBuf.subarray(0, 32).toString('hex')}...`);
+        console.log(`[MQTT] PUBLISH  ${client.id} ${direction} ${packet.topic}  [encrypted ${payloadBuf.length}B]`);
       }
     } else {
       const payload = payloadBuf.toString();
@@ -252,6 +230,9 @@ export async function startMqttBroker(): Promise<void> {
         upsertDevice(client.id, resolvedSn, resolvedMac, existing?.mqtt_username ?? null);
       }
     }
+
+    // Forward naar Home Assistant bridge (no-op als niet geconfigureerd)
+    forwardToHomeAssistant(packet.topic, payloadBuf, sn ?? extractSn(packet.topic));
   });
 
   // Start MQTT bridge naar upstream als we in cloud proxy mode zijn
@@ -259,27 +240,18 @@ export async function startMqttBroker(): Promise<void> {
     startMqttBridge(broker);
   }
 
-  const server = net.createServer({ allowHalfOpen: true }, (socket) => {
-    const addr = `${socket.remoteAddress}:${socket.remotePort}`;
-    console.log(`[TCP]  OPEN  ${addr}`);
+  // Start Home Assistant MQTT bridge (optioneel, alleen als HA_MQTT_HOST is geconfigureerd)
+  startHomeAssistantBridge();
 
+  const server = net.createServer({ allowHalfOpen: true }, (socket) => {
     // Workaround: ESP32-charger stuurt TCP FIN direct na MQTT CONNECT (half-close).
-    // aedes schrijft CONNACK via een microtask (.then in fetchSubs), maar die microtask
-    // loopt pas NA de 'end' event. Tegen die tijd heeft close() socket.destroy() al
-    // aangeroepen en is client.connecting = false → write() weigert CONNACK te sturen.
-    //
-    // Fix: schrijf CONNACK SYNCHROON in de 'data' handler (vóór de microtask-grens)
-    // en onderschep socket.destroy() → socket.end() zodat de write-buffer geflushed wordt.
+    // Fix: schrijf CONNACK synchroon en onderschep destroy() → end() zodat
+    // de write-buffer geflushed wordt vóórdat de socket gesloten wordt.
     let earlyConnackSent = false;
     const origDestroy = socket.destroy.bind(socket);
     (socket as any).destroy = (..._args: unknown[]) => {
       if (earlyConnackSent) {
-        // socket.end() flusht de write-buffer (CONNACK) vóórdat FIN verstuurd wordt.
-        // Zonder dit discardt socket.destroy() alle gebufferde data.
-        // Zet earlyConnackSent = false zodat latere destroy()-aanroepen (bijv. na
-        // MQTT DISCONNECT) gewoon origDestroy() gebruiken en niet 3x DESTROY→END loggen.
         earlyConnackSent = false;
-        console.log(`[TCP]  DESTROY→END ${addr} (flushing CONNACK)`);
         socket.end();
       } else {
         origDestroy();
@@ -288,37 +260,24 @@ export async function startMqttBroker(): Promise<void> {
     };
 
     socket.once('data', (chunk) => {
-      // Fix: Novabot app stuurt Will QoS=1 met Will Flag=0 → mqtt-packet reject dit.
-      // Patch de Connect Flags byte IN-PLACE vóórdat aedes/mqtt-packet het pakket parst.
-      // Node.js data event buffers zijn mutable en dezelfde referentie wordt doorgegeven
-      // aan zowel 'data' als 'readable' listeners, dus in-place wijziging werkt.
+      // Fix: Novabot app stuurt Will QoS=1 met Will Flag=0 → patch Connect Flags in-place
       sanitizeConnectFlags(chunk);
-
-      const hex = chunk.subarray(0, 20).toString('hex');
-      console.log(`[TCP]  DATA  ${addr} (${chunk.length}B) first20=${hex}`);
 
       // MQTT CONNECT packet type = 0x10
       if (chunk[0] === 0x10) {
-        // Stap 1: schrijf CONNACK SYNCHROON (vóór microtask-grens / 'end' event)
+        // Schrijf CONNACK synchroon (vóór microtask-grens / 'end' event)
         socket.write(Buffer.from([0x20, 0x02, 0x00, 0x00]));
         earlyConnackSent = true;
-        console.log(`[TCP]  CONNACK→ ${addr} (vroeg, synchroon)`);
 
-        // Stap 2: log alle writes van aedes op deze socket (diagnostisch)
-        // en onderdruk eventuele tweede CONNACK (type=0x20).
+        // Onderdruk dubbele CONNACK van aedes
         const origWrite = socket.write.bind(socket);
         let dupSuppressed = false;
-        console.log(`[TCP]  WRITE-INTERCEPT geïnstalleerd ${addr}`);
         (socket as any).write = function (data: Buffer | string | Uint8Array, ...rest: unknown[]): boolean {
           const buf = Buffer.isBuffer(data) ? data :
                       data instanceof Uint8Array ? Buffer.from(data) :
                       Buffer.from(data as string);
-          const t = buf[0]?.toString(16).padStart(2, '0') ?? '??';
-          console.log(`[TCP]  WRITE ${addr} (${buf.length}B) type=0x${t}`);
           if (!dupSuppressed && buf.length >= 2 && buf[0] === 0x20) {
             dupSuppressed = true;
-            console.log(`[TCP]  CONNACK-DUP onderdrukt ${addr}`);
-            // Roep de callback aan zodat aedes's interne serie doorloopt (→ READY)
             const cb = rest.find((a): a is () => void => typeof a === 'function');
             if (cb) process.nextTick(cb);
             return true;
@@ -328,47 +287,12 @@ export async function startMqttBroker(): Promise<void> {
       }
     });
 
-    // Log ALLE binnenkomende data (ook na het CONNECT pakket) — voor diagnostiek
-    socket.on('data', (chunk) => {
-      const t = chunk[0]?.toString(16).padStart(2, '0') ?? '??';
-      console.log(`[TCP]  RECV  ${addr} (${chunk.length}B) type=0x${t}`);
-    });
-
-    socket.on('close', (hadError) => console.log(`[TCP]  CLOSE ${addr} hadError=${hadError}`));
-    socket.on('error', (err) => console.error(`[TCP]  ERROR ${addr} ${err.message}`));
-    socket.on('end',   () => console.log(`[TCP]  END   ${addr}`));
+    socket.on('error', () => {}); // voorkom unhandled error crashes
     (broker.handle as (socket: net.Socket) => void)(socket);
   });
   server.listen(1883, '0.0.0.0', () => {
     console.log('[MQTT] Broker luistert op port 1883');
   });
-
-  // Probe-servers: detecteer welk protocol/poort de app gebruikt voor MQTT.
-  // - 8883: TLS-MQTT (raw TCP over TLS)
-  // - 9001: MQTT over WebSocket (veel Flutter mqtt_client implementaties gebruiken dit)
-  function makeProbe(port: number, label: string) {
-    const probe = net.createServer((s) => {
-      const first = Buffer.alloc(16);
-      let n = 0;
-      s.on('data', (chunk) => {
-        if (n < 16) {
-          chunk.copy(first, n, 0, Math.min(chunk.length, 16 - n));
-          n += chunk.length;
-        }
-        if (n >= 4) {
-          const hex = first.subarray(0, Math.min(n, 16)).toString('hex');
-          const txt = first.subarray(0, Math.min(n, 16)).toString('utf8').replace(/[^\x20-\x7e]/g, '.');
-          console.log(`[TCP]  PROBE-${port} (${label}) van ${s.remoteAddress} bytes=${hex} ascii="${txt}"`);
-          s.destroy();
-        }
-      });
-      s.on('error', () => {}); // negeer fouten op probe-sockets
-    });
-    probe.listen(port, '0.0.0.0', () => console.log(`[MQTT] Probe luistert op port ${port} (${label})`));
-  }
-
-  makeProbe(8883, 'TLS-MQTT');
-  makeProbe(9001, 'WebSocket-MQTT');
 }
 
 // Hulpfunctie voor equipment.ts: zoek het MAC-adres op voor een gegeven SN

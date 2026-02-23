@@ -189,36 +189,45 @@ equipmentRouter.post('/bindingEquipment', authMiddleware, (req: AuthRequest, res
 
 // POST /api/nova-user/equipment/unboundEquipment
 equipmentRouter.post('/unboundEquipment', authMiddleware, (req: AuthRequest, res: Response) => {
-  const { equipmentId } = req.body as { equipmentId?: string };
-  if (!equipmentId) { res.json(fail('equipmentId required', 400)); return; }
+  // App stuurt {sn, appUserId} — niet equipmentId zoals eerder aangenomen
+  const { sn, equipmentId } = req.body as { sn?: string; equipmentId?: number };
+  if (!sn && equipmentId == null) { res.json(fail('sn or equipmentId required', 400)); return; }
+
+  // Zoek equipment op basis van SN (primair) of equipmentId (fallback)
+  const equip = sn
+    ? db.prepare('SELECT id, mower_sn, charger_sn, charger_address, charger_channel FROM equipment WHERE (mower_sn = ? OR charger_sn = ?) AND user_id = ?')
+        .get(sn, sn, req.userId) as { id: number; mower_sn: string; charger_sn: string | null; charger_address: string | null; charger_channel: string | null } | undefined
+    : db.prepare('SELECT id, mower_sn, charger_sn, charger_address, charger_channel FROM equipment WHERE id = ? AND user_id = ?')
+        .get(equipmentId, req.userId) as { id: number; mower_sn: string; charger_sn: string | null; charger_address: string | null; charger_channel: string | null } | undefined;
+
+  if (!equip) { res.json(ok()); return; }
 
   // Cache LoRa-parameters vóór DELETE zodat ze beschikbaar blijven bij opnieuw toevoegen
-  const equip = db.prepare('SELECT mower_sn, charger_sn, charger_address, charger_channel FROM equipment WHERE equipment_id = ? AND user_id = ?')
-    .get(equipmentId, req.userId) as { mower_sn: string; charger_sn: string | null; charger_address: string | null; charger_channel: string | null } | undefined;
-  if (equip && (equip.charger_address || equip.charger_channel)) {
-    const sn = equip.charger_sn ?? equip.mower_sn;
+  if (equip.charger_address || equip.charger_channel) {
+    const cacheSn = equip.charger_sn ?? equip.mower_sn;
     db.prepare(`
       INSERT INTO equipment_lora_cache (sn, charger_address, charger_channel)
       VALUES (?, ?, ?)
       ON CONFLICT(sn) DO UPDATE SET
         charger_address = COALESCE(excluded.charger_address, charger_address),
         charger_channel = COALESCE(excluded.charger_channel, charger_channel)
-    `).run(sn, equip.charger_address, equip.charger_channel);
+    `).run(cacheSn, equip.charger_address, equip.charger_channel);
   }
 
-  db.prepare('DELETE FROM equipment WHERE equipment_id = ? AND user_id = ?')
-    .run(equipmentId, req.userId);
+  db.prepare('DELETE FROM equipment WHERE id = ? AND user_id = ?')
+    .run(equip.id, req.userId);
+  console.log(`[equipment] unboundEquipment: sn=${sn ?? '?'} id=${equip.id} deleted`);
   res.json(ok());
 });
 
 // POST /api/nova-user/equipment/updateEquipmentNickName
 equipmentRouter.post('/updateEquipmentNickName', authMiddleware, (req: AuthRequest, res: Response) => {
   const { equipmentId, equipmentNickName } = req.body as {
-    equipmentId?: string; equipmentNickName?: string;
+    equipmentId?: number; equipmentNickName?: string;
   };
-  if (!equipmentId) { res.json(fail('equipmentId required', 400)); return; }
+  if (equipmentId == null) { res.json(fail('equipmentId required', 400)); return; }
 
-  db.prepare('UPDATE equipment SET equipment_nick_name = ? WHERE equipment_id = ? AND user_id = ?')
+  db.prepare('UPDATE equipment SET equipment_nick_name = ? WHERE id = ? AND user_id = ?')
     .run(equipmentNickName ?? null, equipmentId, req.userId);
   res.json(ok());
 });
@@ -226,15 +235,15 @@ equipmentRouter.post('/updateEquipmentNickName', authMiddleware, (req: AuthReque
 // POST /api/nova-user/equipment/updateEquipmentVersion
 equipmentRouter.post('/updateEquipmentVersion', authMiddleware, (req: AuthRequest, res: Response) => {
   const { equipmentId, mowerVersion, chargerVersion } = req.body as {
-    equipmentId?: string; mowerVersion?: string; chargerVersion?: string;
+    equipmentId?: number; mowerVersion?: string; chargerVersion?: string;
   };
-  if (!equipmentId) { res.json(fail('equipmentId required', 400)); return; }
+  if (equipmentId == null) { res.json(fail('equipmentId required', 400)); return; }
 
   db.prepare(`
     UPDATE equipment
     SET mower_version = COALESCE(?, mower_version),
         charger_version = COALESCE(?, charger_version)
-    WHERE equipment_id = ? AND user_id = ?
+    WHERE id = ? AND user_id = ?
   `).run(mowerVersion ?? null, chargerVersion ?? null, equipmentId, req.userId);
   res.json(ok());
 });

@@ -142,9 +142,170 @@ De cloud retourneert het **BLE MAC** adres in `macAddress`, niet het WiFi STA MA
 De app matcht dit MAC-adres tegen BLE manufacturer data tijdens scanning.
 Onze `device_registry` en `equipment` tabellen moeten daarom het BLE MAC bevatten.
 
-### Bekende MQTT payload velden (up_status_info van charger)
-`charger_status`, `mower_status`, `mower_x`, `mower_y`, `mower_z`, `mower_gps_*`,
-`mower_info`, `mower_info1`, `mower_error`
+### Compleet MQTT commando protocol (uit APK analyse)
+
+Alle commando's worden gepubliceerd als JSON op `Dart/Send_mqtt/<SN>` (app→apparaat)
+en ontvangen op `Dart/Receive_mqtt/<SN>` (apparaat→app).
+
+**Maaien:**
+| Commando | Response | Beschrijving |
+|----------|----------|-------------|
+| `start_run` | `start_run_respond` | Start maaien |
+| `stop_run` | `stop_run_respond` | Stop maaien |
+| `pause_run` | `pause_run_respond` | Pauzeer maaien |
+| `resume_run` | `resume_run_respond` | Hervat maaien |
+
+**Navigatie:**
+| Commando | Response | Beschrijving |
+|----------|----------|-------------|
+| `start_navigation` | `start_navigation_respond` | Start punt-naar-punt navigatie |
+| `stop_navigation` | `stop_navigation_respond` | Stop navigatie |
+| `pause_navigation` | `pause_navigation_respond` | Pauzeer navigatie |
+| `resume_navigation` | `resume_navigation_respond` | Hervat navigatie |
+
+**Handmatige besturing (joystick, app route `/manulController`):**
+| Commando | Response | Beschrijving |
+|----------|----------|-------------|
+| `start_move` | _(geen)_ | Start handmatige beweging (joystick data) |
+| `stop_move` | _(geen)_ | Stop handmatige beweging |
+
+De joystick-pagina (`ManulControllerPageLogic`) stuurt continue positie-updates via `start_move`.
+De `writeDataForMove` methode berekent richting/snelheid vanuit de joystick offset.
+
+**Opladen / docking:**
+| Commando | Response | Beschrijving |
+|----------|----------|-------------|
+| `go_to_charge` | `go_to_charge_respond` | Ga naar laadstation |
+| `go_pile` | `go_pile_respond` | Ga naar laadpaal |
+| `stop_to_charge` | `stop_to_charge_respond` | Stop opladen |
+| `auto_recharge` | `auto_recharge_respond` | Automatisch herladen |
+| `get_recharge_pos` | `get_recharge_pos_respond` | Haal laadstation positie op |
+| `save_recharge_pos` | `save_recharge_pos_respond` | Sla laadstation positie op |
+
+**Kaart bouwen (mapping):**
+| Commando | Response | Beschrijving |
+|----------|----------|-------------|
+| `start_scan_map` | `start_scan_map_respond` | Start handmatig grens scannen |
+| `stop_scan_map` | `stop_scan_map_respond` | Stop scannen |
+| `add_scan_map` | `add_scan_map_respond` | Voeg scan-datapunt toe |
+| `start_erase_map` | `start_erase_map_respond` | Start kaartgebied wissen |
+| `stop_erase_map` | `stop_erase_map_respond` | Stop wissen |
+| `start_assistant_build_map` | `start_assistant_build_map_respond` | Start automatisch kaart bouwen |
+| `quit_mapping_mode` | _(geen)_ | Verlaat mapping modus |
+
+**Kaart beheer:**
+| Commando | Response | Beschrijving |
+|----------|----------|-------------|
+| `get_map_list` | `get_map_list_respond` | Haal lijst van alle kaarten op |
+| `get_map_outline` | _(via report)_ | Haal kaartgrens op |
+| `get_map_plan_path` | `get_map_plan_path_respond` | Haal gepland maaipad op |
+| `get_preview_cover_path` | `get_preview_cover_path_respond` | Haal coverage preview op |
+| `generate_preview_cover_path` | `generate_preview_cover_path_respond` | Genereer coverage preview |
+| `request_map_ids` | _(geen)_ | Verzoek beschikbare kaart-IDs |
+| `save_map` | `save_map_respond` | Sla kaart op |
+| `delete_map` | `delete_map_respond` | Verwijder kaart |
+| `reset_map` | `reset_map_respond` | Reset kaart |
+
+**Apparaat parameters (via BLE én MQTT):**
+| Commando | Response | Beschrijving |
+|----------|----------|-------------|
+| `get_para_info` | `get_para_info_respond` | Haal geavanceerde instellingen op |
+| `set_para_info` | `set_para_info_respond` | Wijzig geavanceerde instellingen |
+
+Parameters: `obstacle_avoidance_sensitivity`, `target_height`, `defaultCuttingHeight`,
+`path_direction`, `cutGrassHeight`
+
+**PIN code:**
+| Commando | Response | Beschrijving |
+|----------|----------|-------------|
+| `dev_pin_info` | `dev_pin_info_respond` | PIN code opvragen/instellen |
+| `no_set_pin_code` | _(flag)_ | Geeft aan dat geen PIN code is ingesteld |
+
+**OTA firmware update:**
+| Commando | Response | Beschrijving |
+|----------|----------|-------------|
+| `ota_version_info` | `ota_version_info_respond` | Firmware versie opvragen |
+| `ota_upgrade_cmd` | _(via state)_ | Start OTA upgrade |
+| `ota_upgrade_state` | _(unsolicited)_ | OTA voortgang (apparaat pusht dit) |
+
+**Timer/planning:**
+| Commando | Response | Beschrijving |
+|----------|----------|-------------|
+| `timer_task` | _(geen)_ | Timer/gepland taak commando |
+
+**Overig:**
+| Commando | Response | Beschrijving |
+|----------|----------|-------------|
+| `auto_connect` | _(geen)_ | Auto-connect commando |
+
+### Status reports (apparaat → app, unsolicited)
+
+Deze berichten worden periodiek door het apparaat gepusht (niet op verzoek):
+
+| Report type | Beschrijving |
+|-------------|-------------|
+| `up_status_info` | Hoofd-statusupdate van charger (bevat alle charger/mower velden) |
+| `report_state_robot` | Robot status rapport |
+| `report_state_battery` | Batterij status rapport |
+| `report_state_work` | Werk/maai status rapport |
+| `report_state_map_outline` | Kaartgrens data |
+| `report_state_timer_data` | Timer/planning data rapport |
+| `report_exception_state` | Fout/uitzondering rapport |
+| `ota_upgrade_state` | OTA upgrade voortgang |
+| `connection_state` | Verbindingsstatus wijziging |
+
+### MQTT payload velden
+
+**`up_status_info` velden (charger → app):**
+| Veld | Beschrijving |
+|------|-------------|
+| `charger_status` | Charger status bitfield (zie hieronder) |
+| `mower_status` | Maaier operationele status |
+| `mower_x` | Maaier X positie |
+| `mower_y` | Maaier Y positie |
+| `mower_z` | Maaier Z positie / heading |
+| `mower_info` | Maaier info veld 1 |
+| `mower_info1` | Maaier info veld 2 |
+| `mower_error` | Fout-teller / error code |
+| `battery_capacity` | Batterij percentage |
+
+**Werk/status velden:**
+| Veld | Beschrijving |
+|------|-------------|
+| `work_mode` | Huidige werkmodus |
+| `work_state` | Huidige werkstatus |
+| `work_status` | Werkstatus |
+| `task_mode` | Taakmodus |
+| `recharge_status` | Oplaadstatus |
+| `prev_state` | Vorige status |
+| `mowing_progress` | Maaivoortgang (percentage) |
+| `error_code` | Numerieke foutcode |
+| `error_msg` | Foutmelding tekst |
+| `error_status` | Foutstatus |
+| `cmd_num` | Commando volgnummer |
+
+**Kaart-gerelateerde velden:**
+| Veld | Beschrijving |
+|------|-------------|
+| `map_id` | Kaart identifier |
+| `map_ids` | Lijst van kaart-IDs |
+| `map_name` | Kaart naam |
+| `map_type` | Kaart type (werkgebied, obstakel, kanaal) |
+| `map_position` | Kaart positie data |
+| `plan_path` | Gepland maaipad |
+| `cover_path` | Coverage pad |
+| `preview_cover_path` | Preview coverage pad |
+| `path_direction` | Maaipad richting |
+| `covering_area` | Huidig dekkingsgebied |
+| `finished_area` | Afgewerkt gebeid |
+| `cov_direction` | Coverage richting |
+
+**Positie velden:**
+| Veld | Beschrijving |
+|------|-------------|
+| `longitude` | GPS lengtegraad |
+| `latitude` | GPS breedtegraad |
+| `orient_flag` | Oriëntatie vlag |
 
 ### charger_status bitfield (geobserveerde waarden)
 | Waarde (dec) | Waarde (hex)   | Situatie                              |
@@ -645,12 +806,270 @@ De `charger_channel` waarde (`15`) komt uit de `set_lora_info_respond` tijdens c
 
 ---
 
+## Maaier foutmeldingen (uit `mower_error_text.dart`)
+
+De app mapt numerieke foutcodes (`error_code` / `report_exception_state`) naar gebruikersberichten:
+
+**Motor/hardware fouten (PIN code vereist om te ontgrendelen):**
+- Blade motor is stalled. Please check and enter the PIN code to unlock.
+- Blade motor overcurrent. Please check and enter the PIN code to unlock.
+- Wheel motor is stalled. Please check and enter the PIN code to unlock.
+- Wheel motor overcurrent. Please check and enter the PIN code to unlock.
+- NOVABOT has been emergency stopped. Please enter the PIN code to unlock.
+- NOVABOT is lifted. Please put it back on the ground and enter the PIN code to unlock.
+- NOVABOT is tilted. Please manually move it to a flat ground, and enter the PIN code to unlock.
+- NOVABOT turn over! Please manually turn it back upright and enter the PIN code to unlock.
+
+**Fysieke obstakels:**
+- NOVABOT collided. Please assist it in getting unstuck.
+- The wheels are slipping, please check.
+- The lawnmower is outside the map. Please move it back inside the map.
+
+**Batterij:**
+- NOVABOT is out of power, please wait for charging to complete.
+- The lawnmower has low battery and cannot start working.
+- The machine has a low battery. This function is unavailable.
+
+**Hardware sensoren:**
+- The TOF sensor has a hardware malfunction. Please contact after-sales service.
+- The front camera sensor has a hardware malfunction. Please contact after-sales service.
+- Machine chassis error. Please view the control panel screen.
+
+**Mapping/navigatie:**
+- Internal service error in the mapping module. Please restart the machine and try again.
+- The mapping service request is unreasonable. Please restart the machine and try again.
+- Cover module internal error. Please restart the machine or try again later.
+- Cover module action error. Please restart the machine or try again later.
+- Lora configuration error. Please restart the machine or try again later.
+- Mapping failed, please re-mapping.
+- The map was created successfully, but the upload failed. Please retry in an area with a strong network signal.
+
+**Laadstation:**
+- Failed to obtain the charging location. Please restart the machine or try again later.
+- Failed to return to the charging station, please try again or remotely control the machine to return.
+- Return to charging station failed, please retry or manually move NOVABOT back.
+- Go to charging station failed, please try again.
+- The charging signal cannot be found. Please verify that the charging station is connected to power.
+- The QR code signal cannot be found. Please verify that the QR code on the charging station is not blocked.
+- The lawnmower is unable to leave the charging station. Please ensure there are no obstacles blocking its path.
+
+**GPS/signaal:**
+- GPS signal is weak and cannot be initialized. Please try moving the antenna to an open area and retry.
+- The GPS signal is weak, please make sure the antenna is installed in an unobstructed area.
+- Poor location quality, please move the lawnmower to an open area to start.
+
+**Netwerk:**
+- Network configuration error. Please retry.
+- Network configuration error. Please ensure the antenna is connected properly and try again.
+- Network connection timed out. Please retry.
+- WiFi connection failed. Please verify that the WiFi name and password entered are correct.
+- Bluetooth connection failed.
+- NOVABOT's Bluetooth is disconnected. Please move closer to the machine and try again.
+
+---
+
+## Kaarttypen en beperkingen
+
+De app ondersteunt 3 kaarttypen (`map_type`):
+
+| Type | Beschrijving | Beperkingen |
+|------|-------------|-------------|
+| **Working area** | Gazon dat gemaaid moet worden | Max 3 werkgebieden |
+| **Obstacle area** | Gebieden om te vermijden | Min 1m afstand tot grens |
+| **Channel area** | Smalle doorgangen tussen gazons | Min 1m breed, max 10m recht |
+
+**Overige beperkingen (uit app UI strings):**
+- Max 3 kaarten + 3 kanaalgebieden tegelijk
+- Kanaal nodig als pad naar laadstation > 1.5m of niet recht tegenover gazon
+- Bij mapping: volg maaier binnen 2 meter
+- Min 20% batterij op telefoon én maaier voor mapping
+- Maaiertijd aanbeveling: minimaal 30 minuten
+
+---
+
+## Geavanceerde instellingen (para_info)
+
+Via de app-pagina `/advancedSettings` en MQTT commando's `get_para_info` / `set_para_info`:
+
+| Parameter | Beschrijving |
+|-----------|-------------|
+| `obstacle_avoidance_sensitivity` | Gevoeligheid obstakeldetectie |
+| `target_height` | Doelhoogte voor maaien |
+| `defaultCuttingHeight` | Standaard maaihoogte |
+| `path_direction` | Maaipad richting |
+| `cutGrassHeight` | Maaihoogte instelling |
+
+---
+
+## App navigatie routes
+
+Alle in-app routes (voor eigen app ontwikkeling):
+
+| Route | Beschrijving |
+|-------|-------------|
+| `/entrance` | Splash/welkom scherm |
+| `/login` | Inloggen |
+| `/signup` | Registreren |
+| `/forgetPassword` | Wachtwoord vergeten |
+| `/resetPassword` | Wachtwoord resetten |
+| `/home` | Hoofdscherm (apparaat status) |
+| `/profile` | Gebruikersprofiel |
+| `/settings` | Instellingen |
+| `/about` | Over de app |
+| `/language` | Taal selectie |
+| `/deleteAccount` | Account verwijderen |
+| `/addCharger` | Laadstation toevoegen (BLE provisioning) |
+| `/addMower` | Maaier toevoegen (BLE provisioning) |
+| `/equipmentDetail` | Apparaat detail pagina |
+| `/renameDevice` | Apparaat hernoemen |
+| `/viewPin` | PIN code bekijken |
+| `/advancedSettings` | Geavanceerde instellingen (para_info) |
+| `/otaPage` | Firmware update (OTA) |
+| `/lawn` | Gazon/kaart weergave |
+| `/buildMap` | Kaart bouwen |
+| `/chooseMapType` | Kaarttype kiezen (werkgebied/obstakel/kanaal) |
+| `/preBuildMap` | Pre-build kaart instructies |
+| `/manulController` | Handmatige joystick besturing (let op: typo "manul") |
+| `/schedule` | Maaischema's beheren |
+| `/message` | Berichten |
+| `/robotMessage` | Robot berichten |
+| `/workingRecords` | Werkhistorie |
+| `/scanner` | QR code scanner (voor SN invoer) |
+| `/webview` | WebView pagina |
+| `/pdfview` | PDF viewer |
+| `/videoPlay` | Video afspelen |
+| `/logs` | Logs bekijken |
+
+---
+
+## App architectuur (uit APK source paden)
+
+**Framework**: Flutter/Dart met GetX state management
+
+### MQTT laag
+| Bestand | Beschrijving |
+|---------|-------------|
+| `mqtt/mqtt.dart` | MQTT client klasse (`Mqtt`) |
+| `mqtt/mqtt_data_handler.dart` | Message routing (`MqttDataHandler`, singleton) |
+
+De `MqttDataHandler` heeft twee aparte handlers:
+- `_handlerChargerMsg` — parst plain JSON van charger
+- `_handlerMowerMsg` — decrypteert AES en parst JSON van maaier
+
+Routering: `targetIsMower` flag bepaalt of bericht naar charger of maaier handler gaat.
+
+### Controllers (GetX)
+| Controller | Beschrijving |
+|-----------|-------------|
+| `charger_status_controller.dart` | Charger status state management |
+| `mower_status_controller.dart` | Maaier status state management |
+| `equipment_controller.dart` | Apparaat beheer |
+| `lawn_controller.dart` | Gazon/kaart state |
+| `user_controller.dart` | Gebruiker state |
+
+### Data models
+| Model | Velden |
+|-------|--------|
+| `EquipmentEntity` | `chargerSn`, `chargerVersion`, `equipmentId`, `equipmentNickName`, `equipmentTypeH`, `macAddress`, `mowerVersion`, `online`, `status`, `chargerAddress`, `chargerChannel`, `userId` |
+| `MapEntity` / `MapEntityItem` | `map_id`, `map_ids`, `map_name`, `map_type`, `map_position` |
+| `WorkPlanEntity` / `WorkPlanEntityItem` | `startTime`, `endTime`, `mapId`, `work_mode` |
+| `ChargingPostion` _(typo in APK)_ | Laadstation positie data |
+| `CoveringData` | `covering_area`, `cov_direction`, `finished_area`, `mowing_progress` |
+| `PlanPath` | `plan_path`, `path_direction` |
+| `UserEntity` | Gebruikersaccount data |
+| `RobotMessageEntity` | Robot notificatie berichten |
+| `WorkMessageEntity` | Werk/maai berichten |
+
+### UI interceptors (guard conditions)
+De app blokkeert bepaalde acties met deze checks:
+| Check | Beschrijving |
+|-------|-------------|
+| `noMapIntercept` | Geen kaart aanwezig |
+| `noMower` | Geen maaier gekoppeld |
+| `noChargingStation` | Geen laadstation gekoppeld |
+| `lowBatteryIntercept` | Batterij te laag |
+| `backingIntercept` | Maaier keert terug |
+| `workingIntercept` | Machine is aan het werk (blokkeert verwijderen/bewerken) |
+| `pinCodeIntercept` | PIN code vereist |
+| `mapNoUnicomIntercept` | Kaarten niet verbonden via kanaal |
+
+### "Niet meer herinneren" voorkeurkeys
+| Key | Beschrijving |
+|-----|-------------|
+| `dont_remind_build_map` | Kaart bouwen waarschuwing |
+| `dont_remind_obstacle` | Obstakelgebied waarschuwing |
+| `dont_remind_channel3` | Kanaalgebied waarschuwing |
+| `dont_remind_modify_map` | Kaart wijzigen waarschuwing |
+| `dont_remind_pre_build` | Pre-build waarschuwing |
+
+---
+
+## Externe URLs en diensten
+
+| URL | Beschrijving |
+|-----|-------------|
+| `https://app.lfibot.com` | Hoofd API server |
+| `mqtt.lfibot.com:1883` | MQTT broker |
+| `https://lfibot.zendesk.com/hc/en-gb` | Klantenservice / helpcentrum |
+| `https://novabot.com/` | Publieke website |
+| `https://novabot-oss.oss-us-east-1.aliyuncs.com/novabot-document/` | Handleidingen (PDF) op Alibaba OSS |
+
+**Developer info gelekt in binary**: `file:///Users/jiangcongde/Desktop/project/flutter_novabot/`
+
+---
+
+## Maaier status weergave (UI widgets)
+
+De app toont verschillende widgets afhankelijk van de maaier-status:
+
+| Widget | Beschrijving |
+|--------|-------------|
+| `OnlineView` | Apparaat online, wacht op commando's |
+| `OfflineView` | Apparaat offline |
+| `MowingWidget` | Bezig met maaien |
+| `ChargingWidget` | Bezig met opladen |
+| `BackingChargerWidget` | Keert terug naar laadstation |
+| `WaitCommandWidget` | Standby, wacht op commando's |
+| `LoadFailedView` | Laden mislukt |
+
+### Display states (afgeleid uit widget/string namen)
+| State | Beschrijving |
+|-------|-------------|
+| `backingCharger` | Maaier keert terug naar laadstation |
+| `backedCharger` | Maaier bij laadstation aangekomen |
+| `pauseAndCharging` | Gepauzeerd en aan het opladen |
+| `gotoCharging` | Onderweg naar laadstation |
+| `startMowing` | Start met maaien |
+| `startMapping` | Start met kaart bouwen |
+| `noMowingUncharged` | Kan niet maaien (batterij leeg) |
+
+---
+
+## OTA firmware update protocol
+
+**App route**: `/otaPage`
+
+**Flow:**
+1. App vraagt `ota_version_info` via MQTT → `ota_version_info_respond`
+2. App checkt API: `GET /api/nova-user/otaUpgrade/checkOtaNewVersion?version=<VER>&upgradeType=serviceUpgrade&equipmentType=<TYPE>`
+3. App checkt API: `POST /api/nova-data/appManage/queryNewVersion`
+4. Bij beschikbare update: app stuurt `ota_upgrade_cmd` via MQTT
+5. Apparaat pusht `ota_upgrade_state` updates (voortgang)
+6. Na maaier-update vraagt app: "The charging station can also be upgraded. Would you like to proceed?"
+
+**UI strings:**
+- "Are you sure to upgrade? Expected to take 20-30 minutes"
+- "Can be operated in the background during the upgrade. Do not close NOVABOT APP."
+- "Upgrading... please do not operate the machine during the upgrade process."
+
+---
+
 ## Open issues / TODO
 
 - [ ] Android Private DNS uitschakelen zodat DNS rewrites werken op Android
 - [ ] `charger_status` bitfield volledig decoderen tegen Novabot-Base-Station.pdf
 - [x] Maaier provisioning flow documenteren (BLE commando's voor `Novabot` device)
-- [ ] Volledige MQTT message structuur documenteren (app→apparaat commando's)
+- [x] Volledige MQTT commando protocol documenteren (40+ commando's, 39 response types)
 - [ ] Begrijpen wanneer `mower_error` stopt met tellen (maaier verbindt via LoRa)
 - [x] AES encryptie-infrastructuur gevonden in APK (`AesEncryptor`, `SICBlockCipher`)
 - [ ] AES key achterhalen — statische key `1234123412ABCDEF` werkt niet, key is runtime-derived (4300+ combinaties getest). Volgende stappen: Frida, blutter, of ESP32 firmware dump
@@ -659,7 +1078,10 @@ De `charger_channel` waarde (`15`) komt uit de `set_lora_info_respond` tijdens c
 - [x] App MQTT CONNECT bug fixen (Will QoS met Will Flag=0) — `sanitizeConnectFlags` in broker.ts
 - [x] Maaier `account`/`password` = null in cloud response bevestigd en geïmplementeerd
 - [x] MAC-adres in responses = BLE MAC (niet WiFi STA) — device_registry bijgewerkt
+- [x] Alle foutmeldingen, kaarttypen, app-routes en UI states gedocumenteerd
+- [x] App architectuur (controllers, models, interceptors) gedocumenteerd
 - [ ] Uitzoeken of `_6688` clientId suffix een vaste waarde of berekend is
+- [ ] Eigen app bouwen — alle MQTT commando's en data models zijn gedocumenteerd als referentie
 
 ## Gedocumenteerde sessies
 
