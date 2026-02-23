@@ -1,0 +1,801 @@
+      },
+      {
+        "equipmentId": 729,
+        "email": "ramonvanbruggen@gmail.com",
+        "deviceType": "mower",
+        "sn": "LFIN2230700238",
+        "equipmentCode": "LFIN2230700238",
+        "equipmentName": "LFIN2230700238",
+        "equipmentNickName": "Novabot",
+        "equipmentType": "LFIN2",
+        "sysVersion": "v6.0.0",
+        "period": "2026-11-16 00:00:00",
+        "status": 1,
+        "activationTime": "2023-11-15 10:16:52",
+        "importTime": "2023-08-23 18:22:48",
+        "batteryState": null,
+        "videoTutorial": "https://novabot-storage.s3.us-east-2.amazonaws.com/install_mower.mp4",
+        "macAddress": "50:41:1C:39:BD:C1",
+        "chargerAddress": null,
+        "chargerChannel": null,
+        "account": null,
+        "password": null,
+        "wifiName": null,
+        "wifiPassword": null,
+        "model": "N2000",
+        "photoId": null,
+        "photoType": null,
+        "photoDownload": null,
+        "photoTime": null
+      }
+    ]
+  },
+  "dateline": 1771873907031
+}
+[PROXY-HTTP] ──────────────────────────────────────
+
+[PROXY-HTTP] <<< 200 OK
+[PROXY-HTTP] <<< Body:
+{
+  "success": true,
+  "code": 200,
+  "message": "request success",
+  "value": {
+    "createrTime": "2023-08-08 10:37:42",
+    "createrId": 0,
+    "updateTime": "2023-08-08 10:37:42",
+    "updateId": 0,
+    "deleteFlag": 0,
+    "recycleFlag": 0,
+    "id": 1,
+    "appVersion": "1.2.26",
+    "appSystem": "ios",
+    "buildNumber": 5,
+    "updateType": "force",
+    "updateContent": "修复已知问题",
+    "androidId": "com.laiyufei.nova",
+    "iosId": "1644028955"
+  },
+  "dateline": 1771873907034
+}
+[PROXY-HTTP] ──────────────────────────────────────
+
+[TCP]  OPEN  192.168.0.177:52894
+[TCP]  DATA  192.168.0.177:52894 (96B) first20=105e00044d515454048a000a003e72616d6f6e76
+[TCP]  CONNACK→ 192.168.0.177:52894 (vroeg, synchroon)
+[TCP]  WRITE-INTERCEPT geïnstalleerd 192.168.0.177:52894
+[TCP]  RECV  192.168.0.177:52894 (96B) type=0x10
+[MQTT] CONN-ERR clientId="?" err=Will QoS must be set to zero when Will Flag is set to 0
+[TCP]  DESTROY→END 192.168.0.177:52894 (flushing CONNACK)
+[TCP]  RECV  192.168.0.177:52894 (78B) type=0x82
+[TCP]  END   192.168.0.177:52894
+[REQ] POST /api/nova-data/cutGrassPlan/queryRecentCutGrassPlan {"sn":"LFIN2230700238","currentTime":"20:11","week":"Mon"}
+
+[PROXY-HTTP] ──────────────────────────────────────
+[PROXY-HTTP] >>> POST /api/nova-data/cutGrassPlan/queryRecentCutGrassPlan
+[PROXY-HTTP] >>> Body:
+{
+  "sn": "LFIN2230700238",
+  "currentTime": "20:11",
+  "week": "Mon"
+}
+[PROXY-HTTP] >>> Authorization: 06ddcd63-5762-4db5-896a-ef7768...
+[TCP]  CLOSE 192.168.0.177:52894 hadError=false
+[REQ] GET /api/nova-file-server/map/queryEquipmentMap {}
+
+[PROXY-HTTP] ──────────────────────────────────────
+[PROXY-HTTP] >>> GET /api/nova-file-server/map/queryEquipmentMap?sn=LFIN2230700238
+[PROXY-HTTP] >>> Body:
+{}
+[PROXY-HTTP] >>> Authorization: 06ddcd63-5762-4db5-896a-ef7768...
+[PROXY-HTTP] <<< 200 OK
+[PROXY-HTTP] <<< Body:
+{
+  "success": true,
+  "code": 200,
+  "message": "request success",
+  "value": {
+    "data": null,
+    "md5": null,
+    "machineExtendedField": null
+  },
+  "dateline": 1771873907169
+}
+[PROXY-HTTP] ──────────────────────────────────────
+
+[PROXY-HTTP] <<< 200 OK
+[PROXY-HTTP] <<< Body:
+{
+  "success": true,
+  "code": 200,
+  "message": "request success",
+  "value": {
+    "id": null,
+    "sn": null,
+    "timezone": null,
+    "week": null,
+    "startTime": null,
+    "endTime": null,
+    "workTime": null,
+    "workDay": null,
+    "area": null,
+    "areaFileAlias": null,
+    "cutGrassHeight": null,
+    "repeatType": null,
+    "associationId": null,
+    "weekArray": null,
+    "times": null
+  },
+  "dateline": 1771873907184
+}
+[PROXY-HTTP] ──────────────────────────────────────
+
+[TCP]  RECV  192.168.0.245:55196 (837B) type=0x30
+[MQTT] PUBLISH  LFIN2230700238_6688 ←DEV Dart/Receive_mqtt/LFIN2230700238  [AES-FAIL] (800B) hex=bab8033ebbafb64dc09d523934626ed57d14fc511b376b3993129fb9087516f9...
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="LFIN2230700238_6688" topic="Dart/Receive_mqtt/LFIN2230700238"
+[PROXY-MQTT] ↑ Payload: ��>���M��R94bn�}�Qk9��u�j��S���ߦ�C�TK2>b�o�V�>�V�)Eg��*���X��{��4�|�F��������.�Ұ����Hz��ţ.���D1ءE��aދ���[h|�-M��b�����
+be�G��-�0�ß     �X�O�:Ȉ��B�+;�
+                              �l/dJS�ü��pZ�Y��v�<��Ö���m�X�Z�oԤ��"�ö�Ü,�֗��6��`O�c�2"J.���/�ua���fG=M���$n.�ö�Ä���6�A�
+���$�äp4΍QY�c�?�ѽ�Fö��$� ���)S�̻M���e�L�+����W�lÇ���Q��5��)2�P����6��cvDLI9�$"`6�!%��3"E���Qk�d-�ȅ�yF��
+��?�v�����r���(��.(>�^#���])#���V�D=w��äGo�%ß��öe(?�JN�a��.��Ü�e�(���Ȏ#�19�J�����yxG+��j'mM���T��d��h���2_8q��
+Dd�y���r��"sx��w�&�!�'��        :�1t2G��9��KR�8�1A��q��H�/Ri?aF���!4C%� �-��f��b���'�ŵx�ǧT8Cöī�
+                                                                                               -b�ßR���H><���#-��/
+                  ��"§8��
+�U�����z.AO�3߯Kf�P֜sä����k��Ü�1(bZ�_Qq��dY
+                                        ���.�g5
+Տ��5�0r�9?W
+ÄTCPÜ  RECV  192.168.0.245:55196 (181B) type=0x30
+ÄMQTTÜ PUBLISH  LFIN2230700238_6688 ←DEV Dart/Receive_mqtt/LFIN2230700238  ÄAES-FAILÜ (144B) hex=f3ae2055de8ffb87ffe33d45334dd8be5bba25f77007212896f082afbc4e3491...
+ÄPROXY-MQTTÜ ↑ LOCAL→UPSTREAM clientId="LFIN2230700238_6688" topic="Dart/Receive_mqtt/LFIN2230700238"
+ÄPROXY-MQTTÜ ↑ Payload: � Uޏ����=E3MؾÄ�%�p!(�����N4�K��%�=2Ö�����"N�e��Ǚ��ß�m��dä��Dl��͸��ß§��Ü��5VW�v�Jh�u�n!Vׇ��Ä�U���!��I����m�fi���e�(�ul��K�#
+ÄTCPÜ  RECV  192.168.0.245:55196 (517B) type=0x30
+ÄMQTTÜ PUBLISH  LFIN2230700238_6688 ←DEV Dart/Receive_mqtt/LFIN2230700238  ÄAES-FAILÜ (480B) hex=92d5f50382c300ea652d4c260ce2446a5d4580dd0692dd96a58e3d3d06497857...
+ÄPROXY-MQTTÜ ↑ LOCAL→UPSTREAM clientId="LFIN2230700238_6688" topic="Dart/Receive_mqtt/LFIN2230700238"
+ÄPROXY-MQTTÜ ↑ Payload: ������e-L&
+                                  �DjÜE���ݖ��==IxW���:�<�S��m��� `e�4M�d���Ym��$�Ԕlb����$�zgz�X:d_/�����s�G�ö!�����A��-$/#� n��b� ��q�VC>��z�3�I�ǊTÖ�d��L/���7IKN[�9nd���� cPԻqSXl�����]VBK���
+                                                                                              p�&��"^��O�~��tVHo�NkPM~'��!�ϐ8�C�脬��:]���!����-SH�0�:�g��       ��f��`�x!�ÜTR�j9Xa(��e�Q��<T��
+Α��BJ���;.#e�U7�#o���Ü�Pֽ�c2��6��X���X�PÖ%I��g���Muk�6����)(=����0=��%1E������k���6�`�fj�ޏ�ö�§cQ-��٤��U:�B*�h�R�j`��§
+                    q�B�q9��Mk֯�F�<�V/�8E��
+ÄPROXY-HTTPÜ <<< 200 OK
+ÄPROXY-HTTPÜ <<< Body:
+ä
+  "success": true,
+  "code": 200,
+  "message": "request success",
+  "value": ä
+    "workRecordMsg": "week:Thu  time:07/17 18:42  area:All maps",
+    "workRecordUnread": 13,
+    "securityRecordMsg": null,
+    "securityRecordUnread": null,
+    "workRecordDate": "2025-07-17 17:41:15",
+    "robotMsg": "Please enter the PIN code on the device.",
+    "robotMsgUnread": 4331,
+    "robotMsgDate": "2025-09-08 09:45:32",
+    "sharingMsg": null,
+    "sharingUnread": null,
+    "sharingDate": null,
+    "promotionMsg": null,
+    "promotionUnread": null,
+    "promotionDate": null
+  ü,
+  "dateline": 1771873908201
+ü
+ÄPROXY-HTTPÜ ──────────────────────────────────────
+
+ÄTCPÜ  RECV  192.168.0.232:49859 (187B) type=0x30
+ÄMQTTÜ PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  ä"up_status_info":ä"charger_status":318767361,"mower_status":0,"mower_info":0,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":0,"mower_error":8074üü
+ÄPROXY-MQTTÜ ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+ÄPROXY-MQTTÜ ↑ Payload:
+ä
+  "up_status_info": ä
+    "charger_status": 318767361,
+    "mower_status": 0,
+    "mower_info": 0,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 0,
+    "mower_error": 8074
+  ü
+ü
+ÄTCPÜ  RECV  192.168.0.245:55196 (2B) type=0xc0
+ÄTCPÜ  WRITE 192.168.0.245:55196 (2B) type=0xd0
+ÄTCPÜ  RECV  192.168.0.245:55196 (837B) type=0x30
+ÄMQTTÜ PUBLISH  LFIN2230700238_6688 ←DEV Dart/Receive_mqtt/LFIN2230700238  ÄAES-FAILÜ (800B) hex=bab8033ebbafb64dc09d523934626ed57d14fc511b376b3993129fb9087516f9...
+ÄPROXY-MQTTÜ ↑ LOCAL→UPSTREAM clientId="LFIN2230700238_6688" topic="Dart/Receive_mqtt/LFIN2230700238"
+ÄPROXY-MQTTÜ ↑ Payload: ��>���M��R94bn�ü�Qk9��u�j��S���ߦ�C�TK2>b�o�V�>�V�)Eg��*���X��ä��4�ö�F��������.�Ұ����Hz��ţ.���D1ءE��aދ���Ähö�-M��b�����
+be�G��-�0�ß     �X�O�:Ȉ��B�+;�
+                              �l/dJS�ü�:�LÜ��T�R��O��rÖX�%�C�(�f�˫�x�#'�ö�k�N9`�a�����3�ö-�1�-x$ҥs�igk��"��l�j����SL�JÄ����9ȶ���z�/�m��Z�
+                                         2St/f�zןy�{<��d�J;d�oH���r��.g׾9�lR=���2=z��as�Jm�V�eMG�a��$����[�5k\��N�ũ�Le���ä��X����Ä�<��౩���ä�NG&"3�Rqn�säz��ۘ�A��>��P=W�.wg&�c��(�ko:z�/"��"ʟ+ü��'�?�YR=+տ����*���ޚB�,h̀+��hP����t��_T�%9n�n§�OHä��u�������JTUH)ß��6��N�q�Gu�!8kw���`q��������v�>��X�,�%`f�_$r�`��,�n.Uq�9�ݹ�m�+�$Ә��%8�2?���3J�i6��vä     ��!��R˖����6�/t����0Έ��q�y����
+                                                                                      �!&[ץ~Ě!����_�]n�?W/�N�t�ْ[?-O��
+[TCP]  RECV  192.168.0.245:55196 (181B) type=0x30
+[MQTT] PUBLISH  LFIN2230700238_6688 ←DEV Dart/Receive_mqtt/LFIN2230700238  [AES-FAIL] (144B) hex=f3ae2055de8ffb87ffe33d45334dd8be5bba25f77007212896f082afbc4e3491...
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="LFIN2230700238_6688" topic="Dart/Receive_mqtt/LFIN2230700238"
+[PROXY-MQTT] ↑ Payload: � Uޏ����=E3Mؾ[�%�p!(�����N4�K��%�=2\�����"N�e��Ǚ��~�m��d{��Dl��͸��~@��]��5VW�v�Jh�u�n!Vׇ��Ä�U���!��I����m�fi���e�(�ul��K�#
+ÄTCPÜ  RECV  192.168.0.245:55196 (533B) type=0x30
+ÄMQTTÜ PUBLISH  LFIN2230700238_6688 ←DEV Dart/Receive_mqtt/LFIN2230700238  ÄAES-FAILÜ (496B) hex=92d5f50382c300ea652d4c260ce2446a5d4580dd0692dd96a58e3d3d06497857...
+ÄPROXY-MQTTÜ ↑ LOCAL→UPSTREAM clientId="LFIN2230700238_6688" topic="Dart/Receive_mqtt/LFIN2230700238"
+ÄPROXY-MQTTÜ ↑ Payload: ������e-L&
+                                  �DjÜE���ݖ��==IxW���:�<�S��m��� `e�4M�d���Ym��$�Ԕlb����$�zgz�X:d_/�����s�G�ö!�����A��-$/#� n��b� ��q�VC>��z�3�I�ǊTÖ�d��L/���7IKN[�9nd���� cPԻqSXl�����]VBK���
+                                                                                              p��"#���O?�𮒧�o|[*ѭ�3Z����Vm�v=�t�����۝�U���       G!�     �pݻ��y$U_�i\D[Kp(��G¾�\�^"�jNv��ʷ;�~O�f���
+]F܆���2YKFC*
+|$�+
+�zFK��k\�D�o�A���6Y�I�gY��v�U�x��ا'��B�-�a���bA�)Äò��ĝ�
+Od§��qO�t�Üp�6?9��Al�W�0�V����е�d�)�j���̳t��[��7W�v
+[TCP]  RECV  192.168.0.232:49859 (187B) type=0x30
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":318767361,"mower_status":0,"mower_info":0,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":0,"mower_error":8075}}
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+[PROXY-MQTT] ↑ Payload:
+{
+  "up_status_info": {
+    "charger_status": 318767361,
+    "mower_status": 0,
+    "mower_info": 0,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 0,
+    "mower_error": 8075
+  }
+}
+[TCP]  RECV  192.168.0.245:55196 (837B) type=0x30
+[MQTT] PUBLISH  LFIN2230700238_6688 ←DEV Dart/Receive_mqtt/LFIN2230700238  [AES-FAIL] (800B) hex=bab8033ebbafb64dc09d523934626ed57d14fc511b376b3993129fb9087516f9...
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="LFIN2230700238_6688" topic="Dart/Receive_mqtt/LFIN2230700238"
+[PROXY-MQTT] ↑ Payload: ��>���M��R94bn�}�Qk9��u�j��S���ߦ�C�TK2>b�o�V�>�V�)Eg��*���X��{��4�|�F��������.�Ұ����Hz��ţ.���D1ءE��aދ���[h|�-M��b�����
+be�G��-�0�ß     �X�O�:Ȉ��B�+;�
+                              �l/dJS�ü�:�LÜ��T�R��O��rÖX�%�C�(�f�˫�x�#'�ö�k�N9`�a�����3�ö-�1�-x$ҥs�igk��"��l�j����SL�JÄ����9ȶ���z�/�m��Z�
+                                         2St/f�zןy�{<��d�J;d�oH���r��.g׾9�lR=���2=z��as�Jm�V�eMG�a��$����[�5k\��N�ũ�Le���ä��X����Ä�<��౩���ä�NG&"3�Rqn�säz��ۘ�A��>��P=W�.wg&�c��(�ko:z�/"��"ʟ+ü��'�?�YR=+տ����*���ޚB�,h̀+��hP����t��_T�%9n�n§�OHä��u�������JTUH)ß��6��N�q�Gu�!8kw���`q��������v�>��X�,�%`f�_$r�`��,�n.Uq�9�ݹ�m�+�$Ә��%8�2?���3J�i6��vä     ��!��R˖����6�/t����0Έ��q�y����
+                                                                                      �!&[ץ~Ě!����_�]n�?W/�N�t�ْ[?-O��
+[TCP]  RECV  192.168.0.245:55196 (181B) type=0x30
+[MQTT] PUBLISH  LFIN2230700238_6688 ←DEV Dart/Receive_mqtt/LFIN2230700238  [AES-FAIL] (144B) hex=f3ae2055de8ffb87ffe33d45334dd8be5bba25f77007212896f082afbc4e3491...
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="LFIN2230700238_6688" topic="Dart/Receive_mqtt/LFIN2230700238"
+[PROXY-MQTT] ↑ Payload: � Uޏ����=E3Mؾ[�%�p!(�����N4�K��%�=2\�����"N�e��Ǚ��~�m��d{��Dl��͸��~@��]��5VW�v�Jh�u�n!Vׇ��Ä�U���!��I����m�fi���e�(�ul��K�#
+ÄTCPÜ  RECV  192.168.0.245:55196 (533B) type=0x30
+ÄMQTTÜ PUBLISH  LFIN2230700238_6688 ←DEV Dart/Receive_mqtt/LFIN2230700238  ÄAES-FAILÜ (496B) hex=92d5f50382c300ea652d4c260ce2446a5d4580dd0692dd96a58e3d3d06497857...
+ÄPROXY-MQTTÜ ↑ LOCAL→UPSTREAM clientId="LFIN2230700238_6688" topic="Dart/Receive_mqtt/LFIN2230700238"
+ÄPROXY-MQTTÜ ↑ Payload: ������e-L&
+                                  �DjÜE���ݖ��==IxW���:�<�S��m��� `e�4M�d���Ym��$�Ԕlb����$�zgz�X:d_/�����s�G�ö!�����A��-$/#� n��b� ��q�VC>��z�3�I�ǊTÖ�d��L/���7IKN[�9nd���� cPԻqSXl�����]VBK���
+                                                                                              p�&��"^��O��AY���aH�AZF�:\l�O�A���v8
+׵uL��                             �l9�Ǜ7�|�<-�a�CQ@#�&��"OX��՚��Aj�w92]h3�q��ƞ@eN�ģm�Sm�9�P+�
+     jx�~
+         ����D�JOvuee#�Z<�z4e�%<
+���QY�W�vT|T�I�S�v�%���n/�r�=�9#�m,�m��qp��~V/�������
+                                                     �x�KvH�;?IäAVH�)�VIe
+                                                                         ÖAj�s����Xv�N��үH�*I��5��Ї�:at����bSՖ"?#�d5�
+
+ÄTCPÜ  RECV  192.168.0.232:49859 (187B) type=0x30
+ÄMQTTÜ PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  ä"up_status_info":ä"charger_status":318767361,"mower_status":0,"mower_info":0,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":0,"mower_error":8076üü
+ÄPROXY-MQTTÜ ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+ÄPROXY-MQTTÜ ↑ Payload:
+ä
+  "up_status_info": ä
+    "charger_status": 318767361,
+    "mower_status": 0,
+    "mower_info": 0,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 0,
+    "mower_error": 8076
+  ü
+ü
+ÄTCPÜ  RECV  192.168.0.245:55196 (837B) type=0x30
+ÄMQTTÜ PUBLISH  LFIN2230700238_6688 ←DEV Dart/Receive_mqtt/LFIN2230700238  ÄAES-FAILÜ (800B) hex=bab8033ebbafb64dc09d523934626ed57d14fc511b376b3993129fb9087516f9...
+ÄPROXY-MQTTÜ ↑ LOCAL→UPSTREAM clientId="LFIN2230700238_6688" topic="Dart/Receive_mqtt/LFIN2230700238"
+ÄPROXY-MQTTÜ ↑ Payload: ��>���M��R94bn�ü�Qk9��u�j��S���ߦ�C�TK2>b�o�V�>�V�)Eg��*���X��ä��4�ö�F��������.�Ұ����Hz��ţ.���D1ءE��aދ���Ähö�-M��b�����
+be�G��-�0�ß     �X�O�:Ȉ��B�+;�
+                              �l/dJS�ü�e� �*0c��
+                                                ��g,�öɃZ����8����Ui>�HHv�Ü���">$�6A^+�,�<��������T�v����:`:s_E�T�-���3�P��W��ό���rÖHyO�DߞV������MM4%����WA�����ß(O�Zn�Y5���
+                                                                           pÜ�P��g����z�ѣ�HQ�5�d�+L�k��������a��NM��82���I�CJ�c��B�1����K��
+                                           b�1N~�9���&�5�]�2'?:���l��1��
+                                                                        �3̝M;(n�9Ҫ�-�aJ���`�R9��3�py�ߪ�hw�\��-���r�������"�!�Ɯ�������c!�ЖÜÇ�JZC
+`g�
+Ak�X8ټ�^��Q��s��o��!7u]e5�a:[.C�=��"r�PΓ�gDQ����Y䛍]!�1�
+�a��c����zn�MW��g#����3z%�i�O�,X�Hk�E����zE��ŝ�bb�}W�nݠ�h����}R��V�
+[TCP]  RECV  192.168.0.245:55196 (181B) type=0x30
+[MQTT] PUBLISH  LFIN2230700238_6688 ←DEV Dart/Receive_mqtt/LFIN2230700238  [AES-FAIL] (144B) hex=f3ae2055de8ffb87ffe33d45334dd8be5bba25f77007212896f082afbc4e3491...
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="LFIN2230700238_6688" topic="Dart/Receive_mqtt/LFIN2230700238"
+[PROXY-MQTT] ↑ Payload: � Uޏ����=E3Mؾ[�%�p!(�����N4�K��%�=2\�����"N�e��Ǚ��~�m��d{��Dl��͸��~@��]��5VW�v�Jh�#v�'Cd��������ơ
+                         �A����+���ü�����JÄW'�
+ÄTCPÜ  RECV  192.168.0.245:55196 (533B) type=0x30
+ÄMQTTÜ PUBLISH  LFIN2230700238_6688 ←DEV Dart/Receive_mqtt/LFIN2230700238  ÄAES-FAILÜ (496B) hex=92d5f50382c300ea652d4c260ce2446a5d4580dd0692dd96a58e3d3d06497857...
+ÄPROXY-MQTTÜ ↑ LOCAL→UPSTREAM clientId="LFIN2230700238_6688" topic="Dart/Receive_mqtt/LFIN2230700238"
+ÄPROXY-MQTTÜ ↑ Payload: ������e-L&
+                                  �DjÜE���ݖ��==IxW���:�<�S��m��� `e�4M�d���Ym��$�Ԕlb����$�zgz�X:d_/�����s�G�ö!�����A��-$/#� n��b� ��q�VC>��z�3�I�ǊTÖ�d��L/���7IKN[�9nd���� cPԻqSXl�����]VBK���
+                                                                                              p�&��"^��OÞgb/������!��>��JS�ޣ(t�O�Öh��2^V�
+Näw��bJ`#:�q��b���                       ?B$Z�Ö��Ü����>�� �:r��D�§������
+                  �������QA-'��$���ҧ1q�lVÜ�     �U�c����$��k��A�兆<i��nxq
+                                                                         ��Ѳ��#ÜUj
+��Ec�ä�C�ä�%�ߎÄ�U�d5F�O.��q�+�BfN��ԕz�ä`ה4p�O?������üH
+������
+ÄTCPÜ  RECV  192.168.0.232:49859 (187B) type=0x30
+ÄMQTTÜ PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  ä"up_status_info":ä"charger_status":318767361,"mower_status":0,"mower_info":0,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":0,"mower_error":8077üü
+ÄPROXY-MQTTÜ ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+ÄPROXY-MQTTÜ ↑ Payload:
+ä
+  "up_status_info": ä
+    "charger_status": 318767361,
+    "mower_status": 0,
+    "mower_info": 0,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 0,
+    "mower_error": 8077
+  ü
+ü
+ÄTCPÜ  RECV  192.168.0.245:55196 (837B) type=0x30
+ÄMQTTÜ PUBLISH  LFIN2230700238_6688 ←DEV Dart/Receive_mqtt/LFIN2230700238  ÄAES-FAILÜ (800B) hex=bab8033ebbafb64dc09d523934626ed57d14fc511b376b3993129fb9087516f9...
+ÄPROXY-MQTTÜ ↑ LOCAL→UPSTREAM clientId="LFIN2230700238_6688" topic="Dart/Receive_mqtt/LFIN2230700238"
+ÄPROXY-MQTTÜ ↑ Payload: ��>���M��R94bn�ü�Qk9��u�j��S���ߦ�C�TK2>b�o�V�>�V�)Eg��*���X��ä��4�ö�F��������.�Ұ����Hz��ţ.���D1ءE��aދ���Ähö�-M��b�����
+be�G��-�0�ß     �X�O�:Ȉ��B�+;�
+                              �l/dJS�ü�e� �*0c��
+                                                ��g,�öɃZ����8����Ui>�HHv�Ü���">$�6A^+�,�<��������T�v����:`:s_E�T�-���3�P��W��ό���rÖHyO�DߞV������MM4%����WA�����ß(O�Zn�Y5���
+                                                                           pÜ�P��g����z�ѣ�HQ�5�d�+L�k��������a��NM��82���I�CJ�c��B�1����K��
+                                           b�1N~�9���&�5�]�2'?:���l��1��
+                                                                        �3̝M;(n�9Ҫ�-�aJ���`�R9��3�py�ߪ�hw�\��-���r�������"�!�Ɯ�������c!�ЖÜÇ�JZC
+`g�
+Ak�X8ټ�^��Q��s��o��!7u]e5�a:[.C�=��"r�PΓ�gDQ����Y䛍]!�1�
+�a��c����zn�MW��g#����3z%�i�O�,X�Hk�E����zE��ŝ�bb�}W�nݠ�h����}R��V�
+[TCP]  RECV  192.168.0.232:49859 (187B) type=0x30
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":318767361,"mower_status":0,"mower_info":0,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":0,"mower_error":8078}}
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+[PROXY-MQTT] ↑ Payload:
+{
+  "up_status_info": {
+    "charger_status": 318767361,
+    "mower_status": 0,
+    "mower_info": 0,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 0,
+    "mower_error": 8078
+  }
+}
+[TCP]  RECV  192.168.0.245:55196 (181B) type=0x30
+[MQTT] PUBLISH  LFIN2230700238_6688 ←DEV Dart/Receive_mqtt/LFIN2230700238  [AES-FAIL] (144B) hex=f3ae2055de8ffb87ffe33d45334dd8be5bba25f77007212896f082afbc4e3491...
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="LFIN2230700238_6688" topic="Dart/Receive_mqtt/LFIN2230700238"
+[PROXY-MQTT] ↑ Payload: � Uޏ����=E3Mؾ[�%�p!(�����N4�K��%�=2\�����"N�e��Ǚ��~�m��d{��Dl��͸��~@��]��5VW�v�Jh�#v�'Cd��������ơ
+                         �A����+���ü�����JÄW'�
+ÄREQÜ POST /api/nova-network/network/connection äü
+
+ÄPROXY-HTTPÜ ──────────────────────────────────────
+ÄPROXY-HTTPÜ >>> POST /api/nova-network/network/connection
+ÄPROXY-HTTPÜ >>> Body:
+äü
+ÄTCPÜ  RECV  192.168.0.245:55196 (533B) type=0x30
+ÄMQTTÜ PUBLISH  LFIN2230700238_6688 ←DEV Dart/Receive_mqtt/LFIN2230700238  ÄAES-FAILÜ (496B) hex=92d5f50382c300ea652d4c260ce2446a5d4580dd0692dd96a58e3d3d06497857...
+ÄPROXY-MQTTÜ ↑ LOCAL→UPSTREAM clientId="LFIN2230700238_6688" topic="Dart/Receive_mqtt/LFIN2230700238"
+ÄPROXY-MQTTÜ ↑ Payload: ������e-L&
+                                  �DjÜE���ݖ��==IxW���:�<�S��m��� `e�4M�d���Ym��$�Ԕlb����$�zgz�X:d_/�����s�G�ö!�����A��-$/#� n��b� ��q�VC>��z�3�I�ǊTÖ�d��L/���7IKN[�9nd���� cPԻqSXl�����]VBK���
+                                                                                              p�&��"^��O\�ȳ�~�~T�
+                 8,�\�_��Jw&�^�DFr��
+                                    ,v�[��W�`jF�DXPo�-������
+                                                            ��p�c��7Ñ�/?����dp�6��P�Z*)A�m�s���*"f�R�������?�\��x��0PM|�1��W;]��5���o�N6L��w�Ք-�B�arwf~^ACծXB`+yc""     ����/����D����ä�ˌ)�Xt/���R
+ÄPROXY-HTTPÜ <<< 200 OK
+ÄPROXY-HTTPÜ <<< Body:
+ä
+  "success": true,
+  "code": 200,
+  "message": "request success",
+  "value": 1,
+  "dateline": 1771873917038
+ü
+ÄPROXY-HTTPÜ ──────────────────────────────────────
+
+ÄTCPÜ  RECV  192.168.0.232:49859 (187B) type=0x30
+ÄMQTTÜ PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  ä"up_status_info":ä"charger_status":318767361,"mower_status":0,"mower_info":0,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":0,"mower_error":8079üü
+ÄPROXY-MQTTÜ ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+ÄPROXY-MQTTÜ ↑ Payload:
+ä
+  "up_status_info": ä
+    "charger_status": 318767361,
+    "mower_status": 0,
+    "mower_info": 0,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 0,
+    "mower_error": 8079
+  ü
+ü
+ÄTCPÜ  RECV  192.168.0.245:55196 (837B) type=0x30
+ÄMQTTÜ PUBLISH  LFIN2230700238_6688 ←DEV Dart/Receive_mqtt/LFIN2230700238  ÄAES-FAILÜ (800B) hex=bab8033ebbafb64dc09d523934626ed57d14fc511b376b3993129fb9087516f9...
+ÄPROXY-MQTTÜ ↑ LOCAL→UPSTREAM clientId="LFIN2230700238_6688" topic="Dart/Receive_mqtt/LFIN2230700238"
+ÄPROXY-MQTTÜ ↑ Payload: ��>���M��R94bn�ü�Qk9��u�j��S���ߦ�C�TK2>b�o�V�>�V�)Eg��*���X��ä��4�ö�F��������.�Ұ����Hz��ţ.���D1ءE��aދ���Ähö�-M��b�����
+be�G��-�0�ß     �X�O�:Ȉ��B�+;�
+                              �l/dJS�ü�Yc��L���y§0tG ���:R��Pö�ms5B���!�҆*�k��N  Ћ�0A����W�DuΓ��yBQ�VVE�?<Ü�AYڳ�/�ͤ8�M\L�H���Ur�T����ö.şmI��=���Ӆ�Ü
+��
+  ���4�k�/=���ng�ß��Dv-��4ß�ß�^Wö�w�f�'ä ��h(E�U�d,�ǯ%�O�V���<���äx�X����ɒ<�u�TP^K����B-����Y�����vE�C2�G�V§rN���OHq��ӱӟO3����ֈ�e,§����ܯ�      �5��9�w�04b ��x٧kt,��9�[�n:���ד����v��l�?�m���>���k/+i��D�&�)
+             Iä`�c���-�
+S��)�㬸��Äñ     �������RV������
+���ö���g��Pzö�.�룮"J!���y�j�$����J��˒
+ißäO����0��_�§��/������'�*D` ��&��<1�DNNM�Ö
+ÄTCPÜ  RECV  192.168.0.245:55196 (181B) type=0x30
+ÄMQTTÜ PUBLISH  LFIN2230700238_6688 ←DEV Dart/Receive_mqtt/LFIN2230700238  ÄAES-FAILÜ (144B) hex=f3ae2055de8ffb87ffe33d45334dd8be5bba25f77007212896f082afbc4e3491...
+ÄPROXY-MQTTÜ ↑ LOCAL→UPSTREAM clientId="LFIN2230700238_6688" topic="Dart/Receive_mqtt/LFIN2230700238"
+ÄPROXY-MQTTÜ ↑ Payload: � Uޏ����=E3MؾÄ�%�p!(�����N4�K��%�=2Ö�����"N�e��Ǚ��ß�m��dä��Dl��͸��ß§��Ü��5VW�v�Jh�#v�'Cd��������ơ
+                         �A����+���ü�����JÄW'�
+ÄTCPÜ  RECV  192.168.0.245:55196 (517B) type=0x30
+ÄMQTTÜ PUBLISH  LFIN2230700238_6688 ←DEV Dart/Receive_mqtt/LFIN2230700238  ÄAES-FAILÜ (480B) hex=92d5f50382c300ea652d4c260ce2446a5d4580dd0692dd96a58e3d3d06497857...
+ÄPROXY-MQTTÜ ↑ LOCAL→UPSTREAM clientId="LFIN2230700238_6688" topic="Dart/Receive_mqtt/LFIN2230700238"
+ÄPROXY-MQTTÜ ↑ Payload: ������e-L&
+                                  �DjÜE���ݖ��==IxW���:�<�S��m��� `e�4M�d���Ym��$�Ԕlb����$�zgz�X:d_/�����s�G�ö!�����A��-$/#� n��b� ��q�VC>��z�3�I�ǊTÖ�d��L/���7IKN[�9nd���� cPԻqSXl�����]VBK���
+                                                                                              p�&��"^��O��L�M����S�Ӽ����h���n �@�g�bk��;i�*>�؀J�OR�5�a�,��p��Xw�[������qt��⎇̠��T�Եݜ�qi��3C,��ږHc���y�}_��T�ö,w�H߽�����Q�q�d���S��Jm����p��thi癞�SÜW��VY��g�Dg�z¢����.��f�ks�H*��E&)�m>���Y
+                                                                                        ^���D��KP�����y��_F�ܸs�1��/��*#��#8*�7�
+ÄTCPÜ  RECV  192.168.0.245:55196 (2B) type=0xc0
+ÄTCPÜ  WRITE 192.168.0.245:55196 (2B) type=0xd0
+ÄTCPÜ  RECV  192.168.0.232:49859 (187B) type=0x30
+ÄMQTTÜ PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  ä"up_status_info":ä"charger_status":318767361,"mower_status":0,"mower_info":0,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":0,"mower_error":8080üü
+ÄPROXY-MQTTÜ ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+ÄPROXY-MQTTÜ ↑ Payload:
+ä
+  "up_status_info": ä
+    "charger_status": 318767361,
+    "mower_status": 0,
+    "mower_info": 0,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 0,
+    "mower_error": 8080
+  ü
+ü
+ÄTCPÜ  RECV  192.168.0.245:55196 (837B) type=0x30
+ÄMQTTÜ PUBLISH  LFIN2230700238_6688 ←DEV Dart/Receive_mqtt/LFIN2230700238  ÄAES-FAILÜ (800B) hex=bab8033ebbafb64dc09d523934626ed57d14fc511b376b3993129fb9087516f9...
+ÄPROXY-MQTTÜ ↑ LOCAL→UPSTREAM clientId="LFIN2230700238_6688" topic="Dart/Receive_mqtt/LFIN2230700238"
+ÄPROXY-MQTTÜ ↑ Payload: ��>���M��R94bn�ü�Qk9��u�j��S���ߦ�C�TK2>b�o�V�>�V�)Eg��*���X��ä��4�ö�F��������.�Ұ����Hz��ţ.���D1ءE��aދ���Ähö�-M��b�����
+be�G��-�0�ß     �X�O�:Ȉ��B�+;�
+                              �l/dJS�ü�Yc��L���y§0tG ���:R��Pö�ms5B���!�҆*�k��N  Ћ�0A����W�DuΓ��yBQ�VVE�?<Ü�AYڳ�/�ͤ8�M\L�H���Ur�T����ö.şmI��=���Ӆ�Ü
+��
+  ���4�k�/=���ng�ß��Dv-��4ß�ß�^Wö�w�f�'ä ��h(E�U�d,�ǯ%�O�V���<���äx�X����ɒ<�u�TP^K����B-����Y�����vE�C2�G�V§rN���OHq��ӱӟO3����ֈ�e,§����ܯ�      �5��9�w�04b ��x٧kt,��9�[�n:���ד����v��l�?�m���>���k/+i��D�&�)
+             Iä`�c���-�
+S��)�㬸��Äñ     �������RV������
+���ö���g��Pzö�.�룮"J!���y�j�$����J��˒
+ißäO����0��_�§��/������'�*D` ��&��<1�DNNM�Ö
+ÄTCPÜ  RECV  192.168.0.245:55196 (181B) type=0x30
+ÄMQTTÜ PUBLISH  LFIN2230700238_6688 ←DEV Dart/Receive_mqtt/LFIN2230700238  ÄAES-FAILÜ (144B) hex=f3ae2055de8ffb87ffe33d45334dd8be5bba25f77007212896f082afbc4e3491...
+ÄPROXY-MQTTÜ ↑ LOCAL→UPSTREAM clientId="LFIN2230700238_6688" topic="Dart/Receive_mqtt/LFIN2230700238"
+ÄPROXY-MQTTÜ ↑ Payload: � Uޏ����=E3MؾÄ�%�p!(�����N4�K��%�=2Ö�����"N�e��Ǚ��ß�m��dä��Dl��͸��ß§��Ü��5VW�v�Jh�#v�'Cd��������ơ
+                         �A����+���ü�����JÄW'�
+ÄTCPÜ  RECV  192.168.0.245:55196 (517B) type=0x30
+ÄMQTTÜ PUBLISH  LFIN2230700238_6688 ←DEV Dart/Receive_mqtt/LFIN2230700238  ÄAES-FAILÜ (480B) hex=92d5f50382c300ea652d4c260ce2446a5d4580dd0692dd96a58e3d3d06497857...
+ÄPROXY-MQTTÜ ↑ LOCAL→UPSTREAM clientId="LFIN2230700238_6688" topic="Dart/Receive_mqtt/LFIN2230700238"
+ÄPROXY-MQTTÜ ↑ Payload: ������e-L&
+                                  �DjÜE���ݖ��==IxW���:�<�S��m��� `e�4M�d���Ym��$�Ԕlb����$�zgz�X:d_/�����s�G�ö!�����A��-$/#� n��b� ��q�VC>��z�3�I�ǊTÖ�d��L/���7IKN[�9nd���� cPԻqSXl�����]VBK���
+                                                                                              p�&��"^��O�E��(������;3�]w\
+                         ����f
+xUC�z�ρ6�VB�i���1�,ؼ�]C2�L�d��;y(��G��
+�b�c�|�GEO،�=3U�'Fu�d�
+�����=�����<�{��ƀ�yö�����yɣ���S;6�wy���P4h:K�,�dV�R��t���.X'�i�$�R6)d-�pc�l��
+7�B_�?�;L";�&�[��zY�wu
+[REQ] POST /api/nova-network/network/connection {}
+
+[PROXY-HTTP] ──────────────────────────────────────
+[PROXY-HTTP] >>> POST /api/nova-network/network/connection
+[PROXY-HTTP] >>> Body:
+{}
+[PROXY-HTTP] <<< 200 OK
+[PROXY-HTTP] <<< Body:
+{
+  "success": true,
+  "code": 200,
+  "message": "request success",
+  "value": 1,
+  "dateline": 1771873921853
+}
+[PROXY-HTTP] ──────────────────────────────────────
+
+[TCP]  RECV  192.168.0.232:49859 (187B) type=0x30
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":318767361,"mower_status":0,"mower_info":0,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":0,"mower_error":8081}}
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+[PROXY-MQTT] ↑ Payload:
+{
+  "up_status_info": {
+    "charger_status": 318767361,
+    "mower_status": 0,
+    "mower_info": 0,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 0,
+    "mower_error": 8081
+  }
+}
+[TCP]  RECV  192.168.0.245:55196 (837B) type=0x30
+[MQTT] PUBLISH  LFIN2230700238_6688 ←DEV Dart/Receive_mqtt/LFIN2230700238  [AES-FAIL] (800B) hex=bab8033ebbafb64dc09d523934626ed57d14fc511b376b3993129fb9087516f9...
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="LFIN2230700238_6688" topic="Dart/Receive_mqtt/LFIN2230700238"
+[PROXY-MQTT] ↑ Payload: ��>���M��R94bn�}�Qk9��u�j��S���ߦ�C�TK2>b�o�V�>�V�)Eg��*���X��{��4�|�F��������.�Ұ����Hz��ţ.���D1ءE��aދ���[h|�-M��b�����
+be�G��-�0�ß     �X�O�:Ȉ��B�+;�
+;#6�P2��ƹ��<f޼$n��ßj�: A����IÖԇ�9'(;Aa�P���z:;�ß�,HF6G����t�#�����-FHöä��p�N�
+^�c�� ,����Β"�נ���9�������k�1L��,y�iyge�Յ�"�+�r-�#����L-��n�t�G�#�Ƕ��K*�姦�I|g�B�ȫ��JltJ
+                                                                                        w�ʺ�ACG��s��X������O���Z��A�����`��Y�+��D�F%�xW#��_�P�?T�j�0�O��U��5��KÜ`�5aS��k�Äj
+D�z�ÜEo�ä�0醲w�Ü���c�Xc2P�!���&�EJ:�_R�8��U�KFj�h�§��V�T����p�I����6B9y���4u����2���X��UԿ �m�w�I�+my1s��x��ߕ��ÖV� h)�������PI����p�ü���RG��&��q>�ʝE��#���ö�x�)T����n8s��BC�Ǎ�KͬÜ��>�Q����9�
+ömnm�IUD
+
+ÄTCPÜ  RECV  192.168.0.245:55196 (181B) type=0x30
+ÄMQTTÜ PUBLISH  LFIN2230700238_6688 ←DEV Dart/Receive_mqtt/LFIN2230700238  ÄAES-FAILÜ (144B) hex=f3ae2055de8ffb87ffe33d45334dd8be5bba25f77007212896f082afbc4e3491...
+ÄPROXY-MQTTÜ ↑ LOCAL→UPSTREAM clientId="LFIN2230700238_6688" topic="Dart/Receive_mqtt/LFIN2230700238"
+ÄPROXY-MQTTÜ ↑ Payload: � Uޏ����=E3MؾÄ�%�p!(�����N4�K��%�=2Ö�����"N�e��Ǚ��ß�m��dä��Dl��͸��ß§��Ü��5VW�v�Jh�#v�'Cd��������ơ
+                         �A����+���ü�����JÄW'�
+ÄTCPÜ  RECV  192.168.0.245:55196 (533B) type=0x30
+ÄMQTTÜ PUBLISH  LFIN2230700238_6688 ←DEV Dart/Receive_mqtt/LFIN2230700238  ÄAES-FAILÜ (496B) hex=92d5f50382c300ea652d4c260ce2446a5d4580dd0692dd96a58e3d3d06497857...
+ÄPROXY-MQTTÜ ↑ LOCAL→UPSTREAM clientId="LFIN2230700238_6688" topic="Dart/Receive_mqtt/LFIN2230700238"
+ÄPROXY-MQTTÜ ↑ Payload: ������e-L&
+                                  �DjÜE���ݖ��==IxW���:�<�S��m��� `e�4M�d���Ym��$�Ԕlb����$�zgz�X:d_/�����s�G�ö!�����A��-$/#� n��b� ��q�VC>��z�3�I�ǊTÖ�d��L/���7IKN[�9nd���� cPԻqSXl�����]VBK���
+                                                                                              p�&��"^��O�s��YX$���A!8j {:\ڑ��)�D_��V��-&��u��fq�X��v
+                                                     �Ke;�cV�
+����MxV�F����~c�NK���I��%?�,.Ac��g���+�ӈ咠{��m#[�R�ɐ�����
+                                                         S�z�NWҲ�[Ԡ!��x��f�j��d]:��0�x��-������~��աT&vv!(:�
+           b�X�j��J�Q;�L���L��I��jc}H��?��'��,���~B�S��+?,��p�Ԅ7�r猸��g
+[TCP]  RECV  192.168.0.232:49859 (187B) type=0x30
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":318767361,"mower_status":0,"mower_info":0,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":0,"mower_error":8082}}
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+[PROXY-MQTT] ↑ Payload:
+{
+  "up_status_info": {
+    "charger_status": 318767361,
+    "mower_status": 0,
+    "mower_info": 0,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 0,
+    "mower_error": 8082
+  }
+}
+[TCP]  RECV  192.168.0.245:55196 (837B) type=0x30
+[MQTT] PUBLISH  LFIN2230700238_6688 ←DEV Dart/Receive_mqtt/LFIN2230700238  [AES-FAIL] (800B) hex=bab8033ebbafb64dc09d523934626ed57d14fc511b376b3993129fb9087516f9...
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="LFIN2230700238_6688" topic="Dart/Receive_mqtt/LFIN2230700238"
+[PROXY-MQTT] ↑ Payload: ��>���M��R94bn�}�Qk9��u�j��S���ߦ�C�TK2>b�o�V�>�V�)Eg��*���X��{��4�|�F��������.�Ұ����Hz��ţ.���D1ءE��aދ���[h|�-M��b�����
+be�G��-�0�ß     �X�O�:Ȉ��B�+;�
+;#6�P2��ƹ��<f޼$n��ßj�: A����IÖԇ�9'(;Aa�P���z:;�ß�,HF6G����t�#�����-FHöä��p�N�
+^�c�� ,����Β"�נ���9�������k�1L��,y�iyge�Յ�"�+�r-�#����L-��n�t�G�#�Ƕ��K*�姦�I|g�B�ȫ��JltJ
+                                                                                        w�ʺ�ACG��s��X������O���Z��A�����`��Y�+��D�F%�xW#��_�P�?T�j�0�O��U��5��KÜ`�5aS��k�Äj
+D�z�ÜEo�ä�0醲w�Ü���c�Xc2P�!���&�EJ:�_R�8��U�KFj�h�§��V�T����p�I����6B9y���4u����2���X��UԿ �m�w�I�+my1s��x��ߕ��ÖV� h)�������PI����p�ü���RG��&��q>�ʝE��#���ö�x�)T����n8s��BC�Ǎ�KͬÜ��>�Q����9�
+ömnm�IUD
+
+ÄTCPÜ  RECV  192.168.0.245:55196 (181B) type=0x30
+ÄMQTTÜ PUBLISH  LFIN2230700238_6688 ←DEV Dart/Receive_mqtt/LFIN2230700238  ÄAES-FAILÜ (144B) hex=f3ae2055de8ffb87ffe33d45334dd8be5bba25f77007212896f082afbc4e3491...
+ÄPROXY-MQTTÜ ↑ LOCAL→UPSTREAM clientId="LFIN2230700238_6688" topic="Dart/Receive_mqtt/LFIN2230700238"
+ÄPROXY-MQTTÜ ↑ Payload: � Uޏ����=E3MؾÄ�%�p!(�����N4�K��%�=2Ö�����"N�e��Ǚ��ß�m��dä��Dl��͸��ß§��Ü��5VW�v�Jh�#v�'Cd��������ơ
+                         �A����+���ü�����JÄW'�
+ÄTCPÜ  RECV  192.168.0.245:55196 (517B) type=0x30
+ÄMQTTÜ PUBLISH  LFIN2230700238_6688 ←DEV Dart/Receive_mqtt/LFIN2230700238  ÄAES-FAILÜ (480B) hex=92d5f50382c300ea652d4c260ce2446a5d4580dd0692dd96a58e3d3d06497857...
+ÄPROXY-MQTTÜ ↑ LOCAL→UPSTREAM clientId="LFIN2230700238_6688" topic="Dart/Receive_mqtt/LFIN2230700238"
+ÄPROXY-MQTTÜ ↑ Payload: ������e-L&
+                                  �DjÜE���ݖ��==IxW���:�<�S��m��� `e�4M�d���Ym��$�Ԕlb����$�zgz�X:d_/�����s�G�ö!�����A��-$/#� n��b� ��q�VC>��z�3�I�ǊTÖ�d��L/���7IKN[�9nd���� cPԻqSXl�����]VBK���
+                                                                                              p��s)���/2Ub�0�@�J�m�[+�kХ���Ĝ��P+�����}�Fui����icu3Zs4XM�`Z���XW�ǜ>)4-������Nj��@z0�Q�[�3ז�����;��#����]��B��Y�l�E���`�e>��R�J�i~�ean�j\�<˱���-�\�
+˓�,�Cඞ�����w�>��&��Z\�
+d��C�T$               ��+MQ ~���ޟ�Vߘ7_$�%�\�rO7�aܛ��
+[TCP]  RECV  192.168.0.232:49859 (187B) type=0x30
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":318767361,"mower_status":0,"mower_info":0,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":0,"mower_error":8083}}
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+[PROXY-MQTT] ↑ Payload:
+{
+  "up_status_info": {
+    "charger_status": 318767361,
+    "mower_status": 0,
+    "mower_info": 0,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 0,
+    "mower_error": 8083
+  }
+}
+[REQ] POST /api/nova-network/network/connection {}
+
+[PROXY-HTTP] ──────────────────────────────────────
+[PROXY-HTTP] >>> POST /api/nova-network/network/connection
+[PROXY-HTTP] >>> Body:
+{}
+[PROXY-HTTP] <<< 200 OK
+[PROXY-HTTP] <<< Body:
+{
+  "success": true,
+  "code": 200,
+  "message": "request success",
+  "value": 1,
+  "dateline": 1771873926849
+}
+[PROXY-HTTP] ──────────────────────────────────────
+
+[TCP]  RECV  192.168.0.245:55196 (837B) type=0x30
+[MQTT] PUBLISH  LFIN2230700238_6688 ←DEV Dart/Receive_mqtt/LFIN2230700238  [AES-FAIL] (800B) hex=bab8033ebbafb64dc09d523934626ed57d14fc511b376b3993129fb9087516f9...
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="LFIN2230700238_6688" topic="Dart/Receive_mqtt/LFIN2230700238"
+[PROXY-MQTT] ↑ Payload: ��>���M��R94bn�}�Qk9��u�j��S���ߦ�C�TK2>b�o�V�>�V�)Eg��*���X��{��4�|�F��������.�Ұ����Hz��ţ.���D1ءE��aދ���[h|�-M��b�����
+be�G��-�0�ß     �X�O�:Ȉ��B�+;�
+                              �l/dJS�ü�e� �*0c��
+                                                ��g,�öɃZ����8����Ui>�HHv�Ü���">$�6A^+�,�<��������T�v����:`:s_E�T�-���3�P��W��ό���rÖHyO�DߞV������MM4%����WA�����ß(O�Zn�Y5���
+                                                                           pÜ�P��g����z�ѣ�HQ�5�d�+L�k��������a��NM��82���I�CJ�c��B�1����K��
+                                           b�1N~�9���&�5�]�2'?:���l��1��
+                                                                        �3̝M;(n�9Ҫ�-�aJ���`�R9��3�py�ߪ�hw�\��-���r�������"�!�Ɯ�������c!�ЖÜÇ�JZC
+`g�
+Ak�X8ټ�^��Q��s��o��!7u]e5�a:[.C�=��"r�PΓ�gDQ����Y䛍]!�1�
+�a��c����zn�MW��g#����3z%�i�O�,X�Hk�E����zE��ŝ�bb�}W�nݠ�h����}R��V�
+[TCP]  RECV  192.168.0.245:55196 (181B) type=0x30
+[MQTT] PUBLISH  LFIN2230700238_6688 ←DEV Dart/Receive_mqtt/LFIN2230700238  [AES-FAIL] (144B) hex=f3ae2055de8ffb87ffe33d45334dd8be5bba25f77007212896f082afbc4e3491...
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="LFIN2230700238_6688" topic="Dart/Receive_mqtt/LFIN2230700238"
+[PROXY-MQTT] ↑ Payload: � Uޏ����=E3Mؾ[�%�p!(�����N4�K��%�=2\�����"N�e��Ǚ��~�m��d{��Dl��͸��~@��]��5VW�v�Jh��852H����z�[tt�8�a��تN��5��
+                                     ���
+                                        K�b�+�
+[TCP]  RECV  192.168.0.245:55196 (517B) type=0x30
+[MQTT] PUBLISH  LFIN2230700238_6688 ←DEV Dart/Receive_mqtt/LFIN2230700238  [AES-FAIL] (480B) hex=92d5f50382c300ea652d4c260ce2446a5d4580dd0692dd96a58e3d3d06497857...
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="LFIN2230700238_6688" topic="Dart/Receive_mqtt/LFIN2230700238"
+[PROXY-MQTT] ↑ Payload: ������e-L&
+                                  �Dj]E���ݖ��==IxW���:�<�S��m��� `e�4M�d���Ym��$�Ԕlb����$�zgz�X:d_/�����s�G�|!�����A��-$/#� n��b� ��q�VC>��z�3�I�ǊT\�d��L/���7IKN[�9nd���� cPԻqSXl�����]VBK���
+                                                                                              p�&��"^��O���-�u�P�������'��Vw
+                            ���=��۾�B���"m�����`
+[=����?bS�`�z>�Ȝ@�L
+�
+ �1V�1��2oǸ�P�ˏ^mi�5Lpi�D�O��]����v��CI��g�h�0�Iw�*hN�����/� �U(����\�~�gzS�Jh��=d6�
+                                                                                    ���ݞ��#P�������Q����\�������ݴ:/"|]v��>>Z�٪{Sr��A�)=�"u���ޚ�=
+          9n
+[TCP]  RECV  192.168.0.232:49859 (187B) type=0x30
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":318767361,"mower_status":0,"mower_info":0,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":0,"mower_error":8084}}
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+[PROXY-MQTT] ↑ Payload:
+{
+  "up_status_info": {
+    "charger_status": 318767361,
+    "mower_status": 0,
+    "mower_info": 0,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 0,
+    "mower_error": 8084
+  }
+}
+[TCP]  RECV  192.168.0.245:55196 (837B) type=0x30
+[MQTT] PUBLISH  LFIN2230700238_6688 ←DEV Dart/Receive_mqtt/LFIN2230700238  [AES-FAIL] (800B) hex=bab8033ebbafb64dc09d523934626ed57d14fc511b376b3993129fb9087516f9...
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="LFIN2230700238_6688" topic="Dart/Receive_mqtt/LFIN2230700238"
+[PROXY-MQTT] ↑ Payload: ��>���M��R94bn�}�Qk9��u�j��S���ߦ�C�TK2>b�o�V�>�V�)Eg��*���X��{��4�|�F��������.�Ұ����Hz��ţ.���D1ءE��aދ���[h|�-M��b�����
+be�G��-�0�ß     �X�O�:Ȉ��B�+;�
+                              �l/dJS�ü�e� �*0c��
+                                                ��g,�öɃZ����8����Ui>�HHv�Ü���">$�6A^+�,�<��������T�v����:`:s_E�T�-���3�P��W��ό���rÖHyO�DߞV������MM4%����WA�����ß(O�Zn�Y5���
+                                                                           pÜ�P��g����z�ѣ�HQ�5�d�+L�k��������a��NM��82���I�CJ�c��B�1����K��
+                                           b�1N~�9���&�5�]�2'?:���l��1��
+                                                                        �3̝M;(n�9Ҫ�-�aJ���`�R9��3�py�ߪ�hw�\��-���r�������"�!�Ɯ�������c!�ЖÜÇ�JZC
+`g�
+Ak�X8ټ�^��Q��s��o��!7u]e5�a:[.C�=��"r�PΓ�gDQ����Y䛍]!�1�
+�a��c����zn�MW��g#����3z%�i�O�,X�Hk�E����zE��ŝ�bb�}W�nݠ�h����}R��V�
+[TCP]  RECV  192.168.0.245:55196 (181B) type=0x30
+[MQTT] PUBLISH  LFIN2230700238_6688 ←DEV Dart/Receive_mqtt/LFIN2230700238  [AES-FAIL] (144B) hex=f3ae2055de8ffb87ffe33d45334dd8be5bba25f77007212896f082afbc4e3491...
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="LFIN2230700238_6688" topic="Dart/Receive_mqtt/LFIN2230700238"
+[PROXY-MQTT] ↑ Payload: � Uޏ����=E3Mؾ[�%�p!(�����N4�K��%�=2\�����"N�e��Ǚ��~�m��d{��Dl��͸��~@��]��5VW�v�Jh��852H����z�[tt�8�a��تN��5��
+                                     ���
+                                        K�b�+�
+[TCP]  RECV  192.168.0.245:55196 (517B) type=0x30
+[MQTT] PUBLISH  LFIN2230700238_6688 ←DEV Dart/Receive_mqtt/LFIN2230700238  [AES-FAIL] (480B) hex=92d5f50382c300ea652d4c260ce2446a5d4580dd0692dd96a58e3d3d06497857...
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="LFIN2230700238_6688" topic="Dart/Receive_mqtt/LFIN2230700238"
+[PROXY-MQTT] ↑ Payload: ������e-L&
+                                  �Dj]E���ݖ��==IxW���:�<�S��m��� `e�4M�d���Ym��$�Ԕlb����$�zgz�X:d_/�����s�G�|!�����A��-$/#� n��b� ��q�VC>��z�3�I�ǊT\�d��L/���7IKN[�9nd���� cPԻqSXl�����]VBK���
+                                                                                              p�&��"^��Os�(�AtL^��0ޛ�3�k ����m�ǥ���4���qS�������:d�C4��TҜ�aX�ǃ!����/�j��ā
+                                                                         䡅Je+��
+�n>��SL���r���HMU޼�1z���#T+Y�����)8�����/���B�V�陜�b�R㸼 *�����*����-��.J�a�;�`§3�Jß��9��r�w��Q���,b���E�SWs&,ZP��H9��>K��쌦������3�j�MP����IO�Ö��.�=����
+ÄTCPÜ  RECV  192.168.0.232:49859 (187B) type=0x30
+ÄMQTTÜ PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  ä"up_status_info":ä"charger_status":318767361,"mower_status":0,"mower_info":0,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":0,"mower_error":8085üü
+ÄPROXY-MQTTÜ ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+ÄPROXY-MQTTÜ ↑ Payload:
+ä
+  "up_status_info": ä
+    "charger_status": 318767361,
+    "mower_status": 0,
+    "mower_info": 0,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 0,
+    "mower_error": 8085
+  ü
+ü
+ÄTCPÜ  RECV  192.168.0.245:55196 (2B) type=0xc0
+ÄTCPÜ  WRITE 192.168.0.245:55196 (2B) type=0xd0
+ÄREQÜ POST /api/nova-network/network/connection äü
+
+ÄPROXY-HTTPÜ ──────────────────────────────────────
+ÄPROXY-HTTPÜ >>> POST /api/nova-network/network/connection
+ÄPROXY-HTTPÜ >>> Body:
+äü
+ÄPROXY-HTTPÜ <<< 200 OK
+ÄPROXY-HTTPÜ <<< Body:
+ä
+  "success": true,
+  "code": 200,
+  "message": "request success",
+  "value": 1,
+  "dateline": 1771873931926
+ü
+ÄPROXY-HTTPÜ ──────────────────────────────────────
+
+ÄTCPÜ  RECV  192.168.0.232:49859 (187B) type=0x30
+ÄMQTTÜ PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  ä"up_status_info":ä"charger_status":318767361,"mower_status":0,"mower_info":0,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":0,"mower_error":8086üü
+ÄPROXY-MQTTÜ ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+ÄPROXY-MQTTÜ ↑ Payload:
+ä
+  "up_status_info": ä
+    "charger_status": 318767361,
+    "mower_status": 0,
+    "mower_info": 0,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 0,
+    "mower_error": 8086
+  ü
+ü
+ÄTCPÜ  RECV  192.168.0.245:55196 (837B) type=0x30
+ÄMQTTÜ PUBLISH  LFIN2230700238_6688 ←DEV Dart/Receive_mqtt/LFIN2230700238  ÄAES-FAILÜ (800B) hex=bab8033ebbafb64dc09d523934626ed57d14fc511b376b3993129fb9087516f9...
+ÄPROXY-MQTTÜ ↑ LOCAL→UPSTREAM clientId="LFIN2230700238_6688" topic="Dart/Receive_mqtt/LFIN2230700238"
+ÄPROXY-MQTTÜ ↑ Payload: ��>���M��R94bn�ü�Qk9��u�j��S���ߦ�C�TK2>b�o�V�>�V�)Eg��*���X��ä��4�ö�F��������.�Ұ����Hz��ţ.���D1ءE��aދ���Ähö�-M��b�����
+be�G��-�0�ß     �X�O�:Ȉ��B�+;�
+                              �l/dJS�ü�e� �*0c��
+                                                ��g,�öɃZ����8����Ui>�HHv�Ü���">$�6A^+�,�<��������T�v����:`:s_E�T�-���3�P��W��ό���rÖHyO�DߞV������MM4%����WA�����ß(O�Zn�Y5���
+                                                                           pÜ�P��g����z�ѣ�HQ�5�d�+L�k��������a��NM��82���I�CJ�c��B�1����K��
+                                           b�1N~�9���&�5�]�2'?:���l��1��
+                                                                        �3̝M;(n�9Ҫ�-�aJ���`�R9��3�py�ߪ�hw�\��-���r�������"�!�Ɯ�������c!�ЖÜÇ�JZC
+`g�
+Ak�X8ټ�^��Q��s��o��!7u]e5�a:[.C�=��"r�PΓ�gDQ����Y䛍]!�1�
+�a��c����zn�MW��g#����3z%�i�O�,X�Hk�E����zE��ŝ�bb�}W�nݠ�h����}R��V�
+[TCP]  RECV  192.168.0.245:55196 (181B) type=0x30
+[MQTT] PUBLISH  LFIN2230700238_6688 ←DEV Dart/Receive_mqtt/LFIN2230700238  [AES-FAIL] (144B) hex=f3ae2055de8ffb87ffe33d45334dd8be5bba25f77007212896f082afbc4e3491...
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="LFIN2230700238_6688" topic="Dart/Receive_mqtt/LFIN2230700238"
+[PROXY-MQTT] ↑ Payload: � Uޏ����=E3Mؾ[�%�p!(�����N4�K��%�=2\�����"N�e��Ǚ��~�m��d{��Dl��͸��~@��]��5VW�v�Jh��852H����z�[tt�8�a��تN��5��
+                                     ���
+                                        K�b�+�
+[TCP]  RECV  192.168.0.245:55196 (517B) type=0x30
+[MQTT] PUBLISH  LFIN2230700238_6688 ←DEV Dart/Receive_mqtt/LFIN2230700238  [AES-FAIL] (480B) hex=92d5f50382c300ea652d4c260ce2446a5d4580dd0692dd96a58e3d3d06497857...
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="LFIN2230700238_6688" topic="Dart/Receive_mqtt/LFIN2230700238"
+[PROXY-MQTT] ↑ Payload: ������e-L&
+                                  �Dj]E���ݖ��==IxW���:�<�S��m��� `e�4M�d���Ym��$�Ԕlb����$�zgz�X:d_/�����s�G�|!�����A��-$/#� n��b� ��q�VC>��z�3�I�ǊT\�d��L/���7IKN[�9nd���� cPԻqSXl�����]VBK���
+                                                                                              p�&��"^��Oo:�N�xIP�Ù�N/W�����臠� G���Ը�B�Yu��W�!�x�y�+�f��]�s�ߟ'7�W��A�T;Ȳ(��&p�����g�Ղ��"�mļ���m!��i&R�`wTMZ���v6�3�����
+�C��&���mzP�2���!��xZڜ�ԳބB��9�'"�b�^gJ�XÖ��äs���rF'���FbBJ
+                                                          �J8�  +�z�    ��iP��D���H���L�>o��
+ÄTCPÜ  RECV  192.168.0.232:49859 (187B) type=0x30
+ÄMQTTÜ PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  ä"up_status_info":ä"charger_status":318767361,"mower_status":0,"mower_info":0,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":0,"mower_error":8087üü
+ÄPROXY-MQTTÜ ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+ÄPROXY-MQTTÜ ↑ Payload:
+ä
+  "up_status_info": ä
+    "charger_status": 318767361,
+    "mower_status": 0,
+    "mower_info": 0,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 0,
+    "mower_error": 8087
+  ü
+ü
+ÄTCPÜ  RECV  192.168.0.245:55196 (837B) type=0x30
+ÄMQTTÜ PUBLISH  LFIN2230700238_6688 ←DEV Dart/Receive_mqtt/LFIN2230700238  ÄAES-FAILÜ (800B) hex=bab8033ebbafb64dc09d523934626ed57d14fc511b376b3993129fb9087516f9...
+ÄPROXY-MQTTÜ ↑ LOCAL→UPSTREAM clientId="LFIN2230700238_6688" topic="Dart/Receive_mqtt/LFIN2230700238"
+ÄPROXY-MQTTÜ ↑ Payload: ��>���M��R94bn�ü�Qk9��u�j��S���ߦ�C�TK2>b�o�V�>�V�)Eg��*���X��ä��4�ö�F��������.�Ұ����Hz��ţ.���D1ءE��aދ���Ähö�-M��b�����
+be�G��-�0�ß     �X�O�:Ȉ��B�+;�
+�Ö<��?<��)�����Q�>Q�#qB��QD�E��7��b�Ö�5���(1üM-��ä��iL�%l����n�:�Z�)th;���
+        P�"�k�V�")���������+�e�IEL���
+�§�0X���Y����(�u��_U���Y3W�u)s�Ԫ���VՇr2��>&����UÜ>ß�Ü)�U�`J����>+���8>1��E�N�z���ۺ&
+��l     h:v�c�MÄ��x!����u)-�e��<jUO=♗�(s#C:
+��Zi�?��§��5%�ÄU҉ʦ�ʑM�b�R���&�j���§)��ü���n�������d�V��1KA_2�ղ|��Jw;�"���L���k��4��"'ri8�0�]���,��7�
+�̯��     f�50P�D)69�7s *v�nd#4n�p�:��������{�Ox(�nV�â�:�~��#�!ӣ@�5ϱ��ȭ������!����~#:zI
+                                                                                     t�Ff\*�=��yP�s�AU��S�q�&U*�
+[TCP]  RECV  192.168.0.245:55196 (181B) type=0x30
+[MQTT] PUBLISH  LFIN2230700238_6688 ←DEV Dart/Receive_mqtt/LFIN2230700238  [AES-FAIL] (144B) hex=f3ae2055de8ffb87ffe33d45334dd8be5bba25f77007212896f082afbc4e3491...
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="LFIN2230700238_6688" topic="Dart/Receive_mqtt/LFIN2230700238"
+[PROXY-MQTT] ↑ Payload: � Uޏ����=E3Mؾ[�%�p!(�����N4�K��%�=2\�����"N�e��Ǚ��~�m��d{��Dl��͸��~@��]��5VW�v�Jh��852H����z�[tt�8�a��تN��5��
+                                     ���
+                                        K�b�+�
+[TCP]  RECV  192.168.0.245:55196 (533B) type=0x30
+[MQTT] PUBLISH  LFIN2230700238_6688 ←DEV Dart/Receive_mqtt/LFIN2230700238  [AES-FAIL] (496B) hex=92d5f50382c300ea652d4c260ce2446a5d4580dd0692dd96a58e3d3d06497857...
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="LFIN2230700238_6688" topic="Dart/Receive_mqtt/LFIN2230700238"
+[PROXY-MQTT] ↑ Payload: ������e-L&
+                                  �Dj]E���ݖ��==IxW���:�<�S��m��� `e�4M�d���Ym��$�Ԕlb����$�zgz�X:d_/�����s�G�|!�����A��-$/#� n��b� ��q�VC>��z�3�I�ǊT\�d��L/���7IKN[�9nd���� cPԻqSXl�����]VBK���
+                                                                                              p�&��"^��O�y-�<�+�'��-R�ͻ��O�=����R66�FU0�f�p"G�G�r��fP��9�
+                                                         �r-��i��.R9�w*3���6ue(Z�:
+                                                                                  "§���`�N�P?���)�`���hRKü%�߱>�8§�QÜ���E�>��m�s�2        �K�x
+                                            ĩ�;���ä�c�B���ߏ3Ø�z�&�����o2���$���*C�WNxT�=(���Q9���/�9W:ld�yn�`n�@O--�9�蝫qv'����t
+                                @���W'D���GX�}
+                                              j:�#zM�����o�0]w

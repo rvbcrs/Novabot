@@ -23,7 +23,8 @@ function snToDeviceType(sn: string): string {
 
 // Bouw een response-object dat exact overeenkomt met de echte cloud
 function rowToCloudDto(r: EquipmentRow, email: string) {
-  const sn = r.charger_sn ?? r.mower_sn;
+  // mower_sn is altijd de primaire key (ook bij charger-only binding waar charger SN in mower_sn staat)
+  const sn = r.mower_sn;
   return {
     equipmentId:       r.id ?? 1,
     email:             email,
@@ -41,10 +42,10 @@ function rowToCloudDto(r: EquipmentRow, email: string) {
     importTime:        r.created_at ?? new Date().toISOString().replace('T', ' ').slice(0, 19),
     batteryState:      null,
     macAddress:        r.mac_address ?? null,
-    chargerAddress:    r.charger_address ? Number(r.charger_address) : 718,
-    chargerChannel:    r.charger_channel ? Number(r.charger_channel) : 16,
-    account:           MQTT_ACCOUNT,
-    password:          MQTT_PASSWORD,
+    chargerAddress:    r.charger_address ? Number(r.charger_address) : (snToDeviceType(sn) === 'charger' ? 718 : null),
+    chargerChannel:    r.charger_channel ? Number(r.charger_channel) : (snToDeviceType(sn) === 'charger' ? 16 : null),
+    account:           snToDeviceType(sn) === 'charger' ? MQTT_ACCOUNT : null,
+    password:          snToDeviceType(sn) === 'charger' ? MQTT_PASSWORD : null,
   };
 }
 

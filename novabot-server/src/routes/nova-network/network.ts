@@ -4,9 +4,8 @@ import { ok } from '../../types/index.js';
 export const networkRouter = Router();
 
 // POST /api/nova-network/network/connection
-// Aangeroepen door charger firmware (HTTP, geen HTTPS) elke ~5 seconden.
-// Dient als heartbeat / netwerk-statusrapport van het apparaat naar de server.
+// Aangeroepen door de app elke ~5 seconden als connectivity check.
+// Cloud response: {"success":true,"code":200,"message":"request success","value":1}
 networkRouter.post('/connection', (req: Request, res: Response) => {
-  console.log(`[nova-network] connection payload: ${JSON.stringify(req.body)}`);
-  res.json(ok({ connected: true }));
+  res.json(ok(1));
 });
