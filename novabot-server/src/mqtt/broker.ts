@@ -200,10 +200,11 @@ export async function startMqttBroker(): Promise<void> {
     const direction = packet.topic.startsWith('Dart/Send_mqtt/') ? '→DEV' :
                       packet.topic.startsWith('Dart/Receive_mqtt/') ? '←DEV' : '';
 
-    // Probeer maaier-berichten (LFIN*) te decrypten
-    const isMowerMsg = client.id.startsWith('LFIN') || (direction === '←DEV' && packet.topic.includes('/LFIN'));
-    if (isMowerMsg) {
-      const decrypted = tryDecrypt(payloadBuf);
+    // Ontsleutel maaier-berichten (LFIN*) met AES-128-CBC
+    const mowerSn = client.id.startsWith('LFIN') ? client.id.replace(/_.*$/, '') :
+                    (direction === '←DEV' && packet.topic.includes('/LFIN')) ? packet.topic.split('/').pop() ?? '' : '';
+    if (mowerSn) {
+      const decrypted = tryDecrypt(payloadBuf, mowerSn);
       if (decrypted) {
         console.log(`[MQTT] PUBLISH  ${client.id} ${direction} ${packet.topic}  [AES] ${decrypted}`);
       } else {
@@ -232,7 +233,16 @@ export async function startMqttBroker(): Promise<void> {
     }
 
     // Forward naar Home Assistant bridge (no-op als niet geconfigureerd)
-    forwardToHomeAssistant(packet.topic, payloadBuf, sn ?? extractSn(packet.topic));
+    // Voor maaier-berichten: stuur ontsleutelde payload door i.p.v. ruwe ciphertext
+    const topicSn = sn ?? extractSn(packet.topic);
+    if (mowerSn) {
+      const decryptedJson = tryDecrypt(payloadBuf, mowerSn);
+      if (decryptedJson) {
+        forwardToHomeAssistant(packet.topic, Buffer.from(decryptedJson, 'utf8'), mowerSn);
+      }
+    } else {
+      forwardToHomeAssistant(packet.topic, payloadBuf, topicSn);
+    }
   });
 
   // Start MQTT bridge naar upstream als we in cloud proxy mode zijn

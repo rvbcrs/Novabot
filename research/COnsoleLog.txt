@@ -1,0 +1,163 @@
+er_z":0,"mower_info1":1,"mower_error":0}}
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+[PROXY-MQTT] ↑ Payload:
+{
+  "up_status_info": {
+    "charger_status": 268435713,
+    "mower_status": 589825,
+    "mower_info": 16802816,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 1,
+    "mower_error": 0
+  }
+}
+[PROXY-MQTT] ↓ UPSTREAM→LOCAL clientId="ramonvanbruggen@gmail.com-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiIwOTQ5ZjQ1NC04MTdiLTRkODAtYWM4OS1kYmJkZDEzMGU5ZWIiLCJlbWFpbCI6InJhbW9udmFuYnJ1Z2dlbkBnbWFpbC5jb20iLCJpYXQiOjE3NzE4NzQ5NDUsImV4cCI6MTc3NDQ2Njk0NX0.6f-5w4Om-3qGndnhdUu6Au719zulplxECskT7RaR2r8" topic="Dart/Receive_mqtt/LFIC1230700004"
+[PROXY-MQTT] ↓ Payload:
+{
+  "up_status_info": {
+    "charger_status": 268435713,
+    "mower_status": 589825,
+    "mower_info": 16802816,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 1,
+    "mower_error": 0
+  }
+}
+[PROXY-MQTT] ↓ UPSTREAM→LOCAL clientId="ramonvanbruggen@gmail.com-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiIwOTQ5ZjQ1NC04MTdiLTRkODAtYWM4OS1kYmJkZDEzMGU5ZWIiLCJlbWFpbCI6InJhbW9udmFuYnJ1Z2dlbkBnbWFpbC5jb20iLCJpYXQiOjE3NzE4NzQ5NDUsImV4cCI6MTc3NDQ2Njk0NX0.6f-5w4Om-3qGndnhdUu6Au719zulplxECskT7RaR2r8" topic="Dart/Receive_mqtt/LFIN2230700238"
+[PROXY-MQTT] ↓ Payload: ��>���M��R94bn�}�Qk9��u�j��S���ߦ�C�TK2>b�o�V�>�V�)Eg��*���X��{��4�|�F��������.�Ұ����Hz��ţ.���D1ءE��aދ���[h|�-M��b�����
+be�G��-�0�~     �X�O�:Ȉ���Sh��C�>]P�]vwE}5~2����a�      쓐2Ի�('����2�LR��k�=V�
+                                                                               W��቎}|��?��U ��(�z}�����xv�`Hd
+             � /�v�                       �I�F� XHH:�XFV3�n�����|�SG��p�.D}C�5�%F+T��Y�Z)|p�<'"Ug�V��s�D������z1Uv���������5Sԑ�����o���W�L"9Z�>�<��˝���W��|�B�"�{�F�U��I
+%��T�c��|���Y���Do%��                                                   Z���D�HmEW���Z-K�.
+v��.�jȳgG�p)�b��v$T,��n�Rؼ�OO0�I
+�d����?���a?�����;��v0�0?
+                         �a�~��L���ׯэY0ד�(�ԡ�nU�X��eEf��0DJӝ�q��s
+�%�
+[PROXY-MQTT] ↓ UPSTREAM→LOCAL clientId="ramonvanbruggen@gmail.com-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiIwOTQ5ZjQ1NC04MTdiLTRkODAtYWM4OS1kYmJkZDEzMGU5ZWIiLCJlbWFpbCI6InJhbW9udmFuYnJ1Z2dlbkBnbWFpbC5jb20iLCJpYXQiOjE3NzE4NzQ5NDUsImV4cCI6MTc3NDQ2Njk0NX0.6f-5w4Om-3qGndnhdUu6Au719zulplxECskT7RaR2r8" topic="Dart/Receive_mqtt/LFIN2230700238"
+[PROXY-MQTT] ↓ Payload: � Uޏ����=E3Mؾ[�%�p!(�����N4�K��%�=2\�����"N�e��Ǚ��~�m��d{��Dl��͸��~@�u��q=^�h��x)��������ma����2�|O��!9��GZ���
+[PROXY-MQTT] ↓ UPSTREAM→LOCAL clientId="ramonvanbruggen@gmail.com-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiIwOTQ5ZjQ1NC04MTdiLTRkODAtYWM4OS1kYmJkZDEzMGU5ZWIiLCJlbWFpbCI6InJhbW9udmFuYnJ1Z2dlbkBnbWFpbC5jb20iLCJpYXQiOjE3NzE4NzQ5NDUsImV4cCI6MTc3NDQ2Njk0NX0.6f-5w4Om-3qGndnhdUu6Au719zulplxECskT7RaR2r8" topic="Dart/Receive_mqtt/LFIN2230700238"
+[PROXY-MQTT] ↓ Payload: ������e-L&
+                                  �Dj]E���ݖ��==IxW���:�<�S��m��� `e�4M�d���Ym��$�Ԕlb����$�zgz�X:d_/�����s�G�|!�����A��-$/#� n��b� ��q�VC>��z�3�I�ǊT\�d��L/���7IKN[�9nd���� cPԻqSXl�����]VBK���
+                                                                                              p�&��"^��O����6\@����pzE�����R�d���?K�xW������i���]x}l3��u��
+���8�w<t�m����~/�v��<�/7$��
+#?cc���J����x7��fyǨR��hD|�q���������!�ذ���;@>M��|�
+                            ���>I�*���W��n�v�d��n4�w4&��Mɜ�cD���
+                                                                 !a@pq��ޑ�X     �HJ����3b�U{�j�Ċz�ڏ4���I�����2���Ԓ�������2_^
+                            M
+                             j�����ֺtʹ1-Ak"K
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":285212929,"mower_status":589825,"mower_info":16802816,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":1,"mower_error":0}}
+[PROXY-MQTT] ↑ LOCAL→UPSTREAM clientId="ESP32_1bA408" topic="Dart/Receive_mqtt/LFIC1230700004"
+[PROXY-MQTT] ↑ Payload:
+{
+  "up_status_info": {
+    "charger_status": 285212929,
+    "mower_status": 589825,
+    "mower_info": 16802816,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 1,
+    "mower_error": 0
+  }
+}
+[PROXY-MQTT] ↓ UPSTREAM→LOCAL clientId="ramonvanbruggen@gmail.com-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiIwOTQ5ZjQ1NC04MTdiLTRkODAtYWM4OS1kYmJkZDEzMGU5ZWIiLCJlbWFpbCI6InJhbW9udmFuYnJ1Z2dlbkBnbWFpbC5jb20iLCJpYXQiOjE3NzE4NzQ5NDUsImV4cCI6MTc3NDQ2Njk0NX0.6f-5w4Om-3qGndnhdUu6Au719zulplxECskT7RaR2r8" topic="Dart/Receive_mqtt/LFIC1230700004"
+[PROXY-MQTT] ↓ Payload:
+{
+  "up_status_info": {
+    "charger_status": 285212929,
+    "mower_status": 589825,
+    "mower_info": 16802816,
+    "mower_x": 0,
+    "mower_y": 0,
+    "mower_z": 0,
+    "mower_info1": 1,
+    "mower_error": 0
+  }
+}
+^CWaiting for the debugger to disconnect...
+8:51:24 AM [tsx] Previous process hasn't exited yet. Force killing...
+
+ rvbcrs on MacBook-Air via ﴱ gps-okapi-tst/api-ocp-01-prd-ahcaws-com:6443/AL13284(gps-okapi-tst) at …/novabot-server via  master (   ) is 📦 v1.0.0 took 4m36s 
+ 
+ *  History restored 
+
+^[[A%                                                                                           [WARN] - (starship::utils): Executing command "/usr/local/bin/git" timed out.
+[WARN] - (starship::utils): You can set command_timeout in your config to a higher value to allow longer-running commands to keep executing.
+
+ rvbcrs on MacBook-Air via ﴱ gps-okapi-tst/api-ocp-01-prd-ahcaws-com:6443/AL13284(gps-okapi-tst) at …/novabot-server via  master (   ) is 📦 v1.0.0 took 14s 
+ PROXY_MODE=local npm run dev
+
+> novabot-server@1.0.0 dev
+> tsx watch src/index.ts
+
+Debugger listening on ws://127.0.0.1:59961/e2ef7891-474f-45bc-81ad-656f3ea656f5
+For help, see: https://nodejs.org/en/docs/inspector
+Debugger attached.
+[DB] Database initialised
+[HA-MQTT] Verbinden met Home Assistant Mosquitto op mqtt://192.168.0.248:1883
+[SERVER] HTTP listening on port 3000
+[SERVER] Verwacht nginx proxy manager voor TLS termination op app.lfibot.com
+[MQTT] Broker luistert op port 1883
+[HA-MQTT] Verbonden met HA Mosquitto op mqtt://192.168.0.248:1883
+[MQTT] CONNECT   DEV clientId="ESP32_1bA408" sn=LFIC1230700004 mac=? user="LFIC1230700004"
+[HA-MQTT] LFIC1230700004 → online
+[MQTT] SUBSCRIBE ESP32_1bA408 -> [Dart/Send_mqtt/LFIC1230700004]
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":369099009,"mower_status":134807553,"mower_info":25600,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":1,"mower_error":0}}
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":369099009,"mower_status":134807553,"mower_info":25600,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":1,"mower_error":0}}
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":369099009,"mower_status":134807553,"mower_info":25600,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":1,"mower_error":0}}
+[HDR] {"host":"app.lfibot.com","x-forwarded-scheme":"https","x-forwarded-proto":"https","x-forwarded-for":"192.168.0.177","x-real-ip":"192.168.0.177","content-length":"89","user-agent":"Dart/3.6 (dart:io)","source":"app","accept-encoding":"gzip","userlanguage":"en","authorization":"","content-type":"application/json;charset=UTF-8","timestamp":"1771921015734","charset":"utf-8","signature":"ff94f82e537c6dfa82e8424efc6c6fd5e02a544aed4c6ce3afe880e510c60c07","nonce":"1453b963a29b5441b839b18939aaf0817944300b","echostr":"XtcDS34jSa48"}
+[REQ] POST /api/nova-user/appUser/login {"email":"ramonvanbruggen@gmail.com","password":"***","imei":"imei"}
+[RES] POST /login {"success":true,"code":200,"message":"request success","value":{"appUserId":2,"email":"ramonvanbruggen@gmail.com","phone":"","firstName":"","lastName":"","accessToken":"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiIwOTQ5ZjQ1NC04MTdiLTRkODAtYWM4OS1kYmJkZDEzMGU5ZWIiLCJlbWFpbCI6InJhbW9udmFuYnJ1Z2dlbkBnbWFpbC5jb20iLCJpYXQiOjE3NzE5MjEwMTUsImV4cCI6MTc3NDUxMzAxNX0.WYJxwiytUilILG3kmNir7NvR8Q3hNyD5cN26pBeEBgs","newUserFlag":0,"country":"","city":"","address":"","coordinates":""},"dateline":1771921015794,"echostr":"XtcDS34jSa48"}
+[REQ] GET /api/nova-user/appUser/appUserInfo {}
+[RES] GET /appUserInfo {"success":true,"code":200,"message":"request success","value":{"appUserId":2,"email":"ramonvanbruggen@gmail.com","username":null,"machineToken":"fgm9ALQOJEY0rTU_WL5tTr:APA91bGhVitjQQPNCUN10ru8OuYEfr0A2ndBM5OseTPuSepE-XjoirMVgpdRRKsGSw9DwhFNr3t761Uiolwy7_HknqOwnEkWwCO_1trRNEEPRfc1pMdkCMU"},"dateline":1771921015830,"echostr":"zSEb4SrHPfpz"}
+[REQ] POST /api/nova-user/equipment/userEquipmentList {"appUserId":2,"pageSize":10,"pageNo":1}
+[RES] POST /userEquipmentList {"success":true,"code":200,"message":"request success","value":{"pageNo":1,"pageSize":10,"totalSize":2,"totalPage":1,"pageList":[{"equipmentId":7,"email":"ramonvanbruggen@gmail.com","deviceType":"charger","sn":"LFIC1230700004","equipmentCode":"LFIC1230700004","equipmentName":"LFIC1230700004","equipmentNickName":"Charging station","equipmentType":"LFIC1","userId":0,"sysVersion":"v0.3.6","period":"2029-02-22 00:00:00","status":1,"activationTime":"2026-02-23 21:14:13","importTime":"2026-02-23 21:14:13","batteryState":null,"macAddress":"48:27:E2:1B:A4:0A","chargerAddress":718,"chargerChannel":16,"account":"li9hep19","password":"jzd4wac6","videoTutorial":null,"wifiName":null,"wifiPassword":null,"model":"N1000","photoId":null,"photoType":null,"photoDownload":null,"photoTime":null},{"equipmentId":8,"email":"ramonvanbruggen@gmail.com","deviceType":"mower","sn":"LFIN2230700238","equipmentCode":"LFIN2230700238","equipmentName":"LFIN2230700238","equipmentNickName":"Novabot","equipmentType":"LFIN2","userId":0,"sysVersion":"v0.3.6","period":"2029-02-22 00:00:00","status":1,"activationTime":"2026-02-23 21:14:55","importTime":"2026-02-23 21:14:55","batteryState":null,"macAddress":"50:41:1C:39:BD:C1","chargerAddress":null,"chargerChannel":null,"account":null,"password":null,"videoTutorial":null,"wifiName":null,"wifiPassword":null,"model":"N1000","photoId":null,"photoType":null,"photoDownload":null,"photoTime":null}]},"dateline":1771921015852,"echostr":"nRgETxRAESbZ"}
+[REQ] POST /api/nova-data/appManage/queryNewVersion {"appSystem":"ios","appVersion":"2.3.9"}
+[RES] POST /queryNewVersion {"success":true,"code":200,"message":"request success","value":{"version":"2.3.9","hasNewVersion":false},"dateline":1771921015853,"echostr":"KUsmXEfz51sm"}
+[REQ] POST /api/novabot-message/message/queryMsgMenuByUserId {"appUserId":2,"timezone":"GMT+1:00"}
+[RES] POST /queryMsgMenuByUserId {"success":true,"code":200,"message":"request success","value":{"robotMsgUnreadCount":0,"workRecordUnreadCount":0},"dateline":1771921015858,"echostr":"bsaPfomTQdGt"}
+[MQTT] CONNECT   DEV clientId="ramonvanbruggen@gmail.com-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiIwOTQ5ZjQ1NC04MTdiLTRkODAtYWM4OS1kYmJkZDEzMGU5ZWIiLCJlbWFpbCI6InJhbW9udmFuYnJ1Z2dlbkBnbWFpbC5jb20iLCJpYXQiOjE3NzE4NzQ5NDUsImV4cCI6MTc3NDQ2Njk0NX0.6f-5w4Om-3qGndnhdUu6Au719zulplxECskT7RaR2r8" sn=LFIN2230700238 mac=? user="app:LFIN2230700238"
+[HA-MQTT] LFIN2230700238 → online
+[MQTT] SUBSCRIBE ramonvanbruggen@gmail.com-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiIwOTQ5ZjQ1NC04MTdiLTRkODAtYWM4OS1kYmJkZDEzMGU5ZWIiLCJlbWFpbCI6InJhbW9udmFuYnJ1Z2dlbkBnbWFpbC5jb20iLCJpYXQiOjE3NzE4NzQ5NDUsImV4cCI6MTc3NDQ2Njk0NX0.6f-5w4Om-3qGndnhdUu6Au719zulplxECskT7RaR2r8 -> [Dart/Receive_mqtt/LFIN2230700238]
+[MQTT] SUBSCRIBE ramonvanbruggen@gmail.com-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiIwOTQ5ZjQ1NC04MTdiLTRkODAtYWM4OS1kYmJkZDEzMGU5ZWIiLCJlbWFpbCI6InJhbW9udmFuYnJ1Z2dlbkBnbWFpbC5jb20iLCJpYXQiOjE3NzE4NzQ5NDUsImV4cCI6MTc3NDQ2Njk0NX0.6f-5w4Om-3qGndnhdUu6Au719zulplxECskT7RaR2r8 -> [Dart/Receive_mqtt/LFIC1230700004]
+[REQ] GET /api/nova-file-server/map/queryEquipmentMap {}
+[RES] GET /queryEquipmentMap {"success":true,"code":200,"message":"request success","value":[],"dateline":1771921015875,"echostr":"YRitnj5D61pv"}
+[REQ] POST /api/nova-data/cutGrassPlan/queryRecentCutGrassPlan {"sn":"LFIN2230700238","currentTime":"09:16","week":"Tue"}
+[UNKNOWN] POST /api/nova-data/cutGrassPlan/queryRecentCutGrassPlan {"sn":"LFIN2230700238","currentTime":"09:16","week":"Tue"}
+[RES] POST /api/nova-data/cutGrassPlan/queryRecentCutGrassPlan {"code":404,"msg":"Not found","data":null,"echostr":"X3OGsN2q5yR1"}
+[REQ] POST /api/nova-user/appUser/updateAppUserMachineToken {"appUserId":2,"machineToken":"fgm9ALQOJEY0rTU_WL5tTr:APA91bGhVitjQQPNCUN10ru8OuYEfr0A2ndBM5OseTPuSepE-XjoirMVgpdRRKsGSw9DwhFNr3t761Uiolwy7_HknqOwnEkWwCO_1trRNEEPRfc1pMdkCMU","imei":"imei"}
+[RES] POST /updateAppUserMachineToken {"success":true,"code":200,"message":"request success","value":null,"dateline":1771921015942,"echostr":"d6sxrtur4r4W"}
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":352321793,"mower_status":134807553,"mower_info":25600,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":1,"mower_error":0}}
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":369099009,"mower_status":134807553,"mower_info":25600,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":1,"mower_error":0}}
+[MQTT] PUBLISH  ramonvanbruggen@gmail.com-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiIwOTQ5ZjQ1NC04MTdiLTRkODAtYWM4OS1kYmJkZDEzMGU5ZWIiLCJlbWFpbCI6InJhbW9udmFuYnJ1Z2dlbkBnbWFpbC5jb20iLCJpYXQiOjE3NzE4NzQ5NDUsImV4cCI6MTc3NDQ2Njk0NX0.6f-5w4Om-3qGndnhdUu6Au719zulplxECskT7RaR2r8 →DEV Dart/Send_mqtt/LFIC1230700004  {"ota_version_info":null}{"ota_version_info":null}
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"type":"ota_version_info_respond","message":{"result":0,"value":{"system":"v0.0.1","version":"v0.3.6"}}}
+[REQ] GET /api/nova-user/otaUpgrade/checkOtaNewVersion {}
+[OTA] checkOtaNewVersion version=v0.3.6
+[OTA] Cloud response: {"code":500,"msg":"内部服务器错误"}
+[RES] GET /checkOtaNewVersion {"code":500,"msg":"内部服务器错误","echostr":"LChhXCXH9Hec"}
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":385876225,"mower_status":134807553,"mower_info":25600,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":1,"mower_error":0}}
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":385876225,"mower_status":134807553,"mower_info":25600,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":1,"mower_error":0}}
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":385876225,"mower_status":134807553,"mower_info":25600,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":1,"mower_error":0}}
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":385876225,"mower_status":134807553,"mower_info":25600,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":1,"mower_error":0}}
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":385876225,"mower_status":134807553,"mower_info":25600,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":1,"mower_error":0}}
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":385876225,"mower_status":134807553,"mower_info":25600,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":1,"mower_error":0}}
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":385876225,"mower_status":134807553,"mower_info":25600,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":1,"mower_error":0}}
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":385876225,"mower_status":134807553,"mower_info":25600,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":1,"mower_error":0}}
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":352321793,"mower_status":134807553,"mower_info":25600,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":1,"mower_error":0}}
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":369099009,"mower_status":134807553,"mower_info":25600,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":1,"mower_error":0}}
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":369099009,"mower_status":134807553,"mower_info":25600,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":1,"mower_error":0}}
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":352321793,"mower_status":134807553,"mower_info":25600,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":1,"mower_error":0}}
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":352321793,"mower_status":134807553,"mower_info":25600,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":1,"mower_error":0}}
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":352321793,"mower_status":134807553,"mower_info":25600,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":1,"mower_error":0}}
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":352321793,"mower_status":134807553,"mower_info":25600,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":1,"mower_error":0}}
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":352321793,"mower_status":134807553,"mower_info":25600,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":1,"mower_error":0}}
+[MQTT] PUBLISH  ESP32_1bA408 ←DEV Dart/Receive_mqtt/LFIC1230700004  {"up_status_info":{"charger_status":352321793,"mower_status":134807553,"mower_info":25600,"mower_x":0,"mower_y":0,"mower_z":0,"mower_info1":1,"mower_error":0}}
+^CWaiting for the debugger to disconnect...
+9:17:33 AM [tsx] Previous process hasn't exited yet. Force killing...
+
+ rvbcrs on MacBook-Air via ﴱ gps-okapi-tst/api-ocp-01-prd-ahcaws-com:6443/AL13284(gps-okapi-tst) at …/novabot-server via  master (   ) is 📦 v1.0.0 took 50s 
+ 

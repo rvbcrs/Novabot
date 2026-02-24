@@ -1,0 +1,13 @@
+services:
+  novabot-dns:
+    build: .
+    container_name: novabot-dns
+    restart: unless-stopped
+    ports:
+      - "53:53/udp"
+      - "53:53/tcp"
+    environment:
+      # IP-adres van je novabot-server (verplicht)
+      TARGET_IP: 192.168.0.100
+      # Upstream DNS voor alle overige domeinen (optioneel, default: 8.8.8.8)
+      UPSTREAM_DNS: 8.8.8.8

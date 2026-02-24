@@ -33,22 +33,22 @@ interface SensorDef {
 }
 
 const SENSORS: SensorDef[] = [
-  // Charger velden
+  // ── Charger velden (uit up_status_info, plain JSON) ──────────
   { field: 'charger_status',   name: 'Charger Status',    component: 'sensor', icon: 'mdi:ev-station',           entity_category: 'diagnostic' },
 
-  // Mower velden (uit charger's up_status_info)
+  // Mower velden (gerapporteerd door charger via LoRa → up_status_info)
   { field: 'mower_status',     name: 'Mower Status',      component: 'sensor', icon: 'mdi:robot-mower' },
   { field: 'mower_x',          name: 'Mower Position X',  component: 'sensor', icon: 'mdi:map-marker',           entity_category: 'diagnostic' },
   { field: 'mower_y',          name: 'Mower Position Y',  component: 'sensor', icon: 'mdi:map-marker',           entity_category: 'diagnostic' },
   { field: 'mower_z',          name: 'Mower Position Z',  component: 'sensor', icon: 'mdi:map-marker',           entity_category: 'diagnostic' },
   { field: 'mower_info',       name: 'Mower Info',        component: 'sensor', icon: 'mdi:information-outline',  entity_category: 'diagnostic' },
   { field: 'mower_info1',      name: 'Mower Info 1',      component: 'sensor', icon: 'mdi:information-outline',  entity_category: 'diagnostic' },
-  { field: 'mower_error',      name: 'Mower Error',       component: 'sensor', icon: 'mdi:alert-circle',         entity_category: 'diagnostic' },
+  { field: 'mower_error',      name: 'LoRa Search Count', component: 'sensor', icon: 'mdi:alert-circle',         entity_category: 'diagnostic' },
 
-  // Batterij
+  // Batterij (charger report)
   { field: 'battery_capacity', name: 'Battery',           component: 'sensor', icon: 'mdi:battery', device_class: 'battery', state_class: 'measurement', unit: '%' },
 
-  // Werk status
+  // Werk status (charger report)
   { field: 'work_mode',        name: 'Work Mode',         component: 'sensor', icon: 'mdi:cog' },
   { field: 'work_state',       name: 'Work State',        component: 'sensor', icon: 'mdi:state-machine' },
   { field: 'work_status',      name: 'Work Status',       component: 'sensor', icon: 'mdi:progress-wrench' },
@@ -56,14 +56,43 @@ const SENSORS: SensorDef[] = [
   { field: 'recharge_status',  name: 'Recharge Status',   component: 'sensor', icon: 'mdi:battery-charging' },
   { field: 'mowing_progress',  name: 'Mowing Progress',   component: 'sensor', icon: 'mdi:percent', state_class: 'measurement', unit: '%' },
 
-  // Fout info
+  // Fout info (charger report)
   { field: 'error_code',       name: 'Error Code',        component: 'sensor', icon: 'mdi:alert',                entity_category: 'diagnostic' },
   { field: 'error_msg',        name: 'Error Message',     component: 'sensor', icon: 'mdi:alert-circle-outline', entity_category: 'diagnostic' },
   { field: 'error_status',     name: 'Error Status',      component: 'sensor', icon: 'mdi:alert-outline',        entity_category: 'diagnostic' },
 
-  // GPS
+  // GPS (charger report)
   { field: 'latitude',         name: 'Latitude',          component: 'sensor', icon: 'mdi:crosshairs-gps',       entity_category: 'diagnostic' },
   { field: 'longitude',        name: 'Longitude',         component: 'sensor', icon: 'mdi:crosshairs-gps',       entity_category: 'diagnostic' },
+
+  // ── Maaier directe sensoren (uit AES-ontsleutelde MQTT berichten) ──
+
+  // report_state_robot
+  { field: 'battery_power',    name: 'Battery',           component: 'sensor', icon: 'mdi:battery', device_class: 'battery', state_class: 'measurement', unit: '%' },
+  { field: 'battery_state',    name: 'Battery State',     component: 'sensor', icon: 'mdi:battery-charging' },
+  { field: 'cpu_temperature',  name: 'CPU Temperature',   component: 'sensor', icon: 'mdi:thermometer', device_class: 'temperature', state_class: 'measurement', unit: '°C' },
+  { field: 'sw_version',       name: 'Firmware Version',  component: 'sensor', icon: 'mdi:tag',                  entity_category: 'diagnostic' },
+  { field: 'loc_quality',      name: 'Location Quality',  component: 'sensor', icon: 'mdi:crosshairs-gps', state_class: 'measurement', unit: '%' },
+  { field: 'mow_blade_work_time', name: 'Blade Work Time', component: 'sensor', icon: 'mdi:fan', device_class: 'duration', state_class: 'total_increasing', unit: 's' },
+  { field: 'mow_speed',        name: 'Mow Speed',         component: 'sensor', icon: 'mdi:speedometer', state_class: 'measurement' },
+  { field: 'working_hours',    name: 'Working Hours',     component: 'sensor', icon: 'mdi:timer', device_class: 'duration', state_class: 'total_increasing', unit: 'h' },
+  { field: 'covering_area',    name: 'Covering Area',     component: 'sensor', icon: 'mdi:texture-box', state_class: 'measurement' },
+  { field: 'finished_area',    name: 'Finished Area',     component: 'sensor', icon: 'mdi:check-decagram', state_class: 'measurement' },
+  { field: 'x',                name: 'Position X',        component: 'sensor', icon: 'mdi:map-marker',           entity_category: 'diagnostic' },
+  { field: 'y',                name: 'Position Y',        component: 'sensor', icon: 'mdi:map-marker',           entity_category: 'diagnostic' },
+  { field: 'z',                name: 'Position Z',        component: 'sensor', icon: 'mdi:map-marker',           entity_category: 'diagnostic' },
+  { field: 'ota_state',        name: 'OTA State',         component: 'sensor', icon: 'mdi:update',               entity_category: 'diagnostic' },
+  { field: 'prev_state',       name: 'Previous State',    component: 'sensor', icon: 'mdi:history',              entity_category: 'diagnostic' },
+  { field: 'current_map_id',   name: 'Current Map',       component: 'sensor', icon: 'mdi:map',                  entity_category: 'diagnostic' },
+
+  // report_exception_state
+  { field: 'button_stop',      name: 'Emergency Stop',    component: 'binary_sensor', device_class: 'safety', icon: 'mdi:stop-circle' },
+  { field: 'chassis_err',      name: 'Chassis Error',     component: 'sensor', icon: 'mdi:car-wrench',           entity_category: 'diagnostic' },
+  { field: 'rtk_sat',          name: 'RTK Satellites',    component: 'sensor', icon: 'mdi:satellite-variant', state_class: 'measurement' },
+  { field: 'wifi_rssi',        name: 'WiFi Signal',       component: 'sensor', icon: 'mdi:wifi', device_class: 'signal_strength', state_class: 'measurement', unit: 'dBm' },
+
+  // report_state_timer_data
+  { field: 'localization_state', name: 'Localization',    component: 'sensor', icon: 'mdi:crosshairs-question' },
 ];
 
 // ── Waarde vertalingen ────────────────────────────────────────────
@@ -88,8 +117,28 @@ function translateChargerStatus(raw: number): string {
 
 function translateMowerError(raw: number): string {
   if (raw === 0) return 'OK';
-  if (raw >= 1 && raw <= 9) return `Searching mower (${raw}/9)`;
+  if (raw >= 1) return `Searching mower (${raw})`;
   return String(raw);
+}
+
+function translateBatteryState(raw: string): string {
+  switch (raw) {
+    case 'CHARGING': return 'Charging';
+    case 'NOT_CHARGING': return 'Not charging';
+    case 'DISCHARGING': return 'Discharging';
+    case 'FULL': return 'Full';
+    default: return raw;
+  }
+}
+
+function translateLocalization(raw: string): string {
+  switch (raw) {
+    case 'NOT_INITIALIZED': return 'Not initialized';
+    case 'INITIALIZING': return 'Initializing';
+    case 'INITIALIZED': return 'Initialized';
+    case 'LOST': return 'Lost';
+    default: return raw;
+  }
 }
 
 function translateValue(field: string, rawValue: string): string {
@@ -119,6 +168,17 @@ function translateValue(field: string, rawValue: string): string {
       if (n === 1) return 'Charging';
       return `Charging (${n})`;
     }
+    case 'battery_state':
+      return translateBatteryState(rawValue);
+    case 'localization_state':
+      return translateLocalization(rawValue);
+    case 'button_stop':
+      return rawValue === 'true' ? 'ON' : 'OFF';
+    case 'wifi_rssi': {
+      // Maaier rapporteert RSSI als positief getal, maar HA verwacht negatief (dBm)
+      const n = parseInt(rawValue, 10);
+      return isNaN(n) ? rawValue : String(n > 0 ? -n : n);
+    }
     default:
       return rawValue;
   }
@@ -132,7 +192,7 @@ function makeDevice(sn: string) {
     identifiers: [`novabot_${sn}`],
     name: `Novabot ${isCharger ? 'Charger' : 'Mower'} ${sn}`,
     manufacturer: 'Novabot',
-    model: 'N1000',
+    model: 'N2000',
     sw_version: 'local-bridge',
   };
 }
@@ -249,15 +309,22 @@ export function forwardToHomeAssistant(topic: string, payload: Buffer, sn: strin
     return;
   }
 
-  // Eerste key = commando naam (bijv. "up_status_info")
+  // Eerste key = commando naam (bijv. "up_status_info", "report_state_robot")
   const commandName = Object.keys(parsed)[0];
   if (!commandName) return;
 
   // Publiceer ruwe JSON op raw topic
   haClient.publish(`novabot/${sn}/raw/${commandName}`, payload.toString(), { retain: true });
 
-  // Als het up_status_info is: extraheer individuele velden
-  if (commandName === 'up_status_info' && typeof parsed[commandName] === 'object' && parsed[commandName] !== null) {
+  // Verwerk berichten met geneste data (commando → object met velden)
+  const DATA_COMMANDS = [
+    'up_status_info',          // Charger → plain JSON
+    'report_state_robot',      // Maaier → AES ontsleuteld
+    'report_exception_state',  // Maaier → AES ontsleuteld
+    'report_state_timer_data', // Maaier → AES ontsleuteld
+  ];
+
+  if (DATA_COMMANDS.includes(commandName) && typeof parsed[commandName] === 'object' && parsed[commandName] !== null) {
     const data = parsed[commandName] as Record<string, unknown>;
 
     if (!lastValues.has(sn)) lastValues.set(sn, new Map());
@@ -265,6 +332,10 @@ export function forwardToHomeAssistant(topic: string, payload: Buffer, sn: strin
 
     for (const [field, value] of Object.entries(data)) {
       if (value === undefined || value === null) continue;
+
+      // Skip complexe objecten/arrays (bijv. timer_task)
+      if (typeof value === 'object') continue;
+
       const strValue = String(value);
 
       // Alleen publiceren als waarde veranderd is (vergelijk op ruwe waarde)

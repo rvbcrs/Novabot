@@ -33,7 +33,20 @@ cutGrassPlanRouter.get('/queryCutGrassPlan', authMiddleware, (req: AuthRequest, 
   res.json(ok((rows as PlanRow[]).map(rowToDto)));
 });
 
-// GET /api/nova-data/cutGrassPlan/queryRecentCutGrassPlan
+// POST /api/nova-data/cutGrassPlan/queryRecentCutGrassPlan
+// App stuurt: { sn, currentTime, week }
+cutGrassPlanRouter.post('/queryRecentCutGrassPlan', authMiddleware, (req: AuthRequest, res: Response) => {
+  const { sn } = req.body as { sn?: string };
+  const row = sn
+    ? db.prepare(`SELECT p.* FROM cut_grass_plans p
+        JOIN equipment e ON e.equipment_id = p.equipment_id
+        WHERE p.user_id = ? AND (e.mower_sn = ? OR e.charger_sn = ?)
+        ORDER BY p.updated_at DESC LIMIT 1`).get(req.userId, sn, sn)
+    : db.prepare('SELECT * FROM cut_grass_plans WHERE user_id = ? ORDER BY updated_at DESC LIMIT 1').get(req.userId);
+  res.json(ok(row ? rowToDto(row as PlanRow) : null));
+});
+
+// GET variant (backwards compat)
 cutGrassPlanRouter.get('/queryRecentCutGrassPlan', authMiddleware, (req: AuthRequest, res: Response) => {
   const { equipmentId } = req.query as { equipmentId?: string };
   const row = equipmentId

@@ -1,19 +1,37 @@
 {
   "permissions": {
     "allow": [
-      "Bash(strings:*)",
-      "Bash(npm install:*)",
-      "Bash(npx tsc:*)",
+      "Bash(mkdir:*)",
+      "Bash(go:*)",
+      "Write(*)",
+      "Bash(ls:*)",
+      "Bash(git:*)",
+      "Update(*:*)",
+      "Bash(mv:*)",
+      "Bash(echo:*)",
+      "Bash(sed:*)",
+      "Bash(source:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)",
+      "Bash(npm:*)",
+      "Bash(npx:*)",
+      "Bash(pkill:*)",
+      "Bash(touch:*)",
+      "Bash(grep:*)",
+      "Bash(deadcode:*)",
+      "Bash(sqlite3:*)",
+      "Bash(curl:*)",
+      "Bash(rg:*)",
       "Bash(chmod:*)",
-      "Bash(node:*)",
-      "Bash(system_profiler:*)",
-      "Bash(wdutil info:*)",
-      "Bash(otool:*)",
-      "Bash(objdump:*)",
+      "Bash(lsof:*)",
+      "Bash(make:*)",
+      "Bash(PORT=:*)",
+      "Bash(find:*)",
+      "Bash(docker:*)",
+      "Bash(poetry:*)",
+      "Bash(python:*)",
       "Bash(python3:*)",
-      "Bash(__NEW_LINE_186c3274c8a7971a__ strings -n 4 /Users/rvbcrs/GitHub/Novabot/NOVABOT_2.3.8_APKPure/lib/arm64-v8a/libapp.so)",
-      "Read(//Users/rvbcrs/GitHub/Novabot/**)",
-      "Bash(openssl x509:*)"
+      "Update(*)"
     ]
   }
 }
