@@ -1,0 +1,1 @@
+ros2 topic echo /robot_combination_localization/combination_status

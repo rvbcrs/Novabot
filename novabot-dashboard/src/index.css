@@ -1,0 +1,11 @@
+@import "tailwindcss";
+@import "leaflet/dist/leaflet.css";
+
+body {
+  margin: 0;
+}
+
+/* Disable Leaflet's default blue/white selection outline on SVG paths */
+.leaflet-interactive:focus {
+  outline: none;
+}

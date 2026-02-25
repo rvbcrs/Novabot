@@ -155,6 +155,16 @@ export function initDb(): void {
 
     -- Voeg mac_address kolom toe aan equipment als die nog niet bestaat
     -- (SQLite ondersteunt geen IF NOT EXISTS op kolommen, dus via try-catch in code)
+
+    -- Map calibratie: handmatige offset/rotatie/schaal per maaier
+    CREATE TABLE IF NOT EXISTS map_calibration (
+      mower_sn    TEXT    NOT NULL PRIMARY KEY,
+      offset_lat  REAL    NOT NULL DEFAULT 0,
+      offset_lng  REAL    NOT NULL DEFAULT 0,
+      rotation    REAL    NOT NULL DEFAULT 0,
+      scale       REAL    NOT NULL DEFAULT 1,
+      updated_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+    );
   `);
 
   // Voeg mac_address kolom toe aan equipment (migratie – veilig om te herhalen)

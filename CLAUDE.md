@@ -17,16 +17,20 @@ zodat de robotmaaier en het laadstation volledig offline werken.
 │   └── lib/arm64-v8a/libapp.so     Gecompileerde Dart-code (strings extraheren met: strings libapp.so | grep ...)
 ├── novabot-server/                 De lokale vervangingsserver
 │   └── src/
-│       ├── index.ts                Entry point (Express + MQTT broker starten)
-│       ├── db/database.ts          SQLite schema + initDb()
+│       ├── index.ts                Entry point (Express + Socket.io + MQTT broker)
+│       ├── db/database.ts          SQLite schema + initDb() (incl. map_calibration tabel)
 │       ├── types/index.ts          Gedeelde TypeScript interfaces + ok()/fail()
 │       ├── middleware/auth.ts      JWT auth middleware
 │       ├── mqtt/broker.ts          Aedes MQTT broker op port 1883 + sanitizeConnectFlags
 │       ├── mqtt/decrypt.ts         AES-128-CBC decryptie voor maaier MQTT berichten
 │       ├── mqtt/homeassistant.ts   Home Assistant MQTT bridge met auto-discovery sensoren
+│       ├── mqtt/sensorData.ts      Gedeelde sensor definities, vertalingen, en data cache
+│       ├── mqtt/mapConverter.ts    GPS ↔ lokale coördinaten conversie met orientatie
+│       ├── dashboard/socketHandler.ts  Socket.io server voor real-time dashboard updates
 │       ├── proxy/httpProxy.ts      HTTP proxy naar echte cloud (PROXY_MODE=cloud)
 │       └── routes/
 │           ├── admin.ts                        GET /api/admin/devices, POST /api/admin/devices/:sn/mac
+│           ├── dashboard.ts                    REST endpoints voor dashboard (devices, sensors, maps, calibration, trail)
 │           ├── nova-user/appUser.ts            Login, registratie, profiel
 │           ├── nova-user/validate.ts           E-mail verificatiecodes
 │           ├── nova-user/equipment.ts          Apparaatbeheer (bindingEquipment, getEquipmentBySN, ...)
@@ -36,6 +40,18 @@ zodat de robotmaaier en het laadstation volledig offline werken.
 │           ├── nova-file-server/log.ts         App logbestanden
 │           ├── nova-network/network.ts          Connectivity check (connection endpoint)
 │           └── novabot-message/message.ts      Robot- en werkberichten
+├── novabot-dashboard/              React web dashboard (Vite + Tailwind + Leaflet)
+│   └── src/
+│       ├── api/client.ts           REST + WebSocket API client
+│       ├── hooks/useSocket.ts      Socket.io hook voor real-time updates
+│       ├── hooks/useDevices.ts     Gecombineerde REST + Socket.io state
+│       ├── types/index.ts          TypeScript interfaces (DeviceState, MapCalibration, etc.)
+│       ├── components/
+│       │   ├── map/MowerMap.tsx    Leaflet kaart met GPS, polygons, trail, calibratie
+│       │   ├── dashboard/DashboardPage.tsx  Hoofdlayout met sidebar + detail view
+│       │   ├── sensors/SensorGrid.tsx       Sensor cards grid
+│       │   └── status/MowerStatus.tsx       Maaier-specifiek paneel
+│       └── App.tsx                 Root component
 ├── novabot-dns/                    DNS rewrite Docker container (dnsmasq)
 │   ├── Dockerfile                  Alpine + dnsmasq, 8MB image
 │   ├── entrypoint.sh               Genereert dnsmasq.conf uit env vars
@@ -53,6 +69,25 @@ zodat de robotmaaier en het laadstation volledig offline werken.
 │   └── blutter_frida.js            Gegenereerde Frida hooks
 ├── NOVABOT_2.4.0_arm64/            Uitgepakte v2.4.0 APK (arm64-v8a)
 │   └── lib/arm64-v8a/libapp.so     Dart AOT binary (12MB, ELF 64-bit ARM aarch64)
+├── research/
+│   ├── cloud_data/                 Geëxporteerde cloud API data (werk records, firmware, etc.)
+│   │   ├── work_records.json       50 maairecords (april-juli 2024)
+│   │   ├── firmware_versions.json  OTA versies per equipment type
+│   │   └── ...                     user_info, equipment, OTA, app versions
+│   ├── mower_firmware/             Uitgepakte maaier OTA firmware v5.7.1
+│   │   ├── scripts/               Startup scripts (run_novabot.sh, run_ota.sh, start_service.sh)
+│   │   ├── debug_sh/              100+ debug/test scripts voor ontwikkeling
+│   │   ├── test_scripts/           Factory test scripts
+│   │   ├── ota_lib/               Shared libraries, camera params, BCM WiFi driver
+│   │   │   ├── lib/               .so bestanden (IMX307 camera, ToF, logging)
+│   │   │   ├── camera_params/     Camera calibratie (fisheye intrinsic, GDC layout, extrinsic)
+│   │   │   └── bcm/               Broadcom BCM43438 WiFi driver (bcmdhd.ko)
+│   │   ├── novabot_log/           Debug logs van test maaier LFIN2231000675
+│   │   └── Readme.txt             Versie info: mqtt_node v5.7.1, MCU v3.5.8, charger LoRa v0.3.6
+│   ├── Novabot-Base-Station.pdf   Hardware handleiding laadstation
+│   └── Novabot-Mower.pdf          Hardware handleiding maaier
+├── charger_ota_v0.3.6_cloud.bin    Charger OTA firmware v0.3.6 (1.4MB, cloud download)
+├── mower_firmware_v5.7.1.deb       Maaier OTA firmware v5.7.1 (35MB, Debian/ROS 2)
 ├── charger_firmware_2.bin          ESP32-S3 flash dump (8MB) van laadstation
 ├── charger_ota0_v0.3.6.bin         Extracted ota_0 partitie (1.8MB, actieve firmware)
 ├── charger_ota0_v0.3.6.elf         ELF conversie voor Ghidra (Xtensa LX7, 32-bit LSB)
@@ -115,6 +150,45 @@ PCB serienummer label: `GRHCDJB23/0226`
 BLE manufacturer data (type 0xFF): `66 55 50 41 1C 39 BD C1`
 - `66 55` = Company ID 0x5566 (ESP)
 - `50 41 1C 39 BD C1` = BLE MAC
+
+**Hardware (uit PCB inspectie + TÜV rapport CN23XAMH 001, februari 2026):**
+
+De maaier heeft **twee PCB's**: een X3A hoofdbord (computing) en een Motor board (aandrijving).
+
+**X3A Board** — "LFI NOVABOT X3A BOARD VerC PLUS" (datum 20230211):
+| Component | Type | Details |
+|-----------|------|---------|
+| SoC | **Horizon Robotics X3** (Sunrise X3) | ARM Cortex-A53 quad-core + BPU AI accelerator |
+| SoM | X3 System-on-Module | Plug-in module met gouden edge connector |
+| WiFi/BLE | **AP6212** (AMPAK/Broadcom BCM43438) | 2.4GHz WiFi + BLE 4.2, PCB antenne via U.FL kabel |
+| OS | Ubuntu/Debian (ARM64) | ROS 2 Galactic, kernel Linux, draait als root |
+| UART | Header linksboven: **GND / TX / RX / 3V3** | Seriële console, waarschijnlijk 115200 baud |
+| HDMI | **Micro-HDMI** poort (onderkant PCB) | Gelabeld "DEBUG" — video output van X3 SoC |
+| USB | **USB 3.0** poort (onderkant PCB) | Voor keyboard, ethernet adapter, of opslag |
+| Voeding | DC12V barrel jack | |
+| Camera 1 | FPC connector "RGB CAMERA" (J23) | MIPI CSI-2 naar Sony IMX307 front camera |
+| Camera 2 | FPC connector "TOF+RGB SENSOR" (J25) | Gecombineerde ToF + panoramic RGB |
+| Camera 3 | FPC connector "TOF" | PMD Royale ToF depth camera |
+| Silkscreen | "LITTLE LITTLE WORLD" | LFI's motto (ook op charger PCB) |
+
+**Motor Board** (apart PCB, aandrijving + RF):
+| Component | Type | Details |
+|-----------|------|---------|
+| MCU | **STM32F407** | Motor/chassis control (firmware: `novabot_stm32f407_v3_5_8`) |
+| GPS | GPS Module (met afscherming) | Rechtsboven op PCB |
+| LoRa | **LoRa Receiver Module** | Met SMA antenne connector, communicatie met charger |
+| Relays | 2x blauwe relays | Motoraansturing |
+| Connectors | Rode JST headers | Motoren, sensoren, voeding |
+
+**TÜV rapport**: Model **N1000** (charger) en **N2000** (maaier), rapport CN23XAMH 001, TÜV Rheinland.
+
+**Fysieke toegangspoorten (bevestigd via PCB foto's):**
+| Poort | Locatie | Status | Nut |
+|-------|---------|--------|-----|
+| UART (GND/TX/RX/3V3) | X3A board, bovenkant links | Beschikbaar | Root shell, 115200 baud |
+| Micro-HDMI "DEBUG" | X3A board, onderkant rechts | Beschikbaar | Linux console/desktop output |
+| USB 3.0 | X3A board, onderkant links | Beschikbaar | Keyboard, USB-ethernet, opslag |
+| SD kaart | X3A board | Onbevestigd | Mogelijk voor extra opslag |
 
 ---
 
@@ -1461,7 +1535,8 @@ De app blokkeert bepaalde acties met deze checks:
 | `https://lfibot.zendesk.com/hc/en-gb` | Klantenservice / helpcentrum |
 | `https://novabot.com/` | Publieke website |
 | `https://novabot-oss.oss-us-east-1.aliyuncs.com/novabot-document/` | Handleidingen (PDF) op Alibaba OSS |
-| `https://novabot-oss.oss-us-east-1.aliyuncs.com/novabot-file/` | OTA firmware (bucket listing geblokkeerd, URLs geven 404) |
+| `https://novabot-oss.oss-us-east-1.aliyuncs.com/novabot-file/` | OTA firmware bestanden op Alibaba OSS |
+| `https://novabot-oss.oss-accelerate.aliyuncs.com/novabot-file/` | OTA firmware (CDN-versneld, charger downloads) |
 
 **Developer info gelekt in binary**: `file:///Users/jiangcongde/Desktop/project/flutter_novabot/`
 
@@ -1535,8 +1610,20 @@ De app toont verschillende widgets afhankelijk van de maaier-status:
 - [x] DNS rewrite Docker container gebouwd (novabot-dns, Alpine + dnsmasq, 8MB)
 - [x] Home Assistant MQTT bridge met auto-discovery sensoren
 - [ ] Uitzoeken of `_6688` clientId suffix een vaste waarde of berekend is
-- [ ] Eigen app bouwen — alle MQTT commando's en data models zijn gedocumenteerd als referentie
-- [ ] Maaier ESP32 firmware dump (voor verdere reverse engineering)
+- [x] React web dashboard gebouwd (novabot-dashboard): live sensoren, GPS kaart, calibratie tool
+- [x] Socket.io real-time updates van MQTT data naar browser
+- [x] Kaart calibratie tool: offset, rotatie (-180°/+180°), schaal (0.5x-2.0x), opgeslagen in DB
+- [x] PDOK luchtfoto satellite imagery als kaartlaag
+- [x] Camera systeem geanalyseerd: dual IMX307 + PMD ToF, ROS 2 topics, geen remote streaming
+- [x] Netwerk services geanalyseerd: geen SSH/telnet/VNC, ROS 2 localhost-only, VNC expliciet verwijderd
+- [x] Maaier PCB geïdentificeerd: Horizon X3A Board VerC PLUS + Motor Board met STM32F407
+- [x] Fysieke debug poorten gevonden: UART (GND/TX/RX/3V3), micro-HDMI "DEBUG", USB 3.0
+- [x] WiFi/BLE module geïdentificeerd: AP6212 (AMPAK/Broadcom BCM43438)
+- [x] TÜV Rheinland rapport CN23XAMH 001 geanalyseerd (modellen N1000/N2000)
+- [ ] Maaier openen voor UART/HDMI/USB toegang (IP56 waterdicht — seals niet beschadigen)
+- [ ] SSH installeren op maaier via UART of HDMI+USB console
+- [ ] Camera video streaming implementeren (ROS 2 → MJPEG/WebSocket bridge)
+- [ ] Maaier kaartdata ophalen wanneer maaier online is (mapSync via MQTT)
 - [x] APK v2.4.0 geanalyseerd met blutter — `encrypt_utils.dart` bevat AES key derivatie
 - [x] Server decrypt.ts herschreven met correcte key derivatie (`"abcdabcd1234" + SN[-4:]`)
 - [x] HA bridge updaten: ontsleutelde maaier-sensordata doorsturen naar Home Assistant
@@ -1546,6 +1633,16 @@ De app toont verschillende widgets afhankelijk van de maaier-status:
 - [x] LoRa module geïdentificeerd als EBYTE E32/E22 serie (M0=GPIO12, M1=GPIO46)
 - [x] Security audit: geen MQTT auth, geen AES, UART console zonder auth, plaintext WiFi in NVS
 - [x] Charger firmware v0.4.0 gedecompileerd — enige verschil is AES-128-CBC encryptie voor MQTT
+- [x] Cloud API authenticatie reverse-engineered: signature = SHA256(echostr + SHA1("qtzUser") + timestamp + token)
+- [x] Maaier OTA firmware v5.7.1 gedownload (35MB Debian pakket, ROS 2)
+- [x] Charger OTA firmware v0.3.6 gedownload (1.4MB ESP32-S3 binary)
+- [x] Maaier firmware geanalyseerd: Horizon Robotics X3 SoC, dual camera (IMX307 + PMD ToF)
+- [x] AI obstakeldetectie volledig geïmplementeerd: 2 DNN modellen (8.1MB detectie + 3.6MB segmentatie)
+- [x] Detectie klassen: person, animal, obstacle, shoes, wheel, leaf debris, faeces, rock
+- [x] Segmentatie klassen: lawn, road, terrain, fixed/static/dynamic obstacle, bush, charging station, glass
+- [x] Perception node V0.5.3d: 100Hz inference, Horizon BPU acceleratie, Nav2 costmap integratie
+- [x] Cloud data geëxporteerd naar `research/cloud_data/` (50 work records, firmware versies, equipment info)
+- [x] Cloud data geïmporteerd in lokale SQLite database + test kaart aangemaakt
 
 ## Gedocumenteerde sessies
 
@@ -1631,3 +1728,466 @@ De server kan nu ook zelf ontsleutelen (key derivatie bekend).
 - **Security**: geen MQTT auth, geen AES, UART debug console zonder auth, WiFi wachtwoorden in plaintext NVS
 - **NVS structuur**: fctry (sn_code, sn_flag) + storage (wifi_data, wifi_ap_data, mqtt_data, lora_data, rtk_data, cfg_flag)
 - **BLE provisioning**: 20-byte chunks (niet 27 — verschil door ATT header overhead), 30ms inter-chunk delay
+
+### Cloud API reverse-engineering en data export (februari 2026)
+- Cloud login via AES-versleuteld wachtwoord naar `47.253.145.99`
+- Request signature algoritme gekraakt via blutter + brute-force verificatie
+- Alle historische data geëxporteerd naar `research/cloud_data/`
+- OTA firmware bestanden gedownload: charger v0.3.6 (1.4MB) + maaier v5.7.1 (35MB)
+- Cloud data geïmporteerd in lokale SQLite database (50 work records + test kaart)
+- Script: `/tmp/novabot_cloud_fetch.js` (herbruikbaar voor toekomstige data export)
+
+**Resultaat**: Cloud API volledig reverse-engineered. Signature formule:
+`SHA256(echostr + SHA1("qtzUser") + timestamp_ms + token)`.
+Maaier firmware blijkt een Debian pakket met ROS 2 op Horizon Robotics X3 SoC.
+
+### Maaier firmware diepe analyse (februari 2026)
+- `mower_firmware_v5.7.1.deb` uitgepakt (7570 bestanden, ROS 2 Galactic)
+- AI perceptie systeem volledig geanalyseerd
+
+**Resultaat**: AI obstakeldetectie is VOLLEDIG GEÏMPLEMENTEERD en ACTIEF:
+- **Hardware**: Horizon Robotics X3 SoC met BPU AI accelerator
+- **Camera's**: Sony IMX307 (1920x1080 RGB) + PMD Royale (ToF depth)
+- **Detectie model**: `novabot_detv2_11_960_512.bin` (8.1MB) — 9 klassen (person, animal, obstacle, shoes, wheel, leaf debris, faeces, rock, background)
+- **Segmentatie model**: `bisenetv2-seg_2023-11-27_512-960_vanilla.bin` (3.6MB BiSeNet-v2) — 14 klassen (lawn, road, terrain, obstacles, bush, charging station, glass)
+- **Inference**: 100 Hz op Horizon BPU, geïntegreerd met Nav2 costmap voor padplanning
+- **Versie**: V0.5.3d (2024/06/12), actief doorontwikkeld door developer `youfeng`
+
+### React dashboard + kaart calibratie (februari 2026)
+- React dashboard gebouwd met Vite + Tailwind + Leaflet + Socket.io
+- PDOK luchtfoto satellite imagery als kaartlaag (7.5cm resolutie Nederland)
+- Kaart calibratie tool: offset (nudge N/S/E/W), rotatie (-180°/+180°), schaal (0.5x-2.0x)
+- GeoJSON polygon van tuin geïmporteerd als werkgebied voor LFIN2230700238
+- Polygon click highlight (custom highlight i.p.v. Leaflet default selectie)
+- Backend: sensorData.ts (shared cache), socketHandler.ts, dashboard REST routes, map_calibration tabel
+
+### Camera en netwerk analyse maaier (februari 2026)
+- Camera systeem volledig geanalyseerd: dual Sony IMX307 + PMD ToF, GDC fisheye correctie
+- Video streaming **niet geïmplementeerd** — was selling point maar nooit gebouwd in software
+- Geen remote toegang: geen SSH, telnet, VNC (expliciet verwijderd), HTTP server
+- ROS 2 is localhost-only, camera data verlaat maaier nooit
+- Debug mode in firmware was gepland maar uitgecommentarieerd
+- PCB foto's geanalyseerd (eigen + TÜV rapport CN23XAMH 001):
+  - X3A Board: Horizon X3 SoM, AP6212 WiFi/BLE, UART header, micro-HDMI "DEBUG", USB 3.0
+  - Motor Board: STM32F407, GPS module, LoRa receiver, relays
+- Fysieke toegang mogelijk via UART (115200 baud) of HDMI+USB keyboard
+- IP56 waterdicht — voorzichtig openen om seals niet te beschadigen
+
+### Cloud API data export (februari 2026)
+Cloud data opgehaald via directe API calls naar `47.253.145.99` (app.lfibot.com).
+
+**Resultaat**: Alle historische data geëxporteerd naar `research/cloud_data/`:
+- `work_records.json` — 50 maairecords (april-juli 2024), geïmporteerd in lokale database
+- `firmware_versions.json` — OTA versies per equipment type
+- Maaier details: model N2000, cloud versie v6.0.0, verloopt 2026-11-16
+- Charger details: model N1000, versie v0.3.6, verloopt 2029-02-22
+- Cloud slaat WiFi wachtwoorden op in plaintext (zichtbaar in equipment response)
+- Robot messages endpoint gebroken (cloud retourneert 500)
+
+### Cloud API authenticatie (reverse-engineered, februari 2026)
+
+HTTP request signature algoritme ontdekt via blutter decompilatie van `flutter_novabot/common/http.dart`
+en geverifieerd via brute-force testing tegen bekende proxy log waarden.
+
+**Login:**
+- `POST /api/nova-user/appUser/login`
+- Wachtwoord versleuteld met AES-128-CBC: key/IV = `1234123412ABCDEF`, base64 output
+- Response bevat UUID `accessToken` (niet JWT)
+
+**Request headers (alle authenticated requests):**
+| Header | Waarde | Beschrijving |
+|--------|--------|-------------|
+| `Authorization` | `<accessToken>` | UUID token uit login |
+| `echostr` | `p` + 12 random hex chars | Random nonce |
+| `nonce` | `1453b963a29b5441b839b18939aaf0817944300b` | **Statisch**: SHA1("qtzUser") |
+| `timestamp` | `String(Date.now())` | Milliseconden |
+| `signature` | SHA256(echostr + nonce + timestamp + token) | Request handtekening |
+| `source` | `app` | Vast |
+| `userlanguage` | `en` | Taalinstelling |
+
+**Signature formule:**
+```javascript
+const nonce = crypto.createHash('sha1').update('qtzUser', 'utf8').digest('hex');
+const sig = crypto.createHash('sha256').update(echostr + nonce + ts + token, 'utf8').digest('hex');
+```
+
+**Let op:** Header naming is opzettelijk misleidend:
+- `echostr` = random waarde (is eigenlijk de nonce)
+- `nonce` = statische hash (is eigenlijk een constante)
+
+**Backend:** Spring Boot microservices achter nginx + Spring Cloud Gateway.
+5 services: nova-user, nova-data, nova-file-server, novabot-message, nova-network.
+Swagger niet gedeployed (404), Spring Boot Actuator geblokkeerd door nginx (403).
+
+### OTA firmware downloads (februari 2026)
+
+Firmware bestanden gedownload vanuit cloud OTA API en opgeslagen in project root:
+
+| Bestand | Grootte | MD5 | Beschrijving |
+|---------|---------|-----|-------------|
+| `charger_ota_v0.3.6_cloud.bin` | 1.4 MB | `5a2712054309211cbdbb5d25a3d279f1` | Charger ESP32-S3 OTA |
+| `mower_firmware_v5.7.1.deb` | 35 MB | `83c2741d05c9a40ff351332af2082d7c` | Maaier Linux/ROS 2 Debian pakket |
+
+**OTA systeem**: Cloud retourneert altijd alleen de laatst beschikbare versie per apparaattype.
+Geen tussenversies beschikbaar. Alibaba OSS bucket listing is geblokkeerd.
+
+**Download URLs:**
+- Charger: `https://novabot-oss.oss-accelerate.aliyuncs.com/novabot-file/lfi-charging-station_lora-1709264279437.bin`
+- Maaier: `https://novabot-oss.oss-us-east-1.aliyuncs.com/novabot-file/lfimvp-20240915571-1726376551929.deb`
+
+---
+
+## Maaier Firmware Analyse (v5.7.1, februari 2026)
+
+De maaier firmware is een **Debian pakket** (`mvp` v5.7.1, 35MB, 7570 bestanden) dat een
+compleet **ROS 2 Galactic** systeem bevat op een **Horizon Robotics X3 SoC** met ARM aarch64.
+
+**Dit is fundamenteel anders dan de charger** (ESP32-S3 microcontroller) — de maaier draait
+volwaardig Linux met een complete navigatie- en perceptiestack.
+
+### Hardware platform
+
+| Component | Type | Details |
+|-----------|------|---------|
+| **SoC** | Horizon Robotics X3 | ARM aarch64 + BPU AI accelerator |
+| **AI chip** | Horizon BPU | Dedicated neural network inference engine |
+| **Front camera** | Sony IMX307 | 1920x1080, MIPI CSI-2, 25fps |
+| **Depth camera** | PMD Royale (ToF) | Depth, point cloud, grayscale |
+| **GPS** | RTK via charger relay | cm-nauwkeurig via LoRa NMEA relay |
+| **DDS middleware** | CycloneDDS + iceoryx | Zero-copy shared memory IPC |
+
+### ROS 2 pakketstructuur
+
+Geëxtraheerd uit `/tmp/mower_firmware/install/`:
+
+**Perceptie & Camera:**
+| Pakket | Beschrijving |
+|--------|-------------|
+| `perception_node` | AI-perceptie: obstakeldetectie + segmentatie (2.6MB binary) |
+| `camera_307_cap` | IMX307 front camera driver (MIPI, GDC undistortion) |
+| `royale_platform_driver` | PMD ToF depth camera driver |
+| `horizon_wrapper` | Horizon BPU DNN inference wrapper |
+| `percep_srv` | Perception service interfaces |
+| `take_picture_manager` | Foto-opname manager |
+
+**Navigatie (Nav2 stack):**
+| Pakket | Beschrijving |
+|--------|-------------|
+| `nav2_single_node_navigator` | Hoofd navigator |
+| `nav2_controller` | Pad-volg controller |
+| `nav2_costmap_2d` | Costmap met obstakellagen |
+| `nav2_navfn_planner` | A* global planner |
+| `nav2_theta_star_planner` | Theta* planner |
+| `nav2_smac_planner` | State lattice planner |
+| `nav2_dwb_controller` | Dynamic Window controller |
+| `nav2_regulated_pure_pursuit_controller` | Pure Pursuit controller |
+| `teb_local_planner` | Timed Elastic Band local planner |
+| `costmap_converter` | Costmap naar polygonen converter |
+
+**Kernfunctionaliteit:**
+| Pakket | Beschrijving |
+|--------|-------------|
+| `novabot_api` | MQTT ↔ ROS 2 bridge (API service) |
+| `novabot_mapping` | Kaart bouwen en beheren |
+| `coverage_planner` | Maaipatroon generatie |
+| `coverage_map_2d` | 2D dekkingskaart |
+| `compound_decision` | Beslissingslogica (autonome taken) |
+| `chassis_control` | Wielaansturing, motoren |
+| `robot_combination_localization` | GPS + ArUco + odometrie fusie |
+| `aruco_localization` | ArUco marker lokalisatie (laadstation QR code) |
+| `automatic_recharge` | Automatisch terugkeren naar charger |
+| `daemon_process` | Systeem daemon (watchdog) |
+| `ota_client` | OTA firmware update client |
+| `x3_running_check` | Horizon X3 health monitoring |
+| `x3_boot_check` | Boot verificatie |
+
+### AI Perceptie Systeem — VOLLEDIG GEÏMPLEMENTEERD
+
+De maaier heeft een **werkend AI-obstakeldetectiesysteem** met twee neurale netwerken
+die draaien op de Horizon BPU AI-accelerator.
+
+#### AI modellen
+
+| Model | Bestand | Grootte | Invoer | Architectuur |
+|-------|---------|---------|--------|-------------|
+| **Detectie** | `novabot_detv2_11_960_512.bin` | 8.1 MB | 960x512 RGB | YOLO-variant (HZ quantized) |
+| **Segmentatie** | `bisenetv2-seg_2023-11-27_512-960_vanilla.bin` | 3.6 MB | 960x512 RGB | BiSeNet-v2 (HZ quantized) |
+
+Beide modellen in Horizon quantized formaat (.bin), geoptimaliseerd voor BPU inference.
+Locatie: `install/perception_node/share/perception_node/perception_conf/`
+
+#### Detectie klassen (uit `infer_class.json`)
+
+**Object detectie model (9 klassen):**
+| ID | Klasse | Beschrijving |
+|----|--------|-------------|
+| 100 | `person` | Personen |
+| 101 | `animal` | Dieren |
+| 102 | `obstacle` | Generieke obstakels |
+| 103 | `shoes` | Schoenen |
+| 104 | `wheel` | Wielen |
+| 105 | `leaf debris` | Bladafval |
+| 106 | `faeces` | Uitwerpselen |
+| 107 | `rock` | Stenen |
+| 108 | `background` | Achtergrond |
+
+**Segmentatie model (14 klassen):**
+| ID | Klasse | Beschrijving |
+|----|--------|-------------|
+| 0 | `unlabeled` | Ongelabeld |
+| 1 | `background` | Achtergrond |
+| 2 | `lawn` | **Gazon** (hoofddoel) |
+| 3 | `road` | Weg/pad |
+| 4 | `terrain` | Terrein |
+| 5 | `fixed obstacle` | Vast obstakel |
+| 6 | `static obstacle` | Statisch obstakel |
+| 7 | `dynamic obstacle` | Dynamisch obstakel |
+| 8 | `bush` | Struik |
+| 9 | `faeces` | Uitwerpselen |
+| 10 | `charging station` | Laadstation |
+| 11 | `dirt` | Vuil |
+| 12 | `sunlight` | Zonlicht (reflectie) |
+| 13 | `glass` | Glas |
+
+#### Inference modes (runtime selecteerbaar)
+
+| Mode | Beschrijving | Service call |
+|------|-------------|-------------|
+| 1 | Alleen segmentatie | `/perception/do_perception` (SetBool) |
+| 2 | Alleen detectie | |
+| 3 | Detectie + segmentatie (fusie) | |
+
+#### Perceptie pipeline
+
+```
+IMX307 Camera (1920x1080 @ 25fps)
+    │
+    ▼ /camera/preposition/image
+Resize → 960x512
+    │
+    ├──────────────────────┐
+    ▼                      ▼
+Detectie Model         Segmentatie Model
+(8.1MB DNN)            (3.6MB BiSeNet-v2)
+BBox + confidence      Pixel-wise labels
+    │                      │
+    └──────────┬───────────┘
+               ▼
+    Fusie & Post-processing
+    - KDtree ruis filtering
+    - Kleine regio suppressie (min 3px)
+    - Morfologische sluiting
+    - Hoogte filtering (0-50cm)
+    - Groei drempel: 0.05
+               │
+    ┌──────────┴──────────┐
+    ▼                      ▼
+ToF Point Cloud        RGB Point Cloud
+(diepte-gebaseerd)     (segmentatie labels)
+    │                      │
+    └──────────┬───────────┘
+               ▼
+/perception/points_labeled (PointCloud2)
+    Met semantische labels
+               │
+               ▼
+Nav2 Costmap Obstacle Layer
+    min_obstacle_height: 0.35m
+    max_obstacle_height: 0.50m
+    obstacle_max_range: 1.49m
+    observation_persistence: 2.0s
+               │
+               ▼
+Path Planning & Obstacle Avoidance
+```
+
+#### Perception node configuratie
+
+```yaml
+det_model_name: "novabot_detv2_11_960_512.bin"
+seg_model_name: "bisenetv2-seg_2023-11-27_512-960_vanilla.bin"
+detec_threshold: 0.61          # Detectie confidence drempel
+infer_mode: 1                  # 1=seg, 2=det, 3=beide
+suppress_size: 3               # Min regio grootte (pixels)
+timer_rate: 100.0              # Inference frequentie (Hz)
+dirty_frame: 60                # Vuile lens detectie drempel
+pub_debug_image: False         # Debug visualisatie
+```
+
+#### ROS 2 topics (perceptie)
+
+| Topic | Type | Beschrijving |
+|-------|------|-------------|
+| `/camera/preposition/image` | Image | RGB input van IMX307 |
+| `/camera/tof/depth_image` | Image | Depth map van ToF |
+| `/camera/tof/point_cloud` | PointCloud2 | 3D point cloud van ToF |
+| `/perception/points_labeled` | PointCloud2 | **Hoofd output**: gelabelde obstakels |
+| `/perception/labeled_img/compressed` | CompressedImage | Debug: gesegmenteerd beeld |
+| `/perception/pedestrian_detect` | - | Gedetecteerde personen/dieren |
+| `/perception/dirty_detect` | - | Camera vuil/beslagen status |
+
+#### Camera vuil detectie
+
+Aparte ML-module die detecteert of de cameralens vuil/beslagen is:
+- Klassen: `clean`, `transparent`, `semi_transparent`, `opaque`
+- Entropie-gebaseerde analyse + ML inference
+- Service: `/start_dirty_detection`
+
+#### Perception node versiegeschiedenis (uit `perception_node_version.json`)
+
+| Versie | Datum | Wijzigingen |
+|--------|-------|-------------|
+| V0.2.0 | - | Initieel: dual-model support, camera data alignment verwijderd |
+| V0.2.1 | - | Model switching, fusie modes, nieuw detectie model |
+| V0.3.0 | - | Single-model inference, morfologische post-processing |
+| V0.3.3 | - | KDtree ruis filtering, 10% CPU reductie |
+| V0.4.0 | - | Data recording capability |
+| V0.4.7 | - | Camera vuil detectie toegevoegd |
+| V0.5.2b | - | Z-filter van 0.35→0.50m, groei drempel 0.08 (hoog gras fix) |
+| V0.5.3 | - | Groei drempel naar 0.05, laadstation kleur distinctie |
+| **V0.5.3d** | **2024/06/12** | **Huidige versie** — input size filter tegen crashes |
+
+Eigenaar: `youfeng` (LFI developer). Design docs op Feishu (Lark) intern wiki.
+
+### Maaier systeem startup volgorde
+
+Uit `debug_sh/run_all_perception.sh`:
+```
+1. iox-roudi          (shared memory daemon)
+2. camera_307_cap     (IMX307 front camera)
+3. perception_node    (AI inference)
+4. royale_platform    (ToF depth camera)
+5. robot_combination_localization (GPS/ArUco/odometrie fusie)
+6. nav2_single_node   (navigatie)
+7. coverage_planner   (maaipatroon)
+```
+
+### Debug scripts (firmware)
+
+In `debug_sh/` staan 100+ scripts voor ontwikkeling en testen:
+- `enable_perception.sh` / `disable_perception.sh` — AI aan/uit schakelen
+- `start_front_camera.sh` — Camera starten met parameters
+- `demo_tof.sh` — ToF camera demonstratie
+- `open_collision.sh` / `close_collision.sh` — Botsingsdetectie aan/uit
+- `mapping_*.sh` — Kaart bouwen scripts
+- `test_coverage_cutting.sh` — Maaitests
+- `chassis_factory_test.py` — Factory testscript (14KB Python)
+- `novabot_keyboard.py` — Keyboard teleop (15KB Python)
+- `topic_points_labeled.sh` — Live obstakel output bekijken
+
+### Shared memory architectuur
+
+DDS middleware met iceoryx voor zero-copy IPC:
+- Configuratie: `shm_config/shm_cyclonedds.xml`
+- Sub-queue capacity: 128 berichten
+- History: 16 samples
+- Alternatief: FastRTPS met `shm_fastdds.xml`
+
+### Conclusie AI obstakeldetectie
+
+**VOLLEDIG GEÏMPLEMENTEERD EN ACTIEF** — dit is geen scaffolding of belofte:
+- Twee productie AI modellen (8.1MB detectie + 3.6MB segmentatie)
+- Horizon BPU hardware-acceleratie (`hbDNNInfer`, `libdnn.so`)
+- Real-time inference op 100 Hz
+- Volledige integratie met Nav2 costmap en padplanning
+- Versiegeschiedenis toont actieve doorontwikkeling (V0.2.0 → V0.5.3d)
+- Detecteert: personen, dieren, schoenen, stenen, bladafval, uitwerpselen, struiken, glas
+- Segmenteert: gazon vs obstakel grenzen, terrein types, laadstation
+
+### Camera systeem en video streaming analyse (februari 2026)
+
+**Camera hardware:**
+| Camera | Sensor | Resolutie | Interface | Doel |
+|--------|--------|-----------|-----------|------|
+| Front (preposition) | Sony IMX307 | 1920×1080 @25fps | MIPI CSI-2 | RGB navigatie, obstakeldetectie |
+| Panoramic | Sony IMX307 | 1920×1080 | MIPI CSI-2 | Breed overzicht |
+| Depth/ToF | PMD Royale (IRS2875C) | Point cloud + grayscale | Geïntegreerd | 3D diepte, obstakel vermijding |
+
+**Camera ISP libraries (in `ota_lib/lib/`):**
+- `libimx307preposition.so` / `libimx307preposition_linear.so` — Front camera ISP
+- `libimx307panoramic.so` / `libimx307panoramic_linear.so` — Panoramic camera ISP
+- `libirs2875c_pmd.so` — PMD ToF sensor driver
+
+**Image processing pipeline:**
+1. IMX307 → MIPI CSI-2 → Horizon SIF (sensor interface)
+2. ISP (auto-exposure, white balance)
+3. GDC (fisheye undistortion via custom distortion map, 180° FOV)
+4. VPU (H.264 encoding, semiplanar420 YUV)
+5. ROS 2 Topic publish (`/camera/preposition/image/compressed`)
+
+**Camera calibratie bestanden (`ota_lib/camera_params/`):**
+- `preposition_intrinsic.json` — Fisheye K-matrix (~1129-1205px focal length)
+- `layout_preposition.json` — GDC layout (180° FOV, 1080px diameter)
+- `preposition_tof_extrinsic.json` — RGB↔ToF rotatiematrix + translatie
+- `gdc_map.py` — Python GDC distortion map generator (OpenCV fisheye)
+
+**ROS 2 camera topics:**
+| Topic | Beschrijving |
+|-------|-------------|
+| `/camera/preposition/image` | RGB image (1920×1080) |
+| `/camera/preposition/image/compressed` | Gecomprimeerde RGB stream |
+| `/camera/preposition/image_half/compressed` | Halve resolutie stream |
+| `/camera/panoramic/image/compressed` | Panoramic camera stream |
+| `/camera/tof/depth_image` | Depth map |
+| `/camera/tof/gray_image` | Grayscale van ToF |
+| `/camera/tof/point_cloud` | 3D point cloud |
+
+**Camera aan/uit via ROS 2 services:**
+```bash
+ros2 service call /camera/preposition/start_camera std_srvs/srv/SetBool "data: true"
+ros2 service call /camera/tof/start_camera std_srvs/srv/SetBool "data: true"
+```
+
+**Foto opslaan:** `ros2 service call /camera/preposition/save_camera std_srvs/srv/Empty`
+
+**Video streaming status: NIET GEÏMPLEMENTEERD**
+- Camera's zijn puur voor **autonome navigatie** — niet voor remote viewing
+- Geen RTSP server, WebRTC, MJPEG server, of P2P library (TUTK/Kalay)
+- Geen MQTT camera commando's (van de 40+ commando's is er geen camera-gerelateerd)
+- App `video_player` is alleen voor tutorial video's (`assembly2.mp4`, `plan1-4.mp4`)
+- ROS 2 is `ROS_LOCALHOST_ONLY=1` — camera data verlaat de maaier nooit
+- Live camera was een **selling point** van Novabot maar is nooit geïmplementeerd in software
+- Debug mode (uitgecommentarieerd in `run_all.sh`) had een optie voor netwerk-exposed ROS 2
+
+### Maaier netwerk services en remote toegang (februari 2026)
+
+**Status: GEEN remote toegang mogelijk zonder fysieke interventie**
+
+| Service | Status | Details |
+|---------|--------|---------|
+| SSH/SSHD | **Niet geïnstalleerd** | Geen openssh-server of dropbear aanwezig |
+| Telnet | **Niet geïnstalleerd** | |
+| VNC | **Expliciet verwijderd** | `apt purge -y x11vnc` in `start_service.sh` |
+| ADB | **Niet gevonden** | |
+| HTTP server | **Niet aanwezig** | Geen webserver voor camera/API |
+| UDP broadcast | **Uitgeschakeld** | Factory test tool (`udp_client`), uitgecommentarieerd |
+| ROS 2 | **Localhost only** | `export ROS_LOCALHOST_ONLY=1` in alle startup scripts |
+| dnsmasq | **Actief** | DHCP/DNS voor WiFi AP modus |
+
+**Startup services (systemd):**
+- `novabot_launch.service` → `/root/novabot/scripts/run_novabot.sh start`
+- `novabot_ota_launch.service` → `/userdata/ota/run_ota.sh start` (OTA + mqtt_node)
+
+**WiFi configuratie in firmware:**
+| Netwerk | SSID | Wachtwoord | Type |
+|---------|------|-----------|------|
+| LFI intern | `lfi-abc` / `LFI_TEST` | `nlfi@upenn123` / `lfi@upenn123` | Development |
+| Factory default | `abcd1234` | `12345678` | Test |
+| Maaier AP | `<SN>` | `12345678` | Eigen access point |
+
+**Debug mode (uitgecommentarieerd in `debug_sh/run_all.sh`):**
+```bash
+#export DEBUG=ON
+#export NETWORK_INTERFACE=wlan0
+#export IPAddress=$(ifconfig $NETWORK_INTERFACE | grep -o 'inet [^ ]*' | cut -d ":" -f2)
+```
+Bevestigt dat netwerktoegang **gepland was** maar nooit in productie gezet.
+
+**Fysieke toegangsmogelijkheden (voor SSH installatie / video streaming):**
+1. **UART console** — GND/TX/RX/3V3 header op X3A board, 115200 baud → root shell
+2. **HDMI + USB keyboard** — Micro-HDMI "DEBUG" poort + USB 3.0 → Linux console
+3. Eenmaal ingelogd: `apt install -y openssh-server` (maaier heeft apt + internet via WiFi)
+4. Dan `ROS_LOCALHOST_ONLY=0` zetten voor camera access via netwerk
+
+**Let op bij openen behuizing**: Maaier is IP56 waterdicht. Rubber gaskets/O-ringen rondom de naad.
+Voorzichtig openen om waterproof seals niet te beschadigen.

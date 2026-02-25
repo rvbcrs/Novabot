@@ -1,9 +1,12 @@
 import 'dotenv/config';
 import http from 'http';
+import path from 'path';
 import express from 'express';
 import { initDb } from './db/database.js';
 import { startMqttBroker } from './mqtt/broker.js';
 import { cloudHttpProxy } from './proxy/httpProxy.js';
+import { initDashboardSocket } from './dashboard/socketHandler.js';
+import { dashboardRouter } from './routes/dashboard.js';
 
 const PROXY_MODE = process.env.PROXY_MODE ?? 'local';
 
@@ -89,17 +92,33 @@ if (PROXY_MODE === 'cloud') {
   // admin (lokaal gebruik, geen auth)
   app.use('/api/admin', adminRouter);
 
-  // ── Catch-all: log unknown routes so we can discover missing endpoints ────────
+  // dashboard (lokaal gebruik, geen auth)
+  app.use('/api/dashboard', dashboardRouter);
+
+  // ── Dashboard static files (productie build) ────────────────────────────────
+  const dashboardPath = path.resolve(__dirname, '../../novabot-dashboard/dist');
+  app.use(express.static(dashboardPath));
+
+  // ── Catch-all: log unknown API routes, SPA fallback voor dashboard ──────────
   app.use((req, res) => {
-    console.warn(`[UNKNOWN] ${req.method} ${req.originalUrl}`, JSON.stringify(req.body));
-    res.status(404).json({ code: 404, msg: 'Not found', data: null });
+    if (req.path.startsWith('/api/')) {
+      console.warn(`[UNKNOWN] ${req.method} ${req.originalUrl}`, JSON.stringify(req.body));
+      res.status(404).json({ code: 404, msg: 'Not found', data: null });
+    } else {
+      // SPA fallback: serveer index.html voor alle niet-API routes
+      res.sendFile(path.join(dashboardPath, 'index.html'), (err) => {
+        if (err) res.status(404).json({ code: 404, msg: 'Not found', data: null });
+      });
+    }
   });
 }
 
 // ── Start server ─────────────────────────────────────────────────────────────
 // TLS wordt afgehandeld door nginx proxy manager — Node.js draait puur HTTP.
 const PORT = parseInt(process.env.PORT ?? '3000', 10);
-http.createServer(app).listen(PORT, '0.0.0.0', () => {
-  console.log(`[SERVER] HTTP listening on port ${PORT}`);
+const server = http.createServer(app);
+initDashboardSocket(server);
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`[SERVER] HTTP + WebSocket listening on port ${PORT}`);
   console.log(`[SERVER] Verwacht nginx proxy manager voor TLS termination op app.lfibot.com`);
 });

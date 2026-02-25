@@ -5,6 +5,9 @@ import { DeviceRegistryRow } from '../types/index.js';
 import { startMqttBridge } from '../proxy/mqttBridge.js';
 import { tryDecrypt } from './decrypt.js';
 import { startHomeAssistantBridge, forwardToHomeAssistant, publishDeviceOnline, publishDeviceOffline } from './homeassistant.js';
+import { updateDeviceData } from './sensorData.js';
+import { forwardToDashboard, emitDeviceOnline, emitDeviceOffline, pushMqttLog } from '../dashboard/socketHandler.js';
+import { initMapSync, onMowerConnected, handleMapMessage } from './mapSync.js';
 
 const PROXY_MODE = process.env.PROXY_MODE ?? 'local';
 
@@ -128,6 +131,9 @@ export async function startMqttBroker(): Promise<void> {
   // waardoor doConnack nooit wordt uitgevoerd.
   const broker = await Aedes.createBroker();
 
+  // Initialiseer mapSync met de broker zodat we MQTT commands kunnen publiceren
+  initMapSync(broker);
+
   broker.authenticate = (client: Client, username: Readonly<string | undefined>, password: Readonly<Buffer | undefined>, callback) => {
     const clientId  = client.id ?? '';
     const user      = username ?? '';
@@ -151,6 +157,11 @@ export async function startMqttBroker(): Promise<void> {
       console.log(`[MQTT] CONNECT   ${clientType} clientId="${clientId}" sn=${sn ?? '?'} mac=${mac ?? '?'} user="${user}"`);
     }
 
+    pushMqttLog({
+      ts: now, type: 'connect', clientId, clientType, sn: sn ?? null,
+      direction: '', topic: '', payload: `user="${user}" mac=${mac ?? '?'}`, encrypted: false,
+    });
+
     upsertDevice(clientId, sn, mac, user || null);
 
     // Sla credentials op zodat de MQTT bridge ze kan doorsturen naar upstream
@@ -161,6 +172,9 @@ export async function startMqttBroker(): Promise<void> {
       if (!onlineBySn.has(sn)) onlineBySn.set(sn, new Set());
       onlineBySn.get(sn)!.add(clientId);
       publishDeviceOnline(sn);
+      emitDeviceOnline(sn);
+      // Automatisch kaarten opvragen bij maaier-connect
+      onMowerConnected(sn);
     }
 
     (callback as Function)(null, true);
@@ -168,6 +182,10 @@ export async function startMqttBroker(): Promise<void> {
 
   broker.on('clientError', (client: Client, err: Error) => {
     console.error(`[MQTT] ERROR    clientId="${client.id}" err=${err.message}`);
+    pushMqttLog({
+      ts: Date.now(), type: 'error', clientId: client.id, clientType: '?', sn: null,
+      direction: '', topic: '', payload: err.message, encrypted: false,
+    });
   });
 
   (broker as any).on('connectionError', (client: Client, err: Error) => {
@@ -180,18 +198,31 @@ export async function startMqttBroker(): Promise<void> {
     // Verwijder uit online-set op basis van SN in device_registry
     const row = db.prepare('SELECT sn FROM device_registry WHERE mqtt_client_id = ?')
       .get(client.id) as { sn: string | null } | undefined;
-    if (row?.sn) {
-      onlineBySn.get(row.sn)?.delete(client.id);
-      if (!isDeviceOnline(row.sn)) publishDeviceOffline(row.sn);
-      console.log(`[MQTT] DISCONNECT clientId="${client.id}" sn=${row.sn}`);
+    const disconnSn = row?.sn ?? null;
+    if (disconnSn) {
+      onlineBySn.get(disconnSn)?.delete(client.id);
+      if (!isDeviceOnline(disconnSn)) {
+        publishDeviceOffline(disconnSn);
+        emitDeviceOffline(disconnSn);
+      }
+      console.log(`[MQTT] DISCONNECT clientId="${client.id}" sn=${disconnSn}`);
     } else {
       console.log(`[MQTT] DISCONNECT clientId="${client.id}"`);
     }
+    pushMqttLog({
+      ts: Date.now(), type: 'disconnect', clientId: client.id, clientType: '?', sn: disconnSn,
+      direction: '', topic: '', payload: '', encrypted: false,
+    });
   });
 
   broker.on('subscribe', (subscriptions, client: Client) => {
     const topics = subscriptions.map(s => s.topic).join(', ');
     console.log(`[MQTT] SUBSCRIBE ${client.id} -> [${topics}]`);
+    const subSn = extractSn(client.id) ?? extractSn(topics);
+    pushMqttLog({
+      ts: Date.now(), type: 'subscribe', clientId: client.id, clientType: '?', sn: subSn,
+      direction: '', topic: topics, payload: '', encrypted: false,
+    });
   });
 
   broker.on('publish', (packet: AedesPublishPacket, client: Client | null) => {
@@ -203,16 +234,35 @@ export async function startMqttBroker(): Promise<void> {
     // Ontsleutel maaier-berichten (LFIN*) met AES-128-CBC
     const mowerSn = client.id.startsWith('LFIN') ? client.id.replace(/_.*$/, '') :
                     (direction === '←DEV' && packet.topic.includes('/LFIN')) ? packet.topic.split('/').pop() ?? '' : '';
+    let logPayload: string;
+    let isEncrypted = false;
     if (mowerSn) {
       const decrypted = tryDecrypt(payloadBuf, mowerSn);
       if (decrypted) {
         console.log(`[MQTT] PUBLISH  ${client.id} ${direction} ${packet.topic}  [AES] ${decrypted}`);
+        logPayload = decrypted;
+        isEncrypted = true;
       } else {
         console.log(`[MQTT] PUBLISH  ${client.id} ${direction} ${packet.topic}  [encrypted ${payloadBuf.length}B]`);
+        logPayload = `[encrypted ${payloadBuf.length}B]`;
+        isEncrypted = true;
       }
     } else {
-      const payload = payloadBuf.toString();
-      console.log(`[MQTT] PUBLISH  ${client.id} ${direction} ${packet.topic}  ${payload}`);
+      logPayload = payloadBuf.toString();
+      console.log(`[MQTT] PUBLISH  ${client.id} ${direction} ${packet.topic}  ${logPayload}`);
+    }
+
+    {
+      const pubSn = extractSn(client.id) ?? extractSn(packet.topic);
+      const isApp = /^[0-9a-f]{8}-/i.test(client.id);
+      pushMqttLog({
+        ts: Date.now(), type: 'publish', clientId: client.id,
+        clientType: isApp ? 'APP' : 'DEV', sn: pubSn,
+        direction: direction as '→DEV' | '←DEV' | '',
+        topic: packet.topic,
+        payload: logPayload.length > 2000 ? logPayload.slice(0, 2000) + '...' : logPayload,
+        encrypted: isEncrypted,
+      });
     }
 
     const payload = payloadBuf.toString();
@@ -232,16 +282,34 @@ export async function startMqttBroker(): Promise<void> {
       }
     }
 
-    // Forward naar Home Assistant bridge (no-op als niet geconfigureerd)
+    // Forward naar Home Assistant bridge + dashboard
     // Voor maaier-berichten: stuur ontsleutelde payload door i.p.v. ruwe ciphertext
     const topicSn = sn ?? extractSn(packet.topic);
     if (mowerSn) {
       const decryptedJson = tryDecrypt(payloadBuf, mowerSn);
       if (decryptedJson) {
-        forwardToHomeAssistant(packet.topic, Buffer.from(decryptedJson, 'utf8'), mowerSn);
+        const decryptedBuf = Buffer.from(decryptedJson, 'utf8');
+
+        // Check of dit een kaart-gerelateerde response is
+        try {
+          const parsed = JSON.parse(decryptedJson);
+          handleMapMessage(mowerSn, parsed);
+        } catch { /* geen JSON of geen map-bericht */ }
+
+        const changes = updateDeviceData(mowerSn, decryptedBuf);
+        forwardToHomeAssistant(packet.topic, decryptedBuf, mowerSn, changes);
+        forwardToDashboard(mowerSn, changes);
       }
-    } else {
-      forwardToHomeAssistant(packet.topic, payloadBuf, topicSn);
+    } else if (topicSn) {
+      // Check ook niet-versleutelde berichten op kaart-responses
+      try {
+        const parsed = JSON.parse(payload);
+        handleMapMessage(topicSn, parsed);
+      } catch { /* geen JSON of geen map-bericht */ }
+
+      const changes = updateDeviceData(topicSn, payloadBuf);
+      forwardToHomeAssistant(packet.topic, payloadBuf, topicSn, changes);
+      forwardToDashboard(topicSn, changes);
     }
   });
 

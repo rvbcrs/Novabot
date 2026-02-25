@@ -1,3 +1,26 @@
 NOVABOT_*/
 NOVABOT_*.*apk
 blutter*
+*.bin
+*.deb
+*.elf
+*.xapk
+
+# Research — skip large binaries and APK data
+research/NOVABOT_*/
+research/blutter_output*/
+research/ghidra_output/
+research/cloud_data/
+research/*.pklg
+research/*.pdf
+research/*.bin
+research/*.elf
+research/*.xapk
+
+# Mower firmware — skip PGM occupancy grids (large)
+research/mower_firmware/**/*.pgm
+research/mower_firmware/ota_lib/
+
+# Dashboard build artifacts
+novabot-dashboard/node_modules/
+novabot-dashboard/dist/
