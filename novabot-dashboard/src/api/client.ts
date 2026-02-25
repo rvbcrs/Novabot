@@ -46,3 +46,35 @@ export async function saveCalibration(sn: string, cal: MapCalibration): Promise<
     body: JSON.stringify(cal),
   });
 }
+
+export async function renameMap(sn: string, mapId: string, mapName: string): Promise<void> {
+  await fetch(`${BASE}/maps/${encodeURIComponent(sn)}/${encodeURIComponent(mapId)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mapName }),
+  });
+}
+
+export async function updateMapArea(sn: string, mapId: string, mapArea: Array<{ lat: number; lng: number }>): Promise<void> {
+  await fetch(`${BASE}/maps/${encodeURIComponent(sn)}/${encodeURIComponent(mapId)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mapArea }),
+  });
+}
+
+export async function createMap(sn: string, mapName: string, mapArea: Array<{ lat: number; lng: number }>, mapType?: string): Promise<MapData> {
+  const res = await fetch(`${BASE}/maps/${encodeURIComponent(sn)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mapName, mapArea, mapType }),
+  });
+  const data = await res.json();
+  return data.map;
+}
+
+export async function deleteMap(sn: string, mapId: string): Promise<void> {
+  await fetch(`${BASE}/maps/${encodeURIComponent(sn)}/${encodeURIComponent(mapId)}`, {
+    method: 'DELETE',
+  });
+}

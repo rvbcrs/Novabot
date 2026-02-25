@@ -9,7 +9,7 @@ import { isDeviceOnline } from '../mqtt/broker.js';
 import { getRecentLogs } from '../dashboard/socketHandler.js';
 import { requestMapList, requestMapOutline } from '../mqtt/mapSync.js';
 import { generateMapZipFromDb, gpsToLocal, localToGps, parseMapZip, type GpsPoint } from '../mqtt/mapConverter.js';
-import { existsSync } from 'fs';
+import { existsSync, unlinkSync } from 'fs';
 import path from 'path';
 
 interface DeviceRegistryRow {
@@ -144,6 +144,103 @@ dashboardRouter.post('/maps/:sn/request-outline', (req: Request, res: Response) 
   }
   requestMapOutline(sn, mapId);
   res.json({ ok: true, message: `get_map_outline gestuurd naar ${sn} voor kaart ${mapId}` });
+});
+
+// POST /api/dashboard/maps/:sn — nieuwe kaart aanmaken (getekend op dashboard)
+dashboardRouter.post('/maps/:sn', (req: Request, res: Response) => {
+  const { sn } = req.params;
+  const { mapName, mapArea, mapType } = req.body as {
+    mapName?: string;
+    mapArea?: Array<{ lat: number; lng: number }>;
+    mapType?: string;
+  };
+
+  if (!mapArea || !Array.isArray(mapArea) || mapArea.length < 3) {
+    res.status(400).json({ error: 'mapArea met minimaal 3 punten is vereist' });
+    return;
+  }
+
+  const typeSlug = mapType && ['work', 'obstacle', 'unicom'].includes(mapType) ? mapType : 'work';
+  const mapId = `dashboard_${typeSlug}_${Date.now()}`;
+  const lats = mapArea.map(p => p.lat);
+  const lngs = mapArea.map(p => p.lng);
+  const bounds = {
+    minLat: Math.min(...lats), maxLat: Math.max(...lats),
+    minLng: Math.min(...lngs), maxLng: Math.max(...lngs),
+  };
+
+  db.prepare(`
+    INSERT INTO maps (map_id, mower_sn, map_name, map_area, map_max_min, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+  `).run(mapId, sn, mapName ?? null, JSON.stringify(mapArea), JSON.stringify(bounds));
+
+  res.json({
+    ok: true,
+    map: {
+      mapId,
+      mapName: mapName ?? null,
+      mapArea,
+      mapMaxMin: bounds,
+      createdAt: new Date().toISOString(),
+    },
+  });
+});
+
+// PATCH /api/dashboard/maps/:sn/:mapId — hernoem of bewerk een kaart
+dashboardRouter.patch('/maps/:sn/:mapId', (req: Request, res: Response) => {
+  const { sn, mapId } = req.params;
+  const { mapName, mapArea } = req.body as {
+    mapName?: string;
+    mapArea?: Array<{ lat: number; lng: number }>;
+  };
+
+  const row = db.prepare('SELECT map_id FROM maps WHERE map_id = ? AND mower_sn = ?').get(mapId, sn);
+  if (!row) {
+    res.status(404).json({ error: 'Kaart niet gevonden' });
+    return;
+  }
+
+  // Update polygon punten als meegegeven
+  if (mapArea && Array.isArray(mapArea) && mapArea.length >= 3) {
+    const lats = mapArea.map(p => p.lat);
+    const lngs = mapArea.map(p => p.lng);
+    const bounds = {
+      minLat: Math.min(...lats), maxLat: Math.max(...lats),
+      minLng: Math.min(...lngs), maxLng: Math.max(...lngs),
+    };
+    db.prepare('UPDATE maps SET map_area = ?, map_max_min = ?, updated_at = datetime(\'now\') WHERE map_id = ? AND mower_sn = ?')
+      .run(JSON.stringify(mapArea), JSON.stringify(bounds), mapId, sn);
+  }
+
+  // Update naam als meegegeven
+  if (mapName !== undefined) {
+    db.prepare('UPDATE maps SET map_name = ?, updated_at = datetime(\'now\') WHERE map_id = ? AND mower_sn = ?')
+      .run(mapName ?? null, mapId, sn);
+  }
+
+  res.json({ ok: true });
+});
+
+// DELETE /api/dashboard/maps/:sn/:mapId — verwijder een kaart
+dashboardRouter.delete('/maps/:sn/:mapId', (req: Request, res: Response) => {
+  const { sn, mapId } = req.params;
+
+  const row = db.prepare('SELECT file_name FROM maps WHERE map_id = ? AND mower_sn = ?').get(mapId, sn) as { file_name: string | null } | undefined;
+  if (!row) {
+    res.status(404).json({ error: 'Kaart niet gevonden' });
+    return;
+  }
+
+  // Verwijder eventueel opgeslagen bestand
+  if (row.file_name) {
+    const filePath = path.resolve('storage/maps', row.file_name);
+    if (existsSync(filePath)) {
+      try { unlinkSync(filePath); } catch { /* ignore */ }
+    }
+  }
+
+  db.prepare('DELETE FROM maps WHERE map_id = ? AND mower_sn = ?').run(mapId, sn);
+  res.json({ ok: true });
 });
 
 // ── Map converter endpoints ──────────────────────────────────────

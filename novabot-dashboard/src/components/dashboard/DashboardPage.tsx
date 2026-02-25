@@ -78,10 +78,20 @@ export function DashboardPage({ devices, loading, logs }: Props) {
                       batteryPower: selected.sensors.battery_power ?? selected.sensors.battery_capacity,
                       batteryState: selected.sensors.battery_state,
                     }}
+                    mowing={{
+                      mowingProgress: selected.sensors.mowing_progress,
+                      coveringArea: selected.sensors.covering_area,
+                      finishedArea: selected.sensors.finished_area,
+                      workStatus: selected.sensors.work_status,
+                      mowSpeed: selected.sensors.mow_speed,
+                      covDirection: selected.sensors.cov_direction,
+                    }}
                   />
                   {/* Sensor tiles floating on map */}
-                  <div className="absolute bottom-0 left-0 right-0 z-[1000] max-h-[50%] overflow-auto p-4">
-                    <MowerStatus device={selected} overlay />
+                  <div className="absolute bottom-0 left-0 right-0 z-[1000] max-h-[50%] overflow-auto p-4 pointer-events-none">
+                    <div className="pointer-events-auto">
+                      <MowerStatus device={selected} overlay />
+                    </div>
                   </div>
                 </div>
               )}

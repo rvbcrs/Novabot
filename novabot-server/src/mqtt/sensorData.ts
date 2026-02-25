@@ -65,6 +65,8 @@ export const SENSORS: SensorDef[] = [
   { field: 'working_hours',    name: 'Working Hours',     component: 'sensor', icon: 'mdi:timer', device_class: 'duration', state_class: 'total_increasing', unit: 'h' },
   { field: 'covering_area',    name: 'Covering Area',     component: 'sensor', icon: 'mdi:texture-box', state_class: 'measurement' },
   { field: 'finished_area',    name: 'Finished Area',     component: 'sensor', icon: 'mdi:check-decagram', state_class: 'measurement' },
+  { field: 'cov_direction',    name: 'Mow Direction',     component: 'sensor', icon: 'mdi:compass', state_class: 'measurement', unit: '°' },
+  { field: 'path_direction',   name: 'Path Direction',    component: 'sensor', icon: 'mdi:compass-outline', state_class: 'measurement', unit: '°' },
   { field: 'x',                name: 'Position X',        component: 'sensor', icon: 'mdi:map-marker',           entity_category: 'diagnostic' },
   { field: 'y',                name: 'Position Y',        component: 'sensor', icon: 'mdi:map-marker',           entity_category: 'diagnostic' },
   { field: 'z',                name: 'Position Z',        component: 'sensor', icon: 'mdi:map-marker',           entity_category: 'diagnostic' },

@@ -1643,6 +1643,7 @@ De app toont verschillende widgets afhankelijk van de maaier-status:
 - [x] Perception node V0.5.3d: 100Hz inference, Horizon BPU acceleratie, Nav2 costmap integratie
 - [x] Cloud data geëxporteerd naar `research/cloud_data/` (50 work records, firmware versies, equipment info)
 - [x] Cloud data geïmporteerd in lokale SQLite database + test kaart aangemaakt
+- [x] Kaart bouwen analyse: werkt volledig via MQTT (lokaal), cloud upload is alleen backup en mag falen
 
 ## Gedocumenteerde sessies
 

@@ -4,11 +4,12 @@ import L from 'leaflet';
 import {
   MapPin, Map as MapIcon, Trash2, Route, Wifi, WifiOff, Satellite, Crosshair,
   Battery, BatteryCharging, BatteryLow, BatteryFull, Layers,
-  SlidersHorizontal, Save, X, RotateCcw,
+  SlidersHorizontal, Save, X, RotateCcw, Pencil, Check, Scissors, Navigation,
   ChevronUp, ChevronDown, ChevronLeft, ChevronRight,
 } from 'lucide-react';
 import type { MapData, TrailPoint, MapCalibration } from '../../types';
-import { fetchMaps, fetchTrail, clearTrail, fetchCalibration, saveCalibration } from '../../api/client';
+import { fetchMaps, fetchTrail, clearTrail, fetchCalibration, saveCalibration, deleteMap, renameMap, updateMapArea, createMap } from '../../api/client';
+import { PolygonEditor } from './PolygonEditor';
 
 // Fix Leaflet default marker icons in Vite
 import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png';
@@ -36,9 +37,9 @@ const AREA_STYLES = {
 function getAreaStyle(mapId: string, mapName?: string | null) {
   const id = mapId.toLowerCase();
   const name = (mapName ?? '').toLowerCase();
-  if (id.includes('obstacle') || name.includes('obstakel')) return AREA_STYLES.obstacle;
-  if (id.includes('unicom') || name.includes('pad naar')) return AREA_STYLES.unicom;
-  if (id.includes('work') || name.includes('werkgebied')) return AREA_STYLES.work;
+  if (id.includes('obstacle') || name.includes('obstakel') || name.includes('obstacle')) return AREA_STYLES.obstacle;
+  if (id.includes('unicom') || name.includes('pad naar') || name.includes('kanaal') || name.includes('channel')) return AREA_STYLES.unicom;
+  if (id.includes('work') || name.includes('werkgebied') || name.includes('map')) return AREA_STYLES.work;
   return AREA_STYLES.default;
 }
 
@@ -50,11 +51,21 @@ interface SignalInfo {
   batteryState?: string;
 }
 
+interface MowingInfo {
+  mowingProgress?: string;
+  coveringArea?: string;
+  finishedArea?: string;
+  workStatus?: string;
+  mowSpeed?: string;
+  covDirection?: string;
+}
+
 interface Props {
   sn: string;
   lat?: string;
   lng?: string;
   signals?: SignalInfo;
+  mowing?: MowingInfo;
 }
 
 function wifiColor(rssi: number): string {
@@ -124,6 +135,52 @@ function ResizeHandler() {
     const t2 = setTimeout(() => map.invalidateSize(), 350);
     return () => { clearTimeout(t1); clearTimeout(t2); };
   }, [map]);
+  return null;
+}
+
+/** Zoom-aware mowing coverage band — renders trail as wide stripes representing mowed area */
+function CoverageTrail({ positions, widthMeters = 0.5 }: { positions: [number, number][]; widthMeters?: number }) {
+  const map = useMap();
+  const [weight, setWeight] = useState(6);
+
+  useEffect(() => {
+    const updateWeight = () => {
+      const zoom = map.getZoom();
+      const center = map.getCenter();
+      // meters per pixel at this zoom level and latitude
+      const metersPerPixel = 156543.03 * Math.cos(center.lat * Math.PI / 180) / Math.pow(2, zoom);
+      setWeight(Math.max(2, widthMeters / metersPerPixel));
+    };
+    updateWeight();
+    map.on('zoomend', updateWeight);
+    return () => { map.off('zoomend', updateWeight); };
+  }, [map, widthMeters]);
+
+  if (positions.length < 2) return null;
+
+  return (
+    <Polyline
+      positions={positions}
+      pathOptions={{
+        color: '#10b981',
+        weight,
+        opacity: 0.35,
+        lineCap: 'butt',
+        lineJoin: 'round',
+      }}
+    />
+  );
+}
+
+/** Click handler for draw mode — adds points to the polygon */
+function DrawClickHandler({ onPoint }: { onPoint: (latlng: [number, number]) => void }) {
+  const map = useMap();
+  useEffect(() => {
+    const handler = (e: L.LeafletMouseEvent) => onPoint([e.latlng.lat, e.latlng.lng]);
+    map.on('click', handler);
+    map.getContainer().style.cursor = 'crosshair';
+    return () => { map.off('click', handler); map.getContainer().style.cursor = ''; };
+  }, [map, onPoint]);
   return null;
 }
 
@@ -202,15 +259,29 @@ function calibratePoints(
 
 const DEFAULT_CAL: MapCalibration = { offsetLat: 0, offsetLng: 0, rotation: 0, scale: 1 };
 
+const AREA_TYPE_META = {
+  work:     { color: '#10b981', label: 'Werkgebied', icon: '🌱' },
+  obstacle: { color: '#ef4444', label: 'Obstakel',   icon: '🚧' },
+  unicom:   { color: '#3b82f6', label: 'Kanaal',     icon: '↔️' },
+} as const;
+
+type AreaType = keyof typeof AREA_TYPE_META;
+
 // ── Nudge step: ~0.5m in degrees ─────────────────────────────────
 const NUDGE_STEP = 0.000005; // ~0.55m lat, ~0.35m lng at 52°N
 
-export function MowerMap({ sn, lat, lng, signals }: Props) {
+export function MowerMap({ sn, lat, lng, signals, mowing }: Props) {
   const [maps, setMaps] = useState<MapData[]>([]);
   const [trail, setTrail] = useState<TrailPoint[]>([]);
   const [showTrail, setShowTrail] = useState(true);
   const [tileLayer, setTileLayer] = useState<'satellite' | 'street'>('satellite');
   const [selectedMapId, setSelectedMapId] = useState<string | null>(null);
+
+  // Polygon edit/draw state
+  const [editMode, setEditMode] = useState<'none' | 'edit' | 'draw'>('none');
+  const [editVertices, setEditVertices] = useState<[number, number][]>([]);
+  const [editingMapId, setEditingMapId] = useState<string | null>(null);
+  const [drawType, setDrawType] = useState<'work' | 'obstacle' | 'unicom'>('work');
 
   // Calibration state
   const [savedCal, setSavedCal] = useState<MapCalibration>(DEFAULT_CAL);
@@ -245,6 +316,94 @@ export function MowerMap({ sn, lat, lng, signals }: Props) {
   const handleClearTrail = useCallback(() => {
     clearTrail(sn).then(() => setTrail([])).catch(() => {});
   }, [sn]);
+
+  const handleDeleteMap = useCallback((mapId: string) => {
+    deleteMap(sn, mapId).then(() => {
+      setMaps(prev => prev.filter(m => m.mapId !== mapId));
+      setSelectedMapId(null);
+    }).catch(() => {});
+  }, [sn]);
+
+  // Inline rename state
+  const [editingName, setEditingName] = useState<string | null>(null);
+
+  const handleRenameMap = useCallback((mapId: string, newName: string) => {
+    const trimmed = newName.trim();
+    renameMap(sn, mapId, trimmed).then(() => {
+      setMaps(prev => prev.map(m => m.mapId === mapId ? { ...m, mapName: trimmed || null } : m));
+      setEditingName(null);
+    }).catch(() => {});
+  }, [sn]);
+
+  // Start editing an existing polygon — accepts map data directly to avoid stale closure
+  const startEditMap = useCallback((mapId: string, mapArea: Array<{ lat: number; lng: number }>) => {
+    if (mapArea.length < 3) return;
+    setEditingMapId(mapId);
+    setEditVertices(mapArea.map(p => [p.lat, p.lng] as [number, number]));
+    setEditMode('edit');
+    setSelectedMapId(null);
+    setEditingName(null);
+    setUserInteracted(true);
+  }, []);
+
+  // Start drawing a new polygon
+  const startDrawMap = useCallback(() => {
+    setEditingMapId(null);
+    setEditVertices([]);
+    setEditMode('draw');
+    setSelectedMapId(null);
+    setUserInteracted(true);
+  }, []);
+
+  // Determine editor polygon color based on context
+  const editorColor = useMemo(() => {
+    if (editMode === 'draw') return AREA_TYPE_META[drawType].color;
+    if (editMode === 'edit' && editingMapId) {
+      const m = maps.find(p => p.mapId === editingMapId);
+      if (m) return getAreaStyle(m.mapId, m.mapName).color;
+    }
+    return '#10b981';
+  }, [editMode, drawType, editingMapId, maps]);
+
+  // Save edited/drawn polygon
+  const handleSavePolygon = useCallback(() => {
+    if (editVertices.length < 3) return;
+    const area = editVertices.map(([lat, lng]) => ({ lat, lng }));
+
+    if (editMode === 'edit' && editingMapId) {
+      updateMapArea(sn, editingMapId, area).then(() => {
+        setMaps(prev => prev.map(m => m.mapId === editingMapId ? { ...m, mapArea: area } : m));
+        setEditMode('none');
+        setEditVertices([]);
+        setEditingMapId(null);
+      }).catch(() => {});
+    } else if (editMode === 'draw') {
+      const typeMeta = AREA_TYPE_META[drawType];
+      const count = maps.filter(m => {
+        const s = getAreaStyle(m.mapId, m.mapName);
+        return s.color === typeMeta.color;
+      }).length;
+      const name = `${typeMeta.label} ${count + 1}`;
+      createMap(sn, name, area, drawType).then(newMap => {
+        setMaps(prev => [...prev, newMap]);
+        setEditMode('none');
+        setEditVertices([]);
+        setSelectedMapId(newMap.mapId);
+      }).catch(() => {});
+    }
+  }, [editVertices, editMode, editingMapId, sn, maps, drawType]);
+
+  // Cancel edit/draw
+  const cancelEditPolygon = useCallback(() => {
+    setEditMode('none');
+    setEditVertices([]);
+    setEditingMapId(null);
+  }, []);
+
+  // Add point in draw mode
+  const handleDrawPoint = useCallback((latlng: [number, number]) => {
+    setEditVertices(prev => [...prev, latlng]);
+  }, []);
 
   const hasGps = lat && lng && lat !== '0' && lng !== '0';
   const position: [number, number] = hasGps
@@ -353,8 +512,19 @@ export function MowerMap({ sn, lat, lng, signals }: Props) {
               <Trash2 className="w-3.5 h-3.5" />
             </button>
           )}
+          {/* Draw new polygon */}
+          {editMode === 'none' && !calibrating && (
+            <button
+              onClick={startDrawMap}
+              className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded transition-colors bg-gray-700/50 text-gray-400 hover:text-emerald-400 hover:bg-emerald-900/30"
+              title="Teken een nieuw werkgebied"
+            >
+              <Pencil className="w-3 h-3" />
+              Tekenen
+            </button>
+          )}
           {/* Calibrate toggle */}
-          {polygonMaps.length > 0 && !calibrating && (
+          {polygonMaps.length > 0 && !calibrating && editMode === 'none' && (
             <button
               onClick={startCalibrating}
               className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded transition-colors bg-gray-700/50 text-gray-400 hover:text-amber-400 hover:bg-amber-900/30"
@@ -374,12 +544,27 @@ export function MowerMap({ sn, lat, lng, signals }: Props) {
             <Layers className="w-3 h-3" />
             {tileLayer === 'satellite' ? 'Sat' : 'Map'}
           </button>
-          {polygonMaps.length > 0 && (
-            <span className="inline-flex items-center gap-1 text-xs text-gray-500">
-              <MapIcon className="w-3 h-3" />
-              {polygonMaps.length} map{polygonMaps.length !== 1 ? 's' : ''}
-            </span>
-          )}
+          {polygonMaps.length > 0 && (() => {
+            const counts = { work: 0, obstacle: 0, unicom: 0, other: 0 };
+            for (const m of polygonMaps) {
+              const s = getAreaStyle(m.mapId, m.mapName);
+              if (s === AREA_STYLES.work) counts.work++;
+              else if (s === AREA_STYLES.obstacle) counts.obstacle++;
+              else if (s === AREA_STYLES.unicom) counts.unicom++;
+              else counts.other++;
+            }
+            const parts: string[] = [];
+            if (counts.work > 0) parts.push(`${counts.work} map${counts.work !== 1 ? 's' : ''}`);
+            if (counts.obstacle > 0) parts.push(`${counts.obstacle} obstacle${counts.obstacle !== 1 ? 's' : ''}`);
+            if (counts.unicom > 0) parts.push(`${counts.unicom} channel${counts.unicom !== 1 ? 's' : ''}`);
+            if (counts.other > 0) parts.push(`${counts.other} other`);
+            return (
+              <span className="inline-flex items-center gap-1 text-xs text-gray-500">
+                <MapIcon className="w-3 h-3" />
+                {parts.join(', ')}
+              </span>
+            );
+          })()}
           {hasGps ? (
             <span className="text-xs text-gray-500 font-mono">
               {parseFloat(lat).toFixed(6)}, {parseFloat(lng).toFixed(6)}
@@ -409,37 +594,53 @@ export function MowerMap({ sn, lat, lng, signals }: Props) {
           {polygonMaps.map(m => {
             const positions = calibratePoints(m.mapArea, activeCal, polyCenter);
             const baseStyle = getAreaStyle(m.mapId, m.mapName);
+            const isBeingEdited = editMode === 'edit' && editingMapId === m.mapId;
             const isSelected = selectedMapId === m.mapId;
-            const style = isSelected
-              ? { ...baseStyle, fillOpacity: 0.5, weight: 3, opacity: 1 }
-              : baseStyle;
+            // Dim the polygon being edited (the editor shows its own)
+            const style = isBeingEdited
+              ? { ...baseStyle, fillOpacity: 0.1, weight: 1, opacity: 0.3, dashArray: '4, 4' }
+              : isSelected
+                ? { ...baseStyle, fillOpacity: 0.5, weight: 3, opacity: 1 }
+                : baseStyle;
             return (
               <Polygon
                 key={m.mapId}
                 positions={positions}
                 pathOptions={style}
                 eventHandlers={{
-                  click: (e) => {
+                  click: editMode === 'none' ? (e) => {
                     L.DomEvent.stopPropagation(e);
                     setSelectedMapId(prev => prev === m.mapId ? null : m.mapId);
-                  },
+                  } : undefined,
                 }}
               >
-                {m.mapName && (
+                {m.mapName && editMode === 'none' && (
                   <Tooltip sticky>{m.mapName}</Tooltip>
                 )}
               </Polygon>
             );
           })}
-          {/* GPS trail */}
+          {/* Polygon editor overlay */}
+          {editMode !== 'none' && editVertices.length >= 2 && (
+            <PolygonEditor vertices={editVertices} onChange={setEditVertices} color={editorColor} />
+          )}
+          {/* Draw mode: click handler to add points */}
+          {editMode === 'draw' && (
+            <DrawClickHandler onPoint={handleDrawPoint} />
+          )}
+          {/* Mowing coverage band (wide green stripes) */}
+          {showTrail && trailPositions.length >= 2 && (
+            <CoverageTrail positions={trailPositions} />
+          )}
+          {/* GPS trail centerline */}
           {showTrail && trailPositions.length >= 2 && (
             <Polyline
               positions={trailPositions}
               pathOptions={{
                 color: '#06b6d4',
-                weight: 3,
-                opacity: 0.7,
-                dashArray: '6, 4',
+                weight: 1.5,
+                opacity: 0.5,
+                dashArray: '4, 3',
               }}
             />
           )}
@@ -454,7 +655,7 @@ export function MowerMap({ sn, lat, lng, signals }: Props) {
           <FitToMaps maps={polygonMaps} />
           <RecenterMap position={position} hasManualInteraction={userInteracted} />
           <UserInteractionTracker onInteract={() => setUserInteracted(true)} />
-          <MapClickDeselect onDeselect={() => setSelectedMapId(null)} />
+          {editMode === 'none' && <MapClickDeselect onDeselect={() => setSelectedMapId(null)} />}
           <ResizeHandler />
         </MapContainer>
 
@@ -550,6 +751,203 @@ export function MowerMap({ sn, lat, lng, signals }: Props) {
             </div>
           </div>
         )}
+
+        {/* Mowing progress overlay */}
+        {mowing && (() => {
+          const progress = parseInt(mowing.mowingProgress ?? '0', 10);
+          if (progress <= 0) return null;
+          const covering = parseFloat(mowing.coveringArea ?? '0');
+          const finished = parseFloat(mowing.finishedArea ?? '0');
+          const speed = parseFloat(mowing.mowSpeed ?? '0');
+          const direction = mowing.covDirection ? parseFloat(mowing.covDirection) : null;
+          return (
+            <div className="absolute top-3 right-3 z-[1000] bg-gray-900/95 backdrop-blur border border-gray-700 rounded-lg p-3 shadow-xl w-52">
+              <div className="flex items-center gap-2 mb-2">
+                <Scissors className="w-4 h-4 text-emerald-400" />
+                <span className="text-xs font-semibold text-emerald-400 uppercase tracking-wide">Maaien</span>
+                {direction !== null && !isNaN(direction) && (
+                  <span className="inline-flex items-center gap-0.5 text-gray-400" title={`Richting: ${direction.toFixed(0)}°`}>
+                    <Navigation className="w-3.5 h-3.5 text-emerald-300 transition-transform duration-300" style={{ transform: `rotate(${direction}deg)` }} />
+                    <span className="text-[10px] font-mono">{direction.toFixed(0)}°</span>
+                  </span>
+                )}
+                <span className="ml-auto text-sm font-bold text-white">{progress}%</span>
+              </div>
+              <div className="h-2 bg-gray-700 rounded-full overflow-hidden mb-2">
+                <div
+                  className="h-full bg-emerald-500 rounded-full transition-all duration-500"
+                  style={{ width: `${Math.min(progress, 100)}%` }}
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
+                {covering > 0 && (
+                  <>
+                    <span className="text-gray-500">Gebied</span>
+                    <span className="text-gray-300 text-right">{covering.toFixed(0)} m&sup2;</span>
+                  </>
+                )}
+                {finished > 0 && (
+                  <>
+                    <span className="text-gray-500">Gemaaid</span>
+                    <span className="text-gray-300 text-right">{finished.toFixed(0)} m&sup2;</span>
+                  </>
+                )}
+                {speed > 0 && (
+                  <>
+                    <span className="text-gray-500">Snelheid</span>
+                    <span className="text-gray-300 text-right">{speed.toFixed(1)} m/s</span>
+                  </>
+                )}
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* Edit/Draw control panel */}
+        {editMode !== 'none' && (
+          <div className="absolute top-3 left-3 z-[1000] bg-gray-900/95 backdrop-blur border border-gray-700 rounded-lg p-3 shadow-xl w-64">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: editorColor }}>
+                {editMode === 'edit' ? 'Kaart bewerken' : 'Nieuwe kaart tekenen'}
+              </span>
+              <button onClick={cancelEditPolygon} className="text-gray-500 hover:text-gray-300" title="Annuleren">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            {/* Area type selector (only in draw mode) */}
+            {editMode === 'draw' && (
+              <div className="flex gap-1.5 mb-3">
+                {(Object.keys(AREA_TYPE_META) as AreaType[]).map(type => {
+                  const meta = AREA_TYPE_META[type];
+                  const active = drawType === type;
+                  return (
+                    <button
+                      key={type}
+                      onClick={() => setDrawType(type)}
+                      className={`flex-1 text-[11px] py-1.5 rounded border transition-colors ${
+                        active
+                          ? 'border-current font-medium'
+                          : 'border-gray-700 text-gray-500 hover:text-gray-300 hover:border-gray-500'
+                      }`}
+                      style={active ? { color: meta.color, borderColor: meta.color, backgroundColor: meta.color + '20' } : undefined}
+                    >
+                      {meta.label}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            <p className="text-[11px] text-gray-400 mb-3">
+              {editMode === 'draw'
+                ? 'Klik op de kaart om punten toe te voegen. Minimaal 3 punten nodig.'
+                : 'Versleep hoekpunten om de kaart aan te passen. Klik op grijze punten om hoekpunten toe te voegen. Rechtermuisklik om te verwijderen.'}
+            </p>
+            <div className="flex items-center gap-2 text-[11px] text-gray-500 mb-3">
+              <span>{editVertices.length} punten</span>
+              {editMode === 'draw' && editVertices.length < 3 && (
+                <span className="text-amber-400">nog {3 - editVertices.length} nodig</span>
+              )}
+            </div>
+            <div className="flex items-center gap-2 pt-2 border-t border-gray-700">
+              <button
+                onClick={cancelEditPolygon}
+                className="flex-1 inline-flex items-center justify-center gap-1 text-xs px-2 py-1.5 rounded bg-gray-700 text-gray-400 hover:text-gray-200 transition-colors"
+              >
+                <X className="w-3 h-3" />
+                Annuleren
+              </button>
+              <button
+                onClick={handleSavePolygon}
+                disabled={editVertices.length < 3}
+                className="flex-1 inline-flex items-center justify-center gap-1 text-xs px-2 py-1.5 rounded transition-colors text-white disabled:opacity-40 disabled:cursor-not-allowed"
+                style={{ backgroundColor: editorColor }}
+              >
+                <Save className="w-3 h-3" />
+                Opslaan
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Selected map info panel */}
+        {selectedMapId && !calibrating && editMode === 'none' && (() => {
+          const m = polygonMaps.find(p => p.mapId === selectedMapId);
+          if (!m) return null;
+          const style = getAreaStyle(m.mapId, m.mapName);
+          return (
+            <div className="absolute bottom-3 left-3 z-[1000] bg-gray-900/95 backdrop-blur border border-gray-700 rounded-lg p-3 shadow-xl max-w-72">
+              <div className="flex items-center gap-2 mb-2">
+                <span className="w-3 h-3 rounded-sm flex-shrink-0" style={{ backgroundColor: style.color }} />
+                {editingName !== null ? (
+                  <form
+                    className="flex items-center gap-1 flex-1 min-w-0"
+                    onSubmit={e => { e.preventDefault(); handleRenameMap(m.mapId, editingName); }}
+                  >
+                    <input
+                      autoFocus
+                      value={editingName}
+                      onChange={e => setEditingName(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Escape') setEditingName(null); }}
+                      className="flex-1 min-w-0 text-sm bg-gray-800 border border-gray-600 rounded px-1.5 py-0.5 text-gray-200 focus:outline-none focus:border-blue-500"
+                    />
+                    <button type="submit" className="text-green-400 hover:text-green-300 flex-shrink-0" title="Opslaan">
+                      <Check className="w-3.5 h-3.5" />
+                    </button>
+                    <button type="button" onClick={() => setEditingName(null)} className="text-gray-500 hover:text-gray-300 flex-shrink-0" title="Annuleren">
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </form>
+                ) : (
+                  <>
+                    <span className="text-sm font-medium text-gray-200 truncate">
+                      {m.mapName || m.mapId}
+                    </span>
+                    <button
+                      onClick={() => setEditingName(m.mapName ?? '')}
+                      className="text-gray-500 hover:text-gray-300 flex-shrink-0"
+                      title="Naam wijzigen"
+                    >
+                      <Pencil className="w-3 h-3" />
+                    </button>
+                  </>
+                )}
+                <button
+                  onClick={() => { setSelectedMapId(null); setEditingName(null); }}
+                  className="ml-auto text-gray-500 hover:text-gray-300 flex-shrink-0"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+              <div className="flex items-center gap-3 text-[11px] text-gray-400">
+                <span>{m.mapArea.length} punten</span>
+                {m.createdAt && (
+                  <span>{new Date(m.createdAt).toLocaleDateString('nl-NL', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
+                )}
+                <span className="font-mono text-gray-500 truncate">{m.mapId}</span>
+              </div>
+              <div className="mt-2 pt-2 border-t border-gray-700 flex items-center gap-2">
+                <button
+                  onClick={(e) => { e.stopPropagation(); startEditMap(m.mapId, m.mapArea); }}
+                  className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded bg-emerald-900/40 text-emerald-400 hover:bg-emerald-900/70 hover:text-emerald-300 transition-colors"
+                >
+                  <Pencil className="w-3 h-3" />
+                  Bewerken
+                </button>
+                <button
+                  onClick={() => {
+                    if (confirm(`Kaart "${m.mapName || m.mapId}" verwijderen?`)) {
+                      handleDeleteMap(m.mapId);
+                    }
+                  }}
+                  className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded bg-red-900/40 text-red-400 hover:bg-red-900/70 hover:text-red-300 transition-colors"
+                >
+                  <Trash2 className="w-3 h-3" />
+                  Verwijderen
+                </button>
+              </div>
+            </div>
+          );
+        })()}
       </div>
     </div>
   );
