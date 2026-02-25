@@ -7,10 +7,11 @@ import { db } from '../db/database.js';
 import { getAllDeviceSnapshots, getDeviceSnapshot, SENSORS, getGpsTrail, clearGpsTrail } from '../mqtt/sensorData.js';
 import { isDeviceOnline } from '../mqtt/broker.js';
 import { getRecentLogs } from '../dashboard/socketHandler.js';
-import { requestMapList, requestMapOutline } from '../mqtt/mapSync.js';
+import { requestMapList, requestMapOutline, publishToDevice } from '../mqtt/mapSync.js';
 import { generateMapZipFromDb, gpsToLocal, localToGps, parseMapZip, type GpsPoint } from '../mqtt/mapConverter.js';
 import { existsSync, unlinkSync } from 'fs';
 import path from 'path';
+import { v4 as uuidv4 } from 'uuid';
 
 interface DeviceRegistryRow {
   mqtt_client_id: string;
@@ -75,6 +76,7 @@ interface MapRow {
   map_id: string;
   mower_sn: string;
   map_name: string | null;
+  map_type: string;
   map_area: string | null;
   map_max_min: string | null;
   file_name: string | null;
@@ -93,6 +95,7 @@ dashboardRouter.get('/maps/:sn', (req: Request, res: Response) => {
   const maps = rows.map(r => ({
     mapId: r.map_id,
     mapName: r.map_name,
+    mapType: r.map_type ?? 'work',
     mapArea: r.map_area ? JSON.parse(r.map_area) : [],
     mapMaxMin: r.map_max_min ? JSON.parse(r.map_max_min) : null,
     createdAt: r.created_at,
@@ -170,15 +173,16 @@ dashboardRouter.post('/maps/:sn', (req: Request, res: Response) => {
   };
 
   db.prepare(`
-    INSERT INTO maps (map_id, mower_sn, map_name, map_area, map_max_min, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))
-  `).run(mapId, sn, mapName ?? null, JSON.stringify(mapArea), JSON.stringify(bounds));
+    INSERT INTO maps (map_id, mower_sn, map_name, map_type, map_area, map_max_min, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+  `).run(mapId, sn, mapName ?? null, typeSlug, JSON.stringify(mapArea), JSON.stringify(bounds));
 
   res.json({
     ok: true,
     map: {
       mapId,
       mapName: mapName ?? null,
+      mapType: typeSlug,
       mapArea,
       mapMaxMin: bounds,
       createdAt: new Date().toISOString(),
@@ -433,4 +437,243 @@ dashboardRouter.post('/maps/convert', (req: Request, res: Response) => {
     );
     res.json({ points: result });
   }
+});
+
+// ── MQTT command publishing ─────────────────────────────────────
+
+// POST /api/dashboard/command/:sn — stuur een MQTT commando naar een apparaat
+dashboardRouter.post('/command/:sn', (req: Request, res: Response) => {
+  const { sn } = req.params;
+  const { command } = req.body as { command?: Record<string, unknown> };
+
+  if (!command || typeof command !== 'object') {
+    res.status(400).json({ error: 'command object is vereist' });
+    return;
+  }
+
+  if (!isDeviceOnline(sn)) {
+    res.status(404).json({ error: 'Device is offline' });
+    return;
+  }
+
+  publishToDevice(sn, command);
+  res.json({ ok: true, command: Object.keys(command)[0] });
+});
+
+// ── Dashboard schedules ─────────────────────────────────────────
+
+interface ScheduleRow {
+  schedule_id: string;
+  mower_sn: string;
+  schedule_name: string | null;
+  start_time: string;
+  end_time: string | null;
+  weekdays: string;
+  enabled: number;
+  map_id: string | null;
+  map_name: string | null;
+  cutting_height: number;
+  path_direction: number;
+  work_mode: number;
+  task_mode: number;
+  created_at: string;
+  updated_at: string;
+}
+
+function scheduleRowToDto(r: ScheduleRow) {
+  return {
+    scheduleId: r.schedule_id,
+    mowerSn: r.mower_sn,
+    scheduleName: r.schedule_name,
+    startTime: r.start_time,
+    endTime: r.end_time,
+    weekdays: JSON.parse(r.weekdays),
+    enabled: r.enabled === 1,
+    mapId: r.map_id,
+    mapName: r.map_name,
+    cuttingHeight: r.cutting_height,
+    pathDirection: r.path_direction,
+    workMode: r.work_mode,
+    taskMode: r.task_mode,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  };
+}
+
+// GET /api/dashboard/schedules/:sn — alle schedules voor een maaier
+dashboardRouter.get('/schedules/:sn', (req: Request, res: Response) => {
+  const { sn } = req.params;
+  const rows = db.prepare(
+    'SELECT * FROM dashboard_schedules WHERE mower_sn = ? ORDER BY start_time'
+  ).all(sn) as ScheduleRow[];
+  res.json({ schedules: rows.map(scheduleRowToDto) });
+});
+
+// POST /api/dashboard/schedules/:sn — nieuw schedule aanmaken
+dashboardRouter.post('/schedules/:sn', (req: Request, res: Response) => {
+  const { sn } = req.params;
+  const body = req.body as {
+    scheduleName?: string;
+    startTime: string;
+    endTime?: string;
+    weekdays?: number[];
+    mapId?: string;
+    mapName?: string;
+    cuttingHeight?: number;
+    pathDirection?: number;
+    workMode?: number;
+    taskMode?: number;
+  };
+
+  if (!body.startTime) {
+    res.status(400).json({ error: 'startTime is vereist' });
+    return;
+  }
+
+  const scheduleId = uuidv4();
+  db.prepare(`
+    INSERT INTO dashboard_schedules
+      (schedule_id, mower_sn, schedule_name, start_time, end_time, weekdays, enabled,
+       map_id, map_name, cutting_height, path_direction, work_mode, task_mode)
+    VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)
+  `).run(
+    scheduleId, sn,
+    body.scheduleName ?? null,
+    body.startTime,
+    body.endTime ?? null,
+    JSON.stringify(body.weekdays ?? [1, 2, 3, 4, 5]),
+    body.mapId ?? null,
+    body.mapName ?? null,
+    body.cuttingHeight ?? 40,
+    body.pathDirection ?? 0,
+    body.workMode ?? 0,
+    body.taskMode ?? 0,
+  );
+
+  // Stuur timer_task naar maaier als die online is
+  if (isDeviceOnline(sn)) {
+    publishToDevice(sn, {
+      timer_task: {
+        task_id: scheduleId,
+        start_time: body.startTime,
+        end_time: body.endTime ?? '',
+        map_id: body.mapId ?? '',
+        map_name: body.mapName ?? '',
+        repeat_type: 'WEEKLY',
+        is_timer: true,
+        work_mode: body.workMode ?? 0,
+        task_mode: body.taskMode ?? 0,
+        cov_direction: 0,
+        path_direction: body.pathDirection ?? 0,
+      },
+    });
+
+    // Stuur set_para_info voor cutting height en path direction
+    publishToDevice(sn, {
+      set_para_info: {
+        cutGrassHeight: body.cuttingHeight ?? 40,
+        defaultCuttingHeight: body.cuttingHeight ?? 40,
+        target_height: body.cuttingHeight ?? 40,
+        path_direction: body.pathDirection ?? 0,
+      },
+    });
+  }
+
+  const row = db.prepare('SELECT * FROM dashboard_schedules WHERE schedule_id = ?').get(scheduleId) as ScheduleRow;
+  res.json({ ok: true, schedule: scheduleRowToDto(row) });
+});
+
+// PATCH /api/dashboard/schedules/:sn/:scheduleId — update schedule
+dashboardRouter.patch('/schedules/:sn/:scheduleId', (req: Request, res: Response) => {
+  const { sn, scheduleId } = req.params;
+  const body = req.body as Record<string, unknown>;
+
+  const existing = db.prepare('SELECT schedule_id FROM dashboard_schedules WHERE schedule_id = ? AND mower_sn = ?').get(scheduleId, sn);
+  if (!existing) {
+    res.status(404).json({ error: 'Schedule niet gevonden' });
+    return;
+  }
+
+  db.prepare(`
+    UPDATE dashboard_schedules SET
+      schedule_name  = COALESCE(?, schedule_name),
+      start_time     = COALESCE(?, start_time),
+      end_time       = COALESCE(?, end_time),
+      weekdays       = COALESCE(?, weekdays),
+      enabled        = COALESCE(?, enabled),
+      map_id         = COALESCE(?, map_id),
+      map_name       = COALESCE(?, map_name),
+      cutting_height = COALESCE(?, cutting_height),
+      path_direction = COALESCE(?, path_direction),
+      work_mode      = COALESCE(?, work_mode),
+      task_mode      = COALESCE(?, task_mode),
+      updated_at     = datetime('now')
+    WHERE schedule_id = ? AND mower_sn = ?
+  `).run(
+    body.scheduleName ?? null,
+    body.startTime ?? null,
+    body.endTime ?? null,
+    body.weekdays ? JSON.stringify(body.weekdays) : null,
+    body.enabled !== undefined ? (body.enabled ? 1 : 0) : null,
+    body.mapId ?? null,
+    body.mapName ?? null,
+    body.cuttingHeight ?? null,
+    body.pathDirection ?? null,
+    body.workMode ?? null,
+    body.taskMode ?? null,
+    scheduleId, sn,
+  );
+
+  const row = db.prepare('SELECT * FROM dashboard_schedules WHERE schedule_id = ?').get(scheduleId) as ScheduleRow;
+  res.json({ ok: true, schedule: scheduleRowToDto(row) });
+});
+
+// DELETE /api/dashboard/schedules/:sn/:scheduleId — verwijder schedule
+dashboardRouter.delete('/schedules/:sn/:scheduleId', (req: Request, res: Response) => {
+  const { sn, scheduleId } = req.params;
+  db.prepare('DELETE FROM dashboard_schedules WHERE schedule_id = ? AND mower_sn = ?').run(scheduleId, sn);
+  res.json({ ok: true });
+});
+
+// POST /api/dashboard/schedules/:sn/:scheduleId/send — push schedule naar maaier via MQTT
+dashboardRouter.post('/schedules/:sn/:scheduleId/send', (req: Request, res: Response) => {
+  const { sn, scheduleId } = req.params;
+
+  if (!isDeviceOnline(sn)) {
+    res.status(404).json({ error: 'Device is offline' });
+    return;
+  }
+
+  const row = db.prepare('SELECT * FROM dashboard_schedules WHERE schedule_id = ? AND mower_sn = ?').get(scheduleId, sn) as ScheduleRow | undefined;
+  if (!row) {
+    res.status(404).json({ error: 'Schedule niet gevonden' });
+    return;
+  }
+
+  publishToDevice(sn, {
+    timer_task: {
+      task_id: row.schedule_id,
+      start_time: row.start_time,
+      end_time: row.end_time ?? '',
+      map_id: row.map_id ?? '',
+      map_name: row.map_name ?? '',
+      repeat_type: 'WEEKLY',
+      is_timer: true,
+      work_mode: row.work_mode,
+      task_mode: row.task_mode,
+      cov_direction: 0,
+      path_direction: row.path_direction,
+    },
+  });
+
+  publishToDevice(sn, {
+    set_para_info: {
+      cutGrassHeight: row.cutting_height,
+      defaultCuttingHeight: row.cutting_height,
+      target_height: row.cutting_height,
+      path_direction: row.path_direction,
+    },
+  });
+
+  res.json({ ok: true, message: 'Schedule en parameters verstuurd naar maaier' });
 });

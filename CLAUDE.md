@@ -18,7 +18,7 @@ zodat de robotmaaier en het laadstation volledig offline werken.
 ├── novabot-server/                 De lokale vervangingsserver
 │   └── src/
 │       ├── index.ts                Entry point (Express + Socket.io + MQTT broker)
-│       ├── db/database.ts          SQLite schema + initDb() (incl. map_calibration tabel)
+│       ├── db/database.ts          SQLite schema + initDb() (incl. map_calibration + dashboard_schedules)
 │       ├── types/index.ts          Gedeelde TypeScript interfaces + ok()/fail()
 │       ├── middleware/auth.ts      JWT auth middleware
 │       ├── mqtt/broker.ts          Aedes MQTT broker op port 1883 + sanitizeConnectFlags
@@ -30,7 +30,7 @@ zodat de robotmaaier en het laadstation volledig offline werken.
 │       ├── proxy/httpProxy.ts      HTTP proxy naar echte cloud (PROXY_MODE=cloud)
 │       └── routes/
 │           ├── admin.ts                        GET /api/admin/devices, POST /api/admin/devices/:sn/mac
-│           ├── dashboard.ts                    REST endpoints voor dashboard (devices, sensors, maps, calibration, trail)
+│           ├── dashboard.ts                    REST endpoints voor dashboard (devices, sensors, maps, calibration, trail, schedules, commands)
 │           ├── nova-user/appUser.ts            Login, registratie, profiel
 │           ├── nova-user/validate.ts           E-mail verificatiecodes
 │           ├── nova-user/equipment.ts          Apparaatbeheer (bindingEquipment, getEquipmentBySN, ...)
@@ -47,8 +47,10 @@ zodat de robotmaaier en het laadstation volledig offline werken.
 │       ├── hooks/useDevices.ts     Gecombineerde REST + Socket.io state
 │       ├── types/index.ts          TypeScript interfaces (DeviceState, MapCalibration, etc.)
 │       ├── components/
-│       │   ├── map/MowerMap.tsx    Leaflet kaart met GPS, polygons, trail, calibratie
-│       │   ├── dashboard/DashboardPage.tsx  Hoofdlayout met sidebar + detail view
+│       │   ├── map/MowerMap.tsx    Leaflet kaart met GPS, polygons, trail, calibratie, heatmap, export
+│       │   ├── map/PolygonEditor.tsx  Polygon bewerken/tekenen (versleepbare vertices)
+│       │   ├── dashboard/DashboardPage.tsx  Hoofdlayout met sidebar + detail view + schema paneel
+│       │   ├── schedule/Scheduler.tsx       Maaischema beheer (CRUD + MQTT push)
 │       │   ├── sensors/SensorGrid.tsx       Sensor cards grid
 │       │   └── status/MowerStatus.tsx       Maaier-specifiek paneel
 │       └── App.tsx                 Root component
@@ -640,6 +642,26 @@ Alle endpoints op `https://app.lfibot.com` → lokaal `http://Mac-IP:3000`
 - `GET  /api/admin/devices` — alle bekende apparaten uit device_registry
 - `POST /api/admin/devices/:sn/mac` — handmatig MAC registreren `{macAddress: "AA:BB:..."}`
 
+### Dashboard endpoints (lokaal, geen auth)
+- `GET    /api/dashboard/devices` — alle apparaten met sensor snapshots
+- `GET    /api/dashboard/sensors` — sensor definities
+- `GET    /api/dashboard/maps/:sn` — kaarten voor een apparaat
+- `PATCH  /api/dashboard/maps/:sn/:mapId` — kaart updaten (mapName, mapArea)
+- `POST   /api/dashboard/maps/:sn` — nieuwe kaart aanmaken
+- `DELETE /api/dashboard/maps/:sn/:mapId` — kaart verwijderen
+- `POST   /api/dashboard/maps/:sn/export-zip` — kaarten exporteren als Novabot ZIP
+- `POST   /api/dashboard/maps/convert` — GPS ↔ lokale coördinaten conversie
+- `GET    /api/dashboard/trail/:sn` — GPS trail ophalen
+- `DELETE /api/dashboard/trail/:sn` — GPS trail wissen
+- `GET    /api/dashboard/calibration/:sn` — kaart calibratie ophalen
+- `PUT    /api/dashboard/calibration/:sn` — kaart calibratie opslaan
+- `POST   /api/dashboard/command/:sn` — MQTT commando naar apparaat sturen
+- `GET    /api/dashboard/schedules/:sn` — maaischema's ophalen
+- `POST   /api/dashboard/schedules/:sn` — maaischema aanmaken + MQTT push
+- `PATCH  /api/dashboard/schedules/:sn/:scheduleId` — maaischema updaten
+- `DELETE /api/dashboard/schedules/:sn/:scheduleId` — maaischema verwijderen
+- `POST   /api/dashboard/schedules/:sn/:scheduleId/send` — schema naar maaier pushen via MQTT
+
 ---
 
 ## Database tabellen
@@ -657,6 +679,8 @@ Alle endpoints op `https://app.lfibot.com` → lokaal `http://Mac-IP:3000`
 | work_records     | Maaiopnames/werkhistorie                                    |
 | equipment_lora_cache | Cached LoRa parameters (behouden na unbind voor re-bind) |
 | ota_versions     | OTA firmware versies                                        |
+| map_calibration  | Handmatige kaart offset/rotatie/schaal per maaier           |
+| dashboard_schedules | Dashboard maaischema's (CRUD, MQTT push naar maaier)     |
 
 ---
 
@@ -1644,6 +1668,24 @@ De app toont verschillende widgets afhankelijk van de maaier-status:
 - [x] Cloud data geëxporteerd naar `research/cloud_data/` (50 work records, firmware versies, equipment info)
 - [x] Cloud data geïmporteerd in lokale SQLite database + test kaart aangemaakt
 - [x] Kaart bouwen analyse: werkt volledig via MQTT (lokaal), cloud upload is alleen backup en mag falen
+- [x] Polygon editor gebouwd: tekenen, bewerken, verslepen, midpoint toevoegen, rechtermuisklik verwijderen
+- [x] Dashboard maaischema's (Scheduler): CRUD + MQTT timer_task + set_para_info push naar maaier
+- [x] MQTT command publishing endpoint: POST /api/dashboard/command/:sn
+- [x] Maaier heading marker: roterende SVG pijl op kaart op basis van z/mower_z sensordata
+- [x] GPS trail heatmap: kleurverloop (oud→nieuw) met instelbare segmenten
+- [x] Coverage statistieken per werkgebied: trail points × 0.25m² → dekkingspercentage
+- [x] Polygon oppervlakteberekening (Shoelace formule op GPS coördinaten → m²)
+- [x] Map export: ZIP download met Novabot-formaat CSV bestanden vanuit dashboard
+- [x] Charger GPS positie doorgeven aan MowerMap voor export referentiepunt
+- [x] Polygon editor gebouwd en werkend: bestaande kaarten aanpassen + nieuwe kaarten tekenen op satellietfoto
+- [x] Kaart sync naar maaier onderzocht: save_map, area_set, StartCoverageTask geanalyseerd
+- [x] Maaier HTTP uploads geanalyseerd: uploadEquipmentMap, uploadEquipmentTrack, saveCutGrassRecord
+- [ ] `POST /api/nova-file-server/map/uploadEquipmentMap` endpoint bouwen (maaier kaart-ZIP ontvangen + parsen)
+- [ ] `POST /api/nova-file-server/map/uploadEquipmentTrack` endpoint bouwen (maaipad ontvangen)
+- [ ] `POST /api/nova-data/cutGrassPlan/queryPlanFromMachine` endpoint bouwen (schema's naar maaier)
+- [ ] `POST /api/nova-data/equipmentState/saveCutGrassRecord` endpoint bouwen (maairesultaten opslaan)
+- [ ] SSH toegang tot maaier voor directe CSV/ZIP upload naar `/userdata/lfi/maps/home0/csv_file/`
+- [ ] `start_run` met `polygon_area` parameter implementeren (SPECIFIED_AREA modus)
 
 ## Gedocumenteerde sessies
 
@@ -1761,6 +1803,48 @@ Maaier firmware blijkt een Debian pakket met ROS 2 op Horizon Robotics X3 SoC.
 - GeoJSON polygon van tuin geïmporteerd als werkgebied voor LFIN2230700238
 - Polygon click highlight (custom highlight i.p.v. Leaflet default selectie)
 - Backend: sensorData.ts (shared cache), socketHandler.ts, dashboard REST routes, map_calibration tabel
+
+### Dashboard uitbreiding: scheduler, heatmap, heading, export (februari 2026)
+
+**Maaischema systeem (Scheduler):**
+- Nieuwe `dashboard_schedules` tabel in SQLite (schedule_id, mower_sn, start/end_time, weekdays, cutting_height, etc.)
+- CRUD REST endpoints: GET/POST/PATCH/DELETE `/api/dashboard/schedules/:sn[/:scheduleId]`
+- MQTT push: `timer_task` + `set_para_info` naar maaier bij aanmaken en via `/send` endpoint
+- React component: `Scheduler.tsx` — weekdag selector, kaart keuze, maaihoogte slider, pad richting
+- Integratie in DashboardPage als uitklapbaar zijpaneel (Calendar knop in header)
+
+**MQTT command publishing:**
+- `POST /api/dashboard/command/:sn` — stuur willekeurig MQTT commando naar apparaat
+- `publishToDevice()` in mapSync.ts geëxporteerd voor hergebruik vanuit dashboard routes
+
+**Maaier heading weergave:**
+- MowerMap ontvangt nu `heading` prop (uit `z` / `mower_z` sensor)
+- Custom SVG DivIcon met groene cirkel + witte pijl, roteert met heading
+- Vervangt standaard Leaflet marker
+
+**GPS trail heatmap:**
+- Toggle knop "Heat" op kaart toolbar
+- Trail gesplitst in ~30 segmenten met kleurverloop: rood (oud) → groen (nieuw)
+- Opacity stijgt van 0.3 naar 0.8 voor recentere segmenten
+
+**Coverage statistieken:**
+- Per werkgebied polygon: tel trail points binnen polygon (ray casting)
+- Schatting: elke trail point ≈ 0.25m² (0.5m maaibreedte × 0.5m spacing)
+- Voortgangsbalk met percentage in kaart info panel
+
+**Polygon oppervlakte:**
+- Shoelace formule op GPS coördinaten → m² (met cos(lat) correctie)
+- Getoond in kaart info panel naast puntenaantal
+
+**Map export:**
+- `POST /api/dashboard/maps/:sn/export-zip` → genereert Novabot-formaat ZIP
+- Charger GPS positie als referentiepunt (doorgestuurd vanuit DashboardPage)
+- Download knop op kaart toolbar
+
+**Overige wijzigingen:**
+- `chargerLat`/`chargerLng` props doorgestuurd naar MowerMap vanuit charger device sensors
+- `Schedule` TypeScript interface toegevoegd aan dashboard types
+- API client uitgebreid: `sendCommand`, `exportMaps`, `fetchSchedules`, `createSchedule`, `updateSchedule`, `deleteSchedule`, `sendSchedule`
 
 ### Camera en netwerk analyse maaier (februari 2026)
 - Camera systeem volledig geanalyseerd: dual Sony IMX307 + PMD ToF, GDC fisheye correctie
@@ -2192,3 +2276,321 @@ Bevestigt dat netwerktoegang **gepland was** maar nooit in productie gezet.
 
 **Let op bij openen behuizing**: Maaier is IP56 waterdicht. Rubber gaskets/O-ringen rondom de naad.
 Voorzichtig openen om waterproof seals niet te beschadigen.
+
+---
+
+## Kaart synchronisatie naar maaier — deep analysis (februari 2026)
+
+### Twee coördinatensystemen
+
+De maaier werkt met **twee coördinatensystemen**:
+
+1. **Intern**: Lokale x,y meters relatief t.o.v. het laadstation (CSV bestanden in `/userdata/lfi/maps/home0/csv_file/`)
+2. **Extern**: GPS lat/lng via UTM projectie (`+proj=utm +zone=N +north +ellps=WGS84`), gerapporteerd via MQTT als `map_position`
+
+De localisatie module (`robot_combination_localization`) doet de conversie:
+- GPS (WGS84) → UTM → lokaal referentiekader (relatief t.o.v. charging station)
+- UTM origin wordt opgeslagen en geladen via `SaveUtmOriginInfo` / `LoadUtmOriginInfo` ROS services
+- Firmware log: `"Setting utm origin: zone: %d utm_x: %.3f utm_y:%.3f longitude: %.7f latitude: %.7f"`
+
+### CSV/ZIP kaartformaat (bevestigd uit firmware)
+
+Kaarten worden opgeslagen in `/userdata/lfi/maps/home0/csv_file/`:
+
+```
+csv_file/
+├── map_info.json          (charging_pose + per-kaart map_size)
+├── map0_work.csv          (werkgebied 0 - x,y meters)
+├── map0_0_obstacle.csv    (obstakel 0 bij werkgebied 0)
+├── map0tocharge_unicom.csv (kanaal van werkgebied 0 naar laadstation)
+├── map1_work.csv          (werkgebied 1)
+└── map_0_unicom.csv       (kanaal type 2)
+```
+
+**CSV formaat**: comma-separated x,y lokale coördinaten (meters, float):
+```
+-0.0306977,-0.918932
+-0.0388416,-0.868202
+-9.62,-8.29
+```
+
+**map_info.json**:
+```json
+{
+  "charging_pose": { "orientation": 1.326, "x": -0.048, "y": -0.180 },
+  "map0_work.csv": { "map_size": 149.28 },
+  "map1_work.csv": { "map_size": 26.62 }
+}
+```
+
+Onze `mapConverter.ts` genereert **exact dit formaat** vanuit GPS polygonen.
+
+### MQTT commando's relevant voor kaart-synchronisatie
+
+#### `save_map` (cpp:3606) — Finaliseer mapping sessie
+
+Slaat de **huidige intern gebouwde** kaart op. Accepteert GEEN externe coördinaten.
+
+```json
+{"save_map": {"mapName": "home"}}
+```
+
+ROS service: `/robot_decision/save_map` → `SaveMap.srv`:
+```
+string mapname      # Kaartnaam
+float32 resolution  # Grid resolutie (meters, typisch 0.02-0.05)
+int64 type          # Kaarttype (0=work, 1=obstacle, 2=unicom)
+---
+string data
+uint8 result
+uint8 error_code    # 1=OVERLAPING_OTHER_MAP, 2=OVERLAPING_OTHER_UNICOM, 3=CROSS_MULTI_MAPS
+```
+
+#### `area_set` (cpp:7437) — Definieer gebied via GPS bounding box
+
+Stuurt GPS coördinaten naar de maaier om een gebied te definiëren.
+
+```json
+{
+  "area_set": {
+    "latitude1": 52.1409,
+    "longitude1": 6.2310,
+    "latitude2": 52.1412,
+    "longitude2": 6.2315,
+    "map_name": "map0"
+  }
+}
+```
+Response: `area_set_respond`
+
+ROS service: `/robot_decision/add_area`
+
+#### `update_virtual_wall` (cpp:7400) — Update obstakelbarrières
+
+```json
+{
+  "update_virtual_wall": {
+    "virtual_wall": [...],
+    "map_name": "map0"
+  }
+}
+```
+Response: `update_virtual_wall_respond`
+
+#### `delete_map` (cpp:3812) — Verwijder kaart
+
+```json
+{"delete_map": {"map_name": "map0", "map_type": 0}}
+```
+Response: `delete_map_respond`
+
+ROS service: `/robot_decision/delete_map` → `DeleteMap.srv`:
+```
+uint8 maptype       # 0=work, 1=obstacle, 2=unicom
+string mapname
+```
+
+### StartCoverageTask — Maaien starten MET polygoon
+
+De belangrijkste ontdekking: bij het starten van een maaissessie kan de maaier
+**GPS polygoon-coördinaten** accepteren in `SPECIFIED_AREA` modus.
+
+ROS service: `/robot_decision/start_cov_task` → `StartCoverageTask.srv`:
+```
+uint8 NORMAL=0              # Normaal: maai opgeslagen kaart
+uint8 SPECIFIED_AREA=1      # Maai binnen meegegeven polygoon
+uint8 BOUNDARY_COV=2        # Alleen randen maaien
+
+uint8 cov_mode              # Maaien modus (0/1/2)
+uint8 request_type          # Bron: 11=app normaal, 12=schema, 21=MCU normaal, 22=MCU schema
+uint32 map_ids              # Kaart ID (als map_id > 0, prioriteit boven map_names)
+string[] map_names          # Kaart namen om te maaien
+geometry_msgs/Point[] polygon_area  # GPS polygoon punten (voor SPECIFIED_AREA)
+uint8[] blade_heights       # Maaihoogtes (0-7, hoogte = (level+2)*10 mm)
+bool specify_direction
+uint8 cov_direction         # Maairichting 0-180°
+uint8 light                 # LED helderheid
+bool specify_perception_level
+uint8 perception_level      # 0=uit, 1=detectie, 2=segmentatie, 3=gevoelig
+uint8 blade_info_level      # 0=default, 1=alles uit, 2=buzzer, 3=LED, 4=alles aan
+bool night_light            # Nacht LED toestaan
+bool enable_loc_weak_mapping  # Mapping bij zwak GPS signaal
+bool enable_loc_weak_working  # Maaien bij zwak GPS signaal
+---
+bool result
+```
+
+**MQTT → ROS mapping** (in `mqtt_node`):
+- `start_run` MQTT commando op charger → LoRa relay → maaier
+- Op maaier zelf: `mqtt_node` vertaalt JSON naar `StartCoverageTask` service call
+- Velden uit MQTT JSON (cpp:13362-13389): `workArea`, `cutGrassHeight`, `mapNames`, `startWay`, `schedule`, `scheduleId`
+
+### GenerateCoveragePath — Preview maaipad
+
+```json
+{"generate_preview_cover_path": {"map_ids": 0, "cov_direction": 90}}
+```
+Response: `generate_preview_cover_path_respond`
+
+ROS service: `/robot_decision/generate_preview_cover_path` → `GenerateCoveragePath.srv`:
+```
+uint32 map_ids
+bool specify_direction
+uint8 cov_direction     # 0-180°
+---
+bool result
+```
+
+### Alle ROS 2 services voor kaarten/navigatie
+
+| ROS Service | MQTT Trigger | Beschrijving |
+|-------------|-------------|-------------|
+| `/robot_decision/start_mapping` | `start_scan_map` | Start handmatig kaart bouwen |
+| `/robot_decision/add_area` | `area_set` | Gebied toevoegen via GPS bbox |
+| `/robot_decision/map_stop_record` | `stop_scan_map` | Stop mapping opname |
+| `/robot_decision/reset_mapping` | `reset_map` | Reset mapping sessie |
+| `/robot_decision/save_map` | `save_map` | Sla kaart op als CSV/ZIP |
+| `/robot_decision/start_assistant_mapping` | `start_assistant_build_map` | Automatisch kaart bouwen |
+| `/robot_decision/delete_map` | `delete_map` | Verwijder kaart |
+| `/robot_decision/start_erase` | `start_erase_map` | Wis deel van kaart |
+| `/robot_decision/save_charging_pose` | `save_recharge_pos` | Sla laadstation positie op |
+| `/robot_decision/nav_to_recharge` | `go_to_charge` | Navigeer naar laadstation |
+| `/robot_decision/cancel_recharge` | `stop_to_charge` | Stop terugkeer naar laadstation |
+| `/robot_decision/auto_recharge` | `auto_recharge` | Automatisch herladen |
+| `/robot_decision/start_cov_task` | `start_run` | Start maaien |
+| `/robot_decision/stop_task` | `stop_run` | Stop maaien |
+| `/robot_decision/cancel_task` | (intern) | Annuleer taak |
+| `/robot_decision/generate_preview_cover_path` | `generate_preview_cover_path` | Genereer maaipad preview |
+| `/robot_decision/quit_mapping_mode` | `quit_mapping_mode` | Verlaat mapping modus |
+| `/robot_decision/map_position` | (subscription) | Maaier positie tijdens mapping |
+
+### ROS 2 topics voor mapping
+
+| Topic | Beschrijving |
+|-------|-------------|
+| `/robot_decision/map_position` | Real-time maaier positie tijdens mapping |
+| `/novabot_mapping/in_map_area` | Boolean: maaier binnen gedefinieerd gebied? |
+| `/novabot_mapping/if_closed_cycle` | Polygoon gesloten detectie |
+| `/novabot_mapping/save_csv_file` | Bestandsnaam na CSV save |
+| `/novabot_mapping/start_build_unicom_area` | Start kanaal-detectie tussen kaarten |
+| `/novabot_mapping/if_unicom_can_stop` | Kanaal bouwen klaar? |
+
+### Mapping flow: hoe kaarten worden gebouwd
+
+**Fysieke mapping (normaal gebruik):**
+1. App stuurt `start_scan_map` (handmatig) of `start_assistant_build_map` (automatisch)
+2. Maaier rijdt rond de grens, registreert GPS/lokale punten
+3. Tijdens rijden: `/novabot_mapping/if_closed_cycle` detecteert wanneer polygoon gesloten is
+4. App stuurt `stop_scan_map` → maaier stopt opname
+5. App stuurt `save_map` met `mapName` → maaier schrijft CSV + map_info.json
+6. Na save: overlapping validatie (error codes 1-3)
+7. Automatisch: `start_build_unicom_area` detecteert kanalen tussen werkgebieden
+8. Maaier publiceert `report_state_map_outline` met GPS polygoon via MQTT
+9. App/server ontvangt outline → opslaan in database
+
+**BLE bestandsoverdracht (firmware):**
+- mqtt_node heeft BLE file handler (cpp:12107-12332) voor ZIP transfer
+- Stuurt/ontvangt ZIP bestanden vanuit `/userdata/lfi/maps/home0/csv_file/`
+
+**Cloud upload door maaier (cpp:6820-6850):**
+- Maaier uploadt zelf de ZIP naar cloud: `http://<server>/api/nova-file-server/map/uploadEquipmentMap`
+- Server adres gelezen uit `/userdata/lfi/http_address.txt`
+- Dit is **maaier → cloud** richting, niet andersom
+
+### Conclusie: drie synchronisatie-opties
+
+**Optie 1: Dashboard-polygonen meesturen bij start_run (SPECIFIED_AREA modus)**
+- `StartCoverageTask.srv` accepteert `polygon_area` (GPS punten) + `cov_mode=1`
+- Geen opgeslagen kaart nodig op de maaier
+- Dashboard tekent gebied → bij "Start maaien" stuur polygoon als parameter mee
+- **Meest haalbaar zonder fysieke toegang**
+
+**Optie 2: CSV/ZIP direct op maaier plaatsen (vereist SSH)**
+- `mapConverter.ts` genereert exact het juiste formaat
+- Kopieer naar `/userdata/lfi/maps/home0/csv_file/`
+- Vereist eerst UART/HDMI toegang om SSH te installeren
+- **Meest complete oplossing** — kaarten persistent op maaier
+
+**Optie 3: Dashboard-kaarten als visuele referentie**
+- Kaarten in database zijn puur informatief
+- Opgehaald van maaier via `get_map_outline` → `report_state_map_outline`
+- Nieuwe tekeningen lokaal opgeslagen, niet automatisch naar maaier gestuurd
+- **Huidige situatie**
+
+### Maaier HTTP uploads naar server (firmware → cloud)
+
+De maaier firmware (`mqtt_node`) heeft een eigen HTTP client (`http_work_fun`, cpp:6820+) die
+data uploadt naar de server. Door DNS rewrite stuurt de maaier naar onze lokale server.
+De server-URL wordt gelezen uit `/userdata/lfi/http_address.txt`.
+
+**Endpoints die de maaier aanroept:**
+
+| Endpoint | Event | Beschrijving |
+|----------|-------|-------------|
+| `POST /api/nova-file-server/map/uploadEquipmentMap` | `UPDATA_EVENT_MAP` | **Kaart ZIP upload** na mapping |
+| `POST /api/nova-file-server/map/uploadEquipmentTrack` | `UPDATA_EVENT_PATH_LIST` | Maaipad upload (planned_path) |
+| `POST /api/nova-data/cutGrassPlan/queryPlanFromMachine` | `UPDATA_EVENT_PLAN` | Maaischema ophalen |
+| `POST /api/nova-data/equipmentState/saveCutGrassRecord` | `UPDATA_EVENT_WORK_RESULT` | Maairesultaat opslaan |
+| `POST /api/nova-message/machineMessage/saveCutGrassMessage` | `UPDATA_EVENT_CLICK_EVENT_RESULT` | Maai-notificatie opslaan |
+| `POST /api/nova-user/equipment/machineReset` | `UPDATA_EVENT_UNBIND` | Apparaat reset/unbind |
+| `POST /api/nova-network/network/connection` | (periodiek) | Connectivity check |
+
+#### `uploadEquipmentMap` — kaart upload van maaier
+
+De maaier uploadt de kaart-ZIP via `curl_formadd` (libcurl multipart/form-data):
+
+**Upload velden (uit firmware strings cpp:6421-6700):**
+| Veld | Beschrijving |
+|------|-------------|
+| `local_file` | Het ZIP bestand (binary) |
+| `local_file_name` | Bestandsnaam van de ZIP |
+| `zipMd5` | MD5 checksum van de ZIP |
+| `sn` | Serienummer van de maaier |
+| `jsonBody` | Extra metadata (JSON) |
+
+**Upload flow:**
+1. Na `save_map` genereert de maaier een ZIP: `zip -r -q` in `/userdata/lfi/maps/home0/`
+2. `generate_map_file_name` subscriber ontvangt bestandsnaam van mapping module
+3. `UPDATA_EVENT_MAP` triggert de HTTP upload thread
+4. Maaier checkt of ZIP bestaat (`access_MAP_PATH_DIR_sn_zip_file_exist`)
+5. Bouwt URL: `http://<server>/api/nova-file-server/map/uploadEquipmentMap`
+6. Stuurt via `curl_formadd` multipart POST
+7. Bij succes (`success=true code=200`): klaar
+8. Bij fout: logt `curl_easy_perform_failed` of `success=false or code=405`
+
+**⚠️ Status: NIET geïmplementeerd op onze server**
+
+Onze server heeft alleen `fragmentUploadEquipmentMap` (voor de app), niet `uploadEquipmentMap` (voor de maaier):
+
+| Aspect | App endpoint (bestaand) | Maaier endpoint (ontbreekt) |
+|--------|------------------------|----------------------------|
+| Route | `POST .../fragmentUploadEquipmentMap` | `POST .../uploadEquipmentMap` |
+| Auth | JWT token (authMiddleware) | **Geen auth** — maaier stuurt geen JWT |
+| Upload methode | Chunked (chunkIndex/chunksTotal) | Enkele multipart POST |
+| Velden | `file`, `sn`, `uploadId`, `mapName`, `mapArea` | `local_file`, `local_file_name`, `zipMd5`, `sn`, `jsonBody` |
+| Bron | Flutter app | Maaier firmware (curl) |
+
+**TODO**: Nieuw endpoint bouwen dat:
+1. Geen JWT auth vereist (of SN-based verificatie)
+2. `curl_formadd` multipart accepteert met `local_file` veld
+3. ZIP opslaat en parseert (CSV → GPS polygonen via `parseMapZip()`)
+4. Kaarten in database zet met correcte `map_type` (work/obstacle/unicom)
+5. MD5 checksum verifieert (`zipMd5`)
+
+#### `uploadEquipmentTrack` — maaipad upload
+
+De maaier uploadt ook het geplande maaipad:
+- Bron: `/userdata/lfi/maps/home0/planned_path/`
+- Endpoint: `POST /api/nova-file-server/map/uploadEquipmentTrack`
+- Zelfde `curl_formadd` formaat als kaart upload
+- **Status: NIET geïmplementeerd**
+
+#### Overige maaier HTTP calls
+
+| Endpoint | Status | Beschrijving |
+|----------|--------|-------------|
+| `queryPlanFromMachine` | ❌ Niet geïmplementeerd | Maaier haalt maaischema's op van server |
+| `saveCutGrassRecord` | ❌ Niet geïmplementeerd | Maaier slaat maairesultaten op |
+| `saveCutGrassMessage` | ❌ Niet geïmplementeerd | Maaier stuurt notificatieberichten |
+| `machineReset` | ✅ Geïmplementeerd | Apparaat unbind/reset |
+| `network/connection` | ✅ Geïmplementeerd | Connectivity check → `{"success":true,"code":200}` |

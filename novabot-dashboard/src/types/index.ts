@@ -34,6 +34,7 @@ export interface DeviceOnlineEvent {
 export interface MapData {
   mapId: string;
   mapName: string | null;
+  mapType: 'work' | 'obstacle' | 'unicom';
   mapArea: Array<{ lat: number; lng: number }>;
   mapMaxMin: { minLat: number; maxLat: number; minLng: number; maxLng: number } | null;
   createdAt: string;
@@ -50,6 +51,24 @@ export interface MapCalibration {
   offsetLng: number;
   rotation: number;
   scale: number;
+}
+
+export interface Schedule {
+  scheduleId: string;
+  mowerSn: string;
+  scheduleName: string | null;
+  startTime: string;
+  endTime: string | null;
+  weekdays: number[];
+  enabled: boolean;
+  mapId: string | null;
+  mapName: string | null;
+  cuttingHeight: number;
+  pathDirection: number;
+  workMode: number;
+  taskMode: number;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface MqttLogEntry {

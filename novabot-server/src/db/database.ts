@@ -156,6 +156,26 @@ export function initDb(): void {
     -- Voeg mac_address kolom toe aan equipment als die nog niet bestaat
     -- (SQLite ondersteunt geen IF NOT EXISTS op kolommen, dus via try-catch in code)
 
+    -- Dashboard maaischema's (geen auth, lokaal netwerk)
+    CREATE TABLE IF NOT EXISTS dashboard_schedules (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      schedule_id     TEXT    NOT NULL UNIQUE,
+      mower_sn        TEXT    NOT NULL,
+      schedule_name   TEXT,
+      start_time      TEXT    NOT NULL,  -- HH:MM
+      end_time        TEXT,              -- HH:MM (optioneel)
+      weekdays        TEXT    NOT NULL DEFAULT '[]',  -- JSON array [0-6], 0=zondag
+      enabled         INTEGER NOT NULL DEFAULT 1,
+      map_id          TEXT,
+      map_name        TEXT,
+      cutting_height  INTEGER DEFAULT 40,   -- mm
+      path_direction  INTEGER DEFAULT 0,    -- graden 0-360
+      work_mode       INTEGER DEFAULT 0,
+      task_mode       INTEGER DEFAULT 0,
+      created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+      updated_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+    );
+
     -- Map calibratie: handmatige offset/rotatie/schaal per maaier
     CREATE TABLE IF NOT EXISTS map_calibration (
       mower_sn    TEXT    NOT NULL PRIMARY KEY,
@@ -173,6 +193,43 @@ export function initDb(): void {
     console.log('[DB] Migrated: added equipment.mac_address');
   } catch {
     // Kolom bestaat al — geen actie nodig
+  }
+
+  // Nieuwe kolommen voor maaier work records (saveCutGrassRecord endpoint)
+  for (const col of [
+    'work_area_m2 REAL',
+    'cut_grass_height INTEGER',
+    'map_names TEXT',
+    'start_way TEXT',
+    'schedule_id TEXT',
+    'week TEXT',
+    'date_time TEXT',
+  ]) {
+    try { db.exec(`ALTER TABLE work_records ADD COLUMN ${col}`); }
+    catch { /* kolom bestaat al */ }
+  }
+
+  // Voeg map_type kolom toe aan maps (migratie – work/obstacle/unicom)
+  try {
+    db.exec(`ALTER TABLE maps ADD COLUMN map_type TEXT NOT NULL DEFAULT 'work'`);
+    console.log('[DB] Migrated: added maps.map_type');
+  } catch {
+    // Kolom bestaat al — geen actie nodig
+  }
+  // Migreer bestaande kaarten op basis van map_id en map_name patronen (idempotent)
+  const migrated = db.prepare(`
+    UPDATE maps SET map_type = 'obstacle'
+    WHERE map_type = 'work'
+      AND (map_id LIKE '%obstacle%' OR map_name LIKE '%obstakel%' OR map_name LIKE '%obstacle%'
+           OR map_name LIKE '%trampoline%' OR map_name LIKE '%speeltoestel%')
+  `).run();
+  const migratedUnicom = db.prepare(`
+    UPDATE maps SET map_type = 'unicom'
+    WHERE map_type = 'work'
+      AND (map_id LIKE '%unicom%' OR map_name LIKE '%kanaal%' OR map_name LIKE '%channel%' OR map_name LIKE '%pad naar%')
+  `).run();
+  if (migrated.changes > 0 || migratedUnicom.changes > 0) {
+    console.log(`[DB] Migrated map_type: ${migrated.changes} obstacles, ${migratedUnicom.changes} unicom`);
   }
 
   console.log('[DB] Database initialised');

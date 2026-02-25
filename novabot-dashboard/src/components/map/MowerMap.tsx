@@ -5,10 +5,11 @@ import {
   MapPin, Map as MapIcon, Trash2, Route, Wifi, WifiOff, Satellite, Crosshair,
   Battery, BatteryCharging, BatteryLow, BatteryFull, Layers,
   SlidersHorizontal, Save, X, RotateCcw, Pencil, Check, Scissors, Navigation,
-  ChevronUp, ChevronDown, ChevronLeft, ChevronRight,
+  ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Download, Flame,
 } from 'lucide-react';
 import type { MapData, TrailPoint, MapCalibration } from '../../types';
-import { fetchMaps, fetchTrail, clearTrail, fetchCalibration, saveCalibration, deleteMap, renameMap, updateMapArea, createMap } from '../../api/client';
+import { fetchMaps, fetchTrail, clearTrail, fetchCalibration, saveCalibration, deleteMap, renameMap, updateMapArea, createMap, exportMaps } from '../../api/client';
+import { useToast } from '../common/Toast';
 import { PolygonEditor } from './PolygonEditor';
 
 // Fix Leaflet default marker icons in Vite
@@ -33,9 +34,13 @@ const AREA_STYLES = {
   default:  { color: '#8b5cf6', fillColor: '#8b5cf640', fillOpacity: 0.25, weight: 2 },   // purple
 } as const;
 
-/** Bepaal kaarttype uit mapId of mapName */
-function getAreaStyle(mapId: string, mapName?: string | null) {
-  const id = mapId.toLowerCase();
+/** Bepaal kaarttype — primair uit mapType veld, fallback op mapId/mapName patronen */
+function getAreaStyle(mapType?: string, mapId?: string, mapName?: string | null) {
+  if (mapType === 'obstacle') return AREA_STYLES.obstacle;
+  if (mapType === 'unicom') return AREA_STYLES.unicom;
+  if (mapType === 'work') return AREA_STYLES.work;
+  // Fallback voor oude kaarten zonder mapType
+  const id = (mapId ?? '').toLowerCase();
   const name = (mapName ?? '').toLowerCase();
   if (id.includes('obstacle') || name.includes('obstakel') || name.includes('obstacle')) return AREA_STYLES.obstacle;
   if (id.includes('unicom') || name.includes('pad naar') || name.includes('kanaal') || name.includes('channel')) return AREA_STYLES.unicom;
@@ -64,8 +69,13 @@ interface Props {
   sn: string;
   lat?: string;
   lng?: string;
+  heading?: string;
+  chargerLat?: string;
+  chargerLng?: string;
   signals?: SignalInfo;
   mowing?: MowingInfo;
+  /** Wanneer ingesteld, toon een richting-overlay lijn op de kaart (graden, 0=N) */
+  pathDirectionPreview?: number | null;
 }
 
 function wifiColor(rssi: number): string {
@@ -214,12 +224,14 @@ const TILE_LAYERS = {
   satellite: {
     url: 'https://service.pdok.nl/hwh/luchtfotorgb/wmts/v1_0/Actueel_orthoHR/EPSG:3857/{z}/{x}/{y}.jpeg',
     attribution: '&copy; <a href="https://www.pdok.nl">PDOK</a> Luchtfoto',
-    maxZoom: 21,
+    maxNativeZoom: 21,
+    maxZoom: 23,
   },
   street: {
     url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>',
-    maxZoom: 19,
+    maxNativeZoom: 19,
+    maxZoom: 23,
   },
 } as const;
 
@@ -267,10 +279,117 @@ const AREA_TYPE_META = {
 
 type AreaType = keyof typeof AREA_TYPE_META;
 
+// ── Mower marker icon ────────────────────────────────────────────
+
+function makeMowerIcon(heading: number) {
+  return L.divIcon({
+    className: '',
+    html: `<div style="width:32px;height:32px;transform:rotate(${heading}deg)">
+      <svg viewBox="0 0 32 32" width="32" height="32">
+        <circle cx="16" cy="16" r="12" fill="#10b981" stroke="white" stroke-width="2" opacity="0.9"/>
+        <polygon points="16,4 22,18 16,14 10,18" fill="white" opacity="0.9"/>
+      </svg>
+    </div>`,
+    iconSize: [32, 32],
+    iconAnchor: [16, 16],
+  });
+}
+
+// ── Point-in-polygon (ray casting) ──────────────────────────────
+
+function pointInPolygon(lat: number, lng: number, polygon: Array<{ lat: number; lng: number }>): boolean {
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const yi = polygon[i].lat, xi = polygon[i].lng;
+    const yj = polygon[j].lat, xj = polygon[j].lng;
+    if ((yi > lat) !== (yj > lat) && lng < (xj - xi) * (lat - yi) / (yj - yi) + xi) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+/** Calculate polygon area in m² using Shoelace on GPS coords */
+function polygonAreaM2(points: Array<{ lat: number; lng: number }>): number {
+  if (points.length < 3) return 0;
+  const MpD = 111320;
+  const centerLat = points.reduce((s, p) => s + p.lat, 0) / points.length;
+  const cosLat = Math.cos(centerLat * Math.PI / 180);
+  let area = 0;
+  for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
+    const xi = (points[i].lng - points[0].lng) * MpD * cosLat;
+    const yi = (points[i].lat - points[0].lat) * MpD;
+    const xj = (points[j].lng - points[0].lng) * MpD * cosLat;
+    const yj = (points[j].lat - points[0].lat) * MpD;
+    area += xi * yj - xj * yi;
+  }
+  return Math.abs(area) / 2;
+}
+
+// ── Clip a line segment to a polygon (Sutherland-Hodgman style) ──
+
+/** Returns segments of `line` that lie inside `polygon`. */
+function clipLineToPolygon(
+  line: [[number, number], [number, number]],
+  polygon: Array<{ lat: number; lng: number }>,
+): [number, number][][] {
+  const pts = polygon.map(p => [p.lat, p.lng] as [number, number]);
+  const n = pts.length;
+  if (n < 3) return [];
+
+  // Collect all intersection t-values of line with polygon edges
+  const [aLat, aLng] = line[0];
+  const [bLat, bLng] = line[1];
+  const dLat = bLat - aLat;
+  const dLng = bLng - aLng;
+
+  const tValues: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    const [eLat, eLng] = pts[i];
+    const [fLat, fLng] = pts[j];
+    const edLat = fLat - eLat;
+    const edLng = fLng - eLng;
+    const denom = dLat * edLng - dLng * edLat;
+    if (Math.abs(denom) < 1e-15) continue;
+    const t = ((eLat - aLat) * edLng - (eLng - aLng) * edLat) / denom;
+    const u = ((eLat - aLat) * dLng - (eLng - aLng) * dLat) / denom;
+    if (u >= 0 && u <= 1 && t >= 0 && t <= 1) {
+      tValues.push(t);
+    }
+  }
+
+  // Add start/end if inside polygon
+  const startInside = pointInPolygon(aLat, aLng, polygon);
+  const endInside = pointInPolygon(bLat, bLng, polygon);
+  if (startInside) tValues.push(0);
+  if (endInside) tValues.push(1);
+
+  tValues.sort((a, b) => a - b);
+
+  // Build segments from consecutive pairs (enter→exit)
+  const segments: [number, number][][] = [];
+  for (let i = 0; i < tValues.length - 1; i++) {
+    const t1 = tValues[i];
+    const t2 = tValues[i + 1];
+    const midT = (t1 + t2) / 2;
+    const midLat = aLat + dLat * midT;
+    const midLng = aLng + dLng * midT;
+    if (pointInPolygon(midLat, midLng, polygon)) {
+      segments.push([
+        [aLat + dLat * t1, aLng + dLng * t1],
+        [aLat + dLat * t2, aLng + dLng * t2],
+      ]);
+    }
+  }
+  return segments;
+}
+
 // ── Nudge step: ~0.5m in degrees ─────────────────────────────────
 const NUDGE_STEP = 0.000005; // ~0.55m lat, ~0.35m lng at 52°N
 
-export function MowerMap({ sn, lat, lng, signals, mowing }: Props) {
+export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signals, mowing, pathDirectionPreview }: Props) {
+  const { toast } = useToast();
   const [maps, setMaps] = useState<MapData[]>([]);
   const [trail, setTrail] = useState<TrailPoint[]>([]);
   const [showTrail, setShowTrail] = useState(true);
@@ -282,6 +401,7 @@ export function MowerMap({ sn, lat, lng, signals, mowing }: Props) {
   const [editVertices, setEditVertices] = useState<[number, number][]>([]);
   const [editingMapId, setEditingMapId] = useState<string | null>(null);
   const [drawType, setDrawType] = useState<'work' | 'obstacle' | 'unicom'>('work');
+  const [showHeatmap, setShowHeatmap] = useState(false);
 
   // Calibration state
   const [savedCal, setSavedCal] = useState<MapCalibration>(DEFAULT_CAL);
@@ -360,7 +480,7 @@ export function MowerMap({ sn, lat, lng, signals, mowing }: Props) {
     if (editMode === 'draw') return AREA_TYPE_META[drawType].color;
     if (editMode === 'edit' && editingMapId) {
       const m = maps.find(p => p.mapId === editingMapId);
-      if (m) return getAreaStyle(m.mapId, m.mapName).color;
+      if (m) return getAreaStyle(m.mapType, m.mapId, m.mapName).color;
     }
     return '#10b981';
   }, [editMode, drawType, editingMapId, maps]);
@@ -380,7 +500,7 @@ export function MowerMap({ sn, lat, lng, signals, mowing }: Props) {
     } else if (editMode === 'draw') {
       const typeMeta = AREA_TYPE_META[drawType];
       const count = maps.filter(m => {
-        const s = getAreaStyle(m.mapId, m.mapName);
+        const s = getAreaStyle(m.mapType, m.mapId, m.mapName);
         return s.color === typeMeta.color;
       }).length;
       const name = `${typeMeta.label} ${count + 1}`;
@@ -414,6 +534,37 @@ export function MowerMap({ sn, lat, lng, signals, mowing }: Props) {
 
   const polygonMaps = maps.filter(m => m.mapArea.length >= 3);
   const trailPositions: [number, number][] = trail.map(p => [p.lat, p.lng]);
+
+  // Mower heading icon (rotates with heading data)
+  const headingDeg = heading ? parseFloat(heading) : 0;
+  const mowerIcon = useMemo(() => makeMowerIcon(isNaN(headingDeg) ? 0 : headingDeg), [headingDeg]);
+
+  // Coverage stats per polygon (trail points inside each work area)
+  const coverageStats = useMemo(() => {
+    if (trail.length === 0) return new Map<string, { points: number; area: number }>();
+    const stats = new Map<string, { points: number; area: number }>();
+    for (const m of polygonMaps) {
+      const style = getAreaStyle(m.mapType, m.mapId, m.mapName);
+      if (style !== AREA_STYLES.work) continue;
+      const area = polygonAreaM2(m.mapArea);
+      let count = 0;
+      for (const t of trail) {
+        if (pointInPolygon(t.lat, t.lng, m.mapArea)) count++;
+      }
+      stats.set(m.mapId, { points: count, area });
+    }
+    return stats;
+  }, [trail, polygonMaps]);
+
+  // Export handler
+  const chargerHasGps = !!(chargerLat && parseFloat(chargerLat) && chargerLng && parseFloat(chargerLng));
+  const handleExport = useCallback(() => {
+    if (!chargerHasGps) return;
+    exportMaps(sn, { lat: parseFloat(chargerLat!), lng: parseFloat(chargerLng!) }).then(url => {
+      window.open(url, '_blank');
+      toast('Kaarten geëxporteerd', 'success');
+    }).catch(() => toast('Export mislukt', 'error'));
+  }, [sn, chargerLat, chargerLng, chargerHasGps]);
 
   // Center of all polygon points (used as rotation/scale pivot)
   const polyCenter = useMemo(() => {
@@ -534,6 +685,35 @@ export function MowerMap({ sn, lat, lng, signals, mowing }: Props) {
               Calibrate
             </button>
           )}
+          {/* Heatmap toggle */}
+          {trail.length > 10 && (
+            <button
+              onClick={() => setShowHeatmap(!showHeatmap)}
+              className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded transition-colors ${
+                showHeatmap ? 'bg-orange-900/50 text-orange-400' : 'bg-gray-700/50 text-gray-500'
+              }`}
+              title={showHeatmap ? 'Verberg heatmap' : 'Toon heatmap'}
+            >
+              <Flame className="w-3 h-3" />
+              Heat
+            </button>
+          )}
+          {/* Export button */}
+          {polygonMaps.length > 0 && editMode === 'none' && !calibrating && (
+            <button
+              onClick={handleExport}
+              disabled={!chargerHasGps}
+              className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded transition-colors ${
+                chargerHasGps
+                  ? 'bg-gray-700/50 text-gray-400 hover:text-cyan-400 hover:bg-cyan-900/30'
+                  : 'bg-gray-700/30 text-gray-600 cursor-not-allowed'
+              }`}
+              title={chargerHasGps ? 'Exporteer kaarten als Novabot ZIP' : 'Charger offline — GPS positie nodig voor export'}
+            >
+              <Download className="w-3 h-3" />
+              Export
+            </button>
+          )}
           <button
             onClick={() => setTileLayer(tileLayer === 'satellite' ? 'street' : 'satellite')}
             className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded transition-colors ${
@@ -547,7 +727,7 @@ export function MowerMap({ sn, lat, lng, signals, mowing }: Props) {
           {polygonMaps.length > 0 && (() => {
             const counts = { work: 0, obstacle: 0, unicom: 0, other: 0 };
             for (const m of polygonMaps) {
-              const s = getAreaStyle(m.mapId, m.mapName);
+              const s = getAreaStyle(m.mapType, m.mapId, m.mapName);
               if (s === AREA_STYLES.work) counts.work++;
               else if (s === AREA_STYLES.obstacle) counts.obstacle++;
               else if (s === AREA_STYLES.unicom) counts.unicom++;
@@ -578,7 +758,7 @@ export function MowerMap({ sn, lat, lng, signals, mowing }: Props) {
         <MapContainer
           center={position}
           zoom={20}
-          maxZoom={21}
+          maxZoom={23}
           className="h-full w-full"
           zoomControl={true}
           scrollWheelZoom={true}
@@ -589,11 +769,12 @@ export function MowerMap({ sn, lat, lng, signals, mowing }: Props) {
             attribution={TILE_LAYERS[tileLayer].attribution}
             url={TILE_LAYERS[tileLayer].url}
             maxZoom={TILE_LAYERS[tileLayer].maxZoom}
+            maxNativeZoom={TILE_LAYERS[tileLayer].maxNativeZoom}
           />
           {/* Saved map polygons with calibration applied */}
           {polygonMaps.map(m => {
             const positions = calibratePoints(m.mapArea, activeCal, polyCenter);
-            const baseStyle = getAreaStyle(m.mapId, m.mapName);
+            const baseStyle = getAreaStyle(m.mapType, m.mapId, m.mapName);
             const isBeingEdited = editMode === 'edit' && editingMapId === m.mapId;
             const isSelected = selectedMapId === m.mapId;
             // Dim the polygon being edited (the editor shows its own)
@@ -633,7 +814,7 @@ export function MowerMap({ sn, lat, lng, signals, mowing }: Props) {
             <CoverageTrail positions={trailPositions} />
           )}
           {/* GPS trail centerline */}
-          {showTrail && trailPositions.length >= 2 && (
+          {showTrail && !showHeatmap && trailPositions.length >= 2 && (
             <Polyline
               positions={trailPositions}
               pathOptions={{
@@ -644,14 +825,115 @@ export function MowerMap({ sn, lat, lng, signals, mowing }: Props) {
               }}
             />
           )}
-          {/* GPS marker */}
+          {/* Heatmap mode: color trail segments by recency */}
+          {showHeatmap && trailPositions.length >= 2 && (() => {
+            const chunkSize = Math.max(2, Math.floor(trailPositions.length / 30));
+            const chunks: [number, number][][] = [];
+            for (let i = 0; i < trailPositions.length; i += chunkSize) {
+              const chunk = trailPositions.slice(i, i + chunkSize + 1);
+              if (chunk.length >= 2) chunks.push(chunk);
+            }
+            return chunks.map((chunk, idx) => {
+              const t = chunks.length > 1 ? idx / (chunks.length - 1) : 1;
+              const r = Math.round(255 * (1 - t));
+              const g = Math.round(200 * t);
+              const b = Math.round(50 + 100 * (1 - t));
+              return (
+                <Polyline
+                  key={`heat-${idx}`}
+                  positions={chunk}
+                  pathOptions={{
+                    color: `rgb(${r},${g},${b})`,
+                    weight: 4,
+                    opacity: 0.3 + 0.5 * t,
+                    lineCap: 'round',
+                  }}
+                />
+              );
+            });
+          })()}
+          {/* Mower marker with heading arrow */}
           {hasGps && (
-            <Marker position={position}>
+            <Marker position={position} icon={mowerIcon}>
               <Popup>
-                Mower: {parseFloat(lat).toFixed(6)}, {parseFloat(lng).toFixed(6)}
+                <div className="text-xs">
+                  <div className="font-semibold">Mower</div>
+                  <div>{parseFloat(lat).toFixed(6)}, {parseFloat(lng).toFixed(6)}</div>
+                  {heading && <div>Heading: {parseFloat(heading).toFixed(0)}&deg;</div>}
+                </div>
               </Popup>
             </Marker>
           )}
+          {/* Path direction preview: hatching lines clipped to work polygons */}
+          {pathDirectionPreview != null && polyCenter.lat !== 0 && (() => {
+            const deg = pathDirectionPreview;
+            const rad = (deg * Math.PI) / 180;
+            // Direction vector (bearing: 0=N, 90=E)
+            const dLat = Math.cos(rad);
+            const dLng = Math.sin(rad);
+            // Perpendicular for parallel offset lines
+            const pLat = -dLng;
+            const pLng = dLat;
+
+            // Collect all work-area polygons (calibrated)
+            const workPolys = polygonMaps
+              .filter(m => getAreaStyle(m.mapType, m.mapId, m.mapName) === AREA_STYLES.work)
+              .map(m => {
+                const calPts = calibratePoints(m.mapArea, activeCal, polyCenter);
+                return calPts.map(([lat, lng]) => ({ lat, lng }));
+              });
+            if (workPolys.length === 0) return null;
+
+            // Compute bounding box of all work polygons to determine line count + extent
+            let minPerp = Infinity, maxPerp = -Infinity;
+            let minPar = Infinity, maxPar = -Infinity;
+            for (const poly of workPolys) {
+              for (const p of poly) {
+                const dL = p.lat - polyCenter.lat;
+                const dN = p.lng - polyCenter.lng;
+                const perp = dL * pLat + dN * pLng;
+                const par = dL * dLat + dN * dLng;
+                if (perp < minPerp) minPerp = perp;
+                if (perp > maxPerp) maxPerp = perp;
+                if (par < minPar) minPar = par;
+                if (par > maxPar) maxPar = par;
+              }
+            }
+
+            const spacing = 0.000008; // ~0.9m between lines — dense hatching
+            const margin = spacing * 2;
+            const lineExtent = Math.max(Math.abs(maxPar), Math.abs(minPar)) + margin;
+            const startPerp = Math.floor((minPerp - margin) / spacing) * spacing;
+            const endPerp = maxPerp + margin;
+
+            const allSegments: [number, number][][] = [];
+            for (let offset = startPerp; offset <= endPerp; offset += spacing) {
+              const cLat = polyCenter.lat + pLat * offset;
+              const cLng = polyCenter.lng + pLng * offset;
+              const rawLine: [[number, number], [number, number]] = [
+                [cLat - dLat * lineExtent, cLng - dLng * lineExtent],
+                [cLat + dLat * lineExtent, cLng + dLng * lineExtent],
+              ];
+              for (const poly of workPolys) {
+                const clipped = clipLineToPolygon(rawLine, poly);
+                for (const seg of clipped) {
+                  allSegments.push(seg);
+                }
+              }
+            }
+
+            return allSegments.map((seg, idx) => (
+              <Polyline
+                key={`dir-${idx}`}
+                positions={seg}
+                pathOptions={{
+                  color: '#60a5fa',
+                  weight: 2,
+                  opacity: 0.7,
+                }}
+              />
+            ));
+          })()}
           <FitToMaps maps={polygonMaps} />
           <RecenterMap position={position} hasManualInteraction={userInteracted} />
           <UserInteractionTracker onInteract={() => setUserInteracted(true)} />
@@ -873,7 +1155,7 @@ export function MowerMap({ sn, lat, lng, signals, mowing }: Props) {
         {selectedMapId && !calibrating && editMode === 'none' && (() => {
           const m = polygonMaps.find(p => p.mapId === selectedMapId);
           if (!m) return null;
-          const style = getAreaStyle(m.mapId, m.mapName);
+          const style = getAreaStyle(m.mapType, m.mapId, m.mapName);
           return (
             <div className="absolute bottom-3 left-3 z-[1000] bg-gray-900/95 backdrop-blur border border-gray-700 rounded-lg p-3 shadow-xl max-w-72">
               <div className="flex items-center gap-2 mb-2">
@@ -920,11 +1202,36 @@ export function MowerMap({ sn, lat, lng, signals, mowing }: Props) {
               </div>
               <div className="flex items-center gap-3 text-[11px] text-gray-400">
                 <span>{m.mapArea.length} punten</span>
+                {(() => {
+                  const area = polygonAreaM2(m.mapArea);
+                  return area > 0 ? <span>{area.toFixed(0)} m&sup2;</span> : null;
+                })()}
                 {m.createdAt && (
                   <span>{new Date(m.createdAt).toLocaleDateString('nl-NL', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
                 )}
-                <span className="font-mono text-gray-500 truncate">{m.mapId}</span>
               </div>
+              {/* Coverage stats for work areas */}
+              {coverageStats.has(m.mapId) && (() => {
+                const stats = coverageStats.get(m.mapId)!;
+                // Rough coverage: each trail point covers ~0.25m² (0.5m mow width × 0.5m spacing)
+                const coveredM2 = stats.points * 0.25;
+                const pct = stats.area > 0 ? Math.min(100, (coveredM2 / stats.area) * 100) : 0;
+                return (
+                  <div className="mt-1.5">
+                    <div className="flex items-center justify-between text-[11px] mb-1">
+                      <span className="text-gray-500">Coverage</span>
+                      <span className="text-emerald-400 font-mono">{pct.toFixed(0)}%</span>
+                    </div>
+                    <div className="h-1.5 bg-gray-700 rounded-full overflow-hidden">
+                      <div className="h-full bg-emerald-500 rounded-full transition-all" style={{ width: `${pct}%` }} />
+                    </div>
+                    <div className="flex items-center gap-3 mt-1 text-[10px] text-gray-500">
+                      <span>{stats.points} trail pts</span>
+                      <span>~{coveredM2.toFixed(0)} m&sup2; gemaaid</span>
+                    </div>
+                  </div>
+                );
+              })()}
               <div className="mt-2 pt-2 border-t border-gray-700 flex items-center gap-2">
                 <button
                   onClick={(e) => { e.stopPropagation(); startEditMap(m.mapId, m.mapArea); }}

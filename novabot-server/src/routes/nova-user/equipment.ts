@@ -1,4 +1,4 @@
-import { Router, Response } from 'express';
+import { Router, Request, Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { db } from '../../db/database.js';
 import { authMiddleware } from '../../middleware/auth.js';
@@ -246,4 +246,14 @@ equipmentRouter.post('/updateEquipmentVersion', authMiddleware, (req: AuthReques
     WHERE id = ? AND user_id = ?
   `).run(mowerVersion ?? null, chargerVersion ?? null, equipmentId, req.userId);
   res.json(ok());
+});
+
+// ── Maaier firmware endpoint (geen JWT auth) ──────────────────────────────────
+
+// POST /api/nova-user/equipment/machineReset
+// De maaier bevestigt een factory reset. Simpel acknowledgment.
+equipmentRouter.post('/machineReset', (req: Request, res: Response) => {
+  const { sn } = req.body as { sn?: string };
+  console.log(`[equipment] machineReset: sn=${sn ?? 'unknown'}`);
+  res.json(ok(null));
 });

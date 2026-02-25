@@ -61,6 +61,24 @@ export interface MapRow {
   updated_at: string;
 }
 
+export interface WorkRecordRow {
+  id: number;
+  record_id: string;
+  user_id: string;
+  equipment_id: string | null;
+  work_record_date: string;
+  work_status: string | null;
+  work_time: number | null;
+  work_record_unread: number;
+  work_area_m2: number | null;
+  cut_grass_height: number | null;
+  map_names: string | null;
+  start_way: string | null;
+  schedule_id: string | null;
+  week: string | null;
+  date_time: string | null;
+}
+
 export interface PlanRow {
   id: number;
   plan_id: string;

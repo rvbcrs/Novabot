@@ -1,4 +1,4 @@
-import { Router, Response } from 'express';
+import { Router, Request, Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { db } from '../../db/database.js';
 import { authMiddleware } from '../../middleware/auth.js';
@@ -138,4 +138,24 @@ cutGrassPlanRouter.post('/deleteCutGrassPlan', authMiddleware, (req: AuthRequest
 // POST /api/nova-data/appManage/queryNewVersion
 cutGrassPlanRouter.post('/queryNewVersion', (_req, res: Response) => {
   res.json(ok({ version: '2.3.9', hasNewVersion: false }));
+});
+
+// ── Maaier firmware endpoint (geen JWT auth) ──────────────────────────────────
+
+// POST /api/nova-data/cutGrassPlan/queryPlanFromMachine
+// De maaier vraagt maaischema's op via SN (geen JWT).
+cutGrassPlanRouter.post('/queryPlanFromMachine', (req: Request, res: Response) => {
+  const { sn } = req.body as { sn?: string };
+  if (!sn) { res.json(fail('sn required', 400)); return; }
+
+  console.log(`[PLAN] queryPlanFromMachine: sn=${sn}`);
+
+  const rows = db.prepare(`
+    SELECT p.* FROM cut_grass_plans p
+    JOIN equipment e ON e.equipment_id = p.equipment_id
+    WHERE e.mower_sn = ? OR e.charger_sn = ?
+    ORDER BY p.updated_at DESC
+  `).all(sn, sn) as PlanRow[];
+
+  res.json(ok(rows.map(rowToDto)));
 });

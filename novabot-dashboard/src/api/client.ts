@@ -1,4 +1,4 @@
-import type { DeviceState, SensorDef, MapData, TrailPoint, MapCalibration } from '../types';
+import type { DeviceState, SensorDef, MapData, TrailPoint, MapCalibration, Schedule } from '../types';
 
 const BASE = '/api/dashboard';
 
@@ -76,5 +76,67 @@ export async function createMap(sn: string, mapName: string, mapArea: Array<{ la
 export async function deleteMap(sn: string, mapId: string): Promise<void> {
   await fetch(`${BASE}/maps/${encodeURIComponent(sn)}/${encodeURIComponent(mapId)}`, {
     method: 'DELETE',
+  });
+}
+
+// ── MQTT Commands ──────────────────────────────────────────────
+
+export async function sendCommand(sn: string, command: Record<string, unknown>): Promise<void> {
+  await fetch(`${BASE}/command/${encodeURIComponent(sn)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ command }),
+  });
+}
+
+// ── Map Export ──────────────────────────────────────────────────
+
+export async function exportMaps(sn: string, chargingStation: { lat: number; lng: number }, chargingOrientation?: number): Promise<string> {
+  const res = await fetch(`${BASE}/maps/${encodeURIComponent(sn)}/export-zip`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ chargingStation, chargingOrientation: chargingOrientation ?? 0 }),
+  });
+  const data = await res.json();
+  return data.downloadUrl;
+}
+
+// ── Schedules ──────────────────────────────────────────────────
+
+export async function fetchSchedules(sn: string): Promise<Schedule[]> {
+  const res = await fetch(`${BASE}/schedules/${encodeURIComponent(sn)}`);
+  const data = await res.json();
+  return data.schedules;
+}
+
+export async function createSchedule(sn: string, schedule: Omit<Schedule, 'scheduleId' | 'mowerSn' | 'createdAt' | 'updatedAt'>): Promise<Schedule> {
+  const res = await fetch(`${BASE}/schedules/${encodeURIComponent(sn)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(schedule),
+  });
+  const data = await res.json();
+  return data.schedule;
+}
+
+export async function updateSchedule(sn: string, scheduleId: string, updates: Partial<Schedule>): Promise<Schedule> {
+  const res = await fetch(`${BASE}/schedules/${encodeURIComponent(sn)}/${encodeURIComponent(scheduleId)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(updates),
+  });
+  const data = await res.json();
+  return data.schedule;
+}
+
+export async function deleteSchedule(sn: string, scheduleId: string): Promise<void> {
+  await fetch(`${BASE}/schedules/${encodeURIComponent(sn)}/${encodeURIComponent(scheduleId)}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function sendSchedule(sn: string, scheduleId: string): Promise<void> {
+  await fetch(`${BASE}/schedules/${encodeURIComponent(sn)}/${encodeURIComponent(scheduleId)}/send`, {
+    method: 'POST',
   });
 }

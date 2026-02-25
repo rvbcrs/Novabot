@@ -27,7 +27,7 @@ export function initMapSync(broker: Aedes): void {
 /**
  * Publiceer een MQTT commando naar een apparaat.
  */
-function publishToDevice(sn: string, command: Record<string, unknown>): void {
+export function publishToDevice(sn: string, command: Record<string, unknown>): void {
   if (!aedesBroker) {
     console.error(`${TAG} Broker niet geinitialiseerd`);
     return;

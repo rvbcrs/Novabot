@@ -19,6 +19,8 @@ import { cutGrassPlanRouter } from './routes/nova-data/cutGrassPlan.js';
 import { mapRouter }          from './routes/nova-file-server/map.js';
 import { logRouter }          from './routes/nova-file-server/log.js';
 import { messageRouter }      from './routes/novabot-message/message.js';
+import { machineMessageRouter } from './routes/novabot-message/machineMessage.js';
+import { equipmentStateRouter } from './routes/nova-data/equipmentState.js';
 import { adminRouter }        from './routes/admin.js';
 import { networkRouter }      from './routes/nova-network/network.js';
 
@@ -76,15 +78,17 @@ if (PROXY_MODE === 'cloud') {
   app.use('/api/nova-user/otaUpgrade', otaUpgradeRouter);
 
   // nova-data service
-  app.use('/api/nova-data/appManage',    cutGrassPlanRouter);
-  app.use('/api/nova-data/cutGrassPlan', cutGrassPlanRouter);
+  app.use('/api/nova-data/appManage',       cutGrassPlanRouter);
+  app.use('/api/nova-data/cutGrassPlan',    cutGrassPlanRouter);
+  app.use('/api/nova-data/equipmentState',  equipmentStateRouter);
 
   // nova-file-server service
   app.use('/api/nova-file-server/map', mapRouter);
   app.use('/api/nova-file-server/log', logRouter);
 
   // novabot-message service
-  app.use('/api/novabot-message/message', messageRouter);
+  app.use('/api/novabot-message/message',        messageRouter);
+  app.use('/api/novabot-message/machineMessage',  machineMessageRouter);
 
   // nova-network service (aangeroepen door charger firmware via HTTP)
   app.use('/api/nova-network/network', networkRouter);
@@ -94,6 +98,12 @@ if (PROXY_MODE === 'cloud') {
 
   // dashboard (lokaal gebruik, geen auth)
   app.use('/api/dashboard', dashboardRouter);
+
+  // ── Maaier firmware log upload (geen /api/ prefix, geen auth) ───────────────
+  app.post('/x3/log/upload', express.raw({ type: '*/*', limit: '50mb' }), (req, res) => {
+    console.log(`[x3-log] Log upload ontvangen (${req.get('content-length') ?? '?'} bytes)`);
+    res.json({ code: 200, msg: 'ok' });
+  });
 
   // ── Dashboard static files (productie build) ────────────────────────────────
   const dashboardPath = path.resolve(__dirname, '../../novabot-dashboard/dist');
