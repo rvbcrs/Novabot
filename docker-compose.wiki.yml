@@ -1,0 +1,10 @@
+services:
+  wiki:
+    image: squidfunk/mkdocs-material:latest
+    ports:
+      - "8100:8000"
+    volumes:
+      - .:/docs
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
