@@ -404,24 +404,45 @@ Update firmware version record.
 
 ### GET `/api/nova-user/otaUpgrade/checkOtaNewVersion`
 
-Check for new firmware version.
+Check for new firmware version. Returns the latest available firmware for the given equipment type.
 
 **Auth**: JWT
 
-| Query Param | Type | Description |
-|-------------|------|-------------|
-| `version` | string | Current firmware version |
-| `upgradeType` | string | `serviceUpgrade` |
-| `equipmentType` | string | Equipment type code |
+| Query Param | Type | Example | Description |
+|-------------|------|---------|-------------|
+| `version` | string | `v0.0.0` | Current firmware version (use `v0.0.0` to always get latest) |
+| `upgradeType` | string | `serviceUpgrade` | Upgrade type |
+| `equipmentType` | string | `LFIN2` | First 5 chars of SN |
+| `sn` | string | `LFIN2230700238` | Device serial number (optional, ignored by cloud) |
 
-```json title="Response → value"
+```json title="Response → value (update available)"
 {
-  "hasNewVersion": false,
-  "newVersion": null,
-  "downloadUrl": null,
-  "releaseNotes": null
+  "version": "v5.7.1",
+  "upgradeType": "serviceUpgrade",
+  "md5": "83c2741d05c9a40ff351332af2082d7c",
+  "downloadUrl": "https://novabot-oss.oss-us-east-1.aliyuncs.com/novabot-file/lfimvp-20240915571-1726376551929.deb",
+  "upgradeFlag": 0,
+  "environment": "trial",
+  "dependenceSystemVersionList": null
 }
 ```
+
+```json title="Response → value (no update)"
+null
+```
+
+!!! warning "Cloud ignores SN parameter"
+    The cloud OTA API returns the **same firmware version for ALL serial numbers** of a given equipment type. The `sn` parameter is ignored — there is no per-device versioning via this endpoint. Firmware v6.0.3 (seen pushed to select users) was likely delivered via direct MQTT `ota_upgrade_cmd`, not through this API.
+
+**Known firmware versions per equipment type:**
+
+| Equipment Type | Version | Description |
+|---------------|---------|-------------|
+| `LFIN2` | v5.7.1 | Mower (Debian/ROS 2, 35MB) |
+| `LFIN1` | v5.7.1 | Mower (older model) |
+| `LFIC1` | v0.3.6 | Charger (ESP32-S3, 1.4MB) |
+| `LFIC2` | v0.3.6 | Charger (variant) |
+| `LFIN3`, `LFIC3`, `LFI01`, `N1000`, `N2000` | v0.3.6 | Various equipment types |
 
 ---
 

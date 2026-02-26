@@ -98,6 +98,20 @@ zodat de robotmaaier en het laadstation volledig offline werken.
 ├── ghidra_output/                  Ghidra decompilatie output
 │   ├── charger_v036_decompiled.c   Gedecompileerde C-code (7.6MB, 296K regels, 7405 functies)
 │   └── charger_v036/               Ghidra project directory (interactieve analyse)
+├── docs/                           MkDocs markdown bronbestanden voor wiki
+│   ├── architecture/              Overzicht, hardware, netwerktopologie
+│   ├── api/                       Cloud API, dashboard API, mower API, authenticatie
+│   ├── mqtt/                      MQTT protocol: commando's, status reports, encryptie
+│   ├── ble/                       BLE provisioning: charger, mower, commando's
+│   ├── firmware/                  LoRa protocol, charger/mower firmware, AI perceptie
+│   ├── flows/                     Provisioning, mowing, map building, OTA flows
+│   └── index.md                   Wiki homepage
+├── mkdocs.yml                     MkDocs Material configuratie (nav, theme, plugins)
+├── site/                          Gegenereerde statische wiki (mkdocs build output)
+├── research/
+│   ├── download_firmware.js       Firmware downloader: login → OTA check → download .deb
+│   ├── bruteforce_firmware.js     SN brute-force scanner (alle SNs → zelfde versie)
+│   └── firmware/                  Gedownloade firmware bestanden
 ├── mqtt_sniffer.py                 Standalone TCP MQTT packet sniffer (diagnostisch)
 ├── Novabot-Base-Station.pdf        Hardware handleiding laadstation
 ├── Novabot-Mower.pdf               Hardware handleiding maaier
@@ -1593,17 +1607,117 @@ De app toont verschillende widgets afhankelijk van de maaier-status:
 
 ---
 
-## OTA firmware update protocol
+## OTA firmware update protocol (volledig reverse-engineered, februari 2026)
 
 **App route**: `/otaPage`
 
-**Flow:**
+### App-geïnitieerde update flow
 1. App vraagt `ota_version_info` via MQTT → `ota_version_info_respond`
 2. App checkt API: `GET /api/nova-user/otaUpgrade/checkOtaNewVersion?version=<VER>&upgradeType=serviceUpgrade&equipmentType=<TYPE>`
 3. App checkt API: `POST /api/nova-data/appManage/queryNewVersion`
 4. Bij beschikbare update: app stuurt `ota_upgrade_cmd` via MQTT
 5. Apparaat pusht `ota_upgrade_state` updates (voortgang)
 6. Na maaier-update vraagt app: "The charging station can also be upgraded. Would you like to proceed?"
+
+### `ota_upgrade_cmd` JSON formaat (uit firmware analyse)
+
+```json
+{
+  "ota_upgrade_cmd": {
+    "type": "full",
+    "content": {
+      "upgradeApp": {
+        "version": "v5.7.1",
+        "downloadUrl": "https://novabot-oss.oss-us-east-1.aliyuncs.com/novabot-file/lfimvp-20240915571-1726376551929.deb",
+        "md5": "83c2741d05c9a40ff351332af2082d7c"
+      }
+    }
+  }
+}
+```
+
+**Upgrade types** (4 gevonden in `ota_client_node`):
+| Type | Beschrijving |
+|------|-------------|
+| `full` | Volledige firmware (.deb), extract + replace + reboot |
+| `increment` | Incrementele app update |
+| `file_update` | Losse bestanden (.zip met `check.json` manifest) |
+| `system` | Voert `sudo apt full-upgrade && reboot -f` uit (!) |
+
+### Maaier OTA architectuur (twee componenten)
+
+| Component | Binary | Functie |
+|-----------|--------|---------|
+| `ota_client_node` | 5.8MB ROS 2 node | Download engine (libcurl), MD5 verificatie, extractie |
+| `mqtt_node` | 6.3MB ROS 2 node | MQTT ↔ ROS 2 bridge, forwardt `ota_upgrade_cmd` naar `/ota_upgrade_srv` |
+
+**ROS 2 service**: `OtaUpgradeSys` (`string ota_cmd` → `bool state, string state_out`)
+**Status topic**: `/ota/upgrade_status` → doorgestuurd als `ota_upgrade_state` via MQTT
+
+### OTA download & installatie flow
+
+```
+1. mqtt_node ontvangt ota_upgrade_cmd via MQTT
+2. Forward JSON naar ota_client_node via /ota_upgrade_srv ROS 2 service
+3. ota_client wacht tot maaier OPLAADT (vereist!)
+4. Download .deb via libcurl (resume-capable, max 24u timeout)
+5. Verificatie MD5 checksum
+6. Extract: dpkg -x pakket.deb /root/novabot.new/
+7. Kopieer charger firmware naar /userdata/ota/charging_station_pkg/
+8. Schrijf "1" naar /userdata/ota/upgrade.txt
+9. reboot -f
+
+Na reboot (run_ota.sh):
+10. Check upgrade.txt flag
+11. Backup: /root/novabot → /root/novabot.bak
+12. Deploy: /root/novabot.new → /root/novabot
+13. Restore gebruikersdata (kaarten, CSV, charging station config)
+14. Verificatie: als run_novabot.sh ontbreekt → ROLLBACK
+15. Schrijf "0" naar upgrade.txt, reboot
+```
+
+### Charger OTA (via maaier)
+
+De maaier handelt ook charger updates af:
+- **TCP socket**: verbindt met charger AP op `192.168.4.1`, stuurt firmware in chunks
+- **HTTP POST**: `http://192.168.4.1/setotadata` (alternatief pad in `ota_client_node`)
+- Firmware bron: `/userdata/ota/charging_station_pkg/lfi-charging-station_lora.bin`
+
+### Charger eigen OTA (ESP32-S3)
+
+De charger verwerkt `ota_upgrade_cmd` via `esp_https_ota()` (ESP-IDF OTA library).
+Downloadt firmware direct van de URL in het commando. Geen code signing, alleen MD5.
+
+### Cloud OTA API bevindingen
+
+- `checkOtaNewVersion` retourneert **dezelfde versie voor ALLE serial numbers**
+- SN parameter wordt genegeerd — geen per-device versioning via dit endpoint
+- v6.0.3 (gezien bij één gebruiker) werd waarschijnlijk gepusht via:
+  - **Direct MQTT**: support stuurde `ota_upgrade_cmd` naar `Dart/Send_mqtt/<SN>` via cloud broker
+  - **Database override**: cloud database tijdelijk aangepast voor specifiek SN
+- Download URL bevat onvoorspelbare timestamp → niet te raden zonder exacte URL
+
+### OTA bestanden op maaier
+
+| Pad | Beschrijving |
+|-----|-------------|
+| `/userdata/ota/upgrade.txt` | Flag: "0"=geen update, "1"=update pending |
+| `/userdata/ota/upgrade_pkg/` | Gedownloade .deb pakketten |
+| `/userdata/ota/run_ota.sh` | OTA startup script (gekopieerd bij update) |
+| `/userdata/ota/charging_station_pkg/` | Charger firmware voor relay |
+| `/userdata/ota/ota_client.log` | OTA operatie log |
+| `/userdata/lfi/system_version.txt` | Huidige firmware versie |
+| `/root/novabot/` | Actieve firmware installatie |
+| `/root/novabot.new/` | Uitgepakte nieuwe firmware (pre-reboot) |
+| `/root/novabot.bak/` | Backup vorige firmware (rollback) |
+
+### OTA security
+
+- **Geen authenticatie** op MQTT OTA commando's — elk bericht op `Dart/Send_mqtt/<SN>` triggert update
+- **Geen code signing** — alleen MD5 integriteitscheck
+- **Download URL niet gevalideerd** — kan naar elke server wijzen
+- **`system` type** voert `apt full-upgrade` uit → kwaadaardige apt repo = arbitrary code execution
+- **Charger OTA via HTTP** (niet HTTPS) naar `192.168.4.1`
 
 **UI strings:**
 - "Are you sure to upgrade? Expected to take 20-30 minutes"
@@ -1686,6 +1800,10 @@ De app toont verschillende widgets afhankelijk van de maaier-status:
 - [ ] `POST /api/nova-data/equipmentState/saveCutGrassRecord` endpoint bouwen (maairesultaten opslaan)
 - [ ] SSH toegang tot maaier voor directe CSV/ZIP upload naar `/userdata/lfi/maps/home0/csv_file/`
 - [ ] `start_run` met `polygon_area` parameter implementeren (SPECIFIED_AREA modus)
+- [x] OTA push mechanisme volledig reverse-engineered: ota_upgrade_cmd JSON formaat, ota_client_node flow, charger OTA relay
+- [x] OTA brute-force: cloud OTA API negeert SN parameter, retourneert altijd v5.7.1
+- [x] MkDocs Material wiki gebouwd: docs/ bronbestanden, mkdocs.yml config, site/ gegenereerde output
+- [x] Firmware download script geschreven: research/download_firmware.js (cloud login → OTA check → .deb download)
 
 ## Gedocumenteerde sessies
 
@@ -2594,3 +2712,25 @@ De maaier uploadt ook het geplande maaipad:
 | `saveCutGrassMessage` | ❌ Niet geïmplementeerd | Maaier stuurt notificatieberichten |
 | `machineReset` | ✅ Geïmplementeerd | Apparaat unbind/reset |
 | `network/connection` | ✅ Geïmplementeerd | Connectivity check → `{"success":true,"code":200}` |
+
+### OTA push mechanisme analyse (februari 2026)
+
+Volledige reverse engineering van het OTA update systeem uit drie bronnen:
+- `mqtt_node` binary (6.3MB, strings analyse voor OTA command handlers)
+- `ota_client_node` binary (5.8MB, download engine en installatie logica)
+- `run_ota.sh` startup script (boot-time upgrade, rollback mechanisme)
+- Ghidra decompilatie charger firmware (esp_https_ota flow)
+
+**Resultaat**: OTA push mechanisme volledig begrepen.
+- `ota_upgrade_cmd` MQTT commando bevat: `type` (full/increment/file_update/system), `content.upgradeApp.{version, downloadUrl, md5}`
+- Maaier wacht tot hij oplaadt → download via libcurl → MD5 check → dpkg extract → reboot → run_ota.sh doet atomic swap met rollback
+- Charger OTA via maaier: TCP socket naar `192.168.4.1` of HTTP POST naar `/setotadata`
+- Cloud OTA API negeert SN parameter (alle SNs krijgen v5.7.1)
+- v6.0.3 werd waarschijnlijk direct via MQTT gepusht naar specifiek SN
+- Scripts: `research/download_firmware.js` (downloader), `research/bruteforce_firmware.js` (SN scanner)
+
+### MkDocs wiki (februari 2026)
+- MkDocs Material wiki gebouwd in `docs/` met `mkdocs.yml` configuratie
+- 30 markdown bestanden: architectuur, API's, MQTT, BLE, LoRa, firmware, flows
+- Gegenereerde site in `site/` (2.4MB statische HTML)
+- Gebouwd met: `mkdocs build` (of `mkdocs serve` voor lokaal)

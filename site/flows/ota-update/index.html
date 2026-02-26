@@ -21,23 +21,18 @@
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
-      <meta name="generator" content="zensical-0.0.24">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.3">
     
     
       
-        <title>Flow: OTA Firmware Update - Novabot Reverse Engineering Wiki</title>
+        <title>OTA Update - Novabot Reverse Engineering Wiki</title>
       
     
     
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
       
         
-      
-      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.28978c9b.min.css">
-      
-        
-          
-        
-        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.dfe2e883.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
       
       
 
@@ -51,12 +46,12 @@
         
         
         <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,500,500i,700,700i%7CJetBrains+Mono:400,400i,700,700i&display=fallback">
-        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
       
     
     
-    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,a=__md_scope)=>JSON.parse(t.getItem(a.pathname+"."+e)),__md_set=(e,t,a=localStorage,_=__md_scope)=>{try{a.setItem(_.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -109,12 +104,12 @@
     <a href="../.." title="Novabot Reverse Engineering Wiki" class="md-header__button md-logo" aria-label="Novabot Reverse Engineering Wiki" data-md-component="logo">
       
   
-  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 7v14M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></svg>
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
 
     </a>
     <label class="md-header__button md-icon" for="__drawer">
       
-      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-menu" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h16"/></svg>
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
     </label>
     <div class="md-header__title" data-md-component="header-title">
       <div class="md-header__ellipsis">
@@ -126,7 +121,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Flow: OTA Firmware Update
+              OTA Update
             
           </span>
         </div>
@@ -168,18 +163,45 @@
       
         <label class="md-header__button md-icon" for="__search">
           
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
         </label>
-        <div class="md-search" data-md-component="search" role="dialog" aria-label="Search">
-  <button type="button" class="md-search__button">
-    Search
-  </button>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
 </div>
       
     
-    <div class="md-header__source">
-      
-    </div>
+    
   </nav>
   
 </header>
@@ -203,6 +225,9 @@
       <a href="../.." class="md-tabs__link">
         
   
+  
+    
+  
   Home
 
       </a>
@@ -220,6 +245,7 @@
       <li class="md-tabs__item">
         <a href="../../architecture/overview/" class="md-tabs__link">
           
+  
   
   Architecture
 
@@ -240,6 +266,7 @@
         <a href="../../api/overview/" class="md-tabs__link">
           
   
+  
   HTTP API
 
         </a>
@@ -258,6 +285,7 @@
       <li class="md-tabs__item">
         <a href="../../mqtt/overview/" class="md-tabs__link">
           
+  
   
   MQTT Protocol
 
@@ -278,6 +306,7 @@
         <a href="../../ble/overview/" class="md-tabs__link">
           
   
+  
   BLE Protocol
 
         </a>
@@ -297,6 +326,7 @@
         <a href="../../firmware/lora-protocol/" class="md-tabs__link">
           
   
+  
   LoRa Protocol
 
         </a>
@@ -315,6 +345,7 @@
       <li class="md-tabs__item">
         <a href="../../firmware/charger/" class="md-tabs__link">
           
+  
   
   Firmware
 
@@ -336,6 +367,7 @@
       <li class="md-tabs__item md-tabs__item--active">
         <a href="../charger-provisioning/" class="md-tabs__link">
           
+  
   
   Flows
 
@@ -370,7 +402,7 @@
     <a href="../.." title="Novabot Reverse Engineering Wiki" class="md-nav__button md-logo" aria-label="Novabot Reverse Engineering Wiki" data-md-component="logo">
       
   
-  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 7v14M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></svg>
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
 
     </a>
     Novabot Reverse Engineering Wiki
@@ -1674,7 +1706,7 @@
           <span class="md-nav__icon md-icon"></span>
         </label>
       
-      <a href="././" class="md-nav__link md-nav__link--active">
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1693,8 +1725,7 @@
       
         
 
-
-<nav class="md-nav md-nav--secondary" aria-label="On this page">
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
   
   
   
@@ -1703,9 +1734,198 @@
   
     <label class="md-nav__title" for="__toc">
       <span class="md-nav__icon md-icon"></span>
-      On this page
+      Table of contents
     </label>
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Overview
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#app-initiated-update-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        App-Initiated Update Flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#remote-push-support-initiated" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Remote Push (Support-Initiated)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ota_upgrade_cmd-json-format" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ota_upgrade_cmd JSON Format
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="ota_upgrade_cmd JSON Format">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#upgrade-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Upgrade Types
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mower-ota-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Mower OTA Architecture
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Mower OTA Architecture">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#ros-2-service-otaupgradesys" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ROS 2 Service: OtaUpgradeSys
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ota-client-launch-parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OTA Client Launch Parameters
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#full-firmware-installation-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Full Firmware Installation Flow
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Full Firmware Installation Flow">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#phase-1-download-ota_client_node" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 1: Download (ota_client_node)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-2-install-run_otash-at-boot" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 2: Install (run_ota.sh at boot)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#file-update-flow-type-file_update" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        File Update Flow (type: "file_update")
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#charger-ota" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Charger OTA
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Charger OTA">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#via-mower-relay" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Via Mower (Relay)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#direct-charger-own-ota" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Direct (Charger Own OTA)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
       
         <li class="md-nav__item">
   <a href="#ota-download-urls" class="md-nav__link">
@@ -1730,10 +1950,32 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#charger-ota-partition-scheme" class="md-nav__link">
+  <a href="#file-system-paths" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Charger OTA Partition Scheme
+        File System Paths
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ota-client-version-history" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OTA Client Version History
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#security-considerations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Security Considerations
       
     </span>
   </a>
@@ -1769,8 +2011,7 @@
                   <div class="md-sidebar__inner">
                     
 
-
-<nav class="md-nav md-nav--secondary" aria-label="On this page">
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
   
   
   
@@ -1779,9 +2020,198 @@
   
     <label class="md-nav__title" for="__toc">
       <span class="md-nav__icon md-icon"></span>
-      On this page
+      Table of contents
     </label>
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Overview
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#app-initiated-update-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        App-Initiated Update Flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#remote-push-support-initiated" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Remote Push (Support-Initiated)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ota_upgrade_cmd-json-format" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ota_upgrade_cmd JSON Format
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="ota_upgrade_cmd JSON Format">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#upgrade-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Upgrade Types
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mower-ota-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Mower OTA Architecture
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Mower OTA Architecture">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#ros-2-service-otaupgradesys" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ROS 2 Service: OtaUpgradeSys
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ota-client-launch-parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OTA Client Launch Parameters
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#full-firmware-installation-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Full Firmware Installation Flow
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Full Firmware Installation Flow">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#phase-1-download-ota_client_node" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 1: Download (ota_client_node)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-2-install-run_otash-at-boot" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 2: Install (run_ota.sh at boot)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#file-update-flow-type-file_update" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        File Update Flow (type: "file_update")
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#charger-ota" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Charger OTA
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Charger OTA">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#via-mower-relay" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Via Mower (Relay)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#direct-charger-own-ota" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Direct (Charger Own OTA)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
       
         <li class="md-nav__item">
   <a href="#ota-download-urls" class="md-nav__link">
@@ -1806,10 +2236,32 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#charger-ota-partition-scheme" class="md-nav__link">
+  <a href="#file-system-paths" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Charger OTA Partition Scheme
+        File System Paths
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ota-client-version-history" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OTA Client Version History
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#security-considerations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Security Considerations
       
     </span>
   </a>
@@ -1831,75 +2283,298 @@
                 
                   
 
+
+
 <h1 id="flow-ota-firmware-update">Flow: OTA Firmware Update<a class="headerlink" href="#flow-ota-firmware-update" title="Permanent link">&para;</a></h1>
-<pre class="mermaid"><code>sequenceDiagram
+<h2 id="overview">Overview<a class="headerlink" href="#overview" title="Permanent link">&para;</a></h2>
+<p>The OTA update system supports both <strong>app-initiated</strong> updates (user checks for updates) and <strong>remote push</strong> updates (support sends firmware directly via MQTT). The mower has a production-grade OTA pipeline with resume-capable downloads, MD5 verification, atomic replacement, and automatic rollback.</p>
+<h2 id="app-initiated-update-flow">App-Initiated Update Flow<a class="headerlink" href="#app-initiated-update-flow" title="Permanent link">&para;</a></h2>
+<p>```mermaid
+sequenceDiagram
     participant App
     participant Server as Local Server
-    participant Charger
+    participant MQTT as MQTT Broker
     participant Mower
-    participant Cloud as Alibaba OSS
+    participant Charger
+    participant Cloud as Alibaba OSS</p>
+<div class="highlight"><pre><span></span><code>rect rgb(240, 248, 255)
+    Note over App,Cloud: Phase 1: Version Check
+    App-&gt;&gt;MQTT: ota_version_info
+    MQTT-&gt;&gt;Mower: ota_version_info
+    Mower--&gt;&gt;MQTT: ota_version_info_respond
+    MQTT--&gt;&gt;App: {mower: &quot;v5.7.1&quot;, charger: &quot;v0.3.6&quot;, mcu: &quot;v3.5.8&quot;}
 
-    rect rgb(240, 248, 255)
-        Note over App,Cloud: Phase 1: Version Check
-        App-&gt;&gt;Charger: MQTT: ota_version_info
-        Charger--&gt;&gt;App: ota_version_info_respond&lt;br/&gt;{mower: "v5.7.1", charger: "v0.3.6", mcu: "v3.5.8"}
+    App-&gt;&gt;Server: GET checkOtaNewVersion?version=v5.7.1&amp;equipmentType=LFIN2
+    Server--&gt;&gt;App: {version: &quot;v5.7.1&quot;, downloadUrl: &quot;https://...&quot;, md5: &quot;...&quot;}
+end
 
-        App-&gt;&gt;Server: GET checkOtaNewVersion?version=v0.3.6
-        App-&gt;&gt;Server: POST queryNewVersion
+rect rgb(255, 248, 240)
+    Note over App,Cloud: Phase 2: Mower OTA
+    Note over App: &quot;Are you sure to upgrade?&lt;br/&gt;Expected to take 20-30 minutes&quot;
+
+    App-&gt;&gt;MQTT: ota_upgrade_cmd {type: &quot;full&quot;, content: {upgradeApp: {version, downloadUrl, md5}}}
+    MQTT-&gt;&gt;Mower: ota_upgrade_cmd
+
+    Note over Mower: mqtt_node forwards to&lt;br/&gt;ota_client_node via ROS 2&lt;br/&gt;/ota_upgrade_srv service
+
+    Mower--&gt;&gt;MQTT: ota_upgrade_cmd_respond
+
+    Note over Mower: Wait for CHARGING state
+
+    Mower-&gt;&gt;Cloud: HTTPS GET firmware .deb (libcurl, resume-capable)
+
+    loop Download progress
+        Mower-&gt;&gt;MQTT: ota_upgrade_state {progress: 45, state: &quot;downloading&quot;}
+        MQTT-&gt;&gt;App: ota_upgrade_state
     end
 
-    rect rgb(255, 248, 240)
-        Note over App,Cloud: Phase 2: Charger OTA
-        Note over App: "Are you sure to upgrade?&lt;br/&gt;Expected to take 20-30 minutes"
-        App-&gt;&gt;Charger: MQTT: ota_upgrade_cmd {url, version}
-        Note over Charger: Handled locally (no LoRa relay)
-        Charger-&gt;&gt;Cloud: HTTPS GET firmware binary
-        Note over Cloud: novabot-oss.oss-accelerate.aliyuncs.com&lt;br/&gt;/novabot-file/lfi-charging-station_lora-*.bin
+    Note over Mower: MD5 verification
+    Note over Mower: dpkg -x → /root/novabot.new/
+    Note over Mower: Write &quot;1&quot; to upgrade.txt
+    Note over Mower: reboot -f
 
-        loop Download progress
-            Charger-&gt;&gt;App: ota_upgrade_state {progress: 45%, state: "downloading"}
-        end
+    Note over Mower: run_ota.sh:&lt;br/&gt;backup → deploy → restore maps → verify → reboot
+    Mower-&gt;&gt;MQTT: ota_upgrade_state {state: &quot;completed&quot;}
+end
 
-        Charger-&gt;&gt;Charger: Write to inactive OTA partition
-        Charger-&gt;&gt;Charger: Switch boot partition (otadata)
-        Charger-&gt;&gt;Charger: Reboot
+rect rgb(240, 255, 240)
+    Note over App,Cloud: Phase 3: Charger OTA (via mower)
+    Note over App: &quot;The charging station can also&lt;br/&gt;be upgraded. Would you like to proceed?&quot;
 
-        Charger-&gt;&gt;App: ota_upgrade_state {state: "completed"}
-    end
+    Mower-&gt;&gt;Charger: TCP/HTTP push firmware to 192.168.4.1
+    Charger-&gt;&gt;Charger: esp_https_ota → write to inactive OTA partition
+    Charger-&gt;&gt;Charger: Switch boot partition + reboot
+end
+</code></pre></div>
+<p>```</p>
+<h2 id="remote-push-support-initiated">Remote Push (Support-Initiated)<a class="headerlink" href="#remote-push-support-initiated" title="Permanent link">&para;</a></h2>
+<p>Support can push firmware to a specific device <strong>without user interaction</strong> via two mechanisms:</p>
+<p>```mermaid
+sequenceDiagram
+    participant Support
+    participant CloudBroker as Cloud MQTT Broker
+    participant Mower</p>
+<div class="highlight"><pre><span></span><code>rect rgb(255, 240, 240)
+    Note over Support,Mower: Method 1: Direct MQTT Push
+    Support-&gt;&gt;CloudBroker: Publish to Dart/Send_mqtt/&lt;SN&gt;
+    CloudBroker-&gt;&gt;Mower: ota_upgrade_cmd {type, content}
+    Note over Mower: Same flow as app-initiated
+end
 
-    rect rgb(240, 255, 240)
-        Note over App,Cloud: Phase 3: Mower OTA (optional)
-        Note over App: "The charging station can also be upgraded.&lt;br/&gt;Would you like to proceed?"
-        App-&gt;&gt;Mower: MQTT: ota_upgrade_cmd {url, version}
-        Mower-&gt;&gt;Cloud: HTTPS GET firmware .deb package
-        Note over Cloud: novabot-oss.oss-us-east-1.aliyuncs.com&lt;br/&gt;/novabot-file/lfimvp-*.deb
-
-        loop Download progress
-            Mower-&gt;&gt;App: ota_upgrade_state {progress, state}
-        end
-
-        Mower-&gt;&gt;Mower: dpkg -i firmware.deb
-        Mower-&gt;&gt;Mower: Restart ROS 2 services
-    end</code></pre>
+rect rgb(240, 240, 255)
+    Note over Support,Mower: Method 2: Cloud Database Override
+    Note over Support: Set per-SN firmware version in cloud DB
+    Note over Mower: Next time app checks checkOtaNewVersion&lt;br/&gt;→ gets new version → sends ota_upgrade_cmd
+end
+</code></pre></div>
+<p>```</p>
+<div class="admonition warning">
+<p class="admonition-title">No authentication on OTA commands</p>
+<p>Any MQTT message on <code>Dart/Send_mqtt/&lt;SN&gt;</code> with <code>ota_upgrade_cmd</code> triggers a firmware download. There is no verification of the sender's identity.</p>
+</div>
+<hr />
+<h2 id="ota_upgrade_cmd-json-format"><code>ota_upgrade_cmd</code> JSON Format<a class="headerlink" href="#ota_upgrade_cmd-json-format" title="Permanent link">&para;</a></h2>
+<div class="highlight"><span class="filename">Full firmware upgrade</span><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="p">{</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">&quot;ota_upgrade_cmd&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">    </span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;full&quot;</span><span class="p">,</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">    </span><span class="nt">&quot;content&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">      </span><span class="nt">&quot;upgradeApp&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">        </span><span class="nt">&quot;version&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;v5.7.1&quot;</span><span class="p">,</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">        </span><span class="nt">&quot;downloadUrl&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;https://novabot-oss.oss-us-east-1.aliyuncs.com/novabot-file/lfimvp-20240915571-1726376551929.deb&quot;</span><span class="p">,</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">        </span><span class="nt">&quot;md5&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;83c2741d05c9a40ff351332af2082d7c&quot;</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">      </span><span class="p">}</span>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="w">  </span><span class="p">}</span>
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="p">}</span>
+</code></pre></div>
+<h3 id="upgrade-types">Upgrade Types<a class="headerlink" href="#upgrade-types" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Type</th>
+<th>Description</th>
+<th>Payload</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>full</code></td>
+<td>Full firmware replacement (.deb package)</td>
+<td><code>content.upgradeApp</code></td>
+</tr>
+<tr>
+<td><code>increment</code></td>
+<td>Incremental app update</td>
+<td><code>content.upgradeApp</code></td>
+</tr>
+<tr>
+<td><code>file_update</code></td>
+<td>Individual file updates (.zip with manifest)</td>
+<td><code>content.upgradeApp</code> (zip with <code>check.json</code>)</td>
+</tr>
+<tr>
+<td><code>system</code></td>
+<td>Full system upgrade via apt</td>
+<td>Runs <code>sudo apt full-upgrade &amp;&amp; reboot -f</code></td>
+</tr>
+</tbody>
+</table>
+<div class="admonition danger">
+<p class="admonition-title"><code>system</code> upgrade type</p>
+<p>The <code>system</code> type runs <code>sudo apt-get update &amp;&amp; sudo apt full-upgrade &amp;&amp; sleep 2 &amp;&amp; reboot -f</code>. If the mower's apt sources were pointed to a malicious repository, this would allow arbitrary code execution.</p>
+</div>
+<hr />
+<h2 id="mower-ota-architecture">Mower OTA Architecture<a class="headerlink" href="#mower-ota-architecture" title="Permanent link">&para;</a></h2>
+<p>The mower has <strong>two ROS 2 nodes</strong> that handle OTA:</p>
+<p>```mermaid
+graph LR
+    MQTT[MQTT Broker] --&gt;|ota_upgrade_cmd| MN[mqtt_node<br/>6.3MB]
+    MN --&gt;|/ota_upgrade_srv<br/>ROS 2 service| OC[ota_client_node<br/>5.8MB]
+    OC --&gt;|libcurl HTTPS| OSS[Alibaba OSS]
+    OC --&gt;|/ota/upgrade_status<br/>ROS 2 topic| MN
+    MN --&gt;|ota_upgrade_state| MQTT
+    OC --&gt;|Check| CS[/pipe_charge_status<br/>Charging required]</p>
+<div class="highlight"><pre><span></span><code>style MN fill:#f9f,stroke:#333
+style OC fill:#9ff,stroke:#333
+</code></pre></div>
+<p>```</p>
+<h3 id="ros-2-service-otaupgradesys">ROS 2 Service: OtaUpgradeSys<a class="headerlink" href="#ros-2-service-otaupgradesys" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a># Request (mqtt_node → ota_client)
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>string ota_cmd          # Full JSON string from MQTT command
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>---
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a># Response (ota_client → mqtt_node)
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>bool state              # true = accepted, false = error
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>string state_out        # Status message
+</code></pre></div>
+<h3 id="ota-client-launch-parameters">OTA Client Launch Parameters<a class="headerlink" href="#ota-client-launch-parameters" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">upgrade_srv_name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/ota_upgrade_srv</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="nt">ota_state_pub</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/ota/upgrade_status</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="nt">charging_state_sub</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/pipe_charge_status</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="nt">ota_data_dir_root</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/userdata/ota</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="nt">download_max_time</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">86400</span><span class="w">          </span><span class="c1"># 24 hours max download time</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="nt">upgrade_app_subs_maxt</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">600</span><span class="w">        </span><span class="c1"># 10 minutes max per submodule</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="nt">upgrade_file_enable</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">True</span>
+</code></pre></div>
+<hr />
+<h2 id="full-firmware-installation-flow">Full Firmware Installation Flow<a class="headerlink" href="#full-firmware-installation-flow" title="Permanent link">&para;</a></h2>
+<h3 id="phase-1-download-ota_client_node">Phase 1: Download (ota_client_node)<a class="headerlink" href="#phase-1-download-ota_client_node" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>1. Receive ota_upgrade_cmd via /ota_upgrade_srv ROS 2 service
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>2. Parse JSON: extract type, content.upgradeApp.{version, downloadUrl, md5}
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>3. Wait for mower to be in CHARGING state
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>   └─ If not charging: pause download, wait, retry every 60s
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>4. Download .deb to /userdata/ota/upgrade_pkg/
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>   └─ libcurl with HTTPS, resume-capable, max 24h timeout
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>5. Verify MD5 checksum
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>   └─ If mismatch: delete package, retry download
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>6. Extract: dpkg -x &lt;package.deb&gt; /root/novabot.new/
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>7. Verify extracted files via /root/novabot.new/package_verify.json
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a>8. Copy charger firmware to /userdata/ota/charging_station_pkg/
+<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a>9. Start submodule upgrades (charger OTA, max 10 min)
+<a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a>10. Copy run_ota.sh to /userdata/ota/run_ota.sh
+<a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a>11. Write &quot;1&quot; to /userdata/ota/upgrade.txt
+<a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a>12. reboot -f
+</code></pre></div>
+<h3 id="phase-2-install-run_otash-at-boot">Phase 2: Install (run_ota.sh at boot)<a class="headerlink" href="#phase-2-install-run_otash-at-boot" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>1. Check /root/novabot.new exists AND /userdata/ota/upgrade.txt == &quot;1&quot;
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>2. Backup: mv /root/novabot → /root/novabot.bak
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>3. Deploy: cp -rfp /root/novabot.new → /root/novabot
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>4. Restore user data:
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>   └─ Maps, charging_station config, CSV files from backup
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>5. Run start_service.sh (install system libraries, services)
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>6. Optionally replace WiFi driver (bcm/)
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>7. Verify: /root/novabot/scripts/run_novabot.sh exists and non-empty
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>   └─ If missing: ROLLBACK (cp /root/novabot.bak → /root/novabot)
+<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>8. Write &quot;0&quot; to /userdata/ota/upgrade.txt
+<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a>9. Clean up: rm -rf /root/novabot.new
+<a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a>10. Final reboot
+</code></pre></div>
+<hr />
+<h2 id="file-update-flow-type-file_update">File Update Flow (<code>type: "file_update"</code>)<a class="headerlink" href="#file-update-flow-type-file_update" title="Permanent link">&para;</a></h2>
+<p>For updating individual files without full firmware replacement:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>1. Download .zip package to /userdata/ota/download/
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>2. Verify MD5
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>3. Extract to /userdata/ota/download/unzip/
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>4. Parse check.json manifest:
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>   {
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>     &quot;upgradeFiles&quot;: [
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>       {&quot;filePath&quot;: &quot;source/in/zip&quot;, &quot;destPath&quot;: &quot;/target/path&quot;, &quot;checkWay&quot;: &quot;md5&quot;}
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>     ]
+<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a>   }
+<a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a>5. For each file: verify, then replace at destPath
+<a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a>6. Report status to cloud
+</code></pre></div>
+<hr />
+<h2 id="charger-ota">Charger OTA<a class="headerlink" href="#charger-ota" title="Permanent link">&para;</a></h2>
+<h3 id="via-mower-relay">Via Mower (Relay)<a class="headerlink" href="#via-mower-relay" title="Permanent link">&para;</a></h3>
+<p>The mower pushes charger firmware to the charger via two methods:</p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Target</th>
+<th>Protocol</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>TCP socket</td>
+<td><code>192.168.4.1</code></td>
+<td>Raw TCP, firmware in chunks</td>
+</tr>
+<tr>
+<td>HTTP POST</td>
+<td><code>http://192.168.4.1/setotadata</code></td>
+<td>HTTP multipart</td>
+</tr>
+</tbody>
+</table>
+<p>Firmware source: <code>/userdata/ota/charging_station_pkg/lfi-charging-station_lora.bin</code></p>
+<h3 id="direct-charger-own-ota">Direct (Charger Own OTA)<a class="headerlink" href="#direct-charger-own-ota" title="Permanent link">&para;</a></h3>
+<p>The charger can also handle <code>ota_upgrade_cmd</code> directly:</p>
+<ol>
+<li>Receives command via MQTT (handled locally, no LoRa relay)</li>
+<li>Downloads firmware via <code>esp_https_ota()</code> (ESP-IDF library)</li>
+<li>Writes to <strong>inactive</strong> OTA partition</li>
+<li>Updates <code>otadata</code> to switch boot partition</li>
+<li>Reboots</li>
+</ol>
+<p>```mermaid
+graph LR
+    OTAData[otadata<br/>ota_seq = 7] --&gt;|"(7-1) % 2 = 0"| OTA0[ota_0: v0.3.6<br/>ACTIVE]
+    OTAData -.-&gt; OTA1[ota_1: v0.4.0<br/>inactive]</p>
+<div class="highlight"><pre><span></span><code>style OTA0 fill:#9f9,stroke:#333
+style OTA1 fill:#ddd,stroke:#333
+</code></pre></div>
+<p>```</p>
+<hr />
 <h2 id="ota-download-urls">OTA Download URLs<a class="headerlink" href="#ota-download-urls" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
 <th>Device</th>
 <th>URL Pattern</th>
+<th>Example</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td>Charger</td>
 <td><code>https://novabot-oss.oss-accelerate.aliyuncs.com/novabot-file/lfi-charging-station_lora-{timestamp}.bin</code></td>
+<td><code>...-1709264279437.bin</code></td>
 </tr>
 <tr>
 <td>Mower</td>
-<td><code>https://novabot-oss.oss-us-east-1.aliyuncs.com/novabot-file/lfimvp-{date}{version}-{timestamp}.deb</code></td>
+<td><code>https://novabot-oss.oss-us-east-1.aliyuncs.com/novabot-file/lfimvp-{YYYYMMDD}{ver}-{timestamp}.deb</code></td>
+<td><code>...-20240915571-1726376551929.deb</code></td>
 </tr>
 </tbody>
 </table>
+<div class="admonition note">
+<p class="admonition-title">URL contains unpredictable timestamp</p>
+<p>The download URL includes a millisecond timestamp, making it impossible to guess. The URL must be obtained from the cloud OTA API or the <code>ota_upgrade_cmd</code> message.</p>
+</div>
 <h2 id="known-firmware-versions">Known Firmware Versions<a class="headerlink" href="#known-firmware-versions" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -1930,6 +2605,12 @@
 <td>Debian/ROS 2, Horizon X3</td>
 </tr>
 <tr>
+<td>Mower</td>
+<td>v6.0.3</td>
+<td>?</td>
+<td>Pushed to select users by support</td>
+</tr>
+<tr>
 <td>MCU</td>
 <td>v3.5.8</td>
 <td>—</td>
@@ -1937,16 +2618,146 @@
 </tr>
 </tbody>
 </table>
-<h2 id="charger-ota-partition-scheme">Charger OTA Partition Scheme<a class="headerlink" href="#charger-ota-partition-scheme" title="Permanent link">&para;</a></h2>
-<pre class="mermaid"><code>graph LR
-    OTAData[otadata&lt;br/&gt;ota_seq = 7] --&gt;|"(7-1) % 2 = 0"| OTA0[ota_0: v0.3.6&lt;br/&gt;ACTIVE]
-    OTAData -.-&gt; OTA1[ota_1: v0.4.0&lt;br/&gt;inactive]
-
-    style OTA0 fill:#9f9,stroke:#333
-    style OTA1 fill:#ddd,stroke:#333</code></pre>
-<p>After OTA, the charger writes the new firmware to the <strong>inactive</strong> partition and updates <code>otadata</code> to boot from it.</p>
-
-
+<h2 id="file-system-paths">File System Paths<a class="headerlink" href="#file-system-paths" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Path</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/userdata/ota/upgrade.txt</code></td>
+<td>Flag: "0"=no update, "1"=pending</td>
+</tr>
+<tr>
+<td><code>/userdata/ota/upgrade_pkg/</code></td>
+<td>Downloaded .deb packages</td>
+</tr>
+<tr>
+<td><code>/userdata/ota/download/</code></td>
+<td>Downloaded .zip packages (file_update)</td>
+</tr>
+<tr>
+<td><code>/userdata/ota/run_ota.sh</code></td>
+<td>OTA startup script (updated during OTA)</td>
+</tr>
+<tr>
+<td><code>/userdata/ota/novabot_timezone.txt</code></td>
+<td>Timezone from OTA command</td>
+</tr>
+<tr>
+<td><code>/userdata/ota/charging_station_pkg/</code></td>
+<td>Charger firmware for relay</td>
+</tr>
+<tr>
+<td><code>/userdata/ota/ota_client.log</code></td>
+<td>OTA operation log</td>
+</tr>
+<tr>
+<td><code>/userdata/lfi/system_version.txt</code></td>
+<td>Current system version</td>
+</tr>
+<tr>
+<td><code>/root/novabot/</code></td>
+<td>Active firmware installation</td>
+</tr>
+<tr>
+<td><code>/root/novabot.new/</code></td>
+<td>Extracted new firmware (pre-reboot)</td>
+</tr>
+<tr>
+<td><code>/root/novabot.bak/</code></td>
+<td>Backup of previous firmware (rollback)</td>
+</tr>
+</tbody>
+</table>
+<h2 id="ota-client-version-history">OTA Client Version History<a class="headerlink" href="#ota-client-version-history" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Version</th>
+<th>Date</th>
+<th>Developer</th>
+<th>Changes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Pre-V0.0.1</td>
+<td>2022</td>
+<td>Li Qiang</td>
+<td>Initial: download, extract, replace</td>
+</tr>
+<tr>
+<td>V0.0.1</td>
+<td>2023/04</td>
+<td>Cai Tao</td>
+<td>Weak network download, ROS service API, breakpoint resume</td>
+</tr>
+<tr>
+<td>V0.0.2</td>
+<td>2023/05</td>
+<td>Cai Tao</td>
+<td>Charge-state pause/resume, progress reporting</td>
+</tr>
+<tr>
+<td>V0.0.3</td>
+<td>2023/10</td>
+<td>Cai Tao</td>
+<td>MD5 verification, file size verification</td>
+</tr>
+<tr>
+<td>V0.0.4</td>
+<td>2024/02</td>
+<td>Cai Tao</td>
+<td>File update feature (<code>file_update</code> type)</td>
+</tr>
+</tbody>
+</table>
+<h2 id="security-considerations">Security Considerations<a class="headerlink" href="#security-considerations" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Issue</th>
+<th>Risk</th>
+<th>Details</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>No authentication on MQTT OTA</td>
+<td><strong>Critical</strong></td>
+<td>Any message on <code>Dart/Send_mqtt/&lt;SN&gt;</code> triggers update</td>
+</tr>
+<tr>
+<td>No code signing</td>
+<td><strong>High</strong></td>
+<td>Only MD5 integrity check, no digital signatures</td>
+</tr>
+<tr>
+<td>Download URL not validated</td>
+<td><strong>High</strong></td>
+<td>Can point to any server</td>
+</tr>
+<tr>
+<td><code>system</code> upgrade type</td>
+<td><strong>Critical</strong></td>
+<td>Runs <code>apt full-upgrade</code> — malicious apt repo = RCE</td>
+</tr>
+<tr>
+<td>Charger OTA via HTTP</td>
+<td><strong>Medium</strong></td>
+<td>HTTP POST to <code>192.168.4.1</code>, no TLS</td>
+</tr>
+<tr>
+<td>No rollback verification</td>
+<td><strong>Low</strong></td>
+<td>Rollback only checks if run_novabot.sh exists</td>
+</tr>
+</tbody>
+</table>
 
 
 
@@ -1971,7 +2782,7 @@
         
           <button type="button" class="md-top md-icon" data-md-component="top" hidden>
   
-  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-circle-arrow-up" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="m16 12-4-4-4 4M12 16V8"/></svg>
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
   Back to top
 </button>
         
@@ -1985,8 +2796,8 @@
   
   
     Made with
-    <a href="https://zensical.org/" target="_blank" rel="noopener">
-      Zensical
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
     </a>
   
 </div>
@@ -2002,7 +2813,7 @@
       
     
     <a href="https://github.com/rvbcrs/Novabot" target="_blank" rel="noopener" title="github.com" class="md-social__link">
-      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path fill="currentColor" d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
     </a>
   
 </div>
@@ -2020,11 +2831,10 @@
     
       
       
-      
-      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["navigation.tabs","navigation.sections","navigation.expand","navigation.top","search.suggest","search.highlight","content.code.copy","content.tabs.link","toc.follow"],"search":"../../assets/javascripts/workers/search.e2d2d235.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy", "content.tabs.link", "toc.follow"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../../assets/javascripts/bundle.16f8adc2.min.js"></script>
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
       
         <script src="../../assets/js/mermaid-zoom.js"></script>
       

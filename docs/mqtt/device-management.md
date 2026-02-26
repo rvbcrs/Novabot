@@ -135,24 +135,67 @@ Query current firmware versions.
 
 ### ota_upgrade_cmd
 
-Start an OTA firmware upgrade.
+Start an OTA firmware upgrade. The command contains the download URL, target version, and MD5 hash.
 
-```json title="Command"
+```json title="Command (full firmware upgrade)"
 {
   "ota_upgrade_cmd": {
-    "url": "https://novabot-oss.oss-accelerate.aliyuncs.com/novabot-file/...",
-    "version": "v0.3.7"
+    "type": "full",
+    "content": {
+      "upgradeApp": {
+        "version": "v5.7.1",
+        "downloadUrl": "https://novabot-oss.oss-us-east-1.aliyuncs.com/novabot-file/lfimvp-20240915571-1726376551929.deb",
+        "md5": "83c2741d05c9a40ff351332af2082d7c"
+      }
+    }
   }
 }
 ```
 
-The device publishes `ota_upgrade_state` updates during the upgrade process.
+```json title="Response"
+{
+  "type": "ota_upgrade_cmd_respond",
+  "message": {
+    "result": 0,
+    "value": null
+  }
+}
+```
+
+**Upgrade types:**
+
+| Type | Description |
+|------|-------------|
+| `full` | Full firmware replacement (.deb for mower, .bin for charger) |
+| `increment` | Incremental app update |
+| `file_update` | Individual file updates (.zip with `check.json` manifest) |
+| `system` | System upgrade via `apt full-upgrade && reboot` |
+
+!!! warning "Security"
+    There is **no authentication** on this command. Any MQTT message on `Dart/Send_mqtt/<SN>` with `ota_upgrade_cmd` triggers a firmware download and install. The download URL is not validated — it can point to any server.
+
+**Mower processing:**
+
+1. `mqtt_node` receives command, forwards JSON to `ota_client_node` via ROS 2 service `/ota_upgrade_srv`
+2. `ota_client_node` waits for **charging state** (download only while charging)
+3. Downloads .deb via libcurl (resume-capable, max 24h timeout)
+4. Verifies MD5 checksum
+5. Extracts with `dpkg -x`, sets upgrade flag, reboots
+6. `run_ota.sh` performs atomic swap with rollback on failure
+
+**Charger processing:**
+
+1. Charger handles command locally (no LoRa relay)
+2. Downloads firmware via `esp_https_ota()` (ESP-IDF library)
+3. Writes to inactive OTA partition, switches boot partition, reboots
+
+See [OTA Update Flow](../flows/ota-update.md) for the complete pipeline.
 
 ---
 
 ### ota_upgrade_state
 
-Unsolicited progress updates during OTA upgrade.
+Unsolicited progress updates during OTA upgrade. Published by the device continuously during download and installation.
 
 ```json title="Status (device → app)"
 {
@@ -163,6 +206,13 @@ Unsolicited progress updates during OTA upgrade.
   }
 }
 ```
+
+| State | Description |
+|-------|-------------|
+| `downloading` | Firmware package being downloaded |
+| `upgrading` | Installing firmware |
+| `success` | Update completed successfully |
+| `fail` | Update failed |
 
 ---
 
@@ -557,8 +607,9 @@ Get LoRa module configuration. Handled locally by charger (no LoRa relay).
 
 | Command | Response | Handled by |
 |---------|----------|------------|
-| `ota_version_info` | `ota_version_info_respond` | **Charger** (local, no LoRa) |
-| `ota_upgrade_cmd` | `ota_upgrade_cmd_respond` | **Charger** (local, no LoRa) |
+| `ota_version_info` | `ota_version_info_respond` | **Charger** (local) or **Mower** (direct MQTT) |
+| `ota_upgrade_cmd` | `ota_upgrade_cmd_respond` | **Charger** (local) or **Mower** (direct MQTT, via ota_client_node) |
+| `ota_upgrade_state` | — (unsolicited) | **Charger** or **Mower** (progress updates during OTA) |
 
 ### Timer / Scheduling
 
