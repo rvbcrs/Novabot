@@ -1,4 +1,5 @@
 import net from 'net';
+import { execFile } from 'child_process';
 import { Aedes, Client, AedesPublishPacket } from 'aedes';
 import { db } from '../db/database.js';
 import { DeviceRegistryRow } from '../types/index.js';
@@ -80,6 +81,98 @@ function normalizeMac(raw: string): string {
 function isAppClient(clientId: string): boolean {
   // App MQTT clients hebben een UUID@appUser_SN patroon of bevatten een JWT prefix
   return clientId.includes('@') || clientId.startsWith('eyJ');
+}
+
+/**
+ * Bereken BLE MAC-adres vanuit WiFi STA MAC.
+ * ESP32 wijst MACs opeenvolgend toe: STA = base, AP = base+1, BLE = base+2.
+ * Horizon X3 maaier gebruikt AP6212 met hetzelfde patroon.
+ */
+function wifiStaToBle(staMac: string): string {
+  const bytes = staMac.split(':').map(b => parseInt(b, 16));
+  // +2 op het laatste byte, carry propageren
+  bytes[5] += 2;
+  for (let i = 5; i > 0 && bytes[i] > 255; i--) {
+    bytes[i] -= 256;
+    bytes[i - 1] += 1;
+  }
+  return bytes.map(b => b.toString(16).toUpperCase().padStart(2, '0')).join(':');
+}
+
+// Flexibele MAC regex voor ARP output — matcht zowel gepadde (0E:E4:05) als ongepadde (e:e4:5) notatie
+const ARP_MAC_RE = /([0-9A-Fa-f]{1,2}[:\-]){5}[0-9A-Fa-f]{1,2}/;
+
+/**
+ * Normaliseer een MAC-adres uit ARP output (kan ongepadde octetten bevatten).
+ * Bijv. "e:e4:5:92:2b:e3" → "0E:E4:05:92:2B:E3"
+ */
+function normalizeArpMac(raw: string): string {
+  return raw.split(/[:\-]/).map(b => b.toUpperCase().padStart(2, '0')).join(':');
+}
+
+/**
+ * Zoek het WiFi MAC-adres op via de ARP-tabel voor een gegeven IP-adres.
+ * Werkt op macOS (`arp -n`) en Linux (`ip neigh show` of `arp -n`).
+ * Retourneert het genormaliseerde MAC of null.
+ */
+function lookupArpMac(ip: string): Promise<string | null> {
+  return new Promise(resolve => {
+    // Probeer eerst `ip neigh` (Linux), daarna `arp -n` (macOS/Linux)
+    const tryArp = () => {
+      execFile('arp', ['-n', ip], { timeout: 2000 }, (err, stdout) => {
+        if (err || !stdout) return resolve(null);
+        const m = ARP_MAC_RE.exec(stdout);
+        if (m) return resolve(normalizeArpMac(m[0]));
+        resolve(null);
+      });
+    };
+
+    execFile('ip', ['neigh', 'show', ip], { timeout: 2000 }, (err, stdout) => {
+      if (err || !stdout) return tryArp();
+      const m = ARP_MAC_RE.exec(stdout);
+      if (m) return resolve(normalizeArpMac(m[0]));
+      tryArp();
+    });
+  });
+}
+
+/**
+ * Auto-detect BLE MAC via ARP lookup op het remote IP van een MQTT-verbinding.
+ * Slaat WiFi STA MAC + berekend BLE MAC op in device_registry.
+ */
+async function autoDetectBleMac(sn: string, remoteIp: string): Promise<void> {
+  // Skip loopback / IPv6 / al bekende MACs
+  if (!remoteIp || remoteIp === '127.0.0.1' || remoteIp === '::1') return;
+  const cleanIp = remoteIp.replace(/^::ffff:/, ''); // IPv4-mapped IPv6 → IPv4
+
+  // Check of we al een BLE MAC hebben voor dit SN
+  const existing = db.prepare(`
+    SELECT mac_address FROM device_registry
+    WHERE sn = ? AND mac_address IS NOT NULL
+    LIMIT 1
+  `).get(sn) as { mac_address: string } | undefined;
+  if (existing) return; // Al bekend
+
+  const wifiMac = await lookupArpMac(cleanIp);
+  if (!wifiMac) {
+    console.log(`[ARP] Kon WiFi MAC niet vinden voor ${sn} (IP: ${cleanIp})`);
+    return;
+  }
+
+  const bleMac = wifiStaToBle(wifiMac);
+  console.log(`[ARP] Auto-detected MAC voor ${sn}: WiFi STA=${wifiMac} → BLE=${bleMac} (IP: ${cleanIp})`);
+
+  // Sla BLE MAC op in device_registry (update bestaand record)
+  db.prepare(`
+    UPDATE device_registry SET mac_address = ?
+    WHERE sn = ? AND mac_address IS NULL
+  `).run(bleMac, sn);
+
+  // Sla ook op in equipment tabel
+  db.prepare(`
+    UPDATE equipment SET mac_address = ?
+    WHERE (mower_sn = ? OR charger_sn = ?) AND mac_address IS NULL
+  `).run(bleMac, sn, sn);
 }
 
 function extractMac(s: string): string | null {
@@ -217,8 +310,13 @@ export async function startMqttBroker(): Promise<void> {
     const isReconnect = lastSeen > 0 && (now - lastSeen) < 5 * 60 * 1000;
     seenClients.set(clientId, now);
 
-    // Detecteer of dit de app is (UUID formaat) of een apparaat
-    const isAppClient = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(clientId);
+    // Detecteer of dit de app is of een fysiek apparaat
+    // App clientIds: pure UUID, email+UUID, of JWT token
+    // App usernames: "app:LFIN..." of "app:LFIC..."
+    const isAppClient = /^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(clientId)
+      || clientId.includes('@')
+      || clientId.startsWith('eyJ')
+      || user.startsWith('app:');
     const clientType = isAppClient ? 'APP' : 'DEV';
 
     if (isReconnect) {
@@ -234,11 +332,17 @@ export async function startMqttBroker(): Promise<void> {
 
     upsertDevice(clientId, sn, mac, user || null);
 
+    // Auto-detect BLE MAC via ARP als we geen MAC uit het clientId konden halen
+    // (bijv. maaier clientId = LFIN2230700238_6688, bevat geen MAC)
+    if (sn && !mac && !isAppClient && (client as any).conn?.remoteAddress) {
+      autoDetectBleMac(sn, (client as any).conn.remoteAddress).catch(() => {});
+    }
+
     // Sla credentials op zodat de MQTT bridge ze kan doorsturen naar upstream
     (client as any)._proxyMeta = { username: user || undefined, password: pass || undefined };
 
-    // Registreer als online op basis van het bekende SN
-    if (sn) {
+    // Registreer als online op basis van het bekende SN — alleen voor fysieke apparaten, niet de app
+    if (sn && !isAppClient) {
       if (!onlineBySn.has(sn)) onlineBySn.set(sn, new Set());
       onlineBySn.get(sn)!.add(clientId);
       publishDeviceOnline(sn);
@@ -390,31 +494,22 @@ export async function startMqttBroker(): Promise<void> {
     // Forward naar Home Assistant bridge + dashboard
     // Voor versleutelde berichten: stuur ontsleutelde payload door i.p.v. ruwe ciphertext
     const topicSn = sn ?? extractSn(packet.topic);
-    if (encryptSn) {
-      const decryptedJson = tryDecrypt(payloadBuf, encryptSn);
-      if (decryptedJson) {
-        const decryptedBuf = Buffer.from(decryptedJson, 'utf8');
+    const forwardSn = encryptSn || topicSn;
+    if (forwardSn) {
+      // Probeer te decrypten; val terug op plain payload als decrypt faalt (bijv. charger v0.3.6 plain JSON)
+      const decryptedJson = encryptSn ? tryDecrypt(payloadBuf, encryptSn) : null;
+      const effectiveBuf = decryptedJson ? Buffer.from(decryptedJson, 'utf8') : payloadBuf;
+      const effectiveJson = decryptedJson ?? payload;
 
-        // Check of dit een kaart-gerelateerde response is
-        try {
-          const parsed = JSON.parse(decryptedJson);
-          handleMapMessage(encryptSn, parsed);
-        } catch { /* geen JSON of geen map-bericht */ }
-
-        const changes = updateDeviceData(encryptSn, decryptedBuf);
-        forwardToHomeAssistant(packet.topic, decryptedBuf, encryptSn, changes);
-        forwardToDashboard(encryptSn, changes);
-      }
-    } else if (topicSn) {
-      // Check ook niet-versleutelde berichten op kaart-responses
+      // Check of dit een kaart-gerelateerde response is
       try {
-        const parsed = JSON.parse(payload);
-        handleMapMessage(topicSn, parsed);
+        const parsed = JSON.parse(effectiveJson);
+        handleMapMessage(forwardSn, parsed);
       } catch { /* geen JSON of geen map-bericht */ }
 
-      const changes = updateDeviceData(topicSn, payloadBuf);
-      forwardToHomeAssistant(packet.topic, payloadBuf, topicSn, changes);
-      forwardToDashboard(topicSn, changes);
+      const changes = updateDeviceData(forwardSn, effectiveBuf);
+      forwardToHomeAssistant(packet.topic, effectiveBuf, forwardSn, changes);
+      forwardToDashboard(forwardSn, changes);
     }
   });
 
@@ -455,6 +550,11 @@ export async function startMqttBroker(): Promise<void> {
           if (snMatch) {
             rawSocketBySn.set(snMatch[0], socket);
             console.log(`[RAW-TCP] Socket opgeslagen voor ${snMatch[0]} (${socket.remoteAddress}:${socket.remotePort})`);
+
+            // Auto-detect BLE MAC via ARP (betrouwbaarder dan via client.conn in aedes)
+            if (socket.remoteAddress) {
+              autoDetectBleMac(snMatch[0], socket.remoteAddress).catch(() => {});
+            }
 
             // Tap ALL incoming data van dit apparaat (vóór aedes verwerking)
             const deviceSn = snMatch[0];

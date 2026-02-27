@@ -54,17 +54,31 @@ export function initDashboardSocket(httpServer: HttpServer): void {
     console.log(`[DASHBOARD] Client connected: ${socket.id}`);
 
     // Stuur volledige state snapshot bij connect
+    // Zelfde filtering als REST /devices: alleen gebonden of online, gededupliceerd op SN
     const snapshots = getAllDeviceSnapshots();
-    const registry = db.prepare(
-      'SELECT sn, mac_address, last_seen FROM device_registry WHERE sn IS NOT NULL'
-    ).all() as DeviceRegistryRow[];
+    const registry = db.prepare(`
+      SELECT d.sn, d.mac_address, d.last_seen FROM device_registry d
+      INNER JOIN (
+        SELECT sn, MAX(last_seen) as max_seen FROM device_registry
+        WHERE sn IS NOT NULL GROUP BY sn
+      ) latest ON d.sn = latest.sn AND d.last_seen = latest.max_seen
+    `).all() as DeviceRegistryRow[];
 
-    const devices = registry.map(r => ({
-      sn: r.sn!,
-      deviceType: r.sn!.startsWith('LFIC') ? 'charger' : 'mower',
-      online: isDeviceOnline(r.sn!),
-      sensors: snapshots[r.sn!] ?? {},
-    }));
+    const equipment = db.prepare('SELECT mower_sn, charger_sn FROM equipment').all() as { mower_sn: string; charger_sn: string | null }[];
+    const boundSns = new Set<string>();
+    for (const e of equipment) {
+      if (e.mower_sn) boundSns.add(e.mower_sn);
+      if (e.charger_sn) boundSns.add(e.charger_sn);
+    }
+
+    const devices = registry
+      .filter(r => boundSns.has(r.sn!) || isDeviceOnline(r.sn!))
+      .map(r => ({
+        sn: r.sn!,
+        deviceType: r.sn!.startsWith('LFIC') ? 'charger' : 'mower',
+        online: isDeviceOnline(r.sn!),
+        sensors: snapshots[r.sn!] ?? {},
+      }));
 
     socket.emit('state:snapshot', { devices });
 

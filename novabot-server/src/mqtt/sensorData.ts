@@ -255,6 +255,22 @@ export function updateDeviceData(sn: string, payload: Buffer): Map<string, strin
     changes.set(field, translateValue(field, strValue));
   }
 
+  // Extraheer virtuele sensorvelden uit charger_status bitfield
+  if (changes.has('charger_status')) {
+    const raw = parseInt(snValues.get('charger_status') ?? '0', 10);
+    if (!isNaN(raw)) {
+      const gpsSats = String((raw >> 24) & 0xFF);
+      const gpsValid = (raw & 0x01) !== 0 ? '1' : '0';
+      const rtkOk = (raw & 0x100) !== 0 ? '1' : '0';
+      for (const [vf, vv] of [['gps_satellites', gpsSats], ['gps_valid', gpsValid], ['rtk_ok', rtkOk]] as const) {
+        if (snValues.get(vf) !== vv) {
+          snValues.set(vf, vv);
+          changes.set(vf, vv);
+        }
+      }
+    }
+  }
+
   // Append GPS trail als lat of lng gewijzigd zijn
   if (changes.has('latitude') || changes.has('longitude')) {
     const lat = snValues.get('latitude');

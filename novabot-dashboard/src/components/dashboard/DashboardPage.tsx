@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import {
   Plug, TreePine, ChevronDown, Terminal, Calendar, Circle,
   BatteryMedium, Satellite, Radio, Activity, Gauge, Cpu, Code,
+  Wifi, WifiOff, Bluetooth, Trash2, MapPin, Thermometer,
 } from 'lucide-react';
 import type { DeviceState, MqttLogEntry } from '../../types';
 import { MowerMap } from '../map/MowerMap';
@@ -10,6 +11,7 @@ import { LogConsole } from '../log/LogConsole';
 import { Scheduler } from '../schedule/Scheduler';
 import { MowerControls } from './MowerControls';
 import { SensorGrid } from '../sensors/SensorGrid';
+import { deleteDevice } from '../../api/client';
 
 interface Props {
   devices: Map<string, DeviceState>;
@@ -17,26 +19,48 @@ interface Props {
   logs: MqttLogEntry[];
 }
 
+/** Small stat pill used in the DeviceChip */
+function Stat({ icon: Icon, value, color = 'text-gray-400', label }: {
+  icon: React.ComponentType<{ className?: string }>;
+  value: string | number;
+  color?: string;
+  label?: string;
+}) {
+  return (
+    <span className="inline-flex items-center gap-0.5" title={label}>
+      <Icon className={`w-3 h-3 ${color}`} />
+      <span className={`tabular-nums ${color}`}>{value}</span>
+    </span>
+  );
+}
+
 /** Inline device chip for the toolbar */
-function DeviceChip({ device, expanded, onToggle }: {
+function DeviceChip({ device, expanded, onToggle, onDelete }: {
   device: DeviceState;
   expanded: boolean;
   onToggle: () => void;
+  onDelete?: (sn: string) => void;
 }) {
   const s = device.sensors;
   const isCharger = device.deviceType === 'charger';
   const battery = parseInt(s.battery_power ?? s.battery_capacity ?? '0', 10);
 
-  // Parse charger_status bitfield
-  const chargerStatus = parseInt(s.charger_status ?? '0', 10);
-  const gpsSats = (chargerStatus >> 24) & 0xFF;
-  const rtkOk = (chargerStatus & 0x100) !== 0;
+  // Charger: virtuele velden uit charger_status (geëxtraheerd door server)
+  const gpsSats = parseInt(s.gps_satellites ?? '0', 10);
+  const rtkOk = s.rtk_ok === '1';
+
+  // Mower: directe sensoren
+  const mowerSats = parseInt(s.rtk_sat ?? '0', 10);
+  const wifiRssi = parseInt(s.wifi_rssi ?? '0', 10);
+  const cpuTemp = parseInt(s.cpu_temperature ?? '0', 10);
+
+  const hasSensorData = Object.keys(s).length > 0;
 
   return (
     <div className="relative">
       <button
         onClick={onToggle}
-        className={`inline-flex items-center gap-2 h-8 px-2.5 rounded-md text-xs transition-colors ${
+        className={`inline-flex items-center gap-1.5 h-8 px-2.5 rounded-md text-xs transition-colors ${
           expanded
             ? 'bg-gray-700 border border-gray-600'
             : 'hover:bg-gray-800 border border-transparent'
@@ -53,64 +77,63 @@ function DeviceChip({ device, expanded, onToggle }: {
         </span>
         <Circle className={`w-2.5 h-2.5 fill-current ${device.online ? 'text-green-500' : 'text-gray-600'}`} />
 
-        {/* Key stats inline */}
-        <span className="text-gray-600">|</span>
-
-        {/* Battery */}
-        {battery > 0 && (
-          <span className="inline-flex items-center gap-1">
-            <BatteryMedium className="w-3 h-3 text-gray-500" />
-            <span className="text-gray-400 tabular-nums">{battery}%</span>
-          </span>
-        )}
-
-        {/* Charger stats */}
-        {isCharger && (
+        {hasSensorData && (
           <>
-            <span className="inline-flex items-center gap-0.5">
-              <Satellite className="w-3 h-3 text-sky-400" />
-              <span className={`tabular-nums ${gpsSats > 0 ? 'text-sky-400' : 'text-gray-600'}`}>{gpsSats}</span>
-            </span>
-            <span className={`text-[10px] font-medium ${rtkOk ? 'text-green-400' : 'text-gray-600'}`}>
-              RTK{rtkOk ? '✓' : '—'}
-            </span>
-            {s.mower_error && parseInt(s.mower_error) > 0 && (
-              <span className="inline-flex items-center gap-0.5">
-                <Radio className="w-3 h-3 text-orange-400" />
-                <span className="text-orange-400 tabular-nums">{s.mower_error}</span>
-              </span>
+            <span className="text-gray-700">|</span>
+
+            {/* Battery (both devices) */}
+            {battery > 0 && (
+              <Stat icon={BatteryMedium} value={`${battery}%`}
+                color={battery > 20 ? 'text-green-400' : 'text-red-400'}
+                label={`Battery: ${battery}%`} />
+            )}
+
+            {/* Charger inline stats */}
+            {isCharger && (
+              <>
+                <Stat icon={Satellite} value={gpsSats}
+                  color={gpsSats > 0 ? 'text-sky-400' : 'text-gray-600'}
+                  label={`GPS Satellites: ${gpsSats}`} />
+                <span className={`text-[10px] font-medium ${rtkOk ? 'text-green-400' : 'text-gray-600'}`}>
+                  RTK{rtkOk ? '✓' : '—'}
+                </span>
+                {s.mower_error && parseInt(s.mower_error) > 0 && (
+                  <Stat icon={Radio} value={s.mower_error} color="text-orange-400" label="LoRa search count" />
+                )}
+              </>
+            )}
+
+            {/* Mower inline stats */}
+            {!isCharger && (
+              <>
+                {mowerSats > 0 && (
+                  <Stat icon={Satellite} value={mowerSats}
+                    color={mowerSats >= 15 ? 'text-sky-400' : mowerSats >= 8 ? 'text-yellow-400' : 'text-red-400'}
+                    label={`RTK Satellites: ${mowerSats}`} />
+                )}
+                {wifiRssi !== 0 && (
+                  <Stat icon={Wifi} value={`${wifiRssi}dB`}
+                    color={Math.abs(wifiRssi) < 60 ? 'text-green-400' : Math.abs(wifiRssi) < 75 ? 'text-yellow-400' : 'text-red-400'}
+                    label={`WiFi RSSI: ${wifiRssi} dBm`} />
+                )}
+                {cpuTemp > 0 && (
+                  <Stat icon={Thermometer} value={`${cpuTemp}°`}
+                    color={cpuTemp < 50 ? 'text-gray-400' : cpuTemp < 65 ? 'text-yellow-400' : 'text-red-400'}
+                    label={`CPU: ${cpuTemp}°C`} />
+                )}
+                {s.work_status && s.work_status !== '0' && (
+                  <Stat icon={Activity} value={s.work_status} color="text-emerald-400" label="Work status" />
+                )}
+                {s.sw_version && (
+                  <span className="text-gray-600 text-[10px] truncate max-w-[48px]">{s.sw_version}</span>
+                )}
+              </>
             )}
           </>
         )}
 
-        {/* Mower stats */}
-        {!isCharger && (
-          <>
-            {s.work_status && (
-              <span className="inline-flex items-center gap-0.5">
-                <Activity className="w-3 h-3 text-emerald-400" />
-                <span className="text-gray-300 truncate max-w-[50px]">{s.work_status}</span>
-              </span>
-            )}
-            {s.mowing_progress && parseInt(s.mowing_progress) > 0 && (
-              <span className="inline-flex items-center gap-0.5">
-                <Gauge className="w-3 h-3 text-emerald-400" />
-                <span className="text-emerald-400 tabular-nums">{s.mowing_progress}%</span>
-              </span>
-            )}
-            {s.cpu_temperature && (
-              <span className="inline-flex items-center gap-0.5">
-                <Cpu className="w-3 h-3 text-orange-400" />
-                <span className="text-gray-400 tabular-nums">{s.cpu_temperature}°</span>
-              </span>
-            )}
-            {s.sw_version && (
-              <span className="inline-flex items-center gap-0.5">
-                <Code className="w-3 h-3 text-purple-400" />
-                <span className="text-gray-500 truncate max-w-[48px]">{s.sw_version}</span>
-              </span>
-            )}
-          </>
+        {!hasSensorData && device.online && (
+          <span className="text-gray-600 text-[10px] italic">waiting for data...</span>
         )}
 
         <ChevronDown className={`w-3 h-3 text-gray-500 transition-transform ${expanded ? 'rotate-180' : ''}`} />
@@ -118,8 +141,48 @@ function DeviceChip({ device, expanded, onToggle }: {
 
       {/* Sensor detail dropdown */}
       {expanded && (
-        <div className="absolute top-full left-0 mt-1 w-96 z-[10000] bg-gray-800 rounded-lg border border-gray-700 shadow-xl p-3 max-h-80 overflow-auto">
-          <div className="text-[10px] text-gray-500 font-mono mb-2">{device.sn}</div>
+        <div className="absolute top-full left-0 mt-1 w-[420px] z-[10000] bg-gray-800 rounded-lg border border-gray-700 shadow-xl p-3 max-h-96 overflow-auto">
+          {/* Header with SN + actions */}
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] text-gray-500 font-mono">{device.sn}</span>
+              {device.macAddress && (
+                <span className="inline-flex items-center gap-1 text-[10px] text-gray-600">
+                  <Bluetooth className="w-2.5 h-2.5" />
+                  {device.macAddress}
+                </span>
+              )}
+            </div>
+            {onDelete && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onDelete(device.sn); }}
+                className="text-gray-600 hover:text-red-400 transition-colors p-1 rounded hover:bg-gray-700"
+                title="Remove device from dashboard"
+              >
+                <Trash2 className="w-3 h-3" />
+              </button>
+            )}
+          </div>
+
+          {/* Quick info row */}
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] mb-3 pb-2 border-b border-gray-700">
+            <span className={device.online ? 'text-green-400' : 'text-gray-600'}>
+              {device.online ? 'Online' : 'Offline'}
+            </span>
+            {device.lastSeen && (
+              <span className="text-gray-600">
+                Last seen: {new Date(device.lastSeen + 'Z').toLocaleString()}
+              </span>
+            )}
+            {s.localization_state && (
+              <span className="text-gray-500">Loc: {s.localization_state}</span>
+            )}
+            {s.battery_state && (
+              <span className="text-gray-500">{s.battery_state}</span>
+            )}
+          </div>
+
+          {/* Full sensor grid */}
           <SensorGrid device={device} />
         </div>
       )}
@@ -132,6 +195,13 @@ export function DashboardPage({ devices, loading, logs }: Props) {
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [pathDirPreview, setPathDirPreview] = useState<number | null>(null);
   const [expandedChip, setExpandedChip] = useState<string | null>(null);
+
+  const handleDeleteDevice = useCallback(async (sn: string) => {
+    if (!confirm(`Remove ${sn} from dashboard?`)) return;
+    await deleteDevice(sn);
+    setExpandedChip(null);
+    window.location.reload();
+  }, []);
 
   const sorted = Array.from(devices.values()).sort((a, b) => {
     if (a.deviceType !== b.deviceType) return a.deviceType === 'charger' ? -1 : 1;
@@ -164,6 +234,7 @@ export function DashboardPage({ devices, loading, logs }: Props) {
               device={device}
               expanded={expandedChip === device.sn}
               onToggle={() => setExpandedChip(expandedChip === device.sn ? null : device.sn)}
+              onDelete={handleDeleteDevice}
             />
           ))}
         </div>

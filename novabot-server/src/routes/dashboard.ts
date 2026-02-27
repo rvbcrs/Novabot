@@ -31,28 +31,52 @@ interface EquipmentRow {
 export const dashboardRouter = Router();
 
 // GET /api/dashboard/devices — alle devices met online status en cached sensor waarden
+// Toont alleen apparaten die gebonden zijn (in equipment tabel) of momenteel online zijn,
+// gedepliceerd op SN (meest recente entry per SN)
 dashboardRouter.get('/devices', (_req: Request, res: Response) => {
-  const registry = db.prepare(
-    'SELECT * FROM device_registry WHERE sn IS NOT NULL ORDER BY last_seen DESC'
-  ).all() as DeviceRegistryRow[];
+  const registry = db.prepare(`
+    SELECT d.* FROM device_registry d
+    INNER JOIN (
+      SELECT sn, MAX(last_seen) as max_seen FROM device_registry
+      WHERE sn IS NOT NULL GROUP BY sn
+    ) latest ON d.sn = latest.sn AND d.last_seen = latest.max_seen
+    ORDER BY d.last_seen DESC
+  `).all() as DeviceRegistryRow[];
 
   const equipment = db.prepare('SELECT mower_sn, charger_sn, equipment_nick_name FROM equipment').all() as EquipmentRow[];
 
+  // Verzamel alle gebonden SNs
+  const boundSns = new Set<string>();
+  for (const e of equipment) {
+    if (e.mower_sn) boundSns.add(e.mower_sn);
+    if (e.charger_sn) boundSns.add(e.charger_sn);
+  }
+
   const snapshots = getAllDeviceSnapshots();
 
-  const devices = registry.map(d => ({
-    sn: d.sn!,
-    macAddress: d.mac_address,
-    lastSeen: d.last_seen,
-    online: isDeviceOnline(d.sn!),
-    deviceType: d.sn!.startsWith('LFIC') ? 'charger' as const : 'mower' as const,
-    nickname: equipment.find(e =>
-      e.mower_sn === d.sn || e.charger_sn === d.sn
-    )?.equipment_nick_name ?? null,
-    sensors: snapshots[d.sn!] ?? {},
-  }));
+  // Filter: toon alleen gebonden apparaten of online apparaten
+  const devices = registry
+    .filter(d => boundSns.has(d.sn!) || isDeviceOnline(d.sn!))
+    .map(d => ({
+      sn: d.sn!,
+      macAddress: d.mac_address,
+      lastSeen: d.last_seen,
+      online: isDeviceOnline(d.sn!),
+      deviceType: d.sn!.startsWith('LFIC') ? 'charger' as const : 'mower' as const,
+      nickname: equipment.find(e =>
+        e.mower_sn === d.sn || e.charger_sn === d.sn
+      )?.equipment_nick_name ?? null,
+      sensors: snapshots[d.sn!] ?? {},
+    }));
 
   res.json({ devices });
+});
+
+// DELETE /api/dashboard/devices/:sn — verwijder een device uit de registry
+dashboardRouter.delete('/devices/:sn', (req: Request, res: Response) => {
+  const { sn } = req.params;
+  db.prepare('DELETE FROM device_registry WHERE sn = ?').run(sn);
+  res.json({ ok: true });
 });
 
 // GET /api/dashboard/devices/:sn — enkel device met volledige state

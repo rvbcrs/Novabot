@@ -11,6 +11,10 @@ export async function fetchDevices(): Promise<DeviceState[]> {
   }));
 }
 
+export async function deleteDevice(sn: string): Promise<void> {
+  await fetch(`${BASE}/devices/${encodeURIComponent(sn)}`, { method: 'DELETE' });
+}
+
 export async function fetchSensors(): Promise<SensorDef[]> {
   const res = await fetch(`${BASE}/sensors`);
   const data = await res.json();
