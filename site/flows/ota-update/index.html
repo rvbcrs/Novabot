@@ -1972,6 +1972,56 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#firmware-patching-local-server" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Firmware Patching (Local Server)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Firmware Patching (Local Server)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#patched-firmware-available" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Patched Firmware Available
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#patch-tool-usage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Patch Tool Usage
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ota-flash-via-mqtt" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OTA Flash via MQTT
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#security-considerations" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2258,6 +2308,56 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#firmware-patching-local-server" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Firmware Patching (Local Server)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Firmware Patching (Local Server)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#patched-firmware-available" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Patched Firmware Available
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#patch-tool-usage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Patch Tool Usage
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ota-flash-via-mqtt" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OTA Flash via MQTT
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#security-considerations" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2289,85 +2389,81 @@
 <h2 id="overview">Overview<a class="headerlink" href="#overview" title="Permanent link">&para;</a></h2>
 <p>The OTA update system supports both <strong>app-initiated</strong> updates (user checks for updates) and <strong>remote push</strong> updates (support sends firmware directly via MQTT). The mower has a production-grade OTA pipeline with resume-capable downloads, MD5 verification, atomic replacement, and automatic rollback.</p>
 <h2 id="app-initiated-update-flow">App-Initiated Update Flow<a class="headerlink" href="#app-initiated-update-flow" title="Permanent link">&para;</a></h2>
-<p>```mermaid
-sequenceDiagram
+<pre class="mermaid"><code>sequenceDiagram
     participant App
     participant Server as Local Server
     participant MQTT as MQTT Broker
     participant Mower
     participant Charger
-    participant Cloud as Alibaba OSS</p>
-<div class="highlight"><pre><span></span><code>rect rgb(240, 248, 255)
-    Note over App,Cloud: Phase 1: Version Check
-    App-&gt;&gt;MQTT: ota_version_info
-    MQTT-&gt;&gt;Mower: ota_version_info
-    Mower--&gt;&gt;MQTT: ota_version_info_respond
-    MQTT--&gt;&gt;App: {mower: &quot;v5.7.1&quot;, charger: &quot;v0.3.6&quot;, mcu: &quot;v3.5.8&quot;}
+    participant Cloud as Alibaba OSS
 
-    App-&gt;&gt;Server: GET checkOtaNewVersion?version=v5.7.1&amp;equipmentType=LFIN2
-    Server--&gt;&gt;App: {version: &quot;v5.7.1&quot;, downloadUrl: &quot;https://...&quot;, md5: &quot;...&quot;}
-end
+    rect rgb(240, 248, 255)
+        Note over App,Cloud: Phase 1: Version Check
+        App-&gt;&gt;MQTT: ota_version_info
+        MQTT-&gt;&gt;Mower: ota_version_info
+        Mower--&gt;&gt;MQTT: ota_version_info_respond
+        MQTT--&gt;&gt;App: {mower: "v5.7.1", charger: "v0.3.6", mcu: "v3.5.8"}
 
-rect rgb(255, 248, 240)
-    Note over App,Cloud: Phase 2: Mower OTA
-    Note over App: &quot;Are you sure to upgrade?&lt;br/&gt;Expected to take 20-30 minutes&quot;
-
-    App-&gt;&gt;MQTT: ota_upgrade_cmd {type: &quot;full&quot;, content: {upgradeApp: {version, downloadUrl, md5}}}
-    MQTT-&gt;&gt;Mower: ota_upgrade_cmd
-
-    Note over Mower: mqtt_node forwards to&lt;br/&gt;ota_client_node via ROS 2&lt;br/&gt;/ota_upgrade_srv service
-
-    Mower--&gt;&gt;MQTT: ota_upgrade_cmd_respond
-
-    Note over Mower: Wait for CHARGING state
-
-    Mower-&gt;&gt;Cloud: HTTPS GET firmware .deb (libcurl, resume-capable)
-
-    loop Download progress
-        Mower-&gt;&gt;MQTT: ota_upgrade_state {progress: 45, state: &quot;downloading&quot;}
-        MQTT-&gt;&gt;App: ota_upgrade_state
+        App-&gt;&gt;Server: GET checkOtaNewVersion?version=v5.7.1&amp;equipmentType=LFIN2
+        Server--&gt;&gt;App: {version: "v5.7.1", downloadUrl: "https://...", md5: "..."}
     end
 
-    Note over Mower: MD5 verification
-    Note over Mower: dpkg -x → /root/novabot.new/
-    Note over Mower: Write &quot;1&quot; to upgrade.txt
-    Note over Mower: reboot -f
+    rect rgb(255, 248, 240)
+        Note over App,Cloud: Phase 2: Mower OTA
+        Note over App: "Are you sure to upgrade?&lt;br/&gt;Expected to take 20-30 minutes"
 
-    Note over Mower: run_ota.sh:&lt;br/&gt;backup → deploy → restore maps → verify → reboot
-    Mower-&gt;&gt;MQTT: ota_upgrade_state {state: &quot;completed&quot;}
-end
+        App-&gt;&gt;MQTT: ota_upgrade_cmd {type: "full", content: {upgradeApp: {version, downloadUrl, md5}}}
+        MQTT-&gt;&gt;Mower: ota_upgrade_cmd
 
-rect rgb(240, 255, 240)
-    Note over App,Cloud: Phase 3: Charger OTA (via mower)
-    Note over App: &quot;The charging station can also&lt;br/&gt;be upgraded. Would you like to proceed?&quot;
+        Note over Mower: mqtt_node forwards to&lt;br/&gt;ota_client_node via ROS 2&lt;br/&gt;/ota_upgrade_srv service
 
-    Mower-&gt;&gt;Charger: TCP/HTTP push firmware to 192.168.4.1
-    Charger-&gt;&gt;Charger: esp_https_ota → write to inactive OTA partition
-    Charger-&gt;&gt;Charger: Switch boot partition + reboot
-end
-</code></pre></div>
-<p>```</p>
+        Mower--&gt;&gt;MQTT: ota_upgrade_cmd_respond
+
+        Note over Mower: Wait for CHARGING state
+
+        Mower-&gt;&gt;Cloud: HTTPS GET firmware .deb (libcurl, resume-capable)
+
+        loop Download progress
+            Mower-&gt;&gt;MQTT: ota_upgrade_state {progress: 45, state: "downloading"}
+            MQTT-&gt;&gt;App: ota_upgrade_state
+        end
+
+        Note over Mower: MD5 verification
+        Note over Mower: dpkg -x → /root/novabot.new/
+        Note over Mower: Write "1" to upgrade.txt
+        Note over Mower: reboot -f
+
+        Note over Mower: run_ota.sh:&lt;br/&gt;backup → deploy → restore maps → verify → reboot
+        Mower-&gt;&gt;MQTT: ota_upgrade_state {state: "completed"}
+    end
+
+    rect rgb(240, 255, 240)
+        Note over App,Cloud: Phase 3: Charger OTA (via mower)
+        Note over App: "The charging station can also&lt;br/&gt;be upgraded. Would you like to proceed?"
+
+        Mower-&gt;&gt;Charger: TCP/HTTP push firmware to 192.168.4.1
+        Charger-&gt;&gt;Charger: esp_https_ota → write to inactive OTA partition
+        Charger-&gt;&gt;Charger: Switch boot partition + reboot
+    end</code></pre>
 <h2 id="remote-push-support-initiated">Remote Push (Support-Initiated)<a class="headerlink" href="#remote-push-support-initiated" title="Permanent link">&para;</a></h2>
 <p>Support can push firmware to a specific device <strong>without user interaction</strong> via two mechanisms:</p>
-<p>```mermaid
-sequenceDiagram
+<pre class="mermaid"><code>sequenceDiagram
     participant Support
     participant CloudBroker as Cloud MQTT Broker
-    participant Mower</p>
-<div class="highlight"><pre><span></span><code>rect rgb(255, 240, 240)
-    Note over Support,Mower: Method 1: Direct MQTT Push
-    Support-&gt;&gt;CloudBroker: Publish to Dart/Send_mqtt/&lt;SN&gt;
-    CloudBroker-&gt;&gt;Mower: ota_upgrade_cmd {type, content}
-    Note over Mower: Same flow as app-initiated
-end
+    participant Mower
 
-rect rgb(240, 240, 255)
-    Note over Support,Mower: Method 2: Cloud Database Override
-    Note over Support: Set per-SN firmware version in cloud DB
-    Note over Mower: Next time app checks checkOtaNewVersion&lt;br/&gt;→ gets new version → sends ota_upgrade_cmd
-end
-</code></pre></div>
-<p>```</p>
+    rect rgb(255, 240, 240)
+        Note over Support,Mower: Method 1: Direct MQTT Push
+        Support-&gt;&gt;CloudBroker: Publish to Dart/Send_mqtt/&lt;SN&gt;
+        CloudBroker-&gt;&gt;Mower: ota_upgrade_cmd {type, content}
+        Note over Mower: Same flow as app-initiated
+    end
+
+    rect rgb(240, 240, 255)
+        Note over Support,Mower: Method 2: Cloud Database Override
+        Note over Support: Set per-SN firmware version in cloud DB
+        Note over Mower: Next time app checks checkOtaNewVersion&lt;br/&gt;→ gets new version → sends ota_upgrade_cmd
+    end</code></pre>
 <div class="admonition warning">
 <p class="admonition-title">No authentication on OTA commands</p>
 <p>Any MQTT message on <code>Dart/Send_mqtt/&lt;SN&gt;</code> with <code>ota_upgrade_cmd</code> triggers a firmware download. There is no verification of the sender's identity.</p>
@@ -2426,18 +2522,16 @@ end
 <hr />
 <h2 id="mower-ota-architecture">Mower OTA Architecture<a class="headerlink" href="#mower-ota-architecture" title="Permanent link">&para;</a></h2>
 <p>The mower has <strong>two ROS 2 nodes</strong> that handle OTA:</p>
-<p>```mermaid
-graph LR
-    MQTT[MQTT Broker] --&gt;|ota_upgrade_cmd| MN[mqtt_node<br/>6.3MB]
-    MN --&gt;|/ota_upgrade_srv<br/>ROS 2 service| OC[ota_client_node<br/>5.8MB]
+<pre class="mermaid"><code>graph LR
+    MQTT[MQTT Broker] --&gt;|ota_upgrade_cmd| MN[mqtt_node&lt;br/&gt;6.3MB]
+    MN --&gt;|/ota_upgrade_srv&lt;br/&gt;ROS 2 service| OC[ota_client_node&lt;br/&gt;5.8MB]
     OC --&gt;|libcurl HTTPS| OSS[Alibaba OSS]
-    OC --&gt;|/ota/upgrade_status<br/>ROS 2 topic| MN
+    OC --&gt;|/ota/upgrade_status&lt;br/&gt;ROS 2 topic| MN
     MN --&gt;|ota_upgrade_state| MQTT
-    OC --&gt;|Check| CS[/pipe_charge_status<br/>Charging required]</p>
-<div class="highlight"><pre><span></span><code>style MN fill:#f9f,stroke:#333
-style OC fill:#9ff,stroke:#333
-</code></pre></div>
-<p>```</p>
+    OC --&gt;|Check| CS[/pipe_charge_status&lt;br/&gt;Charging required]
+
+    style MN fill:#f9f,stroke:#333
+    style OC fill:#9ff,stroke:#333</code></pre>
 <h3 id="ros-2-service-otaupgradesys">ROS 2 Service: OtaUpgradeSys<a class="headerlink" href="#ros-2-service-otaupgradesys" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a># Request (mqtt_node → ota_client)
 <a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>string ota_cmd          # Full JSON string from MQTT command
@@ -2540,14 +2634,12 @@ style OC fill:#9ff,stroke:#333
 <li>Updates <code>otadata</code> to switch boot partition</li>
 <li>Reboots</li>
 </ol>
-<p>```mermaid
-graph LR
-    OTAData[otadata<br/>ota_seq = 7] --&gt;|"(7-1) % 2 = 0"| OTA0[ota_0: v0.3.6<br/>ACTIVE]
-    OTAData -.-&gt; OTA1[ota_1: v0.4.0<br/>inactive]</p>
-<div class="highlight"><pre><span></span><code>style OTA0 fill:#9f9,stroke:#333
-style OTA1 fill:#ddd,stroke:#333
-</code></pre></div>
-<p>```</p>
+<pre class="mermaid"><code>graph LR
+    OTAData[otadata&lt;br/&gt;ota_seq = 7] --&gt;|"(7-1) % 2 = 0"| OTA0[ota_0: v0.3.6&lt;br/&gt;ACTIVE]
+    OTAData -.-&gt; OTA1[ota_1: v0.4.0&lt;br/&gt;inactive]
+
+    style OTA0 fill:#9f9,stroke:#333
+    style OTA1 fill:#ddd,stroke:#333</code></pre>
 <hr />
 <h2 id="ota-download-urls">OTA Download URLs<a class="headerlink" href="#ota-download-urls" title="Permanent link">&para;</a></h2>
 <table>
@@ -2588,15 +2680,15 @@ style OTA1 fill:#ddd,stroke:#333
 <tbody>
 <tr>
 <td>Charger</td>
-<td>v0.3.6 (active)</td>
+<td>v0.3.6</td>
 <td>1.4 MB</td>
-<td>ESP32-S3, ESP-IDF v4.4.2</td>
+<td>ESP32-S3, ESP-IDF v4.4.2, plain JSON MQTT</td>
 </tr>
 <tr>
 <td>Charger</td>
-<td>v0.4.0 (inactive)</td>
+<td>v0.4.0</td>
 <td>1.4 MB</td>
-<td>Adds AES MQTT encryption</td>
+<td>Adds AES-128-CBC MQTT encryption + <code>cJSON_IsNull</code> command validation</td>
 </tr>
 <tr>
 <td>Mower</td>
@@ -2716,6 +2808,79 @@ style OTA1 fill:#ddd,stroke:#333
 </tr>
 </tbody>
 </table>
+<h2 id="firmware-patching-local-server">Firmware Patching (Local Server)<a class="headerlink" href="#firmware-patching-local-server" title="Permanent link">&para;</a></h2>
+<p>A patch tool (<code>research/patch_firmware.js</code>) allows modifying hardcoded MQTT hostnames/IPs
+in the charger firmware binary so the charger connects to the local server without DNS rewrites.</p>
+<h3 id="patched-firmware-available">Patched Firmware Available<a class="headerlink" href="#patched-firmware-available" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Version</th>
+<th>File</th>
+<th>MD5</th>
+<th>Changes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>v0.3.6</td>
+<td><code>research/firmware/charger_v0.3.6_patched.bin</code></td>
+<td><code>fb7427789bf0e164ed00ef9ea8f9dbf0</code></td>
+<td>MQTT → <code>novabot.ramonvanbruggen.nl</code></td>
+</tr>
+<tr>
+<td>v0.4.0</td>
+<td><code>research/firmware/charger_v0.4.0_patched.bin</code></td>
+<td><code>538f01c8412a7d9936d1de9c298f8918</code></td>
+<td>MQTT → <code>novabot.ramonvanbruggen.nl</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="patch-tool-usage">Patch Tool Usage<a class="headerlink" href="#patch-tool-usage" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>node<span class="w"> </span>research/patch_firmware.js<span class="w">                          </span><span class="c1"># Patch with defaults</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>node<span class="w"> </span>research/patch_firmware.js<span class="w"> </span>--analyze<span class="w">                </span><span class="c1"># Analyze only</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>node<span class="w"> </span>research/patch_firmware.js<span class="w"> </span>--mqtt-host<span class="w"> </span><span class="m">192</span>.168.1.50<span class="w"> </span><span class="c1"># Short IP (in-place)</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>node<span class="w"> </span>research/patch_firmware.js<span class="w"> </span>--mqtt-host<span class="w"> </span>my.server.nl<span class="w"> </span><span class="c1"># Long hostname (relocation)</span>
+</code></pre></div>
+<p>The tool handles:</p>
+<ul>
+<li>ESP32-S3 image header parsing</li>
+<li>String relocation to unused DROM space when replacement is longer</li>
+<li>Code reference updates (literal pool pointers)</li>
+<li>SHA256 hash recalculation</li>
+</ul>
+<h3 id="ota-flash-via-mqtt">OTA Flash via MQTT<a class="headerlink" href="#ota-flash-via-mqtt" title="Permanent link">&para;</a></h3>
+<p>To flash a patched firmware to a charger:</p>
+<div class="highlight"><span class="filename">ota_upgrade_cmd</span><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="p">{</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">  </span><span class="nt">&quot;ota_upgrade_cmd&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">    </span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;full&quot;</span><span class="p">,</span>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">    </span><span class="nt">&quot;content&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="w">      </span><span class="nt">&quot;upgradeApp&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="w">        </span><span class="nt">&quot;version&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;v0.3.6-local&quot;</span><span class="p">,</span>
+<a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="w">        </span><span class="nt">&quot;downloadUrl&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;http://&lt;server&gt;:8080/charger_v0.3.6_patched.bin&quot;</span><span class="p">,</span>
+<a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a><span class="w">        </span><span class="nt">&quot;md5&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;fb7427789bf0e164ed00ef9ea8f9dbf0&quot;</span>
+<a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a><span class="w">      </span><span class="p">}</span>
+<a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a><span class="w">  </span><span class="p">}</span>
+<a id="__codelineno-7-12" name="__codelineno-7-12" href="#__codelineno-7-12"></a><span class="p">}</span>
+</code></pre></div>
+<div class="admonition tip">
+<p class="admonition-title">v0.4.0 encrypted charger</p>
+<p>For a charger running v0.4.0, commands must be AES-128-CBC encrypted
+and use <code>null</code> values: <code>{"ota_version_info": null}</code>.
+Use the raw-tcp endpoint: <code>POST /api/dashboard/raw-tcp/:sn</code></p>
+</div>
+<div class="admonition warning">
+<p class="admonition-title">Important notes</p>
+<ul>
+<li><code>esp_https_ota()</code> may require HTTPS — set up an HTTPS server if HTTP fails</li>
+<li>NVS config (set via BLE) is NOT affected by OTA — production MQTT host also needs BLE re-provisioning</li>
+<li>On OTA failure: charger automatically boots from the other OTA partition</li>
+<li>Recovery via UART: press <code>b</code> to manually switch OTA partition</li>
+<li><strong>Always test on a spare board first!</strong></li>
+</ul>
+</div>
+<hr />
 <h2 id="security-considerations">Security Considerations<a class="headerlink" href="#security-considerations" title="Permanent link">&para;</a></h2>
 <table>
 <thead>

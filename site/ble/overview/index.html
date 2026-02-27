@@ -1969,26 +1969,24 @@ Commands are sent as JSON over a GATT characteristic.</p>
 <a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>ble_end
 </code></pre></div>
 <h2 id="command-flow">Command Flow<a class="headerlink" href="#command-flow" title="Permanent link">&para;</a></h2>
-<p>```mermaid
-sequenceDiagram
+<pre class="mermaid"><code>sequenceDiagram
     participant App
-    participant Device as BLE Device</p>
-<div class="highlight"><pre><span></span><code>App-&gt;&gt;Device: BLE Connect
-App-&gt;&gt;Device: Discover Services (UUID 0x1234)
-App-&gt;&gt;Device: Subscribe to 0x2222 Notify
-App-&gt;&gt;Device: Write: get_signal_info
-Device--&gt;&gt;App: Notify: get_signal_info_respond
-App-&gt;&gt;Device: Write: set_wifi_info (chunked)
-Device--&gt;&gt;App: Notify: set_wifi_info_respond
-App-&gt;&gt;Device: Write: set_mqtt_info
-Device--&gt;&gt;App: Notify: set_mqtt_info_respond
-App-&gt;&gt;Device: Write: set_lora_info
-Device--&gt;&gt;App: Notify: set_lora_info_respond
-App-&gt;&gt;Device: Write: set_cfg_info
-Device--&gt;&gt;App: Notify: set_cfg_info_respond
-Note over Device: Reconnects WiFi + MQTT
-</code></pre></div>
-<p>```</p>
+    participant Device as BLE Device
+
+    App-&gt;&gt;Device: BLE Connect
+    App-&gt;&gt;Device: Discover Services (UUID 0x1234)
+    App-&gt;&gt;Device: Subscribe to 0x2222 Notify
+    App-&gt;&gt;Device: Write: get_signal_info
+    Device--&gt;&gt;App: Notify: get_signal_info_respond
+    App-&gt;&gt;Device: Write: set_wifi_info (chunked)
+    Device--&gt;&gt;App: Notify: set_wifi_info_respond
+    App-&gt;&gt;Device: Write: set_mqtt_info
+    Device--&gt;&gt;App: Notify: set_mqtt_info_respond
+    App-&gt;&gt;Device: Write: set_lora_info
+    Device--&gt;&gt;App: Notify: set_lora_info_respond
+    App-&gt;&gt;Device: Write: set_cfg_info
+    Device--&gt;&gt;App: Notify: set_cfg_info_respond
+    Note over Device: Reconnects WiFi + MQTT</code></pre>
 <h2 id="ble-commands-summary">BLE Commands Summary<a class="headerlink" href="#ble-commands-summary" title="Permanent link">&para;</a></h2>
 <table>
 <thead>

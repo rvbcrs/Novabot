@@ -1967,69 +1967,65 @@
 
 <h1 id="architecture-overview">Architecture Overview<a class="headerlink" href="#architecture-overview" title="Permanent link">&para;</a></h1>
 <h2 id="system-diagram">System Diagram<a class="headerlink" href="#system-diagram" title="Permanent link">&para;</a></h2>
-<p>```mermaid
-graph TB
+<pre class="mermaid"><code>graph TB
     subgraph Internet
-        Cloud[app.lfibot.com<br/>Cloud API Server]
-        MQTT_Cloud[mqtt.lfibot.com<br/>Cloud MQTT Broker]
-    end</p>
-<div class="highlight"><pre><span></span><code>subgraph Local Network
-    DNS[novabot-dns&lt;br/&gt;dnsmasq Docker]
-    Server[novabot-server&lt;br/&gt;Express + Aedes MQTT]
-    Dashboard[novabot-dashboard&lt;br/&gt;React + Leaflet]
-    HA[Home Assistant&lt;br/&gt;MQTT Bridge]
-end
+        Cloud[app.lfibot.com&lt;br/&gt;Cloud API Server]
+        MQTT_Cloud[mqtt.lfibot.com&lt;br/&gt;Cloud MQTT Broker]
+    end
 
-subgraph Devices
-    Charger[Charging Station&lt;br/&gt;ESP32-S3 / LFIC1230700XXX]
-    Mower[Robot Mower&lt;br/&gt;Horizon X3 / LFIN2230700XXX]
-end
+    subgraph Local Network
+        DNS[novabot-dns&lt;br/&gt;dnsmasq Docker]
+        Server[novabot-server&lt;br/&gt;Express + Aedes MQTT]
+        Dashboard[novabot-dashboard&lt;br/&gt;React + Leaflet]
+        HA[Home Assistant&lt;br/&gt;MQTT Bridge]
+    end
 
-App[Novabot App&lt;br/&gt;Flutter v2.3.8/v2.4.0]
+    subgraph Devices
+        Charger[Charging Station&lt;br/&gt;ESP32-S3 / LFIC1230700XXX]
+        Mower[Robot Mower&lt;br/&gt;Horizon X3 / LFIN2230700XXX]
+    end
 
-DNS --&gt;|Redirects *.lfibot.com| Server
-App --&gt;|HTTP REST API| Server
-App --&gt;|MQTT port 1883| Server
-App &lt;--&gt;|BLE GATT| Charger
-App &lt;--&gt;|BLE GATT| Mower
-Charger --&gt;|MQTT plain JSON| Server
-Mower --&gt;|MQTT AES-128-CBC| Server
-Charger &lt;--&gt;|LoRa 433MHz| Mower
-Server --&gt;|Socket.io| Dashboard
-Server --&gt;|MQTT auto-discovery| HA
-Dashboard --&gt;|HTTP REST| Server
+    App[Novabot App&lt;br/&gt;Flutter v2.3.8/v2.4.0]
 
-Cloud -.-&gt;|Replaced by local server| Server
-MQTT_Cloud -.-&gt;|Replaced by local broker| Server
-</code></pre></div>
-<p>```</p>
+    DNS --&gt;|Redirects *.lfibot.com| Server
+    App --&gt;|HTTP REST API| Server
+    App --&gt;|MQTT port 1883| Server
+    App &lt;--&gt;|BLE GATT| Charger
+    App &lt;--&gt;|BLE GATT| Mower
+    Charger --&gt;|MQTT plain JSON| Server
+    Mower --&gt;|MQTT AES-128-CBC| Server
+    Charger &lt;--&gt;|LoRa 433MHz| Mower
+    Server --&gt;|Socket.io| Dashboard
+    Server --&gt;|MQTT auto-discovery| HA
+    Dashboard --&gt;|HTTP REST| Server
+
+    Cloud -.-&gt;|Replaced by local server| Server
+    MQTT_Cloud -.-&gt;|Replaced by local broker| Server</code></pre>
 <h2 id="communication-layers">Communication Layers<a class="headerlink" href="#communication-layers" title="Permanent link">&para;</a></h2>
-<p>```mermaid
-graph LR
+<pre class="mermaid"><code>graph LR
     subgraph "App ↔ Server"
-        A1[HTTP REST<br/>Port 3000]
-        A2[MQTT<br/>Port 1883]
-    end</p>
-<div class="highlight"><pre><span></span><code>subgraph &quot;Server ↔ Dashboard&quot;
-    B1[HTTP REST&lt;br/&gt;Port 3000]
-    B2[Socket.io&lt;br/&gt;WebSocket]
-end
+        A1[HTTP REST&lt;br/&gt;Port 3000]
+        A2[MQTT&lt;br/&gt;Port 1883]
+    end
 
-subgraph &quot;Charger ↔ Server&quot;
-    C1[MQTT Plain JSON&lt;br/&gt;Port 1883]
-end
+    subgraph "Server ↔ Dashboard"
+        B1[HTTP REST&lt;br/&gt;Port 3000]
+        B2[Socket.io&lt;br/&gt;WebSocket]
+    end
 
-subgraph &quot;Mower ↔ Server&quot;
-    D1[MQTT AES-128-CBC&lt;br/&gt;Port 1883]
-    D2[HTTP Uploads&lt;br/&gt;Port 3000]
-end
+    subgraph "Charger ↔ Server"
+        C1[MQTT Plain JSON&lt;br/&gt;Port 1883]
+    end
 
-subgraph &quot;Charger ↔ Mower&quot;
-    E1[LoRa 433MHz&lt;br/&gt;Binary packets]
-    E2[RTK GPS Relay&lt;br/&gt;NMEA via LoRa]
-end
-</code></pre></div>
-<p>```</p>
+    subgraph "Mower ↔ Server"
+        D1[MQTT AES-128-CBC&lt;br/&gt;Port 1883]
+        D2[HTTP Uploads&lt;br/&gt;Port 3000]
+    end
+
+    subgraph "Charger ↔ Mower"
+        E1[LoRa 433MHz&lt;br/&gt;Binary packets]
+        E2[RTK GPS Relay&lt;br/&gt;NMEA via LoRa]
+    end</code></pre>
 <h2 id="technology-stack">Technology Stack<a class="headerlink" href="#technology-stack" title="Permanent link">&para;</a></h2>
 <h3 id="server-novabot-server">Server (<code>novabot-server/</code>)<a class="headerlink" href="#server-novabot-server" title="Permanent link">&para;</a></h3>
 <table>

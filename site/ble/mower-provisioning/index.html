@@ -2059,37 +2059,35 @@
 <li>Mower serial number known (e.g., <code>LFIN2230700XXX</code>)</li>
 </ul>
 <h2 id="step-by-step-flow">Step-by-Step Flow<a class="headerlink" href="#step-by-step-flow" title="Permanent link">&para;</a></h2>
-<p>```mermaid
-sequenceDiagram
+<pre class="mermaid"><code>sequenceDiagram
     participant User
     participant App
     participant Mower as Mower (BLE)
-    participant Server</p>
-<div class="highlight"><pre><span></span><code>User-&gt;&gt;App: Enter mower SN (or scan QR)
-User-&gt;&gt;App: Enter home WiFi credentials
+    participant Server
 
-App-&gt;&gt;Mower: BLE Connect (Novabot)
-App-&gt;&gt;Mower: get_signal_info
+    User-&gt;&gt;App: Enter mower SN (or scan QR)
+    User-&gt;&gt;App: Enter home WiFi credentials
 
-Note over App,Mower: Configuration (different order!)
-App-&gt;&gt;Mower: set_wifi_info {ap only!}
-Mower--&gt;&gt;App: set_wifi_info_respond {result: 0}
+    App-&gt;&gt;Mower: BLE Connect (Novabot)
+    App-&gt;&gt;Mower: get_signal_info
 
-App-&gt;&gt;Mower: set_lora_info {addr, channel, hc, lc}
-Mower--&gt;&gt;App: set_lora_info_respond {value: null}
+    Note over App,Mower: Configuration (different order!)
+    App-&gt;&gt;Mower: set_wifi_info {ap only!}
+    Mower--&gt;&gt;App: set_wifi_info_respond {result: 0}
 
-App-&gt;&gt;Mower: set_mqtt_info {addr, port}
-Mower--&gt;&gt;App: set_mqtt_info_respond {result: 0}
+    App-&gt;&gt;Mower: set_lora_info {addr, channel, hc, lc}
+    Mower--&gt;&gt;App: set_lora_info_respond {value: null}
 
-App-&gt;&gt;Mower: set_cfg_info {cfg_value: 1, tz: &quot;Europe/Amsterdam&quot;}
-Mower--&gt;&gt;App: set_cfg_info_respond {result: 0}
+    App-&gt;&gt;Mower: set_mqtt_info {addr, port}
+    Mower--&gt;&gt;App: set_mqtt_info_respond {result: 0}
 
-Note over Mower: Disconnects BLE&lt;br/&gt;Connects WiFi + MQTT
+    App-&gt;&gt;Mower: set_cfg_info {cfg_value: 1, tz: "Europe/Amsterdam"}
+    Mower--&gt;&gt;App: set_cfg_info_respond {result: 0}
 
-App-&gt;&gt;Server: POST getEquipmentBySN {sn}
-App-&gt;&gt;Server: POST bindingEquipment {mowerSn, chargerSn}
-</code></pre></div>
-<p>```</p>
+    Note over Mower: Disconnects BLE&lt;br/&gt;Connects WiFi + MQTT
+
+    App-&gt;&gt;Server: POST getEquipmentBySN {sn}
+    App-&gt;&gt;Server: POST bindingEquipment {mowerSn, chargerSn}</code></pre>
 <h2 id="ble-command-payloads">BLE Command Payloads<a class="headerlink" href="#ble-command-payloads" title="Permanent link">&para;</a></h2>
 <h3 id="set_wifi_info-mower-ap-only">set_wifi_info (Mower — AP only)<a class="headerlink" href="#set_wifi_info-mower-ap-only" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="p">{</span>

@@ -39,7 +39,7 @@ markdown_extensions:
       custom_fences:
         - name: mermaid
           class: mermaid
-          format: pymdownx.superfences.fence_code_format
+          format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.tabbed:
       alternate_style: true
   - pymdownx.details
@@ -94,6 +94,8 @@ nav:
     - Charger (ESP32-S3): firmware/charger.md
     - Mower (Horizon X3): firmware/mower.md
     - AI Perception: firmware/ai-perception.md
+    - Security Analysis: firmware/security.md
+    - Custom Firmware: firmware/custom-firmware.md
   - Flows:
     - Charger Provisioning: flows/charger-provisioning.md
     - Mower Provisioning: flows/mower-provisioning.md

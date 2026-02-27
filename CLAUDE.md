@@ -21,7 +21,7 @@ zodat de robotmaaier en het laadstation volledig offline werken.
 │       ├── db/database.ts          SQLite schema + initDb() (incl. map_calibration + dashboard_schedules)
 │       ├── types/index.ts          Gedeelde TypeScript interfaces + ok()/fail()
 │       ├── middleware/auth.ts      JWT auth middleware
-│       ├── mqtt/broker.ts          Aedes MQTT broker op port 1883 + sanitizeConnectFlags
+│       ├── mqtt/broker.ts          Aedes MQTT broker op port 1883 + sanitizeConnectFlags + raw TCP + CONNACK fix
 │       ├── mqtt/decrypt.ts         AES-128-CBC decryptie voor maaier MQTT berichten
 │       ├── mqtt/homeassistant.ts   Home Assistant MQTT bridge met auto-discovery sensoren
 │       ├── mqtt/sensorData.ts      Gedeelde sensor definities, vertalingen, en data cache
@@ -88,16 +88,13 @@ zodat de robotmaaier en het laadstation volledig offline werken.
 │   │   └── Readme.txt             Versie info: mqtt_node v5.7.1, MCU v3.5.8, charger LoRa v0.3.6
 │   ├── Novabot-Base-Station.pdf   Hardware handleiding laadstation
 │   └── Novabot-Mower.pdf          Hardware handleiding maaier
-├── charger_ota_v0.3.6_cloud.bin    Charger OTA firmware v0.3.6 (1.4MB, cloud download)
 ├── mower_firmware_v5.7.1.deb       Maaier OTA firmware v5.7.1 (35MB, Debian/ROS 2)
 ├── charger_firmware_2.bin          ESP32-S3 flash dump (8MB) van laadstation
-├── charger_ota0_v0.3.6.bin         Extracted ota_0 partitie (1.8MB, actieve firmware)
-├── charger_ota0_v0.3.6.elf         ELF conversie voor Ghidra (Xtensa LX7, 32-bit LSB)
-├── charger_ota1_v0.4.0.bin         Extracted ota_1 partitie (1.8MB, inactieve firmware)
-├── charger_ota1_v0.4.0.elf         ELF conversie voor Ghidra
-├── ghidra_output/                  Ghidra decompilatie output
-│   ├── charger_v036_decompiled.c   Gedecompileerde C-code (7.6MB, 296K regels, 7405 functies)
-│   └── charger_v036/               Ghidra project directory (interactieve analyse)
+├── research/ghidra_output/          Ghidra decompilatie output
+│   ├── charger_v036_decompiled.c   Gedecompileerde C-code v0.3.6 (7.6MB, 296K regels, 7405 functies)
+│   ├── charger_v040_decompiled.c   Gedecompileerde C-code v0.4.0 (7.6MB, met AES encryptie)
+│   ├── charger_v036.rep/           Ghidra project v0.3.6
+│   └── charger_v040.rep/           Ghidra project v0.4.0
 ├── docs/                           MkDocs markdown bronbestanden voor wiki
 │   ├── architecture/              Overzicht, hardware, netwerktopologie
 │   ├── api/                       Cloud API, dashboard API, mower API, authenticatie
@@ -107,11 +104,29 @@ zodat de robotmaaier en het laadstation volledig offline werken.
 │   ├── flows/                     Provisioning, mowing, map building, OTA flows
 │   └── index.md                   Wiki homepage
 ├── mkdocs.yml                     MkDocs Material configuratie (nav, theme, plugins)
+├── mkdocs-public.yml              MkDocs config voor publieke wiki (docs_dir: docs-public)
 ├── site/                          Gegenereerde statische wiki (mkdocs build output)
+├── site-public/                   Gegenereerde publieke wiki HTML (geen secrets)
+├── docs-public/                   Gegenereerde publieke wiki bronbestanden (gestript)
+├── scripts/
+│   └── build-public-wiki.sh       Strip PRIVATE secties uit docs → docs-public
 ├── research/
 │   ├── download_firmware.js       Firmware downloader: login → OTA check → download .deb
 │   ├── bruteforce_firmware.js     SN brute-force scanner (alle SNs → zelfde versie)
-│   └── firmware/                  Gedownloade firmware bestanden
+│   ├── patch_firmware.js          Charger firmware patcher (MQTT host/IP relocation + SHA256 update)
+│   ├── build_custom_firmware.sh   Custom firmware builder (SSH + local URLs → .deb)
+│   ├── charger_ota_v0.3.6_cloud.bin  Originele charger OTA firmware (1.4MB, cloud download)
+│   ├── charger_ota0_v0.3.6.bin    Extracted ota_0 partitie (1.8MB, van flash dump)
+│   ├── charger_ota0_v0.3.6.elf    ELF conversie voor Ghidra (Xtensa LX7)
+│   ├── charger_ota1_v0.4.0.bin    Extracted ota_1 partitie (1.8MB, inactieve firmware)
+│   ├── charger_ota1_v0.4.0.elf    ELF conversie voor Ghidra
+│   └── firmware/                  Gedownloade + gepatchte + custom firmware bestanden
+│       ├── charger_firmware_v0.3.6.bin   Originele charger OTA firmware (1.4MB)
+│       ├── charger_v0.3.6_patched.bin    Gepatchte v0.3.6 (MQTT → novabot.ramonvanbruggen.nl)
+│       ├── charger_v0.4.0_patched.bin    Gepatchte v0.4.0 (MQTT → novabot.ramonvanbruggen.nl)
+│       ├── mower_firmware_v5.7.1.deb     Maaier OTA firmware (35MB, Debian/ROS 2)
+│       ├── mower_firmware_v5.7.1-custom-1.deb  Maaier firmware met SSH + lokale server
+│       └── ota_flash_command.json        OTA commando JSON (klaar voor MQTT publish)
 ├── mqtt_sniffer.py                 Standalone TCP MQTT packet sniffer (diagnostisch)
 ├── Novabot-Base-Station.pdf        Hardware handleiding laadstation
 ├── Novabot-Mower.pdf               Hardware handleiding maaier
@@ -151,6 +166,21 @@ BLE manufacturer data (type 0xFF): `66 55 48 27 E2 1B A4 0A 45 53 50`
 
 PCB tekst: "LFi Charging Station 20230228", "Little Little World, Big Big Novabot", "No Boundaries, No Worries"
 PCB serienummer label: `GRHCDJB23/0226`
+
+### Reserve Laadstation Moederbord (Charger Board #2)
+| Eigenschap       | Waarde                        |
+|------------------|-------------------------------|
+| Serienummer (SN) | `LFIC2230700017`              |
+| NVS SN           | `LFIC2230700017` (uit factory NVS) |
+| MQTT clientId    | `ESP32_1bA3D0`                |
+| MQTT username    | `LFIC2230700017`              |
+| WiFi STA IP      | `192.168.2.2`                 |
+| Firmware         | **v0.4.0** (actief op ota_1 partitie) |
+
+**Status**: Reserve moederbord zonder behuizing/antennes, gebruikt voor OTA testing.
+Draait firmware v0.4.0 die AES-128-CBC encryptie gebruikt voor ALLE MQTT berichten.
+Gepatchte firmware (`charger_v0.4.0_patched.bin`) redirect MQTT naar `novabot.ramonvanbruggen.nl`.
+Charger verbindt, stuurt encrypted `up_status_info`, maar reageert nog niet op commands (zie v0.4.0 analyse).
 
 ### Maaier (Mower)
 | Eigenschap       | Waarde                        |
@@ -1079,10 +1109,12 @@ Custom `esp32s3_to_elf.py` script geschreven om ESP32-S3 app image naar ELF te c
 
 | Bestand | Beschrijving |
 |---------|-------------|
-| `charger_ota0_v0.3.6.elf` | ELF voor Ghidra (1.4MB, 6 segments) |
-| `charger_ota1_v0.4.0.elf` | ELF voor Ghidra (1.4MB, 6 segments) |
-| `ghidra_output/charger_v036_decompiled.c` | Gedecompileerde C-code (7.6MB, 296K regels, 7405 functies) |
-| `ghidra_output/charger_v036/` | Ghidra project directory (interactieve analyse) |
+| `research/charger_ota0_v0.3.6.elf` | ELF voor Ghidra (1.4MB, 6 segments) |
+| `research/charger_ota1_v0.4.0.elf` | ELF voor Ghidra (1.4MB, 6 segments) |
+| `research/ghidra_output/charger_v036_decompiled.c` | Gedecompileerde C-code v0.3.6 (7.6MB, 296K regels, 7405 functies) |
+| `research/ghidra_output/charger_v040_decompiled.c` | Gedecompileerde C-code v0.4.0 (7.6MB) |
+| `research/ghidra_output/charger_v036.rep/` | Ghidra project directory v0.3.6 |
+| `research/ghidra_output/charger_v040.rep/` | Ghidra project directory v0.4.0 |
 
 ### Firmware architectuur (uit decompilatie)
 
@@ -1221,6 +1253,98 @@ via LoRa command `[0x31, NMEA_data...]`. De maaier gebruikt dit voor centimeter-
 6. **Hardcoded fallback IP** — `47.253.57.111` (Alibaba Cloud) als DNS faalt.
 7. **ESP-IDF voorbeeld-code** — firmware gebouwd op ESP-IDF examples (`SEC_GATTS_DEMO`, `MQTT_EXAMPLE`, `advanced_ota_example_task`), beperkte custom security hardening.
 8. **TLS wordt geprobeerd maar faalt** — mbedTLS stack aanwezig, maar TLS MQTT verbindingen falen (`Connection reset by peer`).
+
+### Charger firmware v0.4.0 — verschillen met v0.3.6 (februari 2026)
+
+Firmware v0.4.0 gedecompileerd met Ghidra en vergeleken met v0.3.6. Het enige significante
+verschil is de toevoeging van **AES-128-CBC encryptie voor ALLE MQTT berichten**.
+
+**AES encryptie (nieuw in v0.4.0):**
+| Eigenschap | Waarde |
+|------------|--------|
+| Algoritme | AES-128-CBC (zelfde als maaier) |
+| Key formule | `"abcdabcd1234" + SN[-4:]` (16 bytes UTF-8) |
+| IV | `"abcd1234abcd1234"` (statisch) |
+| Padding | Null-byte padding naar 16-byte grens (niet PKCS7) |
+| Richting | **Beide**: publish (encrypt) EN subscribe (decrypt) |
+| Firmware string | `abcdabcd12341234abcdabcd12341234` op offset 0x23b600 |
+
+**MQTT_EVENT_DATA handler** (decompilatie regel 34106-34143):
+1. Check `mqtt_rec_data_flag` — als al 1, skip (vorig bericht nog niet verwerkt)
+2. Lengte validatie: `>0`, `<1024`, `%16==0` (AES blokgrootte check)
+3. AES-128-CBC decrypt met key `"abcdabcd1234" + SN[-4:]`
+4. Zet `mqtt_rec_data_flag = 1` en signal FreeRTOS queue
+
+**Commando verwerking — cJSON_IsNull check (KRITISCH):**
+
+De command processor (`FUN_4200e8c4`, regels 34234-34548) gebruikt `PTR_FUN_420013d4`
+(waarschijnlijk `cJSON_IsNull`) om de waarde van bepaalde commando-keys te valideren:
+
+```c
+// get_lora_info handler (regel 34524-34542):
+iVar4 = cJSON_GetObjectItem(root, "get_lora_info");
+if (iVar4 != NULL) {
+    iVar4 = cJSON_IsNull(iVar4);    // PTR_FUN_420013d4
+    if (iVar4 == 1) {                // Alleen als waarde NULL is
+        printf("get_lora_info null");
+        // Build en publish LoRa info response
+        goto publish_response;
+    }
+}
+
+// ota_version_info handler (regel 34509-34522):
+iVar4 = cJSON_GetObjectItem(root, "ota_version_info");
+if (iVar4 != NULL) {
+    iVar4 = cJSON_IsNull(iVar4);     // Zelfde check
+    if (iVar4 == 1) {
+        printf("ota_version_info null");
+        // Build en publish versie info response
+    }
+}
+```
+
+**Impact**: v0.4.0 firmware verwacht `{"get_lora_info":null}` (cJSON NULL type),
+NIET `{"get_lora_info":0}` (cJSON Number type). Bij een verkeerde waarde retourneert
+`cJSON_IsNull` 0 en wordt de handler overgeslagen — geen response, geen error log.
+
+**Commando's die NULL waarde verwachten:**
+- `get_lora_info` → `get_lora_info_respond`
+- `ota_version_info` → `ota_version_info_respond`
+
+**Commando's die een object/string waarde verwachten:**
+- `ota_upgrade_cmd` → parst `downloadUrl`, `md5`, `version` als strings (cJSON_IsString)
+
+**Correcte commando-syntax voor v0.4.0:**
+```json
+{"get_lora_info": null}
+{"ota_version_info": null}
+{"ota_upgrade_cmd": {"type":"full","content":{"upgradeApp":{"version":"...","downloadUrl":"...","md5":"..."}}}}
+```
+
+**PUBACK bevestiging**: ESP-IDF MQTT client stuurt PUBACK (`40 02 00 01`) terug voor QoS 1
+PUBLISH packets, wat bevestigt dat de charger het bericht ontvangt en parst. Het probleem
+zit puur in de cJSON waarde-validatie, niet in de MQTT transport laag.
+
+### Aedes MQTT broker patches (broker.ts)
+
+De broker heeft meerdere patches om compatibel te zijn met ESP32/app MQTT clients:
+
+**1. sanitizeConnectFlags** — Fix voor app MQTT CONNECT bug (Will QoS met Will Flag=0).
+
+**2. CONNACK suppression** — Aedes stuurt een CONNACK maar wij sturen ook een eigen CONNACK
+(met returnCode=0) voordat aedes de connectie verwerkt. Aedes schrijft in **1-byte chunks**,
+dus de oorspronkelijke check `buf.length >= 2 && buf[0] === 0x20` faalde altijd.
+Fix: byte-counting aanpak die exact 4 bytes (CONNACK = `0x20 0x02 0x00 0x00`) opslurpt
+ongeacht chunking.
+
+**3. Raw TCP infrastructure** — `writeRawPublish()` functie + `rawSocketBySn` Map voor het
+direct schrijven van MQTT PUBLISH packets naar device TCP sockets, aedes volledig omzeilend.
+Gebruikt voor debugging en voor het sturen van AES-encrypted commando's naar de charger.
+Endpoint: `POST /api/dashboard/raw-tcp/:sn` met `{"command":{...}, "qos":0|1}`.
+
+**4. RAW-IN data tap** — Socket.emit override die ALLE inkomende bytes van apparaten
+logt vóór aedes-verwerking: packet type, grootte, hex dump. Detecteert SUBSCRIBE,
+PUBLISH, PUBACK, PINGREQ, etc.
 
 ---
 
@@ -1726,6 +1850,93 @@ Downloadt firmware direct van de URL in het commando. Geen code signing, alleen 
 
 ---
 
+## Custom Firmware Builder (februari 2026)
+
+### Maaier firmware aanpassen via OTA
+
+Het build-script `research/build_custom_firmware.sh` neemt de originele maaier .deb (v5.7.1),
+pakt hem uit, past shell scripts en configuratie aan, en herbouwt als .deb voor OTA installatie.
+
+**Gebruik:**
+```bash
+./research/build_custom_firmware.sh --server novabot.ramonvanbruggen.nl --ssh-password novabot
+./research/build_custom_firmware.sh --server 192.168.1.50 --remote-ros2
+```
+
+**CLI opties:**
+| Optie | Default | Beschrijving |
+|-------|---------|-------------|
+| `--server` | `novabot.local` | Server hostname/IP |
+| `--http-port` | `3000` | HTTP port |
+| `--ssh-password` | `novabot` | Root SSH wachtwoord |
+| `--ssh-port` | `22` | SSH poort |
+| `--remote-ros2` | uit | ROS 2 netwerk openzetten (ROS_LOCALHOST_ONLY=0) |
+| `--version` | `custom-1` | Versie suffix |
+
+**Wijzigingen t.o.v. origineel:**
+| Wijziging | Bestand | Details |
+|-----------|---------|---------|
+| SSH server | `scripts/start_service.sh` | `apt install openssh-server` bij OTA install |
+| Root wachtwoord | `scripts/start_service.sh` | Via `chpasswd` |
+| HTTP URL | `scripts/set_server_urls.sh` | Schrijft server URL naar `/userdata/lfi/http_address.txt` bij elke boot |
+| Boot hook | `scripts/run_novabot.sh` | Roept `set_server_urls.sh` aan voor main startup |
+| Log upload URL | `log_manager.yaml` | `app.lfibot.com` → lokale server |
+| Versie | `novabot_api.yaml` | `v5.7.1-custom-N` |
+
+**OTA flash flow:**
+1. Bouw .deb: `./research/build_custom_firmware.sh --server <host>`
+2. Host bestand: `cd research/firmware && python3 -m http.server 8080`
+3. Stuur OTA commando via MQTT (of gebruik `research/firmware/ota_flash_command.json`)
+4. Maaier moet OPLADEN → download start automatisch → MD5 check → install → reboot
+5. Na reboot: `ssh root@<maaier-ip>` (wachtwoord uit --ssh-password)
+6. Bij problemen: automatische rollback naar originele v5.7.1
+
+**Firmware structuur (.deb inhoud):**
+| Type | Aantal | Aanpasbaar? |
+|------|--------|-------------|
+| ELF binaries (C++ compiled) | ~40 ROS 2 nodes | Nee (alleen strings patchen) |
+| Shared libraries (.so) | 239 | Nee |
+| Shell scripts (.sh) | 575 | **Ja** |
+| Python scripts (.py) | 298 | **Ja** |
+| Config/YAML | 136 | **Ja** |
+| AI modellen (.bin) | 2 (11.1MB) | Nee (Horizon BPU formaat) |
+| Totaal | 6237 bestanden | |
+
+**MQTT host configuratie op maaier:**
+- MQTT broker host komt uit BLE provisioning → opgeslagen in `/userdata/lfi/json_config.json`
+- `mqtt.lfibot.com` in `mqtt_node` binary is alleen fallback/ping target → DNS redirect werkt
+- HTTP upload URL wordt gelezen uit `/userdata/lfi/http_address.txt` → `set_server_urls.sh` overschrijft dit
+- `app.lfibot.com` hardcoded als HTTP fallback → DNS redirect werkt ook hier
+
+### Charger firmware patchen
+
+Bestaand patch tool `research/patch_firmware.js` vervangt MQTT hostnames in de charger binary:
+
+```bash
+node research/patch_firmware.js --mqtt-host novabot.ramonvanbruggen.nl
+```
+
+Gepatche firmware in `research/firmware/charger_v0.3.6_patched.bin` en `charger_v0.4.0_patched.bin`.
+
+### Publieke/private wiki split
+
+Het project heeft een publiek/privaat wiki systeem om gevoelige informatie te beschermen:
+
+- **`docs/`** — Volledige wiki met gevoelige details (AES keys, credentials, fallback IPs, firmware URLs)
+- **`docs-public/`** — Gegenereerde publieke versie zonder gevoelige secties
+- **`scripts/build-public-wiki.sh`** — Strip script dat `<!-- PRIVATE -->` markers verwijdert
+- **`mkdocs-public.yml`** — MkDocs config voor publieke wiki (docs_dir: docs-public)
+- **8 bestanden** bevatten PRIVATE markers
+- **14 gevoelige strings** geverifieerd op 0 hits in publieke build
+
+**Gebruik:**
+```bash
+./scripts/build-public-wiki.sh        # Genereer docs-public/ + site-public/
+mkdocs serve -f mkdocs-public.yml     # Preview publieke wiki
+```
+
+---
+
 ## Open issues / TODO
 
 - [ ] Android Private DNS uitschakelen zodat DNS rewrites werken op Android
@@ -1759,7 +1970,7 @@ Downloadt firmware direct van de URL in het commando. Geen code signing, alleen 
 - [x] WiFi/BLE module geïdentificeerd: AP6212 (AMPAK/Broadcom BCM43438)
 - [x] TÜV Rheinland rapport CN23XAMH 001 geanalyseerd (modellen N1000/N2000)
 - [ ] Maaier openen voor UART/HDMI/USB toegang (IP56 waterdicht — seals niet beschadigen)
-- [ ] SSH installeren op maaier via UART of HDMI+USB console
+- [ ] SSH installeren op maaier via UART of HDMI+USB console (alternatief: custom firmware via OTA)
 - [ ] Camera video streaming implementeren (ROS 2 → MJPEG/WebSocket bridge)
 - [ ] Maaier kaartdata ophalen wanneer maaier online is (mapSync via MQTT)
 - [x] APK v2.4.0 geanalyseerd met blutter — `encrypt_utils.dart` bevat AES key derivatie
@@ -1770,7 +1981,12 @@ Downloadt firmware direct van de URL in het commando. Geen code signing, alleen 
 - [x] Charger = MQTT ↔ LoRa bridge architectuur bevestigd
 - [x] LoRa module geïdentificeerd als EBYTE E32/E22 serie (M0=GPIO12, M1=GPIO46)
 - [x] Security audit: geen MQTT auth, geen AES, UART console zonder auth, plaintext WiFi in NVS
-- [x] Charger firmware v0.4.0 gedecompileerd — enige verschil is AES-128-CBC encryptie voor MQTT
+- [x] Charger firmware v0.4.0 gedecompileerd — AES-128-CBC encryptie + cJSON_IsNull command validatie
+- [x] v0.4.0 command protocol ontdekt: `get_lora_info`/`ota_version_info` verwachten `null` waarde, niet `0`
+- [x] CONNACK suppression fix: byte-counting i.p.v. buffer-length check (aedes 1-byte writes)
+- [x] Raw TCP infrastructure: writeRawPublish() + rawSocketBySn Map voor direct socket writes
+- [x] PUBACK bevestigd: ESP-IDF client ontvangt en parst PUBLISH packets correct
+- [x] v0.4.0 gepatchte firmware geproduceerd: research/firmware/charger_v0.4.0_patched.bin (MD5: 538f01c8412a7d9936d1de9c298f8918)
 - [x] Cloud API authenticatie reverse-engineered: signature = SHA256(echostr + SHA1("qtzUser") + timestamp + token)
 - [x] Maaier OTA firmware v5.7.1 gedownload (35MB Debian pakket, ROS 2)
 - [x] Charger OTA firmware v0.3.6 gedownload (1.4MB ESP32-S3 binary)
@@ -1804,6 +2020,23 @@ Downloadt firmware direct van de URL in het commando. Geen code signing, alleen 
 - [x] OTA brute-force: cloud OTA API negeert SN parameter, retourneert altijd v5.7.1
 - [x] MkDocs Material wiki gebouwd: docs/ bronbestanden, mkdocs.yml config, site/ gegenereerde output
 - [x] Firmware download script geschreven: research/download_firmware.js (cloud login → OTA check → .deb download)
+- [x] Charger firmware patch tool geschreven: research/patch_firmware.js (string relocation + SHA256 update)
+- [x] Gepatchte firmware geproduceerd: v0.3.6 + v0.4.0 (MQTT → novabot.ramonvanbruggen.nl)
+- [x] Custom firmware builder script geschreven: research/build_custom_firmware.sh
+- [x] Maaier .deb firmware geanalyseerd: 6237 bestanden, 575 shell scripts, 298 Python, 136 YAML (allemaal aanpasbaar)
+- [x] SSH installatie via OTA: openssh-server + root wachtwoord in start_service.sh
+- [x] HTTP URL override: set_server_urls.sh schrijft http_address.txt bij elke boot
+- [x] Publieke/private wiki split: PRIVATE markers in 8 docs, build-public-wiki.sh strip script
+- [x] 14 gevoelige strings geverifieerd op 0 hits in publieke wiki build
+- [x] Firmware haalbaarheidsanalyse: charger=haalbaar (ESP-IDF), maaier=aanpasbaar via .deb OTA
+- [ ] v0.4.0 null-value commando's testen: `{"get_lora_info":null}` naar reserve charger
+- [ ] OTA flash reserve charger via `ota_upgrade_cmd` MQTT commando
+- [ ] HTTPS server opzetten voor charger OTA (esp_https_ota vereist mogelijk HTTPS)
+- [ ] Custom firmware flashen op maaier via OTA (vereist: maaier aan lader + WiFi internet)
+- [ ] SSH verbinding testen na OTA flash
+- [ ] Charger eigen ESP-IDF firmware project opzetten (MQTT↔LoRa bridge)
+- [ ] Camera streaming via eigen ROS 2 node (na SSH toegang)
+- [ ] Publieke wiki deployen (site-public/ of docs-public/ + mkdocs-public.yml)
 
 ## Gedocumenteerde sessies
 
@@ -2734,3 +2967,112 @@ Volledige reverse engineering van het OTA update systeem uit drie bronnen:
 - 30 markdown bestanden: architectuur, API's, MQTT, BLE, LoRa, firmware, flows
 - Gegenereerde site in `site/` (2.4MB statische HTML)
 - Gebouwd met: `mkdocs build` (of `mkdocs serve` voor lokaal)
+
+### Charger firmware patching (februari 2026)
+
+Firmware patch tool geschreven om hardcoded MQTT hostnames/IPs in de charger firmware te vervangen
+zodat de charger volledig lokaal kan opereren zonder DNS rewrites.
+
+**Binary analyse bevindingen:**
+- `mqtt.lfibot.com` staat NIET in de firmware binary — alleen in NVS (gezet via BLE provisioning)
+- `mqtt-dev.lfibot.com` op offset 0x005F10 (DROM, 20-byte slot) — factory default MQTT host
+- `mqtt://47.253.57.111` op offset 0x00951C (DROM, 24-byte slot) — hardcoded fallback URI
+- OTA URL op offset 0x020500 (92-byte slot) — Alibaba OSS firmware download URL
+- 1.028 bytes ongebruikte DROM ruimte beschikbaar op 0x0181D8 voor string relocation
+- SHA256 hash als laatste 32 bytes van de binary (moet bijgewerkt worden na patching)
+
+**ESP32-S3 image structuur:**
+- Magic byte: 0xE9, 6 segmenten (DROM 305KB, DRAM 17KB, IRAM 6KB, IROM 1019KB, IRAM2 72KB, RTC 16B)
+- Memory map: DROM op 0x3C000000+, IROM op 0x42000000+
+- String referenties: 4-byte little-endian virtuele adressen in literal pools
+
+**Patch tool**: `research/patch_firmware.js` (Node.js)
+- Parseert ESP32 image headers en segmenten
+- Vindt alle target strings en hun locaties + code-referenties
+- In-place patching wanneer vervanging past in bestaande slot
+- String relocation wanneer vervanging langer is (schrijft naar ongebruikte DROM ruimte, update code refs)
+- Bijwerken SHA256 hash na patching
+- Genereert MD5 voor OTA command + deployment instructies
+
+**Gebruik:**
+```bash
+node research/patch_firmware.js                          # Patch met defaults
+node research/patch_firmware.js --analyze                # Alleen analyseren
+node research/patch_firmware.js --mqtt-host 192.168.1.50 # Kort IP (past in-place)
+node research/patch_firmware.js --mqtt-host my.server.nl # Lang hostname (relocation)
+```
+
+**Gepatchte firmwares:**
+
+| Versie | Bestand | MD5 | Status |
+|--------|---------|-----|--------|
+| v0.3.6 | `research/firmware/charger_v0.3.6_patched.bin` | `fb7427789bf0e164ed00ef9ea8f9dbf0` | Klaar voor deployment |
+| v0.4.0 | `research/firmware/charger_v0.4.0_patched.bin` | `538f01c8412a7d9936d1de9c298f8918` | Op reserve charger, testing |
+
+Beide firmwares:
+- `mqtt-dev.lfibot.com` → `novabot.ramonvanbruggen.nl` (gereloceerd, code-ref bijgewerkt)
+- `mqtt://47.253.57.111` → `mqtt://novabot.ramonvanbruggen.nl` (gereloceerd, code-ref bijgewerkt)
+- SHA256 hash bijgewerkt en geverifieerd
+- Bestandsgrootte identiek aan origineel (1.4MB)
+
+**Deployment**: Host binary op HTTP(S) server, stuur `ota_upgrade_cmd` via MQTT:
+```json
+{
+  "ota_upgrade_cmd": {
+    "type": "full",
+    "content": {
+      "upgradeApp": {
+        "version": "v0.3.6-local",
+        "downloadUrl": "http://<IP>:8080/charger_v0.3.6_patched.bin",
+        "md5": "fb7427789bf0e164ed00ef9ea8f9dbf0"
+      }
+    }
+  }
+}
+```
+
+**Belangrijke opmerkingen:**
+- Charger `esp_https_ota()` kan HTTPS vereisen — als HTTP faalt, HTTPS server opzetten
+- NVS config (set via BLE provisioning) wordt NIET beïnvloed door OTA — voor productie-MQTT host ook re-provisioning via BLE nodig
+- Bij OTA fout: charger boot automatisch van andere OTA partitie
+- Recovery via UART: druk op `b` om handmatig van OTA partitie te wisselen
+- ALTIJD eerst testen op reserve moederbord!
+- **v0.4.0 commando's vereisen `null` waarden** — zie "Charger firmware v0.4.0" sectie hierboven
+
+### Reserve charger v0.4.0 OTA testing (februari 2026)
+
+Reserve charger moederbord (LFIC2230700017) met gepatchte v0.4.0 firmware aangesloten.
+Charger verbindt met MQTT broker via `novabot.ramonvanbruggen.nl` op WiFi `ABERSONPLEIN-IoT`.
+
+**Bevindingen:**
+1. **Charger verbindt succesvol** — clientId `ESP32_1bA3D0`, subscribe op `Dart/Send_mqtt/LFIC2230700017`
+2. **AES-encrypted `up_status_info`** — elke ~2 seconden, correct ontsleuteld met key `abcdabcd12340017`
+3. **Eigen CONNACK nodig** — aedes' CONNACK werd onderdrukt maar fix faalde door 1-byte writes
+4. **CONNACK fix**: byte-counting aanpak die exact 4 bytes opslurpt ongeacht chunking
+5. **PUBACK ontvangen** — QoS 1 PUBLISH packets worden correct ontvangen door ESP-IDF client (PUBACK `40 02 00 01`)
+6. **Geen command response** — charger reageert niet op `{"get_lora_info":0}` (verkeerde waarde)
+7. **Root cause gevonden** — v0.4.0 gebruikt `cJSON_IsNull()` check, verwacht `null` niet `0`
+8. **Nog niet getest** — charger ging offline (clean DISCONNECT) voordat `{"get_lora_info":null}` getest kon worden
+
+**Volgende stap**: Wanneer charger herverbindt, test `{"get_lora_info":null}` via:
+```bash
+curl -s -X POST http://localhost:3000/api/dashboard/raw-tcp/LFIC2230700017 \
+  -H 'Content-Type: application/json' \
+  -d '{"command":{"get_lora_info":null},"qos":1}'
+```
+Bij succes: stuur `ota_upgrade_cmd` om firmware te flashen.
+
+### Firmware aanpassing en publieke wiki (februari 2026)
+- Custom firmware builder geschreven: `research/build_custom_firmware.sh`
+- Maaier .deb v5.7.1 geanalyseerd en aangepast: SSH + lokale server URLs
+- Output: `research/firmware/mower_firmware_v5.7.1-custom-1.deb` (35MB, MD5: 6a29052606a69c12e9d1c386b99cdbbf)
+- OTA flash instructies en JSON commando gegenereerd
+- Publieke/private wiki split geimplementeerd met `<!-- PRIVATE -->` markers in 8 bestanden
+- Build script `scripts/build-public-wiki.sh` stript PRIVATE secties, vervangt met admonition notices
+- 14 gevoelige strings (AES keys, credentials, fallback IPs, firmware URLs) geverifieerd op 0 hits
+- Beveiligingsaudit samengesteld: 19 issues (5 kritiek, 8 hoog, 6 medium) + 6 uitdagingen
+
+**Resultaat**:
+- Maaier firmware klaar om te flashen via OTA → SSH toegang na reboot
+- Publieke wiki klaar voor deployment (geen secrets, geen credentials)
+- Volledige beveiligingsanalyse gedocumenteerd

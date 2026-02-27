@@ -1911,101 +1911,95 @@
 
 <h1 id="flow-map-building">Flow: Map Building<a class="headerlink" href="#flow-map-building" title="Permanent link">&para;</a></h1>
 <h2 id="manual-mapping-walk-the-boundary">Manual Mapping (Walk the Boundary)<a class="headerlink" href="#manual-mapping-walk-the-boundary" title="Permanent link">&para;</a></h2>
-<p>```mermaid
-sequenceDiagram
+<pre class="mermaid"><code>sequenceDiagram
     actor User
     participant App
     participant Charger
     participant Mower
-    participant ROS as Mower ROS 2</p>
-<div class="highlight"><pre><span></span><code>User-&gt;&gt;App: Select &quot;Build Map&quot;
-App-&gt;&gt;Charger: MQTT: start_scan_map
-Charger-&gt;&gt;Mower: LoRa relay
-Mower-&gt;&gt;ROS: /robot_decision/start_mapping
+    participant ROS as Mower ROS 2
 
-rect rgb(240, 255, 240)
-    Note over User,ROS: User walks boundary (stay within 2m of mower)
-    loop Walking perimeter
-        Mower-&gt;&gt;ROS: Record GPS + local coordinates
-        ROS-&gt;&gt;ROS: /novabot_mapping/map_position (real-time)
-        Mower-&gt;&gt;App: report_state_map_outline (partial boundary)
-
-        Note over ROS: /novabot_mapping/if_closed_cycle&lt;br/&gt;monitors if polygon is closing
-    end
-end
-
-ROS--&gt;&gt;Mower: Polygon closed detected!
-App-&gt;&gt;Charger: MQTT: stop_scan_map
-Charger-&gt;&gt;Mower: LoRa relay
-Mower-&gt;&gt;ROS: /robot_decision/map_stop_record
-
-rect rgb(255, 248, 240)
-    Note over App,ROS: Save Map
-    App-&gt;&gt;Charger: MQTT: save_map {mapName: &quot;home&quot;}
+    User-&gt;&gt;App: Select "Build Map"
+    App-&gt;&gt;Charger: MQTT: start_scan_map
     Charger-&gt;&gt;Mower: LoRa relay
-    Mower-&gt;&gt;ROS: /robot_decision/save_map
+    Mower-&gt;&gt;ROS: /robot_decision/start_mapping
 
-    ROS-&gt;&gt;ROS: Write CSV files
-    ROS-&gt;&gt;ROS: Generate map_info.json
-    ROS-&gt;&gt;ROS: Validate: no overlap
+    rect rgb(240, 255, 240)
+        Note over User,ROS: User walks boundary (stay within 2m of mower)
+        loop Walking perimeter
+            Mower-&gt;&gt;ROS: Record GPS + local coordinates
+            ROS-&gt;&gt;ROS: /novabot_mapping/map_position (real-time)
+            Mower-&gt;&gt;App: report_state_map_outline (partial boundary)
 
-    alt Overlap with other map
-        ROS--&gt;&gt;App: save_map_respond {error_code: 1}
-    else Overlap with unicom
-        ROS--&gt;&gt;App: save_map_respond {error_code: 2}
-    else Crosses multiple maps
-        ROS--&gt;&gt;App: save_map_respond {error_code: 3}
-    else Success
-        ROS--&gt;&gt;App: save_map_respond {result: 0}
+            Note over ROS: /novabot_mapping/if_closed_cycle&lt;br/&gt;monitors if polygon is closing
+        end
     end
-end
 
-rect rgb(240, 248, 255)
-    Note over Mower,App: Post-save
-    Mower-&gt;&gt;ROS: Detect unicom channels between areas
-    Mower-&gt;&gt;App: report_state_map_outline (final GPS polygon)
-    Mower-&gt;&gt;App: HTTP: uploadEquipmentMap (ZIP with CSV files)
-end
-</code></pre></div>
-<p>```</p>
+    ROS--&gt;&gt;Mower: Polygon closed detected!
+    App-&gt;&gt;Charger: MQTT: stop_scan_map
+    Charger-&gt;&gt;Mower: LoRa relay
+    Mower-&gt;&gt;ROS: /robot_decision/map_stop_record
+
+    rect rgb(255, 248, 240)
+        Note over App,ROS: Save Map
+        App-&gt;&gt;Charger: MQTT: save_map {mapName: "home"}
+        Charger-&gt;&gt;Mower: LoRa relay
+        Mower-&gt;&gt;ROS: /robot_decision/save_map
+
+        ROS-&gt;&gt;ROS: Write CSV files
+        ROS-&gt;&gt;ROS: Generate map_info.json
+        ROS-&gt;&gt;ROS: Validate: no overlap
+
+        alt Overlap with other map
+            ROS--&gt;&gt;App: save_map_respond {error_code: 1}
+        else Overlap with unicom
+            ROS--&gt;&gt;App: save_map_respond {error_code: 2}
+        else Crosses multiple maps
+            ROS--&gt;&gt;App: save_map_respond {error_code: 3}
+        else Success
+            ROS--&gt;&gt;App: save_map_respond {result: 0}
+        end
+    end
+
+    rect rgb(240, 248, 255)
+        Note over Mower,App: Post-save
+        Mower-&gt;&gt;ROS: Detect unicom channels between areas
+        Mower-&gt;&gt;App: report_state_map_outline (final GPS polygon)
+        Mower-&gt;&gt;App: HTTP: uploadEquipmentMap (ZIP with CSV files)
+    end</code></pre>
 <h2 id="automatic-mapping">Automatic Mapping<a class="headerlink" href="#automatic-mapping" title="Permanent link">&para;</a></h2>
-<p>```mermaid
-sequenceDiagram
+<pre class="mermaid"><code>sequenceDiagram
     participant App
-    participant Mower</p>
-<div class="highlight"><pre><span></span><code>App-&gt;&gt;Mower: MQTT: start_assistant_build_map
-Mower-&gt;&gt;Mower: ROS: start_assistant_mapping
-Note over Mower: Mower autonomously maps the area&lt;br/&gt;using GPS + camera + AI
+    participant Mower
 
-loop Autonomous exploration
-    Mower-&gt;&gt;App: report_state_map_outline (growing boundary)
-end
+    App-&gt;&gt;Mower: MQTT: start_assistant_build_map
+    Mower-&gt;&gt;Mower: ROS: start_assistant_mapping
+    Note over Mower: Mower autonomously maps the area&lt;br/&gt;using GPS + camera + AI
 
-Mower-&gt;&gt;Mower: Boundary complete
-App-&gt;&gt;Mower: MQTT: save_map {mapName}
-</code></pre></div>
-<p>```</p>
+    loop Autonomous exploration
+        Mower-&gt;&gt;App: report_state_map_outline (growing boundary)
+    end
+
+    Mower-&gt;&gt;Mower: Boundary complete
+    App-&gt;&gt;Mower: MQTT: save_map {mapName}</code></pre>
 <h2 id="map-file-structure">Map File Structure<a class="headerlink" href="#map-file-structure" title="Permanent link">&para;</a></h2>
-<p>```mermaid
-graph TB
+<pre class="mermaid"><code>graph TB
     subgraph "Mower filesystem: /userdata/lfi/maps/home0/csv_file/"
         MI[map_info.json]
         M0W[map0_work.csv]
         M0O[map0_0_obstacle.csv]
         M0U[map0tocharge_unicom.csv]
         M1W[map1_work.csv]
-    end</p>
-<div class="highlight"><pre><span></span><code>subgraph &quot;map_info.json&quot;
-    CP[charging_pose:&lt;br/&gt;orientation: 1.326&lt;br/&gt;x: -0.048, y: -0.180]
-    S0[map0_work.csv: map_size: 149.28]
-    S1[map1_work.csv: map_size: 26.62]
-end
+    end
 
-MI --&gt; CP
-MI --&gt; S0
-MI --&gt; S1
-</code></pre></div>
-<p>```</p>
+    subgraph "map_info.json"
+        CP[charging_pose:&lt;br/&gt;orientation: 1.326&lt;br/&gt;x: -0.048, y: -0.180]
+        S0[map0_work.csv: map_size: 149.28]
+        S1[map1_work.csv: map_size: 26.62]
+    end
+
+    MI --&gt; CP
+    MI --&gt; S0
+    MI --&gt; S1</code></pre>
 <h2 id="map-types">Map Types<a class="headerlink" href="#map-types" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -2038,33 +2032,31 @@ MI --&gt; S1
 </tbody>
 </table>
 <h2 id="three-map-sync-options">Three Map Sync Options<a class="headerlink" href="#three-map-sync-options" title="Permanent link">&para;</a></h2>
-<p>```mermaid
-graph TB
+<pre class="mermaid"><code>graph TB
     subgraph "Option 1: SPECIFIED_AREA (no physical mapping needed)"
         A1[Dashboard: Draw polygon on satellite photo]
         A2[start_run with polygon_area + cov_mode=1]
         A3[Mower mows within GPS polygon]
         A1 --&gt; A2 --&gt; A3
-    end</p>
-<div class="highlight"><pre><span></span><code>subgraph &quot;Option 2: Direct CSV Upload (requires SSH)&quot;
-    B1[Dashboard: Export ZIP via mapConverter.ts]
-    B2[SCP to /userdata/lfi/maps/home0/csv_file/]
-    B3[Maps persisted on mower]
-    B1 --&gt; B2 --&gt; B3
-end
+    end
 
-subgraph &quot;Option 3: Physical Mapping&quot;
-    C1[Walk boundary with mower]
-    C2[save_map via MQTT]
-    C3[Mower writes CSV + uploads ZIP to server]
-    C1 --&gt; C2 --&gt; C3
-end
+    subgraph "Option 2: Direct CSV Upload (requires SSH)"
+        B1[Dashboard: Export ZIP via mapConverter.ts]
+        B2[SCP to /userdata/lfi/maps/home0/csv_file/]
+        B3[Maps persisted on mower]
+        B1 --&gt; B2 --&gt; B3
+    end
 
-style A1 fill:#9f9,stroke:#333
-style B1 fill:#ff9,stroke:#333
-style C1 fill:#f99,stroke:#333
-</code></pre></div>
-<p>```</p>
+    subgraph "Option 3: Physical Mapping"
+        C1[Walk boundary with mower]
+        C2[save_map via MQTT]
+        C3[Mower writes CSV + uploads ZIP to server]
+        C1 --&gt; C2 --&gt; C3
+    end
+
+    style A1 fill:#9f9,stroke:#333
+    style B1 fill:#ff9,stroke:#333
+    style C1 fill:#f99,stroke:#333</code></pre>
 
 
 

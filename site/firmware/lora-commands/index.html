@@ -2065,39 +2065,35 @@
 </tbody>
 </table>
 <h2 id="status-report-flow">Status Report Flow<a class="headerlink" href="#status-report-flow" title="Permanent link">&para;</a></h2>
-<p>```mermaid
-graph TB
+<pre class="mermaid"><code>graph TB
     subgraph "LoRa → MQTT Translation"
-        L1[LoRa: 0x34 REPORT<br/>19 bytes from mower]
-        L2[Parse uint32/uint24<br/>little-endian fields]
-        L3[Build JSON:<br/>mower_status, mower_x/y/z,<br/>mower_info, mower_info1]
-        L4[MQTT publish:<br/>up_status_info]</p>
-<div class="highlight"><pre><span></span><code>    L1 --&gt; L2 --&gt; L3 --&gt; L4
-end
+        L1[LoRa: 0x34 REPORT&lt;br/&gt;19 bytes from mower]
+        L2[Parse uint32/uint24&lt;br/&gt;little-endian fields]
+        L3[Build JSON:&lt;br/&gt;mower_status, mower_x/y/z,&lt;br/&gt;mower_info, mower_info1]
+        L4[MQTT publish:&lt;br/&gt;up_status_info]
 
-subgraph &quot;MQTT → LoRa Translation&quot;
-    M1[MQTT: start_run&lt;br/&gt;{mapName, cutGrassHeight}]
-    M2[Extract parameters]
-    M3[Build LoRa packet:&lt;br/&gt;[0x35, 0x01, map, area, height]]
-    M4[FreeRTOS queue → LoRa task]
-    M5[LoRa TX + wait ACK]
+        L1 --&gt; L2 --&gt; L3 --&gt; L4
+    end
 
-    M1 --&gt; M2 --&gt; M3 --&gt; M4 --&gt; M5
-end
-</code></pre></div>
-<p>```</p>
+    subgraph "MQTT → LoRa Translation"
+        M1[MQTT: start_run&lt;br/&gt;{mapName, cutGrassHeight}]
+        M2[Extract parameters]
+        M3[Build LoRa packet:&lt;br/&gt;[0x35, 0x01, map, area, height]]
+        M4[FreeRTOS queue → LoRa task]
+        M5[LoRa TX + wait ACK]
+
+        M1 --&gt; M2 --&gt; M3 --&gt; M4 --&gt; M5
+    end</code></pre>
 <h2 id="freertos-task-architecture">FreeRTOS Task Architecture<a class="headerlink" href="#freertos-task-architecture" title="Permanent link">&para;</a></h2>
-<p>```mermaid
-graph LR
+<pre class="mermaid"><code>graph LR
     subgraph "Charger FreeRTOS Tasks"
-        MQTT[mqtt_config_task<br/>MQTT connect, publish,<br/>command dispatch]
-        LoRa[lora_config_task<br/>LoRa communication,<br/>channel scan, heartbeat]
-        OTA[advanced_ota_task<br/>OTA firmware download]</p>
-<div class="highlight"><pre><span></span><code>    MQTT --&gt;|FreeRTOS Queue| LoRa
-    LoRa --&gt;|Shared globals| MQTT
-end
-</code></pre></div>
-<p>```</p>
+        MQTT[mqtt_config_task&lt;br/&gt;MQTT connect, publish,&lt;br/&gt;command dispatch]
+        LoRa[lora_config_task&lt;br/&gt;LoRa communication,&lt;br/&gt;channel scan, heartbeat]
+        OTA[advanced_ota_task&lt;br/&gt;OTA firmware download]
+
+        MQTT --&gt;|FreeRTOS Queue| LoRa
+        LoRa --&gt;|Shared globals| MQTT
+    end</code></pre>
 <h2 id="command-routing-charger-lora-vs-mower-direct-mqtt">Command Routing: Charger LoRa vs Mower Direct MQTT<a class="headerlink" href="#command-routing-charger-lora-vs-mower-direct-mqtt" title="Permanent link">&para;</a></h2>
 <div class="admonition important">
 <p class="admonition-title">Key finding from firmware analysis</p>
@@ -2229,24 +2225,22 @@ end
 </tr>
 </tbody>
 </table>
-<p>```mermaid
-graph LR
+<pre class="mermaid"><code>graph LR
     subgraph "App sends command to MQTT broker"
         CMD[MQTT Command]
-    end</p>
-<div class="highlight"><pre><span></span><code>subgraph &quot;6 commands via Charger LoRa&quot;
-    CMD --&gt;|start/pause/resume/stop_run&lt;br/&gt;stop_time_run, go_pile| CHARGER[Charger&lt;br/&gt;ESP32-S3]
-    CHARGER --&gt;|LoRa binary packet| MOWER_LORA[Mower&lt;br/&gt;LoRa receiver]
-end
+    end
 
-subgraph &quot;50+ commands direct to Mower&quot;
-    CMD --&gt;|all other commands| MOWER_MQTT[Mower&lt;br/&gt;mqtt_node via WiFi]
-end
+    subgraph "6 commands via Charger LoRa"
+        CMD --&gt;|start/pause/resume/stop_run&lt;br/&gt;stop_time_run, go_pile| CHARGER[Charger&lt;br/&gt;ESP32-S3]
+        CHARGER --&gt;|LoRa binary packet| MOWER_LORA[Mower&lt;br/&gt;LoRa receiver]
+    end
 
-style CHARGER fill:#ff9,stroke:#333
-style MOWER_MQTT fill:#9f9,stroke:#333
-</code></pre></div>
-<p>```</p>
+    subgraph "50+ commands direct to Mower"
+        CMD --&gt;|all other commands| MOWER_MQTT[Mower&lt;br/&gt;mqtt_node via WiFi]
+    end
+
+    style CHARGER fill:#ff9,stroke:#333
+    style MOWER_MQTT fill:#9f9,stroke:#333</code></pre>
 
 
 

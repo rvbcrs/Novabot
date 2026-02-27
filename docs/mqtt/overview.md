@@ -7,7 +7,9 @@
 | Cloud broker | `mqtt.lfibot.com:1883` |
 | Local broker | Aedes on `0.0.0.0:1883` |
 | Protocol | MQTT 3.1.1 (plain TCP, no TLS) |
+<!-- PRIVATE -->
 | Fallback IP | `47.253.57.111` (hardcoded in charger firmware) |
+<!-- /PRIVATE -->
 
 ## Topic Structure
 
@@ -68,7 +70,9 @@ All MQTT messages are JSON objects. The **command name is the root key**:
 | Device | Encryption | Details |
 |--------|-----------|---------|
 | Charger | **None** (plain JSON) | Published to `Dart/Receive_mqtt/LFIC...` |
+<!-- PRIVATE -->
 | Mower | **AES-128-CBC** | Key = `"abcdabcd1234" + SN[-4:]`, IV = `"abcd1234abcd1234"` |
+<!-- /PRIVATE -->
 
 See [Encryption](encryption.md) for full details.
 

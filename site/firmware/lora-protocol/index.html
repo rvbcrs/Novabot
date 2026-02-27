@@ -2152,30 +2152,28 @@
 <p>See <a href="../lora-packets/">LoRa Packets</a> for detailed packet structures.
 See <a href="../lora-commands/">LoRa Command Mapping</a> for MQTT ↔ LoRa translation table.</p>
 <h2 id="communication-flow">Communication Flow<a class="headerlink" href="#communication-flow" title="Permanent link">&para;</a></h2>
-<p>```mermaid
-sequenceDiagram
+<pre class="mermaid"><code>sequenceDiagram
     participant App
     participant Charger as Charger (MQTT + LoRa)
-    participant Mower as Mower (LoRa)</p>
-<div class="highlight"><pre><span></span><code>Note over Charger,Mower: Heartbeat (every ~1.5s)
-Charger-&gt;&gt;Mower: LoRa [0x34, 0x01] (poll)
-Mower--&gt;&gt;Charger: LoRa [0x34, 0x02, status...] (19 bytes)
-Charger-&gt;&gt;App: MQTT: up_status_info (includes mower data)
+    participant Mower as Mower (LoRa)
 
-Note over App,Mower: Command relay
-App-&gt;&gt;Charger: MQTT: start_run
-Charger-&gt;&gt;Charger: Translate to LoRa
-Charger-&gt;&gt;Mower: LoRa [0x35, 0x01, mapName, area, height]
-Note over Charger: Wait max 3s for ACK
-Mower--&gt;&gt;Charger: LoRa ACK
-Charger-&gt;&gt;App: MQTT: start_run_respond
+    Note over Charger,Mower: Heartbeat (every ~1.5s)
+    Charger-&gt;&gt;Mower: LoRa [0x34, 0x01] (poll)
+    Mower--&gt;&gt;Charger: LoRa [0x34, 0x02, status...] (19 bytes)
+    Charger-&gt;&gt;App: MQTT: up_status_info (includes mower data)
 
-Note over Charger,Mower: RTK GPS relay
-Charger-&gt;&gt;Charger: UM960 GNGGA NMEA
-Charger-&gt;&gt;Mower: LoRa [0x31, NMEA_data...]
-Note over Mower: cm-accurate positioning
-</code></pre></div>
-<p>```</p>
+    Note over App,Mower: Command relay
+    App-&gt;&gt;Charger: MQTT: start_run
+    Charger-&gt;&gt;Charger: Translate to LoRa
+    Charger-&gt;&gt;Mower: LoRa [0x35, 0x01, mapName, area, height]
+    Note over Charger: Wait max 3s for ACK
+    Mower--&gt;&gt;Charger: LoRa ACK
+    Charger-&gt;&gt;App: MQTT: start_run_respond
+
+    Note over Charger,Mower: RTK GPS relay
+    Charger-&gt;&gt;Charger: UM960 GNGGA NMEA
+    Charger-&gt;&gt;Mower: LoRa [0x31, NMEA_data...]
+    Note over Mower: cm-accurate positioning</code></pre>
 <h2 id="rssi-measurement">RSSI Measurement<a class="headerlink" href="#rssi-measurement" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>Query:    [0xC0, 0xC1, 0xC2, 0xC3, 0x00, 0x01]
 <a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>Response: [0xC1, 0x00, 0x01, &lt;RSSI byte&gt;]

@@ -1982,11 +1982,10 @@
 </tbody>
 </table>
 <h2 id="topic-structure">Topic Structure<a class="headerlink" href="#topic-structure" title="Permanent link">&para;</a></h2>
-<p><code>mermaid
-graph LR
+<pre class="mermaid"><code>graph LR
     App[App / Server] --&gt;|Dart/Send_mqtt/SN| Device[Device]
     Device --&gt;|Dart/Receive_mqtt/SN| App
-    Device --&gt;|Dart/Receive_server_mqtt/SN| Server[Server only]</code></p>
+    Device --&gt;|Dart/Receive_server_mqtt/SN| Server[Server only]</code></pre>
 <table>
 <thead>
 <tr>
@@ -2109,34 +2108,32 @@ graph LR
 </tbody>
 </table>
 <h2 id="message-flow-architecture">Message Flow Architecture<a class="headerlink" href="#message-flow-architecture" title="Permanent link">&para;</a></h2>
-<p>```mermaid
-graph TB
+<pre class="mermaid"><code>graph TB
     subgraph "App → Charger → Mower (via LoRa)"
-        A1[App sends MQTT command] --&gt; A2[Charger receives on<br/>Dart/Send_mqtt/LFIC...]
-        A2 --&gt; A3[Charger translates to<br/>LoRa binary packet]
-        A3 --&gt; A4[Mower receives<br/>LoRa packet]
+        A1[App sends MQTT command] --&gt; A2[Charger receives on&lt;br/&gt;Dart/Send_mqtt/LFIC...]
+        A2 --&gt; A3[Charger translates to&lt;br/&gt;LoRa binary packet]
+        A3 --&gt; A4[Mower receives&lt;br/&gt;LoRa packet]
         A4 --&gt; A5[Mower executes command]
-    end</p>
-<div class="highlight"><pre><span></span><code>subgraph &quot;Mower → App (direct MQTT)&quot;
-    B1[Mower publishes AES-encrypted&lt;br/&gt;on Dart/Receive_mqtt/LFIN...]
-    B1 --&gt; B2[Server decrypts AES-128-CBC]
-    B2 --&gt; B3[Server forwards to dashboard&lt;br/&gt;via Socket.io]
-    B2 --&gt; B4[Server forwards to Home Assistant&lt;br/&gt;via MQTT auto-discovery]
-end
+    end
 
-subgraph &quot;Charger → App (direct MQTT)&quot;
-    C1[Charger publishes plain JSON&lt;br/&gt;on Dart/Receive_mqtt/LFIC...]
-    C1 --&gt; C2[Server processes sensor data]
-    C2 --&gt; C3[Server forwards to dashboard]
-end
+    subgraph "Mower → App (direct MQTT)"
+        B1[Mower publishes AES-encrypted&lt;br/&gt;on Dart/Receive_mqtt/LFIN...]
+        B1 --&gt; B2[Server decrypts AES-128-CBC]
+        B2 --&gt; B3[Server forwards to dashboard&lt;br/&gt;via Socket.io]
+        B2 --&gt; B4[Server forwards to Home Assistant&lt;br/&gt;via MQTT auto-discovery]
+    end
 
-subgraph &quot;Mower → Server only (direct MQTT)&quot;
-    D1[Mower publishes AES-encrypted&lt;br/&gt;on Dart/Receive_server_mqtt/LFIN...]
-    D1 --&gt; D2[Server decrypts + processes]
-    D2 --&gt; D3[Server sends acknowledge response]
-end
-</code></pre></div>
-<p>```</p>
+    subgraph "Charger → App (direct MQTT)"
+        C1[Charger publishes plain JSON&lt;br/&gt;on Dart/Receive_mqtt/LFIC...]
+        C1 --&gt; C2[Server processes sensor data]
+        C2 --&gt; C3[Server forwards to dashboard]
+    end
+
+    subgraph "Mower → Server only (direct MQTT)"
+        D1[Mower publishes AES-encrypted&lt;br/&gt;on Dart/Receive_server_mqtt/LFIN...]
+        D1 --&gt; D2[Server decrypts + processes]
+        D2 --&gt; D3[Server sends acknowledge response]
+    end</code></pre>
 <h2 id="command-routing">Command Routing<a class="headerlink" href="#command-routing" title="Permanent link">&para;</a></h2>
 <div class="admonition important">
 <p class="admonition-title">Not all commands go through the charger</p>

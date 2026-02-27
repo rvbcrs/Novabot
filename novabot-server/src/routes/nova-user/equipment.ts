@@ -94,6 +94,12 @@ equipmentRouter.post('/getEquipmentBySN', authMiddleware, (req: AuthRequest, res
     console.log(`[equipment] getEquipmentBySN: MAC nog niet bekend voor sn=${sn} — wacht op MQTT CONNECT van het apparaat`);
   }
 
+  // Sla gevonden MAC persistent op in equipment tabel (zodat het bewaard blijft bij DB wipe van device_registry)
+  if (row && mac && !row.mac_address) {
+    db.prepare('UPDATE equipment SET mac_address = ? WHERE mower_sn = ? OR charger_sn = ?')
+      .run(mac, sn, sn);
+  }
+
   if (row) {
     const dto = rowToCloudDto(row, req.email ?? '');
     res.json(ok({ ...dto, macAddress: mac ?? dto.macAddress }));

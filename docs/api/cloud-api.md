@@ -23,8 +23,10 @@ Login with email and password.
 }
 ```
 
+<!-- PRIVATE -->
 !!! info "Password Encryption"
     Password is AES-128-CBC encrypted: key/IV = `1234123412ABCDEF`, output base64.
+<!-- /PRIVATE -->
 
 ```json title="Response → value"
 {
@@ -256,8 +258,8 @@ List all bound equipment for user.
       "macAddress": "48:27:E2:1B:A4:0A",
       "chargerAddress": 718,
       "chargerChannel": 16,
-      "account": "li9hep19",
-      "password": "jzd4wac6",
+      "account": "<mqtt-username>",
+      "password": "<mqtt-password>",
       "videoTutorial": null,
       "model": null,
       "wifiName": null,
@@ -306,8 +308,8 @@ Get equipment details by serial number.
   "macAddress": "48:27:E2:1B:A4:0A",
   "chargerAddress": 718,
   "chargerChannel": 16,
-  "account": "li9hep19",
-  "password": "jzd4wac6"
+  "account": "<mqtt-username>",
+  "password": "<mqtt-password>"
 }
 ```
 
@@ -419,8 +421,8 @@ Check for new firmware version. Returns the latest available firmware for the gi
 {
   "version": "v5.7.1",
   "upgradeType": "serviceUpgrade",
-  "md5": "83c2741d05c9a40ff351332af2082d7c",
-  "downloadUrl": "https://novabot-oss.oss-us-east-1.aliyuncs.com/novabot-file/lfimvp-20240915571-1726376551929.deb",
+  "md5": "<md5-checksum>",
+  "downloadUrl": "https://<oss-host>/novabot-file/<firmware-file>.deb",
   "upgradeFlag": 0,
   "environment": "trial",
   "dependenceSystemVersionList": null

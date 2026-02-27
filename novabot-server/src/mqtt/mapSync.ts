@@ -27,6 +27,31 @@ export function initMapSync(broker: Aedes): void {
 /**
  * Publiceer een MQTT commando naar een apparaat.
  */
+/**
+ * Publiceer een raw Buffer naar een apparaat (bijv. AES-versleutelde payload).
+ */
+export function publishRawToDevice(sn: string, payload: Buffer, qos: 0 | 1 = 1): void {
+  if (!aedesBroker) {
+    console.error(`${TAG} Broker niet geinitialiseerd`);
+    return;
+  }
+  const topic = `Dart/Send_mqtt/${sn}`;
+  const packet = {
+    cmd: 'publish' as const,
+    qos: qos as 0 | 1,
+    dup: false,
+    retain: false,
+    topic,
+    payload,
+    brokerId: 'mapSync',
+    brokerCounter: 0,
+  } satisfies AedesPublishPacket;
+  aedesBroker.publish(packet, (err) => {
+    if (err) console.error(`${TAG} Raw publish fout naar ${topic}: ${err.message}`);
+    else console.log(`${TAG} Raw payload (${payload.length}B) gestuurd naar ${topic} QoS=${qos}`);
+  });
+}
+
 export function publishToDevice(sn: string, command: Record<string, unknown>): void {
   if (!aedesBroker) {
     console.error(`${TAG} Broker niet geinitialiseerd`);

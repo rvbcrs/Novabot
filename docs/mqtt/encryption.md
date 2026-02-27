@@ -2,12 +2,14 @@
 
 ## Overview
 
-| Device | Encryption | Direction |
-|--------|-----------|-----------|
-| Charger | **None** (plain JSON) | Both directions |
-| Mower | **AES-128-CBC** | Both directions |
+| Device | Firmware | Encryption | Direction |
+|--------|----------|-----------|-----------|
+| Charger | v0.3.6 | **None** (plain JSON) | Both directions |
+| Charger | **v0.4.0** | **AES-128-CBC** | Both directions |
+| Mower | All versions | **AES-128-CBC** | Both directions |
 
-The charger firmware (v0.3.6) sends and receives plain JSON.
+The charger firmware v0.3.6 sends and receives plain JSON.
+Charger firmware **v0.4.0 adds AES-128-CBC encryption** — identical key scheme as the mower.
 The mower encrypts all MQTT messages with AES-128-CBC.
 
 ---
@@ -16,6 +18,7 @@ The mower encrypts all MQTT messages with AES-128-CBC.
 
 Discovered via Blutter decompilation of APK v2.4.0 (`encrypt_utils.dart`).
 
+<!-- PRIVATE -->
 ### Key Derivation
 
 | Property | Value |
@@ -63,6 +66,7 @@ graph LR
 0x765c0c: r0 = substring()                // SN.substring(len-4) = last 4 chars
 0x765c18: r0 = decode()                   // EncryptUtils.decode(data, snSuffix)
 ```
+<!-- /PRIVATE -->
 
 ### Encrypted Message Sizes
 
@@ -85,8 +89,9 @@ MQTT overhead per message: 37 bytes.
 
 ## Password Encryption (Separate System)
 
-The app uses a **different** AES setup for encrypting login passwords:
+The app uses a **different** AES setup for encrypting login passwords.
 
+<!-- PRIVATE -->
 | Property | Value |
 |----------|-------|
 | Class | `AesEncryption` in `flutter_novabot/common/aes.dart` |
@@ -99,6 +104,7 @@ The app uses a **different** AES setup for encrypting login passwords:
 !!! warning "Two different AES systems"
     - **Password AES**: key/IV = `1234123412ABCDEF`, PKCS7 padding, Base64 output
     - **MQTT AES**: key = `abcdabcd1234` + SN suffix, IV = `abcd1234abcd1234`, null-byte padding
+<!-- /PRIVATE -->
 
 ---
 
@@ -115,6 +121,62 @@ The `encrypt_utils.dart` module is **new in v2.4.0**. In v2.3.8, mower messages 
 
 ---
 
-## Charger Firmware v0.4.0
+## Charger Firmware v0.4.0 — AES Confirmed
 
-The charger firmware v0.4.0 (inactive OTA partition) contains the string `abcdabcd12341234abcdabcd12341234` — suggesting v0.4.0 adds AES encryption for charger MQTT messages too, using the same key prefix scheme.
+!!! success "Fully reverse-engineered via Ghidra decompilation"
+    Charger firmware v0.4.0 has been decompiled and analysed. It uses the **exact same AES-128-CBC scheme** as the mower.
+
+<!-- PRIVATE -->
+### Key Details
+
+| Property | Value |
+|----------|-------|
+| Algorithm | AES-128-CBC |
+| Key formula | `"abcdabcd1234" + SN[-4:]` (same as mower) |
+| IV | `"abcd1234abcd1234"` (static) |
+| Padding | Null-byte padding to 16-byte boundary |
+| Direction | Both: publish (encrypt) AND subscribe (decrypt) |
+
+The firmware string `abcdabcd12341234abcdabcd12341234` at offset 0x23b600 is likely a test/default key variant. The actual key is device-specific: `"abcdabcd1234" + SN[-4:]`.
+
+### MQTT Receive Path (v0.4.0)
+
+```mermaid
+graph LR
+    MQTT[MQTT PUBLISH<br/>encrypted payload] --> Valid{Length > 0<br/>Length < 1024<br/>Length % 16 == 0}
+    Valid -->|Yes| Decrypt[AES-128-CBC<br/>Decrypt]
+    Valid -->|No| Drop[Drop packet]
+    Decrypt --> Flag[Set mqtt_rec_data_flag = 1]
+    Flag --> Queue[Signal FreeRTOS queue]
+    Queue --> Parse[cJSON Parse]
+    Parse --> Dispatch[Command dispatch<br/>FUN_4200e8c4]
+```
+
+### cJSON_IsNull Validation
+
+!!! warning "v0.4.0 command values must be JSON `null`"
+    Unlike v0.3.6 which accepts `0` or `{}`, v0.4.0 uses `cJSON_IsNull()` to validate
+    certain command values. Sending `{"get_lora_info": 0}` will be **silently ignored**.
+
+| Command | Expected value | cJSON check |
+|---------|---------------|-------------|
+| `get_lora_info` | `null` | `cJSON_IsNull()` |
+| `ota_version_info` | `null` | `cJSON_IsNull()` |
+| `ota_upgrade_cmd` | `{...}` object | `cJSON_IsString()` on nested fields |
+
+### Server Implementation
+
+The local server handles v0.4.0 encrypted charger messages via the raw-TCP endpoint:
+
+```
+POST /api/dashboard/raw-tcp/:sn
+Body: {"command": {"get_lora_info": null}, "qos": 1}
+```
+
+This endpoint:
+
+1. Takes the JSON command
+2. Encrypts with AES-128-CBC using `"abcdabcd1234" + SN[-4:]`
+3. Writes the MQTT PUBLISH packet directly to the device's TCP socket (bypassing aedes)
+4. Returns success/failure with packet size
+<!-- /PRIVATE -->

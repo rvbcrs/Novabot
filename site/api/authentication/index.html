@@ -2081,17 +2081,15 @@
 <h2 id="local-server-authentication">Local Server Authentication<a class="headerlink" href="#local-server-authentication" title="Permanent link">&para;</a></h2>
 <h3 id="jwt-tokens">JWT Tokens<a class="headerlink" href="#jwt-tokens" title="Permanent link">&para;</a></h3>
 <p>The local server uses JWT tokens for app authentication.</p>
-<p>```mermaid
-sequenceDiagram
+<pre class="mermaid"><code>sequenceDiagram
     participant App
-    participant Server</p>
-<div class="highlight"><pre><span></span><code>App-&gt;&gt;Server: POST /appUser/login {email, password}
-Server--&gt;&gt;App: {accessToken: &quot;jwt-token&quot;}
-App-&gt;&gt;Server: GET /equipment/... (Authorization: jwt-token)
-Server-&gt;&gt;Server: Verify JWT
-Server--&gt;&gt;App: {data...}
-</code></pre></div>
-<p>```</p>
+    participant Server
+
+    App-&gt;&gt;Server: POST /appUser/login {email, password}
+    Server--&gt;&gt;App: {accessToken: "jwt-token"}
+    App-&gt;&gt;Server: GET /equipment/... (Authorization: jwt-token)
+    Server-&gt;&gt;Server: Verify JWT
+    Server--&gt;&gt;App: {data...}</code></pre>
 <p>Login returns a JWT <code>accessToken</code> which is sent in the <code>Authorization</code> header of subsequent requests.</p>
 <h3 id="password-encryption">Password Encryption<a class="headerlink" href="#password-encryption" title="Permanent link">&para;</a></h3>
 <p>The app encrypts passwords with AES-128-CBC before sending:</p>

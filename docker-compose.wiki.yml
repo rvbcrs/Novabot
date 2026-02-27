@@ -1,6 +1,7 @@
 services:
   wiki:
     image: squidfunk/mkdocs-material:latest
+    container_name: novabot-wiki
     ports:
       - "8100:8000"
     volumes:

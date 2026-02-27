@@ -2318,19 +2318,17 @@ The mower reads the server URL from <code>/userdata/lfi/http_address.txt</code>.
 </tbody>
 </table>
 <p><strong>Trigger</strong>: After <code>save_map</code> MQTT command completes, the mower generates a ZIP from <code>/userdata/lfi/maps/home0/csv_file/</code> and uploads it.</p>
-<p>```mermaid
-sequenceDiagram
+<pre class="mermaid"><code>sequenceDiagram
     participant App
     participant Server
-    participant Mower</p>
-<div class="highlight"><pre><span></span><code>App-&gt;&gt;Server: MQTT: save_map
-Server-&gt;&gt;Mower: MQTT forward
-Mower-&gt;&gt;Mower: Build ZIP from CSV files
-Mower-&gt;&gt;Server: POST uploadEquipmentMap (multipart)
-Server-&gt;&gt;Server: Parse ZIP, store maps in DB
-Server--&gt;&gt;Mower: {&quot;success&quot;:true,&quot;code&quot;:200}
-</code></pre></div>
-<p>```</p>
+    participant Mower
+
+    App-&gt;&gt;Server: MQTT: save_map
+    Server-&gt;&gt;Mower: MQTT forward
+    Mower-&gt;&gt;Mower: Build ZIP from CSV files
+    Mower-&gt;&gt;Server: POST uploadEquipmentMap (multipart)
+    Server-&gt;&gt;Server: Parse ZIP, store maps in DB
+    Server--&gt;&gt;Mower: {"success":true,"code":200}</code></pre>
 <hr />
 <h2 id="uploadequipmenttrack">uploadEquipmentTrack<a class="headerlink" href="#uploadequipmenttrack" title="Permanent link">&para;</a></h2>
 <h3 id="post-apinova-file-servermapuploadequipmenttrack">POST <code>/api/nova-file-server/map/uploadEquipmentTrack</code><a class="headerlink" href="#post-apinova-file-servermapuploadequipmenttrack" title="Permanent link">&para;</a></h3>

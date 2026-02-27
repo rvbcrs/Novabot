@@ -209,6 +209,12 @@ export function initDb(): void {
     catch { /* kolom bestaat al */ }
   }
 
+  // Charger GPS positie in map_calibration (migratie)
+  for (const col of ['charger_lat REAL', 'charger_lng REAL']) {
+    try { db.exec(`ALTER TABLE map_calibration ADD COLUMN ${col}`); }
+    catch { /* kolom bestaat al */ }
+  }
+
   // Voeg map_type kolom toe aan maps (migratie – work/obstacle/unicom)
   try {
     db.exec(`ALTER TABLE maps ADD COLUMN map_type TEXT NOT NULL DEFAULT 'work'`);

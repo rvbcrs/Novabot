@@ -2431,20 +2431,18 @@
 </table>
 <p>The mower runs a full Linux system with ROS 2 — fundamentally different from the charger (ESP32-S3 microcontroller).</p>
 <h2 id="system-startup-sequence">System Startup Sequence<a class="headerlink" href="#system-startup-sequence" title="Permanent link">&para;</a></h2>
-<p>```mermaid
-graph TB
+<pre class="mermaid"><code>graph TB
     A[systemd: novabot_launch.service] --&gt; B[run_novabot.sh start]
-    B --&gt; C[iox-roudi<br/>Shared memory daemon]
-    C --&gt; D[camera_307_cap<br/>IMX307 front camera]
-    D --&gt; E[perception_node<br/>AI inference]
-    E --&gt; F[royale_platform<br/>ToF depth camera]
-    F --&gt; G[robot_combination_localization<br/>GPS/ArUco/odometry fusion]
-    G --&gt; H[nav2_single_node<br/>Navigation]
-    H --&gt; I[coverage_planner<br/>Mowing pattern]</p>
-<div class="highlight"><pre><span></span><code>A2[systemd: novabot_ota_launch.service] --&gt; B2[run_ota.sh start]
-B2 --&gt; C2[ota_client] &amp; D2[mqtt_node&lt;br/&gt;MQTT ↔ ROS bridge]
-</code></pre></div>
-<p>```</p>
+    B --&gt; C[iox-roudi&lt;br/&gt;Shared memory daemon]
+    C --&gt; D[camera_307_cap&lt;br/&gt;IMX307 front camera]
+    D --&gt; E[perception_node&lt;br/&gt;AI inference]
+    E --&gt; F[royale_platform&lt;br/&gt;ToF depth camera]
+    F --&gt; G[robot_combination_localization&lt;br/&gt;GPS/ArUco/odometry fusion]
+    G --&gt; H[nav2_single_node&lt;br/&gt;Navigation]
+    H --&gt; I[coverage_planner&lt;br/&gt;Mowing pattern]
+
+    A2[systemd: novabot_ota_launch.service] --&gt; B2[run_ota.sh start]
+    B2 --&gt; C2[ota_client] &amp; D2[mqtt_node&lt;br/&gt;MQTT ↔ ROS bridge]</code></pre>
 <h2 id="key-ros-2-packages">Key ROS 2 Packages<a class="headerlink" href="#key-ros-2-packages" title="Permanent link">&para;</a></h2>
 <h3 id="perception-camera">Perception &amp; Camera<a class="headerlink" href="#perception-camera" title="Permanent link">&para;</a></h3>
 <table>

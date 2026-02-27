@@ -1,0 +1,12 @@
+{
+  "ota_upgrade_cmd": {
+    "type": "full",
+    "content": {
+      "upgradeApp": {
+        "version": "v5.7.1-custom-1",
+        "downloadUrl": "http://novabot.ramonvanbruggen.nl:8080/mower_firmware_v5.7.1-custom-1.deb",
+        "md5": "6a29052606a69c12e9d1c386b99cdbbf"
+      }
+    }
+  }
+}

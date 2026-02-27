@@ -1,0 +1,112 @@
+site_name: Novabot Reverse Engineering Wiki (Public)
+site_description: Community documentation for the Novabot local server replacement project
+site_author: Novabot RE Team
+docs_dir: docs-public
+
+theme:
+  name: material
+  custom_dir: docs/overrides
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: green
+      accent: light green
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: green
+      accent: light green
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.tabs.link
+    - toc.follow
+  icon:
+    repo: fontawesome/brands/github
+
+markdown_extensions:
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.critic
+  - pymdownx.mark
+  - admonition
+  - tables
+  - attr_list
+  - md_in_html
+  - def_list
+  - toc:
+      permalink: true
+
+plugins:
+  - search
+  - tags
+
+nav:
+  - Home: index.md
+  - Architecture:
+    - Overview: architecture/overview.md
+    - Hardware: architecture/hardware.md
+    - Network Topology: architecture/network.md
+  - HTTP API:
+    - Overview: api/overview.md
+    - Cloud API (App → Server): api/cloud-api.md
+    - Dashboard API (Local): api/dashboard-api.md
+    - Mower → Server API: api/mower-api.md
+    - Authentication: api/authentication.md
+  - MQTT Protocol:
+    - Overview: mqtt/overview.md
+    - Mowing Commands: mqtt/mowing-commands.md
+    - Navigation Commands: mqtt/navigation-commands.md
+    - Mapping Commands: mqtt/mapping-commands.md
+    - Device Management: mqtt/device-management.md
+    - Status Reports: mqtt/status-reports.md
+    - Encryption: mqtt/encryption.md
+  - BLE Protocol:
+    - Provisioning Overview: ble/overview.md
+    - Charger Provisioning: ble/charger-provisioning.md
+    - Mower Provisioning: ble/mower-provisioning.md
+    - BLE Commands: ble/commands.md
+  - LoRa Protocol:
+    - Overview: firmware/lora-protocol.md
+    - Packet Format: firmware/lora-packets.md
+    - Command Mapping: firmware/lora-commands.md
+  - Firmware:
+    - Charger (ESP32-S3): firmware/charger.md
+    - Mower (Horizon X3): firmware/mower.md
+    - AI Perception: firmware/ai-perception.md
+    - Security Analysis: firmware/security.md
+    - Custom Firmware: firmware/custom-firmware.md
+  - Flows:
+    - Charger Provisioning: flows/charger-provisioning.md
+    - Mower Provisioning: flows/mower-provisioning.md
+    - Mowing Session: flows/mowing-session.md
+    - Map Building: flows/map-building.md
+    - OTA Update: flows/ota-update.md
+
+extra_javascript:
+  - assets/js/mermaid-zoom.js
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/rvbcrs/Novabot

@@ -40,8 +40,10 @@ graph LR
 |-----|-----|---------|
 | `app.lfibot.com` | `47.253.145.99` | Cloud API server |
 | `mqtt.lfibot.com` | (varies) | Cloud MQTT broker |
+<!-- PRIVATE -->
 | `mqtt-dev.lfibot.com` | (varies) | Development MQTT broker |
 | `47.253.57.111` | Hardcoded | Fallback MQTT IP (Alibaba Cloud) |
+<!-- /PRIVATE -->
 | `novabot-oss.oss-us-east-1.aliyuncs.com` | (CDN) | OTA firmware + documents |
 | `novabot-oss.oss-accelerate.aliyuncs.com` | (CDN) | OTA firmware (accelerated) |
 | `lfibot.zendesk.com` | (varies) | Customer support |

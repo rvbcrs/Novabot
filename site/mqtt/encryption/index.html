@@ -1182,13 +1182,63 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#charger-firmware-v040" class="md-nav__link">
+  <a href="#charger-firmware-v040-aes-confirmed" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Charger Firmware v0.4.0
+        Charger Firmware v0.4.0 — AES Confirmed
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Charger Firmware v0.4.0 — AES Confirmed">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#key-details" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Key Details
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#mqtt-receive-path-v040" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MQTT Receive Path (v0.4.0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cjson_isnull-validation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        cJSON_IsNull Validation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#server-implementation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Server Implementation
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -2004,13 +2054,63 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#charger-firmware-v040" class="md-nav__link">
+  <a href="#charger-firmware-v040-aes-confirmed" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Charger Firmware v0.4.0
+        Charger Firmware v0.4.0 — AES Confirmed
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Charger Firmware v0.4.0 — AES Confirmed">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#key-details" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Key Details
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#mqtt-receive-path-v040" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MQTT Receive Path (v0.4.0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cjson_isnull-validation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        cJSON_IsNull Validation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#server-implementation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Server Implementation
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -2037,6 +2137,7 @@
 <thead>
 <tr>
 <th>Device</th>
+<th>Firmware</th>
 <th>Encryption</th>
 <th>Direction</th>
 </tr>
@@ -2044,17 +2145,26 @@
 <tbody>
 <tr>
 <td>Charger</td>
+<td>v0.3.6</td>
 <td><strong>None</strong> (plain JSON)</td>
 <td>Both directions</td>
 </tr>
 <tr>
+<td>Charger</td>
+<td><strong>v0.4.0</strong></td>
+<td><strong>AES-128-CBC</strong></td>
+<td>Both directions</td>
+</tr>
+<tr>
 <td>Mower</td>
+<td>All versions</td>
 <td><strong>AES-128-CBC</strong></td>
 <td>Both directions</td>
 </tr>
 </tbody>
 </table>
-<p>The charger firmware (v0.3.6) sends and receives plain JSON.
+<p>The charger firmware v0.3.6 sends and receives plain JSON.
+Charger firmware <strong>v0.4.0 adds AES-128-CBC encryption</strong> — identical key scheme as the mower.
 The mower encrypts all MQTT messages with AES-128-CBC.</p>
 <hr />
 <h2 id="mower-aes-128-cbc-encryption">Mower AES-128-CBC Encryption<a class="headerlink" href="#mower-aes-128-cbc-encryption" title="Permanent link">&para;</a></h2>
@@ -2095,13 +2205,12 @@ The mower encrypts all MQTT messages with AES-128-CBC.</p>
 </tbody>
 </table>
 <h3 id="step-by-step-key-construction">Step-by-Step Key Construction<a class="headerlink" href="#step-by-step-key-construction" title="Permanent link">&para;</a></h3>
-<p><code>mermaid
-graph LR
+<pre class="mermaid"><code>graph LR
     SN[Serial Number&lt;br/&gt;LFIN2230700XXX] --&gt;|Last 4 chars| Suffix[0238]
     Prefix[abcdabcd1234] --&gt;|Concatenate| Key[abcdabcd12340238&lt;br/&gt;16 bytes = AES-128]
     IV_const[abcd1234abcd1234] --&gt; IV[Static IV&lt;br/&gt;16 bytes]
     Key --&gt; AES[AES-128-CBC&lt;br/&gt;Encrypt/Decrypt]
-    IV --&gt; AES</code></p>
+    IV --&gt; AES</code></pre>
 <ol>
 <li>Take device serial number (e.g., <code>LFIN2230700XXX</code>)</li>
 <li>Extract last 4 characters: <code>0238</code></li>
@@ -2248,8 +2357,96 @@ graph LR
 </table>
 <p>The <code>encrypt_utils.dart</code> module is <strong>new in v2.4.0</strong>. In v2.3.8, mower messages are passed directly to <code>jsonDecode()</code> which throws a <code>FormatException</code> on the ciphertext, and the exception is silently caught and dropped.</p>
 <hr />
-<h2 id="charger-firmware-v040">Charger Firmware v0.4.0<a class="headerlink" href="#charger-firmware-v040" title="Permanent link">&para;</a></h2>
-<p>The charger firmware v0.4.0 (inactive OTA partition) contains the string <code>abcdabcd12341234abcdabcd12341234</code> — suggesting v0.4.0 adds AES encryption for charger MQTT messages too, using the same key prefix scheme.</p>
+<h2 id="charger-firmware-v040-aes-confirmed">Charger Firmware v0.4.0 — AES Confirmed<a class="headerlink" href="#charger-firmware-v040-aes-confirmed" title="Permanent link">&para;</a></h2>
+<div class="admonition success">
+<p class="admonition-title">Fully reverse-engineered via Ghidra decompilation</p>
+<p>Charger firmware v0.4.0 has been decompiled and analysed. It uses the <strong>exact same AES-128-CBC scheme</strong> as the mower.</p>
+</div>
+<h3 id="key-details">Key Details<a class="headerlink" href="#key-details" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Property</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Algorithm</td>
+<td>AES-128-CBC</td>
+</tr>
+<tr>
+<td>Key formula</td>
+<td><code>"abcdabcd1234" + SN[-4:]</code> (same as mower)</td>
+</tr>
+<tr>
+<td>IV</td>
+<td><code>"abcd1234abcd1234"</code> (static)</td>
+</tr>
+<tr>
+<td>Padding</td>
+<td>Null-byte padding to 16-byte boundary</td>
+</tr>
+<tr>
+<td>Direction</td>
+<td>Both: publish (encrypt) AND subscribe (decrypt)</td>
+</tr>
+</tbody>
+</table>
+<p>The firmware string <code>abcdabcd12341234abcdabcd12341234</code> at offset 0x23b600 is likely a test/default key variant. The actual key is device-specific: <code>"abcdabcd1234" + SN[-4:]</code>.</p>
+<h3 id="mqtt-receive-path-v040">MQTT Receive Path (v0.4.0)<a class="headerlink" href="#mqtt-receive-path-v040" title="Permanent link">&para;</a></h3>
+<pre class="mermaid"><code>graph LR
+    MQTT[MQTT PUBLISH&lt;br/&gt;encrypted payload] --&gt; Valid{Length &gt; 0&lt;br/&gt;Length &lt; 1024&lt;br/&gt;Length % 16 == 0}
+    Valid --&gt;|Yes| Decrypt[AES-128-CBC&lt;br/&gt;Decrypt]
+    Valid --&gt;|No| Drop[Drop packet]
+    Decrypt --&gt; Flag[Set mqtt_rec_data_flag = 1]
+    Flag --&gt; Queue[Signal FreeRTOS queue]
+    Queue --&gt; Parse[cJSON Parse]
+    Parse --&gt; Dispatch[Command dispatch&lt;br/&gt;FUN_4200e8c4]</code></pre>
+<h3 id="cjson_isnull-validation">cJSON_IsNull Validation<a class="headerlink" href="#cjson_isnull-validation" title="Permanent link">&para;</a></h3>
+<div class="admonition warning">
+<p class="admonition-title">v0.4.0 command values must be JSON <code>null</code></p>
+<p>Unlike v0.3.6 which accepts <code>0</code> or <code>{}</code>, v0.4.0 uses <code>cJSON_IsNull()</code> to validate
+certain command values. Sending <code>{"get_lora_info": 0}</code> will be <strong>silently ignored</strong>.</p>
+</div>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Expected value</th>
+<th>cJSON check</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>get_lora_info</code></td>
+<td><code>null</code></td>
+<td><code>cJSON_IsNull()</code></td>
+</tr>
+<tr>
+<td><code>ota_version_info</code></td>
+<td><code>null</code></td>
+<td><code>cJSON_IsNull()</code></td>
+</tr>
+<tr>
+<td><code>ota_upgrade_cmd</code></td>
+<td><code>{...}</code> object</td>
+<td><code>cJSON_IsString()</code> on nested fields</td>
+</tr>
+</tbody>
+</table>
+<h3 id="server-implementation">Server Implementation<a class="headerlink" href="#server-implementation" title="Permanent link">&para;</a></h3>
+<p>The local server handles v0.4.0 encrypted charger messages via the raw-TCP endpoint:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>POST /api/dashboard/raw-tcp/:sn
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>Body: {&quot;command&quot;: {&quot;get_lora_info&quot;: null}, &quot;qos&quot;: 1}
+</code></pre></div>
+<p>This endpoint:</p>
+<ol>
+<li>Takes the JSON command</li>
+<li>Encrypts with AES-128-CBC using <code>"abcdabcd1234" + SN[-4:]</code></li>
+<li>Writes the MQTT PUBLISH packet directly to the device's TCP socket (bypassing aedes)</li>
+<li>Returns success/failure with packet size</li>
+</ol>
 
 
 

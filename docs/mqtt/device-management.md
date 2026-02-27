@@ -108,11 +108,22 @@ Flag indicating no PIN code has been set.
 
 Query current firmware versions.
 
-```json title="Command"
-{
-  "ota_version_info": {}
-}
-```
+!!! warning "v0.4.0 firmware requires `null` value"
+    Same as `get_lora_info` — charger firmware v0.4.0 uses `cJSON_IsNull()`.
+
+=== "v0.4.0 (encrypted)"
+    ```json title="Command"
+    {
+      "ota_version_info": null
+    }
+    ```
+
+=== "v0.3.6 (plain JSON)"
+    ```json title="Command"
+    {
+      "ota_version_info": {}
+    }
+    ```
 
 ```json title="Response"
 {
@@ -144,8 +155,8 @@ Start an OTA firmware upgrade. The command contains the download URL, target ver
     "content": {
       "upgradeApp": {
         "version": "v5.7.1",
-        "downloadUrl": "https://novabot-oss.oss-us-east-1.aliyuncs.com/novabot-file/lfimvp-20240915571-1726376551929.deb",
-        "md5": "83c2741d05c9a40ff351332af2082d7c"
+        "downloadUrl": "https://<oss-host>/novabot-file/<firmware-file>.deb",
+        "md5": "<md5-checksum>"
       }
     }
   }
@@ -169,10 +180,14 @@ Start an OTA firmware upgrade. The command contains the download URL, target ver
 | `full` | Full firmware replacement (.deb for mower, .bin for charger) |
 | `increment` | Incremental app update |
 | `file_update` | Individual file updates (.zip with `check.json` manifest) |
+<!-- PRIVATE -->
 | `system` | System upgrade via `apt full-upgrade && reboot` |
+<!-- /PRIVATE -->
 
+<!-- PRIVATE -->
 !!! warning "Security"
     There is **no authentication** on this command. Any MQTT message on `Dart/Send_mqtt/<SN>` with `ota_upgrade_cmd` triggers a firmware download and install. The download URL is not validated — it can point to any server.
+<!-- /PRIVATE -->
 
 **Mower processing:**
 
@@ -569,11 +584,23 @@ Connection state change (unsolicited from device).
 
 Get LoRa module configuration. Handled locally by charger (no LoRa relay).
 
-```json title="Command"
-{
-  "get_lora_info": {}
-}
-```
+!!! warning "v0.4.0 firmware requires `null` value"
+    Charger firmware v0.4.0 uses `cJSON_IsNull()` to validate this command.
+    You **must** send `null` as the value, not `0` or `{}`.
+
+=== "v0.4.0 (encrypted)"
+    ```json title="Command"
+    {
+      "get_lora_info": null
+    }
+    ```
+
+=== "v0.3.6 (plain JSON)"
+    ```json title="Command"
+    {
+      "get_lora_info": 0
+    }
+    ```
 
 ```json title="Response"
 {

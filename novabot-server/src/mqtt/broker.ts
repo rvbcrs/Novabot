@@ -77,7 +77,15 @@ function normalizeMac(raw: string): string {
   return clean.match(/.{2}/g)!.join(':');
 }
 
+function isAppClient(clientId: string): boolean {
+  // App MQTT clients hebben een UUID@appUser_SN patroon of bevatten een JWT prefix
+  return clientId.includes('@') || clientId.startsWith('eyJ');
+}
+
 function extractMac(s: string): string | null {
+  // Geen MAC extraheren uit app-client clientIds — hun UUIDs bevatten hex-reeksen
+  // die als MAC geïnterpreteerd worden maar dat niet zijn (bijv. c4303f5a907a)
+  if (isAppClient(s)) return null;
   const m = MAC_SEP_RE.exec(s);
   if (m) return normalizeMac(m[0]);
   const m2 = MAC_FLAT_RE.exec(s);
@@ -114,8 +122,70 @@ function upsertDevice(clientId: string, sn: string | null, mac: string | null, u
 // Bijhouden welke clients al gelogd zijn (clientId -> timestamp eerste connect)
 const seenClients = new Map<string, number>();
 
+// Onderdruk herhaalde up_status_info logs (toon alleen elke 30e keer)
+let statusLogCounter = 0;
+
 // Bijhouden welke SN's momenteel verbonden zijn (SN -> Set van clientId's)
 const onlineBySn = new Map<string, Set<string>>();
+
+// Raw TCP sockets per SN opslaan voor directe PUBLISH bypass
+const rawSocketBySn = new Map<string, net.Socket>();
+
+/**
+ * Schrijf een raw MQTT PUBLISH packet direct naar de TCP socket van een apparaat.
+ * Omzeilt aedes volledig — voor debugging van delivery issues.
+ */
+export function writeRawPublish(sn: string, payload: Buffer, qos: 0 | 1 = 0): boolean {
+  const socket = rawSocketBySn.get(sn);
+  if (!socket || socket.destroyed) {
+    console.error(`[RAW-TCP] Geen actieve socket voor ${sn}`);
+    return false;
+  }
+  const topic = `Dart/Send_mqtt/${sn}`;
+  const topicBuf = Buffer.from(topic, 'utf8');
+
+  // Bouw MQTT PUBLISH packet handmatig
+  const packetIdLen = qos > 0 ? 2 : 0;
+  const remainingLen = 2 + topicBuf.length + packetIdLen + payload.length;
+
+  // Remaining length encoding (variable byte integer)
+  const rlBytes: number[] = [];
+  let rl = remainingLen;
+  do {
+    let encodedByte = rl % 128;
+    rl = Math.floor(rl / 128);
+    if (rl > 0) encodedByte |= 0x80;
+    rlBytes.push(encodedByte);
+  } while (rl > 0);
+
+  // Fixed header
+  const fixedHeader = qos === 0 ? 0x30 : 0x32;
+
+  // Assembleer het volledige packet
+  const parts: Buffer[] = [
+    Buffer.from([fixedHeader, ...rlBytes]),
+    Buffer.from([topicBuf.length >> 8, topicBuf.length & 0xFF]),
+    topicBuf,
+  ];
+  if (qos > 0) {
+    // Packet ID (simpele counter)
+    parts.push(Buffer.from([0x00, 0x01]));
+  }
+  parts.push(payload);
+
+  const packet = Buffer.concat(parts);
+  console.log(`[RAW-TCP] Schrijf ${packet.length}B MQTT PUBLISH (QoS ${qos}) naar ${sn} socket`);
+  console.log(`[RAW-TCP]   Fixed: 0x${fixedHeader.toString(16)}, RemLen: ${remainingLen}, Topic: ${topic} (${topicBuf.length}B), Payload: ${payload.length}B`);
+  console.log(`[RAW-TCP]   Hex (first 32): ${packet.subarray(0, 32).toString('hex')}`);
+
+  try {
+    socket.write(packet);
+    return true;
+  } catch (err) {
+    console.error(`[RAW-TCP] Write failed:`, err);
+    return false;
+  }
+}
 
 /** Geeft true als het apparaat met dit SN momenteel verbonden is met de MQTT broker */
 export function isDeviceOnline(sn: string): boolean {
@@ -231,25 +301,60 @@ export async function startMqttBroker(): Promise<void> {
     const direction = packet.topic.startsWith('Dart/Send_mqtt/') ? '→DEV' :
                       packet.topic.startsWith('Dart/Receive_mqtt/') ? '←DEV' : '';
 
-    // Ontsleutel maaier-berichten (LFIN*) met AES-128-CBC
-    const mowerSn = client.id.startsWith('LFIN') ? client.id.replace(/_.*$/, '') :
-                    (direction === '←DEV' && packet.topic.includes('/LFIN')) ? packet.topic.split('/').pop() ?? '' : '';
+    // Ontsleutel versleutelde berichten (LFIN maaier + LFIC charger v0.4.0+)
+    const deviceSn = client.id.startsWith('LFIN') ? client.id.replace(/_.*$/, '') :
+                     client.id.startsWith('LFIC') ? client.id.replace(/_.*$/, '') :
+                     (direction === '←DEV' && packet.topic.includes('/LFI')) ? packet.topic.split('/').pop() ?? '' : '';
+    // Voor ESP32_* clientIds: zoek SN uit topic
+    const encryptSn = deviceSn || (direction === '←DEV' && client.id.startsWith('ESP32_') ? packet.topic.split('/').pop() ?? '' : '');
     let logPayload: string;
     let isEncrypted = false;
-    if (mowerSn) {
-      const decrypted = tryDecrypt(payloadBuf, mowerSn);
+
+    // Detecteer OTA-gerelateerde berichten voor extra tag in logs
+    const otaKeywords = ['ota_upgrade_cmd', 'ota_version_info', 'ota_upgrade_state'];
+    const tagForPayload = (p: string) => otaKeywords.some(k => p.includes(k)) ? '[OTA] ' : '';
+
+    // Vlag om herhaalde up_status_info te onderdrukken in console (niet in pushMqttLog)
+    let suppressLog = false;
+
+    if (encryptSn) {
+      const decrypted = tryDecrypt(payloadBuf, encryptSn);
       if (decrypted) {
-        console.log(`[MQTT] PUBLISH  ${client.id} ${direction} ${packet.topic}  [AES] ${decrypted}`);
+        const tag = tagForPayload(decrypted);
         logPayload = decrypted;
         isEncrypted = true;
+        // Onderdruk herhaalde up_status_info (toon elke 30e keer)
+        if (decrypted.includes('"up_status_info"')) {
+          statusLogCounter++;
+          if (statusLogCounter % 30 !== 1) suppressLog = true;
+          else console.log(`[MQTT] PUBLISH  ${client.id} ${direction} ${packet.topic}  ${tag}[AES] ${decrypted}  (×30 suppressed)`);
+        } else {
+          console.log(`[MQTT] PUBLISH  ${client.id} ${direction} ${packet.topic}  ${tag}[AES] ${decrypted}`);
+        }
       } else {
-        console.log(`[MQTT] PUBLISH  ${client.id} ${direction} ${packet.topic}  [encrypted ${payloadBuf.length}B]`);
-        logPayload = `[encrypted ${payloadBuf.length}B]`;
-        isEncrypted = true;
+        // Niet ontsleutelbaar — toon als plain text als het al JSON is, anders als encrypted
+        const plain = payloadBuf.toString();
+        if (plain.startsWith('{') || plain.startsWith('[')) {
+          const tag = tagForPayload(plain);
+          logPayload = plain;
+          console.log(`[MQTT] PUBLISH  ${client.id} ${direction} ${packet.topic}  ${tag}${logPayload}`);
+        } else {
+          console.log(`[MQTT] PUBLISH  ${client.id} ${direction} ${packet.topic}  [encrypted ${payloadBuf.length}B]`);
+          logPayload = `[encrypted ${payloadBuf.length}B]`;
+          isEncrypted = true;
+        }
       }
     } else {
       logPayload = payloadBuf.toString();
-      console.log(`[MQTT] PUBLISH  ${client.id} ${direction} ${packet.topic}  ${logPayload}`);
+      const tag = tagForPayload(logPayload);
+      // Onderdruk ook plain up_status_info
+      if (logPayload.includes('"up_status_info"')) {
+        statusLogCounter++;
+        if (statusLogCounter % 30 !== 1) suppressLog = true;
+        else console.log(`[MQTT] PUBLISH  ${client.id} ${direction} ${packet.topic}  ${tag}${logPayload}  (×30 suppressed)`);
+      } else {
+        console.log(`[MQTT] PUBLISH  ${client.id} ${direction} ${packet.topic}  ${tag}${logPayload}`);
+      }
     }
 
     {
@@ -283,22 +388,22 @@ export async function startMqttBroker(): Promise<void> {
     }
 
     // Forward naar Home Assistant bridge + dashboard
-    // Voor maaier-berichten: stuur ontsleutelde payload door i.p.v. ruwe ciphertext
+    // Voor versleutelde berichten: stuur ontsleutelde payload door i.p.v. ruwe ciphertext
     const topicSn = sn ?? extractSn(packet.topic);
-    if (mowerSn) {
-      const decryptedJson = tryDecrypt(payloadBuf, mowerSn);
+    if (encryptSn) {
+      const decryptedJson = tryDecrypt(payloadBuf, encryptSn);
       if (decryptedJson) {
         const decryptedBuf = Buffer.from(decryptedJson, 'utf8');
 
         // Check of dit een kaart-gerelateerde response is
         try {
           const parsed = JSON.parse(decryptedJson);
-          handleMapMessage(mowerSn, parsed);
+          handleMapMessage(encryptSn, parsed);
         } catch { /* geen JSON of geen map-bericht */ }
 
-        const changes = updateDeviceData(mowerSn, decryptedBuf);
-        forwardToHomeAssistant(packet.topic, decryptedBuf, mowerSn, changes);
-        forwardToDashboard(mowerSn, changes);
+        const changes = updateDeviceData(encryptSn, decryptedBuf);
+        forwardToHomeAssistant(packet.topic, decryptedBuf, encryptSn, changes);
+        forwardToDashboard(encryptSn, changes);
       }
     } else if (topicSn) {
       // Check ook niet-versleutelde berichten op kaart-responses
@@ -343,23 +448,69 @@ export async function startMqttBroker(): Promise<void> {
 
       // MQTT CONNECT packet type = 0x10
       if (chunk[0] === 0x10) {
+        // Probeer SN uit CONNECT packet te extraheren en socket op te slaan
+        try {
+          const connectStr = chunk.toString('utf8');
+          const snMatch = connectStr.match(/LFI[A-Z]\d{10,}/);
+          if (snMatch) {
+            rawSocketBySn.set(snMatch[0], socket);
+            console.log(`[RAW-TCP] Socket opgeslagen voor ${snMatch[0]} (${socket.remoteAddress}:${socket.remotePort})`);
+
+            // Tap ALL incoming data van dit apparaat (vóór aedes verwerking)
+            const deviceSn = snMatch[0];
+            const origEmit = socket.emit.bind(socket);
+            (socket as any).emit = function(event: string, ...args: unknown[]) {
+              if (event === 'data' && args[0]) {
+                const inBuf = Buffer.isBuffer(args[0]) ? args[0] : Buffer.from(args[0] as any);
+                const type = inBuf[0];
+                const typeStr = type === 0x30 || type === 0x32 ? 'PUBLISH' :
+                                type === 0x40 ? 'PUBACK' :
+                                type === 0x82 ? 'SUBSCRIBE' :
+                                type === 0x90 ? 'SUBACK' :
+                                type === 0xC0 ? 'PINGREQ' :
+                                type === 0xD0 ? 'PINGRESP' :
+                                type === 0xE0 ? 'DISCONNECT' :
+                                `0x${type.toString(16)}`;
+                console.log(`[RAW-IN] ${deviceSn} ← ${inBuf.length}B ${typeStr} hex=${inBuf.subarray(0, Math.min(32, inBuf.length)).toString('hex')}`);
+              }
+              return origEmit(event, ...args);
+            };
+
+            socket.once('close', () => {
+              rawSocketBySn.delete(deviceSn);
+              console.log(`[RAW-TCP] Socket verwijderd voor ${deviceSn}`);
+            });
+          }
+        } catch { /* SN extractie mislukt, niet erg */ }
+
         // Schrijf CONNACK synchroon (vóór microtask-grens / 'end' event)
         socket.write(Buffer.from([0x20, 0x02, 0x00, 0x00]));
         earlyConnackSent = true;
 
         // Onderdruk dubbele CONNACK van aedes
+        // Aedes schrijft soms 1-byte-per-keer, dus we tellen bytes i.p.v. te checken op buf.length>=2
         const origWrite = socket.write.bind(socket);
-        let dupSuppressed = false;
+        let connackBytesToSwallow = 4; // CONNACK = 0x20 0x02 0x00 0x00 = 4 bytes
         (socket as any).write = function (data: Buffer | string | Uint8Array, ...rest: unknown[]): boolean {
           const buf = Buffer.isBuffer(data) ? data :
                       data instanceof Uint8Array ? Buffer.from(data) :
                       Buffer.from(data as string);
-          if (!dupSuppressed && buf.length >= 2 && buf[0] === 0x20) {
-            dupSuppressed = true;
-            const cb = rest.find((a): a is () => void => typeof a === 'function');
-            if (cb) process.nextTick(cb);
-            return true;
+          // Swallow aedes' duplicate CONNACK (komt in 1-byte chunks)
+          if (connackBytesToSwallow > 0) {
+            const toSwallow = Math.min(buf.length, connackBytesToSwallow);
+            connackBytesToSwallow -= toSwallow;
+            if (toSwallow === buf.length) {
+              // Hele buffer opgeslokt
+              const cb = rest.find((a): a is () => void => typeof a === 'function');
+              if (cb) process.nextTick(cb);
+              return true;
+            }
+            // Deels opgeslokt — rest doorgeven
+            data = buf.subarray(toSwallow);
           }
+          // Debug: log writes naar device socket
+          const dbgBuf = Buffer.isBuffer(data) ? data : Buffer.from(data as any);
+          console.log(`[MQTT-DBG] WRITE ${dbgBuf.length}B type=0x${dbgBuf[0].toString(16)} hex=${dbgBuf.subarray(0, Math.min(16, dbgBuf.length)).toString('hex')}`);
           return (origWrite as Function)(data, ...rest);
         };
       }
@@ -373,12 +524,23 @@ export async function startMqttBroker(): Promise<void> {
   });
 }
 
-// Hulpfunctie voor equipment.ts: zoek het MAC-adres op voor een gegeven SN
+// Hulpfunctie voor equipment.ts: zoek het BLE MAC-adres op voor een gegeven SN.
+// Zoekt eerst in device_registry (alleen echte apparaat-entries, geen app-clients),
+// en valt daarna terug op de equipment tabel (handmatig of eerder geregistreerd).
 export function lookupMac(sn: string): string | null {
-  const row = db.prepare(`
+  // 1. Zoek in device_registry (app-clients worden al gefilterd door extractMac)
+  const regRow = db.prepare(`
     SELECT mac_address FROM device_registry
     WHERE sn = ? AND mac_address IS NOT NULL
     ORDER BY last_seen DESC LIMIT 1
   `).get(sn) as { mac_address: string } | undefined;
-  return row?.mac_address ?? null;
+  if (regRow) return regRow.mac_address;
+
+  // 2. Fallback: zoek in equipment tabel (gezet via admin API of eerdere binding)
+  const eqRow = db.prepare(`
+    SELECT mac_address FROM equipment
+    WHERE (mower_sn = ? OR charger_sn = ?) AND mac_address IS NOT NULL
+    LIMIT 1
+  `).get(sn, sn) as { mac_address: string } | undefined;
+  return eqRow?.mac_address ?? null;
 }

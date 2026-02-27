@@ -2734,35 +2734,33 @@
 </code></pre></div>
 <hr />
 <h2 id="map-building-flow">Map Building Flow<a class="headerlink" href="#map-building-flow" title="Permanent link">&para;</a></h2>
-<p>```mermaid
-sequenceDiagram
+<pre class="mermaid"><code>sequenceDiagram
     participant App
     participant Mower
-    participant Server</p>
-<div class="highlight"><pre><span></span><code>Note over App,Mower: Manual Mapping
-App-&gt;&gt;Mower: MQTT: start_scan_map
-Mower-&gt;&gt;Mower: ROS: start_mapping
+    participant Server
 
-loop User walks boundary
-    Mower-&gt;&gt;App: report_state_map_outline (partial)
-    Note over Mower: /novabot_mapping/if_closed_cycle&lt;br/&gt;detects polygon closure
-end
+    Note over App,Mower: Manual Mapping
+    App-&gt;&gt;Mower: MQTT: start_scan_map
+    Mower-&gt;&gt;Mower: ROS: start_mapping
 
-App-&gt;&gt;Mower: MQTT: stop_scan_map
-App-&gt;&gt;Mower: MQTT: save_map {mapName: &quot;home&quot;}
-Mower-&gt;&gt;Mower: Write CSV files to&lt;br/&gt;/userdata/lfi/maps/home0/csv_file/
-Mower-&gt;&gt;Mower: Validate: no overlap
+    loop User walks boundary
+        Mower-&gt;&gt;App: report_state_map_outline (partial)
+        Note over Mower: /novabot_mapping/if_closed_cycle&lt;br/&gt;detects polygon closure
+    end
 
-alt Overlap detected
-    Mower--&gt;&gt;App: save_map_respond {error_code: 1}
-else Success
-    Mower--&gt;&gt;App: save_map_respond {result: 0}
-    Mower-&gt;&gt;Mower: Detect unicom channels&lt;br/&gt;between work areas
-    Mower-&gt;&gt;Server: HTTP: uploadEquipmentMap (ZIP)
-    Mower-&gt;&gt;App: report_state_map_outline (final GPS polygon)
-end
-</code></pre></div>
-<p>```</p>
+    App-&gt;&gt;Mower: MQTT: stop_scan_map
+    App-&gt;&gt;Mower: MQTT: save_map {mapName: "home"}
+    Mower-&gt;&gt;Mower: Write CSV files to&lt;br/&gt;/userdata/lfi/maps/home0/csv_file/
+    Mower-&gt;&gt;Mower: Validate: no overlap
+
+    alt Overlap detected
+        Mower--&gt;&gt;App: save_map_respond {error_code: 1}
+    else Success
+        Mower--&gt;&gt;App: save_map_respond {result: 0}
+        Mower-&gt;&gt;Mower: Detect unicom channels&lt;br/&gt;between work areas
+        Mower-&gt;&gt;Server: HTTP: uploadEquipmentMap (ZIP)
+        Mower-&gt;&gt;App: report_state_map_outline (final GPS polygon)
+    end</code></pre>
 <hr />
 <h2 id="map-file-format">Map File Format<a class="headerlink" href="#map-file-format" title="Permanent link">&para;</a></h2>
 <p>Maps are stored on the mower at <code>/userdata/lfi/maps/home0/csv_file/</code>:</p>

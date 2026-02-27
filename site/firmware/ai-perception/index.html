@@ -2236,35 +2236,33 @@
 </tbody>
 </table>
 <h2 id="perception-pipeline">Perception Pipeline<a class="headerlink" href="#perception-pipeline" title="Permanent link">&para;</a></h2>
-<p>```mermaid
-graph TB
-    CAM[IMX307 Camera<br/>1920×1080 @ 25fps] --&gt;|/camera/preposition/image| RESIZE[Resize → 960×512]</p>
-<div class="highlight"><pre><span></span><code>RESIZE --&gt; DET[Detection Model&lt;br/&gt;8.1MB DNN]
-RESIZE --&gt; SEG[Segmentation Model&lt;br/&gt;3.6MB BiSeNet-v2]
+<pre class="mermaid"><code>graph TB
+    CAM[IMX307 Camera&lt;br/&gt;1920×1080 @ 25fps] --&gt;|/camera/preposition/image| RESIZE[Resize → 960×512]
 
-DET --&gt; |BBox + confidence| FUSE[Fusion &amp; Post-processing]
-SEG --&gt; |Pixel-wise labels| FUSE
+    RESIZE --&gt; DET[Detection Model&lt;br/&gt;8.1MB DNN]
+    RESIZE --&gt; SEG[Segmentation Model&lt;br/&gt;3.6MB BiSeNet-v2]
 
-FUSE --&gt; |KDtree noise filter| PP1[Small region suppression&lt;br/&gt;min 3px]
-PP1 --&gt; PP2[Morphological closing]
-PP2 --&gt; PP3[Height filter 0-50cm]
-PP3 --&gt; PP4[Growth threshold: 0.05]
+    DET --&gt; |BBox + confidence| FUSE[Fusion &amp; Post-processing]
+    SEG --&gt; |Pixel-wise labels| FUSE
 
-TOF[PMD ToF Camera&lt;br/&gt;Depth + Point Cloud] --&gt; PC1[ToF Point Cloud]
-PP4 --&gt; PC2[RGB Point Cloud&lt;br/&gt;with semantic labels]
+    FUSE --&gt; |KDtree noise filter| PP1[Small region suppression&lt;br/&gt;min 3px]
+    PP1 --&gt; PP2[Morphological closing]
+    PP2 --&gt; PP3[Height filter 0-50cm]
+    PP3 --&gt; PP4[Growth threshold: 0.05]
 
-PC1 --&gt; MERGE[Merge Point Clouds]
-PC2 --&gt; MERGE
+    TOF[PMD ToF Camera&lt;br/&gt;Depth + Point Cloud] --&gt; PC1[ToF Point Cloud]
+    PP4 --&gt; PC2[RGB Point Cloud&lt;br/&gt;with semantic labels]
 
-MERGE --&gt;|/perception/points_labeled| COSTMAP[Nav2 Costmap&lt;br/&gt;Obstacle Layer]
+    PC1 --&gt; MERGE[Merge Point Clouds]
+    PC2 --&gt; MERGE
 
-COSTMAP --&gt; NAV[Path Planning &amp;&lt;br/&gt;Obstacle Avoidance]
+    MERGE --&gt;|/perception/points_labeled| COSTMAP[Nav2 Costmap&lt;br/&gt;Obstacle Layer]
 
-style DET fill:#ff9,stroke:#333
-style SEG fill:#9ff,stroke:#333
-style FUSE fill:#f9f,stroke:#333
-</code></pre></div>
-<p>```</p>
+    COSTMAP --&gt; NAV[Path Planning &amp;&lt;br/&gt;Obstacle Avoidance]
+
+    style DET fill:#ff9,stroke:#333
+    style SEG fill:#9ff,stroke:#333
+    style FUSE fill:#f9f,stroke:#333</code></pre>
 <h2 id="camera-system">Camera System<a class="headerlink" href="#camera-system" title="Permanent link">&para;</a></h2>
 <table>
 <thead>

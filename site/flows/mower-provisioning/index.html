@@ -1823,63 +1823,61 @@
 
 <h1 id="flow-mower-provisioning">Flow: Mower Provisioning<a class="headerlink" href="#flow-mower-provisioning" title="Permanent link">&para;</a></h1>
 <p>Complete flow for adding a mower to the system.</p>
-<p>```mermaid
-sequenceDiagram
+<pre class="mermaid"><code>sequenceDiagram
     actor User
     participant App as Novabot App
     participant BLE as Mower (BLE)
     participant WiFi as Mower (WiFi)
     participant MQTT as Local MQTT Broker
-    participant API as Local Server</p>
-<div class="highlight"><pre><span></span><code>rect rgb(240, 248, 255)
-    Note over User,API: Phase 1: BLE Connection
-    User-&gt;&gt;App: Enter mower SN (or scan QR)
-    User-&gt;&gt;App: Enter home WiFi credentials
+    participant API as Local Server
 
-    App-&gt;&gt;BLE: BLE Scan for &quot;novabot&quot;
-    App-&gt;&gt;BLE: BLE Connect
-    App-&gt;&gt;BLE: get_signal_info
-    BLE--&gt;&gt;App: {wifi: 0, rtk: 17}
-end
+    rect rgb(240, 248, 255)
+        Note over User,API: Phase 1: BLE Connection
+        User-&gt;&gt;App: Enter mower SN (or scan QR)
+        User-&gt;&gt;App: Enter home WiFi credentials
 
-rect rgb(255, 248, 240)
-    Note over User,API: Phase 2: Configuration (different order!)
-    App-&gt;&gt;BLE: set_wifi_info {ap: {ssid, passwd}} ← NO sta!
-    BLE--&gt;&gt;App: {result: 0}
-
-    App-&gt;&gt;BLE: set_lora_info {addr, channel, hc, lc}
-    BLE--&gt;&gt;App: {value: null} ← NOT a channel number!
-
-    App-&gt;&gt;BLE: set_mqtt_info {addr, port}
-    BLE--&gt;&gt;App: {result: 0}
-
-    App-&gt;&gt;BLE: set_cfg_info {cfg_value: 1, tz: &quot;Europe/Amsterdam&quot;}
-    BLE--&gt;&gt;App: {result: 0}
-end
-
-rect rgb(240, 255, 240)
-    Note over User,API: Phase 3: Connection
-    Note over BLE,WiFi: Mower disconnects BLE,&lt;br/&gt;connects to WiFi
-    WiFi-&gt;&gt;MQTT: MQTT CONNECT (clientId: LFIN..._6688)
-    WiFi-&gt;&gt;MQTT: PUBLISH (AES-128-CBC encrypted)
-
-    loop Every ~5 seconds
-        WiFi-&gt;&gt;MQTT: report_state_robot (encrypted)
-        WiFi-&gt;&gt;MQTT: report_exception_state (encrypted)
-        WiFi-&gt;&gt;MQTT: report_state_timer_data (encrypted)
+        App-&gt;&gt;BLE: BLE Scan for "novabot"
+        App-&gt;&gt;BLE: BLE Connect
+        App-&gt;&gt;BLE: get_signal_info
+        BLE--&gt;&gt;App: {wifi: 0, rtk: 17}
     end
-end
 
-rect rgb(255, 240, 255)
-    Note over User,API: Phase 4: Registration
-    App-&gt;&gt;API: POST getEquipmentBySN {sn: &quot;LFIN...&quot;}
-    API--&gt;&gt;App: {macAddress: &quot;50:41:1C:39:BD:C1&quot;, account: null, password: null}
+    rect rgb(255, 248, 240)
+        Note over User,API: Phase 2: Configuration (different order!)
+        App-&gt;&gt;BLE: set_wifi_info {ap: {ssid, passwd}} ← NO sta!
+        BLE--&gt;&gt;App: {result: 0}
 
-    App-&gt;&gt;API: POST bindingEquipment {mowerSn, chargerSn}
-    API--&gt;&gt;App: {value: null}
-end
-</code></pre></div>
-<p>```</p>
+        App-&gt;&gt;BLE: set_lora_info {addr, channel, hc, lc}
+        BLE--&gt;&gt;App: {value: null} ← NOT a channel number!
+
+        App-&gt;&gt;BLE: set_mqtt_info {addr, port}
+        BLE--&gt;&gt;App: {result: 0}
+
+        App-&gt;&gt;BLE: set_cfg_info {cfg_value: 1, tz: "Europe/Amsterdam"}
+        BLE--&gt;&gt;App: {result: 0}
+    end
+
+    rect rgb(240, 255, 240)
+        Note over User,API: Phase 3: Connection
+        Note over BLE,WiFi: Mower disconnects BLE,&lt;br/&gt;connects to WiFi
+        WiFi-&gt;&gt;MQTT: MQTT CONNECT (clientId: LFIN..._6688)
+        WiFi-&gt;&gt;MQTT: PUBLISH (AES-128-CBC encrypted)
+
+        loop Every ~5 seconds
+            WiFi-&gt;&gt;MQTT: report_state_robot (encrypted)
+            WiFi-&gt;&gt;MQTT: report_exception_state (encrypted)
+            WiFi-&gt;&gt;MQTT: report_state_timer_data (encrypted)
+        end
+    end
+
+    rect rgb(255, 240, 255)
+        Note over User,API: Phase 4: Registration
+        App-&gt;&gt;API: POST getEquipmentBySN {sn: "LFIN..."}
+        API--&gt;&gt;App: {macAddress: "50:41:1C:39:BD:C1", account: null, password: null}
+
+        App-&gt;&gt;API: POST bindingEquipment {mowerSn, chargerSn}
+        API--&gt;&gt;App: {value: null}
+    end</code></pre>
 <h2 id="key-differences-from-charger">Key Differences from Charger<a class="headerlink" href="#key-differences-from-charger" title="Permanent link">&para;</a></h2>
 <table>
 <thead>

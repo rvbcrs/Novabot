@@ -22,8 +22,9 @@ Login returns a JWT `accessToken` which is sent in the `Authorization` header of
 
 ### Password Encryption
 
-The app encrypts passwords with AES-128-CBC before sending:
+The app encrypts passwords with AES-128-CBC before sending.
 
+<!-- PRIVATE -->
 | Property | Value |
 |----------|-------|
 | Algorithm | AES-128-CBC |
@@ -31,6 +32,7 @@ The app encrypts passwords with AES-128-CBC before sending:
 | IV | `1234123412ABCDEF` (same as key) |
 | Padding | PKCS7 |
 | Output | Base64 |
+<!-- /PRIVATE -->
 
 ---
 
@@ -38,6 +40,7 @@ The app encrypts passwords with AES-128-CBC before sending:
 
 The real cloud uses a more complex signature scheme:
 
+<!-- PRIVATE -->
 ### Request Headers
 
 | Header | Value | Description |
@@ -49,7 +52,9 @@ The real cloud uses a more complex signature scheme:
 | `signature` | SHA256(echostr + nonce + ts + token) | Request signature |
 | `source` | `app` | Fixed |
 | `userlanguage` | `en` | Language setting |
+<!-- /PRIVATE -->
 
+<!-- PRIVATE -->
 ### Signature Formula
 
 ```javascript
@@ -67,6 +72,7 @@ const signature = crypto.createHash('sha256')
 !!! warning "Intentionally misleading header names"
     - `echostr` = actually the random nonce
     - `nonce` = actually a static constant (SHA1 of "qtzUser")
+<!-- /PRIVATE -->
 
 ### Cloud Backend
 
@@ -92,10 +98,12 @@ const signature = crypto.createHash('sha256')
 
 Returned by `getEquipmentBySN` / `userEquipmentList`:
 
+<!-- PRIVATE -->
 | Device | `account` | `password` |
 |--------|-----------|-----------|
 | Charger | `li9hep19` | `jzd4wac6` |
 | Mower | `null` | `null` |
+<!-- /PRIVATE -->
 
 The charger gets MQTT credentials from the cloud; the mower does **not**.
 

@@ -2163,34 +2163,32 @@
 <p>See also <a href="../device-management/#timer_task">Device Management → Timer/Scheduling</a> for <code>timer_task</code>, <code>timer_task_active</code>, and <code>timer_task_stop</code>.</p>
 <hr />
 <h2 id="mowing-command-flow">Mowing Command Flow<a class="headerlink" href="#mowing-command-flow" title="Permanent link">&para;</a></h2>
-<p>```mermaid
-sequenceDiagram
+<pre class="mermaid"><code>sequenceDiagram
     participant App
     participant Server as MQTT Broker
     participant Charger
-    participant Mower</p>
-<div class="highlight"><pre><span></span><code>App-&gt;&gt;Server: MQTT: start_run {mapName, cutGrassHeight}
-Server-&gt;&gt;Charger: Forward on Dart/Send_mqtt/LFIC...
-Charger-&gt;&gt;Charger: Translate to LoRa [0x35, 0x01, ...]
-Charger-&gt;&gt;Mower: LoRa packet
-Mower-&gt;&gt;Mower: ROS: start_cov_task
-Mower--&gt;&gt;Charger: LoRa ACK
-Charger--&gt;&gt;Server: MQTT: start_run_respond
-Server--&gt;&gt;App: Forward response
+    participant Mower
 
-loop Every ~5 seconds
-    Mower-&gt;&gt;Server: MQTT: report_state_robot (AES encrypted)
-    Server-&gt;&gt;Server: Decrypt AES-128-CBC
-    Server-&gt;&gt;App: Forward decrypted status
-end
+    App-&gt;&gt;Server: MQTT: start_run {mapName, cutGrassHeight}
+    Server-&gt;&gt;Charger: Forward on Dart/Send_mqtt/LFIC...
+    Charger-&gt;&gt;Charger: Translate to LoRa [0x35, 0x01, ...]
+    Charger-&gt;&gt;Mower: LoRa packet
+    Mower-&gt;&gt;Mower: ROS: start_cov_task
+    Mower--&gt;&gt;Charger: LoRa ACK
+    Charger--&gt;&gt;Server: MQTT: start_run_respond
+    Server--&gt;&gt;App: Forward response
 
-App-&gt;&gt;Server: MQTT: stop_run
-Server-&gt;&gt;Charger: Forward
-Charger-&gt;&gt;Mower: LoRa [0x35, 0x07]
-Mower--&gt;&gt;Charger: LoRa ACK
-Charger--&gt;&gt;Server: MQTT: stop_run_respond
-</code></pre></div>
-<p>```</p>
+    loop Every ~5 seconds
+        Mower-&gt;&gt;Server: MQTT: report_state_robot (AES encrypted)
+        Server-&gt;&gt;Server: Decrypt AES-128-CBC
+        Server-&gt;&gt;App: Forward decrypted status
+    end
+
+    App-&gt;&gt;Server: MQTT: stop_run
+    Server-&gt;&gt;Charger: Forward
+    Charger-&gt;&gt;Mower: LoRa [0x35, 0x07]
+    Mower--&gt;&gt;Charger: LoRa ACK
+    Charger--&gt;&gt;Server: MQTT: stop_run_respond</code></pre>
 <h2 id="complete-command-summary">Complete Command Summary<a class="headerlink" href="#complete-command-summary" title="Permanent link">&para;</a></h2>
 <table>
 <thead>

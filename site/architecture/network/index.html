@@ -1947,12 +1947,11 @@
 <h2 id="dns-redirect">DNS Redirect<a class="headerlink" href="#dns-redirect" title="Permanent link">&para;</a></h2>
 <p>The Novabot app connects to <code>app.lfibot.com</code> (HTTP) and <code>mqtt.lfibot.com</code> (MQTT).
 To intercept, DNS is rewritten to point to the local server.</p>
-<p><code>mermaid
-graph LR
+<pre class="mermaid"><code>graph LR
     App[Novabot App] --&gt;|DNS query: mqtt.lfibot.com| DNS[novabot-dns&lt;br/&gt;dnsmasq]
     DNS --&gt;|Response: 192.168.x.x| App
     App --&gt;|MQTT connect 192.168.x.x:1883| Server[novabot-server]
-    App --&gt;|HTTP POST 192.168.x.x:3000| Server</code></p>
+    App --&gt;|HTTP POST 192.168.x.x:3000| Server</code></pre>
 <h3 id="dns-configuration-options">DNS Configuration Options<a class="headerlink" href="#dns-configuration-options" title="Permanent link">&para;</a></h3>
 <ol>
 <li><strong>novabot-dns Docker</strong> — <code>docker compose -f novabot-dns/docker-compose.yml up</code></li>

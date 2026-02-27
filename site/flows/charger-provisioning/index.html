@@ -1823,71 +1823,69 @@
 
 <h1 id="flow-charger-provisioning">Flow: Charger Provisioning<a class="headerlink" href="#flow-charger-provisioning" title="Permanent link">&para;</a></h1>
 <p>Complete flow from unboxing to operational charger.</p>
-<p>```mermaid
-sequenceDiagram
+<pre class="mermaid"><code>sequenceDiagram
     actor User
     participant App as Novabot App
     participant BLE as Charger (BLE)
     participant WiFi as Charger (WiFi)
     participant MQTT as Local MQTT Broker
-    participant API as Local Server</p>
-<div class="highlight"><pre><span></span><code>rect rgb(240, 248, 255)
-    Note over User,API: Phase 1: BLE Provisioning
-    User-&gt;&gt;App: Enter charger SN (LFIC...)
-    User-&gt;&gt;App: Enter home WiFi SSID + password
+    participant API as Local Server
 
-    App-&gt;&gt;BLE: BLE Scan for &quot;CHARGER_PILE&quot;
-    App-&gt;&gt;BLE: BLE Connect
-    App-&gt;&gt;BLE: GATT Discover Services (UUID 0x1234)
-    App-&gt;&gt;BLE: Subscribe to Char 0x2222 Notify
+    rect rgb(240, 248, 255)
+        Note over User,API: Phase 1: BLE Provisioning
+        User-&gt;&gt;App: Enter charger SN (LFIC...)
+        User-&gt;&gt;App: Enter home WiFi SSID + password
 
-    App-&gt;&gt;BLE: get_signal_info
-    BLE--&gt;&gt;App: {wifi: 0, rtk: 17}
-    Note over App: Show: WiFi=Strong, GPS=Strong
-end
+        App-&gt;&gt;BLE: BLE Scan for "CHARGER_PILE"
+        App-&gt;&gt;BLE: BLE Connect
+        App-&gt;&gt;BLE: GATT Discover Services (UUID 0x1234)
+        App-&gt;&gt;BLE: Subscribe to Char 0x2222 Notify
 
-rect rgb(255, 248, 240)
-    Note over User,API: Phase 2: Configuration
-    User-&gt;&gt;App: Click &quot;Next&quot;
+        App-&gt;&gt;BLE: get_signal_info
+        BLE--&gt;&gt;App: {wifi: 0, rtk: 17}
+        Note over App: Show: WiFi=Strong, GPS=Strong
+    end
 
-    App-&gt;&gt;BLE: set_wifi_info {sta: {ssid, passwd}, ap: {SN, &quot;12345678&quot;}}
-    BLE--&gt;&gt;App: {result: 0}
+    rect rgb(255, 248, 240)
+        Note over User,API: Phase 2: Configuration
+        User-&gt;&gt;App: Click "Next"
 
-    App-&gt;&gt;BLE: set_mqtt_info {addr: &quot;mqtt.lfibot.com&quot;, port: 1883}
-    BLE--&gt;&gt;App: {result: 0}
+        App-&gt;&gt;BLE: set_wifi_info {sta: {ssid, passwd}, ap: {SN, "12345678"}}
+        BLE--&gt;&gt;App: {result: 0}
 
-    App-&gt;&gt;BLE: set_lora_info {addr: 718, channel: 16, hc: 20, lc: 14}
-    BLE--&gt;&gt;App: {value: 15} ← assigned channel!
+        App-&gt;&gt;BLE: set_mqtt_info {addr: "mqtt.lfibot.com", port: 1883}
+        BLE--&gt;&gt;App: {result: 0}
 
-    App-&gt;&gt;BLE: set_rtk_info
-    BLE--&gt;&gt;App: {result: 0}
+        App-&gt;&gt;BLE: set_lora_info {addr: 718, channel: 16, hc: 20, lc: 14}
+        BLE--&gt;&gt;App: {value: 15} ← assigned channel!
 
-    App-&gt;&gt;BLE: set_cfg_info (commit)
-    BLE--&gt;&gt;App: {result: 0}
-end
+        App-&gt;&gt;BLE: set_rtk_info
+        BLE--&gt;&gt;App: {result: 0}
 
-rect rgb(240, 255, 240)
-    Note over User,API: Phase 3: WiFi + MQTT Connection
-    Note over BLE,WiFi: Charger disconnects BLE,&lt;br/&gt;connects to home WiFi
-    WiFi-&gt;&gt;MQTT: MQTT CONNECT (clientId: ESP32_XXXXXX)
-    MQTT--&gt;&gt;WiFi: CONNACK
-    WiFi-&gt;&gt;MQTT: SUBSCRIBE Dart/Send_mqtt/LFIC1230700XXX
-    WiFi-&gt;&gt;MQTT: PUBLISH Dart/Receive_mqtt/LFIC1230700XXX&lt;br/&gt;{up_status_info: ...}
-end
+        App-&gt;&gt;BLE: set_cfg_info (commit)
+        BLE--&gt;&gt;App: {result: 0}
+    end
 
-rect rgb(255, 240, 255)
-    Note over User,API: Phase 4: Equipment Registration
-    App-&gt;&gt;API: POST getEquipmentBySN {sn: &quot;LFIC1230700XXX&quot;}
-    API--&gt;&gt;App: {macAddress, chargerAddress: 718, account: &quot;li9hep19&quot;, password: &quot;jzd4wac6&quot;}
+    rect rgb(240, 255, 240)
+        Note over User,API: Phase 3: WiFi + MQTT Connection
+        Note over BLE,WiFi: Charger disconnects BLE,&lt;br/&gt;connects to home WiFi
+        WiFi-&gt;&gt;MQTT: MQTT CONNECT (clientId: ESP32_XXXXXX)
+        MQTT--&gt;&gt;WiFi: CONNACK
+        WiFi-&gt;&gt;MQTT: SUBSCRIBE Dart/Send_mqtt/LFIC1230700XXX
+        WiFi-&gt;&gt;MQTT: PUBLISH Dart/Receive_mqtt/LFIC1230700XXX&lt;br/&gt;{up_status_info: ...}
+    end
 
-    App-&gt;&gt;API: POST bindingEquipment {chargerSn, chargerChannel: 15}
-    API--&gt;&gt;App: {value: null}
+    rect rgb(255, 240, 255)
+        Note over User,API: Phase 4: Equipment Registration
+        App-&gt;&gt;API: POST getEquipmentBySN {sn: "LFIC1230700XXX"}
+        API--&gt;&gt;App: {macAddress, chargerAddress: 718, account: "li9hep19", password: "jzd4wac6"}
 
-    App-&gt;&gt;API: POST userEquipmentList
-    API--&gt;&gt;App: Charger in device list ✓
-end
-</code></pre></div>
-<p>```</p>
+        App-&gt;&gt;API: POST bindingEquipment {chargerSn, chargerChannel: 15}
+        API--&gt;&gt;App: {value: null}
+
+        App-&gt;&gt;API: POST userEquipmentList
+        API--&gt;&gt;App: Charger in device list ✓
+    end</code></pre>
 <h2 id="key-observations">Key Observations<a class="headerlink" href="#key-observations" title="Permanent link">&para;</a></h2>
 <ol>
 <li><strong>chargerChannel</strong> = value from <code>set_lora_info_respond</code> (15), NOT the requested channel (16)</li>

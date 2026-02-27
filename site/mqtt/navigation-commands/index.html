@@ -2709,25 +2709,23 @@
 </code></pre></div>
 <hr />
 <h2 id="navigation-flow">Navigation Flow<a class="headerlink" href="#navigation-flow" title="Permanent link">&para;</a></h2>
-<p>```mermaid
-sequenceDiagram
+<pre class="mermaid"><code>sequenceDiagram
     participant App
     participant Charger
-    participant Mower</p>
-<div class="highlight"><pre><span></span><code>Note over App,Mower: Return to Charger
-App-&gt;&gt;Charger: MQTT: go_to_charge
-Charger-&gt;&gt;Mower: LoRa: go_pile [0x35, 0x0B]
-Mower-&gt;&gt;Mower: ROS: nav_to_recharge
+    participant Mower
 
-loop Navigation Progress
-    Mower-&gt;&gt;App: report_state_robot {x, y, z, work_status}
-end
+    Note over App,Mower: Return to Charger
+    App-&gt;&gt;Charger: MQTT: go_to_charge
+    Charger-&gt;&gt;Mower: LoRa: go_pile [0x35, 0x0B]
+    Mower-&gt;&gt;Mower: ROS: nav_to_recharge
 
-Mower-&gt;&gt;Mower: ArUco QR code detection
-Mower-&gt;&gt;Mower: Dock with charger
-Mower-&gt;&gt;App: report_state_robot {battery_state: &quot;CHARGING&quot;}
-</code></pre></div>
-<p>```</p>
+    loop Navigation Progress
+        Mower-&gt;&gt;App: report_state_robot {x, y, z, work_status}
+    end
+
+    Mower-&gt;&gt;Mower: ArUco QR code detection
+    Mower-&gt;&gt;Mower: Dock with charger
+    Mower-&gt;&gt;App: report_state_robot {battery_state: "CHARGING"}</code></pre>
 <h2 id="complete-command-summary">Complete Command Summary<a class="headerlink" href="#complete-command-summary" title="Permanent link">&para;</a></h2>
 <table>
 <thead>

@@ -1967,55 +1967,53 @@
 </tbody>
 </table>
 <h2 id="step-by-step-flow">Step-by-Step Flow<a class="headerlink" href="#step-by-step-flow" title="Permanent link">&para;</a></h2>
-<p>```mermaid
-sequenceDiagram
+<pre class="mermaid"><code>sequenceDiagram
     participant User
     participant App
     participant Charger as Charger (BLE)
     participant Server as Local Server
-    participant Cloud as Cloud API</p>
-<div class="highlight"><pre><span></span><code>User-&gt;&gt;App: Enter charger SN
-User-&gt;&gt;App: Enter home WiFi credentials
-App-&gt;&gt;Charger: BLE Connect (CHARGER_PILE)
-App-&gt;&gt;Charger: Discover Services
+    participant Cloud as Cloud API
 
-Note over App,Charger: Signal Check
-App-&gt;&gt;Charger: get_signal_info
-Charger--&gt;&gt;App: {wifi: 0, rtk: 17}
-App-&gt;&gt;User: WiFi=Strong, GPS=Strong
+    User-&gt;&gt;App: Enter charger SN
+    User-&gt;&gt;App: Enter home WiFi credentials
+    App-&gt;&gt;Charger: BLE Connect (CHARGER_PILE)
+    App-&gt;&gt;Charger: Discover Services
 
-User-&gt;&gt;App: Click &quot;Next&quot;
+    Note over App,Charger: Signal Check
+    App-&gt;&gt;Charger: get_signal_info
+    Charger--&gt;&gt;App: {wifi: 0, rtk: 17}
+    App-&gt;&gt;User: WiFi=Strong, GPS=Strong
 
-Note over App,Charger: Configuration
-App-&gt;&gt;Charger: set_wifi_info {sta + ap}
-Charger--&gt;&gt;App: set_wifi_info_respond {result: 0}
+    User-&gt;&gt;App: Click "Next"
 
-App-&gt;&gt;Charger: set_mqtt_info {addr, port}
-Charger--&gt;&gt;App: set_mqtt_info_respond {result: 0}
+    Note over App,Charger: Configuration
+    App-&gt;&gt;Charger: set_wifi_info {sta + ap}
+    Charger--&gt;&gt;App: set_wifi_info_respond {result: 0}
 
-App-&gt;&gt;Charger: set_lora_info {addr, channel, hc, lc}
-Charger--&gt;&gt;App: set_lora_info_respond {value: 15}
-Note over App: Save assigned channel (15)
+    App-&gt;&gt;Charger: set_mqtt_info {addr, port}
+    Charger--&gt;&gt;App: set_mqtt_info_respond {result: 0}
 
-App-&gt;&gt;Charger: set_rtk_info
-Charger--&gt;&gt;App: set_rtk_info_respond {result: 0}
+    App-&gt;&gt;Charger: set_lora_info {addr, channel, hc, lc}
+    Charger--&gt;&gt;App: set_lora_info_respond {value: 15}
+    Note over App: Save assigned channel (15)
 
-App-&gt;&gt;Charger: set_cfg_info (commit)
-Charger--&gt;&gt;App: set_cfg_info_respond {result: 0}
+    App-&gt;&gt;Charger: set_rtk_info
+    Charger--&gt;&gt;App: set_rtk_info_respond {result: 0}
 
-Note over Charger: Disconnects BLE&lt;br/&gt;Reconnects WiFi + MQTT
+    App-&gt;&gt;Charger: set_cfg_info (commit)
+    Charger--&gt;&gt;App: set_cfg_info_respond {result: 0}
 
-Note over App,Server: Equipment Registration
-App-&gt;&gt;Server: POST getEquipmentBySN {sn}
-Server--&gt;&gt;App: {macAddress, chargerAddress, account, password}
+    Note over Charger: Disconnects BLE&lt;br/&gt;Reconnects WiFi + MQTT
 
-App-&gt;&gt;Server: POST bindingEquipment {chargerSn, chargerChannel: 15}
-Server--&gt;&gt;App: {value: null}
+    Note over App,Server: Equipment Registration
+    App-&gt;&gt;Server: POST getEquipmentBySN {sn}
+    Server--&gt;&gt;App: {macAddress, chargerAddress, account, password}
 
-App-&gt;&gt;Server: POST userEquipmentList
-Server--&gt;&gt;App: Charger appears in device list
-</code></pre></div>
-<p>```</p>
+    App-&gt;&gt;Server: POST bindingEquipment {chargerSn, chargerChannel: 15}
+    Server--&gt;&gt;App: {value: null}
+
+    App-&gt;&gt;Server: POST userEquipmentList
+    Server--&gt;&gt;App: Charger appears in device list</code></pre>
 <h2 id="ble-command-sequence">BLE Command Sequence<a class="headerlink" href="#ble-command-sequence" title="Permanent link">&para;</a></h2>
 <table>
 <thead>

@@ -1890,100 +1890,93 @@
 <h1 id="flow-mowing-session">Flow: Mowing Session<a class="headerlink" href="#flow-mowing-session" title="Permanent link">&para;</a></h1>
 <p>Complete flow from starting a mow to completion.</p>
 <h2 id="start-mowing-app-initiated">Start Mowing (App-Initiated)<a class="headerlink" href="#start-mowing-app-initiated" title="Permanent link">&para;</a></h2>
-<p>```mermaid
-sequenceDiagram
+<pre class="mermaid"><code>sequenceDiagram
     participant App
     participant Broker as MQTT Broker
     participant Charger
     participant Mower
-    participant ROS as Mower ROS 2</p>
-<div class="highlight"><pre><span></span><code>App-&gt;&gt;Broker: MQTT: {&quot;start_run&quot;: {mapName, cutGrassHeight, workArea, startWay: &quot;app&quot;}}
-Broker-&gt;&gt;Charger: Forward on Dart/Send_mqtt/LFIC...
+    participant ROS as Mower ROS 2
 
-rect rgb(255, 248, 240)
-    Note over Charger,Mower: LoRa Relay
-    Charger-&gt;&gt;Charger: Parse JSON → build LoRa packet
-    Charger-&gt;&gt;Mower: LoRa [0x35, 0x01, mapName, area, height]
-    Note over Charger: Wait max 3s for ACK
-    Mower--&gt;&gt;Charger: LoRa ACK
-end
+    App-&gt;&gt;Broker: MQTT: {"start_run": {mapName, cutGrassHeight, workArea, startWay: "app"}}
+    Broker-&gt;&gt;Charger: Forward on Dart/Send_mqtt/LFIC...
 
-Charger-&gt;&gt;Broker: MQTT: {&quot;type&quot;: &quot;start_run_respond&quot;, &quot;message&quot;: {&quot;result&quot;: 0}}
-Broker-&gt;&gt;App: Forward response
-
-rect rgb(240, 255, 240)
-    Note over Mower,ROS: ROS 2 Execution
-    Mower-&gt;&gt;ROS: Service call: /robot_decision/start_cov_task
-    ROS-&gt;&gt;ROS: coverage_planner generates path
-    ROS-&gt;&gt;ROS: nav2 follows path
-    ROS-&gt;&gt;ROS: perception_node detects obstacles
-end
-
-loop Every ~5 seconds
-    rect rgb(240, 248, 255)
-        Note over Mower,App: Status Updates (Direct MQTT)
-        Mower-&gt;&gt;Broker: AES-encrypted report_state_robot
-        Broker-&gt;&gt;Broker: Decrypt AES-128-CBC
-        Broker-&gt;&gt;App: {battery_power, work_status, x, y, z, mowing_progress, covering_area}
+    rect rgb(255, 248, 240)
+        Note over Charger,Mower: LoRa Relay
+        Charger-&gt;&gt;Charger: Parse JSON → build LoRa packet
+        Charger-&gt;&gt;Mower: LoRa [0x35, 0x01, mapName, area, height]
+        Note over Charger: Wait max 3s for ACK
+        Mower--&gt;&gt;Charger: LoRa ACK
     end
 
-    rect rgb(255, 240, 255)
-        Note over Charger,App: Charger Status (includes mower position via LoRa)
-        Charger-&gt;&gt;Mower: LoRa heartbeat [0x34, 0x01]
-        Mower--&gt;&gt;Charger: LoRa status [0x34, 0x02, ...19 bytes]
-        Charger-&gt;&gt;Broker: up_status_info {mower_x, mower_y, mower_z, mower_status}
+    Charger-&gt;&gt;Broker: MQTT: {"type": "start_run_respond", "message": {"result": 0}}
+    Broker-&gt;&gt;App: Forward response
+
+    rect rgb(240, 255, 240)
+        Note over Mower,ROS: ROS 2 Execution
+        Mower-&gt;&gt;ROS: Service call: /robot_decision/start_cov_task
+        ROS-&gt;&gt;ROS: coverage_planner generates path
+        ROS-&gt;&gt;ROS: nav2 follows path
+        ROS-&gt;&gt;ROS: perception_node detects obstacles
     end
-end
-</code></pre></div>
-<p>```</p>
+
+    loop Every ~5 seconds
+        rect rgb(240, 248, 255)
+            Note over Mower,App: Status Updates (Direct MQTT)
+            Mower-&gt;&gt;Broker: AES-encrypted report_state_robot
+            Broker-&gt;&gt;Broker: Decrypt AES-128-CBC
+            Broker-&gt;&gt;App: {battery_power, work_status, x, y, z, mowing_progress, covering_area}
+        end
+
+        rect rgb(255, 240, 255)
+            Note over Charger,App: Charger Status (includes mower position via LoRa)
+            Charger-&gt;&gt;Mower: LoRa heartbeat [0x34, 0x01]
+            Mower--&gt;&gt;Charger: LoRa status [0x34, 0x02, ...19 bytes]
+            Charger-&gt;&gt;Broker: up_status_info {mower_x, mower_y, mower_z, mower_status}
+        end
+    end</code></pre>
 <h2 id="stop-mowing">Stop Mowing<a class="headerlink" href="#stop-mowing" title="Permanent link">&para;</a></h2>
-<p>```mermaid
-sequenceDiagram
+<pre class="mermaid"><code>sequenceDiagram
     participant App
     participant Charger
     participant Mower
-    participant Server</p>
-<div class="highlight"><pre><span></span><code>App-&gt;&gt;Charger: MQTT: stop_run
-Charger-&gt;&gt;Mower: LoRa [0x35, 0x07]
-Mower-&gt;&gt;Mower: ROS: stop_task
-Mower--&gt;&gt;Charger: LoRa ACK
-Charger--&gt;&gt;App: stop_run_respond
+    participant Server
 
-alt User requests: go to charger
-    App-&gt;&gt;Charger: MQTT: go_to_charge
-    Charger-&gt;&gt;Mower: LoRa: go_pile [0x35, 0x0B]
-    Mower-&gt;&gt;Mower: nav_to_recharge
-    Mower-&gt;&gt;Mower: ArUco QR detection at charger
-    Mower-&gt;&gt;App: report_state_robot {battery_state: &quot;CHARGING&quot;}
-end
+    App-&gt;&gt;Charger: MQTT: stop_run
+    Charger-&gt;&gt;Mower: LoRa [0x35, 0x07]
+    Mower-&gt;&gt;Mower: ROS: stop_task
+    Mower--&gt;&gt;Charger: LoRa ACK
+    Charger--&gt;&gt;App: stop_run_respond
 
-Mower-&gt;&gt;Server: HTTP POST saveCutGrassRecord {workTime, workArea, ...}
-Mower-&gt;&gt;Server: HTTP POST uploadEquipmentTrack (mowing path)
-</code></pre></div>
-<p>```</p>
+    alt User requests: go to charger
+        App-&gt;&gt;Charger: MQTT: go_to_charge
+        Charger-&gt;&gt;Mower: LoRa: go_pile [0x35, 0x0B]
+        Mower-&gt;&gt;Mower: nav_to_recharge
+        Mower-&gt;&gt;Mower: ArUco QR detection at charger
+        Mower-&gt;&gt;App: report_state_robot {battery_state: "CHARGING"}
+    end
+
+    Mower-&gt;&gt;Server: HTTP POST saveCutGrassRecord {workTime, workArea, ...}
+    Mower-&gt;&gt;Server: HTTP POST uploadEquipmentTrack (mowing path)</code></pre>
 <h2 id="scheduled-mowing">Scheduled Mowing<a class="headerlink" href="#scheduled-mowing" title="Permanent link">&para;</a></h2>
-<p>```mermaid
-sequenceDiagram
+<pre class="mermaid"><code>sequenceDiagram
     participant Dashboard
     participant Server
     participant Charger
-    participant Mower</p>
-<div class="highlight"><pre><span></span><code>Dashboard-&gt;&gt;Server: POST /api/dashboard/schedules/:sn
-Server-&gt;&gt;Server: Save schedule to DB
+    participant Mower
 
-Server-&gt;&gt;Charger: MQTT: timer_task {task_id, start_time, end_time, map_id, ...}
-Server-&gt;&gt;Charger: MQTT: set_para_info {cuttingHeight, pathDirection}
-Charger-&gt;&gt;Mower: LoRa relay (both commands)
+    Dashboard-&gt;&gt;Server: POST /api/dashboard/schedules/:sn
+    Server-&gt;&gt;Server: Save schedule to DB
 
-Note over Mower: At scheduled time...
-Mower-&gt;&gt;Mower: Auto-start coverage task
-Mower-&gt;&gt;Charger: LoRa: status updates
-Charger-&gt;&gt;Server: MQTT: up_status_info {mower working}
-</code></pre></div>
-<p>```</p>
+    Server-&gt;&gt;Charger: MQTT: timer_task {task_id, start_time, end_time, map_id, ...}
+    Server-&gt;&gt;Charger: MQTT: set_para_info {cuttingHeight, pathDirection}
+    Charger-&gt;&gt;Mower: LoRa relay (both commands)
+
+    Note over Mower: At scheduled time...
+    Mower-&gt;&gt;Mower: Auto-start coverage task
+    Mower-&gt;&gt;Charger: LoRa: status updates
+    Charger-&gt;&gt;Server: MQTT: up_status_info {mower working}</code></pre>
 <h2 id="low-battery-return">Low Battery Return<a class="headerlink" href="#low-battery-return" title="Permanent link">&para;</a></h2>
-<p><code>mermaid
-graph TB
+<pre class="mermaid"><code>graph TB
     A[Mowing in progress] --&gt; B{Battery &lt; threshold?}
     B --&gt;|No| A
     B --&gt;|Yes| C[auto_recharge triggered]
@@ -1996,7 +1989,7 @@ graph TB
     H --&gt;|Yes| I{Mowing complete?}
     I --&gt;|Yes| J[Done]
     I --&gt;|No| K[Resume mowing]
-    K --&gt; A</code></p>
+    K --&gt; A</code></pre>
 
 
 

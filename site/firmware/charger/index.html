@@ -1589,6 +1589,67 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#firmware-v040-differences-from-v036" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Firmware v0.4.0 — Differences from v0.3.6
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Firmware v0.4.0 — Differences from v0.3.6">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#aes-encryption-new-in-v040" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AES Encryption (new in v0.4.0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#mqtt_event_data-handler-v040" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MQTT_EVENT_DATA Handler (v0.4.0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#command-value-validation-cjson_isnull-critical" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Command Value Validation — cJSON_IsNull (CRITICAL)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#firmware-patching" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Firmware Patching
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#ghidra-decompilation" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2021,6 +2082,67 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#firmware-v040-differences-from-v036" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Firmware v0.4.0 — Differences from v0.3.6
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Firmware v0.4.0 — Differences from v0.3.6">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#aes-encryption-new-in-v040" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AES Encryption (new in v0.4.0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#mqtt_event_data-handler-v040" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MQTT_EVENT_DATA Handler (v0.4.0)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#command-value-validation-cjson_isnull-critical" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Command Value Validation — cJSON_IsNull (CRITICAL)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#firmware-patching" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Firmware Patching
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#ghidra-decompilation" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2393,7 +2515,7 @@
 <h2 id="security-findings">Security Findings<a class="headerlink" href="#security-findings" title="Permanent link">&para;</a></h2>
 <ol>
 <li><strong>No MQTT authentication</strong> — charger v0.3.6 uses no username/password</li>
-<li><strong>No AES encryption</strong> — charger sends plain JSON (unlike mower)</li>
+<li><strong>No AES encryption in v0.3.6</strong> — charger sends plain JSON (unlike mower). <strong>v0.4.0 adds AES-128-CBC encryption</strong></li>
 <li><strong>WiFi passwords in plaintext</strong> in NVS, printed to UART debug log</li>
 <li><strong>UART console without authentication</strong> — full factory access</li>
 <li><strong>Static BLE passkey</strong> — BLE pairing with static passkey</li>
@@ -2401,6 +2523,86 @@
 <li><strong>ESP-IDF example code</strong> — built on ESP-IDF examples, minimal custom security</li>
 <li><strong>TLS attempted but fails</strong> — mbedTLS present, but TLS MQTT connections fail</li>
 </ol>
+<h2 id="firmware-v040-differences-from-v036">Firmware v0.4.0 — Differences from v0.3.6<a class="headerlink" href="#firmware-v040-differences-from-v036" title="Permanent link">&para;</a></h2>
+<p>The only significant difference is the addition of <strong>AES-128-CBC encryption for ALL MQTT messages</strong>.</p>
+<h3 id="aes-encryption-new-in-v040">AES Encryption (new in v0.4.0)<a class="headerlink" href="#aes-encryption-new-in-v040" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Property</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Algorithm</td>
+<td>AES-128-CBC (same as mower)</td>
+</tr>
+<tr>
+<td>Key formula</td>
+<td><code>"abcdabcd1234" + SN[-4:]</code> (16 bytes UTF-8)</td>
+</tr>
+<tr>
+<td>IV</td>
+<td><code>"abcd1234abcd1234"</code> (static)</td>
+</tr>
+<tr>
+<td>Padding</td>
+<td>Null-byte padding to 16-byte boundary (NOT PKCS7)</td>
+</tr>
+<tr>
+<td>Direction</td>
+<td><strong>Both</strong>: publish (encrypt) AND subscribe (decrypt)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="mqtt_event_data-handler-v040">MQTT_EVENT_DATA Handler (v0.4.0)<a class="headerlink" href="#mqtt_event_data-handler-v040" title="Permanent link">&para;</a></h3>
+<ol>
+<li>Check <code>mqtt_rec_data_flag</code> — if already 1, skip (previous message still being processed)</li>
+<li>Length validation: <code>&gt;0</code>, <code>&lt;1024</code>, <code>%16==0</code> (AES block size check)</li>
+<li>AES-128-CBC decrypt with key <code>"abcdabcd1234" + SN[-4:]</code></li>
+<li>Set <code>mqtt_rec_data_flag = 1</code> and signal FreeRTOS queue</li>
+</ol>
+<h3 id="command-value-validation-cjson_isnull-critical">Command Value Validation — cJSON_IsNull (CRITICAL)<a class="headerlink" href="#command-value-validation-cjson_isnull-critical" title="Permanent link">&para;</a></h3>
+<div class="admonition danger">
+<p class="admonition-title">v0.4.0 expects <code>null</code> values, not <code>0</code> or <code>{}</code></p>
+<p>The v0.4.0 command processor uses <code>cJSON_IsNull()</code> to validate certain command values.
+Commands like <code>get_lora_info</code> and <code>ota_version_info</code> <strong>must</strong> have a JSON <code>null</code> value,
+not a numeric <code>0</code> or empty object <code>{}</code>.</p>
+</div>
+<div class="highlight"><span class="filename">Decompiled command processor (FUN_4200e8c4)</span><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1">// get_lora_info handler:</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="n">item</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">cJSON_GetObjectItem</span><span class="p">(</span><span class="n">root</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;get_lora_info&quot;</span><span class="p">);</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">item</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="nb">NULL</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">cJSON_IsNull</span><span class="p">(</span><span class="n">item</span><span class="p">)</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w">  </span><span class="c1">// Only proceeds if value IS null</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">        </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;get_lora_info null&quot;</span><span class="p">);</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">        </span><span class="c1">// Build and publish LoRa info response</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">    </span><span class="c1">// If value is 0, {}, or anything else → silently skipped!</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="p">}</span>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="c1">// ota_version_info handler — same pattern:</span>
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="n">item</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">cJSON_GetObjectItem</span><span class="p">(</span><span class="n">root</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;ota_version_info&quot;</span><span class="p">);</span>
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">item</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="nb">NULL</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">cJSON_IsNull</span><span class="p">(</span><span class="n">item</span><span class="p">)</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a><span class="w">        </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;ota_version_info null&quot;</span><span class="p">);</span>
+<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a><span class="w">        </span><span class="c1">// Build and publish version info response</span>
+<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a><span class="p">}</span>
+</code></pre></div>
+<p><strong>Correct command syntax for v0.4.0:</strong></p>
+<div class="highlight"><span class="filename">Commands expecting null value</span><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="p">{</span><span class="nt">&quot;get_lora_info&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">}</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="p">{</span><span class="nt">&quot;ota_version_info&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">}</span>
+</code></pre></div>
+<div class="highlight"><span class="filename">Commands expecting object value</span><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="p">{</span><span class="nt">&quot;ota_upgrade_cmd&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="s2">&quot;full&quot;</span><span class="p">,</span><span class="nt">&quot;content&quot;</span><span class="p">:{</span><span class="nt">&quot;upgradeApp&quot;</span><span class="p">:{</span><span class="nt">&quot;version&quot;</span><span class="p">:</span><span class="s2">&quot;...&quot;</span><span class="p">,</span><span class="nt">&quot;downloadUrl&quot;</span><span class="p">:</span><span class="s2">&quot;...&quot;</span><span class="p">,</span><span class="nt">&quot;md5&quot;</span><span class="p">:</span><span class="s2">&quot;...&quot;</span><span class="p">}}}}</span>
+</code></pre></div>
+<h3 id="firmware-patching">Firmware Patching<a class="headerlink" href="#firmware-patching" title="Permanent link">&para;</a></h3>
+<p>Patched firmware available: <code>research/firmware/charger_v0.4.0_patched.bin</code> (MD5: <code>538f01c8412a7d9936d1de9c298f8918</code>)</p>
+<ul>
+<li><code>mqtt-dev.lfibot.com</code> → <code>novabot.ramonvanbruggen.nl</code></li>
+<li><code>mqtt://47.253.57.111</code> → <code>mqtt://novabot.ramonvanbruggen.nl</code></li>
+<li>SHA256 hash updated and verified</li>
+</ul>
+<hr />
 <h2 id="ghidra-decompilation">Ghidra Decompilation<a class="headerlink" href="#ghidra-decompilation" title="Permanent link">&para;</a></h2>
 <p>Decompiled with Ghidra 12.0.3 (headless, Xtensa processor).
 Custom <code>esp32s3_to_elf.py</code> script to convert ESP32-S3 app image to ELF.</p>
@@ -2413,12 +2615,20 @@ Custom <code>esp32s3_to_elf.py</code> script to convert ESP32-S3 app image to EL
 </thead>
 <tbody>
 <tr>
-<td><code>charger_ota0_v0.3.6.elf</code></td>
-<td>ELF for Ghidra (1.4MB)</td>
+<td><code>research/charger_ota0_v0.3.6.elf</code></td>
+<td>ELF for Ghidra v0.3.6 (1.4MB)</td>
 </tr>
 <tr>
-<td><code>ghidra_output/charger_v036_decompiled.c</code></td>
-<td>7405 functions (7.6MB, 296K lines)</td>
+<td><code>research/charger_ota1_v0.4.0.elf</code></td>
+<td>ELF for Ghidra v0.4.0 (1.4MB)</td>
+</tr>
+<tr>
+<td><code>research/ghidra_output/charger_v036_decompiled.c</code></td>
+<td>v0.3.6: 7405 functions (7.6MB, 296K lines)</td>
+</tr>
+<tr>
+<td><code>research/ghidra_output/charger_v040_decompiled.c</code></td>
+<td>v0.4.0: with AES encryption (7.6MB)</td>
 </tr>
 </tbody>
 </table>
@@ -2458,6 +2668,10 @@ Custom <code>esp32s3_to_elf.py</code> script to convert ESP32-S3 app image to EL
 <tr>
 <td><code>FUN_42061d54</code></td>
 <td><code>cJSON_Delete()</code></td>
+</tr>
+<tr>
+<td><code>PTR_FUN_420013d4</code></td>
+<td><code>cJSON_IsNull()</code> (v0.4.0)</td>
 </tr>
 </tbody>
 </table>

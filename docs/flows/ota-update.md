@@ -103,8 +103,8 @@ sequenceDiagram
     "content": {
       "upgradeApp": {
         "version": "v5.7.1",
-        "downloadUrl": "https://novabot-oss.oss-us-east-1.aliyuncs.com/novabot-file/lfimvp-20240915571-1726376551929.deb",
-        "md5": "83c2741d05c9a40ff351332af2082d7c"
+        "downloadUrl": "https://<oss-host>/novabot-file/<firmware-filename>.deb",
+        "md5": "<md5-checksum>"
       }
     }
   }
@@ -118,10 +118,12 @@ sequenceDiagram
 | `full` | Full firmware replacement (.deb package) | `content.upgradeApp` |
 | `increment` | Incremental app update | `content.upgradeApp` |
 | `file_update` | Individual file updates (.zip with manifest) | `content.upgradeApp` (zip with `check.json`) |
+<!-- PRIVATE -->
 | `system` | Full system upgrade via apt | Runs `sudo apt full-upgrade && reboot -f` |
 
 !!! danger "`system` upgrade type"
     The `system` type runs `sudo apt-get update && sudo apt full-upgrade && sleep 2 && reboot -f`. If the mower's apt sources were pointed to a malicious repository, this would allow arbitrary code execution.
+<!-- /PRIVATE -->
 
 ---
 
@@ -264,6 +266,7 @@ graph LR
 
 ---
 
+<!-- PRIVATE -->
 ## OTA Download URLs
 
 | Device | URL Pattern | Example |
@@ -273,13 +276,14 @@ graph LR
 
 !!! note "URL contains unpredictable timestamp"
     The download URL includes a millisecond timestamp, making it impossible to guess. The URL must be obtained from the cloud OTA API or the `ota_upgrade_cmd` message.
+<!-- /PRIVATE -->
 
 ## Known Firmware Versions
 
 | Device | Version | Size | Notes |
 |--------|---------|------|-------|
-| Charger | v0.3.6 (active) | 1.4 MB | ESP32-S3, ESP-IDF v4.4.2 |
-| Charger | v0.4.0 (inactive) | 1.4 MB | Adds AES MQTT encryption |
+| Charger | v0.3.6 | 1.4 MB | ESP32-S3, ESP-IDF v4.4.2, plain JSON MQTT |
+| Charger | v0.4.0 | 1.4 MB | Adds AES-128-CBC MQTT encryption + `cJSON_IsNull` command validation |
 | Mower | v5.7.1 | 35 MB | Debian/ROS 2, Horizon X3 |
 | Mower | v6.0.3 | ? | Pushed to select users by support |
 | MCU | v3.5.8 | — | STM32F407 motor controller |
@@ -310,6 +314,70 @@ graph LR
 | V0.0.3 | 2023/10 | Cai Tao | MD5 verification, file size verification |
 | V0.0.4 | 2024/02 | Cai Tao | File update feature (`file_update` type) |
 
+<!-- PRIVATE -->
+## Firmware Patching (Local Server)
+
+A patch tool (`research/patch_firmware.js`) allows modifying hardcoded MQTT hostnames/IPs
+in the charger firmware binary so the charger connects to the local server without DNS rewrites.
+
+### Patched Firmware Available
+
+| Version | File | MD5 | Changes |
+|---------|------|-----|---------|
+| v0.3.6 | `research/firmware/charger_v0.3.6_patched.bin` | `fb7427789bf0e164ed00ef9ea8f9dbf0` | MQTT → `novabot.ramonvanbruggen.nl` |
+| v0.4.0 | `research/firmware/charger_v0.4.0_patched.bin` | `538f01c8412a7d9936d1de9c298f8918` | MQTT → `novabot.ramonvanbruggen.nl` |
+
+### Patch Tool Usage
+
+```bash
+node research/patch_firmware.js                          # Patch with defaults
+node research/patch_firmware.js --analyze                # Analyze only
+node research/patch_firmware.js --mqtt-host 192.168.1.50 # Short IP (in-place)
+node research/patch_firmware.js --mqtt-host my.server.nl # Long hostname (relocation)
+```
+
+The tool handles:
+
+- ESP32-S3 image header parsing
+- String relocation to unused DROM space when replacement is longer
+- Code reference updates (literal pool pointers)
+- SHA256 hash recalculation
+
+### OTA Flash via MQTT
+
+To flash a patched firmware to a charger:
+
+```json title="ota_upgrade_cmd"
+{
+  "ota_upgrade_cmd": {
+    "type": "full",
+    "content": {
+      "upgradeApp": {
+        "version": "v0.3.6-local",
+        "downloadUrl": "http://<server>:8080/charger_v0.3.6_patched.bin",
+        "md5": "fb7427789bf0e164ed00ef9ea8f9dbf0"
+      }
+    }
+  }
+}
+```
+
+!!! tip "v0.4.0 encrypted charger"
+    For a charger running v0.4.0, commands must be AES-128-CBC encrypted
+    and use `null` values: `{"ota_version_info": null}`.
+    Use the raw-tcp endpoint: `POST /api/dashboard/raw-tcp/:sn`
+
+!!! warning "Important notes"
+    - `esp_https_ota()` may require HTTPS — set up an HTTPS server if HTTP fails
+    - NVS config (set via BLE) is NOT affected by OTA — production MQTT host also needs BLE re-provisioning
+    - On OTA failure: charger automatically boots from the other OTA partition
+    - Recovery via UART: press `b` to manually switch OTA partition
+    - **Always test on a spare board first!**
+<!-- /PRIVATE -->
+
+---
+
+<!-- PRIVATE -->
 ## Security Considerations
 
 | Issue | Risk | Details |
@@ -320,3 +388,4 @@ graph LR
 | `system` upgrade type | **Critical** | Runs `apt full-upgrade` — malicious apt repo = RCE |
 | Charger OTA via HTTP | **Medium** | HTTP POST to `192.168.4.1`, no TLS |
 | No rollback verification | **Low** | Rollback only checks if run_novabot.sh exists |
+<!-- /PRIVATE -->

@@ -51,6 +51,8 @@ export interface MapCalibration {
   offsetLng: number;
   rotation: number;
   scale: number;
+  chargerLat?: number | null;
+  chargerLng?: number | null;
 }
 
 export interface Schedule {

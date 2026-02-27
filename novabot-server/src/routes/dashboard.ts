@@ -5,9 +5,10 @@
 import { Router, Request, Response } from 'express';
 import { db } from '../db/database.js';
 import { getAllDeviceSnapshots, getDeviceSnapshot, SENSORS, getGpsTrail, clearGpsTrail } from '../mqtt/sensorData.js';
-import { isDeviceOnline } from '../mqtt/broker.js';
+import { isDeviceOnline, writeRawPublish } from '../mqtt/broker.js';
 import { getRecentLogs } from '../dashboard/socketHandler.js';
-import { requestMapList, requestMapOutline, publishToDevice } from '../mqtt/mapSync.js';
+import { requestMapList, requestMapOutline, publishToDevice, publishRawToDevice } from '../mqtt/mapSync.js';
+import crypto from 'crypto';
 import { generateMapZipFromDb, gpsToLocal, localToGps, parseMapZip, type GpsPoint } from '../mqtt/mapConverter.js';
 import { existsSync, unlinkSync } from 'fs';
 import path from 'path';
@@ -374,6 +375,8 @@ interface CalibrationRow {
   offset_lng: number;
   rotation: number;
   scale: number;
+  charger_lat: number | null;
+  charger_lng: number | null;
   updated_at: string;
 }
 
@@ -386,31 +389,36 @@ dashboardRouter.get('/calibration/:sn', (req: Request, res: Response) => {
 
   res.json({
     calibration: row
-      ? { offsetLat: row.offset_lat, offsetLng: row.offset_lng, rotation: row.rotation, scale: row.scale }
-      : { offsetLat: 0, offsetLng: 0, rotation: 0, scale: 1 },
+      ? { offsetLat: row.offset_lat, offsetLng: row.offset_lng, rotation: row.rotation, scale: row.scale,
+          chargerLat: row.charger_lat, chargerLng: row.charger_lng }
+      : { offsetLat: 0, offsetLng: 0, rotation: 0, scale: 1, chargerLat: null, chargerLng: null },
   });
 });
 
 // PUT /api/dashboard/calibration/:sn — sla calibratie op
 dashboardRouter.put('/calibration/:sn', (req: Request, res: Response) => {
   const { sn } = req.params;
-  const { offsetLat, offsetLng, rotation, scale } = req.body as {
+  const { offsetLat, offsetLng, rotation, scale, chargerLat, chargerLng } = req.body as {
     offsetLat?: number;
     offsetLng?: number;
     rotation?: number;
     scale?: number;
+    chargerLat?: number | null;
+    chargerLng?: number | null;
   };
 
   db.prepare(`
-    INSERT INTO map_calibration (mower_sn, offset_lat, offset_lng, rotation, scale, updated_at)
-    VALUES (?, ?, ?, ?, ?, datetime('now'))
+    INSERT INTO map_calibration (mower_sn, offset_lat, offset_lng, rotation, scale, charger_lat, charger_lng, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
     ON CONFLICT(mower_sn) DO UPDATE SET
-      offset_lat = excluded.offset_lat,
-      offset_lng = excluded.offset_lng,
-      rotation   = excluded.rotation,
-      scale      = excluded.scale,
-      updated_at = datetime('now')
-  `).run(sn, offsetLat ?? 0, offsetLng ?? 0, rotation ?? 0, scale ?? 1);
+      offset_lat  = excluded.offset_lat,
+      offset_lng  = excluded.offset_lng,
+      rotation    = excluded.rotation,
+      scale       = excluded.scale,
+      charger_lat = excluded.charger_lat,
+      charger_lng = excluded.charger_lng,
+      updated_at  = datetime('now')
+  `).run(sn, offsetLat ?? 0, offsetLng ?? 0, rotation ?? 0, scale ?? 1, chargerLat ?? null, chargerLng ?? null);
 
   res.json({ ok: true });
 });
@@ -456,8 +464,61 @@ dashboardRouter.post('/command/:sn', (req: Request, res: Response) => {
     return;
   }
 
-  publishToDevice(sn, command);
-  res.json({ ok: true, command: Object.keys(command)[0] });
+  // Optioneel: versleutel het commando voor charger v0.4.0+ (encrypt=true in body)
+  const { encrypt: doEncrypt, qos } = req.body as { encrypt?: boolean; qos?: number };
+  if (doEncrypt) {
+    const KEY_PREFIX = 'abcdabcd1234';
+    const IV = Buffer.from('abcd1234abcd1234', 'utf8');
+    const key = Buffer.from(KEY_PREFIX + sn.slice(-4), 'utf8');
+    const json = JSON.stringify(command);
+    // Pad naar 16-byte grens met null bytes (AES block size)
+    const plaintext = Buffer.from(json, 'utf8');
+    const padded = Buffer.alloc(Math.ceil(plaintext.length / 16) * 16, 0);
+    plaintext.copy(padded);
+    const cipher = crypto.createCipheriv('aes-128-cbc', key, IV);
+    cipher.setAutoPadding(false);
+    const encrypted = Buffer.concat([cipher.update(padded), cipher.final()]);
+    console.log(`[DASHBOARD] Encrypted command (${json.length}B → ${encrypted.length}B) voor ${sn}: ${json}`);
+    publishRawToDevice(sn, encrypted, (qos === 1 ? 1 : 0) as 0 | 1);
+    res.json({ ok: true, command: Object.keys(command)[0], encrypted: true, size: encrypted.length });
+  } else {
+    publishToDevice(sn, command);
+    res.json({ ok: true, command: Object.keys(command)[0] });
+  }
+});
+
+// ── Direct TCP debug endpoint ───────────────────────────────────
+
+// POST /api/dashboard/raw-tcp/:sn — stuur encrypted commando direct via TCP (bypass aedes)
+dashboardRouter.post('/raw-tcp/:sn', (req: Request, res: Response) => {
+  const { sn } = req.params;
+  const { command, qos } = req.body as { command?: Record<string, unknown>; qos?: number };
+
+  if (!command) {
+    res.status(400).json({ error: 'command is vereist' });
+    return;
+  }
+
+  // Encrypt het commando
+  const KEY_PREFIX = 'abcdabcd1234';
+  const IV = Buffer.from('abcd1234abcd1234', 'utf8');
+  const key = Buffer.from(KEY_PREFIX + sn.slice(-4), 'utf8');
+  const json = JSON.stringify(command);
+  const plaintext = Buffer.from(json, 'utf8');
+  const padded = Buffer.alloc(Math.ceil(plaintext.length / 16) * 16, 0);
+  plaintext.copy(padded);
+  const cipher = crypto.createCipheriv('aes-128-cbc', key, IV);
+  cipher.setAutoPadding(false);
+  const encrypted = Buffer.concat([cipher.update(padded), cipher.final()]);
+
+  console.log(`[RAW-TCP] Command: ${json} → ${encrypted.length}B encrypted`);
+
+  const sent = writeRawPublish(sn, encrypted, (qos === 1 ? 1 : 0) as 0 | 1);
+  if (sent) {
+    res.json({ ok: true, command: Object.keys(command)[0], encrypted: true, size: encrypted.length, method: 'raw-tcp' });
+  } else {
+    res.status(404).json({ error: `Geen TCP socket voor ${sn}` });
+  }
 });
 
 // ── Dashboard schedules ─────────────────────────────────────────

@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+
+{% block extrahead %}
+  <script>
+    // Force all shadow roots to be "open" instead of "closed"
+    // This allows mermaid-zoom.js to access the rendered SVGs
+    (function() {
+      var orig = Element.prototype.attachShadow;
+      Element.prototype.attachShadow = function(init) {
+        return orig.call(this, Object.assign({}, init, { mode: "open" }));
+      };
+    })();
+  </script>
+{% endblock %}

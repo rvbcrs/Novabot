@@ -3282,22 +3282,20 @@
 </table>
 <hr />
 <h2 id="report-timing">Report Timing<a class="headerlink" href="#report-timing" title="Permanent link">&para;</a></h2>
-<p>```mermaid
-gantt
+<pre class="mermaid"><code>gantt
     title Mower Report Cycle (~5 seconds)
     dateFormat X
-    axisFormat %L</p>
-<div class="highlight"><pre><span></span><code>section Mower → MQTT
-report_state_robot (800B enc)     :0, 100
-report_exception_state (144B enc) :200, 50
-report_state_timer_data (480B enc):400, 100
+    axisFormat %L
 
-section Charger → MQTT
-up_status_info (plain JSON)       :0, 50
-up_status_info                    :2000, 50
-up_status_info                    :4000, 50
-</code></pre></div>
-<p>```</p>
+    section Mower → MQTT
+    report_state_robot (800B enc)     :0, 100
+    report_exception_state (144B enc) :200, 50
+    report_state_timer_data (480B enc):400, 100
+
+    section Charger → MQTT
+    up_status_info (plain JSON)       :0, 50
+    up_status_info                    :2000, 50
+    up_status_info                    :4000, 50</code></pre>
 
 
 

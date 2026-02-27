@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, Polygon, Polyline, Tooltip, useMap } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, Polygon, Polyline, Tooltip, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import {
   MapPin, Map as MapIcon, Trash2, Route, Wifi, WifiOff, Satellite, Crosshair,
@@ -295,6 +295,21 @@ function makeMowerIcon(heading: number) {
   });
 }
 
+// ── Charger marker icon ────────────────────────────────────────
+function makeChargerIcon() {
+  return L.divIcon({
+    className: '',
+    html: `<div style="width:32px;height:32px">
+      <svg viewBox="0 0 32 32" width="32" height="32">
+        <circle cx="16" cy="16" r="12" fill="#f59e0b" stroke="white" stroke-width="2" opacity="0.9"/>
+        <polygon points="18,6 12,17 16,17 14,26 20,15 16,15" fill="white" opacity="0.9"/>
+      </svg>
+    </div>`,
+    iconSize: [32, 32],
+    iconAnchor: [16, 16],
+  });
+}
+
 // ── Point-in-polygon (ray casting) ──────────────────────────────
 
 function pointInPolygon(lat: number, lng: number, polygon: Array<{ lat: number; lng: number }>): boolean {
@@ -385,6 +400,16 @@ function clipLineToPolygon(
   return segments;
 }
 
+// ── Click-to-place charger component ────────────────────────────
+function ChargerPlacer({ onPlace }: { onPlace: (lat: number, lng: number) => void }) {
+  useMapEvents({
+    click(e) {
+      onPlace(e.latlng.lat, e.latlng.lng);
+    },
+  });
+  return null;
+}
+
 // ── Nudge step: ~0.5m in degrees ─────────────────────────────────
 const NUDGE_STEP = 0.000005; // ~0.55m lat, ~0.35m lng at 52°N
 
@@ -402,6 +427,9 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
   const [editingMapId, setEditingMapId] = useState<string | null>(null);
   const [drawType, setDrawType] = useState<'work' | 'obstacle' | 'unicom'>('work');
   const [showHeatmap, setShowHeatmap] = useState(false);
+
+  // Place charger mode
+  const [placingCharger, setPlacingCharger] = useState(false);
 
   // Calibration state
   const [savedCal, setSavedCal] = useState<MapCalibration>(DEFAULT_CAL);
@@ -538,6 +566,7 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
   // Mower heading icon (rotates with heading data)
   const headingDeg = heading ? parseFloat(heading) : 0;
   const mowerIcon = useMemo(() => makeMowerIcon(isNaN(headingDeg) ? 0 : headingDeg), [headingDeg]);
+  const chargerIcon = useMemo(() => makeChargerIcon(), []);
 
   // Coverage stats per polygon (trail points inside each work area)
   const coverageStats = useMemo(() => {
@@ -556,15 +585,29 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
     return stats;
   }, [trail, polygonMaps]);
 
+  // Charger GPS: prefer live sensor data, fallback to calibration-stored position
+  const resolvedChargerLat = (chargerLat && parseFloat(chargerLat)) || savedCal.chargerLat || null;
+  const resolvedChargerLng = (chargerLng && parseFloat(chargerLng)) || savedCal.chargerLng || null;
+  const chargerHasGps = !!(resolvedChargerLat && resolvedChargerLng);
+
+  // Place charger on map click
+  const handlePlaceCharger = useCallback((lat: number, lng: number) => {
+    const updated = { ...savedCal, chargerLat: lat, chargerLng: lng };
+    setSavedCal(updated);
+    setPlacingCharger(false);
+    saveCalibration(sn, updated).then(() => {
+      toast('Charger positie opgeslagen', 'success');
+    });
+  }, [sn, savedCal]);
+
   // Export handler
-  const chargerHasGps = !!(chargerLat && parseFloat(chargerLat) && chargerLng && parseFloat(chargerLng));
   const handleExport = useCallback(() => {
     if (!chargerHasGps) return;
-    exportMaps(sn, { lat: parseFloat(chargerLat!), lng: parseFloat(chargerLng!) }).then(url => {
+    exportMaps(sn, { lat: resolvedChargerLat!, lng: resolvedChargerLng! }).then(url => {
       window.open(url, '_blank');
       toast('Kaarten geëxporteerd', 'success');
     }).catch(() => toast('Export mislukt', 'error'));
-  }, [sn, chargerLat, chargerLng, chargerHasGps]);
+  }, [sn, resolvedChargerLat, resolvedChargerLng, chargerHasGps]);
 
   // Center of all polygon points (used as rotation/scale pivot)
   const polyCenter = useMemo(() => {
@@ -714,6 +757,21 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
               Export
             </button>
           )}
+          {/* Place/reposition charger button */}
+          {editMode === 'none' && !calibrating && (
+            <button
+              onClick={() => setPlacingCharger(!placingCharger)}
+              className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded transition-colors ${
+                placingCharger
+                  ? 'bg-amber-600 text-white animate-pulse'
+                  : 'bg-gray-700/50 text-gray-400 hover:text-amber-400 hover:bg-amber-900/30'
+              }`}
+              title={placingCharger ? 'Klik op de kaart om charger te plaatsen' : 'Charger positie instellen'}
+            >
+              <MapPin className="w-3 h-3" />
+              {placingCharger ? 'Klik op kaart...' : 'Charger'}
+            </button>
+          )}
           <button
             onClick={() => setTileLayer(tileLayer === 'satellite' ? 'street' : 'satellite')}
             className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded transition-colors ${
@@ -860,6 +918,34 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
                   <div className="font-semibold">Mower</div>
                   <div>{parseFloat(lat).toFixed(6)}, {parseFloat(lng).toFixed(6)}</div>
                   {heading && <div>Heading: {parseFloat(heading).toFixed(0)}&deg;</div>}
+                </div>
+              </Popup>
+            </Marker>
+          )}
+          {/* Click-to-place charger handler */}
+          {placingCharger && <ChargerPlacer onPlace={handlePlaceCharger} />}
+          {/* Charger marker (draggable to reposition) */}
+          {chargerHasGps && (
+            <Marker
+              position={[resolvedChargerLat!, resolvedChargerLng!]}
+              icon={chargerIcon}
+              draggable
+              eventHandlers={{
+                dragend: (e) => {
+                  const { lat, lng } = e.target.getLatLng();
+                  const updated = { ...savedCal, chargerLat: lat, chargerLng: lng };
+                  setSavedCal(updated);
+                  saveCalibration(sn, updated).then(() => {
+                    toast('Charger positie opgeslagen', 'success');
+                  });
+                },
+              }}
+            >
+              <Popup>
+                <div className="text-xs">
+                  <div className="font-semibold">Charging Station</div>
+                  <div>{resolvedChargerLat!.toFixed(6)}, {resolvedChargerLng!.toFixed(6)}</div>
+                  <div className="text-gray-500 mt-1">Versleep om positie aan te passen</div>
                 </div>
               </Popup>
             </Marker>
