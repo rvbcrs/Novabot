@@ -35,7 +35,7 @@ export function initDb(): void {
     CREATE TABLE IF NOT EXISTS equipment (
       id                  INTEGER PRIMARY KEY AUTOINCREMENT,
       equipment_id        TEXT    NOT NULL UNIQUE,
-      user_id             TEXT    NOT NULL,
+      user_id             TEXT,
       mower_sn            TEXT    NOT NULL UNIQUE,
       charger_sn          TEXT,
       equipment_nick_name TEXT,
@@ -195,6 +195,39 @@ export function initDb(): void {
     // Kolom bestaat al — geen actie nodig
   }
 
+  // Migratie: user_id nullable maken (was NOT NULL, cloud verwijdert records nooit maar zet user_id=NULL bij unbind)
+  // SQLite kan geen NOT NULL constraint verwijderen, dus herbouw de tabel
+  {
+    const info = db.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='equipment'`).get() as { sql: string } | undefined;
+    if (info?.sql?.includes('user_id') && info.sql.includes('user_id             TEXT    NOT NULL')) {
+      console.log('[DB] Migrating equipment: making user_id nullable...');
+      db.exec(`
+        CREATE TABLE equipment_new (
+          id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+          equipment_id        TEXT    NOT NULL UNIQUE,
+          user_id             TEXT,
+          mower_sn            TEXT    NOT NULL UNIQUE,
+          charger_sn          TEXT,
+          equipment_nick_name TEXT,
+          equipment_type_h    TEXT,
+          mower_version       TEXT,
+          charger_version     TEXT,
+          charger_address     TEXT,
+          charger_channel     TEXT,
+          mac_address         TEXT,
+          created_at          TEXT    NOT NULL DEFAULT (datetime('now')),
+          FOREIGN KEY (user_id) REFERENCES users(app_user_id)
+        );
+        INSERT INTO equipment_new SELECT id, equipment_id, user_id, mower_sn, charger_sn,
+          equipment_nick_name, equipment_type_h, mower_version, charger_version,
+          charger_address, charger_channel, mac_address, created_at FROM equipment;
+        DROP TABLE equipment;
+        ALTER TABLE equipment_new RENAME TO equipment;
+      `);
+      console.log('[DB] Migrated: equipment.user_id is now nullable');
+    }
+  }
+
   // Nieuwe kolommen voor maaier work records (saveCutGrassRecord endpoint)
   for (const col of [
     'work_area_m2 REAL',
@@ -206,6 +239,12 @@ export function initDb(): void {
     'date_time TEXT',
   ]) {
     try { db.exec(`ALTER TABLE work_records ADD COLUMN ${col}`); }
+    catch { /* kolom bestaat al */ }
+  }
+
+  // WiFi credentials (cloud slaat deze op en retourneert ze in userEquipmentList)
+  for (const col of ['wifi_name TEXT', 'wifi_password TEXT']) {
+    try { db.exec(`ALTER TABLE equipment ADD COLUMN ${col}`); }
     catch { /* kolom bestaat al */ }
   }
 

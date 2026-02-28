@@ -1,10 +1,11 @@
 import { useState, useCallback } from 'react';
 import {
   Plug, TreePine, ChevronDown, Terminal, Calendar, Circle,
-  BatteryMedium, Satellite, Radio, Activity, Gauge, Cpu, Code,
-  Wifi, WifiOff, Bluetooth, Trash2, MapPin, Thermometer,
+  BatteryMedium, Satellite, Radio, Activity,
+  Wifi, Bluetooth, Trash2, Thermometer,
 } from 'lucide-react';
-import type { DeviceState, MqttLogEntry } from '../../types';
+import { useTranslation } from 'react-i18next';
+import type { DeviceState, MqttLogEntry, BleLogEntry } from '../../types';
 import { MowerMap } from '../map/MowerMap';
 import { MowerStatus } from '../status/MowerStatus';
 import { LogConsole } from '../log/LogConsole';
@@ -17,6 +18,7 @@ interface Props {
   devices: Map<string, DeviceState>;
   loading: boolean;
   logs: MqttLogEntry[];
+  bleLogs: BleLogEntry[];
 }
 
 /** Small stat pill used in the DeviceChip */
@@ -41,6 +43,7 @@ function DeviceChip({ device, expanded, onToggle, onDelete }: {
   onToggle: () => void;
   onDelete?: (sn: string) => void;
 }) {
+  const { t } = useTranslation();
   const s = device.sensors;
   const isCharger = device.deviceType === 'charger';
   const battery = parseInt(s.battery_power ?? s.battery_capacity ?? '0', 10);
@@ -73,7 +76,7 @@ function DeviceChip({ device, expanded, onToggle, onDelete }: {
           <TreePine className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />
         )}
         <span className="text-gray-300 font-medium">
-          {device.nickname ?? (isCharger ? 'Charger' : 'Mower')}
+          {device.nickname ?? (isCharger ? t('sidebar.charger') : t('sidebar.mower'))}
         </span>
         <Circle className={`w-2.5 h-2.5 fill-current ${device.online ? 'text-green-500' : 'text-gray-600'}`} />
 
@@ -85,7 +88,7 @@ function DeviceChip({ device, expanded, onToggle, onDelete }: {
             {battery > 0 && (
               <Stat icon={BatteryMedium} value={`${battery}%`}
                 color={battery > 20 ? 'text-green-400' : 'text-red-400'}
-                label={`Battery: ${battery}%`} />
+                label={t('devices.batteryLabel', { pct: battery })} />
             )}
 
             {/* Charger inline stats */}
@@ -93,12 +96,12 @@ function DeviceChip({ device, expanded, onToggle, onDelete }: {
               <>
                 <Stat icon={Satellite} value={gpsSats}
                   color={gpsSats > 0 ? 'text-sky-400' : 'text-gray-600'}
-                  label={`GPS Satellites: ${gpsSats}`} />
+                  label={t('devices.gpsSatellites', { sats: gpsSats })} />
                 <span className={`text-[10px] font-medium ${rtkOk ? 'text-green-400' : 'text-gray-600'}`}>
-                  RTK{rtkOk ? '✓' : '—'}
+                  RTK{rtkOk ? '\u2713' : '\u2014'}
                 </span>
                 {s.mower_error && parseInt(s.mower_error) > 0 && (
-                  <Stat icon={Radio} value={s.mower_error} color="text-orange-400" label="LoRa search count" />
+                  <Stat icon={Radio} value={s.mower_error} color="text-orange-400" label={t('devices.loraSearch')} />
                 )}
               </>
             )}
@@ -109,20 +112,20 @@ function DeviceChip({ device, expanded, onToggle, onDelete }: {
                 {mowerSats > 0 && (
                   <Stat icon={Satellite} value={mowerSats}
                     color={mowerSats >= 15 ? 'text-sky-400' : mowerSats >= 8 ? 'text-yellow-400' : 'text-red-400'}
-                    label={`RTK Satellites: ${mowerSats}`} />
+                    label={t('devices.rtkLabel', { sats: mowerSats })} />
                 )}
                 {wifiRssi !== 0 && (
                   <Stat icon={Wifi} value={`${wifiRssi}dB`}
                     color={Math.abs(wifiRssi) < 60 ? 'text-green-400' : Math.abs(wifiRssi) < 75 ? 'text-yellow-400' : 'text-red-400'}
-                    label={`WiFi RSSI: ${wifiRssi} dBm`} />
+                    label={t('devices.wifiLabel', { rssi: wifiRssi })} />
                 )}
                 {cpuTemp > 0 && (
-                  <Stat icon={Thermometer} value={`${cpuTemp}°`}
+                  <Stat icon={Thermometer} value={`${cpuTemp}\u00b0`}
                     color={cpuTemp < 50 ? 'text-gray-400' : cpuTemp < 65 ? 'text-yellow-400' : 'text-red-400'}
-                    label={`CPU: ${cpuTemp}°C`} />
+                    label={`CPU: ${cpuTemp}\u00b0C`} />
                 )}
                 {s.work_status && s.work_status !== '0' && (
-                  <Stat icon={Activity} value={s.work_status} color="text-emerald-400" label="Work status" />
+                  <Stat icon={Activity} value={s.work_status} color="text-emerald-400" label={t('devices.workStatus')} />
                 )}
                 {s.sw_version && (
                   <span className="text-gray-600 text-[10px] truncate max-w-[48px]">{s.sw_version}</span>
@@ -133,7 +136,7 @@ function DeviceChip({ device, expanded, onToggle, onDelete }: {
         )}
 
         {!hasSensorData && device.online && (
-          <span className="text-gray-600 text-[10px] italic">waiting for data...</span>
+          <span className="text-gray-600 text-[10px] italic">{t('devices.waitingForData')}</span>
         )}
 
         <ChevronDown className={`w-3 h-3 text-gray-500 transition-transform ${expanded ? 'rotate-180' : ''}`} />
@@ -157,7 +160,7 @@ function DeviceChip({ device, expanded, onToggle, onDelete }: {
               <button
                 onClick={(e) => { e.stopPropagation(); onDelete(device.sn); }}
                 className="text-gray-600 hover:text-red-400 transition-colors p-1 rounded hover:bg-gray-700"
-                title="Remove device from dashboard"
+                title={t('devices.removeTitle')}
               >
                 <Trash2 className="w-3 h-3" />
               </button>
@@ -167,15 +170,15 @@ function DeviceChip({ device, expanded, onToggle, onDelete }: {
           {/* Quick info row */}
           <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] mb-3 pb-2 border-b border-gray-700">
             <span className={device.online ? 'text-green-400' : 'text-gray-600'}>
-              {device.online ? 'Online' : 'Offline'}
+              {device.online ? t('common.online') : t('common.offline')}
             </span>
             {device.lastSeen && (
               <span className="text-gray-600">
-                Last seen: {new Date(device.lastSeen + 'Z').toLocaleString()}
+                {t('devices.lastSeen', { time: new Date(device.lastSeen + 'Z').toLocaleString() })}
               </span>
             )}
             {s.localization_state && (
-              <span className="text-gray-500">Loc: {s.localization_state}</span>
+              <span className="text-gray-500">{t('devices.locState', { state: s.localization_state })}</span>
             )}
             {s.battery_state && (
               <span className="text-gray-500">{s.battery_state}</span>
@@ -190,18 +193,19 @@ function DeviceChip({ device, expanded, onToggle, onDelete }: {
   );
 }
 
-export function DashboardPage({ devices, loading, logs }: Props) {
+export function DashboardPage({ devices, loading, logs, bleLogs }: Props) {
+  const { t } = useTranslation();
   const [logOpen, setLogOpen] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [pathDirPreview, setPathDirPreview] = useState<number | null>(null);
   const [expandedChip, setExpandedChip] = useState<string | null>(null);
 
   const handleDeleteDevice = useCallback(async (sn: string) => {
-    if (!confirm(`Remove ${sn} from dashboard?`)) return;
+    if (!confirm(t('devices.confirmRemove', { sn }))) return;
     await deleteDevice(sn);
     setExpandedChip(null);
     window.location.reload();
-  }, []);
+  }, [t]);
 
   const sorted = Array.from(devices.values()).sort((a, b) => {
     if (a.deviceType !== b.deviceType) return a.deviceType === 'charger' ? -1 : 1;
@@ -214,7 +218,7 @@ export function DashboardPage({ devices, loading, logs }: Props) {
   if (loading) {
     return (
       <div className="flex-1 flex items-center justify-center">
-        <p className="text-gray-500">Loading devices...</p>
+        <p className="text-gray-500">{t('devices.loading')}</p>
       </div>
     );
   }
@@ -226,7 +230,7 @@ export function DashboardPage({ devices, loading, logs }: Props) {
         {/* Left: device chips */}
         <div className="flex items-center gap-1">
           {sorted.length === 0 && (
-            <span className="text-xs text-gray-500">Waiting for devices...</span>
+            <span className="text-xs text-gray-500">{t('devices.waitingForDevices')}</span>
           )}
           {sorted.map(device => (
             <DeviceChip
@@ -256,7 +260,7 @@ export function DashboardPage({ devices, loading, logs }: Props) {
               }`}
             >
               <Calendar className="w-3.5 h-3.5" />
-              Schema
+              {t('devices.schedule')}
             </button>
           )}
         </div>
@@ -315,14 +319,20 @@ export function DashboardPage({ devices, loading, logs }: Props) {
         >
           <div className="flex items-center gap-2">
             <Terminal className="w-3.5 h-3.5 text-green-400" />
-            <span className="text-xs text-gray-400">MQTT Log</span>
+            <span className="text-xs text-gray-400">{t('log.title')}</span>
             <span className="text-[10px] text-gray-600 font-mono">{logs.length}</span>
+            {bleLogs.length > 0 && (
+              <>
+                <Bluetooth className="w-3 h-3 text-blue-400 ml-1" />
+                <span className="text-[10px] text-gray-600 font-mono">{bleLogs.length}</span>
+              </>
+            )}
           </div>
           <ChevronDown className={`w-3.5 h-3.5 text-gray-500 transition-transform ${logOpen ? 'rotate-180' : ''}`} />
         </button>
         {logOpen && (
           <div className="h-[calc(100%-2rem)] px-4 pb-2">
-            <LogConsole logs={logs} />
+            <LogConsole logs={logs} bleLogs={bleLogs} />
           </div>
         )}
       </div>

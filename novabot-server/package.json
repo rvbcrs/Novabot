@@ -11,6 +11,7 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
+    "@stoprocent/noble": "^2.3.16",
     "aedes": "^1.0.0",
     "bcrypt": "^5.1.1",
     "better-sqlite3": "^9.4.3",

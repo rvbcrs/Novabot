@@ -2,15 +2,11 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   Play, Pause, Square, PlugZap, ArrowUp, X, ChevronDown,
 } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import type { MapData } from '../../types';
 import { sendCommand, fetchMaps } from '../../api/client';
 
-const DIR_PRESETS = [
-  { label: 'N–Z', deg: 0 },
-  { label: 'NO–ZW', deg: 45 },
-  { label: 'O–W', deg: 90 },
-  { label: 'ZO–NW', deg: 135 },
-];
+const DIR_DEGREES = [0, 45, 90, 135];
 
 interface Props {
   sn: string;
@@ -19,6 +15,7 @@ interface Props {
 }
 
 export function MowerControls({ sn, online, onPathDirectionChange }: Props) {
+  const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   const [maps, setMaps] = useState<MapData[]>([]);
   const [cuttingHeight, setCuttingHeight] = useState(40);
@@ -26,6 +23,8 @@ export function MowerControls({ sn, online, onPathDirectionChange }: Props) {
   const [mapId, setMapId] = useState('');
   const [mapName, setMapName] = useState('');
   const [busy, setBusy] = useState(false);
+
+  const compassLabels = t('controls.compass', { returnObjects: true }) as string[];
 
   useEffect(() => {
     if (expanded && maps.length === 0) {
@@ -83,10 +82,10 @@ export function MowerControls({ sn, online, onPathDirectionChange }: Props) {
               ? 'bg-emerald-600 text-white'
               : 'bg-gray-700/60 text-gray-400 hover:text-white hover:bg-emerald-700'
           } disabled:opacity-30 disabled:cursor-not-allowed`}
-          title={online ? 'Start maaien' : 'Mower offline'}
+          title={online ? t('controls.startMowing') : t('controls.mowerOffline')}
         >
           <Play className="w-3.5 h-3.5" />
-          Start
+          {t('controls.start')}
           <ChevronDown className={`w-3 h-3 transition-transform ${expanded ? 'rotate-180' : ''}`} />
         </button>
 
@@ -94,7 +93,7 @@ export function MowerControls({ sn, online, onPathDirectionChange }: Props) {
           onClick={() => send({ pause_run: {} })}
           disabled={disabled}
           className={`${btnBase} bg-gray-700/60 text-yellow-400 hover:bg-yellow-700/40`}
-          title="Pauzeer"
+          title={t('controls.pause')}
         >
           <Pause className="w-3.5 h-3.5" />
         </button>
@@ -103,7 +102,7 @@ export function MowerControls({ sn, online, onPathDirectionChange }: Props) {
           onClick={() => send({ resume_run: {} })}
           disabled={disabled}
           className={`${btnBase} bg-gray-700/60 text-blue-400 hover:bg-blue-700/40`}
-          title="Hervat"
+          title={t('controls.resume')}
         >
           <Play className="w-3.5 h-3.5" />
         </button>
@@ -112,7 +111,7 @@ export function MowerControls({ sn, online, onPathDirectionChange }: Props) {
           onClick={() => send({ stop_run: {} })}
           disabled={disabled}
           className={`${btnBase} bg-gray-700/60 text-red-400 hover:bg-red-700/40`}
-          title="Stop"
+          title={t('controls.stop')}
         >
           <Square className="w-3.5 h-3.5" />
         </button>
@@ -121,7 +120,7 @@ export function MowerControls({ sn, online, onPathDirectionChange }: Props) {
           onClick={() => send({ go_to_charge: {} })}
           disabled={disabled}
           className={`${btnBase} bg-gray-700/60 text-yellow-300 hover:bg-yellow-700/40`}
-          title="Naar laadstation"
+          title={t('controls.goToCharge')}
         >
           <PlugZap className="w-3.5 h-3.5" />
         </button>
@@ -134,7 +133,7 @@ export function MowerControls({ sn, online, onPathDirectionChange }: Props) {
             {/* Map selection */}
             {maps.length > 0 && (
               <div>
-                <label className="text-[9px] text-gray-500 uppercase tracking-wide">Werkgebied</label>
+                <label className="text-[9px] text-gray-500 uppercase tracking-wide">{t('controls.workArea')}</label>
                 <select
                   value={mapId}
                   onChange={e => {
@@ -144,7 +143,7 @@ export function MowerControls({ sn, online, onPathDirectionChange }: Props) {
                   }}
                   className="mt-1 w-full text-xs bg-gray-900 border border-gray-700 rounded px-2 py-1.5 text-gray-200 focus:outline-none focus:border-blue-500"
                 >
-                  <option value="">Alle werkgebieden</option>
+                  <option value="">{t('controls.allWorkAreas')}</option>
                   {maps.map(m => (
                     <option key={m.mapId} value={m.mapId}>{m.mapName || m.mapId}</option>
                   ))}
@@ -155,7 +154,7 @@ export function MowerControls({ sn, online, onPathDirectionChange }: Props) {
             {/* Cutting height */}
             <div>
               <div className="flex items-center justify-between">
-                <label className="text-[9px] text-gray-500 uppercase tracking-wide">Maaihoogte</label>
+                <label className="text-[9px] text-gray-500 uppercase tracking-wide">{t('controls.cuttingHeight')}</label>
                 <span className="text-[11px] text-gray-300 font-mono">{(cuttingHeight / 10).toFixed(1)} cm</span>
               </div>
               <input
@@ -176,24 +175,24 @@ export function MowerControls({ sn, online, onPathDirectionChange }: Props) {
             {/* Path direction */}
             <div>
               <div className="flex items-center justify-between">
-                <label className="text-[9px] text-gray-500 uppercase tracking-wide">Maairichting</label>
+                <label className="text-[9px] text-gray-500 uppercase tracking-wide">{t('controls.pathDirection')}</label>
                 <span className="text-[11px] text-gray-300 font-mono inline-flex items-center gap-1">
                   <ArrowUp className="w-3 h-3 transition-transform" style={{ transform: `rotate(${pathDirection}deg)` }} />
                   {pathDirection}&deg;
                 </span>
               </div>
               <div className="flex gap-1 mt-1 mb-1">
-                {DIR_PRESETS.map(p => (
+                {DIR_DEGREES.map((deg, i) => (
                   <button
-                    key={p.deg}
-                    onClick={() => { setPathDirection(p.deg); onPathDirectionChange?.(p.deg); }}
+                    key={deg}
+                    onClick={() => { setPathDirection(deg); onPathDirectionChange?.(deg); }}
                     className={`flex-1 text-[10px] py-1 rounded transition-colors ${
-                      pathDirection === p.deg
+                      pathDirection === deg
                         ? 'bg-blue-600 text-white font-medium'
                         : 'bg-gray-900 text-gray-500 hover:text-gray-300 border border-gray-700'
                     }`}
                   >
-                    {p.label}
+                    {compassLabels[i]}
                   </button>
                 ))}
               </div>
@@ -219,7 +218,7 @@ export function MowerControls({ sn, online, onPathDirectionChange }: Props) {
                 className="flex-1 inline-flex items-center justify-center gap-1 text-xs px-2 py-1.5 rounded bg-gray-700 text-gray-400 hover:text-gray-200 transition-colors"
               >
                 <X className="w-3 h-3" />
-                Annuleer
+                {t('common.cancel')}
               </button>
               <button
                 onClick={handleStart}
@@ -227,7 +226,7 @@ export function MowerControls({ sn, online, onPathDirectionChange }: Props) {
                 className="flex-1 inline-flex items-center justify-center gap-1 text-xs px-2 py-2 rounded bg-emerald-600 text-white hover:bg-emerald-500 transition-colors font-medium disabled:opacity-40"
               >
                 <Play className="w-3.5 h-3.5" />
-                {busy ? 'Bezig...' : 'Start maaien'}
+                {busy ? t('controls.busy') : t('controls.startMowing')}
               </button>
             </div>
           </div>

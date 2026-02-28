@@ -3,7 +3,8 @@ import { v4 as uuidv4 } from 'uuid';
 import { db } from '../../db/database.js';
 import { authMiddleware } from '../../middleware/auth.js';
 import { AuthRequest, ok, fail, EquipmentRow } from '../../types/index.js';
-import { lookupMac } from '../../mqtt/broker.js';
+import { lookupMac, isDeviceOnline, forceDisconnectDevice } from '../../mqtt/broker.js';
+import { getBleMacForType } from '../../ble/bleLogger.js';
 
 export const equipmentRouter = Router();
 
@@ -25,27 +26,33 @@ function snToDeviceType(sn: string): string {
 function rowToCloudDto(r: EquipmentRow, email: string) {
   // mower_sn is altijd de primaire key (ook bij charger-only binding waar charger SN in mower_sn staat)
   const sn = r.mower_sn;
+  const deviceType = snToDeviceType(sn);
+  const isCharger = deviceType === 'charger';
+  // Cloud retourneert mower firmware voor mowers (v6.0.0/v5.7.1), charger firmware voor chargers (v0.3.6)
+  const sysVersion = isCharger
+    ? (r.charger_version ?? 'v0.3.6')
+    : (r.mower_version ?? 'v5.7.1');
   return {
     equipmentId:       r.id ?? 1,
     email:             email,
-    deviceType:        snToDeviceType(sn),
+    deviceType:        deviceType,
     sn:                sn,
     equipmentCode:     sn,
     equipmentName:     sn,
     equipmentNickName: r.equipment_nick_name ?? '',
     equipmentType:     snToEquipmentType(sn),
     userId:            0,
-    sysVersion:        r.charger_version ?? 'v0.3.6',
-    period:            '2029-02-22 00:00:00',
+    sysVersion:        sysVersion,
+    period:            isCharger ? '2029-02-22 00:00:00' : '2026-11-16 00:00:00',
     status:            1,
     activationTime:    r.created_at ?? new Date().toISOString().replace('T', ' ').slice(0, 19),
     importTime:        r.created_at ?? new Date().toISOString().replace('T', ' ').slice(0, 19),
     batteryState:      null,
     macAddress:        r.mac_address ?? null,
-    chargerAddress:    r.charger_address ? Number(r.charger_address) : (snToDeviceType(sn) === 'charger' ? 718 : null),
-    chargerChannel:    r.charger_channel ? Number(r.charger_channel) : (snToDeviceType(sn) === 'charger' ? 16 : null),
-    account:           snToDeviceType(sn) === 'charger' ? MQTT_ACCOUNT : null,
-    password:          snToDeviceType(sn) === 'charger' ? MQTT_PASSWORD : null,
+    chargerAddress:    isCharger ? (r.charger_address ? Number(r.charger_address) : 718) : null,
+    chargerChannel:    isCharger ? (r.charger_channel ? Number(r.charger_channel) : 16) : null,
+    account:           isCharger ? MQTT_ACCOUNT : null,
+    password:          isCharger ? MQTT_PASSWORD : null,
   };
 }
 
@@ -64,13 +71,17 @@ equipmentRouter.post('/userEquipmentList', authMiddleware, (req: AuthRequest, re
     pageList: rows.map(r => {
       const dto = rowToCloudDto(r, email);
       const mac = lookupMac(dto.sn);
+      // Cloud userEquipmentList bevat GEEN userId per entry (anders dan getEquipmentBySN).
+      // Verwijder userId uit de spread om exact te matchen.
+      const { userId: _userId, ...dtoWithoutUserId } = dto;
+      const isCharger = dto.deviceType === 'charger';
       return {
-        ...dto,
+        ...dtoWithoutUserId,
         macAddress: mac ?? dto.macAddress,
         videoTutorial: null,
-        wifiName: null,
-        wifiPassword: null,
-        model: 'N1000',
+        wifiName: r.wifi_name ?? null,
+        wifiPassword: r.wifi_password ?? null,
+        model: isCharger ? 'N1000' : 'N2000',
         photoId: null,
         photoType: null,
         photoDownload: null,
@@ -89,9 +100,41 @@ equipmentRouter.post('/getEquipmentBySN', authMiddleware, (req: AuthRequest, res
   const row = db.prepare('SELECT * FROM equipment WHERE mower_sn = ? OR charger_sn = ?')
     .get(sn, sn) as EquipmentRow | undefined;
 
-  const mac = lookupMac(sn);
+  // MAC lookup volgorde: MQTT CONNECT → DB equipment tabel → BLE scanner
+  let mac = lookupMac(sn);
   if (!mac) {
-    console.log(`[equipment] getEquipmentBySN: MAC nog niet bekend voor sn=${sn} — wacht op MQTT CONNECT van het apparaat`);
+    // Probeer BLE scanner: als het apparaat in de buurt is en adverteert
+    const bleType = snToDeviceType(sn) === 'charger' ? 'charger' as const : 'novabot' as const;
+    const bleMac = getBleMacForType(bleType);
+    if (bleMac) {
+      mac = bleMac;
+      console.log(`[equipment] getEquipmentBySN: sn=${sn} MAC gevonden via BLE scanner: ${bleMac}`);
+    } else {
+      console.log(`[equipment] getEquipmentBySN: MAC nog niet bekend voor sn=${sn} — wacht op MQTT CONNECT of BLE advertisement`);
+    }
+  }
+
+  // Mower MAC strategie:
+  // - Online + gebonden maaier: macAddress=null → skip BLE provisioning
+  //   Voorkomt dat BLE provisioning de werkende WiFi-config overschrijft
+  // - Online + unbound maaier: macAddress=echt MAC → BLE provisioning NODIG
+  //   User wil re-provisioneren (bijv. na unbind of cloud→local switch)
+  // - Offline maaier: macAddress=echt MAC → BLE provisioning
+  // Chargers: altijd echt MAC retourneren (ESP32 BLE provisioning is stabiel)
+  const isMower = snToDeviceType(sn) === 'mower';
+  const isBound = row?.user_id != null;
+  const skipBle = isMower && isDeviceOnline(sn) && isBound;
+  if (skipBle) {
+    console.log(`[equipment] getEquipmentBySN: mower ${sn} is ONLINE + BOUND → macAddress=null (skip BLE provisioning)`);
+  } else if (isMower && isDeviceOnline(sn)) {
+    // Maaier is online maar unbound → BLE re-provisioning gaat starten.
+    // Force-disconnect de maaier zodat mqtt_node in een schone staat komt.
+    // Zonder dit raakt mqtt_node "stuck" na de WiFi restart door BLE set_cfg_info
+    // en reconnect hij nooit (bekende firmware bug).
+    forceDisconnectDevice(sn);
+    console.log(`[equipment] getEquipmentBySN: mower ${sn} is ONLINE but UNBOUND → force-disconnect + macAddress=${mac ?? 'from-db'} (allow BLE re-provisioning)`);
+  } else if (isMower) {
+    console.log(`[equipment] getEquipmentBySN: mower ${sn} is OFFLINE → macAddress=${mac ?? 'from-db'} (allow BLE provisioning)`);
   }
 
   // Sla gevonden MAC persistent op in equipment tabel (zodat het bewaard blijft bij DB wipe van device_registry)
@@ -100,37 +143,101 @@ equipmentRouter.post('/getEquipmentBySN', authMiddleware, (req: AuthRequest, res
       .run(mac, sn, sn);
   }
 
-  if (row) {
-    const dto = rowToCloudDto(row, req.email ?? '');
-    res.json(ok({ ...dto, macAddress: mac ?? dto.macAddress }));
-  } else {
-    // Nieuw apparaat — geef cloud-achtig response terug zodat de app door kan naar BLE provisioning
-    const knownLora = db.prepare(`
-      SELECT charger_address, charger_channel FROM equipment_lora_cache WHERE sn = ?
-    `).get(sn) as { charger_address: string; charger_channel: string } | undefined;
+  // Haal numeriek user ID op (cloud retourneert dit als integer, bijv. 86).
+  // Cloud gedrag: userId=0 als apparaat unbound, userId=<owner_id> als gebonden.
+  // App checkt: als userId > 0 EN niet eigen ID → "already bound" toast.
+  const numericUserId = (db.prepare('SELECT id FROM users WHERE app_user_id = ?')
+    .get(req.userId) as { id: number } | undefined)?.id ?? 0;
 
-    const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
-    res.json(ok({
-      equipmentId:       0,
-      email:             req.email ?? '',
-      deviceType:        snToDeviceType(sn),
-      sn:                sn,
-      equipmentCode:     sn,
-      equipmentName:     sn,
-      equipmentType:     snToEquipmentType(sn),
-      userId:            0,
-      sysVersion:        'v0.3.6',
-      period:            '2029-02-22 00:00:00',
-      status:            1,
-      activationTime:    now,
-      importTime:        now,
-      batteryState:      null,
-      macAddress:        mac ?? null,
-      chargerAddress:    knownLora?.charger_address ? Number(knownLora.charger_address) : 718,
-      chargerChannel:    knownLora?.charger_channel ? Number(knownLora.charger_channel) : 16,
-      account:           MQTT_ACCOUNT,
-      password:          MQTT_PASSWORD,
-    }));
+  if (row) {
+    // Cloud retourneert email="" in getEquipmentBySN (niet het echte email adres)
+    const dto = rowToCloudDto(row, '');
+    // userId logica (matcht cloud gedrag):
+    // - user_id NULL (unbound): userId=0 → app doet BLE provisioning
+    // - user_id === huidige user: userId=numericUserId → app herkent eigen apparaat
+    // - user_id !== huidige user: userId=numericUserId → app toont "already bound"
+    const userId = row.user_id ? numericUserId : 0;
+    console.log(`[equipment] getEquipmentBySN: sn=${sn} row.user_id=${row.user_id ?? 'NULL'} req.userId=${req.userId} → userId=${userId}`);
+    res.json(ok({ ...dto, userId, macAddress: skipBle ? null : (mac ?? dto.macAddress) }));
+  } else {
+    // Geen equipment record gevonden.
+    // De echte cloud heeft ALTIJD een record (factory-geïmporteerd). Als wij equipmentId=0
+    // retourneren, denkt de app dat het een nieuw apparaat is en triggert volledige BLE
+    // provisioning — die de WiFi-configuratie van het apparaat overschrijft!
+    //
+    // Oplossing: als het apparaat bekend is (via MQTT of device_registry), maak automatisch
+    // een equipment record aan zodat de app equipmentId>0 ziet en BLE overslaat.
+    const knownDevice = db.prepare(
+      'SELECT sn, mac_address FROM device_registry WHERE sn = ?'
+    ).get(sn) as { sn: string; mac_address: string | null } | undefined;
+    const deviceIsKnown = knownDevice || isDeviceOnline(sn) || mac;
+
+    if (deviceIsKnown) {
+      // Auto-create equipment record — spiegelt cloud factory-import gedrag
+      const equipmentId = uuidv4();
+      const knownLora = db.prepare(
+        'SELECT charger_address, charger_channel FROM equipment_lora_cache WHERE sn = ?'
+      ).get(sn) as { charger_address: string; charger_channel: string } | undefined;
+
+      // Als het apparaat online is (MQTT verbonden), bind het direct aan de gebruiker.
+      // Zonder user_id verschijnt het niet in userEquipmentList en kan de app niet binden
+      // omdat skipBle=true macAddress=null retourneert → BLE scan mislukt → bindingEquipment
+      // wordt nooit aangeroepen → user_id blijft NULL.
+      const autoBindUserId = skipBle ? req.userId : null;
+
+      db.prepare(`
+        INSERT INTO equipment
+          (equipment_id, user_id, mower_sn, charger_sn, equipment_type_h, mac_address,
+           charger_address, charger_channel)
+        VALUES (?, ?, ?, NULL, ?, ?, ?, ?)
+      `).run(
+        equipmentId, autoBindUserId, sn, snToEquipmentType(sn),
+        mac ?? knownDevice?.mac_address ?? null,
+        knownLora?.charger_address ?? null,
+        knownLora?.charger_channel ?? null
+      );
+
+      console.log(`[equipment] getEquipmentBySN: auto-created record for known device sn=${sn} equipmentId=${equipmentId} autoBound=${!!autoBindUserId}`);
+
+      // Haal het net aangemaakte record op (voor correcte id/created_at)
+      const newRow = db.prepare('SELECT * FROM equipment WHERE equipment_id = ?')
+        .get(equipmentId) as EquipmentRow;
+      const dto = rowToCloudDto(newRow, req.email ?? '');
+      // Als auto-bound: userId=numericUserId zodat app het apparaat herkent als eigen
+      // Als niet auto-bound: userId=0 → app doet BLE provisioning
+      const autoUserId = autoBindUserId ? numericUserId : 0;
+      res.json(ok({ ...dto, userId: autoUserId, macAddress: skipBle ? null : (mac ?? dto.macAddress) }));
+    } else {
+      // Volledig onbekend apparaat — geef equipmentId=0 zodat app BLE provisioning doet
+      console.log(`[equipment] getEquipmentBySN: unknown device sn=${sn} — returning equipmentId=0 for BLE provisioning`);
+      const knownLora = db.prepare(`
+        SELECT charger_address, charger_channel FROM equipment_lora_cache WHERE sn = ?
+      `).get(sn) as { charger_address: string; charger_channel: string } | undefined;
+
+      const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
+      const isCharger = snToDeviceType(sn) === 'charger';
+      res.json(ok({
+        equipmentId:       0,
+        email:             req.email ?? '',
+        deviceType:        snToDeviceType(sn),
+        sn:                sn,
+        equipmentCode:     sn,
+        equipmentName:     sn,
+        equipmentType:     snToEquipmentType(sn),
+        userId:            0,
+        sysVersion:        isCharger ? 'v0.3.6' : 'v5.7.1',
+        period:            isCharger ? '2029-02-22 00:00:00' : '2026-11-16 00:00:00',
+        status:            1,
+        activationTime:    now,
+        importTime:        now,
+        batteryState:      null,
+        macAddress:        skipBle ? null : (mac ?? null),
+        chargerAddress:    isCharger ? (knownLora?.charger_address ? Number(knownLora.charger_address) : 718) : null,
+        chargerChannel:    isCharger ? (knownLora?.charger_channel ? Number(knownLora.charger_channel) : 16) : null,
+        account:           isCharger ? MQTT_ACCOUNT : null,
+        password:          isCharger ? MQTT_PASSWORD : null,
+      }));
+    }
   }
 });
 
@@ -161,20 +268,22 @@ equipmentRouter.post('/bindingEquipment', authMiddleware, (req: AuthRequest, res
   ).get(sn, sn) as { equipment_id: string; user_id: string } | undefined;
 
   if (existing) {
-    if (existing.user_id === req.userId) {
-      // Same user re-binding — update channel/nickname en return bestaand id
-      console.log(`[equipment] bindingEquipment: re-bind sn=${sn} by same user — updating`);
-      db.prepare(`
-        UPDATE equipment
-        SET charger_channel     = COALESCE(?, charger_channel),
-            charger_address     = COALESCE(?, charger_address),
-            equipment_nick_name = COALESCE(?, equipment_nick_name)
-        WHERE equipment_id = ?
-      `).run(chargerChannel, chargerAddress, nickName, existing.equipment_id);
-      res.json(ok());
+    // Lokale server: sta altijd rebinding toe (ongeacht vorige user_id).
+    // Cloud blokkeert dit voor multi-user, maar wij zijn single-household.
+    if (existing.user_id && existing.user_id !== req.userId) {
+      console.log(`[equipment] bindingEquipment: overschrijf binding sn=${sn} user_id=${existing.user_id} → ${req.userId}`);
     } else {
-      res.json(fail('The device has already been bound.', 400));
+      console.log(`[equipment] bindingEquipment: re-bind sn=${sn} user_id=${existing.user_id ?? 'NULL'} → ${req.userId}`);
     }
+    db.prepare(`
+      UPDATE equipment
+      SET user_id              = ?,
+          charger_channel     = COALESCE(?, charger_channel),
+          charger_address     = COALESCE(?, charger_address),
+          equipment_nick_name = COALESCE(?, equipment_nick_name)
+      WHERE equipment_id = ?
+    `).run(req.userId, chargerChannel, chargerAddress, nickName, existing.equipment_id);
+    res.json(ok(1));  // Cloud retourneert value:1 bij success
     return;
   }
 
@@ -190,7 +299,7 @@ equipmentRouter.post('/bindingEquipment', authMiddleware, (req: AuthRequest, res
          equipmentTypeH ?? null, nickName, chargerChannel, chargerAddress);
 
   console.log(`[equipment] bindingEquipment: sn=${sn} chargerSn=${chargerSn ?? '-'} channel=${chargerChannel} addr=${chargerAddress} equipmentId=${equipmentId}`);
-  res.json(ok());
+  res.json(ok(1));  // Cloud retourneert value:1 bij success
 });
 
 // POST /api/nova-user/equipment/unboundEquipment
@@ -208,21 +317,13 @@ equipmentRouter.post('/unboundEquipment', authMiddleware, (req: AuthRequest, res
 
   if (!equip) { res.json(ok()); return; }
 
-  // Cache LoRa-parameters vóór DELETE zodat ze beschikbaar blijven bij opnieuw toevoegen
-  if (equip.charger_address || equip.charger_channel) {
-    const cacheSn = equip.charger_sn ?? equip.mower_sn;
-    db.prepare(`
-      INSERT INTO equipment_lora_cache (sn, charger_address, charger_channel)
-      VALUES (?, ?, ?)
-      ON CONFLICT(sn) DO UPDATE SET
-        charger_address = COALESCE(excluded.charger_address, charger_address),
-        charger_channel = COALESCE(excluded.charger_channel, charger_channel)
-    `).run(cacheSn, equip.charger_address, equip.charger_channel);
-  }
-
-  db.prepare('DELETE FROM equipment WHERE id = ? AND user_id = ?')
-    .run(equip.id, req.userId);
-  console.log(`[equipment] unboundEquipment: sn=${sn ?? '?'} id=${equip.id} deleted`);
+  // Niet verwijderen — alleen user_id op NULL zetten (zoals de cloud doet).
+  // De cloud verwijdert apparaten nooit uit hun database (geïmporteerd bij fabriek).
+  // Als we DELETE doen, retourneert getEquipmentBySN een "nieuw apparaat" met equipmentId=0,
+  // waardoor de app volledige BLE provisioning triggert die de maaier's WiFi reset.
+  db.prepare('UPDATE equipment SET user_id = NULL WHERE id = ?')
+    .run(equip.id);
+  console.log(`[equipment] unboundEquipment: sn=${sn ?? '?'} id=${equip.id} unbound (user_id=NULL)`);
   res.json(ok());
 });
 

@@ -110,6 +110,25 @@ interface MapRow {
   updated_at: string;
 }
 
+// GET /api/dashboard/maps — alle kaarten (alle SNs)
+dashboardRouter.get('/maps', (_req: Request, res: Response) => {
+  const rows = db.prepare(
+    'SELECT * FROM maps ORDER BY updated_at DESC'
+  ).all() as MapRow[];
+
+  const maps = rows.map(r => ({
+    mapId: r.map_id,
+    mowerSn: r.mower_sn,
+    mapName: r.map_name,
+    mapType: r.map_type ?? 'work',
+    mapArea: r.map_area ? JSON.parse(r.map_area) : [],
+    mapMaxMin: r.map_max_min ? JSON.parse(r.map_max_min) : null,
+    createdAt: r.created_at,
+  }));
+
+  res.json({ maps });
+});
+
 // GET /api/dashboard/maps/:sn — kaarten voor een maaier (polygonen voor Leaflet)
 dashboardRouter.get('/maps/:sn', (req: Request, res: Response) => {
   const { sn } = req.params;
@@ -483,7 +502,8 @@ dashboardRouter.post('/command/:sn', (req: Request, res: Response) => {
     return;
   }
 
-  if (!isDeviceOnline(sn)) {
+  const { force } = req.query as { force?: string };
+  if (!force && !isDeviceOnline(sn)) {
     res.status(404).json({ error: 'Device is offline' });
     return;
   }

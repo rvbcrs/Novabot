@@ -35,17 +35,19 @@ function rowToDto(r: MapRow) {
 }
 
 // GET /api/nova-file-server/map/queryEquipmentMap?sn=
+// Cloud retourneert: { data: <zip-base64|null>, md5: <string|null>, machineExtendedField: <string|null> }
+// NIET een array van kaarten — dat formaat wordt alleen door ons dashboard gebruikt.
 mapRouter.get('/queryEquipmentMap', authMiddleware, (req: AuthRequest, res: Response) => {
   const sn = req.query.sn as string | undefined;
   if (!sn) { res.json(fail('sn required', 400)); return; }
 
-  // Verify this user owns the device
-  const equipment = db.prepare('SELECT equipment_id FROM equipment WHERE mower_sn = ? AND user_id = ?')
-    .get(sn, req.userId);
-  if (!equipment) { res.json(fail('Equipment not found', 404)); return; }
-
-  const rows = db.prepare('SELECT * FROM maps WHERE mower_sn = ? ORDER BY updated_at DESC').all(sn) as MapRow[];
-  res.json(ok(rows.map(rowToDto)));
+  // Cloud retourneert altijd success, ook als apparaat niet van user is
+  // (de data is dan gewoon null)
+  res.json(ok({
+    data: null,
+    md5: null,
+    machineExtendedField: null,
+  }));
 });
 
 // POST /api/nova-file-server/map/fragmentUploadEquipmentMap

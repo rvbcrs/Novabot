@@ -12,6 +12,32 @@ import { initMapSync, onMowerConnected, handleMapMessage } from './mapSync.js';
 
 const PROXY_MODE = process.env.PROXY_MODE ?? 'local';
 
+// ANSI kleuren voor terminal logging
+const C = {
+  reset:   '\x1b[0m',
+  green:   '\x1b[32m',   // maaier (LFIN)
+  yellow:  '\x1b[33m',   // charger (LFIC / ESP32_)
+  blue:    '\x1b[34m',   // app
+  dim:     '\x1b[2m',    // gedimde tekst
+  red:     '\x1b[31m',   // errors
+  cyan:    '\x1b[36m',   // system events
+};
+
+/** Bepaal kleur op basis van clientId / SN */
+function clientColor(clientId: string): string {
+  if (/^[0-9a-f]{8}-/i.test(clientId) || clientId.includes('@') || clientId.startsWith('eyJ')) return C.blue;
+  if (clientId.startsWith('LFIN') || clientId.includes('LFIN')) return C.green;
+  if (clientId.startsWith('LFIC') || clientId.startsWith('ESP32_') || clientId.includes('LFIC')) return C.yellow;
+  return C.reset;
+}
+
+/** Kleur op basis van topic SN */
+function topicColor(topic: string): string {
+  if (topic.includes('LFIN')) return C.green;
+  if (topic.includes('LFIC')) return C.yellow;
+  return C.reset;
+}
+
 // Matcht standaard MAC-notaties: AA:BB:CC:DD:EE:FF of AA-BB-CC-DD-EE-FF
 const MAC_SEP_RE  = /([0-9A-Fa-f]{2}[:\-]){5}[0-9A-Fa-f]{2}/;
 // Matcht 12 aaneengesloten hex-tekens (geen separator), bijv. AABBCCDDEEFF
@@ -86,7 +112,8 @@ function isAppClient(clientId: string): boolean {
 /**
  * Bereken BLE MAC-adres vanuit WiFi STA MAC.
  * ESP32 wijst MACs opeenvolgend toe: STA = base, AP = base+1, BLE = base+2.
- * Horizon X3 maaier gebruikt AP6212 met hetzelfde patroon.
+ * Dit geldt ALLEEN voor ESP32 devices (chargers).
+ * De maaier (Horizon X3 + Broadcom BCM43438/AP6212) volgt dit patroon NIET.
  */
 function wifiStaToBle(staMac: string): string {
   const bytes = staMac.split(':').map(b => parseInt(b, 16));
@@ -139,10 +166,22 @@ function lookupArpMac(ip: string): Promise<string | null> {
 /**
  * Auto-detect BLE MAC via ARP lookup op het remote IP van een MQTT-verbinding.
  * Slaat WiFi STA MAC + berekend BLE MAC op in device_registry.
+ *
+ * De ESP32 BLE=STA+2 formule werkt ALLEEN voor chargers (LFIC*).
+ * Maaiers (LFIN*) gebruiken een Broadcom BCM43438 (AP6212) WiFi-chip die
+ * een ander MAC-patroon heeft. Bovendien kan de maaier een gerandomiseerd
+ * WiFi STA MAC gebruiken (locally-administered bit set). ARP-detectie wordt
+ * daarom overgeslagen voor maaiers — hun BLE MAC moet via BLE provisioning
+ * of handmatig (admin API) worden geregistreerd, net als in de cloud (factory import).
  */
 async function autoDetectBleMac(sn: string, remoteIp: string): Promise<void> {
   // Skip loopback / IPv6 / al bekende MACs
   if (!remoteIp || remoteIp === '127.0.0.1' || remoteIp === '::1') return;
+
+  // Alleen ESP32 devices (chargers) ondersteunen de STA+2 formule.
+  // Maaiers (LFIN*) hebben een ander WiFi-chipset — ARP → BLE werkt daar niet.
+  if (!sn.startsWith('LFIC')) return;
+
   const cleanIp = remoteIp.replace(/^::ffff:/, ''); // IPv4-mapped IPv6 → IPv4
 
   // Check of we al een BLE MAC hebben voor dit SN
@@ -155,12 +194,12 @@ async function autoDetectBleMac(sn: string, remoteIp: string): Promise<void> {
 
   const wifiMac = await lookupArpMac(cleanIp);
   if (!wifiMac) {
-    console.log(`[ARP] Kon WiFi MAC niet vinden voor ${sn} (IP: ${cleanIp})`);
+    console.log(`${C.dim}[ARP] Kon WiFi MAC niet vinden voor ${sn} (IP: ${cleanIp})${C.reset}`);
     return;
   }
 
   const bleMac = wifiStaToBle(wifiMac);
-  console.log(`[ARP] Auto-detected MAC voor ${sn}: WiFi STA=${wifiMac} → BLE=${bleMac} (IP: ${cleanIp})`);
+  console.log(`${C.cyan}[ARP] Auto-detected MAC voor ${sn}: WiFi STA=${wifiMac} → BLE=${bleMac}${C.reset}`);
 
   // Sla BLE MAC op in device_registry (update bestaand record)
   db.prepare(`
@@ -231,7 +270,7 @@ const rawSocketBySn = new Map<string, net.Socket>();
 export function writeRawPublish(sn: string, payload: Buffer, qos: 0 | 1 = 0): boolean {
   const socket = rawSocketBySn.get(sn);
   if (!socket || socket.destroyed) {
-    console.error(`[RAW-TCP] Geen actieve socket voor ${sn}`);
+    console.error(`${C.red}[MQTT] Geen actieve socket voor ${sn}${C.reset}`);
     return false;
   }
   const topic = `Dart/Send_mqtt/${sn}`;
@@ -267,15 +306,14 @@ export function writeRawPublish(sn: string, payload: Buffer, qos: 0 | 1 = 0): bo
   parts.push(payload);
 
   const packet = Buffer.concat(parts);
-  console.log(`[RAW-TCP] Schrijf ${packet.length}B MQTT PUBLISH (QoS ${qos}) naar ${sn} socket`);
-  console.log(`[RAW-TCP]   Fixed: 0x${fixedHeader.toString(16)}, RemLen: ${remainingLen}, Topic: ${topic} (${topicBuf.length}B), Payload: ${payload.length}B`);
-  console.log(`[RAW-TCP]   Hex (first 32): ${packet.subarray(0, 32).toString('hex')}`);
+  const sc = sn.startsWith('LFIN') ? C.green : C.yellow;
+  console.log(`${sc}[MQTT] RAW PUBLISH ${payload.length}B → ${sn} (QoS ${qos})${C.reset}`);
 
   try {
     socket.write(packet);
     return true;
   } catch (err) {
-    console.error(`[RAW-TCP] Write failed:`, err);
+    console.error(`${C.red}[MQTT] RAW PUBLISH failed: ${(err as Error).message}${C.reset}`);
     return false;
   }
 }
@@ -284,6 +322,19 @@ export function writeRawPublish(sn: string, payload: Buffer, qos: 0 | 1 = 0): bo
 export function isDeviceOnline(sn: string): boolean {
   const clients = onlineBySn.get(sn);
   return clients !== undefined && clients.size > 0;
+}
+
+/**
+ * Forceer disconnect van een apparaat — sluit de TCP socket.
+ * Nodig wanneer de maaier een stale MQTT connectie heeft en een frisse
+ * reconnect nodig heeft (bijv. vóór BLE re-provisioning).
+ */
+export function forceDisconnectDevice(sn: string): boolean {
+  const socket = rawSocketBySn.get(sn);
+  if (!socket || socket.destroyed) return false;
+  console.log(`[MQTT] Force-disconnect ${sn} — socket sluiten voor schone reconnect`);
+  socket.destroy();
+  return true;
 }
 
 export async function startMqttBroker(): Promise<void> {
@@ -319,10 +370,11 @@ export async function startMqttBroker(): Promise<void> {
       || user.startsWith('app:');
     const clientType = isAppClient ? 'APP' : 'DEV';
 
+    const cc = isAppClient ? C.blue : (clientId.startsWith('LFIN') || clientId.includes('LFIN') ? C.green : C.yellow);
     if (isReconnect) {
-      console.log(`[MQTT] RECONNECT ${clientType} clientId="${clientId}" sn=${sn ?? '?'}`);
+      console.log(`${cc}[MQTT] RECONNECT ${clientType} clientId="${clientId}" sn=${sn ?? '?'}${C.reset}`);
     } else {
-      console.log(`[MQTT] CONNECT   ${clientType} clientId="${clientId}" sn=${sn ?? '?'} mac=${mac ?? '?'} user="${user}"`);
+      console.log(`${cc}[MQTT] CONNECT   ${clientType} clientId="${clientId}" sn=${sn ?? '?'} mac=${mac ?? '?'} user="${user}"${C.reset}`);
     }
 
     pushMqttLog({
@@ -355,7 +407,7 @@ export async function startMqttBroker(): Promise<void> {
   };
 
   broker.on('clientError', (client: Client, err: Error) => {
-    console.error(`[MQTT] ERROR    clientId="${client.id}" err=${err.message}`);
+    console.error(`${C.red}[MQTT] ERROR    clientId="${client.id}" err=${err.message}${C.reset}`);
     pushMqttLog({
       ts: Date.now(), type: 'error', clientId: client.id, clientType: '?', sn: null,
       direction: '', topic: '', payload: err.message, encrypted: false,
@@ -363,7 +415,7 @@ export async function startMqttBroker(): Promise<void> {
   });
 
   (broker as any).on('connectionError', (client: Client, err: Error) => {
-    console.error(`[MQTT] CONN-ERR clientId="${client?.id ?? '?'}" err=${err.message}`);
+    console.error(`${C.red}[MQTT] CONN-ERR clientId="${client?.id ?? '?'}" err=${err.message}${C.reset}`);
   });
 
   broker.on('clientDisconnect', (client: Client) => {
@@ -379,9 +431,9 @@ export async function startMqttBroker(): Promise<void> {
         publishDeviceOffline(disconnSn);
         emitDeviceOffline(disconnSn);
       }
-      console.log(`[MQTT] DISCONNECT clientId="${client.id}" sn=${disconnSn}`);
+      console.log(`${clientColor(client.id)}[MQTT] DISCONNECT clientId="${client.id}" sn=${disconnSn}${C.reset}`);
     } else {
-      console.log(`[MQTT] DISCONNECT clientId="${client.id}"`);
+      console.log(`${C.dim}[MQTT] DISCONNECT clientId="${client.id}"${C.reset}`);
     }
     pushMqttLog({
       ts: Date.now(), type: 'disconnect', clientId: client.id, clientType: '?', sn: disconnSn,
@@ -391,7 +443,7 @@ export async function startMqttBroker(): Promise<void> {
 
   broker.on('subscribe', (subscriptions, client: Client) => {
     const topics = subscriptions.map(s => s.topic).join(', ');
-    console.log(`[MQTT] SUBSCRIBE ${client.id} -> [${topics}]`);
+    console.log(`${clientColor(client.id)}[MQTT] SUBSCRIBE ${client.id} -> [${topics}]${C.reset}`);
     const subSn = extractSn(client.id) ?? extractSn(topics);
     pushMqttLog({
       ts: Date.now(), type: 'subscribe', clientId: client.id, clientType: '?', sn: subSn,
@@ -421,6 +473,9 @@ export async function startMqttBroker(): Promise<void> {
     // Vlag om herhaalde up_status_info te onderdrukken in console (niet in pushMqttLog)
     let suppressLog = false;
 
+    // Bepaal kleur: app (blauw) of apparaat (groen/geel op basis van topic/clientId)
+    const pubColor = /^[0-9a-f]{8}-/i.test(client.id) ? C.blue : topicColor(packet.topic) || clientColor(client.id);
+
     if (encryptSn) {
       const decrypted = tryDecrypt(payloadBuf, encryptSn);
       if (decrypted) {
@@ -431,9 +486,9 @@ export async function startMqttBroker(): Promise<void> {
         if (decrypted.includes('"up_status_info"')) {
           statusLogCounter++;
           if (statusLogCounter % 30 !== 1) suppressLog = true;
-          else console.log(`[MQTT] PUBLISH  ${client.id} ${direction} ${packet.topic}  ${tag}[AES] ${decrypted}  (×30 suppressed)`);
+          else console.log(`${pubColor}[MQTT] PUBLISH  ${client.id} ${direction} ${packet.topic}  ${tag}[AES] ${decrypted}  (×30 suppressed)${C.reset}`);
         } else {
-          console.log(`[MQTT] PUBLISH  ${client.id} ${direction} ${packet.topic}  ${tag}[AES] ${decrypted}`);
+          console.log(`${pubColor}[MQTT] PUBLISH  ${client.id} ${direction} ${packet.topic}  ${tag}[AES] ${decrypted}${C.reset}`);
         }
       } else {
         // Niet ontsleutelbaar — toon als plain text als het al JSON is, anders als encrypted
@@ -441,9 +496,9 @@ export async function startMqttBroker(): Promise<void> {
         if (plain.startsWith('{') || plain.startsWith('[')) {
           const tag = tagForPayload(plain);
           logPayload = plain;
-          console.log(`[MQTT] PUBLISH  ${client.id} ${direction} ${packet.topic}  ${tag}${logPayload}`);
+          console.log(`${pubColor}[MQTT] PUBLISH  ${client.id} ${direction} ${packet.topic}  ${tag}${logPayload}${C.reset}`);
         } else {
-          console.log(`[MQTT] PUBLISH  ${client.id} ${direction} ${packet.topic}  [encrypted ${payloadBuf.length}B]`);
+          console.log(`${pubColor}[MQTT] PUBLISH  ${client.id} ${direction} ${packet.topic}  [encrypted ${payloadBuf.length}B]${C.reset}`);
           logPayload = `[encrypted ${payloadBuf.length}B]`;
           isEncrypted = true;
         }
@@ -455,9 +510,9 @@ export async function startMqttBroker(): Promise<void> {
       if (logPayload.includes('"up_status_info"')) {
         statusLogCounter++;
         if (statusLogCounter % 30 !== 1) suppressLog = true;
-        else console.log(`[MQTT] PUBLISH  ${client.id} ${direction} ${packet.topic}  ${tag}${logPayload}  (×30 suppressed)`);
+        else console.log(`${pubColor}[MQTT] PUBLISH  ${client.id} ${direction} ${packet.topic}  ${tag}${logPayload}  (×30 suppressed)${C.reset}`);
       } else {
-        console.log(`[MQTT] PUBLISH  ${client.id} ${direction} ${packet.topic}  ${tag}${logPayload}`);
+        console.log(`${pubColor}[MQTT] PUBLISH  ${client.id} ${direction} ${packet.topic}  ${tag}${logPayload}${C.reset}`);
       }
     }
 
@@ -522,6 +577,7 @@ export async function startMqttBroker(): Promise<void> {
   startHomeAssistantBridge();
 
   const server = net.createServer({ allowHalfOpen: true }, (socket) => {
+    console.log(`${C.dim}[TCP] Nieuwe verbinding van ${socket.remoteAddress}:${socket.remotePort}${C.reset}`);
     // Workaround: ESP32-charger stuurt TCP FIN direct na MQTT CONNECT (half-close).
     // Fix: schrijf CONNACK synchroon en onderschep destroy() → end() zodat
     // de write-buffer geflushed wordt vóórdat de socket gesloten wordt.
@@ -548,11 +604,20 @@ export async function startMqttBroker(): Promise<void> {
           const connectStr = chunk.toString('utf8');
           const snMatch = connectStr.match(/LFI[A-Z]\d{10,}/);
           if (snMatch) {
-            rawSocketBySn.set(snMatch[0], socket);
-            console.log(`[RAW-TCP] Socket opgeslagen voor ${snMatch[0]} (${socket.remoteAddress}:${socket.remotePort})`);
+            // Check of dit een app-client is (username bevat "app:" prefix vóór het SN).
+            // App-clients moeten NIET in rawSocketBySn (die is voor directe device sockets)
+            // en ARP op een app-client IP (bijv. iPhone) geeft een verkeerd MAC.
+            const isApp = connectStr.includes(`app:${snMatch[0]}`);
 
-            // Auto-detect BLE MAC via ARP (betrouwbaarder dan via client.conn in aedes)
-            if (socket.remoteAddress) {
+            if (!isApp) {
+              rawSocketBySn.set(snMatch[0], socket);
+            }
+            const sc = snMatch[0].startsWith('LFIN') ? C.green : C.yellow;
+            const label = isApp ? 'APP' : '';
+            console.log(`${sc}[MQTT] TCP socket ${snMatch[0]}${label ? ` (${label})` : ''} (${socket.remoteAddress})${C.reset}`);
+
+            // Auto-detect BLE MAC via ARP — alleen voor DEVICE connecties (niet app-clients)
+            if (!isApp && socket.remoteAddress) {
               autoDetectBleMac(snMatch[0], socket.remoteAddress).catch(() => {});
             }
 
@@ -571,14 +636,34 @@ export async function startMqttBroker(): Promise<void> {
                                 type === 0xD0 ? 'PINGRESP' :
                                 type === 0xE0 ? 'DISCONNECT' :
                                 `0x${type.toString(16)}`;
-                console.log(`[RAW-IN] ${deviceSn} ← ${inBuf.length}B ${typeStr} hex=${inBuf.subarray(0, Math.min(32, inBuf.length)).toString('hex')}`);
+                const rc = deviceSn.startsWith('LFIN') ? C.green : C.yellow;
+                console.log(`${rc}[RAW-IN] ${deviceSn} ← ${inBuf.length}B ${typeStr} (from ${socket.remoteAddress}:${socket.remotePort})${C.reset}`);
+
+                // Safety net: als we data ontvangen maar device niet als online gemarkeerd is,
+                // herstel de online status (kan out-of-sync raken na server restart).
+                // Alleen voor echte device-connecties — app-clients mogen de online status NIET beïnvloeden,
+                // anders denkt getEquipmentBySN dat de maaier online is terwijl alleen de app verbonden is.
+                if (!isApp && !isDeviceOnline(deviceSn)) {
+                  if (!onlineBySn.has(deviceSn)) onlineBySn.set(deviceSn, new Set());
+                  onlineBySn.get(deviceSn)!.add(deviceSn);
+                  publishDeviceOnline(deviceSn);
+                  emitDeviceOnline(deviceSn);
+                  console.log(`${rc}[MQTT] Online status hersteld voor ${deviceSn} (via RAW-IN)${C.reset}`);
+                }
               }
               return origEmit(event, ...args);
             };
 
             socket.once('close', () => {
               rawSocketBySn.delete(deviceSn);
-              console.log(`[RAW-TCP] Socket verwijderd voor ${deviceSn}`);
+              // Verwijder online status bij socket close — alleen voor echte device-connecties
+              if (!isApp) {
+                onlineBySn.get(deviceSn)?.delete(deviceSn);
+                if (!isDeviceOnline(deviceSn)) {
+                  publishDeviceOffline(deviceSn);
+                  emitDeviceOffline(deviceSn);
+                }
+              }
             });
           }
         } catch { /* SN extractie mislukt, niet erg */ }
@@ -608,9 +693,6 @@ export async function startMqttBroker(): Promise<void> {
             // Deels opgeslokt — rest doorgeven
             data = buf.subarray(toSwallow);
           }
-          // Debug: log writes naar device socket
-          const dbgBuf = Buffer.isBuffer(data) ? data : Buffer.from(data as any);
-          console.log(`[MQTT-DBG] WRITE ${dbgBuf.length}B type=0x${dbgBuf[0].toString(16)} hex=${dbgBuf.subarray(0, Math.min(16, dbgBuf.length)).toString('hex')}`);
           return (origWrite as Function)(data, ...rest);
         };
       }
@@ -620,7 +702,7 @@ export async function startMqttBroker(): Promise<void> {
     (broker.handle as (socket: net.Socket) => void)(socket);
   });
   server.listen(1883, '0.0.0.0', () => {
-    console.log('[MQTT] Broker luistert op port 1883');
+    console.log(`${C.cyan}[MQTT] Broker luistert op port 1883${C.reset}`);
   });
 }
 
@@ -628,15 +710,26 @@ export async function startMqttBroker(): Promise<void> {
 // Zoekt eerst in device_registry (alleen echte apparaat-entries, geen app-clients),
 // en valt daarna terug op de equipment tabel (handmatig of eerder geregistreerd).
 export function lookupMac(sn: string): string | null {
-  // 1. Zoek in device_registry (app-clients worden al gefilterd door extractMac)
+  // 1. Zoek in device_registry — prefer echte device entries (mqtt_username = SN)
+  //    boven app-client entries (mqtt_username = 'app:SN') die een ander MAC hebben
+  const devRow = db.prepare(`
+    SELECT mac_address FROM device_registry
+    WHERE sn = ? AND mac_address IS NOT NULL AND mqtt_username = ?
+    ORDER BY last_seen DESC LIMIT 1
+  `).get(sn, sn) as { mac_address: string } | undefined;
+  if (devRow) return devRow.mac_address;
+
+  // 2. Fallback: elke device_registry entry BEHALVE app-clients
+  //    App-clients (mqtt_username = 'app:SN') hadden eerder een verkeerd MAC
+  //    van ARP auto-detectie (iPhone MAC i.p.v. maaier MAC).
   const regRow = db.prepare(`
     SELECT mac_address FROM device_registry
-    WHERE sn = ? AND mac_address IS NOT NULL
+    WHERE sn = ? AND mac_address IS NOT NULL AND mqtt_username NOT LIKE 'app:%'
     ORDER BY last_seen DESC LIMIT 1
   `).get(sn) as { mac_address: string } | undefined;
   if (regRow) return regRow.mac_address;
 
-  // 2. Fallback: zoek in equipment tabel (gezet via admin API of eerdere binding)
+  // 3. Fallback: zoek in equipment tabel (gezet via admin API of eerdere binding)
   const eqRow = db.prepare(`
     SELECT mac_address FROM equipment
     WHERE (mower_sn = ? OR charger_sn = ?) AND mac_address IS NOT NULL

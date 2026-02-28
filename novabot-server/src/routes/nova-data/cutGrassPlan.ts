@@ -35,6 +35,13 @@ cutGrassPlanRouter.get('/queryCutGrassPlan', authMiddleware, (req: AuthRequest, 
 
 // POST /api/nova-data/cutGrassPlan/queryRecentCutGrassPlan
 // App stuurt: { sn, currentTime, week }
+// Cloud retourneert ALTIJD een object met null-velden als er geen plan is (nooit null zelf).
+const EMPTY_PLAN = {
+  id: null, sn: null, timezone: null, week: null,
+  startTime: null, endTime: null, workTime: null, workDay: null,
+  area: null, areaFileAlias: null, cutGrassHeight: null,
+  repeatType: null, associationId: null, weekArray: null, times: null,
+};
 cutGrassPlanRouter.post('/queryRecentCutGrassPlan', authMiddleware, (req: AuthRequest, res: Response) => {
   const { sn } = req.body as { sn?: string };
   const row = sn
@@ -43,7 +50,7 @@ cutGrassPlanRouter.post('/queryRecentCutGrassPlan', authMiddleware, (req: AuthRe
         WHERE p.user_id = ? AND (e.mower_sn = ? OR e.charger_sn = ?)
         ORDER BY p.updated_at DESC LIMIT 1`).get(req.userId, sn, sn)
     : db.prepare('SELECT * FROM cut_grass_plans WHERE user_id = ? ORDER BY updated_at DESC LIMIT 1').get(req.userId);
-  res.json(ok(row ? rowToDto(row as PlanRow) : null));
+  res.json(ok(row ? rowToDto(row as PlanRow) : EMPTY_PLAN));
 });
 
 // GET variant (backwards compat)
@@ -52,7 +59,7 @@ cutGrassPlanRouter.get('/queryRecentCutGrassPlan', authMiddleware, (req: AuthReq
   const row = equipmentId
     ? db.prepare('SELECT * FROM cut_grass_plans WHERE user_id = ? AND equipment_id = ? ORDER BY updated_at DESC LIMIT 1').get(req.userId, equipmentId)
     : db.prepare('SELECT * FROM cut_grass_plans WHERE user_id = ? ORDER BY updated_at DESC LIMIT 1').get(req.userId);
-  res.json(ok(row ? rowToDto(row as PlanRow) : null));
+  res.json(ok(row ? rowToDto(row as PlanRow) : EMPTY_PLAN));
 });
 
 // POST /api/nova-data/appManage/saveCutGrassPlan

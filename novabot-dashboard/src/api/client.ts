@@ -2,10 +2,25 @@ import type { DeviceState, SensorDef, MapData, TrailPoint, MapCalibration, Sched
 
 const BASE = '/api/dashboard';
 
+async function get(url: string): Promise<Response> {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  return res;
+}
+
+async function post(url: string, body?: unknown): Promise<Response> {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: body != null ? { 'Content-Type': 'application/json' } : undefined,
+    body: body != null ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  return res;
+}
+
 export async function fetchDevices(): Promise<DeviceState[]> {
-  const res = await fetch(`${BASE}/devices`);
-  const data = await res.json();
-  return data.devices.map((d: DeviceState) => ({
+  const data = await (await get(`${BASE}/devices`)).json();
+  return (data.devices ?? []).map((d: DeviceState) => ({
     ...d,
     lastUpdate: Date.now(),
   }));
@@ -16,21 +31,23 @@ export async function deleteDevice(sn: string): Promise<void> {
 }
 
 export async function fetchSensors(): Promise<SensorDef[]> {
-  const res = await fetch(`${BASE}/sensors`);
-  const data = await res.json();
-  return data.sensors;
+  const data = await (await get(`${BASE}/sensors`)).json();
+  return data.sensors ?? [];
 }
 
 export async function fetchMaps(sn: string): Promise<MapData[]> {
-  const res = await fetch(`${BASE}/maps/${encodeURIComponent(sn)}`);
-  const data = await res.json();
-  return data.maps;
+  const data = await (await get(`${BASE}/maps/${encodeURIComponent(sn)}`)).json();
+  return data.maps ?? [];
+}
+
+export async function fetchAllMaps(): Promise<MapData[]> {
+  const data = await (await get(`${BASE}/maps`)).json();
+  return data.maps ?? [];
 }
 
 export async function fetchTrail(sn: string): Promise<TrailPoint[]> {
-  const res = await fetch(`${BASE}/trail/${encodeURIComponent(sn)}`);
-  const data = await res.json();
-  return data.trail;
+  const data = await (await get(`${BASE}/trail/${encodeURIComponent(sn)}`)).json();
+  return data.trail ?? [];
 }
 
 export async function clearTrail(sn: string): Promise<void> {
@@ -38,8 +55,7 @@ export async function clearTrail(sn: string): Promise<void> {
 }
 
 export async function fetchCalibration(sn: string): Promise<MapCalibration> {
-  const res = await fetch(`${BASE}/calibration/${encodeURIComponent(sn)}`);
-  const data = await res.json();
+  const data = await (await get(`${BASE}/calibration/${encodeURIComponent(sn)}`)).json();
   return data.calibration;
 }
 
@@ -68,12 +84,7 @@ export async function updateMapArea(sn: string, mapId: string, mapArea: Array<{ 
 }
 
 export async function createMap(sn: string, mapName: string, mapArea: Array<{ lat: number; lng: number }>, mapType?: string): Promise<MapData> {
-  const res = await fetch(`${BASE}/maps/${encodeURIComponent(sn)}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ mapName, mapArea, mapType }),
-  });
-  const data = await res.json();
+  const data = await (await post(`${BASE}/maps/${encodeURIComponent(sn)}`, { mapName, mapArea, mapType })).json();
   return data.map;
 }
 
@@ -86,40 +97,27 @@ export async function deleteMap(sn: string, mapId: string): Promise<void> {
 // ── MQTT Commands ──────────────────────────────────────────────
 
 export async function sendCommand(sn: string, command: Record<string, unknown>): Promise<void> {
-  await fetch(`${BASE}/command/${encodeURIComponent(sn)}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ command }),
-  });
+  await post(`${BASE}/command/${encodeURIComponent(sn)}`, { command });
 }
 
 // ── Map Export ──────────────────────────────────────────────────
 
 export async function exportMaps(sn: string, chargingStation: { lat: number; lng: number }, chargingOrientation?: number): Promise<string> {
-  const res = await fetch(`${BASE}/maps/${encodeURIComponent(sn)}/export-zip`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ chargingStation, chargingOrientation: chargingOrientation ?? 0 }),
-  });
-  const data = await res.json();
+  const data = await (await post(`${BASE}/maps/${encodeURIComponent(sn)}/export-zip`, {
+    chargingStation, chargingOrientation: chargingOrientation ?? 0,
+  })).json();
   return data.downloadUrl;
 }
 
 // ── Schedules ──────────────────────────────────────────────────
 
 export async function fetchSchedules(sn: string): Promise<Schedule[]> {
-  const res = await fetch(`${BASE}/schedules/${encodeURIComponent(sn)}`);
-  const data = await res.json();
-  return data.schedules;
+  const data = await (await get(`${BASE}/schedules/${encodeURIComponent(sn)}`)).json();
+  return data.schedules ?? [];
 }
 
 export async function createSchedule(sn: string, schedule: Omit<Schedule, 'scheduleId' | 'mowerSn' | 'createdAt' | 'updatedAt'>): Promise<Schedule> {
-  const res = await fetch(`${BASE}/schedules/${encodeURIComponent(sn)}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(schedule),
-  });
-  const data = await res.json();
+  const data = await (await post(`${BASE}/schedules/${encodeURIComponent(sn)}`, schedule)).json();
   return data.schedule;
 }
 
@@ -129,6 +127,7 @@ export async function updateSchedule(sn: string, scheduleId: string, updates: Pa
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(updates),
   });
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
   const data = await res.json();
   return data.schedule;
 }
@@ -140,7 +139,23 @@ export async function deleteSchedule(sn: string, scheduleId: string): Promise<vo
 }
 
 export async function sendSchedule(sn: string, scheduleId: string): Promise<void> {
-  await fetch(`${BASE}/schedules/${encodeURIComponent(sn)}/${encodeURIComponent(scheduleId)}/send`, {
-    method: 'POST',
-  });
+  await post(`${BASE}/schedules/${encodeURIComponent(sn)}/${encodeURIComponent(scheduleId)}/send`);
+}
+
+// ── Device Registration ─────────────────────────────────────────
+
+export interface BleDevice {
+  name: string;
+  mac: string;
+  rssi: number;
+}
+
+export async function scanBleDevices(duration = 5): Promise<BleDevice[]> {
+  const res = await get(`/api/admin/ble-scan?duration=${duration}`);
+  const data = await res.json();
+  return data.devices ?? [];
+}
+
+export async function registerDeviceMac(sn: string, macAddress: string): Promise<void> {
+  await post(`/api/admin/devices/${encodeURIComponent(sn)}/mac`, { macAddress });
 }

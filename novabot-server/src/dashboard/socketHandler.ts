@@ -6,6 +6,7 @@ import { Server as SocketServer } from 'socket.io';
 import { getAllDeviceSnapshots } from '../mqtt/sensorData.js';
 import { isDeviceOnline } from '../mqtt/broker.js';
 import { db } from '../db/database.js';
+import { initBleLogger, sendBleLogHistory } from '../ble/bleLogger.js';
 
 interface DeviceRegistryRow {
   sn: string | null;
@@ -50,6 +51,9 @@ export function initDashboardSocket(httpServer: HttpServer): void {
     path: '/socket.io',
   });
 
+  // Start BLE logger — uses io.emit for broadcasting
+  initBleLogger((event, data) => io!.emit(event, data));
+
   io.on('connection', (socket) => {
     console.log(`[DASHBOARD] Client connected: ${socket.id}`);
 
@@ -84,6 +88,9 @@ export function initDashboardSocket(httpServer: HttpServer): void {
 
     // Stuur recente log history bij connect
     socket.emit('mqtt:log:history', logBuffer);
+
+    // Stuur recente BLE log history bij connect
+    sendBleLogHistory((event, data) => socket.emit(event, data));
 
     socket.on('disconnect', () => {
       console.log(`[DASHBOARD] Client disconnected: ${socket.id}`);

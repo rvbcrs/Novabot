@@ -54,14 +54,17 @@ export function startMqttBridge(broker: Aedes): void {
 
     // Berichten van upstream → doorsturen naar lokale client
     upstream.on('message', (topic, payload) => {
-      const payloadStr = payload.toString();
-      console.log(`${TAG} ↓ UPSTREAM→LOCAL clientId="${clientId}" topic="${topic}"`);
+      const payloadBuf = Buffer.isBuffer(payload) ? payload : Buffer.from(payload);
+      const payloadStr = payloadBuf.toString();
+      console.log(`${TAG} ↓ UPSTREAM→LOCAL clientId="${clientId}" topic="${topic}" (${payloadBuf.length}B)`);
       if (payloadStr.length < 4096) {
         try {
           const pretty = JSON.stringify(JSON.parse(payloadStr), null, 2);
           console.log(`${TAG} ↓ Payload:\n${pretty}`);
         } catch {
-          console.log(`${TAG} ↓ Payload: ${payloadStr}`);
+          // Niet-JSON payload (waarschijnlijk AES encrypted) — log als hex
+          console.log(`${TAG} ↓ Payload (hex): ${payloadBuf.toString('hex').substring(0, 400)}`);
+          console.log(`${TAG} ↓ Payload (raw): ${payloadStr.substring(0, 200)}`);
         }
       }
 
@@ -109,14 +112,16 @@ export function startMqttBridge(broker: Aedes): void {
     const upstream = upstreamClients.get(client.id);
     if (!upstream) return;
 
-    const payloadStr = packet.payload.toString();
-    console.log(`${TAG} ↑ LOCAL→UPSTREAM clientId="${client.id}" topic="${packet.topic}"`);
+    const payloadBuf = Buffer.isBuffer(packet.payload) ? packet.payload : Buffer.from(packet.payload);
+    const payloadStr = payloadBuf.toString();
+    console.log(`${TAG} ↑ LOCAL→UPSTREAM clientId="${client.id}" topic="${packet.topic}" (${payloadBuf.length}B)`);
     if (payloadStr.length < 4096) {
       try {
         const pretty = JSON.stringify(JSON.parse(payloadStr), null, 2);
         console.log(`${TAG} ↑ Payload:\n${pretty}`);
       } catch {
-        console.log(`${TAG} ↑ Payload: ${payloadStr}`);
+        // Niet-JSON payload (waarschijnlijk AES encrypted) — log als hex
+        console.log(`${TAG} ↑ Payload (hex): ${payloadBuf.toString('hex').substring(0, 400)}`);
       }
     }
 

@@ -1,5 +1,5 @@
 import { useCallback, useMemo } from 'react';
-import { Marker, Polygon, useMap } from 'react-leaflet';
+import { Marker, Polygon } from 'react-leaflet';
 import L from 'leaflet';
 
 // ── Custom marker icons ─────────────────────────────────────────
@@ -29,8 +29,6 @@ interface Props {
 }
 
 export function PolygonEditor({ vertices, onChange, color = '#10b981' }: Props) {
-  const map = useMap();
-
   const vertexIcon = useMemo(() => makeVertexIcon(color), [color]);
 
   // Drag a vertex to a new position
@@ -96,8 +94,10 @@ export function PolygonEditor({ vertices, onChange, color = '#10b981' }: Props) 
           eventHandlers={{
             dragend: (e) => handleVertexDrag(i, e),
             contextmenu: (e) => {
-              L.DomEvent.preventDefault(e);
-              L.DomEvent.stopPropagation(e);
+              if (e.originalEvent) {
+                e.originalEvent.preventDefault();
+                e.originalEvent.stopPropagation();
+              }
               handleVertexRemove(i);
             },
           }}

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import type { DeviceState, DeviceUpdateEvent, DeviceOnlineEvent, MqttLogEntry } from '../types';
+import type { DeviceState, DeviceUpdateEvent, DeviceOnlineEvent, MqttLogEntry, BleLogEntry } from '../types';
 import { useSocket } from './useSocket';
 import { fetchDevices } from '../api/client';
 
@@ -9,6 +9,7 @@ export function useDevices() {
   const [devices, setDevices] = useState<Map<string, DeviceState>>(new Map());
   const [loading, setLoading] = useState(true);
   const [logs, setLogs] = useState<MqttLogEntry[]>([]);
+  const [bleLogs, setBleLogs] = useState<BleLogEntry[]>([]);
   const logsRef = useRef(logs);
   logsRef.current = logs;
 
@@ -94,10 +95,21 @@ export function useDevices() {
     setLogs(entries.slice(-MAX_LOG_ENTRIES));
   }, []);
 
+  const onBleLog = useCallback((entry: BleLogEntry) => {
+    setBleLogs(prev => {
+      const next = [...prev, entry];
+      return next.length > MAX_LOG_ENTRIES ? next.slice(-MAX_LOG_ENTRIES) : next;
+    });
+  }, []);
+
+  const onBleLogHistory = useCallback((entries: BleLogEntry[]) => {
+    setBleLogs(entries.slice(-MAX_LOG_ENTRIES));
+  }, []);
+
   const { connected } = useSocket({
     onDeviceUpdate, onDeviceOnline, onDeviceOffline, onSnapshot,
-    onMqttLog, onMqttLogHistory,
+    onMqttLog, onMqttLogHistory, onBleLog, onBleLogHistory,
   });
 
-  return { devices, loading, connected, logs };
+  return { devices, loading, connected, logs, bleLogs };
 }

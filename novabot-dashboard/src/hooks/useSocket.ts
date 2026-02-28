@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { io, Socket } from 'socket.io-client';
-import type { DeviceUpdateEvent, DeviceOnlineEvent, MqttLogEntry } from '../types';
+import type { DeviceUpdateEvent, DeviceOnlineEvent, MqttLogEntry, BleLogEntry } from '../types';
 
 interface SocketHandlers {
   onDeviceUpdate: (e: DeviceUpdateEvent) => void;
@@ -9,6 +9,8 @@ interface SocketHandlers {
   onSnapshot: (devices: Array<{ sn: string; deviceType: string; online: boolean; sensors: Record<string, string> }>) => void;
   onMqttLog?: (entry: MqttLogEntry) => void;
   onMqttLogHistory?: (entries: MqttLogEntry[]) => void;
+  onBleLog?: (entry: BleLogEntry) => void;
+  onBleLogHistory?: (entries: BleLogEntry[]) => void;
 }
 
 export function useSocket(handlers: SocketHandlers) {
@@ -46,6 +48,14 @@ export function useSocket(handlers: SocketHandlers) {
 
     socket.on('mqtt:log:history', (entries: MqttLogEntry[]) => {
       handlersRef.current.onMqttLogHistory?.(entries);
+    });
+
+    socket.on('ble:log', (entry: BleLogEntry) => {
+      handlersRef.current.onBleLog?.(entry);
+    });
+
+    socket.on('ble:log:history', (entries: BleLogEntry[]) => {
+      handlersRef.current.onBleLogHistory?.(entries);
     });
 
     return () => { socket.disconnect(); };

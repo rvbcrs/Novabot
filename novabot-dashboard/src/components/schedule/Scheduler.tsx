@@ -3,15 +3,16 @@ import {
   Clock, Plus, Trash2, Send, X, ChevronRight, Calendar,
   Compass, ArrowUp,
 } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import type { Schedule, MapData } from '../../types';
 import { fetchSchedules, createSchedule, updateSchedule, deleteSchedule, sendSchedule, fetchMaps } from '../../api/client';
 
-const WEEKDAY_LABELS = ['Zo', 'Ma', 'Di', 'Wo', 'Do', 'Vr', 'Za'];
+const DIR_DEGREES = [0, 45, 90, 135];
 
 interface Props {
   sn: string;
   online: boolean;
-  /** Wordt aangeroepen wanneer de gebruiker de maairichting aanpast (of null bij sluiten) */
+  /** Called when the user changes the mowing direction (or null on close) */
   onPathDirectionChange?: (deg: number | null) => void;
 }
 
@@ -38,11 +39,15 @@ const defaultForm: ScheduleForm = {
 };
 
 export function Scheduler({ sn, online, onPathDirectionChange }: Props) {
+  const { t } = useTranslation();
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [maps, setMaps] = useState<MapData[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState<ScheduleForm>(defaultForm);
   const [saving, setSaving] = useState(false);
+
+  const weekdayLabels = t('schedule.weekdays', { returnObjects: true }) as string[];
+  const compassLabels = t('schedule.compass', { returnObjects: true }) as string[];
 
   useEffect(() => {
     fetchSchedules(sn).then(setSchedules).catch(() => {});
@@ -99,21 +104,13 @@ export function Scheduler({ sn, online, onPathDirectionChange }: Props) {
     }));
   };
 
-  // Compass direction presets (maaier firmware accepteert 0-180°, 0°=N-Z lijnen, 90°=O-W lijnen)
-  const DIR_PRESETS = [
-    { label: 'N–Z', deg: 0 },
-    { label: 'NO–ZW', deg: 45 },
-    { label: 'O–W', deg: 90 },
-    { label: 'ZO–NW', deg: 135 },
-  ];
-
   return (
     <div className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700">
         <div className="flex items-center gap-2">
           <Calendar className="w-4 h-4 text-blue-400" />
-          <span className="text-sm font-semibold text-white">Maaischema's</span>
+          <span className="text-sm font-semibold text-white">{t('schedule.title')}</span>
           <span className="text-xs text-gray-500">{schedules.length}</span>
         </div>
         <button
@@ -126,7 +123,7 @@ export function Scheduler({ sn, online, onPathDirectionChange }: Props) {
           className="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded bg-blue-600 text-white hover:bg-blue-500 transition-colors"
         >
           <Plus className="w-3 h-3" />
-          Nieuw
+          {t('schedule.new')}
         </button>
       </div>
 
@@ -135,11 +132,11 @@ export function Scheduler({ sn, online, onPathDirectionChange }: Props) {
         <div className="p-4 border-b border-gray-700 bg-gray-850">
           {/* Name */}
           <div className="mb-3">
-            <label className="text-[10px] text-gray-500 uppercase tracking-wide">Naam (optioneel)</label>
+            <label className="text-[10px] text-gray-500 uppercase tracking-wide">{t('schedule.name')}</label>
             <input
               value={form.scheduleName}
               onChange={e => setForm(prev => ({ ...prev, scheduleName: e.target.value }))}
-              placeholder="Bijv. Doordeweeks ochtend"
+              placeholder={t('schedule.namePlaceholder')}
               className="mt-1 w-full text-sm bg-gray-900 border border-gray-700 rounded px-2.5 py-1.5 text-gray-200 focus:outline-none focus:border-blue-500"
             />
           </div>
@@ -147,7 +144,7 @@ export function Scheduler({ sn, online, onPathDirectionChange }: Props) {
           {/* Time */}
           <div className="grid grid-cols-2 gap-3 mb-3">
             <div>
-              <label className="text-[10px] text-gray-500 uppercase tracking-wide">Start</label>
+              <label className="text-[10px] text-gray-500 uppercase tracking-wide">{t('schedule.start')}</label>
               <input
                 type="time"
                 value={form.startTime}
@@ -156,7 +153,7 @@ export function Scheduler({ sn, online, onPathDirectionChange }: Props) {
               />
             </div>
             <div>
-              <label className="text-[10px] text-gray-500 uppercase tracking-wide">Einde</label>
+              <label className="text-[10px] text-gray-500 uppercase tracking-wide">{t('schedule.end')}</label>
               <input
                 type="time"
                 value={form.endTime}
@@ -168,9 +165,9 @@ export function Scheduler({ sn, online, onPathDirectionChange }: Props) {
 
           {/* Weekdays */}
           <div className="mb-3">
-            <label className="text-[10px] text-gray-500 uppercase tracking-wide">Dagen</label>
+            <label className="text-[10px] text-gray-500 uppercase tracking-wide">{t('schedule.days')}</label>
             <div className="flex gap-1 mt-1">
-              {WEEKDAY_LABELS.map((label, idx) => (
+              {weekdayLabels.map((label, idx) => (
                 <button
                   key={idx}
                   onClick={() => toggleWeekday(idx)}
@@ -189,7 +186,7 @@ export function Scheduler({ sn, online, onPathDirectionChange }: Props) {
           {/* Map selection */}
           {maps.length > 0 && (
             <div className="mb-3">
-              <label className="text-[10px] text-gray-500 uppercase tracking-wide">Werkgebied</label>
+              <label className="text-[10px] text-gray-500 uppercase tracking-wide">{t('schedule.workArea')}</label>
               <select
                 value={form.mapId}
                 onChange={e => {
@@ -198,7 +195,7 @@ export function Scheduler({ sn, online, onPathDirectionChange }: Props) {
                 }}
                 className="mt-1 w-full text-sm bg-gray-900 border border-gray-700 rounded px-2.5 py-1.5 text-gray-200 focus:outline-none focus:border-blue-500"
               >
-                <option value="">Alle werkgebieden</option>
+                <option value="">{t('schedule.allWorkAreas')}</option>
                 {maps.map(m => (
                   <option key={m.mapId} value={m.mapId}>{m.mapName || m.mapId}</option>
                 ))}
@@ -209,7 +206,7 @@ export function Scheduler({ sn, online, onPathDirectionChange }: Props) {
           {/* Cutting height */}
           <div className="mb-3">
             <div className="flex items-center justify-between">
-              <label className="text-[10px] text-gray-500 uppercase tracking-wide">Maaihoogte</label>
+              <label className="text-[10px] text-gray-500 uppercase tracking-wide">{t('schedule.cuttingHeight')}</label>
               <span className="text-[11px] text-gray-300 font-mono">{(form.cuttingHeight / 10).toFixed(1)} cm</span>
             </div>
             <input
@@ -230,24 +227,24 @@ export function Scheduler({ sn, online, onPathDirectionChange }: Props) {
           {/* Path direction */}
           <div className="mb-4">
             <div className="flex items-center justify-between">
-              <label className="text-[10px] text-gray-500 uppercase tracking-wide">Maairichting</label>
+              <label className="text-[10px] text-gray-500 uppercase tracking-wide">{t('schedule.pathDirection')}</label>
               <span className="text-[11px] text-gray-300 font-mono inline-flex items-center gap-1">
                 <ArrowUp className="w-3 h-3 transition-transform" style={{ transform: `rotate(${form.pathDirection}deg)` }} />
                 {form.pathDirection}&deg;
               </span>
             </div>
             <div className="flex gap-1 mt-1 mb-1">
-              {DIR_PRESETS.map(p => (
+              {DIR_DEGREES.map((deg, i) => (
                 <button
-                  key={p.deg}
-                  onClick={() => { setForm(prev => ({ ...prev, pathDirection: p.deg })); onPathDirectionChange?.(p.deg); }}
+                  key={deg}
+                  onClick={() => { setForm(prev => ({ ...prev, pathDirection: deg })); onPathDirectionChange?.(deg); }}
                   className={`flex-1 text-[10px] py-1 rounded transition-colors ${
-                    form.pathDirection === p.deg
+                    form.pathDirection === deg
                       ? 'bg-blue-600 text-white font-medium'
                       : 'bg-gray-900 text-gray-500 hover:text-gray-300 border border-gray-700'
                   }`}
                 >
-                  {p.label}
+                  {compassLabels[i]}
                 </button>
               ))}
             </div>
@@ -269,7 +266,7 @@ export function Scheduler({ sn, online, onPathDirectionChange }: Props) {
               className="flex-1 inline-flex items-center justify-center gap-1 text-xs px-2 py-1.5 rounded bg-gray-700 text-gray-400 hover:text-gray-200 transition-colors"
             >
               <X className="w-3 h-3" />
-              Annuleren
+              {t('common.cancel')}
             </button>
             <button
               onClick={handleCreate}
@@ -277,7 +274,7 @@ export function Scheduler({ sn, online, onPathDirectionChange }: Props) {
               className="flex-1 inline-flex items-center justify-center gap-1 text-xs px-2 py-1.5 rounded bg-blue-600 text-white hover:bg-blue-500 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <Plus className="w-3 h-3" />
-              {saving ? 'Opslaan...' : 'Aanmaken'}
+              {saving ? t('schedule.saving') : t('schedule.create')}
             </button>
           </div>
         </div>
@@ -287,7 +284,7 @@ export function Scheduler({ sn, online, onPathDirectionChange }: Props) {
       <div className="divide-y divide-gray-700/50">
         {schedules.length === 0 && !showForm && (
           <div className="px-4 py-6 text-center text-sm text-gray-500">
-            Geen schema's ingesteld
+            {t('schedule.empty')}
           </div>
         )}
         {schedules.map(s => (
@@ -299,7 +296,7 @@ export function Scheduler({ sn, online, onPathDirectionChange }: Props) {
                   className={`w-8 h-4 rounded-full transition-colors relative ${
                     s.enabled ? 'bg-blue-600' : 'bg-gray-700'
                   }`}
-                  title={s.enabled ? 'Uitschakelen' : 'Inschakelen'}
+                  title={s.enabled ? t('schedule.disable') : t('schedule.enable')}
                 >
                   <div className={`w-3 h-3 rounded-full bg-white absolute top-0.5 transition-transform ${
                     s.enabled ? 'translate-x-4' : 'translate-x-0.5'
@@ -307,7 +304,7 @@ export function Scheduler({ sn, online, onPathDirectionChange }: Props) {
                 </button>
                 <Clock className="w-3.5 h-3.5 text-blue-400" />
                 <span className="text-sm font-semibold text-white font-mono">
-                  {s.startTime}{s.endTime ? ` – ${s.endTime}` : ''}
+                  {s.startTime}{s.endTime ? ` \u2013 ${s.endTime}` : ''}
                 </span>
               </div>
               <div className="flex items-center gap-1">
@@ -315,7 +312,7 @@ export function Scheduler({ sn, online, onPathDirectionChange }: Props) {
                   <button
                     onClick={() => handleSend(s.scheduleId)}
                     className="text-blue-400 hover:text-blue-300 p-1 rounded hover:bg-blue-900/30 transition-colors"
-                    title="Stuur naar maaier"
+                    title={t('schedule.sendToMower')}
                   >
                     <Send className="w-3.5 h-3.5" />
                   </button>
@@ -323,7 +320,7 @@ export function Scheduler({ sn, online, onPathDirectionChange }: Props) {
                 <button
                   onClick={() => handleDelete(s.scheduleId)}
                   className="text-gray-500 hover:text-red-400 p-1 rounded hover:bg-red-900/30 transition-colors"
-                  title="Verwijderen"
+                  title={t('common.delete')}
                 >
                   <Trash2 className="w-3.5 h-3.5" />
                 </button>
@@ -332,7 +329,7 @@ export function Scheduler({ sn, online, onPathDirectionChange }: Props) {
             <div className="flex items-center gap-2 text-[11px] text-gray-400">
               {/* Weekday pills */}
               <div className="flex gap-0.5">
-                {WEEKDAY_LABELS.map((label, idx) => (
+                {weekdayLabels.map((label, idx) => (
                   <span
                     key={idx}
                     className={`w-5 h-5 flex items-center justify-center rounded-sm text-[9px] ${

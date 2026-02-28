@@ -7,8 +7,9 @@ import {
   SlidersHorizontal, Save, X, RotateCcw, Pencil, Check, Scissors, Navigation,
   ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Download, Flame,
 } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import type { MapData, TrailPoint, MapCalibration } from '../../types';
-import { fetchMaps, fetchTrail, clearTrail, fetchCalibration, saveCalibration, deleteMap, renameMap, updateMapArea, createMap, exportMaps } from '../../api/client';
+import { fetchMaps, fetchAllMaps, fetchTrail, clearTrail, fetchCalibration, saveCalibration, deleteMap, renameMap, updateMapArea, createMap, exportMaps } from '../../api/client';
 import { useToast } from '../common/Toast';
 import { PolygonEditor } from './PolygonEditor';
 
@@ -271,13 +272,7 @@ function calibratePoints(
 
 const DEFAULT_CAL: MapCalibration = { offsetLat: 0, offsetLng: 0, rotation: 0, scale: 1 };
 
-const AREA_TYPE_META = {
-  work:     { color: '#10b981', label: 'Werkgebied', icon: '🌱' },
-  obstacle: { color: '#ef4444', label: 'Obstakel',   icon: '🚧' },
-  unicom:   { color: '#3b82f6', label: 'Kanaal',     icon: '↔️' },
-} as const;
-
-type AreaType = keyof typeof AREA_TYPE_META;
+type AreaType = 'work' | 'obstacle' | 'unicom';
 
 // ── Mower marker icon ────────────────────────────────────────────
 
@@ -414,6 +409,7 @@ function ChargerPlacer({ onPlace }: { onPlace: (lat: number, lng: number) => voi
 const NUDGE_STEP = 0.000005; // ~0.55m lat, ~0.35m lng at 52°N
 
 export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signals, mowing, pathDirectionPreview }: Props) {
+  const { t } = useTranslation();
   const { toast } = useToast();
   const [maps, setMaps] = useState<MapData[]>([]);
   const [trail, setTrail] = useState<TrailPoint[]>([]);
@@ -437,10 +433,30 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
   const calibrating = editCal !== null;
   const activeCal = editCal ?? savedCal;
 
+  // Area type labels (translated)
+  const AREA_TYPE_META: Record<AreaType, { color: string; label: string }> = useMemo(() => ({
+    work:     { color: '#10b981', label: t('map.workArea') },
+    obstacle: { color: '#ef4444', label: t('map.obstacle') },
+    unicom:   { color: '#3b82f6', label: t('map.channel') },
+  }), [t]);
+
   useEffect(() => {
-    fetchMaps(sn).then(setMaps).catch(() => setMaps([]));
-    fetchTrail(sn).then(setTrail).catch(() => setTrail([]));
-    fetchCalibration(sn).then(setSavedCal).catch(() => {});
+    if (sn) {
+      fetchMaps(sn).then(setMaps).catch(() => setMaps([]));
+      fetchTrail(sn).then(setTrail).catch(() => setTrail([]));
+      fetchCalibration(sn).then(setSavedCal).catch(() => {});
+    } else {
+      // No mower SN — load all maps and calibration as fallback
+      fetchAllMaps().then(loaded => {
+        setMaps(loaded);
+        // Load calibration for the first map's owner SN
+        const ownerSn = (loaded[0] as MapData & { mowerSn?: string })?.mowerSn;
+        if (ownerSn) {
+          fetchCalibration(ownerSn).then(setSavedCal).catch(() => {});
+        }
+      }).catch(() => setMaps([]));
+      setTrail([]);
+    }
   }, [sn]);
 
   // Append new trail points when lat/lng changes
@@ -511,7 +527,7 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
       if (m) return getAreaStyle(m.mapType, m.mapId, m.mapName).color;
     }
     return '#10b981';
-  }, [editMode, drawType, editingMapId, maps]);
+  }, [editMode, drawType, editingMapId, maps, AREA_TYPE_META]);
 
   // Save edited/drawn polygon
   const handleSavePolygon = useCallback(() => {
@@ -539,7 +555,7 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
         setSelectedMapId(newMap.mapId);
       }).catch(() => {});
     }
-  }, [editVertices, editMode, editingMapId, sn, maps, drawType]);
+  }, [editVertices, editMode, editingMapId, sn, maps, drawType, AREA_TYPE_META]);
 
   // Cancel edit/draw
   const cancelEditPolygon = useCallback(() => {
@@ -577,8 +593,8 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
       if (style !== AREA_STYLES.work) continue;
       const area = polygonAreaM2(m.mapArea);
       let count = 0;
-      for (const t of trail) {
-        if (pointInPolygon(t.lat, t.lng, m.mapArea)) count++;
+      for (const tp of trail) {
+        if (pointInPolygon(tp.lat, tp.lng, m.mapArea)) count++;
       }
       stats.set(m.mapId, { points: count, area });
     }
@@ -596,18 +612,18 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
     setSavedCal(updated);
     setPlacingCharger(false);
     saveCalibration(sn, updated).then(() => {
-      toast('Charger positie opgeslagen', 'success');
+      toast(t('map.chargerSaved'), 'success');
     });
-  }, [sn, savedCal]);
+  }, [sn, savedCal, t]);
 
   // Export handler
   const handleExport = useCallback(() => {
     if (!chargerHasGps) return;
     exportMaps(sn, { lat: resolvedChargerLat!, lng: resolvedChargerLng! }).then(url => {
       window.open(url, '_blank');
-      toast('Kaarten geëxporteerd', 'success');
-    }).catch(() => toast('Export mislukt', 'error'));
-  }, [sn, resolvedChargerLat, resolvedChargerLng, chargerHasGps]);
+      toast(t('map.exported'), 'success');
+    }).catch(() => toast(t('map.exportFailed'), 'error'));
+  }, [sn, resolvedChargerLat, resolvedChargerLng, chargerHasGps, t]);
 
   // Center of all polygon points (used as rotation/scale pivot)
   const polyCenter = useMemo(() => {
@@ -664,19 +680,19 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
             const BatIcon = charging ? BatteryCharging : bat !== null && bat <= 15 ? BatteryLow : bat !== null && bat >= 80 ? BatteryFull : Battery;
             return (
               <div className="flex items-center gap-2">
-                <span className={`inline-flex items-center gap-0.5 ${bat !== null ? batteryColor(bat) : 'text-gray-600'}`} title={bat !== null ? `Battery: ${bat}%${charging ? ' (charging)' : ''}` : 'Battery: no data'}>
+                <span className={`inline-flex items-center gap-0.5 ${bat !== null ? batteryColor(bat) : 'text-gray-600'}`} title={bat !== null ? (charging ? t('devices.batteryCharging', { pct: bat }) : t('devices.batteryLabel', { pct: bat })) : t('devices.batteryNoData')}>
                   <BatIcon className="w-3.5 h-3.5" />
                   {bat !== null && <span className="text-[10px] font-mono">{bat}%</span>}
                 </span>
-                <span className={`inline-flex items-center gap-0.5 ${rssi !== null ? wifiColor(rssi) : 'text-gray-600'}`} title={rssi !== null ? `WiFi: ${rssi} dBm` : 'WiFi: no data'}>
+                <span className={`inline-flex items-center gap-0.5 ${rssi !== null ? wifiColor(rssi) : 'text-gray-600'}`} title={rssi !== null ? t('devices.wifiLabel', { rssi }) : t('devices.wifiNoData')}>
                   {rssi !== null ? <Wifi className="w-3.5 h-3.5" /> : <WifiOff className="w-3.5 h-3.5" />}
                   {rssi !== null && <span className="text-[10px] font-mono">{rssi}</span>}
                 </span>
-                <span className={`inline-flex items-center gap-0.5 ${sats !== null ? gpsColor(sats) : 'text-gray-600'}`} title={sats !== null ? `RTK Satellites: ${sats}` : 'RTK: no data'}>
+                <span className={`inline-flex items-center gap-0.5 ${sats !== null ? gpsColor(sats) : 'text-gray-600'}`} title={sats !== null ? t('devices.rtkLabel', { sats }) : t('devices.rtkNoData')}>
                   <Satellite className="w-3.5 h-3.5" />
                   {sats !== null && <span className="text-[10px] font-mono">{sats}</span>}
                 </span>
-                <span className={`inline-flex items-center gap-0.5 ${loc !== null ? locColor(loc) : 'text-gray-600'}`} title={loc !== null ? `Location Quality: ${loc}%` : 'Location: no data'}>
+                <span className={`inline-flex items-center gap-0.5 ${loc !== null ? locColor(loc) : 'text-gray-600'}`} title={loc !== null ? t('devices.locLabel', { loc }) : t('devices.locNoData')}>
                   <Crosshair className="w-3.5 h-3.5" />
                   {loc !== null && <span className="text-[10px] font-mono">{loc}%</span>}
                 </span>
@@ -691,7 +707,7 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
               className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded transition-colors ${
                 showTrail ? 'bg-cyan-900/50 text-cyan-400' : 'bg-gray-700/50 text-gray-500'
               }`}
-              title={showTrail ? 'Hide GPS trail' : 'Show GPS trail'}
+              title={showTrail ? t('map.hideTrail') : t('map.showTrail')}
             >
               <Route className="w-3 h-3" />
               {trail.length} pts
@@ -711,10 +727,10 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
             <button
               onClick={startDrawMap}
               className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded transition-colors bg-gray-700/50 text-gray-400 hover:text-emerald-400 hover:bg-emerald-900/30"
-              title="Teken een nieuw werkgebied"
+              title={t('map.drawNew')}
             >
               <Pencil className="w-3 h-3" />
-              Tekenen
+              {t('map.draw')}
             </button>
           )}
           {/* Calibrate toggle */}
@@ -722,10 +738,10 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
             <button
               onClick={startCalibrating}
               className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded transition-colors bg-gray-700/50 text-gray-400 hover:text-amber-400 hover:bg-amber-900/30"
-              title="Calibrate map overlay"
+              title={t('map.calibrateOverlay')}
             >
               <SlidersHorizontal className="w-3 h-3" />
-              Calibrate
+              {t('map.calibrate')}
             </button>
           )}
           {/* Heatmap toggle */}
@@ -735,10 +751,10 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
               className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded transition-colors ${
                 showHeatmap ? 'bg-orange-900/50 text-orange-400' : 'bg-gray-700/50 text-gray-500'
               }`}
-              title={showHeatmap ? 'Verberg heatmap' : 'Toon heatmap'}
+              title={showHeatmap ? t('map.hideHeatmap') : t('map.showHeatmap')}
             >
               <Flame className="w-3 h-3" />
-              Heat
+              {t('map.heat')}
             </button>
           )}
           {/* Export button */}
@@ -751,10 +767,10 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
                   ? 'bg-gray-700/50 text-gray-400 hover:text-cyan-400 hover:bg-cyan-900/30'
                   : 'bg-gray-700/30 text-gray-600 cursor-not-allowed'
               }`}
-              title={chargerHasGps ? 'Exporteer kaarten als Novabot ZIP' : 'Charger offline — GPS positie nodig voor export'}
+              title={chargerHasGps ? t('map.exportTooltip') : t('map.exportNoCharger')}
             >
               <Download className="w-3 h-3" />
-              Export
+              {t('map.export')}
             </button>
           )}
           {/* Place/reposition charger button */}
@@ -766,10 +782,10 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
                   ? 'bg-amber-600 text-white animate-pulse'
                   : 'bg-gray-700/50 text-gray-400 hover:text-amber-400 hover:bg-amber-900/30'
               }`}
-              title={placingCharger ? 'Klik op de kaart om charger te plaatsen' : 'Charger positie instellen'}
+              title={placingCharger ? t('map.placeChargerClick') : t('map.placeChargerTooltip')}
             >
               <MapPin className="w-3 h-3" />
-              {placingCharger ? 'Klik op kaart...' : 'Charger'}
+              {placingCharger ? t('map.placeChargerActive') : t('map.charger')}
             </button>
           )}
           <button
@@ -777,10 +793,10 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
             className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded transition-colors ${
               tileLayer === 'satellite' ? 'bg-blue-900/50 text-blue-400' : 'bg-gray-700/50 text-gray-500'
             }`}
-            title={tileLayer === 'satellite' ? 'Switch to street map' : 'Switch to satellite'}
+            title={tileLayer === 'satellite' ? t('map.switchToStreet') : t('map.switchToSatellite')}
           >
             <Layers className="w-3 h-3" />
-            {tileLayer === 'satellite' ? 'Sat' : 'Map'}
+            {tileLayer === 'satellite' ? t('map.sat') : t('map.streetMap')}
           </button>
           {polygonMaps.length > 0 && (() => {
             const counts = { work: 0, obstacle: 0, unicom: 0, other: 0 };
@@ -792,10 +808,10 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
               else counts.other++;
             }
             const parts: string[] = [];
-            if (counts.work > 0) parts.push(`${counts.work} map${counts.work !== 1 ? 's' : ''}`);
-            if (counts.obstacle > 0) parts.push(`${counts.obstacle} obstacle${counts.obstacle !== 1 ? 's' : ''}`);
-            if (counts.unicom > 0) parts.push(`${counts.unicom} channel${counts.unicom !== 1 ? 's' : ''}`);
-            if (counts.other > 0) parts.push(`${counts.other} other`);
+            if (counts.work > 0) parts.push(t('map.maps', { count: counts.work }));
+            if (counts.obstacle > 0) parts.push(t('map.obstacles', { count: counts.obstacle }));
+            if (counts.unicom > 0) parts.push(t('map.channels', { count: counts.unicom }));
+            if (counts.other > 0) parts.push(t('map.otherCount', { count: counts.other }));
             return (
               <span className="inline-flex items-center gap-1 text-xs text-gray-500">
                 <MapIcon className="w-3 h-3" />
@@ -808,7 +824,7 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
               {parseFloat(lat).toFixed(6)}, {parseFloat(lng).toFixed(6)}
             </span>
           ) : (
-            <span className="text-xs text-gray-600">No GPS data</span>
+            <span className="text-xs text-gray-600">{t('map.noGps')}</span>
           )}
         </div>
       </div>
@@ -892,10 +908,10 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
               if (chunk.length >= 2) chunks.push(chunk);
             }
             return chunks.map((chunk, idx) => {
-              const t = chunks.length > 1 ? idx / (chunks.length - 1) : 1;
-              const r = Math.round(255 * (1 - t));
-              const g = Math.round(200 * t);
-              const b = Math.round(50 + 100 * (1 - t));
+              const tp = chunks.length > 1 ? idx / (chunks.length - 1) : 1;
+              const r = Math.round(255 * (1 - tp));
+              const g = Math.round(200 * tp);
+              const b = Math.round(50 + 100 * (1 - tp));
               return (
                 <Polyline
                   key={`heat-${idx}`}
@@ -903,7 +919,7 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
                   pathOptions={{
                     color: `rgb(${r},${g},${b})`,
                     weight: 4,
-                    opacity: 0.3 + 0.5 * t,
+                    opacity: 0.3 + 0.5 * tp,
                     lineCap: 'round',
                   }}
                 />
@@ -915,9 +931,9 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
             <Marker position={position} icon={mowerIcon}>
               <Popup>
                 <div className="text-xs">
-                  <div className="font-semibold">Mower</div>
+                  <div className="font-semibold">{t('map.mower')}</div>
                   <div>{parseFloat(lat).toFixed(6)}, {parseFloat(lng).toFixed(6)}</div>
-                  {heading && <div>Heading: {parseFloat(heading).toFixed(0)}&deg;</div>}
+                  {heading && <div>{t('map.headingLabel', { deg: parseFloat(heading).toFixed(0) })}</div>}
                 </div>
               </Popup>
             </Marker>
@@ -936,16 +952,16 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
                   const updated = { ...savedCal, chargerLat: lat, chargerLng: lng };
                   setSavedCal(updated);
                   saveCalibration(sn, updated).then(() => {
-                    toast('Charger positie opgeslagen', 'success');
+                    toast(t('map.chargerSaved'), 'success');
                   });
                 },
               }}
             >
               <Popup>
                 <div className="text-xs">
-                  <div className="font-semibold">Charging Station</div>
+                  <div className="font-semibold">{t('map.chargingStation')}</div>
                   <div>{resolvedChargerLat!.toFixed(6)}, {resolvedChargerLng!.toFixed(6)}</div>
-                  <div className="text-gray-500 mt-1">Versleep om positie aan te passen</div>
+                  <div className="text-gray-500 mt-1">{t('map.dragToReposition')}</div>
                 </div>
               </Popup>
             </Marker>
@@ -1031,33 +1047,33 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
         {calibrating && (
           <div className="absolute top-3 left-3 z-[1000] bg-gray-900/95 backdrop-blur border border-gray-700 rounded-lg p-3 w-64 shadow-xl">
             <div className="flex items-center justify-between mb-3">
-              <span className="text-xs font-semibold text-amber-400 uppercase tracking-wide">Map Calibration</span>
-              <button onClick={cancelCalibrating} className="text-gray-500 hover:text-gray-300" title="Cancel">
+              <span className="text-xs font-semibold text-amber-400 uppercase tracking-wide">{t('map.calibrationTitle')}</span>
+              <button onClick={cancelCalibrating} className="text-gray-500 hover:text-gray-300" title={t('common.cancel')}>
                 <X className="w-4 h-4" />
               </button>
             </div>
 
             {/* Nudge controls */}
             <div className="mb-3">
-              <label className="text-[10px] text-gray-500 uppercase tracking-wide">Position</label>
+              <label className="text-[10px] text-gray-500 uppercase tracking-wide">{t('map.position')}</label>
               <div className="flex items-center justify-center gap-1 mt-1">
                 <div className="grid grid-cols-3 gap-0.5 w-fit">
                   <div />
-                  <button onClick={() => nudge(NUDGE_STEP, 0)} className="bg-gray-700 hover:bg-gray-600 rounded p-1.5 flex items-center justify-center" title="Move North">
+                  <button onClick={() => nudge(NUDGE_STEP, 0)} className="bg-gray-700 hover:bg-gray-600 rounded p-1.5 flex items-center justify-center" title={t('map.moveNorth')}>
                     <ChevronUp className="w-3.5 h-3.5 text-gray-300" />
                   </button>
                   <div />
-                  <button onClick={() => nudge(0, -NUDGE_STEP)} className="bg-gray-700 hover:bg-gray-600 rounded p-1.5 flex items-center justify-center" title="Move West">
+                  <button onClick={() => nudge(0, -NUDGE_STEP)} className="bg-gray-700 hover:bg-gray-600 rounded p-1.5 flex items-center justify-center" title={t('map.moveWest')}>
                     <ChevronLeft className="w-3.5 h-3.5 text-gray-300" />
                   </button>
                   <div className="bg-gray-800 rounded p-1.5 flex items-center justify-center">
                     <span className="text-[9px] text-gray-500 font-mono">0.5m</span>
                   </div>
-                  <button onClick={() => nudge(0, NUDGE_STEP)} className="bg-gray-700 hover:bg-gray-600 rounded p-1.5 flex items-center justify-center" title="Move East">
+                  <button onClick={() => nudge(0, NUDGE_STEP)} className="bg-gray-700 hover:bg-gray-600 rounded p-1.5 flex items-center justify-center" title={t('map.moveEast')}>
                     <ChevronRight className="w-3.5 h-3.5 text-gray-300" />
                   </button>
                   <div />
-                  <button onClick={() => nudge(-NUDGE_STEP, 0)} className="bg-gray-700 hover:bg-gray-600 rounded p-1.5 flex items-center justify-center" title="Move South">
+                  <button onClick={() => nudge(-NUDGE_STEP, 0)} className="bg-gray-700 hover:bg-gray-600 rounded p-1.5 flex items-center justify-center" title={t('map.moveSouth')}>
                     <ChevronDown className="w-3.5 h-3.5 text-gray-300" />
                   </button>
                   <div />
@@ -1068,7 +1084,7 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
             {/* Rotation */}
             <div className="mb-3">
               <div className="flex items-center justify-between">
-                <label className="text-[10px] text-gray-500 uppercase tracking-wide">Rotation</label>
+                <label className="text-[10px] text-gray-500 uppercase tracking-wide">{t('map.rotation')}</label>
                 <span className="text-[10px] text-gray-400 font-mono">{editCal!.rotation.toFixed(1)}&deg;</span>
               </div>
               <input
@@ -1085,7 +1101,7 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
             {/* Scale */}
             <div className="mb-3">
               <div className="flex items-center justify-between">
-                <label className="text-[10px] text-gray-500 uppercase tracking-wide">Scale</label>
+                <label className="text-[10px] text-gray-500 uppercase tracking-wide">{t('map.scale')}</label>
                 <span className="text-[10px] text-gray-400 font-mono">{editCal!.scale.toFixed(3)}x</span>
               </div>
               <input
@@ -1104,17 +1120,17 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
               <button
                 onClick={resetCalibrating}
                 className="flex-1 inline-flex items-center justify-center gap-1 text-xs px-2 py-1.5 rounded bg-gray-700 text-gray-400 hover:text-gray-200 transition-colors"
-                title="Reset to default"
+                title={t('map.resetToDefault')}
               >
                 <RotateCcw className="w-3 h-3" />
-                Reset
+                {t('common.reset')}
               </button>
               <button
                 onClick={handleSaveCalibration}
                 className="flex-1 inline-flex items-center justify-center gap-1 text-xs px-2 py-1.5 rounded bg-amber-600 text-white hover:bg-amber-500 transition-colors"
               >
                 <Save className="w-3 h-3" />
-                Save
+                {t('common.save')}
               </button>
             </div>
           </div>
@@ -1132,11 +1148,11 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
             <div className="absolute top-3 right-3 z-[1000] bg-gray-900/95 backdrop-blur border border-gray-700 rounded-lg p-3 shadow-xl w-52">
               <div className="flex items-center gap-2 mb-2">
                 <Scissors className="w-4 h-4 text-emerald-400" />
-                <span className="text-xs font-semibold text-emerald-400 uppercase tracking-wide">Maaien</span>
+                <span className="text-xs font-semibold text-emerald-400 uppercase tracking-wide">{t('map.mowing')}</span>
                 {direction !== null && !isNaN(direction) && (
-                  <span className="inline-flex items-center gap-0.5 text-gray-400" title={`Richting: ${direction.toFixed(0)}°`}>
+                  <span className="inline-flex items-center gap-0.5 text-gray-400" title={t('map.direction', { deg: direction.toFixed(0) })}>
                     <Navigation className="w-3.5 h-3.5 text-emerald-300 transition-transform duration-300" style={{ transform: `rotate(${direction}deg)` }} />
-                    <span className="text-[10px] font-mono">{direction.toFixed(0)}°</span>
+                    <span className="text-[10px] font-mono">{direction.toFixed(0)}&deg;</span>
                   </span>
                 )}
                 <span className="ml-auto text-sm font-bold text-white">{progress}%</span>
@@ -1150,19 +1166,19 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
               <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
                 {covering > 0 && (
                   <>
-                    <span className="text-gray-500">Gebied</span>
+                    <span className="text-gray-500">{t('map.area')}</span>
                     <span className="text-gray-300 text-right">{covering.toFixed(0)} m&sup2;</span>
                   </>
                 )}
                 {finished > 0 && (
                   <>
-                    <span className="text-gray-500">Gemaaid</span>
+                    <span className="text-gray-500">{t('map.mowed')}</span>
                     <span className="text-gray-300 text-right">{finished.toFixed(0)} m&sup2;</span>
                   </>
                 )}
                 {speed > 0 && (
                   <>
-                    <span className="text-gray-500">Snelheid</span>
+                    <span className="text-gray-500">{t('map.speed')}</span>
                     <span className="text-gray-300 text-right">{speed.toFixed(1)} m/s</span>
                   </>
                 )}
@@ -1176,9 +1192,9 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
           <div className="absolute top-3 left-3 z-[1000] bg-gray-900/95 backdrop-blur border border-gray-700 rounded-lg p-3 shadow-xl w-64">
             <div className="flex items-center justify-between mb-3">
               <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: editorColor }}>
-                {editMode === 'edit' ? 'Kaart bewerken' : 'Nieuwe kaart tekenen'}
+                {editMode === 'edit' ? t('map.editMap') : t('map.drawNewMap')}
               </span>
-              <button onClick={cancelEditPolygon} className="text-gray-500 hover:text-gray-300" title="Annuleren">
+              <button onClick={cancelEditPolygon} className="text-gray-500 hover:text-gray-300" title={t('common.cancel')}>
                 <X className="w-4 h-4" />
               </button>
             </div>
@@ -1207,13 +1223,13 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
             )}
             <p className="text-[11px] text-gray-400 mb-3">
               {editMode === 'draw'
-                ? 'Klik op de kaart om punten toe te voegen. Minimaal 3 punten nodig.'
-                : 'Versleep hoekpunten om de kaart aan te passen. Klik op grijze punten om hoekpunten toe te voegen. Rechtermuisklik om te verwijderen.'}
+                ? t('map.drawHelp')
+                : t('map.editHelp')}
             </p>
             <div className="flex items-center gap-2 text-[11px] text-gray-500 mb-3">
-              <span>{editVertices.length} punten</span>
+              <span>{t('map.points', { count: editVertices.length })}</span>
               {editMode === 'draw' && editVertices.length < 3 && (
-                <span className="text-amber-400">nog {3 - editVertices.length} nodig</span>
+                <span className="text-amber-400">{t('map.needMore', { count: 3 - editVertices.length })}</span>
               )}
             </div>
             <div className="flex items-center gap-2 pt-2 border-t border-gray-700">
@@ -1222,7 +1238,7 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
                 className="flex-1 inline-flex items-center justify-center gap-1 text-xs px-2 py-1.5 rounded bg-gray-700 text-gray-400 hover:text-gray-200 transition-colors"
               >
                 <X className="w-3 h-3" />
-                Annuleren
+                {t('common.cancel')}
               </button>
               <button
                 onClick={handleSavePolygon}
@@ -1231,7 +1247,7 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
                 style={{ backgroundColor: editorColor }}
               >
                 <Save className="w-3 h-3" />
-                Opslaan
+                {t('common.save')}
               </button>
             </div>
           </div>
@@ -1258,10 +1274,10 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
                       onKeyDown={e => { if (e.key === 'Escape') setEditingName(null); }}
                       className="flex-1 min-w-0 text-sm bg-gray-800 border border-gray-600 rounded px-1.5 py-0.5 text-gray-200 focus:outline-none focus:border-blue-500"
                     />
-                    <button type="submit" className="text-green-400 hover:text-green-300 flex-shrink-0" title="Opslaan">
+                    <button type="submit" className="text-green-400 hover:text-green-300 flex-shrink-0" title={t('map.saveRename')}>
                       <Check className="w-3.5 h-3.5" />
                     </button>
-                    <button type="button" onClick={() => setEditingName(null)} className="text-gray-500 hover:text-gray-300 flex-shrink-0" title="Annuleren">
+                    <button type="button" onClick={() => setEditingName(null)} className="text-gray-500 hover:text-gray-300 flex-shrink-0" title={t('map.cancelRename')}>
                       <X className="w-3.5 h-3.5" />
                     </button>
                   </form>
@@ -1273,7 +1289,7 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
                     <button
                       onClick={() => setEditingName(m.mapName ?? '')}
                       className="text-gray-500 hover:text-gray-300 flex-shrink-0"
-                      title="Naam wijzigen"
+                      title={t('map.rename')}
                     >
                       <Pencil className="w-3 h-3" />
                     </button>
@@ -1287,7 +1303,7 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
                 </button>
               </div>
               <div className="flex items-center gap-3 text-[11px] text-gray-400">
-                <span>{m.mapArea.length} punten</span>
+                <span>{t('map.points', { count: m.mapArea.length })}</span>
                 {(() => {
                   const area = polygonAreaM2(m.mapArea);
                   return area > 0 ? <span>{area.toFixed(0)} m&sup2;</span> : null;
@@ -1305,15 +1321,15 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
                 return (
                   <div className="mt-1.5">
                     <div className="flex items-center justify-between text-[11px] mb-1">
-                      <span className="text-gray-500">Coverage</span>
+                      <span className="text-gray-500">{t('map.coverage')}</span>
                       <span className="text-emerald-400 font-mono">{pct.toFixed(0)}%</span>
                     </div>
                     <div className="h-1.5 bg-gray-700 rounded-full overflow-hidden">
                       <div className="h-full bg-emerald-500 rounded-full transition-all" style={{ width: `${pct}%` }} />
                     </div>
                     <div className="flex items-center gap-3 mt-1 text-[10px] text-gray-500">
-                      <span>{stats.points} trail pts</span>
-                      <span>~{coveredM2.toFixed(0)} m&sup2; gemaaid</span>
+                      <span>{t('map.trailPts', { count: stats.points })}</span>
+                      <span>{t('map.mowedArea', { area: coveredM2.toFixed(0) })}</span>
                     </div>
                   </div>
                 );
@@ -1324,18 +1340,18 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
                   className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded bg-emerald-900/40 text-emerald-400 hover:bg-emerald-900/70 hover:text-emerald-300 transition-colors"
                 >
                   <Pencil className="w-3 h-3" />
-                  Bewerken
+                  {t('common.edit')}
                 </button>
                 <button
                   onClick={() => {
-                    if (confirm(`Kaart "${m.mapName || m.mapId}" verwijderen?`)) {
+                    if (confirm(t('map.confirmDelete', { name: m.mapName || m.mapId }))) {
                       handleDeleteMap(m.mapId);
                     }
                   }}
                   className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded bg-red-900/40 text-red-400 hover:bg-red-900/70 hover:text-red-300 transition-colors"
                 >
                   <Trash2 className="w-3 h-3" />
-                  Verwijderen
+                  {t('common.delete')}
                 </button>
               </div>
             </div>

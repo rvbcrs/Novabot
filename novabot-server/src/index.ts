@@ -1,4 +1,9 @@
 import 'dotenv/config';
+import { initProxyLogger } from './proxy/proxyLogger.js';
+
+// Start proxy logger VOOR alle andere imports — vangt alle console output op
+initProxyLogger();
+
 import http from 'http';
 import path from 'path';
 import express from 'express';
@@ -47,7 +52,8 @@ app.use((req, res, next) => {
   if (req.path.includes('login')) {
     console.log(`[HDR] ${JSON.stringify(req.headers)}`);
   }
-  console.log(`[REQ] ${req.method} ${req.path} ${masked}`);
+  const srcIp = req.ip || req.socket.remoteAddress || '?';
+  console.log(`[REQ] ${req.method} ${req.path} ${masked} (from ${srcIp})`);
 
   // Echo de echostr terug in de response — WeChat-achtig verificatiepatroon
   const echostr = req.headers['echostr'] as string | undefined;
@@ -132,3 +138,23 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`[SERVER] HTTP + WebSocket listening on port ${PORT}`);
   console.log(`[SERVER] Verwacht nginx proxy manager voor TLS termination op app.lfibot.com`);
 });
+
+// ── Port 80 listener ────────────────────────────────────────────────────────
+// De maaier firmware maakt HTTP calls naar app.lfibot.com:80 (plain HTTP)
+// na BLE provisioning als connectivity check. Zonder port 80 denkt de maaier
+// dat het netwerk niet werkt en probeert hij geen MQTT verbinding.
+if (PORT !== 80) {
+  const server80 = http.createServer(app);
+  server80.listen(80, '0.0.0.0', () => {
+    console.log(`[SERVER] HTTP also listening on port 80 (mower firmware compatibility)`);
+  });
+  server80.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EACCES') {
+      console.warn(`[SERVER] Port 80 vereist root/sudo — maaier HTTP calls zullen falen`);
+    } else if (err.code === 'EADDRINUSE') {
+      console.warn(`[SERVER] Port 80 al in gebruik (nginx?) — maaier HTTP calls via nginx`);
+    } else {
+      console.warn(`[SERVER] Port 80 bind fout: ${err.message}`);
+    }
+  });
+}

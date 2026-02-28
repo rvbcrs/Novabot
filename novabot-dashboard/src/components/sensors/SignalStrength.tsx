@@ -1,4 +1,5 @@
 import { Wifi, Satellite, Crosshair } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 
 interface Props {
   wifiRssi?: string;
@@ -6,11 +7,11 @@ interface Props {
   locQuality?: string;
 }
 
-function rssiLabel(rssi: number): string {
-  if (rssi >= -50) return 'Excellent';
-  if (rssi >= -60) return 'Good';
-  if (rssi >= -70) return 'Fair';
-  return 'Weak';
+function rssiLabelKey(rssi: number): string {
+  if (rssi >= -50) return 'signal.excellent';
+  if (rssi >= -60) return 'signal.good';
+  if (rssi >= -70) return 'signal.fair';
+  return 'signal.weak';
 }
 
 function rssiBars(rssi: number): number {
@@ -21,6 +22,7 @@ function rssiBars(rssi: number): number {
 }
 
 export function SignalStrength({ wifiRssi, rtkSat, locQuality }: Props) {
+  const { t } = useTranslation();
   const rssi = wifiRssi ? parseInt(wifiRssi, 10) : null;
   const sats = rtkSat ? parseInt(rtkSat, 10) : null;
   const bars = rssi !== null ? rssiBars(rssi) : 0;
@@ -29,7 +31,7 @@ export function SignalStrength({ wifiRssi, rtkSat, locQuality }: Props) {
     <div className="bg-gray-800 rounded-xl p-4 border border-gray-700">
       <div className="flex items-center gap-2 mb-3">
         <Wifi className="w-4 h-4 text-blue-400" />
-        <span className="text-sm text-gray-400">Signal</span>
+        <span className="text-sm text-gray-400">{t('signal.title')}</span>
       </div>
       <div className="space-y-3">
         {rssi !== null && (
@@ -44,16 +46,16 @@ export function SignalStrength({ wifiRssi, rtkSat, locQuality }: Props) {
                   />
                 ))}
               </div>
-              <span className="text-sm text-white">WiFi</span>
+              <span className="text-sm text-white">{t('signal.wifi')}</span>
             </div>
-            <span className="text-xs text-gray-400">{rssi} dBm ({rssiLabel(rssi)})</span>
+            <span className="text-xs text-gray-400">{rssi} dBm ({t(rssiLabelKey(rssi))})</span>
           </div>
         )}
         {sats !== null && (
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Satellite className="w-4 h-4 text-sky-400" />
-              <span className="text-sm text-white">RTK Satellites</span>
+              <span className="text-sm text-white">{t('signal.rtkSatellites')}</span>
             </div>
             <span className="text-sm font-medium text-white">{sats}</span>
           </div>
@@ -62,7 +64,7 @@ export function SignalStrength({ wifiRssi, rtkSat, locQuality }: Props) {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Crosshair className="w-4 h-4 text-purple-400" />
-              <span className="text-sm text-white">Location Quality</span>
+              <span className="text-sm text-white">{t('signal.locationQuality')}</span>
             </div>
             <span className="text-sm font-medium text-white">{locQuality}%</span>
           </div>

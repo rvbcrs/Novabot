@@ -36,8 +36,10 @@ export function cloudHttpProxy(req: Request, res: Response, _next: NextFunction)
   }
 
   const tag = `[PROXY-HTTP]`;
-  console.log(`\n${tag} ──────────────────────────────────────`);
+  console.log(`\n${tag} ══════════════════════════════════════`);
   console.log(`${tag} >>> ${req.method} ${req.originalUrl}`);
+  // Log ALLE request headers (cruciaal voor vergelijking cloud vs lokaal)
+  console.log(`${tag} >>> Headers: ${JSON.stringify(headers)}`);
   if (bodyBuf.length > 0 && bodyBuf.length < 4096) {
     try {
       const pretty = JSON.stringify(JSON.parse(rawBody), null, 2);
@@ -45,11 +47,8 @@ export function cloudHttpProxy(req: Request, res: Response, _next: NextFunction)
     } catch {
       console.log(`${tag} >>> Body: ${rawBody}`);
     }
-  }
-  // Log auth header (masked)
-  if (headers['authorization']) {
-    const token = headers['authorization'];
-    console.log(`${tag} >>> Authorization: ${token.substring(0, 30)}...`);
+  } else if (bodyBuf.length >= 4096) {
+    console.log(`${tag} >>> Body: (${bodyBuf.length} bytes, te groot voor log)`);
   }
 
   const options: https.RequestOptions = {
@@ -72,17 +71,19 @@ export function cloudHttpProxy(req: Request, res: Response, _next: NextFunction)
       const responseBody = Buffer.concat(chunks).toString('utf-8');
 
       console.log(`${tag} <<< ${proxyRes.statusCode} ${proxyRes.statusMessage}`);
-      if (responseBody.length < 8192) {
+      // Log ALLE response headers
+      console.log(`${tag} <<< Headers: ${JSON.stringify(proxyRes.headers)}`);
+      if (responseBody.length < 16384) {
         try {
           const pretty = JSON.stringify(JSON.parse(responseBody), null, 2);
           console.log(`${tag} <<< Body:\n${pretty}`);
         } catch {
-          console.log(`${tag} <<< Body: ${responseBody.substring(0, 2000)}`);
+          console.log(`${tag} <<< Body: ${responseBody.substring(0, 4000)}`);
         }
       } else {
         console.log(`${tag} <<< Body: (${responseBody.length} bytes, truncated)`);
       }
-      console.log(`${tag} ──────────────────────────────────────\n`);
+      console.log(`${tag} ══════════════════════════════════════\n`);
 
       // Forward status + headers + body to the original client
       res.status(proxyRes.statusCode ?? 502);

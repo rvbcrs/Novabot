@@ -27,6 +27,9 @@ zodat de robotmaaier en het laadstation volledig offline werken.
 │       ├── mqtt/sensorData.ts      Gedeelde sensor definities, vertalingen, en data cache
 │       ├── mqtt/mapConverter.ts    GPS ↔ lokale coördinaten conversie met orientatie
 │       ├── dashboard/socketHandler.ts  Socket.io server voor real-time dashboard updates
+│       ├── ble/bleLogger.ts        BLE traffic logger (passive scanner + GATT log, Socket.io push)
+│       ├── ble/scanner.ts          BLE device scanner (Noble/CoreBluetooth, MAC extractie)
+│       ├── ble/provisioner.ts      BLE GATT provisioner (WiFi/MQTT/LoRa config via BLE)
 │       ├── proxy/httpProxy.ts      HTTP proxy naar echte cloud (PROXY_MODE=cloud)
 │       └── routes/
 │           ├── admin.ts                        GET /api/admin/devices, POST /api/admin/devices/:sn/mac
@@ -52,7 +55,8 @@ zodat de robotmaaier en het laadstation volledig offline werken.
 │       │   ├── dashboard/DashboardPage.tsx  Hoofdlayout met sidebar + detail view + schema paneel
 │       │   ├── schedule/Scheduler.tsx       Maaischema beheer (CRUD + MQTT push)
 │       │   ├── sensors/SensorGrid.tsx       Sensor cards grid
-│       │   └── status/MowerStatus.tsx       Maaier-specifiek paneel
+│       │   ├── status/MowerStatus.tsx       Maaier-specifiek paneel
+│       │   └── log/LogConsole.tsx           MQTT + BLE log viewer (tabbed)
 │       └── App.tsx                 Root component
 ├── novabot-dns/                    DNS rewrite Docker container (dnsmasq)
 │   ├── Dockerfile                  Alpine + dnsmasq, 8MB image
@@ -564,7 +568,8 @@ BLE frames worden gesplitst in chunks van ~27 bytes, omgeven door `ble_start`/`b
 - `set_mqtt_info` stuurt GEEN credentials — die worden apart geconfigureerd (via MQTT zelf of hardcoded)
 - `set_wifi_info` bevat altijd twee sub-objecten: `sta` (thuisnet) + `ap` (charger's eigen AP met passwd=`12345678`)
 - `set_lora_info_respond.value` = het werkelijk **toegewezen** LoRa kanaal (kan afwijken van gevraagd `channel`)
-- `bindingEquipment` gebruikt de `value` uit `set_lora_info_respond` als `chargerChannel` (niet de gevraagde waarde)
+- `bindingEquipment` — de app stuurt ALLEEN `sn`, `appUserId`, `userCustomDeviceName` (GEEN `chargerChannel`!)
+- Cloud slaat `chargerChannel: 16` op (het GEVRAAGDE kanaal, niet het toegewezen kanaal 15)
 
 ### "Add Charging Station" flow (stappen in app)
 1. Voer SN in van het laadstation
@@ -578,7 +583,7 @@ BLE frames worden gesplitst in chunks van ~27 bytes, omgeven door `ble_start`/`b
    - `set_cfg_info` (commit)
 5. Charger herverbindt met WiFi + MQTT (disconnect + reconnect zichtbaar in logs)
 6. App doet `getEquipmentBySN` → krijgt `chargerAddress` + MQTT credentials terug
-7. App doet `bindingEquipment` met `chargerChannel` = waarde uit `set_lora_info_respond`
+7. App doet `bindingEquipment` met ALLEEN `sn`, `appUserId`, `userCustomDeviceName` (GEEN chargerChannel!)
 8. App doet `userEquipmentList` → laadstation verschijnt op startscherm
 
 ### "Add Mower" BLE provisioning flow (gecaptured via cloud, februari 2026)
@@ -1948,6 +1953,8 @@ mkdocs serve -f mkdocs-public.yml     # Preview publieke wiki
 - [x] **AES key gekraakt** — via blutter decompilatie van APK v2.4.0: key = `"abcdabcd1234" + SN[-4:]`, IV = `"abcd1234abcd1234"`
 - [x] Maaier MQTT berichten ontsleuteld — 3 report types: `report_state_robot`, `report_exception_state`, `report_state_timer_data`
 - [x] Maaier BLE provisioning via app werkend krijgen (opgelost: MAC fix + CONNECT flags fix)
+- [x] Unbind → re-add flow cloud-identiek geïmplementeerd: userId=0 na unbind, BLE re-provisioning harmless, bindingEquipment altijd rebind
+- [x] App userId check reverse-engineered via ARM64 assembly: `userId != 0` → "already bound" toast (client-side, niet server-side)
 - [x] App MQTT CONNECT bug fixen (Will QoS met Will Flag=0) — `sanitizeConnectFlags` in broker.ts
 - [x] Maaier `account`/`password` = null in cloud response bevestigd en geïmplementeerd
 - [x] MAC-adres in responses = BLE MAC (niet WiFi STA) — device_registry bijgewerkt
@@ -2029,6 +2036,11 @@ mkdocs serve -f mkdocs-public.yml     # Preview publieke wiki
 - [x] Publieke/private wiki split: PRIVATE markers in 8 docs, build-public-wiki.sh strip script
 - [x] 14 gevoelige strings geverifieerd op 0 hits in publieke wiki build
 - [x] Firmware haalbaarheidsanalyse: charger=haalbaar (ESP-IDF), maaier=aanpasbaar via .deb OTA
+- [x] Cloud vs lokale server provisioning analyse: 7 response-verschillen gevonden en 6 gefixt (sysVersion, model, userId, queryEquipmentMap, queryRecentCutGrassPlan, queryMsgMenuByUserId)
+- [ ] Fix `model` per deviceType in `userEquipmentList` (N1000 voor charger, N2000 voor mower)
+- [x] Fix `chargerChannel` in DB en code: cloud slaat 16 op (gevraagd kanaal), niet 15 (toegewezen). `rowToCloudDto()` retourneert nu ALTIJD null voor mower chargerAddress/chargerChannel
+- [ ] Fix `queryEquipmentMap` response formaat: retourneer cloud-identiek object i.p.v. lege array
+- [ ] Bevestigen of maaier BLE aan heeft tijdens lokale provisioning poging
 - [ ] v0.4.0 null-value commando's testen: `{"get_lora_info":null}` naar reserve charger
 - [ ] OTA flash reserve charger via `ota_upgrade_cmd` MQTT commando
 - [ ] HTTPS server opzetten voor charger OTA (esp_https_ota vereist mogelijk HTTPS)
@@ -2089,9 +2101,131 @@ en `bindingEquipment` responses. App doorloopt volledige BLE provisioning flow.
    App v2.3.8 mist de decryptiestap — `jsonDecode()` faalt op ciphertext.
    **Opgelost**: key = `"abcdabcd1234" + SN[-4:]`, IV = `"abcd1234abcd1234"` (ontdekt via blutter v2.4.0).
 
-**Resultaat**: Maaier succesvol toegevoegd via lokale server na fixes 1-3.
+5. **"The device has already been bound"** — Client-side toast in Flutter app.
+   App's `_getMowerFromServer()` checkt `userId` veld uit `getEquipmentBySN` response.
+   ARM64 assembly analyse (adres `0x96a504`): `stp xzr, x0, [SP]` → vergelijkt userId met 0.
+   Als `userId != 0` → toast "already bound". Als `userId == 0` of `null` → BLE provisioning.
+   **Fix**: Server retourneert `userId: 0` voor unbound apparaten (`user_id = NULL` in DB).
+
+6. **Unbind → re-add flow** (cloud-identiek, februari 2026):
+   - `unboundEquipment`: `UPDATE SET user_id = NULL` (record blijft, alleen binding weg)
+   - `getEquipmentBySN`: retourneert `userId: 0` als `user_id` NULL → app doet BLE provisioning
+   - BLE re-provisioning stuurt zelfde WiFi/MQTT/LoRa credentials → apparaat herverbindt normaal
+   - `bindingEquipment`: staat altijd rebinding toe (lokale server = single-household)
+   - WiFi wordt NIET verbroken: zelfde credentials worden opnieuw gestuurd via BLE
+
+**Resultaat**: Maaier succesvol toegevoegd via lokale server na fixes 1-5.
+Unbind → re-add flow werkt identiek aan de cloud.
 Maaier-berichten worden als AES-ciphertext doorgestuurd naar de app.
 De server kan nu ook zelf ontsleutelen (key derivatie bekend).
+
+### App userId check — ARM64 assembly bewijs (februari 2026)
+
+Bron: blutter decompilatie `add_mower_page/logic.dart`, methode `_getMowerFromServer@883255105`.
+
+**Exacte assembly (adres 0x96a4a8-0x96a538):**
+```
+0x96a4a8: r30 = "userId"           // Lees userId uit response
+0x96a4c8: cmp w0, NULL             // Als null → skip naar 0x96a538
+0x96a4cc: b.eq #0x96a538
+0x96a4d4: r30 = "userId"           // Lees userId waarde
+0x96a4f4: r1 = 59                  // Class ID 59 (Smi = small integer)
+0x96a4f8: branchIfSmi(r0, 0x96a504) // Type check
+0x96a504: stp xzr, x0, [SP]       // Push 0 (xzr=zero register) + userId op stack
+0x96a514: blr lr                   // Dispatch call (operator ==)
+0x96a518: tbz w0, #4, #0x96a538   // Als bit4=0 (true) → skip "already bound"
+0x96a51c: r16 = "The device has already been bound."
+```
+
+**Dart equivalent:**
+```dart
+var userId = response['userId'];
+if (userId != null && userId != 0) {
+  showToast("The device has already been bound.");
+  return;
+}
+// Ga door met BLE provisioning...
+```
+
+**Implicaties voor server:**
+- `userId: 0` of `userId: null` → app gaat door met BLE provisioning (normaal)
+- `userId: <elke waarde != 0>` → "already bound" toast (zelfs voor eigen apparaat!)
+- Cloud retourneert `userId: 86` voor gebonden apparaat, `userId: 0` na unbind
+- Na unbind triggert de app dus altijd BLE re-provisioning — dit is by design
+
+### Equipment binding lifecycle (cloud-identiek, februari 2026)
+
+**Database schema**: `equipment.user_id` is nullable (`TEXT`). Cloud verwijdert records nooit.
+
+| Actie | `user_id` in DB | `getEquipmentBySN` response | App gedrag |
+|-------|----------------|----------------------------|------------|
+| Fabriek (nieuw) | `NULL` | `userId: 0` | BLE provisioning |
+| Na binding | `<app_user_id>` | `userId: <numeric_id>` | Apparaat in lijst, "already bound" bij re-add |
+| Na unbind | `NULL` | `userId: 0` | BLE provisioning (zelfde WiFi → geen verlies) |
+| Na re-bind | `<app_user_id>` | `userId: <numeric_id>` | Apparaat terug in lijst |
+
+**`bindingEquipment` handler** (equipment.ts):
+- Check `existing` record op `mower_sn` of `charger_sn`
+- Als bestaat: `UPDATE SET user_id = ?, charger_channel = COALESCE(...)` (altijd, geen "already bound" reject)
+- Als niet bestaat: `INSERT` nieuw record
+
+**`unboundEquipment` handler** (equipment.ts):
+- `UPDATE SET user_id = NULL WHERE id = ?` (niet DELETE)
+- LoRa parameters worden gecached in `equipment_lora_cache` voor re-bind
+
+### Cloud vs lokale server — maaier provisioning analyse (februari 2026)
+
+Systematische vergelijking van cloud-proxy capture (`ConsoleLogMower.txt`) en lokale server responses
+om te verklaren waarom maaier WiFi provisioning lokaal faalt maar via cloud werkt.
+
+**Bronbestanden:**
+- `ConsoleLogMower.txt` — Cloud-proxy capture van maaier OPERATIONELE sessie (apparaten al gebonden)
+- `COnsoleLog.txt` — Lokale server capture van CHARGER toevoegen (niet maaier!)
+- `Novabot-Mower-cloud.pklg` — BLE capture cloud maaier provisioning
+- `Novabot-Local.pklg` — BLE capture lokale charger provisioning (207KB, 4+ retry cycles)
+- Blutter v2.4.0 ARM64 assembly analyse van `AddMowerPageLogic`
+
+**Belangrijke correctie**: `COnsoleLog.txt` is de capture van het CHARGER toevoegen (niet de maaier).
+Het toevoegen van het charging station werkt lokaal prima. Het probleem is specifiek de MAAIER.
+
+**Gebruikersbevestiging**: BLE staat/uit is NIET het probleem. Toevoegen via cloud route (lfibot.com)
+werkt direct, daarna via lokale server niet, zonder tussentijdse BLE wijziging. De app zelf controleert
+BLE — als het werkt met cloud moet het ook werken met lokaal. Het verschil zit PUUR in de server responses.
+
+**Firmware versie correctie**: v0.3.6 is CHARGER firmware. v5.7.1 en v6.0.0 zijn MAAIER firmwares.
+
+**Blutter-bevinding: app gebruikt ALLEEN `macAddress` en `userId` uit `getEquipmentBySN` voor BLE provisioning.**
+BLE commando parameters (WiFi SSID/passwd, LoRa addr/channel, MQTT host/port) komen uit user input
+en hardcoded waarden — NIET uit de server response. De LoRa channel voor de maaier komt uit de
+charger's equipment record (uit `userEquipmentList`), niet uit de maaier's eigen record.
+
+Assembly bewijs (blutter `_writeSetLoraInfo` op 0x91bebc):
+- `r0->field_23 -> field_1b` → equipment controller field (charger's chargerChannel)
+- `"addr"` = vaste waarde 718
+- `"channel"` = gelezen uit charger equipment record
+
+Assembly bewijs (blutter `_getMowerFromServer` op 0x921e48):
+- `0x921f2c: r16 = "macAddress"` → gevalideerd op niet-null
+- `0x921f58: "Device is missing mac address."` → error als null
+- `0x921f74: r30 = "userId"` → vergelijking met 0 voor "already bound" check
+
+**Gevonden en GEFIXT response-verschillen (cloud vs lokaal, feb 2026):**
+
+| # | Verschil | Cloud response | Was lokaal | Fix |
+|---|----------|---------------|-----------|-----|
+| 1 | `sysVersion` voor maaier | `"v6.0.0"` | `"v0.3.6"` (charger FW!) | **GEFIXT**: rowToCloudDto gebruikt nu mower_version voor mowers, default `"v5.7.1"` |
+| 2 | `model` voor maaier | `"N2000"` | `"N1000"` (hardcoded) | **GEFIXT**: `N2000` voor mowers, `N1000` voor chargers |
+| 3 | `userId` in `userEquipmentList` | **Ontbreekt** | `userId: 0` | **GEFIXT**: userId verwijderd uit list entries |
+| 4 | `queryEquipmentMap` response | `{data:null, md5:null, ...}` | `[]` (array) | **GEFIXT**: retourneert nu cloud-identiek object |
+| 5 | `queryRecentCutGrassPlan` | Null-velden object | `null` | **GEFIXT**: retourneert nu cloud-identiek null-velden object |
+| 6 | `queryMsgMenuByUserId` | `{workRecordMsg, robotMsg, ...}` | `{robotMsgUnreadCount, ...}` | **GEFIXT**: retourneert nu cloud-identiek formaat |
+| 7 | `chargerChannel` charger record | Waarschijnlijk `15` | `16` | Open — moet in DB gecorrigeerd worden |
+
+**Mogelijke resterende oorzaak: `macAddress: null` bij verse installatie.**
+Als de maaier nog niet verbonden is met de lokale MQTT broker (bijv. net na DNS switch),
+retourneert `getEquipmentBySN` `macAddress: null`. De app toont dan "Device is missing mac address"
+en kan geen BLE scan doen. De cloud heeft de MAC altijd (factory-geïmporteerd).
+Fix: BLE MAC pre-registreren in device_registry, of `wifiStaToBle()` ARP-detectie afwachten.
 
 ### APK v2.4.0 blutter analyse (februari 2026)
 - `NOVABOT_2.4.0_APKPure-arm64.xapk` — ARM64 XAPK van APKPure
@@ -2196,6 +2330,53 @@ Maaier firmware blijkt een Debian pakket met ROS 2 op Horizon Robotics X3 SoC.
 - `chargerLat`/`chargerLng` props doorgestuurd naar MowerMap vanuit charger device sensors
 - `Schedule` TypeScript interface toegevoegd aan dashboard types
 - API client uitgebreid: `sendCommand`, `exportMaps`, `fetchSchedules`, `createSchedule`, `updateSchedule`, `deleteSchedule`, `sendSchedule`
+
+### BLE Traffic Logger (februari 2026)
+
+Real-time BLE traffic logger, parallel aan de bestaande MQTT logger.
+
+**Server-side (`novabot-server/src/ble/bleLogger.ts`):**
+- Background passive BLE scanner via Noble (CoreBluetooth op macOS)
+- Logt advertisements van Novabot devices (naam-filter: `novabot`, `charger_pile`, `charger`)
+- Extraheert MAC uit manufacturer data (company ID 0x5566)
+- Deduplicatie: zelfde device max elke 2 seconden
+- `pushBleLog(entry)` — toevoegen aan buffer + Socket.io broadcast
+- `initBleLogger(emit)` — start background scan met Socket.io emit functie
+- `sendBleLogHistory(emit)` — stuur buffer naar nieuwe dashboard client
+- `pauseBackgroundScan()` / `resumeBackgroundScan()` — coördinatie met provisioner
+
+**BleLogEntry interface:**
+```typescript
+{
+  ts: number;
+  type: 'advertisement' | 'connect' | 'disconnect' | 'write' | 'notify' | 'read' | 'error';
+  deviceName: string;
+  mac: string;
+  rssi: number;
+  service?: string;
+  characteristic?: string;
+  data?: string;        // hex (advertisements) of JSON (GATT operations)
+  direction?: '→DEV' | '←DEV' | '';
+}
+```
+
+**Socket.io events:**
+| Event | Richting | Beschrijving |
+|-------|----------|-------------|
+| `ble:log` | server → browser | Enkel BLE log entry (real-time) |
+| `ble:log:history` | server → browser | Buffer bij connect (max 500 entries) |
+
+**Dashboard integratie:**
+- `useDevices()` hook retourneert nu ook `bleLogs: BleLogEntry[]`
+- `useSocket()` luistert op `ble:log` en `ble:log:history`
+- `LogConsole` component heeft MQTT/BLE tab-toggle
+- BLE entries tonen: timestamp, type badge, device naam, MAC, RSSI, service/char, data
+- Kleurcodering: mower=emerald (Novabot), charger=yellow (CHARGER_PILE)
+
+**Provisioner integratie:**
+- `provisioner.ts` logt alle GATT writes en notify responses via `pushBleLog()`
+- Connect/disconnect events worden gelogd
+- Background scan wordt gepauzeerd tijdens provisioning/raw diagnostic
 
 ### Camera en netwerk analyse maaier (februari 2026)
 - Camera systeem volledig geanalyseerd: dual Sony IMX307 + PMD ToF, GDC fisheye correctie

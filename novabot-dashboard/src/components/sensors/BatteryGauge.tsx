@@ -1,4 +1,5 @@
 import { Battery, BatteryCharging, BatteryLow, BatteryFull } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 
 interface Props {
   percentage: number;
@@ -6,6 +7,7 @@ interface Props {
 }
 
 export function BatteryGauge({ percentage, state }: Props) {
+  const { t } = useTranslation();
   const color =
     percentage > 50 ? 'bg-green-500' :
     percentage > 20 ? 'bg-yellow-500' :
@@ -28,7 +30,7 @@ export function BatteryGauge({ percentage, state }: Props) {
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
           <Icon className={`w-5 h-5 ${iconColor}`} />
-          <span className="text-sm text-gray-400">Battery</span>
+          <span className="text-sm text-gray-400">{t('battery.title')}</span>
         </div>
         {state && (
           <span className="text-xs text-gray-500 bg-gray-700/50 px-2 py-0.5 rounded">

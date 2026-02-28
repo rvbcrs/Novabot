@@ -1,4 +1,5 @@
 import { BatteryMedium, Plug, TreePine } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import type { DeviceState } from '../../types';
 import { StatusBadge } from '../common/StatusBadge';
 
@@ -9,6 +10,7 @@ interface Props {
 }
 
 export function Sidebar({ devices, selectedSn, onSelect }: Props) {
+  const { t } = useTranslation();
   const sorted = Array.from(devices.values()).sort((a, b) => {
     // Charger first, then mower
     if (a.deviceType !== b.deviceType) return a.deviceType === 'charger' ? -1 : 1;
@@ -18,7 +20,7 @@ export function Sidebar({ devices, selectedSn, onSelect }: Props) {
   return (
     <aside className="w-72 bg-gray-900 border-r border-gray-800 overflow-auto">
       <div className="p-4 space-y-2">
-        <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Devices</h2>
+        <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">{t('sidebar.devices')}</h2>
         {sorted.map(device => (
           <button
             key={device.sn}
@@ -37,7 +39,7 @@ export function Sidebar({ devices, selectedSn, onSelect }: Props) {
                   <TreePine className="w-4 h-4 text-emerald-500" />
                 )}
                 <span className="text-sm font-medium text-white">
-                  {device.nickname ?? (device.deviceType === 'charger' ? 'Charger' : 'Mower')}
+                  {device.nickname ?? (device.deviceType === 'charger' ? t('sidebar.charger') : t('sidebar.mower'))}
                 </span>
               </div>
               <StatusBadge online={device.online} />
@@ -60,7 +62,7 @@ export function Sidebar({ devices, selectedSn, onSelect }: Props) {
           </button>
         ))}
         {sorted.length === 0 && (
-          <p className="text-sm text-gray-500 text-center py-8">No devices found</p>
+          <p className="text-sm text-gray-500 text-center py-8">{t('sidebar.noDevices')}</p>
         )}
       </div>
     </aside>

@@ -37,6 +37,8 @@ export interface EquipmentRow {
   charger_address: string | null;
   charger_channel: string | null;
   mac_address: string | null;
+  wifi_name: string | null;
+  wifi_password: string | null;
   created_at: string;
 }
 

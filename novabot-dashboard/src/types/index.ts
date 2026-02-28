@@ -84,3 +84,15 @@ export interface MqttLogEntry {
   payload: string;
   encrypted: boolean;
 }
+
+export interface BleLogEntry {
+  ts: number;
+  type: 'advertisement' | 'connect' | 'disconnect' | 'write' | 'notify' | 'read' | 'error';
+  deviceName: string;
+  mac: string;
+  rssi: number;
+  service?: string;
+  characteristic?: string;
+  data?: string;
+  direction?: '\u2192DEV' | '\u2190DEV' | '';
+}

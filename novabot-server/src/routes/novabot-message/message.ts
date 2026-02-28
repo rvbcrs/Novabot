@@ -22,13 +22,31 @@ messageRouter.get('/queryRobotMsgPageByUserId', authMiddleware, (req: AuthReques
 });
 
 // POST /api/novabot-message/message/queryMsgMenuByUserId
+// Cloud response format (ConsoleLogMower.txt):
+// { workRecordMsg, workRecordUnread, workRecordDate, robotMsg, robotMsgUnread, robotMsgDate,
+//   securityRecordMsg, securityRecordUnread, sharingMsg, sharingUnread, sharingDate,
+//   promotionMsg, promotionUnread, promotionDate }
 messageRouter.post('/queryMsgMenuByUserId', authMiddleware, (req: AuthRequest, res: Response) => {
   const unreadRobot = (db.prepare('SELECT COUNT(*) as c FROM robot_messages WHERE user_id = ? AND robot_msg_unread = 1').get(req.userId) as { c: number }).c;
   const unreadWork  = (db.prepare('SELECT COUNT(*) as c FROM work_records   WHERE user_id = ? AND work_record_unread = 1').get(req.userId) as { c: number }).c;
+  const latestWork  = db.prepare('SELECT work_record_date FROM work_records WHERE user_id = ? ORDER BY work_record_date DESC LIMIT 1').get(req.userId) as { work_record_date: string } | undefined;
+  const latestRobot = db.prepare('SELECT robot_msg_date FROM robot_messages WHERE user_id = ? ORDER BY robot_msg_date DESC LIMIT 1').get(req.userId) as { robot_msg_date: string } | undefined;
 
   res.json(ok({
-    robotMsgUnreadCount: unreadRobot,
-    workRecordUnreadCount: unreadWork,
+    workRecordMsg: null,
+    workRecordUnread: unreadWork,
+    workRecordDate: latestWork?.work_record_date ?? null,
+    securityRecordMsg: null,
+    securityRecordUnread: null,
+    robotMsg: null,
+    robotMsgUnread: unreadRobot,
+    robotMsgDate: latestRobot?.robot_msg_date ?? null,
+    sharingMsg: null,
+    sharingUnread: null,
+    sharingDate: null,
+    promotionMsg: null,
+    promotionUnread: null,
+    promotionDate: null,
   }));
 });
 

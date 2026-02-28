@@ -6,5 +6,8 @@ certs/
 novabot.db
 storage/
 
+# Proxy logbestanden
+logs/
+
 # Env met secrets
 .env

@@ -12,6 +12,7 @@ export const equipmentStateRouter = Router();
 // Velden (uit firmware strings): dateTime, workTime, workArea, cutGrassHeight,
 // mapNames, startWay, workStatus, scheduleId, week, sn
 equipmentStateRouter.post('/saveCutGrassRecord', (req: Request, res: Response) => {
+  const srcIp = req.ip || req.socket.remoteAddress || '?';
   const { sn, dateTime, workTime, workArea, cutGrassHeight,
           mapNames, startWay, workStatus, scheduleId, week } = req.body as {
     sn?: string;
@@ -26,7 +27,13 @@ equipmentStateRouter.post('/saveCutGrassRecord', (req: Request, res: Response) =
     week?: string | number[];
   };
 
-  if (!sn) { res.json(fail('sn required', 400)); return; }
+  // Maaier stuurt soms lege body (multipart/form-data die Express niet parseert).
+  // Retourneer success om retry-loop te stoppen.
+  if (!sn) {
+    console.log(`[STATE] saveCutGrassRecord: lege body van ${srcIp} (geen sn)`);
+    res.json(ok(null));
+    return;
+  }
 
   console.log(`[STATE] saveCutGrassRecord: sn=${sn} status=${workStatus ?? '-'} time=${workTime ?? '-'}min area=${workArea ?? '-'}m²`);
 
