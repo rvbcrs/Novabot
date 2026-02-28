@@ -5,6 +5,7 @@ import {
 import { useTranslation } from 'react-i18next';
 import type { MapData } from '../../types';
 import { sendCommand, fetchMaps } from '../../api/client';
+import { useToast } from '../common/Toast';
 
 const DIR_DEGREES = [0, 45, 90, 135];
 
@@ -31,6 +32,7 @@ export function MowerControls({ sn, online, onPathDirectionChange, pendingPolygo
   const [mapId, setMapId] = useState('');
   const [mapName, setMapName] = useState('');
   const [busy, setBusy] = useState(false);
+  const { toast } = useToast();
 
   const compassLabels = t('controls.compass', { returnObjects: true }) as string[];
 
@@ -50,11 +52,20 @@ export function MowerControls({ sn, online, onPathDirectionChange, pendingPolygo
     }
   }, [pendingPolygon]);
 
-  const send = useCallback(async (cmd: Record<string, unknown>) => {
+  const send = useCallback(async (cmd: Record<string, unknown>, label?: string) => {
     setBusy(true);
-    try { await sendCommand(sn, cmd); } catch { /* ignore */ }
+    try {
+      const result = await sendCommand(sn, cmd);
+      const cmdName = label || result.command || Object.keys(cmd)[0];
+      const detail = result.encrypted ? ` (encrypted, ${result.size}B)` : '';
+      toast(`✓ ${cmdName}${detail}`, 'success');
+    } catch (err) {
+      const cmdName = label || Object.keys(cmd)[0];
+      const detail = err instanceof Error ? `: ${err.message}` : '';
+      toast(`✗ ${cmdName}${detail}`, 'error');
+    }
     setBusy(false);
-  }, [sn]);
+  }, [sn, t, toast]);
 
   const handleStart = useCallback(async () => {
     setBusy(true);
@@ -88,13 +99,18 @@ export function MowerControls({ sn, online, onPathDirectionChange, pendingPolygo
         startCmd.cutGrassHeight = cuttingHeight;
       }
 
-      await sendCommand(sn, { start_run: startCmd });
+      const result = await sendCommand(sn, { start_run: startCmd });
+      const detail = result.encrypted ? ` (encrypted, ${result.size}B)` : '';
+      toast(`✓ ${t('controls.startMowing')}${detail}`, 'success');
       setExpanded(false);
       onPathDirectionChange?.(null);
       onStarted?.();
-    } catch { /* ignore */ }
+    } catch (err) {
+      const detail = err instanceof Error ? `: ${err.message}` : '';
+      toast(`✗ ${t('controls.startMowing')}${detail}`, 'error');
+    }
     setBusy(false);
-  }, [sn, cuttingHeight, pathDirection, mapId, mapName, maps, pendingPolygon, onPathDirectionChange, onStarted]);
+  }, [sn, cuttingHeight, pathDirection, mapId, mapName, maps, pendingPolygon, onPathDirectionChange, onStarted, t, toast]);
 
   const disabled = busy || !online;
   const btnBase = 'inline-flex items-center justify-center p-1.5 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed';
@@ -123,7 +139,7 @@ export function MowerControls({ sn, online, onPathDirectionChange, pendingPolygo
         </button>
 
         <button
-          onClick={() => send({ pause_run: {} })}
+          onClick={() => send({ pause_run: {} }, t('controls.pause'))}
           disabled={disabled}
           className={`${btnBase} bg-gray-700/60 text-yellow-400 hover:bg-yellow-700/40`}
           title={t('controls.pause')}
@@ -132,7 +148,7 @@ export function MowerControls({ sn, online, onPathDirectionChange, pendingPolygo
         </button>
 
         <button
-          onClick={() => send({ resume_run: {} })}
+          onClick={() => send({ resume_run: {} }, t('controls.resume'))}
           disabled={disabled}
           className={`${btnBase} bg-gray-700/60 text-blue-400 hover:bg-blue-700/40`}
           title={t('controls.resume')}
@@ -141,7 +157,7 @@ export function MowerControls({ sn, online, onPathDirectionChange, pendingPolygo
         </button>
 
         <button
-          onClick={() => send({ stop_run: {} })}
+          onClick={() => send({ stop_run: {} }, t('controls.stop'))}
           disabled={disabled}
           className={`${btnBase} bg-gray-700/60 text-red-400 hover:bg-red-700/40`}
           title={t('controls.stop')}
@@ -150,7 +166,7 @@ export function MowerControls({ sn, online, onPathDirectionChange, pendingPolygo
         </button>
 
         <button
-          onClick={() => send({ go_to_charge: {} })}
+          onClick={() => send({ go_to_charge: {} }, t('controls.goToCharge'))}
           disabled={disabled}
           className={`${btnBase} bg-gray-700/60 text-yellow-300 hover:bg-yellow-700/40`}
           title={t('controls.goToCharge')}

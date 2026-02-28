@@ -255,6 +255,33 @@ export function updateDeviceData(sn: string, payload: Buffer): Map<string, strin
     changes.set(field, translateValue(field, strValue));
   }
 
+  // Extraheer geneste GPS data uit report_state_timer_data → localization.gps_position
+  const dataObj = data as Record<string, unknown>;
+  if (commandName === 'report_state_timer_data' && typeof dataObj.localization === 'object' && dataObj.localization !== null) {
+    const loc = dataObj.localization as Record<string, unknown>;
+    // GPS positie
+    if (typeof loc.gps_position === 'object' && loc.gps_position !== null) {
+      const gps = loc.gps_position as Record<string, unknown>;
+      for (const gpsField of ['latitude', 'longitude', 'altitude'] as const) {
+        if (gps[gpsField] !== undefined && gps[gpsField] !== null) {
+          const strValue = String(gps[gpsField]);
+          if (snValues.get(gpsField) !== strValue) {
+            snValues.set(gpsField, strValue);
+            changes.set(gpsField, translateValue(gpsField, strValue));
+          }
+        }
+      }
+    }
+    // Localization state
+    if (typeof loc.localization_state === 'string') {
+      const field = 'localization_state';
+      if (snValues.get(field) !== loc.localization_state) {
+        snValues.set(field, loc.localization_state);
+        changes.set(field, translateValue(field, loc.localization_state));
+      }
+    }
+  }
+
   // Extraheer virtuele sensorvelden uit charger_status bitfield
   if (changes.has('charger_status')) {
     const raw = parseInt(snValues.get('charger_status') ?? '0', 10);

@@ -96,8 +96,17 @@ export async function deleteMap(sn: string, mapId: string): Promise<void> {
 
 // ── MQTT Commands ──────────────────────────────────────────────
 
-export async function sendCommand(sn: string, command: Record<string, unknown>): Promise<void> {
-  await post(`${BASE}/command/${encodeURIComponent(sn)}`, { command });
+export interface CommandResult {
+  ok: boolean;
+  command: string;
+  encrypted?: boolean;
+  size?: number;
+  error?: string;
+}
+
+export async function sendCommand(sn: string, command: Record<string, unknown>): Promise<CommandResult> {
+  const res = await post(`${BASE}/command/${encodeURIComponent(sn)}`, { command });
+  return res.json();
 }
 
 // ── Map Export ──────────────────────────────────────────────────

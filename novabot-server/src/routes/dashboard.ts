@@ -508,9 +508,12 @@ dashboardRouter.post('/command/:sn', (req: Request, res: Response) => {
     return;
   }
 
-  // Optioneel: versleutel het commando voor charger v0.4.0+ (encrypt=true in body)
+  // Auto-encrypt voor LFIN-apparaten (maaiers) — firmware accepteert alleen AES-versleutelde payloads
+  // Handmatige override: encrypt=true/false in body
   const { encrypt: doEncrypt, qos } = req.body as { encrypt?: boolean; qos?: number };
-  if (doEncrypt) {
+  const shouldEncrypt = doEncrypt !== undefined ? doEncrypt : sn.startsWith('LFIN');
+
+  if (shouldEncrypt) {
     const KEY_PREFIX = 'abcdabcd1234';
     const IV = Buffer.from('abcd1234abcd1234', 'utf8');
     const key = Buffer.from(KEY_PREFIX + sn.slice(-4), 'utf8');
