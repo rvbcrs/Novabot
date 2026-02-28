@@ -90,6 +90,7 @@
     "cuttingHeight": "Hauteur de coupe",
     "pathDirection": "Direction de tonte",
     "busy": "En cours...",
+    "points": "points",
     "compass": ["N–S", "NE–SO", "E–O", "SE–NO"]
   },
   "map": {
@@ -111,6 +112,7 @@
     "placeChargerClick": "Cliquez sur la carte pour placer la station",
     "placeChargerTooltip": "D\u00e9finir la position de la station",
     "placeChargerActive": "Cliquez sur la carte...",
+    "chargerNotSet": "Position de la station non d\u00e9finie — cliquez pour placer",
     "charger": "Station",
     "switchToStreet": "Basculer vers plan",
     "switchToSatellite": "Basculer vers satellite",

@@ -90,6 +90,7 @@
     "cuttingHeight": "Maaihoogte",
     "pathDirection": "Maairichting",
     "busy": "Bezig...",
+    "points": "punten",
     "compass": ["N–Z", "NO–ZW", "O–W", "ZO–NW"]
   },
   "map": {
@@ -111,6 +112,7 @@
     "placeChargerClick": "Klik op de kaart om laadstation te plaatsen",
     "placeChargerTooltip": "Laadstation positie instellen",
     "placeChargerActive": "Klik op kaart...",
+    "chargerNotSet": "Laadstation positie niet ingesteld — klik om te plaatsen",
     "charger": "Laadstation",
     "switchToStreet": "Wissel naar stratenkaart",
     "switchToSatellite": "Wissel naar satelliet",

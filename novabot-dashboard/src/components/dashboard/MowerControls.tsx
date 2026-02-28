@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
-  Play, Pause, Square, PlugZap, ArrowUp, X, ChevronDown,
+  Play, Pause, Square, PlugZap, ArrowUp, X, ChevronDown, MapPin,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { MapData } from '../../types';
@@ -8,13 +8,21 @@ import { sendCommand, fetchMaps } from '../../api/client';
 
 const DIR_DEGREES = [0, 45, 90, 135];
 
+interface PendingPolygon {
+  mapId: string;
+  mapName: string;
+  mapArea: Array<{ lat: number; lng: number }>;
+}
+
 interface Props {
   sn: string;
   online: boolean;
   onPathDirectionChange?: (deg: number | null) => void;
+  pendingPolygon?: PendingPolygon | null;
+  onStarted?: () => void;
 }
 
-export function MowerControls({ sn, online, onPathDirectionChange }: Props) {
+export function MowerControls({ sn, online, onPathDirectionChange, pendingPolygon, onStarted }: Props) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   const [maps, setMaps] = useState<MapData[]>([]);
@@ -31,6 +39,16 @@ export function MowerControls({ sn, online, onPathDirectionChange }: Props) {
       fetchMaps(sn).then(m => setMaps(m.filter(x => x.mapArea.length >= 3))).catch(() => {});
     }
   }, [sn, expanded, maps.length]);
+
+  // Auto-expand and select when a pending polygon arrives
+  useEffect(() => {
+    if (pendingPolygon && online) {
+      setExpanded(true);
+      setMapId(pendingPolygon.mapId);
+      setMapName(pendingPolygon.mapName);
+      onPathDirectionChange?.(pathDirection);
+    }
+  }, [pendingPolygon]);
 
   const send = useCallback(async (cmd: Record<string, unknown>) => {
     setBusy(true);
@@ -50,18 +68,33 @@ export function MowerControls({ sn, online, onPathDirectionChange }: Props) {
           path_direction: pathDirection,
         },
       });
-      // Then send start command
-      await sendCommand(sn, {
-        start_run: {
-          map_id: mapId || '',
-          map_name: mapName || '',
-        },
-      });
+
+      // Build start_run command — include polygon GPS coordinates if available
+      const startCmd: Record<string, unknown> = {
+        map_id: mapId || '',
+        map_name: mapName || '',
+      };
+
+      // Find polygon coordinates: pending polygon or selected map
+      const polySource = pendingPolygon?.mapId === mapId
+        ? pendingPolygon.mapArea
+        : maps.find(m => m.mapId === mapId)?.mapArea;
+
+      if (polySource && polySource.length >= 3) {
+        startCmd.workArea = polySource.map(p => ({
+          latitude: p.lat,
+          longitude: p.lng,
+        }));
+        startCmd.cutGrassHeight = cuttingHeight;
+      }
+
+      await sendCommand(sn, { start_run: startCmd });
       setExpanded(false);
       onPathDirectionChange?.(null);
+      onStarted?.();
     } catch { /* ignore */ }
     setBusy(false);
-  }, [sn, cuttingHeight, pathDirection, mapId, mapName, onPathDirectionChange]);
+  }, [sn, cuttingHeight, pathDirection, mapId, mapName, maps, pendingPolygon, onPathDirectionChange, onStarted]);
 
   const disabled = busy || !online;
   const btnBase = 'inline-flex items-center justify-center p-1.5 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed';
@@ -130,8 +163,21 @@ export function MowerControls({ sn, online, onPathDirectionChange }: Props) {
       {expanded && (
         <div className="absolute top-full right-0 mt-1 w-72 z-[10000] bg-gray-800 rounded-lg border border-gray-700 shadow-xl overflow-hidden">
           <div className="p-3 space-y-3">
-            {/* Map selection */}
-            {maps.length > 0 && (
+            {/* Map selection — show pending polygon or dropdown */}
+            {pendingPolygon && mapId === pendingPolygon.mapId ? (
+              <div>
+                <label className="text-[9px] text-gray-500 uppercase tracking-wide">{t('controls.workArea')}</label>
+                <div className="mt-1 flex items-center gap-2 bg-emerald-900/30 border border-emerald-700/50 rounded px-2 py-1.5">
+                  <MapPin className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-xs text-emerald-300 font-medium truncate">{pendingPolygon.mapName}</div>
+                    <div className="text-[10px] text-emerald-400/70">
+                      {pendingPolygon.mapArea.length} {t('controls.points')}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : maps.length > 0 && (
               <div>
                 <label className="text-[9px] text-gray-500 uppercase tracking-wide">{t('controls.workArea')}</label>
                 <select

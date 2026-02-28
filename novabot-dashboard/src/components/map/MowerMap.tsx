@@ -77,6 +77,8 @@ interface Props {
   mowing?: MowingInfo;
   /** Wanneer ingesteld, toon een richting-overlay lijn op de kaart (graden, 0=N) */
   pathDirectionPreview?: number | null;
+  /** Callback when a new map is saved (draw/edit) — used for draw-to-start flow */
+  onMapSaved?: (map: MapData) => void;
 }
 
 function wifiColor(rssi: number): string {
@@ -408,7 +410,7 @@ function ChargerPlacer({ onPlace }: { onPlace: (lat: number, lng: number) => voi
 // ── Nudge step: ~0.5m in degrees ─────────────────────────────────
 const NUDGE_STEP = 0.000005; // ~0.55m lat, ~0.35m lng at 52°N
 
-export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signals, mowing, pathDirectionPreview }: Props) {
+export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signals, mowing, pathDirectionPreview, onMapSaved }: Props) {
   const { t } = useTranslation();
   const { toast } = useToast();
   const [maps, setMaps] = useState<MapData[]>([]);
@@ -536,10 +538,12 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
 
     if (editMode === 'edit' && editingMapId) {
       updateMapArea(sn, editingMapId, area).then(() => {
+        const updated = maps.find(m => m.mapId === editingMapId);
         setMaps(prev => prev.map(m => m.mapId === editingMapId ? { ...m, mapArea: area } : m));
         setEditMode('none');
         setEditVertices([]);
         setEditingMapId(null);
+        if (updated) onMapSaved?.({ ...updated, mapArea: area });
       }).catch(() => {});
     } else if (editMode === 'draw') {
       const typeMeta = AREA_TYPE_META[drawType];
@@ -553,9 +557,10 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
         setEditMode('none');
         setEditVertices([]);
         setSelectedMapId(newMap.mapId);
+        onMapSaved?.(newMap);
       }).catch(() => {});
     }
-  }, [editVertices, editMode, editingMapId, sn, maps, drawType, AREA_TYPE_META]);
+  }, [editVertices, editMode, editingMapId, sn, maps, drawType, AREA_TYPE_META, onMapSaved]);
 
   // Cancel edit/draw
   const cancelEditPolygon = useCallback(() => {
@@ -773,16 +778,18 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
               {t('map.export')}
             </button>
           )}
-          {/* Place/reposition charger button */}
+          {/* Place/reposition charger button — highlighted when no charger position set */}
           {editMode === 'none' && !calibrating && (
             <button
               onClick={() => setPlacingCharger(!placingCharger)}
               className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded transition-colors ${
                 placingCharger
                   ? 'bg-amber-600 text-white animate-pulse'
-                  : 'bg-gray-700/50 text-gray-400 hover:text-amber-400 hover:bg-amber-900/30'
+                  : !chargerHasGps
+                    ? 'bg-amber-900/50 text-amber-400 border border-amber-700/50 hover:bg-amber-800/50'
+                    : 'bg-gray-700/50 text-gray-400 hover:text-amber-400 hover:bg-amber-900/30'
               }`}
-              title={placingCharger ? t('map.placeChargerClick') : t('map.placeChargerTooltip')}
+              title={placingCharger ? t('map.placeChargerClick') : !chargerHasGps ? t('map.chargerNotSet') : t('map.placeChargerTooltip')}
             >
               <MapPin className="w-3 h-3" />
               {placingCharger ? t('map.placeChargerActive') : t('map.charger')}

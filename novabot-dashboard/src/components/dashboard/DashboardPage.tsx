@@ -5,7 +5,7 @@ import {
   Wifi, Bluetooth, Trash2, Thermometer,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import type { DeviceState, MqttLogEntry, BleLogEntry } from '../../types';
+import type { DeviceState, MqttLogEntry, BleLogEntry, MapData } from '../../types';
 import { MowerMap } from '../map/MowerMap';
 import { MowerStatus } from '../status/MowerStatus';
 import { LogConsole } from '../log/LogConsole';
@@ -199,6 +199,13 @@ export function DashboardPage({ devices, loading, logs, bleLogs }: Props) {
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [pathDirPreview, setPathDirPreview] = useState<number | null>(null);
   const [expandedChip, setExpandedChip] = useState<string | null>(null);
+  const [pendingPolygon, setPendingPolygon] = useState<{ mapId: string; mapName: string; mapArea: Array<{ lat: number; lng: number }> } | null>(null);
+
+  const handleMapSaved = useCallback((map: MapData) => {
+    if (map.mapArea.length >= 3) {
+      setPendingPolygon({ mapId: map.mapId, mapName: map.mapName ?? map.mapId, mapArea: map.mapArea });
+    }
+  }, []);
 
   const handleDeleteDevice = useCallback(async (sn: string) => {
     if (!confirm(t('devices.confirmRemove', { sn }))) return;
@@ -250,6 +257,8 @@ export function DashboardPage({ devices, loading, logs, bleLogs }: Props) {
               sn={mower.sn}
               online={mower.online}
               onPathDirectionChange={setPathDirPreview}
+              pendingPolygon={pendingPolygon}
+              onStarted={() => setPendingPolygon(null)}
             />
           )}
           {mower && (
@@ -293,6 +302,7 @@ export function DashboardPage({ devices, loading, logs, bleLogs }: Props) {
             chargerLat={charger?.sensors.latitude}
             chargerLng={charger?.sensors.longitude}
             pathDirectionPreview={pathDirPreview}
+            onMapSaved={handleMapSaved}
           />
           {/* Mower sensor overlay on map */}
           {mower && (

@@ -90,6 +90,7 @@
     "cuttingHeight": "Cutting height",
     "pathDirection": "Mowing direction",
     "busy": "Working...",
+    "points": "points",
     "compass": ["N–S", "NE–SW", "E–W", "SE–NW"]
   },
   "map": {
@@ -111,6 +112,7 @@
     "placeChargerClick": "Click on the map to place charger",
     "placeChargerTooltip": "Set charger position",
     "placeChargerActive": "Click on map...",
+    "chargerNotSet": "Charger position not set — click to place on map",
     "charger": "Charger",
     "switchToStreet": "Switch to street map",
     "switchToSatellite": "Switch to satellite",
