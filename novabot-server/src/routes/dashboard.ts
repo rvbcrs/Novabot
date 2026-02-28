@@ -26,6 +26,8 @@ interface EquipmentRow {
   mower_sn: string;
   charger_sn: string | null;
   equipment_nick_name: string | null;
+  mower_version: string | null;
+  charger_version: string | null;
 }
 
 export const dashboardRouter = Router();
@@ -43,13 +45,32 @@ dashboardRouter.get('/devices', (_req: Request, res: Response) => {
     ORDER BY d.last_seen DESC
   `).all() as DeviceRegistryRow[];
 
-  const equipment = db.prepare('SELECT mower_sn, charger_sn, equipment_nick_name FROM equipment').all() as EquipmentRow[];
+  const equipment = db.prepare('SELECT mower_sn, charger_sn, equipment_nick_name, mower_version, charger_version FROM equipment').all() as EquipmentRow[];
 
-  // Verzamel alle gebonden SNs
+  // Verzamel alle gebonden SNs + versie lookup
   const boundSns = new Set<string>();
+  const versionBySn = new Map<string, string>();
+  // Eerste pass: directe koppelingen
   for (const e of equipment) {
     if (e.mower_sn) boundSns.add(e.mower_sn);
     if (e.charger_sn) boundSns.add(e.charger_sn);
+    // Mower versie bij mower SN
+    if (e.mower_sn?.startsWith('LFIN') && e.mower_version) {
+      versionBySn.set(e.mower_sn, e.mower_version);
+    }
+    // Charger versie bij charger SN
+    if (e.charger_sn && e.charger_version) {
+      versionBySn.set(e.charger_sn, e.charger_version);
+    }
+  }
+  // Tweede pass: charger_version uit maaier-rij toewijzen aan LFIC device
+  for (const e of equipment) {
+    if (!e.charger_version) continue;
+    for (const sn of boundSns) {
+      if (sn.startsWith('LFIC') && !versionBySn.has(sn)) {
+        versionBySn.set(sn, e.charger_version);
+      }
+    }
   }
 
   const snapshots = getAllDeviceSnapshots();
@@ -57,17 +78,25 @@ dashboardRouter.get('/devices', (_req: Request, res: Response) => {
   // Filter: toon alleen gebonden apparaten of online apparaten
   const devices = registry
     .filter(d => boundSns.has(d.sn!) || isDeviceOnline(d.sn!))
-    .map(d => ({
-      sn: d.sn!,
-      macAddress: d.mac_address,
-      lastSeen: d.last_seen,
-      online: isDeviceOnline(d.sn!),
-      deviceType: d.sn!.startsWith('LFIC') ? 'charger' as const : 'mower' as const,
-      nickname: equipment.find(e =>
-        e.mower_sn === d.sn || e.charger_sn === d.sn
-      )?.equipment_nick_name ?? null,
-      sensors: snapshots[d.sn!] ?? {},
-    }));
+    .map(d => {
+      const sensors = snapshots[d.sn!] ?? {};
+      // Inject firmware versie uit equipment tabel als die niet al in sensors zit
+      const dbVersion = versionBySn.get(d.sn!);
+      if (dbVersion && !sensors.sw_version && !sensors.version) {
+        sensors.version = dbVersion;
+      }
+      return {
+        sn: d.sn!,
+        macAddress: d.mac_address,
+        lastSeen: d.last_seen,
+        online: isDeviceOnline(d.sn!),
+        deviceType: d.sn!.startsWith('LFIC') ? 'charger' as const : 'mower' as const,
+        nickname: equipment.find(e =>
+          e.mower_sn === d.sn || e.charger_sn === d.sn
+        )?.equipment_nick_name ?? null,
+        sensors,
+      };
+    });
 
   res.json({ devices });
 });
@@ -849,7 +878,7 @@ dashboardRouter.post('/ota/versions', (req: Request, res: Response) => {
       const filePath = path.join(firmwareDir, match[1]);
       if (existsSync(filePath)) {
         calculatedMd5 = crypto.createHash('md5').update(readFileSync(filePath)).digest('hex');
-        console.log(`[OTA] Auto-berekende md5 voor ${match[1]}: ${calculatedMd5}`);
+        console.log(`\x1b[38;5;208m[OTA] Auto-berekende md5 voor ${match[1]}: ${calculatedMd5}\x1b[0m`);
       }
     }
   }
@@ -859,7 +888,7 @@ dashboardRouter.post('/ota/versions', (req: Request, res: Response) => {
     VALUES (?, ?, ?, ?, ?)
   `).run(version, device_type ?? 'charger', download_url ?? null, release_notes ?? null, calculatedMd5);
 
-  console.log(`[OTA] Versie toegevoegd: ${version} (${device_type ?? 'charger'}) id=${result.lastInsertRowid}`);
+  console.log(`\x1b[38;5;208m[OTA] Versie toegevoegd: ${version} (${device_type ?? 'charger'}) id=${result.lastInsertRowid}\x1b[0m`);
   res.json({ ok: true, id: result.lastInsertRowid });
 });
 
@@ -867,7 +896,7 @@ dashboardRouter.post('/ota/versions', (req: Request, res: Response) => {
 dashboardRouter.delete('/ota/versions/:id', (req: Request, res: Response) => {
   const id = parseInt(req.params.id);
   db.prepare(`DELETE FROM ota_versions WHERE id = ?`).run(id);
-  console.log(`[OTA] Versie verwijderd: id=${id}`);
+  console.log(`\x1b[38;5;208m[OTA] Versie verwijderd: id=${id}\x1b[0m`);
   res.json({ ok: true });
 });
 
@@ -892,33 +921,42 @@ dashboardRouter.post('/ota/trigger/:sn', (req: Request, res: Response) => {
     return;
   }
 
-  // Stel het MQTT commando samen — exact zoals de Novabot app doet (nested content.upgradeApp formaat)
-  const otaCommand = {
-    ota_upgrade_cmd: {
-      type: 'full',
-      content: {
-        upgradeApp: {
-          version: otaVersion.version,
-          downloadUrl: otaVersion.download_url,
-          md5: otaVersion.md5 ?? '',
-        },
-      },
-    },
-  };
-
-  console.log(`[OTA] Trigger OTA voor ${sn}: versie=${otaVersion.version} url=${otaVersion.download_url}`);
+  console.log(`\x1b[38;5;208m[OTA] Trigger OTA voor ${sn}: versie=${otaVersion.version} url=${otaVersion.download_url}\x1b[0m`);
 
   // Charger (LFIC) krijgt plaintext JSON, maaier (LFIN) krijgt encrypted
+  // Charger v0.3.6 verwacht flat formaat: {url, version, md5}
+  // Charger v0.4.0 + maaier verwachten nested: {type, content.upgradeApp.{version,downloadUrl,md5}}
   const isCharger = sn.startsWith('LFIC');
   if (isCharger) {
+    // Flat formaat — bevestigd via app-log dat v0.3.6 dit formaat gebruikt
+    const otaCommand = {
+      ota_upgrade_cmd: {
+        url: otaVersion.download_url,
+        version: otaVersion.version,
+        md5: otaVersion.md5 ?? '',
+      },
+    };
     publishToDevice(sn, otaCommand);
-    console.log(`[OTA] Plaintext ota_upgrade_cmd naar charger ${sn}`);
+    console.log(`\x1b[38;5;208m[OTA] Plaintext ota_upgrade_cmd (flat) naar charger ${sn}\x1b[0m`);
   } else {
+    // Nested formaat voor maaier (ROS2 ota_client_node verwacht content.upgradeApp structuur)
+    const mowerOtaCommand = {
+      ota_upgrade_cmd: {
+        type: 'full',
+        content: {
+          upgradeApp: {
+            version: otaVersion.version,
+            downloadUrl: otaVersion.download_url,
+            md5: otaVersion.md5 ?? '',
+          },
+        },
+      },
+    };
     // Encrypt voor maaier
     const KEY_PREFIX = 'abcdabcd1234';
     const IV = Buffer.from('abcd1234abcd1234', 'utf8');
     const key = Buffer.from(KEY_PREFIX + sn.slice(-4), 'utf8');
-    const json = JSON.stringify(otaCommand);
+    const json = JSON.stringify(mowerOtaCommand);
     const plaintext = Buffer.from(json, 'utf8');
     const padded = Buffer.alloc(Math.ceil(plaintext.length / 16) * 16, 0);
     plaintext.copy(padded);
@@ -926,7 +964,7 @@ dashboardRouter.post('/ota/trigger/:sn', (req: Request, res: Response) => {
     cipher.setAutoPadding(false);
     const encrypted = Buffer.concat([cipher.update(padded), cipher.final()]);
     publishRawToDevice(sn, encrypted);
-    console.log(`[OTA] Encrypted ota_upgrade_cmd naar mower ${sn}`);
+    console.log(`\x1b[38;5;208m[OTA] Encrypted ota_upgrade_cmd naar mower ${sn}\x1b[0m`);
   }
 
   res.json({ ok: true, command: 'ota_upgrade_cmd', version: otaVersion.version, target: sn });

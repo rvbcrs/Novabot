@@ -5,6 +5,8 @@ import { authMiddleware } from '../../middleware/auth.js';
 import { AuthRequest, ok, fail, EquipmentRow } from '../../types/index.js';
 import { lookupMac, isDeviceOnline, forceDisconnectDevice } from '../../mqtt/broker.js';
 import { getBleMacForType } from '../../ble/bleLogger.js';
+import { deviceCache } from '../../mqtt/sensorData.js';
+import { forwardToDashboard } from '../../dashboard/socketHandler.js';
 
 export const equipmentRouter = Router();
 
@@ -341,17 +343,46 @@ equipmentRouter.post('/updateEquipmentNickName', authMiddleware, (req: AuthReque
 
 // POST /api/nova-user/equipment/updateEquipmentVersion
 equipmentRouter.post('/updateEquipmentVersion', authMiddleware, (req: AuthRequest, res: Response) => {
-  const { equipmentId, mowerVersion, chargerVersion } = req.body as {
-    equipmentId?: number; mowerVersion?: string; chargerVersion?: string;
+  const { equipmentId, sn, chargerSn, mowerVersion, chargerVersion } = req.body as {
+    equipmentId?: number; sn?: string; chargerSn?: string;
+    mowerVersion?: string; chargerVersion?: string;
   };
-  if (equipmentId == null) { res.json(fail('equipmentId required', 400)); return; }
 
-  db.prepare(`
-    UPDATE equipment
-    SET mower_version = COALESCE(?, mower_version),
-        charger_version = COALESCE(?, charger_version)
-    WHERE id = ? AND user_id = ?
-  `).run(mowerVersion ?? null, chargerVersion ?? null, equipmentId, req.userId);
+  // App stuurt sn + chargerSn i.p.v. equipmentId — accepteer beide
+  if (equipmentId != null) {
+    db.prepare(`
+      UPDATE equipment
+      SET mower_version = COALESCE(?, mower_version),
+          charger_version = COALESCE(?, charger_version)
+      WHERE id = ? AND user_id = ?
+    `).run(mowerVersion ?? null, chargerVersion ?? null, equipmentId, req.userId);
+  } else if (sn) {
+    db.prepare(`
+      UPDATE equipment
+      SET mower_version = COALESCE(?, mower_version),
+          charger_version = COALESCE(?, charger_version)
+      WHERE mower_sn = ?
+    `).run(mowerVersion ?? null, chargerVersion ?? null, sn);
+  }
+
+  // Inject versies in sensor cache + push naar dashboard via Socket.io
+  if (sn && mowerVersion) {
+    if (!deviceCache.has(sn)) deviceCache.set(sn, new Map());
+    const cache = deviceCache.get(sn)!;
+    if (cache.get('sw_version') !== mowerVersion) {
+      cache.set('sw_version', mowerVersion);
+      forwardToDashboard(sn, new Map([['sw_version', mowerVersion]]));
+    }
+  }
+  if (chargerSn && chargerVersion) {
+    if (!deviceCache.has(chargerSn)) deviceCache.set(chargerSn, new Map());
+    const cache = deviceCache.get(chargerSn)!;
+    if (cache.get('version') !== chargerVersion) {
+      cache.set('version', chargerVersion);
+      forwardToDashboard(chargerSn, new Map([['version', chargerVersion]]));
+    }
+  }
+
   res.json(ok());
 });
 

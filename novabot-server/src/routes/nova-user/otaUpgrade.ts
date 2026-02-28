@@ -26,7 +26,7 @@ otaUpgradeRouter.get('/checkOtaNewVersion', authMiddleware, (req, res: Response)
   const isCharger = equipmentType?.startsWith('LFIC') || sn?.startsWith('LFIC');
   const deviceType = isCharger ? 'charger' : 'mower';
 
-  console.log(`[OTA] checkOtaNewVersion version=${currentVersion} equipmentType=${equipmentType} sn=${sn} → deviceType=${deviceType}`);
+  console.log(`\x1b[38;5;208m[OTA] checkOtaNewVersion version=${currentVersion} equipmentType=${equipmentType} sn=${sn} → deviceType=${deviceType}\x1b[0m`);
 
   // ── Lokale-eerst strategie: check eerst de lokale DB ──
   const latest = db.prepare(`
@@ -36,7 +36,7 @@ otaUpgradeRouter.get('/checkOtaNewVersion', authMiddleware, (req, res: Response)
   `).get(deviceType) as OtaVersionRow | undefined;
 
   if (latest && latest.version !== currentVersion) {
-    console.log(`[OTA] Lokale versie gevonden: ${latest.version} (huidig: ${currentVersion}) — skip cloud`);
+    console.log(`\x1b[38;5;208m[OTA] Lokale versie gevonden: ${latest.version} (huidig: ${currentVersion}) — skip cloud\x1b[0m`);
     res.json(ok({
       version: latest.version,
       downloadUrl: latest.download_url,
@@ -48,7 +48,7 @@ otaUpgradeRouter.get('/checkOtaNewVersion', authMiddleware, (req, res: Response)
   }
 
   if (latest && latest.version === currentVersion) {
-    console.log(`[OTA] Lokale versie ${latest.version} is gelijk aan huidige — check cloud`);
+    console.log(`\x1b[38;5;208m[OTA] Lokale versie ${latest.version} is gelijk aan huidige — check cloud\x1b[0m`);
   }
 
   // ── Fallback: cloud proxying ──
@@ -74,7 +74,7 @@ otaUpgradeRouter.get('/checkOtaNewVersion', authMiddleware, (req, res: Response)
     cloudRes.on('data', (chunk: Buffer) => chunks.push(chunk));
     cloudRes.on('end', () => {
       const body = Buffer.concat(chunks).toString('utf-8');
-      console.log(`[OTA] Cloud response: ${body}`);
+      console.log(`\x1b[38;5;208m[OTA] Cloud response: ${body}\x1b[0m`);
 
       try {
         const parsed = JSON.parse(body);
@@ -87,7 +87,7 @@ otaUpgradeRouter.get('/checkOtaNewVersion', authMiddleware, (req, res: Response)
   });
 
   cloudReq.on('error', (err) => {
-    console.log(`[OTA] Cloud niet bereikbaar: ${err.message} — geen update`);
+    console.log(`\x1b[38;5;208m[OTA] Cloud niet bereikbaar: ${err.message} — geen update`);
     res.json(ok({ upgradeFlag: 0 }));
   });
 

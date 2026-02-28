@@ -2,7 +2,7 @@ import { useState, useCallback } from 'react';
 import {
   Plug, TreePine, ChevronDown, Terminal, Calendar, Circle,
   BatteryMedium, Satellite, Radio, Activity,
-  Wifi, Bluetooth, Trash2, Thermometer, HardDrive,
+  Wifi, Bluetooth, Trash2, Thermometer, HardDrive, Code,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { DeviceState, MqttLogEntry, BleLogEntry, MapData } from '../../types';
@@ -173,6 +173,12 @@ function DeviceChip({ device, expanded, onToggle, onDelete }: {
             <span className={device.online ? 'text-green-400' : 'text-gray-600'}>
               {device.online ? t('common.online') : t('common.offline')}
             </span>
+            {(s.sw_version || s.version) && (
+              <span className="inline-flex items-center gap-1 text-purple-400">
+                <Code className="w-3 h-3" />
+                {s.sw_version ?? s.version}
+              </span>
+            )}
             {device.lastSeen && (
               <span className="text-gray-600">
                 {t('devices.lastSeen', { time: new Date(device.lastSeen + 'Z').toLocaleString() })}

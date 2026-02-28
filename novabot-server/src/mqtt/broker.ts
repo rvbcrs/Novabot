@@ -399,7 +399,7 @@ export async function startMqttBroker(): Promise<void> {
       onlineBySn.get(sn)!.add(clientId);
       publishDeviceOnline(sn);
       emitDeviceOnline(sn);
-      // Automatisch kaarten opvragen bij maaier-connect
+      // Automatisch firmware versie + kaarten opvragen bij connect
       onMowerConnected(sn);
     }
 

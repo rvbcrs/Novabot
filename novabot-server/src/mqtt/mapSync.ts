@@ -98,19 +98,27 @@ export function requestMapOutline(sn: string, mapId: string): void {
 }
 
 /**
- * Automatisch kaarten opvragen wanneer een maaier verbindt.
+ * Automatisch gegevens opvragen wanneer een apparaat verbindt.
  * Wordt aangeroepen vanuit broker.ts authenticate handler.
- * Wacht 3 seconden zodat de maaier tijd heeft om te settlen.
+ * Wacht 3 seconden zodat het apparaat tijd heeft om te settlen.
  */
 export function onMowerConnected(sn: string): void {
-  if (!sn.startsWith('LFIN')) return;
   if (pendingRequests.has(sn)) return;
 
   pendingRequests.add(sn);
-  console.log(`${TAG} Maaier ${sn} verbonden — kaarten opvragen over 3s...`);
 
   setTimeout(() => {
-    requestMapList(sn);
+    // Firmware versie opvragen (charger + mower)
+    // v0.3.6 charger accepteert 0, v0.4.0 accepteert null — probeer 0 (werkt voor beide als fallback)
+    console.log(`\x1b[38;5;208m${TAG} Firmware versie opvragen van ${sn}...\x1b[0m`);
+    publishToDevice(sn, { ota_version_info: 0 });
+
+    // Maaier: ook kaartlijst opvragen
+    if (sn.startsWith('LFIN')) {
+      console.log(`${TAG} Maaier ${sn} verbonden — kaarten opvragen...`);
+      requestMapList(sn);
+    }
+
     // Na 30 seconden de pending flag resetten zodat bij reconnect opnieuw gevraagd kan worden
     setTimeout(() => pendingRequests.delete(sn), 30_000);
   }, 3000);

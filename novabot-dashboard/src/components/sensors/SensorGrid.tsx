@@ -3,6 +3,7 @@ import {
   Activity, Radio, Gauge, Scissors, AreaChart, CheckCircle2,
   Clock, Wrench, Code, RotateCcw, Zap, Navigation,
 } from 'lucide-react';
+
 import type { LucideIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { DeviceState } from '../../types';
@@ -82,6 +83,7 @@ const CHARGER_GROUPS: SensorGroup[] = [
       { key: 'charger_status', label: 'sensors.chargerStatus', icon: Zap, iconColor: 'text-yellow-400' },
       { key: 'mower_error', label: 'sensors.loraSearch', icon: Radio, iconColor: 'text-orange-400' },
       { key: 'recharge_status', label: 'sensors.recharge', icon: RotateCcw, iconColor: 'text-blue-400' },
+      { key: 'version', label: 'sensors.firmware', icon: Code, iconColor: 'text-purple-400' },
     ],
   },
   {
