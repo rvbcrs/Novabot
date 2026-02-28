@@ -277,5 +277,9 @@ export function initDb(): void {
     console.log(`[DB] Migrated map_type: ${migrated.changes} obstacles, ${migratedUnicom.changes} unicom`);
   }
 
+  // OTA versions: voeg md5 kolom toe (migratie)
+  try { db.exec(`ALTER TABLE ota_versions ADD COLUMN md5 TEXT`); }
+  catch { /* kolom bestaat al */ }
+
   console.log('[DB] Database initialised');
 }

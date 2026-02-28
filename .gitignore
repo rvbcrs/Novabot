@@ -24,3 +24,6 @@ research/mower_firmware/ota_lib/
 # Dashboard build artifacts
 novabot-dashboard/node_modules/
 novabot-dashboard/dist/
+# SQLite runtime files
+*.db-wal
+*.db-shm

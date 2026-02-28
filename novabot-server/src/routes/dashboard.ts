@@ -10,7 +10,7 @@ import { getRecentLogs } from '../dashboard/socketHandler.js';
 import { requestMapList, requestMapOutline, publishToDevice, publishRawToDevice } from '../mqtt/mapSync.js';
 import crypto from 'crypto';
 import { generateMapZipFromDb, gpsToLocal, localToGps, parseMapZip, type GpsPoint } from '../mqtt/mapConverter.js';
-import { existsSync, unlinkSync } from 'fs';
+import { existsSync, unlinkSync, readFileSync, readdirSync, createReadStream, statSync } from 'fs';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -784,4 +784,150 @@ dashboardRouter.post('/schedules/:sn/:scheduleId/send', (req: Request, res: Resp
   });
 
   res.json({ ok: true, message: 'Schedule en parameters verstuurd naar maaier' });
+});
+
+// ── Static firmware file serving ────────────────────────────────
+import express from 'express';
+
+const firmwareDir = path.resolve(__dirname, '../../firmware');
+dashboardRouter.use('/firmware', express.static(firmwareDir));
+
+// GET /api/dashboard/firmware-list — lijst alle firmware bestanden
+dashboardRouter.get('/firmware-list', (_req: Request, res: Response) => {
+  try {
+    const files = readdirSync(firmwareDir).filter(f => !f.startsWith('.'));
+    const list = files.map(f => {
+      const filePath = path.join(firmwareDir, f);
+      const hash = crypto.createHash('md5').update(readFileSync(filePath)).digest('hex');
+      const stats = statSync(filePath);
+      return { name: f, md5: hash, size: stats.size };
+    });
+    res.json({ ok: true, files: list });
+  } catch {
+    res.json({ ok: true, files: [] });
+  }
+});
+
+// ── OTA Version Management ──────────────────────────────────────
+
+interface OtaVersionRow {
+  id: number;
+  version: string;
+  device_type: string;
+  release_notes: string | null;
+  download_url: string | null;
+  md5: string | null;
+  created_at: string;
+}
+
+// GET /api/dashboard/ota/versions — lijst alle OTA versies
+dashboardRouter.get('/ota/versions', (_req: Request, res: Response) => {
+  const rows = db.prepare(`SELECT * FROM ota_versions ORDER BY id DESC`).all() as OtaVersionRow[];
+  res.json({ ok: true, versions: rows });
+});
+
+// POST /api/dashboard/ota/versions — voeg een OTA versie toe
+dashboardRouter.post('/ota/versions', (req: Request, res: Response) => {
+  const { version, device_type, download_url, release_notes, md5 } = req.body as {
+    version: string;
+    device_type?: string;
+    download_url?: string;
+    release_notes?: string;
+    md5?: string;
+  };
+
+  if (!version) {
+    res.status(400).json({ error: 'version is vereist' });
+    return;
+  }
+
+  // Auto-bereken md5 als download_url naar een lokaal firmware bestand wijst en geen md5 is meegegeven
+  let calculatedMd5 = md5 ?? null;
+  if (!calculatedMd5 && download_url) {
+    const match = download_url.match(/\/firmware\/(.+)$/);
+    if (match) {
+      const filePath = path.join(firmwareDir, match[1]);
+      if (existsSync(filePath)) {
+        calculatedMd5 = crypto.createHash('md5').update(readFileSync(filePath)).digest('hex');
+        console.log(`[OTA] Auto-berekende md5 voor ${match[1]}: ${calculatedMd5}`);
+      }
+    }
+  }
+
+  const result = db.prepare(`
+    INSERT INTO ota_versions (version, device_type, download_url, release_notes, md5)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(version, device_type ?? 'charger', download_url ?? null, release_notes ?? null, calculatedMd5);
+
+  console.log(`[OTA] Versie toegevoegd: ${version} (${device_type ?? 'charger'}) id=${result.lastInsertRowid}`);
+  res.json({ ok: true, id: result.lastInsertRowid });
+});
+
+// DELETE /api/dashboard/ota/versions/:id — verwijder een OTA versie
+dashboardRouter.delete('/ota/versions/:id', (req: Request, res: Response) => {
+  const id = parseInt(req.params.id);
+  db.prepare(`DELETE FROM ota_versions WHERE id = ?`).run(id);
+  console.log(`[OTA] Versie verwijderd: id=${id}`);
+  res.json({ ok: true });
+});
+
+// POST /api/dashboard/ota/trigger/:sn — stuur ota_upgrade_cmd naar apparaat
+dashboardRouter.post('/ota/trigger/:sn', (req: Request, res: Response) => {
+  const { sn } = req.params;
+  const { version_id } = req.body as { version_id?: number };
+
+  if (!version_id) {
+    res.status(400).json({ error: 'version_id is vereist' });
+    return;
+  }
+
+  const otaVersion = db.prepare(`SELECT * FROM ota_versions WHERE id = ?`).get(version_id) as OtaVersionRow | undefined;
+  if (!otaVersion) {
+    res.status(404).json({ error: 'OTA versie niet gevonden' });
+    return;
+  }
+
+  if (!otaVersion.download_url) {
+    res.status(400).json({ error: 'Geen download URL geconfigureerd voor deze versie' });
+    return;
+  }
+
+  // Stel het MQTT commando samen — exact zoals de Novabot app doet (nested content.upgradeApp formaat)
+  const otaCommand = {
+    ota_upgrade_cmd: {
+      type: 'full',
+      content: {
+        upgradeApp: {
+          version: otaVersion.version,
+          downloadUrl: otaVersion.download_url,
+          md5: otaVersion.md5 ?? '',
+        },
+      },
+    },
+  };
+
+  console.log(`[OTA] Trigger OTA voor ${sn}: versie=${otaVersion.version} url=${otaVersion.download_url}`);
+
+  // Charger (LFIC) krijgt plaintext JSON, maaier (LFIN) krijgt encrypted
+  const isCharger = sn.startsWith('LFIC');
+  if (isCharger) {
+    publishToDevice(sn, otaCommand);
+    console.log(`[OTA] Plaintext ota_upgrade_cmd naar charger ${sn}`);
+  } else {
+    // Encrypt voor maaier
+    const KEY_PREFIX = 'abcdabcd1234';
+    const IV = Buffer.from('abcd1234abcd1234', 'utf8');
+    const key = Buffer.from(KEY_PREFIX + sn.slice(-4), 'utf8');
+    const json = JSON.stringify(otaCommand);
+    const plaintext = Buffer.from(json, 'utf8');
+    const padded = Buffer.alloc(Math.ceil(plaintext.length / 16) * 16, 0);
+    plaintext.copy(padded);
+    const cipher = crypto.createCipheriv('aes-128-cbc', key, IV);
+    cipher.setAutoPadding(false);
+    const encrypted = Buffer.concat([cipher.update(padded), cipher.final()]);
+    publishRawToDevice(sn, encrypted);
+    console.log(`[OTA] Encrypted ota_upgrade_cmd naar mower ${sn}`);
+  }
+
+  res.json({ ok: true, command: 'ota_upgrade_cmd', version: otaVersion.version, target: sn });
 });

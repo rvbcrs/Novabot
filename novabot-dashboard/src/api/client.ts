@@ -151,6 +151,51 @@ export async function sendSchedule(sn: string, scheduleId: string): Promise<void
   await post(`${BASE}/schedules/${encodeURIComponent(sn)}/${encodeURIComponent(scheduleId)}/send`);
 }
 
+// ── OTA Firmware ────────────────────────────────────────────────
+
+export interface OtaVersion {
+  id: number;
+  version: string;
+  device_type: string;
+  release_notes: string | null;
+  download_url: string | null;
+  md5: string | null;
+  created_at: string;
+}
+
+export interface FirmwareFile {
+  name: string;
+  md5: string;
+  size: number;
+}
+
+export async function fetchOtaVersions(): Promise<OtaVersion[]> {
+  const data = await (await get(`${BASE}/ota/versions`)).json();
+  return data.versions ?? [];
+}
+
+export async function addOtaVersion(params: {
+  version: string;
+  device_type: string;
+  download_url: string;
+  release_notes?: string;
+}): Promise<{ id: number }> {
+  return (await post(`${BASE}/ota/versions`, params)).json();
+}
+
+export async function deleteOtaVersion(id: number): Promise<void> {
+  await fetch(`${BASE}/ota/versions/${id}`, { method: 'DELETE' });
+}
+
+export async function triggerOta(sn: string, versionId: number): Promise<{ ok: boolean; version: string }> {
+  return (await post(`${BASE}/ota/trigger/${encodeURIComponent(sn)}`, { version_id: versionId })).json();
+}
+
+export async function fetchFirmwareFiles(): Promise<FirmwareFile[]> {
+  const data = await (await get(`${BASE}/firmware-list`)).json();
+  return data.files ?? [];
+}
+
 // ── Device Registration ─────────────────────────────────────────
 
 export interface BleDevice {

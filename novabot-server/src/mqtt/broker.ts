@@ -7,7 +7,7 @@ import { startMqttBridge } from '../proxy/mqttBridge.js';
 import { tryDecrypt } from './decrypt.js';
 import { startHomeAssistantBridge, forwardToHomeAssistant, publishDeviceOnline, publishDeviceOffline } from './homeassistant.js';
 import { updateDeviceData } from './sensorData.js';
-import { forwardToDashboard, emitDeviceOnline, emitDeviceOffline, pushMqttLog } from '../dashboard/socketHandler.js';
+import { forwardToDashboard, emitDeviceOnline, emitDeviceOffline, pushMqttLog, emitOtaEvent } from '../dashboard/socketHandler.js';
 import { initMapSync, onMowerConnected, handleMapMessage } from './mapSync.js';
 
 const PROXY_MODE = process.env.PROXY_MODE ?? 'local';
@@ -556,10 +556,17 @@ export async function startMqttBroker(): Promise<void> {
       const effectiveBuf = decryptedJson ? Buffer.from(decryptedJson, 'utf8') : payloadBuf;
       const effectiveJson = decryptedJson ?? payload;
 
-      // Check of dit een kaart-gerelateerde response is
+      // Check of dit een kaart-gerelateerde of OTA response is
       try {
         const parsed = JSON.parse(effectiveJson);
         handleMapMessage(forwardSn, parsed);
+        // OTA voortgang → push naar dashboard via socket
+        if (parsed.ota_upgrade_state) {
+          emitOtaEvent(forwardSn, 'state', parsed.ota_upgrade_state);
+        }
+        if (parsed.ota_version_info_respond) {
+          emitOtaEvent(forwardSn, 'version', parsed.ota_version_info_respond);
+        }
       } catch { /* geen JSON of geen map-bericht */ }
 
       const changes = updateDeviceData(forwardSn, effectiveBuf);

@@ -119,3 +119,7 @@ export function emitDeviceOnline(sn: string): void {
 export function emitDeviceOffline(sn: string): void {
   io?.emit('device:offline', { sn, timestamp: Date.now() });
 }
+
+export function emitOtaEvent(sn: string, eventType: 'state' | 'version', data: unknown): void {
+  io?.emit('ota:event', { sn, eventType, data, timestamp: Date.now() });
+}

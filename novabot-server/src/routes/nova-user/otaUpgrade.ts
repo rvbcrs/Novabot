@@ -6,13 +6,55 @@ import { ok } from '../../types/index.js';
 
 export const otaUpgradeRouter = Router();
 
-// GET /api/nova-user/otaUpgrade/checkOtaNewVersion?version=
+interface OtaVersionRow {
+  id: number;
+  version: string;
+  device_type: string;
+  release_notes: string | null;
+  download_url: string | null;
+  md5: string | null;
+  created_at: string;
+}
+
+// GET /api/nova-user/otaUpgrade/checkOtaNewVersion?version=&equipmentType=&sn=
 otaUpgradeRouter.get('/checkOtaNewVersion', authMiddleware, (req, res: Response) => {
   const currentVersion = req.query.version as string | undefined;
-  console.log(`[OTA] checkOtaNewVersion version=${currentVersion}`);
+  const equipmentType = req.query.equipmentType as string | undefined;
+  const sn = req.query.sn as string | undefined;
 
-  // Probeer eerst de echte cloud te vragen (om firmware URL te achterhalen)
-  const cloudPath = `/api/nova-user/otaUpgrade/checkOtaNewVersion?version=${encodeURIComponent(currentVersion ?? '')}`;
+  // Bepaal device type uit equipmentType of sn
+  const isCharger = equipmentType?.startsWith('LFIC') || sn?.startsWith('LFIC');
+  const deviceType = isCharger ? 'charger' : 'mower';
+
+  console.log(`[OTA] checkOtaNewVersion version=${currentVersion} equipmentType=${equipmentType} sn=${sn} → deviceType=${deviceType}`);
+
+  // ── Lokale-eerst strategie: check eerst de lokale DB ──
+  const latest = db.prepare(`
+    SELECT * FROM ota_versions
+    WHERE device_type = ?
+    ORDER BY id DESC LIMIT 1
+  `).get(deviceType) as OtaVersionRow | undefined;
+
+  if (latest && latest.version !== currentVersion) {
+    console.log(`[OTA] Lokale versie gevonden: ${latest.version} (huidig: ${currentVersion}) — skip cloud`);
+    res.json(ok({
+      version: latest.version,
+      downloadUrl: latest.download_url,
+      md5: latest.md5 ?? '',
+      upgradeFlag: 1,
+      releaseNotes: latest.release_notes,
+    }));
+    return;
+  }
+
+  if (latest && latest.version === currentVersion) {
+    console.log(`[OTA] Lokale versie ${latest.version} is gelijk aan huidige — check cloud`);
+  }
+
+  // ── Fallback: cloud proxying ──
+  const cloudPath = `/api/nova-user/otaUpgrade/checkOtaNewVersion?version=${encodeURIComponent(currentVersion ?? '')}`
+    + (equipmentType ? `&upgradeType=serviceUpgrade&equipmentType=${encodeURIComponent(equipmentType)}` : '')
+    + (sn ? `&sn=${encodeURIComponent(sn)}` : '');
   const authHeader = req.headers['authorization'] as string | undefined;
 
   const cloudReq = https.request({
@@ -34,41 +76,20 @@ otaUpgradeRouter.get('/checkOtaNewVersion', authMiddleware, (req, res: Response)
       const body = Buffer.concat(chunks).toString('utf-8');
       console.log(`[OTA] Cloud response: ${body}`);
 
-      // Stuur cloud response door naar de app
       try {
         const parsed = JSON.parse(body);
         res.json(parsed);
       } catch {
-        // Cloud niet bereikbaar of ongeldig response — fallback naar lokale DB
-        localFallback();
+        console.log('[OTA] Cloud response ongeldig — geen update');
+        res.json(ok({ upgradeFlag: 0 }));
       }
     });
   });
 
   cloudReq.on('error', (err) => {
-    console.log(`[OTA] Cloud niet bereikbaar: ${err.message} — lokale fallback`);
-    localFallback();
+    console.log(`[OTA] Cloud niet bereikbaar: ${err.message} — geen update`);
+    res.json(ok({ upgradeFlag: 0 }));
   });
 
   cloudReq.end();
-
-  function localFallback() {
-    const latest = db.prepare(`
-      SELECT * FROM ota_versions
-      WHERE device_type = 'mower'
-      ORDER BY id DESC LIMIT 1
-    `).get() as { version: string; download_url: string | null; release_notes: string | null } | undefined;
-
-    if (!latest || latest.version === currentVersion) {
-      res.json(ok({ hasNewVersion: false }));
-      return;
-    }
-
-    res.json(ok({
-      hasNewVersion: true,
-      newVersion: latest.version,
-      downloadUrl: latest.download_url,
-      releaseNotes: latest.release_notes,
-    }));
-  }
 });

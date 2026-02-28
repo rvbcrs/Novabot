@@ -86,10 +86,11 @@ export const SENSORS: SensorDef[] = [
 
 // Commando's die geneste data-objecten bevatten die we willen verwerken
 export const DATA_COMMANDS = [
-  'up_status_info',          // Charger → plain JSON
-  'report_state_robot',      // Maaier → AES ontsleuteld
-  'report_exception_state',  // Maaier → AES ontsleuteld
-  'report_state_timer_data', // Maaier → AES ontsleuteld
+  'up_status_info',           // Charger → plain JSON
+  'report_state_robot',       // Maaier → AES ontsleuteld
+  'report_exception_state',   // Maaier → AES ontsleuteld
+  'report_state_timer_data',  // Maaier → AES ontsleuteld
+  'ota_version_info_respond', // Charger/Maaier → huidige firmware versie
 ];
 
 // ── Waarde vertalingen ────────────────────────────────────────────

@@ -2,7 +2,7 @@ import { useState, useCallback } from 'react';
 import {
   Plug, TreePine, ChevronDown, Terminal, Calendar, Circle,
   BatteryMedium, Satellite, Radio, Activity,
-  Wifi, Bluetooth, Trash2, Thermometer,
+  Wifi, Bluetooth, Trash2, Thermometer, HardDrive,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { DeviceState, MqttLogEntry, BleLogEntry, MapData } from '../../types';
@@ -12,6 +12,7 @@ import { LogConsole } from '../log/LogConsole';
 import { Scheduler } from '../schedule/Scheduler';
 import { MowerControls } from './MowerControls';
 import { SensorGrid } from '../sensors/SensorGrid';
+import { OtaManager } from '../ota/OtaManager';
 import { deleteDevice } from '../../api/client';
 
 interface Props {
@@ -197,6 +198,7 @@ export function DashboardPage({ devices, loading, logs, bleLogs }: Props) {
   const { t } = useTranslation();
   const [logOpen, setLogOpen] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [otaOpen, setOtaOpen] = useState(false);
   const [pathDirPreview, setPathDirPreview] = useState<number | null>(null);
   const [expandedChip, setExpandedChip] = useState<string | null>(null);
   const [pendingPolygon, setPendingPolygon] = useState<{ mapId: string; mapName: string; mapArea: Array<{ lat: number; lng: number }> } | null>(null);
@@ -263,7 +265,7 @@ export function DashboardPage({ devices, loading, logs, bleLogs }: Props) {
           )}
           {mower && (
             <button
-              onClick={() => { setScheduleOpen(!scheduleOpen); if (scheduleOpen) setPathDirPreview(null); }}
+              onClick={() => { setScheduleOpen(!scheduleOpen); if (scheduleOpen) setPathDirPreview(null); setOtaOpen(false); }}
               className={`inline-flex items-center gap-1.5 text-xs h-7 px-2.5 rounded transition-colors ${
                 scheduleOpen ? 'bg-blue-600 text-white' : 'bg-gray-700/60 text-gray-400 hover:text-white'
               }`}
@@ -272,6 +274,16 @@ export function DashboardPage({ devices, loading, logs, bleLogs }: Props) {
               {t('devices.schedule')}
             </button>
           )}
+          <button
+            onClick={() => { setOtaOpen(!otaOpen); setScheduleOpen(false); setPathDirPreview(null); }}
+            className={`inline-flex items-center gap-1.5 text-xs h-7 px-2.5 rounded transition-colors ${
+              otaOpen ? 'bg-orange-600 text-white' : 'bg-gray-700/60 text-gray-400 hover:text-white'
+            }`}
+            title="Firmware updates"
+          >
+            <HardDrive className="w-3.5 h-3.5" />
+            OTA
+          </button>
         </div>
       </div>
 
@@ -317,6 +329,12 @@ export function DashboardPage({ devices, loading, logs, bleLogs }: Props) {
         {scheduleOpen && mower && (
           <div className="w-80 flex-shrink-0 overflow-auto border-l border-gray-800">
             <Scheduler sn={mower.sn} online={mower.online} onPathDirectionChange={setPathDirPreview} />
+          </div>
+        )}
+        {/* OTA side panel */}
+        {otaOpen && (
+          <div className="w-80 flex-shrink-0 overflow-auto border-l border-gray-800">
+            <OtaManager devices={devices} />
           </div>
         )}
       </div>
