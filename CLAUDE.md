@@ -571,6 +571,31 @@ BLE frames worden gesplitst in chunks van ~27 bytes, omgeven door `ble_start`/`b
 - `bindingEquipment` — de app stuurt ALLEEN `sn`, `appUserId`, `userCustomDeviceName` (GEEN `chargerChannel`!)
 - Cloud slaat `chargerChannel: 16` op (het GEVRAAGDE kanaal, niet het toegewezen kanaal 15)
 
+### chargerAddress en chargerChannel — herkomst en correcte waarden (februari 2026)
+
+| Veld | Waarde | Herkomst | Opmerking |
+|------|--------|----------|-----------|
+| `chargerAddress` | `718` | BLE `set_lora_info.addr` (hardcoded in app) | Zelfde voor alle chargers |
+| `chargerChannel` | `16` | BLE `set_lora_info.channel` (gevraagd door app) | Cloud slaat GEVRAAGDE waarde op, niet toegewezen (15) |
+
+**Belangrijk**: De app stuurt `chargerAddress` en `chargerChannel` NIET mee in `bindingEquipment`.
+De cloud (en onze server) moet deze waarden zelf bewaren. Herkomst:
+- `chargerAddress`: hardcoded `718` in app (`_writeSetLoraInfo`, blutter adres 0x91bebc)
+- `chargerChannel`: gelezen uit charger equipment record (`userEquipmentList`) voor maaier provisioning
+
+**Cloud vs mower responses** (bevestigd uit cloud proxy logs):
+- **Charger** `getEquipmentBySN`/`userEquipmentList`: `chargerAddress: 718, chargerChannel: 16`
+- **Mower** `getEquipmentBySN`/`userEquipmentList`: `chargerAddress: null, chargerChannel: null`
+
+De maaier krijgt NOOIT chargerAddress/chargerChannel in API responses. De app leest het LoRa kanaal
+uit de charger record en stuurt het via BLE `set_lora_info` naar de maaier.
+
+**`rowToCloudDto()` code** (equipment.ts):
+```typescript
+chargerAddress: isCharger ? (r.charger_address ? Number(r.charger_address) : 718) : null,
+chargerChannel: isCharger ? (r.charger_channel ? Number(r.charger_channel) : 16) : null,
+```
+
 ### "Add Charging Station" flow (stappen in app)
 1. Voer SN in van het laadstation
 2. Voer thuisnetwerk WiFi in (SSID + wachtwoord)
@@ -2020,7 +2045,7 @@ mkdocs serve -f mkdocs-public.yml     # Preview publieke wiki
 - [ ] `POST /api/nova-file-server/map/uploadEquipmentMap` endpoint bouwen (maaier kaart-ZIP ontvangen + parsen)
 - [ ] `POST /api/nova-file-server/map/uploadEquipmentTrack` endpoint bouwen (maaipad ontvangen)
 - [ ] `POST /api/nova-data/cutGrassPlan/queryPlanFromMachine` endpoint bouwen (schema's naar maaier)
-- [ ] `POST /api/nova-data/equipmentState/saveCutGrassRecord` endpoint bouwen (maairesultaten opslaan)
+- [x] `POST /api/nova-data/equipmentState/saveCutGrassRecord` endpoint gebouwd — retourneert ok(null) bij lege body om retry-loop te stoppen
 - [ ] SSH toegang tot maaier voor directe CSV/ZIP upload naar `/userdata/lfi/maps/home0/csv_file/`
 - [ ] `start_run` met `polygon_area` parameter implementeren (SPECIFIED_AREA modus)
 - [x] OTA push mechanisme volledig reverse-engineered: ota_upgrade_cmd JSON formaat, ota_client_node flow, charger OTA relay
@@ -2114,10 +2139,37 @@ en `bindingEquipment` responses. App doorloopt volledige BLE provisioning flow.
    - `bindingEquipment`: staat altijd rebinding toe (lokale server = single-household)
    - WiFi wordt NIET verbroken: zelfde credentials worden opnieuw gestuurd via BLE
 
-**Resultaat**: Maaier succesvol toegevoegd via lokale server na fixes 1-5.
-Unbind → re-add flow werkt identiek aan de cloud.
-Maaier-berichten worden als AES-ciphertext doorgestuurd naar de app.
-De server kan nu ook zelf ontsleutelen (key derivatie bekend).
+7. **`chargerChannel: 15` in plaats van `16`** — Cloud slaat het GEVRAAGDE LoRa kanaal op (16),
+   niet het door de charger TOEGEWEZEN kanaal (15). Onze server retourneerde 15.
+   **Fix**: `rowToCloudDto()` fallback naar 16 voor chargers, ALTIJD null voor mowers.
+
+8. **Mower chargerAddress/chargerChannel niet-null** — Cloud retourneert altijd `null` voor deze
+   velden bij de maaier. Onze server retourneerde 718/15 (stale DB waarden van vorige binding).
+   **Fix**: `rowToCloudDto()` retourneert ALTIJD null voor mowers, ongeacht DB waarden:
+   ```typescript
+   chargerAddress: isCharger ? (r.charger_address ? Number(r.charger_address) : 718) : null,
+   chargerChannel: isCharger ? (r.charger_channel ? Number(r.charger_channel) : 16) : null,
+   ```
+
+9. **`saveCutGrassRecord` retry-loop** — De maaier bombardeerde onze server met 1712 HTTP calls
+   in ~85 seconden (elke ~50ms) naar `/api/nova-data/equipmentState/saveCutGrassRecord` met lege
+   body `{}`. Oorzaak: maaier stuurt multipart/form-data die Express niet parseert → sn ontbreekt
+   → server retourneert 400 → maaier retry → oneindige loop.
+   **Fix**: retourneer `ok(null)` bij ontbrekende sn i.p.v. 400 error.
+   **Belangrijk**: deze retry-loop blokkeerde mogelijk het MQTT reconnect mechanisme van mqtt_node.
+
+10. **Maaier herstart was nodig na eerste BLE provisioning** — Bij de eerste test verbond de maaier
+    niet met MQTT na BLE provisioning. Oorzaak: combinatie van verkeerde chargerAddress/chargerChannel
+    waarden (718/15 i.p.v. null) en saveCutGrassRecord retry-loop die mqtt_node blokkeerde.
+    Na fixes 7-9 en unbind → re-add test verbindt de maaier **zonder herstart**.
+
+**Resultaat (28 februari 2026)**: Maaier volledig werkend via lokale server!
+- Unbind → re-add flow werkt identiek aan de cloud
+- BLE provisioning compleet: WiFi blijft verbonden na re-provisioning
+- Maaier verbindt met MQTT **zonder herstart** (na fixes chargerChannel + saveCutGrassRecord)
+- Maaier-berichten worden als AES-ciphertext doorgestuurd naar de app
+- De server ontsleutelt zelf ook (key derivatie bekend)
+- Volledige end-to-end flow getest en bevestigd werkend
 
 ### App userId check — ARM64 assembly bewijs (februari 2026)
 
@@ -2219,7 +2271,7 @@ Assembly bewijs (blutter `_getMowerFromServer` op 0x921e48):
 | 4 | `queryEquipmentMap` response | `{data:null, md5:null, ...}` | `[]` (array) | **GEFIXT**: retourneert nu cloud-identiek object |
 | 5 | `queryRecentCutGrassPlan` | Null-velden object | `null` | **GEFIXT**: retourneert nu cloud-identiek null-velden object |
 | 6 | `queryMsgMenuByUserId` | `{workRecordMsg, robotMsg, ...}` | `{robotMsgUnreadCount, ...}` | **GEFIXT**: retourneert nu cloud-identiek formaat |
-| 7 | `chargerChannel` charger record | Waarschijnlijk `15` | `16` | Open — moet in DB gecorrigeerd worden |
+| 7 | `chargerChannel` charger record | `16` (gevraagd kanaal) | `15` (toegewezen kanaal) | **GEFIXT**: DB en code op 16 gezet, mower altijd null |
 
 **Mogelijke resterende oorzaak: `macAddress: null` bij verse installatie.**
 Als de maaier nog niet verbonden is met de lokale MQTT broker (bijv. net na DNS switch),
@@ -3122,7 +3174,7 @@ De maaier uploadt ook het geplande maaipad:
 | Endpoint | Status | Beschrijving |
 |----------|--------|-------------|
 | `queryPlanFromMachine` | ❌ Niet geïmplementeerd | Maaier haalt maaischema's op van server |
-| `saveCutGrassRecord` | ❌ Niet geïmplementeerd | Maaier slaat maairesultaten op |
+| `saveCutGrassRecord` | ✅ Geïmplementeerd | Maaier slaat maairesultaten op (retourneert ok(null) bij lege body om retry-loop te stoppen) |
 | `saveCutGrassMessage` | ❌ Niet geïmplementeerd | Maaier stuurt notificatieberichten |
 | `machineReset` | ✅ Geïmplementeerd | Apparaat unbind/reset |
 | `network/connection` | ✅ Geïmplementeerd | Connectivity check → `{"success":true,"code":200}` |

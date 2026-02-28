@@ -127,7 +127,7 @@ export function SensorGrid({ device }: Props) {
   const groups = device.deviceType === 'mower' ? MOWER_GROUPS : CHARGER_GROUPS;
 
   return (
-    <div className="space-y-4">
+    <div className="grid grid-cols-2 gap-1.5">
       {groups.map(group => {
         const available = group.fields.filter(f => device.sensors[f.key] !== undefined);
         if (available.length === 0) return null;
@@ -139,26 +139,22 @@ export function SensorGrid({ device }: Props) {
         }
 
         const GroupIcon = group.icon;
-        return (
-          <div key={group.title}>
-            <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-              <GroupIcon className={`w-3.5 h-3.5 ${group.iconColor}`} />
-              {t(group.title)}
-            </h3>
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
-              {available.map(f => (
-                <SensorCard
-                  key={f.key}
-                  label={t(f.label)}
-                  value={device.sensors[f.key]}
-                  unit={f.unit}
-                  icon={f.icon}
-                  iconColor={f.iconColor}
-                />
-              ))}
-            </div>
-          </div>
-        );
+        return [
+          <h3 key={`h-${group.title}`} className="col-span-2 text-[10px] font-semibold text-gray-500 uppercase tracking-wider flex items-center gap-1 mt-1.5 first:mt-0">
+            <GroupIcon className={`w-3 h-3 ${group.iconColor}`} />
+            {t(group.title)}
+          </h3>,
+          ...available.map(f => (
+            <SensorCard
+              key={f.key}
+              label={t(f.label)}
+              value={device.sensors[f.key]}
+              unit={f.unit}
+              icon={f.icon}
+              iconColor={f.iconColor}
+            />
+          )),
+        ];
       })}
     </div>
   );
