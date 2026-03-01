@@ -1,5 +1,4 @@
 import { Router, Response } from 'express';
-import https from 'node:https';
 import { db } from '../../db/database.js';
 import { authMiddleware } from '../../middleware/auth.js';
 import { ok } from '../../types/index.js';
@@ -36,60 +35,33 @@ otaUpgradeRouter.get('/checkOtaNewVersion', authMiddleware, (req, res: Response)
   `).get(deviceType) as OtaVersionRow | undefined;
 
   if (latest && latest.version !== currentVersion) {
-    console.log(`\x1b[38;5;208m[OTA] Lokale versie gevonden: ${latest.version} (huidig: ${currentVersion}) — skip cloud\x1b[0m`);
+    console.log(`\x1b[38;5;208m[OTA] Lokale versie gevonden: ${latest.version} (huidig: ${currentVersion}) — update beschikbaar\x1b[0m`);
+    // Cloud-identiek formaat: upgradeFlag=0 (optionele update), alle cloud-velden aanwezig
     res.json(ok({
       version: latest.version,
-      downloadUrl: latest.download_url,
+      upgradeType: 'serviceUpgrade',
       md5: latest.md5 ?? '',
-      upgradeFlag: 1,
-      releaseNotes: latest.release_notes,
+      downloadUrl: latest.download_url,
+      upgradeFlag: 0,
+      environment: 'trial',
+      dependenceSystemVersionList: null,
     }));
     return;
   }
 
   if (latest && latest.version === currentVersion) {
-    console.log(`\x1b[38;5;208m[OTA] Lokale versie ${latest.version} is gelijk aan huidige — check cloud\x1b[0m`);
+    console.log(`\x1b[38;5;208m[OTA] Lokale versie ${latest.version} is gelijk aan huidige — geen update\x1b[0m`);
+    res.json(ok({ upgradeFlag: 0 }));
+    return;
   }
 
-  // ── Fallback: cloud proxying ──
-  const cloudPath = `/api/nova-user/otaUpgrade/checkOtaNewVersion?version=${encodeURIComponent(currentVersion ?? '')}`
-    + (equipmentType ? `&upgradeType=serviceUpgrade&equipmentType=${encodeURIComponent(equipmentType)}` : '')
-    + (sn ? `&sn=${encodeURIComponent(sn)}` : '');
-  const authHeader = req.headers['authorization'] as string | undefined;
-
-  const cloudReq = https.request({
-    hostname: '47.253.145.99',
-    port: 443,
-    path: cloudPath,
-    method: 'GET',
-    headers: {
-      'host': 'app.lfibot.com',
-      'content-type': 'application/json',
-      ...(authHeader ? { 'authorization': authHeader } : {}),
-    },
-    servername: 'app.lfibot.com',
-    rejectUnauthorized: false,
-  }, (cloudRes) => {
-    const chunks: Buffer[] = [];
-    cloudRes.on('data', (chunk: Buffer) => chunks.push(chunk));
-    cloudRes.on('end', () => {
-      const body = Buffer.concat(chunks).toString('utf-8');
-      console.log(`\x1b[38;5;208m[OTA] Cloud response: ${body}\x1b[0m`);
-
-      try {
-        const parsed = JSON.parse(body);
-        res.json(parsed);
-      } catch {
-        console.log('[OTA] Cloud response ongeldig — geen update');
-        res.json(ok({ upgradeFlag: 0 }));
-      }
-    });
-  });
-
-  cloudReq.on('error', (err) => {
-    console.log(`\x1b[38;5;208m[OTA] Cloud niet bereikbaar: ${err.message} — geen update`);
+  // Geen lokale versie gevonden — geen update (cloud is niet bereikbaar via DNS redirect)
+  if (!latest) {
+    console.log(`\x1b[38;5;208m[OTA] Geen lokale versie voor ${deviceType} — geen update\x1b[0m`);
     res.json(ok({ upgradeFlag: 0 }));
-  });
+    return;
+  }
 
-  cloudReq.end();
+  // Fallback: zou niet bereikt moeten worden, maar voor de zekerheid
+  res.json(ok({ upgradeFlag: 0 }));
 });

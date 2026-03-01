@@ -1,4 +1,5 @@
 import net from 'net';
+import crypto from 'crypto';
 import { execFile } from 'child_process';
 import { Aedes, Client, AedesPublishPacket } from 'aedes';
 import { db } from '../db/database.js';
@@ -263,6 +264,9 @@ const onlineBySn = new Map<string, Set<string>>();
 // Raw TCP sockets per SN opslaan voor directe PUBLISH bypass
 const rawSocketBySn = new Map<string, net.Socket>();
 
+// Track subscriptions per clientId → Set<topic>
+const clientSubscriptions = new Map<string, Set<string>>();
+
 /**
  * Schrijf een raw MQTT PUBLISH packet direct naar de TCP socket van een apparaat.
  * Omzeilt aedes volledig — voor debugging van delivery issues.
@@ -348,6 +352,33 @@ export async function startMqttBroker(): Promise<void> {
   // Initialiseer mapSync met de broker zodat we MQTT commands kunnen publiceren
   initMapSync(broker);
 
+  // Diagnostiek: log elke message delivery naar subscribers
+  // authorizeForward wordt aangeroepen VOORDAT een bericht naar een subscriber wordt geschreven.
+  // Return packet om door te sturen, null om te blokkeren.
+  broker.authorizeForward = (client: Client, packet: AedesPublishPacket) => {
+    const topic = packet.topic;
+    // Alleen Dart/Receive_mqtt deliveries naar de app verwerken
+    if (isAppClient(client.id) && topic.startsWith('Dart/Receive_mqtt/')) {
+      const payloadBuf = Buffer.isBuffer(packet.payload) ? packet.payload : Buffer.from(packet.payload);
+      const sn = topic.split('/').pop() ?? '';
+      const decrypted = sn ? tryDecrypt(payloadBuf, sn) : null;
+
+      // Geen transformatie — maaier stuurt {"type":"xxx","message":{...}} formaat
+      // en de app v2.4.0 mower handler verwacht EXACT dat formaat.
+      // Gewoon doorsturen met logging.
+      const preview = decrypted
+        ? (decrypted.includes('ota_version_info') ? `[OTA] ${decrypted.slice(0, 200)}` : `[${payloadBuf.length}B]`)
+        : `[encrypted ${payloadBuf.length}B]`;
+      console.log(`${C.cyan}[FWD] → APP ${client.id.slice(0, 30)}... | ${topic} | ${preview}${C.reset}`);
+      pushMqttLog({
+        ts: Date.now(), type: 'forward', clientId: client.id, clientType: 'APP',
+        sn: sn || null, direction: '→APP', topic,
+        payload: preview, encrypted: !!decrypted,
+      });
+    }
+    return packet;
+  };
+
   broker.authenticate = (client: Client, username: Readonly<string | undefined>, password: Readonly<Buffer | undefined>, callback) => {
     const clientId  = client.id ?? '';
     const user      = username ?? '';
@@ -420,6 +451,7 @@ export async function startMqttBroker(): Promise<void> {
 
   broker.on('clientDisconnect', (client: Client) => {
     seenClients.delete(client.id); // zodat reconnect weer gelogd wordt
+    clientSubscriptions.delete(client.id);
 
     // Verwijder uit online-set op basis van SN in device_registry
     const row = db.prepare('SELECT sn FROM device_registry WHERE mqtt_client_id = ?')
@@ -444,6 +476,9 @@ export async function startMqttBroker(): Promise<void> {
   broker.on('subscribe', (subscriptions, client: Client) => {
     const topics = subscriptions.map(s => s.topic).join(', ');
     console.log(`${clientColor(client.id)}[MQTT] SUBSCRIBE ${client.id} -> [${topics}]${C.reset}`);
+    // Track subscriptions
+    if (!clientSubscriptions.has(client.id)) clientSubscriptions.set(client.id, new Set());
+    for (const sub of subscriptions) clientSubscriptions.get(client.id)!.add(sub.topic);
     const subSn = extractSn(client.id) ?? extractSn(topics);
     pushMqttLog({
       ts: Date.now(), type: 'subscribe', clientId: client.id, clientType: '?', sn: subSn,
@@ -566,6 +601,7 @@ export async function startMqttBroker(): Promise<void> {
         const otaState = parsed.ota_upgrade_state
           ?? (parsed.type === 'ota_upgrade_state' ? parsed.message : null);
         if (otaState) {
+          console.log(`\x1b[38;5;208m[OTA] ⚡ ota_upgrade_state van ${forwardSn}: ${JSON.stringify(otaState)}\x1b[0m`);
           emitOtaEvent(forwardSn, 'state', otaState);
         }
 
@@ -736,6 +772,30 @@ export async function startMqttBroker(): Promise<void> {
   server.listen(1883, '0.0.0.0', () => {
     console.log(`${C.cyan}[MQTT] Broker luistert op port 1883${C.reset}`);
   });
+}
+
+/**
+ * Diagnostiek: geeft overzicht van verbonden clients en hun subscriptions.
+ */
+export function getBrokerDiagnostics(): {
+  clients: Array<{ clientId: string; sn: string | null; subscriptions: string[]; isApp: boolean }>;
+  onlineDevices: Array<{ sn: string; clientCount: number }>;
+} {
+  const clients: Array<{ clientId: string; sn: string | null; subscriptions: string[]; isApp: boolean }> = [];
+  for (const [clientId, topics] of clientSubscriptions) {
+    const sn = extractSn(clientId);
+    clients.push({
+      clientId: clientId.length > 60 ? clientId.slice(0, 40) + '...' : clientId,
+      sn,
+      subscriptions: [...topics],
+      isApp: isAppClient(clientId),
+    });
+  }
+  const onlineDevices: Array<{ sn: string; clientCount: number }> = [];
+  for (const [sn, cids] of onlineBySn) {
+    if (cids.size > 0) onlineDevices.push({ sn, clientCount: cids.size });
+  }
+  return { clients, onlineDevices };
 }
 
 // Hulpfunctie voor equipment.ts: zoek het BLE MAC-adres op voor een gegeven SN.

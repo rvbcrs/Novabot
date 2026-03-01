@@ -18,11 +18,11 @@ interface DeviceRegistryRow {
 
 export interface MqttLogEntry {
   ts: number;
-  type: 'connect' | 'disconnect' | 'subscribe' | 'publish' | 'error';
+  type: 'connect' | 'disconnect' | 'subscribe' | 'publish' | 'error' | 'forward';
   clientId: string;
   clientType: 'APP' | 'DEV' | '?';
   sn: string | null;
-  direction: '→DEV' | '←DEV' | '';
+  direction: '→DEV' | '←DEV' | '→APP' | '';
   topic: string;
   payload: string;
   encrypted: boolean;

@@ -5,9 +5,9 @@
 import { Router, Request, Response } from 'express';
 import { db } from '../db/database.js';
 import { getAllDeviceSnapshots, getDeviceSnapshot, SENSORS, getGpsTrail, clearGpsTrail } from '../mqtt/sensorData.js';
-import { isDeviceOnline, writeRawPublish } from '../mqtt/broker.js';
+import { isDeviceOnline, writeRawPublish, getBrokerDiagnostics } from '../mqtt/broker.js';
 import { getRecentLogs } from '../dashboard/socketHandler.js';
-import { requestMapList, requestMapOutline, publishToDevice, publishRawToDevice } from '../mqtt/mapSync.js';
+import { requestMapList, requestMapOutline, publishToDevice, publishRawToDevice, publishEncryptedOnTopic } from '../mqtt/mapSync.js';
 import crypto from 'crypto';
 import { generateMapZipFromDb, gpsToLocal, localToGps, parseMapZip, type GpsPoint } from '../mqtt/mapConverter.js';
 import { existsSync, unlinkSync, readFileSync, readdirSync, createReadStream, statSync } from 'fs';
@@ -820,7 +820,96 @@ dashboardRouter.post('/schedules/:sn/:scheduleId/send', (req: Request, res: Resp
 import express from 'express';
 
 const firmwareDir = path.resolve(__dirname, '../../firmware');
-dashboardRouter.use('/firmware', express.static(firmwareDir));
+// Custom firmware download handler met uitgebreide logging
+dashboardRouter.get('/firmware/:filename', (req: Request, res: Response) => {
+  const filename = req.params.filename;
+  const filePath = path.join(firmwareDir, filename);
+
+  if (!existsSync(filePath)) {
+    res.status(404).send('File not found');
+    return;
+  }
+
+  const fileSize = statSync(filePath).size;
+  const rangeHeader = req.headers.range;
+  let start = 0;
+  let end = fileSize - 1;
+  let isResume = false;
+
+  if (rangeHeader) {
+    const rangeMatch = rangeHeader.match(/bytes=(\d+)-(\d*)/);
+    if (rangeMatch) {
+      start = parseInt(rangeMatch[1], 10);
+      end = rangeMatch[2] ? parseInt(rangeMatch[2], 10) : fileSize - 1;
+
+      if (start >= fileSize) {
+        // Download is al compleet — stuur 416 Range Not Satisfiable (RFC 7233 §4.4)
+        // Dit vertelt libcurl dat het bestand al volledig is → ota_client_node gaat door met MD5 check
+        console.log(`\x1b[38;5;46m[OTA] ✓ Range ${rangeHeader} beyond EOF (${fileSize}B) — bestand al compleet, 416\x1b[0m`);
+        res.writeHead(416, {
+          'Content-Range': `bytes */${fileSize}`,
+          'Content-Length': 0,
+        });
+        res.end();
+        return;
+      } else {
+        isResume = true;
+        console.log(`\x1b[38;5;208m[OTA] Resume download: bytes ${start}-${end}/${fileSize} (${((start/fileSize)*100).toFixed(1)}% al gedownload)\x1b[0m`);
+      }
+    }
+  }
+
+  const chunkSize = end - start + 1;
+  console.log(`\x1b[38;5;208m[OTA] ⬇ Start serving ${filename}: ${chunkSize} bytes (${(chunkSize/1024/1024).toFixed(1)}MB) ${isResume ? 'RESUME' : 'FRESH'}\x1b[0m`);
+
+  const headers: Record<string, string | number> = {
+    'Content-Type': 'application/octet-stream',
+    'Content-Length': chunkSize,
+    'Accept-Ranges': 'bytes',
+  };
+
+  if (isResume) {
+    headers['Content-Range'] = `bytes ${start}-${end}/${fileSize}`;
+    res.writeHead(206, headers);
+  } else {
+    res.writeHead(200, headers);
+  }
+
+  let bytesSent = 0;
+  const stream = createReadStream(filePath, { start, end });
+  const startTime = Date.now();
+  let lastLog = 0;
+
+  stream.on('data', (chunk) => {
+    bytesSent += chunk.length;
+    const now = Date.now();
+    // Log elke 5 seconden
+    if (now - lastLog > 5000) {
+      const pct = (((start + bytesSent) / fileSize) * 100).toFixed(1);
+      const elapsed = ((now - startTime) / 1000).toFixed(1);
+      const speed = ((bytesSent / 1024 / 1024) / ((now - startTime) / 1000)).toFixed(1);
+      console.log(`\x1b[38;5;208m[OTA] ⬇ ${pct}% (${(bytesSent/1024/1024).toFixed(1)}MB/${(chunkSize/1024/1024).toFixed(1)}MB) ${elapsed}s ${speed}MB/s\x1b[0m`);
+      lastLog = now;
+    }
+  });
+
+  stream.pipe(res);
+
+  res.on('close', () => {
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+    const totalPct = (((start + bytesSent) / fileSize) * 100).toFixed(1);
+    if (bytesSent >= chunkSize) {
+      console.log(`\x1b[38;5;46m[OTA] ✓ Download COMPLEET: ${(bytesSent/1024/1024).toFixed(1)}MB in ${elapsed}s (${totalPct}%)\x1b[0m`);
+    } else {
+      console.log(`\x1b[38;5;196m[OTA] ✗ Download AFGEBROKEN op ${totalPct}% (${(bytesSent/1024/1024).toFixed(1)}MB/${(chunkSize/1024/1024).toFixed(1)}MB) na ${elapsed}s\x1b[0m`);
+    }
+  });
+
+  stream.on('error', (err) => {
+    console.log(`\x1b[38;5;196m[OTA] Stream error: ${err.message}\x1b[0m`);
+    if (!res.headersSent) res.status(500).send('Stream error');
+  });
+});
 
 // GET /api/dashboard/firmware-list — lijst alle firmware bestanden
 dashboardRouter.get('/firmware-list', (_req: Request, res: Response) => {
@@ -1060,23 +1149,20 @@ dashboardRouter.post('/ota/trigger/:sn', (req: Request, res: Response) => {
   // publishToDevice() handelt AES encryptie automatisch af voor LFI* apparaten
   const isCharger = sn.startsWith('LFIC');
   if (isCharger) {
-    // Charger v0.4.0 verwacht nested formaat (zelfde als maaier)
+    // Charger ESP32: plat formaat — url/md5/version direct in ota_upgrade_cmd
+    // (firmware parseert cJSON_GetObjectItem op "url", "md5", "version" — geen nesting)
     const otaCommand = {
       ota_upgrade_cmd: {
-        type: 'full',
-        content: {
-          upgradeApp: {
-            version: otaVersion.version,
-            downloadUrl: otaVersion.download_url,
-            md5: otaVersion.md5 ?? '',
-          },
-        },
+        url: otaVersion.download_url,
+        md5: otaVersion.md5 ?? '',
+        version: otaVersion.version,
       },
     };
     publishToDevice(sn, otaCommand);
     console.log(`\x1b[38;5;208m[OTA] Encrypted ota_upgrade_cmd naar charger ${sn}\x1b[0m`);
   } else {
-    // Maaier OTA commando
+    // Maaier OTA: genest formaat — mqtt_node parseert type/content/upgradeApp
+    // Veldnaam is "downloadUrl" (bevestigd: app OTA werkte tot 68% met dit veld)
     const mowerOtaCommand = {
       ota_upgrade_cmd: {
         type: 'full',
@@ -1089,10 +1175,38 @@ dashboardRouter.post('/ota/trigger/:sn', (req: Request, res: Response) => {
         },
       },
     };
-    // publishToDevice() encrypts automatisch voor LFI* apparaten
     publishToDevice(sn, mowerOtaCommand);
     console.log(`\x1b[38;5;208m[OTA] Encrypted ota_upgrade_cmd naar mower ${sn}\x1b[0m`);
   }
 
   res.json({ ok: true, command: 'ota_upgrade_cmd', version: otaVersion.version, target: sn });
+});
+
+// ── MQTT diagnostiek ─────────────────────────────────────────────────────────
+
+// GET /api/dashboard/mqtt-diag — broker state: connected clients, subscriptions, online devices
+dashboardRouter.get('/mqtt-diag', (_req: Request, res: Response) => {
+  const diag = getBrokerDiagnostics();
+  res.json(diag);
+});
+
+// GET /api/dashboard/mqtt-logs — recente MQTT log entries (incl. forward tracking)
+dashboardRouter.get('/mqtt-logs', (req: Request, res: Response) => {
+  const typeFilter = req.query.type as string | undefined;
+  let logs = getRecentLogs();
+  if (typeFilter) logs = logs.filter(l => l.type === typeFilter);
+  // Laatste 50 entries, meest recent eerst
+  res.json(logs.slice(-50).reverse());
+});
+
+// POST /api/dashboard/mqtt-inject/:sn — publiceer een bericht op Dart/Receive_mqtt/<SN>
+// Simuleert een device-response (bijv. ota_version_info_respond) om app te testen
+dashboardRouter.post('/mqtt-inject/:sn', (req: Request, res: Response) => {
+  const { sn } = req.params;
+  const { message } = req.body as { message?: Record<string, unknown> };
+  if (!message) { res.status(400).json({ error: 'message required' }); return; }
+
+  const topic = `Dart/Receive_mqtt/${sn}`;
+  publishEncryptedOnTopic(topic, sn, message);
+  res.json({ ok: true, topic, payload: JSON.stringify(message) });
 });

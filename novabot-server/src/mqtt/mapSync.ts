@@ -99,6 +99,51 @@ export function publishToDevice(sn: string, command: Record<string, unknown>): v
 }
 
 /**
+ * Publiceer een AES-encrypted bericht op een willekeurig MQTT topic.
+ * Gebruikt om device-responses te simuleren (bijv. op Dart/Receive_mqtt/<SN>).
+ */
+export function publishEncryptedOnTopic(topic: string, sn: string, message: Record<string, unknown>): void {
+  if (!aedesBroker) {
+    console.error(`${TAG} Broker niet geinitialiseerd`);
+    return;
+  }
+  const json = JSON.stringify(message);
+  let payload: Buffer;
+
+  if (sn.startsWith('LFI')) {
+    const KEY_PREFIX = 'abcdabcd1234';
+    const IV = Buffer.from('abcd1234abcd1234', 'utf8');
+    const key = Buffer.from(KEY_PREFIX + sn.slice(-4), 'utf8');
+    const plaintext = Buffer.from(json, 'utf8');
+    const padded = Buffer.alloc(Math.ceil(plaintext.length / 16) * 16, 0);
+    plaintext.copy(padded);
+    const cipher = crypto.createCipheriv('aes-128-cbc', key, IV);
+    cipher.setAutoPadding(false);
+    payload = Buffer.concat([cipher.update(padded), cipher.final()]);
+    console.log(`${TAG} [AES] Inject op ${topic}: ${json} (${payload.length}B encrypted)`);
+  } else {
+    payload = Buffer.from(json, 'utf8');
+    console.log(`${TAG} Inject op ${topic}: ${json}`);
+  }
+
+  const packet = {
+    cmd: 'publish' as const,
+    qos: 0 as const,
+    dup: false,
+    retain: false,
+    topic,
+    payload,
+    brokerId: 'mapSync',
+    brokerCounter: 0,
+  } satisfies AedesPublishPacket;
+
+  aedesBroker.publish(packet, (err) => {
+    if (err) console.error(`${TAG} Inject fout op ${topic}: ${err.message}`);
+    else console.log(`${TAG} Inject succesvol op ${topic}`);
+  });
+}
+
+/**
  * Vraag de kaartlijst op van een maaier.
  */
 export function requestMapList(sn: string): void {

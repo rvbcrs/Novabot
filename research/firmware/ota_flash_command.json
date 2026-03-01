@@ -3,9 +3,9 @@
     "type": "full",
     "content": {
       "upgradeApp": {
-        "version": "v5.7.1-custom-1",
-        "downloadUrl": "http://novabot.ramonvanbruggen.nl:8080/mower_firmware_v5.7.1-custom-1.deb",
-        "md5": "6a29052606a69c12e9d1c386b99cdbbf"
+        "version": "v6.0.2-custom-2",
+        "downloadUrl": "http://192.168.0.177:8080/mower_firmware_v6.0.2-custom-2.deb",
+        "md5": "ce82935a5e9170a8dee8715d16887c27"
       }
     }
   }

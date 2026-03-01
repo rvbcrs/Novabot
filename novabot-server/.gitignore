@@ -1,5 +1,6 @@
 node_modules/
 dist/
+*.apk
 
 # Nooit committen — bevat private keys en database
 certs/

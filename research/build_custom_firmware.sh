@@ -9,7 +9,8 @@
 #   4. ROS_LOCALHOST_ONLY optioneel uitschakelbaar
 #
 # Gebruik:
-#   ./build_custom_firmware.sh                          # Standaard: novabot.local server
+#   ./build_custom_firmware.sh                          # Standaard: detecteert nieuwste .deb
+#   ./build_custom_firmware.sh --input firmware/mower_firmware_v6.0.2.deb
 #   ./build_custom_firmware.sh --server 192.168.1.50    # Specifiek IP
 #   ./build_custom_firmware.sh --server myserver.nl     # Eigen hostname
 #   ./build_custom_firmware.sh --ssh-password geheim    # Eigen SSH wachtwoord
@@ -17,7 +18,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-ORIGINAL_DEB="$SCRIPT_DIR/mower_firmware_v5.7.1.deb"
+INPUT_DEB=""
 WORK_DIR="/tmp/mower_firmware_custom"
 OUTPUT_DIR="$SCRIPT_DIR/firmware"
 
@@ -32,6 +33,7 @@ VERSION_SUFFIX="custom-1"
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
+        --input)        INPUT_DEB="$2"; shift 2 ;;
         --server)       SERVER_HOST="$2"; shift 2 ;;
         --http-port)    SERVER_HTTP_PORT="$2"; shift 2 ;;
         --ssh-password) SSH_PASSWORD="$2"; shift 2 ;;
@@ -42,45 +44,67 @@ while [[ $# -gt 0 ]]; do
             echo "Usage: $0 [OPTIONS]"
             echo ""
             echo "Options:"
+            echo "  --input FILE        Source .deb firmware (auto-detects newest if omitted)"
             echo "  --server HOST       Server hostname/IP (default: novabot.local)"
             echo "  --http-port PORT    HTTP port (default: 3000)"
             echo "  --ssh-password PWD  Root SSH password (default: novabot)"
             echo "  --ssh-port PORT     SSH port (default: 22)"
             echo "  --remote-ros2       Enable ROS 2 network access (default: off)"
             echo "  --version SUFFIX    Version suffix (default: custom-1)"
+            echo ""
+            echo "Examples:"
+            echo "  $0 --server novabot.ramonvanbruggen.nl"
+            echo "  $0 --input firmware/mower_firmware_v6.0.2.deb --server 192.168.1.50"
             exit 0
             ;;
         *) echo "Unknown option: $1"; exit 1 ;;
     esac
 done
 
-VERSION="v5.7.1-${VERSION_SUFFIX}"
+# === Auto-detect input .deb if not specified ===
+if [ -z "$INPUT_DEB" ]; then
+    # Look for mower firmware .deb files (exclude -custom builds)
+    CANDIDATES=($(ls -t "$SCRIPT_DIR"/firmware/mower_firmware_v*.deb "$SCRIPT_DIR"/mower_firmware_v*.deb 2>/dev/null | grep -v "custom" || true))
+    if [ ${#CANDIDATES[@]} -eq 0 ]; then
+        echo "ERROR: Geen mower firmware .deb gevonden."
+        echo "Download eerst via: node research/download_firmware.js"
+        echo "Of geef een pad op via: $0 --input <pad-naar-.deb>"
+        exit 1
+    fi
+    INPUT_DEB="${CANDIDATES[0]}"
+    if [ ${#CANDIDATES[@]} -gt 1 ]; then
+        echo "Meerdere firmware bestanden gevonden:"
+        for f in "${CANDIDATES[@]}"; do
+            echo "  $(basename "$f")"
+        done
+        echo "Gebruikt: $(basename "$INPUT_DEB") (nieuwste)"
+        echo ""
+    fi
+fi
+
+# Resolve relative paths (relative to current working directory, not SCRIPT_DIR)
+if [[ "$INPUT_DEB" != /* ]]; then
+    INPUT_DEB="$(pwd)/$INPUT_DEB"
+fi
+
 HTTP_BASE="http://${SERVER_HOST}:${SERVER_HTTP_PORT}"
 
-echo "============================================"
-echo "  Novabot Custom Firmware Builder"
-echo "============================================"
-echo "  Server:       ${SERVER_HOST}:${SERVER_HTTP_PORT}"
-echo "  SSH password:  ${SSH_PASSWORD}"
-echo "  Version:       ${VERSION}"
-echo "  Remote ROS 2:  ${ENABLE_REMOTE_ROS2}"
-echo "============================================"
-echo ""
 
 # === Stap 1: Controleer bronbestand ===
-if [ ! -f "$ORIGINAL_DEB" ]; then
-    echo "ERROR: Originele firmware niet gevonden: $ORIGINAL_DEB"
+if [ ! -f "$INPUT_DEB" ]; then
+    echo "ERROR: Firmware niet gevonden: $INPUT_DEB"
     echo "Download eerst via: node research/download_firmware.js"
     exit 1
 fi
 
 # === Stap 2: Schoon werkdirectory ===
-echo "[1/7] Werkdirectory voorbereiden..."
+echo "[1/8] Werkdirectory voorbereiden..."
 rm -rf "$WORK_DIR"
 mkdir -p "$WORK_DIR"
 
 # === Stap 3: Uitpakken ===
-echo "[2/7] Firmware uitpakken..."
+echo "[2/8] Firmware uitpakken..."
+echo "  Bron: $(basename "$INPUT_DEB")"
 
 # De .deb bevat data.tar.xz met flat structuur (./scripts/, ./install/, etc.)
 # OTA flow doet: dpkg -x package.deb /root/novabot.new/
@@ -89,7 +113,7 @@ FIRMWARE_DATA="$WORK_DIR/firmware_data"
 mkdir -p "$FIRMWARE_DATA"
 
 cd "$WORK_DIR"
-ar x "$ORIGINAL_DEB"
+ar x "$INPUT_DEB"
 echo "  .deb uitgepakt (ar)"
 
 if [ -f data.tar.xz ]; then
@@ -114,8 +138,42 @@ fi
 echo "  Firmware root: $NOVABOT_ROOT"
 echo "  Bestanden: $(find "$NOVABOT_ROOT" -type f | wc -l | tr -d ' ')"
 
-# === Stap 4: SSH installatie toevoegen aan start_service.sh ===
-echo "[3/7] SSH installatie toevoegen..."
+# === Stap 4: Detecteer firmware versie ===
+echo "[3/8] Firmware versie detecteren..."
+
+API_YAML="$NOVABOT_ROOT/install/novabot_api/share/novabot_api/config/novabot_api.yaml"
+if [ -f "$API_YAML" ]; then
+    BASE_VERSION=$(grep 'novabot_version_code:' "$API_YAML" | sed 's/.*novabot_version_code: *//' | tr -d ' ')
+else
+    # Fallback: probeer versie uit bestandsnaam te halen
+    BASE_VERSION=$(basename "$INPUT_DEB" | grep -oP 'v[\d.]+' | head -1)
+fi
+
+if [ -z "$BASE_VERSION" ]; then
+    echo "  WAARSCHUWING: Kan firmware versie niet detecteren, gebruik v0.0.0"
+    BASE_VERSION="v0.0.0"
+fi
+
+VERSION="${BASE_VERSION}-${VERSION_SUFFIX}"
+
+echo "  Basisversie:  $BASE_VERSION"
+echo "  Buildversie:  $VERSION"
+
+echo ""
+echo "============================================"
+echo "  Novabot Custom Firmware Builder"
+echo "============================================"
+echo "  Bron:          $(basename "$INPUT_DEB")"
+echo "  Basisversie:   ${BASE_VERSION}"
+echo "  Server:        ${SERVER_HOST}:${SERVER_HTTP_PORT}"
+echo "  SSH password:  ${SSH_PASSWORD}"
+echo "  Versie:        ${VERSION}"
+echo "  Remote ROS 2:  ${ENABLE_REMOTE_ROS2}"
+echo "============================================"
+echo ""
+
+# === Stap 5: SSH installatie toevoegen aan start_service.sh ===
+echo "[4/8] SSH installatie toevoegen..."
 
 START_SERVICE="$NOVABOT_ROOT/scripts/start_service.sh"
 
@@ -172,7 +230,7 @@ fi
 rm -f "$SSH_BLOCK"
 
 # === Stap 5: HTTP server URL aanpassen ===
-echo "[4/7] Server URLs aanpassen..."
+echo "[5/8] Server URLs aanpassen..."
 
 # 5a. log_manager.yaml — upload URL
 LOG_YAML="$NOVABOT_ROOT/install/log_manager/share/log_manager/config/log_manager.yaml"
@@ -217,7 +275,7 @@ fi
 
 # === Stap 6: Optioneel ROS 2 netwerk openzetten ===
 if [ "$ENABLE_REMOTE_ROS2" = "true" ]; then
-    echo "[5/7] ROS 2 netwerk openzetten..."
+    echo "[6/8] ROS 2 netwerk openzetten..."
     # Vervang ROS_LOCALHOST_ONLY=1 → 0 in run_novabot.sh
     if [ -f "$RUN_NOVABOT" ]; then
         sed -i '' 's/export ROS_LOCALHOST_ONLY=1/export ROS_LOCALHOST_ONLY=0  # CUSTOM: remote ROS 2 enabled/' "$RUN_NOVABOT"
@@ -230,11 +288,11 @@ if [ "$ENABLE_REMOTE_ROS2" = "true" ]; then
         echo "  ROS_LOCALHOST_ONLY=0 in run_ota.sh"
     fi
 else
-    echo "[5/7] ROS 2 netwerk: localhost-only (standaard)"
+    echo "[6/8] ROS 2 netwerk: localhost-only (standaard)"
 fi
 
 # === Stap 7: Versie-info bijwerken ===
-echo "[6/7] Versie-info bijwerken..."
+echo "[7/8] Versie-info bijwerken..."
 
 # Update Readme.txt
 README="$NOVABOT_ROOT/Readme.txt"
@@ -249,14 +307,66 @@ if [ -f "$README" ]; then
 fi
 
 # Update novabot_api.yaml version
-API_YAML="$NOVABOT_ROOT/install/novabot_api/share/novabot_api/config/novabot_api.yaml"
 if [ -f "$API_YAML" ]; then
-    sed -i '' "s/novabot_version_code: v5.7.1/novabot_version_code: ${VERSION}/" "$API_YAML"
+    sed -i '' "s/novabot_version_code: ${BASE_VERSION}/novabot_version_code: ${VERSION}/" "$API_YAML"
     echo "  Versie in novabot_api.yaml → ${VERSION}"
 fi
 
-# === Stap 8: Bouw .deb ===
-echo "[7/7] .deb bouwen..."
+# === Stap 8: package_verify.json bijwerken ===
+echo "[8/9] package_verify.json bijwerken..."
+
+VERIFY_JSON="$NOVABOT_ROOT/package_verify.json"
+if [ -f "$VERIFY_JSON" ]; then
+    # Update bestandsgroottes en MD5 hashes voor alle gewijzigde bestanden
+    export VERIFY_JSON NOVABOT_ROOT
+    python3 << 'PYEOF'
+import json, hashlib, os, sys
+
+verify_path = os.environ.get('VERIFY_JSON', '')
+root_dir = os.environ.get('NOVABOT_ROOT', '')
+
+if not verify_path or not root_dir:
+    print("  ERROR: VERIFY_JSON of NOVABOT_ROOT niet gezet")
+    sys.exit(1)
+
+with open(verify_path, 'r') as f:
+    data = json.load(f)
+
+updated = 0
+for entry in data['fileVerification']:
+    rel_path = entry['path']
+    full_path = os.path.join(root_dir, rel_path.lstrip('/'))
+
+    if not os.path.exists(full_path):
+        continue
+
+    actual_size = os.path.getsize(full_path)
+
+    for key, check in entry['checkWay'].items():
+        if check['way'] == 'Size-B':
+            if check['value'] != actual_size:
+                print(f"  Size update: {rel_path} ({check['value']}B → {actual_size}B)")
+                check['value'] = actual_size
+                updated += 1
+        elif check['way'] == 'MD5-B':
+            with open(full_path, 'rb') as fh:
+                actual_md5 = hashlib.md5(fh.read()).hexdigest()
+            if check['value'] != actual_md5:
+                print(f"  MD5 update:  {rel_path}")
+                check['value'] = actual_md5
+                updated += 1
+
+with open(verify_path, 'w') as f:
+    json.dump(data, f, separators=(',', ':'))
+
+print(f"  {updated} verificatiewaarden bijgewerkt")
+PYEOF
+else
+    echo "  Geen package_verify.json gevonden — overslaan"
+fi
+
+# === Stap 9: Bouw .deb ===
+echo "[9/9] .deb bouwen..."
 mkdir -p "$OUTPUT_DIR"
 OUTPUT_DEB="$OUTPUT_DIR/mower_firmware_${VERSION}.deb"
 
@@ -291,8 +401,13 @@ cd "$WORK_DIR/DEBIAN"
 tar -cJf "$WORK_DIR/control.tar.xz" .
 cd "$WORK_DIR"
 
-# ar rcs bouwt het .deb archief (volgorde is belangrijk!)
-ar rcs "$OUTPUT_DEB" debian-binary control.tar.xz data.tar.xz
+# Bouw .deb ar-archief (volgorde is belangrijk: debian-binary eerst)
+# macOS ar voegt altijd een __.SYMDEF SORTED toe — verwijderen na build
+ar cr "$OUTPUT_DEB" debian-binary control.tar.xz data.tar.xz
+# Verwijder macOS-specifieke __.SYMDEF SORTED (niet geldig in .deb formaat)
+if ar t "$OUTPUT_DEB" | grep -q "SYMDEF"; then
+    ar d "$OUTPUT_DEB" "__.SYMDEF SORTED" 2>/dev/null || true
+fi
 BUILD_METHOD="ar"
 cd "$SCRIPT_DIR"
 
@@ -366,7 +481,7 @@ echo "  BELANGRIJK:"
 echo "    - Maaier moet OPLADEN voordat download start"
 echo "    - Download duurt 20-30 minuten (35MB via WiFi)"
 echo "    - Na reboot: ssh root@<maaier-ip> (wachtwoord: ${SSH_PASSWORD})"
-echo "    - Bij problemen: maaier rollback naar v5.7.1 automatisch"
+echo "    - Bij problemen: maaier rollback naar vorige versie automatisch"
 echo ""
 
 # Schrijf OTA JSON naar bestand voor gemakkelijk gebruik

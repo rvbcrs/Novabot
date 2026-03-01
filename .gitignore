@@ -5,6 +5,7 @@ blutter*
 *.deb
 *.elf
 *.xapk
+*.apk
 
 # Research — skip large binaries and APK data
 research/NOVABOT_*/
