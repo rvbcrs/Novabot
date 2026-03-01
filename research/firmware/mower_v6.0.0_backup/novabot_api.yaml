@@ -1,0 +1,8 @@
+mqtt_node:
+  ros__parameters:
+    novabot_sn_code: LFINXXXX
+    novabot_version_code: v6.0.0
+    novabot_delete_map: 1
+    novabot_night_work: 0
+    novabot_test_night_pm: 0
+    novabot_test_night_am: 0

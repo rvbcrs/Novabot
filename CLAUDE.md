@@ -1938,6 +1938,60 @@ pakt hem uit, past shell scripts en configuratie aan, en herbouwt als .deb voor 
 - HTTP upload URL wordt gelezen uit `/userdata/lfi/http_address.txt` → `set_server_urls.sh` overschrijft dit
 - `app.lfibot.com` hardcoded als HTTP fallback → DNS redirect werkt ook hier
 
+**KRITISCH: `http_address.txt` format — ALLEEN host:port, GEEN `http://` prefix, GEEN trailing newline!**
+
+De firmware (`mqtt_node`) leest `/userdata/lfi/http_address.txt` en bouwt URLs als:
+`"http://" + file_content + "/api/..."`. Als het bestand `http://192.168.0.177:3000` bevat,
+wordt de URL `http://http://192.168.0.177:3000/api/...` → curl faalt → `net_work_flag` blijft 0.
+
+Correct formaat: `192.168.0.177:3000` (zonder http:// prefix, zonder trailing newline).
+Gebruik `printf "%s" "host:port"` i.p.v. `echo` om trailing newline te voorkomen.
+
+### `net_check_fun` — netwerk health check in mqtt_node (maart 2026)
+
+De `net_check_fun` thread in `mqtt_node` controleert periodiek (~27 sec) of de HTTP server
+bereikbaar is. Dit is een vereiste voor `net_work_flag=1`, wat andere functies nodig hebben.
+
+**Control flow:**
+1. `net_check_fun` stuurt event type 3 via `msgsnd` naar `http_work_fun` thread
+2. `http_work_fun` ontvangt via `msgrcv`, leest `/userdata/lfi/http_address.txt`
+3. Bouwt URL: `"http://" + file_content + "/api/nova-network/network/connection"`
+4. Roept `http_post_upload()` aan die `curl_easy_perform()` doet (5 sec timeout)
+5. Bij succes: `net_connect_fail_num = 0`, `net_work_exe_end_flag = 1`
+6. Bij falen: `net_connect_fail_num++`, `net_work_exe_end_flag = 1`
+7. Terug in `net_check_fun`: checkt `net_connect_fail_num`:
+   - `== 0`: zet `net_work_flag = net_work_exe_end_flag` (= 1, SUCCESS)
+   - `1-3`: dead zone — flag niet gezet, WiFi niet herconnect
+   - `> 3`: probeert WiFi reconnect, dan loop terug
+
+**Relevante BSS symbolen (`nm mqtt_node`):**
+| Symbool | Offset | Type | Beschrijving |
+|---------|--------|------|-------------|
+| `_ZL13net_work_flag` | `0x42aff0` | byte | Netwerk OK vlag (0=fail, 1=ok) |
+| `_ZL14mqtt_work_flag` | `0x42af89` | byte | MQTT verbinding OK |
+| `_ZL20net_connect_fail_num` | `0x42b6ac` | int32 | Opeenvolgende HTTP failures |
+| `_ZL21net_work_exe_end_flag` | `0x42b6b0` | int32 | Check voltooid vlag |
+| `_ZL13wifi_rssi_num` | `0x42b6f0` | int32 | WiFi RSSI waarde |
+| `_ZL11g_wifi_rssi` | `0x42b154` | int32 | Globale WiFi RSSI |
+
+**Debug via GDB:**
+```bash
+# PID ophalen
+PID=$(pidof mqtt_node.real)
+# PIE base ophalen
+BASE=$(head -1 /proc/$PID/maps | cut -d'-' -f1)
+# Adressen berekenen: base + offset
+gdb -batch -p $PID \
+  -ex "x/1bx $((0x$BASE + 0x42aff0))" \
+  -ex "x/1wx $((0x$BASE + 0x42b6ac))"
+```
+
+**Root cause gevonden en gefixt (1 maart 2026):**
+- Bug: `build_custom_firmware.sh` schreef `http://host:port` naar `http_address.txt`
+- Firmware prepends `http://` → dubbel prefix → curl fail → `net_work_flag` blijft 0
+- Extra bug: `echo` voegt trailing newline toe → ook met correct prefix faalt curl
+- Fix: `printf "%s" "host:port"` (geen prefix, geen newline)
+
 ### Charger firmware patchen
 
 Bestaand patch tool `research/patch_firmware.js` vervangt MQTT hostnames in de charger binary:
@@ -2058,6 +2112,7 @@ mkdocs serve -f mkdocs-public.yml     # Preview publieke wiki
 - [x] Maaier .deb firmware geanalyseerd: 6237 bestanden, 575 shell scripts, 298 Python, 136 YAML (allemaal aanpasbaar)
 - [x] SSH installatie via OTA: openssh-server + root wachtwoord in start_service.sh
 - [x] HTTP URL override: set_server_urls.sh schrijft http_address.txt bij elke boot
+- [x] `net_check_fun` reverse-engineered: netwerk health check via HTTP POST, BSS symbolen gevonden, URL-formaat bug gefixt (geen http:// prefix, geen trailing newline)
 - [x] Publieke/private wiki split: PRIVATE markers in 8 docs, build-public-wiki.sh strip script
 - [x] 14 gevoelige strings geverifieerd op 0 hits in publieke wiki build
 - [x] Firmware haalbaarheidsanalyse: charger=haalbaar (ESP-IDF), maaier=aanpasbaar via .deb OTA

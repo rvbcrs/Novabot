@@ -241,17 +241,21 @@ fi
 
 # 5b. Voeg script toe dat http_address.txt correct zet bij elke boot
 # Dit overrulet de hardcoded app.lfibot.com fallback in mqtt_node
+# NB: Firmware prepends "http://" zelf, dus ALLEEN host:port opslaan (geen http:// prefix!)
+# NB: Gebruik printf i.p.v. echo om trailing newline te voorkomen (breekt URL in curl)
 cat > "$NOVABOT_ROOT/scripts/set_server_urls.sh" << URLSCRIPT
 #!/bin/bash
 # CUSTOM: Stel lokale server URLs in
 # Dit script wordt aangeroepen bij elke boot vanuit run_novabot.sh
+# NB: Firmware prepends "http://" — schrijf ALLEEN host:port, GEEN http:// prefix!
+# NB: Gebruik printf (niet echo) om trailing newline te voorkomen
 
-HTTP_ADDRESS="${HTTP_BASE}"
+HTTP_ADDRESS="${SERVER_HOST}:${SERVER_HTTP_PORT}"
 HTTP_ADDR_FILE="/userdata/lfi/http_address.txt"
 
-# Schrijf het lokale server adres
+# Schrijf het lokale server adres (zonder http:// prefix, zonder trailing newline)
 mkdir -p /userdata/lfi
-echo "\${HTTP_ADDRESS}" > "\${HTTP_ADDR_FILE}"
+printf "%s" "\${HTTP_ADDRESS}" > "\${HTTP_ADDR_FILE}"
 
 echo "[\$(date)] Server URL set to \${HTTP_ADDRESS}" >> /userdata/ota/custom_firmware.log
 URLSCRIPT
