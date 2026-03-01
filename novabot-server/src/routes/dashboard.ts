@@ -11,6 +11,7 @@ import { requestMapList, requestMapOutline, publishToDevice, publishRawToDevice 
 import crypto from 'crypto';
 import { generateMapZipFromDb, gpsToLocal, localToGps, parseMapZip, type GpsPoint } from '../mqtt/mapConverter.js';
 import { existsSync, unlinkSync, readFileSync, readdirSync, createReadStream, statSync } from 'fs';
+import { execSync } from 'child_process';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -537,10 +538,10 @@ dashboardRouter.post('/command/:sn', (req: Request, res: Response) => {
     return;
   }
 
-  // Auto-encrypt voor LFIN-apparaten (maaiers) — firmware accepteert alleen AES-versleutelde payloads
+  // Auto-encrypt voor LFI-apparaten — maaier (v6+) en charger (v0.4.0+) verwachten AES
   // Handmatige override: encrypt=true/false in body
   const { encrypt: doEncrypt, qos } = req.body as { encrypt?: boolean; qos?: number };
-  const shouldEncrypt = doEncrypt !== undefined ? doEncrypt : sn.startsWith('LFIN');
+  const shouldEncrypt = doEncrypt !== undefined ? doEncrypt : sn.startsWith('LFI');
 
   if (shouldEncrypt) {
     const KEY_PREFIX = 'abcdabcd1234';
@@ -839,6 +840,80 @@ dashboardRouter.get('/firmware-list', (_req: Request, res: Response) => {
 
 // ── OTA Version Management ──────────────────────────────────────
 
+// ── Firmware versie extractie uit binaire bestanden ─────────────────────────
+
+/**
+ * Extraheer firmware versie uit een ESP32-S3 charger binary (.bin).
+ * De versie (bijv. "v0.3.6") is de 2e match van /^v\d+\.\d+/ in strings output.
+ * (1e = ESP-IDF versie, 2e = firmware versie, 3e = sub-versie)
+ */
+function extractChargerVersion(binPath: string): string | null {
+  try {
+    const output = execSync(`strings "${binPath}"`, { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
+    const matches = output.split('\n').filter(l => /^v\d+\.\d+\.\d+/.test(l));
+    // 2e match is altijd de firmware versie
+    return matches.length >= 2 ? matches[1].trim() : matches[0]?.trim() ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Extraheer firmware versie uit een maaier Debian pakket (.deb).
+ * Leest novabot_version_code uit novabot_api.yaml in het pakket.
+ */
+function extractMowerVersion(debPath: string): string | null {
+  try {
+    const output = execSync(
+      `ar p "${debPath}" data.tar.xz 2>/dev/null | tar -xJOf - ./install/novabot_api/share/novabot_api/config/novabot_api.yaml 2>/dev/null`,
+      { encoding: 'utf8', maxBuffer: 1024 * 1024 },
+    );
+    const match = output.match(/novabot_version_code:\s*(.+)/);
+    return match ? match[1].trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Extraheer firmware versie uit een lokaal firmware bestand.
+ * Detecteert automatisch het type op basis van bestandsextensie.
+ */
+function extractFirmwareVersion(filePath: string): string | null {
+  if (!existsSync(filePath)) return null;
+  if (filePath.endsWith('.deb')) return extractMowerVersion(filePath);
+  if (filePath.endsWith('.bin')) return extractChargerVersion(filePath);
+  return null;
+}
+
+/**
+ * Vergelijk twee semver-achtige versies. Retourneert:
+ *  -1 als a < b, 0 als a == b, 1 als a > b
+ */
+function compareVersions(a: string, b: string): number {
+  // Strip 'v' prefix en splits op . en -
+  const normalize = (v: string) => v.replace(/^v/i, '').split(/[.\-]/).map(p => {
+    const n = parseInt(p, 10);
+    return isNaN(n) ? p : n;
+  });
+  const pa = normalize(a);
+  const pb = normalize(b);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const va = pa[i] ?? 0;
+    const vb = pb[i] ?? 0;
+    if (typeof va === 'number' && typeof vb === 'number') {
+      if (va < vb) return -1;
+      if (va > vb) return 1;
+    } else {
+      const sa = String(va);
+      const sb = String(vb);
+      if (sa < sb) return -1;
+      if (sa > sb) return 1;
+    }
+  }
+  return 0;
+}
+
 interface OtaVersionRow {
   id: number;
   version: string;
@@ -865,31 +940,51 @@ dashboardRouter.post('/ota/versions', (req: Request, res: Response) => {
     md5?: string;
   };
 
-  if (!version) {
-    res.status(400).json({ error: 'version is vereist' });
-    return;
-  }
-
-  // Auto-bereken md5 als download_url naar een lokaal firmware bestand wijst en geen md5 is meegegeven
+  // Auto-versie en md5 uit firmware bestand halen als download_url naar lokaal bestand wijst
+  let resolvedVersion = version ?? null;
   let calculatedMd5 = md5 ?? null;
-  if (!calculatedMd5 && download_url) {
+  let detectedDeviceType = device_type ?? null;
+
+  if (download_url) {
     const match = download_url.match(/\/firmware\/(.+)$/);
     if (match) {
       const filePath = path.join(firmwareDir, match[1]);
       if (existsSync(filePath)) {
-        calculatedMd5 = crypto.createHash('md5').update(readFileSync(filePath)).digest('hex');
-        console.log(`\x1b[38;5;208m[OTA] Auto-berekende md5 voor ${match[1]}: ${calculatedMd5}\x1b[0m`);
+        // Auto-bereken md5
+        if (!calculatedMd5) {
+          calculatedMd5 = crypto.createHash('md5').update(readFileSync(filePath)).digest('hex');
+          console.log(`\x1b[38;5;208m[OTA] Auto-berekende md5 voor ${match[1]}: ${calculatedMd5}\x1b[0m`);
+        }
+        // Auto-detecteer versie uit binair bestand
+        const fileVersion = extractFirmwareVersion(filePath);
+        if (fileVersion) {
+          if (!resolvedVersion) {
+            resolvedVersion = fileVersion;
+            console.log(`\x1b[38;5;208m[OTA] Auto-gedetecteerde versie uit ${match[1]}: ${fileVersion}\x1b[0m`);
+          } else if (resolvedVersion !== fileVersion) {
+            console.warn(`\x1b[33m[OTA] ⚠ Opgegeven versie "${resolvedVersion}" wijkt af van bestandsversie "${fileVersion}" in ${match[1]}\x1b[0m`);
+          }
+        }
+        // Auto-detecteer device type
+        if (!detectedDeviceType) {
+          detectedDeviceType = filePath.endsWith('.deb') ? 'mower' : 'charger';
+        }
       }
     }
+  }
+
+  if (!resolvedVersion) {
+    res.status(400).json({ error: 'version is vereist (of upload een firmware bestand met versie-info)' });
+    return;
   }
 
   const result = db.prepare(`
     INSERT INTO ota_versions (version, device_type, download_url, release_notes, md5)
     VALUES (?, ?, ?, ?, ?)
-  `).run(version, device_type ?? 'charger', download_url ?? null, release_notes ?? null, calculatedMd5);
+  `).run(resolvedVersion, detectedDeviceType ?? 'charger', download_url ?? null, release_notes ?? null, calculatedMd5);
 
-  console.log(`\x1b[38;5;208m[OTA] Versie toegevoegd: ${version} (${device_type ?? 'charger'}) id=${result.lastInsertRowid}\x1b[0m`);
-  res.json({ ok: true, id: result.lastInsertRowid });
+  console.log(`\x1b[38;5;208m[OTA] Versie toegevoegd: ${resolvedVersion} (${detectedDeviceType ?? 'charger'}) id=${result.lastInsertRowid}\x1b[0m`);
+  res.json({ ok: true, id: result.lastInsertRowid, version: resolvedVersion, device_type: detectedDeviceType ?? 'charger', md5: calculatedMd5 });
 });
 
 // DELETE /api/dashboard/ota/versions/:id — verwijder een OTA versie
@@ -921,25 +1016,67 @@ dashboardRouter.post('/ota/trigger/:sn', (req: Request, res: Response) => {
     return;
   }
 
-  console.log(`\x1b[38;5;208m[OTA] Trigger OTA voor ${sn}: versie=${otaVersion.version} url=${otaVersion.download_url}\x1b[0m`);
+  // Versie-check: vergelijk met huidige firmware versie op apparaat
+  const isChargerDevice = sn.startsWith('LFIC');
+  const equipRow = isChargerDevice
+    ? db.prepare('SELECT charger_version FROM equipment WHERE charger_sn = ? LIMIT 1').get(sn) as { charger_version: string | null } | undefined
+    : db.prepare('SELECT mower_version FROM equipment WHERE mower_sn = ? LIMIT 1').get(sn) as { mower_version: string | null } | undefined;
+  const currentVersion = isChargerDevice
+    ? (equipRow as { charger_version: string | null } | undefined)?.charger_version
+    : (equipRow as { mower_version: string | null } | undefined)?.mower_version;
 
-  // Charger (LFIC) krijgt plaintext JSON, maaier (LFIN) krijgt encrypted
-  // Charger v0.3.6 verwacht flat formaat: {url, version, md5}
-  // Charger v0.4.0 + maaier verwachten nested: {type, content.upgradeApp.{version,downloadUrl,md5}}
+  if (currentVersion && otaVersion.version) {
+    const cmp = compareVersions(otaVersion.version, currentVersion);
+    const { force } = req.body as { force?: boolean };
+    if (cmp <= 0 && !force) {
+      const label = cmp === 0 ? 'gelijk aan' : 'ouder dan';
+      res.status(400).json({
+        error: `OTA versie ${otaVersion.version} is ${label} huidige versie ${currentVersion}. Gebruik force=true om toch te flashen.`,
+        currentVersion,
+        otaVersion: otaVersion.version,
+      });
+      return;
+    }
+    if (cmp <= 0 && force) {
+      console.warn(`\x1b[33m[OTA] ⚠ Force-flash: ${otaVersion.version} (${cmp === 0 ? '==' : '<'} ${currentVersion}) naar ${sn}\x1b[0m`);
+    }
+  }
+
+  // Verifieer ook de versie in het firmware bestand zelf (als lokaal beschikbaar)
+  if (otaVersion.download_url) {
+    const urlMatch = otaVersion.download_url.match(/\/firmware\/(.+)$/);
+    if (urlMatch) {
+      const filePath = path.join(firmwareDir, urlMatch[1]);
+      const fileVersion = extractFirmwareVersion(filePath);
+      if (fileVersion && fileVersion !== otaVersion.version) {
+        console.warn(`\x1b[33m[OTA] ⚠ Versie mismatch: DB="${otaVersion.version}" maar bestand="${fileVersion}" (${urlMatch[1]})\x1b[0m`);
+      }
+    }
+  }
+
+  console.log(`\x1b[38;5;208m[OTA] Trigger OTA voor ${sn}: versie=${otaVersion.version}${currentVersion ? ` (huidig: ${currentVersion})` : ''} url=${otaVersion.download_url}\x1b[0m`);
+
+  // Beide apparaten krijgen nu AES-encrypted commando's (charger v0.4.0+ en maaier v6+)
+  // publishToDevice() handelt AES encryptie automatisch af voor LFI* apparaten
   const isCharger = sn.startsWith('LFIC');
   if (isCharger) {
-    // Flat formaat — bevestigd via app-log dat v0.3.6 dit formaat gebruikt
+    // Charger v0.4.0 verwacht nested formaat (zelfde als maaier)
     const otaCommand = {
       ota_upgrade_cmd: {
-        url: otaVersion.download_url,
-        version: otaVersion.version,
-        md5: otaVersion.md5 ?? '',
+        type: 'full',
+        content: {
+          upgradeApp: {
+            version: otaVersion.version,
+            downloadUrl: otaVersion.download_url,
+            md5: otaVersion.md5 ?? '',
+          },
+        },
       },
     };
     publishToDevice(sn, otaCommand);
-    console.log(`\x1b[38;5;208m[OTA] Plaintext ota_upgrade_cmd (flat) naar charger ${sn}\x1b[0m`);
+    console.log(`\x1b[38;5;208m[OTA] Encrypted ota_upgrade_cmd naar charger ${sn}\x1b[0m`);
   } else {
-    // Nested formaat voor maaier (ROS2 ota_client_node verwacht content.upgradeApp structuur)
+    // Maaier OTA commando
     const mowerOtaCommand = {
       ota_upgrade_cmd: {
         type: 'full',
@@ -952,18 +1089,8 @@ dashboardRouter.post('/ota/trigger/:sn', (req: Request, res: Response) => {
         },
       },
     };
-    // Encrypt voor maaier
-    const KEY_PREFIX = 'abcdabcd1234';
-    const IV = Buffer.from('abcd1234abcd1234', 'utf8');
-    const key = Buffer.from(KEY_PREFIX + sn.slice(-4), 'utf8');
-    const json = JSON.stringify(mowerOtaCommand);
-    const plaintext = Buffer.from(json, 'utf8');
-    const padded = Buffer.alloc(Math.ceil(plaintext.length / 16) * 16, 0);
-    plaintext.copy(padded);
-    const cipher = crypto.createCipheriv('aes-128-cbc', key, IV);
-    cipher.setAutoPadding(false);
-    const encrypted = Buffer.concat([cipher.update(padded), cipher.final()]);
-    publishRawToDevice(sn, encrypted);
+    // publishToDevice() encrypts automatisch voor LFI* apparaten
+    publishToDevice(sn, mowerOtaCommand);
     console.log(`\x1b[38;5;208m[OTA] Encrypted ota_upgrade_cmd naar mower ${sn}\x1b[0m`);
   }
 

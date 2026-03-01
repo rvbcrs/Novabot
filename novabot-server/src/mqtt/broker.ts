@@ -561,11 +561,36 @@ export async function startMqttBroker(): Promise<void> {
         const parsed = JSON.parse(effectiveJson);
         handleMapMessage(forwardSn, parsed);
         // OTA voortgang → push naar dashboard via socket
-        if (parsed.ota_upgrade_state) {
-          emitOtaEvent(forwardSn, 'state', parsed.ota_upgrade_state);
+        // Charger formaat: {"type":"ota_upgrade_state","message":{...}}
+        // Maaier formaat:  {"ota_upgrade_state":{...}}
+        const otaState = parsed.ota_upgrade_state
+          ?? (parsed.type === 'ota_upgrade_state' ? parsed.message : null);
+        if (otaState) {
+          emitOtaEvent(forwardSn, 'state', otaState);
         }
-        if (parsed.ota_version_info_respond) {
-          emitOtaEvent(forwardSn, 'version', parsed.ota_version_info_respond);
+
+        // Firmware versie response
+        // Charger: {"type":"ota_version_info_respond","message":{"result":0,"value":{"system":"v0.0.1","version":"v0.4.0"}}}
+        // Maaier:  {"ota_version_info_respond":{"version":"v6.0.0",...}}
+        const otaVersionData = parsed.ota_version_info_respond
+          ?? (parsed.type === 'ota_version_info_respond' ? parsed.message : null);
+        if (otaVersionData) {
+          emitOtaEvent(forwardSn, 'version', otaVersionData);
+          // Extraheer versie string — charger heeft value.version, maaier heeft direct version
+          const val = otaVersionData?.value ?? otaVersionData;
+          const versionStr = val?.version ?? val?.sw_version ?? val?.mqtt_version;
+          if (versionStr && forwardSn) {
+            const isCharger = forwardSn.startsWith('LFIC');
+            const isMower = forwardSn.startsWith('LFIN');
+            if (isCharger) {
+              db.prepare('UPDATE equipment SET charger_version = ? WHERE charger_sn = ?')
+                .run(String(versionStr), forwardSn);
+            } else if (isMower) {
+              db.prepare('UPDATE equipment SET mower_version = ? WHERE mower_sn = ?')
+                .run(String(versionStr), forwardSn);
+            }
+            console.log(`${C.cyan}[OTA] Stored firmware version ${versionStr} for ${forwardSn}${C.reset}`);
+          }
         }
       } catch { /* geen JSON of geen map-bericht */ }
 

@@ -1,7 +1,7 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { HardDrive, Zap, Trash2, RefreshCw, Plus, Check, AlertCircle } from 'lucide-react';
-import { io, Socket } from 'socket.io-client';
 import type { DeviceState } from '../../types';
+import type { OtaProgress } from '../../hooks/useDevices';
 import {
   fetchOtaVersions, fetchFirmwareFiles, addOtaVersion, deleteOtaVersion, triggerOta,
   type OtaVersion, type FirmwareFile,
@@ -9,13 +9,7 @@ import {
 
 interface Props {
   devices: Map<string, DeviceState>;
-}
-
-interface OtaEventPayload {
-  sn: string;
-  eventType: 'state' | 'version';
-  data: Record<string, unknown>;
-  timestamp: number;
+  otaProgress: Map<string, OtaProgress>;
 }
 
 type TriggerState = 'idle' | 'sending' | 'done' | 'error';
@@ -28,7 +22,7 @@ function defaultServerBase(): string {
   return `http://${hostname}:${serverPort}`;
 }
 
-export function OtaManager({ devices }: Props) {
+export function OtaManager({ devices, otaProgress }: Props) {
   const [versions, setVersions] = useState<OtaVersion[]>([]);
   const [files, setFiles] = useState<FirmwareFile[]>([]);
   const [loading, setLoading] = useState(false);
@@ -40,22 +34,6 @@ export function OtaManager({ devices }: Props) {
     customUrl: '',
   });
   const [triggerState, setTriggerState] = useState<Record<string, TriggerState>>({});
-
-  // Live OTA progress per SN: most recent ota_upgrade_state data
-  const [otaProgress, setOtaProgress] = useState<Record<string, Record<string, unknown>>>({});
-
-  // Socket.io — share connection with the rest of the app
-  const socketRef = useRef<Socket | null>(null);
-  useEffect(() => {
-    const socket = io({ transports: ['websocket', 'polling'] });
-    socketRef.current = socket;
-    socket.on('ota:event', (e: OtaEventPayload) => {
-      if (e.eventType === 'state') {
-        setOtaProgress(prev => ({ ...prev, [e.sn]: e.data }));
-      }
-    });
-    return () => { socket.disconnect(); };
-  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -129,7 +107,7 @@ export function OtaManager({ devices }: Props) {
             )}
             {sortedDevices.map(d => {
               const version = d.sensors.sw_version ?? d.sensors.version ?? null;
-              const progress = otaProgress[d.sn];
+              const progress = otaProgress.get(d.sn);
               const isCharger = d.deviceType === 'charger';
               return (
                 <div key={d.sn} className="flex flex-col gap-0.5 bg-gray-800 rounded px-2.5 py-1.5">
@@ -143,22 +121,28 @@ export function OtaManager({ devices }: Props) {
                     <span className="text-[10px] font-mono text-gray-300">{version ?? '—'}</span>
                   </div>
                   {/* OTA progress bar */}
-                  {progress && (
-                    <div className="mt-0.5">
-                      <div className="flex items-center justify-between text-[9px] text-orange-300 mb-0.5">
-                        <span>{String(progress.state ?? progress.ota_state ?? 'updating')}</span>
-                        {progress.progress != null && <span>{String(progress.progress)}%</span>}
-                      </div>
-                      {progress.progress != null && (
-                        <div className="w-full bg-gray-700 rounded-full h-1">
-                          <div
-                            className="bg-orange-500 h-1 rounded-full transition-all duration-500"
-                            style={{ width: `${Math.min(100, Number(progress.progress))}%` }}
-                          />
+                  {progress && (Date.now() - progress.timestamp < 120_000) && (() => {
+                    const isDone = progress.status === 'success';
+                    const isFail = progress.status === 'failed' || progress.status === 'error';
+                    return (
+                      <div className="mt-0.5">
+                        <div className="flex items-center justify-between text-[9px] mb-0.5">
+                          <span className={isDone ? 'text-emerald-400' : isFail ? 'text-red-400' : 'text-orange-300'}>
+                            {progress.status === 'upgrade' ? 'Downloading…' : isDone ? 'Update voltooid' : isFail ? 'Update mislukt' : progress.status}
+                          </span>
+                          {progress.percentage != null && <span className={isDone ? 'text-emerald-400' : 'text-orange-300'}>{progress.percentage.toFixed(0)}%</span>}
                         </div>
-                      )}
-                    </div>
-                  )}
+                        {progress.percentage != null && (
+                          <div className="w-full bg-gray-700 rounded-full h-1.5">
+                            <div
+                              className={`h-1.5 rounded-full transition-all duration-500 ${isDone ? 'bg-emerald-500' : isFail ? 'bg-red-500' : 'bg-orange-500'}`}
+                              style={{ width: `${Math.min(100, progress.percentage)}%` }}
+                            />
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
               );
             })}

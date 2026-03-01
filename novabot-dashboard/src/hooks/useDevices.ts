@@ -1,15 +1,22 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { DeviceState, DeviceUpdateEvent, DeviceOnlineEvent, MqttLogEntry, BleLogEntry } from '../types';
-import { useSocket } from './useSocket';
+import { useSocket, type OtaEventPayload } from './useSocket';
 import { fetchDevices } from '../api/client';
 
 const MAX_LOG_ENTRIES = 500;
+
+export interface OtaProgress {
+  status: string;
+  percentage: number | null;
+  timestamp: number;
+}
 
 export function useDevices() {
   const [devices, setDevices] = useState<Map<string, DeviceState>>(new Map());
   const [loading, setLoading] = useState(true);
   const [logs, setLogs] = useState<MqttLogEntry[]>([]);
   const [bleLogs, setBleLogs] = useState<BleLogEntry[]>([]);
+  const [otaProgress, setOtaProgress] = useState<Map<string, OtaProgress>>(new Map());
   const logsRef = useRef(logs);
   logsRef.current = logs;
 
@@ -106,10 +113,29 @@ export function useDevices() {
     setBleLogs(entries.slice(-MAX_LOG_ENTRIES));
   }, []);
 
+  const onOtaEvent = useCallback((e: OtaEventPayload) => {
+    if (e.eventType === 'state') {
+      const data = e.data;
+      const rawPct = data.percentage ?? data.progress;
+      const pct = rawPct != null
+        ? (Number(rawPct) <= 1 ? Number(rawPct) * 100 : Number(rawPct))
+        : null;
+      setOtaProgress(prev => {
+        const next = new Map(prev);
+        next.set(e.sn, {
+          status: String(data.status ?? data.state ?? 'updating'),
+          percentage: pct,
+          timestamp: e.timestamp,
+        });
+        return next;
+      });
+    }
+  }, []);
+
   const { connected } = useSocket({
     onDeviceUpdate, onDeviceOnline, onDeviceOffline, onSnapshot,
-    onMqttLog, onMqttLogHistory, onBleLog, onBleLogHistory,
+    onMqttLog, onMqttLogHistory, onBleLog, onBleLogHistory, onOtaEvent,
   });
 
-  return { devices, loading, connected, logs, bleLogs };
+  return { devices, loading, connected, logs, bleLogs, otaProgress };
 }

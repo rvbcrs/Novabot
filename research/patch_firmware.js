@@ -24,6 +24,7 @@
 //    node patch_firmware.js --analyze                # Analyze only
 //    node patch_firmware.js --mqtt-host my.server.nl # Custom hostname
 //    node patch_firmware.js --mqtt-host 192.168.1.50 # Use IP (always fits)
+//    node patch_firmware.js --fw-version v0.3.6-local # Change firmware version string
 //
 //  After patching, host the binary on a local HTTP server and send
 //  the ota_upgrade_cmd MQTT message shown in the output.
@@ -36,10 +37,7 @@ const path = require('path');
 const PROJECT_ROOT = path.resolve(__dirname, '..');
 
 // ─── Defaults ────────────────────────────────────────────────────────
-const DEFAULT_INPUT = path.join(__dirname, 'charger_ota_v0.3.6_cloud.bin');
-const DEFAULT_OUTPUT = path.join(__dirname, 'firmware', 'charger_v0.3.6_patched.bin');
 const DEFAULT_MQTT_HOST = 'novabot.ramonvanbruggen.nl';
-const FIRMWARE_VERSION = 'v0.3.6-local';
 
 // ─── ESP32-S3 Memory Map ────────────────────────────────────────────
 const DROM_BASE = 0x3C000000; // Data ROM (flash-mapped .rodata)
@@ -49,7 +47,7 @@ const IROM_END  = 0x44000000;
 
 // ─── Patchable strings ──────────────────────────────────────────────
 // Each entry: { id, description, find, makeReplace(host) }
-function buildPatches(mqttHost, otaUrl) {
+function buildPatches(mqttHost, otaUrl, fwVersion, detectedVersion) {
   const patches = [
     {
       id: 'mqtt_dev_host',
@@ -74,17 +72,70 @@ function buildPatches(mqttHost, otaUrl) {
     });
   }
 
+  if (fwVersion && detectedVersion) {
+    patches.push({
+      id: 'fw_version',
+      description: 'Firmware version string',
+      find: detectedVersion,
+      replace: fwVersion,
+    });
+  }
+
   return patches;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  Firmware Version Detection
+// ═══════════════════════════════════════════════════════════════════════
+
+function detectFirmwareVersion(data, segments) {
+  const drom = segments.find(s => s.type === 'DROM');
+  if (!drom) return null;
+
+  const versions = [];
+  const end = drom.dataStart + drom.size;
+
+  for (let i = drom.dataStart; i < end - 6; i++) {
+    // Look for null-terminated strings starting with 'v' + digit
+    if (data[i - 1] !== 0 && i !== drom.dataStart) continue; // Must start at string boundary
+    if (data[i] !== 0x76 /* 'v' */) continue;
+    if (data[i + 1] < 0x30 || data[i + 1] > 0x39) continue; // Next char must be digit
+
+    // Extract null-terminated string
+    let strEnd = i;
+    while (strEnd < end && data[strEnd] !== 0) strEnd++;
+    const str = data.subarray(i, strEnd).toString('utf8');
+
+    // Match vX.Y.Z pattern, skip ESP-IDF versions (contain 'dirty')
+    if (/^v\d+\.\d+\.\d+/.test(str) && !str.includes('dirty')) {
+      versions.push({
+        version: str,
+        offset: i,
+        length: strEnd - i,
+      });
+    }
+  }
+
+  // First non-ESP-IDF version is the firmware version
+  // (v0.0.1 is a sub-version, firmware version has higher minor/patch)
+  // Sort: prefer v0.X.Y where X > 0, then by offset
+  const fwVersion = versions.find(v => {
+    const m = v.version.match(/^v(\d+)\.(\d+)\.(\d+)/);
+    return m && (parseInt(m[1]) > 0 || parseInt(m[2]) > 0);
+  });
+
+  return fwVersion || versions[0] || null;
 }
 
 // ─── Parse command-line arguments ────────────────────────────────────
 function parseArgs() {
   const args = process.argv.slice(2);
   const opts = {
-    input: DEFAULT_INPUT,
-    output: DEFAULT_OUTPUT,
+    input: null,       // Auto-detect from available files
+    output: null,      // Auto-generate from input + version
     mqttHost: DEFAULT_MQTT_HOST,
     otaUrl: null,
+    fwVersion: null,   // null = auto (append '-local' to detected version)
     analyzeOnly: false,
     servePort: 8080,
   };
@@ -94,6 +145,7 @@ function parseArgs() {
       case '--analyze': opts.analyzeOnly = true; break;
       case '--mqtt-host': opts.mqttHost = args[++i]; break;
       case '--ota-url': opts.otaUrl = args[++i]; break;
+      case '--fw-version': opts.fwVersion = args[++i]; break;
       case '--input': opts.input = args[++i]; break;
       case '--output': opts.output = args[++i]; break;
       case '--serve-port': opts.servePort = parseInt(args[++i]); break;
@@ -106,14 +158,31 @@ Usage: node patch_firmware.js [options]
 Options:
   --analyze              Only analyze, don't patch
   --mqtt-host <host>     MQTT hostname/IP (default: ${DEFAULT_MQTT_HOST})
+  --fw-version <ver>     New firmware version string (default: <detected>-local)
   --ota-url <url>        Replacement OTA download URL (optional)
-  --input <file>         Input firmware binary (default: charger_ota_v0.3.6_cloud.bin)
-  --output <file>        Output patched binary (default: research/firmware/charger_v0.3.6_patched.bin)
+  --input <file>         Input firmware binary (auto-detects available files)
+  --output <file>        Output patched binary (auto-generated from version)
   --serve-port <port>    Port for hosting instructions (default: 8080)
   --help                 Show this help
+
+Examples:
+  node patch_firmware.js                                    # Auto-detect, default host
+  node patch_firmware.js --fw-version v0.4.0-local          # Custom version string
+  node patch_firmware.js --mqtt-host 192.168.1.50           # Short IP (fits in-place)
+  node patch_firmware.js --input firmware/charger_v0.4.0.bin --fw-version v0.4.0-patched
 `);
         process.exit(0);
     }
+  }
+
+  // Auto-detect input file if not specified
+  if (!opts.input) {
+    const candidates = [
+      path.join(__dirname, 'charger_ota_v0.3.6_cloud.bin'),
+      path.join(__dirname, 'firmware', 'charger_firmware_v0.3.6.bin'),
+      path.join(__dirname, 'charger_ota1_v0.4.0.bin'),
+    ];
+    opts.input = candidates.find(f => fs.existsSync(f)) || candidates[0];
   }
 
   return opts;
@@ -160,7 +229,16 @@ function parseEsp32Image(data) {
   const stored = data.subarray(imageEnd - 32, imageEnd);
   const sha256Valid = computed.equals(stored);
 
-  return { numSegments, entryPoint, segments, sha256Valid, dataEnd: offset, imageEnd };
+  // Checksum position: after last segment data, pad with zeros, checksum byte is last byte
+  // before 16-byte alignment.  Formula from esptool:
+  //   padding = (16 - dataEnd - 1) % 16
+  //   checksum at dataEnd + padding
+  //   paddedEnd = dataEnd + padding + 1
+  const padding = (16 - (offset % 16) - 1 + 16) % 16;
+  const checksumOffset = offset + padding;
+  const paddedEnd = checksumOffset + 1;
+
+  return { numSegments, entryPoint, segments, sha256Valid, dataEnd: offset, checksumOffset, paddedEnd, imageEnd };
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -408,6 +486,27 @@ function applyPatches(data, patches, segments, analyzeOnly) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
+//  ESP32 Image Checksum (XOR of segment data bytes, init 0xEF)
+// ═══════════════════════════════════════════════════════════════════════
+
+function computeImageChecksum(data, segments) {
+  let checksum = 0xEF;
+  for (const seg of segments) {
+    for (let i = seg.dataStart; i < seg.dataStart + seg.size; i++) {
+      checksum ^= data[i];
+    }
+  }
+  return checksum & 0xFF;
+}
+
+function updateImageChecksum(data, image) {
+  const checksum = computeImageChecksum(data, image.segments);
+  const stored = data[image.checksumOffset];
+  data[image.checksumOffset] = checksum;
+  return { checksum, previousValue: stored, offset: image.checksumOffset };
+}
+
+// ═══════════════════════════════════════════════════════════════════════
 //  SHA256 Hash Update
 // ═══════════════════════════════════════════════════════════════════════
 
@@ -427,9 +526,14 @@ function printAnalysis(data, image, patches, results) {
   console.log('║  Novabot Charger Firmware Patcher — Analysis            ║');
   console.log('╚══════════════════════════════════════════════════════════╝\n');
 
+  const currentChecksum = computeImageChecksum(data, image.segments);
+  const storedChecksum = data[image.checksumOffset];
+  const checksumValid = currentChecksum === storedChecksum;
+
   console.log(`Input:     ${data.length} bytes (${(data.length / 1024).toFixed(1)} KB)`);
   console.log(`Segments:  ${image.numSegments}`);
   console.log(`SHA256:    ${image.sha256Valid ? 'Valid' : 'Invalid/missing'}`);
+  console.log(`Checksum:  stored=0x${storedChecksum.toString(16)} computed=0x${currentChecksum.toString(16)} ${checksumValid ? 'Valid' : 'MISMATCH'} (at 0x${image.checksumOffset.toString(16)})`);
   console.log(`Entry:     0x${image.entryPoint.toString(16)}\n`);
 
   console.log('Segments:');
@@ -460,13 +564,14 @@ function printAnalysis(data, image, patches, results) {
   }
 }
 
-function printDeploymentInstructions(outputPath, md5, opts) {
+function printDeploymentInstructions(outputPath, md5, opts, firmwareVersion) {
   const fileName = path.basename(outputPath);
 
   console.log('\n─── Deployment Instructions ─────────────────────────────\n');
   console.log(`Patched binary: ${outputPath}`);
   console.log(`MD5:            ${md5}`);
   console.log(`Size:           ${fs.statSync(outputPath).size} bytes`);
+  console.log(`Version:        ${firmwareVersion}`);
 
   console.log('\n1. Host the patched firmware on a local HTTP server:\n');
   console.log(`   cd ${path.dirname(outputPath)}`);
@@ -483,7 +588,7 @@ function printDeploymentInstructions(outputPath, md5, opts) {
       type: 'full',
       content: {
         upgradeApp: {
-          version: FIRMWARE_VERSION,
+          version: firmwareVersion,
           downloadUrl: downloadUrl,
           md5: md5,
         },
@@ -530,7 +635,7 @@ function main() {
       opts.input = altPath;
     } else {
       console.error(`Error: Input file not found: ${opts.input}`);
-      console.error('Make sure charger_ota_v0.3.6_cloud.bin exists in the project root.');
+      console.error('Run with --help for usage information.');
       process.exit(1);
     }
   }
@@ -541,8 +646,40 @@ function main() {
   // Parse ESP32 image
   const image = parseEsp32Image(data);
 
-  // Build patch list
-  const patches = buildPatches(opts.mqttHost, opts.otaUrl);
+  // Detect firmware version from binary
+  const detected = detectFirmwareVersion(data, image.segments);
+  const detectedVersion = detected ? detected.version : null;
+
+  if (detectedVersion) {
+    console.log(`Detected firmware version: ${detectedVersion} (at offset 0x${detected.offset.toString(16)}, ${detected.length} bytes, slot ${detected.length + 2} bytes)`);
+  } else {
+    console.log('Warning: Could not detect firmware version in binary');
+  }
+
+  // Determine target firmware version
+  // --fw-version explicitly set → use that
+  // Not set → default to <detected>-local
+  const firmwareVersion = opts.fwVersion || (detectedVersion ? `${detectedVersion}-local` : 'unknown');
+  const shouldPatchVersion = detectedVersion && firmwareVersion !== detectedVersion;
+
+  if (shouldPatchVersion) {
+    console.log(`Target firmware version:  ${firmwareVersion}`);
+  }
+
+  // Auto-generate output filename if not specified
+  if (!opts.output) {
+    // Extract base version from detected version for filename (e.g., v0.3.6 → charger_v0.3.6_patched.bin)
+    const baseVer = detectedVersion || 'unknown';
+    opts.output = path.join(__dirname, 'firmware', `charger_${baseVer}_patched.bin`);
+  }
+
+  // Build patch list (include version patch if version is being changed)
+  const patches = buildPatches(
+    opts.mqttHost,
+    opts.otaUrl,
+    shouldPatchVersion ? firmwareVersion : null,
+    detectedVersion,
+  );
 
   // Apply patches (or analyze)
   const results = applyPatches(data, patches, image.segments, opts.analyzeOnly);
@@ -561,6 +698,11 @@ function main() {
         console.log(`  0x${g.offset.toString(16)}: ${g.size} bytes (virt 0x${g.virtualAddr.toString(16)})`);
       }
       console.log();
+    }
+
+    if (detectedVersion) {
+      console.log(`Detected firmware version: ${detectedVersion}`);
+      console.log(`  Use --fw-version <ver> to change it (e.g., --fw-version ${detectedVersion}-local)\n`);
     }
     return;
   }
@@ -585,7 +727,11 @@ function main() {
   const outputData = data.subarray(0, image.imageEnd);
   console.log(`Image trimmed: ${data.length} → ${outputData.length} bytes (removed ${data.length - outputData.length} bytes padding)`);
 
-  // Update SHA256 hash
+  // Update ESP32 image checksum (XOR byte at paddedEnd - 1)
+  const checksumResult = updateImageChecksum(outputData, image);
+  console.log(`Image checksum updated: 0x${checksumResult.previousValue.toString(16)} → 0x${checksumResult.checksum.toString(16)} (at offset 0x${checksumResult.offset.toString(16)})`);
+
+  // Update SHA256 hash (must be AFTER checksum update, since checksum is in the hashed region)
   const newHash = updateSha256(outputData, outputData.length);
   console.log(`SHA256 hash updated: ${newHash.toString('hex').substring(0, 16)}...`);
 
@@ -597,6 +743,14 @@ function main() {
     process.exit(1);
   }
   console.log('SHA256 verification: OK');
+
+  // Verify image checksum
+  const verifyChecksum = computeImageChecksum(outputData, image.segments);
+  if (verifyChecksum !== outputData[image.checksumOffset]) {
+    console.error(`ERROR: Image checksum verification failed! Computed 0x${verifyChecksum.toString(16)}, stored 0x${outputData[image.checksumOffset].toString(16)}`);
+    process.exit(1);
+  }
+  console.log('Image checksum verification: OK');
 
   // Ensure output directory exists
   const outDir = path.dirname(opts.output);
@@ -612,9 +766,10 @@ function main() {
 
   console.log(`\n✅ Patched firmware written to: ${opts.output}`);
   console.log(`   MD5: ${md5}`);
+  console.log(`   Version: ${firmwareVersion}`);
 
   // Print deployment instructions
-  printDeploymentInstructions(opts.output, md5, opts);
+  printDeploymentInstructions(opts.output, md5, opts, firmwareVersion);
 }
 
 main();

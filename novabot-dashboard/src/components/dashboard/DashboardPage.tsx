@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { DeviceState, MqttLogEntry, BleLogEntry, MapData } from '../../types';
+import type { OtaProgress } from '../../hooks/useDevices';
 import { MowerMap } from '../map/MowerMap';
 import { MowerStatus } from '../status/MowerStatus';
 import { LogConsole } from '../log/LogConsole';
@@ -20,6 +21,7 @@ interface Props {
   loading: boolean;
   logs: MqttLogEntry[];
   bleLogs: BleLogEntry[];
+  otaProgress: Map<string, OtaProgress>;
 }
 
 /** Small stat pill used in the DeviceChip */
@@ -38,11 +40,12 @@ function Stat({ icon: Icon, value, color = 'text-gray-400', label }: {
 }
 
 /** Inline device chip for the toolbar */
-function DeviceChip({ device, expanded, onToggle, onDelete }: {
+function DeviceChip({ device, expanded, onToggle, onDelete, otaProgress }: {
   device: DeviceState;
   expanded: boolean;
   onToggle: () => void;
   onDelete?: (sn: string) => void;
+  otaProgress?: OtaProgress;
 }) {
   const { t } = useTranslation();
   const s = device.sensors;
@@ -140,6 +143,22 @@ function DeviceChip({ device, expanded, onToggle, onDelete }: {
           <span className="text-gray-600 text-[10px] italic">{t('devices.waitingForData')}</span>
         )}
 
+        {/* OTA progress indicator in chip */}
+        {otaProgress && (Date.now() - otaProgress.timestamp < 120_000) && (
+          <>
+            <span className="text-gray-700">|</span>
+            <span className={`text-[10px] font-medium ${
+              otaProgress.status === 'success' ? 'text-emerald-400' :
+              otaProgress.status === 'failed' ? 'text-red-400' :
+              'text-orange-400 animate-pulse'
+            }`}>
+              <HardDrive className="w-3 h-3 inline mr-0.5" />
+              {otaProgress.status === 'upgrade' ? 'OTA' : otaProgress.status === 'success' ? 'OTA OK' : otaProgress.status === 'failed' ? 'OTA FAIL' : 'OTA'}
+              {otaProgress.percentage != null && ` ${otaProgress.percentage.toFixed(0)}%`}
+            </span>
+          </>
+        )}
+
         <ChevronDown className={`w-3 h-3 text-gray-500 transition-transform ${expanded ? 'rotate-180' : ''}`} />
       </button>
 
@@ -200,7 +219,7 @@ function DeviceChip({ device, expanded, onToggle, onDelete }: {
   );
 }
 
-export function DashboardPage({ devices, loading, logs, bleLogs }: Props) {
+export function DashboardPage({ devices, loading, logs, bleLogs, otaProgress }: Props) {
   const { t } = useTranslation();
   const [logOpen, setLogOpen] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
@@ -254,6 +273,7 @@ export function DashboardPage({ devices, loading, logs, bleLogs }: Props) {
               expanded={expandedChip === device.sn}
               onToggle={() => setExpandedChip(expandedChip === device.sn ? null : device.sn)}
               onDelete={handleDeleteDevice}
+              otaProgress={otaProgress.get(device.sn)}
             />
           ))}
         </div>
@@ -340,7 +360,7 @@ export function DashboardPage({ devices, loading, logs, bleLogs }: Props) {
         {/* OTA side panel */}
         {otaOpen && (
           <div className="w-80 flex-shrink-0 overflow-auto border-l border-gray-800">
-            <OtaManager devices={devices} />
+            <OtaManager devices={devices} otaProgress={otaProgress} />
           </div>
         )}
       </div>

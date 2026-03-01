@@ -2,6 +2,13 @@ import { useEffect, useRef, useState } from 'react';
 import { io, Socket } from 'socket.io-client';
 import type { DeviceUpdateEvent, DeviceOnlineEvent, MqttLogEntry, BleLogEntry } from '../types';
 
+export interface OtaEventPayload {
+  sn: string;
+  eventType: 'state' | 'version';
+  data: Record<string, unknown>;
+  timestamp: number;
+}
+
 interface SocketHandlers {
   onDeviceUpdate: (e: DeviceUpdateEvent) => void;
   onDeviceOnline: (e: DeviceOnlineEvent) => void;
@@ -11,6 +18,7 @@ interface SocketHandlers {
   onMqttLogHistory?: (entries: MqttLogEntry[]) => void;
   onBleLog?: (entry: BleLogEntry) => void;
   onBleLogHistory?: (entries: BleLogEntry[]) => void;
+  onOtaEvent?: (e: OtaEventPayload) => void;
 }
 
 export function useSocket(handlers: SocketHandlers) {
@@ -56,6 +64,10 @@ export function useSocket(handlers: SocketHandlers) {
 
     socket.on('ble:log:history', (entries: BleLogEntry[]) => {
       handlersRef.current.onBleLogHistory?.(entries);
+    });
+
+    socket.on('ota:event', (e: OtaEventPayload) => {
+      handlersRef.current.onOtaEvent?.(e);
     });
 
     return () => { socket.disconnect(); };

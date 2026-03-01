@@ -234,11 +234,25 @@ export function updateDeviceData(sn: string, payload: Buffer): Map<string, strin
     return null;
   }
 
-  const commandName = Object.keys(parsed)[0];
-  if (!commandName || !DATA_COMMANDS.includes(commandName)) return null;
+  // Detecteer commando naam — twee formaten:
+  // Maaier:  {"report_state_robot":{...}}   → key = "report_state_robot"
+  // Charger: {"type":"ota_version_info_respond","message":{...}} → type wrapper
+  let commandName = Object.keys(parsed)[0];
+  let data = parsed[commandName];
 
-  const data = parsed[commandName];
+  // Charger type-wrapper normalisatie
+  if (commandName === 'type' && typeof parsed.type === 'string' && parsed.message != null) {
+    commandName = parsed.type as string;
+    data = parsed.message;
+  }
+
+  if (!commandName || !DATA_COMMANDS.includes(commandName)) return null;
   if (typeof data !== 'object' || data === null) return null;
+
+  // Voor ota_version_info_respond: versie zit in message.value.version
+  if (commandName === 'ota_version_info_respond' && typeof (data as Record<string, unknown>).value === 'object') {
+    data = (data as Record<string, unknown>).value;
+  }
 
   if (!deviceCache.has(sn)) deviceCache.set(sn, new Map());
   const snValues = deviceCache.get(sn)!;

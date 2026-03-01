@@ -7,6 +7,7 @@
  *
  * Responses worden geparsed en opgeslagen in de `maps` tabel.
  */
+import crypto from 'crypto';
 import { Aedes, AedesPublishPacket } from 'aedes';
 import { db } from '../db/database.js';
 
@@ -58,16 +59,32 @@ export function publishToDevice(sn: string, command: Record<string, unknown>): v
     return;
   }
 
-  const topic = `Dart/Send_mqtt/${sn}`;
-  const payload = JSON.stringify(command);
+  const json = JSON.stringify(command);
 
+  // Auto-encrypt voor alle LFI-apparaten (maaier v6+ en charger v0.4.0+ verwachten AES)
+  if (sn.startsWith('LFI')) {
+    const KEY_PREFIX = 'abcdabcd1234';
+    const IV = Buffer.from('abcd1234abcd1234', 'utf8');
+    const key = Buffer.from(KEY_PREFIX + sn.slice(-4), 'utf8');
+    const plaintext = Buffer.from(json, 'utf8');
+    const padded = Buffer.alloc(Math.ceil(plaintext.length / 16) * 16, 0);
+    plaintext.copy(padded);
+    const cipher = crypto.createCipheriv('aes-128-cbc', key, IV);
+    cipher.setAutoPadding(false);
+    const encrypted = Buffer.concat([cipher.update(padded), cipher.final()]);
+    console.log(`${TAG} [AES] Gestuurd naar Dart/Send_mqtt/${sn}: ${json} (${encrypted.length}B encrypted)`);
+    publishRawToDevice(sn, encrypted, 0);
+    return;
+  }
+
+  const topic = `Dart/Send_mqtt/${sn}`;
   const packet = {
     cmd: 'publish' as const,
     qos: 0 as const,
     dup: false,
     retain: false,
     topic,
-    payload: Buffer.from(payload),
+    payload: Buffer.from(json),
     brokerId: 'mapSync',
     brokerCounter: 0,
   } satisfies AedesPublishPacket;
@@ -76,7 +93,7 @@ export function publishToDevice(sn: string, command: Record<string, unknown>): v
     if (err) {
       console.error(`${TAG} Publish fout naar ${topic}: ${err.message}`);
     } else {
-      console.log(`${TAG} Gestuurd naar ${topic}: ${payload}`);
+      console.log(`${TAG} Gestuurd naar ${topic}: ${json}`);
     }
   });
 }
@@ -109,9 +126,9 @@ export function onMowerConnected(sn: string): void {
 
   setTimeout(() => {
     // Firmware versie opvragen (charger + mower)
-    // v0.3.6 charger accepteert 0, v0.4.0 accepteert null — probeer 0 (werkt voor beide als fallback)
+    // v0.4.0 charger vereist null (cJSON_IsNull check), v0.3.6 accepteert elke waarde
     console.log(`\x1b[38;5;208m${TAG} Firmware versie opvragen van ${sn}...\x1b[0m`);
-    publishToDevice(sn, { ota_version_info: 0 });
+    publishToDevice(sn, { ota_version_info: null });
 
     // Maaier: ook kaartlijst opvragen
     if (sn.startsWith('LFIN')) {
