@@ -99,6 +99,32 @@ export function publishToDevice(sn: string, command: Record<string, unknown>): v
 }
 
 /**
+ * Publiceer een onversleuteld JSON bericht naar een willekeurig MQTT topic.
+ * Gebruikt voor custom bridge-scripts op de maaier (bijv. led_bridge.py).
+ */
+export function publishToTopic(topic: string, message: Record<string, unknown>): void {
+  if (!aedesBroker) {
+    console.error(`${TAG} Broker niet geinitialiseerd`);
+    return;
+  }
+  const json = JSON.stringify(message);
+  const packet = {
+    cmd: 'publish' as const,
+    qos: 0 as const,
+    dup: false,
+    retain: false,
+    topic,
+    payload: Buffer.from(json),
+    brokerId: 'mapSync',
+    brokerCounter: 0,
+  } satisfies AedesPublishPacket;
+  aedesBroker.publish(packet, (err) => {
+    if (err) console.error(`${TAG} Publish fout naar ${topic}: ${err.message}`);
+    else console.log(`${TAG} Gestuurd naar ${topic}: ${json}`);
+  });
+}
+
+/**
  * Publiceer een AES-encrypted bericht op een willekeurig MQTT topic.
  * Gebruikt om device-responses te simuleren (bijv. op Dart/Receive_mqtt/<SN>).
  */
@@ -182,8 +208,9 @@ export function onMowerConnected(sn: string): void {
       // ota_upgrade_cmd type van "full" naar "increment", waardoor OTA nooit
       // een volledige firmware download start. De app stuurt timezone zelf mee
       // in het ota_upgrade_cmd commando.
-      console.log(`${TAG} Maaier ${sn} verbonden — kaarten opvragen...`);
+      console.log(`${TAG} Maaier ${sn} verbonden — kaarten + parameters opvragen...`);
       requestMapList(sn);
+      publishToDevice(sn, { get_para_info: {} });
     }
 
     // Na 30 seconden de pending flag resetten zodat bij reconnect opnieuw gevraagd kan worden

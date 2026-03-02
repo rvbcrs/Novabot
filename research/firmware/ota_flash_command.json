@@ -3,9 +3,9 @@
     "type": "full",
     "content": {
       "upgradeApp": {
-        "version": "v6.0.2-custom-5",
-        "downloadUrl": "http://nova-dash.ramonvanbruggen.nl/firmware/mower_firmware_v6.0.2-custom-5.deb",
-        "md5": "03e0658678e0e7f7a86a9e2d3ee0a5f3"
+        "version": "v6.0.2-custom-7",
+        "downloadUrl": "http://192.168.0.177:3000/firmware/mower_firmware_v6.0.2-custom-7.deb",
+        "md5": "1999d23b85dd9303b95de03af63daf72"
       }
     }
   }

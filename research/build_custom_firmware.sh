@@ -338,6 +338,82 @@ fi\
     fi
 fi
 
+# === Stap 5d: Camera stream service toevoegen ===
+echo "[5d/9] Camera stream service toevoegen..."
+
+CAMERA_SRC="$SCRIPT_DIR/camera_stream.py"
+if [ -f "$CAMERA_SRC" ]; then
+    cp "$CAMERA_SRC" "$NOVABOT_ROOT/scripts/camera_stream.py"
+    chmod +x "$NOVABOT_ROOT/scripts/camera_stream.py"
+    echo "  camera_stream.py gekopieerd naar scripts/"
+
+    # Voeg camera stream launch toe aan run_novabot.sh start) blok
+    if [ -f "$RUN_NOVABOT" ] && ! grep -q "camera_stream.py" "$RUN_NOVABOT"; then
+        # Schrijf injectie blok naar temp bestand (voorkomt sed escaping problemen)
+        CAMERA_START_BLOCK="/tmp/camera_start_block.sh"
+        cat > "$CAMERA_START_BLOCK" << 'CAMEOF'
+
+  # CUSTOM: Camera MJPEG stream starten (wacht 15s op camera node)
+  if [ -f "/root/novabot/scripts/camera_stream.py" ]; then
+      (sleep 15 && python3 /root/novabot/scripts/camera_stream.py >> $LOGS_PATH/camera_stream.log 2>&1) &
+      echo "Camera stream scheduled (15s delay)" >> $LOGS_PATH/camera_stream.log
+  fi
+CAMEOF
+        # Injecteer na de factory_test/start_test.sh regel
+        sed -i '' '/start_test.sh/r /tmp/camera_start_block.sh' "$RUN_NOVABOT"
+        rm -f "$CAMERA_START_BLOCK"
+        echo "  run_novabot.sh: camera stream launch toegevoegd aan start)"
+
+        # Voeg camera stream kill toe aan stop) blok
+        CAMERA_STOP_BLOCK="/tmp/camera_stop_block.sh"
+        cat > "$CAMERA_STOP_BLOCK" << 'CAMEOF'
+  killall -q -9 camera_stream.py
+CAMEOF
+        sed -i '' '/killall -q -9 daemon_monitor.sh/r /tmp/camera_stop_block.sh' "$RUN_NOVABOT"
+        rm -f "$CAMERA_STOP_BLOCK"
+        echo "  run_novabot.sh: camera stream kill toegevoegd aan stop)"
+    fi
+else
+    echo "  camera_stream.py niet gevonden — overslaan"
+fi
+
+# === Stap 5e: LED bridge service toevoegen ===
+echo "[5e/9] LED bridge service toevoegen..."
+
+LED_SRC="$SCRIPT_DIR/led_bridge.py"
+if [ -f "$LED_SRC" ]; then
+    cp "$LED_SRC" "$NOVABOT_ROOT/scripts/led_bridge.py"
+    chmod +x "$NOVABOT_ROOT/scripts/led_bridge.py"
+    echo "  led_bridge.py gekopieerd naar scripts/"
+
+    # Voeg LED bridge launch toe aan run_novabot.sh start) blok
+    if [ -f "$RUN_NOVABOT" ] && ! grep -q "led_bridge.py" "$RUN_NOVABOT"; then
+        LED_START_BLOCK="/tmp/led_start_block.sh"
+        cat > "$LED_START_BLOCK" << 'LEDEOF'
+
+  # CUSTOM: LED bridge starten (MQTT → ROS /led_set, wacht 10s op ROS)
+  if [ -f "/root/novabot/scripts/led_bridge.py" ]; then
+      (sleep 10 && python3 /root/novabot/scripts/led_bridge.py >> $LOGS_PATH/led_bridge.log 2>&1) &
+      echo "LED bridge scheduled (10s delay)" >> $LOGS_PATH/led_bridge.log
+  fi
+LEDEOF
+        sed -i '' '/start_test.sh/r /tmp/led_start_block.sh' "$RUN_NOVABOT"
+        rm -f "$LED_START_BLOCK"
+        echo "  run_novabot.sh: LED bridge launch toegevoegd aan start)"
+
+        # Voeg LED bridge kill toe aan stop) blok
+        LED_STOP_BLOCK="/tmp/led_stop_block.sh"
+        cat > "$LED_STOP_BLOCK" << 'LEDEOF'
+  killall -q -9 led_bridge.py
+LEDEOF
+        sed -i '' '/killall -q -9 daemon_monitor.sh/r /tmp/led_stop_block.sh' "$RUN_NOVABOT"
+        rm -f "$LED_STOP_BLOCK"
+        echo "  run_novabot.sh: LED bridge kill toegevoegd aan stop)"
+    fi
+else
+    echo "  led_bridge.py niet gevonden — overslaan"
+fi
+
 # === Stap 6: Optioneel ROS 2 netwerk openzetten ===
 if [ "$ENABLE_REMOTE_ROS2" = "true" ]; then
     echo "[6/8] ROS 2 netwerk openzetten..."
@@ -507,6 +583,8 @@ echo "    ✓ SSH poort: ${SSH_PORT}"
 echo "    ✓ HTTP uploads → ${HTTP_BASE}"
 echo "    ✓ MQTT broker → ${MQTT_HOST}:${MQTT_PORT}"
 echo "    ✓ http_address.txt + json_config.json worden bij elke boot gezet"
+[ -f "$NOVABOT_ROOT/scripts/camera_stream.py" ] && echo "    ✓ Camera MJPEG stream op poort 8000 (auto-start na 15s)"
+[ -f "$NOVABOT_ROOT/scripts/led_bridge.py" ] && echo "    ✓ LED bridge: MQTT → ROS /led_set (headlight controle)"
 [ "$ENABLE_REMOTE_ROS2" = "true" ] && echo "    ✓ ROS 2 netwerk open (ROS_LOCALHOST_ONLY=0)"
 echo ""
 echo "============================================"

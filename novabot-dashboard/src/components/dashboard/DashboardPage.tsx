@@ -2,7 +2,8 @@ import { useState, useCallback } from 'react';
 import {
   Plug, TreePine, ChevronDown, Terminal, Calendar, Circle,
   BatteryMedium, Satellite, Radio, Activity,
-  Wifi, Bluetooth, Trash2, Thermometer, HardDrive, Code,
+  Wifi, Bluetooth, Trash2, Thermometer, HardDrive, Code, Octagon,
+  Map as MapIcon, Camera, Save, StopCircle, X,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { DeviceState, MqttLogEntry, BleLogEntry, MapData } from '../../types';
@@ -14,7 +15,9 @@ import { Scheduler } from '../schedule/Scheduler';
 import { MowerControls } from './MowerControls';
 import { SensorGrid } from '../sensors/SensorGrid';
 import { OtaManager } from '../ota/OtaManager';
-import { deleteDevice } from '../../api/client';
+import { CameraStream } from './CameraStream';
+import { deleteDevice, sendCommand } from '../../api/client';
+import { useToast } from '../common/Toast';
 
 interface Props {
   devices: Map<string, DeviceState>;
@@ -221,12 +224,15 @@ function DeviceChip({ device, expanded, onToggle, onDelete, otaProgress }: {
 
 export function DashboardPage({ devices, loading, logs, bleLogs, otaProgress }: Props) {
   const { t } = useTranslation();
+  const { toast } = useToast();
   const [logOpen, setLogOpen] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [otaOpen, setOtaOpen] = useState(false);
   const [pathDirPreview, setPathDirPreview] = useState<number | null>(null);
   const [expandedChip, setExpandedChip] = useState<string | null>(null);
   const [pendingPolygon, setPendingPolygon] = useState<{ mapId: string; mapName: string; mapArea: Array<{ lat: number; lng: number }> } | null>(null);
+  const [stopBusy, setStopBusy] = useState(false);
+  const [cameraOpen, setCameraOpen] = useState(false);
 
   const handleMapSaved = useCallback((map: MapData) => {
     if (map.mapArea.length >= 3) {
@@ -248,6 +254,22 @@ export function DashboardPage({ devices, loading, logs, bleLogs, otaProgress }: 
 
   const mower = sorted.find(d => d.deviceType === 'mower');
   const charger = sorted.find(d => d.deviceType === 'charger');
+
+  const mowerActive = mower?.online && mower.sensors.work_status && mower.sensors.work_status !== '0';
+  const isMappingActive = mower?.online && mower?.sensors.start_edit_or_assistant_map_flag === '1';
+
+  const handleEmergencyStop = useCallback(async () => {
+    if (!mower) return;
+    setStopBusy(true);
+    try {
+      await sendCommand(mower.sn, { stop_run: {} });
+      await sendCommand(mower.sn, { stop_navigation: {} });
+      toast(t('controls.emergencyStopSent'), 'success');
+    } catch {
+      toast(t('controls.emergencyStopFailed'), 'error');
+    }
+    setStopBusy(false);
+  }, [mower, t, toast]);
 
   if (loading) {
     return (
@@ -284,6 +306,7 @@ export function DashboardPage({ devices, loading, logs, bleLogs, otaProgress }: 
             <MowerControls
               sn={mower.sn}
               online={mower.online}
+              sensors={mower.sensors}
               onPathDirectionChange={setPathDirPreview}
               pendingPolygon={pendingPolygon}
               onStarted={() => setPendingPolygon(null)}
@@ -310,6 +333,18 @@ export function DashboardPage({ devices, loading, logs, bleLogs, otaProgress }: 
             <HardDrive className="w-3.5 h-3.5" />
             OTA
           </button>
+          {mower && (
+            <button
+              onClick={() => setCameraOpen(!cameraOpen)}
+              className={`inline-flex items-center gap-1.5 text-xs h-7 px-2.5 rounded transition-colors ${
+                cameraOpen ? 'bg-cyan-600 text-white' : 'bg-gray-700/60 text-gray-400 hover:text-white'
+              }`}
+              title={t('camera.title')}
+            >
+              <Camera className="w-3.5 h-3.5" />
+              {t('camera.camera')}
+            </button>
+          )}
         </div>
       </div>
 
@@ -342,6 +377,74 @@ export function DashboardPage({ devices, loading, logs, bleLogs, otaProgress }: 
             pathDirectionPreview={pathDirPreview}
             onMapSaved={handleMapSaved}
           />
+          {/* Emergency stop floating button */}
+          {mowerActive && (
+            <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[1001]">
+              <button
+                onClick={handleEmergencyStop}
+                disabled={stopBusy}
+                className="flex items-center gap-2 px-6 py-3 rounded-full bg-red-600 hover:bg-red-500 active:bg-red-700 text-white font-bold text-sm shadow-lg shadow-red-900/50 animate-pulse hover:animate-none transition-colors disabled:opacity-50"
+              >
+                <Octagon className="w-5 h-5" />
+                {t('controls.emergencyStop')}
+              </button>
+            </div>
+          )}
+          {/* Mapping active overlay */}
+          {isMappingActive && mower && (
+            <div className="absolute top-16 left-1/2 -translate-x-1/2 z-[1001]">
+              <div className="flex items-center gap-3 px-4 py-2.5 rounded-full bg-purple-600/90 backdrop-blur shadow-lg shadow-purple-900/40 border border-purple-500/30">
+                <span className="flex items-center gap-2 text-sm text-white font-medium">
+                  <MapIcon className="w-4 h-4 animate-pulse" />
+                  {t('controls.mappingActive')}
+                </span>
+                <span className="w-px h-5 bg-purple-400/30" />
+                <button
+                  onClick={async () => {
+                    try {
+                      await sendCommand(mower.sn, { save_map: {} });
+                      await sendCommand(mower.sn, { save_recharge_pos: {} });
+                      toast(t('controls.saveMap') + ' ✓', 'success');
+                    } catch { toast(t('controls.saveMap') + ' ✗', 'error'); }
+                  }}
+                  className="flex items-center gap-1 text-xs px-2.5 py-1 rounded-full bg-white/10 text-white hover:bg-white/20 transition-colors"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  {t('controls.saveMap')}
+                </button>
+                <button
+                  onClick={async () => {
+                    try {
+                      await sendCommand(mower.sn, { stop_scan_map: {} });
+                      toast(t('controls.stopMapping') + ' ✓', 'success');
+                    } catch { toast(t('controls.stopMapping') + ' ✗', 'error'); }
+                  }}
+                  className="flex items-center gap-1 text-xs px-2.5 py-1 rounded-full bg-white/10 text-red-300 hover:bg-red-500/20 transition-colors"
+                >
+                  <StopCircle className="w-3.5 h-3.5" />
+                  {t('controls.stopMapping')}
+                </button>
+                <button
+                  onClick={async () => {
+                    try {
+                      await sendCommand(mower.sn, { quit_mapping_mode: {} });
+                      toast(t('controls.cancelMapping') + ' ✓', 'success');
+                    } catch { toast(t('controls.cancelMapping') + ' ✗', 'error'); }
+                  }}
+                  className="flex items-center gap-1 text-xs px-2.5 py-1 rounded-full bg-white/10 text-gray-300 hover:bg-gray-500/20 transition-colors"
+                >
+                  <X className="w-3.5 h-3.5" />
+                  {t('controls.cancelMapping')}
+                </button>
+              </div>
+            </div>
+          )}
+          {/* Camera stream overlay */}
+          {cameraOpen && mower && (
+            <div className="absolute top-4 right-4 z-[1001] w-80">
+              <CameraStream sn={mower.sn} online={mower.online} onClose={() => setCameraOpen(false)} />
+            </div>
+          )}
           {/* Mower sensor overlay on map */}
           {mower && (
             <div className="absolute bottom-0 left-0 right-0 z-[1000] max-h-[50%] overflow-auto p-4 pointer-events-none">

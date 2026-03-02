@@ -91,6 +91,7 @@ export const DATA_COMMANDS = [
   'report_exception_state',   // Maaier → AES ontsleuteld
   'report_state_timer_data',  // Maaier → AES ontsleuteld
   'ota_version_info_respond', // Charger/Maaier → huidige firmware versie
+  'get_para_info_respond',    // Maaier → headlight, sound, path_direction etc.
 ];
 
 // ── Waarde vertalingen ────────────────────────────────────────────
@@ -262,6 +263,14 @@ export function updateDeviceData(sn: string, payload: Buffer): Map<string, strin
     data = (data as Record<string, unknown>).value;
   }
 
+  // Voor get_para_info_respond: waarden zitten in message.value
+  if (commandName === 'get_para_info_respond') {
+    const msg = (data as Record<string, unknown>).message;
+    if (typeof msg === 'object' && msg !== null && typeof (msg as Record<string, unknown>).value === 'object') {
+      data = (msg as Record<string, unknown>).value;
+    }
+  }
+
   if (!deviceCache.has(sn)) deviceCache.set(sn, new Map());
   const snValues = deviceCache.get(sn)!;
 
@@ -292,6 +301,14 @@ export function updateDeviceData(sn: string, payload: Buffer): Map<string, strin
             snValues.set(gpsField, strValue);
             changes.set(gpsField, translateValue(gpsField, strValue));
           }
+        }
+      }
+      // GPS state (ENABLE/DISABLE) — opslaan als 'gps_state' om conflict met andere 'state' velden te voorkomen
+      if (gps.state !== undefined && gps.state !== null) {
+        const strValue = String(gps.state);
+        if (snValues.get('gps_state') !== strValue) {
+          snValues.set('gps_state', strValue);
+          changes.set('gps_state', translateValue('gps_state', strValue));
         }
       }
     }

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, createContext, useContext } from 'react';
+import { useState, useEffect, useCallback, useRef, createContext, useContext } from 'react';
 import { X, AlertTriangle, CheckCircle2, Info } from 'lucide-react';
 
 type ToastType = 'error' | 'success' | 'info';
@@ -66,16 +66,18 @@ const ICON_COLORS = {
 
 function ToastItem({ toast, onDismiss }: { toast: Toast; onDismiss: () => void }) {
   const [visible, setVisible] = useState(false);
+  const onDismissRef = useRef(onDismiss);
+  onDismissRef.current = onDismiss;
 
   useEffect(() => {
     // Trigger enter animation
     requestAnimationFrame(() => setVisible(true));
     const timer = setTimeout(() => {
       setVisible(false);
-      setTimeout(onDismiss, 200);
+      setTimeout(() => onDismissRef.current(), 200);
     }, 4000);
     return () => clearTimeout(timer);
-  }, [onDismiss]);
+  }, []);
 
   const Icon = ICONS[toast.type];
 

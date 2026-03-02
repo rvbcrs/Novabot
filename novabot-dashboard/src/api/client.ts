@@ -183,6 +183,20 @@ export async function addOtaVersion(params: {
   return (await post(`${BASE}/ota/versions`, params)).json();
 }
 
+export async function updateOtaVersion(id: number, params: {
+  version?: string;
+  device_type?: string;
+  download_url?: string;
+  release_notes?: string;
+}): Promise<{ ok: boolean }> {
+  const res = await fetch(`${BASE}/ota/versions/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+  return res.json();
+}
+
 export async function deleteOtaVersion(id: number): Promise<void> {
   await fetch(`${BASE}/ota/versions/${id}`, { method: 'DELETE' });
 }

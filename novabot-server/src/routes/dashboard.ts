@@ -4,10 +4,10 @@
  */
 import { Router, Request, Response } from 'express';
 import { db } from '../db/database.js';
-import { getAllDeviceSnapshots, getDeviceSnapshot, SENSORS, getGpsTrail, clearGpsTrail } from '../mqtt/sensorData.js';
+import { getAllDeviceSnapshots, getDeviceSnapshot, SENSORS, getGpsTrail, clearGpsTrail, deviceCache } from '../mqtt/sensorData.js';
 import { isDeviceOnline, writeRawPublish, getBrokerDiagnostics } from '../mqtt/broker.js';
 import { getRecentLogs } from '../dashboard/socketHandler.js';
-import { requestMapList, requestMapOutline, publishToDevice, publishRawToDevice, publishEncryptedOnTopic } from '../mqtt/mapSync.js';
+import { requestMapList, requestMapOutline, publishToDevice, publishRawToDevice, publishEncryptedOnTopic, publishToTopic } from '../mqtt/mapSync.js';
 import crypto from 'crypto';
 import { generateMapZipFromDb, gpsToLocal, localToGps, parseMapZip, type GpsPoint } from '../mqtt/mapConverter.js';
 import { existsSync, unlinkSync, readFileSync, readdirSync, createReadStream, statSync } from 'fs';
@@ -543,6 +543,18 @@ dashboardRouter.post('/command/:sn', (req: Request, res: Response) => {
   const { encrypt: doEncrypt, qos } = req.body as { encrypt?: boolean; qos?: number };
   const shouldEncrypt = doEncrypt !== undefined ? doEncrypt : sn.startsWith('LFI');
 
+  // LED bridge: als het commando set_para_info met headlight bevat,
+  // stuur ook een onversleuteld bericht naar novabot/cmd/<SN> zodat
+  // led_bridge.py op de maaier de lamp direct via ROS kan aansturen.
+  const paraInfo = command.set_para_info as Record<string, unknown> | undefined;
+  if (paraInfo && 'headlight' in paraInfo) {
+    const ledValue = Number(paraInfo.headlight);
+    publishToTopic(`novabot/cmd/${sn}`, { led_set: ledValue });
+    // Update sensor cache zodat dashboard direct de juiste state toont
+    if (!deviceCache.has(sn)) deviceCache.set(sn, new Map());
+    deviceCache.get(sn)!.set('headlight_active', String(ledValue));
+  }
+
   if (shouldEncrypt) {
     const KEY_PREFIX = 'abcdabcd1234';
     const IV = Buffer.from('abcd1234abcd1234', 'utf8');
@@ -1076,6 +1088,50 @@ dashboardRouter.post('/ota/versions', (req: Request, res: Response) => {
   res.json({ ok: true, id: result.lastInsertRowid, version: resolvedVersion, device_type: detectedDeviceType ?? 'charger', md5: calculatedMd5 });
 });
 
+// PATCH /api/dashboard/ota/versions/:id — bewerk een OTA versie
+dashboardRouter.patch('/ota/versions/:id', (req: Request, res: Response) => {
+  const id = parseInt(req.params.id);
+  const { version, device_type, download_url, release_notes, md5 } = req.body as {
+    version?: string;
+    device_type?: string;
+    download_url?: string;
+    release_notes?: string;
+    md5?: string;
+  };
+
+  const existing = db.prepare('SELECT id FROM ota_versions WHERE id = ?').get(id);
+  if (!existing) {
+    res.status(404).json({ error: 'OTA versie niet gevonden' });
+    return;
+  }
+
+  // Auto-recalculate md5 als download_url wijzigt naar lokaal bestand
+  let calculatedMd5 = md5 ?? null;
+  if (download_url && !calculatedMd5) {
+    const urlMatch = download_url.match(/\/firmware\/(.+)$/);
+    if (urlMatch) {
+      const filePath = path.join(firmwareDir, urlMatch[1]);
+      if (existsSync(filePath)) {
+        calculatedMd5 = crypto.createHash('md5').update(readFileSync(filePath)).digest('hex');
+      }
+    }
+  }
+
+  db.prepare(`
+    UPDATE ota_versions SET
+      version       = COALESCE(?, version),
+      device_type   = COALESCE(?, device_type),
+      download_url  = COALESCE(?, download_url),
+      release_notes = COALESCE(?, release_notes),
+      md5           = COALESCE(?, md5)
+    WHERE id = ?
+  `).run(version ?? null, device_type ?? null, download_url ?? null, release_notes ?? null, calculatedMd5, id);
+
+  console.log(`\x1b[38;5;208m[OTA] Versie bijgewerkt: id=${id}${version ? ` version=${version}` : ''}\x1b[0m`);
+  const row = db.prepare('SELECT * FROM ota_versions WHERE id = ?').get(id);
+  res.json({ ok: true, version: row });
+});
+
 // DELETE /api/dashboard/ota/versions/:id — verwijder een OTA versie
 dashboardRouter.delete('/ota/versions/:id', (req: Request, res: Response) => {
   const id = parseInt(req.params.id);
@@ -1183,6 +1239,75 @@ dashboardRouter.post('/ota/trigger/:sn', (req: Request, res: Response) => {
   }
 
   res.json({ ok: true, command: 'ota_upgrade_cmd', version: otaVersion.version, target: sn });
+});
+
+// ── Camera proxy ──────────────────────────────────────────────────────────────
+
+import http from 'http';
+
+// GET /api/dashboard/camera/:sn/stream — proxy MJPEG stream van de maaier
+dashboardRouter.get('/camera/:sn/stream', (req: Request, res: Response) => {
+  const ip = req.query.ip as string;
+  const port = parseInt(req.query.port as string) || 8000;
+
+  if (!ip) {
+    res.status(400).json({ error: 'ip query parameter is vereist' });
+    return;
+  }
+
+  // Disable Express timeout — MJPEG stream is infinite
+  req.setTimeout(0);
+  res.setTimeout(0);
+
+  const proxyReq = http.get(`http://${ip}:${port}/stream`, (proxyRes) => {
+    // Forward headers — NO Connection:close (MJPEG needs keep-alive)
+    res.writeHead(proxyRes.statusCode ?? 200, {
+      'Content-Type': proxyRes.headers['content-type'] ?? 'multipart/x-mixed-replace; boundary=frame',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Access-Control-Allow-Origin': '*',
+    });
+    proxyRes.pipe(res);
+  });
+
+  proxyReq.on('error', (err) => {
+    console.log(`[CAMERA] Proxy error voor ${ip}:${port}: ${err.message}`);
+    if (!res.headersSent) {
+      res.status(502).json({ error: 'Camera niet bereikbaar', details: err.message });
+    }
+  });
+
+  req.on('close', () => {
+    proxyReq.destroy();
+  });
+});
+
+// GET /api/dashboard/camera/:sn/snapshot — single JPEG snapshot
+dashboardRouter.get('/camera/:sn/snapshot', (req: Request, res: Response) => {
+  const ip = req.query.ip as string;
+  const port = parseInt(req.query.port as string) || 8000;
+
+  if (!ip) {
+    res.status(400).json({ error: 'ip query parameter is vereist' });
+    return;
+  }
+
+  http.get(`http://${ip}:${port}/snapshot`, (proxyRes) => {
+    const chunks: Buffer[] = [];
+    proxyRes.on('data', (chunk: Buffer) => chunks.push(chunk));
+    proxyRes.on('end', () => {
+      const body = Buffer.concat(chunks);
+      res.writeHead(200, {
+        'Content-Type': proxyRes.headers['content-type'] ?? 'image/jpeg',
+        'Content-Length': body.length,
+        'Cache-Control': 'no-cache',
+      });
+      res.end(body);
+    });
+  }).on('error', (err) => {
+    if (!res.headersSent) {
+      res.status(502).json({ error: 'Camera niet bereikbaar', details: err.message });
+    }
+  });
 });
 
 // ── MQTT diagnostiek ─────────────────────────────────────────────────────────

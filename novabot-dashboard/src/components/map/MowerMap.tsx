@@ -107,18 +107,17 @@ function batteryColor(pct: number): string {
   return 'text-red-400';
 }
 
-function RecenterMap({ position, hasManualInteraction }: { position: [number, number]; hasManualInteraction: boolean }) {
+function RecenterMap({ position, hasManualInteraction, waitForFit }: { position: [number, number]; hasManualInteraction: boolean; waitForFit: boolean }) {
   const map = useMap();
   useEffect(() => {
-    if (!hasManualInteraction) {
-      map.setView(position, map.getZoom());
-    }
-  }, [map, position[0], position[1], hasManualInteraction]);
+    if (waitForFit || hasManualInteraction) return;
+    map.setView(position, map.getZoom());
+  }, [map, position[0], position[1], hasManualInteraction, waitForFit]);
   return null;
 }
 
 /** Auto-fit map to polygon bounds on load */
-function FitToMaps({ maps }: { maps: MapData[] }) {
+function FitToMaps({ maps, onFitted }: { maps: MapData[]; onFitted?: () => void }) {
   const map = useMap();
   const [fitted, setFitted] = useState(false);
 
@@ -132,9 +131,10 @@ function FitToMaps({ maps }: { maps: MapData[] }) {
     }
     if (allPoints.length < 2) return;
     const bounds = L.latLngBounds(allPoints);
-    map.fitBounds(bounds, { padding: [40, 40], maxZoom: 20 });
+    map.fitBounds(bounds, { padding: [50, 50], maxZoom: 23 });
     setFitted(true);
-  }, [map, maps, fitted]);
+    onFitted?.();
+  }, [map, maps, fitted, onFitted]);
 
   return null;
 }
@@ -580,6 +580,7 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
     : DEFAULT_CENTER;
 
   const [userInteracted, setUserInteracted] = useState(false);
+  const [mapsFitted, setMapsFitted] = useState(false);
 
   const polygonMaps = maps.filter(m => m.mapArea.length >= 3);
   const trailPositions: [number, number][] = trail.map(p => [p.lat, p.lng]);
@@ -1043,8 +1044,8 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
               />
             ));
           })()}
-          <FitToMaps maps={polygonMaps} />
-          <RecenterMap position={position} hasManualInteraction={userInteracted} />
+          <FitToMaps maps={polygonMaps} onFitted={() => { setMapsFitted(true); setUserInteracted(true); }} />
+          <RecenterMap position={position} hasManualInteraction={userInteracted} waitForFit={polygonMaps.length > 0 && !mapsFitted} />
           <UserInteractionTracker onInteract={() => setUserInteracted(true)} />
           {editMode === 'none' && <MapClickDeselect onDeselect={() => setSelectedMapId(null)} />}
           <ResizeHandler />

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   Play, Pause, Square, PlugZap, ArrowUp, X, ChevronDown, MapPin,
+  Map as MapIcon, Lightbulb, Volume2, VolumeX,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { MapData } from '../../types';
@@ -18,14 +19,16 @@ interface PendingPolygon {
 interface Props {
   sn: string;
   online: boolean;
+  sensors?: Record<string, string>;
   onPathDirectionChange?: (deg: number | null) => void;
   pendingPolygon?: PendingPolygon | null;
   onStarted?: () => void;
 }
 
-export function MowerControls({ sn, online, onPathDirectionChange, pendingPolygon, onStarted }: Props) {
+export function MowerControls({ sn, online, sensors, onPathDirectionChange, pendingPolygon, onStarted }: Props) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
+  const [mappingExpanded, setMappingExpanded] = useState(false);
   const [maps, setMaps] = useState<MapData[]>([]);
   const [cuttingHeight, setCuttingHeight] = useState(40);
   const [pathDirection, setPathDirection] = useState(0);
@@ -33,6 +36,20 @@ export function MowerControls({ sn, online, onPathDirectionChange, pendingPolygo
   const [mapName, setMapName] = useState('');
   const [busy, setBusy] = useState(false);
   const { toast } = useToast();
+
+  const [headlightLocal, setHeadlightLocal] = useState(false);
+
+  const isMappingActive = sensors?.start_edit_or_assistant_map_flag === '1';
+  const gpsEnabled = sensors?.gps_state === 'ENABLE';
+  const locInitialized = sensors?.localization_state === 'INITIALIZED';
+  const mappingReady = gpsEnabled && locInitialized;
+
+  // Headlight state: server tracked via headlight_active (gezet door dashboard.ts bij led_set commando)
+  // Lokale state voor optimistische toggle (direct visueel feedback bij klik)
+  const serverHeadlight = sensors?.headlight_active === '2';
+  useEffect(() => { setHeadlightLocal(serverHeadlight); }, [serverHeadlight]);
+  const headlightOn = headlightLocal;
+  const soundOn = sensors?.sound === '2';
 
   const compassLabels = t('controls.compass', { returnObjects: true }) as string[];
 
@@ -52,13 +69,16 @@ export function MowerControls({ sn, online, onPathDirectionChange, pendingPolygo
     }
   }, [pendingPolygon]);
 
-  const send = useCallback(async (cmd: Record<string, unknown>, label?: string) => {
+  const send = useCallback(async (cmd: Record<string, unknown>, label?: string, refreshPara?: boolean) => {
     setBusy(true);
     try {
       const result = await sendCommand(sn, cmd);
       const cmdName = label || result.command || Object.keys(cmd)[0];
-      const detail = result.encrypted ? ` (encrypted, ${result.size}B)` : '';
-      toast(`✓ ${cmdName}${detail}`, 'success');
+      toast(`✓ ${cmdName}`, 'success');
+      // Herlaad para state zodat toggles direct bijwerken
+      if (refreshPara) {
+        await sendCommand(sn, { get_para_info: {} }).catch(() => {});
+      }
     } catch (err) {
       const cmdName = label || Object.keys(cmd)[0];
       const detail = err instanceof Error ? `: ${err.message}` : '';
@@ -172,6 +192,54 @@ export function MowerControls({ sn, online, onPathDirectionChange, pendingPolygo
           title={t('controls.goToCharge')}
         >
           <PlugZap className="w-3.5 h-3.5" />
+        </button>
+
+        <button
+          onClick={() => { setMappingExpanded(!mappingExpanded); setExpanded(false); }}
+          disabled={disabled}
+          className={`${btnBase} ${
+            mappingExpanded || isMappingActive
+              ? 'bg-purple-600 text-white'
+              : 'bg-gray-700/60 text-purple-400 hover:bg-purple-700/40'
+          }`}
+          title={t('controls.mapping')}
+        >
+          <MapIcon className="w-3.5 h-3.5" />
+        </button>
+
+        {/* Divider */}
+        <div className="w-px h-5 bg-gray-700/60" />
+
+        {/* Headlight toggle */}
+        <button
+          onClick={() => {
+            const next = !headlightOn;
+            setHeadlightLocal(next);
+            send({ set_para_info: { headlight: next ? 2 : 0 } }, t(next ? 'controls.headlightOn' : 'controls.headlightOff'));
+          }}
+          disabled={disabled}
+          className={`${btnBase} ${
+            headlightOn
+              ? 'bg-yellow-500/30 text-yellow-300 ring-1 ring-yellow-500/50'
+              : 'bg-gray-700/60 text-gray-500 hover:text-yellow-300 hover:bg-yellow-700/30'
+          }`}
+          title={t('controls.headlight')}
+        >
+          <Lightbulb className="w-3.5 h-3.5" />
+        </button>
+
+        {/* Sound toggle */}
+        <button
+          onClick={() => send({ set_para_info: { sound: soundOn ? 0 : 2 } }, t('controls.sound'), true)}
+          disabled={disabled}
+          className={`${btnBase} ${
+            soundOn
+              ? 'bg-blue-500/30 text-blue-300 ring-1 ring-blue-500/50'
+              : 'bg-gray-700/60 text-gray-500 hover:text-blue-300 hover:bg-blue-700/30'
+          }`}
+          title={t('controls.sound')}
+        >
+          {soundOn ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
         </button>
       </div>
 
@@ -292,6 +360,36 @@ export function MowerControls({ sn, online, onPathDirectionChange, pendingPolygo
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Mapping dropdown */}
+      {mappingExpanded && !isMappingActive && (
+        <div className="absolute top-full right-0 mt-1 w-64 z-[10000] bg-gray-800 rounded-lg border border-gray-700 shadow-xl p-3 space-y-3">
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-2 text-xs">
+              <span className={`w-2 h-2 rounded-full ${gpsEnabled ? 'bg-green-500' : 'bg-red-500'}`} />
+              <span className="text-gray-400">{t('controls.gpsStatus')}: {gpsEnabled ? t('controls.gpsEnabled') : t('controls.gpsDisabled')}</span>
+            </div>
+            <div className="flex items-center gap-2 text-xs">
+              <span className={`w-2 h-2 rounded-full ${locInitialized ? 'bg-green-500' : 'bg-red-500'}`} />
+              <span className="text-gray-400">{t('controls.locStatus')}: {sensors?.localization_state ?? '?'}</span>
+            </div>
+          </div>
+
+          {!mappingReady && (
+            <div className="text-[10px] text-amber-400 bg-amber-900/20 border border-amber-800/30 rounded px-2 py-1.5">
+              {t('controls.mappingNotReady')}
+            </div>
+          )}
+
+          <button
+            onClick={() => { send({ start_assistant_build_map: {} }, t('controls.startMapping')); setMappingExpanded(false); }}
+            disabled={busy}
+            className="w-full text-xs px-3 py-2 rounded bg-purple-600 text-white hover:bg-purple-500 disabled:opacity-40 font-medium"
+          >
+            {busy ? t('controls.busy') : t('controls.startAutonomousMapping')}
+          </button>
         </div>
       )}
     </div>

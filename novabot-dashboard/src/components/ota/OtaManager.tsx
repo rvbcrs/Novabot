@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
-import { HardDrive, Zap, Trash2, RefreshCw, Plus, Check, AlertCircle } from 'lucide-react';
+import { HardDrive, Zap, Trash2, RefreshCw, Plus, Check, AlertCircle, AlertTriangle, X, Pencil } from 'lucide-react';
 import type { DeviceState } from '../../types';
 import type { OtaProgress } from '../../hooks/useDevices';
 import {
-  fetchOtaVersions, fetchFirmwareFiles, addOtaVersion, deleteOtaVersion, triggerOta,
+  fetchOtaVersions, fetchFirmwareFiles, addOtaVersion, updateOtaVersion, deleteOtaVersion, triggerOta,
   type OtaVersion, type FirmwareFile,
 } from '../../api/client';
 
@@ -13,6 +13,31 @@ interface Props {
 }
 
 type TriggerState = 'idle' | 'sending' | 'done' | 'error';
+
+/** Compare two semver-ish strings. Returns -1 (a<b), 0 (equal), 1 (a>b). */
+function compareVersions(a: string, b: string): number {
+  const parse = (v: string) => v.replace(/^v/i, '').split(/[-.]/).map(s => {
+    const n = parseInt(s);
+    return isNaN(n) ? 0 : n;
+  });
+  const pa = parse(a), pb = parse(b);
+  const len = Math.max(pa.length, pb.length);
+  for (let i = 0; i < len; i++) {
+    const diff = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (diff !== 0) return diff < 0 ? -1 : 1;
+  }
+  return 0;
+}
+
+// ── Confirmation dialog state ─────────────────────────────────────────────────
+interface ConfirmDialog {
+  title: string;
+  message: string;
+  detail?: string;
+  variant: 'danger' | 'warning' | 'info';
+  confirmLabel: string;
+  onConfirm: () => void;
+}
 
 /** Auto-detect server address reachable by devices (not localhost/127.0.0.1). */
 function defaultServerBase(): string {
@@ -39,6 +64,9 @@ export function OtaManager({ devices, otaProgress }: Props) {
     customUrl: '',
   });
   const [triggerState, setTriggerState] = useState<Record<string, TriggerState>>({});
+  const [confirmDialog, setConfirmDialog] = useState<ConfirmDialog | null>(null);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editForm, setEditForm] = useState({ version: '', device_type: '', download_url: '' });
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -66,10 +94,73 @@ export function OtaManager({ devices, otaProgress }: Props) {
     } catch { /* ignore */ }
   };
 
-  const handleDelete = async (id: number) => {
-    if (!confirm('Versie verwijderen?')) return;
-    await deleteOtaVersion(id);
-    await load();
+  const handleDelete = (id: number, version: string) => {
+    setConfirmDialog({
+      title: 'Versie verwijderen',
+      message: `Weet je zeker dat je ${version} wilt verwijderen?`,
+      detail: 'De registratie wordt verwijderd. Het firmware bestand blijft in de firmware/ map staan.',
+      variant: 'danger',
+      confirmLabel: 'Verwijderen',
+      onConfirm: async () => {
+        setConfirmDialog(null);
+        await deleteOtaVersion(id);
+        await load();
+      },
+    });
+  };
+
+  const handleStartEdit = (v: OtaVersion) => {
+    setEditingId(v.id);
+    setEditForm({ version: v.version, device_type: v.device_type, download_url: v.download_url ?? '' });
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editingId || !editForm.version) return;
+    try {
+      await updateOtaVersion(editingId, {
+        version: editForm.version,
+        device_type: editForm.device_type,
+        download_url: editForm.download_url || undefined,
+      });
+      setEditingId(null);
+      await load();
+    } catch { /* ignore */ }
+  };
+
+  const handleTriggerClick = (sn: string, versionId: number, targetVersion: string, deviceVersion: string | undefined, deviceName: string) => {
+    const cmp = deviceVersion ? compareVersions(targetVersion, deviceVersion) : 1;
+    const isDowngrade = cmp < 0;
+    const isSame = cmp === 0;
+
+    if (isDowngrade) {
+      setConfirmDialog({
+        title: 'Downgrade waarschuwing',
+        message: `Je staat op het punt om te downgraden:`,
+        detail: `${deviceVersion}  \u2192  ${targetVersion}`,
+        variant: 'warning',
+        confirmLabel: 'Toch flashen',
+        onConfirm: () => { setConfirmDialog(null); handleTrigger(sn, versionId); },
+      });
+    } else if (isSame) {
+      setConfirmDialog({
+        title: 'Zelfde versie',
+        message: `${deviceName} draait al ${deviceVersion}.`,
+        detail: `Wil je dezelfde versie opnieuw flashen?`,
+        variant: 'info',
+        confirmLabel: 'Opnieuw flashen',
+        onConfirm: () => { setConfirmDialog(null); handleTrigger(sn, versionId); },
+      });
+    } else {
+      // Upgrade — show confirmation with version info
+      setConfirmDialog({
+        title: 'Firmware update',
+        message: `${deviceName} updaten:`,
+        detail: `${deviceVersion ?? 'onbekend'}  \u2192  ${targetVersion}`,
+        variant: 'info',
+        confirmLabel: 'Flashen',
+        onConfirm: () => { setConfirmDialog(null); handleTrigger(sn, versionId); },
+      });
+    }
   };
 
   const handleTrigger = async (sn: string, versionId: number) => {
@@ -90,6 +181,72 @@ export function OtaManager({ devices, otaProgress }: Props) {
 
   return (
     <div className="flex flex-col h-full bg-gray-900 text-gray-200">
+      {/* ── Confirmation dialog overlay ─────────────────────────────────── */}
+      {confirmDialog && (
+        <div className="fixed inset-0 z-[10001] flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="bg-gray-800 border border-gray-700 rounded-lg shadow-2xl w-80 max-w-[90vw] overflow-hidden">
+            {/* Header */}
+            <div className={`flex items-center justify-between px-4 py-3 border-b border-gray-700 ${
+              confirmDialog.variant === 'danger' ? 'bg-red-950/40' :
+              confirmDialog.variant === 'warning' ? 'bg-amber-950/40' : 'bg-gray-800'
+            }`}>
+              <div className="flex items-center gap-2">
+                {confirmDialog.variant === 'danger' ? (
+                  <Trash2 className="w-4 h-4 text-red-400" />
+                ) : confirmDialog.variant === 'warning' ? (
+                  <AlertTriangle className="w-4 h-4 text-amber-400" />
+                ) : (
+                  <Zap className="w-4 h-4 text-orange-400" />
+                )}
+                <span className="text-sm font-medium">{confirmDialog.title}</span>
+              </div>
+              <button
+                onClick={() => setConfirmDialog(null)}
+                className="text-gray-500 hover:text-gray-300 p-0.5"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            {/* Body */}
+            <div className="px-4 py-4">
+              <p className="text-sm text-gray-300">{confirmDialog.message}</p>
+              {confirmDialog.detail && (
+                <div className={`mt-3 flex items-center justify-center gap-2 text-sm font-mono px-3 py-2 rounded ${
+                  confirmDialog.variant === 'warning'
+                    ? 'bg-amber-950/30 text-amber-300 border border-amber-800/50'
+                    : confirmDialog.variant === 'danger'
+                    ? 'bg-red-950/30 text-red-300 border border-red-800/50'
+                    : 'bg-gray-900 text-gray-200 border border-gray-700'
+                }`}>
+                  {confirmDialog.detail}
+                </div>
+              )}
+            </div>
+            {/* Actions */}
+            <div className="flex gap-2 px-4 py-3 border-t border-gray-700 bg-gray-800/50">
+              <button
+                onClick={() => setConfirmDialog(null)}
+                className="flex-1 text-xs py-2 rounded bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors"
+              >
+                Annuleren
+              </button>
+              <button
+                onClick={confirmDialog.onConfirm}
+                className={`flex-1 text-xs py-2 rounded font-medium transition-colors ${
+                  confirmDialog.variant === 'danger'
+                    ? 'bg-red-700 text-white hover:bg-red-600'
+                    : confirmDialog.variant === 'warning'
+                    ? 'bg-amber-700 text-white hover:bg-amber-600'
+                    : 'bg-orange-700 text-white hover:bg-orange-600'
+                }`}
+              >
+                {confirmDialog.confirmLabel}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700 flex-shrink-0">
         <div className="flex items-center gap-2">
@@ -320,8 +477,62 @@ export function OtaManager({ devices, otaProgress }: Props) {
               const relevantDevices = sortedDevices.filter(d =>
                 v.device_type === 'charger' ? d.deviceType === 'charger' : d.deviceType === 'mower',
               );
+              const isEditing = editingId === v.id;
               return (
                 <div key={v.id} className="bg-gray-800 rounded p-2.5 border border-gray-700/50">
+                  {isEditing ? (
+                    /* ── Inline edit form ── */
+                    <div className="space-y-2">
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="text-[9px] text-gray-500 uppercase tracking-wide">Versie</label>
+                          <input
+                            type="text"
+                            value={editForm.version}
+                            onChange={e => setEditForm(f => ({ ...f, version: e.target.value }))}
+                            className="mt-0.5 w-full text-xs bg-gray-900 border border-gray-700 rounded px-1.5 py-1 text-gray-200 font-mono focus:outline-none focus:border-orange-500"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[9px] text-gray-500 uppercase tracking-wide">Type</label>
+                          <select
+                            value={editForm.device_type}
+                            onChange={e => setEditForm(f => ({ ...f, device_type: e.target.value }))}
+                            className="mt-0.5 w-full text-xs bg-gray-900 border border-gray-700 rounded px-1.5 py-1 text-gray-200"
+                          >
+                            <option value="charger">Laadstation</option>
+                            <option value="mower">Maaier</option>
+                          </select>
+                        </div>
+                      </div>
+                      <div>
+                        <label className="text-[9px] text-gray-500 uppercase tracking-wide">Download URL</label>
+                        <input
+                          type="text"
+                          value={editForm.download_url}
+                          onChange={e => setEditForm(f => ({ ...f, download_url: e.target.value }))}
+                          className="mt-0.5 w-full text-xs bg-gray-900 border border-gray-700 rounded px-1.5 py-1 text-gray-200 font-mono focus:outline-none focus:border-orange-500"
+                        />
+                      </div>
+                      <div className="flex gap-2 pt-1">
+                        <button
+                          onClick={() => setEditingId(null)}
+                          className="flex-1 text-xs py-1 rounded bg-gray-700 text-gray-400 hover:text-gray-200 transition-colors"
+                        >
+                          Annuleren
+                        </button>
+                        <button
+                          onClick={handleSaveEdit}
+                          disabled={!editForm.version}
+                          className="flex-1 text-xs py-1 rounded bg-orange-700 text-white hover:bg-orange-600 disabled:opacity-40 transition-colors"
+                        >
+                          Opslaan
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    /* ── Normal version display ── */
+                    <>
                   <div className="flex items-start justify-between mb-1.5">
                     <div>
                       <span className="text-xs font-medium text-orange-300">{v.version}</span>
@@ -333,13 +544,22 @@ export function OtaManager({ devices, otaProgress }: Props) {
                         {v.device_type === 'charger' ? 'Laadstation' : 'Maaier'}
                       </span>
                     </div>
-                    <button
-                      onClick={() => handleDelete(v.id)}
-                      className="text-gray-600 hover:text-red-400 p-0.5 transition-colors"
-                      title="Verwijder versie"
-                    >
-                      <Trash2 className="w-3 h-3" />
-                    </button>
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => handleStartEdit(v)}
+                        className="text-gray-600 hover:text-orange-400 p-0.5 transition-colors"
+                        title="Bewerk versie"
+                      >
+                        <Pencil className="w-3 h-3" />
+                      </button>
+                      <button
+                        onClick={() => handleDelete(v.id, v.version)}
+                        className="text-gray-600 hover:text-red-400 p-0.5 transition-colors"
+                        title="Verwijder versie"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    </div>
                   </div>
 
                   {v.md5 && (
@@ -358,10 +578,11 @@ export function OtaManager({ devices, otaProgress }: Props) {
                         const state = triggerState[key] ?? 'idle';
                         const deviceVersion = d.sensors.sw_version ?? d.sensors.version;
                         const isCurrent = deviceVersion === v.version;
+                        const isDowngrade = deviceVersion ? compareVersions(v.version, deviceVersion) < 0 : false;
                         return (
                           <button
                             key={d.sn}
-                            onClick={() => handleTrigger(d.sn, v.id)}
+                            onClick={() => handleTriggerClick(d.sn, v.id, v.version, deviceVersion, d.nickname ?? d.sn)}
                             disabled={state === 'sending'}
                             className={`w-full flex items-center justify-center gap-1.5 text-xs py-1.5 rounded transition-colors ${
                               state === 'done'
@@ -369,19 +590,23 @@ export function OtaManager({ devices, otaProgress }: Props) {
                                 : state === 'error'
                                 ? 'bg-red-900/60 text-red-400'
                                 : d.online
-                                ? 'bg-orange-700/80 text-white hover:bg-orange-600 disabled:opacity-40'
+                                ? isDowngrade
+                                  ? 'bg-amber-800/60 text-amber-200 hover:bg-amber-700/60 disabled:opacity-40'
+                                  : 'bg-orange-700/80 text-white hover:bg-orange-600 disabled:opacity-40'
                                 : 'bg-gray-700/50 text-gray-500 cursor-not-allowed'
                             }`}
-                            title={!d.online ? 'Apparaat offline' : isCurrent ? 'Al actieve versie' : undefined}
+                            title={!d.online ? 'Apparaat offline' : isCurrent ? 'Al actieve versie' : isDowngrade ? 'Downgrade!' : undefined}
                           >
                             {state === 'done' ? (
                               <><Check className="w-3 h-3" />Commando verstuurd</>
                             ) : state === 'error' ? (
                               <><AlertCircle className="w-3 h-3" />Fout bij versturen</>
                             ) : (
-                              <><Zap className="w-3 h-3" />
-                              {state === 'sending' ? 'Bezig…' : `Flash → ${d.nickname ?? d.sn}`}
-                              {isCurrent && <span className="ml-1 opacity-60">(huidig)</span>}
+                              <>
+                                {isDowngrade ? <AlertTriangle className="w-3 h-3" /> : <Zap className="w-3 h-3" />}
+                                {state === 'sending' ? 'Bezig…' : `Flash → ${d.nickname ?? d.sn}`}
+                                {isCurrent && <span className="ml-1 opacity-60">(huidig)</span>}
+                                {isDowngrade && !isCurrent && <span className="ml-1 opacity-70">(downgrade)</span>}
                               </>
                             )}
                           </button>
@@ -389,20 +614,14 @@ export function OtaManager({ devices, otaProgress }: Props) {
                       })}
                     </div>
                   )}
+                    </>
+                  )}
                 </div>
               );
             })}
           </div>
         </div>
 
-        {/* How the official app gets the update */}
-        <div className="text-[10px] text-gray-600 leading-relaxed border-t border-gray-800 pt-3 space-y-1.5">
-          <p className="text-gray-500 font-medium">Officiële app flow</p>
-          <p>Als een versie geregistreerd is en de app belt <code className="text-gray-400">checkOtaNewVersion</code>, krijgt die automatisch de update aangeboden — ook in de officiële Novabot app.</p>
-          <p className="text-orange-400/70">
-            Let op: de charger gebruikt <code>esp_https_ota</code> — als HTTP niet werkt, is HTTPS nodig.
-          </p>
-        </div>
       </div>
     </div>
   );
