@@ -175,14 +175,13 @@ export function onMowerConnected(sn: string): void {
     console.log(`\x1b[38;5;208m${TAG} Firmware versie opvragen van ${sn}...\x1b[0m`);
     publishToDevice(sn, { ota_version_info: null });
 
-    // Maaier: timezone instellen + kaartlijst opvragen
+    // Maaier: kaartlijst opvragen
     if (sn.startsWith('LFIN')) {
-      // Timezone fix: mqtt_node leest timezone niet terug uit file na restart,
-      // waardoor ota_upgrade_cmd altijd "tz":null toevoegt → OTA parse failure.
-      // Door set_cfg_info te sturen bij connect heeft mqtt_node de tz in geheugen.
-      console.log(`${TAG} Maaier ${sn} verbonden — timezone instellen...`);
-      publishToDevice(sn, { set_cfg_info: { cfg_value: 1, tz: 'Europe/Amsterdam' } });
-
+      // LET OP: set_cfg_info (timezone) wordt NIET meer gestuurd bij connect.
+      // Reden: mqtt_node slaat timezone op in geheugen en verandert daardoor
+      // ota_upgrade_cmd type van "full" naar "increment", waardoor OTA nooit
+      // een volledige firmware download start. De app stuurt timezone zelf mee
+      // in het ota_upgrade_cmd commando.
       console.log(`${TAG} Maaier ${sn} verbonden — kaarten opvragen...`);
       requestMapList(sn);
     }

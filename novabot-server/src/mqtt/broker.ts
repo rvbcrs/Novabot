@@ -379,6 +379,57 @@ export async function startMqttBroker(): Promise<void> {
     return packet;
   };
 
+  // ── OTA Fix: intercepteer ota_upgrade_cmd van app → maaier ──
+  // mqtt_node op de maaier zet type:"increment" als er een tz veld in het commando zit.
+  // De app stuurt altijd tz mee. Door tz te verwijderen en type:"full" te forceren
+  // voordat het bericht de maaier bereikt, werkt OTA weer correct.
+  (broker as any).authorizePublish = (client: Client | null, packet: AedesPublishPacket, callback: (error?: Error | null) => void) => {
+    if (client && packet.topic.startsWith('Dart/Send_mqtt/LFIN') && isAppClient(client.id)) {
+      const payloadBuf = Buffer.isBuffer(packet.payload) ? packet.payload : Buffer.from(packet.payload);
+      const sn = packet.topic.split('/').pop() ?? '';
+      console.log(`\x1b[38;5;208m[OTA-FIX] authorizePublish: app→mower ${sn}, ${payloadBuf.length}B\x1b[0m`);
+      if (sn) {
+        const decrypted = tryDecrypt(payloadBuf, sn);
+        if (decrypted) {
+          console.log(`\x1b[38;5;208m[OTA-FIX] Decrypted: ${decrypted.slice(0, 300)}\x1b[0m`);
+          try {
+            const parsed = JSON.parse(decrypted);
+            if (parsed.ota_upgrade_cmd) {
+              const originalTz = parsed.ota_upgrade_cmd.tz;
+              const originalType = parsed.ota_upgrade_cmd.type;
+              // Verwijder tz en forceer type:"full"
+              delete parsed.ota_upgrade_cmd.tz;
+              parsed.ota_upgrade_cmd.type = 'full';
+              const modified = JSON.stringify(parsed);
+              console.log(`\x1b[38;5;208m[OTA-FIX] INTERCEPTED! tz="${originalTz}"→removed, type="${originalType}"→"full"\x1b[0m`);
+              console.log(`\x1b[38;5;208m[OTA-FIX] Modified payload: ${modified}\x1b[0m`);
+
+              // Herversleutel met dezelfde AES key
+              const KEY_PREFIX = 'abcdabcd1234';
+              const IV = Buffer.from('abcd1234abcd1234', 'utf8');
+              const key = Buffer.from(KEY_PREFIX + sn.slice(-4), 'utf8');
+              const plaintext = Buffer.from(modified, 'utf8');
+              const padded = Buffer.alloc(Math.ceil(plaintext.length / 16) * 16, 0);
+              plaintext.copy(padded);
+              const cipher = crypto.createCipheriv('aes-128-cbc', key, IV);
+              cipher.setAutoPadding(false);
+              const encrypted = Buffer.concat([cipher.update(padded), cipher.final()]);
+              packet.payload = encrypted;
+              console.log(`\x1b[38;5;208m[OTA-FIX] Re-encrypted: ${encrypted.length}B → maaier\x1b[0m`);
+            } else {
+              console.log(`\x1b[38;5;208m[OTA-FIX] Geen ota_upgrade_cmd, doorsturen ongewijzigd\x1b[0m`);
+            }
+          } catch (e) {
+            console.log(`\x1b[38;5;208m[OTA-FIX] Parse error: ${(e as Error).message}, doorsturen ongewijzigd\x1b[0m`);
+          }
+        } else {
+          console.log(`\x1b[38;5;208m[OTA-FIX] Decrypt mislukt, doorsturen ongewijzigd\x1b[0m`);
+        }
+      }
+    }
+    callback(null);
+  };
+
   broker.authenticate = (client: Client, username: Readonly<string | undefined>, password: Readonly<Buffer | undefined>, callback) => {
     const clientId  = client.id ?? '';
     const user      = username ?? '';

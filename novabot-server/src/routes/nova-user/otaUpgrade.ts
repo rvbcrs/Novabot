@@ -27,7 +27,7 @@ otaUpgradeRouter.get('/checkOtaNewVersion', authMiddleware, (req, res: Response)
 
   console.log(`\x1b[38;5;208m[OTA] checkOtaNewVersion version=${currentVersion} equipmentType=${equipmentType} sn=${sn} → deviceType=${deviceType}\x1b[0m`);
 
-  // ── Lokale-eerst strategie: check eerst de lokale DB ──
+  // ── Check lokale DB voor nieuwere versie ──
   const latest = db.prepare(`
     SELECT * FROM ota_versions
     WHERE device_type = ?
@@ -35,33 +35,20 @@ otaUpgradeRouter.get('/checkOtaNewVersion', authMiddleware, (req, res: Response)
   `).get(deviceType) as OtaVersionRow | undefined;
 
   if (latest && latest.version !== currentVersion) {
-    console.log(`\x1b[38;5;208m[OTA] Lokale versie gevonden: ${latest.version} (huidig: ${currentVersion}) — update beschikbaar\x1b[0m`);
-    // Cloud-identiek formaat: upgradeFlag=1 = update beschikbaar
+    // Zorg dat URL altijd http:// is (lokale server heeft geen TLS)
+    const downloadUrl = latest.download_url?.replace(/^https:\/\//, 'http://') ?? '';
+    console.log(`\x1b[38;5;208m[OTA] Update beschikbaar: ${latest.version} (huidig: ${currentVersion}) url=${downloadUrl}\x1b[0m`);
     res.json(ok({
       version: latest.version,
-      upgradeType: 'serviceUpgrade',
+      downloadUrl,
       md5: latest.md5 ?? '',
-      downloadUrl: latest.download_url,
       upgradeFlag: 1,
-      environment: 'trial',
-      dependenceSystemVersionList: null,
+      releaseNotes: latest.release_notes,
     }));
     return;
   }
 
-  if (latest && latest.version === currentVersion) {
-    console.log(`\x1b[38;5;208m[OTA] Lokale versie ${latest.version} is gelijk aan huidige — geen update\x1b[0m`);
-    res.json(ok({ upgradeFlag: 0 }));
-    return;
-  }
-
-  // Geen lokale versie gevonden — geen update (cloud is niet bereikbaar via DNS redirect)
-  if (!latest) {
-    console.log(`\x1b[38;5;208m[OTA] Geen lokale versie voor ${deviceType} — geen update\x1b[0m`);
-    res.json(ok({ upgradeFlag: 0 }));
-    return;
-  }
-
-  // Fallback: zou niet bereikt moeten worden, maar voor de zekerheid
-  res.json(ok({ upgradeFlag: 0 }));
+  // Geen update — retourneer null (cloud-identiek)
+  console.log(`\x1b[38;5;208m[OTA] Geen update voor ${deviceType} (huidig: ${currentVersion})\x1b[0m`);
+  res.json(ok(null));
 });

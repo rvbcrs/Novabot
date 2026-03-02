@@ -61,7 +61,7 @@ Broker: aedes op `0.0.0.0:1883`. DNS: `mqtt.lfibot.com` + `nova-mqtt.ramonvanbru
 |---------|---------|
 | `index.ts` | Entry point (Express + Socket.io + MQTT) |
 | `db/database.ts` | SQLite schema + initDb() |
-| `mqtt/broker.ts` | Aedes broker, sanitizeConnectFlags, CONNACK fix, raw TCP |
+| `mqtt/broker.ts` | Aedes broker, sanitizeConnectFlags, CONNACK fix, raw TCP, **OTA interceptie** |
 | `mqtt/decrypt.ts` | AES-128-CBC decryptie maaier berichten |
 | `mqtt/mapSync.ts` | publishToDevice(), publishRawToDevice(), onMowerConnected() |
 | `mqtt/sensorData.ts` | Sensor definities + data cache |
@@ -103,10 +103,20 @@ DB locatie: `novabot-server/novabot.db`
 - `account/password`: charger → `li9hep19`/`jzd4wac6`, maaier → `null`/`null`
 
 **onMowerConnected() in mapSync.ts:**
-- Wacht 3s dan stuurt: `ota_version_info: null` + `set_cfg_info` (timezone) + `get_map_list`
+- Wacht 3s dan stuurt: `ota_version_info: null` + `get_map_list`
+- **GEEN `set_cfg_info` (timezone)** — veroorzaakt OTA bug (zie hieronder)
 
-**OTA download URLs**: gebruik altijd `http://` (niet `https://`) — lokale server heeft geen TLS.
-OTA trigger endpoint: `POST /api/dashboard/ota/trigger/:sn` met `{version_id, force?}`
+**OTA — KRITIEK (bewezen werkend 2 maart 2026):**
+- `checkOtaNewVersion` MOET `upgradeFlag: 1` retourneren als er een update is
+- Download URLs MOETEN `http://` zijn (geen TLS)
+- **BROKER-LEVEL OTA FIX in `broker.ts` (`authorizePublish`):**
+  - mqtt_node op de maaier verandert `type:"full"` → `type:"increment"` als er een `tz` veld in het commando zit
+  - De Novabot app stuurt ALTIJD `tz:"Europe/Amsterdam"` mee in `ota_upgrade_cmd`
+  - mqtt_node pakt die tz uit het commando en schrijft naar `/userdata/ota/novabot_timezone.txt`
+  - Met `type:"increment"` start ota_client GEEN volledige firmware download
+  - **FIX**: broker intercepteert app→maaier berichten, decrypteert, verwijdert `tz`, zet `type:"full"`, herversleutelt
+  - **NOOIT VERWIJDEREN** — zonder deze fix werkt OTA niet via de app
+- OTA trigger endpoint: `POST /api/dashboard/ota/trigger/:sn` met `{version_id, force?}`
 
 **saveCutGrassRecord**: retourneert `ok(null)` bij lege/onparseerbare body (maaier stuurt multipart → retry loop anders).
 
@@ -121,7 +131,7 @@ npx tsc --noEmit                          # TypeScript check (vanuit novabot-ser
 ```
 
 Firmware: `research/firmware/` — mower custom builds via `research/build_custom_firmware.sh`
-Maaier firmware versie: `v6.0.2-custom-4` (op maaier: `/root/novabot/install/novabot_api/share/novabot_api/config/novabot_api.yaml`)
+Maaier firmware versie: `v6.0.2-custom-5` (OTA via app geslaagd 2 maart 2026)
 
 ---
 

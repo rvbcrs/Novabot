@@ -1143,7 +1143,13 @@ dashboardRouter.post('/ota/trigger/:sn', (req: Request, res: Response) => {
     }
   }
 
-  console.log(`\x1b[38;5;208m[OTA] Trigger OTA voor ${sn}: versie=${otaVersion.version}${currentVersion ? ` (huidig: ${currentVersion})` : ''} url=${otaVersion.download_url}\x1b[0m`);
+  // Forceer http:// — lokale server heeft geen TLS, maaier kan geen https
+  const downloadUrl = otaVersion.download_url!.replace(/^https:\/\//, 'http://');
+  if (downloadUrl !== otaVersion.download_url) {
+    console.warn(`\x1b[33m[OTA] ⚠ HTTPS→HTTP: ${otaVersion.download_url} → ${downloadUrl}\x1b[0m`);
+  }
+
+  console.log(`\x1b[38;5;208m[OTA] Trigger OTA voor ${sn}: versie=${otaVersion.version}${currentVersion ? ` (huidig: ${currentVersion})` : ''} url=${downloadUrl}\x1b[0m`);
 
   // Maaier: stuur set_cfg_info met timezone VOOR het OTA commando.
   // mqtt_node voegt "tz" toe aan het OTA commando vanuit geheugen — na restart is dit null.
@@ -1161,7 +1167,7 @@ dashboardRouter.post('/ota/trigger/:sn', (req: Request, res: Response) => {
     // (firmware parseert cJSON_GetObjectItem op "url", "md5", "version" — geen nesting)
     const otaCommand = {
       ota_upgrade_cmd: {
-        url: otaVersion.download_url,
+        url: downloadUrl,
         md5: otaVersion.md5 ?? '',
         version: otaVersion.version,
       },
@@ -1180,7 +1186,7 @@ dashboardRouter.post('/ota/trigger/:sn', (req: Request, res: Response) => {
         content: {
           upgradeApp: {
             version: otaVersion.version,
-            downloadUrl: otaVersion.download_url,
+            downloadUrl: downloadUrl,
             md5: otaVersion.md5 ?? '',
           },
         },
