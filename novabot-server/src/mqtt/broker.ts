@@ -7,7 +7,7 @@ import { DeviceRegistryRow } from '../types/index.js';
 import { startMqttBridge } from '../proxy/mqttBridge.js';
 import { tryDecrypt } from './decrypt.js';
 import { startHomeAssistantBridge, forwardToHomeAssistant, publishDeviceOnline, publishDeviceOffline } from './homeassistant.js';
-import { updateDeviceData } from './sensorData.js';
+import { updateDeviceData, clearDeviceData } from './sensorData.js';
 import { forwardToDashboard, emitDeviceOnline, emitDeviceOffline, pushMqttLog, emitOtaEvent } from '../dashboard/socketHandler.js';
 import { initMapSync, onMowerConnected, handleMapMessage } from './mapSync.js';
 
@@ -511,6 +511,7 @@ export async function startMqttBroker(): Promise<void> {
     if (disconnSn) {
       onlineBySn.get(disconnSn)?.delete(client.id);
       if (!isDeviceOnline(disconnSn)) {
+        clearDeviceData(disconnSn);
         publishDeviceOffline(disconnSn);
         emitDeviceOffline(disconnSn);
       }
@@ -779,6 +780,7 @@ export async function startMqttBroker(): Promise<void> {
               if (!isApp) {
                 onlineBySn.get(deviceSn)?.delete(deviceSn);
                 if (!isDeviceOnline(deviceSn)) {
+                  clearDeviceData(deviceSn);
                   publishDeviceOffline(deviceSn);
                   emitDeviceOffline(deviceSn);
                 }

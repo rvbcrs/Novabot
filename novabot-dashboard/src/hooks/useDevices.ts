@@ -86,7 +86,7 @@ export function useDevices() {
     setDevices(prev => {
       const next = new Map(prev);
       const existing = next.get(e.sn);
-      if (existing) next.set(e.sn, { ...existing, online: false });
+      if (existing) next.set(e.sn, { ...existing, online: false, sensors: {} });
       return next;
     });
   }, []);

@@ -106,17 +106,25 @@ DB locatie: `novabot-server/novabot.db`
 - Wacht 3s dan stuurt: `ota_version_info: null` + `get_map_list`
 - **GEEN `set_cfg_info` (timezone)** — veroorzaakt OTA bug (zie hieronder)
 
-**OTA — KRITIEK (bewezen werkend 2 maart 2026):**
+**OTA — KRITIEK (bewezen werkend via APP + DASHBOARD, 2 maart 2026):**
 - `checkOtaNewVersion` MOET `upgradeFlag: 1` retourneren als er een update is
 - Download URLs MOETEN `http://` zijn (geen TLS)
+- **EXACT OTA payload (NOOIT WIJZIGEN):**
+  ```json
+  {"ota_upgrade_cmd":{"cmd":"upgrade","type":"full","content":"app","url":"http://...","version":"...","md5":"..."}}
+  ```
+  - `cmd:"upgrade"` — verplicht, mqtt_node negeert commando zonder dit veld
+  - `type:"full"` — verplicht, "increment" downloadt niet
+  - `content:"app"` — verplicht, mqtt_node negeert commando zonder dit veld
+  - **GEEN `tz` veld** — mqtt_node zet anders type:"increment"
 - **BROKER-LEVEL OTA FIX in `broker.ts` (`authorizePublish`):**
-  - mqtt_node op de maaier verandert `type:"full"` → `type:"increment"` als er een `tz` veld in het commando zit
   - De Novabot app stuurt ALTIJD `tz:"Europe/Amsterdam"` mee in `ota_upgrade_cmd`
-  - mqtt_node pakt die tz uit het commando en schrijft naar `/userdata/ota/novabot_timezone.txt`
-  - Met `type:"increment"` start ota_client GEEN volledige firmware download
-  - **FIX**: broker intercepteert app→maaier berichten, decrypteert, verwijdert `tz`, zet `type:"full"`, herversleutelt
+  - mqtt_node pakt die tz, schrijft naar timezone file, zet type:"increment"
+  - **FIX**: broker intercepteert app→maaier, verwijdert `tz`, zet `type:"full"`, herversleutelt
   - **NOOIT VERWIJDEREN** — zonder deze fix werkt OTA niet via de app
-- OTA trigger endpoint: `POST /api/dashboard/ota/trigger/:sn` met `{version_id, force?}`
+- **Dashboard OTA trigger**: stuurt exact hetzelfde payload als de app (zonder tz)
+  - Endpoint: `POST /api/dashboard/ota/trigger/:sn` met `{version_id, force?}`
+  - Dashboard dist MOET gerebuild worden na frontend wijzigingen: `cd novabot-dashboard && npm run build`
 
 **saveCutGrassRecord**: retourneert `ok(null)` bij lege/onparseerbare body (maaier stuurt multipart → retry loop anders).
 

@@ -1114,20 +1114,16 @@ dashboardRouter.post('/ota/trigger/:sn', (req: Request, res: Response) => {
     ? (equipRow as { charger_version: string | null } | undefined)?.charger_version
     : (equipRow as { mower_version: string | null } | undefined)?.mower_version;
 
+  // Dashboard trigger is altijd een bewuste actie van de beheerder → versie-check is
+  // alleen een waarschuwing, nooit een blokkade. De frontend stuurt force=true mee,
+  // maar oudere builds doen dat niet, dus default naar true voor dashboard endpoint.
+  const { force } = req.body as { force?: boolean };
+  const forceOta = force !== false; // default true voor dashboard
   if (currentVersion && otaVersion.version) {
     const cmp = compareVersions(otaVersion.version, currentVersion);
-    const { force } = req.body as { force?: boolean };
-    if (cmp <= 0 && !force) {
+    if (cmp <= 0) {
       const label = cmp === 0 ? 'gelijk aan' : 'ouder dan';
-      res.status(400).json({
-        error: `OTA versie ${otaVersion.version} is ${label} huidige versie ${currentVersion}. Gebruik force=true om toch te flashen.`,
-        currentVersion,
-        otaVersion: otaVersion.version,
-      });
-      return;
-    }
-    if (cmp <= 0 && force) {
-      console.warn(`\x1b[33m[OTA] ⚠ Force-flash: ${otaVersion.version} (${cmp === 0 ? '==' : '<'} ${currentVersion}) naar ${sn}\x1b[0m`);
+      console.warn(`\x1b[33m[OTA] ⚠ ${forceOta ? 'Force-flash' : 'Versie-check'}: ${otaVersion.version} is ${label} ${currentVersion} op ${sn}\x1b[0m`);
     }
   }
 
@@ -1151,20 +1147,14 @@ dashboardRouter.post('/ota/trigger/:sn', (req: Request, res: Response) => {
 
   console.log(`\x1b[38;5;208m[OTA] Trigger OTA voor ${sn}: versie=${otaVersion.version}${currentVersion ? ` (huidig: ${currentVersion})` : ''} url=${downloadUrl}\x1b[0m`);
 
-  // Maaier: stuur set_cfg_info met timezone VOOR het OTA commando.
-  // mqtt_node voegt "tz" toe aan het OTA commando vanuit geheugen — na restart is dit null.
-  // set_cfg_info zet de timezone in mqtt_node's geheugen zodat OTA het kan lezen.
-  if (sn.startsWith('LFIN')) {
-    console.log(`\x1b[38;5;208m[OTA] Timezone instellen op ${sn} voor OTA...\x1b[0m`);
-    publishToDevice(sn, { set_cfg_info: { cfg_value: 1, tz: 'Europe/Amsterdam' } });
-  }
+  // GEEN set_cfg_info (timezone) sturen! mqtt_node zet type:"increment" als
+  // timezone in geheugen zit. Zonder timezone → type:"full" → OTA werkt.
 
   // Beide apparaten krijgen nu AES-encrypted commando's (charger v0.4.0+ en maaier v6+)
   // publishToDevice() handelt AES encryptie automatisch af voor LFI* apparaten
   const isCharger = sn.startsWith('LFIC');
   if (isCharger) {
     // Charger ESP32: plat formaat — url/md5/version direct in ota_upgrade_cmd
-    // (firmware parseert cJSON_GetObjectItem op "url", "md5", "version" — geen nesting)
     const otaCommand = {
       ota_upgrade_cmd: {
         url: downloadUrl,
@@ -1175,25 +1165,21 @@ dashboardRouter.post('/ota/trigger/:sn', (req: Request, res: Response) => {
     publishToDevice(sn, otaCommand);
     console.log(`\x1b[38;5;208m[OTA] Encrypted ota_upgrade_cmd naar charger ${sn}\x1b[0m`);
   } else {
-    // Maaier OTA: genest formaat — mqtt_node parseert type/content/upgradeApp
-    // Veldnaam is "downloadUrl" (bevestigd: app OTA werkte tot 68% met dit veld)
-    // tz meesturen: mqtt_node voegt "tz":null toe als timezone niet in geheugen zit
-    // (firmware bug: mqtt_node leest timezone niet terug uit file na restart)
+    // Maaier OTA: EXACT het formaat dat bewezen werkte via de app op 2 maart 2026.
+    // Bron: broker.ts OTA-FIX log van het succesvolle app-OTA naar custom-5.
+    // GEEN tz veld (mqtt_node zet anders type:"increment").
     const mowerOtaCommand = {
       ota_upgrade_cmd: {
+        cmd: 'upgrade',
         type: 'full',
-        tz: 'Europe/Amsterdam',
-        content: {
-          upgradeApp: {
-            version: otaVersion.version,
-            downloadUrl: downloadUrl,
-            md5: otaVersion.md5 ?? '',
-          },
-        },
+        content: 'app',
+        url: downloadUrl,
+        version: otaVersion.version,
+        md5: otaVersion.md5 ?? '',
       },
     };
     publishToDevice(sn, mowerOtaCommand);
-    console.log(`\x1b[38;5;208m[OTA] Encrypted ota_upgrade_cmd naar mower ${sn}\x1b[0m`);
+    console.log(`\x1b[38;5;208m[OTA] Encrypted ota_upgrade_cmd naar mower ${sn}: ${JSON.stringify(mowerOtaCommand)}\x1b[0m`);
   }
 
   res.json({ ok: true, command: 'ota_upgrade_cmd', version: otaVersion.version, target: sn });

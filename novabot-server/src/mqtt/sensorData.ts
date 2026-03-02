@@ -216,6 +216,14 @@ export function clearGpsTrail(sn: string): void {
   gpsTrails.delete(sn);
 }
 
+/**
+ * Wis alle gecachte sensor data voor een apparaat (bij disconnect).
+ * Hierdoor toont het dashboard geen stale waarden voor offline apparaten.
+ */
+export function clearDeviceData(sn: string): void {
+  deviceCache.delete(sn);
+}
+
 // ── Data cache ──────────────────────────────────────────────────
 
 // Cache van laatst bekende waarden per SN per veld (ruwe waarde)
