@@ -36,13 +36,13 @@ otaUpgradeRouter.get('/checkOtaNewVersion', authMiddleware, (req, res: Response)
 
   if (latest && latest.version !== currentVersion) {
     console.log(`\x1b[38;5;208m[OTA] Lokale versie gevonden: ${latest.version} (huidig: ${currentVersion}) — update beschikbaar\x1b[0m`);
-    // Cloud-identiek formaat: upgradeFlag=0 (optionele update), alle cloud-velden aanwezig
+    // Cloud-identiek formaat: upgradeFlag=1 = update beschikbaar
     res.json(ok({
       version: latest.version,
       upgradeType: 'serviceUpgrade',
       md5: latest.md5 ?? '',
       downloadUrl: latest.download_url,
-      upgradeFlag: 0,
+      upgradeFlag: 1,
       environment: 'trial',
       dependenceSystemVersionList: null,
     }));

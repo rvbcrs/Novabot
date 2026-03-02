@@ -24,7 +24,9 @@ OUTPUT_DIR="$SCRIPT_DIR/firmware"
 
 # === Configuratie (aanpasbaar via CLI args) ===
 SERVER_HOST="novabot.local"
-SERVER_HTTP_PORT="3000"
+SERVER_HTTP_PORT=""  # Leeg = geen poort suffix (reverse proxy op poort 80)
+MQTT_HOST=""  # Leeg = zelfde als SERVER_HOST
+MQTT_PORT="1883"
 SSH_PASSWORD="novabot"
 SSH_PORT="22"
 ENABLE_REMOTE_ROS2="false"
@@ -36,6 +38,8 @@ while [[ $# -gt 0 ]]; do
         --input)        INPUT_DEB="$2"; shift 2 ;;
         --server)       SERVER_HOST="$2"; shift 2 ;;
         --http-port)    SERVER_HTTP_PORT="$2"; shift 2 ;;
+        --mqtt-host)    MQTT_HOST="$2"; shift 2 ;;
+        --mqtt-port)    MQTT_PORT="$2"; shift 2 ;;
         --ssh-password) SSH_PASSWORD="$2"; shift 2 ;;
         --ssh-port)     SSH_PORT="$2"; shift 2 ;;
         --remote-ros2)  ENABLE_REMOTE_ROS2="true"; shift ;;
@@ -45,15 +49,17 @@ while [[ $# -gt 0 ]]; do
             echo ""
             echo "Options:"
             echo "  --input FILE        Source .deb firmware (auto-detects newest if omitted)"
-            echo "  --server HOST       Server hostname/IP (default: novabot.local)"
-            echo "  --http-port PORT    HTTP port (default: 3000)"
+            echo "  --server HOST       HTTP server hostname/IP (default: novabot.local)"
+            echo "  --http-port PORT    HTTP port (default: none, reverse proxy on 80)"
+            echo "  --mqtt-host HOST    MQTT broker hostname (default: same as --server)"
+            echo "  --mqtt-port PORT    MQTT port (default: 1883)"
             echo "  --ssh-password PWD  Root SSH password (default: novabot)"
             echo "  --ssh-port PORT     SSH port (default: 22)"
             echo "  --remote-ros2       Enable ROS 2 network access (default: off)"
             echo "  --version SUFFIX    Version suffix (default: custom-1)"
             echo ""
             echo "Examples:"
-            echo "  $0 --server novabot.ramonvanbruggen.nl"
+            echo "  $0 --server nova-dash.ramonvanbruggen.nl --mqtt-host nova-mqtt.ramonvanbruggen.nl"
             echo "  $0 --input firmware/mower_firmware_v6.0.2.deb --server 192.168.1.50"
             exit 0
             ;;
@@ -87,7 +93,17 @@ if [[ "$INPUT_DEB" != /* ]]; then
     INPUT_DEB="$(pwd)/$INPUT_DEB"
 fi
 
-HTTP_BASE="http://${SERVER_HOST}:${SERVER_HTTP_PORT}"
+# HTTP_BASE: met poort als opgegeven, anders zonder (reverse proxy op 80)
+if [ -n "$SERVER_HTTP_PORT" ]; then
+    HTTP_BASE="http://${SERVER_HOST}:${SERVER_HTTP_PORT}"
+else
+    HTTP_BASE="http://${SERVER_HOST}"
+fi
+
+# MQTT host defaults naar SERVER_HOST als niet apart opgegeven
+if [ -z "$MQTT_HOST" ]; then
+    MQTT_HOST="$SERVER_HOST"
+fi
 
 
 # === Stap 1: Controleer bronbestand ===
@@ -165,7 +181,8 @@ echo "  Novabot Custom Firmware Builder"
 echo "============================================"
 echo "  Bron:          $(basename "$INPUT_DEB")"
 echo "  Basisversie:   ${BASE_VERSION}"
-echo "  Server:        ${SERVER_HOST}:${SERVER_HTTP_PORT}"
+echo "  HTTP server:   ${HTTP_BASE}"
+echo "  MQTT broker:   ${MQTT_HOST}:${MQTT_PORT}"
 echo "  SSH password:  ${SSH_PASSWORD}"
 echo "  Versie:        ${VERSION}"
 echo "  Remote ROS 2:  ${ENABLE_REMOTE_ROS2}"
@@ -245,19 +262,63 @@ fi
 # NB: Gebruik printf i.p.v. echo om trailing newline te voorkomen (breekt URL in curl)
 cat > "$NOVABOT_ROOT/scripts/set_server_urls.sh" << URLSCRIPT
 #!/bin/bash
-# CUSTOM: Stel lokale server URLs in
-# Dit script wordt aangeroepen bij elke boot vanuit run_novabot.sh
-# NB: Firmware prepends "http://" — schrijf ALLEEN host:port, GEEN http:// prefix!
-# NB: Gebruik printf (niet echo) om trailing newline te voorkomen
+# CUSTOM: Stel lokale server URLs in bij elke boot
+# Aangeroepen vanuit run_novabot.sh
+#
+# Dit maakt de maaier ONAFHANKELIJK van *.lfibot.com:
+# - HTTP uploads → eigen server (http_address.txt)
+# - MQTT broker → eigen server (json_config.json)
 
-HTTP_ADDRESS="${SERVER_HOST}:${SERVER_HTTP_PORT}"
+HTTP_ADDRESS="${SERVER_HOST}$([ -n "${SERVER_HTTP_PORT}" ] && echo ":${SERVER_HTTP_PORT}")"
+MQTT_ADDRESS="${MQTT_HOST}"
+MQTT_PORT_NUM=${MQTT_PORT}
 HTTP_ADDR_FILE="/userdata/lfi/http_address.txt"
+MQTT_CONFIG_FILE="/userdata/lfi/json_config.json"
 
-# Schrijf het lokale server adres (zonder http:// prefix, zonder trailing newline)
 mkdir -p /userdata/lfi
+
+# 1. HTTP server adres (firmware prepends "http://", dus ALLEEN host:port, GEEN prefix!)
 printf "%s" "\${HTTP_ADDRESS}" > "\${HTTP_ADDR_FILE}"
 
-echo "[\$(date)] Server URL set to \${HTTP_ADDRESS}" >> /userdata/ota/custom_firmware.log
+# 2. MQTT broker adres — update ALLEEN mqtt velden in json_config.json
+# (behoud alle BLE-provisioned data: wifi, lora, sn, config/tz)
+# Voorkomt ook de tz:null OTA bug in mqtt_node v5.7.1
+python3 << PYEOF
+import json, os
+
+mqtt_addr = "\${MQTT_ADDRESS}"
+mqtt_port = \${MQTT_PORT_NUM}
+cfg_file = "\${MQTT_CONFIG_FILE}"
+
+c = {}
+if os.path.exists(cfg_file):
+    try:
+        with open(cfg_file) as fh:
+            c = json.load(fh)
+    except:
+        pass
+
+# Update alleen MQTT addr en port
+if "mqtt" not in c:
+    c["mqtt"] = {"set": 1, "value": {}}
+elif not isinstance(c.get("mqtt", {}).get("value"), dict):
+    c["mqtt"] = {"set": 1, "value": {}}
+c["mqtt"]["value"]["addr"] = mqtt_addr
+c["mqtt"]["value"]["port"] = mqtt_port
+
+# Timezone fix (voorkomt tz:null OTA bug in mqtt_node v5.7.1)
+if "config" not in c:
+    c["config"] = {"set": 1, "value": {"tz": "Europe/Amsterdam"}}
+elif c.get("config", {}).get("value") is None:
+    c["config"]["value"] = {"tz": "Europe/Amsterdam"}
+elif isinstance(c["config"].get("value"), dict) and "tz" not in c["config"]["value"]:
+    c["config"]["value"]["tz"] = "Europe/Amsterdam"
+
+with open(cfg_file, "w") as fh:
+    json.dump(c, fh)
+PYEOF
+
+echo "[\$(date)] HTTP → \${HTTP_ADDRESS}, MQTT → \${MQTT_ADDRESS}:\${MQTT_PORT_NUM}" >> /userdata/ota/custom_firmware.log
 URLSCRIPT
 chmod +x "$NOVABOT_ROOT/scripts/set_server_urls.sh"
 echo "  set_server_urls.sh aangemaakt"
@@ -444,20 +505,18 @@ echo "    ✓ SSH server wordt geïnstalleerd bij boot"
 echo "    ✓ Root wachtwoord: ${SSH_PASSWORD}"
 echo "    ✓ SSH poort: ${SSH_PORT}"
 echo "    ✓ HTTP uploads → ${HTTP_BASE}"
-echo "    ✓ http_address.txt wordt bij elke boot gezet"
+echo "    ✓ MQTT broker → ${MQTT_HOST}:${MQTT_PORT}"
+echo "    ✓ http_address.txt + json_config.json worden bij elke boot gezet"
 [ "$ENABLE_REMOTE_ROS2" = "true" ] && echo "    ✓ ROS 2 netwerk open (ROS_LOCALHOST_ONLY=0)"
 echo ""
 echo "============================================"
 echo "  OTA FLASH INSTRUCTIES"
 echo "============================================"
 echo ""
-echo "  1. Host het .deb bestand op je server:"
-echo "     cp $OUTPUT_DEB /pad/naar/webserver/"
+echo "  1. Kopieer firmware naar server firmware directory:"
+echo "     cp $OUTPUT_DEB <novabot-server>/firmware/"
 echo ""
-echo "  2. Of start een simpele HTTP server:"
-echo "     cd $OUTPUT_DIR && python3 -m http.server 8080"
-echo ""
-echo "  3. Stuur het OTA commando via MQTT:"
+echo "  2. Stuur het OTA commando via MQTT:"
 echo ""
 echo "     Topic: Dart/Send_mqtt/LFIN2230700238"
 echo "     Payload:"
@@ -468,7 +527,7 @@ cat << OTAJSON
          "content": {
            "upgradeApp": {
              "version": "${VERSION}",
-             "downloadUrl": "http://${SERVER_HOST}:8080/$(basename $OUTPUT_DEB)",
+             "downloadUrl": "${HTTP_BASE}/firmware/$(basename $OUTPUT_DEB)",
              "md5": "${MD5}"
            }
          }
@@ -476,10 +535,10 @@ cat << OTAJSON
      }
 OTAJSON
 echo ""
-echo "  4. Of gebruik het dashboard commando endpoint:"
-echo "     curl -X POST http://localhost:3000/api/dashboard/command/LFIN2230700238 \\"
+echo "  3. Of gebruik het dashboard commando endpoint:"
+echo "     curl -X POST ${HTTP_BASE}/api/dashboard/command/LFIN2230700238 \\"
 echo "       -H 'Content-Type: application/json' \\"
-echo "       -d '{\"command\": \"ota_upgrade_cmd\", \"params\": {\"type\": \"full\", \"content\": {\"upgradeApp\": {\"version\": \"${VERSION}\", \"downloadUrl\": \"http://${SERVER_HOST}:8080/$(basename $OUTPUT_DEB)\", \"md5\": \"${MD5}\"}}}}'"
+echo "       -d '{\"command\": \"ota_upgrade_cmd\", \"params\": {\"type\": \"full\", \"content\": {\"upgradeApp\": {\"version\": \"${VERSION}\", \"downloadUrl\": \"${HTTP_BASE}/firmware/$(basename $OUTPUT_DEB)\", \"md5\": \"${MD5}\"}}}}'"
 echo ""
 echo "  BELANGRIJK:"
 echo "    - Maaier moet OPLADEN voordat download start"
@@ -496,7 +555,7 @@ cat > "$OUTPUT_DIR/ota_flash_command.json" << OTAFILE
     "content": {
       "upgradeApp": {
         "version": "${VERSION}",
-        "downloadUrl": "http://${SERVER_HOST}:8080/$(basename $OUTPUT_DEB)",
+        "downloadUrl": "${HTTP_BASE}/firmware/$(basename $OUTPUT_DEB)",
         "md5": "${MD5}"
       }
     }

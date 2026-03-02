@@ -41,7 +41,7 @@ export interface ProvisionParams {
   wifiSsid: string;
   /** WiFi password */
   wifiPassword: string;
-  /** MQTT broker address (default: mqtt.lfibot.com) */
+  /** MQTT broker address (default: nova-mqtt.ramonvanbruggen.nl) */
   mqttAddr?: string;
   /** MQTT broker port (default: 1883) */
   mqttPort?: number;
@@ -210,7 +210,7 @@ export async function provisionDevice(params: ProvisionParams): Promise<Provisio
     targetMac,
     wifiSsid,
     wifiPassword,
-    mqttAddr = 'mqtt.lfibot.com',
+    mqttAddr = 'nova-mqtt.ramonvanbruggen.nl',
     mqttPort = 1883,
     loraAddr = 718,
     loraChannel = 15,

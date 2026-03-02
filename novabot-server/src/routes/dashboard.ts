@@ -1145,6 +1145,14 @@ dashboardRouter.post('/ota/trigger/:sn', (req: Request, res: Response) => {
 
   console.log(`\x1b[38;5;208m[OTA] Trigger OTA voor ${sn}: versie=${otaVersion.version}${currentVersion ? ` (huidig: ${currentVersion})` : ''} url=${otaVersion.download_url}\x1b[0m`);
 
+  // Maaier: stuur set_cfg_info met timezone VOOR het OTA commando.
+  // mqtt_node voegt "tz" toe aan het OTA commando vanuit geheugen — na restart is dit null.
+  // set_cfg_info zet de timezone in mqtt_node's geheugen zodat OTA het kan lezen.
+  if (sn.startsWith('LFIN')) {
+    console.log(`\x1b[38;5;208m[OTA] Timezone instellen op ${sn} voor OTA...\x1b[0m`);
+    publishToDevice(sn, { set_cfg_info: { cfg_value: 1, tz: 'Europe/Amsterdam' } });
+  }
+
   // Beide apparaten krijgen nu AES-encrypted commando's (charger v0.4.0+ en maaier v6+)
   // publishToDevice() handelt AES encryptie automatisch af voor LFI* apparaten
   const isCharger = sn.startsWith('LFIC');
@@ -1163,9 +1171,12 @@ dashboardRouter.post('/ota/trigger/:sn', (req: Request, res: Response) => {
   } else {
     // Maaier OTA: genest formaat — mqtt_node parseert type/content/upgradeApp
     // Veldnaam is "downloadUrl" (bevestigd: app OTA werkte tot 68% met dit veld)
+    // tz meesturen: mqtt_node voegt "tz":null toe als timezone niet in geheugen zit
+    // (firmware bug: mqtt_node leest timezone niet terug uit file na restart)
     const mowerOtaCommand = {
       ota_upgrade_cmd: {
         type: 'full',
+        tz: 'Europe/Amsterdam',
         content: {
           upgradeApp: {
             version: otaVersion.version,

@@ -38,7 +38,7 @@ function getArg(name) {
 }
 const hasFlag = (name) => args.includes(name);
 
-const MQTT_HOST = getArg('--mqtt-host') || 'novabot.ramonvanbruggen.nl';
+const MQTT_HOST = getArg('--mqtt-host') || 'nova-mqtt.ramonvanbruggen.nl';
 const MQTT_PORT = parseInt(getArg('--mqtt-port') || '1883', 10);
 const TARGET_MAC = (getArg('--mac') || '48:27:E2:1B:A4:0A').toLowerCase().replace(/:/g, '');
 const TIMEOUT_SEC = parseInt(getArg('--timeout') || '30', 10);

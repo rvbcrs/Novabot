@@ -14,12 +14,17 @@ interface Props {
 
 type TriggerState = 'idle' | 'sending' | 'done' | 'error';
 
-/** Auto-detect the real server address (not the Vite dev proxy). */
+/** Auto-detect server address reachable by devices (not localhost/127.0.0.1). */
 function defaultServerBase(): string {
   const { hostname, port } = window.location;
-  // Vite dev server runs on 5173/5174 — the actual server is on 3000
-  const serverPort = (port === '5173' || port === '5174') ? '3000' : port;
-  return `http://${hostname}:${serverPort}`;
+  // Devices can't reach localhost — use actual hostname/IP
+  const deviceHost = (hostname === 'localhost' || hostname === '127.0.0.1')
+    ? 'nova-dash.ramonvanbruggen.nl'
+    : hostname;
+  // Dev ports (Vite) → local API port; reverse proxy (80/443) → no port suffix
+  const portSuffix = (port === '5173' || port === '5174') ? ':3000'
+    : port ? `:${port}` : '';
+  return `http://${deviceHost}${portSuffix}`;
 }
 
 export function OtaManager({ devices, otaProgress }: Props) {
@@ -71,7 +76,7 @@ export function OtaManager({ devices, otaProgress }: Props) {
     const key = `${sn}-${versionId}`;
     setTriggerState(s => ({ ...s, [key]: 'sending' }));
     try {
-      await triggerOta(sn, versionId);
+      await triggerOta(sn, versionId, true);
       setTriggerState(s => ({ ...s, [key]: 'done' }));
       setTimeout(() => setTriggerState(s => ({ ...s, [key]: 'idle' })), 5000);
     } catch {
