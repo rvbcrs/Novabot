@@ -104,14 +104,17 @@ dashboardRouter.get('/devices', (_req: Request, res: Response) => {
 
 // GET /api/dashboard/unbound-devices — apparaten die verbonden zijn maar nog niet aan een account gekoppeld
 dashboardRouter.get('/unbound-devices', (_req: Request, res: Response) => {
-  // Alle SNs die al in equipment zitten met een user_id
-  const boundSnRows = db.prepare(
-    `SELECT mower_sn, charger_sn FROM equipment WHERE user_id IS NOT NULL`
-  ).all() as { mower_sn: string; charger_sn: string | null }[];
+  // Alle SNs die al in equipment zitten én gekoppeld zijn aan een bestaande gebruiker.
+  // Equipment met een verwijzing naar een niet-bestaand account (verwijderd account) telt als ongebonden.
+  const boundSnRows = db.prepare(`
+    SELECT mower_sn, charger_sn FROM equipment
+    WHERE user_id IS NOT NULL
+      AND user_id IN (SELECT app_user_id FROM users)
+  `).all() as { mower_sn: string; charger_sn: string | null }[];
 
   const boundSns = new Set<string>();
   for (const r of boundSnRows) {
-    if (r.mower_sn)  boundSns.add(r.mower_sn);
+    if (r.mower_sn)   boundSns.add(r.mower_sn);
     if (r.charger_sn) boundSns.add(r.charger_sn);
   }
 

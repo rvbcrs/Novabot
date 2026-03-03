@@ -246,30 +246,47 @@ function FieldInput({ icon: Icon, type, value, onChange, placeholder, required }
 function CertStep({ onComplete }: { onComplete: () => void }) {
   const [status, setStatus] = useState<'waiting' | 'detected' | 'manual-fail'>('waiting');
   const [openGuide, setOpenGuide] = useState<string | null>('mac');
+  const [manualChecking, setManualChecking] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const stoppedRef = useRef(false);
 
   // Poll elke 2 seconden automatisch
   useEffect(() => {
-    let stopped = false;
+    stoppedRef.current = false;
+
+    const advance = () => {
+      setStatus('detected');
+      if (intervalRef.current) clearInterval(intervalRef.current);
+      setTimeout(() => { if (!stoppedRef.current) onComplete(); }, 1200);
+    };
 
     const poll = async () => {
       const trusted = await checkCertTrusted();
-      if (!stopped && trusted) {
-        setStatus('detected');
-        if (intervalRef.current) clearInterval(intervalRef.current);
-        // Korte pauze zodat de gebruiker de succesmelding ziet
-        setTimeout(() => { if (!stopped) onComplete(); }, 1200);
-      }
+      if (!stoppedRef.current && trusted) advance();
     };
 
-    poll(); // direct eerste check
+    poll();
     intervalRef.current = setInterval(poll, 2000);
 
     return () => {
-      stopped = true;
+      stoppedRef.current = true;
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
   }, [onComplete]);
+
+  const handleManualCheck = async () => {
+    setManualChecking(true);
+    const trusted = await checkCertTrusted();
+    setManualChecking(false);
+    if (trusted) {
+      stoppedRef.current = true;
+      if (intervalRef.current) clearInterval(intervalRef.current);
+      setStatus('detected');
+      setTimeout(onComplete, 1200);
+    } else {
+      setStatus('manual-fail');
+    }
+  };
 
   const detected = status === 'detected';
 
@@ -330,10 +347,11 @@ function CertStep({ onComplete }: { onComplete: () => void }) {
               onToggle={() => setOpenGuide(g => g === 'iphone' ? null : 'iphone')}
               steps={[
                 'Stuur het .crt bestand naar je iPhone (AirDrop of mail)',
-                'Open het bestand → "Profiel gedownload" verschijnt',
-                'Ga naar Instellingen → Profiel gedownload → Installeer',
-                'Ga naar Instellingen → Algemeen → Info → Vertrouwde certificaten',
-                'Zet "Novabot Local CA" aan',
+                'Tik op het bestand → "Profiel gedownload" verschijnt bovenaan',
+                'Ga naar Instellingen → bovenaan "Profiel gedownload" → Installeer → Installeer',
+                '⚠️ VERPLICHTE EXTRA STAP: Ga naar Instellingen → Algemeen → Info → Certificaatvertrouwen',
+                'Zet de schakelaar bij "Novabot Local CA" aan → Doorgaan',
+                'Zonder deze stap werkt het certificaat niet!',
               ]}
             />
             <Guide
@@ -348,21 +366,33 @@ function CertStep({ onComplete }: { onComplete: () => void }) {
             />
           </div>
 
-          {/* Auto-detect status */}
-          <div className="flex items-center gap-2.5 bg-gray-900 border border-gray-800 rounded-xl px-4 py-3">
-            <Loader2 className="w-4 h-4 text-blue-400 animate-spin flex-shrink-0" />
-            <div>
-              <p className="text-xs text-gray-300 font-medium">Automatisch detecteren...</p>
-              <p className="text-[11px] text-gray-500 mt-0.5">
-                Het dashboard gaat vanzelf verder zodra het certificaat vertrouwd is.
-              </p>
+          {/* Auto-detect status + handmatige fallback */}
+          <div className="bg-gray-900 border border-gray-800 rounded-xl px-4 py-3">
+            <div className="flex items-center gap-2.5 mb-3">
+              <Loader2 className="w-4 h-4 text-blue-400 animate-spin flex-shrink-0" />
+              <div>
+                <p className="text-xs text-gray-300 font-medium">Automatisch detecteren...</p>
+                <p className="text-[11px] text-gray-500 mt-0.5">
+                  Het dashboard gaat vanzelf verder zodra het certificaat vertrouwd is.
+                </p>
+              </div>
             </div>
+            <button
+              onClick={handleManualCheck}
+              disabled={manualChecking}
+              className="w-full flex items-center justify-center gap-1.5 text-xs py-2 rounded-lg bg-gray-800 hover:bg-gray-700 disabled:opacity-50 text-gray-300 transition-colors"
+            >
+              <Loader2 className={`w-3.5 h-3.5 ${manualChecking ? 'animate-spin' : 'opacity-0'}`} />
+              {manualChecking ? 'Controleren...' : 'Controleer handmatig'}
+            </button>
           </div>
 
           {status === 'manual-fail' && (
-            <p className="text-center text-xs text-red-400 mt-3">
-              Certificaat nog niet vertrouwd — installeer het en de pagina gaat vanzelf verder.
-            </p>
+            <div className="bg-red-950/30 border border-red-800/30 rounded-xl px-4 py-3 text-xs text-red-300 leading-relaxed">
+              Certificaat nog niet vertrouwd. Op iPhone: controleer of je de schakelaar bij
+              {' '}<strong>Instellingen → Algemeen → Info → Certificaatvertrouwen</strong>{' '}
+              hebt aangezet.
+            </div>
           )}
 
           <p className="text-center text-[11px] text-gray-600 mt-4">

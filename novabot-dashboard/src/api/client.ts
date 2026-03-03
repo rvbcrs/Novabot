@@ -284,7 +284,16 @@ export async function testDns(serverPort: number): Promise<{ ok: boolean; resolv
 export async function checkCertTrusted(): Promise<boolean> {
   try {
     const httpsUrl = `https://${window.location.hostname}/api/dashboard/setup/status`;
-    const res = await fetch(httpsUrl, { signal: AbortSignal.timeout(5000) });
+    // AbortSignal.timeout is niet beschikbaar in Safari < 16 — gebruik een fallback
+    let signal: AbortSignal | undefined;
+    try {
+      signal = AbortSignal.timeout(5000);
+    } catch {
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(), 5000);
+      signal = controller.signal;
+    }
+    const res = await fetch(httpsUrl, { signal });
     return res.ok;
   } catch {
     return false;
