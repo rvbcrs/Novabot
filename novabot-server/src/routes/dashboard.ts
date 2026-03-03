@@ -831,7 +831,7 @@ dashboardRouter.post('/schedules/:sn/:scheduleId/send', (req: Request, res: Resp
 // ── Static firmware file serving ────────────────────────────────
 import express from 'express';
 
-const firmwareDir = path.resolve(__dirname, '../../firmware');
+const firmwareDir = process.env.FIRMWARE_PATH ?? path.resolve(__dirname, '../../firmware');
 // Custom firmware download handler met uitgebreide logging
 dashboardRouter.get('/firmware/:filename', (req: Request, res: Response) => {
   const filename = req.params.filename;

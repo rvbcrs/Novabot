@@ -1,0 +1,38 @@
+services:
+  novabot:
+    build: .
+    container_name: novabot
+    restart: unless-stopped
+    ports:
+      - "53:53/udp"
+      - "53:53/tcp"
+      - "80:80"
+      - "1883:1883"
+      - "3000:3000"
+    environment:
+      # Server
+      PORT: 3000
+      JWT_SECRET: ${JWT_SECRET:-change_me_to_a_long_random_secret}
+      DB_PATH: /data/novabot.db
+      STORAGE_PATH: /data/storage
+      FIRMWARE_PATH: /data/firmware
+
+      # DNS — VERPLICHT: IP-adres van de machine waarop deze container draait
+      TARGET_IP: ${TARGET_IP:?}
+      UPSTREAM_DNS: ${UPSTREAM_DNS:-8.8.8.8}
+      # Extra domeinen om te redirecten (komma-gescheiden, optioneel)
+      # Alleen nodig als je firmware hebt geflasht met custom domeinen
+      EXTRA_DOMAINS: ${EXTRA_DOMAINS:-}
+
+      # Home Assistant MQTT bridge (optioneel — uncomment om te activeren)
+      # HA_MQTT_HOST: 192.168.0.248
+      # HA_MQTT_PORT: 1883
+      # HA_MQTT_USER: mqtt
+      # HA_MQTT_PASS: mqtt
+      # HA_THROTTLE_MS: 2000
+      # HA_DISCOVERY_PREFIX: homeassistant
+    volumes:
+      - novabot-data:/data
+
+volumes:
+  novabot-data:

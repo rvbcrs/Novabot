@@ -44,7 +44,7 @@ function defaultServerBase(): string {
   const { hostname, port } = window.location;
   // Devices can't reach localhost — use actual hostname/IP
   const deviceHost = (hostname === 'localhost' || hostname === '127.0.0.1')
-    ? 'nova-dash.ramonvanbruggen.nl'
+    ? 'app.lfibot.com'
     : hostname;
   // Dev ports (Vite) → local API port; reverse proxy (80/443) → no port suffix
   const portSuffix = (port === '5173' || port === '5174') ? ':3000'

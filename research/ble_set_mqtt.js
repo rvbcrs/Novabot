@@ -17,7 +17,7 @@
  * found via BLE scan but will NOT respond to commands. Power-cycle it!
  *
  * OPTIONS:
- *   --mqtt-host <host>   MQTT broker hostname (default: novabot.ramonvanbruggen.nl)
+ *   --mqtt-host <host>   MQTT broker hostname (default: mqtt.lfibot.com)
  *   --mqtt-port <port>   MQTT broker port (default: 1883)
  *   --mac <MAC>          Target BLE MAC (default: 48:27:E2:1B:A4:0A = charger LFIC1230700004)
  *   --timeout <sec>      Scan timeout in seconds (default: 30)
@@ -38,7 +38,7 @@ function getArg(name) {
 }
 const hasFlag = (name) => args.includes(name);
 
-const MQTT_HOST = getArg('--mqtt-host') || 'nova-mqtt.ramonvanbruggen.nl';
+const MQTT_HOST = getArg('--mqtt-host') || 'mqtt.lfibot.com';
 const MQTT_PORT = parseInt(getArg('--mqtt-port') || '1883', 10);
 const TARGET_MAC = (getArg('--mac') || '48:27:E2:1B:A4:0A').toLowerCase().replace(/:/g, '');
 const TIMEOUT_SEC = parseInt(getArg('--timeout') || '30', 10);
