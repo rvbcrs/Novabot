@@ -2,7 +2,7 @@ import { useState, useCallback } from 'react';
 import {
   Plug, TreePine, ChevronDown, Terminal, Calendar, Circle,
   BatteryMedium, Satellite, Radio, Activity,
-  Wifi, Bluetooth, Trash2, Thermometer, HardDrive, Code, Octagon,
+  Wifi, Bluetooth, Trash2, Thermometer, HardDrive, Code, Octagon, Settings,
   Map as MapIcon, Camera, Save, StopCircle, X,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -15,7 +15,9 @@ import { Scheduler } from '../schedule/Scheduler';
 import { MowerControls } from './MowerControls';
 import { SensorGrid } from '../sensors/SensorGrid';
 import { OtaManager } from '../ota/OtaManager';
+import { SetupWizard } from '../setup/SetupWizard';
 import { CameraStream } from './CameraStream';
+import { UnboundDevices } from './UnboundDevices';
 import { deleteDevice, sendCommand } from '../../api/client';
 import { useToast } from '../common/Toast';
 
@@ -228,6 +230,7 @@ export function DashboardPage({ devices, loading, logs, bleLogs, otaProgress }: 
   const [logOpen, setLogOpen] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [otaOpen, setOtaOpen] = useState(false);
+  const [setupOpen, setSetupOpen] = useState(false);
   const [pathDirPreview, setPathDirPreview] = useState<number | null>(null);
   const [expandedChip, setExpandedChip] = useState<string | null>(null);
   const [pendingPolygon, setPendingPolygon] = useState<{ mapId: string; mapName: string; mapArea: Array<{ lat: number; lng: number }> } | null>(null);
@@ -314,7 +317,7 @@ export function DashboardPage({ devices, loading, logs, bleLogs, otaProgress }: 
           )}
           {mower && (
             <button
-              onClick={() => { setScheduleOpen(!scheduleOpen); if (scheduleOpen) setPathDirPreview(null); setOtaOpen(false); }}
+              onClick={() => { setScheduleOpen(!scheduleOpen); if (scheduleOpen) setPathDirPreview(null); setOtaOpen(false); setSetupOpen(false); }}
               className={`inline-flex items-center gap-1.5 text-xs h-7 px-2.5 rounded transition-colors ${
                 scheduleOpen ? 'bg-blue-600 text-white' : 'bg-gray-700/60 text-gray-400 hover:text-white'
               }`}
@@ -324,7 +327,7 @@ export function DashboardPage({ devices, loading, logs, bleLogs, otaProgress }: 
             </button>
           )}
           <button
-            onClick={() => { setOtaOpen(!otaOpen); setScheduleOpen(false); setPathDirPreview(null); }}
+            onClick={() => { setOtaOpen(!otaOpen); setScheduleOpen(false); setSetupOpen(false); setPathDirPreview(null); }}
             className={`inline-flex items-center gap-1.5 text-xs h-7 px-2.5 rounded transition-colors ${
               otaOpen ? 'bg-orange-600 text-white' : 'bg-gray-700/60 text-gray-400 hover:text-white'
             }`}
@@ -345,6 +348,16 @@ export function DashboardPage({ devices, loading, logs, bleLogs, otaProgress }: 
               {t('camera.camera')}
             </button>
           )}
+          <button
+            onClick={() => { setSetupOpen(!setupOpen); setOtaOpen(false); setScheduleOpen(false); setPathDirPreview(null); }}
+            className={`inline-flex items-center gap-1.5 text-xs h-7 px-2.5 rounded transition-colors ${
+              setupOpen ? 'bg-blue-600 text-white' : 'bg-gray-700/60 text-gray-400 hover:text-white'
+            }`}
+            title="Setup"
+          >
+            <Settings className="w-3.5 h-3.5" />
+            Setup
+          </button>
         </div>
       </div>
 
@@ -445,6 +458,10 @@ export function DashboardPage({ devices, loading, logs, bleLogs, otaProgress }: 
               <CameraStream sn={mower.sn} online={mower.online} onClose={() => setCameraOpen(false)} />
             </div>
           )}
+          {/* Ongebonden apparaten — overlay linksboven op de kaart */}
+          <div className="absolute top-3 left-3 z-[1000] w-80 pointer-events-auto">
+            <UnboundDevices onBound={() => window.location.reload()} />
+          </div>
           {/* Mower sensor overlay on map */}
           {mower && (
             <div className="absolute bottom-0 left-0 right-0 z-[1000] max-h-[50%] overflow-auto p-4 pointer-events-none">
@@ -464,6 +481,12 @@ export function DashboardPage({ devices, loading, logs, bleLogs, otaProgress }: 
         {otaOpen && (
           <div className="w-80 flex-shrink-0 overflow-auto border-l border-gray-800">
             <OtaManager devices={devices} otaProgress={otaProgress} />
+          </div>
+        )}
+        {/* Setup side panel */}
+        {setupOpen && (
+          <div className="w-80 flex-shrink-0 overflow-auto border-l border-gray-800">
+            <SetupWizard />
           </div>
         )}
       </div>

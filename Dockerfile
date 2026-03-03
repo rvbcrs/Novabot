@@ -31,7 +31,7 @@ RUN cd novabot-dashboard && npm run build
 # ── Stage 2: Runtime ──────────────────────────────────────────────────────────
 FROM node:20-alpine
 
-RUN apk add --no-cache dnsmasq
+RUN apk add --no-cache dnsmasq nginx openssl
 
 WORKDIR /app
 
@@ -50,7 +50,7 @@ RUN chmod +x /app/docker-entrypoint.sh
 # Persistent data directory
 RUN mkdir -p /data/storage /data/firmware
 
-# Ports: DNS, HTTP (mower compat), MQTT, API+Dashboard
-EXPOSE 53/udp 53/tcp 80 1883 3000
+# Ports: DNS, HTTP, HTTPS (app), MQTT, API+Dashboard
+EXPOSE 53/udp 53/tcp 80 443 1883 3000
 
 ENTRYPOINT ["/app/docker-entrypoint.sh"]

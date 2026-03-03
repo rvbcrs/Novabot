@@ -3,9 +3,9 @@
     "type": "full",
     "content": {
       "upgradeApp": {
-        "version": "v6.0.2-custom-7",
-        "downloadUrl": "http://192.168.0.177:3000/firmware/mower_firmware_v6.0.2-custom-7.deb",
-        "md5": "1999d23b85dd9303b95de03af63daf72"
+        "version": "v6.0.2-custom-8",
+        "downloadUrl": "http://app.lfibot.com/firmware/mower_firmware_v6.0.2-custom-8.deb",
+        "md5": "29c2f201aac3397818a0703a9541d980"
       }
     }
   }

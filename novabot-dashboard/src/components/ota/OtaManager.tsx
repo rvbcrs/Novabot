@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
-import { HardDrive, Zap, Trash2, RefreshCw, Plus, Check, AlertCircle, AlertTriangle, X, Pencil } from 'lucide-react';
+import { HardDrive, Zap, Trash2, RefreshCw, Check, AlertCircle, AlertTriangle, X, Pencil } from 'lucide-react';
 import type { DeviceState } from '../../types';
 import type { OtaProgress } from '../../hooks/useDevices';
 import {
-  fetchOtaVersions, fetchFirmwareFiles, addOtaVersion, updateOtaVersion, deleteOtaVersion, triggerOta,
+  fetchOtaVersions, fetchFirmwareFiles, updateOtaVersion, deleteOtaVersion, triggerOta,
   type OtaVersion, type FirmwareFile,
 } from '../../api/client';
 
@@ -39,34 +39,14 @@ interface ConfirmDialog {
   onConfirm: () => void;
 }
 
-/** Auto-detect server address reachable by devices (not localhost/127.0.0.1). */
-function defaultServerBase(): string {
-  const { hostname, port } = window.location;
-  // Devices can't reach localhost — use actual hostname/IP
-  const deviceHost = (hostname === 'localhost' || hostname === '127.0.0.1')
-    ? 'app.lfibot.com'
-    : hostname;
-  // Dev ports (Vite) → local API port; reverse proxy (80/443) → no port suffix
-  const portSuffix = (port === '5173' || port === '5174') ? ':3000'
-    : port ? `:${port}` : '';
-  return `http://${deviceHost}${portSuffix}`;
-}
-
 export function OtaManager({ devices, otaProgress }: Props) {
   const [versions, setVersions] = useState<OtaVersion[]>([]);
   const [files, setFiles] = useState<FirmwareFile[]>([]);
   const [loading, setLoading] = useState(false);
-  const [showAdd, setShowAdd] = useState(false);
-  const [serverBase, setServerBase] = useState(defaultServerBase);
-  const [addForm, setAddForm] = useState({
-    file: '', version: '', device_type: 'charger',
-    urlMode: 'local' as 'local' | 'custom',
-    customUrl: '',
-  });
   const [triggerState, setTriggerState] = useState<Record<string, TriggerState>>({});
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialog | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
-  const [editForm, setEditForm] = useState({ version: '', device_type: '', download_url: '' });
+  const [editForm, setEditForm] = useState({ version: '', device_type: '' });
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -79,20 +59,6 @@ export function OtaManager({ devices, otaProgress }: Props) {
   }, []);
 
   useEffect(() => { load(); }, [load]);
-
-  const handleAddVersion = async () => {
-    if (!addForm.version) return;
-    const downloadUrl = addForm.urlMode === 'custom'
-      ? addForm.customUrl.trim()
-      : `${serverBase}/api/dashboard/firmware/${encodeURIComponent(addForm.file)}`;
-    if (!downloadUrl) return;
-    try {
-      await addOtaVersion({ version: addForm.version, device_type: addForm.device_type, download_url: downloadUrl });
-      setShowAdd(false);
-      setAddForm({ file: '', version: '', device_type: 'charger', urlMode: 'local', customUrl: '' });
-      await load();
-    } catch { /* ignore */ }
-  };
 
   const handleDelete = (id: number, version: string) => {
     setConfirmDialog({
@@ -111,7 +77,7 @@ export function OtaManager({ devices, otaProgress }: Props) {
 
   const handleStartEdit = (v: OtaVersion) => {
     setEditingId(v.id);
-    setEditForm({ version: v.version, device_type: v.device_type, download_url: v.download_url ?? '' });
+    setEditForm({ version: v.version, device_type: v.device_type });
   };
 
   const handleSaveEdit = async () => {
@@ -120,7 +86,6 @@ export function OtaManager({ devices, otaProgress }: Props) {
       await updateOtaVersion(editingId, {
         version: editForm.version,
         device_type: editForm.device_type,
-        download_url: editForm.download_url || undefined,
       });
       setEditingId(null);
       await load();
@@ -131,12 +96,18 @@ export function OtaManager({ devices, otaProgress }: Props) {
     const cmp = deviceVersion ? compareVersions(targetVersion, deviceVersion) : 1;
     const isDowngrade = cmp < 0;
     const isSame = cmp === 0;
+    const device = devices.get(sn);
+    const isMower = device?.deviceType === 'mower';
+    const isCharging = String(device?.sensors?.recharge_status) === '1';
+    const chargeNote = isMower && !isCharging
+      ? '\n\nDe download start pas als de maaier op het laadstation staat.'
+      : '';
 
     if (isDowngrade) {
       setConfirmDialog({
         title: 'Downgrade waarschuwing',
         message: `Je staat op het punt om te downgraden:`,
-        detail: `${deviceVersion}  \u2192  ${targetVersion}`,
+        detail: `${deviceVersion}  \u2192  ${targetVersion}${chargeNote}`,
         variant: 'warning',
         confirmLabel: 'Toch flashen',
         onConfirm: () => { setConfirmDialog(null); handleTrigger(sn, versionId); },
@@ -145,7 +116,7 @@ export function OtaManager({ devices, otaProgress }: Props) {
       setConfirmDialog({
         title: 'Zelfde versie',
         message: `${deviceName} draait al ${deviceVersion}.`,
-        detail: `Wil je dezelfde versie opnieuw flashen?`,
+        detail: `Wil je dezelfde versie opnieuw flashen?${chargeNote}`,
         variant: 'info',
         confirmLabel: 'Opnieuw flashen',
         onConfirm: () => { setConfirmDialog(null); handleTrigger(sn, versionId); },
@@ -155,7 +126,7 @@ export function OtaManager({ devices, otaProgress }: Props) {
       setConfirmDialog({
         title: 'Firmware update',
         message: `${deviceName} updaten:`,
-        detail: `${deviceVersion ?? 'onbekend'}  \u2192  ${targetVersion}`,
+        detail: `${deviceVersion ?? 'onbekend'}  \u2192  ${targetVersion}${chargeNote}`,
         variant: 'info',
         confirmLabel: 'Flashen',
         onConfirm: () => { setConfirmDialog(null); handleTrigger(sn, versionId); },
@@ -211,7 +182,7 @@ export function OtaManager({ devices, otaProgress }: Props) {
             <div className="px-4 py-4">
               <p className="text-sm text-gray-300">{confirmDialog.message}</p>
               {confirmDialog.detail && (
-                <div className={`mt-3 flex items-center justify-center gap-2 text-sm font-mono px-3 py-2 rounded ${
+                <div className={`mt-3 text-center text-sm font-mono px-3 py-2 rounded whitespace-pre-line ${
                   confirmDialog.variant === 'warning'
                     ? 'bg-amber-950/30 text-amber-300 border border-amber-800/50'
                     : confirmDialog.variant === 'danger'
@@ -335,141 +306,14 @@ export function OtaManager({ devices, otaProgress }: Props) {
           )}
         </div>
 
-        {/* Registered OTA versions */}
+        {/* Registered OTA versions (auto-detected from firmware directory) */}
         <div>
-          <div className="flex items-center justify-between mb-1.5">
-            <div className="text-[10px] text-gray-500 uppercase tracking-wide">Geregistreerde versies</div>
-            <button
-              onClick={() => setShowAdd(v => !v)}
-              className="flex items-center gap-0.5 text-[10px] text-orange-400 hover:text-orange-300"
-            >
-              <Plus className="w-3 h-3" />
-              Registreer
-            </button>
-          </div>
+          <div className="text-[10px] text-gray-500 uppercase tracking-wide mb-1.5">Geregistreerde versies</div>
 
-          {/* Add version form */}
-          {showAdd && (
-            <div className="bg-gray-800 rounded p-2.5 mb-3 space-y-2 border border-gray-700">
-
-              {/* URL source toggle */}
-              <div className="flex rounded overflow-hidden border border-gray-700 text-[10px]">
-                {(['local', 'custom'] as const).map(mode => (
-                  <button
-                    key={mode}
-                    onClick={() => setAddForm(f => ({ ...f, urlMode: mode }))}
-                    className={`flex-1 py-1 transition-colors ${addForm.urlMode === mode ? 'bg-orange-700 text-white' : 'bg-gray-900 text-gray-400 hover:text-gray-200'}`}
-                  >
-                    {mode === 'local' ? 'Lokaal bestand' : 'Eigen URL'}
-                  </button>
-                ))}
-              </div>
-
-              {addForm.urlMode === 'local' ? (
-                <>
-                  {/* Server address */}
-                  <div>
-                    <label className="text-[9px] text-gray-500 uppercase tracking-wide">
-                      Server adres (bereikbaar door apparaten)
-                    </label>
-                    <input
-                      type="text"
-                      value={serverBase}
-                      onChange={e => setServerBase(e.target.value.replace(/\/$/, ''))}
-                      className="mt-0.5 w-full text-xs bg-gray-900 border border-gray-700 rounded px-1.5 py-1 text-gray-200 font-mono focus:outline-none focus:border-orange-500"
-                      placeholder="http://192.168.x.x:3000"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[9px] text-gray-500 uppercase tracking-wide">Bestand</label>
-                    {files.length === 0 ? (
-                      <p className="mt-0.5 text-[10px] text-amber-500/80 leading-snug">
-                        Geen bestanden in <code className="text-amber-400/80">novabot-server/firmware/</code>.
-                        Kopieer er bestanden naartoe of gebruik "Eigen URL".
-                      </p>
-                    ) : (
-                      <select
-                        value={addForm.file}
-                        onChange={e => setAddForm(f => ({ ...f, file: e.target.value }))}
-                        className="mt-0.5 w-full text-xs bg-gray-900 border border-gray-700 rounded px-1.5 py-1 text-gray-200"
-                      >
-                        <option value="">-- selecteer --</option>
-                        {files.map(f => (
-                          <option key={f.name} value={f.name}>{f.name}</option>
-                        ))}
-                      </select>
-                    )}
-                  </div>
-                  {addForm.file && (
-                    <p className="text-[9px] text-gray-500 font-mono leading-tight break-all">
-                      URL: {serverBase}/api/dashboard/firmware/{addForm.file}
-                    </p>
-                  )}
-                </>
-              ) : (
-                <div>
-                  <label className="text-[9px] text-gray-500 uppercase tracking-wide">Download URL</label>
-                  <input
-                    type="text"
-                    value={addForm.customUrl}
-                    onChange={e => setAddForm(f => ({ ...f, customUrl: e.target.value }))}
-                    placeholder="http://192.168.x.x:8080/firmware.bin"
-                    className="mt-0.5 w-full text-xs bg-gray-900 border border-gray-700 rounded px-1.5 py-1 text-gray-200 placeholder-gray-600 font-mono focus:outline-none focus:border-orange-500"
-                  />
-                  <p className="mt-0.5 text-[9px] text-gray-600 leading-tight">
-                    Bijv. een bestand geserveerd via <code>python3 -m http.server 8080</code> in <code>research/firmware/</code>
-                  </p>
-                </div>
-              )}
-
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="text-[9px] text-gray-500 uppercase tracking-wide">Versie label</label>
-                  <input
-                    type="text"
-                    value={addForm.version}
-                    onChange={e => setAddForm(f => ({ ...f, version: e.target.value }))}
-                    placeholder="bijv. v0.4.0-patched"
-                    className="mt-0.5 w-full text-xs bg-gray-900 border border-gray-700 rounded px-1.5 py-1 text-gray-200 placeholder-gray-600 focus:outline-none focus:border-orange-500"
-                  />
-                </div>
-                <div>
-                  <label className="text-[9px] text-gray-500 uppercase tracking-wide">Apparaat type</label>
-                  <select
-                    value={addForm.device_type}
-                    onChange={e => setAddForm(f => ({ ...f, device_type: e.target.value }))}
-                    className="mt-0.5 w-full text-xs bg-gray-900 border border-gray-700 rounded px-1.5 py-1 text-gray-200"
-                  >
-                    <option value="charger">Laadstation</option>
-                    <option value="mower">Maaier</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="flex gap-2 pt-1">
-                <button
-                  onClick={() => setShowAdd(false)}
-                  className="flex-1 text-xs py-1 rounded bg-gray-700 text-gray-400 hover:text-gray-200 transition-colors"
-                >
-                  Annuleren
-                </button>
-                <button
-                  onClick={handleAddVersion}
-                  disabled={
-                    !addForm.version ||
-                    (addForm.urlMode === 'local' && !addForm.file) ||
-                    (addForm.urlMode === 'custom' && !addForm.customUrl.trim())
-                  }
-                  className="flex-1 text-xs py-1 rounded bg-orange-700 text-white hover:bg-orange-600 disabled:opacity-40 transition-colors"
-                >
-                  Registreren
-                </button>
-              </div>
-            </div>
-          )}
-
-          {versions.length === 0 && !showAdd && (
-            <p className="text-xs text-gray-600 italic">Geen versies geregistreerd</p>
+          {versions.length === 0 && (
+            <p className="text-xs text-gray-600 italic leading-snug">
+              Geen versies gevonden. Kopieer <code className="text-gray-500">.bin</code> / <code className="text-gray-500">.deb</code> naar de firmware map — versies worden automatisch geregistreerd.
+            </p>
           )}
 
           <div className="space-y-2">
@@ -478,6 +322,9 @@ export function OtaManager({ devices, otaProgress }: Props) {
                 v.device_type === 'charger' ? d.deviceType === 'charger' : d.deviceType === 'mower',
               );
               const isEditing = editingId === v.id;
+              const filename = v.download_url?.match(/\/firmware\/([^/]+)$/)?.[1]
+                ? decodeURIComponent(v.download_url.match(/\/firmware\/([^/]+)$/)![1])
+                : null;
               return (
                 <div key={v.id} className="bg-gray-800 rounded p-2.5 border border-gray-700/50">
                   {isEditing ? (
@@ -504,15 +351,6 @@ export function OtaManager({ devices, otaProgress }: Props) {
                             <option value="mower">Maaier</option>
                           </select>
                         </div>
-                      </div>
-                      <div>
-                        <label className="text-[9px] text-gray-500 uppercase tracking-wide">Download URL</label>
-                        <input
-                          type="text"
-                          value={editForm.download_url}
-                          onChange={e => setEditForm(f => ({ ...f, download_url: e.target.value }))}
-                          className="mt-0.5 w-full text-xs bg-gray-900 border border-gray-700 rounded px-1.5 py-1 text-gray-200 font-mono focus:outline-none focus:border-orange-500"
-                        />
                       </div>
                       <div className="flex gap-2 pt-1">
                         <button
@@ -562,6 +400,9 @@ export function OtaManager({ devices, otaProgress }: Props) {
                     </div>
                   </div>
 
+                  {filename && (
+                    <div className="text-[9px] text-gray-500 font-mono mb-1 truncate">{filename}</div>
+                  )}
                   {v.md5 && (
                     <div className="text-[9px] text-gray-600 font-mono mb-1.5">MD5: {v.md5.slice(0, 16)}…</div>
                   )}

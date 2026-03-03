@@ -11,7 +11,7 @@ import { initDb } from './db/database.js';
 import { startMqttBroker } from './mqtt/broker.js';
 import { cloudHttpProxy } from './proxy/httpProxy.js';
 import { initDashboardSocket } from './dashboard/socketHandler.js';
-import { dashboardRouter } from './routes/dashboard.js';
+import { dashboardRouter, initFirmwareSync } from './routes/dashboard.js';
 
 const PROXY_MODE = process.env.PROXY_MODE ?? 'local';
 
@@ -31,6 +31,9 @@ import { networkRouter }      from './routes/nova-network/network.js';
 
 // ── Initialise DB ─────────────────────────────────────────────────────────────
 initDb();
+
+// ── Firmware auto-sync (watches firmware directory → ota_versions DB) ─────────
+initFirmwareSync();
 
 // ── MQTT Broker ───────────────────────────────────────────────────────────────
 startMqttBroker().catch(err => {
@@ -78,6 +81,10 @@ if (PROXY_MODE === 'cloud') {
 } else {
   // Normal local mode: handle requests ourselves
   // nova-user service
+  // Alias: app roept /api/nova-user/user/... aan (niet /appUser/)
+  // Validate routes ook under /user/ — app kan sendAppRegistEmailCode e.d. via /user/ aanroepen
+  app.use('/api/nova-user/user',       validateRouter);
+  app.use('/api/nova-user/user',       appUserRouter);
   app.use('/api/nova-user/appUser',    appUserRouter);
   app.use('/api/nova-user/validate',   validateRouter);
   app.use('/api/nova-user/equipment',  equipmentRouter);

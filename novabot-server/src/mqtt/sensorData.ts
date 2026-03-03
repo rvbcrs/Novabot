@@ -92,6 +92,7 @@ export const DATA_COMMANDS = [
   'report_state_timer_data',  // Maaier → AES ontsleuteld
   'ota_version_info_respond', // Charger/Maaier → huidige firmware versie
   'get_para_info_respond',    // Maaier → headlight, sound, path_direction etc.
+  'report_state_to_server_work_respond', // Maaier → server-only status met sv/hv/ov versies
 ];
 
 // ── Waarde vertalingen ────────────────────────────────────────────
@@ -249,8 +250,9 @@ export function updateDeviceData(sn: string, payload: Buffer): Map<string, strin
   let commandName = Object.keys(parsed)[0];
   let data = parsed[commandName];
 
-  // Charger type-wrapper normalisatie
-  if (commandName === 'type' && typeof parsed.type === 'string' && parsed.message != null) {
+  // Type-wrapper normalisatie (charger + maaier server berichten)
+  // Formaat: {"type":"command_name","message":{...}} of {"message":{...},"type":"command_name"}
+  if (typeof parsed.type === 'string' && parsed.message != null && !DATA_COMMANDS.includes(commandName)) {
     commandName = parsed.type as string;
     data = parsed.message;
   }
@@ -269,6 +271,17 @@ export function updateDeviceData(sn: string, payload: Buffer): Map<string, strin
     if (typeof msg === 'object' && msg !== null && typeof (msg as Record<string, unknown>).value === 'object') {
       data = (msg as Record<string, unknown>).value;
     }
+  }
+
+  // Voor report_state_to_server_work_respond: waarden zitten in value, en sv/hv/ov moeten gemapt worden
+  if (commandName === 'report_state_to_server_work_respond' && typeof (data as Record<string, unknown>).value === 'object') {
+    const raw = (data as Record<string, unknown>).value as Record<string, unknown>;
+    // Map afkortingen naar volledige sensor namen
+    const mapped: Record<string, unknown> = { ...raw };
+    if (raw.sv !== undefined) { mapped.sw_version = raw.sv; delete mapped.sv; }
+    if (raw.hv !== undefined) { mapped.hw_version = raw.hv; delete mapped.hv; }
+    if (raw.ov !== undefined) { mapped.os_version = raw.ov; delete mapped.ov; }
+    data = mapped;
   }
 
   if (!deviceCache.has(sn)) deviceCache.set(sn, new Map());
