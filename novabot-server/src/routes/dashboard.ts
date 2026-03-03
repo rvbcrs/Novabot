@@ -10,7 +10,7 @@ import { getRecentLogs } from '../dashboard/socketHandler.js';
 import { requestMapList, requestMapOutline, publishToDevice, publishRawToDevice, publishEncryptedOnTopic, publishToTopic } from '../mqtt/mapSync.js';
 import crypto from 'crypto';
 import { generateMapZipFromDb, gpsToLocal, localToGps, parseMapZip, type GpsPoint } from '../mqtt/mapConverter.js';
-import { existsSync, unlinkSync, readFileSync, readdirSync, createReadStream, statSync } from 'fs';
+import { existsSync, unlinkSync, readFileSync, readdirSync, createReadStream, statSync, watch, mkdirSync } from 'fs';
 import { execSync } from 'child_process';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
@@ -100,6 +100,77 @@ dashboardRouter.get('/devices', (_req: Request, res: Response) => {
     });
 
   res.json({ devices });
+});
+
+// GET /api/dashboard/unbound-devices — apparaten die verbonden zijn maar nog niet aan een account gekoppeld
+dashboardRouter.get('/unbound-devices', (_req: Request, res: Response) => {
+  // Alle SNs die al in equipment zitten én gekoppeld zijn aan een bestaande gebruiker.
+  // Equipment met een verwijzing naar een niet-bestaand account (verwijderd account) telt als ongebonden.
+  const boundSnRows = db.prepare(`
+    SELECT mower_sn, charger_sn FROM equipment
+    WHERE user_id IS NOT NULL
+      AND user_id IN (SELECT app_user_id FROM users)
+  `).all() as { mower_sn: string; charger_sn: string | null }[];
+
+  const boundSns = new Set<string>();
+  for (const r of boundSnRows) {
+    if (r.mower_sn)   boundSns.add(r.mower_sn);
+    if (r.charger_sn) boundSns.add(r.charger_sn);
+  }
+
+  // Meest recent geziene entry per SN uit device_registry
+  const registry = db.prepare(`
+    SELECT d.* FROM device_registry d
+    INNER JOIN (
+      SELECT sn, MAX(last_seen) as max_seen FROM device_registry
+      WHERE sn IS NOT NULL GROUP BY sn
+    ) latest ON d.sn = latest.sn AND d.last_seen = latest.max_seen
+    ORDER BY d.last_seen DESC
+  `).all() as DeviceRegistryRow[];
+
+  const unbound = registry
+    .filter(d => d.sn && !boundSns.has(d.sn))
+    .map(d => ({
+      sn: d.sn!,
+      deviceType: d.sn!.startsWith('LFIC') ? 'charger' as const : 'mower' as const,
+      online: isDeviceOnline(d.sn!),
+      lastSeen: d.last_seen,
+    }));
+
+  res.json({ devices: unbound });
+});
+
+// POST /api/dashboard/bind-device — koppel een device aan het account (enkelvoudige gebruiker)
+dashboardRouter.post('/bind-device', (req: Request, res: Response) => {
+  const { sn, name } = req.body as { sn?: string; name?: string };
+  if (!sn) { res.status(400).json({ ok: false, error: 'sn required' }); return; }
+
+  // Haal de enige gebruiker op (single-user setup)
+  const user = db.prepare('SELECT app_user_id FROM users LIMIT 1').get() as { app_user_id: string } | undefined;
+  if (!user) { res.status(400).json({ ok: false, error: 'Geen gebruiker gevonden' }); return; }
+
+  const existing = db.prepare(
+    'SELECT equipment_id, user_id FROM equipment WHERE mower_sn = ? OR charger_sn = ?'
+  ).get(sn, sn) as { equipment_id: string; user_id: string | null } | undefined;
+
+  if (existing) {
+    // Bijwerken: user_id koppelen + eventueel naam
+    db.prepare(`
+      UPDATE equipment SET user_id = ?, equipment_nick_name = COALESCE(?, equipment_nick_name)
+      WHERE equipment_id = ?
+    `).run(user.app_user_id, name ?? null, existing.equipment_id);
+  } else {
+    // Nieuw record aanmaken
+    const equipmentId = uuidv4();
+    const isCharger = sn.startsWith('LFIC');
+    db.prepare(`
+      INSERT INTO equipment (equipment_id, user_id, mower_sn, equipment_type_h, equipment_nick_name)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(equipmentId, user.app_user_id, sn, isCharger ? 'charger' : 'mower', name ?? null);
+  }
+
+  console.log(`[dashboard] bind-device: sn=${sn} name=${name ?? '-'} gebonden aan user ${user.app_user_id}`);
+  res.json({ ok: true });
 });
 
 // DELETE /api/dashboard/devices/:sn — verwijder een device uit de registry
@@ -831,7 +902,103 @@ dashboardRouter.post('/schedules/:sn/:scheduleId/send', (req: Request, res: Resp
 // ── Static firmware file serving ────────────────────────────────
 import express from 'express';
 
-const firmwareDir = path.resolve(__dirname, '../../firmware');
+const firmwareDir = process.env.FIRMWARE_PATH ?? path.resolve(__dirname, '../../firmware');
+
+// ── Auto-sync firmware directory → ota_versions DB ─────────────────────────
+
+function getOtaBaseUrl(): string {
+  if (process.env.OTA_BASE_URL) return process.env.OTA_BASE_URL.replace(/\/$/, '');
+  if (process.env.TARGET_IP) {
+    const port = parseInt(process.env.PORT ?? '80', 10);
+    return port === 80 ? `http://${process.env.TARGET_IP}` : `http://${process.env.TARGET_IP}:${port}`;
+  }
+  return 'http://app.lfibot.com';
+}
+
+function syncFirmwareVersions(): void {
+  if (!existsSync(firmwareDir)) return;
+
+  const baseUrl = getOtaBaseUrl();
+  const files = readdirSync(firmwareDir).filter(f =>
+    !f.startsWith('.') && (f.endsWith('.bin') || f.endsWith('.deb')),
+  );
+
+  // All auto-registered versions (identified by URL pattern)
+  const dbVersions = db.prepare(
+    `SELECT * FROM ota_versions WHERE download_url LIKE '%/api/dashboard/firmware/%'`,
+  ).all() as OtaVersionRow[];
+
+  // Map DB entries by filename extracted from URL
+  const dbByFilename = new Map<string, OtaVersionRow>();
+  for (const row of dbVersions) {
+    const match = row.download_url?.match(/\/firmware\/([^/]+)$/);
+    if (match) dbByFilename.set(decodeURIComponent(match[1]), row);
+  }
+
+  const validDbIds = new Set<number>();
+
+  for (const filename of files) {
+    const filePath = path.join(firmwareDir, filename);
+    const md5 = crypto.createHash('md5').update(readFileSync(filePath)).digest('hex');
+    const downloadUrl = `${baseUrl}/api/dashboard/firmware/${encodeURIComponent(filename)}`;
+
+    const existing = dbByFilename.get(filename);
+    if (existing) {
+      validDbIds.add(existing.id);
+      if (existing.md5 !== md5) {
+        // File changed — update version + md5
+        const version = extractFirmwareVersion(filePath) ?? existing.version;
+        const deviceType = filename.endsWith('.deb') ? 'mower' : 'charger';
+        db.prepare(`UPDATE ota_versions SET version = ?, device_type = ?, md5 = ?, download_url = ? WHERE id = ?`)
+          .run(version, deviceType, md5, downloadUrl, existing.id);
+        console.log(`\x1b[38;5;208m[OTA] Auto-updated: ${filename} (${version})\x1b[0m`);
+      } else if (existing.download_url !== downloadUrl) {
+        // URL changed (e.g. TARGET_IP changed) — update URL only
+        db.prepare(`UPDATE ota_versions SET download_url = ? WHERE id = ?`).run(downloadUrl, existing.id);
+      }
+    } else {
+      // New file — auto-register
+      const version = extractFirmwareVersion(filePath) ?? filename.replace(/\.(bin|deb)$/, '');
+      const deviceType = filename.endsWith('.deb') ? 'mower' : 'charger';
+      db.prepare(`INSERT INTO ota_versions (version, device_type, download_url, md5) VALUES (?, ?, ?, ?)`)
+        .run(version, deviceType, downloadUrl, md5);
+      console.log(`\x1b[38;5;208m[OTA] Auto-registered: ${filename} (${version}, ${deviceType})\x1b[0m`);
+    }
+  }
+
+  // Remove DB entries for deleted files
+  for (const row of dbVersions) {
+    if (!validDbIds.has(row.id)) {
+      const match = row.download_url?.match(/\/firmware\/([^/]+)$/);
+      db.prepare(`DELETE FROM ota_versions WHERE id = ?`).run(row.id);
+      console.log(`\x1b[38;5;208m[OTA] Auto-removed: ${match ? decodeURIComponent(match[1]) : row.version}\x1b[0m`);
+    }
+  }
+}
+
+let syncTimeout: ReturnType<typeof setTimeout> | null = null;
+
+export function initFirmwareSync(): void {
+  // Ensure firmware directory exists
+  if (!existsSync(firmwareDir)) {
+    try { mkdirSync(firmwareDir, { recursive: true }); } catch { /* ignore */ }
+  }
+
+  // Initial sync
+  syncFirmwareVersions();
+
+  // Watch for changes with 1s debounce
+  try {
+    watch(firmwareDir, { persistent: false }, () => {
+      if (syncTimeout) clearTimeout(syncTimeout);
+      syncTimeout = setTimeout(() => syncFirmwareVersions(), 1000);
+    });
+    console.log(`[OTA] Watching firmware directory: ${firmwareDir}`);
+  } catch (err) {
+    console.warn(`[OTA] Could not watch firmware directory: ${err}`);
+  }
+}
+
 // Custom firmware download handler met uitgebreide logging
 dashboardRouter.get('/firmware/:filename', (req: Request, res: Response) => {
   const filename = req.params.filename;
@@ -982,9 +1149,17 @@ function extractMowerVersion(debPath: string): string | null {
  */
 function extractFirmwareVersion(filePath: string): string | null {
   if (!existsSync(filePath)) return null;
-  if (filePath.endsWith('.deb')) return extractMowerVersion(filePath);
-  if (filePath.endsWith('.bin')) return extractChargerVersion(filePath);
-  return null;
+  if (filePath.endsWith('.deb')) {
+    const fromDeb = extractMowerVersion(filePath);
+    if (fromDeb) return fromDeb;
+  } else if (filePath.endsWith('.bin')) {
+    const fromBin = extractChargerVersion(filePath);
+    if (fromBin) return fromBin;
+  }
+  // Fallback: extract version from filename (e.g. mower_firmware_v6.0.2-custom-8.deb → v6.0.2-custom-8)
+  const basename = path.basename(filePath);
+  const vMatch = basename.match(/(v\d+\.\d+\.\d+(?:[-.]\S+?)?)\.(?:bin|deb)$/i);
+  return vMatch ? vMatch[1] : null;
 }
 
 /**
@@ -1337,4 +1512,66 @@ dashboardRouter.post('/mqtt-inject/:sn', (req: Request, res: Response) => {
   const topic = `Dart/Receive_mqtt/${sn}`;
   publishEncryptedOnTopic(topic, sn, message);
   res.json({ ok: true, topic, payload: JSON.stringify(message) });
+});
+
+// ── Setup / DNS info ──────────────────────────────────────────────────────────
+
+// GET /api/dashboard/setup/info — server info voor setup wizard
+// CORS headers nodig: DNS test fetcht via app.lfibot.com (andere origin dan dashboard IP)
+dashboardRouter.get('/setup/info', (_req: Request, res: Response) => {
+  res.set('Access-Control-Allow-Origin', '*');
+  res.json({
+    targetIp: process.env.TARGET_IP ?? null,
+    dnsEnabled: process.env.DISABLE_DNS !== 'true',
+    port: parseInt(process.env.PORT ?? '80', 10),
+    mqttPort: 1883,
+  });
+});
+
+// GET /api/dashboard/setup/ca-cert — download het lokale CA certificaat (voor Novabot app)
+dashboardRouter.get('/setup/ca-cert', (_req: Request, res: Response) => {
+  const certPath = '/data/certs/server.crt';
+  if (!existsSync(certPath)) {
+    res.status(404).json({ error: 'Cert nog niet gegenereerd — herstart de container' });
+    return;
+  }
+  res.setHeader('Content-Type', 'application/x-x509-ca-cert');
+  res.setHeader('Content-Disposition', 'attachment; filename="novabot-ca.crt"');
+  createReadStream(certPath).pipe(res);
+});
+
+// GET /api/dashboard/setup/status — check of er al een gebruiker aangemaakt is
+// CORS nodig: cert-check doet een cross-origin fetch (http → https, andere scheme = andere origin)
+dashboardRouter.get('/setup/status', (_req: Request, res: Response) => {
+  res.set('Access-Control-Allow-Origin', '*');
+  const row = db.prepare('SELECT COUNT(*) as count FROM users').get() as { count: number };
+  res.json({ hasUsers: row.count > 0 });
+});
+
+// POST /api/dashboard/setup/create-user — maak de eerste gebruiker aan (alleen als DB leeg is)
+dashboardRouter.post('/setup/create-user', async (req: Request, res: Response) => {
+  const { email, password, username } = req.body as { email?: string; password?: string; username?: string };
+
+  if (!email || !password) {
+    res.status(400).json({ ok: false, error: 'Email en wachtwoord zijn verplicht' });
+    return;
+  }
+
+  const row = db.prepare('SELECT COUNT(*) as count FROM users').get() as { count: number };
+  if (row.count > 0) {
+    res.status(409).json({ ok: false, error: 'Er bestaat al een gebruiker. Gebruik de inlogpagina.' });
+    return;
+  }
+
+  const bcrypt = await import('bcrypt');
+  const hash = await bcrypt.hash(password, 10);
+  const appUserId = uuidv4();
+
+  db.prepare(`
+    INSERT INTO users (app_user_id, email, password, username, created_at)
+    VALUES (?, ?, ?, ?, datetime('now'))
+  `).run(appUserId, email.trim().toLowerCase(), hash, username?.trim() ?? '');
+
+  console.log(`[SETUP] Eerste gebruiker aangemaakt: ${email}`);
+  res.json({ ok: true });
 });

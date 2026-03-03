@@ -1,0 +1,44 @@
+services:
+  novabot:
+    build: .
+    container_name: novabot
+    restart: unless-stopped
+    ports:
+      - "53:53/udp"
+      - "53:53/tcp"
+      - "80:80"
+      - "443:443"
+      - "3000:80"
+      - "1883:1883"
+    environment:
+      # Server — poort 80 = dashboard + API + mower HTTP
+      PORT: 80
+      # Proxy mode: 'local' (normaal) of 'cloud' (doorsturen naar echte cloud voor debugging)
+      PROXY_MODE: ${PROXY_MODE:-local}
+      JWT_SECRET: ${JWT_SECRET:-change_me_to_a_long_random_secret}
+      DB_PATH: /data/novabot.db
+      STORAGE_PATH: /data/storage
+      FIRMWARE_PATH: /data/firmware
+
+      # DNS — VERPLICHT: IP-adres van de machine waarop deze container draait
+      TARGET_IP: ${TARGET_IP:?}
+      # DNS — zet DISABLE_DNS=true als je eigen DNS hebt (AdGuard, Pi-hole, etc.)
+      DISABLE_DNS: ${DISABLE_DNS:-false}
+      UPSTREAM_DNS: ${UPSTREAM_DNS:-8.8.8.8}
+      EXTRA_DOMAINS: ${EXTRA_DOMAINS:-}
+
+      # OTA base URL (optioneel — standaard: http://${TARGET_IP})
+      # OTA_BASE_URL: http://app.lfibot.com
+
+      # Home Assistant MQTT bridge (optioneel — uncomment om te activeren)
+      # HA_MQTT_HOST: 192.168.0.248
+      # HA_MQTT_PORT: 1883
+      # HA_MQTT_USER: mqtt
+      # HA_MQTT_PASS: mqtt
+      # HA_THROTTLE_MS: 2000
+      # HA_DISCOVERY_PREFIX: homeassistant
+    volumes:
+      - novabot-data:/data
+
+volumes:
+  novabot-data:

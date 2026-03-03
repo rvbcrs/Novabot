@@ -1,9 +1,29 @@
 import { Router, Response } from 'express';
 import bcrypt from 'bcrypt';
+import crypto from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
 import { db } from '../../db/database.js';
 import { authMiddleware, signToken } from '../../middleware/auth.js';
 import { AuthRequest, ok, fail, UserRow } from '../../types/index.js';
+
+// De Novabot app versleutelt wachtwoorden met AES-128-CBC voor verzending.
+// key = IV = "1234123412ABCDEF" (16 bytes), output = base64
+// Bron: research/NOVABOT_API_REFERENCE.md
+const APP_PASSWORD_KEY_IV = Buffer.from('1234123412ABCDEF', 'utf8');
+
+function tryDecryptAppPassword(raw: string): string {
+  try {
+    const enc = Buffer.from(raw, 'base64');
+    if (enc.length < 16 || enc.length % 16 !== 0) return raw;
+    // App gebruikt PKCS7 padding (standaard AES) — auto-padding aan laten staan
+    const d = crypto.createDecipheriv('aes-128-cbc', APP_PASSWORD_KEY_IV, APP_PASSWORD_KEY_IV);
+    const dec = Buffer.concat([d.update(enc), d.final()]);
+    if (dec.length === 0) return raw;
+    return dec.toString('utf8');
+  } catch {
+    return raw;
+  }
+}
 
 export const appUserRouter = Router();
 
@@ -21,13 +41,14 @@ appUserRouter.post('/login', (req, res: Response) => {
     return;
   }
 
-  // De app stuurt AES-versleutelde wachtwoorden (deterministische encryptie).
-  // We slaan het versleutelde wachtwoord op als-is en vergelijken direct.
-  // Probeer eerst bcrypt (voor via-curl aangemaakte accounts), dan direct.
+  // De app stuurt AES-versleutelde wachtwoorden (key/IV = "1234123412ABCDEF").
+  // Decrypt eerst, dan vergelijken. Fallback naar raw voor niet-versleutelde waarden.
+  const plainPassword = tryDecryptAppPassword(password);
+
   const isBcrypt = user.password.startsWith('$2b$') || user.password.startsWith('$2a$');
   const match = isBcrypt
-    ? bcrypt.compareSync(password, user.password)
-    : user.password === password;
+    ? bcrypt.compareSync(plainPassword, user.password)
+    : user.password === password || user.password === plainPassword;
 
   if (!match) {
     res.json(fail('Invalid email or password', 400));
@@ -54,7 +75,7 @@ appUserRouter.post('/login', (req, res: Response) => {
 });
 
 // POST /api/nova-user/appUser/regist
-appUserRouter.post('/regist', (req, res: Response) => {
+appUserRouter.post('/regist', async (req, res: Response) => {
   const { email, password, username } = req.body as {
     email?: string; password?: string; username?: string;
   };
@@ -69,9 +90,9 @@ appUserRouter.post('/regist', (req, res: Response) => {
     return;
   }
 
-  // Sla het wachtwoord op als-is (de app stuurt al AES-versleuteld).
-  // Bcrypt alleen voor via-curl aangemaakte accounts.
-  const storedPassword = password;
+  // Decrypt het AES-wachtwoord van de app, sla op als bcrypt hash.
+  const plainPassword = tryDecryptAppPassword(password);
+  const storedPassword = await bcrypt.hash(plainPassword, 10);
   const appUserId = uuidv4();
   db.prepare(`
     INSERT INTO users (app_user_id, email, password, username)

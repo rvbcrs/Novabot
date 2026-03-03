@@ -227,3 +227,97 @@ export async function scanBleDevices(duration = 5): Promise<BleDevice[]> {
 export async function registerDeviceMac(sn: string, macAddress: string): Promise<void> {
   await post(`/api/admin/devices/${encodeURIComponent(sn)}/mac`, { macAddress });
 }
+
+// ── Setup / DNS ──────────────────────────────────────────────────────────────
+
+export interface SetupInfo {
+  targetIp: string | null;
+  dnsEnabled: boolean;
+  port: number;
+  mqttPort: number;
+}
+
+export async function fetchSetupInfo(): Promise<SetupInfo> {
+  const res = await get(`${BASE}/setup/info`);
+  return res.json();
+}
+
+export async function checkSetupStatus(): Promise<{ hasUsers: boolean }> {
+  const res = await fetch(`${BASE}/setup/status`);
+  return res.json();
+}
+
+export async function createFirstUser(email: string, password: string, username?: string): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetch(`${BASE}/setup/create-user`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password, username }),
+  });
+  return res.json();
+}
+
+/**
+ * Test DNS by trying to reach the server via app.lfibot.com.
+ * Returns true if DNS correctly resolves to this server.
+ */
+export async function testDns(serverPort: number): Promise<{ ok: boolean; resolvedTo?: string; error?: string }> {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    const res = await fetch(`http://app.lfibot.com:${serverPort}/api/dashboard/setup/info`, {
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
+    const data = await res.json() as SetupInfo;
+    return { ok: true, resolvedTo: data.targetIp ?? undefined };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'DNS lookup failed' };
+  }
+}
+
+/**
+ * Check of het CA-certificaat vertrouwd is door een HTTPS-fetch te proberen.
+ * Als de fetch slaagt → cert is geïnstalleerd en vertrouwd.
+ * Als de fetch faalt (SSL error / network error) → cert niet vertrouwd.
+ */
+export async function checkCertTrusted(): Promise<boolean> {
+  try {
+    const httpsUrl = `https://${window.location.hostname}/api/dashboard/setup/status`;
+    // AbortSignal.timeout is niet beschikbaar in Safari < 16 — gebruik een fallback
+    let signal: AbortSignal | undefined;
+    try {
+      signal = AbortSignal.timeout(5000);
+    } catch {
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(), 5000);
+      signal = controller.signal;
+    }
+    const res = await fetch(httpsUrl, { signal });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+export interface UnboundDevice {
+  sn: string;
+  deviceType: 'mower' | 'charger';
+  online: boolean;
+  lastSeen: string | null;
+}
+
+export async function fetchUnboundDevices(): Promise<UnboundDevice[]> {
+  const res = await get(`${BASE}/unbound-devices`);
+  const data = await res.json();
+  return data.devices ?? [];
+}
+
+export async function bindDevice(sn: string, name?: string): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const res = await post(`${BASE}/bind-device`, { sn, name });
+    return res.json();
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Onbekende fout' };
+  }
+}

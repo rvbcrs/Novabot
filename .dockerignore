@@ -1,0 +1,27 @@
+**/node_modules
+**/dist
+.git
+.gitignore
+
+# Database files (persistent data, not in image)
+*.db
+*.db-wal
+*.db-shm
+
+# Firmware binaries (user provides these via volume)
+novabot-server/firmware/
+novabot-server/storage/
+
+# Research and temp files
+research/
+/tmp
+AUTONOMOUS-MAPPING.md
+
+# IDE / OS
+.vscode
+.idea
+*.swp
+.DS_Store
+
+# Existing DNS container (now integrated)
+novabot-dns/

@@ -37,7 +37,7 @@ const path = require('path');
 const PROJECT_ROOT = path.resolve(__dirname, '..');
 
 // ─── Defaults ────────────────────────────────────────────────────────
-const DEFAULT_MQTT_HOST = 'nova-mqtt.ramonvanbruggen.nl';
+const DEFAULT_MQTT_HOST = 'mqtt.lfibot.com';
 
 // ─── ESP32-S3 Memory Map ────────────────────────────────────────────
 const DROM_BASE = 0x3C000000; // Data ROM (flash-mapped .rodata)

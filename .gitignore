@@ -22,6 +22,13 @@ research/*.xapk
 research/mower_firmware/**/*.pgm
 research/mower_firmware/ota_lib/
 
+# Environment files (secrets)
+.env
+novabot-server/.env
+
+# Docker persistent data
+novabot-data/
+
 # Dashboard build artifacts
 novabot-dashboard/node_modules/
 novabot-dashboard/dist/

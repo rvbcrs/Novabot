@@ -59,7 +59,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --version SUFFIX    Version suffix (default: custom-1)"
             echo ""
             echo "Examples:"
-            echo "  $0 --server nova-dash.ramonvanbruggen.nl --mqtt-host nova-mqtt.ramonvanbruggen.nl"
+            echo "  $0 --server app.lfibot.com --mqtt-host mqtt.lfibot.com"
             echo "  $0 --input firmware/mower_firmware_v6.0.2.deb --server 192.168.1.50"
             exit 0
             ;;
