@@ -59,6 +59,7 @@ export interface MapRow {
   map_max_min: string | null;
   file_name: string | null;
   file_size: number | null;
+  map_type: string;
   created_at: string;
   updated_at: string;
 }

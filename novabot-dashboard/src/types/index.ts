@@ -16,6 +16,7 @@ export interface DeviceState {
   nickname?: string | null;
   macAddress?: string | null;
   lastSeen?: string | null;
+  mowerIp?: string | null;
   sensors: Record<string, string>;
   lastUpdate: number;
 }

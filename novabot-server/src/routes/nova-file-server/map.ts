@@ -3,11 +3,12 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
+import { execSync } from 'child_process';
 import { v4 as uuidv4 } from 'uuid';
 import { db } from '../../db/database.js';
 import { authMiddleware } from '../../middleware/auth.js';
 import { AuthRequest, ok, fail, MapRow } from '../../types/index.js';
-import { parseMapZip, GpsPoint } from '../../mqtt/mapConverter.js';
+import { parseMapZip, GpsPoint, gpsToLocal, polygonArea } from '../../mqtt/mapConverter.js';
 import { deviceCache } from '../../mqtt/sensorData.js';
 
 export const mapRouter = Router();
@@ -35,19 +36,185 @@ function rowToDto(r: MapRow) {
 }
 
 // GET /api/nova-file-server/map/queryEquipmentMap?sn=
-// Cloud retourneert: { data: <zip-base64|null>, md5: <string|null>, machineExtendedField: <string|null> }
-// NIET een array van kaarten — dat formaat wordt alleen door ons dashboard gebruikt.
+//
+// De app (v2.4.0) verwacht een JSON object als `data`, NIET base64:
+//   data: { work: [MapEntityItem, ...], unicom: [MapEntityItem, ...] }
+//   MapEntityItem: { fileName, alias, type, url, fileHash, mapArea, obstacle: [] }
+//   machineExtendedField: { chargingPose: { x: "0", y: "0", orientation: "0" } } | null
+//
+// ChargingPostion.fromJson verwacht x/y/orientation als strings die naar double geparsed worden.
 mapRouter.get('/queryEquipmentMap', authMiddleware, (req: AuthRequest, res: Response) => {
   const sn = req.query.sn as string | undefined;
   if (!sn) { res.json(fail('sn required', 400)); return; }
 
-  // Cloud retourneert altijd success, ook als apparaat niet van user is
-  // (de data is dan gewoon null)
+  // Haal alle kaarten op voor dit SN
+  const maps = db.prepare(
+    'SELECT * FROM maps WHERE mower_sn = ? AND map_area IS NOT NULL ORDER BY map_id'
+  ).all(sn) as MapRow[];
+
+  if (maps.length === 0) {
+    console.log(`[MAP] queryEquipmentMap: sn=${sn} → geen kaarten`);
+    res.json(ok({ data: null, md5: null, machineExtendedField: null }));
+    return;
+  }
+
+  // Groepeer per mapIndex: werk + bijbehorende obstakels
+  const workMaps = maps.filter(m => m.map_type === 'work');
+  const obstacleMaps = maps.filter(m => m.map_type === 'obstacle');
+  const unicomMaps = maps.filter(m => m.map_type === 'unicom');
+
+  // Base URL voor map file downloads
+  const baseUrl = process.env.OTA_BASE_URL
+    ?? `http://${process.env.TARGET_IP ?? 'localhost'}`;
+
+  // Helper: bereken oppervlakte in m² uit GPS punten JSON string
+  function calcAreaM2(mapAreaJson: string | null): string {
+    if (!mapAreaJson) return '0';
+    try {
+      const points: GpsPoint[] = JSON.parse(mapAreaJson);
+      if (!points || points.length < 3) return '0';
+      // Gebruik eerste punt als origin voor lokale conversie
+      const origin = points[0];
+      const localPoints = points.map(p => gpsToLocal(p, origin));
+      const area = polygonArea(localPoints);
+      return String(Math.round(area * 100) / 100);
+    } catch { return '0'; }
+  }
+
+  // Helper: bouw download URL voor een map CSV bestand
+  function mapFileUrl(fileName: string): string {
+    return `${baseUrl}/api/nova-file-server/map/downloadMapFile?sn=${sn}&fileName=${fileName}`;
+  }
+
+  // Bouw work items met geneste obstacles
+  // NB: file_name in DB is de ZIP-bestandsnaam, NIET de CSV-bestandsnaam.
+  // Genereer altijd CSV-bestandsnamen conform firmware conventie.
+  const work = workMaps.map((wm, idx) => {
+    const workFileName = `map${idx}_work.csv`;
+
+    // Zoek obstakels die bij dit werkgebied horen (zelfde mapIndex)
+    let obsCounter = 0;
+    const relatedObs = obstacleMaps
+      .filter(om => om.map_name?.includes(`${idx}`) || om.map_name?.includes(`obstacle_${idx}`))
+      .map(om => {
+        const obsFileName = `map${idx}_${obsCounter++}_obstacle.csv`;
+        return {
+          fileName: obsFileName,
+          alias: om.map_name ?? `obstacle_${idx}`,
+          type: 'obstacle',
+          url: mapFileUrl(obsFileName),
+          fileHash: crypto.createHash('md5').update(om.map_id).digest('hex'),
+          mapArea: calcAreaM2(om.map_area),
+          obstacle: [],
+        };
+      });
+
+    return {
+      fileName: workFileName,
+      alias: wm.map_name ?? `Work area ${idx + 1}`,
+      type: 'work',
+      url: mapFileUrl(workFileName),
+      fileHash: crypto.createHash('md5').update(wm.map_id).digest('hex'),
+      mapArea: calcAreaM2(wm.map_area),
+      obstacle: relatedObs,
+    };
+  });
+
+  // Bouw unicom items
+  const unicom = unicomMaps.map((um, idx) => {
+    const unicomFileName = `map${idx}tocharge_unicom.csv`;
+    return {
+      fileName: unicomFileName,
+      alias: um.map_name ?? `Channel ${idx + 1}`,
+      type: 'unicom',
+      url: mapFileUrl(unicomFileName),
+      fileHash: crypto.createHash('md5').update(um.map_id).digest('hex'),
+      mapArea: calcAreaM2(um.map_area),
+      obstacle: [],
+    };
+  });
+
+  // Bereken MD5 van de ZIP als die bestaat
+  let md5: string | null = null;
+  const latestPath = path.join(STORAGE_PATH, `${sn}_latest.zip`);
+  if (fs.existsSync(latestPath)) {
+    const fileData = fs.readFileSync(latestPath);
+    md5 = crypto.createHash('md5').update(fileData).digest('hex');
+  }
+
+  // ChargingPose uit map_calibration (charger positie)
+  let machineExtendedField: Record<string, unknown> | null = null;
+  const cal = db.prepare('SELECT charger_lat, charger_lng FROM map_calibration WHERE mower_sn = ?')
+    .get(sn) as { charger_lat: number | null; charger_lng: number | null } | undefined;
+  if (cal?.charger_lat && cal?.charger_lng) {
+    machineExtendedField = {
+      chargingPose: {
+        x: String(cal.charger_lng),
+        y: String(cal.charger_lat),
+        orientation: '0',
+      },
+    };
+  }
+
+  console.log(`[MAP] queryEquipmentMap: sn=${sn} → ${work.length} work, ${unicom.length} unicom, md5=${md5 ?? 'none'}`);
   res.json(ok({
-    data: null,
-    md5: null,
-    machineExtendedField: null,
+    data: { work, unicom },
+    md5,
+    machineExtendedField,
   }));
+});
+
+// GET /api/nova-file-server/map/downloadMapFile?sn=&fileName=
+//
+// Serveert individuele CSV kaartbestanden uit de opgeslagen ZIP.
+// De app downloadt deze via de URLs in de queryEquipmentMap response.
+mapRouter.get('/downloadMapFile', (req: Request, res: Response) => {
+  const sn = req.query.sn as string | undefined;
+  const fileName = req.query.fileName as string | undefined;
+  if (!sn || !fileName) { res.status(400).json(fail('sn and fileName required', 400)); return; }
+
+  // Beveilig tegen path traversal
+  const safeName = path.basename(fileName);
+  if (safeName !== fileName || fileName.includes('..')) {
+    res.status(400).json(fail('invalid fileName', 400));
+    return;
+  }
+
+  const zipPath = path.join(STORAGE_PATH, `${sn}_latest.zip`);
+  if (!fs.existsSync(zipPath)) {
+    console.warn(`[MAP] downloadMapFile: ZIP niet gevonden voor ${sn}`);
+    res.status(404).json(fail('map not found', 404));
+    return;
+  }
+
+  try {
+    // Extract het gevraagde bestand uit de ZIP
+    const tmpDir = path.join(STORAGE_PATH, `tmp_dl_${Date.now()}`);
+    fs.mkdirSync(tmpDir, { recursive: true });
+
+    try {
+      execSync(`unzip -o -q "${zipPath}" "csv_file/${safeName}" -d "${tmpDir}"`);
+      const csvPath = path.join(tmpDir, 'csv_file', safeName);
+
+      if (!fs.existsSync(csvPath)) {
+        console.warn(`[MAP] downloadMapFile: ${safeName} niet in ZIP voor ${sn}`);
+        res.status(404).json(fail('file not found in map', 404));
+        return;
+      }
+
+      const csvData = fs.readFileSync(csvPath);
+      console.log(`[MAP] downloadMapFile: ${sn}/${safeName} (${csvData.length} bytes)`);
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', `attachment; filename="${safeName}"`);
+      res.send(csvData);
+    } finally {
+      // Ruim tmp directory op
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  } catch (err) {
+    console.error(`[MAP] downloadMapFile: extractie mislukt voor ${sn}/${safeName}:`, err);
+    res.status(500).json(fail('extraction failed', 500));
+  }
 });
 
 // POST /api/nova-file-server/map/fragmentUploadEquipmentMap
@@ -168,26 +335,51 @@ mapRouter.post('/updateEquipmentMapAlias', authMiddleware, (req: AuthRequest, re
 // De maaier stuurt kaart-ZIPs via curl_formadd (multipart/form-data).
 // Velden: local_file (ZIP), local_file_name, zipMd5, sn, jsonBody
 // Geen JWT — maaier identificeert zichzelf via sn in body.
-mapRouter.post('/uploadEquipmentMap', upload.single('local_file'), (req: Request, res: Response) => {
-  const { sn, zipMd5, local_file_name: localFileName, jsonBody } = req.body as {
-    sn?: string;
+mapRouter.post('/uploadEquipmentMap', upload.any(), (req: Request, res: Response) => {
+  // Debug logging — inspect what the mower actually sends
+  const files = req.files as Express.Multer.File[] | undefined;
+  console.log(`[MAP] uploadEquipmentMap DEBUG:`,
+    `content-type=${req.headers['content-type']}`,
+    `body=${JSON.stringify(req.body)}`,
+    `query=${JSON.stringify(req.query)}`,
+    `files=${files?.map(f => `${f.fieldname}(${f.originalname},${f.size}b)`).join(',')}`,
+  );
+
+  // Maaier stuurt sn in body OF in query params — probeer beide
+  const { zipMd5, local_file_name: localFileName, jsonBody } = req.body as {
     zipMd5?: string;
     local_file_name?: string;
     jsonBody?: string;
   };
+  let sn = (req.body.sn ?? req.query.sn) as string | undefined;
+
+  // Fallback: extract SN from uploaded filename (maaier stuurt LFIN*.zip)
+  if (!sn && files?.[0]?.originalname) {
+    const match = files[0].originalname.match(/^(LFI[A-Z]\d+)/);
+    if (match) {
+      sn = match[1];
+      console.log(`[MAP] uploadEquipmentMap: SN extracted from filename: ${sn}`);
+    }
+  }
 
   if (!sn) { res.json(fail('sn required', 400)); return; }
-  console.log(`[MAP] uploadEquipmentMap: sn=${sn} file=${localFileName ?? '-'} md5=${zipMd5 ?? '-'}`);
 
-  if (!req.file) {
+  // upload.any() accepteert elk veld-naam — pak het eerste bestand
+  const uploadedFile = (req.files as Express.Multer.File[] | undefined)?.[0] ?? req.file;
+  const fieldName = uploadedFile ? (uploadedFile as Express.Multer.File).fieldname : '?';
+  console.log(`[MAP] uploadEquipmentMap: sn=${sn} file=${localFileName ?? '-'} md5=${zipMd5 ?? '-'} field=${fieldName}`);
+
+  if (!uploadedFile) {
     console.warn(`[MAP] uploadEquipmentMap: geen bestand ontvangen van ${sn}`);
     res.json(ok(null));
     return;
   }
 
+  const file = uploadedFile;
+
   // Verifieer MD5 als meegegeven
   if (zipMd5) {
-    const fileData = fs.readFileSync(req.file.path);
+    const fileData = fs.readFileSync(file.path);
     const actualMd5 = crypto.createHash('md5').update(fileData).digest('hex');
     if (actualMd5 !== zipMd5) {
       console.warn(`[MAP] uploadEquipmentMap: MD5 mismatch: expected=${zipMd5} actual=${actualMd5}`);
@@ -197,7 +389,11 @@ mapRouter.post('/uploadEquipmentMap', upload.single('local_file'), (req: Request
   // Hernoem naar definitieve locatie
   const finalFileName = `${sn}_${Date.now()}.zip`;
   const finalPath = path.join(STORAGE_PATH, finalFileName);
-  fs.renameSync(req.file.path, finalPath);
+  fs.renameSync(file.path, finalPath);
+
+  // Bewaar ook als _latest.zip zodat queryEquipmentMap het kan serveren
+  const latestPath = path.join(STORAGE_PATH, `${sn}_latest.zip`);
+  fs.copyFileSync(finalPath, latestPath);
 
   // Probeer GPS polygonen te extraheren als we de charging station positie kennen
   let mapAreaJson: string | null = null;
@@ -242,7 +438,7 @@ mapRouter.post('/uploadEquipmentMap', upload.single('local_file'), (req: Request
               (map_id, mower_sn, map_name, map_area, map_max_min, file_name, file_size, map_type, created_at, updated_at)
             VALUES (?,?,?,?,?,?,?,?,?,?)
           `).run(areaMapId, sn, mapName ?? `map${area.mapIndex}`, mapAreaJson, mapMaxMinJson,
-                 finalFileName, req.file!.size, area.type, now, now);
+                 finalFileName, file.size, area.type, now, now);
           console.log(`[MAP] Opgeslagen werkgebied map${area.mapIndex} voor ${sn} (${area.points.length} GPS punten)`);
         }
         // Sla obstakels ook op
@@ -254,7 +450,7 @@ mapRouter.post('/uploadEquipmentMap', upload.single('local_file'), (req: Request
               (map_id, mower_sn, map_name, map_area, map_max_min, file_name, file_size, map_type, created_at, updated_at)
             VALUES (?,?,?,?,?,?,?,?,?,?)
           `).run(obsMapId, sn, `obstacle_${area.mapIndex}_${area.subIndex ?? 0}`,
-                 JSON.stringify(area.points), null, finalFileName, req.file!.size,
+                 JSON.stringify(area.points), null, finalFileName, file.size,
                  'obstacle', now, now);
         }
         console.log(`[MAP] ZIP geparsed: ${parsed.areas.length} gebieden geëxtraheerd voor ${sn}`);
@@ -271,7 +467,7 @@ mapRouter.post('/uploadEquipmentMap', upload.single('local_file'), (req: Request
       INSERT OR REPLACE INTO maps
         (map_id, mower_sn, map_name, map_area, map_max_min, file_name, file_size, created_at, updated_at)
       VALUES (?,?,?,?,?,?,?,?,?)
-    `).run(mapId, sn, mapName, null, null, finalFileName, req.file.size, now, now);
+    `).run(mapId, sn, mapName, null, null, finalFileName, file.size, now, now);
   }
 
   res.json(ok(null));
@@ -283,18 +479,26 @@ mapRouter.post('/uploadEquipmentMap', upload.single('local_file'), (req: Request
 // Zelfde multipart structuur als uploadEquipmentMap.
 const trackUpload = multer({ dest: TRACKS_PATH });
 
-mapRouter.post('/uploadEquipmentTrack', trackUpload.single('local_file'), (req: Request, res: Response) => {
-  const { sn, local_file_name: localFileName } = req.body as {
-    sn?: string;
+mapRouter.post('/uploadEquipmentTrack', trackUpload.any(), (req: Request, res: Response) => {
+  const { local_file_name: localFileName } = req.body as {
     local_file_name?: string;
   };
+
+  // SN uit body, query, of bestandsnaam
+  let sn = (req.body.sn ?? req.query.sn) as string | undefined;
+  const files = req.files as Express.Multer.File[] | undefined;
+  if (!sn && files?.[0]?.originalname) {
+    const match = files[0].originalname.match(/^(LFI[A-Z]\d+)/);
+    if (match) sn = match[1];
+  }
 
   if (!sn) { res.json(fail('sn required', 400)); return; }
   console.log(`[MAP] uploadEquipmentTrack: sn=${sn} file=${localFileName ?? '-'}`);
 
-  if (req.file) {
+  const file = files?.[0];
+  if (file) {
     const finalName = `${sn}_track_${Date.now()}${path.extname(localFileName ?? '.bin')}`;
-    fs.renameSync(req.file.path, path.join(TRACKS_PATH, finalName));
+    fs.renameSync(file.path, path.join(TRACKS_PATH, finalName));
     console.log(`[MAP] Track opgeslagen: ${finalName}`);
   }
 

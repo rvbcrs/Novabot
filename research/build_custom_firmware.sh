@@ -30,6 +30,10 @@ MQTT_PORT="1883"
 SSH_PASSWORD="novabot"
 SSH_PORT="22"
 ENABLE_REMOTE_ROS2="false"
+INCLUDE_SERVER="false"
+BUNDLE_NODE="false"
+BUNDLE_NODE_IP=""
+SERVER_PORT="3000"
 VERSION_SUFFIX="custom-1"
 
 # Parse command line arguments
@@ -42,8 +46,12 @@ while [[ $# -gt 0 ]]; do
         --mqtt-port)    MQTT_PORT="$2"; shift 2 ;;
         --ssh-password) SSH_PASSWORD="$2"; shift 2 ;;
         --ssh-port)     SSH_PORT="$2"; shift 2 ;;
-        --remote-ros2)  ENABLE_REMOTE_ROS2="true"; shift ;;
-        --version)      VERSION_SUFFIX="$2"; shift 2 ;;
+        --remote-ros2)    ENABLE_REMOTE_ROS2="true"; shift ;;
+        --include-server) INCLUDE_SERVER="true"; shift ;;
+        --bundle-node)    BUNDLE_NODE="true"; shift ;;
+        --bundle-node-ip) BUNDLE_NODE_IP="$2"; shift 2 ;;
+        --server-port)    SERVER_PORT="$2"; shift 2 ;;
+        --version)        VERSION_SUFFIX="$2"; shift 2 ;;
         --help)
             echo "Usage: $0 [OPTIONS]"
             echo ""
@@ -56,6 +64,10 @@ while [[ $# -gt 0 ]]; do
             echo "  --ssh-password PWD  Root SSH password (default: novabot)"
             echo "  --ssh-port PORT     SSH port (default: 22)"
             echo "  --remote-ros2       Enable ROS 2 network access (default: off)"
+            echo "  --include-server    Bundle novabot-server + dashboard in firmware"
+            echo "  --bundle-node       Also bundle Node.js + node_modules (fully offline install)"
+            echo "  --bundle-node-ip IP Mower IP to copy node_modules from (required with --bundle-node)"
+            echo "  --server-port PORT  Dashboard port (default: 3000)"
             echo "  --version SUFFIX    Version suffix (default: custom-1)"
             echo ""
             echo "Examples:"
@@ -170,7 +182,7 @@ if [ -z "$BASE_VERSION" ]; then
     BASE_VERSION="v0.0.0"
 fi
 
-VERSION="${BASE_VERSION}-${VERSION_SUFFIX}"
+VERSION="${BASE_VERSION}-${VERSION_SUFFIX}$([ "$INCLUDE_SERVER" = "true" ] && echo "-server" || true)"
 
 echo "  Basisversie:  $BASE_VERSION"
 echo "  Buildversie:  $VERSION"
@@ -186,6 +198,7 @@ echo "  MQTT broker:   ${MQTT_HOST}:${MQTT_PORT}"
 echo "  SSH password:  ${SSH_PASSWORD}"
 echo "  Versie:        ${VERSION}"
 echo "  Remote ROS 2:  ${ENABLE_REMOTE_ROS2}"
+echo "  Server bundel: ${INCLUDE_SERVER}$([ "$INCLUDE_SERVER" = "true" ] && [ "$BUNDLE_NODE" = "true" ] && echo " (offline: Node.js + node_modules gebundeld)" || true)"
 echo "============================================"
 echo ""
 
@@ -207,14 +220,22 @@ cat > "$SSH_BLOCK" << SSHEOF
 # ============================================================
 # CUSTOM: Install and configure SSH server
 # ============================================================
-echo "Installing openssh-server..." >> \$path/start_service.log
-if ! dpkg -l openssh-server 2>/dev/null | grep -q '^ii'; then
+echo "Installing openssh-server + hostapd..." >> \$path/start_service.log
+if ! dpkg -l openssh-server 2>/dev/null | grep -q '^ii' || ! dpkg -l hostapd 2>/dev/null | grep -q '^ii'; then
     apt-get update -qq 2>/dev/null
-    apt-get install -y -qq openssh-server 2>/dev/null
-    if [ \$? -eq 0 ]; then
+    apt-get install -y -qq openssh-server hostapd 2>/dev/null
+    # Disable hostapd auto-start (we starten het zelf via wifi_ap_fallback.sh)
+    systemctl disable hostapd 2>/dev/null
+    systemctl stop hostapd 2>/dev/null
+    if dpkg -l openssh-server 2>/dev/null | grep -q '^ii'; then
         echo "openssh-server installed successfully" >> \$path/start_service.log
     else
         echo "openssh-server install failed (no internet?)" >> \$path/start_service.log
+    fi
+    if dpkg -l hostapd 2>/dev/null | grep -q '^ii'; then
+        echo "hostapd installed successfully" >> \$path/start_service.log
+    else
+        echo "hostapd install failed (no internet? fallback AP unavailable)" >> \$path/start_service.log
     fi
 fi
 
@@ -246,6 +267,175 @@ fi
 
 rm -f "$SSH_BLOCK"
 
+# Novabot-server installatie blok toevoegen aan start_service.sh (alleen als --include-server)
+if [ "$INCLUDE_SERVER" = "true" ]; then
+    SERVER_INSTALL_BLOCK="/tmp/novabot_server_install.sh"
+    cat > "$SERVER_INSTALL_BLOCK" << SRVEOF
+
+# ============================================================
+# CUSTOM: Novabot-server installatie
+# ============================================================
+echo "Installing novabot-server..." >> \$path/start_service.log
+
+SERVER_SRC="/root/novabot.new/opt/novabot-server"
+DASH_SRC="/root/novabot.new/opt/novabot-dashboard"
+
+# 1. Node.js 20 installeren
+if [ -f "\$SERVER_SRC/node-v20-linux-arm64.tar.gz" ]; then
+    echo "Extracting bundled Node.js 20..." >> \$path/start_service.log
+    mkdir -p /opt/nodejs
+    tar xzf "\$SERVER_SRC/node-v20-linux-arm64.tar.gz" -C /opt/nodejs --strip-components=1 2>/dev/null || true
+fi
+
+# Zet /usr/local/bin/node op het eerste werkende node binary
+# (bundled → system → NodeSource download als fallback)
+NODE_OK=0
+if /opt/nodejs/bin/node --version >/dev/null 2>&1; then
+    ln -sf /opt/nodejs/bin/node /usr/local/bin/node
+    ln -sf /opt/nodejs/bin/npm /usr/local/bin/npm
+    NODE_OK=1
+    echo "Node.js \$(/opt/nodejs/bin/node --version) installed from bundle" >> \$path/start_service.log
+fi
+if [ \$NODE_OK -eq 0 ] && /usr/bin/node --version >/dev/null 2>&1; then
+    ln -sf /usr/bin/node /usr/local/bin/node
+    NODE_OK=1
+    echo "Node.js \$(/usr/bin/node --version) from system /usr/bin/node" >> \$path/start_service.log
+fi
+if [ \$NODE_OK -eq 0 ]; then
+    echo "Installing Node.js 20 via NodeSource..." >> \$path/start_service.log
+    apt-get install -y curl 2>/dev/null
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - 2>/dev/null
+    apt-get install -y nodejs 2>/dev/null
+    ln -sf /usr/bin/node /usr/local/bin/node 2>/dev/null || true
+    echo "Node.js \$(node --version 2>/dev/null) installed via NodeSource" >> \$path/start_service.log
+fi
+echo "Using: \$(/usr/local/bin/node --version 2>/dev/null || echo 'ERROR: node not found')" >> \$path/start_service.log
+
+# 2. Server bestanden kopiëren naar /root/novabot-server/
+mkdir -p /root/novabot-server /root/novabot-dashboard/dist /root/firmware
+cp -r "\$SERVER_SRC/dist" /root/novabot-server/
+cp "\$SERVER_SRC/package.json" "\$SERVER_SRC/package-lock.json" /root/novabot-server/
+cp "\$SERVER_SRC/libmadvise_fix.c" /root/
+cp -r "\$DASH_SRC/dist/." /root/novabot-dashboard/dist/
+echo "Server files copied to /root/novabot-server/" >> \$path/start_service.log
+
+# 3. node_modules installeren
+if [ -d "\$SERVER_SRC/node_modules" ]; then
+    echo "Copying bundled node_modules..." >> \$path/start_service.log
+    cp -r "\$SERVER_SRC/node_modules" /root/novabot-server/
+    echo "node_modules copied from bundle" >> \$path/start_service.log
+else
+    echo "Installing production node_modules via npm..." >> \$path/start_service.log
+    cd /root/novabot-server && NODE_OPTIONS=--jitless npm ci --production 2>&1 | tail -5 >> \$path/start_service.log
+fi
+
+# 4. libmadvise_fix.so compileren (ARM64-specifiek, van broncode)
+echo "Compiling libmadvise_fix.so..." >> \$path/start_service.log
+apt-get install -y gcc 2>/dev/null
+if gcc -shared -fPIC -o /root/libmadvise_fix.so /root/libmadvise_fix.c -ldl 2>/dev/null; then
+    echo "libmadvise_fix.so compiled OK" >> \$path/start_service.log
+else
+    echo "WARNING: libmadvise_fix.so compile failed" >> \$path/start_service.log
+fi
+
+# 5. .env aanmaken (genereer unieke JWT secret)
+JWT=\$(openssl rand -hex 32 2>/dev/null || echo "changeme_\$(date +%s)")
+cat > /root/novabot-server/.env << ENVEOF
+PORT=${SERVER_PORT}
+MQTT_PORT=1883
+JWT_SECRET=\${JWT}
+DB_PATH=./novabot.db
+STORAGE_PATH=./storage
+FIRMWARE_PATH=/root/firmware
+PROXY_MODE=local
+DISABLE_BLE=1
+TARGET_IP=127.0.0.1
+OTA_BASE_URL=http://127.0.0.1:${SERVER_PORT}
+ENVEOF
+echo ".env created with unique JWT secret" >> \$path/start_service.log
+
+# 6. systemd service aanmaken
+mkdir -p /root/novabot-server/logs
+cat > /etc/systemd/system/novabot-server.service << SVCEOF
+[Unit]
+Description=Novabot Server (local cloud replacement)
+After=network-online.target dnsmasq.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/novabot-server
+Environment=NODE_OPTIONS=--jitless
+Environment=LD_PRELOAD=/root/libmadvise_fix.so
+EnvironmentFile=/root/novabot-server/.env
+ExecStart=/usr/local/bin/node dist/index.js
+Restart=always
+RestartSec=5
+StandardOutput=append:/root/novabot-server/logs/server.log
+StandardError=append:/root/novabot-server/logs/server.log
+
+[Install]
+WantedBy=multi-user.target
+SVCEOF
+
+systemctl daemon-reload
+systemctl enable novabot-server 2>/dev/null
+echo "novabot-server.service enabled" >> \$path/start_service.log
+
+# 7. NetworkManager: voorkom overschrijven resolv.conf
+mkdir -p /etc/NetworkManager/conf.d
+printf '[main]\ndns=none\n' > /etc/NetworkManager/conf.d/novabot-dns.conf
+echo "nameserver 127.0.0.1" > /etc/resolv.conf
+chattr +i /etc/resolv.conf 2>/dev/null || true
+echo "resolv.conf → 127.0.0.1 (immutable)" >> \$path/start_service.log
+
+# 8. Avahi mDNS — maaier beschikbaar als novabot.local
+echo "Setting up avahi-daemon (novabot.local)..." >> \$path/start_service.log
+apt-get install -y avahi-daemon libnss-mdns 2>/dev/null
+# Stel hostname in zodat avahi adverteert als novabot.local
+hostnamectl set-hostname novabot 2>/dev/null || hostname novabot
+echo "novabot" > /etc/hostname 2>/dev/null || true
+# Avahi configuratie
+mkdir -p /etc/avahi
+cat > /etc/avahi/avahi-daemon.conf << 'AVAHIEOF'
+[server]
+host-name=novabot
+domain-name=local
+use-ipv4=yes
+use-ipv6=no
+enable-dbus=yes
+
+[publish]
+publish-addresses=yes
+publish-hinfo=yes
+publish-workstation=yes
+publish-domain=yes
+AVAHIEOF
+systemctl enable avahi-daemon 2>/dev/null
+systemctl start avahi-daemon 2>/dev/null
+echo "avahi-daemon started — maaier beschikbaar als novabot.local" >> \$path/start_service.log
+
+echo "novabot-server installation complete" >> \$path/start_service.log
+# ============================================================
+SRVEOF
+
+    # Injecteer na het SSH blok (na "Root password configured for SSH" regel)
+    # Fallback op "start service finish" als SSH blok niet aanwezig is
+    if grep -q "Root password configured for SSH" "$START_SERVICE"; then
+        sed -i '' '/Root password configured for SSH/r /tmp/novabot_server_install.sh' "$START_SERVICE"
+        echo "  Novabot-server installatie toegevoegd na SSH blok"
+    elif grep -q "sudo apt install -y dnsmasq" "$START_SERVICE"; then
+        sed -i '' '/sudo apt install -y dnsmasq/r /tmp/novabot_server_install.sh' "$START_SERVICE"
+        echo "  Novabot-server installatie toegevoegd na dnsmasq install"
+    else
+        sed -i '' '/^echo "start service finish"/r /tmp/novabot_server_install.sh' "$START_SERVICE"
+        echo "  Novabot-server installatie toegevoegd (fallback positie)"
+    fi
+
+    rm -f "$SERVER_INSTALL_BLOCK"
+fi
+
 # === Stap 5: HTTP server URL aanpassen ===
 echo "[5/8] Server URLs aanpassen..."
 
@@ -265,48 +455,197 @@ cat > "$NOVABOT_ROOT/scripts/set_server_urls.sh" << URLSCRIPT
 # CUSTOM: Stel lokale server URLs in bij elke boot
 # Aangeroepen vanuit run_novabot.sh
 #
-# Dit maakt de maaier ONAFHANKELIJK van *.lfibot.com:
-# - HTTP uploads → eigen server (http_address.txt)
-# - MQTT broker → eigen server (json_config.json)
+# Stap 1: Ontdek server via mDNS (opennovabot.local)
+# Stap 2: Fallback naar last-known IP of hardcoded waarden
+# Stap 3: Schrijf naar http_address.txt + json_config.json
 
-HTTP_ADDRESS="${SERVER_HOST}$([ -n "${SERVER_HTTP_PORT}" ] && echo ":${SERVER_HTTP_PORT}")"
-MQTT_ADDRESS="${MQTT_HOST}"
+FALLBACK_HOST="${SERVER_HOST}"
+FALLBACK_HTTP_PORT="${SERVER_HTTP_PORT}"
 MQTT_PORT_NUM=${MQTT_PORT}
+LAST_KNOWN_FILE="/userdata/lfi/server_ip.txt"
 HTTP_ADDR_FILE="/userdata/lfi/http_address.txt"
 MQTT_CONFIG_FILE="/userdata/lfi/json_config.json"
+LOG_FILE="/userdata/ota/custom_firmware.log"
 
-mkdir -p /userdata/lfi
+mkdir -p /userdata/lfi /userdata/ota
+
+log() {
+    echo "[\$(date)] set_server_urls: \$1" >> "\$LOG_FILE"
+}
+
+# ── Wacht op WiFi (max 30s) ──────────────────────────────────
+for i in \$(seq 1 30); do
+    if ip addr show wlan0 2>/dev/null | grep -q 'inet '; then
+        break
+    fi
+    sleep 1
+done
+
+# ── mDNS discovery (Python, geen externe dependencies) ────────
+DISCOVERED_IP=\$(python3 << 'MDNS_EOF'
+import socket, struct, time
+
+def mdns_query(timeout=8):
+    """Discover opennovabot.local via raw mDNS query."""
+    qname = b'\x0eopennovabot\x05local\x00'
+    query = struct.pack('!6H', 0, 0, 1, 0, 0, 0) + qname + struct.pack('!2H', 1, 1)
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+    except:
+        pass
+    sock.settimeout(2)
+    sock.bind(('', 5353))
+    mreq = struct.pack('4sL', socket.inet_aton('224.0.0.251'), socket.INADDR_ANY)
+    sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+    end = time.time() + timeout
+    while time.time() < end:
+        sock.sendto(query, ('224.0.0.251', 5353))
+        try:
+            while True:
+                data, (addr, _) = sock.recvfrom(1024)
+                if len(data) < 12:
+                    continue
+                flags = struct.unpack('!H', data[2:4])[0]
+                ancount = struct.unpack('!H', data[6:8])[0]
+                if (flags & 0x8000) and ancount > 0 and b'opennovabot' in data:
+                    sock.close()
+                    print(addr)
+                    return
+        except socket.timeout:
+            pass
+    sock.close()
+
+mdns_query()
+MDNS_EOF
+)
+
+# ── Bepaal server IP (discovery → last-known → hardcoded) ────
+if [ -n "\$DISCOVERED_IP" ]; then
+    log "Server ontdekt via mDNS: \$DISCOVERED_IP"
+    echo "\$DISCOVERED_IP" > "\$LAST_KNOWN_FILE"
+    SERVER_IP="\$DISCOVERED_IP"
+elif [ -f "\$LAST_KNOWN_FILE" ]; then
+    SERVER_IP=\$(cat "\$LAST_KNOWN_FILE")
+    log "mDNS mislukt — gebruik last-known IP: \$SERVER_IP"
+elif [ -n "\$FALLBACK_HOST" ]; then
+    SERVER_IP="\$FALLBACK_HOST"
+    log "mDNS mislukt, geen last-known — gebruik fallback: \$SERVER_IP"
+else
+    SERVER_IP=""
+    log "WARN: geen server gevonden — configuratie niet bijgewerkt"
+fi
+
+if [ -n "\$SERVER_IP" ]; then
+    HTTP_ADDRESS="\${SERVER_IP}\$([ -n "\$FALLBACK_HTTP_PORT" ] && echo ":\$FALLBACK_HTTP_PORT")"
+    MQTT_ADDRESS="\$SERVER_IP"
+else
+    HTTP_ADDRESS=""
+    MQTT_ADDRESS=""
+fi
 
 # 1. HTTP server adres (firmware prepends "http://", dus ALLEEN host:port, GEEN prefix!)
-printf "%s" "\${HTTP_ADDRESS}" > "\${HTTP_ADDR_FILE}"
+if [ -n "\${HTTP_ADDRESS}" ]; then
+    printf "%s" "\${HTTP_ADDRESS}" > "\${HTTP_ADDR_FILE}"
+fi
 
-# 2. MQTT broker adres — update ALLEEN mqtt velden in json_config.json
+# 2. Ethernet altijd beschikbaar voor noodherstel (RDK X3 default: 192.168.1.10)
+ip addr add 192.168.1.10/24 dev eth0 2>/dev/null || true
+ip link set eth0 up 2>/dev/null || true
+
+# 3. MQTT broker adres — update ALLEEN mqtt velden in json_config.json
 # (behoud alle BLE-provisioned data: wifi, lora, sn, config/tz)
-# Voorkomt ook de tz:null OTA bug in mqtt_node v5.7.1
+# SKIP als geen server gevonden (bewaar bestaande config)
+if [ -z "\${MQTT_ADDRESS}" ]; then
+    log "SKIP json_config.json update — geen server IP beschikbaar"
+else
+#
+# VEILIGHEID (meerdere lagen):
+#   - Factory backup (.factory) — eenmalig, wordt NOOIT overschreven
+#   - Rolling backup (.bak) — bijgewerkt bij elke succesvolle wijziging
+#   - Atomic write — schrijf naar .tmp, valideer, dan mv (nooit direct)
+#   - Post-write validatie — als resultaat secties mist, ABORT en herstel
+#   - Herstelvolgorde: .bak → .factory → niets wijzigen
 python3 << PYEOF
-import json, os
+import json, os, shutil, sys, tempfile
 
 mqtt_addr = "\${MQTT_ADDRESS}"
 mqtt_port = \${MQTT_PORT_NUM}
 cfg_file = "\${MQTT_CONFIG_FILE}"
+backup = cfg_file + ".bak"
+factory = cfg_file + ".factory"
+tmp_file = cfg_file + ".tmp"
+log_file = "/userdata/ota/custom_firmware.log"
 
-c = {}
-if os.path.exists(cfg_file):
+os.makedirs("/userdata/ota", exist_ok=True)
+
+def log_msg(msg):
+    import datetime
+    with open(log_file, "a") as f:
+        f.write(f"[{datetime.datetime.now()}] set_server_urls: {msg}\n")
+
+def load_json(path):
+    """Laad JSON, geeft (dict, True) of ({}, False)."""
+    if not os.path.exists(path):
+        return {}, False
     try:
-        with open(cfg_file) as fh:
-            c = json.load(fh)
+        with open(path) as fh:
+            data = json.load(fh)
+        if isinstance(data, dict):
+            return data, True
+    except Exception as e:
+        log_msg(f"WARN: {path} onleesbaar ({e})")
+    return {}, False
+
+def count_critical(d):
+    """Tel aanwezige kritieke secties (sn, wifi, lora)."""
+    return sum(1 for k in ("sn", "wifi", "lora") if k in d)
+
+# === Stap 1: Laad huidige config (met fallback cascade) ===
+c, loaded = load_json(cfg_file)
+source = "main"
+
+if not loaded:
+    c, loaded = load_json(backup)
+    source = "backup"
+if not loaded:
+    c, loaded = load_json(factory)
+    source = "factory"
+if not loaded:
+    log_msg("WARN: geen leesbare config gevonden — alleen mqtt wordt gezet")
+    c = {}
+    source = "empty"
+else:
+    log_msg(f"Config geladen uit {source} (secties: {list(c.keys())})")
+
+# Bewaar snapshot van origineel VOOR wijziging (voor validatie achteraf)
+original_keys = set(c.keys())
+original_critical = count_critical(c)
+
+# === Stap 2: Factory backup (eenmalig, NOOIT overschrijven) ===
+if not os.path.exists(factory) and original_critical >= 2:
+    try:
+        shutil.copy2(cfg_file if os.path.exists(cfg_file) else backup, factory)
+        log_msg(f"Factory backup aangemaakt ({original_critical} kritieke secties)")
+    except Exception as e:
+        log_msg(f"WARN: factory backup mislukt ({e})")
+
+# === Stap 3: Rolling backup (alleen als main OK is) ===
+if source == "main" and original_critical >= 2:
+    try:
+        shutil.copy2(cfg_file, backup)
     except:
         pass
 
-# Update alleen MQTT addr en port
+# === Stap 4: Update ALLEEN mqtt + config/tz (nooit andere secties aanraken) ===
 if "mqtt" not in c:
     c["mqtt"] = {"set": 1, "value": {}}
 elif not isinstance(c.get("mqtt", {}).get("value"), dict):
-    c["mqtt"] = {"set": 1, "value": {}}
+    c["mqtt"]["value"] = {}
 c["mqtt"]["value"]["addr"] = mqtt_addr
 c["mqtt"]["value"]["port"] = mqtt_port
 
-# Timezone fix (voorkomt tz:null OTA bug in mqtt_node v5.7.1)
 if "config" not in c:
     c["config"] = {"set": 1, "value": {"tz": "Europe/Amsterdam"}}
 elif c.get("config", {}).get("value") is None:
@@ -314,28 +653,223 @@ elif c.get("config", {}).get("value") is None:
 elif isinstance(c["config"].get("value"), dict) and "tz" not in c["config"]["value"]:
     c["config"]["value"]["tz"] = "Europe/Amsterdam"
 
-with open(cfg_file, "w") as fh:
-    json.dump(c, fh)
+# === Stap 5: Herstel verdwenen kritieke secties uit backup/factory ===
+for fallback_path in (backup, factory):
+    fb, fb_ok = load_json(fallback_path)
+    if not fb_ok:
+        continue
+    for key in ("sn", "wifi", "lora"):
+        if key in fb and key not in c:
+            c[key] = fb[key]
+            log_msg(f"WARN: {key} hersteld uit {fallback_path}")
+
+# === Stap 6: POST-WRITE VALIDATIE — als resultaat MINDER secties heeft, ABORT ===
+new_critical = count_critical(c)
+if original_critical > 0 and new_critical < original_critical:
+    log_msg(f"ABORT: resultaat heeft minder secties ({new_critical}) dan origineel ({original_critical}) — NIET schrijven!")
+    # Herstel origineel uit backup
+    for fb_path in (backup, factory):
+        if os.path.exists(fb_path):
+            try:
+                shutil.copy2(fb_path, cfg_file)
+                log_msg(f"Origineel hersteld uit {fb_path}")
+                break
+            except:
+                pass
+    sys.exit(0)
+
+# === Stap 7: ATOMIC WRITE — schrijf naar .tmp, valideer, dan rename ===
+try:
+    with open(tmp_file, "w") as fh:
+        json.dump(c, fh)
+    # Valideer wat we net geschreven hebben
+    verify, verify_ok = load_json(tmp_file)
+    if not verify_ok:
+        log_msg("ABORT: .tmp verificatie mislukt — NIET overnemen!")
+        os.remove(tmp_file)
+        sys.exit(0)
+    # Controleer dat alle originele secties bewaard zijn
+    for key in original_keys:
+        if key not in verify:
+            log_msg(f"ABORT: sectie '{key}' verdwenen na schrijven — NIET overnemen!")
+            os.remove(tmp_file)
+            sys.exit(0)
+    # Alles OK — atomic rename
+    os.replace(tmp_file, cfg_file)
+except Exception as e:
+    log_msg(f"ERROR: schrijven mislukt ({e}) — origineel ongewijzigd")
+    if os.path.exists(tmp_file):
+        os.remove(tmp_file)
+    sys.exit(0)
+
+sections = list(c.keys())
+has_sn = "sn" in c and isinstance(c.get("sn", {}).get("value", {}).get("code"), str)
+has_wifi = "wifi" in c
+log_msg(f"OK — secties: {sections}, SN: {has_sn}, WiFi: {has_wifi}")
 PYEOF
+
+fi  # end of: if [ -z "\${MQTT_ADDRESS}" ] ... else
 
 echo "[\$(date)] HTTP → \${HTTP_ADDRESS}, MQTT → \${MQTT_ADDRESS}:\${MQTT_PORT_NUM}" >> /userdata/ota/custom_firmware.log
 URLSCRIPT
 chmod +x "$NOVABOT_ROOT/scripts/set_server_urls.sh"
 echo "  set_server_urls.sh aangemaakt"
 
-# 5c. Voeg set_server_urls.sh toe aan run_novabot.sh (na de source lines, voor de case statement)
+# Voeg dnsmasq config toe aan set_server_urls.sh (alleen als --include-server)
+if [ "$INCLUDE_SERVER" = "true" ]; then
+    cat >> "$NOVABOT_ROOT/scripts/set_server_urls.sh" << 'DNSSCRIPT'
+
+# 3. dnsmasq DNS redirect bijwerken met actueel wlan0 IP
+# (maaier hoeft zelf localhost te gebruiken, maar andere apparaten op het netwerk
+#  vinden de maaier via DNS als app.lfibot.com / mqtt.lfibot.com)
+MY_IP=$(ip addr show wlan0 2>/dev/null | grep 'inet ' | awk '{print $2}' | cut -d/ -f1)
+if [ -z "$MY_IP" ]; then
+    # Fallback: probeer eth0
+    MY_IP=$(ip addr show eth0 2>/dev/null | grep 'inet ' | awk '{print $2}' | cut -d/ -f1)
+fi
+if [ -n "$MY_IP" ]; then
+    mkdir -p /etc/dnsmasq.d
+    cat > /etc/dnsmasq.d/novabot.conf << DNSEOF
+address=/app.lfibot.com/$MY_IP
+address=/mqtt.lfibot.com/$MY_IP
+address=/nova-dash.ramonvanbruggen.nl/$MY_IP
+address=/nova-mqtt.ramonvanbruggen.nl/$MY_IP
+address=/novabot.local/$MY_IP
+server=8.8.8.8
+server=192.168.0.1
+interface=wlan0
+interface=lo
+listen-address=127.0.0.1
+listen-address=$MY_IP
+domain-needed
+bogus-priv
+DNSEOF
+    systemctl restart dnsmasq 2>/dev/null || true
+fi
+DNSSCRIPT
+    echo "  set_server_urls.sh: dnsmasq config sectie toegevoegd"
+fi
+
+# 5c. Voeg set_server_urls.sh + pre-boot validatie toe aan run_novabot.sh
 RUN_NOVABOT="$NOVABOT_ROOT/scripts/run_novabot.sh"
+
+# 5c-1. Maak pre-boot validatie script
+cat > "$NOVABOT_ROOT/scripts/validate_config.sh" << 'VALSCRIPT'
+#!/bin/bash
+# CUSTOM: Pre-boot validatie van json_config.json
+# Aangeroepen vanuit run_novabot.sh, VOOR mqtt_node start
+# Als kritieke secties (sn, wifi) ontbreken → herstel uit backup/factory
+# Voorkomt dat mqtt_node start zonder geldige config (→ geen WiFi, geen BLE)
+
+CFG="/userdata/lfi/json_config.json"
+BAK="${CFG}.bak"
+FACTORY="${CFG}.factory"
+LOG="/userdata/ota/custom_firmware.log"
+
+log_msg() {
+    echo "[$(date)] validate_config: $1" >> "$LOG"
+}
+
+# Controleer of json_config.json geldig JSON is met sn + wifi secties
+validate() {
+    local file="$1"
+    [ -f "$file" ] || return 1
+    python3 -c "
+import json, sys
+try:
+    with open('$file') as f:
+        c = json.load(f)
+    # Minimale vereisten: moet een dict zijn met sn sectie
+    if not isinstance(c, dict):
+        sys.exit(1)
+    if 'sn' not in c:
+        sys.exit(2)
+    # WiFi is wenselijk maar niet fataal (kan via BLE hersteld worden)
+    sys.exit(0)
+except:
+    sys.exit(1)
+" 2>/dev/null
+    return $?
+}
+
+mkdir -p /userdata/ota
+
+# Stap 1: Check huidige config
+if validate "$CFG"; then
+    log_msg "OK: json_config.json valide"
+    exit 0
+fi
+
+log_msg "WARN: json_config.json ongeldig of mist sn sectie"
+
+# Stap 2: Probeer .bak
+if validate "$BAK"; then
+    log_msg "HERSTEL: .bak is geldig — kopiëren naar json_config.json"
+    cp "$BAK" "$CFG"
+    exit 0
+fi
+
+# Stap 3: Probeer .factory
+if validate "$FACTORY"; then
+    log_msg "HERSTEL: .factory is geldig — kopiëren naar json_config.json"
+    cp "$FACTORY" "$CFG"
+    exit 0
+fi
+
+log_msg "ERROR: geen geldige config gevonden (.json, .bak, .factory) — mqtt_node start mogelijk zonder SN!"
+exit 1
+VALSCRIPT
+chmod +x "$NOVABOT_ROOT/scripts/validate_config.sh"
+echo "  validate_config.sh aangemaakt"
+
+# 5c-2. Voeg beide hooks toe aan run_novabot.sh
 if [ -f "$RUN_NOVABOT" ]; then
-    # Voeg toe vlak voor "case "$1" in"
     if ! grep -q "set_server_urls.sh" "$RUN_NOVABOT"; then
         sed -i '' '/^case "\$1" in/i\
+# CUSTOM: Valideer json_config.json VOOR mqtt_node start\
+if [ -f "/root/novabot/scripts/validate_config.sh" ]; then\
+    bash /root/novabot/scripts/validate_config.sh\
+fi\
+\
 # CUSTOM: Stel lokale server URLs in bij elke boot\
 if [ -f "/root/novabot/scripts/set_server_urls.sh" ]; then\
     bash /root/novabot/scripts/set_server_urls.sh\
 fi\
 ' "$RUN_NOVABOT"
-        echo "  run_novabot.sh: set_server_urls.sh hook toegevoegd"
+        echo "  run_novabot.sh: validate_config.sh + set_server_urls.sh hooks toegevoegd"
     fi
+fi
+
+# 5c-3. daemon_node toevoegen aan run_novabot.sh
+# KRITIEK: In firmware v6.0.2 is novabot_api uitgecommentarieerd in novabot_system.launch.py.
+# mqtt_node wordt normaal gestart door daemon_node (watchdog), maar die ontbreekt in
+# run_novabot.sh (wel aanwezig in run_novabot_backup.sh lijn 100).
+# Zonder deze fix start mqtt_node NIET → geen MQTT communicatie → maaier is dood.
+if [ -f "$RUN_NOVABOT" ] && ! grep -q "daemon_process daemon_node" "$RUN_NOVABOT"; then
+    # Start blok: injecteer na start_test.sh (zelfde anker als camera/LED)
+    DAEMON_START_BLOCK="/tmp/daemon_node_start_block.sh"
+    cat > "$DAEMON_START_BLOCK" << 'DNEOF'
+
+  # CUSTOM: Start daemon_node (watchdog that spawns and monitors mqtt_node)
+  # novabot_system.launch.py has novabot_api commented out in v6.0.2,
+  # so daemon_node is required to start mqtt_node.
+  ros2 run daemon_process daemon_node &
+DNEOF
+    sed -i '' '/start_test.sh/r /tmp/daemon_node_start_block.sh' "$RUN_NOVABOT"
+    rm -f "$DAEMON_START_BLOCK"
+
+    # Stop blok: voeg kills toe na daemon_monitor.sh kill
+    DAEMON_STOP_BLOCK="/tmp/daemon_node_stop_block.sh"
+    cat > "$DAEMON_STOP_BLOCK" << 'DNEOF'
+  killall -q -9 daemon_node
+  killall -q -9 mqtt_node
+DNEOF
+    sed -i '' '/killall -q -9 daemon_monitor.sh/r /tmp/daemon_node_stop_block.sh' "$RUN_NOVABOT"
+    rm -f "$DAEMON_STOP_BLOCK"
+
+    echo "  run_novabot.sh: daemon_node start + stop toegevoegd (mqtt_node fix)"
+else
+    echo "  run_novabot.sh: daemon_node al aanwezig — overslaan"
 fi
 
 # === Stap 5d: Camera stream service toevoegen ===
@@ -414,6 +948,333 @@ else
     echo "  led_bridge.py niet gevonden — overslaan"
 fi
 
+# === Stap 5f: WiFi AP fallback script toevoegen ===
+echo "[5f/9] WiFi AP fallback script toevoegen..."
+
+# Dit script start een WiFi hotspot als de maaier na 90 seconden geen WiFi STA heeft.
+# Hierdoor kun je altijd via WiFi bij de maaier komen, ook als json_config.json corrupt is.
+cat > "$NOVABOT_ROOT/scripts/wifi_ap_fallback.sh" << 'APEOF'
+#!/bin/bash
+# WiFi AP fallback — start hotspot als STA niet verbindt
+# SSID: OpenNova, Wachtwoord: novabot123, IP: 192.168.4.1
+
+TIMEOUT=90
+AP_SSID="OpenNova"
+AP_PASS="novabot123"
+LOG="/userdata/ota/wifi_ap_fallback.log"
+
+echo "[$(date)] WiFi AP fallback monitor gestart (timeout: ${TIMEOUT}s)" >> "$LOG"
+
+# Wacht in stappen van 10 seconden op STA verbinding
+for i in $(seq 1 $((TIMEOUT / 10))); do
+    sleep 10
+    WLAN_IP=$(ip addr show wlan0 2>/dev/null | grep 'inet ' | awk '{print $2}' | cut -d/ -f1)
+    if [ -n "$WLAN_IP" ]; then
+        echo "[$(date)] WiFi STA verbonden: $WLAN_IP — geen AP nodig" >> "$LOG"
+        exit 0
+    fi
+done
+
+echo "[$(date)] Geen WiFi STA na ${TIMEOUT}s — AP starten: SSID=$AP_SSID" >> "$LOG"
+
+# Stop eventuele WiFi STA pogingen
+killall wpa_supplicant 2>/dev/null
+
+# Configureer wlan0 als AP
+ip link set wlan0 down 2>/dev/null
+ip addr flush dev wlan0 2>/dev/null
+ip addr add 192.168.4.1/24 dev wlan0
+ip link set wlan0 up
+
+# Start hostapd
+cat > /tmp/hostapd_fallback.conf << HAPEOF
+interface=wlan0
+driver=nl80211
+ssid=$AP_SSID
+hw_mode=g
+channel=7
+wmm_enabled=0
+wpa=2
+wpa_passphrase=$AP_PASS
+wpa_key_mgmt=WPA-PSK
+rsn_pairwise=CCMP
+HAPEOF
+
+if command -v hostapd &>/dev/null; then
+    hostapd -B /tmp/hostapd_fallback.conf >> "$LOG" 2>&1
+    echo "[$(date)] hostapd gestart" >> "$LOG"
+
+    # DHCP op het AP netwerk (dnsmasq is al geïnstalleerd in --include-server builds)
+    if command -v dnsmasq &>/dev/null; then
+        dnsmasq --interface=wlan0 --bind-interfaces --except-interface=lo \
+            --dhcp-range=192.168.4.10,192.168.4.50,255.255.255.0,12h \
+            --no-hosts --log-facility="$LOG" &
+        echo "[$(date)] DHCP actief op 192.168.4.x" >> "$LOG"
+    fi
+
+    echo "[$(date)] === AP ACTIEF: SSID=$AP_SSID PSK=$AP_PASS IP=192.168.4.1 ===" >> "$LOG"
+else
+    echo "[$(date)] FOUT: hostapd niet gevonden — installeer met: apt-get install hostapd" >> "$LOG"
+fi
+APEOF
+chmod +x "$NOVABOT_ROOT/scripts/wifi_ap_fallback.sh"
+echo "  wifi_ap_fallback.sh aangemaakt"
+
+# WiFi watchdog — continu monitoring na de initiële AP fallback check
+# Als WiFi wegvalt EN json_config.json corrupt is → herstel + herstart netwerk
+cat > "$NOVABOT_ROOT/scripts/wifi_watchdog.sh" << 'WDEOF'
+#!/bin/bash
+# WiFi watchdog — continu monitoring van WiFi connectiviteit
+# Als WiFi >2 minuten weg is:
+#   1. Check of json_config.json wifi sectie heeft
+#   2. Zo niet → herstel uit backup/factory
+#   3. Herstart wpa_supplicant
+#   4. Als WiFi na herstel nog steeds weg → start AP fallback
+#
+# Dit script draait permanent op de achtergrond.
+
+LOG="/userdata/ota/wifi_watchdog.log"
+CFG="/userdata/lfi/json_config.json"
+BAK="${CFG}.bak"
+FACTORY="${CFG}.factory"
+CHECK_INTERVAL=30  # Controleer elke 30 seconden
+FAIL_THRESHOLD=4   # 4 × 30s = 2 minuten
+
+echo "[$(date)] WiFi watchdog gestart" >> "$LOG"
+
+fail_count=0
+
+while true; do
+    sleep $CHECK_INTERVAL
+
+    # Check WiFi STA connectiviteit
+    WLAN_IP=$(ip addr show wlan0 2>/dev/null | grep 'inet ' | awk '{print $2}' | cut -d/ -f1)
+
+    if [ -n "$WLAN_IP" ]; then
+        # WiFi OK
+        if [ $fail_count -gt 0 ]; then
+            echo "[$(date)] WiFi hersteld: $WLAN_IP (na ${fail_count} checks)" >> "$LOG"
+        fi
+        fail_count=0
+        continue
+    fi
+
+    fail_count=$((fail_count + 1))
+
+    if [ $fail_count -lt $FAIL_THRESHOLD ]; then
+        continue
+    fi
+
+    # WiFi is >2 minuten weg
+    if [ $fail_count -eq $FAIL_THRESHOLD ]; then
+        echo "[$(date)] WiFi >2 min weg — config controleren" >> "$LOG"
+
+        # Check of json_config.json een wifi sectie heeft
+        HAS_WIFI=$(python3 -c "
+import json
+try:
+    with open('$CFG') as f:
+        c = json.load(f)
+    print('yes' if 'wifi' in c else 'no')
+except:
+    print('error')
+" 2>/dev/null)
+
+        if [ "$HAS_WIFI" = "no" ] || [ "$HAS_WIFI" = "error" ]; then
+            echo "[$(date)] json_config.json mist wifi sectie (status: $HAS_WIFI) — herstel starten" >> "$LOG"
+
+            # Probeer backup/factory
+            RESTORED=false
+            for SRC in "$BAK" "$FACTORY"; do
+                if [ -f "$SRC" ]; then
+                    SRC_WIFI=$(python3 -c "
+import json
+try:
+    with open('$SRC') as f:
+        c = json.load(f)
+    print('yes' if 'wifi' in c else 'no')
+except:
+    print('error')
+" 2>/dev/null)
+                    if [ "$SRC_WIFI" = "yes" ]; then
+                        cp "$SRC" "$CFG"
+                        echo "[$(date)] Config hersteld uit $SRC" >> "$LOG"
+                        RESTORED=true
+                        break
+                    fi
+                fi
+            done
+
+            if [ "$RESTORED" = "true" ]; then
+                # Herstart netwerk (wpa_supplicant leest wifi config via mqtt_node)
+                echo "[$(date)] Netwerk herstart geprobeerd" >> "$LOG"
+                # mqtt_node herstarting is de beste manier — het leest json_config.json opnieuw
+                killall mqtt_node 2>/dev/null
+                # daemon_node zal mqtt_node automatisch herstarten
+                sleep 30
+                # Check of WiFi nu werkt
+                WLAN_IP=$(ip addr show wlan0 2>/dev/null | grep 'inet ' | awk '{print $2}' | cut -d/ -f1)
+                if [ -n "$WLAN_IP" ]; then
+                    echo "[$(date)] WiFi hersteld na config restore: $WLAN_IP" >> "$LOG"
+                    fail_count=0
+                    continue
+                fi
+            fi
+
+            echo "[$(date)] WiFi niet hersteld — AP fallback starten" >> "$LOG"
+            if [ -f "/root/novabot/scripts/wifi_ap_fallback.sh" ] && ! pgrep -f hostapd >/dev/null; then
+                bash /root/novabot/scripts/wifi_ap_fallback.sh &
+            fi
+        else
+            echo "[$(date)] WiFi weg maar config heeft wifi sectie — netwerk probleem (niet config)" >> "$LOG"
+            # Na 5 minuten zonder WiFi toch AP starten als vangnet
+            if [ $fail_count -ge 10 ] && ! pgrep -f hostapd >/dev/null; then
+                echo "[$(date)] WiFi >5 min weg — AP fallback als vangnet" >> "$LOG"
+                if [ -f "/root/novabot/scripts/wifi_ap_fallback.sh" ]; then
+                    bash /root/novabot/scripts/wifi_ap_fallback.sh &
+                fi
+            fi
+        fi
+    fi
+done
+WDEOF
+chmod +x "$NOVABOT_ROOT/scripts/wifi_watchdog.sh"
+echo "  wifi_watchdog.sh aangemaakt"
+
+# Voeg WiFi AP fallback + watchdog toe aan run_novabot.sh start) blok
+if [ -f "$RUN_NOVABOT" ] && ! grep -q "wifi_ap_fallback.sh" "$RUN_NOVABOT"; then
+    AP_START_BLOCK="/tmp/ap_start_block.sh"
+    cat > "$AP_START_BLOCK" << 'APSTARTEOF'
+
+  # CUSTOM: WiFi AP fallback — start hotspot als STA niet verbindt na 90s
+  if [ -f "/root/novabot/scripts/wifi_ap_fallback.sh" ]; then
+      bash /root/novabot/scripts/wifi_ap_fallback.sh &
+      echo "WiFi AP fallback monitor gestart" >> $LOGS_PATH/wifi_ap_fallback.log
+  fi
+
+  # CUSTOM: WiFi watchdog — continu monitoring, herstelt config bij problemen
+  if [ -f "/root/novabot/scripts/wifi_watchdog.sh" ]; then
+      bash /root/novabot/scripts/wifi_watchdog.sh &
+      echo "WiFi watchdog gestart" >> $LOGS_PATH/wifi_watchdog.log
+  fi
+APSTARTEOF
+    sed -i '' '/start_test.sh/r /tmp/ap_start_block.sh' "$RUN_NOVABOT"
+    rm -f "$AP_START_BLOCK"
+    echo "  run_novabot.sh: WiFi AP fallback + watchdog toegevoegd aan start)"
+
+    # Kill AP fallback + watchdog bij stop
+    AP_STOP_BLOCK="/tmp/ap_stop_block.sh"
+    cat > "$AP_STOP_BLOCK" << 'APSTOPEOF'
+  killall -q -9 wifi_ap_fallback.sh wifi_watchdog.sh hostapd
+APSTOPEOF
+    sed -i '' '/killall -q -9 daemon_monitor.sh/r /tmp/ap_stop_block.sh' "$RUN_NOVABOT"
+    rm -f "$AP_STOP_BLOCK"
+    echo "  run_novabot.sh: WiFi AP fallback + watchdog kill toegevoegd aan stop)"
+fi
+
+# === Stap 5g: Novabot-server bundelen ===
+echo "[5g/9] Novabot-server bundelen..."
+
+if [ "$INCLUDE_SERVER" = "true" ]; then
+    SERVER_SRC_DIR="$SCRIPT_DIR/../novabot-server"
+    DASH_SRC_DIR="$SCRIPT_DIR/../novabot-dashboard"
+
+    # Compileer server TypeScript (als dist/ ontbreekt of verouderd is)
+    if [ ! -d "$SERVER_SRC_DIR/dist" ] || [ "$SERVER_SRC_DIR/src" -nt "$SERVER_SRC_DIR/dist" ]; then
+        echo "  Server TypeScript compileren..."
+        (cd "$SERVER_SRC_DIR" && npm run build 2>&1 | tail -3)
+    else
+        echo "  dist/ is up-to-date — overslaan"
+    fi
+
+    # Bouw dashboard (als dist/ ontbreekt of verouderd is)
+    if [ ! -d "$DASH_SRC_DIR/dist" ] || [ "$DASH_SRC_DIR/src" -nt "$DASH_SRC_DIR/dist" ]; then
+        echo "  Dashboard bouwen..."
+        (cd "$DASH_SRC_DIR" && npm run build 2>&1 | tail -3)
+    else
+        echo "  Dashboard dist/ is up-to-date — overslaan"
+    fi
+
+    # Kopieer naar firmware bundle
+    SERVER_DEST="$NOVABOT_ROOT/opt/novabot-server"
+    DASH_DEST="$NOVABOT_ROOT/opt/novabot-dashboard"
+    mkdir -p "$SERVER_DEST" "$DASH_DEST/dist"
+
+    cp -r "$SERVER_SRC_DIR/dist" "$SERVER_DEST/"
+    cp "$SERVER_SRC_DIR/package.json" "$SERVER_DEST/"
+    cp "$SERVER_SRC_DIR/package-lock.json" "$SERVER_DEST/"
+    cp "$SCRIPT_DIR/libmadvise_fix.c" "$SERVER_DEST/"
+    cp -r "$DASH_SRC_DIR/dist/." "$DASH_DEST/dist/"
+
+    echo "  Server dist/ + dashboard dist/ gekopieerd naar firmware bundle"
+
+    # --bundle-node: ook Node.js binary + pre-compiled node_modules bundelen
+    if [ "$BUNDLE_NODE" = "true" ]; then
+        # Gebruik een vaste, bekende LTS versie (grep -oP werkt niet op macOS BSD grep)
+        NODE_VERSION="v20.19.0"
+        NODE_TARBALL="node-${NODE_VERSION}-linux-arm64.tar.gz"
+        NODE_URL="https://nodejs.org/dist/${NODE_VERSION}/${NODE_TARBALL}"
+
+        echo "  Node.js binary downloaden: ${NODE_VERSION} (ARM64)..."
+        # Verwijder gecachte tarball als die < 1MB is (kapot door vorige mislukte download)
+        if [ -f "/tmp/${NODE_TARBALL}" ] && [ "$(stat -f%z "/tmp/${NODE_TARBALL}" 2>/dev/null || stat -c%s "/tmp/${NODE_TARBALL}" 2>/dev/null || echo 0)" -lt 1048576 ]; then
+            echo "  Gecachte tarball is te klein — opnieuw downloaden..."
+            rm -f "/tmp/${NODE_TARBALL}"
+        fi
+        if [ ! -f "/tmp/${NODE_TARBALL}" ]; then
+            curl -L --progress-bar "$NODE_URL" -o "/tmp/${NODE_TARBALL}"
+            # Controleer of download succesvol was (> 10MB verwacht)
+            TARBALL_SIZE=$(stat -f%z "/tmp/${NODE_TARBALL}" 2>/dev/null || stat -c%s "/tmp/${NODE_TARBALL}" 2>/dev/null || echo 0)
+            if [ "$TARBALL_SIZE" -lt 10485760 ]; then
+                echo "  WAARSCHUWING: Node.js tarball te klein (${TARBALL_SIZE} bytes) — download mislukt?"
+                echo "  Maaier zal system node (/usr/bin/node) gebruiken als fallback"
+                rm -f "/tmp/${NODE_TARBALL}"
+            else
+                echo "  Node.js tarball gedownload ($(du -sh "/tmp/${NODE_TARBALL}" | cut -f1))"
+            fi
+        else
+            echo "  (al gecached in /tmp/)"
+        fi
+        if [ -f "/tmp/${NODE_TARBALL}" ]; then
+            cp "/tmp/${NODE_TARBALL}" "$SERVER_DEST/node-v20-linux-arm64.tar.gz"
+            echo "  Node.js tarball gebundeld ($(du -sh "$SERVER_DEST/node-v20-linux-arm64.tar.gz" | cut -f1))"
+        fi
+
+        # Kopieer pre-compiled node_modules van maaier via scp
+        MOWER_IP="$BUNDLE_NODE_IP"
+        if [ -z "$MOWER_IP" ]; then
+            # Probeer auto-detectie via nmap of arp
+            MOWER_IP=$(arp -n 2>/dev/null | grep -i "50:41:1c" | awk '{print $1}' | head -1 || true)
+        fi
+        # Eerst lokale cache proberen, dan pas SSH naar maaier
+        NM_CACHE="/tmp/node_modules_mower_cache.tar.gz"
+        if [ -f "$NM_CACHE" ]; then
+            echo "  node_modules uit lokale cache ($NM_CACHE)..."
+            # || true: macOS tar geeft fout op Linux resource fork bestanden (._*), maar extractie lukt
+            tar xzf "$NM_CACHE" -C "$SERVER_DEST" 2>/dev/null || true
+            echo "  node_modules gebundeld ($(du -sh "$SERVER_DEST/node_modules" | cut -f1))"
+        elif [ -n "$MOWER_IP" ]; then
+            echo "  node_modules kopiëren van maaier ($MOWER_IP)..."
+            # Comprimeer op maaier, download als één bestand (betrouwbaarder dan scp -r)
+            sshpass -p 'novabot' ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=10 \
+                "root@${MOWER_IP}" \
+                "cd /root/novabot-server && tar czf /tmp/node_modules.tar.gz node_modules"
+            sshpass -p 'novabot' scp -o StrictHostKeyChecking=no -o ServerAliveInterval=10 \
+                "root@${MOWER_IP}:/tmp/node_modules.tar.gz" "$NM_CACHE"
+            tar xzf "$NM_CACHE" -C "$SERVER_DEST"
+            echo "  node_modules gebundeld ($(du -sh "$SERVER_DEST/node_modules" | cut -f1))"
+        else
+            echo "  WAARSCHUWING: Geen maaier IP gevonden voor --bundle-node"
+            echo "  Gebruik --bundle-node-ip <ip> om dit op te geven"
+            echo "  node_modules worden bij installatie gedownload (internet vereist)"
+        fi
+    fi
+
+    echo "  Server bundel klaar"
+else
+    echo "  --include-server niet opgegeven — overslaan"
+fi
+
 # === Stap 6: Optioneel ROS 2 netwerk openzetten ===
 if [ "$ENABLE_REMOTE_ROS2" = "true" ]; then
     echo "[6/8] ROS 2 netwerk openzetten..."
@@ -444,6 +1305,8 @@ if [ -f "$README" ]; then
     echo "# - HTTP uploads → ${HTTP_BASE}" >> "$README"
     echo "# - Root password set for SSH access" >> "$README"
     [ "$ENABLE_REMOTE_ROS2" = "true" ] && echo "# - ROS 2 network access enabled" >> "$README"
+    [ "$INCLUDE_SERVER" = "true" ] && echo "# - Novabot-server (local cloud) gebundeld" >> "$README"
+    [ "$INCLUDE_SERVER" = "true" ] && [ "$BUNDLE_NODE" = "true" ] && echo "# - Node.js + node_modules offline gebundeld" >> "$README"
     echo "# Version: ${VERSION}" >> "$README"
 fi
 
@@ -586,6 +1449,26 @@ echo "    ✓ http_address.txt + json_config.json worden bij elke boot gezet"
 [ -f "$NOVABOT_ROOT/scripts/camera_stream.py" ] && echo "    ✓ Camera MJPEG stream op poort 8000 (auto-start na 15s)"
 [ -f "$NOVABOT_ROOT/scripts/led_bridge.py" ] && echo "    ✓ LED bridge: MQTT → ROS /led_set (headlight controle)"
 [ "$ENABLE_REMOTE_ROS2" = "true" ] && echo "    ✓ ROS 2 netwerk open (ROS_LOCALHOST_ONLY=0)"
+if [ "$INCLUDE_SERVER" = "true" ]; then
+    echo "    ✓ Novabot-server gebundeld (dashboard op poort ${SERVER_PORT})"
+    echo "    ✓ novabot-server.service geactiveerd (auto-start bij boot)"
+    echo "    ✓ DNS redirect: app.lfibot.com + mqtt.lfibot.com → maaier IP"
+    echo "    ✓ mDNS: maaier beschikbaar als novabot.local (avahi-daemon)"
+    echo "    ✓ WiFi AP fallback: SSID=OpenNova PSK=novabot123 (na 90s zonder STA)"
+    echo "    ✓ WiFi watchdog: continu monitoring, auto-herstel config + AP bij problemen"
+    echo "    ✓ Ethernet recovery: 192.168.1.10/24 (altijd actief)"
+    echo "    ✓ json_config.json: atomic writes + factory backup + pre-boot validatie"
+    if [ "$BUNDLE_NODE" = "true" ]; then
+        echo "    ✓ Node.js 20 ARM64 + node_modules offline gebundeld"
+    else
+        echo "    ℹ Node.js 20 + npm packages worden gedownload bij installatie (internet vereist)"
+    fi
+    echo ""
+    echo "  Na OTA flash:"
+    echo "    - Open http://<maaier-ip>:${SERVER_PORT} in browser"
+    echo "    - Maak een account aan via de setup wizard"
+    echo "    - Router DNS: app.lfibot.com → <maaier-ip> voor app-verbinding"
+fi
 echo ""
 echo "============================================"
 echo "  OTA FLASH INSTRUCTIES"

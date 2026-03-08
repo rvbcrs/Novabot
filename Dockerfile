@@ -1,4 +1,4 @@
-# ── Stage 1: Build ────────────────────────────────────────────────────────────
+# ── Stage 1: Build (TypeScript compilatie) ────────────────────────────────────
 FROM node:20-alpine AS build
 
 # Build tools for native modules (bcrypt, better-sqlite3)
@@ -28,17 +28,50 @@ COPY novabot-dashboard/public novabot-dashboard/public
 RUN cd novabot-dashboard && npm run build
 
 
-# ── Stage 2: Runtime ──────────────────────────────────────────────────────────
+# ── Stage 2: Production dependencies (lean) ──────────────────────────────────
+FROM node:20-alpine AS deps
+
+RUN apk add --no-cache python3 make g++ linux-headers
+
+WORKDIR /app
+
+COPY novabot-server/package.json novabot-server/package-lock.json* novabot-server/
+
+# Install production deps only (no typescript, tsx, @types, etc.)
+RUN cd novabot-server && npm ci --omit=dev
+
+# Remove packages not needed in Docker:
+# - @stoprocent/noble + usb + @serialport = BLE (no adapter in Docker)
+# - ssh2 + cpu-features = SSH to mower (dev-only feature)
+# All imports are dynamic — server runs fine without them.
+RUN cd novabot-server && \
+    rm -rf node_modules/@stoprocent \
+           node_modules/noble \
+           node_modules/usb \
+           node_modules/@serialport \
+           node_modules/serialport \
+           node_modules/ssh2 \
+           node_modules/cpu-features \
+           node_modules/@noble
+
+# Strip better-sqlite3: remove build artifacts not needed at runtime
+# The .node binary in build/Release is needed; deps/ and src/ are not.
+RUN cd novabot-server/node_modules/better-sqlite3 && \
+    rm -rf deps src build/deps build/test_extension* build/*.mk build/Makefile \
+           build/config.gypi build/gyp-mac-tool build/binding.Makefile 2>/dev/null; true
+
+
+# ── Stage 3: Runtime ──────────────────────────────────────────────────────────
 FROM node:20-alpine
 
 RUN apk add --no-cache dnsmasq nginx openssl
 
 WORKDIR /app
 
-# Copy compiled server + production dependencies
+# Copy compiled server + lean production dependencies
 COPY --from=build /app/novabot-server/dist novabot-server/dist
-COPY --from=build /app/novabot-server/node_modules novabot-server/node_modules
-COPY --from=build /app/novabot-server/package.json novabot-server/
+COPY --from=deps /app/novabot-server/node_modules novabot-server/node_modules
+COPY --from=deps /app/novabot-server/package.json novabot-server/
 
 # Copy built dashboard
 COPY --from=build /app/novabot-dashboard/dist novabot-dashboard/dist

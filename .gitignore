@@ -18,6 +18,12 @@ research/*.bin
 research/*.elf
 research/*.xapk
 
+# Bootstrap build artifacts
+bootstrap/node_modules/
+bootstrap/dist/
+bootstrap/wizard/node_modules/
+bootstrap/wizard/dist/
+
 # Mower firmware — skip PGM occupancy grids (large)
 research/mower_firmware/**/*.pgm
 research/mower_firmware/ota_lib/

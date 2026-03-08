@@ -187,9 +187,46 @@ For mower: `chargerAddress`, `chargerChannel`, `account`, `password` are all `nu
 
 | # | Method | Endpoint | Auth | Request | Response (`value`) |
 |---|--------|----------|------|---------|-------------------|
-| 27 | GET | `/api/nova-file-server/map/queryEquipmentMap?sn=` | JWT | query: `sn` | `[{ mapId, mowerSn, mapName, mapArea[], mapMaxMin, fileSize, createdAt }]` |
+| 27 | GET | `/api/nova-file-server/map/queryEquipmentMap?sn=` | JWT | query: `sn` | Zie detail hieronder |
 | 28 | POST | `/api/nova-file-server/map/fragmentUploadEquipmentMap` | JWT | multipart: `sn, uploadId, chunkIndex, chunksTotal, mapName?, mapArea?, file` | `{ mapId, uploadId, complete?, chunksReceived? }` |
 | 29 | POST | `/api/nova-file-server/map/updateEquipmentMapAlias` | JWT | `{ mapId, mapName }` | `{}` |
+
+**Endpoint #27 — `queryEquipmentMap` response detail (maart 2026)**
+
+App v2.4.0 verwacht `data` als `Map<String, dynamic>` (doet `data as Map<String, dynamic>` typecheck).
+Een base64 string of array crasht de app → "No map!" error.
+
+```json
+{
+  "data": {
+    "work": [
+      {
+        "fileName": "map0_work.csv",
+        "alias": "Work area 1",
+        "type": "work",
+        "url": null,
+        "fileHash": "md5_van_map_id",
+        "mapArea": "[{\"lat\":52.14,\"lng\":6.23}, ...]",
+        "obstacle": [
+          { "fileName": "map0_0_obstacle.csv", "alias": "obstacle_0", "type": "obstacle", ... }
+        ]
+      }
+    ],
+    "unicom": [
+      { "fileName": "map0tocharge_unicom.csv", "alias": "Channel 1", "type": "unicom", ... }
+    ]
+  },
+  "md5": "hash_van_latest_zip_of_null",
+  "machineExtendedField": {
+    "chargingPose": { "x": "6.231", "y": "52.140", "orientation": "0" }
+  }
+}
+```
+
+- `MapEntityItem` velden: `fileName`, `alias`, `type`, `url`, `fileHash`, `mapArea`, `obstacle[]`
+- `chargingPose` velden zijn **strings** (app doet `double._parse()` erop)
+- `data: null` als er geen kaarten zijn → app toont "No map!"
+- `machineExtendedField: null` als er geen charger GPS positie bekend is
 
 #### Messages
 

@@ -7,6 +7,7 @@ import { getAllDeviceSnapshots } from '../mqtt/sensorData.js';
 import { isDeviceOnline } from '../mqtt/broker.js';
 import { db } from '../db/database.js';
 import { initBleLogger, sendBleLogHistory } from '../ble/bleLogger.js';
+import { setOutlineEmitter } from '../mqtt/mapSync.js';
 
 interface DeviceRegistryRow {
   sn: string | null;
@@ -50,6 +51,9 @@ export function initDashboardSocket(httpServer: HttpServer): void {
     cors: { origin: '*' },  // dev: Vite op :5173
     path: '/socket.io',
   });
+
+  // Stuur live kaart-outlines naar dashboard tijdens actief mappen
+  setOutlineEmitter((sn, points) => io!.emit('map:outline', { sn, points, timestamp: Date.now() }));
 
   // Start BLE logger — uses io.emit for broadcasting
   initBleLogger((event, data) => io!.emit(event, data));

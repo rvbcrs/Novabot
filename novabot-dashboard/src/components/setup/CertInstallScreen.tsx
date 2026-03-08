@@ -41,11 +41,11 @@ export function CertInstallScreen({ onCertTrusted }: Props) {
         {/* Download knop */}
         <a
           href="/api/dashboard/setup/ca-cert"
-          download="novabot-ca.crt"
+          download="opennova-ca.crt"
           className="flex items-center justify-center gap-2.5 w-full bg-blue-600 hover:bg-blue-500 text-white font-medium py-3 rounded-xl transition-colors mb-6 text-sm"
         >
           <Download className="w-4 h-4" />
-          Download novabot-ca.crt
+          Download opennova-ca.crt
         </a>
 
         {/* Installatie handleidingen */}
@@ -55,9 +55,9 @@ export function CertInstallScreen({ onCertTrusted }: Props) {
             open={openGuide === 'mac'}
             onToggle={() => setOpenGuide(g => g === 'mac' ? null : 'mac')}
             steps={[
-              'Download novabot-ca.crt en dubbelklik → Keychain Access opent',
+              'Download opennova-ca.crt en dubbelklik → Keychain Access opent',
               'Het cert staat nu in de System keychain maar is nog NIET vertrouwd',
-              'Dubbelklik op "Novabot Local CA" in de lijst',
+              'Dubbelklik op "OpenNova Local CA" in de lijst',
               'Klap "Trust" open (klik op het driehoekje)',
               'Zet "When using this certificate" op "Always Trust"',
               'Sluit het venster → voer je Mac-wachtwoord in als gevraagd',
@@ -73,7 +73,7 @@ export function CertInstallScreen({ onCertTrusted }: Props) {
               'Open het bestand → "Profiel gedownload" verschijnt',
               'Ga naar Instellingen → Profiel gedownload → Installeer',
               'Ga naar Instellingen → Algemeen → Info → Vertrouwde certificaten',
-              'Zet "Novabot Local CA" aan',
+              'Zet "OpenNova Local CA" aan',
             ]}
           />
         </div>

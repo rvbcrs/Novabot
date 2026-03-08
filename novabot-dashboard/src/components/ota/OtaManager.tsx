@@ -290,7 +290,7 @@ export function OtaManager({ devices, otaProgress }: Props) {
           {files.length === 0 ? (
             <p className="text-xs text-gray-600 italic leading-snug">
               Kopieer <code className="text-gray-500">.bin</code> / <code className="text-gray-500">.deb</code> naar{' '}
-              <code className="text-gray-500">novabot-server/firmware/</code> en herlaad.
+              <code className="text-gray-500">opennova-server/firmware/</code> en herlaad.
             </p>
           ) : (
             <div className="space-y-1">

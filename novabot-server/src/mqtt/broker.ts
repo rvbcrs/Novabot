@@ -1,7 +1,12 @@
 import net from 'net';
+import fs from 'fs';
+import path from 'path';
 import crypto from 'crypto';
 import { execFile } from 'child_process';
-import { Aedes, Client, AedesPublishPacket } from 'aedes';
+// aedes v1.0.0 is ESM-only — loaded lazily inside startMqttBroker() via dynamic import
+type AedesBroker = { publish: (packet: AedesPublishPacket, cb: (err?: Error | null) => void) => void; handle: unknown; on: (event: string, listener: (...args: any[]) => void) => void; close: (cb?: () => void) => void; connectedClients: number };
+type Client = { id: string; conn?: { remoteAddress?: string }; [key: string]: unknown };
+type AedesPublishPacket = { topic: string; payload: Buffer | string; qos: 0 | 1 | 2; retain: boolean; cmd?: string; dup?: boolean };
 import { db } from '../db/database.js';
 import { DeviceRegistryRow } from '../types/index.js';
 import { startMqttBridge } from '../proxy/mqttBridge.js';
@@ -9,7 +14,7 @@ import { tryDecrypt } from './decrypt.js';
 import { startHomeAssistantBridge, forwardToHomeAssistant, publishDeviceOnline, publishDeviceOffline } from './homeassistant.js';
 import { updateDeviceData, clearDeviceData } from './sensorData.js';
 import { forwardToDashboard, emitDeviceOnline, emitDeviceOffline, pushMqttLog, emitOtaEvent } from '../dashboard/socketHandler.js';
-import { initMapSync, onMowerConnected, handleMapMessage } from './mapSync.js';
+import { initMapSync, onMowerConnected, handleMapMessage, publishEncryptedOnTopic } from './mapSync.js';
 
 const PROXY_MODE = process.env.PROXY_MODE ?? 'local';
 
@@ -347,7 +352,10 @@ export async function startMqttBroker(): Promise<void> {
   // Zonder dit retourneert de 'authenticate' stap in connectActions vroegtijdig
   // (if (client.broker.closed) return) zonder done() aan te roepen,
   // waardoor doConnack nooit wordt uitgevoerd.
-  const broker = await Aedes.createBroker();
+  // aedes v1.0.0: `Aedes` is een named export, `createBroker` is een static method
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { Aedes: AedesClass } = await import('aedes') as any;
+  const broker = await AedesClass.createBroker();
 
   // Initialiseer mapSync met de broker zodat we MQTT commands kunnen publiceren
   initMapSync(broker);
@@ -384,6 +392,15 @@ export async function startMqttBroker(): Promise<void> {
   // De app stuurt altijd tz mee. Door tz te verwijderen en type:"full" te forceren
   // voordat het bericht de maaier bereikt, werkt OTA weer correct.
   (broker as any).authorizePublish = (client: Client | null, packet: AedesPublishPacket, callback: (error?: Error | null) => void) => {
+    // Race condition fix: de app stuurt een commando (bijv. get_map_list) en start
+    // daarna pas de timeout listener. Op een lokaal netwerk antwoordt de maaier zo snel
+    // dat het antwoord arriveert VOORDAT de listener actief is → timeout → "Get map failed".
+    // Oplossing: vertraag maaier→app responses op Dart/Receive_mqtt/ met 150ms.
+    if (client && packet.topic.startsWith('Dart/Receive_mqtt/LFIN') && !isAppClient(client.id)) {
+      setTimeout(() => callback(null), 150);
+      return;
+    }
+
     if (client && packet.topic.startsWith('Dart/Send_mqtt/LFIN') && isAppClient(client.id)) {
       const payloadBuf = Buffer.isBuffer(packet.payload) ? packet.payload : Buffer.from(packet.payload);
       const sn = packet.topic.split('/').pop() ?? '';
@@ -416,6 +433,38 @@ export async function startMqttBroker(): Promise<void> {
               const encrypted = Buffer.concat([cipher.update(padded), cipher.final()]);
               packet.payload = encrypted;
               console.log(`\x1b[38;5;208m[OTA-FIX] Re-encrypted: ${encrypted.length}B → maaier\x1b[0m`);
+            } else if ('get_map_list' in parsed) {
+              // ── Server-side map response ──
+              // De app stuurt get_map_list naar de maaier. Als de maaier geen kaarten
+              // heeft (map_num=0), reageert hij niet en de app toont "Get map failed".
+              // Oplossing: server stuurt zelf een get_map_list_respond met de kaartdata
+              // uit de database, zodat de app de kaarten downloadt van onze server.
+              console.log(`${C.cyan}[MAP-PROXY] App vraagt get_map_list voor ${sn} — server beantwoordt${C.reset}`);
+              const STORAGE_PATH = path.resolve(process.env.STORAGE_PATH ?? './storage', 'maps');
+              const zipPath = path.join(STORAGE_PATH, `${sn}_latest.zip`);
+              if (fs.existsSync(zipPath)) {
+                const zipData = fs.readFileSync(zipPath);
+                const zipMd5 = crypto.createHash('md5').update(zipData).digest('hex');
+                const response = {
+                  type: 'get_map_list_respond',
+                  message: {
+                    result: 0,
+                    value: {
+                      md5: zipMd5,
+                      name: `${sn}.zip`,
+                      zip_dir_empty: 0,
+                    },
+                  },
+                };
+                // Publiceer de response op het Receive topic zodat de app het ontvangt
+                // Gebruik setTimeout om de app tijd te geven de listener op te zetten
+                setTimeout(() => {
+                  publishEncryptedOnTopic(`Dart/Receive_mqtt/${sn}`, sn, response);
+                  console.log(`${C.cyan}[MAP-PROXY] get_map_list_respond gestuurd: md5=${zipMd5}${C.reset}`);
+                }, 200);
+              } else {
+                console.log(`${C.cyan}[MAP-PROXY] Geen kaarten in database voor ${sn}, geen response${C.reset}`);
+              }
             } else {
               console.log(`\x1b[38;5;208m[OTA-FIX] Geen ota_upgrade_cmd, doorsturen ongewijzigd\x1b[0m`);
             }
@@ -430,7 +479,8 @@ export async function startMqttBroker(): Promise<void> {
     callback(null);
   };
 
-  broker.authenticate = (client: Client, username: Readonly<string | undefined>, password: Readonly<Buffer | undefined>, callback) => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  broker.authenticate = (client: Client, username: Readonly<string | undefined>, password: Readonly<Buffer | undefined>, callback: any) => {
     const clientId  = client.id ?? '';
     const user      = username ?? '';
     const pass      = password?.toString() ?? '';
@@ -525,7 +575,8 @@ export async function startMqttBroker(): Promise<void> {
     });
   });
 
-  broker.on('subscribe', (subscriptions, client: Client) => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  broker.on('subscribe', (subscriptions: any[], client: Client) => {
     const topics = subscriptions.map(s => s.topic).join(', ');
     console.log(`${clientColor(client.id)}[MQTT] SUBSCRIBE ${client.id} -> [${topics}]${C.reset}`);
     // Track subscriptions
@@ -735,6 +786,14 @@ export async function startMqttBroker(): Promise<void> {
             const sc = snMatch[0].startsWith('LFIN') ? C.green : C.yellow;
             const label = isApp ? 'APP' : '';
             console.log(`${sc}[MQTT] TCP socket ${snMatch[0]}${label ? ` (${label})` : ''} (${socket.remoteAddress})${C.reset}`);
+
+            // Sla IP-adres op in device_registry (voor SSH map-upload)
+            if (!isApp && socket.remoteAddress) {
+              const cleanIp = socket.remoteAddress.replace(/^::ffff:/, '');
+              try {
+                db.prepare('UPDATE device_registry SET ip_address = ? WHERE sn = ?').run(cleanIp, snMatch[0]);
+              } catch { /* tabel nog niet gemigrated */ }
+            }
 
             // Auto-detect BLE MAC via ARP — alleen voor DEVICE connecties (niet app-clients)
             if (!isApp && socket.remoteAddress) {

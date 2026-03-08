@@ -1,7 +1,13 @@
+# macOS / Windows ontwikkelomgeving — bridge networking met port mapping.
+# Op Linux (productie): gebruik docker-compose.linux.yml voor host networking
+# zodat echte client-IPs zichtbaar zijn en maaier-IP auto-detectie werkt:
+#   docker compose -f docker-compose.linux.yml up -d
+
 services:
-  novabot:
+  opennova:
+    image: rvbcrs/opennova:latest
     build: .
-    container_name: novabot
+    container_name: opennova
     restart: unless-stopped
     ports:
       - "53:53/udp"

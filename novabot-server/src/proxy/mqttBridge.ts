@@ -5,7 +5,11 @@
  * Activated when PROXY_MODE=cloud.
  */
 import mqtt from 'mqtt';
-import type { Aedes, Client, AedesPublishPacket } from 'aedes';
+// aedes v1.0.0 has no main field — define compatible types locally
+type Aedes = { on: (event: string, listener: (...args: any[]) => void) => void; publish: (packet: unknown, cb: () => void) => void };
+type Client = { id: string; [key: string]: unknown };
+type AedesPublishPacket = { topic: string; payload: Buffer | string; qos: 0 | 1 | 2; retain: boolean };
+type Subscription = { topic: string; qos: 0 | 1 | 2 };
 
 // Gebruik direct het IP-adres om DNS-rewrite loops te voorkomen
 const UPSTREAM_MQTT = process.env.UPSTREAM_MQTT ?? 'mqtt://47.253.162.193:1883';
@@ -91,7 +95,7 @@ export function startMqttBridge(broker: Aedes): void {
   });
 
   // Wanneer een lokale client subscribeert, ook upstream subscriben
-  broker.on('subscribe', (subscriptions, client: Client) => {
+  broker.on('subscribe', (subscriptions: Subscription[], client: Client) => {
     const upstream = upstreamClients.get(client.id);
     if (!upstream) return;
 

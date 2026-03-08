@@ -281,5 +281,13 @@ export function initDb(): void {
   try { db.exec(`ALTER TABLE ota_versions ADD COLUMN md5 TEXT`); }
   catch { /* kolom bestaat al */ }
 
+  // IP-adres van apparaten opslaan voor SSH upload (migratie)
+  try { db.exec(`ALTER TABLE device_registry ADD COLUMN ip_address TEXT`); }
+  catch { /* kolom bestaat al */ }
+
+  // Handmatig geconfigureerd maaier IP voor SSH upload (migratie)
+  try { db.exec(`ALTER TABLE equipment ADD COLUMN mower_ip TEXT`); }
+  catch { /* kolom bestaat al */ }
+
   console.log('[DB] Database initialised');
 }

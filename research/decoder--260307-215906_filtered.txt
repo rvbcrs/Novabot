@@ -1,0 +1,1193 @@
+NOTICE:  fast_boot:0
+
+S
+F
+L
+O
+NOTICE:  efuse cpu_cfg = 0
+W
+NOTICE:  Booting Trusted Firmware
+NOTICE:  BL1: v1.4(release):HR-ROM-Rel-v1.1-141-ga91d4dd-dirty
+NOTICE:  BL1: Built : 11:24:44, Oct 23 2019
+NOTICE:  Waiting connect ...
+
+NOTICE:  boot src: 0
+
+NOTICE:  eMMC : 0xd6
+
+NOTICE:  BL1: Booting BL2
+
+Auth pass
+NOTICE:  bl1_main exit
+SPL cold boot flow
+check_reset_state (0): wakeup address = 0x0, hw wakeup status = 0x0, wakeup src=0x100
+patch for sys_pll 1200 with 100M eth
+SFLOW_INIT
+CHIP ID:PBS430/WAFER: W18/ X: X05/ Y: Y25
+secondary_jump_to_spl: secure chip flow
+
+X3 SPL : secondary core wake up and jump to spl done (cpu_core_cfg=0)
+SFLOW_FIN_HW_A
+
+U-Boot SPL 2018.09-g4ca851534c-dirty (May 11 2022 - 20:09:50 +0800)
+SPACC Init - ID: (00000061)
+SPL emmc boot mode (from strap)
+emmc: width = 4, mclk = 48000000, sclk = 24000000
+
+ddr_type = 1 (LPDDR4)
+hb_chip_package_type:3
+ddr_hdr.ecc_gran: 0x0
+ddr_hdr.ecc_map: 0x0
+ddr_hdr.sbr_pattern0: 0x33fffc0e
+ddr_hdr.sbr_pattern1: 0x6572a099
+ddr_freq = 05
+board id = 31540334
+ddr datarate: 3200
+### SAMSUNG DDR ###
+no ddr pin set
+detect part number: 108
+detect ddr freq: c80
+board id alternative:0x3
+index is 12
+index is 15
+index is 19
+hb_ddr_index: 19
+ddr_type = 1, ddr_vendor=3, ddr_freq=3200
+dram_pll_init
+sscg disabled 
+
+control load ddrc src_addr: bfe00, load_addr: 802caa20, src_len: 920
+
+[DDR INFO] 	==ddr_release_info==
+[DDR INFO] 	VERSION:	develop
+[DDR INFO] 	BUILD:		2022-05-11-20:09
+[DDR INFO] 	GIT COMMIT:	4ca851534c1616ace920fdaa000c6fb717c1fb74
+[DDR INFO] 	GIT TIME:	Wed, 20 Apr 2022 18:28:49 +0800
+[DDR INFO] 	==ddr_features==
+[DDR INFO] 	RDBI:		0
+[DDR INFO] 	WDBI:		1
+[DDR INFO] 	InlineECC:	0
+[DDR INFO] 	DM:		1
+[DDR INFO] 	DDC:		1
+[DDR INFO] 	SSCG:		0
+[DDR INFO] 	BOARD:		XS_ENABLE
+[DDR INFO] ddr_controller_cfg done
+load ddr phy src_addr: c0800, load_addr: 802caa20, src_len: 420
+ATxSlewRate	: 15f
+ATxImpedance	: 7f
+TxSlewRate	: 19f
+TxOdtDrvStren	: 600
+TxImpedanceCtrl	: e3f
+CalDrvStr0	: 11
+VrefInGlobal	: 104
+board_type = 4 (CUSTOMER_BOARD)
+load dqmap src addr: c2600, load_addr: 802caa20, src_len: 20
+[DDR INFO] dwc_ddrphy_train start
+magic = 544f4248
+load imem1 src_addr: 81e00, load_addr: 802caa20, src_len: 8000
+
+load dmem1 src_addr: bf000, load_addr: 802caa20, src_len: 684
+
+executing 1D fw
+
+load imem2 src_addr: 89e00, load_addr: 802caa20, src_len: 8000
+
+load dmem2 src_addr: bf800, load_addr: 802caa20, src_len: 564
+
+*******************************************************
+p_dmem_lpddr4_2d_16b->MR11_A0:54
+p_dmem_lpddr4_2d_16b->MR14_A0:54
+p_dmem_lpddr4_2d_16b->MR12_A0:51
+p_dmem_lpddr4_2d_16b->MR22_A0:14
+
+p_dmem_lpddr4_2d_16b->MR3_A0:b3
+p_dmem_lpddr4_2d_16b->Reserved00:40
+p_dmem_lpddr4_2d_16b->Reserved0E:4
+p_dmem_lpddr4_2d_16b->Delay_Weight2D:20
+p_dmem_lpddr4_2d_16b->Voltage_Weight2D:80
+*******************************************************
+
+
+executing 2D fw
+
+load pie src_addr: c0e00, load_addr: 802caa20, src_len: 11f0
+
+Set QoS.
+get_ddr_mr_info:cs_num=1, mr5=0x1, mr8=0x10
+no magic in efuse file,bypass efuse
+total_sz = 4096
+SPL_VERSION:7
+
+boot reason: normal
+ota check count:25
+
+uboot partition is uboot_A
+load u-boot: src_addr=0x100000, dest_addr=0x4000000, len=2097152
+
+load warm boot spl: addr=0x45000, dest_addr=0x80000000, len=31232
+
+load bl31: addr=0xe7000, dest_addr=0x0, len=102400
+
+SFLOW_AUTH_BL31
+
+verify signature of header:  verify ok!
+
+verify signature of image:  verify ok!
+bypass bpu image
+clear keybank!!!!
+SFLOW_DBG_EN
+
+Trying to boot from RAM
+SPL: bl31 will jump to u-boot or other entry (0x4000000)
+SFLOW_CLR_KEY
+SFLOW_REG_LD
+install_portal copy portal
+install_portal call smc and jump to bl31 cold entry(0x0)
+
+hb som type: 3
+
+
+
+U-Boot 2018.09 (Jul 06 2023 - 21:25:29 +0800)
+
+Model: Hobot XJ3 Soc Board
+DRAM:  system DDR size: 0xffe00000
+
+4 GiB
+
+MMC:   
+dwmmc@A5010000 clock set: 52000000.
+
+dwmmc@A5010000: 0 (eMMC), dwmmc@A5011000: 1, dwmmc@A5012000: 2
+Loading Environment from MMC... 
+*** Warning - bad CRC, using default environment
+
+
+In:    serial@a5000000
+Out:   serial@a5000000
+Err:   serial@a5000000
+Net:   ****The RT8201F phy has been reset by GPIO1[8] ****
+
+
+Warning: ethernet@A5014000 (eth0) using random MAC address - 56:79:41:43:6f:ef
+eth0: ethernet@A5014000
+Disable cnn cores ..
+
+base board type: X3 SDB
+bootmode: EMMC
+board_id = 31540334
+
+uboot: normal boot 
+boot partition: boot, system partition: system
+hb_boot_args_cmd_set custom_bootargs 0 ubuntu_boot 1
+
+Hit any key to stop autoboot:  1 
+ 0 
+enable watchdog success !
+
+
+MMC read: dev # 0, block # 10496, count 20480 ... 
+20480 blocks read: OK
+## Booting Android Image at 0x10000000 ...
+Android's image name: x3j3
+Kernel load addr 0x00200000 size 6914 KiB
+Kernel compress with: lz4
+board_type = 304
+dtb_name = hobot-x3-sdb.dtb
+   Uncompressing Kernel Image ... 
+OK
+
+   kernel loaded to 0x00200000, end = 0x00f20808
+
+   Loading Device Tree to 0000000003c00000, end 0000000003c1ffff ... OK
+
+chip_id: ab36300
+Ion Heap type CMA Mem
+Orign(MAX) bpu model Reserve Mem Size to 64M!!
+
+
+Starting kernel ...
+
+
+[    0.000000] OF: reserved mem: OVERLAP DETECTED!
+[    0.000000] image_r5_mem (0x0000000080000000--0x0000000080010000) overlaps with msg_r5_mem (0x000000008000f000--0x0000000080010000)
+[    0.000000] Reserved memory: created CMA memory pool at 0x0000000004000000, size 672 MiB
+[    0.000000] OF: reserved mem: initialized node ion_cma, compatible id shared-dma-pool
+[    0.000000] cma: Reserved 16 MiB at 0x000000007f000000
+
+[    0.000000] On node 0 totalpages: 1047808
+[    0.000000]   DMA zone: 8180 pages used for memmap
+[    0.000000]   DMA zone: 0 pages reserved
+[    0.000000]   DMA zone: 523520 pages, LIFO batch:31
+
+[    0.000000]   Normal zone: 8192 pages used for memmap
+[    0.000000]   Normal zone: 524288 pages, LIFO batch:31
+
+[    0.000000] psci: probing for conduit method from DT.
+[    0.000000] psci: PSCIv1.1 detected in firmware.
+[    0.000000] psci: Using standard PSCI v0.2 function IDs
+[    0.000000] psci: MIGRATE_INFO_TYPE not supported.
+[    0.000000] psci: SMC Calling Convention v1.1
+[    0.000000] percpu: Embedded 24 pages/cpu @ffffffc17ff32000 s58520 r8192 d31592 u98304
+[    0.000000] pcpu-alloc: s58520 r8192 d31592 u98304 alloc=24*4096
+[    0.000000] pcpu-alloc: [0] 0 [0] 1 [0] 2 [0] 3 
+
+[    0.000000] Detected VIPT I-cache on CPU0
+[    0.000000] CPU features: enabling workaround for ARM erratum 845719
+[    0.000000] Built 1 zonelists, mobility grouping on.  Total pages: 1031436
+[    0.000000] Kernel command line: earlycon loglevel=8 kgdboc=ttyS0 video=hobot:x3sdb-hdmi  console=ttyS0,921600 raid=noautodetect hobotboot.reson=POWER_RESET rootfstype=ext4 rw rootwait root=/dev/mmcblk0p8 
+[    0.000000] PID hash table entries: 4096 (order: 3, 32768 bytes)
+
+[    0.000000] Dentry cache hash table entries: 524288 (order: 10, 4194304 bytes)
+
+[    0.000000] Inode-cache hash table entries: 262144 (order: 9, 2097152 bytes)
+
+[    0.000000] software IO TLB [mem 0x7afff000-0x7efff000] (64MB) mapped at [ffffffc07afff000-ffffffc07effefff]
+
+[    0.000000] Memory: 3325228K/4191232K available (8062K kernel code, 706K rwdata, 4076K rodata, 576K init, 9210K bss, 161492K reserved, 704512K cma-reserved)
+[    0.000000] Virtual kernel memory layout:
+[    0.000000]     modules : 0xffffff8000000000 - 0xffffff8008000000   (   128 MB)
+[    0.000000]     vmalloc : 0xffffff8008000000 - 0xffffffbebfff0000   (   250 GB)
+[    0.000000]       .text : 0xffffff8008000000 - 0xffffff80087e0000   (  8064 KB)
+[    0.000000]     .rodata : 0xffffff80087e0000 - 0xffffff8008be0000   (  4096 KB)
+[    0.000000]       .init : 0xffffff8008be0000 - 0xffffff8008c70000   (   576 KB)
+[    0.000000]       .data : 0xffffff8008c70000 - 0xffffff8008d20808   (   707 KB)
+[    0.000000]        .bss : 0xffffff8008d20808 - 0xffffff800961f2d8   (  9211 KB)
+[    0.000000]     fixed   : 0xffffffbefe7fd000 - 0xffffffbefec00000   (  4108 KB)
+[    0.000000]     PCI I/O : 0xffffffbefee00000 - 0xffffffbeffe00000   (    16 MB)
+[    0.000000]     vmemmap : 0xffffffbf00000000 - 0xffffffc000000000   (     4 GB maximum)
+[    0.000000]               0xffffffbf00008000 - 0xffffffbf06000000   (    95 MB actual)
+[    0.000000]     memory  : 0xffffffc000200000 - 0xffffffc180000000   (  6142 MB)
+[    0.000000] SLUB: HWalign=64, Order=0-3, MinObjects=0, CPUs=4, Nodes=1
+[    0.000000] Preemptible hierarchical RCU implementation.
+[    0.000000] 	Tasks RCU enabled.
+[    0.000000] NR_IRQS: 64, nr_irqs: 64, preallocated irqs: 0
+
+[    0.000000] parent_rate: 0,  dclk->rate:2666000000, pre_ddr_rate:0, res.a0:138028704
+
+[    0.000000] arch_timer: cp15 timer(s) running at 24.00MHz (virt).
+[    0.000000] clocksource: arch_sys_counter: mask: 0xffffffffffffff max_cycles: 0x588fe9dc0, max_idle_ns: 440795202592 ns
+[    0.000004] sched_clock: 56 bits at 24MHz, resolution 41ns, wraps every 4398046511097ns
+[    0.001191] clocksource: hobot_clocksource: mask: 0xffffffffffffffff max_cycles: 0x1d854df40, max_idle_ns: 3526361616960 ns
+[    0.002948] Console: colour dummy device 80x25
+[    0.003516] Calibrating delay loop (skipped), value calculated using timer frequency.. 48.00 BogoMIPS (lpj=96000)
+[    0.004822] pid_max: default: 32768 minimum: 301
+[    0.005465] Security Framework initialized
+[    0.006014] Mount-cache hash table entries: 8192 (order: 4, 65536 bytes)
+[    0.006872] Mountpoint-cache hash table entries: 8192 (order: 4, 65536 bytes)
+
+[    0.023828] ASID allocator initialised with 65536 entries
+
+[    0.031824] Hierarchical SRCU implementation.
+
+[    0.063871] smp: Bringing up secondary CPUs ...
+
+[    0.100054] Detected VIPT I-cache on CPU1
+[    0.100085] CPU1: Booted secondary processor [410fd034]
+[    0.136092] Detected VIPT I-cache on CPU2
+[    0.136110] CPU2: Booted secondary processor [410fd034]
+[    0.172146] Detected VIPT I-cache on CPU3
+[    0.172164] CPU3: Booted secondary processor [410fd034]
+[    0.172208] smp: Brought up 1 node, 4 CPUs
+[    0.176266] SMP: Total of 4 processors activated.
+[    0.176859] CPU features: detected feature: 32-bit EL0 Support
+[    0.177670] CPU: All CPU(s) started at EL1
+[    0.178195] alternatives: patching kernel code
+
+[    0.179631] devtmpfs: initialized
+
+[    0.187556] random: get_random_u32 called from bucket_table_alloc+0x108/0x268 with crng_init=0
+[    0.189111] clocksource: jiffies: mask: 0xffffffff max_cycles: 0xffffffff, max_idle_ns: 7645041785100000 ns
+[    0.190354] futex hash table entries: 1024 (order: 5, 131072 bytes)
+
+[    0.205491] xor: automatically using best checksumming function   32regs    
+[    0.206392] pinctrl core: initialized pinctrl subsystem
+
+[    0.207616] NET: Registered protocol family 16
+
+[    0.208937] vdso: 2 pages (1 code @ ffffff80087e6000, 1 data @ ffffff8008c74000)
+[    0.209881] hw-breakpoint: found 6 breakpoint and 4 watchpoint registers.
+
+[    0.211326] DMA: preallocated 256 KiB pool for atomic allocations
+[    0.212372] pstore: using zlib compression
+[    0.213136] console [pstore-1] enabled
+[    0.213717] pstore: Registered ramoops as persistent store backend
+[    0.214501] ramoops: attached 0x40000@0x3fc0000, ecc: 0/0
+
+[    0.218884] hobot_dma a1005000.dma: Hobot DMA Engine Driver Probed!!
+
+[    0.229792] SCSI subsystem initialized
+[    0.230400] usbcore: registered new interface driver usbfs
+[    0.231120] usbcore: registered new interface driver hub
+[    0.231845] usbcore: registered new device driver usb
+[    0.232637] media: Linux media interface: v0.10
+[    0.233228] Linux video capture interface: v2.00
+[    0.233845] pps_core: LinuxPPS API ver. 1 registered
+[    0.234472] pps_core: Software ver. 5.3.6 - Copyright 2005-2007 Rodolfo Giometti <giometti@linux.it>
+[    0.235646] PTP clock support registered
+
+[    0.236739] ion_dummy: not reserve carveout memory, try to alloc from cma
+
+[    0.372129] Advanced Linux Sound Architecture Driver Initialized.
+
+[    0.373486] clocksource: Switched to clocksource arch_sys_counter
+
+[    0.378449] NET: Registered protocol family 2
+[    0.379336] TCP established hash table entries: 32768 (order: 6, 262144 bytes)
+[    0.380451] TCP bind hash table entries: 32768 (order: 7, 524288 bytes)
+[    0.381759] TCP: Hash tables configured (established 32768 bind 32768)
+[    0.382657] UDP hash table entries: 2048 (order: 4, 65536 bytes)
+[    0.383486] UDP-Lite hash table entries: 2048 (order: 4, 65536 bytes)
+[    0.384449] NET: Registered protocol family 1
+[    0.385232] RPC: Registered named UNIX socket transport module.
+[    0.386003] RPC: Registered udp transport module.
+[    0.386596] RPC: Registered tcp transport module.
+[    0.387194] RPC: Registered tcp NFSv4.1 backchannel transport module.
+
+[    0.388643] hw perfevents: enabled with armv8_cortex_a53 PMU driver, 7 counters available
+
+[    0.390736] audit: initializing netlink subsys (disabled)
+[    0.391497] audit: type=2000 audit(0.388:1): state=initialized audit_enabled=0 res=1
+[    0.391663] Initialise system trusted keyrings
+[    0.391731] workingset: timestamp_bits=46 max_order=20 bucket_order=0
+
+[    0.395885] squashfs: version 4.0 (2009/01/31) Phillip Lougher
+[    0.396710] exFAT: Version 1.2.9
+[    0.397580] NFS: Registering the id_resolver key type
+[    0.398236] Key type id_resolver registered
+[    0.398762] Key type id_legacy registered
+[    0.399278] nfs4filelayout_init: NFSv4 File Layout Driver Registering...
+[    0.400130] Installing knfsd (copyright (C) 1996 okir@monad.swb.de).
+
+[    0.403448] NET: Registered protocol family 38
+[    0.404015] async_tx: api initialized (async)
+[    0.404566] Key type asymmetric registered
+[    0.405085] Asymmetric key parser 'x509' registered
+[    0.405824] Block layer SCSI generic (bsg) driver version 0.4 loaded (major 245)
+[    0.406764] io scheduler noop registered
+[    0.407343] io scheduler cfq registered (default)
+[    0.407937] io scheduler mq-deadline registered
+[    0.408513] io scheduler kyber registered
+
+[    0.409699] pinctrl-single a6003170.pinctrl_voltag: 64 pins at pa ffffff80096c5170 size 8
+[    0.411037] pinctrl-single a6004000.pinctrl: 128 pins at pa ffffff80096c7000 size 512
+[    0.412208] pinctrl_cdev soc:pinctrl_cdev@0xA6004000: start probe
+[    0.413090] pinctrl_cdev soc:pinctrl_cdev@0xA6004000: probe ok
+[    0.414096] gpio-x3 a6003000.gpio: x3 gpio probe start!!!
+[    0.414785] gpio-x3 a6003000.gpio: x3 gpio add gpiochip start!!!
+[    0.415707] gpio-x3 a6003000.gpio: diable all gpio irq
+
+[    0.417819] gpio-x3 a6003000.gpio: irqbase:55
+[    0.418370] gpio-x3 a6003000.gpio: x3 irq add start!!!
+[    0.419026] irq: Cannot allocate irq_descs @ IRQ55, assuming pre-allocated
+[    0.420035] gpio-x3 a6003000.gpio: x3 irq add ok!!!
+[    0.420682] gpio-x3 a6003000.gpio: x3 irqchip ops add ok!!!
+[    0.421387] gpio-x3 a6003000.gpio: x3 gpio probe ok!!!
+[    0.422460] hobot-pwm: hobot-pwmchip2 registered
+
+[    0.423666] diag dev [ver:1.1] init done
+[    0.424489] hobot_ddr_monitor: LPDDR4 detected
+
+[    0.425244] hobot_ddr_monitor: ddr monitor init finished.
+[    0.425617] [vcam] init start
+[    0.426677] vcam probe start
+[    0.427125] vcam probe end successful
+[    0.427584] [vcam] init end
+[    0.428420] a5000000.serial: ttyS0 at MMIO 0xa5000000 (irq = 10, base_baud = 12000000) is a hobot-uart
+[    0.429831] console [ttyS0] enabled
+[    0.429831] console [ttyS0] enabled
+[    0.430714] bootconsole [hobot0] disabled
+[    0.430714] bootconsole [hobot0] disabled
+[    0.432031] hobot-uart a5001000.serial: Failed to create debugfs root directory
+[    0.433031] a5001000.serial: ttyS1 at MMIO 0xa5001000 (irq = 11, base_baud = 12000000) is a hobot-uart
+[    0.434639] cacheinfo: Unable to detect cache hierarchy for CPU 0
+
+[    0.439466] brd: module loaded
+
+[    0.443664] loop: module loaded
+
+[    0.445523] hobot_spi a5004000.spi: ver: HOBOT-spi_V20.200330 master
+[    0.446551] libphy: Fixed MDIO Bus: probed
+
+[    0.447729] st_gmac a5014000.ethernet: found phy-handle subnode
+[    0.448554] st_gmac a5014000.ethernet: xj3_mtl_setup, plat->rx-queues-to-use:4, and tx:4
+[    0.449823] st_gmac a5014000.ethernet: xj3_probe_config_dt, clk_ptp_rate:250000000
+[    0.450827] set mac address 00:11:22:df:c2:89:
+[    0.450829] (using random mac adress)
+[    0.451871] (NULL device *): xj3_get_hw_features, tx_fifo_size:16384
+[    0.452687] (NULL device *): xj3_get_hw_features, rx_fifo_size:16384
+[    0.453518] st_gmac a5014000.ethernet: TSO supported
+[    0.454158] st_gmac a5014000.ethernet: TSO feature enabled
+[    0.454864] st_gmac a5014000.ethernet: Enable Rx Mitigation via HW Watchdog Timer
+
+[    0.475917] libphy: hobot-mac-mdio: probed
+[    0.476726] mdio_bus hobot-mac-mdio-a5014000: MDIO device at address 0 is missing.
+
+[    0.478235] st_gmac a5014000.ethernet: hobot_eth_probe: probe sucessfully
+[    0.479408] dwc3-of-simple b2000000.usb: b2000000.usb supply usb_0v8 not found, using dummy regulator
+[    0.480632] dwc3-of-simple b2000000.usb: usb regulator 0v8 enable succeed
+[    0.481526] dwc3-of-simple b2000000.usb: b2000000.usb supply usb_3v3 not found, using dummy regulator
+[    0.482727] dwc3-of-simple b2000000.usb: usb regulator 3v3 enable succeed
+
+[    0.484124] dwc3 b2000000.dwc3: Configuration mismatch. user dr_mode(otg) not equal with hardware default mode(peripheral). still use otg mode
+[    0.485790] dwc3 b2000000.dwc3: found 6 IN and 3 OUT endpoints
+
+[    0.487272] usbcore: registered new interface driver cdc_acm
+[    0.488000] cdc_acm: USB Abstract Control Model driver for USB modems and ISDN adapters
+[    0.489050] usbcore: registered new interface driver uas
+[    0.489789] usbcore: registered new interface driver usb-storage
+[    0.490612] usbcore: registered new interface driver usbserial
+[    0.491380] usbcore: registered new interface driver usbserial_generic
+[    0.492235] usbserial: USB Serial support registered for generic
+[    0.493026] usbcore: registered new interface driver usb_serial_simple
+[    0.493906] usbserial: USB Serial support registered for carelink
+[    0.494707] usbserial: USB Serial support registered for zio
+[    0.495449] usbserial: USB Serial support registered for funsoft
+[    0.496236] usbserial: USB Serial support registered for flashloader
+[    0.497067] usbserial: USB Serial support registered for google
+[    0.497858] usbserial: USB Serial support registered for libtransistor
+[    0.498711] usbserial: USB Serial support registered for vivopay
+[    0.499500] usbserial: USB Serial support registered for moto_modem
+[    0.500322] usbserial: USB Serial support registered for motorola_tetra
+[    0.501187] usbserial: USB Serial support registered for novatel_gps
+[    0.502084] usbserial: USB Serial support registered for hp4x
+[    0.502839] usbserial: USB Serial support registered for suunto
+[    0.503615] usbserial: USB Serial support registered for siemens_mpi
+
+[    0.514747] hobot-rtc a6002000.rtc: rtc core: registered hobot-rtc as rtc0
+[    0.515726] i2c /dev entries driver
+[    0.516315] hobot-i2c a5009000.i2c: hobot i2c probe start
+[    0.517071] hobot-i2c a5009000.i2c: round_rate:96000000
+[    0.517765] hobot-i2c a5009000.i2c: I2C bus speed is 400000
+[    0.518483] hobot-i2c a5009000.i2c: clkdiv = 0x1d
+[    0.519089] hobot-i2c a5009000.i2c: i2c0 diag register....
+[    0.520241] hobot-i2c a5009000.i2c: hobot_i2c_0 probe done
+[    0.521036] hobot-i2c a500a000.i2c: hobot i2c probe start
+[    0.521808] hobot-i2c a500a000.i2c: round_rate:96000000
+[    0.522484] hobot-i2c a500a000.i2c: I2C bus speed is 400000
+[    0.523200] hobot-i2c a500a000.i2c: clkdiv = 0x1d
+[    0.523806] hobot-i2c a500a000.i2c: i2c1 diag register....
+[    0.524777] hobot-i2c a500a000.i2c: hobot_i2c_1 probe done
+[    0.525589] hobot-i2c a500b000.i2c: hobot i2c probe start
+[    0.526335] hobot-i2c a500b000.i2c: round_rate:96000000
+[    0.527010] hobot-i2c a500b000.i2c: I2C bus speed is 400000
+[    0.527727] hobot-i2c a500b000.i2c: clkdiv = 0x1d
+[    0.528333] hobot-i2c a500b000.i2c: i2c2 diag register....
+[    0.529199] hobot-i2c a500b000.i2c: hobot_i2c_2 probe done
+[    0.530246] sif_mclk clock frequence is 544000000
+[    0.530877] mipi_rx0_ipi clock frequence is 544000000
+[    0.531558] mipi_rx1_ipi clock frequence is 544000000
+[    0.532249] mipi_rx2_ipi clock frequence is 544000000
+[    0.532948] mipi_rx3_ipi clock frequence is 544000000
+[    0.533673] mipi_tx_ipi clock frequence is 544000000
+[    0.534381] mipi_cfg_host clock frequence is 102000000
+[    0.535120] pym_mclk clock frequence is 1188000000
+[    0.535822] mipi_dev_ref clock frequence is 24000000
+[    0.536560] mipi_host_ref clock frequence is 24000000
+[    0.537315] sensor0_mclk clock frequence is 37125000
+[    0.538085] sensor1_mclk clock frequence is 37125000
+[    0.538849] sensor2_mclk clock frequence is 37125000
+[    0.539621] sensor3_mclk clock frequence is 37125000
+[    0.540259] [FRT:D] x3_ips_probe(0)
+[    0.541189] hobot swinfo sel reg ro=0x1 boot dump
+[    0.542110] pvt a1009000.pvt: SCRATCH test: 1234abcd, pvt is alive.
+[    0.543028] pvt a1009000.pvt: VM Calibrated data detected
+[    0.544165] hobot_wdt a1002000.watchdog: watchdog setting [pet:6s bark:11s bite:15s]
+[    0.545440] hobot_wdt a1002000.watchdog: Hobot Watchdog Timer at ffffff800e433000 with timeout 15s
+[    0.546873] device-mapper: uevent: version 1.0.3
+[    0.547640] device-mapper: ioctl: 4.37.0-ioctl (2017-09-20) initialised: dm-devel@redhat.com
+[    0.548786] device-mapper: verity-avb: AVB error handler initialized with vbmeta device: 
+
+[    0.550784] Synopsys Designware Multimedia Card Interface Driver
+[    0.551800] dwmmc_hobot a5010000.dwmmc: ver: HOBOT-mmc_V20.200402
+[    0.552622] dwmmc_hobot a5010000.dwmmc: card-detect-delay not found.
+[    0.553440] dwmmc_hobot a5010000.dwmmc: data-addr not found.
+[    0.554470] mmc_host mmc0: card is non-removable.
+
+[    0.594668] dwmmc_hobot a5011000.dwmmc: ver: HOBOT-mmc_V20.200402
+
+[    0.597535] dwmmc_hobot a5011000.dwmmc: card-detect-delay not found.
+[    0.598354] dwmmc_hobot a5011000.dwmmc: data-addr not found.
+[    0.599095] dwmmc_hobot a5011000.dwmmc: mmc set to fixed voltage 1800
+[    0.600138] mmc_host mmc1: card is non-removable.
+
+[    0.697617] dwmmc_hobot a5012000.dwmmc: ver: HOBOT-mmc_V20.200402
+[    0.698428] dwmmc_hobot a5012000.dwmmc: card-detect-delay not found.
+[    0.699255] dwmmc_hobot a5012000.dwmmc: data-addr not found.
+[    0.700197] dwmmc_hobot a5012000.dwmmc: Got CD GPIO
+
+[    0.757668] mmc0: new HS200 MMC card at address 0001
+[    0.758527] mmcblk0: mmc0:0001 58A431 14.6 GiB 
+[    0.759195] mmcblk0boot0: mmc0:0001 58A431 partition 1 4.00 MiB
+[    0.760037] mmcblk0boot1: mmc0:0001 58A431 partition 2 4.00 MiB
+[    0.760875] mmcblk0rpmb: mmc0:0001 58A431 partition 3 4.00 MiB
+
+[    0.785791] usbcore: registered new interface driver usbhid
+[    0.786509] usbhid: USB HID core driver
+[    0.787081] logger: created 256K log 'log_main'
+[    0.787715] logger: created 256K log 'log_events'
+[    0.788372] logger: created 256K log 'log_radio'
+[    0.789016] logger: created 256K log 'log_system'
+[    0.790049] set dmc devfreq governor to performance
+[    0.790683] hobot_dmcfreq_target: dmcfreq->rate:2666000000, target_rate:2666000000
+[    0.791223]  mmcblk0: p1 p2 p3 p4 p5 p6 p7 p8
+[    0.792215] buf:, powersave_rate:2666000000, dmcfreq->pre_state:0
+
+[    0.798924] usbcore: registered new interface driver snd-usb-audio
+[    0.800054] Netfilter messages via NETLINK v0.30.
+[    0.800674] ip_set: protocol 6
+[    0.801151] ipip: IPv4 and MPLS over IPv4 tunneling driver
+[    0.802171] ip_tables: (C) 2000-2006 Netfilter Core Team
+[    0.803075] arp_tables: arp_tables: (C) 2002 David S. Miller
+[    0.803877] Initializing XFRM netlink socket
+[    0.804753] NET: Registered protocol family 10
+
+[    0.805967] Segment Routing with IPv6
+[    0.806482] sit: IPv6, IPv4 and MPLS over IPv4 tunneling driver
+[    0.807556] NET: Registered protocol family 17
+[    0.808165] 8021q: 802.1Q VLAN Support v1.8
+[    0.808729] Key type dns_resolver registered
+[    0.809285] Found lo, alias (null) on irq 0
+[    0.809897] MAC: 00:00:00:00:00:00
+[    0.809900] Tx queue length: 1000
+[    0.810774] Invalid capabilities for NIC (lo), dropping from TSN list
+[    0.811606] Found eth0, alias (null) on irq 41
+[    0.812181] MAC: 00:11:22:df:c2:89
+[    0.812184] Tx queue length: 1000
+[    0.813056] _tsn_capable_nic: ndo_tsn_capable() present, got Not capable
+[    0.813936] Invalid capabilities for NIC (eth0), dropping from TSN list
+[    0.814790] Found tunl0, alias (null) on irq 0
+[    0.815366] MAC: 00:00:00:00:00:00
+[    0.815368] Tx queue length: 1000
+[    0.816240] Invalid capabilities for NIC (tunl0), dropping from TSN list
+[    0.817103] Found sit0, alias (null) on irq 0
+[    0.817675] MAC: 00:00:00:00:00:00
+[    0.817677] Tx queue length: 1000
+[    0.818549] Invalid capabilities for NIC (sit0), dropping from TSN list
+[    0.819404] tsn_init_module: No capable NIC found. Perhaps load with in_debug=1 ?
+[    0.820371] mmc1: queuing unknown CIS tuple 0x80 (2 bytes)
+[    0.821384] Loading compiled-in X.509 certificates
+
+[    0.822928] mmc1: queuing unknown CIS tuple 0x80 (3 bytes)
+
+[    0.824904] Loaded X.509 cert 'Build time autogenerated kernel key: 81cb0ef77db2fac76e9588c2120c82422367d268'
+[    0.825098] mmc1: queuing unknown CIS tuple 0x80 (3 bytes)
+
+[    0.827739] mmc1: queuing unknown CIS tuple 0x80 (7 bytes)
+
+[    0.831695] mmc1: queuing unknown CIS tuple 0x81 (9 bytes)
+
+[    0.837016] dwc3 b2000000.dwc3: Configuration mismatch. user dr_mode(otg) not equal with hardware default mode(peripheral). still use otg mode
+[    0.838686] dwc3 b2000000.dwc3: found 6 IN and 3 OUT endpoints
+[    0.839677] console [netcon0] enabled
+[    0.840150] netconsole: network logging started
+[    0.840912] hobot-rtc a6002000.rtc: setting system clock to 1970-01-01 00:00:00 UTC (0)
+[    0.842127] vps mipi_dphy: probe with x3vio done
+[    0.842824] hobot_wdt_test: wdt_test_init: wdt test init
+
+[    0.845522] VCC_CNN0: disabling
+[    0.845930] VCC_CNN1: disabling
+
+[    0.846817] vps mipi_host0: ver 140* port0(0:0)
+[    0.847681] vps mipi_host1: ver 140* port1(1:0)
+[    0.848536] vps mipi_host2: ver 140* port2(0:1)
+[    0.849297] vps mipi_host3: ver 140* port3(1:1)
+[    0.850182] ALSA device list:
+[    0.850566]   No soundcards found.
+[    0.851197] md: Skipping autodetection of RAID arrays. (raid=autodetect will force)
+
+[    0.945770] xhci-hcd xhci-hcd.0.auto: xHCI Host Controller
+[    0.946501] xhci-hcd xhci-hcd.0.auto: new USB bus registered, assigned bus number 1
+
+[    0.948110] xhci-hcd xhci-hcd.0.auto: hcc params 0x0220fe6d hci version 0x110 quirks 0x0000000000010010
+[    0.949359] xhci-hcd xhci-hcd.0.auto: irq 176, io mem 0xb2000000
+
+[    0.950722] hub 1-0:1.0: USB hub found
+[    0.951232] hub 1-0:1.0: 1 port detected
+[    0.951926] xhci-hcd xhci-hcd.0.auto: xHCI Host Controller
+[    0.952649] xhci-hcd xhci-hcd.0.auto: new USB bus registered, assigned bus number 2
+[    0.953670] xhci-hcd xhci-hcd.0.auto: Host supports USB 3.0 SuperSpeed
+[    0.954562] usb usb2: We don't know the algorithms for LPM for this host, disabling LPM.
+[    0.956039] hub 2-0:1.0: USB hub found
+[    0.956544] hub 2-0:1.0: 1 port detected
+
+[    1.061853] mmc1: new HSSDIO card at address 0001
+
+[    1.205533] usb 1-1: new high-speed USB device number 2 using xhci-hcd
+
+[    1.402768] hub 1-1:1.0: USB hub found
+[    1.403294] hub 1-1:1.0: 4 ports detected
+
+[    1.809528] usb 1-1.1: new full-speed USB device number 3 using xhci-hcd
+
+[    2.075406] cdc_acm 1-1.1:1.0: ttyACM0: USB ACM device
+
+[    4.839576] EXT4-fs (mmcblk0p8): warning: maximal mount count reached, running e2fsck is recommended
+
+[    4.841301] EXT4-fs (mmcblk0p8): 1 orphan inode deleted
+[    4.841995] EXT4-fs (mmcblk0p8): recovery complete
+
+[    4.844420] EXT4-fs (mmcblk0p8): mounted filesystem with ordered data mode. Opts: (null)
+[    4.845496] VFS: Mounted root (ext4 filesystem) on device 179:8.
+
+[    4.846781] devtmpfs: mounted
+[    4.847310] Freeing unused kernel memory: 576K
+
+[    4.978739] systemd[1]: System time before build time, advancing clock.
+
+[    4.990359] systemd[1]: Failed to find module 'autofs4'
+
+[    5.002258] systemd[1]: systemd 245.4-4ubuntu3.21 running in system mode. (+PAM +AUDIT +SELINUX +IMA +APPARMOR +SMACK +SYSVINIT +UTMP +LIBCRYPTSETUP +GCRYPT +GNUTLS +ACL +XZ +LZ4 +SECCOMP +BLKID +ELFUTILS +KMOD +IDN2 -IDN +PCRE2 default-hierarchy=hybrid)
+[    5.005451] systemd[1]: Detected architecture arm64.
+
+
+Welcome to mUbuntu 20.04.6 LTSm!
+
+
+[    5.011574] systemd[1]: Set hostname to <novabot>.
+
+[    5.126384] random: lvmconfig: uninitialized urandom read (4 bytes read)
+
+[    5.198409] systemd[1]: Configuration file /etc/systemd/system/systemd-udevd.service.d/00-hobot-private.conf is marked executable. Please remove executable permission bits. Proceeding anyway.
+
+[    5.317876] systemd[1]: Configuration file /lib/systemd/system/x11vnc.service is marked executable. Please remove executable permission bits. Proceeding anyway.
+
+[    5.335557] systemd[1]: Configuration file /lib/systemd/system/novabot_ota_launch.service is marked executable. Please remove executable permission bits. Proceeding anyway.
+
+[    5.338378] systemd[1]: Configuration file /lib/systemd/system/novabot_launch.service is marked executable. Please remove executable permission bits. Proceeding anyway.
+
+[    5.372558] random: systemd: uninitialized urandom read (16 bytes read)
+[    5.373631] systemd[1]: system-modprobe.slice: unit configures an IP firewall, but the local system does not support BPF/cgroup firewalling.
+[    5.375252] systemd[1]: (This warning is only shown for the first unit using IP firewalling.)
+
+[    5.378119] systemd[1]: Created slice system-modprobe.slice.
+[m  OK  m] Created slice msystem-modprobe.slicem.
+[    5.379924] random: systemd: uninitialized urandom read (16 bytes read)
+
+[    5.381453] systemd[1]: Created slice system-serial\x2dgetty.slice.
+[m  OK  m] Created slice msystem-serial\x2dgetty.slicem.
+
+[    5.383883] systemd[1]: Created slice User and Session Slice.
+[m  OK  m] Created slice mUser and Session Slicem.
+[    5.385727] systemd[1]: Started Dispatch Password Requests to Console Directory Watch.
+[m  OK  m] Started mDispatch Password ts to Console Directory Watchm.
+[    5.387999] systemd[1]: Started Forward Password Requests to Wall Directory Watch.
+[m  OK  m] Started mForward Password Ruests to Wall Directory Watchm.
+[    5.390201] systemd[1]: Condition check resulted in Arbitrary Executable File Formats File System Automount Point being skipped.
+[    5.391770] systemd[1]: Reached target Local Encrypted Volumes.
+[m  OK  m] Reached target mLocal Encrypted Volumesm.
+[    5.393576] systemd[1]: Reached target Paths.
+[m  OK  m] Reached target mPathsm.
+[    5.394906] systemd[1]: Reached target Slices.
+[m  OK  m] Reached target mSlicesm.
+[    5.396233] systemd[1]: Reached target Swap.
+[m  OK  m] Reached target mSwapm.
+[    5.397725] systemd[1]: Listening on Device-mapper event daemon FIFOs.
+[m  OK  m] Listening on mDevice-mapper event daemon FIFOsm.
+[    5.399832] systemd[1]: Listening on LVM2 poll daemon socket.
+[m  OK  m] Listening on mLVM2 poll daemon socketm.
+[    5.401836] systemd[1]: Listening on RPCbind Server Activation Socket.
+[m  OK  m] Listening on mRPCbind Server Activation Socketm.
+[    5.403916] systemd[1]: Listening on Syslog Socket.
+[m  OK  m] Listening on mSyslog Socketm.
+[    5.405467] systemd[1]: Listening on initctl Compatibility Named Pipe.
+[m  OK  m] Listening on minitctl Compatibility Named Pipem.
+
+[    5.407865] systemd[1]: Listening on Journal Audit Socket.
+[m  OK  m] Listening on mJournal Audit Socketm.
+[    5.409701] systemd[1]: Listening on Journal Socket (/dev/log).
+[m  OK  m] Listening on mJournal Socket (/dev/log)m.
+[    5.411693] systemd[1]: Listening on Journal Socket.
+[m  OK  m] Listening on mJournal Socketm.
+[    5.413442] systemd[1]: Listening on udev Control Socket.
+[m  OK  m] Listening on mudev Control Socketm.
+[    5.415224] systemd[1]: Listening on udev Kernel Socket.
+[m  OK  m] Listening on mudev Kernel Socketm.
+[    5.417062] systemd[1]: Condition check resulted in Huge Pages File System being skipped.
+
+[    5.420754] systemd[1]: Mounting POSIX Message Queue File System...
+         Mounting mPOSIX Message Queue File Systemm...
+
+[    5.425120] systemd[1]: Mounting RPC Pipe File System...
+         Mounting mRPC Pipe File Systemm...
+
+[    5.429734] systemd[1]: Mounting Kernel Debug File System...
+         Mounting mKernel Debug File Systemm...
+[    5.431670] systemd[1]: Condition check resulted in Kernel Trace File System being skipped.
+
+[    5.436218] systemd[1]: Starting Journal Service...
+         Starting mJournal Servicem...
+
+[    5.440303] systemd[1]: Starting Availability of block devices...
+         Starting mAvailability of block devicesm...
+
+[    5.445612] systemd[1]: Starting Restore / save the current clock...
+         Starting mRestore / save the current clockm...
+
+[    5.450828] systemd[1]: Starting Set the console keyboard layout...
+         Starting mSet the console keyboard layoutm...
+[    5.452754] systemd[1]: Condition check resulted in Create list of static device nodes for the current kernel being skipped.
+
+[    5.457698] systemd[1]: Starting Monitoring of LVM2 mirrors, snapshots etc. using dmeventd or progress polling...
+         Starting mMonitoring of LVMmeventd or progress pollingm...
+
+[    5.464032] systemd[1]: Starting Load Kernel Module chromeos_pstore...
+         Starting mLoad Kernel Module chromeos_pstorem...
+[    5.466019] systemd[1]: Condition check resulted in Load Kernel Module drm being skipped.
+
+[    5.472121] systemd[1]: Starting Load Kernel Module efi_pstore...
+
+         Starting mLoad Kernel Module efi_pstorem...
+
+[    5.480211] systemd[1]: Starting Load Kernel Module pstore_blk...
+
+         Starting mLoad Kernel Module pstore_blkm...
+
+[    5.489684] systemd[1]: Starting Load Kernel Module pstore_zone...
+         Starting mLoad Kernel Module pstore_zonem...
+[    5.491596] systemd[1]: Condition check resulted in Load Kernel Module ramoops being skipped.
+
+[    5.496608] systemd[1]: Condition check resulted in Set Up Additional Binary Formats being skipped.
+
+[    5.502658] systemd[1]: Starting Load Kernel Modules...
+         Starting mLoad Kernel Modulesm...
+
+[    5.507102] systemd[1]: Starting Remount Root and Kernel File Systems...
+         Starting mRemount Root and Kernel File Systemsm...
+
+[    5.513353] systemd[1]: Starting udev Coldplug all Devices...
+         Starting mudev Coldplug all Devicesm...
+
+[    5.524549] systemd[1]: Started Journal Service.
+[m  OK  m] Started mJournal Servicem.
+
+[m  OK  m] Mounted mPOSIX Message Queue File Systemm.
+
+[m  OK  m] Mounted mRPC Pipe File Systemm.
+
+[m  OK  m] Mounted mKernel Debug File Systemm.
+
+[m  OK  m] Finished mAvailability of block devicesm.
+
+[m  OK  m] Finished mRestore / save the current clockm.
+[    5.538601] bpu_cores: module license 'Proprietary' taints kernel.
+[    5.539447] Disabling lock debugging due to kernel taint
+
+[m  OK  m] Finished mLoad Kernel Module chromeos_pstorem.
+
+[m  OK  m] Finished mLoad Kernel Module efi_pstorem.
+
+[    5.547677] hobot_efuse probe success
+[m  OK  m] Finished mLoad Kernel Module pstore_blkm.
+
+[m  OK  m] Finished mLoad Kernel Module pstore_zonem.
+
+[m  OK  m] Finished mRemount Root and Kernel File Systemsm.
+
+         [    5.561147] iar probe begin!!!
+Starting mFlush Journal to Persistent Storagem...
+[    5.562127] hobot-iar a4301000.iar: bt656_func get error -19
+[    5.563037] hobot-iar a4301000.iar: mipi_dsi_func get error -19
+[    5.564218] error get bt656 output pin group config, use low 8bit default!!
+[    5.565124] error get bt1120 clk invert config, use normal as default!!
+
+[    5.567329] can't find timing for 1280*720, use default!!
+[    5.568082] can't find timing for 800*480, use default!!
+         Starting mLoad/Save Random Seedm...
+
+         Starting mCreate System Usersm...
+
+[    5.578845] can't find timing for 1080*1920, use default!!
+[    5.579986] can't find timing for 704*576 touch, use default!!
+[    5.580759] can't find timing for 720*480 touch, use default!!
+
+[    5.582427] hobot_iar_probe: panel type is HDMI_TYPE
+
+[    5.593908] systemd-journald[1181]: Received client request to flush runtime journal.
+
+[    5.605978] systemd-journald[1181]: File /var/log/journal/75bad4a2b0ce45ffbcfa4205c84e6e9a/system.journal corrupted or uncleanly shut down, renaming and replacing.
+
+[    5.610870] iar probe end success!!!
+
+[    5.621126] hb_vpu a8000000.vpu: vpu_aclk clock is 750000000
+[    5.622076] hb_vpu a8000000.vpu: vpu_bclk clock is 544000000
+[    5.622839] hb_vpu a8000000.vpu: vpu_cclk clock is 544000000
+
+[m  OK  m] Finished mCreate System Usersm.
+
+         Starting mCreate Static Device Nodes in /devm...
+[    5.635989] hb_jpu a8010000.jpu: jpg_aclk clock is 750000000
+[    5.637433] hb_jpu a8010000.jpu: jpg_cclk clock is 544000000
+
+[    5.650172] [FRT:D] x3_sif_probe(0)
+
+[m  OK  m] Finished mFlush Journal to Persistent Storagem.
+
+[m  OK  m] Finished mudev Coldplug all Devicesm.
+
+         Starting mHelper to synchronize boot up for ifupdownm...
+
+[m  OK  m] Finished mSet the console keyboard layoutm.
+
+[m  OK  m] Finished mCreate Static Device Nodes in /devm.
+
+         Starting mudev Kernel Device Managerm...
+
+[    5.999206] acamera_loglist_init 
+
+[    6.020464] [isp_drv]: camera_subdev_probe: register v4l2 lens device. result0
+[    6.021595]  sensor_ctrl register success !
+
+[    6.065808] [isp_drv]: acamera_camera_async_complete: complete done, rc: 0.
+
+[    6.071647] Hobot fb probe!!!
+
+[    6.072381] channel id is 0, enable is 1, reg value is 0x1e40000.
+[    6.072386] channel id is 2, enable is 1, reg value is 0x5c4f004.
+[    6.072584] Console: switching to colour frame buffer device 240x67
+[    6.076136] fb0: x2-fb frame buffer at 0x15000000-0x157e8fff
+
+[    6.088123] hdmi: add sii902xA driver
+
+[    6.103413] hobot_dev_ipu: [FRT:D] x3_ipu_probe(0)
+
+[m  OK  m] Started mudev Kernel Device Managerm.
+
+[    6.113867] hobot_dev_pym: [FRT:D] x3_pym_probe(0)
+
+[    6.121121] [FRT:D] x3_gdc_probe(0)
+[    6.121951] [FRT:D] x3_gdc_probe(0)
+
+[    6.137644] usbcore: registered new interface driver uvcvideo
+[    6.138397] USB Video Class driver (1.1.1)
+
+[    6.144645] usbcore: registered new interface driver ch341
+[    6.145660] usbserial: USB Serial support registered for ch341-uart
+
+[    6.152385] usbcore: registered new interface driver cp210x
+[    6.153202] usbserial: USB Serial support registered for cp210x
+
+[    6.163264] usbcore: registered new interface driver ftdi_sio
+[    6.164077] usbserial: USB Serial support registered for FTDI USB Serial Device
+
+[    6.233583] [dhd] _dhd_module_init: in Dongle Host Driver, version 101.10.361.31 (wlan=r892223-20230310-3)
+[    6.233583] drivers/net/wireless/bcmdhd compiled on Jun  7 2023 at 09:45:13
+[    6.233583] 
+[    6.235916] [dhd] STATIC-MSG) dhd_static_buf_init : 101.10.361.31 (wlan=r892223-20230310-3)
+[    6.237031] [dhd] STATIC-MSG) dhd_init_wlan_mem : prealloc ok for index 0: 1100800(1075K)
+[    6.238176] [dhd] ======== dhd_wlan_init_gpio ========
+[    6.238845] [dhd] ======== gpio_wl_reg_on  3  ========
+[    6.239507] [dhd] ======== gpio_wl_host_wake  101  ========
+[    6.240234] [dhd] ======== CUSTOMER_OOB ======================  
+[    6.241018] [dhd] ======== IORESOURCE_IRQ_HIGHEDGE ======================  
+[    6.241943] [dhd] ========  dhd_wlan_init_gpio: WL_HOST_WAKE=101, oob_irq=156, oob_irq_flags=0x1  ======== 
+[    6.243208] [dhd] ======== dhd_wlan_init_gpio: WL_REG_ON=3 ======== 
+[    6.244028] [dhd] dhd_wifi_platform_load: Enter
+[    6.244613] [dhd] Power-up adapter 'DHD generic adapter'
+[    6.245470] [dhd] dummy_probe: enter
+[    6.246092] [dhd] dummy_probe: enter
+[    6.246647] [dhd] wifi_platform_set_power = 1, delay: 200 msec
+[    6.247403] [dhd] ======== PULL WL_REG_ON(3) HIGH! ========
+
+[m  OK  m] Found device m/dev/ttyS0m.
+
+[    6.453528] [dhd] wifi_platform_bus_enumerate device present 1
+[    6.454295] [dhd] ======== Card detection to detect SDIO card! ========
+
+[    6.471291] [dhd] bcmsdh_register: register client driver
+[    6.472272] [dhd] bcmsdh_sdmmc_probe: Enter num=1
+[    6.473017] [dhd] bcmsdh_sdmmc_probe: Enter num=2
+[    6.473652] [dhd] bus num (host idx)=1, slot num (rca)=1
+[    6.474340] [dhd] found adapter info 'DHD generic adapter'
+[    6.475051] [dhd] STATIC-MSG) dhd_wlan_mem_prealloc : section 3, size 139264
+[    6.475977] [dhd] succeed to alloc static buf
+[    6.476539] [dhd] STATIC-MSG) dhd_wlan_mem_prealloc : section 4, size 0
+[    6.477460] [dhd] sdioh_attach: set sd_f2_blocksize 256
+[    6.478216] [dhd] sdioh_attach: sd clock rate = 50000000
+[    6.479040] [dhd] dhdsdio_probe : no mutex held
+[    6.479821] [dhd] dhdsdio_probe : set mutex lock
+[    6.480514] [dhd] F1 signature read @0x18000000=0x1541a9a6
+
+[    6.484956] [dhd] F1 signature OK, socitype:0x1 chip:0xa9a6 rev:0x1 pkg:0x4
+
+[    6.486572] [dhd] DHD: dongle ram size is set to 524288(orig 524288) at 0x0
+
+[    6.488166] [dhd] STATIC-MSG) dhd_wlan_mem_prealloc : section 7, size 32576
+[    6.489088] [dhd] dhd_conf_set_chiprev : devid=0xa9a6, chip=0xa9a6, chiprev=1
+[    6.490074] [dhd] STATIC-MSG) dhd_wlan_mem_prealloc : section 0, size 10320
+[    6.491353] [dhd] STATIC-MSG) dhd_wlan_mem_prealloc : section 5, size 65536
+
+[    6.507840] [dhd] STATIC-MSG) dhd_wlan_mem_prealloc : section 19, size 65680
+[    6.508793] [dhd] STATIC-MSG) dhd_wlan_mem_prealloc : section 20, size 262144
+[    6.509780] [dhd] STATIC-MSG) dhd_wlan_mem_prealloc : section 22, size 65536
+
+[    6.512210] [dhd] dhd_attach(): thread:dhd_watchdog_thread:81a started
+
+[    6.517600] [dhd] dhd_attach(): thread:dhd_dpc:81b started
+
+[    6.521692] [dhd] dhd_attach(): thread:dhd_rxf:81c started
+[    6.522415] [dhd] dhd_deferred_work_init: work queue initialized
+[    6.523191] [dhd] dhd_tcpack_suppress_set: TCP ACK Suppress mode 0 -> mode 2
+[    6.524097] [dhd] dhd_tcpack_suppress_set: TCPACK_INFO_MAXNUM=4, TCPDATA_INFO_MAXNUM=4
+[    6.525155] [dhd] sdioh_cis_read: func_cis_ptr[0]=0x1070
+
+[    6.533139] [dhd] STATIC-MSG) dhd_wlan_mem_prealloc : section 1, size 10300
+[    6.534073] [dhd] STATIC-MSG) dhd_wlan_mem_prealloc : section 2, size 65536
+[    6.535295] [dhd] dhdsdio_probe_init: making DHD_BUS_DOWN
+[    6.536089] [dhd] Dongle Host Driver, version 101.10.361.31 (wlan=r892223-20230310-3)
+[    6.536089] drivers/net/wireless/bcmdhd compiled on Jun  7 2023 at 09:45:13
+[    6.536089] 
+
+[    6.539057] [dhd] Register interface [wlan0]  MAC: 50:41:1c:39:bd:c0
+[    6.539057] 
+[    6.540158] [dhd] [wlan0] wl_android_wifi_off : in g_wifi_on=1, on_failure=1
+[    6.541069] [dhd] dhd_bus_devreset: == Power OFF ==
+
+[    6.544848] [dhd] dhd_bus_stop: making DHD_BUS_DOWN
+[    6.545793] [dhd] bcmsdh_oob_intr_unregister: Enter
+[    6.546433] [dhd] bcmsdh_oob_intr_unregister: irq is not registered
+[    6.547247] [dhd] dhd_bus_devreset: making dhdpub up FALSE
+[    6.547955] [dhd] dhd_txglom_enable: enable 0
+[    6.548518] [dhd] dhd_bus_devreset: making DHD_BUS_DOWN
+[    6.549195] [dhd] wifi_platform_set_power = 0, delay: 0 msec
+
+[    6.550445] [dhd] ======== PULL WL_REG_ON(3) LOW! ========
+[    6.551163] [dhd] [wlan0] wl_android_wifi_off : out
+[    6.551796] [dhd] dhdsdio_probe : mutex is released.
+
+[    6.554095] [dhd] _dhd_module_init: Exit err=0
+
+[    6.589364] Bluetooth: Core ver 2.22
+[    6.589921] NET: Registered protocol family 31
+[    6.590500] Bluetooth: HCI device and connection manager initialized
+[    6.591328] Bluetooth: HCI socket layer initialized
+[    6.591961] Bluetooth: L2CAP socket layer initialized
+[    6.592631] Bluetooth: SCO socket layer initialized
+
+[    6.603987] Bluetooth: HCI UART driver ver 2.3
+[    6.604575] Bluetooth: HCI UART protocol H4 registered
+[    6.605439] Bluetooth: HCI UART protocol Broadcom registered
+
+[m  OK  m] Finished mLoad Kernel Modulesm.
+
+[m  OK  m] Found device m/sys/subsystem/net/devices/eth0m.
+
+[m  OK  m] Finished mMonitoring of LVM dmeventd or progress pollingm.
+
+[m  OK  m] Reached target mLocal File Systems (Pre)m.
+[m  OK  m] Reached target mLocal File Systemsm.
+
+         Mounting mKernel Configuration File Systemm...
+
+         Starting mSet console font and keymapm...
+
+         Starting mPreprocess NFS configurationm...
+
+         Starting mApply Kernel Variablesm...
+
+         Starting mCreate Volatile Files and Directoriesm...
+
+[m  OK  m] Mounted mKernel Configuration File Systemm.
+
+[m  OK  m] Finished mSet console font and keymapm.
+
+[m  OK  m] Finished mPreprocess NFS configurationm.
+
+[m  OK  m] Reached target mNFS client servicesm.
+
+[m  OK  m] Finished mApply Kernel Variablesm.
+
+[m  OK  m] Started mifup for eth0m.
+
+[m  OK  m] Finished mCreate Volatile Files and Directoriesm.
+
+         Starting mRPC bind portmap servicem...
+
+         Starting mNetwork Time Synchronizationm...
+
+         Starting mUpdate UTMP about System Boot/Shutdownm...
+
+[m  OK  m] Finished mUpdate UTMP about System Boot/Shutdownm.
+
+[m  OK  m] Started mRPC bind portmap servicem.
+
+[m  OK  m] Reached target mRemote File Systems (Pre)m.
+[m  OK  m] Reached target mRemote File Systemsm.
+[m  OK  m] Reached target mRPC Port Mapperm.
+
+[m  OK  m] Listening on mLoad/Save RF itch Status /dev/rfkill Watchm.
+
+         Starting mLoad/Save RF Kill Switch Statusm...
+
+[m  OK  m] Started mLoad/Save RF Kill Switch Statusm.
+
+[m  OK  m] Finished mHelper to synchronize boot up for ifupdownm.
+
+         Starting mRaise network interfacesm...
+
+[mFAILEDm] Failed to start mRaise network interfacesm.
+See 'systemctl status networking.service' for details.
+
+[m  OK  m] Started mNetwork Time Synchronizationm.
+
+[m  OK  m] Reached target mSystem Initializationm.
+[m  OK  m] Started mDaily Cleanup of Temporary Directoriesm.
+[m  OK  m] Reached target mSystem Time Setm.
+[m  OK  m] Reached target mSystem Time Synchronizedm.
+
+[m  OK  m] Started mDaily apt download activitiesm.
+[m  OK  m] Started mDaily apt upgrade and clean activitiesm.
+
+[m  OK  m] Started mPeriodic ext4 Onliata Check for All Filesystemsm.
+
+[m  OK  m] Started mDiscard unused blocks once a weekm.
+[m  OK  m] Started mMessage of the Daym.
+[m  OK  m] Reached target mTimersm.
+
+[m  OK  m] Listening on mAvahi mDNS/DNS-SD Stack Activation Socketm.
+
+[m  OK  m] Listening on mD-Bus System Message Bus Socketm.
+[m  OK  m] Reached target mSocketsm.
+[m  OK  m] Reached target mBasic Systemm.
+
+         Starting mAvahi mDNS/DNS-SD Stackm...
+
+         Starting mBluetooth management mechanismm...
+
+[m  OK  m] Started mD-Bus System Message Busm.
+
+         Starting mNetwork Managerm...
+
+[m  OK  m] Started mSave initial kernel messages after bootm.
+
+         Starting mLSB: Lightweight SSH serverm...
+
+         Starting mRemove Stale Onlit4 Metadata Check Snapshotsm...
+
+         Starting minstall_hobot_debs.servicem...
+
+[m  OK  m] Started mSet the CPU Frequency Scaling governorm.
+
+         Starting mAuthorization Managerm...
+
+         Starting mresize_rootfs.servicem...
+
+         Starting mSystem Logging Servicem...
+
+         Starting mLSB: Set sysfs variables from /etc/sysfs.confm...
+
+         Starting mResets System Activity Data Collectorm...
+
+         Starting mLogin Servicem...
+
+         Starting mLSB: usb try & port select for x3 dvbm...
+
+         Starting mWPA supplicantm...
+
+         Starting mLSB: hobot hdmi initm...
+
+[m  OK  m] Finished mLoad/Save Random Seedm.
+
+[m  OK  m] Started minstall_hobot_debs.servicem.
+
+[m  OK  m] Finished mResets System Activity Data Collectorm.
+
+[m  OK  m] Started mLSB: usb try & port select for x3 dvbm.
+
+[m  OK  m] Started mLSB: Lightweight SSH serverm.
+
+[m  OK  m] Started mLSB: Set sysfs variables from /etc/sysfs.confm.
+
+[m  OK  m] Started mAvahi mDNS/DNS-SD Stackm.
+
+[m  OK  m] Started mLogin Servicem.
+
+[m  OK  m] Started mSystem Logging Servicem.
+
+[m  OK  m] Started mWPA supplicantm.
+
+[m  OK  m] Started mAuthorization Managerm.
+
+[    7.689000] no sii902x HDMI device!!
+
+[    7.783122] lt8618sxb i2c write error addr:03b reg:0xff ret -121 !
+[    7.783937] not found lt8618sxb device, exit probe!!!
+
+         Starting mModem Managerm...
+
+[m  OK  m] Started mLSB: hobot hdmi initm.
+
+[m  OK  m] Finished mRemove Stale Onliext4 Metadata Check Snapshotsm.
+
+[m  OK  m] Started mNetwork Managerm.
+
+[m  OK  m] Reached target mNetworkm.
+
+[m  OK  m] Reached target mNetwork is Onlinem.
+
+         Starting mdnsmasq - A lightDHCP and caching DNS serverm...
+
+[m  OK  m] Started mISC DHCP IPv4 serverm.
+
+[m  OK  m] Started mISC DHCP IPv6 serverm.
+
+         Starting m/userdata/ota/run_ota.sh startm...
+
+         Starting m/etc/rc.local Compatibilitym...
+
+         Starting mOpenBSD Secure Shell serverm...
+
+         Starting mPermit User Sessionsm...
+
+         Starting mLSB: HPA's tftp serverm...
+
+[m  OK  m] Finished mPermit User Sessionsm.
+
+         Starting mSet console schemem...
+
+         Starting mHostname Servicem...
+
+[m  OK  m] Finished mSet console schemem.
+
+[m  OK  m] Created slice msystem-getty.slicem.
+
+[    8.402534] rc.local[2399]: 0
+
+[m  OK  m] Started m/etc/rc.local Compatibilitym.
+
+[m  OK  m] Started mGetty on tty1m.
+
+[m  OK  m] Started mSerial Getty on ttyS0m.
+
+[m  OK  m] Reached target mLogin Promptsm.
+
+[m  OK  m] Started mLSB: HPA's tftp serverm.
+
+[m  OK  m] Started mOpenBSD Secure Shell serverm.
+
+[m  OK  m] Started mdnsmasq - A lightwt DHCP and caching DNS serverm.
+
+[m  OK  m] Reached target mHost and Network Name Lookupsm.
+
+[m  OK  m] Started mNovabot Server (local cloud replacement)m.
+
+[m  OK  m] Started mModem Managerm.
+
+[m  OK  m] Started mHostname Servicem.
+
+[m  OK  m] Started mresize_rootfs.servicem.
+
+         Starting mLSB: adb daemonm...
+
+         Starting mNetwork Manager Script Dispatcher Servicem...
+
+[m  OK  m] Started mNetwork Manager Script Dispatcher Servicem.
+
+[m  OK  m] Started mBluetooth management mechanismm.
+
+[m  OK  m] Started mLSB: adb daemonm.
+
+
+Ubuntu 20.04.6 LTS novabot ttyS0
+
+novabot login: 

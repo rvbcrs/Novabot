@@ -55,7 +55,7 @@ export function MowerControls({ sn, online, sensors, onPathDirectionChange, pend
 
   useEffect(() => {
     if (expanded && maps.length === 0) {
-      fetchMaps(sn).then(m => setMaps(m.filter(x => x.mapArea.length >= 3))).catch(() => {});
+      fetchMaps(sn).then(m => setMaps(m.filter(x => x.mapType === 'work' && x.mapArea.length >= 3))).catch(() => {});
     }
   }, [sn, expanded, maps.length]);
 

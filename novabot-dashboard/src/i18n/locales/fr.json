@@ -3,7 +3,7 @@
     "dashboard": "Tableau de bord",
     "server": "Serveur",
     "serverOffline": "Serveur hors ligne",
-    "connectionTitle": "Connexion au serveur novabot"
+    "connectionTitle": "Connexion au serveur OpenNova"
   },
   "sidebar": {
     "devices": "Appareils",
@@ -133,7 +133,7 @@
     "hideHeatmap": "Masquer la carte thermique",
     "showHeatmap": "Afficher la carte thermique",
     "heat": "Chaleur",
-    "exportTooltip": "Exporter les cartes au format Novabot ZIP",
+    "exportTooltip": "Exporter les cartes au format OpenNova ZIP",
     "exportNoCharger": "Station hors ligne — Position GPS requise pour l'export",
     "export": "Exporter",
     "placeChargerClick": "Cliquez sur la carte pour placer la station",

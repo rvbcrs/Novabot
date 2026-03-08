@@ -30,6 +30,18 @@ export async function deleteDevice(sn: string): Promise<void> {
   await fetch(`${BASE}/devices/${encodeURIComponent(sn)}`, { method: 'DELETE' });
 }
 
+export async function setMowerIp(sn: string, ip: string): Promise<void> {
+  const res = await fetch(`${BASE}/equipment/${encodeURIComponent(sn)}/mower-ip`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ip }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error ?? `HTTP ${res.status}`);
+  }
+}
+
 export async function fetchSensors(): Promise<SensorDef[]> {
   const data = await (await get(`${BASE}/sensors`)).json();
   return data.sensors ?? [];
@@ -116,6 +128,18 @@ export async function exportMaps(sn: string, chargingStation: { lat: number; lng
     chargingStation, chargingOrientation: chargingOrientation ?? 0,
   })).json();
   return data.downloadUrl;
+}
+
+export async function pushMapsToMower(sn: string, chargingStation?: { lat: number; lng: number }, chargingOrientation?: number): Promise<void> {
+  const res = await fetch(`${BASE}/maps/${encodeURIComponent(sn)}/push-to-mower`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ chargingStation, chargingOrientation: chargingOrientation ?? 0 }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error ?? `HTTP ${res.status}`);
+  }
 }
 
 // ── Schedules ──────────────────────────────────────────────────
@@ -282,6 +306,8 @@ export async function testDns(serverPort: number): Promise<{ ok: boolean; resolv
  * Als de fetch faalt (SSL error / network error) → cert niet vertrouwd.
  */
 export async function checkCertTrusted(): Promise<boolean> {
+  // Als de dashboard al via HTTP geopend wordt, is er geen TLS cert nodig
+  if (window.location.protocol === 'http:') return true;
   try {
     const httpsUrl = `https://${window.location.hostname}/api/dashboard/setup/status`;
     // AbortSignal.timeout is niet beschikbaar in Safari < 16 — gebruik een fallback

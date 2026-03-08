@@ -9,6 +9,12 @@ export interface OtaEventPayload {
   timestamp: number;
 }
 
+export interface MapOutlineEvent {
+  sn: string;
+  points: Array<{ lat: number; lng: number }>;
+  timestamp: number;
+}
+
 interface SocketHandlers {
   onDeviceUpdate: (e: DeviceUpdateEvent) => void;
   onDeviceOnline: (e: DeviceOnlineEvent) => void;
@@ -19,6 +25,7 @@ interface SocketHandlers {
   onBleLog?: (entry: BleLogEntry) => void;
   onBleLogHistory?: (entries: BleLogEntry[]) => void;
   onOtaEvent?: (e: OtaEventPayload) => void;
+  onMapOutline?: (e: MapOutlineEvent) => void;
 }
 
 export function useSocket(handlers: SocketHandlers) {
@@ -68,6 +75,10 @@ export function useSocket(handlers: SocketHandlers) {
 
     socket.on('ota:event', (e: OtaEventPayload) => {
       handlersRef.current.onOtaEvent?.(e);
+    });
+
+    socket.on('map:outline', (e: MapOutlineEvent) => {
+      handlersRef.current.onMapOutline?.(e);
     });
 
     return () => { socket.disconnect(); };

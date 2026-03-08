@@ -72,7 +72,7 @@ function WelcomeStep({ onNext }: { onNext: () => void }) {
       </div>
 
       <div>
-        <h1 className="text-3xl font-bold text-white">Welkom bij Novabot</h1>
+        <h1 className="text-3xl font-bold text-white">Welkom bij OpenNova</h1>
         <p className="text-gray-400 mt-2 text-sm leading-relaxed">
           Je persoonlijke cloudvervanging voor je robotmaaier
         </p>
@@ -319,11 +319,11 @@ function CertStep({ onComplete }: { onComplete: () => void }) {
           {/* Download */}
           <a
             href="/api/dashboard/setup/ca-cert"
-            download="novabot-ca.crt"
+            download="opennova-ca.crt"
             className="flex items-center justify-center gap-2.5 w-full bg-blue-600 hover:bg-blue-500 text-white font-medium py-3 rounded-xl transition-colors mb-5 text-sm"
           >
             <Download className="w-4 h-4" />
-            Download novabot-ca.crt
+            Download opennova-ca.crt
           </a>
 
           {/* Installatie gidsen */}
@@ -333,9 +333,9 @@ function CertStep({ onComplete }: { onComplete: () => void }) {
               open={openGuide === 'mac'}
               onToggle={() => setOpenGuide(g => g === 'mac' ? null : 'mac')}
               steps={[
-                'Download novabot-ca.crt en dubbelklik → Keychain Access opent',
+                'Download opennova-ca.crt en dubbelklik → Keychain Access opent',
                 'Het cert staat nu in de System keychain maar is nog NIET vertrouwd',
-                'Dubbelklik op "Novabot Local CA" in de lijst',
+                'Dubbelklik op "OpenNova Local CA" in de lijst',
                 'Klap "Trust" open (klik op het driehoekje)',
                 'Zet "When using this certificate" op "Always Trust"',
                 'Sluit het venster → voer je Mac-wachtwoord in als gevraagd',
@@ -350,7 +350,7 @@ function CertStep({ onComplete }: { onComplete: () => void }) {
                 'Tik op het bestand → "Profiel gedownload" verschijnt bovenaan',
                 'Ga naar Instellingen → bovenaan "Profiel gedownload" → Installeer → Installeer',
                 '⚠️ VERPLICHTE EXTRA STAP: Ga naar Instellingen → Algemeen → Info → Certificaatvertrouwen',
-                'Zet de schakelaar bij "Novabot Local CA" aan → Doorgaan',
+                'Zet de schakelaar bij "OpenNova Local CA" aan → Doorgaan',
                 'Zonder deze stap werkt het certificaat niet!',
               ]}
             />
@@ -359,7 +359,7 @@ function CertStep({ onComplete }: { onComplete: () => void }) {
               open={openGuide === 'android'}
               onToggle={() => setOpenGuide(g => g === 'android' ? null : 'android')}
               steps={[
-                'Stuur novabot-ca.crt naar je Android toestel',
+                'Stuur opennova-ca.crt naar je Android toestel',
                 'Ga naar Instellingen → Beveiliging → Certificaten installeren',
                 'Kies "CA-certificaat" en selecteer het bestand',
               ]}

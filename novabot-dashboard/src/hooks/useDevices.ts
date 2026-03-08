@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { DeviceState, DeviceUpdateEvent, DeviceOnlineEvent, MqttLogEntry, BleLogEntry } from '../types';
-import { useSocket, type OtaEventPayload } from './useSocket';
+import { useSocket, type OtaEventPayload, type MapOutlineEvent } from './useSocket';
 import { fetchDevices } from '../api/client';
 
 const MAX_LOG_ENTRIES = 500;
@@ -17,6 +17,7 @@ export function useDevices() {
   const [logs, setLogs] = useState<MqttLogEntry[]>([]);
   const [bleLogs, setBleLogs] = useState<BleLogEntry[]>([]);
   const [otaProgress, setOtaProgress] = useState<Map<string, OtaProgress>>(new Map());
+  const [liveOutlines, setLiveOutlines] = useState<Map<string, Array<{ lat: number; lng: number }>>>(new Map());
   const logsRef = useRef(logs);
   logsRef.current = logs;
 
@@ -89,6 +90,11 @@ export function useDevices() {
       if (existing) next.set(e.sn, { ...existing, online: false, sensors: {} });
       return next;
     });
+    setLiveOutlines(prev => {
+      const next = new Map(prev);
+      next.delete(e.sn);
+      return next;
+    });
   }, []);
 
   const onMqttLog = useCallback((entry: MqttLogEntry) => {
@@ -113,6 +119,14 @@ export function useDevices() {
     setBleLogs(entries.slice(-MAX_LOG_ENTRIES));
   }, []);
 
+  const onMapOutline = useCallback((e: MapOutlineEvent) => {
+    setLiveOutlines(prev => {
+      const next = new Map(prev);
+      next.set(e.sn, e.points);
+      return next;
+    });
+  }, []);
+
   const onOtaEvent = useCallback((e: OtaEventPayload) => {
     if (e.eventType === 'state') {
       const data = e.data;
@@ -135,7 +149,8 @@ export function useDevices() {
   const { connected } = useSocket({
     onDeviceUpdate, onDeviceOnline, onDeviceOffline, onSnapshot,
     onMqttLog, onMqttLogHistory, onBleLog, onBleLogHistory, onOtaEvent,
+    onMapOutline,
   });
 
-  return { devices, loading, connected, logs, bleLogs, otaProgress };
+  return { devices, loading, connected, logs, bleLogs, otaProgress, liveOutlines };
 }

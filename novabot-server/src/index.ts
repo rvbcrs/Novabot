@@ -1,4 +1,8 @@
 import 'dotenv/config';
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 import { initProxyLogger } from './proxy/proxyLogger.js';
 
 // Start proxy logger VOOR alle andere imports — vangt alle console output op
@@ -99,9 +103,11 @@ if (PROXY_MODE === 'cloud') {
   app.use('/api/nova-file-server/map', mapRouter);
   app.use('/api/nova-file-server/log', logRouter);
 
-  // novabot-message service
+  // novabot-message service (maaier stuurt naar nova-message, app naar novabot-message)
   app.use('/api/novabot-message/message',        messageRouter);
   app.use('/api/novabot-message/machineMessage',  machineMessageRouter);
+  app.use('/api/nova-message/message',            messageRouter);
+  app.use('/api/nova-message/machineMessage',     machineMessageRouter);
 
   // nova-network service (aangeroepen door charger firmware via HTTP)
   app.use('/api/nova-network/network', networkRouter);

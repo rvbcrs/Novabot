@@ -99,24 +99,24 @@ export function SetupWizard() {
         <div>
           <div className="text-[10px] text-gray-500 uppercase tracking-wide mb-1.5">TLS Certificaat (Novabot App)</div>
           <p className="text-[11px] text-gray-400 mb-2">
-            De Novabot app gebruikt HTTPS. Installeer het lokale CA-certificaat eenmalig op je apparaat zodat de app kan verbinden.
+            De Novabot app gebruikt HTTPS. Installeer het OpenNova CA-certificaat eenmalig op je apparaat zodat de app kan verbinden.
           </p>
           <a
             href="/api/dashboard/setup/ca-cert"
-            download="novabot-ca.crt"
+            download="opennova-ca.crt"
             className="w-full flex items-center justify-center gap-2 text-xs py-2 rounded bg-blue-700/80 text-white hover:bg-blue-600 transition-colors mb-3"
           >
             <Download className="w-3.5 h-3.5" />
-            Download novabot-ca.crt
+            Download opennova-ca.crt
           </a>
 
           <DnsGuide
             title="Mac (inclusief iOS Simulator)"
             steps={[
-              'Download novabot-ca.crt via de knop hierboven',
+              'Download opennova-ca.crt via de knop hierboven',
               'Dubbelklik op het bestand → Keychain Access opent',
               'Kies "System" keychain → voeg toe',
-              'Zoek "Novabot Local CA" → dubbelklik → Trust → "Always Trust"',
+              'Zoek "OpenNova Local CA" → dubbelklik → Trust → "Always Trust"',
               'iOS Simulator erft automatisch het vertrouwen van macOS',
             ]}
           />
@@ -127,13 +127,13 @@ export function SetupWizard() {
               'Open het bestand → "Profiel gedownload" verschijnt',
               'Ga naar Instellingen → Profiel gedownload → Installeer',
               'Ga naar Instellingen → Algemeen → Info → Vertrouwde certificaten',
-              'Zet "Novabot Local CA" aan',
+              'Zet "OpenNova Local CA" aan',
             ]}
           />
           <DnsGuide
             title="Android"
             steps={[
-              'Download novabot-ca.crt op je Android toestel',
+              'Download opennova-ca.crt op je Android toestel',
               'Ga naar Instellingen → Beveiliging → Certificaten installeren',
               'Kies "CA-certificaat" en selecteer het bestand',
             ]}
@@ -141,7 +141,7 @@ export function SetupWizard() {
           <div className="flex items-start gap-2 mt-2 bg-amber-950/30 border border-amber-800/30 rounded px-2.5 py-2">
             <ShieldCheck className="w-3 h-3 text-amber-400 flex-shrink-0 mt-0.5" />
             <p className="text-[10px] text-amber-300/80">
-              Dit certificaat is alleen geldig voor <code className="text-amber-200">*.lfibot.com</code> op je lokale netwerk. Het wordt nergens voor gebruikt buiten de Novabot server.
+              Dit certificaat is alleen geldig voor <code className="text-amber-200">*.lfibot.com</code> op je lokale netwerk. Het wordt nergens voor gebruikt buiten de OpenNova server.
             </p>
           </div>
         </div>

@@ -56,7 +56,7 @@ export function FirstRunSetup({ onComplete }: Props) {
           <div className="w-16 h-16 bg-emerald-900/40 rounded-2xl flex items-center justify-center mb-4 border border-emerald-800/40">
             <Leaf className="w-8 h-8 text-emerald-400" />
           </div>
-          <h1 className="text-2xl font-bold text-white">Welkom bij Novabot</h1>
+          <h1 className="text-2xl font-bold text-white">Welkom bij OpenNova</h1>
           <p className="text-sm text-gray-400 mt-1 text-center">Maak een account aan om te beginnen</p>
         </div>
 

@@ -9,7 +9,7 @@ import { checkSetupStatus, checkCertTrusted } from './api/client';
 type AppState = 'loading' | 'onboarding' | 'onboarding-cert-only' | 'ready';
 
 export default function App() {
-  const { devices, loading, connected, logs, bleLogs, otaProgress } = useDevices();
+  const { devices, loading, connected, logs, bleLogs, otaProgress, liveOutlines } = useDevices();
   const [appState, setAppState] = useState<AppState>('loading');
 
   useEffect(() => {
@@ -59,7 +59,7 @@ export default function App() {
     <ToastProvider>
       <div className="min-h-screen bg-gray-950 text-white">
         <Header connected={connected} />
-        <DashboardPage devices={devices} loading={loading} logs={logs} bleLogs={bleLogs} otaProgress={otaProgress} />
+        <DashboardPage devices={devices} loading={loading} logs={logs} bleLogs={bleLogs} otaProgress={otaProgress} liveOutlines={liveOutlines} />
       </div>
     </ToastProvider>
   );

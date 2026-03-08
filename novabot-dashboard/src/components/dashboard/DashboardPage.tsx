@@ -3,7 +3,7 @@ import {
   Plug, TreePine, ChevronDown, Terminal, Calendar, Circle,
   BatteryMedium, Satellite, Radio, Activity,
   Wifi, Bluetooth, Trash2, Thermometer, HardDrive, Code, Octagon, Settings,
-  Map as MapIcon, Camera, Save, StopCircle, X,
+  Map as MapIcon, Camera, Save, StopCircle, X, Network,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { DeviceState, MqttLogEntry, BleLogEntry, MapData } from '../../types';
@@ -18,7 +18,7 @@ import { OtaManager } from '../ota/OtaManager';
 import { SetupWizard } from '../setup/SetupWizard';
 import { CameraStream } from './CameraStream';
 import { UnboundDevices } from './UnboundDevices';
-import { deleteDevice, sendCommand } from '../../api/client';
+import { deleteDevice, sendCommand, setMowerIp } from '../../api/client';
 import { useToast } from '../common/Toast';
 
 interface Props {
@@ -27,6 +27,7 @@ interface Props {
   logs: MqttLogEntry[];
   bleLogs: BleLogEntry[];
   otaProgress: Map<string, OtaProgress>;
+  liveOutlines: Map<string, Array<{ lat: number; lng: number }>>;
 }
 
 /** Small stat pill used in the DeviceChip */
@@ -45,13 +46,15 @@ function Stat({ icon: Icon, value, color = 'text-gray-400', label }: {
 }
 
 /** Inline device chip for the toolbar */
-function DeviceChip({ device, expanded, onToggle, onDelete, otaProgress }: {
+function DeviceChip({ device, expanded, onToggle, onDelete, onSetMowerIp, otaProgress }: {
   device: DeviceState;
   expanded: boolean;
   onToggle: () => void;
   onDelete?: (sn: string) => void;
+  onSetMowerIp?: (sn: string, ip: string) => void;
   otaProgress?: OtaProgress;
 }) {
+  const [ipEdit, setIpEdit] = useState(device.mowerIp ?? '');
   const { t } = useTranslation();
   const s = device.sensors;
   const isCharger = device.deviceType === 'charger';
@@ -63,6 +66,7 @@ function DeviceChip({ device, expanded, onToggle, onDelete, otaProgress }: {
 
   // Mower: directe sensoren
   const mowerSats = parseInt(s.rtk_sat ?? '0', 10);
+  const mowerRtk = s.rtk === 'true';
   const wifiRssi = parseInt(s.wifi_rssi ?? '0', 10);
   const cpuTemp = parseInt(s.cpu_temperature ?? '0', 10);
 
@@ -123,6 +127,9 @@ function DeviceChip({ device, expanded, onToggle, onDelete, otaProgress }: {
                     color={mowerSats >= 15 ? 'text-sky-400' : mowerSats >= 8 ? 'text-yellow-400' : 'text-red-400'}
                     label={t('devices.rtkLabel', { sats: mowerSats })} />
                 )}
+                <span className={`text-[10px] font-medium ${mowerRtk ? 'text-green-400' : 'text-gray-600'}`}>
+                  RTK{mowerRtk ? '\u2713' : '\u2014'}
+                </span>
                 {wifiRssi !== 0 && (
                   <Stat icon={Wifi} value={`${wifiRssi}dB`}
                     color={Math.abs(wifiRssi) < 60 ? 'text-green-400' : Math.abs(wifiRssi) < 75 ? 'text-yellow-400' : 'text-red-400'}
@@ -218,13 +225,39 @@ function DeviceChip({ device, expanded, onToggle, onDelete, otaProgress }: {
 
           {/* Full sensor grid */}
           <SensorGrid device={device} />
+
+          {/* SSH IP (alleen voor maaier) */}
+          {device.deviceType === 'mower' && onSetMowerIp && (
+            <div className="mt-3 pt-2 border-t border-gray-700">
+              <div className="flex items-center gap-1.5 mb-1">
+                <Network className="w-3 h-3 text-gray-500" />
+                <span className="text-[10px] text-gray-500">SSH IP (kaart upload)</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="text"
+                  value={ipEdit}
+                  onChange={e => setIpEdit(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') onSetMowerIp(device.sn, ipEdit); }}
+                  placeholder="192.168.0.x"
+                  className="flex-1 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-[11px] font-mono text-gray-200 placeholder-gray-600 focus:outline-none focus:border-emerald-600"
+                />
+                <button
+                  onClick={() => onSetMowerIp(device.sn, ipEdit)}
+                  className="px-2 py-1 text-[10px] bg-emerald-700 hover:bg-emerald-600 text-white rounded transition-colors"
+                >
+                  <Save className="w-3 h-3" />
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
   );
 }
 
-export function DashboardPage({ devices, loading, logs, bleLogs, otaProgress }: Props) {
+export function DashboardPage({ devices, loading, logs, bleLogs, otaProgress, liveOutlines }: Props) {
   const { t } = useTranslation();
   const { toast } = useToast();
   const [logOpen, setLogOpen] = useState(false);
@@ -238,7 +271,7 @@ export function DashboardPage({ devices, loading, logs, bleLogs, otaProgress }: 
   const [cameraOpen, setCameraOpen] = useState(false);
 
   const handleMapSaved = useCallback((map: MapData) => {
-    if (map.mapArea.length >= 3) {
+    if (map.mapType === 'work' && map.mapArea.length >= 3) {
       setPendingPolygon({ mapId: map.mapId, mapName: map.mapName ?? map.mapId, mapArea: map.mapArea });
     }
   }, []);
@@ -249,6 +282,16 @@ export function DashboardPage({ devices, loading, logs, bleLogs, otaProgress }: 
     setExpandedChip(null);
     window.location.reload();
   }, [t]);
+
+  const handleSetMowerIp = useCallback(async (sn: string, ip: string) => {
+    if (!ip.trim()) return;
+    try {
+      await setMowerIp(sn, ip.trim());
+      toast(`IP opgeslagen: ${ip.trim()}`, 'success');
+    } catch {
+      toast('Opslaan mislukt', 'error');
+    }
+  }, [toast]);
 
   const sorted = Array.from(devices.values()).sort((a, b) => {
     if (a.deviceType !== b.deviceType) return a.deviceType === 'charger' ? -1 : 1;
@@ -298,6 +341,7 @@ export function DashboardPage({ devices, loading, logs, bleLogs, otaProgress }: 
               expanded={expandedChip === device.sn}
               onToggle={() => setExpandedChip(expandedChip === device.sn ? null : device.sn)}
               onDelete={handleDeleteDevice}
+              onSetMowerIp={handleSetMowerIp}
               otaProgress={otaProgress.get(device.sn)}
             />
           ))}
@@ -389,6 +433,7 @@ export function DashboardPage({ devices, loading, logs, bleLogs, otaProgress }: 
             chargerLng={charger?.sensors.longitude}
             pathDirectionPreview={pathDirPreview}
             onMapSaved={handleMapSaved}
+            liveOutline={mower ? (liveOutlines.get(mower.sn) ?? null) : null}
           />
           {/* Emergency stop floating button */}
           {mowerActive && (

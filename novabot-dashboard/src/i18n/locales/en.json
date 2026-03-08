@@ -3,7 +3,7 @@
     "dashboard": "Dashboard",
     "server": "Server",
     "serverOffline": "Server offline",
-    "connectionTitle": "Connection to novabot-server"
+    "connectionTitle": "Connection to OpenNova server"
   },
   "sidebar": {
     "devices": "Devices",
@@ -133,7 +133,7 @@
     "hideHeatmap": "Hide heatmap",
     "showHeatmap": "Show heatmap",
     "heat": "Heat",
-    "exportTooltip": "Export maps as Novabot ZIP",
+    "exportTooltip": "Export maps as OpenNova ZIP",
     "exportNoCharger": "Charger offline — GPS position required for export",
     "export": "Export",
     "placeChargerClick": "Click on the map to place charger",

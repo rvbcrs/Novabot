@@ -12,7 +12,9 @@ export const machineMessageRouter = Router();
 // Opgeslagen in de bestaande robot_messages tabel.
 machineMessageRouter.post('/saveCutGrassMessage', (req: Request, res: Response) => {
   const { sn } = req.body as { sn?: string };
-  if (!sn) { res.json(fail('sn required', 400)); return; }
+  // Maaier stuurt soms multipart/form-data die Express niet parseert → lege body.
+  // Retourneer success om retry-loop te stoppen.
+  if (!sn) { res.json(ok(null)); return; }
 
   console.log(`[MSG] saveCutGrassMessage: sn=${sn}`);
 

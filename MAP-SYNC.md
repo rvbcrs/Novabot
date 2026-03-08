@@ -278,24 +278,18 @@ De maaier uploadt de kaart-ZIP via `curl_formadd` (libcurl multipart/form-data):
 7. Bij succes (`success=true code=200`): klaar
 8. Bij fout: logt `curl_easy_perform_failed` of `success=false or code=405`
 
-**⚠️ Status: NIET geïmplementeerd op onze server**
+**✅ Status: VOLLEDIG GEÏMPLEMENTEERD (maart 2026)**
 
-Onze server heeft alleen `fragmentUploadEquipmentMap` (voor de app), niet `uploadEquipmentMap` (voor de maaier):
+Beide endpoints werken:
 
-| Aspect | App endpoint (bestaand) | Maaier endpoint (ontbreekt) |
-|--------|------------------------|----------------------------|
+| Aspect | App endpoint | Maaier endpoint |
+|--------|-------------|-----------------|
 | Route | `POST .../fragmentUploadEquipmentMap` | `POST .../uploadEquipmentMap` |
-| Auth | JWT token (authMiddleware) | **Geen auth** — maaier stuurt geen JWT |
+| Auth | JWT token (authMiddleware) | **Geen auth** — maaier identificeert via `sn` |
 | Upload methode | Chunked (chunkIndex/chunksTotal) | Enkele multipart POST |
 | Velden | `file`, `sn`, `uploadId`, `mapName`, `mapArea` | `local_file`, `local_file_name`, `zipMd5`, `sn`, `jsonBody` |
 | Bron | Flutter app | Maaier firmware (curl) |
-
-**TODO**: Nieuw endpoint bouwen dat:
-1. Geen JWT auth vereist (of SN-based verificatie)
-2. `curl_formadd` multipart accepteert met `local_file` veld
-3. ZIP opslaat en parseert (CSV → GPS polygonen via `parseMapZip()`)
-4. Kaarten in database zet met correcte `map_type` (work/obstacle/unicom)
-5. MD5 checksum verifieert (`zipMd5`)
+| Na upload | Slaat op in DB + `_latest.zip` kopie | Parseert ZIP → GPS polygonen → DB + `_latest.zip` kopie |
 
 #### `uploadEquipmentTrack` — maaipad upload
 
@@ -303,7 +297,7 @@ De maaier uploadt ook het geplande maaipad:
 - Bron: `/userdata/lfi/maps/home0/planned_path/`
 - Endpoint: `POST /api/nova-file-server/map/uploadEquipmentTrack`
 - Zelfde `curl_formadd` formaat als kaart upload
-- **Status: NIET geïmplementeerd**
+- **✅ Status: Geïmplementeerd** — slaat tracks op in `/data/storage/tracks/`
 
 #### Overige maaier HTTP calls
 
@@ -314,6 +308,49 @@ De maaier uploadt ook het geplande maaipad:
 | `saveCutGrassMessage` | ❌ Niet geïmplementeerd | Maaier stuurt notificatieberichten |
 | `machineReset` | ✅ Geïmplementeerd | Apparaat unbind/reset |
 | `network/connection` | ✅ Geïmplementeerd | Connectivity check → `{"success":true,"code":200}` |
+
+### queryEquipmentMap — App haalt kaarten op van server (maart 2026)
+
+**Endpoint:** `GET /api/nova-file-server/map/queryEquipmentMap?sn=<SN>` (JWT auth)
+
+Dit is hoe de Novabot app kaarten ophaalt om te tonen. **De app downloadt GEEN kaarten van de maaier** — de maaier uploadt zelf naar de server, en de app vraagt de server.
+
+**Complete flow:**
+1. Maaier uploadt ZIP → `POST uploadEquipmentMap` → server parseert ZIP → DB + `_latest.zip`
+2. Dashboard maakt kaart → server slaat GPS polygonen op in DB + genereert ZIP
+3. App roept `queryEquipmentMap?sn=` aan → server bouwt JSON response uit DB
+
+**App parsing (blutter analyse v2.4.0, maart 2026):**
+
+De app doet `data as Map<String, dynamic>` — `data` MOET een JSON object zijn, geen base64 string:
+- `data["work"]` → `List<MapEntityItem>` (werkgebieden)
+- `data["unicom"]` → `List<MapEntityItem>` (kanalen naar laadstation)
+- `MapEntityItem.fromJson()` leest: `fileName`, `alias`, `type`, `url`, `fileHash`, `mapArea`, `obstacle`
+- `machineExtendedField["chargingPose"]` → `ChargingPostion.fromJson()` (let op typo in origineel!)
+  - `ChargingPostion` verwacht `x`, `y`, `orientation` als **strings** (doet `double._parse()`)
+- De `noMapIntercept` guard checkt `lawnController.mapList.value.isEmpty()` — als `work` leeg is → "No map!"
+
+**Typische response:**
+```json
+{
+  "data": {
+    "work": [{
+      "fileName": "map0_work.csv",
+      "alias": "Work area 1",
+      "type": "work",
+      "url": null,
+      "fileHash": "md5_hash",
+      "mapArea": "[{\"lat\":52.14,\"lng\":6.23}, ...]",
+      "obstacle": []
+    }],
+    "unicom": []
+  },
+  "md5": "zip_md5_hash",
+  "machineExtendedField": {
+    "chargingPose": { "x": "6.231", "y": "52.140", "orientation": "0" }
+  }
+}
+```
 
 ### OTA push mechanisme analyse (februari 2026)
 

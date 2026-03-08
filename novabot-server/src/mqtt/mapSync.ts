@@ -8,7 +8,11 @@
  * Responses worden geparsed en opgeslagen in de `maps` tabel.
  */
 import crypto from 'crypto';
-import { Aedes, AedesPublishPacket } from 'aedes';
+// aedes v1.0.0 has no main field — define compatible types locally
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Aedes = { publish: (packet: any, cb: (err?: Error | null) => void) => void; [key: string]: unknown };
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AedesPublishPacket = { topic: string; payload: Buffer | string; qos: 0 | 1 | 2; retain: boolean; [key: string]: any };
 import { db } from '../db/database.js';
 
 const TAG = '[MAP-SYNC]';
@@ -17,6 +21,14 @@ let aedesBroker: Aedes | null = null;
 
 // Bijhouden voor welke SNs we al een map-request hebben gestuurd (voorkom spam)
 const pendingRequests = new Set<string>();
+
+// Callback voor live outline updates → dashboard via Socket.io
+type OutlineEmitter = (sn: string, points: Array<{ lat: number; lng: number }>) => void;
+let outlineEmitter: OutlineEmitter | null = null;
+
+export function setOutlineEmitter(fn: OutlineEmitter): void {
+  outlineEmitter = fn;
+}
 
 /**
  * Initialiseer mapSync met een referentie naar de Aedes broker.
@@ -371,6 +383,9 @@ function handleMapOutlineResponse(sn: string, data: unknown): void {
   );
 
   console.log(`${TAG} Kaart "${displayName}" (${mapId}) opgeslagen: ${points.length} punten, bounds: ${JSON.stringify(bounds)}`);
+
+  // Stuur live outline naar dashboard via Socket.io
+  outlineEmitter?.(sn, points);
 }
 
 /**

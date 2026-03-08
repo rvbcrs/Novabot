@@ -26,8 +26,8 @@ distinguished_name = dn
 x509_extensions = v3_ca
 
 [dn]
-CN = Novabot Local CA
-O = Novabot
+CN = OpenNova Local CA
+O = OpenNova
 
 [v3_ca]
 subjectKeyIdentifier = hash
@@ -129,4 +129,7 @@ echo "================================="
 
 # ── Node.js server ────────────────────────────────────────────────────────────
 cd /app/novabot-server
+export DB_PATH=/data/novabot.db
+export STORAGE_PATH=/data/storage
+export FIRMWARE_PATH=/data/firmware
 exec node dist/index.js

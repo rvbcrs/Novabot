@@ -3,7 +3,7 @@
     "dashboard": "Dashboard",
     "server": "Server",
     "serverOffline": "Server offline",
-    "connectionTitle": "Verbinding met novabot-server"
+    "connectionTitle": "Verbinding met OpenNova server"
   },
   "sidebar": {
     "devices": "Apparaten",
@@ -133,7 +133,7 @@
     "hideHeatmap": "Verberg heatmap",
     "showHeatmap": "Toon heatmap",
     "heat": "Heat",
-    "exportTooltip": "Exporteer kaarten als Novabot ZIP",
+    "exportTooltip": "Exporteer kaarten als OpenNova ZIP",
     "exportNoCharger": "Laadstation offline — GPS positie nodig voor export",
     "export": "Export",
     "placeChargerClick": "Klik op de kaart om laadstation te plaatsen",

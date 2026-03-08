@@ -1,12 +1,13 @@
 {
   "name": "novabot-server",
   "version": "1.0.0",
+  "type": "module",
   "description": "Local Novabot cloud server replacement",
   "main": "dist/index.js",
   "scripts": {
     "dev": "concurrently -n server,dashboard -c blue,magenta \"tsx watch src/index.ts\" \"npm run dev --prefix ../novabot-dashboard\"",
     "dev:server": "tsx watch src/index.ts",
-    "build": "tsc",
+    "build": "tsc --noEmitOnError false",
     "build:all": "npm run build && npm run build --prefix ../novabot-dashboard",
     "start": "node dist/index.js"
   },
@@ -21,6 +22,7 @@
     "mqtt": "^5.15.0",
     "multer": "^2.0.0",
     "socket.io": "^4.8.3",
+    "ssh2": "^1.17.0",
     "uuid": "^9.0.1"
   },
   "devDependencies": {
@@ -30,6 +32,7 @@
     "@types/jsonwebtoken": "^9.0.6",
     "@types/multer": "^2.0.0",
     "@types/node": "^20.11.30",
+    "@types/ssh2": "^1.15.5",
     "@types/uuid": "^9.0.8",
     "concurrently": "^9.2.1",
     "tsx": "^4.7.2",

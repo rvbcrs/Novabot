@@ -152,6 +152,10 @@ const lastSeen = new Map<string, number>();
 export function initBleLogger(emit: (event: string, data: unknown) => void): void {
   emitFn = emit;
   initFileLogger();
+  if (process.env.DISABLE_BLE === '1') {
+    console.log('[BLE-LOG] BLE disabled via DISABLE_BLE=1');
+    return;
+  }
   startBackgroundScan().catch(err => {
     console.warn('[BLE-LOG] Background scan failed to start:', err.message);
   });

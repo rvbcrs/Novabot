@@ -218,6 +218,7 @@ interface MapRow {
   map_name: string | null;
   map_area: string | null;
   map_max_min: string | null;
+  map_type: string;
 }
 
 /**
@@ -247,8 +248,12 @@ export function generateMapZipFromDb(
 
   const areas: MapArea[] = [];
 
-  for (let i = 0; i < rows.length; i++) {
-    const row = rows[i];
+  // Splits DB rijen in werk en unicom
+  const workRows = rows.filter(r => r.map_type === 'work');
+  const unicomRows = rows.filter(r => r.map_type === 'unicom');
+
+  for (let i = 0; i < workRows.length; i++) {
+    const row = workRows[i];
     const points: GpsPoint[] = JSON.parse(row.map_area!);
 
     if (!points || points.length < 3) continue;
@@ -259,7 +264,22 @@ export function generateMapZipFromDb(
       points,
     });
 
-    // Genereer automatisch een unicom pad naar het laadstation
+    // Zoek een handmatig getekend unicom kanaal voor dit werkgebied
+    // (unicomRows[i] als die bestaat, anders automatisch genereren)
+    if (unicomRows[i]) {
+      const unicomPoints: GpsPoint[] = JSON.parse(unicomRows[i].map_area!);
+      if (unicomPoints && unicomPoints.length >= 2) {
+        areas.push({
+          mapIndex: i,
+          type: 'unicom',
+          target: 'charge',
+          points: unicomPoints,
+        });
+        continue;
+      }
+    }
+
+    // Geen handmatig kanaal — genereer automatisch een unicom pad
     // (rechte lijn van dichtstbijzijnd punt naar charging station)
     const localPoints = points.map(p => gpsToLocal(p, chargingStation));
     let closestIdx = 0;

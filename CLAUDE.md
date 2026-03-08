@@ -128,6 +128,15 @@ DB locatie: `novabot-server/novabot.db`
 
 **saveCutGrassRecord**: retourneert `ok(null)` bij lege/onparseerbare body (maaier stuurt multipart → retry loop anders).
 
+**queryEquipmentMap — KRITIEK (maart 2026):**
+- App v2.4.0 verwacht `data` als `Map<String, dynamic>` (JSON object), NIET base64 of array
+- Response: `{ data: { work: [MapEntityItem...], unicom: [...] }, md5, machineExtendedField }`
+- `MapEntityItem`: `{ fileName, alias, type, url, fileHash, mapArea, obstacle[] }`
+- `mapArea` = GPS coördinaten als JSON string
+- `chargingPose` velden (`x`, `y`, `orientation`) moeten **strings** zijn (app doet `double._parse()`)
+- `data: null` als geen kaarten → app toont "No map!"
+- Kaart-flow is upload-only: maaier→server, app→server. Maaier downloadt NOOIT kaarten.
+
 ---
 
 ## Development
@@ -136,7 +145,14 @@ DB locatie: `novabot-server/novabot.db`
 cd novabot-server && npm run dev          # Server (tsx watch, port 3000)
 cd novabot-dashboard && npm run dev       # Dashboard (Vite, port 5173)
 npx tsc --noEmit                          # TypeScript check (vanuit novabot-server/)
+docker compose build --no-cache           # Docker rebuild (ALTIJD --no-cache na code wijzigingen)
+docker compose down && docker compose up -d  # Container herstarten
 ```
+
+**Docker belangrijk:**
+- `docker compose build` produceert image `novabot-novabot` — gebruik dit, NIET `docker build -t opennovabot .`
+- Na source wijzigingen ALTIJD `docker compose build --no-cache` — anders pakt Docker gecachte layers
+- Dashboard dist wordt INSIDE de container gebouwd (Dockerfile kopieert src/ en runt `npm run build`)
 
 Firmware: `research/firmware/` — mower custom builds via `research/build_custom_firmware.sh`
 Maaier firmware versie: `v6.0.2-custom-5` (OTA via app geslaagd 2 maart 2026)
@@ -155,4 +171,5 @@ Maaier firmware versie: `v6.0.2-custom-5` (OTA via app geslaagd 2 maart 2026)
 | `@MAP-SYNC.md` | Kaart synchronisatie, CSV/ZIP formaat, StartCoverageTask, maaier HTTP uploads |
 | `@OTA.md` | OTA firmware protocol, custom firmware builder, open issues/TODO |
 | `@APP-ANALYSIS.md` | APK/blutter analyse, AES key derivatie, app architectuur, foutmeldingen |
+| `@MOWER-INTERNALS.md` | Boot sequence, systemd services, ROS2 nodes, map recognition flow, mqtt_node internals |
 | `@SESSIONS.md` | Gedocumenteerde sessies, provisioning fixes, equipment binding lifecycle |

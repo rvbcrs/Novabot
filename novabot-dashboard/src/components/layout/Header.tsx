@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Bot, Server, ServerOff, Plus } from 'lucide-react';
+import { Server, ServerOff, Plus } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { BleScanner } from '../ble/BleScanner';
 
@@ -21,9 +21,8 @@ export function Header({ connected }: Props) {
   return (
     <header className="h-16 bg-gray-900 border-b border-gray-800 flex items-center justify-between px-6">
       <div className="flex items-center gap-3">
-        <Bot className="w-6 h-6 text-emerald-500" />
-        <span className="text-xl font-bold text-white">Novabot</span>
-        <span className="text-sm text-gray-400">{t('header.dashboard')}</span>
+        <img src="/OpenNova.png" alt="OpenNova" className="h-9 w-auto" />
+        <span className="text-xl text-gray-300 tracking-widest uppercase" style={{ fontFamily: "'Posterama 1919', sans-serif", letterSpacing: '0.2em' }}>{t('header.dashboard')}</span>
       </div>
       <div className="flex items-center gap-4">
         {/* Add device */}
