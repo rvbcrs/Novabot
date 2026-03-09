@@ -1,9 +1,11 @@
 import express from 'express';
 import http from 'http';
+import https from 'https';
 import path from 'path';
 import os from 'os';
 import fs from 'fs';
 import dns from 'dns';
+import crypto from 'crypto';
 import { Server as IOServer } from 'socket.io';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const multicastDns = require('multicast-dns');
@@ -11,6 +13,67 @@ import multer from 'multer';
 import { startBroker, publishToMower, getConnectedMower, getMowerVersion, isClientMode, onMowerDisconnect, onMowerReconnect, switchToClientMode } from './broker.js';
 import { encryptForDevice, md5 } from './crypto.js';
 import { getDockerStatus, pullImage, startContainer, removeContainer, checkHealth } from './docker.js';
+
+// ── LFI Cloud API helpers ─────────────────────────────────────────────────────
+const LFI_CLOUD_HOST = '47.253.145.99';
+const APP_PW_KEY_IV = Buffer.from('1234123412ABCDEF', 'utf8');
+
+function encryptCloudPassword(plainPassword: string): string {
+  const cipher = crypto.createCipheriv('aes-128-cbc', APP_PW_KEY_IV, APP_PW_KEY_IV);
+  let encrypted = cipher.update(plainPassword, 'utf8', 'base64');
+  encrypted += cipher.final('base64');
+  return encrypted;
+}
+
+function makeLfiHeaders(token: string): Record<string, string> {
+  const echostr = 'p' + crypto.randomBytes(6).toString('hex');
+  const ts = String(Date.now());
+  const nonce = crypto.createHash('sha1').update('qtzUser', 'utf8').digest('hex');
+  const sig = crypto.createHash('sha256').update(echostr + nonce + ts + token, 'utf8').digest('hex');
+  return {
+    'Host': 'app.lfibot.com',
+    'Authorization': token,
+    'Content-Type': 'application/json;charset=UTF-8',
+    'source': 'app',
+    'userlanguage': 'en',
+    'echostr': echostr,
+    'nonce': nonce,
+    'timestamp': ts,
+    'signature': sig,
+  };
+}
+
+function callLfiCloud(method: string, urlPath: string, body: Record<string, unknown> | null, token = ''): Promise<Record<string, unknown>> {
+  return new Promise((resolve, reject) => {
+    const bodyStr = body ? JSON.stringify(body) : '';
+    const headers: Record<string, string> = {
+      ...makeLfiHeaders(token),
+      ...(bodyStr ? { 'Content-Length': String(Buffer.byteLength(bodyStr)) } : {}),
+    };
+    const opts: https.RequestOptions = {
+      hostname: LFI_CLOUD_HOST,
+      path: urlPath,
+      method,
+      headers,
+      rejectUnauthorized: false,
+    };
+    const req = https.request(opts, (res) => {
+      let data = '';
+      res.on('data', (chunk) => { data += chunk; });
+      res.on('end', () => {
+        try {
+          resolve(JSON.parse(data) as Record<string, unknown>);
+        } catch {
+          reject(new Error(`Cloud API returned invalid JSON: ${data.slice(0, 200)}`));
+        }
+      });
+    });
+    req.on('error', reject);
+    req.setTimeout(15000, () => { req.destroy(); reject(new Error('Cloud API timeout')); });
+    if (bodyStr) req.write(bodyStr);
+    req.end();
+  });
+}
 
 // Wizard files are inlined at build time by scripts/generate-wizard-bundle.mjs
 // This avoids all pkg snapshot path resolution issues.
@@ -389,6 +452,109 @@ export function createServer(): http.Server {
     // Re-emit current version if already detected (handles page refresh)
     const v = getMowerVersion();
     if (v) socket.emit('mower-version', { version: v });
+  });
+
+  // ── API: LFI Cloud import — stap 1: login + ophalen apparaten ─────────────
+  app.post('/api/cloud-import', async (req, res) => {
+    const { email, password } = req.body as { email?: string; password?: string };
+    if (!email || !password) {
+      res.status(400).json({ error: 'email en password zijn verplicht' });
+      return;
+    }
+
+    try {
+      // Versleutel wachtwoord voor LFI cloud (AES-128-CBC, key/IV = "1234123412ABCDEF")
+      const encryptedPw = encryptCloudPassword(password);
+
+      // Stap 1: Login bij LFI cloud
+      const loginResp = await callLfiCloud('POST', '/api/nova-user/appUser/login', {
+        email, password: encryptedPw, imei: 'imei',
+      });
+
+      const loginVal = (loginResp as Record<string, unknown>).value as Record<string, unknown> | undefined;
+      if (!loginResp || !(loginResp as Record<string, boolean>).success || !loginVal?.accessToken) {
+        const msg = (loginResp as Record<string, string>).message ?? 'Inloggen mislukt';
+        res.status(401).json({ error: `Cloud login mislukt: ${msg}` });
+        return;
+      }
+
+      const accessToken = loginVal.accessToken as string;
+      const appUserId = loginVal.appUserId as number;
+
+      // Stap 2: Haal apparaten op
+      const equipResp = await callLfiCloud('POST', '/api/nova-user/equipment/userEquipmentList', {
+        appUserId, pageSize: 10, pageNo: 1,
+      }, accessToken);
+
+      const equipVal = (equipResp as Record<string, unknown>).value as Record<string, unknown> | undefined;
+      const pageList = (equipVal?.pageList ?? []) as Record<string, unknown>[];
+
+      // Zoek charger + mower entries in de lijst
+      // Cloud kan ofwel separate entries sturen (één per device) ofwel gecombineerde entries
+      const chargers = pageList.filter(e => {
+        const sn = String(e.chargerSn ?? e.sn ?? '');
+        return sn.startsWith('LFIC');
+      });
+      const mowers = pageList.filter(e => {
+        const sn = String(e.mowerSn ?? e.sn ?? '');
+        return sn.startsWith('LFIN');
+      });
+
+      // Stel ook de email in zodat de wizard het kan tonen
+      res.json({
+        ok: true,
+        email,
+        appUserId,
+        chargers,
+        mowers,
+        rawList: pageList,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[cloud-import] Fout:', msg);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  // ── API: LFI Cloud import — stap 2: importeer in Docker container ──────────
+  app.post('/api/cloud-import/apply', async (req, res) => {
+    const { email, password, deviceName, charger, mower } = req.body as {
+      email?: string;
+      password?: string;
+      deviceName?: string;
+      charger?: { sn: string; address?: number; channel?: number; mac?: string };
+      mower?: { sn: string; mac?: string; version?: string };
+    };
+
+    if (!email || !password || !charger?.sn) {
+      res.status(400).json({ error: 'email, password en charger.sn zijn verplicht' });
+      return;
+    }
+
+    const dockerIp = selectedIp;
+    if (!dockerIp) {
+      res.status(400).json({ error: 'Geen Docker IP geselecteerd' });
+      return;
+    }
+
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 10000);
+
+      const response = await fetch(`http://${dockerIp}/api/dashboard/admin/import`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password, deviceName, charger, mower }),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeout);
+      const data = await response.json() as Record<string, unknown>;
+      res.json(data);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: `Docker import mislukt: ${msg}` });
+    }
   });
 
   // ── Global error handler: always return JSON ──────────────────────────────

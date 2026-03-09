@@ -1797,3 +1797,131 @@ dashboardRouter.post('/setup/create-user', async (req: Request, res: Response) =
   console.log(`[SETUP] Eerste gebruiker aangemaakt: ${email}`);
   res.json({ ok: true });
 });
+
+// ── POST /api/dashboard/admin/import — import apparaten vanuit LFI cloud ──────
+// Geen JWT auth: alleen bedoeld voor lokaal netwerk (bootstrap wizard).
+// Maakt een lokale gebruiker aan en registreert de maaier + laadstation in de DB.
+dashboardRouter.post('/admin/import', async (req: Request, res: Response) => {
+  const { email, password, deviceName, charger, mower } = req.body as {
+    email?: string;
+    password?: string;
+    deviceName?: string;
+    charger?: { sn: string; address?: number; channel?: number; mac?: string };
+    mower?: { sn: string; mac?: string; version?: string };
+  };
+
+  if (!email || !password || !charger?.sn) {
+    res.status(400).json({ ok: false, error: 'email, password en charger.sn zijn verplicht' });
+    return;
+  }
+
+  const bcrypt = await import('bcrypt');
+
+  // 1. Maak of update gebruiker
+  const normalizedEmail = email.trim().toLowerCase();
+  const existingUser = db.prepare('SELECT app_user_id, id FROM users WHERE email = ?')
+    .get(normalizedEmail) as { app_user_id: string; id: number } | undefined;
+
+  let appUserId: string;
+  let userId: number;
+
+  if (existingUser) {
+    // Update wachtwoord als de gebruiker al bestaat
+    const hash = await bcrypt.hash(password, 10);
+    db.prepare('UPDATE users SET password = ? WHERE app_user_id = ?')
+      .run(hash, existingUser.app_user_id);
+    appUserId = existingUser.app_user_id;
+    userId = existingUser.id;
+    console.log(`[admin/import] Bestaande gebruiker bijgewerkt: ${normalizedEmail}`);
+  } else {
+    const hash = await bcrypt.hash(password, 10);
+    appUserId = uuidv4();
+    db.prepare(`
+      INSERT INTO users (app_user_id, email, password, username, created_at)
+      VALUES (?, ?, ?, ?, datetime('now'))
+    `).run(appUserId, normalizedEmail, hash, deviceName ?? '');
+    userId = (db.prepare('SELECT id FROM users WHERE app_user_id = ?').get(appUserId) as { id: number }).id;
+    console.log(`[admin/import] Nieuwe gebruiker aangemaakt: ${normalizedEmail}`);
+  }
+
+  // 2. Seed equipment_lora_cache voor het laadstation
+  if (charger.address != null && charger.channel != null) {
+    const existingCache = db.prepare('SELECT sn FROM equipment_lora_cache WHERE sn = ?')
+      .get(charger.sn);
+    if (existingCache) {
+      db.prepare('UPDATE equipment_lora_cache SET charger_address = ?, charger_channel = ? WHERE sn = ?')
+        .run(String(charger.address), String(charger.channel), charger.sn);
+    } else {
+      db.prepare('INSERT INTO equipment_lora_cache (sn, charger_address, charger_channel) VALUES (?, ?, ?)')
+        .run(charger.sn, String(charger.address), String(charger.channel));
+    }
+  }
+
+  // 3. Maak charger equipment record aan (of update bestaande)
+  const existingCharger = db.prepare('SELECT equipment_id FROM equipment WHERE mower_sn = ?')
+    .get(charger.sn) as { equipment_id: string } | undefined;
+
+  if (existingCharger) {
+    db.prepare(`
+      UPDATE equipment
+      SET user_id = ?, charger_address = COALESCE(?, charger_address),
+          charger_channel = COALESCE(?, charger_channel),
+          mac_address = COALESCE(?, mac_address),
+          equipment_nick_name = COALESCE(?, equipment_nick_name)
+      WHERE equipment_id = ?
+    `).run(appUserId, charger.address != null ? String(charger.address) : null,
+           charger.channel != null ? String(charger.channel) : null,
+           charger.mac ?? null, deviceName ?? null, existingCharger.equipment_id);
+    console.log(`[admin/import] Charger ${charger.sn} bijgewerkt`);
+  } else {
+    const equipmentId = uuidv4();
+    db.prepare(`
+      INSERT INTO equipment
+        (equipment_id, user_id, mower_sn, charger_sn, equipment_type_h, equipment_nick_name,
+         charger_address, charger_channel, mac_address)
+      VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?)
+    `).run(equipmentId, appUserId, charger.sn, charger.sn.slice(0, 5),
+           deviceName ?? null,
+           charger.address != null ? String(charger.address) : null,
+           charger.channel != null ? String(charger.channel) : null,
+           charger.mac ?? null);
+    console.log(`[admin/import] Charger ${charger.sn} aangemaakt`);
+  }
+
+  // 4. Maak mower equipment record aan (als mower SN beschikbaar)
+  if (mower?.sn) {
+    const existingMower = db.prepare('SELECT equipment_id FROM equipment WHERE mower_sn = ?')
+      .get(mower.sn) as { equipment_id: string } | undefined;
+
+    if (existingMower) {
+      db.prepare(`
+        UPDATE equipment
+        SET user_id = ?, charger_sn = COALESCE(?, charger_sn),
+            mac_address = COALESCE(?, mac_address),
+            mower_version = COALESCE(?, mower_version),
+            equipment_nick_name = COALESCE(?, equipment_nick_name)
+        WHERE equipment_id = ?
+      `).run(appUserId, charger.sn, mower.mac ?? null, mower.version ?? null,
+             deviceName ?? null, existingMower.equipment_id);
+      console.log(`[admin/import] Maaier ${mower.sn} bijgewerkt`);
+    } else {
+      const equipmentId = uuidv4();
+      db.prepare(`
+        INSERT INTO equipment
+          (equipment_id, user_id, mower_sn, charger_sn, equipment_type_h, equipment_nick_name,
+           mac_address, mower_version)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(equipmentId, appUserId, mower.sn, charger.sn, mower.sn.slice(0, 5),
+             deviceName ?? null, mower.mac ?? null, mower.version ?? null);
+      console.log(`[admin/import] Maaier ${mower.sn} aangemaakt`);
+    }
+  }
+
+  res.json({
+    ok: true,
+    userId,
+    email: normalizedEmail,
+    chargerSn: charger.sn,
+    mowerSn: mower?.sn ?? null,
+  });
+});
