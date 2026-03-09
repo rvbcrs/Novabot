@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import type { Socket } from 'socket.io-client';
+import { useT } from '../i18n/index.ts';
 
 interface DockerStatus {
   dockerInstalled: boolean;
@@ -30,6 +31,7 @@ interface Props {
 }
 
 export default function DockerSetup({ selectedIp, socket, onReady }: Props) {
+  const { t } = useT();
   const [phase, setPhase] = useState<Phase>('checking');
   const [pullLog, setPullLog] = useState<string[]>([]);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -91,20 +93,18 @@ export default function DockerSetup({ selectedIp, socket, onReady }: Props) {
         return;
       }
       if (status.containerRunning) {
-        // Container already running — always health check, skip recreate
         setExistingStatus(status);
         runHealthCheck();
         return;
       }
       if (status.containerExists) {
-        // Container exists but not running — offer recreate
         setExistingStatus(status);
         setPhase('existing');
         return;
       }
       setPhase('ready-to-pull');
     } catch {
-      setErrorMsg('Kan Docker status niet ophalen');
+      setErrorMsg(t('docker.errorStatus'));
       setPhase('error');
     }
   }
@@ -116,12 +116,11 @@ export default function DockerSetup({ selectedIp, socket, onReady }: Props) {
       const resp = await fetch('/api/docker/pull', { method: 'POST' });
       const data = await resp.json() as { ok: boolean };
       if (!data.ok) {
-        setErrorMsg('Image downloaden mislukt');
+        setErrorMsg(t('docker.errorPull'));
         setPhase('error');
       }
-      // Success handled by socket event (done: true → startContainer)
     } catch {
-      setErrorMsg('Verbinding met bootstrap server verloren');
+      setErrorMsg(t('docker.errorConnection'));
       setPhase('error');
     }
   }
@@ -136,14 +135,13 @@ export default function DockerSetup({ selectedIp, socket, onReady }: Props) {
       });
       const data = await resp.json() as { ok?: boolean; error?: string };
       if (!data.ok) {
-        setErrorMsg(data.error ?? 'Container starten mislukt');
+        setErrorMsg(data.error ?? t('docker.errorStart'));
         setPhase('error');
         return;
       }
-      // Wait for container to initialize
       setTimeout(() => runHealthCheck(), 5000);
     } catch {
-      setErrorMsg('Verbinding met bootstrap server verloren');
+      setErrorMsg(t('docker.errorConnection'));
       setPhase('error');
     }
   }
@@ -154,7 +152,7 @@ export default function DockerSetup({ selectedIp, socket, onReady }: Props) {
     setHealthMqtt(null);
 
     let attempts = 0;
-    const maxAttempts = 30; // 30 × 2s = 60s
+    const maxAttempts = 30;
 
     const poll = async () => {
       attempts++;
@@ -173,7 +171,7 @@ export default function DockerSetup({ selectedIp, socket, onReady }: Props) {
       }
 
       if (attempts >= maxAttempts) {
-        setErrorMsg('Health check timeout (60s) — controleer Docker logs: docker logs opennova');
+        setErrorMsg(t('docker.errorHealthTimeout'));
         setPhase('error');
         return;
       }
@@ -189,18 +187,17 @@ export default function DockerSetup({ selectedIp, socket, onReady }: Props) {
   const isWin = os.includes('win');
 
   return (
-    <div className="bg-gray-900/60 border border-gray-800 rounded-2xl p-8">
-      <h2 className="text-xl font-bold text-white mb-2">Docker server starten</h2>
+    <div className="glass-card p-8">
+      <h2 className="text-xl font-bold text-white mb-2">{t('docker.title')}</h2>
       <p className="text-gray-400 mb-6 text-sm">
-        De OpenNova server draait in een Docker container. Deze bevat de MQTT broker,
-        het dashboard en DNS.
+        {t('docker.description')}
       </p>
 
       {/* ── Checking ─────────────────────────────────────────── */}
       {phase === 'checking' && (
         <div className="flex flex-col items-center gap-4 py-8">
           <div className="w-8 h-8 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
-          <p className="text-gray-400">Docker controleren...</p>
+          <p className="text-gray-400">{t('docker.checking')}</p>
         </div>
       )}
 
@@ -211,9 +208,9 @@ export default function DockerSetup({ selectedIp, socket, onReady }: Props) {
             <div className="flex items-start gap-2">
               <span className="text-amber-400 mt-0.5">!</span>
               <div className="text-sm text-amber-300">
-                <p className="font-medium mb-2">Docker Desktop is niet geinstalleerd</p>
+                <p className="font-medium mb-2">{t('docker.notInstalledTitle')}</p>
                 <p className="text-amber-400 mb-3">
-                  Download en installeer Docker Desktop voor jouw systeem:
+                  {t('docker.notInstalledDesc')}
                 </p>
                 <div className="space-y-2">
                   <a
@@ -225,7 +222,7 @@ export default function DockerSetup({ selectedIp, socket, onReady }: Props) {
                         : 'bg-gray-800/50 border-gray-700 text-gray-400 hover:text-gray-300'
                     }`}
                   >
-                    macOS {isMac && <span className="text-emerald-400 text-xs ml-1">(jouw systeem)</span>}
+                    macOS {isMac && <span className="text-emerald-400 text-xs ml-1">{t('docker.yourSystem')}</span>}
                   </a>
                   <a
                     href="https://docs.docker.com/desktop/setup/install/windows-install/"
@@ -236,7 +233,7 @@ export default function DockerSetup({ selectedIp, socket, onReady }: Props) {
                         : 'bg-gray-800/50 border-gray-700 text-gray-400 hover:text-gray-300'
                     }`}
                   >
-                    Windows {isWin && <span className="text-emerald-400 text-xs ml-1">(jouw systeem)</span>}
+                    Windows {isWin && <span className="text-emerald-400 text-xs ml-1">{t('docker.yourSystem')}</span>}
                   </a>
                   <a
                     href="https://docs.docker.com/engine/install/"
@@ -247,7 +244,7 @@ export default function DockerSetup({ selectedIp, socket, onReady }: Props) {
                         : 'bg-gray-800/50 border-gray-700 text-gray-400 hover:text-gray-300'
                     }`}
                   >
-                    Linux {!isMac && !isWin && <span className="text-emerald-400 text-xs ml-1">(jouw systeem)</span>}
+                    Linux {!isMac && !isWin && <span className="text-emerald-400 text-xs ml-1">{t('docker.yourSystem')}</span>}
                   </a>
                 </div>
               </div>
@@ -257,7 +254,7 @@ export default function DockerSetup({ selectedIp, socket, onReady }: Props) {
             onClick={checkDocker}
             className="w-full py-3 px-6 bg-gray-700 hover:bg-gray-600 text-white font-semibold rounded-xl transition-colors"
           >
-            Opnieuw controleren
+            {t('docker.recheckBtn')}
           </button>
         </div>
       )}
@@ -269,16 +266,16 @@ export default function DockerSetup({ selectedIp, socket, onReady }: Props) {
             <div className="flex items-start gap-2">
               <span className="text-blue-400 mt-0.5">i</span>
               <div className="text-sm text-blue-300">
-                <p className="font-medium mb-1">Docker Desktop is niet actief</p>
+                <p className="font-medium mb-1">{t('docker.notRunningTitle')}</p>
                 <p className="text-blue-400">
-                  Start Docker Desktop en wacht tot het groene icoon verschijnt. De wizard controleert elke 5 seconden automatisch.
+                  {t('docker.notRunningDesc')}
                 </p>
               </div>
             </div>
           </div>
           <div className="flex items-center justify-center py-4">
             <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-            <span className="text-gray-400 text-sm ml-3">Wachten op Docker...</span>
+            <span className="text-gray-400 text-sm ml-3">{t('docker.waitingForDocker')}</span>
           </div>
         </div>
       )}
@@ -287,17 +284,17 @@ export default function DockerSetup({ selectedIp, socket, onReady }: Props) {
       {phase === 'ready-to-pull' && (
         <div className="space-y-4">
           <div className="p-4 bg-gray-800/50 rounded-xl">
-            <p className="text-white font-medium mb-1">Docker is gereed</p>
+            <p className="text-white font-medium mb-1">{t('docker.readyTitle')}</p>
             <p className="text-gray-400 text-sm">
-              Image: <code className="text-emerald-400">rvbcrs/opennova:latest</code>
+              {t('docker.imageLabel', { image: 'rvbcrs/opennova:latest' })}
             </p>
-            <p className="text-gray-500 text-xs mt-1">~165 MB download</p>
+            <p className="text-gray-500 text-xs mt-1">{t('docker.sizeEstimate')}</p>
           </div>
           <button
             onClick={startPull}
             className="w-full py-3 px-6 bg-emerald-700 hover:bg-emerald-600 text-white font-semibold rounded-xl transition-colors"
           >
-            Download starten
+            {t('docker.pullBtn')}
           </button>
         </div>
       )}
@@ -307,7 +304,7 @@ export default function DockerSetup({ selectedIp, socket, onReady }: Props) {
         <div className="space-y-4">
           <div className="flex items-center gap-3 mb-2">
             <div className="w-5 h-5 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
-            <p className="text-emerald-400 font-medium">Image downloaden...</p>
+            <p className="text-emerald-400 font-medium">{t('docker.pulling')}</p>
           </div>
           <div
             ref={logRef}
@@ -324,15 +321,15 @@ export default function DockerSetup({ selectedIp, socket, onReady }: Props) {
       {phase === 'starting' && (
         <div className="flex flex-col items-center gap-4 py-8">
           <div className="w-8 h-8 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
-          <p className="text-gray-400">Container starten...</p>
-          <p className="text-gray-500 text-xs">IP: {selectedIp}</p>
+          <p className="text-gray-400">{t('docker.starting')}</p>
+          <p className="text-gray-500 text-xs">{t('docker.ipLabel', { ip: selectedIp })}</p>
         </div>
       )}
 
       {/* ── Health check ─────────────────────────────────────── */}
       {phase === 'health-check' && (
         <div className="space-y-4">
-          <p className="text-gray-400 text-sm">Container gestart. Services controleren...</p>
+          <p className="text-gray-400 text-sm">{t('docker.healthCheckTitle')}</p>
           <div className="space-y-2">
             <div className="flex items-center gap-2 text-sm">
               {healthHttp === null ? (
@@ -342,7 +339,7 @@ export default function DockerSetup({ selectedIp, socket, onReady }: Props) {
               ) : (
                 <span className="text-gray-600">&#9675;</span>
               )}
-              <span className="text-gray-300">HTTP server (dashboard + API)</span>
+              <span className="text-gray-300">{t('docker.httpService')}</span>
             </div>
             <div className="flex items-center gap-2 text-sm">
               {healthMqtt === null ? (
@@ -352,7 +349,7 @@ export default function DockerSetup({ selectedIp, socket, onReady }: Props) {
               ) : (
                 <span className="text-gray-600">&#9675;</span>
               )}
-              <span className="text-gray-300">MQTT broker (poort 1883)</span>
+              <span className="text-gray-300">{t('docker.mqttService')}</span>
             </div>
           </div>
         </div>
@@ -365,9 +362,9 @@ export default function DockerSetup({ selectedIp, socket, onReady }: Props) {
             <div className="flex items-center gap-2 text-sm text-emerald-300">
               <span>&#10003;</span>
               <div>
-                <p className="font-medium">Docker server draait</p>
+                <p className="font-medium">{t('docker.readyRunningTitle')}</p>
                 <p className="text-emerald-400 text-xs mt-0.5">
-                  Dashboard: <code>http://{selectedIp}</code> | MQTT: <code>{selectedIp}:1883</code>
+                  {t('docker.dashboardInfo', { ip: selectedIp })}
                 </p>
               </div>
             </div>
@@ -375,22 +372,22 @@ export default function DockerSetup({ selectedIp, socket, onReady }: Props) {
           <div className="space-y-1.5 text-sm">
             <div className="flex items-center gap-2">
               <span className="text-emerald-400">&#10003;</span>
-              <span className="text-gray-300">HTTP server</span>
+              <span className="text-gray-300">{t('docker.httpCheck')}</span>
             </div>
             <div className="flex items-center gap-2">
               <span className="text-emerald-400">&#10003;</span>
-              <span className="text-gray-300">MQTT broker</span>
+              <span className="text-gray-300">{t('docker.mqttCheck')}</span>
             </div>
             <div className="flex items-center gap-2">
               <span className="text-emerald-400">&#10003;</span>
-              <span className="text-gray-300">DNS (dnsmasq)</span>
+              <span className="text-gray-300">{t('docker.dnsCheck')}</span>
             </div>
           </div>
           <button
             onClick={onReady}
             className="w-full py-3 px-6 bg-emerald-700 hover:bg-emerald-600 text-white font-semibold rounded-xl transition-colors"
           >
-            Verder &rarr;
+            {t('docker.next')}
           </button>
         </div>
       )}
@@ -400,14 +397,14 @@ export default function DockerSetup({ selectedIp, socket, onReady }: Props) {
         <div className="space-y-4">
           <div className="p-4 bg-blue-900/20 border border-blue-700/30 rounded-xl">
             <div className="text-sm text-blue-300">
-              <p className="font-medium mb-2">Bestaande container gevonden</p>
+              <p className="font-medium mb-2">{t('docker.existingTitle')}</p>
               <div className="space-y-1 text-blue-400 text-xs">
-                <p>Image: <code>{existingStatus.containerImage ?? 'onbekend'}</code></p>
-                <p>Status: {existingStatus.containerRunning ? 'actief' : 'gestopt'}</p>
+                <p>{t('docker.imageLabel', { image: existingStatus.containerImage ?? 'unknown' })}</p>
+                <p>Status: {existingStatus.containerRunning ? t('docker.statusActive') : t('docker.statusStopped')}</p>
                 {existingStatus.containerTargetIp && (
                   <p>IP: <code>{existingStatus.containerTargetIp}</code>
                     {existingStatus.containerTargetIp !== selectedIp && (
-                      <span className="text-amber-400 ml-2">(verschilt van geselecteerd: {selectedIp})</span>
+                      <span className="text-amber-400 ml-2">{t('docker.ipDiffers', { ip: selectedIp })}</span>
                     )}
                   </p>
                 )}
@@ -420,7 +417,7 @@ export default function DockerSetup({ selectedIp, socket, onReady }: Props) {
                 onClick={() => runHealthCheck()}
                 className="flex-1 py-3 px-6 bg-emerald-700 hover:bg-emerald-600 text-white font-semibold rounded-xl transition-colors"
               >
-                Hergebruiken
+                {t('docker.reuseBtn')}
               </button>
             )}
             <button
@@ -431,7 +428,7 @@ export default function DockerSetup({ selectedIp, socket, onReady }: Props) {
                   : 'bg-emerald-700 hover:bg-emerald-600 text-white'
               }`}
             >
-              Opnieuw aanmaken
+              {t('docker.recreateBtn')}
             </button>
           </div>
         </div>
@@ -444,8 +441,8 @@ export default function DockerSetup({ selectedIp, socket, onReady }: Props) {
             <div className="flex items-start gap-2 text-sm text-red-300">
               <span className="mt-0.5">&#10007;</span>
               <div>
-                <p className="font-medium mb-1">Fout</p>
-                <p className="text-red-400">{errorMsg ?? 'Onbekende fout'}</p>
+                <p className="font-medium mb-1">{t('docker.errorTitle')}</p>
+                <p className="text-red-400">{errorMsg ?? 'Unknown error'}</p>
               </div>
             </div>
           </div>
@@ -453,7 +450,7 @@ export default function DockerSetup({ selectedIp, socket, onReady }: Props) {
             onClick={checkDocker}
             className="w-full py-3 px-6 bg-gray-700 hover:bg-gray-600 text-white font-semibold rounded-xl transition-colors"
           >
-            Opnieuw proberen
+            {t('docker.retryBtn')}
           </button>
         </div>
       )}

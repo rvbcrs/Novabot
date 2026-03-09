@@ -102,6 +102,16 @@ nav:
     - Mowing Session: flows/mowing-session.md
     - Map Building: flows/map-building.md
     - OTA Update: flows/ota-update.md
+  - Official LFI Docs:
+    - Overview: official/index.md
+    - Installation Guide: official/installation.md
+    - App Connection: official/app-connection.md
+    - Garden Mapping: official/mapping.md
+    - Firmware & Versions: official/firmware-versions.md
+    - Troubleshooting: official/troubleshooting.md
+    - FAQ: official/faq.md
+    - Video Tutorials: official/videos.md
+    - Hardware Specs: official/specs.md
 
 extra_javascript:
   - assets/js/mermaid-zoom.js

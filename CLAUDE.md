@@ -159,6 +159,42 @@ Maaier firmware versie: `v6.0.2-custom-5` (OTA via app geslaagd 2 maart 2026)
 
 ---
 
+## Hardware Reparatie (bron: `research/NOVABOT Disassembly Guide.pdf`)
+
+Tools: **PH2** Phillips + **T20** Torx schroevendraaier. Oranje schroeven = constructie, blauw = specifieke componenten.
+
+### Hall Sensors — KRITIEK
+Alle Hall sensors moeten in de JUISTE RICHTING geplaatst zijn. Verkeerde richting → functie werkt niet.
+
+| Sensor | Locatie | Aantal |
+|--------|---------|--------|
+| Collision | Binnenklep (6.2) | 4× |
+| STOP button | Binnenklep (6.3) | 2× + 2 magneten |
+| Liftdetectie | Basis assembly (5.2/5.4) | 3× + 2× |
+| **Charge in place** (laadstation) | Charging station binnenin | 1× |
+
+**Laadprobleem → controleer "Charge in place Hall" + magneet aan maaier-onderkant.**
+
+### PCB Connectors (Basis assembly, linker→rechts)
+LoRa antenne (links!) — RTK antenne — AI board — Display — Battery Pack (2 kabels!) — Charging port — Rijmotoren L+R — Motor lift — Liftmotor — Maaiermotor — Lift sensor
+
+### LoRa Antenne
+Gouden coil spring via **u.FL/IPEX connector**, linkerzijde hoofd-PCB.
+Losse connector → LoRa icoon ontbreekt in app. Fix: connector stevig indrukken.
+
+### Waterproofing (ALTIJD controleren na reparatie)
+- Afdichtingsring rondom basis moet in groef zitten
+- Rubberen hoes maaiermotor moet in groef (sectie 8)
+- O-ring rijmotor niet vergeten (sectie 7)
+
+### FPC kabels (camera's, display)
+Zwart vergrendelplaatje **omhoog** draaien vóór loskoppelen. Dubbele tape houdt kabels vast.
+
+### Laadstation Binnenin
+Charge in place Hall, LoRa antenne, RTK antenne, WiFi/BT antenne, Burn switch (UART flash), Debug serial port.
+
+---
+
 ## Referentiebestanden (laden met @BESTANDSNAAM.md)
 
 | Bestand | Inhoud |

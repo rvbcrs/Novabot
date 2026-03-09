@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { DetectResult, FirmwareInfo, MowerInfo } from '../App.tsx';
+import { useT } from '../i18n/index.ts';
 
 interface Props {
   mower: MowerInfo | null;
@@ -9,6 +10,7 @@ interface Props {
 }
 
 export default function WaitForMower({ mower, firmware, detect, onConnected }: Props) {
+  const { t } = useT();
   const existingBroker = detect?.mqtt.clientMode ?? false;
   const [dots, setDots] = useState('');
 
@@ -22,17 +24,16 @@ export default function WaitForMower({ mower, firmware, detect, onConnected }: P
   // Auto-advance if mower already connected when this step mounts
   useEffect(() => {
     if (mower) {
-      const t = setTimeout(onConnected, 800);
-      return () => clearTimeout(t);
+      const timer = setTimeout(onConnected, 800);
+      return () => clearTimeout(timer);
     }
   }, [mower, onConnected]);
 
   return (
-    <div className="bg-gray-900/60 border border-gray-800 rounded-2xl p-8">
-      <h2 className="text-xl font-bold text-white mb-2">Wachten op maaier</h2>
+    <div className="glass-card p-8">
+      <h2 className="text-xl font-bold text-white mb-2">{t('wait.title')}</h2>
       <p className="text-gray-400 mb-8 text-sm">
-        Zet je maaier aan. De MQTT broker luistert op poort 1883. Zodra de maaier verbindt
-        gaat de wizard automatisch verder.
+        {t('wait.description')}
       </p>
 
       {!mower ? (
@@ -45,11 +46,11 @@ export default function WaitForMower({ mower, firmware, detect, onConnected }: P
             <div className="absolute inset-0 rounded-full border-2 border-emerald-500/50 animate-ping" />
           </div>
 
-          <p className="text-gray-400 text-lg font-mono">Wachten{dots}</p>
+          <p className="text-gray-400 text-lg font-mono">{t('wait.waiting')}{dots}</p>
 
           <div className="space-y-2 text-sm text-gray-500 text-center">
-            <p>MQTT broker actief op poort 1883</p>
-            <p>Zet de maaier aan en controleer WiFi-verbinding</p>
+            <p>{t('wait.mqttActive')}</p>
+            <p>{t('wait.instruction')}</p>
           </div>
         </div>
       ) : (
@@ -58,7 +59,7 @@ export default function WaitForMower({ mower, firmware, detect, onConnected }: P
             <img src="/OpenNova.png" alt="OpenNova" className="w-16 h-16 object-contain" />
           </div>
           <div className="text-center">
-            <p className="text-emerald-400 font-semibold text-lg">Maaier gevonden!</p>
+            <p className="text-emerald-400 font-semibold text-lg">{t('wait.found')}</p>
             <p className="text-gray-300 font-mono text-sm mt-1">{mower.sn}</p>
             <p className="text-gray-500 text-xs">{mower.ip}</p>
           </div>
@@ -66,30 +67,30 @@ export default function WaitForMower({ mower, firmware, detect, onConnected }: P
       )}
 
       <div className="mt-6 p-4 bg-gray-800/40 rounded-xl">
-        <p className="text-gray-500 text-xs font-medium uppercase tracking-wide mb-2">Status</p>
+        <p className="text-gray-500 text-xs font-medium uppercase tracking-wide mb-2">{t('wait.statusTitle')}</p>
         <div className="space-y-1.5 text-sm">
           <div className="flex items-center gap-2">
             <span className="text-emerald-400">✓</span>
             <span className="text-gray-300">
               MQTT {existingBroker
-                ? <span className="text-blue-400">(bestaande broker, subscriber-mode)</span>
-                : '(broker, poort 1883)'}
+                ? <span className="text-blue-400">({t('wait.mqttSubscriber').replace('MQTT ', '')})</span>
+                : `(${t('wait.mqttBroker').replace('MQTT ', '')})`}
             </span>
           </div>
           <div className="flex items-center gap-2">
             <span className="text-emerald-400">✓</span>
-            <span className="text-gray-300">HTTP server (poort 7789)</span>
+            <span className="text-gray-300">{t('wait.httpServer')}</span>
           </div>
           <div className="flex items-center gap-2">
             {firmware ? <span className="text-emerald-400">✓</span> : <span className="text-yellow-400">○</span>}
             <span className="text-gray-300">
-              Firmware: {firmware ? <span className="text-emerald-400">{firmware.version}</span> : 'niet geladen'}
+              {firmware ? t('wait.firmwareLoaded', { version: firmware.version }) : t('wait.firmwareNone')}
             </span>
           </div>
           <div className="flex items-center gap-2">
             {mower ? <span className="text-emerald-400">✓</span> : <span className="text-gray-600">○</span>}
             <span className="text-gray-300">
-              Maaier: {mower ? <span className="text-emerald-400">{mower.sn}</span> : <span className="text-gray-600">niet verbonden</span>}
+              {mower ? t('wait.mowerConnected', { sn: mower.sn }) : <span className="text-gray-600">{t('wait.mowerNone').replace('Mower: ', '').replace('Maaier: ', '').replace('Tondeuse : ', '')}</span>}
             </span>
           </div>
         </div>

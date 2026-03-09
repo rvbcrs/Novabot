@@ -1,60 +1,48 @@
+import { useT } from '../i18n/index.ts';
+
 interface Props {
   onNext: () => void;
 }
 
 export default function Welcome({ onNext }: Props) {
+  const { t } = useT();
   return (
-    <div className="bg-gray-900/60 border border-gray-800 rounded-2xl p-8">
+    <div className="glass-card p-8">
       <div className="flex flex-col items-center mb-8">
         <img src="/OpenNova.png" alt="OpenNova" className="h-24 w-auto mb-4" />
-        <h2 className="text-2xl font-bold text-white mb-2 text-center">Welkom bij OpenNova Bootstrap</h2>
+        <h2 className="text-2xl font-bold text-white mb-2 text-center">{t('welcome.title')}</h2>
         <p className="text-gray-400 leading-relaxed text-center">
-          Deze wizard helpt je om de OpenNova firmware op je robotmaaier te flashen.
-          Na afloop draait je maaier een eigen server en app — volledig offline.
+          {t('welcome.description')}
         </p>
       </div>
 
       <div className="space-y-3 mb-8">
-        <div className="flex items-start gap-3 p-4 bg-gray-800/50 rounded-xl">
-          <span className="text-emerald-400 mt-0.5">&#9312;</span>
-          <div>
-            <p className="text-white font-medium">Firmware uploaden</p>
-            <p className="text-gray-400 text-sm">Upload het OpenNova firmware-bestand (.deb)</p>
+        {[
+          { num: '\u2460', title: t('welcome.step1Title'), desc: t('welcome.step1Desc') },
+          { num: '\u2461', title: t('welcome.step2Title'), desc: t('welcome.step2Desc') },
+          { num: '\u2462', title: t('welcome.step3Title'), desc: t('welcome.step3Desc') },
+          { num: '\u2463', title: t('welcome.step4Title'), desc: t('welcome.step4Desc') },
+        ].map(({ num, title, desc }, i) => (
+          <div key={i} className="flex items-start gap-3 p-4 bg-gray-800/50 rounded-xl">
+            <span className="text-emerald-400 mt-0.5">{num}</span>
+            <div>
+              <p className="text-white font-medium">{title}</p>
+              <p className="text-gray-400 text-sm">{desc}</p>
+            </div>
           </div>
-        </div>
-        <div className="flex items-start gap-3 p-4 bg-gray-800/50 rounded-xl">
-          <span className="text-emerald-400 mt-0.5">&#9313;</span>
-          <div>
-            <p className="text-white font-medium">Netwerk instellen</p>
-            <p className="text-gray-400 text-sm">Selecteer het netwerk waarop de maaier is aangesloten</p>
-          </div>
-        </div>
-        <div className="flex items-start gap-3 p-4 bg-gray-800/50 rounded-xl">
-          <span className="text-emerald-400 mt-0.5">&#9314;</span>
-          <div>
-            <p className="text-white font-medium">Docker server starten</p>
-            <p className="text-gray-400 text-sm">Download en start de OpenNova Docker container</p>
-          </div>
-        </div>
-        <div className="flex items-start gap-3 p-4 bg-gray-800/50 rounded-xl">
-          <span className="text-emerald-400 mt-0.5">&#9315;</span>
-          <div>
-            <p className="text-white font-medium">Maaier flashen</p>
-            <p className="text-gray-400 text-sm">Verbind de maaier met WiFi en start de OTA update via MQTT</p>
-          </div>
-        </div>
+        ))}
       </div>
 
       <div className="p-4 bg-amber-900/30 border border-amber-700/50 rounded-xl mb-8">
         <div className="flex items-start gap-2">
           <span className="text-amber-400 mt-0.5">&#9888;</span>
           <div className="text-sm text-amber-300">
-            <p className="font-medium mb-1">Vereisten</p>
+            <p className="font-medium mb-1">{t('welcome.requirements')}</p>
             <ul className="space-y-1 text-amber-400">
-              <li>&#8226; Docker Desktop is geinstalleerd (of wordt in stap 3 begeleid)</li>
-              <li>&#8226; Je maaier is aangezet en verbonden met hetzelfde WiFi-netwerk als deze computer</li>
-              <li>&#8226; Je hebt de Novabot app gebruikt om de maaier aan het WiFi toe te voegen</li>
-              <li>&#8226; Het OpenNova firmware-bestand (<code className="text-amber-300">novabot-v*-server.deb</code>)</li>
+              <li>&#8226; {t('welcome.reqDocker')}</li>
+              <li>&#8226; {t('welcome.reqWifi')}</li>
+              <li>&#8226; {t('welcome.reqApp')}</li>
+              <li>&#8226; {t('welcome.reqFirmware', { file: 'novabot-v*-server.deb' })}</li>
             </ul>
           </div>
         </div>
@@ -64,7 +52,7 @@ export default function Welcome({ onNext }: Props) {
         onClick={onNext}
         className="w-full py-3 px-6 bg-emerald-700 hover:bg-emerald-600 text-white font-semibold rounded-xl transition-colors"
       >
-        Begin &rarr;
+        {t('welcome.begin')}
       </button>
     </div>
   );

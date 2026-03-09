@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { io, Socket } from 'socket.io-client';
 import Welcome from './steps/Welcome.tsx';
 import FirmwareSelect from './steps/FirmwareSelect.tsx';
@@ -8,6 +8,7 @@ import WaitForMower from './steps/WaitForMower.tsx';
 import OtaConfirm from './steps/OtaConfirm.tsx';
 import OtaProgress from './steps/OtaProgress.tsx';
 import Done from './steps/Done.tsx';
+import { I18nContext, createT, detectLocale, LOCALE_LABELS, type Locale } from './i18n/index.ts';
 
 export type Step = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
 
@@ -46,15 +47,15 @@ export interface WizardState {
   otaTimedOut: boolean;
 }
 
-const STEP_LABELS = [
-  'Welkom',
-  'Firmware',
-  'Netwerk',
-  'Docker',
-  'Wachten',
-  'Bevestigen',
-  'Flashen',
-  'Klaar',
+const STEP_KEYS = [
+  'steps.welcome',
+  'steps.firmware',
+  'steps.network',
+  'steps.docker',
+  'steps.waiting',
+  'steps.confirm',
+  'steps.flashing',
+  'steps.done',
 ];
 
 const socket: Socket = io(window.location.origin, {
@@ -64,6 +65,7 @@ const socket: Socket = io(window.location.origin, {
 
 export default function App() {
   const [step, setStep] = useState<Step>(0);
+  const [locale, setLocaleState] = useState<Locale>(detectLocale);
   const [state, setState] = useState<WizardState>({
     firmware: null,
     selectedIp: null,
@@ -76,6 +78,12 @@ export default function App() {
     detect: null,
     otaTimedOut: false,
   });
+
+  const t = useMemo(() => createT(locale), [locale]);
+  const setLocale = (l: Locale) => {
+    setLocaleState(l);
+    localStorage.setItem('opennova-locale', l);
+  };
 
   useEffect(() => {
     socket.on('mower-connected', (data: MowerInfo) => {
@@ -168,61 +176,89 @@ export default function App() {
   const setFirmware = (fw: FirmwareInfo) => setState(s => ({ ...s, firmware: fw }));
   const setSelectedIp = (ip: string) => setState(s => ({ ...s, selectedIp: ip }));
 
+  const stepLabels = STEP_KEYS.map(k => t(k));
+
   return (
-    <div className="min-h-screen bg-gray-950 flex flex-col items-center justify-start py-10 px-4">
-      {/* Header */}
-      <div className="w-full max-w-2xl mb-8">
-        <div className="flex items-center gap-3 mb-6">
-          <img src="/OpenNova.png" alt="OpenNova" className="h-10 w-auto" />
+    <I18nContext.Provider value={{ locale, t, setLocale }}>
+      <div className="min-h-screen bg-gray-950 flex flex-col items-center justify-start py-10 px-4 relative">
+        {/* Background glow blobs — give the glass something to blur over */}
+        <div className="fixed inset-0 pointer-events-none overflow-hidden" aria-hidden="true">
+          <div className="absolute top-[-20%] left-[-20%] w-[70%] h-[70%] bg-emerald-800/40 rounded-full" style={{filter:'blur(100px)'}} />
+          <div className="absolute bottom-[-20%] right-[-20%] w-[65%] h-[65%] bg-teal-900/50 rounded-full" style={{filter:'blur(90px)'}} />
+          <div className="absolute top-[30%] right-[5%] w-[45%] h-[45%] bg-emerald-700/20 rounded-full" style={{filter:'blur(80px)'}} />
+          <div className="absolute top-[55%] left-[0%] w-[35%] h-[35%] bg-teal-800/25 rounded-full" style={{filter:'blur(70px)'}} />
         </div>
 
-        {/* Step indicator */}
-        <div className="flex items-center gap-0">
-          {STEP_LABELS.map((label, i) => (
-            <div key={i} className="flex items-center flex-1 last:flex-none">
-              <div className="flex flex-col items-center">
-                <div
-                  className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold transition-colors ${
-                    i < step
-                      ? 'bg-emerald-600 text-white'
-                      : i === step
-                      ? 'bg-emerald-700 text-white ring-2 ring-emerald-500 ring-offset-2 ring-offset-gray-950'
-                      : 'bg-gray-800 text-gray-500'
+        {/* Header */}
+        <div className="w-full max-w-2xl mb-8 relative z-10">
+          <div className="flex items-center justify-between mb-6">
+            <img src="/OpenNova.png" alt="OpenNova" className="h-10 w-auto" />
+            {/* Language selector */}
+            <div className="flex gap-1">
+              {(Object.keys(LOCALE_LABELS) as Locale[]).map(l => (
+                <button
+                  key={l}
+                  onClick={() => setLocale(l)}
+                  className={`px-2 py-1 text-xs rounded transition-colors ${
+                    l === locale
+                      ? 'bg-emerald-700 text-white'
+                      : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
                   }`}
                 >
-                  {i < step ? '\u2713' : i + 1}
-                </div>
-                <span className={`text-xs mt-1 hidden sm:block ${i === step ? 'text-emerald-400' : i < step ? 'text-gray-400' : 'text-gray-600'}`}>
-                  {label}
-                </span>
-              </div>
-              {i < STEP_LABELS.length - 1 && (
-                <div className={`flex-1 h-0.5 mx-1 mb-4 sm:mb-5 ${i < step ? 'bg-emerald-600' : 'bg-gray-800'}`} />
-              )}
+                  {l.toUpperCase()}
+                </button>
+              ))}
             </div>
-          ))}
+          </div>
+
+          {/* Step indicator */}
+          <div className="flex items-center gap-0">
+            {stepLabels.map((label, i) => (
+              <div key={i} className="flex items-center flex-1 last:flex-none">
+                <div className="flex flex-col items-center">
+                  <div
+                    className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold transition-colors ${
+                      i < step
+                        ? 'bg-emerald-600 text-white'
+                        : i === step
+                        ? 'bg-emerald-700 text-white ring-2 ring-emerald-500 ring-offset-2 ring-offset-gray-950'
+                        : 'bg-gray-800 text-gray-500'
+                    }`}
+                  >
+                    {i < step ? '\u2713' : i + 1}
+                  </div>
+                  <span className={`text-xs mt-1 hidden sm:block ${i === step ? 'text-emerald-400' : i < step ? 'text-gray-400' : 'text-gray-600'}`}>
+                    {label}
+                  </span>
+                </div>
+                {i < stepLabels.length - 1 && (
+                  <div className={`flex-1 h-0.5 mx-1 mb-4 sm:mb-5 ${i < step ? 'bg-emerald-600' : 'bg-gray-800'}`} />
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Content */}
+        <div className="w-full max-w-2xl relative z-10">
+          {step === 0 && <Welcome onNext={next} />}
+          {step === 1 && <FirmwareSelect firmware={state.firmware} onUploaded={fw => { setFirmware(fw); next(); }} />}
+          {step === 2 && <NetworkConfig selectedIp={state.selectedIp} detect={state.detect} onSelected={ip => { setSelectedIp(ip); next(); }} />}
+          {step === 3 && <DockerSetup selectedIp={state.selectedIp!} socket={socket} onReady={next} />}
+          {step === 4 && <WaitForMower mower={state.mower} firmware={state.firmware} detect={state.detect} onConnected={() => goTo(5)} />}
+          {step === 5 && (
+            <OtaConfirm
+              mower={state.mower!}
+              firmware={state.firmware!}
+              selectedIp={state.selectedIp!}
+              mowerVersion={state.mowerVersion}
+              onBack={() => goTo(4)}
+            />
+          )}
+          {step === 6 && <OtaProgress log={state.otaLog} mower={state.mower} otaStatus={state.otaStatus} otaProgress={state.otaProgress} otaTimedOut={state.otaTimedOut} />}
+          {step === 7 && <Done serverUrl={state.serverUrl} mower={state.mower} />}
         </div>
       </div>
-
-      {/* Content */}
-      <div className="w-full max-w-2xl">
-        {step === 0 && <Welcome onNext={next} />}
-        {step === 1 && <FirmwareSelect firmware={state.firmware} onUploaded={fw => { setFirmware(fw); next(); }} />}
-        {step === 2 && <NetworkConfig selectedIp={state.selectedIp} detect={state.detect} onSelected={ip => { setSelectedIp(ip); next(); }} />}
-        {step === 3 && <DockerSetup selectedIp={state.selectedIp!} socket={socket} onReady={next} />}
-        {step === 4 && <WaitForMower mower={state.mower} firmware={state.firmware} detect={state.detect} onConnected={() => goTo(5)} />}
-        {step === 5 && (
-          <OtaConfirm
-            mower={state.mower!}
-            firmware={state.firmware!}
-            selectedIp={state.selectedIp!}
-            mowerVersion={state.mowerVersion}
-            onBack={() => goTo(4)}
-          />
-        )}
-        {step === 6 && <OtaProgress log={state.otaLog} mower={state.mower} otaStatus={state.otaStatus} otaProgress={state.otaProgress} otaTimedOut={state.otaTimedOut} />}
-        {step === 7 && <Done serverUrl={state.serverUrl} mower={state.mower} />}
-      </div>
-    </div>
+    </I18nContext.Provider>
   );
 }

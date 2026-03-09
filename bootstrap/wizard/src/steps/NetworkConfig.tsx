@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import type { DetectResult } from '../App.tsx';
+import { useT } from '../i18n/index.ts';
 
 interface NetworkInterface {
   name: string;
@@ -13,6 +14,7 @@ interface Props {
 }
 
 export default function NetworkConfig({ selectedIp: initialIp, detect, onSelected }: Props) {
+  const { t } = useT();
   const [interfaces, setInterfaces] = useState<NetworkInterface[]>([]);
   const [selected, setSelected] = useState<string | null>(initialIp);
   const [loading, setLoading] = useState(true);
@@ -32,7 +34,7 @@ export default function NetworkConfig({ selectedIp: initialIp, detect, onSelecte
         setLoading(false);
       })
       .catch(() => {
-        setError('Kan netwerk interfaces niet laden. Is de bootstrap server nog actief?');
+        setError(t('network.loadError'));
         setLoading(false);
       });
   }, []);
@@ -49,24 +51,23 @@ export default function NetworkConfig({ selectedIp: initialIp, detect, onSelecte
       });
       if (!resp.ok) {
         const data = await resp.json().catch(() => ({})) as { error?: string };
-        setError(data.error ?? `Server fout (${resp.status})`);
+        setError(data.error ?? `Server error (${resp.status})`);
         setSaving(false);
         return;
       }
       onSelected(selected);
     } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Onbekende fout';
-      setError(`Verbindingsfout: ${msg}. Herstart de bootstrap tool.`);
+      const msg = e instanceof Error ? e.message : 'Unknown error';
+      setError(`${msg}`);
       setSaving(false);
     }
   }
 
   return (
-    <div className="bg-gray-900/60 border border-gray-800 rounded-2xl p-8">
-      <h2 className="text-xl font-bold text-white mb-2">Netwerk instellen</h2>
+    <div className="glass-card p-8">
+      <h2 className="text-xl font-bold text-white mb-2">{t('network.title')}</h2>
       <p className="text-gray-400 mb-6 text-sm">
-        Selecteer het netwerk waarop je maaier is aangesloten. De maaier haalt de firmware
-        via dit IP-adres op.
+        {t('network.description')}
       </p>
 
       {loading ? (
@@ -75,7 +76,7 @@ export default function NetworkConfig({ selectedIp: initialIp, detect, onSelecte
         </div>
       ) : interfaces.length === 0 && !error ? (
         <div className="p-4 bg-red-900/30 border border-red-700/50 rounded-xl text-red-400 text-sm mb-6">
-          Geen netwerk interfaces gevonden. Controleer je WiFi-verbinding.
+          {t('network.noInterfaces')}
         </div>
       ) : (
         <div className="space-y-2 mb-6">
@@ -101,7 +102,7 @@ export default function NetworkConfig({ selectedIp: initialIp, detect, onSelecte
                 <p className="text-gray-400 text-sm">{iface.name}</p>
               </div>
               {selected === iface.ip && (
-                <span className="text-emerald-400 text-sm font-medium">Geselecteerd</span>
+                <span className="text-emerald-400 text-sm font-medium">{t('network.selected')}</span>
               )}
             </label>
           ))}
@@ -114,7 +115,7 @@ export default function NetworkConfig({ selectedIp: initialIp, detect, onSelecte
           <div className="flex items-center gap-2 text-sm text-emerald-300">
             <span>&#10003;</span>
             <div>
-              <p className="font-medium">DNS rewrite actief</p>
+              <p className="font-medium">{t('network.dnsActive')}</p>
               <p className="text-emerald-400 text-xs">
                 <code>mqtt.lfibot.com</code> &#8594; <code>{detect?.dns.address}</code>
               </p>
@@ -126,10 +127,10 @@ export default function NetworkConfig({ selectedIp: initialIp, detect, onSelecte
           <div className="flex items-start gap-2 text-sm text-blue-300">
             <span className="mt-0.5">i</span>
             <div>
-              <p className="font-medium mb-1">DNS wordt automatisch ingesteld</p>
+              <p className="font-medium mb-1">{t('network.dnsAutoTitle')}</p>
               <p className="text-blue-400">
-                De Docker container bevat een DNS server. Stel op je router dit IP in als DNS server:
-                <code className="text-blue-300 ml-1">{selected ?? 'jouw IP'}</code>
+                {t('network.dnsAutoDesc')}
+                <code className="text-blue-300 ml-1">{selected ?? '...'}</code>
               </p>
             </div>
           </div>
@@ -147,7 +148,7 @@ export default function NetworkConfig({ selectedIp: initialIp, detect, onSelecte
         disabled={!selected || saving || (interfaces.length === 0 && !error)}
         className="w-full py-3 px-6 bg-emerald-700 hover:bg-emerald-600 disabled:bg-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed text-white font-semibold rounded-xl transition-colors"
       >
-        {saving ? 'Opslaan...' : 'Verder →'}
+        {saving ? t('network.saving') : t('network.next')}
       </button>
     </div>
   );

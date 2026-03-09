@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { MowerInfo, OtaStatus } from '../App.tsx';
+import { useT } from '../i18n/index.ts';
 
 interface Props {
   log: string[];
@@ -9,17 +10,18 @@ interface Props {
   otaTimedOut: boolean;
 }
 
-const STAGES: { key: OtaStatus; label: string; sublabel: string }[] = [
-  { key: 'downloading', label: 'Downloaden', sublabel: 'Maaier downloadt en installeert firmware' },
-  { key: 'rebooting',  label: 'Herstart',    sublabel: 'Maaier koppelt los en herstart' },
-  { key: 'waiting',    label: 'Opstarten',   sublabel: 'Wachten tot de nieuwe server online is' },
-];
-
-const STAGE_ORDER: OtaStatus[] = ['downloading', 'rebooting', 'waiting'];
-
 export default function OtaProgress({ log, mower, otaStatus, otaProgress, otaTimedOut }: Props) {
+  const { t } = useT();
   const logRef = useRef<HTMLDivElement>(null);
   const [showSshRecoveryHint, setShowSshRecoveryHint] = useState(false);
+
+  const STAGES: { key: OtaStatus; label: string; sublabel: string }[] = [
+    { key: 'downloading', label: t('progress.stage1'), sublabel: t('progress.stage1Sub') },
+    { key: 'rebooting',  label: t('progress.stage2'), sublabel: t('progress.stage2Sub') },
+    { key: 'waiting',    label: t('progress.stage3'), sublabel: t('progress.stage3Sub') },
+  ];
+
+  const STAGE_ORDER: OtaStatus[] = ['downloading', 'rebooting', 'waiting'];
 
   useEffect(() => {
     if (logRef.current) {
@@ -28,11 +30,10 @@ export default function OtaProgress({ log, mower, otaStatus, otaProgress, otaTim
   }, [log]);
 
   // Show SSH recovery hint after 3.5 minutes in 'waiting' state
-  // (server auto-triggers SSH recovery at 3 min — hint appears just after)
   useEffect(() => {
     if (otaStatus === 'waiting') {
-      const t = setTimeout(() => setShowSshRecoveryHint(true), 3.5 * 60 * 1000);
-      return () => clearTimeout(t);
+      const timer = setTimeout(() => setShowSshRecoveryHint(true), 3.5 * 60 * 1000);
+      return () => clearTimeout(timer);
     } else {
       setShowSshRecoveryHint(false);
     }
@@ -41,10 +42,10 @@ export default function OtaProgress({ log, mower, otaStatus, otaProgress, otaTim
   const currentIdx = STAGE_ORDER.indexOf(otaStatus);
 
   return (
-    <div className="bg-gray-900/60 border border-gray-800 rounded-2xl p-8">
-      <h2 className="text-xl font-bold text-white mb-2">Firmware flashen...</h2>
+    <div className="glass-card p-8">
+      <h2 className="text-xl font-bold text-white mb-2">{t('progress.title')}</h2>
       <p className="text-gray-400 mb-6 text-sm">
-        Sluit dit venster NIET. De wizard detecteert automatisch wanneer de maaier klaar is.
+        {t('progress.description')}
       </p>
 
       {/* Status stages */}
@@ -101,11 +102,11 @@ export default function OtaProgress({ log, mower, otaStatus, otaProgress, otaTim
           )}
         </div>
         <div>
-          <p className="text-white font-medium">{mower ? mower.sn : 'Maaier'}</p>
+          <p className="text-white font-medium">{mower ? mower.sn : t('confirm.mowerLabel')}</p>
           <p className="text-gray-400 text-sm">
-            {otaStatus === 'downloading' && 'Bezig met downloaden en installeren...'}
-            {otaStatus === 'rebooting'   && 'Herstart gedetecteerd — even geduld...'}
-            {otaStatus === 'waiting'     && 'Server opstarten — bijna klaar!'}
+            {otaStatus === 'downloading' && t('progress.downloadInstall')}
+            {otaStatus === 'rebooting'   && t('progress.rebootDetected')}
+            {otaStatus === 'waiting'     && t('progress.serverStarting')}
           </p>
         </div>
       </div>
@@ -115,7 +116,7 @@ export default function OtaProgress({ log, mower, otaStatus, otaProgress, otaTim
         <div className="mb-6">
           <div className="flex justify-between items-center mb-1.5">
             <span className="text-gray-400 text-xs font-medium">
-              {otaProgress === 0 ? 'Wachten op download...' : 'Download voortgang'}
+              {otaProgress === 0 ? t('progress.waitDownload') : t('progress.downloadProgress')}
             </span>
             <span className={`text-sm font-mono font-semibold transition-colors ${otaProgress > 0 ? 'text-emerald-400' : 'text-gray-600'}`}>
               {otaProgress}%
@@ -129,7 +130,7 @@ export default function OtaProgress({ log, mower, otaStatus, otaProgress, otaTim
           </div>
           {otaProgress > 0 && otaProgress < 100 && (
             <p className="text-gray-600 text-xs mt-1 text-right">
-              {otaProgress < 100 ? 'Maaier downloadt...' : 'Installeren...'}
+              {otaProgress < 100 ? t('progress.downloading') : t('progress.installing')}
             </p>
           )}
         </div>
@@ -141,7 +142,7 @@ export default function OtaProgress({ log, mower, otaStatus, otaProgress, otaTim
         className="bg-black/60 border border-gray-800 rounded-xl p-4 h-48 overflow-y-auto font-mono text-sm space-y-1"
       >
         {log.length === 0 ? (
-          <p className="text-gray-600">Wachten op updates...</p>
+          <p className="text-gray-600">{t('progress.waitUpdates')}</p>
         ) : (
           log.map((line, i) => (
             <div key={i} className="flex gap-2">
@@ -162,16 +163,15 @@ export default function OtaProgress({ log, mower, otaStatus, otaProgress, otaTim
       {/* Timeout: definitive failure after 30 minutes */}
       {otaTimedOut && (
         <div className="mt-4 p-4 bg-red-900/20 border border-red-700/40 rounded-xl">
-          <p className="text-red-300 text-sm font-medium mb-2">Server niet bereikbaar na 30 minuten</p>
+          <p className="text-red-300 text-sm font-medium mb-2">{t('progress.timeoutTitle')}</p>
           <p className="text-red-400 text-xs leading-relaxed mb-3">
-            De wizard heeft SSH herstel geprobeerd maar de maaier is nog steeds niet terug.
-            De firmware is waarschijnlijk wel geinstalleerd maar de maaier heeft een volledige herstart nodig.
+            {t('progress.timeoutDesc')}
           </p>
           <ol className="text-red-400 text-xs space-y-1 list-none">
-            <li>1. Schakel de maaier volledig uit</li>
-            <li>2. Wacht 10 seconden</li>
-            <li>3. Zet de maaier weer aan</li>
-            <li>4. Ga dan naar <span className="font-mono text-red-300">http://novabot.local:3000</span></li>
+            <li>{t('progress.timeoutStep1')}</li>
+            <li>{t('progress.timeoutStep2')}</li>
+            <li>{t('progress.timeoutStep3')}</li>
+            <li>{t('progress.timeoutStep4')} <span className="font-mono text-red-300">http://novabot.local:3000</span></li>
           </ol>
         </div>
       )}
@@ -179,10 +179,9 @@ export default function OtaProgress({ log, mower, otaStatus, otaProgress, otaTim
       {/* SSH recovery hint — shown after 3.5 minutes if not yet timed out */}
       {showSshRecoveryHint && !otaTimedOut && (
         <div className="mt-4 p-4 bg-amber-900/20 border border-amber-700/40 rounded-xl">
-          <p className="text-amber-300 text-sm font-medium mb-1">SSH herstel bezig...</p>
+          <p className="text-amber-300 text-sm font-medium mb-1">{t('progress.sshTitle')}</p>
           <p className="text-amber-400 text-xs leading-relaxed">
-            De wizard probeert via SSH de maaier te herstellen. Controleer het logboek hierboven voor details.
-            Als de maaier niet terugkomt: schakel hem volledig uit, wacht 10 seconden, en zet hem weer aan.
+            {t('progress.sshDesc')}
           </p>
         </div>
       )}
