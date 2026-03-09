@@ -4,13 +4,14 @@ import Welcome from './steps/Welcome.tsx';
 import FirmwareSelect from './steps/FirmwareSelect.tsx';
 import NetworkConfig from './steps/NetworkConfig.tsx';
 import DockerSetup from './steps/DockerSetup.tsx';
+import CloudLogin from './steps/CloudLogin.tsx';
 import WaitForMower from './steps/WaitForMower.tsx';
 import OtaConfirm from './steps/OtaConfirm.tsx';
 import OtaProgress from './steps/OtaProgress.tsx';
 import Done from './steps/Done.tsx';
 import { I18nContext, createT, detectLocale, LOCALE_LABELS, type Locale } from './i18n/index.ts';
 
-export type Step = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
+export type Step = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 
 export interface FirmwareInfo {
   name: string;
@@ -39,12 +40,15 @@ export interface WizardState {
   selectedIp: string | null;
   mower: MowerInfo | null;
   mowerVersion: string | null;
+  isCustomFirmware: boolean | null;
   serverUrl: string | null;
   otaLog: string[];
   otaStatus: OtaStatus;
   otaProgress: number; // 0–100
   detect: DetectResult | null;
   otaTimedOut: boolean;
+  otaSshRecovery: boolean;
+  cloudImported: boolean;
 }
 
 const STEP_KEYS = [
@@ -52,6 +56,7 @@ const STEP_KEYS = [
   'steps.firmware',
   'steps.network',
   'steps.docker',
+  'steps.account',
   'steps.waiting',
   'steps.confirm',
   'steps.flashing',
@@ -71,12 +76,15 @@ export default function App() {
     selectedIp: null,
     mower: null,
     mowerVersion: null,
+    isCustomFirmware: null,
     serverUrl: null,
     otaLog: [],
     otaStatus: 'downloading',
     otaProgress: 0,
     detect: null,
     otaTimedOut: false,
+    otaSshRecovery: false,
+    cloudImported: false,
   });
 
   const t = useMemo(() => createT(locale), [locale]);
@@ -88,14 +96,14 @@ export default function App() {
   useEffect(() => {
     socket.on('mower-connected', (data: MowerInfo) => {
       setState(s => ({ ...s, mower: data }));
-      // Auto-advance from "wait for mower" step (now step 4)
-      setStep(prev => (prev === 4 ? 5 : prev));
+      // Auto-advance from "wait for mower" step (step 5)
+      setStep(prev => (prev === 5 ? 6 : prev));
     });
 
     socket.on('mower-disconnected', () => {
       // Only clear mower if not yet in OTA confirm/progress/done
       setStep(prev => {
-        if (prev < 5) setState(s => ({ ...s, mower: null }));
+        if (prev < 6) setState(s => ({ ...s, mower: null }));
         return prev;
       });
     });
@@ -104,13 +112,17 @@ export default function App() {
       setState(s => ({ ...s, mowerVersion: data.version }));
     });
 
+    socket.on('mower-firmware-type', (data: { isCustom: boolean }) => {
+      setState(s => ({ ...s, isCustomFirmware: data.isCustom }));
+    });
+
     socket.on('ota-log', (data: { message: string }) => {
       setState(s => ({ ...s, otaLog: [...s.otaLog, data.message] }));
     });
 
     socket.on('ota-started', () => {
       setState(s => ({ ...s, otaStatus: 'downloading' }));
-      setStep(6);
+      setStep(7);
     });
 
     socket.on('ota-download-progress', (data: { percent: number }) => {
@@ -125,7 +137,7 @@ export default function App() {
 
     socket.on('server-detected', (data: OtaResult) => {
       setState(s => ({ ...s, serverUrl: data.url }));
-      setStep(7);
+      setStep(8);
       // Auto-open dashboard in a new tab
       window.open(data.url, '_blank', 'noopener,noreferrer');
     });
@@ -134,16 +146,22 @@ export default function App() {
       setState(s => ({ ...s, otaTimedOut: true }));
     });
 
+    socket.on('ota-ssh-recovery', (data: { active: boolean }) => {
+      setState(s => ({ ...s, otaSshRecovery: data.active }));
+    });
+
     return () => {
       socket.off('mower-connected');
       socket.off('mower-disconnected');
       socket.off('mower-version');
+      socket.off('mower-firmware-type');
       socket.off('ota-log');
       socket.off('ota-started');
       socket.off('ota-download-progress');
       socket.off('mower-rebooting');
       socket.off('server-detected');
       socket.off('ota-timeout');
+      socket.off('ota-ssh-recovery');
     };
   }, []);
 
@@ -151,13 +169,14 @@ export default function App() {
   useEffect(() => {
     fetch('/api/status')
       .then(r => r.json())
-      .then((data: { firmware: FirmwareInfo | null; selectedIp: string | null; mower: MowerInfo | null; mowerVersion: string | null }) => {
+      .then((data: { firmware: FirmwareInfo | null; selectedIp: string | null; mower: MowerInfo | null; mowerVersion: string | null; isCustomFirmware: boolean | null }) => {
         setState(s => ({
           ...s,
           firmware: data.firmware ?? s.firmware,
           selectedIp: data.selectedIp ?? s.selectedIp,
           mower: data.mower ?? s.mower,
           mowerVersion: data.mowerVersion ?? s.mowerVersion,
+          isCustomFirmware: data.isCustomFirmware ?? s.isCustomFirmware,
         }));
       })
       .catch(() => {});
@@ -171,7 +190,7 @@ export default function App() {
   }, []);
 
   const goTo = (s: Step) => setStep(s);
-  const next = () => setStep(prev => Math.min(prev + 1, 7) as Step);
+  const next = () => setStep(prev => Math.min(prev + 1, 8) as Step);
 
   const setFirmware = (fw: FirmwareInfo) => setState(s => ({ ...s, firmware: fw }));
   const setSelectedIp = (ip: string) => setState(s => ({ ...s, selectedIp: ip }));
@@ -245,18 +264,20 @@ export default function App() {
           {step === 1 && <FirmwareSelect firmware={state.firmware} onUploaded={fw => { setFirmware(fw); next(); }} />}
           {step === 2 && <NetworkConfig selectedIp={state.selectedIp} detect={state.detect} onSelected={ip => { setSelectedIp(ip); next(); }} />}
           {step === 3 && <DockerSetup selectedIp={state.selectedIp!} socket={socket} onReady={next} />}
-          {step === 4 && <WaitForMower mower={state.mower} firmware={state.firmware} detect={state.detect} onConnected={() => goTo(5)} />}
-          {step === 5 && (
+          {step === 4 && <CloudLogin onDone={(imported) => { setState(s => ({ ...s, cloudImported: imported })); goTo(5); }} />}
+          {step === 5 && <WaitForMower mower={state.mower} firmware={state.firmware} detect={state.detect} ip={state.selectedIp ?? ''} cloudImported={state.cloudImported} isCustomFirmware={state.isCustomFirmware} socket={socket} onConnected={() => goTo(6)} />}
+          {step === 6 && (
             <OtaConfirm
               mower={state.mower!}
               firmware={state.firmware!}
               selectedIp={state.selectedIp!}
               mowerVersion={state.mowerVersion}
-              onBack={() => goTo(4)}
+              isCustomFirmware={state.isCustomFirmware}
+              onBack={() => goTo(5)}
             />
           )}
-          {step === 6 && <OtaProgress log={state.otaLog} mower={state.mower} otaStatus={state.otaStatus} otaProgress={state.otaProgress} otaTimedOut={state.otaTimedOut} />}
-          {step === 7 && <Done serverUrl={state.serverUrl} mower={state.mower} />}
+          {step === 7 && <OtaProgress log={state.otaLog} mower={state.mower} otaStatus={state.otaStatus} otaProgress={state.otaProgress} otaTimedOut={state.otaTimedOut} otaSshRecovery={state.otaSshRecovery} isCustomFirmware={state.isCustomFirmware} />}
+          {step === 8 && <Done serverUrl={state.serverUrl} mower={state.mower} />}
         </div>
       </div>
     </I18nContext.Provider>

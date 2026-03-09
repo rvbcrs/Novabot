@@ -13,7 +13,6 @@ research/blutter_output*/
 research/ghidra_output/
 research/cloud_data/
 research/*.pklg
-research/*.pdf
 research/*.bin
 research/*.elf
 research/*.xapk

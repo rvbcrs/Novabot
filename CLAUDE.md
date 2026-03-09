@@ -126,6 +126,21 @@ DB locatie: `novabot-server/novabot.db`
   - Endpoint: `POST /api/dashboard/ota/trigger/:sn` met `{version_id, force?}`
   - Dashboard dist MOET gerebuild worden na frontend wijzigingen: `cd novabot-dashboard && npm run build`
 
+**BLE Provisioning — VOLLEDIG WERKEND (9 maart 2026):**
+- Native BLE via `@stoprocent/noble` in bootstrap wizard (`bootstrap/src/ble.ts`)
+- **MQTT redirect via BLE werkt**: `set_mqtt_info` wijzigt `json_config.json` succesvol
+- **`result:1` betekent NIET "afgewezen"** — het is "acknowledged/applied" (bewezen: WiFi wachtwoord WEL gewijzigd ondanks result:1)
+- **Werkende command sequence** (exact als officiële Novabot app):
+  1. `get_signal_info` (handshake, non-fatal)
+  2. `set_wifi_info` (mower: `{ap:{ssid,passwd,encrypt:0}}`, charger: `{sta:{...},ap:{...}}`)
+  3. `set_lora_info` (`{addr:718, channel:15, hc:20, lc:14}`)
+  4. `set_mqtt_info` (`{addr:"<server-ip>", port:1883}`)
+  5. `set_cfg_info` (mower: `{cfg_value:1, tz:"Europe/Amsterdam"}`, charger: `1`)
+- **`tz` in BLE `set_cfg_info` is VEILIG** — BLE handler schrijft naar json_config.json. De OTA tz-bug is specifiek over MQTT `ota_upgrade_cmd` (ander codepad).
+- Mower responses komen op char `0x0011` (writeChar), NIET op `0x0021`
+- Frame protocol: `ble_start` → 20-byte JSON chunks (30ms) → `ble_end`
+- Novabot company ID: `0x5566` in BLE manufacturer data
+
 **saveCutGrassRecord**: retourneert `ok(null)` bij lege/onparseerbare body (maaier stuurt multipart → retry loop anders).
 
 **queryEquipmentMap — KRITIEK (maart 2026):**

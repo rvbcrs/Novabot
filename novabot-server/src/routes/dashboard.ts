@@ -1762,6 +1762,36 @@ dashboardRouter.get('/setup/ca-cert', (_req: Request, res: Response) => {
   createReadStream(certPath).pipe(res);
 });
 
+// GET /api/dashboard/admin/accounts — return existing accounts + their devices (bootstrap wizard)
+dashboardRouter.get('/admin/accounts', (_req: Request, res: Response) => {
+  const users = db.prepare('SELECT app_user_id, email, username FROM users').all() as
+    { app_user_id: string; email: string; username: string | null }[];
+
+  if (users.length === 0) {
+    res.json({ hasAccount: false });
+    return;
+  }
+
+  const user = users[0];
+  const equipment = db.prepare('SELECT mower_sn, charger_sn, mower_version, charger_version FROM equipment WHERE user_id = ?')
+    .all(user.app_user_id) as { mower_sn: string; charger_sn: string | null; mower_version: string | null; charger_version: string | null }[];
+
+  const devices: { type: string; sn: string; version?: string }[] = [];
+  const seen = new Set<string>();
+  for (const eq of equipment) {
+    if (eq.charger_sn?.startsWith('LFIC') && !seen.has(eq.charger_sn)) {
+      seen.add(eq.charger_sn);
+      devices.push({ type: 'charger', sn: eq.charger_sn, version: eq.charger_version ?? undefined });
+    }
+    if (eq.mower_sn?.startsWith('LFIN') && !seen.has(eq.mower_sn)) {
+      seen.add(eq.mower_sn);
+      devices.push({ type: 'mower', sn: eq.mower_sn, version: eq.mower_version ?? undefined });
+    }
+  }
+
+  res.json({ hasAccount: true, email: user.email, username: user.username, devices });
+});
+
 // GET /api/dashboard/setup/status — check of er al een gebruiker aangemaakt is
 // CORS nodig: cert-check doet een cross-origin fetch (http → https, andere scheme = andere origin)
 dashboardRouter.get('/setup/status', (_req: Request, res: Response) => {

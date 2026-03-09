@@ -3,7 +3,7 @@ import os from 'os';
 import dns from 'dns';
 import type { Server as IOServer } from 'socket.io';
 import mqtt from 'mqtt';
-import { decryptFromDevice } from './crypto.js';
+import { decryptFromDevice, encryptForDevice } from './crypto.js';
 
 // aedes v0.47.x (CommonJS)
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -23,17 +23,108 @@ let _connectedMower: ConnectedMower | null = null;
 let _clientMode = false;        // true = port 1883 was in use, using subscriber only
 let _remoteDetected = false;    // mower found via remote (mower's own) broker
 let _mowerVersion: string | null = null;
+let _isCustomFirmware: boolean | null = null; // null = unknown, true = SSH reachable, false = no SSH
 
 type MowerCallback = (mower: ConnectedMower) => void;
 const _disconnectCallbacks: MowerCallback[] = [];
 const _reconnectCallbacks: MowerCallback[] = [];
 let _wasDisconnected = false;  // Track if mower disconnected (for reconnect detection)
 
+// Heartbeat: detect mower disconnect in subscriber/remote mode (no CONNACK events)
+let _lastMowerMessage = 0;         // timestamp of last MQTT message from mower
+let _heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+const HEARTBEAT_INTERVAL = 15_000; // check every 15s
+const HEARTBEAT_TIMEOUT = 45_000;  // no message for 45s → disconnect
+
 export function getConnectedMower(): ConnectedMower | null { return _connectedMower; }
 export function getMowerVersion(): string | null { return _mowerVersion; }
+export function getIsCustomFirmware(): boolean | null { return _isCustomFirmware; }
 export function isClientMode(): boolean { return _clientMode; }
+
+/**
+ * Check if SSH (port 22) is reachable on the mower.
+ * Custom firmware has SSH enabled; stock firmware does not.
+ */
+function checkSshReachable(ip: string, io: IOServer): void {
+  if (!ip) { _isCustomFirmware = null; return; }
+  const socket = new net.Socket();
+  socket.setTimeout(3000);
+  socket.on('connect', () => {
+    _isCustomFirmware = true;
+    socket.destroy();
+    io.emit('mower-firmware-type', { isCustom: true });
+    console.log(`[MQTT] SSH reachable on ${ip}:22 → custom firmware`);
+  });
+  socket.on('timeout', () => {
+    _isCustomFirmware = false;
+    socket.destroy();
+    io.emit('mower-firmware-type', { isCustom: false });
+    console.log(`[MQTT] SSH not reachable on ${ip}:22 → stock firmware`);
+  });
+  socket.on('error', () => {
+    _isCustomFirmware = false;
+    socket.destroy();
+    io.emit('mower-firmware-type', { isCustom: false });
+    console.log(`[MQTT] SSH not reachable on ${ip}:22 → stock firmware`);
+  });
+  socket.connect(22, ip);
+}
+/**
+ * In subscriber mode, the mower's IP isn't available from the MQTT connection.
+ * Query the Docker container's DB to get the IP, then run SSH check.
+ */
+function checkFirmwareViaDocker(sn: string, io: IOServer): void {
+  if (_isCustomFirmware !== null) return;
+  import('child_process').then(({ execSync }) => {
+    try {
+      const script = [
+        `const Database = require('better-sqlite3');`,
+        `const db = new Database(process.env.DB_PATH || './novabot.db');`,
+        `const r = db.prepare("SELECT e.mower_ip, d.ip_address FROM equipment e LEFT JOIN device_registry d ON d.sn = e.mower_sn AND d.ip_address IS NOT NULL WHERE e.mower_sn = ?").get('${sn}');`,
+        `console.log(JSON.stringify({ip: r?.mower_ip || r?.ip_address || null}));`,
+      ].join(' ');
+      const result = execSync(
+        `docker exec -w /app/novabot-server opennova node -e "${script.replace(/"/g, '\\"')}"`,
+        { encoding: 'utf8', timeout: 10000 },
+      );
+      const { ip } = JSON.parse(result.trim()) as { ip: string | null };
+      if (ip) {
+        console.log(`[MQTT] Mower IP from Docker DB: ${ip}`);
+        if (_connectedMower && !_connectedMower.ip) _connectedMower.ip = ip;
+        checkSshReachable(ip, io);
+      } else {
+        console.log(`[MQTT] No mower IP found in Docker DB`);
+      }
+    } catch (err) {
+      console.warn('[MQTT] Docker DB IP lookup failed:', err instanceof Error ? err.message : err);
+    }
+  });
+}
+
 export function onMowerDisconnect(cb: MowerCallback): void { _disconnectCallbacks.push(cb); }
 export function onMowerReconnect(cb: MowerCallback): void { _reconnectCallbacks.push(cb); }
+
+/**
+ * Start heartbeat timer for subscriber/remote mode.
+ * Detects mower disconnect when MQTT messages stop (no CONNACK events in these modes).
+ */
+function startHeartbeat(io: IOServer): void {
+  if (_heartbeatTimer) return; // already running
+  _heartbeatTimer = setInterval(() => {
+    if (!_connectedMower || _lastMowerMessage === 0) return;
+    const elapsed = Date.now() - _lastMowerMessage;
+    if (elapsed > HEARTBEAT_TIMEOUT) {
+      console.log(`[MQTT] Heartbeat timeout: no message from ${_connectedMower.sn} for ${Math.round(elapsed / 1000)}s — treating as disconnect`);
+      emitMowerDisconnected(io, _connectedMower.sn);
+      _lastMowerMessage = 0; // reset so we don't fire again
+    }
+  }, HEARTBEAT_INTERVAL);
+}
+
+/** Reset heartbeat on each mower message. */
+function heartbeat(): void {
+  _lastMowerMessage = Date.now();
+}
 
 /**
  * Try to decrypt a message from the mower and extract firmware version.
@@ -45,9 +136,27 @@ function tryExtractVersion(io: IOServer, sn: string, payload: Buffer): void {
   if (!text) return;
   try {
     const obj = JSON.parse(text) as Record<string, unknown>;
-    // The mower uses 'mower_version' in its status JSON
-    const version = obj.mower_version ?? obj.device_version ?? obj.version;
-    if (version && typeof version === 'string' && version.startsWith('v')) {
+    let version: string | undefined;
+
+    // 1. ota_version_info_respond — response to our ota_version_info request
+    //    Mower:  {"ota_version_info_respond":{"version":"v6.0.0",...}}
+    //    Charger: {"type":"ota_version_info_respond","message":{"value":{"version":"v0.4.0"}}}
+    const otaResp = obj.ota_version_info_respond as Record<string, unknown> | undefined;
+    if (otaResp && typeof otaResp === 'object') {
+      version = otaResp.version as string | undefined;
+    }
+    if (!version && obj.type === 'ota_version_info_respond') {
+      const msg = obj.message as Record<string, unknown> | undefined;
+      const val = msg?.value as Record<string, unknown> | undefined;
+      version = (val?.version ?? msg?.version) as string | undefined;
+    }
+
+    // 2. Fallback: top-level version fields in status messages
+    if (!version) {
+      version = (obj.mower_version ?? obj.device_version ?? obj.version) as string | undefined;
+    }
+
+    if (version && typeof version === 'string') {
       _mowerVersion = version;
       io.emit('mower-version', { version });
       console.log(`[MQTT] Mower version: ${version}`);
@@ -55,6 +164,21 @@ function tryExtractVersion(io: IOServer, sn: string, payload: Buffer): void {
   } catch {
     // Not JSON or no version field — ignore
   }
+}
+
+/**
+ * Request the mower to report its firmware version by sending ota_version_info: null.
+ * Delayed 3s to let the mower finish its connection handshake.
+ */
+function requestMowerVersion(sn: string): void {
+  if (_mowerVersion) return;
+  setTimeout(() => {
+    if (_mowerVersion) return;
+    console.log(`[MQTT] Requesting mower version from ${sn}...`);
+    const command = { ota_version_info: null };
+    const encrypted = encryptForDevice(sn, command);
+    publishToMower(sn, encrypted);
+  }, 3000);
 }
 
 function emitMowerDisconnected(io: IOServer, sn: string): void {
@@ -89,16 +213,14 @@ export function startBroker(io: IOServer): void {
 
   server.on('error', (err: NodeJS.ErrnoException) => {
     if (err.code === 'EADDRINUSE') {
-      console.log('[MQTT] Port 1883 in use — resolving DNS to find the right broker');
+      // Port 1883 is already in use — Docker container is running on this machine.
+      // Connect directly to localhost instead of doing a DNS lookup (which would
+      // resolve mqtt.lfibot.com to the real LFI cloud if the Mac's DNS bypasses AdGuard).
+      console.log('[MQTT] Port 1883 in use — connecting as subscriber to local broker (127.0.0.1)');
       _clientMode = true;
       _broker = null;
-      // Resolve mqtt.lfibot.com to find where the active broker is
-      dns.lookup('mqtt.lfibot.com', (dnsErr, address) => {
-        const host = (!dnsErr && address) ? address : '127.0.0.1';
-        console.log(`[MQTT] Connecting as subscriber to broker at ${host}:1883`);
-        io.emit('broker-mode', { mode: 'existing', host });
-        startSubscriberMode(io, host);
-      });
+      io.emit('broker-mode', { mode: 'existing', host: '127.0.0.1' });
+      startSubscriberMode(io, '127.0.0.1');
     } else {
       console.error('[MQTT] Server error:', err.message);
     }
@@ -117,6 +239,9 @@ export function startBroker(io: IOServer): void {
       io.emit('mower-connected', { sn, ip });
       console.log(`[MQTT] Mower connected to own broker: SN=${sn}, IP=${ip}`);
       emitMowerReconnected(io, mower);
+      requestMowerVersion(sn);
+      // Check if SSH is reachable → determines custom vs stock firmware
+      if (ip) checkSshReachable(ip, io);
     }
   });
 
@@ -128,7 +253,10 @@ export function startBroker(io: IOServer): void {
   });
 
   broker.on('publish', (packet: { topic: string; payload: Buffer }, client: { id: string } | null) => {
-    if (!client || !packet.topic.startsWith('Dart/Receive_mqtt/')) return;
+    if (!client) return;
+    const isReceive = packet.topic.startsWith('Dart/Receive_mqtt/');
+    const isServerReceive = packet.topic.startsWith('Dart/Receive_server_mqtt/');
+    if (!isReceive && !isServerReceive) return;
     const sn = packet.topic.split('/').pop() ?? '';
     if (!sn.startsWith('LFIN')) return;
     console.log(`[MQTT] Publish on ${packet.topic} from ${client.id} (${packet.payload.length} bytes)`);
@@ -170,11 +298,13 @@ function checkDnsForRemoteBroker(io: IOServer): void {
       console.log(`[MQTT] Connected to mower's broker at ${address}:1883`);
       _remoteClient!.subscribe(['Dart/Receive_mqtt/#', 'Dart/Receive_server_mqtt/#']);
       io.emit('broker-mode', { mode: 'remote-dns', address, connected: true });
+      startHeartbeat(io);
     });
 
     _remoteClient.on('message', (topic: string, payload: Buffer) => {
       const sn = topic.split('/').pop() ?? '';
       if (!sn.startsWith('LFIN')) return;
+      heartbeat();
       if (!_connectedMower || _connectedMower.sn !== sn) {
         _remoteDetected = true;
         const mower: ConnectedMower = { sn, clientId: sn, ip: '' };
@@ -182,8 +312,10 @@ function checkDnsForRemoteBroker(io: IOServer): void {
         io.emit('mower-connected', { sn, ip: '' });
         console.log(`[MQTT] Mower detected via remote broker at ${address}: SN=${sn}`);
         emitMowerReconnected(io, mower);
+        requestMowerVersion(sn);
+        checkFirmwareViaDocker(sn, io);
       }
-      if (topic.startsWith('Dart/Receive_mqtt/')) {
+      if (topic.startsWith('Dart/Receive_mqtt/') || topic.startsWith('Dart/Receive_server_mqtt/')) {
         tryExtractVersion(io, sn, payload);
       }
     });
@@ -218,18 +350,22 @@ function startSubscriberMode(io: IOServer, host: string): void {
     console.log(`[MQTT] Subscribed to existing broker at ${host}:1883`);
     client.subscribe(['Dart/Receive_mqtt/#', 'Dart/Receive_server_mqtt/#']);
     io.emit('broker-mode', { mode: 'existing', connected: true, host });
+    startHeartbeat(io);
   });
 
   client.on('message', (topic: string, payload: Buffer) => {
     const sn = topic.split('/').pop() ?? '';
     if (!sn.startsWith('LFIN')) return;
+    heartbeat();
     if (!_connectedMower || _connectedMower.sn !== sn) {
       const mower: ConnectedMower = { sn, clientId: sn, ip: '' };
       _connectedMower = mower;
       io.emit('mower-connected', { sn, ip: '' });
       emitMowerReconnected(io, mower);
+      requestMowerVersion(sn);
+      checkFirmwareViaDocker(sn, io);
     }
-    if (topic.startsWith('Dart/Receive_mqtt/')) {
+    if (topic.startsWith('Dart/Receive_mqtt/') || topic.startsWith('Dart/Receive_server_mqtt/')) {
       tryExtractVersion(io, sn, payload);
     }
   });

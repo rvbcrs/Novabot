@@ -7,10 +7,11 @@ interface Props {
   firmware: FirmwareInfo;
   selectedIp: string;
   mowerVersion: string | null;
+  isCustomFirmware: boolean | null;
   onBack: () => void;
 }
 
-export default function OtaConfirm({ mower, firmware, selectedIp, mowerVersion, onBack }: Props) {
+export default function OtaConfirm({ mower, firmware, selectedIp, mowerVersion, isCustomFirmware, onBack }: Props) {
   const { t } = useT();
   const [triggering, setTriggering] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -46,6 +47,18 @@ export default function OtaConfirm({ mower, firmware, selectedIp, mowerVersion, 
           <p className="text-gray-500 text-xs uppercase tracking-wide mb-2">{t('confirm.mowerLabel')}</p>
           <p className="text-white font-mono">{mower.sn}</p>
           {mower.ip && <p className="text-gray-400 text-sm">{mower.ip}</p>}
+          <div className="flex items-center gap-2 mt-2">
+            <p className="text-gray-500 text-xs">{t('confirm.firmwareTypeLabel')}:</p>
+            <span className={`text-xs px-2 py-0.5 rounded-full ${
+              isCustomFirmware === true ? 'bg-emerald-900/40 text-emerald-400' :
+              isCustomFirmware === false ? 'bg-amber-900/40 text-amber-400' :
+              'bg-gray-700/40 text-gray-400'
+            }`}>
+              {isCustomFirmware === true ? t('confirm.firmwareTypeCustom') :
+               isCustomFirmware === false ? t('confirm.firmwareTypeStock') :
+               t('confirm.firmwareTypeUnknown')}
+            </span>
+          </div>
         </div>
 
         {/* Version comparison */}
@@ -108,6 +121,19 @@ export default function OtaConfirm({ mower, firmware, selectedIp, mowerVersion, 
               >
                 {t('confirm.forceBtn')}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Stock firmware: power cycle warning */}
+      {isCustomFirmware === false && (
+        <div className="p-4 bg-amber-900/30 border border-amber-700/50 rounded-xl mb-4">
+          <div className="flex items-start gap-2 text-sm">
+            <span className="text-amber-400 mt-0.5">⚠</span>
+            <div>
+              <p className="text-amber-300 font-medium mb-1">{t('confirm.stockRebootTitle')}</p>
+              <p className="text-amber-400 text-xs" dangerouslySetInnerHTML={{ __html: t('confirm.stockRebootMsg') }} />
             </div>
           </div>
         </div>

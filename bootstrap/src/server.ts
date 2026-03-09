@@ -5,14 +5,17 @@ import path from 'path';
 import os from 'os';
 import fs from 'fs';
 import dns from 'dns';
+import net from 'net';
 import crypto from 'crypto';
 import { Server as IOServer } from 'socket.io';
+import { Client as SSHClient } from 'ssh2';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const multicastDns = require('multicast-dns');
 import multer from 'multer';
-import { startBroker, publishToMower, getConnectedMower, getMowerVersion, isClientMode, onMowerDisconnect, onMowerReconnect, switchToClientMode } from './broker.js';
+import { startBroker, publishToMower, getConnectedMower, getMowerVersion, getIsCustomFirmware, isClientMode, onMowerDisconnect, onMowerReconnect, switchToClientMode } from './broker.js';
 import { encryptForDevice, md5 } from './crypto.js';
 import { getDockerStatus, pullImage, startContainer, removeContainer, checkHealth } from './docker.js';
+import { getBleStatus, scanDevices, stopScan, provisionDevice } from './ble.js';
 
 // ── LFI Cloud API helpers ─────────────────────────────────────────────────────
 const LFI_CLOUD_HOST = '47.253.145.99';
@@ -163,22 +166,193 @@ export function createServer(): http.Server {
   // Start MQTT broker (passes io for real-time events)
   startBroker(io);
 
-  // When mower disconnects post-OTA, it means it's rebooting
+  // ── OTA state + SSH recovery ───────────────────────────────────────────────
   let otaInProgress = false;
+  let otaMowerIp: string | null = null;      // Captured from firmware download or MQTT connect
+  let otaTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function clearOtaTimers(): void {
+    if (otaTimeoutTimer) { clearTimeout(otaTimeoutTimer); otaTimeoutTimer = null; }
+  }
+
+  /** TCP check if SSH port 22 is reachable */
+  function isSshReachable(ip: string): Promise<boolean> {
+    return new Promise((resolve) => {
+      const sock = new net.Socket();
+      sock.setTimeout(4000);
+      sock.on('connect', () => { sock.destroy(); resolve(true); });
+      sock.on('timeout', () => { sock.destroy(); resolve(false); });
+      sock.on('error', () => { sock.destroy(); resolve(false); });
+      sock.connect(22, ip);
+    });
+  }
+
+  /** SSH into mower and execute a command. Returns stdout or null on failure. */
+  function sshExec(ip: string, cmd: string): Promise<string | null> {
+    return new Promise((resolve) => {
+      const conn = new SSHClient();
+      const timeout = setTimeout(() => { conn.end(); resolve(null); }, 15000);
+
+      conn.on('ready', () => {
+        conn.exec(cmd, (err, stream) => {
+          if (err) { clearTimeout(timeout); conn.end(); resolve(null); return; }
+          let output = '';
+          stream.on('data', (data: Buffer) => { output += data.toString(); });
+          stream.stderr.on('data', (data: Buffer) => { output += data.toString(); });
+          stream.on('close', () => {
+            clearTimeout(timeout);
+            conn.end();
+            resolve(output);
+          });
+        });
+      });
+
+      conn.on('error', () => { clearTimeout(timeout); resolve(null); });
+
+      conn.connect({
+        host: ip,
+        port: 22,
+        username: 'root',
+        password: 'novabot',
+        readyTimeout: 10000,
+        algorithms: { serverHostKey: ['ssh-rsa', 'ssh-ed25519', 'ecdsa-sha2-nistp256'] },
+      });
+    });
+  }
+
+  /**
+   * SSH recovery after OTA — two phases:
+   *
+   * Phase 1: Mower is stuck mid-reboot → force hard kernel reboot via sysrq
+   *          (the stock `reboot` command on Horizon X3 often hangs)
+   *
+   * Phase 2: After hard reboot, if MQTT still not connected → restart mqtt_node
+   */
+  async function sshRecoveryLoop(ip: string): Promise<void> {
+    const PROBE_INTERVAL = 20_000;   // Check SSH every 20s
+    const PHASE1_DELAY = 3 * 60_000; // Start phase 1 after 3 min
+    const PHASE2_DELAY = 3 * 60_000; // Start phase 2 after another 3 min post-reboot
+
+    // ── Phase 1: wait, then try hard reboot ──────────────────────────────
+    io.emit('ota-log', { message: 'Waiting 3 minutes for normal reboot...' });
+    await new Promise(r => setTimeout(r, PHASE1_DELAY));
+    if (!otaInProgress) return;
+
+    io.emit('ota-log', { message: `Mower not back — probing SSH on ${ip}...` });
+    io.emit('ota-ssh-recovery', { active: true });
+
+    // Probe SSH until reachable (max ~5 min)
+    let sshOk = false;
+    for (let i = 0; i < 15; i++) {
+      if (!otaInProgress) return;
+      const reachable = await isSshReachable(ip);
+      if (reachable) { sshOk = true; break; }
+      console.log(`[OTA-SSH] Probe ${i + 1}/15 — port 22 not reachable`);
+      await new Promise(r => setTimeout(r, PROBE_INTERVAL));
+    }
+
+    if (!otaInProgress) return;
+
+    if (sshOk) {
+      io.emit('ota-log', { message: `SSH reachable — mower is stuck mid-reboot. Forcing hard reboot...` });
+
+      // Force kernel-level reboot (bypasses hanging shutdown scripts)
+      const result = await sshExec(ip, 'sync; echo 1 > /proc/sys/kernel/sysrq; echo b > /proc/sysrq-trigger');
+      // sysrq-trigger causes immediate reboot, so SSH will disconnect (result may be null)
+      io.emit('ota-log', { message: 'Hard reboot triggered — waiting for mower to come back...' });
+
+      // Wait for mower to go down and come back up
+      await new Promise(r => setTimeout(r, 30_000));
+    } else {
+      io.emit('ota-log', { message: 'SSH not reachable — mower may have rebooted normally. Waiting...' });
+    }
+
+    if (!otaInProgress) return;
+
+    // ── Phase 2: wait for mower to boot, then fix MQTT if needed ─────────
+    io.emit('ota-log', { message: 'Waiting for mower to finish booting...' });
+    await new Promise(r => setTimeout(r, PHASE2_DELAY));
+    if (!otaInProgress) return;
+
+    // Probe SSH again
+    sshOk = false;
+    for (let i = 0; i < 10; i++) {
+      if (!otaInProgress) return;
+      const reachable = await isSshReachable(ip);
+      if (reachable) { sshOk = true; break; }
+      console.log(`[OTA-SSH] Phase 2 probe ${i + 1}/10 — port 22 not reachable`);
+      await new Promise(r => setTimeout(r, PROBE_INTERVAL));
+    }
+
+    if (!otaInProgress) return;
+
+    if (sshOk) {
+      io.emit('ota-log', { message: 'SSH connected — checking if mqtt_node is running...' });
+
+      const check = await sshExec(ip, 'pgrep -c mqtt_node 2>/dev/null || echo 0');
+      const mqttRunning = check !== null && !check.trim().startsWith('0');
+
+      if (mqttRunning) {
+        io.emit('ota-log', { message: 'mqtt_node running but no MQTT connection — restarting...' });
+        await sshExec(ip, 'killall -9 mqtt_node 2>/dev/null');
+        io.emit('ota-log', { message: 'mqtt_node killed — daemon_node will restart it. Waiting...' });
+      } else {
+        io.emit('ota-log', { message: 'mqtt_node not running — starting services...' });
+        await sshExec(ip, '/root/novabot/scripts/run_novabot.sh start 2>/dev/null &');
+        io.emit('ota-log', { message: 'Services started — waiting for MQTT connection...' });
+      }
+
+      // Final wait for MQTT reconnect
+      await new Promise(r => setTimeout(r, 60_000));
+      if (!otaInProgress) return;
+
+      // Last resort: try once more
+      if (otaInProgress) {
+        io.emit('ota-log', { message: 'Still no MQTT — last attempt: restarting run_novabot.sh...' });
+        await sshExec(ip, '/root/novabot/scripts/run_novabot.sh stop 2>/dev/null; sleep 3; /root/novabot/scripts/run_novabot.sh start 2>/dev/null &');
+        io.emit('ota-log', { message: 'Waiting for MQTT reconnect...' });
+      }
+    } else {
+      io.emit('ota-log', { message: 'SSH not reachable after reboot — mower may need manual power cycle.' });
+    }
+  }
+
+  // When mower disconnects post-OTA → start SSH recovery
   onMowerDisconnect((mower) => {
     if (!otaInProgress) return;
-    console.log(`[OTA] Mower ${mower.sn} disconnected — reboot detected`);
+    const mowerIp = mower.ip ?? otaMowerIp;
+    console.log(`[OTA] Mower ${mower.sn} disconnected — reboot detected (IP: ${mowerIp})`);
     io.emit('mower-rebooting', { sn: mower.sn });
-    io.emit('ota-log', { message: 'Maaier is losgekoppeld — herstart gedetecteerd!' });
-    io.emit('ota-log', { message: 'Wachten tot de maaier opnieuw verbindt via MQTT...' });
+    io.emit('ota-log', { message: 'Mower disconnected — reboot detected!' });
+    io.emit('ota-log', { message: 'Waiting for mower to reconnect via MQTT...' });
+
+    clearOtaTimers();
+
+    // Absolute timeout: 30 minutes
+    otaTimeoutTimer = setTimeout(() => {
+      if (!otaInProgress) return;
+      clearOtaTimers();
+      io.emit('ota-log', { message: 'Timeout: mower did not reconnect after 30 minutes.' });
+      io.emit('ota-timeout');
+    }, 30 * 60 * 1000);
+
+    // Start SSH recovery loop (async, self-contained)
+    if (mowerIp) {
+      sshRecoveryLoop(mowerIp).catch(err => {
+        console.error(`[OTA-SSH] Recovery loop error:`, err);
+        io.emit('ota-log', { message: `SSH recovery error: ${err.message}` });
+      });
+    }
   });
 
-  // When mower reconnects after OTA reboot, firmware is installed
+  // When mower reconnects after OTA reboot → OTA complete
   onMowerReconnect((mower) => {
     if (!otaInProgress) return;
     otaInProgress = false;
+    clearOtaTimers();
     console.log(`[OTA] Mower ${mower.sn} reconnected — OTA complete!`);
-    io.emit('ota-log', { message: `Maaier ${mower.sn} is opnieuw verbonden — firmware succesvol geïnstalleerd!` });
+    io.emit('ota-log', { message: `Mower ${mower.sn} reconnected — firmware installed successfully!` });
+    io.emit('ota-ssh-recovery', { active: false });
     // Link to Docker dashboard (selectedIp) instead of mower server
     const dashboardUrl = selectedIp ? `http://${selectedIp}` : null;
     io.emit('server-detected', { url: dashboardUrl });
@@ -234,6 +408,13 @@ export function createServer(): http.Server {
       return;
     }
 
+    // Capture mower IP from download request (most reliable source)
+    const reqIp = (req.socket.remoteAddress ?? '').replace('::ffff:', '');
+    if (reqIp && reqIp !== '127.0.0.1') {
+      otaMowerIp = reqIp;
+      console.log(`[OTA] Mower IP captured from firmware download: ${reqIp}`);
+    }
+
     const stat = fs.statSync(filepath);
     const totalBytes = stat.size;
     let sentBytes = 0;
@@ -258,7 +439,7 @@ export function createServer(): http.Server {
     fileStream.on('end', () => {
       io.emit('ota-download-progress', { sentBytes: totalBytes, totalBytes, percent: 100 });
       const mb = (totalBytes / 1024 / 1024).toFixed(1);
-      io.emit('ota-log', { message: `Firmware download klaar (${mb} MB) — maaier installeert...` });
+      io.emit('ota-log', { message: `Firmware download complete (${mb} MB) — mower installing...` });
     });
 
     fileStream.pipe(res);
@@ -397,7 +578,71 @@ export function createServer(): http.Server {
       selectedIp,
       mower: getConnectedMower(),
       mowerVersion: getMowerVersion(),
+      isCustomFirmware: getIsCustomFirmware(),
     });
+  });
+
+  // ── API: BLE status ─────────────────────────────────────────────────────
+  app.get('/api/ble/status', async (_req, res) => {
+    try {
+      const status = await getBleStatus();
+      res.json(status);
+    } catch (err) {
+      res.json({ available: false, state: 'error', error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // ── API: BLE scan ──────────────────────────────────────────────────────
+  app.post('/api/ble/scan', async (req, res) => {
+    const { duration } = req.body as { duration?: number };
+    try {
+      await scanDevices(io, duration);
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // ── API: BLE stop scan ────────────────────────────────────────────────
+  app.post('/api/ble/stop-scan', async (_req, res) => {
+    try {
+      await stopScan();
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // ── API: BLE provision ────────────────────────────────────────────────
+  app.post('/api/ble/provision', async (req, res) => {
+    const { mac, wifiSsid, wifiPassword, deviceType } = req.body as {
+      mac?: string;
+      wifiSsid?: string;
+      wifiPassword?: string;
+      deviceType?: 'mower' | 'charger';
+    };
+    if (!mac || !wifiSsid || !wifiPassword || !deviceType) {
+      res.status(400).json({ error: 'mac, wifiSsid, wifiPassword, deviceType required' });
+      return;
+    }
+    const mqttAddr = selectedIp;
+    if (!mqttAddr) {
+      res.status(400).json({ error: 'No network IP selected (select IP in network step first)' });
+      return;
+    }
+    try {
+      const ok = await provisionDevice({
+        targetMac: mac,
+        wifiSsid,
+        wifiPassword,
+        mqttAddr,
+        mqttPort: 1883,
+        deviceType,
+      }, io);
+      res.json({ ok });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
   });
 
   // ── API: OTA trigger ──────────────────────────────────────────────────────
@@ -435,23 +680,83 @@ export function createServer(): http.Server {
     const encrypted = encryptForDevice(sn, command);
     publishToMower(sn, encrypted);
 
-    io.emit('ota-log', { message: `OTA commando verzonden naar ${sn}` });
+    io.emit('ota-log', { message: `OTA command sent to ${sn}` });
     io.emit('ota-log', { message: `Download URL: ${downloadUrl}` });
-    io.emit('ota-log', { message: `Versie: ${version} | MD5: ${firmwareMd5}` });
-    io.emit('ota-log', { message: 'Maaier downloadt firmware... (dit duurt 10–20 minuten)' });
+    io.emit('ota-log', { message: `Version: ${version} | MD5: ${firmwareMd5}` });
+    io.emit('ota-log', { message: 'Mower downloading firmware... (this takes 10–20 minutes)' });
     io.emit('ota-started', { sn, version });
 
     // Mark OTA in progress so the disconnect/reconnect callbacks fire
     otaInProgress = true;
+    // Capture mower IP from MQTT connection for SSH recovery
+    const connectedMower = getConnectedMower();
+    if (connectedMower?.ip) otaMowerIp = connectedMower.ip;
 
     res.json({ ok: true, sn, version, downloadUrl, md5: firmwareMd5 });
   });
 
   io.on('connection', (socket) => {
     console.log('[WS] Wizard client connected');
-    // Re-emit current version if already detected (handles page refresh)
+    // Re-emit current state if already detected (handles page refresh)
     const v = getMowerVersion();
     if (v) socket.emit('mower-version', { version: v });
+    const isCustom = getIsCustomFirmware();
+    if (isCustom !== null) socket.emit('mower-firmware-type', { isCustom });
+  });
+
+  // ── API: Check existing account in Docker container DB ────────────────────
+  app.get('/api/existing-account', async (_req, res) => {
+    // Approach 1: Try the API endpoint (works after container rebuild)
+    const candidates = selectedIp
+      ? [`http://${selectedIp}`, 'http://localhost:3000']
+      : ['http://localhost:3000'];
+
+    for (const base of candidates) {
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 5000);
+        const response = await fetch(`${base}/api/dashboard/admin/accounts`, {
+          signal: controller.signal,
+        });
+        clearTimeout(timeout);
+        const data = await response.json() as { hasAccount?: boolean };
+        if (data.hasAccount !== undefined) {
+          res.json(data);
+          return;
+        }
+      } catch {
+        // try next candidate
+      }
+    }
+
+    // Approach 2: Fallback — query Docker DB directly via docker exec
+    try {
+      const { execSync } = await import('child_process');
+      const script = [
+        `const Database = require('better-sqlite3');`,
+        `const db = new Database(process.env.DB_PATH || './novabot.db');`,
+        `const user = db.prepare('SELECT app_user_id, email, username FROM users LIMIT 1').get();`,
+        `if (!user) { console.log(JSON.stringify({hasAccount:false})); process.exit(); }`,
+        `const eq = db.prepare('SELECT mower_sn, charger_sn, mower_version, charger_version FROM equipment WHERE user_id = ?').all(user.app_user_id);`,
+        `const devices = []; const seen = new Set();`,
+        `for (const e of eq) {`,
+        `  if (e.charger_sn && e.charger_sn.startsWith('LFIC') && !seen.has(e.charger_sn)) { seen.add(e.charger_sn); devices.push({type:'charger',sn:e.charger_sn,version:e.charger_version||undefined}); }`,
+        `  if (e.mower_sn && e.mower_sn.startsWith('LFIN') && !seen.has(e.mower_sn)) { seen.add(e.mower_sn); devices.push({type:'mower',sn:e.mower_sn,version:e.mower_version||undefined}); }`,
+        `}`,
+        `console.log(JSON.stringify({hasAccount:true,email:user.email,username:user.username,devices}));`,
+      ].join(' ');
+      const result = execSync(`docker exec -w /app/novabot-server opennova node -e "${script.replace(/"/g, '\\"')}"`, {
+        encoding: 'utf8',
+        timeout: 10000,
+      });
+      const parsed = JSON.parse(result.trim());
+      res.json(parsed);
+      return;
+    } catch (err) {
+      console.warn('[existing-account] docker exec fallback failed:', err instanceof Error ? err.message : err);
+    }
+
+    res.json({ hasAccount: false });
   });
 
   // ── API: LFI Cloud import — stap 1: login + ophalen apparaten ─────────────
@@ -531,30 +836,35 @@ export function createServer(): http.Server {
       return;
     }
 
-    const dockerIp = selectedIp;
-    if (!dockerIp) {
-      res.status(400).json({ error: 'Geen Docker IP geselecteerd' });
-      return;
+    // Try Docker container first, fall back to local dev server (localhost:3000)
+    const candidates = selectedIp
+      ? [`http://${selectedIp}`, 'http://localhost:3000']
+      : ['http://localhost:3000'];
+
+    let lastError = '';
+    for (const base of candidates) {
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 8000);
+
+        const response = await fetch(`${base}/api/dashboard/admin/import`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password, deviceName, charger, mower }),
+          signal: controller.signal,
+        });
+
+        clearTimeout(timeout);
+        const data = await response.json() as Record<string, unknown>;
+        res.json(data);
+        return;
+      } catch (err) {
+        lastError = err instanceof Error ? err.message : String(err);
+        console.warn(`[cloud-import/apply] ${base} niet bereikbaar: ${lastError}`);
+      }
     }
 
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 10000);
-
-      const response = await fetch(`http://${dockerIp}/api/dashboard/admin/import`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password, deviceName, charger, mower }),
-        signal: controller.signal,
-      });
-
-      clearTimeout(timeout);
-      const data = await response.json() as Record<string, unknown>;
-      res.json(data);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      res.status(500).json({ error: `Docker import mislukt: ${msg}` });
-    }
+    res.status(500).json({ error: `Server niet bereikbaar: ${lastError}` });
   });
 
   // ── Global error handler: always return JSON ──────────────────────────────

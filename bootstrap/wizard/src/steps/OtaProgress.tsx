@@ -8,12 +8,14 @@ interface Props {
   otaStatus: OtaStatus;
   otaProgress: number; // 0–100
   otaTimedOut: boolean;
+  otaSshRecovery: boolean;
+  isCustomFirmware: boolean | null;
 }
 
-export default function OtaProgress({ log, mower, otaStatus, otaProgress, otaTimedOut }: Props) {
+export default function OtaProgress({ log, mower, otaStatus, otaProgress, otaTimedOut, otaSshRecovery, isCustomFirmware }: Props) {
   const { t } = useT();
+  const [showPowerCycleHint, setShowPowerCycleHint] = useState(false);
   const logRef = useRef<HTMLDivElement>(null);
-  const [showSshRecoveryHint, setShowSshRecoveryHint] = useState(false);
 
   const STAGES: { key: OtaStatus; label: string; sublabel: string }[] = [
     { key: 'downloading', label: t('progress.stage1'), sublabel: t('progress.stage1Sub') },
@@ -29,15 +31,15 @@ export default function OtaProgress({ log, mower, otaStatus, otaProgress, otaTim
     }
   }, [log]);
 
-  // Show SSH recovery hint after 3.5 minutes in 'waiting' state
+  // Stock firmware: show power cycle hint after 5 min in rebooting/waiting phase
+  // (SSH recovery won't work without custom firmware's openssh-server)
   useEffect(() => {
-    if (otaStatus === 'waiting') {
-      const timer = setTimeout(() => setShowSshRecoveryHint(true), 3.5 * 60 * 1000);
+    if (isCustomFirmware === false && (otaStatus === 'rebooting' || otaStatus === 'waiting')) {
+      const timer = setTimeout(() => setShowPowerCycleHint(true), 5 * 60 * 1000);
       return () => clearTimeout(timer);
-    } else {
-      setShowSshRecoveryHint(false);
     }
-  }, [otaStatus]);
+    setShowPowerCycleHint(false);
+  }, [otaStatus, isCustomFirmware]);
 
   const currentIdx = STAGE_ORDER.indexOf(otaStatus);
 
@@ -65,7 +67,7 @@ export default function OtaProgress({ log, mower, otaStatus, otaProgress, otaTim
                     : 'bg-gray-800 border-gray-700 text-gray-600'
                 }`}>
                   {isDone ? (
-                    <span>✓</span>
+                    <span>&#10003;</span>
                   ) : isActive ? (
                     <div className="w-3 h-3 rounded-full bg-emerald-400 animate-pulse" />
                   ) : (
@@ -160,6 +162,33 @@ export default function OtaProgress({ log, mower, otaStatus, otaProgress, otaTim
         )}
       </div>
 
+      {/* SSH recovery in progress (custom firmware only) */}
+      {otaSshRecovery && !otaTimedOut && (
+        <div className="mt-4 p-4 bg-amber-900/20 border border-amber-700/40 rounded-xl">
+          <div className="flex items-center gap-2 mb-1">
+            <div className="w-3 h-3 border-2 border-amber-400/50 border-t-amber-400 rounded-full animate-spin" />
+            <p className="text-amber-300 text-sm font-medium">{t('progress.sshTitle')}</p>
+          </div>
+          <p className="text-amber-400 text-xs leading-relaxed">
+            {t('progress.sshDesc')}
+          </p>
+        </div>
+      )}
+
+      {/* Stock firmware: early power cycle hint (after 5 min, no SSH available) */}
+      {showPowerCycleHint && !otaTimedOut && (
+        <div className="mt-4 p-4 bg-amber-900/20 border border-amber-700/40 rounded-xl">
+          <p className="text-amber-300 text-sm font-medium mb-2">{t('progress.stockPowerCycleTitle')}</p>
+          <p className="text-amber-400 text-xs leading-relaxed mb-2">{t('progress.stockPowerCycleDesc')}</p>
+          <ol className="text-amber-400 text-xs space-y-1 list-none">
+            <li>{t('progress.timeoutStep1')}</li>
+            <li>{t('progress.timeoutStep2')}</li>
+            <li>{t('progress.timeoutStep3')}</li>
+          </ol>
+          <p className="text-amber-400/70 text-xs mt-2">{t('progress.stockPowerCycleHint')}</p>
+        </div>
+      )}
+
       {/* Timeout: definitive failure after 30 minutes */}
       {otaTimedOut && (
         <div className="mt-4 p-4 bg-red-900/20 border border-red-700/40 rounded-xl">
@@ -173,16 +202,6 @@ export default function OtaProgress({ log, mower, otaStatus, otaProgress, otaTim
             <li>{t('progress.timeoutStep3')}</li>
             <li>{t('progress.timeoutStep4')} <span className="font-mono text-red-300">http://novabot.local:3000</span></li>
           </ol>
-        </div>
-      )}
-
-      {/* SSH recovery hint — shown after 3.5 minutes if not yet timed out */}
-      {showSshRecoveryHint && !otaTimedOut && (
-        <div className="mt-4 p-4 bg-amber-900/20 border border-amber-700/40 rounded-xl">
-          <p className="text-amber-300 text-sm font-medium mb-1">{t('progress.sshTitle')}</p>
-          <p className="text-amber-400 text-xs leading-relaxed">
-            {t('progress.sshDesc')}
-          </p>
         </div>
       )}
     </div>
