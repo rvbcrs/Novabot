@@ -3,7 +3,7 @@ import {
   Plug, TreePine, ChevronDown, Terminal, Calendar, Circle,
   BatteryMedium, Satellite, Radio, Activity,
   Wifi, Bluetooth, Trash2, Thermometer, HardDrive, Code, Octagon, Settings,
-  Map as MapIcon, Camera, Save, StopCircle, X, Network,
+  Map as MapIcon, Camera, Save, StopCircle, X, Network, Gamepad2,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { DeviceState, MqttLogEntry, BleLogEntry, MapData } from '../../types';
@@ -17,7 +17,9 @@ import { SensorGrid } from '../sensors/SensorGrid';
 import { OtaManager } from '../ota/OtaManager';
 import { SetupWizard } from '../setup/SetupWizard';
 import { CameraStream } from './CameraStream';
+import { JoystickControl } from './JoystickControl';
 import { UnboundDevices } from './UnboundDevices';
+import { MobileDrawer } from '../common/MobileDrawer';
 import { deleteDevice, sendCommand, setMowerIp } from '../../api/client';
 import { useToast } from '../common/Toast';
 
@@ -76,7 +78,7 @@ function DeviceChip({ device, expanded, onToggle, onDelete, onSetMowerIp, otaPro
     <div className="relative">
       <button
         onClick={onToggle}
-        className={`inline-flex items-center gap-1.5 h-8 px-2.5 rounded-md text-xs transition-colors ${
+        className={`inline-flex items-center gap-1 md:gap-1.5 h-7 md:h-8 px-1.5 md:px-2.5 rounded-md text-xs transition-colors ${
           expanded
             ? 'bg-gray-700 border border-gray-600'
             : 'hover:bg-gray-800 border border-transparent'
@@ -88,13 +90,13 @@ function DeviceChip({ device, expanded, onToggle, onDelete, onSetMowerIp, otaPro
         ) : (
           <TreePine className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />
         )}
-        <span className="text-gray-300 font-medium">
+        <span className="text-gray-300 font-medium truncate max-w-[80px] md:max-w-none">
           {device.nickname ?? (isCharger ? t('sidebar.charger') : t('sidebar.mower'))}
         </span>
         <Circle className={`w-2.5 h-2.5 fill-current ${device.online ? 'text-green-500' : 'text-gray-600'}`} />
 
         {hasSensorData && (
-          <>
+          <span className="hidden sm:contents">
             <span className="text-gray-700">|</span>
 
             {/* Battery (both devices) */}
@@ -148,7 +150,7 @@ function DeviceChip({ device, expanded, onToggle, onDelete, onSetMowerIp, otaPro
                 )}
               </>
             )}
-          </>
+          </span>
         )}
 
         {!hasSensorData && device.online && (
@@ -176,7 +178,7 @@ function DeviceChip({ device, expanded, onToggle, onDelete, onSetMowerIp, otaPro
 
       {/* Sensor detail dropdown */}
       {expanded && (
-        <div className="absolute top-full left-0 mt-1 w-[420px] z-[10000] bg-gray-800 rounded-lg border border-gray-700 shadow-xl p-3 max-h-96 overflow-auto">
+        <div className="absolute top-full left-0 mt-1 w-[calc(100vw-1rem)] sm:w-[420px] z-[10000] bg-gray-800 rounded-lg border border-gray-700 shadow-xl p-3 max-h-[70vh] sm:max-h-96 overflow-auto">
           {/* Header with SN + actions */}
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-2">
@@ -269,6 +271,7 @@ export function DashboardPage({ devices, loading, logs, bleLogs, otaProgress, li
   const [pendingPolygon, setPendingPolygon] = useState<{ mapId: string; mapName: string; mapArea: Array<{ lat: number; lng: number }> } | null>(null);
   const [stopBusy, setStopBusy] = useState(false);
   const [cameraOpen, setCameraOpen] = useState(false);
+  const [joystickOpen, setJoystickOpen] = useState(false);
 
   const handleMapSaved = useCallback((map: MapData) => {
     if (map.mapType === 'work' && map.mapArea.length >= 3) {
@@ -326,11 +329,11 @@ export function DashboardPage({ devices, loading, logs, bleLogs, otaProgress, li
   }
 
   return (
-    <div className="flex flex-col h-[calc(100vh-64px)]">
+    <div className="flex flex-col h-[calc(100vh-48px)] md:h-[calc(100vh-64px)] overflow-hidden">
       {/* Toolbar */}
-      <div className="flex-shrink-0 h-10 flex items-center justify-between px-3 border-b border-gray-800 bg-gray-900/80">
+      <div className="flex-shrink-0 h-10 flex items-center justify-between gap-1 px-2 md:px-3 border-b border-gray-800 bg-gray-900/80 overflow-x-auto">
         {/* Left: device chips */}
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1 flex-shrink-0">
           {sorted.length === 0 && (
             <span className="text-xs text-gray-500">{t('devices.waitingForDevices')}</span>
           )}
@@ -348,7 +351,7 @@ export function DashboardPage({ devices, loading, logs, bleLogs, otaProgress, li
         </div>
 
         {/* Right: mower controls + schedule */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1 md:gap-2 flex-shrink-0">
           {mower && (
             <MowerControls
               sn={mower.sn}
@@ -362,45 +365,57 @@ export function DashboardPage({ devices, loading, logs, bleLogs, otaProgress, li
           {mower && (
             <button
               onClick={() => { setScheduleOpen(!scheduleOpen); if (scheduleOpen) setPathDirPreview(null); setOtaOpen(false); setSetupOpen(false); }}
-              className={`inline-flex items-center gap-1.5 text-xs h-7 px-2.5 rounded transition-colors ${
+              className={`inline-flex items-center gap-1 md:gap-1.5 text-xs h-7 px-1.5 md:px-2.5 rounded transition-colors ${
                 scheduleOpen ? 'bg-blue-600 text-white' : 'bg-gray-700/60 text-gray-400 hover:text-white'
               }`}
             >
               <Calendar className="w-3.5 h-3.5" />
-              {t('devices.schedule')}
+              <span className="hidden sm:inline">{t('devices.schedule')}</span>
             </button>
           )}
           <button
             onClick={() => { setOtaOpen(!otaOpen); setScheduleOpen(false); setSetupOpen(false); setPathDirPreview(null); }}
-            className={`inline-flex items-center gap-1.5 text-xs h-7 px-2.5 rounded transition-colors ${
+            className={`inline-flex items-center gap-1 md:gap-1.5 text-xs h-7 px-1.5 md:px-2.5 rounded transition-colors ${
               otaOpen ? 'bg-orange-600 text-white' : 'bg-gray-700/60 text-gray-400 hover:text-white'
             }`}
             title="Firmware updates"
           >
             <HardDrive className="w-3.5 h-3.5" />
-            OTA
+            <span className="hidden sm:inline">OTA</span>
           </button>
           {mower && (
             <button
               onClick={() => setCameraOpen(!cameraOpen)}
-              className={`inline-flex items-center gap-1.5 text-xs h-7 px-2.5 rounded transition-colors ${
+              className={`inline-flex items-center gap-1 md:gap-1.5 text-xs h-7 px-1.5 md:px-2.5 rounded transition-colors ${
                 cameraOpen ? 'bg-cyan-600 text-white' : 'bg-gray-700/60 text-gray-400 hover:text-white'
               }`}
               title={t('camera.title')}
             >
               <Camera className="w-3.5 h-3.5" />
-              {t('camera.camera')}
+              <span className="hidden sm:inline">{t('camera.camera')}</span>
+            </button>
+          )}
+          {mower && (
+            <button
+              onClick={() => setJoystickOpen(!joystickOpen)}
+              className={`inline-flex items-center gap-1 md:gap-1.5 text-xs h-7 px-1.5 md:px-2.5 rounded transition-colors ${
+                joystickOpen ? 'bg-emerald-600 text-white' : 'bg-gray-700/60 text-gray-400 hover:text-white'
+              }`}
+              title={t('controls.joystick')}
+            >
+              <Gamepad2 className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">{t('controls.joystick')}</span>
             </button>
           )}
           <button
             onClick={() => { setSetupOpen(!setupOpen); setOtaOpen(false); setScheduleOpen(false); setPathDirPreview(null); }}
-            className={`inline-flex items-center gap-1.5 text-xs h-7 px-2.5 rounded transition-colors ${
+            className={`inline-flex items-center gap-1 md:gap-1.5 text-xs h-7 px-1.5 md:px-2.5 rounded transition-colors ${
               setupOpen ? 'bg-blue-600 text-white' : 'bg-gray-700/60 text-gray-400 hover:text-white'
             }`}
             title="Setup"
           >
             <Settings className="w-3.5 h-3.5" />
-            Setup
+            <span className="hidden sm:inline">Setup</span>
           </button>
         </div>
       </div>
@@ -441,7 +456,7 @@ export function DashboardPage({ devices, loading, logs, bleLogs, otaProgress, li
               <button
                 onClick={handleEmergencyStop}
                 disabled={stopBusy}
-                className="flex items-center gap-2 px-6 py-3 rounded-full bg-red-600 hover:bg-red-500 active:bg-red-700 text-white font-bold text-sm shadow-lg shadow-red-900/50 animate-pulse hover:animate-none transition-colors disabled:opacity-50"
+                className="flex items-center gap-2 px-4 md:px-6 py-3 rounded-full bg-red-600 hover:bg-red-500 active:bg-red-700 text-white font-bold text-xs md:text-sm shadow-lg shadow-red-900/50 animate-pulse hover:animate-none transition-colors disabled:opacity-50"
               >
                 <Octagon className="w-5 h-5" />
                 {t('controls.emergencyStop')}
@@ -451,7 +466,7 @@ export function DashboardPage({ devices, loading, logs, bleLogs, otaProgress, li
           {/* Mapping active overlay */}
           {isMappingActive && mower && (
             <div className="absolute top-16 left-1/2 -translate-x-1/2 z-[1001]">
-              <div className="flex items-center gap-3 px-4 py-2.5 rounded-full bg-purple-600/90 backdrop-blur shadow-lg shadow-purple-900/40 border border-purple-500/30">
+              <div className="flex items-center gap-2 md:gap-3 flex-wrap justify-center px-3 md:px-4 py-2.5 rounded-2xl md:rounded-full bg-purple-600/90 backdrop-blur shadow-lg shadow-purple-900/40 border border-purple-500/30">
                 <span className="flex items-center gap-2 text-sm text-white font-medium">
                   <MapIcon className="w-4 h-4 animate-pulse" />
                   {t('controls.mappingActive')}
@@ -499,12 +514,26 @@ export function DashboardPage({ devices, loading, logs, bleLogs, otaProgress, li
           )}
           {/* Camera stream overlay */}
           {cameraOpen && mower && (
-            <div className="absolute top-4 right-4 z-[1001] w-80">
+            <div className="absolute top-4 right-4 z-[1001] w-[calc(100vw-2rem)] sm:w-80">
               <CameraStream sn={mower.sn} online={mower.online} onClose={() => setCameraOpen(false)} />
             </div>
           )}
+          {/* Joystick overlay */}
+          {joystickOpen && mower && (
+            <div className="absolute bottom-20 md:bottom-4 left-1/2 md:left-auto md:right-4 -translate-x-1/2 md:translate-x-0 z-[1001]">
+              <div className="bg-gray-900/95 backdrop-blur rounded-2xl border border-gray-700 p-4 shadow-xl">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-xs font-medium text-emerald-400">{t('controls.manualControl')}</span>
+                  <button onClick={() => setJoystickOpen(false)} className="text-gray-500 hover:text-gray-300 p-0.5">
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+                <JoystickControl sn={mower.sn} online={mower.online} />
+              </div>
+            </div>
+          )}
           {/* Ongebonden apparaten — overlay linksboven op de kaart */}
-          <div className="absolute top-3 left-3 z-[1000] w-80 pointer-events-auto">
+          <div className="absolute top-3 left-3 z-[1000] w-[calc(100vw-1.5rem)] sm:w-80 pointer-events-auto">
             <UnboundDevices onBound={() => window.location.reload()} />
           </div>
           {/* Mower sensor overlay on map */}
@@ -516,28 +545,22 @@ export function DashboardPage({ devices, loading, logs, bleLogs, otaProgress, li
             </div>
           )}
         </div>
-        {/* Scheduler side panel */}
-        {scheduleOpen && mower && (
-          <div className="w-80 flex-shrink-0 overflow-auto border-l border-gray-800">
-            <Scheduler sn={mower.sn} online={mower.online} onPathDirectionChange={setPathDirPreview} />
-          </div>
-        )}
-        {/* OTA side panel */}
-        {otaOpen && (
-          <div className="w-80 flex-shrink-0 overflow-auto border-l border-gray-800">
-            <OtaManager devices={devices} otaProgress={otaProgress} />
-          </div>
-        )}
-        {/* Setup side panel */}
-        {setupOpen && (
-          <div className="w-80 flex-shrink-0 overflow-auto border-l border-gray-800">
-            <SetupWizard />
-          </div>
-        )}
+        {/* Scheduler side panel / drawer */}
+        <MobileDrawer open={scheduleOpen && !!mower} onClose={() => { setScheduleOpen(false); setPathDirPreview(null); }} title={t('devices.schedule')}>
+          {mower && <Scheduler sn={mower.sn} online={mower.online} onPathDirectionChange={setPathDirPreview} />}
+        </MobileDrawer>
+        {/* OTA side panel / drawer */}
+        <MobileDrawer open={otaOpen} onClose={() => setOtaOpen(false)} title="Firmware Update">
+          <OtaManager devices={devices} otaProgress={otaProgress} />
+        </MobileDrawer>
+        {/* Setup side panel / drawer */}
+        <MobileDrawer open={setupOpen} onClose={() => setSetupOpen(false)} title="Setup">
+          <SetupWizard />
+        </MobileDrawer>
       </div>
 
       {/* Log console */}
-      <div className={`flex-shrink-0 border-t border-gray-800 transition-all duration-200 ${logOpen ? 'h-56' : 'h-8'}`}>
+      <div className={`flex-shrink-0 border-t border-gray-800 transition-all duration-200 ${logOpen ? 'h-32 md:h-56' : 'h-8'}`}>
         <button
           onClick={() => setLogOpen(!logOpen)}
           className="w-full flex items-center justify-between px-4 h-8 hover:bg-gray-800/50 transition-colors"

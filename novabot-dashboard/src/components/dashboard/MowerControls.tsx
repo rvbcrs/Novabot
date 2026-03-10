@@ -154,7 +154,7 @@ export function MowerControls({ sn, online, sensors, onPathDirectionChange, pend
           title={online ? t('controls.startMowing') : t('controls.mowerOffline')}
         >
           <Play className="w-3.5 h-3.5" />
-          {t('controls.start')}
+          <span className="hidden sm:inline">{t('controls.start')}</span>
           <ChevronDown className={`w-3 h-3 transition-transform ${expanded ? 'rotate-180' : ''}`} />
         </button>
 
@@ -245,7 +245,7 @@ export function MowerControls({ sn, online, sensors, onPathDirectionChange, pend
 
       {/* Expanded start settings dropdown */}
       {expanded && (
-        <div className="absolute top-full right-0 mt-1 w-72 z-[10000] bg-gray-800 rounded-lg border border-gray-700 shadow-xl overflow-hidden">
+        <div className="absolute top-full right-0 mt-1 w-72 max-w-[calc(100vw-1rem)] z-[10000] bg-gray-800 rounded-lg border border-gray-700 shadow-xl overflow-hidden">
           <div className="p-3 space-y-3">
             {/* Map selection — show pending polygon or dropdown */}
             {pendingPolygon && mapId === pendingPolygon.mapId ? (
@@ -365,7 +365,7 @@ export function MowerControls({ sn, online, sensors, onPathDirectionChange, pend
 
       {/* Mapping dropdown */}
       {mappingExpanded && !isMappingActive && (
-        <div className="absolute top-full right-0 mt-1 w-64 z-[10000] bg-gray-800 rounded-lg border border-gray-700 shadow-xl p-3 space-y-3">
+        <div className="absolute top-full right-0 mt-1 w-64 max-w-[calc(100vw-1rem)] z-[10000] bg-gray-800 rounded-lg border border-gray-700 shadow-xl p-3 space-y-3">
           <div className="space-y-1.5">
             <div className="flex items-center gap-2 text-xs">
               <span className={`w-2 h-2 rounded-full ${gpsEnabled ? 'bg-green-500' : 'bg-red-500'}`} />

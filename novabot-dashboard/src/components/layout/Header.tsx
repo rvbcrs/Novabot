@@ -19,10 +19,10 @@ export function Header({ connected }: Props) {
   };
 
   return (
-    <header className="h-16 bg-gray-900 border-b border-gray-800 flex items-center justify-between px-6">
+    <header className="h-12 md:h-16 bg-gray-900 border-b border-gray-800 flex items-center justify-between px-3 md:px-6">
       <div className="flex items-center gap-3">
         <img src="/OpenNova.png" alt="OpenNova" className="h-9 w-auto" />
-        <span className="text-xl text-gray-300 tracking-widest uppercase" style={{ fontFamily: "'Posterama 1919', sans-serif", letterSpacing: '0.2em' }}>{t('header.dashboard')}</span>
+        <span className="hidden md:inline text-xl text-gray-300 tracking-widest uppercase" style={{ fontFamily: "'Posterama 1919', sans-serif", letterSpacing: '0.2em' }}>{t('header.dashboard')}</span>
       </div>
       <div className="flex items-center gap-4">
         {/* Add device */}
@@ -56,7 +56,7 @@ export function Header({ connected }: Props) {
           ) : (
             <ServerOff className="w-4 h-4 text-red-500" />
           )}
-          <span className="text-gray-400">{connected ? t('header.server') : t('header.serverOffline')}</span>
+          <span className="hidden sm:inline text-gray-400">{connected ? t('header.server') : t('header.serverOffline')}</span>
         </div>
       </div>
       <BleScanner open={showBle} onClose={() => setShowBle(false)} />

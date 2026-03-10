@@ -1164,24 +1164,26 @@ function syncFirmwareVersions(): void {
     const md5 = crypto.createHash('md5').update(readFileSync(filePath)).digest('hex');
     const downloadUrl = `${baseUrl}/api/dashboard/firmware/${encodeURIComponent(filename)}`;
 
+    // Read metadata from companion .json if available
+    const meta = readFirmwareMeta(filePath);
+    const version = meta?.version ?? extractFirmwareVersion(filePath) ?? filename.replace(/\.(bin|deb)$/, '');
+    const deviceType = meta?.device_type ?? (filename.endsWith('.deb') ? 'mower' : 'charger');
+
     const existing = dbByFilename.get(filename);
     if (existing) {
       validDbIds.add(existing.id);
       if (existing.md5 !== md5) {
         // File changed — update version + md5
-        const version = extractFirmwareVersion(filePath) ?? existing.version;
-        const deviceType = filename.endsWith('.deb') ? 'mower' : 'charger';
         db.prepare(`UPDATE ota_versions SET version = ?, device_type = ?, md5 = ?, download_url = ? WHERE id = ?`)
           .run(version, deviceType, md5, downloadUrl, existing.id);
         console.log(`\x1b[38;5;208m[OTA] Auto-updated: ${filename} (${version})\x1b[0m`);
-      } else if (existing.download_url !== downloadUrl) {
-        // URL changed (e.g. TARGET_IP changed) — update URL only
-        db.prepare(`UPDATE ota_versions SET download_url = ? WHERE id = ?`).run(downloadUrl, existing.id);
+      } else if (existing.download_url !== downloadUrl || existing.version !== version) {
+        // URL or version changed — update
+        db.prepare(`UPDATE ota_versions SET version = ?, device_type = ?, download_url = ? WHERE id = ?`)
+          .run(version, deviceType, downloadUrl, existing.id);
       }
     } else {
       // New file — auto-register
-      const version = extractFirmwareVersion(filePath) ?? filename.replace(/\.(bin|deb)$/, '');
-      const deviceType = filename.endsWith('.deb') ? 'mower' : 'charger';
       db.prepare(`INSERT INTO ota_versions (version, device_type, download_url, md5) VALUES (?, ?, ?, ?)`)
         .run(version, deviceType, downloadUrl, md5);
       console.log(`\x1b[38;5;208m[OTA] Auto-registered: ${filename} (${version}, ${deviceType})\x1b[0m`);
@@ -1315,7 +1317,7 @@ dashboardRouter.get('/firmware/:filename', (req: Request, res: Response) => {
 // GET /api/dashboard/firmware-list — lijst alle firmware bestanden
 dashboardRouter.get('/firmware-list', (_req: Request, res: Response) => {
   try {
-    const files = readdirSync(firmwareDir).filter(f => !f.startsWith('.'));
+    const files = readdirSync(firmwareDir).filter(f => !f.startsWith('.') && !f.endsWith('.json'));
     const list = files.map(f => {
       const filePath = path.join(firmwareDir, f);
       const hash = crypto.createHash('md5').update(readFileSync(filePath)).digest('hex');
@@ -1337,12 +1339,32 @@ dashboardRouter.get('/firmware-list', (_req: Request, res: Response) => {
  * De versie (bijv. "v0.3.6") is de 2e match van /^v\d+\.\d+/ in strings output.
  * (1e = ESP-IDF versie, 2e = firmware versie, 3e = sub-versie)
  */
+/**
+ * Read companion .json metadata for a firmware file (OpenNova builds).
+ * Returns { version, device_type, description, md5 } or null.
+ */
+function readFirmwareMeta(filePath: string): { version?: string; device_type?: string; description?: string; md5?: string } | null {
+  const jsonPath = filePath.replace(/\.(bin|deb)$/, '.json');
+  if (!existsSync(jsonPath)) return null;
+  try {
+    return JSON.parse(readFileSync(jsonPath, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
 function extractChargerVersion(binPath: string): string | null {
   try {
     const output = execSync(`strings "${binPath}"`, { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
-    const matches = output.split('\n').filter(l => /^v\d+\.\d+\.\d+/.test(l));
-    // 2e match is altijd de firmware versie
-    return matches.length >= 2 ? matches[1].trim() : matches[0]?.trim() ?? null;
+    const lines = output.split('\n');
+    // Primary: OpenNova firmware embeds "OPENNOVA_FW=v1.2.3" marker
+    for (const line of lines) {
+      const m = line.match(/^OPENNOVA_FW=(v\d+\.\d+\.\d+\S*)/);
+      if (m) return m[1];
+    }
+    // Fallback: original Novabot charger — find version strings, skip ESP-IDF (v4.x/v5.x)
+    const versions = lines.filter(l => /^v\d+\.\d+\.\d+/.test(l) && !/^v[45]\.\d+/.test(l));
+    return versions[0]?.trim() ?? null;
   } catch {
     return null;
   }
@@ -1371,6 +1393,14 @@ function extractMowerVersion(debPath: string): string | null {
  */
 function extractFirmwareVersion(filePath: string): string | null {
   if (!existsSync(filePath)) return null;
+  // Primary: check for companion .json metadata (OpenNova builds)
+  const jsonPath = filePath.replace(/\.(bin|deb)$/, '.json');
+  if (existsSync(jsonPath)) {
+    try {
+      const meta = JSON.parse(readFileSync(jsonPath, 'utf8'));
+      if (meta.version) return meta.version;
+    } catch { /* fall through */ }
+  }
   if (filePath.endsWith('.deb')) {
     const fromDeb = extractMowerVersion(filePath);
     if (fromDeb) return fromDeb;

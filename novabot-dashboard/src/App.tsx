@@ -57,7 +57,7 @@ export default function App() {
 
   return (
     <ToastProvider>
-      <div className="min-h-screen bg-gray-950 text-white">
+      <div className="min-h-screen bg-gray-950 text-white overflow-x-hidden">
         <Header connected={connected} />
         <DashboardPage devices={devices} loading={loading} logs={logs} bleLogs={bleLogs} otaProgress={otaProgress} liveOutlines={liveOutlines} />
       </div>

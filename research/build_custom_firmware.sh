@@ -1428,6 +1428,20 @@ else
 fi
 SIZE=$(ls -lh "$OUTPUT_DEB" | awk '{print $5}')
 
+# Schrijf metadata JSON naast de .deb
+DEB_BASENAME="$(basename "$OUTPUT_DEB")"
+JSON_META="${OUTPUT_DEB%.deb}.json"
+cat > "$JSON_META" << METAEOF
+{
+  "version": "${VERSION}",
+  "device_type": "mower",
+  "filename": "${DEB_BASENAME}",
+  "md5": "${MD5}",
+  "description": "OpenNova mower firmware (custom build)"
+}
+METAEOF
+echo "  Metadata: $(basename "$JSON_META")"
+
 echo ""
 echo "============================================"
 echo "  BUILD SUCCESVOL"

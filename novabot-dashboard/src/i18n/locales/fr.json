@@ -110,7 +110,10 @@
     "headlight": "Phares",
     "headlightOn": "Phares: allumés",
     "headlightOff": "Phares: éteints",
-    "sound": "Son"
+    "sound": "Son",
+    "joystick": "Joystick",
+    "manualControl": "Contrôle manuel",
+    "joystickHelp": "Glissez pour déplacer"
   },
   "camera": {
     "title": "Caméra",

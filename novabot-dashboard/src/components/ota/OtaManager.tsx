@@ -294,7 +294,7 @@ export function OtaManager({ devices, otaProgress }: Props) {
             </p>
           ) : (
             <div className="space-y-1">
-              {files.map(f => (
+              {files.filter(f => !f.name.endsWith('.json')).map(f => (
                 <div key={f.name} className="flex items-center justify-between bg-gray-800 rounded px-2.5 py-1.5">
                   <span className="text-xs font-mono text-gray-200 truncate">{f.name}</span>
                   <span className="text-[10px] text-gray-500 font-mono ml-2 flex-shrink-0">

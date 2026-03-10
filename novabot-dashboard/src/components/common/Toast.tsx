@@ -72,12 +72,14 @@ function ToastItem({ toast, onDismiss }: { toast: Toast; onDismiss: () => void }
   useEffect(() => {
     // Trigger enter animation
     requestAnimationFrame(() => setVisible(true));
+    // Errors stay until dismissed manually
+    if (toast.type === 'error') return;
     const timer = setTimeout(() => {
       setVisible(false);
       setTimeout(() => onDismissRef.current(), 200);
     }, 4000);
     return () => clearTimeout(timer);
-  }, []);
+  }, [toast.type]);
 
   const Icon = ICONS[toast.type];
 

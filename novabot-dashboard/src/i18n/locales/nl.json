@@ -110,7 +110,10 @@
     "headlight": "Koplampen",
     "headlightOn": "Koplampen: aan",
     "headlightOff": "Koplampen: uit",
-    "sound": "Geluid"
+    "sound": "Geluid",
+    "joystick": "Joystick",
+    "manualControl": "Handmatige besturing",
+    "joystickHelp": "Sleep om te bewegen"
   },
   "camera": {
     "title": "Camera",
