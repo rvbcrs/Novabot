@@ -34,6 +34,10 @@ novabot-server/.env
 # Docker persistent data
 novabot-data/
 
+# Charger firmware build artifacts
+charger-firmware/.pio/
+charger-firmware/.vscode/
+
 # Dashboard build artifacts
 novabot-dashboard/node_modules/
 novabot-dashboard/dist/
