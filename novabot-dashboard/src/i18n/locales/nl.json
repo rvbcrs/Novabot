@@ -210,7 +210,9 @@
     "enable": "Inschakelen",
     "sendToMower": "Stuur naar maaier",
     "weekdays": ["Zo", "Ma", "Di", "Wo", "Do", "Vr", "Za"],
-    "compass": ["N–Z", "NO–ZW", "O–W", "ZO–NW"]
+    "compass": ["N–Z", "NO–ZW", "O–W", "ZO–NW"],
+    "conflict": "Overlapt met: {{names}}",
+    "conflictWarning": "Dit schema overlapt met bestaande schema's"
   },
   "sensors": {
     "work": "Werk",
@@ -241,6 +243,65 @@
     "recharge": "Opladen",
     "state": "Toestand",
     "taskMode": "Taakmodus"
+  },
+  "settings": {
+    "title": "Instellingen",
+    "obstacleSensitivity": "Obstakelgevoeligheid",
+    "maxSpeed": "Max snelheid",
+    "handling": "Wendbaarheid",
+    "headlight": "Koplampen",
+    "headlightDesc": "Gebruik koplampen tijdens het maaien",
+    "sound": "Luidspreker",
+    "soundDesc": "Geluid afspelen tijdens het maaien",
+    "low": "Laag",
+    "medium": "Gemiddeld",
+    "high": "Hoog",
+    "reset": "Standaardwaarden herstellen",
+    "resetDone": "Instellingen hersteld",
+    "pin": "PIN Code",
+    "pinDesc": "Anti-diefstal PIN code beheer",
+    "pinQuery": "PIN opvragen",
+    "pinQuerying": "Opvragen...",
+    "pinSet": "PIN instellen",
+    "pinVerify": "PIN verifiëren",
+    "pinCurrentCode": "Huidige PIN",
+    "pinNewCode": "Nieuwe PIN",
+    "pinUnknown": "Onbekend",
+    "pinSent": "PIN commando verstuurd",
+    "pinReceived": "PIN antwoord ontvangen",
+    "pinNoResponse": "Geen antwoord (timeout)",
+    "pinPlaceholder": "4 cijfers"
+  },
+  "pin": {
+    "locked": "PIN vergrendeling actief",
+    "code": "PIN",
+    "unlock": "Ontgrendel",
+    "unlocking": "Ontgrendelen...",
+    "unlockSent": "Ontgrendelcommando verstuurd",
+    "wrongPin": "Onjuiste PIN, probeer opnieuw",
+    "checkStatus": "PIN Slot",
+    "statusLocked": "Maaier is vergrendeld",
+    "statusUnlocked": "Maaier is ontgrendeld"
+  },
+  "history": {
+    "title": "Maaigeschiedenis",
+    "empty": "Nog geen maaisessies opgeslagen",
+    "duration": "{{min}} min",
+    "area": "{{area}} m\u00b2",
+    "height": "{{cm}} cm",
+    "status": "Status",
+    "date": "Datum",
+    "loadMore": "Meer laden"
+  },
+  "charts": {
+    "title": "Signaalgeschiedenis",
+    "battery": "Batterij",
+    "wifi": "WiFi",
+    "rtkSat": "RTK Satellieten",
+    "cpuTemp": "CPU Temperatuur",
+    "hours": "{{count}}u",
+    "days": "{{count}}d",
+    "noData": "Nog niet genoeg data"
   },
   "ble": {
     "addDevice": "Apparaat toevoegen",

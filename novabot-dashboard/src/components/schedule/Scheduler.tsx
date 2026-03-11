@@ -1,13 +1,38 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Clock, Plus, Trash2, Send, X, ChevronRight, Calendar,
-  Compass, ArrowUp,
+  Compass, ArrowUp, AlertTriangle,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { Schedule, MapData } from '../../types';
 import { fetchSchedules, createSchedule, updateSchedule, deleteSchedule, sendSchedule, fetchMaps } from '../../api/client';
 
 const DIR_DEGREES = [0, 45, 90, 135];
+
+/** Check of twee tijdranges overlappen (HH:MM format) */
+function timesOverlap(s1: string, e1: string | null, s2: string, e2: string | null): boolean {
+  const start1 = s1;
+  const end1 = e1 || '23:59';
+  const start2 = s2;
+  const end2 = e2 || '23:59';
+  return start1 < end2 && start2 < end1;
+}
+
+/** Vind conflicterende schedules */
+function findConflicts(
+  startTime: string, endTime: string | null, weekdays: number[],
+  schedules: Schedule[], excludeId?: string,
+): Schedule[] {
+  return schedules.filter(s => {
+    if (!s.enabled) return false;
+    if (s.scheduleId === excludeId) return false;
+    // Check weekday overlap
+    const dayOverlap = weekdays.some(d => s.weekdays.includes(d));
+    if (!dayOverlap) return false;
+    // Check time overlap
+    return timesOverlap(startTime, endTime, s.startTime, s.endTime);
+  });
+}
 
 interface Props {
   sn: string;
@@ -48,6 +73,25 @@ export function Scheduler({ sn, online, onPathDirectionChange }: Props) {
 
   const weekdayLabels = t('schedule.weekdays', { returnObjects: true }) as string[];
   const compassLabels = t('schedule.compass', { returnObjects: true }) as string[];
+
+  // Conflict detection: form vs existing schedules
+  const formConflicts = useMemo(() => {
+    if (!showForm || !form.startTime || form.weekdays.length === 0) return [];
+    return findConflicts(form.startTime, form.endTime || null, form.weekdays, schedules);
+  }, [showForm, form.startTime, form.endTime, form.weekdays, schedules]);
+
+  // Conflict map for existing schedules (schedule_id → conflicting schedule names)
+  const scheduleConflictMap = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const s of schedules) {
+      if (!s.enabled) continue;
+      const conflicts = findConflicts(s.startTime, s.endTime, s.weekdays, schedules, s.scheduleId);
+      if (conflicts.length > 0) {
+        map.set(s.scheduleId, conflicts.map(c => c.scheduleName || c.startTime));
+      }
+    }
+    return map;
+  }, [schedules]);
 
   useEffect(() => {
     fetchSchedules(sn).then(setSchedules).catch(() => {});
@@ -259,6 +303,19 @@ export function Scheduler({ sn, online, onPathDirectionChange }: Props) {
             />
           </div>
 
+          {/* Conflict warning */}
+          {formConflicts.length > 0 && (
+            <div className="flex items-start gap-2 p-2 rounded bg-amber-900/20 border border-amber-800/30">
+              <AlertTriangle className="w-3.5 h-3.5 text-amber-400 flex-shrink-0 mt-0.5" />
+              <div className="text-[10px] text-amber-400">
+                <div className="font-medium">{t('schedule.conflictWarning')}</div>
+                <div className="text-amber-500 mt-0.5">
+                  {t('schedule.conflict', { names: formConflicts.map(c => c.scheduleName || c.startTime).join(', ') })}
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Actions */}
           <div className="flex items-center gap-2 pt-3 border-t border-gray-700">
             <button
@@ -306,6 +363,11 @@ export function Scheduler({ sn, online, onPathDirectionChange }: Props) {
                 <span className="text-sm font-semibold text-white font-mono">
                   {s.startTime}{s.endTime ? ` \u2013 ${s.endTime}` : ''}
                 </span>
+                {scheduleConflictMap.has(s.scheduleId) && (
+                  <span title={t('schedule.conflict', { names: scheduleConflictMap.get(s.scheduleId)!.join(', ') })}>
+                    <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
+                  </span>
+                )}
               </div>
               <div className="flex items-center gap-1">
                 {online && s.enabled && (

@@ -2,7 +2,8 @@ import { useEffect, useRef } from 'react';
 import { useToast } from '../common/Toast';
 
 // Benign error codes that are normal during idle (LoRa timeout, etc.)
-const BENIGN_CODES = new Set(['132']);
+// 151 = PIN lock — handled by PinKeypad overlay, no toast needed
+const BENIGN_CODES = new Set(['132', '151']);
 
 interface Props {
   errorCode?: string;

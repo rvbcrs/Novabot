@@ -3,7 +3,8 @@ import {
   Plug, TreePine, ChevronDown, Terminal, Calendar, Circle,
   BatteryMedium, Satellite, Radio, Activity,
   Wifi, Bluetooth, Trash2, Thermometer, HardDrive, Code, Octagon, Settings,
-  Map as MapIcon, Camera, Save, StopCircle, X, Network, Gamepad2,
+  Map as MapIcon, Camera, Save, StopCircle, X, Network, Gamepad2, SlidersHorizontal,
+  ClipboardList, BarChart3, Menu, Lock,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { DeviceState, MqttLogEntry, BleLogEntry, MapData } from '../../types';
@@ -20,7 +21,11 @@ import { CameraStream } from './CameraStream';
 import { JoystickControl } from './JoystickControl';
 import { UnboundDevices } from './UnboundDevices';
 import { MobileDrawer } from '../common/MobileDrawer';
-import { deleteDevice, sendCommand, setMowerIp } from '../../api/client';
+import { SettingsPanel } from '../settings/SettingsPanel';
+import { WorkHistory } from '../history/WorkHistory';
+import { SignalChart } from '../charts/SignalChart';
+import { deleteDevice, sendCommand, setMowerIp, pinVerify } from '../../api/client';
+import { PinKeypad } from './PinKeypad';
 import { useToast } from '../common/Toast';
 
 interface Props {
@@ -65,6 +70,11 @@ function DeviceChip({ device, expanded, onToggle, onDelete, onSetMowerIp, otaPro
   // Charger: virtuele velden uit charger_status (geëxtraheerd door server)
   const gpsSats = parseInt(s.gps_satellites ?? '0', 10);
   const rtkOk = s.rtk_ok === '1';
+  const loraRaw = s.mower_error;
+  const loraKnown = loraRaw != null;
+  const loraOk = loraRaw === 'OK' || loraRaw === '0';
+  const loraCount = parseInt(loraRaw?.match(/\((\d+)\)/)?.[1] ?? '', 10);
+  const loraSearching = !isNaN(loraCount) && loraCount > 0;
 
   // Mower: directe sensoren
   const mowerSats = parseInt(s.rtk_sat ?? '0', 10);
@@ -115,9 +125,20 @@ function DeviceChip({ device, expanded, onToggle, onDelete, onSetMowerIp, otaPro
                 <span className={`text-[10px] font-medium ${rtkOk ? 'text-green-400' : 'text-gray-600'}`}>
                   RTK{rtkOk ? '\u2713' : '\u2014'}
                 </span>
-                {s.mower_error && parseInt(s.mower_error) > 0 && (
-                  <Stat icon={Radio} value={s.mower_error} color="text-orange-400" label={t('devices.loraSearch')} />
-                )}
+                <span
+                  className={`inline-flex items-center gap-0.5 text-[10px] font-medium ${
+                    !loraKnown ? 'text-gray-600'
+                    : loraOk ? 'text-green-400'
+                    : loraSearching && loraCount <= 5 ? 'text-yellow-400'
+                    : 'text-red-400'
+                  }`}
+                  title={loraKnown
+                    ? (loraOk ? 'LoRa: connected' : `LoRa: ${loraRaw}`)
+                    : 'LoRa: no data'}
+                >
+                  <Radio className="w-3 h-3" />
+                  {!loraKnown ? '\u2014' : loraOk ? '\u2713' : loraSearching ? loraCount : '!'}
+                </span>
               </>
             )}
 
@@ -259,19 +280,52 @@ function DeviceChip({ device, expanded, onToggle, onDelete, onSetMowerIp, otaPro
   );
 }
 
+/** Menu item for the panels dropdown */
+function PanelMenuItem({ icon: Icon, label, active, color, onClick }: {
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  active: boolean;
+  color: string;
+  onClick: () => void;
+}) {
+  const bg: Record<string, string> = {
+    blue: 'bg-blue-600', amber: 'bg-amber-600', sky: 'bg-sky-600',
+    purple: 'bg-purple-600', orange: 'bg-orange-600',
+  };
+  return (
+    <button
+      onClick={onClick}
+      className={`w-full flex items-center gap-2.5 px-3 py-2 text-xs transition-colors ${
+        active ? `${bg[color] ?? 'bg-gray-600'} text-white` : 'text-gray-400 hover:text-white hover:bg-gray-700/50'
+      }`}
+    >
+      <Icon className="w-4 h-4 flex-shrink-0" />
+      <span>{label}</span>
+    </button>
+  );
+}
+
 export function DashboardPage({ devices, loading, logs, bleLogs, otaProgress, liveOutlines }: Props) {
   const { t } = useTranslation();
   const { toast } = useToast();
   const [logOpen, setLogOpen] = useState(false);
-  const [scheduleOpen, setScheduleOpen] = useState(false);
-  const [otaOpen, setOtaOpen] = useState(false);
-  const [setupOpen, setSetupOpen] = useState(false);
+  const [activePanel, setActivePanel] = useState<string | null>(null);
+  const [panelsMenuOpen, setPanelsMenuOpen] = useState(false);
   const [pathDirPreview, setPathDirPreview] = useState<number | null>(null);
   const [expandedChip, setExpandedChip] = useState<string | null>(null);
   const [pendingPolygon, setPendingPolygon] = useState<{ mapId: string; mapName: string; mapArea: Array<{ lat: number; lng: number }> } | null>(null);
   const [stopBusy, setStopBusy] = useState(false);
   const [cameraOpen, setCameraOpen] = useState(false);
   const [joystickOpen, setJoystickOpen] = useState(false);
+  const [pinBusy, setPinBusy] = useState(false);
+  const [pinError, setPinError] = useState<string | null>(null);
+  const [pinManualOpen, setPinManualOpen] = useState(false);
+
+  const togglePanel = useCallback((panel: string) => {
+    setActivePanel(prev => prev === panel ? null : panel);
+    setPanelsMenuOpen(false);
+    setPathDirPreview(null);
+  }, []);
 
   const handleMapSaved = useCallback((map: MapData) => {
     if (map.mapType === 'work' && map.mapArea.length >= 3) {
@@ -306,6 +360,30 @@ export function DashboardPage({ devices, loading, logs, bleLogs, otaProgress, li
 
   const mowerActive = mower?.online && mower.sensors.work_status && mower.sensors.work_status !== '0';
   const isMappingActive = mower?.online && mower?.sensors.start_edit_or_assistant_map_flag === '1';
+  const isPinLocked = mower?.online && (mower.sensors.error_status === 'Error (151)' || mower.sensors.error_status === '151');
+
+  const handlePinSubmit = useCallback(async (code: string) => {
+    if (!mower || pinBusy) return;
+    setPinBusy(true);
+    setPinError(null);
+    try {
+      await pinVerify(mower.sn, code);
+      toast(t('pin.unlockSent'), 'success');
+      // Server-side: markPinUnlocked → error_status 151 → 0, overlay verdwijnt automatisch
+      setPinManualOpen(false);
+      setTimeout(() => setPinBusy(false), 5000);
+    } catch {
+      setPinError(t('pin.wrongPin'));
+      setPinBusy(false);
+    }
+  }, [mower, pinBusy, t, toast]);
+
+  const handlePinMenuOpen = useCallback(async () => {
+    if (!mower?.online) return;
+    setPanelsMenuOpen(false);
+    setPinManualOpen(true);
+    setPinError(null);
+  }, [mower]);
 
   const handleEmergencyStop = useCallback(async () => {
     if (!mower) return;
@@ -331,9 +409,9 @@ export function DashboardPage({ devices, loading, logs, bleLogs, otaProgress, li
   return (
     <div className="flex flex-col h-[calc(100vh-48px)] md:h-[calc(100vh-64px)] overflow-hidden">
       {/* Toolbar */}
-      <div className="flex-shrink-0 h-10 flex items-center justify-between gap-1 px-2 md:px-3 border-b border-gray-800 bg-gray-900/80 overflow-x-auto">
+      <div className="flex-shrink-0 h-10 flex items-center justify-between gap-1 px-2 md:px-3 border-b border-gray-800 bg-gray-900/80 relative z-[10001]">
         {/* Left: device chips */}
-        <div className="flex items-center gap-1 flex-shrink-0">
+        <div className="flex items-center gap-1 min-w-0">
           {sorted.length === 0 && (
             <span className="text-xs text-gray-500">{t('devices.waitingForDevices')}</span>
           )}
@@ -350,8 +428,8 @@ export function DashboardPage({ devices, loading, logs, bleLogs, otaProgress, li
           ))}
         </div>
 
-        {/* Right: mower controls + schedule */}
-        <div className="flex items-center gap-1 md:gap-2 flex-shrink-0">
+        {/* Right: mower controls + overlays + panels menu */}
+        <div className="flex items-center gap-1 md:gap-1.5 flex-shrink-0">
           {mower && (
             <MowerControls
               sn={mower.sn}
@@ -364,59 +442,58 @@ export function DashboardPage({ devices, loading, logs, bleLogs, otaProgress, li
           )}
           {mower && (
             <button
-              onClick={() => { setScheduleOpen(!scheduleOpen); if (scheduleOpen) setPathDirPreview(null); setOtaOpen(false); setSetupOpen(false); }}
-              className={`inline-flex items-center gap-1 md:gap-1.5 text-xs h-7 px-1.5 md:px-2.5 rounded transition-colors ${
-                scheduleOpen ? 'bg-blue-600 text-white' : 'bg-gray-700/60 text-gray-400 hover:text-white'
-              }`}
-            >
-              <Calendar className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">{t('devices.schedule')}</span>
-            </button>
-          )}
-          <button
-            onClick={() => { setOtaOpen(!otaOpen); setScheduleOpen(false); setSetupOpen(false); setPathDirPreview(null); }}
-            className={`inline-flex items-center gap-1 md:gap-1.5 text-xs h-7 px-1.5 md:px-2.5 rounded transition-colors ${
-              otaOpen ? 'bg-orange-600 text-white' : 'bg-gray-700/60 text-gray-400 hover:text-white'
-            }`}
-            title="Firmware updates"
-          >
-            <HardDrive className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">OTA</span>
-          </button>
-          {mower && (
-            <button
               onClick={() => setCameraOpen(!cameraOpen)}
-              className={`inline-flex items-center gap-1 md:gap-1.5 text-xs h-7 px-1.5 md:px-2.5 rounded transition-colors ${
+              className={`inline-flex items-center justify-center w-7 h-7 rounded transition-colors ${
                 cameraOpen ? 'bg-cyan-600 text-white' : 'bg-gray-700/60 text-gray-400 hover:text-white'
               }`}
               title={t('camera.title')}
             >
               <Camera className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">{t('camera.camera')}</span>
             </button>
           )}
           {mower && (
             <button
               onClick={() => setJoystickOpen(!joystickOpen)}
-              className={`inline-flex items-center gap-1 md:gap-1.5 text-xs h-7 px-1.5 md:px-2.5 rounded transition-colors ${
+              className={`inline-flex items-center justify-center w-7 h-7 rounded transition-colors ${
                 joystickOpen ? 'bg-emerald-600 text-white' : 'bg-gray-700/60 text-gray-400 hover:text-white'
               }`}
               title={t('controls.joystick')}
             >
               <Gamepad2 className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">{t('controls.joystick')}</span>
             </button>
           )}
-          <button
-            onClick={() => { setSetupOpen(!setupOpen); setOtaOpen(false); setScheduleOpen(false); setPathDirPreview(null); }}
-            className={`inline-flex items-center gap-1 md:gap-1.5 text-xs h-7 px-1.5 md:px-2.5 rounded transition-colors ${
-              setupOpen ? 'bg-blue-600 text-white' : 'bg-gray-700/60 text-gray-400 hover:text-white'
-            }`}
-            title="Setup"
-          >
-            <Settings className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Setup</span>
-          </button>
+          {/* Panels dropdown menu */}
+          <div className="relative">
+            <button
+              onClick={() => setPanelsMenuOpen(!panelsMenuOpen)}
+              className={`inline-flex items-center justify-center gap-1 h-7 px-1.5 md:px-2 rounded transition-colors ${
+                activePanel ? 'bg-gray-600 text-white' : 'bg-gray-700/60 text-gray-400 hover:text-white'
+              }`}
+              title="Panels"
+            >
+              <Menu className="w-4 h-4" />
+              {activePanel && <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />}
+            </button>
+            {panelsMenuOpen && (
+              <>
+                <div className="fixed inset-0 z-[9999]" onClick={() => setPanelsMenuOpen(false)} />
+                <div className="absolute top-full right-0 mt-1 w-52 z-[10000] bg-gray-800 rounded-lg border border-gray-700 shadow-xl py-1 overflow-hidden">
+                  {mower && (
+                    <>
+                      <PanelMenuItem icon={Calendar} label={t('devices.schedule')} active={activePanel === 'schedule'} color="blue" onClick={() => togglePanel('schedule')} />
+                      <PanelMenuItem icon={ClipboardList} label={t('history.title')} active={activePanel === 'history'} color="amber" onClick={() => togglePanel('history')} />
+                      <PanelMenuItem icon={BarChart3} label={t('charts.title')} active={activePanel === 'charts'} color="sky" onClick={() => togglePanel('charts')} />
+                      <PanelMenuItem icon={SlidersHorizontal} label={t('settings.title')} active={activePanel === 'settings'} color="purple" onClick={() => togglePanel('settings')} />
+                      <PanelMenuItem icon={Lock} label={t('pin.checkStatus')} active={false} color="amber" onClick={handlePinMenuOpen} />
+                      <div className="my-1 border-t border-gray-700" />
+                    </>
+                  )}
+                  <PanelMenuItem icon={HardDrive} label="Firmware (OTA)" active={activePanel === 'ota'} color="orange" onClick={() => togglePanel('ota')} />
+                  <PanelMenuItem icon={Settings} label="Setup" active={activePanel === 'setup'} color="blue" onClick={() => togglePanel('setup')} />
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </div>
 
@@ -462,6 +539,16 @@ export function DashboardPage({ devices, loading, logs, bleLogs, otaProgress, li
                 {t('controls.emergencyStop')}
               </button>
             </div>
+          )}
+          {/* PIN lock keypad overlay — auto (when locked) or manual (menu button) */}
+          {mower && (isPinLocked && !mowerActive || pinManualOpen) && (
+            <PinKeypad
+              onSubmit={handlePinSubmit}
+              busy={pinBusy}
+              error={pinError}
+              onClose={pinManualOpen ? () => setPinManualOpen(false) : undefined}
+              status={pinManualOpen ? (isPinLocked ? 'locked' : 'unlocked') : undefined}
+            />
           )}
           {/* Mapping active overlay */}
           {isMappingActive && mower && (
@@ -545,16 +632,23 @@ export function DashboardPage({ devices, loading, logs, bleLogs, otaProgress, li
             </div>
           )}
         </div>
-        {/* Scheduler side panel / drawer */}
-        <MobileDrawer open={scheduleOpen && !!mower} onClose={() => { setScheduleOpen(false); setPathDirPreview(null); }} title={t('devices.schedule')}>
+        {/* Side panels (mutually exclusive via activePanel state) */}
+        <MobileDrawer open={activePanel === 'schedule' && !!mower} onClose={() => { setActivePanel(null); setPathDirPreview(null); }} title={t('devices.schedule')}>
           {mower && <Scheduler sn={mower.sn} online={mower.online} onPathDirectionChange={setPathDirPreview} />}
         </MobileDrawer>
-        {/* OTA side panel / drawer */}
-        <MobileDrawer open={otaOpen} onClose={() => setOtaOpen(false)} title="Firmware Update">
+        <MobileDrawer open={activePanel === 'history' && !!mower} onClose={() => setActivePanel(null)} title={t('history.title')}>
+          {mower && <WorkHistory sn={mower.sn} />}
+        </MobileDrawer>
+        <MobileDrawer open={activePanel === 'charts' && !!mower} onClose={() => setActivePanel(null)} title={t('charts.title')}>
+          {mower && <SignalChart sn={mower.sn} />}
+        </MobileDrawer>
+        <MobileDrawer open={activePanel === 'settings' && !!mower} onClose={() => setActivePanel(null)} title={t('settings.title')}>
+          {mower && <SettingsPanel sn={mower.sn} online={mower.online} sensors={mower.sensors} />}
+        </MobileDrawer>
+        <MobileDrawer open={activePanel === 'ota'} onClose={() => setActivePanel(null)} title="Firmware Update">
           <OtaManager devices={devices} otaProgress={otaProgress} />
         </MobileDrawer>
-        {/* Setup side panel / drawer */}
-        <MobileDrawer open={setupOpen} onClose={() => setSetupOpen(false)} title="Setup">
+        <MobileDrawer open={activePanel === 'setup'} onClose={() => setActivePanel(null)} title="Setup">
           <SetupWizard />
         </MobileDrawer>
       </div>

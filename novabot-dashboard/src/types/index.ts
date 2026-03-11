@@ -74,6 +74,27 @@ export interface Schedule {
   updatedAt: string;
 }
 
+export interface WorkRecord {
+  recordId: string;
+  dateTime: string | null;
+  workTime: number | null;
+  workArea: number | null;
+  cutGrassHeight: number | null;
+  mapNames: string | null;
+  workStatus: string | null;
+  startWay: string | null;
+  workRecordDate: string;
+}
+
+export interface SignalHistoryPoint {
+  ts: string;
+  battery: number | null;
+  wifiRssi: number | null;
+  rtkSat: number | null;
+  locQuality: number | null;
+  cpuTemp: number | null;
+}
+
 export interface MqttLogEntry {
   ts: number;
   type: 'connect' | 'disconnect' | 'subscribe' | 'publish' | 'error';

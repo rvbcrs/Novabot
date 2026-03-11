@@ -8,20 +8,22 @@ interface Props {
   online: boolean;
 }
 
-const SEND_INTERVAL = 50; // ms between movement commands
-const DEAD_ZONE = 0.05;   // ignore tiny movements
-const MAX_LINEAR = 0.5;   // m/s max forward/backward speed
-const MAX_ANGULAR = 0.8;  // rad/s max turn speed
+const SEND_INTERVAL = 200; // ms between movement commands
+const DEAD_ZONE = 0.05;    // ignore tiny movements
+const MAX_LINEAR = 0.5;    // m/s max forward/backward speed
+const MAX_ANGULAR = 0.8;   // rad/s max turn speed
 
 export function JoystickControl({ sn, online }: Props) {
   const { t } = useTranslation();
   const [active, setActive] = useState(false);
   const [thumbPos, setThumbPos] = useState({ x: 0, y: 0 });
+  const [cmdCount, setCmdCount] = useState(0);
+  const [lastError, setLastError] = useState<string | null>(null);
   const baseRef = useRef<HTMLDivElement>(null);
   const intervalRef = useRef<number | null>(null);
   const thumbRef = useRef({ x: 0, y: 0 });
   const activeRef = useRef(false);
-  const startedRef = useRef(false);
+  const modeActiveRef = useRef(false);
 
   // Keep refs in sync for interval callback
   useEffect(() => { thumbRef.current = thumbPos; }, [thumbPos]);
@@ -37,14 +39,20 @@ export function JoystickControl({ sn, online }: Props) {
     const linearSpeed = -y * MAX_LINEAR;
     const angularSpeed = -x * MAX_ANGULAR;
 
-    // mst = joystick data command (firmware field names: x_w, y_v, z_g)
+    // App sends {"mst": {"x_w": <float>, "y_v": <float>, "z_g": 0}} for continuous velocity
+    // x_w, y_v, z_g confirmed as JSON keys in firmware binary (3-char null-terminated strings)
     sendCommand(sn, {
       mst: {
         x_w: Math.round(linearSpeed * 100) / 100,
         y_v: Math.round(angularSpeed * 100) / 100,
         z_g: 0,
       },
-    }).catch(() => {});
+    }).then(() => {
+      setCmdCount(c => c + 1);
+      setLastError(null);
+    }).catch((e) => {
+      setLastError(e instanceof Error ? e.message : String(e));
+    });
   }, [sn]);
 
   const updatePosition = useCallback((clientX: number, clientY: number) => {
@@ -63,12 +71,15 @@ export function JoystickControl({ sn, online }: Props) {
   const handleStart = useCallback((clientX: number, clientY: number) => {
     if (!online) return;
     setActive(true);
+    setCmdCount(0);
+    setLastError(null);
     updatePosition(clientX, clientY);
 
-    // Send start_move:1 to activate manual control mode, then start sending mst data
-    if (!startedRef.current) {
-      sendCommand(sn, { start_move: 1 }).catch(() => {});
-      startedRef.current = true;
+    // Activate manual control mode: app sends {"start_move": <int>} via BLE
+    // Over MQTT we send {"start_move": {}} then continuous {"mst": {...}} for velocity
+    if (!modeActiveRef.current) {
+      modeActiveRef.current = true;
+      sendCommand(sn, { start_move: {} }).catch(() => {});
     }
 
     if (intervalRef.current) clearInterval(intervalRef.current);
@@ -88,15 +99,17 @@ export function JoystickControl({ sn, online }: Props) {
       intervalRef.current = null;
     }
     // Send stop_move to exit manual control mode
-    sendCommand(sn, { stop_move: {} }).catch(() => {});
-    startedRef.current = false;
+    if (modeActiveRef.current) {
+      sendCommand(sn, { stop_move: {} }).catch(() => {});
+      modeActiveRef.current = false;
+    }
   }, [sn]);
 
   // Clean up interval on unmount
   useEffect(() => {
     return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-      if (startedRef.current) {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
         sendCommand(sn, { stop_move: {} }).catch(() => {});
       }
     };
@@ -107,9 +120,15 @@ export function JoystickControl({ sn, online }: Props) {
 
   return (
     <div className="flex flex-col items-center gap-2">
-      {/* Speed indicator */}
-      <div className="text-[10px] text-gray-500 font-mono h-4 tabular-nums">
-        {active ? `${speedPct}%` : t('controls.joystickHelp')}
+      {/* Status indicator */}
+      <div className="text-[10px] font-mono h-4 tabular-nums">
+        {lastError ? (
+          <span className="text-red-400">{lastError}</span>
+        ) : active ? (
+          <span className="text-emerald-400">{speedPct}% &middot; {cmdCount} cmd</span>
+        ) : (
+          <span className="text-gray-500">{t('controls.joystickHelp')}</span>
+        )}
       </div>
 
       {/* Joystick base */}
@@ -137,10 +156,10 @@ export function JoystickControl({ sn, online }: Props) {
         </div>
 
         {/* Direction labels */}
-        <span className="absolute top-1 left-1/2 -translate-x-1/2 text-[8px] text-gray-600 pointer-events-none">N</span>
-        <span className="absolute bottom-1 left-1/2 -translate-x-1/2 text-[8px] text-gray-600 pointer-events-none">S</span>
-        <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-[8px] text-gray-600 pointer-events-none">W</span>
-        <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[8px] text-gray-600 pointer-events-none">E</span>
+        <span className="absolute top-1 left-1/2 -translate-x-1/2 text-[8px] text-gray-600 pointer-events-none">F</span>
+        <span className="absolute bottom-1 left-1/2 -translate-x-1/2 text-[8px] text-gray-600 pointer-events-none">B</span>
+        <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-[8px] text-gray-600 pointer-events-none">L</span>
+        <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[8px] text-gray-600 pointer-events-none">R</span>
 
         {/* Thumb */}
         <div

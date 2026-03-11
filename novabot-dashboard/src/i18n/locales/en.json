@@ -210,7 +210,9 @@
     "enable": "Enable",
     "sendToMower": "Send to mower",
     "weekdays": ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
-    "compass": ["N–S", "NE–SW", "E–W", "SE–NW"]
+    "compass": ["N–S", "NE–SW", "E–W", "SE–NW"],
+    "conflict": "Overlaps with: {{names}}",
+    "conflictWarning": "This schedule overlaps with existing schedules"
   },
   "sensors": {
     "work": "Work",
@@ -241,6 +243,65 @@
     "recharge": "Recharge",
     "state": "State",
     "taskMode": "Task Mode"
+  },
+  "settings": {
+    "title": "Settings",
+    "obstacleSensitivity": "Obstacle Sensitivity",
+    "maxSpeed": "Max Speed",
+    "handling": "Handling",
+    "headlight": "Headlight",
+    "headlightDesc": "Use headlight during mowing",
+    "sound": "Speaker",
+    "soundDesc": "Play sounds during mowing",
+    "low": "Low",
+    "medium": "Medium",
+    "high": "High",
+    "reset": "Reset to defaults",
+    "resetDone": "Settings reset",
+    "pin": "PIN Code",
+    "pinDesc": "Anti-theft PIN code management",
+    "pinQuery": "Query PIN",
+    "pinQuerying": "Querying...",
+    "pinSet": "Set PIN",
+    "pinVerify": "Verify PIN",
+    "pinCurrentCode": "Current PIN",
+    "pinNewCode": "New PIN",
+    "pinUnknown": "Unknown",
+    "pinSent": "PIN command sent",
+    "pinReceived": "PIN response received",
+    "pinNoResponse": "No response (timeout)",
+    "pinPlaceholder": "4 digits"
+  },
+  "pin": {
+    "locked": "PIN Lock Active",
+    "code": "PIN",
+    "unlock": "Unlock",
+    "unlocking": "Unlocking...",
+    "unlockSent": "Unlock command sent",
+    "wrongPin": "Incorrect PIN, try again",
+    "checkStatus": "PIN Lock",
+    "statusLocked": "Mower is locked",
+    "statusUnlocked": "Mower is unlocked"
+  },
+  "history": {
+    "title": "Mowing History",
+    "empty": "No mowing sessions recorded yet",
+    "duration": "{{min}} min",
+    "area": "{{area}} m\u00b2",
+    "height": "{{cm}} cm",
+    "status": "Status",
+    "date": "Date",
+    "loadMore": "Load more"
+  },
+  "charts": {
+    "title": "Signal History",
+    "battery": "Battery",
+    "wifi": "WiFi",
+    "rtkSat": "RTK Satellites",
+    "cpuTemp": "CPU Temperature",
+    "hours": "{{count}}h",
+    "days": "{{count}}d",
+    "noData": "Not enough data yet"
   },
   "ble": {
     "addDevice": "Add Device",

@@ -4,9 +4,9 @@
  */
 import { Router, Request, Response } from 'express';
 import { db } from '../db/database.js';
-import { getAllDeviceSnapshots, getDeviceSnapshot, SENSORS, getGpsTrail, clearGpsTrail, deviceCache } from '../mqtt/sensorData.js';
+import { getAllDeviceSnapshots, getDeviceSnapshot, SENSORS, getGpsTrail, clearGpsTrail, deviceCache, markPinUnlocked } from '../mqtt/sensorData.js';
 import { isDeviceOnline, writeRawPublish, getBrokerDiagnostics } from '../mqtt/broker.js';
-import { getRecentLogs } from '../dashboard/socketHandler.js';
+import { getRecentLogs, forwardToDashboard } from '../dashboard/socketHandler.js';
 import { requestMapList, requestMapOutline, publishToDevice, publishRawToDevice, publishEncryptedOnTopic, publishToTopic } from '../mqtt/mapSync.js';
 import crypto from 'crypto';
 import { generateMapZipFromDb, gpsToLocal, localToGps, parseMapZip, type GpsPoint } from '../mqtt/mapConverter.js';
@@ -903,6 +903,83 @@ dashboardRouter.post('/raw-tcp/:sn', (req: Request, res: Response) => {
   }
 });
 
+// ── Work records (mowing history) ────────────────────────────────
+
+interface WorkRecordRow {
+  record_id: string;
+  user_id: string;
+  equipment_id: string | null;
+  work_record_date: string;
+  work_status: string | null;
+  work_time: number | null;
+  work_area_m2: number | null;
+  cut_grass_height: number | null;
+  map_names: string | null;
+  start_way: string | null;
+  schedule_id: string | null;
+  week: string | null;
+  date_time: string | null;
+}
+
+// GET /api/dashboard/work-records/:sn — maaigeschiedenis
+dashboardRouter.get('/work-records/:sn', (req: Request, res: Response) => {
+  const { sn } = req.params;
+  const limit = Math.min(parseInt(req.query.limit as string) || 50, 200);
+  const offset = parseInt(req.query.offset as string) || 0;
+
+  const total = (db.prepare(
+    'SELECT COUNT(*) as cnt FROM work_records WHERE equipment_id = ?'
+  ).get(sn) as { cnt: number }).cnt;
+
+  const rows = db.prepare(
+    'SELECT * FROM work_records WHERE equipment_id = ? ORDER BY work_record_date DESC LIMIT ? OFFSET ?'
+  ).all(sn, limit, offset) as WorkRecordRow[];
+
+  res.json({
+    records: rows.map(r => ({
+      recordId: r.record_id,
+      dateTime: r.date_time,
+      workTime: r.work_time,
+      workArea: r.work_area_m2,
+      cutGrassHeight: r.cut_grass_height,
+      mapNames: r.map_names,
+      workStatus: r.work_status,
+      startWay: r.start_way,
+      workRecordDate: r.work_record_date,
+    })),
+    total,
+  });
+});
+
+// ── Signal history ──────────────────────────────────────────────
+
+// GET /api/dashboard/signal-history/:sn — signaal historie grafieken
+dashboardRouter.get('/signal-history/:sn', (req: Request, res: Response) => {
+  const { sn } = req.params;
+  const hours = Math.min(parseInt(req.query.hours as string) || 24, 168); // max 7 dagen
+
+  const rows = db.prepare(
+    `SELECT ts, battery, wifi_rssi, rtk_sat, loc_quality, cpu_temp
+     FROM signal_history
+     WHERE sn = ? AND ts >= datetime('now', ? || ' hours')
+     ORDER BY ts ASC`
+  ).all(sn, String(-hours)) as Array<{
+    ts: string; battery: number | null; wifi_rssi: number | null;
+    rtk_sat: number | null; loc_quality: number | null; cpu_temp: number | null;
+  }>;
+
+  res.json({
+    history: rows.map(r => ({
+      ts: r.ts,
+      battery: r.battery,
+      wifiRssi: r.wifi_rssi,
+      rtkSat: r.rtk_sat,
+      locQuality: r.loc_quality,
+      cpuTemp: r.cpu_temp,
+    })),
+  });
+});
+
 // ── Dashboard schedules ─────────────────────────────────────────
 
 interface ScheduleRow {
@@ -1666,6 +1743,91 @@ dashboardRouter.post('/ota/trigger/:sn', (req: Request, res: Response) => {
   }
 
   res.json({ ok: true, command: 'ota_upgrade_cmd', version: otaVersion.version, target: sn });
+});
+
+// ── PIN Code Management ─────────────────────────────────────────
+
+// POST /api/dashboard/pin/:sn/query — vraag huidige PIN op (cfg_value=0)
+dashboardRouter.post('/pin/:sn/query', (req: Request, res: Response) => {
+  const { sn } = req.params;
+  if (!isDeviceOnline(sn)) {
+    res.status(404).json({ error: 'Device is offline' });
+    return;
+  }
+  publishToDevice(sn, { dev_pin_info: { cfg_value: 0, code: '0000' } });
+  console.log(`[PIN] Query PIN voor ${sn}`);
+  res.json({ ok: true, action: 'query', cfg_value: 0 });
+});
+
+// POST /api/dashboard/pin/:sn/set — stel nieuwe PIN in (cfg_value=1)
+dashboardRouter.post('/pin/:sn/set', (req: Request, res: Response) => {
+  const { sn } = req.params;
+  const { code } = req.body as { code?: string };
+  if (!code || code.length !== 4 || !/^\d{4}$/.test(code)) {
+    res.status(400).json({ error: 'PIN moet 4 cijfers zijn' });
+    return;
+  }
+  if (!isDeviceOnline(sn)) {
+    res.status(404).json({ error: 'Device is offline' });
+    return;
+  }
+  publishToDevice(sn, { dev_pin_info: { cfg_value: 1, code } });
+  console.log(`[PIN] Set PIN voor ${sn}: ${code}`);
+  res.json({ ok: true, action: 'set', cfg_value: 1 });
+});
+
+// POST /api/dashboard/pin/:sn/verify — verifieer PIN en unlock maaier (cfg_value=2)
+// Vereist gepatchte STM32 firmware (v3.6.1+) met type=2 support.
+// Stuurt PIN naar chassis MCU; als correct → scherm gaat naar home (unlock).
+// Response: result=2 (success) of result=3 (wrong PIN).
+dashboardRouter.post('/pin/:sn/verify', (req: Request, res: Response) => {
+  const { sn } = req.params;
+  const { code } = req.body as { code?: string };
+  if (!code || code.length !== 4 || !/^\d{4}$/.test(code)) {
+    res.status(400).json({ error: 'PIN moet 4 cijfers zijn' });
+    return;
+  }
+  if (!isDeviceOnline(sn)) {
+    res.status(404).json({ error: 'Device is offline' });
+    return;
+  }
+  publishToDevice(sn, { dev_pin_info: { cfg_value: 2, code } });
+  console.log(`[PIN] Verify PIN voor ${sn}: ${code}`);
+
+  // Markeer direct als unlocked — onderdrukt error_status 151 server-side.
+  // De MCU blijft 151 rapporteren ook na unlock (flag niet gewist door patch),
+  // dus we moeten dit hier doen, niet pas bij het response.
+  const cacheChanged = markPinUnlocked(sn);
+  if (cacheChanged) {
+    const clearFields = new Map<string, string>();
+    clearFields.set('error_status', 'OK');
+    clearFields.set('error_code', 'None');
+    clearFields.set('error_msg', '');
+    forwardToDashboard(sn, clearFields);
+  }
+
+  res.json({ ok: true, action: 'verify', cfg_value: 2 });
+});
+
+// POST /api/dashboard/pin/:sn/raw — stuur raw cfg_value (voor testing)
+dashboardRouter.post('/pin/:sn/raw', (req: Request, res: Response) => {
+  const { sn } = req.params;
+  const { cfg_value, code } = req.body as { cfg_value?: number; code?: string };
+  if (cfg_value === undefined || typeof cfg_value !== 'number') {
+    res.status(400).json({ error: 'cfg_value (number) is vereist' });
+    return;
+  }
+  if (!code || code.length !== 4 || !/^\d{4}$/.test(code)) {
+    res.status(400).json({ error: 'PIN moet 4 cijfers zijn' });
+    return;
+  }
+  if (!isDeviceOnline(sn)) {
+    res.status(404).json({ error: 'Device is offline' });
+    return;
+  }
+  publishToDevice(sn, { dev_pin_info: { cfg_value, code } });
+  console.log(`[PIN] Raw PIN command voor ${sn}: cfg_value=${cfg_value}, code=${code}`);
+  res.json({ ok: true, action: 'raw', cfg_value });
 });
 
 // ── Camera proxy ──────────────────────────────────────────────────────────────

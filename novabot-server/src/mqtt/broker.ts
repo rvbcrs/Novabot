@@ -12,8 +12,8 @@ import { DeviceRegistryRow } from '../types/index.js';
 import { startMqttBridge } from '../proxy/mqttBridge.js';
 import { tryDecrypt } from './decrypt.js';
 import { startHomeAssistantBridge, forwardToHomeAssistant, publishDeviceOnline, publishDeviceOffline } from './homeassistant.js';
-import { updateDeviceData, clearDeviceData } from './sensorData.js';
-import { forwardToDashboard, emitDeviceOnline, emitDeviceOffline, pushMqttLog, emitOtaEvent } from '../dashboard/socketHandler.js';
+import { updateDeviceData, clearDeviceData, markPinUnlocked } from './sensorData.js';
+import { forwardToDashboard, emitDeviceOnline, emitDeviceOffline, pushMqttLog, emitOtaEvent, emitPinEvent } from '../dashboard/socketHandler.js';
 import { initMapSync, onMowerConnected, handleMapMessage, publishEncryptedOnTopic } from './mapSync.js';
 
 const PROXY_MODE = process.env.PROXY_MODE ?? 'local';
@@ -729,6 +729,30 @@ export async function startMqttBroker(): Promise<void> {
                 .run(String(versionStr), forwardSn);
             }
             console.log(`${C.cyan}[OTA] Stored firmware version ${versionStr} for ${forwardSn}${C.reset}`);
+          }
+        }
+        // PIN code response
+        // Maaier formaat: {"dev_pin_info_respond":{"result":0,"value":{"cfg_value":0,"code":"3053"}}}
+        const pinData = parsed.dev_pin_info_respond
+          ?? (parsed.type === 'dev_pin_info_respond' ? parsed.message : null);
+        if (pinData && forwardSn) {
+          console.log(`${C.cyan}[PIN] dev_pin_info_respond van ${forwardSn}: ${JSON.stringify(pinData)}${C.reset}`);
+          emitPinEvent(forwardSn, pinData);
+
+          // Bij succesvolle PIN verify (cfg_value=2): onderdruk error_status 151
+          // Result=2 = verify success in onze STM32 patch, maar ook result=0 accepteren
+          // (chassis_control_node kan result herinterpreteren)
+          const pinValue = pinData.value ?? pinData;
+          if (pinValue?.cfg_value === 2) {
+            const cacheChanged = markPinUnlocked(forwardSn);
+            if (cacheChanged) {
+              // Direct dashboard updaten — alle PIN-gerelateerde errors clearen
+              const clearFields = new Map<string, string>();
+              clearFields.set('error_status', 'OK');
+              clearFields.set('error_code', 'None');
+              clearFields.set('error_msg', '');
+              forwardToDashboard(forwardSn, clearFields);
+            }
           }
         }
       } catch { /* geen JSON of geen map-bericht */ }

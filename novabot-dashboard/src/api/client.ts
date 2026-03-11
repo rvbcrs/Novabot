@@ -1,4 +1,4 @@
-import type { DeviceState, SensorDef, MapData, TrailPoint, MapCalibration, Schedule } from '../types';
+import type { DeviceState, SensorDef, MapData, TrailPoint, MapCalibration, Schedule, WorkRecord, SignalHistoryPoint } from '../types';
 
 const BASE = '/api/dashboard';
 
@@ -121,6 +121,31 @@ export async function sendCommand(sn: string, command: Record<string, unknown>):
   return res.json();
 }
 
+// ── PIN Code Management ─────────────────────────────────────────
+
+export interface PinResult {
+  ok: boolean;
+  action: string;
+  cfg_value: number;
+  error?: string;
+}
+
+export async function pinQuery(sn: string): Promise<PinResult> {
+  return (await post(`${BASE}/pin/${encodeURIComponent(sn)}/query`)).json();
+}
+
+export async function pinSet(sn: string, code: string): Promise<PinResult> {
+  return (await post(`${BASE}/pin/${encodeURIComponent(sn)}/set`, { code })).json();
+}
+
+export async function pinVerify(sn: string, code: string): Promise<PinResult> {
+  return (await post(`${BASE}/pin/${encodeURIComponent(sn)}/verify`, { code })).json();
+}
+
+export async function pinRaw(sn: string, cfg_value: number, code: string): Promise<PinResult> {
+  return (await post(`${BASE}/pin/${encodeURIComponent(sn)}/raw`, { cfg_value, code })).json();
+}
+
 // ── Map Export ──────────────────────────────────────────────────
 
 export async function exportMaps(sn: string, chargingStation: { lat: number; lng: number }, chargingOrientation?: number): Promise<string> {
@@ -140,6 +165,20 @@ export async function pushMapsToMower(sn: string, chargingStation?: { lat: numbe
     const data = await res.json().catch(() => ({}));
     throw new Error(data.error ?? `HTTP ${res.status}`);
   }
+}
+
+// ── Work Records (Mowing History) ────────────────────────────────
+
+export async function fetchWorkRecords(sn: string, limit = 50, offset = 0): Promise<{ records: WorkRecord[]; total: number }> {
+  const data = await (await get(`${BASE}/work-records/${encodeURIComponent(sn)}?limit=${limit}&offset=${offset}`)).json();
+  return { records: data.records ?? [], total: data.total ?? 0 };
+}
+
+// ── Signal History ──────────────────────────────────────────────
+
+export async function fetchSignalHistory(sn: string, hours = 24): Promise<SignalHistoryPoint[]> {
+  const data = await (await get(`${BASE}/signal-history/${encodeURIComponent(sn)}?hours=${hours}`)).json();
+  return data.history ?? [];
 }
 
 // ── Schedules ──────────────────────────────────────────────────

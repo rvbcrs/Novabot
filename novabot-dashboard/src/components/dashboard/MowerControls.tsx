@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   Play, Pause, Square, PlugZap, ArrowUp, X, ChevronDown, MapPin,
-  Map as MapIcon, Lightbulb, Volume2, VolumeX,
+  Map as MapIcon,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { MapData } from '../../types';
@@ -37,19 +37,10 @@ export function MowerControls({ sn, online, sensors, onPathDirectionChange, pend
   const [busy, setBusy] = useState(false);
   const { toast } = useToast();
 
-  const [headlightLocal, setHeadlightLocal] = useState(false);
-
   const isMappingActive = sensors?.start_edit_or_assistant_map_flag === '1';
   const gpsEnabled = sensors?.gps_state === 'ENABLE';
   const locInitialized = sensors?.localization_state === 'INITIALIZED';
   const mappingReady = gpsEnabled && locInitialized;
-
-  // Headlight state: server tracked via headlight_active (gezet door dashboard.ts bij led_set commando)
-  // Lokale state voor optimistische toggle (direct visueel feedback bij klik)
-  const serverHeadlight = sensors?.headlight_active === '2';
-  useEffect(() => { setHeadlightLocal(serverHeadlight); }, [serverHeadlight]);
-  const headlightOn = headlightLocal;
-  const soundOn = sensors?.sound === '2';
 
   const compassLabels = t('controls.compass', { returnObjects: true }) as string[];
 
@@ -207,40 +198,6 @@ export function MowerControls({ sn, online, sensors, onPathDirectionChange, pend
           <MapIcon className="w-3.5 h-3.5" />
         </button>
 
-        {/* Divider */}
-        <div className="w-px h-5 bg-gray-700/60" />
-
-        {/* Headlight toggle */}
-        <button
-          onClick={() => {
-            const next = !headlightOn;
-            setHeadlightLocal(next);
-            send({ set_para_info: { headlight: next ? 2 : 0 } }, t(next ? 'controls.headlightOn' : 'controls.headlightOff'));
-          }}
-          disabled={disabled}
-          className={`${btnBase} ${
-            headlightOn
-              ? 'bg-yellow-500/30 text-yellow-300 ring-1 ring-yellow-500/50'
-              : 'bg-gray-700/60 text-gray-500 hover:text-yellow-300 hover:bg-yellow-700/30'
-          }`}
-          title={t('controls.headlight')}
-        >
-          <Lightbulb className="w-3.5 h-3.5" />
-        </button>
-
-        {/* Sound toggle */}
-        <button
-          onClick={() => send({ set_para_info: { sound: soundOn ? 0 : 2 } }, t('controls.sound'), true)}
-          disabled={disabled}
-          className={`${btnBase} ${
-            soundOn
-              ? 'bg-blue-500/30 text-blue-300 ring-1 ring-blue-500/50'
-              : 'bg-gray-700/60 text-gray-500 hover:text-blue-300 hover:bg-blue-700/30'
-          }`}
-          title={t('controls.sound')}
-        >
-          {soundOn ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
-        </button>
       </div>
 
       {/* Expanded start settings dropdown */}

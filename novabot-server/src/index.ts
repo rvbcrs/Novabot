@@ -39,6 +39,10 @@ initDb();
 // ── Firmware auto-sync (watches firmware directory → ota_versions DB) ─────────
 initFirmwareSync();
 
+// ── Signal history cleanup (verwijder records ouder dan 7 dagen) ──────────────
+import { cleanupSignalHistory } from './mqtt/sensorData.js';
+cleanupSignalHistory();
+
 // ── MQTT Broker ───────────────────────────────────────────────────────────────
 startMqttBroker().catch(err => {
   console.error('[MQTT] Broker start mislukt:', err);

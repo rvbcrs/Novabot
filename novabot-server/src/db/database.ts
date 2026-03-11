@@ -176,6 +176,25 @@ export function initDb(): void {
       updated_at      TEXT    NOT NULL DEFAULT (datetime('now'))
     );
 
+    -- Signaal historie: periodieke samples van sensor waarden per apparaat
+    CREATE TABLE IF NOT EXISTS signal_history (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      sn          TEXT    NOT NULL,
+      ts          TEXT    NOT NULL DEFAULT (datetime('now')),
+      battery     INTEGER,
+      wifi_rssi   INTEGER,
+      rtk_sat     INTEGER,
+      loc_quality INTEGER,
+      cpu_temp    INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS signal_history_sn_ts ON signal_history(sn, ts);
+
+    -- PIN unlock state: overleeft server restart, wordt gewist bij disconnect/auto-clear
+    CREATE TABLE IF NOT EXISTS pin_unlock_state (
+      sn          TEXT    NOT NULL PRIMARY KEY,
+      unlocked_at TEXT    NOT NULL DEFAULT (datetime('now'))
+    );
+
     -- Map calibratie: handmatige offset/rotatie/schaal per maaier
     CREATE TABLE IF NOT EXISTS map_calibration (
       mower_sn    TEXT    NOT NULL PRIMARY KEY,
