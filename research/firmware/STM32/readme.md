@@ -139,7 +139,7 @@ Stuurt de PIN-commando dispatcher om naar de nieuwe code.
 | Originele bytes | `01 28 08 D1` (= `CMP R0, #1` + `BNE +0x10`) |
 | Gepatchte bytes | Branch naar nieuwe code op `0x4E448` |
 
-#### 2. Patch-code (96 bytes bij file offset `0x4E448`)
+#### 2. Patch-code (118 bytes bij file offset `0x4E448`)
 
 Geplaatst in een nul-gevuld gebied binnen het CRC-bereik. De logica:
 
@@ -151,6 +151,8 @@ Geplaatst in een nul-gevuld gebied binnen het CRC-bereik. De logica:
    - Roept `get_stored_pin()` aan om de opgeslagen PIN op te halen
    - Vergelijkt elk cijfer van de ontvangen PIN met de opgeslagen PIN
    - **Match**: roept `screen_switch(0x0C)` aan om naar het home-scherm te schakelen (ONTGRENDELT!)
+   - **Match**: wist `error_flag_byte` op RAM `0x20000368` (display error state)
+   - **Match**: wist `incident_flag_byte` op RAM `0x200004CE` (serial incident report, v3.6.3)
    - **Match**: stuurt response met status=2 (verificatie geslaagd)
    - **Mismatch**: stuurt response met status=3 (verificatie mislukt)
 
@@ -169,14 +171,17 @@ Flash-adres = file offset + `0x08010000`
 | `send_response` | `0x080215CA` | `0x115CA` |
 | `type1_handler` | `0x0805613C` | `0x4613C` |
 | `exit_dispatch` | `0x0805614E` | `0x4614E` |
+| `error_flag_byte` | RAM `0x20000368` | (RAM, display error state) |
+| `incident_flag_byte` | RAM `0x200004CE` | (RAM, serial incident report) |
+| `error_flag_clear` (normaal) | `0x08052228` | `0x42228` |
+| `error_flag_set` | `0x08045D58` | `0x35D58` (schrijft naar BEIDE bytes) |
 
 ### Gepatchte binary
 
 | Eigenschap | Waarde |
 |------------|--------|
 | Bestand | `novabot_stm32f407_v3_6_0_NewMotor25082301_pin_unlock.bin` |
-| Versie | v3.6.1 (byte op `0x4763A` gewijzigd van `0x00` naar `0x01`) |
-| MD5 | `ed3e2c9065c7ce8628ecfc90a3f6c897` |
+| Versie | v3.6.3 (byte op `0x4763A` gewijzigd van `0x00` naar `0x03`) |
 
 ### Type=2 protocol (verify & unlock)
 
@@ -236,15 +241,43 @@ Om de gepatchte firmware te installeren:
 | `chassis_incident_.error_no_set_pin_code` | PIN niet geconfigureerd |
 | `no_set_pin_code` veld in MQTT status report | Geeft vergrendelstatus aan |
 
-### error_status 151 na PIN unlock
+### error_status 151 — Twee-byte error mechanisme
 
-Na een succesvolle PIN verify (type=2) schakelt het display naar het home-scherm, maar de MCU's interne `error_no_pin_code` vlag (bit 16 van `error_set_flag`) wordt NIET gewist door onze patch. De MCU blijft dus `error_status=151` rapporteren via serial, zelfs nadat het scherm unlocked is.
+De MCU houdt de PIN-vergrendelingsstatus bij in **twee aparte bytes**:
 
-**Server-side fix** (`sensorData.ts`):
+| Byte | RAM-adres | Functie | Gelezen door |
+|------|-----------|---------|--------------|
+| `error_flag_byte` | `0x20000368` | Display error state (PIN-scherm) | Touchscreen handler |
+| `incident_flag_byte` | `0x200004CE` | Serial incident report (CMD 0x20) | `chassis_control_node` |
+
+`error_flag_set()` op `0x35D58` schrijft `1` naar **BEIDE** bytes.
+De normale touchscreen PIN-unlock wist beide via de "PIN code OK!" handler op `0x42228`.
+
+**CMD 0x20 serial report**: De STM32 stuurt elke ~100ms een frame `[02 02 00 01 03 20 XX YY 03 03]` naar de ARM. De byte `XX` en `YY` bevatten incident flags. Als `incident_flag_byte` = 1, bevat het rapport `20 02 A0` wat door `chassis_control_node` vertaald wordt naar `error_status=151`.
+
+#### Versie-geschiedenis
+
+**v3.6.1**: Alleen `screen_switch(0x0C)`, geen error bytes gewist → 151 bleef permanent.
+
+**v3.6.2**: Wist `error_flag_byte` (0x20000368) → display error weg, maar `incident_flag_byte` (0x200004CE) bleef staan → MCU bleef `20 02 A0` rapporteren → `chassis_control_node` bleef `error_status=151` melden.
+
+**v3.6.3**: Wist BEIDE bytes → zowel display als serial report worden schoongemaakt na succesvolle remote verify.
+
+#### chassis_control_node blokkade
+
+**KRITIEK**: `chassis_control_node` (Linux binary) stuurt type=2 PIN commando's NIET door naar de STM32. Het ontvangt het ROS action goal, logt "Received goal request with type 2", maar schrijft NOOIT het serial frame naar `/dev/ttyACM0`. Na 1 seconde timeout retourneert het "Goal fail PinCode config fail".
+
+**Bewijs** (strace analyse):
+- `write(2, "Received goal request with type 2 code 3053")` → stderr (logged)
+- GEEN `write(4, ...)` met `0x23` PIN command byte → serial frame nooit verstuurd
+
+**Workaround**: Direct serieel via `pin_serial_test.py` of een Python service die `/dev/ttyACM0` opent, het verify frame stuurt, en `chassis_control_node` tijdelijk de serial poort afpakt.
+
+**Server-side fallback** (`sensorData.ts`):
 - `markPinUnlocked(sn)` wordt aangeroepen bij ontvangst van `dev_pin_info_respond` met `cfg_value=2`
-- Alle inkomende `error_status=151` waarden worden overschreven naar `0` ("OK")
-- De override wordt gewist bij device disconnect, zodat na een reboot de staat opnieuw geëvalueerd wordt
-- Direct na de override stuurt de server een `device:update` naar het dashboard
+- Onderdrukt `error_status=151` → `0` zolang override actief is
+- **Re-lock detectie**: telt opeenvolgende 151-meldingen. Bij >20 opeenvolgende 151's → override gewist → dashboard toont keypad
+- Override wordt ook gewist bij device disconnect
 
 ---
 
@@ -288,7 +321,7 @@ Het script:
 1. Leest de originele firmware en verifieert de CRC
 2. Controleert of de trampoline-locatie de verwachte bytes bevat
 3. Controleert of het patch-gebied schoon is (nul-bytes)
-4. Bouwt de 96-byte Thumb-2 assembly patch
+4. Bouwt de 118-byte Thumb-2 assembly patch
 5. Plaatst trampoline + patch-code in de firmware
 6. Herberekent de CRC-32
 7. Schrijft het resultaat naar `*_pin_unlock.bin`
@@ -302,6 +335,6 @@ Optioneel: als `capstone` is geinstalleerd, toont het script een disassembly ter
 | Bestand | Beschrijving |
 |---------|--------------|
 | `novabot_stm32f407_v3_6_0_NewMotor25082301.bin` | Originele stock firmware (v3.6.0) |
-| `novabot_stm32f407_v3_6_0_NewMotor25082301_pin_unlock.bin` | Gepatchte firmware met type=2 unlock (v3.6.1) |
+| `novabot_stm32f407_v3_6_0_NewMotor25082301_pin_unlock.bin` | Gepatchte firmware met type=2 unlock (v3.6.3) |
 | `patch_pin_unlock.py` | Python script dat de patch toepast |
 | `readme.md` | Dit bestand |

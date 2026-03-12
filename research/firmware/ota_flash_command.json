@@ -3,9 +3,9 @@
     "type": "full",
     "content": {
       "upgradeApp": {
-        "version": "v6.0.2-custom-16",
-        "downloadUrl": "http://192.168.0.177:3000/firmware/mower_firmware_v6.0.2-custom-16.deb",
-        "md5": "aaa897ed60ed7b4d21b528fb41c563cd"
+        "version": "v6.0.2-custom-17",
+        "downloadUrl": "http://192.168.0.177:3000/firmware/mower_firmware_v6.0.2-custom-17.deb",
+        "md5": "7a2b3d38431d3c2743a1bf9333ca41d0"
       }
     }
   }

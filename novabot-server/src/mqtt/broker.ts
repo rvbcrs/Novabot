@@ -12,8 +12,8 @@ import { DeviceRegistryRow } from '../types/index.js';
 import { startMqttBridge } from '../proxy/mqttBridge.js';
 import { tryDecrypt } from './decrypt.js';
 import { startHomeAssistantBridge, forwardToHomeAssistant, publishDeviceOnline, publishDeviceOffline } from './homeassistant.js';
-import { updateDeviceData, clearDeviceData, markPinUnlocked } from './sensorData.js';
-import { forwardToDashboard, emitDeviceOnline, emitDeviceOffline, pushMqttLog, emitOtaEvent, emitPinEvent } from '../dashboard/socketHandler.js';
+import { updateDeviceData, clearDeviceData } from './sensorData.js';
+import { forwardToDashboard, emitDeviceOnline, emitDeviceOffline, pushMqttLog, emitOtaEvent, emitPinEvent, emitExtendedEvent } from '../dashboard/socketHandler.js';
 import { initMapSync, onMowerConnected, handleMapMessage, publishEncryptedOnTopic } from './mapSync.js';
 
 const PROXY_MODE = process.env.PROXY_MODE ?? 'local';
@@ -739,27 +739,30 @@ export async function startMqttBroker(): Promise<void> {
           console.log(`${C.cyan}[PIN] dev_pin_info_respond van ${forwardSn}: ${JSON.stringify(pinData)}${C.reset}`);
           emitPinEvent(forwardSn, pinData);
 
-          // Bij succesvolle PIN verify (cfg_value=2): onderdruk error_status 151
-          // Result=2 = verify success in onze STM32 patch, maar ook result=0 accepteren
-          // (chassis_control_node kan result herinterpreteren)
-          const pinValue = pinData.value ?? pinData;
-          if (pinValue?.cfg_value === 2) {
-            const cacheChanged = markPinUnlocked(forwardSn);
-            if (cacheChanged) {
-              // Direct dashboard updaten — alle PIN-gerelateerde errors clearen
-              const clearFields = new Map<string, string>();
-              clearFields.set('error_status', 'OK');
-              clearFields.set('error_code', 'None');
-              clearFields.set('error_msg', '');
-              forwardToDashboard(forwardSn, clearFields);
-            }
-          }
+          // PIN verify response — v3.6.4 firmware patch cleart de error_byte
+          // aan STM32 kant, geen server-side suppressie meer nodig
         }
       } catch { /* geen JSON of geen map-bericht */ }
 
       const changes = updateDeviceData(forwardSn, effectiveBuf);
       forwardToHomeAssistant(packet.topic, effectiveBuf, forwardSn, changes);
       forwardToDashboard(forwardSn, changes);
+    }
+
+    // Forward extended_commands.py responses naar dashboard via Socket.io
+    if (packet.topic.startsWith('novabot/extended_response/')) {
+      const extSn = packet.topic.split('/').pop() ?? '';
+      try {
+        const parsed = JSON.parse(payloadBuf.toString());
+        const cmdName = Object.keys(parsed)[0];
+        if (cmdName) {
+          console.log(`${C.cyan}[EXT] Response van ${extSn}: ${cmdName}${C.reset}`);
+          emitExtendedEvent(extSn, cmdName, parsed[cmdName]);
+
+          // PIN verify response via serial — v3.6.4 firmware patch cleart
+          // de error_byte direct op STM32, geen server-side suppressie nodig
+        }
+      } catch { /* geen JSON */ }
     }
   });
 

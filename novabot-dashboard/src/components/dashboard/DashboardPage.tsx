@@ -27,6 +27,7 @@ import { SignalChart } from '../charts/SignalChart';
 import { deleteDevice, sendCommand, setMowerIp, pinVerify } from '../../api/client';
 import { PinKeypad } from './PinKeypad';
 import { useToast } from '../common/Toast';
+import type { PatternPlacement } from '../patterns/PatternOverlay';
 
 interface Props {
   devices: Map<string, DeviceState>;
@@ -320,6 +321,10 @@ export function DashboardPage({ devices, loading, logs, bleLogs, otaProgress, li
   const [pinBusy, setPinBusy] = useState(false);
   const [pinError, setPinError] = useState<string | null>(null);
   const [pinManualOpen, setPinManualOpen] = useState(false);
+  const [patternPlacement, setPatternPlacement] = useState<PatternPlacement | null>(null);
+  const [patternCenter, setPatternCenter] = useState<{ lat: number; lng: number } | null>(null);
+  const [patternClickActive, setPatternClickActive] = useState(false);
+  const [offsetPreview, setOffsetPreview] = useState<Array<{ lat: number; lng: number }> | null>(null);
 
   const togglePanel = useCallback((panel: string) => {
     setActivePanel(prev => prev === panel ? null : panel);
@@ -437,7 +442,11 @@ export function DashboardPage({ devices, loading, logs, bleLogs, otaProgress, li
               sensors={mower.sensors}
               onPathDirectionChange={setPathDirPreview}
               pendingPolygon={pendingPolygon}
-              onStarted={() => setPendingPolygon(null)}
+              onStarted={() => { setPendingPolygon(null); setPatternPlacement(null); setPatternCenter(null); setPatternClickActive(false); setOffsetPreview(null); }}
+              onPatternPlacementChange={setPatternPlacement}
+              onPatternModeChange={setPatternClickActive}
+              onOffsetPreviewChange={setOffsetPreview}
+              patternCenter={patternCenter}
             />
           )}
           {mower && (
@@ -526,6 +535,9 @@ export function DashboardPage({ devices, loading, logs, bleLogs, otaProgress, li
             pathDirectionPreview={pathDirPreview}
             onMapSaved={handleMapSaved}
             liveOutline={mower ? (liveOutlines.get(mower.sn) ?? null) : null}
+            patternPlacement={patternPlacement}
+            onMapClickForPattern={patternClickActive ? (c) => setPatternCenter(c) : undefined}
+            offsetPreview={offsetPreview}
           />
           {/* Emergency stop floating button */}
           {mowerActive && (

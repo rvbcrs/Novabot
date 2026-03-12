@@ -188,7 +188,7 @@ export async function fetchSchedules(sn: string): Promise<Schedule[]> {
   return data.schedules ?? [];
 }
 
-export async function createSchedule(sn: string, schedule: Omit<Schedule, 'scheduleId' | 'mowerSn' | 'createdAt' | 'updatedAt'>): Promise<Schedule> {
+export async function createSchedule(sn: string, schedule: Omit<Schedule, 'scheduleId' | 'mowerSn' | 'createdAt' | 'updatedAt' | 'lastTriggeredAt'>): Promise<Schedule> {
   const data = await (await post(`${BASE}/schedules/${encodeURIComponent(sn)}`, schedule)).json();
   return data.schedule;
 }
@@ -212,6 +212,110 @@ export async function deleteSchedule(sn: string, scheduleId: string): Promise<vo
 
 export async function sendSchedule(sn: string, scheduleId: string): Promise<void> {
   await post(`${BASE}/schedules/${encodeURIComponent(sn)}/${encodeURIComponent(scheduleId)}/send`);
+}
+
+// ── Weather ──────────────────────────────────────────────────────
+
+export interface WeatherHour {
+  time: string;
+  precipitation: number;
+  precipitation_probability: number;
+}
+
+export async function fetchWeather(lat: number, lng: number): Promise<{ hourly: { time: string[]; precipitation: number[]; precipitation_probability: number[] } }> {
+  const data = await (await get(`${BASE}/weather/${lat.toFixed(4)}/${lng.toFixed(4)}`)).json();
+  return data;
+}
+
+// ── Rain Sessions ───────────────────────────────────────────────
+
+export interface RainSession {
+  session_id: string;
+  schedule_id: string;
+  mower_sn: string;
+  state: 'paused' | 'resuming' | 'completed' | 'cancelled';
+  map_id: string | null;
+  map_name: string | null;
+  cutting_height: number;
+  path_direction: number;
+  paused_at: string;
+  resumed_at: string | null;
+}
+
+export async function fetchRainSessions(sn: string): Promise<RainSession[]> {
+  const data = await (await get(`${BASE}/rain-sessions/${encodeURIComponent(sn)}`)).json();
+  return data.sessions ?? [];
+}
+
+// ── Extended Mower Commands ────────────────────────────────────
+
+export async function navigateToPosition(sn: string, latitude: number, longitude: number, angle = 0): Promise<CommandResult> {
+  return (await post(`${BASE}/navigate-to/${encodeURIComponent(sn)}`, { latitude, longitude, angle })).json();
+}
+
+export async function stopNavigation(sn: string): Promise<CommandResult> {
+  return (await post(`${BASE}/stop-navigation/${encodeURIComponent(sn)}`)).json();
+}
+
+export async function startPatrol(sn: string): Promise<CommandResult> {
+  return (await post(`${BASE}/patrol/${encodeURIComponent(sn)}`)).json();
+}
+
+export async function stopPatrol(sn: string): Promise<CommandResult> {
+  return (await post(`${BASE}/stop-patrol/${encodeURIComponent(sn)}`)).json();
+}
+
+export async function setChargeThreshold(sn: string, threshold: number): Promise<CommandResult> {
+  return (await post(`${BASE}/charge-threshold/${encodeURIComponent(sn)}`, { threshold })).json();
+}
+
+export async function setMaxSpeed(sn: string, speed: number): Promise<CommandResult> {
+  return (await post(`${BASE}/max-speed/${encodeURIComponent(sn)}`, { speed })).json();
+}
+
+export async function previewPath(sn: string, polygonArea: Array<{ latitude: number; longitude: number }>, covDirection = 0): Promise<CommandResult> {
+  return (await post(`${BASE}/preview-path/${encodeURIComponent(sn)}`, { polygonArea, covDirection })).json();
+}
+
+// ── Virtual Walls ──────────────────────────────────────────────
+
+export interface VirtualWall {
+  wall_id: string;
+  mower_sn: string;
+  wall_name: string | null;
+  lat1: number;
+  lng1: number;
+  lat2: number;
+  lng2: number;
+  enabled: number;
+  created_at: string;
+}
+
+export async function fetchVirtualWalls(sn: string): Promise<VirtualWall[]> {
+  const data = await (await get(`${BASE}/virtual-walls/${encodeURIComponent(sn)}`)).json();
+  return data.walls ?? [];
+}
+
+export async function createVirtualWall(sn: string, wall: { wallName?: string; lat1: number; lng1: number; lat2: number; lng2: number }): Promise<{ ok: boolean; wallId: string }> {
+  return (await post(`${BASE}/virtual-walls/${encodeURIComponent(sn)}`, wall)).json();
+}
+
+export async function deleteVirtualWall(sn: string, wallId: string): Promise<void> {
+  await fetch(`${BASE}/virtual-walls/${encodeURIComponent(sn)}/${encodeURIComponent(wallId)}`, { method: 'DELETE' });
+}
+
+// ── Extended Commands (firmware Python node) ───────────────────
+
+export async function sendExtendedCommand(sn: string, command: Record<string, unknown>): Promise<CommandResult> {
+  return (await post(`${BASE}/extended/${encodeURIComponent(sn)}`, command)).json();
+}
+
+export async function rebootMower(sn: string): Promise<CommandResult> {
+  return sendExtendedCommand(sn, { set_robot_reboot: {} });
+}
+
+export async function getSystemInfo(sn: string): Promise<CommandResult> {
+  return sendExtendedCommand(sn, { get_system_info: {} });
 }
 
 // ── OTA Firmware ────────────────────────────────────────────────

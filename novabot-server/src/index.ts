@@ -11,7 +11,8 @@ initProxyLogger();
 import http from 'http';
 import path from 'path';
 import express from 'express';
-import { initDb } from './db/database.js';
+// initDb() wordt nu automatisch aangeroepen bij import van database.ts
+import './db/database.js';
 import { startMqttBroker } from './mqtt/broker.js';
 import { cloudHttpProxy } from './proxy/httpProxy.js';
 import { initDashboardSocket } from './dashboard/socketHandler.js';
@@ -33,8 +34,8 @@ import { equipmentStateRouter } from './routes/nova-data/equipmentState.js';
 import { adminRouter }        from './routes/admin.js';
 import { networkRouter }      from './routes/nova-network/network.js';
 
-// ── Initialise DB ─────────────────────────────────────────────────────────────
-initDb();
+// ── DB is al geïnitialiseerd bij import van database.ts (module-level initDb())
+// zodat module-level db.prepare() calls in sensorData.ts etc. niet falen.
 
 // ── Firmware auto-sync (watches firmware directory → ota_versions DB) ─────────
 initFirmwareSync();
@@ -48,6 +49,14 @@ startMqttBroker().catch(err => {
   console.error('[MQTT] Broker start mislukt:', err);
   process.exit(1);
 });
+
+// ── Schedule Runner (server-managed schedules met rain pause) ──────────────
+import { startScheduleRunner } from './services/scheduleRunner.js';
+startScheduleRunner();
+
+// ── Rain Monitor (actieve sessies monitoren + go_to_charge bij regen) ─────
+import { startRainMonitor } from './services/rainMonitor.js';
+startRainMonitor();
 
 // ── Express app ───────────────────────────────────────────────────────────────
 const app = express();

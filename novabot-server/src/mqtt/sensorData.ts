@@ -230,11 +230,9 @@ export function clearGpsTrail(sn: string): void {
 /**
  * Wis alle gecachte sensor data voor een apparaat (bij disconnect).
  * Hierdoor toont het dashboard geen stale waarden voor offline apparaten.
- * Wist ook de PIN-unlock override zodat na reboot de staat opnieuw geëvalueerd wordt.
  */
 export function clearDeviceData(sn: string): void {
   deviceCache.delete(sn);
-  clearPinUnlock(sn);
 }
 
 // ── Signal history sampling ──────────────────────────────────────
@@ -285,74 +283,6 @@ export function cleanupSignalHistory(): void {
     }
   } catch {
     // ignore
-  }
-}
-
-// ── PIN unlock override ─────────────────────────────────────────
-// Na succesvolle PIN verify (cfg_value=2) suppressed de server error_status 151
-// (error_no_pin_code) omdat de MCU dit intern blijft rapporteren ook al is het
-// scherm unlocked. Gepersisteerd in DB zodat het een server restart overleeft.
-//
-// Auto-clear mechanisme dekt alle edge cases:
-// - Maaier reboot → disconnect → clearDeviceData → DB + memory gewist
-// - Maaier error → non-151 error_status → auto-clear → DB + memory gewist
-// - Server restart → laadt uit DB → 151 blijft onderdrukt (correct)
-
-const pinUnlockedDevices = new Set<string>();
-
-// DB statements voor PIN unlock state
-const pinInsertStmt = db.prepare(`INSERT OR REPLACE INTO pin_unlock_state (sn) VALUES (?)`);
-const pinDeleteStmt = db.prepare(`DELETE FROM pin_unlock_state WHERE sn = ?`);
-const pinLoadStmt = db.prepare(`SELECT sn FROM pin_unlock_state`);
-
-// Herstel PIN unlock state uit DB bij module load (na server restart)
-try {
-  const rows = pinLoadStmt.all() as Array<{ sn: string }>;
-  for (const row of rows) {
-    pinUnlockedDevices.add(row.sn);
-  }
-  if (rows.length > 0) {
-    console.log(`[PIN] Restored ${rows.length} PIN-unlock override(s) from DB: ${rows.map(r => r.sn).join(', ')}`);
-  }
-} catch {
-  // DB niet klaar (bijv. initDb nog niet aangeroepen) — wordt later hersteld
-}
-
-/**
- * Markeer een device als PIN-unlocked → error_status 151 wordt onderdrukt.
- * Retourneert true als de cache daadwerkelijk gewijzigd is (voor directe dashboard emit).
- */
-export function markPinUnlocked(sn: string): boolean {
-  pinUnlockedDevices.add(sn);
-  try { pinInsertStmt.run(sn); } catch { /* ignore */ }
-  console.log(`[PIN] Marked ${sn} as PIN-unlocked, suppressing error 151`);
-
-  // Direct alle PIN-gerelateerde error velden overschrijven in cache
-  const snValues = deviceCache.get(sn);
-  if (!snValues) return false;
-
-  let changed = false;
-  if (snValues.get('error_status') === '151') {
-    snValues.set('error_status', '0');
-    changed = true;
-  }
-  if (snValues.get('error_code') === '151') {
-    snValues.set('error_code', '0');
-    changed = true;
-  }
-  const msg = snValues.get('error_msg') ?? '';
-  if (msg.toLowerCase().includes('pin')) {
-    snValues.set('error_msg', '');
-    changed = true;
-  }
-  return changed;
-}
-
-/** Wis de PIN-unlock override (bij disconnect of wanneer de maaier zelf error_status clearet). */
-export function clearPinUnlock(sn: string): void {
-  if (pinUnlockedDevices.delete(sn)) {
-    try { pinDeleteStmt.run(sn); } catch { /* ignore */ }
-    console.log(`[PIN] Cleared PIN-unlock override for ${sn}`);
   }
 }
 
@@ -423,24 +353,7 @@ export function updateDeviceData(sn: string, payload: Buffer): Map<string, strin
     if (value === undefined || value === null) continue;
     if (typeof value === 'object') continue; // skip arrays/objects (bijv. timer_task)
 
-    let strValue = String(value);
-
-    // PIN unlock override logica
-    if (field === 'error_status' && pinUnlockedDevices.has(sn)) {
-      if (strValue === '151') {
-        // MCU rapporteert nog steeds 151 → onderdrukken
-        strValue = '0';
-      } else {
-        // Maaier rapporteert een ANDERE error_status (bijv. 0 = OK, of iets anders)
-        // → de unlock heeft gewerkt, maaier draait normaal. Clear de override zodat
-        // een toekomstige 151 (na error/reboot) WEL het keypad toont.
-        clearPinUnlock(sn);
-      }
-    }
-    if (pinUnlockedDevices.has(sn)) {
-      if (field === 'error_code' && strValue === '151') strValue = '0';
-      if (field === 'error_msg' && strValue.toLowerCase().includes('pin')) strValue = '';
-    }
+    const strValue = String(value);
 
     if (snValues.get(field) === strValue) continue; // ongewijzigd
 

@@ -1,19 +1,25 @@
 # Architecture Overview
 
+!!! warning "Novabot Cloud Offline (March 2026)"
+    Both `app.lfibot.com` and `mqtt.lfibot.com` are unreachable since March 8, 2026. This local server replacement is now the only way to keep Novabot devices operational.
+
 ## System Diagram
 
 ```mermaid
 graph TB
     subgraph Internet
-        Cloud[app.lfibot.com<br/>Cloud API Server]
-        MQTT_Cloud[mqtt.lfibot.com<br/>Cloud MQTT Broker]
+        Cloud[app.lfibot.com<br/>Cloud API Server<br/>❌ OFFLINE since March 2026]
+        MQTT_Cloud[mqtt.lfibot.com<br/>Cloud MQTT Broker<br/>❌ OFFLINE since March 2026]
     end
 
-    subgraph Local Network
-        DNS[novabot-dns<br/>dnsmasq Docker]
+    subgraph "Docker Container (Mac/NAS/RPi)"
+        DNS[dnsmasq<br/>DNS rewrite *.lfibot.com]
         Server[novabot-server<br/>Express + Aedes MQTT]
         Dashboard[novabot-dashboard<br/>React + Leaflet]
-        HA[Home Assistant<br/>MQTT Bridge]
+    end
+
+    subgraph "Host Machine (native)"
+        Bootstrap[Bootstrap Wizard<br/>BLE provisioning + mDNS]
     end
 
     subgraph Devices
@@ -22,12 +28,17 @@ graph TB
     end
 
     App[Novabot App<br/>Flutter v2.3.8/v2.4.0]
+    HA[Home Assistant<br/>MQTT Bridge]
 
     DNS -->|Redirects *.lfibot.com| Server
     App -->|HTTP REST API| Server
     App -->|MQTT port 1883| Server
     App <-->|BLE GATT| Charger
     App <-->|BLE GATT| Mower
+    Bootstrap <-->|BLE provisioning| Charger
+    Bootstrap <-->|BLE provisioning| Mower
+    Bootstrap -->|mDNS opennovabot.local| Mower
+    Mower -->|mDNS discovery| Bootstrap
     Charger -->|MQTT plain JSON| Server
     Mower -->|MQTT AES-128-CBC| Server
     Charger <-->|LoRa 433MHz| Mower
@@ -43,26 +54,26 @@ graph TB
 
 ```mermaid
 graph LR
-    subgraph "App ↔ Server"
+    subgraph "App <-> Server"
         A1[HTTP REST<br/>Port 3000]
         A2[MQTT<br/>Port 1883]
     end
 
-    subgraph "Server ↔ Dashboard"
+    subgraph "Server <-> Dashboard"
         B1[HTTP REST<br/>Port 3000]
         B2[Socket.io<br/>WebSocket]
     end
 
-    subgraph "Charger ↔ Server"
+    subgraph "Charger <-> Server"
         C1[MQTT Plain JSON<br/>Port 1883]
     end
 
-    subgraph "Mower ↔ Server"
+    subgraph "Mower <-> Server"
         D1[MQTT AES-128-CBC<br/>Port 1883]
         D2[HTTP Uploads<br/>Port 3000]
     end
 
-    subgraph "Charger ↔ Mower"
+    subgraph "Charger <-> Mower"
         E1[LoRa 433MHz<br/>Binary packets]
         E2[RTK GPS Relay<br/>NMEA via LoRa]
     end
@@ -91,13 +102,54 @@ graph LR
 | Maps | Leaflet + PDOK aerial imagery |
 | Real-time | Socket.io client |
 
-### DNS (`novabot-dns/`)
+### Bootstrap Wizard (`bootstrap/`)
+
+| Layer | Technology |
+|-------|-----------|
+| Runtime | Node.js + TypeScript |
+| BLE | @stoprocent/noble (native) + Web BLE (browser fallback) |
+| mDNS | Bonjour/Avahi advertisement |
+| Purpose | First-time firmware patching, BLE provisioning, mDNS `opennovabot.local` |
+
+### DNS (inside Docker container)
 
 | Layer | Technology |
 |-------|-----------|
 | Container | Alpine Linux (~8MB image) |
 | DNS | dnsmasq |
-| Purpose | Redirect `*.lfibot.com` → local server IP |
+| Purpose | Redirect `*.lfibot.com` to local server IP |
+
+## Distribution Model
+
+The project uses a Docker-based distribution where the server runs on the user's local network (Mac/NAS/Raspberry Pi), NOT on the mower itself.
+
+### Why Not On The Mower?
+
+- CPU load impacts mowing performance
+- Battery drain from running Node.js server
+- Heat buildup from continuous server operation
+- Brick risk if server crashes
+- No dashboard access when mower is offline/sleeping
+
+### Components
+
+| Component | Runs On | Purpose |
+|-----------|---------|---------|
+| **Docker container** | Mac/NAS/RPi | novabot-server + dashboard + dnsmasq |
+| **Bootstrap wizard** | Host machine (native) | Initial setup, firmware patching, mDNS advertising |
+| **Custom mower firmware** | Mower | SSH, URL patches, camera, mDNS discovery |
+
+### Server Discovery
+
+The mower finds the local server via a fallback cascade (custom firmware v6.0.2-custom-16+):
+
+1. **mDNS query** for `opennovabot.local` (8 second timeout)
+2. **Last-known IP** from previous successful connection
+3. **Fallback host** (hardcoded during firmware build)
+4. **Skip** -- mower continues without server connection
+
+!!! info "mDNS runs on the host, not in Docker"
+    The bootstrap wizard advertises `opennovabot.local` via mDNS on the host machine. Docker bridge networking blocks multicast on macOS, so mDNS runs natively in the bootstrap tool, not inside Docker.
 
 ## Database Schema
 
@@ -110,9 +162,10 @@ graph LR
 | `maps` | Map metadata (polygons stored as JSON) |
 | `map_uploads` | Fragmented map upload tracking |
 | `cut_grass_plans` | Mowing schedules per device |
-| `robot_messages` | Device → user messages |
+| `robot_messages` | Device to user messages |
 | `work_records` | Mowing session history |
 | `equipment_lora_cache` | Cached LoRa parameters (survives unbind) |
 | `ota_versions` | OTA firmware versions |
 | `map_calibration` | Manual map offset/rotation/scale per mower |
 | `dashboard_schedules` | Dashboard mowing schedules (CRUD + MQTT push) |
+| `virtual_walls` | No-go zones / virtual boundaries per mower |

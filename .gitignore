@@ -23,6 +23,9 @@ bootstrap/dist/
 bootstrap/wizard/node_modules/
 bootstrap/wizard/dist/
 
+# BestMow firmware binaries (100MB+)
+research/firmware/bestmow/
+
 # Mower firmware — skip PGM occupancy grids (large)
 research/mower_firmware/**/*.pgm
 research/mower_firmware/ota_lib/

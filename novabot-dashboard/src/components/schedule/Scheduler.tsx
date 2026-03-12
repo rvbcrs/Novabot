@@ -1,13 +1,14 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Clock, Plus, Trash2, Send, X, ChevronRight, Calendar,
-  Compass, ArrowUp, AlertTriangle,
+  Compass, ArrowUp, AlertTriangle, CloudRain, RefreshCw, Ruler,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { Schedule, MapData } from '../../types';
-import { fetchSchedules, createSchedule, updateSchedule, deleteSchedule, sendSchedule, fetchMaps } from '../../api/client';
+import type { RainSession } from '../../api/client';
+import { fetchSchedules, createSchedule, updateSchedule, deleteSchedule, sendSchedule, fetchMaps, fetchRainSessions } from '../../api/client';
 
-const DIR_DEGREES = [0, 45, 90, 135];
+const DIR_DEGREES = [0, 45, 90, 135, 180, 225, 270, 315];
 
 /** Check of twee tijdranges overlappen (HH:MM format) */
 function timesOverlap(s1: string, e1: string | null, s2: string, e2: string | null): boolean {
@@ -50,6 +51,13 @@ interface ScheduleForm {
   mapName: string;
   cuttingHeight: number;
   pathDirection: number;
+  alternateDirection: boolean;
+  alternateStep: number;
+  edgeOffset: number;
+  rainPause: boolean;
+  rainThresholdMm: number;
+  rainThresholdProbability: number;
+  rainCheckHours: number;
 }
 
 const defaultForm: ScheduleForm = {
@@ -61,12 +69,20 @@ const defaultForm: ScheduleForm = {
   mapName: '',
   cuttingHeight: 40,
   pathDirection: 0,
+  alternateDirection: false,
+  alternateStep: 90,
+  edgeOffset: 0,
+  rainPause: false,
+  rainThresholdMm: 0.5,
+  rainThresholdProbability: 50,
+  rainCheckHours: 2,
 };
 
 export function Scheduler({ sn, online, onPathDirectionChange }: Props) {
   const { t } = useTranslation();
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [maps, setMaps] = useState<MapData[]>([]);
+  const [rainSessions, setRainSessions] = useState<RainSession[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState<ScheduleForm>(defaultForm);
   const [saving, setSaving] = useState(false);
@@ -96,6 +112,15 @@ export function Scheduler({ sn, online, onPathDirectionChange }: Props) {
   useEffect(() => {
     fetchSchedules(sn).then(setSchedules).catch(() => {});
     fetchMaps(sn).then(m => setMaps(m.filter(x => x.mapArea.length >= 3))).catch(() => {});
+    fetchRainSessions(sn).then(setRainSessions).catch(() => {});
+  }, [sn]);
+
+  // Poll rain sessions elke 30s (ze veranderen door achtergrond weather checks)
+  useEffect(() => {
+    const id = setInterval(() => {
+      fetchRainSessions(sn).then(setRainSessions).catch(() => {});
+    }, 30_000);
+    return () => clearInterval(id);
   }, [sn]);
 
   const handleCreate = useCallback(async () => {
@@ -114,6 +139,13 @@ export function Scheduler({ sn, online, onPathDirectionChange }: Props) {
         pathDirection: form.pathDirection,
         workMode: 0,
         taskMode: 0,
+        alternateDirection: form.alternateDirection,
+        alternateStep: form.alternateStep,
+        edgeOffset: form.edgeOffset,
+        rainPause: form.rainPause,
+        rainThresholdMm: form.rainThresholdMm,
+        rainThresholdProbability: form.rainThresholdProbability,
+        rainCheckHours: form.rainCheckHours,
       });
       setSchedules(prev => [...prev, s]);
       setShowForm(false);
@@ -269,7 +301,7 @@ export function Scheduler({ sn, online, onPathDirectionChange }: Props) {
           </div>
 
           {/* Path direction */}
-          <div className="mb-4">
+          <div className="mb-3">
             <div className="flex items-center justify-between">
               <label className="text-[10px] text-gray-500 uppercase tracking-wide">{t('schedule.pathDirection')}</label>
               <span className="text-[11px] text-gray-300 font-mono inline-flex items-center gap-1">
@@ -277,30 +309,155 @@ export function Scheduler({ sn, online, onPathDirectionChange }: Props) {
                 {form.pathDirection}&deg;
               </span>
             </div>
-            <div className="flex gap-1 mt-1 mb-1">
+            <div className="grid grid-cols-4 gap-1 mt-1 mb-1">
               {DIR_DEGREES.map((deg, i) => (
                 <button
                   key={deg}
                   onClick={() => { setForm(prev => ({ ...prev, pathDirection: deg })); onPathDirectionChange?.(deg); }}
-                  className={`flex-1 text-[10px] py-1 rounded transition-colors ${
+                  className={`text-[9px] py-1 rounded transition-colors ${
                     form.pathDirection === deg
                       ? 'bg-blue-600 text-white font-medium'
                       : 'bg-gray-900 text-gray-500 hover:text-gray-300 border border-gray-700'
                   }`}
                 >
-                  {compassLabels[i]}
+                  {compassLabels[i] ?? `${deg}°`}
                 </button>
               ))}
             </div>
             <input
               type="range"
               min={0}
-              max={180}
+              max={360}
               step={5}
               value={form.pathDirection}
               onChange={e => { const v = parseInt(e.target.value); setForm(prev => ({ ...prev, pathDirection: v })); onPathDirectionChange?.(v); }}
               className="w-full h-1.5 accent-blue-500 bg-gray-700 rounded-full appearance-none cursor-pointer"
             />
+          </div>
+
+          {/* Alternate direction */}
+          <div className="mb-3">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={form.alternateDirection}
+                onChange={e => setForm(prev => ({ ...prev, alternateDirection: e.target.checked }))}
+                className="w-3.5 h-3.5 rounded accent-blue-500 bg-gray-900 border-gray-700"
+              />
+              <span className="text-[11px] text-gray-300">{t('schedule.alternateDirection')}</span>
+              <RefreshCw className="w-3 h-3 text-gray-500" />
+            </label>
+            {form.alternateDirection && (
+              <div className="flex items-center gap-2 mt-1.5 ml-5">
+                <span className="text-[10px] text-gray-500">{t('schedule.alternateStep')}</span>
+                {[45, 90, 180].map(step => (
+                  <button
+                    key={step}
+                    onClick={() => setForm(prev => ({ ...prev, alternateStep: step }))}
+                    className={`text-[10px] px-2 py-0.5 rounded transition-colors ${
+                      form.alternateStep === step
+                        ? 'bg-blue-600 text-white font-medium'
+                        : 'bg-gray-900 text-gray-500 hover:text-gray-300 border border-gray-700'
+                    }`}
+                  >
+                    +{step}&deg;
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Edge offset */}
+          <div className="mb-3">
+            <div className="flex items-center justify-between">
+              <label className="text-[10px] text-gray-500 uppercase tracking-wide inline-flex items-center gap-1">
+                <Ruler className="w-3 h-3" />
+                {t('schedule.edgeOffset')}
+              </label>
+              <span className="text-[11px] text-gray-300 font-mono">
+                {form.edgeOffset > 0 ? '+' : ''}{form.edgeOffset.toFixed(2)} m
+              </span>
+            </div>
+            <input
+              type="range"
+              min={-0.5}
+              max={0.5}
+              step={0.05}
+              value={form.edgeOffset}
+              onChange={e => setForm(prev => ({ ...prev, edgeOffset: parseFloat(e.target.value) }))}
+              className="w-full h-1.5 mt-1 accent-blue-500 bg-gray-700 rounded-full appearance-none cursor-pointer"
+            />
+            <div className="flex justify-between text-[9px] text-gray-600 mt-0.5">
+              <span>{t('schedule.edgeOffsetShrink')}</span>
+              <span>{t('schedule.edgeOffsetExpand')}</span>
+            </div>
+          </div>
+
+          {/* Rain pause */}
+          <div className="mb-4">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={form.rainPause}
+                onChange={e => setForm(prev => ({ ...prev, rainPause: e.target.checked }))}
+                className="w-3.5 h-3.5 rounded accent-blue-500 bg-gray-900 border-gray-700"
+              />
+              <span className="text-[11px] text-gray-300">{t('schedule.rainPause')}</span>
+              <CloudRain className="w-3 h-3 text-blue-400" />
+            </label>
+            {form.rainPause && (
+              <div className="mt-2 ml-5 space-y-2">
+                {/* Rain threshold mm */}
+                <div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] text-gray-500">{t('schedule.rainThreshold')}</span>
+                    <span className="text-[10px] text-gray-400 font-mono">{form.rainThresholdMm.toFixed(1)} mm/h</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={0.1}
+                    max={5}
+                    step={0.1}
+                    value={form.rainThresholdMm}
+                    onChange={e => setForm(prev => ({ ...prev, rainThresholdMm: parseFloat(e.target.value) }))}
+                    className="w-full h-1 accent-blue-500 bg-gray-700 rounded-full appearance-none cursor-pointer"
+                  />
+                </div>
+                {/* Rain probability */}
+                <div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] text-gray-500">{t('schedule.rainProbability')}</span>
+                    <span className="text-[10px] text-gray-400 font-mono">{form.rainThresholdProbability}%</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={10}
+                    max={90}
+                    step={5}
+                    value={form.rainThresholdProbability}
+                    onChange={e => setForm(prev => ({ ...prev, rainThresholdProbability: parseInt(e.target.value) }))}
+                    className="w-full h-1 accent-blue-500 bg-gray-700 rounded-full appearance-none cursor-pointer"
+                  />
+                </div>
+                {/* Check hours ahead */}
+                <div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] text-gray-500">{t('schedule.rainCheckHours')}</span>
+                    <span className="text-[10px] text-gray-400 font-mono">{form.rainCheckHours}h</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={1}
+                    max={6}
+                    step={1}
+                    value={form.rainCheckHours}
+                    onChange={e => setForm(prev => ({ ...prev, rainCheckHours: parseInt(e.target.value) }))}
+                    className="w-full h-1 accent-blue-500 bg-gray-700 rounded-full appearance-none cursor-pointer"
+                  />
+                </div>
+                <div className="text-[9px] text-blue-400/60 italic">{t('schedule.serverManaged')}</div>
+              </div>
+            )}
           </div>
 
           {/* Conflict warning */}
@@ -334,6 +491,24 @@ export function Scheduler({ sn, online, onPathDirectionChange }: Props) {
               {saving ? t('schedule.saving') : t('schedule.create')}
             </button>
           </div>
+        </div>
+      )}
+
+      {/* Active rain sessions banner */}
+      {rainSessions.length > 0 && (
+        <div className="px-4 py-2.5 border-b border-blue-800/30 bg-blue-900/20">
+          {rainSessions.map(rs => (
+            <div key={rs.session_id} className="flex items-center gap-2 text-[11px]">
+              <CloudRain className="w-4 h-4 text-blue-400 animate-pulse" />
+              <span className="text-blue-300 font-medium">{t('schedule.rainPausedActive')}</span>
+              <span className="text-blue-400/70">
+                {new Date(rs.paused_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+              </span>
+              {rs.map_name && (
+                <span className="text-blue-400/50 truncate">• {rs.map_name}</span>
+              )}
+            </div>
+          ))}
         </div>
       )}
 
@@ -408,8 +583,27 @@ export function Scheduler({ sn, online, onPathDirectionChange }: Props) {
               <span className="inline-flex items-center gap-0.5">
                 <Compass className="w-3 h-3" />
                 {s.pathDirection}&deg;
+                {s.alternateDirection && <RefreshCw className="w-2.5 h-2.5 text-blue-400" />}
               </span>
               <span>{(s.cuttingHeight / 10).toFixed(1)} cm</span>
+              {s.edgeOffset !== 0 && (
+                <span className="inline-flex items-center gap-0.5 text-emerald-400">
+                  <Ruler className="w-2.5 h-2.5" />
+                  {s.edgeOffset > 0 ? '+' : ''}{s.edgeOffset.toFixed(2)}m
+                </span>
+              )}
+              {s.rainPause && (
+                <span className={`inline-flex items-center gap-0.5 ${
+                  rainSessions.some(rs => rs.schedule_id === s.scheduleId) ? 'text-blue-300' : 'text-blue-400'
+                }`}>
+                  <CloudRain className={`w-3 h-3 ${
+                    rainSessions.some(rs => rs.schedule_id === s.scheduleId) ? 'animate-pulse' : ''
+                  }`} />
+                  {rainSessions.some(rs => rs.schedule_id === s.scheduleId) && (
+                    <span className="text-[9px] text-blue-300">{t('schedule.rainPaused')}</span>
+                  )}
+                </span>
+              )}
               {s.scheduleName && (
                 <>
                   <span className="text-gray-600">|</span>

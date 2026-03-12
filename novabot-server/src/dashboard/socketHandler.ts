@@ -128,6 +128,14 @@ export function emitOtaEvent(sn: string, eventType: 'state' | 'version', data: u
   io?.emit('ota:event', { sn, eventType, data, timestamp: Date.now() });
 }
 
+export function emitScheduleEvent(event: string, data: Record<string, unknown>): void {
+  io?.emit(event, { ...data, timestamp: Date.now() });
+}
+
 export function emitPinEvent(sn: string, data: unknown): void {
   io?.emit('pin:event', { sn, data, timestamp: Date.now() });
+}
+
+export function emitExtendedEvent(sn: string, command: string, data: unknown): void {
+  io?.emit('extended:response', { sn, command, data, timestamp: Date.now() });
 }

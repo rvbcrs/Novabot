@@ -70,6 +70,14 @@ export interface Schedule {
   pathDirection: number;
   workMode: number;
   taskMode: number;
+  alternateDirection: boolean;
+  alternateStep: number;
+  edgeOffset: number;
+  rainPause: boolean;
+  rainThresholdMm: number;
+  rainThresholdProbability: number;
+  rainCheckHours: number;
+  lastTriggeredAt: string | null;
   createdAt: string;
   updatedAt: string;
 }

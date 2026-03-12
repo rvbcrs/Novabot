@@ -62,19 +62,26 @@ Resume paused navigation.
 
 ### navigate_to_position
 
-Navigate to a specific position. More explicit than `start_navigation`.
+Navigate to a specific GPS position with optional arrival angle. More explicit than `start_navigation`.
 
 !!! note "Discovered in mower firmware"
-    This command was found in the `mqtt_node` binary and is separate from `start_navigation`.
+    This command was found in the `mqtt_node` binary and is separate from `start_navigation`. It supports an `angle` parameter for the desired heading at arrival.
 
 ```json title="Command"
 {
   "navigate_to_position": {
     "latitude": 52.1409,
-    "longitude": 6.2310
+    "longitude": 6.2310,
+    "angle": 0.0
   }
 }
 ```
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `latitude` | float | Yes | Target GPS latitude (WGS84) |
+| `longitude` | float | Yes | Target GPS longitude (WGS84) |
+| `angle` | float | No | Desired heading at arrival (degrees, default 0.0) |
 
 ```json title="Response"
 {

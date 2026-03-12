@@ -6,12 +6,20 @@ import {
   Battery, BatteryCharging, BatteryLow, BatteryFull, Layers,
   SlidersHorizontal, Save, X, RotateCcw, Pencil, Check, Scissors, Navigation,
   ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Download, Flame, Upload,
+  Fence, Target, XCircle,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { MapData, TrailPoint, MapCalibration } from '../../types';
-import { fetchMaps, fetchAllMaps, fetchTrail, clearTrail, fetchCalibration, saveCalibration, deleteMap, renameMap, updateMapArea, createMap, exportMaps, pushMapsToMower } from '../../api/client';
+import {
+  fetchMaps, fetchAllMaps, fetchTrail, clearTrail, fetchCalibration, saveCalibration,
+  deleteMap, renameMap, updateMapArea, createMap, exportMaps, pushMapsToMower,
+  navigateToPosition, stopNavigation,
+  fetchVirtualWalls, createVirtualWall, deleteVirtualWall,
+  type VirtualWall,
+} from '../../api/client';
 import { useToast } from '../common/Toast';
 import { PolygonEditor } from './PolygonEditor';
+import { PatternOverlay, type PatternPlacement } from '../patterns/PatternOverlay';
 
 // Fix Leaflet default marker icons in Vite
 import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png';
@@ -81,6 +89,12 @@ interface Props {
   onMapSaved?: (map: MapData) => void;
   /** Live growing polygon boundary during autonomous mapping (report_state_map_outline) */
   liveOutline?: Array<{ lat: number; lng: number }> | null;
+  /** Pattern placement preview on the map */
+  patternPlacement?: PatternPlacement | null;
+  /** Callback when user clicks on map to place a pattern */
+  onMapClickForPattern?: (center: { lat: number; lng: number }) => void;
+  /** Offset polygon preview (dashed) */
+  offsetPreview?: Array<{ lat: number; lng: number }> | null;
 }
 
 function wifiColor(rssi: number): string {
@@ -416,7 +430,61 @@ function ChargerPlacer({ onPlace }: { onPlace: (lat: number, lng: number) => voi
 // ── Nudge step: ~0.5m in degrees ─────────────────────────────────
 const NUDGE_STEP = 0.000005; // ~0.55m lat, ~0.35m lng at 52°N
 
-export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signals, mowing, pathDirectionPreview, onMapSaved, liveOutline }: Props) {
+/** Click handler for pattern placement */
+function PatternClickHandler({ onClick }: { onClick: (center: { lat: number; lng: number }) => void }) {
+  const map = useMap();
+  useEffect(() => {
+    const handler = (e: L.LeafletMouseEvent) => onClick({ lat: e.latlng.lat, lng: e.latlng.lng });
+    map.on('click', handler);
+    map.getContainer().style.cursor = 'crosshair';
+    return () => { map.off('click', handler); map.getContainer().style.cursor = ''; };
+  }, [map, onClick]);
+  return null;
+}
+
+/** Click handler for navigate-to mode */
+function NavigateClickHandler({ onClick }: { onClick: (lat: number, lng: number) => void }) {
+  const map = useMap();
+  useEffect(() => {
+    const handler = (e: L.LeafletMouseEvent) => onClick(e.latlng.lat, e.latlng.lng);
+    map.on('click', handler);
+    map.getContainer().style.cursor = 'crosshair';
+    return () => { map.off('click', handler); map.getContainer().style.cursor = ''; };
+  }, [map, onClick]);
+  return null;
+}
+
+/** Click handler for virtual wall drawing (two-point rectangle) */
+function WallDrawClickHandler({ onPoint }: { onPoint: (lat: number, lng: number) => void }) {
+  const map = useMap();
+  useEffect(() => {
+    const handler = (e: L.LeafletMouseEvent) => onPoint(e.latlng.lat, e.latlng.lng);
+    map.on('click', handler);
+    map.getContainer().style.cursor = 'crosshair';
+    return () => { map.off('click', handler); map.getContainer().style.cursor = ''; };
+  }, [map, onPoint]);
+  return null;
+}
+
+/** Navigate-to target icon */
+function makeTargetIcon() {
+  return L.divIcon({
+    className: '',
+    html: `<div style="width:32px;height:32px">
+      <svg viewBox="0 0 32 32" width="32" height="32">
+        <circle cx="16" cy="16" r="12" fill="#3b82f6" stroke="white" stroke-width="2" opacity="0.85"/>
+        <circle cx="16" cy="16" r="5" fill="white" opacity="0.9"/>
+        <circle cx="16" cy="16" r="2" fill="#3b82f6"/>
+      </svg>
+    </div>`,
+    iconSize: [32, 32],
+    iconAnchor: [16, 16],
+  });
+}
+
+const targetIcon = makeTargetIcon();
+
+export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signals, mowing, pathDirectionPreview, onMapSaved, liveOutline, patternPlacement, onMapClickForPattern, offsetPreview }: Props) {
   const { t } = useTranslation();
   const { toast } = useToast();
   const [maps, setMaps] = useState<MapData[]>([]);
@@ -434,6 +502,15 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
 
   // Place charger mode
   const [placingCharger, setPlacingCharger] = useState(false);
+
+  // Navigate-to mode
+  const [navigateMode, setNavigateMode] = useState(false);
+  const [navigateTarget, setNavigateTarget] = useState<{ lat: number; lng: number } | null>(null);
+
+  // Virtual walls
+  const [walls, setWalls] = useState<VirtualWall[]>([]);
+  const [wallDrawMode, setWallDrawMode] = useState(false);
+  const [wallFirstCorner, setWallFirstCorner] = useState<{ lat: number; lng: number } | null>(null);
 
   // Calibration state
   const [savedCal, setSavedCal] = useState<MapCalibration>(DEFAULT_CAL);
@@ -464,6 +541,13 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
         }
       }).catch(() => setMaps([]));
       setTrail([]);
+    }
+  }, [sn]);
+
+  // Fetch virtual walls
+  useEffect(() => {
+    if (sn) {
+      fetchVirtualWalls(sn).then(setWalls).catch(() => setWalls([]));
     }
   }, [sn]);
 
@@ -663,6 +747,52 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
       .finally(() => setPushing(false));
   }, [sn, resolvedChargerLat, resolvedChargerLng, chargerHasGps, t]);
 
+  // Navigate-to handler
+  const handleNavigateClick = useCallback((lat: number, lng: number) => {
+    setNavigateTarget({ lat, lng });
+    setNavigateMode(false);
+    navigateToPosition(sn, lat, lng).then(() => {
+      toast(`✓ ${t('controls.navigateTo')}`, 'success');
+    }).catch(() => toast(`✗ ${t('controls.navigateTo')}`, 'error'));
+    // Auto-clear target after 60s
+    setTimeout(() => setNavigateTarget(null), 60_000);
+  }, [sn, t, toast]);
+
+  const handleStopNavigation = useCallback(() => {
+    setNavigateTarget(null);
+    stopNavigation(sn).then(() => {
+      toast(`✓ ${t('controls.stopNavigation')}`, 'success');
+    }).catch(() => {});
+  }, [sn, t, toast]);
+
+  // Virtual wall drawing
+  const handleWallPoint = useCallback((lat: number, lng: number) => {
+    if (!wallFirstCorner) {
+      setWallFirstCorner({ lat, lng });
+    } else {
+      // Second corner → save wall
+      createVirtualWall(sn, {
+        lat1: wallFirstCorner.lat,
+        lng1: wallFirstCorner.lng,
+        lat2: lat,
+        lng2: lng,
+      }).then(() => {
+        // Refresh walls
+        fetchVirtualWalls(sn).then(setWalls).catch(() => {});
+        toast(`✓ No-go zone saved`, 'success');
+        setWallFirstCorner(null);
+        setWallDrawMode(false);
+      }).catch(() => toast(`✗ No-go zone`, 'error'));
+    }
+  }, [sn, wallFirstCorner, toast]);
+
+  const handleDeleteWall = useCallback((wallId: string) => {
+    deleteVirtualWall(sn, wallId).then(() => {
+      setWalls(prev => prev.filter(w => w.wall_id !== wallId));
+      toast(`✓ No-go zone deleted`, 'success');
+    }).catch(() => toast(`✗ Delete failed`, 'error'));
+  }, [sn, toast]);
+
   // Center of all polygon points (used as rotation/scale pivot)
   const polyCenter = useMemo(() => {
     let totalLat = 0, totalLng = 0, count = 0;
@@ -770,6 +900,58 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
               <Pencil className="w-3 h-3" />
               <span className="hidden md:inline">{t('map.draw')}</span>
             </button>
+          )}
+          {/* Navigate-to toggle */}
+          {editMode === 'none' && !calibrating && sn && (
+            navigateMode ? (
+              <button
+                onClick={() => { setNavigateMode(false); setWallDrawMode(false); }}
+                className="inline-flex items-center gap-1 text-xs px-1.5 md:px-2 py-0.5 rounded transition-colors bg-blue-600 text-white animate-pulse"
+                title={t('controls.navigateTo')}
+              >
+                <Target className="w-3 h-3" />
+                <span className="hidden md:inline">{t('controls.navigateTo')}</span>
+              </button>
+            ) : (
+              <button
+                onClick={() => { setNavigateMode(true); setWallDrawMode(false); setPlacingCharger(false); }}
+                className="inline-flex items-center gap-1 text-xs px-1.5 md:px-2 py-0.5 rounded transition-colors bg-gray-700/50 text-gray-400 hover:text-blue-400 hover:bg-blue-900/30"
+                title={t('controls.navigateTo')}
+              >
+                <Target className="w-3 h-3" />
+              </button>
+            )
+          )}
+          {/* Navigate target cancel */}
+          {navigateTarget && (
+            <button
+              onClick={handleStopNavigation}
+              className="inline-flex items-center gap-1 text-xs px-1.5 md:px-2 py-0.5 rounded transition-colors bg-red-900/50 text-red-400 hover:bg-red-800/50"
+              title={t('controls.stopNavigation')}
+            >
+              <XCircle className="w-3 h-3" />
+            </button>
+          )}
+          {/* Virtual wall draw toggle */}
+          {editMode === 'none' && !calibrating && sn && (
+            wallDrawMode ? (
+              <button
+                onClick={() => { setWallDrawMode(false); setWallFirstCorner(null); }}
+                className="inline-flex items-center gap-1 text-xs px-1.5 md:px-2 py-0.5 rounded transition-colors bg-red-600 text-white animate-pulse"
+                title="No-go zone"
+              >
+                <Fence className="w-3 h-3" />
+                <span className="hidden md:inline">No-go</span>
+              </button>
+            ) : (
+              <button
+                onClick={() => { setWallDrawMode(true); setNavigateMode(false); setPlacingCharger(false); setWallFirstCorner(null); }}
+                className="inline-flex items-center gap-1 text-xs px-1.5 md:px-2 py-0.5 rounded transition-colors bg-gray-700/50 text-gray-400 hover:text-red-400 hover:bg-red-900/30"
+                title="No-go zone"
+              >
+                <Fence className="w-3 h-3" />
+              </button>
+            )
           )}
           {/* Calibrate toggle */}
           {polygonMaps.length > 0 && !calibrating && editMode === 'none' && (
@@ -938,6 +1120,13 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
           {/* Draw mode: click handler to add points */}
           {editMode === 'draw' && (
             <DrawClickHandler onPoint={handleDrawPoint} />
+          )}
+          {/* Edge offset preview (dashed polygon) */}
+          {offsetPreview && offsetPreview.length >= 3 && (
+            <Polygon
+              positions={offsetPreview.map(p => [p.lat, p.lng] as [number, number])}
+              pathOptions={{ color: '#22d3ee', weight: 2, dashArray: '6 4', fillOpacity: 0.05, fillColor: '#22d3ee' }}
+            />
           )}
           {/* Mowing coverage band (wide green stripes) */}
           {showTrail && trailPositions.length >= 2 && (
@@ -1109,6 +1298,82 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
               />
             ));
           })()}
+          {/* Pattern overlay (placed pattern preview) */}
+          {patternPlacement && <PatternOverlay placement={patternPlacement} />}
+          {/* Pattern placement click handler */}
+          {onMapClickForPattern && !placingCharger && editMode === 'none' && (
+            <PatternClickHandler onClick={onMapClickForPattern} />
+          )}
+          {/* Navigate-to click handler */}
+          {navigateMode && !placingCharger && editMode === 'none' && !wallDrawMode && (
+            <NavigateClickHandler onClick={handleNavigateClick} />
+          )}
+          {/* Navigate-to target marker */}
+          {navigateTarget && (
+            <Marker position={[navigateTarget.lat, navigateTarget.lng]} icon={targetIcon}>
+              <Popup>
+                <div className="text-xs">
+                  <div className="font-semibold">Navigation target</div>
+                  <div>{navigateTarget.lat.toFixed(6)}, {navigateTarget.lng.toFixed(6)}</div>
+                </div>
+              </Popup>
+            </Marker>
+          )}
+          {/* Virtual wall draw click handler */}
+          {wallDrawMode && !placingCharger && editMode === 'none' && (
+            <WallDrawClickHandler onPoint={handleWallPoint} />
+          )}
+          {/* Virtual wall first corner preview */}
+          {wallDrawMode && wallFirstCorner && (
+            <Marker
+              position={[wallFirstCorner.lat, wallFirstCorner.lng]}
+              icon={L.divIcon({
+                className: '',
+                html: '<div style="width:12px;height:12px;background:#ef4444;border:2px solid white;border-radius:2px"></div>',
+                iconSize: [12, 12],
+                iconAnchor: [6, 6],
+              })}
+            />
+          )}
+          {/* Virtual walls rendered as rectangles */}
+          {walls.filter(w => w.enabled).map(w => {
+            const bounds: [number, number][] = [
+              [w.lat1, w.lng1],
+              [w.lat1, w.lng2],
+              [w.lat2, w.lng2],
+              [w.lat2, w.lng1],
+            ];
+            return (
+              <Polygon
+                key={w.wall_id}
+                positions={bounds}
+                pathOptions={{
+                  color: '#ef4444',
+                  fillColor: '#ef4444',
+                  fillOpacity: 0.25,
+                  weight: 2,
+                  dashArray: '6, 3',
+                }}
+                eventHandlers={{
+                  click: editMode === 'none' ? (e) => {
+                    L.DomEvent.stopPropagation(e);
+                  } : undefined,
+                }}
+              >
+                <Popup>
+                  <div className="text-xs">
+                    <div className="font-semibold text-red-600">{w.wall_name || 'No-go zone'}</div>
+                    <button
+                      onClick={() => handleDeleteWall(w.wall_id)}
+                      className="mt-1 text-red-500 hover:text-red-400 underline"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </Popup>
+              </Polygon>
+            );
+          })}
           <FitToMaps maps={polygonMaps} onFitted={() => { setMapsFitted(true); setUserInteracted(true); }} />
           <RecenterMap position={position} hasManualInteraction={userInteracted} waitForFit={polygonMaps.length > 0 && !mapsFitted} />
           <UserInteractionTracker onInteract={() => setUserInteracted(true)} />
@@ -1259,6 +1524,28 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
             </div>
           );
         })()}
+
+        {/* Wall drawing hint */}
+        {wallDrawMode && (
+          <div className="absolute top-3 left-3 z-[1000] bg-gray-900/95 backdrop-blur border border-red-700/50 rounded-lg p-3 shadow-xl w-[calc(100vw-1.5rem)] sm:w-56">
+            <div className="flex items-center gap-2 mb-2">
+              <Fence className="w-4 h-4 text-red-400" />
+              <span className="text-xs font-semibold text-red-400 uppercase tracking-wide">No-go zone</span>
+            </div>
+            <p className="text-[11px] text-gray-400 mb-2">
+              {!wallFirstCorner
+                ? 'Click first corner of the no-go rectangle'
+                : 'Click opposite corner to complete'}
+            </p>
+            <button
+              onClick={() => { setWallDrawMode(false); setWallFirstCorner(null); }}
+              className="w-full text-xs py-1.5 rounded bg-gray-700 text-gray-400 hover:text-gray-200 transition-colors flex items-center justify-center gap-1"
+            >
+              <X className="w-3 h-3" />
+              {t('common.cancel')}
+            </button>
+          </div>
+        )}
 
         {/* Edit/Draw control panel */}
         {editMode !== 'none' && (

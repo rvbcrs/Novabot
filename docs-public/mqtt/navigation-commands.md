@@ -62,19 +62,26 @@ Resume paused navigation.
 
 ### navigate_to_position
 
-Navigate to a specific position. More explicit than `start_navigation`.
+Navigate to a specific GPS position with optional arrival angle. More explicit than `start_navigation`.
 
 !!! note "Discovered in mower firmware"
-    This command was found in the `mqtt_node` binary and is separate from `start_navigation`.
+    This command was found in the `mqtt_node` binary and is separate from `start_navigation`. It supports an `angle` parameter for the desired heading at arrival.
 
 ```json title="Command"
 {
   "navigate_to_position": {
     "latitude": 52.1409,
-    "longitude": 6.2310
+    "longitude": 6.2310,
+    "angle": 0.0
   }
 }
 ```
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `latitude` | float | Yes | Target GPS latitude (WGS84) |
+| `longitude` | float | Yes | Target GPS longitude (WGS84) |
+| `angle` | float | No | Desired heading at arrival (degrees, default 0.0) |
 
 ```json title="Response"
 {
@@ -150,7 +157,7 @@ Set the maximum speed during navigation.
 
 ## Patrol Mode
 
-!!! info "New — discovered in mower firmware"
+!!! info "New --- discovered in mower firmware"
     Patrol mode is a separate operational mode from mowing and navigation. The mower follows a predefined patrol route.
 
 ### start_patrol
@@ -398,22 +405,22 @@ sequenceDiagram
 
 | Command | Response | Via Charger LoRa? | ROS Service |
 |---------|----------|-------------------|-------------|
-| `start_navigation` | `start_navigation_respond` | No (direct MQTT) | — |
-| `stop_navigation` | `stop_navigation_respond` | No | — |
-| `pause_navigation` | `pause_navigation_respond` | No | — |
-| `resume_navigation` | `resume_navigation_respond` | No | — |
-| `navigate_to_position` | `navigate_to_position_respond` | No | — |
-| `start_time_navigation` | `start_time_navigation_respond` | No | — |
-| `stop_time_navigation` | `stop_time_navigation_respond` | No | — |
-| `set_navigation_max_speed` | `set_navigation_max_speed_respond` | No | — |
-| `start_patrol` | `start_patrol_respond` | No | — |
-| `stop_patrol` | `stop_patrol_respond` | No | — |
+| `start_navigation` | `start_navigation_respond` | No (direct MQTT) | --- |
+| `stop_navigation` | `stop_navigation_respond` | No | --- |
+| `pause_navigation` | `pause_navigation_respond` | No | --- |
+| `resume_navigation` | `resume_navigation_respond` | No | --- |
+| `navigate_to_position` | `navigate_to_position_respond` | No | --- |
+| `start_time_navigation` | `start_time_navigation_respond` | No | --- |
+| `stop_time_navigation` | `stop_time_navigation_respond` | No | --- |
+| `set_navigation_max_speed` | `set_navigation_max_speed_respond` | No | --- |
+| `start_patrol` | `start_patrol_respond` | No | --- |
+| `stop_patrol` | `stop_patrol_respond` | No | --- |
 | `go_to_charge` | `go_to_charge_respond` | No | `/robot_decision/nav_to_recharge` |
-| `go_pile` | `go_pile_respond` | **Yes** (LoRa `0x25`) | — |
+| `go_pile` | `go_pile_respond` | **Yes** (LoRa `0x25`) | --- |
 | `stop_to_charge` | `stop_to_charge_respond` | No | `/robot_decision/cancel_recharge` |
 | `auto_recharge` | `auto_recharge_respond` | No | `/robot_decision/auto_recharge` |
-| `auto_charge_threshold` | `auto_charge_threshold_respond` | No | — |
-| `get_recharge_pos` | `get_recharge_pos_respond` | No | — |
+| `auto_charge_threshold` | `auto_charge_threshold_respond` | No | --- |
+| `get_recharge_pos` | `get_recharge_pos_respond` | No | --- |
 | `save_recharge_pos` | `save_recharge_pos_respond` | No | `/robot_decision/save_charging_pose` |
-| `start_move` | `start_move_respond` | No | — |
-| `stop_move` | `stop_move_respond` | No | — |
+| `start_move` | `start_move_respond` | No | --- |
+| `stop_move` | `stop_move_respond` | No | --- |

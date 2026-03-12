@@ -11,6 +11,8 @@ export const db = new Database(path.resolve(dbPath));
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 
+// initDb() wordt hier gedefinieerd EN direct aangeroepen aan het einde van dit bestand,
+// zodat tabellen gegarandeerd bestaan voordat andere modules db.prepare() aanroepen op module-level.
 export function initDb(): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS users (
@@ -189,12 +191,6 @@ export function initDb(): void {
     );
     CREATE INDEX IF NOT EXISTS signal_history_sn_ts ON signal_history(sn, ts);
 
-    -- PIN unlock state: overleeft server restart, wordt gewist bij disconnect/auto-clear
-    CREATE TABLE IF NOT EXISTS pin_unlock_state (
-      sn          TEXT    NOT NULL PRIMARY KEY,
-      unlocked_at TEXT    NOT NULL DEFAULT (datetime('now'))
-    );
-
     -- Map calibratie: handmatige offset/rotatie/schaal per maaier
     CREATE TABLE IF NOT EXISTS map_calibration (
       mower_sn    TEXT    NOT NULL PRIMARY KEY,
@@ -308,5 +304,78 @@ export function initDb(): void {
   try { db.exec(`ALTER TABLE equipment ADD COLUMN mower_ip TEXT`); }
   catch { /* kolom bestaat al */ }
 
+  // Feature: alternerende maairichting per schema
+  for (const col of ['alternate_direction INTEGER DEFAULT 0', 'alternate_step INTEGER DEFAULT 90']) {
+    try { db.exec(`ALTER TABLE dashboard_schedules ADD COLUMN ${col}`); }
+    catch { /* kolom bestaat al */ }
+  }
+
+  // Feature: rand-offset (polygon inset/outset)
+  try { db.exec(`ALTER TABLE dashboard_schedules ADD COLUMN edge_offset REAL DEFAULT 0`); }
+  catch { /* kolom bestaat al */ }
+
+  // Feature: weergebaseerd pauzeren
+  for (const col of [
+    'rain_pause INTEGER DEFAULT 0',
+    'rain_threshold_mm REAL DEFAULT 0.5',
+    'rain_threshold_probability INTEGER DEFAULT 50',
+    'rain_check_hours INTEGER DEFAULT 2',
+    'last_triggered_at TEXT',
+  ]) {
+    try { db.exec(`ALTER TABLE dashboard_schedules ADD COLUMN ${col}`); }
+    catch { /* kolom bestaat al */ }
+  }
+
+  // Feature: actieve regenpauze sessies (rain monitor → go_to_charge → herstart na regen)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS rain_sessions (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id      TEXT    NOT NULL UNIQUE,
+      schedule_id     TEXT    NOT NULL,
+      mower_sn        TEXT    NOT NULL,
+      state           TEXT    NOT NULL DEFAULT 'paused',  -- paused | resuming | completed | cancelled
+      -- Opgeslagen maaiparameters voor herstart
+      map_id          TEXT,
+      map_name        TEXT,
+      cutting_height  INTEGER,
+      path_direction  INTEGER,
+      work_mode       INTEGER DEFAULT 0,
+      task_mode       INTEGER DEFAULT 0,
+      edge_offset     REAL    DEFAULT 0,
+      -- Weer thresholds (kopie van schedule, zodat wijzigingen aan schedule geen lopende sessie beïnvloeden)
+      rain_threshold_mm           REAL DEFAULT 0.5,
+      rain_threshold_probability  INTEGER DEFAULT 50,
+      rain_check_hours            INTEGER DEFAULT 2,
+      -- Timestamps
+      paused_at       TEXT    NOT NULL DEFAULT (datetime('now')),
+      resumed_at      TEXT,
+      completed_at    TEXT,
+      created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS rain_sessions_state ON rain_sessions(state);
+    CREATE INDEX IF NOT EXISTS rain_sessions_mower ON rain_sessions(mower_sn, state);
+  `);
+
+  // Feature: virtual walls (no-go zones) per maaier
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS virtual_walls (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      wall_id     TEXT    NOT NULL UNIQUE,
+      mower_sn    TEXT    NOT NULL,
+      wall_name   TEXT,
+      lat1        REAL    NOT NULL,
+      lng1        REAL    NOT NULL,
+      lat2        REAL    NOT NULL,
+      lng2        REAL    NOT NULL,
+      enabled     INTEGER NOT NULL DEFAULT 1,
+      created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS virtual_walls_sn ON virtual_walls(mower_sn);
+  `);
+
   console.log('[DB] Database initialised');
 }
+
+// Direct aanroepen bij module-load — andere modules (sensorData, broker, etc.) doen
+// db.prepare() op module-level en verwachten dat de tabellen al bestaan.
+initDb();

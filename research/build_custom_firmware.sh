@@ -1172,6 +1172,89 @@ APSTOPEOF
     echo "  run_novabot.sh: WiFi AP fallback + watchdog kill toegevoegd aan stop)"
 fi
 
+# === Stap 5h: Extended commands service toevoegen ===
+echo "[5h/9] Extended commands service toevoegen..."
+
+EXT_SRC="$SCRIPT_DIR/extended_commands.py"
+if [ -f "$EXT_SRC" ]; then
+    cp "$EXT_SRC" "$NOVABOT_ROOT/scripts/extended_commands.py"
+    chmod +x "$NOVABOT_ROOT/scripts/extended_commands.py"
+    echo "  extended_commands.py gekopieerd naar scripts/"
+
+    # pin_verify_ros2.py — ROS2 action client voor PIN verify (aangeroepen door extended_commands.py)
+    PIN_VERIFY_SRC="$SCRIPT_DIR/pin_verify_ros2.py"
+    if [ -f "$PIN_VERIFY_SRC" ]; then
+        cp "$PIN_VERIFY_SRC" "$NOVABOT_ROOT/scripts/pin_verify_ros2.py"
+        chmod +x "$NOVABOT_ROOT/scripts/pin_verify_ros2.py"
+        echo "  pin_verify_ros2.py gekopieerd naar scripts/ (on-demand helper, geen daemon)"
+    fi
+
+    # Voeg extended commands launch toe aan run_novabot.sh start) blok
+    if [ -f "$RUN_NOVABOT" ] && ! grep -q "extended_commands.py" "$RUN_NOVABOT"; then
+        EXT_START_BLOCK="/tmp/ext_cmd_start_block.sh"
+        cat > "$EXT_START_BLOCK" << 'EXTEOF'
+
+  # CUSTOM: Extended commands starten (reboot, camera snapshot, system info)
+  # Luistert op novabot/extended/<SN> — apart van mqtt_node (onversleuteld)
+  if [ -f "/root/novabot/scripts/extended_commands.py" ]; then
+      (sleep 12 && python3 /root/novabot/scripts/extended_commands.py >> $LOGS_PATH/extended_commands.log 2>&1) &
+      echo "Extended commands scheduled (12s delay)" >> $LOGS_PATH/extended_commands.log
+  fi
+EXTEOF
+        sed -i '' '/start_test.sh/r /tmp/ext_cmd_start_block.sh' "$RUN_NOVABOT"
+        rm -f "$EXT_START_BLOCK"
+        echo "  run_novabot.sh: extended commands launch toegevoegd aan start)"
+
+        # Voeg extended commands kill toe aan stop) blok
+        EXT_STOP_BLOCK="/tmp/ext_cmd_stop_block.sh"
+        cat > "$EXT_STOP_BLOCK" << 'EXTEOF'
+  killall -q -9 extended_commands.py
+EXTEOF
+        sed -i '' '/killall -q -9 daemon_monitor.sh/r /tmp/ext_cmd_stop_block.sh' "$RUN_NOVABOT"
+        rm -f "$EXT_STOP_BLOCK"
+        echo "  run_novabot.sh: extended commands kill toegevoegd aan stop)"
+    fi
+else
+    echo "  extended_commands.py niet gevonden — overslaan"
+fi
+
+# === Stap 5i: STM32 MCU firmware patchen (PIN unlock v3.6.6) ===
+echo "[5i/9] STM32 MCU firmware patchen..."
+
+MCU_BIN_DIR="$NOVABOT_ROOT/install/chassis_control/share/chassis_control/MCU_BIN"
+MCU_PATCH_SRC="$SCRIPT_DIR/firmware/STM32/novabot_stm32f407_v3_6_6_NewMotor25082301_pin_unlock.bin"
+
+if [ -f "$MCU_PATCH_SRC" ] && [ -d "$MCU_BIN_DIR" ]; then
+    # Verwijder oude MCU versies zodat er geen versie-conflict is
+    for OLD_MCU in "$MCU_BIN_DIR"/novabot_stm32f407_v3_6_*_NewMotor25082301.bin; do
+        [ -f "$OLD_MCU" ] && rm -f "$OLD_MCU" && echo "  Verwijderd: $(basename "$OLD_MCU")"
+    done
+    # Originele binary backuppen (als die er nog is)
+    ORIG_MCU="$MCU_BIN_DIR/novabot_stm32f407_v3_6_0_NewMotor25082301.bin"
+    if [ -f "$ORIG_MCU" ] && [ ! -f "${ORIG_MCU}.bak" ]; then
+        cp "$ORIG_MCU" "${ORIG_MCU}.bak"
+        echo "  Backup: $(basename "$ORIG_MCU").bak"
+    fi
+    # Kopieer gepatchte binary met v3_6_6 in bestandsnaam
+    # chassis_control_node leest versie uit bestandsnaam, niet uit binary!
+    MCU_DST="$MCU_BIN_DIR/novabot_stm32f407_v3_6_6_NewMotor25082301.bin"
+    cp "$MCU_PATCH_SRC" "$MCU_DST"
+    echo "  Gepatchte MCU firmware gekopieerd: $(basename "$MCU_DST")"
+    echo "  Features: PIN lock bypass (lock_state=0xFF) + verify status=0 (ROS2 action compat)"
+    # Verwijder originele v3.6.0 als die er nog is
+    if [ -f "$ORIG_MCU" ]; then
+        rm -f "$ORIG_MCU"
+        echo "  Originele v3.6.0 verwijderd (vervangen door v3.6.6)"
+    fi
+else
+    if [ ! -f "$MCU_PATCH_SRC" ]; then
+        echo "  Gepatchte MCU binary niet gevonden — overslaan"
+        echo "  Run eerst: cd research/firmware/STM32 && python3 patch_pin_unlock.py"
+    elif [ ! -d "$MCU_BIN_DIR" ]; then
+        echo "  MCU_BIN map niet gevonden in firmware — overslaan"
+    fi
+fi
+
 # === Stap 5g: Novabot-server bundelen ===
 echo "[5g/9] Novabot-server bundelen..."
 
@@ -1337,11 +1420,44 @@ with open(verify_path, 'r') as f:
     data = json.load(f)
 
 updated = 0
+removed = 0
+new_entries = []
+
 for entry in data['fileVerification']:
     rel_path = entry['path']
     full_path = os.path.join(root_dir, rel_path.lstrip('/'))
 
     if not os.path.exists(full_path):
+        # Bestand verwijderd of hernoemd — zoek vervanging in dezelfde directory
+        parent = os.path.dirname(full_path)
+        if os.path.isdir(parent):
+            # Zoek bestanden in dezelfde map die niet in de verify-lijst staan
+            existing_paths = set(
+                e['path'] for e in data['fileVerification']
+            )
+            found_replacement = False
+            for sibling in os.listdir(parent):
+                sib_full = os.path.join(parent, sibling)
+                sib_rel = '/' + os.path.relpath(sib_full, root_dir)
+                if os.path.isfile(sib_full) and sib_rel not in existing_paths:
+                    # Voeg vervanging toe met correct formaat
+                    sib_size = os.path.getsize(sib_full)
+                    new_entry = {
+                        "type": "file",
+                        "path": sib_rel,
+                        "checkWay": {"0": {"way": "Size-B", "value": sib_size}},
+                        "ignoreCheck": False
+                    }
+                    new_entries.append(new_entry)
+                    existing_paths.add(sib_rel)
+                    print(f"  Replaced: {rel_path} → {sib_rel} ({sib_size}B)")
+                    found_replacement = True
+            if not found_replacement:
+                print(f"  Removed: {rel_path} (bestand niet meer aanwezig)")
+        else:
+            print(f"  Removed: {rel_path} (directory niet meer aanwezig)")
+        removed += 1
+        entry['_remove'] = True
         continue
 
     actual_size = os.path.getsize(full_path)
@@ -1360,10 +1476,15 @@ for entry in data['fileVerification']:
                 check['value'] = actual_md5
                 updated += 1
 
+# Verwijder ontbrekende entries en voeg nieuwe toe
+data['fileVerification'] = [
+    e for e in data['fileVerification'] if not e.get('_remove')
+] + new_entries
+
 with open(verify_path, 'w') as f:
     json.dump(data, f, separators=(',', ':'))
 
-print(f"  {updated} verificatiewaarden bijgewerkt")
+print(f"  {updated} verificatiewaarden bijgewerkt, {removed} verwijderd/vervangen")
 PYEOF
 else
     echo "  Geen package_verify.json gevonden — overslaan"
@@ -1383,8 +1504,9 @@ OUTPUT_DEB="$OUTPUT_DIR/mower_firmware_${VERSION}.deb"
 echo "  Herbouwen data.tar.xz vanuit aangepaste firmware..."
 
 # Maak nieuwe data.tar.xz vanuit de aangepaste firmware data
+# COPYFILE_DISABLE=1 voorkomt macOS ._* bestanden in de tar (veroorzaakt "unknown extended header" op ARM)
 cd "$FIRMWARE_DATA"
-tar -cJf "$WORK_DIR/data.tar.xz" .
+COPYFILE_DISABLE=1 tar -cJf "$WORK_DIR/data.tar.xz" .
 echo "  data.tar.xz aangemaakt ($(ls -lh "$WORK_DIR/data.tar.xz" | awk '{print $5}'))"
 cd "$SCRIPT_DIR"
 
@@ -1402,7 +1524,7 @@ CTRL
 # Bouw .deb (ar archief: debian-binary + control.tar.xz + data.tar.xz)
 echo "2.0" > "$WORK_DIR/debian-binary"
 cd "$WORK_DIR/DEBIAN"
-tar -cJf "$WORK_DIR/control.tar.xz" .
+COPYFILE_DISABLE=1 tar -cJf "$WORK_DIR/control.tar.xz" .
 cd "$WORK_DIR"
 
 # Bouw .deb ar-archief (volgorde is belangrijk: debian-binary eerst)
@@ -1462,6 +1584,8 @@ echo "    ✓ MQTT broker → ${MQTT_HOST}:${MQTT_PORT}"
 echo "    ✓ http_address.txt + json_config.json worden bij elke boot gezet"
 [ -f "$NOVABOT_ROOT/scripts/camera_stream.py" ] && echo "    ✓ Camera MJPEG stream op poort 8000 (auto-start na 15s)"
 [ -f "$NOVABOT_ROOT/scripts/led_bridge.py" ] && echo "    ✓ LED bridge: MQTT → ROS /led_set (headlight controle)"
+[ -f "$NOVABOT_ROOT/scripts/extended_commands.py" ] && echo "    ✓ Extended commands: reboot, camera snapshot, system info (auto-start na 12s)"
+[ -f "$MCU_BIN_DIR/novabot_stm32f407_v3_6_4_NewMotor25082301.bin" ] 2>/dev/null && echo "    ✓ STM32 MCU v3.6.4: remote PIN unlock + root cause error_byte fix"
 [ "$ENABLE_REMOTE_ROS2" = "true" ] && echo "    ✓ ROS 2 netwerk open (ROS_LOCALHOST_ONLY=0)"
 if [ "$INCLUDE_SERVER" = "true" ]; then
     echo "    ✓ Novabot-server gebundeld (dashboard op poort ${SERVER_PORT})"

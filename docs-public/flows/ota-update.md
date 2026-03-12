@@ -20,17 +20,18 @@ sequenceDiagram
         App->>MQTT: ota_version_info
         MQTT->>Mower: ota_version_info
         Mower-->>MQTT: ota_version_info_respond
-        MQTT-->>App: {mower: "v5.7.1", charger: "v0.3.6", mcu: "v3.5.8"}
+        MQTT-->>App: {mower: "v6.0.2", charger: "v0.4.0", mcu: "v3.6.6"}
 
-        App->>Server: GET checkOtaNewVersion?version=v5.7.1&equipmentType=LFIN2
-        Server-->>App: {version: "v5.7.1", downloadUrl: "https://...", md5: "..."}
+        App->>Server: GET checkOtaNewVersion?version=v6.0.2&equipmentType=LFIN2
+        Server-->>App: {upgradeFlag: 1, version, downloadUrl, md5}
     end
 
     rect rgb(255, 248, 240)
         Note over App,Cloud: Phase 2: Mower OTA
         Note over App: "Are you sure to upgrade?<br/>Expected to take 20-30 minutes"
 
-        App->>MQTT: ota_upgrade_cmd {type: "full", content: {upgradeApp: {version, downloadUrl, md5}}}
+        App->>MQTT: ota_upgrade_cmd {cmd, type, content, url, version, md5}
+        Note over MQTT: Broker removes tz field,<br/>forces type:"full", re-encrypts
         MQTT->>Mower: ota_upgrade_cmd
 
         Note over Mower: mqtt_node forwards to<br/>ota_client_node via ROS 2<br/>/ota_upgrade_srv service
@@ -47,11 +48,11 @@ sequenceDiagram
         end
 
         Note over Mower: MD5 verification
-        Note over Mower: dpkg -x → /root/novabot.new/
+        Note over Mower: dpkg -x -> /root/novabot.new/
         Note over Mower: Write "1" to upgrade.txt
         Note over Mower: reboot -f
 
-        Note over Mower: run_ota.sh:<br/>backup → deploy → restore maps → verify → reboot
+        Note over Mower: run_ota.sh:<br/>backup -> deploy -> restore maps -> verify -> reboot
         Mower->>MQTT: ota_upgrade_state {state: "completed"}
     end
 
@@ -60,7 +61,7 @@ sequenceDiagram
         Note over App: "The charging station can also<br/>be upgraded. Would you like to proceed?"
 
         Mower->>Charger: TCP/HTTP push firmware to 192.168.4.1
-        Charger->>Charger: esp_https_ota → write to inactive OTA partition
+        Charger->>Charger: esp_https_ota -> write to inactive OTA partition
         Charger->>Charger: Switch boot partition + reboot
     end
 ```
@@ -85,7 +86,7 @@ sequenceDiagram
     rect rgb(240, 240, 255)
         Note over Support,Mower: Method 2: Cloud Database Override
         Note over Support: Set per-SN firmware version in cloud DB
-        Note over Mower: Next time app checks checkOtaNewVersion<br/>→ gets new version → sends ota_upgrade_cmd
+        Note over Mower: Next time app checks checkOtaNewVersion<br/>-> gets new version -> sends ota_upgrade_cmd
     end
 ```
 
@@ -96,33 +97,48 @@ sequenceDiagram
 
 ## `ota_upgrade_cmd` JSON Format
 
-```json title="Full firmware upgrade"
+!!! danger "CRITICAL --- Exact payload format (proven working March 2026)"
+    The payload below is the **only format** that works. Any deviation (wrong field names, missing fields, extra fields like `tz`) will cause the update to fail silently.
+
+```json title="Full firmware upgrade (CORRECT format)"
 {
   "ota_upgrade_cmd": {
+    "cmd": "upgrade",
     "type": "full",
-    "content": {
-      "upgradeApp": {
-        "version": "v5.7.1",
-        "downloadUrl": "https://<oss-host>/novabot-file/<firmware-filename>.deb",
-        "md5": "<md5-checksum>"
-      }
-    }
+    "content": "app",
+    "url": "http://<server>:<port>/api/dashboard/ota/firmware/<filename>.deb",
+    "version": "v6.0.2-custom-16",
+    "md5": "<md5-checksum>"
   }
 }
 ```
 
+### Required Fields
+
+| Field | Value | Required | Notes |
+|-------|-------|----------|-------|
+| `cmd` | `"upgrade"` | **Yes** | Without this, `mqtt_node` ignores the command entirely |
+| `type` | `"full"` | **Yes** | `"increment"` does NOT trigger download |
+| `content` | `"app"` | **Yes** | Must be the **string** `"app"`, NOT an object. Without this, `mqtt_node` ignores the command |
+| `url` | `"http://..."` | **Yes** | Must be `http://` --- mower does NOT support HTTPS for OTA downloads |
+| `version` | version string | **Yes** | Version of the firmware being installed |
+| `md5` | MD5 hash | **Yes** | Mower verifies checksum before installing |
+
+!!! warning "NO `tz` field --- Broker-level fix required"
+    The Novabot app always includes `tz:"Europe/Amsterdam"` in `ota_upgrade_cmd`. When `mqtt_node` sees a `tz` field, it:
+
+    1. Writes the timezone to `/userdata/ota/novabot_timezone.txt`
+    2. **Overwrites `type` with `"increment"`** --- breaking the full update!
+
+    The local server's MQTT broker (`authorizePublish` in `broker.ts`) intercepts app->mower messages, removes the `tz` field, forces `type:"full"`, and re-encrypts. **This broker fix must NEVER be removed.**
+
 ### Upgrade Types
 
-| Type | Description | Payload |
-|------|-------------|---------|
-| `full` | Full firmware replacement (.deb package) | `content.upgradeApp` |
-| `increment` | Incremental app update | `content.upgradeApp` |
-| `file_update` | Individual file updates (.zip with manifest) | `content.upgradeApp` (zip with `check.json`) |
-
-!!! lock "Private section"
-    This section contains sensitive security details (encryption keys, credentials,
-    vulnerability specifics) and is only available in the private wiki.
-
+| Type | Description | Notes |
+|------|-------------|-------|
+| `full` | Full firmware replacement (.deb package) | **Only type that works for custom firmware** |
+| `increment` | Incremental app update | mqtt_node sets this when `tz` field present --- causes silent failure |
+| `file_update` | Individual file updates (.zip with manifest) | Requires `check.json` manifest inside ZIP |
 
 ---
 
@@ -146,12 +162,12 @@ graph LR
 ### ROS 2 Service: OtaUpgradeSys
 
 ```
-# Request (mqtt_node → ota_client)
+# Request (mqtt_node -> ota_client)
 string ota_cmd          # Full JSON string from MQTT command
 
 ---
 
-# Response (ota_client → mqtt_node)
+# Response (ota_client -> mqtt_node)
 bool state              # true = accepted, false = error
 string state_out        # Status message
 ```
@@ -178,11 +194,11 @@ upgrade_file_enable: True
 1. Receive ota_upgrade_cmd via /ota_upgrade_srv ROS 2 service
 2. Parse JSON: extract type, content.upgradeApp.{version, downloadUrl, md5}
 3. Wait for mower to be in CHARGING state
-   └─ If not charging: pause download, wait, retry every 60s
+   -- If not charging: pause download, wait, retry every 60s
 4. Download .deb to /userdata/ota/upgrade_pkg/
-   └─ libcurl with HTTPS, resume-capable, max 24h timeout
+   -- libcurl with HTTPS, resume-capable, max 24h timeout
 5. Verify MD5 checksum
-   └─ If mismatch: delete package, retry download
+   -- If mismatch: delete package, retry download
 6. Extract: dpkg -x <package.deb> /root/novabot.new/
 7. Verify extracted files via /root/novabot.new/package_verify.json
 8. Copy charger firmware to /userdata/ota/charging_station_pkg/
@@ -196,14 +212,14 @@ upgrade_file_enable: True
 
 ```
 1. Check /root/novabot.new exists AND /userdata/ota/upgrade.txt == "1"
-2. Backup: mv /root/novabot → /root/novabot.bak
-3. Deploy: cp -rfp /root/novabot.new → /root/novabot
+2. Backup: mv /root/novabot -> /root/novabot.bak
+3. Deploy: cp -rfp /root/novabot.new -> /root/novabot
 4. Restore user data:
-   └─ Maps, charging_station config, CSV files from backup
+   -- Maps, charging_station config, CSV files from backup
 5. Run start_service.sh (install system libraries, services)
 6. Optionally replace WiFi driver (bcm/)
 7. Verify: /root/novabot/scripts/run_novabot.sh exists and non-empty
-   └─ If missing: ROLLBACK (cp /root/novabot.bak → /root/novabot)
+   -- If missing: ROLLBACK (cp /root/novabot.bak -> /root/novabot)
 8. Write "0" to /userdata/ota/upgrade.txt
 9. Clean up: rm -rf /root/novabot.new
 10. Final reboot
@@ -265,12 +281,6 @@ graph LR
 
 ---
 
-
-!!! lock "Private section"
-    This section contains sensitive security details (encryption keys, credentials,
-    vulnerability specifics) and is only available in the private wiki.
-
-
 ## Known Firmware Versions
 
 | Device | Version | Size | Notes |
@@ -278,8 +288,10 @@ graph LR
 | Charger | v0.3.6 | 1.4 MB | ESP32-S3, ESP-IDF v4.4.2, plain JSON MQTT |
 | Charger | v0.4.0 | 1.4 MB | Adds AES-128-CBC MQTT encryption + `cJSON_IsNull` command validation |
 | Mower | v5.7.1 | 35 MB | Debian/ROS 2, Horizon X3 |
-| Mower | v6.0.3 | ? | Pushed to select users by support |
-| MCU | v3.5.8 | — | STM32F407 motor controller |
+| Mower | v6.0.2 | ~35 MB | Latest known stock firmware |
+| Mower | v6.0.2-custom-16 | ~35 MB | Custom: SSH, mDNS, camera stream, extended commands, PIN fix |
+| MCU | v3.5.8 | 444 KB | STM32F407 motor controller (stock) |
+| MCU | v3.6.6 | 444 KB | STM32F407 custom: PIN lock bypass + verify status=0 (ROS2 compat) |
 
 ## File System Paths
 
@@ -306,17 +318,3 @@ graph LR
 | V0.0.2 | 2023/05 | Cai Tao | Charge-state pause/resume, progress reporting |
 | V0.0.3 | 2023/10 | Cai Tao | MD5 verification, file size verification |
 | V0.0.4 | 2024/02 | Cai Tao | File update feature (`file_update` type) |
-
-
-!!! lock "Private section"
-    This section contains sensitive security details (encryption keys, credentials,
-    vulnerability specifics) and is only available in the private wiki.
-
-
----
-
-
-!!! lock "Private section"
-    This section contains sensitive security details (encryption keys, credentials,
-    vulnerability specifics) and is only available in the private wiki.
-

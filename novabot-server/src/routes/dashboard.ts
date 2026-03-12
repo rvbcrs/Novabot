@@ -4,7 +4,7 @@
  */
 import { Router, Request, Response } from 'express';
 import { db } from '../db/database.js';
-import { getAllDeviceSnapshots, getDeviceSnapshot, SENSORS, getGpsTrail, clearGpsTrail, deviceCache, markPinUnlocked } from '../mqtt/sensorData.js';
+import { getAllDeviceSnapshots, getDeviceSnapshot, SENSORS, getGpsTrail, clearGpsTrail, deviceCache } from '../mqtt/sensorData.js';
 import { isDeviceOnline, writeRawPublish, getBrokerDiagnostics } from '../mqtt/broker.js';
 import { getRecentLogs, forwardToDashboard } from '../dashboard/socketHandler.js';
 import { requestMapList, requestMapOutline, publishToDevice, publishRawToDevice, publishEncryptedOnTopic, publishToTopic } from '../mqtt/mapSync.js';
@@ -13,6 +13,7 @@ import { generateMapZipFromDb, gpsToLocal, localToGps, parseMapZip, type GpsPoin
 import { existsSync, unlinkSync, readFileSync, readdirSync, createReadStream, statSync, watch, mkdirSync, copyFileSync } from 'fs';
 import { execSync } from 'child_process';
 import path from 'path';
+import { networkInterfaces } from 'os';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 const __filename = fileURLToPath(import.meta.url);
@@ -996,6 +997,14 @@ interface ScheduleRow {
   path_direction: number;
   work_mode: number;
   task_mode: number;
+  alternate_direction: number;
+  alternate_step: number;
+  edge_offset: number;
+  rain_pause: number;
+  rain_threshold_mm: number;
+  rain_threshold_probability: number;
+  rain_check_hours: number;
+  last_triggered_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -1015,6 +1024,14 @@ function scheduleRowToDto(r: ScheduleRow) {
     pathDirection: r.path_direction,
     workMode: r.work_mode,
     taskMode: r.task_mode,
+    alternateDirection: r.alternate_direction === 1,
+    alternateStep: r.alternate_step ?? 90,
+    edgeOffset: r.edge_offset ?? 0,
+    rainPause: r.rain_pause === 1,
+    rainThresholdMm: r.rain_threshold_mm ?? 0.5,
+    rainThresholdProbability: r.rain_threshold_probability ?? 50,
+    rainCheckHours: r.rain_check_hours ?? 2,
+    lastTriggeredAt: r.last_triggered_at,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   };
@@ -1043,6 +1060,13 @@ dashboardRouter.post('/schedules/:sn', (req: Request, res: Response) => {
     pathDirection?: number;
     workMode?: number;
     taskMode?: number;
+    alternateDirection?: boolean;
+    alternateStep?: number;
+    edgeOffset?: number;
+    rainPause?: boolean;
+    rainThresholdMm?: number;
+    rainThresholdProbability?: number;
+    rainCheckHours?: number;
   };
 
   if (!body.startTime) {
@@ -1054,8 +1078,10 @@ dashboardRouter.post('/schedules/:sn', (req: Request, res: Response) => {
   db.prepare(`
     INSERT INTO dashboard_schedules
       (schedule_id, mower_sn, schedule_name, start_time, end_time, weekdays, enabled,
-       map_id, map_name, cutting_height, path_direction, work_mode, task_mode)
-    VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)
+       map_id, map_name, cutting_height, path_direction, work_mode, task_mode,
+       alternate_direction, alternate_step, edge_offset,
+       rain_pause, rain_threshold_mm, rain_threshold_probability, rain_check_hours)
+    VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     scheduleId, sn,
     body.scheduleName ?? null,
@@ -1068,10 +1094,18 @@ dashboardRouter.post('/schedules/:sn', (req: Request, res: Response) => {
     body.pathDirection ?? 0,
     body.workMode ?? 0,
     body.taskMode ?? 0,
+    body.alternateDirection ? 1 : 0,
+    body.alternateStep ?? 90,
+    body.edgeOffset ?? 0,
+    body.rainPause ? 1 : 0,
+    body.rainThresholdMm ?? 0.5,
+    body.rainThresholdProbability ?? 50,
+    body.rainCheckHours ?? 2,
   );
 
-  // Stuur timer_task naar maaier als die online is
-  if (isDeviceOnline(sn)) {
+  // Stuur timer_task naar maaier als die online is — maar NIET als rain_pause actief is
+  // (dan beheert de server-side scheduleRunner het starten)
+  if (isDeviceOnline(sn) && !body.rainPause) {
     publishToDevice(sn, {
       timer_task: {
         task_id: scheduleId,
@@ -1127,13 +1161,20 @@ dashboardRouter.patch('/schedules/:sn/:scheduleId', (req: Request, res: Response
       path_direction = COALESCE(?, path_direction),
       work_mode      = COALESCE(?, work_mode),
       task_mode      = COALESCE(?, task_mode),
+      alternate_direction = COALESCE(?, alternate_direction),
+      alternate_step      = COALESCE(?, alternate_step),
+      edge_offset         = COALESCE(?, edge_offset),
+      rain_pause          = COALESCE(?, rain_pause),
+      rain_threshold_mm   = COALESCE(?, rain_threshold_mm),
+      rain_threshold_probability = COALESCE(?, rain_threshold_probability),
+      rain_check_hours    = COALESCE(?, rain_check_hours),
       updated_at     = datetime('now')
     WHERE schedule_id = ? AND mower_sn = ?
   `).run(
     body.scheduleName ?? null,
     body.startTime ?? null,
     body.endTime ?? null,
-    body.weekdays ? JSON.stringify(body.weekdays) : null,
+    body.weekdays ? JSON.stringify(body.weekdays as number[]) : null,
     body.enabled !== undefined ? (body.enabled ? 1 : 0) : null,
     body.mapId ?? null,
     body.mapName ?? null,
@@ -1141,6 +1182,13 @@ dashboardRouter.patch('/schedules/:sn/:scheduleId', (req: Request, res: Response
     body.pathDirection ?? null,
     body.workMode ?? null,
     body.taskMode ?? null,
+    body.alternateDirection !== undefined ? (body.alternateDirection ? 1 : 0) : null,
+    body.alternateStep ?? null,
+    body.edgeOffset ?? null,
+    body.rainPause !== undefined ? (body.rainPause ? 1 : 0) : null,
+    body.rainThresholdMm ?? null,
+    body.rainThresholdProbability ?? null,
+    body.rainCheckHours ?? null,
     scheduleId, sn,
   );
 
@@ -1170,6 +1218,17 @@ dashboardRouter.post('/schedules/:sn/:scheduleId/send', (req: Request, res: Resp
     return;
   }
 
+  // Bereken effectieve richting (met alternerende rotatie)
+  let effectiveDirection = row.path_direction;
+  if (row.alternate_direction === 1) {
+    // Tel hoeveel keer dit schema al getriggerd is (via last_triggered_at count)
+    const triggerCount = db.prepare(
+      `SELECT COUNT(*) as cnt FROM work_records WHERE schedule_id = ?`
+    ).get(row.schedule_id) as { cnt: number } | undefined;
+    const count = triggerCount?.cnt ?? 0;
+    effectiveDirection = (row.path_direction + count * (row.alternate_step ?? 90)) % 360;
+  }
+
   publishToDevice(sn, {
     timer_task: {
       task_id: row.schedule_id,
@@ -1182,7 +1241,7 @@ dashboardRouter.post('/schedules/:sn/:scheduleId/send', (req: Request, res: Resp
       work_mode: row.work_mode,
       task_mode: row.task_mode,
       cov_direction: 0,
-      path_direction: row.path_direction,
+      path_direction: effectiveDirection,
     },
   });
 
@@ -1191,11 +1250,196 @@ dashboardRouter.post('/schedules/:sn/:scheduleId/send', (req: Request, res: Resp
       cutGrassHeight: row.cutting_height,
       defaultCuttingHeight: row.cutting_height,
       target_height: row.cutting_height,
-      path_direction: row.path_direction,
+      path_direction: effectiveDirection,
     },
   });
 
-  res.json({ ok: true, message: 'Schedule en parameters verstuurd naar maaier' });
+  res.json({ ok: true, message: 'Schedule en parameters verstuurd naar maaier', effectiveDirection });
+});
+
+// ── Weather forecast (proxy for Open-Meteo) ────────────────────
+
+const weatherCache = new Map<string, { data: unknown; cachedAt: number }>();
+const WEATHER_CACHE_TTL = 15 * 60 * 1000; // 15 minuten
+
+dashboardRouter.get('/weather/:lat/:lng', async (req: Request, res: Response) => {
+  const { lat, lng } = req.params;
+  const cacheKey = `${parseFloat(lat).toFixed(2)}_${parseFloat(lng).toFixed(2)}`;
+  const cached = weatherCache.get(cacheKey);
+  if (cached && Date.now() - cached.cachedAt < WEATHER_CACHE_TTL) {
+    res.json(cached.data);
+    return;
+  }
+
+  try {
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&hourly=precipitation,precipitation_probability&forecast_days=1&timezone=auto`;
+    const resp = await fetch(url);
+    if (!resp.ok) {
+      res.status(502).json({ error: 'Weather API error' });
+      return;
+    }
+    const data = await resp.json();
+    weatherCache.set(cacheKey, { data, cachedAt: Date.now() });
+    res.json(data);
+  } catch (err) {
+    res.status(502).json({ error: 'Weather fetch failed' });
+  }
+});
+
+// ── Rain Sessions (actieve regenpauze sessies) ──────────────────
+
+import { getActiveRainSessions } from '../services/rainMonitor.js';
+
+// GET /api/dashboard/rain-sessions/:sn — actieve rain sessions voor een maaier
+dashboardRouter.get('/rain-sessions/:sn', (req: Request, res: Response) => {
+  const sessions = getActiveRainSessions(req.params.sn);
+  res.json({ sessions });
+});
+
+// GET /api/dashboard/rain-sessions — alle actieve rain sessions
+dashboardRouter.get('/rain-sessions', (_req: Request, res: Response) => {
+  const sessions = getActiveRainSessions();
+  res.json({ sessions });
+});
+
+// ── Extended Mower Commands (bestaande firmware + extended node) ─────────
+
+import { publishExtendedCommand } from '../mqtt/extendedCommands.js';
+
+// POST /api/dashboard/navigate-to/:sn — stuur maaier naar GPS positie
+dashboardRouter.post('/navigate-to/:sn', (req: Request, res: Response) => {
+  const sn = req.params.sn;
+  const { latitude, longitude, angle = 0 } = req.body as { latitude?: number; longitude?: number; angle?: number };
+  if (latitude == null || longitude == null) {
+    res.status(400).json({ ok: false, error: 'latitude and longitude required' });
+    return;
+  }
+  publishToDevice(sn, { navigate_to_position: { latitude, longitude, angle } });
+  res.json({ ok: true, command: 'navigate_to_position' });
+});
+
+// POST /api/dashboard/stop-navigation/:sn — stop navigatie
+dashboardRouter.post('/stop-navigation/:sn', (req: Request, res: Response) => {
+  publishToDevice(req.params.sn, { stop_navigation: {} });
+  res.json({ ok: true, command: 'stop_navigation' });
+});
+
+// POST /api/dashboard/patrol/:sn — start randmaaien (patrol mode)
+dashboardRouter.post('/patrol/:sn', (req: Request, res: Response) => {
+  publishToDevice(req.params.sn, { start_patrol: null });
+  res.json({ ok: true, command: 'start_patrol' });
+});
+
+// POST /api/dashboard/stop-patrol/:sn — stop randmaaien
+dashboardRouter.post('/stop-patrol/:sn', (req: Request, res: Response) => {
+  publishToDevice(req.params.sn, { stop_patrol: null });
+  res.json({ ok: true, command: 'stop_patrol' });
+});
+
+// POST /api/dashboard/charge-threshold/:sn — stel auto-charge drempel in
+dashboardRouter.post('/charge-threshold/:sn', (req: Request, res: Response) => {
+  const { threshold } = req.body as { threshold?: number };
+  if (threshold == null) { res.status(400).json({ ok: false, error: 'threshold required' }); return; }
+  publishToDevice(req.params.sn, { auto_charge_threshold: { threshold } });
+  res.json({ ok: true, command: 'auto_charge_threshold' });
+});
+
+// POST /api/dashboard/max-speed/:sn — stel max navigatie snelheid in
+dashboardRouter.post('/max-speed/:sn', (req: Request, res: Response) => {
+  const { speed } = req.body as { speed?: number };
+  if (speed == null) { res.status(400).json({ ok: false, error: 'speed required' }); return; }
+  publishToDevice(req.params.sn, { set_navigation_max_speed: { speed } });
+  res.json({ ok: true, command: 'set_navigation_max_speed' });
+});
+
+// POST /api/dashboard/preview-path/:sn — genereer maaipad preview
+dashboardRouter.post('/preview-path/:sn', (req: Request, res: Response) => {
+  const sn = req.params.sn;
+  const { polygonArea, covDirection = 0, covMode = 1 } = req.body as {
+    polygonArea?: Array<{ latitude: number; longitude: number }>;
+    covDirection?: number;
+    covMode?: number;
+  };
+  if (!polygonArea || polygonArea.length < 3) {
+    res.status(400).json({ ok: false, error: 'polygonArea with at least 3 points required' });
+    return;
+  }
+  publishToDevice(sn, {
+    generate_preview_cover_path: {
+      cov_mode: covMode,
+      polygon_area: polygonArea,
+      cov_direction: covDirection,
+    },
+  });
+  res.json({ ok: true, command: 'generate_preview_cover_path' });
+});
+
+// ── Virtual Walls (no-go zones) ─────────────────────────────────
+
+// GET /api/dashboard/virtual-walls/:sn — haal alle virtual walls op
+dashboardRouter.get('/virtual-walls/:sn', (req: Request, res: Response) => {
+  const walls = db.prepare(
+    'SELECT * FROM virtual_walls WHERE mower_sn = ? ORDER BY created_at DESC'
+  ).all(req.params.sn);
+  res.json({ walls });
+});
+
+// POST /api/dashboard/virtual-walls/:sn — maak een virtual wall + sync naar maaier
+dashboardRouter.post('/virtual-walls/:sn', (req: Request, res: Response) => {
+  const sn = req.params.sn;
+  const { wallName, lat1, lng1, lat2, lng2 } = req.body as {
+    wallName?: string; lat1?: number; lng1?: number; lat2?: number; lng2?: number;
+  };
+  if (lat1 == null || lng1 == null || lat2 == null || lng2 == null) {
+    res.status(400).json({ ok: false, error: 'lat1, lng1, lat2, lng2 required' });
+    return;
+  }
+  const wallId = uuidv4();
+  db.prepare(
+    'INSERT INTO virtual_walls (wall_id, mower_sn, wall_name, lat1, lng1, lat2, lng2) VALUES (?, ?, ?, ?, ?, ?, ?)'
+  ).run(wallId, sn, wallName ?? null, lat1, lng1, lat2, lng2);
+
+  // Sync alle enabled walls naar maaier
+  syncVirtualWalls(sn);
+  res.json({ ok: true, wallId });
+});
+
+// DELETE /api/dashboard/virtual-walls/:sn/:wallId — verwijder een virtual wall
+dashboardRouter.delete('/virtual-walls/:sn/:wallId', (req: Request, res: Response) => {
+  const { sn, wallId } = req.params;
+  db.prepare('DELETE FROM virtual_walls WHERE wall_id = ? AND mower_sn = ?').run(wallId, sn);
+  syncVirtualWalls(sn);
+  res.json({ ok: true });
+});
+
+/** Sync alle enabled virtual walls naar de maaier via MQTT */
+function syncVirtualWalls(sn: string): void {
+  const walls = db.prepare(
+    'SELECT lat1, lng1, lat2, lng2 FROM virtual_walls WHERE mower_sn = ? AND enabled = 1'
+  ).all(sn) as Array<{ lat1: number; lng1: number; lat2: number; lng2: number }>;
+
+  publishToDevice(sn, {
+    update_virtual_wall: {
+      virtual_wall: walls.map(w => ({
+        latitude1: w.lat1, longitude1: w.lng1,
+        latitude2: w.lat2, longitude2: w.lng2,
+      })),
+    },
+  });
+}
+
+// ── Extended Commands (via firmware Python node) ────────────────
+
+// POST /api/dashboard/extended/:sn — stuur commando naar extended_commands.py
+dashboardRouter.post('/extended/:sn', (req: Request, res: Response) => {
+  const sn = req.params.sn;
+  const command = req.body as Record<string, unknown>;
+  if (!command || Object.keys(command).length === 0) {
+    res.status(400).json({ ok: false, error: 'command required' });
+    return;
+  }
+  publishExtendedCommand(sn, command);
+  res.json({ ok: true, command: Object.keys(command)[0] });
 });
 
 // ── Static firmware file serving ────────────────────────────────
@@ -1205,13 +1449,27 @@ const firmwareDir = process.env.FIRMWARE_PATH ?? path.resolve(__dirname, '../../
 
 // ── Auto-sync firmware directory → ota_versions DB ─────────────────────────
 
+function getLocalIp(): string {
+  const nets = networkInterfaces();
+  for (const name of Object.keys(nets)) {
+    for (const net of nets[name]!) {
+      // Eerste niet-interne IPv4 adres (bijv. 192.168.0.177)
+      if (net.family === 'IPv4' && !net.internal) return net.address;
+    }
+  }
+  return '127.0.0.1';
+}
+
 function getOtaBaseUrl(): string {
   if (process.env.OTA_BASE_URL) return process.env.OTA_BASE_URL.replace(/\/$/, '');
   if (process.env.TARGET_IP) {
     const port = parseInt(process.env.PORT ?? '80', 10);
     return port === 80 ? `http://${process.env.TARGET_IP}` : `http://${process.env.TARGET_IP}:${port}`;
   }
-  return 'http://app.lfibot.com';
+  // Auto-detect: gebruik lokaal IP + poort zodat maaier direct kan downloaden
+  const ip = getLocalIp();
+  const port = parseInt(process.env.PORT ?? '3000', 10);
+  return port === 80 ? `http://${ip}` : `http://${ip}:${port}`;
 }
 
 function syncFirmwareVersions(): void {
@@ -1792,20 +2050,12 @@ dashboardRouter.post('/pin/:sn/verify', (req: Request, res: Response) => {
     return;
   }
   publishToDevice(sn, { dev_pin_info: { cfg_value: 2, code } });
-  console.log(`[PIN] Verify PIN voor ${sn}: ${code}`);
+  // OOK via extended_commands.py voor directe serial verify op de STM32
+  // (bewezen werkend: CMD 0x23 type=2, ASCII PIN digits, CRC-8)
+  publishExtendedCommand(sn, { verify_pin: { code } });
+  console.log(`[PIN] Verify PIN voor ${sn}: ${code} (via mqtt_node + serial)`);
 
-  // Markeer direct als unlocked — onderdrukt error_status 151 server-side.
-  // De MCU blijft 151 rapporteren ook na unlock (flag niet gewist door patch),
-  // dus we moeten dit hier doen, niet pas bij het response.
-  const cacheChanged = markPinUnlocked(sn);
-  if (cacheChanged) {
-    const clearFields = new Map<string, string>();
-    clearFields.set('error_status', 'OK');
-    clearFields.set('error_code', 'None');
-    clearFields.set('error_msg', '');
-    forwardToDashboard(sn, clearFields);
-  }
-
+  // v3.6.4 firmware patch cleart error_byte direct op STM32 na succesvolle verify
   res.json({ ok: true, action: 'verify', cfg_value: 2 });
 });
 
@@ -1872,12 +2122,27 @@ dashboardRouter.get('/camera/:sn/stream', (req: Request, res: Response) => {
 
 // GET /api/dashboard/camera/:sn/snapshot — single JPEG snapshot
 dashboardRouter.get('/camera/:sn/snapshot', (req: Request, res: Response) => {
-  const ip = req.query.ip as string;
+  let ip = req.query.ip as string | undefined;
   const port = parseInt(req.query.port as string) || 8000;
 
+  // Auto-resolve mower IP als niet meegegeven
   if (!ip) {
-    res.status(400).json({ error: 'ip query parameter is vereist' });
-    return;
+    const sn = req.params.sn;
+    const isPrivateIp = (addr: string) =>
+      /^10\./.test(addr) || /^172\.(1[6-9]|2\d|3[01])\./.test(addr) || /^192\.168\./.test(addr);
+    const ipRow = db.prepare(
+      `SELECT e.mower_ip, d.ip_address as detected_ip
+       FROM equipment e
+       LEFT JOIN device_registry d ON d.sn = e.mower_sn AND d.ip_address IS NOT NULL
+       WHERE e.mower_sn = ?
+       ORDER BY d.last_seen DESC LIMIT 1`
+    ).get(sn) as { mower_ip: string | null; detected_ip: string | null } | undefined;
+    ip = ipRow?.mower_ip
+      ?? (ipRow?.detected_ip && isPrivateIp(ipRow.detected_ip) ? ipRow.detected_ip : undefined);
+    if (!ip) {
+      res.status(404).json({ error: 'Maaier IP onbekend' });
+      return;
+    }
   }
 
   http.get(`http://${ip}:${port}/snapshot`, (proxyRes) => {

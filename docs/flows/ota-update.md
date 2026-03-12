@@ -20,17 +20,18 @@ sequenceDiagram
         App->>MQTT: ota_version_info
         MQTT->>Mower: ota_version_info
         Mower-->>MQTT: ota_version_info_respond
-        MQTT-->>App: {mower: "v5.7.1", charger: "v0.3.6", mcu: "v3.5.8"}
+        MQTT-->>App: {mower: "v6.0.2", charger: "v0.4.0", mcu: "v3.6.6"}
 
-        App->>Server: GET checkOtaNewVersion?version=v5.7.1&equipmentType=LFIN2
-        Server-->>App: {version: "v5.7.1", downloadUrl: "https://...", md5: "..."}
+        App->>Server: GET checkOtaNewVersion?version=v6.0.2&equipmentType=LFIN2
+        Server-->>App: {upgradeFlag: 1, version, downloadUrl, md5}
     end
 
     rect rgb(255, 248, 240)
         Note over App,Cloud: Phase 2: Mower OTA
         Note over App: "Are you sure to upgrade?<br/>Expected to take 20-30 minutes"
 
-        App->>MQTT: ota_upgrade_cmd {type: "full", content: {upgradeApp: {version, downloadUrl, md5}}}
+        App->>MQTT: ota_upgrade_cmd {cmd, type, content, url, version, md5}
+        Note over MQTT: Broker removes tz field,<br/>forces type:"full", re-encrypts
         MQTT->>Mower: ota_upgrade_cmd
 
         Note over Mower: mqtt_node forwards to<br/>ota_client_node via ROS 2<br/>/ota_upgrade_srv service
@@ -96,28 +97,48 @@ sequenceDiagram
 
 ## `ota_upgrade_cmd` JSON Format
 
-```json title="Full firmware upgrade"
+!!! danger "CRITICAL — Exact payload format (proven working March 2026)"
+    The payload below is the **only format** that works. Any deviation (wrong field names, missing fields, extra fields like `tz`) will cause the update to fail silently.
+
+```json title="Full firmware upgrade (CORRECT format)"
 {
   "ota_upgrade_cmd": {
+    "cmd": "upgrade",
     "type": "full",
-    "content": {
-      "upgradeApp": {
-        "version": "v5.7.1",
-        "downloadUrl": "https://<oss-host>/novabot-file/<firmware-filename>.deb",
-        "md5": "<md5-checksum>"
-      }
-    }
+    "content": "app",
+    "url": "http://<server>:<port>/api/dashboard/ota/firmware/<filename>.deb",
+    "version": "v6.0.2-custom-16",
+    "md5": "<md5-checksum>"
   }
 }
 ```
 
+### Required Fields
+
+| Field | Value | Required | Notes |
+|-------|-------|----------|-------|
+| `cmd` | `"upgrade"` | **Yes** | Without this, `mqtt_node` ignores the command entirely |
+| `type` | `"full"` | **Yes** | `"increment"` does NOT trigger download |
+| `content` | `"app"` | **Yes** | Must be the **string** `"app"`, NOT an object. Without this, `mqtt_node` ignores the command |
+| `url` | `"http://..."` | **Yes** | Must be `http://` — mower does NOT support HTTPS for OTA downloads |
+| `version` | version string | **Yes** | Version of the firmware being installed |
+| `md5` | MD5 hash | **Yes** | Mower verifies checksum before installing |
+
+!!! warning "NO `tz` field — Broker-level fix required"
+    The Novabot app always includes `tz:"Europe/Amsterdam"` in `ota_upgrade_cmd`. When `mqtt_node` sees a `tz` field, it:
+
+    1. Writes the timezone to `/userdata/ota/novabot_timezone.txt`
+    2. **Overwrites `type` with `"increment"`** — breaking the full update!
+
+    The local server's MQTT broker (`authorizePublish` in `broker.ts`) intercepts app→mower messages, removes the `tz` field, forces `type:"full"`, and re-encrypts. **This broker fix must NEVER be removed.**
+
 ### Upgrade Types
 
-| Type | Description | Payload |
-|------|-------------|---------|
-| `full` | Full firmware replacement (.deb package) | `content.upgradeApp` |
-| `increment` | Incremental app update | `content.upgradeApp` |
-| `file_update` | Individual file updates (.zip with manifest) | `content.upgradeApp` (zip with `check.json`) |
+| Type | Description | Notes |
+|------|-------------|-------|
+| `full` | Full firmware replacement (.deb package) | **Only type that works for custom firmware** |
+| `increment` | Incremental app update | mqtt_node sets this when `tz` field present — causes silent failure |
+| `file_update` | Individual file updates (.zip with manifest) | Requires `check.json` manifest inside ZIP |
 <!-- PRIVATE -->
 | `system` | Full system upgrade via apt | Runs `sudo apt full-upgrade && reboot -f` |
 
@@ -285,8 +306,10 @@ graph LR
 | Charger | v0.3.6 | 1.4 MB | ESP32-S3, ESP-IDF v4.4.2, plain JSON MQTT |
 | Charger | v0.4.0 | 1.4 MB | Adds AES-128-CBC MQTT encryption + `cJSON_IsNull` command validation |
 | Mower | v5.7.1 | 35 MB | Debian/ROS 2, Horizon X3 |
-| Mower | v6.0.3 | ? | Pushed to select users by support |
-| MCU | v3.5.8 | — | STM32F407 motor controller |
+| Mower | v6.0.2 | ~35 MB | Latest known stock firmware |
+| Mower | v6.0.2-custom-16 | ~35 MB | Custom: SSH, mDNS, camera stream, extended commands, PIN fix |
+| MCU | v3.5.8 | 444 KB | STM32F407 motor controller (stock) |
+| MCU | v3.6.6 | 444 KB | STM32F407 custom: PIN lock bypass + verify status=0 (ROS2 compat) |
 
 ## File System Paths
 

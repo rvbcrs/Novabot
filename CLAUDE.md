@@ -127,19 +127,11 @@ DB locatie: `novabot-server/novabot.db`
   - Dashboard dist MOET gerebuild worden na frontend wijzigingen: `cd novabot-dashboard && npm run build`
 
 **BLE Provisioning — VOLLEDIG WERKEND (9 maart 2026):**
-- Native BLE via `@stoprocent/noble` in bootstrap wizard (`bootstrap/src/ble.ts`)
-- **MQTT redirect via BLE werkt**: `set_mqtt_info` wijzigt `json_config.json` succesvol
-- **`result:1` betekent NIET "afgewezen"** — het is "acknowledged/applied" (bewezen: WiFi wachtwoord WEL gewijzigd ondanks result:1)
-- **Werkende command sequence** (exact als officiële Novabot app):
-  1. `get_signal_info` (handshake, non-fatal)
-  2. `set_wifi_info` (mower: `{ap:{ssid,passwd,encrypt:0}}`, charger: `{sta:{...},ap:{...}}`)
-  3. `set_lora_info` (`{addr:718, channel:15, hc:20, lc:14}`)
-  4. `set_mqtt_info` (`{addr:"<server-ip>", port:1883}`)
-  5. `set_cfg_info` (mower: `{cfg_value:1, tz:"Europe/Amsterdam"}`, charger: `1`)
-- **`tz` in BLE `set_cfg_info` is VEILIG** — BLE handler schrijft naar json_config.json. De OTA tz-bug is specifiek over MQTT `ota_upgrade_cmd` (ander codepad).
-- Mower responses komen op char `0x0011` (writeChar), NIET op `0x0021`
-- Frame protocol: `ble_start` → 20-byte JSON chunks (30ms) → `ble_end`
-- Novabot company ID: `0x5566` in BLE manufacturer data
+- Implementatie: `bootstrap/src/ble.ts` (noble) + `bootstrap/wizard/src/ble/webBle.ts`
+- **`result:1` = "acknowledged"** (niet "afgewezen") — bewezen werkend
+- Command sequence: `get_signal_info` → `set_wifi_info` → `set_lora_info` → `set_mqtt_info` → `set_cfg_info`
+- **`tz` in BLE `set_cfg_info` is VEILIG** — ander codepad dan OTA tz-bug
+- Zie `@BLE.md` voor GATT details, frame protocol, exacte payloads
 
 **saveCutGrassRecord**: retourneert `ok(null)` bij lege/onparseerbare body (maaier stuurt multipart → retry loop anders).
 
@@ -170,43 +162,14 @@ docker compose down && docker compose up -d  # Container herstarten
 - Dashboard dist wordt INSIDE de container gebouwd (Dockerfile kopieert src/ en runt `npm run build`)
 
 Firmware: `research/firmware/` — mower custom builds via `research/build_custom_firmware.sh`
-Maaier firmware versie: `v6.0.2-custom-5` (OTA via app geslaagd 2 maart 2026)
+Maaier firmware: `v6.0.2-custom-16`, STM32: `v3.6.6` (PIN lock fix)
 
 ---
 
-## Hardware Reparatie (bron: `research/NOVABOT Disassembly Guide.pdf`)
+## Hardware Reparatie
 
-Tools: **PH2** Phillips + **T20** Torx schroevendraaier. Oranje schroeven = constructie, blauw = specifieke componenten.
-
-### Hall Sensors — KRITIEK
-Alle Hall sensors moeten in de JUISTE RICHTING geplaatst zijn. Verkeerde richting → functie werkt niet.
-
-| Sensor | Locatie | Aantal |
-|--------|---------|--------|
-| Collision | Binnenklep (6.2) | 4× |
-| STOP button | Binnenklep (6.3) | 2× + 2 magneten |
-| Liftdetectie | Basis assembly (5.2/5.4) | 3× + 2× |
-| **Charge in place** (laadstation) | Charging station binnenin | 1× |
-
-**Laadprobleem → controleer "Charge in place Hall" + magneet aan maaier-onderkant.**
-
-### PCB Connectors (Basis assembly, linker→rechts)
-LoRa antenne (links!) — RTK antenne — AI board — Display — Battery Pack (2 kabels!) — Charging port — Rijmotoren L+R — Motor lift — Liftmotor — Maaiermotor — Lift sensor
-
-### LoRa Antenne
-Gouden coil spring via **u.FL/IPEX connector**, linkerzijde hoofd-PCB.
-Losse connector → LoRa icoon ontbreekt in app. Fix: connector stevig indrukken.
-
-### Waterproofing (ALTIJD controleren na reparatie)
-- Afdichtingsring rondom basis moet in groef zitten
-- Rubberen hoes maaiermotor moet in groef (sectie 8)
-- O-ring rijmotor niet vergeten (sectie 7)
-
-### FPC kabels (camera's, display)
-Zwart vergrendelplaatje **omhoog** draaien vóór loskoppelen. Dubbele tape houdt kabels vast.
-
-### Laadstation Binnenin
-Charge in place Hall, LoRa antenne, RTK antenne, WiFi/BT antenne, Burn switch (UART flash), Debug serial port.
+Zie `research/NOVABOT Disassembly Guide.pdf` (15 pagina's) + auto-memory `hardware-repair.md` voor volledige details.
+Key: PH2+T20 tools, Hall sensors richting kritiek, waterproofing controleren na reparatie.
 
 ---
 
