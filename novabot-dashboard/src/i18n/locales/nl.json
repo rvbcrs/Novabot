@@ -243,12 +243,13 @@
     "conflictWarning": "Dit schema overlapt met bestaande schema's"
   },
   "sensors": {
+    "connectivity": "Verbinding",
     "work": "Werk",
     "hardware": "Hardware",
     "errors": "Fouten",
     "position": "Positie",
     "status": "Status",
-    "mowerPositionLora": "Maaier positie (LoRa)",
+    "mowerLora": "Maaier (LoRa)",
     "workStatus": "Status",
     "mode": "Modus",
     "progress": "Voortgang",
@@ -268,9 +269,20 @@
     "chargerStatus": "Laadstation status",
     "mowerStatus": "Maaier status",
     "loraSearch": "LoRa zoeken",
+    "loraStatus": "LoRa",
+    "loraAddress": "LoRa Adres",
+    "loraChannel": "LoRa Kanaal",
     "recharge": "Opladen",
     "state": "Toestand",
-    "taskMode": "Taakmodus"
+    "taskMode": "Taakmodus",
+    "battery": "Batterij",
+    "wifi": "WiFi",
+    "rtkSat": "RTK Sat",
+    "gpsSat": "GPS Sat",
+    "gpsState": "GPS",
+    "disk": "Schijf",
+    "memory": "Geheugen",
+    "config": "Configuratie"
   },
   "settings": {
     "title": "Instellingen",

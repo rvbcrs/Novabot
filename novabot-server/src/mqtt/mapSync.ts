@@ -220,9 +220,10 @@ export function onMowerConnected(sn: string): void {
       // ota_upgrade_cmd type van "full" naar "increment", waardoor OTA nooit
       // een volledige firmware download start. De app stuurt timezone zelf mee
       // in het ota_upgrade_cmd commando.
-      console.log(`${TAG} Maaier ${sn} verbonden — kaarten + parameters opvragen...`);
+      console.log(`${TAG} Maaier ${sn} verbonden — kaarten opvragen...`);
       requestMapList(sn);
-      publishToDevice(sn, { get_para_info: {} });
+      // NB: get_para_info wordt NIET gestuurd — maaier reageert er niet op.
+      // Settings state wordt lokaal bijgehouden wanneer set_para_info wordt gestuurd.
     }
 
     // Na 30 seconden de pending flag resetten zodat bij reconnect opnieuw gevraagd kan worden

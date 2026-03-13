@@ -200,6 +200,16 @@ export function initDb(): void {
       scale       REAL    NOT NULL DEFAULT 1,
       updated_at  TEXT    NOT NULL DEFAULT (datetime('now'))
     );
+
+    -- Apparaat instellingen: persistent cache voor set_para_info
+    -- (maaier reageert niet op get_para_info, dus we bewaren de laatst gezette waarden)
+    CREATE TABLE IF NOT EXISTS device_settings (
+      sn          TEXT    NOT NULL,
+      key         TEXT    NOT NULL,
+      value       TEXT    NOT NULL,
+      updated_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (sn, key)
+    );
   `);
 
   // Voeg mac_address kolom toe aan equipment (migratie – veilig om te herhalen)

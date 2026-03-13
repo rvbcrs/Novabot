@@ -82,6 +82,21 @@ dashboardRouter.get('/devices', (_req: Request, res: Response) => {
 
   const snapshots = getAllDeviceSnapshots();
 
+  // LoRa config uit equipment_lora_cache
+  const loraCache = db.prepare('SELECT sn, charger_address, charger_channel FROM equipment_lora_cache').all() as { sn: string; charger_address: number | null; charger_channel: number | null }[];
+  const loraBySn = new Map<string, { address: number | null; channel: number | null }>();
+  for (const lc of loraCache) {
+    loraBySn.set(lc.sn, { address: lc.charger_address, channel: lc.charger_channel });
+  }
+
+  // Persisted settings uit device_settings (voor set_para_info cache)
+  const settingsRows = db.prepare('SELECT sn, key, value FROM device_settings').all() as { sn: string; key: string; value: string }[];
+  const settingsBySn = new Map<string, Map<string, string>>();
+  for (const row of settingsRows) {
+    if (!settingsBySn.has(row.sn)) settingsBySn.set(row.sn, new Map());
+    settingsBySn.get(row.sn)!.set(row.key, row.value);
+  }
+
   // Filter: toon alleen gebonden apparaten of online apparaten
   const devices = registry
     .filter(d => boundSns.has(d.sn!) || isDeviceOnline(d.sn!))
@@ -93,6 +108,23 @@ dashboardRouter.get('/devices', (_req: Request, res: Response) => {
         sensors.version = dbVersion;
       }
       const eqRow = equipment.find(e => e.mower_sn === d.sn || e.charger_sn === d.sn);
+      // Inject LoRa config uit equipment_lora_cache
+      // Charger: directe lookup. Maaier: via gekoppelde charger SN.
+      let lora = loraBySn.get(d.sn!);
+      if (!lora && eqRow?.charger_sn) {
+        lora = loraBySn.get(eqRow.charger_sn);
+      }
+      if (lora) {
+        if (lora.address != null) sensors.lora_address = String(lora.address);
+        if (lora.channel != null) sensors.lora_channel = String(lora.channel);
+      }
+      // Inject persisted settings (set_para_info cache) als fallback
+      const persisted = settingsBySn.get(d.sn!);
+      if (persisted) {
+        for (const [key, val] of persisted) {
+          if (!(key in sensors)) sensors[key] = val;
+        }
+      }
       return {
         sn: d.sn!,
         macAddress: d.mac_address,
@@ -837,16 +869,30 @@ dashboardRouter.post('/command/:sn', (req: Request, res: Response) => {
   const { encrypt: doEncrypt, qos } = req.body as { encrypt?: boolean; qos?: number };
   const shouldEncrypt = doEncrypt !== undefined ? doEncrypt : sn.startsWith('LFI');
 
-  // LED bridge: als het commando set_para_info met headlight bevat,
-  // stuur ook een onversleuteld bericht naar novabot/cmd/<SN> zodat
-  // led_bridge.py op de maaier de lamp direct via ROS kan aansturen.
+  // set_para_info: bewaar alle settings in sensor cache + SQLite zodat dashboard
+  // de juiste state toont (maaier retourneert GEEN get_para_info_respond)
   const paraInfo = command.set_para_info as Record<string, unknown> | undefined;
-  if (paraInfo && 'headlight' in paraInfo) {
-    const ledValue = Number(paraInfo.headlight);
-    publishToTopic(`novabot/cmd/${sn}`, { led_set: ledValue });
-    // Update sensor cache zodat dashboard direct de juiste state toont
+  if (paraInfo) {
     if (!deviceCache.has(sn)) deviceCache.set(sn, new Map());
-    deviceCache.get(sn)!.set('headlight_active', String(ledValue));
+    const cache = deviceCache.get(sn)!;
+    const changes = new Map<string, string>();
+    const upsert = db.prepare(
+      `INSERT INTO device_settings (sn, key, value, updated_at) VALUES (?, ?, ?, datetime('now'))
+       ON CONFLICT(sn, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+    );
+    for (const [key, val] of Object.entries(paraInfo)) {
+      if (val === undefined || val === null) continue;
+      const strVal = String(val);
+      cache.set(key, strVal);
+      changes.set(key, strVal);
+      upsert.run(sn, key, strVal);
+    }
+    // Push naar dashboard zodat UI direct update
+    forwardToDashboard(sn, changes);
+    // LED bridge: stuur ook naar novabot/cmd/<SN> voor led_bridge.py
+    if ('headlight' in paraInfo) {
+      publishToTopic(`novabot/cmd/${sn}`, { led_set: Number(paraInfo.headlight) });
+    }
   }
 
   if (shouldEncrypt) {

@@ -53,3 +53,5 @@ novabot-dashboard/dist/
 # SQLite runtime files
 *.db-wal
 *.db-shm
+
+**/node_modules/

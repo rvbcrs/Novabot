@@ -243,12 +243,13 @@
     "conflictWarning": "Ce planning chevauche des plannings existants"
   },
   "sensors": {
+    "connectivity": "Connectivit\u00e9",
     "work": "Travail",
     "hardware": "Mat\u00e9riel",
     "errors": "Erreurs",
     "position": "Position",
     "status": "Statut",
-    "mowerPositionLora": "Position tondeuse (LoRa)",
+    "mowerLora": "Tondeuse (LoRa)",
     "workStatus": "Statut",
     "mode": "Mode",
     "progress": "Progression",
@@ -268,9 +269,20 @@
     "chargerStatus": "Statut station",
     "mowerStatus": "Statut tondeuse",
     "loraSearch": "Recherche LoRa",
+    "loraStatus": "LoRa",
+    "loraAddress": "Adresse LoRa",
+    "loraChannel": "Canal LoRa",
     "recharge": "Recharge",
     "state": "\u00c9tat",
-    "taskMode": "Mode de t\u00e2che"
+    "taskMode": "Mode de t\u00e2che",
+    "battery": "Batterie",
+    "wifi": "WiFi",
+    "rtkSat": "Sat RTK",
+    "gpsSat": "Sat GPS",
+    "gpsState": "GPS",
+    "disk": "Disque",
+    "memory": "M\u00e9moire",
+    "config": "Configuration"
   },
   "settings": {
     "title": "Param\u00e8tres",

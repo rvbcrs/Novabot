@@ -243,12 +243,13 @@
     "conflictWarning": "This schedule overlaps with existing schedules"
   },
   "sensors": {
+    "connectivity": "Connectivity",
     "work": "Work",
     "hardware": "Hardware",
     "errors": "Errors",
     "position": "Position",
     "status": "Status",
-    "mowerPositionLora": "Mower Position (LoRa)",
+    "mowerLora": "Mower (LoRa)",
     "workStatus": "Status",
     "mode": "Mode",
     "progress": "Progress",
@@ -268,9 +269,20 @@
     "chargerStatus": "Charger Status",
     "mowerStatus": "Mower Status",
     "loraSearch": "LoRa Search",
+    "loraStatus": "LoRa",
+    "loraAddress": "LoRa Addr",
+    "loraChannel": "LoRa Ch",
     "recharge": "Recharge",
     "state": "State",
-    "taskMode": "Task Mode"
+    "taskMode": "Task Mode",
+    "battery": "Battery",
+    "wifi": "WiFi",
+    "rtkSat": "RTK Sat",
+    "gpsSat": "GPS Sat",
+    "gpsState": "GPS",
+    "disk": "Disk",
+    "memory": "Memory",
+    "config": "Config"
   },
   "settings": {
     "title": "Settings",

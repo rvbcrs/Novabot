@@ -325,11 +325,16 @@ export function updateDeviceData(sn: string, payload: Buffer): Map<string, strin
     data = (data as Record<string, unknown>).value;
   }
 
-  // Voor get_para_info_respond: waarden zitten in message.value
+  // Voor get_para_info_respond: waarden kunnen in meerdere formaten zitten
+  // NB: maaier reageert momenteel NIET op get_para_info — settings worden
+  // lokaal bijgehouden via set_para_info cache in dashboard.ts.
+  // Parser blijft als fallback voor het geval firmware dit later wel stuurt.
   if (commandName === 'get_para_info_respond') {
-    const msg = (data as Record<string, unknown>).message;
-    if (typeof msg === 'object' && msg !== null && typeof (msg as Record<string, unknown>).value === 'object') {
-      data = (msg as Record<string, unknown>).value;
+    const d = data as Record<string, unknown>;
+    if (typeof d.message === 'object' && d.message !== null && typeof (d.message as Record<string, unknown>).value === 'object') {
+      data = (d.message as Record<string, unknown>).value;
+    } else if (typeof d.value === 'object' && d.value !== null) {
+      data = d.value;
     }
   }
 

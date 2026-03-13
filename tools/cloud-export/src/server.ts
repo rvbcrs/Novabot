@@ -602,8 +602,6 @@ export function createServer(): express.Express {
           deviceType: d.deviceType ?? null,
           sysVersion: d.sysVersion ?? null,
           equipmentType: d.equipmentType ?? null,
-          mowerVersion: d.mowerVersion ?? null,
-          chargerVersion: d.chargerVersion ?? null,
         }));
         const entry = {
           timestamp: new Date().toISOString(),
