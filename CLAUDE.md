@@ -131,7 +131,7 @@ DB locatie: `novabot-server/novabot.db`
 - **`result:1` = "acknowledged"** (niet "afgewezen") — bewezen werkend
 - Command sequence: `get_signal_info` → `set_wifi_info` → `set_lora_info` → `set_mqtt_info` → `set_cfg_info`
 - **`tz` in BLE `set_cfg_info` is VEILIG** — ander codepad dan OTA tz-bug
-- Zie `@BLE.md` voor GATT details, frame protocol, exacte payloads
+- Zie `@docs/reference/BLE.md` voor GATT details, frame protocol, exacte payloads
 
 **saveCutGrassRecord**: retourneert `ok(null)` bij lege/onparseerbare body (maaier stuurt multipart → retry loop anders).
 
@@ -173,17 +173,17 @@ Key: PH2+T20 tools, Hall sensors richting kritiek, waterproofing controleren na 
 
 ---
 
-## Referentiebestanden (laden met @BESTANDSNAAM.md)
+## Referentiebestanden (in `docs/reference/`, laden met @docs/reference/BESTANDSNAAM.md)
 
 | Bestand | Inhoud |
 |---------|--------|
-| `@MQTT.md` | Volledig MQTT commando protocol, status reports, payload velden, charger_status bitfield |
-| `@BLE.md` | BLE provisioning protocol, exacte payloads, charger + maaier flows |
-| `@API.md` | Alle cloud + admin + dashboard API endpoints |
-| `@FIRMWARE-CHARGER.md` | Charger ESP32-S3 analyse, LoRa protocol, Ghidra decompilatie, v0.4.0 |
-| `@FIRMWARE-MOWER.md` | Maaier ROS 2 analyse, AI perceptie, camera systeem, netwerk services |
-| `@MAP-SYNC.md` | Kaart synchronisatie, CSV/ZIP formaat, StartCoverageTask, maaier HTTP uploads |
-| `@OTA.md` | OTA firmware protocol, custom firmware builder, open issues/TODO |
-| `@APP-ANALYSIS.md` | APK/blutter analyse, AES key derivatie, app architectuur, foutmeldingen |
-| `@MOWER-INTERNALS.md` | Boot sequence, systemd services, ROS2 nodes, map recognition flow, mqtt_node internals |
-| `@SESSIONS.md` | Gedocumenteerde sessies, provisioning fixes, equipment binding lifecycle |
+| `@docs/reference/MQTT.md` | Volledig MQTT commando protocol, status reports, payload velden, charger_status bitfield |
+| `@docs/reference/BLE.md` | BLE provisioning protocol, exacte payloads, charger + maaier flows |
+| `@docs/reference/API.md` | Alle cloud + admin + dashboard API endpoints |
+| `@docs/reference/FIRMWARE-CHARGER.md` | Charger ESP32-S3 analyse, LoRa protocol, Ghidra decompilatie, v0.4.0 |
+| `@docs/reference/FIRMWARE-MOWER.md` | Maaier ROS 2 analyse, AI perceptie, camera systeem, netwerk services |
+| `@docs/reference/MAP-SYNC.md` | Kaart synchronisatie, CSV/ZIP formaat, StartCoverageTask, maaier HTTP uploads |
+| `@docs/reference/OTA.md` | OTA firmware protocol, custom firmware builder, open issues/TODO |
+| `@docs/reference/APP-ANALYSIS.md` | APK/blutter analyse, AES key derivatie, app architectuur, foutmeldingen |
+| `@docs/reference/MOWER-INTERNALS.md` | Boot sequence, systemd services, ROS2 nodes, map recognition flow, mqtt_node internals |
+| `@docs/reference/SESSIONS.md` | Gedocumenteerde sessies, provisioning fixes, equipment binding lifecycle |
