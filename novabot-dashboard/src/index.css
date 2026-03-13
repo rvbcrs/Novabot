@@ -19,6 +19,15 @@ body {
   animation: slide-in-right 250ms ease-out;
 }
 
+/* Error modal scale-in animation */
+@keyframes modal-in {
+  from { opacity: 0; transform: scale(0.9); }
+  to { opacity: 1; transform: scale(1); }
+}
+.animate-in {
+  animation: modal-in 200ms ease-out;
+}
+
 /* Safe area padding for notched phones */
 @supports (padding: env(safe-area-inset-bottom)) {
   .safe-bottom { padding-bottom: env(safe-area-inset-bottom); }

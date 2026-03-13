@@ -1,0 +1,72 @@
+{
+  "steps": {
+    "welcome": "Welcome",
+    "login": "Login",
+    "export": "Export",
+    "done": "Done"
+  },
+  "welcome": {
+    "title": "Novabot Cloud Export",
+    "subtitle": "Download your data from the Novabot cloud",
+    "description": "This tool connects to the Novabot cloud (app.lfibot.com) and downloads all your account data: devices, mowing history, schedules, maps, and firmware information.",
+    "features": {
+      "account": "Account information",
+      "devices": "Registered devices (charger + mower)",
+      "history": "Mowing history and work records",
+      "maps": "Map data (if available)",
+      "schedules": "Mowing schedules",
+      "firmware": "Firmware version information"
+    },
+    "start": "Get started"
+  },
+  "login": {
+    "title": "Sign in to Novabot Cloud",
+    "subtitle": "Enter your Novabot account credentials",
+    "email": "Email address",
+    "password": "Password",
+    "login": "Connect to cloud",
+    "logging_in": "Connecting...",
+    "success": "Connected successfully!",
+    "found_devices": "Found {chargers} charger(s) and {mowers} mower(s)",
+    "account_info": "Account: {name}",
+    "registered": "Registered: {date}",
+    "error_unreachable": "Cloud is unreachable. It may be offline.",
+    "error_credentials": "Invalid email or password.",
+    "error_generic": "Connection failed: {error}",
+    "next": "Continue to export"
+  },
+  "export": {
+    "title": "Export your data",
+    "subtitle": "Select what to download",
+    "categories": {
+      "account": "Account information",
+      "devices": "Device details ({count} devices)",
+      "maps": "Map data",
+      "workRecords": "Mowing history ({count} records)",
+      "messages": "Robot messages ({count} messages)",
+      "schedules": "Mowing schedules",
+      "firmware": "Firmware versions"
+    },
+    "include_firmware_files": "Also download firmware files (~35 MB each)",
+    "firmware_warning": "This will download the actual firmware binaries from Alibaba OSS.",
+    "export_button": "Export all data",
+    "exporting": "Exporting..."
+  },
+  "done": {
+    "title": "Export complete!",
+    "subtitle": "Your data has been saved",
+    "summary": "Summary",
+    "files": "{count} files exported",
+    "size": "Total size: {size}",
+    "devices": "{count} devices",
+    "records": "{count} work records",
+    "messages": "{count} messages",
+    "output_dir": "Saved to:",
+    "download_zip": "Download ZIP",
+    "restart": "Export another account"
+  },
+  "common": {
+    "back": "Back",
+    "cancel": "Cancel"
+  }
+}

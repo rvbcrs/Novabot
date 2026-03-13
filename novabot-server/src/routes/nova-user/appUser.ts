@@ -112,8 +112,10 @@ appUserRouter.post('/loginOut', authMiddleware, (_req, res: Response) => {
 });
 
 // GET /api/nova-user/appUser/appUserInfo?email=
+// IDOR bescherming: negeer de email query param — gebruik altijd het email uit de JWT token.
+// De cloud laat toe dat elke user andermans info ophaalt (IDOR bug), wij niet.
 appUserRouter.get('/appUserInfo', authMiddleware, (req: AuthRequest, res: Response) => {
-  const email = req.query.email as string | undefined ?? req.email;
+  const email = req.email;
   const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email) as UserRow | undefined;
   if (!user) {
     res.json(fail('User not found', 404));

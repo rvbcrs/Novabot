@@ -1,0 +1,72 @@
+{
+  "steps": {
+    "welcome": "Bienvenue",
+    "login": "Connexion",
+    "export": "Exporter",
+    "done": "Termin\u00e9"
+  },
+  "welcome": {
+    "title": "Novabot Cloud Export",
+    "subtitle": "T\u00e9l\u00e9chargez vos donn\u00e9es du cloud Novabot",
+    "description": "Cet outil se connecte au cloud Novabot (app.lfibot.com) et t\u00e9l\u00e9charge toutes vos donn\u00e9es: appareils, historique de tonte, plannings, cartes et informations firmware.",
+    "features": {
+      "account": "Informations du compte",
+      "devices": "Appareils enregistr\u00e9s (chargeur + tondeuse)",
+      "history": "Historique de tonte",
+      "maps": "Donn\u00e9es cartographiques (si disponibles)",
+      "schedules": "Plannings de tonte",
+      "firmware": "Informations firmware"
+    },
+    "start": "Commencer"
+  },
+  "login": {
+    "title": "Connexion au cloud Novabot",
+    "subtitle": "Entrez vos identifiants Novabot",
+    "email": "Adresse e-mail",
+    "password": "Mot de passe",
+    "login": "Se connecter au cloud",
+    "logging_in": "Connexion en cours...",
+    "success": "Connect\u00e9 avec succ\u00e8s !",
+    "found_devices": "{chargers} chargeur(s) et {mowers} tondeuse(s) trouv\u00e9(s)",
+    "account_info": "Compte : {name}",
+    "registered": "Inscrit le : {date}",
+    "error_unreachable": "Cloud inaccessible. Il est peut-\u00eatre hors ligne.",
+    "error_credentials": "E-mail ou mot de passe incorrect.",
+    "error_generic": "Connexion \u00e9chou\u00e9e : {error}",
+    "next": "Continuer vers l'export"
+  },
+  "export": {
+    "title": "Exportez vos donn\u00e9es",
+    "subtitle": "S\u00e9lectionnez les donn\u00e9es \u00e0 t\u00e9l\u00e9charger",
+    "categories": {
+      "account": "Informations du compte",
+      "devices": "D\u00e9tails des appareils ({count} appareils)",
+      "maps": "Donn\u00e9es cartographiques",
+      "workRecords": "Historique de tonte ({count} enregistrements)",
+      "messages": "Messages du robot ({count} messages)",
+      "schedules": "Plannings de tonte",
+      "firmware": "Versions firmware"
+    },
+    "include_firmware_files": "T\u00e9l\u00e9charger aussi les fichiers firmware (~35 Mo chacun)",
+    "firmware_warning": "Cela t\u00e9l\u00e9chargera les binaires firmware depuis Alibaba OSS.",
+    "export_button": "Tout exporter",
+    "exporting": "Export en cours..."
+  },
+  "done": {
+    "title": "Export termin\u00e9 !",
+    "subtitle": "Vos donn\u00e9es ont \u00e9t\u00e9 sauvegard\u00e9es",
+    "summary": "R\u00e9sum\u00e9",
+    "files": "{count} fichiers export\u00e9s",
+    "size": "Taille totale : {size}",
+    "devices": "{count} appareils",
+    "records": "{count} enregistrements",
+    "messages": "{count} messages",
+    "output_dir": "Sauvegard\u00e9 dans :",
+    "download_zip": "T\u00e9l\u00e9charger ZIP",
+    "restart": "Exporter un autre compte"
+  },
+  "common": {
+    "back": "Retour",
+    "cancel": "Annuler"
+  }
+}

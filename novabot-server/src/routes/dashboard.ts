@@ -2035,9 +2035,10 @@ dashboardRouter.post('/pin/:sn/set', (req: Request, res: Response) => {
 });
 
 // POST /api/dashboard/pin/:sn/verify — verifieer PIN en unlock maaier (cfg_value=2)
-// Vereist gepatchte STM32 firmware (v3.6.1+) met type=2 support.
+// Vereist gepatchte STM32 firmware (v3.6.7+) met type=2 + type=3 support.
 // Stuurt PIN naar chassis MCU; als correct → scherm gaat naar home (unlock).
-// Response: result=2 (success) of result=3 (wrong PIN).
+// extended_commands.py stuurt automatisch type=3 clear_error commands na succesvolle verify
+// om te voorkomen dat tilt/lift detectie het error scherm opnieuw toont.
 dashboardRouter.post('/pin/:sn/verify', (req: Request, res: Response) => {
   const { sn } = req.params;
   const { code } = req.body as { code?: string };
@@ -2052,10 +2053,10 @@ dashboardRouter.post('/pin/:sn/verify', (req: Request, res: Response) => {
   publishToDevice(sn, { dev_pin_info: { cfg_value: 2, code } });
   // OOK via extended_commands.py voor directe serial verify op de STM32
   // (bewezen werkend: CMD 0x23 type=2, ASCII PIN digits, CRC-8)
+  // extended_commands.py stuurt na succesvolle verify automatisch type=3 clear error
   publishExtendedCommand(sn, { verify_pin: { code } });
   console.log(`[PIN] Verify PIN voor ${sn}: ${code} (via mqtt_node + serial)`);
 
-  // v3.6.4 firmware patch cleart error_byte direct op STM32 na succesvolle verify
   res.json({ ok: true, action: 'verify', cfg_value: 2 });
 });
 

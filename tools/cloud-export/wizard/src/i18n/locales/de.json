@@ -1,0 +1,72 @@
+{
+  "steps": {
+    "welcome": "Willkommen",
+    "login": "Anmeldung",
+    "export": "Exportieren",
+    "done": "Fertig"
+  },
+  "welcome": {
+    "title": "Novabot Cloud Export",
+    "subtitle": "Laden Sie Ihre Daten aus der Novabot Cloud herunter",
+    "description": "Dieses Tool verbindet sich mit der Novabot Cloud (app.lfibot.com) und l\u00e4dt alle Ihre Kontodaten herunter: Ger\u00e4te, M\u00e4hhistorie, Zeitpl\u00e4ne, Karten und Firmware-Informationen.",
+    "features": {
+      "account": "Kontoinformationen",
+      "devices": "Registrierte Ger\u00e4te (Ladestation + M\u00e4her)",
+      "history": "M\u00e4hhistorie und Arbeitsprotokolle",
+      "maps": "Kartendaten (falls verf\u00fcgbar)",
+      "schedules": "M\u00e4hzeitpl\u00e4ne",
+      "firmware": "Firmware-Versionsinformationen"
+    },
+    "start": "Loslegen"
+  },
+  "login": {
+    "title": "Bei Novabot Cloud anmelden",
+    "subtitle": "Geben Sie Ihre Novabot-Zugangsdaten ein",
+    "email": "E-Mail-Adresse",
+    "password": "Passwort",
+    "login": "Mit Cloud verbinden",
+    "logging_in": "Verbindung wird hergestellt...",
+    "success": "Verbindung erfolgreich!",
+    "found_devices": "{chargers} Ladestation(en) und {mowers} M\u00e4her gefunden",
+    "account_info": "Konto: {name}",
+    "registered": "Registriert: {date}",
+    "error_unreachable": "Cloud nicht erreichbar. M\u00f6glicherweise ist sie offline.",
+    "error_credentials": "Falsche E-Mail-Adresse oder falsches Passwort.",
+    "error_generic": "Verbindung fehlgeschlagen: {error}",
+    "next": "Weiter zum Export"
+  },
+  "export": {
+    "title": "Ihre Daten exportieren",
+    "subtitle": "W\u00e4hlen Sie aus, was heruntergeladen werden soll",
+    "categories": {
+      "account": "Kontoinformationen",
+      "devices": "Ger\u00e4tedetails ({count} Ger\u00e4te)",
+      "maps": "Kartendaten",
+      "workRecords": "M\u00e4hhistorie ({count} Eintr\u00e4ge)",
+      "messages": "Roboternachrichten ({count} Nachrichten)",
+      "schedules": "M\u00e4hzeitpl\u00e4ne",
+      "firmware": "Firmware-Versionen"
+    },
+    "include_firmware_files": "Auch Firmware-Dateien herunterladen (~35 MB pro St\u00fcck)",
+    "firmware_warning": "Dies l\u00e4dt die Firmware-Bin\u00e4rdateien von Alibaba OSS herunter.",
+    "export_button": "Alles exportieren",
+    "exporting": "Exportieren..."
+  },
+  "done": {
+    "title": "Export abgeschlossen!",
+    "subtitle": "Ihre Daten wurden gespeichert",
+    "summary": "Zusammenfassung",
+    "files": "{count} Dateien exportiert",
+    "size": "Gesamtgr\u00f6\u00dfe: {size}",
+    "devices": "{count} Ger\u00e4te",
+    "records": "{count} Arbeitsprotokolle",
+    "messages": "{count} Nachrichten",
+    "output_dir": "Gespeichert in:",
+    "download_zip": "ZIP herunterladen",
+    "restart": "Anderes Konto exportieren"
+  },
+  "common": {
+    "back": "Zur\u00fcck",
+    "cancel": "Abbrechen"
+  }
+}

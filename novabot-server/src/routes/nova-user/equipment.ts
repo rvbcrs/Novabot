@@ -154,11 +154,42 @@ equipmentRouter.post('/getEquipmentBySN', authMiddleware, (req: AuthRequest, res
   if (row) {
     // Cloud retourneert email="" in getEquipmentBySN (niet het echte email adres)
     const dto = rowToCloudDto(row, '');
-    // userId logica (matcht cloud gedrag):
-    // - user_id NULL (unbound): userId=0 → app doet BLE provisioning
-    // - user_id === huidige user: userId=numericUserId → app herkent eigen apparaat
-    // - user_id !== huidige user: userId=numericUserId → app toont "already bound"
-    const userId = row.user_id ? numericUserId : 0;
+
+    // IDOR bescherming: als het apparaat gebonden is aan een ANDERE user,
+    // retourneer minimale info (geen MQTT credentials, MAC, WiFi data).
+    // De cloud heeft deze IDOR check NIET — wij wel.
+    const isOwnDevice = !row.user_id || row.user_id === req.userId;
+    const isBoundToOther = row.user_id != null && row.user_id !== req.userId;
+
+    // userId logica:
+    // - unbound: userId=0 → app doet BLE provisioning
+    // - eigen apparaat: userId=numericUserId → app herkent eigen apparaat
+    // - ander's apparaat: userId=999 (niet 0, niet eigen ID) → app toont "already bound"
+    const userId = !row.user_id ? 0 : isOwnDevice ? numericUserId : 999;
+
+    if (isBoundToOther) {
+      // Sanitized response: geen credentials, geen MAC, geen LoRa params
+      console.log(`[equipment] getEquipmentBySN: sn=${sn} IDOR blocked — bound to other user`);
+      res.json(ok({
+        equipmentId: dto.equipmentId,
+        deviceType:  dto.deviceType,
+        sn:          dto.sn,
+        equipmentCode: dto.equipmentCode,
+        equipmentName: dto.equipmentName,
+        equipmentType: dto.equipmentType,
+        userId:      userId,
+        sysVersion:  dto.sysVersion,
+        status:      dto.status,
+        // Geen gevoelige velden: account, password, macAddress, chargerAddress, chargerChannel
+        macAddress:     null,
+        account:        null,
+        password:       null,
+        chargerAddress: null,
+        chargerChannel: null,
+      }));
+      return;
+    }
+
     console.log(`[equipment] getEquipmentBySN: sn=${sn} row.user_id=${row.user_id ?? 'NULL'} req.userId=${req.userId} → userId=${userId}`);
     res.json(ok({ ...dto, userId, macAddress: skipBle ? null : (mac ?? dto.macAddress) }));
   } else {
@@ -357,12 +388,13 @@ equipmentRouter.post('/updateEquipmentVersion', authMiddleware, (req: AuthReques
       WHERE id = ? AND user_id = ?
     `).run(mowerVersion ?? null, chargerVersion ?? null, equipmentId, req.userId);
   } else if (sn) {
+    // IDOR bescherming: voeg user_id check toe zodat je niet andermans apparaat kunt updaten
     db.prepare(`
       UPDATE equipment
       SET mower_version = COALESCE(?, mower_version),
           charger_version = COALESCE(?, charger_version)
-      WHERE mower_sn = ?
-    `).run(mowerVersion ?? null, chargerVersion ?? null, sn);
+      WHERE mower_sn = ? AND user_id = ?
+    `).run(mowerVersion ?? null, chargerVersion ?? null, sn, req.userId);
   }
 
   // Inject versies in sensor cache + push naar dashboard via Socket.io

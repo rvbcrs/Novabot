@@ -41,6 +41,12 @@ novabot-data/
 charger-firmware/.pio/
 charger-firmware/.vscode/
 
+# Cloud export tool build artifacts
+tools/cloud-export/node_modules/
+tools/cloud-export/dist/
+tools/cloud-export/wizard/node_modules/
+tools/cloud-export/wizard/dist/
+
 # Dashboard build artifacts
 novabot-dashboard/node_modules/
 novabot-dashboard/dist/

@@ -365,7 +365,15 @@ export function DashboardPage({ devices, loading, logs, bleLogs, otaProgress, li
 
   const mowerActive = mower?.online && mower.sensors.work_status && mower.sensors.work_status !== '0';
   const isMappingActive = mower?.online && mower?.sensors.start_edit_or_assistant_map_flag === '1';
-  const isPinLocked = mower?.online && (mower.sensors.error_status === 'Error (151)' || mower.sensors.error_status === '151');
+  // PIN lock: error_status 151 direct, OR any error whose message mentions PIN input
+  // (e.g. error 157 "Robot turn over, please check robot and try again after input pin")
+  // STM32 firmware v3.6.7+: extended_commands.py sends type=3 clear error after PIN verify,
+  // which clears the error on the mower LCD. Error fields in MQTT will also clear.
+  const isPinLocked = mower?.online && (
+    mower.sensors.error_status === 'Error (151)' ||
+    mower.sensors.error_status === '151' ||
+    mower.sensors.error_msg?.toLowerCase().includes('input pin')
+  );
 
   const handlePinSubmit = useCallback(async (code: string) => {
     if (!mower || pinBusy) return;

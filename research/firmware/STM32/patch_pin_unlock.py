@@ -1,12 +1,21 @@
 #!/usr/bin/env python3
 """
-STM32 Firmware Patcher: Add type=2 remote PIN verify & unlock
+STM32 Firmware Patcher: Add type=2 remote PIN verify & type=3 clear error
 
-Patches the CMD 0x23 PIN handler to support a new type=2 command that:
+Patches the CMD 0x23 PIN handler to support two new commands:
+
+type=2 (verify & unlock):
 1. Receives 4 ASCII PIN digits via serial from ARM
 2. Compares them against the stored PIN (also ASCII, e.g. 0x33 0x30 0x35 0x33 = "3053")
 3. If correct: clears ALL error state + permanently disables re-lock + sends status=0 (success)
 4. If wrong: sends status=3 (failure)
+
+type=3 (clear error — v3.6.7):
+1. Clears ALL error state (same as type=2 success) WITHOUT PIN verification
+2. Switches display to home screen
+3. Sends status=0 (success)
+Used by extended_commands.py to repeatedly force-clear the error display
+after PIN verify, overcoming tilt/lift detection re-triggering.
 
 SERIAL PROTOCOL (bewezen werkend 12 maart 2026):
   Frame format: [02 02] [07 FF] [LEN] [CMD PAYLOAD... CRC8] [03 03]
@@ -156,7 +165,7 @@ def t32_movt(rd, imm16):
 
 
 def build_patch():
-    """Build the 162-byte type=2 verify & unlock patch code (v3.6.6).
+    """Build the 166-byte type=2/3 verify & unlock patch code (v3.6.7).
 
     v3.6.2: clears error_flag_byte at 0x20000368
     v3.6.3: ALSO clears incident_flag_byte at 0x200004CE
@@ -169,6 +178,11 @@ def build_patch():
             ChassisPinCodeSet ROS action: 0=success, other=fail.
             chassis_control_node rejected status=2 → never cleared
             error_no_pin_code → error_status=151 persisted.
+    v3.6.7: type=3 "clear error" command — clears ALL error state and
+            switches to home screen WITHOUT requiring PIN verification.
+            Used by extended_commands.py after PIN verify to force-clear
+            the error display that persists due to tilt/lift detection
+            re-triggering the error screen faster than the verify can clear it.
     """
     code = bytearray()
 
@@ -188,131 +202,136 @@ def build_patch():
 
     P = PATCH_OFFSET  # base file offset for BL/BW calculations
 
-    # === OFFSET MAP (v3.6.4) ===
-    # [0-7]     type dispatch
-    # [8-17]    get stored PIN
-    # [18-57]   compare 4 digits
-    # [58-63]   screen_switch(0x0C)
-    # [64-85]   clear error_flag + incident_flag (v3.6.3)
-    # [86-95]   clear error_byte at 0x20000774 (v3.6.4 ROOT CAUSE)
-    # [96-107]  set state=1 at 0x20000775
-    # [108-119] clear counter at 0x2000077C
-    # [120-129] disable periodic lock at 0x2000150C
-    # [130-141] send success + exit
-    # [142-153] wrong: send failure + exit
-    # [154-157] type1_return
-    # [158-161] exit_return
+    # === OFFSET MAP (v3.6.7) ===
+    # [0-11]    type dispatch (type=1 → set, type=2 → verify, type=3 → clear error)
+    # [12-21]   get stored PIN
+    # [22-61]   compare 4 digits
+    # [62-67]   screen_switch(0x0C)   ← type=3 jumps directly here
+    # [68-89]   clear error_flag + incident_flag (v3.6.3)
+    # [90-99]   clear error_byte at 0x20000774 (v3.6.4 ROOT CAUSE)
+    # [100-111] set state=0xFF at 0x20000775
+    # [112-123] clear counter at 0x2000077C
+    # [124-133] disable periodic lock at 0x2000150C
+    # [134-145] send success + exit
+    # [146-157] wrong: send failure + exit
+    # [158-161] type1_return
+    # [162-165] exit_return
 
-    OFF_WRONG = 142
-    OFF_TYPE1 = 154
-    OFF_EXIT  = 158
+    OFF_CLEAR  = 62     # screen_switch + clear error (type=3 target)
+    OFF_WRONG  = 146
+    OFF_TYPE1  = 158
+    OFF_EXIT   = 162
 
     # --- offset 0: Check type ---
     code += CMP_imm(0, 1)          # [0]  CMP R0, #1
     code += BEQ((OFF_TYPE1 - 2 - 4) // 2)  # [2]  BEQ type1_return
-    code += CMP_imm(0, 2)          # [4]  CMP R0, #2
-    code += BNE((OFF_EXIT - 6 - 4) // 2)   # [6]  BNE exit_return
+    code += CMP_imm(0, 3)          # [4]  CMP R0, #3
+    code += BEQ((OFF_CLEAR - 6 - 4) // 2)  # [6]  BEQ clear_and_home (skip PIN check!)
+    code += CMP_imm(0, 2)          # [8]  CMP R0, #2
+    code += BNE((OFF_EXIT - 10 - 4) // 2)  # [10] BNE exit_return
 
-    # --- offset 8: Get stored PIN into SP+0x10 ---
-    code += MOVS(0, 0)             # [8]  MOVS R0, #0
-    code += STR_SP(0, 4)           # [10] STR R0, [SP, #0x10]
-    code += ADD_SP(0, 4)           # [12] ADD R0, SP, #0x10
-    code += BL(P+14, ADDR_GET_STORED_PIN)  # [14] BL get_stored_pin
+    # --- offset 12: Get stored PIN into SP+0x10 ---
+    code += MOVS(0, 0)             # [12] MOVS R0, #0
+    code += STR_SP(0, 4)           # [14] STR R0, [SP, #0x10]
+    code += ADD_SP(0, 4)           # [16] ADD R0, SP, #0x10
+    code += BL(P+18, ADDR_GET_STORED_PIN)  # [18] BL get_stored_pin
 
-    # --- offset 18: Compare digit 0 ---
-    code += LDRB(0, 4, 2)         # [18] LDRB R0, [R4, #2]
-    code += ADD_SP(1, 4)          # [20] ADD R1, SP, #0x10
-    code += LDRB(1, 1, 0)         # [22] LDRB R1, [R1, #0]
-    code += CMP_reg(0, 1)         # [24] CMP R0, R1
-    code += BNE((OFF_WRONG - 26 - 4) // 2)  # [26] BNE wrong
+    # --- offset 22: Compare digit 0 ---
+    code += LDRB(0, 4, 2)         # [22] LDRB R0, [R4, #2]
+    code += ADD_SP(1, 4)          # [24] ADD R1, SP, #0x10
+    code += LDRB(1, 1, 0)         # [26] LDRB R1, [R1, #0]
+    code += CMP_reg(0, 1)         # [28] CMP R0, R1
+    code += BNE((OFF_WRONG - 30 - 4) // 2)  # [30] BNE wrong
 
-    # --- offset 28: Compare digit 1 ---
-    code += LDRB(0, 4, 3)         # [28] LDRB R0, [R4, #3]
-    code += ADD_SP(1, 4)          # [30] ADD R1, SP, #0x10
-    code += LDRB(1, 1, 1)         # [32] LDRB R1, [R1, #1]
-    code += CMP_reg(0, 1)         # [34] CMP R0, R1
-    code += BNE((OFF_WRONG - 36 - 4) // 2)  # [36] BNE wrong
+    # --- offset 32: Compare digit 1 ---
+    code += LDRB(0, 4, 3)         # [32] LDRB R0, [R4, #3]
+    code += ADD_SP(1, 4)          # [34] ADD R1, SP, #0x10
+    code += LDRB(1, 1, 1)         # [36] LDRB R1, [R1, #1]
+    code += CMP_reg(0, 1)         # [38] CMP R0, R1
+    code += BNE((OFF_WRONG - 40 - 4) // 2)  # [40] BNE wrong
 
-    # --- offset 38: Compare digit 2 ---
-    code += LDRB(0, 4, 4)         # [38] LDRB R0, [R4, #4]
-    code += ADD_SP(1, 4)          # [40] ADD R1, SP, #0x10
-    code += LDRB(1, 1, 2)         # [42] LDRB R1, [R1, #2]
-    code += CMP_reg(0, 1)         # [44] CMP R0, R1
-    code += BNE((OFF_WRONG - 46 - 4) // 2)  # [46] BNE wrong
+    # --- offset 42: Compare digit 2 ---
+    code += LDRB(0, 4, 4)         # [42] LDRB R0, [R4, #4]
+    code += ADD_SP(1, 4)          # [44] ADD R1, SP, #0x10
+    code += LDRB(1, 1, 2)         # [46] LDRB R1, [R1, #2]
+    code += CMP_reg(0, 1)         # [48] CMP R0, R1
+    code += BNE((OFF_WRONG - 50 - 4) // 2)  # [50] BNE wrong
 
-    # --- offset 48: Compare digit 3 ---
-    code += LDRB(0, 4, 5)         # [48] LDRB R0, [R4, #5]
-    code += ADD_SP(1, 4)          # [50] ADD R1, SP, #0x10
-    code += LDRB(1, 1, 3)         # [52] LDRB R1, [R1, #3]
-    code += CMP_reg(0, 1)         # [54] CMP R0, R1
-    code += BNE((OFF_WRONG - 56 - 4) // 2)  # [56] BNE wrong
+    # --- offset 52: Compare digit 3 ---
+    code += LDRB(0, 4, 5)         # [52] LDRB R0, [R4, #5]
+    code += ADD_SP(1, 4)          # [54] ADD R1, SP, #0x10
+    code += LDRB(1, 1, 3)         # [56] LDRB R1, [R1, #3]
+    code += CMP_reg(0, 1)         # [58] CMP R0, R1
+    code += BNE((OFF_WRONG - 60 - 4) // 2)  # [60] BNE wrong
 
-    # --- offset 58: PIN correct — unlock screen ---
-    code += MOVS(0, 0x0C)         # [58] MOVS R0, #0x0C (home screen)
-    code += BL(P+60, ADDR_SCREEN_SWITCH)   # [60] BL screen_switch
+    # --- offset 62: Clear & unlock — switch to home screen ---
+    # type=3 jumps here directly (no PIN check)
+    # type=2 falls through here after successful PIN comparison
+    code += MOVS(0, 0x0C)         # [62] MOVS R0, #0x0C (home screen)
+    code += BL(P+64, ADDR_SCREEN_SWITCH)   # [64] BL screen_switch
 
-    # --- offset 64: Clear error_flag_byte at 0x20000368 ---
-    code += MOVS(0, 0)            # [64] MOVS R0, #0  (R0=0 for all clears below)
-    code += t32_movw(1, ERROR_FLAG_ADDR & 0xFFFF)  # [66] MOVW R1, #0x0368
-    code += t32_movt(1, ERROR_FLAG_ADDR >> 16)      # [70] MOVT R1, #0x2000
-    code += STRB(0, 1, 0)         # [74] STRB R0, [R1, #0]
+    # --- offset 68: Clear error_flag_byte at 0x20000368 ---
+    code += MOVS(0, 0)            # [68] MOVS R0, #0  (R0=0 for all clears below)
+    code += t32_movw(1, ERROR_FLAG_ADDR & 0xFFFF)  # [70] MOVW R1, #0x0368
+    code += t32_movt(1, ERROR_FLAG_ADDR >> 16)      # [74] MOVT R1, #0x2000
+    code += STRB(0, 1, 0)         # [78] STRB R0, [R1, #0]
 
-    # --- offset 76: Clear incident_flag_byte at 0x200004CE ---
-    code += t32_movw(1, INCIDENT_FLAG_ADDR & 0xFFFF)  # [76] MOVW R1, #0x04CE
-    code += t32_movt(1, INCIDENT_FLAG_ADDR >> 16)      # [80] MOVT R1, #0x2000
-    code += STRB(0, 1, 0)         # [84] STRB R0, [R1, #0]
+    # --- offset 80: Clear incident_flag_byte at 0x200004CE ---
+    code += t32_movw(1, INCIDENT_FLAG_ADDR & 0xFFFF)  # [80] MOVW R1, #0x04CE
+    code += t32_movt(1, INCIDENT_FLAG_ADDR >> 16)      # [84] MOVT R1, #0x2000
+    code += STRB(0, 1, 0)         # [88] STRB R0, [R1, #0]
 
-    # --- offset 86: Clear error_byte at 0x20000774 (ROOT CAUSE! v3.6.4) ---
+    # --- offset 90: Clear error_byte at 0x20000774 (ROOT CAUSE! v3.6.4) ---
     # This is the ACTUAL variable that get_error_byte() reads for CMD 0x20.
     # check_pin_lock() sets this to 2 when PIN locked.
-    code += t32_movw(1, ERROR_BYTE_ADDR & 0xFFFF)   # [86] MOVW R1, #0x0774
-    code += t32_movt(1, ERROR_BYTE_ADDR >> 16)       # [90] MOVT R1, #0x2000
-    code += STRB(0, 1, 0)         # [94] STRB R0, [R1, #0]  (R0=0)
+    code += t32_movw(1, ERROR_BYTE_ADDR & 0xFFFF)   # [90] MOVW R1, #0x0774
+    code += t32_movt(1, ERROR_BYTE_ADDR >> 16)       # [94] MOVT R1, #0x2000
+    code += STRB(0, 1, 0)         # [98] STRB R0, [R1, #0]  (R0=0)
 
-    # --- offset 96: Set state=0xFF at 0x20000775 (permanent skip) ---
+    # --- offset 100: Set state=0xFF at 0x20000775 (permanent skip) ---
     # check_pin_lock() state machine handles 1/2/3 only.
     # 0xFF → enters state machine (cbnz) but NO handler matches → exits doing nothing.
     # Persists until reboot (RAM) or voltage < 15V (battery removed).
-    code += MOVS(0, 0xFF)         # [96] MOVS R0, #0xFF
-    code += t32_movw(1, LOCK_STATE_ADDR & 0xFFFF)   # [98] MOVW R1, #0x0775
-    code += t32_movt(1, LOCK_STATE_ADDR >> 16)       # [102] MOVT R1, #0x2000
-    code += STRB(0, 1, 0)         # [106] STRB R0, [R1, #0]
+    code += MOVS(0, 0xFF)         # [100] MOVS R0, #0xFF
+    code += t32_movw(1, LOCK_STATE_ADDR & 0xFFFF)   # [102] MOVW R1, #0x0775
+    code += t32_movt(1, LOCK_STATE_ADDR >> 16)       # [106] MOVT R1, #0x2000
+    code += STRB(0, 1, 0)         # [110] STRB R0, [R1, #0]
 
-    # --- offset 108: Clear counter at 0x2000077C ---
-    code += MOVS(0, 0)            # [108] MOVS R0, #0
-    code += t32_movw(1, LOCK_COUNTER_ADDR & 0xFFFF)  # [110] MOVW R1, #0x077C
-    code += t32_movt(1, LOCK_COUNTER_ADDR >> 16)      # [114] MOVT R1, #0x2000
-    code += STRB(0, 1, 0)         # [118] STRB R0, [R1, #0]
+    # --- offset 112: Clear counter at 0x2000077C ---
+    code += MOVS(0, 0)            # [112] MOVS R0, #0
+    code += t32_movw(1, LOCK_COUNTER_ADDR & 0xFFFF)  # [114] MOVW R1, #0x077C
+    code += t32_movt(1, LOCK_COUNTER_ADDR >> 16)      # [118] MOVT R1, #0x2000
+    code += STRB(0, 1, 0)         # [122] STRB R0, [R1, #0]
 
-    # --- offset 120: Disable periodic check_pin_lock at 0x2000150C ---
+    # --- offset 124: Disable periodic check_pin_lock at 0x2000150C ---
     # The periodic task at 0x08046578 checks this flag; if 0, skips lock check.
     # This is RAM, so it resets to 1 on reboot (PIN required again per power cycle).
-    code += t32_movw(1, LOCK_ENABLE_ADDR & 0xFFFF)   # [120] MOVW R1, #0x150C
-    code += t32_movt(1, LOCK_ENABLE_ADDR >> 16)       # [124] MOVT R1, #0x2000
-    code += STRB(0, 1, 0)         # [128] STRB R0, [R1, #0]  (R0=0)
+    code += t32_movw(1, LOCK_ENABLE_ADDR & 0xFFFF)   # [124] MOVW R1, #0x150C
+    code += t32_movt(1, LOCK_ENABLE_ADDR >> 16)       # [128] MOVT R1, #0x2000
+    code += STRB(0, 1, 0)         # [132] STRB R0, [R1, #0]  (R0=0)
 
-    # --- offset 130: Send success response (status=0 for ROS action compat) ---
+    # --- offset 134: Send success response (status=0 for ROS action compat) ---
     # ChassisPinCodeSet action: status=0 means success. chassis_control_node
     # calls set_pincode_flag(false) only when status=0. With status=2 (v3.6.5)
     # it logged "Goal fail PinCode config fail" and error_status=151 persisted.
-    code += ADDS_i3(1, 4, 2)      # [130] ADDS R1, R4, #2 (digit pointer)
-    code += MOVS(0, 0)            # [132] MOVS R0, #0 (success — was 2 in v3.6.5)
-    code += BL(P+134, ADDR_SEND_RESPONSE)   # [134] BL send_response
-    code += BW(P+138, ADDR_EXIT_DISPATCH)   # [138] B.W exit
+    code += ADDS_i3(1, 4, 2)      # [134] ADDS R1, R4, #2 (digit pointer)
+    code += MOVS(0, 0)            # [136] MOVS R0, #0 (success — was 2 in v3.6.5)
+    code += BL(P+138, ADDR_SEND_RESPONSE)   # [138] BL send_response
+    code += BW(P+142, ADDR_EXIT_DISPATCH)   # [142] B.W exit
 
-    # --- wrong: offset 142 — PIN mismatch ---
-    code += ADDS_i3(1, 4, 2)      # [142] ADDS R1, R4, #2
-    code += MOVS(0, 3)            # [144] MOVS R0, #3 (verify failure)
-    code += BL(P+146, ADDR_SEND_RESPONSE)  # [146] BL send_response
-    code += BW(P+150, ADDR_EXIT_DISPATCH)  # [150] B.W exit
+    # --- wrong: offset 146 — PIN mismatch ---
+    code += ADDS_i3(1, 4, 2)      # [146] ADDS R1, R4, #2
+    code += MOVS(0, 3)            # [148] MOVS R0, #3 (verify failure)
+    code += BL(P+150, ADDR_SEND_RESPONSE)  # [150] BL send_response
+    code += BW(P+154, ADDR_EXIT_DISPATCH)  # [154] B.W exit
 
-    # --- type1_return: offset 154 ---
-    code += BW(P+154, ADDR_TYPE1_HANDLER)  # [154] B.W original type=1
+    # --- type1_return: offset 158 ---
+    code += BW(P+158, ADDR_TYPE1_HANDLER)  # [158] B.W original type=1
 
-    # --- exit_return: offset 158 ---
-    code += BW(P+158, ADDR_EXIT_DISPATCH)  # [158] B.W original exit
+    # --- exit_return: offset 162 ---
+    code += BW(P+162, ADDR_EXIT_DISPATCH)  # [162] B.W original exit
 
-    assert len(code) == 162, f"Patch is {len(code)} bytes, expected 162"
+    assert len(code) == 166, f"Patch is {len(code)} bytes, expected 166"
     return bytes(code)
 
 
@@ -351,7 +370,7 @@ def verify_capstone(code, flash_addr):
 def main():
     script_dir = os.path.dirname(os.path.abspath(__file__))
     src = os.path.join(script_dir, "novabot_stm32f407_v3_6_0_NewMotor25082301.bin")
-    dst = os.path.join(script_dir, "novabot_stm32f407_v3_6_6_NewMotor25082301_pin_unlock.bin")
+    dst = os.path.join(script_dir, "novabot_stm32f407_v3_6_7_NewMotor25082301_pin_unlock.bin")
 
     # 1. Read firmware
     with open(src, 'rb') as f:
@@ -377,7 +396,7 @@ def main():
     print(f"Trampoline at 0x{TRAMPOLINE_OFFSET:X}: {orig_bytes.hex()} (CMP R0,#1 + BNE) OK")
 
     # 4. Verify patch area is clean
-    patch_area = fw[PATCH_OFFSET:PATCH_OFFSET+162]
+    patch_area = fw[PATCH_OFFSET:PATCH_OFFSET+166]
     nonzero = sum(1 for b in patch_area if b != 0x00 and b != 0xFF)
     if nonzero > 0:
         print(f"WARNING: Patch area has {nonzero} non-zero/FF bytes")
@@ -397,12 +416,12 @@ def main():
 
     # 7. Apply patches
     fw[TRAMPOLINE_OFFSET:TRAMPOLINE_OFFSET+4] = trampoline
-    fw[PATCH_OFFSET:PATCH_OFFSET+162] = patch_code
+    fw[PATCH_OFFSET:PATCH_OFFSET+166] = patch_code
 
     # 8. Update version byte: v3.6.0 → v3.6.5
     old_ver = fw[VERSION_OFFSET]
-    fw[VERSION_OFFSET] = 0x06
-    print(f"\nVersion: v3.6.{old_ver} -> v3.6.6 (offset 0x{VERSION_OFFSET:X})")
+    fw[VERSION_OFFSET] = 0x07
+    print(f"\nVersion: v3.6.{old_ver} -> v3.6.7 (offset 0x{VERSION_OFFSET:X})")
 
     # 9. Recompute CRC
     new_crc = stm32_hw_crc32(bytes(fw[:CRC_RANGE]), CRC_RANGE)
@@ -422,7 +441,7 @@ def main():
     # Summary
     print(f"""
 {'='*60}
-PATCH SUMMARY (v3.6.6 — FULL END-TO-END PIN UNLOCK)
+PATCH SUMMARY (v3.6.7 — PIN UNLOCK + CLEAR ERROR)
 {'='*60}
 Trampoline : 4 bytes at file 0x{TRAMPOLINE_OFFSET:05X} (flash 0x{file_to_flash(TRAMPOLINE_OFFSET):08X})
 Patch code : {len(patch_code)} bytes at file 0x{PATCH_OFFSET:05X} (flash 0x{file_to_flash(PATCH_OFFSET):08X})
@@ -432,21 +451,26 @@ Error byte : RAM 0x{ERROR_BYTE_ADDR:08X} (CMD 0x20 data byte)
 Lock state : RAM 0x{LOCK_STATE_ADDR:08X} (check_pin_lock state machine → 0xFF)
 Lock count : RAM 0x{LOCK_COUNTER_ADDR:08X} (lock trigger counter)
 Lock enable: RAM 0x{LOCK_ENABLE_ADDR:08X} (not used by check_pin_lock, kept for safety)
-Version    : v3.6.6 at file 0x{VERSION_OFFSET:05X}
+Version    : v3.6.7 at file 0x{VERSION_OFFSET:05X}
 CRC        : Updated at file 0x{CRC_OFFSET:05X}
 
-v3.6.5 FIX: lock_state = 0xFF (permanent skip of check_pin_lock)
-v3.6.6 FIX: verify success returns status=0 (was 2)
-  chassis_control_node ChassisPinCodeSet action: 0=success, other=fail.
-  With status=2: "Goal fail PinCode config fail" → error_status=151 persists.
-  With status=0: set_pincode_flag(false) called → error_no_pin_code cleared.
+CMD types:
+  type=1: Set PIN (original handler)
+  type=2: Verify PIN + clear all errors + home screen
+  type=3: Clear all errors + home screen (NO PIN check)  ← NEW v3.6.7
 
-After successful verify, ALL state is set:
+v3.6.7 FIX: type=3 "clear error" command.
+  After PIN verify (type=2), tilt/lift detection can re-trigger the error
+  screen before the verify response reaches the ARM. type=3 allows
+  extended_commands.py to repeatedly force-clear the error display
+  without needing PIN re-verification.
+
+After type=2 verify or type=3 clear, ALL state is set:
   1. Screen switches to home (0x0C)
   2. error_flag (0x20000368) = 0
   3. incident_flag (0x200004CE) = 0
   4. error_byte (0x20000774) = 0 — stops CMD 0x20 reporting 0x02
-  5. lock_state (0x20000775) = 0xFF — PERMANENT skip (v3.6.5!)
+  5. lock_state (0x20000775) = 0xFF — PERMANENT skip
   6. lock_counter (0x2000077C) = 0 — resets counter
   7. lock_enable (0x2000150C) = 0 — extra safety
 {'='*60}""")

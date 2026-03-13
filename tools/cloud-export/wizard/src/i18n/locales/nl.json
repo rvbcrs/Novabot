@@ -1,0 +1,72 @@
+{
+  "steps": {
+    "welcome": "Welkom",
+    "login": "Inloggen",
+    "export": "Exporteren",
+    "done": "Klaar"
+  },
+  "welcome": {
+    "title": "Novabot Cloud Export",
+    "subtitle": "Download je gegevens van de Novabot cloud",
+    "description": "Deze tool verbindt met de Novabot cloud (app.lfibot.com) en downloadt al je accountgegevens: apparaten, maaihistorie, schema's, kaarten en firmware-informatie.",
+    "features": {
+      "account": "Accountinformatie",
+      "devices": "Geregistreerde apparaten (laadstation + maaier)",
+      "history": "Maaihistorie en werkrecords",
+      "maps": "Kaartgegevens (indien beschikbaar)",
+      "schedules": "Maaischema's",
+      "firmware": "Firmware versie-informatie"
+    },
+    "start": "Aan de slag"
+  },
+  "login": {
+    "title": "Inloggen bij Novabot Cloud",
+    "subtitle": "Voer je Novabot accountgegevens in",
+    "email": "E-mailadres",
+    "password": "Wachtwoord",
+    "login": "Verbinden met cloud",
+    "logging_in": "Verbinden...",
+    "success": "Verbinding geslaagd!",
+    "found_devices": "{chargers} laadstation(s) en {mowers} maaier(s) gevonden",
+    "account_info": "Account: {name}",
+    "registered": "Geregistreerd: {date}",
+    "error_unreachable": "Cloud is niet bereikbaar. Mogelijk is deze offline.",
+    "error_credentials": "Onjuist e-mailadres of wachtwoord.",
+    "error_generic": "Verbinding mislukt: {error}",
+    "next": "Doorgaan naar export"
+  },
+  "export": {
+    "title": "Exporteer je gegevens",
+    "subtitle": "Selecteer wat je wilt downloaden",
+    "categories": {
+      "account": "Accountinformatie",
+      "devices": "Apparaatgegevens ({count} apparaten)",
+      "maps": "Kaartgegevens",
+      "workRecords": "Maaihistorie ({count} records)",
+      "messages": "Robotberichten ({count} berichten)",
+      "schedules": "Maaischema's",
+      "firmware": "Firmware versies"
+    },
+    "include_firmware_files": "Download ook firmwarebestanden (~35 MB per stuk)",
+    "firmware_warning": "Dit downloadt de daadwerkelijke firmware binaries van Alibaba OSS.",
+    "export_button": "Alles exporteren",
+    "exporting": "Exporteren..."
+  },
+  "done": {
+    "title": "Export voltooid!",
+    "subtitle": "Je gegevens zijn opgeslagen",
+    "summary": "Samenvatting",
+    "files": "{count} bestanden ge\u00ebxporteerd",
+    "size": "Totale grootte: {size}",
+    "devices": "{count} apparaten",
+    "records": "{count} werkrecords",
+    "messages": "{count} berichten",
+    "output_dir": "Opgeslagen in:",
+    "download_zip": "Download ZIP",
+    "restart": "Ander account exporteren"
+  },
+  "common": {
+    "back": "Terug",
+    "cancel": "Annuleren"
+  }
+}

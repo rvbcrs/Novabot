@@ -47,6 +47,16 @@ mapRouter.get('/queryEquipmentMap', authMiddleware, (req: AuthRequest, res: Resp
   const sn = req.query.sn as string | undefined;
   if (!sn) { res.json(fail('sn required', 400)); return; }
 
+  // IDOR bescherming: controleer of dit apparaat van de huidige user is
+  const ownership = db.prepare(
+    'SELECT user_id FROM equipment WHERE (mower_sn = ? OR charger_sn = ?) AND user_id = ?'
+  ).get(sn, sn, req.userId);
+  if (!ownership) {
+    console.log(`[MAP] queryEquipmentMap: IDOR blocked — sn=${sn} not owned by user`);
+    res.json(ok({ data: null, md5: null, machineExtendedField: null }));
+    return;
+  }
+
   // Haal alle kaarten op voor dit SN
   const maps = db.prepare(
     'SELECT * FROM maps WHERE mower_sn = ? AND map_area IS NOT NULL ORDER BY map_id'
@@ -168,10 +178,20 @@ mapRouter.get('/queryEquipmentMap', authMiddleware, (req: AuthRequest, res: Resp
 //
 // Serveert individuele CSV kaartbestanden uit de opgeslagen ZIP.
 // De app downloadt deze via de URLs in de queryEquipmentMap response.
-mapRouter.get('/downloadMapFile', (req: Request, res: Response) => {
+// Auth + IDOR bescherming: alleen eigen apparaten.
+mapRouter.get('/downloadMapFile', authMiddleware, (req: AuthRequest, res: Response) => {
   const sn = req.query.sn as string | undefined;
   const fileName = req.query.fileName as string | undefined;
   if (!sn || !fileName) { res.status(400).json(fail('sn and fileName required', 400)); return; }
+
+  // IDOR bescherming
+  const ownership = db.prepare(
+    'SELECT user_id FROM equipment WHERE (mower_sn = ? OR charger_sn = ?) AND user_id = ?'
+  ).get(sn, sn, req.userId);
+  if (!ownership) {
+    res.status(403).json(fail('Access denied', 403));
+    return;
+  }
 
   // Beveilig tegen path traversal
   const safeName = path.basename(fileName);

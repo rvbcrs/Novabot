@@ -271,8 +271,57 @@ def parse_serial_frames(buf):
     return frames
 
 
+def serial_clear_error():
+    """Send clear error command (CMD 0x23 type=3) to STM32 via serial.
+
+    Clears ALL error state and switches display to home screen.
+    Does NOT require PIN verification. Requires patched firmware v3.6.7+.
+
+    Returns:
+        dict with result: 0=success, 2=serial error
+    """
+    import serial as pyserial
+
+    try:
+        ser = pyserial.Serial("/dev/ttyACM0", 115200, timeout=0.3)
+        ser.reset_input_buffer()
+
+        # Build CMD 0x23 type=3 clear error frame (PIN digits ignored, use 0x30 padding)
+        payload = bytes([0x03, 0x30, 0x30, 0x30, 0x30])  # type=3 + dummy digits
+        frame = build_serial_frame(0x23, payload)
+        log("Clear error TX: " + " ".join("{:02x}".format(b) for b in frame))
+
+        ser.write(frame)
+
+        # Read response
+        buf = b""
+        t0 = time.time()
+        while time.time() - t0 < 0.5:
+            chunk = ser.read(512)
+            if chunk:
+                buf += chunk
+
+        ser.close()
+
+        for f in parse_serial_frames(buf):
+            if len(f) > 5 and f[5] == 0x23:
+                status = f[6] if len(f) > 6 else 0xFF
+                log("Clear error response status={}".format(status))
+                return {"result": 0, "status": "cleared"}
+
+        log("Clear error: no response (may still have worked)")
+        return {"result": 0, "status": "no_response"}
+
+    except Exception as e:
+        log("Clear error serial error: {}".format(e))
+        return {"result": 2, "error": str(e)}
+
+
 def serial_pin_verify(pin_str):
     """Send PIN verify command (CMD 0x23 type=2) to STM32 via serial.
+
+    After successful verify, sends type=3 clear error commands repeatedly
+    to overcome tilt/lift detection re-triggering the error screen.
 
     Args:
         pin_str: 4-digit PIN as string (e.g. "3053")
@@ -314,19 +363,33 @@ def serial_pin_verify(pin_str):
         ser.close()
 
         # Parse response frames, look for CMD 0x23
+        verify_result = None
         for f in parse_serial_frames(buf):
             if len(f) > 5 and f[5] == 0x23:
                 status = f[6] if len(f) > 6 else 0xFF
                 log("PIN verify response status={}".format(status))
-                if status == 2:
-                    return {"result": 0, "status": "verified"}
+                if status == 0:
+                    verify_result = {"result": 0, "status": "verified"}
+                elif status == 2:
+                    verify_result = {"result": 0, "status": "verified"}
                 elif status == 3:
                     return {"result": 1, "status": "wrong_pin"}
                 else:
                     return {"result": 1, "status": "unknown_status_{}".format(status)}
 
-        log("PIN verify: no CMD 0x23 response received")
-        return {"result": 2, "error": "no_response"}
+        if verify_result is None:
+            log("PIN verify: no CMD 0x23 response received")
+            return {"result": 2, "error": "no_response"}
+
+        # PIN verified! Now repeatedly send type=3 clear error to force home screen.
+        # Tilt/lift detection may re-trigger the error screen within ~100ms,
+        # so we send multiple clears over a few seconds to overcome it.
+        log("PIN verified, sending clear error commands...")
+        for i in range(5):
+            time.sleep(0.5)
+            serial_clear_error()
+
+        return verify_result
 
     except Exception as e:
         log("PIN verify serial error: {}".format(e))
@@ -449,6 +512,20 @@ def handle_system_info(params, respond):
     respond("get_system_info_respond", info)
 
 
+def handle_clear_error(params, respond):
+    """Clear all error state on STM32 and switch to home screen (CMD 0x23 type=3).
+
+    Requires patched firmware v3.6.7+. No PIN verification needed.
+    Kills chassis_control_node for serial access.
+    """
+    subprocess.run(["killall", "chassis_control_node"], capture_output=True)
+    time.sleep(0.5)
+
+    log("Clear error aangevraagd")
+    result = serial_clear_error()
+    respond("clear_error_respond", result)
+
+
 # ── Command dispatch ──────────────────────────────────────────────────────
 
 COMMANDS = {
@@ -456,6 +533,7 @@ COMMANDS = {
     "get_system_info": handle_system_info,
     "verify_pin": handle_verify_pin,
     "query_pin": handle_query_pin,
+    "clear_error": handle_clear_error,
 }
 
 
