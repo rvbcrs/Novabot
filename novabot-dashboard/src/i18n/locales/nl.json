@@ -128,7 +128,10 @@
     "rebootSent": "Herstart commando verstuurd",
     "extendedSettings": "Uitgebreide instellingen",
     "navigateTo": "Navigeer naar punt",
-    "stopNavigation": "Stop navigatie"
+    "stopNavigation": "Stop navigatie",
+    "preview": "Preview",
+    "previewPath": "Maaipad preview",
+    "previewNoArea": "Selecteer eerst een werkgebied"
   },
   "camera": {
     "title": "Camera",

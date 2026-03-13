@@ -128,7 +128,10 @@
     "rebootSent": "Reboot command sent",
     "extendedSettings": "Extended settings",
     "navigateTo": "Navigate to point",
-    "stopNavigation": "Stop navigation"
+    "stopNavigation": "Stop navigation",
+    "preview": "Preview",
+    "previewPath": "Preview mowing path",
+    "previewNoArea": "Select a work area first"
   },
   "camera": {
     "title": "Camera",

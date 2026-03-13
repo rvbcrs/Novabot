@@ -2,13 +2,13 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   Play, Pause, Square, PlugZap, ArrowUp, X, ChevronDown, MapPin,
   Map as MapIcon, Sparkles, RotateCw, Navigation, Settings2,
-  Power, Camera, Gauge, Battery,
+  Power, Camera, Gauge, Battery, Eye,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { MapData } from '../../types';
 import {
   sendCommand, fetchMaps, startPatrol, stopPatrol, rebootMower,
-  setChargeThreshold, setMaxSpeed,
+  setChargeThreshold, setMaxSpeed, previewPath,
 } from '../../api/client';
 import { useToast } from '../common/Toast';
 import { PatternPicker } from '../patterns/PatternPicker';
@@ -232,6 +232,36 @@ export function MowerControls({
 
   const disabled = busy || !online;
   const btnBase = 'inline-flex items-center justify-center p-1.5 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed';
+
+  const [previewing, setPreviewing] = useState(false);
+
+  const handlePreview = useCallback(async () => {
+    setPreviewing(true);
+    try {
+      let polySource: Array<{ lat: number; lng: number }> | undefined;
+      if (patternMode && patternContours.length > 0 && patternCenter) {
+        polySource = transformToGps(patternContours[0], patternCenter, patternSize, patternRotation);
+      } else {
+        polySource = pendingPolygon?.mapId === mapId
+          ? pendingPolygon.mapArea
+          : maps.find(m => m.mapId === mapId)?.mapArea;
+      }
+      if (!polySource || polySource.length < 3) {
+        toast(t('controls.previewNoArea'), 'error');
+        setPreviewing(false);
+        return;
+      }
+      const finalPoly = edgeOffset !== 0 ? offsetPolygon(polySource, edgeOffset) : polySource;
+      const polygonArea = finalPoly.map(p => ({ latitude: p.lat, longitude: p.lng }));
+      await previewPath(sn, polygonArea, pathDirection);
+      toast(`✓ ${t('controls.previewPath')}`, 'success');
+    } catch (err) {
+      const detail = err instanceof Error ? `: ${err.message}` : '';
+      toast(`✗ ${t('controls.previewPath')}${detail}`, 'error');
+    }
+    setPreviewing(false);
+  }, [sn, patternMode, patternContours, patternCenter, patternSize, patternRotation,
+    pendingPolygon, mapId, maps, edgeOffset, pathDirection, t, toast]);
 
   const patternReady = patternMode && patternId !== null && patternCenter !== null;
 
@@ -552,10 +582,18 @@ export function MowerControls({
             <div className="flex items-center gap-2 pt-2 border-t border-gray-700">
               <button
                 onClick={() => { setExpanded(false); onPathDirectionChange?.(null); onPatternPlacementChange?.(null); }}
-                className="flex-1 inline-flex items-center justify-center gap-1 text-xs px-2 py-1.5 rounded bg-gray-700 text-gray-400 hover:text-gray-200 transition-colors"
+                className="inline-flex items-center justify-center gap-1 text-xs px-2 py-1.5 rounded bg-gray-700 text-gray-400 hover:text-gray-200 transition-colors"
               >
                 <X className="w-3 h-3" />
-                {t('common.cancel')}
+              </button>
+              <button
+                onClick={handlePreview}
+                disabled={previewing || busy}
+                className="inline-flex items-center justify-center gap-1 text-xs px-2 py-2 rounded text-blue-300 bg-blue-900/40 hover:bg-blue-800/50 transition-colors disabled:opacity-40"
+                title={t('controls.previewPath')}
+              >
+                <Eye className="w-3.5 h-3.5" />
+                {previewing ? '...' : t('controls.preview')}
               </button>
               <button
                 onClick={handleStart}

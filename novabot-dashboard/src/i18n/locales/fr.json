@@ -128,7 +128,10 @@
     "rebootSent": "Commande de redémarrage envoyée",
     "extendedSettings": "Paramètres avancés",
     "navigateTo": "Naviguer vers un point",
-    "stopNavigation": "Arrêter la navigation"
+    "stopNavigation": "Arrêter la navigation",
+    "preview": "Aperçu",
+    "previewPath": "Aperçu du chemin de tonte",
+    "previewNoArea": "Sélectionnez d'abord une zone de travail"
   },
   "camera": {
     "title": "Caméra",
