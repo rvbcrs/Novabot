@@ -318,6 +318,18 @@ export async function getSystemInfo(sn: string): Promise<CommandResult> {
   return sendExtendedCommand(sn, { get_system_info: {} });
 }
 
+export async function setPerceptionMode(sn: string, mode: number): Promise<CommandResult> {
+  return sendExtendedCommand(sn, { set_perception_mode: { mode } });
+}
+
+export async function setSemanticMode(sn: string, mode: number): Promise<CommandResult> {
+  return sendExtendedCommand(sn, { set_semantic_mode: { mode } });
+}
+
+export async function getPerceptionStatus(sn: string): Promise<CommandResult> {
+  return sendExtendedCommand(sn, { get_perception_status: {} });
+}
+
 // ── OTA Firmware ────────────────────────────────────────────────
 
 export interface OtaVersion {

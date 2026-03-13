@@ -496,13 +496,9 @@ def handle_system_info(params, respond):
     except Exception:
         pass
 
-    # ROS 2 nodes (via ros2 CLI — may not be available)
+    # ROS 2 nodes (via ros2 CLI — needs setup.bash sourced)
     try:
-        result = subprocess.run(
-            ['ros2', 'node', 'list'],
-            capture_output=True, text=True, timeout=5,
-            env={**os.environ, 'ROS_DOMAIN_ID': '0'}
-        )
+        result = ros2_run(['ros2', 'node', 'list'], timeout=5)
         if result.returncode == 0:
             info["ros_nodes"] = [n.strip() for n in result.stdout.strip().split('\n') if n.strip()]
     except Exception:
@@ -526,6 +522,166 @@ def handle_clear_error(params, respond):
     respond("clear_error_respond", result)
 
 
+# ── ROS2 Helper ──────────────────────────────────────────────────────────
+
+def ros2_run(args, timeout=10):
+    """Run a ros2 command with proper environment (sources setup.bash).
+
+    ros2 lives at /opt/ros/galactic/bin/ and needs LD_LIBRARY_PATH, PYTHONPATH
+    etc. from setup.bash to find message types and service definitions.
+    ROS_LOCALHOST_ONLY=1 and rmw_cyclonedds_cpp are required to match the
+    running novabot ROS2 nodes.
+    """
+    cmd = (
+        "source /opt/ros/galactic/setup.bash && "
+        "source /root/novabot/install/setup.bash 2>/dev/null && "
+        + " ".join(args)
+    )
+    env = {
+        **os.environ,
+        "ROS_DOMAIN_ID": "0",
+        "ROS_LOCALHOST_ONLY": "1",
+        "RMW_IMPLEMENTATION": "rmw_cyclonedds_cpp",
+    }
+    return subprocess.run(
+        ["bash", "-c", cmd],
+        capture_output=True, text=True, timeout=timeout,
+        env=env
+    )
+
+
+# State file to persist semantic_mode (no ROS2 param available for read-back)
+SEMANTIC_MODE_FILE = "/tmp/semantic_mode"
+
+
+# ── AI Perception Controls (ROS2 service calls) ─────────────────────────
+
+
+def handle_set_perception_mode(params, respond):
+    """Switch AI inference model on perception_node.
+
+    Modes:
+      1 = Segmentation (default) — lawn/obstacle/road classification
+      2 = Detection — object detection (person, animal, shoes, rock, etc.)
+      3 = Segmentation High — high sensitivity segmentation
+      4 = Segmentation Low — low sensitivity segmentation
+    """
+    mode = int(params.get("mode", 1))
+    if mode not in (1, 2, 3, 4):
+        respond("set_perception_mode_respond", {"result": 1, "error": "mode must be 1-4"})
+        return
+
+    mode_names = {1: "segmentation", 2: "detection", 3: "seg_high", 4: "seg_low"}
+    log(f"Set perception mode: {mode} ({mode_names.get(mode, '?')})")
+
+    try:
+        result = ros2_run(
+            ["ros2", "service", "call", "/perception/set_infer_model",
+             "general_msgs/srv/SetUint8", f"'{{value: {mode}}}'"],
+            timeout=10
+        )
+        success = result.returncode == 0
+        log(f"set_infer_model result: rc={result.returncode} stdout={result.stdout.strip()[:200]}")
+        respond("set_perception_mode_respond", {
+            "result": 0 if success else 1,
+            "mode": mode,
+            "mode_name": mode_names.get(mode, "unknown"),
+        })
+    except subprocess.TimeoutExpired:
+        log("set_infer_model timeout")
+        respond("set_perception_mode_respond", {"result": 1, "error": "timeout"})
+    except Exception as e:
+        log(f"set_infer_model error: {e}")
+        respond("set_perception_mode_respond", {"result": 1, "error": str(e)})
+
+
+def handle_set_semantic_mode(params, respond):
+    """Set how the navigation costmap uses semantic segmentation data.
+
+    Modes:
+      0 = LAWN_COVER — stay on lawn only, non-lawn is obstacle
+      1 = FREE_MOVE — free navigation, ignore semantic boundaries
+      2 = BOUNDARY_FOLLOW — follow lawn boundary edges
+      3 = IGNORE_SEMANTIC — completely ignore semantic classification
+    """
+    mode = int(params.get("mode", 0))
+    if mode not in (0, 1, 2, 3):
+        respond("set_semantic_mode_respond", {"result": 1, "error": "mode must be 0-3"})
+        return
+
+    mode_names = {0: "lawn_cover", 1: "free_move", 2: "boundary_follow", 3: "ignore_semantic"}
+    log(f"Set semantic mode: {mode} ({mode_names.get(mode, '?')})")
+
+    try:
+        result = ros2_run(
+            ["ros2", "service", "call", "/local_costmap/set_semantic_mode",
+             "nav2_msgs/srv/SemanticMode", f"'{{semantic_mode: {mode}}}'"],
+            timeout=10
+        )
+        success = result.returncode == 0
+        log(f"set_semantic_mode result: rc={result.returncode} stdout={result.stdout.strip()[:200]}")
+        if success:
+            try:
+                with open(SEMANTIC_MODE_FILE, "w") as f:
+                    f.write(str(mode))
+            except Exception:
+                pass
+        respond("set_semantic_mode_respond", {
+            "result": 0 if success else 1,
+            "mode": mode,
+            "mode_name": mode_names.get(mode, "unknown"),
+        })
+    except subprocess.TimeoutExpired:
+        log("set_semantic_mode timeout")
+        respond("set_semantic_mode_respond", {"result": 1, "error": "timeout"})
+    except Exception as e:
+        log(f"set_semantic_mode error: {e}")
+        respond("set_semantic_mode_respond", {"result": 1, "error": str(e)})
+
+
+def handle_get_perception_status(params, respond):
+    """Query perception system status: which nodes are running + current modes."""
+    info = {}
+
+    # Check running processes directly — much faster than ros2 node list
+    # which requires slow DDS discovery
+    try:
+        result = subprocess.run(
+            ["bash", "-c", "ps -eo args 2>/dev/null | grep -E 'perception_node|robot_decision|nav2_single_node' | grep -v grep"],
+            capture_output=True, text=True, timeout=3
+        )
+        procs = result.stdout.strip()
+        info["perception_running"] = "perception_node" in procs
+        info["decision_running"] = "robot_decision" in procs
+        info["navigation_running"] = "nav2_single_node" in procs
+    except Exception as e:
+        info["perception_running"] = False
+        info["error"] = str(e)
+
+    # Query current infer_mode from perception_node ROS2 parameter
+    try:
+        result = ros2_run(
+            ["ros2", "param", "get", "/perception_node", "infer_mode"],
+            timeout=10
+        )
+        # Output: "Integer value is: 1"
+        if result.returncode == 0 and "value is:" in result.stdout:
+            val = result.stdout.strip().split(":")[-1].strip()
+            info["perception_mode"] = int(val)
+    except Exception:
+        pass
+
+    # Read last-set semantic_mode from state file
+    try:
+        with open(SEMANTIC_MODE_FILE) as f:
+            info["semantic_mode"] = int(f.read().strip())
+    except Exception:
+        info["semantic_mode"] = 0  # default: lawn_cover
+
+    log(f"Perception status: running={info.get('perception_running')}, infer={info.get('perception_mode')}, semantic={info.get('semantic_mode')}")
+    respond("get_perception_status_respond", info)
+
+
 # ── Command dispatch ──────────────────────────────────────────────────────
 
 COMMANDS = {
@@ -534,6 +690,9 @@ COMMANDS = {
     "verify_pin": handle_verify_pin,
     "query_pin": handle_query_pin,
     "clear_error": handle_clear_error,
+    "set_perception_mode": handle_set_perception_mode,
+    "set_semantic_mode": handle_set_semantic_mode,
+    "get_perception_status": handle_get_perception_status,
 }
 
 

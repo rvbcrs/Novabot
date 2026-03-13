@@ -1,11 +1,11 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import {
   ShieldAlert, Gauge, Navigation, RotateCcw, Lightbulb, Volume2, VolumeX,
-  Lock, Search, KeyRound, Send,
+  Lock, Search, KeyRound, Send, Brain, Eye, Route,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { io, Socket } from 'socket.io-client';
-import { sendCommand, pinQuery, pinSet, pinVerify, pinRaw } from '../../api/client';
+import { sendCommand, pinQuery, pinSet, pinVerify, pinRaw, setPerceptionMode, setSemanticMode, getPerceptionStatus } from '../../api/client';
 import { useToast } from '../common/Toast';
 
 interface Props {
@@ -75,6 +75,11 @@ export function SettingsPanel({ sn, online, sensors }: Props) {
         onChange={(v) => send({ obstacle_avoidance_sensitivity: v }, t('settings.obstacleSensitivity'))}
       />
 
+      {/* AI Perception Controls */}
+      <PerceptionPanel sn={sn} online={online} />
+
+      <div className="border-t border-gray-700" />
+
       {/* Max Speed */}
       <SegmentedSetting
         icon={Gauge}
@@ -135,6 +140,7 @@ export function SettingsPanel({ sn, online, sensors }: Props) {
 
       {/* PIN Code Management */}
       <PinPanel sn={sn} online={online} />
+
     </div>
   );
 }
@@ -364,6 +370,183 @@ function PinPanel({ sn, online }: { sn: string; online: boolean }) {
           {lastResponse}
         </div>
       )}
+    </div>
+  );
+}
+
+/* ── AI Perception Panel ─────────────────────────────── */
+
+const PERCEPTION_MODES = [
+  { value: 1, labelKey: 'ai.segmentation', tipKey: 'ai.tipSegmentation', color: 'text-green-400' },
+  { value: 2, labelKey: 'ai.detection', tipKey: 'ai.tipDetection', color: 'text-blue-400' },
+  { value: 3, labelKey: 'ai.segHigh', tipKey: 'ai.tipSegHigh', color: 'text-yellow-400' },
+  { value: 4, labelKey: 'ai.segLow', tipKey: 'ai.tipSegLow', color: 'text-gray-400' },
+] as const;
+
+const SEMANTIC_MODES = [
+  { value: 0, labelKey: 'ai.lawnCover', tipKey: 'ai.tipLawnCover', color: 'text-green-400' },
+  { value: 1, labelKey: 'ai.freeMove', tipKey: 'ai.tipFreeMove', color: 'text-blue-400' },
+  { value: 2, labelKey: 'ai.boundaryFollow', tipKey: 'ai.tipBoundaryFollow', color: 'text-yellow-400' },
+] as const;
+
+interface ExtendedResponseEvent {
+  sn: string;
+  command: string;
+  data: Record<string, unknown>;
+  timestamp: number;
+}
+
+function PerceptionPanel({ sn, online }: { sn: string; online: boolean }) {
+  const { t } = useTranslation();
+  const { toast } = useToast();
+  const [busy, setBusy] = useState(false);
+  const [perceptionMode, setPerceptionModeState] = useState<number | null>(null);
+  const [semanticMode, setSemanticModeState] = useState<number | null>(null);
+  const [perceptionRunning, setPerceptionRunning] = useState<boolean | null>(null);
+  const socketRef = useRef<Socket | null>(null);
+
+  // Listen for extended:response events
+  useEffect(() => {
+    const socket = io({ transports: ['websocket', 'polling'] });
+    socketRef.current = socket;
+
+    socket.on('extended:response', (e: ExtendedResponseEvent) => {
+      if (e.sn !== sn) return;
+
+      if (e.command === 'set_perception_mode_respond') {
+        const result = e.data?.result as number;
+        const mode = e.data?.mode as number;
+        const modeName = e.data?.mode_name as string;
+        if (result === 0) {
+          setPerceptionModeState(mode);
+          toast(`${t('ai.perceptionMode')}: ${modeName}`, 'success');
+        } else {
+          toast(`${t('ai.perceptionMode')} — ${e.data?.error ?? 'failed'}`, 'error');
+        }
+        setBusy(false);
+      }
+
+      if (e.command === 'set_semantic_mode_respond') {
+        const result = e.data?.result as number;
+        const mode = e.data?.mode as number;
+        const modeName = e.data?.mode_name as string;
+        if (result === 0) {
+          setSemanticModeState(mode);
+          toast(`${t('ai.semanticMode')}: ${modeName}`, 'success');
+        } else {
+          toast(`${t('ai.semanticMode')} — ${e.data?.error ?? 'failed'}`, 'error');
+        }
+        setBusy(false);
+      }
+
+      if (e.command === 'get_perception_status_respond') {
+        setPerceptionRunning(e.data?.perception_running as boolean ?? false);
+        if (typeof e.data?.perception_mode === 'number') setPerceptionModeState(e.data.perception_mode as number);
+        if (typeof e.data?.semantic_mode === 'number') setSemanticModeState(e.data.semantic_mode as number);
+        setBusy(false);
+      }
+    });
+
+    return () => { socket.disconnect(); };
+  }, [sn, t, toast]);
+
+  // Query status on mount when online
+  useEffect(() => {
+    if (online) {
+      getPerceptionStatus(sn).catch(() => {});
+    }
+  }, [sn, online]);
+
+  const handlePerceptionMode = useCallback(async (mode: number) => {
+    setBusy(true);
+    try {
+      await setPerceptionMode(sn, mode);
+      // Response arrives via socket — timeout fallback
+      setTimeout(() => setBusy(prev => prev ? false : prev), 8000);
+    } catch {
+      toast(`${t('ai.perceptionMode')} — failed`, 'error');
+      setBusy(false);
+    }
+  }, [sn, t, toast]);
+
+  const handleSemanticMode = useCallback(async (mode: number) => {
+    setBusy(true);
+    try {
+      await setSemanticMode(sn, mode);
+      setTimeout(() => setBusy(prev => prev ? false : prev), 8000);
+    } catch {
+      toast(`${t('ai.semanticMode')} — failed`, 'error');
+      setBusy(false);
+    }
+  }, [sn, t, toast]);
+
+  const disabled = busy || !online;
+
+  return (
+    <div className="space-y-4">
+      {/* Header */}
+      <div className="flex items-center gap-2">
+        <Brain className="w-4 h-4 text-purple-400" />
+        <div className="flex-1">
+          <span className="text-sm text-gray-300">{t('ai.title')}</span>
+          <p className="text-[10px] text-gray-500 leading-tight">{t('ai.desc')}</p>
+        </div>
+        {perceptionRunning !== null && (
+          <span className={`text-[10px] px-1.5 py-0.5 rounded ${perceptionRunning ? 'bg-green-900/40 text-green-400' : 'bg-red-900/40 text-red-400'}`}>
+            {perceptionRunning ? t('ai.running') : t('ai.stopped')}
+          </span>
+        )}
+      </div>
+
+      {/* Perception Mode */}
+      <div className="space-y-1.5">
+        <div className="flex items-center gap-1.5">
+          <Eye className="w-3.5 h-3.5 text-purple-400/70" />
+          <span className="text-xs text-gray-400">{t('ai.perceptionMode')}</span>
+        </div>
+        <div className="grid grid-cols-4 gap-1">
+          {PERCEPTION_MODES.map(({ value, labelKey, tipKey, color }) => (
+            <button
+              key={value}
+              onClick={() => handlePerceptionMode(value)}
+              disabled={disabled}
+              title={t(tipKey)}
+              className={`text-[11px] py-1.5 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed ${
+                perceptionMode === value
+                  ? `bg-gray-600 ${color} font-medium ring-1 ring-gray-500`
+                  : 'bg-gray-800 text-gray-500 hover:text-gray-300 hover:bg-gray-700'
+              }`}
+            >
+              {t(labelKey)}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Semantic Navigation Mode */}
+      <div className="space-y-1.5">
+        <div className="flex items-center gap-1.5">
+          <Route className="w-3.5 h-3.5 text-purple-400/70" />
+          <span className="text-xs text-gray-400">{t('ai.semanticMode')}</span>
+        </div>
+        <div className="grid grid-cols-3 gap-1">
+          {SEMANTIC_MODES.map(({ value, labelKey, tipKey, color }) => (
+            <button
+              key={value}
+              onClick={() => handleSemanticMode(value)}
+              disabled={disabled}
+              title={t(tipKey)}
+              className={`text-[11px] py-1.5 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed ${
+                semanticMode === value
+                  ? `bg-gray-600 ${color} font-medium ring-1 ring-gray-500`
+                  : 'bg-gray-800 text-gray-500 hover:text-gray-300 hover:bg-gray-700'
+              }`}
+            >
+              {t(labelKey)}
+            </button>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
