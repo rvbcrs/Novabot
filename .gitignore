@@ -55,3 +55,5 @@ novabot-dashboard/dist/
 *.db-shm
 
 **/node_modules/
+tools/ble-diagnostic/dist/
+tools/ble-diagnostic/wizard/dist/

@@ -1,0 +1,120 @@
+{
+  "title": "BLE Diagnostic",
+  "scanner": {
+    "title": "Device Scanner",
+    "scan": "Scan",
+    "scanning": "Scanning...",
+    "stopScan": "Stop",
+    "noDevices": "No Novabot devices found. Make sure the mower or charger is powered on and nearby.",
+    "connect": "Connect",
+    "disconnect": "Disconnect",
+    "connected": "Connected",
+    "rssi": "RSSI",
+    "charger": "Charger",
+    "mower": "Mower",
+    "unknown": "Unknown"
+  },
+  "dashboard": {
+    "title": "Radio Dashboard",
+    "backToScan": "Back to scan",
+    "refreshAll": "Refresh All",
+    "autoRefresh": "Auto-refresh",
+    "seconds": "{n}s"
+  },
+  "wifi": {
+    "title": "WiFi",
+    "rssi": "RSSI",
+    "status": "Status",
+    "ok": "Connected",
+    "noData": "No data"
+  },
+  "lora": {
+    "title": "LoRa",
+    "address": "Address",
+    "channel": "Channel",
+    "hc": "HC",
+    "lc": "LC",
+    "noData": "No data",
+    "viaMqtt": "via MQTT",
+    "viaBle": "via BLE"
+  },
+  "gps": {
+    "title": "GPS",
+    "satellites": "Satellites",
+    "rtk": "RTK",
+    "fixed": "Fixed",
+    "float": "Float",
+    "none": "None",
+    "valid": "Valid",
+    "noData": "No data"
+  },
+  "deviceInfo": {
+    "title": "Device Info",
+    "sn": "Serial Number",
+    "firmware": "Firmware",
+    "hardware": "Hardware",
+    "config": "Config",
+    "committed": "Committed",
+    "notCommitted": "Not committed",
+    "noData": "No data"
+  },
+  "provisioning": {
+    "title": "Provisioning",
+    "wifi": "WiFi",
+    "ssid": "SSID",
+    "password": "Password",
+    "lora": "LoRa",
+    "address": "Address",
+    "channel": "Channel",
+    "mqtt": "MQTT",
+    "host": "Host",
+    "port": "Port",
+    "set": "Set",
+    "commit": "Commit Config",
+    "success": "Command sent successfully",
+    "error": "Command failed"
+  },
+  "mqttPanel": {
+    "title": "MQTT Broker",
+    "host": "Host",
+    "port": "Port",
+    "connect": "Connect",
+    "disconnect": "Disconnect",
+    "connected": "Connected",
+    "disconnected": "Not connected",
+    "sn": "Mower SN",
+    "queryLora": "Query LoRa",
+    "queryInfo": "Query Info"
+  },
+  "loraFix": {
+    "title": "Fix LoRa Channel",
+    "description": "Query the mower's actual STM32 LoRa channel via SSH, then set the charger to match via BLE. This ensures both devices are on the same channel so LoRa communication can resume.",
+    "queryMower": "Query Mower",
+    "fix": "Fix LoRa",
+    "mowerIp": "Mower IP",
+    "mowerStm32": "Mower STM32 actual config:",
+    "success": "Charger set to channel {channel} — LoRa should reconnect within seconds.",
+    "failed": "Fix failed",
+    "needCharger": "Connect to charger via BLE to apply fix"
+  },
+  "serial": {
+    "title": "Serial Monitor",
+    "connect": "Connect SSH",
+    "disconnect": "Disconnect",
+    "heartbeats": "Heartbeats",
+    "lastSeen": "Last",
+    "rtkRelay": "RTK Relay",
+    "loraFrames": "LoRa Frames",
+    "total": "Total",
+    "frameRate": "Frame Rate",
+    "framesPerSecond": "frames/sec",
+    "filter": "Filter",
+    "filter_all": "All",
+    "filter_lora": "LoRa",
+    "filter_heartbeat": "Heartbeat",
+    "filter_rtk": "RTK",
+    "filter_sensor": "Sensor",
+    "clear": "Clear",
+    "waitingForData": "Waiting for serial data..."
+  }
+}
