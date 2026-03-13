@@ -2,7 +2,7 @@ import { createServer } from './server';
 import { exec } from 'child_process';
 import os from 'os';
 
-const PORT = 7780;
+const PORT = parseInt(process.env.PORT ?? '7780', 10);
 
 const app = createServer();
 
@@ -16,9 +16,11 @@ const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`║  Open: ${url.padEnd(37)}║`);
   console.log('╚════════════════════════════════════════════╝');
   console.log('');
-  console.log('Press Ctrl+C to quit.');
 
-  openBrowser(url);
+  // Don't open browser in Docker or when NO_BROWSER is set
+  if (!process.env.DOCKER && !process.env.NO_BROWSER) {
+    openBrowser(url);
+  }
 });
 
 server.on('error', (err: NodeJS.ErrnoException) => {

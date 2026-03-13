@@ -104,7 +104,7 @@ async function fetchPaginated(
   return { token: currentToken, items: all };
 }
 
-// ── Export state ──────────────────────────────────────────────────────────────
+// ── Session-based export state ───────────────────────────────────────────────
 
 interface ExportProgress {
   status: 'idle' | 'running' | 'done' | 'error';
@@ -112,6 +112,7 @@ interface ExportProgress {
   outputDir: string;
   error?: string;
   zipFile?: string;
+  createdAt: number;
   summary?: {
     totalFiles: number;
     totalSize: number;
@@ -121,11 +122,22 @@ interface ExportProgress {
   };
 }
 
-let exportProgress: ExportProgress = {
-  status: 'idle',
-  steps: [],
-  outputDir: '',
-};
+const sessions = new Map<string, ExportProgress>();
+
+// Cleanup sessions older than 1 hour
+const SESSION_TTL_MS = 60 * 60 * 1000;
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, session] of sessions) {
+    if (now - session.createdAt > SESSION_TTL_MS) {
+      // Remove temp dir
+      if (session.outputDir && fs.existsSync(session.outputDir)) {
+        try { fs.rmSync(session.outputDir, { recursive: true, force: true }); } catch { /* ignore */ }
+      }
+      sessions.delete(id);
+    }
+  }
+}, 5 * 60 * 1000); // Check every 5 minutes
 
 // ── Wizard bundle (inlined at build time) ────────────────────────────────────
 // In dev mode, we serve from wizard/dist/. In production (pkg), from the bundle.
@@ -234,8 +246,6 @@ export function createServer(): express.Express {
     };
 
     try {
-      const loginFn = async () => accessToken; // simplified, no re-login in preview
-
       // Quick counts — just first page of each
       let workRecordCount = 0;
       let messageCount = 0;
@@ -272,8 +282,14 @@ export function createServer(): express.Express {
   });
 
   // ── GET /api/export/status ───────────────────────────────────────────────
-  app.get('/api/export/status', (_req, res) => {
-    res.json(exportProgress);
+  app.get('/api/export/status', (req, res) => {
+    const sessionId = req.query.session as string;
+    const session = sessionId ? sessions.get(sessionId) : undefined;
+    if (!session) {
+      res.status(404).json({ error: 'Session not found' });
+      return;
+    }
+    res.json(session);
   });
 
   // ── POST /api/export ─────────────────────────────────────────────────────
@@ -287,7 +303,9 @@ export function createServer(): express.Express {
       includeFirmware?: boolean;
     };
 
-    const outputDir = path.join(os.homedir(), 'novabot-export');
+    // Create unique session
+    const sessionId = crypto.randomBytes(12).toString('hex');
+    const outputDir = path.join(os.tmpdir(), `novabot-export-${sessionId}`);
     fs.mkdirSync(outputDir, { recursive: true });
     fs.mkdirSync(path.join(outputDir, 'devices'), { recursive: true });
     fs.mkdirSync(path.join(outputDir, 'maps'), { recursive: true });
@@ -303,9 +321,10 @@ export function createServer(): express.Express {
       .map(d => String(d.sn ?? d.chargerSn ?? d.mowerSn ?? ''))
       .filter(sn => sn.startsWith('LFI'));
 
-    exportProgress = {
+    const progress: ExportProgress = {
       status: 'running',
       outputDir,
+      createdAt: Date.now(),
       steps: [
         { name: 'account', status: 'pending' },
         { name: 'devices', status: 'pending' },
@@ -316,8 +335,9 @@ export function createServer(): express.Express {
         { name: 'firmware', status: 'pending' },
       ],
     };
+    sessions.set(sessionId, progress);
 
-    res.json({ ok: true, outputDir });
+    res.json({ ok: true, sessionId });
 
     // Re-login helper
     const loginFn = async (): Promise<string> => {
@@ -340,6 +360,14 @@ export function createServer(): express.Express {
       fs.writeFileSync(filePath, content);
       totalFiles++;
       totalSize += Buffer.byteLength(content);
+    };
+
+    const setStepStatus = (name: string, status: 'pending' | 'running' | 'done' | 'error', count?: number) => {
+      const step = progress.steps.find(s => s.name === name);
+      if (step) {
+        step.status = status;
+        if (count !== undefined) step.count = count;
+      }
     };
 
     try {
@@ -530,7 +558,7 @@ export function createServer(): express.Express {
         totalSizeBytes: totalSize,
       });
 
-      // Create ZIP of all exported data (cross-platform)
+      // Create ZIP of all exported data
       const zipPath = path.join(outputDir, 'novabot-export.zip');
       try {
         if (fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
@@ -547,36 +575,107 @@ export function createServer(): express.Express {
             .join(',');
           execSync(`powershell -NoProfile -Command "Compress-Archive -Path ${items} -DestinationPath '${zipPath}'"`, { stdio: 'pipe' });
         } else {
-          // macOS / Linux
+          // macOS / Linux / Docker
           execSync(`cd "${outputDir}" && zip -r "novabot-export.zip" ${filesToZip}`, { stdio: 'pipe' });
         }
-        exportProgress.zipFile = zipPath;
+        progress.zipFile = zipPath;
       } catch {
         // ZIP creation failed — still mark as done
       }
 
-      exportProgress.status = 'done';
-      exportProgress.summary = {
+      progress.status = 'done';
+      progress.summary = {
         totalFiles,
         totalSize,
         devices: allSns.length,
         workRecords: workRecordCount,
         messages: messageCount,
       };
+
+      // Log device telemetry (SNs + firmware versions) for analytics
+      try {
+        const telemetryDir = process.env.DOCKER ? '/data' : path.join(os.homedir(), '.novabot-export');
+        fs.mkdirSync(telemetryDir, { recursive: true });
+        const telemetryFile = path.join(telemetryDir, 'devices.jsonl');
+        const deviceEntries = devices.map(d => ({
+          sn: d.sn ?? d.mowerSn ?? d.chargerSn ?? null,
+          deviceType: d.deviceType ?? null,
+          sysVersion: d.sysVersion ?? null,
+          equipmentType: d.equipmentType ?? null,
+          mowerVersion: d.mowerVersion ?? null,
+          chargerVersion: d.chargerVersion ?? null,
+        }));
+        const entry = {
+          timestamp: new Date().toISOString(),
+          devices: deviceEntries,
+        };
+        fs.appendFileSync(telemetryFile, JSON.stringify(entry) + '\n');
+        console.log(`[telemetry] Logged ${deviceEntries.length} devices to ${telemetryFile}`);
+      } catch { /* non-fatal — telemetry should never break the export */ }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      exportProgress.status = 'error';
-      exportProgress.error = msg;
+      progress.status = 'error';
+      progress.error = msg;
     }
   });
 
   // ── GET /api/export/download ─────────────────────────────────────────────
-  app.get('/api/export/download', (_req, res) => {
-    if (!exportProgress.zipFile || !fs.existsSync(exportProgress.zipFile)) {
+  app.get('/api/export/download', (req, res) => {
+    const sessionId = req.query.session as string;
+    const session = sessionId ? sessions.get(sessionId) : undefined;
+    if (!session?.zipFile || !fs.existsSync(session.zipFile)) {
       res.status(404).json({ error: 'No export ZIP available' });
       return;
     }
-    res.download(exportProgress.zipFile, 'novabot-export.zip');
+    res.download(session.zipFile, 'novabot-export.zip', () => {
+      // Cleanup: delete temp dir after successful download
+      // Delay slightly to ensure download is complete
+      setTimeout(() => {
+        if (session.outputDir && fs.existsSync(session.outputDir)) {
+          try { fs.rmSync(session.outputDir, { recursive: true, force: true }); } catch { /* ignore */ }
+        }
+        sessions.delete(sessionId);
+      }, 5000);
+    });
+  });
+
+  // ── GET /api/admin/devices — view collected device telemetry ─────────────
+  app.get('/api/admin/devices', (_req, res) => {
+    try {
+      const telemetryDir = process.env.DOCKER ? '/data' : path.join(os.homedir(), '.novabot-export');
+      const telemetryFile = path.join(telemetryDir, 'devices.jsonl');
+      if (!fs.existsSync(telemetryFile)) {
+        res.json({ ok: true, entries: [], uniqueDevices: [] });
+        return;
+      }
+      const lines = fs.readFileSync(telemetryFile, 'utf8').trim().split('\n').filter(Boolean);
+      const entries = lines.map(line => { try { return JSON.parse(line); } catch { return null; } }).filter(Boolean);
+
+      // Build unique device list (deduplicate by SN, keep latest info)
+      const deviceMap = new Map<string, Record<string, unknown>>();
+      for (const entry of entries) {
+        const ts = entry.timestamp;
+        for (const d of (entry.devices ?? [])) {
+          const sn = d.sn as string;
+          if (sn) {
+            deviceMap.set(sn, { ...d, lastSeen: ts });
+          }
+        }
+      }
+      const uniqueDevices = [...deviceMap.values()].sort((a, b) =>
+        String(a.sn ?? '').localeCompare(String(b.sn ?? ''))
+      );
+
+      res.json({
+        ok: true,
+        totalExports: entries.length,
+        uniqueDevices,
+        entries,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: msg });
+    }
   });
 
   // ── Wizard: serve from inlined bundle or filesystem ─────────────────────
@@ -624,14 +723,6 @@ export function createServer(): express.Express {
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
-
-function setStepStatus(name: string, status: 'pending' | 'running' | 'done' | 'error', count?: number) {
-  const step = exportProgress.steps.find(s => s.name === name);
-  if (step) {
-    step.status = status;
-    if (count !== undefined) step.count = count;
-  }
-}
 
 function downloadFile(url: string, destPath: string, token?: string): Promise<void> {
   return new Promise((resolve, reject) => {

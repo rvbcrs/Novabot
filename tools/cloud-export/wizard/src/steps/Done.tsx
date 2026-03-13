@@ -1,7 +1,7 @@
 import { useT } from '../i18n/index.ts';
 
 interface ExportResult {
-  outputDir: string;
+  sessionId: string;
   totalFiles: number;
   totalSize: number;
   devices: number;
@@ -45,16 +45,10 @@ export default function Done({ result, onRestart }: Props) {
           </div>
         </div>
 
-        {/* Output directory */}
-        <div className="bg-white/5 rounded-xl p-4 mb-4">
-          <p className="text-xs text-gray-500 mb-1">{t('done.output_dir')}</p>
-          <p className="text-sm text-sky-300 font-mono break-all">{result.outputDir}</p>
-        </div>
-
         <div className="flex gap-3">
           {result.hasZip && (
             <a
-              href="/api/export/download"
+              href={`/api/export/download?session=${result.sessionId}`}
               download="novabot-export.zip"
               className="flex-1 py-3 bg-sky-600 hover:bg-sky-500 text-white font-semibold rounded-xl transition-all text-center"
             >

@@ -18,7 +18,7 @@ interface ExportStep {
 }
 
 interface ExportResult {
-  outputDir: string;
+  sessionId: string;
   totalFiles: number;
   totalSize: number;
   devices: number;
@@ -39,7 +39,6 @@ export default function DataPreview({ loginData, onDone }: Props) {
   const [includeFirmware, setIncludeFirmware] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [steps, setSteps] = useState<ExportStep[]>([]);
-  const [outputDir, setOutputDir] = useState('');
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Fetch preview counts
@@ -86,12 +85,12 @@ export default function DataPreview({ loginData, onDone }: Props) {
     });
 
     const data = await resp.json();
-    setOutputDir(data.outputDir || '');
+    const sessionId = data.sessionId as string;
 
-    // Poll for progress
+    // Poll for progress using session ID
     pollRef.current = setInterval(async () => {
       try {
-        const statusResp = await fetch('/api/export/status');
+        const statusResp = await fetch(`/api/export/status?session=${sessionId}`);
         const status = await statusResp.json();
         setSteps(status.steps || []);
 
@@ -99,7 +98,7 @@ export default function DataPreview({ loginData, onDone }: Props) {
           if (pollRef.current) clearInterval(pollRef.current);
 
           onDone({
-            outputDir: status.outputDir,
+            sessionId,
             totalFiles: status.summary?.totalFiles ?? 0,
             totalSize: status.summary?.totalSize ?? 0,
             devices: status.summary?.devices ?? 0,
@@ -199,9 +198,6 @@ export default function DataPreview({ loginData, onDone }: Props) {
                 )}
               </div>
             ))}
-            {outputDir && (
-              <p className="text-xs text-gray-500 text-center mt-4">→ {outputDir}</p>
-            )}
           </div>
         )}
       </div>

@@ -19,7 +19,7 @@ interface LoginData {
 }
 
 interface ExportResult {
-  outputDir: string;
+  sessionId: string;
   totalFiles: number;
   totalSize: number;
   devices: number;
