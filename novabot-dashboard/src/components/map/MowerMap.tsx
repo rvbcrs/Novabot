@@ -5,19 +5,20 @@ import {
   MapPin, Map as MapIcon, Trash2, Route, Wifi, WifiOff, Satellite, Crosshair,
   Battery, BatteryCharging, BatteryLow, BatteryFull, Layers,
   SlidersHorizontal, Save, X, RotateCcw, Pencil, Check, Scissors, Navigation,
-  ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Download, Flame, Upload,
+  ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Download, Flame,
   Fence, Target, XCircle,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { MapData, TrailPoint, MapCalibration } from '../../types';
 import {
   fetchMaps, fetchAllMaps, fetchTrail, clearTrail, fetchCalibration, saveCalibration,
-  deleteMap, renameMap, updateMapArea, createMap, exportMaps, pushMapsToMower,
+  deleteMap, renameMap, updateMapArea, createMap, exportMaps,
   navigateToPosition, stopNavigation,
   fetchVirtualWalls, createVirtualWall, deleteVirtualWall,
   type VirtualWall,
 } from '../../api/client';
 import { useToast } from '../common/Toast';
+import { ConfirmDialog } from '../common/ConfirmDialog';
 import { PolygonEditor } from './PolygonEditor';
 import { PatternOverlay, type PatternPlacement } from '../patterns/PatternOverlay';
 
@@ -37,10 +38,10 @@ const DEFAULT_CENTER: [number, number] = [52.1409, 6.231];
 
 // Kleuren per kaarttype
 const AREA_STYLES = {
-  work:     { color: '#10b981', fillColor: '#10b98140', fillOpacity: 0.25, weight: 2 },   // emerald
-  obstacle: { color: '#ef4444', fillColor: '#ef444440', fillOpacity: 0.30, weight: 2 },   // red
-  unicom:   { color: '#3b82f6', fillColor: '#3b82f640', fillOpacity: 0.20, weight: 2 },   // blue
-  default:  { color: '#8b5cf6', fillColor: '#8b5cf640', fillOpacity: 0.25, weight: 2 },   // purple
+  work:     { color: '#10b981', fillColor: '#10b981', fillOpacity: 0.25, weight: 2 },   // emerald
+  obstacle: { color: '#ef4444', fillColor: '#ef4444', fillOpacity: 0.30, weight: 2 },   // red
+  unicom:   { color: '#3b82f6', fillColor: '#3b82f6', fillOpacity: 0.20, weight: 2 },   // blue
+  default:  { color: '#8b5cf6', fillColor: '#8b5cf6', fillOpacity: 0.25, weight: 2 },   // purple
 } as const;
 
 /** Bepaal kaarttype — primair uit mapType veld, fallback op mapId/mapName patronen */
@@ -507,6 +508,10 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
   const [navigateMode, setNavigateMode] = useState(false);
   const [navigateTarget, setNavigateTarget] = useState<{ lat: number; lng: number } | null>(null);
 
+  // Confirm delete dialog
+  const [confirmDeleteMapId, setConfirmDeleteMapId] = useState<string | null>(null);
+  const [confirmDeleteMapName, setConfirmDeleteMapName] = useState<string>('');
+
   // Virtual walls
   const [walls, setWalls] = useState<VirtualWall[]>([]);
   const [wallDrawMode, setWallDrawMode] = useState(false);
@@ -556,14 +561,25 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
   const mowerLng = lng ? parseFloat(lng) : null;
   const mowerHasGps = !!(mowerLat && mowerLng && mowerLat !== 0 && mowerLng !== 0);
 
-  // Auto-save mower GPS as charger position when no charger position is set yet
+  // Auto-save mower GPS as charger position — de charger zelf rapporteert geen
+  // lat/lng via MQTT, maar de maaier WEL. Als de maaier op het laadstation staat
+  // (idle, opladen), is zijn GPS positie gelijk aan de charger positie.
+  // Sla dit automatisch op zodat de charger marker altijd correct staat.
+  const chargerLiveLat = chargerLat ? parseFloat(chargerLat) : null;
+  const hasLiveChargerGps = !!(chargerLiveLat && chargerLiveLat !== 0);
   useEffect(() => {
-    if (!sn || !mowerHasGps) return;
-    if (savedCal.chargerLat || savedCal.chargerLng) return;
+    if (!sn || !mowerHasGps || hasLiveChargerGps) return;
+    // Alleen auto-updaten als er nog geen positie is, of als de afstand > 5m
+    // (voorkomt continue saves maar corrigeert GPS drift)
+    if (savedCal.chargerLat && savedCal.chargerLng) {
+      const dLat = Math.abs(mowerLat! - savedCal.chargerLat);
+      const dLng = Math.abs(mowerLng! - savedCal.chargerLng);
+      if (dLat < 0.00005 && dLng < 0.00005) return; // < ~5m, geen update nodig
+    }
     const updated = { ...savedCal, chargerLat: mowerLat!, chargerLng: mowerLng! };
     setSavedCal(updated);
     saveCalibration(sn, updated).catch(() => {});
-  }, [sn, mowerHasGps, mowerLat, mowerLng, savedCal]);
+  }, [sn, mowerHasGps, mowerLat, mowerLng, hasLiveChargerGps]);
 
   // Append new trail points when lat/lng changes
   useEffect(() => {
@@ -737,16 +753,6 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
   }, [sn, resolvedChargerLat, resolvedChargerLng, chargerHasGps, t]);
 
   // Push maps to mower via SSH
-  const [pushing, setPushing] = useState(false);
-  const handlePushToMower = useCallback(() => {
-    if (!chargerHasGps) return;
-    setPushing(true);
-    pushMapsToMower(sn, { lat: resolvedChargerLat!, lng: resolvedChargerLng! })
-      .then(() => toast(t('map.pushedToMower', 'Kaarten geüpload — mapping herstart...'), 'success'))
-      .catch((err: Error) => toast(`${t('map.pushFailed', 'Upload mislukt')}: ${err.message}`, 'error'))
-      .finally(() => setPushing(false));
-  }, [sn, resolvedChargerLat, resolvedChargerLng, chargerHasGps, t]);
-
   // Navigate-to handler
   const handleNavigateClick = useCallback((lat: number, lng: number) => {
     setNavigateTarget({ lat, lng });
@@ -991,22 +997,6 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
             >
               <Download className="w-3 h-3" />
               {t('map.export')}
-            </button>
-          )}
-          {/* Push to mower button (hidden on mobile) */}
-          {polygonMaps.length > 0 && editMode === 'none' && !calibrating && (
-            <button
-              onClick={handlePushToMower}
-              disabled={!chargerHasGps || pushing}
-              className={`hidden md:inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded transition-colors ${
-                chargerHasGps && !pushing
-                  ? 'bg-gray-700/50 text-gray-400 hover:text-emerald-400 hover:bg-emerald-900/30'
-                  : 'bg-gray-700/30 text-gray-600 cursor-not-allowed'
-              }`}
-              title={chargerHasGps ? t('map.pushToMowerTooltip', 'Kaarten via SSH op maaier plaatsen') : t('map.exportNoCharger')}
-            >
-              <Upload className="w-3 h-3" />
-              {pushing ? t('map.pushing', 'Bezig...') : t('map.pushToMower', 'Op maaier')}
             </button>
           )}
           {/* Place/reposition charger button — highlighted when no charger position set */}
@@ -1704,9 +1694,8 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
                 </button>
                 <button
                   onClick={() => {
-                    if (confirm(t('map.confirmDelete', { name: m.mapName || m.mapId }))) {
-                      handleDeleteMap(m.mapId);
-                    }
+                    setConfirmDeleteMapId(m.mapId);
+                    setConfirmDeleteMapName(m.mapName || m.mapId);
                   }}
                   className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded bg-red-900/40 text-red-400 hover:bg-red-900/70 hover:text-red-300 transition-colors"
                 >
@@ -1718,6 +1707,19 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
           );
         })()}
       </div>
+
+      {/* Confirm map delete dialog */}
+      <ConfirmDialog
+        open={!!confirmDeleteMapId}
+        title={t('map.confirmDelete', { name: confirmDeleteMapName })}
+        confirmLabel={t('common.delete')}
+        cancelLabel={t('common.cancel')}
+        onConfirm={() => {
+          if (confirmDeleteMapId) handleDeleteMap(confirmDeleteMapId);
+          setConfirmDeleteMapId(null);
+        }}
+        onCancel={() => setConfirmDeleteMapId(null)}
+      />
     </div>
   );
 }

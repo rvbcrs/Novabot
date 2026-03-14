@@ -3,7 +3,7 @@ import {
   Plug, TreePine, ChevronDown, Terminal, Calendar, Circle,
   BatteryMedium, Satellite, Radio, Activity,
   Wifi, Bluetooth, Trash2, Thermometer, HardDrive, Code, Octagon, Settings,
-  Map as MapIcon, Camera, Save, StopCircle, X, Network, Gamepad2, SlidersHorizontal,
+  Map as MapIcon, Camera, Save, StopCircle, X, Gamepad2, SlidersHorizontal,
   ClipboardList, BarChart3, Menu, Lock,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -21,11 +21,13 @@ import { CameraStream } from './CameraStream';
 import { JoystickControl } from './JoystickControl';
 import { UnboundDevices } from './UnboundDevices';
 import { MobileDrawer } from '../common/MobileDrawer';
+import { ConfirmDialog } from '../common/ConfirmDialog';
 import { SettingsPanel } from '../settings/SettingsPanel';
 import { WorkHistory } from '../history/WorkHistory';
 import { SignalChart } from '../charts/SignalChart';
-import { deleteDevice, sendCommand, setMowerIp, pinVerify } from '../../api/client';
+import { deleteDevice, sendCommand, pinVerify } from '../../api/client';
 import { PinKeypad } from './PinKeypad';
+import { RainOverlay } from './RainOverlay';
 import { useToast } from '../common/Toast';
 import type { PatternPlacement } from '../patterns/PatternOverlay';
 
@@ -54,15 +56,13 @@ function Stat({ icon: Icon, value, color = 'text-gray-400', label }: {
 }
 
 /** Inline device chip for the toolbar */
-function DeviceChip({ device, expanded, onToggle, onDelete, onSetMowerIp, otaProgress }: {
+function DeviceChip({ device, expanded, onToggle, onDelete, otaProgress }: {
   device: DeviceState;
   expanded: boolean;
   onToggle: () => void;
   onDelete?: (sn: string) => void;
-  onSetMowerIp?: (sn: string, ip: string) => void;
   otaProgress?: OtaProgress;
 }) {
-  const [ipEdit, setIpEdit] = useState(device.mowerIp ?? '');
   const { t } = useTranslation();
   const s = device.sensors;
   const isCharger = device.deviceType === 'charger';
@@ -86,10 +86,10 @@ function DeviceChip({ device, expanded, onToggle, onDelete, onSetMowerIp, otaPro
   const hasSensorData = Object.keys(s).length > 0;
 
   return (
-    <div className="relative">
+    <div className="relative min-w-0 flex-shrink">
       <button
         onClick={onToggle}
-        className={`inline-flex items-center gap-1 md:gap-1.5 h-7 md:h-8 px-1.5 md:px-2.5 rounded-md text-xs transition-colors ${
+        className={`inline-flex items-center gap-1 md:gap-1.5 h-7 md:h-8 px-1.5 md:px-2.5 rounded-md text-xs transition-colors min-w-0 ${
           expanded
             ? 'bg-gray-700 border border-gray-600'
             : 'hover:bg-gray-800 border border-transparent'
@@ -101,7 +101,7 @@ function DeviceChip({ device, expanded, onToggle, onDelete, onSetMowerIp, otaPro
         ) : (
           <TreePine className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />
         )}
-        <span className="text-gray-300 font-medium truncate max-w-[80px] md:max-w-none">
+        <span className="text-gray-300 font-medium truncate max-w-[60px] sm:max-w-[80px] md:max-w-none">
           {device.nickname ?? (isCharger ? t('sidebar.charger') : t('sidebar.mower'))}
         </span>
         <Circle className={`w-2.5 h-2.5 fill-current ${device.online ? 'text-green-500' : 'text-gray-600'}`} />
@@ -200,7 +200,7 @@ function DeviceChip({ device, expanded, onToggle, onDelete, onSetMowerIp, otaPro
 
       {/* Sensor detail dropdown */}
       {expanded && (
-        <div className="absolute top-full left-0 mt-1 w-[calc(100vw-1rem)] sm:w-[420px] z-[10000] bg-gray-800 rounded-lg border border-gray-700 shadow-xl p-3 max-h-[70vh] sm:max-h-96 overflow-auto">
+        <div className="absolute top-full left-0 mt-1 w-[calc(100vw-1rem)] sm:w-[380px] md:w-[420px] z-[10000] bg-gray-800 rounded-lg border border-gray-700 shadow-xl p-2 sm:p-3 max-h-[70vh] sm:max-h-96 overflow-auto">
           {/* Header with SN + actions */}
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-2">
@@ -250,31 +250,6 @@ function DeviceChip({ device, expanded, onToggle, onDelete, onSetMowerIp, otaPro
           {/* Full sensor grid */}
           <SensorGrid device={device} />
 
-          {/* SSH IP (alleen voor maaier) */}
-          {device.deviceType === 'mower' && onSetMowerIp && (
-            <div className="mt-3 pt-2 border-t border-gray-700">
-              <div className="flex items-center gap-1.5 mb-1">
-                <Network className="w-3 h-3 text-gray-500" />
-                <span className="text-[10px] text-gray-500">SSH IP (kaart upload)</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <input
-                  type="text"
-                  value={ipEdit}
-                  onChange={e => setIpEdit(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') onSetMowerIp(device.sn, ipEdit); }}
-                  placeholder="192.168.0.x"
-                  className="flex-1 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-[11px] font-mono text-gray-200 placeholder-gray-600 focus:outline-none focus:border-emerald-600"
-                />
-                <button
-                  onClick={() => onSetMowerIp(device.sn, ipEdit)}
-                  className="px-2 py-1 text-[10px] bg-emerald-700 hover:bg-emerald-600 text-white rounded transition-colors"
-                >
-                  <Save className="w-3 h-3" />
-                </button>
-              </div>
-            </div>
-          )}
         </div>
       )}
     </div>
@@ -291,7 +266,7 @@ function PanelMenuItem({ icon: Icon, label, active, color, onClick }: {
 }) {
   const bg: Record<string, string> = {
     blue: 'bg-blue-600', amber: 'bg-amber-600', sky: 'bg-sky-600',
-    purple: 'bg-purple-600', orange: 'bg-orange-600',
+    purple: 'bg-purple-600', orange: 'bg-orange-600', cyan: 'bg-cyan-600', emerald: 'bg-emerald-600',
   };
   return (
     <button
@@ -324,6 +299,7 @@ export function DashboardPage({ devices, loading, logs, bleLogs, otaProgress, li
   const [patternPlacement, setPatternPlacement] = useState<PatternPlacement | null>(null);
   const [patternCenter, setPatternCenter] = useState<{ lat: number; lng: number } | null>(null);
   const [patternClickActive, setPatternClickActive] = useState(false);
+  const [confirmDeleteDevice, setConfirmDeleteDevice] = useState<string | null>(null);
   const [offsetPreview, setOffsetPreview] = useState<Array<{ lat: number; lng: number }> | null>(null);
 
   const togglePanel = useCallback((panel: string) => {
@@ -339,21 +315,15 @@ export function DashboardPage({ devices, loading, logs, bleLogs, otaProgress, li
   }, []);
 
   const handleDeleteDevice = useCallback(async (sn: string) => {
-    if (!confirm(t('devices.confirmRemove', { sn }))) return;
-    await deleteDevice(sn);
+    setConfirmDeleteDevice(sn);
+  }, []);
+  const executeDeleteDevice = useCallback(async () => {
+    if (!confirmDeleteDevice) return;
+    await deleteDevice(confirmDeleteDevice);
+    setConfirmDeleteDevice(null);
     setExpandedChip(null);
     window.location.reload();
-  }, [t]);
-
-  const handleSetMowerIp = useCallback(async (sn: string, ip: string) => {
-    if (!ip.trim()) return;
-    try {
-      await setMowerIp(sn, ip.trim());
-      toast(`IP opgeslagen: ${ip.trim()}`, 'success');
-    } catch {
-      toast('Opslaan mislukt', 'error');
-    }
-  }, [toast]);
+  }, [confirmDeleteDevice]);
 
   const sorted = Array.from(devices.values()).sort((a, b) => {
     if (a.deviceType !== b.deviceType) return a.deviceType === 'charger' ? -1 : 1;
@@ -422,9 +392,9 @@ export function DashboardPage({ devices, loading, logs, bleLogs, otaProgress, li
   return (
     <div className="flex flex-col h-[calc(100vh-48px)] md:h-[calc(100vh-64px)] overflow-hidden">
       {/* Toolbar */}
-      <div className="flex-shrink-0 h-10 flex items-center justify-between gap-1 px-2 md:px-3 border-b border-gray-800 bg-gray-900/80 relative z-[10001]">
+      <div className="flex-shrink-0 h-10 flex items-center justify-between gap-1 px-1.5 md:px-3 border-b border-gray-800 bg-gray-900/80 relative z-[10001]">
         {/* Left: device chips */}
-        <div className="flex items-center gap-1 min-w-0">
+        <div className="flex items-center gap-1 min-w-0 flex-shrink">
           {sorted.length === 0 && (
             <span className="text-xs text-gray-500">{t('devices.waitingForDevices')}</span>
           )}
@@ -435,7 +405,6 @@ export function DashboardPage({ devices, loading, logs, bleLogs, otaProgress, li
               expanded={expandedChip === device.sn}
               onToggle={() => setExpandedChip(expandedChip === device.sn ? null : device.sn)}
               onDelete={handleDeleteDevice}
-              onSetMowerIp={handleSetMowerIp}
               otaProgress={otaProgress.get(device.sn)}
             />
           ))}
@@ -457,28 +426,6 @@ export function DashboardPage({ devices, loading, logs, bleLogs, otaProgress, li
               patternCenter={patternCenter}
             />
           )}
-          {mower && (
-            <button
-              onClick={() => setCameraOpen(!cameraOpen)}
-              className={`inline-flex items-center justify-center w-7 h-7 rounded transition-colors ${
-                cameraOpen ? 'bg-cyan-600 text-white' : 'bg-gray-700/60 text-gray-400 hover:text-white'
-              }`}
-              title={t('camera.title')}
-            >
-              <Camera className="w-3.5 h-3.5" />
-            </button>
-          )}
-          {mower && (
-            <button
-              onClick={() => setJoystickOpen(!joystickOpen)}
-              className={`inline-flex items-center justify-center w-7 h-7 rounded transition-colors ${
-                joystickOpen ? 'bg-emerald-600 text-white' : 'bg-gray-700/60 text-gray-400 hover:text-white'
-              }`}
-              title={t('controls.joystick')}
-            >
-              <Gamepad2 className="w-3.5 h-3.5" />
-            </button>
-          )}
           {/* Panels dropdown menu */}
           <div className="relative">
             <button
@@ -494,9 +441,12 @@ export function DashboardPage({ devices, loading, logs, bleLogs, otaProgress, li
             {panelsMenuOpen && (
               <>
                 <div className="fixed inset-0 z-[9999]" onClick={() => setPanelsMenuOpen(false)} />
-                <div className="absolute top-full right-0 mt-1 w-52 z-[10000] bg-gray-800 rounded-lg border border-gray-700 shadow-xl py-1 overflow-hidden">
+                <div className="absolute top-full right-0 mt-1 w-52 max-w-[calc(100vw-1rem)] z-[10000] bg-gray-800 rounded-lg border border-gray-700 shadow-xl py-1 overflow-hidden">
                   {mower && (
                     <>
+                      <PanelMenuItem icon={Camera} label={t('camera.title')} active={cameraOpen} color="cyan" onClick={() => { setCameraOpen(!cameraOpen); setPanelsMenuOpen(false); }} />
+                      <PanelMenuItem icon={Gamepad2} label={t('controls.joystick')} active={joystickOpen} color="emerald" onClick={() => { setJoystickOpen(!joystickOpen); setPanelsMenuOpen(false); }} />
+                      <div className="my-1 border-t border-gray-700" />
                       <PanelMenuItem icon={Calendar} label={t('devices.schedule')} active={activePanel === 'schedule'} color="blue" onClick={() => togglePanel('schedule')} />
                       <PanelMenuItem icon={ClipboardList} label={t('history.title')} active={activePanel === 'history'} color="amber" onClick={() => togglePanel('history')} />
                       <PanelMenuItem icon={BarChart3} label={t('charts.title')} active={activePanel === 'charts'} color="sky" onClick={() => togglePanel('charts')} />
@@ -547,6 +497,8 @@ export function DashboardPage({ devices, loading, logs, bleLogs, otaProgress, li
             onMapClickForPattern={patternClickActive ? (c) => setPatternCenter(c) : undefined}
             offsetPreview={offsetPreview}
           />
+          {/* Rain pause overlay */}
+          {mower && <RainOverlay mowerSn={mower.sn} />}
           {/* Emergency stop floating button */}
           {mowerActive && (
             <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[1001]">
@@ -621,7 +573,7 @@ export function DashboardPage({ devices, loading, logs, bleLogs, otaProgress, li
           )}
           {/* Camera stream overlay */}
           {cameraOpen && mower && (
-            <div className="absolute top-4 right-4 z-[1001] w-[calc(100vw-2rem)] sm:w-80">
+            <div className="absolute top-2 right-2 z-[1001] w-[calc(100vw-1rem)] sm:w-80">
               <CameraStream sn={mower.sn} online={mower.online} onClose={() => setCameraOpen(false)} />
             </div>
           )}
@@ -640,7 +592,7 @@ export function DashboardPage({ devices, loading, logs, bleLogs, otaProgress, li
             </div>
           )}
           {/* Ongebonden apparaten — overlay linksboven op de kaart */}
-          <div className="absolute top-3 left-3 z-[1000] w-[calc(100vw-1.5rem)] sm:w-80 pointer-events-auto">
+          <div className="absolute top-3 left-3 z-[1000] w-[calc(100vw-1.5rem)] sm:w-72 pointer-events-auto">
             <UnboundDevices onBound={() => window.location.reload()} />
           </div>
           {/* Mower sensor overlay on map */}
@@ -698,6 +650,16 @@ export function DashboardPage({ devices, loading, logs, bleLogs, otaProgress, li
           </div>
         )}
       </div>
+
+      {/* Confirm device removal dialog */}
+      <ConfirmDialog
+        open={!!confirmDeleteDevice}
+        title={t('devices.confirmRemove', { sn: confirmDeleteDevice ?? '' })}
+        confirmLabel={t('common.delete')}
+        cancelLabel={t('common.cancel')}
+        onConfirm={executeDeleteDevice}
+        onCancel={() => setConfirmDeleteDevice(null)}
+      />
     </div>
   );
 }

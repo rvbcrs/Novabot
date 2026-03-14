@@ -4,7 +4,7 @@
  */
 import { Router, Request, Response } from 'express';
 import { db } from '../db/database.js';
-import { getAllDeviceSnapshots, getDeviceSnapshot, SENSORS, getGpsTrail, clearGpsTrail, deviceCache } from '../mqtt/sensorData.js';
+import { getAllDeviceSnapshots, getDeviceSnapshot, SENSORS, getGpsTrail, clearGpsTrail, deviceCache, translateValue, markPinVerified } from '../mqtt/sensorData.js';
 import { isDeviceOnline, writeRawPublish, getBrokerDiagnostics } from '../mqtt/broker.js';
 import { getRecentLogs, forwardToDashboard } from '../dashboard/socketHandler.js';
 import { requestMapList, requestMapOutline, publishToDevice, publishRawToDevice, publishEncryptedOnTopic, publishToTopic } from '../mqtt/mapSync.js';
@@ -381,6 +381,9 @@ dashboardRouter.post('/maps/:sn', (req: Request, res: Response) => {
       createdAt: new Date().toISOString(),
     },
   });
+
+  // Auto-push naar maaier in de achtergrond
+  autoPushMapsInBackground(sn);
 });
 
 // PATCH /api/dashboard/maps/:sn/:mapId — hernoem of bewerk een kaart
@@ -416,6 +419,9 @@ dashboardRouter.patch('/maps/:sn/:mapId', (req: Request, res: Response) => {
   }
 
   res.json({ ok: true });
+
+  // Auto-push naar maaier als polygon is gewijzigd
+  if (mapArea) autoPushMapsInBackground(sn);
 });
 
 // DELETE /api/dashboard/maps/:sn/:mapId — verwijder een kaart
@@ -438,6 +444,9 @@ dashboardRouter.delete('/maps/:sn/:mapId', (req: Request, res: Response) => {
 
   db.prepare('DELETE FROM maps WHERE map_id = ? AND mower_sn = ?').run(mapId, sn);
   res.json({ ok: true });
+
+  // Auto-push naar maaier (bijgewerkte kaarten zonder de verwijderde)
+  autoPushMapsInBackground(sn);
 });
 
 // ── Map converter endpoints ──────────────────────────────────────
@@ -493,6 +502,114 @@ dashboardRouter.get('/maps/:sn/download-zip', (req: Request, res: Response) => {
 
   res.download(zipPath, `${sn}.zip`);
 });
+
+// ── UTM conversie voor pos.json ──────────────────────────────────────────────
+function generatePosJson(charger: GpsPoint): Record<string, unknown> {
+  const { lat, lng } = charger;
+  const a = 6378137.0;
+  const f = 1 / 298.257223563;
+  const e2 = 2 * f - f * f;
+  const ePrime2 = e2 / (1 - e2);
+  const k0 = 0.9996;
+
+  const zone = Math.floor((lng + 180) / 6) + 1;
+  const lng0 = (zone - 1) * 6 - 180 + 3;
+
+  const latRad = (lat * Math.PI) / 180;
+  const lngRad = (lng * Math.PI) / 180;
+  const lng0Rad = (lng0 * Math.PI) / 180;
+
+  const N = a / Math.sqrt(1 - e2 * Math.sin(latRad) ** 2);
+  const T = Math.tan(latRad) ** 2;
+  const C = ePrime2 * Math.cos(latRad) ** 2;
+  const A = Math.cos(latRad) * (lngRad - lng0Rad);
+
+  const M = a * (
+    (1 - e2 / 4 - 3 * e2 ** 2 / 64 - 5 * e2 ** 3 / 256) * latRad
+    - (3 * e2 / 8 + 3 * e2 ** 2 / 32 + 45 * e2 ** 3 / 1024) * Math.sin(2 * latRad)
+    + (15 * e2 ** 2 / 256 + 45 * e2 ** 3 / 1024) * Math.sin(4 * latRad)
+    - (35 * e2 ** 3 / 3072) * Math.sin(6 * latRad)
+  );
+
+  const x = k0 * N * (A + (1 - T + C) * A ** 3 / 6 + (5 - 18 * T + T ** 2 + 72 * C - 58 * ePrime2) * A ** 5 / 120) + 500000;
+  const y = k0 * (M + N * Math.tan(latRad) * (A ** 2 / 2 + (5 - T + 9 * C + 4 * C ** 2) * A ** 4 / 24 + (61 - 58 * T + T ** 2 + 600 * C - 330 * ePrime2) * A ** 6 / 720));
+
+  return {
+    time_stamp: Date.now() / 1000,
+    utm_origin: { utm_zone: zone, x, y, z: 0 },
+    wgs84_origin: { latitude: lat, longitude: lng },
+  };
+}
+
+// ── Auto-push kaarten naar maaier (fire-and-forget) ─────────────────────────
+// Wordt aangeroepen na map create/update/delete zodat de maaier altijd up-to-date is.
+// Zoekt zelf de charger GPS op via dezelfde fallback chain als de endpoint.
+function autoPushMapsInBackground(sn: string): void {
+  // Zoek charger GPS: live cache → map_calibration
+  let chargerGps: GpsPoint | null = null;
+
+  const eqRow = db.prepare('SELECT charger_sn FROM equipment WHERE mower_sn = ?').get(sn) as { charger_sn: string | null } | undefined;
+  if (eqRow?.charger_sn) {
+    const snap = getDeviceSnapshot(eqRow.charger_sn);
+    const lat = parseFloat(snap?.latitude ?? '');
+    const lng = parseFloat(snap?.longitude ?? '');
+    if (!isNaN(lat) && !isNaN(lng) && lat !== 0 && lng !== 0) {
+      chargerGps = { lat, lng };
+    }
+  }
+  if (!chargerGps) {
+    const cal = db.prepare('SELECT charger_lat, charger_lng FROM map_calibration WHERE mower_sn = ?').get(sn) as { charger_lat: number | null; charger_lng: number | null } | undefined;
+    if (cal?.charger_lat && cal?.charger_lng) {
+      chargerGps = { lat: cal.charger_lat, lng: cal.charger_lng };
+    }
+  }
+  // Fallback: maaier GPS (staat waarschijnlijk op charger)
+  if (!chargerGps) {
+    const mowerSnap = getDeviceSnapshot(sn);
+    const lat = parseFloat(mowerSnap?.latitude ?? '');
+    const lng = parseFloat(mowerSnap?.longitude ?? '');
+    if (!isNaN(lat) && !isNaN(lng) && lat !== 0 && lng !== 0) {
+      chargerGps = { lat, lng };
+    }
+  }
+
+  if (!chargerGps) {
+    console.log(`[AUTO-PUSH] Geen charger GPS beschikbaar voor ${sn}, skip push`);
+    return;
+  }
+
+  // Controleer of maaier IP bekend is
+  const ipRow = db.prepare(
+    `SELECT e.mower_ip, d.ip_address as detected_ip
+     FROM equipment e
+     LEFT JOIN device_registry d ON d.sn = e.mower_sn AND d.ip_address IS NOT NULL
+     WHERE e.mower_sn = ?
+     ORDER BY d.last_seen DESC LIMIT 1`
+  ).get(sn) as { mower_ip: string | null; detected_ip: string | null } | undefined;
+
+  const isPrivateIp = (addr: string) =>
+    /^10\./.test(addr) || /^172\.(1[6-9]|2\d|3[01])\./.test(addr) || /^192\.168\./.test(addr);
+  const ip = ipRow?.mower_ip
+    ?? (ipRow?.detected_ip && isPrivateIp(ipRow.detected_ip) ? ipRow.detected_ip : null);
+
+  if (!ip) {
+    console.log(`[AUTO-PUSH] Maaier IP onbekend voor ${sn}, skip push`);
+    return;
+  }
+
+  // Fire-and-forget: roep push-to-mower endpoint aan via interne fetch
+  const port = process.env.PORT ?? '3000';
+  const url = `http://127.0.0.1:${port}/api/dashboard/maps/${encodeURIComponent(sn)}/push-to-mower`;
+  console.log(`[AUTO-PUSH] Trigger push naar maaier ${sn} (${ip})...`);
+  fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ chargingStation: chargerGps }),
+  }).then(r => {
+    if (r.ok) console.log(`[AUTO-PUSH] Kaarten gepusht naar ${sn}`);
+    else r.text().then(t => console.warn(`[AUTO-PUSH] Push mislukt voor ${sn}: ${t}`));
+  }).catch(err => console.warn(`[AUTO-PUSH] Push fout voor ${sn}:`, err));
+}
 
 // POST /api/dashboard/maps/:sn/push-to-mower — upload kaarten via SSH/SFTP naar de maaier
 dashboardRouter.post('/maps/:sn/push-to-mower', async (req: Request, res: Response) => {
@@ -563,7 +680,35 @@ dashboardRouter.post('/maps/:sn/push-to-mower', async (req: Request, res: Respon
     return;
   }
   if (!zipPath) {
-    res.status(404).json({ error: 'Geen kaarten gevonden voor deze maaier' });
+    // Geen kaarten meer — verwijder oude bestanden op de maaier via SSH
+    try {
+      const { Client } = await import('ssh2');
+      const cleanOp = new Promise<void>((resolve, reject) => {
+        const conn = new Client();
+        conn.on('ready', () => {
+          const cmd = 'rm -rf /userdata/lfi/maps/home0/csv_file /userdata/lfi/maps/home0/x3_csv_file';
+          conn.exec(cmd, (err, stream) => {
+            if (err) { conn.end(); reject(err); return; }
+            stream.on('close', () => { conn.end(); resolve(); });
+            stream.on('data', () => {});
+            stream.stderr.on('data', () => {});
+          });
+        });
+        conn.on('error', reject);
+        conn.connect({ host: ip, port: 22, username: 'root', password: 'novabot', readyTimeout: 8000 });
+      });
+      await Promise.race([cleanOp, new Promise<void>((_, rej) => setTimeout(() => rej(new Error('timeout')), 15000))]);
+      console.log(`[SSH] Kaarten verwijderd op maaier ${sn} (geen kaarten meer in DB)`);
+    } catch (err) {
+      console.warn(`[SSH] Kon kaarten niet verwijderen op maaier:`, err);
+    }
+    // Verwijder ook _latest.zip
+    try {
+      const mapsStorage = path.resolve(process.env.STORAGE_PATH ?? './storage', 'maps');
+      const latestZip = path.join(mapsStorage, `${sn}_latest.zip`);
+      if (existsSync(latestZip)) unlinkSync(latestZip);
+    } catch { /* ignore */ }
+    res.json({ ok: true, cleared: true });
     return;
   }
 
@@ -605,12 +750,16 @@ dashboardRouter.post('/maps/:sn/push-to-mower', async (req: Request, res: Respon
             // 2. Verwijder oude kaarten en pak ZIP uit naar BEIDE directories
             // csv_file = app-formaat (voor upload/download)
             // x3_csv_file = intern formaat (novabot_mapping leest hieruit voor coverage tasks)
+            // 2b. Genereer pos.json (UTM referentie) zodat localization GPS→lokaal kan mappen
+            const posJson = generatePosJson(chargingStation!);
+            const posJsonEscaped = JSON.stringify(posJson).replace(/'/g, "'\\''");
             const cmd = [
               'rm -rf /userdata/lfi/maps/home0/csv_file',
               'rm -rf /userdata/lfi/maps/home0/x3_csv_file',
               `unzip -o -q ${remote} -d /userdata/lfi/maps/home0`,
               'cp -r /userdata/lfi/maps/home0/csv_file /userdata/lfi/maps/home0/x3_csv_file',
               `rm ${remote}`,
+              `echo '${posJsonEscaped}' > /userdata/pos.json`,
             ].join(' && ');
 
             conn.exec(cmd, (execErr, stream) => {
@@ -1335,6 +1484,7 @@ dashboardRouter.get('/weather/:lat/:lng', async (req: Request, res: Response) =>
 // ── Rain Sessions (actieve regenpauze sessies) ──────────────────
 
 import { getActiveRainSessions } from '../services/rainMonitor.js';
+import { getWeatherForecast } from '../services/weatherService.js';
 
 // GET /api/dashboard/rain-sessions/:sn — actieve rain sessions voor een maaier
 dashboardRouter.get('/rain-sessions/:sn', (req: Request, res: Response) => {
@@ -1346,6 +1496,43 @@ dashboardRouter.get('/rain-sessions/:sn', (req: Request, res: Response) => {
 dashboardRouter.get('/rain-sessions', (_req: Request, res: Response) => {
   const sessions = getActiveRainSessions();
   res.json({ sessions });
+});
+
+// GET /api/dashboard/rain-forecast/:sn — regen voorspelling voor een maaier
+dashboardRouter.get('/rain-forecast/:sn', async (req: Request, res: Response) => {
+  const { sn } = req.params;
+  // Haal charger GPS op
+  const cal = db.prepare('SELECT charger_lat, charger_lng FROM map_calibration WHERE mower_sn = ?').get(sn) as { charger_lat: number | null; charger_lng: number | null } | undefined;
+  if (!cal?.charger_lat || !cal?.charger_lng) {
+    res.json({ available: false });
+    return;
+  }
+  try {
+    const forecast = await getWeatherForecast(cal.charger_lat, cal.charger_lng);
+    const now = new Date();
+    // Zoek het eerste droge uur (neerslag < 0.1mm EN kans < 30%)
+    let clearAt: string | null = null;
+    for (const h of forecast.hourly) {
+      const t = new Date(h.time);
+      if (t <= now) continue;
+      if (h.precipitation < 0.1 && h.precipitationProbability < 30) {
+        clearAt = h.time;
+        break;
+      }
+    }
+    // Komende uren met regen
+    const upcoming = forecast.hourly
+      .filter(h => new Date(h.time) > now)
+      .slice(0, 6)
+      .map(h => ({
+        time: h.time,
+        mm: h.precipitation,
+        prob: h.precipitationProbability,
+      }));
+    res.json({ available: true, clearAt, upcoming });
+  } catch {
+    res.json({ available: false });
+  }
 });
 
 // ── Extended Mower Commands (bestaande firmware + extended node) ─────────
@@ -2102,6 +2289,30 @@ dashboardRouter.post('/pin/:sn/verify', (req: Request, res: Response) => {
   // extended_commands.py stuurt na succesvolle verify automatisch type=3 clear error
   publishExtendedCommand(sn, { verify_pin: { code } });
   console.log(`[PIN] Verify PIN voor ${sn}: ${code} (via mqtt_node + serial)`);
+
+  // Activeer cooldown: gedurende 60s worden inkomende error_status updates
+  // die PIN-gerelateerd zijn genegeerd (voorkomt dat LoRa/report de error terugzet)
+  markPinVerified(sn);
+
+  // Optimistisch error fields clearen in sensor cache — de PIN wordt
+  // via serial geverifieerd (extended_commands.py), geen MQTT response verwacht.
+  // Zonder dit blijft de dashboard PIN overlay staan totdat de charger
+  // een nieuwe up_status_info stuurt (kan minuten duren via LoRa).
+  const snCache = deviceCache.get(sn);
+  if (snCache) {
+    const errorFields = ['error_status', 'error_msg', 'error_code'];
+    const cleared = new Map<string, string>();
+    for (const f of errorFields) {
+      if (snCache.has(f)) {
+        snCache.set(f, '0');
+        cleared.set(f, translateValue(f, '0'));
+      }
+    }
+    if (cleared.size > 0) {
+      forwardToDashboard(sn, cleared);
+      console.log(`[PIN] Cleared error fields in cache for ${sn}`);
+    }
+  }
 
   res.json({ ok: true, action: 'verify', cfg_value: 2 });
 });

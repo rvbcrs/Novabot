@@ -233,6 +233,7 @@ export function clearGpsTrail(sn: string): void {
  */
 export function clearDeviceData(sn: string): void {
   deviceCache.delete(sn);
+  pinVerifiedSns.delete(sn);
 }
 
 // ── Signal history sampling ──────────────────────────────────────
@@ -290,6 +291,24 @@ export function cleanupSignalHistory(): void {
 
 // Cache van laatst bekende waarden per SN per veld (ruwe waarde)
 export const deviceCache = new Map<string, Map<string, string>>();
+
+// ── PIN verify suppressie ────────────────────────────────────────
+// Na PIN verify blijft mqtt_node error_status 151 rapporteren omdat alleen
+// de STM32 MCU de error cleart — de Linux-kant weet daar niets van.
+// We onderdrukken PIN-gerelateerde errors totdat:
+// - error_status daadwerkelijk 0 wordt (maaier cleart zelf), of
+// - een ANDERE error binnenkomt (echt nieuw probleem), of
+// - het apparaat offline gaat (clearDeviceData wist alles)
+const pinVerifiedSns = new Set<string>();
+const PIN_ERROR_CODES = new Set(['151']);
+
+export function markPinVerified(sn: string): void {
+  pinVerifiedSns.add(sn);
+}
+
+export function clearPinVerified(sn: string): void {
+  pinVerifiedSns.delete(sn);
+}
 
 /**
  * Verwerk een inkomend MQTT bericht en update de cache.
@@ -353,12 +372,28 @@ export function updateDeviceData(sn: string, payload: Buffer): Map<string, strin
   const snValues = deviceCache.get(sn)!;
 
   const changes = new Map<string, string>();
+  const pinSuppressed = pinVerifiedSns.has(sn);
 
   for (const [field, value] of Object.entries(data as Record<string, unknown>)) {
     if (value === undefined || value === null) continue;
     if (typeof value === 'object') continue; // skip arrays/objects (bijv. timer_task)
 
     const strValue = String(value);
+
+    // PIN suppressie: na verify blijft mqtt_node error 151 rapporteren.
+    // Onderdruk zolang het dezelfde PIN-error is. Laat door als:
+    // - waarde is '0' (error daadwerkelijk gecleared)
+    // - het een andere error is (nieuw probleem)
+    if (pinSuppressed && field === 'error_status') {
+      if (PIN_ERROR_CODES.has(strValue)) continue;           // zelfde PIN error → skip
+      if (strValue === '0') pinVerifiedSns.delete(sn);       // error gecleared → stop suppressie
+    }
+    if (pinSuppressed && field === 'error_msg') {
+      if (String(value).toLowerCase().includes('input pin')) continue;  // PIN-gerelateerde msg → skip
+    }
+    if (pinSuppressed && field === 'error_code') {
+      if (PIN_ERROR_CODES.has(strValue)) continue;           // zelfde PIN error code → skip
+    }
 
     if (snValues.get(field) === strValue) continue; // ongewijzigd
 

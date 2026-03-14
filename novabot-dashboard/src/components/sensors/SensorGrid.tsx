@@ -2,7 +2,7 @@ import {
   Cog, Cpu, AlertTriangle, MapPin,
   Activity, Radio, Gauge, Scissors,
   Clock, Code, Zap, Navigation,
-  Wifi, Satellite, BatteryMedium, Signal,
+  Wifi, Satellite, BatteryMedium,
 } from 'lucide-react';
 
 import type { LucideIcon } from 'lucide-react';
@@ -35,7 +35,6 @@ const MOWER_GROUPS: SensorGroup[] = [
       { key: 'wifi_rssi', label: 'sensors.wifi', unit: 'dBm', icon: Wifi, iconColor: 'text-sky-400' },
       { key: 'rtk_sat', label: 'sensors.rtkSat', icon: Satellite, iconColor: 'text-sky-400' },
       { key: 'gps_sat_num', label: 'sensors.gpsSat', icon: Satellite, iconColor: 'text-sky-400' },
-      { key: 'gps_state', label: 'sensors.gpsState', icon: Signal, iconColor: 'text-sky-400' },
     ],
   },
   {

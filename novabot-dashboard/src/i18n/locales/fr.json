@@ -85,6 +85,7 @@
     "resume": "Reprendre",
     "stop": "Arr\u00eater",
     "goToCharge": "Retour au chargeur",
+    "more": "Plus",
     "emergencyStop": "ARR\u00caT D'URGENCE",
     "emergencyStopSent": "Arr\u00eat d'urgence envoy\u00e9",
     "emergencyStopFailed": "\u00c9chec arr\u00eat d'urgence",
@@ -249,6 +250,11 @@
     "serverManaged": "G\u00e9r\u00e9 par le serveur",
     "conflict": "Chevauche : {{names}}",
     "conflictWarning": "Ce planning chevauche des plannings existants"
+  },
+  "rain": {
+    "since": "Depuis {{time}}",
+    "clearsInMin": "Sec dans ~{{min}} min",
+    "clearsAt": "Sec vers ~{{time}}"
   },
   "sensors": {
     "connectivity": "Connectivit\u00e9",

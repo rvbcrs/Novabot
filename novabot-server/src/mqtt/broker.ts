@@ -740,7 +740,7 @@ export async function startMqttBroker(): Promise<void> {
           emitPinEvent(forwardSn, pinData);
 
           // PIN verify response — v3.6.4 firmware patch cleart de error_byte
-          // aan STM32 kant, geen server-side suppressie meer nodig
+          // aan STM32 kant. Cache clearing gebeurt in dashboard.ts verify endpoint.
         }
       } catch { /* geen JSON of geen map-bericht */ }
 

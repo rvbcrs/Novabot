@@ -30,18 +30,6 @@ export async function deleteDevice(sn: string): Promise<void> {
   await fetch(`${BASE}/devices/${encodeURIComponent(sn)}`, { method: 'DELETE' });
 }
 
-export async function setMowerIp(sn: string, ip: string): Promise<void> {
-  const res = await fetch(`${BASE}/equipment/${encodeURIComponent(sn)}/mower-ip`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ip }),
-  });
-  if (!res.ok) {
-    const data = await res.json().catch(() => ({}));
-    throw new Error(data.error ?? `HTTP ${res.status}`);
-  }
-}
-
 export async function fetchSensors(): Promise<SensorDef[]> {
   const data = await (await get(`${BASE}/sensors`)).json();
   return data.sensors ?? [];
@@ -155,18 +143,6 @@ export async function exportMaps(sn: string, chargingStation: { lat: number; lng
   return data.downloadUrl;
 }
 
-export async function pushMapsToMower(sn: string, chargingStation?: { lat: number; lng: number }, chargingOrientation?: number): Promise<void> {
-  const res = await fetch(`${BASE}/maps/${encodeURIComponent(sn)}/push-to-mower`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ chargingStation, chargingOrientation: chargingOrientation ?? 0 }),
-  });
-  if (!res.ok) {
-    const data = await res.json().catch(() => ({}));
-    throw new Error(data.error ?? `HTTP ${res.status}`);
-  }
-}
-
 // ── Work Records (Mowing History) ────────────────────────────────
 
 export async function fetchWorkRecords(sn: string, limit = 50, offset = 0): Promise<{ records: WorkRecord[]; total: number }> {
@@ -214,19 +190,6 @@ export async function sendSchedule(sn: string, scheduleId: string): Promise<void
   await post(`${BASE}/schedules/${encodeURIComponent(sn)}/${encodeURIComponent(scheduleId)}/send`);
 }
 
-// ── Weather ──────────────────────────────────────────────────────
-
-export interface WeatherHour {
-  time: string;
-  precipitation: number;
-  precipitation_probability: number;
-}
-
-export async function fetchWeather(lat: number, lng: number): Promise<{ hourly: { time: string[]; precipitation: number[]; precipitation_probability: number[] } }> {
-  const data = await (await get(`${BASE}/weather/${lat.toFixed(4)}/${lng.toFixed(4)}`)).json();
-  return data;
-}
-
 // ── Rain Sessions ───────────────────────────────────────────────
 
 export interface RainSession {
@@ -245,6 +208,17 @@ export interface RainSession {
 export async function fetchRainSessions(sn: string): Promise<RainSession[]> {
   const data = await (await get(`${BASE}/rain-sessions/${encodeURIComponent(sn)}`)).json();
   return data.sessions ?? [];
+}
+
+export interface RainForecast {
+  available: boolean;
+  clearAt: string | null;
+  upcoming: Array<{ time: string; mm: number; prob: number }>;
+}
+
+export async function fetchRainForecast(sn: string): Promise<RainForecast> {
+  const data = await (await get(`${BASE}/rain-forecast/${encodeURIComponent(sn)}`)).json();
+  return data;
 }
 
 // ── Extended Mower Commands ────────────────────────────────────
@@ -314,10 +288,6 @@ export async function rebootMower(sn: string): Promise<CommandResult> {
   return sendExtendedCommand(sn, { set_robot_reboot: {} });
 }
 
-export async function getSystemInfo(sn: string): Promise<CommandResult> {
-  return sendExtendedCommand(sn, { get_system_info: {} });
-}
-
 export async function setPerceptionMode(sn: string, mode: number): Promise<CommandResult> {
   return sendExtendedCommand(sn, { set_perception_mode: { mode } });
 }
@@ -351,15 +321,6 @@ export interface FirmwareFile {
 export async function fetchOtaVersions(): Promise<OtaVersion[]> {
   const data = await (await get(`${BASE}/ota/versions`)).json();
   return data.versions ?? [];
-}
-
-export async function addOtaVersion(params: {
-  version: string;
-  device_type: string;
-  download_url: string;
-  release_notes?: string;
-}): Promise<{ id: number }> {
-  return (await post(`${BASE}/ota/versions`, params)).json();
 }
 
 export async function updateOtaVersion(id: number, params: {

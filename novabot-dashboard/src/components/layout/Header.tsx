@@ -24,7 +24,7 @@ export function Header({ connected }: Props) {
         <img src="/OpenNova.png" alt="OpenNova" className="h-9 w-auto" />
         <span className="hidden md:inline text-xl text-gray-300 tracking-widest uppercase" style={{ fontFamily: "'Posterama 1919', sans-serif", letterSpacing: '0.2em' }}>{t('header.dashboard')}</span>
       </div>
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-2 sm:gap-4">
         {/* Add device */}
         <button
           onClick={() => setShowBle(true)}
@@ -39,7 +39,7 @@ export function Header({ connected }: Props) {
             <button
               key={lng}
               onClick={() => changeLang(lng)}
-              className={`px-2 py-0.5 text-xs rounded transition-colors ${
+              className={`px-1.5 sm:px-2 py-0.5 text-[10px] sm:text-xs rounded transition-colors ${
                 i18n.language === lng
                   ? 'bg-emerald-600 text-white font-medium'
                   : 'text-gray-500 hover:text-gray-300 hover:bg-gray-800'

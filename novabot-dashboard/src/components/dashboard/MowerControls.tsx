@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   Play, Pause, Square, PlugZap, ArrowUp, X, ChevronDown, MapPin,
   Map as MapIcon, Sparkles, RotateCw, Navigation, Settings2,
-  Power, Camera, Gauge, Battery, Eye,
+  Power, Camera, Gauge, Battery, Eye, MoreHorizontal,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { MapData } from '../../types';
@@ -62,6 +62,7 @@ export function MowerControls({
 
   // Extended controls state
   const [settingsExpanded, setSettingsExpanded] = useState(false);
+  const [moreExpanded, setMoreExpanded] = useState(false);
   const [patrolActive, setPatrolActive] = useState(false);
   const [chargeThresholdVal, setChargeThresholdVal] = useState(20);
   const [maxSpeedVal, setMaxSpeedVal] = useState(0.5);
@@ -69,7 +70,7 @@ export function MowerControls({
 
   const isMappingActive = sensors?.start_edit_or_assistant_map_flag === '1';
   const gpsEnabled = sensors?.gps_state === 'ENABLE';
-  const locInitialized = sensors?.localization_state === 'INITIALIZED';
+  const locInitialized = sensors?.localization_state === 'INITIALIZED' || sensors?.localization_state === 'Initialized';
   const mappingReady = gpsEnabled && locInitialized;
 
   const compassLabels = t('controls.compass', { returnObjects: true }) as string[];
@@ -231,7 +232,9 @@ export function MowerControls({
     onPathDirectionChange, onPatternPlacementChange, onStarted, t, toast]);
 
   const disabled = busy || !online;
-  const btnBase = 'inline-flex items-center justify-center p-1.5 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed';
+  const btnBase = 'inline-flex items-center justify-center p-1 sm:p-1.5 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed';
+  // Hidden on mobile, shown on desktop — no inline-flex from btnBase to avoid Tailwind display conflict
+  const btnHidden = 'hidden md:inline-flex items-center justify-center p-1 sm:p-1.5 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed';
 
   const [previewing, setPreviewing] = useState(false);
 
@@ -275,10 +278,11 @@ export function MowerControls({
             setExpanded(next);
             setSettingsExpanded(false);
             setMappingExpanded(false);
+            setMoreExpanded(false);
             onPathDirectionChange?.(next ? pathDirection : null);
           }}
           disabled={disabled}
-          className={`inline-flex items-center gap-1 text-xs h-7 px-2.5 rounded transition-colors ${
+          className={`inline-flex items-center gap-1 text-xs h-7 px-1.5 sm:px-2.5 rounded transition-colors ${
             expanded
               ? 'bg-emerald-600 text-white'
               : 'bg-gray-700/60 text-gray-400 hover:text-white hover:bg-emerald-700'
@@ -317,10 +321,11 @@ export function MowerControls({
           <Square className="w-3.5 h-3.5" />
         </button>
 
+        {/* Secondary buttons — hidden on mobile, inline on desktop */}
         <button
           onClick={() => send({ go_to_charge: {} }, t('controls.goToCharge'))}
           disabled={disabled}
-          className={`${btnBase} bg-gray-700/60 text-yellow-300 hover:bg-yellow-700/40`}
+          className={`${btnHidden} bg-gray-700/60 text-yellow-300 hover:bg-yellow-700/40`}
           title={t('controls.goToCharge')}
         >
           <PlugZap className="w-3.5 h-3.5" />
@@ -346,7 +351,7 @@ export function MowerControls({
             setBusy(false);
           }}
           disabled={disabled}
-          className={`${btnBase} ${
+          className={`${btnHidden} ${
             patrolActive
               ? 'bg-cyan-600 text-white'
               : 'bg-gray-700/60 text-cyan-400 hover:bg-cyan-700/40'
@@ -357,9 +362,9 @@ export function MowerControls({
         </button>
 
         <button
-          onClick={() => { setMappingExpanded(!mappingExpanded); setExpanded(false); setSettingsExpanded(false); }}
+          onClick={() => { setMappingExpanded(!mappingExpanded); setExpanded(false); setSettingsExpanded(false); setMoreExpanded(false); }}
           disabled={disabled}
-          className={`${btnBase} ${
+          className={`${btnHidden} ${
             mappingExpanded || isMappingActive
               ? 'bg-purple-600 text-white'
               : 'bg-gray-700/60 text-purple-400 hover:bg-purple-700/40'
@@ -370,9 +375,9 @@ export function MowerControls({
         </button>
 
         <button
-          onClick={() => { setSettingsExpanded(!settingsExpanded); setExpanded(false); setMappingExpanded(false); }}
+          onClick={() => { setSettingsExpanded(!settingsExpanded); setExpanded(false); setMappingExpanded(false); setMoreExpanded(false); }}
           disabled={disabled}
-          className={`${btnBase} ${
+          className={`${btnHidden} ${
             settingsExpanded
               ? 'bg-gray-600 text-white'
               : 'bg-gray-700/60 text-gray-400 hover:text-white'
@@ -382,11 +387,86 @@ export function MowerControls({
           <Settings2 className="w-3.5 h-3.5" />
         </button>
 
+        {/* More button — mobile only */}
+        <div className="relative md:hidden">
+          <button
+            onClick={() => { setMoreExpanded(!moreExpanded); setExpanded(false); setMappingExpanded(false); setSettingsExpanded(false); }}
+            disabled={disabled}
+            className={`${btnBase} ${moreExpanded ? 'bg-gray-600 text-white' : 'bg-gray-700/60 text-gray-400 hover:text-white'}`}
+            title={t('controls.more')}
+          >
+            <MoreHorizontal className="w-3.5 h-3.5" />
+          </button>
+          {moreExpanded && (
+            <>
+              <div className="fixed inset-0 z-[9998]" onClick={() => setMoreExpanded(false)} />
+              <div className="absolute top-full right-0 mt-1 w-48 z-[10000] bg-gray-800 rounded-lg border border-gray-700 shadow-xl py-1">
+                <button
+                  onClick={() => { setMoreExpanded(false); send({ go_to_charge: {} }, t('controls.goToCharge')); }}
+                  disabled={disabled}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-yellow-300 hover:bg-gray-700/50 transition-colors disabled:opacity-30"
+                >
+                  <PlugZap className="w-3.5 h-3.5" />
+                  {t('controls.goToCharge')}
+                </button>
+                <button
+                  onClick={async () => {
+                    setMoreExpanded(false);
+                    setBusy(true);
+                    try {
+                      if (patrolActive) {
+                        await stopPatrol(sn);
+                        setPatrolActive(false);
+                        toast(`✓ ${t('controls.stopPatrol')}`, 'success');
+                      } else {
+                        await startPatrol(sn);
+                        setPatrolActive(true);
+                        toast(`✓ ${t('controls.patrol')}`, 'success');
+                      }
+                    } catch (err) {
+                      const detail = err instanceof Error ? `: ${err.message}` : '';
+                      toast(`✗ Patrol${detail}`, 'error');
+                    }
+                    setBusy(false);
+                  }}
+                  disabled={disabled}
+                  className={`w-full flex items-center gap-2.5 px-3 py-2 text-xs transition-colors disabled:opacity-30 ${
+                    patrolActive ? 'text-cyan-300 bg-cyan-900/20' : 'text-gray-300 hover:bg-gray-700/50'
+                  }`}
+                >
+                  <Navigation className="w-3.5 h-3.5" />
+                  {patrolActive ? t('controls.stopPatrol') : t('controls.patrol')}
+                </button>
+                <button
+                  onClick={() => { setMoreExpanded(false); setMappingExpanded(!mappingExpanded); setExpanded(false); setSettingsExpanded(false); }}
+                  disabled={disabled}
+                  className={`w-full flex items-center gap-2.5 px-3 py-2 text-xs transition-colors disabled:opacity-30 ${
+                    mappingExpanded || isMappingActive ? 'text-purple-300 bg-purple-900/20' : 'text-gray-300 hover:bg-gray-700/50'
+                  }`}
+                >
+                  <MapIcon className="w-3.5 h-3.5" />
+                  {t('controls.mapping')}
+                </button>
+                <button
+                  onClick={() => { setMoreExpanded(false); setSettingsExpanded(!settingsExpanded); setExpanded(false); setMappingExpanded(false); }}
+                  disabled={disabled}
+                  className={`w-full flex items-center gap-2.5 px-3 py-2 text-xs transition-colors disabled:opacity-30 ${
+                    settingsExpanded ? 'text-white bg-gray-700/30' : 'text-gray-300 hover:bg-gray-700/50'
+                  }`}
+                >
+                  <Settings2 className="w-3.5 h-3.5" />
+                  {t('controls.extendedSettings')}
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+
       </div>
 
       {/* Expanded start settings dropdown */}
       {expanded && (
-        <div className="absolute top-full right-0 mt-1 w-72 max-w-[calc(100vw-1rem)] z-[10000] bg-gray-800 rounded-lg border border-gray-700 shadow-xl overflow-hidden">
+        <div className="absolute top-full right-0 mt-1 w-[calc(100vw-1rem)] sm:w-72 z-[10000] bg-gray-800 rounded-lg border border-gray-700 shadow-xl overflow-hidden">
           <div className="p-3 space-y-3">
 
             {/* Mode toggle: Map area / Pattern */}
@@ -551,7 +631,7 @@ export function MowerControls({
                   {pathDirection}&deg;
                 </span>
               </div>
-              <div className="grid grid-cols-4 gap-1 mt-1 mb-1">
+              <div className="grid grid-cols-4 sm:grid-cols-4 gap-0.5 sm:gap-1 mt-1 mb-1">
                 {DIR_DEGREES.map((deg, i) => (
                   <button
                     key={deg}
@@ -612,7 +692,7 @@ export function MowerControls({
 
       {/* Mapping dropdown */}
       {mappingExpanded && !isMappingActive && (
-        <div className="absolute top-full right-0 mt-1 w-64 max-w-[calc(100vw-1rem)] z-[10000] bg-gray-800 rounded-lg border border-gray-700 shadow-xl p-3 space-y-3">
+        <div className="absolute top-full right-0 mt-1 w-[calc(100vw-1rem)] sm:w-64 z-[10000] bg-gray-800 rounded-lg border border-gray-700 shadow-xl p-3 space-y-3">
           <div className="space-y-1.5">
             <div className="flex items-center gap-2 text-xs">
               <span className={`w-2 h-2 rounded-full ${gpsEnabled ? 'bg-green-500' : 'bg-red-500'}`} />
@@ -642,7 +722,7 @@ export function MowerControls({
 
       {/* Extended settings dropdown */}
       {settingsExpanded && (
-        <div className="absolute top-full right-0 mt-1 w-64 max-w-[calc(100vw-1rem)] z-[10000] bg-gray-800 rounded-lg border border-gray-700 shadow-xl p-3 space-y-3">
+        <div className="absolute top-full right-0 mt-1 w-[calc(100vw-1rem)] sm:w-64 z-[10000] bg-gray-800 rounded-lg border border-gray-700 shadow-xl p-3 space-y-3">
           {/* Max speed */}
           <div>
             <div className="flex items-center justify-between">
