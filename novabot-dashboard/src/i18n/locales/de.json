@@ -407,5 +407,37 @@
     "scanFailed": "BLE-Scan fehlgeschlagen",
     "tryAgain": "Erneut versuchen",
     "close": "Schließen"
+  },
+  "time": {
+    "today": "Heute",
+    "tomorrow": "Morgen"
+  },
+  "mobile": {
+    "activity": {
+      "idle": "Inaktiv",
+      "mowing": "Mäht",
+      "charging": "Lädt",
+      "returning": "Kehrt zurück",
+      "paused": "Pausiert",
+      "mapping": "Kartierung",
+      "error": "Fehler",
+      "offline": "Offline"
+    },
+    "tabs": {
+      "home": "Start",
+      "map": "Karte",
+      "camera": "Kamera",
+      "schedules": "Zeitpläne",
+      "history": "Verlauf"
+    },
+    "start": "Start",
+    "pause": "Pause",
+    "resume": "Fortsetzen",
+    "stop": "Stopp",
+    "goHome": "Zur Basis",
+    "progress": "Fortschritt",
+    "nextSchedule": "Nächster",
+    "noSchedules": "Keine Zeitpläne",
+    "stopConfirm": "Mähen stoppen?"
   }
 }

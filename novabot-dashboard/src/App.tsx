@@ -5,6 +5,7 @@ import { OnboardingWizard } from './components/setup/OnboardingWizard';
 import { ToastProvider } from './components/common/Toast';
 import { useDevices } from './hooks/useDevices';
 import { checkSetupStatus, checkCertTrusted } from './api/client';
+import { MobilePage } from './mobile/MobilePage';
 
 type AppState = 'loading' | 'onboarding' | 'onboarding-cert-only' | 'ready';
 
@@ -55,12 +56,18 @@ export default function App() {
     );
   }
 
+  const isMobile = window.location.pathname.startsWith('/mobile');
+
   return (
     <ToastProvider>
-      <div className="min-h-screen bg-gray-950 text-white overflow-x-hidden">
-        <Header connected={connected} />
-        <DashboardPage devices={devices} loading={loading} logs={logs} bleLogs={bleLogs} otaProgress={otaProgress} liveOutlines={liveOutlines} />
-      </div>
+      {isMobile ? (
+        <MobilePage devices={devices} loading={loading} connected={connected} liveOutlines={liveOutlines} />
+      ) : (
+        <div className="min-h-screen bg-gray-950 text-white overflow-x-hidden">
+          <Header connected={connected} />
+          <DashboardPage devices={devices} loading={loading} logs={logs} bleLogs={bleLogs} otaProgress={otaProgress} liveOutlines={liveOutlines} />
+        </div>
+      )}
     </ToastProvider>
   );
 }

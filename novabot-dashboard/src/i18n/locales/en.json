@@ -407,5 +407,37 @@
     "scanFailed": "BLE scan failed",
     "tryAgain": "Try again",
     "close": "Close"
+  },
+  "time": {
+    "today": "Today",
+    "tomorrow": "Tomorrow"
+  },
+  "mobile": {
+    "activity": {
+      "idle": "Idle",
+      "mowing": "Mowing",
+      "charging": "Charging",
+      "returning": "Returning",
+      "paused": "Paused",
+      "mapping": "Mapping",
+      "error": "Error",
+      "offline": "Offline"
+    },
+    "tabs": {
+      "home": "Home",
+      "map": "Map",
+      "camera": "Camera",
+      "schedules": "Schedules",
+      "history": "History"
+    },
+    "start": "Start",
+    "pause": "Pause",
+    "resume": "Resume",
+    "stop": "Stop",
+    "goHome": "Go Home",
+    "progress": "Progress",
+    "nextSchedule": "Next",
+    "noSchedules": "No schedules",
+    "stopConfirm": "Stop mowing?"
   }
 }

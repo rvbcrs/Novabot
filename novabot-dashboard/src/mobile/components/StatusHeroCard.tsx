@@ -1,0 +1,161 @@
+import { Wifi, Satellite, Zap } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
+import type { MowerDerived, MowerActivity } from '../MobilePage';
+
+interface Props {
+  mower: MowerDerived;
+}
+
+// ── Ring colors per activity ────────────────────────────────────────
+
+const RING_COLOR: Record<MowerActivity, string> = {
+  idle:      '#6b7280', // gray-500
+  mowing:    '#10b981', // emerald-500
+  charging:  '#3b82f6', // blue-500
+  returning: '#f59e0b', // amber-500
+  paused:    '#eab308', // yellow-500
+  mapping:   '#a855f7', // purple-500
+  error:     '#ef4444', // red-500
+  offline:   '#374151', // gray-700
+};
+
+const GLOW_COLOR: Record<MowerActivity, string> = {
+  idle:      'transparent',
+  mowing:    'rgba(16, 185, 129, 0.15)',
+  charging:  'rgba(59, 130, 246, 0.15)',
+  returning: 'rgba(245, 158, 11, 0.12)',
+  paused:    'rgba(234, 179, 8, 0.10)',
+  mapping:   'rgba(168, 85, 247, 0.12)',
+  error:     'rgba(239, 68, 68, 0.15)',
+  offline:   'transparent',
+};
+
+const ACTIVITY_TEXT_COLOR: Record<MowerActivity, string> = {
+  idle:      'text-gray-400',
+  mowing:    'text-emerald-400',
+  charging:  'text-blue-400',
+  returning: 'text-amber-400',
+  paused:    'text-yellow-400',
+  mapping:   'text-purple-400',
+  error:     'text-red-400',
+  offline:   'text-gray-600',
+};
+
+function batteryRingColor(pct: number): string {
+  if (pct >= 60) return '#22c55e'; // green-500
+  if (pct >= 30) return '#eab308'; // yellow-500
+  if (pct >= 15) return '#f97316'; // orange-500
+  return '#ef4444'; // red-500
+}
+
+// ── SVG Ring ────────────────────────────────────────────────────────
+
+function BatteryRing({ percentage, color, size = 160 }: { percentage: number; color: string; size?: number }) {
+  const strokeWidth = 8;
+  const radius = (size - strokeWidth) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const offset = circumference - (percentage / 100) * circumference;
+
+  return (
+    <svg width={size} height={size} className="transform -rotate-90">
+      {/* Background ring */}
+      <circle
+        cx={size / 2}
+        cy={size / 2}
+        r={radius}
+        fill="none"
+        stroke="#1f2937"
+        strokeWidth={strokeWidth}
+      />
+      {/* Progress ring */}
+      <circle
+        cx={size / 2}
+        cy={size / 2}
+        r={radius}
+        fill="none"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+        strokeDasharray={circumference}
+        strokeDashoffset={offset}
+        className="transition-all duration-700 ease-out"
+      />
+    </svg>
+  );
+}
+
+// ── Component ───────────────────────────────────────────────────────
+
+export function StatusHeroCard({ mower }: Props) {
+  const { t } = useTranslation();
+  const ringColor = mower.activity === 'idle' || mower.activity === 'offline'
+    ? batteryRingColor(mower.battery)
+    : RING_COLOR[mower.activity];
+
+  return (
+    <div className="flex flex-col items-center pt-2 pb-1">
+      {/* Name + online */}
+      <div className="flex items-center gap-2 mb-5">
+        <span className={`w-2 h-2 rounded-full ${mower.online ? 'bg-emerald-400' : 'bg-gray-600'}`} />
+        <h1 className="text-sm font-medium text-gray-300">
+          {mower.nickname || 'OpenNova Mower'}
+        </h1>
+      </div>
+
+      {/* Circular battery gauge */}
+      <div
+        className="relative flex items-center justify-center mb-4"
+        style={{ filter: `drop-shadow(0 0 20px ${GLOW_COLOR[mower.activity]})` }}
+      >
+        <BatteryRing
+          percentage={mower.battery}
+          color={ringColor}
+          size={160}
+        />
+        {/* Center content */}
+        <div className="absolute inset-0 flex flex-col items-center justify-center">
+          <div className="flex items-baseline gap-0.5">
+            <span className="text-4xl font-bold text-white tabular-nums">{mower.battery}</span>
+            <span className="text-lg text-gray-400 font-medium">%</span>
+          </div>
+          {mower.batteryCharging && (
+            <Zap className="w-4 h-4 text-blue-400 mt-0.5" />
+          )}
+        </div>
+      </div>
+
+      {/* Activity label */}
+      <p className={`text-base font-semibold mb-1 ${ACTIVITY_TEXT_COLOR[mower.activity]}`}>
+        {t(`mobile.activity.${mower.activity}`)}
+      </p>
+
+      {/* Mowing progress */}
+      {mower.activity === 'mowing' && mower.mowingProgress > 0 && (
+        <div className="w-48 mt-1">
+          <div className="flex items-center justify-between text-[10px] text-gray-500 mb-1">
+            <span>{t('mobile.progress')}</span>
+            <span className="tabular-nums">{mower.mowingProgress}%</span>
+          </div>
+          <div className="h-1.5 bg-gray-800 rounded-full overflow-hidden">
+            <div
+              className="h-full bg-emerald-500 rounded-full transition-all duration-500"
+              style={{ width: `${mower.mowingProgress}%` }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Signal chips */}
+      <div className="flex items-center gap-3 mt-3">
+        <div className="flex items-center gap-1 text-[11px] text-gray-500">
+          <Wifi className="w-3 h-3" />
+          <span className="tabular-nums">{mower.wifiRssi ? `${mower.wifiRssi}` : '—'}</span>
+        </div>
+        <div className="flex items-center gap-1 text-[11px] text-gray-500">
+          <Satellite className="w-3 h-3" />
+          <span className="tabular-nums">{mower.rtkSat ?? '—'}</span>
+        </div>
+      </div>
+    </div>
+  );
+}

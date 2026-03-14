@@ -407,5 +407,37 @@
     "scanFailed": "BLE scan mislukt",
     "tryAgain": "Opnieuw proberen",
     "close": "Sluiten"
+  },
+  "time": {
+    "today": "Vandaag",
+    "tomorrow": "Morgen"
+  },
+  "mobile": {
+    "activity": {
+      "idle": "Inactief",
+      "mowing": "Aan het maaien",
+      "charging": "Aan het opladen",
+      "returning": "Terug naar basis",
+      "paused": "Gepauzeerd",
+      "mapping": "Aan het karteren",
+      "error": "Fout",
+      "offline": "Offline"
+    },
+    "tabs": {
+      "home": "Thuis",
+      "map": "Kaart",
+      "camera": "Camera",
+      "schedules": "Schema's",
+      "history": "Geschiedenis"
+    },
+    "start": "Start",
+    "pause": "Pauze",
+    "resume": "Hervatten",
+    "stop": "Stop",
+    "goHome": "Naar basis",
+    "progress": "Voortgang",
+    "nextSchedule": "Volgende",
+    "noSchedules": "Geen schema's",
+    "stopConfirm": "Stoppen met maaien?"
   }
 }

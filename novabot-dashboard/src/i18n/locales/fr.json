@@ -407,5 +407,37 @@
     "scanFailed": "\u00c9chec du scan BLE",
     "tryAgain": "R\u00e9essayer",
     "close": "Fermer"
+  },
+  "time": {
+    "today": "Aujourd'hui",
+    "tomorrow": "Demain"
+  },
+  "mobile": {
+    "activity": {
+      "idle": "Inactif",
+      "mowing": "Tonte en cours",
+      "charging": "En charge",
+      "returning": "Retour à la base",
+      "paused": "En pause",
+      "mapping": "Cartographie",
+      "error": "Erreur",
+      "offline": "Hors ligne"
+    },
+    "tabs": {
+      "home": "Accueil",
+      "map": "Carte",
+      "camera": "Caméra",
+      "schedules": "Programmes",
+      "history": "Historique"
+    },
+    "start": "Démarrer",
+    "pause": "Pause",
+    "resume": "Reprendre",
+    "stop": "Arrêter",
+    "goHome": "Retour base",
+    "progress": "Progression",
+    "nextSchedule": "Prochain",
+    "noSchedules": "Aucun programme",
+    "stopConfirm": "Arrêter la tonte ?"
   }
 }
