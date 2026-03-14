@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Camera, X, Maximize2, Minimize2, RefreshCw, Loader } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
@@ -45,12 +46,14 @@ export function CameraStream({ sn, online, onClose }: Props) {
     );
   }
 
-  return (
-    <div className={`bg-gray-800 rounded-lg border border-gray-700 shadow-xl overflow-hidden ${
-      expanded ? 'fixed inset-4 z-[9999]' : ''
+  const content = (
+    <div className={`bg-gray-800 shadow-xl overflow-hidden ${
+      expanded
+        ? 'fixed inset-0 z-[99999] flex flex-col'
+        : 'rounded-lg border border-gray-700'
     }`}>
       {/* Header */}
-      <div className="flex items-center justify-between px-3 py-2 bg-gray-900/80 border-b border-gray-700">
+      <div className="flex items-center justify-between px-3 py-2 bg-gray-900 border-b border-gray-700">
         <span className="flex items-center gap-1.5 text-xs text-gray-300 font-medium">
           <Camera className="w-3.5 h-3.5 text-cyan-400" />
           {t('camera.title')}
@@ -76,9 +79,9 @@ export function CameraStream({ sn, online, onClose }: Props) {
       </div>
 
       {/* Stream */}
-      <div className={`relative bg-black ${expanded ? 'flex-1' : ''}`}>
+      <div className={`relative bg-black ${expanded ? 'flex-1 min-h-0' : ''}`}>
         {hasError ? (
-          <div className="flex flex-col items-center justify-center gap-2 h-40 text-xs text-gray-500">
+          <div className={`flex flex-col items-center justify-center gap-2 text-xs text-gray-500 ${expanded ? 'h-full' : 'h-40'}`}>
             <span>{t('camera.unavailable')}</span>
             <button
               onClick={handleRetry}
@@ -110,4 +113,11 @@ export function CameraStream({ sn, online, onClose }: Props) {
       </div>
     </div>
   );
+
+  // Expanded: render via portal zodat het boven de toolbar (z-10001) zit
+  if (expanded) {
+    return createPortal(content, document.body);
+  }
+
+  return content;
 }

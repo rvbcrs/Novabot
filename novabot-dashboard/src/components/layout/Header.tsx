@@ -3,7 +3,7 @@ import { Server, ServerOff, Plus } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { BleScanner } from '../ble/BleScanner';
 
-const LANGS = ['nl', 'en', 'fr'] as const;
+const LANGS = ['nl', 'en', 'fr', 'de'] as const;
 
 interface Props {
   connected: boolean;

@@ -20,6 +20,7 @@ import sys
 import threading
 import time
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from socketserver import ThreadingMixIn
 
 rclpy = None  # Wordt geinitialiseerd in main()
 
@@ -34,7 +35,7 @@ signal.signal(signal.SIGTERM, _sigterm_handler)
 ROS_TOPIC = '/camera/preposition/image_half/compressed'
 HTTP_PORT = 8000
 MAX_FPS = 10
-IDLE_TIMEOUT = 60  # seconden zonder viewers -> camera uit
+IDLE_TIMEOUT = 300  # seconden zonder viewers -> camera uit (5 min)
 
 
 class CameraManager:
@@ -49,6 +50,7 @@ class CameraManager:
     def __init__(self):
         self._lock = threading.Lock()
         self._active = False
+        self._activating = False
         self._node = None
         self._spin_thread = None
         self._watchdog_thread = None
@@ -63,39 +65,52 @@ class CameraManager:
         self.last_viewer_time = 0.0
 
     def activate(self):
-        """Activeer ROS subscriber + camera. Idempotent."""
+        """Activeer camera hardware (+ ROS node bij eerste keer). Idempotent.
+
+        Draait in een aparte thread zodat de HTTP server nooit blokkeert
+        op trage ROS service calls (start_camera kan 5+s duren).
+        """
         with self._lock:
-            if self._active:
+            if self._active or self._activating:
                 return
-            self._active = True
+            self._activating = True
 
-        print("[CAMERA] === Camera activeren (lazy) ===", flush=True)
+        t = threading.Thread(target=self._do_activate, daemon=True)
+        t.start()
 
-        try:
-            from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
-            from sensor_msgs.msg import CompressedImage
-        except ImportError as e:
-            print(f"[CAMERA] FATAL: ROS 2 import failed: {e}", flush=True)
-            with self._lock:
-                self._active = False
-            return
+    def _do_activate(self):
+        """Interne activatie — draait in eigen thread."""
+        # Eerste keer: maak node + subscription (wordt NOOIT vernietigd)
+        if self._node is None:
+            print("[CAMERA] === Eerste activatie: ROS node aanmaken ===", flush=True)
+            try:
+                from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+                from sensor_msgs.msg import CompressedImage
+            except ImportError as e:
+                print(f"[CAMERA] FATAL: ROS 2 import failed: {e}", flush=True)
+                with self._lock:
+                    self._activating = False
+                return
 
-        # Maak node + subscriber (rclpy is al geinitialiseerd in main())
-        self._node = rclpy.create_node('camera_stream_server')
-        qos = QoSProfile(
-            reliability=ReliabilityPolicy.RELIABLE,
-            history=HistoryPolicy.KEEP_LAST,
-            depth=1,
-        )
-        self._node.create_subscription(CompressedImage, ROS_TOPIC, self._frame_callback, qos)
-        print(f"[CAMERA] Subscribed op {ROS_TOPIC}", flush=True)
+            self._node = rclpy.create_node('camera_stream_server')
+            qos = QoSProfile(
+                reliability=ReliabilityPolicy.RELIABLE,
+                history=HistoryPolicy.KEEP_LAST,
+                depth=1,
+            )
+            self._node.create_subscription(CompressedImage, ROS_TOPIC, self._frame_callback, qos)
+            print(f"[CAMERA] Subscribed op {ROS_TOPIC}", flush=True)
 
-        # Spin thread
-        self._spin_thread = threading.Thread(target=self._spin, daemon=True)
-        self._spin_thread.start()
+            self._spin_thread = threading.Thread(target=self._spin, daemon=True)
+            self._spin_thread.start()
 
-        # Activeer camera via ROS service
+        # Activeer camera hardware
+        print("[CAMERA] Camera hardware activeren...", flush=True)
         self._call_start_camera()
+
+        with self._lock:
+            self._active = True
+            self._activating = False
 
         # Start watchdog (checkt idle timeout)
         if self._watchdog_thread is None or not self._watchdog_thread.is_alive():
@@ -105,45 +120,33 @@ class CameraManager:
         print("[CAMERA] Camera actief", flush=True)
 
     def deactivate(self):
-        """Stop ROS subscriber + camera. Idempotent.
+        """Stop camera hardware. Node + subscription blijven draaien.
 
-        Vernietigt alleen de node — rclpy blijft geinitialiseerd zodat
-        activate() later opnieuw een node kan aanmaken zonder deadlock.
+        BELANGRIJK: we vernietigen de node NIET meer. CycloneDDS op
+        Galactic kan na destroy_node + create_node geen data meer
+        ontvangen op de subscription. Door de node te laten draaien
+        (0% CPU als camera uit staat) vermijden we dit probleem.
         """
         with self._lock:
             if not self._active:
                 return
             self._active = False
 
-        print("[CAMERA] === Camera deactiveren (idle timeout) ===", flush=True)
+        print("[CAMERA] === Camera hardware stoppen (idle timeout) ===", flush=True)
 
-        # Stop camera hardware
+        # Stop camera hardware (node + subscription blijven intact)
         self._call_stop_camera()
-
-        # Destroy node (spin thread stopt automatisch)
-        try:
-            if self._node:
-                self._node.destroy_node()
-                self._node = None
-        except Exception as e:
-            print(f"[CAMERA] Deactivate fout: {e}", flush=True)
-
-        # Wacht tot spin thread stopt
-        if self._spin_thread and self._spin_thread.is_alive():
-            self._spin_thread.join(timeout=3.0)
-        self._spin_thread = None
 
         # Reset frame data
         with self.frame_lock:
             self.latest_frame = None
-            self.frame_count = 0
 
-        print("[CAMERA] Camera gestopt", flush=True)
+        print("[CAMERA] Camera hardware gestopt (node blijft actief)", flush=True)
 
     @property
     def is_active(self):
         with self._lock:
-            return self._active
+            return self._active or self._activating
 
     def get_frame(self):
         # type: () -> Optional[bytes]
@@ -180,7 +183,12 @@ class CameraManager:
             pass
 
     def _call_start_camera(self):
-        """Activeer camera hardware via ROS service."""
+        """Activeer camera hardware via ROS service.
+
+        Probeert eerst via rclpy service client. Als dat faalt (timeout
+        na node recreatie), fallback naar subprocess ros2 service call.
+        """
+        success = False
         try:
             from std_srvs.srv import SetBool
             client = self._node.create_client(SetBool, '/camera/preposition/start_camera')
@@ -192,13 +200,32 @@ class CameraManager:
                 while not future.done() and time.time() < deadline:
                     time.sleep(0.1)
                 if future.done() and future.result() is not None:
-                    print(f"[CAMERA] start_camera: success={future.result().success}", flush=True)
+                    print(f"[CAMERA] start_camera (rclpy): success={future.result().success}", flush=True)
+                    success = True
                 else:
-                    print("[CAMERA] start_camera: timeout", flush=True)
+                    print("[CAMERA] start_camera (rclpy): timeout — probeer subprocess fallback", flush=True)
             else:
-                print("[CAMERA] start_camera service niet beschikbaar", flush=True)
+                print("[CAMERA] start_camera service niet beschikbaar via rclpy", flush=True)
         except Exception as e:
-            print(f"[CAMERA] start_camera fout: {e}", flush=True)
+            print(f"[CAMERA] start_camera (rclpy) fout: {e}", flush=True)
+
+        # Subprocess fallback — werkt altijd, ook na node recreatie
+        if not success:
+            try:
+                import subprocess
+                cmd = (
+                    "source /opt/ros/galactic/setup.bash && "
+                    "source /root/novabot/install/setup.bash 2>/dev/null && "
+                    "ros2 service call /camera/preposition/start_camera std_srvs/srv/SetBool \"{data: true}\""
+                )
+                env = {**os.environ, "ROS_LOCALHOST_ONLY": "1", "RMW_IMPLEMENTATION": "rmw_cyclonedds_cpp", "ROS_DOMAIN_ID": "0"}
+                result = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True, timeout=15, env=env)
+                if "success=True" in result.stdout or "success=true" in result.stdout:
+                    print(f"[CAMERA] start_camera (subprocess): success", flush=True)
+                else:
+                    print(f"[CAMERA] start_camera (subprocess): {result.stdout.strip()} {result.stderr.strip()}", flush=True)
+            except Exception as e:
+                print(f"[CAMERA] start_camera (subprocess) fout: {e}", flush=True)
 
     def _call_stop_camera(self):
         """Deactiveer camera hardware via ROS service."""
@@ -364,7 +391,10 @@ def main():
     rclpy.init()
     print("[CAMERA] ROS 2 geinitialiseerd (eenmalig)", flush=True)
 
-    server = HTTPServer(('0.0.0.0', HTTP_PORT), StreamHandler)
+    class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
+        daemon_threads = True
+
+    server = ThreadingHTTPServer(('0.0.0.0', HTTP_PORT), StreamHandler)
     print(f'[CAMERA] HTTP server luistert op http://0.0.0.0:{HTTP_PORT}/', flush=True)
     print(f'[CAMERA] ROS subscription start pas bij eerste request', flush=True)
 

@@ -888,9 +888,15 @@ if [ -f "$CAMERA_SRC" ]; then
         cat > "$CAMERA_START_BLOCK" << 'CAMEOF'
 
   # CUSTOM: Camera MJPEG stream starten (wacht 15s op camera node)
+  # Respawn wrapper: herstart automatisch bij crash (max 5s pauze)
   if [ -f "/root/novabot/scripts/camera_stream.py" ]; then
-      (sleep 15 && python3 /root/novabot/scripts/camera_stream.py >> $LOGS_PATH/camera_stream.log 2>&1) &
-      echo "Camera stream scheduled (15s delay)" >> $LOGS_PATH/camera_stream.log
+      (sleep 15 && while true; do
+          echo "[$(date)] camera_stream.py starten..." >> $LOGS_PATH/camera_stream.log
+          python3 /root/novabot/scripts/camera_stream.py >> $LOGS_PATH/camera_stream.log 2>&1
+          echo "[$(date)] camera_stream.py gestopt (exit $?), herstart in 5s..." >> $LOGS_PATH/camera_stream.log
+          sleep 5
+      done) &
+      echo "Camera stream scheduled (15s delay, auto-respawn)" >> $LOGS_PATH/camera_stream.log
   fi
 CAMEOF
         # Injecteer na de factory_test/start_test.sh regel
