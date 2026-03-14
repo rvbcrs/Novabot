@@ -139,7 +139,12 @@
     "offline": "Mower offline",
     "unavailable": "Camera unavailable",
     "retry": "Retry",
-    "connecting": "Connecting..."
+    "connecting": "Connecting...",
+    "front": "Front",
+    "frontHd": "Front HD",
+    "tofGray": "ToF Gray",
+    "tofDepth": "ToF Depth",
+    "aruco": "ArUco"
   },
   "map": {
     "workArea": "Work area",

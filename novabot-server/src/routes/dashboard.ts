@@ -2145,7 +2145,8 @@ dashboardRouter.get('/camera/:sn/stream', (req: Request, res: Response) => {
   req.setTimeout(0);
   res.setTimeout(0);
 
-  const proxyReq = http.get(`http://${ip}:${port}/stream`, (proxyRes) => {
+  const topic = req.query.topic as string || 'front';
+  const proxyReq = http.get(`http://${ip}:${port}/stream?topic=${encodeURIComponent(topic)}`, (proxyRes) => {
     // Forward headers — NO Connection:close (MJPEG needs keep-alive)
     res.writeHead(proxyRes.statusCode ?? 200, {
       'Content-Type': proxyRes.headers['content-type'] ?? 'multipart/x-mixed-replace; boundary=frame',
@@ -2192,7 +2193,8 @@ dashboardRouter.get('/camera/:sn/snapshot', (req: Request, res: Response) => {
     }
   }
 
-  http.get(`http://${ip}:${port}/snapshot`, (proxyRes) => {
+  const topic = req.query.topic as string || 'front';
+  http.get(`http://${ip}:${port}/snapshot?topic=${encodeURIComponent(topic)}`, (proxyRes) => {
     const chunks: Buffer[] = [];
     proxyRes.on('data', (chunk: Buffer) => chunks.push(chunk));
     proxyRes.on('end', () => {

@@ -139,7 +139,12 @@
     "offline": "Maaier offline",
     "unavailable": "Camera niet beschikbaar",
     "retry": "Opnieuw",
-    "connecting": "Verbinden..."
+    "connecting": "Verbinden...",
+    "front": "Front",
+    "frontHd": "Front HD",
+    "tofGray": "ToF Grijs",
+    "tofDepth": "ToF Diepte",
+    "aruco": "ArUco"
   },
   "map": {
     "workArea": "Werkgebied",

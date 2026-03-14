@@ -139,7 +139,12 @@
     "offline": "Mäher offline",
     "unavailable": "Kamera nicht verfügbar",
     "retry": "Erneut versuchen",
-    "connecting": "Verbinde..."
+    "connecting": "Verbinde...",
+    "front": "Front",
+    "frontHd": "Front HD",
+    "tofGray": "ToF Grau",
+    "tofDepth": "ToF Tiefe",
+    "aruco": "ArUco"
   },
   "map": {
     "workArea": "Arbeitsbereich",

@@ -139,7 +139,12 @@
     "offline": "Tondeuse hors ligne",
     "unavailable": "Caméra indisponible",
     "retry": "Réessayer",
-    "connecting": "Connexion..."
+    "connecting": "Connexion...",
+    "front": "Front",
+    "frontHd": "Front HD",
+    "tofGray": "ToF Gris",
+    "tofDepth": "ToF Profondeur",
+    "aruco": "ArUco"
   },
   "map": {
     "workArea": "Zone de travail",

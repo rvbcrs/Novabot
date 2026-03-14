@@ -12,16 +12,30 @@ interface Props {
 const MOWER_IP = '192.168.0.244';
 const CAMERA_PORT = 8000;
 
+const CAMERA_TOPICS = [
+  { key: 'front', labelKey: 'camera.front' },
+  { key: 'tof_gray', labelKey: 'camera.tofGray' },
+  { key: 'tof_depth', labelKey: 'camera.tofDepth' },
+] as const;
+
 export function CameraStream({ sn, online, onClose }: Props) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   const [hasError, setHasError] = useState(false);
   const [loading, setLoading] = useState(true);
   const [retryKey, setRetryKey] = useState(0);
+  const [selectedTopic, setSelectedTopic] = useState('front');
 
-  const streamUrl = `/api/dashboard/camera/${sn}/stream?ip=${MOWER_IP}&port=${CAMERA_PORT}&_k=${retryKey}`;
+  const streamUrl = `/api/dashboard/camera/${sn}/stream?ip=${MOWER_IP}&port=${CAMERA_PORT}&topic=${selectedTopic}&_k=${retryKey}`;
 
   const handleRetry = () => {
+    setHasError(false);
+    setLoading(true);
+    setRetryKey(k => k + 1);
+  };
+
+  const handleTopicChange = (key: string) => {
+    setSelectedTopic(key);
     setHasError(false);
     setLoading(true);
     setRetryKey(k => k + 1);
@@ -78,10 +92,27 @@ export function CameraStream({ sn, online, onClose }: Props) {
         </div>
       </div>
 
+      {/* Topic selector */}
+      <div className="flex items-center gap-1 px-3 py-1.5 bg-gray-900/60 border-b border-gray-700/50 overflow-x-auto">
+        {CAMERA_TOPICS.map(({ key, labelKey }) => (
+          <button
+            key={key}
+            onClick={() => handleTopicChange(key)}
+            className={`px-2 py-0.5 text-[10px] rounded whitespace-nowrap transition-colors ${
+              selectedTopic === key
+                ? 'bg-cyan-600 text-white font-medium'
+                : 'text-gray-500 hover:text-gray-300 hover:bg-gray-700'
+            }`}
+          >
+            {t(labelKey)}
+          </button>
+        ))}
+      </div>
+
       {/* Stream */}
-      <div className={`relative bg-black ${expanded ? 'flex-1 min-h-0' : ''}`}>
+      <div className={`relative bg-black ${expanded ? 'flex-1 min-h-0' : 'h-[280px]'}`}>
         {hasError ? (
-          <div className={`flex flex-col items-center justify-center gap-2 text-xs text-gray-500 ${expanded ? 'h-full' : 'h-40'}`}>
+          <div className={`flex flex-col items-center justify-center gap-2 text-xs text-gray-500 ${expanded ? 'h-full' : 'h-full'}`}>
             <span>{t('camera.unavailable')}</span>
             <button
               onClick={handleRetry}
