@@ -8,7 +8,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { db } from '../../db/database.js';
 import { authMiddleware } from '../../middleware/auth.js';
 import { AuthRequest, ok, fail, MapRow } from '../../types/index.js';
-import { parseMapZip, GpsPoint, gpsToLocal, polygonArea } from '../../mqtt/mapConverter.js';
+import { parseMapZip, GpsPoint } from '../../mqtt/mapConverter.js';
 import { deviceCache } from '../../mqtt/sensorData.js';
 
 export const mapRouter = Router();
@@ -77,20 +77,6 @@ mapRouter.get('/queryEquipmentMap', authMiddleware, (req: AuthRequest, res: Resp
   const baseUrl = process.env.OTA_BASE_URL
     ?? `http://${process.env.TARGET_IP ?? 'localhost'}`;
 
-  // Helper: bereken oppervlakte in m² uit GPS punten JSON string
-  function calcAreaM2(mapAreaJson: string | null): string {
-    if (!mapAreaJson) return '0';
-    try {
-      const points: GpsPoint[] = JSON.parse(mapAreaJson);
-      if (!points || points.length < 3) return '0';
-      // Gebruik eerste punt als origin voor lokale conversie
-      const origin = points[0];
-      const localPoints = points.map(p => gpsToLocal(p, origin));
-      const area = polygonArea(localPoints);
-      return String(Math.round(area * 100) / 100);
-    } catch { return '0'; }
-  }
-
   // Helper: bouw download URL voor een map CSV bestand
   function mapFileUrl(fileName: string): string {
     return `${baseUrl}/api/nova-file-server/map/downloadMapFile?sn=${sn}&fileName=${fileName}`;
@@ -114,7 +100,7 @@ mapRouter.get('/queryEquipmentMap', authMiddleware, (req: AuthRequest, res: Resp
           type: 'obstacle',
           url: mapFileUrl(obsFileName),
           fileHash: crypto.createHash('md5').update(om.map_id).digest('hex'),
-          mapArea: calcAreaM2(om.map_area),
+          mapArea: om.map_area ?? '[]',
           obstacle: [],
         };
       });
@@ -125,7 +111,7 @@ mapRouter.get('/queryEquipmentMap', authMiddleware, (req: AuthRequest, res: Resp
       type: 'work',
       url: mapFileUrl(workFileName),
       fileHash: crypto.createHash('md5').update(wm.map_id).digest('hex'),
-      mapArea: calcAreaM2(wm.map_area),
+      mapArea: wm.map_area ?? '[]',
       obstacle: relatedObs,
     };
   });
@@ -139,7 +125,7 @@ mapRouter.get('/queryEquipmentMap', authMiddleware, (req: AuthRequest, res: Resp
       type: 'unicom',
       url: mapFileUrl(unicomFileName),
       fileHash: crypto.createHash('md5').update(um.map_id).digest('hex'),
-      mapArea: calcAreaM2(um.map_area),
+      mapArea: um.map_area ?? '[]',
       obstacle: [],
     };
   });
