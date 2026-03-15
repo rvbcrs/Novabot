@@ -10,14 +10,12 @@ interface Props {
 
 export function SensorCard({ label, value, unit, icon: Icon, iconColor = 'text-gray-500' }: Props) {
   return (
-    <div className="bg-gray-800 rounded px-2 py-1 border border-gray-700 flex items-center gap-1.5 min-w-0">
-      {Icon && <Icon className={`w-3 h-3 ${iconColor} flex-shrink-0`} />}
-      <div className="min-w-0">
-        <div className="text-[9px] text-gray-500 leading-tight truncate">{label}</div>
-        <span className="text-[11px] font-medium text-white leading-tight">
-          {value}{unit ? <span className="text-gray-400 ml-0.5 text-[10px]">{unit}</span> : null}
-        </span>
-      </div>
+    <div className="bg-gray-800/60 rounded px-1.5 py-0.5 border border-gray-700/60 flex items-center gap-1 min-w-0" title={`${label}: ${value}${unit ?? ''}`}>
+      {Icon && <Icon className={`w-2.5 h-2.5 ${iconColor} flex-shrink-0`} />}
+      <span className="text-[9px] text-gray-500 truncate">{label}</span>
+      <span className="text-[10px] font-semibold text-white whitespace-nowrap ml-auto">
+        {value}{unit ? <span className="text-gray-500 text-[9px]">{unit}</span> : null}
+      </span>
     </div>
   );
 }
