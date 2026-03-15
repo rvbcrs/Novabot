@@ -22,6 +22,52 @@ fs.mkdirSync(TRACKS_PATH, { recursive: true });
 // multer stores fragment files in the maps storage dir
 const upload = multer({ dest: STORAGE_PATH });
 
+/**
+ * Genereer CSV content uit database GPS coördinaten voor een map bestand.
+ * Converteert GPS lat/lng naar lokale x,y meters (relatief t.o.v. eerste punt als origin).
+ * Retourneert null als er geen data gevonden kan worden.
+ */
+function generateCsvFromDb(sn: string, fileName: string): string | null {
+  // Parse bestandsnaam om te bepalen welke map het betreft
+  // map0_work.csv → mapIndex 0, type work
+  // map0_0_obstacle.csv → mapIndex 0, subIndex 0, type obstacle
+  const workMatch = fileName.match(/^map(\d+)_work\.csv$/);
+  const obstacleMatch = fileName.match(/^map(\d+)_(\d+)_obstacle\.csv$/);
+
+  let mapRow: MapRow | undefined;
+
+  if (workMatch) {
+    const mapIndex = parseInt(workMatch[1]);
+    const workMaps = db.prepare(
+      "SELECT * FROM maps WHERE mower_sn = ? AND map_type = 'work' AND map_area IS NOT NULL ORDER BY map_id"
+    ).all(sn) as MapRow[];
+    mapRow = workMaps[mapIndex];
+  } else if (obstacleMatch) {
+    const obstacleMaps = db.prepare(
+      "SELECT * FROM maps WHERE mower_sn = ? AND map_type = 'obstacle' AND map_area IS NOT NULL ORDER BY map_id"
+    ).all(sn) as MapRow[];
+    mapRow = obstacleMaps[parseInt(obstacleMatch[2])];
+  }
+
+  if (!mapRow?.map_area) return null;
+
+  try {
+    const gpsPoints: GpsPoint[] = JSON.parse(mapRow.map_area);
+    if (!gpsPoints || gpsPoints.length < 2) return null;
+
+    // Converteer GPS → lokale meters relatief t.o.v. eerste punt
+    const origin = gpsPoints[0];
+    const lines = gpsPoints.map(p => {
+      const local = gpsToLocal(p, origin);
+      return `${local.x},${local.y}`;
+    });
+
+    return lines.join('\n') + '\n';
+  } catch {
+    return null;
+  }
+}
+
 function rowToDto(r: MapRow) {
   return {
     mapId: r.map_id,
@@ -77,23 +123,24 @@ mapRouter.get('/queryEquipmentMap', authMiddleware, (req: AuthRequest, res: Resp
   const baseUrl = process.env.OTA_BASE_URL
     ?? `http://${process.env.TARGET_IP ?? 'localhost'}`;
 
-  // Helper: bereken oppervlakte in m² uit GPS punten JSON string
-  function calcAreaM2(mapAreaJson: string | null): string {
-    if (!mapAreaJson) return '0';
+  // Helper: bouw download URL voor een map CSV bestand
+  function mapFileUrl(fileName: string): string {
+    return `${baseUrl}/api/nova-file-server/map/downloadMapFile?sn=${sn}&fileName=${fileName}`;
+  }
+
+  // mapArea = oppervlakte in m² als string (bv. "6.22"). App toont dit bij "Size: Xm²"
+  // en berekent maaitijd via double._parse(mapArea) * 0.03 / 3600.
+  // Polygoon rendering komt NIET uit mapArea maar via MQTT get_map_outline of url download.
+  function calcPolygonAreaM2(polygonJson: string | null): string {
+    if (!polygonJson) return '0';
     try {
-      const points: GpsPoint[] = JSON.parse(mapAreaJson);
+      const points: GpsPoint[] = JSON.parse(polygonJson);
       if (!points || points.length < 3) return '0';
-      // Gebruik eerste punt als origin voor lokale conversie
       const origin = points[0];
       const localPoints = points.map(p => gpsToLocal(p, origin));
       const area = polygonArea(localPoints);
       return String(Math.round(area * 100) / 100);
     } catch { return '0'; }
-  }
-
-  // Helper: bouw download URL voor een map CSV bestand
-  function mapFileUrl(fileName: string): string {
-    return `${baseUrl}/api/nova-file-server/map/downloadMapFile?sn=${sn}&fileName=${fileName}`;
   }
 
   // Bouw work items met geneste obstacles
@@ -114,7 +161,7 @@ mapRouter.get('/queryEquipmentMap', authMiddleware, (req: AuthRequest, res: Resp
           type: 'obstacle',
           url: mapFileUrl(obsFileName),
           fileHash: crypto.createHash('md5').update(om.map_id).digest('hex'),
-          mapArea: calcAreaM2(om.map_area),
+          mapArea: calcPolygonAreaM2(om.map_area),
           obstacle: [],
         };
       });
@@ -125,7 +172,7 @@ mapRouter.get('/queryEquipmentMap', authMiddleware, (req: AuthRequest, res: Resp
       type: 'work',
       url: mapFileUrl(workFileName),
       fileHash: crypto.createHash('md5').update(wm.map_id).digest('hex'),
-      mapArea: calcAreaM2(wm.map_area),
+      mapArea: calcPolygonAreaM2(wm.map_area),
       obstacle: relatedObs,
     };
   });
@@ -139,7 +186,7 @@ mapRouter.get('/queryEquipmentMap', authMiddleware, (req: AuthRequest, res: Resp
       type: 'unicom',
       url: mapFileUrl(unicomFileName),
       fileHash: crypto.createHash('md5').update(um.map_id).digest('hex'),
-      mapArea: calcAreaM2(um.map_area),
+      mapArea: calcPolygonAreaM2(um.map_area),
       obstacle: [],
     };
   });
@@ -200,41 +247,43 @@ mapRouter.get('/downloadMapFile', authMiddleware, (req: AuthRequest, res: Respon
     return;
   }
 
+  // Probeer eerst uit de ZIP te extracten (maaier-geüploade kaarten)
   const zipPath = path.join(STORAGE_PATH, `${sn}_latest.zip`);
-  if (!fs.existsSync(zipPath)) {
-    console.warn(`[MAP] downloadMapFile: ZIP niet gevonden voor ${sn}`);
-    res.status(404).json(fail('map not found', 404));
+  if (fs.existsSync(zipPath)) {
+    try {
+      const tmpDir = path.join(STORAGE_PATH, `tmp_dl_${Date.now()}`);
+      fs.mkdirSync(tmpDir, { recursive: true });
+      try {
+        execSync(`unzip -o -q "${zipPath}" "csv_file/${safeName}" -d "${tmpDir}"`);
+        const csvPath = path.join(tmpDir, 'csv_file', safeName);
+        if (fs.existsSync(csvPath)) {
+          const csvData = fs.readFileSync(csvPath);
+          console.log(`[MAP] downloadMapFile: ${sn}/${safeName} (${csvData.length} bytes) from ZIP`);
+          res.setHeader('Content-Type', 'text/csv');
+          res.setHeader('Content-Disposition', `attachment; filename="${safeName}"`);
+          res.send(csvData);
+          return;
+        }
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    } catch { /* ZIP extractie mislukt, probeer fallback */ }
+  }
+
+  // Fallback: genereer CSV on-the-fly uit database GPS coördinaten.
+  // Dit is nodig voor dashboard-getekende kaarten die geen ZIP hebben.
+  // De app's getOffsetListFromFile() verwacht per regel: x,y (lokale meters).
+  const csvGenerated = generateCsvFromDb(sn!, safeName);
+  if (csvGenerated) {
+    console.log(`[MAP] downloadMapFile: ${sn}/${safeName} (${csvGenerated.length} bytes) generated from DB`);
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="${safeName}"`);
+    res.send(csvGenerated);
     return;
   }
 
-  try {
-    // Extract het gevraagde bestand uit de ZIP
-    const tmpDir = path.join(STORAGE_PATH, `tmp_dl_${Date.now()}`);
-    fs.mkdirSync(tmpDir, { recursive: true });
-
-    try {
-      execSync(`unzip -o -q "${zipPath}" "csv_file/${safeName}" -d "${tmpDir}"`);
-      const csvPath = path.join(tmpDir, 'csv_file', safeName);
-
-      if (!fs.existsSync(csvPath)) {
-        console.warn(`[MAP] downloadMapFile: ${safeName} niet in ZIP voor ${sn}`);
-        res.status(404).json(fail('file not found in map', 404));
-        return;
-      }
-
-      const csvData = fs.readFileSync(csvPath);
-      console.log(`[MAP] downloadMapFile: ${sn}/${safeName} (${csvData.length} bytes)`);
-      res.setHeader('Content-Type', 'text/csv');
-      res.setHeader('Content-Disposition', `attachment; filename="${safeName}"`);
-      res.send(csvData);
-    } finally {
-      // Ruim tmp directory op
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
-  } catch (err) {
-    console.error(`[MAP] downloadMapFile: extractie mislukt voor ${sn}/${safeName}:`, err);
-    res.status(500).json(fail('extraction failed', 500));
-  }
+  console.warn(`[MAP] downloadMapFile: ${safeName} niet gevonden voor ${sn}`);
+  res.status(404).json(fail('map not found', 404));
 });
 
 // POST /api/nova-file-server/map/fragmentUploadEquipmentMap

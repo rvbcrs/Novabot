@@ -439,31 +439,144 @@ export async function startMqttBroker(): Promise<void> {
               // heeft (map_num=0), reageert hij niet en de app toont "Get map failed".
               // Oplossing: server stuurt zelf een get_map_list_respond met de kaartdata
               // uit de database, zodat de app de kaarten downloadt van onze server.
+              //
+              // BELANGRIJK: response MOET top-level key `get_map_list_respond` gebruiken,
+              // NIET {type: ..., message: ...} wrapping. De app (en onze eigen mapSync
+              // handler) parsen de EERSTE KEY van het JSON object.
               console.log(`${C.cyan}[MAP-PROXY] App vraagt get_map_list voor ${sn} — server beantwoordt${C.reset}`);
-              const STORAGE_PATH = path.resolve(process.env.STORAGE_PATH ?? './storage', 'maps');
-              const zipPath = path.join(STORAGE_PATH, `${sn}_latest.zip`);
-              if (fs.existsSync(zipPath)) {
-                const zipData = fs.readFileSync(zipPath);
-                const zipMd5 = crypto.createHash('md5').update(zipData).digest('hex');
+
+              // Haal kaarten uit DB (zelfde query als queryEquipmentMap)
+              const dbMaps = db.prepare(
+                'SELECT map_id, map_name, map_type FROM maps WHERE mower_sn = ? AND map_area IS NOT NULL ORDER BY map_id'
+              ).all(sn) as Array<{ map_id: string; map_name: string | null; map_type: string | null }>;
+
+              if (dbMaps.length > 0) {
+                // Bouw ZIP md5 als die bestaat
+                const STORAGE_PATH = path.resolve(process.env.STORAGE_PATH ?? './storage', 'maps');
+                const zipPath = path.join(STORAGE_PATH, `${sn}_latest.zip`);
+                let zipMd5 = '';
+                if (fs.existsSync(zipPath)) {
+                  zipMd5 = crypto.createHash('md5').update(fs.readFileSync(zipPath)).digest('hex');
+                }
+
                 const response = {
-                  type: 'get_map_list_respond',
-                  message: {
+                  get_map_list_respond: {
                     result: 0,
-                    value: {
-                      md5: zipMd5,
-                      name: `${sn}.zip`,
-                      zip_dir_empty: 0,
-                    },
+                    map_num: dbMaps.length,
+                    maps: dbMaps.map(m => ({
+                      map_id: m.map_id,
+                      map_name: m.map_name ?? 'home',
+                      map_type: m.map_type ?? 'work',
+                    })),
+                    md5: zipMd5,
+                    name: `${sn}.zip`,
+                    zip_dir_empty: 0,
                   },
                 };
                 // Publiceer de response op het Receive topic zodat de app het ontvangt
                 // Gebruik setTimeout om de app tijd te geven de listener op te zetten
                 setTimeout(() => {
                   publishEncryptedOnTopic(`Dart/Receive_mqtt/${sn}`, sn, response);
-                  console.log(`${C.cyan}[MAP-PROXY] get_map_list_respond gestuurd: md5=${zipMd5}${C.reset}`);
+                  console.log(`${C.cyan}[MAP-PROXY] get_map_list_respond gestuurd: ${dbMaps.length} kaart(en), md5=${zipMd5}${C.reset}`);
                 }, 200);
+
+                // Stuur ook meteen de polygon outlines mee zodat de app ze niet apart hoeft op te vragen
+                const dbMapsWithArea = db.prepare(
+                  'SELECT map_id, map_name, map_type, map_area FROM maps WHERE mower_sn = ? AND map_area IS NOT NULL ORDER BY map_id'
+                ).all(sn) as Array<{ map_id: string; map_name: string | null; map_type: string | null; map_area: string }>;
+
+                let outlineDelay = 500; // na de get_map_list_respond
+                for (const mapRow of dbMapsWithArea) {
+                  try {
+                    const points = JSON.parse(mapRow.map_area) as Array<{ lat: number; lng: number }>;
+                    if (points.length < 3) continue;
+                    // Maaier stuurt {"type":"xxx","message":{...}} formaat.
+                    // App verwacht EXACT dat formaat voor polygon data.
+                    const outlineResponse = {
+                      type: 'report_state_map_outline',
+                      message: {
+                        status: 'success',
+                        map_id: mapRow.map_id,
+                        map_name: mapRow.map_name ?? 'home',
+                        map_type: mapRow.map_type ?? 'work',
+                        map_position: points,
+                      },
+                    };
+                    setTimeout(() => {
+                      publishEncryptedOnTopic(`Dart/Receive_mqtt/${sn}`, sn, outlineResponse);
+                      console.log(`${C.cyan}[MAP-PROXY] Proactief report_state_map_outline gestuurd (status:success): ${points.length} punten voor ${mapRow.map_id}${C.reset}`);
+                    }, outlineDelay);
+                    outlineDelay += 200;
+                  } catch { /* skip invalid map_area */ }
+                }
               } else {
                 console.log(`${C.cyan}[MAP-PROXY] Geen kaarten in database voor ${sn}, geen response${C.reset}`);
+              }
+            } else if ('get_map_outline' in parsed) {
+              // ── Server-side map outline response ──
+              // De app stuurt get_map_outline naar de maaier om het polygoon op te halen.
+              // Als de maaier geen kaarten heeft, antwoordt hij niet → leeg kaartbeeld.
+              // Oplossing: server stuurt report_state_map_outline met polygoon uit database.
+              const outlineReq = parsed.get_map_outline as { map_id?: string } | undefined;
+              const mapId = outlineReq?.map_id;
+              console.log(`${C.cyan}[MAP-PROXY] App vraagt get_map_outline voor ${sn} map_id=${mapId}${C.reset}`);
+
+              if (mapId) {
+                // Zoek specifieke kaart
+                const mapRow = db.prepare(
+                  'SELECT map_id, map_name, map_type, map_area FROM maps WHERE map_id = ? AND mower_sn = ? AND map_area IS NOT NULL'
+                ).get(mapId, sn) as { map_id: string; map_name: string | null; map_type: string | null; map_area: string } | undefined;
+
+                if (mapRow) {
+                  try {
+                    const points = JSON.parse(mapRow.map_area) as Array<{ lat: number; lng: number }>;
+                    const response = {
+                      type: 'report_state_map_outline',
+                      message: {
+                        status: 'success',
+                        map_id: mapRow.map_id,
+                        map_name: mapRow.map_name ?? 'home',
+                        map_type: mapRow.map_type ?? 'work',
+                        map_position: points,
+                      },
+                    };
+                    setTimeout(() => {
+                      publishEncryptedOnTopic(`Dart/Receive_mqtt/${sn}`, sn, response);
+                      console.log(`${C.cyan}[MAP-PROXY] report_state_map_outline gestuurd: ${points.length} punten voor ${mapId}${C.reset}`);
+                    }, 200);
+                  } catch (err) {
+                    console.log(`${C.cyan}[MAP-PROXY] map_area parse error voor ${mapId}: ${err}${C.reset}`);
+                  }
+                } else {
+                  console.log(`${C.cyan}[MAP-PROXY] Kaart ${mapId} niet gevonden in database${C.reset}`);
+                }
+              } else {
+                // Geen map_id → stuur outlines voor ALLE kaarten
+                const allMaps = db.prepare(
+                  'SELECT map_id, map_name, map_type, map_area FROM maps WHERE mower_sn = ? AND map_area IS NOT NULL'
+                ).all(sn) as Array<{ map_id: string; map_name: string | null; map_type: string | null; map_area: string }>;
+
+                let delay = 200;
+                for (const mapRow of allMaps) {
+                  try {
+                    const points = JSON.parse(mapRow.map_area) as Array<{ lat: number; lng: number }>;
+                    const response = {
+                      type: 'report_state_map_outline',
+                      message: {
+                        status: 'success',
+                        map_id: mapRow.map_id,
+                        map_name: mapRow.map_name ?? 'home',
+                        map_type: mapRow.map_type ?? 'work',
+                        map_position: points,
+                      },
+                    };
+                    setTimeout(() => {
+                      publishEncryptedOnTopic(`Dart/Receive_mqtt/${sn}`, sn, response);
+                      console.log(`${C.cyan}[MAP-PROXY] report_state_map_outline gestuurd: ${points.length} punten voor ${mapRow.map_id}${C.reset}`);
+                    }, delay);
+                    delay += 100;
+                  } catch { /* skip invalid map_area */ }
+                }
               }
             } else {
               console.log(`\x1b[38;5;208m[OTA-FIX] Geen ota_upgrade_cmd, doorsturen ongewijzigd\x1b[0m`);

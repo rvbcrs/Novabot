@@ -139,7 +139,12 @@ DB locatie: `novabot-server/novabot.db`
 - App v2.4.0 verwacht `data` als `Map<String, dynamic>` (JSON object), NIET base64 of array
 - Response: `{ data: { work: [MapEntityItem...], unicom: [...] }, md5, machineExtendedField }`
 - `MapEntityItem`: `{ fileName, alias, type, url, fileHash, mapArea, obstacle[] }`
-- `mapArea` = GPS coördinaten als JSON string
+- **`mapArea` = oppervlakte in m² als string** (bv. `"6.22"`), NIET GPS coördinaten
+  - App doet `double._parse(mapArea)` voor Size display — GPS coords breken dit
+- **`url` = download URL voor CSV** met lokale x,y coördinaten (meters, comma-separated)
+  - App downloadt CSV → `getOffsetListFromFile()` → `MapPainter._drawPath()` tekent polygon
+  - Zonder werkende `url` → GEEN polygon op de kaart
+  - Server genereert CSV on-the-fly uit DB GPS data als er geen maaier-ZIP is
 - `chargingPose` velden (`x`, `y`, `orientation`) moeten **strings** zijn (app doet `double._parse()`)
 - `data: null` als geen kaarten → app toont "No map!"
 - Kaart-flow is upload-only: maaier→server, app→server. Maaier downloadt NOOIT kaarten.

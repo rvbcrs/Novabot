@@ -206,7 +206,7 @@ Een base64 string of array crasht de app → "No map!" error.
         "type": "work",
         "url": null,
         "fileHash": "md5_van_map_id",
-        "mapArea": "[{\"lat\":52.14,\"lng\":6.23}, ...]",
+        "mapArea": "6.22",
         "obstacle": [
           { "fileName": "map0_0_obstacle.csv", "alias": "obstacle_0", "type": "obstacle", ... }
         ]

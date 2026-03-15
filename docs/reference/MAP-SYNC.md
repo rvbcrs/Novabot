@@ -330,6 +330,18 @@ De app doet `data as Map<String, dynamic>` — `data` MOET een JSON object zijn,
   - `ChargingPostion` verwacht `x`, `y`, `orientation` als **strings** (doet `double._parse()`)
 - De `noMapIntercept` guard checkt `lawnController.mapList.value.isEmpty()` — als `work` leeg is → "No map!"
 
+**mapArea — oppervlakte in m², NIET GPS coördinaten (bevestigd maart 2026):**
+
+De Flutter app's `MapEntityItem.getArea()` doet `double._parse(mapArea)` en splitst op "." voor de Size display. `mapArea` MOET een numerieke string zijn (bv. `"6.22"`) die de oppervlakte in m² aangeeft. GPS coördinaten in dit veld breken de Size weergave.
+
+**url — download URL voor CSV met lokale coördinaten (bevestigd maart 2026):**
+
+De app downloadt het CSV bestand via de `url` en parsed het met `getOffsetListFromFile()`:
+- Elke regel = `x,y` (lokale meters, komma-gescheiden, geen header)
+- Deze Offset-lijst wordt door `MapPainter._drawPath()` getekend als polygon
+- Als de URL een 404 retourneert → GEEN polygon op de kaart
+- Server genereert CSV on-the-fly uit DB GPS coördinaten als er geen ZIP bestaat
+
 **Typische response:**
 ```json
 {
@@ -338,9 +350,9 @@ De app doet `data as Map<String, dynamic>` — `data` MOET een JSON object zijn,
       "fileName": "map0_work.csv",
       "alias": "Work area 1",
       "type": "work",
-      "url": null,
+      "url": "http://192.168.0.177/api/nova-file-server/map/downloadMapFile?sn=LFIN...&fileName=map0_work.csv",
       "fileHash": "md5_hash",
-      "mapArea": "[{\"lat\":52.14,\"lng\":6.23}, ...]",
+      "mapArea": "6.22",
       "obstacle": []
     }],
     "unicom": []
