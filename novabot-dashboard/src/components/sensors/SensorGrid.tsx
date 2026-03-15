@@ -16,6 +16,7 @@ interface FieldDef {
   unit?: string;
   icon?: LucideIcon;
   iconColor?: string;
+  wide?: boolean;
 }
 
 interface SensorGroup {
@@ -68,7 +69,7 @@ const MOWER_GROUPS: SensorGroup[] = [
     iconColor: 'text-red-400',
     fields: [
       { key: 'error_status', label: 'sensors.errorStatus', icon: AlertTriangle, iconColor: 'text-red-400' },
-      { key: 'error_msg', label: 'sensors.errorMessage', icon: AlertTriangle, iconColor: 'text-red-400' },
+      { key: 'error_msg', label: 'sensors.errorMessage', icon: AlertTriangle, iconColor: 'text-red-400', wide: true },
       { key: 'chassis_err', label: 'sensors.chassisError', icon: AlertTriangle, iconColor: 'text-red-400' },
       { key: 'button_stop', label: 'sensors.emergencyStop', icon: Zap, iconColor: 'text-red-500' },
     ],
@@ -132,7 +133,7 @@ const CHARGER_GROUPS: SensorGroup[] = [
     iconColor: 'text-red-400',
     fields: [
       { key: 'error_status', label: 'sensors.errorStatus', icon: AlertTriangle, iconColor: 'text-red-400' },
-      { key: 'error_msg', label: 'sensors.errorMessage', icon: AlertTriangle, iconColor: 'text-red-400' },
+      { key: 'error_msg', label: 'sensors.errorMessage', icon: AlertTriangle, iconColor: 'text-red-400', wide: true },
     ],
   },
   {
@@ -155,7 +156,7 @@ export function SensorGrid({ device }: Props) {
   const groups = device.deviceType === 'mower' ? MOWER_GROUPS : CHARGER_GROUPS;
 
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 gap-0.5">
+    <div className="grid grid-cols-3 gap-1">
       {groups.map(group => {
         const available = group.fields.filter(f => device.sensors[f.key] !== undefined);
         if (available.length === 0) return null;
@@ -170,8 +171,8 @@ export function SensorGrid({ device }: Props) {
 
         const GroupIcon = group.icon;
         return [
-          <h3 key={`h-${group.title}`} className="col-span-2 sm:col-span-3 text-[8px] font-semibold text-gray-600 uppercase tracking-wider flex items-center gap-1 mt-1.5 first:mt-0">
-            <GroupIcon className={`w-2.5 h-2.5 ${group.iconColor}`} />
+          <h3 key={`h-${group.title}`} className="col-span-3 text-[9px] font-semibold text-gray-500 uppercase tracking-wider flex items-center gap-1 mt-2 first:mt-0">
+            <GroupIcon className={`w-3 h-3 ${group.iconColor}`} />
             {t(group.title)}
           </h3>,
           ...available.map(f => (
@@ -182,6 +183,7 @@ export function SensorGrid({ device }: Props) {
               unit={f.unit}
               icon={f.icon}
               iconColor={f.iconColor}
+              wide={f.wide}
             />
           )),
         ];
