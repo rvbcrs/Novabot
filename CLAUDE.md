@@ -162,7 +162,7 @@ docker compose down && docker compose up -d  # Container herstarten
 - Dashboard dist wordt INSIDE de container gebouwd (Dockerfile kopieert src/ en runt `npm run build`)
 
 Firmware: `research/firmware/` — mower custom builds via `research/build_custom_firmware.sh`
-Maaier firmware: `v6.0.2-custom-16`, STM32: `v3.6.6` (PIN lock fix)
+Maaier firmware: `v6.0.2-custom-16`, STM32: `v3.6.8` (PIN lock fix + check_pin_lock NOP)
 
 ---
 
