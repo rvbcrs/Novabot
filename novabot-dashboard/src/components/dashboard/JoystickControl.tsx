@@ -6,12 +6,18 @@ import { sendCommand } from '../../api/client';
 interface Props {
   sn: string;
   online: boolean;
+  speedLevel?: number; // 0=low, 1=medium, 2=high (from manual_controller_v setting)
 }
 
 const SEND_INTERVAL = 200; // ms between movement commands
 const DEAD_ZONE = 0.05;    // ignore tiny movements
-const MAX_LINEAR = 0.5;    // m/s max forward/backward speed
-const MAX_ANGULAR = 0.8;   // rad/s max turn speed
+
+// Speed limits per level — matches manual_controller_v setting (0=low, 1=med, 2=high)
+const SPEED_LEVELS = [
+  { linear: 0.15, angular: 0.3 },  // 0 = low
+  { linear: 0.3,  angular: 0.5 },  // 1 = medium
+  { linear: 0.5,  angular: 0.8 },  // 2 = high
+];
 
 // Map joystick position to JoystickHoldType direction
 // 0=none, 1=left, 2=right, 3=top(forward), 4=bottom(backward)
@@ -22,7 +28,7 @@ function getHoldType(x: number, y: number): number {
   return x < 0 ? 1 : 2; // left(1), right(2)
 }
 
-export function JoystickControl({ sn, online }: Props) {
+export function JoystickControl({ sn, online, speedLevel = 0 }: Props) {
   const { t } = useTranslation();
   const [active, setActive] = useState(false);
   const [thumbPos, setThumbPos] = useState({ x: 0, y: 0 });
@@ -39,6 +45,9 @@ export function JoystickControl({ sn, online }: Props) {
   useEffect(() => { thumbRef.current = thumbPos; }, [thumbPos]);
   useEffect(() => { activeRef.current = active; }, [active]);
 
+  const speedRef = useRef(speedLevel);
+  useEffect(() => { speedRef.current = speedLevel; }, [speedLevel]);
+
   const sendMoveCommand = useCallback(() => {
     const { x, y } = thumbRef.current;
     const dist = Math.sqrt(x * x + y * y);
@@ -54,11 +63,12 @@ export function JoystickControl({ sn, online }: Props) {
     }
 
     // mst provides speed magnitude; direction comes from start_move
-    const speed = Math.round(dist * MAX_LINEAR * 100) / 100;
+    const lvl = SPEED_LEVELS[speedRef.current] ?? SPEED_LEVELS[0];
+    const speed = Math.round(dist * lvl.linear * 100) / 100;
     sendCommand(sn, {
       mst: {
         x_w: speed,
-        y_v: Math.round(Math.abs(x) * MAX_ANGULAR * 100) / 100,
+        y_v: Math.round(Math.abs(x) * lvl.angular * 100) / 100,
         z_g: 0,
       },
     }).then(() => {
@@ -141,7 +151,9 @@ export function JoystickControl({ sn, online }: Props) {
   }, [sn]);
 
   const dist = Math.sqrt(thumbPos.x * thumbPos.x + thumbPos.y * thumbPos.y);
-  const speedPct = Math.round(dist * 100);
+  const lvl = SPEED_LEVELS[speedLevel] ?? SPEED_LEVELS[0];
+  const speedMs = (dist * lvl.linear).toFixed(2);
+  const levelLabel = ['Low', 'Med', 'High'][speedLevel] ?? 'Low';
 
   return (
     <div className="flex flex-col items-center gap-2">
@@ -152,7 +164,7 @@ export function JoystickControl({ sn, online }: Props) {
         ) : lastError ? (
           <span className="text-red-400">{lastError}</span>
         ) : active ? (
-          <span className="text-emerald-400">{speedPct}% &middot; {cmdCount} cmd</span>
+          <span className="text-emerald-400">{speedMs} m/s ({levelLabel}) &middot; {cmdCount}</span>
         ) : (
           <span className="text-gray-500">{t('controls.joystickHelp')}</span>
         )}

@@ -534,7 +534,7 @@ export function DashboardPage({ devices, loading, logs, bleLogs, otaProgress, li
                 <button
                   onClick={async () => {
                     try {
-                      await sendCommand(mower.sn, { save_map: {} });
+                      await sendCommand(mower.sn, { save_map: { mapName: 'home' } });
                       await sendCommand(mower.sn, { save_recharge_pos: {} });
                       toast(t('controls.saveMap') + ' ✓', 'success');
                     } catch { toast(t('controls.saveMap') + ' ✗', 'error'); }
@@ -587,7 +587,7 @@ export function DashboardPage({ devices, loading, logs, bleLogs, otaProgress, li
                     <X className="w-4 h-4" />
                   </button>
                 </div>
-                <JoystickControl sn={mower.sn} online={mower.online} />
+                <JoystickControl sn={mower.sn} online={mower.online} speedLevel={parseInt(mower.sensors.manual_controller_v ?? '0', 10)} />
               </div>
             </div>
           )}
