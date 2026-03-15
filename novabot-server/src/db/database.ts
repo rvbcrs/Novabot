@@ -154,6 +154,8 @@ export function initDb(): void {
     -- vóórdat het apparaat ooit gebonden is geweest (nodig voor eerste BLE provisioning).
     INSERT OR IGNORE INTO equipment_lora_cache (sn, charger_address, charger_channel)
     VALUES ('LFIC1230700004', '718', '16');
+    INSERT OR IGNORE INTO equipment_lora_cache (sn, charger_address, charger_channel)
+    VALUES ('LFIN2230700238', '718', '15');
 
     -- Voeg mac_address kolom toe aan equipment als die nog niet bestaat
     -- (SQLite ondersteunt geen IF NOT EXISTS op kolommen, dus via try-catch in code)

@@ -1044,6 +1044,24 @@ dashboardRouter.post('/command/:sn', (req: Request, res: Response) => {
     }
   }
 
+  // set_lora_info: cache addr/channel in equipment_lora_cache zodat dashboard
+  // LoRa config kan tonen in de device chip dropdown
+  const loraInfo = command.set_lora_info as { addr?: number; channel?: number } | undefined;
+  if (loraInfo && (loraInfo.addr != null || loraInfo.channel != null)) {
+    const upsertLora = db.prepare(
+      `INSERT INTO equipment_lora_cache (sn, charger_address, charger_channel) VALUES (?, ?, ?)
+       ON CONFLICT(sn) DO UPDATE SET charger_address = COALESCE(excluded.charger_address, charger_address),
+                                     charger_channel = COALESCE(excluded.charger_channel, charger_channel)`
+    );
+    upsertLora.run(sn, loraInfo.addr != null ? String(loraInfo.addr) : null, loraInfo.channel != null ? String(loraInfo.channel) : null);
+    // Push naar dashboard
+    const loraChanges = new Map<string, string>();
+    if (loraInfo.addr != null) loraChanges.set('lora_address', String(loraInfo.addr));
+    if (loraInfo.channel != null) loraChanges.set('lora_channel', String(loraInfo.channel));
+    forwardToDashboard(sn, loraChanges);
+    console.log(`[DASHBOARD] Cached LoRa config for ${sn}: addr=${loraInfo.addr} channel=${loraInfo.channel}`);
+  }
+
   if (shouldEncrypt) {
     const KEY_PREFIX = 'abcdabcd1234';
     const IV = Buffer.from('abcd1234abcd1234', 'utf8');
