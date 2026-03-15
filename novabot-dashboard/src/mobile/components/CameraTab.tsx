@@ -1,11 +1,13 @@
 import { useState } from 'react';
-import { Camera, RefreshCw, Loader } from 'lucide-react';
+import { Camera, RefreshCw, Loader, Lightbulb } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { sendCommand } from '../../api/client';
 
 interface Props {
   sn: string;
   online: boolean;
   mowerIp?: string;
+  headlightOn?: boolean;
 }
 
 const CAMERA_PORT = 8000;
@@ -17,12 +19,13 @@ const CAMERA_TOPICS = [
   { key: 'tof_depth', labelKey: 'camera.tofDepth' },
 ] as const;
 
-export function CameraTab({ sn, online, mowerIp }: Props) {
+export function CameraTab({ sn, online, mowerIp, headlightOn = false }: Props) {
   const { t } = useTranslation();
   const [selectedTopic, setSelectedTopic] = useState('front');
   const [hasError, setHasError] = useState(false);
   const [loading, setLoading] = useState(true);
   const [retryKey, setRetryKey] = useState(0);
+  const [lightOn, setLightOn] = useState(headlightOn);
 
   const ip = mowerIp || DEFAULT_IP;
   const streamUrl = `/api/dashboard/camera/${sn}/stream?ip=${ip}&port=${CAMERA_PORT}&topic=${selectedTopic}&_k=${retryKey}`;
@@ -43,8 +46,8 @@ export function CameraTab({ sn, online, mowerIp }: Props) {
   if (!online) {
     return (
       <div className="h-full flex flex-col items-center justify-center gap-3 px-8">
-        <Camera className="w-16 h-16 text-gray-700" />
-        <p className="text-sm text-gray-500 text-center">{t('camera.offline')}</p>
+        <Camera className="w-16 h-16 text-gray-300 dark:text-gray-700" />
+        <p className="text-sm text-gray-400 dark:text-gray-500 text-center">{t('camera.offline')}</p>
       </div>
     );
   }
@@ -52,7 +55,8 @@ export function CameraTab({ sn, online, mowerIp }: Props) {
   return (
     <div className="h-full flex flex-col bg-black">
       {/* Topic selector */}
-      <div className="flex items-center justify-between px-4 py-2.5 bg-gray-900/90 backdrop-blur-sm">
+      <div className="flex items-center justify-between px-4 py-2.5
+                       bg-white/90 dark:bg-gray-900/90 backdrop-blur-sm">
         <div className="flex items-center gap-1.5">
           {CAMERA_TOPICS.map(({ key, labelKey }) => (
             <button
@@ -61,19 +65,36 @@ export function CameraTab({ sn, online, mowerIp }: Props) {
               className={`px-3 py-1.5 text-xs rounded-full font-medium transition-colors ${
                 selectedTopic === key
                   ? 'bg-cyan-600 text-white'
-                  : 'text-gray-400 bg-gray-800 active:bg-gray-700'
+                  : 'text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-800 active:bg-gray-200 dark:active:bg-gray-700'
               }`}
             >
               {t(labelKey)}
             </button>
           ))}
         </div>
-        <button
-          onClick={handleRetry}
-          className="p-2 text-gray-400 active:text-white transition-colors"
-        >
-          <RefreshCw className="w-4 h-4" />
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => {
+              const next = !lightOn;
+              setLightOn(next);
+              sendCommand(sn, { headlight: next ? 2 : 0 });
+            }}
+            className={`p-2 rounded-full transition-colors ${
+              lightOn
+                ? 'text-yellow-400 bg-yellow-400/15'
+                : 'text-gray-400 active:text-gray-700 dark:active:text-white'
+            }`}
+            title={t('controls.headlight')}
+          >
+            <Lightbulb className="w-4 h-4" />
+          </button>
+          <button
+            onClick={handleRetry}
+            className="p-2 text-gray-400 active:text-gray-700 dark:active:text-white transition-colors"
+          >
+            <RefreshCw className="w-4 h-4" />
+          </button>
+        </div>
       </div>
 
       {/* Stream */}
@@ -84,7 +105,8 @@ export function CameraTab({ sn, online, mowerIp }: Props) {
             <p className="text-sm text-gray-500 text-center">{t('camera.unavailable')}</p>
             <button
               onClick={handleRetry}
-              className="px-5 py-2.5 rounded-xl bg-gray-800 text-gray-300 text-sm font-medium
+              className="px-5 py-2.5 rounded-xl bg-gray-200 dark:bg-gray-800
+                         text-gray-700 dark:text-gray-300 text-sm font-medium
                          active:scale-[0.97] transition-transform"
             >
               {t('camera.retry')}

@@ -11,7 +11,7 @@ export function HistoryTab({ sn }: Props) {
   return (
     <div className="h-full overflow-y-auto">
       <div className="px-4 pt-5 pb-3">
-        <h2 className="text-lg font-semibold text-white">{t('mobile.tabs.history')}</h2>
+        <h2 className="text-lg font-semibold text-gray-900 dark:text-white">{t('mobile.tabs.history')}</h2>
       </div>
       <WorkHistory sn={sn} />
     </div>

@@ -1,7 +1,8 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { DeviceState } from '../types';
 import { ErrorDisplay } from '../components/status/ErrorDisplay';
+import { ThemeProvider } from './ThemeProvider';
 import { BottomTabBar } from './components/BottomTabBar';
 import { HomeTab } from './components/HomeTab';
 import { MapTab } from './components/MapTab';
@@ -36,6 +37,7 @@ export interface MowerDerived {
   hasError: boolean;
   nickname: string | null;
   mowerIp: string | undefined;
+  headlightOn: boolean;
 }
 
 interface Props {
@@ -88,6 +90,7 @@ function deriveMower(devices: Map<string, DeviceState>): MowerDerived {
     hasError,
     nickname: mower?.nickname ?? null,
     mowerIp: mower?.mowerIp ?? undefined,
+    headlightOn: s.headlight === '2',
   };
 }
 
@@ -97,46 +100,50 @@ export function MobilePage({ devices, loading, liveOutlines }: Props) {
   const { t } = useTranslation();
   const [tab, setTab] = useState<Tab>('home');
   const mower = useMemo(() => deriveMower(devices), [devices]);
+  const rootRef = useRef<HTMLDivElement>(null);
 
   if (!mower.sn && loading) {
     return (
-      <div className="h-screen bg-gray-950 flex items-center justify-center">
-        <div className="text-gray-500 text-sm">{t('devices.loading')}</div>
+      <div className="h-screen bg-white dark:bg-gray-950 flex items-center justify-center">
+        <div className="text-gray-400 dark:text-gray-500 text-sm">{t('devices.loading')}</div>
       </div>
     );
   }
 
   return (
-    <div
-      className="h-[100dvh] bg-gray-950 text-white flex flex-col overflow-hidden"
-      style={{ paddingTop: 'env(safe-area-inset-top)' }}
-    >
-      {/* Error modal */}
-      <ErrorDisplay
-        errorCode={mower.errorCode}
-        errorMsg={mower.errorMsg}
-        errorStatus={mower.errorStatus}
-        workStatus={mower.activity === 'idle' ? '0' : '1'}
-      />
+    <ThemeProvider rootRef={rootRef}>
+      <div
+        ref={rootRef}
+        className="h-[100dvh] bg-gray-50 dark:bg-gray-950 text-gray-900 dark:text-white flex flex-col overflow-hidden"
+        style={{ paddingTop: 'env(safe-area-inset-top)' }}
+      >
+        {/* Error modal */}
+        <ErrorDisplay
+          errorCode={mower.errorCode}
+          errorMsg={mower.errorMsg}
+          errorStatus={mower.errorStatus}
+          workStatus={mower.activity === 'idle' ? '0' : '1'}
+        />
 
-      {/* Tab content */}
-      <div className="flex-1 overflow-hidden">
-        {tab === 'home' && (
-          <HomeTab mower={mower} liveOutlines={liveOutlines} onNavigate={setTab} />
-        )}
-        {tab === 'map' && (
-          <MapTab mower={mower} liveOutlines={liveOutlines} />
-        )}
-        {tab === 'camera' && mower.sn && (
-          <CameraTab sn={mower.sn} online={mower.online} mowerIp={mower.mowerIp} />
-        )}
-        {tab === 'schedules' && mower.sn && (
-          <SchedulesTab sn={mower.sn} online={mower.online} />
-        )}
+        {/* Tab content */}
+        <div className="flex-1 overflow-hidden">
+          {tab === 'home' && (
+            <HomeTab mower={mower} />
+          )}
+          {tab === 'map' && (
+            <MapTab mower={mower} liveOutlines={liveOutlines} />
+          )}
+          {tab === 'camera' && mower.sn && (
+            <CameraTab sn={mower.sn} online={mower.online} mowerIp={mower.mowerIp} headlightOn={mower.headlightOn} />
+          )}
+          {tab === 'schedules' && mower.sn && (
+            <SchedulesTab sn={mower.sn} online={mower.online} />
+          )}
+        </div>
+
+        {/* Bottom tab bar */}
+        <BottomTabBar active={tab} onTabChange={setTab} />
       </div>
-
-      {/* Bottom tab bar */}
-      <BottomTabBar active={tab} onTabChange={setTab} />
-    </div>
+    </ThemeProvider>
   );
 }

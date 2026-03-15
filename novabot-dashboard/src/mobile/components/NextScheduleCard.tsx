@@ -71,9 +71,9 @@ export function NextScheduleCard({ sn }: Props) {
 
   if (!nextSchedule || !nextRun) {
     return (
-      <div className="flex items-center gap-3 bg-gray-900 rounded-xl border border-gray-800 px-4 py-3">
-        <CalendarClock className="w-5 h-5 text-gray-600 flex-shrink-0" />
-        <span className="text-sm text-gray-500">{t('mobile.noSchedules')}</span>
+      <div className="flex items-center gap-3 bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 px-4 py-3">
+        <CalendarClock className="w-5 h-5 text-gray-300 dark:text-gray-600 flex-shrink-0" />
+        <span className="text-sm text-gray-400 dark:text-gray-500">{t('mobile.noSchedules')}</span>
       </div>
     );
   }
@@ -81,13 +81,13 @@ export function NextScheduleCard({ sn }: Props) {
   const label = formatNextRun(nextRun, t);
 
   return (
-    <div className="flex items-center gap-3 bg-gray-900 rounded-xl border border-gray-800 px-4 py-3">
-      <CalendarClock className="w-5 h-5 text-emerald-400 flex-shrink-0" />
+    <div className="flex items-center gap-3 bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 px-4 py-3">
+      <CalendarClock className="w-5 h-5 text-emerald-500 dark:text-emerald-400 flex-shrink-0" />
       <div className="min-w-0 flex-1">
-        <p className="text-sm text-white font-medium truncate">
+        <p className="text-sm text-gray-900 dark:text-white font-medium truncate">
           {nextSchedule.scheduleName || label}
         </p>
-        <p className="text-xs text-gray-400 truncate">
+        <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
           {t('mobile.nextSchedule')}: {label}
           {nextSchedule.mapName ? ` — ${nextSchedule.mapName}` : ''}
         </p>

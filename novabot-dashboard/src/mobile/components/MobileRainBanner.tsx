@@ -70,7 +70,9 @@ export function MobileRainBanner({ mowerSn }: Props) {
         }
       `}</style>
 
-      <div className="relative overflow-hidden rounded-2xl bg-blue-950/70 backdrop-blur-sm border border-blue-500/20 px-4 py-3">
+      <div className="relative overflow-hidden rounded-2xl
+                       bg-blue-50 dark:bg-blue-950/70 backdrop-blur-sm
+                       border border-blue-200 dark:border-blue-500/20 px-4 py-3">
         {/* Raindrops */}
         {DROPS.map((d, i) => (
           <div
@@ -81,14 +83,14 @@ export function MobileRainBanner({ mowerSn }: Props) {
         ))}
 
         <div className="relative flex items-center gap-3">
-          <div className="flex-shrink-0 w-9 h-9 rounded-full bg-blue-500/20 flex items-center justify-center">
-            <CloudRain className="w-4.5 h-4.5 text-blue-400 animate-pulse" />
+          <div className="flex-shrink-0 w-9 h-9 rounded-full bg-blue-100 dark:bg-blue-500/20 flex items-center justify-center">
+            <CloudRain className="w-4.5 h-4.5 text-blue-500 dark:text-blue-400 animate-pulse" />
           </div>
           <div className="min-w-0 flex-1">
-            <p className="text-xs font-semibold text-blue-200 leading-tight">
+            <p className="text-xs font-semibold text-blue-700 dark:text-blue-200 leading-tight">
               {t('schedule.rainPaused')}
             </p>
-            <p className="text-[10px] text-blue-300/70 leading-tight mt-0.5">
+            <p className="text-[10px] text-blue-500/70 dark:text-blue-300/70 leading-tight mt-0.5">
               {t('rain.since', { time: pausedAt, defaultValue: `Since ${pausedAt}` })}
             </p>
           </div>
@@ -96,9 +98,9 @@ export function MobileRainBanner({ mowerSn }: Props) {
 
         {/* Clear prediction */}
         {clearLabel && (
-          <div className="relative flex items-center gap-1.5 mt-2 pt-2 border-t border-blue-500/10">
-            <CloudSun className="w-3.5 h-3.5 text-amber-400/80" />
-            <span className="text-[10px] text-amber-300/80 font-medium">{clearLabel}</span>
+          <div className="relative flex items-center gap-1.5 mt-2 pt-2 border-t border-blue-200/50 dark:border-blue-500/10">
+            <CloudSun className="w-3.5 h-3.5 text-amber-500 dark:text-amber-400/80" />
+            <span className="text-[10px] text-amber-600 dark:text-amber-300/80 font-medium">{clearLabel}</span>
           </div>
         )}
       </div>

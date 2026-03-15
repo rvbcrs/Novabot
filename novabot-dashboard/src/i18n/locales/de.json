@@ -118,6 +118,7 @@
     "joystick": "Joystick",
     "manualControl": "Manuelle Steuerung",
     "joystickHelp": "Ziehen zum Bewegen",
+    "offline": "Gerät offline",
     "patrol": "Randpatrouille",
     "stopPatrol": "Patrouille stoppen",
     "maxSpeed": "Max. Geschwindigkeit",
@@ -249,7 +250,13 @@
     "rainResumed": "Mähen nach Regen fortgesetzt",
     "serverManaged": "Server-verwaltet (Regenprüfung)",
     "conflict": "Überschneidung mit: {{names}}",
-    "conflictWarning": "Dieser Zeitplan überschneidet sich mit bestehenden Zeitplänen"
+    "conflictWarning": "Dieser Zeitplan überschneidet sich mit bestehenden Zeitplänen",
+    "deleteConfirm": "Zeitplan löschen?",
+    "deleted": "Zeitplan gelöscht",
+    "saved": "Zeitplan gespeichert",
+    "created": "Zeitplan erstellt",
+    "saveFailed": "Speichern fehlgeschlagen",
+    "deleteFailed": "Löschen fehlgeschlagen"
   },
   "rain": {
     "since": "Seit {{time}}",
@@ -438,6 +445,10 @@
     "progress": "Fortschritt",
     "nextSchedule": "Nächster",
     "noSchedules": "Keine Zeitpläne",
-    "stopConfirm": "Mähen stoppen?"
+    "stopConfirm": "Mähen stoppen?",
+    "startMowing": "Mähen starten",
+    "starting": "Starten...",
+    "sessionEnds": "Mähsitzung endet um",
+    "mapObjects": "Kartenobjekte"
   }
 }

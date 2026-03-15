@@ -63,7 +63,7 @@ export default function App() {
       {isMobile ? (
         <MobilePage devices={devices} loading={loading} connected={connected} liveOutlines={liveOutlines} />
       ) : (
-        <div className="min-h-screen bg-gray-950 text-white overflow-x-hidden">
+        <div className="dark min-h-screen bg-gray-950 text-white overflow-x-hidden">
           <Header connected={connected} />
           <DashboardPage devices={devices} loading={loading} logs={logs} bleLogs={bleLogs} otaProgress={otaProgress} liveOutlines={liveOutlines} />
         </div>

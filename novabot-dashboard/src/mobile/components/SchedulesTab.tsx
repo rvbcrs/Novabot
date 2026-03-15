@@ -1,116 +1,113 @@
 import { useState, useEffect } from 'react';
-import { CalendarDays, Clock } from 'lucide-react';
+import { Plus, Loader } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import type { Schedule } from '../../types';
-import { fetchSchedules, updateSchedule } from '../../api/client';
-import { useToast } from '../../components/common/Toast';
+import type { Schedule, MapData } from '../../types';
+import { fetchSchedules, fetchMaps } from '../../api/client';
+import { CalendarGrid } from './schedule/CalendarGrid';
+import { ScheduleSheet } from './schedule/ScheduleSheet';
 
 interface Props {
   sn: string;
   online: boolean;
 }
 
-function formatWeekdays(weekdays: number[], dayLabels: string[]): string {
-  if (!weekdays || weekdays.length === 0) return '';
-  if (weekdays.length === 7) return 'Daily';
-  return weekdays.map(d => dayLabels[d]?.slice(0, 2) ?? '').join(' · ');
-}
-
 export function SchedulesTab({ sn, online }: Props) {
   const { t } = useTranslation();
-  const { toast } = useToast();
   const [schedules, setSchedules] = useState<Schedule[]>([]);
+  const [maps, setMaps] = useState<MapData[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const weekdayLabels = (t('schedule.weekdays', { returnObjects: true }) as string[]) ?? [];
+  // Sheet state
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [editSchedule, setEditSchedule] = useState<Schedule | null>(null);
+  const [createDefaults, setCreateDefaults] = useState<{ weekday: number; hour: number } | null>(null);
 
   useEffect(() => {
     if (!sn) return;
-    fetchSchedules(sn)
-      .then(data => { setSchedules(data); setLoading(false); })
-      .catch(() => setLoading(false));
+    Promise.all([
+      fetchSchedules(sn),
+      fetchMaps(sn),
+    ]).then(([s, m]) => {
+      setSchedules(s);
+      setMaps(m);
+      setLoading(false);
+    }).catch(() => setLoading(false));
   }, [sn]);
 
-  const handleToggle = async (schedule: Schedule) => {
-    const newEnabled = !schedule.enabled;
-    // Optimistic update
-    setSchedules(prev =>
-      prev.map(s => s.scheduleId === schedule.scheduleId ? { ...s, enabled: newEnabled } : s)
-    );
-    try {
-      await updateSchedule(sn, schedule.scheduleId, { enabled: newEnabled });
-    } catch {
-      // Revert
-      setSchedules(prev =>
-        prev.map(s => s.scheduleId === schedule.scheduleId ? { ...s, enabled: schedule.enabled } : s)
-      );
-      toast('Update failed', 'error');
-    }
+  const openCreate = (weekday?: number, hour?: number) => {
+    setEditSchedule(null);
+    setCreateDefaults(weekday != null && hour != null ? { weekday, hour } : null);
+    setSheetOpen(true);
+  };
+
+  const openEdit = (schedule: Schedule) => {
+    setEditSchedule(schedule);
+    setCreateDefaults(null);
+    setSheetOpen(true);
+  };
+
+  const handleSaved = (schedule: Schedule) => {
+    setSchedules(prev => {
+      const idx = prev.findIndex(s => s.scheduleId === schedule.scheduleId);
+      if (idx >= 0) {
+        const copy = [...prev];
+        copy[idx] = schedule;
+        return copy;
+      }
+      return [...prev, schedule];
+    });
+  };
+
+  const handleDeleted = (scheduleId: string) => {
+    setSchedules(prev => prev.filter(s => s.scheduleId !== scheduleId));
   };
 
   if (loading) {
     return (
       <div className="h-full flex items-center justify-center">
-        <div className="text-gray-500 text-sm">{t('devices.loading')}</div>
+        <Loader className="w-5 h-5 text-gray-400 animate-spin" />
       </div>
     );
   }
 
   return (
-    <div className="h-full overflow-y-auto">
-      <div className="px-4 pt-5 pb-3">
-        <h2 className="text-lg font-semibold text-white">{t('mobile.tabs.schedules')}</h2>
+    <div className="h-full flex flex-col">
+      {/* Header with + button */}
+      <div className="flex items-center justify-between px-4 py-3">
+        <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+          {t('mobile.tabs.schedules')}
+        </h2>
+        <button
+          onClick={() => openCreate()}
+          disabled={!online}
+          className="w-8 h-8 rounded-full bg-emerald-500 hover:bg-emerald-400
+                     flex items-center justify-center text-white
+                     active:scale-[0.92] disabled:opacity-40 transition-all"
+        >
+          <Plus className="w-5 h-5" />
+        </button>
       </div>
 
-      {schedules.length === 0 ? (
-        <div className="px-4 py-12 text-center">
-          <CalendarDays className="w-12 h-12 text-gray-700 mx-auto mb-3" />
-          <p className="text-sm text-gray-500">{t('mobile.noSchedules')}</p>
-        </div>
-      ) : (
-        <div className="px-4 space-y-2 pb-6">
-          {schedules.map(s => (
-            <div
-              key={s.scheduleId}
-              className={`bg-gray-900 rounded-xl border border-gray-800 px-4 py-3 flex items-center gap-3 transition-opacity ${
-                !s.enabled ? 'opacity-50' : ''
-              }`}
-            >
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium text-white truncate">
-                  {s.scheduleName || formatWeekdays(s.weekdays, weekdayLabels) || t('schedule.title')}
-                </p>
-                <div className="flex items-center gap-2 mt-0.5">
-                  <Clock className="w-3 h-3 text-gray-500" />
-                  <span className="text-xs text-gray-400 tabular-nums">
-                    {s.startTime}{s.endTime ? ` — ${s.endTime}` : ''}
-                  </span>
-                  {s.mapName && (
-                    <span className="text-xs text-gray-500 truncate">· {s.mapName}</span>
-                  )}
-                </div>
-              </div>
+      {/* Calendar grid */}
+      <div className="flex-1 min-h-0">
+        <CalendarGrid
+          schedules={schedules}
+          onEdit={openEdit}
+          onCreateAt={(weekday, hour) => openCreate(weekday, hour)}
+        />
+      </div>
 
-              {/* Toggle switch */}
-              <button
-                onClick={() => handleToggle(s)}
-                disabled={!online}
-                className={`w-11 h-6 rounded-full relative flex-shrink-0 transition-colors disabled:opacity-50 ${
-                  s.enabled ? 'bg-emerald-500' : 'bg-gray-600'
-                }`}
-                role="switch"
-                aria-checked={s.enabled}
-              >
-                <span
-                  className={`block w-5 h-5 bg-white rounded-full shadow absolute top-0.5 transition-transform ${
-                    s.enabled ? 'translate-x-[22px]' : 'translate-x-0.5'
-                  }`}
-                />
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
+      {/* Schedule editor sheet */}
+      <ScheduleSheet
+        open={sheetOpen}
+        onClose={() => setSheetOpen(false)}
+        sn={sn}
+        editSchedule={editSchedule}
+        createDefaults={createDefaults}
+        maps={maps}
+        onSaved={handleSaved}
+        onDeleted={handleDeleted}
+      />
     </div>
   );
 }

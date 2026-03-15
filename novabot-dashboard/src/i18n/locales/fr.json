@@ -118,6 +118,7 @@
     "joystick": "Joystick",
     "manualControl": "Contrôle manuel",
     "joystickHelp": "Glissez pour déplacer",
+    "offline": "Appareil hors ligne",
     "patrol": "Patrouille de bordure",
     "stopPatrol": "Arrêter la patrouille",
     "maxSpeed": "Vitesse max",
@@ -249,7 +250,13 @@
     "rainResumed": "Tonte reprise apr\u00e8s la pluie",
     "serverManaged": "G\u00e9r\u00e9 par le serveur",
     "conflict": "Chevauche : {{names}}",
-    "conflictWarning": "Ce planning chevauche des plannings existants"
+    "conflictWarning": "Ce planning chevauche des plannings existants",
+    "deleteConfirm": "Supprimer ce programme ?",
+    "deleted": "Programme supprim\u00e9",
+    "saved": "Programme enregistr\u00e9",
+    "created": "Programme cr\u00e9\u00e9",
+    "saveFailed": "\u00c9chec de la sauvegarde",
+    "deleteFailed": "\u00c9chec de la suppression"
   },
   "rain": {
     "since": "Depuis {{time}}",
@@ -438,6 +445,10 @@
     "progress": "Progression",
     "nextSchedule": "Prochain",
     "noSchedules": "Aucun programme",
-    "stopConfirm": "Arrêter la tonte ?"
+    "stopConfirm": "Arrêter la tonte ?",
+    "startMowing": "Démarrer la tonte",
+    "starting": "Démarrage...",
+    "sessionEnds": "Session de tonte se termine à",
+    "mapObjects": "Objets de la carte"
   }
 }

@@ -118,6 +118,7 @@
     "joystick": "Joystick",
     "manualControl": "Manual control",
     "joystickHelp": "Drag to move",
+    "offline": "Device offline",
     "patrol": "Edge patrol",
     "stopPatrol": "Stop patrol",
     "maxSpeed": "Max speed",
@@ -249,7 +250,13 @@
     "rainResumed": "Mowing resumed after rain",
     "serverManaged": "Server-managed (rain check)",
     "conflict": "Overlaps with: {{names}}",
-    "conflictWarning": "This schedule overlaps with existing schedules"
+    "conflictWarning": "This schedule overlaps with existing schedules",
+    "deleteConfirm": "Delete this schedule?",
+    "deleted": "Schedule deleted",
+    "saved": "Schedule saved",
+    "created": "Schedule created",
+    "saveFailed": "Could not save",
+    "deleteFailed": "Could not delete"
   },
   "rain": {
     "since": "Since {{time}}",
@@ -438,6 +445,10 @@
     "progress": "Progress",
     "nextSchedule": "Next",
     "noSchedules": "No schedules",
-    "stopConfirm": "Stop mowing?"
+    "stopConfirm": "Stop mowing?",
+    "startMowing": "Start Mowing",
+    "starting": "Starting...",
+    "sessionEnds": "Mowing session ends at",
+    "mapObjects": "Map objects"
   }
 }

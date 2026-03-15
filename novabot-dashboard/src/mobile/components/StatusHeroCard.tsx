@@ -1,6 +1,7 @@
 import { Wifi, Satellite, Zap } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { MowerDerived, MowerActivity } from '../MobilePage';
+import { useTheme } from '../ThemeProvider';
 
 interface Props {
   mower: MowerDerived;
@@ -9,14 +10,14 @@ interface Props {
 // ── Ring colors per activity ────────────────────────────────────────
 
 const RING_COLOR: Record<MowerActivity, string> = {
-  idle:      '#6b7280', // gray-500
-  mowing:    '#10b981', // emerald-500
-  charging:  '#3b82f6', // blue-500
-  returning: '#f59e0b', // amber-500
-  paused:    '#eab308', // yellow-500
-  mapping:   '#a855f7', // purple-500
-  error:     '#ef4444', // red-500
-  offline:   '#374151', // gray-700
+  idle:      '#6b7280',
+  mowing:    '#10b981',
+  charging:  '#3b82f6',
+  returning: '#f59e0b',
+  paused:    '#eab308',
+  mapping:   '#a855f7',
+  error:     '#ef4444',
+  offline:   '#374151',
 };
 
 const GLOW_COLOR: Record<MowerActivity, string> = {
@@ -31,26 +32,28 @@ const GLOW_COLOR: Record<MowerActivity, string> = {
 };
 
 const ACTIVITY_TEXT_COLOR: Record<MowerActivity, string> = {
-  idle:      'text-gray-400',
-  mowing:    'text-emerald-400',
-  charging:  'text-blue-400',
-  returning: 'text-amber-400',
-  paused:    'text-yellow-400',
-  mapping:   'text-purple-400',
-  error:     'text-red-400',
-  offline:   'text-gray-600',
+  idle:      'text-gray-500 dark:text-gray-400',
+  mowing:    'text-emerald-600 dark:text-emerald-400',
+  charging:  'text-blue-600 dark:text-blue-400',
+  returning: 'text-amber-600 dark:text-amber-400',
+  paused:    'text-yellow-600 dark:text-yellow-400',
+  mapping:   'text-purple-600 dark:text-purple-400',
+  error:     'text-red-600 dark:text-red-400',
+  offline:   'text-gray-400 dark:text-gray-600',
 };
 
 function batteryRingColor(pct: number): string {
-  if (pct >= 60) return '#22c55e'; // green-500
-  if (pct >= 30) return '#eab308'; // yellow-500
-  if (pct >= 15) return '#f97316'; // orange-500
-  return '#ef4444'; // red-500
+  if (pct >= 60) return '#22c55e';
+  if (pct >= 30) return '#eab308';
+  if (pct >= 15) return '#f97316';
+  return '#ef4444';
 }
 
 // ── SVG Ring ────────────────────────────────────────────────────────
 
-function BatteryRing({ percentage, color, size = 160 }: { percentage: number; color: string; size?: number }) {
+export function BatteryRing({ percentage, color, bgColor, size = 160 }: {
+  percentage: number; color: string; bgColor?: string; size?: number;
+}) {
   const strokeWidth = 8;
   const radius = (size - strokeWidth) / 2;
   const circumference = 2 * Math.PI * radius;
@@ -58,26 +61,14 @@ function BatteryRing({ percentage, color, size = 160 }: { percentage: number; co
 
   return (
     <svg width={size} height={size} className="transform -rotate-90">
-      {/* Background ring */}
       <circle
-        cx={size / 2}
-        cy={size / 2}
-        r={radius}
-        fill="none"
-        stroke="#1f2937"
-        strokeWidth={strokeWidth}
+        cx={size / 2} cy={size / 2} r={radius}
+        fill="none" stroke={bgColor ?? '#1f2937'} strokeWidth={strokeWidth}
       />
-      {/* Progress ring */}
       <circle
-        cx={size / 2}
-        cy={size / 2}
-        r={radius}
-        fill="none"
-        stroke={color}
-        strokeWidth={strokeWidth}
-        strokeLinecap="round"
-        strokeDasharray={circumference}
-        strokeDashoffset={offset}
+        cx={size / 2} cy={size / 2} r={radius}
+        fill="none" stroke={color} strokeWidth={strokeWidth}
+        strokeLinecap="round" strokeDasharray={circumference} strokeDashoffset={offset}
         className="transition-all duration-700 ease-out"
       />
     </svg>
@@ -88,16 +79,20 @@ function BatteryRing({ percentage, color, size = 160 }: { percentage: number; co
 
 export function StatusHeroCard({ mower }: Props) {
   const { t } = useTranslation();
+  const { resolved } = useTheme();
+
   const ringColor = mower.activity === 'idle' || mower.activity === 'offline'
     ? batteryRingColor(mower.battery)
     : RING_COLOR[mower.activity];
+
+  const ringBg = resolved === 'dark' ? '#1f2937' : '#e5e7eb';
 
   return (
     <div className="flex flex-col items-center pt-2 pb-1">
       {/* Name + online */}
       <div className="flex items-center gap-2 mb-5">
-        <span className={`w-2 h-2 rounded-full ${mower.online ? 'bg-emerald-400' : 'bg-gray-600'}`} />
-        <h1 className="text-sm font-medium text-gray-300">
+        <span className={`w-2 h-2 rounded-full ${mower.online ? 'bg-emerald-400' : 'bg-gray-300 dark:bg-gray-600'}`} />
+        <h1 className="text-sm font-medium text-gray-700 dark:text-gray-300">
           {mower.nickname || 'OpenNova Mower'}
         </h1>
       </div>
@@ -107,15 +102,10 @@ export function StatusHeroCard({ mower }: Props) {
         className="relative flex items-center justify-center mb-4"
         style={{ filter: `drop-shadow(0 0 20px ${GLOW_COLOR[mower.activity]})` }}
       >
-        <BatteryRing
-          percentage={mower.battery}
-          color={ringColor}
-          size={160}
-        />
-        {/* Center content */}
+        <BatteryRing percentage={mower.battery} color={ringColor} bgColor={ringBg} size={160} />
         <div className="absolute inset-0 flex flex-col items-center justify-center">
           <div className="flex items-baseline gap-0.5">
-            <span className="text-4xl font-bold text-white tabular-nums">{mower.battery}</span>
+            <span className="text-4xl font-bold text-gray-900 dark:text-white tabular-nums">{mower.battery}</span>
             <span className="text-lg text-gray-400 font-medium">%</span>
           </div>
           {mower.batteryCharging && (
@@ -136,7 +126,7 @@ export function StatusHeroCard({ mower }: Props) {
             <span>{t('mobile.progress')}</span>
             <span className="tabular-nums">{mower.mowingProgress}%</span>
           </div>
-          <div className="h-1.5 bg-gray-800 rounded-full overflow-hidden">
+          <div className="h-1.5 bg-gray-200 dark:bg-gray-800 rounded-full overflow-hidden">
             <div
               className="h-full bg-emerald-500 rounded-full transition-all duration-500"
               style={{ width: `${mower.mowingProgress}%` }}
@@ -147,11 +137,11 @@ export function StatusHeroCard({ mower }: Props) {
 
       {/* Signal chips */}
       <div className="flex items-center gap-3 mt-3">
-        <div className="flex items-center gap-1 text-[11px] text-gray-500">
+        <div className="flex items-center gap-1 text-[11px] text-gray-400 dark:text-gray-500">
           <Wifi className="w-3 h-3" />
           <span className="tabular-nums">{mower.wifiRssi ? `${mower.wifiRssi}` : '—'}</span>
         </div>
-        <div className="flex items-center gap-1 text-[11px] text-gray-500">
+        <div className="flex items-center gap-1 text-[11px] text-gray-400 dark:text-gray-500">
           <Satellite className="w-3 h-3" />
           <span className="tabular-nums">{mower.rtkSat ?? '—'}</span>
         </div>

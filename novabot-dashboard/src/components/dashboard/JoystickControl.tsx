@@ -13,6 +13,15 @@ const DEAD_ZONE = 0.05;    // ignore tiny movements
 const MAX_LINEAR = 0.5;    // m/s max forward/backward speed
 const MAX_ANGULAR = 0.8;   // rad/s max turn speed
 
+// Map joystick position to JoystickHoldType direction
+// 0=none, 1=left, 2=right, 3=top(forward), 4=bottom(backward)
+function getHoldType(x: number, y: number): number {
+  if (Math.abs(y) >= Math.abs(x)) {
+    return y < 0 ? 3 : 4; // up = forward(3), down = backward(4)
+  }
+  return x < 0 ? 1 : 2; // left(1), right(2)
+}
+
 export function JoystickControl({ sn, online }: Props) {
   const { t } = useTranslation();
   const [active, setActive] = useState(false);
@@ -24,6 +33,7 @@ export function JoystickControl({ sn, online }: Props) {
   const thumbRef = useRef({ x: 0, y: 0 });
   const activeRef = useRef(false);
   const modeActiveRef = useRef(false);
+  const lastHoldTypeRef = useRef(0);
 
   // Keep refs in sync for interval callback
   useEffect(() => { thumbRef.current = thumbPos; }, [thumbPos]);
@@ -34,17 +44,21 @@ export function JoystickControl({ sn, online }: Props) {
     const dist = Math.sqrt(x * x + y * y);
     if (dist < DEAD_ZONE || !activeRef.current) return;
 
-    // x = left/right → angular velocity (y_v)
-    // y = up/down → linear velocity (x_w), negative y = forward
-    const linearSpeed = -y * MAX_LINEAR;
-    const angularSpeed = -x * MAX_ANGULAR;
+    // Firmware uses start_move direction + mst magnitude for motor control
+    // Resend start_move when dominant direction changes
+    const holdType = getHoldType(x, y);
+    if (holdType !== lastHoldTypeRef.current) {
+      lastHoldTypeRef.current = holdType;
+      sendCommand(sn, { start_move: holdType })
+        .catch((e) => setLastError(e instanceof Error ? e.message : String(e)));
+    }
 
-    // App sends {"mst": {"x_w": <float>, "y_v": <float>, "z_g": 0}} for continuous velocity
-    // x_w, y_v, z_g confirmed as JSON keys in firmware binary (3-char null-terminated strings)
+    // mst provides speed magnitude; direction comes from start_move
+    const speed = Math.round(dist * MAX_LINEAR * 100) / 100;
     sendCommand(sn, {
       mst: {
-        x_w: Math.round(linearSpeed * 100) / 100,
-        y_v: Math.round(angularSpeed * 100) / 100,
+        x_w: speed,
+        y_v: Math.round(Math.abs(x) * MAX_ANGULAR * 100) / 100,
         z_g: 0,
       },
     }).then(() => {
@@ -55,8 +69,8 @@ export function JoystickControl({ sn, online }: Props) {
     });
   }, [sn]);
 
-  const updatePosition = useCallback((clientX: number, clientY: number) => {
-    if (!baseRef.current) return;
+  const updatePosition = useCallback((clientX: number, clientY: number): { x: number; y: number } => {
+    if (!baseRef.current) return { x: 0, y: 0 };
     const rect = baseRef.current.getBoundingClientRect();
     const cx = rect.left + rect.width / 2;
     const cy = rect.top + rect.height / 2;
@@ -65,21 +79,30 @@ export function JoystickControl({ sn, online }: Props) {
     let dy = (clientY - cy) / radius;
     const dist = Math.sqrt(dx * dx + dy * dy);
     if (dist > 1) { dx /= dist; dy /= dist; }
-    setThumbPos({ x: dx, y: dy });
+    const pos = { x: dx, y: dy };
+    thumbRef.current = pos;   // Update ref immediately for interval callback
+    setThumbPos(pos);
+    return pos;
   }, []);
 
   const handleStart = useCallback((clientX: number, clientY: number) => {
     if (!online) return;
     setActive(true);
+    activeRef.current = true;  // Update ref immediately (don't wait for useEffect)
     setCmdCount(0);
     setLastError(null);
-    updatePosition(clientX, clientY);
+    const pos = updatePosition(clientX, clientY);
 
-    // Activate manual control mode: app sends {"start_move": <int>} via BLE
-    // Over MQTT we send {"start_move": {}} then continuous {"mst": {...}} for velocity
+    // Activate manual control mode: firmware requires {"start_move": <int>}, NOT empty object
+    // JoystickHoldType: 0=none, 1=left, 2=right, 3=top(fwd), 4=bottom(back)
+    // Direction from start_move determines motor direction, mst provides speed magnitude
     if (!modeActiveRef.current) {
       modeActiveRef.current = true;
-      sendCommand(sn, { start_move: {} }).catch(() => {});
+      const holdType = getHoldType(pos.x, pos.y) || 3;
+      lastHoldTypeRef.current = holdType;
+      sendCommand(sn, { start_move: holdType })
+        .then(() => setLastError(null))
+        .catch((e) => setLastError(e instanceof Error ? e.message : String(e)));
     }
 
     if (intervalRef.current) clearInterval(intervalRef.current);
@@ -93,7 +116,9 @@ export function JoystickControl({ sn, online }: Props) {
 
   const handleEnd = useCallback(() => {
     setActive(false);
+    activeRef.current = false;  // Update ref immediately
     setThumbPos({ x: 0, y: 0 });
+    thumbRef.current = { x: 0, y: 0 };
     if (intervalRef.current) {
       clearInterval(intervalRef.current);
       intervalRef.current = null;
@@ -122,7 +147,9 @@ export function JoystickControl({ sn, online }: Props) {
     <div className="flex flex-col items-center gap-2">
       {/* Status indicator */}
       <div className="text-[10px] font-mono h-4 tabular-nums">
-        {lastError ? (
+        {!online ? (
+          <span className="text-red-400">{t('controls.offline')}</span>
+        ) : lastError ? (
           <span className="text-red-400">{lastError}</span>
         ) : active ? (
           <span className="text-emerald-400">{speedPct}% &middot; {cmdCount} cmd</span>

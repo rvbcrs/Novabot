@@ -239,8 +239,10 @@ export function MiniMap({
       {showControls && (
         <button
           onClick={() => setTileLayer(l => l === 'satellite' ? 'street' : 'satellite')}
-          className="absolute top-3 right-3 z-[1001] bg-gray-900/80 backdrop-blur-sm
-                     rounded-lg p-2 border border-gray-700/50 text-gray-300
+          className="absolute top-3 right-3 z-[1001]
+                     bg-white/85 dark:bg-gray-900/80 backdrop-blur-sm
+                     rounded-lg p-2 border border-gray-200/60 dark:border-gray-700/50
+                     text-gray-600 dark:text-gray-300
                      active:scale-95 transition-transform"
         >
           <Layers className="w-5 h-5" />

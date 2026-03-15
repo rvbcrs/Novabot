@@ -118,6 +118,7 @@
     "joystick": "Joystick",
     "manualControl": "Handmatige besturing",
     "joystickHelp": "Sleep om te bewegen",
+    "offline": "Apparaat offline",
     "patrol": "Randpatrouille",
     "stopPatrol": "Stop patrouille",
     "maxSpeed": "Max snelheid",
@@ -249,7 +250,13 @@
     "rainResumed": "Maaien hervat na regen",
     "serverManaged": "Server-beheerd (regencheck)",
     "conflict": "Overlapt met: {{names}}",
-    "conflictWarning": "Dit schema overlapt met bestaande schema's"
+    "conflictWarning": "Dit schema overlapt met bestaande schema's",
+    "deleteConfirm": "Dit schema verwijderen?",
+    "deleted": "Schema verwijderd",
+    "saved": "Schema opgeslagen",
+    "created": "Schema aangemaakt",
+    "saveFailed": "Opslaan mislukt",
+    "deleteFailed": "Verwijderen mislukt"
   },
   "rain": {
     "since": "Sinds {{time}}",
@@ -438,6 +445,10 @@
     "progress": "Voortgang",
     "nextSchedule": "Volgende",
     "noSchedules": "Geen schema's",
-    "stopConfirm": "Stoppen met maaien?"
+    "stopConfirm": "Stoppen met maaien?",
+    "startMowing": "Start maaien",
+    "starting": "Starten...",
+    "sessionEnds": "Maaisessie eindigt om",
+    "mapObjects": "Kaartobjecten"
   }
 }
