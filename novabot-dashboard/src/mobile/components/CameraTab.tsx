@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Camera, RefreshCw, Loader, Lightbulb } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { sendCommand } from '../../api/client';
@@ -12,12 +12,18 @@ interface Props {
 
 const CAMERA_PORT = 8000;
 const DEFAULT_IP = '192.168.0.244';
+const SNAPSHOT_INTERVAL = 500; // ms between snapshot polls
+const STREAM_TIMEOUT = 5000;  // ms to wait for stream before fallback
 
 const CAMERA_TOPICS = [
   { key: 'front', labelKey: 'camera.front' },
+  { key: 'front_hd', labelKey: 'camera.frontHd' },
   { key: 'tof_gray', labelKey: 'camera.tofGray' },
   { key: 'tof_depth', labelKey: 'camera.tofDepth' },
+  { key: 'aruco', labelKey: 'camera.aruco' },
 ] as const;
+
+type Mode = 'stream' | 'snapshot';
 
 export function CameraTab({ sn, online, mowerIp, headlightOn = false }: Props) {
   const { t } = useTranslation();
@@ -26,13 +32,47 @@ export function CameraTab({ sn, online, mowerIp, headlightOn = false }: Props) {
   const [loading, setLoading] = useState(true);
   const [retryKey, setRetryKey] = useState(0);
   const [lightOn, setLightOn] = useState(headlightOn);
+  const [mode, setMode] = useState<Mode>('stream');
 
   const ip = mowerIp || DEFAULT_IP;
   const streamUrl = `/api/dashboard/camera/${sn}/stream?ip=${ip}&port=${CAMERA_PORT}&topic=${selectedTopic}&_k=${retryKey}`;
+  const snapshotBaseUrl = `/api/dashboard/camera/${sn}/snapshot?ip=${ip}&port=${CAMERA_PORT}&topic=${selectedTopic}`;
+
+  // Snapshot polling
+  const snapshotRef = useRef<HTMLImageElement>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const seqRef = useRef(0);
+
+  const pollSnapshot = useCallback(() => {
+    if (!snapshotRef.current) return;
+    seqRef.current++;
+    snapshotRef.current.src = `${snapshotBaseUrl}&_t=${Date.now()}`;
+  }, [snapshotBaseUrl]);
+
+  useEffect(() => {
+    if (mode !== 'snapshot' || hasError) return;
+    // Start polling
+    pollSnapshot();
+    timerRef.current = setInterval(pollSnapshot, SNAPSHOT_INTERVAL);
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  }, [mode, hasError, pollSnapshot, retryKey]);
+
+  // Stream timeout → auto-fallback to snapshot mode
+  const streamTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (mode !== 'stream' || !loading) return;
+    streamTimeoutRef.current = setTimeout(() => {
+      // Stream didn't load in time, switch to snapshot polling
+      setMode('snapshot');
+      setLoading(true);
+    }, STREAM_TIMEOUT);
+    return () => { if (streamTimeoutRef.current) clearTimeout(streamTimeoutRef.current); };
+  }, [mode, loading, retryKey]);
 
   const handleRetry = () => {
     setHasError(false);
     setLoading(true);
+    setMode('stream'); // retry stream first
     setRetryKey(k => k + 1);
   };
 
@@ -40,6 +80,7 @@ export function CameraTab({ sn, online, mowerIp, headlightOn = false }: Props) {
     setSelectedTopic(key);
     setHasError(false);
     setLoading(true);
+    setMode('stream');
     setRetryKey(k => k + 1);
   };
 
@@ -57,12 +98,12 @@ export function CameraTab({ sn, online, mowerIp, headlightOn = false }: Props) {
       {/* Topic selector */}
       <div className="flex items-center justify-between px-4 py-2.5
                        bg-white/90 dark:bg-gray-900/90 backdrop-blur-sm">
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 overflow-x-auto">
           {CAMERA_TOPICS.map(({ key, labelKey }) => (
             <button
               key={key}
               onClick={() => handleTopicChange(key)}
-              className={`px-3 py-1.5 text-xs rounded-full font-medium transition-colors ${
+              className={`px-3 py-1.5 text-xs rounded-full font-medium transition-colors whitespace-nowrap ${
                 selectedTopic === key
                   ? 'bg-cyan-600 text-white'
                   : 'text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-800 active:bg-gray-200 dark:active:bg-gray-700'
@@ -72,7 +113,7 @@ export function CameraTab({ sn, online, mowerIp, headlightOn = false }: Props) {
             </button>
           ))}
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1 flex-shrink-0">
           <button
             onClick={() => {
               const next = !lightOn;
@@ -97,7 +138,7 @@ export function CameraTab({ sn, online, mowerIp, headlightOn = false }: Props) {
         </div>
       </div>
 
-      {/* Stream */}
+      {/* Stream / Snapshot */}
       <div className="flex-1 relative flex items-center justify-center min-h-0">
         {hasError ? (
           <div className="flex flex-col items-center gap-4 px-8">
@@ -122,17 +163,42 @@ export function CameraTab({ sn, online, mowerIp, headlightOn = false }: Props) {
                 </span>
               </div>
             )}
-            <img
-              key={retryKey}
-              src={streamUrl}
-              alt="Mower camera"
-              className="w-full h-full object-contain"
-              onLoad={() => setLoading(false)}
-              onError={() => { setLoading(false); setHasError(true); }}
-            />
+
+            {mode === 'stream' ? (
+              <img
+                key={`stream-${retryKey}`}
+                src={streamUrl}
+                alt="Mower camera"
+                className="w-full h-full object-contain"
+                onLoad={() => setLoading(false)}
+                onError={() => {
+                  // Stream failed, try snapshot polling
+                  setMode('snapshot');
+                  setLoading(true);
+                }}
+              />
+            ) : (
+              <img
+                ref={snapshotRef}
+                key={`snap-${retryKey}`}
+                alt="Mower camera"
+                className="w-full h-full object-contain"
+                onLoad={() => setLoading(false)}
+                onError={() => { setLoading(false); setHasError(true); }}
+              />
+            )}
           </>
         )}
       </div>
+
+      {/* Mode indicator */}
+      {!hasError && !loading && mode === 'snapshot' && (
+        <div className="absolute bottom-2 left-1/2 -translate-x-1/2 z-20">
+          <span className="text-[10px] text-gray-500 bg-black/60 px-2 py-0.5 rounded-full">
+            snapshot
+          </span>
+        </div>
+      )}
     </div>
   );
 }

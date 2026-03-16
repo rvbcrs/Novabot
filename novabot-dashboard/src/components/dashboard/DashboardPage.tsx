@@ -331,7 +331,6 @@ export function DashboardPage({ devices, loading, logs, bleLogs, otaProgress, li
   });
 
   const mower = sorted.find(d => d.deviceType === 'mower');
-  const charger = sorted.find(d => d.deviceType === 'charger');
 
   const mowerActive = mower?.online && mower.sensors.work_status && mower.sensors.work_status !== '0';
   const isMappingActive = mower?.online && mower?.sensors.start_edit_or_assistant_map_flag === '1';
@@ -488,8 +487,6 @@ export function DashboardPage({ devices, loading, logs, bleLogs, otaProgress, li
               mowSpeed: mower?.sensors.mow_speed,
               covDirection: mower?.sensors.cov_direction,
             }}
-            chargerLat={charger?.sensors.latitude}
-            chargerLng={charger?.sensors.longitude}
             pathDirectionPreview={pathDirPreview}
             onMapSaved={handleMapSaved}
             liveOutline={mower ? (liveOutlines.get(mower.sn) ?? null) : null}

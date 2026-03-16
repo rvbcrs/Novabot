@@ -38,6 +38,7 @@ export interface MowerDerived {
   nickname: string | null;
   mowerIp: string | undefined;
   headlightOn: boolean;
+  manualSpeedLevel: number;
 }
 
 interface Props {
@@ -91,6 +92,7 @@ function deriveMower(devices: Map<string, DeviceState>): MowerDerived {
     nickname: mower?.nickname ?? null,
     mowerIp: mower?.mowerIp ?? undefined,
     headlightOn: s.headlight === '2',
+    manualSpeedLevel: parseInt(s.manual_controller_v ?? '0', 10) || 0,
   };
 }
 

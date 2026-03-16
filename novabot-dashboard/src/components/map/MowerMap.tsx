@@ -81,8 +81,6 @@ interface Props {
   lat?: string;
   lng?: string;
   heading?: string;
-  chargerLat?: string;
-  chargerLng?: string;
   signals?: SignalInfo;
   mowing?: MowingInfo;
   /** Wanneer ingesteld, toon een richting-overlay lijn op de kaart (graden, 0=N) */
@@ -304,7 +302,7 @@ function makeMowerIcon(heading: number) {
   return L.divIcon({
     className: '',
     html: `<div style="width:36px;height:36px;transform:rotate(${heading}deg);display:flex;align-items:center;justify-content:center">
-      <img src="/mower/mower_location.png" style="width:32px;height:20px;filter:drop-shadow(0 1px 3px rgba(0,0,0,0.4))" />
+      <img src="/mower/lawn_mower.png" style="width:32px;height:20px;filter:drop-shadow(0 1px 3px rgba(0,0,0,0.4))" />
     </div>`,
     iconSize: [36, 36],
     iconAnchor: [18, 18],
@@ -318,9 +316,12 @@ function makeChargerIcon(live = false) {
     : '';
   return L.divIcon({
     className: '',
-    html: `<div style="width:36px;height:36px;position:relative;display:flex;align-items:center;justify-content:center">
+    html: `<div style="width:36px;height:36px;position:relative;display:flex;align-items:center;justify-content:center;filter:drop-shadow(0 1px 3px rgba(0,0,0,0.4))">
       ${ring}
-      <img src="/mower/lawn_charger.png" style="width:28px;height:28px;filter:drop-shadow(0 1px 3px rgba(0,0,0,0.4))" />
+      <svg viewBox="0 0 32 32" width="28" height="28">
+        <path d="M16 3 L28 14 L24 14 L24 27 L8 27 L8 14 L4 14 Z" fill="#f59e0b" stroke="white" stroke-width="1.5" stroke-linejoin="round"/>
+        <path d="M18 12 L13 19 L16 19 L14 25 L21 17 L17 17 Z" fill="white" opacity="0.95"/>
+      </svg>
     </div>`,
     iconSize: [36, 36],
     iconAnchor: [18, 18],
@@ -484,7 +485,7 @@ function makeTargetIcon() {
 
 const targetIcon = makeTargetIcon();
 
-export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signals, mowing, pathDirectionPreview, onMapSaved, liveOutline, patternPlacement, onMapClickForPattern, offsetPreview }: Props) {
+export function MowerMap({ sn, lat, lng, heading, signals, mowing, pathDirectionPreview, onMapSaved, liveOutline, patternPlacement, onMapClickForPattern, offsetPreview }: Props) {
   const { t } = useTranslation();
   const { toast } = useToast();
   const [maps, setMaps] = useState<MapData[]>([]);
@@ -559,27 +560,11 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
     }
   }, [sn]);
 
-  // Mower GPS parsed — used as charger position fallback (mower sits on charger when idle)
-  const mowerLat = lat ? parseFloat(lat) : null;
-  const mowerLng = lng ? parseFloat(lng) : null;
-  const mowerHasGps = !!(mowerLat && mowerLng && mowerLat !== 0 && mowerLng !== 0);
 
-  // Auto-init charger positie van maaier GPS (maaier zit op laadstation bij idle).
-  // Charger positie = conversie origin voor lokaal→GPS. Alleen zetten als nog niet bekend.
+  // Append new trail points when lat/lng changes — only while actively mowing
+  const isMowing = mowing?.workStatus === '1';
   useEffect(() => {
-    if (!sn || !mowerHasGps) return;
-    if (savedCal.chargerLat && savedCal.chargerLng) return; // al gezet
-    const updated = {
-      ...savedCal,
-      chargerLat: mowerLat!,
-      chargerLng: mowerLng!,
-    };
-    setSavedCal(updated);
-    saveCalibration(sn, updated).catch(() => {});
-  }, [sn, mowerHasGps, mowerLat, mowerLng]);
-
-  // Append new trail points when lat/lng changes
-  useEffect(() => {
+    if (!isMowing) return;
     if (!lat || !lng || lat === '0' || lng === '0') return;
     const numLat = parseFloat(lat);
     const numLng = parseFloat(lng);
@@ -594,7 +579,7 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
       }
       return [...prev, { lat: numLat, lng: numLng, ts: Date.now() }];
     });
-  }, [lat, lng]);
+  }, [lat, lng, isMowing]);
 
   const handleClearTrail = useCallback(() => {
     clearTrail(sn).then(() => setTrail([])).catch(() => {});
@@ -710,9 +695,6 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
   // Mower heading icon (rotates with heading data)
   const headingDeg = heading ? parseFloat(heading) : 0;
   const mowerIcon = useMemo(() => makeMowerIcon(isNaN(headingDeg) ? 0 : headingDeg), [headingDeg]);
-  const chargerGpsIsLive = !!(chargerLat && parseFloat(chargerLat) !== 0 && chargerLng && parseFloat(chargerLng) !== 0);
-  const chargerIcon = useMemo(() => makeChargerIcon(chargerGpsIsLive), [chargerGpsIsLive]);
-
   // Coverage stats per polygon (trail points inside each work area)
   const coverageStats = useMemo(() => {
     if (trail.length === 0) return new Map<string, { points: number; area: number }>();
@@ -730,9 +712,10 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
     return stats;
   }, [trail, polygonMaps]);
 
-  // Charger GPS: prefer live charger sensor, then calibration, then mower GPS as fallback
-  const resolvedChargerLat = (chargerLat && parseFloat(chargerLat)) || savedCal.chargerLat || (mowerHasGps ? mowerLat : null);
-  const resolvedChargerLng = (chargerLng && parseFloat(chargerLng)) || savedCal.chargerLng || (mowerHasGps ? mowerLng : null);
+  // Charger GPS: ALLEEN uit opgeslagen calibratie — nooit live GPS (voorkomt drift bij refresh)
+  const resolvedChargerLat = savedCal.chargerLat || null;
+  const resolvedChargerLng = savedCal.chargerLng || null;
+  const chargerIcon = useMemo(() => makeChargerIcon(false), []);
   const chargerHasGps = !!(resolvedChargerLat && resolvedChargerLng);
 
   // Place charger on map click
@@ -1212,6 +1195,8 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
                   setSavedCal(updated);
                   saveCalibration(sn, updated).then(() => {
                     toast(t('map.chargerSaved'), 'success');
+                    // Re-fetch maps — server herberekent lokaal→GPS met nieuwe charger origin
+                    fetchMaps(sn).then(setMaps).catch(() => {});
                   });
                 },
               }}
@@ -1220,10 +1205,10 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
                 <div className="text-xs">
                   <div className="font-semibold">{t('map.chargingStation')}</div>
                   <div>{resolvedChargerLat!.toFixed(6)}, {resolvedChargerLng!.toFixed(6)}</div>
-                  <div className={`mt-1 font-medium ${chargerGpsIsLive ? 'text-green-600' : 'text-gray-500'}`}>
-                    {chargerGpsIsLive ? t('map.chargerGpsLive', 'Live GPS') : t('map.chargerGpsManual', 'Handmatig geplaatst')}
+                  <div className="mt-1 font-medium text-gray-500">
+                    {t('map.chargerGpsManual', 'Handmatig geplaatst')}
                   </div>
-                  {!chargerGpsIsLive && <div className="text-gray-400 mt-0.5">{t('map.dragToReposition')}</div>}
+                  <div className="text-gray-400 mt-0.5">{t('map.dragToReposition')}</div>
                 </div>
               </Popup>
             </Marker>

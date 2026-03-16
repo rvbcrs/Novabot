@@ -1,7 +1,7 @@
 import { useEffect, useState, useMemo } from 'react';
 import { MapContainer, TileLayer, Marker, Polygon, Polyline, useMap } from 'react-leaflet';
 import L from 'leaflet';
-import { Layers } from 'lucide-react';
+import { Layers, Gamepad2 } from 'lucide-react';
 import type { MapData, TrailPoint } from '../../types';
 import { fetchMaps, fetchTrail } from '../../api/client';
 
@@ -58,7 +58,7 @@ function makeMowerIcon(heading: number) {
   return L.divIcon({
     className: '',
     html: `<div style="width:36px;height:36px;transform:rotate(${heading}deg);display:flex;align-items:center;justify-content:center">
-      <img src="/mower/mower_location.png" style="width:32px;height:20px;filter:drop-shadow(0 1px 3px rgba(0,0,0,0.4))" />
+      <img src="/mower/lawn_mower.png" style="width:32px;height:20px;filter:drop-shadow(0 1px 3px rgba(0,0,0,0.4))" />
     </div>`,
     iconSize: [36, 36],
     iconAnchor: [18, 18],
@@ -68,8 +68,11 @@ function makeMowerIcon(heading: number) {
 function makeChargerIcon() {
   return L.divIcon({
     className: '',
-    html: `<div style="width:36px;height:36px;display:flex;align-items:center;justify-content:center">
-      <img src="/mower/lawn_charger.png" style="width:28px;height:28px;filter:drop-shadow(0 1px 3px rgba(0,0,0,0.4))" />
+    html: `<div style="width:36px;height:36px;display:flex;align-items:center;justify-content:center;filter:drop-shadow(0 1px 3px rgba(0,0,0,0.4))">
+      <svg viewBox="0 0 32 32" width="28" height="28">
+        <path d="M16 3 L28 14 L24 14 L24 27 L8 27 L8 14 L4 14 Z" fill="#f59e0b" stroke="white" stroke-width="1.5" stroke-linejoin="round"/>
+        <path d="M18 12 L13 19 L16 19 L14 25 L21 17 L17 17 Z" fill="white" opacity="0.95"/>
+      </svg>
     </div>`,
     iconSize: [36, 36],
     iconAnchor: [18, 18],
@@ -118,6 +121,15 @@ function RecenterMap({ position }: { position: [number, number] }) {
   return null;
 }
 
+function FlyToBounds({ bounds }: { bounds: L.LatLngBoundsExpression | null }) {
+  const map = useMap();
+  useEffect(() => {
+    if (!bounds) return;
+    map.flyToBounds(bounds, { padding: [50, 50], maxZoom: 22, duration: 0.5 });
+  }, [map, bounds]);
+  return null;
+}
+
 // ── MiniMap ─────────────────────────────────────────────────────────
 
 interface Props {
@@ -131,11 +143,17 @@ interface Props {
   className?: string;
   onTap?: () => void;
   showControls?: boolean;
+  joystickOpen?: boolean;
+  onJoystickToggle?: () => void;
+  selectedMapId?: string | null;
+  focusBounds?: L.LatLngBoundsExpression | null;
 }
 
 export function MiniMap({
   sn, lat, lng, heading, chargerLat, chargerLng,
   liveOutline, className = '', onTap, showControls = false,
+  joystickOpen = false, onJoystickToggle,
+  selectedMapId = null, focusBounds = null,
 }: Props) {
   const [maps, setMaps] = useState<MapData[]>([]);
   const [trail, setTrail] = useState<TrailPoint[]>([]);
@@ -182,13 +200,19 @@ export function MiniMap({
         />
 
         {/* Work area polygons */}
-        {maps.map(m => (
-          <Polygon
-            key={m.mapId}
-            positions={m.mapArea.map(p => [p.lat, p.lng] as [number, number])}
-            pathOptions={getAreaStyle(m.mapType, m.mapId, m.mapName)}
-          />
-        ))}
+        {maps.map(m => {
+          const style = getAreaStyle(m.mapType, m.mapId, m.mapName);
+          const isSelected = m.mapId === selectedMapId;
+          return (
+            <Polygon
+              key={m.mapId}
+              positions={m.mapArea.map(p => [p.lat, p.lng] as [number, number])}
+              pathOptions={isSelected
+                ? { ...style, weight: 4, fillOpacity: 0.4, dashArray: undefined }
+                : style}
+            />
+          );
+        })}
 
         {/* GPS trail */}
         {trailPositions.length > 1 && (
@@ -218,7 +242,8 @@ export function MiniMap({
 
         <FitToMaps maps={maps} />
         <ResizeHandler />
-        {lat && lng && !onTap && <RecenterMap position={[lat, lng]} />}
+        {lat && lng && !onTap && !focusBounds && <RecenterMap position={[lat, lng]} />}
+        <FlyToBounds bounds={focusBounds} />
       </MapContainer>
 
       {/* Tap overlay for home mode — blocks Leaflet touch, navigates to map tab */}
@@ -229,18 +254,31 @@ export function MiniMap({
         />
       )}
 
-      {/* Tile layer switcher */}
+      {/* Map control buttons */}
       {showControls && (
-        <button
-          onClick={() => setTileLayer(l => l === 'satellite' ? 'street' : 'satellite')}
-          className="absolute top-3 right-3 z-[1001]
-                     bg-white/85 dark:bg-gray-900/80 backdrop-blur-sm
-                     rounded-lg p-2 border border-gray-200/60 dark:border-gray-700/50
-                     text-gray-600 dark:text-gray-300
-                     active:scale-95 transition-transform"
-        >
-          <Layers className="w-5 h-5" />
-        </button>
+        <div className="absolute top-3 right-3 z-[1001] flex flex-col gap-2">
+          <button
+            onClick={() => setTileLayer(l => l === 'satellite' ? 'street' : 'satellite')}
+            className="bg-white/85 dark:bg-gray-900/80 backdrop-blur-sm
+                       rounded-lg p-2 border border-gray-200/60 dark:border-gray-700/50
+                       text-gray-600 dark:text-gray-300
+                       active:scale-95 transition-transform"
+          >
+            <Layers className="w-5 h-5" />
+          </button>
+          {onJoystickToggle && (
+            <button
+              onClick={onJoystickToggle}
+              className={`backdrop-blur-sm rounded-lg p-2 border active:scale-95 transition-all ${
+                joystickOpen
+                  ? 'bg-emerald-500/90 border-emerald-400/60 text-white'
+                  : 'bg-white/85 dark:bg-gray-900/80 border-gray-200/60 dark:border-gray-700/50 text-gray-600 dark:text-gray-300'
+              }`}
+            >
+              <Gamepad2 className="w-5 h-5" />
+            </button>
+          )}
+        </div>
       )}
     </div>
   );

@@ -10,9 +10,10 @@ interface Props {
   onClose: () => void;
   sn: string;
   onStarted: () => void;
+  initialMapId?: string | null;
 }
 
-export function StartMowSheet({ open, onClose, sn, onStarted }: Props) {
+export function StartMowSheet({ open, onClose, sn, onStarted, initialMapId = null }: Props) {
   const { t } = useTranslation();
   const { toast } = useToast();
   const [starting, setStarting] = useState(false);
@@ -32,10 +33,10 @@ export function StartMowSheet({ open, onClose, sn, onStarted }: Props) {
   useEffect(() => {
     if (!open || !sn) return;
     fetchMaps(sn).then(setMaps).catch(() => {});
-    // Reset to defaults
+    // Reset to defaults (pre-select area if provided)
     setCuttingHeight(40);
     setPathDirection(0);
-    setMapId(null);
+    setMapId(initialMapId ?? null);
   }, [open, sn]);
 
   const handleStart = async () => {
