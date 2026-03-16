@@ -32,7 +32,6 @@ const MOWER_GROUPS: SensorGroup[] = [
     icon: Wifi,
     iconColor: 'text-sky-400',
     fields: [
-      { key: 'battery_power', label: 'sensors.battery', unit: '%', icon: BatteryMedium, iconColor: 'text-green-400' },
       { key: 'wifi_rssi', label: 'sensors.wifi', unit: 'dBm', icon: Wifi, iconColor: 'text-sky-400' },
       { key: 'rtk_sat', label: 'sensors.rtkSat', icon: Satellite, iconColor: 'text-sky-400' },
       { key: 'gps_sat_num', label: 'sensors.gpsSat', icon: Satellite, iconColor: 'text-sky-400' },

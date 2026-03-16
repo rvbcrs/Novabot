@@ -452,11 +452,15 @@ export function updateDeviceData(sn: string, payload: Buffer): Map<string, strin
     }
   }
 
-  // Append GPS trail als lat of lng gewijzigd zijn
+  // Append GPS trail alleen als de maaier actief aan het maaien is
   if (changes.has('latitude') || changes.has('longitude')) {
-    const lat = snValues.get('latitude');
-    const lng = snValues.get('longitude');
-    if (lat && lng) appendTrailPoint(sn, lat, lng);
+    const ws = snValues.get('work_status');
+    // work_status 1 = mowing, 5 = mapping — alleen dan trail opslaan
+    if (ws === '1' || ws === '5') {
+      const lat = snValues.get('latitude');
+      const lng = snValues.get('longitude');
+      if (lat && lng) appendTrailPoint(sn, lat, lng);
+    }
   }
 
   // Sample signal history elke 30s

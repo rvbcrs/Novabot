@@ -170,12 +170,12 @@ export function HomeTab({ mower }: Props) {
           <div className={`w-12 h-1 rounded-full mt-2 ${UNDERLINE_COLOR[mower.activity]}`} />
         </div>
 
-        {/* Logo image — shown when not actively mowing */}
+        {/* Mower image — shown when not actively mowing */}
         {!isMowing && (
           <img
-            src="/OpenNova.png"
-            alt="OpenNova"
-            className="w-36 h-36 object-contain mb-4 opacity-90 dark:opacity-80"
+            src={mower.online ? '/mower/novabot.png' : '/mower/mower_offline.png'}
+            alt="Novabot Mower"
+            className="w-36 h-36 object-contain mb-4"
           />
         )}
 

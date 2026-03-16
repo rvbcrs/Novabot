@@ -25,7 +25,7 @@ import { ConfirmDialog } from '../common/ConfirmDialog';
 import { SettingsPanel } from '../settings/SettingsPanel';
 import { WorkHistory } from '../history/WorkHistory';
 import { SignalChart } from '../charts/SignalChart';
-import { deleteDevice, sendCommand, pinVerify } from '../../api/client';
+import { deleteDevice, sendCommand, pinVerify, dockAndSave } from '../../api/client';
 import { PinKeypad } from './PinKeypad';
 import { RainOverlay } from './RainOverlay';
 import { useToast } from '../common/Toast';
@@ -535,8 +535,13 @@ export function DashboardPage({ devices, loading, logs, bleLogs, otaProgress, li
                   onClick={async () => {
                     try {
                       await sendCommand(mower.sn, { save_map: { mapName: 'home' } });
-                      await sendCommand(mower.sn, { save_recharge_pos: {} });
                       toast(t('controls.saveMap') + ' ✓', 'success');
+                      // Maaier staat in het veld — stuur terug naar station via go_to_charge + ArUco
+                      toast(t('map.returningToCharger'), 'info');
+                      dockAndSave(mower.sn).then(result => {
+                        if (result.ok) toast(t('map.chargerSaveOk'), 'success');
+                        else toast(t('map.chargerSaveTimeout'), 'error');
+                      }).catch(() => {});
                     } catch { toast(t('controls.saveMap') + ' ✗', 'error'); }
                   }}
                   className="flex items-center gap-1 text-xs px-2.5 py-1 rounded-full bg-white/10 text-white hover:bg-white/20 transition-colors"

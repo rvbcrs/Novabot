@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Link2, Loader2, CheckCircle, Cpu, Zap } from 'lucide-react';
+import { Link2, Loader2, CheckCircle } from 'lucide-react';
 import { fetchUnboundDevices, bindDevice, type UnboundDevice } from '../../api/client';
 
 interface Props {
@@ -51,14 +51,14 @@ export function UnboundDevices({ onBound }: Props) {
         {devices.map(d => {
           const isDone    = done.has(d.sn);
           const isBusy    = binding === d.sn;
-          const Icon      = d.deviceType === 'charger' ? Zap : Cpu;
+          const iconSrc   = d.deviceType === 'charger' ? '/mower/ic_charger.png' : '/mower/ic_mower.png';
           const typeLabel = d.deviceType === 'charger' ? 'Laadstation' : 'Maaier';
 
           return (
             <div key={d.sn} className="flex items-center gap-3 bg-gray-900/60 rounded-lg px-3 py-2.5">
               {/* Type icoon + online dot */}
               <div className="relative flex-shrink-0">
-                <Icon className="w-5 h-5 text-gray-400" />
+                <img src={iconSrc} alt={typeLabel} className="w-5 h-5 opacity-60 invert" />
                 <span className={`absolute -bottom-0.5 -right-0.5 w-2 h-2 rounded-full border border-gray-900 ${
                   d.online ? 'bg-emerald-400' : 'bg-gray-600'
                 }`} />

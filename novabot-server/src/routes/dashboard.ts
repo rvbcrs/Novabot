@@ -842,12 +842,104 @@ dashboardRouter.post('/maps/:sn/push-to-mower', async (req: Request, res: Respon
     // Stuur na 8s een get_map_list om de nieuwe kaarten op te halen.
     setTimeout(() => requestMapList(sn), 8000);
 
+    // Maaier staat op het laadstation — sla huidige positie op als charger positie
+    setTimeout(() => {
+      publishToDevice(sn, { save_recharge_pos: {} });
+      console.log(`[SSH] save_recharge_pos gestuurd naar ${sn} (maaier op charger)`);
+    }, 10000);
+
     console.log(`[SSH] Kaarten geüpload + novabot_mapping herstart op ${sn} (${ip})`);
     res.json({ ok: true, ip, sn });
   } catch (err) {
     console.error(`[SSH] Upload mislukt naar ${sn} (${ip}):`, err);
     res.status(500).json({ error: `SSH upload mislukt: ${err instanceof Error ? err.message : err}` });
   }
+});
+
+// POST /api/dashboard/maps/:sn/dock-and-save — stuur maaier naar station (go_to_charge + ArUco)
+// en sla charger positie op zodra de maaier gedockt is.
+// Gebruikt na autonomous mapping: maaier staat in het veld, moet terug naar station.
+dashboardRouter.post('/maps/:sn/dock-and-save', (req: Request, res: Response) => {
+  const { sn } = req.params;
+  const MAX_WAIT = 5 * 60 * 1000; // 5 min
+  const POLL_INTERVAL = 5000;
+  const start = Date.now();
+
+  // Stuur go_to_charge — maaier navigeert via GPS + ArUco QR scan voor final approach
+  publishToDevice(sn, { go_to_charge: {} });
+  console.log(`[CHARGER] go_to_charge gestuurd naar ${sn}, wacht op docking...`);
+
+  const check = () => {
+    const snap = getDeviceSnapshot(sn);
+    const state = snap?.battery_state;
+    if (state === 'CHARGING' || state === 'FULL') {
+      publishToDevice(sn, { save_recharge_pos: {} });
+      console.log(`[CHARGER] Maaier ${sn} gedockt, save_recharge_pos gestuurd`);
+      res.json({ ok: true, waited: Date.now() - start });
+      return;
+    }
+    if (Date.now() - start > MAX_WAIT) {
+      console.warn(`[CHARGER] Timeout: maaier ${sn} niet op station na ${MAX_WAIT / 1000}s`);
+      res.json({ ok: false, error: 'timeout', waited: MAX_WAIT });
+      return;
+    }
+    setTimeout(check, POLL_INTERVAL);
+  };
+  // Geef maaier 3s om te beginnen met navigeren
+  setTimeout(check, 3000);
+});
+
+// POST /api/dashboard/maps/:sn/calibrate-charger — ArUco kalibratie
+// Maaier staat op station → start_run undockt (enige commando dat werkt) →
+// stop_run stopt maaien → go_to_charge keert terug via GPS + ArUco.
+// Geteste alternatieven die NIET werken terwijl docked:
+//   - start_move: firmware blokkeert handmatige besturing op laadstation
+//   - start_navigation: crasht ROS nav stack (localization niet geïnitialiseerd)
+//   - start_assistant_build_map: commando ontvangen maar maaier beweegt niet
+// start_run is het ENIGE commando dat de maaier van het dock laat rijden.
+// Mesjes draaien ~5s maar dat is onvermijdelijk.
+dashboardRouter.post('/maps/:sn/calibrate-charger', (req: Request, res: Response) => {
+  const { sn } = req.params;
+
+  // Zoek een beschikbare map voor start_run
+  const mapRow = db.prepare(
+    `SELECT map_name FROM maps WHERE mower_sn = ? AND map_type = 'work' LIMIT 1`
+  ).get(sn) as { map_name: string } | undefined;
+  const mapName = mapRow?.map_name || 'map0';
+
+  // 1. Save huidige positie als charger (maaier staat op station)
+  publishToDevice(sn, { save_recharge_pos: {} });
+  console.log(`[CALIBRATE] save_recharge_pos gestuurd naar ${sn}`);
+
+  // 2. start_run — maaier undockt automatisch (enige werkende methode)
+  setTimeout(() => {
+    publishToDevice(sn, {
+      start_run: {
+        mapName,
+        cutGrassHeight: 5,
+        workArea: mapName,
+        startWay: 'app',
+        schedule: false,
+        scheduleId: '',
+        mapNames: [mapName]
+      }
+    });
+    console.log(`[CALIBRATE] start_run gestuurd naar ${sn} (map: ${mapName}) — maaier undockt`);
+
+    // 3. Na 8s: stop maaien (maaier is ~1m van dock, mesjes stoppen)
+    setTimeout(() => {
+      publishToDevice(sn, { stop_run: {} });
+      console.log(`[CALIBRATE] stop_run naar ${sn}, wacht 3s...`);
+
+      // 4. Na 3s: terug naar charger via go_to_charge (GPS + ArUco scan)
+      setTimeout(() => {
+        publishToDevice(sn, { go_to_charge: {} });
+        console.log(`[CALIBRATE] go_to_charge naar ${sn} — ArUco scan tijdens return`);
+      }, 3000);
+    }, 8000);
+  }, 1000);
+
+  res.json({ ok: true });
 });
 
 // POST /api/dashboard/maps/:sn/import-zip — importeer kaarten uit een Novabot ZIP
@@ -2301,12 +2393,12 @@ dashboardRouter.post('/pin/:sn/verify', (req: Request, res: Response) => {
     res.status(404).json({ error: 'Device is offline' });
     return;
   }
-  publishToDevice(sn, { dev_pin_info: { cfg_value: 2, code } });
-  // OOK via extended_commands.py voor directe serial verify op de STM32
-  // (bewezen werkend: CMD 0x23 type=2, ASCII PIN digits, CRC-8)
-  // extended_commands.py stuurt na succesvolle verify automatisch type=3 clear error
+  // NIET via MQTT dev_pin_info! mqtt_node's C++ ChassisPinCodeSet action client
+  // vindt de action server NOOIT (21s timeout) en rapporteert dan error_status=151.
+  // Dit VEROORZAAKT de PIN lock error die alle commando's blokkeert.
+  // ALLEEN via extended_commands.py → pin_verify_ros2.py → ROS2 action (bewezen werkend).
   publishExtendedCommand(sn, { verify_pin: { code } });
-  console.log(`[PIN] Verify PIN voor ${sn}: ${code} (via mqtt_node + serial)`);
+  console.log(`[PIN] Verify PIN voor ${sn}: ${code} (alleen via extended_commands.py ROS2)`);
 
   // Activeer cooldown: gedurende 60s worden inkomende error_status updates
   // die PIN-gerelateerd zijn genegeerd (voorkomt dat LoRa/report de error terugzet)

@@ -456,8 +456,9 @@ cat > "$NOVABOT_ROOT/scripts/set_server_urls.sh" << URLSCRIPT
 # Aangeroepen vanuit run_novabot.sh
 #
 # Stap 1: Ontdek server via mDNS (opennovabot.local)
-# Stap 2: Fallback naar last-known IP of hardcoded waarden
-# Stap 3: Schrijf naar http_address.txt + json_config.json
+# Stap 2: DNS resolve mqtt.lfibot.com (via systeem-DNS / AdGuard)
+# Stap 3: Fallback naar last-known IP of hardcoded waarden
+# Stap 4: Schrijf naar http_address.txt + json_config.json
 
 FALLBACK_HOST="${SERVER_HOST}"
 FALLBACK_HTTP_PORT="${SERVER_HTTP_PORT}"
@@ -521,17 +522,34 @@ mdns_query()
 MDNS_EOF
 )
 
-# ── Bepaal server IP (discovery → last-known → hardcoded) ────
+# ── DNS resolution (mqtt.lfibot.com → IP via systeem-DNS / AdGuard) ────
+DNS_HOSTNAME="mqtt.lfibot.com"
+DNS_IP=\$(python3 -c "
+import socket
+try:
+    ip = socket.gethostbyname('\$DNS_HOSTNAME')
+    # Filter localhost/loopback — dat is de maaier zelf
+    if not ip.startswith('127.'):
+        print(ip)
+except:
+    pass
+" 2>/dev/null)
+
+# ── Bepaal server IP (mDNS → DNS → last-known → hardcoded) ────
 if [ -n "\$DISCOVERED_IP" ]; then
     log "Server ontdekt via mDNS: \$DISCOVERED_IP"
     echo "\$DISCOVERED_IP" > "\$LAST_KNOWN_FILE"
     SERVER_IP="\$DISCOVERED_IP"
+elif [ -n "\$DNS_IP" ]; then
+    log "Server ontdekt via DNS (\$DNS_HOSTNAME): \$DNS_IP"
+    echo "\$DNS_IP" > "\$LAST_KNOWN_FILE"
+    SERVER_IP="\$DNS_IP"
 elif [ -f "\$LAST_KNOWN_FILE" ]; then
     SERVER_IP=\$(cat "\$LAST_KNOWN_FILE")
-    log "mDNS mislukt — gebruik last-known IP: \$SERVER_IP"
+    log "mDNS+DNS mislukt — gebruik last-known IP: \$SERVER_IP"
 elif [ -n "\$FALLBACK_HOST" ]; then
     SERVER_IP="\$FALLBACK_HOST"
-    log "mDNS mislukt, geen last-known — gebruik fallback: \$SERVER_IP"
+    log "mDNS+DNS mislukt, geen last-known — gebruik fallback: \$SERVER_IP"
 else
     SERVER_IP=""
     log "WARN: geen server gevonden — configuratie niet bijgewerkt"

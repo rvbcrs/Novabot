@@ -104,13 +104,18 @@ export function StatusHeroCard({ mower }: Props) {
       >
         <BatteryRing percentage={mower.battery} color={ringColor} bgColor={ringBg} size={160} />
         <div className="absolute inset-0 flex flex-col items-center justify-center">
+          <img
+            src={mower.online ? '/mower/novabot.png' : '/mower/mower_offline.png'}
+            alt="Mower"
+            className="w-16 h-16 object-contain mb-0.5"
+          />
           <div className="flex items-baseline gap-0.5">
-            <span className="text-4xl font-bold text-gray-900 dark:text-white tabular-nums">{mower.battery}</span>
-            <span className="text-lg text-gray-400 font-medium">%</span>
+            <span className="text-xl font-bold text-gray-900 dark:text-white tabular-nums">{mower.battery}</span>
+            <span className="text-xs text-gray-400 font-medium">%</span>
+            {mower.batteryCharging && (
+              <Zap className="w-3 h-3 text-blue-400 ml-0.5" />
+            )}
           </div>
-          {mower.batteryCharging && (
-            <Zap className="w-4 h-4 text-blue-400 mt-0.5" />
-          )}
         </div>
       </div>
 
