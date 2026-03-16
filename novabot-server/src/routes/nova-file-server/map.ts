@@ -8,8 +8,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { db } from '../../db/database.js';
 import { authMiddleware } from '../../middleware/auth.js';
 import { AuthRequest, ok, fail, MapRow } from '../../types/index.js';
-import { parseMapZip, GpsPoint, gpsToLocal, polygonArea } from '../../mqtt/mapConverter.js';
-import { deviceCache } from '../../mqtt/sensorData.js';
+import { parseMapZip, type LocalPoint, type GpsPoint, polygonArea, gpsToLocal } from '../../mqtt/mapConverter.js';
 
 export const mapRouter = Router();
 
@@ -23,14 +22,10 @@ fs.mkdirSync(TRACKS_PATH, { recursive: true });
 const upload = multer({ dest: STORAGE_PATH });
 
 /**
- * Genereer CSV content uit database GPS coördinaten voor een map bestand.
- * Converteert GPS lat/lng naar lokale x,y meters (relatief t.o.v. eerste punt als origin).
- * Retourneert null als er geen data gevonden kan worden.
+ * Genereer CSV content uit database lokale coördinaten.
+ * DB bevat al lokale x,y meters (charger = 0,0) — output direct als CSV.
  */
 function generateCsvFromDb(sn: string, fileName: string): string | null {
-  // Parse bestandsnaam om te bepalen welke map het betreft
-  // map0_work.csv → mapIndex 0, type work
-  // map0_0_obstacle.csv → mapIndex 0, subIndex 0, type obstacle
   const workMatch = fileName.match(/^map(\d+)_work\.csv$/);
   const obstacleMatch = fileName.match(/^map(\d+)_(\d+)_obstacle\.csv$/);
 
@@ -52,21 +47,11 @@ function generateCsvFromDb(sn: string, fileName: string): string | null {
   if (!mapRow?.map_area) return null;
 
   try {
-    const gpsPoints: GpsPoint[] = JSON.parse(mapRow.map_area);
-    if (!gpsPoints || gpsPoints.length < 2) return null;
+    const points: LocalPoint[] = JSON.parse(mapRow.map_area);
+    if (!points || points.length < 2) return null;
 
-    // Gebruik charger positie als origin (consistent met maaier's lokale coördinatensysteem)
-    const cal = db.prepare('SELECT charger_lat, charger_lng FROM map_calibration WHERE mower_sn = ?')
-      .get(sn) as { charger_lat: number | null; charger_lng: number | null } | undefined;
-    const origin: GpsPoint = cal?.charger_lat && cal?.charger_lng
-      ? { lat: cal.charger_lat, lng: cal.charger_lng }
-      : gpsPoints[0]; // fallback als geen charger positie bekend
-
-    const lines = gpsPoints.map(p => {
-      const local = gpsToLocal(p, origin);
-      return `${local.x},${local.y}`;
-    });
-
+    // Lokale punten direct als CSV — geen conversie nodig
+    const lines = points.map(p => `${p.x.toFixed(2)},${p.y.toFixed(2)}`);
     return lines.join('\n') + '\n';
   } catch {
     return null;
@@ -139,11 +124,10 @@ mapRouter.get('/queryEquipmentMap', authMiddleware, (req: AuthRequest, res: Resp
   function calcPolygonAreaM2(polygonJson: string | null): string {
     if (!polygonJson) return '0';
     try {
-      const points: GpsPoint[] = JSON.parse(polygonJson);
+      const points: LocalPoint[] = JSON.parse(polygonJson);
       if (!points || points.length < 3) return '0';
-      const origin = points[0];
-      const localPoints = points.map(p => gpsToLocal(p, origin));
-      const area = polygonArea(localPoints);
+      // Punten zijn al lokale meters — directe oppervlakteberekening
+      const area = polygonArea(points);
       return String(Math.round(area * 100) / 100);
     } catch { return '0'; }
   }
@@ -314,6 +298,30 @@ mapRouter.post('/fragmentUploadEquipmentMap', authMiddleware, upload.single('fil
     .get(sn, req.userId);
   if (!equipment) { res.json(fail('Equipment not found', 404)); return; }
 
+  // App stuurt mapArea als GPS [{lat,lng}] — converteer naar lokaal [{x,y}] vóór opslag
+  let localMapArea = mapArea ?? null;
+  let localMapMaxMin = mapMaxMin ?? null;
+  if (mapArea) {
+    try {
+      const pts = JSON.parse(mapArea);
+      if (Array.isArray(pts) && pts.length > 0 && 'lat' in pts[0]) {
+        const cal = db.prepare('SELECT charger_lat, charger_lng FROM map_calibration WHERE mower_sn = ?')
+          .get(sn) as { charger_lat: number | null; charger_lng: number | null } | undefined;
+        if (cal?.charger_lat && cal?.charger_lng) {
+          const origin: GpsPoint = { lat: cal.charger_lat, lng: cal.charger_lng };
+          const localPts = pts.map((p: GpsPoint) => gpsToLocal(p, origin));
+          localMapArea = JSON.stringify(localPts);
+          localMapMaxMin = JSON.stringify({
+            minX: Math.min(...localPts.map((p: LocalPoint) => p.x)),
+            maxX: Math.max(...localPts.map((p: LocalPoint) => p.x)),
+            minY: Math.min(...localPts.map((p: LocalPoint) => p.y)),
+            maxY: Math.max(...localPts.map((p: LocalPoint) => p.y)),
+          });
+        }
+      }
+    } catch { /* keep as-is */ }
+  }
+
   // Single-chunk or simple upload (no fragmentation)
   if (!chunkIndex && !chunksTotal) {
     const mapId = uuidv4();
@@ -324,7 +332,7 @@ mapRouter.post('/fragmentUploadEquipmentMap', authMiddleware, upload.single('fil
       INSERT OR REPLACE INTO maps
         (map_id, mower_sn, map_name, map_area, map_max_min, file_name, file_size, created_at, updated_at)
       VALUES (?,?,?,?,?,?,?,?,?)
-    `).run(mapId, sn, mapName ?? null, mapArea ?? null, mapMaxMin ?? null,
+    `).run(mapId, sn, mapName ?? null, localMapArea, localMapMaxMin,
            fileName, req.file?.size ?? null, now, now);
 
     res.json(ok({ mapId, uploadId }));
@@ -377,7 +385,7 @@ mapRouter.post('/fragmentUploadEquipmentMap', authMiddleware, upload.single('fil
       INSERT OR REPLACE INTO maps
         (map_id, mower_sn, map_name, map_area, map_max_min, file_name, file_size, created_at, updated_at)
       VALUES (?,?,?,?,?,?,?,?,?)
-    `).run(mapId, sn, mapName ?? null, mapArea ?? null, mapMaxMin ?? null,
+    `).run(mapId, sn, mapName ?? null, localMapArea, localMapMaxMin,
            finalFileName, updated.file_size, now, now);
 
     db.prepare('DELETE FROM map_uploads WHERE upload_id = ?').run(uploadId);
@@ -519,9 +527,7 @@ mapRouter.post('/uploadEquipmentMap', upload.any(), (req: Request, res: Response
   const latestPath = path.join(STORAGE_PATH, `${sn}_latest.zip`);
   fs.copyFileSync(finalPath, latestPath);
 
-  // Probeer GPS polygonen te extraheren als we de charging station positie kennen
-  let mapAreaJson: string | null = null;
-  let mapMaxMinJson: string | null = null;
+  // Parse ZIP — lokale coördinaten direct uit CSV (geen GPS origin nodig)
   let mapName: string | null = localFileName ?? null;
 
   // Parse jsonBody metadata als aanwezig
@@ -533,80 +539,70 @@ mapRouter.post('/uploadEquipmentMap', upload.any(), (req: Request, res: Response
     } catch { /* niet-JSON jsonBody, negeren */ }
   }
 
-  // Haal GPS origin op vanuit sensorData cache (maaier stuurt lat/lng via MQTT)
-  const snData = deviceCache.get(sn);
-  const lat = snData?.get('latitude');
-  const lng = snData?.get('longitude');
+  try {
+    const parsed = parseMapZip(finalPath);
+    if (parsed && parsed.areas.length > 0) {
+      // Check of er al maps in de DB staan voor deze maaier (bijv. dashboard-drawn)
+      const existingMaps = db.prepare(
+        "SELECT map_id, map_type FROM maps WHERE mower_sn = ? AND map_area IS NOT NULL"
+      ).all(sn) as Array<{ map_id: string; map_type: string }>;
 
-  if (lat && lng) {
-    const origin: GpsPoint = { lat: parseFloat(lat), lng: parseFloat(lng) };
-    try {
-      const parsed = parseMapZip(finalPath, origin);
-      if (parsed && parsed.areas.length > 0) {
-        // Check of er al maps in de DB staan voor deze maaier (bijv. dashboard-drawn)
-        const existingMaps = db.prepare(
-          "SELECT map_id, map_type FROM maps WHERE mower_sn = ? AND map_area IS NOT NULL"
-        ).all(sn) as Array<{ map_id: string; map_type: string }>;
-
-        if (existingMaps.length > 0) {
-          // Maps bestaan al — maaier stuurt onze eigen ZIP terug. Alleen file_name bijwerken.
-          const now = new Date().toISOString();
-          for (const em of existingMaps) {
-            db.prepare("UPDATE maps SET file_name = ?, updated_at = ? WHERE map_id = ?")
-              .run(finalFileName, now, em.map_id);
-          }
-          console.log(`[MAP] uploadEquipmentMap: ${existingMaps.length} bestaande maps bijgewerkt voor ${sn} (geen duplicaten)`);
-        } else {
-          // Geen bestaande maps — sla elk werkgebied als aparte map op
-          const now = new Date().toISOString();
-          for (const area of parsed.areas) {
-            if (area.type !== 'work') continue;
-            const areaMapId = uuidv4();
-            const lats = area.points.map(p => p.lat);
-            const lngs = area.points.map(p => p.lng);
-            const bounds = {
-              minLat: Math.min(...lats), maxLat: Math.max(...lats),
-              minLng: Math.min(...lngs), maxLng: Math.max(...lngs),
-            };
-            mapAreaJson = JSON.stringify(area.points);
-            mapMaxMinJson = JSON.stringify(bounds);
-
-            db.prepare(`
-              INSERT OR REPLACE INTO maps
-                (map_id, mower_sn, map_name, map_area, map_max_min, file_name, file_size, map_type, created_at, updated_at)
-              VALUES (?,?,?,?,?,?,?,?,?,?)
-            `).run(areaMapId, sn, mapName ?? `map${area.mapIndex}`, mapAreaJson, mapMaxMinJson,
-                   finalFileName, file.size, area.type, now, now);
-            console.log(`[MAP] Opgeslagen werkgebied map${area.mapIndex} voor ${sn} (${area.points.length} GPS punten)`);
-          }
-          // Sla obstakels ook op
-          for (const area of parsed.areas) {
-            if (area.type !== 'obstacle') continue;
-            const obsMapId = uuidv4();
-            db.prepare(`
-              INSERT OR REPLACE INTO maps
-                (map_id, mower_sn, map_name, map_area, map_max_min, file_name, file_size, map_type, created_at, updated_at)
-              VALUES (?,?,?,?,?,?,?,?,?,?)
-            `).run(obsMapId, sn, `obstacle_${area.mapIndex}_${area.subIndex ?? 0}`,
-                   JSON.stringify(area.points), null, finalFileName, file.size,
-                   'obstacle', now, now);
-          }
-          console.log(`[MAP] ZIP geparsed: ${parsed.areas.length} gebieden geëxtraheerd voor ${sn}`);
+      if (existingMaps.length > 0) {
+        // Maps bestaan al — maaier stuurt onze eigen ZIP terug. Alleen file_name bijwerken.
+        const now = new Date().toISOString();
+        for (const em of existingMaps) {
+          db.prepare("UPDATE maps SET file_name = ?, updated_at = ? WHERE map_id = ?")
+            .run(finalFileName, now, em.map_id);
         }
+        console.log(`[MAP] uploadEquipmentMap: ${existingMaps.length} bestaande maps bijgewerkt voor ${sn} (geen duplicaten)`);
+      } else {
+        // Geen bestaande maps — sla elk werkgebied op (lokale coördinaten direct uit CSV)
+        const now = new Date().toISOString();
+        for (const area of parsed.areas) {
+          if (area.type !== 'work') continue;
+          const areaMapId = uuidv4();
+          const bounds = {
+            minX: Math.min(...area.points.map(p => p.x)),
+            maxX: Math.max(...area.points.map(p => p.x)),
+            minY: Math.min(...area.points.map(p => p.y)),
+            maxY: Math.max(...area.points.map(p => p.y)),
+          };
+
+          db.prepare(`
+            INSERT OR REPLACE INTO maps
+              (map_id, mower_sn, map_name, map_area, map_max_min, file_name, file_size, map_type, created_at, updated_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?)
+          `).run(areaMapId, sn, mapName ?? `map${area.mapIndex}`, JSON.stringify(area.points),
+                 JSON.stringify(bounds), finalFileName, file.size, area.type, now, now);
+          console.log(`[MAP] Opgeslagen werkgebied map${area.mapIndex} voor ${sn} (${area.points.length} lokale punten)`);
+        }
+        // Sla obstakels ook op
+        for (const area of parsed.areas) {
+          if (area.type !== 'obstacle') continue;
+          const obsMapId = uuidv4();
+          db.prepare(`
+            INSERT OR REPLACE INTO maps
+              (map_id, mower_sn, map_name, map_area, map_max_min, file_name, file_size, map_type, created_at, updated_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?)
+          `).run(obsMapId, sn, `obstacle_${area.mapIndex}_${area.subIndex ?? 0}`,
+                 JSON.stringify(area.points), null, finalFileName, file.size,
+                 'obstacle', now, now);
+        }
+        console.log(`[MAP] ZIP geparsed: ${parsed.areas.length} gebieden geëxtraheerd voor ${sn}`);
       }
-    } catch (err) {
-      console.error(`[MAP] ZIP parsing mislukt voor ${sn}:`, err);
+    } else {
+      // ZIP parsing geeft geen gebieden — sla alleen het bestand op
+      console.log(`[MAP] Geen kaartgebieden in ZIP voor ${sn}, bestand opgeslagen`);
+      const mapId = uuidv4();
+      const now = new Date().toISOString();
+      db.prepare(`
+        INSERT OR REPLACE INTO maps
+          (map_id, mower_sn, map_name, map_area, map_max_min, file_name, file_size, created_at, updated_at)
+        VALUES (?,?,?,?,?,?,?,?,?)
+      `).run(mapId, sn, mapName, null, null, finalFileName, file.size, now, now);
     }
-  } else {
-    // Geen GPS beschikbaar — sla alleen het bestand op zonder parsing
-    console.log(`[MAP] Geen GPS origin beschikbaar voor ${sn}, ZIP opgeslagen als bestand`);
-    const mapId = uuidv4();
-    const now = new Date().toISOString();
-    db.prepare(`
-      INSERT OR REPLACE INTO maps
-        (map_id, mower_sn, map_name, map_area, map_max_min, file_name, file_size, created_at, updated_at)
-      VALUES (?,?,?,?,?,?,?,?,?)
-    `).run(mapId, sn, mapName, null, null, finalFileName, file.size, now, now);
+  } catch (err) {
+    console.error(`[MAP] ZIP parsing mislukt voor ${sn}:`, err);
   }
 
   res.json(ok(null));

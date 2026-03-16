@@ -1,11 +1,11 @@
 /**
- * Map Converter — converteert GPS polygonen naar het Novabot CSV/ZIP kaartformaat.
+ * Map Converter — beheert het Novabot CSV/ZIP kaartformaat.
  *
- * De maaier slaat kaarten op als CSV bestanden met lokale x,y coördinaten (meters
- * relatief t.o.v. het laadstation). Dit bestand converteert GPS lat/lng polygonen
- * uit de dashboard database naar dat formaat, en verpakt ze in een ZIP.
+ * De database slaat kaartpolygonen op als lokale x,y coördinaten (meters,
+ * charger = 0,0), identiek aan het CSV formaat op de maaier.
+ * Conversie GPS ↔ lokaal gebeurt alleen aan de API-grenzen (dashboard, app).
  *
- * Coördinaatconversie (WGS84 → lokaal):
+ * Coördinaatconversie (WGS84 ↔ lokaal):
  *   x_local = (lon - lon_origin) × cos(lat_origin) × 111320
  *   y_local = (lat - lat_origin) × 111320
  *
@@ -52,12 +52,11 @@ export interface MapArea {
   subIndex?: number;
   /** Voor unicom: doel ("charge" of "map1_0" etc) */
   target?: string;
-  points: GpsPoint[];
+  points: LocalPoint[];
 }
 
 export interface MapPackage {
   sn: string;
-  chargingStation: GpsPoint;
   chargingOrientation: number;
   areas: MapArea[];
 }
@@ -158,8 +157,6 @@ export function buildMapZip(pkg: MapPackage): string {
   // Zorg dat directories bestaan
   mkdirSync(csvDir, { recursive: true });
 
-  const origin: GpsPoint = pkg.chargingStation;
-
   // map_info.json
   const mapInfo: Record<string, unknown> = {
     charging_pose: {
@@ -169,9 +166,9 @@ export function buildMapZip(pkg: MapPackage): string {
     },
   };
 
-  // Genereer CSV bestanden
+  // Genereer CSV bestanden — punten zijn al lokaal (charger = 0,0)
   for (const area of pkg.areas) {
-    const localPoints = area.points.map(p => gpsToLocal(p, origin));
+    const localPoints = area.points;
     const fileName = areaFileName(area);
     const csvContent = pointsToCsv(localPoints);
 
@@ -234,7 +231,6 @@ interface MapRow {
  */
 export function generateMapZipFromDb(
   sn: string,
-  chargingStation: GpsPoint,
   chargingOrientation: number = 0,
 ): string | null {
   const rows = db.prepare(
@@ -254,7 +250,7 @@ export function generateMapZipFromDb(
 
   for (let i = 0; i < workRows.length; i++) {
     const row = workRows[i];
-    const points: GpsPoint[] = JSON.parse(row.map_area!);
+    const points: LocalPoint[] = JSON.parse(row.map_area!);
 
     if (!points || points.length < 3) continue;
 
@@ -265,9 +261,8 @@ export function generateMapZipFromDb(
     });
 
     // Zoek een handmatig getekend unicom kanaal voor dit werkgebied
-    // (unicomRows[i] als die bestaat, anders automatisch genereren)
     if (unicomRows[i]) {
-      const unicomPoints: GpsPoint[] = JSON.parse(unicomRows[i].map_area!);
+      const unicomPoints: LocalPoint[] = JSON.parse(unicomRows[i].map_area!);
       if (unicomPoints && unicomPoints.length >= 2) {
         areas.push({
           mapIndex: i,
@@ -280,27 +275,25 @@ export function generateMapZipFromDb(
     }
 
     // Geen handmatig kanaal — genereer automatisch een unicom pad
-    // (rechte lijn van dichtstbijzijnd punt naar charging station)
-    const localPoints = points.map(p => gpsToLocal(p, chargingStation));
+    // Rechte lijn van charger (0,0) naar dichtstbijzijnd punt
     let closestIdx = 0;
     let closestDist = Infinity;
-    for (let j = 0; j < localPoints.length; j++) {
-      const dist = Math.sqrt(localPoints[j].x ** 2 + localPoints[j].y ** 2);
+    for (let j = 0; j < points.length; j++) {
+      const dist = Math.sqrt(points[j].x ** 2 + points[j].y ** 2);
       if (dist < closestDist) {
         closestDist = dist;
         closestIdx = j;
       }
     }
 
-    // Unicom: lineair pad van charging station naar dichtstbijzijnd punt
-    const closestGps = points[closestIdx];
+    const closest = points[closestIdx];
     const steps = Math.max(5, Math.ceil(closestDist / 0.5)); // stappen van ~0.5m
-    const unicomPoints: GpsPoint[] = [];
+    const unicomPoints: LocalPoint[] = [];
     for (let s = 0; s <= steps; s++) {
       const t = s / steps;
       unicomPoints.push({
-        lat: chargingStation.lat + t * (closestGps.lat - chargingStation.lat),
-        lng: chargingStation.lng + t * (closestGps.lng - chargingStation.lng),
+        x: t * closest.x,
+        y: t * closest.y,
       });
     }
 
@@ -319,7 +312,6 @@ export function generateMapZipFromDb(
 
   return buildMapZip({
     sn,
-    chargingStation,
     chargingOrientation,
     areas,
   });
@@ -328,11 +320,10 @@ export function generateMapZipFromDb(
 /**
  * Lees en parseer een bestaand Novabot ZIP kaartbestand.
  *
- * @returns Geparsde kaartdata met GPS coördinaten
+ * @returns Geparsde kaartdata met lokale coördinaten (charger = 0,0)
  */
 export function parseMapZip(
   zipPath: string,
-  chargingStation: GpsPoint,
 ): { areas: MapArea[]; chargingPose: ChargingPose } | null {
   if (!existsSync(zipPath)) return null;
 
@@ -358,7 +349,7 @@ export function parseMapZip(
       }
     }
 
-    // Zoek alle CSV bestanden
+    // Zoek alle CSV bestanden — punten blijven lokaal (1:1 met CSV)
     const areas: MapArea[] = [];
     const files = execSync(`ls "${csvDir}"/*.csv 2>/dev/null || true`).toString().trim().split('\n').filter(Boolean);
 
@@ -380,11 +371,8 @@ export function parseMapZip(
 
       if (localPoints.length === 0) continue;
 
-      // Converteer terug naar GPS (met orientation uit map_info.json)
-      const gpsPoints = localPoints.map(p => localToGps(p, chargingStation, chargingPose.orientation));
-
-      // Bepaal area type uit bestandsnaam
-      const area = parseAreaFileName(fileName, gpsPoints);
+      // Bepaal area type uit bestandsnaam — punten zijn al lokaal
+      const area = parseAreaFileName(fileName, localPoints);
       if (area) areas.push(area);
     }
 
@@ -398,7 +386,7 @@ export function parseMapZip(
 /**
  * Parse een CSV bestandsnaam naar een MapArea.
  */
-function parseAreaFileName(fileName: string, points: GpsPoint[]): MapArea | null {
+function parseAreaFileName(fileName: string, points: LocalPoint[]): MapArea | null {
   // map0_work.csv
   const workMatch = fileName.match(/^map(\d+)_work\.csv$/);
   if (workMatch) {

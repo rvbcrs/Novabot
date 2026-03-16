@@ -15,6 +15,7 @@ import {
   deleteMap, renameMap, updateMapArea, createMap, exportMaps,
   navigateToPosition, stopNavigation,
   fetchVirtualWalls, createVirtualWall, deleteVirtualWall,
+  calibrateCharger,
   type VirtualWall,
 } from '../../api/client';
 import { useToast } from '../common/Toast';
@@ -257,13 +258,17 @@ const TILE_LAYERS = {
 
 // ── Calibration transform ────────────────────────────────────────
 
-/** Apply calibration (offset + rotation + scale) to polygon points */
+/** Apply calibration (manual offset + rotation + scale) to polygon points.
+ *  Server converteert lokaal→GPS met charger als origin — anchor offset is niet meer nodig. */
 function calibratePoints(
   points: Array<{ lat: number; lng: number }>,
   cal: MapCalibration,
   center: { lat: number; lng: number },
 ): [number, number][] {
-  if (cal.offsetLat === 0 && cal.offsetLng === 0 && cal.rotation === 0 && cal.scale === 1) {
+  const totalOffLat = cal.offsetLat;
+  const totalOffLng = cal.offsetLng;
+
+  if (totalOffLat === 0 && totalOffLng === 0 && cal.rotation === 0 && cal.scale === 1) {
     return points.map(p => [p.lat, p.lng]);
   }
 
@@ -284,8 +289,8 @@ function calibratePoints(
     const rLat = dLat * cos - dLng * sin;
     const rLng = dLat * sin + dLng * cos;
 
-    // Translate back + offset
-    return [center.lat + rLat + cal.offsetLat, center.lng + rLng + cal.offsetLng] as [number, number];
+    // Translate back + anchor offset + manual offset
+    return [center.lat + rLat + totalOffLat, center.lng + rLng + totalOffLng] as [number, number];
   });
 }
 
@@ -298,33 +303,27 @@ type AreaType = 'work' | 'obstacle' | 'unicom';
 function makeMowerIcon(heading: number) {
   return L.divIcon({
     className: '',
-    html: `<div style="width:32px;height:32px;transform:rotate(${heading}deg)">
-      <svg viewBox="0 0 32 32" width="32" height="32">
-        <circle cx="16" cy="16" r="12" fill="#10b981" stroke="white" stroke-width="2" opacity="0.9"/>
-        <polygon points="16,4 22,18 16,14 10,18" fill="white" opacity="0.9"/>
-      </svg>
+    html: `<div style="width:36px;height:36px;transform:rotate(${heading}deg);display:flex;align-items:center;justify-content:center">
+      <img src="/mower/mower_location.png" style="width:32px;height:20px;filter:drop-shadow(0 1px 3px rgba(0,0,0,0.4))" />
     </div>`,
-    iconSize: [32, 32],
-    iconAnchor: [16, 16],
+    iconSize: [36, 36],
+    iconAnchor: [18, 18],
   });
 }
 
 // ── Charger marker icon ────────────────────────────────────────
 function makeChargerIcon(live = false) {
   const ring = live
-    ? `<circle cx="16" cy="16" r="15" fill="none" stroke="#22c55e" stroke-width="2" opacity="0.8"/>`
+    ? `<div style="position:absolute;inset:-3px;border:2px solid #22c55e;border-radius:50%;opacity:0.8"></div>`
     : '';
   return L.divIcon({
     className: '',
-    html: `<div style="width:32px;height:32px">
-      <svg viewBox="0 0 32 32" width="32" height="32">
-        ${ring}
-        <circle cx="16" cy="16" r="12" fill="#f59e0b" stroke="white" stroke-width="2" opacity="0.9"/>
-        <polygon points="18,6 12,17 16,17 14,26 20,15 16,15" fill="white" opacity="0.9"/>
-      </svg>
+    html: `<div style="width:36px;height:36px;position:relative;display:flex;align-items:center;justify-content:center">
+      ${ring}
+      <img src="/mower/lawn_charger.png" style="width:28px;height:28px;filter:drop-shadow(0 1px 3px rgba(0,0,0,0.4))" />
     </div>`,
-    iconSize: [32, 32],
-    iconAnchor: [16, 16],
+    iconSize: [36, 36],
+    iconAnchor: [18, 18],
   });
 }
 
@@ -499,6 +498,7 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
   const [editVertices, setEditVertices] = useState<[number, number][]>([]);
   const [editingMapId, setEditingMapId] = useState<string | null>(null);
   const [drawType, setDrawType] = useState<'work' | 'obstacle' | 'unicom'>('work');
+  const [drawName, setDrawName] = useState('');
   const [showHeatmap, setShowHeatmap] = useState(false);
 
   // Place charger mode
@@ -511,6 +511,9 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
   // Confirm delete dialog
   const [confirmDeleteMapId, setConfirmDeleteMapId] = useState<string | null>(null);
   const [confirmDeleteMapName, setConfirmDeleteMapName] = useState<string>('');
+
+  // Charger calibration
+  const [confirmCalibrate, setConfirmCalibrate] = useState(false);
 
   // Virtual walls
   const [walls, setWalls] = useState<VirtualWall[]>([]);
@@ -561,25 +564,19 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
   const mowerLng = lng ? parseFloat(lng) : null;
   const mowerHasGps = !!(mowerLat && mowerLng && mowerLat !== 0 && mowerLng !== 0);
 
-  // Auto-save mower GPS as charger position — de charger zelf rapporteert geen
-  // lat/lng via MQTT, maar de maaier WEL. Als de maaier op het laadstation staat
-  // (idle, opladen), is zijn GPS positie gelijk aan de charger positie.
-  // Sla dit automatisch op zodat de charger marker altijd correct staat.
-  const chargerLiveLat = chargerLat ? parseFloat(chargerLat) : null;
-  const hasLiveChargerGps = !!(chargerLiveLat && chargerLiveLat !== 0);
+  // Auto-init charger positie van maaier GPS (maaier zit op laadstation bij idle).
+  // Charger positie = conversie origin voor lokaal→GPS. Alleen zetten als nog niet bekend.
   useEffect(() => {
-    if (!sn || !mowerHasGps || hasLiveChargerGps) return;
-    // Alleen auto-updaten als er nog geen positie is, of als de afstand > 5m
-    // (voorkomt continue saves maar corrigeert GPS drift)
-    if (savedCal.chargerLat && savedCal.chargerLng) {
-      const dLat = Math.abs(mowerLat! - savedCal.chargerLat);
-      const dLng = Math.abs(mowerLng! - savedCal.chargerLng);
-      if (dLat < 0.00005 && dLng < 0.00005) return; // < ~5m, geen update nodig
-    }
-    const updated = { ...savedCal, chargerLat: mowerLat!, chargerLng: mowerLng! };
+    if (!sn || !mowerHasGps) return;
+    if (savedCal.chargerLat && savedCal.chargerLng) return; // al gezet
+    const updated = {
+      ...savedCal,
+      chargerLat: mowerLat!,
+      chargerLng: mowerLng!,
+    };
     setSavedCal(updated);
     saveCalibration(sn, updated).catch(() => {});
-  }, [sn, mowerHasGps, mowerLat, mowerLng, hasLiveChargerGps]);
+  }, [sn, mowerHasGps, mowerLat, mowerLng]);
 
   // Append new trail points when lat/lng changes
   useEffect(() => {
@@ -622,6 +619,7 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
   }, [sn]);
 
   // Start editing an existing polygon — accepts map data directly to avoid stale closure
+  // Server stuurt al GPS coords (lokaal→GPS conversie) — direct bruikbaar voor Leaflet.
   const startEditMap = useCallback((mapId: string, mapArea: Array<{ lat: number; lng: number }>) => {
     if (mapArea.length < 3) return;
     setEditingMapId(mapId);
@@ -636,6 +634,7 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
   const startDrawMap = useCallback(() => {
     setEditingMapId(null);
     setEditVertices([]);
+    setDrawName('');
     setEditMode('draw');
     setSelectedMapId(null);
     setUserInteracted(true);
@@ -651,7 +650,7 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
     return '#10b981';
   }, [editMode, drawType, editingMapId, maps, AREA_TYPE_META]);
 
-  // Save edited/drawn polygon
+  // Save edited/drawn polygon — vertices zijn Leaflet GPS coords, server converteert naar lokaal.
   const handleSavePolygon = useCallback(() => {
     if (editVertices.length < 3) return;
     const area = editVertices.map(([lat, lng]) => ({ lat, lng }));
@@ -667,11 +666,14 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
       }).catch(() => {});
     } else if (editMode === 'draw') {
       const typeMeta = AREA_TYPE_META[drawType];
-      const count = maps.filter(m => {
-        const s = getAreaStyle(m.mapType, m.mapId, m.mapName);
-        return s.color === typeMeta.color;
-      }).length;
-      const name = `${typeMeta.label} ${count + 1}`;
+      const trimmedName = drawName.trim();
+      const name = trimmedName || (() => {
+        const count = maps.filter(m => {
+          const s = getAreaStyle(m.mapType, m.mapId, m.mapName);
+          return s.color === typeMeta.color;
+        }).length;
+        return `${typeMeta.label} ${count + 1}`;
+      })();
       createMap(sn, name, area, drawType).then(newMap => {
         setMaps(prev => [...prev, newMap]);
         setEditMode('none');
@@ -680,7 +682,7 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
         onMapSaved?.(newMap);
       }).catch(() => {});
     }
-  }, [editVertices, editMode, editingMapId, sn, maps, drawType, AREA_TYPE_META, onMapSaved]);
+  }, [editVertices, editMode, editingMapId, sn, maps, drawType, drawName, AREA_TYPE_META, onMapSaved, savedCal]);
 
   // Cancel edit/draw
   const cancelEditPolygon = useCallback(() => {
@@ -753,14 +755,13 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
   }, [sn, resolvedChargerLat, resolvedChargerLng, chargerHasGps, t]);
 
   // Push maps to mower via SSH
-  // Navigate-to handler
+  // Navigate-to handler — GPS coords direct van Leaflet klik
   const handleNavigateClick = useCallback((lat: number, lng: number) => {
     setNavigateTarget({ lat, lng });
     setNavigateMode(false);
     navigateToPosition(sn, lat, lng).then(() => {
       toast(`✓ ${t('controls.navigateTo')}`, 'success');
     }).catch(() => toast(`✗ ${t('controls.navigateTo')}`, 'error'));
-    // Auto-clear target after 60s
     setTimeout(() => setNavigateTarget(null), 60_000);
   }, [sn, t, toast]);
 
@@ -771,19 +772,17 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
     }).catch(() => {});
   }, [sn, t, toast]);
 
-  // Virtual wall drawing
+  // Virtual wall drawing — GPS coords direct van Leaflet klik
   const handleWallPoint = useCallback((lat: number, lng: number) => {
     if (!wallFirstCorner) {
       setWallFirstCorner({ lat, lng });
     } else {
-      // Second corner → save wall
       createVirtualWall(sn, {
         lat1: wallFirstCorner.lat,
         lng1: wallFirstCorner.lng,
         lat2: lat,
         lng2: lng,
       }).then(() => {
-        // Refresh walls
         fetchVirtualWalls(sn).then(setWalls).catch(() => {});
         toast(`✓ No-go zone saved`, 'success');
         setWallFirstCorner(null);
@@ -1014,6 +1013,17 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
             >
               <MapPin className="w-3 h-3" />
               <span className="hidden md:inline">{placingCharger ? t('map.placeChargerActive') : t('map.charger')}</span>
+            </button>
+          )}
+          {/* Calibrate charger — drive mower out and back for ArUco scan */}
+          {editMode === 'none' && !calibrating && chargerHasGps && sn && (
+            <button
+              onClick={() => setConfirmCalibrate(true)}
+              className="inline-flex items-center gap-1 text-xs px-1.5 md:px-2 py-0.5 rounded bg-gray-700/50 text-gray-400 hover:text-blue-400 hover:bg-blue-900/30 transition-colors"
+              title={t('map.calibrateCharger')}
+            >
+              <Navigation className="w-3 h-3" />
+              <span className="hidden md:inline">{t('map.calibrateCharger')}</span>
             </button>
           )}
           <button
@@ -1571,6 +1581,16 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
                 })}
               </div>
             )}
+            {/* Name input (draw mode only) */}
+            {editMode === 'draw' && (
+              <input
+                type="text"
+                value={drawName}
+                onChange={e => setDrawName(e.target.value)}
+                placeholder={t('map.mapNamePlaceholder')}
+                className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-emerald-600 transition-colors mb-3"
+              />
+            )}
             <p className="text-[11px] text-gray-400 mb-3">
               {editMode === 'draw'
                 ? t('map.drawHelp')
@@ -1719,6 +1739,22 @@ export function MowerMap({ sn, lat, lng, heading, chargerLat, chargerLng, signal
           setConfirmDeleteMapId(null);
         }}
         onCancel={() => setConfirmDeleteMapId(null)}
+      />
+      <ConfirmDialog
+        open={confirmCalibrate}
+        title={t('map.calibrateConfirm')}
+        confirmLabel={t('map.calibrateCharger')}
+        cancelLabel={t('common.cancel')}
+        onConfirm={async () => {
+          setConfirmCalibrate(false);
+          try {
+            await calibrateCharger(sn);
+            toast(t('map.calibrateStarted'), 'success');
+          } catch {
+            toast(t('map.calibrateCharger') + ' ✗', 'error');
+          }
+        }}
+        onCancel={() => setConfirmCalibrate(false)}
       />
     </div>
   );

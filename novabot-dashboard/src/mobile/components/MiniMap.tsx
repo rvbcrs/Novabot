@@ -57,28 +57,22 @@ function getAreaStyle(mapType?: string, mapId?: string, mapName?: string | null)
 function makeMowerIcon(heading: number) {
   return L.divIcon({
     className: '',
-    html: `<div style="width:32px;height:32px;transform:rotate(${heading}deg)">
-      <svg viewBox="0 0 32 32" width="32" height="32">
-        <circle cx="16" cy="16" r="12" fill="#10b981" stroke="white" stroke-width="2" opacity="0.9"/>
-        <polygon points="16,4 22,18 16,14 10,18" fill="white" opacity="0.9"/>
-      </svg>
+    html: `<div style="width:36px;height:36px;transform:rotate(${heading}deg);display:flex;align-items:center;justify-content:center">
+      <img src="/mower/mower_location.png" style="width:32px;height:20px;filter:drop-shadow(0 1px 3px rgba(0,0,0,0.4))" />
     </div>`,
-    iconSize: [32, 32],
-    iconAnchor: [16, 16],
+    iconSize: [36, 36],
+    iconAnchor: [18, 18],
   });
 }
 
 function makeChargerIcon() {
   return L.divIcon({
     className: '',
-    html: `<div style="width:32px;height:32px">
-      <svg viewBox="0 0 32 32" width="32" height="32">
-        <circle cx="16" cy="16" r="12" fill="#f59e0b" stroke="white" stroke-width="2" opacity="0.9"/>
-        <polygon points="18,6 12,17 16,17 14,26 20,15 16,15" fill="white" opacity="0.9"/>
-      </svg>
+    html: `<div style="width:36px;height:36px;display:flex;align-items:center;justify-content:center">
+      <img src="/mower/lawn_charger.png" style="width:28px;height:28px;filter:drop-shadow(0 1px 3px rgba(0,0,0,0.4))" />
     </div>`,
-    iconSize: [32, 32],
-    iconAnchor: [16, 16],
+    iconSize: [36, 36],
+    iconAnchor: [18, 18],
   });
 }
 

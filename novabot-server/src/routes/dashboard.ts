@@ -9,7 +9,7 @@ import { isDeviceOnline, writeRawPublish, getBrokerDiagnostics } from '../mqtt/b
 import { getRecentLogs, forwardToDashboard } from '../dashboard/socketHandler.js';
 import { requestMapList, requestMapOutline, publishToDevice, publishRawToDevice, publishEncryptedOnTopic, publishToTopic } from '../mqtt/mapSync.js';
 import crypto from 'crypto';
-import { generateMapZipFromDb, gpsToLocal, localToGps, parseMapZip, type GpsPoint } from '../mqtt/mapConverter.js';
+import { generateMapZipFromDb, gpsToLocal, localToGps, parseMapZip, type GpsPoint, type LocalPoint } from '../mqtt/mapConverter.js';
 import { existsSync, unlinkSync, readFileSync, readdirSync, createReadStream, statSync, watch, mkdirSync, copyFileSync } from 'fs';
 import { execSync } from 'child_process';
 import path from 'path';
@@ -265,15 +265,46 @@ dashboardRouter.get('/maps', (_req: Request, res: Response) => {
     'SELECT * FROM maps ORDER BY updated_at DESC'
   ).all() as MapRow[];
 
-  const maps = rows.map(r => ({
-    mapId: r.map_id,
-    mowerSn: r.mower_sn,
-    mapName: r.map_name,
-    mapType: r.map_type ?? 'work',
-    mapArea: r.map_area ? JSON.parse(r.map_area) : [],
-    mapMaxMin: r.map_max_min ? JSON.parse(r.map_max_min) : null,
-    createdAt: r.created_at,
-  }));
+  // Charger GPS per maaier ophalen voor local→GPS conversie
+  const chargerCache = new Map<string, GpsPoint | null>();
+  function getChargerGps(mowerSn: string): GpsPoint | null {
+    if (chargerCache.has(mowerSn)) return chargerCache.get(mowerSn)!;
+    const cal = db.prepare('SELECT charger_lat, charger_lng FROM map_calibration WHERE mower_sn = ?')
+      .get(mowerSn) as { charger_lat: number | null; charger_lng: number | null } | undefined;
+    const result = cal?.charger_lat && cal?.charger_lng
+      ? { lat: cal.charger_lat, lng: cal.charger_lng } : null;
+    chargerCache.set(mowerSn, result);
+    return result;
+  }
+
+  const maps = rows.map(r => {
+    let mapArea: GpsPoint[] = [];
+    let mapMaxMin: Record<string, number> | null = null;
+
+    if (r.map_area) {
+      const chargerGps = getChargerGps(r.mower_sn);
+      if (chargerGps) {
+        const localPoints: LocalPoint[] = JSON.parse(r.map_area);
+        mapArea = localPoints.map(p => localToGps(p, chargerGps));
+        const lats = mapArea.map(p => p.lat);
+        const lngs = mapArea.map(p => p.lng);
+        mapMaxMin = {
+          minLat: Math.min(...lats), maxLat: Math.max(...lats),
+          minLng: Math.min(...lngs), maxLng: Math.max(...lngs),
+        };
+      }
+    }
+
+    return {
+      mapId: r.map_id,
+      mowerSn: r.mower_sn,
+      mapName: r.map_name,
+      mapType: r.map_type ?? 'work',
+      mapArea,
+      mapMaxMin,
+      createdAt: r.created_at,
+    };
+  });
 
   res.json({ maps });
 });
@@ -285,14 +316,36 @@ dashboardRouter.get('/maps/:sn', (req: Request, res: Response) => {
     'SELECT * FROM maps WHERE mower_sn = ? ORDER BY updated_at DESC'
   ).all(sn) as MapRow[];
 
-  const maps = rows.map(r => ({
-    mapId: r.map_id,
-    mapName: r.map_name,
-    mapType: r.map_type ?? 'work',
-    mapArea: r.map_area ? JSON.parse(r.map_area) : [],
-    mapMaxMin: r.map_max_min ? JSON.parse(r.map_max_min) : null,
-    createdAt: r.created_at,
-  }));
+  // Charger GPS ophalen voor local→GPS conversie
+  const cal = db.prepare('SELECT charger_lat, charger_lng FROM map_calibration WHERE mower_sn = ?')
+    .get(sn) as { charger_lat: number | null; charger_lng: number | null } | undefined;
+  const chargerGps: GpsPoint | null = cal?.charger_lat && cal?.charger_lng
+    ? { lat: cal.charger_lat, lng: cal.charger_lng } : null;
+
+  const maps = rows.map(r => {
+    let mapArea: GpsPoint[] = [];
+    let mapMaxMin: Record<string, number> | null = null;
+
+    if (r.map_area && chargerGps) {
+      const localPoints: LocalPoint[] = JSON.parse(r.map_area);
+      mapArea = localPoints.map(p => localToGps(p, chargerGps));
+      const lats = mapArea.map(p => p.lat);
+      const lngs = mapArea.map(p => p.lng);
+      mapMaxMin = {
+        minLat: Math.min(...lats), maxLat: Math.max(...lats),
+        minLng: Math.min(...lngs), maxLng: Math.max(...lngs),
+      };
+    }
+
+    return {
+      mapId: r.map_id,
+      mapName: r.map_name,
+      mapType: r.map_type ?? 'work',
+      mapArea,
+      mapMaxMin,
+      createdAt: r.created_at,
+    };
+  });
 
   res.json({ maps });
 });
@@ -356,19 +409,31 @@ dashboardRouter.post('/maps/:sn', (req: Request, res: Response) => {
     return;
   }
 
+  // Charger GPS nodig voor GPS→lokaal conversie
+  const cal = db.prepare('SELECT charger_lat, charger_lng FROM map_calibration WHERE mower_sn = ?')
+    .get(sn) as { charger_lat: number | null; charger_lng: number | null } | undefined;
+  if (!cal?.charger_lat || !cal?.charger_lng) {
+    res.status(400).json({ error: 'Charger positie onbekend — plaats eerst de charger op de kaart' });
+    return;
+  }
+  const chargerGps: GpsPoint = { lat: cal.charger_lat, lng: cal.charger_lng };
+
+  // Converteer GPS→lokaal vóór opslag
+  const localPoints = mapArea.map(p => gpsToLocal(p, chargerGps));
+  const bounds = {
+    minX: Math.min(...localPoints.map(p => p.x)),
+    maxX: Math.max(...localPoints.map(p => p.x)),
+    minY: Math.min(...localPoints.map(p => p.y)),
+    maxY: Math.max(...localPoints.map(p => p.y)),
+  };
+
   const typeSlug = mapType && ['work', 'obstacle', 'unicom'].includes(mapType) ? mapType : 'work';
   const mapId = `dashboard_${typeSlug}_${Date.now()}`;
-  const lats = mapArea.map(p => p.lat);
-  const lngs = mapArea.map(p => p.lng);
-  const bounds = {
-    minLat: Math.min(...lats), maxLat: Math.max(...lats),
-    minLng: Math.min(...lngs), maxLng: Math.max(...lngs),
-  };
 
   db.prepare(`
     INSERT INTO maps (map_id, mower_sn, map_name, map_type, map_area, map_max_min, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
-  `).run(mapId, sn, mapName ?? null, typeSlug, JSON.stringify(mapArea), JSON.stringify(bounds));
+  `).run(mapId, sn, mapName ?? null, typeSlug, JSON.stringify(localPoints), JSON.stringify(bounds));
 
   res.json({
     ok: true,
@@ -376,8 +441,11 @@ dashboardRouter.post('/maps/:sn', (req: Request, res: Response) => {
       mapId,
       mapName: mapName ?? null,
       mapType: typeSlug,
-      mapArea,
-      mapMaxMin: bounds,
+      mapArea,        // Retourneer GPS voor frontend (ongewijzigd)
+      mapMaxMin: {    // GPS bounds voor frontend
+        minLat: Math.min(...mapArea.map(p => p.lat)), maxLat: Math.max(...mapArea.map(p => p.lat)),
+        minLng: Math.min(...mapArea.map(p => p.lng)), maxLng: Math.max(...mapArea.map(p => p.lng)),
+      },
       createdAt: new Date().toISOString(),
     },
   });
@@ -400,16 +468,24 @@ dashboardRouter.patch('/maps/:sn/:mapId', (req: Request, res: Response) => {
     return;
   }
 
-  // Update polygon punten als meegegeven
+  // Update polygon punten als meegegeven — converteer GPS→lokaal
   if (mapArea && Array.isArray(mapArea) && mapArea.length >= 3) {
-    const lats = mapArea.map(p => p.lat);
-    const lngs = mapArea.map(p => p.lng);
+    const cal = db.prepare('SELECT charger_lat, charger_lng FROM map_calibration WHERE mower_sn = ?')
+      .get(sn) as { charger_lat: number | null; charger_lng: number | null } | undefined;
+    if (!cal?.charger_lat || !cal?.charger_lng) {
+      res.status(400).json({ error: 'Charger positie onbekend' });
+      return;
+    }
+    const chargerGps: GpsPoint = { lat: cal.charger_lat, lng: cal.charger_lng };
+    const localPoints = mapArea.map(p => gpsToLocal(p, chargerGps));
     const bounds = {
-      minLat: Math.min(...lats), maxLat: Math.max(...lats),
-      minLng: Math.min(...lngs), maxLng: Math.max(...lngs),
+      minX: Math.min(...localPoints.map(p => p.x)),
+      maxX: Math.max(...localPoints.map(p => p.x)),
+      minY: Math.min(...localPoints.map(p => p.y)),
+      maxY: Math.max(...localPoints.map(p => p.y)),
     };
     db.prepare('UPDATE maps SET map_area = ?, map_max_min = ?, updated_at = datetime(\'now\') WHERE map_id = ? AND mower_sn = ?')
-      .run(JSON.stringify(mapArea), JSON.stringify(bounds), mapId, sn);
+      .run(JSON.stringify(localPoints), JSON.stringify(bounds), mapId, sn);
   }
 
   // Update naam als meegegeven
@@ -455,23 +531,12 @@ dashboardRouter.delete('/maps/:sn/:mapId', (req: Request, res: Response) => {
 dashboardRouter.post('/maps/:sn/export-zip', (req: Request, res: Response) => {
   const { sn } = req.params;
   const body = req.body as {
-    chargingStation?: GpsPoint;
     chargingOrientation?: number;
   };
-
-  // Charging station GPS positie is vereist
-  if (!body.chargingStation?.lat || !body.chargingStation?.lng) {
-    res.status(400).json({
-      error: 'chargingStation {lat, lng} is vereist',
-      hint: 'Gebruik de GPS positie van het laadstation uit de sensor data (latitude/longitude)',
-    });
-    return;
-  }
 
   try {
     const zipPath = generateMapZipFromDb(
       sn,
-      body.chargingStation,
       body.chargingOrientation ?? 0,
     );
 
@@ -674,7 +739,7 @@ dashboardRouter.post('/maps/:sn/push-to-mower', async (req: Request, res: Respon
   // Genereer ZIP
   let zipPath: string | null;
   try {
-    zipPath = generateMapZipFromDb(sn, chargingStation, body.chargingOrientation ?? 0);
+    zipPath = generateMapZipFromDb(sn, body.chargingOrientation ?? 0);
   } catch (err) {
     res.status(500).json({ error: `ZIP generatie mislukt: ${err}` });
     return;
@@ -947,37 +1012,32 @@ dashboardRouter.post('/maps/:sn/import-zip', (req: Request, res: Response) => {
   const { sn } = req.params;
   const body = req.body as {
     zipPath?: string;
-    chargingStation?: GpsPoint;
   };
 
-  if (!body.zipPath || !body.chargingStation?.lat || !body.chargingStation?.lng) {
-    res.status(400).json({
-      error: 'zipPath en chargingStation {lat, lng} zijn vereist',
-    });
+  if (!body.zipPath) {
+    res.status(400).json({ error: 'zipPath is vereist' });
     return;
   }
 
   try {
-    const result = parseMapZip(body.zipPath, body.chargingStation);
+    const result = parseMapZip(body.zipPath);
     if (!result) {
       res.status(400).json({ error: 'Kon ZIP niet parsen' });
       return;
     }
 
-    // Sla werkgebieden op in database
+    // Sla werkgebieden op — lokale coördinaten direct uit CSV
     let imported = 0;
     for (const area of result.areas) {
       if (area.type !== 'work') continue;
 
       const mapId = `imported_map${area.mapIndex}_${Date.now()}`;
       const points = area.points;
-      const lats = points.map(p => p.lat);
-      const lngs = points.map(p => p.lng);
       const bounds = {
-        minLat: Math.min(...lats),
-        maxLat: Math.max(...lats),
-        minLng: Math.min(...lngs),
-        maxLng: Math.max(...lngs),
+        minX: Math.min(...points.map(p => p.x)),
+        maxX: Math.max(...points.map(p => p.x)),
+        minY: Math.min(...points.map(p => p.y)),
+        maxY: Math.max(...points.map(p => p.y)),
       };
 
       db.prepare(`
@@ -1017,6 +1077,8 @@ interface CalibrationRow {
   scale: number;
   charger_lat: number | null;
   charger_lng: number | null;
+  gps_charger_lat: number | null;
+  gps_charger_lng: number | null;
   updated_at: string;
 }
 
@@ -1030,26 +1092,30 @@ dashboardRouter.get('/calibration/:sn', (req: Request, res: Response) => {
   res.json({
     calibration: row
       ? { offsetLat: row.offset_lat, offsetLng: row.offset_lng, rotation: row.rotation, scale: row.scale,
-          chargerLat: row.charger_lat, chargerLng: row.charger_lng }
-      : { offsetLat: 0, offsetLng: 0, rotation: 0, scale: 1, chargerLat: null, chargerLng: null },
+          chargerLat: row.charger_lat, chargerLng: row.charger_lng,
+          gpsChargerLat: row.gps_charger_lat, gpsChargerLng: row.gps_charger_lng }
+      : { offsetLat: 0, offsetLng: 0, rotation: 0, scale: 1,
+          chargerLat: null, chargerLng: null, gpsChargerLat: null, gpsChargerLng: null },
   });
 });
 
 // PUT /api/dashboard/calibration/:sn — sla calibratie op
 dashboardRouter.put('/calibration/:sn', (req: Request, res: Response) => {
   const { sn } = req.params;
-  const { offsetLat, offsetLng, rotation, scale, chargerLat, chargerLng } = req.body as {
+  const { offsetLat, offsetLng, rotation, scale, chargerLat, chargerLng, gpsChargerLat, gpsChargerLng } = req.body as {
     offsetLat?: number;
     offsetLng?: number;
     rotation?: number;
     scale?: number;
     chargerLat?: number | null;
     chargerLng?: number | null;
+    gpsChargerLat?: number | null;
+    gpsChargerLng?: number | null;
   };
 
   db.prepare(`
-    INSERT INTO map_calibration (mower_sn, offset_lat, offset_lng, rotation, scale, charger_lat, charger_lng, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    INSERT INTO map_calibration (mower_sn, offset_lat, offset_lng, rotation, scale, charger_lat, charger_lng, gps_charger_lat, gps_charger_lng, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
     ON CONFLICT(mower_sn) DO UPDATE SET
       offset_lat  = excluded.offset_lat,
       offset_lng  = excluded.offset_lng,
@@ -1057,8 +1123,11 @@ dashboardRouter.put('/calibration/:sn', (req: Request, res: Response) => {
       scale       = excluded.scale,
       charger_lat = excluded.charger_lat,
       charger_lng = excluded.charger_lng,
+      gps_charger_lat = excluded.gps_charger_lat,
+      gps_charger_lng = excluded.gps_charger_lng,
       updated_at  = datetime('now')
-  `).run(sn, offsetLat ?? 0, offsetLng ?? 0, rotation ?? 0, scale ?? 1, chargerLat ?? null, chargerLng ?? null);
+  `).run(sn, offsetLat ?? 0, offsetLng ?? 0, rotation ?? 0, scale ?? 1,
+    chargerLat ?? null, chargerLng ?? null, gpsChargerLat ?? null, gpsChargerLng ?? null);
 
   res.json({ ok: true });
 });

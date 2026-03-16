@@ -14,6 +14,7 @@ type Aedes = { publish: (packet: any, cb: (err?: Error | null) => void) => void;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AedesPublishPacket = { topic: string; payload: Buffer | string; qos: 0 | 1 | 2; retain: boolean; [key: string]: any };
 import { db } from '../db/database.js';
+import { gpsToLocal, type GpsPoint, type LocalPoint } from './mapConverter.js';
 
 const TAG = '[MAP-SYNC]';
 
@@ -354,17 +355,29 @@ function handleMapOutlineResponse(sn: string, data: unknown): void {
     return;
   }
 
-  // Bereken bounds
-  const lats = points.map(p => p.lat);
-  const lngs = points.map(p => p.lng);
+  // Converteer GPS→lokaal vóór opslag (maaier stuurt GPS coords)
+  const cal = db.prepare('SELECT charger_lat, charger_lng FROM map_calibration WHERE mower_sn = ?')
+    .get(sn) as { charger_lat: number | null; charger_lng: number | null } | undefined;
+
+  let localPoints: LocalPoint[];
+  if (cal?.charger_lat && cal?.charger_lng) {
+    const origin: GpsPoint = { lat: cal.charger_lat, lng: cal.charger_lng };
+    localPoints = points.map(p => gpsToLocal(p, origin));
+  } else {
+    // Geen charger positie — gebruik eerste punt als origin (tijdelijk)
+    const origin: GpsPoint = { lat: points[0].lat, lng: points[0].lng };
+    localPoints = points.map(p => gpsToLocal(p, origin));
+    console.log(`${TAG} Geen charger GPS voor ${sn} — eerste punt als origin gebruikt`);
+  }
+
   const bounds = {
-    minLat: Math.min(...lats),
-    maxLat: Math.max(...lats),
-    minLng: Math.min(...lngs),
-    maxLng: Math.max(...lngs),
+    minX: Math.min(...localPoints.map(p => p.x)),
+    maxX: Math.max(...localPoints.map(p => p.x)),
+    minY: Math.min(...localPoints.map(p => p.y)),
+    maxY: Math.max(...localPoints.map(p => p.y)),
   };
 
-  // Sla op in database
+  // Sla op in database (lokale coördinaten)
   const displayName = mapName || mapType || `Map ${mapId.slice(0, 8)}`;
 
   db.prepare(`
@@ -379,13 +392,13 @@ function handleMapOutlineResponse(sn: string, data: unknown): void {
     mapId,
     sn,
     displayName,
-    JSON.stringify(points),
+    JSON.stringify(localPoints),
     JSON.stringify(bounds),
   );
 
-  console.log(`${TAG} Kaart "${displayName}" (${mapId}) opgeslagen: ${points.length} punten, bounds: ${JSON.stringify(bounds)}`);
+  console.log(`${TAG} Kaart "${displayName}" (${mapId}) opgeslagen: ${localPoints.length} punten (lokaal), bounds: ${JSON.stringify(bounds)}`);
 
-  // Stuur live outline naar dashboard via Socket.io
+  // Stuur live outline naar dashboard via Socket.io (GPS voor Leaflet)
   outlineEmitter?.(sn, points);
 }
 

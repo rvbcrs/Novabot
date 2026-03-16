@@ -56,9 +56,9 @@ export function initDb(): void {
       map_id      TEXT    NOT NULL UNIQUE,
       mower_sn    TEXT    NOT NULL,
       map_name    TEXT,
-      -- JSON array of GPS coordinate objects {lat, lng}
+      -- JSON array of local coordinate objects {x, y} in meters (charger = 0,0)
       map_area    TEXT,
-      -- JSON object {minLat, maxLat, minLng, maxLng}
+      -- JSON object {minX, maxX, minY, maxY} in meters
       map_max_min TEXT,
       -- Filename of the binary blob stored in storage/maps/
       file_name   TEXT,
@@ -276,7 +276,10 @@ export function initDb(): void {
   }
 
   // Charger GPS positie in map_calibration (migratie)
-  for (const col of ['charger_lat REAL', 'charger_lng REAL']) {
+  // charger_lat/lng = door gebruiker op kaart geplaatste positie (visueel)
+  // gps_charger_lat/lng = ruwe GPS positie van maaier op laadstation (meetwaarde)
+  // Verschil = satellietbeeld offset → automatische polygon kalibratie
+  for (const col of ['charger_lat REAL', 'charger_lng REAL', 'gps_charger_lat REAL', 'gps_charger_lng REAL']) {
     try { db.exec(`ALTER TABLE map_calibration ADD COLUMN ${col}`); }
     catch { /* kolom bestaat al */ }
   }
@@ -384,6 +387,73 @@ export function initDb(): void {
     );
     CREATE INDEX IF NOT EXISTS virtual_walls_sn ON virtual_walls(mower_sn);
   `);
+
+  // ── Migratie: map_area van GPS {lat,lng} naar lokaal {x,y} meters ──
+  // Detectie: als het eerste punt in map_area een 'lat' veld heeft, is het GPS formaat.
+  // Na migratie bevat map_area [{x,y}] lokale meters (charger = 0,0).
+  {
+    const sampleRow = db.prepare(
+      "SELECT map_area FROM maps WHERE map_area IS NOT NULL AND map_area != '[]' LIMIT 1"
+    ).get() as { map_area: string } | undefined;
+
+    if (sampleRow) {
+      try {
+        const sample = JSON.parse(sampleRow.map_area);
+        if (Array.isArray(sample) && sample.length > 0 && 'lat' in sample[0]) {
+          console.log('[DB] Migrating map_area from GPS to local coordinates...');
+
+          // Inline conversie (vermijdt circulaire import met mapConverter.ts)
+          const METERS_PER_DEG = 111320;
+          function gps2local(p: { lat: number; lng: number }, o: { lat: number; lng: number }) {
+            const cosLat = Math.cos(o.lat * Math.PI / 180);
+            return {
+              x: Math.round(((p.lng - o.lng) * cosLat * METERS_PER_DEG) * 100) / 100,
+              y: Math.round(((p.lat - o.lat) * METERS_PER_DEG) * 100) / 100,
+            };
+          }
+
+          const allMaps = db.prepare(
+            'SELECT map_id, mower_sn, map_area FROM maps WHERE map_area IS NOT NULL'
+          ).all() as Array<{ map_id: string; mower_sn: string; map_area: string }>;
+
+          // Verzamel charger GPS per mower_sn
+          const chargerCache = new Map<string, { lat: number; lng: number } | null>();
+          function getCharger(mowerSn: string) {
+            if (chargerCache.has(mowerSn)) return chargerCache.get(mowerSn)!;
+            const cal = db.prepare('SELECT charger_lat, charger_lng FROM map_calibration WHERE mower_sn = ?')
+              .get(mowerSn) as { charger_lat: number | null; charger_lng: number | null } | undefined;
+            const result = cal?.charger_lat && cal?.charger_lng
+              ? { lat: cal.charger_lat, lng: cal.charger_lng } : null;
+            chargerCache.set(mowerSn, result);
+            return result;
+          }
+
+          let migrated = 0;
+          for (const row of allMaps) {
+            try {
+              const gpsPoints = JSON.parse(row.map_area);
+              if (!Array.isArray(gpsPoints) || gpsPoints.length === 0 || !('lat' in gpsPoints[0])) continue;
+
+              const origin = getCharger(row.mower_sn) ?? gpsPoints[0]; // fallback: eerste punt
+              const localPoints = gpsPoints.map((p: { lat: number; lng: number }) => gps2local(p, origin));
+              const bounds = {
+                minX: Math.min(...localPoints.map((p: { x: number }) => p.x)),
+                maxX: Math.max(...localPoints.map((p: { x: number }) => p.x)),
+                minY: Math.min(...localPoints.map((p: { y: number }) => p.y)),
+                maxY: Math.max(...localPoints.map((p: { y: number }) => p.y)),
+              };
+
+              db.prepare('UPDATE maps SET map_area = ?, map_max_min = ? WHERE map_id = ?')
+                .run(JSON.stringify(localPoints), JSON.stringify(bounds), row.map_id);
+              migrated++;
+            } catch { /* skip ongeldig record */ }
+          }
+
+          console.log(`[DB] Migrated ${migrated}/${allMaps.length} map(s) to local coordinates`);
+        }
+      } catch { /* skip als parse mislukt */ }
+    }
+  }
 
   console.log('[DB] Database initialised');
 }
