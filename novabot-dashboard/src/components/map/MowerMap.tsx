@@ -170,7 +170,7 @@ function ResizeHandler() {
 }
 
 /** Clip een lijn aan een polygon — geeft segmenten binnen de polygon terug. */
-function clipLineToPolygon(
+export function clipLineToPolygon(
   line: [[number, number], [number, number]],
   polygon: Array<{ lat: number; lng: number }>,
 ): [number, number][][] {
@@ -210,7 +210,7 @@ function clipLineToPolygon(
 
 /** Coverage visualisatie — dunne lijntjes ~3px uit elkaar, geclipt aan polygon.
  *  Per lane worden meerdere parallelle dunne lijnen gerenderd, net als de Novabot app. */
-function CoverageStripes({ lanes, workPolys }: {
+export function CoverageStripes({ lanes, workPolys }: {
   lanes: Array<{ lat1: number; lng1: number; lat2: number; lng2: number }>;
   workPolys: Array<Array<{ lat: number; lng: number }>>;
 }) {

@@ -4,6 +4,7 @@ import L from 'leaflet';
 import { Layers, Gamepad2 } from 'lucide-react';
 import type { MapData, TrailPoint } from '../../types';
 import { fetchMaps, fetchTrail } from '../../api/client';
+import { CoverageStripes } from '../../components/map/MowerMap';
 
 // Fix Leaflet default marker icons in Vite
 import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png';
@@ -148,6 +149,7 @@ interface Props {
   onJoystickToggle?: () => void;
   selectedMapId?: string | null;
   focusBounds?: L.LatLngBoundsExpression | null;
+  coveredLanes?: Array<{ lat1: number; lng1: number; lat2: number; lng2: number }> | null;
 }
 
 export function MiniMap({
@@ -155,6 +157,7 @@ export function MiniMap({
   liveOutline, className = '', onTap, showControls = false,
   joystickOpen = false, onJoystickToggle,
   selectedMapId = null, focusBounds = null,
+  coveredLanes = null,
 }: Props) {
   const [maps, setMaps] = useState<MapData[]>([]);
   const [trail, setTrail] = useState<TrailPoint[]>([]);
@@ -230,6 +233,14 @@ export function MiniMap({
             pathOptions={{ color: '#a78bfa', fillColor: '#a78bfa', fillOpacity: 0.15, weight: 2, dashArray: '6 4' }}
           />
         )}
+
+        {/* Coverage stripes (demo mowing) */}
+        {coveredLanes && coveredLanes.length > 0 && (() => {
+          const wPolys = maps
+            .filter(m => getAreaStyle(m.mapType, m.mapId, m.mapName) === AREA_STYLES.work)
+            .map(m => m.mapArea);
+          return <CoverageStripes lanes={coveredLanes} workPolys={wPolys} />;
+        })()}
 
         {/* Charger marker */}
         {chargerLat && chargerLng && (

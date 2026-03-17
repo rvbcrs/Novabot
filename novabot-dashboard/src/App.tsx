@@ -61,7 +61,7 @@ export default function App() {
   return (
     <ToastProvider>
       {isMobile ? (
-        <MobilePage devices={devices} loading={loading} connected={connected} liveOutlines={liveOutlines} />
+        <MobilePage devices={devices} loading={loading} connected={connected} liveOutlines={liveOutlines} coveredLanes={coveredLanes} />
       ) : (
         <div className="dark min-h-screen bg-gray-950 text-white overflow-x-hidden">
           <Header connected={connected} />

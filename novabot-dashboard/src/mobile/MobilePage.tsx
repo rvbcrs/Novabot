@@ -41,11 +41,14 @@ export interface MowerDerived {
   manualSpeedLevel: number;
 }
 
+type CoveredLane = { lat1: number; lng1: number; lat2: number; lng2: number };
+
 interface Props {
   devices: Map<string, DeviceState>;
   loading: boolean;
   connected: boolean;
   liveOutlines: Map<string, Array<{ lat: number; lng: number }>>;
+  coveredLanes: Map<string, CoveredLane[]>;
 }
 
 // ── Derive mower state ──────────────────────────────────────────────
@@ -98,7 +101,7 @@ function deriveMower(devices: Map<string, DeviceState>): MowerDerived {
 
 // ── MobilePage ──────────────────────────────────────────────────────
 
-export function MobilePage({ devices, loading, liveOutlines }: Props) {
+export function MobilePage({ devices, loading, liveOutlines, coveredLanes }: Props) {
   const { t } = useTranslation();
   const [tab, setTab] = useState<Tab>('home');
   const mower = useMemo(() => deriveMower(devices), [devices]);
@@ -133,7 +136,7 @@ export function MobilePage({ devices, loading, liveOutlines }: Props) {
             <HomeTab mower={mower} />
           )}
           {tab === 'map' && (
-            <MapTab mower={mower} liveOutlines={liveOutlines} />
+            <MapTab mower={mower} liveOutlines={liveOutlines} coveredLanes={coveredLanes.get(mower.sn) ?? null} />
           )}
           {tab === 'camera' && mower.sn && (
             <CameraTab sn={mower.sn} online={mower.online} mowerIp={mower.mowerIp} headlightOn={mower.headlightOn} />

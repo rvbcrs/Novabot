@@ -1,17 +1,21 @@
-import { useState, useEffect, useMemo } from 'react';
-import { ChevronRight, X, Play } from 'lucide-react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { ChevronRight, X, Play, Octagon, Scissors, CheckCircle2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import L from 'leaflet';
 import type { MowerDerived, MowerActivity } from '../MobilePage';
 import type { MapData } from '../../types';
-import { fetchMaps } from '../../api/client';
+import { fetchMaps, sendCommand } from '../../api/client';
 import { MiniMap } from './MiniMap';
 import { JoystickControl } from '../../components/dashboard/JoystickControl';
 import { StartMowSheet } from './StartMowSheet';
+import { useToast } from '../../components/common/Toast';
+
+type CoveredLane = { lat1: number; lng1: number; lat2: number; lng2: number };
 
 interface Props {
   mower: MowerDerived;
   liveOutlines: Map<string, Array<{ lat: number; lng: number }>>;
+  coveredLanes: CoveredLane[] | null;
 }
 
 const ACTIVITY_DOT: Record<MowerActivity, string> = {
@@ -56,17 +60,37 @@ function formatArea(m2: number): string {
   return `${Math.round(m2)} m\u00b2`;
 }
 
-export function MapTab({ mower, liveOutlines }: Props) {
+export function MapTab({ mower, liveOutlines, coveredLanes }: Props) {
   const { t } = useTranslation();
+  const { toast } = useToast();
   const [maps, setMaps] = useState<MapData[]>([]);
   const [joystickOpen, setJoystickOpen] = useState(false);
   const [selectedMapId, setSelectedMapId] = useState<string | null>(null);
   const [mowSheetOpen, setMowSheetOpen] = useState(false);
+  const [stopBusy, setStopBusy] = useState(false);
+
+  // Mowing completion celebration + "vandaag gemaaid" tracking
+  const [showCelebration, setShowCelebration] = useState(false);
+  const [lastMowedDate, setLastMowedDate] = useState<string | null>(null);
+  const prevActivityRef = useRef<MowerActivity>('idle');
+  const celebrationArea = useRef(0);
 
   useEffect(() => {
     if (!mower.sn) return;
     fetchMaps(mower.sn).then(setMaps).catch(() => {});
   }, [mower.sn]);
+
+  // Detect mowing completion: mowing → any other activity with progress >= 95%
+  useEffect(() => {
+    const prev = prevActivityRef.current;
+    const curr = mower.activity;
+    if (prev === 'mowing' && curr !== 'mowing' && mower.mowingProgress >= 95) {
+      celebrationArea.current = 0; // area not available in MowerDerived
+      setShowCelebration(true);
+      setLastMowedDate(new Date().toLocaleDateString());
+    }
+    prevActivityRef.current = curr;
+  }, [mower.activity, mower.mowingProgress]);
 
   const obstacleMaps = maps.filter(m => m.mapType === 'obstacle');
   const channelMaps = maps.filter(m => m.mapType === 'unicom');
@@ -82,6 +106,22 @@ export function MapTab({ mower, liveOutlines }: Props) {
   const handleMapItemTap = (mapId: string) => {
     setSelectedMapId(prev => prev === mapId ? null : mapId);
   };
+
+  const handleEmergencyStop = useCallback(async () => {
+    setStopBusy(true);
+    try {
+      await sendCommand(mower.sn, { stop_run: {} });
+      await sendCommand(mower.sn, { stop_navigation: {} });
+      toast(t('controls.emergencyStopSent'), 'success');
+    } catch {
+      toast(t('controls.emergencyStopFailed'), 'error');
+    }
+    setStopBusy(false);
+  }, [mower.sn, t, toast]);
+
+  const isMowing = mower.activity === 'mowing';
+  const isPaused = mower.activity === 'paused';
+  const showEmergencyStop = mower.online && (isMowing || isPaused);
 
   return (
     <div className="h-full flex flex-col">
@@ -101,6 +141,7 @@ export function MapTab({ mower, liveOutlines }: Props) {
           onJoystickToggle={() => setJoystickOpen(o => !o)}
           selectedMapId={selectedMapId}
           focusBounds={focusBounds}
+          coveredLanes={coveredLanes}
         />
 
         {/* Floating status chip */}
@@ -116,10 +157,66 @@ export function MapTab({ mower, liveOutlines }: Props) {
           <span className="text-xs font-bold text-gray-900 dark:text-white tabular-nums">
             {mower.battery}%
           </span>
+          {lastMowedDate && (
+            <span className="flex items-center gap-0.5 text-emerald-500">
+              <CheckCircle2 className="w-3 h-3" />
+            </span>
+          )}
         </div>
 
+        {/* Emergency stop button */}
+        {showEmergencyStop && (
+          <div className="absolute top-14 left-1/2 -translate-x-1/2 z-[1001]">
+            <button
+              onClick={handleEmergencyStop}
+              disabled={stopBusy}
+              className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-red-600 hover:bg-red-500 active:bg-red-700 text-white font-bold text-xs shadow-lg shadow-red-900/50 animate-pulse hover:animate-none transition-colors disabled:opacity-50"
+            >
+              <Octagon className="w-4 h-4" />
+              {t('controls.emergencyStop')}
+            </button>
+          </div>
+        )}
+
+        {/* Mowing progress overlay */}
+        {isMowing && mower.mowingProgress > 0 && (
+          <div className="absolute top-3 right-3 z-[1001] bg-gray-900/95 backdrop-blur border border-gray-700 rounded-lg p-2.5 shadow-xl w-44">
+            <div className="flex items-center gap-1.5 mb-1.5">
+              <Scissors className="w-3.5 h-3.5 text-emerald-400" />
+              <span className="text-[10px] font-semibold text-emerald-400 uppercase tracking-wide">{t('map.mowing')}</span>
+              <span className="ml-auto text-xs font-bold text-white">{mower.mowingProgress}%</span>
+            </div>
+            <div className="h-1.5 bg-gray-700 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-emerald-500 rounded-full transition-all duration-500"
+                style={{ width: `${Math.min(mower.mowingProgress, 100)}%` }}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Celebration popup */}
+        {showCelebration && (
+          <div className="absolute inset-0 z-[1100] flex items-center justify-center bg-black/40 backdrop-blur-sm">
+            <div className="bg-gray-900/95 border border-gray-700 rounded-2xl p-6 shadow-2xl text-center max-w-[280px] mx-4">
+              <div className="text-5xl mb-3">🎉</div>
+              <h3 className="text-lg font-bold text-emerald-400 mb-1">{t('map.mowingComplete')}</h3>
+              <p className="text-sm text-gray-300 mb-1">100% — {t('map.allLanesDone')}</p>
+              {celebrationArea.current > 0 && (
+                <p className="text-xs text-gray-500">{celebrationArea.current.toFixed(0)} m² {t('map.finished')}</p>
+              )}
+              <button
+                onClick={() => setShowCelebration(false)}
+                className="mt-4 px-6 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white font-semibold text-sm transition-colors"
+              >
+                {t('map.close')}
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Selected area action chip */}
-        {selectedMap && selectedMap.mapType === 'work' && (
+        {selectedMap && selectedMap.mapType === 'work' && !isMowing && (
           <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-[1002]
                           bg-white/95 dark:bg-gray-900/95 backdrop-blur-sm rounded-2xl
                           px-4 py-3 flex items-center gap-3
