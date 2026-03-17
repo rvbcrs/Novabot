@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, Polygon, Polyline, Tooltip, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import {
@@ -6,7 +6,7 @@ import {
   Battery, BatteryCharging, BatteryLow, BatteryFull, Layers,
   SlidersHorizontal, Save, X, RotateCcw, Pencil, Check, Scissors, Navigation,
   ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Download, Flame,
-  Fence, Target, XCircle,
+  Fence, Target, XCircle, CheckCircle2,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { MapData, TrailPoint, MapCalibration } from '../../types';
@@ -95,6 +95,8 @@ interface Props {
   onMapClickForPattern?: (center: { lat: number; lng: number }) => void;
   /** Offset polygon preview (dashed) */
   offsetPreview?: Array<{ lat: number; lng: number }> | null;
+  /** Afgelegde maai-banen van demo simulator */
+  coveredLanes?: Array<{ lat1: number; lng1: number; lat2: number; lng2: number }> | null;
 }
 
 function wifiColor(rssi: number): string {
@@ -167,37 +169,169 @@ function ResizeHandler() {
   return null;
 }
 
-/** Zoom-aware mowing coverage band — renders trail as wide stripes representing mowed area */
-function CoverageTrail({ positions, widthMeters = 0.5 }: { positions: [number, number][]; widthMeters?: number }) {
+/** Clip een lijn aan een polygon — geeft segmenten binnen de polygon terug. */
+function clipLineToPolygon(
+  line: [[number, number], [number, number]],
+  polygon: Array<{ lat: number; lng: number }>,
+): [number, number][][] {
+  const pts = polygon.map(p => [p.lat, p.lng] as [number, number]);
+  const n = pts.length;
+  if (n < 3) return [];
+  const [aLat, aLng] = line[0];
+  const [bLat, bLng] = line[1];
+  const dLat = bLat - aLat;
+  const dLng = bLng - aLng;
+  const tValues: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    const edLat = pts[j][0] - pts[i][0];
+    const edLng = pts[j][1] - pts[i][1];
+    const denom = dLat * edLng - dLng * edLat;
+    if (Math.abs(denom) < 1e-15) continue;
+    const t = ((pts[i][0] - aLat) * edLng - (pts[i][1] - aLng) * edLat) / denom;
+    const u = ((pts[i][0] - aLat) * dLng - (pts[i][1] - aLng) * dLat) / denom;
+    if (u >= 0 && u <= 1 && t >= 0 && t <= 1) tValues.push(t);
+  }
+  if (pointInPolygon(aLat, aLng, polygon)) tValues.push(0);
+  if (pointInPolygon(bLat, bLng, polygon)) tValues.push(1);
+  tValues.sort((a, b) => a - b);
+  const segments: [number, number][][] = [];
+  for (let i = 0; i < tValues.length - 1; i++) {
+    const midT = (tValues[i] + tValues[i + 1]) / 2;
+    if (pointInPolygon(aLat + dLat * midT, aLng + dLng * midT, polygon)) {
+      segments.push([
+        [aLat + dLat * tValues[i], aLng + dLng * tValues[i]],
+        [aLat + dLat * tValues[i + 1], aLng + dLng * tValues[i + 1]],
+      ]);
+    }
+  }
+  return segments;
+}
+
+/** Coverage visualisatie — dunne lijntjes ~3px uit elkaar, geclipt aan polygon.
+ *  Per lane worden meerdere parallelle dunne lijnen gerenderd, net als de Novabot app. */
+function CoverageStripes({ lanes, workPolys }: {
+  lanes: Array<{ lat1: number; lng1: number; lat2: number; lng2: number }>;
+  workPolys: Array<Array<{ lat: number; lng: number }>>;
+}) {
   const map = useMap();
-  const [weight, setWeight] = useState(6);
+  const [zoom, setZoom] = useState(map.getZoom());
+  useMapEvents({ zoomend: () => setZoom(map.getZoom()) });
 
-  useEffect(() => {
-    const updateWeight = () => {
-      const zoom = map.getZoom();
-      const center = map.getCenter();
-      // meters per pixel at this zoom level and latitude
-      const metersPerPixel = 156543.03 * Math.cos(center.lat * Math.PI / 180) / Math.pow(2, zoom);
-      setWeight(Math.max(2, widthMeters / metersPerPixel));
-    };
-    updateWeight();
-    map.on('zoomend', updateWeight);
-    return () => { map.off('zoomend', updateWeight); };
-  }, [map, widthMeters]);
+  const segments = useMemo(() => {
+    if (lanes.length === 0 || workPolys.length === 0) return [];
 
-  if (positions.length < 2) return null;
+    const lat = lanes[0].lat1;
+    const metersPerPixel = 156543.03392 * Math.cos(lat * Math.PI / 180) / Math.pow(2, zoom);
+    const spacingMeters = metersPerPixel * 3;  // 3px spacing
+    const laneWidth = 0.28;
+    const linesPerLane = Math.max(1, Math.round(laneWidth / spacingMeters));
+
+    const result: [number, number][][] = [];
+
+    for (const lane of lanes) {
+      const dLat = lane.lat2 - lane.lat1;
+      const dLng = lane.lng2 - lane.lng1;
+      const len = Math.sqrt(dLat * dLat + dLng * dLng);
+      if (len === 0) continue;
+      const pLat = -dLng / len;
+      const pLng = dLat / len;
+
+      const cosLat = Math.cos(lat * Math.PI / 180);
+      const mPerDeg = Math.sqrt((pLat * 111000) ** 2 + (pLng * 111000 * cosLat) ** 2);
+      const halfWidthDeg = (laneWidth / 2) / mPerDeg;
+      const stepDeg = linesPerLane > 1 ? laneWidth / mPerDeg / (linesPerLane - 1) : 0;
+
+      const subLines: [[number, number], [number, number]][] = [];
+      if (linesPerLane === 1) {
+        subLines.push([[lane.lat1, lane.lng1], [lane.lat2, lane.lng2]]);
+      } else {
+        for (let i = 0; i < linesPerLane; i++) {
+          const offset = -halfWidthDeg + i * stepDeg;
+          subLines.push([
+            [lane.lat1 + pLat * offset, lane.lng1 + pLng * offset],
+            [lane.lat2 + pLat * offset, lane.lng2 + pLng * offset],
+          ]);
+        }
+      }
+
+      // Clip elke sub-lijn aan alle work polygons
+      for (const sl of subLines) {
+        for (const poly of workPolys) {
+          const clipped = clipLineToPolygon(sl, poly);
+          for (const seg of clipped) result.push(seg);
+        }
+      }
+    }
+    return result;
+  }, [lanes, workPolys, zoom]);
+
+  // Edge lines: eerste en laatste sub-lijn per lane voor witte rand
+  const edgeSegments = useMemo(() => {
+    if (lanes.length === 0 || workPolys.length === 0) return [];
+
+    const lat = lanes[0].lat1;
+    const metersPerPixel = 156543.03392 * Math.cos(lat * Math.PI / 180) / Math.pow(2, zoom);
+    const spacingMeters = metersPerPixel * 3;
+    const laneWidth = 0.28;
+    const linesPerLane = Math.max(1, Math.round(laneWidth / spacingMeters));
+
+    if (linesPerLane <= 2) return []; // te weinig lijnen voor edge effect
+
+    const result: [number, number][][] = [];
+
+    for (const lane of lanes) {
+      const dLat = lane.lat2 - lane.lat1;
+      const dLng = lane.lng2 - lane.lng1;
+      const len = Math.sqrt(dLat * dLat + dLng * dLng);
+      if (len === 0) continue;
+      const pLat = -dLng / len;
+      const pLng = dLat / len;
+
+      const cosLat = Math.cos(lat * Math.PI / 180);
+      const mPerDeg = Math.sqrt((pLat * 111000) ** 2 + (pLng * 111000 * cosLat) ** 2);
+      const halfWidthDeg = (laneWidth / 2) / mPerDeg;
+
+      // Alleen de buitenste twee lijnen (edges)
+      for (const offset of [-halfWidthDeg, halfWidthDeg]) {
+        const edgeLine: [[number, number], [number, number]] = [
+          [lane.lat1 + pLat * offset, lane.lng1 + pLng * offset],
+          [lane.lat2 + pLat * offset, lane.lng2 + pLng * offset],
+        ];
+        for (const poly of workPolys) {
+          const clipped = clipLineToPolygon(edgeLine, poly);
+          for (const seg of clipped) result.push(seg);
+        }
+      }
+    }
+    return result;
+  }, [lanes, workPolys, zoom]);
+
+  if (segments.length === 0) return null;
 
   return (
-    <Polyline
-      positions={positions}
-      pathOptions={{
-        color: '#10b981',
-        weight,
-        opacity: 0.35,
-        lineCap: 'butt',
-        lineJoin: 'round',
-      }}
-    />
+    <>
+      {edgeSegments.length > 0 && (
+        <Polyline
+          positions={edgeSegments}
+          pathOptions={{
+            color: 'rgba(255,255,255,0.5)',
+            weight: 2,
+            opacity: 1,
+            lineCap: 'butt',
+          }}
+        />
+      )}
+      <Polyline
+        positions={segments}
+        pathOptions={{
+          color: '#026c4aff',
+          weight: 3.5,
+          opacity: 0.25,
+          lineCap: 'butt',
+        }}
+      />
+    </>
   );
 }
 
@@ -299,9 +433,13 @@ type AreaType = 'work' | 'obstacle' | 'unicom';
 // ── Mower marker icon ────────────────────────────────────────────
 
 function makeMowerIcon(heading: number) {
+  // PNG bovenaanzicht: voorkant wijst naar rechts (= 90° compass).
+  // CSS rotate(0deg) = geen rotatie → maaier wijst rechts.
+  // Compass: 0°=N(omhoog), 90°=E(rechts). Offset -90° corrigeert dit.
+  const cssRotation = heading - 90;
   return L.divIcon({
     className: '',
-    html: `<div style="width:36px;height:36px;transform:rotate(${heading}deg);display:flex;align-items:center;justify-content:center">
+    html: `<div style="width:36px;height:36px;transform:rotate(${cssRotation}deg);display:flex;align-items:center;justify-content:center">
       <img src="/mower/lawn_mower.png" style="width:32px;height:20px;filter:drop-shadow(0 1px 3px rgba(0,0,0,0.4))" />
     </div>`,
     iconSize: [36, 36],
@@ -357,65 +495,6 @@ function polygonAreaM2(points: Array<{ lat: number; lng: number }>): number {
     area += xi * yj - xj * yi;
   }
   return Math.abs(area) / 2;
-}
-
-// ── Clip a line segment to a polygon (Sutherland-Hodgman style) ──
-
-/** Returns segments of `line` that lie inside `polygon`. */
-function clipLineToPolygon(
-  line: [[number, number], [number, number]],
-  polygon: Array<{ lat: number; lng: number }>,
-): [number, number][][] {
-  const pts = polygon.map(p => [p.lat, p.lng] as [number, number]);
-  const n = pts.length;
-  if (n < 3) return [];
-
-  // Collect all intersection t-values of line with polygon edges
-  const [aLat, aLng] = line[0];
-  const [bLat, bLng] = line[1];
-  const dLat = bLat - aLat;
-  const dLng = bLng - aLng;
-
-  const tValues: number[] = [];
-  for (let i = 0; i < n; i++) {
-    const j = (i + 1) % n;
-    const [eLat, eLng] = pts[i];
-    const [fLat, fLng] = pts[j];
-    const edLat = fLat - eLat;
-    const edLng = fLng - eLng;
-    const denom = dLat * edLng - dLng * edLat;
-    if (Math.abs(denom) < 1e-15) continue;
-    const t = ((eLat - aLat) * edLng - (eLng - aLng) * edLat) / denom;
-    const u = ((eLat - aLat) * dLng - (eLng - aLng) * dLat) / denom;
-    if (u >= 0 && u <= 1 && t >= 0 && t <= 1) {
-      tValues.push(t);
-    }
-  }
-
-  // Add start/end if inside polygon
-  const startInside = pointInPolygon(aLat, aLng, polygon);
-  const endInside = pointInPolygon(bLat, bLng, polygon);
-  if (startInside) tValues.push(0);
-  if (endInside) tValues.push(1);
-
-  tValues.sort((a, b) => a - b);
-
-  // Build segments from consecutive pairs (enter→exit)
-  const segments: [number, number][][] = [];
-  for (let i = 0; i < tValues.length - 1; i++) {
-    const t1 = tValues[i];
-    const t2 = tValues[i + 1];
-    const midT = (t1 + t2) / 2;
-    const midLat = aLat + dLat * midT;
-    const midLng = aLng + dLng * midT;
-    if (pointInPolygon(midLat, midLng, polygon)) {
-      segments.push([
-        [aLat + dLat * t1, aLng + dLng * t1],
-        [aLat + dLat * t2, aLng + dLng * t2],
-      ]);
-    }
-  }
-  return segments;
 }
 
 // ── Click-to-place charger component ────────────────────────────
@@ -485,7 +564,95 @@ function makeTargetIcon() {
 
 const targetIcon = makeTargetIcon();
 
-export function MowerMap({ sn, lat, lng, heading, signals, mowing, pathDirectionPreview, onMapSaved, liveOutline, patternPlacement, onMapClickForPattern, offsetPreview }: Props) {
+// ── Confetti celebration ──────────────────────────────────────
+
+const CONFETTI_COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#22d3ee'];
+
+function ConfettiPiece({ color, left, delay, duration, size, wobble }: {
+  color: string; left: number; delay: number; duration: number; size: number; wobble: number;
+}) {
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        left: `${left}%`,
+        top: -20,
+        width: size,
+        height: size * 0.6,
+        backgroundColor: color,
+        borderRadius: 2,
+        opacity: 0,
+        animation: `confetti-fall ${duration}s ease-in ${delay}s forwards`,
+        '--wobble': `${wobble}px`,
+      } as React.CSSProperties}
+    />
+  );
+}
+
+function CelebrationOverlay({ area, onDismiss }: { area: number; onDismiss: () => void }) {
+  const pieces = useMemo(() =>
+    Array.from({ length: 60 }, (_, i) => ({
+      id: i,
+      color: CONFETTI_COLORS[i % CONFETTI_COLORS.length],
+      left: Math.random() * 100,
+      delay: Math.random() * 2,
+      duration: 2.5 + Math.random() * 2.5,
+      size: 5 + Math.random() * 8,
+      wobble: (Math.random() - 0.5) * 100,
+    })),
+  []);
+
+  return (
+    <div className="absolute inset-0 z-[2000] overflow-hidden">
+      <style>{`
+        @keyframes confetti-fall {
+          0%   { transform: translateY(0) translateX(0) rotate(0deg); opacity: 1; }
+          25%  { transform: translateY(25vh) translateX(var(--wobble)) rotate(180deg); opacity: 1; }
+          50%  { transform: translateY(50vh) translateX(calc(var(--wobble) * -0.5)) rotate(360deg); opacity: 0.8; }
+          100% { transform: translateY(110vh) translateX(var(--wobble)) rotate(720deg); opacity: 0; }
+        }
+        @keyframes celebration-pulse {
+          0%, 100% { transform: scale(1); }
+          50% { transform: scale(1.05); }
+        }
+        @keyframes celebration-appear {
+          0% { opacity: 0; transform: scale(0.8); }
+          100% { opacity: 1; transform: scale(1); }
+        }
+      `}</style>
+
+      {pieces.map(p => <ConfettiPiece key={p.id} {...p} />)}
+
+      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+        <div
+          className="pointer-events-auto bg-gray-900/95 backdrop-blur-lg border border-emerald-500/40 rounded-2xl p-6 shadow-2xl text-center max-w-xs"
+          style={{ animation: 'celebration-appear 0.4s ease-out forwards' }}
+        >
+          <div className="text-5xl mb-3" style={{ animation: 'celebration-pulse 1.5s ease-in-out infinite' }}>
+            🎉
+          </div>
+          <h3 className="text-lg font-bold text-emerald-400 mb-1">Maaien voltooid!</h3>
+          <p className="text-sm text-gray-400 mb-1">
+            100% — Alle banen gemaaid
+          </p>
+          {area > 0 && (
+            <p className="text-xs text-gray-500 mb-4">
+              {area.toFixed(0)} m&sup2; afgerond
+            </p>
+          )}
+          <button
+            onClick={onDismiss}
+            className="px-5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium transition-colors shadow-lg shadow-emerald-900/40"
+          >
+            Sluiten
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function MowerMap({ sn, lat, lng, heading, signals, mowing, pathDirectionPreview, onMapSaved, liveOutline, patternPlacement, onMapClickForPattern, offsetPreview, coveredLanes }: Props) {
   const { t } = useTranslation();
   const { toast } = useToast();
   const [maps, setMaps] = useState<MapData[]>([]);
@@ -501,6 +668,28 @@ export function MowerMap({ sn, lat, lng, heading, signals, mowing, pathDirection
   const [drawType, setDrawType] = useState<'work' | 'obstacle' | 'unicom'>('work');
   const [drawName, setDrawName] = useState('');
   const [showHeatmap, setShowHeatmap] = useState(false);
+
+  // Mowing completion celebration + "vandaag gemaaid" tracking
+  const [showCelebration, setShowCelebration] = useState(false);
+  const [lastMowedDate, setLastMowedDate] = useState<string | null>(null);
+  const prevWorkStatusRef = useRef<string>('0');
+  const celebrationArea = useRef(0);
+
+  useEffect(() => {
+    const ws = mowing?.workStatus ?? '0';
+    const progress = parseInt(mowing?.mowingProgress ?? '0', 10);
+    // Maaien gestart → wis oude trail
+    if (prevWorkStatusRef.current !== '1' && ws === '1') {
+      setTrail([]);
+    }
+    // Transitie: maaien klaar (status 1→x met progress >=95%)
+    if (prevWorkStatusRef.current === '1' && ws !== '1' && progress >= 95) {
+      celebrationArea.current = parseFloat(mowing?.coveringArea ?? '0');
+      setShowCelebration(true);
+      setLastMowedDate(new Date().toLocaleDateString());
+    }
+    prevWorkStatusRef.current = ws;
+  }, [mowing?.workStatus, mowing?.mowingProgress, mowing?.coveringArea]);
 
   // Place charger mode
   const [placingCharger, setPlacingCharger] = useState(false);
@@ -857,6 +1046,12 @@ export function MowerMap({ sn, lat, lng, heading, signals, mowing, pathDirection
           })()}
         </div>
         <div className="flex items-center gap-1 md:gap-3">
+          {lastMowedDate && (
+            <span className="inline-flex items-center gap-1 text-xs px-1.5 md:px-2 py-0.5 rounded bg-emerald-900/50 text-emerald-400" title={`Laatst gemaaid: ${lastMowedDate}`}>
+              <CheckCircle2 className="w-3 h-3" />
+              <span className="hidden md:inline">Gemaaid</span>
+            </span>
+          )}
           {trail.length > 0 && (
             <button
               onClick={() => setShowTrail(!showTrail)}
@@ -1111,12 +1306,18 @@ export function MowerMap({ sn, lat, lng, heading, signals, mowing, pathDirection
               pathOptions={{ color: '#22d3ee', weight: 2, dashArray: '6 4', fillOpacity: 0.05, fillColor: '#22d3ee' }}
             />
           )}
-          {/* Mowing coverage band (wide green stripes) */}
-          {showTrail && trailPositions.length >= 2 && (
-            <CoverageTrail positions={trailPositions} />
-          )}
-          {/* GPS trail centerline */}
-          {showTrail && !showHeatmap && trailPositions.length >= 2 && (
+          {/* Afgelegde maai-banen (dunne lijntjes geclipt aan polygon) */}
+          {coveredLanes && coveredLanes.length > 0 && (() => {
+            const wPolys = polygonMaps
+              .filter(m => getAreaStyle(m.mapType, m.mapId, m.mapName) === AREA_STYLES.work)
+              .map(m => {
+                const calPts = calibratePoints(m.mapArea, activeCal, polyCenter);
+                return calPts.map(([lat, lng]) => ({ lat, lng }));
+              });
+            return <CoverageStripes lanes={coveredLanes} workPolys={wPolys} />;
+          })()}
+          {/* GPS trail centerline — verberg tijdens maaien (hatching toont coverage) */}
+          {showTrail && !showHeatmap && mowing?.workStatus !== '1' && trailPositions.length >= 2 && (
             <Polyline
               positions={trailPositions}
               pathOptions={{
@@ -1213,18 +1414,15 @@ export function MowerMap({ sn, lat, lng, heading, signals, mowing, pathDirection
               </Popup>
             </Marker>
           )}
-          {/* Path direction preview: hatching lines clipped to work polygons */}
+          {/* Path direction preview: blauwe lijnen bij richting selectie */}
           {pathDirectionPreview != null && polyCenter.lat !== 0 && (() => {
             const deg = pathDirectionPreview;
             const rad = (deg * Math.PI) / 180;
-            // Direction vector (bearing: 0=N, 90=E)
             const dLat = Math.cos(rad);
             const dLng = Math.sin(rad);
-            // Perpendicular for parallel offset lines
             const pLat = -dLng;
             const pLng = dLat;
 
-            // Collect all work-area polygons (calibrated)
             const workPolys = polygonMaps
               .filter(m => getAreaStyle(m.mapType, m.mapId, m.mapName) === AREA_STYLES.work)
               .map(m => {
@@ -1233,7 +1431,6 @@ export function MowerMap({ sn, lat, lng, heading, signals, mowing, pathDirection
               });
             if (workPolys.length === 0) return null;
 
-            // Compute bounding box of all work polygons to determine line count + extent
             let minPerp = Infinity, maxPerp = -Infinity;
             let minPar = Infinity, maxPar = -Infinity;
             for (const poly of workPolys) {
@@ -1249,7 +1446,7 @@ export function MowerMap({ sn, lat, lng, heading, signals, mowing, pathDirection
               }
             }
 
-            const spacing = 0.000008; // ~0.9m between lines — dense hatching
+            const spacing = 0.000008;
             const margin = spacing * 2;
             const lineExtent = Math.max(Math.abs(maxPar), Math.abs(minPar)) + margin;
             const startPerp = Math.floor((minPerp - margin) / spacing) * spacing;
@@ -1265,9 +1462,7 @@ export function MowerMap({ sn, lat, lng, heading, signals, mowing, pathDirection
               ];
               for (const poly of workPolys) {
                 const clipped = clipLineToPolygon(rawLine, poly);
-                for (const seg of clipped) {
-                  allSegments.push(seg);
-                }
+                for (const seg of clipped) allSegments.push(seg);
               }
             }
 
@@ -1275,11 +1470,7 @@ export function MowerMap({ sn, lat, lng, heading, signals, mowing, pathDirection
               <Polyline
                 key={`dir-${idx}`}
                 positions={seg}
-                pathOptions={{
-                  color: '#60a5fa',
-                  weight: 2,
-                  opacity: 0.7,
-                }}
+                pathOptions={{ color: '#60a5fa', weight: 2, opacity: 0.7 }}
               />
             ));
           })()}
@@ -1459,8 +1650,8 @@ export function MowerMap({ sn, lat, lng, heading, signals, mowing, pathDirection
           </div>
         )}
 
-        {/* Mowing progress overlay */}
-        {mowing && (() => {
+        {/* Mowing progress overlay — alleen tonen tijdens actief maaien */}
+        {mowing && mowing.workStatus === '1' && (() => {
           const progress = parseInt(mowing.mowingProgress ?? '0', 10);
           if (progress <= 0) return null;
           const covering = parseFloat(mowing.coveringArea ?? '0');
@@ -1509,6 +1700,11 @@ export function MowerMap({ sn, lat, lng, heading, signals, mowing, pathDirection
             </div>
           );
         })()}
+
+        {/* Mowing complete celebration */}
+        {showCelebration && (
+          <CelebrationOverlay area={celebrationArea.current} onDismiss={() => setShowCelebration(false)} />
+        )}
 
         {/* Wall drawing hint */}
         {wallDrawMode && (

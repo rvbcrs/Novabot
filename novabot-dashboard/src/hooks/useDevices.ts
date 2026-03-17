@@ -18,6 +18,7 @@ export function useDevices() {
   const [bleLogs, setBleLogs] = useState<BleLogEntry[]>([]);
   const [otaProgress, setOtaProgress] = useState<Map<string, OtaProgress>>(new Map());
   const [liveOutlines, setLiveOutlines] = useState<Map<string, Array<{ lat: number; lng: number }>>>(new Map());
+  const [coveredLanes, setCoveredLanes] = useState<Map<string, Array<{ lat1: number; lng1: number; lat2: number; lng2: number }>>>(new Map());
   const logsRef = useRef(logs);
   logsRef.current = logs;
 
@@ -127,6 +128,14 @@ export function useDevices() {
     });
   }, []);
 
+  const onMowLanes = useCallback((e: { sn: string; lanes: Array<{ lat1: number; lng1: number; lat2: number; lng2: number }> }) => {
+    setCoveredLanes(prev => {
+      const next = new Map(prev);
+      next.set(e.sn, e.lanes);
+      return next;
+    });
+  }, []);
+
   const onOtaEvent = useCallback((e: OtaEventPayload) => {
     if (e.eventType === 'state') {
       const data = e.data;
@@ -149,8 +158,8 @@ export function useDevices() {
   const { connected } = useSocket({
     onDeviceUpdate, onDeviceOnline, onDeviceOffline, onSnapshot,
     onMqttLog, onMqttLogHistory, onBleLog, onBleLogHistory, onOtaEvent,
-    onMapOutline,
+    onMapOutline, onMowLanes,
   });
 
-  return { devices, loading, connected, logs, bleLogs, otaProgress, liveOutlines };
+  return { devices, loading, connected, logs, bleLogs, otaProgress, liveOutlines, coveredLanes };
 }

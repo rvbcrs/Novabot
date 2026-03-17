@@ -13,6 +13,7 @@ import { startMqttBridge } from '../proxy/mqttBridge.js';
 import { tryDecrypt } from './decrypt.js';
 import { startHomeAssistantBridge, forwardToHomeAssistant, publishDeviceOnline, publishDeviceOffline } from './homeassistant.js';
 import { updateDeviceData, clearDeviceData } from './sensorData.js';
+import { isDemoMode } from '../services/demoSimulator.js';
 import { forwardToDashboard, emitDeviceOnline, emitDeviceOffline, pushMqttLog, emitOtaEvent, emitPinEvent, emitExtendedEvent } from '../dashboard/socketHandler.js';
 import { initMapSync, onMowerConnected, handleMapMessage, publishEncryptedOnTopic } from './mapSync.js';
 import { localToGps, type GpsPoint, type LocalPoint } from './mapConverter.js';
@@ -875,9 +876,12 @@ export async function startMqttBroker(): Promise<void> {
         }
       } catch { /* geen JSON of geen map-bericht */ }
 
-      const changes = updateDeviceData(forwardSn, effectiveBuf);
-      forwardToHomeAssistant(packet.topic, effectiveBuf, forwardSn, changes);
-      forwardToDashboard(forwardSn, changes);
+      // In demo mode: skip echte maaier status updates (simulator stuurt eigen data)
+      if (!isDemoMode(forwardSn)) {
+        const changes = updateDeviceData(forwardSn, effectiveBuf);
+        forwardToHomeAssistant(packet.topic, effectiveBuf, forwardSn, changes);
+        forwardToDashboard(forwardSn, changes);
+      }
     }
 
     // Forward extended_commands.py responses naar dashboard via Socket.io

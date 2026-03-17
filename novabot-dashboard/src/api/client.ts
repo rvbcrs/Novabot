@@ -109,6 +109,24 @@ export async function sendCommand(sn: string, command: Record<string, unknown>):
   return res.json();
 }
 
+// ── Demo/simulatie modus ────────────────────────────────────────
+
+export interface DemoStatus {
+  demoMode: boolean;
+  state: string;
+  progress: number;
+}
+
+export async function setDemoMode(sn: string, enabled: boolean): Promise<DemoStatus & { ok: boolean }> {
+  const res = await post(`${BASE}/demo/${encodeURIComponent(sn)}`, { enabled });
+  return res.json();
+}
+
+export async function getDemoMode(sn: string): Promise<{ sn: string } & DemoStatus> {
+  const res = await get(`${BASE}/demo/${encodeURIComponent(sn)}`);
+  return res.json();
+}
+
 // ── PIN Code Management ─────────────────────────────────────────
 
 export interface PinResult {

@@ -11,6 +11,7 @@ interface Props {
 export function MowerStatus({ device, overlay }: Props) {
   const s = device.sensors;
   const progress = parseInt(s.mowing_progress ?? '0', 10);
+  const isMowing = s.work_status === '1';
 
   // In overlay mode: only show work progress (errors go via toast)
   if (overlay) {
@@ -22,7 +23,7 @@ export function MowerStatus({ device, overlay }: Props) {
           errorStatus={s.error_status}
           workStatus={s.work_status}
         />
-        {progress > 0 && <WorkProgress progress={progress} />}
+        {isMowing && progress > 0 && <WorkProgress progress={progress} />}
       </>
     );
   }
@@ -35,7 +36,7 @@ export function MowerStatus({ device, overlay }: Props) {
         errorStatus={s.error_status}
         workStatus={s.work_status}
       />
-      {progress > 0 && <WorkProgress progress={progress} />}
+      {isMowing && progress > 0 && <WorkProgress progress={progress} />}
       <SensorGrid device={device} />
     </div>
   );

@@ -38,6 +38,7 @@ interface Props {
   bleLogs: BleLogEntry[];
   otaProgress: Map<string, OtaProgress>;
   liveOutlines: Map<string, Array<{ lat: number; lng: number }>>;
+  coveredLanes: Map<string, Array<{ lat1: number; lng1: number; lat2: number; lng2: number }>>;
 }
 
 /** Small stat pill used in the DeviceChip */
@@ -281,7 +282,7 @@ function PanelMenuItem({ icon: Icon, label, active, color, onClick }: {
   );
 }
 
-export function DashboardPage({ devices, loading, logs, bleLogs, otaProgress, liveOutlines }: Props) {
+export function DashboardPage({ devices, loading, logs, bleLogs, otaProgress, liveOutlines, coveredLanes }: Props) {
   const { t } = useTranslation();
   const { toast } = useToast();
   const [logOpen, setLogOpen] = useState(false);
@@ -332,7 +333,7 @@ export function DashboardPage({ devices, loading, logs, bleLogs, otaProgress, li
 
   const mower = sorted.find(d => d.deviceType === 'mower');
 
-  const mowerActive = mower?.online && mower.sensors.work_status && mower.sensors.work_status !== '0';
+  const mowerActive = mower?.online && (mower.sensors.work_status === '1' || mower.sensors.work_status === '4');
   const isMappingActive = mower?.online && mower?.sensors.start_edit_or_assistant_map_flag === '1';
   // PIN lock: error_status 151 direct, OR any error whose message mentions PIN input
   // (e.g. error 157 "Robot turn over, please check robot and try again after input pin")
@@ -490,6 +491,7 @@ export function DashboardPage({ devices, loading, logs, bleLogs, otaProgress, li
             pathDirectionPreview={pathDirPreview}
             onMapSaved={handleMapSaved}
             liveOutline={mower ? (liveOutlines.get(mower.sn) ?? null) : null}
+            coveredLanes={mower ? (coveredLanes.get(mower.sn) ?? null) : null}
             patternPlacement={patternPlacement}
             onMapClickForPattern={patternClickActive ? (c) => setPatternCenter(c) : undefined}
             offsetPreview={offsetPreview}

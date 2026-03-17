@@ -55,9 +55,10 @@ function getAreaStyle(mapType?: string, mapId?: string, mapName?: string | null)
 }
 
 function makeMowerIcon(heading: number) {
+  const cssRotation = heading - 90;
   return L.divIcon({
     className: '',
-    html: `<div style="width:36px;height:36px;transform:rotate(${heading}deg);display:flex;align-items:center;justify-content:center">
+    html: `<div style="width:36px;height:36px;transform:rotate(${cssRotation}deg);display:flex;align-items:center;justify-content:center">
       <img src="/mower/lawn_mower.png" style="width:32px;height:20px;filter:drop-shadow(0 1px 3px rgba(0,0,0,0.4))" />
     </div>`,
     iconSize: [36, 36],

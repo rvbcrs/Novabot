@@ -9,6 +9,7 @@ import type { MapData } from '../../types';
 import {
   sendCommand, fetchMaps, startPatrol, stopPatrol, rebootMower,
   setChargeThreshold, setMaxSpeed, previewPath,
+  setDemoMode as setDemoModeApi, getDemoMode,
 } from '../../api/client';
 import { useToast } from '../common/Toast';
 import { PatternPicker } from '../patterns/PatternPicker';
@@ -67,6 +68,23 @@ export function MowerControls({
   const [chargeThresholdVal, setChargeThresholdVal] = useState(20);
   const [maxSpeedVal, setMaxSpeedVal] = useState(0.5);
   const [rebootConfirm, setRebootConfirm] = useState(false);
+  const [demoActive, setDemoActive] = useState(false);
+
+  // Load demo mode status on mount
+  useEffect(() => {
+    if (!sn) return;
+    getDemoMode(sn).then(r => setDemoActive(r.demoMode)).catch(() => {});
+  }, [sn]);
+
+  const toggleDemo = async () => {
+    try {
+      const r = await setDemoModeApi(sn, !demoActive);
+      setDemoActive(r.demoMode);
+      toast(r.demoMode ? 'Demo mode ON — commands are simulated' : 'Demo mode OFF', 'success');
+    } catch {
+      toast('Failed to toggle demo mode', 'error');
+    }
+  };
 
   const isMappingActive = sensors?.start_edit_or_assistant_map_flag === '1';
   const gpsEnabled = sensors?.gps_state === 'ENABLE';
@@ -231,7 +249,7 @@ export function MowerControls({
     patternMode, patternId, patternContours, patternCenter, patternSize, patternRotation,
     onPathDirectionChange, onPatternPlacementChange, onStarted, t, toast]);
 
-  const disabled = busy || !online;
+  const disabled = busy || (!online && !demoActive);
   const btnBase = 'inline-flex items-center justify-center p-1 sm:p-1.5 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed';
   // Hidden on mobile, shown on desktop — no inline-flex from btnBase to avoid Tailwind display conflict
   const btnHidden = 'hidden md:inline-flex items-center justify-center p-1 sm:p-1.5 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed';
@@ -272,6 +290,19 @@ export function MowerControls({
     <div className="relative">
       {/* Action buttons row */}
       <div className="flex items-center gap-1">
+        <button
+          onClick={toggleDemo}
+          className={`inline-flex items-center gap-1 text-xs h-7 px-1.5 sm:px-2 rounded transition-colors ${
+            demoActive
+              ? 'bg-amber-600 text-white'
+              : 'bg-gray-700/60 text-gray-500 hover:text-amber-400 hover:bg-amber-700/30'
+          }`}
+          title={demoActive ? 'Demo mode ON — click to disable' : 'Enable demo mode (simulated commands)'}
+        >
+          <Sparkles className="w-3.5 h-3.5" />
+          {demoActive && <span className="hidden sm:inline">Demo</span>}
+        </button>
+
         <button
           onClick={() => {
             const next = !expanded;

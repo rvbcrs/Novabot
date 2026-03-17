@@ -11,6 +11,7 @@ import { requestMapList, requestMapOutline, publishToDevice, publishRawToDevice,
 import crypto from 'crypto';
 import { generateMapZipFromDb, gpsToLocal, localToGps, parseMapZip, type GpsPoint, type LocalPoint } from '../mqtt/mapConverter.js';
 import { existsSync, unlinkSync, readFileSync, readdirSync, createReadStream, statSync, watch, mkdirSync, copyFileSync } from 'fs';
+import { isDemoMode, setDemoMode as setDemo, getDemoStatus } from '../services/demoSimulator.js';
 import { execSync } from 'child_process';
 import path from 'path';
 import { networkInterfaces } from 'os';
@@ -97,9 +98,9 @@ dashboardRouter.get('/devices', (_req: Request, res: Response) => {
     settingsBySn.get(row.sn)!.set(row.key, row.value);
   }
 
-  // Filter: toon alleen gebonden apparaten of online apparaten
+  // Filter: toon alleen gebonden apparaten of online/demo apparaten
   const devices = registry
-    .filter(d => boundSns.has(d.sn!) || isDeviceOnline(d.sn!))
+    .filter(d => boundSns.has(d.sn!) || isDeviceOnline(d.sn!) || isDemoMode(d.sn!))
     .map(d => {
       const sensors = snapshots[d.sn!] ?? {};
       // Inject firmware versie uit equipment tabel als die niet al in sensors zit
@@ -129,7 +130,7 @@ dashboardRouter.get('/devices', (_req: Request, res: Response) => {
         sn: d.sn!,
         macAddress: d.mac_address,
         lastSeen: d.last_seen,
-        online: isDeviceOnline(d.sn!),
+        online: isDeviceOnline(d.sn!) || isDemoMode(d.sn!),
         deviceType: d.sn!.startsWith('LFIC') ? 'charger' as const : 'mower' as const,
         nickname: eqRow?.equipment_nick_name ?? null,
         mowerIp: d.sn!.startsWith('LFIN') ? (eqRow?.mower_ip ?? null) : null,
@@ -235,7 +236,7 @@ dashboardRouter.get('/devices/:sn', (req: Request, res: Response) => {
 
   res.json({
     sn,
-    online: isDeviceOnline(sn),
+    online: isDeviceOnline(sn) || isDemoMode(sn),
     deviceType: sn.startsWith('LFIC') ? 'charger' : 'mower',
     sensors: snapshot,
   });
@@ -1156,6 +1157,20 @@ dashboardRouter.post('/maps/convert', (req: Request, res: Response) => {
   }
 });
 
+// ── Demo/simulatie modus ────────────────────────────────────────
+
+dashboardRouter.post('/demo/:sn', (req: Request, res: Response) => {
+  const { sn } = req.params;
+  const { enabled } = req.body as { enabled: boolean };
+  setDemo(sn, !!enabled);
+  res.json({ ok: true, ...getDemoStatus(sn) });
+});
+
+dashboardRouter.get('/demo/:sn', (req: Request, res: Response) => {
+  const { sn } = req.params;
+  res.json({ sn, ...getDemoStatus(sn) });
+});
+
 // ── MQTT command publishing ─────────────────────────────────────
 
 // POST /api/dashboard/command/:sn — stuur een MQTT commando naar een apparaat
@@ -1169,7 +1184,7 @@ dashboardRouter.post('/command/:sn', (req: Request, res: Response) => {
   }
 
   const { force } = req.query as { force?: string };
-  if (!force && !isDeviceOnline(sn)) {
+  if (!force && !isDemoMode(sn) && !isDeviceOnline(sn)) {
     res.status(404).json({ error: 'Device is offline' });
     return;
   }
@@ -1237,10 +1252,10 @@ dashboardRouter.post('/command/:sn', (req: Request, res: Response) => {
     const encrypted = Buffer.concat([cipher.update(padded), cipher.final()]);
     console.log(`[DASHBOARD] Encrypted command (${json.length}B → ${encrypted.length}B) voor ${sn}: ${json}`);
     publishRawToDevice(sn, encrypted, (qos === 1 ? 1 : 0) as 0 | 1);
-    res.json({ ok: true, command: Object.keys(command)[0], encrypted: true, size: encrypted.length });
+    res.json({ ok: true, command: Object.keys(command)[0], encrypted: true, size: encrypted.length, demo: isDemoMode(sn) });
   } else {
     publishToDevice(sn, command);
-    res.json({ ok: true, command: Object.keys(command)[0] });
+    res.json({ ok: true, command: Object.keys(command)[0], demo: isDemoMode(sn) });
   }
 });
 

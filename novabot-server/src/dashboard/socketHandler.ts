@@ -9,6 +9,12 @@ import { db } from '../db/database.js';
 import { initBleLogger, sendBleLogHistory } from '../ble/bleLogger.js';
 import { setOutlineEmitter } from '../mqtt/mapSync.js';
 
+// Callback om demo mode status te checken (geregistreerd door demoSimulator)
+let demoModeChecker: ((sn: string) => boolean) | null = null;
+export function setDemoModeChecker(fn: (sn: string) => boolean): void {
+  demoModeChecker = fn;
+}
+
 interface DeviceRegistryRow {
   sn: string | null;
   mac_address: string | null;
@@ -80,11 +86,11 @@ export function initDashboardSocket(httpServer: HttpServer): void {
     }
 
     const devices = registry
-      .filter(r => boundSns.has(r.sn!) || isDeviceOnline(r.sn!))
+      .filter(r => boundSns.has(r.sn!) || isDeviceOnline(r.sn!) || demoModeChecker?.(r.sn!))
       .map(r => ({
         sn: r.sn!,
         deviceType: r.sn!.startsWith('LFIC') ? 'charger' : 'mower',
-        online: isDeviceOnline(r.sn!),
+        online: isDeviceOnline(r.sn!) || demoModeChecker?.(r.sn!) === true,
         sensors: snapshots[r.sn!] ?? {},
       }));
 
@@ -122,6 +128,15 @@ export function emitDeviceOnline(sn: string): void {
 
 export function emitDeviceOffline(sn: string): void {
   io?.emit('device:offline', { sn, timestamp: Date.now() });
+}
+
+export function emitTrailClear(sn: string): void {
+  io?.emit('trail:clear', { sn, timestamp: Date.now() });
+}
+
+/** Stuur afgelegde maai-banen naar dashboard (demo simulator) */
+export function emitCoveredLanes(sn: string, lanes: Array<{ lat1: number; lng1: number; lat2: number; lng2: number }>): void {
+  io?.emit('mow:lanes', { sn, lanes, timestamp: Date.now() });
 }
 
 export function emitOtaEvent(sn: string, eventType: 'state' | 'version', data: unknown): void {

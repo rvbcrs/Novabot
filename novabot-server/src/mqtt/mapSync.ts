@@ -15,6 +15,7 @@ type Aedes = { publish: (packet: any, cb: (err?: Error | null) => void) => void;
 type AedesPublishPacket = { topic: string; payload: Buffer | string; qos: 0 | 1 | 2; retain: boolean; [key: string]: any };
 import { db } from '../db/database.js';
 import { gpsToLocal, type GpsPoint, type LocalPoint } from './mapConverter.js';
+import { tryDecrypt } from './decrypt.js';
 
 const TAG = '[MAP-SYNC]';
 
@@ -29,6 +30,14 @@ let outlineEmitter: OutlineEmitter | null = null;
 
 export function setOutlineEmitter(fn: OutlineEmitter): void {
   outlineEmitter = fn;
+}
+
+// Demo interceptor: geeft true als het command is onderschept (skip MQTT publish)
+type DemoInterceptor = (sn: string, command: Record<string, unknown>) => boolean;
+let demoInterceptor: DemoInterceptor | null = null;
+
+export function setDemoInterceptor(fn: DemoInterceptor): void {
+  demoInterceptor = fn;
 }
 
 /**
@@ -49,6 +58,21 @@ export function publishRawToDevice(sn: string, payload: Buffer, qos: 0 | 1 = 1):
     console.error(`${TAG} Broker niet geinitialiseerd`);
     return;
   }
+
+  // Demo interceptor: decrypt encrypted payload, laat simulator verwerken
+  if (demoInterceptor && sn.startsWith('LFI')) {
+    const decrypted = tryDecrypt(payload, sn);
+    if (decrypted) {
+      try {
+        const command = JSON.parse(decrypted) as Record<string, unknown>;
+        if (demoInterceptor(sn, command)) {
+          console.log(`${TAG} [DEMO] Intercepted raw command for ${sn}: ${Object.keys(command)[0]}`);
+          return;
+        }
+      } catch { /* niet-JSON payload, laat door */ }
+    }
+  }
+
   const topic = `Dart/Send_mqtt/${sn}`;
   const packet = {
     cmd: 'publish' as const,
@@ -69,6 +93,12 @@ export function publishRawToDevice(sn: string, payload: Buffer, qos: 0 | 1 = 1):
 export function publishToDevice(sn: string, command: Record<string, unknown>): void {
   if (!aedesBroker) {
     console.error(`${TAG} Broker niet geinitialiseerd`);
+    return;
+  }
+
+  // Demo interceptor: block MQTT publish, laat simulator verwerken
+  if (demoInterceptor?.(sn, command)) {
+    console.log(`${TAG} [DEMO] Intercepted command for ${sn}: ${Object.keys(command)[0]}`);
     return;
   }
 

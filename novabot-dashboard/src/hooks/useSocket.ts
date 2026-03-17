@@ -26,6 +26,8 @@ interface SocketHandlers {
   onBleLogHistory?: (entries: BleLogEntry[]) => void;
   onOtaEvent?: (e: OtaEventPayload) => void;
   onMapOutline?: (e: MapOutlineEvent) => void;
+  onTrailClear?: (e: { sn: string }) => void;
+  onMowLanes?: (e: { sn: string; lanes: Array<{ lat1: number; lng1: number; lat2: number; lng2: number }> }) => void;
 }
 
 export function useSocket(handlers: SocketHandlers) {
@@ -79,6 +81,14 @@ export function useSocket(handlers: SocketHandlers) {
 
     socket.on('map:outline', (e: MapOutlineEvent) => {
       handlersRef.current.onMapOutline?.(e);
+    });
+
+    socket.on('trail:clear', (e: { sn: string }) => {
+      handlersRef.current.onTrailClear?.(e);
+    });
+
+    socket.on('mow:lanes', (e: { sn: string; lanes: Array<{ lat1: number; lng1: number; lat2: number; lng2: number }> }) => {
+      handlersRef.current.onMowLanes?.(e);
     });
 
     return () => { socket.disconnect(); };

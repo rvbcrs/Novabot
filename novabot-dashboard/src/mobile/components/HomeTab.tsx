@@ -3,7 +3,7 @@ import { Wifi, Satellite, Zap, Home, Pause, Play, Square, Bug } from 'lucide-rea
 import { useTranslation } from 'react-i18next';
 import type { MowerDerived, MowerActivity } from '../MobilePage';
 import type { Schedule } from '../../types';
-import { sendCommand, fetchSchedules } from '../../api/client';
+import { sendCommand, fetchSchedules, setDemoMode, getDemoMode } from '../../api/client';
 import { useToast } from '../../components/common/Toast';
 import { ConfirmDialog } from '../../components/common/ConfirmDialog';
 import { MobileRainBanner } from './MobileRainBanner';
@@ -97,6 +97,7 @@ export function HomeTab({ mower }: Props) {
   const [debugActivity, setDebugActivity] = useState<MowerActivity | null>(null);
   const [debugOpen, setDebugOpen] = useState(false);
   const [debugBattery, setDebugBattery] = useState(75);
+  const [demoActive, setDemoActive] = useState(false);
 
   // Override mower with debug values when active
   const effectiveMower = useMemo(() => {
@@ -112,12 +113,24 @@ export function HomeTab({ mower }: Props) {
   }, [mower, debugActivity, debugBattery]);
 
   const m = effectiveMower;
-  const disabled = !m.sn || !m.online || m.activity === 'offline';
+  const disabled = !m.sn || (!demoActive && (!m.online || m.activity === 'offline'));
 
   useEffect(() => {
     if (!mower.sn) return;
     fetchSchedules(mower.sn).then(setSchedules).catch(() => {});
+    getDemoMode(mower.sn).then(r => setDemoActive(r.demoMode)).catch(() => {});
   }, [mower.sn]);
+
+  const toggleDemo = async () => {
+    if (!mower.sn) return;
+    try {
+      const r = await setDemoMode(mower.sn, !demoActive);
+      setDemoActive(r.demoMode);
+      toast(r.demoMode ? 'Demo mode ON' : 'Demo mode OFF', 'success');
+    } catch {
+      toast('Failed to toggle demo mode', 'error');
+    }
+  };
 
   const send = async (label: string, command: Record<string, unknown>) => {
     if (disabled) return;
@@ -227,6 +240,28 @@ export function HomeTab({ mower }: Props) {
             />
             <span className="text-[10px] text-amber-600 dark:text-amber-400 tabular-nums w-8 text-right">{debugBattery}%</span>
           </div>
+          <div className="flex items-center justify-between mt-2 pt-2 border-t border-amber-200 dark:border-amber-800/50">
+            <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 uppercase tracking-wider">Demo Mode</span>
+            <button
+              onClick={toggleDemo}
+              className={`relative w-10 h-5 rounded-full transition-colors ${
+                demoActive ? 'bg-amber-500' : 'bg-gray-300 dark:bg-gray-600'
+              }`}
+            >
+              <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${
+                demoActive ? 'translate-x-5' : 'translate-x-0.5'
+              }`} />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Demo mode banner */}
+      {demoActive && (
+        <div className="mx-4 mb-1 px-3 py-1.5 rounded-lg bg-amber-100 dark:bg-amber-900/40 border border-amber-300 dark:border-amber-700/50 text-center">
+          <span className="text-[11px] font-semibold text-amber-700 dark:text-amber-300">
+            DEMO MODE — Commands are simulated
+          </span>
         </div>
       )}
 
