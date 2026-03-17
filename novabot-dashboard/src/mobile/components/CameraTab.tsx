@@ -11,9 +11,7 @@ interface Props {
 }
 
 const CAMERA_PORT = 8000;
-const DEFAULT_IP = '192.168.0.244';
-const SNAPSHOT_INTERVAL = 500; // ms between snapshot polls
-const STREAM_TIMEOUT = 5000;  // ms to wait for stream before fallback
+const POLL_INTERVAL_MS = 500;
 
 const CAMERA_TOPICS = [
   { key: 'front', labelKey: 'camera.front' },
@@ -23,65 +21,68 @@ const CAMERA_TOPICS = [
   { key: 'aruco', labelKey: 'camera.aruco' },
 ] as const;
 
-type Mode = 'stream' | 'snapshot';
-
 export function CameraTab({ sn, online, mowerIp, headlightOn = false }: Props) {
   const { t } = useTranslation();
   const [selectedTopic, setSelectedTopic] = useState('front');
   const [hasError, setHasError] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [retryKey, setRetryKey] = useState(0);
   const [lightOn, setLightOn] = useState(headlightOn);
-  const [mode, setMode] = useState<Mode>('stream');
+  const [imageSrc, setImageSrc] = useState<string | null>(null);
+  const activeRef = useRef(true);
+  const blobUrlRef = useRef<string | null>(null);
 
-  const ip = mowerIp || DEFAULT_IP;
-  const streamUrl = `/api/dashboard/camera/${sn}/stream?ip=${ip}&port=${CAMERA_PORT}&topic=${selectedTopic}&_k=${retryKey}`;
-  const snapshotBaseUrl = `/api/dashboard/camera/${sn}/snapshot?ip=${ip}&port=${CAMERA_PORT}&topic=${selectedTopic}`;
+  const snapshotUrl = `/api/dashboard/camera/${sn}/snapshot?ip=${mowerIp ?? ''}&port=${CAMERA_PORT}&topic=${selectedTopic}`;
 
-  // Snapshot polling
-  const snapshotRef = useRef<HTMLImageElement>(null);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const seqRef = useRef(0);
+  const fetchSnapshot = useCallback(async () => {
+    if (!activeRef.current) return;
+    try {
+      const res = await fetch(`${snapshotUrl}&_t=${Date.now()}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      if (!activeRef.current) return;
+      if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current);
+      const url = URL.createObjectURL(blob);
+      blobUrlRef.current = url;
+      setImageSrc(url);
+      setLoading(false);
+      setHasError(false);
+    } catch {
+      if (!activeRef.current) return;
+      setLoading(false);
+      setHasError(true);
+    }
+  }, [snapshotUrl]);
 
-  const pollSnapshot = useCallback(() => {
-    if (!snapshotRef.current) return;
-    seqRef.current++;
-    snapshotRef.current.src = `${snapshotBaseUrl}&_t=${Date.now()}`;
-  }, [snapshotBaseUrl]);
-
+  // Poll snapshots
   useEffect(() => {
-    if (mode !== 'snapshot' || hasError) return;
-    // Start polling
-    pollSnapshot();
-    timerRef.current = setInterval(pollSnapshot, SNAPSHOT_INTERVAL);
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [mode, hasError, pollSnapshot, retryKey]);
+    if (!online) return;
+    activeRef.current = true;
+    setLoading(true);
+    setHasError(false);
 
-  // Stream timeout → auto-fallback to snapshot mode
-  const streamTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => {
-    if (mode !== 'stream' || !loading) return;
-    streamTimeoutRef.current = setTimeout(() => {
-      // Stream didn't load in time, switch to snapshot polling
-      setMode('snapshot');
-      setLoading(true);
-    }, STREAM_TIMEOUT);
-    return () => { if (streamTimeoutRef.current) clearTimeout(streamTimeoutRef.current); };
-  }, [mode, loading, retryKey]);
+    fetchSnapshot();
+    const interval = setInterval(fetchSnapshot, POLL_INTERVAL_MS);
+    return () => {
+      activeRef.current = false;
+      clearInterval(interval);
+      if (blobUrlRef.current) {
+        URL.revokeObjectURL(blobUrlRef.current);
+        blobUrlRef.current = null;
+      }
+    };
+  }, [online, fetchSnapshot]);
 
   const handleRetry = () => {
     setHasError(false);
     setLoading(true);
-    setMode('stream'); // retry stream first
-    setRetryKey(k => k + 1);
+    fetchSnapshot();
   };
 
   const handleTopicChange = (key: string) => {
     setSelectedTopic(key);
     setHasError(false);
     setLoading(true);
-    setMode('stream');
-    setRetryKey(k => k + 1);
+    setImageSrc(null);
   };
 
   if (!online) {
@@ -138,7 +139,7 @@ export function CameraTab({ sn, online, mowerIp, headlightOn = false }: Props) {
         </div>
       </div>
 
-      {/* Stream / Snapshot */}
+      {/* Snapshot view */}
       <div className="flex-1 relative flex items-center justify-center min-h-0">
         {hasError ? (
           <div className="flex flex-col items-center gap-4 px-8">
@@ -155,7 +156,7 @@ export function CameraTab({ sn, online, mowerIp, headlightOn = false }: Props) {
           </div>
         ) : (
           <>
-            {loading && (
+            {loading && !imageSrc && (
               <div className="absolute inset-0 flex items-center justify-center bg-black z-10">
                 <span className="flex items-center gap-2 text-xs text-gray-400">
                   <Loader className="w-5 h-5 animate-spin" />
@@ -163,42 +164,16 @@ export function CameraTab({ sn, online, mowerIp, headlightOn = false }: Props) {
                 </span>
               </div>
             )}
-
-            {mode === 'stream' ? (
+            {imageSrc && (
               <img
-                key={`stream-${retryKey}`}
-                src={streamUrl}
+                src={imageSrc}
                 alt="Mower camera"
                 className="w-full h-full object-contain"
-                onLoad={() => setLoading(false)}
-                onError={() => {
-                  // Stream failed, try snapshot polling
-                  setMode('snapshot');
-                  setLoading(true);
-                }}
-              />
-            ) : (
-              <img
-                ref={snapshotRef}
-                key={`snap-${retryKey}`}
-                alt="Mower camera"
-                className="w-full h-full object-contain"
-                onLoad={() => setLoading(false)}
-                onError={() => { setLoading(false); setHasError(true); }}
               />
             )}
           </>
         )}
       </div>
-
-      {/* Mode indicator */}
-      {!hasError && !loading && mode === 'snapshot' && (
-        <div className="absolute bottom-2 left-1/2 -translate-x-1/2 z-20">
-          <span className="text-[10px] text-gray-500 bg-black/60 px-2 py-0.5 rounded-full">
-            snapshot
-          </span>
-        </div>
-      )}
     </div>
   );
 }

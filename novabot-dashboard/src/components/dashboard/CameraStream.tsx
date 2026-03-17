@@ -10,10 +10,8 @@ interface Props {
   onClose: () => void;
 }
 
-const DEFAULT_IP = '192.168.0.244';
 const CAMERA_PORT = 8000;
-const SNAPSHOT_INTERVAL = 500;
-const STREAM_TIMEOUT = 5000;
+const POLL_INTERVAL_MS = 500;
 
 const CAMERA_TOPICS = [
   { key: 'front', labelKey: 'camera.front' },
@@ -23,61 +21,69 @@ const CAMERA_TOPICS = [
   { key: 'aruco', labelKey: 'camera.aruco' },
 ] as const;
 
-type Mode = 'stream' | 'snapshot';
-
 export function CameraStream({ sn, online, mowerIp, onClose }: Props) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   const [hasError, setHasError] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [retryKey, setRetryKey] = useState(0);
   const [selectedTopic, setSelectedTopic] = useState('front');
-  const [mode, setMode] = useState<Mode>('stream');
+  const [imageSrc, setImageSrc] = useState<string | null>(null);
+  const activeRef = useRef(true);
+  const blobUrlRef = useRef<string | null>(null);
 
-  const ip = mowerIp || DEFAULT_IP;
-  const streamUrl = `/api/dashboard/camera/${sn}/stream?ip=${ip}&port=${CAMERA_PORT}&topic=${selectedTopic}&_k=${retryKey}`;
-  const snapshotBaseUrl = `/api/dashboard/camera/${sn}/snapshot?ip=${ip}&port=${CAMERA_PORT}&topic=${selectedTopic}`;
+  const ip = mowerIp || '192.168.0.244';
+  const snapshotUrl = `/api/dashboard/camera/${sn}/snapshot?ip=${ip}&port=${CAMERA_PORT}&topic=${selectedTopic}`;
 
-  // Snapshot polling
-  const snapshotRef = useRef<HTMLImageElement>(null);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const fetchSnapshot = useCallback(async () => {
+    if (!activeRef.current) return;
+    try {
+      const res = await fetch(`${snapshotUrl}&_t=${Date.now()}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      if (!activeRef.current) return;
+      if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current);
+      const url = URL.createObjectURL(blob);
+      blobUrlRef.current = url;
+      setImageSrc(url);
+      setLoading(false);
+      setHasError(false);
+    } catch {
+      if (!activeRef.current) return;
+      setLoading(false);
+      setHasError(true);
+    }
+  }, [snapshotUrl]);
 
-  const pollSnapshot = useCallback(() => {
-    if (!snapshotRef.current) return;
-    snapshotRef.current.src = `${snapshotBaseUrl}&_t=${Date.now()}`;
-  }, [snapshotBaseUrl]);
-
+  // Poll snapshots
   useEffect(() => {
-    if (mode !== 'snapshot' || hasError) return;
-    pollSnapshot();
-    timerRef.current = setInterval(pollSnapshot, SNAPSHOT_INTERVAL);
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [mode, hasError, pollSnapshot, retryKey]);
+    if (!online) return;
+    activeRef.current = true;
+    setLoading(true);
+    setHasError(false);
 
-  // Stream timeout → auto-fallback to snapshot
-  const streamTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => {
-    if (mode !== 'stream' || !loading) return;
-    streamTimeoutRef.current = setTimeout(() => {
-      setMode('snapshot');
-      setLoading(true);
-    }, STREAM_TIMEOUT);
-    return () => { if (streamTimeoutRef.current) clearTimeout(streamTimeoutRef.current); };
-  }, [mode, loading, retryKey]);
+    fetchSnapshot();
+    const interval = setInterval(fetchSnapshot, POLL_INTERVAL_MS);
+    return () => {
+      activeRef.current = false;
+      clearInterval(interval);
+      if (blobUrlRef.current) {
+        URL.revokeObjectURL(blobUrlRef.current);
+        blobUrlRef.current = null;
+      }
+    };
+  }, [online, fetchSnapshot]);
 
   const handleRetry = () => {
     setHasError(false);
     setLoading(true);
-    setMode('stream');
-    setRetryKey(k => k + 1);
+    fetchSnapshot();
   };
 
   const handleTopicChange = (key: string) => {
     setSelectedTopic(key);
     setHasError(false);
     setLoading(true);
-    setMode('stream');
-    setRetryKey(k => k + 1);
+    setImageSrc(null);
   };
 
   if (!online) {
@@ -110,9 +116,6 @@ export function CameraStream({ sn, online, mowerIp, onClose }: Props) {
         <span className="flex items-center gap-1.5 text-xs text-gray-300 font-medium">
           <Camera className="w-3.5 h-3.5 text-cyan-400" />
           {t('camera.title')}
-          {mode === 'snapshot' && !loading && (
-            <span className="text-[9px] text-gray-500 ml-1">(snapshot)</span>
-          )}
         </span>
         <div className="flex items-center gap-1">
           <button
@@ -151,7 +154,7 @@ export function CameraStream({ sn, online, mowerIp, onClose }: Props) {
         ))}
       </div>
 
-      {/* Stream / Snapshot */}
+      {/* Snapshot view */}
       <div className={`relative bg-black ${expanded ? 'flex-1 min-h-0' : 'h-[280px]'}`}>
         {hasError ? (
           <div className="flex flex-col items-center justify-center gap-2 text-xs text-gray-500 h-full">
@@ -165,7 +168,7 @@ export function CameraStream({ sn, online, mowerIp, onClose }: Props) {
           </div>
         ) : (
           <>
-            {loading && (
+            {loading && !imageSrc && (
               <div className="absolute inset-0 flex items-center justify-center bg-black/80 z-10">
                 <span className="flex items-center gap-2 text-xs text-gray-400">
                   <Loader className="w-4 h-4 animate-spin" />
@@ -173,27 +176,11 @@ export function CameraStream({ sn, online, mowerIp, onClose }: Props) {
                 </span>
               </div>
             )}
-
-            {mode === 'stream' ? (
+            {imageSrc && (
               <img
-                key={`stream-${retryKey}`}
-                src={streamUrl}
+                src={imageSrc}
                 alt="Mower camera"
                 className={`w-full ${expanded ? 'h-full object-contain' : ''}`}
-                onLoad={() => setLoading(false)}
-                onError={() => {
-                  setMode('snapshot');
-                  setLoading(true);
-                }}
-              />
-            ) : (
-              <img
-                ref={snapshotRef}
-                key={`snap-${retryKey}`}
-                alt="Mower camera"
-                className={`w-full ${expanded ? 'h-full object-contain' : ''}`}
-                onLoad={() => setLoading(false)}
-                onError={() => { setLoading(false); setHasError(true); }}
               />
             )}
           </>

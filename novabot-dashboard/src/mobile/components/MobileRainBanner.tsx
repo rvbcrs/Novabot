@@ -96,12 +96,47 @@ export function MobileRainBanner({ mowerSn }: Props) {
           </div>
         </div>
 
+        {/* Forecast bar chart */}
+        {forecast?.available && forecast.upcoming.length > 0 && (
+          <div className="relative mt-3">
+            <div className="flex gap-[3px]">
+              {forecast.upcoming.map((h, i) => {
+                const intensity = Math.min(h.mm / 2, 1);
+                const probIntensity = h.prob / 100;
+                const barHeight = Math.max(intensity, probIntensity);
+                const time = new Date(h.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                return (
+                  <div key={i} className="flex-1 flex flex-col items-center gap-0.5">
+                    <div className="w-full h-7 bg-blue-200/40 dark:bg-blue-900/30 rounded-sm flex items-end overflow-hidden">
+                      <div
+                        className="w-full rounded-sm transition-all"
+                        style={{
+                          height: `${Math.max(barHeight * 100, 4)}%`,
+                          backgroundColor: h.mm >= 0.1
+                            ? `rgba(96, 165, 250, ${0.3 + barHeight * 0.5})`
+                            : 'rgba(96, 165, 250, 0.1)',
+                        }}
+                      />
+                    </div>
+                    <span className="text-[7px] text-blue-400/60 dark:text-blue-400/50 leading-none tabular-nums">{time}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {/* Clear prediction */}
         {clearLabel && (
           <div className="relative flex items-center gap-1.5 mt-2 pt-2 border-t border-blue-200/50 dark:border-blue-500/10">
             <CloudSun className="w-3.5 h-3.5 text-amber-500 dark:text-amber-400/80" />
             <span className="text-[10px] text-amber-600 dark:text-amber-300/80 font-medium">{clearLabel}</span>
           </div>
+        )}
+
+        {/* Map name */}
+        {session.map_name && (
+          <p className="relative text-[9px] text-blue-400/50 dark:text-blue-400/40 truncate mt-1">{session.map_name}</p>
         )}
       </div>
     </>

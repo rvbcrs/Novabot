@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { Wifi, Satellite, Zap, Home, Pause, Play, Square } from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
+import { Wifi, Satellite, Zap, Home, Pause, Play, Square, Bug } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { MowerDerived, MowerActivity } from '../MobilePage';
 import type { Schedule } from '../../types';
@@ -8,6 +8,7 @@ import { useToast } from '../../components/common/Toast';
 import { ConfirmDialog } from '../../components/common/ConfirmDialog';
 import { MobileRainBanner } from './MobileRainBanner';
 import { StartMowSheet } from './StartMowSheet';
+import { MowerAnimation } from './MowerAnimation';
 
 interface Props {
   mower: MowerDerived;
@@ -84,6 +85,8 @@ function getCurrentEndTime(schedules: Schedule[]): string | null {
 
 // ── Component ───────────────────────────────────────────────────────
 
+const ALL_ACTIVITIES: MowerActivity[] = ['idle', 'mowing', 'charging', 'returning', 'paused', 'mapping', 'error', 'offline'];
+
 export function HomeTab({ mower }: Props) {
   const { t } = useTranslation();
   const { toast } = useToast();
@@ -91,8 +94,25 @@ export function HomeTab({ mower }: Props) {
   const [sending, setSending] = useState<string | null>(null);
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [showStartSheet, setShowStartSheet] = useState(false);
+  const [debugActivity, setDebugActivity] = useState<MowerActivity | null>(null);
+  const [debugOpen, setDebugOpen] = useState(false);
+  const [debugBattery, setDebugBattery] = useState(75);
 
-  const disabled = !mower.sn || !mower.online || mower.activity === 'offline';
+  // Override mower with debug values when active
+  const effectiveMower = useMemo(() => {
+    if (!debugActivity) return mower;
+    return {
+      ...mower,
+      activity: debugActivity,
+      battery: debugBattery,
+      batteryCharging: debugActivity === 'charging',
+      online: debugActivity !== 'offline',
+      mowingProgress: debugActivity === 'mowing' ? 42 : 0,
+    };
+  }, [mower, debugActivity, debugBattery]);
+
+  const m = effectiveMower;
+  const disabled = !m.sn || !m.online || m.activity === 'offline';
 
   useEffect(() => {
     if (!mower.sn) return;
@@ -112,7 +132,7 @@ export function HomeTab({ mower }: Props) {
   };
 
   // Session info
-  const isMowing = mower.activity === 'mowing';
+  const isMowing = m.activity === 'mowing';
   const endTime = isMowing ? getCurrentEndTime(schedules) : null;
 
   let sessionText = '';
@@ -150,68 +170,102 @@ export function HomeTab({ mower }: Props) {
           />
           <div className="min-w-0">
             <h1 className="text-sm font-semibold text-gray-900 dark:text-white truncate">
-              {mower.nickname || 'OpenNova'}
+              {m.nickname || 'OpenNova'}
             </h1>
             <p className="text-[11px] text-gray-400 dark:text-gray-500">Novabot Mower</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <span className={`w-2.5 h-2.5 rounded-full ${mower.online ? 'bg-emerald-400' : 'bg-gray-300 dark:bg-gray-600'}`} />
+          <button
+            onClick={() => setDebugOpen(o => !o)}
+            className={`p-1 rounded-md transition-colors ${debugOpen ? 'text-amber-500 bg-amber-500/10' : 'text-gray-300 dark:text-gray-600'}`}
+          >
+            <Bug className="w-4 h-4" />
+          </button>
+          <span className={`w-2.5 h-2.5 rounded-full ${m.online ? 'bg-emerald-400' : 'bg-gray-300 dark:bg-gray-600'}`} />
         </div>
       </div>
+
+      {/* Debug toolbar */}
+      {debugOpen && (
+        <div className="mx-4 mb-2 p-3 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/50">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 uppercase tracking-wider">Debug Mode</span>
+            {debugActivity && (
+              <button
+                onClick={() => setDebugActivity(null)}
+                className="text-[10px] text-amber-500 underline"
+              >
+                Reset
+              </button>
+            )}
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {ALL_ACTIVITIES.map(a => (
+              <button
+                key={a}
+                onClick={() => setDebugActivity(a)}
+                className={`px-2.5 py-1 rounded-lg text-[11px] font-medium transition-all ${
+                  debugActivity === a
+                    ? 'bg-amber-500 text-white'
+                    : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700'
+                }`}
+              >
+                {a}
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center gap-2 mt-2">
+            <span className="text-[10px] text-amber-600 dark:text-amber-400">Battery:</span>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              value={debugBattery}
+              onChange={e => setDebugBattery(Number(e.target.value))}
+              className="flex-1 h-1 accent-amber-500"
+            />
+            <span className="text-[10px] text-amber-600 dark:text-amber-400 tabular-nums w-8 text-right">{debugBattery}%</span>
+          </div>
+        </div>
+      )}
 
       {/* Main content — centered */}
       <div className="flex-1 flex flex-col items-center justify-center px-6">
         {/* Large activity status */}
         <div className="flex flex-col items-center mb-4">
-          <h2 className={`text-3xl font-bold tracking-tight ${STATUS_COLOR[mower.activity]}`}>
-            {t(`mobile.activity.${mower.activity}`)}
+          <h2 className={`text-3xl font-bold tracking-tight ${STATUS_COLOR[m.activity]}`}>
+            {t(`mobile.activity.${m.activity}`)}
           </h2>
-          <div className={`w-12 h-1 rounded-full mt-2 ${UNDERLINE_COLOR[mower.activity]}`} />
+          <div className={`w-12 h-1 rounded-full mt-2 ${UNDERLINE_COLOR[m.activity]}`} />
         </div>
 
-        {/* Mower image — shown when not actively mowing */}
-        {!isMowing && (
-          <img
-            src={mower.online ? '/mower/novabot.png' : '/mower/mower_offline.png'}
-            alt="Novabot Mower"
-            className="w-36 h-36 object-contain mb-4"
+        {/* Animated mower scene */}
+        <div className="w-full max-w-xs mb-4">
+          <MowerAnimation
+            activity={m.activity}
+            battery={m.battery}
+            mowingProgress={m.mowingProgress}
           />
-        )}
+        </div>
 
         {/* Info chips */}
         <div className="flex items-center gap-4 mb-6">
           <div className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
             <Wifi className="w-3.5 h-3.5" />
-            <span className="tabular-nums">{mower.wifiRssi ?? '—'}</span>
+            <span className="tabular-nums">{m.wifiRssi ?? '—'}</span>
           </div>
           <div className="w-px h-4 bg-gray-200 dark:bg-gray-700" />
           <div className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
             <Satellite className="w-3.5 h-3.5" />
-            <span className="tabular-nums">{mower.rtkSat ?? '—'}</span>
+            <span className="tabular-nums">{m.rtkSat ?? '—'}</span>
           </div>
           <div className="w-px h-4 bg-gray-200 dark:bg-gray-700" />
-          <div className={`flex items-center gap-1.5 text-xs font-semibold ${batteryColor(mower.battery)}`}>
-            {mower.batteryCharging && <Zap className="w-3.5 h-3.5" />}
-            <span className="tabular-nums">{mower.battery}%</span>
+          <div className={`flex items-center gap-1.5 text-xs font-semibold ${batteryColor(m.battery)}`}>
+            {m.batteryCharging && <Zap className="w-3.5 h-3.5" />}
+            <span className="tabular-nums">{m.battery}%</span>
           </div>
         </div>
-
-        {/* Mowing progress bar */}
-        {isMowing && mower.mowingProgress > 0 && (
-          <div className="w-56 mb-4">
-            <div className="flex items-center justify-between text-[10px] text-gray-500 dark:text-gray-400 mb-1">
-              <span>{t('mobile.progress')}</span>
-              <span className="tabular-nums">{mower.mowingProgress}%</span>
-            </div>
-            <div className="h-1.5 bg-gray-200 dark:bg-gray-800 rounded-full overflow-hidden">
-              <div
-                className="h-full bg-emerald-500 rounded-full transition-all duration-500"
-                style={{ width: `${mower.mowingProgress}%` }}
-              />
-            </div>
-          </div>
-        )}
 
         {/* Session info */}
         {sessionText && (
@@ -222,15 +276,15 @@ export function HomeTab({ mower }: Props) {
       </div>
 
       {/* Rain banner */}
-      {mower.sn && (
+      {m.sn && (
         <div className="px-4">
-          <MobileRainBanner mowerSn={mower.sn} />
+          <MobileRainBanner mowerSn={m.sn} />
         </div>
       )}
 
       {/* Action buttons — bottom */}
       <div className="px-5 pb-4 pt-2">
-        {mower.activity === 'mowing' && (
+        {m.activity === 'mowing' && (
           <div className="flex items-center gap-3">
             <button
               onClick={() => send(t('mobile.goHome'), { go_to_charge: {} })}
@@ -253,7 +307,7 @@ export function HomeTab({ mower }: Props) {
           </div>
         )}
 
-        {mower.activity === 'paused' && (
+        {m.activity === 'paused' && (
           <div className="flex items-center gap-3">
             <button
               onClick={() => send(t('mobile.resume'), { resume_run: {} })}
@@ -278,7 +332,7 @@ export function HomeTab({ mower }: Props) {
           </div>
         )}
 
-        {mower.activity === 'returning' && (
+        {m.activity === 'returning' && (
           <button
             onClick={() => setConfirmStop(true)}
             disabled={disabled || sending !== null}
@@ -292,7 +346,7 @@ export function HomeTab({ mower }: Props) {
           </button>
         )}
 
-        {(mower.activity === 'idle' || mower.activity === 'charging' || mower.activity === 'offline' || mower.activity === 'error') && (
+        {(m.activity === 'idle' || m.activity === 'charging' || m.activity === 'offline' || m.activity === 'error') && (
           <button
             onClick={() => setShowStartSheet(true)}
             disabled={disabled || sending !== null}
