@@ -463,6 +463,10 @@ export function updateDeviceData(sn: string, payload: Buffer): Map<string, strin
     }
   }
 
+  // Charger GPS positie wordt NIET automatisch bijgewerkt — GPS jitter (2-3m) verschuift
+  // de conversie-origin en daarmee alle kaartpolygonen. Charger positie wordt eenmalig
+  // ingesteld via dashboard of bij eerste mapping sessie.
+
   // Sample signal history elke 30s
   if (changes.size > 0) {
     sampleSignalHistory(sn, snValues);

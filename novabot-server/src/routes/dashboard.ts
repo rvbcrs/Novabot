@@ -746,13 +746,19 @@ dashboardRouter.post('/maps/:sn/push-to-mower', async (req: Request, res: Respon
     return;
   }
   if (!zipPath) {
-    // Geen kaarten meer — verwijder oude bestanden op de maaier via SSH
+    // Geen kaarten meer — verwijder ALLE kaartbestanden op de maaier
+    // 1. Stuur MQTT delete_map om in-memory kaartdata in novabot_mapping te wissen
+    publishToDevice(sn, { delete_map: { map_name: 'map0', map_type: 0 } });
+    console.log(`[DELETE] MQTT delete_map gestuurd naar ${sn}`);
+
+    // 2. Verwijder alle bestanden in de map directory via SSH
+    //    (map0.pgm, map0.yaml, map0.png, *.zip, csv_file/, x3_csv_file/, covered_path/, planned_path/)
     try {
       const { Client } = await import('ssh2');
       const cleanOp = new Promise<void>((resolve, reject) => {
         const conn = new Client();
         conn.on('ready', () => {
-          const cmd = 'rm -rf /userdata/lfi/maps/home0/csv_file /userdata/lfi/maps/home0/x3_csv_file';
+          const cmd = 'rm -rf /userdata/lfi/maps/home0/*';
           conn.exec(cmd, (err, stream) => {
             if (err) { conn.end(); reject(err); return; }
             stream.on('close', () => { conn.end(); resolve(); });
@@ -764,9 +770,9 @@ dashboardRouter.post('/maps/:sn/push-to-mower', async (req: Request, res: Respon
         conn.connect({ host: ip, port: 22, username: 'root', password: 'novabot', readyTimeout: 8000 });
       });
       await Promise.race([cleanOp, new Promise<void>((_, rej) => setTimeout(() => rej(new Error('timeout')), 15000))]);
-      console.log(`[SSH] Kaarten verwijderd op maaier ${sn} (geen kaarten meer in DB)`);
+      console.log(`[SSH] Alle kaartbestanden verwijderd op maaier ${sn}`);
     } catch (err) {
-      console.warn(`[SSH] Kon kaarten niet verwijderen op maaier:`, err);
+      console.warn(`[SSH] Kon kaartbestanden niet verwijderen op maaier:`, err);
     }
     // Verwijder ook _latest.zip
     try {
@@ -1101,9 +1107,11 @@ dashboardRouter.get('/calibration/:sn', (req: Request, res: Response) => {
 });
 
 // PUT /api/dashboard/calibration/:sn — sla calibratie op
+// relocateCharger=true: charger fysiek verplaatst → herbereken alle map lokale coördinaten
 dashboardRouter.put('/calibration/:sn', (req: Request, res: Response) => {
   const { sn } = req.params;
-  const { offsetLat, offsetLng, rotation, scale, chargerLat, chargerLng, gpsChargerLat, gpsChargerLng } = req.body as {
+  const { offsetLat, offsetLng, rotation, scale, chargerLat, chargerLng,
+    gpsChargerLat, gpsChargerLng, relocateCharger } = req.body as {
     offsetLat?: number;
     offsetLng?: number;
     rotation?: number;
@@ -1112,7 +1120,48 @@ dashboardRouter.put('/calibration/:sn', (req: Request, res: Response) => {
     chargerLng?: number | null;
     gpsChargerLat?: number | null;
     gpsChargerLng?: number | null;
+    relocateCharger?: boolean;
   };
+
+  // Als relocateCharger=true EN er is een oude + nieuwe charger positie:
+  // herbereken alle map_area van local(old) → GPS → local(new)
+  let mapsRecalculated = 0;
+  if (relocateCharger && chargerLat != null && chargerLng != null) {
+    const oldCal = db.prepare('SELECT charger_lat, charger_lng FROM map_calibration WHERE mower_sn = ?')
+      .get(sn) as { charger_lat: number | null; charger_lng: number | null } | undefined;
+
+    if (oldCal?.charger_lat != null && oldCal?.charger_lng != null) {
+      const oldOrigin: GpsPoint = { lat: oldCal.charger_lat, lng: oldCal.charger_lng };
+      const newOrigin: GpsPoint = { lat: chargerLat, lng: chargerLng };
+
+      const allMaps = db.prepare(
+        'SELECT map_id, map_area FROM maps WHERE mower_sn = ? AND map_area IS NOT NULL'
+      ).all(sn) as Array<{ map_id: string; map_area: string }>;
+
+      const updateStmt = db.prepare(
+        'UPDATE maps SET map_area = ?, map_max_min = ?, updated_at = datetime(\'now\') WHERE map_id = ?'
+      );
+
+      for (const row of allMaps) {
+        try {
+          const oldLocal: LocalPoint[] = JSON.parse(row.map_area);
+          if (!Array.isArray(oldLocal) || oldLocal.length < 2) continue;
+
+          // local(old charger) → GPS → local(new charger)
+          const newLocal = oldLocal.map(p => gpsToLocal(localToGps(p, oldOrigin), newOrigin));
+          const bounds = {
+            minX: Math.min(...newLocal.map(p => p.x)),
+            maxX: Math.max(...newLocal.map(p => p.x)),
+            minY: Math.min(...newLocal.map(p => p.y)),
+            maxY: Math.max(...newLocal.map(p => p.y)),
+          };
+          updateStmt.run(JSON.stringify(newLocal), JSON.stringify(bounds), row.map_id);
+          mapsRecalculated++;
+        } catch { /* skip corrupt rows */ }
+      }
+      console.log(`[Calibration] Charger relocated for ${sn}: ${mapsRecalculated} maps recalculated`);
+    }
+  }
 
   db.prepare(`
     INSERT INTO map_calibration (mower_sn, offset_lat, offset_lng, rotation, scale, charger_lat, charger_lng, gps_charger_lat, gps_charger_lng, updated_at)
@@ -1130,7 +1179,12 @@ dashboardRouter.put('/calibration/:sn', (req: Request, res: Response) => {
   `).run(sn, offsetLat ?? 0, offsetLng ?? 0, rotation ?? 0, scale ?? 1,
     chargerLat ?? null, chargerLng ?? null, gpsChargerLat ?? null, gpsChargerLng ?? null);
 
-  res.json({ ok: true });
+  // Na charger relocatie: push bijgewerkte maps naar maaier
+  if (mapsRecalculated > 0) {
+    autoPushMapsInBackground(sn);
+  }
+
+  res.json({ ok: true, mapsRecalculated });
 });
 
 // POST /api/dashboard/maps/convert — converteer coördinaten (voor debugging)

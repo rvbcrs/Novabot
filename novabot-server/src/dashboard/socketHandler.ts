@@ -7,7 +7,7 @@ import { getAllDeviceSnapshots } from '../mqtt/sensorData.js';
 import { isDeviceOnline } from '../mqtt/broker.js';
 import { db } from '../db/database.js';
 import { initBleLogger, sendBleLogHistory } from '../ble/bleLogger.js';
-import { setOutlineEmitter } from '../mqtt/mapSync.js';
+import { setOutlineEmitter, publishToDevice } from '../mqtt/mapSync.js';
 
 // Callback om demo mode status te checken (geregistreerd door demoSimulator)
 let demoModeChecker: ((sn: string) => boolean) | null = null;
@@ -102,7 +102,66 @@ export function initDashboardSocket(httpServer: HttpServer): void {
     // Stuur recente BLE log history bij connect
     sendBleLogHistory((event, data) => socket.emit(event, data));
 
+    // ── Joystick: server-side tight loop for smooth motor control ──
+    // Browser sends desired velocity; server handles the high-frequency MQTT sending.
+    // This eliminates browser setInterval jitter and network round-trip variability.
+    let joystickInterval: ReturnType<typeof setInterval> | null = null;
+    let joystickSn = '';
+
+    // Track current manual mode state to avoid re-sending start_move
+    let joystickHoldType = 0;
+
+    socket.on('joystick:start', (data: { sn: string; holdType: number }) => {
+      if (!data?.sn) return;
+      joystickSn = data.sn;
+      joystickHoldType = data.holdType || 3;
+      console.log(`[JOYSTICK] START sn=${data.sn} holdType=${joystickHoldType}`);
+      // Enter manual mode ONCE
+      publishToDevice(data.sn, { start_move: joystickHoldType });
+    });
+
+    socket.on('joystick:move', (data: { sn: string; holdType: number; mst: { x_w: number; y_v: number; z_g: number } }) => {
+      if (!data?.sn) return;
+      joystickSn = data.sn;
+      if (joystickInterval) clearInterval(joystickInterval);
+
+      // Only re-send start_move if direction changed
+      if (data.holdType !== joystickHoldType) {
+        joystickHoldType = data.holdType;
+        publishToDevice(data.sn, { start_move: joystickHoldType });
+        console.log(`[JOYSTICK] direction changed → holdType=${joystickHoldType}`);
+      }
+
+      // Send velocity immediately
+      const mstCmd = { mst: data.mst };
+      publishToDevice(data.sn, mstCmd);
+
+      // Server-side repeat: ONLY mst at 100ms — no start_move re-entry
+      let tick = 0;
+      joystickInterval = setInterval(() => {
+        publishToDevice(joystickSn, mstCmd);
+        tick++;
+        if (tick % 20 === 0) console.log(`[JOYSTICK] tick=${tick} mst x_w=${data.mst.x_w}`);
+      }, 100);
+    });
+
+    socket.on('joystick:stop', (data: { sn: string }) => {
+      console.log(`[JOYSTICK] STOP sn=${data?.sn} had_interval=${!!joystickInterval}`);
+      if (joystickInterval) { clearInterval(joystickInterval); joystickInterval = null; }
+      joystickHoldType = 0;
+      if (data?.sn) publishToDevice(data.sn, { stop_move: {} });
+    });
+
+    // Legacy: direct command passthrough
+    socket.on('joystick:cmd', (data: { sn: string; command: Record<string, unknown> }) => {
+      if (!data?.sn || !data?.command) return;
+      publishToDevice(data.sn, data.command);
+    });
+
     socket.on('disconnect', () => {
+      // Clean up joystick interval on disconnect (safety)
+      if (joystickInterval) { clearInterval(joystickInterval); joystickInterval = null; }
+      if (joystickSn) publishToDevice(joystickSn, { stop_move: {} });
       console.log(`[DASHBOARD] Client disconnected: ${socket.id}`);
     });
   });

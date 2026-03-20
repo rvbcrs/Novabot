@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { Square } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { sendCommand } from '../../api/client';
+import { joystickStart, joystickMove, joystickStop } from '../../api/socket';
 
 interface Props {
   sn: string;
@@ -9,8 +9,8 @@ interface Props {
   speedLevel?: number; // 0=low, 1=medium, 2=high (from manual_controller_v setting)
 }
 
-const SEND_INTERVAL = 200; // ms between movement commands
-const DEAD_ZONE = 0.05;    // ignore tiny movements
+const DEAD_ZONE = 0.05;
+const THROTTLE_MS = 80; // min ms between joystick:move updates to server
 
 // Speed limits per level — matches manual_controller_v setting (0=low, 1=med, 2=high)
 const SPEED_LEVELS = [
@@ -20,7 +20,6 @@ const SPEED_LEVELS = [
 ];
 
 // Map joystick position to JoystickHoldType direction
-// 0=none, 1=left, 2=right, 3=top(forward), 4=bottom(backward)
 function getHoldType(x: number, y: number): number {
   if (Math.abs(y) >= Math.abs(x)) {
     return y < 0 ? 3 : 4; // up = forward(3), down = backward(4)
@@ -32,55 +31,33 @@ export function JoystickControl({ sn, online, speedLevel = 0 }: Props) {
   const { t } = useTranslation();
   const [active, setActive] = useState(false);
   const [thumbPos, setThumbPos] = useState({ x: 0, y: 0 });
-  const [cmdCount, setCmdCount] = useState(0);
-  const [lastError, setLastError] = useState<string | null>(null);
   const baseRef = useRef<HTMLDivElement>(null);
-  const intervalRef = useRef<number | null>(null);
-  const thumbRef = useRef({ x: 0, y: 0 });
   const activeRef = useRef(false);
-  const modeActiveRef = useRef(false);
-  const lastHoldTypeRef = useRef(0);
-
-  // Keep refs in sync for interval callback
-  useEffect(() => { thumbRef.current = thumbPos; }, [thumbPos]);
-  useEffect(() => { activeRef.current = active; }, [active]);
+  const lastSendRef = useRef(0);
 
   const speedRef = useRef(speedLevel);
   useEffect(() => { speedRef.current = speedLevel; }, [speedLevel]);
 
-  const sendMoveCommand = useCallback(() => {
-    const { x, y } = thumbRef.current;
+  // Send updated velocity to server (throttled)
+  const sendUpdate = useCallback((x: number, y: number) => {
     const dist = Math.sqrt(x * x + y * y);
-    if (dist < DEAD_ZONE || !activeRef.current) return;
+    if (dist < DEAD_ZONE) return;
 
-    // Firmware uses start_move direction + mst magnitude for motor control
-    // Resend start_move when dominant direction changes
+    const now = Date.now();
+    if (now - lastSendRef.current < THROTTLE_MS) return;
+    lastSendRef.current = now;
+
     const holdType = getHoldType(x, y);
-    if (holdType !== lastHoldTypeRef.current) {
-      lastHoldTypeRef.current = holdType;
-      sendCommand(sn, { start_move: holdType })
-        .catch((e) => setLastError(e instanceof Error ? e.message : String(e)));
-    }
-
-    // mst provides speed magnitude; direction comes from start_move
     const lvl = SPEED_LEVELS[speedRef.current] ?? SPEED_LEVELS[0];
-    const speed = Math.round(dist * lvl.linear * 100) / 100;
-    sendCommand(sn, {
-      mst: {
-        x_w: speed,
-        y_v: Math.round(Math.abs(x) * lvl.angular * 100) / 100,
-        z_g: 0,
-      },
-    }).then(() => {
-      setCmdCount(c => c + 1);
-      setLastError(null);
-    }).catch((e) => {
-      setLastError(e instanceof Error ? e.message : String(e));
+    joystickMove(sn, holdType, {
+      x_w: Math.round(dist * lvl.linear * 100) / 100,
+      y_v: Math.round(Math.abs(x) * lvl.angular * 100) / 100,
+      z_g: 0,
     });
   }, [sn]);
 
-  const updatePosition = useCallback((clientX: number, clientY: number): { x: number; y: number } => {
-    if (!baseRef.current) return { x: 0, y: 0 };
+  const updatePosition = useCallback((clientX: number, clientY: number) => {
+    if (!baseRef.current) return;
     const rect = baseRef.current.getBoundingClientRect();
     const cx = rect.left + rect.width / 2;
     const cy = rect.top + rect.height / 2;
@@ -89,66 +66,91 @@ export function JoystickControl({ sn, online, speedLevel = 0 }: Props) {
     let dy = (clientY - cy) / radius;
     const dist = Math.sqrt(dx * dx + dy * dy);
     if (dist > 1) { dx /= dist; dy /= dist; }
-    const pos = { x: dx, y: dy };
-    thumbRef.current = pos;   // Update ref immediately for interval callback
-    setThumbPos(pos);
-    return pos;
-  }, []);
+    setThumbPos({ x: dx, y: dy });
+    if (activeRef.current) sendUpdate(dx, dy);
+  }, [sendUpdate]);
 
-  const handleStart = useCallback((clientX: number, clientY: number) => {
+  const stopAll = useCallback(() => {
+    activeRef.current = false;
+    setActive(false);
+    setThumbPos({ x: 0, y: 0 });
+    joystickStop(sn);
+  }, [sn]);
+
+  const startJoystick = useCallback((clientX: number, clientY: number) => {
     if (!online) return;
+    activeRef.current = true;
     setActive(true);
-    activeRef.current = true;  // Update ref immediately (don't wait for useEffect)
-    setCmdCount(0);
-    setLastError(null);
-    const pos = updatePosition(clientX, clientY);
+    lastSendRef.current = 0; // reset throttle
 
-    // Activate manual control mode: firmware requires {"start_move": <int>}, NOT empty object
-    // JoystickHoldType: 0=none, 1=left, 2=right, 3=top(fwd), 4=bottom(back)
-    // Direction from start_move determines motor direction, mst provides speed magnitude
-    if (!modeActiveRef.current) {
-      modeActiveRef.current = true;
-      const holdType = getHoldType(pos.x, pos.y) || 3;
-      lastHoldTypeRef.current = holdType;
-      sendCommand(sn, { start_move: holdType })
-        .then(() => setLastError(null))
-        .catch((e) => setLastError(e instanceof Error ? e.message : String(e)));
+    // Calculate initial position
+    if (baseRef.current) {
+      const rect = baseRef.current.getBoundingClientRect();
+      const cx = rect.left + rect.width / 2;
+      const cy = rect.top + rect.height / 2;
+      const radius = rect.width / 2;
+      let dx = (clientX - cx) / radius;
+      let dy = (clientY - cy) / radius;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist > 1) { dx /= dist; dy /= dist; }
+      setThumbPos({ x: dx, y: dy });
+
+      const holdType = getHoldType(dx, dy) || 3;
+      // Tell server to enter manual mode AND start the MQTT loop
+      const lvl = SPEED_LEVELS[speedRef.current] ?? SPEED_LEVELS[0];
+      const speed = Math.sqrt(dx * dx + dy * dy);
+      joystickStart(sn, holdType);
+      joystickMove(sn, holdType, {
+        x_w: Math.round(speed * lvl.linear * 100) / 100,
+        y_v: Math.round(Math.abs(dx) * lvl.angular * 100) / 100,
+        z_g: 0,
+      });
     }
+  }, [sn, online]);
 
-    if (intervalRef.current) clearInterval(intervalRef.current);
-    intervalRef.current = window.setInterval(sendMoveCommand, SEND_INTERVAL);
-  }, [sn, online, updatePosition, sendMoveCommand]);
-
-  const handleMove = useCallback((clientX: number, clientY: number) => {
+  // ── Mouse: capture at document level during drag ──
+  const handleMouseMove = useCallback((e: MouseEvent) => {
     if (!activeRef.current) return;
-    updatePosition(clientX, clientY);
+    updatePosition(e.clientX, e.clientY);
   }, [updatePosition]);
 
-  const handleEnd = useCallback(() => {
-    setActive(false);
-    activeRef.current = false;  // Update ref immediately
-    setThumbPos({ x: 0, y: 0 });
-    thumbRef.current = { x: 0, y: 0 };
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-      intervalRef.current = null;
-    }
-    // Send stop_move to exit manual control mode
-    if (modeActiveRef.current) {
-      sendCommand(sn, { stop_move: {} }).catch(() => {});
-      modeActiveRef.current = false;
-    }
-  }, [sn]);
+  const handleMouseUp = useCallback(() => {
+    document.removeEventListener('mousemove', handleMouseMove);
+    document.removeEventListener('mouseup', handleMouseUp);
+    if (activeRef.current) stopAll();
+  }, [handleMouseMove, stopAll]);
 
-  // Clean up interval on unmount
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    startJoystick(e.clientX, e.clientY);
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+  }, [startJoystick, handleMouseMove, handleMouseUp]);
+
+  // ── Touch ──
+  const handleTouchStart = useCallback((e: React.TouchEvent) => {
+    e.preventDefault();
+    startJoystick(e.touches[0].clientX, e.touches[0].clientY);
+  }, [startJoystick]);
+
+  const handleTouchMove = useCallback((e: React.TouchEvent) => {
+    e.preventDefault();
+    if (!activeRef.current) return;
+    updatePosition(e.touches[0].clientX, e.touches[0].clientY);
+  }, [updatePosition]);
+
+  const handleTouchEnd = useCallback(() => {
+    if (activeRef.current) stopAll();
+  }, [stopAll]);
+
+  // Clean up on unmount
   useEffect(() => {
     return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-        sendCommand(sn, { stop_move: {} }).catch(() => {});
-      }
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+      if (activeRef.current) joystickStop(sn);
     };
-  }, [sn]);
+  }, [sn, handleMouseMove, handleMouseUp]);
 
   const dist = Math.sqrt(thumbPos.x * thumbPos.x + thumbPos.y * thumbPos.y);
   const lvl = SPEED_LEVELS[speedLevel] ?? SPEED_LEVELS[0];
@@ -161,10 +163,8 @@ export function JoystickControl({ sn, online, speedLevel = 0 }: Props) {
       <div className="text-[10px] font-mono h-4 tabular-nums">
         {!online ? (
           <span className="text-red-400">{t('controls.offline')}</span>
-        ) : lastError ? (
-          <span className="text-red-400">{lastError}</span>
         ) : active ? (
-          <span className="text-emerald-400">{speedMs} m/s ({levelLabel}) &middot; {cmdCount}</span>
+          <span className="text-emerald-400">{speedMs} m/s ({levelLabel})</span>
         ) : (
           <span className="text-gray-500">{t('controls.joystickHelp')}</span>
         )}
@@ -179,14 +179,11 @@ export function JoystickControl({ sn, online, speedLevel = 0 }: Props) {
             : 'bg-gray-800/40 ring-gray-700 cursor-not-allowed opacity-50'
         }`}
         style={{ touchAction: 'none' }}
-        onTouchStart={(e) => { e.preventDefault(); handleStart(e.touches[0].clientX, e.touches[0].clientY); }}
-        onTouchMove={(e) => { e.preventDefault(); handleMove(e.touches[0].clientX, e.touches[0].clientY); }}
-        onTouchEnd={handleEnd}
-        onTouchCancel={handleEnd}
-        onMouseDown={(e) => { e.preventDefault(); handleStart(e.clientX, e.clientY); }}
-        onMouseMove={(e) => handleMove(e.clientX, e.clientY)}
-        onMouseUp={handleEnd}
-        onMouseLeave={() => { if (activeRef.current) handleEnd(); }}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+        onTouchCancel={handleTouchEnd}
+        onMouseDown={handleMouseDown}
       >
         {/* Crosshair lines */}
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
@@ -216,9 +213,9 @@ export function JoystickControl({ sn, online, speedLevel = 0 }: Props) {
         />
       </div>
 
-      {/* Emergency stop button below joystick */}
+      {/* Emergency stop button */}
       <button
-        onClick={handleEnd}
+        onClick={stopAll}
         disabled={!active}
         className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded bg-gray-700/60 text-gray-400 hover:text-red-400 hover:bg-red-900/30 transition-colors disabled:opacity-30"
       >

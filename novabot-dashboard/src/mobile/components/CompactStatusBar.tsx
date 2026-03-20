@@ -112,6 +112,10 @@ export function CompactStatusBar({ mower }: Props) {
           <Satellite className="w-3 h-3" />
           <span className="tabular-nums">{mower.rtkSat ?? '—'}</span>
         </div>
+        <div className={`flex items-center gap-1 text-[11px] font-medium ${mower.rtkOk ? 'text-emerald-400' : 'text-red-400'}`}>
+          <span className={`w-1.5 h-1.5 rounded-full ${mower.rtkOk ? 'bg-emerald-400' : 'bg-red-400 animate-pulse'}`} />
+          <span>RTK</span>
+        </div>
       </div>
     </div>
   );

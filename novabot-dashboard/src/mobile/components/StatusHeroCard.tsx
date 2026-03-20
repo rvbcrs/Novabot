@@ -150,7 +150,26 @@ export function StatusHeroCard({ mower }: Props) {
           <Satellite className="w-3 h-3" />
           <span className="tabular-nums">{mower.rtkSat ?? '—'}</span>
         </div>
+        <div className={`flex items-center gap-1 text-[11px] font-medium ${mower.rtkOk ? 'text-emerald-400' : 'text-red-400'}`}>
+          <span className={`w-1.5 h-1.5 rounded-full ${mower.rtkOk ? 'bg-emerald-400' : 'bg-red-400 animate-pulse'}`} />
+          <span>RTK</span>
+        </div>
       </div>
+
+      {/* GPS/Localization status */}
+      {mower.online && mower.localizationState && (
+        <div className="mt-1.5">
+          <span className={`text-[10px] px-2 py-0.5 rounded-full ${
+            mower.localizationState.toLowerCase().includes('not initialized')
+              ? 'bg-amber-900/30 text-amber-400'
+              : mower.localizationState.toLowerCase().includes('initialized')
+              ? 'bg-emerald-900/30 text-emerald-400'
+              : 'bg-gray-800 text-gray-400'
+          }`}>
+            {mower.localizationState}
+          </span>
+        </div>
+      )}
     </div>
   );
 }

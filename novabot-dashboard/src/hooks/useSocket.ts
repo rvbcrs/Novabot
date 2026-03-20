@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { io, Socket } from 'socket.io-client';
+import type { Socket } from 'socket.io-client';
+import { getSocket } from '../api/socket';
 import type { DeviceUpdateEvent, DeviceOnlineEvent, MqttLogEntry, BleLogEntry } from '../types';
 
 export interface OtaEventPayload {
@@ -37,7 +38,7 @@ export function useSocket(handlers: SocketHandlers) {
   const [connected, setConnected] = useState(false);
 
   useEffect(() => {
-    const socket = io({ transports: ['websocket', 'polling'] });
+    const socket = getSocket();
     socketRef.current = socket;
 
     socket.on('connect', () => setConnected(true));
@@ -91,7 +92,23 @@ export function useSocket(handlers: SocketHandlers) {
       handlersRef.current.onMowLanes?.(e);
     });
 
-    return () => { socket.disconnect(); };
+    // Shared socket — only remove listeners this hook registered, don't disconnect
+    return () => {
+      socket.off('connect');
+      socket.off('disconnect');
+      socket.off('state:snapshot');
+      socket.off('device:update');
+      socket.off('device:online');
+      socket.off('device:offline');
+      socket.off('mqtt:log');
+      socket.off('mqtt:log:history');
+      socket.off('ble:log');
+      socket.off('ble:log:history');
+      socket.off('ota:event');
+      socket.off('map:outline');
+      socket.off('trail:clear');
+      socket.off('mow:lanes');
+    };
   }, []);
 
   return { connected };

@@ -74,9 +74,7 @@ interface DemoSession {
 
 const demoSessions = new Map<string, DemoSession>();
 
-// Demo mode standaard aan voor de maaier
-const DEFAULT_DEMO_SN = 'LFIN2230700238';
-setTimeout(() => setDemoMode(DEFAULT_DEMO_SN, true), 1000);
+// Demo mode standaard UIT — alleen handmatig activeren via dashboard toggle
 
 // ── Public API ────────────────────────────────────────────────────
 

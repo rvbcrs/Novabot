@@ -25,6 +25,9 @@ export interface MowerDerived {
   batteryCharging: boolean;
   wifiRssi: string | undefined;
   rtkSat: string | undefined;
+  rtkOk: boolean;
+  gpsState: string | undefined;
+  localizationState: string | undefined;
   lat: number | null;
   lng: number | null;
   heading: number;
@@ -82,6 +85,9 @@ function deriveMower(devices: Map<string, DeviceState>): MowerDerived {
     batteryCharging: activity === 'charging',
     wifiRssi: s.wifi_rssi,
     rtkSat: s.rtk_sat,
+    rtkOk: s.rtk === 'true',
+    gpsState: s.gps_state,
+    localizationState: s.localization_state,
     lat: s.latitude ? parseFloat(s.latitude) : null,
     lng: s.longitude ? parseFloat(s.longitude) : null,
     heading: parseInt(s.z ?? s.mower_z ?? '0', 10) || 0,

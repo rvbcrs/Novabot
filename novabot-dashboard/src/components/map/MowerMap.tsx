@@ -704,6 +704,8 @@ export function MowerMap({ sn, lat, lng, heading, signals, mowing, pathDirection
 
   // Charger calibration
   const [confirmCalibrate, setConfirmCalibrate] = useState(false);
+  // Charger drag: pending move awaiting user choice (relocate vs correct)
+  const [pendingChargerMove, setPendingChargerMove] = useState<{ lat: number; lng: number } | null>(null);
 
   // Virtual walls
   const [walls, setWalls] = useState<VirtualWall[]>([]);
@@ -872,14 +874,14 @@ export function MowerMap({ sn, lat, lng, heading, signals, mowing, pathDirection
 
   const hasGps = lat && lng && lat !== '0' && lng !== '0';
   const position: [number, number] = hasGps
-    ? [parseFloat(lat), parseFloat(lng)]
+    ? [parseFloat(lat) + activeCal.offsetLat, parseFloat(lng) + activeCal.offsetLng]
     : DEFAULT_CENTER;
 
   const [userInteracted, setUserInteracted] = useState(false);
   const [mapsFitted, setMapsFitted] = useState(false);
 
   const polygonMaps = maps.filter(m => m.mapArea.length >= 3);
-  const trailPositions: [number, number][] = trail.map(p => [p.lat, p.lng]);
+  const trailPositions: [number, number][] = trail.map(p => [p.lat + activeCal.offsetLat, p.lng + activeCal.offsetLng]);
 
   // Mower heading icon (rotates with heading data)
   const headingDeg = heading ? parseFloat(heading) : 0;
@@ -1383,22 +1385,27 @@ export function MowerMap({ sn, lat, lng, heading, signals, mowing, pathDirection
           )}
           {/* Click-to-place charger handler */}
           {placingCharger && <ChargerPlacer onPlace={handlePlaceCharger} />}
-          {/* Charger marker (draggable to reposition) */}
+          {/* Charger marker (draggable to reposition) — apply same calibration offset as polygons */}
           {chargerHasGps && (
             <Marker
-              position={[resolvedChargerLat!, resolvedChargerLng!]}
+              position={[resolvedChargerLat! + activeCal.offsetLat, resolvedChargerLng! + activeCal.offsetLng]}
               icon={chargerIcon}
               draggable
               eventHandlers={{
                 dragend: (e) => {
                   const { lat, lng } = e.target.getLatLng();
-                  const updated = { ...savedCal, chargerLat: lat, chargerLng: lng };
-                  setSavedCal(updated);
-                  saveCalibration(sn, updated).then(() => {
-                    toast(t('map.chargerSaved'), 'success');
-                    // Re-fetch maps — server herberekent lokaal→GPS met nieuwe charger origin
-                    fetchMaps(sn).then(setMaps).catch(() => {});
-                  });
+                  // Als er maps bestaan en een oude charger positie: vraag of dit een verplaatsing of correctie is
+                  if (maps.length > 0 && savedCal.chargerLat && savedCal.chargerLng) {
+                    setPendingChargerMove({ lat, lng });
+                  } else {
+                    // Eerste plaatsing of geen maps: direct opslaan
+                    const updated = { ...savedCal, chargerLat: lat, chargerLng: lng };
+                    setSavedCal(updated);
+                    saveCalibration(sn, updated).then(() => {
+                      toast(t('map.chargerSaved'), 'success');
+                      fetchMaps(sn).then(setMaps).catch(() => {});
+                    });
+                  }
                 },
               }}
             >
@@ -1937,6 +1944,69 @@ export function MowerMap({ sn, lat, lng, heading, signals, mowing, pathDirection
         }}
         onCancel={() => setConfirmCalibrate(false)}
       />
+
+      {/* Charger relocate vs correct dialog */}
+      {pendingChargerMove && (
+        <div className="fixed inset-0 z-[99999] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setPendingChargerMove(null)} />
+          <div className="relative bg-gray-900 border border-gray-700/50 rounded-2xl shadow-2xl max-w-sm w-full p-6">
+            <div className="flex justify-center mb-4">
+              <div className="w-14 h-14 rounded-full flex items-center justify-center bg-blue-500/15">
+                <MapPin className="w-7 h-7 text-blue-400" />
+              </div>
+            </div>
+            <p className="text-center text-white font-medium text-lg leading-snug mb-2">
+              {t('map.chargerMoveTitle', 'Charger verplaatst?')}
+            </p>
+            <p className="text-center text-gray-400 text-sm mb-6">
+              {t('map.chargerMoveDescription', 'Staat de charger fysiek op een nieuwe plek, of corrigeer je alleen de positie op de kaart?')}
+            </p>
+            <div className="flex flex-col gap-2.5">
+              <button
+                onClick={async () => {
+                  const { lat, lng } = pendingChargerMove;
+                  const updated = { ...savedCal, chargerLat: lat, chargerLng: lng };
+                  setSavedCal(updated);
+                  setPendingChargerMove(null);
+                  const result = await saveCalibration(sn, updated, { relocateCharger: true });
+                  toast(t('map.chargerRelocated', { count: result.mapsRecalculated ?? 0 }), 'success');
+                  fetchMaps(sn).then(setMaps).catch(() => {});
+                }}
+                className="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-xl transition-colors"
+              >
+                {t('map.chargerRelocatedBtn', 'Ja, fysiek verplaatst')}
+                <span className="block text-xs text-blue-200/70 mt-0.5">
+                  {t('map.chargerRelocatedHint', 'Kaarten blijven op hun GPS-positie')}
+                </span>
+              </button>
+              <button
+                onClick={() => {
+                  const { lat, lng } = pendingChargerMove;
+                  const updated = { ...savedCal, chargerLat: lat, chargerLng: lng };
+                  setSavedCal(updated);
+                  setPendingChargerMove(null);
+                  saveCalibration(sn, updated).then(() => {
+                    toast(t('map.chargerSaved'), 'success');
+                    fetchMaps(sn).then(setMaps).catch(() => {});
+                  });
+                }}
+                className="w-full py-3 bg-white/10 hover:bg-white/15 text-gray-300 text-sm font-medium rounded-xl transition-colors"
+              >
+                {t('map.chargerCorrectedBtn', 'Nee, positie gecorrigeerd')}
+                <span className="block text-xs text-gray-500 mt-0.5">
+                  {t('map.chargerCorrectedHint', 'Kaarten verplaatsen mee met de charger')}
+                </span>
+              </button>
+              <button
+                onClick={() => setPendingChargerMove(null)}
+                className="w-full py-2 text-gray-500 text-xs hover:text-gray-400 transition-colors"
+              >
+                {t('common.cancel')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -59,12 +59,15 @@ export async function fetchCalibration(sn: string): Promise<MapCalibration> {
   return data.calibration;
 }
 
-export async function saveCalibration(sn: string, cal: MapCalibration): Promise<void> {
-  await fetch(`${BASE}/calibration/${encodeURIComponent(sn)}`, {
+export async function saveCalibration(
+  sn: string, cal: MapCalibration, opts?: { relocateCharger?: boolean },
+): Promise<{ mapsRecalculated?: number }> {
+  const res = await fetch(`${BASE}/calibration/${encodeURIComponent(sn)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(cal),
+    body: JSON.stringify({ ...cal, ...(opts?.relocateCharger ? { relocateCharger: true } : {}) }),
   });
+  return res.json();
 }
 
 export async function renameMap(sn: string, mapId: string, mapName: string): Promise<void> {
