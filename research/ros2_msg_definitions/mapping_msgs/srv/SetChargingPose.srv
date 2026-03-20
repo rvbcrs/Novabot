@@ -1,0 +1,12 @@
+#control_mode表示是读还是写操作；0代表读操作，1代表写操作
+#map_file_name表示是在哪个整图中，整图的名字
+#child_map_file_name表示充电桩和哪个子图连接起来,子图的名字
+uint8 control_mode
+string map_file_name
+string child_map_file_name
+---
+geometry_msgs/Pose charging_pose
+bool result
+string message
+float32 map_to_charging_dis
+bool charging_pile_orientation

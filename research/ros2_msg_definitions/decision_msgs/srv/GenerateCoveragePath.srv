@@ -1,0 +1,5 @@
+uint32 map_ids
+bool specify_direction
+uint8 cov_direction  # planning main direction 0-180
+---
+bool result

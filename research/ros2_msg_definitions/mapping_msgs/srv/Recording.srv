@@ -1,0 +1,5 @@
+#type表示录制的多边形围起来的区域是什么类型；0表示可通行区域，1表示障碍物区域，2表示联通区域
+uint8 type
+---
+bool result
+string message

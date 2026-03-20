@@ -1,0 +1,4 @@
+string utm_info_path  # utm origin info for load
+---
+string msg
+bool result # true is ok, false is not ok

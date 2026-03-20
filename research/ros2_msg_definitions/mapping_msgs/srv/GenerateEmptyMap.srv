@@ -1,0 +1,7 @@
+string map_path
+float32 resolution
+float32 width
+float32 height
+---
+bool result
+string empty_map_directory

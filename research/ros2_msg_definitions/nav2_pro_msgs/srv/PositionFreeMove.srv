@@ -1,0 +1,7 @@
+geometry_msgs/PoseStamped pose
+bool using_input_pose
+bool local_costmap
+bool global_costmap
+float32 radius
+---
+bool result

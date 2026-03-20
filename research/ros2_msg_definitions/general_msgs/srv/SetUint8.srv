@@ -1,0 +1,16 @@
+uint8 LEVEL0=0
+uint8 LEVEL1=1
+uint8 LEVEL2=2
+uint8 LEVEL3=3
+uint8 LEVEL4=5
+uint8 LEVEL5=5
+uint8 LEVEL6=6
+uint8 LEVEL7=7
+uint8 LEVEL8=8
+uint8 LEVEL9=9
+uint8 LEVEL10=10
+uint8 LEVEL11=11
+uint8 value
+---
+bool success
+string message

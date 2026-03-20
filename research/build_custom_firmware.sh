@@ -1279,6 +1279,49 @@ else
     fi
 fi
 
+# === Stap 5j: Open robot_decision boot hook toevoegen ===
+echo "[5j/9] Open robot_decision boot hook toevoegen..."
+
+# Voeg de boot hook toe aan run_novabot.sh
+# Dit blok vervangt de C++ robot_decision binary door onze Python implementatie.
+# De bestanden moeten in /userdata/open_decision/ staan (deployed via deploy.sh).
+# /userdata/ overleeft firmware updates, dus eenmaal deployed blijft het werken.
+if [ -f "$RUN_NOVABOT" ] && ! grep -q "open_decision" "$RUN_NOVABOT"; then
+    OPEN_DECISION_BLOCK="/tmp/open_decision_start_block.sh"
+    cat > "$OPEN_DECISION_BLOCK" << 'ODEOF'
+
+  # CUSTOM: Open robot_decision (vervangt closed-source C++ binary)
+  # Bestanden in /userdata/open_decision/ overleven firmware updates.
+  # Rollback: rm -rf /userdata/open_decision && reboot
+  if [ -d "/userdata/open_decision" ] && [ -f "/userdata/open_decision/robot_decision.py" ]; then
+      (sleep 20 && killall -q -9 robot_decision && sleep 2 && \
+       source /opt/ros/galactic/setup.bash && \
+       source /root/novabot/install/setup.bash && \
+       export PYTHONPATH=$PYTHONPATH:/userdata/open_decision && \
+       export ROS_LOG_DIR=/root/novabot/data/ros2_log && \
+       export ROS_LOCALHOST_ONLY=1 && \
+       python3 /userdata/open_decision/robot_decision.py \
+       --ros-args --params-file /root/novabot/install/compound_decision/share/compound_decision/config/robot_decision.yaml \
+       >> /userdata/open_decision/decision.log 2>&1) &
+      echo "Open robot_decision scheduled (20s delay)" >> $LOGS_PATH/open_decision.log
+  fi
+ODEOF
+    sed -i '' '/start_test.sh/r /tmp/open_decision_start_block.sh' "$RUN_NOVABOT"
+    rm -f "$OPEN_DECISION_BLOCK"
+    echo "  run_novabot.sh: open_decision boot hook toegevoegd aan start)"
+
+    # Voeg Python process kill toe aan stop) blok
+    OPEN_DECISION_STOP="/tmp/open_decision_stop_block.sh"
+    cat > "$OPEN_DECISION_STOP" << 'ODEOF'
+  pkill -9 -f "python3.*robot_decision" 2>/dev/null
+ODEOF
+    sed -i '' '/killall -q -9 robot_decision/r /tmp/open_decision_stop_block.sh' "$RUN_NOVABOT"
+    rm -f "$OPEN_DECISION_STOP"
+    echo "  run_novabot.sh: Python robot_decision kill toegevoegd aan stop)"
+else
+    echo "  run_novabot.sh: open_decision hook al aanwezig — overslaan"
+fi
+
 # === Stap 5g: Novabot-server bundelen ===
 echo "[5g/9] Novabot-server bundelen..."
 
@@ -1610,6 +1653,7 @@ echo "    ✓ http_address.txt + json_config.json worden bij elke boot gezet"
 [ -f "$NOVABOT_ROOT/scripts/led_bridge.py" ] && echo "    ✓ LED bridge: MQTT → ROS /led_set (headlight controle)"
 [ -f "$NOVABOT_ROOT/scripts/extended_commands.py" ] && echo "    ✓ Extended commands: reboot, camera snapshot, system info (auto-start na 12s)"
 [ -f "$MCU_BIN_DIR/novabot_stm32f407_v3_6_7_NewMotor25082301.bin" ] 2>/dev/null && echo "    ✓ STM32 MCU v3.6.7: remote PIN unlock + clear error (type=3)"
+grep -q "open_decision" "$RUN_NOVABOT" 2>/dev/null && echo "    ✓ Open robot_decision boot hook (Python vervangt C++ na 20s)"
 [ "$ENABLE_REMOTE_ROS2" = "true" ] && echo "    ✓ ROS 2 netwerk open (ROS_LOCALHOST_ONLY=0)"
 if [ "$INCLUDE_SERVER" = "true" ]; then
     echo "    ✓ Novabot-server gebundeld (dashboard op poort ${SERVER_PORT})"

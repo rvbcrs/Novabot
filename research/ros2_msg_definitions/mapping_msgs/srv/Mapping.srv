@@ -1,0 +1,12 @@
+#resolution 构建的当前地图的分辨率， type表示是子图还是整图，0代表子图、1代表整图
+float32 resolution
+uint8 type
+uint8 main_id
+---
+bool result
+string message
+uint8 error_code
+# error_code defintions
+uint8 OVERLAPING_OTHER_MAP=1
+uint8 OVERLAPING_OTHER_UNICOM=2
+uint8 CROSS_MULTI_MAPS=3

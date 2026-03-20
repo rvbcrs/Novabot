@@ -1,0 +1,5 @@
+# Unicom srv
+string start_map
+---
+uint8 result
+string description

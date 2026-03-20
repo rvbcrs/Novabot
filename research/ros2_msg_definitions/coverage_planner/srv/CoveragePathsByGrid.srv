@@ -1,0 +1,8 @@
+geometry_msgs/Pose start_pose
+nav_msgs/OccupancyGrid obstacle_grid
+nav_msgs/OccupancyGrid coverage_grid
+---
+uint8 RESULT_SUCCESS=0
+uint8 RESULT_FAILURE=255
+nav_msgs/Path[] coverage_paths
+uint8 result

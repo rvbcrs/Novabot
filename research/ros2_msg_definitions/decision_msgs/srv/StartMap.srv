@@ -1,0 +1,7 @@
+#startmap srv
+string model
+string mapname
+uint8 type
+---
+string data
+uint8 result

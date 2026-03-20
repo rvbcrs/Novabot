@@ -1,0 +1,25 @@
+# 1 - goal definition
+uint8 ASSIST_MAPPING_MODE=0
+uint8 AUTO_MAPPING_MODE=1
+uint8 BOUNDARY_CUTTING_MODE=2
+uint8 follow_mode
+bool enable_coverage
+bool more_close_to_boundary
+bool close_loop_stop
+bool start_follow_wait
+bool debug_mode
+float32 inflation_radius
+uint8 blade_height
+---
+#2 - result definition
+uint8 LOOP_CLOSED=0
+uint8 NO_VALID_BOUNDARY=1
+uint8 CANCELLED=2
+uint8 FOLLOW_FAILED=3
+uint8 SEARCHING_START_FAILED=4
+uint8 TF_RELATED_EXCEPTION=5
+uint8 NAV_TO_POSE_ACTION_EXCEPTION=6
+uint8 status
+string msg
+---
+#3 - feedback definition

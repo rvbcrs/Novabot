@@ -1,0 +1,25 @@
+uint8 NORMAL=0
+uint8 SPECIFIED_AREA=1
+uint8 BOUNDARY_COV=2
+uint8 INFO_CLOSE=1
+uint8 INFO_BUZZER=2
+uint8 INFO_LED=3
+uint8 INFO_BUZZER_LED=4
+uint8 cov_mode
+# request_type: 1x=mqtt/app, 11=normal, 12=scheduled; 2x=MCU
+uint8 request_type
+uint32 map_ids
+string[] map_names
+geometry_msgs/Point[] polygon_area
+uint8[] blade_heights
+bool specify_direction
+uint8 cov_direction  # planning main direction 0-180
+uint8 light
+bool specify_perception_level
+uint8 perception_level # 0=off, 1=detect, 2=segment, 3=segment high sensitivity
+uint8 blade_info_level # 0=default, 1=all off, 2=buzzer on/led off, 3=buzzer off/led on, 4=all on
+bool night_light
+bool enable_loc_weak_mapping
+bool enable_loc_weak_working
+---
+bool result

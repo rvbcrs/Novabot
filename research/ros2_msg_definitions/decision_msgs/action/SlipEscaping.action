@@ -1,0 +1,9 @@
+# 1 - goal definition
+float32 max_escape_time
+---
+#2 - result definition
+uint8 SUCCESS=0
+uint8 FAILED=1
+uint8 result
+---
+#3 - feedback definition

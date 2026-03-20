@@ -1,0 +1,71 @@
+# 1 - goal definition
+uint8 COVERAGE_BY_FILE=0
+uint8 COVERAGE_BY_MAP=1
+uint8 COVERAGE_BY_COSTMAP=2
+uint8 COVERAGE_TEST=3
+uint8 COVERAGE_LINE_TEST=4
+uint8 COVERAGE_SQUARE_TEST=5
+uint8 COVERAGE_VISION=6
+string map_yaml
+uint8 coverage_type
+bool reset_coverage_map
+bool return_to_start
+bool ignore_start_for_planning
+bool disable_recover
+bool enable_tf_action_abort_as_stop
+bool include_edge
+bool mixed_edge
+bool setting_blade_height
+uint8 blade_height
+uint8 grass_height
+bool auto_repeat_num
+int32 target_repeat_times
+bool debug_mode
+uint8 adaptive_mode # 0=constant, 1=reciprocal, 2=difference
+bool specify_direction
+uint8 cov_direction
+bool only_edge_mode
+bool enable_check_walkable
+bool back_avoid_mode
+float32 test_long_length
+float32 test_short_length
+---
+#2 - result definition
+uint8 TF_RELATED_EXCEPTION=1
+uint8 INPUT_RELATED_EXCEPTION=2
+uint8 CANCELED=3
+uint8 NO_FIXED_RTK_FOR_START=4
+uint8 CURRENT_STUCK_OR_OUT_MAP=5
+uint8 NAV_TO_POSE_ACTION_EXCEPTION=6
+uint8 NO_PATH_TO_GOAL=7
+uint8 PARTIALLY_FINISHED=90
+uint8 FINISHED=100
+uint8 result_status
+string msg
+float32 total_covered_area
+float32 task_planned_area
+float32 task_covered_area
+float32 covered_ratio
+int32 obstacle_avoid_count
+float32 navigation_time
+float32 total_missed_area
+float32 recovered_missed_area
+---
+#3 - feedback definition
+uint8 STOP=0
+uint8 EXCEPTION_STOP=1
+uint8 RECOVERABLE_STUCK_STOP=2
+uint8 COVERING=100
+uint8 AVOIDING=120
+uint8 BOUNDARY_COVERING=150
+uint8 RECOVERING=200
+uint8 MOVING=250
+uint8 work_status
+float32 total_covered_area
+float32 task_planned_area
+float32 task_covered_area
+float32 covered_ratio
+float32 estimate_remaining_time
+int32 obstacle_avoid_count
+float32 navigation_time
+int32 finished_times

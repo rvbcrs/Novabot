@@ -1,0 +1,9 @@
+# charging srv
+string name
+float32 pose_x
+float32 pose_y
+float32 pose_theta
+string mode
+---
+uint8 result
+string description

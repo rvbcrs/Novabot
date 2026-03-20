@@ -1,0 +1,4 @@
+geometry_msgs/Point32 edge_obstacle
+---
+bool result
+string message

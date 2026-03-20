@@ -1,0 +1,26 @@
+# 1 - goal definition
+bool overwrite
+bool non_charging_pose_mode
+bool enable_no_visual_recharge
+uint8 max_retry
+bool disable_charge_check
+bool keep_alive
+bool rotate_searching
+---
+#2 - result definition
+uint8 SUCCESS=100
+uint8 OVERWRITE=101
+uint8 NO_VISUAL_SIGNAL=3
+uint8 NO_CHARGING_POSE=6
+uint8 NO_NAV_PATH=7
+uint8 CANCEL=8
+uint8 CHARGING_LOCK=9
+uint8 result
+---
+#3 - feedback definition
+uint8 NAVIGATING_TO_CHARGING_STATION=0
+uint8 CHARGING=1
+uint8 VISUAL_DOCKING=2
+uint8 SEARCHING_CHARGER=3
+uint8 WAIT_FOR_CHARGE_LOCK=4
+uint8 status

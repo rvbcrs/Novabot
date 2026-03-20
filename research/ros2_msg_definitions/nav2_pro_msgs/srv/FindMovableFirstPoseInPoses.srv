@@ -1,0 +1,5 @@
+geometry_msgs/PoseStamped[] poses
+bool local_costmap
+bool global_costmap
+---
+int32 index

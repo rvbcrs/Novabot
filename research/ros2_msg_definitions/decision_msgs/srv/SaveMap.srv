@@ -1,0 +1,12 @@
+#savemap srv
+string mapname
+float32 resolution
+int64 type
+---
+string data
+uint8 result
+uint8 error_code
+# error_code definitions
+uint8 OVERLAPING_OTHER_MAP=1
+uint8 OVERLAPING_OTHER_UNICOM=2
+uint8 CROSS_MULTI_MAPS=3

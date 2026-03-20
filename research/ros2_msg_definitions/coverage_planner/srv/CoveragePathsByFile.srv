@@ -1,0 +1,9 @@
+string map_yaml
+bool include_edge
+bool specify_direction
+uint8 cov_direction
+---
+bool success
+string msg
+string path_json
+float32 planned_area

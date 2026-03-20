@@ -1,0 +1,6 @@
+# DeleteMap srv
+uint8 maptype
+string mapname
+---
+uint8 result
+string description

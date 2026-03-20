@@ -1,0 +1,10 @@
+#map_file_name代表整个家庭图的名字  child_map_file_name代表子图的名字
+#type代表此次操作的类型:1.重新建图 2.添加子图 3.删除子图 4.增加整图(弃用) 5.删除整图(弃用) 6.添加联通域 7.未用 8.添加障碍物 9.删除障碍物 10.添加子图到充电桩联通域(弃用)
+string map_file_name
+string child_map_file_name
+string obstacle_file_name
+string unicom_area_file_name
+uint8 type
+---
+bool result
+string message
