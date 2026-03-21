@@ -197,11 +197,10 @@ void command_handler_periodic_report(void)
         sensors_get_motor_current(&current);
         serial_send_motor_current(current.left_ma, current.right_ma, current.blade_ma);
 
-        /* Hall sensor status */
+        /* Hall sensor status — pass full struct (11 bytes, all sensors) */
         hall_status_t hall;
         sensors_get_hall(&hall);
-        serial_send_hall_status(hall.collision_lf, hall.collision_lb,
-                                hall.collision_rb, hall.collision_rf);
+        serial_send_hall_status(&hall);
 
         /* Battery */
         battery_data_t bat;
@@ -214,9 +213,19 @@ void command_handler_periodic_report(void)
     {
         last_200ms_tick = now;
 
-        /* Incident flags */
+        /* Incident flags — split uint64 internal representation into 4x uint32 BE bitfields
+         * as verified via Ghidra (REV instruction in chassis_cmd_deal_chassis_incident):
+         *   bitfield_b: event flags   (our bits  0-1)
+         *   bitfield_a: warning flags (our bits  8-21, shifted right 8)
+         *   bitfield_c: error flags   (our bits 24-39, shifted right 24, masked to 16 bits)
+         *   bitfield_d: Class-B flags (our bits 40-46, shifted right 40)
+         */
         uint64_t flags = sensors_get_incident_flags();
-        serial_send_incident(flags);
+        uint32_t ev = (uint32_t)((flags >>  0) & 0x00000003ULL);
+        uint32_t wa = (uint32_t)((flags >>  8) & 0x00003FFFULL);
+        uint32_t er = (uint32_t)((flags >> 24) & 0x0000FFFFULL);
+        uint32_t cb = (uint32_t)((flags >> 40) & 0x0000007FULL);
+        serial_send_incident(ev, wa, er, cb);
 
         /* Magnetometer (sub-cmd 0x43) */
         mag_data_t mag;

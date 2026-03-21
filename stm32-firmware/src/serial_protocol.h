@@ -2,6 +2,7 @@
 #define SERIAL_PROTOCOL_H
 
 #include <stdint.h>
+#include "sensors.h"  /* for hall_status_t */
 
 /*
  * Serial protocol between STM32 (this firmware) and X3 SoC (chassis_control_node)
@@ -41,14 +42,20 @@ void serial_send_wheel_speed(int16_t left_speed_mm, int16_t right_speed_mm);
 /* Send motor current (sub-cmd 0x0A) */
 void serial_send_motor_current(int16_t left_ma, int16_t right_ma, int16_t blade_ma);
 
-/* Send hall sensor status (sub-cmd 0x0C) */
-void serial_send_hall_status(uint8_t lf, uint8_t lb, uint8_t rb, uint8_t rf);
+/* Send hall sensor status (sub-cmd 0x0C) — 11 bytes, all Hall sensors */
+void serial_send_hall_status(const hall_status_t *hall);
 
 /* Send battery message (sub-cmd 0x17) */
 void serial_send_battery(uint8_t soc_pct, uint16_t voltage_mv, int16_t current_ma);
 
-/* Send incident flags (sub-cmd 0x18) */
-void serial_send_incident(uint64_t flags);
+/* Send incident flags (sub-cmd 0x18) — 4x uint32 BE, verified via Ghidra REV instruction
+ *   bitfield_b: event flags   (bits 0-1)
+ *   bitfield_a: warning flags (bits 0-13)
+ *   bitfield_c: error flags   (bits 0-20)
+ *   bitfield_d: Class-B flags (bits 0-6)
+ */
+void serial_send_incident(uint32_t bitfield_b, uint32_t bitfield_a,
+                          uint32_t bitfield_c, uint32_t bitfield_d);
 
 /* Send IMU data (sub-cmd 0x42 for ICM-20602) */
 void serial_send_imu(int16_t ax, int16_t ay, int16_t az,

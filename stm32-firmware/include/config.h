@@ -24,6 +24,18 @@
 #define FIRMWARE_VERSION_STRING  "v0.1.0-dev"
 
 /* ========================================================================
+ * BLADE MOTOR SAFETY SWITCH
+ *
+ * Define BLADE_MOTOR_DISABLED to prevent the blade motor from ever spinning.
+ * Use this during initial hardware testing to avoid accidental blade activation.
+ * The wheel motors, lift motor, GPS, IMU, LoRa, and all other systems work normally.
+ *
+ * To re-enable the blade motor: remove or comment out this define, then recompile.
+ * ======================================================================== */
+
+#define BLADE_MOTOR_DISABLED     1
+
+/* ========================================================================
  * MCU CONFIGURATION — STM32F407VGT6
  * ======================================================================== */
 

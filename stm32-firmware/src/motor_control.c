@@ -177,6 +177,17 @@ void motor_set_velocity(int16_t left_mm_s, int16_t right_mm_s)
 
 void motor_set_blade_speed(uint8_t speed_pct)
 {
+#ifdef BLADE_MOTOR_DISABLED
+    /*
+     * SAFETY SWITCH ACTIVE: BLADE_MOTOR_DISABLED is defined in config.h.
+     * Blade motor (TIM8 CH1) is forced to 0% duty cycle regardless of command.
+     * Remove BLADE_MOTOR_DISABLED from config.h and recompile to enable the blade.
+     */
+    (void)speed_pct;
+    __HAL_TIM_SET_COMPARE(&htim8, TIM_CHANNEL_1, 0);
+    return;
+#endif
+
     if (speed_pct > 100) speed_pct = 100;
 
     uint16_t compare = (uint16_t)((uint32_t)speed_pct * BLADE_PWM_ARR / 100);
