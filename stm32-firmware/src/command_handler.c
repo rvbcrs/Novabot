@@ -218,7 +218,10 @@ void command_handler_periodic_report(void)
         uint64_t flags = sensors_get_incident_flags();
         serial_send_incident(flags);
 
-        /* TODO: Send magnetometer data (sub-cmd 0x43) */
+        /* Magnetometer (sub-cmd 0x43) */
+        mag_data_t mag;
+        sensors_get_mag(&mag);
+        serial_send_magnetometer(mag.mag_x, mag.mag_y, mag.mag_z);
     }
 
     /* 1s interval: version + LoRa status + self-check (1 Hz) */

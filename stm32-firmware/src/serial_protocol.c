@@ -242,6 +242,19 @@ void serial_send_version(uint8_t major, uint8_t minor, uint8_t patch)
 
 void serial_send_wheel_speed(int16_t left_speed_mm, int16_t right_speed_mm)
 {
+    /*
+     * UNVERIFIED PAYLOAD FORMAT — needs Ghidra analysis of chassis_cmd_deal_wheel_speed
+     *
+     * The spec only says "encoder data + timestamp" — exact byte layout unknown.
+     * The OEM STM32 likely sends raw encoder ticks + a millisecond timestamp,
+     * NOT processed mm/s values. The X3 then converts ticks → odometry using:
+     *   wheel_separation = 0.40342m, wheel_diameter = 0.22356m
+     *
+     * Current implementation sends mm/s directly (4 bytes).
+     * If X3 rejects this: increase to 8 or 12 bytes with timestamp padding.
+     *
+     * Known: publishes odom, odom_raw, odom_3d, /tf (odom→base_link)
+     */
     uint8_t data[4] = {
         (left_speed_mm >> 8) & 0xFF, left_speed_mm & 0xFF,
         (right_speed_mm >> 8) & 0xFF, right_speed_mm & 0xFF
@@ -299,12 +312,43 @@ void serial_send_imu(int16_t ax, int16_t ay, int16_t az,
     send_report(SUBCMD_TX_IMU_20602, data, sizeof(data));
 }
 
+void serial_send_magnetometer(int16_t mx, int16_t my, int16_t mz)
+{
+    /* BMM150 magnetometer — sub-cmd 0x43 */
+    /* Payload: [mx_hi mx_lo] [my_hi my_lo] [mz_hi mz_lo] — 6 bytes, big-endian */
+    uint8_t data[6] = {
+        (mx >> 8) & 0xFF, mx & 0xFF,
+        (my >> 8) & 0xFF, my & 0xFF,
+        (mz >> 8) & 0xFF, mz & 0xFF
+    };
+    send_report(SUBCMD_TX_BMM150, data, sizeof(data));
+}
+
 void serial_send_charge_data(float charge_v, float charge_ma,
                              float battery_v, float adapter_v)
 {
-    /* TODO: Verify exact payload format from chassis_cmd_deal_charge_cur_vol */
-    (void)charge_v;
-    (void)charge_ma;
-    (void)battery_v;
-    (void)adapter_v;
+    /*
+     * Payload format from log string:
+     *   "charge_data: charge_vol_v = %f, charge_cur_ma = %f,
+     *    battery_vol_v = %f, adapter_vol_v = %f"
+     *
+     * 4 float values — encoding is UNVERIFIED (IEEE-754 big-endian assumed).
+     * The OEM may encode them as fixed-point integers instead of raw floats.
+     * TODO: Verify with Ghidra analysis of chassis_cmd_deal_charge_cur_vol.
+     *
+     * Current impl: encodes as 4x uint16 (value * 100, in centi-volts/mA).
+     * This is a reasonable guess; update once format is confirmed.
+     */
+    uint16_t cv  = (uint16_t)(charge_v   * 100.0f);
+    uint16_t cc  = (uint16_t)(charge_ma  * 100.0f);
+    uint16_t bv  = (uint16_t)(battery_v  * 100.0f);
+    uint16_t av  = (uint16_t)(adapter_v  * 100.0f);
+
+    uint8_t data[8] = {
+        (cv >> 8) & 0xFF, cv & 0xFF,
+        (cc >> 8) & 0xFF, cc & 0xFF,
+        (bv >> 8) & 0xFF, bv & 0xFF,
+        (av >> 8) & 0xFF, av & 0xFF
+    };
+    send_report(SUBCMD_TX_CHARGE_DATA, data, sizeof(data));
 }

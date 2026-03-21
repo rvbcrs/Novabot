@@ -54,7 +54,10 @@ void serial_send_incident(uint64_t flags);
 void serial_send_imu(int16_t ax, int16_t ay, int16_t az,
                      int16_t gx, int16_t gy, int16_t gz);
 
-/* Send charge data (sub-cmd 0x0B) */
+/* Send magnetometer data (sub-cmd 0x43 for BMM150) */
+void serial_send_magnetometer(int16_t mx, int16_t my, int16_t mz);
+
+/* Send charge data (sub-cmd 0x0B) — payload encoding unverified, see .c */
 void serial_send_charge_data(float charge_v, float charge_ma,
                              float battery_v, float adapter_v);
 

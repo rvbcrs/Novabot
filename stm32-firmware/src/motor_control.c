@@ -185,14 +185,30 @@ void motor_set_blade_speed(uint8_t speed_pct)
 
 void motor_blade_up(void)
 {
-    /* TODO: Implement blade lift up (direction GPIO + TIM8 CH3 PWM) */
-    /* Needs PCB verification for lift motor direction pin */
+    /*
+     * Lift motor: direction GPIO HIGH + PWM on TIM8 CH3.
+     * TODO: Set direction GPIO pin HIGH before applying PWM.
+     *       GPIO pin needs PCB verification (lift motor direction).
+     *
+     * The lift motor runs until a Hall sensor (hall.lift) detects top position.
+     * For now: apply 50% PWM in "up" direction (GPIO pin unknown = not set).
+     * WARNING: Without the direction pin, motor will not move correctly.
+     */
+    /* HAL_GPIO_WritePin(LIFT_DIR_PORT, LIFT_DIR_PIN, GPIO_PIN_SET); */
     __HAL_TIM_SET_COMPARE(&htim8, TIM_CHANNEL_3, LIFT_PWM_ARR / 2);
 }
 
 void motor_blade_down(void)
 {
-    /* TODO: Implement blade lift down (reverse direction + TIM8 CH3 PWM) */
+    /*
+     * Lift motor: direction GPIO LOW + PWM on TIM8 CH3.
+     * TODO: Set direction GPIO pin LOW before applying PWM.
+     *       GPIO pin needs PCB verification (lift motor direction).
+     *
+     * Opposite direction from motor_blade_up().
+     * WARNING: Without the direction pin, this is identical to blade_up().
+     */
+    /* HAL_GPIO_WritePin(LIFT_DIR_PORT, LIFT_DIR_PIN, GPIO_PIN_RESET); */
     __HAL_TIM_SET_COMPARE(&htim8, TIM_CHANNEL_3, LIFT_PWM_ARR / 2);
 }
 
