@@ -22,6 +22,7 @@ Topic names verified from mqtt_node binary (must use /robot_decision/ prefix):
        /robot_combination_localization/combination_status, cloud_move_cmd
 """
 
+import json
 import math
 import sys
 import os
@@ -99,6 +100,14 @@ MAX_LIN_VEL = 0.6      # m/s
 MAX_ANG_VEL = 2.094     # rad/s
 UNDOCK_VEL = -0.5       # m/s (backward) — 0.3 was too slow, mower rolled back
 UNDOCK_HOLD_TIME = 2.0  # seconds to hold position after driving (prevent rollback)
+
+# ─── Heading discovery constants ─────────────────────────────
+HEADING_CACHE_PATH  = '/userdata/novabot_heading.json'
+HEADING_CACHE_TTL_S = 86400   # 24 uur geldig
+DRIVE_OFF_SPEED     = 0.3     # m/s voorwaarts van dock af
+DRIVE_OFF_TIME_S    = 5.0     # ~1.5m bij 0.3 m/s
+SPIN_SPEED          = 0.3     # rad/s langzaam ronddraaien
+HEADING_TIMEOUT_S   = 60.0    # max wachttijd voor heading alignment
 
 
 class OpenRobotDecision(Node):
@@ -391,6 +400,17 @@ class OpenRobotDecision(Node):
         self._charging_goal_handle = None
         self._charger_pose_stamped = None
 
+        # ─── ArUco localization (heading discovery) ───
+        self.cli_enable_aruco = self.create_client(
+            SetBool, '/enable_aruco_localization',
+            callback_group=self.client_cb_group)
+
+        # ─── Heading discovery state ───
+        self._heading_phase: str | None = None  # 'drive_off' | 'spinning' | None
+        self._heading_timer = None
+        self._heading_phase_start: float = 0.0
+        self._heading_cached: bool = False
+
         # ─── Service SERVERS (created by ServiceHandlers) ───
         self.service_handlers = ServiceHandlers(self)
 
@@ -583,6 +603,18 @@ class OpenRobotDecision(Node):
             if self.is_on_charger:
                 self._set_state(TaskMode.CHARGING, WorkStatus.INIT_SUCCESS)
                 self.get_logger().info('Detected charging, setting CHARGING mode')
+            else:
+                self.get_logger().info(
+                    'Boot: niet op dock — ArUco enablen + auto-dock starten')
+                self._enable_aruco()
+                if self.loc_quality >= 80 or self._load_heading_cache():
+                    # Heading al bekend of recent gecached → direct auto-dock
+                    self.get_logger().info(
+                        'Heading bekend/gecached — direct auto-dock')
+                    self._start_auto_charging()
+                else:
+                    # Heading onbekend → eerst van dock afrijden + ronddraaien
+                    self._start_heading_discovery()
 
     # ─── Charger detection ─────────────────────────────────────
 
@@ -1551,6 +1583,99 @@ class OpenRobotDecision(Node):
                         recharge_status=RechargeStatus.DOCKING)
         self._start_auto_charging()
 
+    # ─── Heading discovery (ArUco auto-dock at boot) ────────
+
+    def _enable_aruco(self, enable: bool = True) -> None:
+        """Enable/disable ArUco localization for heading alignment."""
+        if not self.cli_enable_aruco.wait_for_service(timeout_sec=2.0):
+            self.get_logger().warn(
+                'enable_aruco_localization service niet beschikbaar')
+            return
+        req = SetBool.Request()
+        req.data = enable
+        self.cli_enable_aruco.call_async(req)
+        self.get_logger().info(
+            f'ArUco localization {"ingeschakeld" if enable else "uitgeschakeld"}')
+
+    def _load_heading_cache(self) -> bool:
+        """Lees heading cachefile. Geeft True als recente cache aanwezig."""
+        try:
+            with open(HEADING_CACHE_PATH) as f:
+                data = json.load(f)
+            age = time.time() - data.get('timestamp', 0)
+            if age < HEADING_CACHE_TTL_S:
+                self._heading_cached = True
+                self.get_logger().info(
+                    f'Heading cache gevonden (leeftijd {age / 3600:.1f}u) — '
+                    f'drive-around overgeslagen')
+                return True
+        except (FileNotFoundError, json.JSONDecodeError, KeyError):
+            pass
+        self._heading_cached = False
+        return False
+
+    def _save_heading_cache(self) -> None:
+        """Schrijf heading cachefile na succesvolle dock."""
+        try:
+            data = {
+                'timestamp': time.time(),
+                'loc_quality': self.loc_quality,
+            }
+            with open(HEADING_CACHE_PATH, 'w') as f:
+                json.dump(data, f)
+            self.get_logger().info(
+                f'Heading cache opgeslagen (loc_quality={self.loc_quality})')
+        except OSError as e:
+            self.get_logger().warn(f'Heading cache schrijven mislukt: {e}')
+
+    def _start_heading_discovery(self) -> None:
+        """Rijd van dock af + draai rond totdat heading bekend is, dan auto-dock."""
+        self.get_logger().info(
+            f'Heading discovery: rijd {DRIVE_OFF_TIME_S}s van dock af...')
+        self._heading_phase = 'drive_off'
+        self._heading_phase_start = time.monotonic()
+        self._heading_timer = self.create_timer(
+            0.2, self._heading_discovery_tick)
+
+    def _heading_discovery_tick(self) -> None:
+        """Timer callback: beheert drive-off + spin totdat heading verkregen."""
+        elapsed = time.monotonic() - self._heading_phase_start
+
+        if self._heading_phase == 'drive_off':
+            twist = Twist()
+            twist.linear.x = DRIVE_OFF_SPEED
+            self.cmd_vel_pub.publish(twist)
+            if elapsed >= DRIVE_OFF_TIME_S:
+                self.get_logger().info(
+                    'Heading discovery: van dock af — nu ronddraaien...')
+                self._heading_phase = 'spinning'
+                self._heading_phase_start = time.monotonic()
+
+        elif self._heading_phase == 'spinning':
+            if self.loc_quality >= 80:
+                self.get_logger().info(
+                    f'Heading verkregen (loc_quality={self.loc_quality}) '
+                    f'— auto-dock starten')
+                self._stop_heading_discovery()
+            elif elapsed >= HEADING_TIMEOUT_S:
+                self.get_logger().warn(
+                    f'Heading timeout na {HEADING_TIMEOUT_S:.0f}s '
+                    f'(loc_quality={self.loc_quality}) — toch auto-dock proberen')
+                self._stop_heading_discovery()
+            else:
+                twist = Twist()
+                twist.angular.z = SPIN_SPEED
+                self.cmd_vel_pub.publish(twist)
+
+    def _stop_heading_discovery(self) -> None:
+        """Stop heading discovery en start auto-dock."""
+        self.cmd_vel_pub.publish(Twist())  # Motors stoppen
+        if self._heading_timer is not None:
+            self._heading_timer.cancel()
+            self._heading_timer = None
+        self._heading_phase = None
+        self._start_auto_charging()
+
     def _start_auto_charging(self):
         """Start AutoCharging action to dock onto charger."""
         if not self.auto_charging_client.wait_for_server(timeout_sec=5.0):
@@ -1565,9 +1690,11 @@ class OpenRobotDecision(Node):
         goal.non_charging_pose_mode = True
         goal.enable_no_visual_recharge = False
         goal.max_retry = 5
-        goal.disable_charge_check = False
+        # Disable charge-current check when battery >= 90%: AutoCharging otherwise
+        # retries indefinitely because no current flows on a full battery.
+        goal.disable_charge_check = (self.battery_power >= 90)
         goal.keep_alive = False
-        goal.rotate_searching = False
+        goal.rotate_searching = (self.loc_quality < 100)
         if self._charger_pose_stamped is not None:
             goal.charge_pose = self._charger_pose_stamped
 
@@ -1623,6 +1750,8 @@ class OpenRobotDecision(Node):
                 self._set_state(TaskMode.CHARGING, WorkStatus.INIT_SUCCESS,
                                 recharge_status=RechargeStatus.CHARGING)
                 self.is_on_charger = True
+                self.save_utm_origin()
+                self._save_heading_cache()
             elif result.code == 7:  # CANCELED
                 self.get_logger().info('Recharge: Charging cancelled')
                 self._set_state(TaskMode.FREE, WorkStatus.CANCELLED,
