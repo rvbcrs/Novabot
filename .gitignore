@@ -41,3 +41,10 @@ novabot.db
 # ── Platform-specific ────────────────────────────────
 charger-firmware/.pio/
 charger-firmware/.vscode/
+stm32-firmware/.pio/
+stm32-firmware/.vscode/
+
+# ── Python ────────────────────────────────────────────
+**/__pycache__/
+*.pyc
+*.pyo
