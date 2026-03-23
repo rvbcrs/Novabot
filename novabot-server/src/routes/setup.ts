@@ -1,0 +1,305 @@
+/**
+ * Setup wizard API routes — used during initial configuration.
+ *
+ * Reuses the working cloud import logic from bootstrap/src/server.ts
+ * and the admin import endpoint already in dashboard.ts.
+ *
+ * Flow:
+ * 1. GET  /api/setup/status       — check if setup is complete
+ * 2. POST /api/setup/cloud-login  — login to LFI cloud, return device list (preview)
+ * 3. POST /api/setup/cloud-apply  — import selected devices into local DB
+ * 4. POST /api/setup/skip         — create local account without cloud import
+ * 5. GET  /api/setup/devices      — list imported devices
+ * 6. GET  /api/setup/health       — check server + MQTT health
+ */
+
+import { Router, Request, Response } from 'express';
+import https from 'https';
+import crypto from 'crypto';
+import { db } from '../db/database.js';
+import { isSetupComplete, invalidateSetupCache } from '../middleware/setupGuard.js';
+
+export const setupRouter = Router();
+
+// ── LFI Cloud API helpers (copied from bootstrap/src/server.ts) ──────────────
+// These are proven working — do NOT modify without testing against the real cloud.
+
+const LFI_CLOUD_HOST = '47.253.145.99';
+const APP_PW_KEY_IV = Buffer.from('1234123412ABCDEF', 'utf8');
+
+function encryptCloudPassword(plainPassword: string): string {
+  const cipher = crypto.createCipheriv('aes-128-cbc', APP_PW_KEY_IV, APP_PW_KEY_IV);
+  let encrypted = cipher.update(plainPassword, 'utf8', 'base64');
+  encrypted += cipher.final('base64');
+  return encrypted;
+}
+
+function makeLfiHeaders(token: string): Record<string, string> {
+  const echostr = 'p' + crypto.randomBytes(6).toString('hex');
+  const ts = String(Date.now());
+  const nonce = crypto.createHash('sha1').update('qtzUser', 'utf8').digest('hex');
+  const sig = crypto.createHash('sha256')
+    .update(echostr + nonce + ts + token, 'utf8').digest('hex');
+  return {
+    'Host': 'app.lfibot.com',
+    'Authorization': token,
+    'Content-Type': 'application/json;charset=UTF-8',
+    'source': 'app',
+    'userlanguage': 'en',
+    'echostr': echostr,
+    'nonce': nonce,
+    'timestamp': ts,
+    'signature': sig,
+  };
+}
+
+function callLfiCloud(
+  method: string, urlPath: string,
+  body: Record<string, unknown> | null, token = ''
+): Promise<Record<string, unknown>> {
+  return new Promise((resolve, reject) => {
+    const bodyStr = body ? JSON.stringify(body) : '';
+    const headers: Record<string, string> = {
+      ...makeLfiHeaders(token),
+      ...(bodyStr ? { 'Content-Length': String(Buffer.byteLength(bodyStr)) } : {}),
+    };
+    const opts: https.RequestOptions = {
+      hostname: LFI_CLOUD_HOST,
+      path: urlPath,
+      method,
+      headers,
+      rejectUnauthorized: false,
+    };
+    const req = https.request(opts, (res) => {
+      let data = '';
+      res.on('data', (chunk: string) => { data += chunk; });
+      res.on('end', () => {
+        try { resolve(JSON.parse(data)); }
+        catch { reject(new Error(`Cloud API invalid JSON: ${data.slice(0, 200)}`)); }
+      });
+    });
+    req.on('error', reject);
+    req.setTimeout(15000, () => { req.destroy(); reject(new Error('Cloud API timeout')); });
+    if (bodyStr) req.write(bodyStr);
+    req.end();
+  });
+}
+
+// ── GET /status ──────────────────────────────────────────────────────────────
+
+setupRouter.get('/status', (_req, res) => {
+  const userCount = (db.prepare('SELECT COUNT(*) as count FROM users').get() as { count: number }).count;
+  const equipCount = (db.prepare('SELECT COUNT(*) as count FROM equipment').get() as { count: number }).count;
+  const deviceCount = (db.prepare('SELECT COUNT(*) as count FROM device_registry').get() as { count: number }).count;
+
+  res.json({
+    setupComplete: isSetupComplete(),
+    users: userCount,
+    equipment: equipCount,
+    devicesConnected: deviceCount,
+  });
+});
+
+// ── POST /cloud-login — Step 1: login + fetch device list (preview) ──────────
+// Exact same logic as bootstrap/src/server.ts /api/cloud-import
+
+setupRouter.post('/cloud-login', async (req: Request, res: Response) => {
+  const { email, password } = req.body as { email?: string; password?: string };
+  if (!email || !password) {
+    res.status(400).json({ ok: false, error: 'Email and password required' });
+    return;
+  }
+
+  try {
+    const encryptedPw = encryptCloudPassword(password);
+
+    // Login (exact same call as bootstrap)
+    const loginResp = await callLfiCloud('POST', '/api/nova-user/appUser/login', {
+      email, password: encryptedPw, imei: 'imei',
+    });
+
+    const loginVal = (loginResp as Record<string, unknown>).value as Record<string, unknown> | undefined;
+    if (!loginResp || !(loginResp as { success?: boolean }).success || !loginVal?.accessToken) {
+      const msg = (loginResp as { message?: string }).message ?? 'Login failed';
+      res.status(401).json({ ok: false, error: msg });
+      return;
+    }
+
+    const accessToken = loginVal.accessToken as string;
+    const appUserId = loginVal.appUserId as number;
+
+    // Fetch equipment list (exact same call as bootstrap)
+    const equipResp = await callLfiCloud('POST', '/api/nova-user/equipment/userEquipmentList', {
+      appUserId, pageSize: 10, pageNo: 1,
+    }, accessToken);
+
+    const equipVal = (equipResp as Record<string, unknown>).value as Record<string, unknown> | undefined;
+    const pageList = ((equipVal?.pageList ?? []) as Record<string, unknown>[]);
+
+    // Categorize devices (same logic as bootstrap)
+    const chargers = pageList.filter(e => {
+      const sn = String(e.chargerSn ?? e.sn ?? '');
+      return sn.startsWith('LFIC');
+    });
+    const mowers = pageList.filter(e => {
+      const sn = String(e.mowerSn ?? e.sn ?? '');
+      return sn.startsWith('LFIN');
+    });
+
+    res.json({ ok: true, email, appUserId, chargers, mowers, rawList: pageList });
+  } catch (err) {
+    console.error('[Setup] Cloud login error:', err);
+    res.status(500).json({
+      ok: false,
+      error: err instanceof Error ? err.message : 'Cloud login failed',
+    });
+  }
+});
+
+// ── POST /cloud-apply — Step 2: import into local DB ─────────────────────────
+// Calls the existing /api/dashboard/admin/import endpoint internally.
+
+setupRouter.post('/cloud-apply', async (req: Request, res: Response) => {
+  const { email, password, deviceName, charger, mower } = req.body as {
+    email?: string;
+    password?: string;
+    deviceName?: string;
+    charger?: { sn: string; address?: number; channel?: number; mac?: string };
+    mower?: { sn: string; mac?: string; version?: string };
+  };
+
+  if (!email || !password) {
+    res.status(400).json({ ok: false, error: 'Email and password required' });
+    return;
+  }
+
+  try {
+    // Call the existing admin import endpoint internally via fetch to localhost
+    const port = process.env.PORT ?? '3000';
+    const resp = await fetch(`http://127.0.0.1:${port}/api/dashboard/admin/import`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password, deviceName, charger, mower }),
+    });
+
+    const data = await resp.json() as Record<string, unknown>;
+
+    // Invalidate setup cache after import
+    invalidateSetupCache();
+
+    res.json({ ...data, setupComplete: isSetupComplete() });
+  } catch (err) {
+    console.error('[Setup] Cloud apply error:', err);
+    res.status(500).json({
+      ok: false,
+      error: err instanceof Error ? err.message : 'Import failed',
+    });
+  }
+});
+
+// ── POST /skip — create local account without cloud import ───────────────────
+
+setupRouter.post('/skip', async (_req: Request, res: Response) => {
+  try {
+    const bcrypt = await import('bcrypt');
+    const hashedPwd = await bcrypt.hash('admin', 10);
+    const appUserId = `local_${Date.now()}`;
+
+    db.prepare(`
+      INSERT OR IGNORE INTO users (app_user_id, email, password, username)
+      VALUES (?, ?, ?, ?)
+    `).run(appUserId, 'admin@local', hashedPwd, 'admin');
+
+    invalidateSetupCache();
+    res.json({ ok: true, message: 'Local account created. Bind your mower via the Novabot app.' });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: String(err) });
+  }
+});
+
+// ── GET /devices ─────────────────────────────────────────────────────────────
+
+setupRouter.get('/devices', (_req, res) => {
+  const equipment = db.prepare(`
+    SELECT mower_sn, charger_sn, equipment_nick_name, mower_version, charger_version
+    FROM equipment
+  `).all();
+
+  const registry = db.prepare(`
+    SELECT sn, mac_address, last_seen FROM device_registry
+    ORDER BY last_seen DESC
+  `).all();
+
+  res.json({ equipment, registry });
+});
+
+// ── GET /dns-check — verify DNS resolution ───────────────────────────────────
+
+setupRouter.get('/dns-check', async (_req, res) => {
+  const dns = await import('dns');
+  const os = await import('os');
+
+  // Determine this server's IP (TARGET_IP env or first non-internal IPv4)
+  let serverIp = process.env.TARGET_IP ?? '';
+  if (!serverIp) {
+    const ifaces = os.networkInterfaces();
+    for (const addrs of Object.values(ifaces)) {
+      if (!addrs) continue;
+      for (const addr of addrs) {
+        if (addr.family === 'IPv4' && !addr.internal) {
+          serverIp = addr.address;
+          break;
+        }
+      }
+      if (serverIp) break;
+    }
+  }
+
+  async function checkDomain(domain: string): Promise<{ ok: boolean; resolvedIp: string | null }> {
+    return new Promise((resolve) => {
+      dns.resolve4(domain, (err, addresses) => {
+        if (err || !addresses?.length) {
+          resolve({ ok: false, resolvedIp: null });
+          return;
+        }
+        const ip = addresses[0];
+        resolve({ ok: ip === serverIp, resolvedIp: ip });
+      });
+    });
+  }
+
+  const [appResult, mqttResult] = await Promise.all([
+    checkDomain('app.lfibot.com'),
+    checkDomain('mqtt.lfibot.com'),
+  ]);
+
+  res.json({
+    serverIp,
+    app: appResult,
+    mqtt: mqttResult,
+  });
+});
+
+// ── GET /health ──────────────────────────────────────────────────────────────
+
+setupRouter.get('/health', (_req, res) => {
+  const userCount = (db.prepare('SELECT COUNT(*) as count FROM users').get() as { count: number }).count;
+  const equipCount = (db.prepare('SELECT COUNT(*) as count FROM equipment').get() as { count: number }).count;
+  const deviceCount = (db.prepare('SELECT COUNT(*) as count FROM device_registry').get() as { count: number }).count;
+
+  const recentDevice = db.prepare(`
+    SELECT sn, last_seen FROM device_registry
+    WHERE datetime(last_seen) > datetime('now', '-5 minutes')
+    ORDER BY last_seen DESC LIMIT 1
+  `).get() as { sn: string; last_seen: string } | undefined;
+
+  res.json({
+    server: 'running',
+    mqtt: 'running',
+    users: userCount,
+    equipment: equipCount,
+    devicesEverConnected: deviceCount,
+    lastDeviceOnline: recentDevice ?? null,
+    setupComplete: isSetupComplete(),
+  });
+});

@@ -33,6 +33,8 @@ import { machineMessageRouter } from './routes/novabot-message/machineMessage.js
 import { equipmentStateRouter } from './routes/nova-data/equipmentState.js';
 import { adminRouter }        from './routes/admin.js';
 import { networkRouter }      from './routes/nova-network/network.js';
+import { setupRouter }        from './routes/setup.js';
+import { setupGuard, isSetupComplete } from './middleware/setupGuard.js';
 
 // ── DB is al geïnitialiseerd bij import van database.ts (module-level initDb())
 // zodat module-level db.prepare() calls in sensorData.ts etc. niet falen.
@@ -97,6 +99,15 @@ if (PROXY_MODE === 'cloud') {
   app.use(cloudHttpProxy);
 } else {
   // Normal local mode: handle requests ourselves
+
+  // ── Setup wizard (always accessible) ────────────────────────────────────────
+  app.use('/api/setup', setupRouter);
+
+  // ── Setup guard: block app API routes until setup is complete ───────────────
+  // MQTT broker and /api/setup/* always work. App routes return 503 until
+  // the user completes the wizard (imports their LFI account + devices).
+  app.use(setupGuard);
+
   // nova-user service
   // Alias: app roept /api/nova-user/user/... aan (niet /appUser/)
   // Validate routes ook under /user/ — app kan sendAppRegistEmailCode e.d. via /user/ aanroepen
@@ -137,21 +148,36 @@ if (PROXY_MODE === 'cloud') {
     res.json({ code: 200, msg: 'ok' });
   });
 
-  // ── Dashboard static files (productie build) ────────────────────────────────
+  // ── Static files ────────────────────────────────────────────────────────────
   const dashboardPath = path.resolve(__dirname, '../../novabot-dashboard/dist');
+  const setupWizardPath = path.resolve(__dirname, '../../setup-wizard');
+
+  // Setup wizard static files (always served at /setup)
+  app.use('/setup', express.static(setupWizardPath));
+
+  // Dashboard static files (only when setup is complete)
   app.use(express.static(dashboardPath));
 
-  // ── Catch-all: log unknown API routes, SPA fallback voor dashboard ──────────
+  // ── Catch-all ──────────────────────────────────────────────────────────────
   app.use((req, res) => {
     if (req.path.startsWith('/api/')) {
       console.warn(`[UNKNOWN] ${req.method} ${req.originalUrl}`, JSON.stringify(req.body));
       res.status(404).json({ code: 404, msg: 'Not found', data: null });
-    } else {
-      // SPA fallback: serveer index.html voor alle niet-API routes
-      res.sendFile(path.join(dashboardPath, 'index.html'), (err) => {
-        if (err) res.status(404).json({ code: 404, msg: 'Not found', data: null });
-      });
+      return;
     }
+
+    // Setup wizard fallback
+    if (req.path.startsWith('/setup') || !isSetupComplete()) {
+      res.sendFile(path.join(setupWizardPath, 'index.html'), (err) => {
+        if (err) res.status(404).send('Setup wizard not found. Rebuild with: npm run build:setup');
+      });
+      return;
+    }
+
+    // Dashboard SPA fallback
+    res.sendFile(path.join(dashboardPath, 'index.html'), (err) => {
+      if (err) res.status(404).json({ code: 404, msg: 'Not found', data: null });
+    });
   });
 }
 

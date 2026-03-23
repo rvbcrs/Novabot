@@ -76,6 +76,9 @@ COPY --from=deps /app/novabot-server/package.json novabot-server/
 # Copy built dashboard
 COPY --from=build /app/novabot-dashboard/dist novabot-dashboard/dist
 
+# Copy setup wizard (static HTML, no build needed)
+COPY setup-wizard setup-wizard
+
 # Copy entrypoint
 COPY docker-entrypoint.sh /app/docker-entrypoint.sh
 RUN chmod +x /app/docker-entrypoint.sh

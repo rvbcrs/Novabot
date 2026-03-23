@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OpenNova Setup</title>
+  <style>
+    :root {
+      --bg: #0a0a0f;
+      --card: rgba(255,255,255,0.05);
+      --border: rgba(255,255,255,0.1);
+      --teal: #00c4be;
+      --teal-dark: #009e99;
+      --green: #22c55e;
+      --red: #ef4444;
+      --orange: #f59e0b;
+      --text: #e5e5e5;
+      --muted: #888;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .container { max-width: 480px; width: 100%; padding: 24px; }
+    .logo { text-align: center; margin-bottom: 32px; }
+    .logo h1 { font-size: 28px; color: var(--teal); font-weight: 700; }
+    .logo p { color: var(--muted); font-size: 14px; margin-top: 4px; }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px;
+      backdrop-filter: blur(10px);
+    }
+    .steps { display: flex; justify-content: center; gap: 8px; margin-bottom: 24px; }
+    .step-dot {
+      width: 10px; height: 10px; border-radius: 50%;
+      background: rgba(255,255,255,0.15);
+      transition: all 0.3s;
+    }
+    .step-dot.active { background: var(--teal); transform: scale(1.3); }
+    .step-dot.done { background: var(--green); }
+    h2 { font-size: 20px; margin-bottom: 16px; }
+    p { line-height: 1.6; color: var(--muted); margin-bottom: 12px; }
+    input {
+      width: 100%; padding: 12px; border-radius: 8px;
+      border: 1px solid var(--border); background: rgba(0,0,0,0.3);
+      color: var(--text); font-size: 15px; margin-bottom: 12px; outline: none;
+    }
+    input:focus { border-color: var(--teal); }
+    .btn {
+      width: 100%; padding: 12px; border-radius: 8px; border: none;
+      background: var(--teal); color: #000; font-size: 15px; font-weight: 600;
+      cursor: pointer; transition: background 0.2s;
+    }
+    .btn:hover { background: var(--teal-dark); }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-secondary { background: rgba(255,255,255,0.1); color: var(--text); }
+    .btn-secondary:hover { background: rgba(255,255,255,0.15); }
+    .error { color: var(--red); font-size: 13px; margin-bottom: 8px; }
+    .success { color: var(--green); font-size: 13px; margin-bottom: 8px; }
+    .device-list { margin: 12px 0; }
+    .device {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 12px; border-radius: 8px;
+      background: rgba(255,255,255,0.03); margin-bottom: 4px;
+    }
+    .device .icon { font-size: 20px; }
+    .device .sn { font-family: monospace; color: var(--teal); }
+    .device .name { color: var(--muted); font-size: 13px; }
+    .status-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 16px 0; }
+    .status-item {
+      padding: 16px; border-radius: 8px;
+      background: rgba(255,255,255,0.03); text-align: center;
+    }
+    .status-item .value { font-size: 24px; font-weight: 700; }
+    .status-item .label { font-size: 12px; color: var(--muted); margin-top: 4px; }
+    .status-ok { color: var(--green); }
+    .status-warn { color: var(--orange); }
+    .status-err { color: var(--red); }
+    .dns-code {
+      background: rgba(0,0,0,0.4); border-radius: 8px; padding: 12px;
+      font-family: monospace; font-size: 13px; color: var(--teal);
+      margin: 12px 0; overflow-x: auto; white-space: pre;
+    }
+    .hidden { display: none; }
+    .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid var(--teal);
+      border-top-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .mt-12 { margin-top: 12px; }
+    .mb-8 { margin-bottom: 8px; }
+    a { color: var(--teal); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="logo">
+      <h1>OpenNova</h1>
+      <p>Cloud-free Novabot control</p>
+    </div>
+    <div class="steps">
+      <div class="step-dot" id="dot-0"></div>
+      <div class="step-dot" id="dot-1"></div>
+      <div class="step-dot" id="dot-2"></div>
+      <div class="step-dot" id="dot-3"></div>
+    </div>
+    <div class="card" id="content"></div>
+  </div>
+
+  <script>
+    let currentStep = 0;
+    let importResult = null;
+
+    // ── Step templates ───────────────────────────────────────────────────────
+    const steps = {
+      // Step 0: Welcome + Cloud Login
+      0: () => `
+        <h2>Welcome</h2>
+        <p>This wizard imports your Novabot account and devices from the LFI cloud
+           so your mower keeps working — even if the cloud goes offline.</p>
+        <p class="mb-8">Enter your Novabot app credentials:</p>
+        <input type="email" id="email" placeholder="Email" autocomplete="email">
+        <input type="password" id="password" placeholder="Password" autocomplete="current-password">
+        <div id="error" class="error hidden"></div>
+        <div id="importing" class="hidden"><span class="spinner"></span> Connecting to LFI cloud...</div>
+        <button class="btn mt-12" id="btn-import" onclick="doImport()">Import Account</button>
+        <button class="btn btn-secondary mt-12" onclick="skipImport()">Skip — I'll set up manually</button>
+      `,
+
+      // Step 1: DNS Configuration
+      1: () => `
+        <h2>DNS Setup</h2>
+        <p>Your mower connects to <strong>mqtt.lfibot.com</strong> and
+           <strong>app.lfibot.com</strong>. These domains need to point to this server
+           so the mower and app talk to OpenNova instead of the cloud.</p>
+        <p><strong>Choose your setup:</strong></p>
+
+        <div style="display:flex;gap:8px;margin:16px 0">
+          <button class="btn btn-secondary" style="flex:1" onclick="showDnsOption('own')">I have Pi-hole / AdGuard</button>
+          <button class="btn btn-secondary" style="flex:1" onclick="showDnsOption('builtin')">I don't have a DNS server</button>
+        </div>
+
+        <div id="dns-own" class="hidden">
+          <p>Add these DNS rewrites in your existing DNS server:</p>
+          <div class="dns-code">mqtt.lfibot.com  →  ${location.hostname}
+app.lfibot.com   →  ${location.hostname}</div>
+          <p><strong>AdGuard Home:</strong> Filters → DNS rewrites → Add rewrite</p>
+          <p><strong>Pi-hole:</strong> Local DNS → DNS Records → Add</p>
+          <button class="btn mt-12" onclick="goStep(2)">Done — I've added the records</button>
+        </div>
+
+        <div id="dns-builtin" class="hidden">
+          <p>This container includes a built-in DNS server (dnsmasq) that handles
+             the redirect automatically. You just need to point your devices to it.</p>
+          <p><strong>Option 1 — Router DNS (recommended):</strong><br>
+             Set your router's DNS server to <code>${location.hostname}</code>.<br>
+             This way all devices on your network will use it automatically.</p>
+          <p><strong>Option 2 — Per device:</strong><br>
+             On your phone (Novabot app): set DNS to <code>${location.hostname}</code><br>
+             The mower uses DHCP so it gets the router's DNS automatically.</p>
+          <div class="dns-code">Built-in DNS server: ${location.hostname}:53
+Redirects: mqtt.lfibot.com → ${location.hostname}
+           app.lfibot.com  → ${location.hostname}</div>
+          <button class="btn mt-12" onclick="goStep(2)">Done — I've configured DNS</button>
+        </div>
+
+        <button class="btn btn-secondary mt-12" onclick="goStep(2)">Skip for now</button>
+      `,
+
+      // Step 2: DNS Verification
+      2: () => `
+        <h2>Verifying DNS</h2>
+        <p>Checking if <strong>app.lfibot.com</strong> and <strong>mqtt.lfibot.com</strong>
+           point to this server...</p>
+        <div id="dns-results" style="margin:16px 0">
+          <div class="device" id="dns-app">
+            <span class="icon"><span class="spinner"></span></span>
+            <div>
+              <div class="sn">app.lfibot.com</div>
+              <div class="name">Checking...</div>
+            </div>
+          </div>
+          <div class="device" id="dns-mqtt">
+            <span class="icon"><span class="spinner"></span></span>
+            <div>
+              <div class="sn">mqtt.lfibot.com</div>
+              <div class="name">Checking...</div>
+            </div>
+          </div>
+        </div>
+        <div id="dns-verdict" class="hidden"></div>
+        <div id="dns-actions" class="hidden">
+          <button class="btn mt-12" id="dns-next-btn" onclick="goStep(3)">Continue</button>
+          <button class="btn btn-secondary mt-12" onclick="goStep(1)">Go back to DNS setup</button>
+          <button class="btn btn-secondary mt-12" onclick="dnsVerify()">Check again</button>
+        </div>
+      `,
+
+      // Step 3: Status (done)
+      3: () => `
+        <h2>You're all set!</h2>
+        <p>OpenNova is running. Use the <strong>Novabot app</strong> as usual —
+           it now talks to your local server instead of the cloud.</p>
+        <div class="status-grid" id="status-grid">
+          <div class="status-item"><div class="value"><span class="spinner"></span></div><div class="label">Loading...</div></div>
+        </div>
+        <div id="device-section"></div>
+        <button class="btn btn-secondary mt-12" onclick="goStep(0)">Run setup again</button>
+      `,
+    };
+
+    // ── Render ───────────────────────────────────────────────────────────────
+    function render() {
+      document.getElementById('content').innerHTML = steps[currentStep]();
+      document.querySelectorAll('.step-dot').forEach((dot, i) => {
+        dot.className = 'step-dot' + (i === currentStep ? ' active' : i < currentStep ? ' done' : '');
+      });
+      if (currentStep === 2) dnsVerify();
+      if (currentStep === 3) loadStatus();
+    }
+
+    function goStep(n) { currentStep = n; render(); }
+
+    function showDnsOption(which) {
+      document.getElementById('dns-own').classList.toggle('hidden', which !== 'own');
+      document.getElementById('dns-builtin').classList.toggle('hidden', which !== 'builtin');
+    }
+
+    // ── Cloud import (2-step: login/preview → apply) ───────────────────────
+    let cloudEmail = '';
+    let cloudPassword = '';
+
+    async function doImport() {
+      const email = document.getElementById('email').value;
+      const password = document.getElementById('password').value;
+      const errorEl = document.getElementById('error');
+      const importingEl = document.getElementById('importing');
+      const btn = document.getElementById('btn-import');
+
+      if (!email || !password) { errorEl.textContent = 'Please fill in both fields'; errorEl.classList.remove('hidden'); return; }
+      errorEl.classList.add('hidden');
+      importingEl.classList.remove('hidden');
+      btn.disabled = true;
+      cloudEmail = email;
+      cloudPassword = password;
+
+      try {
+        // Step 1: Login + fetch device list (preview)
+        const resp = await fetch('/api/setup/cloud-login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password }),
+        });
+        const data = await resp.json();
+        if (!data.ok) {
+          errorEl.textContent = data.error || 'Login failed';
+          errorEl.classList.remove('hidden');
+          importingEl.classList.add('hidden');
+          btn.disabled = false;
+          return;
+        }
+        importResult = data;
+
+        // Step 2: Apply — import devices into local DB
+        // Use the existing admin/import endpoint via setup/cloud-apply
+        const charger = data.chargers?.[0];
+        const mower = data.mowers?.[0];
+        const applyResp = await fetch('/api/setup/cloud-apply', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email,
+            password,
+            deviceName: mower?.equipmentNickName || charger?.equipmentNickName || 'Novabot',
+            charger: charger ? {
+              sn: charger.chargerSn || charger.sn,
+              address: charger.chargerAddress,
+              channel: charger.chargerChannel,
+              mac: charger.macAddress,
+            } : undefined,
+            mower: mower ? {
+              sn: mower.mowerSn || mower.sn,
+              mac: mower.macAddress,
+              version: mower.mowerVersion || mower.sysVersion,
+            } : undefined,
+          }),
+        });
+        const applyData = await applyResp.json();
+        if (applyData.error) {
+          errorEl.textContent = applyData.error;
+          errorEl.classList.remove('hidden');
+          importingEl.classList.add('hidden');
+          btn.disabled = false;
+          return;
+        }
+
+        goStep(1);
+      } catch (e) {
+        errorEl.textContent = 'Connection failed: ' + e.message;
+        errorEl.classList.remove('hidden');
+        importingEl.classList.add('hidden');
+        btn.disabled = false;
+      }
+    }
+
+    async function skipImport() {
+      await fetch('/api/setup/skip', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+      goStep(1);
+    }
+
+    // ── Status page ──────────────────────────────────────────────────────────
+    async function loadStatus() {
+      try {
+        const [health, devices] = await Promise.all([
+          fetch('/api/setup/health').then(r => r.json()),
+          fetch('/api/setup/devices').then(r => r.json()),
+        ]);
+
+        const grid = document.getElementById('status-grid');
+        const online = health.lastDeviceOnline;
+        grid.innerHTML = `
+          <div class="status-item">
+            <div class="value status-ok">${health.server === 'running' ? '✓' : '✗'}</div>
+            <div class="label">Server</div>
+          </div>
+          <div class="status-item">
+            <div class="value status-ok">${health.mqtt === 'running' ? '✓' : '✗'}</div>
+            <div class="label">MQTT Broker</div>
+          </div>
+          <div class="status-item">
+            <div class="value ${health.equipment > 0 ? 'status-ok' : 'status-warn'}">${health.equipment}</div>
+            <div class="label">Devices</div>
+          </div>
+          <div class="status-item">
+            <div class="value ${online ? 'status-ok' : 'status-warn'}">${online ? '✓' : '—'}</div>
+            <div class="label">${online ? 'Mower online' : 'Waiting...'}</div>
+          </div>
+        `;
+
+        const section = document.getElementById('device-section');
+        if (devices.equipment.length > 0) {
+          section.innerHTML = '<h3 style="margin:12px 0 8px;font-size:15px;">Devices</h3>' +
+            devices.equipment.map(d => `
+              <div class="device">
+                <span class="icon">${d.mower_sn?.startsWith('LFIN') ? '🤖' : '🔌'}</span>
+                <div>
+                  <div class="sn">${d.mower_sn || '—'}</div>
+                  <div class="name">${d.equipment_nick_name || ''} ${d.charger_sn ? '+ ' + d.charger_sn : ''}</div>
+                </div>
+              </div>
+            `).join('');
+        }
+      } catch (e) {
+        document.getElementById('status-grid').innerHTML =
+          '<div class="status-item"><div class="value status-err">✗</div><div class="label">Error loading status</div></div>';
+      }
+    }
+
+    // ── Init ─────────────────────────────────────────────────────────────────
+    (async () => {
+      try {
+        const resp = await fetch('/api/setup/status');
+        const data = await resp.json();
+        if (data.setupComplete) { currentStep = 3; }
+      } catch {}
+      render();
+    })();
+
+    // ── DNS Verification ───────────────────────────────────────────────────
+    async function dnsVerify() {
+      try {
+        const resp = await fetch('/api/setup/dns-check');
+        const data = await resp.json();
+
+        function renderResult(id, domain, result) {
+          const el = document.getElementById(id);
+          if (!el) return;
+          const ok = result.ok;
+          const ip = result.resolvedIp || '—';
+          el.innerHTML = `
+            <span class="icon">${ok ? '<span style="color:var(--green)">&#10003;</span>' : '<span style="color:var(--red)">&#10007;</span>'}</span>
+            <div>
+              <div class="sn">${domain}</div>
+              <div class="name">${ok ? 'Points to ' + ip + ' &#10003;' : ip !== '—' ? 'Points to ' + ip + ' (expected ' + data.serverIp + ')' : 'Could not resolve'}</div>
+            </div>
+          `;
+        }
+
+        renderResult('dns-app', 'app.lfibot.com', data.app);
+        renderResult('dns-mqtt', 'mqtt.lfibot.com', data.mqtt);
+
+        const allOk = data.app.ok && data.mqtt.ok;
+        const verdict = document.getElementById('dns-verdict');
+        if (verdict) {
+          verdict.classList.remove('hidden');
+          if (allOk) {
+            verdict.innerHTML = '<p class="success" style="font-size:15px">&#10003; DNS is correctly configured! Both domains point to this server.</p>';
+          } else {
+            verdict.innerHTML = '<p class="error" style="font-size:15px">&#10007; DNS is not fully configured yet. The domains should point to <strong>' + data.serverIp + '</strong>.</p>';
+          }
+        }
+
+        const actions = document.getElementById('dns-actions');
+        if (actions) actions.classList.remove('hidden');
+      } catch (e) {
+        const verdict = document.getElementById('dns-verdict');
+        if (verdict) {
+          verdict.classList.remove('hidden');
+          verdict.innerHTML = '<p class="error">Could not check DNS: ' + e.message + '</p>';
+        }
+        const actions = document.getElementById('dns-actions');
+        if (actions) actions.classList.remove('hidden');
+      }
+    }
+
+    // Auto-refresh status every 10s when on status page
+    setInterval(() => { if (currentStep === 3) loadStatus(); }, 10000);
+  </script>
+</body>
+</html>
