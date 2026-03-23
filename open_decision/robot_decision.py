@@ -61,6 +61,9 @@ from coverage_planner.action import (
 )
 from coverage_planner.srv import CoveragePathsByFile
 from nav2_msgs.srv import LoadMap, ClearCostmapAroundRobot, SemanticMode
+from rcl_interfaces.srv import SetParameters as SetParamsSrv
+from rcl_interfaces.msg import Parameter, ParameterValue, ParameterType
+from action_msgs.srv import CancelGoal as CancelGoalSrv
 from nav2_msgs.action import NavigateToPose as NavigateToPoseAction
 from automatic_recharge_msgs.action import AutoCharging
 from nav2_pro_msgs.srv import FreeMoveAround
@@ -68,7 +71,7 @@ from general_msgs.srv import SetUint8 as SetUint8Srv, SaveFile as SaveFileSrv
 
 from nav_msgs.msg import Odometry
 from geometry_msgs.msg import Twist, PoseStamped
-from std_msgs.msg import UInt8, Int16, String
+from std_msgs.msg import UInt8, UInt32, Int16, String, Bool
 
 from state_machine import (
     TaskMode,
@@ -360,6 +363,14 @@ class OpenRobotDecision(Node):
         self.cli_prohibited_points = self.create_client(
             SetBool, '/local_costmap/prohibited_points',
             callback_group=self.client_cb_group)
+        self.cli_costmap_set_params = self.create_client(
+            SetParamsSrv,
+            '/local_costmap/local_costmap_rclcpp_node/set_parameters',
+            callback_group=self.client_cb_group)
+        self.cli_auto_recharge_set_params = self.create_client(
+            SetParamsSrv,
+            '/auto_recharge_server/set_parameters',
+            callback_group=self.client_cb_group)
 
         # ─── Chassis extended CLIENTS (v10) ───
         self.cli_led_buzzer = self.create_client(
@@ -392,6 +403,10 @@ class OpenRobotDecision(Node):
             self, NavigateToPoseAction,
             '/navigate_to_pose',
             callback_group=self.client_cb_group)
+        self._nav_cancel_client = self.create_client(
+            CancelGoalSrv,
+            '/navigate_to_pose/_action/cancel_goal',
+            callback_group=self.client_cb_group)
         self.auto_charging_client = ActionClient(
             self, AutoCharging,
             '/auto_charging',
@@ -404,6 +419,14 @@ class OpenRobotDecision(Node):
         self.cli_enable_aruco = self.create_client(
             SetBool, '/enable_aruco_localization',
             callback_group=self.client_cb_group)
+
+        # ─── Camera darkness detection (night docking) ───
+        # Subscribe to preposition camera total_gain (AGC output: high = dark scene).
+        # Mirrors robot_decision.orig cameraDarknessCallback behavior.
+        self._camera_is_dark: bool = False
+        self.create_subscription(
+            UInt32, '/camera/preposition/total_gain',
+            self._on_camera_gain, SENSOR_QOS)
 
         # ─── Heading discovery state ───
         self._heading_phase: str | None = None  # 'drive_off' | 'spinning' | None
@@ -421,6 +444,15 @@ class OpenRobotDecision(Node):
         self.status_timer = self.create_timer(0.5, self._publish_status)
         self.summary_timer = self.create_timer(30.0, self._log_summary)
         self.boot_timer = self.create_timer(1.0, self._boot_tick)
+        # One-shot: cancel stale navigation goals 10s after startup.
+        # A stuck navigate_to_pose goal in nav2_single_node_navigator causes
+        # coverage_planner_server to return "Not supported now!!!" and abort
+        # BoundaryFollow immediately. Must cancel BEFORE first mapping attempt.
+        self._nav_cancel_done = False
+        self.nav_cancel_timer = self.create_timer(
+            10.0, self._cancel_stale_nav_goals_once,
+            callback_group=self.client_cb_group)
+
         self.boot_checks_done = False
         self.boot_phase = 'SYSTEM_CHECK_INIT'
         self._boot_init_ok_future = None
@@ -607,13 +639,26 @@ class OpenRobotDecision(Node):
                 self.get_logger().info(
                     'Boot: niet op dock — ArUco enablen + auto-dock starten')
                 self._enable_aruco()
-                if self.loc_quality >= 80 or self._load_heading_cache():
-                    # Heading al bekend of recent gecached → direct auto-dock
+                # UTM-loading at boot always resets localization to ORIGIN_INITIAL (80).
+                # Only LOC_SUCCESS (100) means map→odom TF is published.
+                # → Always run heading discovery unless already at LOC_SUCCESS.
+                self._load_heading_cache()  # Set _heading_cached flag
+                if self.loc_quality >= 100:
+                    # Fully aligned (LOC_SUCCESS) → map frame exists → navigate
                     self.get_logger().info(
-                        'Heading bekend/gecached — direct auto-dock')
+                        'Heading aligned (loc_quality=100) — navigeren naar charger')
+                    self.start_recharge()
+                elif self._charge_stop_active:
+                    # Charger contacts active at boot → mower is ON the dock.
+                    # Skip heading discovery (would drive into dock). Dock directly.
+                    self.get_logger().info(
+                        'Charger contact at boot — skip heading discovery, dock direct')
                     self._start_auto_charging()
                 else:
-                    # Heading onbekend → eerst van dock afrijden + ronddraaien
+                    # ORIGIN_INITIAL or worse → no map frame → heading discovery first
+                    self.get_logger().info(
+                        f'Heading niet aligned (loc_quality={self.loc_quality}) '
+                        '— heading discovery starten')
                     self._start_heading_discovery()
 
     # ─── Charger detection ─────────────────────────────────────
@@ -629,6 +674,15 @@ class OpenRobotDecision(Node):
         )
         if self.is_on_charger and not was_on_charger:
             self.get_logger().info('Charger: Detected — mower is on charger')
+            # Safety: cancel heading discovery if it's running — otherwise
+            # the timer keeps publishing cmd_vel while on the charger.
+            if self._heading_timer is not None:
+                self.get_logger().info(
+                    'Charger: Cancelling heading discovery (on charger)')
+                self.cmd_vel_pub.publish(Twist())  # Stop motors
+                self._heading_timer.cancel()
+                self._heading_timer = None
+                self._heading_phase = None
             if self.task_mode == TaskMode.FREE and self.boot_checks_done \
                     and not self._undocking:
                 self._set_state(TaskMode.CHARGING, WorkStatus.INIT_SUCCESS)
@@ -886,6 +940,65 @@ class OpenRobotDecision(Node):
 
     # ─── Autonomous mapping (Fase 8) ────────────────────────
 
+    def _cancel_stale_nav_goals_once(self):
+        """One-shot startup timer: cancel any stale navigate_to_pose goals.
+        A stuck goal in nav2_single_node_navigator causes BoundaryFollow to
+        abort with "Not supported now!!!" because nav2 is already busy.
+        Uses /_action/cancel_goal service directly (Galactic has no cancel_all_goals_async).
+        Sending zero UUID + zero stamp = cancel ALL goals on that action server."""
+        self.nav_cancel_timer.cancel()
+        if self._nav_cancel_done:
+            return
+        self._nav_cancel_done = True
+        try:
+            req = CancelGoalSrv.Request()
+            # zero UUID + zero stamp = cancel ALL goals (ROS2 action protocol)
+            req.goal_info.goal_id.uuid = [0] * 16
+            req.goal_info.stamp.sec = 0
+            req.goal_info.stamp.nanosec = 0
+            self._nav_cancel_client.call_async(req)
+            self.get_logger().info(
+                'Startup: Sent cancel_all_nav_goals via /_action/cancel_goal service')
+        except Exception as e:
+            self.get_logger().warn(
+                f'Startup: cancel nav goals failed: {e}')
+
+    def _wait_for_perception_data(self, timeout_s=30.0):
+        """Wait until /perception/points_labeled publishes at least one message.
+        Returns True if data received, False if timeout.
+        Uses a persistent subscription that stays active (no destroy to avoid
+        executor conflicts in Galactic)."""
+        if not hasattr(self, '_perception_data_received'):
+            from sensor_msgs.msg import PointCloud2
+            self._perception_data_received = False
+
+            def on_points(msg):
+                if not self._perception_data_received:
+                    n_pts = len(msg.data) // msg.point_step if msg.point_step > 0 else 0
+                    self.get_logger().info(
+                        f'BoundaryFollow: perception data received! '
+                        f'{n_pts} points, {len(msg.data)} bytes')
+                    self._perception_data_received = True
+
+            self.create_subscription(
+                PointCloud2, '/perception/points_labeled', on_points,
+                SENSOR_QOS)
+
+        self._perception_data_received = False
+        t0 = time.monotonic()
+        last_log = 0
+        while not self._perception_data_received and (time.monotonic() - t0) < timeout_s:
+            elapsed = time.monotonic() - t0
+            sec = int(elapsed)
+            if sec > 0 and sec % 5 == 0 and sec != last_log:
+                last_log = sec
+                self.get_logger().info(
+                    f'BoundaryFollow: waiting for perception data... '
+                    f'{sec}/{int(timeout_s)}s')
+            time.sleep(0.5)
+
+        return self._perception_data_received
+
     def start_boundary_follow(self, follow_mode=1):
         """Start boundary following for autonomous mapping.
         follow_mode: 0=ASSIST_MAPPING, 1=AUTO_MAPPING, 2=BOUNDARY_CUTTING."""
@@ -896,14 +1009,6 @@ class OpenRobotDecision(Node):
             self.get_logger().error(
                 'BoundaryFollow: Action server not available!')
             return False
-
-        # Start cameras and wait briefly for them to initialize
-        self.start_cameras()
-        time.sleep(2.0)  # Allow cameras to start capturing
-
-        # Set semantic mode for boundary following
-        self.set_semantic_mode(2)  # BOUNDARY_FOLLOW
-        time.sleep(0.5)
 
         # Verify mower is actually off the charger before starting
         if self._charge_stop_active:
@@ -920,8 +1025,51 @@ class OpenRobotDecision(Node):
                 self._set_state(TaskMode.FREE, WorkStatus.FAILED_ONCE)
                 return False
 
-        # Generate empty map (synchronous — creates map directory structure)
-        # BoundaryFollow uses GPS, NOT nav2 occupancy grid — no LoadMap needed.
+        # --- Phase 1: Start cameras ---
+        # coverage_planner_server configures perception/costmap ITSELF
+        # (it calls set_infer_model, set_semantic_mode, set_detection_mode).
+        # We only need to ensure cameras are running so perception has input.
+        self.get_logger().info('BoundaryFollow: Phase 1 — Starting cameras')
+        self.start_cameras()
+        time.sleep(3.0)  # Allow cameras to initialize hardware
+
+        # --- Phase 2: Enable perception (camera needs do_perception to stream) ---
+        self.get_logger().info('BoundaryFollow: Phase 2 — Enabling perception')
+        req_p = SetBool.Request()
+        req_p.data = True
+        result_p = self._call_service_sync(
+            self.cli_perception, req_p, timeout=5.0)
+        if result_p:
+            self.get_logger().info(
+                f'BoundaryFollow: do_perception={result_p.success}')
+        else:
+            self.get_logger().warn('BoundaryFollow: do_perception call failed')
+
+        # Set infer model so BPU starts producing labeled points
+        self.set_infer_model(3)
+
+        # NOTE: Do NOT set semantic_mode, detection_mode, or obstacle_range_params here.
+        # coverage_planner_server calls these services itself when BoundaryFollow starts.
+        # Our calls would conflict with or be overwritten by the server.
+
+        # --- Phase 3: Wait for perception data ---
+        self.get_logger().info(
+            'BoundaryFollow: Phase 3 — Waiting for perception data '
+            '(up to 30s for BPU model warmup)...')
+        has_data = self._wait_for_perception_data(timeout_s=30.0)
+
+        if not has_data:
+            self.get_logger().error(
+                'BoundaryFollow: NO perception data after 30s!')
+            self.stop_cameras()
+            self.set_perception_level(0)
+            self._set_state(TaskMode.FREE, WorkStatus.FAILED_ONCE)
+            return False
+
+        self.get_logger().info(
+            'BoundaryFollow: Perception data confirmed! Proceeding...')
+
+        # --- Phase 5: Prepare map infrastructure ---
         load_map_path = self.get_parameter('load_map_path').value
         req = GenerateEmptyMapSrv.Request()
         req.map_path = load_map_path
@@ -949,12 +1097,14 @@ class OpenRobotDecision(Node):
             self.get_logger().warn(
                 'BoundaryFollow: GPS recording failed, continuing')
 
+        # --- Phase 6: Start BoundaryFollow action ---
+        self.get_logger().info('BoundaryFollow: Phase 6 — Sending goal')
         goal = BoundaryFollow.Goal()
         goal.follow_mode = follow_mode
         goal.enable_coverage = False
         goal.more_close_to_boundary = False
         goal.close_loop_stop = True
-        goal.start_follow_wait = True
+        goal.start_follow_wait = False  # Don't wait — drive around to find boundary
         goal.debug_mode = False
         goal.inflation_radius = 0.0
         goal.blade_height = 0
@@ -992,9 +1142,12 @@ class OpenRobotDecision(Node):
 
     def _on_boundary_result(self, future):
         self._boundary_goal_handle = None
-        # Stop cameras + reset semantic mode
+        # Stop cameras + disable perception pipeline + reset semantic mode
         self.stop_cameras()
+        self.set_perception_level(0)  # disable do_perception
         self.set_semantic_mode(1)  # FREE_MOVE
+        # Restore default obstacle detection range
+        self.set_obstacle_range_params(max_range=1.2, max_height=0.35)
 
         # Stop GPS recording
         if self._mapping_active:
@@ -1006,10 +1159,18 @@ class OpenRobotDecision(Node):
             self.get_logger().info('BoundaryFollow: GPS recording stopped')
 
         try:
-            result = future.result().result
+            wrapped = future.result()
+            goal_status = wrapped.status  # GoalStatus: SUCCEEDED=4, ABORTED=6, CANCELED=5
+            result = wrapped.result
             self.get_logger().info(
-                f'BoundaryFollow: Done, status={result.status}, '
-                f'msg="{result.msg}"')
+                f'BoundaryFollow: Done, goal_status={goal_status} '
+                f'result_code={result.status}, msg="{result.msg}"')
+            if goal_status != 4:  # not SUCCEEDED → aborted or cancelled
+                self.get_logger().warn(
+                    f'BoundaryFollow: Goal not succeeded (goal_status={goal_status},'
+                    f' result_code={result.status}) — aborted by server')
+                self._set_state(TaskMode.FREE, WorkStatus.FAILED_ONCE)
+                return
             if result.status == 0:  # LOOP_CLOSED
                 self.get_logger().info(
                     'BoundaryFollow: Loop closed! Generating map...')
@@ -1349,6 +1510,28 @@ class OpenRobotDecision(Node):
             self.cli_preposition_hw_exception, req,
             'camera_hw_exception')
 
+    def _on_camera_gain(self, msg: UInt32):
+        """Darkness callback: mirrors robot_decision.orig cameraDarknessCallback.
+        total_gain is the camera AGC output — high value means dark scene.
+        Calls /local_costmap/set_detection_mode(True) in dark to ignore ToF height,
+        and ensures LED is on when in auto-dock state at night."""
+        gain = msg.data
+        thresh = self.get_parameter('image_darkness_thresh').value        # 60.0
+        thresh_lower = self.get_parameter('image_darkness_thresh_lower').value  # 5.0
+
+        was_dark = self._camera_is_dark
+        if gain > thresh:
+            self._camera_is_dark = True
+        elif gain < thresh_lower:
+            self._camera_is_dark = False
+
+        if self._camera_is_dark != was_dark:
+            self.get_logger().info(
+                f'Camera darkness: {"DARK" if self._camera_is_dark else "BRIGHT"} '
+                f'(gain={gain}, thresh={thresh})')
+            # Set detection mode: True=ignore tof height (for dark/night operation)
+            self.set_detection_mode(self._camera_is_dark)
+
     def set_camera_gain(self, gain):
         """Set camera total gain (exposure control)."""
         req = SetUint8Srv.Request()
@@ -1438,6 +1621,47 @@ class OpenRobotDecision(Node):
             self.cli_detection_mode, req,
             f'detection_mode({"on" if enabled else "off"})')
 
+    def set_obstacle_range_params(self, max_range: float, max_height: float):
+        """Set costmap obstacle detection range and height limits.
+
+        max_range: obstacle_max_range and raytrace_max_range (m)
+        max_height: max_obstacle_height (m)
+        These are set on the local_costmap obstacle layer to capture
+        boundary objects that may be further than the default 1.2m range.
+        """
+        def make_param(name, value):
+            p = Parameter()
+            p.name = name
+            p.value = ParameterValue()
+            p.value.type = ParameterType.PARAMETER_DOUBLE
+            p.value.double_value = value
+            return p
+
+        req = SetParamsSrv.Request()
+        req.parameters = [
+            make_param('obstacle_layer.pointcloud.obstacle_max_range', max_range),
+            make_param('obstacle_layer.pointcloud.raytrace_max_range', max_range + 0.5),
+            make_param('obstacle_layer.pointcloud.max_obstacle_height', max_height),
+        ]
+        self.call_service_async(
+            self.cli_costmap_set_params, req,
+            f'costmap_obstacle_params(range={max_range}, max_h={max_height})')
+
+    def _set_recharge_led_brightness(self, value: int):
+        """Set auto_recharge_server brightness_adjustment_value parameter.
+        Default is 1 (LED value=1 when dark, nearly off). Set to 255 for full brightness.
+        auto_recharge_server publishes this value to /led_set when total_gain > threshold."""
+        p = Parameter()
+        p.name = 'brightness_adjustment_value'
+        p.value = ParameterValue()
+        p.value.type = ParameterType.PARAMETER_INTEGER
+        p.value.integer_value = value
+        req = SetParamsSrv.Request()
+        req.parameters = [p]
+        self.call_service_async(
+            self.cli_auto_recharge_set_params, req,
+            f'recharge_led_brightness({value})')
+
     def set_prohibited_points(self, enabled):
         """Enable/disable prohibited points in costmap."""
         req = SetBool.Request()
@@ -1500,10 +1724,12 @@ class OpenRobotDecision(Node):
                     f'Recharge: Charger pose read, '
                     f'dist={result.map_to_charging_dis:.2f}m, '
                     f'pos=({pose.position.x:.2f},{pose.position.y:.2f})')
-                # Build PoseStamped for navigation
+                # Build PoseStamped for navigation.
+                # Use stamp=Time(0) so TF lookups use "latest available" instead
+                # of a specific time that may predate the current TF buffer.
                 ps = PoseStamped()
                 ps.header.frame_id = 'map'
-                ps.header.stamp = self.get_clock().now().to_msg()
+                ps.header.stamp = TimeMsg(sec=0, nanosec=0)
                 ps.pose = pose
                 self._charger_pose_stamped = ps
                 self._navigate_to_charger(ps)
@@ -1639,7 +1865,29 @@ class OpenRobotDecision(Node):
 
     def _heading_discovery_tick(self) -> None:
         """Timer callback: beheert drive-off + spin totdat heading verkregen."""
+        # Safety: abort heading discovery if no longer in appropriate state.
+        if self.task_mode not in (TaskMode.FREE,) or self.is_on_charger:
+            self.cmd_vel_pub.publish(Twist())  # Stop motors
+            if self._heading_timer is not None:
+                self._heading_timer.cancel()
+                self._heading_timer = None
+            self._heading_phase = None
+            self.get_logger().info(
+                f'Heading discovery: aborted (mode={self.task_mode}, '
+                f'on_charger={self.is_on_charger})')
+            return
+
         elapsed = time.monotonic() - self._heading_phase_start
+
+        # Safety: charger contact during heading discovery means we're right next to dock.
+        # Stop driving and transition to spinning to collect GPS data, then dock.
+        if self._heading_phase == 'drive_off' and self._charge_stop_active:
+            self.cmd_vel_pub.publish(Twist())  # Stop
+            self.get_logger().info(
+                'Heading discovery: charger contact during drive-off — switching to spin')
+            self._heading_phase = 'spinning'
+            self._heading_phase_start = time.monotonic()
+            return
 
         if self._heading_phase == 'drive_off':
             twist = Twist()
@@ -1652,7 +1900,7 @@ class OpenRobotDecision(Node):
                 self._heading_phase_start = time.monotonic()
 
         elif self._heading_phase == 'spinning':
-            if self.loc_quality >= 80:
+            if self.loc_quality >= 100:
                 self.get_logger().info(
                     f'Heading verkregen (loc_quality={self.loc_quality}) '
                     f'— auto-dock starten')
@@ -1663,18 +1911,24 @@ class OpenRobotDecision(Node):
                     f'(loc_quality={self.loc_quality}) — toch auto-dock proberen')
                 self._stop_heading_discovery()
             else:
-                twist = Twist()
-                twist.angular.z = SPIN_SPEED
-                self.cmd_vel_pub.publish(twist)
+                # Safety: stop spinning if charger contact (mower drifted to dock).
+                if self._charge_stop_active:
+                    self.cmd_vel_pub.publish(Twist())
+                    self.get_logger().info(
+                        'Heading discovery: charger contact during spin — stopping')
+                else:
+                    twist = Twist()
+                    twist.angular.z = SPIN_SPEED
+                    self.cmd_vel_pub.publish(twist)
 
     def _stop_heading_discovery(self) -> None:
-        """Stop heading discovery en start auto-dock."""
+        """Stop heading discovery en start auto-dock via start_recharge() for correct positioning."""
         self.cmd_vel_pub.publish(Twist())  # Motors stoppen
         if self._heading_timer is not None:
             self._heading_timer.cancel()
             self._heading_timer = None
         self._heading_phase = None
-        self._start_auto_charging()
+        self.start_recharge()
 
     def _start_auto_charging(self):
         """Start AutoCharging action to dock onto charger."""
@@ -1688,16 +1942,36 @@ class OpenRobotDecision(Node):
         goal = AutoCharging.Goal()
         goal.overwrite = False
         goal.non_charging_pose_mode = True
-        goal.enable_no_visual_recharge = False
+        # enable_no_visual_recharge: if ArUco visual fails but charge_pose is set,
+        # fall back to position-based docking (GPS navigation to charger). Needed at night.
+        goal.enable_no_visual_recharge = (self._charger_pose_stamped is not None)
+        if self._charger_pose_stamped is not None:
+            # Refresh stamp to current time so TF lookup in auto_recharge_server works.
+            # Stale stamps cause "extrapolation into the past" TF errors.
+            self._charger_pose_stamped.header.stamp = self.get_clock().now().to_msg()
+            goal.charge_pose = self._charger_pose_stamped
         goal.max_retry = 5
-        # Disable charge-current check when battery >= 90%: AutoCharging otherwise
-        # retries indefinitely because no current flows on a full battery.
-        goal.disable_charge_check = (self.battery_power >= 90)
+        # Disable charge-current check: auto_recharge_server otherwise waits for
+        # charging current > threshold. At high battery levels (>= 85%) current is too
+        # low, causing RECHARGE_FAIL even though physical contact is made correctly.
+        goal.disable_charge_check = (self.battery_power >= 85)
         goal.keep_alive = False
         goal.rotate_searching = (self.loc_quality < 100)
-        if self._charger_pose_stamped is not None:
-            goal.charge_pose = self._charger_pose_stamped
 
+        # Ensure preposition camera is running for ArUco detection.
+        # Camera may have been stopped after mowing or never started.
+        req_cam = SetBool.Request()
+        req_cam.data = True
+        self.call_service_async(
+            self.cli_preposition_camera, req_cam, 'preposition_camera(aruco)')
+
+        # When dark: set auto_recharge_server brightness_adjustment_value to 255.
+        # Default value is 1 (LED nearly off at night) — way too dim for ArUco detection.
+        # auto_recharge_server publishes led_set = brightness_adjustment_value when dark.
+        if self._camera_is_dark:
+            self._set_recharge_led_brightness(255)
+
+        self._set_led(1)  # LED aan voor ArUco camera zicht (ook 's nachts)
         self.get_logger().info('Recharge: Starting AutoCharging action')
         self._set_state(TaskMode.RECHARGING, WorkStatus.ALIGN_PILE,
                         recharge_status=RechargeStatus.DOCKING)
@@ -1745,17 +2019,38 @@ class OpenRobotDecision(Node):
                 f'charge_status={result.charge_status}, '
                 f'msg="{result.message}"')
 
+            # Restore LED brightness to default (1) after dock attempt (day or night)
+            self._set_recharge_led_brightness(1)
+
             if result.code == 100:  # SUCCESS
                 self.get_logger().info('Recharge: Docking SUCCESS!')
                 self._set_state(TaskMode.CHARGING, WorkStatus.INIT_SUCCESS,
                                 recharge_status=RechargeStatus.CHARGING)
                 self.is_on_charger = True
+                self._tf_recovery_attempts = 0
                 self.save_utm_origin()
                 self._save_heading_cache()
             elif result.code == 7:  # CANCELED
                 self.get_logger().info('Recharge: Charging cancelled')
                 self._set_state(TaskMode.FREE, WorkStatus.CANCELLED,
                                 recharge_status=RechargeStatus.IDLE)
+            elif result.code == 10:  # TF_GETTING_FAILED
+                if not hasattr(self, '_tf_recovery_attempts'):
+                    self._tf_recovery_attempts = 0
+                self._tf_recovery_attempts += 1
+                if self._tf_recovery_attempts <= 2:
+                    self.get_logger().warn(
+                        f'Recharge: TF_GETTING_FAILED — starting heading discovery '
+                        f'(attempt {self._tf_recovery_attempts}/2)')
+                    self._set_state(TaskMode.FREE, WorkStatus.INIT_SUCCESS)
+                    self._enable_aruco()
+                    self._start_heading_discovery()
+                else:
+                    self.get_logger().error(
+                        'Recharge: TF_GETTING_FAILED after 2 recovery attempts')
+                    self._tf_recovery_attempts = 0
+                    self._set_state(TaskMode.FREE, WorkStatus.FAILED_ONCE,
+                                    recharge_status=RechargeStatus.FAILED)
             else:
                 self.get_logger().warn(
                     f'Recharge: Failed (code={result.code})')
@@ -2076,6 +2371,7 @@ class OpenRobotDecision(Node):
                 return int(st.f_bavail * st.f_frsize / (1024 * 1024))
             except (OSError, AttributeError):
                 return 0
+
 
     def _publish_status(self):
         """Publish RobotStatus at 2 Hz — the heartbeat of the mower."""

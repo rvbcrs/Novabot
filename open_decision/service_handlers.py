@@ -11,7 +11,7 @@ Service type mapping (mqtt_node is CLIENT of these):
     /robot_decision/add_area
     /robot_decision/reset_mapping
   std_srvs/SetBool:
-    /robot_decision/start_assistant_mapping
+    /robot_decision/start_assistant_mapping  (verified via ros2 service type: mqtt_node is SetBool client)
     /robot_decision/start_erase
     /robot_decision/stop_task
     /robot_decision/map_stop_record
@@ -99,7 +99,7 @@ class ServiceHandlers:
             StartMap, '/robot_decision/reset_mapping',
             self._handle_reset_mapping, callback_group=cb)
 
-        # SetBool services (std_srvs/SetBool)
+        # start_assistant_mapping: mqtt_node connects as SetBool client (verified via ros2 service type)
         n.create_service(
             SetBool, '/robot_decision/start_assistant_mapping',
             self._handle_start_assistant, callback_group=cb)
@@ -344,17 +344,41 @@ class ServiceHandlers:
 
     def _handle_start_assistant(self, request, response):
         """Autonomous mapping: MQTT start_assistant_build_map.
-        Type: std_srvs/SetBool. request.data=True to start.
-        Uses BoundaryFollow action to automatically detect and follow boundaries."""
+        Type: std_srvs/SetBool (verified: mqtt_node connects as SetBool client).
+        Uses BoundaryFollow action to automatically detect and follow boundaries.
+
+        IMPORTANT: start_boundary_follow() blocks for ~35s (camera warmup,
+        perception wait, map generation). Running this in the service callback
+        causes rclpy executor crash (InvalidHandle) when the service caller
+        disconnects. Solution: launch in a separate thread and return immediately."""
         self.log.info(
             f'SetBool: start_assistant_mapping, data={request.data}')
+
+        import threading
+        t = threading.Thread(
+            target=self._run_assistant_mapping, daemon=True)
+        t.start()
+
+        response.success = True
+        response.message = 'Autonomous mapping starting (async)'
+        return response
+
+    def _run_assistant_mapping(self):
+        """Background thread for autonomous mapping.
+        Handles undock + boundary follow without blocking the service callback."""
         n = self.node
 
-        if n.is_on_charger:
+        # Only undock if actually ON the charger (charge contacts active).
+        # Never undock based on distance alone — causes unexpected backwards driving.
+        needs_undock = n.is_on_charger
+        if needs_undock:
+            self.log.info(
+                f'start_assistant_mapping: undocking first '
+                f'(is_on_charger={n.is_on_charger}, dist={dist_from_charger:.2f}m)')
             n.request_undock(after_state=(
                 TaskMode.MAPPING,
                 WorkStatus.ASSISTANT_MAPPING_WORKING_ZONE))
-            deadline = time.monotonic() + 15.0
+            deadline = time.monotonic() + 20.0
             while n._undocking and time.monotonic() < deadline:
                 time.sleep(0.1)
         else:
@@ -362,10 +386,9 @@ class ServiceHandlers:
                          WorkStatus.ASSISTANT_MAPPING_WORKING_ZONE)
 
         # Start autonomous boundary following
-        ok = n.start_boundary_follow(follow_mode=1)  # AUTO_MAPPING_MODE
-        response.success = ok
-        response.message = 'Autonomous mapping started' if ok else 'Failed to start'
-        return response
+        ok = n.start_boundary_follow(follow_mode=0)
+        if not ok:
+            self.log.error('start_assistant_mapping: boundary follow failed to start')
 
     def _handle_start_erase(self, request, response):
         """Start auto-erase mapping path. Type: std_srvs/SetBool."""
