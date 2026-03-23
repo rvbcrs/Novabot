@@ -64,11 +64,15 @@ int main(void)
     /* --- Phase 4: Command handler (registers serial callback) --- */
     command_handler_init();
 
-    /* --- Phase 5: IMU zero-bias calibration (~18s, robot must be stationary) --- */
+    /* --- Phase 5: Boot animation --- */
+    display_boot_animation();
+
+    /* --- Phase 6: IMU zero-bias calibration (~18s, robot must be stationary) --- */
     display_set_line(0, "IMU Calibrating...");
+    display_set_line(1, "Keep robot still");
     sensors_imu_calibrate();
 
-    /* --- Phase 6: Show version on display --- */
+    /* --- Phase 7: Show version on display --- */
     display_show_version();
     display_set_line(1, "Ready");
 
@@ -177,20 +181,29 @@ static void Watchdog_Refresh(void)
 static void GPIO_Init(void)
 {
     /* Enable GPIO clocks for all ports used by the hardware */
-    __HAL_RCC_GPIOA_CLK_ENABLE();
-    __HAL_RCC_GPIOB_CLK_ENABLE();
-    __HAL_RCC_GPIOC_CLK_ENABLE();
-    __HAL_RCC_GPIOD_CLK_ENABLE();
-    __HAL_RCC_GPIOE_CLK_ENABLE();
+    __HAL_RCC_GPIOA_CLK_ENABLE();  /* ADC, LED (PA1), USART1 (PA9/PA10) */
+    __HAL_RCC_GPIOB_CLK_ENABLE();  /* I2C1 (PB6/7), SPI2 (PB12-15), USART3 (PB10/11) */
+    __HAL_RCC_GPIOC_CLK_ENABLE();  /* UART5 TX (PC12) */
+    __HAL_RCC_GPIOD_CLK_ENABLE();  /* UART5 RX (PD2), Hall sensors (PD8-10), lift dir (PD13) */
+    __HAL_RCC_GPIOE_CLK_ENABLE();  /* Hall sensors (PE7-14), charge lock (PE2) */
     __HAL_RCC_GPIOF_CLK_ENABLE();
     __HAL_RCC_GPIOG_CLK_ENABLE();
-    __HAL_RCC_GPIOH_CLK_ENABLE();
+    __HAL_RCC_GPIOH_CLK_ENABLE();  /* HSE oscillator (PH0/PH1) */
 
     /* Enable DMA clocks (used by UART, ADC) */
-    __HAL_RCC_DMA1_CLK_ENABLE();
-    __HAL_RCC_DMA2_CLK_ENABLE();
+    __HAL_RCC_DMA1_CLK_ENABLE();   /* USART3, UART5 DMA */
+    __HAL_RCC_DMA2_CLK_ENABLE();   /* USART1, ADC1 DMA */
 
-    /* TODO: Configure individual GPIO pins once pin mapping is verified */
+    /*
+     * Individual GPIO pin configuration is handled by each peripheral init:
+     *   serial_init()  → PA9/PA10 (USART1)
+     *   sensors_init() → PB6/PB7 (I2C1), PA0/2/3/4/5 (ADC), PE7-14 + PD8-10 (Hall)
+     *   gps_init()     → PC12/PD2 (UART5)
+     *   lora_init()    → PB10/PB11 (USART3)
+     *   display_init() → PB12-15 (SPI2), PB1/PB14 (RST/DC)
+     *   motor_init()   → PA1 (LED), PE2 (charge lock), PD13 (lift dir)
+     *   TIM1/TIM8 PWM  → configured in motor_init()
+     */
 }
 
 /* ========================================================================

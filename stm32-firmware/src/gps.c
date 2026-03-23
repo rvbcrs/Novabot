@@ -48,8 +48,18 @@ void gps_init(void)
 {
     __HAL_RCC_UART5_CLK_ENABLE();
 
-    /* TODO: Configure UART5 GPIO pins */
-    /* PC12 = TX, PD2 = RX — need PCB verification */
+    /* Configure UART5 GPIO pins: PC12=TX, PD2=RX */
+    GPIO_InitTypeDef gpio = {0};
+    gpio.Mode = GPIO_MODE_AF_PP;
+    gpio.Pull = GPIO_PULLUP;
+    gpio.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+    gpio.Alternate = GPIO_AF8_UART5;
+
+    gpio.Pin = GPIO_PIN_12;  /* PC12 = TX */
+    HAL_GPIO_Init(GPIOC, &gpio);
+
+    gpio.Pin = GPIO_PIN_2;   /* PD2 = RX */
+    HAL_GPIO_Init(GPIOD, &gpio);
 
     huart5.Instance = UART5;
     huart5.Init.BaudRate = UART_GPS_BAUD;

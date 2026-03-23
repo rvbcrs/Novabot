@@ -172,10 +172,82 @@
 #define MAG_BMM150_ADDR          0x10U       /* BMM150 (3-axis magnetometer) */
 
 /* ========================================================================
- * SPI — Display
+ * SPI — Display (ST7789V, 240x320, RGB565)
+ *
+ * Identified from OEM firmware binary (LCD init at 0x08009D78):
+ *   - PORCTRL (0xB2): 0x0C 0x0C 0x00 0x33 0x33
+ *   - GCTRL   (0xB7): 0x35
+ *   - VCOMS   (0xBB): 0x35
+ *   - FRCTR2  (0xC6): 0x0F (60 Hz)
+ *   - MADCTL orientations: 0x00, 0x60, 0xC0, 0xA0
+ *   - lcd_write_cmd at 0x0800A010, lcd_write_data at 0x08009FD4
  * ======================================================================== */
 
-#define SPI_DISPLAY              SPI2        /* Color LCD, LVGL */
+#define SPI_DISPLAY              SPI2        /* ST7789V color LCD */
+
+/* Display dimensions */
+#define DISPLAY_WIDTH            240U
+#define DISPLAY_HEIGHT           320U
+#define DISPLAY_ORIENTATION      1U          /* 0=portrait, 1=landscape (320x240) */
+
+/* ST7789V commands */
+#define ST7789_NOP               0x00U
+#define ST7789_SWRESET           0x01U
+#define ST7789_SLPIN             0x10U
+#define ST7789_SLPOUT            0x11U
+#define ST7789_NORON             0x13U
+#define ST7789_INVOFF            0x20U
+#define ST7789_INVON             0x21U
+#define ST7789_DISPOFF           0x28U
+#define ST7789_DISPON            0x29U
+#define ST7789_CASET             0x2AU
+#define ST7789_RASET             0x2BU
+#define ST7789_RAMWR             0x2CU
+#define ST7789_MADCTL            0x36U
+#define ST7789_COLMOD            0x3AU
+#define ST7789_PORCTRL           0xB2U
+#define ST7789_GCTRL             0xB7U
+#define ST7789_VCOMS             0xBBU
+#define ST7789_LCMCTRL           0xC0U
+#define ST7789_VDVVRHEN          0xC2U
+#define ST7789_VRHS              0xC3U
+#define ST7789_VDVSET            0xC4U
+#define ST7789_FRCTR2            0xC6U
+#define ST7789_PWCTRL1           0xD0U
+#define ST7789_PVGAMCTRL         0xE0U
+#define ST7789_NVGAMCTRL         0xE1U
+
+/* MADCTL bit flags */
+#define MADCTL_MY                0x80U       /* Row address order */
+#define MADCTL_MX                0x40U       /* Column address order */
+#define MADCTL_MV                0x20U       /* Row/column exchange */
+#define MADCTL_ML                0x10U       /* Vertical refresh order */
+#define MADCTL_RGB               0x00U       /* RGB color order */
+#define MADCTL_BGR               0x08U       /* BGR color order */
+
+/* RGB565 color macros */
+#define RGB565(r, g, b)          ((uint16_t)(((r) & 0xF8) << 8 | ((g) & 0xFC) << 3 | ((b) >> 3)))
+#define COLOR_BLACK              0x0000U
+#define COLOR_WHITE              0xFFFFU
+#define COLOR_RED                RGB565(255, 0, 0)
+#define COLOR_GREEN              RGB565(0, 255, 0)
+#define COLOR_BLUE               RGB565(0, 0, 255)
+#define COLOR_CYAN               RGB565(0, 196, 190)    /* #00c4be — OEM teal */
+#define COLOR_ORANGE             RGB565(255, 140, 0)
+#define COLOR_DARK_BG            RGB565(20, 20, 30)      /* Dark background */
+#define COLOR_GRAY               RGB565(128, 128, 128)
+#define COLOR_DARK_GRAY          RGB565(60, 60, 60)
+
+/* Display SPI pins (from OEM binary SPI2 init, needs PCB verification) */
+#define DISPLAY_SPI_PORT         GPIOB
+#define DISPLAY_SCK_PIN          GPIO_PIN_13  /* PB13 = SPI2_SCK */
+#define DISPLAY_MOSI_PIN         GPIO_PIN_15  /* PB15 = SPI2_MOSI */
+#define DISPLAY_CS_PIN           GPIO_PIN_12  /* PB12 = SPI2_NSS (active low) */
+/* DC and RST pins — TODO: verify from PCB, these are common assignments */
+#define DISPLAY_DC_PORT          GPIOB
+#define DISPLAY_DC_PIN           GPIO_PIN_14  /* PB14 = Data/Command select */
+#define DISPLAY_RST_PORT         GPIOB
+#define DISPLAY_RST_PIN          GPIO_PIN_1   /* PB1 = Hardware reset */
 
 /* ========================================================================
  * ADC — Analog measurements

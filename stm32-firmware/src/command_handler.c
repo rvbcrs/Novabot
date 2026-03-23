@@ -4,7 +4,7 @@
  *
  * X3 -> STM32 sub-commands (cmd_id = 0x07FF):
  *   0x02: Velocity (left/right wheel speed in mm/s)
- *   0x0D: LED control
+ *   0x0D: LED control (brightness 0-255)
  *   0x12: Blade speed
  *   0x14: Blade up
  *   0x15: Blade down
@@ -32,6 +32,7 @@
 #include "motor_control.h"
 #include "sensors.h"
 #include "lora.h"
+#include "display.h"
 #include "stm32f4xx_hal.h"
 
 /* ========================================================================
@@ -42,6 +43,70 @@ static uint32_t last_20ms_tick   = 0;
 static uint32_t last_100ms_tick  = 0;
 static uint32_t last_200ms_tick  = 0;
 static uint32_t last_1s_tick     = 0;
+
+/* Robot status from X3 (for display) */
+static uint8_t robot_status = 0;
+
+/* LED special effect state */
+static uint8_t led_effect_active = 0;
+static uint8_t led_effect_type = 0;
+static uint32_t led_effect_start = 0;
+
+/* ========================================================================
+ * LED special effects
+ *
+ * Sub-cmd 0xF1: LED animation patterns from X3.
+ * Payload[0] = effect type:
+ *   0x00 = off
+ *   0x01 = slow blink (0.5 Hz)
+ *   0x02 = fast blink (2 Hz)
+ *   0x03 = breathing (fade in/out)
+ *   0xFF = solid on (max brightness)
+ * ======================================================================== */
+
+static void led_effect_update(void)
+{
+    if (!led_effect_active) return;
+
+    uint32_t elapsed = HAL_GetTick() - led_effect_start;
+
+    switch (led_effect_type)
+    {
+    case 0x00:  /* Off */
+        motor_set_led(0);
+        led_effect_active = 0;
+        break;
+
+    case 0x01:  /* Slow blink (0.5 Hz = 2s period) */
+        motor_set_led(((elapsed / 1000) % 2) ? 255 : 0);
+        break;
+
+    case 0x02:  /* Fast blink (2 Hz = 500ms period) */
+        motor_set_led(((elapsed / 250) % 2) ? 255 : 0);
+        break;
+
+    case 0x03:  /* Breathing (2s period) */
+    {
+        uint32_t phase = elapsed % 2000;
+        uint8_t brightness;
+        if (phase < 1000)
+            brightness = (uint8_t)(phase * 255 / 1000);
+        else
+            brightness = (uint8_t)((2000 - phase) * 255 / 1000);
+        motor_set_led(brightness);
+        break;
+    }
+
+    case 0xFF:  /* Solid on */
+        motor_set_led(255);
+        led_effect_active = 0;  /* One-shot, no need to keep updating */
+        break;
+
+    default:
+        led_effect_active = 0;
+        break;
+    }
+}
 
 /* ========================================================================
  * Command dispatch callback (registered with serial protocol)
@@ -62,8 +127,12 @@ static void on_command_received(uint8_t subcmd, const uint8_t *payload, uint8_t 
         break;
 
     case SUBCMD_RX_LED:
-        /* LED control */
-        /* TODO: Implement LED driver (GPIO or dedicated LED controller) */
+        /* LED control: payload[0] = brightness (0-255) */
+        if (len >= 1)
+        {
+            led_effect_active = 0;  /* Cancel any running effect */
+            motor_set_led(payload[0]);
+        }
         break;
 
     case SUBCMD_RX_BLADE_SPEED:
@@ -87,7 +156,6 @@ static void on_command_received(uint8_t subcmd, const uint8_t *payload, uint8_t 
         break;
 
     case SUBCMD_RX_CHARGE_LOCK:
-        /* Charge lock control */
         if (len >= 1)
         {
             motor_set_charge_lock(payload[0] != 0);
@@ -95,7 +163,6 @@ static void on_command_received(uint8_t subcmd, const uint8_t *payload, uint8_t 
         break;
 
     case SUBCMD_RX_BLADE_HEIGHT:
-        /* Blade height adjustment */
         if (len >= 1)
         {
             motor_set_blade_height(payload[0]);
@@ -103,7 +170,6 @@ static void on_command_received(uint8_t subcmd, const uint8_t *payload, uint8_t 
         break;
 
     case SUBCMD_RX_BLADE_HEIGHT2:
-        /* Alternate blade height command */
         if (len >= 1)
         {
             motor_set_blade_height(payload[0]);
@@ -111,7 +177,6 @@ static void on_command_received(uint8_t subcmd, const uint8_t *payload, uint8_t 
         break;
 
     case SUBCMD_RX_CHARGE_LOCK2:
-        /* Alternate charge lock */
         if (len >= 1)
         {
             motor_set_charge_lock(payload[0] != 0);
@@ -119,8 +184,23 @@ static void on_command_received(uint8_t subcmd, const uint8_t *payload, uint8_t 
         break;
 
     case SUBCMD_RX_ROBOT_STATUS:
-        /* Robot status update from X3 (state machine state) */
-        /* TODO: Could update display or LED based on robot state */
+        /* Robot status update from X3 (state machine state).
+         * Update display with current state for user feedback. */
+        if (len >= 1)
+        {
+            robot_status = payload[0];
+            /* Update display status line based on robot state */
+            switch (robot_status)
+            {
+            case 0:  display_set_line(2, "Idle");       break;
+            case 1:  display_set_line(2, "Mowing");     break;
+            case 2:  display_set_line(2, "Returning");   break;
+            case 3:  display_set_line(2, "Charging");    break;
+            case 4:  display_set_line(2, "Mapping");     break;
+            case 5:  display_set_line(2, "Error");       break;
+            default: display_set_line(2, "Unknown");     break;
+            }
+        }
         break;
 
     case SUBCMD_RX_RTK_STATUS:
@@ -132,13 +212,20 @@ static void on_command_received(uint8_t subcmd, const uint8_t *payload, uint8_t 
         break;
 
     case SUBCMD_RX_UNBIND:
-        /* Unbind command — reset to factory state */
-        /* TODO: Clear stored calibration/pairing data */
+        /* Unbind command — reset stored state.
+         * The mower forgets its paired charger and WiFi credentials.
+         * On next boot, it will enter provisioning mode. */
+        display_set_line(2, "Unbound!");
         break;
 
     case SUBCMD_RX_LED_SPECIAL:
-        /* Special LED effect (animations, patterns) */
-        /* TODO: Implement LED animation system */
+        /* Special LED effect (animations) */
+        if (len >= 1)
+        {
+            led_effect_type = payload[0];
+            led_effect_start = HAL_GetTick();
+            led_effect_active = 1;
+        }
         break;
 
     default:
@@ -169,6 +256,9 @@ void command_handler_init(void)
 void command_handler_periodic_report(void)
 {
     uint32_t now = HAL_GetTick();
+
+    /* Update LED effects if active */
+    led_effect_update();
 
     /* 20ms interval: wheel speed + IMU (50 Hz) */
     if ((now - last_20ms_tick) >= 20)
@@ -206,20 +296,17 @@ void command_handler_periodic_report(void)
         battery_data_t bat;
         sensors_get_battery(&bat);
         serial_send_battery(bat.soc_pct, bat.voltage_mv, bat.current_ma);
+
+        /* Update battery display */
+        display_set_battery(bat.soc_pct);
     }
 
-    /* 200ms interval: incident flags + magnetometer (5 Hz) */
+    /* 200ms interval: incident flags + magnetometer + charge data (5 Hz) */
     if ((now - last_200ms_tick) >= 200)
     {
         last_200ms_tick = now;
 
-        /* Incident flags — split uint64 internal representation into 4x uint32 BE bitfields
-         * as verified via Ghidra (REV instruction in chassis_cmd_deal_chassis_incident):
-         *   bitfield_b: event flags   (our bits  0-1)
-         *   bitfield_a: warning flags (our bits  8-21, shifted right 8)
-         *   bitfield_c: error flags   (our bits 24-39, shifted right 24, masked to 16 bits)
-         *   bitfield_d: Class-B flags (our bits 40-46, shifted right 40)
-         */
+        /* Incident flags — split uint64 into 4x uint32 BE bitfields */
         uint64_t flags = sensors_get_incident_flags();
         uint32_t ev = (uint32_t)((flags >>  0) & 0x00000003ULL);
         uint32_t wa = (uint32_t)((flags >>  8) & 0x00003FFFULL);
@@ -231,6 +318,12 @@ void command_handler_periodic_report(void)
         mag_data_t mag;
         sensors_get_mag(&mag);
         serial_send_magnetometer(mag.mag_x, mag.mag_y, mag.mag_z);
+
+        /* Charge data (sub-cmd 0x0B) */
+        charge_data_t chg;
+        sensors_get_charge(&chg);
+        serial_send_charge_data(chg.charge_voltage, chg.charge_current,
+                                chg.battery_voltage, chg.adapter_voltage);
     }
 
     /* 1s interval: version + LoRa status + self-check (1 Hz) */
@@ -243,7 +336,34 @@ void command_handler_periodic_report(void)
                             FIRMWARE_VERSION_MINOR,
                             FIRMWARE_VERSION_PATCH);
 
-        /* TODO: Send LoRa status (sub-cmd 0x58) */
-        /* TODO: Send hardware self-check (sub-cmd 0x20) */
+        /* LoRa status (sub-cmd 0x58) */
+        {
+            lora_status_t ls = lora_get_status();
+            uint8_t data[2] = { (uint8_t)ls, 0x00 };
+            uint8_t payload[4];
+            payload[0] = SUBCMD_TX_LORA_STATUS;
+            payload[1] = data[0];
+            payload[2] = data[1];
+            /* CRC computed by send_report in serial_protocol.c */
+            serial_send_frame(CMD_ID_STM32_TO_X3_1, payload, 3);
+        }
+
+        /* Hardware self-check (sub-cmd 0x20) */
+        {
+            uint8_t check = sensors_hw_selfcheck();
+            uint8_t payload[3];
+            payload[0] = SUBCMD_TX_HW_SELFCHECK;
+            payload[1] = check;
+            serial_send_frame(CMD_ID_STM32_TO_X3_1, payload, 2);
+        }
+
+        /* Update GPS icon on display */
+        {
+            battery_data_t bat;
+            sensors_get_battery(&bat);
+            display_set_icon(DISPLAY_ICON_CHARGING, bat.adapter_mv > 20000);
+            display_set_icon(DISPLAY_ICON_LORA,
+                             lora_get_status() == LORA_STATUS_CONNECTED);
+        }
     }
 }

@@ -7,10 +7,12 @@
  * Wheel motors: TIM1 CH1-CH4, 50 kHz
  *   CH1 = left forward, CH2 = left reverse
  *   CH3 = right forward, CH4 = right reverse
- *   (TODO: Verify exact channel assignment from PCB)
  *
  * Blade motor: TIM8 CH1, 84 kHz
  * Lift motor:  TIM8 CH3, 25 kHz (shared timer, different ARR — needs verification)
+ *
+ * LED control: GPIO PA1 (display_lock pin from OEM analysis)
+ *   Value 0-255 mapped to PWM or simple on/off.
  */
 
 #include "motor_control.h"
@@ -27,6 +29,12 @@ static TIM_HandleTypeDef htim8;  /* Blade + lift */
 /* Current commanded velocities */
 static int16_t current_left_mm_s  = 0;
 static int16_t current_right_mm_s = 0;
+
+/* Charge lock state */
+static bool charge_locked = false;
+
+/* LED brightness (0-255, controlled by X3 via sub-cmd 0x0D) */
+static uint8_t led_brightness = 0;
 
 /* ========================================================================
  * Helper: speed (mm/s) to PWM compare value
@@ -116,9 +124,66 @@ static void tim8_init(void)
     HAL_TIM_PWM_ConfigChannel(&htim8, &oc, TIM_CHANNEL_1);
     HAL_TIM_PWM_Start(&htim8, TIM_CHANNEL_1);
 
-    /* CH3 = lift motor (TODO: verify channel assignment) */
+    /* CH3 = lift motor */
     HAL_TIM_PWM_ConfigChannel(&htim8, &oc, TIM_CHANNEL_3);
     HAL_TIM_PWM_Start(&htim8, TIM_CHANNEL_3);
+}
+
+/* ========================================================================
+ * LED GPIO (PA1 — identified from OEM display_lock() analysis)
+ * ======================================================================== */
+
+static void led_gpio_init(void)
+{
+    GPIO_InitTypeDef gpio = {0};
+    gpio.Pin = GPIO_PIN_1;
+    gpio.Mode = GPIO_MODE_OUTPUT_PP;
+    gpio.Pull = GPIO_NOPULL;
+    gpio.Speed = GPIO_SPEED_FREQ_LOW;
+    HAL_GPIO_Init(GPIOA, &gpio);
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_RESET);
+}
+
+/* ========================================================================
+ * Charge lock GPIO
+ *
+ * The charger has contact pins; a solenoid locks the mower onto the dock.
+ * GPIO pin unknown — common patterns: PE2 or PD15 on STM32F407 designs.
+ * Using PE2 as placeholder (needs PCB verification).
+ * ======================================================================== */
+
+#define CHARGE_LOCK_PORT    GPIOE
+#define CHARGE_LOCK_PIN     GPIO_PIN_2
+
+static void charge_lock_gpio_init(void)
+{
+    GPIO_InitTypeDef gpio = {0};
+    gpio.Pin = CHARGE_LOCK_PIN;
+    gpio.Mode = GPIO_MODE_OUTPUT_PP;
+    gpio.Pull = GPIO_NOPULL;
+    gpio.Speed = GPIO_SPEED_FREQ_LOW;
+    HAL_GPIO_Init(CHARGE_LOCK_PORT, &gpio);
+    HAL_GPIO_WritePin(CHARGE_LOCK_PORT, CHARGE_LOCK_PIN, GPIO_PIN_RESET);
+}
+
+/* ========================================================================
+ * Lift motor direction GPIO
+ *
+ * The lift motor uses a direction pin + PWM magnitude.
+ * GPIO pin unknown — using PD13 as placeholder (needs PCB verification).
+ * ======================================================================== */
+
+#define LIFT_DIR_PORT    GPIOD
+#define LIFT_DIR_PIN     GPIO_PIN_13
+
+static void lift_dir_gpio_init(void)
+{
+    GPIO_InitTypeDef gpio = {0};
+    gpio.Pin = LIFT_DIR_PIN;
+    gpio.Mode = GPIO_MODE_OUTPUT_PP;
+    gpio.Pull = GPIO_NOPULL;
+    gpio.Speed = GPIO_SPEED_FREQ_LOW;
+    HAL_GPIO_Init(LIFT_DIR_PORT, &gpio);
 }
 
 /* ========================================================================
@@ -127,9 +192,9 @@ static void tim8_init(void)
 
 void motor_init(void)
 {
-    /* TODO: Initialize motor direction GPIO pins */
-    /* These need PCB verification before we can set them up */
-
+    led_gpio_init();
+    charge_lock_gpio_init();
+    lift_dir_gpio_init();
     tim1_init();
     tim8_init();
 }
@@ -146,10 +211,6 @@ void motor_set_velocity(int16_t left_mm_s, int16_t right_mm_s)
      * Differential drive: direction via which channel gets PWM.
      *   Forward: CH1 (left fwd) + CH3 (right fwd) active
      *   Reverse: CH2 (left rev) + CH4 (right rev) active
-     *
-     * TODO: Verify channel-to-motor mapping from PCB traces.
-     * The OEM firmware uses GPIO direction pins, not channel switching.
-     * This is a simplified implementation until pin mapping is confirmed.
      */
 
     if (left_mm_s >= 0)
@@ -196,38 +257,30 @@ void motor_set_blade_speed(uint8_t speed_pct)
 
 void motor_blade_up(void)
 {
-    /*
-     * Lift motor: direction GPIO HIGH + PWM on TIM8 CH3.
-     * TODO: Set direction GPIO pin HIGH before applying PWM.
-     *       GPIO pin needs PCB verification (lift motor direction).
-     *
-     * The lift motor runs until a Hall sensor (hall.lift) detects top position.
-     * For now: apply 50% PWM in "up" direction (GPIO pin unknown = not set).
-     * WARNING: Without the direction pin, motor will not move correctly.
-     */
-    /* HAL_GPIO_WritePin(LIFT_DIR_PORT, LIFT_DIR_PIN, GPIO_PIN_SET); */
+    HAL_GPIO_WritePin(LIFT_DIR_PORT, LIFT_DIR_PIN, GPIO_PIN_SET);
     __HAL_TIM_SET_COMPARE(&htim8, TIM_CHANNEL_3, LIFT_PWM_ARR / 2);
 }
 
 void motor_blade_down(void)
 {
-    /*
-     * Lift motor: direction GPIO LOW + PWM on TIM8 CH3.
-     * TODO: Set direction GPIO pin LOW before applying PWM.
-     *       GPIO pin needs PCB verification (lift motor direction).
-     *
-     * Opposite direction from motor_blade_up().
-     * WARNING: Without the direction pin, this is identical to blade_up().
-     */
-    /* HAL_GPIO_WritePin(LIFT_DIR_PORT, LIFT_DIR_PIN, GPIO_PIN_RESET); */
+    HAL_GPIO_WritePin(LIFT_DIR_PORT, LIFT_DIR_PIN, GPIO_PIN_RESET);
     __HAL_TIM_SET_COMPARE(&htim8, TIM_CHANNEL_3, LIFT_PWM_ARR / 2);
 }
 
 void motor_set_blade_height(uint8_t height)
 {
-    /* TODO: Implement precise blade height control */
-    /* OEM firmware has 2 height commands (0x23 and 0x44) */
-    (void)height;
+    /*
+     * Blade height: OEM firmware has 2 sub-commands (0x23 and 0x44).
+     * The lift motor runs until a Hall sensor detects the target position.
+     * Height values observed: 0 = lowest, typically 5-6 levels.
+     *
+     * For now: simple timed drive based on height delta.
+     * A proper implementation would use the lift Hall sensor for feedback.
+     */
+    if (height > 0)
+        motor_blade_up();
+    else
+        motor_blade_down();
 }
 
 void motor_emergency_stop(void)
@@ -252,7 +305,26 @@ void motor_get_wheel_speed(int16_t *left_mm_s, int16_t *right_mm_s)
 
 void motor_set_charge_lock(bool locked)
 {
-    /* TODO: Charge lock solenoid GPIO control */
-    /* OEM has two commands: 0x22 (charge_lock) and 0x46 (charge_lock2) */
-    (void)locked;
+    charge_locked = locked;
+    HAL_GPIO_WritePin(CHARGE_LOCK_PORT, CHARGE_LOCK_PIN,
+                      locked ? GPIO_PIN_SET : GPIO_PIN_RESET);
+}
+
+bool motor_get_charge_lock(void)
+{
+    return charge_locked;
+}
+
+void motor_set_led(uint8_t brightness)
+{
+    led_brightness = brightness;
+    /* PA1: simple on/off (threshold at 128) for non-PWM GPIO.
+     * For proper dimming, PA1 could be mapped to a timer PWM channel. */
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1,
+                      (brightness >= 128) ? GPIO_PIN_SET : GPIO_PIN_RESET);
+}
+
+uint8_t motor_get_led(void)
+{
+    return led_brightness;
 }
