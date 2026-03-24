@@ -233,6 +233,127 @@ setupRouter.get('/devices', (_req, res) => {
   res.json({ equipment, registry });
 });
 
+// ── GET /profile — generate combined .mobileconfig (DNS + TLS cert) ───────────
+
+setupRouter.get('/profile', async (_req, res) => {
+  const fs = await import('fs');
+  const path = await import('path');
+  const crypto = await import('crypto');
+
+  const serverIp = process.env.TARGET_IP ?? '127.0.0.1';
+  const certPath = '/data/certs/server.crt';
+
+  // Read the TLS certificate
+  let certDer: Buffer | null = null;
+  try {
+    const certPem = fs.readFileSync(certPath, 'utf-8');
+    // Extract base64 content between BEGIN/END CERTIFICATE
+    const b64 = certPem
+      .replace(/-----BEGIN CERTIFICATE-----/g, '')
+      .replace(/-----END CERTIFICATE-----/g, '')
+      .replace(/\s/g, '');
+    certDer = Buffer.from(b64, 'base64');
+  } catch {
+    // No cert available
+  }
+
+  const profileUuid = crypto.randomUUID().toUpperCase();
+  const dnsUuid = crypto.randomUUID().toUpperCase();
+  const certUuid = crypto.randomUUID().toUpperCase();
+
+  // Build payloads array
+  const payloads: string[] = [];
+
+  // DNS payload
+  payloads.push(`
+    <dict>
+      <key>PayloadType</key>
+      <string>com.apple.dnsSettings.managed</string>
+      <key>PayloadVersion</key>
+      <integer>1</integer>
+      <key>PayloadIdentifier</key>
+      <string>com.opennova.profile.dns</string>
+      <key>PayloadUUID</key>
+      <string>${dnsUuid}</string>
+      <key>PayloadDisplayName</key>
+      <string>OpenNova DNS</string>
+      <key>PayloadDescription</key>
+      <string>Routes DNS queries through the OpenNova server so the Novabot app connects locally.</string>
+      <key>DNSSettings</key>
+      <dict>
+        <key>ServerAddresses</key>
+        <array>
+          <string>${serverIp}</string>
+        </array>
+      </dict>
+    </dict>`);
+
+  // TLS certificate payload (if cert exists)
+  if (certDer) {
+    payloads.push(`
+    <dict>
+      <key>PayloadType</key>
+      <string>com.apple.security.root</string>
+      <key>PayloadVersion</key>
+      <integer>1</integer>
+      <key>PayloadIdentifier</key>
+      <string>com.opennova.profile.cert</string>
+      <key>PayloadUUID</key>
+      <string>${certUuid}</string>
+      <key>PayloadDisplayName</key>
+      <string>OpenNova CA Certificate</string>
+      <key>PayloadDescription</key>
+      <string>Trusts the OpenNova server's TLS certificate for secure HTTPS connections.</string>
+      <key>PayloadContent</key>
+      <data>${certDer.toString('base64')}</data>
+    </dict>`);
+  }
+
+  const profile = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>PayloadType</key>
+  <string>Configuration</string>
+  <key>PayloadVersion</key>
+  <integer>1</integer>
+  <key>PayloadIdentifier</key>
+  <string>com.opennova.profile</string>
+  <key>PayloadUUID</key>
+  <string>${profileUuid}</string>
+  <key>PayloadDisplayName</key>
+  <string>OpenNova</string>
+  <key>PayloadDescription</key>
+  <string>Configures DNS and TLS for the Novabot app to connect to your local OpenNova server (${serverIp}).</string>
+  <key>PayloadOrganization</key>
+  <string>OpenNova</string>
+  <key>PayloadRemovalDisallowed</key>
+  <false/>
+  <key>PayloadContent</key>
+  <array>${payloads.join('')}
+  </array>
+</dict>
+</plist>`;
+
+  res.setHeader('Content-Type', 'application/x-apple-aspen-config');
+  res.setHeader('Content-Disposition', 'attachment; filename="OpenNova.mobileconfig"');
+  res.send(profile);
+});
+
+// ── GET /cert — download TLS certificate separately ──────────────────────────
+
+setupRouter.get('/cert', async (_req, res) => {
+  const fs = await import('fs');
+  try {
+    const cert = fs.readFileSync('/data/certs/server.crt');
+    res.setHeader('Content-Type', 'application/x-x509-ca-cert');
+    res.setHeader('Content-Disposition', 'attachment; filename="OpenNova-CA.crt"');
+    res.send(cert);
+  } catch {
+    res.status(404).json({ error: 'No certificate found. Start the container first.' });
+  }
+});
+
 // ── GET /dns-check — verify DNS resolution ───────────────────────────────────
 
 setupRouter.get('/dns-check', async (_req, res) => {
@@ -273,10 +394,26 @@ setupRouter.get('/dns-check', async (_req, res) => {
     checkDomain('mqtt.lfibot.com'),
   ]);
 
+  // Check if any connected mower has custom firmware (version contains "custom")
+  const mowerRow = db.prepare(`
+    SELECT mower_version FROM equipment WHERE mower_sn LIKE 'LFIN%' LIMIT 1
+  `).get() as { mower_version?: string } | undefined;
+
+  const hasCustomFirmware = !!(mowerRow?.mower_version && mowerRow.mower_version.includes('custom'));
+
+  // Check if a mower is currently connected (seen in last 5 minutes)
+  const mowerConnected = !!(db.prepare(`
+    SELECT 1 FROM device_registry
+    WHERE sn LIKE 'LFIN%' AND datetime(last_seen) > datetime('now', '-5 minutes')
+    LIMIT 1
+  `).get());
+
   res.json({
     serverIp,
     app: appResult,
     mqtt: mqttResult,
+    hasCustomFirmware,
+    mowerConnected,
   });
 });
 

@@ -137,17 +137,39 @@
       // Step 1: DNS Configuration
       1: () => `
         <h2>DNS Setup</h2>
-        <p>Your mower connects to <strong>mqtt.lfibot.com</strong> and
-           <strong>app.lfibot.com</strong>. These domains need to point to this server
-           so the mower and app talk to OpenNova instead of the cloud.</p>
-        <p><strong>Choose your setup:</strong></p>
+        <div id="dns-fw-info"><span class="spinner"></span> Checking mower firmware...</div>
+        <p style="margin-top:12px"><strong>How does your network look?</strong></p>
 
-        <div style="display:flex;gap:8px;margin:16px 0">
-          <button class="btn btn-secondary" style="flex:1" onclick="showDnsOption('own')">I have Pi-hole / AdGuard</button>
-          <button class="btn btn-secondary" style="flex:1" onclick="showDnsOption('builtin')">I don't have a DNS server</button>
+        <div style="display:flex;flex-direction:column;gap:8px;margin:16px 0">
+          <button class="btn btn-secondary" onclick="showDnsOption('router')">My router supports DNS records (recommended)</button>
+          <button class="btn btn-secondary" onclick="showDnsOption('pihole')">I have Pi-hole or AdGuard Home</button>
+          <button class="btn btn-secondary" onclick="showDnsOption('builtin')">None of the above</button>
         </div>
 
-        <div id="dns-own" class="hidden">
+        <div id="dns-router" class="hidden">
+          <p>Add two DNS entries in your router. This is the simplest method — all devices
+             on your network will automatically use the right address.</p>
+
+          <div class="dns-code">Domain: app.lfibot.com   →  IP: ${location.hostname}
+Domain: mqtt.lfibot.com  →  IP: ${location.hostname}</div>
+
+          <p><strong>UniFi / UDM:</strong><br>
+             Settings → Routing → DNS → Create entry:<br>
+             Type: Host (A), Domain: <code>app.lfibot.com</code>, IP: <code>${location.hostname}</code><br>
+             Repeat for <code>mqtt.lfibot.com</code></p>
+          <p><strong>Fritz!Box:</strong><br>
+             Heimnetzwerk → Netzwerk → DNS-Rebind-Schutz → Ausnahmen</p>
+          <p><strong>OpenWrt:</strong><br>
+             Network → DHCP and DNS → Addresses:<br>
+             <code>/app.lfibot.com/${location.hostname}</code><br>
+             <code>/mqtt.lfibot.com/${location.hostname}</code></p>
+          <p><strong>Mikrotik:</strong><br>
+             <code>/ip dns static add name=app.lfibot.com address=${location.hostname}</code><br>
+             <code>/ip dns static add name=mqtt.lfibot.com address=${location.hostname}</code></p>
+          <button class="btn mt-12" onclick="goStep(2)">Done — I've added the DNS entries</button>
+        </div>
+
+        <div id="dns-pihole" class="hidden">
           <p>Add these DNS rewrites in your existing DNS server:</p>
           <div class="dns-code">mqtt.lfibot.com  →  ${location.hostname}
 app.lfibot.com   →  ${location.hostname}</div>
@@ -157,17 +179,27 @@ app.lfibot.com   →  ${location.hostname}</div>
         </div>
 
         <div id="dns-builtin" class="hidden">
-          <p>This container includes a built-in DNS server (dnsmasq) that handles
-             the redirect automatically. You just need to point your devices to it.</p>
-          <p><strong>Option 1 — Router DNS (recommended):</strong><br>
-             Set your router's DNS server to <code>${location.hostname}</code>.<br>
-             This way all devices on your network will use it automatically.</p>
-          <p><strong>Option 2 — Per device:</strong><br>
-             On your phone (Novabot app): set DNS to <code>${location.hostname}</code><br>
-             The mower uses DHCP so it gets the router's DNS automatically.</p>
-          <div class="dns-code">Built-in DNS server: ${location.hostname}:53
-Redirects: mqtt.lfibot.com → ${location.hostname}
-           app.lfibot.com  → ${location.hostname}</div>
+          <p>This container includes a built-in DNS server. You just need to tell
+             your phone and mower to use it.</p>
+
+          <p><strong>On your phone</strong> (for the Novabot app):<br>
+             WiFi Settings → your network → DNS → Manual → <code>${location.hostname}</code></p>
+
+          <p><strong>For the mower</strong> — pick one:</p>
+          <p style="padding-left:12px">
+             <strong>a)</strong> Change your router's DHCP DNS server to <code>${location.hostname}</code><br>
+             <span style="color:var(--muted);font-size:13px">
+               All devices use this for DNS. If the container stops, regular DNS still
+               works (queries are forwarded to ${location.hostname === 'localhost' ? '8.8.8.8' : 'your upstream DNS'}).
+             </span>
+          </p>
+          <p style="padding-left:12px">
+             <strong>b)</strong> Or assign a static DNS just for the mower in your router's DHCP settings
+          </p>
+
+          <div class="dns-code">Built-in DNS: ${location.hostname}:53
+Redirects:    *.lfibot.com → ${location.hostname}
+Upstream:     all other queries forwarded normally</div>
           <button class="btn mt-12" onclick="goStep(2)">Done — I've configured DNS</button>
         </div>
 
@@ -194,8 +226,22 @@ Redirects: mqtt.lfibot.com → ${location.hostname}
               <div class="name">Checking...</div>
             </div>
           </div>
+          <div class="device" id="dns-mower">
+            <span class="icon"><span class="spinner"></span></span>
+            <div>
+              <div class="sn">Mower firmware</div>
+              <div class="name">Checking...</div>
+            </div>
+          </div>
         </div>
         <div id="dns-verdict" class="hidden"></div>
+        <div id="dns-profile-link" class="hidden" style="margin-top:16px;padding:16px;border-radius:8px;background:rgba(0,196,190,0.1);border:1px solid rgba(0,196,190,0.2)">
+          <p style="color:var(--teal);margin-bottom:8px"><strong>iPhone? Install the OpenNova profile:</strong></p>
+          <p style="font-size:13px">This profile configures both DNS and TLS in one tap — no manual settings needed.</p>
+          <a href="/api/setup/profile" class="btn mt-12" style="display:block;text-align:center;text-decoration:none">Download OpenNova.mobileconfig</a>
+          <p style="font-size:12px;color:var(--muted);margin-top:8px">After downloading: Settings → General → VPN & Device Management → OpenNova → Install.
+             Then: Settings → General → About → Certificate Trust Settings → enable OpenNova CA.</p>
+        </div>
         <div id="dns-actions" class="hidden">
           <button class="btn mt-12" id="dns-next-btn" onclick="goStep(3)">Continue</button>
           <button class="btn btn-secondary mt-12" onclick="goStep(1)">Go back to DNS setup</button>
@@ -222,14 +268,34 @@ Redirects: mqtt.lfibot.com → ${location.hostname}
       document.querySelectorAll('.step-dot').forEach((dot, i) => {
         dot.className = 'step-dot' + (i === currentStep ? ' active' : i < currentStep ? ' done' : '');
       });
+      if (currentStep === 1) checkFirmwareForDns();
       if (currentStep === 2) dnsVerify();
       if (currentStep === 3) loadStatus();
     }
 
     function goStep(n) { currentStep = n; render(); }
 
+    async function checkFirmwareForDns() {
+      const el = document.getElementById('dns-fw-info');
+      if (!el) return;
+      try {
+        const resp = await fetch('/api/setup/dns-check');
+        const data = await resp.json();
+        if (data.hasCustomFirmware) {
+          el.innerHTML = '<p style="color:var(--green)">&#10003; Your mower has <strong>custom firmware</strong> — it finds the server automatically via mDNS. You only need DNS for the <strong>Novabot app on your phone</strong>. Set your phone\'s DNS to <code>' + data.serverIp + '</code> or choose an option below.</p>';
+        } else if (data.mowerConnected) {
+          el.innerHTML = '<p style="color:var(--orange)">&#9888; Your mower has <strong>original firmware</strong>. Both the mower and the app need DNS redirect. Choose an option below to redirect <strong>mqtt.lfibot.com</strong> and <strong>app.lfibot.com</strong> to this server.</p>';
+        } else {
+          el.innerHTML = '<p>Your mower and app connect to <strong>mqtt.lfibot.com</strong> and <strong>app.lfibot.com</strong>. These domains need to point to this server so they talk to OpenNova instead of the cloud.</p>';
+        }
+      } catch {
+        el.innerHTML = '<p>Your mower and app connect to <strong>mqtt.lfibot.com</strong> and <strong>app.lfibot.com</strong>. These domains need to point to this server.</p>';
+      }
+    }
+
     function showDnsOption(which) {
-      document.getElementById('dns-own').classList.toggle('hidden', which !== 'own');
+      document.getElementById('dns-router').classList.toggle('hidden', which !== 'router');
+      document.getElementById('dns-pihole').classList.toggle('hidden', which !== 'pihole');
       document.getElementById('dns-builtin').classList.toggle('hidden', which !== 'builtin');
     }
 
@@ -378,33 +444,70 @@ Redirects: mqtt.lfibot.com → ${location.hostname}
       try {
         const resp = await fetch('/api/setup/dns-check');
         const data = await resp.json();
+        const hasCustomFw = data.hasCustomFirmware;
 
-        function renderResult(id, domain, result) {
+        function renderOk(id, domain, text) {
           const el = document.getElementById(id);
-          if (!el) return;
-          const ok = result.ok;
-          const ip = result.resolvedIp || '—';
-          el.innerHTML = `
-            <span class="icon">${ok ? '<span style="color:var(--green)">&#10003;</span>' : '<span style="color:var(--red)">&#10007;</span>'}</span>
-            <div>
-              <div class="sn">${domain}</div>
-              <div class="name">${ok ? 'Points to ' + ip + ' &#10003;' : ip !== '—' ? 'Points to ' + ip + ' (expected ' + data.serverIp + ')' : 'Could not resolve'}</div>
-            </div>
-          `;
+          if (el) el.innerHTML = '<span class="icon"><span style="color:var(--green)">&#10003;</span></span><div><div class="sn">' + domain + '</div><div class="name">' + text + '</div></div>';
+        }
+        function renderWarn(id, domain, text) {
+          const el = document.getElementById(id);
+          if (el) el.innerHTML = '<span class="icon"><span style="color:var(--orange)">&#9888;</span></span><div><div class="sn">' + domain + '</div><div class="name">' + text + '</div></div>';
+        }
+        function renderFail(id, domain, text) {
+          const el = document.getElementById(id);
+          if (el) el.innerHTML = '<span class="icon"><span style="color:var(--red)">&#10007;</span></span><div><div class="sn">' + domain + '</div><div class="name">' + text + '</div></div>';
         }
 
-        renderResult('dns-app', 'app.lfibot.com', data.app);
-        renderResult('dns-mqtt', 'mqtt.lfibot.com', data.mqtt);
+        // app.lfibot.com — needed for the phone app
+        if (data.app.ok) {
+          renderOk('dns-app', 'app.lfibot.com', 'Points to ' + data.app.resolvedIp + ' — OK');
+        } else {
+          renderWarn('dns-app', 'app.lfibot.com',
+            (data.app.resolvedIp ? 'Points to ' + data.app.resolvedIp + ' (not this server)' : 'Could not resolve') +
+            ' — Set DNS on your phone to ' + data.serverIp + ' or install a DNS profile');
+        }
 
-        const allOk = data.app.ok && data.mqtt.ok;
+        // mqtt.lfibot.com — needed for original firmware only
+        if (data.mqtt.ok) {
+          renderOk('dns-mqtt', 'mqtt.lfibot.com', 'Points to ' + data.mqtt.resolvedIp + ' — OK');
+        } else if (hasCustomFw) {
+          renderOk('dns-mqtt', 'mqtt.lfibot.com', 'Not redirected, but mower has custom firmware (uses mDNS) — OK');
+        } else {
+          renderFail('dns-mqtt', 'mqtt.lfibot.com',
+            (data.mqtt.resolvedIp ? 'Points to ' + data.mqtt.resolvedIp : 'Could not resolve') +
+            ' — Mower needs DNS redirect or custom firmware');
+        }
+
+        // Mower firmware check
+        if (hasCustomFw) {
+          renderOk('dns-mower', 'Mower firmware', 'Custom firmware detected — mower finds server via mDNS, no DNS redirect needed');
+        } else if (data.mowerConnected) {
+          renderWarn('dns-mower', 'Mower firmware', 'Original firmware — mower needs network-wide DNS redirect for mqtt.lfibot.com');
+        } else {
+          renderWarn('dns-mower', 'Mower firmware', 'No mower connected yet — cannot check firmware version');
+        }
+
+        // Verdict
         const verdict = document.getElementById('dns-verdict');
         if (verdict) {
           verdict.classList.remove('hidden');
-          if (allOk) {
-            verdict.innerHTML = '<p class="success" style="font-size:15px">&#10003; DNS is correctly configured! Both domains point to this server.</p>';
+          const appOk = data.app.ok;
+          const mqttOk = data.mqtt.ok || hasCustomFw;
+
+          if (appOk && mqttOk) {
+            verdict.innerHTML = '<p class="success" style="font-size:15px">&#10003; Everything looks good! Your setup is ready.</p>';
+          } else if (!appOk && mqttOk) {
+            verdict.innerHTML = '<p style="color:var(--orange);font-size:15px">&#9888; Mower is fine, but the Novabot app on your phone needs DNS configured. Set your phone\'s DNS to <strong>' + data.serverIp + '</strong> or install the DNS profile below.</p>';
           } else {
-            verdict.innerHTML = '<p class="error" style="font-size:15px">&#10007; DNS is not fully configured yet. The domains should point to <strong>' + data.serverIp + '</strong>.</p>';
+            verdict.innerHTML = '<p class="error" style="font-size:15px">&#10007; DNS redirect needed. Point both domains to <strong>' + data.serverIp + '</strong> via your router or DNS server.</p>';
           }
+        }
+
+        // Show profile download link if app DNS is not OK
+        const profileLink = document.getElementById('dns-profile-link');
+        if (profileLink) {
+          profileLink.classList.toggle('hidden', data.app.ok);
         }
 
         const actions = document.getElementById('dns-actions');
