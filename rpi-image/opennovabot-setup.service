@@ -1,0 +1,15 @@
+[Unit]
+Description=OpenNova First Boot Setup
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=!/opt/opennovabot/.setup-done
+Before=opennovabot.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/opennovabot/setup-firstboot.sh
+RemainAfterExit=yes
+TimeoutStartSec=600
+
+[Install]
+WantedBy=multi-user.target
