@@ -48,3 +48,7 @@ stm32-firmware/.vscode/
 **/__pycache__/
 *.pyc
 *.pyo
+
+# Cloud scan — raw data bevat persoonlijke info (emails, wifi passwords)
+research/cloud_devices.json
+research/cloud_devices_run_*.json
