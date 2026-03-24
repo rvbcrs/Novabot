@@ -4,9 +4,10 @@ import { useT } from '../i18n/index.ts';
 interface Props {
   serverUrl: string | null;
   mower: MowerInfo | null;
+  onAddDevice?: () => void;
 }
 
-export default function Done({ serverUrl, mower }: Props) {
+export default function Done({ serverUrl, mower, onAddDevice }: Props) {
   const { t } = useT();
   return (
     <div className="glass-card p-8">
@@ -49,6 +50,21 @@ export default function Done({ serverUrl, mower }: Props) {
         <div className="p-4 bg-emerald-900/20 border border-emerald-700/50 rounded-xl mb-6">
           <p className="text-emerald-400 text-sm">
             {t('done.reconnected')}
+          </p>
+        </div>
+      )}
+
+      {/* Add new device button */}
+      {onAddDevice && (
+        <div className="mb-6">
+          <button
+            onClick={onAddDevice}
+            className="w-full py-3 px-6 bg-teal-800 hover:bg-teal-700 text-white font-semibold rounded-xl transition-colors"
+          >
+            + Add new charger / mower via Bluetooth
+          </button>
+          <p className="text-gray-500 text-xs text-center mt-2">
+            Use this to provision a new device that has never been connected to this server.
           </p>
         </div>
       )}

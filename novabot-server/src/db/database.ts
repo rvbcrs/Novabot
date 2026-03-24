@@ -1,6 +1,11 @@
 import Database from 'better-sqlite3';
+import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 dotenv.config();
 
@@ -141,6 +146,21 @@ export function initDb(): void {
       last_seen       TEXT    NOT NULL DEFAULT (datetime('now'))
     );
     CREATE INDEX IF NOT EXISTS device_registry_sn ON device_registry(sn);
+
+    -- Factory device lookup — pre-loaded from LFI cloud scan.
+    -- Contains SN → MAC mapping for BLE provisioning without cloud dependency.
+    CREATE TABLE IF NOT EXISTS device_factory (
+      sn              TEXT    NOT NULL PRIMARY KEY,
+      device_type     TEXT,                          -- 'charger' or 'mower'
+      mac_address     TEXT,                          -- BLE MAC address
+      equipment_type  TEXT,                          -- 'LFIC1', 'LFIN2', etc.
+      sys_version     TEXT,                          -- factory firmware version
+      charger_address INTEGER,                       -- LoRa address (718 typical)
+      charger_channel INTEGER,                       -- LoRa channel
+      mqtt_account    TEXT,                          -- MQTT username
+      mqtt_password   TEXT,                          -- MQTT password
+      model           TEXT                           -- 'N1000', 'N2000'
+    );
 
     -- Cache LoRa-parameters per SN zodat ze bewaard blijven na unbind (DELETE uit equipment).
     -- Zonder deze waarden stuurt de app addr:null in set_lora_info → charger crasht.
@@ -455,7 +475,72 @@ export function initDb(): void {
     }
   }
 
+  // ── Import factory device data from cloud scan (one-time, idempotent) ──────
+  importFactoryDevices();
+
   console.log('[DB] Database initialised');
+}
+
+/**
+ * Import anonymized cloud device data into device_factory table.
+ * Looks for cloud_devices_anonymous.json in multiple locations.
+ * Idempotent: uses INSERT OR IGNORE so existing entries are preserved.
+ */
+function importFactoryDevices(): void {
+  // fs and path imported at top of file via static imports
+
+  const candidates = [
+    path.resolve(__dirname, '../../../research/cloud_devices_anonymous.json'),   // dev
+    path.resolve(__dirname, '../../cloud_devices_anonymous.json'),               // Docker
+    '/data/cloud_devices_anonymous.json',                                           // Docker volume
+  ];
+
+  let data: Array<Record<string, unknown>> | null = null;
+  let loadedFrom = '';
+  for (const p of candidates) {
+    try {
+      data = JSON.parse(fs.readFileSync(p, 'utf-8'));
+      loadedFrom = p;
+      break;
+    } catch { /* file not found, try next */ }
+  }
+
+  if (!data || data.length === 0) return;
+
+  const existing = (db.prepare('SELECT COUNT(*) as count FROM device_factory').get() as { count: number }).count;
+  if (existing >= data.length) return;  // Already imported
+
+  const insert = db.prepare(`
+    INSERT OR IGNORE INTO device_factory
+      (sn, device_type, mac_address, equipment_type, sys_version,
+       charger_address, charger_channel, mqtt_account, mqtt_password, model)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  const tx = db.transaction(() => {
+    let imported = 0;
+    for (const d of data!) {
+      const sn = (d.sn ?? d._queriedSn) as string;
+      if (!sn) continue;
+      insert.run(
+        sn,
+        (d.deviceType ?? d._queriedType ?? null) as string | null,
+        (d.macAddress ?? null) as string | null,
+        (d.equipmentType ?? null) as string | null,
+        (d.sysVersion ?? null) as string | null,
+        (d.chargerAddress ?? null) as number | null,
+        (d.chargerChannel ?? null) as number | null,
+        (d.account ?? null) as string | null,
+        (d.password ?? null) as string | null,
+        (d.model ?? null) as string | null,
+      );
+      imported++;
+    }
+    return imported;
+  });
+
+  const count = tx();
+  console.log(`[DB] Factory devices: ${count} imported from ${loadedFrom} (${existing} already in DB)`);
 }
 
 // Direct aanroepen bij module-load — andere modules (sensorData, broker, etc.) doen

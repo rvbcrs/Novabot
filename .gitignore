@@ -52,3 +52,4 @@ stm32-firmware/.vscode/
 # Cloud scan — raw data bevat persoonlijke info (emails, wifi passwords)
 research/cloud_devices.json
 research/cloud_devices_run_*.json
+nova-ota-device/.pio/

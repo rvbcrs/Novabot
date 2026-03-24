@@ -9,6 +9,7 @@ import WaitForMower from './steps/WaitForMower.tsx';
 import OtaConfirm from './steps/OtaConfirm.tsx';
 import OtaProgress from './steps/OtaProgress.tsx';
 import Done from './steps/Done.tsx';
+import BleProvision from './steps/BleProvision.tsx';
 import { I18nContext, createT, detectLocale, LOCALE_LABELS, type Locale } from './i18n/index.ts';
 
 export type Step = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
@@ -96,8 +97,7 @@ export default function App() {
   useEffect(() => {
     socket.on('mower-connected', (data: MowerInfo) => {
       setState(s => ({ ...s, mower: data }));
-      // Auto-advance from "wait for mower" step (step 5)
-      setStep(prev => (prev === 5 ? 6 : prev));
+      // Don't auto-advance — let user choose to use this mower or add a new device
     });
 
     socket.on('mower-disconnected', () => {
@@ -265,7 +265,7 @@ export default function App() {
           {step === 2 && <NetworkConfig selectedIp={state.selectedIp} detect={state.detect} onSelected={ip => { setSelectedIp(ip); next(); }} />}
           {step === 3 && <DockerSetup selectedIp={state.selectedIp!} socket={socket} onReady={next} />}
           {step === 4 && <CloudLogin onDone={(imported) => { setState(s => ({ ...s, cloudImported: imported })); goTo(5); }} />}
-          {step === 5 && <WaitForMower mower={state.mower} firmware={state.firmware} detect={state.detect} ip={state.selectedIp ?? ''} cloudImported={state.cloudImported} isCustomFirmware={state.isCustomFirmware} socket={socket} onConnected={() => goTo(6)} />}
+          {step === 5 && <WaitForMower mower={state.mower} firmware={state.firmware} detect={state.detect} ip={state.selectedIp ?? ''} cloudImported={state.cloudImported} isCustomFirmware={state.isCustomFirmware} socket={socket} onConnected={() => goTo(6)} onAddNewDevice={() => goTo(9)} />}
           {step === 6 && (
             <OtaConfirm
               mower={state.mower!}
@@ -277,7 +277,8 @@ export default function App() {
             />
           )}
           {step === 7 && <OtaProgress log={state.otaLog} mower={state.mower} otaStatus={state.otaStatus} otaProgress={state.otaProgress} otaTimedOut={state.otaTimedOut} otaSshRecovery={state.otaSshRecovery} isCustomFirmware={state.isCustomFirmware} />}
-          {step === 8 && <Done serverUrl={state.serverUrl} mower={state.mower} />}
+          {step === 8 && <Done serverUrl={state.serverUrl} mower={state.mower} onAddDevice={() => goTo(9)} />}
+          {step === 9 && <BleProvision selectedIp={state.selectedIp ?? '192.168.0.177'} onDone={() => goTo(5)} />}
         </div>
       </div>
     </I18nContext.Provider>

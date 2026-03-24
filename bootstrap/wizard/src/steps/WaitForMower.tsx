@@ -20,9 +20,10 @@ interface Props {
   isCustomFirmware: boolean | null;
   socket: Socket;
   onConnected: () => void;
+  onAddNewDevice?: () => void;
 }
 
-export default function WaitForMower({ mower, firmware, detect, ip, cloudImported, isCustomFirmware, socket, onConnected }: Props) {
+export default function WaitForMower({ mower, firmware, detect, ip, cloudImported, isCustomFirmware, socket, onConnected, onAddNewDevice }: Props) {
   const { t } = useT();
   const existingBroker = detect?.mqtt.clientMode ?? false;
   const [dots, setDots] = useState('');
@@ -89,13 +90,7 @@ export default function WaitForMower({ mower, firmware, detect, ip, cloudImporte
     };
   }, [socket]);
 
-  // Auto-advance if mower already connected when this step mounts
-  useEffect(() => {
-    if (mower) {
-      const timer = setTimeout(onConnected, 800);
-      return () => clearTimeout(timer);
-    }
-  }, [mower, onConnected]);
+  // Don't auto-advance — let user choose "Use this mower" or "Add new device"
 
   // ── Native BLE handlers ──────────────────────────────────────────────────
   const handleNativeScan = useCallback(async () => {
@@ -473,6 +468,24 @@ export default function WaitForMower({ mower, firmware, detect, ip, cloudImporte
               }`}>
                 {isCustomFirmware ? t('wait.firmwareCustom') : t('wait.firmwareStock')}
               </span>
+            )}
+          </div>
+
+          {/* Choice buttons when mower is found */}
+          <div className="flex gap-3 mt-4 w-full">
+            <button
+              onClick={onConnected}
+              className="flex-1 py-3 px-4 bg-emerald-700 hover:bg-emerald-600 text-white font-semibold rounded-xl transition-colors"
+            >
+              Use this mower →
+            </button>
+            {onAddNewDevice && (
+              <button
+                onClick={onAddNewDevice}
+                className="flex-1 py-3 px-4 bg-teal-800 hover:bg-teal-700 text-white font-semibold rounded-xl transition-colors"
+              >
+                + Add new device
+              </button>
             )}
           </div>
         </div>

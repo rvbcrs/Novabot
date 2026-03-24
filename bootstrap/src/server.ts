@@ -625,7 +625,10 @@ export function createServer(): http.Server {
       res.status(400).json({ error: 'mac, wifiSsid, wifiPassword, deviceType required' });
       return;
     }
-    const mqttAddr = selectedIp;
+    // Use relay hostname if provided, otherwise fall back to local IP
+    const { mqttHost, mqttPort: reqMqttPort } = req.body as { mqttHost?: string; mqttPort?: number };
+    const mqttAddr = mqttHost || selectedIp;
+    const mqttPort = reqMqttPort || 1883;
     if (!mqttAddr) {
       res.status(400).json({ error: 'No network IP selected (select IP in network step first)' });
       return;
@@ -636,7 +639,7 @@ export function createServer(): http.Server {
         wifiSsid,
         wifiPassword,
         mqttAddr,
-        mqttPort: 1883,
+        mqttPort,
         deviceType,
       }, io);
       res.json({ ok });

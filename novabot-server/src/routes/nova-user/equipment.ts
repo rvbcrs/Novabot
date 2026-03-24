@@ -203,6 +203,20 @@ equipmentRouter.post('/getEquipmentBySN', authMiddleware, (req: AuthRequest, res
     const knownDevice = db.prepare(
       'SELECT sn, mac_address FROM device_registry WHERE sn = ?'
     ).get(sn) as { sn: string; mac_address: string | null } | undefined;
+
+    // Factory lookup — pre-loaded from LFI cloud scan (SN → MAC, LoRa, MQTT creds)
+    const factoryDevice = db.prepare(
+      'SELECT * FROM device_factory WHERE sn = ?'
+    ).get(sn) as { sn: string; mac_address: string | null; device_type: string | null;
+      equipment_type: string | null; sys_version: string | null;
+      charger_address: number | null; charger_channel: number | null;
+      mqtt_account: string | null; mqtt_password: string | null; model: string | null } | undefined;
+
+    if (factoryDevice && !mac) {
+      mac = factoryDevice.mac_address;
+      console.log(`[equipment] getEquipmentBySN: MAC from factory lookup: ${sn} → ${mac}`);
+    }
+
     const deviceIsKnown = knownDevice || isDeviceOnline(sn) || mac;
 
     if (deviceIsKnown) {
@@ -241,14 +255,31 @@ equipmentRouter.post('/getEquipmentBySN', authMiddleware, (req: AuthRequest, res
       const autoUserId = autoBindUserId ? numericUserId : 0;
       res.json(ok({ ...dto, userId: autoUserId, macAddress: skipBle ? null : (mac ?? dto.macAddress) }));
     } else {
-      // Volledig onbekend apparaat — geef equipmentId=0 zodat app BLE provisioning doet
-      console.log(`[equipment] getEquipmentBySN: unknown device sn=${sn} — returning equipmentId=0 for BLE provisioning`);
+      // Apparaat niet online/niet in registry — check factory lookup voor MAC
+      console.log(`[equipment] getEquipmentBySN: unknown device sn=${sn} — checking factory lookup`);
       const knownLora = db.prepare(`
         SELECT charger_address, charger_channel FROM equipment_lora_cache WHERE sn = ?
       `).get(sn) as { charger_address: string; charger_channel: string } | undefined;
 
       const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
       const isCharger = snToDeviceType(sn) === 'charger';
+
+      // Use factory data for MAC, LoRa, MQTT if available
+      const fMac = factoryDevice?.mac_address ?? mac ?? null;
+      const fAddr = knownLora?.charger_address ? Number(knownLora.charger_address)
+        : factoryDevice?.charger_address ?? (isCharger ? 718 : null);
+      const fChan = knownLora?.charger_channel ? Number(knownLora.charger_channel)
+        : factoryDevice?.charger_channel ?? (isCharger ? 16 : null);
+      const fAccount = factoryDevice?.mqtt_account ?? (isCharger ? MQTT_ACCOUNT : null);
+      const fPassword = factoryDevice?.mqtt_password ?? (isCharger ? MQTT_PASSWORD : null);
+      const fVersion = factoryDevice?.sys_version ?? (isCharger ? 'v0.3.6' : 'v5.7.1');
+
+      if (fMac) {
+        console.log(`[equipment] getEquipmentBySN: factory MAC found for ${sn} → ${fMac}`);
+      } else {
+        console.log(`[equipment] getEquipmentBySN: no MAC for ${sn} — app will show "Device is missing mac address"`);
+      }
+
       res.json(ok({
         equipmentId:       0,
         email:             req.email ?? '',
@@ -258,17 +289,17 @@ equipmentRouter.post('/getEquipmentBySN', authMiddleware, (req: AuthRequest, res
         equipmentName:     sn,
         equipmentType:     snToEquipmentType(sn),
         userId:            0,
-        sysVersion:        isCharger ? 'v0.3.6' : 'v5.7.1',
+        sysVersion:        fVersion,
         period:            isCharger ? '2029-02-22 00:00:00' : '2026-11-16 00:00:00',
         status:            1,
         activationTime:    now,
         importTime:        now,
         batteryState:      null,
-        macAddress:        skipBle ? null : (mac ?? null),
-        chargerAddress:    isCharger ? (knownLora?.charger_address ? Number(knownLora.charger_address) : 718) : null,
-        chargerChannel:    isCharger ? (knownLora?.charger_channel ? Number(knownLora.charger_channel) : 16) : null,
-        account:           isCharger ? MQTT_ACCOUNT : null,
-        password:          isCharger ? MQTT_PASSWORD : null,
+        macAddress:        skipBle ? null : fMac,
+        chargerAddress:    fAddr,
+        chargerChannel:    fChan,
+        account:           fAccount,
+        password:          fPassword,
       }));
     }
   }

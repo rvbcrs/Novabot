@@ -381,6 +381,34 @@ export async function provisionMower(
     }
     await sleep(INTER_COMMAND_DELAY);
 
+    // ── Step 4.5: set_lora_info ────────────────────────────────────
+    // LoRa pairing between charger and mower. Charger gets addr+channel,
+    // mower gets the same channel to talk to charger.
+    // addr=718 is standard for all chargers, channel=16 is typical.
+    {
+      onStatus({ phase: 'wifi', message: `LoRa instellen...`, deviceName });
+
+      const loraPayload = JSON.stringify({
+        set_lora_info: { addr: 718, channel: 16, hc: 20, lc: 14 },
+      });
+
+      try {
+        const { ok: loraOk, response: loraResp } = await sendCommand(
+          writeChar, loraPayload, 'set_lora_info', 10000,
+        );
+        if (loraOk) {
+          // Charger responds with assigned channel in value field
+          const assigned = (loraResp as { message?: { value?: number } })?.message?.value;
+          console.log(`[BLE] set_lora_info OK, assigned channel: ${assigned ?? 'null'}`);
+        } else {
+          console.warn('[BLE] set_lora_info non-zero result:', JSON.stringify(loraResp));
+        }
+      } catch (err) {
+        console.warn('[BLE] set_lora_info no response (non-fatal)');
+      }
+      await sleep(INTER_COMMAND_DELAY);
+    }
+
     // ── Step 5: set_mqtt_info ──────────────────────────────────────
     onStatus({
       phase: 'mqtt',
