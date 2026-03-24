@@ -1,0 +1,13 @@
+{
+  "name": "opennova-ota-relay",
+  "version": "1.0.0",
+  "description": "Public OTA relay for flashing custom firmware on Novabot mowers",
+  "main": "index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "aedes": "^1.0.0"
+  }
+}
