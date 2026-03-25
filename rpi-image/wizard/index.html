@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OpenNova Setup</title>
+  <style>
+    :root {
+      --bg: #0a0a0f;
+      --card: rgba(255,255,255,0.05);
+      --border: rgba(255,255,255,0.1);
+      --teal: #00c4be;
+      --teal-dark: #009e99;
+      --green: #22c55e;
+      --red: #ef4444;
+      --orange: #f59e0b;
+      --blue: #3b82f6;
+      --text: #e5e5e5;
+      --muted: #888;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .container { max-width: 480px; width: 100%; padding: 24px; }
+    .logo { text-align: center; margin-bottom: 32px; }
+    .logo h1 { font-size: 28px; color: var(--teal); font-weight: 700; }
+    .logo p { color: var(--muted); font-size: 14px; margin-top: 4px; }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px;
+      backdrop-filter: blur(10px);
+    }
+    .steps { display: flex; justify-content: center; gap: 8px; margin-bottom: 24px; }
+    .step-dot {
+      width: 10px; height: 10px; border-radius: 50%;
+      background: rgba(255,255,255,0.15);
+      transition: all 0.3s;
+    }
+    .step-dot.active { background: var(--teal); transform: scale(1.3); }
+    .step-dot.done { background: var(--green); }
+    h2 { font-size: 20px; margin-bottom: 16px; }
+    p { line-height: 1.6; color: var(--muted); margin-bottom: 12px; }
+    input[type="text"], input[type="email"], input[type="password"] {
+      width: 100%; padding: 12px 16px; background: rgba(255,255,255,0.08);
+      border: 1px solid var(--border); border-radius: 8px; color: white;
+      font-size: 15px; margin-bottom: 8px; outline: none;
+    }
+    input:focus { border-color: var(--teal); }
+    input::placeholder { color: #555; }
+    label { font-size: 13px; color: var(--muted); margin-top: 8px; display: block; margin-bottom: 4px; }
+    .btn {
+      width: 100%; padding: 14px; border: none; border-radius: 8px;
+      font-size: 15px; font-weight: 600; cursor: pointer;
+      background: var(--teal); color: white; transition: all 0.2s;
+    }
+    .btn:hover { background: var(--teal-dark); }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-secondary { background: rgba(255,255,255,0.1); }
+    .btn-secondary:hover { background: rgba(255,255,255,0.15); }
+    .mt-8 { margin-top: 8px; }
+    .mt-12 { margin-top: 12px; }
+    .mt-16 { margin-top: 16px; }
+    .error { color: var(--red); font-size: 13px; margin-top: 8px; }
+    .hidden { display: none !important; }
+    .spinner {
+      display: inline-block; width: 16px; height: 16px;
+      border: 2px solid rgba(255,255,255,0.2);
+      border-top-color: var(--teal);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      vertical-align: middle; margin-right: 8px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+
+    /* BLE device list */
+    .device-item {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 16px; background: rgba(255,255,255,0.05);
+      border: 1px solid var(--border); border-radius: 8px;
+      margin-bottom: 8px; cursor: default;
+    }
+    .device-item .name { font-weight: 600; font-size: 14px; }
+    .device-item .mac { font-size: 12px; color: var(--muted); font-family: monospace; }
+    .device-item .type {
+      font-size: 11px; padding: 2px 8px; border-radius: 12px;
+    }
+    .type-charger { background: rgba(245,158,11,0.2); color: var(--orange); }
+    .type-mower { background: rgba(34,197,94,0.2); color: var(--green); }
+
+    /* Progress steps */
+    .progress-step {
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 0; font-size: 14px;
+    }
+    .progress-step .icon { width: 20px; text-align: center; }
+    .progress-step.done .icon { color: var(--green); }
+    .progress-step.active .icon { color: var(--blue); animation: pulse 1.5s infinite; }
+    .progress-step.pending .icon { color: #444; }
+    .progress-step.error .icon { color: var(--red); }
+    .progress-step .label { color: var(--muted); }
+    .progress-step.done .label { color: var(--text); }
+    .progress-step.active .label { color: var(--blue); }
+
+    /* Status grid */
+    .status-grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 16px 0;
+    }
+    .status-item {
+      background: rgba(255,255,255,0.05); border-radius: 8px;
+      padding: 16px; text-align: center;
+    }
+    .status-item .value { font-size: 24px; font-weight: 700; }
+    .status-item .label { font-size: 12px; color: var(--muted); margin-top: 4px; }
+    .status-ok { color: var(--green); }
+    .status-warn { color: var(--orange); }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="logo">
+      <h1>OpenNova</h1>
+      <p>Plug & Play Novabot Setup</p>
+    </div>
+    <div class="steps">
+      <div class="step-dot" id="dot-0"></div>
+      <div class="step-dot" id="dot-1"></div>
+      <div class="step-dot" id="dot-2"></div>
+    </div>
+    <div class="card" id="content"></div>
+  </div>
+
+  <script>
+    let currentStep = 0;
+    let config = { wifiSsid: '', wifiPassword: '', email: '', password: '', chargerSn: '', mowerSn: '' };
+    let provisionState = { phase: 'idle', chargerDone: false, mowerDone: false, otaSent: false, otaDone: false };
+    let statusInterval = null;
+
+    // ── Step 0: WiFi + Account ─────────────────────────────────────────────────
+    const steps = {
+      0: () => `
+        <h2>Setup Your Novabot</h2>
+        <p>Enter your home WiFi credentials and Novabot device serial numbers.
+           The serial numbers are on stickers on your charging station and mower.</p>
+
+        <label>Home WiFi Network (2.4GHz)</label>
+        <input type="text" id="wifi-ssid" placeholder="WiFi SSID" value="${config.wifiSsid}">
+        <input type="password" id="wifi-pass" placeholder="WiFi Password" value="${config.wifiPassword}">
+
+        <div style="height:1px;background:var(--border);margin:16px 0"></div>
+
+        <label>Charging Station Serial Number</label>
+        <input type="text" id="charger-sn" placeholder="e.g. LFIC1230700004" value="${config.chargerSn}" style="text-transform:uppercase">
+
+        <label>Mower Serial Number</label>
+        <input type="text" id="mower-sn" placeholder="e.g. LFIN2230700238" value="${config.mowerSn}" style="text-transform:uppercase">
+
+        <div style="height:1px;background:var(--border);margin:16px 0"></div>
+
+        <p style="font-size:13px">Account credentials (for the Novabot app):</p>
+        <input type="email" id="email" placeholder="Email" value="${config.email}" autocomplete="email">
+        <input type="password" id="password" placeholder="Password" value="${config.password}">
+
+        <div id="error" class="error hidden"></div>
+
+        <button class="btn mt-16" onclick="startSetup()">Start Setup →</button>
+
+        <p style="font-size:12px;color:#555;margin-top:16px;text-align:center">
+          Already have a Novabot cloud account?
+          <a href="#" onclick="doCloudImport();return false" style="color:var(--teal)">Import from cloud</a>
+        </p>
+      `,
+
+      // Step 1: BLE Provisioning + OTA
+      1: () => `
+        <h2>Setting Up Your Mower</h2>
+        <p>Please keep your charging station and mower powered on and nearby.</p>
+
+        <div id="provision-progress" style="margin: 20px 0">
+          ${renderProgress()}
+        </div>
+
+        <div id="provision-status" style="text-align:center;padding:12px 0">
+          <span class="spinner"></span>
+          <span id="provision-msg" style="color:var(--muted)">Starting...</span>
+        </div>
+
+        <div id="provision-error" class="error hidden"></div>
+      `,
+
+      // Step 2: Done
+      2: () => `
+        <h2>You're All Set!</h2>
+        <p>OpenNova is running. Your mower and charging station are connected.</p>
+
+        <div id="status-grid" class="status-grid">
+          <div class="status-item"><div class="value"><span class="spinner"></span></div><div class="label">Loading...</div></div>
+        </div>
+
+        <div style="background:rgba(0,196,190,0.1);border:1px solid rgba(0,196,190,0.3);border-radius:8px;padding:16px;margin:16px 0">
+          <p style="color:var(--teal);font-weight:600;margin-bottom:4px">📱 Install on your phone</p>
+          <p style="font-size:13px">Download and install this profile so the Novabot app connects to your local server:</p>
+          <a href="/api/setup/profile" style="display:block;text-align:center;padding:12px;background:var(--teal);color:white;border-radius:8px;text-decoration:none;font-weight:600;margin-top:8px">
+            Download Profile (iOS)
+          </a>
+          <a href="/api/setup/cert" style="display:block;text-align:center;padding:12px;background:rgba(255,255,255,0.1);color:var(--text);border-radius:8px;text-decoration:none;margin-top:8px;font-size:13px">
+            Download Certificate (Android)
+          </a>
+        </div>
+
+        <p style="font-size:13px;text-align:center;color:var(--muted)">
+          Use the <strong>Novabot app</strong> as usual — it now talks to this server.
+        </p>
+
+        <button class="btn btn-secondary mt-16" onclick="goStep(0)">Run setup again</button>
+      `,
+    };
+
+    // ── Render progress ────────────────────────────────────────────────────────
+    function renderProgress() {
+      const steps = [
+        { id: 'account', label: 'Creating account' },
+        { id: 'ble-scan', label: 'Scanning for Bluetooth devices' },
+        { id: 'charger', label: 'Configuring charging station' },
+        { id: 'mower', label: 'Configuring mower' },
+        { id: 'mqtt-wait', label: 'Waiting for mower connection' },
+        { id: 'ota', label: 'Flashing custom firmware' },
+        { id: 'reboot', label: 'Mower rebooting with new firmware' },
+      ];
+
+      return steps.map(s => {
+        let state = 'pending';
+        let icon = '○';
+        if (provisionState.phase === s.id) { state = 'active'; icon = '●'; }
+        else if (isStepDone(s.id)) { state = 'done'; icon = '✓'; }
+        else if (provisionState.error && provisionState.phase === s.id) { state = 'error'; icon = '✗'; }
+        return `<div class="progress-step ${state}"><span class="icon">${icon}</span><span class="label">${s.label}</span></div>`;
+      }).join('');
+    }
+
+    function isStepDone(stepId) {
+      const order = ['account', 'ble-scan', 'charger', 'mower', 'mqtt-wait', 'ota', 'reboot'];
+      const currentIdx = order.indexOf(provisionState.phase);
+      const stepIdx = order.indexOf(stepId);
+      if (stepIdx < 0 || currentIdx < 0) return false;
+      return stepIdx < currentIdx;
+    }
+
+    function updateProgress(phase, msg) {
+      provisionState.phase = phase;
+      const progressEl = document.getElementById('provision-progress');
+      const msgEl = document.getElementById('provision-msg');
+      if (progressEl) progressEl.innerHTML = renderProgress();
+      if (msgEl) msgEl.textContent = msg || phase;
+    }
+
+    // ── Navigation ─────────────────────────────────────────────────────────────
+    function goStep(n) {
+      currentStep = n;
+      document.getElementById('content').innerHTML = steps[n]();
+      updateDots();
+      if (n === 2) startStatusPolling();
+      else stopStatusPolling();
+    }
+
+    function updateDots() {
+      for (let i = 0; i < 3; i++) {
+        const dot = document.getElementById('dot-' + i);
+        dot.className = 'step-dot' + (i === currentStep ? ' active' : (i < currentStep ? ' done' : ''));
+      }
+    }
+
+    // ── Step 0: Validate + Start ───────────────────────────────────────────────
+    async function startSetup() {
+      const ssid = document.getElementById('wifi-ssid').value.trim();
+      const pass = document.getElementById('wifi-pass').value;
+      const chargerSn = document.getElementById('charger-sn').value.trim().toUpperCase();
+      const mowerSn = document.getElementById('mower-sn').value.trim().toUpperCase();
+      const email = document.getElementById('email').value.trim();
+      const password = document.getElementById('password').value;
+      const errorEl = document.getElementById('error');
+
+      // Validate
+      if (!ssid || !pass) { errorEl.textContent = 'WiFi credentials are required'; errorEl.classList.remove('hidden'); return; }
+      if (!chargerSn) { errorEl.textContent = 'Charging station serial number is required'; errorEl.classList.remove('hidden'); return; }
+      if (!email || !password) { errorEl.textContent = 'Email and password are required for the Novabot app'; errorEl.classList.remove('hidden'); return; }
+
+      if (!chargerSn.startsWith('LFIC')) { errorEl.textContent = 'Charging station SN should start with LFIC'; errorEl.classList.remove('hidden'); return; }
+      if (mowerSn && !mowerSn.startsWith('LFIN')) { errorEl.textContent = 'Mower SN should start with LFIN'; errorEl.classList.remove('hidden'); return; }
+
+      config = { wifiSsid: ssid, wifiPassword: pass, email, password, chargerSn, mowerSn };
+      errorEl.classList.add('hidden');
+
+      goStep(1);
+      runProvisioning();
+    }
+
+    // ── Cloud import shortcut ──────────────────────────────────────────────────
+    async function doCloudImport() {
+      const email = document.getElementById('email').value.trim();
+      const password = document.getElementById('password').value;
+      const errorEl = document.getElementById('error');
+
+      if (!email || !password) { errorEl.textContent = 'Enter email and password first'; errorEl.classList.remove('hidden'); return; }
+
+      errorEl.classList.add('hidden');
+      try {
+        const resp = await fetch('/api/setup/cloud-login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password }),
+        });
+        const data = await resp.json();
+        if (!data.ok) { errorEl.textContent = data.error || 'Cloud login failed'; errorEl.classList.remove('hidden'); return; }
+
+        const charger = data.chargers?.[0];
+        const mower = data.mowers?.[0];
+
+        if (charger) document.getElementById('charger-sn').value = charger.sn || charger.chargerSn || '';
+        if (mower) document.getElementById('mower-sn').value = mower.sn || mower.mowerSn || '';
+
+        if (!charger && !mower) {
+          errorEl.textContent = 'No devices found in your cloud account. Enter serial numbers manually.';
+          errorEl.classList.remove('hidden');
+        } else {
+          // Auto-fill wifi from cloud data if available
+          if (charger?.wifiName && !document.getElementById('wifi-ssid').value) {
+            document.getElementById('wifi-ssid').value = charger.wifiName;
+          }
+          if (charger?.wifiPassword && !document.getElementById('wifi-pass').value) {
+            document.getElementById('wifi-pass').value = charger.wifiPassword;
+          }
+        }
+      } catch (e) {
+        errorEl.textContent = 'Cloud connection failed: ' + e.message;
+        errorEl.classList.remove('hidden');
+      }
+    }
+
+    // ── Step 1: Run the full provisioning sequence ─────────────────────────────
+    async function runProvisioning() {
+      try {
+        // 1. Create account
+        updateProgress('account', 'Creating local account...');
+        const loginResp = await fetch('/api/setup/cloud-login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: config.email, password: config.password }),
+        });
+        const loginData = await loginResp.json();
+        if (!loginData.ok) throw new Error(loginData.error || 'Account creation failed');
+
+        // Import devices (with SNs from step 0)
+        await fetch('/api/setup/cloud-apply', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: config.email, password: config.password,
+            deviceName: 'Novabot',
+            charger: { sn: config.chargerSn },
+            mower: config.mowerSn ? { sn: config.mowerSn } : undefined,
+          }),
+        });
+
+        // 2. BLE scan
+        updateProgress('ble-scan', 'Scanning for Bluetooth devices...');
+        const scanResp = await fetch('/api/ble/scan', { method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ duration: 15000 })
+        });
+        await scanResp.json();
+        // Wait for scan to complete
+        await sleep(16000);
+
+        // 3. Provision charger
+        updateProgress('charger', 'Configuring charging station via Bluetooth...');
+        // Find charger in scan results (or use MAC from factory DB)
+        const chargerResp = await fetch('/api/ble/provision', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sn: config.chargerSn,
+            wifiSsid: config.wifiSsid,
+            wifiPassword: config.wifiPassword,
+            deviceType: 'charger',
+            mqttHost: 'mqtt.lfibot.com',
+            mqttPort: 1883,
+          }),
+        });
+        const chargerData = await chargerResp.json();
+        if (!chargerData.ok) {
+          updateProgress('charger', 'Charger not found via Bluetooth — it may already be configured');
+        }
+        provisionState.chargerDone = true;
+
+        // 4. Provision mower (if SN provided)
+        if (config.mowerSn) {
+          updateProgress('mower', 'Configuring mower via Bluetooth...');
+          const mowerResp = await fetch('/api/ble/provision', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              sn: config.mowerSn,
+              wifiSsid: config.wifiSsid,
+              wifiPassword: config.wifiPassword,
+              deviceType: 'mower',
+              mqttHost: 'mqtt.lfibot.com',
+              mqttPort: 1883,
+            }),
+          });
+          const mowerData = await mowerResp.json();
+          if (!mowerData.ok) {
+            updateProgress('mower', 'Mower not found via Bluetooth — it may already be configured');
+          }
+          provisionState.mowerDone = true;
+        } else {
+          provisionState.mowerDone = true;
+        }
+
+        // 5. Wait for MQTT connection
+        updateProgress('mqtt-wait', 'Waiting for mower to connect...');
+        let connected = false;
+        for (let i = 0; i < 60; i++) {
+          const health = await fetch('/api/setup/health').then(r => r.json());
+          if (health.devicesConnected > 0 || health.devicesEverConnected > 0) {
+            connected = true;
+            break;
+          }
+          await sleep(2000);
+        }
+
+        if (!connected) {
+          updateProgress('mqtt-wait', 'Mower not connecting — check WiFi and try restarting the mower');
+          return;
+        }
+
+        // 6. OTA flash (if firmware available and mower doesn't have custom firmware)
+        updateProgress('ota', 'Checking firmware...');
+        // Check if OTA is needed
+        const devResp = await fetch('/api/setup/devices').then(r => r.json());
+        const mower = devResp?.equipment?.find(e => e.mower_sn?.startsWith('LFIN'));
+        const needsOta = mower && !mower.mower_version?.includes('custom');
+
+        if (needsOta) {
+          updateProgress('ota', 'Flashing custom firmware (this takes 10-20 minutes)...');
+          // Trigger OTA via the server's existing OTA endpoint
+          await fetch('/api/dashboard/ota/trigger/' + config.mowerSn, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ force: true }),
+          });
+          provisionState.otaSent = true;
+
+          // 7. Wait for reboot
+          updateProgress('reboot', 'Mower is installing firmware and rebooting (10-20 min)...');
+          // Poll until mower reconnects with custom firmware
+          for (let i = 0; i < 120; i++) {
+            await sleep(10000);
+            const devResp2 = await fetch('/api/setup/devices').then(r => r.json());
+            const mower2 = devResp2?.equipment?.find(e => e.mower_sn?.startsWith('LFIN'));
+            if (mower2?.mower_version?.includes('custom')) {
+              provisionState.otaDone = true;
+              break;
+            }
+          }
+        }
+
+        // Done!
+        goStep(2);
+
+      } catch (e) {
+        const errorEl = document.getElementById('provision-error');
+        if (errorEl) {
+          errorEl.textContent = 'Error: ' + e.message;
+          errorEl.classList.remove('hidden');
+        }
+      }
+    }
+
+    // ── Step 2: Status polling ──────────────────────────────────────────────────
+    function startStatusPolling() {
+      loadStatus();
+      statusInterval = setInterval(loadStatus, 5000);
+    }
+    function stopStatusPolling() {
+      if (statusInterval) { clearInterval(statusInterval); statusInterval = null; }
+    }
+
+    async function loadStatus() {
+      try {
+        const health = await fetch('/api/setup/health').then(r => r.json());
+        const grid = document.getElementById('status-grid');
+        if (!grid) return;
+        grid.innerHTML = `
+          <div class="status-item">
+            <div class="value ${health.server === 'running' ? 'status-ok' : 'status-warn'}">${health.server === 'running' ? '✓' : '✗'}</div>
+            <div class="label">Server</div>
+          </div>
+          <div class="status-item">
+            <div class="value ${health.mqtt === 'running' ? 'status-ok' : 'status-warn'}">${health.mqtt === 'running' ? '✓' : '✗'}</div>
+            <div class="label">MQTT Broker</div>
+          </div>
+          <div class="status-item">
+            <div class="value ${health.devicesConnected > 0 ? 'status-ok' : 'status-warn'}">${health.devicesConnected || 0}</div>
+            <div class="label">Devices Online</div>
+          </div>
+          <div class="status-item">
+            <div class="value">${health.equipment || 0}</div>
+            <div class="label">Registered</div>
+          </div>
+        `;
+      } catch {}
+    }
+
+    // ── Helpers ─────────────────────────────────────────────────────────────────
+    function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+    // ── Init ───────────────────────────────────────────────────────────────────
+    (async () => {
+      // Check if setup already done
+      try {
+        const resp = await fetch('/api/setup/health');
+        const data = await resp.json();
+        if (data.setupComplete) {
+          currentStep = 2;
+        }
+      } catch {}
+      goStep(currentStep);
+    })();
+  </script>
+</body>
+</html>
