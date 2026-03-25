@@ -85,8 +85,7 @@ fi
 # Install npm dependencies
 echo "  Installing npm dependencies..."
 cd "$INSTALL_DIR/server" && npm ci --production --quiet 2>/dev/null
-# Build TypeScript
-npx tsc --project tsconfig.json 2>/dev/null || echo "  (TypeScript build skipped — using tsx)"
+# TypeScript is run via tsx at runtime — no build step needed
 
 # ── Step 4: Generate TLS certificate ─────────────────────────────────────────
 
@@ -220,10 +219,10 @@ SERVICE
 # Enable all services
 systemctl daemon-reload
 systemctl enable opennovabot.service
+systemctl unmask hostapd 2>/dev/null || true
 systemctl enable hostapd
 systemctl enable dnsmasq
 systemctl enable nginx
-systemctl unmask hostapd 2>/dev/null || true
 
 # ── Done ──────────────────────────────────────────────────────────────────────
 
