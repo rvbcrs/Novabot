@@ -82,10 +82,11 @@ else
   rm -rf "$TMPDIR"
 fi
 
-# Install npm dependencies
+# Install npm dependencies and build
 echo "  Installing npm dependencies..."
-cd "$INSTALL_DIR/server" && npm ci --production --quiet 2>/dev/null
-# TypeScript is run via tsx at runtime — no build step needed
+cd "$INSTALL_DIR/server" && npm ci --quiet 2>/dev/null
+echo "  Building TypeScript..."
+cd "$INSTALL_DIR/server" && npm run build 2>/dev/null
 
 # ── Step 4: Generate TLS certificate ─────────────────────────────────────────
 
@@ -166,6 +167,7 @@ server {
         proxy_set_header Connection "upgrade";
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
+        proxy_read_timeout 120s;
     }
 }
 server {
@@ -180,6 +182,7 @@ server {
         proxy_set_header Connection "upgrade";
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
+        proxy_read_timeout 120s;
     }
 }
 NGINX

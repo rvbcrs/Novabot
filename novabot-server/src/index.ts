@@ -150,7 +150,7 @@ if (PROXY_MODE === 'cloud') {
 
   // ── Static files ────────────────────────────────────────────────────────────
   const dashboardPath = path.resolve(__dirname, '../../novabot-dashboard/dist');
-  const setupWizardPath = path.resolve(__dirname, '../../setup-wizard');
+  const setupWizardPath = process.env.SETUP_WIZARD_PATH || path.resolve(__dirname, '../../setup-wizard');
 
   // Setup wizard static files (always served at /setup)
   app.use('/setup', express.static(setupWizardPath));

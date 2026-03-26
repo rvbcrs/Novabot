@@ -1,61 +1,36 @@
 /**
  * BLE Provisioner for Novabot devices.
  *
- * Connects to a Novabot / CHARGER_PILE device via BLE GATT and sends
- * provisioning commands (WiFi, MQTT, LoRa, config) — exactly like the
- * Novabot app does during "Add Mower" / "Add Charging Station".
+ * provisionDevice() delegates to provision_noble_raw.mjs (noble, BlueZ D-Bus mode) via subprocess.
+ * WiFi is disconnected before provisioning to reduce CYW43455 coexistence interference.
+ * BlueZ must be running (not stopped).
  *
  * GATT structure (varies by device):
- *   Charger (ESP32-S3):  Service 0x1234, Char 0x2222 (cmd) + 0x3333
- *   Mower (BCM43438):    Service 0x0201, Char 0x0011 (cmd) + 0x0021
- *
- * BLE frame protocol (same on both):
- *   1. Write "ble_start" marker
- *   2. Write JSON payload in ~20-byte chunks
- *   3. Write "ble_end" marker
- *   4. Wait for response on notify (same framing)
+ *   Charger (ESP32-S3):  Service 0x1234, Char 0x2222 (cmd+notify)
+ *   Mower (BCM43438):    Service 0x0201, Char 0x0011 (cmd) + 0x0021 (notify)
  */
 
+import { spawn, execSync } from 'child_process';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { pushBleLog, pauseBackgroundScan, resumeBackgroundScan } from './bleLogger.js';
 
-type Noble = typeof import('@stoprocent/noble').default;
-type Peripheral = import('@stoprocent/noble').Peripheral;
-type Characteristic = import('@stoprocent/noble').Characteristic;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AnyObj = any;
 
-// Known GATT layouts per device type
-// Charger: single command char handles both write and notify
-// Mower: separate write (0011) and notify (0021) characteristics
-const GATT_LAYOUTS = {
-  charger: { service: '1234', writeChar: '2222', notifyChar: '2222' },
-  mower:   { service: '0201', writeChar: '0011', notifyChar: '0021' },
-} as const;
-
-const CHUNK_SIZE = 20;
-const INTER_CHUNK_DELAY = 30; // ms between chunks (matching firmware timing)
-const RESPONSE_TIMEOUT = 10_000; // ms to wait for a BLE response
+const NOVABOT_COMPANY_ID = 0x5566;
 
 export interface ProvisionParams {
-  /** Target BLE MAC address (e.g. "50:41:1C:39:BD:C1") */
   targetMac: string;
-  /** WiFi SSID to connect to */
   wifiSsid: string;
-  /** WiFi password */
   wifiPassword: string;
-  /** MQTT broker address (default: mqtt.lfibot.com) */
   mqttAddr?: string;
-  /** MQTT broker port (default: 1883) */
   mqttPort?: number;
-  /** LoRa address (default: 718) */
   loraAddr?: number;
-  /** LoRa channel (default: 15) */
   loraChannel?: number;
-  /** LoRa high channel bound (default: 20) */
   loraHc?: number;
-  /** LoRa low channel bound (default: 14) */
   loraLc?: number;
-  /** Timezone (default: Europe/Amsterdam) */
   timezone?: string;
-  /** Device type: "mower" or "charger" — affects set_wifi_info format */
   deviceType?: 'mower' | 'charger';
 }
 
@@ -72,542 +47,248 @@ interface StepResult {
   ok: boolean;
 }
 
-let noble: Noble | null = null;
-
-async function getNoble(): Promise<Noble> {
-  if (noble) return noble;
-  const mod = await import('@stoprocent/noble');
-  noble = mod.default;
-  return noble;
-}
-
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-/**
- * Write a BLE frame: ble_start + chunked payload + ble_end.
- * Each chunk is written with Write Without Response (no ACK).
- */
-async function writeFrame(char: Characteristic, payload: string): Promise<void> {
-  const startMarker = Buffer.from('ble_start', 'utf8');
-  const endMarker = Buffer.from('ble_end', 'utf8');
-  const data = Buffer.from(payload, 'utf8');
+function getNobleRawScriptPath(): string {
+  const __dirname = path.dirname(fileURLToPath(import.meta.url));
+  // dist/ble/ → src/ble/provision_noble_raw.mjs
+  return path.join(process.cwd(), 'src', 'ble', 'provision_noble_raw.mjs');
+}
 
-  // Write start marker
-  await char.writeAsync(startMarker, true); // true = withoutResponse
-  await sleep(INTER_CHUNK_DELAY);
+function stopBluetooth(): void {
+  try { execSync('systemctl stop bluetooth', { timeout: 5000, stdio: 'ignore' }); } catch { /* ignore */ }
+}
 
-  // Write payload in chunks
-  for (let offset = 0; offset < data.length; offset += CHUNK_SIZE) {
-    const chunk = data.subarray(offset, Math.min(offset + CHUNK_SIZE, data.length));
-    await char.writeAsync(chunk, true);
-    await sleep(INTER_CHUNK_DELAY);
-  }
-
-  // Write end marker
-  await char.writeAsync(endMarker, true);
-  await sleep(INTER_CHUNK_DELAY);
+function startBluetooth(): void {
+  try { execSync('systemctl start bluetooth', { timeout: 5000, stdio: 'ignore' }); } catch { /* ignore */ }
+  try { execSync('hciconfig hci0 up', { timeout: 3000, stdio: 'ignore' }); } catch { /* ignore */ }
 }
 
 /**
- * Wait for a complete BLE response frame (ble_start ... ble_end).
- * Returns the parsed JSON response.
+ * Disconnect WiFi (keep radio on) during BLE to reduce CYW43455 coexistence interference.
+ * Uses nmcli device disconnect (NOT radio off) to avoid crashing the brcmfmac driver
+ * which manages both WiFi and BT on the same CYW43455 chip.
+ * RPi 5 uses Ethernet for server connectivity, so disconnecting WiFi doesn't break the server.
  */
-function waitForResponse(char: Characteristic, timeoutMs = RESPONSE_TIMEOUT): Promise<unknown> {
-  return new Promise((resolve, reject) => {
-    let buffer = '';
-    let collecting = false;
-    const timeout = setTimeout(() => {
-      char.removeAllListeners('data');
-      reject(new Error(`BLE response timeout after ${timeoutMs}ms`));
-    }, timeoutMs);
+function wifiOff(): void {
+  console.log('[BLE-PROV] Disconnecting WiFi for BLE (radio stays on)...');
+  try { execSync('nmcli device disconnect wlan0', { timeout: 10000, stdio: 'ignore' }); console.log('[BLE-PROV] WiFi disconnected'); } catch { console.log('[BLE-PROV] WiFi disconnect failed (non-fatal)'); }
+}
 
-    const onData = (data: Buffer, _isNotify: boolean) => {
-      const str = data.toString('utf8');
+function wifiOn(profile: string | undefined): void {
+  if (!profile) return;
+  try {
+    execSync(`nmcli connection up "${profile}"`, { timeout: 20000, stdio: 'ignore' });
+    console.log(`[BLE-PROV] WiFi reconnected (${profile})`);
+  } catch {
+    console.log(`[BLE-PROV] WiFi reconnect failed (non-fatal)`);
+  }
+}
 
-      if (str === 'ble_start') {
-        collecting = true;
-        buffer = '';
+/**
+ * Run provision_noble_raw.mjs as a Node subprocess with NOBLE_BINDINGS=hci (raw HCI).
+ * BlueZ is stopped before the subprocess starts and restarted after.
+ */
+async function runNobleRawProvisioner(params: ProvisionParams): Promise<ProvisionResult> {
+  const scriptPath = getNobleRawScriptPath();
+  const paramsJson = JSON.stringify(params);
+
+  wifiOff();
+  await sleep(1500);
+
+  console.log(`[BLE-PROV] Running BlueZ provisioner: ${scriptPath}`);
+
+  // Run btmon alongside noble to capture ALL HCI traffic at kernel level.
+  // btmon uses HCI_MON socket (independent of noble's raw socket) — non-destructive tap.
+  // This tells us: does the CYW43455 controller actually receive BLE notifications from the charger?
+  // If btmon sees NTF packets → noble has a dispatch bug.
+  // If btmon sees nothing → charger isn't sending / controller isn't receiving.
+  const btmon = spawn('btmon', ['-i', 'hci0'], { stdio: ['ignore', 'pipe', 'pipe'] });
+  let btmonLog = '';
+  btmon.stdout.on('data', (d: Buffer) => { btmonLog += d.toString(); });
+  btmon.stderr?.on('data', (d: Buffer) => { btmonLog += d.toString(); });
+
+  return new Promise((resolve) => {
+    const proc = spawn('node', [scriptPath, paramsJson], {
+      env: { ...process.env },
+      timeout: 240_000,
+    });
+
+    let stdout = '';
+
+    proc.stdout.on('data', (d: Buffer) => { stdout += d.toString(); });
+    proc.stderr.on('data', (d: Buffer) => { console.log(d.toString().trimEnd()); });
+
+    proc.on('close', (code) => {
+      console.log(`[BLE-PROV] Noble raw process exited with code ${code}`);
+
+      // Kill btmon and log relevant lines
+      try { btmon.kill(); } catch { /* ignore */ }
+      const btmonLines = btmonLog.split('\n').filter(l =>
+        l.includes('Notify') || l.includes('NTF') || l.includes('Handle Value') ||
+        l.includes('ATT') || l.includes('0x1b') || l.includes('notification')
+      );
+      if (btmonLines.length > 0) {
+        console.log(`[BLE-PROV] btmon: ${btmonLines.length} ATT/notify lines (NOTIFICATIONS SEEN AT KERNEL LEVEL):`);
+        btmonLines.slice(0, 30).forEach(l => console.log(`[btmon] ${l}`));
+      } else {
+        console.log(`[BLE-PROV] btmon: 0 notification lines seen — charger did NOT send notifications at HCI level`);
+      }
+
+      const out = stdout.trim();
+      if (!out) {
+        resolve({ success: false, steps: [], error: `Noble raw script no output (exit ${code})` });
         return;
       }
-
-      if (str === 'ble_end' && collecting) {
-        collecting = false;
-        clearTimeout(timeout);
-        char.removeListener('data', onData);
-        try {
-          resolve(JSON.parse(buffer));
-        } catch {
-          resolve(buffer); // return raw string if not JSON
-        }
-        return;
+      try {
+        resolve(JSON.parse(out) as ProvisionResult);
+      } catch {
+        resolve({ success: false, steps: [], error: `Invalid JSON: ${out.slice(0, 200)}` });
       }
+    });
 
-      if (collecting) {
-        buffer += str;
-      }
-    };
-
-    char.on('data', onData);
+    proc.on('error', (err) => {
+      try { btmon.kill(); } catch { /* ignore */ }
+      resolve({ success: false, steps: [], error: `Failed to spawn noble raw: ${(err as Error).message}` });
+    });
   });
-}
-
-/**
- * Send a BLE command and wait for the response.
- */
-async function sendCommand(
-  writeChar: Characteristic,
-  notifyChar: Characteristic,
-  payload: string,
-  label: string,
-  meta?: { deviceName: string; mac: string },
-): Promise<{ response: unknown; ok: boolean }> {
-  console.log(`[BLE-PROV] → ${label}: ${payload}`);
-
-  // Log the write
-  if (meta) {
-    pushBleLog({
-      ts: Date.now(), type: 'write', deviceName: meta.deviceName, mac: meta.mac,
-      rssi: 0, service: '1234', characteristic: writeChar.uuid,
-      data: payload, direction: '\u2192DEV',
-    });
-  }
-
-  // Start listening BEFORE writing (to not miss the response)
-  const responsePromise = waitForResponse(notifyChar);
-
-  // Write the frame
-  await writeFrame(writeChar, payload);
-
-  // Wait for response
-  const response = await responsePromise;
-  console.log(`[BLE-PROV] ← ${label}:`, JSON.stringify(response));
-
-  // Log the response
-  if (meta) {
-    pushBleLog({
-      ts: Date.now(), type: 'notify', deviceName: meta.deviceName, mac: meta.mac,
-      rssi: 0, service: '1234', characteristic: notifyChar.uuid,
-      data: JSON.stringify(response), direction: '\u2190DEV',
-    });
-  }
-
-  // Check result field
-  const resp = response as { type?: string; message?: { result?: number } };
-  const ok = resp?.message?.result === 0 || resp?.message?.result === undefined;
-  return { response, ok };
 }
 
 /**
  * Provision a Novabot device via BLE.
- *
- * Scans for the target device, connects, and sends WiFi/MQTT/LoRa/config
- * commands in the correct order.
+ * Delegates to provision_noble_raw.mjs (noble, raw HCI) via subprocess.
+ * BlueZ is stopped before provisioning and restarted after.
  */
 export async function provisionDevice(params: ProvisionParams): Promise<ProvisionResult> {
-  const {
-    targetMac,
-    wifiSsid,
-    wifiPassword,
-    mqttAddr = 'mqtt.lfibot.com',
-    mqttPort = 1883,
-    loraAddr = 718,
-    loraChannel = 15,
-    loraHc = 20,
-    loraLc = 14,
-    timezone = 'Europe/Amsterdam',
-    deviceType = 'mower',
-  } = params;
+  const devName = params.deviceType ?? 'device';
+  pushBleLog({ ts: Date.now(), type: 'connect', deviceName: devName, mac: params.targetMac, rssi: 0, direction: '' });
 
-  const steps: StepResult[] = [];
-  const n = await getNoble();
-
-  // Pause background BLE scan so it doesn't interfere
   await pauseBackgroundScan();
 
-  // Wait for adapter
-  if (n.state !== 'poweredOn') {
-    await new Promise<void>((resolve, reject) => {
-      const t = setTimeout(() => reject(new Error('Bluetooth adapter timeout')), 5000);
-      const onState = (state: string) => {
-        if (state === 'poweredOn') { clearTimeout(t); n.removeListener('stateChange', onState); resolve(); }
-      };
-      n.on('stateChange', onState);
-    });
-  }
-
-  // ── Step 1: Find the target device ──────────────────────────
-  console.log(`[BLE-PROV] Scanning for BLE MAC ${targetMac}...`);
-  const targetMacNorm = targetMac.toLowerCase().replace(/:/g, '');
-  let targetPeripheral: Peripheral | null = null;
-
-  await new Promise<void>((resolve, reject) => {
-    const scanTimeout = setTimeout(() => {
-      n.stopScanning();
-      n.removeAllListeners('discover');
-      reject(new Error(`Device ${targetMac} not found after 15s scan`));
-    }, 15_000);
-
-    n.on('discover', (peripheral: Peripheral) => {
-      const mfgData = peripheral.advertisement?.manufacturerData;
-      if (!mfgData || mfgData.length < 8) return;
-
-      const companyId = mfgData.readUInt16LE(0);
-      if (companyId !== 0x5566) return;
-
-      const mac = Array.from(mfgData.subarray(2, 8))
-        .map(b => b.toString(16).padStart(2, '0'))
-        .join('');
-
-      if (mac === targetMacNorm) {
-        clearTimeout(scanTimeout);
-        n.stopScanning();
-        n.removeAllListeners('discover');
-        const name = peripheral.advertisement?.localName ?? '?';
-        console.log(`[BLE-PROV] Found target: ${name} (${targetMac}) RSSI=${peripheral.rssi}`);
-        targetPeripheral = peripheral;
-        resolve();
-      }
-    });
-
-    n.startScanning([], true);
-  });
-
-  if (!targetPeripheral) {
-    return { success: false, steps, error: 'Device not found' };
-  }
-
-  // ── Step 2: Connect ─────────────────────────────────────────
-  const devName = (targetPeripheral as Peripheral).advertisement?.localName ?? '?';
-  const bleMeta = { deviceName: devName, mac: targetMac };
-  console.log('[BLE-PROV] Connecting...');
-  await (targetPeripheral as Peripheral).connectAsync();
-  console.log('[BLE-PROV] Connected!');
-  pushBleLog({ ts: Date.now(), type: 'connect', deviceName: devName, mac: targetMac, rssi: (targetPeripheral as Peripheral).rssi ?? 0, direction: '' });
-
-  // Small delay after connect to let GATT stabilize
-  await sleep(500);
-
   try {
-    // ── Step 3: Discover service + characteristics ───────────
-    const layout = GATT_LAYOUTS[deviceType];
-    console.log(`[BLE-PROV] Discovering services (expecting service=${layout.service}, write=${layout.writeChar}, notify=${layout.notifyChar})...`);
+    const result = await runNobleRawProvisioner(params);
 
-    // Discover all services — filtered discovery is unreliable across platforms
-    const result = await (targetPeripheral as Peripheral).discoverAllServicesAndCharacteristicsAsync();
-    console.log(`[BLE-PROV] Found ${result.services.length} service(s), ${result.characteristics.length} char(s)`);
-    for (const s of result.services) {
-      console.log(`[BLE-PROV]   Service: ${s.uuid}`);
-    }
-    for (const c of result.characteristics) {
-      console.log(`[BLE-PROV]   Char: ${c.uuid} props=${JSON.stringify(c.properties)}`);
+    if (result.success) {
+      console.log('[BLE-PROV] Provisioning successful!');
+    } else {
+      console.error('[BLE-PROV] Provisioning failed:', result.error);
     }
 
-    // Find write and notify characteristics
-    const writeChar = result.characteristics.find(c => c.uuid === layout.writeChar);
-    const notifyChar = result.characteristics.find(c => c.uuid === layout.notifyChar);
-
-    if (!writeChar) {
-      const availUuids = result.characteristics.map(c => `${c.uuid}(${c.properties.join('+')})`).join(', ');
-      return { success: false, steps, error: `Write char ${layout.writeChar} not found. Available: ${availUuids}` };
-    }
-    if (!notifyChar) {
-      const availUuids = result.characteristics.map(c => `${c.uuid}(${c.properties.join('+')})`).join(', ');
-      return { success: false, steps, error: `Notify char ${layout.notifyChar} not found. Available: ${availUuids}` };
-    }
-
-    console.log(`[BLE-PROV] Using write=${writeChar.uuid}, notify=${notifyChar.uuid}`);
-
-    // Subscribe to notifications on BOTH characteristics to catch responses
-    const allNotifyChars = result.characteristics.filter(c => c.properties.includes('notify'));
-    for (const c of allNotifyChars) {
-      await c.subscribeAsync();
-      // Raw data tap for debugging
-      c.on('data', (data: Buffer) => {
-        const hex = data.toString('hex');
-        const str = data.toString('utf8');
-        console.log(`[BLE-PROV] RAW notify on ${c.uuid}: hex=${hex} str=${JSON.stringify(str)} len=${data.length}`);
-      });
-      console.log(`[BLE-PROV] Subscribed to notifications on ${c.uuid}`);
-    }
-
-    // Small delay after subscribe
-    await sleep(200);
-
-    // ── Step 4: get_signal_info ────────────────────────────────
-    {
-      const payload = JSON.stringify({ get_signal_info: 0 });
-      console.log(`[BLE-PROV] Sending get_signal_info on write char ${writeChar.uuid}...`);
-      const { response, ok } = await sendCommand(writeChar, notifyChar, payload, 'get_signal_info', bleMeta);
-      steps.push({ command: 'get_signal_info', sent: { get_signal_info: 0 }, response, ok });
-      if (!ok) console.warn('[BLE-PROV] get_signal_info failed, continuing anyway');
-    }
-
-    // ── Step 5: set_wifi_info ──────────────────────────────────
-    {
-      // Mower: only "ap" sub-object
-      // Charger: "sta" (home WiFi) + "ap" (own AP)
-      let wifiPayload: unknown;
-      if (deviceType === 'mower') {
-        wifiPayload = {
-          set_wifi_info: {
-            ap: { ssid: wifiSsid, passwd: wifiPassword, encrypt: 0 },
-          },
-        };
-      } else {
-        wifiPayload = {
-          set_wifi_info: {
-            sta: { ssid: wifiSsid, passwd: wifiPassword, encrypt: 0 },
-            ap: { ssid: targetMac.replace(/:/g, ''), passwd: '12345678', encrypt: 0 },
-          },
-        };
-      }
-      const payload = JSON.stringify(wifiPayload);
-      const { response, ok } = await sendCommand(writeChar, notifyChar, payload, 'set_wifi_info', bleMeta);
-      steps.push({ command: 'set_wifi_info', sent: wifiPayload, response, ok });
-      if (!ok) {
-        return { success: false, steps, error: 'set_wifi_info failed — check WiFi credentials' };
-      }
-    }
-
-    // ── Step 6: set_lora_info ──────────────────────────────────
-    {
-      const loraPayload = {
-        set_lora_info: { addr: loraAddr, channel: loraChannel, hc: loraHc, lc: loraLc },
-      };
-      const payload = JSON.stringify(loraPayload);
-      const { response, ok } = await sendCommand(writeChar, notifyChar, payload, 'set_lora_info', bleMeta);
-      steps.push({ command: 'set_lora_info', sent: loraPayload, response, ok });
-      // LoRa might return assigned channel in value — log it
-      const resp = response as { message?: { value?: number } };
-      if (resp?.message?.value != null) {
-        console.log(`[BLE-PROV] LoRa assigned channel: ${resp.message.value}`);
-      }
-    }
-
-    // ── Step 7: set_mqtt_info ──────────────────────────────────
-    {
-      const mqttPayload = { set_mqtt_info: { addr: mqttAddr, port: mqttPort } };
-      const payload = JSON.stringify(mqttPayload);
-      const { response, ok } = await sendCommand(writeChar, notifyChar, payload, 'set_mqtt_info', bleMeta);
-      steps.push({ command: 'set_mqtt_info', sent: mqttPayload, response, ok });
-      if (!ok) {
-        return { success: false, steps, error: 'set_mqtt_info failed' };
-      }
-    }
-
-    // ── Step 8: set_cfg_info (commit) ──────────────────────────
-    {
-      // Mower: includes timezone; Charger: just cfg_value
-      const cfgPayload = deviceType === 'mower'
-        ? { set_cfg_info: { cfg_value: 1, tz: timezone } }
-        : { set_cfg_info: 1 };
-      const payload = JSON.stringify(cfgPayload);
-      const { response, ok } = await sendCommand(writeChar, notifyChar, payload, 'set_cfg_info', bleMeta);
-      steps.push({ command: 'set_cfg_info', sent: cfgPayload, response, ok });
-      if (!ok) {
-        return { success: false, steps, error: 'set_cfg_info failed — config not committed' };
-      }
-    }
-
-    // Unsubscribe all
-    for (const c of allNotifyChars) {
-      try { await c.unsubscribeAsync(); } catch { /* ignore */ }
-    }
-
-    console.log('[BLE-PROV] Provisioning complete! Device should restart WiFi now.');
-    return { success: true, steps };
+    pushBleLog({ ts: Date.now(), type: 'disconnect', deviceName: devName, mac: params.targetMac, rssi: 0, direction: '' });
+    return result;
 
   } finally {
-    // Always disconnect
-    try {
-      await (targetPeripheral as Peripheral).disconnectAsync();
-      pushBleLog({ ts: Date.now(), type: 'disconnect', deviceName: devName, mac: targetMac, rssi: 0, direction: '' });
-      console.log('[BLE-PROV] Disconnected');
-    } catch { /* ignore */ }
-    // Resume background scan
-    await resumeBackgroundScan();
+    console.log('[BLE-PROV] Restarting BlueZ...');
+    startBluetooth();
+    wifiOn(process.env.STA_WIFI_SSID);
+    await sleep(1000);
+    try { await Promise.race([resumeBackgroundScan(), sleep(5000)]); } catch { /* ignore */ }
   }
 }
 
-/**
- * Raw BLE diagnostic: connect, discover, write data, capture all notifications.
- * Used to test different protocols and find the right approach.
- */
+// ── Raw BLE diagnostic (noble-based, for dev use) ────────────────────────────
+
 export async function bleRawDiagnostic(
   targetMac: string,
   opts: { charUuid?: string; data?: string; writeToAll?: boolean; durationMs?: number; framed?: boolean },
 ): Promise<{ services: unknown[]; notifications: unknown[]; writeResults: unknown[] }> {
-  const n = await getNoble();
-  await pauseBackgroundScan();
-  const targetMacNorm = targetMac.toLowerCase().replace(/:/g, '');
+  let noble: AnyObj = null;
   const notifications: { charUuid: string; hex: string; utf8: string; ts: number }[] = [];
   const writeResults: { charUuid: string; dataHex: string; ok: boolean; error?: string }[] = [];
 
-  // Wait for adapter
-  if (n.state !== 'poweredOn') {
-    await new Promise<void>((resolve, reject) => {
-      const t = setTimeout(() => reject(new Error('Bluetooth adapter timeout')), 5000);
-      n.on('stateChange', (state: string) => {
-        if (state === 'poweredOn') { clearTimeout(t); resolve(); }
-      });
-    });
-  }
-
-  // Scan for target
-  console.log(`[BLE-RAW] Scanning for ${targetMac}...`);
-  let peripheral: Peripheral | null = null;
-  await new Promise<void>((resolve, reject) => {
-    const t = setTimeout(() => { n.stopScanning(); n.removeAllListeners('discover'); reject(new Error('Not found')); }, 10_000);
-    n.on('discover', (p: Peripheral) => {
-      const mfg = p.advertisement?.manufacturerData;
-      if (!mfg || mfg.length < 8) return;
-      if (mfg.readUInt16LE(0) !== 0x5566) return;
-      const mac = Array.from(mfg.subarray(2, 8)).map(b => b.toString(16).padStart(2, '0')).join('');
-      if (mac === targetMacNorm) {
-        clearTimeout(t); n.stopScanning(); n.removeAllListeners('discover');
-        peripheral = p; resolve();
-      }
-    });
-    n.startScanning([], true);
-  });
-
-  if (!peripheral) throw new Error('Device not found');
-
-  // Connect
-  const devName = (peripheral as Peripheral).advertisement?.localName ?? '?';
-  console.log('[BLE-RAW] Connecting...');
-  await (peripheral as Peripheral).connectAsync();
-  pushBleLog({ ts: Date.now(), type: 'connect', deviceName: devName, mac: targetMac, rssi: (peripheral as Peripheral).rssi ?? 0, direction: '' });
-  await sleep(500);
+  await pauseBackgroundScan();
+  const targetMacNorm = targetMac.toLowerCase().replace(/:/g, '');
 
   try {
-    // Discover all
-    const result = await (peripheral as Peripheral).discoverAllServicesAndCharacteristicsAsync();
-    const services = result.services.map(s => ({
-      uuid: s.uuid,
-      chars: result.characteristics
-        .filter(c => (c as unknown as { _serviceUuid?: string })._serviceUuid === s.uuid)
-        .map(c => ({ uuid: c.uuid, props: c.properties })),
-    }));
+    const mod = await import('@stoprocent/noble');
+    noble = mod.default;
 
-    // If no service grouping works, just list all chars
-    if (services.every(s => s.chars.length === 0)) {
-      services.length = 0;
-      services.push({
-        uuid: 'all',
-        chars: result.characteristics.map(c => ({ uuid: c.uuid, props: c.properties })),
+    if (noble.state !== 'poweredOn') {
+      await new Promise<void>((resolve, reject) => {
+        const t = setTimeout(() => reject(new Error('Bluetooth adapter timeout')), 5000);
+        noble.on('stateChange', (state: string) => {
+          if (state === 'poweredOn') { clearTimeout(t); resolve(); }
+        });
       });
     }
 
-    console.log(`[BLE-RAW] Found ${result.services.length} services, ${result.characteristics.length} chars`);
+    let peripheral: AnyObj = null;
+    await new Promise<void>((resolve, reject) => {
+      const t = setTimeout(() => { noble.stopScanning(); noble.removeAllListeners('discover'); reject(new Error('Not found')); }, 10_000);
+      noble.on('discover', (p: AnyObj) => {
+        const mfg = p.advertisement?.manufacturerData;
+        const id = (p.id ?? p.uuid ?? '').toLowerCase().replace(/:/g, '');
+        let matched = id === targetMacNorm;
+        if (!matched && mfg && mfg.length >= 8 && mfg.readUInt16LE(0) === NOVABOT_COMPANY_ID) {
+          const mac = Array.from(mfg.subarray(2, 8) as Uint8Array).map((b: number) => b.toString(16).padStart(2, '0')).join('');
+          matched = mac === targetMacNorm;
+        }
+        if (matched) { clearTimeout(t); noble.stopScanning(); noble.removeAllListeners('discover'); peripheral = p; resolve(); }
+      });
+      noble.startScanning([], true);
+    });
 
-    // Subscribe to all notify chars
-    for (const c of result.characteristics) {
+    if (!peripheral) throw new Error('Device not found');
+    const devName = peripheral.advertisement?.localName ?? '?';
+    await peripheral.connectAsync();
+    pushBleLog({ ts: Date.now(), type: 'connect', deviceName: devName, mac: targetMac, rssi: peripheral.rssi ?? 0, direction: '' });
+    await sleep(500);
+
+    const result = await peripheral.discoverAllServicesAndCharacteristicsAsync();
+    const services = result.services.map((s: AnyObj) => ({
+      uuid: s.uuid,
+      chars: result.characteristics
+        .filter((c: AnyObj) => c._serviceUuid === s.uuid)
+        .map((c: AnyObj) => ({ uuid: c.uuid, props: c.properties })),
+    }));
+
+    for (const c of result.characteristics as AnyObj[]) {
       if (c.properties.includes('notify')) {
         await c.subscribeAsync();
         c.on('data', (buf: Buffer) => {
-          const now = Date.now();
-          notifications.push({
-            charUuid: c.uuid,
-            hex: buf.toString('hex'),
-            utf8: buf.toString('utf8').replace(/[\x00-\x1f]/g, '.'),
-            ts: now,
-          });
-          pushBleLog({
-            ts: now, type: 'notify', deviceName: devName, mac: targetMac,
-            rssi: 0, characteristic: c.uuid,
-            data: buf.toString('hex'), direction: '\u2190DEV',
-          });
+          notifications.push({ charUuid: c.uuid, hex: buf.toString('hex'), utf8: buf.toString('utf8').replace(/[\x00-\x1f]/g, '.'), ts: Date.now() });
+          pushBleLog({ ts: Date.now(), type: 'notify', deviceName: devName, mac: targetMac, rssi: 0, characteristic: c.uuid, data: buf.toString('hex'), direction: '\u2190DEV' });
         });
       }
     }
 
-    // Wait a moment to capture baseline notifications
     await sleep(1500);
-    const baselineCount = notifications.length;
-    console.log(`[BLE-RAW] Captured ${baselineCount} baseline notifications`);
 
-    // Write data if provided
     if (opts.data) {
-      // Determine data to write
       const isHex = /^[0-9a-fA-F]+$/.test(opts.data) && opts.data.length % 2 === 0;
       const writeBuf = isHex ? Buffer.from(opts.data, 'hex') : Buffer.from(opts.data, 'utf8');
-
-      // Determine which chars to write to
       const writeChars = opts.charUuid
-        ? result.characteristics.filter(c => c.uuid === opts.charUuid)
+        ? result.characteristics.filter((c: AnyObj) => c.uuid === opts.charUuid)
         : opts.writeToAll
-        ? result.characteristics.filter(c => c.properties.includes('writeWithoutResponse'))
-        : [result.characteristics.find(c => c.properties.includes('writeWithoutResponse'))].filter(Boolean);
+        ? result.characteristics.filter((c: AnyObj) => c.properties.includes('writeWithoutResponse'))
+        : [result.characteristics.find((c: AnyObj) => c.properties.includes('writeWithoutResponse'))].filter(Boolean);
 
-      for (const c of writeChars) {
+      for (const c of writeChars as AnyObj[]) {
         if (!c) continue;
         try {
-          if (opts.framed) {
-            // Framed mode: ble_start + chunked data + ble_end (as separate writes)
-            const startMarker = Buffer.from('ble_start', 'utf8');
-            const endMarker = Buffer.from('ble_end', 'utf8');
-            await c.writeAsync(startMarker, true);
-            await sleep(INTER_CHUNK_DELAY);
-            for (let offset = 0; offset < writeBuf.length; offset += CHUNK_SIZE) {
-              const chunk = writeBuf.subarray(offset, Math.min(offset + CHUNK_SIZE, writeBuf.length));
-              await c.writeAsync(chunk, true);
-              await sleep(INTER_CHUNK_DELAY);
-            }
-            await c.writeAsync(endMarker, true);
-            await sleep(INTER_CHUNK_DELAY);
-            console.log(`[BLE-RAW] Wrote FRAMED ${writeBuf.length}B to ${c.uuid} (ble_start + ${Math.ceil(writeBuf.length / CHUNK_SIZE)} chunks + ble_end)`);
-          } else {
-            // Raw mode: write data in chunks directly
-            for (let offset = 0; offset < writeBuf.length; offset += CHUNK_SIZE) {
-              const chunk = writeBuf.subarray(offset, Math.min(offset + CHUNK_SIZE, writeBuf.length));
-              await c.writeAsync(chunk, true);
-              await sleep(INTER_CHUNK_DELAY);
-            }
-            console.log(`[BLE-RAW] Wrote ${writeBuf.length}B to ${c.uuid}`);
-          }
+          await c.writeAsync(writeBuf, true);
           writeResults.push({ charUuid: c.uuid, dataHex: writeBuf.toString('hex'), ok: true });
-          pushBleLog({
-            ts: Date.now(), type: 'write', deviceName: devName, mac: targetMac,
-            rssi: 0, characteristic: c.uuid,
-            data: writeBuf.toString('hex'), direction: '\u2192DEV',
-          });
         } catch (err) {
           writeResults.push({ charUuid: c.uuid, dataHex: writeBuf.toString('hex'), ok: false, error: (err as Error).message });
-          pushBleLog({
-            ts: Date.now(), type: 'error', deviceName: devName, mac: targetMac,
-            rssi: 0, characteristic: c.uuid,
-            data: `Write failed: ${(err as Error).message}`, direction: '',
-          });
         }
       }
-
-      // Wait for responses
       await sleep(opts.durationMs ?? 3000);
     } else {
-      // Just listen
       await sleep(opts.durationMs ?? 3000);
     }
 
-    const afterCount = notifications.length;
-    console.log(`[BLE-RAW] Captured ${afterCount - baselineCount} new notifications after write`);
-
-    // Unsubscribe
-    for (const c of result.characteristics) {
-      if (c.properties.includes('notify')) {
-        try { await c.unsubscribeAsync(); } catch { /* ignore */ }
-      }
+    for (const c of result.characteristics as AnyObj[]) {
+      if (c.properties.includes('notify')) { try { await c.unsubscribeAsync(); } catch { /* ignore */ } }
     }
 
+    try { await peripheral.disconnectAsync(); } catch { /* ignore */ }
+    pushBleLog({ ts: Date.now(), type: 'disconnect', deviceName: devName, mac: targetMac, rssi: 0, direction: '' });
+
     return { services, notifications, writeResults };
+
   } finally {
-    try {
-      await (peripheral as Peripheral).disconnectAsync();
-      pushBleLog({ ts: Date.now(), type: 'disconnect', deviceName: devName, mac: targetMac, rssi: 0, direction: '' });
-    } catch { /* ignore */ }
-    console.log('[BLE-RAW] Disconnected');
-    await resumeBackgroundScan();
+    try { await Promise.race([resumeBackgroundScan(), sleep(5000)]); } catch { /* ignore */ }
   }
 }

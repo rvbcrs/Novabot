@@ -54,6 +54,7 @@ export function setupGuard(req: Request, res: Response, next: NextFunction): voi
   // - Static files for wizard UI
   if (
     req.path.startsWith('/api/setup') ||
+    req.path.startsWith('/api/admin') ||
     req.path.startsWith('/api/nova-network') ||
     req.path.startsWith('/api/dashboard/admin/import') ||
     req.path.startsWith('/x3/') ||

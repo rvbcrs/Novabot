@@ -417,9 +417,52 @@ setupRouter.get('/dns-check', async (_req, res) => {
   });
 });
 
-// ── GET /health ──────────────────────────────────────────────────────────────
+// ── GET /health — replaced by version below with devicesConnected ────────────
 
-setupRouter.get('/health', (_req, res) => {
+// ── WiFi switch (RPi only) ──────────────────────────────────────────────────
+
+setupRouter.post('/switch-wifi', async (req: Request, res: Response) => {
+  const { mode, ssid, password } = req.body as { mode?: string; ssid?: string; password?: string };
+  const { exec } = await import('child_process');
+  const { promisify } = await import('util');
+  const execAsync = promisify(exec);
+
+  try {
+    if (mode === 'ap') {
+      // Switch to AP mode
+      await execAsync('sudo /opt/opennovabot/wifi-switch.sh ap');
+      res.json({ ok: true, mode: 'ap', ip: '192.168.4.1' });
+    } else if (mode === 'home' || ssid) {
+      // Switch to home WiFi
+      if (ssid) {
+        // Configure new WiFi network first
+        await execAsync(`sudo nmcli device wifi connect "${ssid}" password "${password}" 2>/dev/null || sudo nmcli connection up netplan-wlan0-${ssid} 2>/dev/null`).catch(() => {});
+      }
+      await execAsync('sudo /opt/opennovabot/wifi-switch.sh home');
+      res.json({ ok: true, mode: 'home' });
+    } else {
+      // Status
+      const { stdout } = await execAsync('sudo /opt/opennovabot/wifi-switch.sh status');
+      res.json({ ok: true, status: stdout.trim() });
+    }
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    res.json({ ok: false, error: msg });
+  }
+});
+
+// ── GET /factory-lookup — lookup MAC from factory DB (no auth/setup needed) ──
+
+setupRouter.get('/factory-lookup', (req: Request, res: Response) => {
+  const sn = (req.query.sn as string || '').trim().toUpperCase();
+  if (!sn) { res.json({ mac: null, error: 'sn required' }); return; }
+  const row = db.prepare('SELECT mac_address FROM device_factory WHERE sn = ?').get(sn) as { mac_address: string } | undefined;
+  res.json({ sn, mac: row?.mac_address || null });
+});
+
+// ── Device connection count (for MQTT polling) ─────────────────────────────
+
+setupRouter.get('/health', async (_req: Request, res: Response) => {
   const userCount = (db.prepare('SELECT COUNT(*) as count FROM users').get() as { count: number }).count;
   const equipCount = (db.prepare('SELECT COUNT(*) as count FROM equipment').get() as { count: number }).count;
   const deviceCount = (db.prepare('SELECT COUNT(*) as count FROM device_registry').get() as { count: number }).count;
@@ -430,11 +473,41 @@ setupRouter.get('/health', (_req, res) => {
     ORDER BY last_seen DESC LIMIT 1
   `).get() as { sn: string; last_seen: string } | undefined;
 
+  const connectedCount = (db.prepare(`
+    SELECT COUNT(DISTINCT sn) as count FROM device_registry
+    WHERE sn IS NOT NULL AND datetime(last_seen) > datetime('now', '-1 minutes')
+  `).get() as { count: number }).count;
+
+  // Own IP
+  const { networkInterfaces } = await import('os');
+  let serverIp = '192.168.4.1';
+  for (const addrs of Object.values(networkInterfaces())) {
+    if (!addrs) continue;
+    for (const addr of addrs) {
+      if (addr.family === 'IPv4' && !addr.internal) { serverIp = addr.address; break; }
+    }
+    if (serverIp !== '192.168.4.1') break;
+  }
+
+  // DHCP leases — which devices are on the AP
+  let apClients: string[] = [];
+  try {
+    const { readFileSync } = await import('fs');
+    const leases = readFileSync('/var/lib/misc/dnsmasq.leases', 'utf8');
+    apClients = leases.trim().split('\n').filter(Boolean).map(l => {
+      const [, mac, ip, host] = l.split(' ');
+      return `${mac} ${ip}${host && host !== '*' ? ' ('+host+')' : ''}`;
+    });
+  } catch { /* not RPi or no leases yet */ }
+
   res.json({
     server: 'running',
     mqtt: 'running',
+    serverIp,
+    apClients,
     users: userCount,
     equipment: equipCount,
+    devicesConnected: connectedCount,
     devicesEverConnected: deviceCount,
     lastDeviceOnline: recentDevice ?? null,
     setupComplete: isSetupComplete(),

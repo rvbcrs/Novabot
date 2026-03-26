@@ -134,6 +134,20 @@ export function getRecentBleDevices(): RecentBleDevice[] {
   return Array.from(recentBleDevices.values()).filter(d => d.lastSeen > cutoff);
 }
 
+/** All BLE devices seen (any name) — id → device */
+const allBleDevices = new Map<string, RecentBleDevice & { novabot: boolean }>();
+
+/**
+ * Get ALL recently seen BLE devices (within last 60s), not just Novabot ones.
+ * Used by wizard console to show what the RPi can see.
+ */
+export function getAllRecentBleDevices(): (RecentBleDevice & { novabot: boolean })[] {
+  const cutoff = Date.now() - 5 * 60_000; // 5 minutes
+  return Array.from(allBleDevices.values())
+    .filter(d => d.lastSeen > cutoff)
+    .sort((a, b) => b.rssi - a.rssi);
+}
+
 // ── Background advertisement scanner ──────────────────────────────
 
 const NOVABOT_COMPANY_ID = 0x5566;
@@ -141,9 +155,15 @@ const TARGET_PREFIXES = ['novabot', 'charger_pile', 'charger'];
 
 let noble: Noble | null = null;
 let bgScanActive = false;
+
+export function isBackgroundScanActive(): boolean { return bgScanActive; }
 /** Suppress duplicate advertisements within this window (ms) */
 const DEDUP_WINDOW = 2000;
 const lastSeen = new Map<string, number>();
+
+/** Console log dedup for ALL devices — suppress repeats within 30s */
+const CONSOLE_DEDUP = 30_000;
+const consoleLastSeen = new Map<string, number>();
 
 /**
  * Initialize the BLE logger. Call once with the Socket.io emit function.
@@ -168,38 +188,34 @@ export function sendBleLogHistory(emit: (event: string, data: unknown) => void):
   emit('ble:log:history', logBuffer);
 }
 
-async function startBackgroundScan(): Promise<void> {
-  if (bgScanActive) return;
-
-  try {
-    const mod = await import('@stoprocent/noble');
-    noble = mod.default;
-  } catch (err) {
-    console.warn('[BLE-LOG] Noble not available:', (err as Error).message);
-    return;
-  }
-
-  // Wait for adapter to be powered on
-  if (noble.state !== 'poweredOn') {
-    await new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error('Bluetooth adapter timeout')), 8000);
-      const onState = (state: string) => {
-        if (state === 'poweredOn') {
-          clearTimeout(timeout);
-          noble!.removeListener('stateChange', onState);
-          resolve();
-        }
-      };
-      noble!.on('stateChange', onState);
-    });
-  }
-
-  const onDiscover = (peripheral: Peripheral) => {
+const onDiscover = (peripheral: Peripheral) => {
     const localName = peripheral.advertisement?.localName ?? '';
     const nameLower = localName.toLowerCase();
+    const devId = peripheral.id ?? peripheral.uuid ?? '??';
+    const rssi = peripheral.rssi ?? 0;
 
-    // Only log Novabot devices
-    if (!TARGET_PREFIXES.some(p => nameLower.startsWith(p))) return;
+    // Track ALL devices in allBleDevices cache + console log (deduped per 30s)
+    const isNovabot = TARGET_PREFIXES.some(p => nameLower.startsWith(p));
+    const consoleKey = devId;
+    const nowAll = Date.now();
+
+    // Update all-devices cache (always)
+    const existing = allBleDevices.get(devId);
+    if (!existing || rssi > existing.rssi || nowAll - existing.lastSeen > 5_000) {
+      allBleDevices.set(devId, { mac: devId, rssi, lastSeen: nowAll, name: localName || '(no name)', novabot: isNovabot });
+    }
+
+    if (!consoleLastSeen.has(consoleKey) || nowAll - consoleLastSeen.get(consoleKey)! >= CONSOLE_DEDUP) {
+      consoleLastSeen.set(consoleKey, nowAll);
+      if (isNovabot) {
+        console.log(`[BLE-SCAN] *** ${localName || '(no name)'} | id=${devId} | ${rssi}dBm ***`);
+      } else {
+        console.log(`[BLE-SCAN]     ${localName || '(no name)'} | id=${devId} | ${rssi}dBm`);
+      }
+    }
+
+    // Only process/log Novabot devices further
+    if (!isNovabot) return;
 
     // Extract MAC from manufacturer data
     const mfgData = peripheral.advertisement?.manufacturerData;
@@ -254,6 +270,32 @@ async function startBackgroundScan(): Promise<void> {
     });
   };
 
+async function startBackgroundScan(): Promise<void> {
+  if (bgScanActive) return;
+
+  try {
+    const mod = await import('@stoprocent/noble');
+    noble = mod.default;
+  } catch (err) {
+    console.warn('[BLE-LOG] Noble not available:', (err as Error).message);
+    return;
+  }
+
+  // Wait for adapter to be powered on
+  if (noble.state !== 'poweredOn') {
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('Bluetooth adapter timeout')), 8000);
+      const onState = (state: string) => {
+        if (state === 'poweredOn') {
+          clearTimeout(timeout);
+          noble!.removeListener('stateChange', onState);
+          resolve();
+        }
+      };
+      noble!.on('stateChange', onState);
+    });
+  }
+
   noble.on('discover', onDiscover);
 
   try {
@@ -277,8 +319,9 @@ async function startBackgroundScan(): Promise<void> {
  * Temporarily pause background scanning (for provisioner/raw diagnostic).
  */
 export async function pauseBackgroundScan(): Promise<void> {
-  if (!noble || !bgScanActive) return;
+  if (!noble) return;
   try {
+    noble.removeAllListeners('discover'); // remove background listener so provisioner has clean slate
     await noble.stopScanningAsync();
     bgScanActive = false;
     console.log('[BLE-LOG] Background scan paused');
@@ -289,10 +332,29 @@ export async function pauseBackgroundScan(): Promise<void> {
  * Resume background scanning after provisioner/raw diagnostic is done.
  */
 export async function resumeBackgroundScan(): Promise<void> {
-  if (!noble || bgScanActive) return;
+  if (!noble) return;
+  bgScanActive = false; // force reset — BlueZ may have been restarted
   try {
+    // After BlueZ restart, noble needs time to re-detect the adapter
+    if (noble.state !== 'poweredOn') {
+      console.log(`[BLE-LOG] Waiting for adapter (state: ${noble.state})...`);
+      await new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error('Adapter timeout')), 8000);
+        const onState = (state: string) => {
+          if (state === 'poweredOn') {
+            clearTimeout(timeout);
+            noble!.removeListener('stateChange', onState);
+            resolve();
+          }
+        };
+        noble!.on('stateChange', onState);
+      });
+    }
+    noble.on('discover', onDiscover); // re-attach background listener
     await noble.startScanningAsync([], true);
     bgScanActive = true;
     console.log('[BLE-LOG] Background scan resumed');
-  } catch { /* ignore */ }
+  } catch (err) {
+    console.warn('[BLE-LOG] Failed to resume scanning:', (err as Error).message);
+  }
 }

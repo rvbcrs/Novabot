@@ -1043,8 +1043,9 @@ export async function startMqttBroker(): Promise<void> {
     socket.on('error', () => {}); // voorkom unhandled error crashes
     (broker.handle as (socket: net.Socket) => void)(socket);
   });
-  server.listen(1883, '0.0.0.0', () => {
-    console.log(`${C.cyan}[MQTT] Broker luistert op port 1883${C.reset}`);
+  const mqttPort = parseInt(process.env.MQTT_PORT || '1883', 10);
+  server.listen(mqttPort, '0.0.0.0', () => {
+    console.log(`${C.cyan}[MQTT] Broker luistert op port ${mqttPort}${C.reset}`);
   });
 }
 

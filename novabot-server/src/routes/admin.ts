@@ -7,8 +7,14 @@ import { db } from '../db/database.js';
 import { DeviceRegistryRow } from '../types/index.js';
 import { scanForDevices, isBleAvailable } from '../ble/scanner.js';
 import { provisionDevice, type ProvisionParams } from '../ble/provisioner.js';
+import { getAllRecentBleDevices, isBackgroundScanActive } from '../ble/bleLogger.js';
 
 export const adminRouter = Router();
+
+// GET /api/admin/ble-nearby  — returns ALL BLE devices seen in the last 60s by background scanner
+adminRouter.get('/ble-nearby', (_req: Request, res: Response) => {
+  res.json({ scanning: isBackgroundScanActive(), devices: getAllRecentBleDevices() });
+});
 
 // GET /api/admin/ble-scan  — scan for nearby Novabot BLE devices
 // Returns devices with BLE MAC extracted from manufacturer data (0x5566)
