@@ -5,6 +5,8 @@
  * Dark theme (#1a1a2e) with purple/teal accents.
  *
  * CRITICAL: No PSRAM on this board — all buffers in internal SRAM.
+ *
+ * v2.0 — Menu-based state machine with flow selection.
  */
 
 #include "display.h"
@@ -31,17 +33,24 @@ volatile bool ui_wifiRescanPressed  = false;
 char ui_wifiPassword[64]            = {0};
 char ui_wifiSsid[33]                = {0};
 
+// v2.0: Menu + firmware UI flags
+volatile int  ui_menuSelection      = -1;
+volatile bool ui_backPressed        = false;
+volatile bool ui_flashConfirmed     = false;
+volatile bool ui_flashSkipped       = false;
+
 // ── Theme colors ────────────────────────────────────────────────────────────
 
 #define COL_BG       lv_color_hex(0x1a1a2e)
 #define COL_CARD     lv_color_hex(0x16213e)
-#define COL_TEXT     lv_color_hex(0xffffff)
-#define COL_DIM      lv_color_hex(0x9ca3af)
-#define COL_PURPLE   lv_color_hex(0xa78bfa)
-#define COL_TEAL     lv_color_hex(0x2dd4bf)
+#define COL_TEXT     lv_color_hex(0xe0e0e0)
+#define COL_DIM      lv_color_hex(0x6b7280)
+#define COL_PURPLE   lv_color_hex(0x7c3aed)
+#define COL_TEAL     lv_color_hex(0x00d4aa)
 #define COL_GREEN    lv_color_hex(0x22c55e)
 #define COL_RED      lv_color_hex(0xef4444)
 #define COL_ORANGE   lv_color_hex(0xf59e0b)
+#define COL_GRAY_BTN lv_color_hex(0x374151)
 
 // ── Screen dimensions ───────────────────────────────────────────────────────
 
@@ -177,12 +186,24 @@ static lv_obj_t *mqtt_scr = nullptr;
 static lv_obj_t *mqtt_chg_label = nullptr;
 static lv_obj_t *mqtt_mow_label = nullptr;
 
+// Persistent detect screen labels
+static lv_obj_t *detect_scr = nullptr;
+static lv_obj_t *detect_time_label = nullptr;
+static lv_obj_t *detect_wifi_label = nullptr;
+static lv_obj_t *detect_chg_label = nullptr;
+static lv_obj_t *detect_mow_label = nullptr;
+
 // Create a dark base screen
 static lv_obj_t* create_screen() {
-    // Reset persistent screen pointers (mqtt wait screen caching)
+    // Reset persistent screen pointers
     mqtt_scr = nullptr;
     mqtt_chg_label = nullptr;
     mqtt_mow_label = nullptr;
+    detect_scr = nullptr;
+    detect_time_label = nullptr;
+    detect_wifi_label = nullptr;
+    detect_chg_label = nullptr;
+    detect_mow_label = nullptr;
 
     lv_obj_t *scr = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(scr, COL_BG, 0);
@@ -270,6 +291,24 @@ static void done_tap_cb(lv_event_t *e) {
 
 static void error_tap_cb(lv_event_t *e) {
     ui_btnPressed = true;
+}
+
+// v2.0: Menu callbacks
+static void menu_btn_cb(lv_event_t *e) {
+    int idx = (int)(intptr_t)lv_event_get_user_data(e);
+    ui_menuSelection = idx;
+}
+
+static void back_btn_cb(lv_event_t *e) {
+    ui_backPressed = true;
+}
+
+static void flash_confirm_cb(lv_event_t *e) {
+    ui_flashConfirmed = true;
+}
+
+static void flash_skip_cb(lv_event_t *e) {
+    ui_flashSkipped = true;
 }
 
 // ── Public API ──────────────────────────────────────────────────────────────
@@ -602,6 +641,9 @@ void display_mqttWait(bool chargerConnected, bool mowerConnected) {
         lv_obj_set_style_text_font(mqtt_mow_label, &lv_font_montserrat_14, 0);
         lv_obj_align(mqtt_mow_label, LV_ALIGN_LEFT_MID, 20, 80);
 
+        // Skip button
+        add_bottom_btn(mqtt_scr, "Next " LV_SYMBOL_RIGHT, generic_btn_cb);
+
         lv_scr_load(mqtt_scr);
     }
 
@@ -656,6 +698,7 @@ void display_ota(const char* status) {
 void display_done() {
     if (!lvgl_lock(100)) return;
     ui_btnPressed = false;
+    ui_backPressed = false;
 
     lv_obj_t *scr = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(scr, lv_color_hex(0x0a2e1a), 0);  // Dark green tint
@@ -670,11 +713,22 @@ void display_done() {
     lv_obj_align(check, LV_ALIGN_CENTER, 0, -50);
 
     add_label(scr, "Done!", &lv_font_montserrat_28, COL_GREEN, 140);
-    add_label(scr, "Tap to restart", &lv_font_montserrat_14, COL_DIM, 185);
 
-    // Tap anywhere
-    lv_obj_add_event_cb(scr, done_tap_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_add_flag(scr, LV_OBJ_FLAG_CLICKABLE);
+    // "Menu" button instead of "tap to restart"
+    lv_obj_t *btn = lv_btn_create(scr);
+    lv_obj_set_size(btn, 160, 44);
+    lv_obj_align(btn, LV_ALIGN_BOTTOM_MID, 0, -20);
+    lv_obj_set_style_bg_color(btn, COL_PURPLE, 0);
+    lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(btn, 12, 0);
+    lv_obj_set_style_shadow_width(btn, 0, 0);
+    lv_obj_set_style_border_width(btn, 0, 0);
+    lv_obj_t *btn_lbl = lv_label_create(btn);
+    lv_label_set_text(btn_lbl, LV_SYMBOL_HOME " Menu");
+    lv_obj_set_style_text_font(btn_lbl, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_color(btn_lbl, COL_TEXT, 0);
+    lv_obj_center(btn_lbl);
+    lv_obj_add_event_cb(btn, back_btn_cb, LV_EVENT_CLICKED, NULL);
 
     lv_scr_load(scr);
     lvgl_unlock();
@@ -683,6 +737,7 @@ void display_done() {
 void display_error(const char* msg) {
     if (!lvgl_lock(100)) return;
     ui_btnPressed = false;
+    ui_backPressed = false;
 
     lv_obj_t *scr = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(scr, lv_color_hex(0x2e0a0a), 0);  // Dark red tint
@@ -694,9 +749,9 @@ void display_error(const char* msg) {
     lv_label_set_text(xmark, LV_SYMBOL_CLOSE);
     lv_obj_set_style_text_font(xmark, &lv_font_montserrat_28, 0);
     lv_obj_set_style_text_color(xmark, COL_RED, 0);
-    lv_obj_align(xmark, LV_ALIGN_CENTER, 0, -60);
+    lv_obj_align(xmark, LV_ALIGN_CENTER, 0, -70);
 
-    add_label(scr, "Error", &lv_font_montserrat_28, COL_RED, 120);
+    add_label(scr, "Error", &lv_font_montserrat_28, COL_RED, 110);
 
     // Error message with word wrap
     lv_obj_t *lbl = lv_label_create(scr);
@@ -706,13 +761,38 @@ void display_error(const char* msg) {
     lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_width(lbl, SCREEN_W - 30);
     lv_label_set_long_mode(lbl, LV_LABEL_LONG_WRAP);
-    lv_obj_align(lbl, LV_ALIGN_CENTER, 0, 20);
+    lv_obj_align(lbl, LV_ALIGN_CENTER, 0, 10);
 
-    add_label(scr, "Tap to retry", &lv_font_montserrat_14, COL_DIM, 260);
+    // Two buttons: Retry + Menu
+    lv_obj_t *retry_btn = lv_btn_create(scr);
+    lv_obj_set_size(retry_btn, 100, 40);
+    lv_obj_align(retry_btn, LV_ALIGN_BOTTOM_LEFT, 16, -16);
+    lv_obj_set_style_bg_color(retry_btn, COL_RED, 0);
+    lv_obj_set_style_bg_opa(retry_btn, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(retry_btn, 10, 0);
+    lv_obj_set_style_shadow_width(retry_btn, 0, 0);
+    lv_obj_set_style_border_width(retry_btn, 0, 0);
+    lv_obj_t *retry_lbl = lv_label_create(retry_btn);
+    lv_label_set_text(retry_lbl, "Retry");
+    lv_obj_set_style_text_font(retry_lbl, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(retry_lbl, COL_TEXT, 0);
+    lv_obj_center(retry_lbl);
+    lv_obj_add_event_cb(retry_btn, error_tap_cb, LV_EVENT_CLICKED, NULL);
 
-    // Tap anywhere
-    lv_obj_add_event_cb(scr, error_tap_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_add_flag(scr, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_t *menu_btn = lv_btn_create(scr);
+    lv_obj_set_size(menu_btn, 100, 40);
+    lv_obj_align(menu_btn, LV_ALIGN_BOTTOM_RIGHT, -16, -16);
+    lv_obj_set_style_bg_color(menu_btn, COL_PURPLE, 0);
+    lv_obj_set_style_bg_opa(menu_btn, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(menu_btn, 10, 0);
+    lv_obj_set_style_shadow_width(menu_btn, 0, 0);
+    lv_obj_set_style_border_width(menu_btn, 0, 0);
+    lv_obj_t *menu_lbl = lv_label_create(menu_btn);
+    lv_label_set_text(menu_lbl, "Menu");
+    lv_obj_set_style_text_font(menu_lbl, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(menu_lbl, COL_TEXT, 0);
+    lv_obj_center(menu_lbl);
+    lv_obj_add_event_cb(menu_btn, back_btn_cb, LV_EVENT_CLICKED, NULL);
 
     lv_scr_load(scr);
     lvgl_unlock();
@@ -866,7 +946,7 @@ void display_wifiPassword(const char* ssid) {
     add_label(scr, ssidStr, &lv_font_montserrat_14, COL_DIM, 28);
 
     // Hint: use phone instead
-    add_label(scr, "Or use phone: 192.168.4.1/wifi", &lv_font_montserrat_14, COL_PURPLE, 46);
+    add_label(scr, "Or use phone: 10.0.0.1/wifi", &lv_font_montserrat_14, COL_PURPLE, 46);
 
     // Textarea for password input — NO PASSWORD MASKING (screen is tiny)
     lv_obj_t *ta = lv_textarea_create(scr);
@@ -953,6 +1033,366 @@ void display_reprovision(const char* status, int step, int total) {
     lvgl_unlock();
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+// v2.0: New display functions — Menu, Detect, Firmware Check, Firmware Flash
+// ══════════════════════════════════════════════════════════════════════════════
+
+void display_menu(bool sdMounted, bool hasMowerFw, bool hasChargerFw,
+                  const char* mowerFwVer, const char* chargerFwVer,
+                  bool mowerMqtt, bool chargerMqtt) {
+    if (!lvgl_lock(100)) return;
+    ui_menuSelection = -1;
+
+    lv_obj_t *scr = create_screen();
+
+    // ── Title bar ──
+    lv_obj_t *title = lv_label_create(scr);
+    lv_label_set_text(title, "OpenNova Setup");
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_color(title, COL_TEXT, 0);
+    lv_obj_align(title, LV_ALIGN_TOP_LEFT, 10, 6);
+
+    lv_obj_t *ver = lv_label_create(scr);
+    lv_label_set_text(ver, "v2.0");
+    lv_obj_set_style_text_font(ver, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(ver, COL_DIM, 0);
+    lv_obj_align(ver, LV_ALIGN_TOP_RIGHT, -10, 10);
+
+    // ── Menu buttons (4 options) ──
+    // Helper: create a menu button with icon, title, subtitle
+    struct MenuEntry {
+        const char* icon;
+        const char* label;
+        const char* sub;
+        bool enabled;
+        int index;
+    };
+
+    bool canFlash = (hasMowerFw && mowerMqtt) || (hasChargerFw && chargerMqtt);
+    bool canWifi = mowerMqtt || chargerMqtt;
+
+    MenuEntry entries[4] = {
+        { LV_SYMBOL_SETTINGS, "Provision + Flash", "Full setup with firmware", true, 0 },
+        { LV_SYMBOL_WIFI,     "Provision Only",    "BLE setup, no firmware",   true, 1 },
+        { LV_SYMBOL_DOWNLOAD, "Flash Firmware",    "Update connected devices", canFlash, 2 },
+        { LV_SYMBOL_HOME,     "Home WiFi Setup",   "Switch to home network",   canWifi, 3 },
+    };
+
+    lv_coord_t y = 34;
+    for (int i = 0; i < 4; i++) {
+        lv_obj_t *btn = lv_btn_create(scr);
+        lv_obj_set_size(btn, 220, 54);
+        lv_obj_align(btn, LV_ALIGN_TOP_MID, 0, y);
+        lv_obj_set_style_bg_color(btn, entries[i].enabled ? COL_PURPLE : COL_GRAY_BTN, 0);
+        lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(btn, 10, 0);
+        lv_obj_set_style_shadow_width(btn, 0, 0);
+        lv_obj_set_style_border_width(btn, 0, 0);
+        lv_obj_set_style_pad_left(btn, 12, 0);
+        lv_obj_set_style_pad_right(btn, 12, 0);
+        lv_obj_set_style_pad_top(btn, 6, 0);
+        lv_obj_set_style_pad_bottom(btn, 6, 0);
+        lv_obj_set_flex_flow(btn, LV_FLEX_FLOW_ROW);
+        lv_obj_set_flex_align(btn, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+        // Icon
+        lv_obj_t *ico = lv_label_create(btn);
+        lv_label_set_text(ico, entries[i].icon);
+        lv_obj_set_style_text_font(ico, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(ico, entries[i].enabled ? COL_TEXT : COL_DIM, 0);
+        lv_obj_set_style_pad_right(ico, 10, 0);
+
+        // Text container (title + subtitle stacked)
+        lv_obj_t *textCol = lv_obj_create(btn);
+        lv_obj_set_size(textCol, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+        lv_obj_set_style_bg_opa(textCol, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(textCol, 0, 0);
+        lv_obj_set_style_pad_all(textCol, 0, 0);
+        lv_obj_set_flex_flow(textCol, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_style_pad_row(textCol, 2, 0);
+
+        // Title
+        lv_obj_t *lbl = lv_label_create(textCol);
+        lv_label_set_text(lbl, entries[i].label);
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(lbl, entries[i].enabled ? COL_TEXT : COL_DIM, 0);
+
+        // Subtitle inside button
+        lv_obj_t *sub = lv_label_create(textCol);
+        lv_label_set_text(sub, entries[i].sub);
+        lv_obj_set_style_text_font(sub, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_color(sub, entries[i].enabled ? lv_color_hex(0xc0c8d0) : COL_DIM, 0);
+
+        if (entries[i].enabled) {
+            lv_obj_add_event_cb(btn, menu_btn_cb, LV_EVENT_CLICKED, (void*)(intptr_t)entries[i].index);
+        }
+
+        y += 60;  // button height (54) + gap (6)
+    }
+
+    // ── Status bar at bottom ──
+    // SD + firmware info
+    char sdLine[80];
+    if (sdMounted) {
+        char parts[60] = "";
+        if (hasMowerFw) {
+            snprintf(parts, sizeof(parts), "Mower %s", mowerFwVer ? mowerFwVer : "?");
+        }
+        if (hasChargerFw) {
+            if (strlen(parts) > 0) strncat(parts, " " LV_SYMBOL_DUMMY " ", sizeof(parts) - strlen(parts) - 1);
+            strncat(parts, "Charger ", sizeof(parts) - strlen(parts) - 1);
+            strncat(parts, chargerFwVer ? chargerFwVer : LV_SYMBOL_OK, sizeof(parts) - strlen(parts) - 1);
+        }
+        if (strlen(parts) == 0) {
+            snprintf(sdLine, sizeof(sdLine), "SD: mounted, no firmware");
+        } else {
+            snprintf(sdLine, sizeof(sdLine), "SD: %s", parts);
+        }
+    } else {
+        snprintf(sdLine, sizeof(sdLine), "SD: not mounted");
+    }
+
+    lv_obj_t *sd_lbl = lv_label_create(scr);
+    lv_label_set_text(sd_lbl, sdLine);
+    lv_obj_set_style_text_font(sd_lbl, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(sd_lbl, COL_DIM, 0);
+    lv_obj_set_width(sd_lbl, SCREEN_W - 16);
+    lv_label_set_long_mode(sd_lbl, LV_LABEL_LONG_DOT);
+    lv_obj_align(sd_lbl, LV_ALIGN_BOTTOM_LEFT, 8, -36);
+
+    // Charger status
+    char chgLine[48];
+    snprintf(chgLine, sizeof(chgLine), "%s Charger: %s",
+             chargerMqtt ? LV_SYMBOL_OK : LV_SYMBOL_CLOSE,
+             chargerMqtt ? "connected" : "not connected");
+    lv_obj_t *chg_lbl = lv_label_create(scr);
+    lv_label_set_text(chg_lbl, chgLine);
+    lv_obj_set_style_text_font(chg_lbl, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(chg_lbl, chargerMqtt ? COL_GREEN : COL_DIM, 0);
+    lv_obj_align(chg_lbl, LV_ALIGN_BOTTOM_LEFT, 8, -22);
+
+    // Mower status
+    char mowLine[48];
+    snprintf(mowLine, sizeof(mowLine), "%s Mower: %s",
+             mowerMqtt ? LV_SYMBOL_OK : LV_SYMBOL_CLOSE,
+             mowerMqtt ? "connected" : "not connected");
+    lv_obj_t *mow_lbl = lv_label_create(scr);
+    lv_label_set_text(mow_lbl, mowLine);
+    lv_obj_set_style_text_font(mow_lbl, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(mow_lbl, mowerMqtt ? COL_GREEN : COL_DIM, 0);
+    lv_obj_align(mow_lbl, LV_ALIGN_BOTTOM_LEFT, 8, -8);
+
+    lv_scr_load(scr);
+    lvgl_unlock();
+}
+
+void display_detect(int secondsElapsed, int wifiClients, bool chargerMqtt, bool mowerMqtt) {
+    if (!lvgl_lock(100)) return;
+
+    // Create screen only once — update labels on subsequent calls
+    if (!detect_scr || lv_scr_act() != detect_scr) {
+        detect_scr = create_screen();
+
+        add_label(detect_scr, "Detecting devices...", &lv_font_montserrat_20, COL_TEXT, 30);
+
+        // Spinner
+        lv_obj_t *spinner = lv_spinner_create(detect_scr, 1200, 60);
+        lv_obj_set_size(spinner, 50, 50);
+        lv_obj_align(spinner, LV_ALIGN_CENTER, 0, -30);
+        lv_obj_set_style_arc_color(spinner, COL_PURPLE, LV_PART_INDICATOR);
+        lv_obj_set_style_arc_color(spinner, COL_CARD, LV_PART_MAIN);
+        lv_obj_set_style_arc_width(spinner, 5, LV_PART_INDICATOR);
+        lv_obj_set_style_arc_width(spinner, 5, LV_PART_MAIN);
+
+        // Dynamic labels
+        detect_time_label = lv_label_create(detect_scr);
+        lv_obj_set_style_text_font(detect_time_label, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(detect_time_label, COL_DIM, 0);
+        lv_obj_align(detect_time_label, LV_ALIGN_CENTER, 0, 30);
+
+        detect_wifi_label = lv_label_create(detect_scr);
+        lv_obj_set_style_text_font(detect_wifi_label, &lv_font_montserrat_14, 0);
+        lv_obj_align(detect_wifi_label, LV_ALIGN_LEFT_MID, 20, 60);
+
+        detect_chg_label = lv_label_create(detect_scr);
+        lv_obj_set_style_text_font(detect_chg_label, &lv_font_montserrat_14, 0);
+        lv_obj_align(detect_chg_label, LV_ALIGN_LEFT_MID, 20, 80);
+
+        detect_mow_label = lv_label_create(detect_scr);
+        lv_obj_set_style_text_font(detect_mow_label, &lv_font_montserrat_14, 0);
+        lv_obj_align(detect_mow_label, LV_ALIGN_LEFT_MID, 20, 100);
+
+        // Skip button
+        add_bottom_btn(detect_scr, "Skip " LV_SYMBOL_RIGHT, generic_btn_cb);
+
+        lv_scr_load(detect_scr);
+    }
+
+    // Update dynamic labels
+    char timeBuf[32];
+    snprintf(timeBuf, sizeof(timeBuf), "%ds elapsed", secondsElapsed);
+    lv_label_set_text(detect_time_label, timeBuf);
+
+    char wifiBuf[32];
+    snprintf(wifiBuf, sizeof(wifiBuf), LV_SYMBOL_WIFI "  WiFi clients: %d", wifiClients);
+    lv_label_set_text(detect_wifi_label, wifiBuf);
+    lv_obj_set_style_text_color(detect_wifi_label, wifiClients > 0 ? COL_TEAL : COL_DIM, 0);
+
+    char chgBuf[40];
+    snprintf(chgBuf, sizeof(chgBuf), "%s  Charger: %s",
+             chargerMqtt ? LV_SYMBOL_OK : LV_SYMBOL_CLOSE,
+             chargerMqtt ? "connected" : "waiting...");
+    lv_label_set_text(detect_chg_label, chgBuf);
+    lv_obj_set_style_text_color(detect_chg_label, chargerMqtt ? COL_GREEN : COL_DIM, 0);
+
+    char mowBuf[40];
+    snprintf(mowBuf, sizeof(mowBuf), "%s  Mower: %s",
+             mowerMqtt ? LV_SYMBOL_OK : LV_SYMBOL_CLOSE,
+             mowerMqtt ? "connected" : "waiting...");
+    lv_label_set_text(detect_mow_label, mowBuf);
+    lv_obj_set_style_text_color(detect_mow_label, mowerMqtt ? COL_GREEN : COL_DIM, 0);
+
+    lvgl_unlock();
+}
+
+void display_firmware_check(bool hasMowerFw, bool hasChargerFw,
+                            const char* mowerVer, const char* chargerVer,
+                            bool mowerOnline, bool chargerOnline) {
+    if (!lvgl_lock(100)) return;
+    ui_flashConfirmed = false;
+    ui_flashSkipped = false;
+
+    lv_obj_t *scr = create_screen();
+
+    add_label(scr, "Flash Firmware", &lv_font_montserrat_20, COL_ORANGE, 12);
+
+    lv_coord_t y = 48;
+
+    // Mower firmware
+    char mowLine[80];
+    if (hasMowerFw) {
+        snprintf(mowLine, sizeof(mowLine), "%s Mower: %s  %s",
+                 LV_SYMBOL_DOWNLOAD,
+                 mowerVer ? mowerVer : "?",
+                 mowerOnline ? "(online)" : "(offline)");
+    } else {
+        snprintf(mowLine, sizeof(mowLine), "%s Mower: no firmware on SD", LV_SYMBOL_CLOSE);
+    }
+    lv_obj_t *mow_lbl = lv_label_create(scr);
+    lv_label_set_text(mow_lbl, mowLine);
+    lv_obj_set_style_text_font(mow_lbl, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(mow_lbl, (hasMowerFw && mowerOnline) ? COL_GREEN : COL_DIM, 0);
+    lv_obj_set_width(mow_lbl, SCREEN_W - 20);
+    lv_label_set_long_mode(mow_lbl, LV_LABEL_LONG_DOT);
+    lv_obj_align(mow_lbl, LV_ALIGN_TOP_LEFT, 10, y);
+    y += 28;
+
+    // Charger firmware
+    char chgLine[80];
+    if (hasChargerFw) {
+        snprintf(chgLine, sizeof(chgLine), "%s Charger: %s  %s",
+                 LV_SYMBOL_DOWNLOAD,
+                 chargerVer ? chargerVer : "ready",
+                 chargerOnline ? "(online)" : "(offline)");
+    } else {
+        snprintf(chgLine, sizeof(chgLine), "%s Charger: no firmware on SD", LV_SYMBOL_CLOSE);
+    }
+    lv_obj_t *chg_lbl = lv_label_create(scr);
+    lv_label_set_text(chg_lbl, chgLine);
+    lv_obj_set_style_text_font(chg_lbl, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(chg_lbl, (hasChargerFw && chargerOnline) ? COL_GREEN : COL_DIM, 0);
+    lv_obj_set_width(chg_lbl, SCREEN_W - 20);
+    lv_label_set_long_mode(chg_lbl, LV_LABEL_LONG_DOT);
+    lv_obj_align(chg_lbl, LV_ALIGN_TOP_LEFT, 10, y);
+    y += 40;
+
+    // Info text
+    bool canFlash = (hasMowerFw && mowerOnline) || (hasChargerFw && chargerOnline);
+    if (canFlash) {
+        add_label(scr, "Ready to flash firmware.\nDevices will reboot.", &lv_font_montserrat_14, COL_TEXT, y);
+    } else {
+        add_label(scr, "No flashable devices.\nConnect devices first.", &lv_font_montserrat_14, COL_DIM, y);
+    }
+
+    // Bottom buttons: Skip + Flash
+    lv_obj_t *skip_btn = lv_btn_create(scr);
+    lv_obj_set_size(skip_btn, 100, 40);
+    lv_obj_align(skip_btn, LV_ALIGN_BOTTOM_LEFT, 16, -16);
+    lv_obj_set_style_bg_color(skip_btn, COL_CARD, 0);
+    lv_obj_set_style_bg_opa(skip_btn, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(skip_btn, 10, 0);
+    lv_obj_set_style_shadow_width(skip_btn, 0, 0);
+    lv_obj_set_style_border_width(skip_btn, 0, 0);
+    lv_obj_t *skip_lbl = lv_label_create(skip_btn);
+    lv_label_set_text(skip_lbl, "Skip");
+    lv_obj_set_style_text_font(skip_lbl, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(skip_lbl, COL_TEXT, 0);
+    lv_obj_center(skip_lbl);
+    lv_obj_add_event_cb(skip_btn, flash_skip_cb, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t *flash_btn = lv_btn_create(scr);
+    lv_obj_set_size(flash_btn, 100, 40);
+    lv_obj_align(flash_btn, LV_ALIGN_BOTTOM_RIGHT, -16, -16);
+    lv_obj_set_style_bg_color(flash_btn, canFlash ? COL_ORANGE : COL_GRAY_BTN, 0);
+    lv_obj_set_style_bg_opa(flash_btn, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(flash_btn, 10, 0);
+    lv_obj_set_style_shadow_width(flash_btn, 0, 0);
+    lv_obj_set_style_border_width(flash_btn, 0, 0);
+    lv_obj_t *flash_lbl = lv_label_create(flash_btn);
+    lv_label_set_text(flash_lbl, "Flash");
+    lv_obj_set_style_text_font(flash_lbl, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(flash_lbl, canFlash ? COL_TEXT : COL_DIM, 0);
+    lv_obj_center(flash_lbl);
+    if (canFlash) {
+        lv_obj_add_event_cb(flash_btn, flash_confirm_cb, LV_EVENT_CLICKED, NULL);
+    }
+
+    lv_scr_load(scr);
+    lvgl_unlock();
+}
+
+void display_firmware_flash(const char* device, const char* status, int percent) {
+    if (!lvgl_lock(100)) return;
+
+    lv_obj_t *scr = create_screen();
+
+    // Title: "Flashing <device>"
+    char title[48];
+    snprintf(title, sizeof(title), "Flashing %s", device);
+    add_label(scr, title, &lv_font_montserrat_20, COL_ORANGE, 50);
+
+    // Progress bar
+    lv_obj_t *bar = lv_bar_create(scr);
+    lv_obj_set_size(bar, 200, 16);
+    lv_obj_align(bar, LV_ALIGN_CENTER, 0, -10);
+    lv_obj_set_style_bg_color(bar, COL_CARD, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(bar, COL_ORANGE, LV_PART_INDICATOR);
+    lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, LV_PART_INDICATOR);
+    lv_obj_set_style_radius(bar, 8, LV_PART_MAIN);
+    lv_obj_set_style_radius(bar, 8, LV_PART_INDICATOR);
+    lv_bar_set_range(bar, 0, 100);
+    lv_bar_set_value(bar, percent, LV_ANIM_OFF);
+
+    // Percentage text
+    char pctStr[16];
+    snprintf(pctStr, sizeof(pctStr), "%d%%", percent);
+    add_label(scr, pctStr, &lv_font_montserrat_20, COL_TEXT, 170);
+
+    // Status text
+    lv_obj_t *lbl = lv_label_create(scr);
+    lv_label_set_text(lbl, status);
+    lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(lbl, COL_DIM, 0);
+    lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_width(lbl, SCREEN_W - 30);
+    lv_label_set_long_mode(lbl, LV_LABEL_LONG_WRAP);
+    lv_obj_align(lbl, LV_ALIGN_CENTER, 0, 50);
+
+    lv_scr_load(scr);
+    lvgl_unlock();
+}
+
 // ── Legacy hit-test API (no-ops — LVGL handles touch natively) ──────────────
 
 bool display_btnHit(int16_t x, int16_t y) {
@@ -979,6 +1419,11 @@ volatile bool ui_wifiRescanPressed  = false;
 char ui_wifiPassword[64]            = {0};
 char ui_wifiSsid[33]                = {0};
 
+volatile int  ui_menuSelection      = -1;
+volatile bool ui_backPressed        = false;
+volatile bool ui_flashConfirmed     = false;
+volatile bool ui_flashSkipped       = false;
+
 bool lvgl_lock(int) { return true; }
 void lvgl_unlock() {}
 
@@ -995,6 +1440,10 @@ void display_confirm(const char*, const char*, const char*, const char*) {}
 void display_wifiList(WifiNetwork*, int, int) {}
 void display_wifiPassword(const char*) {}
 void display_reprovision(const char*, int, int) {}
+void display_menu(bool, bool, bool, const char*, const char*, bool, bool) {}
+void display_detect(int, int, bool, bool) {}
+void display_firmware_check(bool, bool, const char*, const char*, bool, bool) {}
+void display_firmware_flash(const char*, const char*, int) {}
 bool display_btnHit(int16_t, int16_t) { return false; }
 int display_hitTest(int16_t, int16_t, int, bool&) { return -1; }
 

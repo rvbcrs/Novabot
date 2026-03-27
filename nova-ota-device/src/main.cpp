@@ -108,23 +108,46 @@ static bool wifiScanInProgress = false;
 // ── State machine ────────────────────────────────────────────────────────────
 
 enum State {
-    STATE_INIT,
+    // Boot + detect
+    STATE_BOOT,                 // Hardware init done, starting detect
+    STATE_DETECT,               // Non-blocking WiFi + MQTT detect (10s WiFi, 20s MQTT)
+    STATE_MENU,                 // Main menu — 4 flow options
+
+    // BLE provisioning flow
     STATE_BLE_SCAN,             // Scanning for BLE devices
     STATE_SELECT_DEVICES,       // Touch: select charger + mower from list
     STATE_PROVISION_CHARGER,    // BLE provisioning charger
     STATE_PROVISION_MOWER,      // BLE provisioning mower
     STATE_CONFIRM_BLE,          // Show BLE results, tap Next
-    STATE_WAIT_MQTT,            // Waiting for mower to connect via MQTT
-    STATE_CONFIRM_MQTT,         // Show MQTT results, tap Next (or skip OTA)
-    STATE_OTA_SENT,             // OTA command sent, waiting for download
-    STATE_WIFI_SCAN,            // Phase 2: scanning WiFi networks for home network
-    STATE_WIFI_PASSWORD,        // Phase 2: entering home WiFi password
-    STATE_REPROVISION,          // Phase 2: re-provisioning devices with home WiFi
-    STATE_DONE,                 // All done!
-    STATE_ERROR,
+    STATE_WAIT_MQTT,            // Waiting for MQTT connections
+
+    // Firmware flash flow
+    STATE_FIRMWARE_CHECK,       // Show firmware info + Flash/Skip buttons
+    STATE_FIRMWARE_FLASH,       // OTA command sent, waiting for download
+
+    // Home WiFi flow
+    STATE_WIFI_SCAN,            // Scanning WiFi networks for home network
+    STATE_WIFI_PASSWORD,        // Entering home WiFi password
+    STATE_REPROVISION,          // Re-provisioning devices with home WiFi
+
+    // Terminal
+    STATE_DONE,                 // Flow complete — Menu button
+    STATE_ERROR,                // Error — Retry + Menu buttons
 };
 
-static State currentState = STATE_INIT;
+// ── Flow selection ──────────────────────────────────────────────────────────
+
+enum FlowType {
+    FLOW_NONE             = -1,
+    FLOW_PROVISION_FLASH  = 0,  // Menu option 0: full setup
+    FLOW_PROVISION_ONLY   = 1,  // Menu option 1: BLE only, no firmware
+    FLOW_FLASH_ONLY       = 2,  // Menu option 2: firmware only (devices already on MQTT)
+    FLOW_HOME_WIFI        = 3,  // Menu option 3: re-provision to home network
+};
+
+static State currentState = STATE_BOOT;
+static FlowType activeFlow = FLOW_NONE;
+static bool sdMounted = false;
 static bool servicesStarted = false;
 static String statusMessage = "Initializing...";
 static bool stateJustEntered = true; // Flag for first-time screen draw per state
@@ -219,10 +242,19 @@ static NimBLEAdvertisedDevice* mowerDevice = nullptr;
 static bool bleScanning = false;
 
 // Firmware info (from SD card)
-static String firmwareFilename = "";
-static size_t firmwareSize = 0;
-static String firmwareMd5 = "";
-static String firmwareVersion = "";
+static String mowerFwFilename = "";
+static size_t mowerFwSize = 0;
+static String mowerFwMd5 = "";
+static String mowerFwVersion = "";
+static String chargerFwFilename = "";
+static size_t chargerFwSize = 0;
+static String chargerFwMd5 = "";
+static String chargerFwVersion = "";
+// Legacy aliases for compatibility
+static String& firmwareFilename = mowerFwFilename;
+static size_t& firmwareSize = mowerFwSize;
+static String& firmwareMd5 = mowerFwMd5;
+static String& firmwareVersion = mowerFwVersion;
 
 // Provision progress callback
 typedef void (*ProvisionProgressCb)(const char* device, int step, int total, const char* stepName);
@@ -321,6 +353,23 @@ void setState(State newState) {
     stateEnteredAt = millis();
 }
 
+// Flow-aware routing: what comes after MQTT wait?
+State nextStateAfterMqtt() {
+    switch (activeFlow) {
+        case FLOW_PROVISION_FLASH: return STATE_FIRMWARE_CHECK;
+        case FLOW_PROVISION_ONLY:  return STATE_WIFI_SCAN;
+        default:                   return STATE_MENU;
+    }
+}
+
+// Flow-aware routing: what comes after firmware flash?
+State nextStateAfterFlash() {
+    switch (activeFlow) {
+        case FLOW_PROVISION_FLASH: return STATE_WIFI_SCAN;
+        default:                   return STATE_DONE;
+    }
+}
+
 // ── Setup ────────────────────────────────────────────────────────────────────
 
 void setup() {
@@ -346,8 +395,10 @@ void setup() {
     delay(1500);  // Show boot screen briefly
 #endif
 
-    // Initialize SD card (optional — OTA skipped if no card)
-    if (!SD.begin(SD_CS_PIN)) {
+    // Initialize SD card — shares SPI bus with LCD (SCK=39, MISO=40, MOSI=38)
+    SPI.begin(39, 40, 38, SD_CS_PIN);
+    sdMounted = SD.begin(SD_CS_PIN);
+    if (!sdMounted) {
         Serial.println("[SD] Card mount failed — OTA will be skipped");
     } else {
         Serial.printf("[SD] Card mounted, size: %lluMB\r\n", SD.cardSize() / (1024 * 1024));
@@ -362,7 +413,7 @@ void setup() {
     userWifiSsid = AP_SSID;
     userWifiPassword = AP_PASSWORD;
 
-    // Start WiFi AP for initial device check
+    // Start WiFi AP
     setupWifiAP();
     Serial.println("[SETUP] Waiting for AP to be ready...");
     while (WiFi.softAPIP() == IPAddress(0, 0, 0, 0)) { delay(100); }
@@ -379,77 +430,8 @@ void setup() {
     NimBLEDevice::init("Nova-OTA");
     NimBLEDevice::setMTU(185);
 
-    // Wait for already-provisioned devices to connect via MQTT
-    Serial.println("[SETUP] AP active — waiting up to 45s for MQTT devices...");
-#ifdef WAVESHARE_LCD
-    display_confirm("Starting...", "Checking for connected", "devices...", "Skip");
-#endif
-    // Phase 1: Wait up to 15s for WiFi clients
-    Serial.println("[SETUP] Phase 1: waiting 15s for WiFi clients...");
-    for (int i = 0; i < 150; i++) {
-        delay(100);
-        processDNS();
-        httpServer.handleClient();
-        mqttBroker.update();
-        if (i % 50 == 0) {
-            Serial.printf("[SETUP] %ds — %d WiFi, mower=%s charger=%s\r\n",
-                          i / 10, WiFi.softAPgetStationNum(),
-                          mowerConnected ? "YES" : "no",
-                          chargerMqttConnected ? "YES" : "no");
-        }
-        if (mowerConnected && chargerMqttConnected) break;
-        if (mowerConnected || chargerMqttConnected) break;  // at least one MQTT = skip to phase 2
-#ifdef WAVESHARE_LCD
-        if (ui_btnPressed) {
-            ui_btnPressed = false;
-            Serial.println("[SETUP] Skip pressed — going to BLE scan");
-            setState(STATE_BLE_SCAN);
-            goto setup_done;
-        }
-#endif
-    }
-
-    // Phase 2: If WiFi clients present, wait up to 30s for MQTT
-    if (WiFi.softAPgetStationNum() > 0 && !mowerConnected && !chargerMqttConnected) {
-        Serial.printf("[SETUP] Phase 2: %d WiFi client(s) — waiting 30s for MQTT...\r\n", WiFi.softAPgetStationNum());
-        for (int j = 0; j < 300 && !mowerConnected && !chargerMqttConnected; j++) {
-            delay(100);
-            processDNS();
-            httpServer.handleClient();
-            mqttBroker.update();
-#ifdef WAVESHARE_LCD
-            if (ui_btnPressed) {
-                ui_btnPressed = false;
-                Serial.println("[SETUP] Skip pressed — going to BLE scan");
-                setState(STATE_BLE_SCAN);
-                goto setup_done;
-            }
-#endif
-        }
-    }
-
-    // Phase 3: If one device on MQTT, wait 10s for the other
-    if ((mowerConnected || chargerMqttConnected) && !(mowerConnected && chargerMqttConnected)) {
-        Serial.printf("[SETUP] One device on MQTT, waiting 10s for other...\r\n");
-        for (int j = 0; j < 100 && !(mowerConnected && chargerMqttConnected); j++) {
-            delay(100);
-            processDNS();
-            httpServer.handleClient();
-            mqttBroker.update();
-        }
-    }
-
-    if (mowerConnected || chargerMqttConnected) {
-        // At least one device connected via MQTT — skip BLE!
-        Serial.printf("[SETUP] Devices connected (mower=%s charger=%s) — skipping BLE.\r\n",
-                      mowerConnected ? "YES" : "no", chargerMqttConnected ? "YES" : "no");
-        setState(STATE_CONFIRM_MQTT);
-    } else {
-        // No MQTT devices — start BLE scan (ignore WiFi-only clients like phones)
-        Serial.println("[SETUP] No MQTT devices — starting BLE scan");
-        setState(STATE_BLE_SCAN);
-    }
-    setup_done:;
+    // Go to detect phase (non-blocking, runs in loop)
+    setState(STATE_DETECT);
 }
 
 // ── Main loop ────────────────────────────────────────────────────────────────
@@ -473,7 +455,7 @@ void loop() {
                 userWifiSsid = line.substring(5, comma);
                 userWifiPassword = line.substring(comma + 1);
                 Serial.printf("[CONFIG] WiFi: %s / %s\r\n", userWifiSsid.c_str(), "***");
-                if (currentState == STATE_INIT) setState(STATE_BLE_SCAN);
+                if (currentState == STATE_MENU) { activeFlow = FLOW_PROVISION_FLASH; setState(STATE_BLE_SCAN); }
             }
         }
     }
@@ -488,17 +470,102 @@ void loop() {
     // State machine
     switch (currentState) {
 
-        case STATE_INIT:
+        case STATE_BOOT:
+            // Should not stay here — setup() transitions to STATE_DETECT
+            break;
+
+        case STATE_DETECT: {
+            if (stateJustEntered) {
+                stateJustEntered = false;
+                ui_btnPressed = false;
+                Serial.println("[DETECT] Checking for connected devices...");
+            }
+            unsigned long elapsed = (millis() - stateEnteredAt) / 1000;
+
 #ifdef WAVESHARE_LCD
-            // LCD mode: handled in setup(), auto-transitions to BLE_SCAN
+            display_detect(elapsed, WiFi.softAPgetStationNum(), chargerMqttConnected, mowerConnected);
+#endif
+            // Both connected → go to menu immediately
+            if (mowerConnected && chargerMqttConnected) {
+                Serial.println("[DETECT] Both devices on MQTT!");
+                setState(STATE_MENU);
+                break;
+            }
+
+            // Phase 1 (0-10s): wait for WiFi clients
+            // Phase 2 (10-30s): wait for MQTT if WiFi clients present
+            bool detectDone = false;
+            if (elapsed < 10) {
+                // Phase 1: if MQTT found, skip ahead
+                if (mowerConnected || chargerMqttConnected) detectDone = true;
+            } else if (elapsed < 30) {
+                // Phase 2: only continue if WiFi clients present
+                if (WiFi.softAPgetStationNum() == 0) detectDone = true;
+                if (mowerConnected || chargerMqttConnected) detectDone = true;
+            } else {
+                detectDone = true;
+            }
+
+            // Skip button
+            if (ui_btnPressed) {
+                ui_btnPressed = false;
+                detectDone = true;
+            }
+
+            if (detectDone) {
+                Serial.printf("[DETECT] Done — WiFi:%d mower=%s charger=%s\r\n",
+                    WiFi.softAPgetStationNum(),
+                    mowerConnected ? "YES" : "no",
+                    chargerMqttConnected ? "YES" : "no");
+                setState(STATE_MENU);
+            }
+            break;
+        }
+
+        case STATE_MENU:
+            if (stateJustEntered) {
+                stateJustEntered = false;
+                ui_menuSelection = -1;
+                ui_btnPressed = false;
+                bool hasMowerFw = mowerFwFilename.length() > 0;
+                bool hasChargerFw = chargerFwFilename.length() > 0;
+#ifdef WAVESHARE_LCD
+                display_menu(sdMounted, hasMowerFw, hasChargerFw,
+                    hasMowerFw ? mowerFwVersion.c_str() : nullptr,
+                    hasChargerFw ? chargerFwVersion.c_str() : nullptr,
+                    mowerConnected, chargerMqttConnected);
+#endif
+                Serial.println("[MENU] Showing main menu");
+            }
+
+#ifdef WAVESHARE_LCD
+            if (ui_menuSelection >= 0) {
+                int sel = ui_menuSelection;
+                ui_menuSelection = -1;
+                activeFlow = (FlowType)sel;
+                Serial.printf("[MENU] Selected flow: %d\r\n", sel);
+
+                switch (activeFlow) {
+                    case FLOW_PROVISION_FLASH:
+                    case FLOW_PROVISION_ONLY:
+                        setState(STATE_BLE_SCAN);
+                        break;
+                    case FLOW_FLASH_ONLY:
+                        setState(STATE_FIRMWARE_CHECK);
+                        break;
+                    case FLOW_HOME_WIFI:
+                        setState(STATE_WIFI_SCAN);
+                        break;
+                    default:
+                        break;
+                }
+            }
 #else
-            // Non-LCD: wait for serial or button
+            // Non-LCD: auto-select provision+flash if button pressed
             if (digitalRead(BUTTON_PIN) == LOW) {
                 delay(50);
                 if (digitalRead(BUTTON_PIN) == LOW) {
-                    Serial.println("[CONFIG] AP-only mode");
-                    userWifiSsid = AP_SSID;
-                    userWifiPassword = AP_PASSWORD;
+                    activeFlow = FLOW_PROVISION_FLASH;
                     setState(STATE_BLE_SCAN);
                     while (digitalRead(BUTTON_PIN) == LOW) delay(10);
                 }
@@ -709,9 +776,9 @@ void loop() {
             display_mqttWait(chargerMqttConnected, mowerConnected);
             if (ui_btnPressed) {
                 ui_btnPressed = false;
-                Serial.printf("[STATE] Next/Skip pressed in WAIT_MQTT\r\n");
+                Serial.println("[STATE] Next/Skip pressed in WAIT_MQTT");
                 webLogAdd("Next pressed — proceeding");
-                setState(STATE_CONFIRM_MQTT);
+                setState(nextStateAfterMqtt());
                 break;
             }
 #else
@@ -719,102 +786,90 @@ void loop() {
 #endif
             // Proceed when EITHER mower OR charger connects via MQTT
             if (mowerConnected || chargerMqttConnected) {
-                // Give the other device a few seconds to also connect
                 if (mowerConnected && chargerMqttConnected) {
-                    setState(STATE_CONFIRM_MQTT);
+                    setState(nextStateAfterMqtt());
                 } else if (millis() - stateEnteredAt > 15000) {
-                    // One connected, waited 15s for the other — proceed
                     Serial.printf("[STATE] Proceeding with mower=%s charger=%s\r\n",
                                   mowerConnected ? "YES" : "no",
                                   chargerMqttConnected ? "YES" : "no");
-                    setState(STATE_CONFIRM_MQTT);
+                    setState(nextStateAfterMqtt());
                 }
             }
 
-            // 60s total timeout
+            // 120s total timeout
             if (millis() - stateEnteredAt > 120000 && !mowerConnected && !chargerMqttConnected) {
-                Serial.printf("[STATE] WAIT_MQTT timeout (60s) — no MQTT connections\r\n");
+                Serial.println("[STATE] WAIT_MQTT timeout — no MQTT connections");
                 webLogAdd("MQTT wait timeout — no devices connected");
-                setState(STATE_ERROR);
+                setState(nextStateAfterMqtt());  // Continue flow anyway
             }
 
 #ifdef WAVESHARE_LCD
-            // Skip button
             if (ui_btnPressed) {
                 ui_btnPressed = false;
-                Serial.printf("[TOUCH] Skip MQTT wait\r\n");
-                setState(STATE_CONFIRM_MQTT);
+                Serial.println("[TOUCH] Skip MQTT wait");
+                setState(nextStateAfterMqtt());
             }
 #endif
             break;
 
-        case STATE_CONFIRM_MQTT:
+        case STATE_FIRMWARE_CHECK:
             if (stateJustEntered) {
                 stateJustEntered = false;
-                bool hasOta = firmwareFilename.length() > 0;
-                
-                String chargerSnStr = chargerTopic.startsWith("Dart/Send_mqtt/") ? chargerTopic.substring(15) : "";
-
-                String l1 = "";
-                String l2 = "";
-                if (mowerConnected) {
-                    l1 = "Mower: " + mowerSn;
-                } else {
-                    l1 = "Mower: not connected";
-                }
-                if (chargerMqttConnected && chargerSnStr.length() > 0) {
-                    l2 = "Charger: " + chargerSnStr;
-                } else if (chargerMqttConnected) {
-                    l2 = "Charger: connected";
-                } else {
-                    l2 = "Charger: not connected";
-                }
-                // Skip OTA: go straight to home WiFi provisioning
-                const char* btn = hasOta ? "Flash OTA" : "Setup Home WiFi";
+                ui_flashConfirmed = false;
+                ui_flashSkipped = false;
+                bool hasMowerFw = mowerFwFilename.length() > 0;
+                bool hasChargerFw = chargerFwFilename.length() > 0;
 #ifdef WAVESHARE_LCD
-                display_confirm("MQTT Connected", l1.c_str(), l2.c_str(), btn);
+                display_firmware_check(hasMowerFw, hasChargerFw,
+                    hasMowerFw ? mowerFwVersion.c_str() : nullptr,
+                    hasChargerFw ? chargerFwVersion.c_str() : nullptr,
+                    mowerConnected, chargerMqttConnected);
 #endif
-                Serial.printf("[STATE] MQTT confirmed — %s\r\n", hasOta ? "ready for OTA" : "skipping to WiFi");
+                Serial.printf("[STATE] Firmware check — mower:%s charger:%s\r\n",
+                    hasMowerFw ? firmwareVersion.c_str() : "none",
+                    hasChargerFw ? "yes" : "none");
             }
+
 #ifdef WAVESHARE_LCD
-            if (ui_btnPressed) {
-                ui_btnPressed = false;
-                delay(200);
-                if (firmwareFilename.length() > 0) {
-                    setState(STATE_OTA_SENT);
-                    sendOtaCommand();
-                } else {
-                    // No firmware — skip OTA, go to home WiFi setup
-                    setState(STATE_WIFI_SCAN);
-                }
+            if (ui_flashConfirmed) {
+                ui_flashConfirmed = false;
+                sendOtaCommand();
+                setState(STATE_FIRMWARE_FLASH);
+            }
+            if (ui_flashSkipped) {
+                ui_flashSkipped = false;
+                setState(nextStateAfterFlash());
             }
 #else
             if (firmwareFilename.length() > 0) {
-                setState(STATE_OTA_SENT);
                 sendOtaCommand();
+                setState(STATE_FIRMWARE_FLASH);
             } else {
-                setState(STATE_WIFI_SCAN);
+                setState(nextStateAfterFlash());
             }
 #endif
             break;
 
-        case STATE_OTA_SENT:
+        case STATE_FIRMWARE_FLASH:
             if (stateJustEntered) {
                 stateJustEntered = false;
 #ifdef WAVESHARE_LCD
-                display_ota("Firmware sent. Mower is downloading...");
+                display_firmware_flash("Mower", "Downloading...", 0);
 #endif
+                statusMessage = "Firmware sent — device is downloading...";
             }
 #ifndef WAVESHARE_LCD
             setLed((millis() / 200) % 2);
 #endif
-            statusMessage = "OTA firmware sent — mower is downloading...";
-
-            // After mower disconnects (rebooting), go to home WiFi provisioning
+            // After device disconnects (rebooting with new firmware), proceed
             if (!mowerConnected && mowerSn.length() > 0) {
-                statusMessage = "Firmware sent! Setting up home WiFi...";
-                Serial.println("[OTA] Mower disconnected — proceeding to WiFi setup");
-                setState(STATE_WIFI_SCAN);
+                Serial.println("[OTA] Device disconnected — firmware installed!");
+                setState(nextStateAfterFlash());
+            }
+            // Timeout after 5 minutes
+            if (millis() - stateEnteredAt > 300000) {
+                Serial.println("[OTA] Timeout waiting for firmware install");
+                setState(nextStateAfterFlash());
             }
             break;
 
@@ -1044,30 +1099,45 @@ void loop() {
 #else
                 setLed(true);
 #endif
+                Serial.println("[STATE] Flow complete!");
             }
 
 #ifdef WAVESHARE_LCD
-            // Tap to restart — LVGL callback sets ui_btnPressed
-            if (ui_btnPressed) {
+            if (ui_btnPressed || ui_backPressed) {
                 ui_btnPressed = false;
-                delay(300);
-                Serial.println("[TOUCH] Restarting...");
-                setState(STATE_BLE_SCAN);
+                ui_backPressed = false;
+                delay(200);
+                Serial.println("[TOUCH] Back to menu");
+                setState(STATE_MENU);
             }
 #endif
             break;
 
         case STATE_ERROR:
+            if (stateJustEntered) {
+                stateJustEntered = false;
+            }
 #ifdef WAVESHARE_LCD
-            // Error screen already drawn on entry; tap to retry
             if (ui_btnPressed) {
+                // Retry: go back to appropriate state based on flow
                 ui_btnPressed = false;
-                delay(300);
+                delay(200);
                 Serial.println("[TOUCH] Retrying...");
-                setState(STATE_BLE_SCAN);
+                switch (activeFlow) {
+                    case FLOW_PROVISION_FLASH:
+                    case FLOW_PROVISION_ONLY:  setState(STATE_BLE_SCAN); break;
+                    case FLOW_FLASH_ONLY:      setState(STATE_FIRMWARE_CHECK); break;
+                    case FLOW_HOME_WIFI:       setState(STATE_WIFI_SCAN); break;
+                    default:                   setState(STATE_MENU); break;
+                }
+            }
+            if (ui_backPressed) {
+                ui_backPressed = false;
+                delay(200);
+                Serial.println("[TOUCH] Back to menu");
+                setState(STATE_MENU);
             }
 #else
-            // Non-LCD: blink SOS pattern
             blinkLed(3, 100);
             delay(300);
             blinkLed(3, 300);
@@ -1222,7 +1292,10 @@ void processDNS() {
     qpos++;  // skip null terminator
     qpos += 4;  // skip QTYPE (2) + QCLASS (2)
 
-    Serial.printf("[DNS] Query: %s from %s\r\n", queryName, dnsUdp.remoteIP().toString().c_str());
+    // Only log lfibot.com queries (reduce noise from phones/etc)
+    if (strstr(queryName, "lfibot") || strstr(queryName, "mqtt")) {
+        Serial.printf("[DNS] Query: %s from %s\r\n", queryName, dnsUdp.remoteIP().toString().c_str());
+    }
 
     // Build response: copy header, set response flags, append answer
     uint8_t resp[512];
@@ -1423,9 +1496,11 @@ function saveWifi(e){
 
         // State name for display
         const char* stateNames[] = {
-            "Init", "BLE Scan", "Select Devices", "Provision Charger",
-            "Provision Mower", "Confirm BLE", "Wait MQTT", "Confirm MQTT",
-            "OTA Sent", "WiFi Scan", "WiFi Password", "Re-provision",
+            "Boot", "Detect", "Menu",
+            "BLE Scan", "Select Devices", "Provision Charger",
+            "Provision Mower", "Confirm BLE", "Wait MQTT",
+            "Firmware Check", "Firmware Flash",
+            "WiFi Scan", "WiFi Password", "Re-provision",
             "Done", "Error"
         };
         const char* stateName = (currentState >= 0 && currentState <= STATE_ERROR)
@@ -1559,15 +1634,22 @@ function saveWifi(e){
         httpServer.send(200, "application/json", "{\"success\":true}");
     });
 
-    // Firmware download
+    // Firmware download — mower .deb
     httpServer.on("/firmware.deb", []() {
-        File file = SD.open("/" + firmwareFilename);
-        if (!file) {
-            httpServer.send(404, "text/plain", "Firmware not found");
-            return;
-        }
-        Serial.printf("[HTTP] Serving firmware: %s (%d bytes)\r\n",
-                      firmwareFilename.c_str(), file.size());
+        if (mowerFwFilename.length() == 0) { httpServer.send(404, "text/plain", "No mower firmware"); return; }
+        File file = SD.open("/" + mowerFwFilename);
+        if (!file) { httpServer.send(404, "text/plain", "File not found"); return; }
+        Serial.printf("[HTTP] Serving mower firmware: %s (%d bytes)\r\n", mowerFwFilename.c_str(), file.size());
+        httpServer.streamFile(file, "application/octet-stream");
+        file.close();
+    });
+
+    // Firmware download — charger .bin
+    httpServer.on("/charger.bin", []() {
+        if (chargerFwFilename.length() == 0) { httpServer.send(404, "text/plain", "No charger firmware"); return; }
+        File file = SD.open("/" + chargerFwFilename);
+        if (!file) { httpServer.send(404, "text/plain", "File not found"); return; }
+        Serial.printf("[HTTP] Serving charger firmware: %s (%d bytes)\r\n", chargerFwFilename.c_str(), file.size());
         httpServer.streamFile(file, "application/octet-stream");
         file.close();
     });
@@ -1989,34 +2071,54 @@ bool bleSendCommand(NimBLEClient* client, NimBLERemoteCharacteristic* writeChr,
 // ── Firmware info from SD card ───────────────────────────────────────────────
 
 bool loadFirmwareInfo() {
+    bool foundAny = false;
     File root = SD.open("/");
     while (File f = root.openNextFile()) {
         String name = f.name();
-        if (name.endsWith(".deb") && name.indexOf("mower_firmware") >= 0) {
-            firmwareFilename = name;
-            firmwareSize = f.size();
-            f.close();
 
-            // Extract version from filename
+        // Mower firmware: .deb file
+        if (name.endsWith(".deb") && mowerFwFilename.length() == 0) {
+            mowerFwFilename = name;
+            mowerFwSize = f.size();
             int vIdx = name.indexOf('v');
             int debIdx = name.indexOf(".deb");
-            if (vIdx >= 0 && debIdx > vIdx) {
-                firmwareVersion = name.substring(vIdx, debIdx);
-            }
-
-            // Compute MD5
-            firmwareMd5 = computeMd5(("/" + name).c_str());
-
-            Serial.printf("[SD] Firmware: %s (%d bytes, v%s, md5=%s)\r\n",
-                          name.c_str(), firmwareSize, firmwareVersion.c_str(),
-                          firmwareMd5.c_str());
-            root.close();
-            return true;
+            if (vIdx >= 0 && debIdx > vIdx) mowerFwVersion = name.substring(vIdx, debIdx);
+            mowerFwMd5 = computeMd5(("/" + name).c_str());
+            Serial.printf("[SD] Mower firmware: %s (%d bytes, %s)\r\n",
+                          name.c_str(), mowerFwSize, mowerFwVersion.c_str());
+            foundAny = true;
         }
+
+        // Charger firmware: .bin file (not .elf)
+        if (name.endsWith(".bin") && chargerFwFilename.length() == 0) {
+            chargerFwFilename = name;
+            chargerFwSize = f.size();
+            int vIdx = name.indexOf('v');
+            int binIdx = name.indexOf(".bin");
+            if (vIdx >= 0 && binIdx > vIdx) chargerFwVersion = name.substring(vIdx, binIdx);
+            chargerFwMd5 = computeMd5(("/" + name).c_str());
+            Serial.printf("[SD] Charger firmware: %s (%d bytes, %s)\r\n",
+                          name.c_str(), chargerFwSize, chargerFwVersion.c_str());
+            foundAny = true;
+        }
+
+        // Check for metadata JSON (same name but .json extension)
+        if (name.endsWith(".json")) {
+            File jf = SD.open("/" + name);
+            if (jf && jf.size() < 2048) {
+                String json = jf.readString();
+                jf.close();
+                Serial.printf("[SD] Metadata: %s (%d bytes)\r\n", name.c_str(), json.length());
+                // Store for later display — simple key extraction
+                // TODO: parse and show in firmware check screen
+            }
+        }
+
+        f.close();
     }
     root.close();
-    Serial.println("[SD] No firmware .deb found!");
-    return false;
+    if (!foundAny) Serial.println("[SD] No firmware files found!");
+    return foundAny;
 }
 
 String computeMd5(const char* path) {
