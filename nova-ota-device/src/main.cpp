@@ -233,7 +233,6 @@ static ProvisionProgressCb provisionProgressCb = nullptr;
 void setupWifiAP();
 void setupDNS();
 void processDNS();
-void testDnsResolution();
 void setupHTTP();
 void setupMQTT();
 void sendMqttMessage(String topic, String payload, bool useAes, String sn = "");
@@ -396,21 +395,6 @@ void setup() {
             Serial.printf("[SETUP] %ds — %d WiFi client(s), mower=%s charger=%s\r\n",
                           i / 10, clients, mowerConnected ? "YES" : "no",
                           chargerMqttConnected ? "YES" : "no");
-            // Check station IPs (DHCP may have completed since connect)
-            wifi_sta_list_t sl;
-            esp_wifi_ap_get_sta_list(&sl);
-            esp_netif_t* apN = esp_netif_get_handle_from_ifkey("WIFI_AP_DEF");
-            if (apN && sl.num > 0) {
-                esp_netif_sta_list_t ipl;
-                if (esp_netif_get_sta_list(&sl, &ipl) == ESP_OK) {
-                    for (int s = 0; s < ipl.num; s++) {
-                        Serial.printf("[SETUP]   STA %02X:%02X:%02X:%02X:%02X:%02X → " IPSTR "\r\n",
-                            ipl.sta[s].mac[0], ipl.sta[s].mac[1], ipl.sta[s].mac[2],
-                            ipl.sta[s].mac[3], ipl.sta[s].mac[4], ipl.sta[s].mac[5],
-                            IP2STR(&ipl.sta[s].ip));
-                    }
-                }
-            }
         }
         // Both devices connected — exit immediately
         if (mowerConnected && chargerMqttConnected) {
@@ -421,7 +405,6 @@ void setup() {
         if ((mowerConnected || chargerMqttConnected) && i > 100) {
             // Give the other device 10 more seconds
             Serial.printf("[SETUP] One device connected, waiting 10s for the other...\r\n");
-            testDnsResolution();
             for (int j = 0; j < 100 && !(mowerConnected && chargerMqttConnected); j++) {
                 delay(100);
                 processDNS();
@@ -716,16 +699,6 @@ void loop() {
                               mowerConnected ? "YES" : "no",
                               chargerMqttConnected ? "YES" : "no");
                 webLogAdd("Waiting for MQTT connections...");
-                // Self-test: DNS resolution
-                testDnsResolution();
-                // Self-test: MQTT broker reachable
-                WiFiClient testClient;
-                if (testClient.connect(WiFi.softAPIP(), 1883)) {
-                    webLogAdd("MQTT self-test port 1883: OK");
-                    testClient.stop();
-                } else {
-                    webLogAdd("MQTT self-test port 1883: FAILED!");
-                }
             }
 #ifdef WAVESHARE_LCD
             display_mqttWait(chargerMqttConnected, mowerConnected);
@@ -739,38 +712,6 @@ void loop() {
 #else
             setLed((millis() / 500) % 2);
 #endif
-            // Periodic logging every 10s
-            {
-                static unsigned long lastMqttLog = 0;
-                if (millis() - lastMqttLog > 10000) {
-                    lastMqttLog = millis();
-                    int numSta = WiFi.softAPgetStationNum();
-                    Serial.printf("[WAIT_MQTT] %lus — clients=%d mower=%s charger=%s\r\n",
-                                  (millis() - stateEnteredAt) / 1000, numSta,
-                                  mowerConnected ? "YES" : "no",
-                                  chargerMqttConnected ? "YES" : "no");
-                    // Log each station's MAC + try to find IP via ARP
-                    wifi_sta_list_t staList;
-                    esp_wifi_ap_get_sta_list(&staList);
-                    esp_netif_t* apNetif = esp_netif_get_handle_from_ifkey("WIFI_AP_DEF");
-                    if (apNetif) {
-                        esp_netif_sta_list_t ipList;
-                        if (esp_netif_get_sta_list(&staList, &ipList) == ESP_OK) {
-                            for (int s = 0; s < ipList.num; s++) {
-                                Serial.printf("[WAIT_MQTT]   STA %d: %02X:%02X:%02X:%02X:%02X:%02X → IP=" IPSTR "\r\n",
-                                    s, ipList.sta[s].mac[0], ipList.sta[s].mac[1], ipList.sta[s].mac[2],
-                                    ipList.sta[s].mac[3], ipList.sta[s].mac[4], ipList.sta[s].mac[5],
-                                    IP2STR(&ipList.sta[s].ip));
-                                webLogAdd("STA: %02X:%02X:%02X:%02X:%02X:%02X → " IPSTR,
-                                    ipList.sta[s].mac[0], ipList.sta[s].mac[1], ipList.sta[s].mac[2],
-                                    ipList.sta[s].mac[3], ipList.sta[s].mac[4], ipList.sta[s].mac[5],
-                                    IP2STR(&ipList.sta[s].ip));
-                            }
-                        }
-                    }
-                }
-            }
-
             // Proceed when EITHER mower OR charger connects via MQTT
             if (mowerConnected || chargerMqttConnected) {
                 // Give the other device a few seconds to also connect
@@ -1277,7 +1218,6 @@ void processDNS() {
     qpos += 4;  // skip QTYPE (2) + QCLASS (2)
 
     Serial.printf("[DNS] Query: %s from %s\r\n", queryName, dnsUdp.remoteIP().toString().c_str());
-    webLogAdd("DNS: %s from %s", queryName, dnsUdp.remoteIP().toString().c_str());
 
     // Build response: copy header, set response flags, append answer
     uint8_t resp[512];
@@ -1319,15 +1259,6 @@ void processDNS() {
     dnsUdp.beginPacket(dnsUdp.remoteIP(), dnsUdp.remotePort());
     dnsUdp.write(resp, rpos);
     dnsUdp.endPacket();
-}
-
-void testDnsResolution() {
-    IPAddress resolved;
-    int result = WiFi.hostByName("mqtt.lfibot.com", resolved);
-    Serial.printf("[DNS-TEST] hostByName('mqtt.lfibot.com') = %s (result=%d)\r\n",
-        result ? resolved.toString().c_str() : "FAILED", result);
-    webLogAdd("DNS test: mqtt.lfibot.com → %s (%s)",
-        result ? resolved.toString().c_str() : "FAILED", result ? "OK" : "FAILED");
 }
 
 // ── HTTP server — serves firmware + status ───────────────────────────────────
@@ -1981,10 +1912,10 @@ bool bleSendCommand(NimBLEClient* client, NimBLERemoteCharacteristic* writeChr,
 
     response = "";
 
-    // MUST use writeWithoutResponse (true) — charger only persists data to NVS with ATT_WRITE_CMD!
-    // ATT_WRITE_REQ responses look OK but data is NOT saved. Bootstrap uses writeWithoutResponse too.
-    bool noResp = true;
-    Serial.printf("[BLE] Write mode: WriteCmd (no response) — matches bootstrap\r\n");
+    // WriteReq (noResp=false) works fine — the earlier "FAILED" messages were caused by subnet clash,
+    // not the write type. WriteReq is preferred for data persistence confirmation.
+    bool noResp = false;
+    Serial.printf("[BLE] Write mode: WriteReq (with response)\r\n");
 
     // Send "ble_start" marker
     bool ok = writeChr->writeValue((const uint8_t*)"ble_start", 9, noResp);
