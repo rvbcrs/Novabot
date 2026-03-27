@@ -2,7 +2,6 @@ import { useEffect, useState, useCallback } from 'react';
 import type { Socket } from 'socket.io-client';
 import type { DetectResult, FirmwareInfo, MowerInfo } from '../App.tsx';
 import { useT } from '../i18n/index.ts';
-import { isWebBluetoothAvailable, provisionMower, type BleStatus } from '../ble/webBle.ts';
 
 interface ScannedDevice {
   mac: string;
@@ -29,10 +28,8 @@ export default function WaitForMower({ mower, firmware, detect, ip, cloudImporte
   const [dots, setDots] = useState('');
   const [showNewMower, setShowNewMower] = useState(false);
 
-  // Web Bluetooth state (fallback)
-  const [bleStatus, setBleStatus] = useState<BleStatus>({ phase: 'idle', message: '' });
-  const [wifiSsid, setWifiSsid] = useState('ABERSONPLEIN-IoT');
-  const [wifiPassword, setWifiPassword] = useState('ramonvanbruggen');
+  const [wifiSsid, setWifiSsid] = useState('');
+  const [wifiPassword, setWifiPassword] = useState('');
 
   // Native BLE state
   const [nativeBleAvailable, setNativeBleAvailable] = useState<boolean | null>(null);
@@ -41,8 +38,6 @@ export default function WaitForMower({ mower, firmware, detect, ip, cloudImporte
   const [selectedDevice, setSelectedDevice] = useState<ScannedDevice | null>(null);
   const [provPhase, setProvPhase] = useState<string>('idle');
   const [provError, setProvError] = useState<string | null>(null);
-
-  const hasBle = isWebBluetoothAvailable();
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -140,23 +135,9 @@ export default function WaitForMower({ mower, firmware, detect, ip, cloudImporte
     }
   }, [wifiSsid, wifiPassword]);
 
-  // ── Web Bluetooth handler (fallback) ────────────────────────────────────
-  const handleBleConnect = useCallback(async (scanAll = false) => {
-    if (!ip) return;
-    setBleStatus({ phase: 'requesting', message: '' });
-    await provisionMower(ip, 1883, setBleStatus, scanAll, wifiSsid || undefined, wifiPassword || undefined);
-  }, [ip, wifiSsid, wifiPassword]);
-
-  const bleInProgress = bleStatus.phase !== 'idle' && bleStatus.phase !== 'error' && bleStatus.phase !== 'done';
-  const bleDone = bleStatus.phase === 'done';
-  const bleError = bleStatus.phase === 'error';
-
   const nativeProvInProgress = provPhase !== 'idle' && provPhase !== 'error' && provPhase !== 'done';
   const nativeProvDone = provPhase === 'done';
   const nativeProvError = provPhase === 'error';
-
-  // Use native BLE when available, fall back to Web Bluetooth
-  const useNativeBle = nativeBleAvailable === true;
 
   return (
     <div className="glass-card p-8">
@@ -178,8 +159,8 @@ export default function WaitForMower({ mower, firmware, detect, ip, cloudImporte
             <p className="text-gray-400 font-mono">{t('wait.waiting')}{dots}</p>
           </div>
 
-          {/* ── Native BLE Provisioning (primary when available) ──────── */}
-          {useNativeBle ? (
+          {/* ── Native BLE Provisioning ───────────────────────────────── */}
+          {nativeBleAvailable !== false ? (
             <div className="bg-blue-900/20 border border-blue-700/40 rounded-xl p-5">
               <div className="flex items-center gap-2 mb-2">
                 <span className="text-blue-400 text-lg">&#x1F4F6;</span>
@@ -310,102 +291,8 @@ export default function WaitForMower({ mower, firmware, detect, ip, cloudImporte
                 </div>
               )}
             </div>
-          ) : hasBle ? (
-            /* ── Web Bluetooth fallback ────────────────────────────────── */
-            <div className="bg-blue-900/20 border border-blue-700/40 rounded-xl p-5">
-              <div className="flex items-center gap-2 mb-2">
-                <span className="text-blue-400 text-lg">&#x1F4F6;</span>
-                <p className="text-blue-300 text-sm font-semibold">{t('wait.bleTitle')}</p>
-              </div>
-              <p className="text-gray-400 text-sm mb-4">{t('wait.bleDesc')}</p>
-
-              {/* WiFi credentials + BLE connect */}
-              {bleStatus.phase === 'idle' && (
-                <div className="flex flex-col gap-3">
-                  <div className="space-y-2">
-                    <label className="text-gray-400 text-xs font-medium">{t('wait.bleWifiLabel')}</label>
-                    <input
-                      type="text"
-                      placeholder={t('wait.bleWifiSsid')}
-                      value={wifiSsid}
-                      onChange={e => setWifiSsid(e.target.value)}
-                      className="w-full px-3 py-2 rounded-lg bg-gray-800/60 border border-gray-700/50 text-white text-sm placeholder-gray-600 focus:border-blue-500 focus:outline-none"
-                    />
-                    <input
-                      type="password"
-                      placeholder={t('wait.bleWifiPassword')}
-                      value={wifiPassword}
-                      onChange={e => setWifiPassword(e.target.value)}
-                      className="w-full px-3 py-2 rounded-lg bg-gray-800/60 border border-gray-700/50 text-white text-sm placeholder-gray-600 focus:border-blue-500 focus:outline-none"
-                    />
-                    {!wifiSsid && (
-                      <p className="text-yellow-500/70 text-xs">{t('wait.bleWifiHint')}</p>
-                    )}
-                  </div>
-                  <button
-                    onClick={() => handleBleConnect(false)}
-                    disabled={!ip || !wifiSsid}
-                    className="w-full py-3 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 text-white font-semibold transition-colors"
-                  >
-                    {t('wait.bleBtn')}
-                  </button>
-                  <button
-                    onClick={() => handleBleConnect(true)}
-                    disabled={!ip || !wifiSsid}
-                    className="w-full py-2 rounded-lg bg-gray-700/50 hover:bg-gray-700 disabled:bg-gray-800 disabled:text-gray-600 text-gray-300 text-sm transition-colors"
-                  >
-                    {t('wait.bleScanAll')}
-                  </button>
-                </div>
-              )}
-
-              {bleInProgress && (
-                <div className="space-y-2">
-                  <BleProgressSteps phase={bleStatus.phase} t={t} />
-                  <p className="text-blue-300 text-xs font-mono animate-pulse">{bleStatus.message}</p>
-                </div>
-              )}
-
-              {bleDone && (
-                <div className="flex items-center gap-2 py-2">
-                  <span className="text-emerald-400">&#x2713;</span>
-                  <p className="text-emerald-300 text-sm font-semibold">{t('wait.bleDone')}</p>
-                </div>
-              )}
-
-              {bleError && (
-                <div className="space-y-3">
-                  <div className="flex items-start gap-2 p-3 bg-red-900/20 border border-red-800/30 rounded-lg">
-                    <span className="text-red-400 mt-0.5">&#x2717;</span>
-                    <div>
-                      <p className="text-red-300 text-sm">{bleStatus.message}</p>
-                      {bleStatus.error && bleStatus.error !== 'cancelled' && (
-                        <p className="text-red-400/60 text-xs mt-1 font-mono">{bleStatus.error}</p>
-                      )}
-                    </div>
-                  </div>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => handleBleConnect(false)}
-                      className="flex-1 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-semibold text-sm transition-colors"
-                    >
-                      {t('wait.bleRetry')}
-                    </button>
-                    <button
-                      onClick={() => handleBleConnect(true)}
-                      className="flex-1 py-2.5 rounded-lg bg-gray-700/50 hover:bg-gray-700 text-gray-300 text-sm transition-colors"
-                    >
-                      {t('wait.bleScanAll')}
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* Browser hint */}
-              <p className="text-gray-600 text-xs mt-3">{t('wait.bleHint')}</p>
-            </div>
           ) : (
-            /* Web Bluetooth not available and no native BLE */
+            /* Bluetooth not available on this server */
             <div className="bg-yellow-900/15 border border-yellow-800/30 rounded-xl p-4">
               <p className="text-yellow-400 text-sm font-semibold mb-1">{t('wait.bleUnavailableTitle')}</p>
               <p className="text-gray-400 text-sm">{t('wait.bleUnavailableDesc')}</p>

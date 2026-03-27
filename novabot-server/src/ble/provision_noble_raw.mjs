@@ -135,28 +135,44 @@ async function main() {
   await sleep(500);
 
   log('Connecting...');
+  let disconnected = false;
+  let disconnectReason = null;
+  peripheral.on('disconnect', (reason) => {
+    log(`DISCONNECT event: reason=${reason}`);
+    disconnected = true;
+    disconnectReason = reason;
+  });
+
   let lastErr = null;
-  for (let attempt = 1; attempt <= 3; attempt++) {
+  for (let attempt = 1; attempt <= 5; attempt++) {
     log(`Connect attempt ${attempt}...`);
+    disconnected = false;
+    disconnectReason = null;
     try {
       await peripheral.connectAsync();
       log('Connected!');
+      // Wait briefly and check if connection survived
+      await sleep(1500);
+      if (disconnected) {
+        log(`Immediate disconnect (reason=${disconnectReason}) — retrying...`);
+        if (attempt < 5) { await sleep(3000); continue; }
+        throw new Error(`Immediate disconnect reason=${disconnectReason} after ${attempt} attempts`);
+      }
       lastErr = null;
       break;
     } catch (err) {
       lastErr = err.message ?? String(err);
       log(`Connect failed: ${lastErr}`);
-      if (attempt < 3) { try { await peripheral.disconnectAsync(); } catch {} await sleep(3000); }
+      if (attempt < 5) { try { await peripheral.disconnectAsync(); } catch {} await sleep(3000); }
     }
   }
-  if (lastErr) throw new Error(`Connect failed after 3 attempts: ${lastErr}`);
-
-  peripheral.on('disconnect', (reason) => log(`DISCONNECT event: reason=${reason}`));
-
-  await sleep(1000); // Allow connection to stabilize before GATT discovery
+  if (lastErr) throw new Error(`Connect failed after 5 attempts: ${lastErr}`);
 
   const layout = GATT_LAYOUTS[deviceType];
-  const result = await peripheral.discoverAllServicesAndCharacteristicsAsync();
+  const result = await Promise.race([
+    peripheral.discoverAllServicesAndCharacteristicsAsync(),
+    sleep(10000).then(() => { throw new Error('GATT discovery timeout'); }),
+  ]);
   log(`Services: ${result.services.map(s => s.uuid).join(', ')}`);
   log(`Chars: ${result.characteristics.map(c => `${c.uuid}[${c.properties.join('+')}]`).join(', ')}`);
 

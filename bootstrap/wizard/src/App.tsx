@@ -278,7 +278,7 @@ export default function App() {
           )}
           {step === 7 && <OtaProgress log={state.otaLog} mower={state.mower} otaStatus={state.otaStatus} otaProgress={state.otaProgress} otaTimedOut={state.otaTimedOut} otaSshRecovery={state.otaSshRecovery} isCustomFirmware={state.isCustomFirmware} />}
           {step === 8 && <Done serverUrl={state.serverUrl} mower={state.mower} onAddDevice={() => goTo(9)} />}
-          {step === 9 && <BleProvision selectedIp={state.selectedIp ?? '192.168.0.177'} onDone={() => goTo(5)} />}
+          {step === 9 && <BleProvision selectedIp={state.selectedIp ?? '192.168.0.177'} socket={socket} onDone={() => goTo(5)} />}
         </div>
       </div>
     </I18nContext.Provider>

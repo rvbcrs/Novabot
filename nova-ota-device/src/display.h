@@ -1,13 +1,20 @@
 /**
- * display.h — LovyanGFX driver for Waveshare ESP32-S3 Touch LCD 2"
+ * display.h — LVGL 8.4 display driver for Waveshare ESP32-S3 Touch LCD 2"
  *
- * ST7789T3, 240x320, SPI, with PWM backlight.
- * Dark theme with purple/teal accents.
+ * ST7789, 240x320, SPI, CST816D touch.
+ * Dark theme with purple/teal accents using LVGL widgets.
  */
 
 #pragma once
 
 #include <Arduino.h>
+
+// WiFi scan result — shared between main.cpp and display.cpp
+struct WifiNetwork {
+    String ssid;
+    int rssi;
+    bool isOpen;  // no password needed
+};
 
 // Scan result — shared between main.cpp and display.cpp
 struct ScanResult {
@@ -18,19 +25,25 @@ struct ScanResult {
     bool isMower;     // name contains "novabot" or "Novabot"
 };
 
-// ── Theme colors (RGB565) ───────────────────────────────────────────────────
+// ── UI state flags (set by LVGL event callbacks, read by main.cpp) ──────────
 
-#define COL_BG        0x0000  // Black
-#define COL_TEXT      0xFFFF  // White
-#define COL_DIM       0x7BEF  // Gray
-#define COL_PURPLE    0x781F  // Purple accent (#8000FF approx)
-#define COL_TEAL      0x07F0  // Teal accent
-#define COL_GREEN     0x07E0  // Bright green
-#define COL_RED       0xF800  // Red
-#define COL_ORANGE    0xFD20  // Orange
-#define COL_DARK_GRAY 0x2104  // Dark gray for list items
-#define COL_SELECTED  0x03E0  // Dark green for selected items
-#define COL_BTN       0x781F  // Purple button
+extern volatile int ui_selectedChargerIdx;
+extern volatile int ui_selectedMowerIdx;
+extern volatile bool ui_startPressed;
+extern volatile bool ui_btnPressed;       // Generic button press (confirm screens, done, error)
+extern volatile bool ui_rescanPressed;
+
+// Phase 2: WiFi re-provisioning UI flags
+extern volatile int  ui_selectedWifiIdx;
+extern volatile bool ui_wifiPasswordReady;
+extern volatile bool ui_wifiRescanPressed;
+extern char ui_wifiPassword[64];
+extern char ui_wifiSsid[33];
+
+// ── Thread safety — all lv_* calls from outside LVGL task must use these ────
+
+bool lvgl_lock(int timeout_ms = -1);
+void lvgl_unlock(void);
 
 // ── Public API ──────────────────────────────────────────────────────────────
 
@@ -44,10 +57,12 @@ void display_ota(const char* status);
 void display_done();
 void display_error(const char* msg);
 void display_confirm(const char* title, const char* line1, const char* line2, const char* btnText);
-bool display_btnHit(int16_t x, int16_t y);  // Check if bottom button was tapped
 
-// ── Hit detection helpers ───────────────────────────────────────────────────
+// Phase 2: WiFi re-provisioning screens
+void display_wifiList(WifiNetwork* networks, int count, int selected);
+void display_wifiPassword(const char* ssid);
+void display_reprovision(const char* status, int step, int total);
 
-// Returns device index tapped in the list, or -1 if none.
-// startBtnHit is set to true if the "Start" button was tapped.
+// Legacy hit-test API — kept as no-ops for compatibility, LVGL handles touch natively
+bool display_btnHit(int16_t x, int16_t y);
 int display_hitTest(int16_t x, int16_t y, int deviceCount, bool& startBtnHit);

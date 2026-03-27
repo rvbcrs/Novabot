@@ -72,19 +72,21 @@ function startBluetooth(): void {
  * which manages both WiFi and BT on the same CYW43455 chip.
  * RPi 5 uses Ethernet for server connectivity, so disconnecting WiFi doesn't break the server.
  */
+/**
+ * Reduce WiFi activity during BLE to avoid CYW43455 coexistence (disconnect=62).
+ * NEVER use "ip link set wlan0 down" — crashes brcmfmac driver.
+ * Just stop hostapd (no more AP beacons/data) but keep wlan0 interface up.
+ */
 function wifiOff(): void {
-  console.log('[BLE-PROV] Disconnecting WiFi for BLE (radio stays on)...');
-  try { execSync('nmcli device disconnect wlan0', { timeout: 10000, stdio: 'ignore' }); console.log('[BLE-PROV] WiFi disconnected'); } catch { console.log('[BLE-PROV] WiFi disconnect failed (non-fatal)'); }
+  console.log('[BLE-PROV] Stopping hostapd for BLE coexistence...');
+  try { execSync('systemctl stop hostapd 2>/dev/null', { timeout: 5000, stdio: 'ignore' }); } catch {}
+  console.log('[BLE-PROV] hostapd stopped');
 }
 
-function wifiOn(profile: string | undefined): void {
-  if (!profile) return;
-  try {
-    execSync(`nmcli connection up "${profile}"`, { timeout: 20000, stdio: 'ignore' });
-    console.log(`[BLE-PROV] WiFi reconnected (${profile})`);
-  } catch {
-    console.log(`[BLE-PROV] WiFi reconnect failed (non-fatal)`);
-  }
+function wifiOn(): void {
+  console.log('[BLE-PROV] Restarting hostapd...');
+  try { execSync('systemctl start hostapd 2>/dev/null', { timeout: 10000, stdio: 'ignore' }); } catch {}
+  console.log('[BLE-PROV] hostapd restarted');
 }
 
 /**
@@ -94,9 +96,6 @@ function wifiOn(profile: string | undefined): void {
 async function runNobleRawProvisioner(params: ProvisionParams): Promise<ProvisionResult> {
   const scriptPath = getNobleRawScriptPath();
   const paramsJson = JSON.stringify(params);
-
-  wifiOff();
-  await sleep(1500);
 
   console.log(`[BLE-PROV] Running BlueZ provisioner: ${scriptPath}`);
 
@@ -167,6 +166,10 @@ export async function provisionDevice(params: ProvisionParams): Promise<Provisio
 
   await pauseBackgroundScan();
 
+  // CYW43455 can't do WiFi AP + BLE GATT simultaneously (disconnect=62).
+  wifiOff();
+  await sleep(2000);
+
   try {
     const result = await runNobleRawProvisioner(params);
 
@@ -180,10 +183,48 @@ export async function provisionDevice(params: ProvisionParams): Promise<Provisio
     return result;
 
   } finally {
-    console.log('[BLE-PROV] Restarting BlueZ...');
-    startBluetooth();
-    wifiOn(process.env.STA_WIFI_SSID);
-    await sleep(1000);
+    wifiOn();
+    await sleep(2000);
+    try { await Promise.race([resumeBackgroundScan(), sleep(5000)]); } catch { /* ignore */ }
+  }
+}
+
+/**
+ * Provision multiple devices in one WiFi off/on cycle.
+ * WiFi goes down once, all devices provisioned, WiFi comes back.
+ */
+export async function provisionBatch(devices: ProvisionParams[]): Promise<ProvisionResult[]> {
+  if (devices.length === 0) return [];
+
+  await pauseBackgroundScan();
+  wifiOff();
+  await sleep(2000);
+
+  const results: ProvisionResult[] = [];
+  try {
+    for (const params of devices) {
+      const devName = params.deviceType ?? 'device';
+      console.log(`[BLE-PROV] Batch: provisioning ${devName} (${params.targetMac})`);
+      pushBleLog({ ts: Date.now(), type: 'connect', deviceName: devName, mac: params.targetMac, rssi: 0, direction: '' });
+
+      const result = await runNobleRawProvisioner(params);
+      results.push(result);
+
+      if (result.success) {
+        console.log(`[BLE-PROV] ${devName} provisioning successful!`);
+      } else {
+        console.error(`[BLE-PROV] ${devName} provisioning failed:`, result.error);
+      }
+
+      pushBleLog({ ts: Date.now(), type: 'disconnect', deviceName: devName, mac: params.targetMac, rssi: 0, direction: '' });
+
+      // Brief pause between devices
+      if (devices.indexOf(params) < devices.length - 1) await sleep(3000);
+    }
+    return results;
+  } finally {
+    wifiOn();
+    await sleep(2000);
     try { await Promise.race([resumeBackgroundScan(), sleep(5000)]); } catch { /* ignore */ }
   }
 }

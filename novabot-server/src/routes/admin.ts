@@ -6,7 +6,7 @@ import { Router, Request, Response } from 'express';
 import { db } from '../db/database.js';
 import { DeviceRegistryRow } from '../types/index.js';
 import { scanForDevices, isBleAvailable } from '../ble/scanner.js';
-import { provisionDevice, type ProvisionParams } from '../ble/provisioner.js';
+import { provisionDevice, provisionBatch, type ProvisionParams } from '../ble/provisioner.js';
 import { getAllRecentBleDevices, isBackgroundScanActive } from '../ble/bleLogger.js';
 
 export const adminRouter = Router();
@@ -36,11 +36,18 @@ adminRouter.get('/ble-scan', async (req: Request, res: Response) => {
   }
 });
 
-// POST /api/admin/ble-provision  — provision a Novabot device via BLE GATT
-// Body: { targetMac, wifiSsid, wifiPassword, mqttAddr?, mqttPort?, loraChannel?, deviceType? }
+// ── Async BLE provisioning (CYW43455 WiFi+BLE coexistence causes brief WiFi drops) ──
+// POST starts the job and returns immediately; GET /ble-provision/status polls result.
+let bleProvJob: { id: string; status: 'running' | 'done' | 'error'; result?: unknown; startedAt: number } | null = null;
+
 adminRouter.post('/ble-provision', async (req: Request, res: Response) => {
   if (!isBleAvailable()) {
     res.status(503).json({ error: 'Bluetooth not available on this server' });
+    return;
+  }
+
+  if (bleProvJob?.status === 'running') {
+    res.status(409).json({ error: 'Provisioning already in progress' });
     return;
   }
 
@@ -56,29 +63,65 @@ adminRouter.post('/ble-provision', async (req: Request, res: Response) => {
     return;
   }
 
-  try {
-    console.log(`[ADMIN] BLE provisioning requested for ${targetMac} (${deviceType || 'mower'})`);
-    const result = await provisionDevice({
-      targetMac,
-      wifiSsid,
-      wifiPassword,
-      mqttAddr,
-      mqttPort,
-      loraAddr,
-      loraChannel,
-      loraHc,
-      loraLc,
-      timezone,
-      deviceType,
-    });
-    res.json(result);
-  } catch (err) {
+  const jobId = `prov-${Date.now()}`;
+  bleProvJob = { id: jobId, status: 'running', startedAt: Date.now() };
+  console.log(`[ADMIN] BLE provisioning started for ${targetMac} (${deviceType || 'mower'}) job=${jobId}`);
+
+  // Fire and forget — wizard polls status
+  provisionDevice({
+    targetMac, wifiSsid, wifiPassword, mqttAddr, mqttPort,
+    loraAddr, loraChannel, loraHc, loraLc, timezone, deviceType,
+  }).then(result => {
+    bleProvJob = { id: jobId, status: 'done', result, startedAt: bleProvJob!.startedAt };
+  }).catch(err => {
     const msg = (err as Error).message || String(err);
-    const stack = (err as Error).stack;
     console.error('[ADMIN] BLE provisioning error:', msg);
-    if (stack) console.error('[ADMIN] Stack:', stack);
-    res.status(500).json({ success: false, error: msg });
+    bleProvJob = { id: jobId, status: 'error', result: { success: false, error: msg }, startedAt: bleProvJob!.startedAt };
+  });
+
+  res.json({ started: true, jobId });
+});
+
+adminRouter.get('/ble-provision/status', (_req: Request, res: Response) => {
+  if (!bleProvJob) {
+    res.json({ status: 'idle' });
+    return;
   }
+  const elapsed = Math.round((Date.now() - bleProvJob.startedAt) / 1000);
+  res.json({ status: bleProvJob.status, jobId: bleProvJob.id, elapsed, result: bleProvJob.result ?? null });
+});
+
+// POST /api/admin/ble-provision-batch — provision multiple devices, WiFi off/on once
+adminRouter.post('/ble-provision-batch', async (req: Request, res: Response) => {
+  if (!isBleAvailable()) {
+    res.status(503).json({ error: 'Bluetooth not available on this server' });
+    return;
+  }
+  if (bleProvJob?.status === 'running') {
+    res.status(409).json({ error: 'Provisioning already in progress' });
+    return;
+  }
+
+  const { devices } = req.body as { devices: Partial<ProvisionParams>[] };
+  if (!devices || !Array.isArray(devices) || devices.length === 0) {
+    res.status(400).json({ error: 'devices array required' });
+    return;
+  }
+
+  const jobId = `batch-${Date.now()}`;
+  bleProvJob = { id: jobId, status: 'running', startedAt: Date.now() };
+  console.log(`[ADMIN] BLE batch provisioning: ${devices.length} devices, job=${jobId}`);
+
+  provisionBatch(devices as ProvisionParams[]).then(results => {
+    const allOk = results.every(r => r.success);
+    bleProvJob = { id: jobId, status: 'done', result: { success: allOk, devices: results }, startedAt: bleProvJob!.startedAt };
+  }).catch(err => {
+    const msg = (err as Error).message || String(err);
+    console.error('[ADMIN] BLE batch error:', msg);
+    bleProvJob = { id: jobId, status: 'error', result: { success: false, error: msg }, startedAt: bleProvJob!.startedAt };
+  });
+
+  res.json({ started: true, jobId });
 });
 
 // POST /api/admin/ble-raw  — raw BLE diagnostic: connect, write data, capture responses

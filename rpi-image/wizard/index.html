@@ -130,7 +130,7 @@
     <span id="conn-msg">WiFi tijdelijk verbroken voor BLE — verbinding herstellen...</span>
   </div>
   <div class="container">
-    <div class="logo"><h1>OpenNova</h1><p>Plug & Play Novabot Setup &nbsp;·&nbsp; <span style="color:#4b5563;font-size:11px">v0.9.1774520519</span></p></div>
+    <div class="logo"><h1>OpenNova</h1><p>Plug & Play Novabot Setup &nbsp;·&nbsp; <span style="color:#4b5563;font-size:11px">v0.9.1774528793</span></p></div>
     <div class="card" id="content"></div>
     <div style="display:flex;gap:6px;margin-top:10px">
       <button class="btn btn-secondary" style="flex:1;padding:8px;font-size:11px" onclick="switchWifi('ap')">🔧 AP Mode</button>
@@ -384,30 +384,32 @@
           return false;
         }
 
-        // 3. Provision charger with AP WiFi
+        // 3+4. Provision charger + mower in one batch (WiFi off once)
         phase('ble-scan','Waiting for charger to appear in BLE scan...');
         await waitForBleDevice(chargerMac, 'Charger');
-        phase('charger-ble','BLE → charger: WiFi='+AP_SSID+', MQTT=mqtt.lfibot.com');
-        setConnMsg('BLE provisioning charger — WiFi tijdelijk verbroken...');
-        startConnMonitor();
-        const cr=await api('POST','/api/admin/ble-provision',{
-          targetMac:chargerMac, wifiSsid:AP_SSID, wifiPassword:AP_PASS,
-          mqttAddr:'mqtt.lfibot.com', mqttPort:1883, deviceType:'charger'});
-        stopConnMonitor();
-        log('Charger BLE: '+(cr.success?'OK':'failed (may be pre-configured)'+(cr.error?' — '+cr.error:'')),cr.success?'ok':'warn');
-
-        // 4. Provision mower with AP WiFi
         if(config.mowerSn) {
           phase('ble-scan','Waiting for mower to appear in BLE scan...');
           await waitForBleDevice(mowerMac, 'Mower');
-          phase('mower-ble','BLE → mower: WiFi='+AP_SSID+', MQTT=mqtt.lfibot.com');
-          setConnMsg('BLE provisioning mower — WiFi tijdelijk verbroken...');
-          startConnMonitor();
-          const mr=await api('POST','/api/admin/ble-provision',{
-            targetMac:mowerMac, wifiSsid:AP_SSID, wifiPassword:AP_PASS,
-            mqttAddr:'mqtt.lfibot.com', mqttPort:1883, deviceType:'mower'});
-          stopConnMonitor();
-          log('Mower BLE: '+(mr.success?'OK':'failed (may be pre-configured)'+(mr.error?' — '+mr.error:'')),mr.success?'ok':'warn');
+        }
+
+        const batchDevices = [{
+          targetMac:chargerMac, wifiSsid:AP_SSID, wifiPassword:AP_PASS,
+          mqttAddr:'mqtt.lfibot.com', mqttPort:1883, deviceType:'charger'}];
+        if(config.mowerSn && mowerMac) batchDevices.push({
+          targetMac:mowerMac, wifiSsid:AP_SSID, wifiPassword:AP_PASS,
+          mqttAddr:'mqtt.lfibot.com', mqttPort:1883, deviceType:'mower'});
+
+        phase('charger-ble','BLE provisioning...');
+        const batch=await bleProvision({batch:true, devices:batchDevices}, 'BLE batch');
+
+        // Parse batch results
+        const batchResults = batch.devices || [batch];
+        const cr = batchResults[0] || {success:false,error:'no result'};
+        log('Charger BLE: '+(cr.success?'OK':'failed'+(cr.error?' — '+cr.error:'')),cr.success?'ok':'warn');
+        if(config.mowerSn) {
+          const mr = batchResults[1] || {success:false,error:'no result'};
+          log('Mower BLE: '+(mr.success?'OK':'failed'+(mr.error?' — '+mr.error:'')),mr.success?'ok':'warn');
+          donePhases.add('mower-ble');
         } else { donePhases.add('mower-ble'); log('No mower SN — skip','info'); }
 
         // ── TEST STOP: remove this block to continue past BLE ─────────────
@@ -479,22 +481,22 @@
 
         // 10. Re-provision charger
         phase('reprov-charger','BLE → charger: WiFi='+config.wifiSsid+', MQTT='+HOME_MQTT);
-        setConnMsg('BLE re-provisioning charger — WiFi tijdelijk verbroken...');
+        setConnMsg('BLE re-provisioning charger — WiFi kan even haperen...');
         startConnMonitor();
-        const cr2=await api('POST','/api/admin/ble-provision',{
+        const cr2=await bleProvision({
           targetMac:chargerMac||await lookupMac(config.chargerSn), wifiSsid:config.wifiSsid, wifiPassword:config.wifiPassword,
-          mqttAddr:HOME_MQTT, mqttPort:1883, deviceType:'charger'});
+          mqttAddr:HOME_MQTT, mqttPort:1883, deviceType:'charger'}, 'Charger re-prov');
         stopConnMonitor();
         log('Charger re-provision: '+(cr2.success?'OK':'failed'+(cr2.error?' — '+cr2.error:'')),cr2.success?'ok':'warn');
 
         // 11. Re-provision mower
         if(config.mowerSn) {
           phase('reprov-mower','BLE → mower: WiFi='+config.wifiSsid+', MQTT='+HOME_MQTT);
-          setConnMsg('BLE re-provisioning mower — WiFi tijdelijk verbroken...');
+          setConnMsg('BLE re-provisioning mower — WiFi kan even haperen...');
           startConnMonitor();
-          const mr2=await api('POST','/api/admin/ble-provision',{
+          const mr2=await bleProvision({
             targetMac:mowerMac||await lookupMac(config.mowerSn), wifiSsid:config.wifiSsid, wifiPassword:config.wifiPassword,
-            mqttAddr:HOME_MQTT, mqttPort:1883, deviceType:'mower'});
+            mqttAddr:HOME_MQTT, mqttPort:1883, deviceType:'mower'}, 'Mower re-prov');
           stopConnMonitor();
           log('Mower re-provision: '+(mr2.success?'OK':'failed'+(mr2.error?' — '+mr2.error:'')),mr2.success?'ok':'warn');
         } else { donePhases.add('reprov-mower'); }
@@ -555,6 +557,32 @@
       if(body)opts.body=JSON.stringify(body);
       const r=await fetch(url,opts);
       return r.json();
+    }
+
+    /** Async BLE provisioning — starts job, polls silently until done */
+    async function bleProvision(params, label) {
+      const url = params.batch ? '/api/admin/ble-provision-batch' : '/api/admin/ble-provision';
+      const body = params.batch ? {devices: params.devices} : params;
+      const start = await api('POST', url, body);
+      if (!start.started) return start;
+      log('Provisioning gestart. WiFi gaat ~2 min uit. Verbind daarna opnieuw met OpenNova-Setup.','ble');
+      const MAX_POLL = 360_000, POLL_IV = 3000;
+      const t0 = Date.now();
+      let lastStatus = 'running', connected = false;
+      while (Date.now() - t0 < MAX_POLL) {
+        await sleep(POLL_IV);
+        try {
+          const s = await api('GET','/api/admin/ble-provision/status');
+          if (!connected) { connected = true; log('Verbinding OK — wachten op resultaat...','ok'); }
+          lastStatus = s.status;
+          if (s.status === 'done') { log('Provisioning klaar! ('+s.elapsed+'s)','ok'); return s.result; }
+          if (s.status === 'error') { log('Provisioning fout: '+(s.result?.error||'?'),'err'); return s.result; }
+          log('Bezig... ('+s.elapsed+'s)','info');
+        } catch {
+          if (connected) { connected = false; log('Verbinding weg...','warn'); }
+        }
+      }
+      return { success: false, error: 'Timeout na 6 min (status: '+lastStatus+')' };
     }
 
     // ── MAC lookup from factory DB ───────────────────────────────────────────

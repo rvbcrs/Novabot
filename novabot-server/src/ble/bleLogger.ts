@@ -172,8 +172,8 @@ const consoleLastSeen = new Map<string, number>();
 export function initBleLogger(emit: (event: string, data: unknown) => void): void {
   emitFn = emit;
   initFileLogger();
-  if (process.env.DISABLE_BLE === '1') {
-    console.log('[BLE-LOG] BLE disabled via DISABLE_BLE=1');
+  if (process.env.DISABLE_BLE === '1' || !process.env.SETUP_WIZARD_PATH) {
+    console.log('[BLE-LOG] BLE scan disabled (RPi wizard not configured)');
     return;
   }
   startBackgroundScan().catch(err => {

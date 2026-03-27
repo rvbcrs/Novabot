@@ -68,6 +68,28 @@ static const uint8_t AES_IV[] = "abcd1234abcd1234";
 // Version string
 static const char* VERSION = "v1.0.0-lcd";
 
+// ── Web console log ring buffer (implementation after Arduino.h) ────────────
+#define WEB_LOG_SIZE 50
+#define WEB_LOG_LINE 120
+static char webLog[WEB_LOG_SIZE][WEB_LOG_LINE];
+static int webLogHead = 0;
+static int webLogCount = 0;
+
+// Forward declaration — can't use millis()/Serial before Arduino.h is included (it is at line 23)
+void webLogAdd(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
+void webLogAdd(const char* fmt, ...) {
+    char tmp[WEB_LOG_LINE];
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(tmp, sizeof(tmp), fmt, args);
+    va_end(args);
+    unsigned long sec = millis() / 1000;
+    snprintf(webLog[webLogHead], WEB_LOG_LINE, "[%lum%02lus] %s", sec / 60, sec % 60, tmp);
+    Serial.println(webLog[webLogHead]);
+    webLogHead = (webLogHead + 1) % WEB_LOG_SIZE;
+    if (webLogCount < WEB_LOG_SIZE) webLogCount++;
+}
+
 // ── Scan results (ScanResult defined in display.h) ──────────────────────────
 
 static ScanResult scanResults[20];
@@ -172,7 +194,15 @@ class ScanCallbacks : public NimBLEScanCallbacks {
         if (name.length() == 0) return;
 
         // Check for duplicates
-        String mac = advertisedDevice->getAddress().toString().c_str();
+        // Normalize MAC: uppercase with colons (e.g. "48:27:E2:2E:EF:D6")
+        String rawMac = advertisedDevice->getAddress().toString().c_str();
+        rawMac.toUpperCase();
+        String mac = rawMac;
+        if (rawMac.length() == 12 && rawMac.indexOf(':') == -1) {
+            mac = rawMac.substring(0,2) + ":" + rawMac.substring(2,4) + ":" +
+                  rawMac.substring(4,6) + ":" + rawMac.substring(6,8) + ":" +
+                  rawMac.substring(8,10) + ":" + rawMac.substring(10,12);
+        }
         for (int i = 0; i < scanResultCount; i++) {
             if (scanResults[i].mac == mac) return;
         }
@@ -214,6 +244,7 @@ class ScanCallbacks : public NimBLEScanCallbacks {
     void onScanEnd(const NimBLEScanResults& results, int reason) override {
         bleScanning = false;
         Serial.printf("[BLE] Scan complete, found %d device(s)\n", scanResultCount);
+        webLogAdd("BLE: Scan done, %d device(s)", scanResultCount);
     }
 };
 
@@ -268,6 +299,7 @@ void setup() {
         delay(100);
     }
     Serial.printf("[SETUP] AP ready at %s\n", WiFi.softAPIP().toString().c_str());
+    webLogAdd("AP '%s' ready at %s", AP_SSID, WiFi.softAPIP().toString().c_str());
 
     // In LCD mode, always use AP-only (no serial config needed)
     userWifiSsid = AP_SSID;
@@ -331,8 +363,9 @@ void setup() {
 #ifdef WAVESHARE_LCD
         if (ui_btnPressed) {
             ui_btnPressed = false;
-            Serial.println("[SETUP] Skip pressed");
-            break;
+            Serial.println("[SETUP] Skip pressed — going to BLE scan");
+            setState(STATE_BLE_SCAN);
+            goto setup_done;
         }
 #endif
     }
@@ -342,15 +375,12 @@ void setup() {
         Serial.printf("[SETUP] Devices connected (mower=%s charger=%s) — skipping BLE.\n",
                       mowerConnected ? "YES" : "no", chargerMqttConnected ? "YES" : "no");
         setState(STATE_CONFIRM_MQTT);
-    } else if (WiFi.softAPgetStationNum() > 0) {
-        // WiFi clients but no MQTT yet — go to MQTT wait
-        Serial.printf("[SETUP] %d WiFi client(s) — waiting for MQTT\n", WiFi.softAPgetStationNum());
-        setState(STATE_WAIT_MQTT);
     } else {
-        // No devices — start BLE scan
-        Serial.println("[SETUP] No devices found — starting BLE scan");
+        // No MQTT devices — start BLE scan (ignore WiFi-only clients like phones)
+        Serial.println("[SETUP] No MQTT devices — starting BLE scan");
         setState(STATE_BLE_SCAN);
     }
+    setup_done:;
 }
 
 // ── Main loop ────────────────────────────────────────────────────────────────
@@ -941,10 +971,36 @@ void loop() {
 void onWifiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
     switch (event) {
         case ARDUINO_EVENT_WIFI_AP_STACONNECTED:
-            Serial.printf("[WiFi] Station connected: %02x:%02x:%02x:%02x:%02x:%02x\n",
-                info.wifi_ap_staconnected.mac[0], info.wifi_ap_staconnected.mac[1],
-                info.wifi_ap_staconnected.mac[2], info.wifi_ap_staconnected.mac[3],
-                info.wifi_ap_staconnected.mac[4], info.wifi_ap_staconnected.mac[5]);
+            {
+                char staMac[18];
+                snprintf(staMac, sizeof(staMac), "%02X:%02X:%02X:%02X:%02X:%02X",
+                    info.wifi_ap_staconnected.mac[0], info.wifi_ap_staconnected.mac[1],
+                    info.wifi_ap_staconnected.mac[2], info.wifi_ap_staconnected.mac[3],
+                    info.wifi_ap_staconnected.mac[4], info.wifi_ap_staconnected.mac[5]);
+                const char* who = "unknown";
+                for (int si = 0; si < scanResultCount; si++) {
+                    if (scanResults[si].isCharger || scanResults[si].isMower) {
+                        String bleMac = scanResults[si].mac;
+                        bleMac.toUpperCase();
+                        // Mower: WiFi MAC = BLE MAC
+                        if (String(staMac).equalsIgnoreCase(bleMac)) {
+                            who = scanResults[si].isMower ? "MOWER" : "CHARGER";
+                        }
+                        // Charger: WiFi STA MAC = BLE MAC - 2
+                        if (scanResults[si].isCharger && bleMac.length() >= 17) {
+                            int lastByte = strtol(bleMac.substring(15).c_str(), NULL, 16) - 2;
+                            char expected[18];
+                            snprintf(expected, sizeof(expected), "%s%02X",
+                                bleMac.substring(0, 15).c_str(), lastByte & 0xFF);
+                            if (String(staMac).equalsIgnoreCase(String(expected))) {
+                                who = "CHARGER";
+                            }
+                        }
+                    }
+                }
+                Serial.printf("[WiFi] Station connected: %s (%s)\n", staMac, who);
+                webLogAdd("WiFi: %s connected (%s)", who, staMac);
+            }
             break;
         case ARDUINO_EVENT_WIFI_AP_STADISCONNECTED:
             Serial.printf("[WiFi] Station disconnected: %02x:%02x:%02x:%02x:%02x:%02x\n",
@@ -977,21 +1033,300 @@ void setupWifiAP() {
 void setupDNS() {
     // Captive portal: ALL DNS queries → our IP
     dnsServer.start(53, "*", WiFi.softAPIP());
-    Serial.println("[DNS] Captive DNS started — mqtt.lfibot.com → 192.168.4.1");
+    Serial.printf("[DNS] Captive DNS started — all queries → %s\n", WiFi.softAPIP().toString().c_str());
 }
 
 // ── HTTP server — serves firmware + status ───────────────────────────────────
 
 void setupHTTP() {
-    // Status page
+    // ── Main status/config page ──────────────────────────────────────────────
     httpServer.on("/", []() {
-        String html = "<html><head><title>Nova-OTA</title></head><body>";
-        html += "<h1>Nova-OTA Device</h1>";
-        html += "<p>Status: " + statusMessage + "</p>";
-        html += "<p>Firmware: " + firmwareVersion + " (" + String(firmwareSize / 1024 / 1024) + " MB)</p>";
-        html += "<p>Mower: " + (mowerConnected ? mowerSn : String("not connected")) + "</p>";
-        html += "</body></html>";
+        String html = R"rawhtml(<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Nova-OTA</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:system-ui,-apple-system,sans-serif;background:#1a1a2e;color:#e0e0e0;padding:16px;min-height:100vh}
+  .container{max-width:480px;margin:0 auto}
+  h1{color:#00d4aa;font-size:24px;margin-bottom:4px}
+  .version{color:#666;font-size:12px;margin-bottom:20px}
+  .card{background:#16213e;border-radius:12px;padding:16px;margin-bottom:16px;border:1px solid #0f3460}
+  .card h2{font-size:16px;color:#7c3aed;margin-bottom:12px;text-transform:uppercase;letter-spacing:1px}
+  .row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.06)}
+  .row:last-child{border-bottom:none}
+  .label{color:#888;font-size:14px}
+  .value{font-size:14px;font-weight:600}
+  .on{color:#00d4aa}
+  .off{color:#ef4444}
+  .sn{color:#a78bfa;font-family:monospace;font-size:13px}
+  label{display:block;color:#888;font-size:13px;margin-bottom:4px;margin-top:12px}
+  label:first-child{margin-top:0}
+  input[type=text],input[type=password]{width:100%;padding:10px 12px;background:#0d0d20;border:2px solid #333;border-radius:8px;color:#fff;font-size:15px}
+  input:focus{border-color:#7c3aed;outline:none}
+  .btn{display:block;width:100%;padding:12px;margin-top:16px;background:#7c3aed;color:#fff;border:none;border-radius:8px;font-size:15px;font-weight:600;cursor:pointer;text-align:center}
+  .btn:active{background:#6d28d9}
+  .btn:disabled{background:#444;cursor:not-allowed}
+  .msg{text-align:center;padding:8px;border-radius:8px;margin-top:12px;font-size:14px;display:none}
+  .msg.ok{display:block;background:rgba(0,212,170,.15);color:#00d4aa}
+  .msg.err{display:block;background:rgba(239,68,68,.15);color:#ef4444}
+  .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px}
+  .dot.on{background:#00d4aa}
+  .dot.off{background:#ef4444}
+  .toggle{display:flex;align-items:center;gap:6px;font-size:12px;color:#666;margin-top:6px;cursor:pointer}
+  .toggle input{width:auto;margin:0}
+</style>
+</head><body>
+<div class="container">
+  <h1>Nova-OTA Device</h1>
+  <div class="version">)rawhtml" + String(VERSION) + R"rawhtml(</div>
+
+  <!-- Status section (auto-refreshed) -->
+  <div class="card">
+    <h2>Status</h2>
+    <div class="row"><span class="label">WiFi AP</span><span class="value" id="ap">--</span></div>
+    <div class="row"><span class="label">Connected clients</span><span class="value" id="clients">--</span></div>
+    <div id="clientList" style="margin:4px 0 8px 0;font-size:12px;color:#aaa"></div>
+    <div class="row"><span class="label">State</span><span class="value" id="state">--</span></div>
+    <div class="row"><span class="label">Status</span><span class="value" id="msg">--</span></div>
+  </div>
+
+  <!-- Console log -->
+  <div class="card">
+    <h2>Console</h2>
+    <div id="console" style="background:#0a0a1a;border-radius:6px;padding:8px;font-family:monospace;font-size:11px;color:#aaa;max-height:200px;overflow-y:auto;white-space:pre-wrap"></div>
+  </div>
+
+  <div class="card">
+    <h2>Charger</h2>
+    <div class="row"><span class="label">WiFi</span><span class="value" id="chWifi">--</span></div>
+    <div class="row"><span class="label">MQTT</span><span class="value" id="chMqtt">--</span></div>
+    <div class="row"><span class="label">Serial</span><span class="value sn" id="chSn">--</span></div>
+  </div>
+
+  <div class="card">
+    <h2>Mower</h2>
+    <div class="row"><span class="label">WiFi</span><span class="value" id="mwWifi">--</span></div>
+    <div class="row"><span class="label">MQTT</span><span class="value" id="mwMqtt">--</span></div>
+    <div class="row"><span class="label">Serial</span><span class="value sn" id="mwSn">--</span></div>
+  </div>
+
+  <div class="card">
+    <h2>Firmware</h2>
+    <div class="row"><span class="label">File</span><span class="value" id="fwFile">--</span></div>
+    <div class="row"><span class="label">Version</span><span class="value" id="fwVer">--</span></div>
+    <div class="row"><span class="label">BLE devices found</span><span class="value" id="bleCnt">--</span></div>
+  </div>
+
+  <!-- WiFi config section -->
+  <div class="card">
+    <h2>Home WiFi Config</h2>
+    <form id="wifiForm" onsubmit="return saveWifi(event)">
+      <label for="ssid">SSID</label>
+      <input type="text" id="ssid" name="ssid" placeholder="Home network name" autocomplete="off">
+      <label for="pass">Password</label>
+      <input type="password" id="pass" name="password" placeholder="WiFi password">
+      <label class="toggle"><input type="checkbox" onclick="document.getElementById('pass').type=this.checked?'text':'password'"> Show password</label>
+      <button class="btn" type="submit">Save &amp; Re-provision</button>
+    </form>
+    <div class="msg" id="wifiMsg"></div>
+  </div>
+</div>
+
+<script>
+function dot(on){return '<span class="dot '+(on?'on':'off')+'"></span>'+(on?'Yes':'No')}
+function upd(){
+  fetch('/api/status').then(r=>r.json()).then(d=>{
+    document.getElementById('ap').textContent=d.apSsid;
+    document.getElementById('clients').textContent=d.apClients;
+    var cl=document.getElementById('clientList');
+    if(d.clients&&d.clients.length){cl.innerHTML=d.clients.map(c=>'<div>'+c.name+' <span style="color:#666">'+c.mac+'</span></div>').join('')}else{cl.innerHTML=''}
+    document.getElementById('state').textContent=d.stateName;
+    document.getElementById('msg').textContent=d.message;
+    var con=document.getElementById('console');
+    if(d.log&&d.log.length){con.textContent=d.log.join('\n');con.scrollTop=con.scrollHeight}
+    document.getElementById('chWifi').innerHTML=dot(d.chargerWifi);
+    document.getElementById('chMqtt').innerHTML=dot(d.chargerMqtt);
+    document.getElementById('chSn').textContent=d.chargerSn||'--';
+    document.getElementById('mwWifi').innerHTML=dot(d.mowerWifi);
+    document.getElementById('mwMqtt').innerHTML=dot(d.mowerMqtt);
+    document.getElementById('mwSn').textContent=d.mowerSn||'--';
+    document.getElementById('fwFile').textContent=d.firmwareFile||'none';
+    document.getElementById('fwVer').textContent=d.firmwareVersion||'--';
+    document.getElementById('bleCnt').textContent=d.bleDevices;
+    if(d.userSsid){document.getElementById('ssid').placeholder=d.userSsid+' (current)'}
+  }).catch(()=>{})
+}
+upd();setInterval(upd,3000);
+
+function saveWifi(e){
+  e.preventDefault();
+  var s=document.getElementById('ssid').value;
+  var p=document.getElementById('pass').value;
+  var m=document.getElementById('wifiMsg');
+  if(!s){m.className='msg err';m.textContent='SSID is required';return false}
+  fetch('/api/wifi-config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ssid:s,password:p})})
+  .then(r=>r.json()).then(d=>{
+    if(d.success){m.className='msg ok';m.textContent='Saved! Devices will be re-provisioned.'}
+    else{m.className='msg err';m.textContent=d.error||'Failed'}
+  }).catch(()=>{m.className='msg err';m.textContent='Connection error'});
+  return false;
+}
+</script>
+</body></html>)rawhtml";
         httpServer.send(200, "text/html", html);
+    });
+
+    // ── JSON status API ──────────────────────────────────────────────────────
+    httpServer.on("/api/status", HTTP_GET, []() {
+        // Determine charger SN from topic
+        String chargerSnStr = "";
+        if (chargerTopic.startsWith("Dart/Send_mqtt/")) {
+            chargerSnStr = chargerTopic.substring(15);
+        }
+
+        // Charger WiFi: we know it's connected if we got an MQTT connection from it
+        bool chargerWifi = chargerMqttConnected;
+        // Mower WiFi: at least one STA connected and mower MQTT is up
+        bool mowerWifi = mowerConnected;
+
+        // State name for display
+        const char* stateNames[] = {
+            "Init", "BLE Scan", "Select Devices", "Provision Charger",
+            "Provision Mower", "Confirm BLE", "Wait MQTT", "Confirm MQTT",
+            "OTA Sent", "WiFi Scan", "WiFi Password", "Re-provision",
+            "Done", "Error"
+        };
+        const char* stateName = (currentState >= 0 && currentState <= STATE_ERROR)
+            ? stateNames[currentState] : "Unknown";
+
+        // WiFi client list with MAC + IP
+        wifi_sta_list_t staList;
+        esp_wifi_ap_get_sta_list(&staList);
+        String clientsJson = "[";
+        for (int i = 0; i < staList.num; i++) {
+            if (i > 0) clientsJson += ",";
+            char mac[18];
+            snprintf(mac, sizeof(mac), "%02X:%02X:%02X:%02X:%02X:%02X",
+                staList.sta[i].mac[0], staList.sta[i].mac[1], staList.sta[i].mac[2],
+                staList.sta[i].mac[3], staList.sta[i].mac[4], staList.sta[i].mac[5]);
+            // Identify device by MAC
+            const char* who = "unknown";
+            String macStr = String(mac);
+
+            // 1. Check against BLE scan results (if available)
+            for (int s = 0; s < scanResultCount; s++) {
+                if (scanResults[s].isCharger) {
+                    String bleMac = scanResults[s].mac;
+                    bleMac.toUpperCase();
+                    if (bleMac.length() >= 17) {
+                        int lastByte = strtol(bleMac.substring(15).c_str(), NULL, 16) - 2;
+                        char expected[18];
+                        snprintf(expected, sizeof(expected), "%s%02X",
+                            bleMac.substring(0, 15).c_str(), lastByte & 0xFF);
+                        if (macStr.equalsIgnoreCase(String(expected))) who = "Charger";
+                    }
+                }
+                if (scanResults[s].isMower && macStr.equalsIgnoreCase(scanResults[s].mac)) {
+                    who = "Mower";
+                }
+            }
+
+            // 2. Heuristic: Espressif OUI (48:27:E2, 30:C6:F7, etc.) = likely charger
+            if (strcmp(who, "unknown") == 0) {
+                if (macStr.startsWith("48:27:E2") || macStr.startsWith("30:C6:F7") ||
+                    macStr.startsWith("EC:DA:3B") || macStr.startsWith("24:0A:C4")) {
+                    who = "Charger (likely)";
+                }
+                // Mower: Horizon Robotics OUI 70:4A:0E
+                else if (macStr.startsWith("70:4A:0E")) {
+                    who = "Mower (likely)";
+                }
+            }
+
+            clientsJson += "{\"mac\":\"" + macStr + "\",\"name\":\"" + String(who) + "\"}";
+        }
+        clientsJson += "]";
+
+        // Log ring buffer
+        String logJson = "[";
+        for (int i = 0; i < webLogCount; i++) {
+            int idx = (webLogHead - webLogCount + i + WEB_LOG_SIZE) % WEB_LOG_SIZE;
+            if (i > 0) logJson += ",";
+            // Escape quotes in log lines
+            String line = webLog[idx];
+            line.replace("\"", "'");
+            logJson += "\"" + line + "\"";
+        }
+        logJson += "]";
+
+        String json = "{";
+        json += "\"apSsid\":\"" + String(AP_SSID) + "\",";
+        json += "\"apClients\":" + String(WiFi.softAPgetStationNum()) + ",";
+        json += "\"clients\":" + clientsJson + ",";
+        json += "\"state\":" + String(currentState) + ",";
+        json += "\"stateName\":\"" + String(stateName) + "\",";
+        json += "\"message\":\"" + statusMessage + "\",";
+        json += "\"chargerWifi\":" + String(chargerWifi ? "true" : "false") + ",";
+        json += "\"chargerMqtt\":" + String(chargerMqttConnected ? "true" : "false") + ",";
+        json += "\"chargerSn\":\"" + chargerSnStr + "\",";
+        json += "\"mowerWifi\":" + String(mowerWifi ? "true" : "false") + ",";
+        json += "\"mowerMqtt\":" + String(mowerConnected ? "true" : "false") + ",";
+        json += "\"mowerSn\":\"" + mowerSn + "\",";
+        json += "\"firmwareFile\":\"" + firmwareFilename + "\",";
+        json += "\"firmwareVersion\":\"" + firmwareVersion + "\",";
+        json += "\"firmwareSize\":" + String(firmwareSize) + ",";
+        json += "\"bleDevices\":" + String(scanResultCount) + ",";
+        json += "\"userSsid\":\"" + userWifiSsid + "\",";
+        json += "\"log\":" + logJson;
+        json += "}";
+        httpServer.send(200, "application/json", json);
+    });
+
+    // ── WiFi config API ──────────────────────────────────────────────────────
+    httpServer.on("/api/wifi-config", HTTP_POST, []() {
+        String body = httpServer.arg("plain");
+        // Simple JSON parsing (no ArduinoJson dependency)
+        String ssid = "";
+        String password = "";
+
+        int ssidIdx = body.indexOf("\"ssid\"");
+        if (ssidIdx >= 0) {
+            int colonIdx = body.indexOf(':', ssidIdx);
+            int startQuote = body.indexOf('"', colonIdx + 1);
+            int endQuote = body.indexOf('"', startQuote + 1);
+            if (startQuote >= 0 && endQuote > startQuote) {
+                ssid = body.substring(startQuote + 1, endQuote);
+            }
+        }
+
+        int passIdx = body.indexOf("\"password\"");
+        if (passIdx >= 0) {
+            int colonIdx = body.indexOf(':', passIdx);
+            int startQuote = body.indexOf('"', colonIdx + 1);
+            int endQuote = body.indexOf('"', startQuote + 1);
+            if (startQuote >= 0 && endQuote > startQuote) {
+                password = body.substring(startQuote + 1, endQuote);
+            }
+        }
+
+        if (ssid.length() == 0) {
+            httpServer.send(400, "application/json", "{\"success\":false,\"error\":\"SSID is required\"}");
+            return;
+        }
+
+        userWifiSsid = ssid;
+        userWifiPassword = password;
+        // Also update the ui_ buffers so the display/Phase 2 flow picks them up
+        strncpy(ui_wifiSsid, ssid.c_str(), sizeof(ui_wifiSsid) - 1);
+        ui_wifiSsid[sizeof(ui_wifiSsid) - 1] = '\0';
+        strncpy(ui_wifiPassword, password.c_str(), sizeof(ui_wifiPassword) - 1);
+        ui_wifiPassword[sizeof(ui_wifiPassword) - 1] = '\0';
+
+        Serial.printf("[HTTP] WiFi config saved: SSID='%s' (%d char password)\n",
+                      ssid.c_str(), password.length());
+        httpServer.send(200, "application/json", "{\"success\":true}");
     });
 
     // Firmware download
@@ -1070,9 +1405,22 @@ void setupHTTP() {
         }
     });
 
-    // Catch-all for any other request (prevents 404 spam)
+    // Captive portal detection + catch-all redirect to dashboard
     httpServer.onNotFound([]() {
-        httpServer.send(200, "text/plain", "OK");
+        String uri = httpServer.uri();
+        // Apple captive portal check — must return specific response to dismiss
+        if (uri.indexOf("hotspot-detect") >= 0 || uri.indexOf("captive") >= 0) {
+            httpServer.send(200, "text/html", "<HTML><HEAD><TITLE>Success</TITLE></HEAD><BODY>Success</BODY></HTML>");
+            return;
+        }
+        // Android captive portal check
+        if (uri.indexOf("generate_204") >= 0) {
+            httpServer.send(204);
+            return;
+        }
+        // Everything else → redirect to dashboard
+        httpServer.sendHeader("Location", "http://192.168.4.1/");
+        httpServer.send(302, "text/plain", "Redirecting...");
     });
 
     httpServer.begin();
@@ -1090,6 +1438,8 @@ void handleMQTTClients() {
     // Accept new connections
     if (mqttTcpServer.hasClient()) {
         WiFiClient newClient = mqttTcpServer.available();
+        Serial.printf("[MQTT] TCP connection from %s:%d\n", newClient.remoteIP().toString().c_str(), newClient.remotePort());
+        webLogAdd("MQTT: TCP from %s:%d", newClient.remoteIP().toString().c_str(), newClient.remotePort());
         bool added = false;
         for (int i = 0; i < 2; i++) {
             if (!mqttClients[i].client || !mqttClients[i].client.connected()) {
@@ -1161,6 +1511,7 @@ void handleMQTTClients() {
                                     chargerMqttConnected = true;
                                     mqttClients[i].isCharger = true;
                                     Serial.printf("[MQTT] Charger connected: %s\n", clientId.c_str());
+                                    webLogAdd("MQTT: Charger %s connected!", clientId.c_str());
                                 }
                                 if (clientId.startsWith("LFI")) {
                                     int underscore = clientId.indexOf('_');
@@ -1169,6 +1520,7 @@ void handleMQTTClients() {
                                     mowerConnectTime = millis();
                                     mqttClients[i].isMower = true;
                                     Serial.printf("[MQTT] Mower connected: %s\n", mowerSn.c_str());
+                                    webLogAdd("MQTT: Mower %s connected!", mowerSn.c_str());
                                 }
                             } else {
                                 Serial.printf("[MQTT] Bad clientId: len=%d remaining=%d\n", clientIdLen, len - idx);
@@ -1345,6 +1697,7 @@ bool provisionDevice(NimBLEAdvertisedDevice* device, const char* deviceType) {
     const char* displayName = isMower ? "Mower" : "Charger";
     int totalSteps = 5;
 
+    webLogAdd("BLE: Connecting to %s...", device->getName().c_str());
     Serial.printf("[BLE] Connecting to %s (%s)...\n", device->getName().c_str(),
                   device->getAddress().toString().c_str());
 
@@ -1436,21 +1789,36 @@ bool provisionDevice(NimBLEAdvertisedDevice* device, const char* deviceType) {
 
     totalSteps = numCmds;
     bool disconnected = false;
+    bool wifiConfirmed = false;
     for (int i = 0; i < numCmds; i++) {
-        if (provisionProgressCb) provisionProgressCb(displayName, cmds[i].step, totalSteps, cmds[i].name);
+        // Friendly names for the UI (no technical BLE command names)
+        const char* friendlyName = cmds[i].name;
+        if (strcmp(cmds[i].name, "set_wifi_info") == 0)    friendlyName = "Setting WiFi...";
+        else if (strcmp(cmds[i].name, "set_rtk_info") == 0)     friendlyName = "Setting GPS...";
+        else if (strcmp(cmds[i].name, "set_lora_info") == 0)    friendlyName = "Setting LoRa...";
+        else if (strcmp(cmds[i].name, "set_mqtt_info") == 0)    friendlyName = "Setting server...";
+        else if (strcmp(cmds[i].name, "set_cfg_info") == 0)     friendlyName = "Saving settings...";
+        else if (strcmp(cmds[i].name, "get_signal_info") == 0)  friendlyName = "Reading signal...";
+        if (provisionProgressCb) provisionProgressCb(displayName, cmds[i].step, totalSteps, friendlyName);
 
         // 1 second pause between commands (matches bootstrap — gives device time to process)
         if (i > 0) delay(1000);
 
         bool got = bleSendCommand(client, writeChr, notifChr, cmds[i].payload, cmds[i].name, resp);
-        if (!got) {
+        if (got) {
+            webLogAdd("BLE: %s OK", friendlyName);
+            // Check for set_wifi_info success specifically
+            if (strcmp(cmds[i].name, "set_wifi_info") == 0) wifiConfirmed = true;
+        } else {
             // Check if device disconnected (set_cfg_info causes reboot = success!)
             if (!client->isConnected()) {
                 Serial.printf("[BLE] Device disconnected after %s (expected reboot)\n", cmds[i].name);
+                webLogAdd("BLE: Device rebooted after %s (success!)", friendlyName);
                 disconnected = true;
                 break;
             }
             Serial.printf("[BLE] %s timeout (non-fatal)\n", cmds[i].name);
+            webLogAdd("BLE: %s — no response (sent OK)", friendlyName);
         }
     }
 
@@ -1458,17 +1826,25 @@ bool provisionDevice(NimBLEAdvertisedDevice* device, const char* deviceType) {
         try { client->disconnect(); } catch (...) {}
     }
 
-    // Success = either got responses OR device rebooted (disconnect after set_cfg_info)
-    bool ok = disconnected || true;  // All commands sent = success (charger doesn't respond but processes)
-    Serial.printf("[BLE] %s provisioning %s%s\n", deviceType,
-                  ok ? "complete" : "FAILED",
-                  disconnected ? " (device rebooted)" : " (no responses but commands sent)");
+    // Success criteria:
+    // - set_wifi_info got result:0 response, OR
+    // - device rebooted (disconnect after set_cfg_info)
+    bool ok = wifiConfirmed || disconnected;
+    const char* reason = "";
+    if (wifiConfirmed && disconnected) reason = " (WiFi confirmed + device rebooted)";
+    else if (wifiConfirmed) reason = " (WiFi confirmed)";
+    else if (disconnected) reason = " (device rebooted, WiFi unconfirmed)";
+    else reason = " (no WiFi confirmation!)";
+
+    Serial.printf("[BLE] %s provisioning %s%s\n", deviceType, ok ? "OK" : "FAILED", reason);
+    webLogAdd("BLE: %s provisioning %s%s", displayName, ok ? "OK" : "FAILED", reason);
     return ok;
 }
 
 bool bleSendCommand(NimBLEClient* client, NimBLERemoteCharacteristic* writeChr,
                     NimBLERemoteCharacteristic* notifyChr, const String& json,
                     const char* cmdName, String& response) {
+    webLogAdd("BLE: → %s", cmdName);
     Serial.printf("[BLE] -> %s: %s\n", cmdName, json.c_str());
 
     response = "";
@@ -1516,6 +1892,7 @@ bool bleSendCommand(NimBLEClient* client, NimBLERemoteCharacteristic* writeChr,
                 response = response.substring(jsonStart, jsonEnd + 1);
             }
             Serial.printf("[BLE] <- %s: %s\n", cmdName, response.c_str());
+            webLogAdd("BLE: ← %s response OK", cmdName);
 
             // Check result — result:1 = acknowledged (NOT rejected)
             int resultIdx = response.indexOf("\"result\":");
@@ -1528,6 +1905,7 @@ bool bleSendCommand(NimBLEClient* client, NimBLERemoteCharacteristic* writeChr,
     }
 
     Serial.printf("[BLE] <- %s: TIMEOUT\n", cmdName);
+    webLogAdd("BLE: ← %s timeout", cmdName);
     return false;
 }
 
