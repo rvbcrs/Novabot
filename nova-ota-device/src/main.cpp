@@ -29,6 +29,7 @@
 #include <NimBLEDevice.h>
 #include <MD5Builder.h>
 #include "mbedtls/aes.h"
+#include <esp_wifi.h>
 #include "display.h"
 #include "touch.h"
 
@@ -74,6 +75,12 @@ static int scanResultCount = 0;
 static int selectedChargerIdx = -1;
 static int selectedMowerIdx = -1;
 
+// ── WiFi scan results (Phase 2: home network re-provisioning) ───────────────
+
+static WifiNetwork wifiNetworks[16];
+static int wifiNetworkCount = 0;
+static bool wifiScanInProgress = false;
+
 // ── State machine ────────────────────────────────────────────────────────────
 
 enum State {
@@ -86,6 +93,9 @@ enum State {
     STATE_WAIT_MQTT,            // Waiting for mower to connect via MQTT
     STATE_CONFIRM_MQTT,         // Show MQTT results, tap Next (or skip OTA)
     STATE_OTA_SENT,             // OTA command sent, waiting for download
+    STATE_WIFI_SCAN,            // Phase 2: scanning WiFi networks for home network
+    STATE_WIFI_PASSWORD,        // Phase 2: entering home WiFi password
+    STATE_REPROVISION,          // Phase 2: re-provisioning devices with home WiFi
     STATE_DONE,                 // All done!
     STATE_ERROR,
 };
@@ -102,10 +112,18 @@ WebServer httpServer(80);
 
 // MQTT broker state
 static WiFiServer mqttTcpServer(MQTT_PORT);
-static WiFiClient mqttClient;
+
+struct MqttConn {
+    WiFiClient client;
+    bool isMower;
+    bool isCharger;
+};
+static MqttConn mqttClients[2];
+
 static bool mowerConnected = false;
 static bool chargerMqttConnected = false;
 static String mowerSn = "";
+static String chargerTopic = "";
 static unsigned long mowerConnectTime = 0;
 
 // BLE state
@@ -129,6 +147,7 @@ void setupWifiAP();
 void setupDNS();
 void setupHTTP();
 void setupMQTT();
+void sendMqttMessage(WiFiClient& client, String topic, String payload, bool useAes, String sn = "");
 void startBleScan();
 bool provisionDevice(NimBLEAdvertisedDevice* device, const char* deviceType);
 bool bleSendCommand(NimBLEClient* client, NimBLERemoteCharacteristic* writeChr,
@@ -224,10 +243,9 @@ void setup() {
     Serial.println("======================================");
 
 #ifdef WAVESHARE_LCD
-    // Initialize display and touch
+    // Initialize display (includes LVGL + touch + FreeRTOS task)
     display_init();
     display_boot(VERSION);
-    touch_init();
     delay(1500);  // Show boot screen briefly
 #endif
 
@@ -243,14 +261,19 @@ void setup() {
         Serial.println("[SD] No firmware .deb — OTA will be skipped");
     }
 
-    // Start WiFi AP
+    // Start WiFi AP and wait until it's actually ready
     setupWifiAP();
+    Serial.println("[SETUP] Waiting for AP to be ready...");
+    while (WiFi.softAPIP() == IPAddress(0, 0, 0, 0)) {
+        delay(100);
+    }
+    Serial.printf("[SETUP] AP ready at %s\n", WiFi.softAPIP().toString().c_str());
 
     // In LCD mode, always use AP-only (no serial config needed)
     userWifiSsid = AP_SSID;
     userWifiPassword = AP_PASSWORD;
 
-    // Start network services immediately to detect already-provisioned devices
+    // Start network services
     setupDNS();
     setupHTTP();
     setupMQTT();
@@ -260,45 +283,72 @@ void setup() {
     NimBLEDevice::init("Nova-OTA");
     NimBLEDevice::setMTU(185);
 
-    // Wait for already-provisioned devices to connect (WiFi + MQTT takes ~20s)
-    Serial.println("[SETUP] Waiting up to 30s for already-provisioned devices...");
+    // Wait for already-provisioned devices to connect
+    Serial.println("[SETUP] AP active — waiting up to 45s for devices...");
 #ifdef WAVESHARE_LCD
     display_confirm("Starting...", "Checking for connected", "devices...", "Skip");
 #endif
-    for (int i = 0; i < 300; i++) {
+    for (int i = 0; i < 450; i++) {
         delay(100);
         dnsServer.processNextRequest();
         httpServer.handleClient();
         handleMQTTClients();
-        // Log WiFi clients periodically
+        // Log periodically
         if (i % 50 == 0) {
             int clients = WiFi.softAPgetStationNum();
-            Serial.printf("[SETUP] %ds — %d WiFi client(s), mower MQTT: %s\n",
-                          i / 10, clients, mowerConnected ? "YES" : "no");
+            Serial.printf("[SETUP] %ds — %d WiFi client(s), mower=%s charger=%s\n",
+                          i / 10, clients, mowerConnected ? "YES" : "no",
+                          chargerMqttConnected ? "YES" : "no");
         }
-        // Mower connected via MQTT — can exit early
-        if (mowerConnected) {
-            Serial.printf("[SETUP] Mower %s connected after %ds!\n", mowerSn.c_str(), i / 10);
+        // Both devices connected — exit immediately
+        if (mowerConnected && chargerMqttConnected) {
+            Serial.println("[SETUP] Both devices connected!");
+            break;
+        }
+        // At least one MQTT connected + some extra time for the other
+        if ((mowerConnected || chargerMqttConnected) && i > 100) {
+            // Give the other device 10 more seconds
+            Serial.printf("[SETUP] One device connected, waiting 10s for the other...\n");
+            for (int j = 0; j < 100 && !(mowerConnected && chargerMqttConnected); j++) {
+                delay(100);
+                dnsServer.processNextRequest();
+                httpServer.handleClient();
+                handleMQTTClients();
+            }
+            break;
+        }
+        // WiFi clients present but no MQTT yet — wait a bit longer
+        if (WiFi.softAPgetStationNum() > 0 && i > 150 && !mowerConnected && !chargerMqttConnected) {
+            Serial.printf("[SETUP] %d WiFi client(s) — waiting 10s for MQTT...\n", WiFi.softAPgetStationNum());
+            for (int j = 0; j < 100 && !mowerConnected && !chargerMqttConnected; j++) {
+                delay(100);
+                dnsServer.processNextRequest();
+                httpServer.handleClient();
+                handleMQTTClients();
+            }
             break;
         }
 #ifdef WAVESHARE_LCD
-        // Skip button
-        if (touch_available()) {
-            int16_t tx, ty;
-            if (touch_read(tx, ty) && display_btnHit(tx, ty)) {
-                Serial.println("[SETUP] Skip pressed");
-                break;
-            }
+        if (ui_btnPressed) {
+            ui_btnPressed = false;
+            Serial.println("[SETUP] Skip pressed");
+            break;
         }
 #endif
     }
 
-    if (mowerConnected) {
-        // Mower already connected via MQTT — skip BLE!
-        Serial.printf("[SETUP] Mower %s already connected! Skipping BLE.\n", mowerSn.c_str());
+    if (mowerConnected || chargerMqttConnected) {
+        // At least one device connected via MQTT — skip BLE!
+        Serial.printf("[SETUP] Devices connected (mower=%s charger=%s) — skipping BLE.\n",
+                      mowerConnected ? "YES" : "no", chargerMqttConnected ? "YES" : "no");
         setState(STATE_CONFIRM_MQTT);
+    } else if (WiFi.softAPgetStationNum() > 0) {
+        // WiFi clients but no MQTT yet — go to MQTT wait
+        Serial.printf("[SETUP] %d WiFi client(s) — waiting for MQTT\n", WiFi.softAPgetStationNum());
+        setState(STATE_WAIT_MQTT);
     } else {
-        // No devices yet — start BLE scan
+        // No devices — start BLE scan
+        Serial.println("[SETUP] No devices found — starting BLE scan");
         setState(STATE_BLE_SCAN);
     }
 }
@@ -330,14 +380,10 @@ void loop() {
     }
 #endif
 
-    // Touch handling for interactive states
+    // Touch is handled by LVGL — check UI flags instead
 #ifdef WAVESHARE_LCD
-    int16_t tx, ty;
-    bool touched = false;
-    if (touch_available() && touch_read(tx, ty)) {
-        touched = true;
-        Serial.printf("[TOUCH] x=%d y=%d (state=%d)\n", tx, ty, currentState);
-    }
+    // (LVGL event callbacks set ui_startPressed, ui_btnPressed,
+    //  ui_selectedChargerIdx, ui_selectedMowerIdx)
 #endif
 
     // State machine
@@ -367,16 +413,20 @@ void loop() {
                 scanResultCount = 0;
                 selectedChargerIdx = -1;
                 selectedMowerIdx = -1;
+                ui_selectedChargerIdx = -1;
+                ui_selectedMowerIdx = -1;
+                ui_startPressed = false;
+                ui_btnPressed = false;
+                ui_rescanPressed = false;
                 if (chargerDevice) { delete chargerDevice; chargerDevice = nullptr; }
                 if (mowerDevice) { delete mowerDevice; mowerDevice = nullptr; }
                 Serial.println("[STATE] Starting BLE scan...");
                 statusMessage = "Scanning for Novabot devices...";
+#ifdef WAVESHARE_LCD
+                display_scanning();
+#endif
                 startBleScan();
             }
-
-#ifdef WAVESHARE_LCD
-            display_scanning();
-#endif
 
             // When scan finishes, go to device selection
             if (!bleScanning) {
@@ -404,49 +454,31 @@ void loop() {
             }
 
 #ifdef WAVESHARE_LCD
-            if (touched) {
-                bool startBtn = false;
-                int hitIdx = display_hitTest(tx, ty, scanResultCount, startBtn);
+            // LVGL handles touch — device_item_cb updates ui_selectedChargerIdx/MowerIdx
+            // and redraws the list. We just check selectedCharger/Mower and start button.
+            selectedChargerIdx = ui_selectedChargerIdx;
+            selectedMowerIdx = ui_selectedMowerIdx;
 
-                if (startBtn) {
-                    // Start button tapped — begin provisioning
-                    if (selectedChargerIdx >= 0 || selectedMowerIdx >= 0) {
-                        Serial.println("[TOUCH] Start pressed");
+            if (ui_rescanPressed) {
+                ui_rescanPressed = false;
+                Serial.println("[TOUCH] Rescan pressed");
+                setState(STATE_BLE_SCAN);
+                break;
+            }
 
-                        // Find the NimBLE devices matching selection
-                        // (chargerDevice/mowerDevice already set by scan callbacks)
-                        if (selectedChargerIdx >= 0 && chargerDevice) {
-                            setState(STATE_PROVISION_CHARGER);
-                        } else if (selectedMowerIdx >= 0 && mowerDevice) {
-                            setState(STATE_PROVISION_MOWER);
-                        } else {
-                            statusMessage = "No valid device selected";
-                            display_error("Select at least one device");
-                        }
-                    }
-                } else if (hitIdx >= 0) {
-                    // Visual row tapped — map to real scanResults index
-                    // Display only shows Novabot devices, so map row → array index
-                    int realIdx = -1, row = 0;
-                    for (int i = 0; i < scanResultCount; i++) {
-                        if (!scanResults[i].isCharger && !scanResults[i].isMower) continue;
-                        if (row == hitIdx) { realIdx = i; break; }
-                        row++;
-                    }
-
-                    if (realIdx >= 0) {
-                        ScanResult& r = scanResults[realIdx];
-                        if (r.isCharger) {
-                            selectedChargerIdx = (selectedChargerIdx == realIdx) ? -1 : realIdx;
-                            Serial.printf("[TOUCH] Charger %s\n", selectedChargerIdx >= 0 ? "selected" : "deselected");
-                        } else if (r.isMower) {
-                            selectedMowerIdx = (selectedMowerIdx == realIdx) ? -1 : realIdx;
-                            Serial.printf("[TOUCH] Mower %s\n", selectedMowerIdx >= 0 ? "selected" : "deselected");
-                        }
-                        display_devices(scanResults, scanResultCount, selectedChargerIdx, selectedMowerIdx);
+            if (ui_startPressed) {
+                ui_startPressed = false;
+                if (selectedChargerIdx >= 0 || selectedMowerIdx >= 0) {
+                    Serial.println("[TOUCH] Start pressed");
+                    if (selectedChargerIdx >= 0 && chargerDevice) {
+                        setState(STATE_PROVISION_CHARGER);
+                    } else if (selectedMowerIdx >= 0 && mowerDevice) {
+                        setState(STATE_PROVISION_MOWER);
+                    } else {
+                        statusMessage = "No valid device selected";
+                        display_error("Select at least one device");
                     }
                 }
-                delay(200);  // Simple debounce
             }
 #endif
             break;
@@ -523,7 +555,8 @@ void loop() {
                 Serial.println("[STATE] BLE done — waiting for Next tap");
             }
 #ifdef WAVESHARE_LCD
-            if (touched && display_btnHit(tx, ty)) {
+            if (ui_btnPressed) {
+                ui_btnPressed = false;
                 delay(200);
                 setState(STATE_WAIT_MQTT);
             }
@@ -547,8 +580,13 @@ void loop() {
             // Non-LCD: blink LED while waiting
             setLed((millis() / 500) % 2);
 #endif
-            if (mowerConnected && millis() - mowerConnectTime > 5000) {
-                setState(STATE_CONFIRM_MQTT);
+            if (mowerConnected) {
+                if (chargerMqttConnected) {
+                    setState(STATE_CONFIRM_MQTT);
+                } else if (millis() - mowerConnectTime > 15000) {
+                    Serial.println("[STATE] Timeout waiting for charger MQTT; proceeding with mower only");
+                    setState(STATE_CONFIRM_MQTT);
+                }
             }
             break;
 
@@ -556,22 +594,40 @@ void loop() {
             if (stateJustEntered) {
                 stateJustEntered = false;
                 bool hasOta = firmwareFilename.length() > 0;
-                String l1 = "Mower connected: " + mowerSn;
-                String l2 = hasOta ? ("Firmware: " + firmwareVersion) : "No firmware on SD";
-                const char* btn = hasOta ? "Flash OTA" : "Done";
+                
+                String chargerSnStr = chargerTopic.startsWith("Dart/Send_mqtt/") ? chargerTopic.substring(15) : "";
+
+                String l1 = "";
+                String l2 = "";
+                if (mowerConnected) {
+                    l1 = "Mower: " + mowerSn;
+                } else {
+                    l1 = "Mower: not connected";
+                }
+                if (chargerMqttConnected && chargerSnStr.length() > 0) {
+                    l2 = "Charger: " + chargerSnStr;
+                } else if (chargerMqttConnected) {
+                    l2 = "Charger: connected";
+                } else {
+                    l2 = "Charger: not connected";
+                }
+                // Skip OTA: go straight to home WiFi provisioning
+                const char* btn = hasOta ? "Flash OTA" : "Setup Home WiFi";
 #ifdef WAVESHARE_LCD
                 display_confirm("MQTT Connected", l1.c_str(), l2.c_str(), btn);
 #endif
-                Serial.printf("[STATE] MQTT confirmed — %s\n", hasOta ? "ready for OTA" : "no firmware");
+                Serial.printf("[STATE] MQTT confirmed — %s\n", hasOta ? "ready for OTA" : "skipping to WiFi");
             }
 #ifdef WAVESHARE_LCD
-            if (touched && display_btnHit(tx, ty)) {
+            if (ui_btnPressed) {
+                ui_btnPressed = false;
                 delay(200);
                 if (firmwareFilename.length() > 0) {
                     setState(STATE_OTA_SENT);
                     sendOtaCommand();
                 } else {
-                    setState(STATE_DONE);
+                    // No firmware — skip OTA, go to home WiFi setup
+                    setState(STATE_WIFI_SCAN);
                 }
             }
 #else
@@ -579,7 +635,7 @@ void loop() {
                 setState(STATE_OTA_SENT);
                 sendOtaCommand();
             } else {
-                setState(STATE_DONE);
+                setState(STATE_WIFI_SCAN);
             }
 #endif
             break;
@@ -596,11 +652,239 @@ void loop() {
 #endif
             statusMessage = "OTA firmware sent — mower is downloading...";
 
-            // After mower disconnects (rebooting), we're done
+            // After mower disconnects (rebooting), go to home WiFi provisioning
             if (!mowerConnected && mowerSn.length() > 0) {
-                statusMessage = "Done! Mower installing custom firmware.";
-                Serial.println("[OTA] Mower disconnected — installing firmware!");
-                setState(STATE_DONE);
+                statusMessage = "Firmware sent! Setting up home WiFi...";
+                Serial.println("[OTA] Mower disconnected — proceeding to WiFi setup");
+                setState(STATE_WIFI_SCAN);
+            }
+            break;
+
+        // ── Phase 2: WiFi scan → password → re-provision ────────────────────
+
+        case STATE_WIFI_SCAN:
+            if (stateJustEntered) {
+                stateJustEntered = false;
+                wifiNetworkCount = 0;
+                wifiScanInProgress = true;
+                ui_selectedWifiIdx = -1;
+                ui_wifiRescanPressed = false;
+
+                Serial.println("[STATE] Starting WiFi scan for home networks...");
+
+                // We are already in WIFI_AP_STA from setupWifiAP(), so no need to switch 
+                // and disrupt the AP connectivity.
+
+#ifdef WAVESHARE_LCD
+                display_scanning();  // Reuse BLE scanning screen
+#endif
+                // Start async scan
+                WiFi.scanNetworks(true);  // async=true
+            }
+
+            // Check if async scan completed
+            if (wifiScanInProgress) {
+                int n = WiFi.scanComplete();
+                if (n == WIFI_SCAN_RUNNING) {
+                    break;  // Still scanning
+                }
+
+                wifiScanInProgress = false;
+
+                if (n < 0) n = 0;  // Error → treat as 0 results
+
+                // Populate results, filter duplicates and hidden SSIDs
+                wifiNetworkCount = 0;
+                for (int i = 0; i < n && wifiNetworkCount < 16; i++) {
+                    String ssid = WiFi.SSID(i);
+                    if (ssid.length() == 0) continue;  // Skip hidden networks
+                    if (ssid == AP_SSID) continue;     // Skip our own AP
+
+                    // Check for duplicate SSID (keep strongest signal)
+                    bool duplicate = false;
+                    for (int j = 0; j < wifiNetworkCount; j++) {
+                        if (wifiNetworks[j].ssid == ssid) {
+                            duplicate = true;
+                            if (WiFi.RSSI(i) > wifiNetworks[j].rssi) {
+                                wifiNetworks[j].rssi = WiFi.RSSI(i);
+                            }
+                            break;
+                        }
+                    }
+                    if (duplicate) continue;
+
+                    wifiNetworks[wifiNetworkCount].ssid = ssid;
+                    wifiNetworks[wifiNetworkCount].rssi = WiFi.RSSI(i);
+                    wifiNetworks[wifiNetworkCount].isOpen = (WiFi.encryptionType(i) == WIFI_AUTH_OPEN);
+                    wifiNetworkCount++;
+                }
+                WiFi.scanDelete();  // Free scan results memory
+
+                Serial.printf("[WiFi] Found %d networks\n", wifiNetworkCount);
+#ifdef WAVESHARE_LCD
+                display_wifiList(wifiNetworks, wifiNetworkCount, -1);
+#endif
+            }
+
+            // User tapped a network → go to password entry
+            if (ui_selectedWifiIdx >= 0 && ui_selectedWifiIdx < wifiNetworkCount) {
+                int idx = ui_selectedWifiIdx;
+                strncpy(ui_wifiSsid, wifiNetworks[idx].ssid.c_str(), sizeof(ui_wifiSsid) - 1);
+                ui_wifiSsid[sizeof(ui_wifiSsid) - 1] = '\0';
+                Serial.printf("[WiFi] Selected: %s\n", ui_wifiSsid);
+
+                if (wifiNetworks[idx].isOpen) {
+                    // Open network — no password needed
+                    userWifiSsid = String(ui_wifiSsid);
+                    userWifiPassword = "";
+                    setState(STATE_REPROVISION);
+                } else {
+                    setState(STATE_WIFI_PASSWORD);
+                }
+                ui_selectedWifiIdx = -1;
+            }
+
+            // User tapped rescan
+            if (ui_wifiRescanPressed) {
+                ui_wifiRescanPressed = false;
+                Serial.println("[WiFi] Rescan requested");
+                stateJustEntered = true;  // Re-enter state to rescan
+            }
+            break;
+
+        case STATE_WIFI_PASSWORD:
+            if (stateJustEntered) {
+                stateJustEntered = false;
+                ui_wifiPasswordReady = false;
+                memset(ui_wifiPassword, 0, sizeof(ui_wifiPassword));
+                Serial.printf("[STATE] Waiting for password for '%s'\n", ui_wifiSsid);
+#ifdef WAVESHARE_LCD
+                display_wifiPassword(ui_wifiSsid);
+#endif
+            }
+
+            if (ui_wifiPasswordReady) {
+                ui_wifiPasswordReady = false;
+                userWifiSsid = String(ui_wifiSsid);
+                userWifiPassword = String(ui_wifiPassword);
+                Serial.printf("[WiFi] Credentials set: SSID=%s\n", userWifiSsid.c_str());
+                setState(STATE_REPROVISION);
+            }
+            break;
+
+        case STATE_REPROVISION:
+            if (stateJustEntered) {
+                stateJustEntered = false;
+                Serial.printf("[STATE] Re-provisioning with home WiFi: %s\n", userWifiSsid.c_str());
+
+#ifdef WAVESHARE_LCD
+                display_reprovision("Scanning for devices...", 0, 4);
+#endif
+                // Use previously discovered devices for re-provisioning
+                // If they are missing (e.g. ESP32 rebooted and mower auto-connected, skipping initial scan),
+                // we must scan for them now.
+                if (!chargerDevice && !mowerDevice) {
+                    Serial.println("[REPROVISION] Devices not cached, starting 15s BLE rescan...");
+#ifdef WAVESHARE_LCD
+                    display_reprovision("Searching for Novabot via Bluetooth...", 0, 4);
+#endif
+                    scanResultCount = 0;
+                    NimBLEScan* scan = NimBLEDevice::getScan();
+                    scan->setScanCallbacks(new ScanCallbacks(), false);
+                    scan->setActiveScan(true);
+                    scan->setInterval(100);
+                    scan->setWindow(99);
+                    scan->start(15000, false);  // 15 second scan
+
+                    // Wait for scan completion
+                    unsigned long scanStart = millis();
+                    while (millis() - scanStart < 16000) {
+                        delay(100);
+                        if (servicesStarted) {
+                            dnsServer.processNextRequest();
+                            httpServer.handleClient();
+                            handleMQTTClients();
+                        }
+                        if (!bleScanning) break;  // Scan finished
+                    }
+                }
+                
+                bool chargerOk = false;
+                bool mowerOk = false;
+                int step = 1;
+                
+                WiFiClient* chargerClient = nullptr;
+                WiFiClient* mowerClient = nullptr;
+
+                for (int i=0; i<2; i++) {
+                    if (mqttClients[i].client && mqttClients[i].client.connected()) {
+                        if (mqttClients[i].isCharger) chargerClient = &mqttClients[i].client;
+                        if (mqttClients[i].isMower) mowerClient = &mqttClients[i].client;
+                    }
+                }
+
+                // Provision Charger
+                if (chargerClient && chargerTopic.length() > 0) {
+                    Serial.println("[REPROVISION] Sending WiFi credentials to Charger via MQTT (FAST PATH)!");
+                    String cPayload = "{\"set_wifi_info\":{\"sta\":{\"ssid\":\"" + userWifiSsid + "\",\"passwd\":\"" + userWifiPassword + "\",\"encrypt\":0},\"ap\":{\"ssid\":\"CHARGER_PILE\",\"passwd\":\"12345678\",\"encrypt\":0}}}";
+                    sendMqttMessage(*chargerClient, chargerTopic, cPayload, false, "");
+                    chargerOk = true;
+                } else if (chargerDevice) {
+                    Serial.println("[REPROVISION] Provisioning Charger via BLE...");
+#ifdef WAVESHARE_LCD
+                    provisionProgressCb = display_provision;
+#endif
+                    chargerOk = provisionDevice(chargerDevice, "charger");
+                    provisionProgressCb = nullptr;
+                    if (chargerOk) Serial.println("[REPROVISION] Charger OK!");
+                    else Serial.println("[REPROVISION] Charger FAILED");
+                    step++;
+                } else {
+                    Serial.println("[REPROVISION] No charger found (MQTT/BLE) — skipping");
+                    chargerOk = true; // Skip if completely missing so it doesn't fail the whole process if user only brought the mower
+                }
+
+                // Provision Mower
+                if (mowerClient && mowerSn.length() > 0) {
+                    Serial.println("[REPROVISION] Sending WiFi credentials to Mower via MQTT (FAST PATH)!");
+                    String mPayload = "{\"set_wifi_info\":{\"ap\":{\"ssid\":\"" + userWifiSsid + "\",\"passwd\":\"" + userWifiPassword + "\",\"encrypt\":0}}}";
+                    sendMqttMessage(*mowerClient, "Dart/Send_mqtt/" + mowerSn, mPayload, true, mowerSn);
+                    mowerOk = true;
+                } else if (mowerDevice) {
+                    Serial.println("[REPROVISION] Provisioning Mower via BLE...");
+#ifdef WAVESHARE_LCD
+                    provisionProgressCb = display_provision;
+#endif
+                    mowerOk = provisionDevice(mowerDevice, "mower");
+                    provisionProgressCb = nullptr;
+                    if (mowerOk) Serial.println("[REPROVISION] Mower OK!");
+                    else Serial.println("[REPROVISION] Mower FAILED");
+                } else {
+                    Serial.println("[REPROVISION] No mower found (MQTT/BLE) — skipping");
+                    mowerOk = true;
+                }
+
+                // Result
+                if (!chargerDevice && !mowerDevice) {
+                    Serial.println("[REPROVISION] No devices found!");
+#ifdef WAVESHARE_LCD
+                    display_error("No devices found.\nMove closer and retry.");
+#endif
+                    setState(STATE_ERROR);
+                } else if (chargerOk && mowerOk) {
+                    Serial.println("[REPROVISION] All devices re-provisioned!");
+                    setState(STATE_DONE);
+                } else {
+                    Serial.println("[REPROVISION] Some devices failed");
+#ifdef WAVESHARE_LCD
+                    String msg = "";
+                    if (!chargerOk) msg += "Charger: FAILED\n";
+                    if (!mowerOk) msg += "Mower: FAILED\n";
+                    msg += "Tap to retry";
+                    display_error(msg.c_str());
+#endif
+                    setState(STATE_ERROR);
+                }
             }
             break;
 
@@ -615,8 +899,9 @@ void loop() {
             }
 
 #ifdef WAVESHARE_LCD
-            // Tap to restart
-            if (touched) {
+            // Tap to restart — LVGL callback sets ui_btnPressed
+            if (ui_btnPressed) {
+                ui_btnPressed = false;
                 delay(300);
                 Serial.println("[TOUCH] Restarting...");
                 setState(STATE_BLE_SCAN);
@@ -627,7 +912,8 @@ void loop() {
         case STATE_ERROR:
 #ifdef WAVESHARE_LCD
             // Error screen already drawn on entry; tap to retry
-            if (touched) {
+            if (ui_btnPressed) {
+                ui_btnPressed = false;
                 delay(300);
                 Serial.println("[TOUCH] Retrying...");
                 setState(STATE_BLE_SCAN);
@@ -652,12 +938,38 @@ void loop() {
 
 // ── WiFi AP ──────────────────────────────────────────────────────────────────
 
+void onWifiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
+    switch (event) {
+        case ARDUINO_EVENT_WIFI_AP_STACONNECTED:
+            Serial.printf("[WiFi] Station connected: %02x:%02x:%02x:%02x:%02x:%02x\n",
+                info.wifi_ap_staconnected.mac[0], info.wifi_ap_staconnected.mac[1],
+                info.wifi_ap_staconnected.mac[2], info.wifi_ap_staconnected.mac[3],
+                info.wifi_ap_staconnected.mac[4], info.wifi_ap_staconnected.mac[5]);
+            break;
+        case ARDUINO_EVENT_WIFI_AP_STADISCONNECTED:
+            Serial.printf("[WiFi] Station disconnected: %02x:%02x:%02x:%02x:%02x:%02x\n",
+                info.wifi_ap_stadisconnected.mac[0], info.wifi_ap_stadisconnected.mac[1],
+                info.wifi_ap_stadisconnected.mac[2], info.wifi_ap_stadisconnected.mac[3],
+                info.wifi_ap_stadisconnected.mac[4], info.wifi_ap_stadisconnected.mac[5]);
+            break;
+        default:
+            break;
+    }
+}
+
 void setupWifiAP() {
-    WiFi.mode(WIFI_AP);
-    WiFi.softAP(AP_SSID, AP_PASSWORD);
+    WiFi.onEvent(onWifiEvent);
+    // Use AP+STA mode from the beginning so scanning later doesn't disrupt the AP
+    WiFi.mode(WIFI_AP_STA);
+    WiFi.softAP(AP_SSID, AP_PASSWORD, 1, 0, 4);  // channel 1, not hidden, max 4 clients
+    // Set WPA/WPA2 mixed auth mode for ESP32 charger compatibility (default WPA2-only fails)
+    wifi_config_t conf;
+    esp_wifi_get_config(WIFI_IF_AP, &conf);
+    conf.ap.authmode = WIFI_AUTH_WPA_WPA2_PSK;
+    esp_wifi_set_config(WIFI_IF_AP, &conf);
     delay(500);
-    Serial.printf("[WiFi] AP started: %s (IP: %s)\n", AP_SSID,
-                  WiFi.softAPIP().toString().c_str());
+    Serial.printf("[WiFi] AP started: %s (IP: %s, ch=%d)\n", AP_SSID,
+                  WiFi.softAPIP().toString().c_str(), WiFi.channel());
 }
 
 // ── DNS — resolve mqtt.lfibot.com → our AP IP ───────────────────────────────
@@ -710,6 +1022,54 @@ void setupHTTP() {
             "{\"success\":true,\"code\":200,\"message\":\"request success\",\"value\":1}");
     });
 
+    // WiFi credential entry via phone browser (much easier than tiny on-screen keyboard)
+    httpServer.on("/wifi", HTTP_GET, []() {
+        String ssid = String(ui_wifiSsid);
+        String html = R"rawhtml(
+<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Nova-OTA WiFi</title>
+<style>
+  body{font-family:system-ui;background:#0a0a1a;color:#e0e0e0;margin:0;padding:20px;display:flex;justify-content:center}
+  .card{background:#1a1a2e;border-radius:16px;padding:24px;max-width:380px;width:100%;box-shadow:0 8px 32px rgba(0,0,0,.4)}
+  h1{color:#00d4aa;margin:0 0 8px;font-size:22px}
+  .ssid{color:#888;margin-bottom:20px}
+  label{display:block;margin-bottom:6px;font-size:14px;color:#aaa}
+  input[type=password],input[type=text]{width:100%;padding:12px;border:2px solid #333;border-radius:8px;background:#0d0d20;color:#fff;font-size:16px;box-sizing:border-box;margin-bottom:16px}
+  input:focus{border-color:#7c3aed;outline:none}
+  button{width:100%;padding:14px;background:#7c3aed;color:#fff;border:none;border-radius:8px;font-size:16px;cursor:pointer;font-weight:600}
+  button:active{background:#6d28d9}
+  .toggle{display:flex;align-items:center;gap:8px;margin-bottom:16px;font-size:13px;color:#888;cursor:pointer}
+  .toggle input{width:auto;margin:0}
+</style></head><body>
+<div class="card">
+  <h1>WiFi Password</h1>
+  <div class="ssid">Network: )rawhtml" + ssid + R"rawhtml(</div>
+  <form method="POST" action="/wifi">
+    <label for="pw">Password</label>
+    <input type="password" id="pw" name="password" placeholder="Enter WiFi password" autofocus>
+    <label class="toggle"><input type="checkbox" onclick="document.getElementById('pw').type=this.checked?'text':'password'"> Show password</label>
+    <button type="submit">Connect</button>
+  </form>
+</div></body></html>)rawhtml";
+        httpServer.send(200, "text/html", html);
+    });
+
+    httpServer.on("/wifi", HTTP_POST, []() {
+        if (httpServer.hasArg("password")) {
+            String pw = httpServer.arg("password");
+            strncpy(ui_wifiPassword, pw.c_str(), sizeof(ui_wifiPassword) - 1);
+            ui_wifiPassword[sizeof(ui_wifiPassword) - 1] = '\0';
+            ui_wifiPasswordReady = true;
+            Serial.printf("[HTTP] WiFi password received via web (%d chars)\n", pw.length());
+            httpServer.send(200, "text/html",
+                R"(<html><body style="font-family:system-ui;background:#0a0a1a;color:#e0e0e0;display:flex;justify-content:center;align-items:center;height:100vh;margin:0">)"
+                R"(<div style="text-align:center"><h1 style="color:#00d4aa">&#10004; Credentials Received</h1>)"
+                R"(<p>Check the device screen for progress.</p></div></body></html>)");
+        } else {
+            httpServer.send(400, "text/plain", "Missing password field");
+        }
+    });
+
     // Catch-all for any other request (prevents 404 spam)
     httpServer.onNotFound([]() {
         httpServer.send(200, "text/plain", "OK");
@@ -729,120 +1089,191 @@ void setupMQTT() {
 void handleMQTTClients() {
     // Accept new connections
     if (mqttTcpServer.hasClient()) {
-        if (mqttClient && mqttClient.connected()) {
-            mqttClient.stop(); // Only one client at a time
+        WiFiClient newClient = mqttTcpServer.available();
+        bool added = false;
+        for (int i = 0; i < 2; i++) {
+            if (!mqttClients[i].client || !mqttClients[i].client.connected()) {
+                mqttClients[i].client = newClient;
+                mqttClients[i].isMower = false;
+                mqttClients[i].isCharger = false;
+                added = true;
+                Serial.printf("[MQTT] Client connected from %s (slot %d)\n", newClient.remoteIP().toString().c_str(), i);
+                break;
+            }
         }
-        mqttClient = mqttTcpServer.available();
-        Serial.printf("[MQTT] Client connected from %s\n",
-                      mqttClient.remoteIP().toString().c_str());
+        if (!added) {
+            newClient.stop(); // No slots available (should rarely happen)
+            Serial.println("[MQTT] Rejected client: no slots available");
+        }
     }
 
-    // Read data from connected client
-    if (mqttClient && mqttClient.connected() && mqttClient.available()) {
-        // Parse MQTT CONNECT packet to extract client ID
-        uint8_t buf[512];
-        int len = mqttClient.read(buf, sizeof(buf));
-        if (len > 0 && buf[0] == 0x10) { // CONNECT packet
-            // Parse client ID from CONNECT packet
-            int idx = 1;
-            // Remaining length (variable)
-            int remaining = 0;
-            int mult = 1;
-            while (idx < len) {
-                remaining += (buf[idx] & 0x7F) * mult;
-                if (!(buf[idx] & 0x80)) { idx++; break; }
-                mult *= 128; idx++;
-            }
-            // Protocol name length (2 bytes) + name + protocol level + flags + keepalive
-            if (idx + 2 < len) {
-                int protoLen = (buf[idx] << 8) | buf[idx + 1];
-                idx += 2 + protoLen + 1 + 1 + 2; // name + level + flags + keepalive
-                // Client ID length
-                if (idx + 2 < len) {
-                    int clientIdLen = (buf[idx] << 8) | buf[idx + 1];
-                    idx += 2;
-                    if (idx + clientIdLen <= len) {
-                        String clientId = String((char*)(buf + idx), clientIdLen);
-                        Serial.printf("[MQTT] CONNECT clientId=%s\n", clientId.c_str());
+    // Read data from connected clients
+    for (int i = 0; i < 2; i++) {
+        if (mqttClients[i].client && mqttClients[i].client.connected() && mqttClients[i].client.available()) {
+            uint8_t buf[512];
+            int len = mqttClients[i].client.read(buf, sizeof(buf));
+            
+            if (len > 0 && buf[0] == 0x10) { // CONNECT
+                // Log raw hex for debugging
+                Serial.printf("[MQTT] CONNECT raw (%d bytes): ", len);
+                for (int b = 0; b < (len < 40 ? len : 40); b++) Serial.printf("%02x ", buf[b]);
+                Serial.println();
 
-                        // Detect charger (ESP32_...) or mower (LFIN..._6688)
-                        if (clientId.startsWith("ESP32_")) {
-                            chargerMqttConnected = true;
-                            Serial.printf("[MQTT] Charger connected: %s\n", clientId.c_str());
-                        }
-                        if (clientId.startsWith("LFI")) {
-                            int underscore = clientId.indexOf('_');
-                            mowerSn = underscore > 0 ? clientId.substring(0, underscore) : clientId;
-                            mowerConnected = true;
-                            mowerConnectTime = millis();
-                            Serial.printf("[MQTT] Mower connected: %s\n", mowerSn.c_str());
+                int idx = 1;
+                // Remaining length (variable-length encoding)
+                int remaining = 0;
+                int mult = 1;
+                while (idx < len) {
+                    remaining += (buf[idx] & 0x7F) * mult;
+                    if (!(buf[idx] & 0x80)) { idx++; break; }
+                    mult *= 128; idx++;
+                }
+
+                // Parse variable header
+                if (idx + 2 < len) {
+                    int protoLen = (buf[idx] << 8) | buf[idx + 1];
+                    idx += 2 + protoLen; // skip protocol name
+                    if (idx < len) {
+                        uint8_t protoLevel = buf[idx++]; // protocol level
+                        uint8_t connectFlags = idx < len ? buf[idx++] : 0;
+                        uint16_t keepAlive = (idx + 1 < len) ? (buf[idx] << 8) | buf[idx + 1] : 60;
+                        idx += 2;
+
+                        // Sanitize connect flags (charger sends malformed flags)
+                        // Bit 1 = clean session, Bit 2 = will flag, etc.
+                        // Force clean session, clear reserved bit
+                        connectFlags |= 0x02;  // set clean session
+                        connectFlags &= 0xFE;  // clear reserved bit 0
+
+                        Serial.printf("[MQTT] proto=%d flags=0x%02x keepalive=%d\n",
+                                     protoLevel, connectFlags, keepAlive);
+
+                        // Client ID
+                        if (idx + 2 <= len) {
+                            int clientIdLen = (buf[idx] << 8) | buf[idx + 1];
+                            idx += 2;
+                            if (idx + clientIdLen <= len && clientIdLen > 0) {
+                                String clientId = String((char*)(buf + idx), clientIdLen);
+                                idx += clientIdLen;
+                                Serial.printf("[MQTT] CONNECT clientId=%s\n", clientId.c_str());
+
+                                if (clientId.startsWith("ESP32_") || clientId.startsWith("SNC")) {
+                                    chargerMqttConnected = true;
+                                    mqttClients[i].isCharger = true;
+                                    Serial.printf("[MQTT] Charger connected: %s\n", clientId.c_str());
+                                }
+                                if (clientId.startsWith("LFI")) {
+                                    int underscore = clientId.indexOf('_');
+                                    mowerSn = underscore > 0 ? clientId.substring(0, underscore) : clientId;
+                                    mowerConnected = true;
+                                    mowerConnectTime = millis();
+                                    mqttClients[i].isMower = true;
+                                    Serial.printf("[MQTT] Mower connected: %s\n", mowerSn.c_str());
+                                }
+                            } else {
+                                Serial.printf("[MQTT] Bad clientId: len=%d remaining=%d\n", clientIdLen, len - idx);
+                            }
                         }
                     }
                 }
-            }
 
-            // Send CONNACK
-            uint8_t connack[] = { 0x20, 0x02, 0x00, 0x00 };
-            mqttClient.write(connack, 4);
-        } else if (len > 0 && buf[0] == 0x82) {
-            // SUBSCRIBE — send SUBACK
-            uint8_t packetId1 = buf[2], packetId2 = buf[3];
-            uint8_t suback[] = { 0x90, 0x03, packetId1, packetId2, 0x00 };
-            mqttClient.write(suback, 5);
-        } else if (len > 0 && buf[0] == 0xC0) {
-            // PINGREQ — send PINGRESP
-            uint8_t pingresp[] = { 0xD0, 0x00 };
-            mqttClient.write(pingresp, 2);
+                // Always send CONNACK regardless of parse success
+                uint8_t connack[] = { 0x20, 0x02, 0x00, 0x00 };
+                mqttClients[i].client.write(connack, 4);
+
+            } else if (len > 0 && buf[0] == 0x82) { // SUBSCRIBE
+                int idx = 1;
+                int remaining = 0;
+                int mult = 1;
+                while (idx < len) {
+                    remaining += (buf[idx] & 0x7F) * mult;
+                    if (!(buf[idx] & 0x80)) { idx++; break; }
+                    mult *= 128; idx++;
+                }
+                
+                uint8_t packetId1 = 0, packetId2 = 0;
+                if (idx + 1 < len) {
+                    packetId1 = buf[idx];
+                    packetId2 = buf[idx+1];
+                }
+
+                // Parse the topic to capture the charger's listening topic
+                if (idx + 3 < len) {
+                    int topicLen = (buf[idx+2] << 8) | buf[idx+3];
+                    if (idx + 4 + topicLen <= len) {
+                        String topic = String((char*)(buf + idx + 4), topicLen);
+                        Serial.printf("[MQTT] SUBSCRIBE topic: %s\n", topic.c_str());
+                        if (mqttClients[i].isCharger && topic.startsWith("Dart/Send_mqtt/")) {
+                            chargerTopic = topic;
+                            Serial.printf("[MQTT] Saved Charger Topic: %s\n", chargerTopic.c_str());
+                        }
+                    }
+                }
+
+                uint8_t suback[] = { 0x90, 0x03, packetId1, packetId2, 0x00 };
+                mqttClients[i].client.write(suback, 5);
+
+            } else if (len > 0 && buf[0] == 0xC0) { // PINGREQ
+                uint8_t pingresp[] = { 0xD0, 0x00 };
+                mqttClients[i].client.write(pingresp, 2);
+            }
         }
     }
 
-    // Detect disconnect
-    if (mowerConnected && mqttClient && !mqttClient.connected()) {
+    // Detect disconnects globally to update flags
+    bool currentMowerStatus = false;
+    bool currentChargerStatus = false;
+    for (int i = 0; i < 2; i++) {
+        if (mqttClients[i].client && mqttClients[i].client.connected()) {
+            if (mqttClients[i].isMower) currentMowerStatus = true;
+            if (mqttClients[i].isCharger) currentChargerStatus = true;
+        }
+    }
+    
+    if (mowerConnected && !currentMowerStatus) {
         Serial.printf("[MQTT] Mower %s disconnected\n", mowerSn.c_str());
         mowerConnected = false;
+    }
+    if (chargerMqttConnected && !currentChargerStatus) {
+        Serial.println("[MQTT] Charger disconnected");
+        chargerMqttConnected = false;
     }
 }
 
 // ── OTA command ──────────────────────────────────────────────────────────────
 
-void sendOtaCommand() {
-    if (!mqttClient || !mqttClient.connected() || mowerSn.length() == 0) return;
+void sendMqttMessage(WiFiClient& client, String topic, String payload, bool useAes, String sn) {
+    if (!client.connected()) return;
 
-    String downloadUrl = "http://192.168.4.1/firmware.deb";
+    int paddedLen = payload.length();
+    uint8_t* outBuf = nullptr;
+    
+    if (useAes && sn.length() >= 4) {
+        String keyStr = "abcdabcd1234" + sn.substring(sn.length() - 4);
+        uint8_t key[16];
+        memcpy(key, keyStr.c_str(), 16);
 
-    // EXACT OTA payload — NO tz field, type MUST be "full", cmd MUST be "upgrade"
-    String otaJson = "{\"ota_upgrade_cmd\":{\"cmd\":\"upgrade\",\"type\":\"full\",\"content\":\"app\",";
-    otaJson += "\"url\":\"" + downloadUrl + "\",";
-    otaJson += "\"version\":\"" + firmwareVersion + "\",";
-    otaJson += "\"md5\":\"" + firmwareMd5 + "\"}}";
+        paddedLen = ((payload.length() + 15) / 16) * 16;
+        uint8_t* plaintext = (uint8_t*)calloc(paddedLen, 1);
+        memcpy(plaintext, payload.c_str(), payload.length());
 
-    String topic = "Dart/Send_mqtt/" + mowerSn;
-
-    // AES encrypt — key = "abcdabcd1234" + last 4 chars of SN
-    String keyStr = "abcdabcd1234" + mowerSn.substring(mowerSn.length() - 4);
-    uint8_t key[16];
-    memcpy(key, keyStr.c_str(), 16);
-
-    // Pad to 16-byte boundary with nulls (NOT PKCS7)
-    int plainLen = otaJson.length();
-    int paddedLen = ((plainLen + 15) / 16) * 16;
-    uint8_t* plaintext = (uint8_t*)calloc(paddedLen, 1);
-    memcpy(plaintext, otaJson.c_str(), plainLen);
-
-    // AES-128-CBC encrypt
-    uint8_t* ciphertext = (uint8_t*)malloc(paddedLen);
-    mbedtls_aes_context aes;
-    mbedtls_aes_init(&aes);
-    mbedtls_aes_setkey_enc(&aes, key, 128);
-    uint8_t iv[16];
-    memcpy(iv, AES_IV, 16);
-    mbedtls_aes_crypt_cbc(&aes, MBEDTLS_AES_ENCRYPT, paddedLen, iv, plaintext, ciphertext);
-    mbedtls_aes_free(&aes);
+        outBuf = (uint8_t*)malloc(paddedLen);
+        mbedtls_aes_context aes;
+        mbedtls_aes_init(&aes);
+        mbedtls_aes_setkey_enc(&aes, key, 128);
+        uint8_t iv[16];
+        memcpy(iv, AES_IV, 16);
+        mbedtls_aes_crypt_cbc(&aes, MBEDTLS_AES_ENCRYPT, paddedLen, iv, plaintext, outBuf);
+        mbedtls_aes_free(&aes);
+        free(plaintext);
+    } else {
+        outBuf = (uint8_t*)malloc(paddedLen);
+        memcpy(outBuf, payload.c_str(), paddedLen);
+    }
 
     // Build MQTT PUBLISH packet
     int topicLen = topic.length();
-    int payloadLen = paddedLen;
-    int remainingLen = 2 + topicLen + payloadLen;
+    int remainingLen = 2 + topicLen + paddedLen;
 
     uint8_t header[5];
     int headerLen = 0;
@@ -855,15 +1286,38 @@ void sendOtaCommand() {
         header[headerLen++] = b;
     } while (rl > 0);
 
-    uint8_t topicHeader[2] = { (uint8_t)(topicLen >> 8), (uint8_t)(topicLen & 0xFF) };
+    client.write(header, headerLen);
+    uint8_t topicLenBytes[2] = { (uint8_t)(topicLen >> 8), (uint8_t)(topicLen & 0xFF) };
+    client.write(topicLenBytes, 2);
+    client.write((const uint8_t*)topic.c_str(), topicLen);
+    client.write(outBuf, paddedLen);
 
-    mqttClient.write(header, headerLen);
-    mqttClient.write(topicHeader, 2);
-    mqttClient.write((uint8_t*)topic.c_str(), topicLen);
-    mqttClient.write(ciphertext, payloadLen);
+    free(outBuf);
+    Serial.printf("[MQTT] Published %d bytes to %s\n", paddedLen, topic.c_str());
+}
 
-    free(plaintext);
-    free(ciphertext);
+void sendOtaCommand() {
+    WiFiClient* client = nullptr;
+    for (int i=0; i<2; i++) {
+        if (mqttClients[i].isMower && mqttClients[i].client && mqttClients[i].client.connected()) {
+            client = &mqttClients[i].client;
+            break;
+        }
+    }
+    
+    if (!client || mowerSn.length() == 0) return;
+
+    String downloadUrl = "http://192.168.4.1/firmware.deb";
+
+    // EXACT OTA payload — NO tz field, type MUST be "full", cmd MUST be "upgrade"
+    String otaJson = "{\"ota_upgrade_cmd\":{\"cmd\":\"upgrade\",\"type\":\"full\",\"content\":\"app\",";
+    otaJson += "\"url\":\"" + downloadUrl + "\",";
+    otaJson += "\"version\":\"" + firmwareVersion + "\",";
+    otaJson += "\"md5\":\"" + firmwareMd5 + "\"}}";
+
+    String topic = "Dart/Send_mqtt/" + mowerSn;
+    
+    sendMqttMessage(*client, topic, otaJson, true, mowerSn);
 
     Serial.printf("[OTA] Sent OTA command to %s: %s (%d bytes firmware)\n",
                   mowerSn.c_str(), firmwareVersion.c_str(), firmwareSize);
@@ -889,7 +1343,7 @@ void startBleScan() {
 bool provisionDevice(NimBLEAdvertisedDevice* device, const char* deviceType) {
     bool isMower = strcmp(deviceType, "mower") == 0;
     const char* displayName = isMower ? "Mower" : "Charger";
-    const int totalSteps = 5;
+    int totalSteps = 5;
 
     Serial.printf("[BLE] Connecting to %s (%s)...\n", device->getName().c_str(),
                   device->getAddress().toString().c_str());
@@ -934,37 +1388,60 @@ bool provisionDevice(NimBLEAdvertisedDevice* device, const char* deviceType) {
 
     String resp;
 
-    // All commands are non-fatal on timeout — charger often doesn't respond
-    // but still processes the commands (proven via RPi btmon)
-    struct { const char* name; String payload; int step; } cmds[] = {
-        {"get_signal_info", "{\"get_signal_info\":0}", 1},
-        {"set_wifi_info", "", 2},  // filled below
-        {"set_lora_info", "{\"set_lora_info\":{\"addr\":" + String(LORA_ADDR) +
-            ",\"channel\":" + String(LORA_CHANNEL) + ",\"hc\":" + String(LORA_HC) +
-            ",\"lc\":" + String(LORA_LC) + "}}", 3},
-        {"set_mqtt_info", "{\"set_mqtt_info\":{\"addr\":\"" + String(MQTT_HOST) +
-            "\",\"port\":" + String(MQTT_PORT) + "}}", 4},
-        {"set_cfg_info", "", 5},  // filled below
-    };
+    // ══════════════════════════════════════════════════════════════
+    // Command sequence MUST match official Novabot app exactly:
+    //   Charger: set_wifi → set_rtk → set_lora → set_mqtt → set_cfg
+    //   Mower:   get_signal → set_wifi → set_lora → set_mqtt → set_cfg
+    // CRITICAL: Charger ignores set_wifi_info if get_signal_info is sent first!
+    // ══════════════════════════════════════════════════════════════
 
-    // set_wifi_info
+    String wifiPayload, cfgPayload;
     if (isMower) {
-        cmds[1].payload = "{\"set_wifi_info\":{\"ap\":{\"ssid\":\"" + userWifiSsid +
+        wifiPayload = "{\"set_wifi_info\":{\"ap\":{\"ssid\":\"" + userWifiSsid +
                    "\",\"passwd\":\"" + userWifiPassword + "\",\"encrypt\":0}}}";
+        cfgPayload = "{\"set_cfg_info\":{\"cfg_value\":1,\"tz\":\"Europe/Amsterdam\"}}";
     } else {
-        cmds[1].payload = "{\"set_wifi_info\":{\"sta\":{\"ssid\":\"" + userWifiSsid +
+        wifiPayload = "{\"set_wifi_info\":{\"sta\":{\"ssid\":\"" + userWifiSsid +
                    "\",\"passwd\":\"" + userWifiPassword + "\",\"encrypt\":0}," +
                    "\"ap\":{\"ssid\":\"CHARGER_PILE\",\"passwd\":\"12345678\",\"encrypt\":0}}}";
+        cfgPayload = "{\"set_cfg_info\":1}";
     }
 
-    // set_cfg_info — charger: {set_cfg_info:1}, mower: with tz (safe in BLE)
-    cmds[4].payload = isMower
-        ? "{\"set_cfg_info\":{\"cfg_value\":1,\"tz\":\"Europe/Amsterdam\"}}"
-        : "{\"set_cfg_info\":1}";
+    String loraPayload = "{\"set_lora_info\":{\"addr\":" + String(LORA_ADDR) +
+        ",\"channel\":" + String(LORA_CHANNEL) + ",\"hc\":" + String(LORA_HC) +
+        ",\"lc\":" + String(LORA_LC) + "}}";
+    String mqttPayload = "{\"set_mqtt_info\":{\"addr\":\"" + String(MQTT_HOST) +
+        "\",\"port\":" + String(MQTT_PORT) + "}}";
 
+    // Build command array in correct order per device type
+    struct { const char* name; String payload; int step; } cmds[6];
+    int numCmds;
+
+    if (isMower) {
+        cmds[0] = {"get_signal_info", "{\"get_signal_info\":0}", 1};
+        cmds[1] = {"set_wifi_info", wifiPayload, 2};
+        cmds[2] = {"set_lora_info", loraPayload, 3};
+        cmds[3] = {"set_mqtt_info", mqttPayload, 4};
+        cmds[4] = {"set_cfg_info", cfgPayload, 5};
+        numCmds = 5;
+    } else {
+        // Charger: set_wifi FIRST, then rtk, lora, mqtt, cfg
+        cmds[0] = {"set_wifi_info", wifiPayload, 1};
+        cmds[1] = {"set_rtk_info", "{\"set_rtk_info\":0}", 2};
+        cmds[2] = {"set_lora_info", loraPayload, 3};
+        cmds[3] = {"set_mqtt_info", mqttPayload, 4};
+        cmds[4] = {"set_cfg_info", cfgPayload, 5};
+        numCmds = 5;
+    }
+
+    totalSteps = numCmds;
     bool disconnected = false;
-    for (int i = 0; i < 5; i++) {
+    for (int i = 0; i < numCmds; i++) {
         if (provisionProgressCb) provisionProgressCb(displayName, cmds[i].step, totalSteps, cmds[i].name);
+
+        // 1 second pause between commands (matches bootstrap — gives device time to process)
+        if (i > 0) delay(1000);
+
         bool got = bleSendCommand(client, writeChr, notifChr, cmds[i].payload, cmds[i].name, resp);
         if (!got) {
             // Check if device disconnected (set_cfg_info causes reboot = success!)
@@ -996,24 +1473,36 @@ bool bleSendCommand(NimBLEClient* client, NimBLERemoteCharacteristic* writeChr,
 
     response = "";
 
-    // Send "ble_start" marker
-    writeChr->writeValue((uint8_t*)"ble_start\0", 10, false);
-    delay(50);
+    // Always use write-with-response (false) — NimBLE writeWithoutResponse fails on charger 0x2222
+    // even though it advertises writeWithoutResponse. The charger still processes the data.
+    bool noResp = false;
+    Serial.printf("[BLE] Write mode: WriteReq (with response)\n");
 
-    // Send JSON in chunks of ~20 bytes
+    // Send "ble_start" marker
+    bool ok = writeChr->writeValue((const uint8_t*)"ble_start", 9, noResp);
+    Serial.printf("[BLE] ble_start write: %s\n", ok ? "OK" : "FAILED");
+    delay(100);  // 100ms after start marker
+
+    // Send JSON in chunks of 20 bytes
     const uint8_t* data = (const uint8_t*)json.c_str();
     int remaining = json.length();
     int offset = 0;
+    int chunkNum = 0;
+    Serial.printf("[BLE] Sending %d bytes in %d chunks\n", remaining, (remaining + 19) / 20);
     while (remaining > 0) {
         int chunkSize = remaining > 20 ? 20 : remaining;
-        writeChr->writeValue(data + offset, chunkSize, false);
+        ok = writeChr->writeValue(data + offset, chunkSize, noResp);
+        if (!ok) Serial.printf("[BLE] Chunk %d WRITE FAILED!\n", chunkNum);
         offset += chunkSize;
         remaining -= chunkSize;
-        delay(30);
+        chunkNum++;
+        delay(100);  // 100ms between chunks (more conservative than 30ms)
     }
 
-    // Send "ble_end" marker
-    writeChr->writeValue((uint8_t*)"ble_end\0", 8, false);
+    // Send "ble_end" marker (7 bytes, NO null terminator — matches bootstrap)
+    delay(100);
+    ok = writeChr->writeValue((const uint8_t*)"ble_end", 7, noResp);
+    Serial.printf("[BLE] ble_end write: %s\n", ok ? "OK" : "FAILED");
 
     // Wait for response (up to 10 seconds)
     unsigned long start = millis();

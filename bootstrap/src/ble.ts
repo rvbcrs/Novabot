@@ -25,8 +25,8 @@ const GATT_LAYOUTS = {
 } as const;
 
 const CHUNK_SIZE = 20;
-const INTER_CHUNK_DELAY = 30;
-const RESPONSE_TIMEOUT = 10_000;
+const INTER_CHUNK_DELAY = 100;
+const RESPONSE_TIMEOUT = 60_000;
 const NOVABOT_COMPANY_ID = 0x5566;
 
 let noble: Noble | null = null;
@@ -41,6 +41,16 @@ async function getNoble(): Promise<Noble> {
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+let _bleT0 = 0;
+function bleLog(...args: unknown[]): void {
+  const elapsed = _bleT0 ? `+${((Date.now() - _bleT0) / 1000).toFixed(1)}s` : '0.0s';
+  console.log(`[BLE ${elapsed}]`, ...args);
+}
+function bleWarn(...args: unknown[]): void {
+  const elapsed = _bleT0 ? `+${((Date.now() - _bleT0) / 1000).toFixed(1)}s` : '0.0s';
+  console.warn(`[BLE ${elapsed}]`, ...args);
 }
 
 // ── Public API ──────────────────────────────────────────────────────────────────
@@ -64,6 +74,7 @@ export interface ProvisionParams {
   mqttAddr: string;
   mqttPort: number;
   deviceType: 'mower' | 'charger';
+  targetSn?: string;
 }
 
 /**
@@ -114,7 +125,7 @@ export async function getBleStatus(): Promise<BleStatusResult> {
  */
 export async function scanDevices(io: IOServer, durationMs = 10000): Promise<void> {
   if (_scanning) {
-    console.log('[BLE] Scan already in progress');
+    bleLog('[BLE] Scan already in progress');
     return;
   }
 
@@ -122,7 +133,7 @@ export async function scanDevices(io: IOServer, durationMs = 10000): Promise<voi
 
   // Wait for adapter to be ready
   if (n.state !== 'poweredOn') {
-    console.log(`[BLE] Waiting for Bluetooth adapter (state: ${n.state})...`);
+    bleLog(`[BLE] Waiting for Bluetooth adapter (state: ${n.state})...`);
     await new Promise<void>((resolve, reject) => {
       const t = setTimeout(() => {
         n.removeAllListeners('stateChange');
@@ -169,7 +180,7 @@ export async function scanDevices(io: IOServer, durationMs = 10000): Promise<voi
 
     if (!seen.has(mac)) {
       seen.add(mac);
-      console.log(`[BLE] Found: ${name} (${mac}) RSSI=${rssi} type=${type}`);
+      bleLog(`[BLE] Found: ${name} (${mac}) RSSI=${rssi} type=${type}`);
     }
 
     io.emit('ble-scan-result', device);
@@ -177,7 +188,7 @@ export async function scanDevices(io: IOServer, durationMs = 10000): Promise<voi
 
   n.on('discover', onDiscover);
 
-  console.log(`[BLE] Starting scan (${durationMs}ms)...`);
+  bleLog(`[BLE] Starting scan (${durationMs}ms)...`);
   await n.startScanningAsync([], true); // allow duplicates for RSSI updates
 
   // Stop after duration
@@ -186,7 +197,7 @@ export async function scanDevices(io: IOServer, durationMs = 10000): Promise<voi
     _scanning = false;
     n.removeListener('discover', onDiscover);
     try { await n.stopScanningAsync(); } catch { /* ignore */ }
-    console.log(`[BLE] Scan complete, found ${seen.size} device(s)`);
+    bleLog(`[BLE] Scan complete, found ${seen.size} device(s)`);
     io.emit('ble-scan-done', { count: seen.size });
   }, durationMs);
 }
@@ -199,14 +210,15 @@ export async function stopScan(): Promise<void> {
   _scanning = false;
   noble.removeAllListeners('discover');
   try { await noble.stopScanningAsync(); } catch { /* ignore */ }
-  console.log('[BLE] Scan stopped');
+  bleLog('[BLE] Scan stopped');
 }
 
 /**
  * Provision a Novabot device via native BLE.
  */
 export async function provisionDevice(params: ProvisionParams, io: IOServer): Promise<boolean> {
-  const { targetMac, wifiSsid, wifiPassword, mqttAddr, mqttPort, deviceType } = params;
+  _bleT0 = Date.now();
+  const { targetMac, wifiSsid, wifiPassword, mqttAddr, mqttPort, deviceType, targetSn } = params;
 
   const n = await getNoble();
 
@@ -225,7 +237,7 @@ export async function provisionDevice(params: ProvisionParams, io: IOServer): Pr
   try {
     // ── Step 1: Find target device ──────────────────────────────
     io.emit('ble-progress', { phase: 'connecting', message: 'Scanning for device...' });
-    console.log(`[BLE] Scanning for MAC ${targetMac}...`);
+    bleLog(`[BLE] Scanning for MAC ${targetMac}...`);
 
     await new Promise<void>((resolve, reject) => {
       const scanTimeout = setTimeout(() => {
@@ -263,10 +275,10 @@ export async function provisionDevice(params: ProvisionParams, io: IOServer): Pr
     // ── Step 2: Connect ─────────────────────────────────────────
     const devName = (targetPeripheral as Peripheral).advertisement?.localName ?? '?';
     io.emit('ble-progress', { phase: 'connecting', message: `Connecting to ${devName}...` });
-    console.log(`[BLE] Connecting to ${devName}...`);
+    bleLog(`[BLE] Connecting to ${devName}...`);
 
     await (targetPeripheral as Peripheral).connectAsync();
-    console.log('[BLE] Connected!');
+    bleLog('[BLE] Connected!');
     await sleep(500);
 
     // ── Step 3: Discover services ───────────────────────────────
@@ -275,12 +287,12 @@ export async function provisionDevice(params: ProvisionParams, io: IOServer): Pr
     const layout = GATT_LAYOUTS[deviceType];
     const result = await (targetPeripheral as Peripheral).discoverAllServicesAndCharacteristicsAsync();
 
-    console.log(`[BLE] Found ${result.services.length} service(s), ${result.characteristics.length} char(s)`);
+    bleLog(`[BLE] Found ${result.services.length} service(s), ${result.characteristics.length} char(s)`);
     for (const s of result.services) {
-      console.log(`[BLE]   Service: ${s.uuid}`);
+      bleLog(`[BLE]   Service: ${s.uuid}`);
     }
     for (const c of result.characteristics) {
-      console.log(`[BLE]   Char: ${c.uuid} props=${JSON.stringify(c.properties)}`);
+      bleLog(`[BLE]   Char: ${c.uuid} props=${JSON.stringify(c.properties)}`);
     }
 
     const writeChar = result.characteristics.find(c => c.uuid === layout.writeChar);
@@ -295,6 +307,9 @@ export async function provisionDevice(params: ProvisionParams, io: IOServer): Pr
       throw new Error(`Notify char ${layout.notifyChar} not found. Available: ${avail}`);
     }
 
+    // Char 0x3333 (read+writeWithoutResponse) — used to flush CoreBluetooth notification buffer
+    const flushChar = result.characteristics.find(c => c.uuid === '3333') || null;
+
     // Subscribe to ALL notify characteristics (responses come on writeChar for mower!)
     const allNotifyChars = result.characteristics.filter(c => c.properties.includes('notify'));
     for (const c of allNotifyChars) {
@@ -302,26 +317,20 @@ export async function provisionDevice(params: ProvisionParams, io: IOServer): Pr
       c.on('data', (data: Buffer) => {
         const hex = data.toString('hex');
         const str = data.toString('utf8').replace(/\0/g, '');
-        console.log(`[BLE] RAW notify on ${c.uuid}: hex=${hex} str="${str}" len=${data.length}`);
+        bleLog(`[BLE] RAW notify on ${c.uuid}: hex=${hex} str="${str}" len=${data.length}`);
       });
-      console.log(`[BLE] Subscribed to notifications on ${c.uuid}`);
+      bleLog(`[BLE] Subscribed to notifications on ${c.uuid}`);
     }
     await sleep(500);
 
-    // ── Step 4: get_signal_info (handshake, non-fatal) ──────────
-    try {
-      io.emit('ble-progress', { phase: 'handshake', message: 'Handshake...' });
-      const { response } = await sendCommand(writeChar, allNotifyChars,
-        JSON.stringify({ get_signal_info: 0 }), 'get_signal_info', 5000);
-      console.log('[BLE] get_signal_info OK:', JSON.stringify(response));
-    } catch {
-      console.warn('[BLE] get_signal_info no response (non-fatal, continuing)');
-    }
-    await sleep(1000); // Give mower time to process
+    // ══════════════════════════════════════════════════════════════
+    // Command sequence MUST match official Novabot app exactly:
+    //   Charger: set_wifi → get_signal → set_rtk → set_lora → set_mqtt → set_cfg
+    //   Mower:   get_signal → set_wifi → set_lora → set_mqtt → set_cfg
+    // Charger ignores set_wifi_info if get_signal_info is sent first!
+    // ══════════════════════════════════════════════════════════════
 
-    // ── Step 5: set_wifi_info (non-fatal on timeout) ────────────
-    io.emit('ble-progress', { phase: 'wifi', message: `Setting WiFi (${wifiSsid})...` });
-
+    // ── Build WiFi payload ─────────────────────────────────────
     let wifiPayload: unknown;
     if (deviceType === 'mower') {
       wifiPayload = {
@@ -333,65 +342,105 @@ export async function provisionDevice(params: ProvisionParams, io: IOServer): Pr
       wifiPayload = {
         set_wifi_info: {
           sta: { ssid: wifiSsid, passwd: wifiPassword, encrypt: 0 },
-          ap: { ssid: 'CHARGER_PILE', passwd: '12345678', encrypt: 0 },
+          ap: { ssid: targetSn || 'CHARGER_PILE', passwd: '12345678', encrypt: 0 },
         },
       };
     }
 
-    try {
-      const { ok, response } = await sendCommand(writeChar, allNotifyChars,
-        JSON.stringify(wifiPayload), 'set_wifi_info', 15000);
-      if (ok) {
-        console.log('[BLE] set_wifi_info OK');
-      } else {
-        console.warn('[BLE] set_wifi_info result non-zero (continuing):', JSON.stringify(response));
+    // ── Charger: set_wifi_info FIRST (before anything else) ────
+    if (deviceType === 'charger') {
+      io.emit('ble-progress', { phase: 'wifi', message: `Setting WiFi (${wifiSsid})...` });
+      try {
+        const { ok, response } = await sendCommand(writeChar, allNotifyChars,
+          JSON.stringify(wifiPayload), 'set_wifi_info', RESPONSE_TIMEOUT, flushChar);
+        if (ok) {
+          bleLog('[BLE] set_wifi_info OK — WiFi credentials accepted!');
+        } else {
+          bleWarn('[BLE] set_wifi_info result non-zero (continuing):', JSON.stringify(response));
+        }
+      } catch {
+        bleWarn('[BLE] set_wifi_info no response (non-fatal, continuing)');
       }
-    } catch {
-      console.warn('[BLE] set_wifi_info no response (non-fatal, continuing to mqtt)');
+      await sleep(1000);
     }
-    await sleep(1000); // Give mower time to process
 
-    // ── Step 6: set_lora_info ────────────────────────────────────
-    // The official app sends this before set_mqtt_info. Without it,
-    // set_mqtt_info may return result:1 (rejected).
+    // ── get_signal_info (mower only — charger doesn't need it) ──
+    if (deviceType === 'mower') {
+      try {
+        io.emit('ble-progress', { phase: 'handshake', message: 'Handshake...' });
+        const { response } = await sendCommand(writeChar, allNotifyChars,
+          JSON.stringify({ get_signal_info: 0 }), 'get_signal_info', RESPONSE_TIMEOUT, flushChar);
+        bleLog('[BLE] get_signal_info OK:', JSON.stringify(response));
+      } catch {
+        bleWarn('[BLE] get_signal_info no response (non-fatal, continuing)');
+      }
+      await sleep(1000);
+    }
+
+    // ── Mower: set_wifi_info AFTER get_signal_info ─────────────
+    if (deviceType === 'mower') {
+      io.emit('ble-progress', { phase: 'wifi', message: `Setting WiFi (${wifiSsid})...` });
+      try {
+        const { ok, response } = await sendCommand(writeChar, allNotifyChars,
+          JSON.stringify(wifiPayload), 'set_wifi_info', RESPONSE_TIMEOUT, flushChar);
+        if (ok) {
+          bleLog('[BLE] set_wifi_info OK');
+        } else {
+          bleWarn('[BLE] set_wifi_info result non-zero (continuing):', JSON.stringify(response));
+        }
+      } catch {
+        bleWarn('[BLE] set_wifi_info no response (non-fatal, continuing)');
+      }
+      await sleep(1000);
+    }
+
+    // ── set_rtk_info (charger only, before lora) ───────────────
+    if (deviceType === 'charger') {
+      io.emit('ble-progress', { phase: 'rtk', message: 'Setting RTK...' });
+      try {
+        const { ok: rtkOk, response: rtkResp } = await sendCommand(
+          writeChar, allNotifyChars, JSON.stringify({ set_rtk_info: 0 }), 'set_rtk_info', RESPONSE_TIMEOUT, flushChar);
+        if (rtkOk) bleLog('[BLE] set_rtk_info OK');
+        else bleWarn('[BLE] set_rtk_info non-zero (continuing):', JSON.stringify(rtkResp));
+      } catch {
+        bleWarn('[BLE] set_rtk_info no response (non-fatal, continuing)');
+      }
+      await sleep(1000);
+    }
+
+    // ── set_lora_info ──────────────────────────────────────────
     io.emit('ble-progress', { phase: 'lora', message: 'Setting LoRa...' });
-    const loraPayload = JSON.stringify({
-      set_lora_info: { addr: 718, channel: 15, hc: 20, lc: 14 },
-    });
     try {
       const { ok: loraOk, response: loraResp } = await sendCommand(
-        writeChar, allNotifyChars, loraPayload, 'set_lora_info', 15000);
+        writeChar, allNotifyChars,
+        JSON.stringify({ set_lora_info: { addr: 718, channel: 15, hc: 20, lc: 14 } }),
+        'set_lora_info', 5000, flushChar);
       if (loraOk) {
         const resp = loraResp as { message?: { value?: number } };
-        if (resp?.message?.value != null) {
-          console.log(`[BLE] LoRa assigned channel: ${resp.message.value}`);
-        }
+        if (resp?.message?.value != null) bleLog(`[BLE] LoRa assigned channel: ${resp.message.value}`);
       } else {
-        console.warn('[BLE] set_lora_info returned non-zero (continuing):', JSON.stringify(loraResp));
+        bleWarn('[BLE] set_lora_info non-zero (continuing):', JSON.stringify(loraResp));
       }
     } catch {
-      console.warn('[BLE] set_lora_info no response (non-fatal, continuing)');
+      bleWarn('[BLE] set_lora_info no response (non-fatal, continuing)');
     }
-    await sleep(1000); // Give device time to process
+    await sleep(1000);
 
-    // ── Step 7: set_mqtt_info ───────────────────────────────────
+    // ── set_mqtt_info ──────────────────────────────────────────
     io.emit('ble-progress', { phase: 'mqtt', message: `Setting MQTT (${mqttAddr}:${mqttPort})...` });
-
-    const mqttPayload = JSON.stringify({ set_mqtt_info: { addr: mqttAddr, port: mqttPort } });
     try {
       const { ok: mqttOk, response: mqttResp } = await sendCommand(
-        writeChar, allNotifyChars, mqttPayload, 'set_mqtt_info', 15000);
-      if (mqttOk) {
-        console.log('[BLE] set_mqtt_info OK — MQTT address accepted!');
-      } else {
-        console.warn('[BLE] set_mqtt_info returned non-zero result (continuing to commit):', JSON.stringify(mqttResp));
-      }
+        writeChar, allNotifyChars,
+        JSON.stringify({ set_mqtt_info: { addr: mqttAddr, port: mqttPort } }),
+        'set_mqtt_info', RESPONSE_TIMEOUT, flushChar);
+      if (mqttOk) bleLog('[BLE] set_mqtt_info OK — MQTT address accepted!');
+      else bleWarn('[BLE] set_mqtt_info non-zero (continuing):', JSON.stringify(mqttResp));
     } catch {
-      console.warn('[BLE] set_mqtt_info no response (non-fatal, continuing to commit)');
+      bleWarn('[BLE] set_mqtt_info no response (non-fatal, continuing to commit)');
     }
-    await sleep(1000); // Give device time to process
+    await sleep(1000);
 
-    // ── Step 8: set_cfg_info (commit) ───────────────────────────
+    // ── set_cfg_info (commit) ──────────────────────────────────
     io.emit('ble-progress', { phase: 'commit', message: 'Saving settings...' });
 
     // Charger: { set_cfg_info: 1 }
@@ -403,7 +452,7 @@ export async function provisionDevice(params: ProvisionParams, io: IOServer): Pr
 
     try {
       const { ok: cfgOk, response: cfgResp } = await sendCommand(
-        writeChar, allNotifyChars, cfgPayload, 'set_cfg_info', 15000);
+        writeChar, allNotifyChars, cfgPayload, 'set_cfg_info', RESPONSE_TIMEOUT, flushChar);
       if (!cfgOk) {
         io.emit('ble-progress', { phase: 'error', error: `set_cfg_info failed: ${JSON.stringify(cfgResp)}` });
         return false;
@@ -413,14 +462,14 @@ export async function provisionDevice(params: ProvisionParams, io: IOServer): Pr
       // Timeout or GATT disconnect here is actually SUCCESS.
       const msg = err instanceof Error ? err.message : String(err);
       if (msg.includes('timeout') || msg.includes('disconnect') || msg.includes('GATT') || msg.includes('not connected')) {
-        console.log('[BLE] set_cfg_info caused disconnect (expected — device restarting)');
+        bleLog('[BLE] set_cfg_info caused disconnect (expected — device restarting)');
       } else {
         throw err;
       }
     }
 
     // ── Done! ───────────────────────────────────────────────────
-    console.log('[BLE] Provisioning complete!');
+    bleLog('[BLE] Provisioning complete!');
     io.emit('ble-progress', { phase: 'done', message: 'Settings saved! Device reconnecting...' });
     return true;
 
@@ -435,7 +484,7 @@ export async function provisionDevice(params: ProvisionParams, io: IOServer): Pr
     if (targetPeripheral) {
       try {
         await (targetPeripheral as Peripheral).disconnectAsync();
-        console.log('[BLE] Disconnected');
+        bleLog('[BLE] Disconnected');
       } catch { /* ignore */ }
     }
   }
@@ -511,7 +560,7 @@ function waitForResponse(
         const respType = (parsed as { type?: string })?.type ?? '';
         if (respType && !respType.includes(expectedType)) {
           // Stale response from a previous command — drain it and keep waiting
-          console.log(`[BLE] Draining stale response: ${respType} (waiting for ${expectedType})`);
+          bleLog(`[BLE] Draining stale response: ${respType} (waiting for ${expectedType})`);
           return;
         }
 
@@ -540,17 +589,26 @@ async function sendCommand(
   payload: string,
   label: string,
   timeoutMs = RESPONSE_TIMEOUT,
+  flushChar?: Characteristic | null,
 ): Promise<{ response: unknown; ok: boolean }> {
-  console.log(`[BLE] → ${label}: ${payload}`);
+  bleLog(`[BLE] → ${label}: ${payload}`);
 
-  // Expected response type: e.g. "set_wifi_info" → looks for "set_wifi_info" in type field
   const expectedType = label;
 
   const responsePromise = waitForResponse(allNotifyChars, expectedType, timeoutMs);
+  responsePromise.catch(() => {}); // prevent unhandled rejection
   await writeFrame(writeChar, payload);
-  const response = await responsePromise;
-  console.log(`[BLE] ← ${label}:`, JSON.stringify(response));
 
+  // CoreBluetooth on macOS batches incoming BLE notifications and only delivers
+  // them when there's new outgoing activity. Read char 0x3333 after a short wait
+  // to kick CoreBluetooth into processing pending notifications from the charger.
+  if (flushChar) {
+    await sleep(2000);
+    try { await flushChar.readAsync(); } catch { /* ignore read errors */ }
+  }
+
+  const response = await responsePromise;
+  bleLog(`[BLE] ← ${label}:`, JSON.stringify(response));
   const resp = response as { message?: { result?: number } } | null;
   const ok = resp?.message?.result === 0 || resp?.message?.result === undefined;
   return { response, ok };
