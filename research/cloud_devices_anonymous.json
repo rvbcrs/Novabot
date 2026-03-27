@@ -41410,5 +41410,17 @@
     "account": null,
     "password": null,
     "model": null
+  },
+  {
+    "sn": "LFIN1231000211",
+    "deviceType": "mower",
+    "macAddress": "70:4A:0E:4A:99:CF",
+    "equipmentType": "LFIN1",
+    "sysVersion": "v5.7.1",
+    "chargerAddress": null,
+    "chargerChannel": null,
+    "account": null,
+    "password": null,
+    "model": "N1000"
   }
 ]

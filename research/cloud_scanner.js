@@ -33,10 +33,17 @@ const OUTPUT_FILE = path.join(__dirname, 'cloud_devices.json');
 // Scan ALL devices — chargers and mowers.
 // Known SNs: LFIC1230700004, LFIC1231000319, LFIC2230700017, LFIN2230700238
 // SN format: LFI<C|N><type><batch:4><serial:5>
-// Use --chargers-only to skip mowers.
+// Filters:
+//   --chargers-only     Only scan chargers (LFIC)
+//   --mowers-only       Only scan mowers (LFIN)
+//   --prefix LFIN1      Only scan a specific prefix
+//   --prefix LFIC1,LFIN1  Multiple prefixes (comma-separated)
 const CHARGERS_ONLY = process.argv.includes('--chargers-only');
+const MOWERS_ONLY = process.argv.includes('--mowers-only');
+const prefixIdx = process.argv.indexOf('--prefix');
+const PREFIX_FILTER = prefixIdx >= 0 ? process.argv[prefixIdx + 1].split(',') : null;
 
-const SN_RANGES = [
+const ALL_RANGES = [
   // Chargers
   { prefix: 'LFIC1', type: 'charger', batch: '2307', serialStart: 0, serialEnd: 1000 },
   { prefix: 'LFIC1', type: 'charger', batch: '2308', serialStart: 0, serialEnd: 500 },
@@ -48,19 +55,33 @@ const SN_RANGES = [
   { prefix: 'LFIC1', type: 'charger', batch: '2402', serialStart: 0, serialEnd: 500 },
   { prefix: 'LFIC2', type: 'charger', batch: '2307', serialStart: 0, serialEnd: 500 },
   { prefix: 'LFIC2', type: 'charger', batch: '2310', serialStart: 0, serialEnd: 500 },
-  // Mowers (unless --chargers-only)
-  ...(!CHARGERS_ONLY ? [
-    { prefix: 'LFIN1', type: 'mower', batch: '2307', serialStart: 0, serialEnd: 1000 },
-    { prefix: 'LFIN2', type: 'mower', batch: '2307', serialStart: 0, serialEnd: 1000 },
-    { prefix: 'LFIN2', type: 'mower', batch: '2308', serialStart: 0, serialEnd: 500 },
-    { prefix: 'LFIN2', type: 'mower', batch: '2309', serialStart: 0, serialEnd: 500 },
-    { prefix: 'LFIN2', type: 'mower', batch: '2310', serialStart: 0, serialEnd: 500 },
-    { prefix: 'LFIN2', type: 'mower', batch: '2311', serialStart: 0, serialEnd: 500 },
-    { prefix: 'LFIN2', type: 'mower', batch: '2312', serialStart: 0, serialEnd: 500 },
-    { prefix: 'LFIN2', type: 'mower', batch: '2401', serialStart: 0, serialEnd: 500 },
-    { prefix: 'LFIN2', type: 'mower', batch: '2402', serialStart: 0, serialEnd: 500 },
-  ] : []),
+  // Mowers — LFIN1 (small battery model)
+  { prefix: 'LFIN1', type: 'mower', batch: '2307', serialStart: 0, serialEnd: 1000 },
+  { prefix: 'LFIN1', type: 'mower', batch: '2308', serialStart: 0, serialEnd: 500 },
+  { prefix: 'LFIN1', type: 'mower', batch: '2309', serialStart: 0, serialEnd: 500 },
+  { prefix: 'LFIN1', type: 'mower', batch: '2310', serialStart: 0, serialEnd: 1000 },
+  { prefix: 'LFIN1', type: 'mower', batch: '2311', serialStart: 0, serialEnd: 500 },
+  { prefix: 'LFIN1', type: 'mower', batch: '2312', serialStart: 0, serialEnd: 500 },
+  { prefix: 'LFIN1', type: 'mower', batch: '2401', serialStart: 0, serialEnd: 500 },
+  { prefix: 'LFIN1', type: 'mower', batch: '2402', serialStart: 0, serialEnd: 500 },
+  // Mowers — LFIN2 (large battery model)
+  { prefix: 'LFIN2', type: 'mower', batch: '2307', serialStart: 0, serialEnd: 1000 },
+  { prefix: 'LFIN2', type: 'mower', batch: '2308', serialStart: 0, serialEnd: 500 },
+  { prefix: 'LFIN2', type: 'mower', batch: '2309', serialStart: 0, serialEnd: 500 },
+  { prefix: 'LFIN2', type: 'mower', batch: '2310', serialStart: 0, serialEnd: 500 },
+  { prefix: 'LFIN2', type: 'mower', batch: '2311', serialStart: 0, serialEnd: 500 },
+  { prefix: 'LFIN2', type: 'mower', batch: '2312', serialStart: 0, serialEnd: 500 },
+  { prefix: 'LFIN2', type: 'mower', batch: '2401', serialStart: 0, serialEnd: 500 },
+  { prefix: 'LFIN2', type: 'mower', batch: '2402', serialStart: 0, serialEnd: 500 },
 ];
+
+// Apply filters
+const SN_RANGES = ALL_RANGES.filter(r => {
+  if (PREFIX_FILTER) return PREFIX_FILTER.includes(r.prefix);
+  if (CHARGERS_ONLY) return r.type === 'charger';
+  if (MOWERS_ONLY) return r.type === 'mower';
+  return true;
+});
 
 // ── Cloud API helpers ────────────────────────────────────────────────────────
 

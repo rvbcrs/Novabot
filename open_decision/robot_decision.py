@@ -802,8 +802,7 @@ class OpenRobotDecision(Node):
         if not self._joystick_active:
             return
         if time.monotonic() - self._last_joystick_time > 1.0:
-            twist = Twist()
-            self.cmd_vel_pub.publish(twist)
+            # Don't publish zero velocity — let motors coast freely
             self._joystick_active = False
 
     # ─── Async service call helper ──────────────────────────────
@@ -1923,7 +1922,8 @@ class OpenRobotDecision(Node):
 
     def _stop_heading_discovery(self) -> None:
         """Stop heading discovery en start auto-dock via start_recharge() for correct positioning."""
-        self.cmd_vel_pub.publish(Twist())  # Motors stoppen
+        # Don't publish zero velocity here — let motors coast.
+        # Safety brakes are handled in _heading_discovery_tick.
         if self._heading_timer is not None:
             self._heading_timer.cancel()
             self._heading_timer = None
@@ -2076,8 +2076,7 @@ class OpenRobotDecision(Node):
 
     def _cancel_active_actions(self):
         """Cancel any running actions (coverage, navigation, etc.)."""
-        twist = Twist()
-        self.cmd_vel_pub.publish(twist)
+        # Don't publish zero velocity — let motors coast freely
         self._undocking = False
         self._joystick_active = False
         if self._mapping_active:
@@ -2435,11 +2434,7 @@ def main(args=None):
 
     def signal_handler(sig, frame):
         node.get_logger().info('Shutting down open robot_decision...')
-        try:
-            twist = Twist()
-            node.cmd_vel_pub.publish(twist)
-        except Exception:
-            pass
+        # Don't send zero velocity at shutdown — let motors coast freely
         try:
             executor.shutdown(timeout_sec=1.0)
         except Exception:
@@ -2462,11 +2457,7 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     finally:
-        try:
-            twist = Twist()
-            node.cmd_vel_pub.publish(twist)
-        except Exception:
-            pass
+        # Don't send zero velocity — let motors coast freely
         try:
             executor.shutdown(timeout_sec=1.0)
         except Exception:
