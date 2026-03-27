@@ -454,6 +454,14 @@ export default function DockerSetup({ selectedIp, socket, onReady }: Props) {
           </button>
         </div>
       )}
+
+      {/* Skip button — always visible */}
+      <button
+        onClick={onReady}
+        className="w-full py-2 px-4 mt-4 bg-gray-700 hover:bg-gray-600 text-gray-300 text-sm rounded-xl transition-colors"
+      >
+        Skip Docker →
+      </button>
     </div>
   );
 }

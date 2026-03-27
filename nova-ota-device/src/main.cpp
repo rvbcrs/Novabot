@@ -22,7 +22,8 @@
 
 #include <Arduino.h>
 #include <WiFi.h>
-#include <DNSServer.h>
+// Custom DNS instead of Arduino DNSServer (which doesn't work reliably on ESP32-S3)
+#include <WiFiUdp.h>
 #include <WebServer.h>
 #include <SD.h>
 #include <SPI.h>
@@ -30,6 +31,7 @@
 #include <MD5Builder.h>
 #include "mbedtls/aes.h"
 #include <esp_wifi.h>
+#include <sMQTTBroker.h>
 #include "display.h"
 #include "touch.h"
 
@@ -40,8 +42,8 @@ static const char* AP_SSID     = "OpenNova-Setup";
 static const char* AP_PASSWORD = "12345678";    // WPA2, 8 chars minimum
 
 // The mower ONLY accepts this hostname for MQTT
-static const char* MQTT_HOST   = "mqtt.lfibot.com";
-static const int   MQTT_PORT   = 1883;
+static const char* MQTT_HOST   = "mqtt.lfibot.com";  // DNS resolves to 192.168.4.1 via our custom DNS
+static const int   MQTT_PORT   = 1883;  // sMQTTBroker listens on 1883
 
 // BLE provisioning — WiFi credentials to send to devices
 static String userWifiSsid     = "";
@@ -126,27 +128,90 @@ static State currentState = STATE_INIT;
 static bool servicesStarted = false;
 static String statusMessage = "Initializing...";
 static bool stateJustEntered = true; // Flag for first-time screen draw per state
+static unsigned long stateEnteredAt = 0;
 
 // ── Globals ──────────────────────────────────────────────────────────────────
 
-DNSServer dnsServer;
+WiFiUDP dnsUdp;
 WebServer httpServer(80);
 
-// MQTT broker state
-static WiFiServer mqttTcpServer(MQTT_PORT);
-
-struct MqttConn {
-    WiFiClient client;
-    bool isMower;
-    bool isCharger;
-};
-static MqttConn mqttClients[2];
-
+// MQTT broker state — sMQTTBroker on port 1883
 static bool mowerConnected = false;
 static bool chargerMqttConnected = false;
 static String mowerSn = "";
 static String chargerTopic = "";
 static unsigned long mowerConnectTime = 0;
+
+// ── sMQTTBroker subclass ─────────────────────────────────────────────────────
+
+class NovaMQTTBroker : public sMQTTBroker {
+public:
+    bool onEvent(sMQTTEvent *event) override {
+        switch (event->Type()) {
+            case NewClient_sMQTTEventType: {
+                sMQTTNewClientEvent *e = (sMQTTNewClientEvent *)event;
+                std::string cid = e->Client()->getClientId();
+                Serial.printf("[MQTT] CONNECT clientId=%s\r\n", cid.c_str());
+
+                if (cid.rfind("ESP32_", 0) == 0 || cid.rfind("SNC", 0) == 0) {
+                    chargerMqttConnected = true;
+                    Serial.printf("[MQTT] Charger connected: %s\r\n", cid.c_str());
+                    webLogAdd("MQTT: Charger %s connected!", cid.c_str());
+                }
+                if (cid.rfind("LFI", 0) == 0) {
+                    String clientIdStr = cid.c_str();
+                    int underscore = clientIdStr.indexOf('_');
+                    mowerSn = underscore > 0 ? clientIdStr.substring(0, underscore) : clientIdStr;
+                    mowerConnected = true;
+                    mowerConnectTime = millis();
+                    Serial.printf("[MQTT] Mower connected: %s\r\n", mowerSn.c_str());
+                    webLogAdd("MQTT: Mower %s connected!", mowerSn.c_str());
+                }
+                return true;
+            }
+            case RemoveClient_sMQTTEventType: {
+                sMQTTRemoveClientEvent *e = (sMQTTRemoveClientEvent *)event;
+                std::string cid = e->Client()->getClientId();
+                Serial.printf("[MQTT] Client disconnected: %s\r\n", cid.c_str());
+
+                if (cid.rfind("ESP32_", 0) == 0 || cid.rfind("SNC", 0) == 0) {
+                    chargerMqttConnected = false;
+                    Serial.println("[MQTT] Charger disconnected");
+                    webLogAdd("MQTT: Charger disconnected");
+                }
+                if (cid.rfind("LFI", 0) == 0) {
+                    mowerConnected = false;
+                    Serial.printf("[MQTT] Mower %s disconnected\r\n", mowerSn.c_str());
+                    webLogAdd("MQTT: Mower %s disconnected", mowerSn.c_str());
+                }
+                return true;
+            }
+            case Subscribe_sMQTTEventType: {
+                sMQTTSubUnSubClientEvent *e = (sMQTTSubUnSubClientEvent *)event;
+                std::string cid = e->Client()->getClientId();
+                std::string topic = e->Topic();
+                Serial.printf("[MQTT] SUBSCRIBE clientId=%s topic=%s\r\n", cid.c_str(), topic.c_str());
+
+                // Capture charger's listening topic
+                if ((cid.rfind("ESP32_", 0) == 0 || cid.rfind("SNC", 0) == 0) &&
+                    topic.rfind("Dart/Send_mqtt/", 0) == 0) {
+                    chargerTopic = topic.c_str();
+                    Serial.printf("[MQTT] Saved Charger Topic: %s\r\n", chargerTopic.c_str());
+                    webLogAdd("MQTT: Charger subscribed: %s", chargerTopic.c_str());
+                }
+                return true;
+            }
+            case Public_sMQTTEventType: {
+                // Just let sMQTTBroker handle routing
+                return true;
+            }
+            default:
+                return true;
+        }
+    }
+};
+
+static NovaMQTTBroker mqttBroker;
 
 // BLE state
 static NimBLEAdvertisedDevice* chargerDevice = nullptr;
@@ -167,16 +232,17 @@ static ProvisionProgressCb provisionProgressCb = nullptr;
 
 void setupWifiAP();
 void setupDNS();
+void processDNS();
+void testDnsResolution();
 void setupHTTP();
 void setupMQTT();
-void sendMqttMessage(WiFiClient& client, String topic, String payload, bool useAes, String sn = "");
+void sendMqttMessage(String topic, String payload, bool useAes, String sn = "");
 void startBleScan();
 bool provisionDevice(NimBLEAdvertisedDevice* device, const char* deviceType);
 bool bleSendCommand(NimBLEClient* client, NimBLERemoteCharacteristic* writeChr,
                     NimBLERemoteCharacteristic* notifyChr, const String& json,
                     const char* cmdName, String& response);
 void sendOtaCommand();
-void handleMQTTClients();
 bool loadFirmwareInfo();
 String computeMd5(const char* path);
 void setState(State newState);
@@ -216,7 +282,7 @@ class ScanCallbacks : public NimBLEScanCallbacks {
             r.isCharger = (name == "CHARGER_PILE");
             r.isMower = (name == "NOVABOT" || name == "Novabot" || name == "novabot");
 
-            Serial.printf("[BLE] Found: %s (%s) RSSI=%d%s%s\n",
+            Serial.printf("[BLE] Found: %s (%s) RSSI=%d%s%s\r\n",
                          name.c_str(), mac.c_str(), r.rssi,
                          r.isCharger ? " [CHARGER]" : "",
                          r.isMower ? " [MOWER]" : "");
@@ -243,7 +309,7 @@ class ScanCallbacks : public NimBLEScanCallbacks {
 
     void onScanEnd(const NimBLEScanResults& results, int reason) override {
         bleScanning = false;
-        Serial.printf("[BLE] Scan complete, found %d device(s)\n", scanResultCount);
+        Serial.printf("[BLE] Scan complete, found %d device(s)\r\n", scanResultCount);
         webLogAdd("BLE: Scan done, %d device(s)", scanResultCount);
     }
 };
@@ -253,6 +319,7 @@ class ScanCallbacks : public NimBLEScanCallbacks {
 void setState(State newState) {
     currentState = newState;
     stateJustEntered = true;
+    stateEnteredAt = millis();
 }
 
 // ── Setup ────────────────────────────────────────────────────────────────────
@@ -284,7 +351,7 @@ void setup() {
     if (!SD.begin(SD_CS_PIN)) {
         Serial.println("[SD] Card mount failed — OTA will be skipped");
     } else {
-        Serial.printf("[SD] Card mounted, size: %lluMB\n", SD.cardSize() / (1024 * 1024));
+        Serial.printf("[SD] Card mounted, size: %lluMB\r\n", SD.cardSize() / (1024 * 1024));
     }
 
     // Find firmware file on SD (optional — OTA skipped if not found)
@@ -292,18 +359,16 @@ void setup() {
         Serial.println("[SD] No firmware .deb — OTA will be skipped");
     }
 
-    // Start WiFi AP and wait until it's actually ready
-    setupWifiAP();
-    Serial.println("[SETUP] Waiting for AP to be ready...");
-    while (WiFi.softAPIP() == IPAddress(0, 0, 0, 0)) {
-        delay(100);
-    }
-    Serial.printf("[SETUP] AP ready at %s\n", WiFi.softAPIP().toString().c_str());
-    webLogAdd("AP '%s' ready at %s", AP_SSID, WiFi.softAPIP().toString().c_str());
-
     // In LCD mode, always use AP-only (no serial config needed)
     userWifiSsid = AP_SSID;
     userWifiPassword = AP_PASSWORD;
+
+    // Start WiFi AP for initial device check
+    setupWifiAP();
+    Serial.println("[SETUP] Waiting for AP to be ready...");
+    while (WiFi.softAPIP() == IPAddress(0, 0, 0, 0)) { delay(100); }
+    Serial.printf("[SETUP] AP ready at %s\r\n", WiFi.softAPIP().toString().c_str());
+    webLogAdd("AP '%s' ready at %s", AP_SSID, WiFi.softAPIP().toString().c_str());
 
     // Start network services
     setupDNS();
@@ -315,22 +380,37 @@ void setup() {
     NimBLEDevice::init("Nova-OTA");
     NimBLEDevice::setMTU(185);
 
-    // Wait for already-provisioned devices to connect
-    Serial.println("[SETUP] AP active — waiting up to 45s for devices...");
+    // Wait for already-provisioned devices to connect via MQTT
+    Serial.println("[SETUP] AP active — waiting up to 45s for MQTT devices...");
 #ifdef WAVESHARE_LCD
     display_confirm("Starting...", "Checking for connected", "devices...", "Skip");
 #endif
     for (int i = 0; i < 450; i++) {
         delay(100);
-        dnsServer.processNextRequest();
+        processDNS();
         httpServer.handleClient();
-        handleMQTTClients();
+        mqttBroker.update();
         // Log periodically
         if (i % 50 == 0) {
             int clients = WiFi.softAPgetStationNum();
-            Serial.printf("[SETUP] %ds — %d WiFi client(s), mower=%s charger=%s\n",
+            Serial.printf("[SETUP] %ds — %d WiFi client(s), mower=%s charger=%s\r\n",
                           i / 10, clients, mowerConnected ? "YES" : "no",
                           chargerMqttConnected ? "YES" : "no");
+            // Check station IPs (DHCP may have completed since connect)
+            wifi_sta_list_t sl;
+            esp_wifi_ap_get_sta_list(&sl);
+            esp_netif_t* apN = esp_netif_get_handle_from_ifkey("WIFI_AP_DEF");
+            if (apN && sl.num > 0) {
+                esp_netif_sta_list_t ipl;
+                if (esp_netif_get_sta_list(&sl, &ipl) == ESP_OK) {
+                    for (int s = 0; s < ipl.num; s++) {
+                        Serial.printf("[SETUP]   STA %02X:%02X:%02X:%02X:%02X:%02X → " IPSTR "\r\n",
+                            ipl.sta[s].mac[0], ipl.sta[s].mac[1], ipl.sta[s].mac[2],
+                            ipl.sta[s].mac[3], ipl.sta[s].mac[4], ipl.sta[s].mac[5],
+                            IP2STR(&ipl.sta[s].ip));
+                    }
+                }
+            }
         }
         // Both devices connected — exit immediately
         if (mowerConnected && chargerMqttConnected) {
@@ -340,23 +420,24 @@ void setup() {
         // At least one MQTT connected + some extra time for the other
         if ((mowerConnected || chargerMqttConnected) && i > 100) {
             // Give the other device 10 more seconds
-            Serial.printf("[SETUP] One device connected, waiting 10s for the other...\n");
+            Serial.printf("[SETUP] One device connected, waiting 10s for the other...\r\n");
+            testDnsResolution();
             for (int j = 0; j < 100 && !(mowerConnected && chargerMqttConnected); j++) {
                 delay(100);
-                dnsServer.processNextRequest();
+                processDNS();
                 httpServer.handleClient();
-                handleMQTTClients();
+                mqttBroker.update();
             }
             break;
         }
         // WiFi clients present but no MQTT yet — wait a bit longer
         if (WiFi.softAPgetStationNum() > 0 && i > 150 && !mowerConnected && !chargerMqttConnected) {
-            Serial.printf("[SETUP] %d WiFi client(s) — waiting 10s for MQTT...\n", WiFi.softAPgetStationNum());
+            Serial.printf("[SETUP] %d WiFi client(s) — waiting 10s for MQTT...\r\n", WiFi.softAPgetStationNum());
             for (int j = 0; j < 100 && !mowerConnected && !chargerMqttConnected; j++) {
                 delay(100);
-                dnsServer.processNextRequest();
+                processDNS();
                 httpServer.handleClient();
-                handleMQTTClients();
+                mqttBroker.update();
             }
             break;
         }
@@ -372,7 +453,7 @@ void setup() {
 
     if (mowerConnected || chargerMqttConnected) {
         // At least one device connected via MQTT — skip BLE!
-        Serial.printf("[SETUP] Devices connected (mower=%s charger=%s) — skipping BLE.\n",
+        Serial.printf("[SETUP] Devices connected (mower=%s charger=%s) — skipping BLE.\r\n",
                       mowerConnected ? "YES" : "no", chargerMqttConnected ? "YES" : "no");
         setState(STATE_CONFIRM_MQTT);
     } else {
@@ -388,9 +469,9 @@ void setup() {
 void loop() {
     // Only process network services after provisioning
     if (servicesStarted) {
-        dnsServer.processNextRequest();
+        processDNS();
         httpServer.handleClient();
-        handleMQTTClients();
+        mqttBroker.update();
     }
 
 #ifndef WAVESHARE_LCD
@@ -403,7 +484,7 @@ void loop() {
             if (comma > 5) {
                 userWifiSsid = line.substring(5, comma);
                 userWifiPassword = line.substring(comma + 1);
-                Serial.printf("[CONFIG] WiFi: %s / %s\n", userWifiSsid.c_str(), "***");
+                Serial.printf("[CONFIG] WiFi: %s / %s\r\n", userWifiSsid.c_str(), "***");
                 if (currentState == STATE_INIT) setState(STATE_BLE_SCAN);
             }
         }
@@ -460,7 +541,7 @@ void loop() {
 
             // When scan finishes, go to device selection
             if (!bleScanning) {
-                Serial.printf("[STATE] Scan done, %d devices found\n", scanResultCount);
+                Serial.printf("[STATE] Scan done, %d devices found\r\n", scanResultCount);
                 setState(STATE_SELECT_DEVICES);
             }
             break;
@@ -468,6 +549,17 @@ void loop() {
         case STATE_SELECT_DEVICES:
             if (stateJustEntered) {
                 stateJustEntered = false;
+                // Auto-select first charger and first mower found
+                for (int i = 0; i < scanResultCount; i++) {
+                    if (scanResults[i].isCharger && selectedChargerIdx < 0) {
+                        selectedChargerIdx = i;
+                        ui_selectedChargerIdx = i;
+                    }
+                    if (scanResults[i].isMower && selectedMowerIdx < 0) {
+                        selectedMowerIdx = i;
+                        ui_selectedMowerIdx = i;
+                    }
+                }
 #ifdef WAVESHARE_LCD
                 display_devices(scanResults, scanResultCount, selectedChargerIdx, selectedMowerIdx);
 #else
@@ -516,6 +608,7 @@ void loop() {
         case STATE_PROVISION_CHARGER:
             if (stateJustEntered) {
                 stateJustEntered = false;
+                // WiFi stays ON during BLE — disabling breaks NimBLE responses
                 Serial.println("[STATE] Provisioning charger...");
                 statusMessage = "Provisioning charger...";
 
@@ -546,6 +639,11 @@ void loop() {
         case STATE_PROVISION_MOWER:
             if (stateJustEntered) {
                 stateJustEntered = false;
+                // Stop WiFi during BLE to avoid interference
+                if (servicesStarted) {
+                    Serial.println("[NET] Stopping WiFi for BLE provisioning...");
+                    WiFi.enableAP(false);  // Stop AP radio but keep objects intact
+                }
 
                 if (!mowerDevice) {
                     Serial.println("[STATE] No mower found, re-scanning...");
@@ -597,27 +695,111 @@ void loop() {
 
         case STATE_WAIT_MQTT:
             // Start network services (DNS/HTTP/MQTT) on first entry
-            if (!servicesStarted) {
-                Serial.println("[NET] Starting DNS + HTTP + MQTT...");
-                setupDNS();
-                setupHTTP();
-                setupMQTT();
-                servicesStarted = true;
+            if (stateJustEntered) {
+                stateJustEntered = false;
+                // Restart WiFi AP after BLE provisioning (was stopped to avoid interference)
+                Serial.printf("[NET] (Re)starting WiFi AP...\r\n");
+                webLogAdd("Restarting WiFi AP...");
+                setupWifiAP();
+                while (WiFi.softAPIP() == IPAddress(0, 0, 0, 0)) { delay(100); }
+                Serial.printf("[SETUP] AP ready at %s\r\n", WiFi.softAPIP().toString().c_str());
+                webLogAdd("AP '%s' ready at %s", AP_SSID, WiFi.softAPIP().toString().c_str());
+                if (!servicesStarted) {
+                    setupDNS();
+                    setupHTTP();
+                    setupMQTT();
+                    servicesStarted = true;
+                }
+                // Self-test: log current state on entry
+                Serial.printf("[STATE] WAIT_MQTT entered — clients=%d mower=%s charger=%s\r\n",
+                              WiFi.softAPgetStationNum(),
+                              mowerConnected ? "YES" : "no",
+                              chargerMqttConnected ? "YES" : "no");
+                webLogAdd("Waiting for MQTT connections...");
+                // Self-test: DNS resolution
+                testDnsResolution();
+                // Self-test: MQTT broker reachable
+                WiFiClient testClient;
+                if (testClient.connect(WiFi.softAPIP(), 1883)) {
+                    webLogAdd("MQTT self-test port 1883: OK");
+                    testClient.stop();
+                } else {
+                    webLogAdd("MQTT self-test port 1883: FAILED!");
+                }
             }
 #ifdef WAVESHARE_LCD
             display_mqttWait(chargerMqttConnected, mowerConnected);
+            if (ui_btnPressed) {
+                ui_btnPressed = false;
+                Serial.printf("[STATE] Next/Skip pressed in WAIT_MQTT\r\n");
+                webLogAdd("Next pressed — proceeding");
+                setState(STATE_CONFIRM_MQTT);
+                break;
+            }
 #else
-            // Non-LCD: blink LED while waiting
             setLed((millis() / 500) % 2);
 #endif
-            if (mowerConnected) {
-                if (chargerMqttConnected) {
+            // Periodic logging every 10s
+            {
+                static unsigned long lastMqttLog = 0;
+                if (millis() - lastMqttLog > 10000) {
+                    lastMqttLog = millis();
+                    int numSta = WiFi.softAPgetStationNum();
+                    Serial.printf("[WAIT_MQTT] %lus — clients=%d mower=%s charger=%s\r\n",
+                                  (millis() - stateEnteredAt) / 1000, numSta,
+                                  mowerConnected ? "YES" : "no",
+                                  chargerMqttConnected ? "YES" : "no");
+                    // Log each station's MAC + try to find IP via ARP
+                    wifi_sta_list_t staList;
+                    esp_wifi_ap_get_sta_list(&staList);
+                    esp_netif_t* apNetif = esp_netif_get_handle_from_ifkey("WIFI_AP_DEF");
+                    if (apNetif) {
+                        esp_netif_sta_list_t ipList;
+                        if (esp_netif_get_sta_list(&staList, &ipList) == ESP_OK) {
+                            for (int s = 0; s < ipList.num; s++) {
+                                Serial.printf("[WAIT_MQTT]   STA %d: %02X:%02X:%02X:%02X:%02X:%02X → IP=" IPSTR "\r\n",
+                                    s, ipList.sta[s].mac[0], ipList.sta[s].mac[1], ipList.sta[s].mac[2],
+                                    ipList.sta[s].mac[3], ipList.sta[s].mac[4], ipList.sta[s].mac[5],
+                                    IP2STR(&ipList.sta[s].ip));
+                                webLogAdd("STA: %02X:%02X:%02X:%02X:%02X:%02X → " IPSTR,
+                                    ipList.sta[s].mac[0], ipList.sta[s].mac[1], ipList.sta[s].mac[2],
+                                    ipList.sta[s].mac[3], ipList.sta[s].mac[4], ipList.sta[s].mac[5],
+                                    IP2STR(&ipList.sta[s].ip));
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Proceed when EITHER mower OR charger connects via MQTT
+            if (mowerConnected || chargerMqttConnected) {
+                // Give the other device a few seconds to also connect
+                if (mowerConnected && chargerMqttConnected) {
                     setState(STATE_CONFIRM_MQTT);
-                } else if (millis() - mowerConnectTime > 15000) {
-                    Serial.println("[STATE] Timeout waiting for charger MQTT; proceeding with mower only");
+                } else if (millis() - stateEnteredAt > 15000) {
+                    // One connected, waited 15s for the other — proceed
+                    Serial.printf("[STATE] Proceeding with mower=%s charger=%s\r\n",
+                                  mowerConnected ? "YES" : "no",
+                                  chargerMqttConnected ? "YES" : "no");
                     setState(STATE_CONFIRM_MQTT);
                 }
             }
+
+            // 60s total timeout
+            if (millis() - stateEnteredAt > 120000 && !mowerConnected && !chargerMqttConnected) {
+                Serial.printf("[STATE] WAIT_MQTT timeout (60s) — no MQTT connections\r\n");
+                webLogAdd("MQTT wait timeout — no devices connected");
+                setState(STATE_ERROR);
+            }
+
+#ifdef WAVESHARE_LCD
+            // Skip button
+            if (ui_btnPressed) {
+                ui_btnPressed = false;
+                Serial.printf("[TOUCH] Skip MQTT wait\r\n");
+                setState(STATE_CONFIRM_MQTT);
+            }
+#endif
             break;
 
         case STATE_CONFIRM_MQTT:
@@ -646,7 +828,7 @@ void loop() {
 #ifdef WAVESHARE_LCD
                 display_confirm("MQTT Connected", l1.c_str(), l2.c_str(), btn);
 #endif
-                Serial.printf("[STATE] MQTT confirmed — %s\n", hasOta ? "ready for OTA" : "skipping to WiFi");
+                Serial.printf("[STATE] MQTT confirmed — %s\r\n", hasOta ? "ready for OTA" : "skipping to WiFi");
             }
 #ifdef WAVESHARE_LCD
             if (ui_btnPressed) {
@@ -750,7 +932,7 @@ void loop() {
                 }
                 WiFi.scanDelete();  // Free scan results memory
 
-                Serial.printf("[WiFi] Found %d networks\n", wifiNetworkCount);
+                Serial.printf("[WiFi] Found %d networks\r\n", wifiNetworkCount);
 #ifdef WAVESHARE_LCD
                 display_wifiList(wifiNetworks, wifiNetworkCount, -1);
 #endif
@@ -761,7 +943,7 @@ void loop() {
                 int idx = ui_selectedWifiIdx;
                 strncpy(ui_wifiSsid, wifiNetworks[idx].ssid.c_str(), sizeof(ui_wifiSsid) - 1);
                 ui_wifiSsid[sizeof(ui_wifiSsid) - 1] = '\0';
-                Serial.printf("[WiFi] Selected: %s\n", ui_wifiSsid);
+                Serial.printf("[WiFi] Selected: %s\r\n", ui_wifiSsid);
 
                 if (wifiNetworks[idx].isOpen) {
                     // Open network — no password needed
@@ -787,7 +969,7 @@ void loop() {
                 stateJustEntered = false;
                 ui_wifiPasswordReady = false;
                 memset(ui_wifiPassword, 0, sizeof(ui_wifiPassword));
-                Serial.printf("[STATE] Waiting for password for '%s'\n", ui_wifiSsid);
+                Serial.printf("[STATE] Waiting for password for '%s'\r\n", ui_wifiSsid);
 #ifdef WAVESHARE_LCD
                 display_wifiPassword(ui_wifiSsid);
 #endif
@@ -797,7 +979,7 @@ void loop() {
                 ui_wifiPasswordReady = false;
                 userWifiSsid = String(ui_wifiSsid);
                 userWifiPassword = String(ui_wifiPassword);
-                Serial.printf("[WiFi] Credentials set: SSID=%s\n", userWifiSsid.c_str());
+                Serial.printf("[WiFi] Credentials set: SSID=%s\r\n", userWifiSsid.c_str());
                 setState(STATE_REPROVISION);
             }
             break;
@@ -805,7 +987,7 @@ void loop() {
         case STATE_REPROVISION:
             if (stateJustEntered) {
                 stateJustEntered = false;
-                Serial.printf("[STATE] Re-provisioning with home WiFi: %s\n", userWifiSsid.c_str());
+                Serial.printf("[STATE] Re-provisioning with home WiFi: %s\r\n", userWifiSsid.c_str());
 
 #ifdef WAVESHARE_LCD
                 display_reprovision("Scanning for devices...", 0, 4);
@@ -831,9 +1013,9 @@ void loop() {
                     while (millis() - scanStart < 16000) {
                         delay(100);
                         if (servicesStarted) {
-                            dnsServer.processNextRequest();
+                            processDNS();
                             httpServer.handleClient();
-                            handleMQTTClients();
+                            mqttBroker.update();
                         }
                         if (!bleScanning) break;  // Scan finished
                     }
@@ -842,22 +1024,12 @@ void loop() {
                 bool chargerOk = false;
                 bool mowerOk = false;
                 int step = 1;
-                
-                WiFiClient* chargerClient = nullptr;
-                WiFiClient* mowerClient = nullptr;
-
-                for (int i=0; i<2; i++) {
-                    if (mqttClients[i].client && mqttClients[i].client.connected()) {
-                        if (mqttClients[i].isCharger) chargerClient = &mqttClients[i].client;
-                        if (mqttClients[i].isMower) mowerClient = &mqttClients[i].client;
-                    }
-                }
 
                 // Provision Charger
-                if (chargerClient && chargerTopic.length() > 0) {
+                if (chargerMqttConnected && chargerTopic.length() > 0) {
                     Serial.println("[REPROVISION] Sending WiFi credentials to Charger via MQTT (FAST PATH)!");
                     String cPayload = "{\"set_wifi_info\":{\"sta\":{\"ssid\":\"" + userWifiSsid + "\",\"passwd\":\"" + userWifiPassword + "\",\"encrypt\":0},\"ap\":{\"ssid\":\"CHARGER_PILE\",\"passwd\":\"12345678\",\"encrypt\":0}}}";
-                    sendMqttMessage(*chargerClient, chargerTopic, cPayload, false, "");
+                    sendMqttMessage(chargerTopic, cPayload, false, "");
                     chargerOk = true;
                 } else if (chargerDevice) {
                     Serial.println("[REPROVISION] Provisioning Charger via BLE...");
@@ -875,10 +1047,10 @@ void loop() {
                 }
 
                 // Provision Mower
-                if (mowerClient && mowerSn.length() > 0) {
+                if (mowerConnected && mowerSn.length() > 0) {
                     Serial.println("[REPROVISION] Sending WiFi credentials to Mower via MQTT (FAST PATH)!");
                     String mPayload = "{\"set_wifi_info\":{\"ap\":{\"ssid\":\"" + userWifiSsid + "\",\"passwd\":\"" + userWifiPassword + "\",\"encrypt\":0}}}";
-                    sendMqttMessage(*mowerClient, "Dart/Send_mqtt/" + mowerSn, mPayload, true, mowerSn);
+                    sendMqttMessage("Dart/Send_mqtt/" + mowerSn, mPayload, true, mowerSn);
                     mowerOk = true;
                 } else if (mowerDevice) {
                     Serial.println("[REPROVISION] Provisioning Mower via BLE...");
@@ -908,8 +1080,8 @@ void loop() {
                     Serial.println("[REPROVISION] Some devices failed");
 #ifdef WAVESHARE_LCD
                     String msg = "";
-                    if (!chargerOk) msg += "Charger: FAILED\n";
-                    if (!mowerOk) msg += "Mower: FAILED\n";
+                    if (!chargerOk) msg += "Charger: FAILED\r\n";
+                    if (!mowerOk) msg += "Mower: FAILED\r\n";
                     msg += "Tap to retry";
                     display_error(msg.c_str());
 #endif
@@ -998,12 +1170,28 @@ void onWifiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
                         }
                     }
                 }
-                Serial.printf("[WiFi] Station connected: %s (%s)\n", staMac, who);
+                Serial.printf("[WiFi] Station connected: %s (%s)\r\n", staMac, who);
                 webLogAdd("WiFi: %s connected (%s)", who, staMac);
+                // Check DHCP IP after a short delay (log in next loop iteration)
+                // For immediate check: query the sta list
+                wifi_sta_list_t sl;
+                esp_wifi_ap_get_sta_list(&sl);
+                esp_netif_t* apN = esp_netif_get_handle_from_ifkey("WIFI_AP_DEF");
+                if (apN) {
+                    esp_netif_sta_list_t ipl;
+                    if (esp_netif_get_sta_list(&sl, &ipl) == ESP_OK) {
+                        for (int s = 0; s < ipl.num; s++) {
+                            Serial.printf("[WiFi]   STA %02X:%02X:%02X:%02X:%02X:%02X → " IPSTR "\r\n",
+                                ipl.sta[s].mac[0], ipl.sta[s].mac[1], ipl.sta[s].mac[2],
+                                ipl.sta[s].mac[3], ipl.sta[s].mac[4], ipl.sta[s].mac[5],
+                                IP2STR(&ipl.sta[s].ip));
+                        }
+                    }
+                }
             }
             break;
         case ARDUINO_EVENT_WIFI_AP_STADISCONNECTED:
-            Serial.printf("[WiFi] Station disconnected: %02x:%02x:%02x:%02x:%02x:%02x\n",
+            Serial.printf("[WiFi] Station disconnected: %02x:%02x:%02x:%02x:%02x:%02x\r\n",
                 info.wifi_ap_stadisconnected.mac[0], info.wifi_ap_stadisconnected.mac[1],
                 info.wifi_ap_stadisconnected.mac[2], info.wifi_ap_stadisconnected.mac[3],
                 info.wifi_ap_stadisconnected.mac[4], info.wifi_ap_stadisconnected.mac[5]);
@@ -1017,23 +1205,129 @@ void setupWifiAP() {
     WiFi.onEvent(onWifiEvent);
     // Use AP+STA mode from the beginning so scanning later doesn't disrupt the AP
     WiFi.mode(WIFI_AP_STA);
+    // Configure DHCP BEFORE starting AP — charger connects instantly and needs DHCP ready
+    esp_netif_t* apNetif = esp_netif_get_handle_from_ifkey("WIFI_AP_DEF");
+    if (apNetif) {
+        // DHCP server is auto-started by softAP, stop it first to configure
+        esp_netif_dhcps_stop(apNetif);
+        // Enable DNS offer so ESP32 clients get our IP as DNS server
+        dhcps_offer_t offer = OFFER_DNS;
+        esp_netif_dhcps_option(apNetif, ESP_NETIF_OP_SET, ESP_NETIF_DOMAIN_NAME_SERVER, &offer, sizeof(offer));
+        Serial.printf("[WiFi] DHCP pre-configured with DNS offer\r\n");
+        // DON'T restart DHCP yet — softAP() will start it
+    }
+
+    // Use 10.0.0.x subnet — NOT 192.168.4.x which conflicts with charger's own AP!
+    // The charger runs AP+STA mode with its AP on 192.168.4.1 → subnet clash breaks DHCP.
+    WiFi.softAPConfig(IPAddress(10,0,0,1), IPAddress(10,0,0,1), IPAddress(255,255,255,0));
     WiFi.softAP(AP_SSID, AP_PASSWORD, 1, 0, 4);  // channel 1, not hidden, max 4 clients
-    // Set WPA/WPA2 mixed auth mode for ESP32 charger compatibility (default WPA2-only fails)
+
+    // Set WPA/WPA2 mixed auth mode for ESP32 charger compatibility
     wifi_config_t conf;
     esp_wifi_get_config(WIFI_IF_AP, &conf);
     conf.ap.authmode = WIFI_AUTH_WPA_WPA2_PSK;
     esp_wifi_set_config(WIFI_IF_AP, &conf);
+
+    // Now start DHCP server (after AP is active)
+    if (apNetif) {
+        esp_err_t err = esp_netif_dhcps_start(apNetif);
+        Serial.printf("[WiFi] DHCP server started (err=%d)\r\n", err);
+    }
+
     delay(500);
-    Serial.printf("[WiFi] AP started: %s (IP: %s, ch=%d)\n", AP_SSID,
+    Serial.printf("[WiFi] AP started: %s (IP: %s, ch=%d)\r\n", AP_SSID,
                   WiFi.softAPIP().toString().c_str(), WiFi.channel());
 }
 
 // ── DNS — resolve mqtt.lfibot.com → our AP IP ───────────────────────────────
 
+// ── Custom DNS server — responds to ALL queries with our AP IP ───────────────
+// Replaces Arduino DNSServer which doesn't work reliably on ESP32-S3
+
+static IPAddress dnsResponseIP;
+
 void setupDNS() {
-    // Captive portal: ALL DNS queries → our IP
-    dnsServer.start(53, "*", WiFi.softAPIP());
-    Serial.printf("[DNS] Captive DNS started — all queries → %s\n", WiFi.softAPIP().toString().c_str());
+    dnsResponseIP = WiFi.softAPIP();
+    dnsUdp.begin(53);
+    Serial.printf("[DNS] Custom DNS started on port 53 — all queries → %s\r\n", dnsResponseIP.toString().c_str());
+    webLogAdd("DNS: all queries → %s", dnsResponseIP.toString().c_str());
+}
+
+void processDNS() {
+    int packetSize = dnsUdp.parsePacket();
+    if (packetSize < 12) return;  // Too small for DNS header
+
+    uint8_t buf[512];
+    int len = dnsUdp.read(buf, sizeof(buf));
+    if (len < 12) return;
+
+    // Extract query name for logging
+    char queryName[128] = {0};
+    int qpos = 12;  // DNS header is 12 bytes
+    int npos = 0;
+    while (qpos < len && buf[qpos] != 0 && npos < 126) {
+        int labelLen = buf[qpos++];
+        if (npos > 0) queryName[npos++] = '.';
+        for (int j = 0; j < labelLen && qpos < len && npos < 126; j++) {
+            queryName[npos++] = buf[qpos++];
+        }
+    }
+    queryName[npos] = 0;
+    qpos++;  // skip null terminator
+    qpos += 4;  // skip QTYPE (2) + QCLASS (2)
+
+    Serial.printf("[DNS] Query: %s from %s\r\n", queryName, dnsUdp.remoteIP().toString().c_str());
+    webLogAdd("DNS: %s from %s", queryName, dnsUdp.remoteIP().toString().c_str());
+
+    // Build response: copy header, set response flags, append answer
+    uint8_t resp[512];
+    memcpy(resp, buf, len);  // Copy entire query
+
+    // Set response flags: QR=1, AA=1, RD=1, RA=1
+    resp[2] = 0x85;  // QR=1, Opcode=0, AA=1, TC=0, RD=1
+    resp[3] = 0x80;  // RA=1, Z=0, RCODE=0 (no error)
+
+    // Set answer count = 1
+    resp[6] = 0x00;
+    resp[7] = 0x01;
+
+    // Append answer: name pointer + type A + class IN + TTL + data length + IP
+    int rpos = len;  // Start after the query
+    // Name pointer to offset 12 (the query name)
+    resp[rpos++] = 0xC0;
+    resp[rpos++] = 0x0C;
+    // Type A (1)
+    resp[rpos++] = 0x00;
+    resp[rpos++] = 0x01;
+    // Class IN (1)
+    resp[rpos++] = 0x00;
+    resp[rpos++] = 0x01;
+    // TTL (60 seconds)
+    resp[rpos++] = 0x00;
+    resp[rpos++] = 0x00;
+    resp[rpos++] = 0x00;
+    resp[rpos++] = 0x3C;
+    // Data length (4 bytes for IPv4)
+    resp[rpos++] = 0x00;
+    resp[rpos++] = 0x04;
+    // IP address
+    resp[rpos++] = dnsResponseIP[0];
+    resp[rpos++] = dnsResponseIP[1];
+    resp[rpos++] = dnsResponseIP[2];
+    resp[rpos++] = dnsResponseIP[3];
+
+    dnsUdp.beginPacket(dnsUdp.remoteIP(), dnsUdp.remotePort());
+    dnsUdp.write(resp, rpos);
+    dnsUdp.endPacket();
+}
+
+void testDnsResolution() {
+    IPAddress resolved;
+    int result = WiFi.hostByName("mqtt.lfibot.com", resolved);
+    Serial.printf("[DNS-TEST] hostByName('mqtt.lfibot.com') = %s (result=%d)\r\n",
+        result ? resolved.toString().c_str() : "FAILED", result);
+    webLogAdd("DNS test: mqtt.lfibot.com → %s (%s)",
+        result ? resolved.toString().c_str() : "FAILED", result ? "OK" : "FAILED");
 }
 
 // ── HTTP server — serves firmware + status ───────────────────────────────────
@@ -1324,7 +1618,7 @@ function saveWifi(e){
         strncpy(ui_wifiPassword, password.c_str(), sizeof(ui_wifiPassword) - 1);
         ui_wifiPassword[sizeof(ui_wifiPassword) - 1] = '\0';
 
-        Serial.printf("[HTTP] WiFi config saved: SSID='%s' (%d char password)\n",
+        Serial.printf("[HTTP] WiFi config saved: SSID='%s' (%d char password)\r\n",
                       ssid.c_str(), password.length());
         httpServer.send(200, "application/json", "{\"success\":true}");
     });
@@ -1336,7 +1630,7 @@ function saveWifi(e){
             httpServer.send(404, "text/plain", "Firmware not found");
             return;
         }
-        Serial.printf("[HTTP] Serving firmware: %s (%d bytes)\n",
+        Serial.printf("[HTTP] Serving firmware: %s (%d bytes)\r\n",
                       firmwareFilename.c_str(), file.size());
         httpServer.streamFile(file, "application/octet-stream");
         file.close();
@@ -1395,7 +1689,7 @@ function saveWifi(e){
             strncpy(ui_wifiPassword, pw.c_str(), sizeof(ui_wifiPassword) - 1);
             ui_wifiPassword[sizeof(ui_wifiPassword) - 1] = '\0';
             ui_wifiPasswordReady = true;
-            Serial.printf("[HTTP] WiFi password received via web (%d chars)\n", pw.length());
+            Serial.printf("[HTTP] WiFi password received via web (%d chars)\r\n", pw.length());
             httpServer.send(200, "text/html",
                 R"(<html><body style="font-family:system-ui;background:#0a0a1a;color:#e0e0e0;display:flex;justify-content:center;align-items:center;height:100vh;margin:0">)"
                 R"(<div style="text-align:center"><h1 style="color:#00d4aa">&#10004; Credentials Received</h1>)"
@@ -1408,7 +1702,14 @@ function saveWifi(e){
     // Captive portal detection + catch-all redirect to dashboard
     httpServer.onNotFound([]() {
         String uri = httpServer.uri();
-        // Apple captive portal check — must return specific response to dismiss
+        String host = httpServer.hostHeader();
+        // Log ALL unhandled requests — helps debug charger connectivity checks
+        Serial.printf("[HTTP] 404: %s (Host: %s, from %s)\r\n",
+            uri.c_str(), host.c_str(), httpServer.client().remoteIP().toString().c_str());
+        webLogAdd("HTTP: %s %s from %s", uri.c_str(), host.c_str(),
+            httpServer.client().remoteIP().toString().c_str());
+
+        // Apple captive portal check
         if (uri.indexOf("hotspot-detect") >= 0 || uri.indexOf("captive") >= 0) {
             httpServer.send(200, "text/html", "<HTML><HEAD><TITLE>Success</TITLE></HEAD><BODY>Success</BODY></HTML>");
             return;
@@ -1418,9 +1719,8 @@ function saveWifi(e){
             httpServer.send(204);
             return;
         }
-        // Everything else → redirect to dashboard
-        httpServer.sendHeader("Location", "http://192.168.4.1/");
-        httpServer.send(302, "text/plain", "Redirecting...");
+        // Everything else → send 200 OK (charger may need HTTP success to start MQTT)
+        httpServer.send(200, "text/plain", "OK");
     });
 
     httpServer.begin();
@@ -1430,186 +1730,26 @@ function saveWifi(e){
 // ── MQTT broker (minimal) ────────────────────────────────────────────────────
 
 void setupMQTT() {
-    mqttTcpServer.begin();
-    Serial.printf("[MQTT] Listening on port %d\n", MQTT_PORT);
-}
-
-void handleMQTTClients() {
-    // Accept new connections
-    if (mqttTcpServer.hasClient()) {
-        WiFiClient newClient = mqttTcpServer.available();
-        Serial.printf("[MQTT] TCP connection from %s:%d\n", newClient.remoteIP().toString().c_str(), newClient.remotePort());
-        webLogAdd("MQTT: TCP from %s:%d", newClient.remoteIP().toString().c_str(), newClient.remotePort());
-        bool added = false;
-        for (int i = 0; i < 2; i++) {
-            if (!mqttClients[i].client || !mqttClients[i].client.connected()) {
-                mqttClients[i].client = newClient;
-                mqttClients[i].isMower = false;
-                mqttClients[i].isCharger = false;
-                added = true;
-                Serial.printf("[MQTT] Client connected from %s (slot %d)\n", newClient.remoteIP().toString().c_str(), i);
-                break;
-            }
-        }
-        if (!added) {
-            newClient.stop(); // No slots available (should rarely happen)
-            Serial.println("[MQTT] Rejected client: no slots available");
-        }
-    }
-
-    // Read data from connected clients
-    for (int i = 0; i < 2; i++) {
-        if (mqttClients[i].client && mqttClients[i].client.connected() && mqttClients[i].client.available()) {
-            uint8_t buf[512];
-            int len = mqttClients[i].client.read(buf, sizeof(buf));
-            
-            if (len > 0 && buf[0] == 0x10) { // CONNECT
-                // Log raw hex for debugging
-                Serial.printf("[MQTT] CONNECT raw (%d bytes): ", len);
-                for (int b = 0; b < (len < 40 ? len : 40); b++) Serial.printf("%02x ", buf[b]);
-                Serial.println();
-
-                int idx = 1;
-                // Remaining length (variable-length encoding)
-                int remaining = 0;
-                int mult = 1;
-                while (idx < len) {
-                    remaining += (buf[idx] & 0x7F) * mult;
-                    if (!(buf[idx] & 0x80)) { idx++; break; }
-                    mult *= 128; idx++;
-                }
-
-                // Parse variable header
-                if (idx + 2 < len) {
-                    int protoLen = (buf[idx] << 8) | buf[idx + 1];
-                    idx += 2 + protoLen; // skip protocol name
-                    if (idx < len) {
-                        uint8_t protoLevel = buf[idx++]; // protocol level
-                        uint8_t connectFlags = idx < len ? buf[idx++] : 0;
-                        uint16_t keepAlive = (idx + 1 < len) ? (buf[idx] << 8) | buf[idx + 1] : 60;
-                        idx += 2;
-
-                        // Sanitize connect flags (charger sends malformed flags)
-                        // Bit 1 = clean session, Bit 2 = will flag, etc.
-                        // Force clean session, clear reserved bit
-                        connectFlags |= 0x02;  // set clean session
-                        connectFlags &= 0xFE;  // clear reserved bit 0
-
-                        Serial.printf("[MQTT] proto=%d flags=0x%02x keepalive=%d\n",
-                                     protoLevel, connectFlags, keepAlive);
-
-                        // Client ID
-                        if (idx + 2 <= len) {
-                            int clientIdLen = (buf[idx] << 8) | buf[idx + 1];
-                            idx += 2;
-                            if (idx + clientIdLen <= len && clientIdLen > 0) {
-                                String clientId = String((char*)(buf + idx), clientIdLen);
-                                idx += clientIdLen;
-                                Serial.printf("[MQTT] CONNECT clientId=%s\n", clientId.c_str());
-
-                                if (clientId.startsWith("ESP32_") || clientId.startsWith("SNC")) {
-                                    chargerMqttConnected = true;
-                                    mqttClients[i].isCharger = true;
-                                    Serial.printf("[MQTT] Charger connected: %s\n", clientId.c_str());
-                                    webLogAdd("MQTT: Charger %s connected!", clientId.c_str());
-                                }
-                                if (clientId.startsWith("LFI")) {
-                                    int underscore = clientId.indexOf('_');
-                                    mowerSn = underscore > 0 ? clientId.substring(0, underscore) : clientId;
-                                    mowerConnected = true;
-                                    mowerConnectTime = millis();
-                                    mqttClients[i].isMower = true;
-                                    Serial.printf("[MQTT] Mower connected: %s\n", mowerSn.c_str());
-                                    webLogAdd("MQTT: Mower %s connected!", mowerSn.c_str());
-                                }
-                            } else {
-                                Serial.printf("[MQTT] Bad clientId: len=%d remaining=%d\n", clientIdLen, len - idx);
-                            }
-                        }
-                    }
-                }
-
-                // Always send CONNACK regardless of parse success
-                uint8_t connack[] = { 0x20, 0x02, 0x00, 0x00 };
-                mqttClients[i].client.write(connack, 4);
-
-            } else if (len > 0 && buf[0] == 0x82) { // SUBSCRIBE
-                int idx = 1;
-                int remaining = 0;
-                int mult = 1;
-                while (idx < len) {
-                    remaining += (buf[idx] & 0x7F) * mult;
-                    if (!(buf[idx] & 0x80)) { idx++; break; }
-                    mult *= 128; idx++;
-                }
-                
-                uint8_t packetId1 = 0, packetId2 = 0;
-                if (idx + 1 < len) {
-                    packetId1 = buf[idx];
-                    packetId2 = buf[idx+1];
-                }
-
-                // Parse the topic to capture the charger's listening topic
-                if (idx + 3 < len) {
-                    int topicLen = (buf[idx+2] << 8) | buf[idx+3];
-                    if (idx + 4 + topicLen <= len) {
-                        String topic = String((char*)(buf + idx + 4), topicLen);
-                        Serial.printf("[MQTT] SUBSCRIBE topic: %s\n", topic.c_str());
-                        if (mqttClients[i].isCharger && topic.startsWith("Dart/Send_mqtt/")) {
-                            chargerTopic = topic;
-                            Serial.printf("[MQTT] Saved Charger Topic: %s\n", chargerTopic.c_str());
-                        }
-                    }
-                }
-
-                uint8_t suback[] = { 0x90, 0x03, packetId1, packetId2, 0x00 };
-                mqttClients[i].client.write(suback, 5);
-
-            } else if (len > 0 && buf[0] == 0xC0) { // PINGREQ
-                uint8_t pingresp[] = { 0xD0, 0x00 };
-                mqttClients[i].client.write(pingresp, 2);
-            }
-        }
-    }
-
-    // Detect disconnects globally to update flags
-    bool currentMowerStatus = false;
-    bool currentChargerStatus = false;
-    for (int i = 0; i < 2; i++) {
-        if (mqttClients[i].client && mqttClients[i].client.connected()) {
-            if (mqttClients[i].isMower) currentMowerStatus = true;
-            if (mqttClients[i].isCharger) currentChargerStatus = true;
-        }
-    }
-    
-    if (mowerConnected && !currentMowerStatus) {
-        Serial.printf("[MQTT] Mower %s disconnected\n", mowerSn.c_str());
-        mowerConnected = false;
-    }
-    if (chargerMqttConnected && !currentChargerStatus) {
-        Serial.println("[MQTT] Charger disconnected");
-        chargerMqttConnected = false;
-    }
+    mqttBroker.init(MQTT_PORT);
+    Serial.printf("[MQTT] sMQTTBroker listening on port %d\r\n", MQTT_PORT);
+    webLogAdd("MQTT broker (sMQTTBroker) on port %d", MQTT_PORT);
 }
 
 // ── OTA command ──────────────────────────────────────────────────────────────
 
-void sendMqttMessage(WiFiClient& client, String topic, String payload, bool useAes, String sn) {
-    if (!client.connected()) return;
+void sendMqttMessage(String topic, String payload, bool useAes, String sn) {
+    std::string payloadStr;
 
-    int paddedLen = payload.length();
-    uint8_t* outBuf = nullptr;
-    
     if (useAes && sn.length() >= 4) {
         String keyStr = "abcdabcd1234" + sn.substring(sn.length() - 4);
         uint8_t key[16];
         memcpy(key, keyStr.c_str(), 16);
 
-        paddedLen = ((payload.length() + 15) / 16) * 16;
+        int paddedLen = ((payload.length() + 15) / 16) * 16;
         uint8_t* plaintext = (uint8_t*)calloc(paddedLen, 1);
         memcpy(plaintext, payload.c_str(), payload.length());
 
-        outBuf = (uint8_t*)malloc(paddedLen);
+        uint8_t* outBuf = (uint8_t*)malloc(paddedLen);
         mbedtls_aes_context aes;
         mbedtls_aes_init(&aes);
         mbedtls_aes_setkey_enc(&aes, key, 128);
@@ -1618,48 +1758,21 @@ void sendMqttMessage(WiFiClient& client, String topic, String payload, bool useA
         mbedtls_aes_crypt_cbc(&aes, MBEDTLS_AES_ENCRYPT, paddedLen, iv, plaintext, outBuf);
         mbedtls_aes_free(&aes);
         free(plaintext);
+
+        payloadStr = std::string((char*)outBuf, paddedLen);
+        free(outBuf);
     } else {
-        outBuf = (uint8_t*)malloc(paddedLen);
-        memcpy(outBuf, payload.c_str(), paddedLen);
+        payloadStr = std::string(payload.c_str(), payload.length());
     }
 
-    // Build MQTT PUBLISH packet
-    int topicLen = topic.length();
-    int remainingLen = 2 + topicLen + paddedLen;
-
-    uint8_t header[5];
-    int headerLen = 0;
-    header[headerLen++] = 0x30; // PUBLISH, QoS 0
-    int rl = remainingLen;
-    do {
-        uint8_t b = rl % 128;
-        rl /= 128;
-        if (rl > 0) b |= 0x80;
-        header[headerLen++] = b;
-    } while (rl > 0);
-
-    client.write(header, headerLen);
-    uint8_t topicLenBytes[2] = { (uint8_t)(topicLen >> 8), (uint8_t)(topicLen & 0xFF) };
-    client.write(topicLenBytes, 2);
-    client.write((const uint8_t*)topic.c_str(), topicLen);
-    client.write(outBuf, paddedLen);
-
-    free(outBuf);
-    Serial.printf("[MQTT] Published %d bytes to %s\n", paddedLen, topic.c_str());
+    mqttBroker.publish(std::string(topic.c_str()), payloadStr);
+    Serial.printf("[MQTT] Published %d bytes to %s\r\n", (int)payloadStr.length(), topic.c_str());
 }
 
 void sendOtaCommand() {
-    WiFiClient* client = nullptr;
-    for (int i=0; i<2; i++) {
-        if (mqttClients[i].isMower && mqttClients[i].client && mqttClients[i].client.connected()) {
-            client = &mqttClients[i].client;
-            break;
-        }
-    }
-    
-    if (!client || mowerSn.length() == 0) return;
+    if (!mowerConnected || mowerSn.length() == 0) return;
 
-    String downloadUrl = "http://192.168.4.1/firmware.deb";
+    String downloadUrl = "http://10.0.0.1/firmware.deb";
 
     // EXACT OTA payload — NO tz field, type MUST be "full", cmd MUST be "upgrade"
     String otaJson = "{\"ota_upgrade_cmd\":{\"cmd\":\"upgrade\",\"type\":\"full\",\"content\":\"app\",";
@@ -1668,10 +1781,10 @@ void sendOtaCommand() {
     otaJson += "\"md5\":\"" + firmwareMd5 + "\"}}";
 
     String topic = "Dart/Send_mqtt/" + mowerSn;
-    
-    sendMqttMessage(*client, topic, otaJson, true, mowerSn);
 
-    Serial.printf("[OTA] Sent OTA command to %s: %s (%d bytes firmware)\n",
+    sendMqttMessage(topic, otaJson, true, mowerSn);
+
+    Serial.printf("[OTA] Sent OTA command to %s: %s (%d bytes firmware)\r\n",
                   mowerSn.c_str(), firmwareVersion.c_str(), firmwareSize);
     statusMessage = "OTA sent! Mower downloading firmware...";
 }
@@ -1698,14 +1811,28 @@ bool provisionDevice(NimBLEAdvertisedDevice* device, const char* deviceType) {
     int totalSteps = 5;
 
     webLogAdd("BLE: Connecting to %s...", device->getName().c_str());
-    Serial.printf("[BLE] Connecting to %s (%s)...\n", device->getName().c_str(),
+    Serial.printf("[BLE] Connecting to %s (%s)...\r\n", device->getName().c_str(),
                   device->getAddress().toString().c_str());
 
     if (provisionProgressCb) provisionProgressCb(displayName, 0, totalSteps, "Connecting...");
 
     NimBLEClient* client = NimBLEDevice::createClient();
-    if (!client->connect(device)) {
-        Serial.println("[BLE] Connection failed!");
+    bool connected = false;
+    for (int attempt = 1; attempt <= 3; attempt++) {
+        Serial.printf("[BLE] Connect attempt %d/3...\r\n", attempt);
+        if (client->connect(device)) {
+            connected = true;
+            break;
+        }
+        Serial.printf("[BLE] Attempt %d failed\r\n", attempt);
+        if (attempt < 3) {
+            webLogAdd("BLE: Connect failed, retrying in 2s...");
+            delay(2000);
+        }
+    }
+    if (!connected) {
+        Serial.println("[BLE] Connection failed after 3 attempts!");
+        webLogAdd("BLE: Connection failed (3 attempts)");
         return false;
     }
     Serial.println("[BLE] Connected!");
@@ -1719,7 +1846,7 @@ bool provisionDevice(NimBLEAdvertisedDevice* device, const char* deviceType) {
 
     NimBLERemoteService* svc = client->getService(svcUuid);
     if (!svc) {
-        Serial.printf("[BLE] Service %s not found!\n", svcUuid);
+        Serial.printf("[BLE] Service %s not found!\r\n", svcUuid);
         client->disconnect();
         return false;
     }
@@ -1738,8 +1865,6 @@ bool provisionDevice(NimBLEAdvertisedDevice* device, const char* deviceType) {
                                               uint8_t* data, size_t length, bool isNotify) {
         bleResponse += String((char*)data, length);
     });
-
-    String resp;
 
     // ══════════════════════════════════════════════════════════════
     // Command sequence MUST match official Novabot app exactly:
@@ -1763,11 +1888,15 @@ bool provisionDevice(NimBLEAdvertisedDevice* device, const char* deviceType) {
     String loraPayload = "{\"set_lora_info\":{\"addr\":" + String(LORA_ADDR) +
         ",\"channel\":" + String(LORA_CHANNEL) + ",\"hc\":" + String(LORA_HC) +
         ",\"lc\":" + String(LORA_LC) + "}}";
-    String mqttPayload = "{\"set_mqtt_info\":{\"addr\":\"" + String(MQTT_HOST) +
-        "\",\"port\":" + String(MQTT_PORT) + "}}";
+    // Charger: direct IP (charger doesn't use DHCP DNS!) + port 1883
+    // Mower: hostname mqtt.lfibot.com (uses our custom DNS) + port 1883
+    String mqttAddr = isMower ? String(MQTT_HOST) : "10.0.0.1";
+    int mqttPort = 1883;
+    String mqttPayload = "{\"set_mqtt_info\":{\"addr\":\"" + mqttAddr +
+        "\",\"port\":" + String(mqttPort) + "}}";
 
     // Build command array in correct order per device type
-    struct { const char* name; String payload; int step; } cmds[6];
+    struct { const char* name; String payload; int step; } cmds[8];
     int numCmds;
 
     if (isMower) {
@@ -1778,13 +1907,14 @@ bool provisionDevice(NimBLEAdvertisedDevice* device, const char* deviceType) {
         cmds[4] = {"set_cfg_info", cfgPayload, 5};
         numCmds = 5;
     } else {
-        // Charger: set_wifi FIRST, then rtk, lora, mqtt, cfg
+        // Charger: set_wifi FIRST, then rtk, lora, mqtt, get_wifi (verify), cfg
         cmds[0] = {"set_wifi_info", wifiPayload, 1};
         cmds[1] = {"set_rtk_info", "{\"set_rtk_info\":0}", 2};
         cmds[2] = {"set_lora_info", loraPayload, 3};
         cmds[3] = {"set_mqtt_info", mqttPayload, 4};
-        cmds[4] = {"set_cfg_info", cfgPayload, 5};
-        numCmds = 5;
+        cmds[4] = {"get_wifi_info", "{\"get_wifi_info\":0}", 5};
+        cmds[5] = {"set_cfg_info", cfgPayload, 6};
+        numCmds = 6;
     }
 
     totalSteps = numCmds;
@@ -1799,25 +1929,27 @@ bool provisionDevice(NimBLEAdvertisedDevice* device, const char* deviceType) {
         else if (strcmp(cmds[i].name, "set_mqtt_info") == 0)    friendlyName = "Setting server...";
         else if (strcmp(cmds[i].name, "set_cfg_info") == 0)     friendlyName = "Saving settings...";
         else if (strcmp(cmds[i].name, "get_signal_info") == 0)  friendlyName = "Reading signal...";
+        else if (strcmp(cmds[i].name, "get_wifi_info") == 0)   friendlyName = "Verifying WiFi...";
         if (provisionProgressCb) provisionProgressCb(displayName, cmds[i].step, totalSteps, friendlyName);
 
         // 1 second pause between commands (matches bootstrap — gives device time to process)
         if (i > 0) delay(1000);
 
-        bool got = bleSendCommand(client, writeChr, notifChr, cmds[i].payload, cmds[i].name, resp);
+        bool got = bleSendCommand(client, writeChr, notifChr, cmds[i].payload, cmds[i].name, bleResponse);
         if (got) {
+            Serial.printf("[BLE] Response data: %s\r\n", bleResponse.c_str());
             webLogAdd("BLE: %s OK", friendlyName);
             // Check for set_wifi_info success specifically
             if (strcmp(cmds[i].name, "set_wifi_info") == 0) wifiConfirmed = true;
         } else {
             // Check if device disconnected (set_cfg_info causes reboot = success!)
             if (!client->isConnected()) {
-                Serial.printf("[BLE] Device disconnected after %s (expected reboot)\n", cmds[i].name);
+                Serial.printf("[BLE] Device disconnected after %s (expected reboot)\r\n", cmds[i].name);
                 webLogAdd("BLE: Device rebooted after %s (success!)", friendlyName);
                 disconnected = true;
                 break;
             }
-            Serial.printf("[BLE] %s timeout (non-fatal)\n", cmds[i].name);
+            Serial.printf("[BLE] %s timeout (non-fatal)\r\n", cmds[i].name);
             webLogAdd("BLE: %s — no response (sent OK)", friendlyName);
         }
     }
@@ -1836,7 +1968,7 @@ bool provisionDevice(NimBLEAdvertisedDevice* device, const char* deviceType) {
     else if (disconnected) reason = " (device rebooted, WiFi unconfirmed)";
     else reason = " (no WiFi confirmation!)";
 
-    Serial.printf("[BLE] %s provisioning %s%s\n", deviceType, ok ? "OK" : "FAILED", reason);
+    Serial.printf("[BLE] %s provisioning %s%s\r\n", deviceType, ok ? "OK" : "FAILED", reason);
     webLogAdd("BLE: %s provisioning %s%s", displayName, ok ? "OK" : "FAILED", reason);
     return ok;
 }
@@ -1845,18 +1977,18 @@ bool bleSendCommand(NimBLEClient* client, NimBLERemoteCharacteristic* writeChr,
                     NimBLERemoteCharacteristic* notifyChr, const String& json,
                     const char* cmdName, String& response) {
     webLogAdd("BLE: → %s", cmdName);
-    Serial.printf("[BLE] -> %s: %s\n", cmdName, json.c_str());
+    Serial.printf("[BLE] -> %s: %s\r\n", cmdName, json.c_str());
 
     response = "";
 
-    // Always use write-with-response (false) — NimBLE writeWithoutResponse fails on charger 0x2222
-    // even though it advertises writeWithoutResponse. The charger still processes the data.
-    bool noResp = false;
-    Serial.printf("[BLE] Write mode: WriteReq (with response)\n");
+    // MUST use writeWithoutResponse (true) — charger only persists data to NVS with ATT_WRITE_CMD!
+    // ATT_WRITE_REQ responses look OK but data is NOT saved. Bootstrap uses writeWithoutResponse too.
+    bool noResp = true;
+    Serial.printf("[BLE] Write mode: WriteCmd (no response) — matches bootstrap\r\n");
 
     // Send "ble_start" marker
     bool ok = writeChr->writeValue((const uint8_t*)"ble_start", 9, noResp);
-    Serial.printf("[BLE] ble_start write: %s\n", ok ? "OK" : "FAILED");
+    Serial.printf("[BLE] ble_start write: %s\r\n", ok ? "OK" : "FAILED");
     delay(100);  // 100ms after start marker
 
     // Send JSON in chunks of 20 bytes
@@ -1864,11 +1996,11 @@ bool bleSendCommand(NimBLEClient* client, NimBLERemoteCharacteristic* writeChr,
     int remaining = json.length();
     int offset = 0;
     int chunkNum = 0;
-    Serial.printf("[BLE] Sending %d bytes in %d chunks\n", remaining, (remaining + 19) / 20);
+    Serial.printf("[BLE] Sending %d bytes in %d chunks\r\n", remaining, (remaining + 19) / 20);
     while (remaining > 0) {
         int chunkSize = remaining > 20 ? 20 : remaining;
         ok = writeChr->writeValue(data + offset, chunkSize, noResp);
-        if (!ok) Serial.printf("[BLE] Chunk %d WRITE FAILED!\n", chunkNum);
+        if (!ok) Serial.printf("[BLE] Chunk %d WRITE FAILED!\r\n", chunkNum);
         offset += chunkSize;
         remaining -= chunkSize;
         chunkNum++;
@@ -1878,33 +2010,42 @@ bool bleSendCommand(NimBLEClient* client, NimBLERemoteCharacteristic* writeChr,
     // Send "ble_end" marker (7 bytes, NO null terminator — matches bootstrap)
     delay(100);
     ok = writeChr->writeValue((const uint8_t*)"ble_end", 7, noResp);
-    Serial.printf("[BLE] ble_end write: %s\n", ok ? "OK" : "FAILED");
+    Serial.printf("[BLE] ble_end write: %s\r\n", ok ? "OK" : "FAILED");
 
     // Wait for response (up to 10 seconds)
+    String expectedType = String(cmdName) + "_respond";
     unsigned long start = millis();
     while (millis() - start < 10000) {
         delay(50);
         // Check if we got a complete response (contains _respond)
         if (response.indexOf("_respond") >= 0) {
-            int jsonStart = response.indexOf('{');
-            int jsonEnd = response.lastIndexOf('}');
-            if (jsonStart >= 0 && jsonEnd > jsonStart) {
-                response = response.substring(jsonStart, jsonEnd + 1);
-            }
-            Serial.printf("[BLE] <- %s: %s\n", cmdName, response.c_str());
-            webLogAdd("BLE: ← %s response OK", cmdName);
+            // Check if this is the response we're waiting for
+            if (response.indexOf(expectedType) >= 0) {
+                int jsonStart = response.indexOf('{');
+                int jsonEnd = response.lastIndexOf('}');
+                if (jsonStart >= 0 && jsonEnd > jsonStart) {
+                    response = response.substring(jsonStart, jsonEnd + 1);
+                }
+                Serial.printf("[BLE] <- %s: %s\r\n", cmdName, response.c_str());
+                webLogAdd("BLE: <- %s response OK", cmdName);
 
-            // Check result — result:1 = acknowledged (NOT rejected)
-            int resultIdx = response.indexOf("\"result\":");
-            if (resultIdx >= 0) {
-                int resultVal = response.charAt(resultIdx + 9) - '0';
-                return resultVal == 0;
+                // Check result — result:1 = acknowledged (NOT rejected)
+                int resultIdx = response.indexOf("\"result\":");
+                if (resultIdx >= 0) {
+                    int resultVal = response.charAt(resultIdx + 9) - '0';
+                    return resultVal == 0;
+                }
+                return true;
+            } else {
+                // Stale response from a previous command — drain it
+                Serial.printf("[BLE] Draining stale: %s (waiting for %s)\r\n",
+                              response.c_str(), expectedType.c_str());
+                response = "";
             }
-            return true;
         }
     }
 
-    Serial.printf("[BLE] <- %s: TIMEOUT\n", cmdName);
+    Serial.printf("[BLE] <- %s: TIMEOUT\r\n", cmdName);
     webLogAdd("BLE: ← %s timeout", cmdName);
     return false;
 }
@@ -1930,7 +2071,7 @@ bool loadFirmwareInfo() {
             // Compute MD5
             firmwareMd5 = computeMd5(("/" + name).c_str());
 
-            Serial.printf("[SD] Firmware: %s (%d bytes, v%s, md5=%s)\n",
+            Serial.printf("[SD] Firmware: %s (%d bytes, v%s, md5=%s)\r\n",
                           name.c_str(), firmwareSize, firmwareVersion.c_str(),
                           firmwareMd5.c_str());
             root.close();

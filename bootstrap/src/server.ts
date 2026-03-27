@@ -627,8 +627,8 @@ export function createServer(): http.Server {
     }
     // Use relay hostname if provided, otherwise fall back to local IP
     const { mqttHost, mqttPort: reqMqttPort } = req.body as { mqttHost?: string; mqttPort?: number };
-    const mqttAddr = mqttHost || 'mqtt.lfibot.com';
-    const mqttPort = reqMqttPort || 1883;
+    const mqttAddr = mqttHost || process.env.MQTT_ADDR || 'mqtt.lfibot.com';
+    const mqttPort = reqMqttPort || (process.env.MQTT_PORT ? parseInt(process.env.MQTT_PORT) : 1883);
     if (!mqttAddr) {
       res.status(400).json({ error: 'No network IP selected (select IP in network step first)' });
       return;
