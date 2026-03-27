@@ -582,6 +582,107 @@ export function createServer(): http.Server {
     });
   });
 
+  // ── API: WiFi scan (cross-platform via node-wifi + macOS fallback) ────
+  app.get('/api/wifi/scan', async (_req, res) => {
+    interface WifiResult {
+      ssid: string;
+      bssid: string;
+      signal_level: number;
+      quality: number;
+      security: string;
+      channel: number;
+      current: boolean;
+    }
+
+    // Strategy 1: node-wifi (works on Linux, Windows, macOS <Sonoma)
+    try {
+      const wifi = require('node-wifi');
+      wifi.init({ iface: null });
+
+      const [scanResults, currentConns] = await Promise.all([
+        wifi.scan().catch(() => []),
+        wifi.getCurrentConnections().catch(() => []),
+      ]);
+
+      const currentSsids = new Set(currentConns.map((c: any) => c.ssid));
+      const seen = new Set<string>();
+      const networks: WifiResult[] = [];
+
+      for (const n of scanResults) {
+        if (!n.ssid || n.ssid.trim() === '' || seen.has(n.ssid)) continue;
+        seen.add(n.ssid);
+        networks.push({
+          ssid: n.ssid,
+          bssid: n.bssid || '',
+          signal_level: n.signal_level ?? 0,
+          quality: n.quality ?? Math.min(100, Math.max(0, (n.signal_level + 100) * 2)),
+          security: n.security || 'unknown',
+          channel: n.channel ?? 0,
+          current: currentSsids.has(n.ssid),
+        });
+      }
+
+      if (networks.length > 0) {
+        networks.sort((a, b) => b.signal_level - a.signal_level);
+        return res.json({ success: true, data: networks, source: 'scan' });
+      }
+    } catch (err) {
+      console.warn('[WiFi] node-wifi scan failed:', err instanceof Error ? err.message : err);
+    }
+
+    // Strategy 2: macOS CoreWLAN via compiled Swift helper
+    try {
+      const { execSync } = require('child_process');
+      const helperPath = require('path').join(__dirname, '..', 'wifi_scan');
+      const { existsSync } = require('fs');
+      if (existsSync(helperPath)) {
+        const raw = execSync(helperPath, { timeout: 15000 }).toString();
+        const parsed = JSON.parse(raw);
+        if (parsed.networks?.length > 0) {
+          const networks: WifiResult[] = parsed.networks.map((n: any) => ({
+            ssid: n.ssid,
+            bssid: '',
+            signal_level: n.signal,
+            quality: Math.min(100, Math.max(0, (n.signal + 100) * 2)),
+            security: 'unknown',
+            channel: n.channel || 0,
+            current: n.ssid === parsed.current,
+          }));
+          return res.json({ success: true, data: networks, source: 'corewlan' });
+        }
+      }
+    } catch (err) {
+      console.warn('[WiFi] CoreWLAN scan failed:', err instanceof Error ? err.message : err);
+    }
+
+    // Strategy 3: macOS networksetup (known/preferred networks, no signal)
+    try {
+      const { execSync } = require('child_process');
+      const networks: WifiResult[] = [];
+
+      // Current network
+      const currentRaw = execSync('networksetup -getairportnetwork en0', { timeout: 5000 }).toString();
+      const currentMatch = currentRaw.match(/Current Wi-Fi Network:\s*(.+)/);
+      const currentSsid = currentMatch ? currentMatch[1].trim() : null;
+      if (currentSsid) networks.push({ ssid: currentSsid, bssid: '', signal_level: 0, quality: 100, security: 'known', channel: 0, current: true });
+
+      // Preferred networks
+      const prefRaw = execSync('networksetup -listpreferredwirelessnetworks en0', { timeout: 5000 }).toString();
+      for (const line of prefRaw.split('\n').slice(1)) {
+        const ssid = line.trim();
+        if (ssid && !networks.some(n => n.ssid === ssid)) {
+          networks.push({ ssid, bssid: '', signal_level: 0, quality: 0, security: 'known', channel: 0, current: false });
+        }
+      }
+
+      if (networks.length > 0) {
+        return res.json({ success: true, data: networks, source: 'known' });
+      }
+    } catch {}
+
+    res.json({ success: false, error: 'WiFi scan not available on this platform', data: [] });
+  });
+
   // ── API: BLE status ─────────────────────────────────────────────────────
   app.get('/api/ble/status', async (_req, res) => {
     try {

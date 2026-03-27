@@ -3,13 +3,16 @@
   "version": "1.0.0",
   "description": "Standalone OTA installer wizard for OpenNova self-hosted mower firmware",
   "private": true,
-  "type": "commonjs",
+  "main": "electron-main.cjs",
   "scripts": {
     "dev": "tsx src/index.ts",
+    "electron": "npm run build && electron .",
+    "electron:dev": "electron .",
     "build:wizard": "cd wizard && npm run build",
     "generate-bundle": "node scripts/generate-wizard-bundle.mjs",
     "build:server": "npm run generate-bundle && tsc",
     "build": "npm run build:wizard && npm run build:server",
+    "dist": "npm run build && electron-builder",
     "package": "npm run build && npx @yao-pkg/pkg dist/index.js --target node20-macos-arm64,node20-macos-x64,node20-windows-x64 --output dist/novabot-bootstrap"
   },
   "dependencies": {
@@ -19,17 +22,62 @@
     "mqtt": "^4.3.8",
     "multer": "^1.4.5-lts.1",
     "multicast-dns": "^7.2.5",
+    "node-wifi": "^2.0.16",
     "socket.io": "^4.8.3",
     "ssh2": "^1.17.0"
   },
   "devDependencies": {
+    "@tauri-apps/api": "^2.10.1",
+    "@tauri-apps/cli": "^2.10.1",
     "@types/express": "^4.17.21",
     "@types/multer": "^1.4.11",
     "@types/node": "^20",
     "@types/ssh2": "^1.15.5",
     "@yao-pkg/pkg": "^5.11.5",
+    "electron": "^33.4.11",
+    "electron-builder": "^26.8.1",
     "tsx": "^4.7.2",
     "typescript": "^5.4.3"
+  },
+  "build": {
+    "appId": "com.opennovabot.setup",
+    "productName": "OpenNova",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "wizard/dist/**/*",
+      "wizard/public/**/*",
+      "wifi_scan",
+      "node_modules/**/*"
+    ],
+    "mac": {
+      "category": "public.app-category.utilities",
+      "icon": "wizard/public/OpenNova.png",
+      "target": [
+        "dmg"
+      ],
+      "entitlements": "electron/entitlements.mac.plist",
+      "entitlementsInherit": "electron/entitlements.mac.plist",
+      "extendInfo": {
+        "NSLocationWhenInUseUsageDescription": "OpenNova needs location access to scan for nearby WiFi networks.",
+        "NSBluetoothAlwaysUsageDescription": "OpenNova uses Bluetooth to provision Novabot devices."
+      }
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "wizard/public/OpenNova.png"
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Utility"
+    }
   },
   "pkg": {
     "targets": [

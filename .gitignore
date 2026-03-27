@@ -56,3 +56,13 @@ nova-ota-device/.pio/
 nova-ota-device/ESP32-S3-Touch-LCD-2-Demo/
 .vscode/
 *.pklg
+
+# ── Tauri / Electron ────────────────────────────────
+bootstrap/src-tauri/target/
+bootstrap/src-tauri/binaries/
+bootstrap/src-tauri/Cargo.lock
+bootstrap/src-tauri/gen/
+bootstrap/electron/
+bootstrap/electron-main.cjs
+bootstrap/wifi_scan
+bootstrap/src/wifi_scan.swift
