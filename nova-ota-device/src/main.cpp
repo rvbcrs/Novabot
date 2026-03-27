@@ -384,46 +384,21 @@ void setup() {
 #ifdef WAVESHARE_LCD
     display_confirm("Starting...", "Checking for connected", "devices...", "Skip");
 #endif
-    for (int i = 0; i < 450; i++) {
+    // Phase 1: Wait up to 15s for WiFi clients
+    Serial.println("[SETUP] Phase 1: waiting 15s for WiFi clients...");
+    for (int i = 0; i < 150; i++) {
         delay(100);
         processDNS();
         httpServer.handleClient();
         mqttBroker.update();
-        // Log periodically
         if (i % 50 == 0) {
-            int clients = WiFi.softAPgetStationNum();
-            Serial.printf("[SETUP] %ds — %d WiFi client(s), mower=%s charger=%s\r\n",
-                          i / 10, clients, mowerConnected ? "YES" : "no",
+            Serial.printf("[SETUP] %ds — %d WiFi, mower=%s charger=%s\r\n",
+                          i / 10, WiFi.softAPgetStationNum(),
+                          mowerConnected ? "YES" : "no",
                           chargerMqttConnected ? "YES" : "no");
         }
-        // Both devices connected — exit immediately
-        if (mowerConnected && chargerMqttConnected) {
-            Serial.println("[SETUP] Both devices connected!");
-            break;
-        }
-        // At least one MQTT connected + some extra time for the other
-        if ((mowerConnected || chargerMqttConnected) && i > 100) {
-            // Give the other device 10 more seconds
-            Serial.printf("[SETUP] One device connected, waiting 10s for the other...\r\n");
-            for (int j = 0; j < 100 && !(mowerConnected && chargerMqttConnected); j++) {
-                delay(100);
-                processDNS();
-                httpServer.handleClient();
-                mqttBroker.update();
-            }
-            break;
-        }
-        // WiFi clients present but no MQTT yet — wait a bit longer
-        if (WiFi.softAPgetStationNum() > 0 && i > 150 && !mowerConnected && !chargerMqttConnected) {
-            Serial.printf("[SETUP] %d WiFi client(s) — waiting 10s for MQTT...\r\n", WiFi.softAPgetStationNum());
-            for (int j = 0; j < 100 && !mowerConnected && !chargerMqttConnected; j++) {
-                delay(100);
-                processDNS();
-                httpServer.handleClient();
-                mqttBroker.update();
-            }
-            break;
-        }
+        if (mowerConnected && chargerMqttConnected) break;
+        if (mowerConnected || chargerMqttConnected) break;  // at least one MQTT = skip to phase 2
 #ifdef WAVESHARE_LCD
         if (ui_btnPressed) {
             ui_btnPressed = false;
@@ -432,6 +407,36 @@ void setup() {
             goto setup_done;
         }
 #endif
+    }
+
+    // Phase 2: If WiFi clients present, wait up to 30s for MQTT
+    if (WiFi.softAPgetStationNum() > 0 && !mowerConnected && !chargerMqttConnected) {
+        Serial.printf("[SETUP] Phase 2: %d WiFi client(s) — waiting 30s for MQTT...\r\n", WiFi.softAPgetStationNum());
+        for (int j = 0; j < 300 && !mowerConnected && !chargerMqttConnected; j++) {
+            delay(100);
+            processDNS();
+            httpServer.handleClient();
+            mqttBroker.update();
+#ifdef WAVESHARE_LCD
+            if (ui_btnPressed) {
+                ui_btnPressed = false;
+                Serial.println("[SETUP] Skip pressed — going to BLE scan");
+                setState(STATE_BLE_SCAN);
+                goto setup_done;
+            }
+#endif
+        }
+    }
+
+    // Phase 3: If one device on MQTT, wait 10s for the other
+    if ((mowerConnected || chargerMqttConnected) && !(mowerConnected && chargerMqttConnected)) {
+        Serial.printf("[SETUP] One device on MQTT, waiting 10s for other...\r\n");
+        for (int j = 0; j < 100 && !(mowerConnected && chargerMqttConnected); j++) {
+            delay(100);
+            processDNS();
+            httpServer.handleClient();
+            mqttBroker.update();
+        }
     }
 
     if (mowerConnected || chargerMqttConnected) {
