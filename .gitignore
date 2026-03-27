@@ -54,3 +54,5 @@ research/cloud_devices.json
 research/cloud_devices_run_*.json
 nova-ota-device/.pio/
 nova-ota-device/ESP32-S3-Touch-LCD-2-Demo/
+.vscode/
+*.pklg
