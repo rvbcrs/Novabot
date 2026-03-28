@@ -687,6 +687,76 @@ export function createServer(): http.Server {
     }
   });
 
+  // ── API: Generate iOS mobileconfig for DNS redirect ──────────────────
+  app.get('/api/generate-mobileconfig', (req, res) => {
+    const ip = (req.query.ip as string) || '192.168.0.177';
+    const uuid1 = 'A1B2C3D4-E5F6-7890-ABCD-' + Date.now().toString(16).toUpperCase();
+    const uuid2 = 'B2C3D4E5-F6A7-8901-BCDE-' + (Date.now() + 1).toString(16).toUpperCase();
+
+    // This mobileconfig sets the phone's DNS to the OpenNova server IP.
+    // The server must run a DNS service that redirects *.lfibot.com to itself.
+    // Alternative: use a split-horizon DNS approach with dnsmasq on the server.
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>PayloadContent</key>
+  <array>
+    <dict>
+      <key>DNSSettings</key>
+      <dict>
+        <key>DNSProtocol</key>
+        <string>HTTPS</string>
+        <key>ServerURL</key>
+        <string>https://dns.google/dns-query</string>
+        <key>ServerAddresses</key>
+        <array>
+          <string>${ip}</string>
+          <string>8.8.8.8</string>
+        </array>
+        <key>SupplementalMatchDomains</key>
+        <array>
+          <string>lfibot.com</string>
+        </array>
+      </dict>
+      <key>PayloadDescription</key>
+      <string>Redirects Novabot domains (*.lfibot.com) to your local OpenNova server at ${ip}</string>
+      <key>PayloadDisplayName</key>
+      <string>OpenNova DNS</string>
+      <key>PayloadIdentifier</key>
+      <string>com.opennovabot.dns.settings</string>
+      <key>PayloadType</key>
+      <string>com.apple.dnsSettings.managed</string>
+      <key>PayloadUUID</key>
+      <string>${uuid1}</string>
+      <key>PayloadVersion</key>
+      <integer>1</integer>
+    </dict>
+  </array>
+  <key>PayloadDescription</key>
+  <string>Routes Novabot app traffic to your local OpenNova server (${ip}) instead of the cloud.</string>
+  <key>PayloadDisplayName</key>
+  <string>OpenNova DNS Redirect</string>
+  <key>PayloadIdentifier</key>
+  <string>com.opennovabot.dns</string>
+  <key>PayloadOrganization</key>
+  <string>OpenNova</string>
+  <key>PayloadRemovalDisallowed</key>
+  <false/>
+  <key>PayloadType</key>
+  <string>Configuration</string>
+  <key>PayloadUUID</key>
+  <string>${uuid2}</string>
+  <key>PayloadVersion</key>
+  <integer>1</integer>
+</dict>
+</plist>`;
+
+    res.setHeader('Content-Type', 'application/x-apple-aspen-config');
+    res.setHeader('Content-Disposition', 'attachment; filename="OpenNova-DNS.mobileconfig"');
+    res.send(xml);
+  });
+
   // ── API: BLE stop scan ────────────────────────────────────────────────
   app.post('/api/ble/stop-scan', async (_req, res) => {
     try {

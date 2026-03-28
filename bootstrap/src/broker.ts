@@ -191,9 +191,14 @@ function tryExtractVersion(io: IOServer, sn: string, payload: Buffer): void {
 /**
  * Request the mower to report its firmware version by sending ota_version_info: null.
  * Delayed 3s to let the mower finish its connection handshake.
+ * Only sends once per SN, only for mowers (LFIN), never for chargers (LFIC).
  */
+const _versionRequested = new Set<string>();
 function requestMowerVersion(sn: string): void {
   if (_mowerVersion) return;
+  if (!sn.startsWith('LFIN')) return; // Only mowers, not chargers
+  if (_versionRequested.has(sn)) return; // Already requested
+  _versionRequested.add(sn);
   setTimeout(() => {
     if (_mowerVersion) return;
     console.log(`[MQTT] Requesting mower version from ${sn}...`);

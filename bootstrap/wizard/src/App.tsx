@@ -258,6 +258,9 @@ export default function App() {
   // ── Navigation ────────────────────────────────────────────────────────────
 
   const goTo = (s: Step) => setStep(s);
+  const goBack = useCallback(() => {
+    setStep(prev => Math.max(prev - 1, 0) as Step);
+  }, []);
 
   const next = useCallback(() => {
     setStep(prev => {
@@ -320,9 +323,9 @@ export default function App() {
 
   return (
     <I18nContext.Provider value={{ locale, t, setLocale }}>
-      <div className="min-h-screen bg-gray-950 flex flex-col items-center justify-start py-10 px-4 relative">
-        {/* Background glow blobs */}
-        <div className="fixed inset-0 pointer-events-none overflow-hidden" aria-hidden="true">
+      <div className="min-h-screen bg-gray-950 flex flex-col items-center justify-start py-4 sm:py-10 px-3 sm:px-4 relative">
+        {/* Background glow blobs — hidden on mobile (causes rendering issues on Safari) */}
+        <div className="hidden md:block fixed inset-0 pointer-events-none overflow-hidden" aria-hidden="true">
           <div className="absolute top-[-20%] left-[-20%] w-[70%] h-[70%] bg-emerald-800/40 rounded-full" style={{ filter: 'blur(100px)' }} />
           <div className="absolute bottom-[-20%] right-[-20%] w-[65%] h-[65%] bg-teal-900/50 rounded-full" style={{ filter: 'blur(90px)' }} />
           <div className="absolute top-[30%] right-[5%] w-[45%] h-[45%] bg-emerald-700/20 rounded-full" style={{ filter: 'blur(80px)' }} />
@@ -330,8 +333,8 @@ export default function App() {
         </div>
 
         {/* Header */}
-        <div className="w-full max-w-2xl mb-8 relative z-10">
-          <div className="flex items-center justify-between mb-6">
+        <div className="w-full max-w-2xl mb-4 sm:mb-8 relative z-10">
+          <div className="flex items-center justify-between mb-4 sm:mb-6">
             <img src="/OpenNova.png" alt="OpenNova" className="h-10 w-auto" />
             {/* Language selector */}
             <div className="flex gap-1">
@@ -357,7 +360,7 @@ export default function App() {
               <div key={i} className="flex items-center flex-1 last:flex-none">
                 <div className="flex flex-col items-center">
                   <div
-                    className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold transition-colors ${
+                    className={`w-6 h-6 sm:w-8 sm:h-8 rounded-full flex items-center justify-center text-xs sm:text-sm font-semibold transition-colors ${
                       i < step
                         ? 'bg-emerald-600 text-white'
                         : i === step
@@ -383,6 +386,14 @@ export default function App() {
 
         {/* Content */}
         <div className="w-full max-w-2xl relative z-10">
+          {step > 0 && step < 8 && (
+            <button
+              onClick={goBack}
+              className="mb-4 flex items-center gap-1 text-gray-500 hover:text-gray-300 text-sm transition-colors"
+            >
+              <span>{'\u2190'}</span> Back
+            </button>
+          )}
           {step === 0 && (
             <Settings
               mqttAddr={state.mqttAddr}
@@ -475,8 +486,8 @@ export default function App() {
               mowerConnected={state.mowerConnected}
               chargerFirmware={state.chargerFirmware}
               mowerFirmware={state.mowerFirmware}
+              mqttAddr={state.mqttAddr}
               onAddAnother={resetForNewDevice}
-              onDashboard={openDashboard}
             />
           )}
         </div>
