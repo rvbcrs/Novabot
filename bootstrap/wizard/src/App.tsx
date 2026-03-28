@@ -240,6 +240,21 @@ export default function App() {
     };
   }, []);
 
+  // ── Sync status on load ─────────────────────────────────────────────────
+  useEffect(() => {
+    fetch('/api/status')
+      .then(r => r.json())
+      .then((data: { mower?: MowerInfo | null; chargerConnected?: boolean; mowerConnected?: boolean }) => {
+        setState(s => ({
+          ...s,
+          mower: data.mower ?? s.mower,
+          chargerConnected: data.chargerConnected ?? s.chargerConnected,
+          mowerConnected: data.mowerConnected ?? s.mowerConnected,
+        }));
+      })
+      .catch(() => {});
+  }, []);
+
   // ── Navigation ────────────────────────────────────────────────────────────
 
   const goTo = (s: Step) => setStep(s);
@@ -407,9 +422,12 @@ export default function App() {
             <BleScan
               deviceMode={state.deviceMode!}
               socket={socket}
+              chargerConnected={state.chargerConnected}
+              mowerConnected={state.mowerConnected}
               onDeviceSelected={setSelectedDevices}
               onAlreadyConnected={setAlreadyConnected}
               onNext={next}
+              onSkip={() => goTo(6)}
             />
           )}
 

@@ -12,7 +12,7 @@ import { Client as SSHClient } from 'ssh2';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const multicastDns = require('multicast-dns');
 import multer from 'multer';
-import { startBroker, publishToMower, getConnectedMower, getMowerVersion, getIsCustomFirmware, isClientMode, onMowerDisconnect, onMowerReconnect, switchToClientMode } from './broker.js';
+import { startBroker, publishToMower, getConnectedMower, getConnectedCharger, getMowerVersion, getIsCustomFirmware, isClientMode, onMowerDisconnect, onMowerReconnect, switchToClientMode } from './broker.js';
 import { encryptForDevice, md5 } from './crypto.js';
 import { getDockerStatus, pullImage, startContainer, removeContainer, checkHealth } from './docker.js';
 import { getBleStatus, scanDevices, stopScan, provisionDevice } from './ble.js';
@@ -573,13 +573,97 @@ export function createServer(): http.Server {
 
   // ── API: status ───────────────────────────────────────────────────────────
   app.get('/api/status', (_req, res) => {
+    const charger = getConnectedCharger?.() ?? null;
     res.json({
       firmware: activeFirmware ? { name: activeFirmware.name, version: activeFirmware.version, size: activeFirmware.size } : null,
       selectedIp,
       mower: getConnectedMower(),
       mowerVersion: getMowerVersion(),
       isCustomFirmware: getIsCustomFirmware(),
+      charger,
+      chargerConnected: !!charger,
+      mowerConnected: !!getConnectedMower(),
     });
+  });
+
+  // ── API: Discover OpenNova servers on the network ────────────────────────
+  // Strategy 1: mDNS (opennovabot.local)
+  // Strategy 2: HTTP probe on local subnet port 3000 (/api/nova-user/equipment/*)
+  app.get('/api/discover', async (_req, res) => {
+    const servers: { ip: string; source: string }[] = [];
+    const net = require('os').networkInterfaces();
+
+    // 1. mDNS discovery (3s timeout)
+    try {
+      const mdns = require('multicast-dns')();
+      const mdnsPromise = new Promise<void>((resolve) => {
+        mdns.on('response', (response: { answers: Array<{ name: string; type: string; data: string }> }) => {
+          for (const ans of response.answers) {
+            if (ans.name === 'opennovabot.local' && ans.type === 'A') {
+              if (!servers.some(s => s.ip === ans.data)) {
+                servers.push({ ip: ans.data, source: 'mDNS' });
+              }
+            }
+          }
+        });
+        mdns.query({ questions: [{ name: 'opennovabot.local', type: 'A' }] });
+        setTimeout(() => { mdns.destroy(); resolve(); }, 2000);
+      });
+      await mdnsPromise;
+    } catch {}
+
+    // 2. Probe local subnet for OpenNova server on port 3000
+    // Find local IP and scan .1-.254 with fast TCP connect + HTTP check
+    const localIps: string[] = [];
+    for (const ifaces of Object.values(net)) {
+      for (const iface of (ifaces as Array<{ address: string; family: string; internal: boolean }>)) {
+        if (iface.family === 'IPv4' && !iface.internal && iface.address.startsWith('192.168.')) {
+          localIps.push(iface.address);
+        }
+      }
+    }
+
+    if (localIps.length > 0 && servers.length === 0) {
+      const subnet = localIps[0].split('.').slice(0, 3).join('.');
+      // Probe common IPs first (gateway, .177, .100, .2-.10), then broader
+      const candidates = [1, 177, 100, 2, 3, 4, 5, 6, 7, 8, 9, 10, 50, 200];
+      async function probeOpenNova(ip: string): Promise<boolean> {
+        try {
+          const r = await fetch(`http://${ip}:3000/api/setup/health`, {
+            signal: AbortSignal.timeout(1500),
+          });
+          const body = await r.json() as Record<string, unknown>;
+          return body?.server === 'running' && body?.mqtt === 'running';
+        } catch { return false; }
+      }
+
+      const probes = candidates
+        .filter(n => `${subnet}.${n}` !== localIps[0]) // skip self
+        .map(async n => {
+          const ip = `${subnet}.${n}`;
+          if (await probeOpenNova(ip)) {
+            if (!servers.some(s => s.ip === ip)) {
+              servers.push({ ip, source: 'probe' });
+            }
+          }
+        });
+      await Promise.all(probes);
+    }
+
+    // 3. Also check own IP
+    if (localIps.length > 0 && !servers.some(s => s.ip === localIps[0])) {
+      try {
+        const r = await fetch(`http://${localIps[0]}:3000/api/setup/health`, {
+          signal: AbortSignal.timeout(1000),
+        });
+        const body = await r.json() as Record<string, unknown>;
+        if (body?.server === 'running') {
+          servers.push({ ip: localIps[0], source: 'self' });
+        }
+      } catch {}
+    }
+
+    res.json({ servers });
   });
 
   // ── API: BLE status ─────────────────────────────────────────────────────

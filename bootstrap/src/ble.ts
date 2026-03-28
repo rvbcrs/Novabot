@@ -315,6 +315,8 @@ export async function provisionDevice(params: ProvisionParams, io: IOServer): Pr
     for (const c of allNotifyChars) {
       await c.subscribeAsync();
       c.on('data', (data: Buffer) => {
+        // Skip mower binary telemetry (bb/cc status packets every ~1s)
+        if (data.length >= 2 && ((data[0] === 0x62 && data[1] === 0x62) || (data[0] === 0x63 && data[1] === 0x63))) return;
         const hex = data.toString('hex');
         const str = data.toString('utf8').replace(/\0/g, '');
         bleLog(`[BLE] RAW notify on ${c.uuid}: hex=${hex} str="${str}" len=${data.length}`);
@@ -369,7 +371,7 @@ export async function provisionDevice(params: ProvisionParams, io: IOServer): Pr
       try {
         io.emit('ble-progress', { phase: 'handshake', message: 'Handshake...' });
         const { response } = await sendCommand(writeChar, allNotifyChars,
-          JSON.stringify({ get_signal_info: 0 }), 'get_signal_info', RESPONSE_TIMEOUT, flushChar);
+          JSON.stringify({ get_signal_info: 0 }), 'get_signal_info', 5000, flushChar);
         bleLog('[BLE] get_signal_info OK:', JSON.stringify(response));
       } catch {
         bleWarn('[BLE] get_signal_info no response (non-fatal, continuing)');

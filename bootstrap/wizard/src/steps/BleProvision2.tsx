@@ -35,10 +35,9 @@ const BLE_STEP_DEFS = [
   { key: 'connecting', phases: ['requesting', 'connecting'], label: 'Connecting to device' },
   { key: 'discovering', phases: ['discovering', 'handshake'], label: 'Discovering services' },
   { key: 'wifi', phases: ['wifi'], label: 'Sending WiFi credentials' },
-  { key: 'lora', phases: ['lora'], label: 'Configuring LoRa' },
+  { key: 'config', phases: ['rtk', 'lora'], label: 'Configuring device' },
   { key: 'mqtt', phases: ['mqtt'], label: 'Sending MQTT settings' },
   { key: 'commit', phases: ['commit'], label: 'Saving configuration' },
-  { key: 'done', phases: ['done'], label: 'Complete' },
 ];
 
 function buildSteps(): ProvisionStep[] {
@@ -46,20 +45,19 @@ function buildSteps(): ProvisionStep[] {
 }
 
 function updateStepsForPhase(steps: ProvisionStep[], phase: string): ProvisionStep[] {
-  let foundActive = false;
-  return steps.map(step => {
-    const def = BLE_STEP_DEFS.find(d => d.key === step.key);
-    if (!def) return step;
+  // Find which step this phase belongs to
+  const activeIdx = BLE_STEP_DEFS.findIndex(d => d.phases.includes(phase));
+  if (activeIdx === -1) return steps; // Unknown phase — don't change anything
 
-    if (def.phases.includes(phase)) {
-      foundActive = true;
-      return { ...step, status: 'active' as StepStatus };
-    }
-    if (!foundActive) {
-      // Everything before active is done
-      return { ...step, status: 'done' as StepStatus };
-    }
-    return step;
+  // 'done' phase = mark everything as done
+  if (phase === 'done') {
+    return steps.map(s => ({ ...s, status: 'done' as StepStatus }));
+  }
+
+  return steps.map((step, i) => {
+    if (i < activeIdx) return { ...step, status: 'done' as StepStatus };
+    if (i === activeIdx) return { ...step, status: 'active' as StepStatus };
+    return { ...step, status: step.status === 'done' ? 'done' : 'pending' as StepStatus };
   });
 }
 

@@ -5,9 +5,12 @@ import type { DeviceMode, BleDevice } from '../App.tsx';
 interface Props {
   deviceMode: DeviceMode;
   socket: Socket;
+  chargerConnected: boolean;
+  mowerConnected: boolean;
   onDeviceSelected: (devices: BleDevice[]) => void;
   onAlreadyConnected: (devices: string[]) => void;
   onNext: () => void;
+  onSkip: () => void;
 }
 
 interface ScannedDevice {
@@ -18,7 +21,7 @@ interface ScannedDevice {
   type: 'charger' | 'mower' | 'unknown';
 }
 
-export default function BleScan({ deviceMode, socket, onDeviceSelected, onAlreadyConnected, onNext }: Props) {
+export default function BleScan({ deviceMode, socket, chargerConnected, mowerConnected, onDeviceSelected, onAlreadyConnected, onNext, onSkip }: Props) {
   const [scanning, setScanning] = useState(false);
   const [devices, setDevices] = useState<ScannedDevice[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -149,6 +152,62 @@ export default function BleScan({ deviceMode, socket, onDeviceSelected, onAlread
         Scanning for nearby Bluetooth devices. Make sure your {deviceMode === 'both' ? 'charger and mower are' : deviceMode + ' is'} powered
         on and in range.
       </p>
+
+      {/* Already connected via MQTT — show skip option */}
+      {(() => {
+        const chargerNeeded = deviceMode === 'charger' || deviceMode === 'both';
+        const mowerNeeded = deviceMode === 'mower' || deviceMode === 'both';
+        const chargerOk = !chargerNeeded || chargerConnected;
+        const mowerOk = !mowerNeeded || mowerConnected;
+        const allConnected = chargerOk && mowerOk;
+        // Only count devices that are RELEVANT to this flow
+        const relevantConnected = (chargerNeeded && chargerConnected) || (mowerNeeded && mowerConnected);
+
+        if (!relevantConnected) return null;
+
+        return (
+          <div className={`mb-6 p-4 rounded-xl border ${allConnected ? 'bg-emerald-900/20 border-emerald-700/40' : 'bg-blue-900/20 border-blue-700/30'}`}>
+            <p className={`text-sm font-medium mb-2 ${allConnected ? 'text-emerald-300' : 'text-blue-300'}`}>
+              {allConnected
+                ? deviceMode === 'both' ? 'Both devices already connected!' : `${deviceMode === 'charger' ? 'Charger' : 'Mower'} already connected!`
+                : 'Some devices already connected'}
+            </p>
+            <div className="space-y-1 mb-3">
+              {chargerNeeded && (
+                <div className="flex items-center gap-2 text-sm">
+                  <span className={chargerConnected ? 'text-emerald-400' : 'text-gray-500'}>{chargerConnected ? '●' : '○'}</span>
+                  <span className={chargerConnected ? 'text-gray-300' : 'text-gray-500'}>
+                    Charger — {chargerConnected ? 'connected via MQTT' : 'not connected'}
+                  </span>
+                </div>
+              )}
+              {mowerNeeded && (
+                <div className="flex items-center gap-2 text-sm">
+                  <span className={mowerConnected ? 'text-emerald-400' : 'text-gray-500'}>{mowerConnected ? '●' : '○'}</span>
+                  <span className={mowerConnected ? 'text-gray-300' : 'text-gray-500'}>
+                    Mower — {mowerConnected ? 'connected via MQTT' : 'not connected'}
+                  </span>
+                </div>
+              )}
+            </div>
+            <p className="text-gray-500 text-xs mb-3">
+              {allConnected
+                ? 'BLE provisioning is not needed. You can skip this step.'
+                : 'Only unconnected devices need BLE provisioning.'}
+            </p>
+            <button
+              onClick={onSkip}
+              className={`w-full py-2 px-4 font-semibold rounded-xl transition-colors text-sm ${
+                allConnected
+                  ? 'bg-emerald-700 hover:bg-emerald-600 text-white'
+                  : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+              }`}
+            >
+              {allConnected ? 'Skip BLE — All Connected' : 'Skip BLE — Continue with connected devices'}
+            </button>
+          </div>
+        );
+      })()}
 
       {/* Scanning indicator */}
       {scanning && (

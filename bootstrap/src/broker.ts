@@ -15,6 +15,28 @@ export interface ConnectedMower {
   ip: string;
 }
 
+export interface ConnectedCharger {
+  sn: string;
+  clientId: string;
+}
+
+let _connectedCharger: ConnectedCharger | null = null;
+
+export function getConnectedCharger(): ConnectedCharger | null { return _connectedCharger; }
+
+function detectCharger(io: IOServer, sn: string, clientId: string): void {
+  if (_connectedCharger?.sn === sn) return; // already known
+  _connectedCharger = { sn, clientId };
+  console.log(`[MQTT] Charger connected: SN=${sn} clientId=${clientId}`);
+  io.emit('charger-connected', { sn });
+}
+
+function detectDevice(io: IOServer, sn: string, topic: string, clientId: string): void {
+  if (sn.startsWith('LFIC')) {
+    detectCharger(io, sn, clientId);
+  }
+}
+
 let _broker: ReturnType<typeof Aedes> | null = null;
 let _tcpServer: net.Server | null = null;           // TCP server for own broker
 let _localClient: mqtt.MqttClient | null = null;   // subscriber to existing local broker
@@ -240,6 +262,10 @@ export function startBroker(io: IOServer): void {
       console.log(`[MQTT] Mower connected to own broker: SN=${sn}, IP=${ip}`);
       emitMowerReconnected(io, mower);
       requestMowerVersion(sn);
+    }
+    if (client.id.startsWith('ESP32_') || client.id.startsWith('SNC')) {
+      // Charger — clientId is ESP32_xxxx, detect SN from subscribe topic later
+      console.log(`[MQTT] Charger connected to own broker: clientId=${client.id}, IP=${ip}`);
       // Check if SSH is reachable → determines custom vs stock firmware
       if (ip) checkSshReachable(ip, io);
     }
@@ -258,7 +284,8 @@ export function startBroker(io: IOServer): void {
     const isServerReceive = packet.topic.startsWith('Dart/Receive_server_mqtt/');
     if (!isReceive && !isServerReceive) return;
     const sn = packet.topic.split('/').pop() ?? '';
-    if (!sn.startsWith('LFIN')) return;
+    if (sn.startsWith('LFIC')) detectDevice(io, sn, packet.topic, client.id);
+    if (!sn.startsWith('LFIN') && !sn.startsWith('LFIC')) return;
     console.log(`[MQTT] Publish on ${packet.topic} from ${client.id} (${packet.payload.length} bytes)`);
     tryExtractVersion(io, sn, packet.payload);
   });
@@ -303,20 +330,28 @@ function checkDnsForRemoteBroker(io: IOServer): void {
 
     _remoteClient.on('message', (topic: string, payload: Buffer) => {
       const sn = topic.split('/').pop() ?? '';
-      if (!sn.startsWith('LFIN')) return;
+      if (!sn.startsWith('LFI')) return;
       heartbeat();
-      if (!_connectedMower || _connectedMower.sn !== sn) {
-        _remoteDetected = true;
-        const mower: ConnectedMower = { sn, clientId: sn, ip: '' };
-        _connectedMower = mower;
-        io.emit('mower-connected', { sn, ip: '' });
-        console.log(`[MQTT] Mower detected via remote broker at ${address}: SN=${sn}`);
-        emitMowerReconnected(io, mower);
-        requestMowerVersion(sn);
-        checkFirmwareViaDocker(sn, io);
+
+      if (sn.startsWith('LFIC')) {
+        detectDevice(io, sn, topic, sn);
+        return;
       }
-      if (topic.startsWith('Dart/Receive_mqtt/') || topic.startsWith('Dart/Receive_server_mqtt/')) {
-        tryExtractVersion(io, sn, payload);
+
+      if (sn.startsWith('LFIN')) {
+        if (!_connectedMower || _connectedMower.sn !== sn) {
+          _remoteDetected = true;
+          const mower: ConnectedMower = { sn, clientId: sn, ip: '' };
+          _connectedMower = mower;
+          io.emit('mower-connected', { sn, ip: '' });
+          console.log(`[MQTT] Mower detected via remote broker at ${address}: SN=${sn}`);
+          emitMowerReconnected(io, mower);
+          requestMowerVersion(sn);
+          checkFirmwareViaDocker(sn, io);
+        }
+        if (topic.startsWith('Dart/Receive_mqtt/') || topic.startsWith('Dart/Receive_server_mqtt/')) {
+          tryExtractVersion(io, sn, payload);
+        }
       }
     });
 
@@ -355,18 +390,28 @@ function startSubscriberMode(io: IOServer, host: string): void {
 
   client.on('message', (topic: string, payload: Buffer) => {
     const sn = topic.split('/').pop() ?? '';
-    if (!sn.startsWith('LFIN')) return;
+    if (!sn.startsWith('LFI')) return;
     heartbeat();
-    if (!_connectedMower || _connectedMower.sn !== sn) {
-      const mower: ConnectedMower = { sn, clientId: sn, ip: '' };
-      _connectedMower = mower;
-      io.emit('mower-connected', { sn, ip: '' });
-      emitMowerReconnected(io, mower);
-      requestMowerVersion(sn);
-      checkFirmwareViaDocker(sn, io);
+
+    // Charger detection (LFIC*)
+    if (sn.startsWith('LFIC')) {
+      detectDevice(io, sn, topic, sn);
+      return;
     }
-    if (topic.startsWith('Dart/Receive_mqtt/') || topic.startsWith('Dart/Receive_server_mqtt/')) {
-      tryExtractVersion(io, sn, payload);
+
+    // Mower detection (LFIN*)
+    if (sn.startsWith('LFIN')) {
+      if (!_connectedMower || _connectedMower.sn !== sn) {
+        const mower: ConnectedMower = { sn, clientId: sn, ip: '' };
+        _connectedMower = mower;
+        io.emit('mower-connected', { sn, ip: '' });
+        emitMowerReconnected(io, mower);
+        requestMowerVersion(sn);
+        checkFirmwareViaDocker(sn, io);
+      }
+      if (topic.startsWith('Dart/Receive_mqtt/') || topic.startsWith('Dart/Receive_server_mqtt/')) {
+        tryExtractVersion(io, sn, payload);
+      }
     }
   });
 
