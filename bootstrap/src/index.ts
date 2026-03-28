@@ -29,10 +29,7 @@ httpServer.listen(PORT, '0.0.0.0', () => {
   console.log('');
   console.log('Druk Ctrl+C om af te sluiten.');
 
-  // Don't open browser when running inside Tauri/Electron
-  if (!process.env.ELECTRON) {
-    openBrowser(url);
-  }
+  openBrowser(url);
 });
 
 function openBrowser(url: string): void {

@@ -3,8 +3,6 @@
  *
  * ST7789, 240x320, SPI, CST816D touch.
  * Dark theme with purple/teal accents using LVGL widgets.
- *
- * v2.0 — Menu-based state machine with flow selection.
  */
 
 #pragma once
@@ -42,12 +40,6 @@ extern volatile bool ui_wifiRescanPressed;
 extern char ui_wifiPassword[64];
 extern char ui_wifiSsid[33];
 
-// v2.0: Menu + firmware UI flags
-extern volatile int  ui_menuSelection;    // -1 = none, 0-3 for menu options
-extern volatile bool ui_backPressed;      // Back/menu button pressed
-extern volatile bool ui_flashConfirmed;   // Flash confirm button pressed
-extern volatile bool ui_flashSkipped;     // Flash skip button pressed
-
 // ── Thread safety — all lv_* calls from outside LVGL task must use these ────
 
 bool lvgl_lock(int timeout_ms = -1);
@@ -70,16 +62,6 @@ void display_confirm(const char* title, const char* line1, const char* line2, co
 void display_wifiList(WifiNetwork* networks, int count, int selected);
 void display_wifiPassword(const char* ssid);
 void display_reprovision(const char* status, int step, int total);
-
-// v2.0: Menu + firmware screens
-void display_menu(bool sdMounted, bool hasMowerFw, bool hasChargerFw,
-                  const char* mowerFwVer, const char* chargerFwVer,
-                  bool mowerMqtt, bool chargerMqtt);
-void display_detect(int secondsElapsed, int wifiClients, bool chargerMqtt, bool mowerMqtt);
-void display_firmware_check(bool hasMowerFw, bool hasChargerFw,
-                            const char* mowerVer, const char* chargerVer,
-                            bool mowerOnline, bool chargerOnline);
-void display_firmware_flash(const char* device, const char* status, int percent);
 
 // Legacy hit-test API — kept as no-ops for compatibility, LVGL handles touch natively
 bool display_btnHit(int16_t x, int16_t y);
