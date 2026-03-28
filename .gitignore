@@ -29,6 +29,9 @@ research/*.xapk
 research/firmware/bestmow/
 research/mower_firmware/**/*.pgm
 research/mower_firmware/ota_lib/
+research/mower_firmware/novabot_log/
+research/mower_firmware/novabot_log_extra/
+research/ros2_msg_definitions/
 
 # ── Environment & secrets ─────────────────────────────
 .env

@@ -1,0 +1,11 @@
+# Ignore everything outside the app
+../research/
+../novabot-server/
+../novabot-dashboard/
+../nova-ota-device/
+../bootstrap/
+../open_decision/
+../rpi-image/
+../docs/
+../setup-wizard/
+../.claude/
