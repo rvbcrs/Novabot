@@ -1,5 +1,8 @@
 # Custom Firmware
 
+!!! info "Custom firmware is OPTIONAL"
+    Custom firmware is OPTIONAL for basic OpenNova setup. Stock Novabot firmware works with BLE provisioning (direct IP). Custom firmware adds: mDNS discovery, SSH access, camera streaming.
+
 ## Feasibility Assessment
 
 Can we build custom firmware for the Novabot charger and mower without the original source code? The answer depends on the device.
@@ -160,7 +163,7 @@ A build script (`research/build_custom_firmware.sh`) automates the process of cr
 | `--ssh-password` | `novabot` | Root SSH password |
 | `--ssh-port` | `22` | SSH listen port |
 | `--remote-ros2` | off | Remove `ROS_LOCALHOST_ONLY=1` restriction |
-| `--include-server` | off | Bundle novabot-server + dashboard in firmware |
+| `--include-server` | off | Bundle server + dashboard in firmware |
 | `--bundle-node` | off | Also bundle Node.js + node_modules (offline install) |
 | `--bundle-node-ip` | _(auto)_ | Mower IP to copy node_modules from |
 | `--server-port` | `3000` | Dashboard port (with `--include-server`) |
@@ -179,7 +182,7 @@ A build script (`research/build_custom_firmware.sh`) automates the process of cr
 | 7. daemon_node fix | Injects `ros2 run daemon_process daemon_node` into run_novabot.sh |
 | 8. Extended commands | Copies `extended_commands.py` + `pin_verify_ros2.py` |
 | 9. STM32 MCU patch | Copies v3.6.6 PIN unlock binary to MCU_BIN directory |
-| 10. Server bundle | _(optional)_ Bundles novabot-server + dashboard + Node.js |
+| 10. Server bundle | _(optional)_ Bundles server + dashboard + Node.js |
 | 11. Version update | Updates `novabot_api.yaml` + `Readme.txt` + `package_verify.json` |
 | 12. Build .deb | Repackages modified firmware into `.deb` + generates metadata JSON |
 
@@ -554,7 +557,7 @@ Custom firmware overrides this file at every boot to ensure it always points to 
 ```mermaid
 flowchart LR
     subgraph Host["Host Machine (Mac/NAS/RPi)"]
-        Docker["Docker Container<br/>novabot-server + dashboard<br/>+ Aedes MQTT broker"]
+        Docker["Docker Container<br/>server + dashboard<br/>+ Aedes MQTT broker"]
         Bootstrap["Bootstrap Wizard<br/>(native, not Docker)<br/>+ mDNS opennovabot.local"]
     end
 

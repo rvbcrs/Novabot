@@ -1,5 +1,8 @@
 # Network Topology
 
+!!! info "DNS rewrites are OPTIONAL since v1.0.0"
+    Since v1.0.0, DNS rewrites are OPTIONAL. The OpenNova app and bootstrap tool provision devices with direct IP addresses via BLE. DNS rewrites are only needed if you want to use the official Novabot app.
+
 ## DNS Redirect
 
 The Novabot app connects to `app.lfibot.com` (HTTP) and `mqtt.lfibot.com` (MQTT).

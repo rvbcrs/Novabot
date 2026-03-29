@@ -12,7 +12,7 @@ sequenceDiagram
     participant API as Local Server
 
     rect rgb(240, 248, 255)
-        Note over User,API: Phase 1: BLE Provisioning
+        Note over User,API: Phase 1: BLE Connect
         User->>App: Enter charger SN (LFIC...)
         User->>App: Enter home WiFi SSID + password
 
@@ -20,29 +20,24 @@ sequenceDiagram
         App->>BLE: BLE Connect
         App->>BLE: GATT Discover Services (UUID 0x1234)
         App->>BLE: Subscribe to Char 0x2222 Notify
-
-        App->>BLE: get_signal_info
-        BLE-->>App: {wifi: 0, rtk: 17}
-        Note over App: Show: WiFi=Strong, GPS=Strong
     end
 
     rect rgb(255, 248, 240)
-        Note over User,API: Phase 2: Configuration
-        User->>App: Click "Next"
+        Note over User,API: Phase 2: Configuration (set_wifi_info MUST be first!)
 
         App->>BLE: set_wifi_info {sta: {ssid, passwd}, ap: {SN, "12345678"}}
         BLE-->>App: {result: 0}
 
-        App->>BLE: set_mqtt_info {addr: "mqtt.lfibot.com", port: 1883}
-        BLE-->>App: {result: 0}
-
-        App->>BLE: set_lora_info {addr: 718, channel: 16, hc: 20, lc: 14}
-        BLE-->>App: {value: 15} ← assigned channel!
-
         App->>BLE: set_rtk_info
         BLE-->>App: {result: 0}
 
-        App->>BLE: set_cfg_info (commit)
+        App->>BLE: set_lora_info {addr: 718, channel: 16, hc: 20, lc: 14}
+        BLE-->>App: {value: 15} <- assigned channel!
+
+        App->>BLE: set_mqtt_info {addr: server IP, port: 1883}
+        BLE-->>App: {result: 0}
+
+        App->>BLE: set_cfg_info (commit + reboot)
         BLE-->>App: {result: 0}
     end
 
@@ -70,7 +65,8 @@ sequenceDiagram
 
 ## Key Observations
 
-1. **chargerChannel** = value from `set_lora_info_respond` (15), NOT the requested channel (16)
-2. **set_mqtt_info** sends NO credentials — charger v0.3.6 doesn't use MQTT auth
-3. **Charger AP password** is always `12345678`
-4. After provisioning, charger tries both plain MQTT (1883) and TLS (fails with "Connection reset")
+1. **`set_wifi_info` MUST be the first command** -- the charger's internal state machine switches from "provisioning" mode to "info" mode after receiving `get_signal_info`, causing it to ignore subsequent configuration commands
+2. **chargerChannel** = value from `set_lora_info_respond` (15), NOT the requested channel (16)
+3. **set_mqtt_info** sends NO credentials -- charger v0.3.6 doesn't use MQTT auth
+4. **Charger AP password** is always `12345678`
+5. After provisioning, charger tries both plain MQTT (1883) and TLS (fails with "Connection reset")

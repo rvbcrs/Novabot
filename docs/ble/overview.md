@@ -35,25 +35,53 @@ ble_end
 
 ## Command Flow
 
+!!! danger "CRITICAL: Command order differs between charger and mower"
+    The charger has an internal state machine that switches from "provisioning" mode to "info" mode after receiving `get_signal_info`. For chargers, `set_wifi_info` MUST be the first command. For mowers, `get_signal_info` can be sent first.
+
+### Charger Command Order
+
 ```mermaid
 sequenceDiagram
     participant App
-    participant Device as BLE Device
+    participant Charger as Charger (BLE)
 
-    App->>Device: BLE Connect
-    App->>Device: Discover Services (UUID 0x1234)
-    App->>Device: Subscribe to 0x2222 Notify
-    App->>Device: Write: get_signal_info
-    Device-->>App: Notify: get_signal_info_respond
-    App->>Device: Write: set_wifi_info (chunked)
-    Device-->>App: Notify: set_wifi_info_respond
-    App->>Device: Write: set_mqtt_info
-    Device-->>App: Notify: set_mqtt_info_respond
-    App->>Device: Write: set_lora_info
-    Device-->>App: Notify: set_lora_info_respond
-    App->>Device: Write: set_cfg_info
-    Device-->>App: Notify: set_cfg_info_respond
-    Note over Device: Reconnects WiFi + MQTT
+    App->>Charger: BLE Connect
+    App->>Charger: Discover Services (UUID 0x1234)
+    App->>Charger: Subscribe to 0x2222 Notify
+    App->>Charger: Write: set_wifi_info (MUST be first!)
+    Charger-->>App: Notify: set_wifi_info_respond
+    App->>Charger: Write: set_rtk_info
+    Charger-->>App: Notify: set_rtk_info_respond
+    App->>Charger: Write: set_lora_info
+    Charger-->>App: Notify: set_lora_info_respond
+    App->>Charger: Write: set_mqtt_info
+    Charger-->>App: Notify: set_mqtt_info_respond
+    App->>Charger: Write: set_cfg_info (commit + reboot)
+    Charger-->>App: Notify: set_cfg_info_respond
+    Note over Charger: Reconnects WiFi + MQTT
+```
+
+### Mower Command Order
+
+```mermaid
+sequenceDiagram
+    participant App
+    participant Mower as Mower (BLE)
+
+    App->>Mower: BLE Connect
+    App->>Mower: Discover Services (UUID 0x1234)
+    App->>Mower: Subscribe to 0x2222 Notify
+    App->>Mower: Write: get_signal_info
+    Mower-->>App: Notify: get_signal_info_respond
+    App->>Mower: Write: set_wifi_info (chunked)
+    Mower-->>App: Notify: set_wifi_info_respond
+    App->>Mower: Write: set_lora_info
+    Mower-->>App: Notify: set_lora_info_respond
+    App->>Mower: Write: set_mqtt_info
+    Mower-->>App: Notify: set_mqtt_info_respond
+    App->>Mower: Write: set_cfg_info (commit + reboot)
+    Mower-->>App: Notify: set_cfg_info_respond
+    Note over Mower: Reconnects WiFi + MQTT
 ```
 
 ## BLE Commands Summary

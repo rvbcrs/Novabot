@@ -18,6 +18,9 @@
 
 ## Step-by-Step Flow
 
+!!! danger "CRITICAL: `set_wifi_info` MUST be the first command"
+    The charger has an internal state machine that switches from "provisioning" mode to "info" mode after receiving `get_signal_info`. If `get_signal_info` is sent first, the charger ignores subsequent configuration commands. Always send `set_wifi_info` before any other command.
+
 ```mermaid
 sequenceDiagram
     participant User
@@ -31,26 +34,19 @@ sequenceDiagram
     App->>Charger: BLE Connect (CHARGER_PILE)
     App->>Charger: Discover Services
 
-    Note over App,Charger: Signal Check
-    App->>Charger: get_signal_info
-    Charger-->>App: {wifi: 0, rtk: 17}
-    App->>User: WiFi=Strong, GPS=Strong
-
-    User->>App: Click "Next"
-
-    Note over App,Charger: Configuration
+    Note over App,Charger: Configuration (set_wifi_info MUST be first!)
     App->>Charger: set_wifi_info {sta + ap}
     Charger-->>App: set_wifi_info_respond {result: 0}
 
-    App->>Charger: set_mqtt_info {addr, port}
-    Charger-->>App: set_mqtt_info_respond {result: 0}
+    App->>Charger: set_rtk_info
+    Charger-->>App: set_rtk_info_respond {result: 0}
 
     App->>Charger: set_lora_info {addr, channel, hc, lc}
     Charger-->>App: set_lora_info_respond {value: 15}
     Note over App: Save assigned channel (15)
 
-    App->>Charger: set_rtk_info
-    Charger-->>App: set_rtk_info_respond {result: 0}
+    App->>Charger: set_mqtt_info {addr, port}
+    Charger-->>App: set_mqtt_info_respond {result: 0}
 
     App->>Charger: set_cfg_info (commit)
     Charger-->>App: set_cfg_info_respond {result: 0}
@@ -70,14 +66,16 @@ sequenceDiagram
 
 ## BLE Command Sequence
 
+!!! danger "CRITICAL: `set_wifi_info` MUST be the first command"
+    The charger has an internal state machine that switches from "provisioning" mode to "info" mode after receiving `get_signal_info`. Sending `get_signal_info` first causes the charger to ignore all subsequent configuration commands.
+
 | Step | Command | Key Data |
 |------|---------|----------|
-| 1 | `get_signal_info` | Check WiFi + GPS quality |
-| 2 | `set_wifi_info` | `sta` (home WiFi) + `ap` (charger AP, passwd=12345678) |
-| 3 | `set_mqtt_info` | `addr`: mqtt.lfibot.com, `port`: 1883 |
-| 4 | `set_lora_info` | `addr`: 718, `channel`: 16, `hc`: 20, `lc`: 14 |
-| 5 | `set_rtk_info` | RTK GPS configuration |
-| 6 | `set_cfg_info` | Commit all settings (value: 1) |
+| 1 | `set_wifi_info` | **MUST be first** -- `sta` (home WiFi) + `ap` (charger AP, passwd=12345678) |
+| 2 | `set_rtk_info` | RTK GPS configuration |
+| 3 | `set_lora_info` | `addr`: 718, `channel`: 16, `hc`: 20, `lc`: 14 |
+| 4 | `set_mqtt_info` | `addr`: server IP or hostname, `port`: 1883 |
+| 5 | `set_cfg_info` | Commit all settings (value: 1) -- causes reboot |
 
 ## After Provisioning
 

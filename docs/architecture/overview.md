@@ -14,8 +14,8 @@ graph TB
 
     subgraph "Docker Container (Mac/NAS/RPi)"
         DNS[dnsmasq<br/>DNS rewrite *.lfibot.com]
-        Server[novabot-server<br/>Express + Aedes MQTT]
-        Dashboard[novabot-dashboard<br/>React + Leaflet]
+        Server[server<br/>Express + Aedes MQTT]
+        Dashboard[dashboard<br/>React + Leaflet]
     end
 
     subgraph "Host Machine (native)"
@@ -81,7 +81,7 @@ graph LR
 
 ## Technology Stack
 
-### Server (`novabot-server/`)
+### Server (`server/`)
 
 | Layer | Technology |
 |-------|-----------|
@@ -92,7 +92,7 @@ graph LR
 | Database | better-sqlite3 (WAL mode) |
 | Auth | JWT (jsonwebtoken + bcrypt) |
 
-### Dashboard (`novabot-dashboard/`)
+### Dashboard (`dashboard/`)
 
 | Layer | Technology |
 |-------|-----------|
@@ -135,7 +135,7 @@ The project uses a Docker-based distribution where the server runs on the user's
 
 | Component | Runs On | Purpose |
 |-----------|---------|---------|
-| **Docker container** | Mac/NAS/RPi | novabot-server + dashboard + dnsmasq |
+| **Docker container** | Mac/NAS/RPi | server + dashboard + dnsmasq |
 | **Bootstrap wizard** | Host machine (native) | Initial setup, firmware patching, mDNS advertising |
 | **Custom mower firmware** | Mower | SSH, URL patches, camera, mDNS discovery |
 
