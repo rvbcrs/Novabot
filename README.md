@@ -46,12 +46,6 @@ Create a `.env` file next to `docker-compose.yml`:
 # Required: generate with: openssl rand -hex 32
 JWT_SECRET=your_random_secret_here
 
-# Optional: enable web dashboard (work in progress)
-# ENABLE_DASHBOARD=true
-
-# Optional: your server IP (only needed for TLS/DNS features)
-# TARGET_IP=192.168.0.177
-
 # Optional: admin email (auto-promoted to admin on startup)
 # ADMIN_EMAIL=your@email.com
 ```
