@@ -158,11 +158,8 @@ if (PROXY_MODE === 'cloud') {
     res.send(adminPageHtml());
   });
 
-  // dashboard (hidden by default — enable with ENABLE_DASHBOARD=true)
-  const dashboardEnabled = process.env.ENABLE_DASHBOARD === 'true';
-  if (dashboardEnabled) {
-    app.use('/api/dashboard', dashboardRouter);
-  }
+  // dashboard API — always mounted (setup/import routes needed by bootstrap wizard)
+  app.use('/api/dashboard', dashboardRouter);
 
   // ── Maaier firmware log upload (geen /api/ prefix, geen auth) ───────────────
   app.post('/x3/log/upload', express.raw({ type: '*/*', limit: '50mb' }), (req, res) => {
@@ -174,10 +171,8 @@ if (PROXY_MODE === 'cloud') {
   const dashboardPath = path.resolve(__dirname, '../../dashboard/dist');
   // Setup wizard removed — provisioning now handled by OpenNova mobile app or bootstrap tool
 
-  // Dashboard static files (only when enabled)
-  if (dashboardEnabled) {
-    app.use(express.static(dashboardPath));
-  }
+  // Dashboard static files
+  app.use(express.static(dashboardPath));
 
   // ── Catch-all ──────────────────────────────────────────────────────────────
   app.use((req, res) => {
@@ -188,14 +183,10 @@ if (PROXY_MODE === 'cloud') {
     }
 
 
-    // Dashboard SPA fallback (only when enabled)
-    if (dashboardEnabled) {
-      res.sendFile(path.join(dashboardPath, 'index.html'), (err) => {
-        if (err) res.status(404).json({ code: 404, msg: 'Not found', data: null });
-      });
-    } else {
-      res.status(200).send('<html><body style="background:#030712;color:#666;font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0"><p>OpenNova Server is running. Dashboard is not enabled.</p></body></html>');
-    }
+    // Dashboard SPA fallback
+    res.sendFile(path.join(dashboardPath, 'index.html'), (err) => {
+      if (err) res.status(404).json({ code: 404, msg: 'Not found', data: null });
+    });
   });
 }
 

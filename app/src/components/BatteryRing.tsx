@@ -11,6 +11,7 @@ interface BatteryRingProps {
   percentage: number;
   size?: number;
   strokeWidth?: number;
+  color?: string;  // Override auto color (activity-based)
 }
 
 function getBatteryColor(pct: number): string {
@@ -23,12 +24,13 @@ export function BatteryRing({
   percentage,
   size = 120,
   strokeWidth = 10,
+  color,
 }: BatteryRingProps) {
   const radius = (size - strokeWidth) / 2;
   const circumference = 2 * Math.PI * radius;
   const clampedPct = Math.max(0, Math.min(100, percentage));
   const strokeDashoffset = circumference - (circumference * clampedPct) / 100;
-  const batteryColor = getBatteryColor(clampedPct);
+  const batteryColor = color ?? getBatteryColor(clampedPct);
 
   return (
     <View style={[styles.container, { width: size, height: size }]}>

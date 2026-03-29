@@ -1,7 +1,7 @@
 /**
  * Home screen — real-time mower status and action buttons.
  */
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -9,11 +9,14 @@ import {
   StyleSheet,
   ScrollView,
   ActivityIndicator,
+  Animated,
+  Image,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors } from '../theme/colors';
 import { BatteryRing } from '../components/BatteryRing';
+import { MowerScene } from '../components/mower/MowerScene';
 import { useMowerState } from '../hooks/useMowerState';
 import { ApiClient } from '../services/api';
 import { getServerUrl } from '../services/auth';
@@ -140,14 +143,78 @@ function getActivityIcon(
   }
 }
 
+// ── Glow colors per activity (matching dashboard StatusHeroCard) ────
+
+const GLOW_COLOR: Record<MowerActivity, string> = {
+  idle:      'transparent',
+  mowing:    'rgba(16, 185, 129, 0.20)',
+  charging:  'rgba(59, 130, 246, 0.20)',
+  returning: 'rgba(245, 158, 11, 0.15)',
+  paused:    'rgba(234, 179, 8, 0.12)',
+  mapping:   'rgba(168, 85, 247, 0.15)',
+  error:     'rgba(239, 68, 68, 0.20)',
+};
+
 // ── Component ────────────────────────────────────────────────────────
+
+// ── Demo mode — simulate mower activities ────────────────────────────
+
+const DEMO_ACTIVITIES: MowerActivity[] = ['idle', 'mowing', 'charging', 'returning', 'paused', 'mapping', 'error'];
+
+function makeDemoMower(activity: MowerActivity): MowerDerived {
+  return {
+    sn: 'LFIN0000000000',
+    online: activity !== 'idle',
+    activity,
+    battery: activity === 'charging' ? 42 : activity === 'mowing' ? 78 : 95,
+    batteryCharging: activity === 'charging',
+    wifiRssi: '-52',
+    rtkSat: '14',
+    errorStatus: activity === 'error' ? '151' : undefined,
+    errorCode: activity === 'error' ? '151' : undefined,
+    errorMsg: activity === 'error' ? 'Obstacle detected — mower stuck' : undefined,
+    hasError: activity === 'error',
+  };
+}
 
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const { devices, connected } = useMowerState();
-  const mower = useMemo(() => deriveMower(devices), [devices]);
+  const [demoIdx, setDemoIdx] = useState(-1); // -1 = off
+  const isDemo = demoIdx >= 0;
+  const realMower = useMemo(() => deriveMower(devices), [devices]);
+  const mower = isDemo ? makeDemoMower(DEMO_ACTIVITIES[demoIdx % DEMO_ACTIVITIES.length]) : realMower;
   const [commandLoading, setCommandLoading] = useState<string | null>(null);
   const [commandError, setCommandError] = useState('');
+
+  // Mower bounce animation (subtle bob when active)
+  const bounceAnim = useRef(new Animated.Value(0)).current;
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    if (!mower) return;
+    const isMoving = mower.activity === 'mowing' || mower.activity === 'returning' || mower.activity === 'mapping';
+    if (isMoving) {
+      // Continuous bounce
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(bounceAnim, { toValue: -4, duration: 400, useNativeDriver: true }),
+          Animated.timing(bounceAnim, { toValue: 0, duration: 400, useNativeDriver: true }),
+        ])
+      ).start();
+    } else if (mower.activity === 'charging') {
+      // Gentle pulse
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseAnim, { toValue: 1.05, duration: 1000, useNativeDriver: true }),
+          Animated.timing(pulseAnim, { toValue: 1, duration: 1000, useNativeDriver: true }),
+        ])
+      ).start();
+    } else {
+      bounceAnim.setValue(0);
+      pulseAnim.setValue(1);
+    }
+  }, [mower?.activity]);
 
   const sendCommand = async (
     sn: string,
@@ -195,6 +262,12 @@ export default function HomeScreen() {
               style={{ marginTop: 16 }}
             />
           )}
+          <TouchableOpacity
+            style={{ marginTop: 24, paddingVertical: 10, paddingHorizontal: 20, backgroundColor: 'rgba(124,58,237,0.15)', borderRadius: 10, borderWidth: 1, borderColor: 'rgba(124,58,237,0.3)' }}
+            onPress={() => setDemoIdx(0)}
+          >
+            <Text style={{ color: colors.purple, fontSize: 14, fontWeight: '600', textAlign: 'center' }}>Preview Demo Mode</Text>
+          </TouchableOpacity>
         </View>
       </View>
     );
@@ -205,6 +278,25 @@ export default function HomeScreen() {
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <ScrollView contentContainerStyle={styles.scroll}>
+        {/* Demo mode bar */}
+        {isDemo && (
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: 'rgba(124,58,237,0.15)', borderRadius: 10, padding: 10, marginBottom: 12 }}>
+            <Text style={{ color: colors.purple, fontSize: 12, fontWeight: '600' }}>
+              DEMO: {DEMO_ACTIVITIES[demoIdx % DEMO_ACTIVITIES.length]}
+            </Text>
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              <TouchableOpacity onPress={() => setDemoIdx(i => (i + 1) % DEMO_ACTIVITIES.length)}
+                style={{ backgroundColor: colors.purple, paddingHorizontal: 12, paddingVertical: 5, borderRadius: 6 }}>
+                <Text style={{ color: '#fff', fontSize: 12, fontWeight: '600' }}>Next →</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => setDemoIdx(-1)}
+                style={{ backgroundColor: 'rgba(255,255,255,0.1)', paddingHorizontal: 12, paddingVertical: 5, borderRadius: 6 }}>
+                <Text style={{ color: colors.textDim, fontSize: 12 }}>Exit</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+
         {/* Connection indicator */}
         <View style={styles.connectionRow}>
           <View
@@ -230,6 +322,9 @@ export default function HomeScreen() {
           )}
         </View>
 
+        {/* Mower animation scene */}
+        <MowerScene activity={mower.activity} battery={mower.battery} />
+
         {/* Status card */}
         <View style={styles.statusCard}>
           {/* Activity header */}
@@ -244,19 +339,27 @@ export default function HomeScreen() {
             </Text>
           </View>
 
-          {/* Battery ring + percentage */}
-          <View style={styles.batteryContainer}>
+          {/* Battery ring + mower image (like dashboard StatusHeroCard) */}
+          <View style={[styles.batteryContainer, { shadowColor: GLOW_COLOR[mower.activity], shadowRadius: 30, shadowOpacity: 1 }]}>
             <BatteryRing
               percentage={mower.battery}
-              size={140}
-              strokeWidth={12}
+              size={160}
+              strokeWidth={10}
+              color={mower.activity === 'idle' ? undefined : getActivityColor(mower.activity)}
             />
-            <View style={styles.batteryTextOverlay}>
-              <Text style={styles.batteryPercentage}>{mower.battery}%</Text>
-              <Text style={styles.batteryLabel}>
-                {mower.batteryCharging ? 'Charging' : 'Battery'}
-              </Text>
-            </View>
+            <Animated.View style={[styles.batteryTextOverlay, { transform: [{ translateY: bounceAnim }, { scale: pulseAnim }] }]}>
+              <Image
+                source={mower.online ? require('../../assets/mower.png') : require('../../assets/mower_offline.png')}
+                style={styles.mowerImage}
+              />
+              <View style={styles.batteryRow}>
+                <Text style={styles.batteryPercentage}>{mower.battery}</Text>
+                <Text style={styles.batteryPercSign}>%</Text>
+                {mower.batteryCharging && (
+                  <Ionicons name="flash" size={14} color={colors.blue} style={{ marginLeft: 2 }} />
+                )}
+              </View>
+            </Animated.View>
           </View>
 
           {/* Signal chips */}
@@ -556,15 +659,26 @@ const styles = StyleSheet.create({
     position: 'absolute',
     alignItems: 'center',
   },
+  mowerImage: {
+    width: 56,
+    height: 56,
+    resizeMode: 'contain',
+    marginBottom: 2,
+  },
+  batteryRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+  },
   batteryPercentage: {
-    fontSize: 28,
+    fontSize: 24,
     fontWeight: '700',
     color: colors.white,
   },
-  batteryLabel: {
+  batteryPercSign: {
     fontSize: 12,
+    fontWeight: '600',
     color: colors.textDim,
-    marginTop: 2,
+    marginLeft: 1,
   },
   chipsRow: {
     flexDirection: 'row',

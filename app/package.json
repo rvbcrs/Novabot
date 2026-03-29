@@ -17,6 +17,7 @@
     "expo": "55.0.10-canary-20260328-2049187",
     "expo-build-properties": "55.0.11-canary-20260328-2049187",
     "expo-dev-client": "55.0.20-canary-20260328-2049187",
+    "expo-linear-gradient": "55.0.10-canary-20260328-2049187",
     "expo-navigation-bar": "55.0.10-canary-20260328-2049187",
     "expo-network": "55.0.10-canary-20260328-2049187",
     "expo-secure-store": "55.0.10-canary-20260328-2049187",
@@ -25,13 +26,17 @@
     "react": "19.2.0",
     "react-native": "0.83.4",
     "react-native-ble-plx": "^3.5.1",
+    "react-native-reanimated": "4.2.1",
     "react-native-safe-area-context": "~5.6.2",
     "react-native-screens": "~4.23.0",
     "react-native-svg": "15.15.3",
+    "react-native-webview": "13.16.0",
+    "react-native-worklets": "^0.7.4",
     "socket.io-client": "^4.8.3"
   },
   "devDependencies": {
     "@types/react": "~19.2.2",
+    "babel-preset-expo": "^55.0.13",
     "typescript": "~5.9.2"
   },
   "private": true

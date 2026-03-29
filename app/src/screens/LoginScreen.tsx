@@ -12,6 +12,7 @@ import {
   Platform,
   ScrollView,
   ActivityIndicator,
+  Image,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -122,7 +123,7 @@ export default function LoginScreen({ navigation, onLoginSuccess }: Props) {
         {/* Header */}
         <View style={styles.header}>
           <View style={styles.iconCircle}>
-            <Ionicons name="leaf" size={36} color={colors.emerald} />
+            <Image source={require('../../assets/icon.png')} style={styles.logo} />
           </View>
           <Text style={styles.title}>OpenNova</Text>
           <Text style={styles.subtitle}>
@@ -275,13 +276,19 @@ const styles = StyleSheet.create({
     marginBottom: 32,
   },
   iconCircle: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    backgroundColor: 'rgba(0,212,170,0.1)',
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: 'rgba(0,212,170,0.08)',
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 16,
+    overflow: 'hidden',
+  },
+  logo: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
   },
   title: {
     fontSize: 32,
