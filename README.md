@@ -63,6 +63,66 @@ Access the admin panel at `http://your-server:3000/admin`. The first registered 
 | Novabot Charging Station | ✅ Fully supported |
 | BestMow (rebrand) | 🔄 In progress |
 
+## Building from source
+
+### Android APK
+
+```bash
+cd app
+npm install
+npx expo prebuild --platform android --clean
+cd android
+./gradlew assembleRelease
+```
+
+APK: `android/app/build/outputs/apk/release/app-release.apk`
+
+### iOS (TestFlight)
+
+```bash
+cd app
+npm install
+npx expo prebuild --platform ios --clean
+```
+
+Then in Xcode:
+1. Open `ios/OpenNova.xcworkspace`
+2. Select **Any iOS Device (arm64)** as target
+3. **Product → Archive**
+4. **Distribute App → TestFlight Internal Only**
+
+### Desktop Bootstrap Tool
+
+```bash
+cd bootstrap
+npm install
+npm run build
+npx @yao-pkg/pkg dist/index.js --target node20-macos-arm64,node20-macos-x64,node20-windows-x64 --output dist/binaries/novabot-bootstrap
+```
+
+### Docker Server
+
+```bash
+docker compose build --no-cache
+docker push rvbcrs/opennova:latest
+```
+
+## Project Structure
+
+```
+server/              # Express + MQTT broker (Node.js)
+dashboard/           # Web dashboard (React + Vite)
+app/                 # Mobile app (React Native + Expo)
+bootstrap/           # Desktop provisioning tool (Node.js + React)
+firmware/
+  charger/           # ESP32 charger firmware research
+  stm32/             # STM32 MCU firmware patches
+  esp32-tool/        # ESP32 touchscreen provisioning tool
+mower/               # Python robot_decision replacement
+docs/                # Reference documentation
+research/            # Firmware analysis, captures, decompiled code
+```
+
 ## Community
 
 - [Facebook Group](https://facebook.com/groups/novabot) — Share your setup, get help
