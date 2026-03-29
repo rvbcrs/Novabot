@@ -12,6 +12,7 @@
 
 import { BleManager, Device, Characteristic } from 'react-native-ble-plx';
 import { Buffer } from 'buffer';
+import { Platform, PermissionsAndroid } from 'react-native';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -78,6 +79,32 @@ export function destroyBleManager(): void {
 
 // ── Scan ─────────────────────────────────────────────────────────────────────
 
+async function requestAndroidPermissions(): Promise<boolean> {
+  if (Platform.OS !== 'android') return true;
+
+  const apiLevel = Platform.Version;
+  const perms: string[] = [];
+
+  if (apiLevel >= 31) {
+    // Android 12+
+    perms.push(
+      PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
+      PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
+    );
+  }
+  // All Android versions need location for BLE scan
+  perms.push(PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION);
+
+  const results = await PermissionsAndroid.requestMultiple(perms as any);
+  const allGranted = Object.values(results).every(
+    (r) => r === PermissionsAndroid.RESULTS.GRANTED,
+  );
+  if (!allGranted) {
+    bleLog('[BLE] Android permissions not granted');
+  }
+  return allGranted;
+}
+
 export function scanForDevices(
   durationMs: number,
   onDevice: (dev: ScannedDevice) => void,
@@ -85,26 +112,56 @@ export function scanForDevices(
 ): () => void {
   const mgr = getBleManager();
   const seen = new Set<string>();
+  let cancelled = false;
+  let scanTimer: ReturnType<typeof setTimeout> | null = null;
 
-  mgr.startDeviceScan(null, { allowDuplicates: false }, (error, device) => {
-    if (error) { console.warn('[BLE] Scan error:', error.message); return; }
-    if (!device?.name || seen.has(device.id)) return;
-    seen.add(device.id);
+  const doScan = () => {
+    if (cancelled) return;
+    bleLog(`[BLE] Starting scan (${durationMs}ms)...`);
 
-    let type: DeviceType | 'unknown' = 'unknown';
-    if (device.name === 'CHARGER_PILE') type = 'charger';
-    if (device.name === 'NOVABOT' || device.name === 'Novabot') type = 'mower';
+    mgr.startDeviceScan(null, { allowDuplicates: false }, (error, device) => {
+      if (error) { bleLog(`[BLE] Scan error: ${error.message}`); return; }
+      if (!device?.name || seen.has(device.id)) return;
+      seen.add(device.id);
 
-    onDevice({ id: device.id, name: device.name, rssi: device.rssi ?? -100, type });
+      let type: DeviceType | 'unknown' = 'unknown';
+      if (device.name === 'CHARGER_PILE') type = 'charger';
+      if (device.name === 'NOVABOT' || device.name === 'Novabot') type = 'mower';
+
+      onDevice({ id: device.id, name: device.name, rssi: device.rssi ?? -100, type });
+    });
+
+    scanTimer = setTimeout(() => {
+      mgr.stopDeviceScan();
+      onDone();
+    }, durationMs);
+  };
+
+  // Request Android permissions, then wait for BLE adapter ready
+  let stateSub: { remove: () => void } | null = null;
+
+  requestAndroidPermissions().then((granted) => {
+    if (!granted && Platform.OS === 'android') {
+      bleLog('[BLE] Permissions denied — cannot scan');
+      onDone();
+      return;
+    }
+    stateSub = mgr.onStateChange((state) => {
+      bleLog(`[BLE] Adapter state: ${state}`);
+      if (state === 'PoweredOn') {
+        stateSub?.remove();
+        doScan();
+      }
+    }, true);
   });
 
-  const timer = setTimeout(() => {
-    mgr.stopDeviceScan();
-    onDone();
-  }, durationMs);
-
   // Return cancel function
-  return () => { clearTimeout(timer); mgr.stopDeviceScan(); };
+  return () => {
+    cancelled = true;
+    stateSub?.remove();
+    if (scanTimer) clearTimeout(scanTimer);
+    mgr.stopDeviceScan();
+  };
 }
 
 // ── Provision ────────────────────────────────────────────────────────────────

@@ -478,6 +478,31 @@ export function initDb(): void {
   // ── Import factory device data from cloud scan (one-time, idempotent) ──────
   importFactoryDevices();
 
+  // User roles
+  try { db.exec(`ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0`); }
+  catch { /* kolom bestaat al */ }
+  try { db.exec(`ALTER TABLE users ADD COLUMN dashboard_access INTEGER NOT NULL DEFAULT 0`); }
+  catch { /* kolom bestaat al */ }
+
+  // Auto-promote user to admin if ADMIN_EMAIL env var matches
+  const adminEmail = process.env.ADMIN_EMAIL;
+  if (adminEmail) {
+    const result = db.prepare('UPDATE users SET is_admin = 1 WHERE email = ? AND is_admin = 0').run(adminEmail);
+    if (result.changes > 0) {
+      console.log(`[DB] Promoted ${adminEmail} to admin`);
+    }
+  }
+
+  // First user is always admin (if no admins exist yet)
+  const hasAdmin = db.prepare('SELECT COUNT(*) as c FROM users WHERE is_admin = 1').get() as { c: number };
+  if (hasAdmin.c === 0) {
+    const firstUser = db.prepare('SELECT id FROM users ORDER BY id ASC LIMIT 1').get() as { id: number } | undefined;
+    if (firstUser) {
+      db.prepare('UPDATE users SET is_admin = 1 WHERE id = ?').run(firstUser.id);
+      console.log('[DB] First user promoted to admin (no admins existed)');
+    }
+  }
+
   console.log('[DB] Database initialised');
 }
 

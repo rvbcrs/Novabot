@@ -26,7 +26,7 @@ validateRouter.post('/sendAppRegistEmailCode', (req, res: Response) => {
   `).run(email, code, expiresAt());
 
   // TODO: send email with code
-  console.log(`[VALIDATE] Register code for ${email}: ${code}`);
+  console.log(`[VALIDATE] Register code sent to ${email}`);
   res.json(ok());
 });
 
@@ -63,7 +63,7 @@ validateRouter.post('/sendAppResetPwdEmailCode', (req, res: Response) => {
   `).run(email, code, expiresAt());
 
   // TODO: send email with code
-  console.log(`[VALIDATE] Reset password code for ${email}: ${code}`);
+  console.log(`[VALIDATE] Reset password code sent to ${email}`);
   res.json(ok());
 });
 

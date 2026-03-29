@@ -3,7 +3,8 @@ import { StatusBar } from 'expo-status-bar';
 import { NavigationContainer, DefaultTheme } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import * as SplashScreen from 'expo-splash-screen';
-import { View } from 'react-native';
+import * as NavigationBar from 'expo-navigation-bar';
+import { View, Platform } from 'react-native';
 import { colors } from './src/theme/colors';
 import type { RootStackParams } from './src/navigation/types';
 
@@ -42,7 +43,13 @@ export default function App() {
   const [appReady, setAppReady] = useState(false);
 
   useEffect(() => {
-    // Simulate brief loading (fonts, etc.) then hide splash
+    // Hide Android navigation bar
+    if (Platform.OS === 'android') {
+      NavigationBar.setVisibilityAsync('hidden');
+      NavigationBar.setBehaviorAsync('overlay-swipe');
+      NavigationBar.setBackgroundColorAsync(colors.bg);
+    }
+    // Simulate brief loading then hide splash
     const timer = setTimeout(() => setAppReady(true), 1500);
     return () => clearTimeout(timer);
   }, []);

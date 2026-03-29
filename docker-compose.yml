@@ -1,7 +1,10 @@
-# macOS / Windows ontwikkelomgeving — bridge networking met port mapping.
-# Op Linux (productie): gebruik docker-compose.linux.yml voor host networking
-# zodat echte client-IPs zichtbaar zijn en maaier-IP auto-detectie werkt:
-#   docker compose -f docker-compose.linux.yml up -d
+# OpenNova Server — self-hosted Novabot cloud replacement
+#
+# Quick start:
+#   docker compose up -d
+#
+# Dashboard: http://localhost:3000
+# Provision devices: use the OpenNova app (iOS/Android) or bootstrap tool
 
 services:
   opennova:
@@ -10,39 +13,35 @@ services:
     container_name: opennova
     restart: unless-stopped
     ports:
-      - "53:53/udp"
-      - "53:53/tcp"
-      - "80:80"
-      - "443:443"
-      - "3000:80"
-      - "1883:1883"
+      - "3000:80"    # Dashboard + API
+      - "1883:1883"  # MQTT broker
+      # Uncomment if using TLS/DNS features:
+      # - "443:443"  # HTTPS (requires ENABLE_TLS + TARGET_IP)
+      # - "53:53/udp"  # DNS (requires ENABLE_DNS + TARGET_IP)
     environment:
-      # Server — poort 80 = dashboard + API + mower HTTP
       PORT: 80
-      # Proxy mode: 'local' (normaal) of 'cloud' (doorsturen naar echte cloud voor debugging)
-      PROXY_MODE: ${PROXY_MODE:-local}
-      JWT_SECRET: ${JWT_SECRET:-change_me_to_a_long_random_secret}
       DB_PATH: /data/novabot.db
       STORAGE_PATH: /data/storage
       FIRMWARE_PATH: /data/firmware
 
-      # DNS — VERPLICHT: IP-adres van de machine waarop deze container draait
-      TARGET_IP: ${TARGET_IP:?}
-      # DNS — zet DISABLE_DNS=true als je eigen DNS hebt (AdGuard, Pi-hole, etc.)
-      DISABLE_DNS: ${DISABLE_DNS:-false}
-      UPSTREAM_DNS: ${UPSTREAM_DNS:-8.8.8.8}
-      EXTRA_DOMAINS: ${EXTRA_DOMAINS:-}
+      # Optional: your server's LAN IP (only needed for TLS/DNS features)
+      # TARGET_IP: 192.168.0.177
 
-      # OTA base URL (optioneel — standaard: http://${TARGET_IP})
-      # OTA_BASE_URL: http://app.lfibot.com
+      # Optional: TLS for Novabot iOS app (requires TARGET_IP)
+      # ENABLE_TLS: "true"
 
-      # Home Assistant MQTT bridge (optioneel — uncomment om te activeren)
+      # Optional: DNS redirect for Novabot app (requires TARGET_IP)
+      # ENABLE_DNS: "true"
+      # UPSTREAM_DNS: 8.8.8.8
+
+      # Optional: enable web dashboard (work in progress)
+      # ENABLE_DASHBOARD: "true"
+
+      # Optional: Home Assistant MQTT bridge
       # HA_MQTT_HOST: 192.168.0.248
       # HA_MQTT_PORT: 1883
       # HA_MQTT_USER: mqtt
       # HA_MQTT_PASS: mqtt
-      # HA_THROTTLE_MS: 2000
-      # HA_DISCOVERY_PREFIX: homeassistant
     volumes:
       - novabot-data:/data
 

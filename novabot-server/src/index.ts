@@ -16,6 +16,8 @@ import './db/database.js';
 import { startMqttBroker } from './mqtt/broker.js';
 import { cloudHttpProxy } from './proxy/httpProxy.js';
 import { initDashboardSocket } from './dashboard/socketHandler.js';
+import { adminStatusRouter } from './routes/adminStatus.js';
+import { authMiddleware, adminMiddleware, dashboardMiddleware } from './middleware/auth.js';
 import { dashboardRouter, initFirmwareSync } from './routes/dashboard.js';
 
 const PROXY_MODE = process.env.PROXY_MODE ?? 'local';
@@ -66,16 +68,21 @@ const app = express();
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// Request/response logger — helpful during reverse engineering unknown payloads
+// Request/response logger — controlled by LOG_LEVEL env var
+const LOG_VERBOSE = process.env.LOG_LEVEL === 'verbose';
 app.use((req, res, next) => {
-  const body = JSON.stringify(req.body);
-  const masked = body.replace(/"password":"[^"]*"/g, '"password":"***"');
-  // Log ook headers bij login requests voor debugging
-  if (req.path.includes('login')) {
-    console.log(`[HDR] ${JSON.stringify(req.headers)}`);
-  }
   const srcIp = req.ip || req.socket.remoteAddress || '?';
-  console.log(`[REQ] ${req.method} ${req.path} ${masked} (from ${srcIp})`);
+  // Mask sensitive fields
+  const body = JSON.stringify(req.body);
+  const masked = body
+    .replace(/"password":"[^"]*"/g, '"password":"***"')
+    .replace(/"passwd":"[^"]*"/g, '"passwd":"***"')
+    .replace(/"token":"[^"]*"/g, '"token":"***"');
+  // Compact logging: skip noisy endpoints
+  const isNoisy = req.path.includes('/network/connection') || req.path.includes('/up_status_info');
+  if (!isNoisy || LOG_VERBOSE) {
+    console.log(`[REQ] ${req.method} ${req.path} ${masked} (from ${srcIp})`);
+  }
 
   // Echo de echostr terug in de response — WeChat-achtig verificatiepatroon
   const echostr = req.headers['echostr'] as string | undefined;
@@ -85,7 +92,10 @@ app.use((req, res, next) => {
     const enriched = echostr && typeof data === 'object' && data !== null
       ? { ...(data as Record<string, unknown>), echostr }
       : data;
-    console.log(`[RES] ${req.method} ${req.path} ${JSON.stringify(enriched)}`);
+    if (!isNoisy || LOG_VERBOSE) {
+      const resStr = JSON.stringify(enriched);
+      console.log(`[RES] ${req.method} ${req.path} ${resStr.substring(0, 200)}${resStr.length > 200 ? '...' : ''}`);
+    }
     return originalJson(enriched);
   };
   next();
@@ -139,8 +149,14 @@ if (PROXY_MODE === 'cloud') {
   // admin (lokaal gebruik, geen auth)
   app.use('/api/admin', adminRouter);
 
-  // dashboard (lokaal gebruik, geen auth)
-  app.use('/api/dashboard', dashboardRouter);
+  // Admin status API (always available for admin users)
+  app.use('/api/admin-status', authMiddleware, adminMiddleware, adminStatusRouter);
+
+  // dashboard (hidden by default — enable with ENABLE_DASHBOARD=true)
+  const dashboardEnabled = process.env.ENABLE_DASHBOARD === 'true';
+  if (dashboardEnabled) {
+    app.use('/api/dashboard', dashboardRouter);
+  }
 
   // ── Maaier firmware log upload (geen /api/ prefix, geen auth) ───────────────
   app.post('/x3/log/upload', express.raw({ type: '*/*', limit: '50mb' }), (req, res) => {
@@ -150,13 +166,12 @@ if (PROXY_MODE === 'cloud') {
 
   // ── Static files ────────────────────────────────────────────────────────────
   const dashboardPath = path.resolve(__dirname, '../../novabot-dashboard/dist');
-  const setupWizardPath = process.env.SETUP_WIZARD_PATH || path.resolve(__dirname, '../../setup-wizard');
+  // Setup wizard removed — provisioning now handled by OpenNova mobile app or bootstrap tool
 
-  // Setup wizard static files (always served at /setup)
-  app.use('/setup', express.static(setupWizardPath));
-
-  // Dashboard static files (only when setup is complete)
-  app.use(express.static(dashboardPath));
+  // Dashboard static files (only when enabled)
+  if (dashboardEnabled) {
+    app.use(express.static(dashboardPath));
+  }
 
   // ── Catch-all ──────────────────────────────────────────────────────────────
   app.use((req, res) => {
@@ -166,18 +181,15 @@ if (PROXY_MODE === 'cloud') {
       return;
     }
 
-    // Setup wizard fallback
-    if (req.path.startsWith('/setup') || !isSetupComplete()) {
-      res.sendFile(path.join(setupWizardPath, 'index.html'), (err) => {
-        if (err) res.status(404).send('Setup wizard not found. Rebuild with: npm run build:setup');
-      });
-      return;
-    }
 
-    // Dashboard SPA fallback
-    res.sendFile(path.join(dashboardPath, 'index.html'), (err) => {
-      if (err) res.status(404).json({ code: 404, msg: 'Not found', data: null });
-    });
+    // Dashboard SPA fallback (only when enabled)
+    if (dashboardEnabled) {
+      res.sendFile(path.join(dashboardPath, 'index.html'), (err) => {
+        if (err) res.status(404).json({ code: 404, msg: 'Not found', data: null });
+      });
+    } else {
+      res.status(200).send('<html><body style="background:#030712;color:#666;font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0"><p>OpenNova Server is running. Dashboard is not enabled.</p></body></html>');
+    }
   });
 }
 

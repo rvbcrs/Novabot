@@ -76,9 +76,6 @@ COPY --from=deps /app/novabot-server/package.json novabot-server/
 # Copy built dashboard
 COPY --from=build /app/novabot-dashboard/dist novabot-dashboard/dist
 
-# Copy setup wizard (static HTML, no build needed)
-COPY setup-wizard setup-wizard
-
 # Copy factory device database (SN → MAC lookup for BLE provisioning)
 COPY novabot-server/cloud_devices_anonymous.json novabot-server/cloud_devices_anonymous.json
 

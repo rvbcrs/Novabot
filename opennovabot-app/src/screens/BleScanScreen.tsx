@@ -78,9 +78,8 @@ export default function BleScanScreen({ navigation, route }: Props) {
   }, [deviceMode]);
 
   useEffect(() => {
-    // Delay first scan slightly to allow BLE permissions to settle
-    const timer = setTimeout(() => startScan(), 1000);
-    return () => { clearTimeout(timer); cancelRef.current?.(); };
+    startScan();
+    return () => { cancelRef.current?.(); };
   }, [startScan]);
 
   const toggleDevice = (id: string) => {

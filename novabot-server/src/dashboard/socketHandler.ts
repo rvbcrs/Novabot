@@ -54,7 +54,7 @@ let io: SocketServer | null = null;
 
 export function initDashboardSocket(httpServer: HttpServer): void {
   io = new SocketServer(httpServer, {
-    cors: { origin: '*' },  // dev: Vite op :5173
+    cors: { origin: process.env.CORS_ORIGIN || true },  // true = same-origin; set CORS_ORIGIN="*" for dev
     path: '/socket.io',
   });
 
