@@ -17,6 +17,7 @@ import { startMqttBroker } from './mqtt/broker.js';
 import { cloudHttpProxy } from './proxy/httpProxy.js';
 import { initDashboardSocket } from './dashboard/socketHandler.js';
 import { adminStatusRouter } from './routes/adminStatus.js';
+import { adminPageHtml } from './routes/adminPage.js';
 import { authMiddleware, adminMiddleware, dashboardMiddleware } from './middleware/auth.js';
 import { dashboardRouter, initFirmwareSync } from './routes/dashboard.js';
 
@@ -151,6 +152,11 @@ if (PROXY_MODE === 'cloud') {
 
   // Admin status API (always available for admin users)
   app.use('/api/admin-status', authMiddleware, adminMiddleware, adminStatusRouter);
+
+  // Admin web page — self-contained HTML with login + dashboard
+  app.get('/admin', (_req, res) => {
+    res.send(adminPageHtml());
+  });
 
   // dashboard (hidden by default — enable with ENABLE_DASHBOARD=true)
   const dashboardEnabled = process.env.ENABLE_DASHBOARD === 'true';
