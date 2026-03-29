@@ -61,7 +61,6 @@ Access the admin panel at `http://your-server:3000/admin`. The first registered 
 | Novabot N1000 Mower | ✅ Fully supported |
 | Novabot N2000 Mower | ✅ Fully supported |
 | Novabot Charging Station | ✅ Fully supported |
-| BestMow (rebrand) | 🔄 In progress |
 
 ## Building from source
 

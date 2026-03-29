@@ -1,4 +1,4 @@
-/** Pattern mowing utilities — parse BestMow-format pattern JSONs, transform to GPS polygons */
+/** Pattern mowing utilities — parse mower pattern JSONs, transform to GPS polygons */
 
 const METERS_PER_DEGREE = 111_320;
 
