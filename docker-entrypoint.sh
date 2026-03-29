@@ -85,7 +85,7 @@ fi
 echo "================================="
 
 # ── Node.js server ────────────────────────────────────────────────────────────
-cd /app/novabot-server
+cd /app/server
 export DB_PATH=/data/novabot.db
 export STORAGE_PATH=/data/storage
 export FIRMWARE_PATH=/data/firmware

@@ -1,0 +1,30 @@
+{
+    "name": "FastIMU",
+    "keywords": "IMU, mpu9250, mpu6050, bmi160, bmi055, bmx055, mpu6500, icm20689, QMC5883L, QMI8658, i2c",
+    "description": "IMU library with support for different IMU's",
+    "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/LiquidCGS/FastIMU.git"
+    },
+    "version": "1.2.8",
+    "export": {
+        "exclude": [
+            "datasheets",
+            ".github/*",
+			".git/*",
+			"fast.png",
+            "keywords.txt"
+        ]
+    },
+    "frameworks": "arduino",
+    "platforms": [
+        "atmelavr",
+        "teensy",
+        "atmelmegaavr",
+        "espressif32",
+        "espressif8266",
+        "ststm32",
+		"raspberrypi"
+    ]
+}

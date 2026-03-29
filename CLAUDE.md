@@ -55,7 +55,7 @@ Broker: aedes op `0.0.0.0:1883`. DNS: `mqtt.lfibot.com` + `nova-mqtt.ramonvanbru
 
 ---
 
-## Server architectuur (`novabot-server/src/`)
+## Server architectuur (`server/src/`)
 
 | Bestand | Functie |
 |---------|---------|
@@ -71,7 +71,7 @@ Broker: aedes op `0.0.0.0:1883`. DNS: `mqtt.lfibot.com` + `nova-mqtt.ramonvanbru
 | `routes/nova-user/otaUpgrade.ts` | checkOtaNewVersion |
 | `routes/dashboard.ts` | Dashboard REST + OTA trigger + firmware serving |
 
-Dashboard: `novabot-dashboard/src/` (React + Vite + Tailwind + Leaflet)
+Dashboard: `dashboard/src/` (React + Vite + Tailwind + Leaflet)
 
 ---
 
@@ -90,7 +90,7 @@ Dashboard: `novabot-dashboard/src/` (React + Vite + Tailwind + Leaflet)
 | `cut_grass_plans` | Maaischema's (app-zijde) |
 | `work_records` | Maaihistorie |
 
-DB locatie: `novabot-server/novabot.db`
+DB locatie: `server/novabot.db`
 
 ---
 
@@ -156,7 +156,7 @@ DB locatie: `novabot-server/novabot.db`
 ```bash
 cd novabot-server && npm run dev          # Server (tsx watch, port 3000)
 cd novabot-dashboard && npm run dev       # Dashboard (Vite, port 5173)
-npx tsc --noEmit                          # TypeScript check (vanuit novabot-server/)
+npx tsc --noEmit                          # TypeScript check (vanuit server/)
 docker compose build --no-cache           # Docker rebuild (ALTIJD --no-cache na code wijzigingen)
 docker compose down && docker compose up -d  # Container herstarten
 ```
