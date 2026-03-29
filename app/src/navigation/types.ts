@@ -45,6 +45,8 @@ export type RootStackParams = ProvisionStackParams;
 export type MainTabParams = {
   Home: undefined;
   Map: undefined;
+  Schedules: undefined;
+  History: undefined;
   AppSettings: undefined;
   ProvisionTab: undefined;
 };

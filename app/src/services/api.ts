@@ -34,6 +34,37 @@ export interface MapData {
   mapArea: Array<{ lat: number; lng: number }>;
 }
 
+export interface Schedule {
+  id: number;
+  sn: string;
+  day_of_week: number; // 0=Sun, 1=Mon, ...
+  start_hour: number;
+  start_minute: number;
+  duration_minutes: number;
+  enabled: boolean;
+  map_id?: string;
+  cutting_height?: number;
+  path_angle?: number;
+  created_at: string;
+}
+
+export interface WorkRecord {
+  id: number;
+  sn: string;
+  start_time: string;
+  end_time: string | null;
+  duration_seconds: number;
+  area_m2: number;
+  status: string;
+  map_name: string | null;
+}
+
+export interface TrailPoint {
+  lat: number;
+  lng: number;
+  ts: number;
+}
+
 export class ApiClient {
   private baseUrl: string;
 
@@ -159,4 +190,93 @@ export class ApiClient {
       '/api/setup/health',
     );
   }
+
+  // ── Schedules ────────────────────────────────────────────────────────
+
+  async getSchedules(sn: string): Promise<Schedule[]> {
+    return this.request<Schedule[]>('GET', `/api/dashboard/schedules/${enc(sn)}`);
+  }
+
+  async createSchedule(
+    sn: string,
+    schedule: Omit<Schedule, 'id' | 'sn' | 'created_at'>,
+  ): Promise<{ ok: boolean; id: number }> {
+    return this.request('POST', `/api/dashboard/schedules/${enc(sn)}`, {
+      body: schedule as unknown as Record<string, unknown>,
+    });
+  }
+
+  async updateSchedule(
+    sn: string,
+    scheduleId: number,
+    updates: Partial<Omit<Schedule, 'id' | 'sn' | 'created_at'>>,
+  ): Promise<{ ok: boolean }> {
+    return this.request('POST', `/api/dashboard/schedules/${enc(sn)}/${scheduleId}`, {
+      body: { ...updates, _method: 'PATCH' } as Record<string, unknown>,
+    });
+  }
+
+  async deleteSchedule(sn: string, scheduleId: number): Promise<{ ok: boolean }> {
+    return this.request('POST', `/api/dashboard/schedules/${enc(sn)}/${scheduleId}`, {
+      body: { _method: 'DELETE' },
+    });
+  }
+
+  // ── Work History ─────────────────────────────────────────────────────
+
+  async getWorkRecords(sn: string): Promise<WorkRecord[]> {
+    return this.request<WorkRecord[]>('GET', `/api/dashboard/work-records/${enc(sn)}`);
+  }
+
+  // ── GPS Trail ────────────────────────────────────────────────────────
+
+  async getTrail(sn: string): Promise<TrailPoint[]> {
+    return this.request<TrailPoint[]>('GET', `/api/dashboard/trail/${enc(sn)}`);
+  }
+
+  // ── Headlight ────────────────────────────────────────────────────────
+
+  async setHeadlight(sn: string, on: boolean): Promise<CommandResult> {
+    return this.sendCommand(sn, { set_headlight: on ? 1 : 0 });
+  }
+
+  // ── Joystick (manual control) ────────────────────────────────────────
+
+  async joystickStart(sn: string, holdType: number): Promise<CommandResult> {
+    return this.sendCommand(sn, { start_move: holdType });
+  }
+
+  async joystickMove(
+    sn: string,
+    xw: number,
+    yv: number,
+  ): Promise<CommandResult> {
+    return this.sendCommand(sn, { mst: { x_w: xw, y_v: yv, z_g: 0 } });
+  }
+
+  async joystickStop(sn: string): Promise<CommandResult> {
+    return this.sendCommand(sn, { stop_move: {} });
+  }
+
+  // ── Device Info ──────────────────────────────────────────────────────
+
+  async getDevices(): Promise<Array<{
+    sn: string;
+    deviceType: string;
+    online: boolean;
+    nickname?: string;
+    sysVersion?: string;
+  }>> {
+    return this.request('GET', '/api/dashboard/devices');
+  }
+
+  // ── Cutting Height ───────────────────────────────────────────────────
+
+  async setCuttingHeight(sn: string, height: number): Promise<CommandResult> {
+    return this.sendCommand(sn, { set_cutting_height: height });
+  }
+}
+
+function enc(s: string): string {
+  return encodeURIComponent(s);
 }

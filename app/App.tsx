@@ -29,6 +29,8 @@ import LoginScreen from './src/screens/LoginScreen';
 import RegisterScreen from './src/screens/RegisterScreen';
 import HomeScreen from './src/screens/HomeScreen';
 import MapScreen from './src/screens/MapScreen';
+import ScheduleScreen from './src/screens/ScheduleScreen';
+import HistoryScreen from './src/screens/HistoryScreen';
 import AppSettingsScreen from './src/screens/AppSettingsScreen';
 
 // Existing provisioning screens
@@ -171,6 +173,8 @@ export default function App() {
                   'home';
                 if (route.name === 'Home') iconName = 'home';
                 else if (route.name === 'Map') iconName = 'map';
+                else if (route.name === 'Schedules') iconName = 'calendar';
+                else if (route.name === 'History') iconName = 'time';
                 else if (route.name === 'AppSettings') iconName = 'settings';
                 else if (route.name === 'ProvisionTab') iconName = 'bluetooth';
                 return <Ionicons name={iconName} size={size} color={color} />;
@@ -188,6 +192,16 @@ export default function App() {
               options={{ tabBarLabel: 'Map' }}
             />
             <Tab.Screen
+              name="Schedules"
+              component={ScheduleScreen}
+              options={{ tabBarLabel: 'Schedule' }}
+            />
+            <Tab.Screen
+              name="History"
+              component={HistoryScreen}
+              options={{ tabBarLabel: 'History' }}
+            />
+            <Tab.Screen
               name="AppSettings"
               options={{ tabBarLabel: 'Settings' }}
             >
@@ -201,7 +215,7 @@ export default function App() {
             <Tab.Screen
               name="ProvisionTab"
               component={ProvisionTabScreen}
-              options={{ tabBarLabel: 'Provision' }}
+              options={{ tabBarLabel: 'Provision', tabBarButton: () => null }}
             />
           </Tab.Navigator>
         ) : (
