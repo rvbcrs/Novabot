@@ -16,6 +16,7 @@
     "expo": "55.0.10-canary-20260328-2049187",
     "expo-build-properties": "55.0.11-canary-20260328-2049187",
     "expo-dev-client": "55.0.20-canary-20260328-2049187",
+    "expo-navigation-bar": "55.0.10-canary-20260328-2049187",
     "expo-network": "55.0.10-canary-20260328-2049187",
     "expo-secure-store": "55.0.10-canary-20260328-2049187",
     "expo-splash-screen": "55.0.14-canary-20260328-2049187",

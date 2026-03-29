@@ -52,7 +52,7 @@ adminStatusRouter.get('/overview', (_req: AuthRequest, res: Response) => {
 // GET /api/admin-status/users — all users with their equipment
 adminStatusRouter.get('/users', (_req: AuthRequest, res: Response) => {
   const users = db.prepare(`
-    SELECT u.id, u.app_user_id, u.email, u.username, u.is_admin, u.created_at,
+    SELECT u.id, u.app_user_id, u.email, u.username, u.is_admin, u.dashboard_access, u.created_at,
            GROUP_CONCAT(DISTINCT e.mower_sn) as mower_sns,
            GROUP_CONCAT(DISTINCT e.charger_sn) as charger_sns
     FROM users u
@@ -61,18 +61,34 @@ adminStatusRouter.get('/users', (_req: AuthRequest, res: Response) => {
     ORDER BY u.created_at DESC
   `).all();
 
-  res.json({ users });
+  // Also get all equipment (including unbound)
+  const allEquipment = db.prepare(`
+    SELECT mower_sn, charger_sn, user_id, equipment_nick_name
+    FROM equipment
+    ORDER BY created_at DESC
+  `).all();
+
+  // Count unbound equipment
+  const unboundCount = allEquipment.filter((e: any) => !e.user_id).length;
+
+  res.json({ users, allEquipment, unboundCount });
 });
 
-// GET /api/admin-status/devices — all known devices with online status
+// GET /api/admin-status/devices — known Novabot devices with online status
 adminStatusRouter.get('/devices', (_req: AuthRequest, res: Response) => {
+  // Only show real Novabot devices (LFIN/LFIC/ESP32), not test clients
   const devices = db.prepare(`
     SELECT d.mqtt_client_id, d.sn, d.mac_address, d.mqtt_username, d.last_seen, d.ip_address,
            e.equipment_id, e.user_id, e.equipment_nick_name,
-           CASE WHEN julianday('now') - julianday(d.last_seen) < 0.003 THEN 1 ELSE 0 END as is_online
+           CASE WHEN julianday('now') - julianday(d.last_seen) < 0.003 THEN 1 ELSE 0 END as is_online,
+           CASE WHEN d.sn LIKE 'LFIC%' THEN 'charger'
+                WHEN d.sn LIKE 'LFIN%' THEN 'mower'
+                ELSE 'unknown' END as device_type
     FROM device_registry d
     LEFT JOIN equipment e ON (e.mower_sn = d.sn OR e.charger_sn = d.sn)
-    ORDER BY d.last_seen DESC
+    WHERE d.sn IS NOT NULL AND (d.sn LIKE 'LFIN%' OR d.sn LIKE 'LFIC%')
+    GROUP BY d.sn
+    ORDER BY is_online DESC, d.last_seen DESC
   `).all();
 
   res.json({ devices });
@@ -80,12 +96,23 @@ adminStatusRouter.get('/devices', (_req: AuthRequest, res: Response) => {
 
 // GET /api/admin-status/equipment — all equipment pairings
 adminStatusRouter.get('/equipment', (_req: AuthRequest, res: Response) => {
-  const equipment = db.prepare(`
+  const raw = db.prepare(`
     SELECT e.*, u.email as user_email
     FROM equipment e
     LEFT JOIN users u ON u.app_user_id = e.user_id
     ORDER BY e.created_at DESC
-  `).all();
+  `).all() as Array<Record<string, unknown>>;
+
+  // Fix display: if mower_sn starts with LFIC, it's actually a charger
+  const equipment = raw.map((e) => {
+    const mowerSn = e.mower_sn as string | null;
+    const chargerSn = e.charger_sn as string | null;
+    const actualMowerSn = mowerSn?.startsWith('LFIN') ? mowerSn : null;
+    const actualChargerSn = chargerSn?.startsWith('LFIC') ? chargerSn
+      : mowerSn?.startsWith('LFIC') ? mowerSn : null;
+    const deviceType = actualMowerSn ? 'Novabot' : 'Charging station';
+    return { ...e, display_mower_sn: actualMowerSn, display_charger_sn: actualChargerSn, device_type: deviceType };
+  });
 
   res.json({ equipment });
 });
@@ -105,6 +132,19 @@ adminStatusRouter.post('/set-role', (req: AuthRequest, res: Response) => {
     .run(enabled ? 1 : 0, userId);
 
   console.log(`[ADMIN] Set ${role}=${enabled ? 1 : 0} for user ${userId}`);
+  res.json({ ok: true });
+});
+
+// POST /api/admin-status/delete-user — admin can delete a user
+adminStatusRouter.post('/delete-user', (req: AuthRequest, res: Response) => {
+  const { userId } = req.body as { userId: string };
+  if (!userId) { res.status(400).json({ error: 'userId required' }); return; }
+  if (userId === req.userId) { res.status(400).json({ error: 'Cannot delete yourself' }); return; }
+
+  db.prepare('DELETE FROM users WHERE app_user_id = ?').run(userId);
+  db.prepare('UPDATE equipment SET user_id = NULL WHERE user_id = ?').run(userId);
+
+  console.log(`[ADMIN] Deleted user ${userId}`);
   res.json({ ok: true });
 });
 

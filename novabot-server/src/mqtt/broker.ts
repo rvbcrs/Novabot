@@ -272,16 +272,14 @@ function upsertDevice(clientId: string, sn: string | null, mac: string | null, u
   }
 
   // Auto-create equipment record if device connects but has no equipment entry.
-  // This ensures devices provisioned via the OpenNova app (direct IP, no cloud import)
-  // are visible in the Novabot app without manual registration.
-  if (sn) {
+  if (sn && sn.startsWith('LFI')) {
     const existing = db.prepare(
       'SELECT equipment_id FROM equipment WHERE mower_sn = ? OR charger_sn = ?'
     ).get(sn, sn);
     if (!existing) {
-      const { v4: uuidv4 } = require('uuid');
-      const equipmentId = uuidv4();
+      const equipmentId = crypto.randomUUID();
       const isCharger = sn.startsWith('LFIC');
+      // mower_sn has NOT NULL constraint — for charger-only, store SN in both columns
       db.prepare(`
         INSERT INTO equipment (equipment_id, mower_sn, charger_sn, mac_address, equipment_type_h)
         VALUES (?, ?, ?, ?, ?)

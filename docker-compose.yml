@@ -20,6 +20,7 @@ services:
       # - "53:53/udp"  # DNS (requires ENABLE_DNS + TARGET_IP)
     environment:
       PORT: 80
+      JWT_SECRET: ${JWT_SECRET:-change_me_to_a_random_secret}
       DB_PATH: /data/novabot.db
       STORAGE_PATH: /data/storage
       FIRMWARE_PATH: /data/firmware

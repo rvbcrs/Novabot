@@ -46,9 +46,25 @@ appUserRouter.post('/login', (req, res: Response) => {
   const plainPassword = tryDecryptAppPassword(password);
 
   const isBcrypt = user.password.startsWith('$2b$') || user.password.startsWith('$2a$');
-  const match = isBcrypt
-    ? bcrypt.compareSync(plainPassword, user.password)
-    : user.password === password || user.password === plainPassword;
+  let match = false;
+  if (isBcrypt) {
+    match = bcrypt.compareSync(plainPassword, user.password);
+  } else {
+    // Cloud-imported passwords are stored as AES-encrypted values.
+    // Compare: direct match, decrypted app password match, or decrypt stored and compare with plain.
+    match = user.password === password || user.password === plainPassword;
+    if (!match) {
+      // Try decrypting the stored password and compare with plain input
+      try {
+        const key = Buffer.from('1234123412ABCDEF', 'utf8');
+        const iv = Buffer.from('1234123412ABCDEF', 'utf8');
+        const decipher = crypto.createDecipheriv('aes-128-cbc', key, iv);
+        let decrypted = decipher.update(user.password, 'base64', 'utf8');
+        decrypted += decipher.final('utf8');
+        match = decrypted === plainPassword;
+      } catch { /* not AES encrypted — skip */ }
+    }
+  }
 
   if (!match) {
     res.json(fail('Invalid email or password', 400));

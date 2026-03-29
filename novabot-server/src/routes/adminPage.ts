@@ -53,6 +53,8 @@ export function adminPageHtml(): string {
   #app{display:none}
   .refresh-btn{float:right;cursor:pointer;color:#666;font-size:12px}
   .refresh-btn:hover{color:#00d4aa}
+  .menu-item{padding:8px 12px;font-size:12px;color:#ccc;cursor:pointer;border-radius:6px;white-space:nowrap}
+  .menu-item:hover{background:rgba(255,255,255,.08)}
 </style>
 </head>
 <body>
@@ -125,8 +127,8 @@ async function doLogin() {
       body: JSON.stringify({ email, password: pass }),
     });
     const d = await r.json();
-    if (d.code === 200 && d.data?.token) {
-      token = d.data.token;
+    if (d.code === 200 && (d.data?.token || d.value?.accessToken)) {
+      token = d.data?.token || d.value?.accessToken;
       localStorage.setItem('admin_token', token);
       showApp();
     } else {
@@ -188,19 +190,49 @@ async function loadUsers() {
     for (const u of d.users) {
       const role = u.is_admin ? 'admin' : u.dashboard_access ? 'dashboard' : 'user';
       const badgeClass = u.is_admin ? 'badge-admin' : u.dashboard_access ? 'badge-dash' : 'badge-user';
-      const sns = [u.mower_sns, u.charger_sns].filter(Boolean).join(', ') || '-';
+      // Deduplicate and label SNs
+      const allSns = new Set([...(u.mower_sns||'').split(','), ...(u.charger_sns||'').split(',')].filter(Boolean));
+      let snHtml = '';
+      for (const sn of allSns) {
+        const isCharger = sn.startsWith('LFIC');
+        const color = isCharger ? '#f59e0b' : '#00d4aa';
+        const label = isCharger ? 'C' : 'M';
+        snHtml += '<span style="display:inline-block;margin:2px 4px 2px 0;padding:2px 8px;border-radius:6px;font-size:11px;font-family:monospace;background:rgba(255,255,255,.05);border:1px solid ' + color + '33"><span style="color:' + color + ';font-weight:700;margin-right:4px">' + label + '</span>' + sn + '</span>';
+      }
       html += '<tr>' +
         '<td>' + u.email + '</td>' +
-        '<td class="sn">' + sns + '</td>' +
+        '<td>' + (snHtml || '<span style="color:#666">-</span>') + '</td>' +
         '<td><span class="badge ' + badgeClass + '">' + role + '</span></td>' +
         '<td style="color:#666">' + ago(u.created_at) + '</td>' +
-        '<td>' +
-          (u.is_admin ? '' : '<button class="btn btn-sm btn-green" onclick="setRole(\\'' + u.app_user_id + '\\',\\'dashboard_access\\',true)">+ Dash</button> ') +
-          (u.is_admin ? '' : '<button class="btn btn-sm btn-purple" onclick="setRole(\\'' + u.app_user_id + '\\',\\'is_admin\\',true)">+ Admin</button> ') +
-          (u.is_admin ? '<button class="btn btn-sm btn-red" onclick="setRole(\\'' + u.app_user_id + '\\',\\'is_admin\\',false)">- Admin</button>' : '') +
-        '</td></tr>';
+        '<td><div style="position:relative;display:inline-block">' +
+          '<button class="btn btn-sm" style="background:#374151;color:#ccc" onclick="toggleMenu(this)">⋯</button>' +
+          '<div class="action-menu" style="display:none;position:absolute;right:0;top:28px;background:#1e293b;border:1px solid rgba(255,255,255,.12);border-radius:10px;padding:6px;min-width:160px;z-index:50;box-shadow:0 8px 30px rgba(0,0,0,.5)">' +
+            (u.is_admin ? '' : '<div class="menu-item" onclick="closeMenus();setRole(\\'' + u.app_user_id + '\\',\\'dashboard_access\\',true)">Grant Dashboard</div>') +
+            (u.is_admin ? '' : '<div class="menu-item" onclick="closeMenus();setRole(\\'' + u.app_user_id + '\\',\\'is_admin\\',true)">Grant Admin</div>') +
+            (u.is_admin ? '<div class="menu-item" onclick="closeMenus();setRole(\\'' + u.app_user_id + '\\',\\'is_admin\\',false)">Remove Admin</div>' : '') +
+            (u.dashboard_access && !u.is_admin ? '<div class="menu-item" onclick="closeMenus();setRole(\\'' + u.app_user_id + '\\',\\'dashboard_access\\',false)">Remove Dashboard</div>' : '') +
+            '<div class="menu-item" onclick="closeMenus();resetPw(\\'' + u.app_user_id + '\\',\\'' + u.email + '\\')">Reset Password</div>' +
+            '<div class="menu-item" style="color:#ef4444" onclick="closeMenus();deleteUser(\\'' + u.app_user_id + '\\',\\'' + u.email + '\\')">Delete User</div>' +
+          '</div></div></td></tr>';
     }
     html += '</table>';
+
+    // Show unbound equipment warning
+    if (d.unboundCount > 0) {
+      html += '<div style="margin-top:12px;padding:10px 14px;background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.2);border-radius:8px">' +
+        '<span class="warn" style="font-size:12px;font-weight:600">' + d.unboundCount + ' unbound device(s)</span>' +
+        '<span style="color:#888;font-size:12px"> — not linked to any user account</span></div>';
+
+      html += '<table style="margin-top:8px"><tr><th>Mower SN</th><th>Charger SN</th><th>Name</th></tr>';
+      for (const eq of d.allEquipment) {
+        if (eq.user_id) continue;
+        html += '<tr><td class="sn">' + (eq.mower_sn || '-') + '</td>' +
+          '<td class="sn">' + (eq.charger_sn || '-') + '</td>' +
+          '<td style="color:#888">' + (eq.equipment_nick_name || '-') + '</td></tr>';
+      }
+      html += '</table>';
+    }
+
     document.getElementById('users').innerHTML = html;
   } catch { document.getElementById('users').textContent = 'Failed to load'; }
 }
@@ -210,19 +242,101 @@ async function setRole(userId, role, enabled) {
   loadUsers();
 }
 
+// ── Action menu ──
+function toggleMenu(btn) {
+  closeMenus();
+  const menu = btn.nextElementSibling;
+  menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+  event.stopPropagation();
+}
+function closeMenus() {
+  document.querySelectorAll('.action-menu').forEach(function(m) { m.style.display = 'none'; });
+}
+document.addEventListener('click', closeMenus);
+
+// ── Inline modal system ──
+function showModal(title, body, onConfirm) {
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:999';
+  const modal = document.createElement('div');
+  modal.style.cssText = 'background:#16213e;border:1px solid rgba(255,255,255,.12);border-radius:16px;padding:24px;max-width:380px;width:90%;box-shadow:0 20px 60px rgba(0,0,0,.5)';
+  modal.innerHTML = '<h3 style="color:#fff;font-size:16px;margin-bottom:8px">' + title + '</h3>' +
+    '<div style="color:#aaa;font-size:13px;margin-bottom:20px">' + body + '</div>' +
+    '<div id="modal-actions" style="display:flex;gap:8px;justify-content:flex-end"></div>';
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click', function(e) { if (e.target === overlay) { overlay.remove(); } });
+
+  const actions = modal.querySelector('#modal-actions');
+  const cancelBtn = document.createElement('button');
+  cancelBtn.className = 'btn'; cancelBtn.style.cssText = 'background:#374151;color:#ccc;padding:8px 20px';
+  cancelBtn.textContent = 'Cancel';
+  cancelBtn.onclick = function() { overlay.remove(); };
+  actions.appendChild(cancelBtn);
+
+  const confirmBtn = document.createElement('button');
+  confirmBtn.className = 'btn btn-purple'; confirmBtn.style.padding = '8px 20px';
+  confirmBtn.textContent = 'Confirm';
+  confirmBtn.onclick = function() { overlay.remove(); onConfirm(); };
+  actions.appendChild(confirmBtn);
+
+  return { overlay, modal, actions };
+}
+
+function showInputModal(title, placeholder, onSubmit) {
+  const { modal, actions } = showModal(title, '<input id="modal-input" type="text" placeholder="' + placeholder + '" style="width:100%;margin-top:4px">', function() {
+    const val = document.getElementById('modal-input').value;
+    onSubmit(val);
+  });
+  setTimeout(function() { const inp = document.getElementById('modal-input'); if(inp) inp.focus(); }, 100);
+}
+
+function showToast(msg, isError) {
+  const t = document.createElement('div');
+  t.style.cssText = 'position:fixed;top:20px;right:20px;padding:12px 20px;border-radius:10px;font-size:13px;font-weight:500;z-index:1000;transition:opacity .3s;' +
+    (isError ? 'background:#991b1b;color:#fca5a5' : 'background:#065f46;color:#6ee7b7');
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(function() { t.style.opacity = '0'; setTimeout(function() { t.remove(); }, 300); }, 3000);
+}
+
+async function deleteUser(userId, email) {
+  showModal('Delete User', 'Are you sure you want to delete <strong style="color:#fff">' + email + '</strong>? This cannot be undone.', async function() {
+    try {
+      await api('/delete-user', 'POST', { userId });
+      showToast('User ' + email + ' deleted');
+      loadUsers();
+    } catch(e) { showToast('Failed: ' + e.message, true); }
+  });
+  // Style confirm button red for destructive action
+  setTimeout(function() { const btns = document.querySelectorAll('.btn-purple'); const last = btns[btns.length-1]; if(last) { last.className='btn btn-red'; last.textContent='Delete'; } }, 10);
+}
+
+async function resetPw(userId, email) {
+  showInputModal('Reset Password for ' + email, 'Enter new password...', async function(pw) {
+    if (!pw || pw.length < 4) { showToast('Password must be at least 4 characters', true); return; }
+    try {
+      await api('/reset-password', 'POST', { userId, newPassword: pw });
+      showToast('Password reset for ' + email);
+    } catch(e) { showToast('Failed: ' + e.message, true); }
+  });
+}
+
 async function loadDevices() {
   try {
     const d = await api('/devices');
     if (!d.devices?.length) { document.getElementById('devices').textContent = 'No devices'; return; }
-    let html = '<table><tr><th>SN</th><th>MAC</th><th>Status</th><th>Last Seen</th><th>User</th></tr>';
+    let html = '<table><tr><th>SN</th><th>Type</th><th>MAC</th><th>Status</th><th>Last Seen</th><th>Name</th></tr>';
     for (const dev of d.devices) {
       const online = dev.is_online;
+      const typeColor = dev.device_type === 'charger' ? '#f59e0b' : dev.device_type === 'mower' ? '#00d4aa' : '#666';
       html += '<tr>' +
         '<td class="sn">' + (dev.sn || dev.mqtt_client_id) + '</td>' +
+        '<td><span style="color:' + typeColor + '">' + (dev.device_type || '-') + '</span></td>' +
         '<td class="sn">' + (dev.mac_address || '-') + '</td>' +
         '<td>' + dot(online) + (online ? '<span class="on">Online</span>' : '<span class="off">Offline</span>') + '</td>' +
         '<td style="color:#666">' + ago(dev.last_seen) + '</td>' +
-        '<td style="color:#888">' + (dev.equipment_nick_name || dev.user_id || '-') + '</td>' +
+        '<td style="color:#888">' + (dev.equipment_nick_name || '-') + '</td>' +
         '</tr>';
     }
     html += '</table>';
@@ -234,11 +348,13 @@ async function loadEquipment() {
   try {
     const d = await api('/equipment');
     if (!d.equipment?.length) { document.getElementById('equipment').textContent = 'No equipment'; return; }
-    let html = '<table><tr><th>Mower SN</th><th>Charger SN</th><th>Name</th><th>User</th><th>MAC</th></tr>';
+    let html = '<table><tr><th>Type</th><th>SN</th><th>Name</th><th>User</th><th>MAC</th></tr>';
     for (const eq of d.equipment) {
+      const typeColor = eq.device_type === 'Charging station' ? '#f59e0b' : '#00d4aa';
+      const sn = eq.display_mower_sn || eq.display_charger_sn || eq.mower_sn || '-';
       html += '<tr>' +
-        '<td class="sn">' + (eq.mower_sn || '-') + '</td>' +
-        '<td class="sn">' + (eq.charger_sn || '-') + '</td>' +
+        '<td><span style="color:' + typeColor + '">' + eq.device_type + '</span></td>' +
+        '<td class="sn">' + sn + '</td>' +
         '<td>' + (eq.equipment_nick_name || '-') + '</td>' +
         '<td style="color:#888">' + (eq.user_email || '-') + '</td>' +
         '<td class="sn">' + (eq.mac_address || '-') + '</td>' +
