@@ -2,7 +2,7 @@
  * Mower settings — cutting height, obstacle sensitivity, path direction.
  * Ported from dashboard SettingsPanel + Novabot app advanced settings.
  */
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import {
   View,
   Text,
@@ -47,9 +47,29 @@ export default function MowerSettingsScreen() {
     return [...devices.values()].find((d) => d.deviceType === 'mower')?.sn ?? '';
   }, [devices]);
 
-  const mowerOnline = useMemo(() => {
-    return [...devices.values()].find((d) => d.deviceType === 'mower')?.online ?? false;
+  const mower = useMemo(() => {
+    return [...devices.values()].find((d) => d.deviceType === 'mower') ?? null;
   }, [devices]);
+
+  const mowerOnline = mower?.online ?? false;
+
+  // Load current values from sensor data
+  useEffect(() => {
+    if (!mower) return;
+    const s = mower.sensors;
+    if (s.defaultCuttingHeight) {
+      const h = parseInt(s.defaultCuttingHeight, 10);
+      if (h >= 20 && h <= 80) setCuttingHeight(h);
+    }
+    if (s.obstacle_avoidance_sensitivity) {
+      const v = parseInt(s.obstacle_avoidance_sensitivity, 10);
+      if (v >= 1 && v <= 3) setSensitivity(v);
+    }
+    if (s.path_direction) {
+      const a = parseInt(s.path_direction, 10);
+      if (a >= 0 && a <= 315) setPathDirection(a);
+    }
+  }, [mower?.sn]);
 
   const sendSetting = useCallback(async (label: string, fn: (api: ApiClient) => Promise<unknown>) => {
     setSending(label);

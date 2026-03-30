@@ -73,10 +73,10 @@ function makeDemoDevices(activity: MowerActivity): Map<string, DeviceState> {
 }
 
 const DEMO_SCHEDULES: Schedule[] = [
-  { id: 901, sn: DEMO_SN, day_of_week: 1, start_hour: 9, start_minute: 0, duration_minutes: 90, enabled: true, created_at: '2026-03-28' },
-  { id: 902, sn: DEMO_SN, day_of_week: 3, start_hour: 10, start_minute: 30, duration_minutes: 60, enabled: true, created_at: '2026-03-28' },
-  { id: 903, sn: DEMO_SN, day_of_week: 5, start_hour: 8, start_minute: 0, duration_minutes: 120, enabled: true, created_at: '2026-03-28' },
-  { id: 904, sn: DEMO_SN, day_of_week: 0, start_hour: 14, start_minute: 0, duration_minutes: 45, enabled: false, created_at: '2026-03-28' },
+  { id: 901, sn: DEMO_SN, day_of_week: 1, start_hour: 9, start_minute: 0, duration_minutes: 90, enabled: true, cuttingHeight: 40, pathDirection: 0, created_at: '2026-03-28' },
+  { id: 902, sn: DEMO_SN, day_of_week: 3, start_hour: 10, start_minute: 30, duration_minutes: 60, enabled: true, cuttingHeight: 50, pathDirection: 90, created_at: '2026-03-28' },
+  { id: 903, sn: DEMO_SN, day_of_week: 5, start_hour: 8, start_minute: 0, duration_minutes: 120, enabled: true, cuttingHeight: 30, pathDirection: 45, created_at: '2026-03-28' },
+  { id: 904, sn: DEMO_SN, day_of_week: 0, start_hour: 14, start_minute: 0, duration_minutes: 45, enabled: false, cuttingHeight: 40, pathDirection: 180, created_at: '2026-03-28' },
 ];
 
 const DEMO_HISTORY: WorkRecord[] = [

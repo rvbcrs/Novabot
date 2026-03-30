@@ -26,6 +26,12 @@ import { DemoBanner } from '../components/DemoBanner';
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const DAYS_FULL = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const HEIGHT_OPTIONS = [20, 30, 40, 50, 60, 70, 80];
+const DIRECTION_OPTIONS = [
+  { angle: 0, label: 'N' }, { angle: 45, label: 'NE' }, { angle: 90, label: 'E' },
+  { angle: 135, label: 'SE' }, { angle: 180, label: 'S' }, { angle: 225, label: 'SW' },
+  { angle: 270, label: 'W' }, { angle: 315, label: 'NW' },
+];
 
 export default function ScheduleScreen() {
   const insets = useSafeAreaInsets();
@@ -198,9 +204,19 @@ export default function ScheduleScreen() {
                     <Text style={[styles.scheduleTime, !s.enabled && styles.textDisabled]}>
                       {pad(s.start_hour)}:{pad(s.start_minute)}
                     </Text>
-                    <Text style={styles.scheduleDuration}>
-                      {s.duration_minutes} min
-                    </Text>
+                    <View style={styles.scheduleChips}>
+                      <Text style={styles.scheduleDuration}>{s.duration_minutes} min</Text>
+                      {(s.cuttingHeight ?? s.cutting_height) != null && (
+                        <Text style={styles.scheduleChip}>
+                          {((s.cuttingHeight ?? s.cutting_height ?? 40) / 10).toFixed(1)} cm
+                        </Text>
+                      )}
+                      {(s.pathDirection ?? s.path_direction) != null && (
+                        <Text style={styles.scheduleChip}>
+                          {DIRECTION_OPTIONS.find((d) => d.angle === (s.pathDirection ?? s.path_direction))?.label ?? `${s.pathDirection ?? s.path_direction}°`}
+                        </Text>
+                      )}
+                    </View>
                   </View>
                   <Switch
                     value={s.enabled}
@@ -249,6 +265,8 @@ function ScheduleEditor({
   const [hour, setHour] = useState(String(schedule?.start_hour ?? 9));
   const [minute, setMinute] = useState(pad(schedule?.start_minute ?? 0));
   const [duration, setDuration] = useState(String(schedule?.duration_minutes ?? 60));
+  const [cuttingHeight, setCuttingHeight] = useState(schedule?.cuttingHeight ?? schedule?.cutting_height ?? 40);
+  const [pathDir, setPathDir] = useState(schedule?.pathDirection ?? schedule?.path_direction ?? 0);
   const [saving, setSaving] = useState(false);
 
   const handleSave = async () => {
@@ -263,6 +281,8 @@ function ScheduleEditor({
         start_minute: parseInt(minute, 10) || 0,
         duration_minutes: parseInt(duration, 10) || 60,
         enabled: true,
+        cuttingHeight: cuttingHeight,
+        pathDirection: pathDir,
       };
 
       if (isEdit) {
@@ -340,6 +360,38 @@ function ScheduleEditor({
             placeholderTextColor={colors.textMuted}
           />
 
+          {/* Cutting Height */}
+          <Text style={editorStyles.label}>CUTTING HEIGHT</Text>
+          <View style={editorStyles.chipRow}>
+            {HEIGHT_OPTIONS.map((h) => (
+              <TouchableOpacity
+                key={h}
+                style={[editorStyles.chip, cuttingHeight === h && editorStyles.chipActive]}
+                onPress={() => setCuttingHeight(h)}
+              >
+                <Text style={[editorStyles.chipText, cuttingHeight === h && editorStyles.chipTextActive]}>
+                  {(h / 10).toFixed(1)}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          {/* Mowing Direction */}
+          <Text style={editorStyles.label}>MOWING DIRECTION</Text>
+          <View style={editorStyles.chipRow}>
+            {DIRECTION_OPTIONS.map((d) => (
+              <TouchableOpacity
+                key={d.angle}
+                style={[editorStyles.dirChip, pathDir === d.angle && editorStyles.dirChipActive]}
+                onPress={() => setPathDir(d.angle)}
+              >
+                <Text style={[editorStyles.dirText, pathDir === d.angle && editorStyles.dirTextActive]}>
+                  {d.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
           {/* Save button */}
           <TouchableOpacity
             style={[editorStyles.saveButton, saving && { opacity: 0.6 }]}
@@ -397,9 +449,11 @@ const styles = StyleSheet.create({
     padding: 16, marginBottom: 8,
   },
   scheduleCardDisabled: { opacity: 0.5 },
-  scheduleLeft: { gap: 4 },
+  scheduleLeft: { gap: 4, flex: 1 },
   scheduleTime: { fontSize: 24, fontWeight: '700', color: colors.white, fontVariant: ['tabular-nums'] },
+  scheduleChips: { flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginTop: 2 },
   scheduleDuration: { fontSize: 13, color: colors.textDim },
+  scheduleChip: { fontSize: 11, color: colors.textMuted, backgroundColor: 'rgba(255,255,255,0.06)', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, overflow: 'hidden' },
   textDisabled: { color: colors.textMuted },
 });
 
@@ -432,6 +486,21 @@ const editorStyles = StyleSheet.create({
     borderRadius: 12, borderWidth: 1, borderColor: colors.inputBorder,
     paddingHorizontal: 16, fontSize: 16, color: colors.white,
   },
+  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  chip: {
+    paddingHorizontal: 14, paddingVertical: 8, borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+  },
+  chipActive: { backgroundColor: colors.emerald },
+  chipText: { fontSize: 14, fontWeight: '600', color: colors.textDim },
+  chipTextActive: { color: colors.white },
+  dirChip: {
+    width: 44, paddingVertical: 8, borderRadius: 10, alignItems: 'center' as const,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+  },
+  dirChipActive: { backgroundColor: colors.purple },
+  dirText: { fontSize: 14, fontWeight: '700', color: colors.textDim },
+  dirTextActive: { color: colors.white },
   saveButton: {
     height: 48, borderRadius: 12, backgroundColor: colors.emerald,
     alignItems: 'center', justifyContent: 'center', marginTop: 24,

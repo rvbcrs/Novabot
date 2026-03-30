@@ -44,7 +44,9 @@ export interface Schedule {
   enabled: boolean;
   map_id?: string;
   cutting_height?: number;
-  path_angle?: number;
+  path_direction?: number;
+  cuttingHeight?: number;    // server returns camelCase
+  pathDirection?: number;    // server returns camelCase
   created_at: string;
 }
 
@@ -299,7 +301,7 @@ export class ApiClient {
   // ── Cutting Height ───────────────────────────────────────────────────
 
   async setCuttingHeight(sn: string, height: number): Promise<CommandResult> {
-    return this.sendCommand(sn, { set_cutting_height: height });
+    return this.sendCommand(sn, { set_para_info: { defaultCuttingHeight: height } });
   }
 
   // ── Advanced Settings ────────────────────────────────────────────────
