@@ -35,9 +35,6 @@ services:
       # ENABLE_DNS: "true"
       # UPSTREAM_DNS: 8.8.8.8
 
-      # Optional: enable web dashboard (work in progress)
-      # ENABLE_DASHBOARD: "true"
-
       # Optional: Home Assistant MQTT bridge
       # HA_MQTT_HOST: 192.168.0.248
       # HA_MQTT_PORT: 1883
