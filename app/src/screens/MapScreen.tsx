@@ -224,6 +224,28 @@ export default function MapScreen() {
     ],
   }));
 
+  // ── Export ZIP ───────────────────────────────────────────────────
+  const handleExport = async () => {
+    if (!mower?.sn || maps.length === 0) return;
+
+    if (demo.enabled) {
+      Alert.alert('Demo Mode', 'Export is not available in demo mode.');
+      return;
+    }
+
+    try {
+      const serverUrl = await getServerUrl();
+      if (!serverUrl) return;
+      // Trigger server-side ZIP generation, then open download URL
+      const downloadUrl = `${serverUrl}/api/dashboard/maps/${encodeURIComponent(mower.sn)}/download-zip`;
+      Alert.alert('Export Map', `Download your map ZIP from:\n\n${downloadUrl}`, [
+        { text: 'OK' },
+      ]);
+    } catch (e) {
+      Alert.alert('Error', e instanceof Error ? e.message : 'Export failed');
+    }
+  };
+
   // ── Import ZIP ───────────────────────────────────────────────────
   const handleImport = async () => {
     if (!mower?.sn) {
@@ -322,13 +344,17 @@ export default function MapScreen() {
         <View style={styles.header}>
           <Text style={styles.title}>Map</Text>
           <View style={styles.headerButtons}>
-            <TouchableOpacity onPress={handleImport} style={styles.importBtn} activeOpacity={0.7} disabled={importing}>
+            <TouchableOpacity onPress={handleExport} style={styles.actionBtn} activeOpacity={0.7} disabled={maps.length === 0}>
+              <Ionicons name="download-outline" size={16} color={maps.length > 0 ? colors.white : colors.textMuted} />
+              <Text style={[styles.actionBtnText, maps.length === 0 && { color: colors.textMuted }]}>Export</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={handleImport} style={[styles.actionBtn, styles.actionBtnGreen]} activeOpacity={0.7} disabled={importing}>
               {importing ? (
                 <ActivityIndicator size="small" color={colors.white} />
               ) : (
                 <>
                   <Ionicons name="cloud-upload-outline" size={16} color={colors.white} />
-                  <Text style={styles.importBtnText}>Import</Text>
+                  <Text style={styles.actionBtnText}>Import</Text>
                 </>
               )}
             </TouchableOpacity>
@@ -484,12 +510,13 @@ const styles = StyleSheet.create({
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
   title: { fontSize: 28, fontWeight: '700', color: colors.white },
   headerButtons: { flexDirection: 'row', gap: 8 },
-  importBtn: {
+  actionBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 6,
-    paddingHorizontal: 14, height: 36, borderRadius: 18,
-    backgroundColor: colors.emerald,
+    paddingHorizontal: 12, height: 34, borderRadius: 17,
+    backgroundColor: 'rgba(255,255,255,0.08)',
   },
-  importBtnText: { fontSize: 13, fontWeight: '600', color: colors.white },
+  actionBtnGreen: { backgroundColor: colors.emerald },
+  actionBtnText: { fontSize: 13, fontWeight: '600', color: colors.white },
   headerBtn: {
     width: 36, height: 36, borderRadius: 18,
     backgroundColor: 'rgba(255,255,255,0.06)',
