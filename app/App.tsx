@@ -13,6 +13,7 @@ import { View, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from './src/theme/colors';
 import { DemoProvider } from './src/context/DemoContext';
+import { DevModeProvider, useDevMode } from './src/context/DevModeContext';
 import type {
   AuthStackParams,
   ProvisionStackParams,
@@ -115,6 +116,75 @@ function SettingsTabScreen({
   );
 }
 
+// ── Main Tabs (respects dev mode) ────────────────────────────────────────────
+
+function MainTabs({ onLogout, onGoToProvision }: { onLogout: () => void; onGoToProvision: () => void }) {
+  const { unlocked } = useDevMode();
+
+  return (
+    <Tab.Navigator
+      screenOptions={({ route }) => ({
+        headerShown: false,
+        tabBarStyle: {
+          backgroundColor: colors.bg,
+          borderTopColor: colors.cardBorder,
+          borderTopWidth: 1,
+          height: Platform.OS === 'ios' ? 88 : 64,
+          paddingBottom: Platform.OS === 'ios' ? 28 : 8,
+          paddingTop: 8,
+        },
+        tabBarActiveTintColor: colors.emerald,
+        tabBarInactiveTintColor: colors.textMuted,
+        tabBarLabelStyle: { fontSize: 11, fontWeight: '600' },
+        tabBarIcon: ({ color, size }) => {
+          let iconName: React.ComponentProps<typeof Ionicons>['name'] = 'home';
+          if (route.name === 'Home') iconName = 'home';
+          else if (route.name === 'Map') iconName = 'map';
+          else if (route.name === 'Schedules') iconName = 'calendar';
+          else if (route.name === 'History') iconName = 'time';
+          else if (route.name === 'Messages') iconName = 'notifications';
+          else if (route.name === 'AppSettings') iconName = 'settings';
+          else if (route.name === 'ProvisionTab') iconName = 'bluetooth';
+          return <Ionicons name={iconName} size={size} color={color} />;
+        },
+      })}
+    >
+      {/* Dev mode: full app */}
+      {unlocked && (
+        <>
+          <Tab.Screen name="Home" component={HomeScreen} options={{ tabBarLabel: 'Home' }} />
+          <Tab.Screen name="Map" component={MapScreen} options={{ tabBarLabel: 'Map' }} />
+          <Tab.Screen name="Schedules" component={ScheduleScreen} options={{ tabBarLabel: 'Schedule' }} />
+          <Tab.Screen name="History" component={HistoryScreen} options={{ tabBarLabel: 'History' }} />
+          <Tab.Screen name="Messages" component={MessagesScreen} options={{ tabBarLabel: 'Alerts' }} />
+        </>
+      )}
+
+      {/* Provision: visible when locked, completely absent when unlocked */}
+      {!unlocked && (
+        <Tab.Screen
+          name="ProvisionTab"
+          component={ProvisionTabScreen}
+          options={{ tabBarLabel: 'Provision' }}
+        />
+      )}
+
+      {/* Settings always last */}
+      <Tab.Screen
+        name="AppSettings"
+        options={{ tabBarLabel: 'Settings' }}
+      >
+        {() => (
+          <SettingsTabScreen
+            onLogout={onLogout}
+            onGoToProvision={onGoToProvision}
+          />
+        )}
+      </Tab.Screen>
+    </Tab.Navigator>
+  );
+}
+
 // ── App ──────────────────────────────────────────────────────────────────────
 
 export default function App() {
@@ -180,84 +250,13 @@ export default function App() {
   if (!appReady || !authChecked) return null;
 
   return (
+    <DevModeProvider>
     <DemoProvider>
     <View style={{ flex: 1 }} onLayout={onLayoutRootView}>
       <NavigationContainer theme={DarkTheme} ref={navigationRef}>
         <StatusBar style="light" />
         {isAuthenticated ? (
-          <Tab.Navigator
-            screenOptions={({ route }) => ({
-              headerShown: false,
-              tabBarStyle: {
-                backgroundColor: colors.bg,
-                borderTopColor: colors.cardBorder,
-                borderTopWidth: 1,
-                height: Platform.OS === 'ios' ? 88 : 64,
-                paddingBottom: Platform.OS === 'ios' ? 28 : 8,
-                paddingTop: 8,
-              },
-              tabBarActiveTintColor: colors.emerald,
-              tabBarInactiveTintColor: colors.textMuted,
-              tabBarLabelStyle: {
-                fontSize: 11,
-                fontWeight: '600',
-              },
-              tabBarIcon: ({ color, size }) => {
-                let iconName: React.ComponentProps<typeof Ionicons>['name'] =
-                  'home';
-                if (route.name === 'Home') iconName = 'home';
-                else if (route.name === 'Map') iconName = 'map';
-                else if (route.name === 'Schedules') iconName = 'calendar';
-                else if (route.name === 'History') iconName = 'time';
-                else if (route.name === 'Messages') iconName = 'notifications';
-                else if (route.name === 'AppSettings') iconName = 'settings';
-                else if (route.name === 'ProvisionTab') iconName = 'bluetooth';
-                return <Ionicons name={iconName} size={size} color={color} />;
-              },
-            })}
-          >
-            <Tab.Screen
-              name="Home"
-              component={HomeScreen}
-              options={{ tabBarLabel: 'Home' }}
-            />
-            <Tab.Screen
-              name="Map"
-              component={MapScreen}
-              options={{ tabBarLabel: 'Map' }}
-            />
-            <Tab.Screen
-              name="Schedules"
-              component={ScheduleScreen}
-              options={{ tabBarLabel: 'Schedule' }}
-            />
-            <Tab.Screen
-              name="History"
-              component={HistoryScreen}
-              options={{ tabBarLabel: 'History' }}
-            />
-            <Tab.Screen
-              name="Messages"
-              component={MessagesScreen}
-              options={{ tabBarLabel: 'Alerts' }}
-            />
-            <Tab.Screen
-              name="AppSettings"
-              options={{ tabBarLabel: 'Settings' }}
-            >
-              {() => (
-                <SettingsTabScreen
-                  onLogout={handleLogout}
-                  onGoToProvision={handleGoToProvision}
-                />
-              )}
-            </Tab.Screen>
-            <Tab.Screen
-              name="ProvisionTab"
-              component={ProvisionTabScreen}
-              options={{ tabBarLabel: 'Provision', tabBarButton: () => null }}
-            />
-          </Tab.Navigator>
+          <MainTabs onLogout={handleLogout} onGoToProvision={handleGoToProvision} />
         ) : (
           <AuthStack.Navigator screenOptions={screenOptions}>
             <AuthStack.Screen name="Login">
@@ -278,5 +277,6 @@ export default function App() {
       </NavigationContainer>
     </View>
     </DemoProvider>
+    </DevModeProvider>
   );
 }

@@ -18,6 +18,7 @@ import { getServerUrl, getToken, clearToken } from '../services/auth';
 import { useMowerState } from '../hooks/useMowerState';
 import { ApiClient } from '../services/api';
 import { JoystickControl } from '../components/JoystickControl';
+import { useDevMode } from '../context/DevModeContext';
 
 interface AppSettingsScreenProps {
   onLogout: () => void;
@@ -38,6 +39,7 @@ export default function AppSettingsScreen({
   const [email, setEmail] = useState('');
   const [headlightOn, setHeadlightOn] = useState(false);
   const [showJoystick, setShowJoystick] = useState(false);
+  const devMode = useDevMode();
 
   const mower = useMemo(() => {
     return [...devices.values()].find((d) => d.deviceType === 'mower') ?? null;
@@ -230,7 +232,16 @@ export default function AppSettingsScreen({
           <Text style={styles.logoutText}>Sign Out</Text>
         </TouchableOpacity>
 
-        <Text style={styles.versionText}>OpenNova App v1.1.0</Text>
+        <TouchableOpacity onPress={devMode.handleTap} activeOpacity={1}>
+          <Text style={styles.versionText}>
+            OpenNova App v1.1.0
+            {devMode.tapCount >= 4 && devMode.tapCount < 7
+              ? `  (${7 - devMode.tapCount} taps to go...)`
+              : devMode.unlocked
+                ? '  [Developer Mode]'
+                : ''}
+          </Text>
+        </TouchableOpacity>
       </ScrollView>
 
       {/* Joystick modal */}
