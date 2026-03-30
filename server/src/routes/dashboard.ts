@@ -1074,6 +1074,72 @@ dashboardRouter.post('/maps/:sn/import-zip', (req: Request, res: Response) => {
   }
 });
 
+// POST /api/dashboard/maps/:sn/upload-zip — upload + import kaarten uit base64 ZIP
+dashboardRouter.post('/maps/:sn/upload-zip', (req: Request, res: Response) => {
+  const { sn } = req.params;
+  const { data } = req.body as { data?: string }; // base64 encoded ZIP
+
+  if (!data) {
+    res.status(400).json({ error: 'data (base64 ZIP) is vereist' });
+    return;
+  }
+
+  try {
+    const tmpPath = `/tmp/map_upload_${sn}_${Date.now()}.zip`;
+    const fs = require('fs');
+    fs.writeFileSync(tmpPath, Buffer.from(data, 'base64'));
+
+    const result = parseMapZip(tmpPath);
+    fs.unlinkSync(tmpPath); // cleanup
+
+    if (!result) {
+      res.status(400).json({ error: 'Kon ZIP niet parsen' });
+      return;
+    }
+
+    let imported = 0;
+    for (const area of result.areas) {
+      if (area.type !== 'work') continue;
+      const mapId = `uploaded_map${area.mapIndex}_${Date.now()}`;
+      const points = area.points;
+      const bounds = {
+        minX: Math.min(...points.map((p: any) => p.x)),
+        maxX: Math.max(...points.map((p: any) => p.x)),
+        minY: Math.min(...points.map((p: any) => p.y)),
+        maxY: Math.max(...points.map((p: any) => p.y)),
+      };
+
+      db.prepare(`
+        INSERT INTO maps (map_id, mower_sn, map_name, map_area, map_max_min, updated_at)
+        VALUES (?, ?, ?, ?, ?, datetime('now'))
+        ON CONFLICT(map_id) DO UPDATE SET
+          map_area = excluded.map_area,
+          map_max_min = excluded.map_max_min,
+          updated_at = datetime('now')
+      `).run(mapId, sn, `Uploaded map ${area.mapIndex}`, JSON.stringify(points), JSON.stringify(bounds));
+      imported++;
+    }
+
+    // Also import obstacles
+    for (const area of result.areas) {
+      if (area.type === 'work') continue;
+      const mapId = `uploaded_${area.type}${area.mapIndex}_${Date.now()}`;
+      db.prepare(`
+        INSERT INTO maps (map_id, mower_sn, map_name, map_type, map_area, updated_at)
+        VALUES (?, ?, ?, ?, ?, datetime('now'))
+        ON CONFLICT(map_id) DO UPDATE SET
+          map_area = excluded.map_area, updated_at = datetime('now')
+      `).run(mapId, sn, `${area.type} ${area.mapIndex}`, area.type, JSON.stringify(area.points));
+      imported++;
+    }
+
+    console.log(`[MAP-IMPORT] Uploaded ZIP for ${sn}: ${imported} areas imported`);
+    res.json({ ok: true, imported, totalAreas: result.areas.length, chargingPose: result.chargingPose });
+  } catch (err) {
+    res.status(500).json({ error: 'Upload import mislukt', details: String(err) });
+  }
+});
+
 // ── Map calibratie endpoints ──────────────────────────────────────
 
 interface CalibrationRow {
