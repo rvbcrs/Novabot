@@ -231,6 +231,25 @@ export default function MapScreen() {
       return;
     }
 
+    // Demo mode: just show a success message and add a fake imported map
+    if (demo.enabled) {
+      Alert.alert('Demo Mode', 'In demo mode, a sample imported map has been added.');
+      setMaps((prev) => [
+        ...prev,
+        {
+          mapId: `imported-demo-${Date.now()}`,
+          mapName: 'Imported Garden',
+          mapType: 'work',
+          mapArea: [
+            { lat: 52.0900, lng: 5.1200 }, { lat: 52.0906, lng: 5.1198 },
+            { lat: 52.0910, lng: 5.1205 }, { lat: 52.0908, lng: 5.1215 },
+            { lat: 52.0903, lng: 5.1218 }, { lat: 52.0898, lng: 5.1210 },
+          ],
+        },
+      ]);
+      return;
+    }
+
     try {
       const result = await DocumentPicker.getDocumentAsync({
         type: 'application/zip',
@@ -303,11 +322,14 @@ export default function MapScreen() {
         <View style={styles.header}>
           <Text style={styles.title}>Map</Text>
           <View style={styles.headerButtons}>
-            <TouchableOpacity onPress={handleImport} style={styles.headerBtn} activeOpacity={0.7} disabled={importing}>
+            <TouchableOpacity onPress={handleImport} style={styles.importBtn} activeOpacity={0.7} disabled={importing}>
               {importing ? (
-                <ActivityIndicator size="small" color={colors.emerald} />
+                <ActivityIndicator size="small" color={colors.white} />
               ) : (
-                <Ionicons name="cloud-upload-outline" size={20} color={colors.emerald} />
+                <>
+                  <Ionicons name="cloud-upload-outline" size={16} color={colors.white} />
+                  <Text style={styles.importBtnText}>Import</Text>
+                </>
               )}
             </TouchableOpacity>
             <TouchableOpacity onPress={fetchData} style={styles.headerBtn} activeOpacity={0.7}>
@@ -462,6 +484,12 @@ const styles = StyleSheet.create({
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
   title: { fontSize: 28, fontWeight: '700', color: colors.white },
   headerButtons: { flexDirection: 'row', gap: 8 },
+  importBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingHorizontal: 14, height: 36, borderRadius: 18,
+    backgroundColor: colors.emerald,
+  },
+  importBtnText: { fontSize: 13, fontWeight: '600', color: colors.white },
   headerBtn: {
     width: 36, height: 36, borderRadius: 18,
     backgroundColor: 'rgba(255,255,255,0.06)',
