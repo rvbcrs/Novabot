@@ -20,6 +20,7 @@ import { MowerScene } from '../components/mower/MowerScene';
 import { useMowerState } from '../hooks/useMowerState';
 import { ApiClient } from '../services/api';
 import { getServerUrl } from '../services/auth';
+import { DemoBanner } from '../components/DemoBanner';
 import type { DeviceState, MowerActivity } from '../types';
 
 // ── Derive mower status ──────────────────────────────────────────────
@@ -157,33 +158,10 @@ const GLOW_COLOR: Record<MowerActivity, string> = {
 
 // ── Component ────────────────────────────────────────────────────────
 
-// ── Demo mode — simulate mower activities ────────────────────────────
-
-const DEMO_ACTIVITIES: MowerActivity[] = ['idle', 'mowing', 'charging', 'returning', 'paused', 'mapping', 'error'];
-
-function makeDemoMower(activity: MowerActivity): MowerDerived {
-  return {
-    sn: 'LFIN0000000000',
-    online: activity !== 'idle',
-    activity,
-    battery: activity === 'charging' ? 42 : activity === 'mowing' ? 78 : 95,
-    batteryCharging: activity === 'charging',
-    wifiRssi: '-52',
-    rtkSat: '14',
-    errorStatus: activity === 'error' ? '151' : undefined,
-    errorCode: activity === 'error' ? '151' : undefined,
-    errorMsg: activity === 'error' ? 'Obstacle detected — mower stuck' : undefined,
-    hasError: activity === 'error',
-  };
-}
-
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const { devices, connected } = useMowerState();
-  const [demoIdx, setDemoIdx] = useState(-1); // -1 = off
-  const isDemo = demoIdx >= 0;
-  const realMower = useMemo(() => deriveMower(devices), [devices]);
-  const mower = isDemo ? makeDemoMower(DEMO_ACTIVITIES[demoIdx % DEMO_ACTIVITIES.length]) : realMower;
+  const mower = useMemo(() => deriveMower(devices), [devices]);
   const [commandLoading, setCommandLoading] = useState<string | null>(null);
   const [commandError, setCommandError] = useState('');
 
@@ -262,12 +240,9 @@ export default function HomeScreen() {
               style={{ marginTop: 16 }}
             />
           )}
-          <TouchableOpacity
-            style={{ marginTop: 24, paddingVertical: 10, paddingHorizontal: 20, backgroundColor: 'rgba(124,58,237,0.15)', borderRadius: 10, borderWidth: 1, borderColor: 'rgba(124,58,237,0.3)' }}
-            onPress={() => setDemoIdx(0)}
-          >
-            <Text style={{ color: colors.purple, fontSize: 14, fontWeight: '600', textAlign: 'center' }}>Preview Demo Mode</Text>
-          </TouchableOpacity>
+          <View style={{ width: '100%', marginTop: 24 }}>
+            <DemoBanner />
+          </View>
         </View>
       </View>
     );
@@ -278,24 +253,8 @@ export default function HomeScreen() {
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <ScrollView contentContainerStyle={styles.scroll}>
-        {/* Demo mode bar */}
-        {isDemo && (
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: 'rgba(124,58,237,0.15)', borderRadius: 10, padding: 10, marginBottom: 12 }}>
-            <Text style={{ color: colors.purple, fontSize: 12, fontWeight: '600' }}>
-              DEMO: {DEMO_ACTIVITIES[demoIdx % DEMO_ACTIVITIES.length]}
-            </Text>
-            <View style={{ flexDirection: 'row', gap: 8 }}>
-              <TouchableOpacity onPress={() => setDemoIdx(i => (i + 1) % DEMO_ACTIVITIES.length)}
-                style={{ backgroundColor: colors.purple, paddingHorizontal: 12, paddingVertical: 5, borderRadius: 6 }}>
-                <Text style={{ color: '#fff', fontSize: 12, fontWeight: '600' }}>Next →</Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={() => setDemoIdx(-1)}
-                style={{ backgroundColor: 'rgba(255,255,255,0.1)', paddingHorizontal: 12, paddingVertical: 5, borderRadius: 6 }}>
-                <Text style={{ color: colors.textDim, fontSize: 12 }}>Exit</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        )}
+        {/* Global demo toggle */}
+        <DemoBanner />
 
         {/* Connection indicator */}
         <View style={styles.connectionRow}>

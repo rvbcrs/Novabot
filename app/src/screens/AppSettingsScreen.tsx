@@ -22,11 +22,15 @@ import { JoystickControl } from '../components/JoystickControl';
 interface AppSettingsScreenProps {
   onLogout: () => void;
   onGoToProvision: () => void;
+  onGoToOta?: () => void;
+  onGoToMowerSettings?: () => void;
 }
 
 export default function AppSettingsScreen({
   onLogout,
   onGoToProvision,
+  onGoToOta,
+  onGoToMowerSettings,
 }: AppSettingsScreenProps) {
   const insets = useSafeAreaInsets();
   const { devices, connected } = useMowerState();
@@ -180,6 +184,28 @@ export default function AppSettingsScreen({
             >
               <Ionicons name="game-controller-outline" size={20} color={colors.purple} />
               <Text style={styles.actionLabel}>Manual Control</Text>
+              <Ionicons name="chevron-forward" size={18} color={colors.textDim} />
+            </TouchableOpacity>
+          )}
+          {onGoToMowerSettings && (
+            <TouchableOpacity
+              style={styles.actionRow}
+              onPress={onGoToMowerSettings}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="options-outline" size={20} color={colors.amber} />
+              <Text style={styles.actionLabel}>Mower Settings</Text>
+              <Ionicons name="chevron-forward" size={18} color={colors.textDim} />
+            </TouchableOpacity>
+          )}
+          {onGoToOta && (
+            <TouchableOpacity
+              style={styles.actionRow}
+              onPress={onGoToOta}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="cloud-download-outline" size={20} color={colors.blue} />
+              <Text style={styles.actionLabel}>Firmware Updates</Text>
               <Ionicons name="chevron-forward" size={18} color={colors.textDim} />
             </TouchableOpacity>
           )}

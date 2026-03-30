@@ -6,7 +6,7 @@
  *   - 'device:update'  -> real-time sensor updates
  *   - 'device:online'  / 'device:offline'
  */
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import type { Socket } from 'socket.io-client';
 import { getSocket } from '../services/socket';
 import type {
@@ -15,14 +15,16 @@ import type {
   DeviceOnlineEvent,
   SnapshotDevice,
 } from '../types';
+import { useDemo } from '../context/DemoContext';
 
 interface UseMowerStateResult {
   devices: Map<string, DeviceState>;
   connected: boolean;
 }
 
+// Re-export so screens can import from one place
 export function useMowerState(): UseMowerStateResult {
-  const [devices, setDevices] = useState<Map<string, DeviceState>>(new Map());
+  const [realDevices, setDevices] = useState<Map<string, DeviceState>>(new Map());
   const [connected, setConnected] = useState(false);
   const socketRef = useRef<Socket | null>(null);
 
@@ -118,5 +120,16 @@ export function useMowerState(): UseMowerStateResult {
     };
   }, [handleSnapshot, handleDeviceUpdate, handleDeviceOnline, handleDeviceOffline]);
 
-  return { devices, connected };
+  // Merge demo devices when demo mode is active
+  const demo = useDemo();
+  const devices = useMemo(() => {
+    if (!demo.enabled) return realDevices;
+    const merged = new Map(realDevices);
+    for (const [sn, d] of demo.demoDevices) {
+      merged.set(sn, d);
+    }
+    return merged;
+  }, [realDevices, demo.enabled, demo.demoDevices]);
+
+  return { devices, connected: demo.enabled || connected };
 }

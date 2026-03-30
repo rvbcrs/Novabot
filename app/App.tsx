@@ -12,10 +12,12 @@ import * as NavigationBar from 'expo-navigation-bar';
 import { View, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from './src/theme/colors';
+import { DemoProvider } from './src/context/DemoContext';
 import type {
   AuthStackParams,
   ProvisionStackParams,
   MainTabParams,
+  SettingsStackParams,
 } from './src/navigation/types';
 import { getToken, getServerUrl } from './src/services/auth';
 import { initSocket, disconnectSocket } from './src/services/socket';
@@ -31,7 +33,10 @@ import HomeScreen from './src/screens/HomeScreen';
 import MapScreen from './src/screens/MapScreen';
 import ScheduleScreen from './src/screens/ScheduleScreen';
 import HistoryScreen from './src/screens/HistoryScreen';
+import MessagesScreen from './src/screens/MessagesScreen';
 import AppSettingsScreen from './src/screens/AppSettingsScreen';
+import OtaScreen from './src/screens/OtaScreen';
+import MowerSettingsScreen from './src/screens/MowerSettingsScreen';
 
 // Existing provisioning screens
 import SettingsScreen from './src/screens/SettingsScreen';
@@ -44,6 +49,7 @@ import ProvisionScreen from './src/screens/ProvisionScreen';
 
 const AuthStack = createNativeStackNavigator<AuthStackParams>();
 const ProvisionStack = createNativeStackNavigator<ProvisionStackParams>();
+const SettingsStack = createNativeStackNavigator<SettingsStackParams>();
 const Tab = createBottomTabNavigator<MainTabParams>();
 
 // ── Theme ────────────────────────────────────────────────────────────────────
@@ -79,6 +85,33 @@ function ProvisionTabScreen() {
       <ProvisionStack.Screen name="BleScan" component={BleScanScreen} />
       <ProvisionStack.Screen name="Provision" component={ProvisionScreen} />
     </ProvisionStack.Navigator>
+  );
+}
+
+// ── Settings Tab (nested stack for OTA + MowerSettings) ─────────────────────
+
+function SettingsTabScreen({
+  onLogout,
+  onGoToProvision,
+}: {
+  onLogout: () => void;
+  onGoToProvision: () => void;
+}) {
+  return (
+    <SettingsStack.Navigator screenOptions={screenOptions}>
+      <SettingsStack.Screen name="SettingsMain">
+        {(props) => (
+          <AppSettingsScreen
+            onLogout={onLogout}
+            onGoToProvision={onGoToProvision}
+            onGoToOta={() => props.navigation.navigate('OTA')}
+            onGoToMowerSettings={() => props.navigation.navigate('MowerSettings')}
+          />
+        )}
+      </SettingsStack.Screen>
+      <SettingsStack.Screen name="OTA" component={OtaScreen} />
+      <SettingsStack.Screen name="MowerSettings" component={MowerSettingsScreen} />
+    </SettingsStack.Navigator>
   );
 }
 
@@ -147,6 +180,7 @@ export default function App() {
   if (!appReady || !authChecked) return null;
 
   return (
+    <DemoProvider>
     <View style={{ flex: 1 }} onLayout={onLayoutRootView}>
       <NavigationContainer theme={DarkTheme} ref={navigationRef}>
         <StatusBar style="light" />
@@ -175,6 +209,7 @@ export default function App() {
                 else if (route.name === 'Map') iconName = 'map';
                 else if (route.name === 'Schedules') iconName = 'calendar';
                 else if (route.name === 'History') iconName = 'time';
+                else if (route.name === 'Messages') iconName = 'notifications';
                 else if (route.name === 'AppSettings') iconName = 'settings';
                 else if (route.name === 'ProvisionTab') iconName = 'bluetooth';
                 return <Ionicons name={iconName} size={size} color={color} />;
@@ -202,11 +237,16 @@ export default function App() {
               options={{ tabBarLabel: 'History' }}
             />
             <Tab.Screen
+              name="Messages"
+              component={MessagesScreen}
+              options={{ tabBarLabel: 'Alerts' }}
+            />
+            <Tab.Screen
               name="AppSettings"
               options={{ tabBarLabel: 'Settings' }}
             >
               {() => (
-                <AppSettingsScreen
+                <SettingsTabScreen
                   onLogout={handleLogout}
                   onGoToProvision={handleGoToProvision}
                 />
@@ -237,5 +277,6 @@ export default function App() {
         )}
       </NavigationContainer>
     </View>
+    </DemoProvider>
   );
 }

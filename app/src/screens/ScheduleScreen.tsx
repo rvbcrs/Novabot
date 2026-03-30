@@ -21,6 +21,8 @@ import { colors } from '../theme/colors';
 import { useMowerState } from '../hooks/useMowerState';
 import { ApiClient, type Schedule } from '../services/api';
 import { getServerUrl } from '../services/auth';
+import { useDemo } from '../context/DemoContext';
+import { DemoBanner } from '../components/DemoBanner';
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const DAYS_FULL = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -38,8 +40,15 @@ export default function ScheduleScreen() {
     return [...devices.values()].find((d) => d.deviceType === 'mower')?.sn ?? '';
   }, [devices]);
 
+  const demo = useDemo();
+
   const fetchSchedules = useCallback(async () => {
     if (!mowerSn) return;
+    if (demo.enabled) {
+      setSchedules(demo.demoSchedules);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError('');
     try {
@@ -53,7 +62,7 @@ export default function ScheduleScreen() {
     } finally {
       setLoading(false);
     }
-  }, [mowerSn]);
+  }, [mowerSn, demo.enabled]);
 
   useEffect(() => {
     fetchSchedules();
@@ -139,6 +148,8 @@ export default function ScheduleScreen() {
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <ScrollView contentContainerStyle={styles.scroll}>
+        <DemoBanner />
+
         {/* Header */}
         <View style={styles.header}>
           <Text style={styles.title}>Schedules</Text>

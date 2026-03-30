@@ -16,6 +16,8 @@ import { colors } from '../theme/colors';
 import { useMowerState } from '../hooks/useMowerState';
 import { ApiClient, type WorkRecord } from '../services/api';
 import { getServerUrl } from '../services/auth';
+import { useDemo } from '../context/DemoContext';
+import { DemoBanner } from '../components/DemoBanner';
 
 export default function HistoryScreen() {
   const insets = useSafeAreaInsets();
@@ -29,8 +31,15 @@ export default function HistoryScreen() {
     return [...devices.values()].find((d) => d.deviceType === 'mower')?.sn ?? '';
   }, [devices]);
 
+  const demo = useDemo();
+
   const fetchRecords = useCallback(async (isRefresh = false) => {
     if (!mowerSn) return;
+    if (demo.enabled) {
+      setRecords(demo.demoHistory);
+      setLoading(false);
+      return;
+    }
     if (isRefresh) setRefreshing(true);
     else setLoading(true);
     setError('');
@@ -46,7 +55,7 @@ export default function HistoryScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [mowerSn]);
+  }, [mowerSn, demo.enabled]);
 
   useEffect(() => {
     fetchRecords();
@@ -76,6 +85,7 @@ export default function HistoryScreen() {
           />
         }
       >
+        <DemoBanner />
         <Text style={styles.title}>Mowing History</Text>
 
         {loading && (

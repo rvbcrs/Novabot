@@ -49,4 +49,13 @@ export type MainTabParams = {
   History: undefined;
   AppSettings: undefined;
   ProvisionTab: undefined;
+  Messages: undefined;
+};
+
+// ── Settings Stack (nested in Settings tab) ─────────────────────────
+
+export type SettingsStackParams = {
+  SettingsMain: undefined;
+  OTA: undefined;
+  MowerSettings: undefined;
 };

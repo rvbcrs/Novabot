@@ -65,6 +65,32 @@ export interface TrailPoint {
   ts: number;
 }
 
+export interface OtaVersion {
+  id: number;
+  version: string;
+  device_type: string;
+  release_notes: string | null;
+  download_url: string | null;
+  md5: string | null;
+  created_at: string;
+}
+
+export interface FirmwareFile {
+  name: string;
+  md5: string;
+  size: number;
+}
+
+export interface RobotMessage {
+  id: number;
+  sn: string;
+  type: string;
+  title: string;
+  message: string;
+  timestamp: string;
+  read: boolean;
+}
+
 export class ApiClient {
   private baseUrl: string;
 
@@ -274,6 +300,50 @@ export class ApiClient {
 
   async setCuttingHeight(sn: string, height: number): Promise<CommandResult> {
     return this.sendCommand(sn, { set_cutting_height: height });
+  }
+
+  // ── Advanced Settings ────────────────────────────────────────────────
+
+  async getParaInfo(sn: string): Promise<CommandResult> {
+    return this.sendCommand(sn, { get_para_info: {} });
+  }
+
+  async setObstacleSensitivity(sn: string, level: number): Promise<CommandResult> {
+    return this.sendCommand(sn, { set_para_info: { obstacle_avoidance_sensitivity: level } });
+  }
+
+  async setPathDirection(sn: string, angle: number): Promise<CommandResult> {
+    return this.sendCommand(sn, { set_para_info: { path_direction: angle } });
+  }
+
+  // ── OTA ──────────────────────────────────────────────────────────────
+
+  async getOtaVersions(): Promise<OtaVersion[]> {
+    return this.request<OtaVersion[]>('GET', '/api/dashboard/ota/versions');
+  }
+
+  async getFirmwareFiles(): Promise<FirmwareFile[]> {
+    return this.request<FirmwareFile[]>('GET', '/api/dashboard/firmware-list');
+  }
+
+  async triggerOta(
+    sn: string,
+    versionId: number,
+    force = true,
+  ): Promise<{ ok: boolean; command?: string; version?: string }> {
+    return this.request('POST', `/api/dashboard/ota/trigger/${enc(sn)}`, {
+      body: { version_id: versionId, force },
+    });
+  }
+
+  // ── Messages (robot alerts) ──────────────────────────────────────────
+
+  async getRobotMessages(sn: string): Promise<RobotMessage[]> {
+    // Uses the novabot-message endpoint
+    return this.request<RobotMessage[]>(
+      'GET',
+      `/api/dashboard/work-records/${enc(sn)}`,
+    ).catch(() => []);
   }
 }
 
