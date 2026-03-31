@@ -194,6 +194,8 @@ static lv_obj_t *detect_chg_label = nullptr;
 static lv_obj_t *detect_mow_label = nullptr;
 
 // Create a dark base screen
+static lv_obj_t *prev_screen = nullptr;
+
 static lv_obj_t* create_screen() {
     // Reset persistent screen pointers
     mqtt_scr = nullptr;
@@ -205,10 +207,21 @@ static lv_obj_t* create_screen() {
     detect_chg_label = nullptr;
     detect_mow_label = nullptr;
 
+    // Remember old screen for deletion after new one is loaded
+    lv_obj_t *old_screen = prev_screen;
+
     lv_obj_t *scr = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(scr, COL_BG, 0);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
     lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
+    prev_screen = scr;
+
+    // Delete old screen to free memory (ESP32-S3 has no PSRAM!)
+    // Use async delete — caller will lv_scr_load(scr) after building widgets
+    if (old_screen) {
+        lv_obj_del_async(old_screen);
+    }
+
     return scr;
 }
 
@@ -268,7 +281,14 @@ static void generic_btn_cb(lv_event_t *e) {
     ui_btnPressed = true;
 }
 
+static unsigned long lastDeviceTapMs = 0;
+
 static void device_item_cb(lv_event_t *e) {
+    // Debounce: ignore taps within 300ms of each other (screen redraw causes double events)
+    unsigned long now = millis();
+    if (now - lastDeviceTapMs < 150) return;
+    lastDeviceTapMs = now;
+
     int row = (int)(intptr_t)lv_event_get_user_data(e);
     if (row < 0 || row >= g_rowCount) return;
     int realIdx = g_rowToIdx[row];

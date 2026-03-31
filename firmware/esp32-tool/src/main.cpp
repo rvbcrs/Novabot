@@ -32,8 +32,11 @@
 #include "mbedtls/aes.h"
 #include <esp_wifi.h>
 #include <sMQTTBroker.h>
+#include <Preferences.h>
 #include "display.h"
 #include "touch.h"
+
+static Preferences prefs;
 
 // ── Configuration ────────────────────────────────────────────────────────────
 
@@ -94,7 +97,7 @@ void webLogAdd(const char* fmt, ...) {
 
 // ── Scan results (ScanResult defined in display.h) ──────────────────────────
 
-static ScanResult scanResults[20];
+static ScanResult scanResults[10];
 static int scanResultCount = 0;
 static int selectedChargerIdx = -1;
 static int selectedMowerIdx = -1;
@@ -162,8 +165,19 @@ WebServer httpServer(80);
 static bool mowerConnected = false;
 static bool chargerMqttConnected = false;
 static String mowerSn = "";
+static String chargerSn = "";
 static String chargerTopic = "";
 static unsigned long mowerConnectTime = 0;
+
+// OTA progress (updated from MQTT ota_upgrade_state messages)
+static int otaProgressPercent = 0;
+static String otaStatus = "";
+
+// Forward declarations for OTA retry
+static bool mowerOtaTriedPlain;
+static bool mowerOtaTriedAes;
+static unsigned long mowerOtaSentAt;
+void sendMowerOtaWithAes(bool useAes);
 
 // ── sMQTTBroker subclass ─────────────────────────────────────────────────────
 
@@ -219,13 +233,50 @@ public:
                 if ((cid.rfind("ESP32_", 0) == 0 || cid.rfind("SNC", 0) == 0) &&
                     topic.rfind("Dart/Send_mqtt/", 0) == 0) {
                     chargerTopic = topic.c_str();
-                    Serial.printf("[MQTT] Saved Charger Topic: %s\r\n", chargerTopic.c_str());
+                    // Extract charger SN from topic: Dart/Send_mqtt/LFIC1231000319
+                    if (chargerTopic.startsWith("Dart/Send_mqtt/")) {
+                        chargerSn = chargerTopic.substring(15);
+                    }
+                    Serial.printf("[MQTT] Saved Charger Topic: %s (SN: %s)\r\n", chargerTopic.c_str(), chargerSn.c_str());
                     webLogAdd("MQTT: Charger subscribed: %s", chargerTopic.c_str());
                 }
                 return true;
             }
             case Public_sMQTTEventType: {
-                // Just let sMQTTBroker handle routing
+                sMQTTPublicClientEvent *e = (sMQTTPublicClientEvent *)event;
+                std::string topic = e->Topic();
+                std::string payload = e->Payload();
+
+                // Parse OTA progress from mower: {"ota_upgrade_state":{"percentage":42,"status":"upgrade"}}
+                if (payload.find("ota_upgrade_state") != std::string::npos) {
+                    // Extract percentage
+                    size_t pctPos = payload.find("\"percentage\":");
+                    if (pctPos != std::string::npos) {
+                        int pct = atoi(payload.c_str() + pctPos + 14);
+                        otaProgressPercent = pct;
+                    }
+                    // Extract status
+                    size_t statusPos = payload.find("\"status\":\"");
+                    if (statusPos != std::string::npos) {
+                        size_t start = statusPos + 10;
+                        size_t end = payload.find('"', start);
+                        if (end != std::string::npos) {
+                            String status = String(payload.substr(start, end - start).c_str());
+                            otaStatus = status;
+                            Serial.printf("[OTA] Progress: %d%% status=%s\r\n", otaProgressPercent, status.c_str());
+
+                            if (status == "fail" || status == "error") {
+                                // Immediate AES retry if plain failed
+                                if (mowerOtaTriedPlain && !mowerOtaTriedAes && mowerConnected) {
+                                    Serial.println("[OTA] FAIL detected — retrying with AES...");
+                                    mowerOtaTriedAes = true;
+                                    sendMowerOtaWithAes(true);
+                                }
+                            }
+                        }
+                    }
+                }
+
                 return true;
             }
             default:
@@ -272,8 +323,10 @@ void startBleScan();
 bool provisionDevice(NimBLEAdvertisedDevice* device, const char* deviceType);
 bool bleSendCommand(NimBLEClient* client, NimBLERemoteCharacteristic* writeChr,
                     NimBLERemoteCharacteristic* notifyChr, const String& json,
-                    const char* cmdName, String& response);
+                    const char* cmdName, String& response, bool isMower = false);
 void sendOtaCommand();
+void sendMowerOta();
+void sendChargerOta();
 bool loadFirmwareInfo();
 String computeMd5(const char* path);
 void setState(State newState);
@@ -305,13 +358,16 @@ class ScanCallbacks : public NimBLEScanCallbacks {
         }
 
         // Add to results array
-        if (scanResultCount < 20) {
+        if (scanResultCount < 10) {
             ScanResult& r = scanResults[scanResultCount];
             r.name = name;
             r.mac = mac;
             r.rssi = advertisedDevice->getRSSI();
-            r.isCharger = (name == "CHARGER_PILE");
-            r.isMower = (name == "NOVABOT" || name == "Novabot" || name == "novabot");
+            // Match like bootstrap: case-insensitive contains (not exact match)
+            String nameLower = name;
+            nameLower.toLowerCase();
+            r.isCharger = (nameLower.indexOf("charger") >= 0);
+            r.isMower = (nameLower.indexOf("novabot") >= 0 || nameLower.indexOf("lfin") >= 0);
 
             Serial.printf("[BLE] Found: %s (%s) RSSI=%d%s%s\r\n",
                          name.c_str(), mac.c_str(), r.rssi,
@@ -326,15 +382,15 @@ class ScanCallbacks : public NimBLEScanCallbacks {
                 selectedMowerIdx = scanResultCount;
             }
 
-            scanResultCount++;
-        }
+            // Also keep NimBLE device pointers for provisioning
+            if (r.isCharger && chargerDevice == nullptr) {
+                chargerDevice = new NimBLEAdvertisedDevice(*advertisedDevice);
+            }
+            if (r.isMower && mowerDevice == nullptr) {
+                mowerDevice = new NimBLEAdvertisedDevice(*advertisedDevice);
+            }
 
-        // Also keep NimBLE device pointers for provisioning
-        if (name == "CHARGER_PILE" && chargerDevice == nullptr) {
-            chargerDevice = new NimBLEAdvertisedDevice(*advertisedDevice);
-        }
-        if ((name == "NOVABOT" || name == "Novabot" || name == "novabot") && mowerDevice == nullptr) {
-            mowerDevice = new NimBLEAdvertisedDevice(*advertisedDevice);
+            scanResultCount++;
         }
     }
 
@@ -388,6 +444,20 @@ void setup() {
     Serial.println("  Waveshare ESP32-S3 Touch LCD 2\"");
     Serial.println("======================================");
 
+    // Load saved WiFi credentials from NVS
+    prefs.begin("nova-ota", false);
+    String savedSsid = prefs.getString("wifi_ssid", "");
+    String savedPass = prefs.getString("wifi_pass", "");
+    if (savedSsid.length() > 0) {
+        userWifiSsid = savedSsid;
+        userWifiPassword = savedPass;
+        strncpy(ui_wifiSsid, savedSsid.c_str(), sizeof(ui_wifiSsid) - 1);
+        strncpy(ui_wifiPassword, savedPass.c_str(), sizeof(ui_wifiPassword) - 1);
+        Serial.printf("[NVS] Loaded WiFi: %s\r\n", savedSsid.c_str());
+    } else {
+        Serial.println("[NVS] No saved WiFi credentials");
+    }
+
 #ifdef WAVESHARE_LCD
     // Initialize display (includes LVGL + touch + FreeRTOS task)
     display_init();
@@ -412,9 +482,14 @@ void setup() {
         Serial.println("[SD] No firmware .deb — OTA will be skipped");
     }
 
-    // In LCD mode, always use AP-only (no serial config needed)
-    userWifiSsid = AP_SSID;
-    userWifiPassword = AP_PASSWORD;
+    // Use saved WiFi credentials if available, otherwise default to AP credentials
+    if (userWifiSsid.length() == 0) {
+        userWifiSsid = AP_SSID;
+        userWifiPassword = AP_PASSWORD;
+        Serial.println("[SETUP] No saved WiFi — using AP defaults");
+    } else {
+        Serial.printf("[SETUP] Using saved WiFi: %s\r\n", userWifiSsid.c_str());
+    }
 
     // Start WiFi AP
     setupWifiAP();
@@ -648,15 +723,18 @@ void loop() {
 
             if (ui_startPressed) {
                 ui_startPressed = false;
+                Serial.printf("[TOUCH] Start pressed — chargerIdx=%d chargerDev=%s mowerIdx=%d mowerDev=%s\r\n",
+                    selectedChargerIdx, chargerDevice ? "OK" : "NULL",
+                    selectedMowerIdx, mowerDevice ? "OK" : "NULL");
                 if (selectedChargerIdx >= 0 || selectedMowerIdx >= 0) {
-                    Serial.println("[TOUCH] Start pressed");
                     if (selectedChargerIdx >= 0 && chargerDevice) {
                         setState(STATE_PROVISION_CHARGER);
                     } else if (selectedMowerIdx >= 0 && mowerDevice) {
                         setState(STATE_PROVISION_MOWER);
                     } else {
-                        statusMessage = "No valid device selected";
-                        display_error("Select at least one device");
+                        Serial.println("[TOUCH] No valid device pointer for selected index!");
+                        statusMessage = "Device not found — try re-scanning";
+                        display_error("Device not found.\nTry re-scanning.");
                     }
                 }
             }
@@ -822,15 +900,38 @@ void loop() {
                 ui_flashSkipped = false;
                 bool hasMowerFw = mowerFwFilename.length() > 0;
                 bool hasChargerFw = chargerFwFilename.length() > 0;
+                bool canFlashMower = hasMowerFw && mowerConnected;
+                bool canFlashCharger = hasChargerFw && chargerMqttConnected;
+
+                if (!hasMowerFw && !hasChargerFw) {
+                    // No firmware on SD at all
+                    Serial.println("[STATE] No firmware files on SD card!");
 #ifdef WAVESHARE_LCD
-                display_firmware_check(hasMowerFw, hasChargerFw,
-                    hasMowerFw ? mowerFwVersion.c_str() : nullptr,
-                    hasChargerFw ? chargerFwVersion.c_str() : nullptr,
-                    mowerConnected, chargerMqttConnected);
+                    display_confirm("No Firmware", "No firmware files found", "on the SD card.", "Continue");
 #endif
-                Serial.printf("[STATE] Firmware check — mower:%s charger:%s\r\n",
-                    hasMowerFw ? firmwareVersion.c_str() : "none",
-                    hasChargerFw ? "yes" : "none");
+                } else if (!canFlashMower && !canFlashCharger) {
+                    // Firmware on SD but no matching device online
+                    String msg = "";
+                    if (hasMowerFw && !mowerConnected) msg = "Mower firmware on SD\nbut mower not connected.";
+                    else if (hasChargerFw && !chargerMqttConnected) msg = "Charger firmware on SD\nbut charger not connected.";
+                    else msg = "No matching device\nfor firmware on SD.";
+                    Serial.printf("[STATE] Cannot flash: %s\r\n", msg.c_str());
+#ifdef WAVESHARE_LCD
+                    display_confirm("Cannot Flash", msg.c_str(), "", "Continue");
+#endif
+                } else {
+#ifdef WAVESHARE_LCD
+                    display_firmware_check(hasMowerFw, hasChargerFw,
+                        hasMowerFw ? mowerFwVersion.c_str() : nullptr,
+                        hasChargerFw ? chargerFwVersion.c_str() : nullptr,
+                        mowerConnected, chargerMqttConnected);
+#endif
+                }
+                Serial.printf("[STATE] Firmware check — mower:%s(%s) charger:%s(%s)\r\n",
+                    hasMowerFw ? mowerFwVersion.c_str() : "none",
+                    mowerConnected ? "online" : "offline",
+                    hasChargerFw ? chargerFwVersion.c_str() : "none",
+                    chargerMqttConnected ? "online" : "offline");
             }
 
 #ifdef WAVESHARE_LCD
@@ -839,8 +940,10 @@ void loop() {
                 sendOtaCommand();
                 setState(STATE_FIRMWARE_FLASH);
             }
-            if (ui_flashSkipped) {
+            if (ui_flashSkipped || ui_btnPressed) {
                 ui_flashSkipped = false;
+                ui_btnPressed = false;
+                Serial.println("[STATE] Firmware flash skipped");
                 setState(nextStateAfterFlash());
             }
 #else
@@ -857,13 +960,34 @@ void loop() {
             if (stateJustEntered) {
                 stateJustEntered = false;
 #ifdef WAVESHARE_LCD
-                display_firmware_flash("Mower", "Downloading...", 0);
+                display_firmware_flash("Mower", "Sending OTA (plain)...", 0);
 #endif
                 statusMessage = "Firmware sent — device is downloading...";
             }
 #ifndef WAVESHARE_LCD
             setLed((millis() / 200) % 2);
 #endif
+            // Update display with live OTA progress
+#ifdef WAVESHARE_LCD
+            if (otaProgressPercent > 0 || otaStatus.length() > 0) {
+                String statusMsg = otaStatus.length() > 0 ? otaStatus : "Downloading...";
+                display_firmware_flash("Mower", statusMsg.c_str(), otaProgressPercent);
+            }
+#endif
+
+            // AES retry: if plain OTA got "fail" or no response after 30s, try encrypted (v6.x)
+            if (mowerOtaTriedPlain && !mowerOtaTriedAes &&
+                mowerOtaSentAt > 0 && millis() - mowerOtaSentAt > 30000 &&
+                mowerConnected) {
+                Serial.println("[OTA] No response to plain OTA — retrying with AES (v6.x)...");
+                webLogAdd("OTA: Retrying with AES encryption...");
+#ifdef WAVESHARE_LCD
+                display_firmware_flash("Mower", "Retrying (encrypted)...", 0);
+#endif
+                mowerOtaTriedAes = true;
+                sendMowerOtaWithAes(true);
+            }
+
             // After device disconnects (rebooting with new firmware), proceed
             if (!mowerConnected && mowerSn.length() > 0) {
                 Serial.println("[OTA] Device disconnected — firmware installed!");
@@ -983,7 +1107,9 @@ void loop() {
                 ui_wifiPasswordReady = false;
                 userWifiSsid = String(ui_wifiSsid);
                 userWifiPassword = String(ui_wifiPassword);
-                Serial.printf("[WiFi] Credentials set: SSID=%s\r\n", userWifiSsid.c_str());
+                prefs.putString("wifi_ssid", userWifiSsid);
+                prefs.putString("wifi_pass", userWifiPassword);
+                Serial.printf("[WiFi] Credentials set + saved to NVS: SSID=%s\r\n", userWifiSsid.c_str());
                 setState(STATE_REPROVISION);
             }
             break;
@@ -1453,7 +1579,7 @@ void setupHTTP() {
       <label for="pass">Password</label>
       <input type="password" id="pass" name="password" placeholder="WiFi password">
       <label class="toggle"><input type="checkbox" onclick="document.getElementById('pass').type=this.checked?'text':'password'"> Show password</label>
-      <button class="btn" type="submit">Save &amp; Re-provision</button>
+      <button class="btn" type="submit">Save</button>
     </form>
     <div class="msg" id="wifiMsg"></div>
   </div>
@@ -1698,7 +1824,11 @@ function saveWifi(e){
         strncpy(ui_wifiPassword, password.c_str(), sizeof(ui_wifiPassword) - 1);
         ui_wifiPassword[sizeof(ui_wifiPassword) - 1] = '\0';
 
-        Serial.printf("[HTTP] WiFi config saved: SSID='%s' (%d char password)\r\n",
+        // Persist to NVS so it survives reboot
+        prefs.putString("wifi_ssid", ssid);
+        prefs.putString("wifi_pass", password);
+
+        Serial.printf("[HTTP] WiFi config saved to NVS: SSID='%s' (%d char password)\r\n",
                       ssid.c_str(), password.length());
         httpServer.send(200, "application/json", "{\"success\":true}");
     });
@@ -1927,24 +2057,61 @@ void sendMqttMessage(String topic, String payload, bool useAes, String sn) {
     Serial.printf("[MQTT] Published %d bytes to %s\r\n", (int)payloadStr.length(), topic.c_str());
 }
 
-void sendOtaCommand() {
-    if (!mowerConnected || mowerSn.length() == 0) return;
+void sendMowerOtaWithAes(bool useAes) {
+    if (!mowerConnected || mowerSn.length() == 0 || mowerFwFilename.length() == 0) return;
 
     String downloadUrl = "http://10.0.0.1/firmware.deb";
 
     // EXACT OTA payload — NO tz field, type MUST be "full", cmd MUST be "upgrade"
     String otaJson = "{\"ota_upgrade_cmd\":{\"cmd\":\"upgrade\",\"type\":\"full\",\"content\":\"app\",";
     otaJson += "\"url\":\"" + downloadUrl + "\",";
-    otaJson += "\"version\":\"" + firmwareVersion + "\",";
-    otaJson += "\"md5\":\"" + firmwareMd5 + "\"}}";
+    otaJson += "\"version\":\"" + mowerFwVersion + "\",";
+    otaJson += "\"md5\":\"" + mowerFwMd5 + "\"}}";
 
     String topic = "Dart/Send_mqtt/" + mowerSn;
 
-    sendMqttMessage(topic, otaJson, true, mowerSn);
+    sendMqttMessage(topic, otaJson, useAes, mowerSn);
+    mowerOtaSentAt = millis();
 
-    Serial.printf("[OTA] Sent OTA command to %s: %s (%d bytes firmware)\r\n",
-                  mowerSn.c_str(), firmwareVersion.c_str(), firmwareSize);
-    statusMessage = "OTA sent! Mower downloading firmware...";
+    Serial.printf("[OTA] Mower OTA sent to %s (%s): %s (%d bytes)\r\n",
+                  mowerSn.c_str(), useAes ? "AES" : "PLAIN",
+                  mowerFwVersion.c_str(), mowerFwSize);
+    statusMessage = useAes ? "OTA sent (encrypted)..." : "OTA sent (plain)...";
+}
+
+void sendMowerOta() {
+    // Try plain first (v5.x), if no response after 30s try AES (v6.x)
+    mowerOtaTriedPlain = true;
+    mowerOtaTriedAes = false;
+    Serial.println("[OTA] Trying PLAIN first (v5.x stock firmware)...");
+    sendMowerOtaWithAes(false);
+}
+
+void sendChargerOta() {
+    if (!chargerMqttConnected || chargerSn.length() == 0 || chargerFwFilename.length() == 0) return;
+
+    String downloadUrl = "http://10.0.0.1/charger.bin";
+
+    // Charger OTA: simpler format (no cmd/type/content fields)
+    String otaJson = "{\"ota_upgrade_cmd\":{";
+    otaJson += "\"url\":\"" + downloadUrl + "\",";
+    otaJson += "\"version\":\"" + chargerFwVersion + "\",";
+    otaJson += "\"md5\":\"" + chargerFwMd5 + "\"}}";
+
+    String topic = "Dart/Send_mqtt/" + chargerSn;
+
+    // Charger always uses AES encryption
+    sendMqttMessage(topic, otaJson, true, chargerSn);
+
+    Serial.printf("[OTA] Charger OTA sent to %s: %s (%d bytes)\r\n",
+                  chargerSn.c_str(), chargerFwVersion.c_str(), chargerFwSize);
+    statusMessage = "OTA sent! Charger downloading firmware...";
+}
+
+void sendOtaCommand() {
+    // Send to whichever device has firmware available
+    if (mowerConnected && mowerFwFilename.length() > 0) sendMowerOta();
+    if (chargerMqttConnected && chargerFwFilename.length() > 0) sendChargerOta();
 }
 
 // ── BLE provisioning ─────────────────────────────────────────────────────────
@@ -2018,11 +2185,25 @@ bool provisionDevice(NimBLEAdvertisedDevice* device, const char* deviceType) {
     }
 
     // Subscribe to notifications
+    // Mower: responses come on BOTH write char (0011) and notify char (0021)
+    // Charger: responses come on write/notify char (2222, same char)
     String bleResponse = "";
-    notifChr->subscribe(true, [&bleResponse](NimBLERemoteCharacteristic* chr,
-                                              uint8_t* data, size_t length, bool isNotify) {
+    auto notifyCb = [&bleResponse](NimBLERemoteCharacteristic* chr,
+                                    uint8_t* data, size_t length, bool isNotify) {
+        // Skip mower bb/cc telemetry
+        if (length >= 2 && ((data[0] == 0x62 && data[1] == 0x62) || (data[0] == 0x63 && data[1] == 0x63))) return;
         bleResponse += String((char*)data, length);
-    });
+    };
+
+    // Subscribe to the notify characteristic
+    notifChr->subscribe(true, notifyCb);
+    Serial.printf("[BLE] Subscribed to notifications on %s\r\n", notifChr->getUUID().toString().c_str());
+
+    // For mower: also subscribe to write char if it's different and supports notify
+    if (isMower && writeChr != notifChr && writeChr->canNotify()) {
+        writeChr->subscribe(true, notifyCb);
+        Serial.printf("[BLE] Also subscribed to write char %s (mower responses)\r\n", writeChr->getUUID().toString().c_str());
+    }
 
     // ══════════════════════════════════════════════════════════════
     // Command sequence MUST match official Novabot app exactly:
@@ -2093,7 +2274,7 @@ bool provisionDevice(NimBLEAdvertisedDevice* device, const char* deviceType) {
         // 1 second pause between commands (matches bootstrap — gives device time to process)
         if (i > 0) delay(1000);
 
-        bool got = bleSendCommand(client, writeChr, notifChr, cmds[i].payload, cmds[i].name, bleResponse);
+        bool got = bleSendCommand(client, writeChr, notifChr, cmds[i].payload, cmds[i].name, bleResponse, isMower);
         if (got) {
             Serial.printf("[BLE] Response data: %s\r\n", bleResponse.c_str());
             webLogAdd("BLE: %s OK", friendlyName);
@@ -2133,16 +2314,17 @@ bool provisionDevice(NimBLEAdvertisedDevice* device, const char* deviceType) {
 
 bool bleSendCommand(NimBLEClient* client, NimBLERemoteCharacteristic* writeChr,
                     NimBLERemoteCharacteristic* notifyChr, const String& json,
-                    const char* cmdName, String& response) {
+                    const char* cmdName, String& response, bool isMower) {
     webLogAdd("BLE: → %s", cmdName);
     Serial.printf("[BLE] -> %s: %s\r\n", cmdName, json.c_str());
 
     response = "";
 
-    // WriteReq (noResp=false) works fine — the earlier "FAILED" messages were caused by subnet clash,
-    // not the write type. WriteReq is preferred for data persistence confirmation.
-    bool noResp = false;
-    Serial.printf("[BLE] Write mode: WriteReq (with response)\r\n");
+    // CRITICAL: write type differs per device (matches bootstrap/noble)
+    // Charger: writeWithoutResponse (ATT_WRITE_CMD) — noble writeAsync(buf, true)
+    // Mower: writeWithResponse (ATT_WRITE_REQ) — noble writeAsync(buf, false)
+    bool noResp = !isMower;  // charger=true (without), mower=false (with)
+    Serial.printf("[BLE] Write mode: %s\r\n", noResp ? "WriteCmd (no response)" : "WriteReq (with response)");
 
     // Send "ble_start" marker
     bool ok = writeChr->writeValue((const uint8_t*)"ble_start", 9, noResp);
@@ -2212,6 +2394,7 @@ bool bleSendCommand(NimBLEClient* client, NimBLERemoteCharacteristic* writeChr,
 
 bool loadFirmwareInfo() {
     bool foundAny = false;
+    digitalWrite(LCD_CS, HIGH);  // Deactivate LCD during SD access
     File root = SD.open("/");
     while (File f = root.openNextFile()) {
         String name = f.name();
