@@ -63,6 +63,21 @@ void display_wifiList(WifiNetwork* networks, int count, int selected);
 void display_wifiPassword(const char* ssid);
 void display_reprovision(const char* status, int step, int total);
 
+// Phase 3: Menu + firmware flash screens
+extern volatile int ui_menuSelection;     // -1 = no selection, 0+ = menu item
+extern volatile bool ui_flashConfirmed;
+extern volatile bool ui_flashSkipped;
+extern volatile bool ui_backPressed;
+
+void display_detect(int secondsElapsed, int apClients, bool chargerConn, bool mowerConn);
+void display_menu(bool sdMounted, bool hasMowerFw, bool hasChargerFw,
+                  const char* mowerVer, const char* chargerVer,
+                  bool mowerConn, bool chargerConn);
+void display_firmware_check(bool hasMowerFw, bool hasChargerFw,
+                            const char* mowerVer, const char* chargerVer,
+                            bool mowerConn, bool chargerConn);
+void display_firmware_flash(const char* device, const char* status, int progress);
+
 // Legacy hit-test API — kept as no-ops for compatibility, LVGL handles touch natively
 bool display_btnHit(int16_t x, int16_t y);
 int display_hitTest(int16_t x, int16_t y, int deviceCount, bool& startBtnHit);

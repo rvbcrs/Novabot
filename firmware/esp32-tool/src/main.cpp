@@ -396,8 +396,11 @@ void setup() {
 #endif
 
     // Initialize SD card — shares SPI bus with LCD (SCK=39, MISO=40, MOSI=38)
+    // CRITICAL: deactivate LCD CS before SD access to avoid SPI bus conflict
+    pinMode(LCD_CS, OUTPUT);
+    digitalWrite(LCD_CS, HIGH);  // LCD deselected
     SPI.begin(39, 40, 38, SD_CS_PIN);
-    sdMounted = SD.begin(SD_CS_PIN);
+    sdMounted = SD.begin(SD_CS_PIN, SPI, 20000000);  // 20 MHz — LCD CS disabled so no bus conflict
     if (!sdMounted) {
         Serial.println("[SD] Card mount failed — OTA will be skipped");
     } else {
@@ -483,7 +486,7 @@ void loop() {
             unsigned long elapsed = (millis() - stateEnteredAt) / 1000;
 
 #ifdef WAVESHARE_LCD
-            display_detect(elapsed, WiFi.softAPgetStationNum(), chargerMqttConnected, mowerConnected);
+            display_detect((int)elapsed, WiFi.softAPgetStationNum(), chargerMqttConnected, mowerConnected);
 #endif
             // Both connected → go to menu immediately
             if (mowerConnected && chargerMqttConnected) {
@@ -1422,6 +1425,25 @@ void setupHTTP() {
     <div class="row"><span class="label">BLE devices found</span><span class="value" id="bleCnt">--</span></div>
   </div>
 
+  <!-- SD Card file manager -->
+  <div class="card">
+    <h2>SD Card</h2>
+    <div id="sdFiles">Loading...</div>
+    <div style="margin-top:12px;padding-top:12px;border-top:1px solid rgba(255,255,255,.06)">
+      <form id="uploadForm" onsubmit="return doUpload(event)">
+        <input type="file" id="fwFile2" accept=".deb,.bin" style="font-size:13px;color:#aaa">
+        <button class="btn" type="submit" id="uploadBtn" style="margin-top:8px">Upload to SD</button>
+      </form>
+      <div id="uploadProgress" style="display:none;margin-top:8px">
+        <div style="background:#0a0a1a;border-radius:4px;height:20px;overflow:hidden">
+          <div id="progBar" style="height:100%;background:#7c3aed;width:0%;transition:width 0.3s"></div>
+        </div>
+        <div id="progText" style="font-size:12px;color:#888;margin-top:4px">0%</div>
+      </div>
+      <div class="msg" id="uploadMsg"></div>
+    </div>
+  </div>
+
   <!-- WiFi config section -->
   <div class="card">
     <h2>Home WiFi Config</h2>
@@ -1462,6 +1484,53 @@ function upd(){
   }).catch(()=>{})
 }
 upd();setInterval(upd,3000);
+
+function loadFiles(){
+  fetch('/api/sd-files').then(r=>r.json()).then(d=>{
+    var el=document.getElementById('sdFiles');
+    if(!d.mounted){el.innerHTML='<span style="color:#ef4444">SD card not mounted</span>';return}
+    if(!d.files||d.files.length===0){el.innerHTML='<span style="color:#888">No files on SD card</span>';return}
+    el.innerHTML=d.files.map(f=>
+      '<div class="row"><span class="label">'+f.name+'</span><span class="value" style="display:flex;gap:8px;align-items:center">'
+      +'<span style="color:#888;font-size:12px">'+formatSize(f.size)+'</span>'
+      +'<span style="color:#ef4444;cursor:pointer;font-size:12px" onclick="delFile(\''+f.name+'\')">[x]</span>'
+      +'</span></div>'
+    ).join('');
+  }).catch(()=>{document.getElementById('sdFiles').innerHTML='<span style="color:#ef4444">Error</span>'})
+}
+function formatSize(b){if(b>1048576)return (b/1048576).toFixed(1)+'MB';if(b>1024)return (b/1024).toFixed(0)+'KB';return b+'B'}
+function delFile(name){
+  if(!confirm('Delete '+name+'?'))return;
+  fetch('/api/sd-delete?name='+encodeURIComponent(name),{method:'DELETE'}).then(r=>r.json()).then(d=>{
+    if(d.ok)loadFiles(); else alert(d.error||'Delete failed');
+  })
+}
+loadFiles();
+
+function doUpload(e){
+  e.preventDefault();
+  var f=document.getElementById('fwFile2').files[0];
+  if(!f){alert('Select a file first');return false}
+  var xhr=new XMLHttpRequest();
+  var prog=document.getElementById('uploadProgress');
+  var bar=document.getElementById('progBar');
+  var txt=document.getElementById('progText');
+  var msg=document.getElementById('uploadMsg');
+  var btn=document.getElementById('uploadBtn');
+  prog.style.display='block';msg.className='msg';btn.disabled=true;
+  xhr.upload.onprogress=function(e){
+    if(e.lengthComputable){var pct=Math.round(e.loaded/e.total*100);bar.style.width=pct+'%';txt.textContent=pct+'% ('+formatSize(e.loaded)+' / '+formatSize(e.total)+')'}
+  };
+  xhr.onload=function(){
+    btn.disabled=false;
+    if(xhr.status===200){msg.className='msg ok';msg.textContent='Upload complete!';loadFiles()}
+    else{msg.className='msg err';msg.textContent='Upload failed: '+xhr.statusText}
+  };
+  xhr.onerror=function(){btn.disabled=false;msg.className='msg err';msg.textContent='Connection error'};
+  var fd=new FormData();fd.append('firmware',f);
+  xhr.open('POST','/upload');xhr.send(fd);
+  return false;
+}
 
 function saveWifi(e){
   e.preventDefault();
@@ -1718,6 +1787,77 @@ function saveWifi(e){
     });
 
     // Captive portal detection + catch-all redirect to dashboard
+    // ── SD card API endpoints ───────────────────────────────────────────
+
+    // List files on SD card
+    httpServer.on("/api/sd-files", HTTP_GET, []() {
+        if (!sdMounted) {
+            httpServer.send(200, "application/json", "{\"mounted\":false,\"files\":[]}");
+            return;
+        }
+        digitalWrite(LCD_CS, HIGH);  // Deactivate LCD during SD access
+        String json = "{\"mounted\":true,\"files\":[";
+        File root = SD.open("/");
+        bool first = true;
+        while (File f = root.openNextFile()) {
+            if (!f.isDirectory()) {
+                if (!first) json += ",";
+                json += "{\"name\":\"" + String(f.name()) + "\",\"size\":" + String(f.size()) + "}";
+                first = false;
+            }
+            f.close();
+        }
+        root.close();
+        json += "]}";
+        httpServer.send(200, "application/json", json);
+    });
+
+    // Delete file from SD card
+    httpServer.on("/api/sd-delete", HTTP_DELETE, []() {
+        String name = httpServer.arg("name");
+        if (name.length() == 0) { httpServer.send(400, "application/json", "{\"ok\":false,\"error\":\"name required\"}"); return; }
+        String path = name.startsWith("/") ? name : "/" + name;
+        digitalWrite(LCD_CS, HIGH);
+        if (SD.exists(path)) {
+            SD.remove(path);
+            Serial.printf("[SD] Deleted: %s\r\n", path.c_str());
+            httpServer.send(200, "application/json", "{\"ok\":true}");
+        } else {
+            httpServer.send(404, "application/json", "{\"ok\":false,\"error\":\"file not found\"}");
+        }
+    });
+
+    // Upload file to SD card — stream directly, no RAM buffering
+    static File uploadFile;
+    httpServer.on("/upload", HTTP_POST,
+        []() {
+            httpServer.send(200, "application/json", "{\"ok\":true}");
+        },
+        []() {
+            HTTPUpload& upload = httpServer.upload();
+            if (upload.status == UPLOAD_FILE_START) {
+                digitalWrite(LCD_CS, HIGH);  // Deactivate LCD during SD write
+                String filename = "/" + upload.filename;
+                Serial.printf("[UPLOAD] Start: %s\r\n", filename.c_str());
+                if (SD.exists(filename)) SD.remove(filename);
+                uploadFile = SD.open(filename, FILE_WRITE);
+                if (!uploadFile) Serial.println("[UPLOAD] ERROR: Could not open file");
+            } else if (upload.status == UPLOAD_FILE_WRITE) {
+                if (uploadFile) {
+                    uploadFile.write(upload.buf, upload.currentSize);
+                    if (upload.totalSize > 0 && upload.totalSize % (1024*1024) < upload.currentSize) {
+                        Serial.printf("[UPLOAD] %d MB received\r\n", (int)(upload.totalSize / (1024*1024)));
+                    }
+                }
+            } else if (upload.status == UPLOAD_FILE_END) {
+                if (uploadFile) {
+                    uploadFile.close();
+                    Serial.printf("[UPLOAD] Done: %s (%d bytes)\r\n", upload.filename.c_str(), upload.totalSize);
+                }
+            }
+        }
+    );
+
     httpServer.onNotFound([]() {
         String uri = httpServer.uri();
         String host = httpServer.hostHeader();
@@ -2122,17 +2262,27 @@ bool loadFirmwareInfo() {
 }
 
 String computeMd5(const char* path) {
+    // Deactivate LCD CS during SD read
+    digitalWrite(LCD_CS, HIGH);
     File f = SD.open(path);
     if (!f) return "";
     MD5Builder md5;
     md5.begin();
     uint8_t buf[4096];
+    unsigned long start = millis();
     while (f.available()) {
         int n = f.read(buf, sizeof(buf));
+        if (n <= 0) break;  // Read error — don't hang
         md5.add(buf, n);
+        if (millis() - start > 30000) {  // 30s timeout
+            Serial.println("[SD] MD5 computation timeout!");
+            f.close();
+            return "";
+        }
     }
     f.close();
     md5.calculate();
+    Serial.printf("[SD] MD5 of %s: %s (%lums)\r\n", path, md5.toString().c_str(), millis() - start);
     return md5.toString();
 }
 
