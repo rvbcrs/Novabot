@@ -21,8 +21,8 @@ let logStream: fs.WriteStream | null = null;
 export function initProxyLogger(): void {
   const mode = process.env.PROXY_MODE ?? 'local';
 
-  // Maak logs directory aan naast package.json (process.cwd = novabot-server/)
-  const logsDir = path.resolve(process.cwd(), 'logs');
+  // Maak logs directory aan relatief aan dit bronbestand (server/logs/)
+  const logsDir = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../../logs');
   if (!fs.existsSync(logsDir)) {
     fs.mkdirSync(logsDir, { recursive: true });
   }

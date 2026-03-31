@@ -60,7 +60,7 @@ export function adminPageHtml(): string {
 <body>
 
 <!-- Login -->
-<div id="login" class="login-box">
+<div id="login" class="login-box" style="display:none">
   <div class="card" style="text-align:center;padding:32px">
     <h1 style="margin-bottom:16px">OpenNova Admin</h1>
     <p style="color:#666;font-size:13px;margin-bottom:24px">Login with your OpenNova account</p>
@@ -72,7 +72,7 @@ export function adminPageHtml(): string {
 </div>
 
 <!-- Admin Panel -->
-<div id="app" class="container">
+<div id="app" class="container" style="display:none">
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:24px">
     <div>
       <h1>OpenNova Admin</h1>
@@ -368,10 +368,14 @@ async function loadEquipment() {
 // Auto-login if token exists
 if (token) {
   api('/overview').then(() => showApp()).catch(() => {
+    token = '';
+    localStorage.removeItem('admin_token');
     document.getElementById('login').style.display = 'block';
+    document.getElementById('app').style.display = 'none';
   });
 } else {
   document.getElementById('login').style.display = 'block';
+  document.getElementById('app').style.display = 'none';
 }
 </script>
 </body>

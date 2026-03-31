@@ -2515,11 +2515,16 @@ dashboardRouter.post('/ota/trigger/:sn', (req: Request, res: Response) => {
   // GEEN set_cfg_info (timezone) sturen! mqtt_node zet type:"increment" als
   // timezone in geheugen zit. Zonder timezone → type:"full" → OTA werkt.
 
-  // Beide apparaten krijgen nu AES-encrypted commando's (charger v0.4.0+ en maaier v6+)
-  // publishToDevice() handelt AES encryptie automatisch af voor LFI* apparaten
+  // Detect firmware version to decide encryption
+  // v5.x firmware has NO AES decryption → must send plain JSON
+  // v6.x+ firmware HAS AES → must send encrypted
+  const snapshots = getAllDeviceSnapshots();
+  const deviceSensors = snapshots[sn] ?? {};
+  const fwVersion = deviceSensors.sw_version || deviceSensors.version || deviceSensors.mower_version || '';
+  const needsPlaintext = fwVersion.startsWith('v5.') || fwVersion.startsWith('5.');
+
   const isCharger = sn.startsWith('LFIC');
   if (isCharger) {
-    // Charger ESP32: plat formaat — url/md5/version direct in ota_upgrade_cmd
     const otaCommand = {
       ota_upgrade_cmd: {
         url: downloadUrl,
@@ -2530,9 +2535,6 @@ dashboardRouter.post('/ota/trigger/:sn', (req: Request, res: Response) => {
     publishToDevice(sn, otaCommand);
     console.log(`\x1b[38;5;208m[OTA] Encrypted ota_upgrade_cmd naar charger ${sn}\x1b[0m`);
   } else {
-    // Maaier OTA: EXACT het formaat dat bewezen werkte via de app op 2 maart 2026.
-    // Bron: broker.ts OTA-FIX log van het succesvolle app-OTA naar custom-5.
-    // GEEN tz veld (mqtt_node zet anders type:"increment").
     const mowerOtaCommand = {
       ota_upgrade_cmd: {
         cmd: 'upgrade',
@@ -2543,11 +2545,129 @@ dashboardRouter.post('/ota/trigger/:sn', (req: Request, res: Response) => {
         md5: otaVersion.md5 ?? '',
       },
     };
-    publishToDevice(sn, mowerOtaCommand);
-    console.log(`\x1b[38;5;208m[OTA] Encrypted ota_upgrade_cmd naar mower ${sn}: ${JSON.stringify(mowerOtaCommand)}\x1b[0m`);
+
+    if (needsPlaintext) {
+      // v5.x: send UNENCRYPTED — firmware cannot decrypt AES
+      const topic = `Dart/Send_mqtt/${sn}`;
+      publishToTopic(topic, mowerOtaCommand);
+      console.log(`\x1b[38;5;208m[OTA] PLAIN (v5.x) ota_upgrade_cmd naar mower ${sn}: ${JSON.stringify(mowerOtaCommand)}\x1b[0m`);
+    } else {
+      // v6.x+: send AES encrypted
+      publishToDevice(sn, mowerOtaCommand);
+      console.log(`\x1b[38;5;208m[OTA] Encrypted ota_upgrade_cmd naar mower ${sn}: ${JSON.stringify(mowerOtaCommand)}\x1b[0m`);
+    }
   }
 
   res.json({ ok: true, command: 'ota_upgrade_cmd', version: otaVersion.version, target: sn });
+});
+
+// ── LoRa address allocation ──────────────────────────────────────
+
+// GET /api/dashboard/lora/next-address — get next free LoRa address for a new charger
+dashboardRouter.get('/lora/next-address', (_req: Request, res: Response) => {
+  const rows = db.prepare(
+    'SELECT charger_address FROM equipment_lora_cache WHERE charger_address IS NOT NULL'
+  ).all() as { charger_address: number }[];
+
+  const usedAddresses = new Set(rows.map(r => Number(r.charger_address)));
+  // Start at 718 (Novabot default), find next unused
+  let nextAddr = 718;
+  while (usedAddresses.has(nextAddr)) {
+    nextAddr++;
+  }
+
+  res.json({ address: nextAddr, channel: 16, hc: 20, lc: 14 });
+});
+
+// GET /api/dashboard/device-sets — group devices into charger↔mower sets based on LoRa address
+dashboardRouter.get('/device-sets', (_req: Request, res: Response) => {
+  // Get all LoRa pairings
+  const loraRows = db.prepare('SELECT sn, charger_address, charger_channel FROM equipment_lora_cache').all() as
+    { sn: string; charger_address: number | null; charger_channel: number | null }[];
+
+  // Get all known devices with online status
+  const deviceRows = db.prepare(`
+    SELECT d.sn, d.mac_address, d.last_seen FROM device_registry d
+    INNER JOIN (
+      SELECT sn, MAX(last_seen) as max_seen FROM device_registry
+      WHERE sn IS NOT NULL GROUP BY sn
+    ) latest ON d.sn = latest.sn AND d.last_seen = latest.max_seen
+  `).all() as { sn: string; mac_address: string | null; last_seen: string }[];
+
+  const allSns = new Set(deviceRows.map(r => r.sn));
+
+  // Group by LoRa address
+  const byAddr = new Map<number, { charger: string | null; mower: string | null }>();
+  const paired = new Set<string>();
+
+  for (const r of loraRows) {
+    if (r.charger_address == null) continue;
+    const addr = Number(r.charger_address);
+    if (!byAddr.has(addr)) byAddr.set(addr, { charger: null, mower: null });
+    const set = byAddr.get(addr)!;
+    if (r.sn.startsWith('LFIC')) set.charger = r.sn;
+    else set.mower = r.sn;
+    paired.add(r.sn);
+  }
+
+  // Build sets
+  const sets: Array<{
+    loraAddress: number | null;
+    charger: { sn: string; online: boolean } | null;
+    mower: { sn: string; online: boolean } | null;
+  }> = [];
+
+  for (const [addr, pair] of byAddr) {
+    sets.push({
+      loraAddress: addr,
+      charger: pair.charger ? { sn: pair.charger, online: isDeviceOnline(pair.charger) } : null,
+      mower: pair.mower ? { sn: pair.mower, online: isDeviceOnline(pair.mower) } : null,
+    });
+  }
+
+  // Add unpaired devices
+  for (const d of deviceRows) {
+    if (paired.has(d.sn)) continue;
+    if (!d.sn.startsWith('LFI')) continue;
+    const isCharger = d.sn.startsWith('LFIC');
+    sets.push({
+      loraAddress: null,
+      charger: isCharger ? { sn: d.sn, online: isDeviceOnline(d.sn) } : null,
+      mower: !isCharger ? { sn: d.sn, online: isDeviceOnline(d.sn) } : null,
+    });
+  }
+
+  res.json({ sets });
+});
+
+// GET /api/dashboard/lora/for-charger/:chargerSn — get LoRa params for a specific charger
+dashboardRouter.get('/lora/for-charger/:chargerSn', (req: Request, res: Response) => {
+  const { chargerSn } = req.params;
+  const row = db.prepare(
+    'SELECT charger_address, charger_channel FROM equipment_lora_cache WHERE sn = ?'
+  ).get(chargerSn) as { charger_address: number; charger_channel: number } | undefined;
+
+  if (row) {
+    res.json({ address: row.charger_address, channel: row.charger_channel, hc: 20, lc: 14 });
+  } else {
+    res.status(404).json({ error: 'Charger not found in LoRa cache' });
+  }
+});
+
+// POST /api/dashboard/lora/register — register LoRa params after charger provisioning
+dashboardRouter.post('/lora/register', (req: Request, res: Response) => {
+  const { sn, address, channel } = req.body as { sn?: string; address?: number; channel?: number };
+  if (!sn || address == null) {
+    res.status(400).json({ error: 'sn and address required' });
+    return;
+  }
+  db.prepare(`
+    INSERT INTO equipment_lora_cache (sn, charger_address, charger_channel)
+    VALUES (?, ?, ?)
+    ON CONFLICT(sn) DO UPDATE SET charger_address = ?, charger_channel = ?
+  `).run(sn, address, channel ?? 16, address, channel ?? 16);
+  console.log(`[LoRa] Registered ${sn}: addr=${address} ch=${channel ?? 16}`);
+  res.json({ ok: true });
 });
 
 // ── PIN Code Management ─────────────────────────────────────────
