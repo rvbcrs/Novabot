@@ -349,6 +349,13 @@ export async function provisionDevice(params: ProvisionParams, io: IOServer): Pr
       };
     }
 
+    // ── Log all payloads before sending ─────────────────────────
+    bleLog(`[BLE] === PROVISIONING PARAMS ===`);
+    bleLog(`[BLE]   WiFi: ${JSON.stringify(wifiPayload)}`);
+    bleLog(`[BLE]   MQTT: addr=${mqttAddr}, port=${mqttPort}`);
+    bleLog(`[BLE]   Device: ${deviceType}, SN=${targetSn ?? '?'}`);
+    bleLog(`[BLE] ==============================`);
+
     // ── Charger: set_wifi_info FIRST (before anything else) ────
     if (deviceType === 'charger') {
       io.emit('ble-progress', { phase: 'wifi', message: `Setting WiFi (${wifiSsid})...` });
@@ -429,11 +436,13 @@ export async function provisionDevice(params: ProvisionParams, io: IOServer): Pr
     await sleep(1000);
 
     // ── set_mqtt_info ──────────────────────────────────────────
+    const mqttPayload = { set_mqtt_info: { addr: mqttAddr, port: mqttPort } };
+    bleLog(`[BLE] MQTT payload: ${JSON.stringify(mqttPayload)}`);
     io.emit('ble-progress', { phase: 'mqtt', message: `Setting MQTT (${mqttAddr}:${mqttPort})...` });
     try {
       const { ok: mqttOk, response: mqttResp } = await sendCommand(
         writeChar, allNotifyChars,
-        JSON.stringify({ set_mqtt_info: { addr: mqttAddr, port: mqttPort } }),
+        JSON.stringify(mqttPayload),
         'set_mqtt_info', RESPONSE_TIMEOUT, flushChar);
       if (mqttOk) bleLog('[BLE] set_mqtt_info OK — MQTT address accepted!');
       else bleWarn('[BLE] set_mqtt_info non-zero (continuing):', JSON.stringify(mqttResp));

@@ -100,6 +100,13 @@ let activeFirmware: { name: string; path: string; size: number; version: string 
 // Selected network IP (set by user in wizard)
 let selectedIp: string | null = null;
 
+// MQTT address used during provisioning (mqtt.lfibot.com or direct IP)
+// Persisted to file so it survives restarts
+const MQTT_ADDR_FILE = path.resolve(__dirname, '../.mqtt_addr');
+let provisionedMqttAddr: string | null = (() => {
+  try { return fs.readFileSync(MQTT_ADDR_FILE, 'utf8').trim() || null; } catch { return null; }
+})();
+
 // mDNS responder: advertises opennovabot.local → selectedIp
 let mdnsInstance: ReturnType<typeof multicastDns> | null = null;
 
@@ -780,9 +787,11 @@ export function createServer(): http.Server {
       return;
     }
     // Use relay hostname if provided, otherwise fall back to local IP
-    const { mqttHost, mqttPort: reqMqttPort } = req.body as { mqttHost?: string; mqttPort?: number };
-    const mqttAddr = mqttHost || process.env.MQTT_ADDR || 'mqtt.lfibot.com';
+    const { mqttHost, mqttAddr: reqMqttAddr, mqttPort: reqMqttPort } = req.body as { mqttHost?: string; mqttAddr?: string; mqttPort?: number };
+    const mqttAddr = reqMqttAddr || mqttHost || process.env.MQTT_ADDR || 'mqtt.lfibot.com';
     const mqttPort = reqMqttPort || (process.env.MQTT_PORT ? parseInt(process.env.MQTT_PORT) : 1883);
+    provisionedMqttAddr = mqttAddr;
+    try { fs.writeFileSync(MQTT_ADDR_FILE, mqttAddr); } catch {}
     if (!mqttAddr) {
       res.status(400).json({ error: 'No network IP selected (select IP in network step first)' });
       return;
@@ -807,7 +816,6 @@ export function createServer(): http.Server {
     const mower = getConnectedMower();
     if (!mower) { res.status(400).json({ error: 'Geen maaier verbonden' }); return; }
     if (!activeFirmware) { res.status(400).json({ error: 'Geen firmware geselecteerd' }); return; }
-    if (!selectedIp) { res.status(400).json({ error: 'Geen netwerk IP geselecteerd' }); return; }
 
     const { sn, ip: mowerIp } = mower;
     const { name, path: firmwarePath, version } = activeFirmware;
@@ -818,8 +826,33 @@ export function createServer(): http.Server {
     const fileBuffer = fs.readFileSync(firmwarePath);
     const firmwareMd5 = md5(fileBuffer);
 
-    // Download URL: bootstrap HTTP server serves the file on port 7789
-    const downloadUrl = `http://${selectedIp}:7789/firmware/${name}`;
+    // Determine download URL based on MQTT host
+    // If MQTT was mqtt.lfibot.com → mower can only resolve *.lfibot.com
+    // So OTA download URL must use app.lfibot.com (DNS rewrite → server)
+    // Otherwise use the direct IP the user selected
+    // Server address = MQTT address, unless mqtt.lfibot.com → use app.lfibot.com
+    const serverAddr = provisionedMqttAddr || selectedIp || 'mqtt.lfibot.com';
+    const otaHost = serverAddr === 'mqtt.lfibot.com' ? 'app.lfibot.com' : serverAddr;
+    const otaPort = serverAddr === 'mqtt.lfibot.com' ? '' : ':7789';
+
+    // If using lfibot.com, copy firmware to main server
+    if (serverAddr === 'mqtt.lfibot.com') {
+      try {
+        const serverFwDir = path.resolve(__dirname, '../../server/firmware');
+        const destPath = path.join(serverFwDir, name);
+        if (!fs.existsSync(destPath) || fs.statSync(destPath).size !== fileBuffer.length) {
+          fs.copyFileSync(firmwarePath, destPath);
+          console.log(`[OTA] Copied firmware to server: ${destPath}`);
+        }
+      } catch (err) {
+        console.warn(`[OTA] Could not copy to server firmware dir: ${err}`);
+      }
+    }
+
+    const downloadUrl = serverAddr === 'mqtt.lfibot.com'
+      ? `http://app.lfibot.com/api/dashboard/firmware/${name}`
+      : `http://${otaHost}:7789/firmware/${name}`;
+    console.log(`[OTA] serverAddr=${serverAddr}, downloadUrl=${downloadUrl}`);
 
     // Build OTA command (exact payload — NEVER change this structure)
     const command = {
@@ -833,9 +866,48 @@ export function createServer(): http.Server {
       },
     };
 
-    // Encrypt and publish
-    const encrypted = encryptForDevice(sn, command);
-    publishToMower(sn, encrypted);
+    // Send OTA command
+    if (serverAddr === 'mqtt.lfibot.com') {
+      // Mower is connected to the MAIN server's MQTT broker (via DNS rewrite)
+      // → send OTA via the main server's dashboard API instead of bootstrap's own broker
+      const mainServerUrl = 'http://localhost:3000';
+      try {
+        // First register the firmware version on the main server
+        const regResp = await fetch(`${mainServerUrl}/api/dashboard/ota/versions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            version,
+            device_type: 'mower',
+            download_url: downloadUrl,
+            md5: firmwareMd5,
+          }),
+        });
+        const regData = await regResp.json() as { id?: number };
+        console.log(`[OTA] Registered version on server: id=${regData.id}`);
+
+        // Then trigger OTA via the server
+        const trigResp = await fetch(`${mainServerUrl}/api/dashboard/ota/trigger/${sn}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ version_id: regData.id, force: true }),
+        });
+        const trigData = await trigResp.json() as { ok?: boolean; error?: string };
+        if (!trigData.ok) {
+          console.error(`[OTA] Server trigger failed: ${trigData.error}`);
+          io.emit('ota-log', { message: `Server OTA trigger failed: ${trigData.error}` });
+        } else {
+          console.log(`[OTA] Server triggered OTA for ${sn}`);
+        }
+      } catch (err) {
+        console.error(`[OTA] Failed to trigger via main server: ${err}`);
+        io.emit('ota-log', { message: `Failed to trigger via server: ${err}` });
+      }
+    } else {
+      // Mower is connected to bootstrap's own MQTT broker → publish directly
+      const encrypted = encryptForDevice(sn, command);
+      publishToMower(sn, encrypted);
+    }
 
     io.emit('ota-log', { message: `OTA command sent to ${sn}` });
     io.emit('ota-log', { message: `Download URL: ${downloadUrl}` });
@@ -845,6 +917,33 @@ export function createServer(): http.Server {
 
     // Mark OTA in progress so the disconnect/reconnect callbacks fire
     otaInProgress = true;
+
+    // If using main server for OTA, listen to its socket.io for progress events
+    if (serverAddr === 'mqtt.lfibot.com') {
+      try {
+        const { io: ioClient } = await import('socket.io-client');
+        const serverSocket = ioClient('http://localhost:3000', { transports: ['websocket'] });
+        serverSocket.on('ota:event', (data: { sn: string; eventType: string; data: any }) => {
+          if (data.sn !== sn) return;
+          const otaData = data.data || {};
+          const pct = otaData.percentage ?? otaData.progress ?? null;
+          const status = otaData.status ?? otaData.state ?? '';
+          console.log(`[OTA] Progress from server: ${sn} ${status} ${pct != null ? pct + '%' : ''}`);
+          io.emit('ota-log', { message: `OTA progress: ${status} ${pct != null ? pct + '%' : ''}` });
+          if (pct != null) {
+            io.emit('ota-download-progress', { percent: Number(pct) <= 1 ? Number(pct) * 100 : Number(pct) });
+          }
+          if (status === 'success' || status === 'fail' || status === 'error') {
+            io.emit('ota-log', { message: `OTA ${status}!` });
+            serverSocket.disconnect();
+          }
+        });
+        // Auto-disconnect after 30 minutes
+        setTimeout(() => serverSocket.disconnect(), 30 * 60 * 1000);
+      } catch (err) {
+        console.warn(`[OTA] Could not connect to server socket for progress: ${err}`);
+      }
+    }
     // Capture mower IP from MQTT connection for SSH recovery
     const connectedMower = getConnectedMower();
     if (connectedMower?.ip) otaMowerIp = connectedMower.ip;
