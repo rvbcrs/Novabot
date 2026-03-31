@@ -16,6 +16,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { colors } from '../theme/colors';
 import type { RootStackParams } from '../navigation/types';
 import { discoverServers, type DiscoveredServer } from '../services/discovery';
+import { getServerUrl } from '../services/auth';
 
 type Props = NativeStackScreenProps<RootStackParams, 'Settings'>;
 
@@ -36,6 +37,15 @@ export default function SettingsScreen({ navigation }: Props) {
         const savedPort = await SecureStore.getItemAsync(STORE_KEY_PORT);
         if (savedAddr) setMqttAddr(savedAddr);
         if (savedPort) setMqttPort(savedPort);
+
+        // Pre-fill from login server URL if no saved MQTT address
+        if (!savedAddr) {
+          const serverUrl = await getServerUrl();
+          if (serverUrl) {
+            const match = serverUrl.match(/\/\/([^:/]+)/);
+            if (match?.[1]) setMqttAddr(match[1]);
+          }
+        }
       } catch {}
       setLoaded(true);
     })();

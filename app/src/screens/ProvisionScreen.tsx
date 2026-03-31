@@ -21,6 +21,8 @@ import {
   type DeviceType,
   type ProvisionPhase,
 } from '../services/ble';
+import { ApiClient } from '../services/api';
+import { getServerUrl } from '../services/auth';
 
 type Props = NativeStackScreenProps<RootStackParams, 'Provision'>;
 
@@ -70,6 +72,7 @@ export default function ProvisionScreen({ navigation, route }: Props) {
   const [otaMessage, setOtaMessage] = useState('');
   const [serverReachable, setServerReachable] = useState<boolean | null>(null);
   const startedRef = useRef(false);
+  const provisionStartTime = useRef(0);
 
   // Success animation
   const successScale = useRef(new Animated.Value(0)).current;
@@ -90,11 +93,55 @@ export default function ProvisionScreen({ navigation, route }: Props) {
   );
 
   const runProvisioning = useCallback(async () => {
+    provisionStartTime.current = Date.now();
     const results: boolean[] = [];
+
+    // Fetch LoRa params from server before provisioning
+    let chargerLoraParams: { addr: number; channel: number; hc: number; lc: number } | undefined;
+    let mowerLoraParams: { addr: number; channel: number; hc: number; lc: number } | undefined;
+    try {
+      const serverUrl = await getServerUrl();
+      if (serverUrl) {
+        const api = new ApiClient(serverUrl);
+        const hasCharger = devices.some(d => d.type === 'charger');
+        const hasMower = devices.some(d => d.type === 'mower');
+
+        if (hasCharger) {
+          // New charger: get next free LoRa address
+          const resp = await api.getNextLoraAddress();
+          chargerLoraParams = { addr: resp.address, channel: resp.channel, hc: resp.hc, lc: resp.lc };
+          bleLog(`[LoRa] Charger will get address: ${resp.address}, channel: ${resp.channel}`);
+        }
+
+        if (hasMower) {
+          // Mower: find the online charger and get its LoRa params
+          try {
+            const setsRes = await api.getDeviceSets();
+            // Find a charger that's online and has LoRa params, or the one being provisioned now
+            const onlineSet = setsRes.sets?.find(s => s.charger?.online && s.loraAddress);
+            if (onlineSet && onlineSet.loraAddress) {
+              mowerLoraParams = { addr: onlineSet.loraAddress, channel: 16, hc: 20, lc: 14 };
+              bleLog(`[LoRa] Mower will pair with charger ${onlineSet.charger?.sn} (addr=${onlineSet.loraAddress})`);
+            } else if (chargerLoraParams) {
+              // Pairing with the charger being provisioned in this same session
+              mowerLoraParams = chargerLoraParams;
+              bleLog(`[LoRa] Mower will pair with charger from this session (addr=${chargerLoraParams.addr})`);
+            }
+          } catch {
+            bleLog('[LoRa] Could not fetch device sets for mower pairing');
+          }
+        }
+      }
+    } catch (e) {
+      bleLog(`[LoRa] Could not fetch from server, using defaults: ${e}`);
+    }
 
     for (const dev of devices) {
       const deviceType: DeviceType =
         dev.type === 'charger' || dev.type === 'mower' ? dev.type : 'mower';
+
+      // Pick the right LoRa params per device type
+      const loraForDevice = deviceType === 'charger' ? chargerLoraParams : mowerLoraParams;
 
       updateDeviceState(dev.id, (s) => ({
         ...s,
@@ -105,7 +152,7 @@ export default function ProvisionScreen({ navigation, route }: Props) {
       const ok = await provisionDevice(
         dev.id,
         deviceType,
-        { wifiSsid, wifiPassword, mqttAddr, mqttPort },
+        { wifiSsid, wifiPassword, mqttAddr, mqttPort, lora: loraForDevice, deviceName: dev.name },
         (phase, message) => {
           updateDeviceState(dev.id, (s) => {
             const completed = new Set(s.completedPhases);
@@ -135,6 +182,20 @@ export default function ProvisionScreen({ navigation, route }: Props) {
           });
         },
       );
+
+      // After successful charger provisioning, register LoRa params on server
+      if (ok && deviceType === 'charger' && chargerLoraParams) {
+        try {
+          const serverUrl = await getServerUrl();
+          if (serverUrl) {
+            const api = new ApiClient(serverUrl);
+            await api.registerLora(dev.name ?? dev.id, chargerLoraParams.addr, chargerLoraParams.channel);
+            bleLog(`[LoRa] Registered charger LoRa: addr=${chargerLoraParams.addr} ch=${chargerLoraParams.channel}`);
+          }
+        } catch (e) {
+          bleLog(`[LoRa] Failed to register: ${e}`);
+        }
+      }
 
       results.push(ok);
     }
@@ -197,15 +258,32 @@ export default function ProvisionScreen({ navigation, route }: Props) {
         const lastSeen = lastDevice?.last_seen as string | null;
         bleLog(`[MQTT-POLL] lastDevice=${lastSn}, lastSeen=${lastSeen}`);
 
-        // Check if a device came online recently (within last 2 minutes)
-        if (lastSeen) {
+        // Check if one of our provisioned devices came online recently
+        if (lastSn && lastSeen) {
           const seenDate = new Date(lastSeen + 'Z'); // UTC
           const age = Date.now() - seenDate.getTime();
-          if (age < 120000) { // 2 minutes
-            const status: Record<string, boolean> = {};
-            for (const dev of devices) status[dev.id] = true;
-            setDeviceOnline(status);
-            bleLog(`[MQTT-POLL] Device online! (${Math.round(age/1000)}s ago)`);
+          // Match against BLE device names (charger=CHARGER_PILE, mower=Novabot)
+          // or check if the SN is new (wasn't online before provisioning started)
+          const isOurDevice = devices.some(d => {
+            // SN-based match: device name might contain part of SN
+            const nameLower = (d.name ?? '').toLowerCase();
+            const snLower = (lastSn ?? '').toLowerCase();
+            return nameLower.includes(snLower) || snLower.includes(nameLower);
+          });
+
+          if (age < 120000 && age > 0) { // within 2 minutes
+            // Only mark as online if the device wasn't already online before we started
+            const wasAlreadyOnline = provisionStartTime.current > 0 &&
+              seenDate.getTime() < provisionStartTime.current;
+
+            if (!wasAlreadyOnline) {
+              const status: Record<string, boolean> = {};
+              for (const dev of devices) status[dev.id] = true;
+              setDeviceOnline(status);
+              bleLog(`[MQTT-POLL] New device online: ${lastSn} (${Math.round(age/1000)}s ago)`);
+            } else {
+              bleLog(`[MQTT-POLL] ${lastSn} was already online before provisioning`);
+            }
           }
         }
       } catch (e: any) {

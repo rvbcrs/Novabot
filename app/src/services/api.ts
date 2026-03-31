@@ -298,6 +298,43 @@ export class ApiClient {
     return this.request('GET', '/api/dashboard/devices');
   }
 
+  async deleteDevice(sn: string): Promise<{ ok: boolean }> {
+    const url = `${this.baseUrl}/api/dashboard/devices/${enc(sn)}`;
+    const res = await fetch(url, { method: 'DELETE' });
+    return res.json();
+  }
+
+  // ── Device sets (charger↔mower pairing) ─────────────────────────────
+
+  async getDeviceSets(): Promise<{
+    sets: Array<{
+      loraAddress: number | null;
+      charger: { sn: string; online: boolean } | null;
+      mower: { sn: string; online: boolean } | null;
+    }>;
+  }> {
+    return this.request('GET', '/api/dashboard/device-sets');
+  }
+
+  // ── LoRa address allocation ─────────────────────────────────────────
+
+  /** Get next free LoRa address for a new charger */
+  async getNextLoraAddress(): Promise<{ address: number; channel: number; hc: number; lc: number }> {
+    return this.request('GET', '/api/dashboard/lora/next-address');
+  }
+
+  /** Get LoRa params for a specific charger (for mower provisioning) */
+  async getLoraForCharger(chargerSn: string): Promise<{ address: number; channel: number; hc: number; lc: number }> {
+    return this.request('GET', `/api/dashboard/lora/for-charger/${enc(chargerSn)}`);
+  }
+
+  /** Register LoRa params after charger provisioning */
+  async registerLora(sn: string, address: number, channel: number): Promise<{ ok: boolean }> {
+    return this.request('POST', '/api/dashboard/lora/register', {
+      body: { sn, address, channel },
+    });
+  }
+
   // ── Cutting Height ───────────────────────────────────────────────────
 
   async setCuttingHeight(sn: string, height: number): Promise<CommandResult> {

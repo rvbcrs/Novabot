@@ -13,6 +13,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors } from '../theme/colors';
+import { MowingDirectionPreview } from '../components/MowingDirectionPreview';
 import { useMowerState } from '../hooks/useMowerState';
 import { ApiClient } from '../services/api';
 import { getServerUrl } from '../services/auth';
@@ -116,12 +117,12 @@ export default function MowerSettingsScreen() {
         {!mowerOnline && (
           <View style={styles.offlineBanner}>
             <Ionicons name="cloud-offline" size={16} color={colors.amber} />
-            <Text style={styles.offlineText}>Mower is offline. Settings will be applied when it reconnects.</Text>
+            <Text style={styles.offlineText}>Mower is offline. Connect the mower to change settings.</Text>
           </View>
         )}
 
         {/* Cutting Height */}
-        <View style={styles.section}>
+        <View style={[styles.section, !mowerOnline && styles.sectionDisabled]} pointerEvents={mowerOnline ? 'auto' : 'none'}>
           <Text style={styles.sectionTitle}>CUTTING HEIGHT</Text>
           <View style={styles.card}>
             <Text style={styles.currentValue}>{(cuttingHeight / 10).toFixed(1)} cm</Text>
@@ -144,7 +145,7 @@ export default function MowerSettingsScreen() {
         </View>
 
         {/* Obstacle Sensitivity */}
-        <View style={styles.section}>
+        <View style={[styles.section, !mowerOnline && styles.sectionDisabled]} pointerEvents={mowerOnline ? 'auto' : 'none'}>
           <Text style={styles.sectionTitle}>OBSTACLE AVOIDANCE</Text>
           <View style={styles.card}>
             {SENSITIVITY_LEVELS.map((s) => (
@@ -170,9 +171,13 @@ export default function MowerSettingsScreen() {
         </View>
 
         {/* Path Direction */}
-        <View style={styles.section}>
+        <View style={[styles.section, !mowerOnline && styles.sectionDisabled]} pointerEvents={mowerOnline ? 'auto' : 'none'}>
           <Text style={styles.sectionTitle}>MOWING DIRECTION</Text>
           <View style={styles.card}>
+            <View style={styles.previewRow}>
+              <MowingDirectionPreview direction={pathDirection} size={120} />
+              <Text style={styles.directionLabel}>{PATH_DIRECTIONS.find((d) => d.angle === pathDirection)?.label ?? ''} — {pathDirection}°</Text>
+            </View>
             <View style={styles.compassGrid}>
               {PATH_DIRECTIONS.map((d) => (
                 <TouchableOpacity
@@ -208,6 +213,7 @@ const styles = StyleSheet.create({
   },
   offlineText: { flex: 1, fontSize: 13, color: colors.amber, lineHeight: 18 },
   section: { marginBottom: 24 },
+  sectionDisabled: { opacity: 0.3 },
   sectionTitle: {
     fontSize: 13, fontWeight: '600', color: colors.textDim,
     textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8, marginLeft: 4,
@@ -247,6 +253,16 @@ const styles = StyleSheet.create({
   optionLabel: { fontSize: 16, fontWeight: '600', color: colors.white },
   optionLabelActive: { color: colors.emerald },
   optionDesc: { fontSize: 12, color: colors.textMuted, marginTop: 2 },
+  previewRow: {
+    alignItems: 'center',
+    marginBottom: 16,
+    gap: 8,
+  },
+  directionLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.textDim,
+  },
   compassGrid: {
     flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'center',
   },

@@ -21,6 +21,7 @@ import type { AuthStackParams } from '../navigation/types';
 import { getServerUrl, setServerUrl, setToken } from '../services/auth';
 import { ApiClient, AuthError } from '../services/api';
 import { discoverServers } from '../services/discovery';
+import { useDevMode } from '../context/DevModeContext';
 
 type Props = NativeStackScreenProps<AuthStackParams, 'Login'> & {
   onLoginSuccess: (token: string, serverUrl: string) => void;
@@ -35,6 +36,7 @@ export default function LoginScreen({ navigation, onLoginSuccess }: Props) {
   const [error, setError] = useState('');
   const [scanning, setScanning] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const devMode = useDevMode();
 
   // Load saved server URL on mount
   useEffect(() => {
@@ -122,13 +124,20 @@ export default function LoginScreen({ navigation, onLoginSuccess }: Props) {
       >
         {/* Header */}
         <View style={styles.header}>
-          <View style={styles.iconCircle}>
+          <TouchableOpacity onPress={devMode.handleTap} activeOpacity={0.9} style={styles.iconCircle}>
             <Image source={require('../../assets/icon.png')} style={styles.logo} />
-          </View>
+          </TouchableOpacity>
           <Text style={styles.title}>OpenNova</Text>
           <Text style={styles.subtitle}>
-            Sign in to your local server to control your mower.
+            {devMode.unlocked
+              ? 'Developer mode active. Sign in to access the full app.'
+              : 'Sign in to your local server to control your mower.'}
           </Text>
+          {devMode.unlocked && (
+            <View style={{ backgroundColor: 'rgba(124,58,237,0.15)', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6, marginTop: 8 }}>
+              <Text style={{ color: '#c084fc', fontSize: 13, fontWeight: '600', textAlign: 'center' }}>Developer Mode</Text>
+            </View>
+          )}
         </View>
 
         {/* Server URL */}

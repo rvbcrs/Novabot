@@ -1,15 +1,29 @@
-# EAS Build: only include opennovabot-app
+# EAS Build: only include app/ directory
+# Everything else is server, firmware, research, etc.
 research/
+server/
+dashboard/
+bootstrap/
+firmware/
+mower/
+docs/
+.claude/
+ios/build/
+
+# Old directory names (in case any remain)
 novabot-server/
 novabot-dashboard/
 nova-ota-device/
-bootstrap/
 open_decision/
 rpi-image/
-docs/
 setup-wizard/
-.claude/
+
+# Large binary files
 *.bin
 *.deb
 *.elf
 *.pklg
+*.zip
+*.pdf
+*.png.bak
+novabot.db

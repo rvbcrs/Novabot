@@ -28,8 +28,8 @@ const MOWER_SERVICE = '00000201-0000-1000-8000-00805f9b34fb';
 const MOWER_WRITE   = '00000011-0000-1000-8000-00805f9b34fb';
 const MOWER_NOTIFY  = '00000021-0000-1000-8000-00805f9b34fb';
 
-// LoRa defaults (same as official app — NEVER change)
-const LORA = { addr: 718, channel: 15, hc: 20, lc: 14 };
+// LoRa defaults — used as fallback only if server is unreachable
+const LORA_FALLBACK = { addr: 718, channel: 16, hc: 20, lc: 14 };
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -47,6 +47,10 @@ export interface ProvisionParams {
   wifiPassword: string;
   mqttAddr: string;
   mqttPort: number;
+  /** LoRa params from server — if not provided, fetched automatically */
+  lora?: { addr: number; channel: number; hc: number; lc: number };
+  /** Device BLE name — used as AP SSID for the device */
+  deviceName?: string;
 }
 
 export type ProvisionPhase =
@@ -294,7 +298,10 @@ export async function provisionDevice(
     const wChar = isCharger ? CHARGER_WRITE : MOWER_WRITE;
     const nChar = isCharger ? CHARGER_NOTIFY : MOWER_NOTIFY;
     const fChar = isCharger ? CHARGER_FLUSH : null;
-    const withResp = false; // Always writeWithoutResponse — matches bootstrap (noble writeAsync(data, true))
+    // CRITICAL: write type differs per device!
+    // Charger: writeWithoutResponse (ATT_WRITE_CMD) — noble writeAsync(buf, true)
+    // Mower: writeWithResponse (ATT_WRITE_REQ) — noble writeAsync(buf, false)
+    const withResp = !isCharger;
 
     bleLog(`[BLE] Device: ${deviceType}, svc=${svc.substring(4,8)}, write=${wChar.substring(4,8)}, notify=${nChar.substring(4,8)}`);
     bleLog(`[BLE] WiFi: ${params.wifiSsid}, MQTT: ${params.mqttAddr}:${params.mqttPort}`);
@@ -306,46 +313,51 @@ export async function provisionDevice(
       bleLog(`[BLE] Service ${s.uuid.substring(4,8)}: ${chars.map(c => c.uuid.substring(4,8) + '(' + (c.isWritableWithoutResponse ? 'wNoR' : '') + (c.isWritableWithResponse ? 'wR' : '') + (c.isNotifiable ? 'n' : '') + (c.isReadable ? 'r' : '') + ')').join(', ')}`);
     }
 
-    // Subscribe to notifications ONCE before all commands (like bootstrap does)
+    // Subscribe to ALL notify characteristics (bootstrap does the same)
+    // Mower responses may come on the write char, not just the notify char!
     let notifyBuffer = '';
     let notifyCollecting = false;
     let notifyResolve: ((resp: string) => void) | null = null;
 
-    // Explicitly write CCCD descriptor to enable notifications (0x2902 → 01 00)
-    // react-native-ble-plx should do this automatically, but let's be explicit
-    try {
-      const descriptorUuid = '00002902-0000-1000-8000-00805f9b34fb';
-      const enableNotify = Buffer.from([0x01, 0x00]).toString('base64');
-      await device.writeDescriptorForService(svc, nChar, descriptorUuid, enableNotify);
-      bleLog(`[BLE] CCCD written manually (01 00) for ${nChar.substring(4,8)}`);
-    } catch (e: any) {
-      bleLog(`[BLE] CCCD manual write failed: ${e.message} — relying on monitor`);
-    }
+    const notifyHandler = (_err: any, char: Characteristic | null) => {
+      if (!char?.value) return;
+      const raw = Buffer.from(char.value, 'base64');
+      // Skip mower bb/cc telemetry
+      if (raw.length >= 2 && ((raw[0] === 0x62 && raw[1] === 0x62) || (raw[0] === 0x63 && raw[1] === 0x63))) return;
+      const str = raw.toString('utf8');
+      bleLog(`[BLE] NOTIFY ${char.uuid.substring(4,8)}: "${str.substring(0, 40)}" (${raw.length}b)`);
 
-    const notifySub = device.monitorCharacteristicForService(
-      svc, nChar,
-      (_err: any, char: Characteristic | null) => {
-        if (!char?.value) return;
-        const raw = Buffer.from(char.value, 'base64');
-        // Skip mower bb/cc telemetry
-        if (raw.length >= 2 && ((raw[0] === 0x62 && raw[1] === 0x62) || (raw[0] === 0x63 && raw[1] === 0x63))) return;
-        const str = raw.toString('utf8');
-        bleLog(`[BLE] NOTIFY: "${str.substring(0, 40)}" (${raw.length}b)`);
-
-        if (str === 'ble_start') { notifyCollecting = true; notifyBuffer = ''; return; }
-        if (str === 'ble_end' && notifyCollecting) {
-          notifyCollecting = false;
-          if (notifyBuffer.includes('_respond') && notifyResolve) {
-            bleLog(`[BLE] RESPONSE: ${notifyBuffer.substring(0, 60)}`);
-            notifyResolve(notifyBuffer);
-            notifyResolve = null;
-          }
-          return;
+      if (str === 'ble_start') { notifyCollecting = true; notifyBuffer = ''; return; }
+      if (str === 'ble_end' && notifyCollecting) {
+        notifyCollecting = false;
+        if (notifyBuffer.includes('_respond') && notifyResolve) {
+          bleLog(`[BLE] RESPONSE: ${notifyBuffer.substring(0, 60)}`);
+          notifyResolve(notifyBuffer);
+          notifyResolve = null;
         }
-        if (notifyCollecting) notifyBuffer += str;
-      },
-    );
-    bleLog(`[BLE] Subscribed to notifications (single subscription)`);
+        return;
+      }
+      if (notifyCollecting) notifyBuffer += str;
+    };
+
+    // Find ALL notifiable characteristics and subscribe to each
+    const notifySubs: Array<{ remove: () => void }> = [];
+    for (const s of services) {
+      const chars = await s.characteristics();
+      for (const c of chars) {
+        if (c.isNotifiable) {
+          const sub = c.monitor((err, ch) => notifyHandler(err, ch));
+          notifySubs.push(sub);
+          bleLog(`[BLE] Subscribed to notifications on ${c.uuid.substring(4,8)}`);
+        }
+      }
+    }
+    if (notifySubs.length === 0) {
+      // Fallback: subscribe to the specific notify char
+      const sub = device.monitorCharacteristicForService(svc, nChar, notifyHandler);
+      notifySubs.push(sub);
+      bleLog(`[BLE] Fallback: subscribed to ${nChar.substring(4,8)}`);
+    }
     await sleep(500); // Let CCCD settle
 
     // Helper: send command using shared notification subscription
@@ -359,12 +371,15 @@ export async function provisionDevice(
 
         notifyResolve = (resp) => {
           clearTimeout(timer);
-          const ok = resp.includes('"result":0') || resp.includes('"result":1');
-          bleLog(`[BLE] ${cmdName} → ${ok ? 'OK' : 'FAIL'}`);
+          // result:0 = success for all commands
+          // result:1 = success ONLY for set_lora_info (assigned channel)
+          const isLoraCmd = cmdName === 'set_lora_info';
+          const ok = resp.includes('"result":0') || (isLoraCmd && resp.includes('"result":1'));
+          bleLog(`[BLE] ${cmdName} → ${ok ? 'OK' : 'FAIL'} (response: ${resp.substring(0, 60)})`);
           resolve({ ok, response: resp });
         };
 
-        await writeFrame(device, svc, wChar, json, false);
+        await writeFrame(device, svc, wChar, json, withResp);
 
         // Flush: read from char 3333 to kick iOS CoreBluetooth notification delivery
         if (fChar) {
@@ -376,12 +391,14 @@ export async function provisionDevice(
 
     // ── Command sequence (order is CRITICAL) ─────────────────────
 
+    const apName = params.deviceName || (isCharger ? 'CHARGER_PILE' : 'Novabot');
+
     if (isCharger) {
       onProgress('wifi', `Setting WiFi (${params.wifiSsid})...`);
       await cmd(JSON.stringify({
         set_wifi_info: {
           sta: { ssid: params.wifiSsid, passwd: params.wifiPassword, encrypt: 0 },
-          ap: { ssid: 'CHARGER_PILE', passwd: '12345678', encrypt: 0 },
+          ap: { ssid: apName, passwd: '12345678', encrypt: 0 },
         },
       }), 'set_wifi_info', 15000);
       await sleep(1000);
@@ -390,19 +407,25 @@ export async function provisionDevice(
       await cmd(JSON.stringify({ set_rtk_info: 0 }), 'set_rtk_info', 15000);
       await sleep(1000);
     } else {
+      // Mower flow: get_signal_info first, then set_wifi_info
+      // NOTE: mower uses 'ap' field (not 'sta') — matches bootstrap + official app
       onProgress('wifi', 'Handshake...');
       await cmd(JSON.stringify({ get_signal_info: 0 }), 'get_signal_info', 5000);
       await sleep(1000);
 
       onProgress('wifi', `Setting WiFi (${params.wifiSsid})...`);
       await cmd(JSON.stringify({
-        set_wifi_info: { ap: { ssid: params.wifiSsid, passwd: params.wifiPassword, encrypt: 0 } },
+        set_wifi_info: {
+          ap: { ssid: params.wifiSsid, passwd: params.wifiPassword, encrypt: 0 },
+        },
       }), 'set_wifi_info', 15000);
       await sleep(1000);
     }
 
-    onProgress('lora', 'Configuring LoRa...');
-    await cmd(JSON.stringify({ set_lora_info: LORA }), 'set_lora_info', 15000);
+    // Use provided LoRa params (from server) or fallback
+    const lora = params.lora ?? LORA_FALLBACK;
+    onProgress('lora', `Configuring LoRa (addr=${lora.addr}, ch=${lora.channel})...`);
+    await cmd(JSON.stringify({ set_lora_info: lora }), 'set_lora_info', 15000);
     await sleep(1000);
 
     onProgress('mqtt', `Setting MQTT (${params.mqttAddr})...`);
@@ -416,8 +439,8 @@ export async function provisionDevice(
       : JSON.stringify({ set_cfg_info: { cfg_value: 1, tz: 'Europe/Amsterdam' } });
     await cmd(cfgPayload, 'set_cfg_info', 15000);
 
-    // Cleanup subscription
-    notifySub?.remove();
+    // Cleanup subscriptions
+    for (const sub of notifySubs) sub.remove();
 
     // Device will reboot — disconnect is expected
     try { await device.cancelConnection(); } catch {}

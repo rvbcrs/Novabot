@@ -29,7 +29,8 @@ function makeDemoDevices(activity: MowerActivity): Map<string, DeviceState> {
 
   const battery = activity === 'charging' ? '42' : activity === 'mowing' ? '78' : '95';
   const workStatus = activity === 'mowing' ? '1' : activity === 'charging' ? '2'
-    : activity === 'returning' ? '3' : activity === 'paused' ? '4' : '0';
+    : activity === 'returning' ? '3' : activity === 'paused' ? '4'
+    : activity === 'error' ? '1' : '0'; // error happens while mowing
 
   map.set(DEMO_SN, {
     sn: DEMO_SN,
@@ -42,6 +43,8 @@ function makeDemoDevices(activity: MowerActivity): Map<string, DeviceState> {
       error_status: activity === 'error' ? '151' : '0',
       error_code: activity === 'error' ? '151' : '0',
       error_msg: activity === 'error' ? 'Obstacle detected — mower stuck' : '',
+      mowing_progress: activity === 'mowing' ? '63' : activity === 'mapping' ? '41' : '0',
+      path_direction: '45',
       wifi_rssi: '-52',
       rtk_sat: '14',
       sw_version: '6.0.2',

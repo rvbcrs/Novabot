@@ -30,6 +30,8 @@ import Svg, {
   G,
   Line,
   Path,
+  Defs,
+  ClipPath,
 } from 'react-native-svg';
 import * as DocumentPicker from 'expo-document-picker';
 import { Ionicons } from '@expo/vector-icons';
@@ -97,6 +99,38 @@ const MAP_COLORS: Record<string, { fill: string; stroke: string }> = {
   channel:  { fill: 'rgba(59,130,246,0.15)', stroke: '#3b82f6' },
 };
 
+// ── Coverage stripes for mowing visualization ────────────────────────
+
+function generateCoverageStripes(
+  svgPoints: Array<{ x: number; y: number }>,
+  direction: number,
+  progress: number,
+  spacing: number,
+): Array<{ x1: number; y1: number; x2: number; y2: number }> {
+  if (svgPoints.length < 3 || progress <= 0) return [];
+  const xs = svgPoints.map((p) => p.x);
+  const ys = svgPoints.map((p) => p.y);
+  const cx = (Math.min(...xs) + Math.max(...xs)) / 2;
+  const cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+  const diagonal = Math.sqrt((Math.max(...xs) - Math.min(...xs)) ** 2 + (Math.max(...ys) - Math.min(...ys)) ** 2);
+
+  const rad = ((direction + 90) * Math.PI) / 180;
+  const perpRad = (direction * Math.PI) / 180;
+  const dx = Math.cos(rad), dy = Math.sin(rad);
+  const px = Math.cos(perpRad), py = Math.sin(perpRad);
+
+  const total = Math.ceil(diagonal / spacing);
+  const filled = Math.floor((total * progress) / 100);
+  const lines: Array<{ x1: number; y1: number; x2: number; y2: number }> = [];
+  for (let i = -total; i <= total; i++) {
+    if (Math.abs(i) > filled) continue;
+    const ox = cx + px * i * spacing;
+    const oy = cy + py * i * spacing;
+    lines.push({ x1: ox - dx * diagonal, y1: oy - dy * diagonal, x2: ox + dx * diagonal, y2: oy + dy * diagonal });
+  }
+  return lines;
+}
+
 // ── Demo data ────────────────────────────────────────────────────────
 
 const DEMO_MAPS: MapData[] = [
@@ -153,6 +187,9 @@ export default function MapScreen() {
   }, [charger?.sensors.latitude, charger?.sensors.longitude]);
 
   const heading = parseFloat(mower?.sensors.heading ?? '0') || 0;
+  const isMowing = mower?.sensors.work_status === '1';
+  const mowingProgress = parseInt(mower?.sensors.mowing_progress ?? '0', 10) || 0;
+  const pathDir = parseInt(mower?.sensors.path_direction ?? '0', 10) || 0;
 
   const fetchData = useCallback(async () => {
     if (demo.enabled) {
@@ -399,12 +436,39 @@ export default function MapScreen() {
                     );
                   })}
 
+                  {/* Polygon clip paths for coverage stripes */}
+                  {isMowing && mowingProgress > 0 && (
+                    <Defs>
+                      {maps.filter((m) => m.mapType === 'work' && m.mapArea?.length >= 3).map((m) => {
+                        const svgPts = m.mapArea.map((p) => gpsToSvg(p, bounds, MAP_SIZE, INNER_PADDING));
+                        return (
+                          <ClipPath key={`clip-${m.mapId}`} id={`clip-${m.mapId}`}>
+                            <SvgPolygon points={svgPts.map((p) => `${p.x},${p.y}`).join(' ')} />
+                          </ClipPath>
+                        );
+                      })}
+                    </Defs>
+                  )}
+
                   {/* Polygons */}
                   {maps.map((m) => {
                     if (!m.mapArea || m.mapArea.length < 3) return null;
                     const c = MAP_COLORS[m.mapType] ?? MAP_COLORS.work;
-                    const pts = m.mapArea.map((p) => gpsToSvg(p, bounds, MAP_SIZE, INNER_PADDING)).map((p) => `${p.x},${p.y}`).join(' ');
-                    return <SvgPolygon key={m.mapId} points={pts} fill={c.fill} stroke={c.stroke} strokeWidth={2} strokeLinejoin="round" />;
+                    const svgPts = m.mapArea.map((p) => gpsToSvg(p, bounds, MAP_SIZE, INNER_PADDING));
+                    const pts = svgPts.map((p) => `${p.x},${p.y}`).join(' ');
+                    return (
+                      <G key={m.mapId}>
+                        <SvgPolygon points={pts} fill={c.fill} stroke={c.stroke} strokeWidth={2} strokeLinejoin="round" />
+                        {/* Coverage stripes on work polygons during mowing */}
+                        {isMowing && mowingProgress > 0 && m.mapType === 'work' && (
+                          <G clipPath={`url(#clip-${m.mapId})`}>
+                            {generateCoverageStripes(svgPts, pathDir, mowingProgress, 6).map((l, i) => (
+                              <Line key={i} x1={l.x1} y1={l.y1} x2={l.x2} y2={l.y2} stroke="rgba(34,197,94,0.4)" strokeWidth={4} />
+                            ))}
+                          </G>
+                        )}
+                      </G>
+                    );
                   })}
 
                   {/* Trail */}

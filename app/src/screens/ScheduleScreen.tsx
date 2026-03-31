@@ -23,6 +23,7 @@ import { ApiClient, type Schedule } from '../services/api';
 import { getServerUrl } from '../services/auth';
 import { useDemo } from '../context/DemoContext';
 import { DemoBanner } from '../components/DemoBanner';
+import { MowingDirectionPreview } from '../components/MowingDirectionPreview';
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const DAYS_FULL = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -378,6 +379,9 @@ function ScheduleEditor({
 
           {/* Mowing Direction */}
           <Text style={editorStyles.label}>MOWING DIRECTION</Text>
+          <View style={{ alignItems: 'center', marginBottom: 12 }}>
+            <MowingDirectionPreview direction={pathDir} size={90} />
+          </View>
           <View style={editorStyles.chipRow}>
             {DIRECTION_OPTIONS.map((d) => (
               <TouchableOpacity

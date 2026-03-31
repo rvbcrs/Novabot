@@ -104,16 +104,22 @@ export function MowerScene({ activity, battery, mowingProgress = 0, height = 140
     }
   }, [isError]);
 
-  const errorStyle = useAnimatedStyle(() => ({
-    // Simulate box-shadow glow with border + opacity
-    borderColor: `rgba(239, 68, 68, ${errorGlow.value * 0.3})`,
-    borderWidth: errorGlow.value > 0.01 ? 2 : 0,
+  const errorOverlayStyle = useAnimatedStyle(() => ({
+    opacity: errorGlow.value * 0.2,
   }));
 
   return (
-    <Animated.View style={[styles.container, { height }, isError && errorStyle]}>
+    <View style={[styles.container, { height }]}>
       {/* Background gradient */}
       <LinearGradient colors={gradientColors} style={StyleSheet.absoluteFill} />
+
+      {/* Error red pulse overlay */}
+      {isError && (
+        <Animated.View
+          style={[StyleSheet.absoluteFill, styles.errorGlow, errorOverlayStyle]}
+          pointerEvents="none"
+        />
+      )}
 
       {/* Sky gradient overlay */}
       {!isOffline && (
@@ -151,7 +157,7 @@ export function MowerScene({ activity, battery, mowingProgress = 0, height = 140
 
       {/* Battery indicator (top-right) */}
       <BatteryIndicator battery={battery} />
-    </Animated.View>
+    </View>
   );
 }
 
@@ -187,5 +193,9 @@ const styles = StyleSheet.create({
   progressBar: {
     height: '100%',
     backgroundColor: 'rgba(52,211,153,0.8)',
+  },
+  errorGlow: {
+    backgroundColor: '#ef4444',
+    borderRadius: 20,
   },
 });

@@ -90,6 +90,19 @@ export function useMowerState(): UseMowerStateResult {
     });
   }, []);
 
+  // Re-check for socket every second until we have one
+  const [socketReady, setSocketReady] = useState(false);
+  useEffect(() => {
+    if (socketReady) return;
+    const interval = setInterval(() => {
+      if (getSocket()) {
+        setSocketReady(true);
+        clearInterval(interval);
+      }
+    }, 500);
+    return () => clearInterval(interval);
+  }, [socketReady]);
+
   useEffect(() => {
     const socket = getSocket();
     if (!socket) return;
@@ -105,9 +118,11 @@ export function useMowerState(): UseMowerStateResult {
     socket.on('device:online', handleDeviceOnline);
     socket.on('device:offline', handleDeviceOffline);
 
-    // If already connected, update state
+    // If already connected, update state and request fresh snapshot
     if (socket.connected) {
       setConnected(true);
+      // Request a fresh snapshot in case we missed the initial one
+      socket.emit('request:snapshot');
     }
 
     return () => {
@@ -118,7 +133,7 @@ export function useMowerState(): UseMowerStateResult {
       socket.off('device:online', handleDeviceOnline);
       socket.off('device:offline', handleDeviceOffline);
     };
-  }, [handleSnapshot, handleDeviceUpdate, handleDeviceOnline, handleDeviceOffline]);
+  }, [socketReady, handleSnapshot, handleDeviceUpdate, handleDeviceOnline, handleDeviceOffline]);
 
   // Merge demo devices when demo mode is active
   const demo = useDemo();

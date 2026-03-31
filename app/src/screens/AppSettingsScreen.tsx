@@ -6,15 +6,19 @@ import {
   View,
   Text,
   TouchableOpacity,
+  TextInput,
   StyleSheet,
   ScrollView,
   Switch,
   Modal,
+  ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors } from '../theme/colors';
-import { getServerUrl, getToken, clearToken } from '../services/auth';
+import { getServerUrl, setServerUrl as saveServerUrl, getToken, clearToken } from '../services/auth';
+import { initSocket, disconnectSocket } from '../services/socket';
+import { discoverServers } from '../services/discovery';
 import { useMowerState } from '../hooks/useMowerState';
 import { ApiClient } from '../services/api';
 import { JoystickControl } from '../components/JoystickControl';
@@ -36,6 +40,10 @@ export default function AppSettingsScreen({
   const insets = useSafeAreaInsets();
   const { devices, connected } = useMowerState();
   const [serverUrl, setServerUrl] = useState('');
+  const [editingUrl, setEditingUrl] = useState('');
+  const [isEditingServer, setIsEditingServer] = useState(false);
+  const [scanning, setScanning] = useState(false);
+  const [discoveredServers, setDiscoveredServers] = useState<string[]>([]);
   const [email, setEmail] = useState('');
   const [headlightOn, setHeadlightOn] = useState(false);
   const [showJoystick, setShowJoystick] = useState(false);
@@ -87,6 +95,29 @@ export default function AppSettingsScreen({
     }
   };
 
+  const handleChangeServer = async (newUrl: string) => {
+    const normalized = newUrl.trim().replace(/\/+$/, '');
+    if (!normalized) return;
+    await saveServerUrl(normalized);
+    setServerUrl(normalized);
+    setIsEditingServer(false);
+    // Reconnect: logout triggers full re-init with new server URL
+    disconnectSocket();
+    initSocket(normalized);
+    // Force re-login so socket hooks re-attach to the new socket
+    await clearToken();
+    onLogout();
+  };
+
+  const handleDiscover = () => {
+    setScanning(true);
+    setDiscoveredServers([]);
+    discoverServers((server) => {
+      const url = `http://${server.ip}:3000`;
+      setDiscoveredServers((prev) => prev.includes(url) ? prev : [...prev, url]);
+    }).finally(() => setScanning(false));
+  };
+
   const handleLogout = async () => {
     await clearToken();
     onLogout();
@@ -99,11 +130,69 @@ export default function AppSettingsScreen({
 
         {/* Server info */}
         <Section title="SERVER">
-          <SettingsRow
-            icon="server-outline"
-            label="Server URL"
-            value={serverUrl || 'Not configured'}
-          />
+          {!isEditingServer && (
+            <View style={rowStyles.container}>
+              <Ionicons name="server-outline" size={20} color={colors.textDim} />
+              <Text style={rowStyles.label}>Server URL</Text>
+              <Text style={[rowStyles.value, { fontSize: 13 }]} numberOfLines={1}>{serverUrl || 'Not configured'}</Text>
+              <TouchableOpacity
+                style={serverStyles.changeBtn}
+                onPress={() => { setEditingUrl(serverUrl); setIsEditingServer(true); }}
+                activeOpacity={0.7}
+              >
+                <Text style={serverStyles.changeText}>Change</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+          {isEditingServer && (
+            <View style={serverStyles.editContainer}>
+              <View style={serverStyles.inputRow}>
+                <TextInput
+                  style={serverStyles.input}
+                  value={editingUrl}
+                  onChangeText={setEditingUrl}
+                  placeholder="http://192.168.0.177:3000"
+                  placeholderTextColor={colors.textMuted}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  keyboardType="url"
+                  returnKeyType="done"
+                  onSubmitEditing={() => handleChangeServer(editingUrl)}
+                />
+              </View>
+              {/* Discover servers */}
+              <TouchableOpacity style={serverStyles.discoverBtn} onPress={handleDiscover} disabled={scanning} activeOpacity={0.7}>
+                {scanning ? (
+                  <ActivityIndicator size="small" color={colors.emerald} />
+                ) : (
+                  <Ionicons name="search" size={16} color={colors.emerald} />
+                )}
+                <Text style={serverStyles.discoverText}>
+                  {scanning ? 'Scanning...' : 'Find servers on network'}
+                </Text>
+              </TouchableOpacity>
+              {discoveredServers.map((url) => (
+                <TouchableOpacity
+                  key={url}
+                  style={serverStyles.serverItem}
+                  onPress={() => { setEditingUrl(url); handleChangeServer(url); }}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="server" size={16} color={colors.emerald} />
+                  <Text style={serverStyles.serverUrl}>{url}</Text>
+                </TouchableOpacity>
+              ))}
+              {/* Cancel / Save */}
+              <View style={serverStyles.buttonRow}>
+                <TouchableOpacity style={serverStyles.cancelBtn} onPress={() => setIsEditingServer(false)} activeOpacity={0.7}>
+                  <Text style={serverStyles.cancelText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={serverStyles.saveBtn} onPress={() => handleChangeServer(editingUrl)} activeOpacity={0.7}>
+                  <Text style={serverStyles.saveText}>Connect</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
           <SettingsRow
             icon="pulse"
             label="Connection"
@@ -116,49 +205,6 @@ export default function AppSettingsScreen({
         <Section title="ACCOUNT">
           <SettingsRow icon="mail-outline" label="Email" value={email || 'Unknown'} />
         </Section>
-
-        {/* Devices */}
-        {(mower || charger) && (
-          <Section title="DEVICES">
-            {mower && (
-              <>
-                <SettingsRow
-                  icon="construct-outline"
-                  label="Mower"
-                  value={mower.online ? 'Online' : 'Offline'}
-                  valueColor={mower.online ? colors.green : colors.red}
-                />
-                <SettingsRow
-                  icon="hardware-chip-outline"
-                  label="Serial"
-                  value={mower.sn}
-                />
-                {mower.sensors.mower_version && (
-                  <SettingsRow
-                    icon="code-outline"
-                    label="Firmware"
-                    value={`v${mower.sensors.mower_version}`}
-                  />
-                )}
-              </>
-            )}
-            {charger && (
-              <>
-                <SettingsRow
-                  icon="flash-outline"
-                  label="Charger"
-                  value={charger.online ? 'Online' : 'Offline'}
-                  valueColor={charger.online ? colors.green : colors.red}
-                />
-                <SettingsRow
-                  icon="hardware-chip-outline"
-                  label="Serial"
-                  value={charger.sn}
-                />
-              </>
-            )}
-          </Section>
-        )}
 
         {/* Controls */}
         {mower?.online && (
@@ -317,6 +363,43 @@ const styles = StyleSheet.create({
   logoutText: { fontSize: 16, fontWeight: '600', color: colors.red },
   versionText: { fontSize: 12, color: colors.textMuted, textAlign: 'center', marginTop: 24 },
   modalOverlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.5)' },
+});
+
+const serverStyles = StyleSheet.create({
+  changeBtn: {
+    paddingHorizontal: 12, paddingVertical: 5, borderRadius: 8,
+    backgroundColor: 'rgba(0,212,170,0.15)',
+  },
+  changeText: { fontSize: 13, fontWeight: '600', color: colors.emerald },
+  editContainer: { padding: 16, gap: 12 },
+  inputRow: { flexDirection: 'row', alignItems: 'center' },
+  input: {
+    flex: 1, height: 44, backgroundColor: colors.inputBg,
+    borderRadius: 10, borderWidth: 1, borderColor: colors.inputBorder,
+    paddingHorizontal: 14, fontSize: 15, color: colors.white,
+  },
+  discoverBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    paddingVertical: 8,
+  },
+  discoverText: { fontSize: 14, color: colors.emerald },
+  serverItem: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    paddingVertical: 10, paddingHorizontal: 12,
+    backgroundColor: 'rgba(0,212,170,0.08)', borderRadius: 10,
+  },
+  serverUrl: { fontSize: 14, color: colors.white, fontFamily: 'monospace' },
+  buttonRow: { flexDirection: 'row', gap: 10, marginTop: 4 },
+  cancelBtn: {
+    flex: 1, height: 40, borderRadius: 10, alignItems: 'center', justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.06)',
+  },
+  cancelText: { fontSize: 14, fontWeight: '600', color: colors.textDim },
+  saveBtn: {
+    flex: 1, height: 40, borderRadius: 10, alignItems: 'center', justifyContent: 'center',
+    backgroundColor: colors.emerald,
+  },
+  saveText: { fontSize: 14, fontWeight: '600', color: colors.white },
 });
 
 const rowStyles = StyleSheet.create({

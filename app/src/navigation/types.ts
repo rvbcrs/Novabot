@@ -58,4 +58,5 @@ export type SettingsStackParams = {
   SettingsMain: undefined;
   OTA: undefined;
   MowerSettings: undefined;
+  ProvisionFlow: undefined;
 };
