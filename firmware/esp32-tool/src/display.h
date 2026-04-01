@@ -57,6 +57,11 @@ void display_ota(const char* status);
 void display_done();
 void display_error(const char* msg);
 void display_confirm(const char* title, const char* line1, const char* line2, const char* btnText);
+// Device status screen: charger + mower icons that go grey→orange→green
+// status: 0=not seen, 1=WiFi connected, 2=MQTT connected
+void display_deviceStatus(int chargerStatus, const char* chargerSn,
+                          int mowerStatus, const char* mowerSn,
+                          bool canContinue);
 
 // Phase 2: WiFi re-provisioning screens
 void display_wifiList(WifiNetwork* networks, int count, int selected);

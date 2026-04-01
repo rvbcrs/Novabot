@@ -596,6 +596,125 @@ void display_confirm(const char* title, const char* line1, const char* line2, co
     lvgl_unlock();
 }
 
+void display_deviceStatus(int chargerStatus, const char* chargerSn,
+                          int mowerStatus, const char* mowerSn,
+                          bool canContinue) {
+    if (!lvgl_lock(100)) return;
+    ui_btnPressed = false;
+
+    lv_obj_t *scr = create_screen();
+
+    // Title
+    add_label(scr, "Device Status", &lv_font_montserrat_20, COL_GREEN, 20);
+
+    // Color mapping: 0=grey, 1=orange(WiFi), 2=green(MQTT)
+    auto statusColor = [](int s) -> lv_color_t {
+        if (s >= 2) return lv_color_hex(0x34D399); // green
+        if (s >= 1) return lv_color_hex(0xF59E0B); // orange
+        return lv_color_hex(0x4B5563);              // grey
+    };
+
+    // Helper: add bouncing dots at position
+    auto addDots = [&](lv_obj_t* parent, int xOff, int y) {
+        for (int d = 0; d < 3; d++) {
+            lv_obj_t *dot = lv_obj_create(parent);
+            lv_obj_remove_style_all(dot);
+            lv_obj_set_size(dot, 6, 6);
+            lv_obj_set_style_radius(dot, 3, 0);
+            lv_obj_set_style_bg_color(dot, lv_color_hex(0x4B5563), 0);
+            lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
+            lv_obj_align(dot, LV_ALIGN_TOP_MID, xOff + (d - 1) * 12, y);
+            lv_anim_t a;
+            lv_anim_init(&a);
+            lv_anim_set_var(&a, dot);
+            lv_anim_set_exec_cb(&a, [](void* obj, int32_t v) { lv_obj_set_style_opa((lv_obj_t*)obj, v, 0); });
+            lv_anim_set_values(&a, 80, 255);
+            lv_anim_set_time(&a, 400);
+            lv_anim_set_playback_time(&a, 400);
+            lv_anim_set_delay(&a, d * 200);
+            lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
+            lv_anim_start(&a);
+        }
+    };
+
+    // ── Charger block (icon centered above name + SN/dots) ──
+    int chY = 65;
+    lv_obj_t *chIcon = lv_label_create(scr);
+    lv_label_set_text(chIcon, LV_SYMBOL_CHARGE);
+    lv_obj_set_style_text_font(chIcon, &lv_font_montserrat_28, 0);
+    lv_obj_set_style_text_color(chIcon, statusColor(chargerStatus), 0);
+    lv_obj_align(chIcon, LV_ALIGN_TOP_MID, 0, chY);
+
+    lv_obj_t *chLbl = lv_label_create(scr);
+    lv_label_set_text(chLbl, "Charger");
+    lv_obj_set_style_text_font(chLbl, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(chLbl, statusColor(chargerStatus), 0);
+    lv_obj_align(chLbl, LV_ALIGN_TOP_MID, 0, chY + 35);
+
+    if (chargerSn && strlen(chargerSn) > 0) {
+        lv_obj_t *chSn = lv_label_create(scr);
+        lv_label_set_text(chSn, chargerSn);
+        lv_obj_set_style_text_font(chSn, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_color(chSn, lv_color_hex(0x9CA3AF), 0);
+        lv_obj_align(chSn, LV_ALIGN_TOP_MID, 0, chY + 53);
+    } else {
+        addDots(scr, 0, chY + 58);
+    }
+
+    // ── Mower block (icon centered above name + SN/dots) ──
+    int mwY = 145;
+    lv_obj_t *mwIcon = lv_label_create(scr);
+    lv_label_set_text(mwIcon, LV_SYMBOL_DRIVE);
+    lv_obj_set_style_text_font(mwIcon, &lv_font_montserrat_28, 0);
+    lv_obj_set_style_text_color(mwIcon, statusColor(mowerStatus), 0);
+    lv_obj_align(mwIcon, LV_ALIGN_TOP_MID, 0, mwY);
+
+    lv_obj_t *mwLbl = lv_label_create(scr);
+    lv_label_set_text(mwLbl, "Mower");
+    lv_obj_set_style_text_font(mwLbl, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(mwLbl, statusColor(mowerStatus), 0);
+    lv_obj_align(mwLbl, LV_ALIGN_TOP_MID, 0, mwY + 35);
+
+    if (mowerSn && strlen(mowerSn) > 0) {
+        lv_obj_t *mwSn = lv_label_create(scr);
+        lv_label_set_text(mwSn, mowerSn);
+        lv_obj_set_style_text_font(mwSn, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_color(mwSn, lv_color_hex(0x9CA3AF), 0);
+        lv_obj_align(mwSn, LV_ALIGN_TOP_MID, 0, mwY + 53);
+    } else {
+        addDots(scr, 0, mwY + 58);
+    }
+
+    // Legend at bottom
+    lv_obj_t *legend = lv_label_create(scr);
+    lv_label_set_text(legend, "Grey=waiting  Orange=WiFi  Green=MQTT");
+    lv_obj_set_style_text_font(legend, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(legend, lv_color_hex(0x6B7280), 0);
+    lv_obj_set_style_text_align(legend, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_width(legend, 220);
+    lv_obj_align(legend, LV_ALIGN_BOTTOM_MID, 0, -60);
+
+    // Continue button — always visible, greyed out when not ready
+    lv_obj_t *btn = lv_btn_create(scr);
+    lv_obj_set_size(btn, 200, 40);
+    lv_obj_align(btn, LV_ALIGN_BOTTOM_MID, 0, -10);
+    lv_obj_set_style_radius(btn, 8, 0);
+    if (canContinue) {
+        lv_obj_set_style_bg_color(btn, COL_TEAL, 0);
+        lv_obj_add_event_cb(btn, generic_btn_cb, LV_EVENT_CLICKED, NULL);
+    } else {
+        lv_obj_set_style_bg_color(btn, lv_color_hex(0x374151), 0);
+        lv_obj_clear_flag(btn, LV_OBJ_FLAG_CLICKABLE);
+    }
+    lv_obj_t *btnLbl = lv_label_create(btn);
+    lv_label_set_text(btnLbl, "Continue");
+    lv_obj_set_style_text_color(btnLbl, canContinue ? lv_color_hex(0xFFFFFF) : lv_color_hex(0x6B7280), 0);
+    lv_obj_center(btnLbl);
+
+    lv_scr_load(scr);
+    lvgl_unlock();
+}
+
 void display_provision(const char* device, int step, int total, const char* stepName) {
     if (!lvgl_lock(100)) return;
 

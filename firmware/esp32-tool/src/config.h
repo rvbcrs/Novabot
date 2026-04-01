@@ -63,6 +63,7 @@ enum State {
     WIZ_SELECT_MOWER,           // Select mower from list (if multiple)
     WIZ_PROVISION_MOWER,        // Provision mower with AP wifi + mqtt.lfibot.com
     WIZ_WAIT_MOWER,             // Wait for mower MQTT connect
+    WIZ_OTA_CONFIRM,            // Confirm before flashing firmware
     WIZ_OTA_FLASH,              // Flash mower firmware (if .deb on SD)
     WIZ_REPROVISION,            // Re-provision both to home WiFi (if configured)
     WIZ_DONE,                   // All done!

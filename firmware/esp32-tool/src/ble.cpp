@@ -156,6 +156,9 @@ bool provisionDevice(NimBLEAdvertisedDevice* device, const char* deviceType) {
     String bleResponse = "";
     auto notifyCb = [&bleResponse](NimBLERemoteCharacteristic* chr,
                                     uint8_t* data, size_t length, bool isNotify) {
+        Serial.printf("[BLE-NOTIFY] chr=%s len=%d data=", chr->getUUID().toString().c_str(), length);
+        for (size_t i = 0; i < length && i < 20; i++) Serial.printf("%02X ", data[i]);
+        Serial.println();
         // Skip mower bb/cc telemetry
         if (length >= 2 && ((data[0] == 0x62 && data[1] == 0x62) || (data[0] == 0x63 && data[1] == 0x63))) return;
         bleResponse += String((char*)data, length);
@@ -215,12 +218,14 @@ bool provisionDevice(NimBLEAdvertisedDevice* device, const char* deviceType) {
     int numCmds;
 
     if (isMower) {
+        // Order MUST match bootstrap: get_signal → set_wifi → set_rtk → set_lora → set_mqtt → set_cfg
         cmds[0] = {"get_signal_info", "{\"get_signal_info\":0}", 1};
         cmds[1] = {"set_wifi_info", wifiPayload, 2};
-        cmds[2] = {"set_lora_info", loraPayload, 3};
-        cmds[3] = {"set_mqtt_info", mqttPayload, 4};
-        cmds[4] = {"set_cfg_info", cfgPayload, 5};
-        numCmds = 5;
+        cmds[2] = {"set_rtk_info", "{\"set_rtk_info\":0}", 3};
+        cmds[3] = {"set_lora_info", loraPayload, 4};
+        cmds[4] = {"set_mqtt_info", mqttPayload, 5};
+        cmds[5] = {"set_cfg_info", cfgPayload, 6};
+        numCmds = 6;
     } else {
         // Charger: set_wifi FIRST, then rtk, lora, mqtt, get_wifi (verify), cfg
         cmds[0] = {"set_wifi_info", wifiPayload, 1};
@@ -300,9 +305,9 @@ bool bleSendCommand(NimBLEClient* client, NimBLERemoteCharacteristic* writeChr,
     response = "";
 
     // CRITICAL: write type differs per device (matches bootstrap/noble)
-    // Charger: writeWithoutResponse (ATT_WRITE_CMD) -- noble writeAsync(buf, true)
-    // Mower: writeWithResponse (ATT_WRITE_REQ) -- noble writeAsync(buf, false)
-    bool noResp = !isMower;  // charger=true (without), mower=false (with)
+    // Both charger AND mower use writeWithoutResponse (ATT_WRITE_CMD)
+    // Bootstrap: noble writeAsync(buf, true) = writeWithoutResponse for both
+    bool noResp = true;
     Serial.printf("[BLE] Write mode: %s\r\n", noResp ? "WriteCmd (no response)" : "WriteReq (with response)");
 
     // Send "ble_start" marker
@@ -334,7 +339,7 @@ bool bleSendCommand(NimBLEClient* client, NimBLERemoteCharacteristic* writeChr,
     // Wait for response (up to 10 seconds)
     String expectedType = String(cmdName) + "_respond";
     unsigned long start = millis();
-    while (millis() - start < 10000) {
+    while (millis() - start < 15000) {
         delay(50);
         // Check if we got a complete response (contains _respond)
         if (response.indexOf("_respond") >= 0) {

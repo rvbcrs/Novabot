@@ -8,6 +8,7 @@ i.p.v. `app.lfibot.com` / `mqtt.lfibot.com`, zodat maaier en laadstation volledi
 - **Firewall staat UIT** — nooit suggereren dat macOS firewall poort 1883 blokkeert.
 - **GEEN shortcuts/hacks** — geen handmatige DB inserts als workaround. Server moet cloud flow exact nabouwen voor hergebruik door anderen.
 - **ALLEEN cloud API kopie** — geen BLE vanuit server, geen UART. Maaier komt online via normale app flow.
+- **NOOIT voorstellen om te stoppen** — nooit suggereren om "morgen verder te gaan", "het is laat", "even pauze nemen", of iets dergelijks. De gebruiker bepaalt zelf wanneer hij stopt.
 
 ---
 

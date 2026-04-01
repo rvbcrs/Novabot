@@ -156,7 +156,9 @@ void sendMqttMessage(String topic, String payload, bool useAes, String sn) {
 void sendMowerOtaWithAes(bool useAes) {
     if (!mowerConnected || mowerSn.length() == 0 || mowerFwFilename.length() == 0) return;
 
-    String downloadUrl = "http://10.0.0.1/firmware.deb";
+    // Use app.lfibot.com hostname (NOT direct IP!) — mower whitelists lfibot.com domains
+    // ESP32 DNS resolves app.lfibot.com → 10.0.0.1
+    String downloadUrl = "http://app.lfibot.com/firmware.deb";
 
     // EXACT OTA payload -- NO tz field, type MUST be "full", cmd MUST be "upgrade"
     String otaJson = "{\"ota_upgrade_cmd\":{\"cmd\":\"upgrade\",\"type\":\"full\",\"content\":\"app\",";

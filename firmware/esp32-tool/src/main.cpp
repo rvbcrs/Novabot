@@ -263,30 +263,8 @@ void setup() {
     NimBLEDevice::init("Nova-OTA");
     NimBLEDevice::setMTU(185);
 
-    // Wait for already-connected devices (charger needs ~20s: WiFi→DHCP→MQTT)
-    webLogAdd("Checking for connected devices...");
-#ifdef WAVESHARE_LCD
-    display_detect(0, 0, false, false);
-#endif
-    unsigned long detectStart = millis();
-    while (millis() - detectStart < 30000) {
-        mqttBroker.update();
-        httpServer.handleClient();
-        processDNS();
-        delay(100);
-        int sec = (millis() - detectStart) / 1000;
-#ifdef WAVESHARE_LCD
-        if (sec % 2 == 0) display_detect(sec, WiFi.softAPgetStationNum(), chargerMqttConnected, mowerConnected);
-#endif
-        if (chargerMqttConnected) break;
-    }
-
-    if (chargerMqttConnected) {
-        webLogAdd("Charger already connected: %s", chargerSn.c_str());
-        setState(WIZ_CHARGER_CONNECTED);
-    } else {
-        setState(WIZ_SCAN_CHARGER);
-    }
+    // Go straight to device status screen — it handles everything
+    setState(WIZ_CHARGER_CONNECTED);
 }
 
 // ── Main loop — linear wizard flow ──────────────────────────────────────────
@@ -370,7 +348,7 @@ void loop() {
             if (provisionDevice(chargerDevice, "charger")) {
                 webLogAdd("BLE: Charger provisioned!");
                 provisionProgressCb = nullptr;
-                setState(WIZ_WAIT_CHARGER);
+                setState(WIZ_CHARGER_CONNECTED);
             } else {
                 webLogAdd("BLE: Charger provisioning failed!");
                 provisionProgressCb = nullptr;
@@ -405,28 +383,44 @@ void loop() {
     }
 
     case WIZ_CHARGER_CONNECTED: {
+        // Compute status: 0=not seen, 1=WiFi, 2=MQTT
+        int chStatus = chargerMqttConnected ? 2 : (chargerWifiDetected ? 1 : 0);
+        int mwStatus = mowerConnected ? 2 : (mowerWifiDetected ? 1 : 0);
+        bool canContinue = chStatus >= 1 || mwStatus >= 1;
+
+#ifdef WAVESHARE_LCD
+        // Refresh display periodically (live updating icons)
+        static unsigned long lastRefresh = 0;
+        if (millis() - lastRefresh > 500) {
+            lastRefresh = millis();
+            display_deviceStatus(chStatus, chargerSn.c_str(),
+                                mwStatus, mowerSn.c_str(),
+                                canContinue);
+        }
+#endif
         if (stateJustEntered) {
             stateJustEntered = false;
-            String title = chargerMqttConnected ? "Charger Connected" : "Charger Timeout";
-            String line1 = chargerSn.length() > 0 ? ("SN: " + chargerSn) : "Waiting for charger...";
-            String line2 = chargerMqttConnected ? "Connected via MQTT" : "Not connected — will retry later";
-            if (mowerWifiDetected) {
-                line2 += "\nMower detected on WiFi!";
-            }
-            webLogAdd("Charger status: %s (%s), mower WiFi: %s",
-                line1.c_str(), chargerMqttConnected ? "online" : "timeout",
-                mowerWifiDetected ? "yes" : "no");
-#ifdef WAVESHARE_LCD
-            display_confirm(title.c_str(), line1.c_str(), line2.c_str(),
-                mowerWifiDetected ? "Wait for Mower MQTT" : "Find Mower");
-#endif
         }
-        if (ui_btnPressed) {
+
+        // After 30s with no charger at all, go to BLE scan
+        if (chStatus == 0 && elapsed > 30) {
+            webLogAdd("No charger detected — starting BLE scan...");
+            setState(WIZ_SCAN_CHARGER);
+            break;
+        }
+
+        if (ui_btnPressed && canContinue) {
             ui_btnPressed = false;
             scanRetryCount = 0;
-            if (mowerWifiDetected || mowerConnected) {
-                // Mower already on WiFi — skip BLE scan, go wait for MQTT
-                webLogAdd("Mower already on WiFi — waiting for MQTT...");
+            if (mowerConnected) {
+                // Mower on MQTT — skip to OTA or done
+                if (mowerFwFilename.length() > 0) {
+                    setState(WIZ_OTA_CONFIRM);
+                } else {
+                    setState(WIZ_DONE);
+                }
+            } else if (mowerWifiDetected) {
+                webLogAdd("Mower on WiFi — waiting for MQTT...");
                 setState(WIZ_WAIT_MOWER);
             } else {
                 setState(WIZ_SCAN_MOWER);
@@ -521,7 +515,10 @@ void loop() {
             if (provisionDevice(mowerDevice, "mower")) {
                 webLogAdd("BLE: Mower provisioned!");
                 provisionProgressCb = nullptr;
-                setState(WIZ_WAIT_MOWER);
+                // Restart WiFi AP (was stopped during BLE) then go to device status
+                setupWifiAP();
+                while (WiFi.softAPIP() == IPAddress(0, 0, 0, 0)) { delay(100); }
+                setState(WIZ_CHARGER_CONNECTED);
             } else {
                 webLogAdd("BLE: Mower provisioning failed!");
                 provisionProgressCb = nullptr;
@@ -553,7 +550,7 @@ void loop() {
             webLogAdd("MQTT: Mower connected!");
             // Check if we have firmware to flash
             if (mowerFwFilename.length() > 0) {
-                setState(WIZ_OTA_FLASH);
+                setState(WIZ_OTA_CONFIRM);
             } else {
                 webLogAdd("No mower firmware on SD — skipping OTA");
                 setState(WIZ_DONE);
@@ -567,17 +564,54 @@ void loop() {
         break;
     }
 
-    case WIZ_OTA_FLASH: {
+    case WIZ_OTA_CONFIRM: {
         if (stateJustEntered) {
             stateJustEntered = false;
+            webLogAdd("Firmware available: %s", mowerFwFilename.c_str());
+            statusMessage = "Flash firmware?";
+#ifdef WAVESHARE_LCD
+            display_confirm("Flash Firmware?",
+                (String("Flash ") + mowerFwVersion).c_str(),
+                (String("to mower ") + mowerSn).c_str(),
+                "Flash");
+#endif
+        }
+#ifdef WAVESHARE_LCD
+        if (ui_btnPressed) {
+            ui_btnPressed = false;
+            setState(WIZ_OTA_FLASH);
+        }
+        // Skip = tap outside the button area or use the back gesture
+#endif
+        // Timeout: skip OTA after 60s without user input
+        if (elapsed > 60) {
+            webLogAdd("OTA confirm timeout — skipping");
+            setState(WIZ_DONE);
+        }
+        break;
+    }
+
+    case WIZ_OTA_FLASH: {
+        static bool otaSent = false;
+        if (stateJustEntered) {
+            stateJustEntered = false;
+            otaSent = false;
             otaProgressPercent = 0;
             otaStatus = "";
+            statusMessage = "Waiting for mower MQTT...";
+#ifdef WAVESHARE_LCD
+            display_ota("Waiting for mower MQTT...");
+#endif
+        }
+        // Wait for mower to be connected before sending OTA
+        if (!otaSent && mowerConnected) {
             webLogAdd("OTA: Sending firmware to mower...");
             statusMessage = "Sending OTA command...";
 #ifdef WAVESHARE_LCD
             display_ota("Sending OTA command...");
 #endif
             sendMowerOta();  // tries plain first, then AES
+            otaSent = true;
         }
         // Display OTA progress from MQTT ota_upgrade_state messages
 #ifdef WAVESHARE_LCD
