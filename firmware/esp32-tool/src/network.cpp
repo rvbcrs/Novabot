@@ -105,10 +105,17 @@ void setupWifiAP() {
     if (apNetif) {
         // DHCP server is auto-started by softAP, stop it first to configure
         esp_netif_dhcps_stop(apNetif);
-        // Enable DNS offer so ESP32 clients get our IP as DNS server
+
+        // 1. Set our AP IP as the DNS server for the network interface
+        esp_netif_dns_info_t dnsInfo;
+        dnsInfo.ip.u_addr.ip4.addr = ipaddr_addr("10.0.0.1");
+        dnsInfo.ip.type = ESP_IPADDR_TYPE_V4;
+        esp_netif_set_dns_info(apNetif, ESP_NETIF_DNS_MAIN, &dnsInfo);
+
+        // 2. Enable DHCP DNS offer so clients receive our DNS via DHCP option 6
         dhcps_offer_t offer = OFFER_DNS;
         esp_netif_dhcps_option(apNetif, ESP_NETIF_OP_SET, ESP_NETIF_DOMAIN_NAME_SERVER, &offer, sizeof(offer));
-        Serial.printf("[WiFi] DHCP pre-configured with DNS offer\r\n");
+        Serial.printf("[WiFi] DHCP pre-configured with DNS=10.0.0.1\r\n");
         // DON'T restart DHCP yet -- softAP() will start it
     }
 
