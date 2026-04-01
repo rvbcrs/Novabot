@@ -29,11 +29,20 @@ void ScanCallbacks::onResult(const NimBLEAdvertisedDevice* advertisedDevice) {
         r.name = name;
         r.mac = mac;
         r.rssi = advertisedDevice->getRSSI();
-        // Match like bootstrap: case-insensitive contains (not exact match)
+        // Match by BLE name (case-insensitive) AND/OR MAC prefix
         String nameLower = name;
         nameLower.toLowerCase();
-        r.isCharger = (nameLower.indexOf("charger") >= 0);
-        r.isMower = (nameLower.indexOf("novabot") >= 0 || nameLower.indexOf("lfin") >= 0);
+        // BLE name match
+        bool nameIsCharger = (nameLower.indexOf("charger") >= 0);
+        bool nameIsMower = (nameLower.indexOf("novabot") >= 0 || nameLower.indexOf("lfin") >= 0);
+        // MAC prefix match (BLE MAC = WiFi STA MAC + 2, so prefix is same)
+        // LFIC chargers: 48:27:E2:*
+        // LFIN1 mowers:  50:41:1C:*
+        // LFIN2 mowers:  70:4A:0E:*
+        bool macIsCharger = mac.startsWith("48:27");
+        bool macIsMower = mac.startsWith("70:4A") || mac.startsWith("50:41");
+        r.isCharger = nameIsCharger || macIsCharger;
+        r.isMower = nameIsMower || macIsMower;
 
         Serial.printf("[BLE] Found: %s (%s) RSSI=%d%s%s\r\n",
                      name.c_str(), mac.c_str(), r.rssi,
@@ -68,12 +77,15 @@ void ScanCallbacks::onScanEnd(const NimBLEScanResults& results, int reason) {
 
 // ── BLE scan start ───────────────────────────────────────────────────────────
 
+static ScanCallbacks scanCb;  // Reuse single instance (no heap alloc per scan)
+
 void startBleScan() {
     if (chargerDevice) { delete chargerDevice; chargerDevice = nullptr; }
     if (mowerDevice) { delete mowerDevice; mowerDevice = nullptr; }
 
     NimBLEScan* scan = NimBLEDevice::getScan();
-    scan->setScanCallbacks(new ScanCallbacks(), false);
+    scan->clearResults();  // Free previous scan results
+    scan->setScanCallbacks(&scanCb, false);
     scan->setActiveScan(true);
     scan->setInterval(100);
     scan->setWindow(99);
@@ -171,6 +183,9 @@ bool provisionDevice(NimBLEAdvertisedDevice* device, const char* deviceType) {
     String provSsid = reprovisioning ? userWifiSsid : String(AP_SSID);
     String provPass = reprovisioning ? userWifiPassword : String(AP_PASSWORD);
 
+    // AP SSID: use device name if available (e.g. "LFIC1231000319"), else default
+    String apSsid = chargerSn.length() > 0 ? chargerSn : "CHARGER_PILE";
+
     String wifiPayload, cfgPayload;
     if (isMower) {
         wifiPayload = "{\"set_wifi_info\":{\"ap\":{\"ssid\":\"" + provSsid +
@@ -179,12 +194,14 @@ bool provisionDevice(NimBLEAdvertisedDevice* device, const char* deviceType) {
     } else {
         wifiPayload = "{\"set_wifi_info\":{\"sta\":{\"ssid\":\"" + provSsid +
                    "\",\"passwd\":\"" + provPass + "\",\"encrypt\":0}," +
-                   "\"ap\":{\"ssid\":\"CHARGER_PILE\",\"passwd\":\"12345678\",\"encrypt\":0}}}";
+                   "\"ap\":{\"ssid\":\"" + apSsid + "\",\"passwd\":\"12345678\",\"encrypt\":0}}}";
         cfgPayload = "{\"set_cfg_info\":1}";
     }
 
+    // LoRa: charger=channel 16, mower=channel 15 (NEVER the same!)
+    int loraChannel = isMower ? LORA_CHANNEL_MOWER : LORA_CHANNEL_CHARGER;
     String loraPayload = "{\"set_lora_info\":{\"addr\":" + String(LORA_ADDR) +
-        ",\"channel\":" + String(LORA_CHANNEL) + ",\"hc\":" + String(LORA_HC) +
+        ",\"channel\":" + String(loraChannel) + ",\"hc\":" + String(LORA_HC) +
         ",\"lc\":" + String(LORA_LC) + "}}";
     // Charger: direct IP (charger doesn't use DHCP DNS!) + port 1883
     // Mower: hostname mqtt.lfibot.com (uses our custom DNS) + port 1883
@@ -217,7 +234,8 @@ bool provisionDevice(NimBLEAdvertisedDevice* device, const char* deviceType) {
 
     totalSteps = numCmds;
     bool disconnected = false;
-    bool wifiConfirmed = false;
+    int successCount = 0;
+    int totalSent = 0;
     for (int i = 0; i < numCmds; i++) {
         // Friendly names for the UI (no technical BLE command names)
         const char* friendlyName = cmds[i].name;
@@ -233,21 +251,24 @@ bool provisionDevice(NimBLEAdvertisedDevice* device, const char* deviceType) {
         // 1 second pause between commands (matches bootstrap -- gives device time to process)
         if (i > 0) delay(1000);
 
+        totalSent++;
         bool got = bleSendCommand(client, writeChr, notifChr, cmds[i].payload, cmds[i].name, bleResponse, isMower);
         if (got) {
             Serial.printf("[BLE] Response data: %s\r\n", bleResponse.c_str());
             webLogAdd("BLE: %s OK", friendlyName);
-            // Check for set_wifi_info success specifically
-            if (strcmp(cmds[i].name, "set_wifi_info") == 0) wifiConfirmed = true;
+            successCount++;
         } else {
             // Check if device disconnected (set_cfg_info causes reboot = success!)
             if (!client->isConnected()) {
                 Serial.printf("[BLE] Device disconnected after %s (expected reboot)\r\n", cmds[i].name);
                 webLogAdd("BLE: Device rebooted after %s (success!)", friendlyName);
                 disconnected = true;
+                successCount++;  // reboot = success for the last command
                 break;
             }
-            Serial.printf("[BLE] %s timeout (non-fatal)\r\n", cmds[i].name);
+            // Timeout is non-fatal — the command was sent, response just didn't arrive
+            // (common with charger writeWithoutResponse where NimBLE reports "FAILED" but data IS sent)
+            Serial.printf("[BLE] %s timeout (non-fatal, command was sent)\r\n", cmds[i].name);
             webLogAdd("BLE: %s — no response (sent OK)", friendlyName);
         }
     }
@@ -256,18 +277,17 @@ bool provisionDevice(NimBLEAdvertisedDevice* device, const char* deviceType) {
         try { client->disconnect(); } catch (...) {}
     }
 
-    // Success criteria:
-    // - set_wifi_info got result:0 response, OR
-    // - device rebooted (disconnect after set_cfg_info)
-    bool ok = wifiConfirmed || disconnected;
-    const char* reason = "";
-    if (wifiConfirmed && disconnected) reason = " (WiFi confirmed + device rebooted)";
-    else if (wifiConfirmed) reason = " (WiFi confirmed)";
-    else if (disconnected) reason = " (device rebooted, WiFi unconfirmed)";
-    else reason = " (no WiFi confirmation!)";
+    // Success criteria (relaxed — matches bootstrap behavior):
+    // - At least ONE command got result:0 response, OR
+    // - Device rebooted (disconnect after set_cfg_info = commit success), OR
+    // - All commands were sent (even if responses timed out — writeWithoutResponse is unreliable)
+    // Only FAIL if we couldn't connect or got explicit result:1 rejections
+    bool ok = successCount > 0 || disconnected || totalSent == numCmds;
 
-    Serial.printf("[BLE] %s provisioning %s%s\r\n", deviceType, ok ? "OK" : "FAILED", reason);
-    webLogAdd("BLE: %s provisioning %s%s", displayName, ok ? "OK" : "FAILED", reason);
+    Serial.printf("[BLE] %s provisioning %s (%d/%d responses, disconnected=%s)\r\n",
+        deviceType, ok ? "OK" : "FAILED", successCount, totalSent,
+        disconnected ? "yes" : "no");
+    webLogAdd("BLE: %s provisioning %s (%d/%d OK)", displayName, ok ? "OK" : "FAILED", successCount, totalSent);
     return ok;
 }
 

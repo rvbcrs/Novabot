@@ -48,10 +48,11 @@ const int   MQTT_PORT   = 1883;
 String userWifiSsid     = "";
 String userWifiPassword = "";
 
-const int LORA_ADDR    = 718;
-const int LORA_CHANNEL = 15;
-const int LORA_HC      = 20;
-const int LORA_LC      = 14;
+const int LORA_ADDR            = 718;
+const int LORA_CHANNEL_CHARGER = 16;
+const int LORA_CHANNEL_MOWER   = 15;
+const int LORA_HC              = 20;
+const int LORA_LC              = 14;
 
 const uint8_t AES_IV[] = "abcd1234abcd1234";
 const char* VERSION = "v1.0.0-lcd";
@@ -81,6 +82,7 @@ ScanResult scanResults[10];
 int scanResultCount = 0;
 int selectedChargerIdx = -1;
 int selectedMowerIdx = -1;
+static int scanRetryCount = 0;
 
 // ── WiFi scan results ───────────────────────────────────────────────────────
 
@@ -124,6 +126,8 @@ unsigned long mowerOtaSentAt;
 NimBLEAdvertisedDevice* chargerDevice = nullptr;
 NimBLEAdvertisedDevice* mowerDevice = nullptr;
 bool bleScanning = false;
+bool chargerWifiDetected = false;
+bool mowerWifiDetected = false;
 
 // ── Firmware info (from SD card) ────────────────────────────────────────────
 
@@ -165,6 +169,26 @@ void setState(State newState) {
         case WIZ_DONE:               wizStep = 8; break;
         default:                     break;
     }
+}
+
+// ── Helper: build filtered scan results for display ─────────────────────────
+static ScanResult filteredResults[10];
+static int filteredCount = 0;
+
+// Filter scan results to only chargers or only mowers, remap selected index
+int buildFilteredResults(bool showChargers) {
+    filteredCount = 0;
+    int newSelectedIdx = -1;
+    for (int i = 0; i < scanResultCount && filteredCount < 10; i++) {
+        bool match = showChargers ? scanResults[i].isCharger : scanResults[i].isMower;
+        if (match) {
+            filteredResults[filteredCount] = scanResults[i];
+            if (showChargers && i == selectedChargerIdx) newSelectedIdx = filteredCount;
+            if (!showChargers && i == selectedMowerIdx) newSelectedIdx = filteredCount;
+            filteredCount++;
+        }
+    }
+    return newSelectedIdx;
 }
 
 // ── Setup ────────────────────────────────────────────────────────────────────
@@ -239,8 +263,30 @@ void setup() {
     NimBLEDevice::init("Nova-OTA");
     NimBLEDevice::setMTU(185);
 
-    // Start wizard -- go straight to charger scan
-    setState(WIZ_SCAN_CHARGER);
+    // Wait for already-connected devices (charger needs ~20s: WiFi→DHCP→MQTT)
+    webLogAdd("Checking for connected devices...");
+#ifdef WAVESHARE_LCD
+    display_detect(0, 0, false, false);
+#endif
+    unsigned long detectStart = millis();
+    while (millis() - detectStart < 30000) {
+        mqttBroker.update();
+        httpServer.handleClient();
+        processDNS();
+        delay(100);
+        int sec = (millis() - detectStart) / 1000;
+#ifdef WAVESHARE_LCD
+        if (sec % 2 == 0) display_detect(sec, WiFi.softAPgetStationNum(), chargerMqttConnected, mowerConnected);
+#endif
+        if (chargerMqttConnected) break;
+    }
+
+    if (chargerMqttConnected) {
+        webLogAdd("Charger already connected: %s", chargerSn.c_str());
+        setState(WIZ_CHARGER_CONNECTED);
+    } else {
+        setState(WIZ_SCAN_CHARGER);
+    }
 }
 
 // ── Main loop — linear wizard flow ──────────────────────────────────────────
@@ -261,6 +307,7 @@ void loop() {
     case WIZ_SCAN_CHARGER: {
         if (stateJustEntered) {
             stateJustEntered = false;
+            scanRetryCount = 0;
             webLogAdd("BLE: Scanning for charger...");
             statusMessage = "Scanning for charger...";
 #ifdef WAVESHARE_LCD
@@ -271,21 +318,43 @@ void loop() {
             chargerDevice = nullptr;
             startBleScan();
         }
-        // Check if charger found during scan
         if (!bleScanning) {
-            if (chargerDevice != nullptr) {
-                webLogAdd("BLE: Charger found! %s", chargerDevice->getName().c_str());
-                setState(WIZ_PROVISION_CHARGER);
-            } else {
-                // No charger found -- retry scan
+            // Count chargers found
+            int chargerCount = 0;
+            for (int i = 0; i < scanResultCount; i++) {
+                if (scanResults[i].isCharger) chargerCount++;
+            }
+            if (chargerCount == 0) {
                 webLogAdd("BLE: No charger found, retrying in 3s...");
 #ifdef WAVESHARE_LCD
                 display_error("No charger found\nMake sure charger is powered on\n\nRetrying...");
 #endif
                 delay(3000);
                 stateJustEntered = true;  // retry
+            } else {
+                webLogAdd("BLE: Found %d charger(s)", chargerCount);
+#ifdef WAVESHARE_LCD
+                int selIdx = buildFilteredResults(true);  // chargers only
+                display_devices(filteredResults, filteredCount, selIdx, -1);
+#endif
+                setState(WIZ_SELECT_CHARGER);
             }
         }
+        break;
+    }
+
+    case WIZ_SELECT_CHARGER: {
+#ifdef WAVESHARE_LCD
+        // Accept both ui_startPressed (device list) and ui_btnPressed (confirm dialog)
+        if (ui_startPressed || ui_btnPressed) {
+            ui_startPressed = false;
+            ui_btnPressed = false;
+            if (selectedChargerIdx >= 0 && chargerDevice != nullptr) {
+                webLogAdd("BLE: Selected charger: %s", scanResults[selectedChargerIdx].name.c_str());
+                setState(WIZ_PROVISION_CHARGER);
+            }
+        }
+#endif
         break;
     }
 
@@ -326,11 +395,42 @@ void loop() {
 #endif
         if (chargerMqttConnected) {
             webLogAdd("MQTT: Charger connected!");
-            setState(WIZ_SCAN_MOWER);
+            setState(WIZ_CHARGER_CONNECTED);
         }
         if (elapsed > 60) {
             webLogAdd("MQTT: Charger timeout — continuing to mower");
-            setState(WIZ_SCAN_MOWER);  // Continue anyway
+            setState(WIZ_CHARGER_CONNECTED);  // Show status even if timeout
+        }
+        break;
+    }
+
+    case WIZ_CHARGER_CONNECTED: {
+        if (stateJustEntered) {
+            stateJustEntered = false;
+            String title = chargerMqttConnected ? "Charger Connected" : "Charger Timeout";
+            String line1 = chargerSn.length() > 0 ? ("SN: " + chargerSn) : "Waiting for charger...";
+            String line2 = chargerMqttConnected ? "Connected via MQTT" : "Not connected — will retry later";
+            if (mowerWifiDetected) {
+                line2 += "\nMower detected on WiFi!";
+            }
+            webLogAdd("Charger status: %s (%s), mower WiFi: %s",
+                line1.c_str(), chargerMqttConnected ? "online" : "timeout",
+                mowerWifiDetected ? "yes" : "no");
+#ifdef WAVESHARE_LCD
+            display_confirm(title.c_str(), line1.c_str(), line2.c_str(),
+                mowerWifiDetected ? "Wait for Mower MQTT" : "Find Mower");
+#endif
+        }
+        if (ui_btnPressed) {
+            ui_btnPressed = false;
+            scanRetryCount = 0;
+            if (mowerWifiDetected || mowerConnected) {
+                // Mower already on WiFi — skip BLE scan, go wait for MQTT
+                webLogAdd("Mower already on WiFi — waiting for MQTT...");
+                setState(WIZ_WAIT_MOWER);
+            } else {
+                setState(WIZ_SCAN_MOWER);
+            }
         }
         break;
     }
@@ -349,18 +449,59 @@ void loop() {
             startBleScan();
         }
         if (!bleScanning) {
-            if (mowerDevice != nullptr) {
-                webLogAdd("BLE: Mower found! %s", mowerDevice->getName().c_str());
-                setState(WIZ_PROVISION_MOWER);
-            } else {
-                webLogAdd("BLE: No mower found, retrying in 3s...");
+            int mowerCount = 0;
+            for (int i = 0; i < scanResultCount; i++) {
+                if (scanResults[i].isMower) mowerCount++;
+            }
+            if (mowerCount == 0) {
+                scanRetryCount++;
+                if (scanRetryCount >= 3) {
+                    // After 3 retries, offer skip option
+                    webLogAdd("BLE: No mower after %d scans — tap to skip or wait for retry", scanRetryCount);
 #ifdef WAVESHARE_LCD
-                display_error("No mower found\nMake sure mower is powered on\nand not connected to WiFi\n\nRetrying...");
+                    display_confirm("Mower Not Found",
+                        "No mower found after 3 scans.",
+                        "Is the mower powered on?",
+                        "Skip Mower");
 #endif
-                delay(3000);
-                stateJustEntered = true;  // retry
+                    setState(WIZ_SELECT_MOWER);  // reuse select state for skip
+                } else {
+                    webLogAdd("BLE: No mower found, retrying in 3s... (%d/3)", scanRetryCount);
+#ifdef WAVESHARE_LCD
+                    display_error("No mower found\nMake sure mower is powered on\nand not connected to WiFi\n\nRetrying...");
+#endif
+                    delay(3000);
+                    stateJustEntered = true;  // retry
+                }
+            } else {
+                webLogAdd("BLE: Found %d mower(s)", mowerCount);
+#ifdef WAVESHARE_LCD
+                int selIdx = buildFilteredResults(false);  // mowers only
+                display_devices(filteredResults, filteredCount, -1, selIdx);
+#endif
+                setState(WIZ_SELECT_MOWER);
             }
         }
+        break;
+    }
+
+    case WIZ_SELECT_MOWER: {
+#ifdef WAVESHARE_LCD
+        if (ui_startPressed || ui_btnPressed) {
+            ui_startPressed = false;
+            ui_btnPressed = false;
+            if (selectedMowerIdx >= 0 && mowerDevice != nullptr) {
+                webLogAdd("BLE: Selected mower: %s", scanResults[selectedMowerIdx].name.c_str());
+                scanRetryCount = 0;
+                setState(WIZ_PROVISION_MOWER);
+            } else {
+                // Skip mower — no mower selected (from "Skip Mower" confirm dialog)
+                webLogAdd("Skipping mower — continuing without mower");
+                scanRetryCount = 0;
+                setState(WIZ_DONE);
+            }
+        }
+#endif
         break;
     }
 

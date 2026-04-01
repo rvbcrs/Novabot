@@ -35,12 +35,14 @@ void onWifiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
                     info.wifi_ap_staconnected.mac[2], info.wifi_ap_staconnected.mac[3],
                     info.wifi_ap_staconnected.mac[4], info.wifi_ap_staconnected.mac[5]);
                 const char* who = "unknown";
+                String staMacStr = String(staMac);
+                // 1. Try matching against BLE scan results
                 for (int si = 0; si < scanResultCount; si++) {
                     if (scanResults[si].isCharger || scanResults[si].isMower) {
                         String bleMac = scanResults[si].mac;
                         bleMac.toUpperCase();
                         // Mower: WiFi MAC = BLE MAC
-                        if (String(staMac).equalsIgnoreCase(bleMac)) {
+                        if (staMacStr.equalsIgnoreCase(bleMac)) {
                             who = scanResults[si].isMower ? "MOWER" : "CHARGER";
                         }
                         // Charger: WiFi STA MAC = BLE MAC - 2
@@ -49,12 +51,20 @@ void onWifiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
                             char expected[18];
                             snprintf(expected, sizeof(expected), "%s%02X",
                                 bleMac.substring(0, 15).c_str(), lastByte & 0xFF);
-                            if (String(staMac).equalsIgnoreCase(String(expected))) {
+                            if (staMacStr.equalsIgnoreCase(String(expected))) {
                                 who = "CHARGER";
                             }
                         }
                     }
                 }
+                // 2. Fallback: identify by MAC prefix
+                if (strcmp(who, "unknown") == 0) {
+                    if (staMacStr.startsWith("48:27")) who = "CHARGER";
+                    else if (staMacStr.startsWith("70:4A") || staMacStr.startsWith("50:41")) who = "MOWER";
+                }
+                // Set WiFi-detected flags
+                if (strcmp(who, "CHARGER") == 0) chargerWifiDetected = true;
+                if (strcmp(who, "MOWER") == 0) mowerWifiDetected = true;
                 Serial.printf("[WiFi] Station connected: %s (%s)\r\n", staMac, who);
                 webLogAdd("WiFi: %s connected (%s)", who, staMac);
                 // Check DHCP IP after a short delay (log in next loop iteration)
@@ -156,9 +166,10 @@ void processDNS() {
     qpos++;  // skip null terminator
     qpos += 4;  // skip QTYPE (2) + QCLASS (2)
 
-    // Only log lfibot.com queries (reduce noise from phones/etc)
+    // Log ALL DNS queries with response IP for debugging
+    Serial.printf("[DNS] %s → %s (from %s)\r\n", queryName, dnsResponseIP.toString().c_str(), dnsUdp.remoteIP().toString().c_str());
     if (strstr(queryName, "lfibot") || strstr(queryName, "mqtt")) {
-        Serial.printf("[DNS] Query: %s from %s\r\n", queryName, dnsUdp.remoteIP().toString().c_str());
+        webLogAdd("DNS: %s → %s", queryName, dnsResponseIP.toString().c_str());
     }
 
     // Build response: copy header, set response flags, append answer

@@ -27,7 +27,8 @@ extern String userWifiPassword;
 // ── LoRa defaults (same as official app — NEVER change) ─────────────────────
 
 extern const int LORA_ADDR;
-extern const int LORA_CHANNEL;
+extern const int LORA_CHANNEL_CHARGER;  // Charger = channel 16
+extern const int LORA_CHANNEL_MOWER;    // Mower = channel 15
 extern const int LORA_HC;
 extern const int LORA_LC;
 
@@ -54,9 +55,12 @@ extern const char* VERSION;
 enum State {
     WIZ_BOOT,                   // Hardware init, start AP + DNS + MQTT + HTTP
     WIZ_SCAN_CHARGER,           // BLE scan for CHARGER_PILE
+    WIZ_SELECT_CHARGER,         // Select charger from list (if multiple)
     WIZ_PROVISION_CHARGER,      // Provision charger with AP wifi + mqtt
     WIZ_WAIT_CHARGER,           // Wait for charger MQTT connect
+    WIZ_CHARGER_CONNECTED,      // Charger connected — confirm before mower scan
     WIZ_SCAN_MOWER,             // BLE scan for NOVABOT
+    WIZ_SELECT_MOWER,           // Select mower from list (if multiple)
     WIZ_PROVISION_MOWER,        // Provision mower with AP wifi + mqtt.lfibot.com
     WIZ_WAIT_MOWER,             // Wait for mower MQTT connect
     WIZ_OTA_FLASH,              // Flash mower firmware (if .deb on SD)
@@ -114,6 +118,10 @@ extern unsigned long mowerOtaSentAt;
 extern NimBLEAdvertisedDevice* chargerDevice;
 extern NimBLEAdvertisedDevice* mowerDevice;
 extern bool bleScanning;
+
+// ── WiFi-detected devices (by MAC prefix, before BLE scan) ──────────────────
+extern bool chargerWifiDetected;
+extern bool mowerWifiDetected;
 
 // ── Firmware info (from SD card) ────────────────────────────────────────────
 
