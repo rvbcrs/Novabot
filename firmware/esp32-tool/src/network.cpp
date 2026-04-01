@@ -14,6 +14,7 @@
 
 WiFiUDP dnsUdp;
 WebServer httpServer(80);
+WebServer otaHttpServer(3000);
 
 // ── DNS response IP ─────────────────────────────────────────────────────────
 
@@ -23,9 +24,28 @@ static IPAddress dnsResponseIP;
 
 extern Preferences prefs;
 
+// ── WebServer Client Accessor ───────────────────────────────────────────────
+// Exposes the protected _currentClient member from WebServer
+class WebServerExt : public WebServer {
+public:
+    WebServerExt(int port) : WebServer(port) {}
+    bool isClientConnected() { return _currentClient.connected(); }
+};
+
+#define EXT_SERVER(s) (static_cast<WebServerExt*>(&s))
+
+// ── Hardware Control Macros ─────────────────────────────────────────────────
+#ifdef WAVESHARE_LCD
+#define DEACTIVATE_LCD() digitalWrite(LCD_CS, HIGH)
+#define REACTIVATE_LCD() digitalWrite(LCD_CS, LOW)
+#else
+#define DEACTIVATE_LCD()
+#define REACTIVATE_LCD()
+#endif
+
 // ── WiFi AP ──────────────────────────────────────────────────────────────────
 
-void onWifiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
+void onWifiEvent(arduino_event_id_t event, arduino_event_info_t info) {
     switch (event) {
         case ARDUINO_EVENT_WIFI_AP_STACONNECTED:
             {
@@ -113,7 +133,7 @@ void setupWifiAP() {
         esp_netif_set_dns_info(apNetif, ESP_NETIF_DNS_MAIN, &dnsInfo);
 
         // 2. Enable DHCP DNS offer so clients receive our DNS via DHCP option 6
-        dhcps_offer_t offer = OFFER_DNS;
+        uint8_t offer = 1; // ESP-IDF v5 requires uint8_t for offer types rather than dhcps_offer_t, 1 = true
         esp_netif_dhcps_option(apNetif, ESP_NETIF_OP_SET, ESP_NETIF_DOMAIN_NAME_SERVER, &offer, sizeof(offer));
         Serial.printf("[WiFi] DHCP pre-configured with DNS=10.0.0.1\r\n");
         // DON'T restart DHCP yet -- softAP() will start it
@@ -219,6 +239,28 @@ void processDNS() {
     dnsUdp.beginPacket(dnsUdp.remoteIP(), dnsUdp.remotePort());
     dnsUdp.write(resp, rpos);
     dnsUdp.endPacket();
+}
+
+void streamFileWithYield(WebServer& server, File& file, const String& contentType) {
+    server.setContentLength(file.size());
+    server.send(200, contentType, "");
+    
+    uint8_t buf[2048];
+    while (file.available() && EXT_SERVER(server)->isClientConnected()) {
+        size_t len = file.read(buf, sizeof(buf));
+        if (len > 0) {
+            server.sendContent((const char*)buf, len);
+        }
+        
+        // Pump the other services so they don't time out during large file streaming
+        mqttBroker.update();
+        if (&server == &otaHttpServer) {
+            httpServer.handleClient();
+        } else {
+            otaHttpServer.handleClient();
+        }
+        yield();
+    }
 }
 
 // ── HTTP server -- serves firmware + status ──────────────────────────────────
@@ -591,7 +633,7 @@ function saveWifi(e){
         File file = SD.open("/" + mowerFwFilename);
         if (!file) { httpServer.send(404, "text/plain", "File not found"); return; }
         Serial.printf("[HTTP] Serving mower firmware: %s (%d bytes)\r\n", mowerFwFilename.c_str(), file.size());
-        httpServer.streamFile(file, "application/octet-stream");
+        streamFileWithYield(httpServer, file, "application/octet-stream");
         file.close();
     });
 
@@ -601,7 +643,7 @@ function saveWifi(e){
         File file = SD.open("/" + chargerFwFilename);
         if (!file) { httpServer.send(404, "text/plain", "File not found"); return; }
         Serial.printf("[HTTP] Serving charger firmware: %s (%d bytes)\r\n", chargerFwFilename.c_str(), file.size());
-        httpServer.streamFile(file, "application/octet-stream");
+        streamFileWithYield(httpServer, file, "application/octet-stream");
         file.close();
     });
 
@@ -677,7 +719,7 @@ function saveWifi(e){
             httpServer.send(200, "application/json", "{\"mounted\":false,\"files\":[]}");
             return;
         }
-        digitalWrite(LCD_CS, HIGH);  // Deactivate LCD during SD access
+        DEACTIVATE_LCD();  // Deactivate LCD during SD access
         String json = "{\"mounted\":true,\"files\":[";
         File root = SD.open("/");
         bool first = true;
@@ -699,7 +741,7 @@ function saveWifi(e){
         String name = httpServer.arg("name");
         if (name.length() == 0) { httpServer.send(400, "application/json", "{\"ok\":false,\"error\":\"name required\"}"); return; }
         String path = name.startsWith("/") ? name : "/" + name;
-        digitalWrite(LCD_CS, HIGH);
+        DEACTIVATE_LCD();
         if (SD.exists(path)) {
             SD.remove(path);
             Serial.printf("[SD] Deleted: %s\r\n", path.c_str());
@@ -718,7 +760,7 @@ function saveWifi(e){
         []() {
             HTTPUpload& upload = httpServer.upload();
             if (upload.status == UPLOAD_FILE_START) {
-                digitalWrite(LCD_CS, HIGH);  // Deactivate LCD during SD write
+                DEACTIVATE_LCD();  // Deactivate LCD during SD write
                 String filename = "/" + upload.filename;
                 Serial.printf("[UPLOAD] Start: %s\r\n", filename.c_str());
                 if (SD.exists(filename)) SD.remove(filename);
@@ -744,10 +786,9 @@ function saveWifi(e){
         String uri = httpServer.uri();
         String host = httpServer.hostHeader();
         // Log ALL unhandled requests -- helps debug charger connectivity checks
-        Serial.printf("[HTTP] 404: %s (Host: %s, from %s)\r\n",
-            uri.c_str(), host.c_str(), httpServer.client().remoteIP().toString().c_str());
-        webLogAdd("HTTP: %s %s from %s", uri.c_str(), host.c_str(),
-            httpServer.client().remoteIP().toString().c_str());
+        Serial.printf("[HTTP] 404: %s (Host: %s)\r\n",
+            uri.c_str(), host.c_str());
+        webLogAdd("HTTP: %s %s", uri.c_str(), host.c_str());
 
         // Apple captive portal check
         if (uri.indexOf("hotspot-detect") >= 0 || uri.indexOf("captive") >= 0) {
@@ -765,13 +806,40 @@ function saveWifi(e){
 
     httpServer.begin();
     Serial.println("[HTTP] Server started on port 80");
+
+    // ── OTA server on port 3000 — firmware downloads + health check ──────────
+    otaHttpServer.on("/", []() {
+        otaHttpServer.send(200, "text/plain", "Novabot OTA Server Active");
+    });
+    
+    otaHttpServer.on("/firmware.deb", []() {
+        if (mowerFwFilename.length() == 0) { otaHttpServer.send(404, "text/plain", "No firmware"); return; }
+        String path = "/" + mowerFwFilename;
+        DEACTIVATE_LCD();
+        File file = SD.open(path, FILE_READ);
+        if (!file) { otaHttpServer.send(404, "text/plain", "File not found"); REACTIVATE_LCD(); return; }
+        Serial.printf("[HTTP:3000] Serving %s (%d bytes)\r\n", path.c_str(), file.size());
+        streamFileWithYield(otaHttpServer, file, "application/octet-stream");
+        file.close();
+        REACTIVATE_LCD();
+    });
+
+    otaHttpServer.onNotFound([]() {
+        String uri = otaHttpServer.uri();
+        String host = otaHttpServer.hostHeader();
+        Serial.printf("[HTTP:3000] 404: %s (Host: %s)\r\n", uri.c_str(), host.c_str());
+        otaHttpServer.send(200, "text/plain", "OK");
+    });
+
+    otaHttpServer.begin();
+    Serial.println("[HTTP] OTA Server started on port 3000");
 }
 
 // ── Firmware info from SD card ───────────────────────────────────────────────
 
 bool loadFirmwareInfo() {
     bool foundAny = false;
-    digitalWrite(LCD_CS, HIGH);  // Deactivate LCD during SD access
+    DEACTIVATE_LCD();  // Deactivate LCD during SD access
     File root = SD.open("/");
     while (File f = root.openNextFile()) {
         String name = f.name();
@@ -823,7 +891,7 @@ bool loadFirmwareInfo() {
 
 String computeMd5(const char* path) {
     // Deactivate LCD CS during SD read
-    digitalWrite(LCD_CS, HIGH);
+    DEACTIVATE_LCD();
     File f = SD.open(path);
     if (!f) return "";
     MD5Builder md5;
