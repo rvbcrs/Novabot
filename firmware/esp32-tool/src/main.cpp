@@ -233,16 +233,14 @@ void setup() {
 #endif
 
     // Initialize shared SPI bus for SD — EXACT factory pattern (bsp_spi.cpp)
-    // This is a SEPARATE SPIClass instance from what Arduino_GFX uses internally
     static SPIClass bsp_spi(FSPI);
     bsp_spi.begin(39, 40, 38, -1);  // SCK=39, MISO=40, MOSI=38, CS=-1
 
-    // Mount SD card using the shared SPI bus
+    // Mount SD card — LVGL task not running yet, so no SPI conflict
     pinMode(SD_CS_PIN, OUTPUT);
     digitalWrite(SD_CS_PIN, HIGH);
     pinMode(LCD_CS, OUTPUT);
-    digitalWrite(LCD_CS, HIGH);  // LCD deselected during SD access
-
+    digitalWrite(LCD_CS, HIGH);
     sdMounted = SD.begin(SD_CS_PIN, bsp_spi);
     if (!sdMounted) {
         Serial.println("[SD] Card mount failed — OTA will be skipped");
@@ -254,6 +252,12 @@ void setup() {
     if (!loadFirmwareInfo()) {
         Serial.println("[SD] No firmware .deb — OTA will be skipped");
     }
+
+#ifdef WAVESHARE_LCD
+    // NOW start LVGL task — after SD is mounted and firmware file is open
+    // (same as factory: bsp_lv_port_run() runs after bsp_spi_init + SD.begin)
+    display_run();
+#endif
 
     // Start WiFi AP
     setupWifiAP();
@@ -279,7 +283,7 @@ void setup() {
 
 void loop() {
     processDNS();
-    // AsyncWebServer handles requests automatically — no handleClient needed
+    httpServer.handleClient();
     mqttBroker.update();
 
     unsigned long elapsed = (millis() - stateEnteredAt) / 1000;

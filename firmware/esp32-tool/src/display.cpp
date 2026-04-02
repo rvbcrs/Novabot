@@ -1,21 +1,32 @@
 /**
- * display.cpp — LVGL 8.4 display driver for Waveshare ESP32-S3 Touch LCD 2"
+ * display.cpp — LVGL 8.4 display driver
  *
- * Uses Arduino_GFX for SPI display, LVGL for widgets and touch handling.
- * Dark theme (#1a1a2e) with purple/teal accents.
+ * Supports two hardware targets:
+ *   WAVESHARE_LCD — Waveshare ESP32-S3 Touch LCD 2" (ST7789, SPI, CST816D touch)
+ *                   No PSRAM — buffers in internal SRAM.
+ *   JC3248W535    — JC3248W535EN (AXS15231B, QSPI, I2C touch, 8MB PSRAM)
+ *                   320x480 display, rotated 90° → 480x320 logical.
  *
- * CRITICAL: No PSRAM on this board — all buffers in internal SRAM.
+ * Dark theme (#1a1a2e) with purple/teal accents using LVGL widgets.
  *
- * v2.0 — Menu-based state machine with flow selection.
+ * v2.1 — JC3248W535 QSPI board support via BSP.
  */
 
+#include <stdint.h>
 #include "display.h"
 #include "logo.h"
 
-#ifdef WAVESHARE_LCD
+#if defined(WAVESHARE_LCD) || defined(JC3248W535)
 
+#ifdef WAVESHARE_LCD
 #include <Arduino_GFX_Library.h>
 #include <Wire.h>
+#endif
+
+#ifdef JC3248W535
+#include "jc_bsp.h"
+#endif
+
 #include "lvgl.h"
 #include "esp_timer.h"
 
@@ -54,9 +65,16 @@ volatile bool ui_flashSkipped       = false;
 #define COL_GRAY_BTN lv_color_hex(0x374151)
 
 // ── Screen dimensions ───────────────────────────────────────────────────────
+// JC3248W535: 320x480 display, rotated 90° → logical 480x320
+// Waveshare:  240x320 (portrait)
 
+#ifdef JC3248W535
+#define SCREEN_W 480
+#define SCREEN_H 320
+#else
 #define SCREEN_W 240
 #define SCREEN_H 320
+#endif
 
 // ── LVGL tick period ────────────────────────────────────────────────────────
 
@@ -64,8 +82,9 @@ volatile bool ui_flashSkipped       = false;
 #define LV_TASK_MAX_DELAY_MS 500
 #define LV_TASK_MIN_DELAY_MS 1
 
-// ── Arduino_GFX display instance ────────────────────────────────────────────
+// ── Arduino_GFX display instance (Waveshare only) ────────────────────────────
 
+#ifdef WAVESHARE_LCD
 static Arduino_DataBus *bus = nullptr;
 static Arduino_GFX *gfx = nullptr;
 
@@ -81,6 +100,7 @@ static bool spi_lock(int timeout_ms = -1) {
 static void spi_unlock() {
     xSemaphoreGiveRecursive(spi_mux);
 }
+#endif // WAVESHARE_LCD
 
 // ── LVGL mutex ──────────────────────────────────────────────────────────────
 
@@ -95,13 +115,17 @@ void lvgl_unlock() {
     xSemaphoreGiveRecursive(lvgl_mux);
 }
 
-// ── LVGL draw buffers — static, internal RAM, 1/10 screen ──────────────────
+// ── LVGL draw buffers — Waveshare only (JC3248W535 uses PSRAM via BSP) ───────
 
+#ifdef WAVESHARE_LCD
 static lv_color_t draw_buf1[SCREEN_W * 32];   // 240 * 32 * 2 = 15360 bytes
 static lv_color_t draw_buf2[SCREEN_W * 32];   // 15360 bytes
 static lv_disp_draw_buf_t disp_draw_buf;
+#endif // WAVESHARE_LCD
 
-// ── Touch — CST816D via I2C ────────────────────────────────────────────────
+// ── Touch + flush callbacks — Waveshare only (JC3248W535 uses BSP/esp_lvgl_port) ──
+
+#ifdef WAVESHARE_LCD
 
 static const uint8_t CST816D_ADDR = 0x15;
 
@@ -150,16 +174,13 @@ static void disp_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t 
     lv_disp_flush_ready(drv);
 }
 
-// ── LVGL tick callback ──────────────────────────────────────────────────────
+// ── LVGL tick + task — Waveshare only (JC3248W535 uses lv_port.c internal task) ──
 
 static void lvgl_tick_cb(void *arg) {
     lv_tick_inc(LV_TICK_PERIOD_MS);
 }
 
-// ── LVGL task (runs on core 1) ──────────────────────────────────────────────
-
 static void lvgl_task(void *param) {
-    // Start tick timer on this core
     const esp_timer_create_args_t tick_args = {
         .callback = &lvgl_tick_cb,
         .name = "lvgl_tick"
@@ -180,7 +201,9 @@ static void lvgl_task(void *param) {
     }
 }
 
-// ── Style helpers ───────────────────────────────────────────────────────────
+#endif // WAVESHARE_LCD
+
+// ── Style helpers — shared by both boards ────────────────────────────────────
 
 // Persistent MQTT wait labels (forward declarations for create_screen reset)
 static lv_obj_t *mqtt_scr = nullptr;
@@ -334,6 +357,20 @@ static void flash_skip_cb(lv_event_t *e) {
 
 // ── Public API ──────────────────────────────────────────────────────────────
 
+#ifdef JC3248W535
+void display_init() {
+    Serial.printf("[DISPLAY] LVGL 8.4 initialized (%dx%d, PSRAM)\r\n", SCREEN_W, SCREEN_H);
+    // JC3248W535 display + touch + LVGL are initialized by jc_bsp.c / lv_port.c
+    // via bsp_display_start_with_config() — called from main.cpp
+    // This function is a placeholder; the real init is in main.cpp
+}
+
+void display_run() {
+    // LVGL task is started by esp_lvgl_port internally — nothing extra needed
+    Serial.println("[DISPLAY] LVGL task started (via esp_lvgl_port)");
+}
+
+#elif defined(WAVESHARE_LCD)
 void display_init() {
     // SPI mutex
     spi_mux = xSemaphoreCreateRecursiveMutex();
@@ -381,11 +418,18 @@ void display_init() {
     indev_drv.read_cb = touch_read_cb;
     lv_indev_drv_register(&indev_drv);
 
-    // Start LVGL task on core 1
-    xTaskCreatePinnedToCore(lvgl_task, "lvgl", 1024 * 10, NULL, 5, NULL, 1);
-
+    // DON'T start LVGL task yet — call display_run() after SD init
     Serial.println("[DISPLAY] LVGL 8.4 initialized (240x320, no PSRAM)");
 }
+
+void display_run() {
+    // Start LVGL task on core 1 — call AFTER SD init to avoid SPI conflict
+    xTaskCreatePinnedToCore(lvgl_task, "lvgl", 1024 * 10, NULL, 5, NULL, 1);
+    Serial.println("[DISPLAY] LVGL task started");
+}
+#endif // WAVESHARE_LCD display_init/display_run
+
+// ── Shared LVGL widget functions (used by both boards) ─────────────────────
 
 void display_boot(const char* version) {
     if (!lvgl_lock(100)) return;

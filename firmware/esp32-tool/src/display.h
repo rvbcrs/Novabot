@@ -48,6 +48,7 @@ void lvgl_unlock(void);
 // ── Public API ──────────────────────────────────────────────────────────────
 
 void display_init();
+void display_run();   // Start LVGL FreeRTOS task — call AFTER SD init
 void display_boot(const char* version);
 void display_scanning();
 void display_devices(ScanResult* results, int count, int selectedCharger, int selectedMower);

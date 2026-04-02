@@ -5,10 +5,10 @@
  *             and SD card firmware loading.
  */
 
-#include <ESPAsyncWebServer.h>
+#include <WebServer.h>
 #include <WiFiUdp.h>
 
-extern AsyncWebServer httpServer;
+extern WebServer httpServer;
 extern WiFiUDP dnsUdp;
 
 // ── Public API ──────────────────────────────────────────────────────────────
