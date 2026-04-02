@@ -159,7 +159,8 @@ void sendMowerOtaWithAes(bool useAes) {
 
     // Direct IP for firmware download — curl on mower may not resolve DNS correctly
     // (resolv.conf points to home network DNS which is unreachable on ESP32 AP)
-    String downloadUrl = "http://10.0.0.1:3000/firmware.deb";
+    // Direct IP, port 80 — single HTTP server
+    String downloadUrl = "http://10.0.0.1/firmware.deb";
 
     // EXACT OTA payload -- NO tz field, type MUST be "full", cmd MUST be "upgrade"
     String otaJson = "{\"ota_upgrade_cmd\":{\"cmd\":\"upgrade\",\"type\":\"full\",\"content\":\"app\",";

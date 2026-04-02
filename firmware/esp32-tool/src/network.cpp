@@ -14,7 +14,6 @@
 
 WiFiUDP dnsUdp;
 WebServer httpServer(80);
-WebServer otaHttpServer(3000);
 
 // ── DNS response IP ─────────────────────────────────────────────────────────
 
@@ -254,11 +253,7 @@ void streamFileWithYield(WebServer& server, File& file, const String& contentTyp
         
         // Pump the other services so they don't time out during large file streaming
         mqttBroker.update();
-        if (&server == &otaHttpServer) {
-            httpServer.handleClient();
-        } else {
-            otaHttpServer.handleClient();
-        }
+        processDNS();
         yield();
     }
 }
@@ -630,8 +625,11 @@ function saveWifi(e){
     // Firmware download -- mower .deb
     httpServer.on("/firmware.deb", []() {
         if (mowerFwFilename.length() == 0) { httpServer.send(404, "text/plain", "No mower firmware"); return; }
+        DEACTIVATE_LCD();
+        SD.end(); delay(50);
+        if (!SD.begin(SD_CS)) { httpServer.send(500, "text/plain", "SD error"); REACTIVATE_LCD(); return; }
         File file = SD.open("/" + mowerFwFilename);
-        if (!file) { httpServer.send(404, "text/plain", "File not found"); return; }
+        if (!file) { httpServer.send(404, "text/plain", "File not found"); REACTIVATE_LCD(); return; }
         Serial.printf("[HTTP] Serving mower firmware: %s (%d bytes)\r\n", mowerFwFilename.c_str(), file.size());
         streamFileWithYield(httpServer, file, "application/octet-stream");
         file.close();
@@ -807,32 +805,6 @@ function saveWifi(e){
     httpServer.begin();
     Serial.println("[HTTP] Server started on port 80");
 
-    // ── OTA server on port 3000 — firmware downloads + health check ──────────
-    otaHttpServer.on("/", []() {
-        otaHttpServer.send(200, "text/plain", "Novabot OTA Server Active");
-    });
-    
-    otaHttpServer.on("/firmware.deb", []() {
-        if (mowerFwFilename.length() == 0) { otaHttpServer.send(404, "text/plain", "No firmware"); return; }
-        String path = "/" + mowerFwFilename;
-        DEACTIVATE_LCD();
-        File file = SD.open(path, FILE_READ);
-        if (!file) { otaHttpServer.send(404, "text/plain", "File not found"); REACTIVATE_LCD(); return; }
-        Serial.printf("[HTTP:3000] Serving %s (%d bytes)\r\n", path.c_str(), file.size());
-        streamFileWithYield(otaHttpServer, file, "application/octet-stream");
-        file.close();
-        REACTIVATE_LCD();
-    });
-
-    otaHttpServer.onNotFound([]() {
-        String uri = otaHttpServer.uri();
-        String host = otaHttpServer.hostHeader();
-        Serial.printf("[HTTP:3000] 404: %s (Host: %s)\r\n", uri.c_str(), host.c_str());
-        otaHttpServer.send(200, "text/plain", "OK");
-    });
-
-    otaHttpServer.begin();
-    Serial.println("[HTTP] OTA Server started on port 3000");
 }
 
 // ── Firmware info from SD card ───────────────────────────────────────────────

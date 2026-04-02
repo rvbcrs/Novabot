@@ -9,7 +9,6 @@
 #include <WiFiUdp.h>
 
 extern WebServer httpServer;
-extern WebServer otaHttpServer;
 extern WiFiUDP dnsUdp;
 
 // ── Public API ──────────────────────────────────────────────────────────────

@@ -272,7 +272,6 @@ void setup() {
 void loop() {
     processDNS();
     httpServer.handleClient();
-    otaHttpServer.handleClient();
     mqttBroker.update();
 
     unsigned long elapsed = (millis() - stateEnteredAt) / 1000;
