@@ -51,6 +51,7 @@ const int   MQTT_PORT   = 1883;
 
 String userWifiSsid     = "";
 String userWifiPassword = "";
+String userMqttAddr     = "";
 
 const int LORA_ADDR            = 718;
 const int LORA_CHANNEL_CHARGER = 16;
@@ -201,6 +202,8 @@ int buildFilteredResults(bool showChargers) {
 void setup() {
     Serial.begin(115200);
     delay(1000);
+    // Suppress noisy WiFi CCMP errors from charger (corrupt mgmt frames)
+    esp_log_level_set("wifi", ESP_LOG_NONE);
 
 #ifndef WAVESHARE_LCD
     pinMode(LED_PIN, OUTPUT);
@@ -218,12 +221,14 @@ void setup() {
     prefs.begin("nova-ota", false);
     String savedSsid = prefs.getString("wifi_ssid", "");
     String savedPass = prefs.getString("wifi_pass", "");
+    String savedMqtt = prefs.getString("mqtt_addr", "");
     if (savedSsid.length() > 0) {
         userWifiSsid = savedSsid;
         userWifiPassword = savedPass;
+        userMqttAddr = savedMqtt;
         strncpy(ui_wifiSsid, savedSsid.c_str(), sizeof(ui_wifiSsid) - 1);
         strncpy(ui_wifiPassword, savedPass.c_str(), sizeof(ui_wifiPassword) - 1);
-        Serial.printf("[NVS] Loaded home WiFi: %s\r\n", savedSsid.c_str());
+        Serial.printf("[NVS] Loaded home WiFi: %s, MQTT: %s\r\n", savedSsid.c_str(), savedMqtt.c_str());
     } else {
         Serial.println("[NVS] No saved WiFi credentials");
     }
@@ -378,11 +383,20 @@ void loop() {
 #if defined(WAVESHARE_LCD) || defined(JC3248W535)
             provisionProgressCb = display_provision;
 #endif
-            reprovisioning = false;  // Use AP credentials
+            reprovisioning = false;
+            bool chargerToHome = userWifiSsid.length() > 0 && userMqttAddr.length() > 0;
             if (provisionDevice(chargerDevice, "charger")) {
-                webLogAdd("BLE: Charger provisioned!");
                 provisionProgressCb = nullptr;
-                setState(WIZ_CHARGER_CONNECTED);
+                if (chargerToHome) {
+                    // Charger sent to home WiFi — it will leave our AP
+                    webLogAdd("BLE: Charger provisioned → home WiFi (%s)", userWifiSsid.c_str());
+                    webLogAdd("BLE: Charger MQTT → %s", userMqttAddr.c_str());
+                    chargerWifiDetected = true;  // Mark as "done" so status shows OK
+                    setState(WIZ_CHARGER_CONNECTED);
+                } else {
+                    webLogAdd("BLE: Charger provisioned → our AP");
+                    setState(WIZ_CHARGER_CONNECTED);
+                }
             } else {
                 webLogAdd("BLE: Charger provisioning failed!");
                 provisionProgressCb = nullptr;
@@ -612,12 +626,12 @@ void loop() {
 #endif
         }
 #if defined(WAVESHARE_LCD) || defined(JC3248W535)
-        if (ui_btnPressed) {
+        if (ui_btnPressed && mowerCharging) {
             ui_btnPressed = false;
-            if (!mowerCharging) {
-                webLogAdd("OTA: Warning — mower may not be charging. Flashing anyway.");
-            }
             setState(WIZ_OTA_FLASH);
+        } else if (ui_btnPressed && !mowerCharging) {
+            ui_btnPressed = false;
+            webLogAdd("OTA: Mower not on charger — waiting...");
         }
 #endif
         // No timeout — wait until user acts or places mower on charger

@@ -181,10 +181,21 @@ bool provisionDevice(NimBLEAdvertisedDevice* device, const char* deviceType) {
     // CRITICAL: Charger ignores set_wifi_info if get_signal_info is sent first!
     // ======================================================================
 
-    // During initial provisioning (reprovisioning=false): use our AP credentials
-    // During re-provisioning (reprovisioning=true): use home WiFi credentials
-    String provSsid = reprovisioning ? userWifiSsid : String(AP_SSID);
-    String provPass = reprovisioning ? userWifiPassword : String(AP_PASSWORD);
+    // WiFi credentials per device:
+    //   Charger: ALWAYS home WiFi (goes straight to home network, off our AP)
+    //            If no home WiFi configured yet, fall back to our AP
+    //   Mower:   AP credentials during initial provisioning (needs OTA via our AP)
+    //            Home WiFi during re-provisioning (after OTA)
+    bool chargerToHome = !isMower && userWifiSsid.length() > 0 && userMqttAddr.length() > 0;
+    String provSsid, provPass;
+    if (isMower) {
+        provSsid = reprovisioning ? userWifiSsid : String(AP_SSID);
+        provPass = reprovisioning ? userWifiPassword : String(AP_PASSWORD);
+    } else {
+        // Charger always goes to home WiFi if available
+        provSsid = chargerToHome ? userWifiSsid : String(AP_SSID);
+        provPass = chargerToHome ? userWifiPassword : String(AP_PASSWORD);
+    }
 
     // AP SSID: use device name if available (e.g. "LFIC1231000319"), else default
     String apSsid = chargerSn.length() > 0 ? chargerSn : "CHARGER_PILE";
@@ -206,12 +217,17 @@ bool provisionDevice(NimBLEAdvertisedDevice* device, const char* deviceType) {
     String loraPayload = "{\"set_lora_info\":{\"addr\":" + String(LORA_ADDR) +
         ",\"channel\":" + String(loraChannel) + ",\"hc\":" + String(LORA_HC) +
         ",\"lc\":" + String(LORA_LC) + "}}";
-    // Charger: direct IP (charger doesn't use DHCP DNS!) + port 1883
-    // Mower: hostname mqtt.lfibot.com (uses our custom DNS) + port 1883
-    String mqttAddr = isMower ? String(MQTT_HOST) : "10.0.0.1";
+    // MQTT address per device:
+    //   Charger: home MQTT server IP if configured, else our AP (10.0.0.1)
+    //   Mower:   mqtt.lfibot.com (resolved by our DNS to 10.0.0.1)
+    String mqttAddr = isMower ? String(MQTT_HOST) :
+                      (chargerToHome ? userMqttAddr : "10.0.0.1");
     int mqttPort = 1883;
     String mqttPayload = "{\"set_mqtt_info\":{\"addr\":\"" + mqttAddr +
         "\",\"port\":" + String(mqttPort) + "}}";
+
+    Serial.printf("[BLE] Provisioning %s: WiFi=%s MQTT=%s\r\n",
+                  isMower ? "mower" : "charger", provSsid.c_str(), mqttAddr.c_str());
 
     // Build command array in correct order per device type
     struct { const char* name; String payload; int step; } cmds[8];

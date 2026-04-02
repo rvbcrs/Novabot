@@ -1,5 +1,6 @@
 #include "mqtt.h"
 #include "config.h"
+#include "network.h"
 #include "mbedtls/aes.h"
 
 // ── NovaMQTTBroker instance ─────────────────────────────────────────────────
@@ -99,6 +100,14 @@ bool NovaMQTTBroker::onEvent(sMQTTEvent *event) {
                 }
             }
 
+            // During OTA flash: only process ota_upgrade_state, skip everything else.
+            // Mower sends report_state_robot / report_state_timer_data every few seconds —
+            // the Serial.printf + string parsing overwhelms the ESP32 during firmware download.
+            bool otaActive = mowerOtaTriedPlain || mowerOtaTriedAes;
+            if (otaActive && payload.find("ota_upgrade_state") == std::string::npos) {
+                return true;
+            }
+
             // Log decrypted mower messages (skip frequent report_exception_state)
             if (topic.find("Dart/Receive_mqtt/LFIN") != std::string::npos && payload.size() > 0 && payload[0] == '{') {
                 if (payload.find("report_exception_state") == std::string::npos) {
@@ -156,12 +165,20 @@ bool NovaMQTTBroker::onEvent(sMQTTEvent *event) {
                         otaStatus = status;
                         Serial.printf("[OTA] Progress: %d%% status=%s\r\n", otaProgressPercent, status.c_str());
 
-                        if (status == "fail" || status == "error") {
+                        if (status == "success" || otaProgressPercent >= 100) {
+                            Serial.println("[OTA] COMPLETE!");
+                            mowerOtaTriedPlain = false;
+                            mowerOtaTriedAes = false;
+                            allowChargerAfterOta();
+                        }
+                        else if (status == "fail" || status == "error") {
                             // Immediate AES retry if plain failed
                             if (mowerOtaTriedPlain && !mowerOtaTriedAes && mowerConnected) {
                                 Serial.println("[OTA] FAIL detected — retrying with AES...");
                                 mowerOtaTriedAes = true;
                                 sendMowerOtaWithAes(true);
+                            } else {
+                                allowChargerAfterOta();
                             }
                         }
                     }
@@ -223,19 +240,20 @@ void sendMqttMessage(String topic, String payload, bool useAes, String sn) {
 void sendMowerOtaWithAes(bool useAes) {
     if (!mowerConnected || mowerSn.length() == 0 || mowerFwFilename.length() == 0) return;
 
-    // Direct IP for firmware download — curl on mower may not resolve DNS correctly
-    // (resolv.conf points to home network DNS which is unreachable on ESP32 AP)
-    // Direct IP, port 80 — single HTTP server
+    // Direct IP — curl on mower can reach the ESP32 AP gateway directly
     String downloadUrl = "http://10.0.0.1/firmware.deb";
 
     // EXACT OTA payload -- NO tz field, type MUST be "full", cmd MUST be "upgrade"
     String otaJson = "{\"ota_upgrade_cmd\":{\"cmd\":\"upgrade\",\"type\":\"full\",\"content\":\"app\",";
     otaJson += "\"url\":\"" + downloadUrl + "\",";
-    otaJson += "\"version\":\"" + mowerFwVersion + "\",";
+    // Always append timestamp to version to ensure ota_client sees it as "newer"
+    String otaVersion = mowerFwVersion + "-" + String(millis() / 1000);
+    otaJson += "\"version\":\"" + otaVersion + "\",";
     otaJson += "\"md5\":\"" + mowerFwMd5 + "\"}}";
 
     String topic = "Dart/Send_mqtt/" + mowerSn;
 
+    Serial.printf("[OTA] JSON payload: %s\r\n", otaJson.c_str());
     sendMqttMessage(topic, otaJson, useAes, mowerSn);
     mowerOtaSentAt = millis();
 
@@ -246,6 +264,9 @@ void sendMowerOtaWithAes(bool useAes) {
 }
 
 void sendMowerOta() {
+    // Kick charger off WiFi — its CCMP frames destabilize the channel during download
+    kickChargerForOta();
+
     // Try plain first (v5.x), if no response after 30s try AES (v6.x)
     mowerOtaTriedPlain = true;
     mowerOtaTriedAes = false;

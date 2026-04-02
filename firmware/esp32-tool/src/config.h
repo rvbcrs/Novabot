@@ -23,6 +23,7 @@ extern const int   MQTT_PORT;
 
 extern String userWifiSsid;
 extern String userWifiPassword;
+extern String userMqttAddr;       // Home MQTT server address (e.g. "192.168.0.177")
 
 // ── LoRa defaults (same as official app — NEVER change) ─────────────────────
 

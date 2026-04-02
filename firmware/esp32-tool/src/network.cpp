@@ -58,6 +58,10 @@ public:
 
 // ── WiFi AP ──────────────────────────────────────────────────────────────────
 
+// Charger WiFi blocking during OTA — charger's CCMP frames destabilize the channel
+static uint16_t chargerWifiAid = 0;       // Charger's WiFi Association ID
+static bool blockChargerWifi = false;     // Set true during OTA to block charger
+
 void onWifiEvent(arduino_event_id_t event, arduino_event_info_t info) {
     switch (event) {
         case ARDUINO_EVENT_WIFI_AP_STACONNECTED:
@@ -96,7 +100,16 @@ void onWifiEvent(arduino_event_id_t event, arduino_event_info_t info) {
                     else if (staMacStr.startsWith("70:4A") || staMacStr.startsWith("50:41")) who = "MOWER";
                 }
                 // Set WiFi-detected flags
-                if (strcmp(who, "CHARGER") == 0) chargerWifiDetected = true;
+                if (strcmp(who, "CHARGER") == 0) {
+                    chargerWifiDetected = true;
+                    chargerWifiAid = info.wifi_ap_staconnected.aid;
+                    // During OTA: immediately kick charger — its CCMP frames crash mower downloads
+                    if (blockChargerWifi) {
+                        esp_wifi_deauth_sta(chargerWifiAid);
+                        Serial.printf("[WiFi] Charger blocked during OTA (AID %d)\r\n", chargerWifiAid);
+                        break;
+                    }
+                }
                 if (strcmp(who, "MOWER") == 0) mowerWifiDetected = true;
                 Serial.printf("[WiFi] Station connected: %s (%s)\r\n", staMac, who);
                 webLogAdd("WiFi: %s connected (%s)", who, staMac);
@@ -157,6 +170,11 @@ void setupWifiAP() {
     conf.ap.authmode = WIFI_AUTH_WPA_WPA2_PSK;
     esp_wifi_set_config(WIFI_IF_AP, &conf);
 
+    // Maximize WiFi performance — critical for stable OTA firmware downloads
+    esp_wifi_set_ps(WIFI_PS_NONE);           // Disable power save (keeps AP responsive)
+    esp_wifi_set_max_tx_power(84);           // Max TX power: 21dBm
+    esp_wifi_set_bandwidth(WIFI_IF_AP, WIFI_BW_HT40);  // 40MHz channel = double throughput
+
     // Now start DHCP server (after AP is active)
     if (apNetif) {
         esp_err_t err = esp_netif_dhcps_start(apNetif);
@@ -200,10 +218,12 @@ void processDNS() {
     qpos++;  // skip null terminator
     qpos += 4;  // skip QTYPE (2) + QCLASS (2)
 
-    // Log ALL DNS queries with response IP for debugging
-    Serial.printf("[DNS] %s → %s (from %s)\r\n", queryName, dnsResponseIP.toString().c_str(), dnsUdp.remoteIP().toString().c_str());
-    if (strstr(queryName, "lfibot") || strstr(queryName, "mqtt")) {
-        webLogAdd("DNS: %s → %s", queryName, dnsResponseIP.toString().c_str());
+    // Log DNS queries (suppress during OTA to reduce serial overhead)
+    if (!(mowerOtaTriedPlain || mowerOtaTriedAes)) {
+        Serial.printf("[DNS] %s → %s (from %s)\r\n", queryName, dnsResponseIP.toString().c_str(), dnsUdp.remoteIP().toString().c_str());
+        if (strstr(queryName, "lfibot") || strstr(queryName, "mqtt")) {
+            webLogAdd("DNS: %s → %s", queryName, dnsResponseIP.toString().c_str());
+        }
     }
 
     // Build response: copy header, set response flags, append answer
@@ -246,6 +266,24 @@ void processDNS() {
     dnsUdp.beginPacket(dnsUdp.remoteIP(), dnsUdp.remotePort());
     dnsUdp.write(resp, rpos);
     dnsUdp.endPacket();
+}
+
+// ── Charger WiFi control for OTA ────────────────────────────────────────────
+
+void kickChargerForOta() {
+    blockChargerWifi = true;
+    // Kick charger if currently connected
+    if (chargerWifiAid > 0) {
+        esp_wifi_deauth_sta(chargerWifiAid);
+        Serial.printf("[OTA] Kicked charger (AID %d) — CCMP interference removed\r\n", chargerWifiAid);
+    } else {
+        Serial.println("[OTA] Charger not on WiFi, blocking reconnect");
+    }
+}
+
+void allowChargerAfterOta() {
+    blockChargerWifi = false;
+    Serial.println("[OTA] Charger WiFi allowed again");
 }
 
 #ifndef JC3248W535
@@ -383,6 +421,8 @@ void setupHTTP() {
       <label for="pass">Password</label>
       <input type="password" id="pass" name="password" placeholder="WiFi password">
       <label class="toggle"><input type="checkbox" onclick="document.getElementById('pass').type=this.checked?'text':'password'"> Show password</label>
+      <label for="mqtt">MQTT Server (IP address)</label>
+      <input type="text" id="mqtt" name="mqtt_addr" placeholder="e.g. 192.168.0.177">
       <button class="btn" type="submit">Save</button>
     </form>
     <div class="msg" id="wifiMsg"></div>
@@ -411,6 +451,7 @@ function upd(){
     document.getElementById('fwVer').textContent=d.firmwareVersion||'--';
     document.getElementById('bleCnt').textContent=d.bleDevices;
     if(d.userSsid){document.getElementById('ssid').placeholder=d.userSsid+' (current)'}
+    if(d.mqttAddr){document.getElementById('mqtt').placeholder=d.mqttAddr+' (current)'}
   }).catch(()=>{})
 }
 upd();setInterval(upd,3000);
@@ -466,9 +507,10 @@ function saveWifi(e){
   e.preventDefault();
   var s=document.getElementById('ssid').value;
   var p=document.getElementById('pass').value;
+  var q=document.getElementById('mqtt').value;
   var m=document.getElementById('wifiMsg');
   if(!s){m.className='msg err';m.textContent='SSID is required';return false}
-  fetch('/api/wifi-config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ssid:s,password:p})})
+  fetch('/api/wifi-config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ssid:s,password:p,mqtt_addr:q})})
   .then(r=>r.json()).then(d=>{
     if(d.success){m.className='msg ok';m.textContent='Saved! Devices will be re-provisioned.'}
     else{m.className='msg err';m.textContent=d.error||'Failed'}
@@ -590,6 +632,7 @@ function saveWifi(e){
         json += "\"firmwareSize\":" + String(firmwareSize) + ",";
         json += "\"bleDevices\":" + String(scanResultCount) + ",";
         json += "\"userSsid\":\"" + userWifiSsid + "\",";
+        json += "\"mqttAddr\":\"" + userMqttAddr + "\",";
         json += "\"log\":" + logJson;
         json += "}";
 #ifdef JC3248W535
@@ -631,6 +674,17 @@ function saveWifi(e){
             }
         }
 
+        String mqttAddr = "";
+        int mqttIdx = body.indexOf("\"mqtt_addr\"");
+        if (mqttIdx >= 0) {
+            int colonIdx = body.indexOf(':', mqttIdx);
+            int startQuote = body.indexOf('"', colonIdx + 1);
+            int endQuote = body.indexOf('"', startQuote + 1);
+            if (startQuote >= 0 && endQuote > startQuote) {
+                mqttAddr = body.substring(startQuote + 1, endQuote);
+            }
+        }
+
         if (ssid.length() == 0) {
 #ifdef JC3248W535
             request->send(400, "application/json", "{\"success\":false,\"error\":\"SSID is required\"}");
@@ -648,12 +702,18 @@ function saveWifi(e){
         strncpy(ui_wifiPassword, password.c_str(), sizeof(ui_wifiPassword) - 1);
         ui_wifiPassword[sizeof(ui_wifiPassword) - 1] = '\0';
 
+        // Save MQTT address if provided
+        if (mqttAddr.length() > 0) {
+            userMqttAddr = mqttAddr;
+            prefs.putString("mqtt_addr", mqttAddr);
+        }
+
         // Persist to NVS so it survives reboot
         prefs.putString("wifi_ssid", ssid);
         prefs.putString("wifi_pass", password);
 
-        Serial.printf("[HTTP] WiFi config saved to NVS: SSID='%s' (%d char password)\r\n",
-                      ssid.c_str(), password.length());
+        Serial.printf("[HTTP] Config saved to NVS: SSID='%s' MQTT='%s'\r\n",
+                      ssid.c_str(), userMqttAddr.c_str());
 #ifdef JC3248W535
         request->send(200, "application/json", "{\"success\":true}");
 #else
@@ -662,13 +722,28 @@ function saveWifi(e){
     });
 
     // Firmware download -- mower .deb (uses pre-opened file handle from boot)
+    // Only one download at a time — concurrent requests corrupt the shared file handle
+    // and overwhelm the ESP32 (mower retries aggressively from cached OTA tasks)
+    static volatile bool fwDownloadActive = false;
 #ifdef JC3248W535
     httpServer.on("/firmware.deb", HTTP_GET, [](AsyncWebServerRequest *request) {
         if (!mowerFwFileHandle) { request->send(404, "text/plain", "No mower firmware"); return; }
+        if (fwDownloadActive) {
+            request->send(503, "text/plain", "Download in progress");
+            return;
+        }
+        fwDownloadActive = true;
         mowerFwFileHandle.seek(0);
-        AsyncWebServerResponse *response = request->beginResponse("application/octet-stream", mowerFwFileHandle.size(),
-            [](uint8_t *buffer, size_t maxLen, size_t index) -> size_t {
-                return mowerFwFileHandle.read(buffer, maxLen);
+        size_t fileSize = mowerFwFileHandle.size();
+        Serial.printf("[HTTP] Serving mower firmware: %d bytes\r\n", (int)fileSize);
+
+        AsyncWebServerResponse *response = request->beginResponse("application/octet-stream", fileSize,
+            [fileSize](uint8_t *buffer, size_t maxLen, size_t index) -> size_t {
+                size_t bytesRead = mowerFwFileHandle.read(buffer, maxLen);
+                if (index + bytesRead >= fileSize || bytesRead == 0) {
+                    fwDownloadActive = false;
+                }
+                return bytesRead;
             });
         request->send(response);
     });
