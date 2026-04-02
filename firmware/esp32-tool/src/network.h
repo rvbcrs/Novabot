@@ -5,10 +5,14 @@
  *             and SD card firmware loading.
  */
 
+#ifdef JC3248W535
+#include <ESPAsyncWebServer.h>
+extern AsyncWebServer httpServer;
+#else
 #include <WebServer.h>
-#include <WiFiUdp.h>
-
 extern WebServer httpServer;
+#endif
+#include <WiFiUdp.h>
 extern WiFiUDP dnsUdp;
 
 // ── Public API ──────────────────────────────────────────────────────────────

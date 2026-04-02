@@ -20,7 +20,11 @@
 // ── Globals defined here ────────────────────────────────────────────────────
 
 WiFiUDP dnsUdp;
+#ifdef JC3248W535
+AsyncWebServer httpServer(80);
+#else
 WebServer httpServer(80);
+#endif
 
 // ── DNS response IP ─────────────────────────────────────────────────────────
 
@@ -33,6 +37,7 @@ extern Preferences prefs;
 
 // ── WebServer Client Accessor ───────────────────────────────────────────────
 // Exposes the protected _currentClient member from WebServer
+#ifndef JC3248W535
 class WebServerExt : public WebServer {
 public:
     WebServerExt(int port) : WebServer(port) {}
@@ -40,6 +45,7 @@ public:
 };
 
 #define EXT_SERVER(s) (static_cast<WebServerExt*>(&s))
+#endif
 
 // ── Hardware Control Macros ─────────────────────────────────────────────────
 #ifdef WAVESHARE_LCD
@@ -242,29 +248,35 @@ void processDNS() {
     dnsUdp.endPacket();
 }
 
+#ifndef JC3248W535
 void streamFileWithYield(WebServer& server, File& file, const String& contentType) {
     server.setContentLength(file.size());
     server.send(200, contentType, "");
-    
+
     uint8_t buf[2048];
     while (file.available() && EXT_SERVER(server)->isClientConnected()) {
         size_t len = file.read(buf, sizeof(buf));
         if (len > 0) {
             server.sendContent((const char*)buf, len);
         }
-        
+
         // Pump the other services so they don't time out during large file streaming
         mqttBroker.update();
         processDNS();
         yield();
     }
 }
+#endif
 
 // ── HTTP server -- serves firmware + status ──────────────────────────────────
 
 void setupHTTP() {
     // ── Main status/config page ──────────────────────────────────────────────
+#ifdef JC3248W535
+    httpServer.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
+#else
     httpServer.on("/", []() {
+#endif
         String html = R"rawhtml(<!DOCTYPE html>
 <html><head>
 <meta charset="utf-8">
@@ -465,11 +477,19 @@ function saveWifi(e){
 }
 </script>
 </body></html>)rawhtml";
+#ifdef JC3248W535
+        request->send(200, "text/html", html);
+#else
         httpServer.send(200, "text/html", html);
+#endif
     });
 
     // ── JSON status API ──────────────────────────────────────────────────────
+#ifdef JC3248W535
+    httpServer.on("/api/status", HTTP_GET, [](AsyncWebServerRequest *request) {
+#else
     httpServer.on("/api/status", HTTP_GET, []() {
+#endif
         // Determine charger SN from topic
         String chargerSnStr = "";
         if (chargerTopic.startsWith("Dart/Send_mqtt/")) {
@@ -572,12 +592,21 @@ function saveWifi(e){
         json += "\"userSsid\":\"" + userWifiSsid + "\",";
         json += "\"log\":" + logJson;
         json += "}";
+#ifdef JC3248W535
+        request->send(200, "application/json", json);
+#else
         httpServer.send(200, "application/json", json);
+#endif
     });
 
     // ── WiFi config API ──────────────────────────────────────────────────────
+#ifdef JC3248W535
+    httpServer.on("/api/wifi-config", HTTP_POST, [](AsyncWebServerRequest *request) {
+        String body = request->arg("plain");
+#else
     httpServer.on("/api/wifi-config", HTTP_POST, []() {
         String body = httpServer.arg("plain");
+#endif
         // Simple JSON parsing (no ArduinoJson dependency)
         String ssid = "";
         String password = "";
@@ -603,7 +632,11 @@ function saveWifi(e){
         }
 
         if (ssid.length() == 0) {
+#ifdef JC3248W535
+            request->send(400, "application/json", "{\"success\":false,\"error\":\"SSID is required\"}");
+#else
             httpServer.send(400, "application/json", "{\"success\":false,\"error\":\"SSID is required\"}");
+#endif
             return;
         }
 
@@ -621,10 +654,25 @@ function saveWifi(e){
 
         Serial.printf("[HTTP] WiFi config saved to NVS: SSID='%s' (%d char password)\r\n",
                       ssid.c_str(), password.length());
+#ifdef JC3248W535
+        request->send(200, "application/json", "{\"success\":true}");
+#else
         httpServer.send(200, "application/json", "{\"success\":true}");
+#endif
     });
 
     // Firmware download -- mower .deb (uses pre-opened file handle from boot)
+#ifdef JC3248W535
+    httpServer.on("/firmware.deb", HTTP_GET, [](AsyncWebServerRequest *request) {
+        if (!mowerFwFileHandle) { request->send(404, "text/plain", "No mower firmware"); return; }
+        mowerFwFileHandle.seek(0);
+        AsyncWebServerResponse *response = request->beginResponse("application/octet-stream", mowerFwFileHandle.size(),
+            [](uint8_t *buffer, size_t maxLen, size_t index) -> size_t {
+                return mowerFwFileHandle.read(buffer, maxLen);
+            });
+        request->send(response);
+    });
+#else
     httpServer.on("/firmware.deb", []() {
         if (!mowerFwFileHandle || mowerFwFilename.length() == 0) {
             httpServer.send(404, "text/plain", "No mower firmware");
@@ -646,8 +694,22 @@ function saveWifi(e){
         }
         REACTIVATE_LCD();
     });
+#endif
 
     // Firmware download -- charger .bin
+#ifdef JC3248W535
+    httpServer.on("/charger.bin", HTTP_GET, [](AsyncWebServerRequest *request) {
+        if (chargerFwFilename.length() == 0) { request->send(404, "text/plain", "No charger firmware"); return; }
+        File file = SDFS.open("/" + chargerFwFilename);
+        if (!file) { request->send(404, "text/plain", "File not found"); return; }
+        Serial.printf("[HTTP] Serving charger firmware: %s (%d bytes)\r\n", chargerFwFilename.c_str(), file.size());
+        AsyncWebServerResponse *response = request->beginResponse("application/octet-stream", file.size(),
+            [file](uint8_t *buffer, size_t maxLen, size_t index) mutable -> size_t {
+                return file.read(buffer, maxLen);
+            });
+        request->send(response);
+    });
+#else
     httpServer.on("/charger.bin", []() {
         if (chargerFwFilename.length() == 0) { httpServer.send(404, "text/plain", "No charger firmware"); return; }
         File file = SDFS.open("/" + chargerFwFilename);
@@ -656,8 +718,18 @@ function saveWifi(e){
         streamFileWithYield(httpServer, file, "application/octet-stream");
         file.close();
     });
+#endif
 
     // Status JSON
+#ifdef JC3248W535
+    httpServer.on("/status", HTTP_GET, [](AsyncWebServerRequest *request) {
+        String json = "{\"state\":\"" + String(currentState) + "\",";
+        json += "\"message\":\"" + statusMessage + "\",";
+        json += "\"firmware\":\"" + firmwareVersion + "\",";
+        json += "\"mower\":\"" + (mowerConnected ? mowerSn : String("")) + "\"}";
+        request->send(200, "application/json", json);
+    });
+#else
     httpServer.on("/status", []() {
         String json = "{\"state\":\"" + String(currentState) + "\",";
         json += "\"message\":\"" + statusMessage + "\",";
@@ -665,15 +737,27 @@ function saveWifi(e){
         json += "\"mower\":\"" + (mowerConnected ? mowerSn : String("")) + "\"}";
         httpServer.send(200, "application/json", json);
     });
+#endif
 
     // Mower net_check_fun hits this URL to verify connectivity
+#ifdef JC3248W535
+    httpServer.on("/api/nova-network/network/connection", HTTP_POST, [](AsyncWebServerRequest *request) {
+        request->send(200, "application/json",
+            "{\"success\":true,\"code\":200,\"message\":\"request success\",\"value\":1}");
+    });
+#else
     httpServer.on("/api/nova-network/network/connection", HTTP_POST, []() {
         httpServer.send(200, "application/json",
             "{\"success\":true,\"code\":200,\"message\":\"request success\",\"value\":1}");
     });
+#endif
 
     // WiFi credential entry via phone browser (much easier than tiny on-screen keyboard)
+#ifdef JC3248W535
+    httpServer.on("/wifi", HTTP_GET, [](AsyncWebServerRequest *request) {
+#else
     httpServer.on("/wifi", HTTP_GET, []() {
+#endif
         String ssid = String(ui_wifiSsid);
         String html = R"rawhtml(
 <!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -701,16 +785,36 @@ function saveWifi(e){
     <button type="submit">Connect</button>
   </form>
 </div></body></html>)rawhtml";
+#ifdef JC3248W535
+        request->send(200, "text/html", html);
+#else
         httpServer.send(200, "text/html", html);
+#endif
     });
 
+#ifdef JC3248W535
+    httpServer.on("/wifi", HTTP_POST, [](AsyncWebServerRequest *request) {
+        if (request->hasArg("password")) {
+            String pw = request->arg("password");
+#else
     httpServer.on("/wifi", HTTP_POST, []() {
         if (httpServer.hasArg("password")) {
             String pw = httpServer.arg("password");
+#endif
             strncpy(ui_wifiPassword, pw.c_str(), sizeof(ui_wifiPassword) - 1);
             ui_wifiPassword[sizeof(ui_wifiPassword) - 1] = '\0';
             ui_wifiPasswordReady = true;
             Serial.printf("[HTTP] WiFi password received via web (%d chars)\r\n", pw.length());
+#ifdef JC3248W535
+            request->send(200, "text/html",
+                R"(<html><body style="font-family:system-ui;background:#0a0a1a;color:#e0e0e0;display:flex;justify-content:center;align-items:center;height:100vh;margin:0">)"
+                R"(<div style="text-align:center"><h1 style="color:#00d4aa">&#10004; Credentials Received</h1>)"
+                R"(<p>Check the device screen for progress.</p></div></body></html>)");
+        } else {
+            request->send(400, "text/plain", "Missing password field");
+        }
+    });
+#else
             httpServer.send(200, "text/html",
                 R"(<html><body style="font-family:system-ui;background:#0a0a1a;color:#e0e0e0;display:flex;justify-content:center;align-items:center;height:100vh;margin:0">)"
                 R"(<div style="text-align:center"><h1 style="color:#00d4aa">&#10004; Credentials Received</h1>)"
@@ -719,11 +823,34 @@ function saveWifi(e){
             httpServer.send(400, "text/plain", "Missing password field");
         }
     });
+#endif
 
     // Captive portal detection + catch-all redirect to dashboard
     // ── SD card API endpoints ───────────────────────────────────────────
 
     // List files on SD card
+#ifdef JC3248W535
+    httpServer.on("/api/sd-files", HTTP_GET, [](AsyncWebServerRequest *request) {
+        if (!sdMounted) {
+            request->send(200, "application/json", "{\"mounted\":false,\"files\":[]}");
+            return;
+        }
+        String json = "{\"mounted\":true,\"files\":[";
+        File root = SDFS.open("/");
+        bool first = true;
+        while (File f = root.openNextFile()) {
+            if (!f.isDirectory()) {
+                if (!first) json += ",";
+                json += "{\"name\":\"" + String(f.name()) + "\",\"size\":" + String(f.size()) + "}";
+                first = false;
+            }
+            f.close();
+        }
+        root.close();
+        json += "]}";
+        request->send(200, "application/json", json);
+    });
+#else
     httpServer.on("/api/sd-files", HTTP_GET, []() {
         if (!sdMounted) {
             httpServer.send(200, "application/json", "{\"mounted\":false,\"files\":[]}");
@@ -745,8 +872,23 @@ function saveWifi(e){
         json += "]}";
         httpServer.send(200, "application/json", json);
     });
+#endif
 
     // Delete file from SD card
+#ifdef JC3248W535
+    httpServer.on("/api/sd-delete", HTTP_DELETE, [](AsyncWebServerRequest *request) {
+        String name = request->arg("name");
+        if (name.length() == 0) { request->send(400, "application/json", "{\"ok\":false,\"error\":\"name required\"}"); return; }
+        String path = name.startsWith("/") ? name : "/" + name;
+        if (SDFS.exists(path)) {
+            SDFS.remove(path);
+            Serial.printf("[SD] Deleted: %s\r\n", path.c_str());
+            request->send(200, "application/json", "{\"ok\":true}");
+        } else {
+            request->send(404, "application/json", "{\"ok\":false,\"error\":\"file not found\"}");
+        }
+    });
+#else
     httpServer.on("/api/sd-delete", HTTP_DELETE, []() {
         String name = httpServer.arg("name");
         if (name.length() == 0) { httpServer.send(400, "application/json", "{\"ok\":false,\"error\":\"name required\"}"); return; }
@@ -760,9 +902,35 @@ function saveWifi(e){
             httpServer.send(404, "application/json", "{\"ok\":false,\"error\":\"file not found\"}");
         }
     });
+#endif
 
     // Upload file to SD card -- stream directly, no RAM buffering
     static File uploadFile;
+#ifdef JC3248W535
+    httpServer.on("/upload", HTTP_POST,
+        [](AsyncWebServerRequest *request) {
+            request->send(200, "application/json", "{\"ok\":true}");
+        },
+        [](AsyncWebServerRequest *request, const String& filename, size_t index, uint8_t *data, size_t len, bool final) {
+            if (index == 0) {
+                String path = "/" + filename;
+                Serial.printf("[UPLOAD] Start: %s\r\n", path.c_str());
+                if (SDFS.exists(path)) SDFS.remove(path);
+                uploadFile = SDFS.open(path, FILE_WRITE);
+                if (!uploadFile) Serial.println("[UPLOAD] ERROR: Could not open file");
+            }
+            if (uploadFile && len > 0) {
+                uploadFile.write(data, len);
+            }
+            if (final) {
+                if (uploadFile) {
+                    uploadFile.close();
+                    Serial.printf("[UPLOAD] Done: %s (%u bytes)\r\n", filename.c_str(), index + len);
+                }
+            }
+        }
+    );
+#else
     httpServer.on("/upload", HTTP_POST,
         []() {
             httpServer.send(200, "application/json", "{\"ok\":true}");
@@ -791,7 +959,31 @@ function saveWifi(e){
             }
         }
     );
+#endif
 
+#ifdef JC3248W535
+    httpServer.onNotFound([](AsyncWebServerRequest *request) {
+        String uri = request->url();
+        String host = request->host();
+        // Log ALL unhandled requests -- helps debug charger connectivity checks
+        Serial.printf("[HTTP] 404: %s (Host: %s)\r\n",
+            uri.c_str(), host.c_str());
+        webLogAdd("HTTP: %s %s", uri.c_str(), host.c_str());
+
+        // Apple captive portal check
+        if (uri.indexOf("hotspot-detect") >= 0 || uri.indexOf("captive") >= 0) {
+            request->send(200, "text/html", "<HTML><HEAD><TITLE>Success</TITLE></HEAD><BODY>Success</BODY></HTML>");
+            return;
+        }
+        // Android captive portal check
+        if (uri.indexOf("generate_204") >= 0) {
+            request->send(204);
+            return;
+        }
+        // Everything else -> send 200 OK (charger may need HTTP success to start MQTT)
+        request->send(200, "text/plain", "OK");
+    });
+#else
     httpServer.onNotFound([]() {
         String uri = httpServer.uri();
         String host = httpServer.hostHeader();
@@ -813,6 +1005,7 @@ function saveWifi(e){
         // Everything else -> send 200 OK (charger may need HTTP success to start MQTT)
         httpServer.send(200, "text/plain", "OK");
     });
+#endif
 
     httpServer.begin();
     Serial.println("[HTTP] Server started on port 80");

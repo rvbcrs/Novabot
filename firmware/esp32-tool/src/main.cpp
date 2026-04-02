@@ -303,7 +303,9 @@ void setup() {
 
 void loop() {
     processDNS();
+#ifndef JC3248W535
     httpServer.handleClient();
+#endif
     mqttBroker.update();
 
     unsigned long elapsed = (millis() - stateEnteredAt) / 1000;
