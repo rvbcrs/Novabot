@@ -98,6 +98,7 @@ extern bool wifiScanInProgress;
 
 extern bool mowerConnected;
 extern bool chargerMqttConnected;
+extern bool mowerCharging;          // true if battery_state == "CHARGING"
 extern String mowerSn;
 extern String chargerSn;
 extern String chargerTopic;

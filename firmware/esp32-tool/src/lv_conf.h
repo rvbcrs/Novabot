@@ -200,7 +200,7 @@
 #define LV_USE_CANVAS     0
 #define LV_USE_CHECKBOX   0
 #define LV_USE_DROPDOWN   0
-#define LV_USE_IMG        0
+#define LV_USE_IMG        1
 #define LV_USE_LABEL      1
 #if LV_USE_LABEL
     #define LV_LABEL_TEXT_SELECTION 0

@@ -13,25 +13,16 @@
 // ── Globals defined here ────────────────────────────────────────────────────
 
 WiFiUDP dnsUdp;
-WebServer httpServer(80);
+AsyncWebServer httpServer(80);
 
 // ── DNS response IP ─────────────────────────────────────────────────────────
 
 static IPAddress dnsResponseIP;
+static File mowerFwFileHandle;  // Kept open from boot for reliable serving
 
 // ── External Preferences (owned by main.cpp) ────────────────────────────────
 
 extern Preferences prefs;
-
-// ── WebServer Client Accessor ───────────────────────────────────────────────
-// Exposes the protected _currentClient member from WebServer
-class WebServerExt : public WebServer {
-public:
-    WebServerExt(int port) : WebServer(port) {}
-    bool isClientConnected() { return _currentClient.connected(); }
-};
-
-#define EXT_SERVER(s) (static_cast<WebServerExt*>(&s))
 
 // ── Hardware Control Macros ─────────────────────────────────────────────────
 #ifdef WAVESHARE_LCD
@@ -240,29 +231,11 @@ void processDNS() {
     dnsUdp.endPacket();
 }
 
-void streamFileWithYield(WebServer& server, File& file, const String& contentType) {
-    server.setContentLength(file.size());
-    server.send(200, contentType, "");
-    
-    uint8_t buf[2048];
-    while (file.available() && EXT_SERVER(server)->isClientConnected()) {
-        size_t len = file.read(buf, sizeof(buf));
-        if (len > 0) {
-            server.sendContent((const char*)buf, len);
-        }
-        
-        // Pump the other services so they don't time out during large file streaming
-        mqttBroker.update();
-        processDNS();
-        yield();
-    }
-}
-
 // ── HTTP server -- serves firmware + status ──────────────────────────────────
 
 void setupHTTP() {
     // ── Main status/config page ──────────────────────────────────────────────
-    httpServer.on("/", []() {
+    httpServer.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
         String html = R"rawhtml(<!DOCTYPE html>
 <html><head>
 <meta charset="utf-8">
@@ -463,11 +436,11 @@ function saveWifi(e){
 }
 </script>
 </body></html>)rawhtml";
-        httpServer.send(200, "text/html", html);
+        request->send(200, "text/html", html);
     });
 
     // ── JSON status API ──────────────────────────────────────────────────────
-    httpServer.on("/api/status", HTTP_GET, []() {
+    httpServer.on("/api/status", HTTP_GET, [](AsyncWebServerRequest *request) {
         // Determine charger SN from topic
         String chargerSnStr = "";
         if (chargerTopic.startsWith("Dart/Send_mqtt/")) {
@@ -570,12 +543,12 @@ function saveWifi(e){
         json += "\"userSsid\":\"" + userWifiSsid + "\",";
         json += "\"log\":" + logJson;
         json += "}";
-        httpServer.send(200, "application/json", json);
+        request->send(200, "application/json", json);
     });
 
     // ── WiFi config API ──────────────────────────────────────────────────────
-    httpServer.on("/api/wifi-config", HTTP_POST, []() {
-        String body = httpServer.arg("plain");
+    httpServer.on("/api/wifi-config", HTTP_POST, [](AsyncWebServerRequest *request) {
+        String body = request->arg("plain");
         // Simple JSON parsing (no ArduinoJson dependency)
         String ssid = "";
         String password = "";
@@ -601,7 +574,7 @@ function saveWifi(e){
         }
 
         if (ssid.length() == 0) {
-            httpServer.send(400, "application/json", "{\"success\":false,\"error\":\"SSID is required\"}");
+            request->send(400, "application/json", "{\"success\":false,\"error\":\"SSID is required\"}");
             return;
         }
 
@@ -619,49 +592,57 @@ function saveWifi(e){
 
         Serial.printf("[HTTP] WiFi config saved to NVS: SSID='%s' (%d char password)\r\n",
                       ssid.c_str(), password.length());
-        httpServer.send(200, "application/json", "{\"success\":true}");
+        request->send(200, "application/json", "{\"success\":true}");
     });
 
     // Firmware download -- mower .deb
-    httpServer.on("/firmware.deb", []() {
-        if (mowerFwFilename.length() == 0) { httpServer.send(404, "text/plain", "No mower firmware"); return; }
+    httpServer.on("/firmware.deb", HTTP_GET, [](AsyncWebServerRequest *request) {
+        if (!mowerFwFileHandle || mowerFwFilename.length() == 0) {
+            request->send(404, "text/plain", "No mower firmware");
+            return;
+        }
+        // Seek back to start — file was kept open from boot
+        mowerFwFileHandle.seek(0);
+        size_t fwSize = mowerFwFileHandle.size();
+        Serial.printf("[HTTP] Serving mower firmware: %s (%d bytes)\r\n", mowerFwFilename.c_str(), fwSize);
+
+        // Use chunked response with the pre-opened file handle
         DEACTIVATE_LCD();
-        SD.end(); delay(50);
-        if (!SD.begin(SD_CS)) { httpServer.send(500, "text/plain", "SD error"); REACTIVATE_LCD(); return; }
-        File file = SD.open("/" + mowerFwFilename);
-        if (!file) { httpServer.send(404, "text/plain", "File not found"); REACTIVATE_LCD(); return; }
-        Serial.printf("[HTTP] Serving mower firmware: %s (%d bytes)\r\n", mowerFwFilename.c_str(), file.size());
-        streamFileWithYield(httpServer, file, "application/octet-stream");
-        file.close();
+        AsyncWebServerResponse *response = request->beginResponse("application/octet-stream", fwSize,
+            [](uint8_t *buffer, size_t maxLen, size_t index) -> size_t {
+                DEACTIVATE_LCD();
+                size_t bytesRead = mowerFwFileHandle.read(buffer, maxLen);
+                REACTIVATE_LCD();
+                return bytesRead;
+            });
+        response->addHeader("Content-Disposition", "attachment; filename=" + mowerFwFilename);
+        request->send(response);
     });
 
     // Firmware download -- charger .bin
-    httpServer.on("/charger.bin", []() {
-        if (chargerFwFilename.length() == 0) { httpServer.send(404, "text/plain", "No charger firmware"); return; }
-        File file = SD.open("/" + chargerFwFilename);
-        if (!file) { httpServer.send(404, "text/plain", "File not found"); return; }
-        Serial.printf("[HTTP] Serving charger firmware: %s (%d bytes)\r\n", chargerFwFilename.c_str(), file.size());
-        streamFileWithYield(httpServer, file, "application/octet-stream");
-        file.close();
+    httpServer.on("/charger.bin", HTTP_GET, [](AsyncWebServerRequest *request) {
+        if (chargerFwFilename.length() == 0) { request->send(404, "text/plain", "No charger firmware"); return; }
+        Serial.printf("[HTTP] Serving charger firmware: %s\r\n", chargerFwFilename.c_str());
+        request->send(SD, "/" + chargerFwFilename, "application/octet-stream");
     });
 
     // Status JSON
-    httpServer.on("/status", []() {
+    httpServer.on("/status", HTTP_GET, [](AsyncWebServerRequest *request) {
         String json = "{\"state\":\"" + String(currentState) + "\",";
         json += "\"message\":\"" + statusMessage + "\",";
         json += "\"firmware\":\"" + firmwareVersion + "\",";
         json += "\"mower\":\"" + (mowerConnected ? mowerSn : String("")) + "\"}";
-        httpServer.send(200, "application/json", json);
+        request->send(200, "application/json", json);
     });
 
     // Mower net_check_fun hits this URL to verify connectivity
-    httpServer.on("/api/nova-network/network/connection", HTTP_POST, []() {
-        httpServer.send(200, "application/json",
+    httpServer.on("/api/nova-network/network/connection", HTTP_POST, [](AsyncWebServerRequest *request) {
+        request->send(200, "application/json",
             "{\"success\":true,\"code\":200,\"message\":\"request success\",\"value\":1}");
     });
 
     // WiFi credential entry via phone browser (much easier than tiny on-screen keyboard)
-    httpServer.on("/wifi", HTTP_GET, []() {
+    httpServer.on("/wifi", HTTP_GET, [](AsyncWebServerRequest *request) {
         String ssid = String(ui_wifiSsid);
         String html = R"rawhtml(
 <!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -689,22 +670,22 @@ function saveWifi(e){
     <button type="submit">Connect</button>
   </form>
 </div></body></html>)rawhtml";
-        httpServer.send(200, "text/html", html);
+        request->send(200, "text/html", html);
     });
 
-    httpServer.on("/wifi", HTTP_POST, []() {
-        if (httpServer.hasArg("password")) {
-            String pw = httpServer.arg("password");
+    httpServer.on("/wifi", HTTP_POST, [](AsyncWebServerRequest *request) {
+        if (request->hasArg("password")) {
+            String pw = request->arg("password");
             strncpy(ui_wifiPassword, pw.c_str(), sizeof(ui_wifiPassword) - 1);
             ui_wifiPassword[sizeof(ui_wifiPassword) - 1] = '\0';
             ui_wifiPasswordReady = true;
             Serial.printf("[HTTP] WiFi password received via web (%d chars)\r\n", pw.length());
-            httpServer.send(200, "text/html",
+            request->send(200, "text/html",
                 R"(<html><body style="font-family:system-ui;background:#0a0a1a;color:#e0e0e0;display:flex;justify-content:center;align-items:center;height:100vh;margin:0">)"
                 R"(<div style="text-align:center"><h1 style="color:#00d4aa">&#10004; Credentials Received</h1>)"
                 R"(<p>Check the device screen for progress.</p></div></body></html>)");
         } else {
-            httpServer.send(400, "text/plain", "Missing password field");
+            request->send(400, "text/plain", "Missing password field");
         }
     });
 
@@ -712,9 +693,9 @@ function saveWifi(e){
     // ── SD card API endpoints ───────────────────────────────────────────
 
     // List files on SD card
-    httpServer.on("/api/sd-files", HTTP_GET, []() {
+    httpServer.on("/api/sd-files", HTTP_GET, [](AsyncWebServerRequest *request) {
         if (!sdMounted) {
-            httpServer.send(200, "application/json", "{\"mounted\":false,\"files\":[]}");
+            request->send(200, "application/json", "{\"mounted\":false,\"files\":[]}");
             return;
         }
         DEACTIVATE_LCD();  // Deactivate LCD during SD access
@@ -731,58 +712,57 @@ function saveWifi(e){
         }
         root.close();
         json += "]}";
-        httpServer.send(200, "application/json", json);
+        request->send(200, "application/json", json);
     });
 
     // Delete file from SD card
-    httpServer.on("/api/sd-delete", HTTP_DELETE, []() {
-        String name = httpServer.arg("name");
-        if (name.length() == 0) { httpServer.send(400, "application/json", "{\"ok\":false,\"error\":\"name required\"}"); return; }
+    httpServer.on("/api/sd-delete", HTTP_DELETE, [](AsyncWebServerRequest *request) {
+        String name = request->arg("name");
+        if (name.length() == 0) { request->send(400, "application/json", "{\"ok\":false,\"error\":\"name required\"}"); return; }
         String path = name.startsWith("/") ? name : "/" + name;
         DEACTIVATE_LCD();
         if (SD.exists(path)) {
             SD.remove(path);
             Serial.printf("[SD] Deleted: %s\r\n", path.c_str());
-            httpServer.send(200, "application/json", "{\"ok\":true}");
+            request->send(200, "application/json", "{\"ok\":true}");
         } else {
-            httpServer.send(404, "application/json", "{\"ok\":false,\"error\":\"file not found\"}");
+            request->send(404, "application/json", "{\"ok\":false,\"error\":\"file not found\"}");
         }
     });
 
-    // Upload file to SD card -- stream directly, no RAM buffering
+    // Upload file to SD card -- written in chunks via AsyncWebServer upload handler
     static File uploadFile;
     httpServer.on("/upload", HTTP_POST,
-        []() {
-            httpServer.send(200, "application/json", "{\"ok\":true}");
+        [](AsyncWebServerRequest *request) {
+            request->send(200, "application/json", "{\"ok\":true}");
         },
-        []() {
-            HTTPUpload& upload = httpServer.upload();
-            if (upload.status == UPLOAD_FILE_START) {
+        [](AsyncWebServerRequest *request, const String& filename, size_t index, uint8_t *data, size_t len, bool final) {
+            if (index == 0) {
                 DEACTIVATE_LCD();  // Deactivate LCD during SD write
-                String filename = "/" + upload.filename;
-                Serial.printf("[UPLOAD] Start: %s\r\n", filename.c_str());
-                if (SD.exists(filename)) SD.remove(filename);
-                uploadFile = SD.open(filename, FILE_WRITE);
+                String path = "/" + filename;
+                Serial.printf("[UPLOAD] Start: %s\r\n", path.c_str());
+                if (SD.exists(path)) SD.remove(path);
+                uploadFile = SD.open(path, FILE_WRITE);
                 if (!uploadFile) Serial.println("[UPLOAD] ERROR: Could not open file");
-            } else if (upload.status == UPLOAD_FILE_WRITE) {
-                if (uploadFile) {
-                    uploadFile.write(upload.buf, upload.currentSize);
-                    if (upload.totalSize > 0 && upload.totalSize % (1024*1024) < upload.currentSize) {
-                        Serial.printf("[UPLOAD] %d MB received\r\n", (int)(upload.totalSize / (1024*1024)));
-                    }
+            }
+            if (uploadFile && len > 0) {
+                uploadFile.write(data, len);
+                if ((index + len) % (1024*1024) < len) {
+                    Serial.printf("[UPLOAD] %d MB received\r\n", (int)((index + len) / (1024*1024)));
                 }
-            } else if (upload.status == UPLOAD_FILE_END) {
+            }
+            if (final) {
                 if (uploadFile) {
                     uploadFile.close();
-                    Serial.printf("[UPLOAD] Done: %s (%d bytes)\r\n", upload.filename.c_str(), upload.totalSize);
+                    Serial.printf("[UPLOAD] Done: %s (%d bytes)\r\n", filename.c_str(), index + len);
                 }
             }
         }
     );
 
-    httpServer.onNotFound([]() {
-        String uri = httpServer.uri();
-        String host = httpServer.hostHeader();
+    httpServer.onNotFound([](AsyncWebServerRequest *request) {
+        String uri = request->url();
+        String host = request->host();
         // Log ALL unhandled requests -- helps debug charger connectivity checks
         Serial.printf("[HTTP] 404: %s (Host: %s)\r\n",
             uri.c_str(), host.c_str());
@@ -790,16 +770,16 @@ function saveWifi(e){
 
         // Apple captive portal check
         if (uri.indexOf("hotspot-detect") >= 0 || uri.indexOf("captive") >= 0) {
-            httpServer.send(200, "text/html", "<HTML><HEAD><TITLE>Success</TITLE></HEAD><BODY>Success</BODY></HTML>");
+            request->send(200, "text/html", "<HTML><HEAD><TITLE>Success</TITLE></HEAD><BODY>Success</BODY></HTML>");
             return;
         }
         // Android captive portal check
         if (uri.indexOf("generate_204") >= 0) {
-            httpServer.send(204);
+            request->send(204);
             return;
         }
         // Everything else -> send 200 OK (charger may need HTTP success to start MQTT)
-        httpServer.send(200, "text/plain", "OK");
+        request->send(200, "text/plain", "OK");
     });
 
     httpServer.begin();
@@ -858,6 +838,19 @@ bool loadFirmwareInfo() {
     }
     root.close();
     if (!foundAny) Serial.println("[SD] No firmware files found!");
+
+    // Keep mower firmware file open for reliable HTTP serving later
+    // (SD re-init after boot is unreliable due to shared SPI bus with LCD)
+    if (mowerFwFilename.length() > 0) {
+        mowerFwFileHandle = SD.open("/" + mowerFwFilename, FILE_READ);
+        if (mowerFwFileHandle) {
+            Serial.printf("[SD] Mower firmware file kept open: %s (%d bytes)\r\n",
+                mowerFwFilename.c_str(), mowerFwFileHandle.size());
+        } else {
+            Serial.println("[SD] WARNING: Could not keep mower firmware file open");
+        }
+    }
+
     return foundAny;
 }
 

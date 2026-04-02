@@ -10,6 +10,7 @@
  */
 
 #include "display.h"
+#include "logo.h"
 
 #ifdef WAVESHARE_LCD
 
@@ -391,14 +392,19 @@ void display_boot(const char* version) {
 
     lv_obj_t *scr = create_screen();
 
-    // OpenNova title
-    add_label(scr, "OpenNova", &lv_font_montserrat_28, COL_TEXT, 100);
+    // OpenNova logo
+    lv_obj_t *logo = lv_img_create(scr);
+    lv_img_set_src(logo, &logo_img);
+    lv_obj_align(logo, LV_ALIGN_TOP_MID, 0, 30);
+
+    // OpenNova title below logo
+    add_label(scr, "OpenNova", &lv_font_montserrat_28, COL_TEXT, 120);
 
     // Subtitle
-    add_label(scr, "Provisioner", &lv_font_montserrat_20, COL_TEAL, 140);
+    add_label(scr, "Provisioner", &lv_font_montserrat_20, COL_TEAL, 155);
 
     // Version
-    add_label(scr, version, &lv_font_montserrat_14, COL_DIM, 175);
+    add_label(scr, version, &lv_font_montserrat_14, COL_DIM, 185);
 
     // Spinner at bottom
     lv_obj_t *spinner = lv_spinner_create(scr, 1000, 60);
@@ -837,37 +843,82 @@ void display_ota(const char* status) {
 void display_done() {
     if (!lvgl_lock(100)) return;
     ui_btnPressed = false;
-    ui_backPressed = false;
 
     lv_obj_t *scr = lv_obj_create(NULL);
-    lv_obj_set_style_bg_color(scr, lv_color_hex(0x0a2e1a), 0);  // Dark green tint
+    lv_obj_set_style_bg_color(scr, lv_color_hex(0x030712), 0);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
     lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
+
+    // Confetti particles — colored dots flying outward from center
+    static const lv_color_t confettiColors[] = {
+        lv_color_hex(0x34D399), lv_color_hex(0x818CF8), lv_color_hex(0xF59E0B),
+        lv_color_hex(0xEC4899), lv_color_hex(0x06B6D4), lv_color_hex(0xEF4444),
+        lv_color_hex(0xA78BFA), lv_color_hex(0x10B981),
+    };
+    for (int i = 0; i < 20; i++) {
+        lv_obj_t *dot = lv_obj_create(scr);
+        lv_obj_remove_style_all(dot);
+        int sz = 4 + (i % 3) * 2;
+        lv_obj_set_size(dot, sz, sz);
+        lv_obj_set_style_radius(dot, sz / 2, 0);
+        lv_obj_set_style_bg_color(dot, confettiColors[i % 8], 0);
+        lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
+        // Start from center
+        lv_obj_align(dot, LV_ALIGN_CENTER, 0, -30);
+
+        // Animate X outward
+        int targetX = -100 + (i * 211 % 200);  // pseudo-random spread
+        lv_anim_t ax;
+        lv_anim_init(&ax);
+        lv_anim_set_var(&ax, dot);
+        lv_anim_set_exec_cb(&ax, [](void* obj, int32_t v) {
+            lv_obj_set_x((lv_obj_t*)obj, v);
+        });
+        lv_anim_set_values(&ax, 120, 120 + targetX);
+        lv_anim_set_time(&ax, 800 + (i * 37 % 400));
+        lv_anim_set_delay(&ax, i * 50);
+        lv_anim_set_path_cb(&ax, lv_anim_path_ease_out);
+        lv_anim_start(&ax);
+
+        // Animate Y outward + fade
+        int targetY = -120 + (i * 173 % 240);
+        lv_anim_t ay;
+        lv_anim_init(&ay);
+        lv_anim_set_var(&ay, dot);
+        lv_anim_set_exec_cb(&ay, [](void* obj, int32_t v) {
+            lv_obj_set_y((lv_obj_t*)obj, v);
+        });
+        lv_anim_set_values(&ay, 130, 130 + targetY);
+        lv_anim_set_time(&ay, 800 + (i * 37 % 400));
+        lv_anim_set_delay(&ay, i * 50);
+        lv_anim_set_path_cb(&ay, lv_anim_path_ease_out);
+        lv_anim_start(&ay);
+
+        // Fade out
+        lv_anim_t af;
+        lv_anim_init(&af);
+        lv_anim_set_var(&af, dot);
+        lv_anim_set_exec_cb(&af, [](void* obj, int32_t v) {
+            lv_obj_set_style_opa((lv_obj_t*)obj, v, 0);
+        });
+        lv_anim_set_values(&af, 255, 0);
+        lv_anim_set_time(&af, 1200);
+        lv_anim_set_delay(&af, i * 50 + 600);
+        lv_anim_start(&af);
+    }
 
     // Large checkmark
     lv_obj_t *check = lv_label_create(scr);
     lv_label_set_text(check, LV_SYMBOL_OK);
     lv_obj_set_style_text_font(check, &lv_font_montserrat_28, 0);
     lv_obj_set_style_text_color(check, COL_GREEN, 0);
-    lv_obj_align(check, LV_ALIGN_CENTER, 0, -50);
+    lv_obj_align(check, LV_ALIGN_CENTER, 0, -40);
 
-    add_label(scr, "Done!", &lv_font_montserrat_28, COL_GREEN, 140);
+    add_label(scr, "Done!", &lv_font_montserrat_28, COL_GREEN, 150);
+    add_label(scr, "All devices provisioned", &lv_font_montserrat_14, lv_color_hex(0x9CA3AF), 185);
 
-    // "Menu" button instead of "tap to restart"
-    lv_obj_t *btn = lv_btn_create(scr);
-    lv_obj_set_size(btn, 160, 44);
-    lv_obj_align(btn, LV_ALIGN_BOTTOM_MID, 0, -20);
-    lv_obj_set_style_bg_color(btn, COL_PURPLE, 0);
-    lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(btn, 12, 0);
-    lv_obj_set_style_shadow_width(btn, 0, 0);
-    lv_obj_set_style_border_width(btn, 0, 0);
-    lv_obj_t *btn_lbl = lv_label_create(btn);
-    lv_label_set_text(btn_lbl, LV_SYMBOL_HOME " Menu");
-    lv_obj_set_style_text_font(btn_lbl, &lv_font_montserrat_20, 0);
-    lv_obj_set_style_text_color(btn_lbl, COL_TEXT, 0);
-    lv_obj_center(btn_lbl);
-    lv_obj_add_event_cb(btn, back_btn_cb, LV_EVENT_CLICKED, NULL);
+    // Restart button
+    add_bottom_btn(scr, LV_SYMBOL_REFRESH " Restart", generic_btn_cb);
 
     lv_scr_load(scr);
     lvgl_unlock();

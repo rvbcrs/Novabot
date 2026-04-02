@@ -105,6 +105,7 @@ bool reprovisioning = false;
 
 bool mowerConnected = false;
 bool chargerMqttConnected = false;
+bool mowerCharging = false;
 String mowerSn = "";
 String chargerSn = "";
 String chargerTopic = "";
@@ -271,7 +272,7 @@ void setup() {
 
 void loop() {
     processDNS();
-    httpServer.handleClient();
+    // AsyncWebServer handles requests automatically — no handleClient needed
     mqttBroker.update();
 
     unsigned long elapsed = (millis() - stateEnteredAt) / 1000;
@@ -565,29 +566,36 @@ void loop() {
     }
 
     case WIZ_OTA_CONFIRM: {
+        // Refresh display to show live charging status
+        {
+            String line1 = String("Flash ") + mowerFwVersion + " to " + mowerSn;
+            String line2 = mowerCharging
+                ? "Mower is charging — ready to flash"
+                : "Place mower on charger first!";
+            String btnText = mowerCharging ? "Flash" : "Waiting...";
+#ifdef WAVESHARE_LCD
+            static unsigned long lastConfirmRefresh = 0;
+            if (stateJustEntered || millis() - lastConfirmRefresh > 1000) {
+                lastConfirmRefresh = millis();
+                display_confirm("Flash Firmware?", line1.c_str(), line2.c_str(), btnText.c_str());
+            }
+#endif
+        }
         if (stateJustEntered) {
             stateJustEntered = false;
-            webLogAdd("Firmware available: %s", mowerFwFilename.c_str());
+            webLogAdd("Firmware available: %s (charging: %s)", mowerFwFilename.c_str(), mowerCharging ? "yes" : "no");
             statusMessage = "Flash firmware?";
-#ifdef WAVESHARE_LCD
-            display_confirm("Flash Firmware?",
-                (String("Flash ") + mowerFwVersion).c_str(),
-                (String("to mower ") + mowerSn).c_str(),
-                "Flash");
-#endif
         }
 #ifdef WAVESHARE_LCD
-        if (ui_btnPressed) {
+        if (ui_btnPressed && mowerCharging) {
             ui_btnPressed = false;
             setState(WIZ_OTA_FLASH);
+        } else if (ui_btnPressed && !mowerCharging) {
+            ui_btnPressed = false;  // Eat the press, don't flash
+            webLogAdd("OTA: Mower not charging — place on charger first");
         }
-        // Skip = tap outside the button area or use the back gesture
 #endif
-        // Timeout: skip OTA after 60s without user input
-        if (elapsed > 60) {
-            webLogAdd("OTA confirm timeout — skipping");
-            setState(WIZ_DONE);
-        }
+        // No timeout — wait until user acts or places mower on charger
         break;
     }
 

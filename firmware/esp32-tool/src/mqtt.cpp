@@ -72,12 +72,76 @@ bool NovaMQTTBroker::onEvent(sMQTTEvent *event) {
             std::string topic = e->Topic();
             std::string payload = e->Payload();
 
+            // Decrypt mower messages (AES-128-CBC, v6.x firmware)
+            // Topic: Dart/Receive_mqtt/LFIN... — these are encrypted
+            if (topic.find("Dart/Receive_mqtt/LFIN") != std::string::npos && mowerSn.length() >= 4 &&
+                payload.size() > 0 && payload.size() % 16 == 0 && payload[0] != '{') {
+                String keyStr = "abcdabcd1234" + mowerSn.substring(mowerSn.length() - 4);
+                uint8_t key[16];
+                memcpy(key, keyStr.c_str(), 16);
+                uint8_t iv[16];
+                memcpy(iv, AES_IV, 16);
+
+                uint8_t* decBuf = (uint8_t*)malloc(payload.size() + 1);
+                if (decBuf) {
+                    mbedtls_aes_context aes;
+                    mbedtls_aes_init(&aes);
+                    mbedtls_aes_setkey_dec(&aes, key, 128);
+                    mbedtls_aes_crypt_cbc(&aes, MBEDTLS_AES_DECRYPT, payload.size(), iv,
+                        (const uint8_t*)payload.data(), decBuf);
+                    mbedtls_aes_free(&aes);
+                    // Strip null padding
+                    size_t decLen = payload.size();
+                    while (decLen > 0 && decBuf[decLen - 1] == 0) decLen--;
+                    decBuf[decLen] = 0;
+                    payload = std::string((char*)decBuf, decLen);
+                    free(decBuf);
+                }
+            }
+
+            // Log all decrypted mower messages
+            if (topic.find("Dart/Receive_mqtt/LFIN") != std::string::npos && payload.size() > 0 && payload[0] == '{') {
+                Serial.printf("[MOWER] %s\r\n", payload.c_str());
+            }
+
+            // Parse charging state from multiple sources:
+            // 1. report_state_timer_data: {"battery_state":"CHARGING"} or {"battery_state":"FULL"}
+            // 2. report_state_robot: {"recharge_status":9} (9 = FINISHED = on charger)
+            if (payload.find("battery_state") != std::string::npos) {
+                bool wasCharging = mowerCharging;
+                mowerCharging = payload.find("\"battery_state\":\"CHARGING\"") != std::string::npos
+                             || payload.find("\"battery_state\":\"FULL\"") != std::string::npos;
+                if (mowerCharging != wasCharging) {
+                    Serial.printf("[MQTT] Mower charging state: %s\r\n", mowerCharging ? "ON CHARGER" : "NOT CHARGING");
+                }
+            }
+            // Also check report_state_robot for recharge_status and Recharge: FINISHED
+            if (!mowerCharging && payload.find("report_state_robot") != std::string::npos) {
+                bool wasCharging = mowerCharging;
+                mowerCharging = payload.find("\"recharge_status\":9") != std::string::npos
+                             || payload.find("Recharge: FINISHED") != std::string::npos
+                             || payload.find("Recharge: CHARGING") != std::string::npos;
+                // Fallback: battery_power >= 95 likely means on charger
+                if (!mowerCharging) {
+                    size_t bpPos = payload.find("\"battery_power\":");
+                    if (bpPos != std::string::npos) {
+                        int bp = atoi(payload.c_str() + bpPos + 16);
+                        if (bp >= 95) mowerCharging = true;
+                    }
+                }
+                if (mowerCharging != wasCharging) {
+                    Serial.printf("[MQTT] Mower on charger (from report_state_robot)\r\n");
+                }
+            }
+
             // Parse OTA progress from mower: {"ota_upgrade_state":{"percentage":42,"status":"upgrade"}}
             if (payload.find("ota_upgrade_state") != std::string::npos) {
                 // Extract percentage
                 size_t pctPos = payload.find("\"percentage\":");
                 if (pctPos != std::string::npos) {
-                    int pct = atoi(payload.c_str() + pctPos + 14);
+                    double rawPct = atof(payload.c_str() + pctPos + 14);
+                    // percentage is 0.0-1.0 (fraction), convert to 0-100
+                    int pct = (rawPct <= 1.0) ? (int)(rawPct * 100) : (int)rawPct;
                     otaProgressPercent = pct;
                 }
                 // Extract status
