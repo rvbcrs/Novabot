@@ -5,8 +5,15 @@
 
 #include <WiFi.h>
 #include <esp_wifi.h>
+#ifdef JC3248W535
+#include <SD_MMC.h>
+// Wrapper: use SD_MMC as "SDFS" so existing SDFS.open/SDFS.exists calls work
+#define SDFS SD_MMC
+#else
 #include <SD.h>
 #include <SPI.h>
+#define SDFS SD
+#endif
 #include <MD5Builder.h>
 #include <Preferences.h>
 
@@ -643,7 +650,7 @@ function saveWifi(e){
     // Firmware download -- charger .bin
     httpServer.on("/charger.bin", []() {
         if (chargerFwFilename.length() == 0) { httpServer.send(404, "text/plain", "No charger firmware"); return; }
-        File file = SD.open("/" + chargerFwFilename);
+        File file = SDFS.open("/" + chargerFwFilename);
         if (!file) { httpServer.send(404, "text/plain", "File not found"); return; }
         Serial.printf("[HTTP] Serving charger firmware: %s (%d bytes)\r\n", chargerFwFilename.c_str(), file.size());
         streamFileWithYield(httpServer, file, "application/octet-stream");
@@ -724,7 +731,7 @@ function saveWifi(e){
         }
         DEACTIVATE_LCD();  // Deactivate LCD during SD access
         String json = "{\"mounted\":true,\"files\":[";
-        File root = SD.open("/");
+        File root = SDFS.open("/");
         bool first = true;
         while (File f = root.openNextFile()) {
             if (!f.isDirectory()) {
@@ -745,8 +752,8 @@ function saveWifi(e){
         if (name.length() == 0) { httpServer.send(400, "application/json", "{\"ok\":false,\"error\":\"name required\"}"); return; }
         String path = name.startsWith("/") ? name : "/" + name;
         DEACTIVATE_LCD();
-        if (SD.exists(path)) {
-            SD.remove(path);
+        if (SDFS.exists(path)) {
+            SDFS.remove(path);
             Serial.printf("[SD] Deleted: %s\r\n", path.c_str());
             httpServer.send(200, "application/json", "{\"ok\":true}");
         } else {
@@ -766,8 +773,8 @@ function saveWifi(e){
                 DEACTIVATE_LCD();  // Deactivate LCD during SD write
                 String filename = "/" + upload.filename;
                 Serial.printf("[UPLOAD] Start: %s\r\n", filename.c_str());
-                if (SD.exists(filename)) SD.remove(filename);
-                uploadFile = SD.open(filename, FILE_WRITE);
+                if (SDFS.exists(filename)) SDFS.remove(filename);
+                uploadFile = SDFS.open(filename, FILE_WRITE);
                 if (!uploadFile) Serial.println("[UPLOAD] ERROR: Could not open file");
             } else if (upload.status == UPLOAD_FILE_WRITE) {
                 if (uploadFile) {
@@ -817,7 +824,7 @@ function saveWifi(e){
 bool loadFirmwareInfo() {
     bool foundAny = false;
     DEACTIVATE_LCD();  // Deactivate LCD during SD access
-    File root = SD.open("/");
+    File root = SDFS.open("/");
     while (File f = root.openNextFile()) {
         String name = f.name();
 
@@ -829,7 +836,7 @@ bool loadFirmwareInfo() {
             int debIdx = name.indexOf(".deb");
             if (vIdx >= 0 && debIdx > vIdx) mowerFwVersion = name.substring(vIdx, debIdx);
             // Open file handle BEFORE MD5 — keep it open for HTTP serving
-            mowerFwFileHandle = SD.open("/" + name, FILE_READ);
+            mowerFwFileHandle = SDFS.open("/" + name, FILE_READ);
             if (mowerFwFileHandle) {
                 Serial.printf("[SD] Firmware file opened: %s (%d bytes)\r\n", name.c_str(), mowerFwFileHandle.size());
             }
@@ -854,7 +861,7 @@ bool loadFirmwareInfo() {
 
         // Check for metadata JSON (same name but .json extension)
         if (name.endsWith(".json")) {
-            File jf = SD.open("/" + name);
+            File jf = SDFS.open("/" + name);
             if (jf && jf.size() < 2048) {
                 String json = jf.readString();
                 jf.close();
@@ -874,7 +881,7 @@ bool loadFirmwareInfo() {
 String computeMd5(const char* path) {
     // Deactivate LCD CS during SD read
     DEACTIVATE_LCD();
-    File f = SD.open(path);
+    File f = SDFS.open(path);
     if (!f) return "";
     MD5Builder md5;
     md5.begin();

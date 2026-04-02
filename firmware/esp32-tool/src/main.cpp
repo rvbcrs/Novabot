@@ -22,8 +22,12 @@
 
 #include <Arduino.h>
 #include <WiFi.h>
+#ifdef JC3248W535
+#include <SD_MMC.h>
+#else
 #include <SD.h>
 #include <SPI.h>
+#endif
 #include <NimBLEDevice.h>
 #include <Preferences.h>
 
@@ -224,17 +228,35 @@ void setup() {
         Serial.println("[NVS] No saved WiFi credentials");
     }
 
-    // Initialize display FIRST (same order as Waveshare factory example)
-    // Factory order: bsp_i2c_init → bsp_lv_port_init → bsp_spi_init → app_system_run (SD)
-#ifdef WAVESHARE_LCD
+#ifdef JC3248W535
+    // JC3248W535: SD uses SD_MMC (separate bus from display — no conflict!)
+    SD_MMC.setPins(SD_MMC_CLK, SD_MMC_CMD, SD_MMC_D0);
+    sdMounted = SD_MMC.begin("/sdcard", true);  // 1-bit mode
+    if (!sdMounted) {
+        Serial.println("[SD] SD_MMC mount failed — OTA will be skipped");
+    } else {
+        Serial.printf("[SD] SD_MMC mounted, size: %lluMB\r\n", SD_MMC.cardSize() / (1024 * 1024));
+    }
+
+    // Find firmware file on SD
+    if (!loadFirmwareInfo()) {
+        Serial.println("[SD] No firmware .deb — OTA will be skipped");
+    }
+
+    // Initialize display + LVGL (BSP handles everything including LVGL task)
     display_init();
     display_boot(VERSION);
     delay(500);
-#endif
+
+#elif defined(WAVESHARE_LCD)
+    // Waveshare: display FIRST, then shared SPI for SD
+    display_init();
+    display_boot(VERSION);
+    delay(500);
 
     // Initialize shared SPI bus for SD — EXACT factory pattern (bsp_spi.cpp)
     static SPIClass bsp_spi(FSPI);
-    bsp_spi.begin(39, 40, 38, -1);  // SCK=39, MISO=40, MOSI=38, CS=-1
+    bsp_spi.begin(39, 40, 38, -1);
 
     // Mount SD card — LVGL task not running yet, so no SPI conflict
     pinMode(SD_CS_PIN, OUTPUT);
@@ -248,14 +270,12 @@ void setup() {
         Serial.printf("[SD] Card mounted, size: %lluMB\r\n", SD.cardSize() / (1024 * 1024));
     }
 
-    // Find firmware file on SD (optional -- OTA skipped if not found)
+    // Find firmware file on SD
     if (!loadFirmwareInfo()) {
         Serial.println("[SD] No firmware .deb — OTA will be skipped");
     }
 
-#ifdef WAVESHARE_LCD
-    // NOW start LVGL task — after SD is mounted and firmware file is open
-    // (same as factory: bsp_lv_port_run() runs after bsp_spi_init + SD.begin)
+    // NOW start LVGL task
     display_run();
 #endif
 

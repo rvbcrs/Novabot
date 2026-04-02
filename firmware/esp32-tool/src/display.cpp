@@ -102,8 +102,9 @@ static void spi_unlock() {
 }
 #endif // WAVESHARE_LCD
 
-// ── LVGL mutex ──────────────────────────────────────────────────────────────
+// ── LVGL mutex — Waveshare only (JC3248W535 uses jc3248w535_lock/unlock) ────
 
+#ifdef WAVESHARE_LCD
 static SemaphoreHandle_t lvgl_mux = nullptr;
 
 bool lvgl_lock(int timeout_ms) {
@@ -114,6 +115,7 @@ bool lvgl_lock(int timeout_ms) {
 void lvgl_unlock() {
     xSemaphoreGiveRecursive(lvgl_mux);
 }
+#endif
 
 // ── LVGL draw buffers — Waveshare only (JC3248W535 uses PSRAM via BSP) ───────
 
@@ -358,16 +360,28 @@ static void flash_skip_cb(lv_event_t *e) {
 // ── Public API ──────────────────────────────────────────────────────────────
 
 #ifdef JC3248W535
+#include "jc3248w535.h"
+
+static jc3248w535_handles_t jc_handles;
+
 void display_init() {
-    Serial.printf("[DISPLAY] LVGL 8.4 initialized (%dx%d, PSRAM)\r\n", SCREEN_W, SCREEN_H);
-    // JC3248W535 display + touch + LVGL are initialized by jc_bsp.c / lv_port.c
-    // via bsp_display_start_with_config() — called from main.cpp
-    // This function is a placeholder; the real init is in main.cpp
+    // Initialize JC3248W535 display + touch + LVGL via the clean library
+    jc3248w535_begin_simple(90, &jc_handles);  // 90° rotation → landscape
+    jc3248w535_backlight_set(100);
+    Serial.printf("[DISPLAY] JC3248W535 initialized (%dx%d, PSRAM)\r\n", SCREEN_W, SCREEN_H);
 }
 
 void display_run() {
-    // LVGL task is started by esp_lvgl_port internally — nothing extra needed
-    Serial.println("[DISPLAY] LVGL task started (via esp_lvgl_port)");
+    // LVGL task is already started by esp_lvgl_port inside jc3248w535_begin_simple
+    Serial.println("[DISPLAY] LVGL task running (via esp_lvgl_port)");
+}
+
+// lvgl_lock/unlock for JC3248W535 — delegates to jc3248w535 library
+bool lvgl_lock(int timeout_ms) {
+    return jc3248w535_lock(timeout_ms < 0 ? 0xFFFFFFFF : (uint32_t)timeout_ms);
+}
+void lvgl_unlock(void) {
+    jc3248w535_unlock();
 }
 
 #elif defined(WAVESHARE_LCD)
@@ -427,7 +441,8 @@ void display_run() {
     xTaskCreatePinnedToCore(lvgl_task, "lvgl", 1024 * 10, NULL, 5, NULL, 1);
     Serial.println("[DISPLAY] LVGL task started");
 }
-#endif // WAVESHARE_LCD display_init/display_run
+
+#endif // JC3248W535 / WAVESHARE_LCD display_init/display_run
 
 // ── Shared LVGL widget functions (used by both boards) ─────────────────────
 
