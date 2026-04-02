@@ -377,8 +377,12 @@ void display_run() {
 }
 
 // lvgl_lock/unlock for JC3248W535 — delegates to jc3248w535 library
+// Note: jc_bsp uses timeout_ms==0 to mean "wait forever" (portMAX_DELAY)
 bool lvgl_lock(int timeout_ms) {
-    return jc3248w535_lock(timeout_ms < 0 ? 0xFFFFFFFF : (uint32_t)timeout_ms);
+    // Map our timeout: -1 or 0 → wait forever (pass 0 to bsp_display_lock)
+    // Positive values → actual timeout in ms
+    if (timeout_ms <= 0) return jc3248w535_lock(0);
+    return jc3248w535_lock((uint32_t)timeout_ms);
 }
 void lvgl_unlock(void) {
     jc3248w535_unlock();
@@ -447,7 +451,7 @@ void display_run() {
 // ── Shared LVGL widget functions (used by both boards) ─────────────────────
 
 void display_boot(const char* version) {
-    if (!lvgl_lock(100)) return;
+    if (!lvgl_lock(0)) return;
 
     lv_obj_t *scr = create_screen();
 
@@ -479,7 +483,7 @@ void display_boot(const char* version) {
 }
 
 void display_scanning() {
-    if (!lvgl_lock(100)) return;
+    if (!lvgl_lock(0)) return;
 
     lv_obj_t *scr = create_screen();
 
@@ -501,7 +505,7 @@ void display_scanning() {
 }
 
 void display_devices(ScanResult* results, int count, int selectedCharger, int selectedMower) {
-    if (!lvgl_lock(100)) return;
+    if (!lvgl_lock(0)) return;
 
     // Store for callbacks
     g_scanResults = results;
@@ -638,7 +642,7 @@ void display_devices(ScanResult* results, int count, int selectedCharger, int se
 }
 
 void display_confirm(const char* title, const char* line1, const char* line2, const char* btnText) {
-    if (!lvgl_lock(100)) return;
+    if (!lvgl_lock(0)) return;
     ui_btnPressed = false;
 
     lv_obj_t *scr = create_screen();
@@ -664,7 +668,7 @@ void display_confirm(const char* title, const char* line1, const char* line2, co
 void display_deviceStatus(int chargerStatus, const char* chargerSn,
                           int mowerStatus, const char* mowerSn,
                           bool canContinue) {
-    if (!lvgl_lock(100)) return;
+    if (!lvgl_lock(0)) return;
     ui_btnPressed = false;
 
     lv_obj_t *scr = create_screen();
@@ -781,7 +785,7 @@ void display_deviceStatus(int chargerStatus, const char* chargerSn,
 }
 
 void display_provision(const char* device, int step, int total, const char* stepName) {
-    if (!lvgl_lock(100)) return;
+    if (!lvgl_lock(0)) return;
 
     lv_obj_t *scr = create_screen();
 
@@ -818,7 +822,7 @@ void display_provision(const char* device, int step, int total, const char* step
 }
 
 void display_mqttWait(bool chargerConnected, bool mowerConnected) {
-    if (!lvgl_lock(100)) return;
+    if (!lvgl_lock(0)) return;
 
     // Create screen only once
     if (!mqtt_scr || lv_scr_act() != mqtt_scr) {
@@ -870,7 +874,7 @@ void display_mqttWait(bool chargerConnected, bool mowerConnected) {
 }
 
 void display_ota(const char* status) {
-    if (!lvgl_lock(100)) return;
+    if (!lvgl_lock(0)) return;
 
     lv_obj_t *scr = create_screen();
 
@@ -900,7 +904,7 @@ void display_ota(const char* status) {
 }
 
 void display_done() {
-    if (!lvgl_lock(100)) return;
+    if (!lvgl_lock(0)) return;
     ui_btnPressed = false;
 
     lv_obj_t *scr = lv_obj_create(NULL);
@@ -984,7 +988,7 @@ void display_done() {
 }
 
 void display_error(const char* msg) {
-    if (!lvgl_lock(100)) return;
+    if (!lvgl_lock(0)) return;
     ui_btnPressed = false;
     ui_backPressed = false;
 
@@ -1073,7 +1077,7 @@ static void wifi_connect_cb(lv_event_t *e) {
 }
 
 void display_wifiList(WifiNetwork* networks, int count, int selected) {
-    if (!lvgl_lock(100)) return;
+    if (!lvgl_lock(0)) return;
 
     g_wifiNetworks = networks;
     g_wifiCount = count;
@@ -1179,7 +1183,7 @@ void display_wifiList(WifiNetwork* networks, int count, int selected) {
 }
 
 void display_wifiPassword(const char* ssid) {
-    if (!lvgl_lock(100)) return;
+    if (!lvgl_lock(0)) return;
 
     ui_wifiPasswordReady = false;
     memset(ui_wifiPassword, 0, sizeof(ui_wifiPassword));
@@ -1242,7 +1246,7 @@ void display_wifiPassword(const char* ssid) {
 }
 
 void display_reprovision(const char* status, int step, int total) {
-    if (!lvgl_lock(100)) return;
+    if (!lvgl_lock(0)) return;
 
     lv_obj_t *scr = create_screen();
 
@@ -1289,7 +1293,7 @@ void display_reprovision(const char* status, int step, int total) {
 void display_menu(bool sdMounted, bool hasMowerFw, bool hasChargerFw,
                   const char* mowerFwVer, const char* chargerFwVer,
                   bool mowerMqtt, bool chargerMqtt) {
-    if (!lvgl_lock(100)) return;
+    if (!lvgl_lock(0)) return;
     ui_menuSelection = -1;
 
     lv_obj_t *scr = create_screen();
@@ -1436,7 +1440,7 @@ void display_menu(bool sdMounted, bool hasMowerFw, bool hasChargerFw,
 }
 
 void display_detect(int secondsElapsed, int wifiClients, bool chargerMqtt, bool mowerMqtt) {
-    if (!lvgl_lock(100)) return;
+    if (!lvgl_lock(0)) return;
 
     // Create screen only once — update labels on subsequent calls
     if (!detect_scr || lv_scr_act() != detect_scr) {
@@ -1507,7 +1511,7 @@ void display_detect(int secondsElapsed, int wifiClients, bool chargerMqtt, bool 
 void display_firmware_check(bool hasMowerFw, bool hasChargerFw,
                             const char* mowerVer, const char* chargerVer,
                             bool mowerOnline, bool chargerOnline) {
-    if (!lvgl_lock(100)) return;
+    if (!lvgl_lock(0)) return;
     ui_flashConfirmed = false;
     ui_flashSkipped = false;
 
@@ -1601,7 +1605,7 @@ void display_firmware_check(bool hasMowerFw, bool hasChargerFw,
 }
 
 void display_firmware_flash(const char* device, const char* status, int percent) {
-    if (!lvgl_lock(100)) return;
+    if (!lvgl_lock(0)) return;
 
     lv_obj_t *scr = create_screen();
 
