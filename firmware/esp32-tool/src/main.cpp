@@ -224,19 +224,26 @@ void setup() {
         Serial.println("[NVS] No saved WiFi credentials");
     }
 
+    // Initialize display FIRST (same order as Waveshare factory example)
+    // Factory order: bsp_i2c_init → bsp_lv_port_init → bsp_spi_init → app_system_run (SD)
 #ifdef WAVESHARE_LCD
-    // Initialize display (includes LVGL + touch + FreeRTOS task)
     display_init();
     display_boot(VERSION);
-    delay(1500);  // Show boot screen briefly
+    delay(500);
 #endif
 
-    // Initialize SD card -- shares SPI bus with LCD (SCK=39, MISO=40, MOSI=38)
-    // CRITICAL: deactivate LCD CS before SD access to avoid SPI bus conflict
+    // Initialize shared SPI bus for SD — EXACT factory pattern (bsp_spi.cpp)
+    // This is a SEPARATE SPIClass instance from what Arduino_GFX uses internally
+    static SPIClass bsp_spi(FSPI);
+    bsp_spi.begin(39, 40, 38, -1);  // SCK=39, MISO=40, MOSI=38, CS=-1
+
+    // Mount SD card using the shared SPI bus
+    pinMode(SD_CS_PIN, OUTPUT);
+    digitalWrite(SD_CS_PIN, HIGH);
     pinMode(LCD_CS, OUTPUT);
-    digitalWrite(LCD_CS, HIGH);  // LCD deselected
-    SPI.begin(39, 40, 38, SD_CS_PIN);
-    sdMounted = SD.begin(SD_CS_PIN, SPI, 20000000);  // 20 MHz -- LCD CS disabled so no bus conflict
+    digitalWrite(LCD_CS, HIGH);  // LCD deselected during SD access
+
+    sdMounted = SD.begin(SD_CS_PIN, bsp_spi);
     if (!sdMounted) {
         Serial.println("[SD] Card mount failed — OTA will be skipped");
     } else {
@@ -566,33 +573,25 @@ void loop() {
     }
 
     case WIZ_OTA_CONFIRM: {
-        // Refresh display to show live charging status
-        {
-            String line1 = String("Flash ") + mowerFwVersion + " to " + mowerSn;
-            String line2 = mowerCharging
-                ? "Mower is charging — ready to flash"
-                : "Place mower on charger first!";
-            String btnText = mowerCharging ? "Flash" : "Waiting...";
-#ifdef WAVESHARE_LCD
-            static unsigned long lastConfirmRefresh = 0;
-            if (stateJustEntered || millis() - lastConfirmRefresh > 1000) {
-                lastConfirmRefresh = millis();
-                display_confirm("Flash Firmware?", line1.c_str(), line2.c_str(), btnText.c_str());
-            }
-#endif
-        }
         if (stateJustEntered) {
             stateJustEntered = false;
             webLogAdd("Firmware available: %s (charging: %s)", mowerFwFilename.c_str(), mowerCharging ? "yes" : "no");
             statusMessage = "Flash firmware?";
+            String line1 = String("Flash ") + mowerFwVersion + " to " + mowerSn;
+            String line2 = mowerCharging
+                ? "Mower is on charger — ready!"
+                : "Ensure mower is on charger!";
+#ifdef WAVESHARE_LCD
+            display_confirm("Flash Firmware?", line1.c_str(), line2.c_str(), "Flash");
+#endif
         }
 #ifdef WAVESHARE_LCD
-        if (ui_btnPressed && mowerCharging) {
+        if (ui_btnPressed) {
             ui_btnPressed = false;
+            if (!mowerCharging) {
+                webLogAdd("OTA: Warning — mower may not be charging. Flashing anyway.");
+            }
             setState(WIZ_OTA_FLASH);
-        } else if (ui_btnPressed && !mowerCharging) {
-            ui_btnPressed = false;  // Eat the press, don't flash
-            webLogAdd("OTA: Mower not charging — place on charger first");
         }
 #endif
         // No timeout — wait until user acts or places mower on charger

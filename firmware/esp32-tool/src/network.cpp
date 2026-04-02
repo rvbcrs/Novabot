@@ -803,6 +803,11 @@ bool loadFirmwareInfo() {
             int vIdx = name.indexOf('v');
             int debIdx = name.indexOf(".deb");
             if (vIdx >= 0 && debIdx > vIdx) mowerFwVersion = name.substring(vIdx, debIdx);
+            // Open file handle FIRST (before MD5 which may corrupt SD state)
+            mowerFwFileHandle = SD.open("/" + name, FILE_READ);
+            if (mowerFwFileHandle) {
+                Serial.printf("[SD] Mower firmware file opened: %s (%d bytes)\r\n", name.c_str(), mowerFwFileHandle.size());
+            }
             mowerFwMd5 = computeMd5(("/" + name).c_str());
             Serial.printf("[SD] Mower firmware: %s (%d bytes, %s)\r\n",
                           name.c_str(), mowerFwSize, mowerFwVersion.c_str());
@@ -839,16 +844,9 @@ bool loadFirmwareInfo() {
     root.close();
     if (!foundAny) Serial.println("[SD] No firmware files found!");
 
-    // Keep mower firmware file open for reliable HTTP serving later
-    // (SD re-init after boot is unreliable due to shared SPI bus with LCD)
-    if (mowerFwFilename.length() > 0) {
-        mowerFwFileHandle = SD.open("/" + mowerFwFilename, FILE_READ);
-        if (mowerFwFileHandle) {
-            Serial.printf("[SD] Mower firmware file kept open: %s (%d bytes)\r\n",
-                mowerFwFilename.c_str(), mowerFwFileHandle.size());
-        } else {
-            Serial.println("[SD] WARNING: Could not keep mower firmware file open");
-        }
+    // Verify file handle is still valid
+    if (mowerFwFilename.length() > 0 && !mowerFwFileHandle) {
+        Serial.println("[SD] WARNING: Mower firmware file handle lost — OTA may fail");
     }
 
     return foundAny;

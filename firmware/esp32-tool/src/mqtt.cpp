@@ -99,9 +99,11 @@ bool NovaMQTTBroker::onEvent(sMQTTEvent *event) {
                 }
             }
 
-            // Log all decrypted mower messages
+            // Log decrypted mower messages (skip frequent report_exception_state)
             if (topic.find("Dart/Receive_mqtt/LFIN") != std::string::npos && payload.size() > 0 && payload[0] == '{') {
-                Serial.printf("[MOWER] %s\r\n", payload.c_str());
+                if (payload.find("report_exception_state") == std::string::npos) {
+                    Serial.printf("[MOWER] (%dB) %s\r\n", (int)payload.size(), payload.c_str());
+                }
             }
 
             // Parse charging state from multiple sources:
