@@ -1,6 +1,5 @@
 #include "mqtt.h"
 #include "config.h"
-#include "network.h"
 #include "mbedtls/aes.h"
 
 // ── NovaMQTTBroker instance ─────────────────────────────────────────────────
@@ -169,7 +168,6 @@ bool NovaMQTTBroker::onEvent(sMQTTEvent *event) {
                             Serial.println("[OTA] COMPLETE!");
                             mowerOtaTriedPlain = false;
                             mowerOtaTriedAes = false;
-                            allowChargerAfterOta();
                         }
                         else if (status == "fail" || status == "error") {
                             // Immediate AES retry if plain failed
@@ -178,8 +176,7 @@ bool NovaMQTTBroker::onEvent(sMQTTEvent *event) {
                                 mowerOtaTriedAes = true;
                                 sendMowerOtaWithAes(true);
                             } else {
-                                allowChargerAfterOta();
-                            }
+                                }
                         }
                     }
                 }
@@ -265,8 +262,6 @@ void sendMowerOtaWithAes(bool useAes) {
 
 void sendMowerOta() {
     // Kick charger off WiFi — its CCMP frames destabilize the channel during download
-    kickChargerForOta();
-
     // Try plain first (v5.x), if no response after 30s try AES (v6.x)
     mowerOtaTriedPlain = true;
     mowerOtaTriedAes = false;
@@ -299,4 +294,14 @@ void sendOtaCommand() {
     // Send to whichever device has firmware available
     if (mowerConnected && mowerFwFilename.length() > 0) sendMowerOta();
     if (chargerMqttConnected && chargerFwFilename.length() > 0) sendChargerOta();
+}
+
+void sendOtaCleanup() {
+    // Send clean_ota_cache to extended_commands.py on the mower.
+    // Cleans /userdata/ota/upgrade_pkg/ + resets upgrade.txt + reboots mower.
+    if (!mowerConnected || mowerSn.length() == 0) return;
+    String topic = "novabot/extended/" + mowerSn;
+    String payload = "{\"clean_ota_cache\":{}}";
+    mqttBroker.publish(std::string(topic.c_str()), std::string(payload.c_str()));
+    Serial.printf("[OTA] Sent clean_ota_cache to %s (mower will reboot)\r\n", mowerSn.c_str());
 }

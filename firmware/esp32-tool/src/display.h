@@ -39,6 +39,8 @@ extern volatile bool ui_wifiPasswordReady;
 extern volatile bool ui_wifiRescanPressed;
 extern char ui_wifiPassword[64];
 extern char ui_wifiSsid[33];
+extern volatile bool ui_mqttAddrReady;
+extern char ui_mqttAddr[64];
 
 // ── Thread safety — all lv_* calls from outside LVGL task must use these ────
 
@@ -50,6 +52,7 @@ void lvgl_unlock(void);
 void display_init();
 void display_run();   // Start LVGL FreeRTOS task — call AFTER SD init
 void display_boot(const char* version);
+void display_boot_status(const char* status);
 void display_scanning();
 void display_devices(ScanResult* results, int count, int selectedCharger, int selectedMower);
 void display_provision(const char* device, int step, int total, const char* stepName);
@@ -67,6 +70,9 @@ void display_deviceStatus(int chargerStatus, const char* chargerSn,
 // Phase 2: WiFi re-provisioning screens
 void display_wifiList(WifiNetwork* networks, int count, int selected);
 void display_wifiPassword(const char* ssid);
+void display_textEntry(const char* title, const char* subtitle,
+                       const char* placeholder, const char* btnText);
+void display_mqttAddr();
 void display_reprovision(const char* status, int step, int total);
 
 // Phase 3: Menu + firmware flash screens

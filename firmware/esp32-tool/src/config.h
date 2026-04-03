@@ -55,18 +55,19 @@ extern const char* VERSION;
 
 enum State {
     WIZ_BOOT,                   // Hardware init, start AP + DNS + MQTT + HTTP
+    WIZ_WIFI_CONFIG,            // Wait for home WiFi + MQTT config via WebUI
     WIZ_SCAN_CHARGER,           // BLE scan for CHARGER_PILE
     WIZ_SELECT_CHARGER,         // Select charger from list (if multiple)
-    WIZ_PROVISION_CHARGER,      // Provision charger with AP wifi + mqtt
-    WIZ_WAIT_CHARGER,           // Wait for charger MQTT connect
-    WIZ_CHARGER_CONNECTED,      // Charger connected — confirm before mower scan
+    WIZ_PROVISION_CHARGER,      // Provision charger with home WiFi + home MQTT
+    WIZ_WAIT_CHARGER,           // Wait for charger MQTT connect (legacy, skipped in home-WiFi flow)
+    WIZ_CHARGER_CONNECTED,      // Charger done — status screen
     WIZ_SCAN_MOWER,             // BLE scan for NOVABOT
     WIZ_SELECT_MOWER,           // Select mower from list (if multiple)
     WIZ_PROVISION_MOWER,        // Provision mower with AP wifi + mqtt.lfibot.com
     WIZ_WAIT_MOWER,             // Wait for mower MQTT connect
     WIZ_OTA_CONFIRM,            // Confirm before flashing firmware
     WIZ_OTA_FLASH,              // Flash mower firmware (if .deb on SD)
-    WIZ_REPROVISION,            // Re-provision both to home WiFi (if configured)
+    WIZ_REPROVISION,            // Re-provision mower to home WiFi (if configured)
     WIZ_DONE,                   // All done!
     WIZ_ERROR,                  // Error — tap to retry current step
 };

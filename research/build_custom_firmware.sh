@@ -657,12 +657,26 @@ if source == "main" and original_critical >= 2:
         pass
 
 # === Stap 4: Update ALLEEN mqtt + config/tz (nooit andere secties aanraken) ===
+# BELANGRIJK: als json_config.json al een custom MQTT adres bevat (niet mqtt.lfibot.com
+# of mqtt-dev.lfibot.com), dan is dat gezet via BLE/MQTT provisioning → NIET overschrijven.
+# Dit maakt de firmware generiek bruikbaar: ESP32 OTA tool flasht, provisioneert MQTT adres
+# via MQTT (stap 8), en set_server_urls.sh respecteert dat bij elke boot daarna.
 if "mqtt" not in c:
     c["mqtt"] = {"set": 1, "value": {}}
 elif not isinstance(c.get("mqtt", {}).get("value"), dict):
     c["mqtt"]["value"] = {}
-c["mqtt"]["value"]["addr"] = mqtt_addr
-c["mqtt"]["value"]["port"] = mqtt_port
+
+existing_addr = c.get("mqtt", {}).get("value", {}).get("addr", "")
+is_stock_addr = existing_addr in ("", "mqtt.lfibot.com", "mqtt-dev.lfibot.com", "app.lfibot.com")
+if is_stock_addr:
+    c["mqtt"]["value"]["addr"] = mqtt_addr
+    c["mqtt"]["value"]["port"] = mqtt_port
+    log_msg(f"MQTT addr updated: {existing_addr} -> {mqtt_addr}")
+else:
+    log_msg(f"MQTT addr KEPT (custom): {existing_addr} (niet overschreven door {mqtt_addr})")
+    # Alleen port updaten als die verschilt
+    if c["mqtt"]["value"].get("port") != mqtt_port:
+        c["mqtt"]["value"]["port"] = mqtt_port
 
 if "config" not in c:
     c["config"] = {"set": 1, "value": {"tz": "Europe/Amsterdam"}}

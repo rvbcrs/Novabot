@@ -44,6 +44,8 @@ volatile bool ui_wifiPasswordReady  = false;
 volatile bool ui_wifiRescanPressed  = false;
 char ui_wifiPassword[64]            = {0};
 char ui_wifiSsid[33]                = {0};
+volatile bool ui_mqttAddrReady      = false;
+char ui_mqttAddr[64]                = {0};
 
 // v2.0: Menu + firmware UI flags
 volatile int  ui_menuSelection      = -1;
@@ -207,6 +209,17 @@ static void lvgl_task(void *param) {
 
 // ── Style helpers — shared by both boards ────────────────────────────────────
 
+// Persistent screens — created once, updated in-place to prevent memory leaks
+static lv_obj_t* ds_scr = nullptr;
+static lv_obj_t* cf_scr = nullptr;
+static lv_obj_t* ff_scr = nullptr;
+static lv_obj_t* ds_mwIcon = nullptr;
+static lv_obj_t* ds_mwLbl = nullptr;
+static lv_obj_t* ds_mwSn = nullptr;
+static lv_obj_t* ds_legend = nullptr;
+static lv_obj_t* ds_btn = nullptr;
+static lv_obj_t* ds_btnLbl = nullptr;
+
 // Persistent MQTT wait labels (forward declarations for create_screen reset)
 static lv_obj_t *mqtt_scr = nullptr;
 static lv_obj_t *mqtt_chg_label = nullptr;
@@ -232,6 +245,9 @@ static lv_obj_t* create_screen() {
     detect_wifi_label = nullptr;
     detect_chg_label = nullptr;
     detect_mow_label = nullptr;
+    ds_scr = nullptr;
+    cf_scr = nullptr;
+    ff_scr = nullptr;
 
     // Remember old screen for deletion after new one is loaded
     lv_obj_t *old_screen = prev_screen;
@@ -267,7 +283,7 @@ static lv_obj_t* add_label(lv_obj_t *parent, const char *text, const lv_font_t *
 // Purple rounded button at bottom
 static lv_obj_t* add_bottom_btn(lv_obj_t *parent, const char *text, lv_event_cb_t cb) {
     lv_obj_t *btn = lv_btn_create(parent);
-    lv_obj_set_size(btn, 200, 44);
+    lv_obj_set_size(btn, SCREEN_W - 80, 44);
     lv_obj_align(btn, LV_ALIGN_BOTTOM_MID, 0, -12);
     lv_obj_set_style_bg_color(btn, COL_PURPLE, 0);
     lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
@@ -280,9 +296,15 @@ static lv_obj_t* add_bottom_btn(lv_obj_t *parent, const char *text, lv_event_cb_
     lv_obj_set_style_text_font(lbl, &lv_font_montserrat_20, 0);
     lv_obj_set_style_text_color(lbl, COL_TEXT, 0);
     lv_obj_center(lbl);
+    lv_obj_clear_flag(lbl, LV_OBJ_FLAG_CLICKABLE);  // clicks pass through to button
 
     if (cb) lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, NULL);
     return btn;
+}
+
+// Helper: make label in a button click-transparent
+static void btn_label_passthrough(lv_obj_t *lbl) {
+    lv_obj_clear_flag(lbl, LV_OBJ_FLAG_CLICKABLE);
 }
 
 // ── Device list state — needed for LVGL callbacks ───────────────────────────
@@ -472,13 +494,37 @@ void display_boot(const char* version) {
     // Spinner at bottom
     lv_obj_t *spinner = lv_spinner_create(scr, 1000, 60);
     lv_obj_set_size(spinner, 36, 36);
-    lv_obj_align(spinner, LV_ALIGN_BOTTOM_MID, 0, -30);
+    lv_obj_align(spinner, LV_ALIGN_BOTTOM_MID, 0, -50);
     lv_obj_set_style_arc_color(spinner, COL_PURPLE, LV_PART_INDICATOR);
     lv_obj_set_style_arc_color(spinner, COL_CARD, LV_PART_MAIN);
     lv_obj_set_style_arc_width(spinner, 4, LV_PART_INDICATOR);
     lv_obj_set_style_arc_width(spinner, 4, LV_PART_MAIN);
 
+    // Status label below spinner — updated by display_boot_status()
+    lv_obj_t *status = lv_label_create(scr);
+    lv_label_set_text(status, "Starting...");
+    lv_obj_set_style_text_font(status, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(status, COL_DIM, 0);
+    lv_obj_set_style_text_align(status, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_width(status, SCREEN_W - 40);
+    lv_obj_align(status, LV_ALIGN_BOTTOM_MID, 0, -16);
+
     lv_scr_load(scr);
+    lvgl_unlock();
+}
+
+static lv_obj_t* _find_boot_status_label() {
+    lv_obj_t *scr = lv_scr_act();
+    // Last child of boot screen is the status label
+    uint32_t cnt = lv_obj_get_child_cnt(scr);
+    if (cnt > 0) return lv_obj_get_child(scr, cnt - 1);
+    return nullptr;
+}
+
+void display_boot_status(const char* status) {
+    if (!lvgl_lock(0)) return;
+    lv_obj_t *lbl = _find_boot_status_label();
+    if (lbl) lv_label_set_text(lbl, status);
     lvgl_unlock();
 }
 
@@ -519,7 +565,7 @@ void display_devices(ScanResult* results, int count, int selectedCharger, int se
 
     // List
     lv_obj_t *list = lv_list_create(scr);
-    lv_obj_set_size(list, 232, 200);
+    lv_obj_set_size(list, SCREEN_W - 16, SCREEN_H - 120);
     lv_obj_align(list, LV_ALIGN_TOP_MID, 0, 42);
     lv_obj_set_style_bg_color(list, COL_BG, 0);
     lv_obj_set_style_bg_opa(list, LV_OPA_COVER, 0);
@@ -617,7 +663,25 @@ void display_devices(ScanResult* results, int count, int selectedCharger, int se
     lv_obj_set_style_text_font(rescan_lbl, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(rescan_lbl, COL_TEXT, 0);
     lv_obj_center(rescan_lbl);
+    btn_label_passthrough(rescan_lbl);
     lv_obj_add_event_cb(rescan, rescan_btn_cb, LV_EVENT_CLICKED, NULL);
+
+    // Skip button (center) — allows skipping charger provisioning
+    lv_obj_t *skip = lv_btn_create(scr);
+    lv_obj_set_size(skip, 100, 42);
+    lv_obj_align(skip, LV_ALIGN_BOTTOM_MID, 0, -10);
+    lv_obj_set_style_bg_color(skip, lv_color_hex(0x2a2a3e), 0);
+    lv_obj_set_style_bg_opa(skip, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(skip, 12, 0);
+    lv_obj_set_style_shadow_width(skip, 0, 0);
+    lv_obj_set_style_border_width(skip, 0, 0);
+    lv_obj_t *skip_lbl = lv_label_create(skip);
+    lv_label_set_text(skip_lbl, "Skip");
+    lv_obj_set_style_text_font(skip_lbl, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(skip_lbl, COL_DIM, 0);
+    lv_obj_center(skip_lbl);
+    btn_label_passthrough(skip_lbl);
+    lv_obj_add_event_cb(skip, generic_btn_cb, LV_EVENT_CLICKED, NULL);
 
     // Start button (right)
     lv_obj_t *btn = lv_btn_create(scr);
@@ -633,6 +697,7 @@ void display_devices(ScanResult* results, int count, int selectedCharger, int se
     lv_obj_set_style_text_font(btn_lbl, &lv_font_montserrat_20, 0);
     lv_obj_set_style_text_color(btn_lbl, canStart ? COL_TEXT : COL_DIM, 0);
     lv_obj_center(btn_lbl);
+    btn_label_passthrough(btn_lbl);
     if (canStart) {
         lv_obj_add_event_cb(btn, start_btn_cb, LV_EVENT_CLICKED, NULL);
     }
@@ -641,27 +706,58 @@ void display_devices(ScanResult* results, int count, int selectedCharger, int se
     lvgl_unlock();
 }
 
+// Persistent confirm screen labels
+static lv_obj_t* cf_title = nullptr;
+static lv_obj_t* cf_line1 = nullptr;
+static lv_obj_t* cf_line2 = nullptr;
+static lv_obj_t* cf_btn = nullptr;
+
 void display_confirm(const char* title, const char* line1, const char* line2, const char* btnText) {
     if (!lvgl_lock(0)) return;
-    ui_btnPressed = false;
 
-    lv_obj_t *scr = create_screen();
+    if (!cf_scr || lv_scr_act() != cf_scr) {
+        cf_scr = create_screen();
+        ui_btnPressed = false;
 
-    // Title
-    add_label(scr, title, &lv_font_montserrat_20, COL_GREEN, 60);
+        cf_title = lv_label_create(cf_scr);
+        lv_obj_set_style_text_font(cf_title, &lv_font_montserrat_20, 0);
+        lv_obj_set_style_text_color(cf_title, COL_GREEN, 0);
+        lv_obj_set_style_text_align(cf_title, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_width(cf_title, SCREEN_W - 40);
+        lv_obj_align(cf_title, LV_ALIGN_TOP_MID, 0, 60);
 
-    // Info lines
-    if (line1 && strlen(line1) > 0) {
-        add_label(scr, line1, &lv_font_montserrat_14, COL_TEXT, 110);
+        cf_line1 = lv_label_create(cf_scr);
+        lv_obj_set_style_text_font(cf_line1, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(cf_line1, COL_TEXT, 0);
+        lv_obj_set_style_text_align(cf_line1, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_width(cf_line1, SCREEN_W - 40);
+        lv_obj_align(cf_line1, LV_ALIGN_TOP_MID, 0, 110);
+
+        cf_line2 = lv_label_create(cf_scr);
+        lv_obj_set_style_text_font(cf_line2, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(cf_line2, COL_TEXT, 0);
+        lv_obj_set_style_text_align(cf_line2, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_width(cf_line2, SCREEN_W - 40);
+        lv_obj_align(cf_line2, LV_ALIGN_TOP_MID, 0, 140);
+
+        cf_btn = add_bottom_btn(cf_scr, "", generic_btn_cb);
+
+        lv_scr_load(cf_scr);
     }
-    if (line2 && strlen(line2) > 0) {
-        add_label(scr, line2, &lv_font_montserrat_14, COL_TEXT, 140);
+
+    // Update text in-place
+    lv_label_set_text(cf_title, title ? title : "");
+    lv_label_set_text(cf_line1, line1 ? line1 : "");
+    lv_label_set_text(cf_line2, line2 ? line2 : "");
+
+    // Show/hide button based on text
+    if (btnText && strlen(btnText) > 0) {
+        lv_obj_clear_flag(cf_btn, LV_OBJ_FLAG_HIDDEN);
+        lv_label_set_text(lv_obj_get_child(cf_btn, 0), btnText);
+    } else {
+        lv_obj_add_flag(cf_btn, LV_OBJ_FLAG_HIDDEN);
     }
 
-    // Button
-    add_bottom_btn(scr, btnText, generic_btn_cb);
-
-    lv_scr_load(scr);
     lvgl_unlock();
 }
 
@@ -669,118 +765,76 @@ void display_deviceStatus(int chargerStatus, const char* chargerSn,
                           int mowerStatus, const char* mowerSn,
                           bool canContinue) {
     if (!lvgl_lock(0)) return;
-    ui_btnPressed = false;
 
-    lv_obj_t *scr = create_screen();
-
-    // Title
-    add_label(scr, "Device Status", &lv_font_montserrat_20, COL_GREEN, 20);
-
-    // Color mapping: 0=grey, 1=orange(WiFi), 2=green(MQTT)
     auto statusColor = [](int s) -> lv_color_t {
         if (s >= 2) return lv_color_hex(0x34D399); // green
         if (s >= 1) return lv_color_hex(0xF59E0B); // orange
         return lv_color_hex(0x4B5563);              // grey
     };
 
-    // Helper: add bouncing dots at position
-    auto addDots = [&](lv_obj_t* parent, int xOff, int y) {
-        for (int d = 0; d < 3; d++) {
-            lv_obj_t *dot = lv_obj_create(parent);
-            lv_obj_remove_style_all(dot);
-            lv_obj_set_size(dot, 6, 6);
-            lv_obj_set_style_radius(dot, 3, 0);
-            lv_obj_set_style_bg_color(dot, lv_color_hex(0x4B5563), 0);
-            lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
-            lv_obj_align(dot, LV_ALIGN_TOP_MID, xOff + (d - 1) * 12, y);
-            lv_anim_t a;
-            lv_anim_init(&a);
-            lv_anim_set_var(&a, dot);
-            lv_anim_set_exec_cb(&a, [](void* obj, int32_t v) { lv_obj_set_style_opa((lv_obj_t*)obj, v, 0); });
-            lv_anim_set_values(&a, 80, 255);
-            lv_anim_set_time(&a, 400);
-            lv_anim_set_playback_time(&a, 400);
-            lv_anim_set_delay(&a, d * 200);
-            lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
-            lv_anim_start(&a);
-        }
-    };
+    // Create screen ONCE, then just update colors/text on subsequent calls
+    if (!ds_scr || lv_scr_act() != ds_scr) {
+        ds_scr = create_screen();
+        ui_btnPressed = false;
 
-    // ── Charger block (icon centered above name + SN/dots) ──
-    int chY = 65;
-    lv_obj_t *chIcon = lv_label_create(scr);
-    lv_label_set_text(chIcon, LV_SYMBOL_CHARGE);
-    lv_obj_set_style_text_font(chIcon, &lv_font_montserrat_28, 0);
-    lv_obj_set_style_text_color(chIcon, statusColor(chargerStatus), 0);
-    lv_obj_align(chIcon, LV_ALIGN_TOP_MID, 0, chY);
+        add_label(ds_scr, "Device Status", &lv_font_montserrat_20, COL_GREEN, 20);
 
-    lv_obj_t *chLbl = lv_label_create(scr);
-    lv_label_set_text(chLbl, "Charger");
-    lv_obj_set_style_text_font(chLbl, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(chLbl, statusColor(chargerStatus), 0);
-    lv_obj_align(chLbl, LV_ALIGN_TOP_MID, 0, chY + 35);
+        int mwY = 60;
+        ds_mwIcon = lv_label_create(ds_scr);
+        lv_label_set_text(ds_mwIcon, LV_SYMBOL_SETTINGS);
+        lv_obj_set_style_text_font(ds_mwIcon, &lv_font_montserrat_28, 0);
+        lv_obj_align(ds_mwIcon, LV_ALIGN_TOP_MID, 0, mwY);
 
-    if (chargerSn && strlen(chargerSn) > 0) {
-        lv_obj_t *chSn = lv_label_create(scr);
-        lv_label_set_text(chSn, chargerSn);
-        lv_obj_set_style_text_font(chSn, &lv_font_montserrat_12, 0);
-        lv_obj_set_style_text_color(chSn, lv_color_hex(0x9CA3AF), 0);
-        lv_obj_align(chSn, LV_ALIGN_TOP_MID, 0, chY + 53);
-    } else {
-        addDots(scr, 0, chY + 58);
+        ds_mwLbl = lv_label_create(ds_scr);
+        lv_label_set_text(ds_mwLbl, "Mower");
+        lv_obj_set_style_text_font(ds_mwLbl, &lv_font_montserrat_20, 0);
+        lv_obj_align(ds_mwLbl, LV_ALIGN_TOP_MID, 0, mwY + 55);
+
+        ds_mwSn = lv_label_create(ds_scr);
+        lv_label_set_text(ds_mwSn, "...");
+        lv_obj_set_style_text_font(ds_mwSn, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(ds_mwSn, lv_color_hex(0x9CA3AF), 0);
+        lv_obj_align(ds_mwSn, LV_ALIGN_TOP_MID, 0, mwY + 80);
+
+        ds_legend = lv_label_create(ds_scr);
+        lv_label_set_text(ds_legend, "Grey=waiting  Orange=WiFi  Green=MQTT");
+        lv_obj_set_style_text_font(ds_legend, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_color(ds_legend, lv_color_hex(0x6B7280), 0);
+        lv_obj_set_style_text_align(ds_legend, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_width(ds_legend, SCREEN_W - 40);
+        lv_obj_align(ds_legend, LV_ALIGN_BOTTOM_MID, 0, -60);
+
+        ds_btn = lv_btn_create(ds_scr);
+        lv_obj_set_size(ds_btn, SCREEN_W - 80, 40);
+        lv_obj_align(ds_btn, LV_ALIGN_BOTTOM_MID, 0, -10);
+        lv_obj_set_style_radius(ds_btn, 8, 0);
+        lv_obj_set_style_shadow_width(ds_btn, 0, 0);
+        lv_obj_set_style_border_width(ds_btn, 0, 0);
+        lv_obj_add_event_cb(ds_btn, generic_btn_cb, LV_EVENT_CLICKED, NULL);
+        ds_btnLbl = lv_label_create(ds_btn);
+        lv_label_set_text(ds_btnLbl, "Continue");
+        lv_obj_center(ds_btnLbl);
+        btn_label_passthrough(ds_btnLbl);
+
+        lv_scr_load(ds_scr);
     }
 
-    // ── Mower block (icon centered above name + SN/dots) ──
-    int mwY = 145;
-    lv_obj_t *mwIcon = lv_label_create(scr);
-    lv_label_set_text(mwIcon, LV_SYMBOL_DRIVE);
-    lv_obj_set_style_text_font(mwIcon, &lv_font_montserrat_28, 0);
-    lv_obj_set_style_text_color(mwIcon, statusColor(mowerStatus), 0);
-    lv_obj_align(mwIcon, LV_ALIGN_TOP_MID, 0, mwY);
+    // Update colors and text in-place (no screen recreation)
+    lv_color_t mwCol = statusColor(mowerStatus);
+    lv_obj_set_style_text_color(ds_mwIcon, mwCol, 0);
+    lv_obj_set_style_text_color(ds_mwLbl, mwCol, 0);
+    lv_label_set_text(ds_mwSn, (mowerSn && strlen(mowerSn) > 0) ? mowerSn : "...");
 
-    lv_obj_t *mwLbl = lv_label_create(scr);
-    lv_label_set_text(mwLbl, "Mower");
-    lv_obj_set_style_text_font(mwLbl, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(mwLbl, statusColor(mowerStatus), 0);
-    lv_obj_align(mwLbl, LV_ALIGN_TOP_MID, 0, mwY + 35);
-
-    if (mowerSn && strlen(mowerSn) > 0) {
-        lv_obj_t *mwSn = lv_label_create(scr);
-        lv_label_set_text(mwSn, mowerSn);
-        lv_obj_set_style_text_font(mwSn, &lv_font_montserrat_12, 0);
-        lv_obj_set_style_text_color(mwSn, lv_color_hex(0x9CA3AF), 0);
-        lv_obj_align(mwSn, LV_ALIGN_TOP_MID, 0, mwY + 53);
-    } else {
-        addDots(scr, 0, mwY + 58);
-    }
-
-    // Legend at bottom
-    lv_obj_t *legend = lv_label_create(scr);
-    lv_label_set_text(legend, "Grey=waiting  Orange=WiFi  Green=MQTT");
-    lv_obj_set_style_text_font(legend, &lv_font_montserrat_12, 0);
-    lv_obj_set_style_text_color(legend, lv_color_hex(0x6B7280), 0);
-    lv_obj_set_style_text_align(legend, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_width(legend, 220);
-    lv_obj_align(legend, LV_ALIGN_BOTTOM_MID, 0, -60);
-
-    // Continue button — always visible, greyed out when not ready
-    lv_obj_t *btn = lv_btn_create(scr);
-    lv_obj_set_size(btn, 200, 40);
-    lv_obj_align(btn, LV_ALIGN_BOTTOM_MID, 0, -10);
-    lv_obj_set_style_radius(btn, 8, 0);
     if (canContinue) {
-        lv_obj_set_style_bg_color(btn, COL_TEAL, 0);
-        lv_obj_add_event_cb(btn, generic_btn_cb, LV_EVENT_CLICKED, NULL);
+        lv_obj_set_style_bg_color(ds_btn, COL_TEAL, 0);
+        lv_obj_add_flag(ds_btn, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_style_text_color(ds_btnLbl, lv_color_hex(0xFFFFFF), 0);
     } else {
-        lv_obj_set_style_bg_color(btn, lv_color_hex(0x374151), 0);
-        lv_obj_clear_flag(btn, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_style_bg_color(ds_btn, lv_color_hex(0x374151), 0);
+        lv_obj_clear_flag(ds_btn, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_style_text_color(ds_btnLbl, lv_color_hex(0x6B7280), 0);
     }
-    lv_obj_t *btnLbl = lv_label_create(btn);
-    lv_label_set_text(btnLbl, "Continue");
-    lv_obj_set_style_text_color(btnLbl, canContinue ? lv_color_hex(0xFFFFFF) : lv_color_hex(0x6B7280), 0);
-    lv_obj_center(btnLbl);
 
-    lv_scr_load(scr);
     lvgl_unlock();
 }
 
@@ -797,7 +851,7 @@ void display_provision(const char* device, int step, int total, const char* step
 
     // Progress bar
     lv_obj_t *bar = lv_bar_create(scr);
-    lv_obj_set_size(bar, 200, 16);
+    lv_obj_set_size(bar, SCREEN_W - 80, 16);
     lv_obj_align(bar, LV_ALIGN_CENTER, 0, -10);
     lv_obj_set_style_bg_color(bar, COL_CARD, LV_PART_MAIN);
     lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, LV_PART_MAIN);
@@ -1030,6 +1084,7 @@ void display_error(const char* msg) {
     lv_obj_set_style_text_font(retry_lbl, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(retry_lbl, COL_TEXT, 0);
     lv_obj_center(retry_lbl);
+    btn_label_passthrough(retry_lbl);
     lv_obj_add_event_cb(retry_btn, error_tap_cb, LV_EVENT_CLICKED, NULL);
 
     lv_obj_t *menu_btn = lv_btn_create(scr);
@@ -1045,6 +1100,7 @@ void display_error(const char* msg) {
     lv_obj_set_style_text_font(menu_lbl, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(menu_lbl, COL_TEXT, 0);
     lv_obj_center(menu_lbl);
+    btn_label_passthrough(menu_lbl);
     lv_obj_add_event_cb(menu_btn, back_btn_cb, LV_EVENT_CLICKED, NULL);
 
     lv_scr_load(scr);
@@ -1090,7 +1146,7 @@ void display_wifiList(WifiNetwork* networks, int count, int selected) {
 
     // List
     lv_obj_t *list = lv_list_create(scr);
-    lv_obj_set_size(list, 232, 220);
+    lv_obj_set_size(list, SCREEN_W - 16, SCREEN_H - 100);
     lv_obj_align(list, LV_ALIGN_TOP_MID, 0, 36);
     lv_obj_set_style_bg_color(list, COL_BG, 0);
     lv_obj_set_style_bg_opa(list, LV_OPA_COVER, 0);
@@ -1164,7 +1220,7 @@ void display_wifiList(WifiNetwork* networks, int count, int selected) {
 
     // Rescan button at bottom
     lv_obj_t *rescan = lv_btn_create(scr);
-    lv_obj_set_size(rescan, 200, 42);
+    lv_obj_set_size(rescan, SCREEN_W - 80, 42);
     lv_obj_align(rescan, LV_ALIGN_BOTTOM_MID, 0, -10);
     lv_obj_set_style_bg_color(rescan, COL_CARD, 0);
     lv_obj_set_style_bg_opa(rescan, LV_OPA_COVER, 0);
@@ -1176,39 +1232,39 @@ void display_wifiList(WifiNetwork* networks, int count, int selected) {
     lv_obj_set_style_text_font(rescan_lbl, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(rescan_lbl, COL_TEXT, 0);
     lv_obj_center(rescan_lbl);
+    btn_label_passthrough(rescan_lbl);
     lv_obj_add_event_cb(rescan, wifi_rescan_cb, LV_EVENT_CLICKED, NULL);
 
     lv_scr_load(scr);
     lvgl_unlock();
 }
 
-void display_wifiPassword(const char* ssid) {
+// Generic text entry screen — used for SSID, password, and MQTT address
+// Callback writes to ui_wifiPassword[] and sets ui_wifiPasswordReady (reused for all fields)
+void display_textEntry(const char* title, const char* subtitle,
+                       const char* placeholder, const char* btnText) {
     if (!lvgl_lock(0)) return;
 
     ui_wifiPasswordReady = false;
     memset(ui_wifiPassword, 0, sizeof(ui_wifiPassword));
 
+    int w = SCREEN_W - 40;  // content width with 20px margin each side
+
     lv_obj_t *scr = create_screen();
 
-    // Title
-    add_label(scr, "Enter Password", &lv_font_montserrat_20, COL_TEAL, 4);
+    add_label(scr, title, &lv_font_montserrat_20, COL_TEAL, 4);
+    if (subtitle && subtitle[0]) {
+        add_label(scr, subtitle, &lv_font_montserrat_14, COL_DIM, 28);
+    }
+    add_label(scr, "Or use browser: 10.0.0.1", &lv_font_montserrat_14, COL_PURPLE, 46);
 
-    // SSID label
-    char ssidStr[48];
-    snprintf(ssidStr, sizeof(ssidStr), "Network: %s", ssid);
-    add_label(scr, ssidStr, &lv_font_montserrat_14, COL_DIM, 28);
-
-    // Hint: use phone instead
-    add_label(scr, "Or use phone: 10.0.0.1/wifi", &lv_font_montserrat_14, COL_PURPLE, 46);
-
-    // Textarea for password input — NO PASSWORD MASKING (screen is tiny)
     lv_obj_t *ta = lv_textarea_create(scr);
     lv_textarea_set_one_line(ta, true);
-    lv_textarea_set_password_mode(ta, false);  // Show plain text
+    lv_textarea_set_password_mode(ta, false);
     lv_textarea_set_max_length(ta, 63);
-    lv_textarea_set_placeholder_text(ta, "WiFi password");
-    lv_obj_set_size(ta, 220, 36);
-    lv_obj_align(ta, LV_ALIGN_TOP_MID, 0, 64);
+    lv_textarea_set_placeholder_text(ta, placeholder);
+    lv_obj_set_size(ta, w - 110, 36);  // leave room for button
+    lv_obj_align(ta, LV_ALIGN_TOP_LEFT, 20, 64);
     lv_obj_set_style_bg_color(ta, COL_CARD, 0);
     lv_obj_set_style_bg_opa(ta, LV_OPA_COVER, 0);
     lv_obj_set_style_text_color(ta, COL_TEXT, 0);
@@ -1216,25 +1272,95 @@ void display_wifiPassword(const char* ssid) {
     lv_obj_set_style_border_color(ta, COL_PURPLE, LV_STATE_FOCUSED);
     lv_obj_set_style_border_width(ta, 2, LV_STATE_FOCUSED);
 
-    // Connect button — between textarea and keyboard
     lv_obj_t *btn = lv_btn_create(scr);
-    lv_obj_set_size(btn, 100, 32);
-    lv_obj_align(btn, LV_ALIGN_TOP_RIGHT, -10, 104);
+    lv_obj_set_size(btn, 100, 36);
+    lv_obj_align(btn, LV_ALIGN_TOP_RIGHT, -20, 64);
     lv_obj_set_style_bg_color(btn, COL_PURPLE, 0);
     lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(btn, 8, 0);
     lv_obj_set_style_shadow_width(btn, 0, 0);
     lv_obj_set_style_border_width(btn, 0, 0);
     lv_obj_t *btn_lbl = lv_label_create(btn);
-    lv_label_set_text(btn_lbl, "Connect");
+    lv_label_set_text(btn_lbl, btnText);
     lv_obj_set_style_text_font(btn_lbl, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(btn_lbl, COL_TEXT, 0);
     lv_obj_center(btn_lbl);
+    btn_label_passthrough(btn_lbl);
     lv_obj_add_event_cb(btn, wifi_connect_cb, LV_EVENT_CLICKED, (void*)ta);
 
-    // LVGL on-screen keyboard — fills bottom portion
     lv_obj_t *kb = lv_keyboard_create(scr);
-    lv_obj_set_size(kb, 240, 180);
+    lv_obj_set_size(kb, SCREEN_W, SCREEN_H - 106);
+    lv_obj_align(kb, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_keyboard_set_textarea(kb, ta);
+    lv_obj_set_style_bg_color(kb, lv_color_hex(0x111122), 0);
+    lv_obj_set_style_bg_opa(kb, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_font(kb, &lv_font_montserrat_14, 0);
+
+    lv_scr_load(scr);
+    lvgl_unlock();
+}
+
+void display_wifiPassword(const char* ssid) {
+    char sub[64];
+    snprintf(sub, sizeof(sub), "Network: %s", ssid);
+    display_textEntry("Enter Password", sub, "WiFi password", "Next");
+}
+
+static void mqtt_save_cb(lv_event_t *e) {
+    lv_obj_t *ta = (lv_obj_t *)lv_event_get_user_data(e);
+    const char *txt = lv_textarea_get_text(ta);
+    strncpy(ui_mqttAddr, txt, sizeof(ui_mqttAddr) - 1);
+    ui_mqttAddr[sizeof(ui_mqttAddr) - 1] = '\0';
+    ui_mqttAddrReady = true;
+}
+
+void display_mqttAddr() {
+    // Reuse the text entry helper but with mqtt_save_cb instead of wifi_connect_cb
+    if (!lvgl_lock(0)) return;
+
+    ui_mqttAddrReady = false;
+    memset(ui_mqttAddr, 0, sizeof(ui_mqttAddr));
+
+    int w = SCREEN_W - 40;
+
+    lv_obj_t *scr = create_screen();
+
+    add_label(scr, "MQTT Server", &lv_font_montserrat_20, COL_TEAL, 4);
+    add_label(scr, "Enter your server IP address", &lv_font_montserrat_14, COL_DIM, 28);
+    add_label(scr, "Or use browser: 10.0.0.1", &lv_font_montserrat_14, COL_PURPLE, 46);
+
+    lv_obj_t *ta = lv_textarea_create(scr);
+    lv_textarea_set_one_line(ta, true);
+    lv_textarea_set_password_mode(ta, false);
+    lv_textarea_set_max_length(ta, 63);
+    lv_textarea_set_placeholder_text(ta, "e.g. 192.168.0.177");
+    lv_obj_set_size(ta, w - 110, 36);
+    lv_obj_align(ta, LV_ALIGN_TOP_LEFT, 20, 64);
+    lv_obj_set_style_bg_color(ta, COL_CARD, 0);
+    lv_obj_set_style_bg_opa(ta, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_color(ta, COL_TEXT, 0);
+    lv_obj_set_style_text_font(ta, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_border_color(ta, COL_PURPLE, LV_STATE_FOCUSED);
+    lv_obj_set_style_border_width(ta, 2, LV_STATE_FOCUSED);
+
+    lv_obj_t *btn = lv_btn_create(scr);
+    lv_obj_set_size(btn, 100, 36);
+    lv_obj_align(btn, LV_ALIGN_TOP_RIGHT, -20, 64);
+    lv_obj_set_style_bg_color(btn, COL_PURPLE, 0);
+    lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(btn, 8, 0);
+    lv_obj_set_style_shadow_width(btn, 0, 0);
+    lv_obj_set_style_border_width(btn, 0, 0);
+    lv_obj_t *btn_lbl = lv_label_create(btn);
+    lv_label_set_text(btn_lbl, "Save");
+    lv_obj_set_style_text_font(btn_lbl, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(btn_lbl, COL_TEXT, 0);
+    lv_obj_center(btn_lbl);
+    btn_label_passthrough(btn_lbl);
+    lv_obj_add_event_cb(btn, mqtt_save_cb, LV_EVENT_CLICKED, (void*)ta);
+
+    lv_obj_t *kb = lv_keyboard_create(scr);
+    lv_obj_set_size(kb, SCREEN_W, SCREEN_H - 106);
     lv_obj_align(kb, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_keyboard_set_textarea(kb, ta);
     lv_obj_set_style_bg_color(kb, lv_color_hex(0x111122), 0);
@@ -1255,7 +1381,7 @@ void display_reprovision(const char* status, int step, int total) {
 
     // Progress bar
     lv_obj_t *bar = lv_bar_create(scr);
-    lv_obj_set_size(bar, 200, 16);
+    lv_obj_set_size(bar, SCREEN_W - 80, 16);
     lv_obj_align(bar, LV_ALIGN_CENTER, 0, -10);
     lv_obj_set_style_bg_color(bar, COL_CARD, LV_PART_MAIN);
     lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, LV_PART_MAIN);
@@ -1334,7 +1460,7 @@ void display_menu(bool sdMounted, bool hasMowerFw, bool hasChargerFw,
     lv_coord_t y = 34;
     for (int i = 0; i < 4; i++) {
         lv_obj_t *btn = lv_btn_create(scr);
-        lv_obj_set_size(btn, 220, 54);
+        lv_obj_set_size(btn, SCREEN_W - 40, 54);
         lv_obj_align(btn, LV_ALIGN_TOP_MID, 0, y);
         lv_obj_set_style_bg_color(btn, entries[i].enabled ? COL_PURPLE : COL_GRAY_BTN, 0);
         lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
@@ -1581,6 +1707,7 @@ void display_firmware_check(bool hasMowerFw, bool hasChargerFw,
     lv_obj_set_style_text_font(skip_lbl, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(skip_lbl, COL_TEXT, 0);
     lv_obj_center(skip_lbl);
+    btn_label_passthrough(skip_lbl);
     lv_obj_add_event_cb(skip_btn, flash_skip_cb, LV_EVENT_CLICKED, NULL);
 
     lv_obj_t *flash_btn = lv_btn_create(scr);
@@ -1596,6 +1723,7 @@ void display_firmware_check(bool hasMowerFw, bool hasChargerFw,
     lv_obj_set_style_text_font(flash_lbl, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(flash_lbl, canFlash ? COL_TEXT : COL_DIM, 0);
     lv_obj_center(flash_lbl);
+    btn_label_passthrough(flash_lbl);
     if (canFlash) {
         lv_obj_add_event_cb(flash_btn, flash_confirm_cb, LV_EVENT_CLICKED, NULL);
     }
@@ -1604,45 +1732,67 @@ void display_firmware_check(bool hasMowerFw, bool hasChargerFw,
     lvgl_unlock();
 }
 
+// Persistent firmware flash screen labels
+static lv_obj_t* ff_title = nullptr;
+static lv_obj_t* ff_bar = nullptr;
+static lv_obj_t* ff_pct = nullptr;
+static lv_obj_t* ff_status = nullptr;
+
 void display_firmware_flash(const char* device, const char* status, int percent) {
     if (!lvgl_lock(0)) return;
 
-    lv_obj_t *scr = create_screen();
+    if (!ff_scr || lv_scr_act() != ff_scr) {
+        ff_scr = create_screen();
 
-    // Title: "Flashing <device>"
+        ff_title = lv_label_create(ff_scr);
+        lv_obj_set_style_text_font(ff_title, &lv_font_montserrat_20, 0);
+        lv_obj_set_style_text_color(ff_title, COL_ORANGE, 0);
+        lv_obj_set_style_text_align(ff_title, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_width(ff_title, SCREEN_W - 40);
+        lv_obj_align(ff_title, LV_ALIGN_TOP_MID, 0, 50);
+
+        ff_bar = lv_bar_create(ff_scr);
+        lv_obj_set_size(ff_bar, SCREEN_W - 80, 16);
+        lv_obj_align(ff_bar, LV_ALIGN_CENTER, 0, -10);
+        lv_obj_set_style_bg_color(ff_bar, COL_CARD, LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(ff_bar, LV_OPA_COVER, LV_PART_MAIN);
+        lv_obj_set_style_bg_color(ff_bar, COL_ORANGE, LV_PART_INDICATOR);
+        lv_obj_set_style_bg_opa(ff_bar, LV_OPA_COVER, LV_PART_INDICATOR);
+        lv_obj_set_style_radius(ff_bar, 8, LV_PART_MAIN);
+        lv_obj_set_style_radius(ff_bar, 8, LV_PART_INDICATOR);
+        lv_bar_set_range(ff_bar, 0, 100);
+
+        ff_pct = lv_label_create(ff_scr);
+        lv_obj_set_style_text_font(ff_pct, &lv_font_montserrat_20, 0);
+        lv_obj_set_style_text_color(ff_pct, COL_TEXT, 0);
+        lv_obj_set_style_text_align(ff_pct, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_width(ff_pct, SCREEN_W - 40);
+        lv_obj_align(ff_pct, LV_ALIGN_TOP_MID, 0, 170);
+
+        ff_status = lv_label_create(ff_scr);
+        lv_obj_set_style_text_font(ff_status, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(ff_status, COL_DIM, 0);
+        lv_obj_set_style_text_align(ff_status, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_width(ff_status, SCREEN_W - 30);
+        lv_label_set_long_mode(ff_status, LV_LABEL_LONG_WRAP);
+        lv_obj_align(ff_status, LV_ALIGN_CENTER, 0, 50);
+
+        lv_scr_load(ff_scr);
+    }
+
+    // Update in-place
     char title[48];
     snprintf(title, sizeof(title), "Flashing %s", device);
-    add_label(scr, title, &lv_font_montserrat_20, COL_ORANGE, 50);
+    lv_label_set_text(ff_title, title);
 
-    // Progress bar
-    lv_obj_t *bar = lv_bar_create(scr);
-    lv_obj_set_size(bar, 200, 16);
-    lv_obj_align(bar, LV_ALIGN_CENTER, 0, -10);
-    lv_obj_set_style_bg_color(bar, COL_CARD, LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(bar, COL_ORANGE, LV_PART_INDICATOR);
-    lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, LV_PART_INDICATOR);
-    lv_obj_set_style_radius(bar, 8, LV_PART_MAIN);
-    lv_obj_set_style_radius(bar, 8, LV_PART_INDICATOR);
-    lv_bar_set_range(bar, 0, 100);
-    lv_bar_set_value(bar, percent, LV_ANIM_OFF);
+    lv_bar_set_value(ff_bar, percent, LV_ANIM_OFF);
 
-    // Percentage text
     char pctStr[16];
     snprintf(pctStr, sizeof(pctStr), "%d%%", percent);
-    add_label(scr, pctStr, &lv_font_montserrat_20, COL_TEXT, 170);
+    lv_label_set_text(ff_pct, pctStr);
 
-    // Status text
-    lv_obj_t *lbl = lv_label_create(scr);
-    lv_label_set_text(lbl, status);
-    lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(lbl, COL_DIM, 0);
-    lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_width(lbl, SCREEN_W - 30);
-    lv_label_set_long_mode(lbl, LV_LABEL_LONG_WRAP);
-    lv_obj_align(lbl, LV_ALIGN_CENTER, 0, 50);
+    lv_label_set_text(ff_status, status);
 
-    lv_scr_load(scr);
     lvgl_unlock();
 }
 
@@ -1671,6 +1821,8 @@ volatile bool ui_wifiPasswordReady  = false;
 volatile bool ui_wifiRescanPressed  = false;
 char ui_wifiPassword[64]            = {0};
 char ui_wifiSsid[33]                = {0};
+volatile bool ui_mqttAddrReady      = false;
+char ui_mqttAddr[64]                = {0};
 
 volatile int  ui_menuSelection      = -1;
 volatile bool ui_backPressed        = false;
@@ -1682,6 +1834,7 @@ void lvgl_unlock() {}
 
 void display_init() {}
 void display_boot(const char*) {}
+void display_boot_status(const char*) {}
 void display_scanning() {}
 void display_devices(ScanResult*, int, int, int) {}
 void display_provision(const char*, int, int, const char*) {}
@@ -1691,7 +1844,9 @@ void display_done() {}
 void display_error(const char*) {}
 void display_confirm(const char*, const char*, const char*, const char*) {}
 void display_wifiList(WifiNetwork*, int, int) {}
+void display_textEntry(const char*, const char*, const char*, const char*) {}
 void display_wifiPassword(const char*) {}
+void display_mqttAddr() {}
 void display_reprovision(const char*, int, int) {}
 void display_menu(bool, bool, bool, const char*, const char*, bool, bool) {}
 void display_detect(int, int, bool, bool) {}

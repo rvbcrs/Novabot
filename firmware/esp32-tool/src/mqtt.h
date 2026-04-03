@@ -24,3 +24,4 @@ void sendMowerOtaWithAes(bool useAes);
 void sendMowerOta();
 void sendChargerOta();
 void sendOtaCommand();
+void sendOtaCleanup();

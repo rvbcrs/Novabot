@@ -24,5 +24,3 @@ void setupHTTP();
 
 bool loadFirmwareInfo();
 String computeMd5(const char* path);
-void kickChargerForOta();
-void allowChargerAfterOta();

@@ -682,6 +682,146 @@ def handle_get_perception_status(params, respond):
     respond("get_perception_status_respond", info)
 
 
+# ── MQTT/WiFi Config (bypasses mqtt_node whitelist) ──────────────────────
+
+def handle_set_mqtt_config(params, respond):
+    """Set custom MQTT broker address directly in json_config.json.
+
+    Bypasses mqtt_node's *.lfibot.com whitelist by writing to the config
+    file directly. After writing, restarts mqtt_node so it picks up the
+    new address.
+
+    Params:
+      addr: MQTT broker hostname or IP (e.g. "192.168.0.177")
+      port: MQTT port (default: 1883)
+
+    Used by ESP32 OTA tool step 8 (reprovision) to set the home MQTT
+    server address after flashing custom firmware.
+    """
+    addr = params.get("addr", "")
+    port = int(params.get("port", 1883))
+
+    if not addr:
+        respond("set_mqtt_config_respond", {"result": 1, "error": "addr is required"})
+        return
+
+    cfg_file = "/userdata/lfi/json_config.json"
+    log(f"Setting MQTT config: addr={addr} port={port}")
+
+    try:
+        # Read current config
+        with open(cfg_file) as f:
+            cfg = json.load(f)
+
+        # Update mqtt section
+        if "mqtt" not in cfg:
+            cfg["mqtt"] = {"set": 1, "value": {}}
+        elif not isinstance(cfg.get("mqtt", {}).get("value"), dict):
+            cfg["mqtt"]["value"] = {}
+        cfg["mqtt"]["value"]["addr"] = addr
+        cfg["mqtt"]["value"]["port"] = port
+
+        # Atomic write: tmp → rename
+        tmp_file = cfg_file + ".tmp"
+        with open(tmp_file, "w") as f:
+            json.dump(cfg, f)
+
+        # Validate written file
+        with open(tmp_file) as f:
+            check = json.load(f)
+        if check.get("mqtt", {}).get("value", {}).get("addr") != addr:
+            raise ValueError("Verification failed")
+
+        os.rename(tmp_file, cfg_file)
+        log(f"json_config.json updated: mqtt.addr={addr} port={port}")
+
+        # Restart mqtt_node so it picks up the new address
+        # daemon_node will auto-restart it
+        subprocess.run(["killall", "mqtt_node"], capture_output=True)
+        log("mqtt_node killed (daemon_node will restart it)")
+
+        respond("set_mqtt_config_respond", {"result": 0, "addr": addr, "port": port})
+
+    except Exception as e:
+        log(f"set_mqtt_config error: {e}")
+        respond("set_mqtt_config_respond", {"result": 1, "error": str(e)})
+
+
+def handle_set_wifi_config(params, respond):
+    """Set WiFi credentials directly in json_config.json.
+
+    Params:
+      ssid: WiFi network name
+      password: WiFi password
+
+    After writing, restarts mqtt_node which triggers WiFi reconnect.
+    """
+    ssid = params.get("ssid", "")
+    password = params.get("password", "")
+
+    if not ssid:
+        respond("set_wifi_config_respond", {"result": 1, "error": "ssid is required"})
+        return
+
+    cfg_file = "/userdata/lfi/json_config.json"
+    log(f"Setting WiFi config: ssid={ssid}")
+
+    try:
+        with open(cfg_file) as f:
+            cfg = json.load(f)
+
+        # Update wifi section (mower uses "ap" key for STA WiFi, confusingly)
+        if "wifi" not in cfg:
+            cfg["wifi"] = {"set": 1, "value": {}}
+        elif not isinstance(cfg.get("wifi", {}).get("value"), dict):
+            cfg["wifi"]["value"] = {}
+        if "ap" not in cfg["wifi"]["value"]:
+            cfg["wifi"]["value"]["ap"] = {}
+        cfg["wifi"]["value"]["ap"]["ssid"] = ssid
+        cfg["wifi"]["value"]["ap"]["passwd"] = password
+        cfg["wifi"]["value"]["ap"]["encrypt"] = 0
+
+        # Atomic write
+        tmp_file = cfg_file + ".tmp"
+        with open(tmp_file, "w") as f:
+            json.dump(cfg, f)
+        os.rename(tmp_file, cfg_file)
+        log(f"json_config.json updated: wifi.ap.ssid={ssid}")
+
+        # Restart mqtt_node to trigger WiFi reconnect
+        subprocess.run(["killall", "mqtt_node"], capture_output=True)
+        log("mqtt_node killed (daemon_node will restart → WiFi reconnect)")
+
+        respond("set_wifi_config_respond", {"result": 0, "ssid": ssid})
+
+    except Exception as e:
+        log(f"set_wifi_config error: {e}")
+        respond("set_wifi_config_respond", {"result": 1, "error": str(e)})
+
+
+def handle_clean_ota_cache(params, respond):
+    """Clean OTA cache and restart ota_client.
+
+    Removes downloaded firmware fragments and resets upgrade flag.
+    Required after any failed OTA attempt — without this, ota_client
+    retries the cached (broken) download forever.
+    """
+    log("Cleaning OTA cache...")
+    try:
+        subprocess.run(["rm", "-rf", "/userdata/ota/upgrade_pkg/"], capture_output=True)
+        os.makedirs("/userdata/ota/upgrade_pkg", exist_ok=True)
+        with open("/userdata/ota/upgrade.txt", "w") as f:
+            f.write("0")
+
+        log("OTA cache cleaned, rebooting in 3s...")
+        respond("clean_ota_cache_respond", {"result": 0})
+        time.sleep(3)
+        os.system('reboot')
+    except Exception as e:
+        log(f"clean_ota_cache error: {e}")
+        respond("clean_ota_cache_respond", {"result": 1, "error": str(e)})
+
+
 # ── Command dispatch ──────────────────────────────────────────────────────
 
 COMMANDS = {
@@ -693,6 +833,9 @@ COMMANDS = {
     "set_perception_mode": handle_set_perception_mode,
     "set_semantic_mode": handle_set_semantic_mode,
     "get_perception_status": handle_get_perception_status,
+    "set_mqtt_config": handle_set_mqtt_config,
+    "set_wifi_config": handle_set_wifi_config,
+    "clean_ota_cache": handle_clean_ota_cache,
 }
 
 

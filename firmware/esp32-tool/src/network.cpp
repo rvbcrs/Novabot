@@ -16,6 +16,7 @@
 #endif
 #include <MD5Builder.h>
 #include <Preferences.h>
+#include <atomic>
 
 // ── Globals defined here ────────────────────────────────────────────────────
 
@@ -58,10 +59,6 @@ public:
 
 // ── WiFi AP ──────────────────────────────────────────────────────────────────
 
-// Charger WiFi blocking during OTA — charger's CCMP frames destabilize the channel
-static uint16_t chargerWifiAid = 0;       // Charger's WiFi Association ID
-static bool blockChargerWifi = false;     // Set true during OTA to block charger
-
 void onWifiEvent(arduino_event_id_t event, arduino_event_info_t info) {
     switch (event) {
         case ARDUINO_EVENT_WIFI_AP_STACONNECTED:
@@ -100,16 +97,7 @@ void onWifiEvent(arduino_event_id_t event, arduino_event_info_t info) {
                     else if (staMacStr.startsWith("70:4A") || staMacStr.startsWith("50:41")) who = "MOWER";
                 }
                 // Set WiFi-detected flags
-                if (strcmp(who, "CHARGER") == 0) {
-                    chargerWifiDetected = true;
-                    chargerWifiAid = info.wifi_ap_staconnected.aid;
-                    // During OTA: immediately kick charger — its CCMP frames crash mower downloads
-                    if (blockChargerWifi) {
-                        esp_wifi_deauth_sta(chargerWifiAid);
-                        Serial.printf("[WiFi] Charger blocked during OTA (AID %d)\r\n", chargerWifiAid);
-                        break;
-                    }
-                }
+                if (strcmp(who, "CHARGER") == 0) chargerWifiDetected = true;
                 if (strcmp(who, "MOWER") == 0) mowerWifiDetected = true;
                 Serial.printf("[WiFi] Station connected: %s (%s)\r\n", staMac, who);
                 webLogAdd("WiFi: %s connected (%s)", who, staMac);
@@ -162,7 +150,7 @@ void setupWifiAP() {
     // Use 10.0.0.x subnet -- NOT 192.168.4.x which conflicts with charger's own AP!
     // The charger runs AP+STA mode with its AP on 192.168.4.1 -> subnet clash breaks DHCP.
     WiFi.softAPConfig(IPAddress(10,0,0,1), IPAddress(10,0,0,1), IPAddress(255,255,255,0));
-    WiFi.softAP(AP_SSID, AP_PASSWORD, 1, 0, 4);  // channel 1, not hidden, max 4 clients
+    WiFi.softAP(AP_SSID, AP_PASSWORD, 6, 0, 4);  // channel 6 (less crowded), not hidden, max 4
 
     // Set WPA/WPA2 mixed auth mode for ESP32 charger compatibility
     wifi_config_t conf;
@@ -170,10 +158,11 @@ void setupWifiAP() {
     conf.ap.authmode = WIFI_AUTH_WPA_WPA2_PSK;
     esp_wifi_set_config(WIFI_IF_AP, &conf);
 
-    // Maximize WiFi performance — critical for stable OTA firmware downloads
+    // WiFi stability — HT20 is more stable than HT40 for long transfers
     esp_wifi_set_ps(WIFI_PS_NONE);           // Disable power save (keeps AP responsive)
     esp_wifi_set_max_tx_power(84);           // Max TX power: 21dBm
-    esp_wifi_set_bandwidth(WIFI_IF_AP, WIFI_BW_HT40);  // 40MHz channel = double throughput
+    esp_wifi_set_bandwidth(WIFI_IF_AP, WIFI_BW_HT20);  // 20MHz = more stable, less interference
+    esp_wifi_set_protocol(WIFI_IF_AP, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N);
 
     // Now start DHCP server (after AP is active)
     if (apNetif) {
@@ -270,21 +259,6 @@ void processDNS() {
 
 // ── Charger WiFi control for OTA ────────────────────────────────────────────
 
-void kickChargerForOta() {
-    blockChargerWifi = true;
-    // Kick charger if currently connected
-    if (chargerWifiAid > 0) {
-        esp_wifi_deauth_sta(chargerWifiAid);
-        Serial.printf("[OTA] Kicked charger (AID %d) — CCMP interference removed\r\n", chargerWifiAid);
-    } else {
-        Serial.println("[OTA] Charger not on WiFi, blocking reconnect");
-    }
-}
-
-void allowChargerAfterOta() {
-    blockChargerWifi = false;
-    Serial.println("[OTA] Charger WiFi allowed again");
-}
 
 #ifndef JC3248W535
 void streamFileWithYield(WebServer& server, File& file, const String& contentType) {
@@ -721,30 +695,93 @@ function saveWifi(e){
 #endif
     });
 
-    // Firmware download -- mower .deb (uses pre-opened file handle from boot)
-    // Only one download at a time — concurrent requests corrupt the shared file handle
-    // and overwhelm the ESP32 (mower retries aggressively from cached OTA tasks)
-    static volatile bool fwDownloadActive = false;
+    // Firmware download -- mower .deb
+    // Uses AsyncWebServer's built-in static file serving which handles:
+    // - Chunking with proper LwIP thread yielding (no vTaskDelay blocking)
+    // - HTTP Range requests (206 Partial Content) for download resume
+    // - Automatic memory management and file closing
+    static std::atomic<bool> isFirmwareDownloading(false);
+    static File currentDownloadFile;
 #ifdef JC3248W535
     httpServer.on("/firmware.deb", HTTP_GET, [](AsyncWebServerRequest *request) {
-        if (!mowerFwFileHandle) { request->send(404, "text/plain", "No mower firmware"); return; }
-        if (fwDownloadActive) {
-            request->send(503, "text/plain", "Download in progress");
+        // Concurrency lock — concurrent SD reads block CPU, WiFi beacons get missed
+        if (isFirmwareDownloading) {
+            request->send(429, "text/plain", "Download in progress");
             return;
         }
-        fwDownloadActive = true;
-        mowerFwFileHandle.seek(0);
-        size_t fileSize = mowerFwFileHandle.size();
-        Serial.printf("[HTTP] Serving mower firmware: %d bytes\r\n", (int)fileSize);
 
-        AsyncWebServerResponse *response = request->beginResponse("application/octet-stream", fileSize,
-            [fileSize](uint8_t *buffer, size_t maxLen, size_t index) -> size_t {
-                size_t bytesRead = mowerFwFileHandle.read(buffer, maxLen);
-                if (index + bytesRead >= fileSize || bytesRead == 0) {
-                    fwDownloadActive = false;
+        String path = "/" + mowerFwFilename;
+        if (mowerFwFilename.length() == 0 || !SDFS.exists(path)) {
+            request->send(404, "text/plain", "No mower firmware");
+            return;
+        }
+
+        currentDownloadFile = SDFS.open(path, FILE_READ);
+        if (!currentDownloadFile) {
+            request->send(500, "text/plain", "SD read error");
+            return;
+        }
+
+        size_t fileSize = currentDownloadFile.size();
+        size_t startByte = 0;
+        size_t endByte = fileSize - 1;
+
+        // Parse HTTP Range header (e.g. "bytes=7168000-")
+        if (request->hasHeader("Range")) {
+            String range = request->header("Range");
+            if (range.startsWith("bytes=")) {
+                int dashPos = range.indexOf('-');
+                if (dashPos > 0) {
+                    startByte = range.substring(6, dashPos).toInt();
+                }
+            }
+        }
+
+        if (startByte >= fileSize) {
+            currentDownloadFile.close();
+            request->send(416, "text/plain", "Range Not Satisfiable");
+            return;
+        }
+
+        currentDownloadFile.seek(startByte);
+        size_t contentLength = fileSize - startByte;
+
+        AsyncWebServerResponse *response = request->beginResponse("application/octet-stream", contentLength,
+            [contentLength](uint8_t *buffer, size_t maxLen, size_t index) -> size_t {
+                if (!currentDownloadFile) return 0;
+                size_t chunkSize = (maxLen > 2048) ? 2048 : maxLen;
+                if (index + chunkSize > contentLength) {
+                    chunkSize = contentLength - index;
+                }
+                size_t bytesRead = currentDownloadFile.read(buffer, chunkSize);
+                if (index + bytesRead >= contentLength || bytesRead == 0) {
+                    currentDownloadFile.close();
                 }
                 return bytesRead;
             });
+
+        response->addHeader("Accept-Ranges", "bytes");
+
+        if (startByte > 0) {
+            response->setCode(206);
+            String contentRange = "bytes " + String(startByte) + "-" + String(endByte) + "/" + String(fileSize);
+            response->addHeader("Content-Range", contentRange);
+            Serial.printf("[HTTP] Resume (206): %s\r\n", contentRange.c_str());
+        } else {
+            response->setCode(200);
+            Serial.printf("[HTTP] Serving firmware: %u bytes\r\n", fileSize);
+        }
+
+        isFirmwareDownloading = true;
+
+        request->onDisconnect([]() {
+            isFirmwareDownloading = false;
+            if (currentDownloadFile) {
+                currentDownloadFile.close();
+            }
+            Serial.println("[HTTP] Download closed, lock released");
+        });
+
         request->send(response);
     });
 #else
@@ -1103,11 +1140,15 @@ bool loadFirmwareInfo() {
             int vIdx = name.indexOf('v');
             int debIdx = name.indexOf(".deb");
             if (vIdx >= 0 && debIdx > vIdx) mowerFwVersion = name.substring(vIdx, debIdx);
-            // Open file handle BEFORE MD5 — keep it open for HTTP serving
+#ifndef JC3248W535
+            // Waveshare sync server needs a persistent file handle
             mowerFwFileHandle = SDFS.open("/" + name, FILE_READ);
             if (mowerFwFileHandle) {
                 Serial.printf("[SD] Firmware file opened: %s (%d bytes)\r\n", name.c_str(), mowerFwFileHandle.size());
             }
+#else
+            Serial.printf("[SD] Firmware file found: %s (%d bytes)\r\n", name.c_str(), (int)f.size());
+#endif
             mowerFwMd5 = computeMd5(("/" + name).c_str());
             Serial.printf("[SD] Mower firmware: %s (%d bytes, %s)\r\n",
                           name.c_str(), mowerFwSize, mowerFwVersion.c_str());

@@ -60,7 +60,7 @@ const int LORA_HC              = 20;
 const int LORA_LC              = 14;
 
 const uint8_t AES_IV[] = "abcd1234abcd1234";
-const char* VERSION = "v1.0.0-lcd";
+const char* VERSION = "v1.0.0 (" __DATE__ " " __TIME__ ")";
 
 // ── Web console log ring buffer ─────────────────────────────────────────────
 
@@ -164,9 +164,9 @@ void setState(State newState) {
     // Map state to wizard step number for progress indicator
     switch (newState) {
         case WIZ_BOOT:               wizStep = 0; break;
-        case WIZ_SCAN_CHARGER:       wizStep = 1; break;
-        case WIZ_PROVISION_CHARGER:  wizStep = 2; break;
-        case WIZ_WAIT_CHARGER:       wizStep = 3; break;
+        case WIZ_WIFI_CONFIG:        wizStep = 1; break;
+        case WIZ_SCAN_CHARGER:       wizStep = 2; break;
+        case WIZ_PROVISION_CHARGER:  wizStep = 3; break;
         case WIZ_SCAN_MOWER:         wizStep = 4; break;
         case WIZ_PROVISION_MOWER:    wizStep = 5; break;
         case WIZ_WAIT_MOWER:         wizStep = 6; break;
@@ -222,36 +222,43 @@ void setup() {
     String savedSsid = prefs.getString("wifi_ssid", "");
     String savedPass = prefs.getString("wifi_pass", "");
     String savedMqtt = prefs.getString("mqtt_addr", "");
-    if (savedSsid.length() > 0) {
+    if (savedSsid.length() > 0 && savedMqtt.length() > 0) {
         userWifiSsid = savedSsid;
         userWifiPassword = savedPass;
         userMqttAddr = savedMqtt;
         strncpy(ui_wifiSsid, savedSsid.c_str(), sizeof(ui_wifiSsid) - 1);
         strncpy(ui_wifiPassword, savedPass.c_str(), sizeof(ui_wifiPassword) - 1);
-        Serial.printf("[NVS] Loaded home WiFi: %s, MQTT: %s\r\n", savedSsid.c_str(), savedMqtt.c_str());
+        Serial.printf("[NVS] Loaded: WiFi=%s MQTT=%s\r\n", savedSsid.c_str(), savedMqtt.c_str());
     } else {
-        Serial.println("[NVS] No saved WiFi credentials");
+        Serial.println("[NVS] Incomplete config — need WiFi + MQTT setup");
     }
 
 #ifdef JC3248W535
-    // JC3248W535: SD uses SD_MMC (separate bus from display — no conflict!)
+    // Display first — show splash while SD loads (MD5 takes ~12s)
+    display_init();
+    display_boot(VERSION);
+
+    // SD uses SD_MMC (separate bus from display — no conflict!)
+    display_boot_status("Mounting SD card...");
     SD_MMC.setPins(SD_MMC_CLK, SD_MMC_CMD, SD_MMC_D0);
     sdMounted = SD_MMC.begin("/sdcard", true);  // 1-bit mode
     if (!sdMounted) {
         Serial.println("[SD] SD_MMC mount failed — OTA will be skipped");
+        display_boot_status("No SD card found");
+        delay(1000);
     } else {
         Serial.printf("[SD] SD_MMC mounted, size: %lluMB\r\n", SD_MMC.cardSize() / (1024 * 1024));
+        display_boot_status("Reading firmware from SD...");
     }
 
-    // Find firmware file on SD
+    // Find firmware file on SD (MD5 computation takes ~12s for 35MB)
     if (!loadFirmwareInfo()) {
         Serial.println("[SD] No firmware .deb — OTA will be skipped");
+        display_boot_status("No firmware on SD card");
+        delay(1000);
+    } else {
+        display_boot_status("Firmware ready!");
     }
-
-    // Initialize display + LVGL (BSP handles everything including LVGL task)
-    display_init();
-    display_boot(VERSION);
-    delay(500);
 
 #elif defined(WAVESHARE_LCD)
     // Waveshare: display FIRST, then shared SPI for SD
@@ -300,8 +307,15 @@ void setup() {
     NimBLEDevice::init("Nova-OTA");
     NimBLEDevice::setMTU(185);
 
-    // Go straight to device status screen — it handles everything
-    setState(WIZ_CHARGER_CONNECTED);
+    // Start wizard: need home WiFi + MQTT before we can provision anything
+    if (userWifiSsid.length() > 0 && userMqttAddr.length() > 0) {
+        Serial.printf("[SETUP] Home WiFi: %s, MQTT: %s — starting charger scan\r\n",
+                      userWifiSsid.c_str(), userMqttAddr.c_str());
+        setState(WIZ_SCAN_CHARGER);
+    } else {
+        Serial.println("[SETUP] No home WiFi/MQTT configured — waiting for WebUI config");
+        setState(WIZ_WIFI_CONFIG);
+    }
 }
 
 // ── Main loop — linear wizard flow ──────────────────────────────────────────
@@ -315,46 +329,128 @@ void loop() {
 
     unsigned long elapsed = (millis() - stateEnteredAt) / 1000;
 
+    // Auto-detect OTA in progress (mower resuming cached download)
+    // Jump to flash screen if we're not already there
+    if (otaProgressPercent > 0 && otaStatus.length() > 0 &&
+        currentState != WIZ_OTA_FLASH && currentState != WIZ_OTA_CONFIRM &&
+        currentState != WIZ_REPROVISION && currentState != WIZ_DONE) {
+        webLogAdd("OTA in progress detected (%d%%) — switching to flash screen", otaProgressPercent);
+        setState(WIZ_OTA_FLASH);
+    }
+
     switch (currentState) {
 
     case WIZ_BOOT:
-        // Should not stay here -- setup() transitions to WIZ_SCAN_CHARGER
+        // Should not stay here -- setup() transitions to WIZ_WIFI_CONFIG or WIZ_SCAN_CHARGER
         break;
 
+    case WIZ_WIFI_CONFIG: {
+        // Sub-steps: 0=show SSID keyboard, 1=show password keyboard, 2=show MQTT keyboard
+        static int wifiConfigStep = 0;
+
+        if (stateJustEntered) {
+            stateJustEntered = false;
+            wifiConfigStep = 0;
+            statusMessage = "Enter home WiFi SSID";
+            webLogAdd("WiFi config: enter SSID");
+#if defined(WAVESHARE_LCD) || defined(JC3248W535)
+            ui_wifiPasswordReady = false;
+            display_textEntry("WiFi Network", "Step 1 of 3", "Enter SSID (network name)", "Next");
+#endif
+        }
+
+        // Also accept config via WebUI at any time
+        if (userWifiSsid.length() > 0 && userMqttAddr.length() > 0) {
+            Serial.printf("[SETUP] Config via WebUI: WiFi=%s MQTT=%s\r\n",
+                          userWifiSsid.c_str(), userMqttAddr.c_str());
+            webLogAdd("Config OK: WiFi=%s MQTT=%s", userWifiSsid.c_str(), userMqttAddr.c_str());
+            setState(WIZ_SCAN_CHARGER);
+            break;
+        }
+
+#if defined(WAVESHARE_LCD) || defined(JC3248W535)
+        if (wifiConfigStep == 0 && ui_wifiPasswordReady) {
+            // SSID entered via keyboard — stored in ui_wifiPassword by callback
+            strncpy(ui_wifiSsid, ui_wifiPassword, sizeof(ui_wifiSsid) - 1);
+            userWifiSsid = String(ui_wifiPassword);
+            Serial.printf("[LCD] WiFi SSID: %s\r\n", userWifiSsid.c_str());
+            wifiConfigStep = 1;
+            ui_wifiPasswordReady = false;
+            char sub[64];
+            snprintf(sub, sizeof(sub), "Network: %s  (Step 2 of 3)", userWifiSsid.c_str());
+            display_textEntry("WiFi Password", sub, "Enter password", "Next");
+        }
+        else if (wifiConfigStep == 1 && ui_wifiPasswordReady) {
+            // Password entered
+            userWifiPassword = String(ui_wifiPassword);
+            Serial.printf("[LCD] WiFi password set (%d chars)\r\n", userWifiPassword.length());
+            wifiConfigStep = 2;
+            display_mqttAddr();  // Now ask for MQTT server IP
+        }
+        else if (wifiConfigStep == 2 && ui_mqttAddrReady) {
+            // MQTT address entered
+            userMqttAddr = String(ui_mqttAddr);
+            Serial.printf("[LCD] MQTT addr: %s\r\n", userMqttAddr.c_str());
+
+            // Save to NVS
+            prefs.putString("wifi_ssid", userWifiSsid);
+            prefs.putString("wifi_pass", userWifiPassword);
+            prefs.putString("mqtt_addr", userMqttAddr);
+            webLogAdd("Config saved: WiFi=%s MQTT=%s", userWifiSsid.c_str(), userMqttAddr.c_str());
+            setState(WIZ_SCAN_CHARGER);
+        }
+#endif
+        break;
+    }
+
     case WIZ_SCAN_CHARGER: {
+        // Step 2: BLE scan for charger — OPTIONAL, user can skip anytime
         if (stateJustEntered) {
             stateJustEntered = false;
             scanRetryCount = 0;
-            webLogAdd("BLE: Scanning for charger...");
+            ui_btnPressed = false;
+            webLogAdd("BLE: Scanning for charger (optional)...");
             statusMessage = "Scanning for charger...";
 #if defined(WAVESHARE_LCD) || defined(JC3248W535)
-            display_scanning();
+            display_confirm("Scanning for Charger",
+                "Looking for CHARGER_PILE via BLE...",
+                "Charger provisioning is optional.",
+                "Skip");
 #endif
             scanResultCount = 0;
             selectedChargerIdx = -1;
             chargerDevice = nullptr;
             startBleScan();
         }
+        // Skip anytime during scan
+        if (ui_btnPressed) {
+            ui_btnPressed = false;
+            webLogAdd("Charger scan skipped by user");
+            setState(WIZ_CHARGER_CONNECTED);
+            break;
+        }
         if (!bleScanning) {
-            // Count chargers found
             int chargerCount = 0;
             for (int i = 0; i < scanResultCount; i++) {
                 if (scanResults[i].isCharger) chargerCount++;
             }
-            if (chargerCount == 0) {
-                webLogAdd("BLE: No charger found, retrying in 3s...");
-#if defined(WAVESHARE_LCD) || defined(JC3248W535)
-                display_error("No charger found\nMake sure charger is powered on\n\nRetrying...");
-#endif
-                delay(3000);
-                stateJustEntered = true;  // retry
-            } else {
+            if (chargerCount > 0) {
                 webLogAdd("BLE: Found %d charger(s)", chargerCount);
 #if defined(WAVESHARE_LCD) || defined(JC3248W535)
-                int selIdx = buildFilteredResults(true);  // chargers only
+                int selIdx = buildFilteredResults(true);
                 display_devices(filteredResults, filteredCount, selIdx, -1);
 #endif
                 setState(WIZ_SELECT_CHARGER);
+            } else {
+                scanRetryCount++;
+                if (scanRetryCount >= 3) {
+                    webLogAdd("BLE: No charger after 3 scans — skipping");
+                    setState(WIZ_CHARGER_CONNECTED);
+                } else {
+                    webLogAdd("BLE: No charger found (%d/3), retrying...", scanRetryCount);
+                    delay(2000);
+                    stateJustEntered = true;
+                }
             }
         }
         break;
@@ -362,10 +458,25 @@ void loop() {
 
     case WIZ_SELECT_CHARGER: {
 #if defined(WAVESHARE_LCD) || defined(JC3248W535)
-        // Accept both ui_startPressed (device list) and ui_btnPressed (confirm dialog)
-        if (ui_startPressed || ui_btnPressed) {
-            ui_startPressed = false;
+        if (stateJustEntered) {
+            stateJustEntered = false;
             ui_btnPressed = false;
+            ui_startPressed = false;
+            ui_rescanPressed = false;
+        }
+        if (ui_rescanPressed) {
+            ui_rescanPressed = false;
+            webLogAdd("BLE: Rescanning for charger...");
+            setState(WIZ_SCAN_CHARGER);
+        }
+        else if (ui_btnPressed) {
+            ui_btnPressed = false;
+            ui_startPressed = false;
+            webLogAdd("Charger skipped — continuing to mower");
+            setState(WIZ_CHARGER_CONNECTED);
+        }
+        else if (ui_startPressed) {
+            ui_startPressed = false;
             if (selectedChargerIdx >= 0 && chargerDevice != nullptr) {
                 webLogAdd("BLE: Selected charger: %s", scanResults[selectedChargerIdx].name.c_str());
                 setState(WIZ_PROVISION_CHARGER);
@@ -384,19 +495,17 @@ void loop() {
             provisionProgressCb = display_provision;
 #endif
             reprovisioning = false;
-            bool chargerToHome = userWifiSsid.length() > 0 && userMqttAddr.length() > 0;
             if (provisionDevice(chargerDevice, "charger")) {
                 provisionProgressCb = nullptr;
+                bool chargerToHome = userWifiSsid.length() > 0 && userMqttAddr.length() > 0;
                 if (chargerToHome) {
-                    // Charger sent to home WiFi — it will leave our AP
-                    webLogAdd("BLE: Charger provisioned → home WiFi (%s)", userWifiSsid.c_str());
-                    webLogAdd("BLE: Charger MQTT → %s", userMqttAddr.c_str());
-                    chargerWifiDetected = true;  // Mark as "done" so status shows OK
-                    setState(WIZ_CHARGER_CONNECTED);
+                    webLogAdd("BLE: Charger → home WiFi (%s) + MQTT %s", userWifiSsid.c_str(), userMqttAddr.c_str());
                 } else {
-                    webLogAdd("BLE: Charger provisioned → our AP");
-                    setState(WIZ_CHARGER_CONNECTED);
+                    webLogAdd("BLE: Charger → our AP");
                 }
+                chargerWifiDetected = true;
+                // After charger → check mower status
+                setState(WIZ_CHARGER_CONNECTED);
             } else {
                 webLogAdd("BLE: Charger provisioning failed!");
                 provisionProgressCb = nullptr;
@@ -410,69 +519,47 @@ void loop() {
         break;
     }
 
-    case WIZ_WAIT_CHARGER: {
-        if (stateJustEntered) {
-            stateJustEntered = false;
-            webLogAdd("MQTT: Waiting for charger to connect...");
-            statusMessage = "Waiting for charger MQTT...";
-        }
-#if defined(WAVESHARE_LCD) || defined(JC3248W535)
-        display_mqttWait(chargerMqttConnected, false);
-#endif
-        if (chargerMqttConnected) {
-            webLogAdd("MQTT: Charger connected!");
-            setState(WIZ_CHARGER_CONNECTED);
-        }
-        if (elapsed > 60) {
-            webLogAdd("MQTT: Charger timeout — continuing to mower");
-            setState(WIZ_CHARGER_CONNECTED);  // Show status even if timeout
-        }
+    case WIZ_WAIT_CHARGER:
+        // Legacy — charger goes to home WiFi now, no need to wait
+        setState(WIZ_CHARGER_CONNECTED);
         break;
-    }
 
     case WIZ_CHARGER_CONNECTED: {
-        // Compute status: 0=not seen, 1=WiFi, 2=MQTT
-        int chStatus = chargerMqttConnected ? 2 : (chargerWifiDetected ? 1 : 0);
-        int mwStatus = mowerConnected ? 2 : (mowerWifiDetected ? 1 : 0);
-        bool canContinue = chStatus >= 1 || mwStatus >= 1;
-
-#if defined(WAVESHARE_LCD) || defined(JC3248W535)
-        // Refresh display periodically (live updating icons)
-        static unsigned long lastRefresh = 0;
-        if (millis() - lastRefresh > 500) {
-            lastRefresh = millis();
-            display_deviceStatus(chStatus, chargerSn.c_str(),
-                                mwStatus, mowerSn.c_str(),
-                                canContinue);
-        }
-#endif
+        // Step 3: Mower connection check — wait up to 10s for mower to appear
         if (stateJustEntered) {
             stateJustEntered = false;
+            webLogAdd("Checking mower connection...");
+#if defined(WAVESHARE_LCD) || defined(JC3248W535)
+            display_deviceStatus(0, "", 0, "", false);
+#endif
         }
 
-        // After 30s with no charger at all, go to BLE scan
-        if (chStatus == 0 && elapsed > 30) {
-            webLogAdd("No charger detected — starting BLE scan...");
-            setState(WIZ_SCAN_CHARGER);
-            break;
-        }
+        int mwStatus = mowerConnected ? 2 : (mowerWifiDetected ? 1 : 0);
 
-        if (ui_btnPressed && canContinue) {
-            ui_btnPressed = false;
-            scanRetryCount = 0;
-            if (mowerConnected) {
-                // Mower on MQTT — skip to OTA or done
-                if (mowerFwFilename.length() > 0) {
-                    setState(WIZ_OTA_CONFIRM);
-                } else {
-                    setState(WIZ_DONE);
-                }
-            } else if (mowerWifiDetected) {
-                webLogAdd("Mower on WiFi — waiting for MQTT...");
-                setState(WIZ_WAIT_MOWER);
+#if defined(WAVESHARE_LCD) || defined(JC3248W535)
+        // Update display once per second
+        static unsigned long lastChkRefresh = 0;
+        if (millis() - lastChkRefresh > 1000) {
+            lastChkRefresh = millis();
+            display_deviceStatus(0, "", mwStatus, mowerSn.c_str(), mwStatus == 2);
+        }
+#endif
+
+        if (mwStatus == 2) {
+            webLogAdd("Mower on MQTT!");
+            if (mowerFwFilename.length() > 0) {
+                setState(WIZ_OTA_CONFIRM);
             } else {
-                setState(WIZ_SCAN_MOWER);
+                setState(WIZ_DONE);
             }
+        } else if (mwStatus == 1 && elapsed > 3) {
+            // On WiFi but no MQTT after 3s — go to wait screen
+            webLogAdd("Mower on WiFi — waiting for MQTT...");
+            setState(WIZ_WAIT_MOWER);
+        } else if (elapsed > 60) {
+            // Nothing after 60s — go to BLE scan
+            webLogAdd("No mower detected after 60s — starting BLE scan");
+            setState(WIZ_SCAN_MOWER);
         }
         break;
     }
@@ -529,18 +616,29 @@ void loop() {
 
     case WIZ_SELECT_MOWER: {
 #if defined(WAVESHARE_LCD) || defined(JC3248W535)
-        if (ui_startPressed || ui_btnPressed) {
-            ui_startPressed = false;
+        if (stateJustEntered) {
+            stateJustEntered = false;
             ui_btnPressed = false;
+            ui_startPressed = false;
+            ui_rescanPressed = false;
+        }
+        if (ui_rescanPressed) {
+            ui_rescanPressed = false;
+            webLogAdd("BLE: Rescanning for mower...");
+            setState(WIZ_SCAN_MOWER);
+        }
+        else if (ui_btnPressed) {
+            ui_btnPressed = false;
+            webLogAdd("Skipping mower — continuing without mower");
+            scanRetryCount = 0;
+            setState(WIZ_DONE);
+        }
+        else if (ui_startPressed) {
+            ui_startPressed = false;
             if (selectedMowerIdx >= 0 && mowerDevice != nullptr) {
                 webLogAdd("BLE: Selected mower: %s", scanResults[selectedMowerIdx].name.c_str());
                 scanRetryCount = 0;
                 setState(WIZ_PROVISION_MOWER);
-            } else {
-                // Skip mower — no mower selected (from "Skip Mower" confirm dialog)
-                webLogAdd("Skipping mower — continuing without mower");
-                scanRetryCount = 0;
-                setState(WIZ_DONE);
             }
         }
 #endif
@@ -563,10 +661,10 @@ void loop() {
             if (provisionDevice(mowerDevice, "mower")) {
                 webLogAdd("BLE: Mower provisioned!");
                 provisionProgressCb = nullptr;
-                // Restart WiFi AP (was stopped during BLE) then go to device status
+                // Restart WiFi AP (was stopped during BLE) then wait for mower MQTT
                 setupWifiAP();
                 while (WiFi.softAPIP() == IPAddress(0, 0, 0, 0)) { delay(100); }
-                setState(WIZ_CHARGER_CONNECTED);
+                setState(WIZ_WAIT_MOWER);
             } else {
                 webLogAdd("BLE: Mower provisioning failed!");
                 provisionProgressCb = nullptr;
@@ -583,16 +681,27 @@ void loop() {
     case WIZ_WAIT_MOWER: {
         if (stateJustEntered) {
             stateJustEntered = false;
-            // Restart WiFi AP (was stopped during mower BLE provisioning)
-            Serial.printf("[NET] (Re)starting WiFi AP...\r\n");
-            webLogAdd("Restarting WiFi AP...");
-            setupWifiAP();
-            while (WiFi.softAPIP() == IPAddress(0, 0, 0, 0)) { delay(100); }
-            webLogAdd("AP ready at %s — waiting for mower MQTT...", WiFi.softAPIP().toString().c_str());
+            // Only restart AP if it was stopped (during mower BLE provisioning)
+            if (WiFi.softAPIP() == IPAddress(0, 0, 0, 0)) {
+                Serial.printf("[NET] (Re)starting WiFi AP...\r\n");
+                webLogAdd("Restarting WiFi AP...");
+                setupWifiAP();
+                while (WiFi.softAPIP() == IPAddress(0, 0, 0, 0)) { delay(100); }
+                webLogAdd("AP ready at %s", WiFi.softAPIP().toString().c_str());
+            }
+            webLogAdd("Waiting for mower MQTT...");
             statusMessage = "Waiting for mower MQTT...";
         }
 #if defined(WAVESHARE_LCD) || defined(JC3248W535)
-        display_mqttWait(chargerMqttConnected, mowerConnected);
+        {
+            static unsigned long lastWaitRefresh = 0;
+            if (millis() - lastWaitRefresh > 1000) {
+                lastWaitRefresh = millis();
+                int chStatus = chargerMqttConnected ? 2 : (chargerWifiDetected ? 1 : 0);
+                int mwStatus = mowerConnected ? 2 : (mowerWifiDetected ? 1 : 0);
+                display_deviceStatus(chStatus, chargerSn.c_str(), mwStatus, mowerSn.c_str(), false);
+            }
+        }
 #endif
         if (mowerConnected) {
             webLogAdd("MQTT: Mower connected!");
@@ -615,17 +724,28 @@ void loop() {
     case WIZ_OTA_CONFIRM: {
         if (stateJustEntered) {
             stateJustEntered = false;
+            // Reset OTA flags so MQTT message filter doesn't block charging detection
+            mowerOtaTriedPlain = false;
+            mowerOtaTriedAes = false;
             webLogAdd("Firmware available: %s (charging: %s)", mowerFwFilename.c_str(), mowerCharging ? "yes" : "no");
             statusMessage = "Flash firmware?";
-            String line1 = String("Flash ") + mowerFwVersion + " to " + mowerSn;
-            String line2 = mowerCharging
-                ? "Mower is on charger — ready!"
-                : "Ensure mower is on charger!";
-#if defined(WAVESHARE_LCD) || defined(JC3248W535)
-            display_confirm("Flash Firmware?", line1.c_str(), line2.c_str(), "Flash");
-#endif
         }
 #if defined(WAVESHARE_LCD) || defined(JC3248W535)
+        {
+            // Refresh display to show live charging status
+            static unsigned long lastOtaRefresh = 0;
+            static bool lastChargingState = false;
+            if (stateJustEntered || millis() - lastOtaRefresh > 1000 || mowerCharging != lastChargingState) {
+                lastOtaRefresh = millis();
+                lastChargingState = mowerCharging;
+                String line1 = String("Flash ") + mowerFwVersion + " to " + mowerSn;
+                String line2 = mowerCharging
+                    ? "Mower is on charger — ready!"
+                    : "WARNING: Place mower on charger first!";
+                display_confirm("Flash Firmware?", line1.c_str(), line2.c_str(),
+                    mowerCharging ? "Flash" : "");
+            }
+        }
         if (ui_btnPressed && mowerCharging) {
             ui_btnPressed = false;
             setState(WIZ_OTA_FLASH);
@@ -634,7 +754,6 @@ void loop() {
             webLogAdd("OTA: Mower not on charger — waiting...");
         }
 #endif
-        // No timeout — wait until user acts or places mower on charger
         break;
     }
 
@@ -679,16 +798,33 @@ void loop() {
             sendMowerOtaWithAes(true);
         }
 
+        // Timeout: both PLAIN and AES tried, 30s after AES, still no progress → FAILED
+        if (mowerOtaTriedPlain && mowerOtaTriedAes &&
+            mowerOtaSentAt > 0 && millis() - mowerOtaSentAt > 30000 &&
+            otaProgressPercent == 0) {
+            webLogAdd("OTA: No response — cleaning cache + rebooting mower...");
+            mowerOtaTriedPlain = false;
+            mowerOtaTriedAes = false;
+            sendOtaCleanup();  // clean cache + reboot mower
+#if defined(WAVESHARE_LCD) || defined(JC3248W535)
+            display_error("OTA Failed!\n\nCleaning cache + rebooting mower.\nWait for reconnect, then retry.\n\nTap to retry.");
+#endif
+            setState(WIZ_ERROR);
+            break;
+        }
+
         // Check for completion
         if (otaStatus == "success" || otaProgressPercent >= 100) {
             webLogAdd("OTA: Firmware installed! Mower rebooting...");
 #if defined(WAVESHARE_LCD) || defined(JC3248W535)
             display_firmware_flash("Mower", "Installed! Rebooting...", 100);
 #endif
-            delay(5000);  // Wait for mower to reboot
-            // After OTA, custom firmware handles server discovery via mDNS/DNS
-            // No need to re-provision to home WiFi
-            setState(WIZ_DONE);
+            delay(5000);
+            if (userWifiSsid.length() > 0) {
+                setState(WIZ_REPROVISION);
+            } else {
+                setState(WIZ_DONE);
+            }
         }
 
         // After device disconnects (rebooting with new firmware), also proceed
@@ -698,7 +834,11 @@ void loop() {
             display_firmware_flash("Mower", "Rebooting...", 100);
 #endif
             delay(3000);
-            setState(WIZ_DONE);
+            if (userWifiSsid.length() > 0) {
+                setState(WIZ_REPROVISION);
+            } else {
+                setState(WIZ_DONE);
+            }
         }
 
         // Timeout after 30 minutes
@@ -710,80 +850,60 @@ void loop() {
     }
 
     case WIZ_REPROVISION: {
+        // Step 8: Re-provision mower to home WiFi (charger already on home WiFi from step 2)
         if (stateJustEntered) {
             stateJustEntered = false;
-            reprovisioning = true;  // Use home WiFi credentials in provisionDevice
-            webLogAdd("Re-provisioning to home WiFi: %s", userWifiSsid.c_str());
-            statusMessage = "Re-provisioning to home WiFi...";
+            reprovisioning = true;
+            webLogAdd("Re-provisioning mower to home WiFi: %s", userWifiSsid.c_str());
+            statusMessage = "Mower → home WiFi...";
 
 #if defined(WAVESHARE_LCD) || defined(JC3248W535)
-            display_reprovision("Connecting to devices...", 0, 2);
+            display_reprovision("Mower -> home WiFi", 1, 1);
 #endif
-            bool chargerOk = false;
             bool mowerOk = false;
 
-            // Re-provision charger to home WiFi
-            if (chargerMqttConnected && chargerTopic.length() > 0) {
-                // Fast path: send via MQTT
-                webLogAdd("REPROVISION: Charger via MQTT");
-#if defined(WAVESHARE_LCD) || defined(JC3248W535)
-                display_reprovision("Charger -> home WiFi (MQTT)", 1, 2);
-#endif
-                String cPayload = "{\"set_wifi_info\":{\"sta\":{\"ssid\":\"" + userWifiSsid +
-                    "\",\"passwd\":\"" + userWifiPassword +
-                    "\",\"encrypt\":0},\"ap\":{\"ssid\":\"CHARGER_PILE\",\"passwd\":\"12345678\",\"encrypt\":0}}}";
-                sendMqttMessage(chargerTopic, cPayload, false, "");
-                chargerOk = true;
-            } else if (chargerDevice) {
-                webLogAdd("REPROVISION: Charger via BLE");
-#if defined(WAVESHARE_LCD) || defined(JC3248W535)
-                provisionProgressCb = display_provision;
-                display_reprovision("Charger -> home WiFi (BLE)", 1, 2);
-#endif
-                chargerOk = provisionDevice(chargerDevice, "charger");
-                provisionProgressCb = nullptr;
-            } else {
-                webLogAdd("REPROVISION: No charger found — skipping");
-                chargerOk = true;
-            }
-
-            // Re-provision mower to home WiFi
             if (mowerConnected && mowerSn.length() > 0) {
-                // Fast path: send via MQTT
-                webLogAdd("REPROVISION: Mower via MQTT");
-#if defined(WAVESHARE_LCD) || defined(JC3248W535)
-                display_reprovision("Mower -> home WiFi (MQTT)", 2, 2);
-#endif
-                String mPayload = "{\"set_wifi_info\":{\"ap\":{\"ssid\":\"" + userWifiSsid +
-                    "\",\"passwd\":\"" + userWifiPassword + "\",\"encrypt\":0}}}";
-                sendMqttMessage("Dart/Send_mqtt/" + mowerSn, mPayload, true, mowerSn);
+                // Use extended_commands.py (custom firmware) to bypass mqtt_node whitelist.
+                // Stock mqtt_node only accepts *.lfibot.com for set_mqtt_info — but
+                // extended_commands.py writes directly to json_config.json.
+                String extTopic = "novabot/extended/" + mowerSn;
+                webLogAdd("REPROVISION: via extended_commands");
+
+                // 1. Set MQTT address (bypasses whitelist)
+                String mqttCmd = "{\"set_mqtt_config\":{\"addr\":\"" + userMqttAddr +
+                    "\",\"port\":1883}}";
+                mqttBroker.publish(std::string(extTopic.c_str()), std::string(mqttCmd.c_str()));
+                Serial.printf("[REPROV] MQTT config → %s\r\n", userMqttAddr.c_str());
+                delay(1000);  // Wait for json_config.json write + mqtt_node restart
+
+                // 2. Set WiFi (also via extended_commands for reliability)
+                String wifiCmd = "{\"set_wifi_config\":{\"ssid\":\"" + userWifiSsid +
+                    "\",\"password\":\"" + userWifiPassword + "\"}}";
+                mqttBroker.publish(std::string(extTopic.c_str()), std::string(wifiCmd.c_str()));
+                Serial.printf("[REPROV] WiFi config → %s\r\n", userWifiSsid.c_str());
+
                 mowerOk = true;
             } else if (mowerDevice) {
                 webLogAdd("REPROVISION: Mower via BLE");
 #if defined(WAVESHARE_LCD) || defined(JC3248W535)
                 provisionProgressCb = display_provision;
-                display_reprovision("Mower -> home WiFi (BLE)", 2, 2);
 #endif
                 mowerOk = provisionDevice(mowerDevice, "mower");
                 provisionProgressCb = nullptr;
             } else {
-                webLogAdd("REPROVISION: No mower found — skipping");
+                webLogAdd("REPROVISION: Mower not available — skipping");
                 mowerOk = true;
             }
 
             reprovisioning = false;
 
-            if (chargerOk && mowerOk) {
-                webLogAdd("REPROVISION: All devices re-provisioned!");
+            if (mowerOk) {
+                webLogAdd("Mower re-provisioned to home WiFi!");
                 setState(WIZ_DONE);
             } else {
                 statusMessage = "Re-provisioning failed";
 #if defined(WAVESHARE_LCD) || defined(JC3248W535)
-                String msg = "";
-                if (!chargerOk) msg += "Charger: FAILED\n";
-                if (!mowerOk) msg += "Mower: FAILED\n";
-                msg += "Tap to retry";
-                display_error(msg.c_str());
+                display_error("Mower re-provisioning failed.\nTap to retry.");
 #endif
                 setState(WIZ_ERROR);
             }
