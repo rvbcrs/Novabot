@@ -60,13 +60,14 @@ enum State {
     WIZ_SELECT_CHARGER,         // Select charger from list (if multiple)
     WIZ_PROVISION_CHARGER,      // Provision charger with home WiFi + home MQTT
     WIZ_WAIT_CHARGER,           // Wait for charger MQTT connect (legacy, skipped in home-WiFi flow)
-    WIZ_CHARGER_CONNECTED,      // Charger done — status screen
+    WIZ_MOWER_CHECK,            // Check mower connection status
     WIZ_SCAN_MOWER,             // BLE scan for NOVABOT
     WIZ_SELECT_MOWER,           // Select mower from list (if multiple)
     WIZ_PROVISION_MOWER,        // Provision mower with AP wifi + mqtt.lfibot.com
     WIZ_WAIT_MOWER,             // Wait for mower MQTT connect
     WIZ_OTA_CONFIRM,            // Confirm before flashing firmware
     WIZ_OTA_FLASH,              // Flash mower firmware (if .deb on SD)
+    WIZ_WAIT_REBOOT,            // Wait for mower to reboot and reconnect after OTA
     WIZ_REPROVISION,            // Re-provision mower to home WiFi (if configured)
     WIZ_DONE,                   // All done!
     WIZ_ERROR,                  // Error — tap to retry current step
@@ -105,6 +106,7 @@ extern String mowerSn;
 extern String chargerSn;
 extern String chargerTopic;
 extern unsigned long mowerConnectTime;
+extern String mowerFirmwareVersion;  // Actual firmware version from mower (via extended_commands)
 
 // ── OTA progress ────────────────────────────────────────────────────────────
 

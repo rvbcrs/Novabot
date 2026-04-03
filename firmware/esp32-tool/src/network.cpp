@@ -722,7 +722,6 @@ function saveWifi(e){
         isFirmwareDownloading = true;
         Serial.printf("[HTTP] Serving firmware: %s\r\n", path.c_str());
 
-        // Let AsyncWebServer handle chunking, Range/206, and WiFi yielding internally
         request->send(SDFS, path, "application/octet-stream");
 
         request->onDisconnect([]() {

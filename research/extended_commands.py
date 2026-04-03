@@ -460,6 +460,13 @@ def handle_system_info(params, respond):
     """Verzamel systeem diagnostiek."""
     info = {}
 
+    # Firmware version
+    try:
+        with open("/etc/version") as f:
+            info["firmware_version"] = f.read().strip()
+    except Exception:
+        info["firmware_version"] = "unknown"
+
     # CPU temperatuur
     try:
         with open("/sys/class/thermal/thermal_zone0/temp") as f:

@@ -478,19 +478,14 @@ void display_boot(const char* version) {
 
     lv_obj_t *scr = create_screen();
 
-    // OpenNova logo
+    // OpenNova logo (192px with transparent background)
+    LV_IMG_DECLARE(openova_192);
     lv_obj_t *logo = lv_img_create(scr);
-    lv_img_set_src(logo, &logo_img);
-    lv_obj_align(logo, LV_ALIGN_TOP_MID, 0, 30);
-
-    // OpenNova title below logo
-    add_label(scr, "OpenNova", &lv_font_montserrat_28, COL_TEXT, 120);
-
-    // Subtitle
-    add_label(scr, "Provisioner", &lv_font_montserrat_20, COL_TEAL, 155);
+    lv_img_set_src(logo, &openova_192);
+    lv_obj_align(logo, LV_ALIGN_TOP_MID, 0, 10);
 
     // Version
-    add_label(scr, version, &lv_font_montserrat_14, COL_DIM, 185);
+    add_label(scr, version, &lv_font_montserrat_14, COL_DIM, 190);
 
     // Spinner at bottom
     lv_obj_t *spinner = lv_spinner_create(scr, 1000, 60);
@@ -713,6 +708,7 @@ static lv_obj_t* cf_title = nullptr;
 static lv_obj_t* cf_line1 = nullptr;
 static lv_obj_t* cf_line2 = nullptr;
 static lv_obj_t* cf_btn = nullptr;
+static lv_obj_t* cf_skipBtn = nullptr;
 
 void display_confirm(const char* title, const char* line1, const char* line2, const char* btnText) {
     if (!lvgl_lock(0)) return;
@@ -742,7 +738,40 @@ void display_confirm(const char* title, const char* line1, const char* line2, co
         lv_obj_set_width(cf_line2, SCREEN_W - 40);
         lv_obj_align(cf_line2, LV_ALIGN_TOP_MID, 0, 140);
 
-        cf_btn = add_bottom_btn(cf_scr, "", generic_btn_cb);
+        // Skip button (left)
+        cf_skipBtn = lv_btn_create(cf_scr);
+        lv_obj_set_size(cf_skipBtn, 120, 44);
+        lv_obj_align(cf_skipBtn, LV_ALIGN_BOTTOM_LEFT, 20, -12);
+        lv_obj_set_style_bg_color(cf_skipBtn, lv_color_hex(0x2a2a3e), 0);
+        lv_obj_set_style_bg_opa(cf_skipBtn, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(cf_skipBtn, 12, 0);
+        lv_obj_set_style_shadow_width(cf_skipBtn, 0, 0);
+        lv_obj_set_style_border_width(cf_skipBtn, 0, 0);
+        lv_obj_t *skipLbl = lv_label_create(cf_skipBtn);
+        lv_label_set_text(skipLbl, "Skip");
+        lv_obj_set_style_text_font(skipLbl, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(skipLbl, COL_DIM, 0);
+        lv_obj_center(skipLbl);
+        btn_label_passthrough(skipLbl);
+        lv_obj_add_event_cb(cf_skipBtn, rescan_btn_cb, LV_EVENT_CLICKED, NULL);
+        lv_obj_add_flag(cf_skipBtn, LV_OBJ_FLAG_HIDDEN);  // hidden by default
+
+        // Main action button (right)
+        cf_btn = lv_btn_create(cf_scr);
+        lv_obj_set_size(cf_btn, SCREEN_W / 2 - 30, 44);
+        lv_obj_align(cf_btn, LV_ALIGN_BOTTOM_RIGHT, -20, -12);
+        lv_obj_set_style_bg_color(cf_btn, COL_PURPLE, 0);
+        lv_obj_set_style_bg_opa(cf_btn, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(cf_btn, 12, 0);
+        lv_obj_set_style_shadow_width(cf_btn, 0, 0);
+        lv_obj_set_style_border_width(cf_btn, 0, 0);
+        lv_obj_t *btnLbl = lv_label_create(cf_btn);
+        lv_label_set_text(btnLbl, "");
+        lv_obj_set_style_text_font(btnLbl, &lv_font_montserrat_20, 0);
+        lv_obj_set_style_text_color(btnLbl, COL_TEXT, 0);
+        lv_obj_center(btnLbl);
+        btn_label_passthrough(btnLbl);
+        lv_obj_add_event_cb(cf_btn, generic_btn_cb, LV_EVENT_CLICKED, NULL);
 
         lv_scr_load(cf_scr);
     }
@@ -752,7 +781,8 @@ void display_confirm(const char* title, const char* line1, const char* line2, co
     lv_label_set_text(cf_line1, line1 ? line1 : "");
     lv_label_set_text(cf_line2, line2 ? line2 : "");
 
-    // Show/hide button based on text
+    // Show/hide main button based on text, Skip always visible
+    lv_obj_clear_flag(cf_skipBtn, LV_OBJ_FLAG_HIDDEN);
     if (btnText && strlen(btnText) > 0) {
         lv_obj_clear_flag(cf_btn, LV_OBJ_FLAG_HIDDEN);
         lv_label_set_text(lv_obj_get_child(cf_btn, 0), btnText);
@@ -763,9 +793,12 @@ void display_confirm(const char* title, const char* line1, const char* line2, co
     lvgl_unlock();
 }
 
+static lv_obj_t* ds_mwVer = nullptr;
+static lv_obj_t* ds_spinner = nullptr;
+
 void display_deviceStatus(int chargerStatus, const char* chargerSn,
                           int mowerStatus, const char* mowerSn,
-                          bool canContinue) {
+                          const char* mowerVersion, bool canContinue) {
     if (!lvgl_lock(0)) return;
 
     auto statusColor = [](int s) -> lv_color_t {
@@ -798,6 +831,23 @@ void display_deviceStatus(int chargerStatus, const char* chargerSn,
         lv_obj_set_style_text_color(ds_mwSn, lv_color_hex(0x9CA3AF), 0);
         lv_obj_align(ds_mwSn, LV_ALIGN_TOP_MID, 0, mwY + 80);
 
+        ds_mwVer = lv_label_create(ds_scr);
+        lv_label_set_text(ds_mwVer, "");
+        lv_obj_set_style_text_font(ds_mwVer, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(ds_mwVer, lv_color_hex(0xA78BFA), 0);  // lighter purple
+        lv_obj_set_style_text_align(ds_mwVer, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_width(ds_mwVer, SCREEN_W - 40);
+        lv_obj_align(ds_mwVer, LV_ALIGN_TOP_MID, 0, mwY + 98);
+
+        // Spinner — shown while waiting for mower connection
+        ds_spinner = lv_spinner_create(ds_scr, 1200, 60);
+        lv_obj_set_size(ds_spinner, 30, 30);
+        lv_obj_align(ds_spinner, LV_ALIGN_TOP_MID, 0, mwY + 100);
+        lv_obj_set_style_arc_color(ds_spinner, COL_PURPLE, LV_PART_INDICATOR);
+        lv_obj_set_style_arc_color(ds_spinner, COL_CARD, LV_PART_MAIN);
+        lv_obj_set_style_arc_width(ds_spinner, 3, LV_PART_INDICATOR);
+        lv_obj_set_style_arc_width(ds_spinner, 3, LV_PART_MAIN);
+
         ds_legend = lv_label_create(ds_scr);
         lv_label_set_text(ds_legend, "Grey=waiting  Orange=WiFi  Green=MQTT");
         lv_obj_set_style_text_font(ds_legend, &lv_font_montserrat_12, 0);
@@ -806,9 +856,27 @@ void display_deviceStatus(int chargerStatus, const char* chargerSn,
         lv_obj_set_width(ds_legend, SCREEN_W - 40);
         lv_obj_align(ds_legend, LV_ALIGN_BOTTOM_MID, 0, -60);
 
+        // Scan button (left) — manual BLE scan
+        lv_obj_t *scanBtn = lv_btn_create(ds_scr);
+        lv_obj_set_size(scanBtn, 120, 40);
+        lv_obj_align(scanBtn, LV_ALIGN_BOTTOM_LEFT, 20, -10);
+        lv_obj_set_style_bg_color(scanBtn, lv_color_hex(0x2a2a3e), 0);
+        lv_obj_set_style_bg_opa(scanBtn, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(scanBtn, 8, 0);
+        lv_obj_set_style_shadow_width(scanBtn, 0, 0);
+        lv_obj_set_style_border_width(scanBtn, 0, 0);
+        lv_obj_t *scanLbl = lv_label_create(scanBtn);
+        lv_label_set_text(scanLbl, LV_SYMBOL_BLUETOOTH " Scan");
+        lv_obj_set_style_text_font(scanLbl, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(scanLbl, COL_DIM, 0);
+        lv_obj_center(scanLbl);
+        btn_label_passthrough(scanLbl);
+        lv_obj_add_event_cb(scanBtn, rescan_btn_cb, LV_EVENT_CLICKED, NULL);
+
+        // Continue button (right)
         ds_btn = lv_btn_create(ds_scr);
-        lv_obj_set_size(ds_btn, SCREEN_W - 80, 40);
-        lv_obj_align(ds_btn, LV_ALIGN_BOTTOM_MID, 0, -10);
+        lv_obj_set_size(ds_btn, SCREEN_W / 2 - 30, 40);
+        lv_obj_align(ds_btn, LV_ALIGN_BOTTOM_RIGHT, -20, -10);
         lv_obj_set_style_radius(ds_btn, 8, 0);
         lv_obj_set_style_shadow_width(ds_btn, 0, 0);
         lv_obj_set_style_border_width(ds_btn, 0, 0);
@@ -825,7 +893,21 @@ void display_deviceStatus(int chargerStatus, const char* chargerSn,
     lv_color_t mwCol = statusColor(mowerStatus);
     lv_obj_set_style_text_color(ds_mwIcon, mwCol, 0);
     lv_obj_set_style_text_color(ds_mwLbl, mwCol, 0);
-    lv_label_set_text(ds_mwSn, (mowerSn && strlen(mowerSn) > 0) ? mowerSn : "...");
+    lv_label_set_text(ds_mwSn, (mowerSn && strlen(mowerSn) > 0) ? mowerSn : "Waiting...");
+    if (mowerVersion && strlen(mowerVersion) > 0) {
+        lv_label_set_text(ds_mwVer, mowerVersion);
+    } else if (mowerStatus >= 2) {
+        lv_label_set_text(ds_mwVer, "Stock firmware");
+    } else {
+        lv_label_set_text(ds_mwVer, "");
+    }
+
+    // Show spinner while waiting, hide when connected
+    if (mowerStatus < 2) {
+        lv_obj_clear_flag(ds_spinner, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(ds_spinner, LV_OBJ_FLAG_HIDDEN);
+    }
 
     if (canContinue) {
         lv_obj_set_style_bg_color(ds_btn, COL_TEAL, 0);

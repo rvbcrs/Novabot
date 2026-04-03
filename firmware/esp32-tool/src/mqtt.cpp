@@ -28,6 +28,9 @@ bool NovaMQTTBroker::onEvent(sMQTTEvent *event) {
                 mowerConnectTime = millis();
                 Serial.printf("[MQTT] Mower connected: %s\r\n", mowerSn.c_str());
                 webLogAdd("MQTT: Mower %s connected!", mowerSn.c_str());
+                // Query firmware version via extended_commands.py
+                String extTopic = "novabot/extended/" + mowerSn;
+                mqttBroker.publish(std::string(extTopic.c_str()), std::string("{\"get_system_info\":{}}"));
             }
             return true;
         }
@@ -96,6 +99,21 @@ bool NovaMQTTBroker::onEvent(sMQTTEvent *event) {
                     decBuf[decLen] = 0;
                     payload = std::string((char*)decBuf, decLen);
                     free(decBuf);
+                }
+            }
+
+            // Parse firmware version from extended_commands response
+            // Topic: novabot/extended_response/<SN> → {"get_system_info_respond":{..."firmware_version":"v6.0.2-custom-20"...}}
+            if (topic.find("extended_response") != std::string::npos &&
+                payload.find("firmware_version") != std::string::npos) {
+                size_t fvPos = payload.find("\"firmware_version\":\"");
+                if (fvPos != std::string::npos) {
+                    size_t start = fvPos + 20;
+                    size_t end = payload.find('"', start);
+                    if (end != std::string::npos) {
+                        mowerFirmwareVersion = String(payload.substr(start, end - start).c_str());
+                        Serial.printf("[MQTT] Mower firmware: %s\r\n", mowerFirmwareVersion.c_str());
+                    }
                 }
             }
 
