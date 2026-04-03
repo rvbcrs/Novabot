@@ -1249,42 +1249,10 @@ else
     echo "  extended_commands.py niet gevonden — overslaan"
 fi
 
-# === Stap 5i: STM32 MCU firmware patchen (PIN unlock v3.6.6) ===
-echo "[5i/9] STM32 MCU firmware patchen..."
-
-MCU_BIN_DIR="$NOVABOT_ROOT/install/chassis_control/share/chassis_control/MCU_BIN"
-MCU_PATCH_SRC="$SCRIPT_DIR/firmware/STM32/novabot_stm32f407_v3_6_7_NewMotor25082301_pin_unlock.bin"
-
-if [ -f "$MCU_PATCH_SRC" ] && [ -d "$MCU_BIN_DIR" ]; then
-    # Verwijder oude MCU versies zodat er geen versie-conflict is
-    for OLD_MCU in "$MCU_BIN_DIR"/novabot_stm32f407_v3_6_*_NewMotor25082301.bin; do
-        [ -f "$OLD_MCU" ] && rm -f "$OLD_MCU" && echo "  Verwijderd: $(basename "$OLD_MCU")"
-    done
-    # Originele binary backuppen (als die er nog is)
-    ORIG_MCU="$MCU_BIN_DIR/novabot_stm32f407_v3_6_0_NewMotor25082301.bin"
-    if [ -f "$ORIG_MCU" ] && [ ! -f "${ORIG_MCU}.bak" ]; then
-        cp "$ORIG_MCU" "${ORIG_MCU}.bak"
-        echo "  Backup: $(basename "$ORIG_MCU").bak"
-    fi
-    # Kopieer gepatchte binary met v3_6_6 in bestandsnaam
-    # chassis_control_node leest versie uit bestandsnaam, niet uit binary!
-    MCU_DST="$MCU_BIN_DIR/novabot_stm32f407_v3_6_7_NewMotor25082301.bin"
-    cp "$MCU_PATCH_SRC" "$MCU_DST"
-    echo "  Gepatchte MCU firmware gekopieerd: $(basename "$MCU_DST")"
-    echo "  Features: PIN lock bypass + verify status=0 + type=3 clear error (v3.6.7)"
-    # Verwijder originele v3.6.0 als die er nog is
-    if [ -f "$ORIG_MCU" ]; then
-        rm -f "$ORIG_MCU"
-        echo "  Originele v3.6.0 verwijderd (vervangen door v3.6.6)"
-    fi
-else
-    if [ ! -f "$MCU_PATCH_SRC" ]; then
-        echo "  Gepatchte MCU binary niet gevonden — overslaan"
-        echo "  Run eerst: cd research/firmware/STM32 && python3 patch_pin_unlock.py"
-    elif [ ! -d "$MCU_BIN_DIR" ]; then
-        echo "  MCU_BIN map niet gevonden in firmware — overslaan"
-    fi
-fi
+# === Stap 5i: STM32 MCU firmware — KEEP STOCK v3.6.0 ===
+# DISABLED: v3.6.7 pin_unlock causes motor lock issues (blade calibration broken).
+# The stock v3.6.0 from the source .deb is kept as-is.
+echo "[5i/9] STM32 MCU: keeping stock v3.6.0 (pin_unlock patch DISABLED)"
 
 # === Stap 5j: Open robot_decision boot hook toevoegen ===
 echo "[5j/9] Open robot_decision boot hook toevoegen..."
@@ -1665,7 +1633,7 @@ echo "    ✓ http_address.txt + json_config.json worden bij elke boot gezet"
 [ -f "$NOVABOT_ROOT/scripts/camera_stream.py" ] && echo "    ✓ Camera MJPEG stream op poort 8000 (auto-start na 15s)"
 [ -f "$NOVABOT_ROOT/scripts/led_bridge.py" ] && echo "    ✓ LED bridge: MQTT → ROS /led_set (headlight controle)"
 [ -f "$NOVABOT_ROOT/scripts/extended_commands.py" ] && echo "    ✓ Extended commands: reboot, camera snapshot, system info (auto-start na 12s)"
-[ -f "$MCU_BIN_DIR/novabot_stm32f407_v3_6_7_NewMotor25082301.bin" ] 2>/dev/null && echo "    ✓ STM32 MCU v3.6.7: remote PIN unlock + clear error (type=3)"
+echo "    ✓ STM32 MCU: stock v3.6.0 (pin_unlock patch disabled)"
 grep -q "open_decision" "$RUN_NOVABOT" 2>/dev/null && echo "    ✓ Open robot_decision boot hook (Python vervangt C++ na 20s)"
 [ "$ENABLE_REMOTE_ROS2" = "true" ] && echo "    ✓ ROS 2 netwerk open (ROS_LOCALHOST_ONLY=0)"
 if [ "$INCLUDE_SERVER" = "true" ]; then
