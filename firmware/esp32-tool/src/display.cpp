@@ -15,6 +15,7 @@
 #include <stdint.h>
 #include "display.h"
 #include "logo.h"
+#include "fonts/fa_icons.h"
 
 #if defined(WAVESHARE_LCD) || defined(JC3248W535)
 
@@ -605,7 +606,8 @@ void display_devices(ScanResult* results, int count, int selectedCharger, int se
 
         // Icon
         lv_obj_t *icon_lbl = lv_label_create(item);
-        lv_label_set_text(icon_lbl, results[i].isCharger ? LV_SYMBOL_CHARGE : LV_SYMBOL_SETTINGS);
+        lv_label_set_text(icon_lbl, results[i].isCharger ? FA_BOLT : FA_ROBOT);
+        lv_obj_set_style_text_font(icon_lbl, &fa_icons_28, 0);
         lv_obj_set_style_text_color(icon_lbl, accent, 0);
         lv_obj_set_style_text_font(icon_lbl, &lv_font_montserrat_28, 0);
         lv_obj_set_style_pad_right(icon_lbl, 10, 0);
@@ -781,8 +783,8 @@ void display_deviceStatus(int chargerStatus, const char* chargerSn,
 
         int mwY = 60;
         ds_mwIcon = lv_label_create(ds_scr);
-        lv_label_set_text(ds_mwIcon, LV_SYMBOL_SETTINGS);
-        lv_obj_set_style_text_font(ds_mwIcon, &lv_font_montserrat_28, 0);
+        lv_label_set_text(ds_mwIcon, FA_ROBOT);
+        lv_obj_set_style_text_font(ds_mwIcon, &fa_icons_40, 0);
         lv_obj_align(ds_mwIcon, LV_ALIGN_TOP_MID, 0, mwY);
 
         ds_mwLbl = lv_label_create(ds_scr);
@@ -1451,7 +1453,7 @@ void display_menu(bool sdMounted, bool hasMowerFw, bool hasChargerFw,
     bool canWifi = mowerMqtt || chargerMqtt;
 
     MenuEntry entries[4] = {
-        { LV_SYMBOL_SETTINGS, "Provision + Flash", "Full setup with firmware", true, 0 },
+        { FA_WRENCH, "Provision + Flash", "Full setup with firmware", true, 0 },
         { LV_SYMBOL_WIFI,     "Provision Only",    "BLE setup, no firmware",   true, 1 },
         { LV_SYMBOL_DOWNLOAD, "Flash Firmware",    "Update connected devices", canFlash, 2 },
         { LV_SYMBOL_HOME,     "Home WiFi Setup",   "Switch to home network",   canWifi, 3 },

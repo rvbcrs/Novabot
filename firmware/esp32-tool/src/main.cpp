@@ -119,6 +119,7 @@ unsigned long mowerConnectTime = 0;
 // ── OTA progress ────────────────────────────────────────────────────────────
 
 int otaProgressPercent = 0;
+int httpDownloadPercent = 0;
 String otaStatus = "";
 
 // ── OTA retry state ─────────────────────────────────────────────────────────
@@ -545,19 +546,20 @@ void loop() {
         }
 #endif
 
-        if (mwStatus == 2) {
-            webLogAdd("Mower on MQTT!");
+        // Wait for user to press Continue
+        if (ui_btnPressed && mwStatus == 2) {
+            ui_btnPressed = false;
             if (mowerFwFilename.length() > 0) {
                 setState(WIZ_OTA_CONFIRM);
             } else {
                 setState(WIZ_DONE);
             }
-        } else if (mwStatus == 1 && elapsed > 3) {
-            // On WiFi but no MQTT after 3s — go to wait screen
-            webLogAdd("Mower on WiFi — waiting for MQTT...");
-            setState(WIZ_WAIT_MOWER);
-        } else if (elapsed > 60) {
-            // Nothing after 60s — go to BLE scan
+        } else if (ui_btnPressed && mwStatus < 2) {
+            ui_btnPressed = false;
+            // Not on MQTT yet — ignore press
+        }
+        // After 60s with no mower at all, go to BLE scan
+        if (mwStatus == 0 && elapsed > 60) {
             webLogAdd("No mower detected after 60s — starting BLE scan");
             setState(WIZ_SCAN_MOWER);
         }
@@ -740,7 +742,7 @@ void loop() {
                 lastChargingState = mowerCharging;
                 String line1 = String("Flash ") + mowerFwVersion + " to " + mowerSn;
                 String line2 = mowerCharging
-                    ? "Mower is on charger — ready!"
+                    ? "Mower is on charger - ready!"
                     : "WARNING: Place mower on charger first!";
                 display_confirm("Flash Firmware?", line1.c_str(), line2.c_str(),
                     mowerCharging ? "Flash" : "");
@@ -779,11 +781,18 @@ void loop() {
             sendMowerOta();  // tries plain first, then AES
             otaSent = true;
         }
-        // Display OTA progress from MQTT ota_upgrade_state messages
+        // Display OTA progress — use best available source:
+        // httpDownloadPercent = HTTP-side (0-62%), otaProgressPercent = MQTT-side (0-100%)
+        // MQTT progress may stop updating after WiFi reconnect, HTTP always works
 #if defined(WAVESHARE_LCD) || defined(JC3248W535)
-        display_firmware_flash("Mower",
-            otaStatus.length() > 0 ? otaStatus.c_str() : "Downloading...",
-            otaProgressPercent);
+        {
+            int displayPercent = (otaProgressPercent > httpDownloadPercent)
+                ? otaProgressPercent : httpDownloadPercent;
+            const char* statusText = "Downloading...";
+            if (otaStatus.length() > 0) statusText = otaStatus.c_str();
+            else if (httpDownloadPercent >= 62) statusText = "Unpacking...";
+            display_firmware_flash("Mower", statusText, displayPercent);
+        }
 #endif
 
         // AES retry: if plain OTA got "fail" or no response after 30s, try encrypted (v6.x)

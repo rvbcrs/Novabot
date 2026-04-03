@@ -701,10 +701,9 @@ function saveWifi(e){
     // - HTTP Range requests (206 Partial Content) for download resume
     // - Automatic memory management and file closing
     static std::atomic<bool> isFirmwareDownloading(false);
-    static File currentDownloadFile;
 #ifdef JC3248W535
     httpServer.on("/firmware.deb", HTTP_GET, [](AsyncWebServerRequest *request) {
-        // Concurrency lock — concurrent SD reads block CPU, WiFi beacons get missed
+        // Concurrency lock
         if (isFirmwareDownloading) {
             request->send(429, "text/plain", "Download in progress");
             return;
@@ -716,73 +715,20 @@ function saveWifi(e){
             return;
         }
 
-        currentDownloadFile = SDFS.open(path, FILE_READ);
-        if (!currentDownloadFile) {
-            request->send(500, "text/plain", "SD read error");
-            return;
-        }
-
-        size_t fileSize = currentDownloadFile.size();
-        size_t startByte = 0;
-        size_t endByte = fileSize - 1;
-
-        // Parse HTTP Range header (e.g. "bytes=7168000-")
         if (request->hasHeader("Range")) {
-            String range = request->header("Range");
-            if (range.startsWith("bytes=")) {
-                int dashPos = range.indexOf('-');
-                if (dashPos > 0) {
-                    startByte = range.substring(6, dashPos).toInt();
-                }
-            }
-        }
-
-        if (startByte >= fileSize) {
-            currentDownloadFile.close();
-            request->send(416, "text/plain", "Range Not Satisfiable");
-            return;
-        }
-
-        currentDownloadFile.seek(startByte);
-        size_t contentLength = fileSize - startByte;
-
-        AsyncWebServerResponse *response = request->beginResponse("application/octet-stream", contentLength,
-            [contentLength](uint8_t *buffer, size_t maxLen, size_t index) -> size_t {
-                if (!currentDownloadFile) return 0;
-                size_t chunkSize = (maxLen > 2048) ? 2048 : maxLen;
-                if (index + chunkSize > contentLength) {
-                    chunkSize = contentLength - index;
-                }
-                size_t bytesRead = currentDownloadFile.read(buffer, chunkSize);
-                if (index + bytesRead >= contentLength || bytesRead == 0) {
-                    currentDownloadFile.close();
-                }
-                return bytesRead;
-            });
-
-        response->addHeader("Accept-Ranges", "bytes");
-
-        if (startByte > 0) {
-            response->setCode(206);
-            String contentRange = "bytes " + String(startByte) + "-" + String(endByte) + "/" + String(fileSize);
-            response->addHeader("Content-Range", contentRange);
-            Serial.printf("[HTTP] Resume (206): %s\r\n", contentRange.c_str());
-        } else {
-            response->setCode(200);
-            Serial.printf("[HTTP] Serving firmware: %u bytes\r\n", fileSize);
+            Serial.printf("[HTTP] Range request: %s\r\n", request->header("Range").c_str());
         }
 
         isFirmwareDownloading = true;
+        Serial.printf("[HTTP] Serving firmware: %s\r\n", path.c_str());
+
+        // Let AsyncWebServer handle chunking, Range/206, and WiFi yielding internally
+        request->send(SDFS, path, "application/octet-stream");
 
         request->onDisconnect([]() {
             isFirmwareDownloading = false;
-            if (currentDownloadFile) {
-                currentDownloadFile.close();
-            }
             Serial.println("[HTTP] Download closed, lock released");
         });
-
-        request->send(response);
     });
 #else
     httpServer.on("/firmware.deb", []() {

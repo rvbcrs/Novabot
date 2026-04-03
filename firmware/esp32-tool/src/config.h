@@ -110,6 +110,7 @@ extern unsigned long mowerConnectTime;
 
 extern int otaProgressPercent;
 extern String otaStatus;
+extern int httpDownloadPercent;    // HTTP-side download progress (from Range requests)
 
 // ── OTA retry state ─────────────────────────────────────────────────────────
 
