@@ -167,7 +167,7 @@ bool NovaMQTTBroker::onEvent(sMQTTEvent *event) {
                 // Extract percentage
                 size_t pctPos = payload.find("\"percentage\":");
                 if (pctPos != std::string::npos) {
-                    double rawPct = atof(payload.c_str() + pctPos + 14);
+                    double rawPct = atof(payload.c_str() + pctPos + 13);
                     // percentage is 0.0-1.0 (fraction), convert to 0-100
                     int pct = (rawPct <= 1.0) ? (int)(rawPct * 100) : (int)rawPct;
                     otaProgressPercent = pct;

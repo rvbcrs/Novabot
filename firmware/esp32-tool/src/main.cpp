@@ -791,17 +791,19 @@ void loop() {
             sendMowerOta();  // tries plain first, then AES
             otaSent = true;
         }
-        // Display OTA progress — use best available source:
-        // httpDownloadPercent = HTTP-side (0-62%), otaProgressPercent = MQTT-side (0-100%)
-        // MQTT progress may stop updating after WiFi reconnect, HTTP always works
+        // Display OTA progress — throttled to once per second
 #if defined(WAVESHARE_LCD) || defined(JC3248W535)
         {
-            int displayPercent = (otaProgressPercent > httpDownloadPercent)
-                ? otaProgressPercent : httpDownloadPercent;
-            const char* statusText = "Downloading...";
-            if (otaStatus.length() > 0) statusText = otaStatus.c_str();
-            else if (httpDownloadPercent >= 62) statusText = "Unpacking...";
-            display_firmware_flash("Mower", statusText, displayPercent);
+            static unsigned long lastFlashRefresh = 0;
+            if (millis() - lastFlashRefresh > 1000) {
+                lastFlashRefresh = millis();
+                int displayPercent = (otaProgressPercent > httpDownloadPercent)
+                    ? otaProgressPercent : httpDownloadPercent;
+                const char* statusText = "Downloading...";
+                if (otaStatus.length() > 0) statusText = otaStatus.c_str();
+                else if (httpDownloadPercent >= 62) statusText = "Unpacking...";
+                display_firmware_flash("Mower", statusText, displayPercent);
+            }
         }
 #endif
 

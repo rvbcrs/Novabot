@@ -711,7 +711,7 @@ static lv_obj_t* cf_btn = nullptr;
 static lv_obj_t* cf_skipBtn = nullptr;
 
 void display_confirm(const char* title, const char* line1, const char* line2, const char* btnText) {
-    if (!lvgl_lock(0)) return;
+    if (!lvgl_lock(50)) return;
 
     if (!cf_scr || lv_scr_act() != cf_scr) {
         cf_scr = create_screen();
@@ -799,7 +799,7 @@ static lv_obj_t* ds_spinner = nullptr;
 void display_deviceStatus(int chargerStatus, const char* chargerSn,
                           int mowerStatus, const char* mowerSn,
                           const char* mowerVersion, bool canContinue) {
-    if (!lvgl_lock(0)) return;
+    if (!lvgl_lock(50)) return;  // Short timeout — don't block LVGL animations
 
     auto statusColor = [](int s) -> lv_color_t {
         if (s >= 2) return lv_color_hex(0x34D399); // green
@@ -1050,61 +1050,63 @@ void display_done() {
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
     lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
-    // Confetti particles — colored dots flying outward from center
+    // Confetti particles — 3 waves of colored dots from center, filling the screen
     static const lv_color_t confettiColors[] = {
         lv_color_hex(0x34D399), lv_color_hex(0x818CF8), lv_color_hex(0xF59E0B),
         lv_color_hex(0xEC4899), lv_color_hex(0x06B6D4), lv_color_hex(0xEF4444),
-        lv_color_hex(0xA78BFA), lv_color_hex(0x10B981),
+        lv_color_hex(0xA78BFA), lv_color_hex(0x10B981), lv_color_hex(0xFBBF24),
+        lv_color_hex(0x8B5CF6),
     };
-    for (int i = 0; i < 20; i++) {
+    int centerX = SCREEN_W / 2;
+    int centerY = SCREEN_H / 2 - 30;
+    for (int i = 0; i < 40; i++) {
         lv_obj_t *dot = lv_obj_create(scr);
         lv_obj_remove_style_all(dot);
-        int sz = 4 + (i % 3) * 2;
+        int sz = 4 + (i % 4) * 2;
         lv_obj_set_size(dot, sz, sz);
         lv_obj_set_style_radius(dot, sz / 2, 0);
-        lv_obj_set_style_bg_color(dot, confettiColors[i % 8], 0);
+        lv_obj_set_style_bg_color(dot, confettiColors[i % 10], 0);
         lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
-        // Start from center
         lv_obj_align(dot, LV_ALIGN_CENTER, 0, -30);
 
-        // Animate X outward
-        int targetX = -100 + (i * 211 % 200);  // pseudo-random spread
+        // Wave delay: 0-14 = wave 1, 15-29 = wave 2, 30-39 = wave 3
+        int wave = i / 15;
+        int waveDelay = wave * 1500;
+
+        // Spread across full screen width and height
+        int targetX = -SCREEN_W/2 + (i * 211 % SCREEN_W);
+        int targetY = -SCREEN_H/2 + (i * 173 % SCREEN_H);
+
+        // Animate X
         lv_anim_t ax;
         lv_anim_init(&ax);
         lv_anim_set_var(&ax, dot);
-        lv_anim_set_exec_cb(&ax, [](void* obj, int32_t v) {
-            lv_obj_set_x((lv_obj_t*)obj, v);
-        });
-        lv_anim_set_values(&ax, 120, 120 + targetX);
-        lv_anim_set_time(&ax, 800 + (i * 37 % 400));
-        lv_anim_set_delay(&ax, i * 50);
+        lv_anim_set_exec_cb(&ax, [](void* obj, int32_t v) { lv_obj_set_x((lv_obj_t*)obj, v); });
+        lv_anim_set_values(&ax, centerX, centerX + targetX);
+        lv_anim_set_time(&ax, 1500 + (i * 37 % 500));
+        lv_anim_set_delay(&ax, waveDelay + (i % 15) * 40);
         lv_anim_set_path_cb(&ax, lv_anim_path_ease_out);
         lv_anim_start(&ax);
 
-        // Animate Y outward + fade
-        int targetY = -120 + (i * 173 % 240);
+        // Animate Y
         lv_anim_t ay;
         lv_anim_init(&ay);
         lv_anim_set_var(&ay, dot);
-        lv_anim_set_exec_cb(&ay, [](void* obj, int32_t v) {
-            lv_obj_set_y((lv_obj_t*)obj, v);
-        });
-        lv_anim_set_values(&ay, 130, 130 + targetY);
-        lv_anim_set_time(&ay, 800 + (i * 37 % 400));
-        lv_anim_set_delay(&ay, i * 50);
+        lv_anim_set_exec_cb(&ay, [](void* obj, int32_t v) { lv_obj_set_y((lv_obj_t*)obj, v); });
+        lv_anim_set_values(&ay, centerY, centerY + targetY);
+        lv_anim_set_time(&ay, 1500 + (i * 37 % 500));
+        lv_anim_set_delay(&ay, waveDelay + (i % 15) * 40);
         lv_anim_set_path_cb(&ay, lv_anim_path_ease_out);
         lv_anim_start(&ay);
 
-        // Fade out
+        // Fade out — longer duration
         lv_anim_t af;
         lv_anim_init(&af);
         lv_anim_set_var(&af, dot);
-        lv_anim_set_exec_cb(&af, [](void* obj, int32_t v) {
-            lv_obj_set_style_opa((lv_obj_t*)obj, v, 0);
-        });
+        lv_anim_set_exec_cb(&af, [](void* obj, int32_t v) { lv_obj_set_style_opa((lv_obj_t*)obj, v, 0); });
         lv_anim_set_values(&af, 255, 0);
-        lv_anim_set_time(&af, 1200);
-        lv_anim_set_delay(&af, i * 50 + 600);
+        lv_anim_set_time(&af, 2000);
+        lv_anim_set_delay(&af, waveDelay + (i % 15) * 40 + 1000);
         lv_anim_start(&af);
     }
 
@@ -1823,7 +1825,7 @@ static lv_obj_t* ff_pct = nullptr;
 static lv_obj_t* ff_status = nullptr;
 
 void display_firmware_flash(const char* device, const char* status, int percent) {
-    if (!lvgl_lock(0)) return;
+    if (!lvgl_lock(50)) return;
 
     if (!ff_scr || lv_scr_act() != ff_scr) {
         ff_scr = create_screen();
