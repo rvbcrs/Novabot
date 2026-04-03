@@ -170,13 +170,18 @@ bool NovaMQTTBroker::onEvent(sMQTTEvent *event) {
                             mowerOtaTriedAes = false;
                         }
                         else if (status == "fail" || status == "error") {
-                            // Immediate AES retry if plain failed
-                            if (mowerOtaTriedPlain && !mowerOtaTriedAes && mowerConnected) {
-                                Serial.println("[OTA] FAIL detected — retrying with AES...");
+                            // Only retry with AES if PLAIN never made any progress
+                            // If we reached >0%, PLAIN worked — the fail is install-side, not encryption
+                            static int maxProgressSeen = 0;
+                            if (otaProgressPercent > maxProgressSeen) maxProgressSeen = otaProgressPercent;
+                            if (mowerOtaTriedPlain && !mowerOtaTriedAes && maxProgressSeen == 0 && mowerConnected) {
+                                Serial.println("[OTA] FAIL with 0% progress — retrying with AES...");
                                 mowerOtaTriedAes = true;
                                 sendMowerOtaWithAes(true);
                             } else {
-                                }
+                                Serial.printf("[OTA] FAIL at install stage (max progress was %d%%)\r\n", maxProgressSeen);
+                                maxProgressSeen = 0;
+                            }
                         }
                     }
                 }

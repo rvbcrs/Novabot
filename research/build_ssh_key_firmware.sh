@@ -1578,9 +1578,10 @@ OUTPUT_DEB="$OUTPUT_DIR/mower_firmware_${VERSION}.deb"
 echo "  Herbouwen data.tar.xz vanuit aangepaste firmware..."
 
 # Maak nieuwe data.tar.xz vanuit de aangepaste firmware data
-# COPYFILE_DISABLE=1 voorkomt macOS ._* bestanden in de tar (veroorzaakt "unknown extended header" op ARM)
+# COPYFILE_DISABLE=1 voorkomt macOS ._* bestanden in de tar
+# --format=gnu voorkomt PAX extended headers die dpkg op de mower niet ondersteunt
 cd "$FIRMWARE_DATA"
-COPYFILE_DISABLE=1 tar -cJf "$WORK_DIR/data.tar.xz" .
+COPYFILE_DISABLE=1 tar --format=gnu -cJf "$WORK_DIR/data.tar.xz" .
 echo "  data.tar.xz aangemaakt ($(ls -lh "$WORK_DIR/data.tar.xz" | awk '{print $5}'))"
 cd "$SCRIPT_DIR"
 
@@ -1598,20 +1599,21 @@ CTRL
 # Bouw .deb (ar archief: debian-binary + control.tar.xz + data.tar.xz)
 echo "2.0" > "$WORK_DIR/debian-binary"
 cd "$WORK_DIR/DEBIAN"
-COPYFILE_DISABLE=1 tar -cJf "$WORK_DIR/control.tar.xz" .
+COPYFILE_DISABLE=1 tar --format=gnu -cJf "$WORK_DIR/control.tar.xz" .
 cd "$WORK_DIR"
 
 # Bouw .deb ar-archief (volgorde is belangrijk: debian-binary eerst)
-# macOS /usr/bin/ar is broken voor non-Mach-O files — gebruik Homebrew binutils ar
-AR_BIN="/usr/local/Cellar/binutils/2.34/bin/ar"
-if [ ! -f "$AR_BIN" ]; then
-    AR_BIN=$(find /usr/local/Cellar/binutils -name "ar" -type f 2>/dev/null | head -1)
+# macOS /usr/bin/ar is BROKEN (produces 96-byte files) — use bundled GNU ar
+GNU_AR="$SCRIPT_DIR/../tools/bin/gnu-ar"
+if [ ! -f "$GNU_AR" ]; then
+    GNU_AR=$(find /usr/local/Cellar/binutils /opt/homebrew/Cellar/binutils -name "ar" -type f 2>/dev/null | head -1)
 fi
-if [ -z "$AR_BIN" ] || [ ! -f "$AR_BIN" ]; then
-    echo "ERROR: GNU ar (binutils) not found. Install with: brew install binutils"
+if [ -z "$GNU_AR" ] || [ ! -f "$GNU_AR" ]; then
+    echo "ERROR: GNU ar niet gevonden. Verwacht: tools/bin/gnu-ar of brew install binutils"
     exit 1
 fi
-"$AR_BIN" cr "$OUTPUT_DEB" debian-binary control.tar.xz data.tar.xz
+echo "  Gebruik ar: $GNU_AR"
+"$GNU_AR" cr "$OUTPUT_DEB" debian-binary control.tar.xz data.tar.xz
 BUILD_METHOD="ar"
 cd "$SCRIPT_DIR"
 

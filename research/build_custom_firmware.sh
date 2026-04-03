@@ -1609,12 +1609,18 @@ COPYFILE_DISABLE=1 tar -cJf "$WORK_DIR/control.tar.xz" .
 cd "$WORK_DIR"
 
 # Bouw .deb ar-archief (volgorde is belangrijk: debian-binary eerst)
-# macOS ar voegt altijd een __.SYMDEF SORTED toe — verwijderen na build
-ar cr "$OUTPUT_DEB" debian-binary control.tar.xz data.tar.xz
-# Verwijder macOS-specifieke __.SYMDEF SORTED (niet geldig in .deb formaat)
-if ar t "$OUTPUT_DEB" | grep -q "SYMDEF"; then
-    ar d "$OUTPUT_DEB" "__.SYMDEF SORTED" 2>/dev/null || true
+# macOS /usr/bin/ar is BROKEN (produces 96-byte files) — use bundled GNU ar
+GNU_AR="$SCRIPT_DIR/../tools/bin/gnu-ar"
+if [ ! -f "$GNU_AR" ]; then
+    # Fallback: find Homebrew ar
+    GNU_AR=$(find /usr/local/Cellar/binutils /opt/homebrew/Cellar/binutils -name "ar" -type f 2>/dev/null | head -1)
 fi
+if [ -z "$GNU_AR" ] || [ ! -f "$GNU_AR" ]; then
+    echo "ERROR: GNU ar niet gevonden. Verwacht: tools/bin/gnu-ar of brew install binutils"
+    exit 1
+fi
+echo "  Gebruik ar: $GNU_AR"
+"$GNU_AR" cr "$OUTPUT_DEB" debian-binary control.tar.xz data.tar.xz
 BUILD_METHOD="ar"
 cd "$SCRIPT_DIR"
 
