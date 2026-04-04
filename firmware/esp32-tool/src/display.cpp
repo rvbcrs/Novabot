@@ -480,11 +480,12 @@ void display_boot(const char* version) {
 
     lv_obj_t *scr = create_screen();
 
-    // OpenNova logo (192px with transparent background)
+    // OpenNova logo (192px scaled up to ~290px)
     LV_IMG_DECLARE(openova_192);
     lv_obj_t *logo = lv_img_create(scr);
     lv_img_set_src(logo, &openova_192);
-    lv_obj_align(logo, LV_ALIGN_TOP_MID, 0, 10);
+    lv_img_set_zoom(logo, 384);  // 256=100%, 384=150%
+    lv_obj_align(logo, LV_ALIGN_TOP_MID, 0, -20);
 
     // Version
     add_label(scr, version, &lv_font_montserrat_14, COL_DIM, 190);
@@ -884,52 +885,84 @@ void display_deviceStatus(int chargerStatus, const char* chargerSn,
         lv_obj_set_style_radius(ds_btn, 8, 0);
         lv_obj_set_style_shadow_width(ds_btn, 0, 0);
         lv_obj_set_style_border_width(ds_btn, 0, 0);
+        // Start inactive — enabled when mower connects
+        lv_obj_set_style_bg_color(ds_btn, lv_color_hex(0x374151), 0);
+        lv_obj_clear_flag(ds_btn, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_add_event_cb(ds_btn, generic_btn_cb, LV_EVENT_CLICKED, NULL);
         ds_btnLbl = lv_label_create(ds_btn);
         lv_label_set_text(ds_btnLbl, "Continue");
+        lv_obj_set_style_text_color(ds_btnLbl, lv_color_hex(0x6B7280), 0);
         lv_obj_center(ds_btnLbl);
         btn_label_passthrough(ds_btnLbl);
 
         lv_scr_load(ds_scr);
     }
 
-    // Update colors and text in-place (no screen recreation)
-    lv_color_t mwCol = statusColor(mowerStatus);
-    // Icon tint: grey when waiting, original colors when MQTT connected
-    if (mowerStatus >= 2) {
-        lv_obj_set_style_img_recolor_opa(ds_mwIcon, LV_OPA_0, 0);  // no tint — full color
-    } else if (mowerStatus == 1) {
-        lv_obj_set_style_img_recolor(ds_mwIcon, lv_color_hex(0xF59E0B), 0);
-        lv_obj_set_style_img_recolor_opa(ds_mwIcon, LV_OPA_40, 0);
-    } else {
-        lv_obj_set_style_img_recolor(ds_mwIcon, lv_color_hex(0x4B5563), 0);
-        lv_obj_set_style_img_recolor_opa(ds_mwIcon, LV_OPA_70, 0);
-    }
-    lv_obj_set_style_text_color(ds_mwLbl, mwCol, 0);
-    lv_label_set_text(ds_mwSn, (mowerSn && strlen(mowerSn) > 0) ? mowerSn : "Waiting...");
-    if (mowerVersion && strlen(mowerVersion) > 0) {
-        lv_label_set_text(ds_mwVer, mowerVersion);
-    } else if (mowerStatus >= 2) {
-        lv_label_set_text(ds_mwVer, "Stock firmware");
-    } else {
-        lv_label_set_text(ds_mwVer, "");
+    // Only update if something changed — prevents LVGL memory churn
+    static int prevMwStatus = -1;
+    static bool prevCanContinue = false;
+    static String prevSn = "";
+    static String prevVer = "";
+
+    bool statusChanged = (mowerStatus != prevMwStatus);
+    bool continueChanged = (canContinue != prevCanContinue);
+    bool snChanged = (String(mowerSn ? mowerSn : "") != prevSn);
+    bool verChanged = (String(mowerVersion ? mowerVersion : "") != prevVer);
+
+    if (!statusChanged && !continueChanged && !snChanged && !verChanged) {
+        lvgl_unlock();
+        return;
     }
 
-    // Show spinner while waiting, hide when connected
-    if (mowerStatus < 2) {
-        lv_obj_clear_flag(ds_spinner, LV_OBJ_FLAG_HIDDEN);
-    } else {
-        lv_obj_add_flag(ds_spinner, LV_OBJ_FLAG_HIDDEN);
+    if (statusChanged) {
+        prevMwStatus = mowerStatus;
+        lv_color_t mwCol = statusColor(mowerStatus);
+        if (mowerStatus >= 2) {
+            lv_obj_set_style_img_recolor(ds_mwIcon, lv_color_hex(0x34D399), 0);  // green
+            lv_obj_set_style_img_recolor_opa(ds_mwIcon, LV_OPA_20, 0);  // subtle
+        } else if (mowerStatus == 1) {
+            lv_obj_set_style_img_recolor(ds_mwIcon, lv_color_hex(0xF59E0B), 0);
+            lv_obj_set_style_img_recolor_opa(ds_mwIcon, LV_OPA_40, 0);
+        } else {
+            lv_obj_set_style_img_recolor(ds_mwIcon, lv_color_hex(0x4B5563), 0);
+            lv_obj_set_style_img_recolor_opa(ds_mwIcon, LV_OPA_70, 0);
+        }
+        lv_obj_set_style_text_color(ds_mwLbl, mwCol, 0);
+
+        if (mowerStatus < 2) {
+            lv_obj_clear_flag(ds_spinner, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(ds_spinner, LV_OBJ_FLAG_HIDDEN);
+        }
     }
 
-    if (canContinue) {
-        lv_obj_set_style_bg_color(ds_btn, COL_TEAL, 0);
-        lv_obj_add_flag(ds_btn, LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_set_style_text_color(ds_btnLbl, lv_color_hex(0xFFFFFF), 0);
-    } else {
-        lv_obj_set_style_bg_color(ds_btn, lv_color_hex(0x374151), 0);
-        lv_obj_clear_flag(ds_btn, LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_set_style_text_color(ds_btnLbl, lv_color_hex(0x6B7280), 0);
+    if (snChanged) {
+        prevSn = String(mowerSn ? mowerSn : "");
+        lv_label_set_text(ds_mwSn, prevSn.length() > 0 ? prevSn.c_str() : "Waiting...");
+    }
+
+    if (verChanged) {
+        prevVer = String(mowerVersion ? mowerVersion : "");
+        if (prevVer.length() > 0) {
+            lv_label_set_text(ds_mwVer, prevVer.c_str());
+        } else if (mowerStatus >= 2) {
+            lv_label_set_text(ds_mwVer, "Stock firmware");
+        } else {
+            lv_label_set_text(ds_mwVer, "");
+        }
+    }
+
+    if (continueChanged) {
+        prevCanContinue = canContinue;
+        if (canContinue) {
+            lv_obj_set_style_bg_color(ds_btn, COL_TEAL, 0);
+            lv_obj_add_flag(ds_btn, LV_OBJ_FLAG_CLICKABLE);
+            lv_obj_set_style_text_color(ds_btnLbl, lv_color_hex(0xFFFFFF), 0);
+        } else {
+            lv_obj_set_style_bg_color(ds_btn, lv_color_hex(0x374151), 0);
+            lv_obj_clear_flag(ds_btn, LV_OBJ_FLAG_CLICKABLE);
+            lv_obj_set_style_text_color(ds_btnLbl, lv_color_hex(0x6B7280), 0);
+        }
     }
 
     lvgl_unlock();

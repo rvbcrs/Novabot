@@ -460,12 +460,17 @@ def handle_system_info(params, respond):
     """Verzamel systeem diagnostiek."""
     info = {}
 
-    # Firmware version
+    # Firmware version — from novabot_api.yaml (novabot_version_code field)
+    info["firmware_version"] = "unknown"
     try:
-        with open("/etc/version") as f:
-            info["firmware_version"] = f.read().strip()
+        yaml_path = "/root/novabot/install/novabot_api/share/novabot_api/config/novabot_api.yaml"
+        with open(yaml_path) as f:
+            for line in f:
+                if "novabot_version_code" in line:
+                    info["firmware_version"] = line.split(":", 1)[1].strip()
+                    break
     except Exception:
-        info["firmware_version"] = "unknown"
+        pass
 
     # CPU temperatuur
     try:
