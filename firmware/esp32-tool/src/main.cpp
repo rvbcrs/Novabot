@@ -83,7 +83,7 @@ void webLogAdd(const char* fmt, ...) {
 
 // ── Scan results ────────────────────────────────────────────────────────────
 
-ScanResult scanResults[10];
+ScanResult scanResults[20];
 int scanResultCount = 0;
 int selectedChargerIdx = -1;
 int selectedMowerIdx = -1;
@@ -180,14 +180,14 @@ void setState(State newState) {
 }
 
 // ── Helper: build filtered scan results for display ─────────────────────────
-static ScanResult filteredResults[10];
+static ScanResult filteredResults[20];
 static int filteredCount = 0;
 
 // Filter scan results to only chargers or only mowers, remap selected index
 int buildFilteredResults(bool showChargers) {
     filteredCount = 0;
     int newSelectedIdx = -1;
-    for (int i = 0; i < scanResultCount && filteredCount < 10; i++) {
+    for (int i = 0; i < scanResultCount && filteredCount < 20; i++) {
         bool match = showChargers ? scanResults[i].isCharger : scanResults[i].isMower;
         if (match) {
             filteredResults[filteredCount] = scanResults[i];
@@ -594,7 +594,7 @@ void loop() {
                     display_confirm("Mower Not Found",
                         "No mower found after 3 scans.",
                         "Is the mower powered on?",
-                        "Skip Mower");
+                        "Retry");
 #endif
                     setState(WIZ_SELECT_MOWER);  // reuse select state for skip
                 } else {
@@ -626,15 +626,20 @@ void loop() {
             ui_rescanPressed = false;
         }
         if (ui_rescanPressed) {
+            // Skip button (left) → skip mower entirely
             ui_rescanPressed = false;
-            webLogAdd("BLE: Rescanning for mower...");
-            setState(WIZ_SCAN_MOWER);
-        }
-        else if (ui_btnPressed) {
-            ui_btnPressed = false;
-            webLogAdd("Skipping mower — continuing without mower");
+            webLogAdd("Skipping mower");
             scanRetryCount = 0;
             setState(WIZ_DONE);
+        }
+        else if (ui_btnPressed) {
+            // Retry button (right) or confirm from "Mower Not Found" → rescan
+            ui_btnPressed = false;
+            if (selectedMowerIdx < 0) {
+                webLogAdd("BLE: Retrying mower scan...");
+                scanRetryCount = 0;
+                setState(WIZ_SCAN_MOWER);
+            }
         }
         else if (ui_startPressed) {
             ui_startPressed = false;

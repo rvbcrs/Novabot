@@ -86,7 +86,7 @@ extern bool reprovisioning;
 
 // ── Scan results ────────────────────────────────────────────────────────────
 
-extern ScanResult scanResults[10];
+extern ScanResult scanResults[20];
 extern int scanResultCount;
 extern int selectedChargerIdx;
 extern int selectedMowerIdx;

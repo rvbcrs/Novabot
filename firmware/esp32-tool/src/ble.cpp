@@ -24,7 +24,7 @@ void ScanCallbacks::onResult(const NimBLEAdvertisedDevice* advertisedDevice) {
     }
 
     // Add to results array
-    if (scanResultCount < 10) {
+    if (scanResultCount < 20) {
         ScanResult& r = scanResults[scanResultCount];
         r.name = name;
         r.mac = mac;
