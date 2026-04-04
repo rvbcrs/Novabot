@@ -804,6 +804,11 @@ def handle_set_wifi_config(params, respond):
         )
         if result.returncode == 0:
             log(f"nmcli WiFi connected: {ssid}")
+            # Restart mqtt_node so it picks up the new MQTT address from json_config.json
+            # (MQTT config was likely changed by set_mqtt_config just before this call)
+            time.sleep(2)  # Wait for WiFi to stabilize
+            subprocess.run(["killall", "mqtt_node"], capture_output=True)
+            log("mqtt_node restarted (daemon_node will respawn with new config)")
         else:
             log(f"nmcli WiFi failed: {result.stderr.strip()}")
 
