@@ -465,7 +465,9 @@ void display_init() {
 
 void display_run() {
     // Start LVGL task on core 1 — call AFTER SD init to avoid SPI conflict
-    xTaskCreatePinnedToCore(lvgl_task, "lvgl", 1024 * 10, NULL, 5, NULL, 1);
+    // LVGL on core 0 — keeps animations running even when main loop (core 1)
+    // is busy with MQTT broker updates, DNS processing, or HTTP streaming
+    xTaskCreatePinnedToCore(lvgl_task, "lvgl", 1024 * 10, NULL, 5, NULL, 0);
     Serial.println("[DISPLAY] LVGL task started");
 }
 
@@ -667,7 +669,7 @@ void display_devices(ScanResult* results, int count, int selectedCharger, int se
     lv_obj_t *skip = lv_btn_create(scr);
     lv_obj_set_size(skip, 100, 42);
     lv_obj_align(skip, LV_ALIGN_BOTTOM_MID, 0, -10);
-    lv_obj_set_style_bg_color(skip, lv_color_hex(0x2a2a3e), 0);
+    lv_obj_set_style_bg_color(skip, lv_color_hex(0x3b3b5c), 0);
     lv_obj_set_style_bg_opa(skip, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(skip, 12, 0);
     lv_obj_set_style_shadow_width(skip, 0, 0);
@@ -675,7 +677,7 @@ void display_devices(ScanResult* results, int count, int selectedCharger, int se
     lv_obj_t *skip_lbl = lv_label_create(skip);
     lv_label_set_text(skip_lbl, "Skip");
     lv_obj_set_style_text_font(skip_lbl, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(skip_lbl, COL_DIM, 0);
+    lv_obj_set_style_text_color(skip_lbl, COL_TEXT, 0);
     lv_obj_center(skip_lbl);
     btn_label_passthrough(skip_lbl);
     lv_obj_add_event_cb(skip, generic_btn_cb, LV_EVENT_CLICKED, NULL);
@@ -684,7 +686,7 @@ void display_devices(ScanResult* results, int count, int selectedCharger, int se
     lv_obj_t *btn = lv_btn_create(scr);
     lv_obj_set_size(btn, 110, 42);
     lv_obj_align(btn, LV_ALIGN_BOTTOM_RIGHT, -12, -10);
-    lv_obj_set_style_bg_color(btn, canStart ? COL_PURPLE : lv_color_hex(0x2a2a3e), 0);
+    lv_obj_set_style_bg_color(btn, canStart ? COL_PURPLE : lv_color_hex(0x3b3b5c), 0);
     lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(btn, 12, 0);
     lv_obj_set_style_shadow_width(btn, 0, 0);
@@ -742,7 +744,7 @@ void display_confirm(const char* title, const char* line1, const char* line2, co
         cf_skipBtn = lv_btn_create(cf_scr);
         lv_obj_set_size(cf_skipBtn, 120, 44);
         lv_obj_align(cf_skipBtn, LV_ALIGN_BOTTOM_LEFT, 20, -12);
-        lv_obj_set_style_bg_color(cf_skipBtn, lv_color_hex(0x2a2a3e), 0);
+        lv_obj_set_style_bg_color(cf_skipBtn, lv_color_hex(0x3b3b5c), 0);
         lv_obj_set_style_bg_opa(cf_skipBtn, LV_OPA_COVER, 0);
         lv_obj_set_style_radius(cf_skipBtn, 12, 0);
         lv_obj_set_style_shadow_width(cf_skipBtn, 0, 0);
@@ -750,7 +752,7 @@ void display_confirm(const char* title, const char* line1, const char* line2, co
         lv_obj_t *skipLbl = lv_label_create(cf_skipBtn);
         lv_label_set_text(skipLbl, "Skip");
         lv_obj_set_style_text_font(skipLbl, &lv_font_montserrat_14, 0);
-        lv_obj_set_style_text_color(skipLbl, COL_DIM, 0);
+        lv_obj_set_style_text_color(skipLbl, COL_TEXT, 0);
         lv_obj_center(skipLbl);
         btn_label_passthrough(skipLbl);
         lv_obj_add_event_cb(cf_skipBtn, rescan_btn_cb, LV_EVENT_CLICKED, NULL);
@@ -814,35 +816,37 @@ void display_deviceStatus(int chargerStatus, const char* chargerSn,
 
         add_label(ds_scr, "Device Status", &lv_font_montserrat_20, COL_GREEN, 20);
 
-        int mwY = 60;
-        ds_mwIcon = lv_label_create(ds_scr);
-        lv_label_set_text(ds_mwIcon, FA_ROBOT);
-        lv_obj_set_style_text_font(ds_mwIcon, &fa_icons_40, 0);
-        lv_obj_align(ds_mwIcon, LV_ALIGN_TOP_MID, 0, mwY);
+        int mwY = 20;
+        LV_IMG_DECLARE(OpenNova_Icon_2);
+        ds_mwIcon = lv_img_create(ds_scr);
+        lv_img_set_src(ds_mwIcon, &OpenNova_Icon_2);
+        lv_img_set_zoom(ds_mwIcon, 60);  // 486px → ~115px (~24%)
+        lv_obj_align(ds_mwIcon, LV_ALIGN_TOP_MID, 0, -50);
 
+        int infoY = 140;  // Below the icon
         ds_mwLbl = lv_label_create(ds_scr);
         lv_label_set_text(ds_mwLbl, "Mower");
         lv_obj_set_style_text_font(ds_mwLbl, &lv_font_montserrat_20, 0);
-        lv_obj_align(ds_mwLbl, LV_ALIGN_TOP_MID, 0, mwY + 55);
+        lv_obj_align(ds_mwLbl, LV_ALIGN_TOP_MID, 0, infoY);
 
         ds_mwSn = lv_label_create(ds_scr);
         lv_label_set_text(ds_mwSn, "...");
         lv_obj_set_style_text_font(ds_mwSn, &lv_font_montserrat_14, 0);
         lv_obj_set_style_text_color(ds_mwSn, lv_color_hex(0x9CA3AF), 0);
-        lv_obj_align(ds_mwSn, LV_ALIGN_TOP_MID, 0, mwY + 80);
+        lv_obj_align(ds_mwSn, LV_ALIGN_TOP_MID, 0, infoY + 25);
 
         ds_mwVer = lv_label_create(ds_scr);
         lv_label_set_text(ds_mwVer, "");
         lv_obj_set_style_text_font(ds_mwVer, &lv_font_montserrat_14, 0);
-        lv_obj_set_style_text_color(ds_mwVer, lv_color_hex(0xA78BFA), 0);  // lighter purple
+        lv_obj_set_style_text_color(ds_mwVer, lv_color_hex(0xA78BFA), 0);
         lv_obj_set_style_text_align(ds_mwVer, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_set_width(ds_mwVer, SCREEN_W - 40);
-        lv_obj_align(ds_mwVer, LV_ALIGN_TOP_MID, 0, mwY + 98);
+        lv_obj_align(ds_mwVer, LV_ALIGN_TOP_MID, 0, infoY + 43);
 
         // Spinner — shown while waiting for mower connection
         ds_spinner = lv_spinner_create(ds_scr, 1200, 60);
         lv_obj_set_size(ds_spinner, 30, 30);
-        lv_obj_align(ds_spinner, LV_ALIGN_TOP_MID, 0, mwY + 100);
+        lv_obj_align(ds_spinner, LV_ALIGN_TOP_MID, 0, infoY + 65);
         lv_obj_set_style_arc_color(ds_spinner, COL_PURPLE, LV_PART_INDICATOR);
         lv_obj_set_style_arc_color(ds_spinner, COL_CARD, LV_PART_MAIN);
         lv_obj_set_style_arc_width(ds_spinner, 3, LV_PART_INDICATOR);
@@ -860,7 +864,7 @@ void display_deviceStatus(int chargerStatus, const char* chargerSn,
         lv_obj_t *scanBtn = lv_btn_create(ds_scr);
         lv_obj_set_size(scanBtn, 120, 40);
         lv_obj_align(scanBtn, LV_ALIGN_BOTTOM_LEFT, 20, -10);
-        lv_obj_set_style_bg_color(scanBtn, lv_color_hex(0x2a2a3e), 0);
+        lv_obj_set_style_bg_color(scanBtn, lv_color_hex(0x3b3b5c), 0);
         lv_obj_set_style_bg_opa(scanBtn, LV_OPA_COVER, 0);
         lv_obj_set_style_radius(scanBtn, 8, 0);
         lv_obj_set_style_shadow_width(scanBtn, 0, 0);
@@ -868,7 +872,7 @@ void display_deviceStatus(int chargerStatus, const char* chargerSn,
         lv_obj_t *scanLbl = lv_label_create(scanBtn);
         lv_label_set_text(scanLbl, LV_SYMBOL_BLUETOOTH " Scan");
         lv_obj_set_style_text_font(scanLbl, &lv_font_montserrat_14, 0);
-        lv_obj_set_style_text_color(scanLbl, COL_DIM, 0);
+        lv_obj_set_style_text_color(scanLbl, COL_TEXT, 0);
         lv_obj_center(scanLbl);
         btn_label_passthrough(scanLbl);
         lv_obj_add_event_cb(scanBtn, rescan_btn_cb, LV_EVENT_CLICKED, NULL);
@@ -891,7 +895,16 @@ void display_deviceStatus(int chargerStatus, const char* chargerSn,
 
     // Update colors and text in-place (no screen recreation)
     lv_color_t mwCol = statusColor(mowerStatus);
-    lv_obj_set_style_text_color(ds_mwIcon, mwCol, 0);
+    // Icon tint: grey when waiting, original colors when MQTT connected
+    if (mowerStatus >= 2) {
+        lv_obj_set_style_img_recolor_opa(ds_mwIcon, LV_OPA_0, 0);  // no tint — full color
+    } else if (mowerStatus == 1) {
+        lv_obj_set_style_img_recolor(ds_mwIcon, lv_color_hex(0xF59E0B), 0);
+        lv_obj_set_style_img_recolor_opa(ds_mwIcon, LV_OPA_40, 0);
+    } else {
+        lv_obj_set_style_img_recolor(ds_mwIcon, lv_color_hex(0x4B5563), 0);
+        lv_obj_set_style_img_recolor_opa(ds_mwIcon, LV_OPA_70, 0);
+    }
     lv_obj_set_style_text_color(ds_mwLbl, mwCol, 0);
     lv_label_set_text(ds_mwSn, (mowerSn && strlen(mowerSn) > 0) ? mowerSn : "Waiting...");
     if (mowerVersion && strlen(mowerVersion) > 0) {

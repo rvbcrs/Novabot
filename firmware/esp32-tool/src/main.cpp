@@ -328,6 +328,7 @@ void loop() {
     httpServer.handleClient();
 #endif
     mqttBroker.update();
+    yield();  // Give LVGL task time to run (animations, touch processing)
 
     unsigned long elapsed = (millis() - stateEnteredAt) / 1000;
 
