@@ -333,10 +333,11 @@ void loop() {
     unsigned long elapsed = (millis() - stateEnteredAt) / 1000;
 
     // Auto-detect OTA in progress (mower resuming cached download)
-    // Jump to flash screen if we're not already there
-    if (otaProgressPercent > 0 && otaStatus.length() > 0 &&
+    // Only jump to flash screen from early wizard states
+    if (otaProgressPercent > 0 && otaProgressPercent < 100 && otaStatus == "upgrade" &&
         currentState != WIZ_OTA_FLASH && currentState != WIZ_OTA_CONFIRM &&
-        currentState != WIZ_REPROVISION && currentState != WIZ_DONE) {
+        currentState != WIZ_WAIT_REBOOT && currentState != WIZ_REPROVISION &&
+        currentState != WIZ_DONE && currentState != WIZ_ERROR) {
         webLogAdd("OTA in progress detected (%d%%) — switching to flash screen", otaProgressPercent);
         setState(WIZ_OTA_FLASH);
     }
@@ -841,6 +842,11 @@ void loop() {
 #if defined(WAVESHARE_LCD) || defined(JC3248W535)
             display_firmware_flash("Mower", "Installed! Rebooting...", 100);
 #endif
+            // Reset OTA state so auto-detect doesn't re-trigger
+            otaProgressPercent = 0;
+            otaStatus = "";
+            mowerOtaTriedPlain = false;
+            mowerOtaTriedAes = false;
             delay(3000);
             setState(WIZ_WAIT_REBOOT);
         }
@@ -955,6 +961,13 @@ void loop() {
                     "\",\"password\":\"" + userWifiPassword + "\"}}";
                 mqttBroker.publish(std::string(extTopic.c_str()), std::string(wifiCmd.c_str()));
                 Serial.printf("[REPROV] WiFi config → %s\r\n", userWifiSsid.c_str());
+                delay(2000);
+
+                // 3. Reboot mower so it picks up the new WiFi + MQTT config
+                // mqtt_node kill alone doesn't switch WiFi — a full reboot is needed
+                String rebootCmd = "{\"set_robot_reboot\":{}}";
+                mqttBroker.publish(std::string(extTopic.c_str()), std::string(rebootCmd.c_str()));
+                Serial.println("[REPROV] Reboot command sent");
 
                 mowerOk = true;
             } else if (mowerDevice) {

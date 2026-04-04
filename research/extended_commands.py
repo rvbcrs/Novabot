@@ -777,27 +777,35 @@ def handle_set_wifi_config(params, respond):
         with open(cfg_file) as f:
             cfg = json.load(f)
 
-        # Update wifi section (mower uses "ap" key for STA WiFi, confusingly)
+        # Update wifi section — mqtt_node stores wifi config FLAT in value
+        # (not nested under "ap" like BLE set_wifi_info sends it)
         if "wifi" not in cfg:
             cfg["wifi"] = {"set": 1, "value": {}}
         elif not isinstance(cfg.get("wifi", {}).get("value"), dict):
             cfg["wifi"]["value"] = {}
-        if "ap" not in cfg["wifi"]["value"]:
-            cfg["wifi"]["value"]["ap"] = {}
-        cfg["wifi"]["value"]["ap"]["ssid"] = ssid
-        cfg["wifi"]["value"]["ap"]["passwd"] = password
-        cfg["wifi"]["value"]["ap"]["encrypt"] = 0
+        cfg["wifi"]["value"]["ssid"] = ssid
+        cfg["wifi"]["value"]["passwd"] = password
+        cfg["wifi"]["value"]["encrypt"] = 0
 
         # Atomic write
         tmp_file = cfg_file + ".tmp"
         with open(tmp_file, "w") as f:
             json.dump(cfg, f)
         os.rename(tmp_file, cfg_file)
-        log(f"json_config.json updated: wifi.ap.ssid={ssid}")
+        log(f"json_config.json updated: wifi.ssid={ssid}")
 
-        # Restart mqtt_node to trigger WiFi reconnect
-        subprocess.run(["killall", "mqtt_node"], capture_output=True)
-        log("mqtt_node killed (daemon_node will restart → WiFi reconnect)")
+        # Also configure WiFi via nmcli — mqtt_node uses NetworkManager, not wpa_supplicant directly.
+        # Writing json_config.json alone is NOT enough; nmcli must be called to actually switch networks.
+        log(f"Configuring WiFi via nmcli: {ssid}")
+        subprocess.run(["nmcli", "connection", "delete", ssid], capture_output=True)  # Remove old if exists
+        result = subprocess.run(
+            ["nmcli", "device", "wifi", "connect", ssid, "password", password],
+            capture_output=True, text=True, timeout=30
+        )
+        if result.returncode == 0:
+            log(f"nmcli WiFi connected: {ssid}")
+        else:
+            log(f"nmcli WiFi failed: {result.stderr.strip()}")
 
         respond("set_wifi_config_respond", {"result": 0, "ssid": ssid})
 
