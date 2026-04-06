@@ -22,6 +22,8 @@ research/
 
 # ── Project-internal files ────────────────────────────
 CLAUDE.md
+.claude/
+**/.agent/
 server/captured/
 docs/reference/
 docs/TESTER-GUIDE.md
