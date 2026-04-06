@@ -1,4 +1,0 @@
-
-export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
-export FASTRTPS_DEFAULT_PROFILES_FILE=/root/novabot/shm_config/shm_fastdds.xml
-export RMW_FASTRTPS_USE_QOS_FROM_XML=1

@@ -1,1 +1,0 @@
-ros2 run novabot_teleop teleop_keyboard

@@ -17,31 +17,14 @@ site-public/
 NOVABOT_*/
 NOVABOT_*.*apk
 
-# ── Research — large files ────────────────────────────
-research/NOVABOT_*/
-research/blutter_output*/
-research/ghidra_output/
-research/cloud_data/
-research/*.pklg
-research/*.bin
-research/*.elf
-research/*.xapk
-research/firmware/bestmow/
-research/mower_firmware/**/*.pgm
-research/mower_firmware/ota_lib/
-research/mower_firmware/novabot_log/
-research/mower_firmware/novabot_log_extra/
-research/ros2_msg_definitions/
+# ── Research (entire directory — development only) ───
+research/
 
 # ── Project-internal files ────────────────────────────
 CLAUDE.md
 server/captured/
 docs/reference/
 docs/TESTER-GUIDE.md
-research/*.md
-research/*.txt
-research/*.pklg
-research/*.js
 
 # ── Environment & secrets ─────────────────────────────
 .env
@@ -55,20 +38,6 @@ novabot-data/
 **/*.db-wal
 **/*.db-shm
 
-# ── Firmware binaries (proprietary) ──────────────────
-research/firmware/**/*.deb
-research/firmware/**/*.bin
-research/firmware/STM32/
-research/firmware/mower_v6.0.0_backup/
-research/charger_firmware*.bin
-
-# ── Cloud data captures (personal info) ──────────────
-research/cloud_data/
-research/cloud_devices*.json
-research/ConsoleLog*.txt
-
-# ── Build keys ───────────────────────────────────────
-research/build_ssh_key_firmware.sh
 
 # ── Hardware demo files (400MB+) ─────────────────────
 firmware/esp32-tool/JC3248W535EN/

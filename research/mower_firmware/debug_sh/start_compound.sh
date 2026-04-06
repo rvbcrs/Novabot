@@ -1,1 +1,0 @@
-ros2 launch compound_decision compound_decision_node.py

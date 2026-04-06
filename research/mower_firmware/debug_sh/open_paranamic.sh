@@ -1,1 +1,0 @@
-ros2 service call /camera/panoramic/start_camera std_srvs/srv/SetBool "data: true"

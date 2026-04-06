@@ -1,4 +1,0 @@
-killall tof_camera_node
-killall camera_307_cap
-killall iox-roudi
-killall perception_node
