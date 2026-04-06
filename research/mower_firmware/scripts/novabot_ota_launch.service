@@ -1,0 +1,17 @@
+[Unit]
+Description=/userdata/ota/run_ota.sh start
+ConditionPathExists=/userdata/ota/run_ota.sh
+After=network.target
+
+[Service]
+Type=forking
+ExecStart=/userdata/ota/run_ota.sh  start 
+ExecStop=/userdata/ota/run_ota.sh  stop 
+Restart=on-failure
+RestartSec=10s
+TimeoutSec=60
+StandardOutput=null
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,26 @@
+# Local build artifacts (EAS installs these itself)
+ios/build/
+ios/Pods/
+
+# Parent project directories
+../research/
+../server/
+../dashboard/
+../bootstrap/
+../firmware/
+../mower/
+../docs/
+../.claude/
+
+# Old directory names
+../novabot-server/
+../novabot-dashboard/
+../nova-ota-device/
+../open_decision/
+../rpi-image/
+../setup-wizard/
+
+# Large files
+*.bin
+*.deb
+*.elf

@@ -1,0 +1,12 @@
+{
+  "ota_upgrade_cmd": {
+    "type": "full",
+    "content": {
+      "upgradeApp": {
+        "version": "v6.0.2-custom-21",
+        "downloadUrl": "http://novabot.local/firmware/mower_firmware_v6.0.2-custom-21.deb",
+        "md5": "0f868e52a63c8ea6f06d9227d65034f3"
+      }
+    }
+  }
+}

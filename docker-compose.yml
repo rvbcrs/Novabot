@@ -1,0 +1,50 @@
+# OpenNova Server — self-hosted Novabot cloud replacement
+#
+# Quick start:
+#   docker compose up -d
+#
+# Dashboard: http://localhost:3000
+# Provision devices: use the OpenNova app (iOS/Android) or bootstrap tool
+
+services:
+  opennova:
+    image: rvbcrs/opennova:latest
+    build: .
+    container_name: opennova
+    restart: unless-stopped
+    ports:
+      - "3000:80"    # Dashboard + API
+      - "1883:1883"  # MQTT broker
+      # Uncomment if using TLS/DNS features:
+      # - "443:443"  # HTTPS (requires ENABLE_TLS + TARGET_IP)
+      # - "53:53/udp"  # DNS (requires ENABLE_DNS + TARGET_IP)
+    environment:
+      PORT: 80
+      JWT_SECRET: ${JWT_SECRET:-change_me_to_a_random_secret}
+      DB_PATH: /data/novabot.db
+      STORAGE_PATH: /data/storage
+      FIRMWARE_PATH: /data/firmware
+
+      # Optional: enable web dashboard (default: disabled)
+      # ENABLE_DASHBOARD: "true"
+
+      # Optional: your server's LAN IP (only needed for TLS/DNS features)
+      # TARGET_IP: 192.168.0.177
+
+      # Optional: TLS for Novabot iOS app (requires TARGET_IP)
+      # ENABLE_TLS: "true"
+
+      # Optional: DNS redirect for Novabot app (requires TARGET_IP)
+      # ENABLE_DNS: "true"
+      # UPSTREAM_DNS: 8.8.8.8
+
+      # Optional: Home Assistant MQTT bridge
+      # HA_MQTT_HOST: 192.168.0.248
+      # HA_MQTT_PORT: 1883
+      # HA_MQTT_USER: mqtt
+      # HA_MQTT_PASS: mqtt
+    volumes:
+      - novabot-data:/data
+
+volumes:
+  novabot-data:

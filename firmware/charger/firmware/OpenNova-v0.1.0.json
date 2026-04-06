@@ -1,0 +1,7 @@
+{
+  "version": "v0.1.0",
+  "device_type": "charger",
+  "filename": "OpenNova-v0.1.0.bin",
+  "md5": "70fbb0cee297faa7c596386112c20ed0",
+  "description": "OpenNova charger firmware (ESP32-S3)"
+}

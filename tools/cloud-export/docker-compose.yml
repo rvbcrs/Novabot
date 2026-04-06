@@ -1,0 +1,16 @@
+services:
+  cloud-export:
+    image: rvbcrs/novabot-cloud-export:latest
+    build: .
+    container_name: novabot-cloud-export
+    restart: unless-stopped
+    ports:
+      - "7780:7780"
+    environment:
+      PORT: 7780
+      DOCKER: 1
+    volumes:
+      - cloud-export-data:/data
+
+volumes:
+  cloud-export-data:

@@ -1,0 +1,120 @@
+{
+  "title": "BLE Diagnostiek",
+  "scanner": {
+    "title": "Apparaat Scanner",
+    "scan": "Scannen",
+    "scanning": "Scannen...",
+    "stopScan": "Stop",
+    "noDevices": "Geen Novabot apparaten gevonden. Zorg dat de maaier of het laadstation aan staat en in de buurt is.",
+    "connect": "Verbinden",
+    "disconnect": "Verbreken",
+    "connected": "Verbonden",
+    "rssi": "RSSI",
+    "charger": "Laadstation",
+    "mower": "Maaier",
+    "unknown": "Onbekend"
+  },
+  "dashboard": {
+    "title": "Radio Dashboard",
+    "backToScan": "Terug naar scan",
+    "refreshAll": "Alles verversen",
+    "autoRefresh": "Auto-ververs",
+    "seconds": "{n}s"
+  },
+  "wifi": {
+    "title": "WiFi",
+    "rssi": "RSSI",
+    "status": "Status",
+    "ok": "Verbonden",
+    "noData": "Geen data"
+  },
+  "lora": {
+    "title": "LoRa",
+    "address": "Adres",
+    "channel": "Kanaal",
+    "hc": "HC",
+    "lc": "LC",
+    "noData": "Geen data",
+    "viaMqtt": "via MQTT",
+    "viaBle": "via BLE"
+  },
+  "gps": {
+    "title": "GPS",
+    "satellites": "Satellieten",
+    "rtk": "RTK",
+    "fixed": "Fixed",
+    "float": "Float",
+    "none": "Geen",
+    "valid": "Geldig",
+    "noData": "Geen data"
+  },
+  "deviceInfo": {
+    "title": "Apparaat Info",
+    "sn": "Serienummer",
+    "firmware": "Firmware",
+    "hardware": "Hardware",
+    "config": "Configuratie",
+    "committed": "Opgeslagen",
+    "notCommitted": "Niet opgeslagen",
+    "noData": "Geen data"
+  },
+  "provisioning": {
+    "title": "Provisioning",
+    "wifi": "WiFi",
+    "ssid": "SSID",
+    "password": "Wachtwoord",
+    "lora": "LoRa",
+    "address": "Adres",
+    "channel": "Kanaal",
+    "mqtt": "MQTT",
+    "host": "Host",
+    "port": "Poort",
+    "set": "Instellen",
+    "commit": "Config Opslaan",
+    "success": "Commando succesvol verstuurd",
+    "error": "Commando mislukt"
+  },
+  "mqttPanel": {
+    "title": "MQTT Broker",
+    "host": "Host",
+    "port": "Poort",
+    "connect": "Verbinden",
+    "disconnect": "Verbreken",
+    "connected": "Verbonden",
+    "disconnected": "Niet verbonden",
+    "sn": "Maaier SN",
+    "queryLora": "LoRa opvragen",
+    "queryInfo": "Info opvragen"
+  },
+  "loraFix": {
+    "title": "Fix LoRa Kanaal",
+    "description": "Vraag het werkelijke STM32 LoRa kanaal op via SSH naar de maaier, en stel de charger in op hetzelfde kanaal via BLE. Dit zorgt dat beide apparaten op hetzelfde kanaal zitten zodat LoRa communicatie hervat.",
+    "queryMower": "Maaier opvragen",
+    "fix": "Fix LoRa",
+    "mowerIp": "Maaier IP",
+    "mowerStm32": "Maaier STM32 werkelijke config:",
+    "success": "Charger ingesteld op kanaal {channel} — LoRa verbinding zou binnen seconden moeten herstellen.",
+    "failed": "Fix mislukt",
+    "needCharger": "Verbind met charger via BLE om fix toe te passen"
+  },
+  "serial": {
+    "title": "Serieel Monitor",
+    "connect": "SSH Verbinden",
+    "disconnect": "Verbreken",
+    "heartbeats": "Heartbeats",
+    "lastSeen": "Laatst",
+    "rtkRelay": "RTK Relay",
+    "loraFrames": "LoRa Frames",
+    "total": "Totaal",
+    "frameRate": "Frame Snelheid",
+    "framesPerSecond": "frames/sec",
+    "filter": "Filter",
+    "filter_all": "Alles",
+    "filter_lora": "LoRa",
+    "filter_heartbeat": "Heartbeat",
+    "filter_rtk": "RTK",
+    "filter_sensor": "Sensor",
+    "clear": "Wissen",
+    "waitingForData": "Wachten op seriële data..."
+  }
+}

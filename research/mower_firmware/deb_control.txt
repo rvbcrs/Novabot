@@ -1,0 +1,9 @@
+Package: mvp
+Version: 5.7.1
+Section: custom
+Priority: optional
+Architecture: all
+Essential: no
+Installed-Size: 90214
+Maintainer: lfi.org
+Description: log for battery
