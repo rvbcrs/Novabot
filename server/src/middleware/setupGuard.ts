@@ -31,7 +31,7 @@ export function isSetupComplete(): boolean {
   const userCount = (db.prepare('SELECT COUNT(*) as count FROM users').get() as { count: number }).count;
   const equipCount = (db.prepare('SELECT COUNT(*) as count FROM equipment').get() as { count: number }).count;
 
-  _setupComplete = userCount > 0 && equipCount > 0;
+  _setupComplete = userCount > 0;
   return _setupComplete;
 }
 
@@ -55,10 +55,13 @@ export function setupGuard(req: Request, res: Response, next: NextFunction): voi
   if (
     req.path.startsWith('/api/setup') ||
     req.path.startsWith('/api/admin') ||
+    req.path.startsWith('/api/nova-user/appUser/login') ||
+    req.path.startsWith('/api/nova-user/appUser/register') ||
     req.path.startsWith('/api/nova-network') ||
     req.path.startsWith('/api/dashboard/admin/import') ||
     req.path.startsWith('/x3/') ||
-    req.path.startsWith('/setup')
+    req.path.startsWith('/setup') ||
+    req.path === '/admin'
   ) {
     next();
     return;
@@ -69,17 +72,13 @@ export function setupGuard(req: Request, res: Response, next: NextFunction): voi
     return;
   }
 
-  // Setup not complete — handle based on request type
+  // Setup not complete — let API requests through anyway
+  // (login auto-import will create the user on first login attempt)
   if (req.path.startsWith('/api/')) {
-    // API routes: return 503 with helpful message
-    res.status(503).json({
-      code: 503,
-      msg: 'Setup not complete. Please visit the web interface to complete initial setup.',
-      data: null,
-    });
+    next();
     return;
   }
 
-  // Browser request: redirect to wizard
-  res.redirect('/setup');
+  // Browser request: redirect to admin (which has cloud import + first-time setup)
+  res.redirect('/admin');
 }

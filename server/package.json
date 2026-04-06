@@ -5,8 +5,8 @@
   "description": "Local Novabot cloud server replacement",
   "main": "dist/index.js",
   "scripts": {
-    "dev": "concurrently -n server,dashboard -c blue,magenta \"tsx watch src/index.ts\" \"npm run dev --prefix ../dashboard\"",
-    "dev:server": "tsx watch src/index.ts",
+    "dev": "tsx watch src/index.ts",
+    "dev:all": "concurrently -n server,dashboard -c blue,magenta \"tsx watch src/index.ts\" \"npm run dev --prefix ../dashboard\"",
     "build": "tsc --noEmitOnError false",
     "build:all": "npm run build && npm run build --prefix ../dashboard",
     "start": "node dist/index.js"

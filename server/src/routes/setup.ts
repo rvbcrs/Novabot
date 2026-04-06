@@ -27,7 +27,7 @@ export const setupRouter = Router();
 const LFI_CLOUD_HOST = '47.253.145.99';
 const APP_PW_KEY_IV = Buffer.from('1234123412ABCDEF', 'utf8');
 
-function encryptCloudPassword(plainPassword: string): string {
+export function encryptCloudPassword(plainPassword: string): string {
   const cipher = crypto.createCipheriv('aes-128-cbc', APP_PW_KEY_IV, APP_PW_KEY_IV);
   let encrypted = cipher.update(plainPassword, 'utf8', 'base64');
   encrypted += cipher.final('base64');
@@ -53,7 +53,7 @@ function makeLfiHeaders(token: string): Record<string, string> {
   };
 }
 
-function callLfiCloud(
+export function callLfiCloud(
   method: string, urlPath: string,
   body: Record<string, unknown> | null, token = ''
 ): Promise<Record<string, unknown>> {
@@ -174,20 +174,66 @@ setupRouter.post('/cloud-apply', async (req: Request, res: Response) => {
   }
 
   try {
-    // Call the existing admin import endpoint internally via fetch to localhost
-    const port = process.env.PORT ?? '3000';
-    const resp = await fetch(`http://127.0.0.1:${port}/api/dashboard/admin/import`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password, deviceName, charger, mower }),
-    });
+    const bcrypt = await import('bcrypt');
+    const normalizedEmail = email.trim().toLowerCase();
 
-    const data = await resp.json() as Record<string, unknown>;
+    // 1. Create or update user
+    const existingUser = db.prepare('SELECT app_user_id FROM users WHERE email = ?')
+      .get(normalizedEmail) as { app_user_id: string } | undefined;
 
-    // Invalidate setup cache after import
+    let appUserId: string;
+    if (existingUser) {
+      appUserId = existingUser.app_user_id;
+      const hash = await bcrypt.hash(password, 10);
+      db.prepare('UPDATE users SET password = ? WHERE app_user_id = ?').run(hash, appUserId);
+      console.log(`[Setup] Updated user: ${normalizedEmail}`);
+    } else {
+      appUserId = crypto.randomUUID();
+      const hash = await bcrypt.hash(password, 10);
+      db.prepare(`
+        INSERT INTO users (app_user_id, email, password, username, is_admin, created_at)
+        VALUES (?, ?, ?, ?, 1, datetime('now'))
+      `).run(appUserId, normalizedEmail, hash, normalizedEmail.split('@')[0]);
+      console.log(`[Setup] Created user: ${normalizedEmail} (admin)`);
+    }
+
+    // 2. Register equipment
+    const primarySn = mower?.sn ?? charger?.sn;
+    if (primarySn) {
+      const existing = db.prepare('SELECT equipment_id FROM equipment WHERE mower_sn = ?').get(primarySn);
+      if (!existing) {
+        const equipmentId = crypto.randomUUID();
+        db.prepare(`
+          INSERT INTO equipment (equipment_id, user_id, mower_sn, charger_sn, equipment_nick_name,
+            charger_address, charger_channel, mac_address, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+        `).run(
+          equipmentId, appUserId, primarySn, charger?.sn ?? null,
+          deviceName ?? null, charger?.address ?? null, charger?.channel ?? null,
+          (mower?.mac ?? charger?.mac) ?? null,
+        );
+        console.log(`[Setup] Equipment created: ${primarySn} + ${charger?.sn ?? 'no charger'}`);
+      }
+
+      // 3. Register in device_registry (for MAC lookup)
+      if (mower?.sn && mower?.mac) {
+        db.prepare('INSERT OR IGNORE INTO device_registry (sn, mac_address, last_seen) VALUES (?, ?, datetime("now"))')
+          .run(mower.sn, mower.mac);
+      }
+      if (charger?.sn && charger?.mac) {
+        db.prepare('INSERT OR IGNORE INTO device_registry (sn, mac_address, last_seen) VALUES (?, ?, datetime("now"))')
+          .run(charger.sn, charger.mac);
+      }
+
+      // 4. LoRa cache
+      if (charger?.sn && charger?.address) {
+        db.prepare('INSERT OR REPLACE INTO equipment_lora_cache (sn, charger_address, charger_channel) VALUES (?, ?, ?)')
+          .run(charger.sn, charger.address, charger.channel ?? 16);
+      }
+    }
+
     invalidateSetupCache();
-
-    res.json({ ...data, setupComplete: isSetupComplete() });
+    res.json({ ok: true, email: normalizedEmail, setupComplete: isSetupComplete() });
   } catch (err) {
     console.error('[Setup] Cloud apply error:', err);
     res.status(500).json({

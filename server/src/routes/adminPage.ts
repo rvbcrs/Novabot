@@ -59,7 +59,7 @@ export function adminPageHtml(): string {
 </head>
 <body>
 
-<!-- Login -->
+<!-- Login (hidden when first-time setup is shown) -->
 <div id="login" class="login-box" style="display:none">
   <div class="card" style="text-align:center;padding:32px">
     <h1 style="margin-bottom:16px">OpenNova Admin</h1>
@@ -71,6 +71,21 @@ export function adminPageHtml(): string {
   </div>
 </div>
 
+<!-- First-time setup (shown instead of login when DB is empty) -->
+<div id="firstTimeSetup" class="login-box" style="display:none">
+  <div class="card" style="padding:28px">
+    <h1 style="color:#00d4aa;margin-bottom:8px;text-align:center">Welcome to OpenNova</h1>
+    <p style="font-size:13px;color:#888;margin-bottom:20px;text-align:center">Import your devices from the Novabot cloud to get started.</p>
+    <input type="email" id="cloud_email_setup" placeholder="Novabot app email" style="margin-bottom:8px">
+    <input type="password" id="cloud_pass_setup" placeholder="Novabot app password" style="margin-bottom:14px">
+    <button class="btn btn-green" style="width:100%;padding:12px" onclick="firstTimeCloudImport()" id="setupBtn">Connect &amp; Import from Cloud</button>
+    <div id="setupResult" style="margin-top:10px"></div>
+    <div style="text-align:center;color:#444;margin:16px 0;font-size:12px">— or —</div>
+    <button class="btn" style="width:100%;padding:10px;background:#333" onclick="skipSetup()">Skip — Create Local Account</button>
+    <p style="font-size:11px;color:#555;margin-top:8px;text-align:center">Creates admin@local with password admin</p>
+  </div>
+</div>
+
 <!-- Admin Panel -->
 <div id="app" class="container" style="display:none">
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:24px">
@@ -78,31 +93,34 @@ export function adminPageHtml(): string {
       <h1>OpenNova Admin</h1>
       <div class="version" id="serverInfo">Loading...</div>
     </div>
-    <button class="btn btn-purple" onclick="location.reload()">↻ Refresh</button>
+    <div style="display:flex;gap:8px">
+      <button class="btn" style="background:#333" onclick="logout()">Logout</button>
+      <button class="btn btn-purple" onclick="loadAll()">↻ Refresh</button>
+    </div>
   </div>
 
-  <!-- Overview -->
+  <!-- Account -->
   <div class="card">
-    <h2>Server</h2>
-    <div id="overview">Loading...</div>
+    <h2>Account</h2>
+    <div id="account">Loading...</div>
   </div>
 
-  <!-- Users -->
+  <!-- My Devices -->
   <div class="card">
-    <h2>Users <span class="refresh-btn" onclick="loadUsers()">↻</span></h2>
-    <div id="users">Loading...</div>
+    <h2>My Devices <span class="refresh-btn" onclick="loadMyDevices()">↻</span></h2>
+    <div id="myDevices">Loading...</div>
   </div>
 
-  <!-- Devices -->
+  <!-- Cloud Import -->
   <div class="card">
-    <h2>Devices <span class="refresh-btn" onclick="loadDevices()">↻</span></h2>
-    <div id="devices">Loading...</div>
-  </div>
-
-  <!-- Equipment -->
-  <div class="card">
-    <h2>Equipment <span class="refresh-btn" onclick="loadEquipment()">↻</span></h2>
-    <div id="equipment">Loading...</div>
+    <h2>Cloud Import</h2>
+    <p style="font-size:12px;color:#888;margin-bottom:12px">Import devices from the Novabot cloud using your Novabot app credentials.</p>
+    <div style="display:flex;gap:8px;margin-bottom:8px">
+      <input type="email" id="cloud_email" placeholder="Novabot email" style="flex:1">
+      <input type="password" id="cloud_pass" placeholder="Novabot password" style="flex:1">
+    </div>
+    <button class="btn btn-purple" onclick="cloudImport()" id="cloudBtn">Connect &amp; Import</button>
+    <div id="cloudResult" style="margin-top:8px"></div>
   </div>
 </div>
 
@@ -159,224 +177,284 @@ function ago(ts) {
 
 async function showApp() {
   document.getElementById('login').style.display = 'none';
+  document.getElementById('firstTimeSetup').style.display = 'none';
   document.getElementById('app').style.display = 'block';
-  loadOverview();
-  loadUsers();
-  loadDevices();
-  loadEquipment();
+  loadAll();
 }
 
-async function loadOverview() {
+async function loadAll() {
+  loadAccount();
+  loadMyDevices();
+}
+
+async function loadAccount() {
   try {
     const d = await api('/overview');
     const s = d.server;
-    document.getElementById('serverInfo').textContent = s.nodeVersion + ' · ' + s.platform + ' · uptime ' + s.uptimeFormatted;
-    document.getElementById('overview').innerHTML =
-      '<div class="row"><span class="label">Uptime</span><span class="value">' + s.uptimeFormatted + '</span></div>' +
-      '<div class="row"><span class="label">Memory</span><span class="value">' + s.memoryMB + ' MB (heap: ' + s.heapUsedMB + ' MB)</span></div>' +
-      '<div class="row"><span class="label">Database</span><span class="value">' + s.dbSizeMB + ' MB</span></div>' +
-      '<div class="row"><span class="label">Users</span><span class="value">' + d.counts.users + '</span></div>' +
-      '<div class="row"><span class="label">Equipment</span><span class="value">' + d.counts.equipment + '</span></div>' +
-      '<div class="row"><span class="label">Devices seen</span><span class="value">' + d.counts.devices + '</span></div>' +
+    document.getElementById('serverInfo').textContent = 'uptime ' + s.uptimeFormatted + ' · ' + s.memoryMB + ' MB RAM';
+    const u = d.currentUser || {};
+    document.getElementById('account').innerHTML =
+      '<div class="row"><span class="label">Email</span><span class="value">' + (u.email || '-') + '</span></div>' +
+      '<div class="row"><span class="label">Role</span><span class="value"><span class="badge badge-admin">' + (u.is_admin ? 'admin' : 'user') + '</span></span></div>' +
+      '<div class="row"><span class="label">Devices</span><span class="value">' + d.counts.equipment + ' registered · ' + d.counts.devices + ' seen</span></div>' +
       '<div class="row"><span class="label">Maps</span><span class="value">' + d.counts.maps + '</span></div>';
-  } catch { document.getElementById('overview').textContent = 'Failed to load'; }
+  } catch { document.getElementById('account').textContent = 'Failed to load'; }
 }
 
-async function loadUsers() {
+async function loadMyDevices() {
   try {
-    const d = await api('/users');
-    if (!d.users?.length) { document.getElementById('users').textContent = 'No users'; return; }
-    let html = '<table><tr><th>Email</th><th>SNs</th><th>Role</th><th>Registered</th><th>Actions</th></tr>';
-    for (const u of d.users) {
-      const role = u.is_admin ? 'admin' : u.dashboard_access ? 'dashboard' : 'user';
-      const badgeClass = u.is_admin ? 'badge-admin' : u.dashboard_access ? 'badge-dash' : 'badge-user';
-      // Deduplicate and label SNs
-      const allSns = new Set([...(u.mower_sns||'').split(','), ...(u.charger_sns||'').split(',')].filter(Boolean));
-      let snHtml = '';
-      for (const sn of allSns) {
-        const isCharger = sn.startsWith('LFIC');
-        const color = isCharger ? '#f59e0b' : '#00d4aa';
-        const label = isCharger ? 'C' : 'M';
-        snHtml += '<span style="display:inline-block;margin:2px 4px 2px 0;padding:2px 8px;border-radius:6px;font-size:11px;font-family:monospace;background:rgba(255,255,255,.05);border:1px solid ' + color + '33"><span style="color:' + color + ';font-weight:700;margin-right:4px">' + label + '</span>' + sn + '</span>';
-      }
-      html += '<tr>' +
-        '<td>' + u.email + '</td>' +
-        '<td>' + (snHtml || '<span style="color:#666">-</span>') + '</td>' +
-        '<td><span class="badge ' + badgeClass + '">' + role + '</span></td>' +
-        '<td style="color:#666">' + ago(u.created_at) + '</td>' +
-        '<td><div style="position:relative;display:inline-block">' +
-          '<button class="btn btn-sm" style="background:#374151;color:#ccc" onclick="toggleMenu(this)">⋯</button>' +
-          '<div class="action-menu" style="display:none;position:absolute;right:0;top:28px;background:#1e293b;border:1px solid rgba(255,255,255,.12);border-radius:10px;padding:6px;min-width:160px;z-index:50;box-shadow:0 8px 30px rgba(0,0,0,.5)">' +
-            (u.is_admin ? '' : '<div class="menu-item" onclick="closeMenus();setRole(\\'' + u.app_user_id + '\\',\\'dashboard_access\\',true)">Grant Dashboard</div>') +
-            (u.is_admin ? '' : '<div class="menu-item" onclick="closeMenus();setRole(\\'' + u.app_user_id + '\\',\\'is_admin\\',true)">Grant Admin</div>') +
-            (u.is_admin ? '<div class="menu-item" onclick="closeMenus();setRole(\\'' + u.app_user_id + '\\',\\'is_admin\\',false)">Remove Admin</div>' : '') +
-            (u.dashboard_access && !u.is_admin ? '<div class="menu-item" onclick="closeMenus();setRole(\\'' + u.app_user_id + '\\',\\'dashboard_access\\',false)">Remove Dashboard</div>' : '') +
-            '<div class="menu-item" onclick="closeMenus();resetPw(\\'' + u.app_user_id + '\\',\\'' + u.email + '\\')">Reset Password</div>' +
-            '<div class="menu-item" style="color:#ef4444" onclick="closeMenus();deleteUser(\\'' + u.app_user_id + '\\',\\'' + u.email + '\\')">Delete User</div>' +
-          '</div></div></td></tr>';
-    }
-    html += '</table>';
+    const d = await api('/devices');
+    const devs = d.devices || [];
+    if (!devs.length) { document.getElementById('myDevices').textContent = 'No devices found. Import from cloud or wait for devices to connect via MQTT.'; return; }
+    // Split into bound (has equipment with user_id) and unbound
+    let html = '';
 
-    // Show unbound equipment warning
-    if (d.unboundCount > 0) {
-      html += '<div style="margin-top:12px;padding:10px 14px;background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.2);border-radius:8px">' +
-        '<span class="warn" style="font-size:12px;font-weight:600">' + d.unboundCount + ' unbound device(s)</span>' +
-        '<span style="color:#888;font-size:12px"> — not linked to any user account</span></div>';
+    // Bound devices
+    const bound = devs.filter(function(d) { return d.is_bound; });
+    const unbound = devs.filter(function(d) { return !d.is_bound; });
 
-      html += '<table style="margin-top:8px"><tr><th>Mower SN</th><th>Charger SN</th><th>Name</th></tr>';
-      for (const eq of d.allEquipment) {
-        if (eq.user_id) continue;
-        html += '<tr><td class="sn">' + (eq.mower_sn || '-') + '</td>' +
-          '<td class="sn">' + (eq.charger_sn || '-') + '</td>' +
-          '<td style="color:#888">' + (eq.equipment_nick_name || '-') + '</td></tr>';
+    if (bound.length > 0) {
+      html += '<table><tr><th>Device</th><th>Serial Number</th><th>Status</th><th>MAC</th><th>Last Seen</th></tr>';
+      for (const dev of bound) {
+        const online = dev.is_online;
+        const isCharger = dev.device_type === 'charger';
+        const icon = isCharger ? '⚡' : '🤖';
+        const typeColor = isCharger ? '#f59e0b' : '#00d4aa';
+        const typeName = isCharger ? 'Charger' : 'Mower';
+        html += '<tr>' +
+          '<td><span style="color:' + typeColor + '">' + icon + ' ' + typeName + '</span></td>' +
+          '<td class="sn">' + (dev.sn || '-') + '</td>' +
+          '<td>' + dot(online) + (online ? '<span class="on">Online</span>' : '<span class="off">Offline</span>') + '</td>' +
+          '<td class="sn">' + (dev.mac_address || '-') + '</td>' +
+          '<td style="color:#666">' + ago(dev.last_seen) + '</td>' +
+          '</tr>';
       }
       html += '</table>';
     }
 
-    document.getElementById('users').innerHTML = html;
-  } catch { document.getElementById('users').textContent = 'Failed to load'; }
-}
-
-async function setRole(userId, role, enabled) {
-  await api('/set-role', 'POST', { userId, role, enabled });
-  loadUsers();
-}
-
-// ── Action menu ──
-function toggleMenu(btn) {
-  closeMenus();
-  const menu = btn.nextElementSibling;
-  menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
-  event.stopPropagation();
-}
-function closeMenus() {
-  document.querySelectorAll('.action-menu').forEach(function(m) { m.style.display = 'none'; });
-}
-document.addEventListener('click', closeMenus);
-
-// ── Inline modal system ──
-function showModal(title, body, onConfirm) {
-  const overlay = document.createElement('div');
-  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:999';
-  const modal = document.createElement('div');
-  modal.style.cssText = 'background:#16213e;border:1px solid rgba(255,255,255,.12);border-radius:16px;padding:24px;max-width:380px;width:90%;box-shadow:0 20px 60px rgba(0,0,0,.5)';
-  modal.innerHTML = '<h3 style="color:#fff;font-size:16px;margin-bottom:8px">' + title + '</h3>' +
-    '<div style="color:#aaa;font-size:13px;margin-bottom:20px">' + body + '</div>' +
-    '<div id="modal-actions" style="display:flex;gap:8px;justify-content:flex-end"></div>';
-  overlay.appendChild(modal);
-  document.body.appendChild(overlay);
-  overlay.addEventListener('click', function(e) { if (e.target === overlay) { overlay.remove(); } });
-
-  const actions = modal.querySelector('#modal-actions');
-  const cancelBtn = document.createElement('button');
-  cancelBtn.className = 'btn'; cancelBtn.style.cssText = 'background:#374151;color:#ccc;padding:8px 20px';
-  cancelBtn.textContent = 'Cancel';
-  cancelBtn.onclick = function() { overlay.remove(); };
-  actions.appendChild(cancelBtn);
-
-  const confirmBtn = document.createElement('button');
-  confirmBtn.className = 'btn btn-purple'; confirmBtn.style.padding = '8px 20px';
-  confirmBtn.textContent = 'Confirm';
-  confirmBtn.onclick = function() { overlay.remove(); onConfirm(); };
-  actions.appendChild(confirmBtn);
-
-  return { overlay, modal, actions };
-}
-
-function showInputModal(title, placeholder, onSubmit) {
-  const { modal, actions } = showModal(title, '<input id="modal-input" type="text" placeholder="' + placeholder + '" style="width:100%;margin-top:4px">', function() {
-    const val = document.getElementById('modal-input').value;
-    onSubmit(val);
-  });
-  setTimeout(function() { const inp = document.getElementById('modal-input'); if(inp) inp.focus(); }, 100);
-}
-
-function showToast(msg, isError) {
-  const t = document.createElement('div');
-  t.style.cssText = 'position:fixed;top:20px;right:20px;padding:12px 20px;border-radius:10px;font-size:13px;font-weight:500;z-index:1000;transition:opacity .3s;' +
-    (isError ? 'background:#991b1b;color:#fca5a5' : 'background:#065f46;color:#6ee7b7');
-  t.textContent = msg;
-  document.body.appendChild(t);
-  setTimeout(function() { t.style.opacity = '0'; setTimeout(function() { t.remove(); }, 300); }, 3000);
-}
-
-async function deleteUser(userId, email) {
-  showModal('Delete User', 'Are you sure you want to delete <strong style="color:#fff">' + email + '</strong>? This cannot be undone.', async function() {
-    try {
-      await api('/delete-user', 'POST', { userId });
-      showToast('User ' + email + ' deleted');
-      loadUsers();
-    } catch(e) { showToast('Failed: ' + e.message, true); }
-  });
-  // Style confirm button red for destructive action
-  setTimeout(function() { const btns = document.querySelectorAll('.btn-purple'); const last = btns[btns.length-1]; if(last) { last.className='btn btn-red'; last.textContent='Delete'; } }, 10);
-}
-
-async function resetPw(userId, email) {
-  showInputModal('Reset Password for ' + email, 'Enter new password...', async function(pw) {
-    if (!pw || pw.length < 4) { showToast('Password must be at least 4 characters', true); return; }
-    try {
-      await api('/reset-password', 'POST', { userId, newPassword: pw });
-      showToast('Password reset for ' + email);
-    } catch(e) { showToast('Failed: ' + e.message, true); }
-  });
-}
-
-async function loadDevices() {
-  try {
-    const d = await api('/devices');
-    if (!d.devices?.length) { document.getElementById('devices').textContent = 'No devices'; return; }
-    let html = '<table><tr><th>SN</th><th>Type</th><th>MAC</th><th>Status</th><th>Last Seen</th><th>Name</th></tr>';
-    for (const dev of d.devices) {
-      const online = dev.is_online;
-      const typeColor = dev.device_type === 'charger' ? '#f59e0b' : dev.device_type === 'mower' ? '#00d4aa' : '#666';
-      html += '<tr>' +
-        '<td class="sn">' + (dev.sn || dev.mqtt_client_id) + '</td>' +
-        '<td><span style="color:' + typeColor + '">' + (dev.device_type || '-') + '</span></td>' +
-        '<td class="sn">' + (dev.mac_address || '-') + '</td>' +
-        '<td>' + dot(online) + (online ? '<span class="on">Online</span>' : '<span class="off">Offline</span>') + '</td>' +
-        '<td style="color:#666">' + ago(dev.last_seen) + '</td>' +
-        '<td style="color:#888">' + (dev.equipment_nick_name || '-') + '</td>' +
-        '</tr>';
+    // Unbound devices
+    if (unbound.length > 0) {
+      html += '<div style="margin-top:12px;padding:10px 14px;background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.15);border-radius:8px">' +
+        '<span style="color:#f59e0b;font-size:12px;font-weight:600">' + unbound.length + ' unbound device(s) detected via MQTT</span></div>';
+      html += '<table style="margin-top:8px"><tr><th>Device</th><th>Serial Number</th><th>Status</th><th>MAC</th><th></th></tr>';
+      for (const dev of unbound) {
+        const online = dev.is_online;
+        const isCharger = dev.device_type === 'charger';
+        const icon = isCharger ? '⚡' : '🤖';
+        const typeColor = isCharger ? '#f59e0b' : '#00d4aa';
+        const typeName = isCharger ? 'Charger' : 'Mower';
+        html += '<tr>' +
+          '<td><span style="color:' + typeColor + '">' + icon + ' ' + typeName + '</span></td>' +
+          '<td class="sn">' + (dev.sn || '-') + '</td>' +
+          '<td>' + dot(online) + (online ? '<span class="on">Online</span>' : '<span class="off">Offline</span>') + '</td>' +
+          '<td class="sn">' + (dev.mac_address || '-') + '</td>' +
+          '<td><button class="btn btn-sm btn-green" onclick="bindDevice(\\'' + dev.sn + '\\')">Bind</button></td>' +
+          '</tr>';
+      }
+      html += '</table>';
     }
-    html += '</table>';
-    document.getElementById('devices').innerHTML = html;
-  } catch { document.getElementById('devices').textContent = 'Failed to load'; }
-}
 
-async function loadEquipment() {
-  try {
-    const d = await api('/equipment');
-    if (!d.equipment?.length) { document.getElementById('equipment').textContent = 'No equipment'; return; }
-    let html = '<table><tr><th>Type</th><th>SN</th><th>Name</th><th>User</th><th>MAC</th></tr>';
-    for (const eq of d.equipment) {
-      const typeColor = eq.device_type === 'Charging station' ? '#f59e0b' : '#00d4aa';
-      const sn = eq.display_mower_sn || eq.display_charger_sn || eq.mower_sn || '-';
-      html += '<tr>' +
-        '<td><span style="color:' + typeColor + '">' + eq.device_type + '</span></td>' +
-        '<td class="sn">' + sn + '</td>' +
-        '<td>' + (eq.equipment_nick_name || '-') + '</td>' +
-        '<td style="color:#888">' + (eq.user_email || '-') + '</td>' +
-        '<td class="sn">' + (eq.mac_address || '-') + '</td>' +
-        '</tr>';
+    if (!bound.length && !unbound.length) {
+      html = '<p style="color:#666;font-size:13px">No devices detected. Make sure your mower and charger are connected to WiFi and DNS is configured.</p>';
     }
-    html += '</table>';
-    document.getElementById('equipment').innerHTML = html;
-  } catch { document.getElementById('equipment').textContent = 'Failed to load'; }
+    document.getElementById('myDevices').innerHTML = html;
+  } catch { document.getElementById('myDevices').textContent = 'Failed to load'; }
 }
 
-// Auto-login if token exists
-if (token) {
-  api('/overview').then(() => showApp()).catch(() => {
-    token = '';
-    localStorage.removeItem('admin_token');
-    document.getElementById('login').style.display = 'block';
-    document.getElementById('app').style.display = 'none';
-  });
-} else {
+function logout() {
+  token = '';
+  localStorage.removeItem('admin_token');
+  location.reload();
+}
+
+async function bindDevice(sn) {
+  try {
+    await api('/bind-device', 'POST', { sn });
+    loadMyDevices();
+  } catch(e) { alert('Bind failed: ' + e.message); }
+}
+
+async function cloudImport() {
+  const email = document.getElementById('cloud_email').value;
+  const pass = document.getElementById('cloud_pass').value;
+  const btn = document.getElementById('cloudBtn');
+  const result = document.getElementById('cloudResult');
+  if (!email || !pass) { result.innerHTML = '<div class="msg err" style="display:block">Enter email and password</div>'; return; }
+
+  btn.disabled = true;
+  btn.textContent = 'Connecting...';
+  result.innerHTML = '';
+
+  try {
+    // Step 1: Login to cloud
+    const loginRes = await fetch('/api/setup/cloud-login', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({email, password: pass})
+    });
+    const loginData = await loginRes.json();
+    if (!loginData.ok) {
+      result.innerHTML = '<div style="color:#ef4444;font-size:13px">' + (loginData.error || 'Login failed') + '</div>';
+      btn.disabled = false; btn.textContent = 'Connect & Import';
+      return;
+    }
+
+    // Show devices found
+    const all = loginData.rawList || [];
+    let devHtml = '<div style="font-size:12px;color:#00d4aa;margin-bottom:8px">Found ' + all.length + ' device(s)</div>';
+    all.forEach(function(d) {
+      const sn = d.mowerSn || d.chargerSn || d.sn || '?';
+      const type = sn.startsWith('LFIC') ? 'Charger' : sn.startsWith('LFIN') ? 'Mower' : '?';
+      devHtml += '<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:12px"><span class="sn">' + sn + '</span><span style="color:#888">' + type + '</span></div>';
+    });
+    result.innerHTML = devHtml;
+
+    // Step 2: Import each device
+    btn.textContent = 'Importing...';
+    let imported = 0;
+    for (const equip of all) {
+      const chargerSn = equip.chargerSn || (equip.sn && equip.sn.startsWith('LFIC') ? equip.sn : null);
+      const mowerSn = equip.mowerSn || (equip.sn && equip.sn.startsWith('LFIN') ? equip.sn : null);
+      await fetch('/api/setup/cloud-apply', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          email, password: pass,
+          deviceName: equip.userCustomDeviceName || equip.equipmentNickName || 'My Novabot',
+          charger: chargerSn ? { sn: chargerSn, address: equip.chargerAddress, channel: equip.chargerChannel, mac: equip.macAddress } : undefined,
+          mower: mowerSn ? { sn: mowerSn, mac: equip.macAddress, version: equip.sysVersion } : undefined
+        })
+      });
+      imported++;
+    }
+
+    result.innerHTML += '<div style="color:#00d4aa;font-size:13px;margin-top:8px;font-weight:600">Imported ' + imported + ' device set(s)!</div>';
+    loadEquipment();
+    loadDevices();
+  } catch(e) {
+    result.innerHTML = '<div style="color:#ef4444;font-size:13px">Failed: ' + e.message + '</div>';
+  }
+  btn.disabled = false;
+  btn.textContent = 'Connect & Import';
+}
+
+async function firstTimeCloudImport() {
+  const email = document.getElementById('cloud_email_setup').value;
+  const pass = document.getElementById('cloud_pass_setup').value;
+  const btn = document.getElementById('setupBtn');
+  const result = document.getElementById('setupResult');
+  if (!email || !pass) { result.innerHTML = '<p style="color:#ef4444;font-size:12px">Enter email and password</p>'; return; }
+
+  btn.disabled = true;
+  btn.textContent = 'Connecting to Novabot cloud...';
+  result.innerHTML = '';
+
+  try {
+    const loginRes = await fetch('/api/setup/cloud-login', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({email, password: pass})
+    });
+    const loginData = await loginRes.json();
+    if (!loginData.ok) {
+      result.innerHTML = '<p style="color:#ef4444;font-size:12px">' + (loginData.error || 'Login failed') + '</p>';
+      btn.disabled = false; btn.textContent = 'Connect & Import from Cloud'; return;
+    }
+
+    const all = loginData.rawList || [];
+    result.innerHTML = '<p style="color:#00d4aa;font-size:12px">Found ' + all.length + ' device(s). Creating account...</p>';
+    btn.textContent = 'Importing...';
+
+    // Always create user account (even if no devices found)
+    try {
+      const createRes = await fetch('/api/setup/cloud-apply', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ email, password: pass })
+      });
+      const createData = await createRes.json();
+      if (!createData.ok && createData.error) {
+        result.innerHTML += '<p style="color:#ef4444;font-size:11px">' + createData.error + '</p>';
+      }
+    } catch(accountErr) {
+      console.error('Account create failed:', accountErr);
+      result.innerHTML += '<p style="color:#ef4444;font-size:11px">Account creation error: ' + accountErr.message + '</p>';
+    }
+
+    for (const equip of all) {
+      const chargerSn = equip.chargerSn || (equip.sn && equip.sn.startsWith('LFIC') ? equip.sn : null);
+      const mowerSn = equip.mowerSn || (equip.sn && equip.sn.startsWith('LFIN') ? equip.sn : null);
+      const applyRes = await fetch('/api/setup/cloud-apply', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          email, password: pass,
+          deviceName: equip.userCustomDeviceName || equip.equipmentNickName || 'My Novabot',
+          charger: chargerSn ? { sn: chargerSn, address: equip.chargerAddress, channel: equip.chargerChannel, mac: equip.macAddress } : undefined,
+          mower: mowerSn ? { sn: mowerSn, mac: equip.macAddress, version: equip.sysVersion } : undefined
+        })
+      });
+      const applyData = await applyRes.json();
+      if (applyData.error) {
+        result.innerHTML += '<p style="color:#ef4444;font-size:11px">Error: ' + applyData.error + '</p>';
+      }
+    }
+
+    result.innerHTML += '<p style="color:#00d4aa;font-size:13px;font-weight:600">Setup complete! ' + all.length + ' device(s) imported.</p><p style="color:#888;font-size:12px;margin-top:4px">You can now login with: ' + email + '</p>';
+    btn.textContent = 'Done!';
+    setTimeout(() => location.reload(), 2000);
+  } catch(e) {
+    result.innerHTML = '<p style="color:#ef4444;font-size:12px">Failed: ' + e.message + '</p>';
+    btn.disabled = false; btn.textContent = 'Connect & Import from Cloud';
+  }
+}
+
+async function skipSetup() {
+  try {
+    await fetch('/api/setup/skip', {method:'POST'});
+    alert('Local account created!\\nEmail: admin@local\\nPassword: admin');
+    location.reload();
+  } catch(e) { alert('Failed: ' + e.message); }
+}
+
+function showLogin() {
   document.getElementById('login').style.display = 'block';
+  document.getElementById('firstTimeSetup').style.display = 'none';
   document.getElementById('app').style.display = 'none';
 }
+
+function showSetup() {
+  document.getElementById('login').style.display = 'none';
+  document.getElementById('firstTimeSetup').style.display = 'block';
+  document.getElementById('app').style.display = 'none';
+}
+
+// Check if this is first time (no users) or returning user
+(async function init() {
+  // Always check setup status first (no auth needed)
+  let needsSetup = false;
+  try {
+    const s = await fetch('/api/setup/status');
+    const sd = await s.json();
+    needsSetup = sd && !sd.setupComplete;
+  } catch { /* assume setup complete if endpoint fails */ }
+
+  if (needsSetup) {
+    showSetup();
+    return;
+  }
+
+  // Setup is complete — try auto-login
+  if (token) {
+    try {
+      await api('/overview');
+      showApp();
+      return;
+    } catch {
+      token = '';
+      localStorage.removeItem('admin_token');
+    }
+  }
+
+  showLogin();
+})();
 </script>
 </body>
 </html>`;

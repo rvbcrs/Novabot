@@ -5,6 +5,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { db } from '../../db/database.js';
 import { authMiddleware, signToken } from '../../middleware/auth.js';
 import { AuthRequest, ok, fail, UserRow } from '../../types/index.js';
+import { callLfiCloud, encryptCloudPassword } from '../setup.js';
 
 // De Novabot app versleutelt wachtwoorden met AES-128-CBC voor verzending.
 // key = IV = "1234123412ABCDEF" (16 bytes), output = base64
@@ -28,17 +29,73 @@ function tryDecryptAppPassword(raw: string): string {
 export const appUserRouter = Router();
 
 // POST /api/nova-user/appUser/login
-appUserRouter.post('/login', (req, res: Response) => {
+appUserRouter.post('/login', async (req, res: Response) => {
   const { email, password } = req.body as { email?: string; password?: string };
   if (!email || !password) {
     res.json(fail('Email and password required', 400));
     return;
   }
 
-  const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email) as UserRow | undefined;
+  let user = db.prepare('SELECT * FROM users WHERE email = ?').get(email) as UserRow | undefined;
   if (!user) {
-    res.json(fail('Invalid email or password', 400));
-    return;
+    // User not found locally — try cloud login + auto-import
+    try {
+      {
+        const plainPw = tryDecryptAppPassword(password);
+        const encPw = encryptCloudPassword(plainPw);
+        const loginResp = await callLfiCloud('POST', '/api/nova-user/appUser/login', {
+          email, password: encPw, imei: 'imei',
+        }) as Record<string, unknown>;
+        const loginVal = loginResp?.value as Record<string, unknown> | undefined;
+
+        if (loginResp?.success && loginVal?.accessToken) {
+          // Cloud login OK — create local user
+          const hash = bcrypt.hashSync(plainPw, 10);
+          const appUserId = crypto.randomUUID();
+          const isFirst = (db.prepare('SELECT COUNT(*) as c FROM users').get() as { c: number }).c === 0;
+          db.prepare(
+            'INSERT INTO users (app_user_id, email, password, username, is_admin, created_at) VALUES (?, ?, ?, ?, ?, datetime(\'now\'))'
+          ).run(appUserId, email.trim().toLowerCase(), hash, email.split('@')[0], isFirst ? 1 : 0);
+          console.log('[Login] Auto-imported user from cloud: ' + email + ' (admin=' + isFirst + ')');
+
+          // Fetch and import devices
+          const equipResp = await callLfiCloud('POST', '/api/nova-user/equipment/userEquipmentList', {
+            appUserId: loginVal.appUserId, pageSize: 10, pageNo: 1,
+          }, loginVal.accessToken as string) as Record<string, unknown>;
+          const pageList = ((equipResp?.value as Record<string, unknown>)?.pageList ?? []) as Record<string, unknown>[];
+
+          for (const equip of pageList) {
+            const mowerSn = equip.mowerSn as string | undefined;
+            const chargerSn = equip.chargerSn as string | undefined;
+            const primarySn = mowerSn ?? chargerSn;
+            if (!primarySn) continue;
+            const existing = db.prepare('SELECT equipment_id FROM equipment WHERE mower_sn = ?').get(primarySn);
+            if (!existing) {
+              db.prepare(
+                'INSERT INTO equipment (equipment_id, user_id, mower_sn, charger_sn, equipment_nick_name, charger_address, charger_channel, mac_address, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime(\'now\'))'
+              ).run(
+                crypto.randomUUID(), appUserId, primarySn, chargerSn ?? null,
+                (equip.userCustomDeviceName ?? equip.equipmentNickName ?? null) as string | null,
+                (equip.chargerAddress ?? null) as number | null,
+                (equip.chargerChannel ?? null) as number | null,
+                (equip.macAddress ?? null) as string | null,
+              );
+            }
+          }
+          console.log('[Login] Imported ' + pageList.length + ' device(s) for ' + email);
+
+          // Re-fetch the newly created user
+          user = db.prepare('SELECT * FROM users WHERE email = ?').get(email.trim().toLowerCase()) as UserRow | undefined;
+        }
+      }
+    } catch (cloudErr) {
+      console.log('[Login] Cloud fallback failed:', cloudErr instanceof Error ? cloudErr.message : cloudErr);
+    }
+
+    if (!user) {
+      res.json(fail('Invalid email or password', 400));
+      return;
+    }
   }
 
   // De app stuurt AES-versleutelde wachtwoorden (key/IV = "1234123412ABCDEF").

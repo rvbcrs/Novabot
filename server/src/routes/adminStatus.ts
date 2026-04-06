@@ -30,6 +30,11 @@ adminStatusRouter.get('/overview', (_req: AuthRequest, res: Response) => {
     dbSize = stat.size;
   } catch {}
 
+  // Current user info from JWT
+  const currentUser = _req.userId
+    ? db.prepare('SELECT email, is_admin, dashboard_access FROM users WHERE app_user_id = ?').get(_req.userId) as { email: string; is_admin: number; dashboard_access: number } | undefined
+    : undefined;
+
   res.json({
     server: {
       uptime: Math.round(uptime),
@@ -46,6 +51,11 @@ adminStatusRouter.get('/overview', (_req: AuthRequest, res: Response) => {
       devices: deviceCount,
       maps: mapCount,
     },
+    currentUser: currentUser ? {
+      email: currentUser.email,
+      is_admin: currentUser.is_admin === 1,
+      dashboard_access: currentUser.dashboard_access === 1,
+    } : null,
   });
 });
 
@@ -78,20 +88,53 @@ adminStatusRouter.get('/users', (_req: AuthRequest, res: Response) => {
 adminStatusRouter.get('/devices', (_req: AuthRequest, res: Response) => {
   // Only show real Novabot devices (LFIN/LFIC/ESP32), not test clients
   const devices = db.prepare(`
-    SELECT d.mqtt_client_id, d.sn, d.mac_address, d.mqtt_username, d.last_seen, d.ip_address,
+    SELECT d.mqtt_client_id, d.sn,
+           COALESCE(d.mac_address, f.mac_address) as mac_address,
+           d.mqtt_username, d.last_seen, d.ip_address,
            e.equipment_id, e.user_id, e.equipment_nick_name,
            CASE WHEN julianday('now') - julianday(d.last_seen) < 0.003 THEN 1 ELSE 0 END as is_online,
            CASE WHEN d.sn LIKE 'LFIC%' THEN 'charger'
                 WHEN d.sn LIKE 'LFIN%' THEN 'mower'
-                ELSE 'unknown' END as device_type
+                ELSE 'unknown' END as device_type,
+           CASE WHEN e.user_id IS NOT NULL THEN 1 ELSE 0 END as is_bound
     FROM device_registry d
     LEFT JOIN equipment e ON (e.mower_sn = d.sn OR e.charger_sn = d.sn)
+    LEFT JOIN device_factory f ON f.sn = d.sn
     WHERE d.sn IS NOT NULL AND (d.sn LIKE 'LFIN%' OR d.sn LIKE 'LFIC%')
     GROUP BY d.sn
     ORDER BY is_online DESC, d.last_seen DESC
   `).all();
 
   res.json({ devices });
+});
+
+// POST /api/admin-status/bind-device — bind unbound device to current user
+adminStatusRouter.post('/bind-device', (_req: AuthRequest, res: Response) => {
+  const { sn } = _req.body as { sn?: string };
+  if (!sn || !_req.userId) {
+    res.status(400).json({ error: 'sn required' });
+    return;
+  }
+
+  // Check if equipment exists
+  const existing = db.prepare('SELECT equipment_id FROM equipment WHERE mower_sn = ? OR charger_sn = ?').get(sn, sn) as { equipment_id: string } | undefined;
+
+  if (existing) {
+    // Update existing — set user_id
+    db.prepare('UPDATE equipment SET user_id = ? WHERE equipment_id = ?').run(_req.userId, existing.equipment_id);
+  } else {
+    // Create new equipment record
+    const crypto = require('crypto');
+    const equipmentId = crypto.randomUUID();
+    const isCharger = sn.startsWith('LFIC');
+    db.prepare(`
+      INSERT INTO equipment (equipment_id, user_id, mower_sn, charger_sn, created_at)
+      VALUES (?, ?, ?, ?, datetime('now'))
+    `).run(equipmentId, _req.userId, sn, isCharger ? sn : null);
+  }
+
+  console.log(`[Admin] Device ${sn} bound to user ${_req.userId}`);
+  res.json({ ok: true });
 });
 
 // GET /api/admin-status/equipment — all equipment pairings

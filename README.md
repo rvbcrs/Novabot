@@ -112,17 +112,35 @@ nslookup mqtt.lfibot.com
 
 Should return your server IP. If it shows `47.253.145.99` (Novabot cloud), DNS is not redirected yet.
 
-### 6. Restart your mower
+### 6. Open the Novabot app and log in
 
-Power off the mower, wait 10 seconds, power on. It will reconnect to WiFi and get the new DNS from your router. It should now connect to your server via MQTT.
+That's it! Open the official Novabot app on your phone and log in with your normal Novabot account. The server will:
 
-Check the server logs:
+1. **Detect you're a new user** (not yet in the local database)
+2. **Forward your login to the Novabot cloud** to verify your credentials
+3. **Automatically create your local account** (first user becomes admin)
+4. **Import your devices** from the cloud
+
+From this point on, the app talks to your local server. Your mower and charger connect via MQTT on port 1883.
+
+> **Tip:** Restart your mower after setting up DNS — power off, wait 10 seconds, power on. It will pick up the new DNS and connect to your server.
+
+Check the server logs to confirm:
 
 ```bash
 docker compose logs -f opennova | grep CONNECT
 ```
 
 You should see your mower's serial number (LFIN...) connecting.
+
+### Fallback: Admin Panel
+
+If the automatic login doesn't work (e.g., Novabot cloud is down), you can use the admin panel:
+
+1. Open **http://YOUR_SERVER_IP:3000/admin** in your browser
+2. On first visit with an empty database, you'll see a **"Welcome to OpenNova"** setup page
+3. Enter your Novabot cloud email + password to import your account and devices
+4. Or click **"Skip"** to create a local account (admin@local / admin)
 
 ## Configuration
 
