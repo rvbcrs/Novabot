@@ -152,19 +152,74 @@ environment:
 
 Entities auto-appear in Home Assistant under the mower/charger serial number.
 
-### Optional: TLS for iOS
+### iOS Setup (Novabot iOS App)
 
-The original Novabot iOS app requires HTTPS. Enable with:
+The Novabot iOS app requires HTTPS — it won't connect over plain HTTP. You need to enable TLS and install a certificate profile on your iPhone.
+
+#### Step 1: Enable TLS in Docker
 
 ```yaml
 ports:
-  - "443:443"
+  - "3000:80"
+  - "1883:1883"
+  - "443:443"         # HTTPS for iOS
 environment:
+  PORT: 80
+  JWT_SECRET: your_secret_here
   ENABLE_TLS: "true"
-  TARGET_IP: "192.168.0.100"
+  TARGET_IP: "192.168.0.100"   # Your server's LAN IP
 ```
 
-A self-signed certificate is auto-generated. Install the CA profile on your iPhone via `http://YOUR_SERVER_IP:3000/api/setup/ios-profile`.
+Restart the container:
+```bash
+docker compose down && docker compose up -d
+```
+
+A self-signed TLS certificate is automatically generated on first start.
+
+#### Step 2: Download the Configuration Profile
+
+Open **Safari** on your iPhone and go to:
+
+```
+http://YOUR_SERVER_IP:3000/api/setup/profile
+```
+
+(Replace `YOUR_SERVER_IP` with your server's actual IP address, e.g., `http://192.168.0.100:3000/api/setup/profile`)
+
+Safari will prompt you to download `OpenNova.mobileconfig`. Tap **Allow**.
+
+This profile includes:
+- **DNS settings** — routes DNS through your OpenNova server
+- **CA Certificate** — trusts your server's self-signed TLS certificate
+
+#### Step 3: Install the Profile
+
+1. Open **Settings** on your iPhone
+2. You'll see **"Profile Downloaded"** near the top — tap it
+3. Tap **Install** (top right)
+4. Enter your iPhone passcode
+5. Tap **Install** again on the warning screen
+6. Tap **Done**
+
+#### Step 4: Trust the Certificate
+
+1. Go to **Settings → General → About → Certificate Trust Settings**
+2. Find **"OpenNova CA Certificate"**
+3. Toggle it **ON**
+4. Tap **Continue** on the warning
+
+#### Step 5: Verify
+
+Open the Novabot app on your iPhone. It should now connect to your local server instead of the cloud.
+
+> **To remove later**: Go to Settings → General → VPN & Device Management → OpenNova → Remove Profile
+
+### Android Setup (Novabot Android App)
+
+Android is simpler — **no certificate needed**. Just set up DNS (see above) and the Novabot app will connect to your server automatically.
+
+If your mower is already connected to WiFi and DNS is redirected, restart the mower and it will connect to your server. The Android app will then communicate via your server.
 
 ## Data & Backup
 
