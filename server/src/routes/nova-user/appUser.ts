@@ -36,7 +36,8 @@ appUserRouter.post('/login', async (req, res: Response) => {
     return;
   }
 
-  let user = db.prepare('SELECT * FROM users WHERE email = ?').get(email) as UserRow | undefined;
+  const normalizedEmail = email.trim().toLowerCase();
+  let user = db.prepare('SELECT * FROM users WHERE email = ?').get(normalizedEmail) as UserRow | undefined;
   if (!user) {
     // User not found locally — try cloud login + auto-import
     try {
@@ -55,7 +56,7 @@ appUserRouter.post('/login', async (req, res: Response) => {
           const isFirst = (db.prepare('SELECT COUNT(*) as c FROM users').get() as { c: number }).c === 0;
           db.prepare(
             'INSERT INTO users (app_user_id, email, password, username, is_admin, created_at) VALUES (?, ?, ?, ?, ?, datetime(\'now\'))'
-          ).run(appUserId, email.trim().toLowerCase(), hash, email.split('@')[0], isFirst ? 1 : 0);
+          ).run(appUserId, normalizedEmail, hash, normalizedEmail.split('@')[0], isFirst ? 1 : 0);
           console.log('[Login] Auto-imported user from cloud: ' + email + ' (admin=' + isFirst + ')');
 
           // Fetch and import devices
@@ -85,7 +86,7 @@ appUserRouter.post('/login', async (req, res: Response) => {
           console.log('[Login] Imported ' + pageList.length + ' device(s) for ' + email);
 
           // Re-fetch the newly created user
-          user = db.prepare('SELECT * FROM users WHERE email = ?').get(email.trim().toLowerCase()) as UserRow | undefined;
+          user = db.prepare('SELECT * FROM users WHERE email = ?').get(normalizedEmail) as UserRow | undefined;
         }
       }
     } catch (cloudErr) {
@@ -157,7 +158,8 @@ appUserRouter.post('/regist', async (req, res: Response) => {
     return;
   }
 
-  const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email);
+  const regEmail = email.trim().toLowerCase();
+  const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(regEmail);
   if (existing) {
     res.json(fail('Email already registered', 400));
     return;
@@ -170,11 +172,11 @@ appUserRouter.post('/regist', async (req, res: Response) => {
   db.prepare(`
     INSERT INTO users (app_user_id, email, password, username)
     VALUES (?, ?, ?, ?)
-  `).run(appUserId, email, storedPassword, username ?? null);
+  `).run(appUserId, regEmail, storedPassword, username ?? null);
 
   const newUser = db.prepare('SELECT id FROM users WHERE app_user_id = ?').get(appUserId) as { id: number };
-  const token = signToken({ userId: appUserId, email });
-  res.json(ok({ appUserId: newUser.id, email, token }));
+  const token = signToken({ userId: appUserId, email: regEmail });
+  res.json(ok({ appUserId: newUser.id, email: regEmail, token }));
 });
 
 // POST /api/nova-user/appUser/loginOut
