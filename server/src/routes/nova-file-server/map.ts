@@ -280,7 +280,7 @@ mapRouter.get('/downloadMapFile', authMiddleware, (req: AuthRequest, res: Respon
 // The app sends the map as multipart/form-data chunks.
 // Fields expected:  sn, uploadId, fileSize, chunkIndex, chunksTotal, file (binary)
 // When all chunks are received they are reassembled into one file.
-mapRouter.post('/fragmentUploadEquipmentMap', authMiddleware, upload.single('file'), (req: AuthRequest, res: Response) => {
+mapRouter.post('/fragmentUploadEquipmentMap', authMiddleware, upload.single('file'), async (req: AuthRequest, res: Response) => {
   const { sn, uploadId, fileSize, chunkIndex, chunksTotal, mapName, mapArea, mapMaxMin } = req.body as {
     sn?: string;
     uploadId?: string;
@@ -377,7 +377,13 @@ mapRouter.post('/fragmentUploadEquipmentMap', authMiddleware, upload.single('fil
       out.write(data);
       fs.unlinkSync(chunkPath);
     }
-    out.end();
+
+    // Wait for write stream to finish before inserting into DB
+    await new Promise<void>((resolve, reject) => {
+      out.on('finish', resolve);
+      out.on('error', reject);
+      out.end();
+    });
 
     const mapId = uuidv4();
     const now = new Date().toISOString();

@@ -15,6 +15,7 @@ export const db = new Database(path.resolve(dbPath));
 // WAL mode for better concurrent read performance
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
+db.pragma('busy_timeout = 5000');
 
 // initDb() wordt hier gedefinieerd EN direct aangeroepen aan het einde van dit bestand,
 // zodat tabellen gegarandeerd bestaan voordat andere modules db.prepare() aanroepen op module-level.
