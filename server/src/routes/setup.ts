@@ -217,11 +217,11 @@ setupRouter.post('/cloud-apply', async (req: Request, res: Response) => {
 
       // 3. Register in device_registry (for MAC lookup)
       if (mower?.sn && mower?.mac) {
-        db.prepare('INSERT OR IGNORE INTO device_registry (sn, mac_address, last_seen) VALUES (?, ?, datetime("now"))')
+        db.prepare(`INSERT OR IGNORE INTO device_registry (sn, mac_address, last_seen) VALUES (?, ?, datetime('now'))`)
           .run(mower.sn, mower.mac);
       }
       if (charger?.sn && charger?.mac) {
-        db.prepare('INSERT OR IGNORE INTO device_registry (sn, mac_address, last_seen) VALUES (?, ?, datetime("now"))')
+        db.prepare(`INSERT OR IGNORE INTO device_registry (sn, mac_address, last_seen) VALUES (?, ?, datetime('now'))`)
           .run(charger.sn, charger.mac);
       }
 
