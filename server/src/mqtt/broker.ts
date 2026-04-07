@@ -14,7 +14,7 @@ import { tryDecrypt } from './decrypt.js';
 import { startHomeAssistantBridge, forwardToHomeAssistant, publishDeviceOnline, publishDeviceOffline } from './homeassistant.js';
 import { updateDeviceData, clearDeviceData } from './sensorData.js';
 import { isDemoMode } from '../services/demoSimulator.js';
-import { forwardToDashboard, emitDeviceOnline, emitDeviceOffline, pushMqttLog, emitOtaEvent, emitPinEvent, emitExtendedEvent } from '../dashboard/socketHandler.js';
+import { forwardToDashboard, emitDeviceOnline, emitDeviceOffline, pushMqttLog, emitOtaEvent, emitPinEvent, emitExtendedEvent, emitCommandRespond } from '../dashboard/socketHandler.js';
 import { initMapSync, onMowerConnected, handleMapMessage, publishEncryptedOnTopic, handleExtendedResponse } from './mapSync.js';
 import { localToGps, type GpsPoint, type LocalPoint } from './mapConverter.js';
 
@@ -890,6 +890,20 @@ export async function startMqttBroker(): Promise<void> {
 
           // PIN verify response — v3.6.4 firmware patch cleart de error_byte
           // aan STM32 kant. Cache clearing gebeurt in dashboard.ts verify endpoint.
+        }
+        // Forward all _respond messages to app via Socket.io
+        // Flutter app listens for: stop_scan_map_respond, save_map_respond,
+        // auto_recharge_respond, save_recharge_pos_respond, etc.
+        for (const key of Object.keys(parsed)) {
+          if (key.endsWith('_respond') && forwardSn) {
+            console.log(`${C.cyan}[RESPOND] ${key} from ${forwardSn}${C.reset}`);
+            emitCommandRespond(forwardSn, key, parsed[key]);
+          }
+        }
+        // Also handle charger-style responds: {"type":"xxx_respond","message":{...}}
+        if (typeof parsed.type === 'string' && parsed.type.endsWith('_respond') && forwardSn) {
+          console.log(`${C.cyan}[RESPOND] ${parsed.type} from ${forwardSn}${C.reset}`);
+          emitCommandRespond(forwardSn, parsed.type, parsed.message);
         }
       } catch { /* geen JSON of geen map-bericht */ }
 

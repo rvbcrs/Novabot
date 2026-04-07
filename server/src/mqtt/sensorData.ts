@@ -426,6 +426,20 @@ export function updateDeviceData(sn: string, payload: Buffer): Map<string, strin
         }
       }
     }
+    // Map position (local x/y in meters relative to charger, + orientation in radians)
+    if (typeof loc.map_position === 'object' && loc.map_position !== null) {
+      const mp = loc.map_position as Record<string, unknown>;
+      for (const mpField of ['x', 'y', 'orientation'] as const) {
+        if (mp[mpField] !== undefined && mp[mpField] !== null) {
+          const key = mpField === 'x' ? 'map_position_x' : mpField === 'y' ? 'map_position_y' : 'map_position_orientation';
+          const strValue = String(mp[mpField]);
+          if (snValues.get(key) !== strValue) {
+            snValues.set(key, strValue);
+            changes.set(key, strValue);
+          }
+        }
+      }
+    }
     // Localization state
     if (typeof loc.localization_state === 'string') {
       const field = 'localization_state';

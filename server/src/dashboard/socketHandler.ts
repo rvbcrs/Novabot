@@ -114,52 +114,49 @@ export function initDashboardSocket(httpServer: HttpServer): void {
     // This eliminates browser setInterval jitter and network round-trip variability.
     let joystickInterval: ReturnType<typeof setInterval> | null = null;
     let joystickSn = '';
-
-    // Track current manual mode state to avoid re-sending start_move
-    let joystickHoldType = 0;
+    let joystickStopped = true;
+    let joystickHoldType = 3;
+    let currentMst = { x_w: 0, y_v: 0, z_g: 0 };
 
     socket.on('joystick:start', (data: { sn: string; holdType: number }) => {
       if (!data?.sn) return;
       joystickSn = data.sn;
+      joystickStopped = false;
       joystickHoldType = data.holdType || 3;
       console.log(`[JOYSTICK] START sn=${data.sn} holdType=${joystickHoldType}`);
-      // Enter manual mode ONCE
       publishToDevice(data.sn, { start_move: joystickHoldType });
     });
 
     socket.on('joystick:move', (data: { sn: string; holdType: number; mst: { x_w: number; y_v: number; z_g: number } }) => {
-      if (!data?.sn) return;
+      if (!data?.sn || joystickStopped) return;
       joystickSn = data.sn;
-      if (joystickInterval) clearInterval(joystickInterval);
+      currentMst = data.mst;
 
-      // Only re-send start_move if direction changed
+      // Change direction only when holdType actually changes — send start_move immediately
       if (data.holdType !== joystickHoldType) {
         joystickHoldType = data.holdType;
         publishToDevice(data.sn, { start_move: joystickHoldType });
-        console.log(`[JOYSTICK] direction changed → holdType=${joystickHoldType}`);
       }
 
-      // Send velocity immediately
-      const mstCmd = { mst: data.mst };
-      publishToDevice(data.sn, mstCmd);
-
-      // Server-side repeat: mst at 100ms + start_move re-entry every 500ms
-      // mqtt_node drops out of manual mode after ~1s without start_move
-      let tick = 0;
-      joystickInterval = setInterval(() => {
-        publishToDevice(joystickSn, mstCmd);
-        tick++;
-        // Re-send start_move every 5 ticks (500ms) to keep manual mode alive
-        if (tick % 5 === 0) {
-          publishToDevice(joystickSn, { start_move: joystickHoldType });
-        }
-        if (tick % 20 === 0) console.log(`[JOYSTICK] tick=${tick} mst x_w=${data.mst.x_w}`);
-      }, 100);
+      // Start repeating interval once (mst every 150ms, start_move keepalive every 750ms)
+      if (!joystickInterval) {
+        let tick = 0;
+        joystickInterval = setInterval(() => {
+          if (joystickStopped) return;
+          publishToDevice(joystickSn, { mst: currentMst });
+          tick++;
+          if (tick % 5 === 0) {
+            publishToDevice(joystickSn, { start_move: joystickHoldType });
+          }
+        }, 150);
+      }
     });
 
     socket.on('joystick:stop', (data: { sn: string }) => {
-      console.log(`[JOYSTICK] STOP sn=${data?.sn} had_interval=${!!joystickInterval}`);
+      console.log(`[JOYSTICK] STOP sn=${data?.sn}`);
+      joystickStopped = true;
       if (joystickInterval) { clearInterval(joystickInterval); joystickInterval = null; }
+      currentMst = { x_w: 0, y_v: 0, z_g: 0 };
       joystickHoldType = 0;
       if (data?.sn) publishToDevice(data.sn, { stop_move: {} });
     });
@@ -203,6 +200,11 @@ export function emitDeviceOffline(sn: string): void {
 
 export function emitTrailClear(sn: string): void {
   io?.emit('trail:clear', { sn, timestamp: Date.now() });
+}
+
+/** Forward MQTT _respond messages to app (mapping flow, etc.) */
+export function emitCommandRespond(sn: string, command: string, data: unknown): void {
+  io?.emit('command:respond', { sn, command, data, timestamp: Date.now() });
 }
 
 /** Stuur afgelegde maai-banen naar dashboard (demo simulator) */
