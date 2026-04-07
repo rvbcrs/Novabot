@@ -13,7 +13,8 @@ services:
     container_name: opennova
     restart: unless-stopped
     ports:
-      - "3000:80"    # Dashboard + API
+      - "80:80"      # HTTP API (required — mower firmware checks port 80)
+      - "3000:80"    # Dashboard + API (alternative port)
       - "1883:1883"  # MQTT broker
       # Uncomment if using TLS/DNS features:
       # - "443:443"  # HTTPS (requires ENABLE_TLS + TARGET_IP)
