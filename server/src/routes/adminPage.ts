@@ -18,16 +18,17 @@ export function adminPageHtml(): string {
   h2{color:#7c3aed;font-size:14px;text-transform:uppercase;letter-spacing:1px;margin-bottom:12px}
   .version{color:#666;font-size:12px;margin-bottom:24px}
   .card{background:#16213e;border-radius:12px;padding:16px;margin-bottom:16px;border:1px solid rgba(255,255,255,.08)}
-  .row{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.04)}
+  .row{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.04);flex-wrap:wrap;gap:4px}
   .row:last-child{border-bottom:none}
   .label{color:#888;font-size:13px}
-  .value{font-size:13px;font-weight:600}
+  .value{font-size:13px;font-weight:600;text-align:right;word-break:break-all}
   .on{color:#00d4aa}
   .off{color:#ef4444}
   .warn{color:#f59e0b}
-  .sn{color:#a78bfa;font-family:monospace;font-size:12px}
-  table{width:100%;border-collapse:collapse;font-size:13px}
-  th{text-align:left;color:#888;font-size:11px;text-transform:uppercase;letter-spacing:.5px;padding:8px 6px;border-bottom:1px solid rgba(255,255,255,.1)}
+  .sn{color:#a78bfa;font-family:monospace;font-size:12px;word-break:break-all}
+  .table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  table{width:100%;border-collapse:collapse;font-size:13px;min-width:400px}
+  th{text-align:left;color:#888;font-size:11px;text-transform:uppercase;letter-spacing:.5px;padding:8px 6px;border-bottom:1px solid rgba(255,255,255,.1);white-space:nowrap}
   td{padding:8px 6px;border-bottom:1px solid rgba(255,255,255,.04)}
   .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px}
   .dot-on{background:#00d4aa}
@@ -46,10 +47,27 @@ export function adminPageHtml(): string {
   .btn-purple:hover{background:#7c3aed}
   input{padding:10px 14px;background:#0d0d20;border:1px solid #333;border-radius:8px;color:#fff;font-size:14px;width:100%}
   input:focus{border-color:#7c3aed;outline:none}
-  .login-box{max-width:360px;margin:80px auto}
+  .login-box{max-width:360px;margin:80px auto;padding:0 16px}
   .tabs{display:flex;gap:4px;margin-bottom:16px}
   .tab{padding:8px 16px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:500;background:rgba(255,255,255,.05);color:#888;border:none}
   .tab.active{background:#7c3aed;color:#fff}
+  .hide-mobile{}
+  /* Responsive */
+  @media(max-width:600px){
+    .container{padding:10px}
+    h1{font-size:20px}
+    h2{font-size:12px}
+    .card{padding:12px;border-radius:10px}
+    table{font-size:12px;min-width:0}
+    th,td{padding:6px 4px}
+    th{font-size:9px}
+    .row{flex-direction:column;align-items:flex-start;gap:2px}
+    .value{text-align:left;font-size:12px}
+    .sn{font-size:11px}
+    .btn{font-size:11px;padding:6px 10px}
+    .login-box{margin:40px auto}
+    .hide-mobile{display:none!important}
+  }
   #app{display:none}
   .refresh-btn{float:right;cursor:pointer;color:#666;font-size:12px}
   .refresh-btn:hover{color:#00d4aa}
@@ -88,14 +106,14 @@ export function adminPageHtml(): string {
 
 <!-- Admin Panel -->
 <div id="app" class="container" style="display:none">
-  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:24px">
-    <div>
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;flex-wrap:wrap;gap:8px">
+    <div style="min-width:0">
       <h1>OpenNova Admin</h1>
       <div class="version" id="serverInfo">Loading...</div>
     </div>
-    <div style="display:flex;gap:8px">
+    <div style="display:flex;gap:6px">
       <button class="btn" style="background:#333" onclick="logout()">Logout</button>
-      <button class="btn btn-purple" onclick="loadAll()">↻ Refresh</button>
+      <button class="btn btn-purple" onclick="loadAll()">↻</button>
     </div>
   </div>
 
@@ -115,9 +133,9 @@ export function adminPageHtml(): string {
   <div class="card">
     <h2>Cloud Import</h2>
     <p style="font-size:12px;color:#888;margin-bottom:12px">Import devices from the Novabot cloud using your Novabot app credentials.</p>
-    <div style="display:flex;gap:8px;margin-bottom:8px">
-      <input type="email" id="cloud_email" placeholder="Novabot email" style="flex:1">
-      <input type="password" id="cloud_pass" placeholder="Novabot password" style="flex:1">
+    <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap">
+      <input type="email" id="cloud_email" placeholder="Novabot email" style="flex:1;min-width:200px">
+      <input type="password" id="cloud_pass" placeholder="Novabot password" style="flex:1;min-width:200px">
     </div>
     <button class="btn btn-purple" onclick="cloudImport()" id="cloudBtn">Connect &amp; Import</button>
     <div id="cloudResult" style="margin-top:8px"></div>
@@ -201,62 +219,88 @@ async function loadAccount() {
   } catch { document.getElementById('account').textContent = 'Failed to load'; }
 }
 
+function devRow(dev) {
+  const online = dev.is_online;
+  const isCharger = dev.device_type === 'charger';
+  const icon = isCharger ? '⚡' : '🤖';
+  const typeColor = isCharger ? '#f59e0b' : '#00d4aa';
+  const typeName = isCharger ? 'Charger' : 'Mower';
+  const bound = dev.is_bound;
+  let actions = '';
+  if (bound) {
+    actions = '<button class="btn btn-sm" style="background:#374151;color:#aaa" onclick="unbindDevice(\\'' + dev.sn + '\\')">Unbind</button>';
+  } else {
+    actions = '<button class="btn btn-sm btn-green" onclick="bindDevice(\\'' + dev.sn + '\\')">Bind</button> ' +
+      '<button class="btn btn-sm btn-red" onclick="removeDevice(\\'' + dev.sn + '\\')">Remove</button>';
+  }
+  return '<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.04);flex-wrap:wrap">' +
+    '<span style="color:' + typeColor + ';font-size:13px;min-width:80px">' + icon + ' ' + typeName + '</span>' +
+    '<span class="sn" style="flex:1;min-width:120px">' + (dev.sn || '-') + '</span>' +
+    '<span>' + dot(online) + (online ? '<span class="on" style="font-size:12px">Online</span>' : '<span class="off" style="font-size:12px">Offline</span>') + '</span>' +
+    '<span style="color:#666;font-size:11px;min-width:50px">' + ago(dev.last_seen) + '</span>' +
+    '<span style="white-space:nowrap">' + actions + '</span>' +
+    '</div>';
+}
+
 async function loadMyDevices() {
   try {
     const d = await api('/devices');
     const devs = d.devices || [];
     if (!devs.length) { document.getElementById('myDevices').textContent = 'No devices found. Import from cloud or wait for devices to connect via MQTT.'; return; }
-    // Split into bound (has equipment with user_id) and unbound
+
     let html = '';
 
-    // Bound devices
-    const bound = devs.filter(function(d) { return d.is_bound; });
-    const unbound = devs.filter(function(d) { return !d.is_bound; });
-
-    if (bound.length > 0) {
-      html += '<table><tr><th>Device</th><th>Serial Number</th><th>Status</th><th>MAC</th><th>Last Seen</th></tr>';
-      for (const dev of bound) {
-        const online = dev.is_online;
-        const isCharger = dev.device_type === 'charger';
-        const icon = isCharger ? '⚡' : '🤖';
-        const typeColor = isCharger ? '#f59e0b' : '#00d4aa';
-        const typeName = isCharger ? 'Charger' : 'Mower';
-        html += '<tr>' +
-          '<td><span style="color:' + typeColor + '">' + icon + ' ' + typeName + '</span></td>' +
-          '<td class="sn">' + (dev.sn || '-') + '</td>' +
-          '<td>' + dot(online) + (online ? '<span class="on">Online</span>' : '<span class="off">Offline</span>') + '</td>' +
-          '<td class="sn">' + (dev.mac_address || '-') + '</td>' +
-          '<td style="color:#666">' + ago(dev.last_seen) + '</td>' +
-          '</tr>';
+    // Group by LoRa address
+    const byAddr = {};
+    const unpaired = [];
+    for (const dev of devs) {
+      const addr = dev.lora_address;
+      if (addr != null) {
+        if (!byAddr[addr]) byAddr[addr] = [];
+        byAddr[addr].push(dev);
+      } else {
+        unpaired.push(dev);
       }
-      html += '</table>';
     }
 
-    // Unbound devices
-    if (unbound.length > 0) {
-      html += '<div style="margin-top:12px;padding:10px 14px;background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.15);border-radius:8px">' +
-        '<span style="color:#f59e0b;font-size:12px;font-weight:600">' + unbound.length + ' unbound device(s) detected via MQTT</span></div>';
-      html += '<table style="margin-top:8px"><tr><th>Device</th><th>Serial Number</th><th>Status</th><th>MAC</th><th></th></tr>';
-      for (const dev of unbound) {
-        const online = dev.is_online;
-        const isCharger = dev.device_type === 'charger';
-        const icon = isCharger ? '⚡' : '🤖';
-        const typeColor = isCharger ? '#f59e0b' : '#00d4aa';
-        const typeName = isCharger ? 'Charger' : 'Mower';
-        html += '<tr>' +
-          '<td><span style="color:' + typeColor + '">' + icon + ' ' + typeName + '</span></td>' +
-          '<td class="sn">' + (dev.sn || '-') + '</td>' +
-          '<td>' + dot(online) + (online ? '<span class="on">Online</span>' : '<span class="off">Offline</span>') + '</td>' +
-          '<td class="sn">' + (dev.mac_address || '-') + '</td>' +
-          '<td><button class="btn btn-sm btn-green" onclick="bindDevice(\\'' + dev.sn + '\\')">Bind</button></td>' +
-          '</tr>';
+    // Render paired sets
+    const addrs = Object.keys(byAddr).sort();
+    for (const addr of addrs) {
+      const group = byAddr[addr];
+      const chargers = group.filter(function(d) { return d.device_type === 'charger'; });
+      const mowers = group.filter(function(d) { return d.device_type === 'mower'; });
+      const anyOnline = group.some(function(d) { return d.is_online; });
+      const isPaired = chargers.length > 0 && mowers.length > 0;
+      const hasDuplicates = chargers.length > 1 || mowers.length > 1;
+
+      html += '<div style="margin-bottom:12px;padding:12px;background:rgba(255,255,255,.02);border:1px solid ' + (anyOnline ? 'rgba(0,212,170,.2)' : 'rgba(255,255,255,.06)') + ';border-radius:10px">';
+      html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
+      html += '<span style="font-size:12px;font-weight:600;color:' + (isPaired ? '#00d4aa' : '#f59e0b') + '">' +
+        (isPaired ? '🔗 Paired Set' : '⚠ Incomplete') + '</span>';
+      html += '<span style="font-size:11px;color:#666">LoRa ' + addr + '</span>';
+      html += '</div>';
+
+      if (hasDuplicates) {
+        html += '<div style="padding:6px 10px;background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.2);border-radius:6px;margin-bottom:8px">' +
+          '<span style="color:#ef4444;font-size:11px;font-weight:600">⚠ Multiple devices on same LoRa address!</span></div>';
       }
-      html += '</table>';
+
+      for (const dev of group) {
+        html += devRow(dev);
+      }
+      html += '</div>';
     }
 
-    if (!bound.length && !unbound.length) {
-      html = '<p style="color:#666;font-size:13px">No devices detected. Make sure your mower and charger are connected to WiFi and DNS is configured.</p>';
+    // Unpaired devices (no LoRa address)
+    if (unpaired.length > 0) {
+      html += '<div style="margin-bottom:12px;padding:12px;background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.06);border-radius:10px">';
+      html += '<div style="margin-bottom:8px"><span style="font-size:12px;font-weight:600;color:#888">Unpaired Devices</span></div>';
+      for (const dev of unpaired) {
+        html += devRow(dev);
+      }
+      html += '</div>';
     }
+
     document.getElementById('myDevices').innerHTML = html;
   } catch { document.getElementById('myDevices').textContent = 'Failed to load'; }
 }
@@ -272,6 +316,22 @@ async function bindDevice(sn) {
     await api('/bind-device', 'POST', { sn });
     loadMyDevices();
   } catch(e) { alert('Bind failed: ' + e.message); }
+}
+
+async function unbindDevice(sn) {
+  if (!confirm('Unbind ' + sn + ' from your account?')) return;
+  try {
+    await api('/unbind-device', 'POST', { sn });
+    loadMyDevices();
+  } catch(e) { alert('Unbind failed: ' + e.message); }
+}
+
+async function removeDevice(sn) {
+  if (!confirm('Remove ' + sn + '? This deletes it from the database.')) return;
+  try {
+    await api('/remove-device', 'POST', { sn });
+    loadMyDevices();
+  } catch(e) { alert('Remove failed: ' + e.message); }
 }
 
 async function cloudImport() {
@@ -315,7 +375,7 @@ async function cloudImport() {
     for (const equip of all) {
       const chargerSn = equip.chargerSn || (equip.sn && equip.sn.startsWith('LFIC') ? equip.sn : null);
       const mowerSn = equip.mowerSn || (equip.sn && equip.sn.startsWith('LFIN') ? equip.sn : null);
-      await fetch('/api/setup/cloud-apply', {
+      const r = await fetch('/api/setup/cloud-apply', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({
@@ -325,12 +385,13 @@ async function cloudImport() {
           mower: mowerSn ? { sn: mowerSn, mac: equip.macAddress, version: equip.sysVersion } : undefined
         })
       });
-      imported++;
+      const rj = await r.json();
+      if (rj.ok) imported++;
+      else result.innerHTML += '<div style="color:#ef4444;font-size:12px">Failed to import ' + (mowerSn || chargerSn) + ': ' + (rj.error || 'unknown error') + '</div>';
     }
 
     result.innerHTML += '<div style="color:#00d4aa;font-size:13px;margin-top:8px;font-weight:600">Imported ' + imported + ' device set(s)!</div>';
-    loadEquipment();
-    loadDevices();
+    loadMyDevices();
   } catch(e) {
     result.innerHTML = '<div style="color:#ef4444;font-size:13px">Failed: ' + e.message + '</div>';
   }

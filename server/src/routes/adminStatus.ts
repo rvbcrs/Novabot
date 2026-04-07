@@ -90,9 +90,10 @@ adminStatusRouter.get('/devices', (_req: AuthRequest, res: Response) => {
   const devices = db.prepare(`
     SELECT d.mqtt_client_id, d.sn,
            COALESCE(d.mac_address, f.mac_address) as mac_address,
-           d.mqtt_username, d.last_seen, d.ip_address,
+           d.mqtt_username, MAX(d.last_seen) as last_seen, d.ip_address,
            e.equipment_id, e.user_id, e.equipment_nick_name,
-           CASE WHEN julianday('now') - julianday(d.last_seen) < 0.003 THEN 1 ELSE 0 END as is_online,
+           l.charger_address as lora_address, l.charger_channel as lora_channel,
+           CASE WHEN julianday('now') - julianday(MAX(d.last_seen)) < 0.003 THEN 1 ELSE 0 END as is_online,
            CASE WHEN d.sn LIKE 'LFIC%' THEN 'charger'
                 WHEN d.sn LIKE 'LFIN%' THEN 'mower'
                 ELSE 'unknown' END as device_type,
@@ -100,6 +101,7 @@ adminStatusRouter.get('/devices', (_req: AuthRequest, res: Response) => {
     FROM device_registry d
     LEFT JOIN equipment e ON (e.mower_sn = d.sn OR e.charger_sn = d.sn)
     LEFT JOIN device_factory f ON f.sn = d.sn
+    LEFT JOIN equipment_lora_cache l ON l.sn = d.sn
     WHERE d.sn IS NOT NULL AND (d.sn LIKE 'LFIN%' OR d.sn LIKE 'LFIC%')
     GROUP BY d.sn
     ORDER BY is_online DESC, d.last_seen DESC
@@ -134,6 +136,28 @@ adminStatusRouter.post('/bind-device', (_req: AuthRequest, res: Response) => {
   }
 
   console.log(`[Admin] Device ${sn} bound to user ${_req.userId}`);
+  res.json({ ok: true });
+});
+
+// POST /api/admin-status/unbind-device — remove user_id from equipment (keep device)
+adminStatusRouter.post('/unbind-device', (_req: AuthRequest, res: Response) => {
+  const { sn } = _req.body as { sn?: string };
+  if (!sn) { res.status(400).json({ error: 'sn required' }); return; }
+
+  db.prepare('UPDATE equipment SET user_id = NULL WHERE mower_sn = ? OR charger_sn = ?').run(sn, sn);
+  console.log('[Admin] Device ' + sn + ' unbound');
+  res.json({ ok: true });
+});
+
+// POST /api/admin-status/remove-device — delete device from device_registry + equipment
+adminStatusRouter.post('/remove-device', (_req: AuthRequest, res: Response) => {
+  const { sn } = _req.body as { sn?: string };
+  if (!sn) { res.status(400).json({ error: 'sn required' }); return; }
+
+  db.prepare('DELETE FROM device_registry WHERE sn = ?').run(sn);
+  db.prepare('DELETE FROM equipment WHERE mower_sn = ? OR charger_sn = ?').run(sn, sn);
+  db.prepare('DELETE FROM equipment_lora_cache WHERE sn = ?').run(sn);
+  console.log('[Admin] Device ' + sn + ' removed');
   res.json({ ok: true });
 });
 
