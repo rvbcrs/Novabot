@@ -5,6 +5,7 @@ dist/
 # Nooit committen — bevat private keys en database
 certs/
 novabot.db
+novabot.db.bak
 storage/
 
 # Proxy logbestanden

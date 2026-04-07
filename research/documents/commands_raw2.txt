@@ -1,0 +1,346 @@
+File: ble_tools.dart, Frame: 1
+Strings: ['ble_start', 'ble_end', '蓝牙写入数据:', '蓝牙写入数据异常:']
+File: ble_tools.dart, Frame: 8
+Strings: ['蓝牙写入移动数据:', '蓝牙控制写入数据异常:']
+File: ble_tools.dart, Frame: 10
+Strings: ['蓝牙写入移动数据:', '蓝牙控制写入数据异常:']
+File: map_entity.dart, Frame: 7
+Strings: ['fileName', 'alias', 'type', 'url', 'obstacle']
+File: map_entity.dart, Frame: 8
+Strings: ['fileName', 'alias', 'type', 'url', 'fileHash', 'mapArea', 'obstacle']
+File: timeout_tools.dart, Frame: 2
+Strings: ['监听mqtt:', 'type', 'message', 'result']
+File: button_intercept.dart, Frame: 1
+Strings: ['No map! Please create a map.', 'Start mapping']
+File: button_intercept.dart, Frame: 4
+Strings: ['NOVABOT is working, map/area cannot be edited or deleted']
+File: button_intercept.dart, Frame: 6
+Strings: ['Please enter the PIN code on the mower.']
+File: button_intercept.dart, Frame: 7
+Strings: ['map0', 'The distance from your charging station to the lawn exceeds 1.5 m, or it is not directly facing the lawn. You need to create a channel.', 'Create']
+File: button_intercept.dart, Frame: 9
+Strings: ['map0', 'Please create a channel from the charging station to an existing map.', 'Create']
+File: button_intercept.dart, Frame: 11
+Strings: ['NOVABOT is out of power, please wait for charging to complete.']
+File: mqtt.dart, Frame: 9
+Strings: ['Dart/Receive_mqtt/', 'mqtt ', ': ']
+File: mqtt.dart, Frame: 10
+Strings: ['Dart/Send_mqtt/', 'mqtt send:targetIsMower:', ',josn:', ',topic:']
+File: mqtt.dart, Frame: 11
+Strings: ['app:', 'mqtt连接 ', 'mqtt连接异常']
+File: encrypt_utils.dart, Frame: 1
+Strings: ['abcdabcd1234', 'abcd1234abcd1234']
+File: encrypt_utils.dart, Frame: 3
+Strings: ['abcdabcd1234']
+File: mqtt_data_handler.dart, Frame: 2
+Strings: ['up_status_info', 'mower_error', 'mower_info', 'mower_info1', 'mower_status', 'mower_x', 'mower_y', 'mower_z', 'type', 'ota_version_info_respond', 'message', 'result', 'value', 'version']
+File: mqtt_data_handler.dart, Frame: 3
+Strings: ['/api/nova-user/otaUpgrade/checkOtaNewVersion\\?version=', '&upgradeType=serviceUpgrade&equipmentType=', '&sn=', 'md5', 'downloadUrl', 'upgradeFlag', 'version']
+File: mqtt_data_handler.dart, Frame: 6
+Strings: ['report_state_battery', 'battery_capacity', 'report_state_timer_data', 'timer_task', 'localization', 'map_position', 'orientation', 'mowing_progress', 'plan_path', 'get_map_plan_path', 'map_name', 'all', 'preview_cover_path', 'get_preview_cover_path', 'cover_path', 'map_id', 'covered', 'covering_area', 'area_id', 'points', 'finished_area', 'finished_maps', 'report_state_robot', 'task_mode', 'work_status', 'recharge_status', 'error_msg', 'error_status', 'cov_ratio', 'cov_area', 'cov_remaining_area', 'target_height', 'request_map_ids', 'report_state_work', 'work_mode', 'work_state', 'work_scene', 'report_exception_state', 'chassis_err', 'no_set_pin_code', 'wifi_rssi', 'rtk', 'type', 'ota_version_info_respond', 'message', 'result', 'value', 'version', '\\\\.', 'get_map_list_respond', 'md5', 'zip_dir_empty', 'report_state_map_outline', 'status', 'success', 'get_recharge_pos_respond', 'position', 'get_wifi_rssi_respond', 'get_map_plan_path_respond', 'data', 'get_preview_cover_path_respond']
+File: mqtt_data_handler.dart, Frame: 11
+Strings: ['ota_version_info']
+File: mqtt_data_handler.dart, Frame: 12
+Strings: ['sn', 'chargerSn', 'mowerVersion', 'chargerVersion', 'appVersion', '2.4.0(android)', '/api/nova-user/equipment/updateEquipmentVersion']
+File: logic.dart, Frame: 6
+Strings: ['00:00', 'NOVABOT is executing the current schedule. Please end the task before modifying or deleting it.']
+File: logic.dart, Frame: 9
+Strings: ['sn', '/api/nova-data/appManage/queryCutGrassPlan', '23:59', '00:00']
+File: logic.dart, Frame: 12
+Strings: ['The work plan has been arranged for this time period,please modify it', 'id']
+File: logic.dart, Frame: 13
+Strings: ['sn', '/api/nova-data/appManage/saveCutGrassPlan', '/api/nova-data/appManage/updateCutGrassPlan', 'Error adding schedule, please try again.', 'Error editing schedule, please try again.', 'Successfully added the schedule.', 'Successfully edited the schedule.']
+File: logic.dart, Frame: 14
+Strings: ['weeks', 'startTime', 'endTime']
+File: schedule_painter.dart, Frame: 1
+Strings: ['00:00', '01:00', '02:00', '03:00', '04:00', '05:00', '06:00', '07:00', '08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00', '19:00', '20:00', '21:00', '22:00', '23:00']
+File: logic.dart, Frame: 9
+Strings: ['/lawn']
+File: logic.dart, Frame: 11
+Strings: ['stop_scan_map', 'value']
+File: logic.dart, Frame: 14
+Strings: ["NOVABOT\\'s Bluetooth is disconnected. Please retry or exit mapping. Exiting will result in mapping failure.", 'Retry', 'Exit']
+File: logic.dart, Frame: 16
+Strings: ['Bluetooth connection failed.']
+File: logic.dart, Frame: 21
+Strings: ['开始发现服务', '00000201-0000-1000-8000-00805f9b34fb', '00000011-0000-1000-8000-00805f9b34fb', '00000021-0000-1000-8000-00805f9b34fb', 'dont_remind_modify_map']
+File: logic.dart, Frame: 26
+Strings: ["Drive NOVABOT to the edge of your lawn，then click \\'Start\\'.", "Drive NOVABOT to the edge of the obstacle，then click \\'Start\\'.", "Drive NOVABOT to the edge of the lawn you want to modify and click \\'Start\\'.", "Drive NOVABOT to one end of the channel，then click \\'Start\\'.", 'NOVABOT is creating the map automatically.', 'Remember the starting point and then remotely control NOVABOT to walk along the edge of the lawn.', 'Remotely control NOVABOT to walk around the obstacle.', 'Remotely control NOVABOT to create new map boundaries.', 'Drive NOVABOT from one end of the channel to the other.', "After NOVABOT returns to the ideal position, click \\'Stop\\'.", 'Retract map success!', 'Failed to retract map. please retry.', "Remote control NOVABOT close to the charging station, make sure NOVABOT is facing the charging station, and then click \\'Confirm\\'.", 'NOVABOT is returning to the charging station automatically.', 'Please manually navigate NOVABOT to charging station.']
+File: logic.dart, Frame: 29
+Strings: ['save_recharge_pos', 'mapName', 'map0']
+File: logic.dart, Frame: 30
+Strings: ['蓝牙传图：', '传输完成']
+File: logic.dart, Frame: 31
+Strings: ['地图:上传成功现在去获取服务器的地图', '地图:获取homePageLogic', '地图:服务器地图获取成功-现在去获取机器的md5', '/lawn']
+File: logic.dart, Frame: 35
+Strings: ['map0', 'map1', 'map2']
+File: logic.dart, Frame: 36
+Strings: ['NOVABOT cannot continue automatic mapping and needs to switch to manual remote control.']
+File: logic.dart, Frame: 39
+Strings: ['type', 'add_scan_map_respond', 'start_scan_map_respond', 'message', 'result', 'value', 'map_position', 'Failed to scan map. please retry.', 'reset_map_respond', 'Failed to reset map. please retry.', 'stop_scan_map_respond', 'Stop scan map failed,please retry.', 'save_map_respond', 'Maps cannot overlap. Please recreate the map.', 'The map cannot overlap the channel, please reset.', 'The channel between two maps cannot cross other maps. Please reset it.', 'Mapping failed,please re-mapping.', 'auto_recharge_respond', 'save_recharge_pos_respond', 'Mapping failed,please re-mapping', 'dis', 'orient_flag', 'start_erase_map_respond', 'Failed to retract map. please retry.', 'stop_erase_map_respond', 'Failed to stop retract map. please retry.', 'get_map_info_respond', 'size', 'name', 'gbf', 'start_assistant_build_map_respond', 'NOVABOT cannot continue automatic mapping and needs to switch to manual remote control.']
+File: logic.dart, Frame: 42
+Strings: ['save_map', 'mapName', 'type']
+File: logic.dart, Frame: 43
+Strings: ['get_map_outline', 'map_name', 'all']
+File: logic.dart, Frame: 51
+Strings: ['auto_recharge']
+File: logic.dart, Frame: 53
+Strings: ['start_scan_map', 'model', 'manual', 'mapName', 'map0', 'type', 'add_scan_map']
+File: logic.dart, Frame: 55
+Strings: ['stop_erase_map']
+File: logic.dart, Frame: 58
+Strings: ['start_erase_map']
+File: logic.dart, Frame: 60
+Strings: ['reset_map', 'type', 'boundaries', 'obstacle', 'channel', 'Are you sure you want to rescan the ', '\\?']
+File: logic.dart, Frame: 63
+Strings: ['start_assistant_build_map', 'type']
+File: logic.dart, Frame: 66
+Strings: ['start_assistant_build_map', 'type']
+File: logic.dart, Frame: 68
+Strings: ['start_move']
+File: logic.dart, Frame: 70
+Strings: ['mst']
+File: logic.dart, Frame: 71
+Strings: ['quit_mapping_mode', 'value']
+File: view.dart, Frame: 11
+Strings: ['Reset', 'Retract', 'Stop', 'Start', 'Confirm', 'Done']
+File: view.dart, Frame: 17
+Strings: ['assets/images/lawn/lawn_charger.png', 'assets/images/buildMap/ic_mower_location.png']
+File: ble_data_handler.dart, Frame: 1
+Strings: ['蓝牙推送:']
+File: logic.dart, Frame: 1
+Strings: ['get_recharge_pos']
+File: logic.dart, Frame: 2
+Strings: ['NOVABOT is creating the map. Exiting will result in the mapping failure. Are you sure you want to exit\\?']
+File: logic.dart, Frame: 3
+Strings: ['/lawn']
+File: logic.dart, Frame: 5
+Strings: ['Mapping Success!', '/lawn']
+File: logic.dart, Frame: 6
+Strings: ['Currently only supports the creation of three maps and three channel areas.', 'dont_remind_build_map0', '/buildMap', 'dont_remind_build_map', 'dont_remind_obstacle', 'dont_remind_channel3']
+File: view.dart, Frame: 3
+Strings: ['Finish']
+File: view.dart, Frame: 5
+Strings: ['assets/images/buildMap/ic_map.png', 'Map', 'assets/images/buildMap/ic_obstacle.png', 'Obstacle', 'assets/images/buildMap/ic_channel.png', 'Channel', 'assets/images/buildMap/item_normal.png', "If you have multiple lawns, click \\'Map\\' to continue mapping.", 'A channel needs to be created between the two maps.']
+File: logic.dart, Frame: 4
+Strings: ['get_wifi_rssi']
+File: logic.dart, Frame: 9
+Strings: ['Please go to the system settings page to turn on Bluetooth permissions and positioning permissions.', "Please turn on your phone\\'s Bluetooth.", "Please turn on your phone\\'s location service.", 'get_wifi_rssi', 'dont_remind_pre_build']
+File: view.dart, Frame: 4
+Strings: ['Wifi Signal', 'GPS Signal', 'Bluetooth Signal', 'Phone Battery', 'NOVABOT Battery', 'Start mapping', 'Refresh']
+File: logic.dart, Frame: 3
+Strings: ['/api/nova-file-server/map/queryEquipmentMap\\?sn=', 'data', 'md5', 'machineExtendedField', 'chargingPose']
+File: logic.dart, Frame: 4
+Strings: ['/login', 'appUserId', 'pageSize', 'pageNo', '/api/nova-user/equipment/userEquipmentList', 'pageList', 'charger']
+File: logic.dart, Frame: 5
+Strings: ['HH:mm', 'sn', 'currentTime', 'week', '/api/nova-data/cutGrassPlan/queryRecentCutGrassPlan', 'startTime', 'areaFileAlias', '  ']
+File: logic.dart, Frame: 12
+Strings: ['GMT', ':00', 'GMT+', 'appUserId', 'timezone', '/api/novabot-message/message/queryMsgMenuByUserId', 'robotMsgUnread']
+File: logic.dart, Frame: 14
+Strings: ['/home', '/lawn']
+File: logic.dart, Frame: 15
+Strings: ['/home']
+File: logic.dart, Frame: 17
+Strings: ['go_to_charge', 'chargerpile', 'latitude', 'longitude']
+File: logic.dart, Frame: 18
+Strings: ['/login', '/api/nova-user/appUser/appUserInfo\\?email=', 'error=>']
+File: logic.dart, Frame: 20
+Strings: ['收到一条推送消息:', 'msgType', 'schedule']
+File: view.dart, Frame: 2
+Strings: ['assets/images/home/navbar_home.png', 'Home', 'assets/images/home/navbar_store.png', 'Store', 'Profile']
+File: view.dart, Frame: 3
+Strings: ['assets/images/home/navbar_account.png']
+File: mower_view.dart, Frame: 3
+Strings: ['/equipmentDetail', 'NOVABOT is offline.', '/advancedSettings', 'NOVABOT is offline. Failed to obtain PIN code.', '/viewPin', 'The machine is working and cannot be controlled manually.']
+File: mower_view.dart, Frame: 4
+Strings: ['Please go to the system settings page to turn on Bluetooth permissions and positioning permissions.', "Please turn on your phone\\'s Bluetooth.", "Please turn on your phone\\'s location service.", 'The machine has a low battery. This function is unavailable.', 'Your phone battery is low. This function is unavailable.']
+File: main_view.dart, Frame: 4
+Strings: ['/message']
+File: user_center_view.dart, Frame: 6
+Strings: ['Settings  ']
+File: advanced_settings_page.dart, Frame: 16
+Strings: ['NOVABOT is currently working. You cannot preview.', 'No map! Please create a map.', 'generate_preview_cover_path', 'map_ids', 'cov_direction', 'generate_preview_cover_path_respond']
+File: advanced_settings_page.dart, Frame: 17
+Strings: ['map0', 'map1', 'map2']
+File: advanced_settings_page.dart, Frame: 18
+Strings: ['message', 'result', 'preview failed, please retry.']
+File: advanced_settings_page.dart, Frame: 19
+Strings: ['preview failed, please retry.']
+File: online_view.dart, Frame: 3
+Strings: ['Pause', 'Start', 'Continue', 'Back', 'Lawn', 'Schedule']
+File: online_view.dart, Frame: 8
+Strings: ['resume_run', 'resume_run_respond', 'resume_navigation', 'resume_navigation_respond']
+File: online_view.dart, Frame: 12
+Strings: ['NOVABOT is currently working.', 'start_run', 'mapName', 'area', 'cutterhigh', 'start_run_respond', 'start_navigation', 'test', 'start_navigation_respond']
+File: online_view.dart, Frame: 13
+Strings: ['Start navigation successfully.', 'Start navigation failed,please try again.']
+File: online_view.dart, Frame: 14
+Strings: ['pause_run', 'pause_run_respond', 'pause_navigation', 'pause_navigation_respond']
+File: online_view.dart, Frame: 16
+Strings: ['Which command do you want NOVABOT to execute\\? \\nA. End the work, return for charging.\\nB. Pause the work, return for charging.', 'Are you sure you want NOVABOT to return\\?']
+File: online_view.dart, Frame: 18
+Strings: ['go_pile', 'go_pile_respond', 'go_to_charge', 'chargerpile', 'latitude', 'longitude', 'go_to_charge_respond']
+File: online_view.dart, Frame: 21
+Strings: ['pause_run', 'pause_run_respond', 'pause_navigation', 'pause_navigation_respond']
+File: online_view.dart, Frame: 25
+Strings: ['stop_run', 'stop_run_respond', 'stop_navigation', 'stop_navigation_respond']
+File: online_view.dart, Frame: 26
+Strings: ['go_to_charge', 'chargerpile', 'latitude', 'longitude', 'go_to_charge_respond', 'Go to charging station failed,please try again.']
+File: online_view.dart, Frame: 29
+Strings: ['none', 'Next task : ', 'Resume unfinished mowing after charging']
+File: online_view.dart, Frame: 31
+Strings: ['Charging', 'Mowing,  ', ',  ', 'cm', 'Standby']
+File: online_view.dart, Frame: 32
+Strings: ['All maps', 'map0', 'map1', 'map2']
+File: online_view.dart, Frame: 34
+Strings: ['Progress: ', '  Pause']
+File: logic.dart, Frame: 5
+Strings: ['stop_to_charge']
+File: logic.dart, Frame: 8
+Strings: ["NOVABOT\\'s Bluetooth is disconnected. Please move closer to the machine and try again.", 'Retry', 'Exit']
+File: logic.dart, Frame: 10
+Strings: ['Bluetooth connection failed.']
+File: logic.dart, Frame: 15
+Strings: ['开始发现服务', '00000201-0000-1000-8000-00805f9b34fb', '00000011-0000-1000-8000-00805f9b34fb', '00000021-0000-1000-8000-00805f9b34fb']
+File: logic.dart, Frame: 20
+Strings: ['NOVABOT returned to the charging station successfully.', 'Control the machine to be near the charging station and within the map, click \\', 'NOVABOT is returning to the charging station automatically.', 'Please manually navigate NOVABOT to charging station.']
+File: logic.dart, Frame: 27
+Strings: ['type', 'go_to_charge_respond', 'message', 'result', 'Failed to back to station. please retry.', 'stop_to_charge_respond', 'Failed to stop back to station. please retry.']
+File: logic.dart, Frame: 29
+Strings: ['go_to_charge']
+File: logic.dart, Frame: 33
+Strings: ['start_move']
+File: logic.dart, Frame: 35
+Strings: ['mst']
+File: view.dart, Frame: 3
+Strings: ['Back to Station', 'Stop']
+File: view.dart, Frame: 12
+Strings: ['assets/images/lawn/lawn_charger.png', 'assets/images/buildMap/ic_mower_location.png']
+File: ble_data_handler.dart, Frame: 1
+Strings: ['蓝牙推送:']
+File: logic.dart, Frame: 4
+Strings: ['Please Enter Your Email.', 'email', '/api/nova-user/validate/sendAppResetPwdEmailCode']
+File: view.dart, Frame: 6
+Strings: ['Send']
+File: working_records_page.dart, Frame: 2
+Strings: ['GMT', ':00', 'GMT+', 'appUserId', 'pageNo', 'pageSize', 'timezone', '/api/novabot-message/message/queryCutGrassRecordPageByUserId', 'pageList']
+File: robot_messages_page.dart, Frame: 2
+Strings: ['GMT', ':00', 'GMT+', 'appUserId', 'pageNo', 'pageSize', 'timezone', '/api/novabot-message/message/queryRobotMsgPageByUserId', 'pageList']
+File: logic.dart, Frame: 5
+Strings: ['appUserId', 'menu', '/api/novabot-message/message/updateMsgByUserId', 'Marked as read successfully.', 'robot', 'workRecord']
+File: logic.dart, Frame: 7
+Strings: ['appUserId', 'menu', 'robot', '/api/novabot-message/message/deleteMsgByUserId', 'Deletion of all messages successful.']
+File: logic.dart, Frame: 11
+Strings: ['appUserId', 'menu', 'workRecord', '/api/novabot-message/message/deleteMsgByUserId', 'Deletion of all messages successful.']
+File: logic.dart, Frame: 13
+Strings: ['appUserId', 'menu', 'all', '/api/novabot-message/message/updateMsgByUserId', 'All messages are marked as read.']
+File: logic.dart, Frame: 15
+Strings: ['GMT', ':00', 'GMT+', 'appUserId', 'timezone', '/api/novabot-message/message/queryMsgMenuByUserId', 'robotMsg', 'robotMsgUnread', 'workRecordUnread', 'workRecordDate', 'robotMsgDate', 'yyyy-MM-dd HH:mm:ss']
+File: view.dart, Frame: 3
+Strings: ['Read', 'Clear']
+File: view.dart, Frame: 4
+Strings: ['...', 'none.']
+File: view.dart, Frame: 7
+Strings: ['...']
+File: ota_page.dart, Frame: 3
+Strings: ['ota_upgrade_cmd', 'url', 'version', 'md5']
+File: ota_page.dart, Frame: 5
+Strings: ['超过一分钟未收到ota回应:', 'ota_version_info']
+File: ota_page.dart, Frame: 8
+Strings: ['ota_upgrade_state', 'status', 'success', 'percentage', 'upgrade', 'fail', 'type', 'ota_version_info_respond', 'message', 'value', 'version']
+File: ota_page.dart, Frame: 12
+Strings: ['ota_upgrade_cmd', 'cmd', 'upgrade', 'type', 'full', 'increment', 'content', 'app', 'url', 'version', 'md5', 'tz']
+File: ota_page.dart, Frame: 13
+Strings: ['ota_upgrade_state', 'status', 'success', 'percentage', 'upgrade', 'fail', 'type', 'ota_version_info_respond', 'message', 'value', 'version']
+File: ota_page.dart, Frame: 14
+Strings: ['\\\\.']
+File: delete_account_page.dart, Frame: 2
+Strings: ['Delete Account']
+File: delete_account_page.dart, Frame: 3
+Strings: ['NOVABOT is working.', 'Once the account is deleted, it cannot be restored. Please reconsider before you proceed.', 'Confirm']
+File: about_page.dart, Frame: 2
+Strings: ['NOVABOT v2.4.0', 'User Agreement', 'Privacy Policy', 'Device Upgrade (OTA)    ', 'Mower', 'Charging Station']
+File: about_page.dart, Frame: 5
+Strings: ['The Mower is Offline.', 'The Chaging Station is Offline.', 'The Mower is not charging.', 'The current version is the latest']
+File: settings_page.dart, Frame: 2
+Strings: ['Reset password', 'assets/images/user/icon_reset_password.png', 'Delete account', 'assets/images/user/icon_delete_account.png', 'assets/images/user/icon_language.png', 'About  ', 'assets/images/user/icon_about.png', 'App log upload', 'Sign out']
+File: entrance_view.dart, Frame: 2
+Strings: ['assets/images/entrance/bg.png', 'assets/images/entrance/robot.png', 'NOVABOT IS READY TO HELP YOU.', 'Revolutionary Autonomous ', 'Lawn Care Robot', 'Language', 'assets/images/entrance/icon_fast.png', 'By logging in, you agree to our', ' User Agreement ', ' and  ', 'Privacy Policy.']
+File: entrance_view.dart, Frame: 3
+Strings: ['/signup', 'Please read our user agreement,privacy policy and agree.']
+File: entrance_view.dart, Frame: 4
+Strings: ['/login', 'Please read our user agreement,privacy policy and agree.']
+File: rename_page.dart, Frame: 4
+Strings: ['Please enter your new name.', 'firstName', 'lastName', 'appUserId', '/api/nova-user/appUser/appUserInfoUpdate']
+File: logic.dart, Frame: 4
+Strings: ['Please Enter Your Email.', 'email', '/api/nova-user/validate/sendAppRegistEmailCode']
+File: view.dart, Frame: 8
+Strings: ['Send']
+File: equipment_detail_page.dart, Frame: 1
+Strings: ['About charging station', 'About NOVABOT', 'Device name', 'Model', 'Serial number', 'Warranty period', 'Delete']
+File: equipment_detail_page.dart, Frame: 5
+Strings: ['sn', 'appUserId', '/api/nova-user/equipment/unboundEquipment']
+File: rename_device_page.dart, Frame: 4
+Strings: ['Please enter a new nickname.', 'sn', 'appUserId', 'equipmentNickName', '/api/nova-user/equipment/updateEquipmentNickName']
+File: logic.dart, Frame: 5
+Strings: ['novabot', '12345678', 'set_wifi_info', 'ap', 'ssid', 'passwd', 'encrypt']
+File: logic.dart, Frame: 10
+Strings: ['type', 'set_wifi_info_respond', 'message', 'result', 'WiFi connection failed. Please verify that the WiFi name and password entered are correct.', 'set_rtk_info_respond', 'Network configuration error. Please retry.', 'set_lora_info_respond', 'Network configuration error. Please ensure the antenna is connected properly and try again.', 'set_mqtt_info_respond', 'Network connection timed out. Please retry.', 'set_cfg_info_respond']
+File: logic.dart, Frame: 16
+Strings: ['set_lora_info', 'addr', 'channel']
+File: logic.dart, Frame: 7
+Strings: ['/scanner', 'Please allow app to use camera in your app settings']
+File: logic.dart, Frame: 20
+Strings: ['开始发现服务', '00001234-0000-1000-8000-00805f9b34fb', '00002222-0000-1000-8000-00805f9b34fb', 'No device was found, please make sure the device is powered on.']
+File: logic.dart, Frame: 23
+Strings: ['type', 'set_wifi_info_respond', 'message', 'result', 'WiFi connection failed. Please verify that the WiFi name and password entered are correct.', 'get_signal_info_respond', 'The GPS signal is weak, please make sure the antenna is installed in an unobstructed area.', 'value', 'wifi', 'rtk', 'set_rtk_info_respond', 'Network configuration error. Please retry.', 'set_lora_info_respond', 'Network configuration error. Please ensure the antenna is connected properly and try again.', 'set_mqtt_info_respond', 'Network connection timed out. Please retry.', 'set_cfg_info_respond']
+File: logic.dart, Frame: 32
+Strings: ['get_signal_info']
+File: logic.dart, Frame: 33
+Strings: ['The GPS signal is weak, please make sure the antenna is installed in an unobstructed area.']
+File: view.dart, Frame: 3
+Strings: ['Select/Input your home WiFi', 'Connecting...', 'Reset', 'Next']
+File: view.dart, Frame: 4
+Strings: ['Strong', 'Weak', 'Wifi Signal', 'GPS Signal']
+File: view.dart, Frame: 6
+Strings: ['Scan/Enter the charging station serial number', "Can\\'t find ", 'the SN code of the charging station\\?', 'Connect home Wi-Fi', 'Only supports 2.4G network. ', 'How to convert 5G network to 2.4G \\?', 'Detect signals']
+File: view.dart, Frame: 7
+Strings: ['2.4GHz Network Setup', 'https://www.youtube.com/watch\\?v=TRwkgeTzylU&list=PLSzQe_ug-Hcrzb-CRFahHIO7msI9bsqVR&index=4', '/webview']
+File: logic.dart, Frame: 7
+Strings: ['NOVABOT is currently working.', 'map0', 'map1', 'map2', 'start_run', 'mapName', 'area', 'cutterhigh', 'start_run_respond', 'start_navigation', 'test', 'start_navigation_respond']
+File: logic.dart, Frame: 8
+Strings: ['Start navigation successfully.', 'Start navigation failed,please try again.']
+File: logic.dart, Frame: 12
+Strings: ['delete_map', 'map_name', 'map_type', 'delete_map_respond']
+File: logic.dart, Frame: 14
+Strings: ['get_map_outline', 'map_name', 'all']
+File: logic.dart, Frame: 18
+Strings: ['get_map_list', 'init', 'get_map_list_respond']
+File: logic.dart, Frame: 19
+Strings: ['hasShowLawnTips']
+File: logic.dart, Frame: 21
+Strings: ['get_recharge_pos', 'get_recharge_pos_respond']
+File: logic.dart, Frame: 23
+Strings: ['message', 'value', 'position']
+File: logic.dart, Frame: 27
+Strings: ['message', 'result', 'value', 'zip_dir_empty', 'get_map_outline', 'map_name', 'all', 'Map list is null.']
+File: logic.dart, Frame: 28
+Strings: ['message', 'result', 'value', 'md5', 'zip_dir_empty', 'init']
+File: logic.dart, Frame: 29
+Strings: ['地图:上传成功现在去获取服务器的地图', '地图:服务器地图获取成功-现在去获取机器的md5']
+File: logic.dart, Frame: 32
+Strings: ['Name cannot be empty.', 'sn', 'fileName', 'fileAlias', '/api/nova-file-server/map/updateEquipmentMapAlias', 'modify successful.', 'obstacle']
+File: logic.dart, Frame: 35
+Strings: ['obstacle', 'map']
+File: logic.dart, Frame: 40
+Strings: ['/preBuildMap']
+File: logic.dart, Frame: 41
+Strings: ['/preBuildMap']
+File: view.dart, Frame: 10
+Strings: ['Work Map: ', 'assets/images/lawn/ic_edit.png', 'assets/images/lawn/ic_delete.png', 'Size: ', ' hours', 'assets/images/lawn/ic_lawn_start.png', 'Start mowing', 'assets/images/lawn/ic_clock.png', 'Schedule']
+File: view.dart, Frame: 14
+Strings: ['assets/images/lawn/lawn_charger.png', 'assets/images/lawn/lawn_charging.gif', 'assets/images/lawn/lawn_mower.png']
+File: view.dart, Frame: 15
+Strings: ['no_map']
+File: funs.dart, Frame: 18
+Strings: ['All maps']

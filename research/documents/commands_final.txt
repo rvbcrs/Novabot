@@ -1,0 +1,252 @@
+--- File: mqtt_data_handler.dart, Line: 1208, Trigger: ota_version_info_respond ---
+Payload Keys / Associated strings: ['ota_version_info_respond', 'message', 'result', 'value', 'version']
+
+--- File: mqtt_data_handler.dart, Line: 6606, Trigger: ota_version_info_respond ---
+Payload Keys / Associated strings: ['report_exception_state', 'no_set_pin_code', 'wifi_rssi', 'rtk', 'ota_version_info_respond', 'message', 'result', 'value', 'version', '\\\\.']
+
+--- File: mqtt_data_handler.dart, Line: 6952, Trigger: get_map_list_respond ---
+Payload Keys / Associated strings: ['message', 'value', 'version', '\\\\.', 'get_map_list_respond', 'result', 'md5', 'zip_dir_empty', 'report_state_map_outline', 'status', 'success']
+
+--- File: mqtt_data_handler.dart, Line: 7296, Trigger: get_recharge_pos_respond ---
+Payload Keys / Associated strings: ['message', 'value', 'md5', 'zip_dir_empty', 'report_state_map_outline', 'status', 'success', 'get_recharge_pos_respond', 'result', 'position', 'get_wifi_rssi_respond']
+
+--- File: mqtt_data_handler.dart, Line: 7558, Trigger: get_wifi_rssi_respond ---
+Payload Keys / Associated strings: ['get_recharge_pos_respond', 'message', 'result', 'value', 'position', 'get_wifi_rssi_respond', 'get_map_plan_path_respond', 'data']
+
+--- File: mqtt_data_handler.dart, Line: 7701, Trigger: get_map_plan_path_respond ---
+Payload Keys / Associated strings: ['message', 'value', 'position', 'get_wifi_rssi_respond', 'result', 'get_map_plan_path_respond', 'data', 'get_preview_cover_path_respond']
+
+--- File: mqtt_data_handler.dart, Line: 7925, Trigger: get_preview_cover_path_respond ---
+Payload Keys / Associated strings: ['message', 'value', 'get_map_plan_path_respond', 'result', 'data', 'get_preview_cover_path_respond']
+
+--- File: logic.dart, Line: 4619, Trigger: cmd_num ---
+Payload Keys / Associated strings: ['Yes', 'No', '/lawn', 'stop_scan_map', 'value']
+
+--- File: logic.dart, Line: 7257, Trigger: cmd_num ---
+Payload Keys / Associated strings: ['save_recharge_pos', 'mapName', 'map0', '蓝牙传图：', '传输完成']
+
+--- File: logic.dart, Line: 9590, Trigger: add_scan_map_respond ---
+Payload Keys / Associated strings: ['le_start', 'le_end', '收到蓝牙数据:', 'add_scan_map_respond', 'start_scan_map_respond', 'message', 'result', 'value', 'map_position']
+
+--- File: logic.dart, Line: 9955, Trigger: reset_map_respond ---
+Payload Keys / Associated strings: ['result', 'message', 'value', 'map_position', 'reset_map_respond', 'stop_scan_map_respond', 'save_map_respond']
+
+--- File: logic.dart, Line: 10081, Trigger: stop_scan_map_respond ---
+Payload Keys / Associated strings: ['value', 'map_position', 'reset_map_respond', 'message', 'result', 'stop_scan_map_respond', 'save_map_respond']
+
+--- File: logic.dart, Line: 10191, Trigger: save_map_respond ---
+Payload Keys / Associated strings: ['reset_map_respond', 'message', 'result', 'stop_scan_map_respond', 'save_map_respond', 'value']
+
+--- File: logic.dart, Line: 10574, Trigger: auto_recharge_respond ---
+Payload Keys / Associated strings: ['value', 'message', 'result', 'auto_recharge_respond', 'save_recharge_pos_respond']
+
+--- File: logic.dart, Line: 10687, Trigger: save_recharge_pos_respond ---
+Payload Keys / Associated strings: ['message', 'result', 'auto_recharge_respond', 'save_recharge_pos_respond', 'value', 'dis', 'orient_flag']
+
+--- File: logic.dart, Line: 11015, Trigger: start_erase_map_respond ---
+Payload Keys / Associated strings: ['result', 'message', 'value', 'dis', 'orient_flag', 'start_erase_map_respond', 'stop_erase_map_respond']
+
+--- File: logic.dart, Line: 11175, Trigger: stop_erase_map_respond ---
+Payload Keys / Associated strings: ['dis', 'message', 'value', 'orient_flag', 'start_erase_map_respond', 'result', 'stop_erase_map_respond', 'get_map_info_respond', 'size']
+
+--- File: logic.dart, Line: 11335, Trigger: get_map_info_respond ---
+Payload Keys / Associated strings: ['message', 'result', 'stop_erase_map_respond', 'get_map_info_respond', 'value', 'size', 'name', 'gbf']
+
+--- File: logic.dart, Line: 11642, Trigger: start_assistant_build_map_respond ---
+Payload Keys / Associated strings: ['message', 'result', 'value', 'size', 'name', 'gbf', 'start_assistant_build_map_respond', 'Retry']
+
+--- File: logic.dart, Line: 12045, Trigger: cmd_num ---
+Payload Keys / Associated strings: ['Retry', 'save_map', 'mapName', 'get_map_outline', 'map_name', 'all']
+
+--- File: logic.dart, Line: 12771, Trigger: auto_recharge ---
+Payload Keys / Associated strings: ['Yes', 'No', 'auto_recharge', 'start_scan_map', 'model', 'manual', 'mapName', 'map0', 'add_scan_map']
+
+--- File: logic.dart, Line: 13038, Trigger: add_scan_map ---
+Payload Keys / Associated strings: ['auto_recharge', 'start_scan_map', 'model', 'manual', 'mapName', 'map0', 'add_scan_map']
+
+--- File: logic.dart, Line: 13086, Trigger: cmd_num ---
+Payload Keys / Associated strings: ['start_scan_map', 'model', 'manual', 'mapName', 'map0', 'add_scan_map']
+
+--- File: logic.dart, Line: 13282, Trigger: add_scan_map ---
+Payload Keys / Associated strings: ['add_scan_map', 'model', 'manual', 'mapName']
+
+--- File: logic.dart, Line: 13337, Trigger: cmd_num ---
+Payload Keys / Associated strings: ['add_scan_map', 'model', 'manual', 'mapName', 'stop_erase_map']
+
+--- File: logic.dart, Line: 13462, Trigger: cmd_num ---
+Payload Keys / Associated strings: ['model', 'manual', 'mapName', 'add_scan_map', 'stop_erase_map']
+
+--- File: logic.dart, Line: 13607, Trigger: cmd_num ---
+Payload Keys / Associated strings: ['add_scan_map', 'model', 'manual', 'mapName', 'stop_erase_map', 'start_erase_map']
+
+--- File: logic.dart, Line: 13782, Trigger: start_erase_map ---
+Payload Keys / Associated strings: ['stop_erase_map', 'start_erase_map', 'reset_map', 'boundaries']
+
+--- File: logic.dart, Line: 13947, Trigger: cmd_num ---
+Payload Keys / Associated strings: ['start_erase_map', 'reset_map', 'boundaries', 'obstacle']
+
+--- File: logic.dart, Line: 14041, Trigger: cmd_num ---
+Payload Keys / Associated strings: ['start_erase_map', 'reset_map', 'boundaries', 'obstacle', 'channel', '\\?', 'Yes', 'No']
+
+--- File: logic.dart, Line: 14135, Trigger: cmd_num ---
+Payload Keys / Associated strings: ['reset_map', 'boundaries', 'obstacle', 'channel', '\\?', 'Yes', 'No']
+
+--- File: logic.dart, Line: 14224, Trigger: cmd_num ---
+Payload Keys / Associated strings: ['reset_map', 'boundaries', 'obstacle', 'channel', '\\?', 'Yes', 'No', 'start_assistant_build_map']
+
+--- File: logic.dart, Line: 14458, Trigger: start_assistant_build_map ---
+Payload Keys / Associated strings: ['boundaries', 'reset_map', 'channel', '\\?', 'Yes', 'No', 'start_assistant_build_map']
+
+--- File: logic.dart, Line: 14651, Trigger: start_assistant_build_map ---
+Payload Keys / Associated strings: ['start_assistant_build_map', 'stop_move']
+
+--- File: logic.dart, Line: 14663, Trigger: cmd_num ---
+Payload Keys / Associated strings: ['start_assistant_build_map', 'stop_move', 'start_move']
+
+--- File: logic.dart, Line: 14960, Trigger: start_move ---
+Payload Keys / Associated strings: ['stop_move', 'start_move', 'mst']
+
+--- File: logic.dart, Line: 15305, Trigger: cmd_num ---
+Payload Keys / Associated strings: ['stop_move', 'mst', 'quit_mapping_mode', 'value', 'map0', '/buildMap']
+
+--- File: logic.dart, Line: 2666, Trigger: go_to_charge ---
+Payload Keys / Associated strings: ['/lawn', '/home', 'Retry', 'go_to_charge', 'chargerpile', 'latitude', 'longitude', '/login', '/api/nova-user/appUser/appUserInfo\\?email=']
+
+--- File: logic.dart, Line: 2679, Trigger: cmd_num ---
+Payload Keys / Associated strings: ['/home', 'Retry', 'go_to_charge', 'chargerpile', 'latitude', 'longitude', '/login', '/api/nova-user/appUser/appUserInfo\\?email=']
+
+--- File: advanced_settings_page.dart, Line: 162, Trigger: get_para_info_respond ---
+Payload Keys / Associated strings: ['get_para_info', 'get_para_info_respond', 'message', 'result', 'value', 'sound', 'headlight']
+
+--- File: advanced_settings_page.dart, Line: 4400, Trigger: cmd_num ---
+Payload Keys / Associated strings: ['generate_preview_cover_path', 'map_ids', 'cov_direction', 'generate_preview_cover_path_respond', 'map0', 'map1']
+
+--- File: advanced_settings_page.dart, Line: 4521, Trigger: generate_preview_cover_path_respond ---
+Payload Keys / Associated strings: ['generate_preview_cover_path', 'map_ids', 'cov_direction', 'generate_preview_cover_path_respond', 'map0', 'map1', 'map2', 'message', 'result']
+
+--- File: advanced_settings_page.dart, Line: 5922, Trigger: set_para_info_respond ---
+Payload Keys / Associated strings: ['set_para_info', 'sound', 'headlight', 'path_direction', 'obstacle_avoidance_sensitivity', 'manual_controller_v', 'manual_controller_w', 'set_para_info_respond', 'message', 'result', 'Yes', 'No']
+
+--- File: online_view.dart, Line: 1692, Trigger: resume_run_respond ---
+Payload Keys / Associated strings: ['/schedule', '/lawn', 'resume_run', 'resume_run_respond', 'resume_navigation', 'resume_navigation_respond']
+
+--- File: online_view.dart, Line: 1811, Trigger: resume_navigation_respond ---
+Payload Keys / Associated strings: ['/lawn', 'resume_run', 'resume_run_respond', 'resume_navigation', 'resume_navigation_respond']
+
+--- File: online_view.dart, Line: 2210, Trigger: start_run ---
+Payload Keys / Associated strings: ['start_run', 'mapName', 'area', 'cutterhigh', 'start_run_respond', 'start_navigation', 'test', 'start_navigation_respond']
+
+--- File: online_view.dart, Line: 2378, Trigger: cmd_num ---
+Payload Keys / Associated strings: ['start_run', 'mapName', 'area', 'cutterhigh', 'start_run_respond', 'start_navigation', 'test', 'start_navigation_respond', 'pause_run']
+
+--- File: online_view.dart, Line: 2459, Trigger: start_navigation_respond ---
+Payload Keys / Associated strings: ['start_run', 'mapName', 'area', 'cutterhigh', 'start_run_respond', 'start_navigation', 'test', 'start_navigation_respond', 'pause_run', 'pause_run_respond', 'pause_navigation']
+
+--- File: online_view.dart, Line: 2716, Trigger: pause_run_respond ---
+Payload Keys / Associated strings: ['start_navigation_respond', 'pause_run', 'pause_run_respond', 'pause_navigation', 'pause_navigation_respond']
+
+--- File: online_view.dart, Line: 2754, Trigger: cmd_num ---
+Payload Keys / Associated strings: ['start_navigation_respond', 'pause_run', 'pause_run_respond', 'pause_navigation', 'pause_navigation_respond', 'Yes', 'No']
+
+--- File: online_view.dart, Line: 2835, Trigger: pause_navigation_respond ---
+Payload Keys / Associated strings: ['pause_run', 'pause_run_respond', 'pause_navigation', 'pause_navigation_respond', 'Yes', 'No']
+
+--- File: online_view.dart, Line: 3238, Trigger: go_pile_respond ---
+Payload Keys / Associated strings: ['Yes', 'No', 'go_pile', 'go_pile_respond', 'go_to_charge', 'chargerpile', 'latitude', 'longitude', 'go_to_charge_respond']
+
+--- File: online_view.dart, Line: 3405, Trigger: go_to_charge_respond ---
+Payload Keys / Associated strings: ['go_pile', 'go_pile_respond', 'go_to_charge', 'chargerpile', 'latitude', 'longitude', 'go_to_charge_respond', 'pause_run', 'pause_run_respond', 'pause_navigation']
+
+--- File: online_view.dart, Line: 3659, Trigger: pause_run_respond ---
+Payload Keys / Associated strings: ['go_to_charge_respond', 'pause_run', 'pause_run_respond', 'pause_navigation', 'pause_navigation_respond']
+
+--- File: online_view.dart, Line: 3777, Trigger: pause_navigation_respond ---
+Payload Keys / Associated strings: ['pause_run', 'pause_run_respond', 'pause_navigation', 'pause_navigation_respond', 'stop_run']
+
+--- File: online_view.dart, Line: 4105, Trigger: stop_run_respond ---
+Payload Keys / Associated strings: ['stop_run', 'stop_run_respond', 'stop_navigation', 'stop_navigation_respond', 'go_to_charge', 'chargerpile', 'latitude', 'longitude']
+
+--- File: online_view.dart, Line: 4143, Trigger: cmd_num ---
+Payload Keys / Associated strings: ['stop_run', 'stop_run_respond', 'stop_navigation', 'stop_navigation_respond', 'go_to_charge', 'chargerpile', 'latitude', 'longitude', 'go_to_charge_respond']
+
+--- File: online_view.dart, Line: 4224, Trigger: stop_navigation_respond ---
+Payload Keys / Associated strings: ['stop_run', 'stop_run_respond', 'stop_navigation', 'stop_navigation_respond', 'go_to_charge', 'chargerpile', 'latitude', 'longitude', 'go_to_charge_respond', 'go_pile']
+
+--- File: online_view.dart, Line: 4288, Trigger: cmd_num ---
+Payload Keys / Associated strings: ['stop_run', 'stop_run_respond', 'stop_navigation', 'stop_navigation_respond', 'go_to_charge', 'chargerpile', 'latitude', 'longitude', 'go_to_charge_respond', 'go_pile', 'go_pile_respond']
+
+--- File: online_view.dart, Line: 4423, Trigger: go_to_charge_respond ---
+Payload Keys / Associated strings: ['stop_navigation', 'stop_navigation_respond', 'go_to_charge', 'chargerpile', 'latitude', 'longitude', 'go_to_charge_respond', 'go_pile', 'go_pile_respond', 'none']
+
+--- File: online_view.dart, Line: 4575, Trigger: go_pile_respond ---
+Payload Keys / Associated strings: ['chargerpile', 'latitude', 'longitude', 'go_to_charge_respond', 'go_pile', 'go_pile_respond', 'none']
+
+--- File: logic.dart, Line: 197, Trigger: cmd_num ---
+Payload Keys / Associated strings: ['Yes', 'No', 'stop_to_charge', 'Retry', 'Exit']
+
+--- File: logic.dart, Line: 5659, Trigger: go_to_charge_respond ---
+Payload Keys / Associated strings: ['le_start', 'le_end', '收到蓝牙数据:', 'go_to_charge_respond', 'message', 'result', 'stop_to_charge_respond', 'go_to_charge']
+
+--- File: logic.dart, Line: 5788, Trigger: stop_to_charge_respond ---
+Payload Keys / Associated strings: ['le_end', '收到蓝牙数据:', 'go_to_charge_respond', 'message', 'result', 'stop_to_charge_respond', 'go_to_charge']
+
+--- File: logic.dart, Line: 5946, Trigger: go_to_charge ---
+Payload Keys / Associated strings: ['go_to_charge_respond', 'message', 'result', 'stop_to_charge_respond', 'go_to_charge', 'stop_move']
+
+--- File: ota_page.dart, Line: 1071, Trigger: ota_version_info_respond ---
+Payload Keys / Associated strings: ['success', 'ota_upgrade_state', 'percentage', 'status', 'upgrade', 'fail', 'ota_version_info_respond', 'message', 'value', 'version']
+
+--- File: view_pin_page.dart, Line: 209, Trigger: dev_pin_info_respond ---
+Payload Keys / Associated strings: ['dev_pin_info', 'cfg_value', 'code', '0000', 'dev_pin_info_respond', 'message', 'value', 'Retry', 'Exit']
+
+--- File: logic.dart, Line: 1001, Trigger: set_wifi_info_respond ---
+Payload Keys / Associated strings: ['le_start', 'le_end', '收到蓝牙数据:', 'set_wifi_info_respond', 'message', 'result', 'set_rtk_info_respond', 'set_lora_info_respond']
+
+--- File: logic.dart, Line: 1110, Trigger: set_rtk_info_respond ---
+Payload Keys / Associated strings: ['le_start', 'le_end', '收到蓝牙数据:', 'set_wifi_info_respond', 'message', 'result', 'set_rtk_info_respond', 'set_lora_info_respond', 'set_mqtt_info_respond']
+
+--- File: logic.dart, Line: 1219, Trigger: set_lora_info_respond ---
+Payload Keys / Associated strings: ['set_wifi_info_respond', 'message', 'result', 'set_rtk_info_respond', 'set_lora_info_respond', 'set_mqtt_info_respond', 'set_cfg_info_respond']
+
+--- File: logic.dart, Line: 1328, Trigger: set_mqtt_info_respond ---
+Payload Keys / Associated strings: ['result', 'set_rtk_info_respond', 'message', 'set_lora_info_respond', 'set_mqtt_info_respond', 'set_cfg_info_respond', 'sn', 'appUserId', 'userCustomDeviceName', 'Novabot', '/api/nova-user/equipment/bindingEquipment']
+
+--- File: logic.dart, Line: 1437, Trigger: set_cfg_info_respond ---
+Payload Keys / Associated strings: ['result', 'set_lora_info_respond', 'message', 'set_mqtt_info_respond', 'set_cfg_info_respond', 'sn', 'appUserId', 'userCustomDeviceName', 'Novabot', '/api/nova-user/equipment/bindingEquipment', 'set_cfg_info']
+
+--- File: logic.dart, Line: 2374, Trigger: set_wifi_info_respond ---
+Payload Keys / Associated strings: ['le_start', 'le_end', '收到蓝牙数据:', 'set_wifi_info_respond', 'message', 'result', 'get_signal_info_respond', 'value', 'wifi', 'rtk']
+
+--- File: logic.dart, Line: 2494, Trigger: get_signal_info_respond ---
+Payload Keys / Associated strings: ['le_start', 'le_end', '收到蓝牙数据:', 'set_wifi_info_respond', 'message', 'result', 'get_signal_info_respond', 'value', 'wifi', 'rtk', 'set_rtk_info_respond']
+
+--- File: logic.dart, Line: 2772, Trigger: set_rtk_info_respond ---
+Payload Keys / Associated strings: ['get_signal_info_respond', 'message', 'result', 'value', 'wifi', 'rtk', 'set_rtk_info_respond', 'set_lora_info_respond']
+
+--- File: logic.dart, Line: 2880, Trigger: set_lora_info_respond ---
+Payload Keys / Associated strings: ['value', 'wifi', 'message', 'rtk', 'set_rtk_info_respond', 'result', 'set_lora_info_respond', 'set_mqtt_info_respond']
+
+--- File: logic.dart, Line: 3077, Trigger: set_mqtt_info_respond ---
+Payload Keys / Associated strings: ['message', 'result', 'set_lora_info_respond', 'value', 'set_mqtt_info_respond', 'set_cfg_info_respond', 'sn', 'appUserId', 'userCustomDeviceName', 'chargerChannel', 'wifiName']
+
+--- File: logic.dart, Line: 3185, Trigger: set_cfg_info_respond ---
+Payload Keys / Associated strings: ['message', 'result', 'value', 'set_mqtt_info_respond', 'set_cfg_info_respond', 'sn', 'appUserId', 'userCustomDeviceName', 'chargerChannel', 'wifiName', 'wifiPassword', '/api/nova-user/equipment/bindingEquipment']
+
+--- File: logic.dart, Line: 636, Trigger: start_run ---
+Payload Keys / Associated strings: ['map0', 'map1', 'map2', 'start_run', 'mapName', 'area', 'cutterhigh', 'start_run_respond', 'start_navigation', 'test', 'start_navigation_respond']
+
+--- File: logic.dart, Line: 811, Trigger: cmd_num ---
+Payload Keys / Associated strings: ['map2', 'start_run', 'mapName', 'area', 'cutterhigh', 'start_run_respond', 'start_navigation', 'test', 'start_navigation_respond']
+
+--- File: logic.dart, Line: 902, Trigger: start_navigation_respond ---
+Payload Keys / Associated strings: ['start_run', 'mapName', 'area', 'cutterhigh', 'start_run_respond', 'start_navigation', 'test', 'start_navigation_respond', 'Delete']
+
+--- File: logic.dart, Line: 1384, Trigger: cmd_num ---
+Payload Keys / Associated strings: ['Delete', 'delete_map', 'map_name', 'map_type', 'delete_map_respond', 'get_map_outline', 'all']
+
+--- File: logic.dart, Line: 2142, Trigger: get_map_list_respond ---
+Payload Keys / Associated strings: ['Retry', 'Close', 'get_map_list', 'init', 'get_map_list_respond']
+
+--- File: logic.dart, Line: 4214, Trigger: get_recharge_pos_respond ---
+Payload Keys / Associated strings: ['get_recharge_pos', 'get_recharge_pos_respond', 'message', 'value', 'position']
+

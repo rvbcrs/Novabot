@@ -1,0 +1,52 @@
+Function: Mqtt::isConncected
+  Strings (likely command + payload keys): ['Dart/Send_mqtt/', ',josn:', ',topic:']
+Function: __RxImpl&RxNotifier&RxObjectMixin::value
+  Strings (likely command + payload keys): ['stop_scan_map', 'value']
+Function: ::debugPrint
+  Strings (likely command + payload keys): ['开始发现服务', '00000201-0000-1000-8000-00805f9b34fb', '00000011-0000-1000-8000-00805f9b34fb', '00000021-0000-1000-8000-00805f9b34fb', 'dont_remind_modify_map']
+Function: BuildMapPageLogic::_writeDataToDevice
+  Strings (likely command + payload keys): ['save_recharge_pos', 'mapName', 'map0']
+Function: BuildMapPageLogic::_getMapName
+  Strings (likely command + payload keys): ['save_map', 'mapName']
+Function: ::Get
+  Strings (likely command + payload keys): ['auto_recharge']
+Function: __RxImpl&RxNotifier&RxObjectMixin::value
+  Strings (likely command + payload keys): ['start_scan_map', 'model', 'manual', 'mapName', 'map0', 'add_scan_map']
+Function: BuildMapPageLogic::_writeDataToDevice
+  Strings (likely command + payload keys): ['stop_erase_map']
+Function: BuildMapPageLogic::_writeDataToDevice
+  Strings (likely command + payload keys): ['start_erase_map']
+Function: ::Get
+  Strings (likely command + payload keys): ['reset_map', 'boundaries', 'obstacle', 'channel', '\\?']
+Function: BuildMapPageLogic::_writeDataToDevice
+  Strings (likely command + payload keys): ['start_assistant_build_map']
+Function: BuildMapPageLogic::_writeDataToDevice
+  Strings (likely command + payload keys): ['start_assistant_build_map']
+Function: BluetoothDevice::isConnected
+  Strings (likely command + payload keys): ['quit_mapping_mode', 'value']
+Function: ::Get
+  Strings (likely command + payload keys): ['go_to_charge', 'chargerpile', 'latitude', 'longitude']
+Function: ButtonIntercept::workingIntercept
+  Strings (likely command + payload keys): ['generate_preview_cover_path', 'map_ids', 'cov_direction', 'generate_preview_cover_path_respond']
+Function: ButtonIntercept::lowBatteryIntercept
+  Strings (likely command + payload keys): ['resume_run', 'resume_run_respond', 'resume_navigation', 'resume_navigation_respond']
+Function: ButtonIntercept::workingIntercept
+  Strings (likely command + payload keys): ['start_run', 'mapName', 'area', 'cutterhigh', 'start_run_respond', 'start_navigation', 'test', 'start_navigation_respond']
+Function: ButtonIntercept::pinCodeIntercept
+  Strings (likely command + payload keys): ['pause_run', 'pause_run_respond', 'pause_navigation', 'pause_navigation_respond']
+Function: OnlineView::_mowerStatusController
+  Strings (likely command + payload keys): ['go_pile', 'go_pile_respond', 'go_to_charge', 'chargerpile', 'latitude', 'longitude', 'go_to_charge_respond']
+Function: LoadingTools::instance
+  Strings (likely command + payload keys): ['pause_run', 'pause_run_respond', 'pause_navigation', 'pause_navigation_respond']
+Function: LoadingTools::instance
+  Strings (likely command + payload keys): ['stop_run', 'stop_run_respond', 'stop_navigation', 'stop_navigation_respond']
+Function: Mqtt::instance
+  Strings (likely command + payload keys): ['go_to_charge', 'chargerpile', 'latitude', 'longitude', 'go_to_charge_respond']
+Function: ManulControllerPageLogic::_writeDataToDevice
+  Strings (likely command + payload keys): ['stop_to_charge']
+Function: ManulControllerPageLogic::_writeDataToDevice
+  Strings (likely command + payload keys): ['go_to_charge']
+Function: ButtonIntercept::workingIntercept
+  Strings (likely command + payload keys): ['map0', 'map1', 'map2', 'start_run', 'mapName', 'area', 'cutterhigh', 'start_run_respond', 'start_navigation', 'test', 'start_navigation_respond']
+Function: LoadingTools::instance
+  Strings (likely command + payload keys): ['delete_map', 'map_name', 'map_type', 'delete_map_respond']
