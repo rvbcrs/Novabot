@@ -274,11 +274,19 @@ async function loadMyDevices() {
       const hasDuplicates = chargers.length > 1 || mowers.length > 1;
 
       html += '<div style="margin-bottom:12px;padding:12px;background:rgba(255,255,255,.02);border:1px solid ' + (anyOnline ? 'rgba(0,212,170,.2)' : 'rgba(255,255,255,.06)') + ';border-radius:10px">';
-      html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
+      html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">';
       html += '<span style="font-size:12px;font-weight:600;color:' + (isPaired ? '#00d4aa' : '#f59e0b') + '">' +
-        (isPaired ? '🔗 Paired Set' : '⚠ Incomplete') + '</span>';
+        (isPaired ? '🔗 Paired Set' : '⚡ Charger Only') + '</span>';
       html += '<span style="font-size:11px;color:#666">LoRa ' + addr + '</span>';
       html += '</div>';
+
+      if (!isPaired) {
+        html += '<div style="padding:4px 8px;margin-bottom:6px"><span style="color:#888;font-size:11px">' +
+          (mowers.length === 0
+            ? 'No mower paired on this LoRa address yet. The mower will be linked automatically when it connects, or you can pair it via BLE provisioning.'
+            : 'No charger found on this LoRa address. Provision the charger via BLE to link it.') +
+          '</span></div>';
+      }
 
       if (hasDuplicates) {
         html += '<div style="padding:6px 10px;background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.2);border-radius:6px;margin-bottom:8px">' +
@@ -294,7 +302,11 @@ async function loadMyDevices() {
     // Unpaired devices (no LoRa address)
     if (unpaired.length > 0) {
       html += '<div style="margin-bottom:12px;padding:12px;background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.06);border-radius:10px">';
-      html += '<div style="margin-bottom:8px"><span style="font-size:12px;font-weight:600;color:#888">Unpaired Devices</span></div>';
+      html += '<div style="margin-bottom:4px"><span style="font-size:12px;font-weight:600;color:#888">New Devices</span></div>';
+      html += '<div style="padding:4px 8px;margin-bottom:6px"><span style="color:#888;font-size:11px">' +
+        'These devices have connected but have no LoRa pairing yet. ' +
+        'They will be paired automatically after BLE provisioning, or when the charger and mower connect on the same LoRa address.' +
+        '</span></div>';
       for (const dev of unpaired) {
         html += devRow(dev);
       }
