@@ -162,10 +162,15 @@ function MainTabs({ onLogout, onGoToProvision }: { onLogout: () => void; onGoToP
       <Tab.Screen name="Camera" component={CameraScreen} options={{ tabBarLabel: t('tabCamera') }} />
       <Tab.Screen name="Schedules" component={ScheduleScreen} options={{ tabBarLabel: t('tabSchedule') }} />
 
-      {/* Settings — always last, unmount on blur to reset stack */}
+      {/* Settings — always last, reset nested stack to root on tab press */}
       <Tab.Screen
         name="AppSettings"
         options={{ tabBarLabel: t('tabSettings'), unmountOnBlur: true }}
+        listeners={({ navigation }) => ({
+          tabPress: () => {
+            navigation.navigate('AppSettings', { screen: 'SettingsMain' });
+          },
+        })}
       >
         {() => (
           <SettingsTabScreen

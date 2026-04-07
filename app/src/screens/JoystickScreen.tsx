@@ -91,6 +91,7 @@ export default function JoystickScreen() {
 
     const holdType = getHoldType(dx, dy);
     const lvl = SPEED_LEVELS[speedRef.current];
+    // holdType determines direction, mst provides positive magnitudes
     socket.emit('joystick:move', {
       sn,
       holdType,

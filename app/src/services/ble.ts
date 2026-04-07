@@ -129,8 +129,8 @@ export function scanForDevices(
       seen.add(device.id);
 
       let type: DeviceType | 'unknown' = 'unknown';
-      if (device.name === 'CHARGER_PILE') type = 'charger';
-      if (device.name === 'NOVABOT' || device.name === 'Novabot') type = 'mower';
+      if (device.name === 'CHARGER_PILE' || device.name?.startsWith('LFIC')) type = 'charger';
+      if (device.name === 'NOVABOT' || device.name === 'Novabot' || device.name?.startsWith('LFIN')) type = 'mower';
 
       onDevice({ id: device.id, name: device.name, rssi: device.rssi ?? -100, type });
     });
@@ -452,4 +452,116 @@ export async function provisionDevice(
     onProgress('error', err.message);
     return false;
   }
+}
+
+// ── BLE Joystick — direct low-latency control ──────────────────────────────
+//
+// Connects to the mower via BLE and sends joystick commands directly.
+// ~20ms latency vs ~300ms+ via MQTT. Used by MappingScreen and JoystickScreen.
+
+let _joystickDevice: Device | null = null;
+let _joystickConnected = false;
+
+/**
+ * Connect to mower for BLE joystick control.
+ * Returns true if connected successfully.
+ */
+export async function bleJoystickConnect(deviceId: string): Promise<boolean> {
+  const mgr = getBleManager();
+  try {
+    if (_joystickDevice?.id === deviceId && _joystickConnected) {
+      // Check if still connected
+      const connected = await mgr.isDeviceConnected(deviceId);
+      if (connected) return true;
+    }
+    bleLog(`[BLE-JOY] Connecting to ${deviceId}...`);
+    _joystickDevice = await mgr.connectToDevice(deviceId, { timeout: 10000 });
+    _joystickDevice = await _joystickDevice.discoverAllServicesAndCharacteristics();
+    _joystickConnected = true;
+    bleLog(`[BLE-JOY] Connected!`);
+    return true;
+  } catch (err: any) {
+    bleLog(`[BLE-JOY] Connect failed: ${err.message}`);
+    _joystickDevice = null;
+    _joystickConnected = false;
+    return false;
+  }
+}
+
+/**
+ * Disconnect BLE joystick.
+ */
+export async function bleJoystickDisconnect(): Promise<void> {
+  if (_joystickDevice) {
+    try { await _joystickDevice.cancelConnection(); } catch {}
+    bleLog(`[BLE-JOY] Disconnected`);
+  }
+  _joystickDevice = null;
+  _joystickConnected = false;
+}
+
+/**
+ * Send a BLE joystick command — raw JSON chunks WITHOUT ble_start/ble_end framing.
+ *
+ * The official Novabot app uses BleTools.writeDataForMove() for joystick,
+ * which sends raw 20-byte JSON chunks directly — NO ble_start/ble_end markers.
+ * This is different from BleTools.writeData() (provisioning) which DOES use framing.
+ *
+ * Uses a serial queue: commands wait for the previous to finish (like the official app's await).
+ */
+let _bleWriteQueue: Promise<void> = Promise.resolve();
+
+async function writeJoystickFrame(json: string): Promise<void> {
+  if (!_joystickDevice || !_joystickConnected) return;
+
+  // Chain onto the queue so writes are sequential, never overlapping
+  _bleWriteQueue = _bleWriteQueue.then(async () => {
+    if (!_joystickDevice || !_joystickConnected) return;
+    const svc = MOWER_SERVICE;
+    const chr = MOWER_WRITE;
+    try {
+      const data = Buffer.from(json, 'utf8');
+      for (let offset = 0; offset < data.length; offset += 20) {
+        const chunk = Buffer.from(data.subarray(offset, Math.min(offset + 20, data.length)));
+        await _joystickDevice!.writeCharacteristicWithoutResponseForService(
+          svc, chr, chunk.toString('base64'));
+      }
+    } catch (err: any) {
+      if (err.message?.includes('disconnect') || err.message?.includes('not connected')) {
+        _joystickConnected = false;
+        _joystickDevice = null;
+      }
+    }
+  });
+  return _bleWriteQueue;
+}
+
+/**
+ * Enter manual mode — sent every 300ms together with mst (matches official app).
+ */
+export async function bleJoystickStart(holdType: number): Promise<void> {
+  await writeJoystickFrame(JSON.stringify({ start_move: holdType }));
+}
+
+/**
+ * Send velocity command.
+ * Official app uses integers (BoxInt64), but mqtt_node also accepts floats.
+ * Keep as floats since that's proven to work via MQTT.
+ */
+export async function bleJoystickMove(mst: { x_w: number; y_v: number; z_g: number }): Promise<void> {
+  await writeJoystickFrame(JSON.stringify({ mst }));
+}
+
+/**
+ * Exit manual mode — official app sends stop_move: null (not {}).
+ */
+export async function bleJoystickStop(): Promise<void> {
+  await writeJoystickFrame(JSON.stringify({ stop_move: null }));
+}
+
+/**
+ * Check if BLE joystick is currently connected.
+ */
+export function isBleJoystickConnected(): boolean {
+  return _joystickConnected;
 }
