@@ -8,6 +8,7 @@ import {
   TouchableOpacity,
   StyleSheet,
   ScrollView,
+  RefreshControl,
   Alert,
   ActivityIndicator,
   Animated,
@@ -31,6 +32,7 @@ import { useDemo } from '../context/DemoContext';
 import { StartMowSheet } from '../components/StartMowSheet';
 import { RainOverlay } from '../components/RainOverlay';
 import { useI18n } from '../i18n';
+import { getSocket } from '../services/socket';
 import type { DeviceState, MowerActivity } from '../types';
 
 // ── Derive mower status ──────────────────────────────────────────────
@@ -568,7 +570,12 @@ export default function HomeScreen() {
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
-      <ScrollView contentContainerStyle={styles.scroll}>
+      <ScrollView contentContainerStyle={styles.scroll} refreshControl={
+        <RefreshControl refreshing={false} tintColor={colors.purple} onRefresh={() => {
+          const socket = getSocket();
+          if (socket) socket.emit('request:snapshot');
+        }} />
+      }>
         {/* Global demo toggle */}
 
 

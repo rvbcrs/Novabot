@@ -9,12 +9,14 @@ import {
   TouchableOpacity,
   StyleSheet,
   ScrollView,
+  RefreshControl,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors } from '../theme/colors';
 import { MowingDirectionPreview } from '../components/MowingDirectionPreview';
 import { useMowerState } from '../hooks/useMowerState';
+import { getSocket } from '../services/socket';
 import { ApiClient } from '../services/api';
 import { getServerUrl } from '../services/auth';
 
@@ -111,7 +113,12 @@ export default function MowerSettingsScreen() {
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
-      <ScrollView contentContainerStyle={styles.scroll}>
+      <ScrollView contentContainerStyle={styles.scroll} refreshControl={
+        <RefreshControl refreshing={false} tintColor={colors.purple} onRefresh={() => {
+          const socket = getSocket();
+          if (socket) socket.emit('request:snapshot');
+        }} />
+      }>
         <Text style={styles.title}>Mower Settings</Text>
 
         {!mowerOnline && (

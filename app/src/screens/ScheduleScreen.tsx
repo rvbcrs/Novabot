@@ -9,6 +9,7 @@ import {
   TouchableOpacity,
   StyleSheet,
   ScrollView,
+  RefreshControl,
   ActivityIndicator,
   Switch,
   Modal,
@@ -42,6 +43,7 @@ export default function ScheduleScreen() {
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [refreshing, setRefreshing] = useState(false);
   const [showEditor, setShowEditor] = useState(false);
   const [editingSchedule, setEditingSchedule] = useState<Schedule | null>(null);
 
@@ -156,7 +158,11 @@ export default function ScheduleScreen() {
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
-      <ScrollView contentContainerStyle={styles.scroll}>
+      <ScrollView contentContainerStyle={styles.scroll} refreshControl={
+        <RefreshControl refreshing={refreshing} tintColor={colors.purple} onRefresh={async () => {
+          setRefreshing(true); await fetchSchedules(); setRefreshing(false);
+        }} />
+      }>
 
 
         {/* Header */}
