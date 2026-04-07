@@ -42,6 +42,8 @@ extern char ui_wifiSsid[33];
 extern volatile bool ui_mqttAddrReady;
 extern char ui_mqttAddr[64];
 
+#ifdef HAS_DISPLAY
+
 // ── Thread safety — all lv_* calls from outside LVGL task must use these ────
 
 bool lvgl_lock(int timeout_ms = -1);
@@ -61,19 +63,41 @@ void display_ota(const char* status);
 void display_done();
 void display_error(const char* msg);
 void display_confirm(const char* title, const char* line1, const char* line2, const char* btnText);
-// Device status screen: charger + mower icons that go grey→orange→green
-// status: 0=not seen, 1=WiFi connected, 2=MQTT connected
 void display_deviceStatus(int chargerStatus, const char* chargerSn,
                           int mowerStatus, const char* mowerSn,
                           const char* mowerVersion, bool canContinue);
-
-// Phase 2: WiFi re-provisioning screens
 void display_wifiList(WifiNetwork* networks, int count, int selected);
 void display_wifiPassword(const char* ssid);
 void display_textEntry(const char* title, const char* subtitle,
                        const char* placeholder, const char* btnText);
 void display_mqttAddr();
 void display_reprovision(const char* status, int step, int total);
-
-// Firmware flash progress screen (used during OTA)
 void display_firmware_flash(const char* device, const char* status, int progress);
+
+#else
+
+// ── Headless stubs — no display, wizard controlled via web UI ───────────────
+
+inline void display_init() {}
+inline void display_run() {}
+inline void display_boot(const char*) {}
+inline void display_boot_status(const char*) {}
+inline void display_scanning() {}
+inline void display_devices(ScanResult*, int, int, int) {}
+inline void display_provision(const char*, int, int, const char*) {}
+inline void display_mqttWait(bool, bool) {}
+inline void display_ota(const char*) {}
+inline void display_done() {}
+inline void display_error(const char*) {}
+inline void display_confirm(const char*, const char*, const char*, const char*) {}
+inline void display_deviceStatus(int, const char*, int, const char*, const char*, bool) {}
+inline void display_wifiList(WifiNetwork*, int, int) {}
+inline void display_wifiPassword(const char*) {}
+inline void display_textEntry(const char*, const char*, const char*, const char*) {}
+inline void display_mqttAddr() {}
+inline void display_reprovision(const char*, int, int) {}
+inline void display_firmware_flash(const char*, const char*, int) {}
+inline bool lvgl_lock(int = -1) { return true; }
+inline void lvgl_unlock() {}
+
+#endif

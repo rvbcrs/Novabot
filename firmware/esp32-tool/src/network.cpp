@@ -5,9 +5,15 @@
 
 #include <WiFi.h>
 #include <esp_wifi.h>
-#include <SD_MMC.h>
-// Wrapper: use SD_MMC as "SDFS" so existing SDFS.open/SDFS.exists calls work
-#define SDFS SD_MMC
+#ifdef SD_MMC_D0
+  #include <SD_MMC.h>
+  #define SDFS SD_MMC
+  #define HAS_SD 1
+#else
+  // No SD card — provide a stub filesystem that always fails (never mounted)
+  #include <LittleFS.h>
+  #define SDFS LittleFS
+#endif
 #include <MD5Builder.h>
 #include <Preferences.h>
 #include <Update.h>
@@ -102,49 +108,44 @@ void onWifiEvent(arduino_event_id_t event, arduino_event_info_t info) {
 
 void setupWifiAP() {
     WiFi.onEvent(onWifiEvent);
-    // Use AP+STA mode from the beginning so scanning later doesn't disrupt the AP
+
+#ifdef HAS_DISPLAY
+    // Full AP+STA setup with custom DHCP DNS, subnet, auth mode, bandwidth tuning.
+    // Needed for charger provisioning (charger AP conflict on 192.168.4.x).
     WiFi.mode(WIFI_AP_STA);
-    // Configure DHCP BEFORE starting AP -- charger connects instantly and needs DHCP ready
     esp_netif_t* apNetif = esp_netif_get_handle_from_ifkey("WIFI_AP_DEF");
     if (apNetif) {
-        // DHCP server is auto-started by softAP, stop it first to configure
         esp_netif_dhcps_stop(apNetif);
-
-        // 1. Set our AP IP as the DNS server for the network interface
         esp_netif_dns_info_t dnsInfo;
         dnsInfo.ip.u_addr.ip4.addr = ipaddr_addr("10.0.0.1");
         dnsInfo.ip.type = ESP_IPADDR_TYPE_V4;
         esp_netif_set_dns_info(apNetif, ESP_NETIF_DNS_MAIN, &dnsInfo);
-
-        // 2. Enable DHCP DNS offer so clients receive our DNS via DHCP option 6
-        uint8_t offer = 1; // ESP-IDF v5 requires uint8_t for offer types rather than dhcps_offer_t, 1 = true
+        uint8_t offer = 1;
         esp_netif_dhcps_option(apNetif, ESP_NETIF_OP_SET, ESP_NETIF_DOMAIN_NAME_SERVER, &offer, sizeof(offer));
         Serial.printf("[WiFi] DHCP pre-configured with DNS=10.0.0.1\r\n");
-        // DON'T restart DHCP yet -- softAP() will start it
     }
-
-    // Use 10.0.0.x subnet -- NOT 192.168.4.x which conflicts with charger's own AP!
-    // The charger runs AP+STA mode with its AP on 192.168.4.1 -> subnet clash breaks DHCP.
     WiFi.softAPConfig(IPAddress(10,0,0,1), IPAddress(10,0,0,1), IPAddress(255,255,255,0));
-    WiFi.softAP(AP_SSID, AP_PASSWORD, 6, 0, 4);  // channel 6 (less crowded), not hidden, max 4
-
-    // Set WPA/WPA2 mixed auth mode for ESP32 charger compatibility
+    WiFi.softAP(AP_SSID, AP_PASSWORD, 6, 0, 4);
     wifi_config_t conf;
     esp_wifi_get_config(WIFI_IF_AP, &conf);
     conf.ap.authmode = WIFI_AUTH_WPA_WPA2_PSK;
     esp_wifi_set_config(WIFI_IF_AP, &conf);
-
-    // WiFi stability — HT20 is more stable than HT40 for long transfers
-    esp_wifi_set_ps(WIFI_PS_NONE);           // Disable power save (keeps AP responsive)
-    esp_wifi_set_max_tx_power(84);           // Max TX power: 21dBm
-    esp_wifi_set_bandwidth(WIFI_IF_AP, WIFI_BW_HT20);  // 20MHz = more stable, less interference
+    esp_wifi_set_ps(WIFI_PS_NONE);
+    esp_wifi_set_max_tx_power(84);
+    esp_wifi_set_bandwidth(WIFI_IF_AP, WIFI_BW_HT20);
     esp_wifi_set_protocol(WIFI_IF_AP, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N);
-
-    // Now start DHCP server (after AP is active)
     if (apNetif) {
         esp_err_t err = esp_netif_dhcps_start(apNetif);
         Serial.printf("[WiFi] DHCP server started (err=%d)\r\n", err);
     }
+#else
+    // Headless / ESP32-C3: simple AP setup — avoid low-level esp_netif calls
+    // that can break WiFi on single-core chips with limited netif support.
+    WiFi.softAPConfig(IPAddress(10,0,0,1), IPAddress(10,0,0,1), IPAddress(255,255,255,0));
+    WiFi.softAP(AP_SSID, AP_PASSWORD, 6, 0, 4);
+    esp_wifi_set_ps(WIFI_PS_NONE);
+    Serial.println("[WiFi] Simple AP mode (headless)");
+#endif
 
     delay(500);
     Serial.printf("[WiFi] AP started: %s (IP: %s, ch=%d)\r\n", AP_SSID,
@@ -309,6 +310,7 @@ void setupHTTP() {
 <div class="container">
   <h1>Nova-OTA Device</h1>
   <div class="version">)rawhtml" + String(VERSION) + R"rawhtml(</div>
+  <a href="/wizard" class="btn" style="margin-bottom:16px;text-decoration:none;display:block;text-align:center">Open Setup Wizard</a>
 
   <!-- Status section (auto-refreshed) -->
   <div class="card">
@@ -701,12 +703,28 @@ function doEspOta(e){
             prefs.putString("mqtt_addr", mqttAddr);
         }
 
+        // Save firmware proxy URL if provided (for no-SD boards)
+        String fwUrl = "";
+        int fwIdx = body.indexOf("\"fw_url\"");
+        if (fwIdx >= 0) {
+            int colonIdx = body.indexOf(':', fwIdx);
+            int startQuote = body.indexOf('"', colonIdx + 1);
+            int endQuote = body.indexOf('"', startQuote + 1);
+            if (startQuote >= 0 && endQuote > startQuote) {
+                fwUrl = body.substring(startQuote + 1, endQuote);
+            }
+        }
+        if (fwUrl.length() > 0) {
+            firmwareProxyUrl = fwUrl;
+            prefs.putString("fw_url", fwUrl);
+        }
+
         // Persist to NVS so it survives reboot
         prefs.putString("wifi_ssid", ssid);
         prefs.putString("wifi_pass", password);
 
-        Serial.printf("[HTTP] Config saved to NVS: SSID='%s' MQTT='%s'\r\n",
-                      ssid.c_str(), userMqttAddr.c_str());
+        Serial.printf("[HTTP] Config saved to NVS: SSID='%s' MQTT='%s' FW='%s'\r\n",
+                      ssid.c_str(), userMqttAddr.c_str(), firmwareProxyUrl.c_str());
 
         // Connect STA to home WiFi in background (AP stays active)
         connectHomeWifi();
@@ -715,6 +733,9 @@ function doEspOta(e){
     });
 
     // Firmware download -- mower .deb with HTTP Range resume support
+    // Supports two modes:
+    //   1. SD card: serve from local file (original behavior)
+    //   2. Proxy: stream from remote URL via STA WiFi (no SD needed)
     static std::atomic<bool> isFirmwareDownloading(false);
     static File currentDownloadFile;
     httpServer.on("/firmware.deb", HTTP_GET, [](AsyncWebServerRequest *request) {
@@ -723,9 +744,18 @@ function doEspOta(e){
             return;
         }
 
+        // If no SD firmware but proxy URL is configured, redirect mower to fetch directly
+        // from the remote server. This avoids ESP32 memory constraints entirely.
         String path = "/" + mowerFwFilename;
-        if (mowerFwFilename.length() == 0 || !SDFS.exists(path)) {
-            request->send(404, "text/plain", "No mower firmware");
+        bool hasSD = mowerFwFilename.length() > 0 && sdMounted && SDFS.exists(path);
+        if (!hasSD && firmwareProxyUrl.length() > 0) {
+            webLogAdd("Firmware proxy: redirecting to %s", firmwareProxyUrl.c_str());
+            request->redirect(firmwareProxyUrl);
+            return;
+        }
+
+        if (!hasSD) {
+            request->send(404, "text/plain", "No mower firmware (no SD, no proxy URL)");
             return;
         }
 
@@ -976,6 +1006,321 @@ function doEspOta(e){
             }
         }
     );
+
+    // ── Wizard state polling API ───────────────────────────────────────────
+    httpServer.on("/api/wizard-state", HTTP_GET, [](AsyncWebServerRequest *request) {
+        String json = "{";
+        json += "\"state\":" + String((int)currentState);
+        json += ",\"step\":" + String(wizStep);
+        json += ",\"totalSteps\":" + String(WIZ_TOTAL_STEPS);
+        json += ",\"msg\":\"" + statusMessage + "\"";
+        json += ",\"bleScanning\":" + String(bleScanning ? "true" : "false");
+        json += ",\"mowerConnected\":" + String(mowerConnected ? "true" : "false");
+        json += ",\"chargerConnected\":" + String(chargerMqttConnected ? "true" : "false");
+        json += ",\"mowerSn\":\"" + mowerSn + "\"";
+        json += ",\"chargerSn\":\"" + chargerSn + "\"";
+        json += ",\"mowerVersion\":\"" + mowerFirmwareVersion + "\"";
+        json += ",\"mowerCharging\":" + String(mowerCharging ? "true" : "false");
+        json += ",\"otaProgress\":" + String(max(otaProgressPercent, httpDownloadPercent));
+        json += ",\"otaStatus\":\"" + otaStatus + "\"";
+        json += ",\"fwFile\":\"" + mowerFwFilename + "\"";
+        json += ",\"fwVersion\":\"" + mowerFwVersion + "\"";
+        json += ",\"wifiConfigured\":" + String((userWifiSsid.length() > 0 && userMqttAddr.length() > 0) ? "true" : "false");
+
+        // Scan results (only in SELECT states)
+        if (currentState == WIZ_SELECT_CHARGER || currentState == WIZ_SELECT_MOWER) {
+            json += ",\"devices\":[";
+            bool first = true;
+            for (int i = 0; i < scanResultCount; i++) {
+                bool show = (currentState == WIZ_SELECT_CHARGER) ? scanResults[i].isCharger : scanResults[i].isMower;
+                if (!show) continue;
+                if (!first) json += ",";
+                first = false;
+                json += "{\"idx\":" + String(i);
+                json += ",\"name\":\"" + scanResults[i].name + "\"";
+                json += ",\"mac\":\"" + scanResults[i].mac + "\"";
+                json += ",\"rssi\":" + String(scanResults[i].rssi) + "}";
+            }
+            json += "]";
+        }
+
+        // Available actions based on current state
+        json += ",\"actions\":[";
+        switch (currentState) {
+            case WIZ_WIFI_CONFIG: json += "\"wifi-config\""; break;
+            case WIZ_SCAN_CHARGER: json += "\"skip\""; break;
+            case WIZ_SELECT_CHARGER: json += "\"select\",\"skip\",\"rescan\""; break;
+            case WIZ_SELECT_MOWER: json += "\"select\",\"skip\",\"rescan\""; break;
+            case WIZ_MOWER_CHECK:
+                if (mowerConnected) json += "\"continue\",\"scan\"";
+                else json += "\"scan\"";
+                break;
+            case WIZ_OTA_CONFIRM:
+                if (mowerCharging) json += "\"flash\",\"skip\"";
+                else json += "\"skip\"";
+                break;
+            case WIZ_REPROVISION: json += "\"reprovision\",\"skip\""; break;
+            case WIZ_DONE: json += "\"restart\""; break;
+            case WIZ_ERROR: json += "\"retry\""; break;
+            default: break;
+        }
+        json += "]}";
+
+        request->send(200, "application/json", json);
+    });
+
+    // ── Wizard action endpoint ──────────────────────────────────────────────
+    httpServer.on("/api/wizard/action", HTTP_POST, [](AsyncWebServerRequest *request) {}, NULL,
+        [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+        String body = String((char*)data).substring(0, len);
+        // Simple JSON parsing for {"action":"...","index":N}
+        String action = "";
+        int idx = -1;
+        int aStart = body.indexOf("\"action\":\"");
+        if (aStart >= 0) {
+            aStart += 10;
+            int aEnd = body.indexOf("\"", aStart);
+            if (aEnd > aStart) action = body.substring(aStart, aEnd);
+        }
+        int iStart = body.indexOf("\"index\":");
+        if (iStart >= 0) {
+            iStart += 8;
+            idx = body.substring(iStart).toInt();
+        }
+
+        webLogAdd("[WEB] Action: %s (idx=%d, state=%d)", action.c_str(), idx, (int)currentState);
+
+        if (action == "skip") {
+            switch (currentState) {
+                case WIZ_SCAN_CHARGER:
+                case WIZ_SELECT_CHARGER:
+                    ui_btnPressed = true; break;
+                case WIZ_SELECT_MOWER:
+                    ui_rescanPressed = true; break;  // Left button = skip
+                case WIZ_OTA_CONFIRM:
+                case WIZ_REPROVISION:
+                    ui_rescanPressed = true; break;
+                default: break;
+            }
+        } else if (action == "select" && idx >= 0) {
+            if (currentState == WIZ_SELECT_CHARGER) {
+                selectedChargerIdx = idx;
+                ui_startPressed = true;
+            } else if (currentState == WIZ_SELECT_MOWER) {
+                selectedMowerIdx = idx;
+                ui_startPressed = true;
+            }
+        } else if (action == "rescan") {
+            if (currentState == WIZ_SELECT_CHARGER) ui_rescanPressed = true;
+            else if (currentState == WIZ_SELECT_MOWER) {
+                ui_btnPressed = true;  // Right button = retry
+            }
+            else if (currentState == WIZ_MOWER_CHECK) ui_rescanPressed = true;
+        } else if (action == "continue") {
+            ui_btnPressed = true;
+        } else if (action == "scan") {
+            ui_rescanPressed = true;
+        } else if (action == "flash") {
+            if (mowerCharging) ui_btnPressed = true;
+        } else if (action == "reprovision") {
+            ui_btnPressed = true;
+        } else if (action == "retry") {
+            ui_btnPressed = true;
+        } else if (action == "restart") {
+            request->send(200, "application/json", "{\"ok\":true}");
+            delay(500);
+            ESP.restart();
+            return;
+        }
+
+        request->send(200, "application/json", "{\"ok\":true}");
+    });
+
+    // ── Wizard web page ─────────────────────────────────────────────────────
+    httpServer.on("/wizard", HTTP_GET, [](AsyncWebServerRequest *request) {
+        String html = R"rawhtml(<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Nova-OTA Wizard</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,sans-serif;background:#1a1a2e;color:#e0e0e0;min-height:100vh;display:flex;justify-content:center}
+.w{max-width:420px;width:100%;padding:16px}
+h1{color:#00d4aa;font-size:22px;text-align:center;margin-bottom:4px}
+.sub{color:#666;font-size:12px;text-align:center;margin-bottom:16px}
+.prog{background:#0d0d20;border-radius:8px;height:6px;margin-bottom:20px;overflow:hidden}
+.prog .bar{height:100%;background:linear-gradient(90deg,#7c3aed,#00d4aa);transition:width .5s}
+.card{background:#16213e;border-radius:12px;padding:20px;margin-bottom:16px;border:1px solid #0f3460;text-align:center}
+.card h2{color:#7c3aed;font-size:15px;text-transform:uppercase;letter-spacing:1px;margin-bottom:12px}
+.msg{color:#a0a0a0;font-size:14px;margin:12px 0}
+.btn{display:inline-block;padding:12px 24px;margin:6px;background:#7c3aed;color:#fff;border:none;border-radius:8px;font-size:15px;font-weight:600;cursor:pointer;min-width:120px}
+.btn:active{background:#6d28d9}
+.btn.sec{background:transparent;border:2px solid #444;color:#888}
+.btn.sec:active{border-color:#7c3aed;color:#fff}
+.btn.grn{background:#059669}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.dev{background:#0d0d20;border-radius:8px;padding:12px;margin:8px 0;cursor:pointer;border:2px solid transparent;transition:border .2s}
+.dev:hover,.dev.sel{border-color:#7c3aed}
+.dev .n{font-weight:600;color:#e0e0e0}
+.dev .m{color:#666;font-size:12px;font-family:monospace}
+.dev .r{color:#888;font-size:12px}
+.ota{position:relative;background:#0d0d20;border-radius:8px;height:36px;margin:16px 0;overflow:hidden}
+.ota .fill{height:100%;background:linear-gradient(90deg,#7c3aed,#00d4aa);transition:width .5s}
+.ota .pct{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:16px}
+.spin{display:inline-block;width:32px;height:32px;border:3px solid #333;border-top-color:#7c3aed;border-radius:50%;animation:spin 1s linear infinite;margin:16px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.ok{color:#00d4aa}
+.err{color:#ef4444}
+label{display:block;color:#888;font-size:13px;margin:12px 0 4px;text-align:left}
+input{width:100%;padding:10px;background:#0d0d20;border:2px solid #333;border-radius:8px;color:#fff;font-size:15px}
+input:focus{border-color:#7c3aed;outline:none}
+.link{display:block;text-align:center;color:#666;font-size:12px;margin-top:12px;text-decoration:none}
+.st{display:flex;gap:8px;align-items:center;justify-content:center;margin:8px 0}
+.dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+.dot.g{background:#00d4aa}.dot.o{background:#f59e0b}.dot.r{background:#ef4444}
+</style>
+</head><body>
+<div class="w">
+<h1>OpenNova Setup</h1>
+<div class="sub" id="step"></div>
+<div class="prog"><div class="bar" id="bar"></div></div>
+<div id="app"></div>
+<a class="link" href="/">Dashboard</a>
+</div>
+<script>
+let S={},poll;
+function api(a,idx){fetch('/api/wizard/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(idx!=null?{action:a,index:idx}:{action:a})}).then(()=>upd())}
+function wifiSave(){
+  const s=document.getElementById('ws').value,p=document.getElementById('wp').value,m=document.getElementById('wm').value,f=document.getElementById('wf').value;
+  if(!s||!m)return;
+  const d={ssid:s,password:p,mqtt_addr:m};if(f)d.fw_url=f;
+  fetch('/api/wifi-config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)}).then(()=>upd())
+}
+function upd(){fetch('/api/wizard-state').then(r=>r.json()).then(d=>{S=d;render(d)}).catch(()=>{})}
+function render(d){
+  document.getElementById('step').textContent='Step '+(d.step||0)+'/'+d.totalSteps;
+  document.getElementById('bar').style.width=(d.step/d.totalSteps*100)+'%';
+  const a=document.getElementById('app');
+  let h='';
+  switch(d.state){
+    case 1:h=wifiForm();break;
+    case 2:h=scanning('charger');break;
+    case 3:h=devList(d,'charger');break;
+    case 4:h=provScreen('charger');break;
+    case 5:h=scanning('charger','Provisioning...');break;
+    case 6:h=statusScreen(d);break;
+    case 7:h=scanning('mower');break;
+    case 8:h=devList(d,'mower');break;
+    case 9:h=provScreen('mower');break;
+    case 10:h=waitScreen(d);break;
+    case 11:h=otaConfirm(d);break;
+    case 12:h=otaFlash(d);break;
+    case 13:h=waitReboot(d);break;
+    case 14:h=reprov(d);break;
+    case 15:h=done();break;
+    case 16:h=error(d);break;
+    default:h='<div class="card"><div class="spin"></div><p class="msg">Initializing...</p></div>';
+  }
+  a.innerHTML=h;
+}
+function wifiForm(){
+  return '<div class="card"><h2>WiFi Configuration</h2>'+
+    '<label>Home WiFi SSID</label><input id="ws" type="text" placeholder="Network name">'+
+    '<label>WiFi Password</label><input id="wp" type="password" placeholder="Password">'+
+    '<label>OpenNova Server IP</label><input id="wm" type="text" placeholder="192.168.x.x">'+
+    '<label>Firmware URL <span style="color:#666">(optional, if no SD card)</span></label>'+
+    '<input id="wf" type="text" placeholder="http://192.168.x.x:3000/firmware.deb">'+
+    '<button class="btn" onclick="wifiSave()" style="margin-top:16px;width:100%">Save & Continue</button></div>'
+}
+function scanning(t,msg){
+  return '<div class="card"><h2>'+(msg||('Scanning for '+t))+'</h2><div class="spin"></div>'+
+    '<p class="msg">'+(msg||'Looking for devices via BLE...')+'</p>'+
+    (t=='charger'?'<button class="btn sec" onclick="api(\'skip\')">Skip</button>':'')+
+    '</div>'
+}
+function devList(d,t){
+  let h='<div class="card"><h2>Select '+t+'</h2>';
+  if(d.devices&&d.devices.length>0){
+    d.devices.forEach(function(dev){
+      h+='<div class="dev" onclick="api(\'select\','+dev.idx+')">'+
+        '<div class="n">'+dev.name+'</div>'+
+        '<div class="m">'+dev.mac+'</div>'+
+        '<div class="r">Signal: '+dev.rssi+' dBm</div></div>'
+    });
+  } else {
+    h+='<p class="msg">No devices found</p>';
+  }
+  h+='<button class="btn sec" onclick="api(\'rescan\')">Rescan</button>';
+  h+=' <button class="btn sec" onclick="api(\'skip\')">Skip</button></div>';
+  return h;
+}
+function provScreen(t){
+  return '<div class="card"><h2>Provisioning '+t+'</h2><div class="spin"></div>'+
+    '<p class="msg">Sending WiFi + MQTT config via BLE...</p>'+
+    '<p class="msg" style="font-size:12px;color:#f59e0b">Web may disconnect briefly</p></div>'
+}
+function statusScreen(d){
+  let mc=d.mowerConnected?'g':(d.mowerSn?'o':'r');
+  let h='<div class="card"><h2>Device Status</h2>';
+  h+='<div class="st"><span class="dot '+mc+'"></span> Mower: '+(d.mowerConnected?'<span class="ok">Connected</span>':'<span class="err">Waiting...</span>')+'</div>';
+  if(d.mowerSn)h+='<p class="msg" style="font-family:monospace">'+d.mowerSn+'</p>';
+  if(d.mowerVersion)h+='<p class="msg">Firmware: '+d.mowerVersion+'</p>';
+  h+='<button class="btn" onclick="api(\'continue\')"'+(d.mowerConnected?'':' disabled')+'>Continue</button>';
+  h+=' <button class="btn sec" onclick="api(\'scan\')">BLE Scan</button></div>';
+  return h;
+}
+function waitScreen(d){
+  let mc=d.mowerConnected?'g':'r';
+  return '<div class="card"><h2>Waiting for Mower</h2><div class="spin"></div>'+
+    '<div class="st"><span class="dot '+mc+'"></span> MQTT: '+(d.mowerConnected?'<span class="ok">Connected!</span>':'Waiting...')+'</div>'+
+    '<p class="msg">Mower should connect within 60 seconds</p></div>'
+}
+function otaConfirm(d){
+  let h='<div class="card"><h2>Flash Firmware?</h2>';
+  h+='<p class="msg">'+d.fwVersion+' -> '+d.mowerSn+'</p>';
+  h+=d.mowerCharging?'<p class="ok">Mower is on charger</p>':'<p class="err">Place mower on charger first</p>';
+  h+='<button class="btn grn" onclick="api(\'flash\')"'+(d.mowerCharging?'':' disabled')+'>Flash Firmware</button>';
+  h+=' <button class="btn sec" onclick="api(\'skip\')">Skip</button></div>';
+  return h;
+}
+function otaFlash(d){
+  let p=d.otaProgress||0;
+  let st=d.otaStatus||'Downloading...';
+  if(p>=62&&p<68)st='Unpacking...';
+  if(p>=68)st='Installing...';
+  return '<div class="card"><h2>Flashing Firmware</h2>'+
+    '<div class="ota"><div class="fill" style="width:'+p+'%"></div><div class="pct">'+p+'%</div></div>'+
+    '<p class="msg">'+st+'</p>'+
+    '<p class="msg" style="font-size:12px">Do not power off the mower</p></div>'
+}
+function waitReboot(d){
+  return '<div class="card"><h2>Waiting for Reboot</h2><div class="spin"></div>'+
+    '<p class="msg">Mower is rebooting with new firmware...</p>'+
+    (d.mowerConnected?'<p class="ok">Mower back online!</p>':'')+
+    '</div>'
+}
+function reprov(d){
+  return '<div class="card"><h2>Reprovision to Home WiFi?</h2>'+
+    '<p class="msg">Send mower to your home network</p>'+
+    '<button class="btn" onclick="api(\'reprovision\')">Reprovision</button>'+
+    ' <button class="btn sec" onclick="api(\'skip\')">Skip</button></div>'
+}
+function done(){
+  return '<div class="card"><h2 style="color:#00d4aa;font-size:24px">Setup Complete!</h2>'+
+    '<p class="msg">All devices have been provisioned.</p>'+
+    '<button class="btn" onclick="api(\'restart\')">Restart Tool</button></div>'
+}
+function error(d){
+  return '<div class="card"><h2 class="err">Error</h2>'+
+    '<p class="msg">'+d.msg+'</p>'+
+    '<button class="btn" onclick="api(\'retry\')">Retry</button></div>'
+}
+upd();poll=setInterval(upd,2000);
+</script>
+</body></html>)rawhtml";
+        request->send(200, "text/html", html);
+    });
 
     httpServer.onNotFound([](AsyncWebServerRequest *request) {
         String uri = request->url();

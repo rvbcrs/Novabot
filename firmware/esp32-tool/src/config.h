@@ -123,6 +123,10 @@ extern bool bleScanning;
 extern bool chargerWifiDetected;
 extern bool mowerWifiDetected;
 
+// ── Firmware proxy URL (when no SD card — stream from remote server) ────────
+
+extern String firmwareProxyUrl;   // e.g. "http://192.168.0.222:3000/api/dashboard/ota/firmware/mower_latest.deb"
+
 // ── Firmware info (from SD card) ────────────────────────────────────────────
 
 extern String mowerFwFilename;

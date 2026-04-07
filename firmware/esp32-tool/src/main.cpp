@@ -21,7 +21,9 @@
 
 #include <Arduino.h>
 #include <WiFi.h>
+#ifdef SD_MMC_D0
 #include <SD_MMC.h>
+#endif
 #include <NimBLEDevice.h>
 #include <Preferences.h>
 
@@ -147,6 +149,9 @@ size_t& firmwareSize = mowerFwSize;
 String& firmwareMd5 = mowerFwMd5;
 String& firmwareVersion = mowerFwVersion;
 
+// ── Firmware proxy URL (stream from remote server when no SD) ───────────────
+String firmwareProxyUrl = "";
+
 // ── Provision progress callback ─────────────────────────────────────────────
 
 ProvisionProgressCb provisionProgressCb = nullptr;
@@ -180,12 +185,18 @@ void setup() {
     } else {
         Serial.println("[NVS] Incomplete config — need WiFi + MQTT setup");
     }
+    String savedFwUrl = prefs.getString("fw_url", "");
+    if (savedFwUrl.length() > 0) {
+        firmwareProxyUrl = savedFwUrl;
+        Serial.printf("[NVS] Firmware proxy URL: %s\r\n", savedFwUrl.c_str());
+    }
 
     // Display first — show splash while SD loads (MD5 takes ~12s)
     display_init();
     display_boot(VERSION);
 
     // SD uses SD_MMC (separate bus from display — no conflict!)
+#ifdef SD_MMC_D0
     display_boot_status("Mounting SD card...");
     SD_MMC.setPins(SD_MMC_CLK, SD_MMC_CMD, SD_MMC_D0);
     sdMounted = SD_MMC.begin("/sdcard", true);  // 1-bit mode
@@ -197,6 +208,10 @@ void setup() {
         Serial.printf("[SD] SD_MMC mounted, size: %lluMB\r\n", SD_MMC.cardSize() / (1024 * 1024));
         display_boot_status("Reading firmware from SD...");
     }
+#else
+    Serial.println("[SD] No SD card support on this board — use firmware proxy URL");
+    sdMounted = false;
+#endif
 
     // Find firmware file on SD (MD5 computed lazily when Flash is pressed)
     if (!loadFirmwareInfo()) {
