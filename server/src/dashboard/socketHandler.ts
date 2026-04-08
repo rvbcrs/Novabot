@@ -158,7 +158,7 @@ export function initDashboardSocket(httpServer: HttpServer): void {
       if (joystickInterval) { clearInterval(joystickInterval); joystickInterval = null; }
       currentMst = { x_w: 0, y_v: 0, z_g: 0 };
       joystickHoldType = 0;
-      if (data?.sn) publishToDevice(data.sn, { stop_move: {} });
+      if (data?.sn) publishToDevice(data.sn, { stop_move: null });
     });
 
     // Legacy: direct command passthrough
@@ -170,7 +170,7 @@ export function initDashboardSocket(httpServer: HttpServer): void {
     socket.on('disconnect', () => {
       // Clean up joystick interval on disconnect (safety)
       if (joystickInterval) { clearInterval(joystickInterval); joystickInterval = null; }
-      if (joystickSn) publishToDevice(joystickSn, { stop_move: {} });
+      if (joystickSn) publishToDevice(joystickSn, { stop_move: null });
       console.log(`[DASHBOARD] Client disconnected: ${socket.id}`);
     });
   });
