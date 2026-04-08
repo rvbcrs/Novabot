@@ -7,7 +7,7 @@ import { db } from '../db/database.js';
 import { getAllDeviceSnapshots, getDeviceSnapshot, SENSORS, getGpsTrail, clearGpsTrail, deviceCache, translateValue, markPinVerified } from '../mqtt/sensorData.js';
 import { isDeviceOnline, writeRawPublish, getBrokerDiagnostics } from '../mqtt/broker.js';
 import { getRecentLogs, forwardToDashboard } from '../dashboard/socketHandler.js';
-import { requestMapList, requestMapOutline, publishToDevice, publishRawToDevice, publishEncryptedOnTopic, publishToTopic, goToChargePayload } from '../mqtt/mapSync.js';
+import { requestMapList, requestMapOutline, publishToDevice, publishRawToDevice, publishEncryptedOnTopic, publishToTopic, goToChargePayload, getNextCmdNum } from '../mqtt/mapSync.js';
 import crypto from 'crypto';
 import { generateMapZipFromDb, gpsToLocal, localToGps, parseMapZip, type GpsPoint, type LocalPoint } from '../mqtt/mapConverter.js';
 import { existsSync, unlinkSync, readFileSync, readdirSync, createReadStream, statSync, watch, mkdirSync, copyFileSync } from 'fs';
@@ -916,7 +916,7 @@ dashboardRouter.post('/maps/:sn/push-to-mower', async (req: Request, res: Respon
 
     // Maaier staat op het laadstation — sla huidige positie op als charger positie
     setTimeout(() => {
-      publishToDevice(sn, { save_recharge_pos: {} });
+      publishToDevice(sn, { save_recharge_pos: { mapName: 'map0', map0: '', cmd_num: getNextCmdNum(sn) } });
       console.log(`[SSH] save_recharge_pos gestuurd naar ${sn} (maaier op charger)`);
     }, 10000);
 
@@ -945,7 +945,7 @@ dashboardRouter.post('/maps/:sn/dock-and-save', (req: Request, res: Response) =>
     const snap = getDeviceSnapshot(sn);
     const state = snap?.battery_state;
     if (state === 'CHARGING' || state === 'FULL') {
-      publishToDevice(sn, { save_recharge_pos: {} });
+       publishToDevice(sn, { save_recharge_pos: { mapName: 'map0', map0: '', cmd_num: getNextCmdNum(sn) } });
       console.log(`[CHARGER] Maaier ${sn} gedockt, save_recharge_pos gestuurd`);
       res.json({ ok: true, waited: Date.now() - start });
       return;
@@ -980,7 +980,7 @@ dashboardRouter.post('/maps/:sn/calibrate-charger', (req: Request, res: Response
   const mapName = mapRow?.map_name || 'map0';
 
   // 1. Save huidige positie als charger (maaier staat op station)
-  publishToDevice(sn, { save_recharge_pos: {} });
+  publishToDevice(sn, { save_recharge_pos: { mapName, map0: '', cmd_num: getNextCmdNum(sn) } });
   console.log(`[CALIBRATE] save_recharge_pos gestuurd naar ${sn}`);
 
   // 2. start_run — maaier undockt automatisch (enige werkende methode)
@@ -1867,7 +1867,7 @@ dashboardRouter.post('/navigate-to/:sn', (req: Request, res: Response) => {
 
 // POST /api/dashboard/stop-navigation/:sn — stop navigatie
 dashboardRouter.post('/stop-navigation/:sn', (req: Request, res: Response) => {
-  publishToDevice(req.params.sn, { stop_navigation: {} });
+  publishToDevice(req.params.sn, { stop_navigation: { cmd_num: getNextCmdNum(req.params.sn) } });
   res.json({ ok: true, command: 'stop_navigation' });
 });
 

@@ -143,7 +143,12 @@ export function initDashboardSocket(httpServer: HttpServer): void {
         let tick = 0;
         joystickInterval = setInterval(() => {
           if (joystickStopped) return;
-          publishToDevice(joystickSn, { mst: currentMst });
+          // Official Flutter app sends mst as List<int>: [v*100, w*100, 8]
+          publishToDevice(joystickSn, { mst: [
+            Math.round(currentMst.x_w * 100),
+            Math.round(currentMst.y_v * 100),
+            8,
+          ] });
           tick++;
           if (tick % 5 === 0) {
             publishToDevice(joystickSn, { start_move: joystickHoldType });
