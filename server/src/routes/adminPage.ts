@@ -117,55 +117,222 @@ export function adminPageHtml(): string {
     </div>
   </div>
 
-  <!-- Account -->
-  <div class="card">
-    <h2>Account</h2>
-    <div id="account">Loading...</div>
+  <!-- Tabs -->
+  <div class="tabs">
+    <button class="tab active" onclick="switchTab('devices')">Devices</button>
+    <button class="tab" onclick="switchTab('console')">Console</button>
+    <button class="tab" onclick="switchTab('settings')">Settings</button>
   </div>
 
-  <!-- My Devices -->
-  <div class="card">
-    <h2>My Devices <span class="refresh-btn" onclick="loadMyDevices()">↻</span></h2>
-    <div id="myDevices">Loading...</div>
-  </div>
-
-  <!-- Cloud Import -->
-  <div class="card">
-    <h2>Cloud Import</h2>
-    <p style="font-size:12px;color:#888;margin-bottom:12px">Import devices from the Novabot cloud using your Novabot app credentials.</p>
-    <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap">
-      <input type="email" id="cloud_email" placeholder="Novabot email" style="flex:1;min-width:200px">
-      <input type="password" id="cloud_pass" placeholder="Novabot password" style="flex:1;min-width:200px">
+  <!-- Tab: Devices -->
+  <div id="tab_devices">
+    <div class="card">
+      <h2>My Devices <span class="refresh-btn" onclick="loadMyDevices()">↻</span></h2>
+      <div id="myDevices">Loading...</div>
     </div>
-    <button class="btn btn-purple" onclick="cloudImport()" id="cloudBtn">Connect &amp; Import</button>
-    <div id="cloudResult" style="margin-top:8px"></div>
   </div>
 
-  <!-- iOS Setup Profile -->
-  <div class="card">
-    <h2>iOS Setup</h2>
-    <p style="font-size:12px;color:#888;margin-bottom:12px">
-      The Novabot iOS app requires HTTPS. Install this profile on your iPhone/iPad to trust the OpenNova server certificate and redirect DNS.
-    </p>
-    <div style="background:rgba(124,58,237,.08);border:1px solid rgba(124,58,237,.2);border-radius:8px;padding:12px;margin-bottom:12px">
-      <p style="font-size:13px;color:#c4b5fd;margin:0 0 8px 0;font-weight:600">How to install:</p>
-      <ol style="font-size:12px;color:#a0a0a0;margin:0;padding-left:20px;line-height:1.8">
-        <li>Tap the download button below on your iPhone/iPad</li>
-        <li>Go to <b style="color:#e0e0e0">Settings → General → VPN & Device Management</b></li>
-        <li>Tap the <b style="color:#e0e0e0">OpenNova</b> profile → <b style="color:#e0e0e0">Install</b></li>
-        <li>Go to <b style="color:#e0e0e0">Settings → General → About → Certificate Trust Settings</b></li>
-        <li>Enable <b style="color:#e0e0e0">OpenNova CA Certificate</b></li>
-      </ol>
+  <!-- Tab: Console -->
+  <div id="tab_console" style="display:none">
+    <div class="card" style="padding:0;overflow:hidden">
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid rgba(255,255,255,.06);flex-wrap:wrap;gap:6px">
+        <h2 style="margin:0">MQTT Traffic</h2>
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+          <label style="font-size:11px;color:#888;cursor:pointer"><input type="checkbox" id="f_mower" checked onchange="applyFilter()" style="margin-right:3px"><span style="color:#22c55e">Mower</span></label>
+          <label style="font-size:11px;color:#888;cursor:pointer"><input type="checkbox" id="f_charger" checked onchange="applyFilter()" style="margin-right:3px"><span style="color:#eab308">Charger</span></label>
+          <label style="font-size:11px;color:#888;cursor:pointer"><input type="checkbox" id="f_app" checked onchange="applyFilter()" style="margin-right:3px"><span style="color:#3b82f6">App</span></label>
+          <label style="font-size:11px;color:#888;cursor:pointer"><input type="checkbox" id="f_system" checked onchange="applyFilter()" style="margin-right:3px"><span style="color:#888">System</span></label>
+          <button onclick="mqttLogs=[];renderLogs()" style="background:#333;color:#888;border:none;border-radius:4px;padding:2px 8px;font-size:11px;cursor:pointer">Clear</button>
+          <label style="font-size:11px;color:#888;cursor:pointer"><input type="checkbox" id="f_autoscroll" checked style="margin-right:3px">Auto-scroll</label>
+        </div>
+      </div>
+      <div style="padding:6px 12px;border-bottom:1px solid rgba(255,255,255,.06)">
+        <input id="f_search" type="text" placeholder="Search (e.g. start_run, error, LFIN...)" oninput="renderLogs()" style="width:100%;padding:6px 10px;font-size:12px;background:#0d0d20;border:1px solid #333;border-radius:6px;color:#fff">
+      </div>
+      <div id="mqttConsole" style="height:calc(100vh - 320px);min-height:300px;overflow-y:auto;font-family:monospace;font-size:11px;padding:8px;background:#0a0a1a;line-height:1.6"></div>
     </div>
-    <a href="/api/setup/profile" class="btn btn-purple" style="display:block;text-align:center;text-decoration:none">Download iOS Profile (.mobileconfig)</a>
-    <p style="font-size:11px;color:#666;margin-top:8px;text-align:center">
-      Not needed for Android — only iOS requires TLS certificate trust.
-    </p>
+  </div>
+
+  <!-- Tab: Settings -->
+  <div id="tab_settings" style="display:none">
+    <div class="card">
+      <h2>Account</h2>
+      <div id="account">Loading...</div>
+    </div>
+
+    <div class="card">
+      <h2>Cloud Import</h2>
+      <p style="font-size:12px;color:#888;margin-bottom:12px">Import devices from the Novabot cloud using your Novabot app credentials.</p>
+      <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap">
+        <input type="email" id="cloud_email" placeholder="Novabot email" style="flex:1;min-width:200px">
+        <input type="password" id="cloud_pass" placeholder="Novabot password" style="flex:1;min-width:200px">
+      </div>
+      <button class="btn btn-purple" onclick="cloudImport()" id="cloudBtn">Connect &amp; Import</button>
+      <div id="cloudResult" style="margin-top:8px"></div>
+    </div>
+
+    <div class="card">
+      <h2>iOS Setup</h2>
+      <p style="font-size:12px;color:#888;margin-bottom:12px">
+        The Novabot iOS app requires HTTPS. Install this profile on your iPhone/iPad to trust the OpenNova server certificate and redirect DNS.
+      </p>
+      <div style="background:rgba(124,58,237,.08);border:1px solid rgba(124,58,237,.2);border-radius:8px;padding:12px;margin-bottom:12px">
+        <p style="font-size:13px;color:#c4b5fd;margin:0 0 8px 0;font-weight:600">How to install:</p>
+        <ol style="font-size:12px;color:#a0a0a0;margin:0;padding-left:20px;line-height:1.8">
+          <li>Tap the download button below on your iPhone/iPad</li>
+          <li>Go to <b style="color:#e0e0e0">Settings → General → VPN & Device Management</b></li>
+          <li>Tap the <b style="color:#e0e0e0">OpenNova</b> profile → <b style="color:#e0e0e0">Install</b></li>
+          <li>Go to <b style="color:#e0e0e0">Settings → General → About → Certificate Trust Settings</b></li>
+          <li>Enable <b style="color:#e0e0e0">OpenNova CA Certificate</b></li>
+        </ol>
+      </div>
+      <a href="/api/setup/profile" class="btn btn-purple" style="display:block;text-align:center;text-decoration:none">Download iOS Profile (.mobileconfig)</a>
+      <p style="font-size:11px;color:#666;margin-top:8px;text-align:center">
+        Not needed for Android — only iOS requires TLS certificate trust.
+      </p>
+    </div>
   </div>
 </div>
 
+<script src="/socket.io/socket.io.js"></script>
 <script>
 let token = localStorage.getItem('admin_token') || '';
+let currentTab = 'devices';
+
+function switchTab(name) {
+  currentTab = name;
+  var tabs = document.querySelectorAll('.tab');
+  for (var i = 0; i < tabs.length; i++) tabs[i].classList.remove('active');
+  // Activate clicked tab
+  var names = ['devices','console','settings'];
+  for (var i = 0; i < names.length; i++) {
+    document.getElementById('tab_' + names[i]).style.display = names[i] === name ? '' : 'none';
+    if (names[i] === name) tabs[i].classList.add('active');
+  }
+}
+
+// ── MQTT Console ──────────────────────────────────────────────────
+let mqttLogs = [];
+const MAX_CONSOLE_LINES = 500;
+
+function classifyLog(entry) {
+  if (!entry) return 'system';
+  var cid = (entry.clientId || '') + (entry.sn || '') + (entry.topic || '');
+  if (cid.indexOf('LFIN') >= 0) return 'mower';
+  if (cid.indexOf('LFIC') >= 0 || cid.indexOf('ESP32') >= 0) return 'charger';
+  if (entry.clientType === 'APP' || cid.indexOf('@') >= 0 || cid.indexOf('eyJ') >= 0) return 'app';
+  return 'system';
+}
+
+function logColor(cls) {
+  if (cls === 'mower') return '#22c55e';
+  if (cls === 'charger') return '#eab308';
+  if (cls === 'app') return '#3b82f6';
+  return '#666';
+}
+
+function typeIcon(type) {
+  if (type === 'connect') return '🔌';
+  if (type === 'disconnect') return '🔴';
+  if (type === 'subscribe') return '📡';
+  if (type === 'publish') return '📨';
+  if (type === 'error') return '❌';
+  return '·';
+}
+
+function truncate(s, n) { return s && s.length > n ? s.substring(0, n) + '...' : (s || ''); }
+
+function formatLog(entry) {
+  var cls = classifyLog(entry);
+  var color = logColor(cls);
+  var t = new Date(entry.ts);
+  var time = t.toLocaleTimeString('nl-NL', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  var icon = typeIcon(entry.type);
+  var dir = entry.direction || '';
+  var sn = entry.sn || '';
+  var topic = entry.topic ? entry.topic.replace('Dart/Receive_mqtt/','←').replace('Dart/Send_mqtt/','→').replace('Dart/Receive_server_mqtt/','⇐') : '';
+  var payload = truncate(entry.payload, 120);
+
+  return '<div class="mqtt-line mqtt-' + cls + '" style="color:' + color + '">' +
+    '<span style="color:#555">' + time + '</span> ' +
+    icon + ' ' +
+    '<span style="font-weight:700">' + (entry.type || '').toUpperCase() + '</span> ' +
+    (sn ? '<span style="color:' + color + ';opacity:.7">' + sn + '</span> ' : '') +
+    (dir ? '<span style="color:#888">' + dir + '</span> ' : '') +
+    (topic ? '<span style="color:#888">' + topic + '</span> ' : '') +
+    (payload ? '<span style="color:' + color + ';opacity:.6">' + payload.replace(/</g,'&lt;') + '</span>' : '') +
+    '</div>';
+}
+
+function applyFilter() {
+  renderLogs();
+}
+
+function matchesSearch(entry, q) {
+  if (!q) return true;
+  var s = ((entry.sn || '') + ' ' + (entry.clientId || '') + ' ' + (entry.topic || '') + ' ' + (entry.payload || '') + ' ' + (entry.type || '')).toLowerCase();
+  return s.indexOf(q) >= 0;
+}
+
+function renderLogs() {
+  var fm = document.getElementById('f_mower').checked;
+  var fc = document.getElementById('f_charger').checked;
+  var fa = document.getElementById('f_app').checked;
+  var fs = document.getElementById('f_system').checked;
+  var q = (document.getElementById('f_search').value || '').toLowerCase().trim();
+  var el = document.getElementById('mqttConsole');
+  var html = '';
+  for (var i = 0; i < mqttLogs.length; i++) {
+    var cls = classifyLog(mqttLogs[i]);
+    if (cls === 'mower' && !fm) continue;
+    if (cls === 'charger' && !fc) continue;
+    if (cls === 'app' && !fa) continue;
+    if (cls === 'system' && !fs) continue;
+    if (!matchesSearch(mqttLogs[i], q)) continue;
+    html += formatLog(mqttLogs[i]);
+  }
+  el.innerHTML = html;
+  if (document.getElementById('f_autoscroll').checked) {
+    el.scrollTop = el.scrollHeight;
+  }
+}
+
+function addLog(entry) {
+  mqttLogs.push(entry);
+  if (mqttLogs.length > MAX_CONSOLE_LINES) mqttLogs.splice(0, mqttLogs.length - MAX_CONSOLE_LINES);
+
+  var cls = classifyLog(entry);
+  var fm = document.getElementById('f_mower').checked;
+  var fc = document.getElementById('f_charger').checked;
+  var fa = document.getElementById('f_app').checked;
+  var fs = document.getElementById('f_system').checked;
+  var q = (document.getElementById('f_search').value || '').toLowerCase().trim();
+  if (cls === 'mower' && !fm) return;
+  if (cls === 'charger' && !fc) return;
+  if (cls === 'app' && !fa) return;
+  if (cls === 'system' && !fs) return;
+  if (!matchesSearch(entry, q)) return;
+
+  var el = document.getElementById('mqttConsole');
+  el.insertAdjacentHTML('beforeend', formatLog(entry));
+  if (document.getElementById('f_autoscroll').checked) {
+    el.scrollTop = el.scrollHeight;
+  }
+}
+
+// Connect Socket.io for real-time logs
+var mqttSocket = io();
+mqttSocket.on('mqtt:log', function(entry) { addLog(entry); });
+
+// Load initial logs
+fetch('/api/dashboard/mqtt-logs')
+  .then(function(r) { return r.json(); })
+  .then(function(d) {
+    var logs = d.logs || d || [];
+    for (var i = 0; i < logs.length; i++) mqttLogs.push(logs[i]);
+    renderLogs();
+  })
+  .catch(function() {});
 
 async function api(path, method='GET', body=null) {
   const opts = { method, headers: { 'Authorization': token, 'Content-Type': 'application/json' } };
