@@ -61,9 +61,10 @@ function deriveMower(devices: Map<string, DeviceState>): MowerDerived | null {
   const s = mower.sensors;
   const workStatus = s.work_status ?? '0';
   const isOffline = !mower.online;
+  // Only use error_status from report_state_robot as the source of truth.
+  // error_code can be stale (chassis_err from charger, not a real app error).
   const hasError = Boolean(
-    (s.error_status && s.error_status !== 'OK' && s.error_status !== '0') ||
-      (s.error_code && s.error_code !== 'None' && s.error_code !== '0'),
+    s.error_status && s.error_status !== 'OK' && s.error_status !== '0',
   );
 
   let activity: MowerActivity = 'idle';
@@ -777,7 +778,7 @@ export default function HomeScreen() {
               <TouchableOpacity
                 style={[styles.actionButton, styles.actionButtonAmber]}
                 onPress={() =>
-                  sendCommand(mower.sn, { stop_run: {} }, 'pause')
+                  sendCommand(mower.sn, { stop_run: { cmd_num: ++cmdNumRef.current } }, 'pause')
                 }
                 disabled={commandLoading !== null}
                 activeOpacity={0.7}
@@ -794,7 +795,7 @@ export default function HomeScreen() {
               <TouchableOpacity
                 style={[styles.actionButton, styles.actionButtonRed]}
                 onPress={() =>
-                  sendCommand(mower.sn, { cancel_run: {} }, 'stop')
+                  sendCommand(mower.sn, { stop_run: { cmd_num: ++cmdNumRef.current } }, 'stop')
                 }
                 disabled={commandLoading !== null}
                 activeOpacity={0.7}
@@ -833,7 +834,7 @@ export default function HomeScreen() {
               <TouchableOpacity
                 style={[styles.actionButton, styles.actionButtonGreen]}
                 onPress={() =>
-                  sendCommand(mower.sn, { start_run: {} }, 'resume')
+                  sendCommand(mower.sn, { start_run: { cmd_num: ++cmdNumRef.current } }, 'resume')
                 }
                 disabled={commandLoading !== null}
                 activeOpacity={0.7}
@@ -894,7 +895,7 @@ export default function HomeScreen() {
               <TouchableOpacity
                 style={[styles.actionButton, styles.actionButtonRed]}
                 onPress={() =>
-                  sendCommand(mower.sn, { stop_run: {} }, 'stop')
+                  sendCommand(mower.sn, { stop_run: { cmd_num: ++cmdNumRef.current } }, 'stop')
                 }
                 disabled={commandLoading !== null}
                 activeOpacity={0.7}
