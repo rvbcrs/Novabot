@@ -140,6 +140,28 @@ export function adminPageHtml(): string {
     <button class="btn btn-purple" onclick="cloudImport()" id="cloudBtn">Connect &amp; Import</button>
     <div id="cloudResult" style="margin-top:8px"></div>
   </div>
+
+  <!-- iOS Setup Profile -->
+  <div class="card">
+    <h2>iOS Setup</h2>
+    <p style="font-size:12px;color:#888;margin-bottom:12px">
+      The Novabot iOS app requires HTTPS. Install this profile on your iPhone/iPad to trust the OpenNova server certificate and redirect DNS.
+    </p>
+    <div style="background:rgba(124,58,237,.08);border:1px solid rgba(124,58,237,.2);border-radius:8px;padding:12px;margin-bottom:12px">
+      <p style="font-size:13px;color:#c4b5fd;margin:0 0 8px 0;font-weight:600">How to install:</p>
+      <ol style="font-size:12px;color:#a0a0a0;margin:0;padding-left:20px;line-height:1.8">
+        <li>Tap the download button below on your iPhone/iPad</li>
+        <li>Go to <b style="color:#e0e0e0">Settings → General → VPN & Device Management</b></li>
+        <li>Tap the <b style="color:#e0e0e0">OpenNova</b> profile → <b style="color:#e0e0e0">Install</b></li>
+        <li>Go to <b style="color:#e0e0e0">Settings → General → About → Certificate Trust Settings</b></li>
+        <li>Enable <b style="color:#e0e0e0">OpenNova CA Certificate</b></li>
+      </ol>
+    </div>
+    <a href="/api/setup/profile" class="btn btn-purple" style="display:block;text-align:center;text-decoration:none">Download iOS Profile (.mobileconfig)</a>
+    <p style="font-size:11px;color:#666;margin-top:8px;text-align:center">
+      Not needed for Android — only iOS requires TLS certificate trust.
+    </p>
+  </div>
 </div>
 
 <script>
