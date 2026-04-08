@@ -24,7 +24,6 @@ import { getServerUrl } from '../services/auth';
 import { getSocket } from '../services/socket';
 import { useNavigation } from '@react-navigation/native';
 import { PatternPicker } from './PatternPicker';
-import { MowingDirectionPreview } from './MowingDirectionPreview';
 import { usePattern } from '../context/PatternContext';
 import { transformToGps } from '../utils/patternUtils';
 import { offsetPolygon } from '../utils/polygonOffset';
@@ -217,10 +216,7 @@ export function StartMowSheet({ visible, onClose, sn, onStarted }: Props) {
 
             {/* Path direction */}
             <View style={styles.section}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                <Text style={styles.label}>{t('pathDirection')}</Text>
-                <MowingDirectionPreview direction={pathDirection} size={60} />
-              </View>
+              <Text style={styles.label}>{t('pathDirection')}</Text>
               <View style={styles.compassGrid}>
                 {COMPASS.map((label, i) => {
                   const deg = i * 45;
@@ -477,7 +473,7 @@ const styles = StyleSheet.create({
   content: { paddingHorizontal: 20, paddingBottom: Platform.OS === 'ios' ? 40 : 20, gap: 20 },
   title: { fontSize: 20, fontWeight: '700', color: colors.white },
   section: { gap: 8 },
-  label: { fontSize: 12, fontWeight: '600', color: colors.textMuted, textTransform: 'uppercase', letterSpacing: 0.5 },
+  label: { fontSize: 13, fontWeight: '700', color: '#a0a0b0', textTransform: 'uppercase', letterSpacing: 0.5 },
   labelRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   labelValue: { fontSize: 14, fontWeight: '700', color: colors.white },
   mapGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
@@ -490,10 +486,10 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.08)',
   },
   mapBtnActive: { backgroundColor: 'rgba(16,185,129,0.2)', borderColor: colors.emerald },
-  mapBtnText: { fontSize: 13, fontWeight: '600', color: colors.textMuted },
+  mapBtnText: { fontSize: 13, fontWeight: '600', color: '#a0a0b0' },
   mapBtnTextActive: { color: colors.emerald },
   noMaps: { flexDirection: 'row', alignItems: 'center', gap: 8, padding: 12, backgroundColor: 'rgba(255,255,255,0.04)', borderRadius: 10 },
-  noMapsText: { fontSize: 13, color: colors.textMuted, flex: 1 },
+  noMapsText: { fontSize: 13, color: '#a0a0b0', flex: 1 },
   stepperRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   stepperBtn: {
     width: 40, height: 40, borderRadius: 10,
@@ -512,7 +508,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   compassBtnActive: { backgroundColor: colors.emerald },
-  compassText: { fontSize: 12, fontWeight: '700', color: colors.textMuted },
+  compassText: { fontSize: 13, fontWeight: '700', color: '#a0a0b0' },
   compassTextActive: { color: colors.white },
   actionRow: { flexDirection: 'row', gap: 12, paddingTop: 4 },
   cancelBtn: {
