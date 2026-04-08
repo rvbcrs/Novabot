@@ -190,8 +190,11 @@ equipmentRouter.post('/getEquipmentBySN', authMiddleware, (req: AuthRequest, res
       return;
     }
 
-    console.log(`[equipment] getEquipmentBySN: sn=${sn} row.user_id=${row.user_id ?? 'NULL'} req.userId=${req.userId} → userId=${userId}`);
-    res.json(ok({ ...dto, userId, macAddress: skipBle ? null : (mac ?? dto.macAddress) }));
+    // Always return MAC address — the official app needs it for BLE readiness checks
+    // (build map pre-check, signal info). Without MAC, the app skips BLE scan → spinner hangs.
+    const finalResponse = { ...dto, userId, macAddress: mac ?? dto.macAddress };
+    console.log(`[equipment] getEquipmentBySN: sn=${sn} sysVersion=${finalResponse.sysVersion} userId=${userId}`);
+    res.json(ok(finalResponse));
   } else {
     // Geen equipment record gevonden.
     // De echte cloud heeft ALTIJD een record (factory-geïmporteerd). Als wij equipmentId=0

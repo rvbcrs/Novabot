@@ -680,7 +680,6 @@ export async function startMqttBroker(): Promise<void> {
       onlineBySn.get(sn)!.add(clientId);
       publishDeviceOnline(sn);
       emitDeviceOnline(sn);
-      // Automatisch firmware versie + kaarten opvragen bij connect
       onMowerConnected(sn);
     }
 
@@ -1132,5 +1131,13 @@ export function lookupMac(sn: string): string | null {
     WHERE (mower_sn = ? OR charger_sn = ?) AND mac_address IS NOT NULL
     LIMIT 1
   `).get(sn, sn) as { mac_address: string } | undefined;
-  return eqRow?.mac_address ?? null;
+  if (eqRow) return eqRow.mac_address;
+
+  // 4. Fallback: factory device lookup table (cloud_devices_anonymous.json import)
+  const factoryRow = db.prepare(`
+    SELECT mac_address FROM device_factory
+    WHERE sn = ? AND mac_address IS NOT NULL
+    LIMIT 1
+  `).get(sn) as { mac_address: string } | undefined;
+  return factoryRow?.mac_address ?? null;
 }
