@@ -61,10 +61,12 @@ function deriveMower(devices: Map<string, DeviceState>): MowerDerived | null {
   const s = mower.sensors;
   const workStatus = s.work_status ?? '0';
   const isOffline = !mower.online;
-  // Only use error_status from report_state_robot as the source of truth.
-  // error_code can be stale (chassis_err from charger, not a real app error).
+  // Error status from report_state_robot.
+  // Non-blocking errors (LoRa warnings etc.) should not block the UI.
+  const errorStatusRaw = parseInt(s.error_status?.match(/\d+/)?.[0] ?? '0', 10);
+  const NON_BLOCKING_ERRORS = [8]; // 8 = LoRa disconnect warning, not a real fault
   const hasError = Boolean(
-    s.error_status && s.error_status !== 'OK' && s.error_status !== '0',
+    errorStatusRaw > 0 && !NON_BLOCKING_ERRORS.includes(errorStatusRaw),
   );
 
   let activity: MowerActivity = 'idle';
@@ -778,7 +780,7 @@ export default function HomeScreen() {
               <TouchableOpacity
                 style={[styles.actionButton, styles.actionButtonAmber]}
                 onPress={() =>
-                  sendCommand(mower.sn, { stop_run: { cmd_num: ++cmdNumRef.current } }, 'pause')
+                  sendCommand(mower.sn, { pause_run: { cmd_num: ++cmdNumRef.current } }, 'pause')
                 }
                 disabled={commandLoading !== null}
                 activeOpacity={0.7}
@@ -834,7 +836,7 @@ export default function HomeScreen() {
               <TouchableOpacity
                 style={[styles.actionButton, styles.actionButtonGreen]}
                 onPress={() =>
-                  sendCommand(mower.sn, { start_run: { cmd_num: ++cmdNumRef.current } }, 'resume')
+                  sendCommand(mower.sn, { resume_run: { cmd_num: ++cmdNumRef.current } }, 'resume')
                 }
                 disabled={commandLoading !== null}
                 activeOpacity={0.7}

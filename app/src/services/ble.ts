@@ -545,11 +545,15 @@ export async function bleJoystickStart(holdType: number): Promise<void> {
 
 /**
  * Send velocity command.
- * Official app uses integers (BoxInt64), but mqtt_node also accepts floats.
- * Keep as floats since that's proven to work via MQTT.
+ * Official Flutter app sends: {"mst": [v_linear, w_angular, 8]} as List<int>
+ * Verified in blutter: AllocateArray(6) → [BoxInt64(v), BoxInt64(w), 8], TypeArgs: <int>
  */
 export async function bleJoystickMove(mst: { x_w: number; y_v: number; z_g: number }): Promise<void> {
-  await writeJoystickFrame(JSON.stringify({ mst }));
+  await writeJoystickFrame(JSON.stringify({ mst: [
+    Math.round(mst.x_w * 100),
+    Math.round(mst.y_v * 100),
+    8,
+  ] }));
 }
 
 /**

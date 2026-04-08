@@ -77,7 +77,9 @@ export function StartMowSheet({ visible, onClose, sn, onStarted }: Props) {
     setStarting(true);
     try {
       const socket = getSocket();
-      if (!socket) return;
+      console.log('[StartMow] socket:', !!socket, 'sn:', sn, 'selectedMapId:', selectedMapId, 'maps:', maps.length);
+      if (!socket) { console.log('[StartMow] NO SOCKET!'); return; }
+      if (!sn) { console.log('[StartMow] NO SN!'); return; }
 
       // 1. Set cutting height + direction
       socket.emit('joystick:cmd', {
@@ -96,41 +98,25 @@ export function StartMowSheet({ visible, onClose, sn, onStarted }: Props) {
       await new Promise(r => setTimeout(r, 500));
 
       // 2. Build start_run command
-      const startCmd: Record<string, unknown> = {};
-      let polySource: Array<{ lat: number; lng: number }> | undefined;
+      // Official Flutter app (blutter decompilation): start_run is a Map<String, int>
+      // with only: mapName (int index, 0-based), area (int), cutterhigh (int)
+      // The mower already has the map stored locally — NO GPS coordinates are sent!
+      const selectedIdx = maps.findIndex(m => m.mapId === selectedMapId);
+      const mapIdx = selectedIdx >= 0 ? selectedIdx : 0;
 
-      if (patternId && patternCenter) {
-        // Pattern mowing — use placement from inline preview tap
-        const { loadPattern } = require('../utils/patternUtils');
-        const contours = loadPattern(patternId);
-        if (contours.length > 0) {
-          polySource = transformToGps(contours[0], patternCenter, patternSize, patternRotation);
-          startCmd.map_id = `pattern_${patternId}`;
-          startCmd.map_name = `Pattern ${patternId}`;
-        }
-      } else if (selectedMapId) {
-        const selectedMap = maps.find(m => m.mapId === selectedMapId);
-        startCmd.map_id = selectedMapId;
-        startCmd.map_name = selectedMap?.mapName ?? '';
-        polySource = selectedMap?.mapArea;
-      } else if (maps.length > 0) {
-        // All areas — use first map
-        polySource = maps[0]?.mapArea;
-      }
-
-      if (polySource && polySource.length >= 3) {
-        const finalPoly = edgeOffset !== 0 ? offsetPolygon(polySource, edgeOffset) : polySource;
-        startCmd.workArea = finalPoly.map(p => ({
-          latitude: p.lat,
-          longitude: p.lng,
-        }));
-        startCmd.cutGrassHeight = cuttingHeight;
-      }
-
-      socket.emit('joystick:cmd', { sn, command: { start_run: startCmd } });
+      const selectedMap = maps.find(m => m.mapId === selectedMapId) ?? maps[0];
+      const startCmd = {
+        start_run: {
+          mapName: selectedMap?.mapName ?? 'map0',
+          area: 1,
+          cutterhigh: cuttingHeight,
+        },
+      };
+      console.log('[StartMow] Sending:', JSON.stringify(startCmd));
+      socket.emit('joystick:cmd', { sn, command: startCmd });
       onStarted();
       onClose();
-    } catch { /* ignore */ }
+    } catch (err) { console.log('[StartMow] ERROR:', err); }
     setStarting(false);
   };
 

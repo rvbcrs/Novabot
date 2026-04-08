@@ -404,8 +404,8 @@ export default function MappingScreen() {
     } catch {}
 
     // Exact payload from official Novabot app (Flutter decompilation):
-    // {"start_scan_map": {"model": "manual", "mapName": "map0", "type": 0, "cmd_num": N}}
-    sendCommand({ start_scan_map: { model: 'manual', mapName: 'map0', type: 0, cmd_num: cmdNumRef.current++ } }, 'start_scan_map');
+    // Blutter: model="border"|"obstacle", manual=true|false, mapName, map0, type=0
+    sendCommand({ start_scan_map: { model: 'border', manual: true, mapName: 'map0', map0: '', type: 0, cmd_num: cmdNumRef.current++ } }, 'start_scan_map');
     setMappingState('mapping');
     setClosedCycleSeen(false);
     closedCycleDismissedRef.current = false;
@@ -480,7 +480,7 @@ export default function MappingScreen() {
     if (mappingState === 'chargerPosition' && rechargeStatus > 0 && prevRechargeRef.current === 0 && !savingChargerPosRef.current) {
       savingChargerPosRef.current = true;
       console.log('[Mapping] Step 5: Mower docked! Sending save_recharge_pos...');
-      sendCommand({ save_recharge_pos: { mapName: 'map0', cmd_num: cmdNumRef.current++ } }, 'save_recharge_pos');
+      sendCommand({ save_recharge_pos: { mapName: 'map0', map0: '', cmd_num: cmdNumRef.current++ } }, 'save_recharge_pos');
 
       // Wait for save_recharge_pos_respond
       const socket = getSocket();
@@ -514,7 +514,7 @@ export default function MappingScreen() {
           onPress: () => {
             if (joystickActiveRef.current) stopJoystick();
             sendCommand({ stop_scan_map: { value: true, cmd_num: cmdNumRef.current++ } }, 'stop_scan_map (cancel)');
-            sendCommand({ quit_mapping_mode: { cmd_num: cmdNumRef.current++ } }, 'quit_mapping_mode');
+            sendCommand({ quit_mapping_mode: { value: 1, cmd_num: cmdNumRef.current++ } }, 'quit_mapping_mode');
             setMappingState('cancelled');
             setTimeout(() => navigation.goBack(), 500);
           },
@@ -525,7 +525,7 @@ export default function MappingScreen() {
 
   // ── Manual charger position save (fallback if auto_recharge doesn't dock) ──
   const handleSaveChargerPos = async () => {
-    sendCommand({ save_recharge_pos: { mapName: 'map0', cmd_num: cmdNumRef.current++ } }, 'save_recharge_pos');
+    sendCommand({ save_recharge_pos: { mapName: 'map0', map0: '', cmd_num: cmdNumRef.current++ } }, 'save_recharge_pos');
     const socket = getSocket();
     const responded = await new Promise<boolean>((resolve) => {
       const timer = setTimeout(() => resolve(false), 10000);

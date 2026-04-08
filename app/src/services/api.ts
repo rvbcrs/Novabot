@@ -267,7 +267,7 @@ export class ApiClient {
   // ── Headlight ────────────────────────────────────────────────────────
 
   async setHeadlight(sn: string, on: boolean): Promise<CommandResult> {
-    return this.sendCommand(sn, { set_headlight: on ? 1 : 0 });
+    return this.sendCommand(sn, { set_para_info: { headlight: on ? 1 : 0 } });
   }
 
   // ── Joystick (manual control) ────────────────────────────────────────
@@ -281,7 +281,8 @@ export class ApiClient {
     xw: number,
     yv: number,
   ): Promise<CommandResult> {
-    return this.sendCommand(sn, { mst: { x_w: xw, y_v: yv, z_g: 0 } });
+    // Official Flutter app: mst is List<int> [v*100, w*100, 8]
+    return this.sendCommand(sn, { mst: [Math.round(xw * 100), Math.round(yv * 100), 8] });
   }
 
   async joystickStop(sn: string): Promise<CommandResult> {
