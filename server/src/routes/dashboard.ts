@@ -7,7 +7,7 @@ import { db } from '../db/database.js';
 import { getAllDeviceSnapshots, getDeviceSnapshot, SENSORS, getGpsTrail, clearGpsTrail, deviceCache, translateValue, markPinVerified } from '../mqtt/sensorData.js';
 import { isDeviceOnline, writeRawPublish, getBrokerDiagnostics } from '../mqtt/broker.js';
 import { getRecentLogs, forwardToDashboard } from '../dashboard/socketHandler.js';
-import { requestMapList, requestMapOutline, publishToDevice, publishRawToDevice, publishEncryptedOnTopic, publishToTopic } from '../mqtt/mapSync.js';
+import { requestMapList, requestMapOutline, publishToDevice, publishRawToDevice, publishEncryptedOnTopic, publishToTopic, goToChargePayload } from '../mqtt/mapSync.js';
 import crypto from 'crypto';
 import { generateMapZipFromDb, gpsToLocal, localToGps, parseMapZip, type GpsPoint, type LocalPoint } from '../mqtt/mapConverter.js';
 import { existsSync, unlinkSync, readFileSync, readdirSync, createReadStream, statSync, watch, mkdirSync, copyFileSync } from 'fs';
@@ -938,7 +938,7 @@ dashboardRouter.post('/maps/:sn/dock-and-save', (req: Request, res: Response) =>
   const start = Date.now();
 
   // Stuur go_to_charge — maaier navigeert via GPS + ArUco QR scan voor final approach
-  publishToDevice(sn, { go_to_charge: {} });
+  publishToDevice(sn, goToChargePayload(sn));
   console.log(`[CHARGER] go_to_charge gestuurd naar ${sn}, wacht op docking...`);
 
   const check = () => {
@@ -1005,7 +1005,7 @@ dashboardRouter.post('/maps/:sn/calibrate-charger', (req: Request, res: Response
 
       // 4. Na 3s: terug naar charger via go_to_charge (GPS + ArUco scan)
       setTimeout(() => {
-        publishToDevice(sn, { go_to_charge: {} });
+        publishToDevice(sn, goToChargePayload(sn));
         console.log(`[CALIBRATE] go_to_charge naar ${sn} — ArUco scan tijdens return`);
       }, 3000);
     }, 8000);

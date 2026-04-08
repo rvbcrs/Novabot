@@ -17,7 +17,7 @@
 import { randomUUID } from 'crypto';
 import { db } from '../db/database.js';
 import { isDeviceOnline } from '../mqtt/broker.js';
-import { publishToDevice } from '../mqtt/mapSync.js';
+import { publishToDevice, goToChargePayload } from '../mqtt/mapSync.js';
 import { deviceCache } from '../mqtt/sensorData.js';
 import { getWeatherForecast, shouldPauseForRain } from './weatherService.js';
 import { emitScheduleEvent } from '../dashboard/socketHandler.js';
@@ -183,7 +183,7 @@ async function checkActiveMowers(): Promise<void> {
 /** Stuur maaier naar huis en maak een rain_session */
 function pauseForRain(mowerSn: string, schedule: RainScheduleRow): void {
   // Stuur go_to_charge
-  publishToDevice(mowerSn, { go_to_charge: {} });
+  publishToDevice(mowerSn, goToChargePayload(mowerSn));
   pendingGoCharge.add(mowerSn);
 
   // Maak rain session in DB

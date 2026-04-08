@@ -21,6 +21,33 @@ const TAG = '[MAP-SYNC]';
 
 let aedesBroker: Aedes | null = null;
 
+// ── Per-device cmd_num counter (matches Flutter app behavior) ────────────────
+// The Flutter app uses an auto-incrementing cmd_num per command.
+// We track per-SN to avoid collisions between devices.
+const cmdNumCounters = new Map<string, number>();
+
+/** Get the next cmd_num for a device (auto-incrementing, starts at 1). */
+export function getNextCmdNum(sn: string): number {
+  const current = cmdNumCounters.get(sn) ?? 0;
+  const next = current + 1;
+  cmdNumCounters.set(sn, next);
+  return next;
+}
+
+/**
+ * Build the correct go_to_charge payload as used by the Flutter app.
+ * Assembly analysis shows: { cmd_num: N, chargerpile: { latitude: 200, longitude: 200 } }
+ * The lat/lng 200 values are sentinel/placeholder — the mower navigates via RTK/LoRa.
+ */
+export function goToChargePayload(sn: string): Record<string, unknown> {
+  return {
+    go_to_charge: {
+      cmd_num: getNextCmdNum(sn),
+      chargerpile: { latitude: 200, longitude: 200 },
+    },
+  };
+}
+
 // Bijhouden voor welke SNs we al een map-request hebben gestuurd (voorkom spam)
 const pendingRequests = new Set<string>();
 

@@ -252,6 +252,8 @@ export default function HomeScreen() {
   // Mower bounce animation (subtle bob when active)
   const bounceAnim = useRef(new Animated.Value(0)).current;
   const pulseAnim = useRef(new Animated.Value(1)).current;
+  // Auto-incrementing cmd_num for commands (matches Flutter app behavior)
+  const cmdNumRef = useRef(0);
 
   useEffect(() => {
     if (!mower) return;
@@ -809,7 +811,7 @@ export default function HomeScreen() {
               <TouchableOpacity
                 style={[styles.actionButton, styles.actionButtonBlue]}
                 onPress={() =>
-                  sendCommand(mower.sn, { go_to_charge: {} }, 'home')
+                  sendCommand(mower.sn, { go_to_charge: { cmd_num: ++cmdNumRef.current, chargerpile: { latitude: 200, longitude: 200 } } }, 'home')
                 }
                 disabled={commandLoading !== null}
                 activeOpacity={0.7}
@@ -848,7 +850,7 @@ export default function HomeScreen() {
               <TouchableOpacity
                 style={[styles.actionButton, styles.actionButtonBlue]}
                 onPress={() =>
-                  sendCommand(mower.sn, { go_to_charge: {} }, 'home')
+                  sendCommand(mower.sn, { go_to_charge: { cmd_num: ++cmdNumRef.current, chargerpile: { latitude: 200, longitude: 200 } } }, 'home')
                 }
                 disabled={commandLoading !== null}
                 activeOpacity={0.7}
@@ -870,7 +872,7 @@ export default function HomeScreen() {
               <TouchableOpacity
                 style={[styles.actionButton, styles.actionButtonBlue]}
                 onPress={() =>
-                  sendCommand(mower.sn, { go_to_charge: {} }, 'home')
+                  sendCommand(mower.sn, { go_to_charge: { cmd_num: ++cmdNumRef.current, chargerpile: { latitude: 200, longitude: 200 } } }, 'home')
                 }
                 disabled={commandLoading !== null}
                 activeOpacity={0.7}
