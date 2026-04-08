@@ -285,7 +285,7 @@ export class ApiClient {
   }
 
   async joystickStop(sn: string): Promise<CommandResult> {
-    return this.sendCommand(sn, { stop_move: {} });
+    return this.sendCommand(sn, { stop_move: null });
   }
 
   // ── Device Info ──────────────────────────────────────────────────────

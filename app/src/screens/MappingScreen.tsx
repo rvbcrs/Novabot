@@ -513,7 +513,7 @@ export default function MappingScreen() {
           style: 'destructive',
           onPress: () => {
             if (joystickActiveRef.current) stopJoystick();
-            sendCommand({ stop_scan_map: {} }, 'stop_scan_map (cancel)');
+            sendCommand({ stop_scan_map: { value: true, cmd_num: cmdNumRef.current++ } }, 'stop_scan_map (cancel)');
             sendCommand({ quit_mapping_mode: { cmd_num: cmdNumRef.current++ } }, 'quit_mapping_mode');
             setMappingState('cancelled');
             setTimeout(() => navigation.goBack(), 500);
