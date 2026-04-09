@@ -51,7 +51,7 @@ You should see the MQTT broker starting and TLS enabled on port 443.
 Open your browser and go to:
 
 ```
-http://<server-ip>:3000/admin
+http://<server-ip>/admin
 ```
 
 Log in with the credentials you configured during setup (or the default admin account from cloud import).

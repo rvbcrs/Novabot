@@ -554,8 +554,12 @@ async function loadMyDevices() {
       }
     }
 
-    // Render paired sets
-    const addrs = Object.keys(byAddr).sort();
+    // Render paired sets — online groups first
+    const addrs = Object.keys(byAddr).sort(function(a, b) {
+      var aOnline = byAddr[a].some(function(d) { return d.is_online; }) ? 0 : 1;
+      var bOnline = byAddr[b].some(function(d) { return d.is_online; }) ? 0 : 1;
+      return aOnline - bOnline;
+    });
     for (const addr of addrs) {
       const group = byAddr[addr];
       const chargers = group.filter(function(d) { return d.device_type === 'charger'; });

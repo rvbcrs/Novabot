@@ -249,7 +249,7 @@ The OpenNova Docker container includes a built-in DNS server. This is the easies
 services:
   opennova:
     ports:
-      - "3000:80"
+      - "80:80"
       - "1883:1883"
       - "53:53/udp"     # ← Uncomment this line
     environment:
@@ -288,7 +288,7 @@ After setting up DNS, test from any device on your network:
     ```
 
 === "Phone"
-    Open a browser and go to: `http://mqtt.lfibot.com:3000`
+    Open a browser and go to: `http://mqtt.lfibot.com`
 
 **Expected result**: Your OpenNova server IP (e.g., `192.168.0.100`).
 

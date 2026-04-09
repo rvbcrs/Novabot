@@ -57,7 +57,7 @@ docker compose up -d
 ### 4. Verify it's running
 
 ```bash
-curl http://localhost:3000/api/setup/health
+curl http://localhost/api/setup/health
 ```
 
 Expected response:
@@ -90,7 +90,7 @@ Enable the built-in DNS server in docker-compose.yml:
 
 ```yaml
 ports:
-  - "3000:80"
+  - "80:80"
   - "1883:1883"
   - "53:53/udp"       # DNS
 environment:
@@ -141,7 +141,7 @@ You should see your mower's serial number (LFIN...) connecting.
 
 If the automatic login doesn't work (e.g., Novabot cloud is down), you can use the admin panel:
 
-1. Open **http://YOUR_SERVER_IP:3000/admin** in your browser
+1. Open **http://YOUR_SERVER_IP/admin** in your browser
 2. On first visit with an empty database, you'll see a **"Welcome to OpenNova"** setup page
 3. Enter your Novabot cloud email + password to import your account and devices
 4. Or click **"Skip"** to create a local account (admin@local / admin)
@@ -182,7 +182,7 @@ The Novabot iOS app requires HTTPS — it won't connect over plain HTTP. You nee
 
 ```yaml
 ports:
-  - "3000:80"
+  - "80:80"
   - "1883:1883"
   - "443:443"         # HTTPS for iOS
 environment:
@@ -204,10 +204,10 @@ A self-signed TLS certificate is automatically generated on first start.
 Open **Safari** on your iPhone and go to:
 
 ```
-http://YOUR_SERVER_IP:3000/api/setup/profile
+http://YOUR_SERVER_IP/api/setup/profile
 ```
 
-(Replace `YOUR_SERVER_IP` with your server's actual IP address, e.g., `http://192.168.0.100:3000/api/setup/profile`)
+(Replace `YOUR_SERVER_IP` with your server's actual IP address, e.g., `http://192.168.0.100/api/setup/profile`)
 
 Safari will prompt you to download `OpenNova.mobileconfig`. Tap **Allow**.
 

@@ -3,7 +3,7 @@
 # Quick start:
 #   docker compose up -d
 #
-# Dashboard: http://localhost:3000
+# Admin: http://localhost/admin
 # Provision devices: use the OpenNova app (iOS/Android) or bootstrap tool
 
 services:
@@ -13,27 +13,23 @@ services:
     container_name: opennova
     restart: unless-stopped
     ports:
-      - "80:80"      # HTTP API (required — mower firmware checks port 80)
-      - "3000:80"    # Dashboard + API (alternative port)
-      - "1883:1883"  # MQTT broker
-      # Uncomment if using TLS/DNS features:
-      # - "443:443"  # HTTPS (requires ENABLE_TLS + TARGET_IP)
-      # - "53:53/udp"  # DNS (requires ENABLE_DNS + TARGET_IP)
+      - "80:80"       # HTTP (API + admin panel + mower connectivity check)
+      - "443:443"     # HTTPS (required for Novabot app)
+      - "1883:1883"   # MQTT broker
+      # - "53:53/udp" # DNS (optional — requires ENABLE_DNS + TARGET_IP)
     environment:
       PORT: 80
       JWT_SECRET: ${JWT_SECRET:-change_me_to_a_random_secret}
       DB_PATH: /data/novabot.db
       STORAGE_PATH: /data/storage
       FIRMWARE_PATH: /data/firmware
+      ENABLE_TLS: "true"
 
       # Optional: enable web dashboard (default: disabled)
       # ENABLE_DASHBOARD: "true"
 
-      # Optional: your server's LAN IP (only needed for TLS/DNS features)
+      # Optional: your server's LAN IP (for TLS cert SAN + DNS)
       # TARGET_IP: 192.168.0.177
-
-      # Optional: TLS for Novabot iOS app (requires TARGET_IP)
-      # ENABLE_TLS: "true"
 
       # Optional: DNS redirect for Novabot app (requires TARGET_IP)
       # ENABLE_DNS: "true"

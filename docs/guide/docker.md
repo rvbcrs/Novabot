@@ -77,7 +77,7 @@ docker compose up -d
 docker compose ps
 
 # Check health endpoint
-curl http://localhost:3000/api/setup/health
+curl http://localhost/api/setup/health
 ```
 
 You should see:
@@ -107,7 +107,7 @@ From this point on, the app talks to your local server — no cloud needed.
 
 If the Novabot cloud is down or automatic login doesn't work:
 
-1. Open **http://your-server-ip:3000/admin**
+1. Open **http://your-server-ip/admin**
 2. With an empty database, you'll see a **"Welcome to OpenNova"** setup page
 3. Enter your Novabot cloud credentials to import your account + devices
 4. Or click **"Skip — Create Local Account"** (creates admin@local with password admin)
@@ -334,7 +334,7 @@ docker compose up -d
 
 If using the original Novabot iOS app with `ENABLE_TLS=true`:
 
-1. Open **http://your-server-ip:3000/api/setup/ios-profile** on your iPhone
+1. Open **http://your-server-ip/api/setup/ios-profile** on your iPhone
 2. Install the configuration profile (Settings → General → VPN & Device Management)
 3. Trust the certificate (Settings → General → About → Certificate Trust Settings)
 4. The app will now accept the self-signed certificate
