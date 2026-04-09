@@ -36,12 +36,12 @@ export async function fetchSensors(): Promise<SensorDef[]> {
 }
 
 export async function fetchMaps(sn: string): Promise<MapData[]> {
-  const data = await (await get(`${BASE}/maps/${encodeURIComponent(sn)}`)).json();
+  const data = await (await get(`${BASE}/maps/${encodeURIComponent(sn)}?coords=gps`)).json();
   return data.maps ?? [];
 }
 
 export async function fetchAllMaps(): Promise<MapData[]> {
-  const data = await (await get(`${BASE}/maps`)).json();
+  const data = await (await get(`${BASE}/maps?coords=gps`)).json();
   return data.maps ?? [];
 }
 

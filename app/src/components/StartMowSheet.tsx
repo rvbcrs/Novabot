@@ -21,12 +21,11 @@ import Svg, { Polygon, Line, G, Defs, ClipPath } from 'react-native-svg';
 import { colors } from '../theme/colors';
 import { ApiClient, type MapData } from '../services/api';
 import { getServerUrl } from '../services/auth';
-import { getSocket } from '../services/socket';
 import { useNavigation } from '@react-navigation/native';
 import { PatternPicker } from './PatternPicker';
 import { usePattern } from '../context/PatternContext';
 import { transformToGps } from '../utils/patternUtils';
-import { offsetPolygon } from '../utils/polygonOffset';
+import { offsetLocalPolygon } from '../utils/polygonOffset';
 import { useI18n } from '../i18n';
 
 interface Props {
@@ -34,15 +33,18 @@ interface Props {
   onClose: () => void;
   sn: string;
   onStarted: () => void;
+  battery?: number;       // mower battery percentage
+  isWorking?: boolean;     // mower currently mowing/navigating
 }
 
 const COMPASS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
 
-export function StartMowSheet({ visible, onClose, sn, onStarted }: Props) {
+export function StartMowSheet({ visible, onClose, sn, onStarted, battery, isWorking }: Props) {
   const navigation = useNavigation();
   const pattern = usePattern();
   const { t } = useI18n();
   const [maps, setMaps] = useState<MapData[]>([]);
+  const [allMaps, setAllMaps] = useState<MapData[]>([]);
   const [selectedMapId, setSelectedMapId] = useState<string | null>(null);
   const [cuttingHeight, setCuttingHeight] = useState(40);
   const [pathDirection, setPathDirection] = useState(0);
@@ -66,54 +68,124 @@ export function StartMowSheet({ visible, onClose, sn, onStarted }: Props) {
         if (!url) return;
         const api = new ApiClient(url);
         const res = await api.fetchMaps(sn);
-        const workMaps = (res.maps ?? []).filter(m => m.mapType === 'work' && m.mapArea?.length >= 3);
+        const all = res.maps ?? [];
+        setAllMaps(all);
+        const workMaps = all.filter(m => m.mapType === 'work' && m.mapArea?.length >= 3);
         setMaps(workMaps);
         if (workMaps.length === 1) setSelectedMapId(workMaps[0].mapId);
       } catch { /* ignore */ }
     })();
   }, [visible, sn]);
 
+  // Check if a unicom (channel) exists for the selected map
+  const hasUnicom = allMaps.some(m => m.mapType === 'unicom' && m.mapArea?.length >= 2);
+
   const handleStart = async () => {
+    // Pre-start checks (matches Flutter button_intercept.dart sequence)
+
+    // 1. lowBatteryIntercept: battery < 20%
+    if (battery != null && battery < 20) {
+      Alert.alert(
+        t('lowBattery') || 'Low Battery',
+        `${t('lowBatteryDesc') || 'Battery is at'} ${battery}%. ${t('pleaseCharge') || 'Please wait for charging to complete.'}`,
+      );
+      return;
+    }
+
+    // 2. noMap0Intercept: no work map
+    if (maps.length === 0) {
+      Alert.alert(
+        t('noMap') || 'No Map',
+        t('noMapDesc') || 'No work area found. Please create a map first.',
+        [
+          {
+            text: t('create') || 'Create',
+            onPress: () => { onClose(); (navigation as any).navigate('AppSettings', { screen: 'Mapping' }); },
+          },
+          { text: t('cancel') || 'Cancel', style: 'cancel' },
+        ],
+      );
+      return;
+    }
+
+    // 3. noCharingUnicomIntercept: no channel (warning, not blocking)
+    if (!hasUnicom) {
+      Alert.alert(
+        t('channelRequired') || 'Channel Required',
+        t('channelRequiredDesc') || 'The distance from your charging station to the lawn exceeds 1.5m, or it is not directly facing the lawn. You need to create a channel.',
+        [
+          {
+            text: t('create') || 'Create',
+            onPress: () => { onClose(); (navigation as any).navigate('AppSettings', { screen: 'Mapping', params: { mode: 'channel' } }); },
+          },
+          { text: t('cancel') || 'Cancel', style: 'cancel' },
+          { text: t('startAnyway') || 'Start Anyway', style: 'destructive', onPress: () => doStart() },
+        ],
+      );
+      return;
+    }
+
+    // 4. workingIntercept: mower already working
+    if (isWorking) {
+      Alert.alert(t('mowerBusy') || 'Mower Busy', t('mowerBusyDesc') || 'The mower is currently working.');
+      return;
+    }
+
+    doStart();
+  };
+
+  const doStart = async () => {
     setStarting(true);
     try {
-      const socket = getSocket();
-      console.log('[StartMow] socket:', !!socket, 'sn:', sn, 'selectedMapId:', selectedMapId, 'maps:', maps.length);
-      if (!socket) { console.log('[StartMow] NO SOCKET!'); return; }
       if (!sn) { console.log('[StartMow] NO SN!'); return; }
+      const url = await getServerUrl();
+      if (!url) { console.log('[StartMow] NO SERVER URL!'); return; }
+      const api = new ApiClient(url);
 
-      // 1. Set cutting height + direction
-      socket.emit('joystick:cmd', {
-        sn,
-        command: {
-          set_para_info: {
-            cutGrassHeight: cuttingHeight,
-            defaultCuttingHeight: cuttingHeight,
-            target_height: cuttingHeight,
-            path_direction: pathDirection,
-          },
-        },
-      });
-
-      // Small delay so set_para_info is processed
-      await new Promise(r => setTimeout(r, 500));
-
-      // 2. Build start_run command
-      // Official Flutter app (blutter decompilation): start_run is a Map<String, int>
-      // with only: mapName (int index, 0-based), area (int), cutterhigh (int)
-      // The mower already has the map stored locally — NO GPS coordinates are sent!
+      // Map area parameter: 1=map0, 10=map1, 200=map2 (Flutter decompilation)
       const selectedIdx = maps.findIndex(m => m.mapId === selectedMapId);
       const mapIdx = selectedIdx >= 0 ? selectedIdx : 0;
+      const areaParam = mapIdx === 0 ? 1 : mapIdx === 1 ? 10 : 200;
 
-      const selectedMap = maps.find(m => m.mapId === selectedMapId) ?? maps[0];
-      const startCmd = {
-        start_run: {
-          mapName: selectedMap?.mapName ?? 'map0',
-          area: 1,
+      // 1. Set cutting height + direction
+      console.log('[StartMow] Sending set_para_info');
+      await api.sendCommand(sn, {
+        set_para_info: {
+          cutGrassHeight: cuttingHeight,
+          defaultCuttingHeight: cuttingHeight,
+          target_height: cuttingHeight,
+          path_direction: pathDirection,
+        },
+      });
+      await new Promise(r => setTimeout(r, 500));
+
+      // 2. Start mowing — try new protocol first, then old
+      // Flutter decompilation (LawnPageLogic::startMowing, 0x92cf0c):
+      // New: {start_navigation: {mapName: "test", cutterhigh, area, cmd_num}}
+      // Old: {start_run: {mapName: null, area, cutterhigh}, targetIsMower: false}
+      const cmdNum = Date.now() % 100000;
+      const navCmd = {
+        start_navigation: {
+          mapName: 'test',
           cutterhigh: cuttingHeight,
+          area: areaParam,
+          cmd_num: cmdNum,
         },
       };
-      console.log('[StartMow] Sending:', JSON.stringify(startCmd));
-      socket.emit('joystick:cmd', { sn, command: startCmd });
+      console.log('[StartMow] Sending start_navigation:', JSON.stringify(navCmd));
+      const navResult = await api.sendCommand(sn, navCmd);
+
+      // If start_navigation fails or device is offline, try old protocol
+      if (!navResult.ok) {
+        console.log('[StartMow] start_navigation failed, trying start_run');
+        const runCmd = {
+          start_run: { mapName: null, area: areaParam, cutterhigh: cuttingHeight },
+          targetIsMower: false,
+        };
+        console.log('[StartMow] Sending start_run:', JSON.stringify(runCmd));
+        await api.sendCommand(sn, runCmd);
+      }
+
       onStarted();
       onClose();
     } catch (err) { console.log('[StartMow] ERROR:', err); }
@@ -263,24 +335,22 @@ export function StartMowSheet({ visible, onClose, sn, onStarted }: Props) {
               const poly = previewMap?.mapArea;
               if (!poly || poly.length < 3) return null;
 
-              const finalPoly = edgeOffset !== 0 ? offsetPolygon(poly, edgeOffset) : poly;
+              const finalPoly = edgeOffset !== 0 ? offsetLocalPolygon(poly, edgeOffset) : poly;
               const allPts = [...poly, ...finalPoly];
-              const minLat = Math.min(...allPts.map(p => p.lat));
-              const maxLat = Math.max(...allPts.map(p => p.lat));
-              const minLng = Math.min(...allPts.map(p => p.lng));
-              const maxLng = Math.max(...allPts.map(p => p.lng));
-              const midLat = (minLat + maxLat) / 2;
-              const cosLat = Math.cos((midLat * Math.PI) / 180);
-              const latRange = maxLat - minLat || 0.0001;
-              const lngRange = (maxLng - minLng) * cosLat || 0.0001;
+              const minX = Math.min(...allPts.map(p => p.x));
+              const maxX = Math.max(...allPts.map(p => p.x));
+              const minY = Math.min(...allPts.map(p => p.y));
+              const maxY = Math.max(...allPts.map(p => p.y));
+              const xRange = maxX - minX || 0.1;
+              const yRange = maxY - minY || 0.1;
               const SIZE = 200;
               const PAD = 12;
               const draw = SIZE - PAD * 2;
-              const sc = Math.min(draw / lngRange, draw / latRange);
+              const sc = Math.min(draw / xRange, draw / yRange);
 
-              const toSvg = (p: { lat: number; lng: number }) => ({
-                x: PAD + (p.lng - minLng) * cosLat * sc + (draw - lngRange * sc) / 2,
-                y: PAD + (maxLat - p.lat) * sc + (draw - latRange * sc) / 2,
+              const toSvg = (p: { x: number; y: number }) => ({
+                x: PAD + (maxX - p.x) * sc + (draw - xRange * sc) / 2,
+                y: PAD + (p.y - minY) * sc + (draw - yRange * sc) / 2,
               });
 
               const origPts = poly.map(toSvg).map(p => `${p.x},${p.y}`).join(' ');
@@ -303,25 +373,17 @@ export function StartMowSheet({ visible, onClose, sn, onStarted }: Props) {
                 };
               });
 
-              // Pattern contours for overlay
-              let patternSvgPolys: string[] = [];
-              if (patternId && patternCenter) {
-                const { loadPattern: lp } = require('../utils/patternUtils');
-                const contours = lp(patternId);
-                patternSvgPolys = contours.map((c: Array<[number, number]>) => {
-                  const gpsPts = transformToGps(c, patternCenter, patternSize, patternRotation);
-                  return gpsPts.map(p => { const s = toSvg(p); return `${s.x},${s.y}`; }).join(' ');
-                });
-              }
+              // Pattern contours for overlay (TODO: convert pattern to local coords)
+              const patternSvgPolys: string[] = [];
 
-              // Tap handler: convert SVG coords back to GPS for pattern placement
+              // Tap handler: convert SVG coords back to local meters for pattern placement
               const handlePreviewTap = (evt: { nativeEvent: { locationX: number; locationY: number } }) => {
                 if (!patternId) return;
-                const x = evt.nativeEvent.locationX - 8; // subtract container padding
-                const y = evt.nativeEvent.locationY - 8;
-                const lng = minLng + (x - PAD - (draw - lngRange * sc) / 2) / (cosLat * sc);
-                const lat = maxLat - (y - PAD - (draw - latRange * sc) / 2) / sc;
-                setPatternCenter({ lat, lng });
+                const tx = evt.nativeEvent.locationX - 8;
+                const ty = evt.nativeEvent.locationY - 8;
+                const localX = maxX - (tx - PAD - (draw - xRange * sc) / 2) / sc;
+                const localY = minY + (ty - PAD - (draw - yRange * sc) / 2) / sc;
+                setPatternCenter({ lat: localY, lng: localX });
               };
 
               return (

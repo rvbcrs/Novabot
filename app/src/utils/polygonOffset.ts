@@ -59,6 +59,13 @@ export function offsetPolygon(points: LatLng[], offsetMeters: number): LatLng[] 
 
   const center = centroid(points);
   const local = points.map(p => gpsToLocal(p, center));
+  const result = offsetLocalPolygon(local, offsetMeters);
+  return result.map(p => localToGps(p, center));
+}
+
+/** Offset a polygon already in local meter coordinates. */
+export function offsetLocalPolygon(local: Point[], offsetMeters: number): Point[] {
+  if (local.length < 3 || offsetMeters === 0) return local;
   const n = local.length;
 
   // Ensure polygon is counter-clockwise (positive area = CCW)
@@ -112,5 +119,5 @@ export function offsetPolygon(points: LatLng[], offsetMeters: number): LatLng[] 
     }
   }
 
-  return result.map(p => localToGps(p, center));
+  return result;
 }

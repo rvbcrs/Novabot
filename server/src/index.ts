@@ -15,7 +15,7 @@ import express from 'express';
 import './db/database.js';
 import { startMqttBroker } from './mqtt/broker.js';
 import { cloudHttpProxy } from './proxy/httpProxy.js';
-import { initDashboardSocket } from './dashboard/socketHandler.js';
+import { initDashboardSocket, pushMqttLog } from './dashboard/socketHandler.js';
 import { adminStatusRouter } from './routes/adminStatus.js';
 import { adminPageHtml } from './routes/adminPage.js';
 import { authMiddleware, adminMiddleware, dashboardMiddleware } from './middleware/auth.js';
@@ -83,6 +83,14 @@ app.use((req, res, next) => {
   const isNoisy = req.path.includes('/network/connection') || req.path.includes('/up_status_info');
   if (!isNoisy || LOG_VERBOSE) {
     console.log(`[REQ] ${req.method} ${req.path} ${masked} (from ${srcIp})`);
+    // Push HTTP requests naar admin console
+    pushMqttLog({
+      ts: Date.now(), type: 'http-req' as any, clientId: srcIp,
+      clientType: 'APP', sn: null, direction: '' as any,
+      topic: `${req.method} ${req.path}`,
+      payload: masked.length > 200 ? masked.substring(0, 200) + '...' : masked,
+      encrypted: false,
+    });
   }
 
   // Echo de echostr terug in de response — WeChat-achtig verificatiepatroon
@@ -96,6 +104,13 @@ app.use((req, res, next) => {
     if (!isNoisy || LOG_VERBOSE) {
       const resStr = JSON.stringify(enriched);
       console.log(`[RES] ${req.method} ${req.path} ${resStr.substring(0, 200)}${resStr.length > 200 ? '...' : ''}`);
+      pushMqttLog({
+        ts: Date.now(), type: 'http-res' as any, clientId: srcIp,
+        clientType: 'APP', sn: null, direction: '' as any,
+        topic: `${res.statusCode} ${req.method} ${req.path}`,
+        payload: resStr.length > 200 ? resStr.substring(0, 200) + '...' : resStr,
+        encrypted: false,
+      });
     }
     return originalJson(enriched);
   };

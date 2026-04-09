@@ -40,7 +40,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { colors } from '../theme/colors';
 import { useMowerState } from '../hooks/useMowerState';
-import { ApiClient, type MapData, type TrailPoint } from '../services/api';
+import { ApiClient, type MapData, type TrailPoint, type LocalPoint, type ChargerGps } from '../services/api';
 import { getServerUrl } from '../services/auth';
 import { DemoBanner } from '../components/DemoBanner';
 import { useDemo } from '../context/DemoContext';
@@ -53,45 +53,63 @@ const MAP_PADDING = 24;
 const MAP_SIZE = SCREEN_W - MAP_PADDING * 2;
 const INNER_PADDING = 20;
 
-// ── GPS → SVG coordinate conversion ─────────────────────────────────
+// ── Local meters → SVG coordinate conversion ───────────────────────
+// All map data is in local meters with charger at (0,0).
+// Mower GPS is converted to local meters using charger GPS as origin.
 
 interface GpsPoint { lat: number; lng: number }
 
-interface Bounds {
-  minLat: number; maxLat: number; minLng: number; maxLng: number;
+interface LocalBounds {
+  minX: number; maxX: number; minY: number; maxY: number;
 }
 
-function computeBounds(points: GpsPoint[]): Bounds | null {
-  if (points.length === 0) return null;
-  let minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity;
-  for (const p of points) {
-    if (p.lat < minLat) minLat = p.lat;
-    if (p.lat > maxLat) maxLat = p.lat;
-    if (p.lng < minLng) minLng = p.lng;
-    if (p.lng > maxLng) maxLng = p.lng;
-  }
-  return { minLat, maxLat, minLng, maxLng };
-}
-
-function expandBounds(a: Bounds | null, b: Bounds | null): Bounds | null {
-  if (!a) return b;
-  if (!b) return a;
+/** Convert GPS point to local meters relative to charger GPS origin */
+function gpsToLocal(point: GpsPoint, origin: GpsPoint): LocalPoint {
+  const metersPerDegreeLat = 111320;
+  const metersPerDegreeLng = 111320 * Math.cos(origin.lat * Math.PI / 180);
   return {
-    minLat: Math.min(a.minLat, b.minLat), maxLat: Math.max(a.maxLat, b.maxLat),
-    minLng: Math.min(a.minLng, b.minLng), maxLng: Math.max(a.maxLng, b.maxLng),
+    x: (point.lng - origin.lng) * metersPerDegreeLng,
+    y: (point.lat - origin.lat) * metersPerDegreeLat,
   };
 }
 
-function gpsToSvg(point: GpsPoint, bounds: Bounds, size: number, padding: number) {
+function computeLocalBounds(points: LocalPoint[]): LocalBounds | null {
+  if (points.length === 0) return null;
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const p of points) {
+    if (p.x < minX) minX = p.x;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.y > maxY) maxY = p.y;
+  }
+  return { minX, maxX, minY, maxY };
+}
+
+function expandLocalBounds(a: LocalBounds | null, b: LocalBounds | null): LocalBounds | null {
+  if (!a) return b;
+  if (!b) return a;
+  return {
+    minX: Math.min(a.minX, b.minX), maxX: Math.max(a.maxX, b.maxX),
+    minY: Math.min(a.minY, b.minY), maxY: Math.max(a.maxY, b.maxY),
+  };
+}
+
+/** Rotate a point around the origin by angle (radians). Used to align local frame with north. */
+function rotatePoint(p: LocalPoint, angle: number): LocalPoint {
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+  return { x: p.x * cos - p.y * sin, y: p.x * sin + p.y * cos };
+}
+
+/** Convert local meter point to SVG coordinates.
+ *  Both axes flipped to match real-world bird's-eye view. */
+function localToSvg(point: LocalPoint, bounds: LocalBounds, size: number, padding: number) {
   const drawSize = size - padding * 2;
-  const latRange = bounds.maxLat - bounds.minLat || 0.0001;
-  const lngRange = bounds.maxLng - bounds.minLng || 0.0001;
-  const midLat = (bounds.minLat + bounds.maxLat) / 2;
-  const cosLat = Math.cos((midLat * Math.PI) / 180);
-  const effectiveLngRange = lngRange * cosLat;
-  const scale = Math.min(drawSize / effectiveLngRange, drawSize / latRange);
-  const x = padding + (point.lng - bounds.minLng) * cosLat * scale + (drawSize - effectiveLngRange * scale) / 2;
-  const y = padding + (bounds.maxLat - point.lat) * scale + (drawSize - latRange * scale) / 2;
+  const xRange = bounds.maxX - bounds.minX || 0.1;
+  const yRange = bounds.maxY - bounds.minY || 0.1;
+  const scale = Math.min(drawSize / xRange, drawSize / yRange);
+  const x = padding + (bounds.maxX - point.x) * scale + (drawSize - xRange * scale) / 2;
+  const y = padding + (point.y - bounds.minY) * scale + (drawSize - yRange * scale) / 2;
   return { x, y };
 }
 
@@ -138,20 +156,18 @@ function generateCoverageStripes(
 
 // ── Demo data ────────────────────────────────────────────────────────
 
+// Demo data in local meters (charger = 0,0)
 const DEMO_MAPS: MapData[] = [
   { mapId: 'demo-front', mapName: 'Front Yard', mapType: 'work', mapArea: [
-    { lat: 52.0912, lng: 5.1208 }, { lat: 52.0916, lng: 5.1210 },
-    { lat: 52.0917, lng: 5.1218 }, { lat: 52.0914, lng: 5.1222 },
-    { lat: 52.0910, lng: 5.1220 }, { lat: 52.0909, lng: 5.1212 },
+    { x: -3, y: 5 }, { x: 1, y: 7 }, { x: 5, y: 6 },
+    { x: 6, y: 2 }, { x: 3, y: -1 }, { x: -2, y: 1 },
   ]},
   { mapId: 'demo-back', mapName: 'Back Garden', mapType: 'work', mapArea: [
-    { lat: 52.0904, lng: 5.1210 }, { lat: 52.0907, lng: 5.1208 },
-    { lat: 52.0908, lng: 5.1216 }, { lat: 52.0905, lng: 5.1220 },
-    { lat: 52.0902, lng: 5.1215 },
+    { x: -5, y: -3 }, { x: -2, y: -5 }, { x: 3, y: -4 },
+    { x: 4, y: -1 }, { x: -1, y: -1 },
   ]},
   { mapId: 'demo-obstacle', mapName: 'Tree', mapType: 'obstacle', mapArea: [
-    { lat: 52.0913, lng: 5.1214 }, { lat: 52.0914, lng: 5.1215 },
-    { lat: 52.0913, lng: 5.1216 }, { lat: 52.0912, lng: 5.1215 },
+    { x: 1, y: 4 }, { x: 2, y: 5 }, { x: 1, y: 6 }, { x: 0, y: 5 },
   ]},
 ];
 
@@ -171,59 +187,29 @@ export default function MapScreen() {
   const demo = useDemo();
   const { t } = useI18n();
   const [maps, setMaps] = useState<MapData[]>([]);
+  const [chargerGpsOrigin, setChargerGpsOrigin] = useState<ChargerGps | null>(null);
   const [trail, setTrail] = useState<TrailPoint[]>([]);
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
 
   const mower = useMemo(() => [...devices.values()].find((d) => d.deviceType === 'mower') ?? null, [devices]);
-  const charger = useMemo(() => [...devices.values()].find((d) => d.deviceType === 'charger') ?? null, [devices]);
 
-  const mowerGps: GpsPoint | null = useMemo(() => {
-    if (!mower?.sensors.latitude || !mower?.sensors.longitude) return null;
-    const lat = parseFloat(mower.sensors.latitude);
-    const lng = parseFloat(mower.sensors.longitude);
-    if (isNaN(lat) || isNaN(lng) || (lat === 0 && lng === 0)) return null;
-    return { lat, lng };
-  }, [mower?.sensors.latitude, mower?.sensors.longitude]);
+  // Mower position from ROS2 localization (map_position_x/y) — already in local meters, much more accurate than GPS
+  const mowerLocal: LocalPoint | null = useMemo(() => {
+    const mx = mower?.sensors.map_position_x;
+    const my = mower?.sensors.map_position_y;
+    if (mx == null || my == null) return null;
+    const x = parseFloat(mx);
+    const y = parseFloat(my);
+    if (isNaN(x) || isNaN(y)) return null;
+    return { x, y };
+  }, [mower?.sensors.map_position_x, mower?.sensors.map_position_y]);
 
-  const chargerGps: GpsPoint | null = useMemo(() => {
-    if (!charger?.sensors.latitude || !charger?.sensors.longitude) return null;
-    const lat = parseFloat(charger.sensors.latitude);
-    const lng = parseFloat(charger.sensors.longitude);
-    if (isNaN(lat) || isNaN(lng) || (lat === 0 && lng === 0)) return null;
-    return { lat, lng };
-  }, [charger?.sensors.latitude, charger?.sensors.longitude]);
-
-  const heading = parseFloat(mower?.sensors.heading ?? '0') || 0;
+  // Use local map_position_orientation (radians) for heading on local map
+  const heading = parseFloat(mower?.sensors.map_position_orientation ?? '0') || 0;
   const isMowing = mower?.sensors.work_status === '1';
   const mowingProgress = parseInt(mower?.sensors.mowing_progress ?? '0', 10) || 0;
   const pathDir = parseInt(mower?.sensors.path_direction ?? '0', 10) || 0;
-
-  // Auto-calibrate once: if no calibration exists, try charger GPS from live sensor data
-  const calibrationChecked = useRef(false);
-  useEffect(() => {
-    if (demo.enabled || !mower?.sn || calibrationChecked.current) return;
-    calibrationChecked.current = true;
-    (async () => {
-      try {
-        const url = await getServerUrl();
-        if (!url) return;
-        const api = new ApiClient(url);
-        const cal = await api.fetchCalibration(mower.sn);
-        if (cal?.chargerLat && cal?.chargerLng) return; // Already calibrated
-        const charger = [...devices.values()].find(d => d.deviceType === 'charger' && d.online);
-        const lat = parseFloat(charger?.sensors?.latitude ?? '');
-        const lng = parseFloat(charger?.sensors?.longitude ?? '');
-        if (!isNaN(lat) && !isNaN(lng) && lat !== 0 && lng !== 0) {
-          console.log(`[Map] Auto-calibrating: charger GPS ${lat}, ${lng}`);
-          await api.saveCalibration(mower.sn, {
-            offsetLat: 0, offsetLng: 0, rotation: 0, scale: 1,
-            chargerLat: lat, chargerLng: lng,
-          });
-        }
-      } catch { /* ignore */ }
-    })();
-  }, [mower?.sn]);
 
   const fetchData = useCallback(async () => {
     if (demo.enabled) {
@@ -240,10 +226,11 @@ export default function MapScreen() {
       if (!url) return;
       const api = new ApiClient(url);
       const [mapsRes, trailRes] = await Promise.all([
-        api.fetchMaps(sn).catch(() => ({ maps: [] })),
+        api.fetchMaps(sn).catch(() => ({ maps: [], chargerGps: null })),
         api.getTrail(sn).catch(() => []),
       ]);
       setMaps(mapsRes.maps ?? []);
+      setChargerGpsOrigin(mapsRes.chargerGps ?? null);
       setTrail(Array.isArray(trailRes) ? trailRes : (trailRes as any).trail ?? []);
     } catch { /* ignore */ }
     finally { setLoading(false); }
@@ -287,24 +274,26 @@ export default function MapScreen() {
 
   const composedGesture = Gesture.Simultaneous(pinchGesture, panGesture, doubleTapGesture);
 
-  // Pattern placement: convert tap position to GPS
+  // Pattern placement: convert tap position to local meters, then to GPS for pattern context
   const handleMapTap = useCallback((evt: { nativeEvent: { locationX: number; locationY: number } }) => {
-    if (!patternCtx.isPlacing || !bounds) return;
+    if (!patternCtx.isPlacing || !bounds || !chargerGpsOrigin) return;
     const x = evt.nativeEvent.locationX;
     const y = evt.nativeEvent.locationY;
     const drawSize = MAP_SIZE - INNER_PADDING * 2;
-    const latRange = bounds.maxLat - bounds.minLat || 0.0001;
-    const lngRange = bounds.maxLng - bounds.minLng || 0.0001;
-    const midLat = (bounds.minLat + bounds.maxLat) / 2;
-    const cosLat = Math.cos((midLat * Math.PI) / 180);
-    const effectiveLngRange = lngRange * cosLat;
-    const mapScale = Math.min(drawSize / effectiveLngRange, drawSize / latRange);
-    const xOffset = (drawSize - effectiveLngRange * mapScale) / 2;
-    const yOffset = (drawSize - latRange * mapScale) / 2;
-    const lng = bounds.minLng + (x - INNER_PADDING - xOffset) / (cosLat * mapScale);
-    const lat = bounds.maxLat - (y - INNER_PADDING - yOffset) / mapScale;
+    const xRange = bounds.maxX - bounds.minX || 0.1;
+    const yRange = bounds.maxY - bounds.minY || 0.1;
+    const mapScale = Math.min(drawSize / xRange, drawSize / yRange);
+    const xOffset = (drawSize - xRange * mapScale) / 2;
+    const yOffset = (drawSize - yRange * mapScale) / 2;
+    const localX = bounds.minX + (x - INNER_PADDING - xOffset) / mapScale;
+    const localY = bounds.maxY - (y - INNER_PADDING - yOffset) / mapScale;
+    // Convert local meters back to GPS for pattern context
+    const metersPerDegreeLat = 111320;
+    const metersPerDegreeLng = 111320 * Math.cos(chargerGpsOrigin.lat * Math.PI / 180);
+    const lat = chargerGpsOrigin.lat + localY / metersPerDegreeLat;
+    const lng = chargerGpsOrigin.lng + localX / metersPerDegreeLng;
     patternCtx.setCenter(lat, lng);
-  }, [patternCtx, bounds]);
+  }, [patternCtx, bounds, chargerGpsOrigin]);
 
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [
@@ -616,21 +605,31 @@ export default function MapScreen() {
   };
 
   // ── Compute bounds ───────────────────────────────────────────────
+  // Trail GPS → local meters
+  const trailLocal: LocalPoint[] = useMemo(() => {
+    if (!chargerGpsOrigin || trail.length === 0) return [];
+    return trail.map(p => gpsToLocal(p, chargerGpsOrigin));
+  }, [trail, chargerGpsOrigin]);
+
+  // Charger is always at origin (0,0)
+  const chargerLocal: LocalPoint = { x: 0, y: 0 };
+
   const bounds = useMemo(() => {
-    let b: Bounds | null = null;
-    for (const m of maps) b = expandBounds(b, computeBounds(m.mapArea));
-    if (trail.length > 0) b = expandBounds(b, computeBounds(trail));
-    if (mowerGps) b = expandBounds(b, computeBounds([mowerGps]));
-    if (chargerGps) b = expandBounds(b, computeBounds([chargerGps]));
+    let b: LocalBounds | null = null;
+    for (const m of maps) b = expandLocalBounds(b, computeLocalBounds(m.mapArea));
+    if (trailLocal.length > 0) b = expandLocalBounds(b, computeLocalBounds(trailLocal));
+    if (mowerLocal) b = expandLocalBounds(b, computeLocalBounds([mowerLocal]));
+    // Always include charger at origin
+    b = expandLocalBounds(b, computeLocalBounds([chargerLocal]));
     if (b) {
-      const latPad = (b.maxLat - b.minLat) * 0.15 || 0.0002;
-      const lngPad = (b.maxLng - b.minLng) * 0.15 || 0.0002;
-      b = { minLat: b.minLat - latPad, maxLat: b.maxLat + latPad, minLng: b.minLng - lngPad, maxLng: b.maxLng + lngPad };
+      const xPad = (b.maxX - b.minX) * 0.15 || 0.5;
+      const yPad = (b.maxY - b.minY) * 0.15 || 0.5;
+      b = { minX: b.minX - xPad, maxX: b.maxX + xPad, minY: b.minY - yPad, maxY: b.maxY + yPad };
     }
     return b;
-  }, [maps, trail, mowerGps, chargerGps]);
+  }, [maps, trailLocal, mowerLocal]);
 
-  const hasData = maps.length > 0 || trail.length > 0 || mowerGps || chargerGps;
+  const hasData = maps.length > 0 || trailLocal.length > 0 || mowerLocal;
 
   return (
     <GestureHandlerRootView style={[styles.container, { paddingTop: insets.top }]}>
@@ -726,7 +725,7 @@ export default function MapScreen() {
                   {isMowing && mowingProgress > 0 && (
                     <Defs>
                       {maps.filter((m) => m.mapType === 'work' && m.mapArea?.length >= 3).map((m) => {
-                        const svgPts = m.mapArea.map((p) => gpsToSvg(p, bounds, MAP_SIZE, INNER_PADDING));
+                        const svgPts = m.mapArea.map((p) => localToSvg(p, bounds, MAP_SIZE, INNER_PADDING));
                         return (
                           <ClipPath key={`clip-${m.mapId}`} id={`clip-${m.mapId}`}>
                             <SvgPolygon points={svgPts.map((p) => `${p.x},${p.y}`).join(' ')} />
@@ -740,7 +739,7 @@ export default function MapScreen() {
                   {maps.map((m) => {
                     if (!m.mapArea || m.mapArea.length < 3) return null;
                     const c = MAP_COLORS[m.mapType] ?? MAP_COLORS.work;
-                    const svgPts = m.mapArea.map((p) => gpsToSvg(p, bounds, MAP_SIZE, INNER_PADDING));
+                    const svgPts = m.mapArea.map((p) => localToSvg(p, bounds, MAP_SIZE, INNER_PADDING));
                     const pts = svgPts.map((p) => `${p.x},${p.y}`).join(' ');
                     return (
                       <G key={m.mapId}>
@@ -758,16 +757,16 @@ export default function MapScreen() {
                   })}
 
                   {/* Trail */}
-                  {trail.length > 1 && (
+                  {trailLocal.length > 1 && (
                     <Polyline
-                      points={trail.map((p) => gpsToSvg(p, bounds, MAP_SIZE, INNER_PADDING)).map((p) => `${p.x},${p.y}`).join(' ')}
+                      points={trailLocal.map((p) => localToSvg(p, bounds, MAP_SIZE, INNER_PADDING)).map((p) => `${p.x},${p.y}`).join(' ')}
                       fill="none" stroke="rgba(52,211,153,0.5)" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"
                     />
                   )}
 
-                  {/* Charger */}
-                  {chargerGps && (() => {
-                    const cp = gpsToSvg(chargerGps, bounds, MAP_SIZE, INNER_PADDING);
+                  {/* Charger (always at origin 0,0) */}
+                  {(() => {
+                    const cp = localToSvg(chargerLocal, bounds, MAP_SIZE, INNER_PADDING);
                     return (
                       <G>
                         <Circle cx={cp.x} cy={cp.y} r={10} fill="rgba(245,158,11,0.2)" stroke="#f59e0b" strokeWidth={2} />
@@ -777,9 +776,11 @@ export default function MapScreen() {
                   })()}
 
                   {/* Mower + heading */}
-                  {mowerGps && (() => {
-                    const mp = gpsToSvg(mowerGps, bounds, MAP_SIZE, INNER_PADDING);
-                    const rad = ((heading - 90) * Math.PI) / 180;
+                  {mowerLocal && (() => {
+                    const mp = localToSvg(mowerLocal!, bounds, MAP_SIZE, INNER_PADDING);
+                    // heading from map_position_orientation (radians in local frame)
+                    // Both axes are flipped in localToSvg, so rotate heading by 180° + flip
+                    const rad = heading - Math.PI / 2;
                     const ax = mp.x + Math.cos(rad) * 14;
                     const ay = mp.y + Math.sin(rad) * 14;
                     return (
@@ -792,11 +793,13 @@ export default function MapScreen() {
                   })()}
 
                   {/* Pattern overlay (only during placement mode) */}
-                  {patternCtx.isPlacing && patternCtx.placement?.center && patternCtx.placement.contours.length > 0 && bounds && (() => {
+                  {patternCtx.isPlacing && patternCtx.placement?.center && patternCtx.placement.contours.length > 0 && bounds && chargerGpsOrigin && (() => {
                     const p = patternCtx.placement!;
                     const gpsPolys = p.contours.map(c => transformToGps(c, p.center!, p.sizeMeter, p.rotation));
+                    // Convert GPS pattern points to local meters for rendering
                     return gpsPolys.map((poly, i) => {
-                      const svgPts = poly.map(pt => gpsToSvg(pt, bounds, MAP_SIZE, INNER_PADDING));
+                      const localPoly = poly.map(pt => gpsToLocal(pt, chargerGpsOrigin));
+                      const svgPts = localPoly.map(pt => localToSvg(pt, bounds, MAP_SIZE, INNER_PADDING));
                       const pts = svgPts.map(pt => `${pt.x},${pt.y}`).join(' ');
                       return (
                         <SvgPolygon
@@ -917,13 +920,11 @@ export default function MapScreen() {
                 </TouchableOpacity>
               );
             })}
-            {chargerGps && (
-              <View style={styles.legendItem}>
-                <View style={[styles.legendDot, { backgroundColor: '#f59e0b' }]} />
-                <Text style={styles.legendText}>Charger</Text>
-              </View>
-            )}
-            {mowerGps && (
+            <View style={styles.legendItem}>
+              <View style={[styles.legendDot, { backgroundColor: '#f59e0b' }]} />
+              <Text style={styles.legendText}>Charger</Text>
+            </View>
+            {mowerLocal && (
               <View style={styles.legendItem}>
                 <View style={[styles.legendDot, { backgroundColor: colors.emerald }]} />
                 <Text style={styles.legendText}>Mower</Text>
@@ -935,16 +936,16 @@ export default function MapScreen() {
         {/* Status chips */}
         {mower && (
           <View style={styles.statusRow}>
-            {mowerGps && (
+            {mowerLocal && (
               <View style={styles.chip}>
                 <Ionicons name="location" size={14} color={colors.emerald} />
-                <Text style={styles.chipText}>{mowerGps.lat.toFixed(5)}, {mowerGps.lng.toFixed(5)}</Text>
+                <Text style={styles.chipText}>{mowerLocal.x.toFixed(1)}, {mowerLocal.y.toFixed(1)} m</Text>
               </View>
             )}
-            {mower.sensors.heading && (
+            {mower.sensors.map_position_orientation && (
               <View style={styles.chip}>
                 <Ionicons name="compass" size={14} color={colors.textDim} />
-                <Text style={styles.chipText}>{Math.round(heading)}°</Text>
+                <Text style={styles.chipText}>{Math.round(heading * 180 / Math.PI)}°</Text>
               </View>
             )}
             {mower.sensors.loc_quality && (

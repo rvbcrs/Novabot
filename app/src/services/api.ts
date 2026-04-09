@@ -27,12 +27,16 @@ export interface CommandResult {
   error?: string;
 }
 
+export interface LocalPoint { x: number; y: number }
+
 export interface MapData {
   mapId: string;
   mapName: string;
   mapType: string;
-  mapArea: Array<{ lat: number; lng: number }>;
+  mapArea: Array<LocalPoint>;
 }
+
+export interface ChargerGps { lat: number; lng: number }
 
 export interface Schedule {
   id: number;
@@ -204,8 +208,8 @@ export class ApiClient {
   /**
    * Fetch map data for a given serial number.
    */
-  async fetchMaps(sn: string): Promise<{ maps: MapData[] }> {
-    return this.request<{ maps: MapData[] }>(
+  async fetchMaps(sn: string): Promise<{ maps: MapData[]; chargerGps: ChargerGps | null; chargerOrientation: number }> {
+    return this.request<{ maps: MapData[]; chargerGps: ChargerGps | null; chargerOrientation: number }>(
       'GET',
       `/api/dashboard/maps/${encodeURIComponent(sn)}`,
     );

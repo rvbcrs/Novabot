@@ -436,11 +436,17 @@ export async function startMqttBroker(): Promise<void> {
     if (client && packet.topic.startsWith('Dart/Send_mqtt/LFIN') && isAppClient(client.id)) {
       const payloadBuf = Buffer.isBuffer(packet.payload) ? packet.payload : Buffer.from(packet.payload);
       const sn = packet.topic.split('/').pop() ?? '';
-      console.log(`\x1b[38;5;208m[OTA-FIX] authorizePublish: app→mower ${sn}, ${payloadBuf.length}B\x1b[0m`);
+      console.log(`${C.blue}[MQTT] PUBLISH  ${client.id.slice(0, 30)} →DEV ${packet.topic}  [app→mower ${payloadBuf.length}B]${C.reset}`);
       if (sn) {
         const decrypted = tryDecrypt(payloadBuf, sn);
         if (decrypted) {
-          console.log(`\x1b[38;5;208m[OTA-FIX] Decrypted: ${decrypted.slice(0, 300)}\x1b[0m`);
+          console.log(`${C.blue}[MQTT] APP→DEV  ${sn}: ${decrypted.slice(0, 300)}${C.reset}`);
+          // Log naar admin console
+          pushMqttLog({
+            ts: Date.now(), type: 'publish', clientId: client.id,
+            clientType: 'APP', sn, direction: '→DEV', topic: packet.topic,
+            payload: decrypted, encrypted: true,
+          });
           try {
             const parsed = JSON.parse(decrypted);
             if (parsed.ota_upgrade_cmd) {
@@ -512,34 +518,9 @@ export async function startMqttBroker(): Promise<void> {
                   console.log(`${C.cyan}[MAP-PROXY] get_map_list_respond gestuurd: ${dbMaps.length} kaart(en), md5=${zipMd5}${C.reset}`);
                 }, 200);
 
-                // Stuur ook meteen de polygon outlines mee zodat de app ze niet apart hoeft op te vragen
-                const dbMapsWithArea = db.prepare(
-                  'SELECT map_id, map_name, map_type, map_area FROM maps WHERE mower_sn = ? AND map_area IS NOT NULL ORDER BY map_id'
-                ).all(sn) as Array<{ map_id: string; map_name: string | null; map_type: string | null; map_area: string }>;
-
-                let outlineDelay = 500; // na de get_map_list_respond
-                for (const mapRow of dbMapsWithArea) {
-                  try {
-                    // DB bevat lokale coords — converteer naar GPS voor de app
-                    const gpsPoints = localMapAreaToGps(mapRow.map_area, sn);
-                    if (!gpsPoints || gpsPoints.length < 3) continue;
-                    const outlineResponse = {
-                      type: 'report_state_map_outline',
-                      message: {
-                        status: 'success',
-                        map_id: mapRow.map_id,
-                        map_name: mapRow.map_name ?? 'home',
-                        map_type: mapRow.map_type ?? 'work',
-                        map_position: gpsPoints,
-                      },
-                    };
-                    setTimeout(() => {
-                      publishEncryptedOnTopic(`Dart/Receive_mqtt/${sn}`, sn, outlineResponse);
-                      console.log(`${C.cyan}[MAP-PROXY] Proactief report_state_map_outline gestuurd (status:success): ${gpsPoints.length} punten voor ${mapRow.map_id}${C.reset}`);
-                    }, outlineDelay);
-                    outlineDelay += 200;
-                  } catch { /* skip invalid map_area */ }
-                }
+                // NB: Geen proactieve report_state_map_outline meer na get_map_list.
+                // De app haalt de polygon via HTTP (queryEquipmentMap → downloadMapFile CSV).
+                // De outline wordt alleen gestuurd als de app expliciet get_map_outline vraagt.
               } else {
                 console.log(`${C.cyan}[MAP-PROXY] Geen kaarten in database voor ${sn}, geen response${C.reset}`);
               }
@@ -563,8 +544,7 @@ export async function startMqttBroker(): Promise<void> {
                     const gpsPoints = localMapAreaToGps(mapRow.map_area, sn);
                     if (gpsPoints && gpsPoints.length > 0) {
                       const response = {
-                        type: 'report_state_map_outline',
-                        message: {
+                        report_state_map_outline: {
                           status: 'success',
                           map_id: mapRow.map_id,
                           map_name: mapRow.map_name ?? 'home',
@@ -597,8 +577,7 @@ export async function startMqttBroker(): Promise<void> {
                     const gpsPoints = localMapAreaToGps(mapRow.map_area, sn);
                     if (!gpsPoints || gpsPoints.length < 3) continue;
                     const response = {
-                      type: 'report_state_map_outline',
-                      message: {
+                      report_state_map_outline: {
                         status: 'success',
                         map_id: mapRow.map_id,
                         map_name: mapRow.map_name ?? 'home',

@@ -81,6 +81,7 @@ function rowToDto(r: MapRow) {
 // ChargingPostion.fromJson verwacht x/y/orientation als strings die naar double geparsed worden.
 mapRouter.get('/queryEquipmentMap', authMiddleware, (req: AuthRequest, res: Response) => {
   const sn = req.query.sn as string | undefined;
+  console.log(`[MAP] queryEquipmentMap called: sn=${sn} userId=${(req as any).userId}`);
   if (!sn) { res.json(fail('sn required', 400)); return; }
 
   // IDOR bescherming: controleer of dit apparaat van de huidige user is
@@ -109,9 +110,9 @@ mapRouter.get('/queryEquipmentMap', authMiddleware, (req: AuthRequest, res: Resp
   const obstacleMaps = maps.filter(m => m.map_type === 'obstacle');
   const unicomMaps = maps.filter(m => m.map_type === 'unicom');
 
-  // Base URL voor map file downloads
+  // Base URL voor map file downloads — server IP direct, geen NPM/DNS omweg
   const baseUrl = process.env.OTA_BASE_URL
-    ?? `http://${process.env.TARGET_IP ?? 'localhost'}`;
+    ?? `http://${process.env.TARGET_IP ?? 'localhost'}:${process.env.PORT ?? '3000'}`;
 
   // Helper: bouw download URL voor een map CSV bestand
   function mapFileUrl(fileName: string): string {
@@ -188,18 +189,33 @@ mapRouter.get('/queryEquipmentMap', authMiddleware, (req: AuthRequest, res: Resp
     md5 = crypto.createHash('md5').update(fileData).digest('hex');
   }
 
-  // ChargingPose uit map_calibration (charger positie)
+  // ChargingPose uit de ZIP map_info.json (lokale meters, consistent met CSV polygonen)
+  // De maaier slaat de charger positie op in lokale coördinaten relatief aan de origin.
   let machineExtendedField: Record<string, unknown> | null = null;
-  const cal = db.prepare('SELECT charger_lat, charger_lng FROM map_calibration WHERE mower_sn = ?')
-    .get(sn) as { charger_lat: number | null; charger_lng: number | null } | undefined;
-  if (cal?.charger_lat && cal?.charger_lng) {
-    machineExtendedField = {
-      chargingPose: {
-        x: String(cal.charger_lng),
-        y: String(cal.charger_lat),
-        orientation: '0',
-      },
-    };
+  const latestPath2 = path.join(STORAGE_PATH, `${sn}_latest.zip`);
+  if (fs.existsSync(latestPath2)) {
+    try {
+      const tmpDir = path.join(STORAGE_PATH, `tmp_info_${Date.now()}`);
+      fs.mkdirSync(tmpDir, { recursive: true });
+      try {
+        execSync(`unzip -o -q "${latestPath2}" "csv_file/map_info.json" -d "${tmpDir}"`);
+        const infoPath = path.join(tmpDir, 'csv_file', 'map_info.json');
+        if (fs.existsSync(infoPath)) {
+          const info = JSON.parse(fs.readFileSync(infoPath, 'utf8'));
+          if (info.charging_pose) {
+            machineExtendedField = {
+              chargingPose: {
+                x: String(info.charging_pose.x ?? 0),
+                y: String(info.charging_pose.y ?? 0),
+                orientation: String(info.charging_pose.orientation ?? 0),
+              },
+            };
+          }
+        }
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    } catch { /* geen map_info.json in ZIP */ }
   }
 
   console.log(`[MAP] queryEquipmentMap: sn=${sn} → ${work.length} work, ${unicom.length} unicom, md5=${md5 ?? 'none'}`);
@@ -582,7 +598,7 @@ mapRouter.post('/uploadEquipmentMap', upload.any(), (req: Request, res: Response
                  JSON.stringify(bounds), finalFileName, file.size, area.type, now, now);
           console.log(`[MAP] Opgeslagen werkgebied map${area.mapIndex} voor ${sn} (${area.points.length} lokale punten)`);
         }
-        // Sla obstakels ook op
+        // Sla obstakels op
         for (const area of parsed.areas) {
           if (area.type !== 'obstacle') continue;
           const obsMapId = uuidv4();
@@ -593,6 +609,19 @@ mapRouter.post('/uploadEquipmentMap', upload.any(), (req: Request, res: Response
           `).run(obsMapId, sn, `obstacle_${area.mapIndex}_${area.subIndex ?? 0}`,
                  JSON.stringify(area.points), null, finalFileName, file.size,
                  'obstacle', now, now);
+        }
+        // Sla unicom (channel) paden op
+        for (const area of parsed.areas) {
+          if (area.type !== 'unicom') continue;
+          const unicomMapId = uuidv4();
+          db.prepare(`
+            INSERT OR REPLACE INTO maps
+              (map_id, mower_sn, map_name, map_area, map_max_min, file_name, file_size, map_type, created_at, updated_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?)
+          `).run(unicomMapId, sn, `map${area.mapIndex}tocharge_unicom`,
+                 JSON.stringify(area.points), null, finalFileName, file.size,
+                 'unicom', now, now);
+          console.log(`[MAP] Opgeslagen unicom kanaal map${area.mapIndex} voor ${sn} (${area.points.length} punten)`);
         }
         console.log(`[MAP] ZIP geparsed: ${parsed.areas.length} gebieden geëxtraheerd voor ${sn}`);
       }

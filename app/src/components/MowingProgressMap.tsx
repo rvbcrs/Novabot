@@ -16,50 +16,42 @@ import Svg, {
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
 
-interface GpsPoint {
-  lat: number;
-  lng: number;
+interface LocalPoint {
+  x: number;
+  y: number;
 }
 
 interface Props {
-  polygon: GpsPoint[];
+  polygon: LocalPoint[];
   progress: number;         // 0-100
   pathDirection: number;    // degrees (0=N, 90=E, etc.)
   battery: number;
   size?: number;
 }
 
-// ── Convert polygon to SVG coordinates ───────────────────────────────
+// ── Convert polygon (local meters) to SVG coordinates ────────────────
 
 function polygonToSvg(
-  points: GpsPoint[],
+  points: LocalPoint[],
   size: number,
   padding: number,
 ): { svgPoints: Array<{ x: number; y: number }>; bounds: { minX: number; maxX: number; minY: number; maxY: number } } {
   if (points.length === 0) return { svgPoints: [], bounds: { minX: 0, maxX: 1, minY: 0, maxY: 1 } };
 
-  const midLat = points.reduce((s, p) => s + p.lat, 0) / points.length;
-  const cosLat = Math.cos((midLat * Math.PI) / 180);
+  const minX = Math.min(...points.map((p) => p.x));
+  const maxX = Math.max(...points.map((p) => p.x));
+  const minY = Math.min(...points.map((p) => p.y));
+  const maxY = Math.max(...points.map((p) => p.y));
 
-  // Project to flat coordinates (meters-ish)
-  const projected = points.map((p) => ({
-    x: p.lng * cosLat,
-    y: p.lat,
-  }));
-
-  const minX = Math.min(...projected.map((p) => p.x));
-  const maxX = Math.max(...projected.map((p) => p.x));
-  const minY = Math.min(...projected.map((p) => p.y));
-  const maxY = Math.max(...projected.map((p) => p.y));
-
-  const rangeX = maxX - minX || 0.0001;
-  const rangeY = maxY - minY || 0.0001;
+  const rangeX = maxX - minX || 0.1;
+  const rangeY = maxY - minY || 0.1;
   const drawSize = size - padding * 2;
   const scale = Math.min(drawSize / rangeX, drawSize / rangeY);
 
-  const svgPoints = projected.map((p) => ({
-    x: padding + (p.x - minX) * scale + (drawSize - rangeX * scale) / 2,
-    y: padding + (maxY - p.y) * scale + (drawSize - rangeY * scale) / 2,
+  // Both axes flipped to match MapScreen rendering (bird's-eye view)
+  const svgPoints = points.map((p) => ({
+    x: padding + (maxX - p.x) * scale + (drawSize - rangeX * scale) / 2,
+    y: padding + (p.y - minY) * scale + (drawSize - rangeY * scale) / 2,
   }));
 
   return {

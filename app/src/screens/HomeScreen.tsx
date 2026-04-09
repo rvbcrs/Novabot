@@ -204,7 +204,7 @@ export default function HomeScreen() {
   const [commandError, setCommandError] = useState('');
   const [showHistory, setShowHistory] = useState(false);
   const [showAlerts, setShowAlerts] = useState(false);
-  const [activeMapPolygon, setActiveMapPolygon] = useState<Array<{ lat: number; lng: number }>>([]);
+  const [activeMapPolygon, setActiveMapPolygon] = useState<Array<{ x: number; y: number }>>([]);
   const demo = useDemo();
 
   // Fetch device sets + map count from server
@@ -233,9 +233,8 @@ export default function HomeScreen() {
   useEffect(() => {
     if (demo.enabled) {
       setActiveMapPolygon([
-        { lat: 52.0912, lng: 5.1208 }, { lat: 52.0916, lng: 5.1210 },
-        { lat: 52.0917, lng: 5.1218 }, { lat: 52.0914, lng: 5.1222 },
-        { lat: 52.0910, lng: 5.1220 }, { lat: 52.0909, lng: 5.1212 },
+        { x: -3, y: 5 }, { x: 1, y: 7 }, { x: 5, y: 6 },
+        { x: 6, y: 2 }, { x: 3, y: -1 }, { x: -2, y: 1 },
       ]);
       return;
     }
@@ -301,6 +300,29 @@ export default function HomeScreen() {
       if (!result.ok) {
         setCommandError(result.error ?? 'Command failed');
       }
+    } catch (e) {
+      setCommandError(e instanceof Error ? e.message : 'Command failed');
+    } finally {
+      setCommandLoading(null);
+    }
+  };
+
+  // Go home: send go_pile first, then go_to_charge (matches Flutter app flow)
+  const sendGoHome = async (sn: string) => {
+    setCommandLoading('home');
+    setCommandError('');
+    try {
+      const url = await getServerUrl();
+      if (!url) { setCommandError('No server configured'); return; }
+      const api = new ApiClient(url);
+      // Step 1: go_pile
+      await api.sendCommand(sn, { go_pile: {} });
+      // Step 2: go_to_charge (after short delay)
+      await new Promise(r => setTimeout(r, 500));
+      const result = await api.sendCommand(sn, {
+        go_to_charge: { cmd_num: ++cmdNumRef.current, chargerpile: { latitude: 200, longitude: 200 } },
+      });
+      if (!result.ok) setCommandError(result.error ?? 'Command failed');
     } catch (e) {
       setCommandError(e instanceof Error ? e.message : 'Command failed');
     } finally {
@@ -653,15 +675,15 @@ export default function HomeScreen() {
               progress={mower.mowingProgress}
               pathDirection={mower.pathDirection}
               battery={mower.battery}
-              size={180}
+              size={140}
             />
           ) : (
             /* Battery ring + mower image (default) */
             <View style={[styles.batteryContainer, { shadowColor: GLOW_COLOR[mower.activity], shadowRadius: 30, shadowOpacity: 1 }]}>
               <BatteryRing
                 percentage={mower.battery}
-                size={160}
-                strokeWidth={10}
+                size={130}
+                strokeWidth={8}
                 color={mower.activity === 'idle' ? undefined : getActivityColor(mower.activity)}
               />
               <Animated.View style={[styles.batteryTextOverlay, { transform: [{ translateY: bounceAnim }, { scale: pulseAnim }] }]}>
@@ -780,7 +802,7 @@ export default function HomeScreen() {
               <TouchableOpacity
                 style={[styles.actionButton, styles.actionButtonAmber]}
                 onPress={() =>
-                  sendCommand(mower.sn, { pause_run: { cmd_num: ++cmdNumRef.current } }, 'pause')
+                  sendCommand(mower.sn, { pause_navigation: { cmd_num: ++cmdNumRef.current } }, 'pause')
                 }
                 disabled={commandLoading !== null}
                 activeOpacity={0.7}
@@ -797,7 +819,7 @@ export default function HomeScreen() {
               <TouchableOpacity
                 style={[styles.actionButton, styles.actionButtonRed]}
                 onPress={() =>
-                  sendCommand(mower.sn, { stop_run: { cmd_num: ++cmdNumRef.current } }, 'stop')
+                  sendCommand(mower.sn, { stop_navigation: { cmd_num: ++cmdNumRef.current } }, 'stop')
                 }
                 disabled={commandLoading !== null}
                 activeOpacity={0.7}
@@ -814,7 +836,7 @@ export default function HomeScreen() {
               <TouchableOpacity
                 style={[styles.actionButton, styles.actionButtonBlue]}
                 onPress={() =>
-                  sendCommand(mower.sn, { go_to_charge: { cmd_num: ++cmdNumRef.current, chargerpile: { latitude: 200, longitude: 200 } } }, 'home')
+                  sendGoHome(mower.sn)
                 }
                 disabled={commandLoading !== null}
                 activeOpacity={0.7}
@@ -836,7 +858,7 @@ export default function HomeScreen() {
               <TouchableOpacity
                 style={[styles.actionButton, styles.actionButtonGreen]}
                 onPress={() =>
-                  sendCommand(mower.sn, { resume_run: { cmd_num: ++cmdNumRef.current } }, 'resume')
+                  sendCommand(mower.sn, { resume_navigation: { cmd_num: ++cmdNumRef.current } }, 'resume')
                 }
                 disabled={commandLoading !== null}
                 activeOpacity={0.7}
@@ -853,7 +875,7 @@ export default function HomeScreen() {
               <TouchableOpacity
                 style={[styles.actionButton, styles.actionButtonBlue]}
                 onPress={() =>
-                  sendCommand(mower.sn, { go_to_charge: { cmd_num: ++cmdNumRef.current, chargerpile: { latitude: 200, longitude: 200 } } }, 'home')
+                  sendGoHome(mower.sn)
                 }
                 disabled={commandLoading !== null}
                 activeOpacity={0.7}
@@ -875,7 +897,7 @@ export default function HomeScreen() {
               <TouchableOpacity
                 style={[styles.actionButton, styles.actionButtonBlue]}
                 onPress={() =>
-                  sendCommand(mower.sn, { go_to_charge: { cmd_num: ++cmdNumRef.current, chargerpile: { latitude: 200, longitude: 200 } } }, 'home')
+                  sendGoHome(mower.sn)
                 }
                 disabled={commandLoading !== null}
                 activeOpacity={0.7}
@@ -897,7 +919,7 @@ export default function HomeScreen() {
               <TouchableOpacity
                 style={[styles.actionButton, styles.actionButtonRed]}
                 onPress={() =>
-                  sendCommand(mower.sn, { stop_run: { cmd_num: ++cmdNumRef.current } }, 'stop')
+                  sendCommand(mower.sn, { stop_navigation: { cmd_num: ++cmdNumRef.current } }, 'stop')
                 }
                 disabled={commandLoading !== null}
                 activeOpacity={0.7}
@@ -951,6 +973,8 @@ export default function HomeScreen() {
           onClose={() => setShowStartMow(false)}
           sn={mower.sn}
           onStarted={() => setCommandLoading(null)}
+          battery={mower.battery}
+          isWorking={mower.activity === 'mowing' || mower.activity === 'mapping'}
         />
       )}
 
@@ -1287,15 +1311,15 @@ const styles = StyleSheet.create({
     position: 'relative',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 20,
+    marginBottom: 10,
   },
   batteryTextOverlay: {
     position: 'absolute',
     alignItems: 'center',
   },
   mowerImage: {
-    width: 56,
-    height: 56,
+    width: 48,
+    height: 48,
     resizeMode: 'contain',
     marginBottom: 2,
   },

@@ -136,20 +136,26 @@ export function adminPageHtml(): string {
   <div id="tab_console" style="display:none">
     <div class="card" style="padding:0;overflow:hidden">
       <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid rgba(255,255,255,.06);flex-wrap:wrap;gap:6px">
-        <h2 style="margin:0">MQTT Traffic</h2>
-        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-          <label style="font-size:11px;color:#888;cursor:pointer"><input type="checkbox" id="f_mower" checked onchange="applyFilter()" style="margin-right:3px"><span style="color:#22c55e">Mower</span></label>
-          <label style="font-size:11px;color:#888;cursor:pointer"><input type="checkbox" id="f_charger" checked onchange="applyFilter()" style="margin-right:3px"><span style="color:#eab308">Charger</span></label>
-          <label style="font-size:11px;color:#888;cursor:pointer"><input type="checkbox" id="f_app" checked onchange="applyFilter()" style="margin-right:3px"><span style="color:#3b82f6">App</span></label>
-          <label style="font-size:11px;color:#888;cursor:pointer"><input type="checkbox" id="f_system" checked onchange="applyFilter()" style="margin-right:3px"><span style="color:#888">System</span></label>
-          <button onclick="mqttLogs=[];renderLogs()" style="background:#333;color:#888;border:none;border-radius:4px;padding:2px 8px;font-size:11px;cursor:pointer">Clear</button>
-          <label style="font-size:11px;color:#888;cursor:pointer"><input type="checkbox" id="f_autoscroll" checked style="margin-right:3px">Auto-scroll</label>
+        <h2 style="margin:0">Server Console</h2>
+        <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+          <div style="display:flex;gap:8px;align-items:center;background:rgba(255,255,255,.04);border-radius:6px;padding:4px 10px">
+            <label style="font-size:11px;cursor:pointer;display:flex;align-items:center;gap:3px"><input type="checkbox" id="f_mower" checked onchange="applyFilter()"><span style="color:#22c55e">Mower</span></label>
+            <label style="font-size:11px;cursor:pointer;display:flex;align-items:center;gap:3px"><input type="checkbox" id="f_charger" checked onchange="applyFilter()"><span style="color:#eab308">Charger</span></label>
+            <label style="font-size:11px;cursor:pointer;display:flex;align-items:center;gap:3px"><input type="checkbox" id="f_app" checked onchange="applyFilter()"><span style="color:#3b82f6">App</span></label>
+            <label style="font-size:11px;cursor:pointer;display:flex;align-items:center;gap:3px"><input type="checkbox" id="f_http" checked onchange="applyFilter()"><span style="color:#c084fc">HTTP</span></label>
+            <label style="font-size:11px;cursor:pointer;display:flex;align-items:center;gap:3px"><input type="checkbox" id="f_system" checked onchange="applyFilter()"><span style="color:#888">System</span></label>
+          </div>
+          <div style="display:flex;gap:4px;align-items:center">
+            <button onclick="mqttLogs=[];renderLogs()" style="background:rgba(239,68,68,.15);color:#f87171;border:1px solid rgba(239,68,68,.2);border-radius:6px;padding:4px 12px;font-size:11px;cursor:pointer">Clear</button>
+            <button onclick="copyConsole()" style="background:rgba(59,130,246,.15);color:#60a5fa;border:1px solid rgba(59,130,246,.2);border-radius:6px;padding:4px 12px;font-size:11px;cursor:pointer">Copy</button>
+          </div>
+          <label style="font-size:11px;color:#888;cursor:pointer;display:flex;align-items:center;gap:3px"><input type="checkbox" id="f_autoscroll" checked>Auto-scroll</label>
         </div>
       </div>
       <div style="padding:6px 12px;border-bottom:1px solid rgba(255,255,255,.06)">
         <input id="f_search" type="text" placeholder="Search (e.g. start_run, error, LFIN...)" oninput="renderLogs()" style="width:100%;padding:6px 10px;font-size:12px;background:#0d0d20;border:1px solid #333;border-radius:6px;color:#fff">
       </div>
-      <div id="mqttConsole" style="height:calc(100vh - 320px);min-height:300px;overflow-y:auto;font-family:monospace;font-size:11px;padding:8px;background:#0a0a1a;line-height:1.6"></div>
+      <div id="mqttConsole" style="height:calc(100vh - 320px);min-height:300px;overflow-y:auto;font-family:monospace;font-size:11px;padding:8px;background:#0a0a1a;line-height:1.6;word-break:break-all"></div>
     </div>
   </div>
 
@@ -217,6 +223,8 @@ const MAX_CONSOLE_LINES = 500;
 
 function classifyLog(entry) {
   if (!entry) return 'system';
+  var t = entry.type || '';
+  if (t === 'http-req' || t === 'http-res') return 'http';
   var cid = (entry.clientId || '') + (entry.sn || '') + (entry.topic || '');
   if (cid.indexOf('LFIN') >= 0) return 'mower';
   if (cid.indexOf('LFIC') >= 0 || cid.indexOf('ESP32') >= 0) return 'charger';
@@ -228,6 +236,7 @@ function logColor(cls) {
   if (cls === 'mower') return '#22c55e';
   if (cls === 'charger') return '#eab308';
   if (cls === 'app') return '#3b82f6';
+  if (cls === 'http') return '#c084fc';
   return '#666';
 }
 
@@ -236,13 +245,32 @@ function typeIcon(type) {
   if (type === 'disconnect') return '🔴';
   if (type === 'subscribe') return '📡';
   if (type === 'publish') return '📨';
+  if (type === 'forward') return '➡️';
+  if (type === 'http-req') return '🌐';
+  if (type === 'http-res') return '↩️';
   if (type === 'error') return '❌';
   return '·';
 }
 
 function truncate(s, n) { return s && s.length > n ? s.substring(0, n) + '...' : (s || ''); }
 
-function formatLog(entry) {
+function highlightTerm(text, q) {
+  if (!q || !text) return text;
+  var idx = text.toLowerCase().indexOf(q.toLowerCase());
+  if (idx === -1) return text;
+  var result = '';
+  var pos = 0;
+  while (idx !== -1) {
+    result += text.substring(pos, idx);
+    result += '<mark style="background:#facc15;color:#000;border-radius:2px;padding:0 1px">' + text.substring(idx, idx + q.length) + '</mark>';
+    pos = idx + q.length;
+    idx = text.toLowerCase().indexOf(q.toLowerCase(), pos);
+  }
+  result += text.substring(pos);
+  return result;
+}
+
+function formatLog(entry, searchTerm) {
   var cls = classifyLog(entry);
   var color = logColor(cls);
   var t = new Date(entry.ts);
@@ -251,7 +279,15 @@ function formatLog(entry) {
   var dir = entry.direction || '';
   var sn = entry.sn || '';
   var topic = entry.topic ? entry.topic.replace('Dart/Receive_mqtt/','←').replace('Dart/Send_mqtt/','→').replace('Dart/Receive_server_mqtt/','⇐') : '';
-  var payload = truncate(entry.payload, 120);
+  var payload = (entry.payload || '').replace(/</g,'&lt;');
+  var q = searchTerm || '';
+
+  // Highlight search term in sn, topic, payload
+  if (q) {
+    sn = highlightTerm(sn, q);
+    topic = highlightTerm(topic, q);
+    payload = highlightTerm(payload, q);
+  }
 
   return '<div class="mqtt-line mqtt-' + cls + '" style="color:' + color + '">' +
     '<span style="color:#555">' + time + '</span> ' +
@@ -260,8 +296,39 @@ function formatLog(entry) {
     (sn ? '<span style="color:' + color + ';opacity:.7">' + sn + '</span> ' : '') +
     (dir ? '<span style="color:#888">' + dir + '</span> ' : '') +
     (topic ? '<span style="color:#888">' + topic + '</span> ' : '') +
-    (payload ? '<span style="color:' + color + ';opacity:.6">' + payload.replace(/</g,'&lt;') + '</span>' : '') +
+    (payload ? '<span style="color:' + color + ';opacity:.6">' + payload + '</span>' : '') +
     '</div>';
+}
+
+function copyConsole() {
+  var fm = document.getElementById('f_mower').checked;
+  var fc = document.getElementById('f_charger').checked;
+  var fa = document.getElementById('f_app').checked;
+  var fh = document.getElementById('f_http').checked;
+  var fs = document.getElementById('f_system').checked;
+  var q = (document.getElementById('f_search').value || '').toLowerCase().trim();
+  var lines = [];
+  for (var i = 0; i < mqttLogs.length; i++) {
+    var e = mqttLogs[i];
+    var cls = classifyLog(e);
+    if (cls === 'mower' && !fm) continue;
+    if (cls === 'charger' && !fc) continue;
+    if (cls === 'app' && !fa) continue;
+    if (cls === 'http' && !fh) continue;
+    if (cls === 'system' && !fs) continue;
+    if (!matchesSearch(e, q)) continue;
+    var t = new Date(e.ts);
+    var time = t.toLocaleTimeString('nl-NL', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    var dir = e.direction || '';
+    var sn = e.sn || '';
+    lines.push(time + ' ' + (e.type || '').toUpperCase() + ' ' + sn + ' ' + dir + ' ' + (e.topic || '') + ' ' + (e.payload || ''));
+  }
+  var text = lines.join('\\n');
+  navigator.clipboard.writeText(text).then(function() {
+    var btn = event.target;
+    btn.textContent = 'Copied!';
+    setTimeout(function() { btn.textContent = 'Copy'; }, 1500);
+  });
 }
 
 function applyFilter() {
@@ -278,6 +345,7 @@ function renderLogs() {
   var fm = document.getElementById('f_mower').checked;
   var fc = document.getElementById('f_charger').checked;
   var fa = document.getElementById('f_app').checked;
+  var fh = document.getElementById('f_http').checked;
   var fs = document.getElementById('f_system').checked;
   var q = (document.getElementById('f_search').value || '').toLowerCase().trim();
   var el = document.getElementById('mqttConsole');
@@ -287,9 +355,10 @@ function renderLogs() {
     if (cls === 'mower' && !fm) continue;
     if (cls === 'charger' && !fc) continue;
     if (cls === 'app' && !fa) continue;
+    if (cls === 'http' && !fh) continue;
     if (cls === 'system' && !fs) continue;
     if (!matchesSearch(mqttLogs[i], q)) continue;
-    html += formatLog(mqttLogs[i]);
+    html += formatLog(mqttLogs[i], q);
   }
   el.innerHTML = html;
   if (document.getElementById('f_autoscroll').checked) {
@@ -305,16 +374,18 @@ function addLog(entry) {
   var fm = document.getElementById('f_mower').checked;
   var fc = document.getElementById('f_charger').checked;
   var fa = document.getElementById('f_app').checked;
+  var fh = document.getElementById('f_http').checked;
   var fs = document.getElementById('f_system').checked;
   var q = (document.getElementById('f_search').value || '').toLowerCase().trim();
   if (cls === 'mower' && !fm) return;
   if (cls === 'charger' && !fc) return;
   if (cls === 'app' && !fa) return;
+  if (cls === 'http' && !fh) return;
   if (cls === 'system' && !fs) return;
   if (!matchesSearch(entry, q)) return;
 
   var el = document.getElementById('mqttConsole');
-  el.insertAdjacentHTML('beforeend', formatLog(entry));
+  el.insertAdjacentHTML('beforeend', formatLog(entry, q));
   if (document.getElementById('f_autoscroll').checked) {
     el.scrollTop = el.scrollHeight;
   }

@@ -13,6 +13,7 @@ import { generateMapZipFromDb, gpsToLocal, localToGps, parseMapZip, type GpsPoin
 import { existsSync, unlinkSync, readFileSync, readdirSync, createReadStream, statSync, watch, mkdirSync, copyFileSync } from 'fs';
 import { isDemoMode, setDemoMode as setDemo, getDemoStatus } from '../services/demoSimulator.js';
 import { execSync } from 'child_process';
+import fs from 'fs';
 import path from 'path';
 import { networkInterfaces } from 'os';
 import { fileURLToPath } from 'url';
@@ -310,32 +311,49 @@ dashboardRouter.get('/maps', (_req: Request, res: Response) => {
   res.json({ maps });
 });
 
-// GET /api/dashboard/maps/:sn — kaarten voor een maaier (polygonen voor Leaflet)
+// GET /api/dashboard/maps/:sn — kaarten voor een maaier
+// Retourneert lokale meter coördinaten (charger = 0,0) + charger GPS voor conversie.
+// ?coords=gps forceert GPS output (voor Leaflet dashboard).
 dashboardRouter.get('/maps/:sn', (req: Request, res: Response) => {
   const { sn } = req.params;
+  const wantGps = req.query.coords === 'gps';
   const rows = db.prepare(
     'SELECT * FROM maps WHERE mower_sn = ? ORDER BY updated_at DESC'
   ).all(sn) as MapRow[];
 
-  // Charger GPS ophalen voor local→GPS conversie
+  // Charger GPS ophalen
   const cal = db.prepare('SELECT charger_lat, charger_lng FROM map_calibration WHERE mower_sn = ?')
     .get(sn) as { charger_lat: number | null; charger_lng: number | null } | undefined;
   const chargerGps: GpsPoint | null = cal?.charger_lat && cal?.charger_lng
     ? { lat: cal.charger_lat, lng: cal.charger_lng } : null;
 
   const maps = rows.map(r => {
-    let mapArea: GpsPoint[] = [];
+    let mapArea: Array<{ x: number; y: number } | GpsPoint> = [];
     let mapMaxMin: Record<string, number> | null = null;
 
-    if (r.map_area && chargerGps) {
+    if (r.map_area) {
       const localPoints: LocalPoint[] = JSON.parse(r.map_area);
-      mapArea = localPoints.map(p => localToGps(p, chargerGps));
-      const lats = mapArea.map(p => p.lat);
-      const lngs = mapArea.map(p => p.lng);
-      mapMaxMin = {
-        minLat: Math.min(...lats), maxLat: Math.max(...lats),
-        minLng: Math.min(...lngs), maxLng: Math.max(...lngs),
-      };
+
+      if (wantGps && chargerGps) {
+        // GPS output voor Leaflet dashboard
+        const gpsPoints = localPoints.map(p => localToGps(p, chargerGps));
+        mapArea = gpsPoints;
+        const lats = gpsPoints.map(p => p.lat);
+        const lngs = gpsPoints.map(p => p.lng);
+        mapMaxMin = {
+          minLat: Math.min(...lats), maxLat: Math.max(...lats),
+          minLng: Math.min(...lngs), maxLng: Math.max(...lngs),
+        };
+      } else {
+        // Lokale meters (default) — charger = (0,0)
+        mapArea = localPoints;
+        const xs = localPoints.map(p => p.x);
+        const ys = localPoints.map(p => p.y);
+        mapMaxMin = {
+          minX: Math.min(...xs), maxX: Math.max(...xs),
+          minY: Math.min(...ys), maxY: Math.max(...ys),
+        };
+      }
     }
 
     return {
@@ -348,7 +366,32 @@ dashboardRouter.get('/maps/:sn', (req: Request, res: Response) => {
     };
   });
 
-  res.json({ maps });
+  // Charger orientatie uit ZIP map_info.json
+  let chargerOrientation = 0;
+  const STORAGE_PATH = path.resolve(process.env.STORAGE_PATH ?? './storage', 'maps');
+  const latestZip = path.join(STORAGE_PATH, `${sn}_latest.zip`);
+  if (fs.existsSync(latestZip)) {
+    try {
+      const tmpDir = path.join(STORAGE_PATH, `tmp_orient_${Date.now()}`);
+      fs.mkdirSync(tmpDir, { recursive: true });
+      try {
+        execSync(`unzip -o -q "${latestZip}" "csv_file/map_info.json" -d "${tmpDir}"`);
+        const infoPath = path.join(tmpDir, 'csv_file', 'map_info.json');
+        if (fs.existsSync(infoPath)) {
+          const info = JSON.parse(fs.readFileSync(infoPath, 'utf8'));
+          chargerOrientation = info.charging_pose?.orientation ?? 0;
+        }
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    } catch { /* ignore */ }
+  }
+
+  res.json({
+    maps,
+    chargerGps: chargerGps ? { lat: chargerGps.lat, lng: chargerGps.lng } : null,
+    chargerOrientation,
+  });
 });
 
 // GET /api/dashboard/trail/:sn — GPS trail punten voor de kaart
