@@ -6,6 +6,7 @@
 import { Router, Response } from 'express';
 import os from 'os';
 import dns from 'dns';
+import crypto from 'crypto';
 import { execSync } from 'child_process';
 import { db } from '../db/database.js';
 import { AuthRequest } from '../types/index.js';
@@ -180,7 +181,7 @@ adminStatusRouter.post('/pair-devices', (_req: AuthRequest, res: Response) => {
         .run(chargerSn, mowerEquip.equipment_id);
     } else {
       // Neither has a record — create one
-      const equipmentId = require('crypto').randomUUID();
+      const equipmentId = crypto.randomUUID();
       db.prepare(`INSERT INTO equipment (equipment_id, user_id, mower_sn, charger_sn, created_at)
         VALUES (?, ?, ?, ?, datetime('now'))`)
         .run(equipmentId, _req.userId, mowerSn, chargerSn);

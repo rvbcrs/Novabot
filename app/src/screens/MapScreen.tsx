@@ -297,11 +297,9 @@ export default function MapScreen() {
       translateY.value = withTiming(0, { duration: 300 });
     });
 
-  const composedGesture = Gesture.Simultaneous(pinchGesture, panGesture, doubleTapGesture);
-
   // Pattern placement: convert tap position to local meters, then to GPS for pattern context
   const handleMapTap = useCallback((evt: { nativeEvent: { locationX: number; locationY: number } }) => {
-    if (!patternCtx.isPlacing || !bounds || !chargerGpsOrigin) return;
+    if (!patternCtx.isPlacing || !bounds) return;
     const x = evt.nativeEvent.locationX;
     const y = evt.nativeEvent.locationY;
     const drawSize = MAP_SIZE - INNER_PADDING * 2;
@@ -310,15 +308,38 @@ export default function MapScreen() {
     const mapScale = Math.min(drawSize / xRange, drawSize / yRange);
     const xOffset = (drawSize - xRange * mapScale) / 2;
     const yOffset = (drawSize - yRange * mapScale) / 2;
-    const localX = bounds.minX + (x - INNER_PADDING - xOffset) / mapScale;
-    const localY = bounds.maxY - (y - INNER_PADDING - yOffset) / mapScale;
-    // Convert local meters back to GPS for pattern context
-    const metersPerDegreeLat = 111320;
-    const metersPerDegreeLng = 111320 * Math.cos(chargerGpsOrigin.lat * Math.PI / 180);
-    const lat = chargerGpsOrigin.lat + localY / metersPerDegreeLat;
-    const lng = chargerGpsOrigin.lng + localX / metersPerDegreeLng;
-    patternCtx.setCenter(lat, lng);
+    // Inverse of localToSvg (which flips both axes):
+    // svgX = padding + (maxX - localX) * scale + xOffset → localX = maxX - (svgX - padding - xOffset) / scale
+    // svgY = padding + (localY - minY) * scale + yOffset → localY = minY + (svgY - padding - yOffset) / scale
+    const localX = bounds.maxX - (x - INNER_PADDING - xOffset) / mapScale;
+    const localY = bounds.minY + (y - INNER_PADDING - yOffset) / mapScale;
+    // Convert to GPS if chargerGpsOrigin available, otherwise use local coords directly
+    if (chargerGpsOrigin) {
+      const metersPerDegreeLat = 111320;
+      const metersPerDegreeLng = 111320 * Math.cos(chargerGpsOrigin.lat * Math.PI / 180);
+      patternCtx.setCenter(
+        chargerGpsOrigin.lat + localY / metersPerDegreeLat,
+        chargerGpsOrigin.lng + localX / metersPerDegreeLng,
+      );
+    } else {
+      // No GPS origin — use local meters as pseudo-GPS (pattern will render in local coords)
+      patternCtx.setCenter(localY, localX);
+    }
   }, [patternCtx, bounds, chargerGpsOrigin]);
+
+  const handleTapGesture = (x: number, y: number) => {
+    handleMapTap({ nativeEvent: { locationX: x, locationY: y } } as any);
+  };
+
+  const singleTapGesture = Gesture.Tap()
+    .numberOfTaps(1)
+    .onEnd((e) => {
+      if (patternCtx.isPlacing) {
+        runOnJS(handleTapGesture)(e.x, e.y);
+      }
+    });
+
+  const composedGesture = Gesture.Simultaneous(pinchGesture, panGesture, doubleTapGesture, singleTapGesture);
 
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [
@@ -724,14 +745,6 @@ export default function MapScreen() {
         {/* SVG Map with pan + zoom */}
         {bounds && (
           <View style={styles.mapContainer}>
-            {/* Tap overlay for pattern placement */}
-            {patternCtx.isPlacing && (
-              <View
-                style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 10 }}
-                onStartShouldSetResponder={() => true}
-                onResponderRelease={handleMapTap}
-              />
-            )}
             <GestureDetector gesture={composedGesture}>
               <Animated.View style={[styles.mapInner, animatedStyle]}>
                 <Svg width={MAP_SIZE} height={MAP_SIZE} viewBox={`0 0 ${MAP_SIZE} ${MAP_SIZE}`}>

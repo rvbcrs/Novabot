@@ -406,8 +406,26 @@ export function StartMowSheet({ visible, onClose, sn, onStarted, battery, isWork
                 };
               });
 
-              // Pattern contours for overlay (TODO: convert pattern to local coords)
-              const patternSvgPolys: string[] = [];
+              // Pattern contours overlay
+              let patternSvgPolys: string[] = [];
+              if (patternId && patternCenter) {
+                const { loadPattern } = require('../utils/patternUtils');
+                const contours = loadPattern(patternId);
+                patternSvgPolys = contours.map((c: Array<[number, number]>) => {
+                  // Pattern center is stored as {lat: localY, lng: localX}
+                  const cx = patternCenter.lng; // localX
+                  const cy = patternCenter.lat; // localY
+                  return c.map(([nx, ny]: [number, number]) => {
+                    // Pattern points are normalized -1..1, scale by patternSize
+                    const rad = (patternRotation * Math.PI) / 180;
+                    const rx = nx * Math.cos(rad) - ny * Math.sin(rad);
+                    const ry = nx * Math.sin(rad) + ny * Math.cos(rad);
+                    const localPt = { x: cx + rx * patternSize / 2, y: cy + ry * patternSize / 2 };
+                    const svgPt = toSvg(localPt);
+                    return `${svgPt.x},${svgPt.y}`;
+                  }).join(' ');
+                });
+              }
 
               // Tap handler: convert SVG coords back to local meters for pattern placement
               const handlePreviewTap = (evt: { nativeEvent: { locationX: number; locationY: number } }) => {
