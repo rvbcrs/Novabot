@@ -44,11 +44,13 @@ services:
     container_name: opennova
     restart: unless-stopped
     ports:
-      - "3000:80"     # API + Admin panel
+      - "3000:80"     # Admin panel + API
+      - "443:443"     # HTTPS (required for Novabot app)
       - "1883:1883"   # MQTT broker
     environment:
       PORT: 80
       JWT_SECRET: change_me_to_a_random_secret  # Generate one with: openssl rand -hex 32
+      ENABLE_TLS: "true"  # Required for the official Novabot app (HTTPS)
     volumes:
       - novabot-data:/data
 

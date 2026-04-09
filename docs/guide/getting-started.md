@@ -10,6 +10,31 @@ This guide walks you through setting up OpenNova with your Novabot mower and the
 
 ## Step 1: Start the Container
 
+Make sure your `docker-compose.yml` includes **port 443** and **ENABLE_TLS**. The official Novabot app connects via HTTPS — without this, the app will show "network connection is abnormal":
+
+```yaml
+services:
+  opennova:
+    image: rvbcrs/opennova:latest
+    container_name: opennova
+    restart: unless-stopped
+    ports:
+      - "3000:80"     # Admin panel + API
+      - "443:443"     # HTTPS (required for Novabot app!)
+      - "1883:1883"   # MQTT broker
+    environment:
+      PORT: 80
+      JWT_SECRET: change_me_to_a_random_secret
+      ENABLE_TLS: "true"
+    volumes:
+      - novabot-data:/data
+
+volumes:
+  novabot-data:
+```
+
+Start the container:
+
 ```bash
 docker compose up -d
 ```
@@ -19,7 +44,7 @@ Verify it's running:
 docker compose logs -f
 ```
 
-You should see the MQTT broker starting and listening on port 1883.
+You should see the MQTT broker starting and TLS enabled on port 443.
 
 ## Step 2: Access the Admin Page
 

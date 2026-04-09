@@ -32,17 +32,21 @@ services:
     container_name: opennova
     restart: unless-stopped
     ports:
-      - "3000:80"     # API
+      - "3000:80"     # Admin panel + API
+      - "443:443"     # HTTPS (required for Novabot app)
       - "1883:1883"   # MQTT broker
     environment:
       PORT: 80
       JWT_SECRET: change_me_to_a_random_secret
+      ENABLE_TLS: "true"
     volumes:
       - novabot-data:/data
 
 volumes:
   novabot-data:
 ```
+
+> **Important**: Port 443 and `ENABLE_TLS=true` are required for the official Novabot app. The app connects via HTTPS to `app.lfibot.com`. Without TLS, the app will show "network connection is abnormal".
 
 ### 3. Start the server
 
