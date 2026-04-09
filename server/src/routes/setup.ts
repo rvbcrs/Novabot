@@ -233,6 +233,9 @@ setupRouter.post('/cloud-apply', async (req: Request, res: Response) => {
     }
 
     // 5. Import maps from cloud for each mower
+    let mapsImported = 0;
+    let mapZipSize = 0;
+    let chargerGpsImported = false;
     if (mower?.sn) {
       try {
         // Login to get a fresh token
@@ -340,6 +343,8 @@ setupRouter.post('/cloud-apply', async (req: Request, res: Response) => {
                              JSON.stringify(area.points), `${mower.sn}_latest.zip`, zipData.length,
                              area.type, now, now);
                     }
+                    mapsImported = parsed.areas.length;
+                    mapZipSize = zipData.length;
                     console.log(`[Setup] Imported ${parsed.areas.length} map areas from cloud ZIP`);
                   }
                 }
@@ -359,6 +364,7 @@ setupRouter.post('/cloud-apply', async (req: Request, res: Response) => {
                   INSERT OR REPLACE INTO map_calibration (mower_sn, offset_lat, offset_lng, rotation, scale, charger_lat, charger_lng, updated_at)
                   VALUES (?, 0, 0, 0, 1, ?, ?, datetime('now'))
                 `).run(mower.sn, chargerLat, chargerLng);
+                chargerGpsImported = true;
                 console.log(`[Setup] Charger GPS imported: ${chargerLat}, ${chargerLng}`);
               }
             }
@@ -370,7 +376,7 @@ setupRouter.post('/cloud-apply', async (req: Request, res: Response) => {
     }
 
     invalidateSetupCache();
-    res.json({ ok: true, email: normalizedEmail, setupComplete: isSetupComplete() });
+    res.json({ ok: true, email: normalizedEmail, setupComplete: isSetupComplete(), mapsImported, mapZipSize, chargerGpsImported });
   } catch (err) {
     console.error('[Setup] Cloud apply error:', err);
     res.status(500).json({

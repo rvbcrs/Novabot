@@ -860,7 +860,14 @@ async function firstTimeCloudImport() {
       }
     }
 
-    result.innerHTML += '<p style="color:#00d4aa;font-size:13px;font-weight:600">Setup complete! ' + all.length + ' device(s) imported.</p><p style="color:#aaa;font-size:12px;margin-top:4px">You can now login with: ' + email + '</p>';
+    var mapInfo = '';
+    if (d.mapsImported > 0) {
+      mapInfo = ' + ' + d.mapsImported + ' map area(s)';
+      if (d.chargerGpsImported) mapInfo += ' + charger GPS';
+    } else {
+      mapInfo = ' (no maps found on cloud)';
+    }
+    result.innerHTML += '<p style="color:#00d4aa;font-size:13px;font-weight:600">Setup complete! ' + all.length + ' device(s)' + mapInfo + ' imported.</p><p style="color:#aaa;font-size:12px;margin-top:4px">You can now login with: ' + email + '</p>';
     btn.textContent = 'Done!';
     setTimeout(() => location.reload(), 2000);
   } catch(e) {
