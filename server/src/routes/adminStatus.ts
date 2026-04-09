@@ -151,6 +151,46 @@ adminStatusRouter.post('/unbind-device', (_req: AuthRequest, res: Response) => {
   res.json({ ok: true });
 });
 
+// POST /api/admin-status/pair-devices — pair mower with charger in equipment table
+adminStatusRouter.post('/pair-devices', (_req: AuthRequest, res: Response) => {
+  const { mowerSn, chargerSn } = _req.body as { mowerSn?: string; chargerSn?: string };
+  if (!mowerSn || !chargerSn) { res.status(400).json({ error: 'mowerSn and chargerSn required' }); return; }
+
+  // Find the equipment record for the charger
+  const chargerEquip = db.prepare('SELECT equipment_id, user_id FROM equipment WHERE charger_sn = ?')
+    .get(chargerSn) as { equipment_id: string; user_id: string | null } | undefined;
+
+  if (chargerEquip) {
+    // Charger has an equipment record — add mower_sn to it
+    db.prepare('UPDATE equipment SET mower_sn = ? WHERE equipment_id = ?')
+      .run(mowerSn, chargerEquip.equipment_id);
+    // Remove any standalone mower equipment record
+    db.prepare('DELETE FROM equipment WHERE mower_sn = ? AND charger_sn IS NULL AND equipment_id != ?')
+      .run(mowerSn, chargerEquip.equipment_id);
+    console.log(`[Admin] Paired mower ${mowerSn} with charger ${chargerSn} (updated existing record)`);
+  } else {
+    // No charger equipment record — find mower record and add charger
+    const mowerEquip = db.prepare('SELECT equipment_id FROM equipment WHERE mower_sn = ?')
+      .get(mowerSn) as { equipment_id: string } | undefined;
+    if (mowerEquip) {
+      db.prepare('UPDATE equipment SET charger_sn = ? WHERE equipment_id = ?')
+        .run(chargerSn, mowerEquip.equipment_id);
+      // Remove any standalone charger equipment record
+      db.prepare('DELETE FROM equipment WHERE charger_sn = ? AND mower_sn IS NULL AND equipment_id != ?')
+        .run(chargerSn, mowerEquip.equipment_id);
+    } else {
+      // Neither has a record — create one
+      const equipmentId = require('crypto').randomUUID();
+      db.prepare(`INSERT INTO equipment (equipment_id, user_id, mower_sn, charger_sn, created_at)
+        VALUES (?, ?, ?, ?, datetime('now'))`)
+        .run(equipmentId, _req.userId, mowerSn, chargerSn);
+    }
+    console.log(`[Admin] Paired mower ${mowerSn} with charger ${chargerSn}`);
+  }
+
+  res.json({ ok: true });
+});
+
 // POST /api/admin-status/remove-device — delete device from device_registry + equipment
 adminStatusRouter.post('/remove-device', (_req: AuthRequest, res: Response) => {
   const { sn } = _req.body as { sn?: string };

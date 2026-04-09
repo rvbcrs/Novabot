@@ -598,8 +598,25 @@ async function loadMyDevices() {
         'These devices have connected but have no LoRa pairing yet. ' +
         'They will be paired automatically after BLE provisioning, or when the charger and mower connect on the same LoRa address.' +
         '</span></div>';
+      // Collect charger SNs for pair dropdown
+      var chargerSns = [];
+      for (var a in byAddr) { for (var dd of byAddr[a]) { if (dd.device_type === 'charger') chargerSns.push(dd.sn); } }
+
       for (const dev of unpaired) {
         html += devRow(dev);
+        // Add pair button for unpaired mowers
+        if (dev.device_type === 'mower' && chargerSns.length > 0) {
+          html += '<div style="padding:4px 8px;margin-top:4px">';
+          if (chargerSns.length === 1) {
+            html += '<button class="btn btn-sm btn-green" onclick="pairMowerCharger(\\'' + dev.sn + '\\', \\'' + chargerSns[0] + '\\')">Pair with ' + chargerSns[0] + '</button>';
+          } else {
+            html += '<select id="pair_charger_' + dev.sn + '" style="background:#1a1a2e;color:#fff;border:1px solid #333;border-radius:4px;padding:4px 8px;font-size:11px;margin-right:6px">';
+            for (var cs of chargerSns) { html += '<option value="' + cs + '">' + cs + '</option>'; }
+            html += '</select>';
+            html += '<button class="btn btn-sm btn-green" onclick="pairMowerCharger(\\'' + dev.sn + '\\', document.getElementById(\\'pair_charger_' + dev.sn + '\\').value)">Pair</button>';
+          }
+          html += '</div>';
+        }
       }
       html += '</div>';
     }
@@ -635,6 +652,13 @@ async function removeDevice(sn) {
     await api('/remove-device', 'POST', { sn });
     loadMyDevices();
   } catch(e) { alert('Remove failed: ' + e.message); }
+}
+
+async function pairMowerCharger(mowerSn, chargerSn) {
+  try {
+    await api('/pair-devices', 'POST', { mowerSn, chargerSn });
+    loadMyDevices();
+  } catch(e) { alert('Pair failed: ' + e.message); }
 }
 
 var dnsmasqRunning = false;
