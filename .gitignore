@@ -20,6 +20,8 @@ NOVABOT_*.*apk
 # ── Research (entire directory — development only) ───
 research/*
 !research/documents/
+!research/*.py
+!research/*.md
 
 # ── Project-internal files ────────────────────────────
 CLAUDE.md
