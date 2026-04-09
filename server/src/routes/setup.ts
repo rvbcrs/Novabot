@@ -270,10 +270,11 @@ setupRouter.post('/cloud-apply', async (req: Request, res: Response) => {
                 try {
                   // Download CSV as raw text (not JSON)
                   const csvData = await new Promise<string>((resolve, reject) => {
-                    const parsedUrl = new URL(csvUrl);
+                    // Always download from real cloud, not local DNS redirect
+                    const parsedUrl = new URL(csvUrl, `https://${LFI_CLOUD_HOST}`);
                     const headers = makeLfiHeaders(cloudToken);
                     const req = https.request({
-                      hostname: parsedUrl.hostname || LFI_CLOUD_HOST,
+                      hostname: LFI_CLOUD_HOST,
                       path: parsedUrl.pathname + parsedUrl.search,
                       method: 'GET',
                       headers,
@@ -319,15 +320,20 @@ setupRouter.post('/cloud-apply', async (req: Request, res: Response) => {
             const machineField = mapVal?.machineExtendedField as Record<string, unknown> | undefined;
             const chargingPose = machineField?.chargingPose as Record<string, string> | undefined;
             if (chargingPose?.x && chargingPose?.y) {
-              const chargerLng = parseFloat(chargingPose.x);
-              const chargerLat = parseFloat(chargingPose.y);
-              if (!isNaN(chargerLat) && !isNaN(chargerLng) && chargerLat > 0) {
+              const poseX = parseFloat(chargingPose.x);
+              const poseY = parseFloat(chargingPose.y);
+              // chargingPose can be GPS (lat~52, lng~6) or local meters (x~0.1, y~0.2)
+              // GPS values are > 10, local meters are typically < 50
+              const isGps = !isNaN(poseY) && Math.abs(poseY) > 10;
+              if (isGps) {
                 db.prepare(`
                   INSERT OR REPLACE INTO map_calibration (mower_sn, offset_lat, offset_lng, rotation, scale, charger_lat, charger_lng, updated_at)
                   VALUES (?, 0, 0, 0, 1, ?, ?, datetime('now'))
-                `).run(mower.sn, chargerLat, chargerLng);
+                `).run(mower.sn, poseY, poseX);  // y=lat, x=lng
                 chargerGpsImported = true;
-                console.log(`[Setup] Charger GPS imported: ${chargerLat}, ${chargerLng}`);
+                console.log(`[Setup] Charger GPS imported: lat=${poseY}, lng=${poseX}`);
+              } else {
+                console.log(`[Setup] ChargingPose is local meters (x=${poseX}, y=${poseY}), not GPS — skipping calibration`);
               }
             }
           }
