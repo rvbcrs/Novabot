@@ -111,8 +111,13 @@ function deriveMower(devices: Map<string, DeviceState>): MowerDerived | null {
     battery:
       parseInt(s.battery_power ?? s.battery_capacity ?? '0', 10) || 0,
     batteryCharging: activity === 'charging',
-    mowingProgress:
-      Math.round(parseFloat(s.cov_ratio ?? s.mowing_progress ?? '0')) || 0,
+    mowingProgress: (() => {
+      const ratio = parseFloat(s.cov_ratio ?? '0');
+      // cov_ratio is 0.0-1.0 (fraction), convert to 0-100 percentage
+      if (ratio > 0 && ratio <= 1) return Math.round(ratio * 100);
+      // mowing_progress is already 0-100
+      return Math.round(parseFloat(s.mowing_progress ?? '0')) || 0;
+    })(),
     pathDirection:
       parseInt(s.path_direction ?? '0', 10) || 0,
     wifiRssi: s.wifi_rssi,
@@ -247,6 +252,7 @@ export default function HomeScreen() {
   const [showAlerts, setShowAlerts] = useState(false);
   const [activeMapPolygon, setActiveMapPolygon] = useState<Array<{ x: number; y: number }>>([]);
   const [mowingTrail, setMowingTrail] = useState<Array<{ x: number; y: number }>>([]);
+  const [plannedPaths, setPlannedPaths] = useState<Array<{ id: string; points: Array<{ x: number; y: number }> }>>([]);
   // Track mowing settings for safety check + display
   const [mowSettings, setMowSettings] = useState<{ cuttingHeight: number; pathDirection: number } | null>(null);
   const demo = useDemo();
@@ -330,9 +336,13 @@ export default function HomeScreen() {
         const url = await getServerUrl();
         if (!url) return;
         const api = new ApiClient(url);
-        const res = await api.getTrail(mower.sn).catch(() => []);
-        const trail = Array.isArray(res) ? res : (res as any).trail ?? [];
+        const [trailRes, pathsRes] = await Promise.all([
+          api.getTrail(mower.sn).catch(() => []),
+          api.getPlannedPath(mower.sn).catch(() => []),
+        ]);
+        const trail = Array.isArray(trailRes) ? trailRes : (trailRes as any).trail ?? [];
         setMowingTrail(trail.map((p: any) => ({ x: p.x ?? 0, y: p.y ?? 0 })));
+        if (Array.isArray(pathsRes) && pathsRes.length > 0) setPlannedPaths(pathsRes);
       } catch { /* ignore */ }
     };
     refresh();
@@ -767,6 +777,7 @@ export default function HomeScreen() {
               pathDirection={mowSettings?.pathDirection ?? mower.pathDirection}
               size={240}
               trail={mowingTrail}
+              plannedPaths={plannedPaths}
               mowerPos={mower.mowerPosX != null && mower.mowerPosY != null ? { x: mower.mowerPosX, y: mower.mowerPosY } : null}
               mowerHeading={mower.mowerHeading ?? undefined}
             />

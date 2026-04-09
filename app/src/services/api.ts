@@ -272,6 +272,11 @@ export class ApiClient {
     await this.request('DELETE', `/api/dashboard/trail/${enc(sn)}`);
   }
 
+  async getPlannedPath(sn: string): Promise<Array<{ id: string; points: LocalPoint[] }>> {
+    const res = await this.request<{ paths: Array<{ id: string; points: LocalPoint[] }> }>('GET', `/api/dashboard/planned-path/${enc(sn)}`);
+    return res.paths ?? [];
+  }
+
   // ── Headlight ────────────────────────────────────────────────────────
 
   async setHeadlight(sn: string, on: boolean): Promise<CommandResult> {

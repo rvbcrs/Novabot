@@ -42,9 +42,9 @@ export function MowingDirectionPreview({ direction, size = 100 }: Props) {
     const spacing = 6;
     const count = Math.ceil(diagonal / spacing);
 
-    // Direction: 0=N means stripes go east-west
-    const rad = ((direction + 90) * Math.PI) / 180;
-    const perpRad = (direction * Math.PI) / 180;
+    // Stripes run ALONG the path direction, spacing perpendicular
+    const rad = (direction * Math.PI) / 180;
+    const perpRad = ((direction + 90) * Math.PI) / 180;
     const dx = Math.cos(rad);
     const dy = Math.sin(rad);
     const px = Math.cos(perpRad);

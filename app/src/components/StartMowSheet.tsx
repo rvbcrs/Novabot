@@ -37,8 +37,6 @@ interface Props {
   isWorking?: boolean;     // mower currently mowing/navigating
 }
 
-const COMPASS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
-
 export function StartMowSheet({ visible, onClose, sn, onStarted, battery, isWorking }: Props) {
   const navigation = useNavigation();
   const pattern = usePattern();
@@ -81,6 +79,26 @@ export function StartMowSheet({ visible, onClose, sn, onStarted, battery, isWork
 
   // Check if a unicom (channel) exists for the selected map
   const hasUnicom = allMaps.some(m => m.mapType === 'unicom' && m.mapArea?.length >= 2);
+
+  // Send set_para_info when user changes path direction (matches Flutter Advanced Settings flow)
+  const sendPathDirection = async (deg: number) => {
+    try {
+      const url = await getServerUrl();
+      if (!url || !sn) return;
+      const api = new ApiClient(url);
+      await api.sendCommand(sn, {
+        set_para_info: {
+          sound: 0,
+          headlight: 0,
+          path_direction: deg,
+          obstacle_avoidance_sensitivity: 1,
+          manual_controller_v: 300,
+          manual_controller_w: 300,
+        },
+      });
+      console.log(`[StartMow] set_para_info sent: path_direction=${deg}`);
+    } catch { /* ignore */ }
+  };
 
   const handleStart = async () => {
     // Pre-start checks (matches Flutter button_intercept.dart sequence)
@@ -272,43 +290,36 @@ export function StartMowSheet({ visible, onClose, sn, onStarted, battery, isWork
 
             {/* Path direction */}
             <View style={styles.section}>
-              <Text style={styles.label}>{t('pathDirection')}</Text>
-              <View style={styles.compassGrid}>
-                {COMPASS.map((label, i) => {
-                  const deg = i * 45;
-                  return (
-                    <TouchableOpacity
-                      key={deg}
-                      style={[styles.compassBtn, pathDirection === deg && styles.compassBtnActive]}
-                      onPress={async () => {
-                        setPathDirection(deg);
-                        // Send set_para_info immediately when user picks direction
-                        // (matches Flutter: Advanced Settings sends on Confirm, not at start time)
-                        try {
-                          const url = await getServerUrl();
-                          if (!url || !sn) return;
-                          const api = new ApiClient(url);
-                          await api.sendCommand(sn, {
-                            set_para_info: {
-                              sound: 0,
-                              headlight: 0,
-                              path_direction: deg,
-                              obstacle_avoidance_sensitivity: 1,
-                              manual_controller_v: 300,
-                              manual_controller_w: 300,
-                            },
-                          });
-                          console.log(`[StartMow] set_para_info sent: path_direction=${deg}`);
-                        } catch { /* ignore */ }
-                      }}
-                      activeOpacity={0.7}
-                    >
-                      <Text style={[styles.compassText, pathDirection === deg && styles.compassTextActive]}>
-                        {label}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                <Text style={styles.label}>{t('pathDirection')}</Text>
+                <Text style={styles.labelValue}>{pathDirection}°</Text>
+              </View>
+              <View style={styles.stepperRow}>
+                <TouchableOpacity
+                  style={styles.stepperBtn}
+                  onPress={() => {
+                    const deg = Math.max(0, pathDirection - 15);
+                    setPathDirection(deg);
+                    sendPathDirection(deg);
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="remove" size={20} color={colors.white} />
+                </TouchableOpacity>
+                <View style={styles.stepperValue}>
+                  <Text style={styles.stepperText}>{pathDirection}°</Text>
+                </View>
+                <TouchableOpacity
+                  style={styles.stepperBtn}
+                  onPress={() => {
+                    const deg = Math.min(180, pathDirection + 15);
+                    setPathDirection(deg);
+                    sendPathDirection(deg);
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="add" size={20} color={colors.white} />
+                </TouchableOpacity>
               </View>
             </View>
 
@@ -377,8 +388,9 @@ export function StartMowSheet({ visible, onClose, sn, onStarted, battery, isWork
                 : null;
 
               // Direction stripes
-              // +180 to compensate for both-axes-flipped rendering
-              const rad = ((pathDirection + 90) * Math.PI) / 180;
+              // Stripes run ALONG the path direction (mower drives this way)
+              // perpendicular spacing between stripes
+              const rad = (pathDirection * Math.PI) / 180;
               const cx = SIZE / 2, cy = SIZE / 2;
               const stripes = Array.from({ length: 12 }, (_, i) => {
                 const offset = (i - 6) * 12;

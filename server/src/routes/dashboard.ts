@@ -413,6 +413,54 @@ dashboardRouter.delete('/trail/:sn', (req: Request, res: Response) => {
   res.json({ ok: true });
 });
 
+// GET /api/dashboard/planned-path/:sn — planned mowing path
+// Requests via MQTT: {get_map_plan_path: {map_name: "all"}}
+// Response cached from get_map_plan_path_respond
+// Returns array of sub-paths, each being an array of {x, y} local meter points
+const plannedPathCache = new Map<string, Array<{ id: string; points: Array<{ x: number; y: number }> }>>();
+
+dashboardRouter.get('/planned-path/:sn', (req: Request, res: Response) => {
+  const { sn } = req.params;
+  const cached = plannedPathCache.get(sn);
+  if (cached && cached.length > 0) {
+    res.json({ paths: cached });
+  } else {
+    // Request from mower via MQTT (only works while mowing)
+    if (isDeviceOnline(sn)) {
+      publishToDevice(sn, { get_map_plan_path: { map_name: 'all' } });
+      console.log(`[PLAN-PATH] Requested get_map_plan_path from ${sn}`);
+    }
+    res.json({ paths: [] });
+  }
+});
+
+/** Parse and cache planned path from MQTT respond or file */
+export function handlePlannedPathRespond(sn: string, data: Record<string, unknown>): void {
+  try {
+    const paths: Array<{ id: string; points: Array<{ x: number; y: number }> }> = [];
+    // Format: {"1": {"0": "x y,x y,...", "100": "x y,..."}}
+    for (const mapKey of Object.keys(data)) {
+      const subPaths = data[mapKey];
+      if (typeof subPaths !== 'object' || !subPaths) continue;
+      for (const subKey of Object.keys(subPaths as Record<string, string>)) {
+        const pointsStr = (subPaths as Record<string, string>)[subKey];
+        if (typeof pointsStr !== 'string') continue;
+        const points = pointsStr.split(',').map(p => {
+          const parts = p.trim().split(/\s+/).map(Number);
+          return { x: parts[0], y: parts[1] };
+        }).filter(p => !isNaN(p.x) && !isNaN(p.y));
+        if (points.length >= 2) {
+          paths.push({ id: `${mapKey}_${subKey}`, points });
+        }
+      }
+    }
+    plannedPathCache.set(sn, paths);
+    console.log(`[PLAN-PATH] Cached ${paths.length} sub-paths for ${sn}`);
+  } catch (err) {
+    console.error(`[PLAN-PATH] Parse error:`, err);
+  }
+}
+
 // GET /api/dashboard/logs — recente MQTT log entries
 dashboardRouter.get('/logs', (_req: Request, res: Response) => {
   res.json({ logs: getRecentLogs() });

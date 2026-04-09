@@ -335,6 +335,16 @@ export function handleMapMessage(sn: string, parsed: Record<string, unknown>): b
       handleMapOutlineResponse(sn, parsed[command]);
       return true;
 
+    case 'get_map_plan_path_respond': {
+      // Forward to dashboard planned path cache
+      const { handlePlannedPathRespond } = require('../routes/dashboard.js');
+      const respondData = parsed[command] as Record<string, unknown>;
+      if (respondData && typeof respondData === 'object') {
+        handlePlannedPathRespond(sn, respondData);
+      }
+      return true;
+    }
+
     default:
       return false;
   }

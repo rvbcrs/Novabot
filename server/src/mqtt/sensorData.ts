@@ -60,6 +60,7 @@ export const SENSORS: SensorDef[] = [
   { field: 'battery_power',    name: 'Battery',           component: 'sensor', icon: 'mdi:battery', device_class: 'battery', state_class: 'measurement', unit: '%' },
   { field: 'battery_state',    name: 'Battery State',     component: 'sensor', icon: 'mdi:battery-charging' },
   { field: 'msg',              name: 'Status Message',    component: 'sensor', icon: 'mdi:message-text',       entity_category: 'diagnostic' },
+  { field: 'plan_path',        name: 'Plan Path',         component: 'sensor', icon: 'mdi:map-marker-path',    entity_category: 'diagnostic' },
   { field: 'cov_ratio',        name: 'Coverage Ratio',    component: 'sensor', icon: 'mdi:percent', state_class: 'measurement', unit: '%' },
   { field: 'cov_area',         name: 'Coverage Area',     component: 'sensor', icon: 'mdi:texture-box', state_class: 'measurement', unit: 'm²' },
   { field: 'cov_work_time',    name: 'Coverage Work Time', component: 'sensor', icon: 'mdi:timer', state_class: 'measurement', unit: 's' },
@@ -497,6 +498,17 @@ export function updateDeviceData(sn: string, payload: Buffer): Map<string, strin
           changes.set(vf, vv);
         }
       }
+    }
+  }
+
+  // Auto-request planned path when plan_path changes (matches Flutter mqtt_data_handler)
+  if (changes.has('plan_path')) {
+    const planPath = snValues.get('plan_path');
+    if (planPath && planPath !== '0') {
+      import('./mapSync.js').then(({ publishToDevice }) => {
+        publishToDevice(sn, { get_map_plan_path: { map_name: 'all' } });
+        console.log(`[SENSOR] plan_path changed to ${planPath} for ${sn}, requesting get_map_plan_path`);
+      }).catch(() => {});
     }
   }
 

@@ -13,6 +13,7 @@ import Svg, {
   G,
   Circle,
   Path,
+  Image as SvgImage,
 } from 'react-native-svg';
 import { colors } from '../theme/colors';
 
@@ -27,6 +28,7 @@ interface Props {
   pathDirection: number;    // degrees
   size?: number;
   trail?: LocalPoint[];     // mowed path in local meters
+  plannedPaths?: Array<{ id: string; points: LocalPoint[] }>;  // planned mowing paths
   mowerPos?: LocalPoint | null;  // mower position in local meters
   mowerHeading?: number;    // radians
 }
@@ -70,8 +72,10 @@ function generateStripes(
   const cx = (bounds.minX + bounds.maxX) / 2;
   const cy = (bounds.minY + bounds.maxY) / 2;
   const diagonal = Math.sqrt((bounds.maxX - bounds.minX) ** 2 + (bounds.maxY - bounds.minY) ** 2);
-  const rad = ((direction + 90) * Math.PI) / 180;
-  const perpRad = (direction * Math.PI) / 180;
+  // Stripes run ALONG the path direction, spacing perpendicular
+  // toSvg flips both axes, so add 180° to compensate
+  const rad = ((direction + 180) * Math.PI) / 180;
+  const perpRad = ((direction + 270) * Math.PI) / 180;
   const dx = Math.cos(rad), dy = Math.sin(rad);
   const px = Math.cos(perpRad), py = Math.sin(perpRad);
   const totalStripes = Math.ceil(diagonal / spacing);
@@ -86,7 +90,7 @@ function generateStripes(
   return lines;
 }
 
-export function MowingProgressMap({ polygon, progress, pathDirection, size = 200, trail, mowerPos, mowerHeading }: Props) {
+export function MowingProgressMap({ polygon, progress, pathDirection, size = 200, trail, plannedPaths, mowerPos, mowerHeading }: Props) {
   const padding = 14;
   const charger: LocalPoint = { x: 0, y: 0 };
 
@@ -123,12 +127,22 @@ export function MowingProgressMap({ polygon, progress, pathDirection, size = 200
         {/* Polygon background */}
         <SvgPolygon points={pointsStr} fill="rgba(34,197,94,0.12)" stroke="#22c55e" strokeWidth={1.5} strokeLinejoin="round" />
 
-        {/* Direction stripes (thin — shows planned mow direction) */}
-        <G clipPath="url(#polyClipHome)">
-          {stripes.map((l, i) => (
-            <Line key={i} x1={l.x1} y1={l.y1} x2={l.x2} y2={l.y2} stroke="rgba(34,197,94,0.15)" strokeWidth={1} />
-          ))}
-        </G>
+        {/* Planned mowing paths OR direction stripes as fallback */}
+        {plannedPaths && plannedPaths.length > 0 ? (
+          plannedPaths.map((path) => (
+            <Polyline
+              key={`plan-${path.id}`}
+              points={path.points.map(p => toSvg(p, bounds, size, padding)).map(p => `${p.x},${p.y}`).join(' ')}
+              fill="none" stroke="rgba(255,255,255,0.3)" strokeWidth={1} strokeLinecap="round" strokeLinejoin="round"
+            />
+          ))
+        ) : (
+          <G clipPath="url(#polyClipHome)">
+            {stripes.map((l, i) => (
+              <Line key={i} x1={l.x1} y1={l.y1} x2={l.x2} y2={l.y2} stroke="rgba(34,197,94,0.15)" strokeWidth={1} />
+            ))}
+          </G>
+        )}
 
         {/* Mowed trail (thick — shows actual coverage) */}
         {trailSvg.length > 1 && (
@@ -144,16 +158,20 @@ export function MowingProgressMap({ polygon, progress, pathDirection, size = 200
         <Circle cx={chargerSvg.x} cy={chargerSvg.y} r={7} fill="rgba(245,158,11,0.2)" stroke="#f59e0b" strokeWidth={1.5} />
         <Path d={`M${chargerSvg.x - 2} ${chargerSvg.y - 3} L${chargerSvg.x + 2} ${chargerSvg.y - 3} L${chargerSvg.x + 0.5} ${chargerSvg.y} L${chargerSvg.x + 2} ${chargerSvg.y} L${chargerSvg.x - 1} ${chargerSvg.y + 3.5} L${chargerSvg.x} ${chargerSvg.y + 0.5} L${chargerSvg.x - 1.5} ${chargerSvg.y + 0.5} Z`} fill="#f59e0b" />
 
-        {/* Mower + heading */}
+        {/* Mower icon + heading */}
         {mowerSvg && (() => {
-          const rad = mowerHeading != null ? (mowerHeading - Math.PI / 2) : 0;
-          const ax = mowerSvg.x + Math.cos(rad) * 10;
-          const ay = mowerSvg.y + Math.sin(rad) * 10;
+          // Icon points RIGHT at 0°; flipped X-axis → negate heading; +360 offset
+          const degHeading = mowerHeading != null ? -(mowerHeading * 180 / Math.PI) + 180 : 0;
+          const mowerSize = 16;
           return (
-            <G>
-              <Line x1={mowerSvg.x} y1={mowerSvg.y} x2={ax} y2={ay} stroke={colors.emerald} strokeWidth={1.5} strokeLinecap="round" />
-              <Circle cx={mowerSvg.x} cy={mowerSvg.y} r={5} fill={colors.emerald} />
-              <Circle cx={mowerSvg.x} cy={mowerSvg.y} r={2.5} fill={colors.white} />
+            <G transform={`translate(${mowerSvg.x}, ${mowerSvg.y}) rotate(${degHeading})`}>
+              <SvgImage
+                x={-mowerSize / 2}
+                y={-mowerSize * 0.35}
+                width={mowerSize}
+                height={mowerSize * 0.68}
+                href={require('../../assets/lawn_mower.png')}
+              />
             </G>
           );
         })()}

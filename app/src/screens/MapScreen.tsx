@@ -33,6 +33,7 @@ import Svg, {
   Path,
   Defs,
   ClipPath,
+  Image as SvgImage,
 } from 'react-native-svg';
 import * as DocumentPicker from 'expo-document-picker';
 import { Ionicons } from '@expo/vector-icons';
@@ -47,6 +48,7 @@ import { useDemo } from '../context/DemoContext';
 import { usePattern } from '../context/PatternContext';
 import { contourToSvgPath, transformToGps } from '../utils/patternUtils';
 import { useI18n } from '../i18n';
+import { Linking } from 'react-native';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 const MAP_PADDING = 24;
@@ -137,9 +139,10 @@ function generateCoverageStripes(
   const cy = (Math.min(...ys) + Math.max(...ys)) / 2;
   const diagonal = Math.sqrt((Math.max(...xs) - Math.min(...xs)) ** 2 + (Math.max(...ys) - Math.min(...ys)) ** 2);
 
-  // +180 to compensate for both-axes-flipped rendering in localToSvg
-  const rad = ((direction + 270) * Math.PI) / 180;
-  const perpRad = ((direction + 180) * Math.PI) / 180;
+  // Stripes run ALONG the path direction, spacing perpendicular
+  // localToSvg flips both axes, so add 180° to compensate
+  const rad = ((direction + 180) * Math.PI) / 180;
+  const perpRad = ((direction + 270) * Math.PI) / 180;
   const dx = Math.cos(rad), dy = Math.sin(rad);
   const px = Math.cos(perpRad), py = Math.sin(perpRad);
 
@@ -190,6 +193,7 @@ export default function MapScreen() {
   const [maps, setMaps] = useState<MapData[]>([]);
   const [chargerGpsOrigin, setChargerGpsOrigin] = useState<ChargerGps | null>(null);
   const [trail, setTrail] = useState<TrailPoint[]>([]);
+  const [plannedPaths, setPlannedPaths] = useState<Array<{ id: string; points: LocalPoint[] }>>([]);
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
 
@@ -210,7 +214,8 @@ export default function MapScreen() {
   const heading = parseFloat(mower?.sensors.map_position_orientation ?? '0') || 0;
   const msg = mower?.sensors.msg ?? '';
   const isMowing = msg.includes('Work:RUNNING') || msg.includes('Work:NAVIGATING') || msg.includes('Work:COVERING') || msg.includes('Work:MOVING');
-  const covRatio = parseFloat(mower?.sensors.cov_ratio ?? '0') || 0;
+  const covRatioRaw = parseFloat(mower?.sensors.cov_ratio ?? '0') || 0;
+  const covRatio = covRatioRaw <= 1 ? Math.round(covRatioRaw * 100) : Math.round(covRatioRaw);
   const mowingProgress = parseInt(mower?.sensors.mowing_progress ?? '0', 10) || 0;
   const pathDir = parseInt(mower?.sensors.path_direction ?? '0', 10) || 0;
 
@@ -228,13 +233,15 @@ export default function MapScreen() {
       const url = await getServerUrl();
       if (!url) return;
       const api = new ApiClient(url);
-      const [mapsRes, trailRes] = await Promise.all([
+      const [mapsRes, trailRes, pathsRes] = await Promise.all([
         api.fetchMaps(sn).catch(() => ({ maps: [], chargerGps: null })),
         api.getTrail(sn).catch(() => []),
+        api.getPlannedPath(sn).catch(() => []),
       ]);
       setMaps(mapsRes.maps ?? []);
       setChargerGpsOrigin(mapsRes.chargerGps ?? null);
       setTrail(Array.isArray(trailRes) ? trailRes : (trailRes as any).trail ?? []);
+      setPlannedPaths(Array.isArray(pathsRes) ? pathsRes : []);
     } catch { /* ignore */ }
     finally { setLoading(false); }
   }, [mower?.sn, demo.enabled]);
@@ -333,11 +340,8 @@ export default function MapScreen() {
     try {
       const serverUrl = await getServerUrl();
       if (!serverUrl) return;
-      // Trigger server-side ZIP generation, then open download URL
       const downloadUrl = `${serverUrl}/api/dashboard/maps/${encodeURIComponent(mower.sn)}/download-zip`;
-      Alert.alert(t('export'), `Download your map ZIP from:\n\n${downloadUrl}`, [
-        { text: t('ok') },
-      ]);
+      await Linking.openURL(downloadUrl);
     } catch (e) {
       Alert.alert(t('error'), e instanceof Error ? e.message : 'Export failed');
     }
@@ -516,9 +520,8 @@ export default function MapScreen() {
           mapName: 'Imported Garden',
           mapType: 'work',
           mapArea: [
-            { lat: 52.0900, lng: 5.1200 }, { lat: 52.0906, lng: 5.1198 },
-            { lat: 52.0910, lng: 5.1205 }, { lat: 52.0908, lng: 5.1215 },
-            { lat: 52.0903, lng: 5.1218 }, { lat: 52.0898, lng: 5.1210 },
+            { x: -3, y: 2 }, { x: 1, y: 5 }, { x: 5, y: 4 },
+            { x: 4, y: -1 }, { x: 0, y: -2 }, { x: -2, y: 0 },
           ],
         },
       ]);
@@ -767,7 +770,7 @@ export default function MapScreen() {
                         {isMowing && m.mapType === 'work' && (
                           <G clipPath={`url(#clip-${m.mapId})`}>
                             {generateCoverageStripes(svgPts, pathDir, 100, 6).map((l, i) => (
-                              <Line key={i} x1={l.x1} y1={l.y1} x2={l.x2} y2={l.y2} stroke="rgba(34,197,94,0.15)" strokeWidth={1} />
+                              <Line key={i} x1={l.x1} y1={l.y1} x2={l.x2} y2={l.y2} stroke="rgba(34,197,94,0.25)" strokeWidth={1.5} />
                             ))}
                           </G>
                         )}
@@ -775,8 +778,17 @@ export default function MapScreen() {
                     );
                   })}
 
-                  {/* Mowed trail (thick — actual coverage path) */}
-                  {trailLocal.length > 1 && (
+                  {/* Planned mowing path (only while mowing) */}
+                  {isMowing && plannedPaths.length > 0 && plannedPaths.map((path) => (
+                    <Polyline
+                      key={`plan-${path.id}`}
+                      points={path.points.map((p) => localToSvg(p, bounds, MAP_SIZE, INNER_PADDING)).map((p) => `${p.x},${p.y}`).join(' ')}
+                      fill="none" stroke="rgba(255,255,255,0.35)" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round"
+                    />
+                  ))}
+
+                  {/* Mowed trail (only while mowing) */}
+                  {isMowing && trailLocal.length > 1 && (
                     <Polyline
                       points={trailLocal.map((p) => localToSvg(p, bounds, MAP_SIZE, INNER_PADDING)).map((p) => `${p.x},${p.y}`).join(' ')}
                       fill="none" stroke="rgba(34,197,94,0.5)" strokeWidth={5} strokeLinecap="round" strokeLinejoin="round"
@@ -794,19 +806,21 @@ export default function MapScreen() {
                     );
                   })()}
 
-                  {/* Mower + heading */}
+                  {/* Mower icon + heading */}
                   {mowerLocal && (() => {
                     const mp = localToSvg(mowerLocal!, bounds, MAP_SIZE, INNER_PADDING);
-                    // heading from map_position_orientation (radians in local frame)
-                    // Both axes are flipped in localToSvg, so rotate heading by 180° + flip
-                    const rad = heading - Math.PI / 2;
-                    const ax = mp.x + Math.cos(rad) * 14;
-                    const ay = mp.y + Math.sin(rad) * 14;
+                    // Icon points RIGHT at 0°; flipped X-axis → negate heading; +360 offset (270+90)
+                    const degHeading = -(heading * 180 / Math.PI) + 180;
+                    const mowerSize = 20;
                     return (
-                      <G>
-                        <Line x1={mp.x} y1={mp.y} x2={ax} y2={ay} stroke={colors.emerald} strokeWidth={2} strokeLinecap="round" />
-                        <Circle cx={mp.x} cy={mp.y} r={8} fill={colors.emerald} />
-                        <Circle cx={mp.x} cy={mp.y} r={4} fill={colors.white} />
+                      <G transform={`translate(${mp.x}, ${mp.y}) rotate(${degHeading})`}>
+                        <SvgImage
+                          x={-mowerSize / 2}
+                          y={-mowerSize * 0.35}
+                          width={mowerSize}
+                          height={mowerSize * 0.68}
+                          href={require('../../assets/lawn_mower.png')}
+                        />
                       </G>
                     );
                   })()}
