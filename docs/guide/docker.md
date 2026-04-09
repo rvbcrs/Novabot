@@ -23,34 +23,50 @@ The OpenNova server runs as a single Docker container that replaces the Novabot 
 
 ## Quick Start
 
-### 1. Clone the repository
+### 1. Pull the Docker image
 
 ```bash
-git clone https://github.com/rvbcrs/Novabot.git
-cd Novabot
+docker pull rvbcrs/opennova:latest
 ```
 
-### 2. Configure environment
+### 2. Create docker-compose.yml
 
-Copy the example configuration:
+Create a new directory and a `docker-compose.yml` file:
 
 ```bash
-cp .env.example .env
+mkdir opennova && cd opennova
 ```
 
-Edit `.env` and set your JWT secret:
+```yaml
+services:
+  opennova:
+    image: rvbcrs/opennova:latest
+    container_name: opennova
+    restart: unless-stopped
+    ports:
+      - "3000:80"     # API + Admin panel
+      - "1883:1883"   # MQTT broker
+    environment:
+      PORT: 80
+      JWT_SECRET: change_me_to_a_random_secret  # Generate one with: openssl rand -hex 32
+    volumes:
+      - novabot-data:/data
 
-```bash
-# Generate a random secret
-JWT_SECRET=$(openssl rand -hex 32)
-echo "JWT_SECRET=$JWT_SECRET" >> .env
+volumes:
+  novabot-data:
 ```
+
+!!! warning "Change the JWT_SECRET"
+    Replace `change_me_to_a_random_secret` with a random string. You can generate one with `openssl rand -hex 32`. If you don't change it, a random secret is generated at startup (tokens won't survive container restarts).
 
 ### 3. Start the container
 
 ```bash
 docker compose up -d
 ```
+
+!!! note "No git clone needed"
+    You do NOT need to clone the repository. The Docker image from Docker Hub contains everything. The `docker-compose.yml` above is all you need.
 
 ### 4. Verify it's running
 
