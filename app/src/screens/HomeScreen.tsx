@@ -938,9 +938,31 @@ export default function HomeScreen() {
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.actionButton, styles.actionButtonBlue]}
-                onPress={() =>
-                  { sendGoHome(mower.sn); setOptimisticActivity('returning'); }
-                }
+                onPress={() => {
+                  Alert.alert(
+                    t('returnHome') || 'Return Home',
+                    t('returnHomeDesc') || 'How should the mower return to the charging station?',
+                    [
+                      {
+                        text: t('endTaskReturn') || 'End task & return',
+                        onPress: () => {
+                          sendCommand(mower.sn, { stop_navigation: { cmd_num: ++cmdNumRef.current } }, 'stop');
+                          setTimeout(() => { sendGoHome(mower.sn); }, 500);
+                          setOptimisticActivity('returning');
+                        },
+                      },
+                      {
+                        text: t('pauseTaskReturn') || 'Pause task & return',
+                        onPress: () => {
+                          sendCommand(mower.sn, { pause_navigation: { cmd_num: ++cmdNumRef.current } }, 'pause');
+                          setTimeout(() => { sendGoHome(mower.sn); }, 500);
+                          setOptimisticActivity('returning');
+                        },
+                      },
+                      { text: t('cancel') || 'Cancel', style: 'cancel' },
+                    ],
+                  );
+                }}
                 disabled={commandLoading !== null}
                 activeOpacity={0.7}
               >

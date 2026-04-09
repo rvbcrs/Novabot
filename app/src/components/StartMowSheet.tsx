@@ -152,20 +152,12 @@ export function StartMowSheet({ visible, onClose, sn, onStarted, battery, isWork
       // 0. Clear old trail from previous session
       await api.clearTrail(sn).catch(() => {});
 
-      // 1. Set cutting height + direction
-      console.log('[StartMow] Sending set_para_info');
-      // set_para_info: height in cm (same raw value as cutterhigh)
-      await api.sendCommand(sn, {
-        set_para_info: {
-          cutGrassHeight: cuttingHeight,
-          defaultCuttingHeight: cuttingHeight,
-          target_height: cuttingHeight,
-          path_direction: pathDirection,
-        },
-      });
-      await new Promise(r => setTimeout(r, 500));
+      // Note: set_para_info (path_direction etc.) is sent when the user CHANGES the
+      // direction in the compass picker below — not here at start time.
+      // This matches the official Novabot app where set_para_info is sent from
+      // Advanced Settings (separate screen), not during the start mowing flow.
 
-      // 2. Start mowing — try new protocol first, then old
+      // Start mowing — try new protocol first, then old
       // Flutter decompilation (LawnPageLogic::startMowing, 0x92cf0c):
       // New: {start_navigation: {mapName: "test", cutterhigh, area, cmd_num}}
       // Old: {start_run: {mapName: null, area, cutterhigh}, targetIsMower: false}
@@ -288,7 +280,27 @@ export function StartMowSheet({ visible, onClose, sn, onStarted, battery, isWork
                     <TouchableOpacity
                       key={deg}
                       style={[styles.compassBtn, pathDirection === deg && styles.compassBtnActive]}
-                      onPress={() => setPathDirection(deg)}
+                      onPress={async () => {
+                        setPathDirection(deg);
+                        // Send set_para_info immediately when user picks direction
+                        // (matches Flutter: Advanced Settings sends on Confirm, not at start time)
+                        try {
+                          const url = await getServerUrl();
+                          if (!url || !sn) return;
+                          const api = new ApiClient(url);
+                          await api.sendCommand(sn, {
+                            set_para_info: {
+                              sound: 0,
+                              headlight: 0,
+                              path_direction: deg,
+                              obstacle_avoidance_sensitivity: 1,
+                              manual_controller_v: 300,
+                              manual_controller_w: 300,
+                            },
+                          });
+                          console.log(`[StartMow] set_para_info sent: path_direction=${deg}`);
+                        } catch { /* ignore */ }
+                      }}
                       activeOpacity={0.7}
                     >
                       <Text style={[styles.compassText, pathDirection === deg && styles.compassTextActive]}>

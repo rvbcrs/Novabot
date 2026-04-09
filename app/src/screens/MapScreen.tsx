@@ -763,11 +763,11 @@ export default function MapScreen() {
                     return (
                       <G key={m.mapId}>
                         <SvgPolygon points={pts} fill={c.fill} stroke={c.stroke} strokeWidth={2} strokeLinejoin="round" />
-                        {/* Coverage stripes on work polygons during mowing */}
-                        {isMowing && mowingProgress > 0 && m.mapType === 'work' && (
+                        {/* Direction stripes (thin — planned mow direction) */}
+                        {isMowing && m.mapType === 'work' && (
                           <G clipPath={`url(#clip-${m.mapId})`}>
-                            {generateCoverageStripes(svgPts, pathDir, mowingProgress, 6).map((l, i) => (
-                              <Line key={i} x1={l.x1} y1={l.y1} x2={l.x2} y2={l.y2} stroke="rgba(34,197,94,0.4)" strokeWidth={4} />
+                            {generateCoverageStripes(svgPts, pathDir, 100, 6).map((l, i) => (
+                              <Line key={i} x1={l.x1} y1={l.y1} x2={l.x2} y2={l.y2} stroke="rgba(34,197,94,0.15)" strokeWidth={1} />
                             ))}
                           </G>
                         )}
@@ -775,11 +775,11 @@ export default function MapScreen() {
                     );
                   })}
 
-                  {/* Trail */}
+                  {/* Mowed trail (thick — actual coverage path) */}
                   {trailLocal.length > 1 && (
                     <Polyline
                       points={trailLocal.map((p) => localToSvg(p, bounds, MAP_SIZE, INNER_PADDING)).map((p) => `${p.x},${p.y}`).join(' ')}
-                      fill="none" stroke="rgba(52,211,153,0.5)" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"
+                      fill="none" stroke="rgba(34,197,94,0.5)" strokeWidth={5} strokeLinecap="round" strokeLinejoin="round"
                     />
                   )}
 

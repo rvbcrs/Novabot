@@ -123,19 +123,21 @@ export function MowingProgressMap({ polygon, progress, pathDirection, size = 200
         {/* Polygon background */}
         <SvgPolygon points={pointsStr} fill="rgba(34,197,94,0.12)" stroke="#22c55e" strokeWidth={1.5} strokeLinejoin="round" />
 
-        {/* Coverage stripes */}
+        {/* Direction stripes (thin — shows planned mow direction) */}
         <G clipPath="url(#polyClipHome)">
           {stripes.map((l, i) => (
-            <Line key={i} x1={l.x1} y1={l.y1} x2={l.x2} y2={l.y2} stroke="rgba(34,197,94,0.3)" strokeWidth={3} />
+            <Line key={i} x1={l.x1} y1={l.y1} x2={l.x2} y2={l.y2} stroke="rgba(34,197,94,0.15)" strokeWidth={1} />
           ))}
         </G>
 
-        {/* Trail */}
+        {/* Mowed trail (thick — shows actual coverage) */}
         {trailSvg.length > 1 && (
-          <Polyline
-            points={trailSvg.map(p => `${p.x},${p.y}`).join(' ')}
-            fill="none" stroke="rgba(52,211,153,0.6)" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"
-          />
+          <G clipPath="url(#polyClipHome)">
+            <Polyline
+              points={trailSvg.map(p => `${p.x},${p.y}`).join(' ')}
+              fill="none" stroke="rgba(34,197,94,0.5)" strokeWidth={6} strokeLinecap="round" strokeLinejoin="round"
+            />
+          </G>
         )}
 
         {/* Charger */}
