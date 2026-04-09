@@ -19,8 +19,8 @@ services:
     container_name: opennova
     restart: unless-stopped
     ports:
-      - "3000:80"     # Admin panel + API
-      - "443:443"     # HTTPS (required for Novabot app!)
+      - "80:80"       # HTTP (API + admin panel + mower connectivity check)
+      - "443:443"     # HTTPS (required for Novabot app)
       - "1883:1883"   # MQTT broker
     environment:
       PORT: 80
