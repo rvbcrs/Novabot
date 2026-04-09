@@ -32,7 +32,7 @@ interface Props {
   visible: boolean;
   onClose: () => void;
   sn: string;
-  onStarted: () => void;
+  onStarted: (settings: { cuttingHeight: number; pathDirection: number }) => void;
   battery?: number;       // mower battery percentage
   isWorking?: boolean;     // mower currently mowing/navigating
 }
@@ -46,7 +46,9 @@ export function StartMowSheet({ visible, onClose, sn, onStarted, battery, isWork
   const [maps, setMaps] = useState<MapData[]>([]);
   const [allMaps, setAllMaps] = useState<MapData[]>([]);
   const [selectedMapId, setSelectedMapId] = useState<string | null>(null);
-  const [cuttingHeight, setCuttingHeight] = useState(40);
+  // cutterhigh = height in mm (20-90, steps of 10). Flutter slider: min=20, max=90, divisions=7.
+  // Values: 20, 30, 40, 50, 60, 70, 80, 90 (mm)
+  const [cuttingHeight, setCuttingHeight] = useState(50);
   const [pathDirection, setPathDirection] = useState(0);
   const [starting, setStarting] = useState(false);
   const [patternId, setPatternId] = useState<number | null>(null);
@@ -59,7 +61,7 @@ export function StartMowSheet({ visible, onClose, sn, onStarted, battery, isWork
   // Load maps when sheet opens
   useEffect(() => {
     if (!visible || !sn) return;
-    setCuttingHeight(40);
+    setCuttingHeight(50);
     setPathDirection(0);
     setSelectedMapId(null);
     (async () => {
@@ -147,8 +149,12 @@ export function StartMowSheet({ visible, onClose, sn, onStarted, battery, isWork
       const mapIdx = selectedIdx >= 0 ? selectedIdx : 0;
       const areaParam = mapIdx === 0 ? 1 : mapIdx === 1 ? 10 : 200;
 
+      // 0. Clear old trail from previous session
+      await api.clearTrail(sn).catch(() => {});
+
       // 1. Set cutting height + direction
       console.log('[StartMow] Sending set_para_info');
+      // set_para_info: height in cm (same raw value as cutterhigh)
       await api.sendCommand(sn, {
         set_para_info: {
           cutGrassHeight: cuttingHeight,
@@ -186,7 +192,7 @@ export function StartMowSheet({ visible, onClose, sn, onStarted, battery, isWork
         await api.sendCommand(sn, runCmd);
       }
 
-      onStarted();
+      onStarted({ cuttingHeight, pathDirection });
       onClose();
     } catch (err) { console.log('[StartMow] ERROR:', err); }
     setStarting(false);
@@ -249,22 +255,22 @@ export function StartMowSheet({ visible, onClose, sn, onStarted, battery, isWork
             <View style={styles.section}>
               <View style={styles.labelRow}>
                 <Text style={styles.label}>{t('cuttingHeight')}</Text>
-                <Text style={styles.labelValue}>{(cuttingHeight / 10).toFixed(0)} cm</Text>
+                <Text style={styles.labelValue}>{cuttingHeight / 10} cm</Text>
               </View>
               <View style={styles.stepperRow}>
                 <TouchableOpacity
                   style={styles.stepperBtn}
-                  onPress={() => setCuttingHeight(Math.max(20, cuttingHeight - 5))}
+                  onPress={() => setCuttingHeight(Math.max(20, cuttingHeight - 10))}
                   activeOpacity={0.7}
                 >
                   <Ionicons name="remove" size={20} color={colors.white} />
                 </TouchableOpacity>
                 <View style={styles.stepperValue}>
-                  <Text style={styles.stepperText}>{(cuttingHeight / 10).toFixed(0)} cm</Text>
+                  <Text style={styles.stepperText}>{cuttingHeight / 10} cm</Text>
                 </View>
                 <TouchableOpacity
                   style={styles.stepperBtn}
-                  onPress={() => setCuttingHeight(Math.min(80, cuttingHeight + 5))}
+                  onPress={() => setCuttingHeight(Math.min(90, cuttingHeight + 10))}
                   activeOpacity={0.7}
                 >
                   <Ionicons name="add" size={20} color={colors.white} />
@@ -359,7 +365,8 @@ export function StartMowSheet({ visible, onClose, sn, onStarted, battery, isWork
                 : null;
 
               // Direction stripes
-              const rad = ((pathDirection - 90) * Math.PI) / 180;
+              // +180 to compensate for both-axes-flipped rendering
+              const rad = ((pathDirection + 90) * Math.PI) / 180;
               const cx = SIZE / 2, cy = SIZE / 2;
               const stripes = Array.from({ length: 12 }, (_, i) => {
                 const offset = (i - 6) * 12;

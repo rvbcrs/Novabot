@@ -52,6 +52,9 @@ interface MowerDerived {
   errorMsg: string | undefined;
   hasError: boolean;
   mapNum: number;
+  mowerPosX: number | null;
+  mowerPosY: number | null;
+  mowerHeading: number | null;
 }
 
 function deriveMower(devices: Map<string, DeviceState>): MowerDerived | null {
@@ -69,18 +72,37 @@ function deriveMower(devices: Map<string, DeviceState>): MowerDerived | null {
     errorStatusRaw > 0 && !NON_BLOCKING_ERRORS.includes(errorStatusRaw),
   );
 
+  // Activity detection based on firmware report_state_robot fields:
+  // - battery_state: "CHARGING" (on dock) / "DISCHARGED" (off dock)
+  // - task_mode: 1=COVERAGE, 2=MAPPING
+  // - work_status: 0=WAIT, 1=WORKING, 9=FINISHED (firmware-specific, not reliable alone)
+  // - recharge_status: 0=IDLE, 1=GOING, 9=FINISHED
+  // - msg: "Mode:COVERAGE Work:RUNNING" etc.
+  const batteryState = s.battery_state?.toUpperCase() ?? '';
+  const taskMode = parseInt(s.task_mode ?? '0', 10);
+  const rechargeStatus = parseInt(s.recharge_status ?? '0', 10);
+  const msg = s.msg ?? '';
+  const isOnDock = batteryState === 'CHARGING';
+  const isCoverageRunning = msg.includes('Work:RUNNING') || msg.includes('Work:NAVIGATING') || msg.includes('Work:COVERING') || msg.includes('Work:MOVING');
+  const isCoveragePaused = msg.includes('Work:PAUSED');
+  const isReturning = rechargeStatus === 1 || msg.includes('Recharge: GOING') || msg.includes('Work:GO_PILE');
+  // "Sticky" mowing: off dock + coverage mode + work not explicitly stopped/finished
+  // Prevents flicker during lane transitions (brief Work:WAIT between lanes)
+  // But NOT sticky when returning home or explicitly cancelled/finished
+  const isMowingSticky = !isOnDock && taskMode === 1 && !isReturning
+    && !msg.includes('Work:FINISHED') && !msg.includes('Work:CANCELLED')
+    && workStatus !== '0' && workStatus !== '9';
+
   let activity: MowerActivity = 'idle';
   if (isOffline) activity = 'idle';
-  else if (hasError && workStatus !== '0') activity = 'error';
+  else if (hasError && !isOnDock) activity = 'error';
   else if (s.start_edit_or_assistant_map_flag === '1') activity = 'mapping';
-  else if (
-    workStatus === '2' ||
-    s.battery_state?.toUpperCase() === 'CHARGING'
-  )
-    activity = 'charging';
-  else if (workStatus === '3') activity = 'returning';
-  else if (workStatus === '4') activity = 'paused';
-  else if (workStatus === '1') activity = 'mowing';
+  else if (isCoverageRunning) activity = 'mowing';
+  else if (isCoveragePaused) activity = 'paused';
+  else if (isReturning && !isOnDock) activity = 'returning';
+  else if (isOnDock) activity = 'charging';
+  // Sticky: still mowing during brief lane transitions (work_status != 0/9)
+  else if (isMowingSticky) activity = 'mowing';
 
   return {
     sn: mower.sn,
@@ -90,7 +112,7 @@ function deriveMower(devices: Map<string, DeviceState>): MowerDerived | null {
       parseInt(s.battery_power ?? s.battery_capacity ?? '0', 10) || 0,
     batteryCharging: activity === 'charging',
     mowingProgress:
-      parseInt(s.mowing_progress ?? '0', 10) || 0,
+      Math.round(parseFloat(s.cov_ratio ?? s.mowing_progress ?? '0')) || 0,
     pathDirection:
       parseInt(s.path_direction ?? '0', 10) || 0,
     wifiRssi: s.wifi_rssi,
@@ -100,6 +122,9 @@ function deriveMower(devices: Map<string, DeviceState>): MowerDerived | null {
     errorMsg: s.error_msg,
     hasError,
     mapNum: parseInt(s.map_num ?? '0', 10) || 0,
+    mowerPosX: parseFloat(s.map_position_x ?? '') || null,
+    mowerPosY: parseFloat(s.map_position_y ?? '') || null,
+    mowerHeading: parseFloat(s.map_position_orientation ?? '') || null,
   };
 }
 
@@ -202,9 +227,28 @@ export default function HomeScreen() {
   const [commandLoading, setCommandLoading] = useState<string | null>(null);
   const [showStartMow, setShowStartMow] = useState(false);
   const [commandError, setCommandError] = useState('');
+  // Optimistic activity override — shows expected state immediately while waiting for MQTT update
+  const [activityOverride, setActivityOverride] = useState<MowerActivity | null>(null);
+  const activityOverrideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const setOptimisticActivity = (target: MowerActivity) => {
+    setActivityOverride(target);
+    if (activityOverrideTimer.current) clearTimeout(activityOverrideTimer.current);
+    // Clear override after 10s — by then real sensor data should have arrived
+    activityOverrideTimer.current = setTimeout(() => setActivityOverride(null), 10000);
+  };
+  // Clear override when real activity matches
+  useEffect(() => {
+    if (mower && activityOverride && mower.activity === activityOverride) {
+      setActivityOverride(null);
+      if (activityOverrideTimer.current) clearTimeout(activityOverrideTimer.current);
+    }
+  }, [mower?.activity, activityOverride]);
   const [showHistory, setShowHistory] = useState(false);
   const [showAlerts, setShowAlerts] = useState(false);
   const [activeMapPolygon, setActiveMapPolygon] = useState<Array<{ x: number; y: number }>>([]);
+  const [mowingTrail, setMowingTrail] = useState<Array<{ x: number; y: number }>>([]);
+  // Track mowing settings for safety check + display
+  const [mowSettings, setMowSettings] = useState<{ cuttingHeight: number; pathDirection: number } | null>(null);
   const demo = useDemo();
 
   // Fetch device sets + map count from server
@@ -250,6 +294,51 @@ export default function HomeScreen() {
       } catch { /* ignore */ }
     })();
   }, [mower?.sn, demo.enabled]);
+
+  // Safety check: verify mower cutting height matches what we set
+  // target_height from firmware = (cutterhigh + 2) * 10 (based on Flutter decompilation)
+  const heightCheckDone = useRef(false);
+  useEffect(() => {
+    if (!mower || !mowSettings || mower.activity !== 'mowing') { heightCheckDone.current = false; return; }
+    const reportedHeight = parseInt(devices.get(mower.sn)?.sensors?.target_height ?? '0', 10);
+    if (reportedHeight === 0 || heightCheckDone.current) return;
+    // Both target_height and cuttingHeight are in mm (20-90 range)
+    // Allow 15mm tolerance for firmware rounding
+    if (Math.abs(reportedHeight - mowSettings.cuttingHeight) > 15) {
+      heightCheckDone.current = true;
+      Alert.alert(
+        'Cutting Height Mismatch!',
+        `Expected ${mowSettings.cuttingHeight / 10}cm but mower reports ${(reportedHeight / 10).toFixed(1)}cm. Stop mowing for safety?`,
+        [
+          { text: 'Stop', style: 'destructive', onPress: () => {
+            sendCommand(mower.sn, { stop_navigation: { cmd_num: ++cmdNumRef.current } }, 'stop');
+            setOptimisticActivity('idle');
+          }},
+          { text: 'Continue', style: 'cancel' },
+        ],
+      );
+    } else {
+      heightCheckDone.current = true;
+    }
+  }, [mower?.sn, mower?.activity, mowSettings, devices]);
+
+  // Auto-refresh trail every 3s during mowing
+  useEffect(() => {
+    if (!mower || (mower.activity !== 'mowing' && mower.activity !== 'mapping') || demo.enabled) return;
+    const refresh = async () => {
+      try {
+        const url = await getServerUrl();
+        if (!url) return;
+        const api = new ApiClient(url);
+        const res = await api.getTrail(mower.sn).catch(() => []);
+        const trail = Array.isArray(res) ? res : (res as any).trail ?? [];
+        setMowingTrail(trail.map((p: any) => ({ x: p.x ?? 0, y: p.y ?? 0 })));
+      } catch { /* ignore */ }
+    };
+    refresh();
+    const interval = setInterval(refresh, 3000);
+    return () => clearInterval(interval);
+  }, [mower?.activity, mower?.sn, demo.enabled]);
 
   // Mower bounce animation (subtle bob when active)
   const bounceAnim = useRef(new Animated.Value(0)).current;
@@ -434,7 +523,7 @@ export default function HomeScreen() {
         chargersWithLora.map(s => ({
           text: `${s.charger!.sn} (LoRa ${s.loraAddress})`,
           onPress: () => doPair(s.charger!.sn),
-        })).concat([{ text: t('cancel'), onPress: () => {} }]),
+        })).concat([{ text: t('cancel'), onPress: async () => {} }]),
       );
     }
   };
@@ -593,7 +682,9 @@ export default function HomeScreen() {
     );
   }
 
-  const activityColor = getActivityColor(mower.activity);
+  // Apply optimistic override if set
+  const displayActivity = activityOverride ?? mower.activity;
+  const activityColor = getActivityColor(displayActivity);
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -640,21 +731,21 @@ export default function HomeScreen() {
         </View>
 
         {/* Mower animation scene */}
-        <MowerScene activity={mower.activity} battery={mower.battery} mowingProgress={mower.mowingProgress} />
+        <MowerScene activity={displayActivity} battery={mower.battery} mowingProgress={mower.mowingProgress} />
 
         {/* Status card */}
         <View style={styles.statusCard}>
           {/* Activity header */}
           <View style={styles.activityRow}>
             <Ionicons
-              name={getActivityIcon(mower.activity)}
+              name={getActivityIcon(displayActivity)}
               size={24}
               color={activityColor}
             />
             <Text style={[styles.activityLabel, { color: activityColor }]}>
-              {getActivityLabel(mower.activity, t)}
+              {getActivityLabel(displayActivity, t)}
             </Text>
-            {mower.mowingProgress > 0 && (mower.activity === 'mowing' || mower.activity === 'mapping') && (
+            {mower.mowingProgress > 0 && (displayActivity === 'mowing' || displayActivity === 'mapping') && (
               <Text style={[styles.progressText, { color: activityColor }]}>
                 {mower.mowingProgress}%
               </Text>
@@ -662,29 +753,31 @@ export default function HomeScreen() {
           </View>
 
           {/* Progress bar */}
-          {mower.mowingProgress > 0 && (mower.activity === 'mowing' || mower.activity === 'mapping') && (
+          {mower.mowingProgress > 0 && (displayActivity === 'mowing' || displayActivity === 'mapping') && (
             <View style={styles.progressTrack}>
               <View style={[styles.progressFill, { width: `${mower.mowingProgress}%` as any, backgroundColor: activityColor }]} />
             </View>
           )}
 
           {/* Mowing/mapping: show progress map instead of battery ring */}
-          {(mower.activity === 'mowing' || mower.activity === 'mapping') && activeMapPolygon.length >= 3 ? (
+          {(displayActivity === 'mowing' || displayActivity === 'mapping') && activeMapPolygon.length >= 3 ? (
             <MowingProgressMap
               polygon={activeMapPolygon}
               progress={mower.mowingProgress}
-              pathDirection={mower.pathDirection}
-              battery={mower.battery}
-              size={140}
+              pathDirection={mowSettings?.pathDirection ?? mower.pathDirection}
+              size={240}
+              trail={mowingTrail}
+              mowerPos={mower.mowerPosX != null && mower.mowerPosY != null ? { x: mower.mowerPosX, y: mower.mowerPosY } : null}
+              mowerHeading={mower.mowerHeading ?? undefined}
             />
           ) : (
             /* Battery ring + mower image (default) */
-            <View style={[styles.batteryContainer, { shadowColor: GLOW_COLOR[mower.activity], shadowRadius: 30, shadowOpacity: 1 }]}>
+            <View style={[styles.batteryContainer, { shadowColor: GLOW_COLOR[displayActivity], shadowRadius: 30, shadowOpacity: 1 }]}>
               <BatteryRing
                 percentage={mower.battery}
-                size={130}
-                strokeWidth={8}
-                color={mower.activity === 'idle' ? undefined : getActivityColor(mower.activity)}
+                size={160}
+                strokeWidth={10}
+                color={displayActivity === 'idle' ? undefined : getActivityColor(displayActivity)}
               />
               <Animated.View style={[styles.batteryTextOverlay, { transform: [{ translateY: bounceAnim }, { scale: pulseAnim }] }]}>
                 <Image
@@ -706,33 +799,27 @@ export default function HomeScreen() {
           <View style={styles.chipsRow}>
             {mower.wifiRssi != null && (
               <View style={styles.chip}>
-                <Ionicons name="wifi" size={14} color={colors.textDim} />
-                <Text style={styles.chipText}>{mower.wifiRssi} dBm</Text>
+                <Ionicons name="wifi" size={11} color={colors.textDim} />
+                <Text style={styles.chipText}>{mower.wifiRssi}</Text>
               </View>
             )}
             {mower.rtkSat != null && (
               <View style={styles.chip}>
-                <Ionicons name="navigate" size={14} color={colors.textDim} />
-                <Text style={styles.chipText}>{mower.rtkSat} {t('sats')}</Text>
+                <Ionicons name="navigate" size={11} color={colors.textDim} />
+                <Text style={styles.chipText}>{mower.rtkSat} sat</Text>
               </View>
             )}
             {devices.get(mower.sn)?.sensors?.cpu_temperature && (
               <View style={styles.chip}>
-                <Ionicons name="thermometer" size={14} color={colors.textDim} />
-                <Text style={styles.chipText}>{devices.get(mower.sn)?.sensors?.cpu_temperature}°C</Text>
-              </View>
-            )}
-            {devices.get(mower.sn)?.sensors?.mow_blade_work_time && (
-              <View style={styles.chip}>
-                <Ionicons name="cut" size={14} color={colors.textDim} />
-                <Text style={styles.chipText}>{Math.round(parseInt(devices.get(mower.sn)?.sensors?.mow_blade_work_time ?? '0', 10) / 3600)}h {t('blade')}</Text>
+                <Ionicons name="thermometer" size={11} color={colors.textDim} />
+                <Text style={styles.chipText}>{devices.get(mower.sn)?.sensors?.cpu_temperature}°</Text>
               </View>
             )}
             {!mower.online && (
               <View style={[styles.chip, styles.chipOffline]}>
                 <Ionicons
                   name="cloud-offline"
-                  size={14}
+                  size={11}
                   color={colors.red}
                 />
                 <Text style={[styles.chipText, { color: colors.red }]}>
@@ -767,7 +854,7 @@ export default function HomeScreen() {
         <View style={styles.actionsCard}>
           <Text style={styles.actionsTitle}>{t('actions')}</Text>
 
-          {(mower.activity === 'idle' || mower.activity === 'charging') && (
+          {(displayActivity === 'idle' || displayActivity === 'charging') && (
             <View style={styles.actionRow}>
               <TouchableOpacity
                 style={[
@@ -775,6 +862,7 @@ export default function HomeScreen() {
                   (mower.hasError || mower.mapNum === 0 && serverMapCount === 0)
                     ? styles.actionButtonDisabled
                     : styles.actionButtonGreen,
+                  { flex: 1 },
                 ]}
                 onPress={() => mower.mapNum === 0 && serverMapCount === 0
                   ? (navigation as any).navigate('AppSettings', { screen: 'Mapping' })
@@ -794,16 +882,32 @@ export default function HomeScreen() {
                   </>
                 )}
               </TouchableOpacity>
+              {/* Go Home button — only when mower is NOT on charger */}
+              {displayActivity === 'idle' && (
+                <TouchableOpacity
+                  style={[styles.actionButton, styles.actionButtonBlue]}
+                  onPress={() => { sendGoHome(mower.sn); setOptimisticActivity('returning'); }}
+                  disabled={commandLoading !== null || !mower.online}
+                  activeOpacity={0.7}
+                >
+                  {commandLoading === 'home' ? (
+                    <ActivityIndicator size="small" color={colors.white} />
+                  ) : (
+                    <Ionicons name="home" size={20} color={colors.white} />
+                  )}
+                </TouchableOpacity>
+              )}
             </View>
           )}
 
-          {mower.activity === 'mowing' && (
+          {displayActivity === 'mowing' && (
             <View style={styles.actionRow}>
               <TouchableOpacity
                 style={[styles.actionButton, styles.actionButtonAmber]}
-                onPress={() =>
-                  sendCommand(mower.sn, { pause_navigation: { cmd_num: ++cmdNumRef.current } }, 'pause')
-                }
+                onPress={() => {
+                  sendCommand(mower.sn, { pause_navigation: { cmd_num: ++cmdNumRef.current } }, 'pause');
+                  setOptimisticActivity('paused');
+                }}
                 disabled={commandLoading !== null}
                 activeOpacity={0.7}
               >
@@ -812,15 +916,15 @@ export default function HomeScreen() {
                 ) : (
                   <>
                     <Ionicons name="pause" size={20} color={colors.white} />
-                    <Text style={styles.actionButtonText}>{t('pause')}</Text>
                   </>
                 )}
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.actionButton, styles.actionButtonRed]}
-                onPress={() =>
-                  sendCommand(mower.sn, { stop_navigation: { cmd_num: ++cmdNumRef.current } }, 'stop')
-                }
+                onPress={() => {
+                  sendCommand(mower.sn, { stop_navigation: { cmd_num: ++cmdNumRef.current } }, 'stop');
+                  setOptimisticActivity('idle');
+                }}
                 disabled={commandLoading !== null}
                 activeOpacity={0.7}
               >
@@ -829,14 +933,13 @@ export default function HomeScreen() {
                 ) : (
                   <>
                     <Ionicons name="stop-circle" size={20} color={colors.white} />
-                    <Text style={styles.actionButtonText}>{t('stop')}</Text>
                   </>
                 )}
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.actionButton, styles.actionButtonBlue]}
                 onPress={() =>
-                  sendGoHome(mower.sn)
+                  { sendGoHome(mower.sn); setOptimisticActivity('returning'); }
                 }
                 disabled={commandLoading !== null}
                 activeOpacity={0.7}
@@ -846,20 +949,20 @@ export default function HomeScreen() {
                 ) : (
                   <>
                     <Ionicons name="home" size={20} color={colors.white} />
-                    <Text style={styles.actionButtonText}>{t('goHome')}</Text>
                   </>
                 )}
               </TouchableOpacity>
             </View>
           )}
 
-          {mower.activity === 'paused' && (
+          {displayActivity === 'paused' && (
             <View style={styles.actionRow}>
               <TouchableOpacity
                 style={[styles.actionButton, styles.actionButtonGreen]}
-                onPress={() =>
-                  sendCommand(mower.sn, { resume_navigation: { cmd_num: ++cmdNumRef.current } }, 'resume')
-                }
+                onPress={() => {
+                  sendCommand(mower.sn, { resume_navigation: { cmd_num: ++cmdNumRef.current } }, 'resume');
+                  setOptimisticActivity('mowing');
+                }}
                 disabled={commandLoading !== null}
                 activeOpacity={0.7}
               >
@@ -868,14 +971,13 @@ export default function HomeScreen() {
                 ) : (
                   <>
                     <Ionicons name="play" size={20} color={colors.white} />
-                    <Text style={styles.actionButtonText}>{t('resume')}</Text>
                   </>
                 )}
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.actionButton, styles.actionButtonBlue]}
                 onPress={() =>
-                  sendGoHome(mower.sn)
+                  { sendGoHome(mower.sn); setOptimisticActivity('returning'); }
                 }
                 disabled={commandLoading !== null}
                 activeOpacity={0.7}
@@ -885,19 +987,18 @@ export default function HomeScreen() {
                 ) : (
                   <>
                     <Ionicons name="home" size={20} color={colors.white} />
-                    <Text style={styles.actionButtonText}>{t('goHome')}</Text>
                   </>
                 )}
               </TouchableOpacity>
             </View>
           )}
 
-          {mower.activity === 'error' && (
+          {displayActivity === 'error' && (
             <View style={styles.actionRow}>
               <TouchableOpacity
                 style={[styles.actionButton, styles.actionButtonBlue]}
                 onPress={() =>
-                  sendGoHome(mower.sn)
+                  { sendGoHome(mower.sn); setOptimisticActivity('returning'); }
                 }
                 disabled={commandLoading !== null}
                 activeOpacity={0.7}
@@ -907,14 +1008,13 @@ export default function HomeScreen() {
                 ) : (
                   <>
                     <Ionicons name="home" size={20} color={colors.white} />
-                    <Text style={styles.actionButtonText}>{t('goHome')}</Text>
                   </>
                 )}
               </TouchableOpacity>
             </View>
           )}
 
-          {mower.activity === 'returning' && (
+          {displayActivity === 'returning' && (
             <View style={styles.actionRow}>
               <TouchableOpacity
                 style={[styles.actionButton, styles.actionButtonRed]}
@@ -929,7 +1029,6 @@ export default function HomeScreen() {
                 ) : (
                   <>
                     <Ionicons name="stop" size={20} color={colors.white} />
-                    <Text style={styles.actionButtonText}>{t('stop')}</Text>
                   </>
                 )}
               </TouchableOpacity>
@@ -972,9 +1071,9 @@ export default function HomeScreen() {
           visible={showStartMow}
           onClose={() => setShowStartMow(false)}
           sn={mower.sn}
-          onStarted={() => setCommandLoading(null)}
+          onStarted={(settings) => { setCommandLoading(null); setOptimisticActivity('mowing'); setMowSettings(settings); setMowingTrail([]); }}
           battery={mower.battery}
-          isWorking={mower.activity === 'mowing' || mower.activity === 'mapping'}
+          isWorking={displayActivity === 'mowing' || displayActivity === 'mapping'}
         />
       )}
 
@@ -1340,24 +1439,23 @@ const styles = StyleSheet.create({
   },
   chipsRow: {
     flexDirection: 'row',
-    gap: 10,
-    flexWrap: 'wrap',
+    gap: 6,
     justifyContent: 'center',
   },
   chip: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
     backgroundColor: 'rgba(255,255,255,0.05)',
-    borderRadius: 20,
+    borderRadius: 12,
   },
   chipOffline: {
     backgroundColor: 'rgba(239,68,68,0.1)',
   },
   chipText: {
-    fontSize: 13,
+    fontSize: 11,
     color: colors.textDim,
   },
   errorCard: {

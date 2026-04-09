@@ -137,8 +137,9 @@ function generateCoverageStripes(
   const cy = (Math.min(...ys) + Math.max(...ys)) / 2;
   const diagonal = Math.sqrt((Math.max(...xs) - Math.min(...xs)) ** 2 + (Math.max(...ys) - Math.min(...ys)) ** 2);
 
-  const rad = ((direction + 90) * Math.PI) / 180;
-  const perpRad = (direction * Math.PI) / 180;
+  // +180 to compensate for both-axes-flipped rendering in localToSvg
+  const rad = ((direction + 270) * Math.PI) / 180;
+  const perpRad = ((direction + 180) * Math.PI) / 180;
   const dx = Math.cos(rad), dy = Math.sin(rad);
   const px = Math.cos(perpRad), py = Math.sin(perpRad);
 
@@ -207,7 +208,9 @@ export default function MapScreen() {
 
   // Use local map_position_orientation (radians) for heading on local map
   const heading = parseFloat(mower?.sensors.map_position_orientation ?? '0') || 0;
-  const isMowing = mower?.sensors.work_status === '1';
+  const msg = mower?.sensors.msg ?? '';
+  const isMowing = msg.includes('Work:RUNNING') || msg.includes('Work:NAVIGATING') || msg.includes('Work:COVERING') || msg.includes('Work:MOVING');
+  const covRatio = parseFloat(mower?.sensors.cov_ratio ?? '0') || 0;
   const mowingProgress = parseInt(mower?.sensors.mowing_progress ?? '0', 10) || 0;
   const pathDir = parseInt(mower?.sensors.path_direction ?? '0', 10) || 0;
 
@@ -237,6 +240,21 @@ export default function MapScreen() {
   }, [mower?.sn, demo.enabled]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  // Auto-refresh trail every 3s during mowing
+  useEffect(() => {
+    if (!isMowing || !mower?.sn || demo.enabled) return;
+    const interval = setInterval(async () => {
+      try {
+        const url = await getServerUrl();
+        if (!url) return;
+        const api = new ApiClient(url);
+        const trailRes = await api.getTrail(mower.sn).catch(() => []);
+        setTrail(Array.isArray(trailRes) ? trailRes : (trailRes as any).trail ?? []);
+      } catch { /* ignore */ }
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [isMowing, mower?.sn, demo.enabled]);
 
   // ── Pan + Zoom state ─────────────────────────────────────────────
   const scale = useSharedValue(1);
@@ -605,11 +623,12 @@ export default function MapScreen() {
   };
 
   // ── Compute bounds ───────────────────────────────────────────────
-  // Trail GPS → local meters
+  // Trail is already in local meters from server (map_position_x/y based)
   const trailLocal: LocalPoint[] = useMemo(() => {
-    if (!chargerGpsOrigin || trail.length === 0) return [];
-    return trail.map(p => gpsToLocal(p, chargerGpsOrigin));
-  }, [trail, chargerGpsOrigin]);
+    if (trail.length === 0) return [];
+    // Trail from server is [{x, y, ts}] — already local meters
+    return trail.map(p => ({ x: (p as any).x ?? 0, y: (p as any).y ?? 0 }));
+  }, [trail]);
 
   // Charger is always at origin (0,0)
   const chargerLocal: LocalPoint = { x: 0, y: 0 };
@@ -952,6 +971,12 @@ export default function MapScreen() {
               <View style={styles.chip}>
                 <Ionicons name="navigate" size={14} color={colors.textDim} />
                 <Text style={styles.chipText}>Loc: {mower.sensors.loc_quality}%</Text>
+              </View>
+            )}
+            {isMowing && covRatio > 0 && (
+              <View style={[styles.chip, { backgroundColor: 'rgba(34,197,94,0.15)' }]}>
+                <Ionicons name="checkmark-circle" size={14} color={colors.emerald} />
+                <Text style={[styles.chipText, { color: colors.emerald }]}>{Math.round(covRatio)}% done</Text>
               </View>
             )}
           </View>

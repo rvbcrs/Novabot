@@ -59,6 +59,10 @@ export const SENSORS: SensorDef[] = [
   // report_state_robot
   { field: 'battery_power',    name: 'Battery',           component: 'sensor', icon: 'mdi:battery', device_class: 'battery', state_class: 'measurement', unit: '%' },
   { field: 'battery_state',    name: 'Battery State',     component: 'sensor', icon: 'mdi:battery-charging' },
+  { field: 'msg',              name: 'Status Message',    component: 'sensor', icon: 'mdi:message-text',       entity_category: 'diagnostic' },
+  { field: 'cov_ratio',        name: 'Coverage Ratio',    component: 'sensor', icon: 'mdi:percent', state_class: 'measurement', unit: '%' },
+  { field: 'cov_area',         name: 'Coverage Area',     component: 'sensor', icon: 'mdi:texture-box', state_class: 'measurement', unit: 'm²' },
+  { field: 'cov_work_time',    name: 'Coverage Work Time', component: 'sensor', icon: 'mdi:timer', state_class: 'measurement', unit: 's' },
   { field: 'cpu_temperature',  name: 'CPU Temperature',   component: 'sensor', icon: 'mdi:thermometer', device_class: 'temperature', state_class: 'measurement', unit: '°C' },
   { field: 'sw_version',       name: 'Firmware Version',  component: 'sensor', icon: 'mdi:tag',                  entity_category: 'diagnostic' },
   { field: 'loc_quality',      name: 'Location Quality',  component: 'sensor', icon: 'mdi:crosshairs-gps', state_class: 'measurement', unit: '%' },
@@ -225,6 +229,36 @@ export function getGpsTrail(sn: string): TrailPoint[] {
 
 export function clearGpsTrail(sn: string): void {
   gpsTrails.delete(sn);
+}
+
+// ── Local meter trail (from map_position_x/y, much more accurate than GPS) ──
+
+export interface LocalTrailPoint { x: number; y: number; ts: number }
+
+const localTrails = new Map<string, LocalTrailPoint[]>();
+
+function appendLocalTrailPoint(sn: string, x: number, y: number): void {
+  if (isNaN(x) || isNaN(y)) return;
+  if (!localTrails.has(sn)) localTrails.set(sn, []);
+  const trail = localTrails.get(sn)!;
+
+  // Dedup: skip als < 5cm verplaatsing
+  if (trail.length > 0) {
+    const last = trail[trail.length - 1];
+    const dx = x - last.x, dy = y - last.y;
+    if (dx * dx + dy * dy < 0.0025) return; // 5cm threshold
+  }
+
+  trail.push({ x, y, ts: Date.now() });
+  if (trail.length > MAX_TRAIL_POINTS) trail.splice(0, trail.length - MAX_TRAIL_POINTS);
+}
+
+export function getLocalTrail(sn: string): LocalTrailPoint[] {
+  return localTrails.get(sn) ?? [];
+}
+
+export function clearLocalTrail(sn: string): void {
+  localTrails.delete(sn);
 }
 
 /**
@@ -466,14 +500,22 @@ export function updateDeviceData(sn: string, payload: Buffer): Map<string, strin
     }
   }
 
-  // Append GPS trail alleen als de maaier actief aan het maaien is
-  if (changes.has('latitude') || changes.has('longitude')) {
-    const ws = snValues.get('work_status');
-    // work_status 1 = mowing, 5 = mapping — alleen dan trail opslaan
-    if (ws === '1' || ws === '5') {
+  // Append trails wanneer de maaier actief beweegt (maaien, navigeren, mapping)
+  const currentMsg = snValues.get('msg') ?? '';
+  const isActive = currentMsg.includes('Work:RUNNING') || currentMsg.includes('Work:NAVIGATING') || currentMsg.includes('Work:COVERING') || currentMsg.includes('Work:MOVING');
+
+  if (isActive) {
+    // GPS trail
+    if (changes.has('latitude') || changes.has('longitude')) {
       const lat = snValues.get('latitude');
       const lng = snValues.get('longitude');
       if (lat && lng) appendTrailPoint(sn, lat, lng);
+    }
+    // Local meter trail (from map_position_x/y — much more accurate)
+    if (changes.has('map_position_x') || changes.has('map_position_y')) {
+      const mx = parseFloat(snValues.get('map_position_x') ?? '');
+      const my = parseFloat(snValues.get('map_position_y') ?? '');
+      if (!isNaN(mx) && !isNaN(my)) appendLocalTrailPoint(sn, mx, my);
     }
   }
 

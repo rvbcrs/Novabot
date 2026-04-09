@@ -108,7 +108,7 @@ export class ApiClient {
   }
 
   private async request<T>(
-    method: 'GET' | 'POST',
+    method: 'GET' | 'POST' | 'DELETE',
     path: string,
     options?: {
       body?: Record<string, unknown>;
@@ -266,6 +266,10 @@ export class ApiClient {
 
   async getTrail(sn: string): Promise<TrailPoint[]> {
     return this.request<TrailPoint[]>('GET', `/api/dashboard/trail/${enc(sn)}`);
+  }
+
+  async clearTrail(sn: string): Promise<void> {
+    await this.request('DELETE', `/api/dashboard/trail/${enc(sn)}`);
   }
 
   // ── Headlight ────────────────────────────────────────────────────────

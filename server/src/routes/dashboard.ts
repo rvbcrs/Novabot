@@ -4,7 +4,7 @@
  */
 import { Router, Request, Response } from 'express';
 import { db } from '../db/database.js';
-import { getAllDeviceSnapshots, getDeviceSnapshot, SENSORS, getGpsTrail, clearGpsTrail, deviceCache, translateValue, markPinVerified } from '../mqtt/sensorData.js';
+import { getAllDeviceSnapshots, getDeviceSnapshot, SENSORS, getGpsTrail, clearGpsTrail, getLocalTrail, clearLocalTrail, deviceCache, translateValue, markPinVerified } from '../mqtt/sensorData.js';
 import { isDeviceOnline, writeRawPublish, getBrokerDiagnostics } from '../mqtt/broker.js';
 import { getRecentLogs, forwardToDashboard } from '../dashboard/socketHandler.js';
 import { requestMapList, requestMapOutline, publishToDevice, publishRawToDevice, publishEncryptedOnTopic, publishToTopic, goToChargePayload, getNextCmdNum } from '../mqtt/mapSync.js';
@@ -394,16 +394,22 @@ dashboardRouter.get('/maps/:sn', (req: Request, res: Response) => {
   });
 });
 
-// GET /api/dashboard/trail/:sn — GPS trail punten voor de kaart
+// GET /api/dashboard/trail/:sn — trail punten voor de kaart
+// ?coords=local retourneert lokale meters (default), ?coords=gps retourneert GPS
 dashboardRouter.get('/trail/:sn', (req: Request, res: Response) => {
   const { sn } = req.params;
-  res.json({ trail: getGpsTrail(sn) });
+  if (req.query.coords === 'gps') {
+    res.json({ trail: getGpsTrail(sn) });
+  } else {
+    res.json({ trail: getLocalTrail(sn) });
+  }
 });
 
-// DELETE /api/dashboard/trail/:sn — wis GPS trail
+// DELETE /api/dashboard/trail/:sn — wis trail
 dashboardRouter.delete('/trail/:sn', (req: Request, res: Response) => {
   const { sn } = req.params;
   clearGpsTrail(sn);
+  clearLocalTrail(sn);
   res.json({ ok: true });
 });
 

@@ -5,6 +5,8 @@
 
 import { Router, Response } from 'express';
 import os from 'os';
+import dns from 'dns';
+import { execSync } from 'child_process';
 import { db } from '../db/database.js';
 import { AuthRequest } from '../types/index.js';
 
@@ -228,3 +230,79 @@ adminStatusRouter.post('/reset-password', (req: AuthRequest, res: Response) => {
   console.log(`[ADMIN] Password reset for user ${userId}`);
   res.json({ ok: true });
 });
+
+// GET /api/admin-status/dns-check — verify DNS configuration
+// Checks if *.lfibot.com resolves to a private/local IP (= redirected, good)
+// vs the Novabot cloud IPs (= not redirected, bad)
+adminStatusRouter.get('/dns-check', async (_req: AuthRequest, res: Response) => {
+  const serverIp = process.env.TARGET_IP ?? getLocalIp();
+  const domains = ['mqtt.lfibot.com', 'app.lfibot.com'];
+
+  const results = await Promise.all(domains.map(domain =>
+    new Promise<{ domain: string; resolvedIp: string | null; ok: boolean; isLocal: boolean; error?: string }>(resolve => {
+      dns.resolve4(domain, (err, addresses) => {
+        if (err) {
+          resolve({ domain, resolvedIp: null, ok: false, isLocal: false, error: err.code ?? err.message });
+        } else {
+          const ip = addresses[0] ?? null;
+          // RFC1918 private ranges: 10.x, 172.16-31.x, 192.168.x
+          const isLocal = ip ? /^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.)/.test(ip) : false;
+          resolve({ domain, resolvedIp: ip, ok: isLocal, isLocal });
+        }
+      });
+    })
+  ));
+
+  res.json({ serverIp, domains: results });
+});
+
+// GET /api/admin-status/dnsmasq — get dnsmasq status
+adminStatusRouter.get('/dnsmasq', (_req: AuthRequest, res: Response) => {
+  try {
+    execSync('pgrep -x dnsmasq', { stdio: 'ignore' });
+    res.json({ running: true });
+  } catch {
+    res.json({ running: false });
+  }
+});
+
+// POST /api/admin-status/dnsmasq — start or stop dnsmasq
+adminStatusRouter.post('/dnsmasq', (req: AuthRequest, res: Response) => {
+  const { enable } = req.body as { enable?: boolean };
+  const serverIp = process.env.TARGET_IP ?? getLocalIp();
+  const upstreamDns = process.env.UPSTREAM_DNS ?? '8.8.8.8';
+
+  if (enable) {
+    try {
+      // Write dnsmasq config
+      const config = `no-resolv\nserver=${upstreamDns}\naddress=/lfibot.com/${serverIp}\nlisten-address=0.0.0.0\nbind-interfaces\nno-hosts\n`;
+      require('fs').writeFileSync('/etc/dnsmasq.conf', config);
+      // Kill existing if running, then start
+      try { execSync('pkill -x dnsmasq', { stdio: 'ignore' }); } catch { /* not running */ }
+      execSync('dnsmasq', { stdio: 'ignore' });
+      console.log(`[DNS] dnsmasq started: *.lfibot.com → ${serverIp}`);
+      res.json({ ok: true, running: true, serverIp });
+    } catch (err) {
+      console.error(`[DNS] Failed to start dnsmasq:`, err);
+      res.json({ ok: false, error: 'Failed to start dnsmasq. Is it installed?' });
+    }
+  } else {
+    try {
+      execSync('pkill -x dnsmasq', { stdio: 'ignore' });
+      console.log('[DNS] dnsmasq stopped');
+      res.json({ ok: true, running: false });
+    } catch {
+      res.json({ ok: true, running: false });
+    }
+  }
+});
+
+function getLocalIp(): string {
+  const nets = os.networkInterfaces();
+  for (const name of Object.keys(nets)) {
+    for (const net of nets[name] ?? []) {
+      if (net.family === 'IPv4' && !net.internal) return net.address;
+    }
+  }
+  return '127.0.0.1';
+}

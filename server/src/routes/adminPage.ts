@@ -20,7 +20,7 @@ export function adminPageHtml(): string {
   .card{background:#16213e;border-radius:12px;padding:16px;margin-bottom:16px;border:1px solid rgba(255,255,255,.08)}
   .row{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.04);flex-wrap:wrap;gap:4px}
   .row:last-child{border-bottom:none}
-  .label{color:#888;font-size:13px}
+  .label{color:#aaa;font-size:13px}
   .value{font-size:13px;font-weight:600;text-align:right;word-break:break-all}
   .on{color:#00d4aa}
   .off{color:#ef4444}
@@ -28,7 +28,7 @@ export function adminPageHtml(): string {
   .sn{color:#a78bfa;font-family:monospace;font-size:12px;word-break:break-all}
   .table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
   table{width:100%;border-collapse:collapse;font-size:13px;min-width:400px}
-  th{text-align:left;color:#888;font-size:11px;text-transform:uppercase;letter-spacing:.5px;padding:8px 6px;border-bottom:1px solid rgba(255,255,255,.1);white-space:nowrap}
+  th{text-align:left;color:#aaa;font-size:11px;text-transform:uppercase;letter-spacing:.5px;padding:8px 6px;border-bottom:1px solid rgba(255,255,255,.1);white-space:nowrap}
   td{padding:8px 6px;border-bottom:1px solid rgba(255,255,255,.04)}
   .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px}
   .dot-on{background:#00d4aa}
@@ -49,7 +49,7 @@ export function adminPageHtml(): string {
   input:focus{border-color:#7c3aed;outline:none}
   .login-box{max-width:360px;margin:80px auto;padding:0 16px}
   .tabs{display:flex;gap:4px;margin-bottom:16px}
-  .tab{padding:8px 16px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:500;background:rgba(255,255,255,.05);color:#888;border:none}
+  .tab{padding:8px 16px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:500;background:rgba(255,255,255,.05);color:#aaa;border:none}
   .tab.active{background:#7c3aed;color:#fff}
   .hide-mobile{}
   /* Responsive */
@@ -93,7 +93,7 @@ export function adminPageHtml(): string {
 <div id="firstTimeSetup" class="login-box" style="display:none">
   <div class="card" style="padding:28px">
     <h1 style="color:#00d4aa;margin-bottom:8px;text-align:center">Welcome to OpenNova</h1>
-    <p style="font-size:13px;color:#888;margin-bottom:20px;text-align:center">Import your devices from the Novabot cloud to get started.</p>
+    <p style="font-size:13px;color:#aaa;margin-bottom:20px;text-align:center">Import your devices from the Novabot cloud to get started.</p>
     <input type="email" id="cloud_email_setup" placeholder="Novabot app email" style="margin-bottom:8px">
     <input type="password" id="cloud_pass_setup" placeholder="Novabot app password" style="margin-bottom:14px">
     <button class="btn btn-green" style="width:100%;padding:12px" onclick="firstTimeCloudImport()" id="setupBtn">Connect &amp; Import from Cloud</button>
@@ -143,13 +143,13 @@ export function adminPageHtml(): string {
             <label style="font-size:11px;cursor:pointer;display:flex;align-items:center;gap:3px"><input type="checkbox" id="f_charger" checked onchange="applyFilter()"><span style="color:#eab308">Charger</span></label>
             <label style="font-size:11px;cursor:pointer;display:flex;align-items:center;gap:3px"><input type="checkbox" id="f_app" checked onchange="applyFilter()"><span style="color:#3b82f6">App</span></label>
             <label style="font-size:11px;cursor:pointer;display:flex;align-items:center;gap:3px"><input type="checkbox" id="f_http" checked onchange="applyFilter()"><span style="color:#c084fc">HTTP</span></label>
-            <label style="font-size:11px;cursor:pointer;display:flex;align-items:center;gap:3px"><input type="checkbox" id="f_system" checked onchange="applyFilter()"><span style="color:#888">System</span></label>
+            <label style="font-size:11px;cursor:pointer;display:flex;align-items:center;gap:3px"><input type="checkbox" id="f_system" checked onchange="applyFilter()"><span style="color:#aaa">System</span></label>
           </div>
           <div style="display:flex;gap:4px;align-items:center">
             <button onclick="mqttLogs=[];renderLogs()" style="background:rgba(239,68,68,.15);color:#f87171;border:1px solid rgba(239,68,68,.2);border-radius:6px;padding:4px 12px;font-size:11px;cursor:pointer">Clear</button>
             <button onclick="copyConsole()" style="background:rgba(59,130,246,.15);color:#60a5fa;border:1px solid rgba(59,130,246,.2);border-radius:6px;padding:4px 12px;font-size:11px;cursor:pointer">Copy</button>
           </div>
-          <label style="font-size:11px;color:#888;cursor:pointer;display:flex;align-items:center;gap:3px"><input type="checkbox" id="f_autoscroll" checked>Auto-scroll</label>
+          <label style="font-size:11px;color:#aaa;cursor:pointer;display:flex;align-items:center;gap:3px"><input type="checkbox" id="f_autoscroll" checked>Auto-scroll</label>
         </div>
       </div>
       <div style="padding:6px 12px;border-bottom:1px solid rgba(255,255,255,.06)">
@@ -167,19 +167,29 @@ export function adminPageHtml(): string {
     </div>
 
     <div class="card">
-      <h2>Cloud Import</h2>
-      <p style="font-size:12px;color:#888;margin-bottom:12px">Import devices from the Novabot cloud using your Novabot app credentials.</p>
-      <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap">
-        <input type="email" id="cloud_email" placeholder="Novabot email" style="flex:1;min-width:200px">
-        <input type="password" id="cloud_pass" placeholder="Novabot password" style="flex:1;min-width:200px">
+      <h2>Network &amp; DNS</h2>
+      <p style="font-size:12px;color:#aaa;margin-bottom:12px">Check that DNS is configured correctly so the Novabot app and mower connect to this server instead of the cloud.</p>
+      <div id="dnsResults" style="margin-bottom:12px;font-size:12px">
+        <div style="color:#aaa">Checking DNS...</div>
       </div>
-      <button class="btn btn-purple" onclick="cloudImport()" id="cloudBtn">Connect &amp; Import</button>
-      <div id="cloudResult" style="margin-top:8px"></div>
+      <div style="margin-bottom:12px;padding:8px 12px;background:rgba(255,255,255,.03);border-radius:6px;display:flex;justify-content:space-between;align-items:center">
+        <div>
+          <div style="color:#ddd;font-weight:600;font-size:12px">Built-in DNS Server (dnsmasq)</div>
+          <div style="color:#aaa;font-size:11px">Redirects *.lfibot.com to this server. Point your router DNS here to use.</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span id="dnsmasqStatus" style="font-size:11px;color:#aaa">...</span>
+          <button id="dnsmasqBtn" onclick="toggleDnsmasq()" class="btn" style="font-size:11px;padding:4px 12px;min-width:60px">...</button>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-purple" onclick="checkDns()">Re-check DNS</button>
+      </div>
     </div>
 
     <div class="card">
       <h2>iOS Setup</h2>
-      <p style="font-size:12px;color:#888;margin-bottom:12px">
+      <p style="font-size:12px;color:#aaa;margin-bottom:12px">
         The Novabot iOS app requires HTTPS. Install this profile on your iPhone/iPad to trust the OpenNova server certificate and redirect DNS.
       </p>
       <div style="background:rgba(124,58,237,.08);border:1px solid rgba(124,58,237,.2);border-radius:8px;padding:12px;margin-bottom:12px">
@@ -196,6 +206,17 @@ export function adminPageHtml(): string {
       <p style="font-size:11px;color:#666;margin-top:8px;text-align:center">
         Not needed for Android — only iOS requires TLS certificate trust.
       </p>
+    </div>
+
+    <div class="card">
+      <h2>Cloud Import</h2>
+      <p style="font-size:12px;color:#aaa;margin-bottom:12px">Import devices from the Novabot cloud using your Novabot app credentials.</p>
+      <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap">
+        <input type="email" id="cloud_email" placeholder="Novabot email" style="flex:1;min-width:200px">
+        <input type="password" id="cloud_pass" placeholder="Novabot password" style="flex:1;min-width:200px">
+      </div>
+      <button class="btn btn-purple" onclick="cloudImport()" id="cloudBtn">Connect &amp; Import</button>
+      <div id="cloudResult" style="margin-top:8px"></div>
     </div>
   </div>
 </div>
@@ -215,6 +236,8 @@ function switchTab(name) {
     document.getElementById('tab_' + names[i]).style.display = names[i] === name ? '' : 'none';
     if (names[i] === name) tabs[i].classList.add('active');
   }
+  // Auto-check DNS + dnsmasq when switching to settings
+  if (name === 'settings') { checkDns(); checkDnsmasqStatus(); }
 }
 
 // ── MQTT Console ──────────────────────────────────────────────────
@@ -294,8 +317,8 @@ function formatLog(entry, searchTerm) {
     icon + ' ' +
     '<span style="font-weight:700">' + (entry.type || '').toUpperCase() + '</span> ' +
     (sn ? '<span style="color:' + color + ';opacity:.7">' + sn + '</span> ' : '') +
-    (dir ? '<span style="color:#888">' + dir + '</span> ' : '') +
-    (topic ? '<span style="color:#888">' + topic + '</span> ' : '') +
+    (dir ? '<span style="color:#aaa">' + dir + '</span> ' : '') +
+    (topic ? '<span style="color:#aaa">' + topic + '</span> ' : '') +
     (payload ? '<span style="color:' + color + ';opacity:.6">' + payload + '</span>' : '') +
     '</div>';
 }
@@ -478,6 +501,14 @@ async function loadAccount() {
       '<div class="row"><span class="label">Maps</span><span class="value">' + d.counts.maps + '</span></div>';
   } catch { document.getElementById('account').textContent = 'Failed to load'; }
 }
+// Refresh uptime every 30s
+setInterval(async function() {
+  try {
+    var d = await api('/overview');
+    var s = d.server;
+    document.getElementById('serverInfo').textContent = 'uptime ' + s.uptimeFormatted + ' · ' + s.memoryMB + ' MB RAM';
+  } catch {}
+}, 30000);
 
 function devRow(dev) {
   const online = dev.is_online;
@@ -541,7 +572,7 @@ async function loadMyDevices() {
       html += '</div>';
 
       if (!isPaired) {
-        html += '<div style="padding:4px 8px;margin-bottom:6px"><span style="color:#888;font-size:11px">' +
+        html += '<div style="padding:4px 8px;margin-bottom:6px"><span style="color:#aaa;font-size:11px">' +
           (mowers.length === 0
             ? 'No mower paired on this LoRa address yet. The mower will be linked automatically when it connects, or you can pair it via BLE provisioning.'
             : 'No charger found on this LoRa address. Provision the charger via BLE to link it.') +
@@ -562,8 +593,8 @@ async function loadMyDevices() {
     // Unpaired devices (no LoRa address)
     if (unpaired.length > 0) {
       html += '<div style="margin-bottom:12px;padding:12px;background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.06);border-radius:10px">';
-      html += '<div style="margin-bottom:4px"><span style="font-size:12px;font-weight:600;color:#888">New Devices</span></div>';
-      html += '<div style="padding:4px 8px;margin-bottom:6px"><span style="color:#888;font-size:11px">' +
+      html += '<div style="margin-bottom:4px"><span style="font-size:12px;font-weight:600;color:#aaa">New Devices</span></div>';
+      html += '<div style="padding:4px 8px;margin-bottom:6px"><span style="color:#aaa;font-size:11px">' +
         'These devices have connected but have no LoRa pairing yet. ' +
         'They will be paired automatically after BLE provisioning, or when the charger and mower connect on the same LoRa address.' +
         '</span></div>';
@@ -606,6 +637,81 @@ async function removeDevice(sn) {
   } catch(e) { alert('Remove failed: ' + e.message); }
 }
 
+var dnsmasqRunning = false;
+
+async function checkDnsmasqStatus() {
+  try {
+    var r = await fetch('/api/admin-status/dnsmasq', { headers: { 'Authorization': token } });
+    var d = await r.json();
+    dnsmasqRunning = d.running;
+    var btn = document.getElementById('dnsmasqBtn');
+    var status = document.getElementById('dnsmasqStatus');
+    if (d.running) {
+      btn.textContent = 'Stop';
+      btn.className = 'btn';
+      btn.style.cssText = 'font-size:11px;padding:4px 12px;min-width:60px;background:rgba(239,68,68,.15);color:#f87171;border:1px solid rgba(239,68,68,.2);border-radius:6px;cursor:pointer';
+      status.textContent = 'Running';
+      status.style.color = '#22c55e';
+    } else {
+      btn.textContent = 'Start';
+      btn.className = 'btn';
+      btn.style.cssText = 'font-size:11px;padding:4px 12px;min-width:60px;background:rgba(34,197,94,.15);color:#86efac;border:1px solid rgba(34,197,94,.2);border-radius:6px;cursor:pointer';
+      status.textContent = 'Stopped';
+      status.style.color = '#aaa';
+    }
+  } catch { /* ignore */ }
+}
+
+async function toggleDnsmasq() {
+  var btn = document.getElementById('dnsmasqBtn');
+  btn.textContent = '...';
+  try {
+    await fetch('/api/admin-status/dnsmasq', {
+      method: 'POST',
+      headers: { 'Authorization': token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enable: !dnsmasqRunning })
+    });
+    await checkDnsmasqStatus();
+    checkDns();
+  } catch(e) { btn.textContent = 'Error'; }
+}
+
+async function checkDns() {
+  var el = document.getElementById('dnsResults');
+  el.innerHTML = '<div style="color:#aaa">Checking DNS...</div>';
+  try {
+    var r = await fetch('/api/admin-status/dns-check', { headers: { 'Authorization': token } });
+    var d = await r.json();
+    var html = '<div style="display:flex;flex-direction:column;gap:6px">';
+    html += '<div style="display:flex;justify-content:space-between;padding:6px 10px;background:rgba(255,255,255,.03);border-radius:6px"><span style="color:#aaa">Server IP</span><span style="color:#fff;font-weight:600">' + (d.serverIp || '?') + '</span></div>';
+    for (var i = 0; i < (d.domains || []).length; i++) {
+      var dom = d.domains[i];
+      var ok = dom.ok;
+      var color = ok ? '#22c55e' : '#ef4444';
+      var icon = ok ? '✓' : '✗';
+      var detail = dom.resolvedIp ? dom.resolvedIp : dom.error || 'not resolved';
+      var label = ok ? '(local)' : dom.isLocal === false && dom.resolvedIp ? '(cloud!)' : '';
+      html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 10px;background:rgba(255,255,255,.03);border-radius:6px">';
+      html += '<span style="color:#aaa">' + dom.domain + '</span>';
+      html += '<span style="color:' + color + ';font-weight:600">' + icon + ' ' + detail + ' <span style="font-weight:400;opacity:.7">' + label + '</span></span>';
+      html += '</div>';
+    }
+    html += '</div>';
+    if (d.domains && d.domains.some(function(x) { return !x.ok; })) {
+      html += '<div style="margin-top:8px;padding:8px 12px;background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);border-radius:6px;font-size:11px;color:#fca5a5">';
+      html += '<b>DNS still points to cloud.</b> Configure your router DNS or AdGuard DNS rewrites to redirect *.lfibot.com to a local IP.';
+      html += '</div>';
+    } else if (d.domains && d.domains.length > 0) {
+      html += '<div style="margin-top:8px;padding:8px 12px;background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.2);border-radius:6px;font-size:11px;color:#86efac">';
+      html += '<b>DNS is redirected!</b> All domains resolve to local IPs. The Novabot app and mower will connect locally.';
+      html += '</div>';
+    }
+    el.innerHTML = html;
+  } catch(e) {
+    el.innerHTML = '<div style="color:#ef4444">DNS check failed: ' + e.message + '</div>';
+  }
+}
+
 async function cloudImport() {
   const email = document.getElementById('cloud_email').value;
   const pass = document.getElementById('cloud_pass').value;
@@ -637,7 +743,7 @@ async function cloudImport() {
     all.forEach(function(d) {
       const sn = d.mowerSn || d.chargerSn || d.sn || '?';
       const type = sn.startsWith('LFIC') ? 'Charger' : sn.startsWith('LFIN') ? 'Mower' : '?';
-      devHtml += '<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:12px"><span class="sn">' + sn + '</span><span style="color:#888">' + type + '</span></div>';
+      devHtml += '<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:12px"><span class="sn">' + sn + '</span><span style="color:#aaa">' + type + '</span></div>';
     });
     result.innerHTML = devHtml;
 
@@ -730,7 +836,7 @@ async function firstTimeCloudImport() {
       }
     }
 
-    result.innerHTML += '<p style="color:#00d4aa;font-size:13px;font-weight:600">Setup complete! ' + all.length + ' device(s) imported.</p><p style="color:#888;font-size:12px;margin-top:4px">You can now login with: ' + email + '</p>';
+    result.innerHTML += '<p style="color:#00d4aa;font-size:13px;font-weight:600">Setup complete! ' + all.length + ' device(s) imported.</p><p style="color:#aaa;font-size:12px;margin-top:4px">You can now login with: ' + email + '</p>';
     btn.textContent = 'Done!';
     setTimeout(() => location.reload(), 2000);
   } catch(e) {
