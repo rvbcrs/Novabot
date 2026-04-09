@@ -85,7 +85,8 @@ function deriveMower(devices: Map<string, DeviceState>): MowerDerived | null {
   const isOnDock = batteryState === 'CHARGING';
   const isCoverageRunning = msg.includes('Work:RUNNING') || msg.includes('Work:NAVIGATING') || msg.includes('Work:COVERING') || msg.includes('Work:MOVING');
   const isCoveragePaused = msg.includes('Work:PAUSED');
-  const isReturning = rechargeStatus === 1 || msg.includes('Recharge: GOING') || msg.includes('Work:GO_PILE');
+  const isReturning = rechargeStatus === 1 || msg.includes('Recharge: GOING') || msg.includes('Work:GO_PILE')
+    || msg.includes('Work:BACK_CHARGER') || msg.includes('Work:DOCKING');
   // "Sticky" mowing: off dock + coverage mode + work not explicitly stopped/finished
   // Prevents flicker during lane transitions (brief Work:WAIT between lanes)
   // But NOT sticky when returning home or explicitly cancelled/finished
@@ -238,12 +239,19 @@ export default function HomeScreen() {
   const setOptimisticActivity = (target: MowerActivity) => {
     setActivityOverride(target);
     if (activityOverrideTimer.current) clearTimeout(activityOverrideTimer.current);
-    // Clear override after 10s — by then real sensor data should have arrived
-    activityOverrideTimer.current = setTimeout(() => setActivityOverride(null), 10000);
+    // Returning can take minutes — use longer timeout
+    const timeout = target === 'returning' ? 120000 : 10000;
+    activityOverrideTimer.current = setTimeout(() => setActivityOverride(null), timeout);
   };
-  // Clear override when real activity matches
+  // Clear override when real activity matches OR when returning + arrived on dock
   useEffect(() => {
-    if (mower && activityOverride && mower.activity === activityOverride) {
+    if (!mower || !activityOverride) return;
+    if (mower.activity === activityOverride) {
+      setActivityOverride(null);
+      if (activityOverrideTimer.current) clearTimeout(activityOverrideTimer.current);
+    }
+    // Returning override: clear when mower reaches charger
+    if (activityOverride === 'returning' && mower.activity === 'charging') {
       setActivityOverride(null);
       if (activityOverrideTimer.current) clearTimeout(activityOverrideTimer.current);
     }
@@ -1107,6 +1115,8 @@ export default function HomeScreen() {
           onStarted={(settings) => { setCommandLoading(null); setOptimisticActivity('mowing'); setMowSettings(settings); setMowingTrail([]); }}
           battery={mower.battery}
           isWorking={displayActivity === 'mowing' || displayActivity === 'mapping'}
+          currentCuttingHeight={parseInt(devices.get(mower.sn)?.sensors?.defaultCuttingHeight ?? devices.get(mower.sn)?.sensors?.target_height ?? '', 10) || undefined}
+          currentPathDirection={parseInt(devices.get(mower.sn)?.sensors?.path_direction ?? '', 10) || undefined}
         />
       )}
 

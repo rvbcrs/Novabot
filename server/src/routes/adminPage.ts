@@ -188,9 +188,9 @@ export function adminPageHtml(): string {
     </div>
 
     <div class="card">
-      <h2>iOS Setup</h2>
+      <h2>Certificate Setup</h2>
       <p style="font-size:12px;color:#aaa;margin-bottom:12px">
-        The Novabot iOS app requires HTTPS. Install this profile on your iPhone/iPad to trust the OpenNova server certificate and redirect DNS.
+        The official Novabot app requires HTTPS with a trusted certificate. Install the OpenNova CA certificate on your phone to trust the server.
       </p>
       <div style="background:rgba(124,58,237,.08);border:1px solid rgba(124,58,237,.2);border-radius:8px;padding:12px;margin-bottom:12px">
         <p style="font-size:13px;color:#c4b5fd;margin:0 0 8px 0;font-weight:600">How to install:</p>
@@ -204,7 +204,7 @@ export function adminPageHtml(): string {
       </div>
       <a href="/api/setup/profile" class="btn btn-purple" style="display:block;text-align:center;text-decoration:none">Download iOS Profile (.mobileconfig)</a>
       <p style="font-size:11px;color:#666;margin-top:8px;text-align:center">
-        Not needed for Android — only iOS requires TLS certificate trust.
+        On Android: download the certificate and install it via Settings → Security → Install certificate → CA certificate.
       </p>
     </div>
 

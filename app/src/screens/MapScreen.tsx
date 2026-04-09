@@ -638,7 +638,10 @@ export default function MapScreen() {
 
   const bounds = useMemo(() => {
     let b: LocalBounds | null = null;
-    for (const m of maps) b = expandLocalBounds(b, computeLocalBounds(m.mapArea));
+    for (const m of maps) {
+      if (m.mapType === 'unicom') continue;
+      b = expandLocalBounds(b, computeLocalBounds(m.mapArea));
+    }
     if (trailLocal.length > 0) b = expandLocalBounds(b, computeLocalBounds(trailLocal));
     if (mowerLocal) b = expandLocalBounds(b, computeLocalBounds([mowerLocal]));
     // Always include charger at origin
@@ -760,6 +763,7 @@ export default function MapScreen() {
                   {/* Polygons */}
                   {maps.map((m) => {
                     if (!m.mapArea || m.mapArea.length < 3) return null;
+                    if (m.mapType === 'unicom') return null;
                     const c = MAP_COLORS[m.mapType] ?? MAP_COLORS.work;
                     const svgPts = m.mapArea.map((p) => localToSvg(p, bounds, MAP_SIZE, INNER_PADDING));
                     const pts = svgPts.map((p) => `${p.x},${p.y}`).join(' ');
@@ -937,7 +941,7 @@ export default function MapScreen() {
         {/* Legend */}
         {maps.length > 0 && (
           <View style={styles.legend}>
-            {maps.map((m) => {
+            {maps.filter((m) => m.mapType !== 'unicom').map((m) => {
               const c = MAP_COLORS[m.mapType] ?? MAP_COLORS.work;
               return (
                 <TouchableOpacity

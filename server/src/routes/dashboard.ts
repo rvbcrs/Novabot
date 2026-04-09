@@ -461,6 +461,20 @@ export function handlePlannedPathRespond(sn: string, data: Record<string, unknow
   }
 }
 
+// POST /api/dashboard/sensor-override/:sn — manually set sensor values (for local preferences)
+dashboardRouter.post('/sensor-override/:sn', (req: Request, res: Response) => {
+  const { sn } = req.params;
+  const overrides = req.body as Record<string, string>;
+  if (!overrides || typeof overrides !== 'object') { res.status(400).json({ error: 'body required' }); return; }
+  const cache = deviceCache.get(sn);
+  if (!cache) { deviceCache.set(sn, new Map()); }
+  const snCache = deviceCache.get(sn)!;
+  for (const [k, v] of Object.entries(overrides)) {
+    snCache.set(k, String(v));
+  }
+  res.json({ ok: true });
+});
+
 // GET /api/dashboard/logs — recente MQTT log entries
 dashboardRouter.get('/logs', (_req: Request, res: Response) => {
   res.json({ logs: getRecentLogs() });

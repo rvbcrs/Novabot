@@ -68,6 +68,7 @@ function getHoldType(x: number, y: number): number {
 
 type MappingState = 'idle' | 'preMapping' | 'mapping' | 'stopping' | 'chargerPosition' | 'done' | 'cancelled';
 type MappingMode = 'autonomous' | 'manual';
+type MapBuildType = 'work' | 'obstacle';
 
 export default function MappingScreen() {
   const insets = useSafeAreaInsets();
@@ -82,6 +83,7 @@ export default function MappingScreen() {
 
   // ── State machine ──
   const [mappingState, setMappingState] = useState<MappingState>('idle');
+  const [mapBuildType, setMapBuildType] = useState<MapBuildType>('work');
   const [mappingMode, setMappingMode] = useState<MappingMode | null>(null);
   const [busy, setBusy] = useState(false);
   const [elapsed, setElapsed] = useState(0);
@@ -405,7 +407,8 @@ export default function MappingScreen() {
 
     // Exact payload from official Novabot app (Flutter decompilation):
     // Blutter: model="border"|"obstacle", manual=true|false, mapName, map0, type=0
-    sendCommand({ start_scan_map: { model: 'border', manual: true, mapName: 'map0', map0: '', type: 0, cmd_num: cmdNumRef.current++ } }, 'start_scan_map');
+    const model = mapBuildType === 'obstacle' ? 'obstacle' : 'border';
+    sendCommand({ start_scan_map: { model, manual: true, mapName: 'map0', map0: '', type: 0, cmd_num: cmdNumRef.current++ } }, 'start_scan_map');
     setMappingState('mapping');
     setClosedCycleSeen(false);
     closedCycleDismissedRef.current = false;
@@ -608,6 +611,26 @@ export default function MappingScreen() {
             {/* Mode selection */}
             <View style={styles.card}>
               <Text style={styles.cardTitle}>{t('mappingMode', undefined) || 'MAPPING MODE'}</Text>
+
+              {/* Map type selector */}
+              <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
+                <TouchableOpacity
+                  style={[styles.modeBtn, { flex: 1, paddingVertical: 10 }, mapBuildType === 'work' && { borderColor: colors.emerald, borderWidth: 1.5 }]}
+                  onPress={() => setMapBuildType('work')}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="map" size={20} color={mapBuildType === 'work' ? colors.emerald : colors.textMuted} />
+                  <Text style={[styles.modeBtnTitle, { fontSize: 13 }, mapBuildType !== 'work' && { color: colors.textMuted }]}>Work Area</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.modeBtn, { flex: 1, paddingVertical: 10 }, mapBuildType === 'obstacle' && { borderColor: '#f59e0b', borderWidth: 1.5 }]}
+                  onPress={() => setMapBuildType('obstacle')}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="warning" size={20} color={mapBuildType === 'obstacle' ? '#f59e0b' : colors.textMuted} />
+                  <Text style={[styles.modeBtnTitle, { fontSize: 13 }, mapBuildType !== 'obstacle' && { color: colors.textMuted }]}>Obstacle</Text>
+                </TouchableOpacity>
+              </View>
 
               <TouchableOpacity
                 style={[styles.modeBtn, !mappingReady && styles.modeBtnDisabled]}

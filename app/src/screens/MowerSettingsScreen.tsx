@@ -20,30 +20,33 @@ import { getSocket } from '../services/socket';
 import { ApiClient } from '../services/api';
 import { getServerUrl } from '../services/auth';
 
-// Cutting height: 20-80 in steps of 5 (displayed as 2.0-8.0 cm)
-const HEIGHT_VALUES = [20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80];
+// Cutting height: 20-90 in steps of 10 (displayed as 2-9 cm, matches Flutter slider)
+const HEIGHT_VALUES = [20, 30, 40, 50, 60, 70, 80, 90];
 
-// Obstacle sensitivity: 1=low, 2=medium, 3=high
+// Obstacle sensitivity: 1=low, 2=medium, 3=high (Flutter slider: min=1, max=3, divisions=2)
 const SENSITIVITY_LEVELS = [
   { value: 1, label: 'Low', desc: 'Less avoidance, more coverage' },
   { value: 2, label: 'Medium', desc: 'Balanced (recommended)' },
   { value: 3, label: 'High', desc: 'Maximum obstacle avoidance' },
 ];
 
-// Path direction: 0-315° in 45° steps
-const PATH_DIRECTIONS = [
-  { angle: 0, label: 'N' }, { angle: 45, label: 'NE' },
-  { angle: 90, label: 'E' }, { angle: 135, label: 'SE' },
-  { angle: 180, label: 'S' }, { angle: 225, label: 'SW' },
-  { angle: 270, label: 'W' }, { angle: 315, label: 'NW' },
+// Joystick speed/handling: 1=low, 2=medium, 3=high (sent as ×100: 100/200/300)
+const CONTROLLER_LEVELS = [
+  { value: 100, label: 'Low' },
+  { value: 200, label: 'Medium' },
+  { value: 300, label: 'High' },
 ];
 
 export default function MowerSettingsScreen() {
   const insets = useSafeAreaInsets();
   const { devices } = useMowerState();
-  const [cuttingHeight, setCuttingHeight] = useState(40);
+  const [cuttingHeight, setCuttingHeight] = useState(50);
   const [sensitivity, setSensitivity] = useState(2);
   const [pathDirection, setPathDirection] = useState(0);
+  const [joystickSpeed, setJoystickSpeed] = useState(300);
+  const [joystickHandling, setJoystickHandling] = useState(300);
+  const [headlight, setHeadlight] = useState(false);
+  const [sound, setSound] = useState(false);
   const [sending, setSending] = useState('');
 
   const mowerSn = useMemo(() => {
@@ -56,13 +59,26 @@ export default function MowerSettingsScreen() {
 
   const mowerOnline = mower?.online ?? false;
 
-  // Load current values from sensor data
+  // Request current settings from mower via get_para_info
+  useEffect(() => {
+    if (!mowerSn || !mowerOnline) return;
+    (async () => {
+      try {
+        const url = await getServerUrl();
+        if (!url) return;
+        const api = new ApiClient(url);
+        await api.sendCommand(mowerSn, { get_para_info: {} });
+      } catch { /* ignore */ }
+    })();
+  }, [mowerSn, mowerOnline]);
+
+  // Load current values from sensor data + local storage
   useEffect(() => {
     if (!mower) return;
     const s = mower.sensors;
     if (s.defaultCuttingHeight) {
       const h = parseInt(s.defaultCuttingHeight, 10);
-      if (h >= 20 && h <= 80) setCuttingHeight(h);
+      if (h >= 20 && h <= 90) setCuttingHeight(h);
     }
     if (s.obstacle_avoidance_sensitivity) {
       const v = parseInt(s.obstacle_avoidance_sensitivity, 10);
@@ -70,8 +86,18 @@ export default function MowerSettingsScreen() {
     }
     if (s.path_direction) {
       const a = parseInt(s.path_direction, 10);
-      if (a >= 0 && a <= 315) setPathDirection(a);
+      if (a >= 0 && a <= 180) setPathDirection(a);
     }
+    if (s.manual_controller_v) {
+      const v = parseInt(s.manual_controller_v, 10);
+      if (v >= 100 && v <= 300) setJoystickSpeed(v);
+    }
+    if (s.manual_controller_w) {
+      const v = parseInt(s.manual_controller_w, 10);
+      if (v >= 100 && v <= 300) setJoystickHandling(v);
+    }
+    if (s.headlight) setHeadlight(s.headlight === '2');
+    if (s.sound) setSound(s.sound === '2');
   }, [mower?.sn]);
 
   const sendSetting = useCallback(async (label: string, fn: (api: ApiClient) => Promise<unknown>) => {
@@ -85,19 +111,62 @@ export default function MowerSettingsScreen() {
     finally { setSending(''); }
   }, []);
 
+  // Send full set_para_info with all current values (matches Flutter Advanced Settings Confirm)
+  const sendAllSettings = (overrides: Record<string, unknown> = {}) => {
+    sendSetting('all', (api) => api.sendCommand(mowerSn, {
+      set_para_info: {
+        sound: sound ? 2 : 0,
+        headlight: headlight ? 2 : 0,
+        path_direction: pathDirection,
+        obstacle_avoidance_sensitivity: sensitivity,
+        manual_controller_v: joystickSpeed,
+        manual_controller_w: joystickHandling,
+        ...overrides,
+      },
+    }));
+  };
+
   const handleCuttingHeight = (height: number) => {
     setCuttingHeight(height);
-    sendSetting('height', (api) => api.setCuttingHeight(mowerSn, height));
+    // Cutting height is NOT in set_para_info — only in cutterhigh within start_navigation.
+    // We update the sensor cache on the server so StartMowSheet can read it.
+    sendSetting('height', async (api) => {
+      await fetch(`${(await getServerUrl())}/api/dashboard/sensor-override/${encodeURIComponent(mowerSn)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ defaultCuttingHeight: String(height) }),
+      });
+    });
   };
 
   const handleSensitivity = (level: number) => {
     setSensitivity(level);
-    sendSetting('sensitivity', (api) => api.setObstacleSensitivity(mowerSn, level));
+    sendAllSettings({ obstacle_avoidance_sensitivity: level });
   };
 
   const handlePathDirection = (angle: number) => {
     setPathDirection(angle);
-    sendSetting('direction', (api) => api.setPathDirection(mowerSn, angle));
+    sendAllSettings({ path_direction: angle });
+  };
+
+  const handleJoystickSpeed = (val: number) => {
+    setJoystickSpeed(val);
+    sendAllSettings({ manual_controller_v: val });
+  };
+
+  const handleJoystickHandling = (val: number) => {
+    setJoystickHandling(val);
+    sendAllSettings({ manual_controller_w: val });
+  };
+
+  const handleHeadlight = (on: boolean) => {
+    setHeadlight(on);
+    sendAllSettings({ headlight: on ? 2 : 0 });
+  };
+
+  const handleSound = (on: boolean) => {
+    setSound(on);
+    sendAllSettings({ sound: on ? 2 : 0 });
   };
 
   if (!mowerSn) {
@@ -132,7 +201,7 @@ export default function MowerSettingsScreen() {
         <View style={[styles.section, !mowerOnline && styles.sectionDisabled]} pointerEvents={mowerOnline ? 'auto' : 'none'}>
           <Text style={styles.sectionTitle}>CUTTING HEIGHT</Text>
           <View style={styles.card}>
-            <Text style={styles.currentValue}>{(cuttingHeight / 10).toFixed(1)} cm</Text>
+            <Text style={styles.currentValue}>{cuttingHeight / 10} cm</Text>
             <View style={styles.chipGrid}>
               {HEIGHT_VALUES.map((h) => (
                 <TouchableOpacity
@@ -143,7 +212,7 @@ export default function MowerSettingsScreen() {
                   activeOpacity={0.7}
                 >
                   <Text style={[styles.chipText, cuttingHeight === h && styles.chipTextActive]}>
-                    {(h / 10).toFixed(1)}
+                    {h / 10}
                   </Text>
                 </TouchableOpacity>
               ))}
@@ -182,25 +251,84 @@ export default function MowerSettingsScreen() {
           <Text style={styles.sectionTitle}>MOWING DIRECTION</Text>
           <View style={styles.card}>
             <View style={styles.previewRow}>
-              <MowingDirectionPreview direction={pathDirection} size={120} />
-              <Text style={styles.directionLabel}>{PATH_DIRECTIONS.find((d) => d.angle === pathDirection)?.label ?? ''} — {pathDirection}°</Text>
+              <MowingDirectionPreview direction={pathDirection} size={100} />
+              <View style={{ flex: 1, alignItems: 'center' }}>
+                <Text style={styles.currentValue}>{pathDirection}°</Text>
+                <View style={{ flexDirection: 'row', gap: 12, marginTop: 8 }}>
+                  <TouchableOpacity style={styles.stepBtn} onPress={() => handlePathDirection(Math.max(0, pathDirection - 15))}>
+                    <Ionicons name="remove" size={20} color={colors.white} />
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.stepBtn} onPress={() => handlePathDirection(Math.min(180, pathDirection + 15))}>
+                    <Ionicons name="add" size={20} color={colors.white} />
+                  </TouchableOpacity>
+                </View>
+              </View>
             </View>
-            <View style={styles.compassGrid}>
-              {PATH_DIRECTIONS.map((d) => (
+          </View>
+        </View>
+
+        {/* Joystick Speed */}
+        <View style={[styles.section, !mowerOnline && styles.sectionDisabled]} pointerEvents={mowerOnline ? 'auto' : 'none'}>
+          <Text style={styles.sectionTitle}>JOYSTICK MAX SPEED</Text>
+          <View style={styles.card}>
+            <View style={styles.chipGrid}>
+              {CONTROLLER_LEVELS.map((l) => (
                 <TouchableOpacity
-                  key={d.angle}
-                  style={[styles.compassChip, pathDirection === d.angle && styles.compassChipActive]}
-                  onPress={() => handlePathDirection(d.angle)}
-                  disabled={sending === 'direction'}
+                  key={l.value}
+                  style={[styles.chip, joystickSpeed === l.value && styles.chipActive]}
+                  onPress={() => handleJoystickSpeed(l.value)}
+                  disabled={sending === 'all'}
                   activeOpacity={0.7}
                 >
-                  <Text style={[styles.compassText, pathDirection === d.angle && styles.compassTextActive]}>
-                    {d.label}
+                  <Text style={[styles.chipText, joystickSpeed === l.value && styles.chipTextActive]}>
+                    {l.label}
                   </Text>
-                  <Text style={styles.compassAngle}>{d.angle}°</Text>
                 </TouchableOpacity>
               ))}
             </View>
+          </View>
+        </View>
+
+        {/* Joystick Handling */}
+        <View style={[styles.section, !mowerOnline && styles.sectionDisabled]} pointerEvents={mowerOnline ? 'auto' : 'none'}>
+          <Text style={styles.sectionTitle}>JOYSTICK HANDLING</Text>
+          <View style={styles.card}>
+            <View style={styles.chipGrid}>
+              {CONTROLLER_LEVELS.map((l) => (
+                <TouchableOpacity
+                  key={l.value}
+                  style={[styles.chip, joystickHandling === l.value && styles.chipActive]}
+                  onPress={() => handleJoystickHandling(l.value)}
+                  disabled={sending === 'all'}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.chipText, joystickHandling === l.value && styles.chipTextActive]}>
+                    {l.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        </View>
+
+        {/* Headlight & Sound */}
+        <View style={[styles.section, !mowerOnline && styles.sectionDisabled]} pointerEvents={mowerOnline ? 'auto' : 'none'}>
+          <Text style={styles.sectionTitle}>OTHER</Text>
+          <View style={styles.card}>
+            <TouchableOpacity style={styles.optionRow} onPress={() => handleHeadlight(!headlight)} activeOpacity={0.7}>
+              <Ionicons name={headlight ? 'flashlight' : 'flashlight-outline'} size={20} color={headlight ? colors.amber : colors.textMuted} />
+              <Text style={[styles.optionLabel, { flex: 1, marginLeft: 12 }]}>Headlight</Text>
+              <View style={[styles.toggle, headlight && styles.toggleActive]}>
+                <View style={[styles.toggleThumb, headlight && styles.toggleThumbActive]} />
+              </View>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.optionRow} onPress={() => handleSound(!sound)} activeOpacity={0.7}>
+              <Ionicons name={sound ? 'volume-high' : 'volume-mute'} size={20} color={sound ? colors.emerald : colors.textMuted} />
+              <Text style={[styles.optionLabel, { flex: 1, marginLeft: 12 }]}>Speaker</Text>
+              <View style={[styles.toggle, sound && styles.toggleActive]}>
+                <View style={[styles.toggleThumb, sound && styles.toggleThumbActive]} />
+              </View>
+            </TouchableOpacity>
           </View>
         </View>
       </ScrollView>
@@ -281,4 +409,25 @@ const styles = StyleSheet.create({
   compassText: { fontSize: 16, fontWeight: '700', color: colors.textDim },
   compassTextActive: { color: colors.white },
   compassAngle: { fontSize: 10, color: colors.textMuted, marginTop: 2 },
+  stepBtn: {
+    width: 36, height: 36, borderRadius: 18,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  toggle: {
+    width: 44, height: 24, borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    justifyContent: 'center', paddingHorizontal: 2,
+  },
+  toggleActive: {
+    backgroundColor: colors.emerald,
+  },
+  toggleThumb: {
+    width: 20, height: 20, borderRadius: 10,
+    backgroundColor: colors.textMuted,
+  },
+  toggleThumbActive: {
+    backgroundColor: colors.white,
+    alignSelf: 'flex-end',
+  },
 });

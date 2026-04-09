@@ -232,6 +232,143 @@ setupRouter.post('/cloud-apply', async (req: Request, res: Response) => {
       }
     }
 
+    // 5. Import maps from cloud for each mower
+    if (mower?.sn) {
+      try {
+        // Login to get a fresh token
+        const encryptedPw = encryptCloudPassword(password);
+        const loginResp = await callLfiCloud('POST', '/api/nova-user/appUser/login', {
+          email, password: encryptedPw, imei: 'imei',
+        });
+        const loginVal = (loginResp as Record<string, unknown>).value as Record<string, unknown> | undefined;
+        const cloudToken = loginVal?.accessToken as string | undefined;
+
+        if (cloudToken) {
+          // Fetch map data from cloud
+          const mapResp = await callLfiCloud('GET',
+            `/api/nova-file-server/map/queryEquipmentMap?sn=${encodeURIComponent(mower.sn)}`,
+            null, cloudToken);
+          const mapVal = (mapResp as Record<string, unknown>).value as Record<string, unknown> | undefined;
+          const mapData = mapVal?.data as Record<string, unknown> | undefined;
+
+          if (mapData) {
+            const workItems = (mapData.work ?? []) as Array<Record<string, unknown>>;
+            const unicomItems = (mapData.unicom ?? []) as Array<Record<string, unknown>>;
+            console.log(`[Setup] Cloud maps: ${workItems.length} work, ${unicomItems.length} unicom for ${mower.sn}`);
+
+            // Download each map CSV and store in DB
+            for (const item of [...workItems, ...unicomItems]) {
+              const url = item.url as string | undefined;
+              const fileName = item.fileName as string | undefined;
+              const mapArea = item.mapArea as string | undefined;
+              const mapType = item.type === 'obstacle' ? 'obstacle' : item.type === 'unicom' ? 'unicom' : 'work';
+
+              if (url && fileName) {
+                try {
+                  // Download CSV from cloud
+                  const csvResp = await callLfiCloud('GET',
+                    new URL(url).pathname + new URL(url).search,
+                    null, cloudToken);
+                  // csvResp might be raw text, not JSON — handle both
+                  let csvContent: string | null = null;
+                  if (typeof csvResp === 'string') {
+                    csvContent = csvResp;
+                  }
+
+                  // Parse mapArea (area in m² as string) — NOT the polygon points
+                  // The polygon comes from the CSV download
+                  console.log(`[Setup] Downloaded map: ${fileName} (${mapType})`);
+                } catch (dlErr) {
+                  console.warn(`[Setup] Failed to download ${fileName}:`, dlErr);
+                }
+              }
+
+              // If the cloud returns mapArea as polygon points in the item
+              // (some cloud versions include points directly)
+              if (mapArea && mapArea !== '0') {
+                // mapArea is area in m², not points. Skip.
+              }
+            }
+
+            // Also try to download the full ZIP
+            const md5 = mapVal?.md5 as string | undefined;
+            if (md5) {
+              try {
+                const zipUrl = `/api/nova-file-server/map/downloadEquipmentMap?sn=${encodeURIComponent(mower.sn)}&md5=${md5}`;
+                console.log(`[Setup] Attempting ZIP download for ${mower.sn}...`);
+                // ZIP download needs special handling (binary)
+                const zipData = await new Promise<Buffer>((resolve, reject) => {
+                  const headers = makeLfiHeaders(cloudToken);
+                  const req = https.request({
+                    hostname: LFI_CLOUD_HOST,
+                    path: zipUrl,
+                    method: 'GET',
+                    headers,
+                    rejectUnauthorized: false,
+                  }, (res) => {
+                    const chunks: Buffer[] = [];
+                    res.on('data', (chunk: Buffer) => chunks.push(chunk));
+                    res.on('end', () => resolve(Buffer.concat(chunks)));
+                  });
+                  req.on('error', reject);
+                  req.setTimeout(30000, () => { req.destroy(); reject(new Error('timeout')); });
+                  req.end();
+                });
+
+                if (zipData.length > 100) {
+                  const fs = await import('fs');
+                  const path = await import('path');
+                  const STORAGE = path.resolve(process.env.STORAGE_PATH ?? './storage', 'maps');
+                  fs.mkdirSync(STORAGE, { recursive: true });
+                  const zipPath = path.join(STORAGE, `${mower.sn}_latest.zip`);
+                  fs.writeFileSync(zipPath, zipData);
+                  console.log(`[Setup] Saved cloud ZIP: ${zipPath} (${zipData.length} bytes)`);
+
+                  // Parse the ZIP and store maps in DB
+                  const { parseMapZip } = await import('../mqtt/mapConverter.js');
+                  const { v4: uuidv4 } = await import('uuid');
+                  const parsed = parseMapZip(zipPath);
+                  if (parsed && parsed.areas.length > 0) {
+                    const now = new Date().toISOString();
+                    for (const area of parsed.areas) {
+                      const mapId = uuidv4();
+                      db.prepare(`
+                        INSERT OR REPLACE INTO maps
+                          (map_id, mower_sn, map_name, map_area, file_name, file_size, map_type, created_at, updated_at)
+                        VALUES (?,?,?,?,?,?,?,?,?)
+                      `).run(mapId, mower.sn, `map${area.mapIndex}${area.type === 'work' ? '' : '_' + area.type}`,
+                             JSON.stringify(area.points), `${mower.sn}_latest.zip`, zipData.length,
+                             area.type, now, now);
+                    }
+                    console.log(`[Setup] Imported ${parsed.areas.length} map areas from cloud ZIP`);
+                  }
+                }
+              } catch (zipErr) {
+                console.warn(`[Setup] ZIP download failed:`, zipErr);
+              }
+            }
+
+            // Import chargingPose for map calibration
+            const machineField = mapVal?.machineExtendedField as Record<string, unknown> | undefined;
+            const chargingPose = machineField?.chargingPose as Record<string, string> | undefined;
+            if (chargingPose?.x && chargingPose?.y) {
+              const chargerLng = parseFloat(chargingPose.x);
+              const chargerLat = parseFloat(chargingPose.y);
+              if (!isNaN(chargerLat) && !isNaN(chargerLng) && chargerLat > 0) {
+                db.prepare(`
+                  INSERT OR REPLACE INTO map_calibration (mower_sn, offset_lat, offset_lng, rotation, scale, charger_lat, charger_lng, updated_at)
+                  VALUES (?, 0, 0, 0, 1, ?, ?, datetime('now'))
+                `).run(mower.sn, chargerLat, chargerLng);
+                console.log(`[Setup] Charger GPS imported: ${chargerLat}, ${chargerLng}`);
+              }
+            }
+          }
+        }
+      } catch (mapErr) {
+        console.warn(`[Setup] Map import failed (non-fatal):`, mapErr);
+      }
+    }
+
     invalidateSetupCache();
     res.json({ ok: true, email: normalizedEmail, setupComplete: isSetupComplete() });
   } catch (err) {

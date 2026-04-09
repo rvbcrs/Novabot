@@ -33,11 +33,13 @@ interface Props {
   onClose: () => void;
   sn: string;
   onStarted: (settings: { cuttingHeight: number; pathDirection: number }) => void;
-  battery?: number;       // mower battery percentage
-  isWorking?: boolean;     // mower currently mowing/navigating
+  battery?: number;
+  isWorking?: boolean;
+  currentCuttingHeight?: number;   // from sensor data (mm)
+  currentPathDirection?: number;   // from sensor data (degrees)
 }
 
-export function StartMowSheet({ visible, onClose, sn, onStarted, battery, isWorking }: Props) {
+export function StartMowSheet({ visible, onClose, sn, onStarted, battery, isWorking, currentCuttingHeight, currentPathDirection }: Props) {
   const navigation = useNavigation();
   const pattern = usePattern();
   const { t } = useI18n();
@@ -59,8 +61,8 @@ export function StartMowSheet({ visible, onClose, sn, onStarted, battery, isWork
   // Load maps when sheet opens
   useEffect(() => {
     if (!visible || !sn) return;
-    setCuttingHeight(50);
-    setPathDirection(0);
+    setCuttingHeight(currentCuttingHeight ?? 50);
+    setPathDirection(currentPathDirection ?? 0);
     setSelectedMapId(null);
     (async () => {
       try {
