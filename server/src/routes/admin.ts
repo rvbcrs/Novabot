@@ -4,6 +4,7 @@
  */
 import { Router, Request, Response } from 'express';
 import { db } from '../db/database.js';
+import { deviceRepo, equipmentRepo } from '../db/repositories/index.js';
 import { DeviceRegistryRow } from '../types/index.js';
 import { scanForDevices, isBleAvailable } from '../ble/scanner.js';
 import { provisionDevice, provisionBatch, type ProvisionParams } from '../ble/provisioner.js';
@@ -165,7 +166,7 @@ adminRouter.post('/ble-raw', async (req: Request, res: Response) => {
 
 // GET /api/admin/devices  — toon alle bekende apparaten
 adminRouter.get('/devices', (_req: Request, res: Response) => {
-  const rows = db.prepare('SELECT * FROM device_registry ORDER BY last_seen DESC').all() as DeviceRegistryRow[];
+  const rows = deviceRepo.listAll() as DeviceRegistryRow[];
   res.json(rows);
 });
 
@@ -183,18 +184,15 @@ adminRouter.post('/devices/:sn/mac', (req: Request, res: Response) => {
   const mac = macAddress.toUpperCase();
 
   // Upsert in device_registry op basis van SN (gebruik SN als pseudo-clientId als er nog geen rij is)
-  const existing = db.prepare('SELECT * FROM device_registry WHERE sn = ?').get(sn) as DeviceRegistryRow | undefined;
+  const existing = deviceRepo.findBySn(sn);
   if (existing) {
-    db.prepare('UPDATE device_registry SET mac_address = ?, last_seen = datetime(\'now\') WHERE sn = ?')
-      .run(mac, sn);
+    deviceRepo.upsertDevice(existing.mqtt_client_id, sn, mac, existing.mqtt_username);
   } else {
-    db.prepare(`
-      INSERT INTO device_registry (mqtt_client_id, sn, mac_address, mqtt_username, last_seen)
-      VALUES (?, ?, ?, NULL, datetime('now'))
-    `).run(`manual:${sn}`, sn, mac);
+    deviceRepo.upsertDevice(`manual:${sn}`, sn, mac);
   }
 
   // Koppel ook terug aan equipment
+  // TODO: add equipmentRepo.updateMacBySn() method to avoid raw db.prepare
   db.prepare('UPDATE equipment SET mac_address = ? WHERE (mower_sn = ? OR charger_sn = ?)')
     .run(mac, sn, sn);
 

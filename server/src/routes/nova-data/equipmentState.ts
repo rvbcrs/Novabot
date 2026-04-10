@@ -1,7 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
-import { db } from '../../db/database.js';
-import { equipmentRepo } from '../../db/repositories/index.js';
+import { equipmentRepo, messageRepo } from '../../db/repositories/index.js';
 import { ok, fail } from '../../types/index.js';
 
 export const equipmentStateRouter = Router();
@@ -42,14 +41,7 @@ equipmentStateRouter.post('/saveCutGrassRecord', (req: Request, res: Response) =
   const equip = equipmentRepo.findByMowerSn(sn);
 
   const recordId = uuidv4();
-  // TODO: no work_records repo yet
-  db.prepare(`
-    INSERT INTO work_records
-      (record_id, user_id, equipment_id, date_time, work_time, work_area_m2,
-       cut_grass_height, map_names, start_way, work_status, schedule_id, week,
-       work_record_date)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))
-  `).run(
+  messageRepo.createWorkRecordFull(
     recordId,
     equip?.user_id ?? 'system',
     equip?.equipment_id ?? sn,

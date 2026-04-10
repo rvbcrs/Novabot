@@ -45,13 +45,12 @@ export function authMiddleware(req: AuthRequest, res: Response, next: NextFuncti
  * Admin middleware — checks is_admin flag in DB after normal auth.
  * Use after authMiddleware: app.use('/api/admin', authMiddleware, adminMiddleware, adminRouter)
  */
-import { db } from '../db/database.js';
+import { userRepo } from '../db/repositories/index.js';
 
 export function adminMiddleware(req: AuthRequest, res: Response, next: NextFunction): void {
   if (!req.userId) { res.json(fail('Unauthorized', 401)); return; }
 
-  const row = db.prepare('SELECT is_admin FROM users WHERE app_user_id = ?').get(req.userId) as { is_admin: number } | undefined;
-  if (!row || row.is_admin !== 1) {
+  if (!userRepo.isAdmin(req.userId)) {
     res.status(403).json(fail('Admin access required', 403));
     return;
   }
@@ -64,8 +63,7 @@ export function adminMiddleware(req: AuthRequest, res: Response, next: NextFunct
 export function dashboardMiddleware(req: AuthRequest, res: Response, next: NextFunction): void {
   if (!req.userId) { res.json(fail('Unauthorized', 401)); return; }
 
-  const row = db.prepare('SELECT is_admin, dashboard_access FROM users WHERE app_user_id = ?').get(req.userId) as { is_admin: number; dashboard_access: number } | undefined;
-  if (!row || (row.is_admin !== 1 && row.dashboard_access !== 1)) {
+  if (!userRepo.hasDashboardAccess(req.userId)) {
     res.status(403).json(fail('Dashboard access required', 403));
     return;
   }

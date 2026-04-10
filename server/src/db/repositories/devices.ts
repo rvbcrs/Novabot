@@ -56,6 +56,7 @@ export class DeviceRepository {
     "SELECT COUNT(*) as count FROM device_registry WHERE last_seen >= datetime('now', '-' || ? || ' minutes')"
   );
   private _countAll = db.prepare('SELECT COUNT(*) as count FROM device_registry');
+  private _listAll = db.prepare('SELECT * FROM device_registry ORDER BY last_seen DESC');
   private _deleteBySn = db.prepare('DELETE FROM device_registry WHERE sn = ?');
 
   // Device factory
@@ -92,6 +93,10 @@ export class DeviceRepository {
 
   countAll(): number {
     return (this._countAll.get() as { count: number }).count;
+  }
+
+  listAll(): DeviceRegistryRow[] {
+    return this._listAll.all() as DeviceRegistryRow[];
   }
 
   deleteBySn(sn: string): void {

@@ -1,9 +1,8 @@
 import { Router, Request, Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
-import { db } from '../../db/database.js';
+import { cutGrassPlanRepo } from '../../db/repositories/index.js';
 import { authMiddleware } from '../../middleware/auth.js';
 import { AuthRequest, ok, fail, PlanRow } from '../../types/index.js';
-// TODO: no cut_grass_plans repo yet — all db.prepare calls remain direct
 
 export const cutGrassPlanRouter = Router();
 
@@ -29,8 +28,8 @@ function rowToDto(r: PlanRow) {
 cutGrassPlanRouter.get('/queryCutGrassPlan', authMiddleware, (req: AuthRequest, res: Response) => {
   const { equipmentId } = req.query as { equipmentId?: string };
   const rows = equipmentId
-    ? db.prepare('SELECT * FROM cut_grass_plans WHERE user_id = ? AND equipment_id = ?').all(req.userId, equipmentId)
-    : db.prepare('SELECT * FROM cut_grass_plans WHERE user_id = ?').all(req.userId);
+    ? cutGrassPlanRepo.findByEquipmentAndUser(equipmentId, req.userId!)
+    : cutGrassPlanRepo.findByUser(req.userId!);
   res.json(ok((rows as PlanRow[]).map(rowToDto)));
 });
 
@@ -46,11 +45,8 @@ const EMPTY_PLAN = {
 cutGrassPlanRouter.post('/queryRecentCutGrassPlan', authMiddleware, (req: AuthRequest, res: Response) => {
   const { sn } = req.body as { sn?: string };
   const row = sn
-    ? db.prepare(`SELECT p.* FROM cut_grass_plans p
-        JOIN equipment e ON e.equipment_id = p.equipment_id
-        WHERE p.user_id = ? AND (e.mower_sn = ? OR e.charger_sn = ?)
-        ORDER BY p.updated_at DESC LIMIT 1`).get(req.userId, sn, sn)
-    : db.prepare('SELECT * FROM cut_grass_plans WHERE user_id = ? ORDER BY updated_at DESC LIMIT 1').get(req.userId);
+    ? cutGrassPlanRepo.findRecentByUserAndSn(req.userId!, sn)
+    : cutGrassPlanRepo.findRecentByUser(req.userId!);
   res.json(ok(row ? rowToDto(row as PlanRow) : EMPTY_PLAN));
 });
 
@@ -58,8 +54,8 @@ cutGrassPlanRouter.post('/queryRecentCutGrassPlan', authMiddleware, (req: AuthRe
 cutGrassPlanRouter.get('/queryRecentCutGrassPlan', authMiddleware, (req: AuthRequest, res: Response) => {
   const { equipmentId } = req.query as { equipmentId?: string };
   const row = equipmentId
-    ? db.prepare('SELECT * FROM cut_grass_plans WHERE user_id = ? AND equipment_id = ? ORDER BY updated_at DESC LIMIT 1').get(req.userId, equipmentId)
-    : db.prepare('SELECT * FROM cut_grass_plans WHERE user_id = ? ORDER BY updated_at DESC LIMIT 1').get(req.userId);
+    ? cutGrassPlanRepo.findRecentByUserAndEquipment(req.userId!, equipmentId)
+    : cutGrassPlanRepo.findRecentByUser(req.userId!);
   res.json(ok(row ? rowToDto(row as PlanRow) : EMPTY_PLAN));
 });
 
@@ -81,23 +77,20 @@ cutGrassPlanRouter.post('/saveCutGrassPlan', authMiddleware, (req: AuthRequest, 
   if (!body.equipmentId) { res.json(fail('equipmentId required', 400)); return; }
 
   const planId = uuidv4();
-  const now = new Date().toISOString();
-  db.prepare(`
-    INSERT INTO cut_grass_plans
-      (plan_id, equipment_id, user_id, start_time, end_time, weekday, repeat,
-       repeat_count, repeat_type, work_time, work_area, work_day, created_at, updated_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-  `).run(
-    planId, body.equipmentId, req.userId,
-    body.startTime ?? null, body.endTime ?? null,
-    body.weekday ? JSON.stringify(body.weekday) : null,
-    body.repeat ? 1 : 0,
-    body.repeatCount ?? 0, body.repeatType ?? null,
-    body.workTime ?? null,
-    body.workArea ? JSON.stringify(body.workArea) : null,
-    body.workDay ? JSON.stringify(body.workDay) : null,
-    now, now,
-  );
+  cutGrassPlanRepo.create({
+    planId,
+    equipmentId: body.equipmentId,
+    userId: req.userId!,
+    startTime: body.startTime,
+    endTime: body.endTime,
+    weekday: body.weekday ? JSON.stringify(body.weekday) : null,
+    repeat: body.repeat,
+    repeatCount: body.repeatCount,
+    repeatType: body.repeatType,
+    workTime: body.workTime,
+    workArea: body.workArea ? JSON.stringify(body.workArea) : null,
+    workDay: body.workDay ? JSON.stringify(body.workDay) : null,
+  });
 
   res.json(ok({ planId }));
 });
@@ -107,30 +100,17 @@ cutGrassPlanRouter.post('/updateCutGrassPlan', authMiddleware, (req: AuthRequest
   const body = req.body as { planId?: string } & Record<string, unknown>;
   if (!body.planId) { res.json(fail('planId required', 400)); return; }
 
-  db.prepare(`
-    UPDATE cut_grass_plans SET
-      start_time   = COALESCE(?, start_time),
-      end_time     = COALESCE(?, end_time),
-      weekday      = COALESCE(?, weekday),
-      repeat       = COALESCE(?, repeat),
-      repeat_count = COALESCE(?, repeat_count),
-      repeat_type  = COALESCE(?, repeat_type),
-      work_time    = COALESCE(?, work_time),
-      work_area    = COALESCE(?, work_area),
-      work_day     = COALESCE(?, work_day),
-      updated_at   = ?
-    WHERE plan_id = ? AND user_id = ?
-  `).run(
-    body.startTime ?? null, body.endTime ?? null,
-    body.weekday ? JSON.stringify(body.weekday) : null,
-    body.repeat !== undefined ? (body.repeat ? 1 : 0) : null,
-    body.repeatCount ?? null, body.repeatType ?? null,
-    body.workTime ?? null,
-    body.workArea ? JSON.stringify(body.workArea) : null,
-    body.workDay ? JSON.stringify(body.workDay) : null,
-    new Date().toISOString(),
-    body.planId, req.userId,
-  );
+  cutGrassPlanRepo.update(body.planId, req.userId!, {
+    startTime: (body.startTime as string) ?? null,
+    endTime: (body.endTime as string) ?? null,
+    weekday: body.weekday ? JSON.stringify(body.weekday) : null,
+    repeat: body.repeat !== undefined ? (body.repeat as boolean) : null,
+    repeatCount: (body.repeatCount as number) ?? null,
+    repeatType: (body.repeatType as string) ?? null,
+    workTime: (body.workTime as number) ?? null,
+    workArea: body.workArea ? JSON.stringify(body.workArea) : null,
+    workDay: body.workDay ? JSON.stringify(body.workDay) : null,
+  });
   res.json(ok());
 });
 
@@ -139,7 +119,7 @@ cutGrassPlanRouter.post('/deleteCutGrassPlan', authMiddleware, (req: AuthRequest
   const { planId } = req.body as { planId?: string };
   if (!planId) { res.json(fail('planId required', 400)); return; }
 
-  db.prepare('DELETE FROM cut_grass_plans WHERE plan_id = ? AND user_id = ?').run(planId, req.userId);
+  cutGrassPlanRepo.delete(planId, req.userId!);
   res.json(ok());
 });
 
@@ -158,12 +138,7 @@ cutGrassPlanRouter.post('/queryPlanFromMachine', (req: Request, res: Response) =
 
   console.log(`[PLAN] queryPlanFromMachine: sn=${sn}`);
 
-  const rows = db.prepare(`
-    SELECT p.* FROM cut_grass_plans p
-    JOIN equipment e ON e.equipment_id = p.equipment_id
-    WHERE e.mower_sn = ? OR e.charger_sn = ?
-    ORDER BY p.updated_at DESC
-  `).all(sn, sn) as PlanRow[];
+  const rows = cutGrassPlanRepo.findBySnForMachine(sn);
 
-  res.json(ok(rows.map(rowToDto)));
+  res.json(ok((rows as PlanRow[]).map(rowToDto)));
 });

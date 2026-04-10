@@ -13,7 +13,7 @@ import crypto from 'crypto';
 type Aedes = { publish: (packet: any, cb: (err?: Error | null) => void) => void; [key: string]: unknown };
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AedesPublishPacket = { topic: string; payload: Buffer | string; qos: 0 | 1 | 2; retain: boolean; [key: string]: any };
-import { db } from '../db/database.js';
+import { mapRepo } from '../db/repositories/index.js';
 import { gpsToLocal, type GpsPoint, type LocalPoint } from './mapConverter.js';
 import { tryDecrypt } from './decrypt.js';
 
@@ -452,12 +452,11 @@ function handleMapOutlineResponse(sn: string, data: unknown): void {
   }
 
   // Converteer GPS→lokaal vóór opslag (maaier stuurt GPS coords)
-  const cal = db.prepare('SELECT charger_lat, charger_lng FROM map_calibration WHERE mower_sn = ?')
-    .get(sn) as { charger_lat: number | null; charger_lng: number | null } | undefined;
+  const chargerGps = mapRepo.getChargerGps(sn);
 
   let localPoints: LocalPoint[];
-  if (cal?.charger_lat && cal?.charger_lng) {
-    const origin: GpsPoint = { lat: cal.charger_lat, lng: cal.charger_lng };
+  if (chargerGps) {
+    const origin: GpsPoint = { lat: chargerGps.lat, lng: chargerGps.lng };
     localPoints = points.map(p => gpsToLocal(p, origin));
   } else {
     // Geen charger positie — gebruik eerste punt als origin (tijdelijk)
@@ -476,21 +475,13 @@ function handleMapOutlineResponse(sn: string, data: unknown): void {
   // Sla op in database (lokale coördinaten)
   const displayName = mapName || mapType || `Map ${mapId.slice(0, 8)}`;
 
-  db.prepare(`
-    INSERT INTO maps (map_id, mower_sn, map_name, map_area, map_max_min, updated_at)
-    VALUES (?, ?, ?, ?, ?, datetime('now'))
-    ON CONFLICT(map_id) DO UPDATE SET
-      map_name    = excluded.map_name,
-      map_area    = excluded.map_area,
-      map_max_min = excluded.map_max_min,
-      updated_at  = datetime('now')
-  `).run(
-    mapId,
-    sn,
-    displayName,
-    JSON.stringify(localPoints),
-    JSON.stringify(bounds),
-  );
+  mapRepo.upsert({
+    map_id: mapId,
+    mower_sn: sn,
+    map_name: displayName,
+    map_area: JSON.stringify(localPoints),
+    map_max_min: JSON.stringify(bounds),
+  });
 
   console.log(`${TAG} Kaart "${displayName}" (${mapId}) opgeslagen: ${localPoints.length} punten (lokaal), bounds: ${JSON.stringify(bounds)}`);
 
@@ -531,9 +522,9 @@ function parsePositionArray(arr: unknown[]): { lat: number; lng: number }[] {
 function upsertMapMetadata(sn: string, mapId: string, meta: Record<string, unknown>): void {
   const mapName = String(meta.map_name ?? meta.mapName ?? meta.map_type ?? '');
 
-  // Alleen inserteren als de kaart nog niet bestaat
-  db.prepare(`
-    INSERT OR IGNORE INTO maps (map_id, mower_sn, map_name, created_at, updated_at)
-    VALUES (?, ?, ?, datetime('now'), datetime('now'))
-  `).run(mapId, sn, mapName || null);
+  // Alleen inserteren als de kaart nog niet bestaat (create uses INSERT, not INSERT OR REPLACE)
+  const existing = mapRepo.findById(mapId);
+  if (!existing) {
+    mapRepo.create({ map_id: mapId, mower_sn: sn, map_name: mapName || null });
+  }
 }

@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
-import { db } from '../../db/database.js';
+import { equipmentRepo, messageRepo } from '../../db/repositories/index.js';
 import { ok, fail } from '../../types/index.js';
 
 export const machineMessageRouter = Router();
@@ -19,16 +19,10 @@ machineMessageRouter.post('/saveCutGrassMessage', (req: Request, res: Response) 
   console.log(`[MSG] saveCutGrassMessage: sn=${sn}`);
 
   // Zoek user_id + equipment_id via SN
-  const equip = db.prepare(
-    'SELECT equipment_id, user_id FROM equipment WHERE mower_sn = ?'
-  ).get(sn) as { equipment_id: string; user_id: string } | undefined;
+  const equip = equipmentRepo.findByMowerSn(sn);
 
   const msgId = uuidv4();
-  db.prepare(`
-    INSERT INTO robot_messages
-      (message_id, user_id, equipment_id, robot_msg)
-    VALUES (?,?,?,?)
-  `).run(
+  messageRepo.createMessageRaw(
     msgId,
     equip?.user_id ?? 'system',
     equip?.equipment_id ?? sn,

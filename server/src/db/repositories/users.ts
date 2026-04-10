@@ -30,6 +30,7 @@ export class UserRepository {
   private _count = db.prepare('SELECT COUNT(*) as count FROM users');
   private _isAdmin = db.prepare('SELECT is_admin FROM users WHERE app_user_id = ?');
   private _hasDashboardAccess = db.prepare('SELECT is_admin, dashboard_access FROM users WHERE app_user_id = ?');
+  private _updatePasswordByEmail = db.prepare('UPDATE users SET password = ? WHERE email = ?');
 
   findByEmail(email: string): UserRow | undefined {
     return this._findByEmail.get(email) as UserRow | undefined;
@@ -67,6 +68,10 @@ export class UserRepository {
   hasDashboardAccess(appUserId: string): boolean {
     const row = this._hasDashboardAccess.get(appUserId) as { is_admin: number; dashboard_access: number } | undefined;
     return row?.is_admin === 1 || row?.dashboard_access === 1;
+  }
+
+  updatePasswordByEmail(email: string, hashedPassword: string): void {
+    this._updatePasswordByEmail.run(hashedPassword, email);
   }
 }
 

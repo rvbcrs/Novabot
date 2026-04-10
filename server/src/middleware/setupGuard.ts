@@ -16,7 +16,7 @@
  * - Browser gets the status page (spoor 1) or dashboard (spoor 2)
  */
 
-import { db } from '../db/database.js';
+import { userRepo, equipmentRepo } from '../db/repositories/index.js';
 import type { Request, Response, NextFunction } from 'express';
 
 let _setupComplete: boolean | null = null;
@@ -28,8 +28,8 @@ let _setupComplete: boolean | null = null;
 export function isSetupComplete(): boolean {
   if (_setupComplete !== null) return _setupComplete;
 
-  const userCount = (db.prepare('SELECT COUNT(*) as count FROM users').get() as { count: number }).count;
-  const equipCount = (db.prepare('SELECT COUNT(*) as count FROM equipment').get() as { count: number }).count;
+  const userCount = userRepo.count();
+  const equipCount = equipmentRepo.count();
 
   _setupComplete = userCount > 0;
   return _setupComplete;

@@ -13,3 +13,7 @@ export { UserRepository, userRepo } from './users.js';
 export { EquipmentRepository, equipmentRepo } from './equipment.js';
 export { MapRepository, mapRepo } from './maps.js';
 export { DeviceRepository, deviceRepo } from './devices.js';
+export { MessageRepository, messageRepo } from './messages.js';
+export { ScheduleRepository, scheduleRepo } from './schedules.js';
+export { EmailCodeRepository, emailCodeRepo } from './emailCodes.js';
+export { CutGrassPlanRepository, cutGrassPlanRepo } from './cutGrassPlans.js';
