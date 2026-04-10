@@ -9,6 +9,7 @@ import dns from 'dns';
 import crypto from 'crypto';
 import { execSync } from 'child_process';
 import { db } from '../db/database.js';
+import { userRepo, equipmentRepo, deviceRepo, mapRepo } from '../db/repositories/index.js';
 import { AuthRequest } from '../types/index.js';
 
 export const adminStatusRouter = Router();
@@ -27,10 +28,10 @@ adminStatusRouter.get('/overview', (_req: AuthRequest, res: Response) => {
   const mem = process.memoryUsage();
 
   // DB stats
-  const userCount = (db.prepare('SELECT COUNT(*) as c FROM users').get() as { c: number }).c;
-  const equipmentCount = (db.prepare('SELECT COUNT(*) as c FROM equipment').get() as { c: number }).c;
-  const deviceCount = (db.prepare('SELECT COUNT(*) as c FROM device_registry').get() as { c: number }).c;
-  const mapCount = (db.prepare('SELECT COUNT(*) as c FROM maps').get() as { c: number }).c;
+  const userCount = userRepo.count();
+  const equipmentCount = equipmentRepo.count();
+  const deviceCount = deviceRepo.countAll();
+  const mapCount = mapRepo.count();
 
   // DB file size
   let dbSize = 0;
@@ -42,9 +43,7 @@ adminStatusRouter.get('/overview', (_req: AuthRequest, res: Response) => {
   } catch {}
 
   // Current user info from JWT
-  const currentUser = _req.userId
-    ? db.prepare('SELECT email, is_admin, dashboard_access FROM users WHERE app_user_id = ?').get(_req.userId) as { email: string; is_admin: number; dashboard_access: number } | undefined
-    : undefined;
+  const currentUser = _req.userId ? userRepo.findById(_req.userId) : undefined;
 
   res.json({
     server: {
@@ -73,6 +72,7 @@ adminStatusRouter.get('/overview', (_req: AuthRequest, res: Response) => {
 
 // GET /api/admin-status/users — all users with their equipment
 adminStatusRouter.get('/users', (_req: AuthRequest, res: Response) => {
+  // TODO: add repo method for users-with-equipment JOIN query
   const users = db.prepare(`
     SELECT u.id, u.app_user_id, u.email, u.username, u.is_admin, u.dashboard_access, u.created_at,
            GROUP_CONCAT(DISTINCT e.mower_sn) as mower_sns,
@@ -84,20 +84,17 @@ adminStatusRouter.get('/users', (_req: AuthRequest, res: Response) => {
   `).all();
 
   // Also get all equipment (including unbound)
-  const allEquipment = db.prepare(`
-    SELECT mower_sn, charger_sn, user_id, equipment_nick_name
-    FROM equipment
-    ORDER BY created_at DESC
-  `).all();
+  const allEquipment = equipmentRepo.listAll();
 
   // Count unbound equipment
-  const unboundCount = allEquipment.filter((e: any) => !e.user_id).length;
+  const unboundCount = allEquipment.filter((e) => !e.user_id).length;
 
   res.json({ users, allEquipment, unboundCount });
 });
 
 // GET /api/admin-status/devices — known Novabot devices with online status
 adminStatusRouter.get('/devices', (_req: AuthRequest, res: Response) => {
+  // TODO: add repo method for devices-with-equipment-and-lora JOIN query
   // Only show real Novabot devices (LFIN/LFIC/ESP32), not test clients
   const devices = db.prepare(`
     SELECT d.mqtt_client_id, d.sn,
@@ -131,20 +128,21 @@ adminStatusRouter.post('/bind-device', (_req: AuthRequest, res: Response) => {
   }
 
   // Check if equipment exists
-  const existing = db.prepare('SELECT equipment_id FROM equipment WHERE mower_sn = ? OR charger_sn = ?').get(sn, sn) as { equipment_id: string } | undefined;
+  const existing = equipmentRepo.findBySn(sn);
 
   if (existing) {
     // Update existing — set user_id
-    db.prepare('UPDATE equipment SET user_id = ? WHERE equipment_id = ?').run(_req.userId, existing.equipment_id);
+    equipmentRepo.setUserId(existing.equipment_id, _req.userId);
   } else {
     // Create new equipment record
-    const crypto = require('crypto');
     const equipmentId = crypto.randomUUID();
     const isCharger = sn.startsWith('LFIC');
-    db.prepare(`
-      INSERT INTO equipment (equipment_id, user_id, mower_sn, charger_sn, created_at)
-      VALUES (?, ?, ?, ?, datetime('now'))
-    `).run(equipmentId, _req.userId, sn, isCharger ? sn : null);
+    equipmentRepo.create({
+      equipment_id: equipmentId,
+      user_id: _req.userId,
+      mower_sn: sn,
+      charger_sn: isCharger ? sn : null,
+    });
   }
 
   console.log(`[Admin] Device ${sn} bound to user ${_req.userId}`);
@@ -156,6 +154,7 @@ adminStatusRouter.post('/unbind-device', (_req: AuthRequest, res: Response) => {
   const { sn } = _req.body as { sn?: string };
   if (!sn) { res.status(400).json({ error: 'sn required' }); return; }
 
+  // TODO: add repo method for clearing user_id by SN (setUserId only accepts string, not null)
   db.prepare('UPDATE equipment SET user_id = NULL WHERE mower_sn = ? OR charger_sn = ?').run(sn, sn);
   console.log('[Admin] Device ' + sn + ' unbound');
   res.json({ ok: true });
@@ -169,32 +168,29 @@ adminStatusRouter.post('/pair-devices', (_req: AuthRequest, res: Response) => {
   try {
     const pairTx = db.transaction(() => {
       // Find existing records
-      const chargerEquip = db.prepare('SELECT equipment_id, user_id FROM equipment WHERE charger_sn = ?')
-        .get(chargerSn) as { equipment_id: string; user_id: string | null } | undefined;
+      const chargerEquip = equipmentRepo.findByChargerSn(chargerSn);
 
       if (chargerEquip) {
         // DELETE standalone mower record FIRST (before UPDATE to avoid UNIQUE violation)
-        db.prepare('DELETE FROM equipment WHERE mower_sn = ? AND equipment_id != ?')
-          .run(mowerSn, chargerEquip.equipment_id);
+        equipmentRepo.deleteStandaloneMower(mowerSn, chargerEquip.equipment_id);
         // Now safe to set mower_sn on the charger record
-        db.prepare('UPDATE equipment SET mower_sn = ? WHERE equipment_id = ?')
-          .run(mowerSn, chargerEquip.equipment_id);
+        equipmentRepo.updateMowerSn(chargerEquip.equipment_id, mowerSn);
         console.log(`[Admin] Paired mower ${mowerSn} with charger ${chargerSn} (into charger record)`);
       } else {
-        const mowerEquip = db.prepare('SELECT equipment_id FROM equipment WHERE mower_sn = ?')
-          .get(mowerSn) as { equipment_id: string } | undefined;
+        const mowerEquip = equipmentRepo.findByMowerSn(mowerSn);
         if (mowerEquip) {
           // DELETE standalone charger record FIRST
-          db.prepare('DELETE FROM equipment WHERE charger_sn = ? AND equipment_id != ?')
-            .run(chargerSn, mowerEquip.equipment_id);
-          db.prepare('UPDATE equipment SET charger_sn = ? WHERE equipment_id = ?')
-            .run(chargerSn, mowerEquip.equipment_id);
+          equipmentRepo.deleteStandaloneCharger(chargerSn, mowerEquip.equipment_id);
+          equipmentRepo.updateChargerSn(mowerEquip.equipment_id, chargerSn);
         } else {
           // Neither has a record — create one
           const equipmentId = crypto.randomUUID();
-          db.prepare(`INSERT INTO equipment (equipment_id, user_id, mower_sn, charger_sn, created_at)
-            VALUES (?, ?, ?, ?, datetime('now'))`)
-            .run(equipmentId, _req.userId, mowerSn, chargerSn);
+          equipmentRepo.create({
+            equipment_id: equipmentId,
+            user_id: _req.userId,
+            mower_sn: mowerSn,
+            charger_sn: chargerSn,
+          });
         }
         console.log(`[Admin] Paired mower ${mowerSn} with charger ${chargerSn}`);
       }
@@ -203,29 +199,21 @@ adminStatusRouter.post('/pair-devices', (_req: AuthRequest, res: Response) => {
 
     // Sync LoRa cache — both devices should share the same LoRa address
     // Use the charger's address as source of truth (charger reports its own LoRa)
-    const chargerLora = db.prepare('SELECT charger_address, charger_channel FROM equipment_lora_cache WHERE sn = ?')
-      .get(chargerSn) as { charger_address: string; charger_channel: string } | undefined;
-    const mowerLora = db.prepare('SELECT charger_address, charger_channel FROM equipment_lora_cache WHERE sn = ?')
-      .get(mowerSn) as { charger_address: string; charger_channel: string } | undefined;
+    const chargerLora = equipmentRepo.getLoraCache(chargerSn);
+    const mowerLora = equipmentRepo.getLoraCache(mowerSn);
 
-    if (chargerLora && !mowerLora) {
+    if (chargerLora?.charger_address && !mowerLora) {
       // Copy charger LoRa to mower
-      db.prepare('INSERT OR REPLACE INTO equipment_lora_cache (sn, charger_address, charger_channel) VALUES (?, ?, ?)')
-        .run(mowerSn, chargerLora.charger_address, chargerLora.charger_channel);
-    } else if (mowerLora && !chargerLora) {
+      equipmentRepo.setLoraCache(mowerSn, chargerLora.charger_address, chargerLora.charger_channel ?? '16');
+    } else if (mowerLora?.charger_address && !chargerLora) {
       // Copy mower LoRa to charger
-      db.prepare('INSERT OR REPLACE INTO equipment_lora_cache (sn, charger_address, charger_channel) VALUES (?, ?, ?)')
-        .run(chargerSn, mowerLora.charger_address, mowerLora.charger_channel);
-    } else if (chargerLora && mowerLora && chargerLora.charger_address !== mowerLora.charger_address) {
+      equipmentRepo.setLoraCache(chargerSn, mowerLora.charger_address, mowerLora.charger_channel ?? '16');
+    } else if (chargerLora?.charger_address && mowerLora?.charger_address && chargerLora.charger_address !== mowerLora.charger_address) {
       // Different addresses — use equipment table's charger_address as truth
-      const equipAddr = db.prepare('SELECT charger_address, charger_channel FROM equipment WHERE mower_sn = ? OR charger_sn = ? LIMIT 1')
-        .get(mowerSn, chargerSn) as { charger_address: number | null; charger_channel: number | null } | undefined;
-      if (equipAddr?.charger_address) {
-        db.prepare('UPDATE equipment_lora_cache SET charger_address = ?, charger_channel = ? WHERE sn = ?')
-          .run(equipAddr.charger_address, equipAddr.charger_channel ?? 16, mowerSn);
-        db.prepare('UPDATE equipment_lora_cache SET charger_address = ?, charger_channel = ? WHERE sn = ?')
-          .run(equipAddr.charger_address, equipAddr.charger_channel ?? 16, chargerSn);
-        console.log(`[Admin] Synced LoRa cache to address ${equipAddr.charger_address} for pair`);
+      const equip = equipmentRepo.findBySn(mowerSn);
+      if (equip?.charger_address) {
+        equipmentRepo.syncLoraPair(mowerSn, chargerSn, equip.charger_address, equip.charger_channel ?? '16');
+        console.log(`[Admin] Synced LoRa cache to address ${equip.charger_address} for pair`);
       }
     }
 
@@ -241,8 +229,9 @@ adminStatusRouter.post('/remove-device', (_req: AuthRequest, res: Response) => {
   const { sn } = _req.body as { sn?: string };
   if (!sn) { res.status(400).json({ error: 'sn required' }); return; }
 
-  db.prepare('DELETE FROM device_registry WHERE sn = ?').run(sn);
-  db.prepare('DELETE FROM equipment WHERE mower_sn = ? OR charger_sn = ?').run(sn, sn);
+  deviceRepo.deleteBySn(sn);
+  equipmentRepo.deleteBySn(sn);
+  // TODO: add deleteLoraCache(sn) to equipmentRepo
   db.prepare('DELETE FROM equipment_lora_cache WHERE sn = ?').run(sn);
   console.log('[Admin] Device ' + sn + ' removed');
   res.json({ ok: true });
@@ -250,6 +239,7 @@ adminStatusRouter.post('/remove-device', (_req: AuthRequest, res: Response) => {
 
 // GET /api/admin-status/equipment — all equipment pairings
 adminStatusRouter.get('/equipment', (_req: AuthRequest, res: Response) => {
+  // TODO: add repo method for equipment-with-user-email JOIN query
   const raw = db.prepare(`
     SELECT e.*, u.email as user_email
     FROM equipment e
@@ -282,6 +272,7 @@ adminStatusRouter.post('/set-role', (req: AuthRequest, res: Response) => {
     return;
   }
 
+  // TODO: add setRole(userId, role, enabled) to userRepo
   db.prepare(`UPDATE users SET ${role} = ? WHERE app_user_id = ?`)
     .run(enabled ? 1 : 0, userId);
 
@@ -295,7 +286,9 @@ adminStatusRouter.post('/delete-user', (req: AuthRequest, res: Response) => {
   if (!userId) { res.status(400).json({ error: 'userId required' }); return; }
   if (userId === req.userId) { res.status(400).json({ error: 'Cannot delete yourself' }); return; }
 
+  // TODO: add deleteById(userId) to userRepo
   db.prepare('DELETE FROM users WHERE app_user_id = ?').run(userId);
+  // TODO: add clearUserIdByUserId(userId) to equipmentRepo
   db.prepare('UPDATE equipment SET user_id = NULL WHERE user_id = ?').run(userId);
 
   console.log(`[ADMIN] Deleted user ${userId}`);
@@ -310,7 +303,7 @@ adminStatusRouter.post('/reset-password', (req: AuthRequest, res: Response) => {
 
   const bcrypt = require('bcrypt');
   const hash = bcrypt.hashSync(newPassword, 10);
-  db.prepare('UPDATE users SET password = ? WHERE app_user_id = ?').run(hash, userId);
+  userRepo.updatePassword(userId, hash);
 
   console.log(`[ADMIN] Password reset for user ${userId}`);
   res.json({ ok: true });
