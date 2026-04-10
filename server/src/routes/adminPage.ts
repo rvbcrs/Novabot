@@ -433,7 +433,16 @@ async function api(path, method='GET', body=null) {
   if (body) opts.body = JSON.stringify(body);
   const r = await fetch('/api/admin-status' + path, opts);
   if (r.status === 401 || r.status === 403) { logout(); throw new Error('Unauthorized'); }
-  return r.json();
+  var ct = r.headers.get('content-type') || '';
+  if (!ct.includes('json')) {
+    var txt = await r.text();
+    // Extract error from HTML if present
+    var match = txt.match(/<pre>(.*?)<\/pre>/s);
+    throw new Error(match ? match[1].replace(/<[^>]+>/g, '').substring(0, 200) : 'Server error: ' + r.status);
+  }
+  var d = await r.json();
+  if (!r.ok) throw new Error(d.error || d.message || 'Server error: ' + r.status);
+  return d;
 }
 
 async function doLogin() {
