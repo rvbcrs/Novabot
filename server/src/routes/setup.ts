@@ -197,25 +197,59 @@ setupRouter.post('/cloud-apply', async (req: Request, res: Response) => {
       console.log(`[Setup] Created user: ${normalizedEmail} (admin)`);
     }
 
-    // 2. Register equipment
-    const primarySn = mower?.sn ?? charger?.sn;
-    if (primarySn) {
-      const existing = db.prepare('SELECT equipment_id FROM equipment WHERE mower_sn = ?').get(primarySn);
-      if (!existing) {
+    // 2. Register equipment (idempotent — safe to run multiple times)
+    // The admin UI sends charger and mower as separate calls, so we need to handle:
+    // - First call: charger only → create record with charger_sn, mower_sn=NULL
+    // - Second call: mower only → find charger record by user_id and add mower_sn
+    // - Re-run: update existing record, don't create duplicates
+    if (mower?.sn || charger?.sn) {
+      // Look for any existing record that matches this mower or charger
+      const existingByMower = mower?.sn
+        ? db.prepare('SELECT equipment_id FROM equipment WHERE mower_sn = ?').get(mower.sn) as { equipment_id: string } | undefined
+        : undefined;
+      const existingByCharger = charger?.sn
+        ? db.prepare('SELECT equipment_id FROM equipment WHERE charger_sn = ?').get(charger.sn) as { equipment_id: string } | undefined
+        : undefined;
+      // Also find any record for this user that has a NULL slot we can fill
+      const existingByUser = db.prepare('SELECT equipment_id, mower_sn, charger_sn FROM equipment WHERE user_id = ? ORDER BY created_at DESC LIMIT 1')
+        .get(appUserId) as { equipment_id: string; mower_sn: string | null; charger_sn: string | null } | undefined;
+
+      const targetId = existingByMower?.equipment_id ?? existingByCharger?.equipment_id ?? existingByUser?.equipment_id;
+
+      if (targetId) {
+        // Update existing record
+        if (mower?.sn) {
+          db.prepare('UPDATE equipment SET mower_sn = ?, mac_address = COALESCE(?, mac_address) WHERE equipment_id = ?')
+            .run(mower.sn, mower.mac ?? null, targetId);
+        }
+        if (charger?.sn) {
+          db.prepare('UPDATE equipment SET charger_sn = ?, charger_address = COALESCE(?, charger_address), charger_channel = COALESCE(?, charger_channel) WHERE equipment_id = ?')
+            .run(charger.sn, charger.address ?? null, charger.channel ?? null, targetId);
+        }
+        if (deviceName) {
+          db.prepare('UPDATE equipment SET equipment_nick_name = ? WHERE equipment_id = ?')
+            .run(deviceName, targetId);
+        }
+        // Clean up any duplicate standalone records
+        if (mower?.sn) db.prepare('DELETE FROM equipment WHERE mower_sn = ? AND equipment_id != ?').run(mower.sn, targetId);
+        if (charger?.sn) db.prepare('DELETE FROM equipment WHERE charger_sn = ? AND equipment_id != ?').run(charger.sn, targetId);
+        console.log(`[Setup] Equipment updated: ${targetId} (mower=${mower?.sn ?? 'same'}, charger=${charger?.sn ?? 'same'})`);
+      } else {
+        // Create new record
         const equipmentId = crypto.randomUUID();
         db.prepare(`
           INSERT INTO equipment (equipment_id, user_id, mower_sn, charger_sn, equipment_nick_name,
             charger_address, charger_channel, mac_address, created_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
         `).run(
-          equipmentId, appUserId, primarySn, charger?.sn ?? null,
+          equipmentId, appUserId, mower?.sn ?? null, charger?.sn ?? null,
           deviceName ?? null, charger?.address ?? null, charger?.channel ?? null,
           (mower?.mac ?? charger?.mac) ?? null,
         );
-        console.log(`[Setup] Equipment created: ${primarySn} + ${charger?.sn ?? 'no charger'}`);
+        console.log(`[Setup] Equipment created: mower=${mower?.sn ?? 'none'}, charger=${charger?.sn ?? 'none'}`);
       }
 
-      // 3. Register in device_registry (for MAC lookup)
+      // 3. Register in device_registry (for MAC lookup) — INSERT OR IGNORE = idempotent
       if (mower?.sn && mower?.mac) {
         db.prepare(`INSERT OR IGNORE INTO device_registry (mqtt_client_id, sn, mac_address, last_seen) VALUES (?, ?, ?, datetime('now'))`)
           .run(`cloud_import_${mower.sn}`, mower.sn, mower.mac);
@@ -225,7 +259,7 @@ setupRouter.post('/cloud-apply', async (req: Request, res: Response) => {
           .run(`cloud_import_${charger.sn}`, charger.sn, charger.mac);
       }
 
-      // 4. LoRa cache
+      // 4. LoRa cache — INSERT OR REPLACE = idempotent
       if (charger?.sn && charger?.address) {
         db.prepare('INSERT OR REPLACE INTO equipment_lora_cache (sn, charger_address, charger_channel) VALUES (?, ?, ?)')
           .run(charger.sn, charger.address, charger.channel ?? 16);
