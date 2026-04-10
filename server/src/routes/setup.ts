@@ -18,7 +18,6 @@ import https from 'https';
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
-import { execSync } from 'child_process';
 import { userRepo, equipmentRepo, deviceRepo, mapRepo } from '../db/repositories/index.js';
 import { isSetupComplete, invalidateSetupCache } from '../middleware/setupGuard.js';
 
@@ -405,10 +404,19 @@ setupRouter.post('/cloud-apply', async (req: Request, res: Response) => {
                 }
                 fs.writeFileSync(path.join(csvDir, 'map_info.json'), JSON.stringify(mapInfoObj, null, 2));
 
-                // Maak ZIP — ALTIJD nieuw bestand, nooit updaten
+                // Maak ZIP met archiver (Node.js, geen system zip command nodig)
                 const zipPath = path.join(STORAGE, `${mower.sn}_latest.zip`);
                 if (fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
-                execSync(`cd "${tmpZipDir}" && zip -r "${zipPath}" csv_file/`, { stdio: 'pipe' });
+                const archiver = (await import('archiver')).default;
+                await new Promise<void>((resolve, reject) => {
+                  const output = fs.createWriteStream(zipPath);
+                  const archive = archiver('zip', { zlib: { level: 9 } });
+                  output.on('close', resolve);
+                  archive.on('error', reject);
+                  archive.pipe(output);
+                  archive.directory(csvDir, 'csv_file');
+                  archive.finalize();
+                });
                 fs.rmSync(tmpZipDir, { recursive: true, force: true });
                 mapZipSize = fs.statSync(zipPath).size;
                 console.log(`[Setup] Generated ${mower.sn}_latest.zip (${mapZipSize} bytes)`);
