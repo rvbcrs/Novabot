@@ -7,6 +7,8 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "dev:all": "concurrently -n server,dashboard -c blue,magenta \"tsx watch src/index.ts\" \"npm run dev --prefix ../dashboard\"",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "build": "tsc --noEmitOnError false",
     "build:all": "npm run build && npm run build --prefix ../dashboard",
     "start": "node dist/index.js"
@@ -36,6 +38,7 @@
     "@types/uuid": "^9.0.8",
     "concurrently": "^9.2.1",
     "tsx": "^4.7.2",
-    "typescript": "^5.4.3"
+    "typescript": "^5.4.3",
+    "vitest": "^4.1.4"
   }
 }
