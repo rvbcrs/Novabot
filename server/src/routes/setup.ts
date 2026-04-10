@@ -283,8 +283,16 @@ setupRouter.post('/cloud-apply', async (req: Request, res: Response) => {
             console.log(`[Setup] Cloud maps: ${workItems.length} work, ${unicomItems.length} unicom for ${mower.sn}`);
 
             // Download each map CSV from cloud and store in DB
+            // Flatten: work items + their nested obstacles + unicom items
             const { v4: uuidv4 } = await import('uuid');
-            for (const item of [...workItems, ...unicomItems]) {
+            const allItems: Array<Record<string, unknown>> = [];
+            for (const w of workItems) {
+              allItems.push(w);
+              const obstacles = (w.obstacle ?? []) as Array<Record<string, unknown>>;
+              for (const obs of obstacles) allItems.push({ ...obs, type: 'obstacle' });
+            }
+            for (const u of unicomItems) allItems.push(u);
+            for (const item of allItems) {
               const csvUrl = item.url as string | undefined;
               const fileName = item.fileName as string | undefined;
               const mapType = item.type === 'obstacle' ? 'obstacle' : item.type === 'unicom' ? 'unicom' : 'work';
