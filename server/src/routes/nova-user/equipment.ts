@@ -1,6 +1,5 @@
 import { Router, Request, Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
-import { db } from '../../db/database.js';
 import { equipmentRepo, userRepo, deviceRepo } from '../../db/repositories/index.js';
 import { authMiddleware } from '../../middleware/auth.js';
 import { AuthRequest, ok, fail, EquipmentRow } from '../../types/index.js';
@@ -140,9 +139,7 @@ equipmentRouter.post('/getEquipmentBySN', authMiddleware, (req: AuthRequest, res
 
   // Sla gevonden MAC persistent op in equipment tabel (zodat het bewaard blijft bij DB wipe van device_registry)
   if (row && mac && !row.mac_address) {
-    // TODO: add equipmentRepo.updateMacAddress(sn, mac) — no matching repo method for UPDATE by mower_sn OR charger_sn
-    db.prepare('UPDATE equipment SET mac_address = ? WHERE mower_sn = ? OR charger_sn = ?')
-      .run(mac, sn, sn);
+    equipmentRepo.updateMacAddress(sn, mac);
   }
 
   // Haal numeriek user ID op (cloud retourneert dit als integer, bijv. 86).
@@ -325,15 +322,7 @@ equipmentRouter.post('/bindingEquipment', authMiddleware, (req: AuthRequest, res
     } else {
       console.log(`[equipment] bindingEquipment: re-bind sn=${sn} user_id=${existing.user_id ?? 'NULL'} → ${req.userId}`);
     }
-    // TODO: add equipmentRepo.rebind() — COALESCE update not available as single repo method
-    db.prepare(`
-      UPDATE equipment
-      SET user_id              = ?,
-          charger_channel     = COALESCE(?, charger_channel),
-          charger_address     = COALESCE(?, charger_address),
-          equipment_nick_name = COALESCE(?, equipment_nick_name)
-      WHERE equipment_id = ?
-    `).run(req.userId, chargerChannel, chargerAddress, nickName, existing.equipment_id);
+    equipmentRepo.rebind(existing.equipment_id, req.userId!, chargerChannel, chargerAddress, nickName);
     res.json(ok(1));  // Cloud retourneert value:1 bij success
     return;
   }
@@ -361,13 +350,12 @@ equipmentRouter.post('/unboundEquipment', authMiddleware, (req: AuthRequest, res
   const { sn, equipmentId } = req.body as { sn?: string; equipmentId?: number };
   if (!sn && equipmentId == null) { res.json(fail('sn or equipmentId required', 400)); return; }
 
-  // TODO: add equipmentRepo.findBySnAndUser() / findByIdAndUser() — no repo method for SN+user_id filtered lookup
   // Zoek equipment op basis van SN (primair) of equipmentId (fallback)
   const equip = sn
-    ? db.prepare('SELECT id, mower_sn, charger_sn, charger_address, charger_channel FROM equipment WHERE (mower_sn = ? OR charger_sn = ?) AND user_id = ?')
-        .get(sn, sn, req.userId) as { id: number; mower_sn: string; charger_sn: string | null; charger_address: string | null; charger_channel: string | null } | undefined
-    : db.prepare('SELECT id, mower_sn, charger_sn, charger_address, charger_channel FROM equipment WHERE id = ? AND user_id = ?')
-        .get(equipmentId, req.userId) as { id: number; mower_sn: string; charger_sn: string | null; charger_address: string | null; charger_channel: string | null } | undefined;
+    ? equipmentRepo.findBySnAndUser(sn, req.userId!)
+    : equipmentId != null
+      ? equipmentRepo.findByIdAndUser(equipmentId, req.userId!)
+      : undefined;
 
   if (!equip) { res.json(ok()); return; }
 
@@ -375,9 +363,7 @@ equipmentRouter.post('/unboundEquipment', authMiddleware, (req: AuthRequest, res
   // De cloud verwijdert apparaten nooit uit hun database (geïmporteerd bij fabriek).
   // Als we DELETE doen, retourneert getEquipmentBySN een "nieuw apparaat" met equipmentId=0,
   // waardoor de app volledige BLE provisioning triggert die de maaier's WiFi reset.
-  // TODO: add equipmentRepo.unbind(id) — setUserId expects string but we need to set NULL
-  db.prepare('UPDATE equipment SET user_id = NULL WHERE id = ?')
-    .run(equip.id);
+  equipmentRepo.unbindById(equip.id);
   console.log(`[equipment] unboundEquipment: sn=${sn ?? '?'} id=${equip.id} unbound (user_id=NULL)`);
   res.json(ok());
 });
@@ -389,9 +375,7 @@ equipmentRouter.post('/updateEquipmentNickName', authMiddleware, (req: AuthReque
   };
   if (equipmentId == null) { res.json(fail('equipmentId required', 400)); return; }
 
-  // TODO: add equipmentRepo.updateNickNameByIdAndUser() — repo updateNickName lacks user_id IDOR check
-  db.prepare('UPDATE equipment SET equipment_nick_name = ? WHERE id = ? AND user_id = ?')
-    .run(equipmentNickName ?? null, equipmentId, req.userId);
+  equipmentRepo.updateNickNameByIdAndUser(equipmentId, req.userId!, equipmentNickName ?? null);
   res.json(ok());
 });
 
@@ -403,22 +387,10 @@ equipmentRouter.post('/updateEquipmentVersion', authMiddleware, (req: AuthReques
   };
 
   // App stuurt sn + chargerSn i.p.v. equipmentId — accepteer beide
-  // TODO: add equipmentRepo.updateVersionsByIdAndUser() — repo updateVersions lacks user_id IDOR check
   if (equipmentId != null) {
-    db.prepare(`
-      UPDATE equipment
-      SET mower_version = COALESCE(?, mower_version),
-          charger_version = COALESCE(?, charger_version)
-      WHERE id = ? AND user_id = ?
-    `).run(mowerVersion ?? null, chargerVersion ?? null, equipmentId, req.userId);
+    equipmentRepo.updateVersionsByIdAndUser(equipmentId, req.userId!, mowerVersion, chargerVersion);
   } else if (sn) {
-    // IDOR bescherming: voeg user_id check toe zodat je niet andermans apparaat kunt updaten
-    db.prepare(`
-      UPDATE equipment
-      SET mower_version = COALESCE(?, mower_version),
-          charger_version = COALESCE(?, charger_version)
-      WHERE mower_sn = ? AND user_id = ?
-    `).run(mowerVersion ?? null, chargerVersion ?? null, sn, req.userId);
+    equipmentRepo.updateVersionsByMowerSnAndUser(sn, req.userId!, mowerVersion, chargerVersion);
   }
 
   // Inject versies in sensor cache + push naar dashboard via Socket.io

@@ -3,7 +3,18 @@
  * Geen auth — alleen bedoeld voor lokaal netwerk.
  */
 import { Router, Request, Response } from 'express';
-import { db } from '../db/database.js';
+import {
+  userRepo,
+  equipmentRepo,
+  deviceRepo,
+  mapRepo,
+  scheduleRepo,
+  messageRepo,
+  deviceSettingsRepo,
+  signalHistoryRepo,
+  virtualWallRepo,
+  otaVersionRepo,
+} from '../db/repositories/index.js';
 import { getAllDeviceSnapshots, getDeviceSnapshot, SENSORS, getGpsTrail, clearGpsTrail, getLocalTrail, clearLocalTrail, deviceCache, translateValue, markPinVerified } from '../mqtt/sensorData.js';
 import { isDeviceOnline, writeRawPublish, getBrokerDiagnostics } from '../mqtt/broker.js';
 import { getRecentLogs, forwardToDashboard } from '../dashboard/socketHandler.js';
@@ -45,16 +56,9 @@ export const dashboardRouter = Router();
 // Toont alleen apparaten die gebonden zijn (in equipment tabel) of momenteel online zijn,
 // gedepliceerd op SN (meest recente entry per SN)
 dashboardRouter.get('/devices', (_req: Request, res: Response) => {
-  const registry = db.prepare(`
-    SELECT d.* FROM device_registry d
-    INNER JOIN (
-      SELECT sn, MAX(last_seen) as max_seen FROM device_registry
-      WHERE sn IS NOT NULL GROUP BY sn
-    ) latest ON d.sn = latest.sn AND d.last_seen = latest.max_seen
-    ORDER BY d.last_seen DESC
-  `).all() as DeviceRegistryRow[];
+  const registry = deviceRepo.listLatestBySn() as DeviceRegistryRow[];
 
-  const equipment = db.prepare('SELECT mower_sn, charger_sn, equipment_nick_name, mower_version, charger_version, mower_ip FROM equipment').all() as EquipmentRow[];
+  const equipment = equipmentRepo.listAll();
 
   // Verzamel alle gebonden SNs + versie lookup
   const boundSns = new Set<string>();
@@ -85,14 +89,17 @@ dashboardRouter.get('/devices', (_req: Request, res: Response) => {
   const snapshots = getAllDeviceSnapshots();
 
   // LoRa config uit equipment_lora_cache
-  const loraCache = db.prepare('SELECT sn, charger_address, charger_channel FROM equipment_lora_cache').all() as { sn: string; charger_address: number | null; charger_channel: number | null }[];
+  const loraCache = equipmentRepo.listLoraCache();
   const loraBySn = new Map<string, { address: number | null; channel: number | null }>();
   for (const lc of loraCache) {
-    loraBySn.set(lc.sn, { address: lc.charger_address, channel: lc.charger_channel });
+    loraBySn.set(lc.sn, {
+      address: lc.charger_address != null ? Number(lc.charger_address) : null,
+      channel: lc.charger_channel != null ? Number(lc.charger_channel) : null,
+    });
   }
 
   // Persisted settings uit device_settings (voor set_para_info cache)
-  const settingsRows = db.prepare('SELECT sn, key, value FROM device_settings').all() as { sn: string; key: string; value: string }[];
+  const settingsRows = deviceSettingsRepo.listAll();
   const settingsBySn = new Map<string, Map<string, string>>();
   for (const row of settingsRows) {
     if (!settingsBySn.has(row.sn)) settingsBySn.set(row.sn, new Map());
@@ -146,11 +153,7 @@ dashboardRouter.get('/devices', (_req: Request, res: Response) => {
 dashboardRouter.get('/unbound-devices', (_req: Request, res: Response) => {
   // Alle SNs die al in equipment zitten én gekoppeld zijn aan een bestaande gebruiker.
   // Equipment met een verwijzing naar een niet-bestaand account (verwijderd account) telt als ongebonden.
-  const boundSnRows = db.prepare(`
-    SELECT mower_sn, charger_sn FROM equipment
-    WHERE user_id IS NOT NULL
-      AND user_id IN (SELECT app_user_id FROM users)
-  `).all() as { mower_sn: string; charger_sn: string | null }[];
+  const boundSnRows = equipmentRepo.listBoundSnForExistingUsers();
 
   const boundSns = new Set<string>();
   for (const r of boundSnRows) {
@@ -159,14 +162,7 @@ dashboardRouter.get('/unbound-devices', (_req: Request, res: Response) => {
   }
 
   // Meest recent geziene entry per SN uit device_registry
-  const registry = db.prepare(`
-    SELECT d.* FROM device_registry d
-    INNER JOIN (
-      SELECT sn, MAX(last_seen) as max_seen FROM device_registry
-      WHERE sn IS NOT NULL GROUP BY sn
-    ) latest ON d.sn = latest.sn AND d.last_seen = latest.max_seen
-    ORDER BY d.last_seen DESC
-  `).all() as DeviceRegistryRow[];
+  const registry = deviceRepo.listLatestBySn() as DeviceRegistryRow[];
 
   const unbound = registry
     .filter(d => d.sn && !boundSns.has(d.sn))
@@ -186,27 +182,25 @@ dashboardRouter.post('/bind-device', (req: Request, res: Response) => {
   if (!sn) { res.status(400).json({ ok: false, error: 'sn required' }); return; }
 
   // Haal de enige gebruiker op (single-user setup)
-  const user = db.prepare('SELECT app_user_id FROM users LIMIT 1').get() as { app_user_id: string } | undefined;
+  const user = userRepo.findFirst();
   if (!user) { res.status(400).json({ ok: false, error: 'Geen gebruiker gevonden' }); return; }
 
-  const existing = db.prepare(
-    'SELECT equipment_id, user_id FROM equipment WHERE mower_sn = ? OR charger_sn = ?'
-  ).get(sn, sn) as { equipment_id: string; user_id: string | null } | undefined;
+  const existing = equipmentRepo.findBySn(sn);
 
   if (existing) {
     // Bijwerken: user_id koppelen + eventueel naam
-    db.prepare(`
-      UPDATE equipment SET user_id = ?, equipment_nick_name = COALESCE(?, equipment_nick_name)
-      WHERE equipment_id = ?
-    `).run(user.app_user_id, name ?? null, existing.equipment_id);
+    equipmentRepo.updateUserAndNickName(existing.equipment_id, user.app_user_id, name ?? null);
   } else {
     // Nieuw record aanmaken
     const equipmentId = uuidv4();
     const isCharger = sn.startsWith('LFIC');
-    db.prepare(`
-      INSERT INTO equipment (equipment_id, user_id, mower_sn, equipment_type_h, equipment_nick_name)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(equipmentId, user.app_user_id, sn, isCharger ? 'charger' : 'mower', name ?? null);
+    equipmentRepo.create({
+      equipment_id: equipmentId,
+      user_id: user.app_user_id,
+      mower_sn: sn,
+      equipment_type_h: isCharger ? 'charger' : 'mower',
+      nick_name: name ?? null,
+    });
   }
 
   console.log(`[dashboard] bind-device: sn=${sn} name=${name ?? '-'} gebonden aan user ${user.app_user_id}`);
@@ -216,7 +210,7 @@ dashboardRouter.post('/bind-device', (req: Request, res: Response) => {
 // DELETE /api/dashboard/devices/:sn — verwijder een device uit de registry
 dashboardRouter.delete('/devices/:sn', (req: Request, res: Response) => {
   const { sn } = req.params;
-  db.prepare('DELETE FROM device_registry WHERE sn = ?').run(sn);
+  deviceRepo.deleteBySn(sn);
   res.json({ ok: true });
 });
 
@@ -225,8 +219,8 @@ dashboardRouter.patch('/equipment/:sn/mower-ip', (req: Request, res: Response) =
   const { sn } = req.params;
   const { ip } = req.body as { ip: string };
   if (!ip || typeof ip !== 'string') { res.status(400).json({ error: 'ip required' }); return; }
-  const result = db.prepare('UPDATE equipment SET mower_ip = ? WHERE mower_sn = ?').run(ip.trim(), sn);
-  if (result.changes === 0) { res.status(404).json({ error: 'Maaier niet gevonden in equipment' }); return; }
+  const changes = equipmentRepo.updateMowerIp(sn, ip.trim());
+  if (changes === 0) { res.status(404).json({ error: 'Maaier niet gevonden in equipment' }); return; }
   res.json({ ok: true });
 });
 
@@ -263,18 +257,13 @@ interface MapRow {
 
 // GET /api/dashboard/maps — alle kaarten (alle SNs)
 dashboardRouter.get('/maps', (_req: Request, res: Response) => {
-  const rows = db.prepare(
-    'SELECT * FROM maps ORDER BY updated_at DESC'
-  ).all() as MapRow[];
+  const rows = mapRepo.listAll() as MapRow[];
 
   // Charger GPS per maaier ophalen voor local→GPS conversie
   const chargerCache = new Map<string, GpsPoint | null>();
-  function getChargerGps(mowerSn: string): GpsPoint | null {
+  function getChargerGpsLocal(mowerSn: string): GpsPoint | null {
     if (chargerCache.has(mowerSn)) return chargerCache.get(mowerSn)!;
-    const cal = db.prepare('SELECT charger_lat, charger_lng FROM map_calibration WHERE mower_sn = ?')
-      .get(mowerSn) as { charger_lat: number | null; charger_lng: number | null } | undefined;
-    const result = cal?.charger_lat && cal?.charger_lng
-      ? { lat: cal.charger_lat, lng: cal.charger_lng } : null;
+    const result = mapRepo.getChargerGps(mowerSn);
     chargerCache.set(mowerSn, result);
     return result;
   }
@@ -284,7 +273,7 @@ dashboardRouter.get('/maps', (_req: Request, res: Response) => {
     let mapMaxMin: Record<string, number> | null = null;
 
     if (r.map_area) {
-      const chargerGps = getChargerGps(r.mower_sn);
+      const chargerGps = getChargerGpsLocal(r.mower_sn);
       if (chargerGps) {
         const localPoints: LocalPoint[] = JSON.parse(r.map_area);
         mapArea = localPoints.map(p => localToGps(p, chargerGps));
@@ -317,15 +306,10 @@ dashboardRouter.get('/maps', (_req: Request, res: Response) => {
 dashboardRouter.get('/maps/:sn', (req: Request, res: Response) => {
   const { sn } = req.params;
   const wantGps = req.query.coords === 'gps';
-  const rows = db.prepare(
-    'SELECT * FROM maps WHERE mower_sn = ? ORDER BY updated_at DESC'
-  ).all(sn) as MapRow[];
+  const rows = mapRepo.findByMowerSn(sn);
 
   // Charger GPS ophalen
-  const cal = db.prepare('SELECT charger_lat, charger_lng FROM map_calibration WHERE mower_sn = ?')
-    .get(sn) as { charger_lat: number | null; charger_lng: number | null } | undefined;
-  const chargerGps: GpsPoint | null = cal?.charger_lat && cal?.charger_lng
-    ? { lat: cal.charger_lat, lng: cal.charger_lng } : null;
+  const chargerGps = mapRepo.getChargerGps(sn);
 
   const maps = rows.map(r => {
     let mapArea: Array<{ x: number; y: number } | GpsPoint> = [];
@@ -522,13 +506,11 @@ dashboardRouter.post('/maps/:sn', (req: Request, res: Response) => {
   }
 
   // Charger GPS nodig voor GPS→lokaal conversie
-  const cal = db.prepare('SELECT charger_lat, charger_lng FROM map_calibration WHERE mower_sn = ?')
-    .get(sn) as { charger_lat: number | null; charger_lng: number | null } | undefined;
-  if (!cal?.charger_lat || !cal?.charger_lng) {
+  const chargerGps = mapRepo.getChargerGps(sn);
+  if (!chargerGps) {
     res.status(400).json({ error: 'Charger positie onbekend — plaats eerst de charger op de kaart' });
     return;
   }
-  const chargerGps: GpsPoint = { lat: cal.charger_lat, lng: cal.charger_lng };
 
   // Converteer GPS→lokaal vóór opslag
   const localPoints = mapArea.map(p => gpsToLocal(p, chargerGps));
@@ -542,10 +524,14 @@ dashboardRouter.post('/maps/:sn', (req: Request, res: Response) => {
   const typeSlug = mapType && ['work', 'obstacle', 'unicom'].includes(mapType) ? mapType : 'work';
   const mapId = `dashboard_${typeSlug}_${Date.now()}`;
 
-  db.prepare(`
-    INSERT INTO maps (map_id, mower_sn, map_name, map_type, map_area, map_max_min, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
-  `).run(mapId, sn, mapName ?? null, typeSlug, JSON.stringify(localPoints), JSON.stringify(bounds));
+  mapRepo.create({
+    map_id: mapId,
+    mower_sn: sn,
+    map_name: mapName ?? null,
+    map_type: typeSlug,
+    map_area: JSON.stringify(localPoints),
+    map_max_min: JSON.stringify(bounds),
+  });
 
   res.json({
     ok: true,
@@ -574,7 +560,7 @@ dashboardRouter.patch('/maps/:sn/:mapId', (req: Request, res: Response) => {
     mapArea?: Array<{ lat: number; lng: number }>;
   };
 
-  const row = db.prepare('SELECT map_id FROM maps WHERE map_id = ? AND mower_sn = ?').get(mapId, sn);
+  const row = mapRepo.findByIdAndMower(mapId, sn);
   if (!row) {
     res.status(404).json({ error: 'Kaart niet gevonden' });
     return;
@@ -582,13 +568,11 @@ dashboardRouter.patch('/maps/:sn/:mapId', (req: Request, res: Response) => {
 
   // Update polygon punten als meegegeven — converteer GPS→lokaal
   if (mapArea && Array.isArray(mapArea) && mapArea.length >= 3) {
-    const cal = db.prepare('SELECT charger_lat, charger_lng FROM map_calibration WHERE mower_sn = ?')
-      .get(sn) as { charger_lat: number | null; charger_lng: number | null } | undefined;
-    if (!cal?.charger_lat || !cal?.charger_lng) {
+    const chargerGps = mapRepo.getChargerGps(sn);
+    if (!chargerGps) {
       res.status(400).json({ error: 'Charger positie onbekend' });
       return;
     }
-    const chargerGps: GpsPoint = { lat: cal.charger_lat, lng: cal.charger_lng };
     const localPoints = mapArea.map(p => gpsToLocal(p, chargerGps));
     const bounds = {
       minX: Math.min(...localPoints.map(p => p.x)),
@@ -596,14 +580,17 @@ dashboardRouter.patch('/maps/:sn/:mapId', (req: Request, res: Response) => {
       minY: Math.min(...localPoints.map(p => p.y)),
       maxY: Math.max(...localPoints.map(p => p.y)),
     };
-    db.prepare('UPDATE maps SET map_area = ?, map_max_min = ?, updated_at = datetime(\'now\') WHERE map_id = ? AND mower_sn = ?')
-      .run(JSON.stringify(localPoints), JSON.stringify(bounds), mapId, sn);
+    mapRepo.updateAreaAndBoundsByIdAndMower(
+      mapId,
+      sn,
+      JSON.stringify(localPoints),
+      JSON.stringify(bounds),
+    );
   }
 
   // Update naam als meegegeven
   if (mapName !== undefined) {
-    db.prepare('UPDATE maps SET map_name = ?, updated_at = datetime(\'now\') WHERE map_id = ? AND mower_sn = ?')
-      .run(mapName ?? null, mapId, sn);
+    mapRepo.updateNameByIdAndMower(mapId, sn, mapName ?? null);
   }
 
   res.json({ ok: true });
@@ -616,7 +603,7 @@ dashboardRouter.patch('/maps/:sn/:mapId', (req: Request, res: Response) => {
 dashboardRouter.delete('/maps/:sn/:mapId', (req: Request, res: Response) => {
   const { sn, mapId } = req.params;
 
-  const row = db.prepare('SELECT file_name FROM maps WHERE map_id = ? AND mower_sn = ?').get(mapId, sn) as { file_name: string | null } | undefined;
+  const row = mapRepo.findByIdAndMower(mapId, sn);
   if (!row) {
     res.status(404).json({ error: 'Kaart niet gevonden' });
     return;
@@ -630,7 +617,7 @@ dashboardRouter.delete('/maps/:sn/:mapId', (req: Request, res: Response) => {
     }
   }
 
-  db.prepare('DELETE FROM maps WHERE map_id = ? AND mower_sn = ?').run(mapId, sn);
+  mapRepo.deleteByIdAndMower(mapId, sn);
   res.json({ ok: true });
 
   // Auto-push naar maaier (bijgewerkte kaarten zonder de verwijderde)
@@ -725,7 +712,7 @@ function autoPushMapsInBackground(sn: string): void {
   // Zoek charger GPS: live cache → map_calibration
   let chargerGps: GpsPoint | null = null;
 
-  const eqRow = db.prepare('SELECT charger_sn FROM equipment WHERE mower_sn = ?').get(sn) as { charger_sn: string | null } | undefined;
+  const eqRow = equipmentRepo.findByMowerSn(sn);
   if (eqRow?.charger_sn) {
     const snap = getDeviceSnapshot(eqRow.charger_sn);
     const lat = parseFloat(snap?.latitude ?? '');
@@ -735,10 +722,7 @@ function autoPushMapsInBackground(sn: string): void {
     }
   }
   if (!chargerGps) {
-    const cal = db.prepare('SELECT charger_lat, charger_lng FROM map_calibration WHERE mower_sn = ?').get(sn) as { charger_lat: number | null; charger_lng: number | null } | undefined;
-    if (cal?.charger_lat && cal?.charger_lng) {
-      chargerGps = { lat: cal.charger_lat, lng: cal.charger_lng };
-    }
+    chargerGps = mapRepo.getChargerGps(sn);
   }
   // Fallback: maaier GPS (staat waarschijnlijk op charger)
   if (!chargerGps) {
@@ -756,13 +740,7 @@ function autoPushMapsInBackground(sn: string): void {
   }
 
   // Controleer of maaier IP bekend is
-  const ipRow = db.prepare(
-    `SELECT e.mower_ip, d.ip_address as detected_ip
-     FROM equipment e
-     LEFT JOIN device_registry d ON d.sn = e.mower_sn AND d.ip_address IS NOT NULL
-     WHERE e.mower_sn = ?
-     ORDER BY d.last_seen DESC LIMIT 1`
-  ).get(sn) as { mower_ip: string | null; detected_ip: string | null } | undefined;
+  const ipRow = equipmentRepo.findResolvedMowerIp(sn);
 
   const isPrivateIp = (addr: string) =>
     /^10\./.test(addr) || /^172\.(1[6-9]|2\d|3[01])\./.test(addr) || /^192\.168\./.test(addr);
@@ -800,13 +778,7 @@ dashboardRouter.post('/maps/:sn/push-to-mower', async (req: Request, res: Respon
   const isPrivateIp = (addr: string) =>
     /^10\./.test(addr) || /^172\.(1[6-9]|2\d|3[01])\./.test(addr) || /^192\.168\./.test(addr);
 
-  const ipRow = db.prepare(
-    `SELECT e.mower_ip, d.ip_address as detected_ip
-     FROM equipment e
-     LEFT JOIN device_registry d ON d.sn = e.mower_sn AND d.ip_address IS NOT NULL
-     WHERE e.mower_sn = ?
-     ORDER BY d.last_seen DESC LIMIT 1`
-  ).get(sn) as { mower_ip: string | null; detected_ip: string | null } | undefined;
+  const ipRow = equipmentRepo.findResolvedMowerIp(sn);
 
   const ip = ipRow?.mower_ip
     ?? (ipRow?.detected_ip && isPrivateIp(ipRow.detected_ip) ? ipRow.detected_ip : null);
@@ -822,7 +794,7 @@ dashboardRouter.post('/maps/:sn/push-to-mower', async (req: Request, res: Respon
 
   if (!chargingStation?.lat || !chargingStation?.lng) {
     // 1. Zoek de charger SN die bij deze maaier hoort
-    const eqRow = db.prepare('SELECT charger_sn FROM equipment WHERE mower_sn = ?').get(sn) as { charger_sn: string | null } | undefined;
+    const eqRow = equipmentRepo.findByMowerSn(sn);
     if (eqRow?.charger_sn) {
       const snap = getDeviceSnapshot(eqRow.charger_sn);
       const lat = parseFloat(snap?.latitude ?? '');
@@ -836,10 +808,10 @@ dashboardRouter.post('/maps/:sn/push-to-mower', async (req: Request, res: Respon
 
   if (!chargingStation?.lat || !chargingStation?.lng) {
     // 2. Fallback: handmatig ingevoerde charger positie uit map_calibration
-    const cal = db.prepare('SELECT charger_lat, charger_lng FROM map_calibration WHERE mower_sn = ?').get(sn) as { charger_lat: number | null; charger_lng: number | null } | undefined;
-    if (cal?.charger_lat && cal?.charger_lng) {
-      chargingStation = { lat: cal.charger_lat, lng: cal.charger_lng };
-      console.log(`[SSH] Charger GPS uit map_calibration: ${cal.charger_lat}, ${cal.charger_lng}`);
+    const calGps = mapRepo.getChargerGps(sn);
+    if (calGps) {
+      chargingStation = calGps;
+      console.log(`[SSH] Charger GPS uit map_calibration: ${calGps.lat}, ${calGps.lng}`);
     }
   }
 
@@ -1085,10 +1057,8 @@ dashboardRouter.post('/maps/:sn/calibrate-charger', (req: Request, res: Response
   const { sn } = req.params;
 
   // Zoek een beschikbare map voor start_run
-  const mapRow = db.prepare(
-    `SELECT map_name FROM maps WHERE mower_sn = ? AND map_type = 'work' LIMIT 1`
-  ).get(sn) as { map_name: string } | undefined;
-  const mapName = mapRow?.map_name || 'map0';
+  const workMaps = mapRepo.findByMowerSnAndType(sn, 'work');
+  const mapName = workMaps[0]?.map_name || 'map0';
 
   // 1. Save huidige positie als charger (maaier staat op station)
   publishToDevice(sn, { save_recharge_pos: { mapName, map0: '', cmd_num: getNextCmdNum(sn) } });
@@ -1158,19 +1128,13 @@ dashboardRouter.post('/maps/:sn/import-zip', (req: Request, res: Response) => {
         maxY: Math.max(...points.map(p => p.y)),
       };
 
-      db.prepare(`
-        INSERT INTO maps (map_id, mower_sn, map_name, map_area, map_max_min, updated_at)
-        VALUES (?, ?, ?, ?, ?, datetime('now'))
-        ON CONFLICT(map_id) DO UPDATE SET
-          map_area = excluded.map_area,
-          map_max_min = excluded.map_max_min,
-          updated_at = datetime('now')
-      `).run(
-        mapId, sn,
-        `Imported map${area.mapIndex}`,
-        JSON.stringify(points),
-        JSON.stringify(bounds),
-      );
+      mapRepo.create({
+        map_id: mapId,
+        mower_sn: sn,
+        map_name: `Imported map${area.mapIndex}`,
+        map_area: JSON.stringify(points),
+        map_max_min: JSON.stringify(bounds),
+      });
       imported++;
     }
 
@@ -1220,14 +1184,13 @@ dashboardRouter.post('/maps/:sn/upload-zip', async (req: Request, res: Response)
         maxY: Math.max(...points.map((p: any) => p.y)),
       };
 
-      db.prepare(`
-        INSERT INTO maps (map_id, mower_sn, map_name, map_area, map_max_min, updated_at)
-        VALUES (?, ?, ?, ?, ?, datetime('now'))
-        ON CONFLICT(map_id) DO UPDATE SET
-          map_area = excluded.map_area,
-          map_max_min = excluded.map_max_min,
-          updated_at = datetime('now')
-      `).run(mapId, sn, `Uploaded map ${area.mapIndex}`, JSON.stringify(points), JSON.stringify(bounds));
+      mapRepo.create({
+        map_id: mapId,
+        mower_sn: sn,
+        map_name: `Uploaded map ${area.mapIndex}`,
+        map_area: JSON.stringify(points),
+        map_max_min: JSON.stringify(bounds),
+      });
       imported++;
     }
 
@@ -1235,12 +1198,13 @@ dashboardRouter.post('/maps/:sn/upload-zip', async (req: Request, res: Response)
     for (const area of result.areas) {
       if (area.type === 'work') continue;
       const mapId = `uploaded_${area.type}${area.mapIndex}_${Date.now()}`;
-      db.prepare(`
-        INSERT INTO maps (map_id, mower_sn, map_name, map_type, map_area, updated_at)
-        VALUES (?, ?, ?, ?, ?, datetime('now'))
-        ON CONFLICT(map_id) DO UPDATE SET
-          map_area = excluded.map_area, updated_at = datetime('now')
-      `).run(mapId, sn, `${area.type} ${area.mapIndex}`, area.type, JSON.stringify(area.points));
+      mapRepo.create({
+        map_id: mapId,
+        mower_sn: sn,
+        map_name: `${area.type} ${area.mapIndex}`,
+        map_type: area.type,
+        map_area: JSON.stringify(area.points),
+      });
       imported++;
     }
 
@@ -1269,9 +1233,7 @@ interface CalibrationRow {
 // GET /api/dashboard/calibration/:sn — haal calibratie op
 dashboardRouter.get('/calibration/:sn', (req: Request, res: Response) => {
   const { sn } = req.params;
-  const row = db.prepare(
-    'SELECT * FROM map_calibration WHERE mower_sn = ?'
-  ).get(sn) as CalibrationRow | undefined;
+  const row = mapRepo.getCalibration(sn);
 
   res.json({
     calibration: row
@@ -1304,24 +1266,17 @@ dashboardRouter.put('/calibration/:sn', (req: Request, res: Response) => {
   // herbereken alle map_area van local(old) → GPS → local(new)
   let mapsRecalculated = 0;
   if (relocateCharger && chargerLat != null && chargerLng != null) {
-    const oldCal = db.prepare('SELECT charger_lat, charger_lng FROM map_calibration WHERE mower_sn = ?')
-      .get(sn) as { charger_lat: number | null; charger_lng: number | null } | undefined;
+    const oldChargerGps = mapRepo.getChargerGps(sn);
 
-    if (oldCal?.charger_lat != null && oldCal?.charger_lng != null) {
-      const oldOrigin: GpsPoint = { lat: oldCal.charger_lat, lng: oldCal.charger_lng };
+    if (oldChargerGps) {
+      const oldOrigin: GpsPoint = oldChargerGps;
       const newOrigin: GpsPoint = { lat: chargerLat, lng: chargerLng };
 
-      const allMaps = db.prepare(
-        'SELECT map_id, map_area FROM maps WHERE mower_sn = ? AND map_area IS NOT NULL'
-      ).all(sn) as Array<{ map_id: string; map_area: string }>;
-
-      const updateStmt = db.prepare(
-        'UPDATE maps SET map_area = ?, map_max_min = ?, updated_at = datetime(\'now\') WHERE map_id = ?'
-      );
+      const allMaps = mapRepo.findWithArea(sn);
 
       for (const row of allMaps) {
         try {
-          const oldLocal: LocalPoint[] = JSON.parse(row.map_area);
+          const oldLocal: LocalPoint[] = JSON.parse(row.map_area!);
           if (!Array.isArray(oldLocal) || oldLocal.length < 2) continue;
 
           // local(old charger) → GPS → local(new charger)
@@ -1332,7 +1287,11 @@ dashboardRouter.put('/calibration/:sn', (req: Request, res: Response) => {
             minY: Math.min(...newLocal.map(p => p.y)),
             maxY: Math.max(...newLocal.map(p => p.y)),
           };
-          updateStmt.run(JSON.stringify(newLocal), JSON.stringify(bounds), row.map_id);
+          mapRepo.updateAreaAndBoundsById(
+            row.map_id,
+            JSON.stringify(newLocal),
+            JSON.stringify(bounds),
+          );
           mapsRecalculated++;
         } catch { /* skip corrupt rows */ }
       }
@@ -1340,21 +1299,16 @@ dashboardRouter.put('/calibration/:sn', (req: Request, res: Response) => {
     }
   }
 
-  db.prepare(`
-    INSERT INTO map_calibration (mower_sn, offset_lat, offset_lng, rotation, scale, charger_lat, charger_lng, gps_charger_lat, gps_charger_lng, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-    ON CONFLICT(mower_sn) DO UPDATE SET
-      offset_lat  = excluded.offset_lat,
-      offset_lng  = excluded.offset_lng,
-      rotation    = excluded.rotation,
-      scale       = excluded.scale,
-      charger_lat = excluded.charger_lat,
-      charger_lng = excluded.charger_lng,
-      gps_charger_lat = excluded.gps_charger_lat,
-      gps_charger_lng = excluded.gps_charger_lng,
-      updated_at  = datetime('now')
-  `).run(sn, offsetLat ?? 0, offsetLng ?? 0, rotation ?? 0, scale ?? 1,
-    chargerLat ?? null, chargerLng ?? null, gpsChargerLat ?? null, gpsChargerLng ?? null);
+  mapRepo.setCalibration(sn, {
+    offset_lat: offsetLat ?? 0,
+    offset_lng: offsetLng ?? 0,
+    rotation: rotation ?? 0,
+    scale: scale ?? 1,
+    charger_lat: chargerLat ?? null,
+    charger_lng: chargerLng ?? null,
+    gps_charger_lat: gpsChargerLat ?? null,
+    gps_charger_lng: gpsChargerLng ?? null,
+  });
 
   // Na charger relocatie: push bijgewerkte maps naar maaier
   if (mapsRecalculated > 0) {
@@ -1396,7 +1350,6 @@ dashboardRouter.post('/demo/:sn', (req: Request, res: Response) => {
   setDemo(sn, !!enabled);
   res.json({ ok: true, ...getDemoStatus(sn) });
 });
-
 dashboardRouter.get('/demo/:sn', (req: Request, res: Response) => {
   const { sn } = req.params;
   res.json({ sn, ...getDemoStatus(sn) });
@@ -1432,16 +1385,12 @@ dashboardRouter.post('/command/:sn', (req: Request, res: Response) => {
     if (!deviceCache.has(sn)) deviceCache.set(sn, new Map());
     const cache = deviceCache.get(sn)!;
     const changes = new Map<string, string>();
-    const upsert = db.prepare(
-      `INSERT INTO device_settings (sn, key, value, updated_at) VALUES (?, ?, ?, datetime('now'))
-       ON CONFLICT(sn, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
-    );
     for (const [key, val] of Object.entries(paraInfo)) {
       if (val === undefined || val === null) continue;
       const strVal = String(val);
       cache.set(key, strVal);
       changes.set(key, strVal);
-      upsert.run(sn, key, strVal);
+      deviceSettingsRepo.upsert(sn, key, strVal);
     }
     // Push naar dashboard zodat UI direct update
     forwardToDashboard(sn, changes);
@@ -1455,12 +1404,11 @@ dashboardRouter.post('/command/:sn', (req: Request, res: Response) => {
   // LoRa config kan tonen in de device chip dropdown
   const loraInfo = command.set_lora_info as { addr?: number; channel?: number } | undefined;
   if (loraInfo && (loraInfo.addr != null || loraInfo.channel != null)) {
-    const upsertLora = db.prepare(
-      `INSERT INTO equipment_lora_cache (sn, charger_address, charger_channel) VALUES (?, ?, ?)
-       ON CONFLICT(sn) DO UPDATE SET charger_address = COALESCE(excluded.charger_address, charger_address),
-                                     charger_channel = COALESCE(excluded.charger_channel, charger_channel)`
+    equipmentRepo.upsertLoraCachePreserving(
+      sn,
+      loraInfo.addr != null ? String(loraInfo.addr) : null,
+      loraInfo.channel != null ? String(loraInfo.channel) : null,
     );
-    upsertLora.run(sn, loraInfo.addr != null ? String(loraInfo.addr) : null, loraInfo.channel != null ? String(loraInfo.channel) : null);
     // Push naar dashboard
     const loraChanges = new Map<string, string>();
     if (loraInfo.addr != null) loraChanges.set('lora_address', String(loraInfo.addr));
@@ -1548,13 +1496,8 @@ dashboardRouter.get('/work-records/:sn', (req: Request, res: Response) => {
   const limit = Math.min(parseInt(req.query.limit as string) || 50, 200);
   const offset = parseInt(req.query.offset as string) || 0;
 
-  const total = (db.prepare(
-    'SELECT COUNT(*) as cnt FROM work_records WHERE equipment_id = ?'
-  ).get(sn) as { cnt: number }).cnt;
-
-  const rows = db.prepare(
-    'SELECT * FROM work_records WHERE equipment_id = ? ORDER BY work_record_date DESC LIMIT ? OFFSET ?'
-  ).all(sn, limit, offset) as WorkRecordRow[];
+  const total = messageRepo.countWorkRecordsByEquipmentId(sn);
+  const rows = messageRepo.findWorkRecordsByEquipmentId(sn, limit, offset) as WorkRecordRow[];
 
   res.json({
     records: rows.map(r => ({
@@ -1579,12 +1522,7 @@ dashboardRouter.get('/signal-history/:sn', (req: Request, res: Response) => {
   const { sn } = req.params;
   const hours = Math.min(parseInt(req.query.hours as string) || 24, 168); // max 7 dagen
 
-  const rows = db.prepare(
-    `SELECT ts, battery, wifi_rssi, rtk_sat, loc_quality, cpu_temp
-     FROM signal_history
-     WHERE sn = ? AND ts >= datetime('now', ? || ' hours')
-     ORDER BY ts ASC`
-  ).all(sn, String(-hours)) as Array<{
+  const rows = signalHistoryRepo.findBySnWithinHours(sn, hours) as Array<{
     ts: string; battery: number | null; wifi_rssi: number | null;
     rtk_sat: number | null; loc_quality: number | null; cpu_temp: number | null;
   }>;
@@ -1660,9 +1598,7 @@ function scheduleRowToDto(r: ScheduleRow) {
 // GET /api/dashboard/schedules/:sn — alle schedules voor een maaier
 dashboardRouter.get('/schedules/:sn', (req: Request, res: Response) => {
   const { sn } = req.params;
-  const rows = db.prepare(
-    'SELECT * FROM dashboard_schedules WHERE mower_sn = ? ORDER BY start_time'
-  ).all(sn) as ScheduleRow[];
+  const rows = scheduleRepo.findByMowerSnOrderByStartTime(sn) as ScheduleRow[];
   res.json({ schedules: rows.map(scheduleRowToDto) });
 });
 
@@ -1695,33 +1631,28 @@ dashboardRouter.post('/schedules/:sn', (req: Request, res: Response) => {
   }
 
   const scheduleId = uuidv4();
-  db.prepare(`
-    INSERT INTO dashboard_schedules
-      (schedule_id, mower_sn, schedule_name, start_time, end_time, weekdays, enabled,
-       map_id, map_name, cutting_height, path_direction, work_mode, task_mode,
-       alternate_direction, alternate_step, edge_offset,
-       rain_pause, rain_threshold_mm, rain_threshold_probability, rain_check_hours)
-    VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    scheduleId, sn,
-    body.scheduleName ?? null,
-    body.startTime,
-    body.endTime ?? null,
-    JSON.stringify(body.weekdays ?? [1, 2, 3, 4, 5]),
-    body.mapId ?? null,
-    body.mapName ?? null,
-    body.cuttingHeight ?? 40,
-    body.pathDirection ?? 0,
-    body.workMode ?? 0,
-    body.taskMode ?? 0,
-    body.alternateDirection ? 1 : 0,
-    body.alternateStep ?? 90,
-    body.edgeOffset ?? 0,
-    body.rainPause ? 1 : 0,
-    body.rainThresholdMm ?? 0.5,
-    body.rainThresholdProbability ?? 50,
-    body.rainCheckHours ?? 2,
-  );
+  scheduleRepo.create({
+    schedule_id: scheduleId,
+    mower_sn: sn,
+    schedule_name: body.scheduleName ?? null,
+    start_time: body.startTime,
+    end_time: body.endTime ?? null,
+    weekdays: JSON.stringify(body.weekdays ?? [1, 2, 3, 4, 5]),
+    enabled: 1,
+    map_id: body.mapId ?? null,
+    map_name: body.mapName ?? null,
+    cutting_height: body.cuttingHeight ?? 40,
+    path_direction: body.pathDirection ?? 0,
+    work_mode: body.workMode ?? 0,
+    task_mode: body.taskMode ?? 0,
+    alternate_direction: body.alternateDirection ? 1 : 0,
+    alternate_step: body.alternateStep ?? 90,
+    edge_offset: body.edgeOffset ?? 0,
+    rain_pause: body.rainPause ? 1 : 0,
+    rain_threshold_mm: body.rainThresholdMm ?? 0.5,
+    rain_threshold_probability: body.rainThresholdProbability ?? 50,
+    rain_check_hours: body.rainCheckHours ?? 2,
+  });
 
   // Stuur timer_task naar maaier als die online is — maar NIET als rain_pause actief is
   // (dan beheert de server-side scheduleRunner het starten)
@@ -1753,7 +1684,7 @@ dashboardRouter.post('/schedules/:sn', (req: Request, res: Response) => {
     });
   }
 
-  const row = db.prepare('SELECT * FROM dashboard_schedules WHERE schedule_id = ?').get(scheduleId) as ScheduleRow;
+  const row = scheduleRepo.findById(scheduleId) as ScheduleRow;
   res.json({ ok: true, schedule: scheduleRowToDto(row) });
 });
 
@@ -1762,64 +1693,41 @@ dashboardRouter.patch('/schedules/:sn/:scheduleId', (req: Request, res: Response
   const { sn, scheduleId } = req.params;
   const body = req.body as Record<string, unknown>;
 
-  const existing = db.prepare('SELECT schedule_id FROM dashboard_schedules WHERE schedule_id = ? AND mower_sn = ?').get(scheduleId, sn);
+  const existing = scheduleRepo.findByIdAndMower(scheduleId, sn);
   if (!existing) {
     res.status(404).json({ error: 'Schedule niet gevonden' });
     return;
   }
 
-  db.prepare(`
-    UPDATE dashboard_schedules SET
-      schedule_name  = COALESCE(?, schedule_name),
-      start_time     = COALESCE(?, start_time),
-      end_time       = COALESCE(?, end_time),
-      weekdays       = COALESCE(?, weekdays),
-      enabled        = COALESCE(?, enabled),
-      map_id         = COALESCE(?, map_id),
-      map_name       = COALESCE(?, map_name),
-      cutting_height = COALESCE(?, cutting_height),
-      path_direction = COALESCE(?, path_direction),
-      work_mode      = COALESCE(?, work_mode),
-      task_mode      = COALESCE(?, task_mode),
-      alternate_direction = COALESCE(?, alternate_direction),
-      alternate_step      = COALESCE(?, alternate_step),
-      edge_offset         = COALESCE(?, edge_offset),
-      rain_pause          = COALESCE(?, rain_pause),
-      rain_threshold_mm   = COALESCE(?, rain_threshold_mm),
-      rain_threshold_probability = COALESCE(?, rain_threshold_probability),
-      rain_check_hours    = COALESCE(?, rain_check_hours),
-      updated_at     = datetime('now')
-    WHERE schedule_id = ? AND mower_sn = ?
-  `).run(
-    body.scheduleName ?? null,
-    body.startTime ?? null,
-    body.endTime ?? null,
-    body.weekdays ? JSON.stringify(body.weekdays as number[]) : null,
-    body.enabled !== undefined ? (body.enabled ? 1 : 0) : null,
-    body.mapId ?? null,
-    body.mapName ?? null,
-    body.cuttingHeight ?? null,
-    body.pathDirection ?? null,
-    body.workMode ?? null,
-    body.taskMode ?? null,
-    body.alternateDirection !== undefined ? (body.alternateDirection ? 1 : 0) : null,
-    body.alternateStep ?? null,
-    body.edgeOffset ?? null,
-    body.rainPause !== undefined ? (body.rainPause ? 1 : 0) : null,
-    body.rainThresholdMm ?? null,
-    body.rainThresholdProbability ?? null,
-    body.rainCheckHours ?? null,
-    scheduleId, sn,
-  );
+  scheduleRepo.updateByIdAndMower(scheduleId, sn, {
+    schedule_name: body.scheduleName as string | undefined,
+    start_time: body.startTime as string | undefined,
+    end_time: body.endTime as string | undefined,
+    weekdays: body.weekdays ? JSON.stringify(body.weekdays as number[]) : undefined,
+    enabled: body.enabled !== undefined ? ((body.enabled as boolean) ? 1 : 0) : undefined,
+    map_id: body.mapId as string | undefined,
+    map_name: body.mapName as string | undefined,
+    cutting_height: body.cuttingHeight as number | undefined,
+    path_direction: body.pathDirection as number | undefined,
+    work_mode: body.workMode as number | undefined,
+    task_mode: body.taskMode as number | undefined,
+    alternate_direction: body.alternateDirection !== undefined ? ((body.alternateDirection as boolean) ? 1 : 0) : undefined,
+    alternate_step: body.alternateStep as number | undefined,
+    edge_offset: body.edgeOffset as number | undefined,
+    rain_pause: body.rainPause !== undefined ? ((body.rainPause as boolean) ? 1 : 0) : undefined,
+    rain_threshold_mm: body.rainThresholdMm as number | undefined,
+    rain_threshold_probability: body.rainThresholdProbability as number | undefined,
+    rain_check_hours: body.rainCheckHours as number | undefined,
+  });
 
-  const row = db.prepare('SELECT * FROM dashboard_schedules WHERE schedule_id = ?').get(scheduleId) as ScheduleRow;
+  const row = scheduleRepo.findById(scheduleId) as ScheduleRow;
   res.json({ ok: true, schedule: scheduleRowToDto(row) });
 });
 
 // DELETE /api/dashboard/schedules/:sn/:scheduleId — verwijder schedule
 dashboardRouter.delete('/schedules/:sn/:scheduleId', (req: Request, res: Response) => {
   const { sn, scheduleId } = req.params;
-  db.prepare('DELETE FROM dashboard_schedules WHERE schedule_id = ? AND mower_sn = ?').run(scheduleId, sn);
+  scheduleRepo.deleteByIdAndMower(scheduleId, sn);
   res.json({ ok: true });
 });
 
@@ -1832,7 +1740,7 @@ dashboardRouter.post('/schedules/:sn/:scheduleId/send', (req: Request, res: Resp
     return;
   }
 
-  const row = db.prepare('SELECT * FROM dashboard_schedules WHERE schedule_id = ? AND mower_sn = ?').get(scheduleId, sn) as ScheduleRow | undefined;
+  const row = scheduleRepo.findByIdAndMower(scheduleId, sn) as ScheduleRow | undefined;
   if (!row) {
     res.status(404).json({ error: 'Schedule niet gevonden' });
     return;
@@ -1842,10 +1750,7 @@ dashboardRouter.post('/schedules/:sn/:scheduleId/send', (req: Request, res: Resp
   let effectiveDirection = row.path_direction;
   if (row.alternate_direction === 1) {
     // Tel hoeveel keer dit schema al getriggerd is (via last_triggered_at count)
-    const triggerCount = db.prepare(
-      `SELECT COUNT(*) as cnt FROM work_records WHERE schedule_id = ?`
-    ).get(row.schedule_id) as { cnt: number } | undefined;
-    const count = triggerCount?.cnt ?? 0;
+    const count = messageRepo.countWorkRecordsBySchedule(row.schedule_id);
     effectiveDirection = (row.path_direction + count * (row.alternate_step ?? 90)) % 360;
   }
 
@@ -1927,13 +1832,13 @@ dashboardRouter.get('/rain-sessions', (_req: Request, res: Response) => {
 dashboardRouter.get('/rain-forecast/:sn', async (req: Request, res: Response) => {
   const { sn } = req.params;
   // Haal charger GPS op
-  const cal = db.prepare('SELECT charger_lat, charger_lng FROM map_calibration WHERE mower_sn = ?').get(sn) as { charger_lat: number | null; charger_lng: number | null } | undefined;
-  if (!cal?.charger_lat || !cal?.charger_lng) {
+  const chargerGps = mapRepo.getChargerGps(sn);
+  if (!chargerGps) {
     res.json({ available: false });
     return;
   }
   try {
-    const forecast = await getWeatherForecast(cal.charger_lat, cal.charger_lng);
+    const forecast = await getWeatherForecast(chargerGps.lat, chargerGps.lng);
     const now = new Date();
     // Zoek het eerste droge uur (neerslag < 0.1mm EN kans < 30%)
     let clearAt: string | null = null;
@@ -2036,9 +1941,7 @@ dashboardRouter.post('/preview-path/:sn', (req: Request, res: Response) => {
 
 // GET /api/dashboard/virtual-walls/:sn — haal alle virtual walls op
 dashboardRouter.get('/virtual-walls/:sn', (req: Request, res: Response) => {
-  const walls = db.prepare(
-    'SELECT * FROM virtual_walls WHERE mower_sn = ? ORDER BY created_at DESC'
-  ).all(req.params.sn);
+  const walls = virtualWallRepo.findByMowerSn(req.params.sn);
   res.json({ walls });
 });
 
@@ -2053,9 +1956,7 @@ dashboardRouter.post('/virtual-walls/:sn', (req: Request, res: Response) => {
     return;
   }
   const wallId = uuidv4();
-  db.prepare(
-    'INSERT INTO virtual_walls (wall_id, mower_sn, wall_name, lat1, lng1, lat2, lng2) VALUES (?, ?, ?, ?, ?, ?, ?)'
-  ).run(wallId, sn, wallName ?? null, lat1, lng1, lat2, lng2);
+  virtualWallRepo.create(wallId, sn, wallName ?? null, lat1, lng1, lat2, lng2);
 
   // Sync alle enabled walls naar maaier
   syncVirtualWalls(sn);
@@ -2065,16 +1966,14 @@ dashboardRouter.post('/virtual-walls/:sn', (req: Request, res: Response) => {
 // DELETE /api/dashboard/virtual-walls/:sn/:wallId — verwijder een virtual wall
 dashboardRouter.delete('/virtual-walls/:sn/:wallId', (req: Request, res: Response) => {
   const { sn, wallId } = req.params;
-  db.prepare('DELETE FROM virtual_walls WHERE wall_id = ? AND mower_sn = ?').run(wallId, sn);
+  virtualWallRepo.deleteByIdAndMower(wallId, sn);
   syncVirtualWalls(sn);
   res.json({ ok: true });
 });
 
 /** Sync alle enabled virtual walls naar de maaier via MQTT */
 function syncVirtualWalls(sn: string): void {
-  const walls = db.prepare(
-    'SELECT lat1, lng1, lat2, lng2 FROM virtual_walls WHERE mower_sn = ? AND enabled = 1'
-  ).all(sn) as Array<{ lat1: number; lng1: number; lat2: number; lng2: number }>;
+  const walls = virtualWallRepo.findEnabledByMowerSn(sn) as Array<{ lat1: number; lng1: number; lat2: number; lng2: number }>;
 
   publishToDevice(sn, {
     update_virtual_wall: {
@@ -2139,9 +2038,7 @@ function syncFirmwareVersions(): void {
   );
 
   // All auto-registered versions (identified by URL pattern)
-  const dbVersions = db.prepare(
-    `SELECT * FROM ota_versions WHERE download_url LIKE '%/api/dashboard/firmware/%'`,
-  ).all() as OtaVersionRow[];
+  const dbVersions = otaVersionRepo.findByDownloadUrlLike('%/api/dashboard/firmware/%') as OtaVersionRow[];
 
   // Map DB entries by filename extracted from URL
   const dbByFilename = new Map<string, OtaVersionRow>();
@@ -2167,18 +2064,29 @@ function syncFirmwareVersions(): void {
       validDbIds.add(existing.id);
       if (existing.md5 !== md5) {
         // File changed — update version + md5
-        db.prepare(`UPDATE ota_versions SET version = ?, device_type = ?, md5 = ?, download_url = ? WHERE id = ?`)
-          .run(version, deviceType, md5, downloadUrl, existing.id);
+        otaVersionRepo.updateById(existing.id, {
+          version,
+          device_type: deviceType,
+          md5,
+          download_url: downloadUrl,
+        });
         console.log(`\x1b[38;5;208m[OTA] Auto-updated: ${filename} (${version})\x1b[0m`);
       } else if (existing.download_url !== downloadUrl || existing.version !== version) {
         // URL or version changed — update
-        db.prepare(`UPDATE ota_versions SET version = ?, device_type = ?, download_url = ? WHERE id = ?`)
-          .run(version, deviceType, downloadUrl, existing.id);
+        otaVersionRepo.updateById(existing.id, {
+          version,
+          device_type: deviceType,
+          download_url: downloadUrl,
+        });
       }
     } else {
       // New file — auto-register
-      db.prepare(`INSERT INTO ota_versions (version, device_type, download_url, md5) VALUES (?, ?, ?, ?)`)
-        .run(version, deviceType, downloadUrl, md5);
+      otaVersionRepo.create({
+        version,
+        device_type: deviceType,
+        download_url: downloadUrl,
+        md5,
+      });
       console.log(`\x1b[38;5;208m[OTA] Auto-registered: ${filename} (${version}, ${deviceType})\x1b[0m`);
     }
   }
@@ -2187,7 +2095,7 @@ function syncFirmwareVersions(): void {
   for (const row of dbVersions) {
     if (!validDbIds.has(row.id)) {
       const match = row.download_url?.match(/\/firmware\/([^/]+)$/);
-      db.prepare(`DELETE FROM ota_versions WHERE id = ?`).run(row.id);
+      otaVersionRepo.deleteById(row.id);
       console.log(`\x1b[38;5;208m[OTA] Auto-removed: ${match ? decodeURIComponent(match[1]) : row.version}\x1b[0m`);
     }
   }
@@ -2447,7 +2355,7 @@ interface OtaVersionRow {
 
 // GET /api/dashboard/ota/versions — lijst alle OTA versies
 dashboardRouter.get('/ota/versions', (_req: Request, res: Response) => {
-  const rows = db.prepare(`SELECT * FROM ota_versions ORDER BY id DESC`).all() as OtaVersionRow[];
+  const rows = otaVersionRepo.listAll() as OtaVersionRow[];
   res.json({ ok: true, versions: rows });
 });
 
@@ -2499,13 +2407,16 @@ dashboardRouter.post('/ota/versions', (req: Request, res: Response) => {
     return;
   }
 
-  const result = db.prepare(`
-    INSERT INTO ota_versions (version, device_type, download_url, release_notes, md5)
-    VALUES (?, ?, ?, ?, ?)
-  `).run(resolvedVersion, detectedDeviceType ?? 'charger', download_url ?? null, release_notes ?? null, calculatedMd5);
+  const id = otaVersionRepo.create({
+    version: resolvedVersion,
+    device_type: detectedDeviceType ?? 'charger',
+    download_url: download_url ?? null,
+    release_notes: release_notes ?? null,
+    md5: calculatedMd5,
+  });
 
-  console.log(`\x1b[38;5;208m[OTA] Versie toegevoegd: ${resolvedVersion} (${detectedDeviceType ?? 'charger'}) id=${result.lastInsertRowid}\x1b[0m`);
-  res.json({ ok: true, id: result.lastInsertRowid, version: resolvedVersion, device_type: detectedDeviceType ?? 'charger', md5: calculatedMd5 });
+  console.log(`\x1b[38;5;208m[OTA] Versie toegevoegd: ${resolvedVersion} (${detectedDeviceType ?? 'charger'}) id=${id}\x1b[0m`);
+  res.json({ ok: true, id, version: resolvedVersion, device_type: detectedDeviceType ?? 'charger', md5: calculatedMd5 });
 });
 
 // PATCH /api/dashboard/ota/versions/:id — bewerk een OTA versie
@@ -2519,7 +2430,7 @@ dashboardRouter.patch('/ota/versions/:id', (req: Request, res: Response) => {
     md5?: string;
   };
 
-  const existing = db.prepare('SELECT id FROM ota_versions WHERE id = ?').get(id);
+  const existing = otaVersionRepo.findById(id);
   if (!existing) {
     res.status(404).json({ error: 'OTA versie niet gevonden' });
     return;
@@ -2537,25 +2448,23 @@ dashboardRouter.patch('/ota/versions/:id', (req: Request, res: Response) => {
     }
   }
 
-  db.prepare(`
-    UPDATE ota_versions SET
-      version       = COALESCE(?, version),
-      device_type   = COALESCE(?, device_type),
-      download_url  = COALESCE(?, download_url),
-      release_notes = COALESCE(?, release_notes),
-      md5           = COALESCE(?, md5)
-    WHERE id = ?
-  `).run(version ?? null, device_type ?? null, download_url ?? null, release_notes ?? null, calculatedMd5, id);
+  otaVersionRepo.updateById(id, {
+    version,
+    device_type,
+    download_url,
+    release_notes,
+    md5: calculatedMd5,
+  });
 
   console.log(`\x1b[38;5;208m[OTA] Versie bijgewerkt: id=${id}${version ? ` version=${version}` : ''}\x1b[0m`);
-  const row = db.prepare('SELECT * FROM ota_versions WHERE id = ?').get(id);
+  const row = otaVersionRepo.findById(id);
   res.json({ ok: true, version: row });
 });
 
 // DELETE /api/dashboard/ota/versions/:id — verwijder een OTA versie
 dashboardRouter.delete('/ota/versions/:id', (req: Request, res: Response) => {
   const id = parseInt(req.params.id);
-  db.prepare(`DELETE FROM ota_versions WHERE id = ?`).run(id);
+  otaVersionRepo.deleteById(id);
   console.log(`\x1b[38;5;208m[OTA] Versie verwijderd: id=${id}\x1b[0m`);
   res.json({ ok: true });
 });
@@ -2570,7 +2479,7 @@ dashboardRouter.post('/ota/trigger/:sn', (req: Request, res: Response) => {
     return;
   }
 
-  const otaVersion = db.prepare(`SELECT * FROM ota_versions WHERE id = ?`).get(version_id) as OtaVersionRow | undefined;
+  const otaVersion = otaVersionRepo.findById(version_id) as OtaVersionRow | undefined;
   if (!otaVersion) {
     res.status(404).json({ error: 'OTA versie niet gevonden' });
     return;
@@ -2584,11 +2493,11 @@ dashboardRouter.post('/ota/trigger/:sn', (req: Request, res: Response) => {
   // Versie-check: vergelijk met huidige firmware versie op apparaat
   const isChargerDevice = sn.startsWith('LFIC');
   const equipRow = isChargerDevice
-    ? db.prepare('SELECT charger_version FROM equipment WHERE charger_sn = ? LIMIT 1').get(sn) as { charger_version: string | null } | undefined
-    : db.prepare('SELECT mower_version FROM equipment WHERE mower_sn = ? LIMIT 1').get(sn) as { mower_version: string | null } | undefined;
+    ? equipmentRepo.findByChargerSn(sn)
+    : equipmentRepo.findByMowerSn(sn);
   const currentVersion = isChargerDevice
-    ? (equipRow as { charger_version: string | null } | undefined)?.charger_version
-    : (equipRow as { mower_version: string | null } | undefined)?.mower_version;
+    ? equipRow?.charger_version
+    : equipRow?.mower_version;
 
   // Dashboard trigger is altijd een bewuste actie van de beheerder → versie-check is
   // alleen een waarschuwing, nooit een blokkade. De frontend stuurt force=true mee,
@@ -2676,11 +2585,7 @@ dashboardRouter.post('/ota/trigger/:sn', (req: Request, res: Response) => {
 
 // GET /api/dashboard/lora/next-address — get next free LoRa address for a new charger
 dashboardRouter.get('/lora/next-address', (_req: Request, res: Response) => {
-  const rows = db.prepare(
-    'SELECT charger_address FROM equipment_lora_cache WHERE charger_address IS NOT NULL'
-  ).all() as { charger_address: number }[];
-
-  const usedAddresses = new Set(rows.map(r => Number(r.charger_address)));
+  const usedAddresses = new Set(equipmentRepo.listUsedLoraAddresses());
   // Start at 718 (Novabot default), find next unused
   let nextAddr = 718;
   while (usedAddresses.has(nextAddr)) {
@@ -2693,17 +2598,20 @@ dashboardRouter.get('/lora/next-address', (_req: Request, res: Response) => {
 // GET /api/dashboard/device-sets — group devices into charger↔mower sets based on LoRa address
 dashboardRouter.get('/device-sets', (_req: Request, res: Response) => {
   // Get all LoRa pairings
-  const loraRows = db.prepare('SELECT sn, charger_address, charger_channel FROM equipment_lora_cache').all() as
-    { sn: string; charger_address: number | null; charger_channel: number | null }[];
+  const loraRows = equipmentRepo.listLoraCache().map(row => ({
+    sn: row.sn,
+    charger_address: row.charger_address != null ? Number(row.charger_address) : null,
+    charger_channel: row.charger_channel != null ? Number(row.charger_channel) : null,
+  }));
 
   // Get all known devices with online status
-  const deviceRows = db.prepare(`
-    SELECT d.sn, d.mac_address, d.last_seen FROM device_registry d
-    INNER JOIN (
-      SELECT sn, MAX(last_seen) as max_seen FROM device_registry
-      WHERE sn IS NOT NULL GROUP BY sn
-    ) latest ON d.sn = latest.sn AND d.last_seen = latest.max_seen
-  `).all() as { sn: string; mac_address: string | null; last_seen: string }[];
+  const deviceRows = deviceRepo.listLatestBySn()
+    .filter(row => row.sn != null)
+    .map(row => ({
+      sn: row.sn as string,
+      mac_address: row.mac_address,
+      last_seen: row.last_seen,
+    }));
 
   const allSns = new Set(deviceRows.map(r => r.sn));
 
@@ -2760,9 +2668,7 @@ dashboardRouter.post('/pair-mower', (req: Request, res: Response) => {
   }
 
   // Get charger's LoRa address from cache
-  const loraRow = db.prepare(
-    'SELECT charger_address, charger_channel FROM equipment_lora_cache WHERE sn = ?'
-  ).get(chargerSn) as { charger_address: number; charger_channel: number } | undefined;
+  const loraRow = equipmentRepo.getLoraCache(chargerSn);
 
   if (!loraRow) {
     res.status(404).json({ error: 'Charger not found in LoRa cache — provision charger first' });
@@ -2770,48 +2676,40 @@ dashboardRouter.post('/pair-mower', (req: Request, res: Response) => {
   }
 
   // Check if mower already has its own equipment record
-  const mowerEquip = db.prepare(
-    'SELECT equipment_id FROM equipment WHERE mower_sn = ?'
-  ).get(mowerSn) as { equipment_id: string } | undefined;
+  const mowerEquip = equipmentRepo.findByMowerSn(mowerSn);
 
   // Check if charger has an equipment record
-  const chargerEquip = db.prepare(
-    'SELECT equipment_id, user_id, mower_sn FROM equipment WHERE mower_sn = ? OR charger_sn = ?'
-  ).get(chargerSn, chargerSn) as { equipment_id: string; user_id: string | null; mower_sn: string } | undefined;
+  const chargerEquip = equipmentRepo.findBySn(chargerSn);
 
   // If mower has its own record, delete it first (will be merged into charger's record)
   if (mowerEquip && (!chargerEquip || mowerEquip.equipment_id !== chargerEquip?.equipment_id)) {
-    db.prepare('DELETE FROM equipment WHERE equipment_id = ?').run(mowerEquip.equipment_id);
+    equipmentRepo.deleteById(mowerEquip.equipment_id);
     console.log(`[pair] Removed mower's standalone equipment record ${mowerEquip.equipment_id}`);
   }
 
   if (chargerEquip && chargerEquip.mower_sn === chargerSn) {
     // Charger is stored as mower_sn (charger-first flow) — update to add mower
-    db.prepare(
-      'UPDATE equipment SET charger_sn = mower_sn, mower_sn = ? WHERE equipment_id = ?'
-    ).run(mowerSn, chargerEquip.equipment_id);
+    equipmentRepo.swapChargerFirstToPaired(chargerEquip.equipment_id, mowerSn);
     console.log(`[pair] Paired mower ${mowerSn} with charger ${chargerSn} (updated existing record)`);
   } else if (chargerEquip) {
     // Charger already has a record — set mower + charger SNs
-    db.prepare(
-      'UPDATE equipment SET mower_sn = ?, charger_sn = ? WHERE equipment_id = ?'
-    ).run(mowerSn, chargerSn, chargerEquip.equipment_id);
+    equipmentRepo.setMowerAndChargerSn(chargerEquip.equipment_id, mowerSn, chargerSn);
     console.log(`[pair] Paired mower ${mowerSn} with charger ${chargerSn} (into existing charger record)`);
   } else {
     // No equipment record for either — create one with both
     const equipmentId = `EQ_${Date.now()}`;
-    db.prepare(`
-      INSERT INTO equipment (equipment_id, mower_sn, charger_sn, charger_address, charger_channel)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(equipmentId, mowerSn, chargerSn, loraRow.charger_address, loraRow.charger_channel);
+    equipmentRepo.create({
+      equipment_id: equipmentId,
+      mower_sn: mowerSn,
+      charger_sn: chargerSn,
+      charger_address: loraRow.charger_address,
+      charger_channel: loraRow.charger_channel,
+    });
     console.log(`[pair] Created equipment ${equipmentId}: mower=${mowerSn} charger=${chargerSn}`);
   }
 
   // Copy LoRa address to mower's lora_cache entry
-  db.prepare(`
-    INSERT OR REPLACE INTO equipment_lora_cache (sn, charger_address, charger_channel)
-    VALUES (?, ?, ?)
-  `).run(mowerSn, loraRow.charger_address, loraRow.charger_channel);
+  equipmentRepo.setLoraCache(mowerSn, String(loraRow.charger_address), String(loraRow.charger_channel));
 
   console.log(`[pair] Mower ${mowerSn} paired with charger ${chargerSn} (LoRa addr=${loraRow.charger_address} ch=${loraRow.charger_channel})`);
   res.json({ ok: true, loraAddress: loraRow.charger_address });
@@ -2859,10 +2757,7 @@ dashboardRouter.post('/lora/set-mower/:mowerSn', async (req: Request, res: Respo
   publishToExtended(mowerSn, { set_lora_info: { addr, channel, hc: hc ?? 20, lc: lc ?? 14 } });
 
   // Update local LoRa cache
-  db.prepare(`
-    INSERT OR REPLACE INTO equipment_lora_cache (sn, charger_address, charger_channel)
-    VALUES (?, ?, ?)
-  `).run(mowerSn, addr, channel);
+  equipmentRepo.setLoraCache(mowerSn, String(addr), String(channel));
 
   console.log(`[lora] Set mower ${mowerSn} LoRa: addr=${addr} channel=${channel}`);
   res.json({ ok: true, addr, channel });
@@ -2871,9 +2766,7 @@ dashboardRouter.post('/lora/set-mower/:mowerSn', async (req: Request, res: Respo
 // GET /api/dashboard/lora/for-charger/:chargerSn — get LoRa params for a specific charger
 dashboardRouter.get('/lora/for-charger/:chargerSn', (req: Request, res: Response) => {
   const { chargerSn } = req.params;
-  const row = db.prepare(
-    'SELECT charger_address, charger_channel FROM equipment_lora_cache WHERE sn = ?'
-  ).get(chargerSn) as { charger_address: number; charger_channel: number } | undefined;
+  const row = equipmentRepo.getLoraCache(chargerSn);
 
   if (row) {
     res.json({ address: row.charger_address, channel: row.charger_channel, hc: 20, lc: 14 });
@@ -2889,11 +2782,7 @@ dashboardRouter.post('/lora/register', (req: Request, res: Response) => {
     res.status(400).json({ error: 'sn and address required' });
     return;
   }
-  db.prepare(`
-    INSERT INTO equipment_lora_cache (sn, charger_address, charger_channel)
-    VALUES (?, ?, ?)
-    ON CONFLICT(sn) DO UPDATE SET charger_address = ?, charger_channel = ?
-  `).run(sn, address, channel ?? 16, address, channel ?? 16);
+  equipmentRepo.setLoraCache(sn, String(address), String(channel ?? 16));
   console.log(`[LoRa] Registered ${sn}: addr=${address} ch=${channel ?? 16}`);
   res.json({ ok: true });
 });
@@ -3051,13 +2940,7 @@ dashboardRouter.get('/camera/:sn/snapshot', (req: Request, res: Response) => {
     const sn = req.params.sn;
     const isPrivateIp = (addr: string) =>
       /^10\./.test(addr) || /^172\.(1[6-9]|2\d|3[01])\./.test(addr) || /^192\.168\./.test(addr);
-    const ipRow = db.prepare(
-      `SELECT e.mower_ip, d.ip_address as detected_ip
-       FROM equipment e
-       LEFT JOIN device_registry d ON d.sn = e.mower_sn AND d.ip_address IS NOT NULL
-       WHERE e.mower_sn = ?
-       ORDER BY d.last_seen DESC LIMIT 1`
-    ).get(sn) as { mower_ip: string | null; detected_ip: string | null } | undefined;
+    const ipRow = equipmentRepo.findResolvedMowerIp(sn);
     ip = ipRow?.mower_ip
       ?? (ipRow?.detected_ip && isPrivateIp(ipRow.detected_ip) ? ipRow.detected_ip : undefined);
     if (!ip) {
@@ -3143,8 +3026,7 @@ dashboardRouter.get('/setup/ca-cert', (_req: Request, res: Response) => {
 
 // GET /api/dashboard/admin/accounts — return existing accounts + their devices (bootstrap wizard)
 dashboardRouter.get('/admin/accounts', (_req: Request, res: Response) => {
-  const users = db.prepare('SELECT app_user_id, email, username FROM users').all() as
-    { app_user_id: string; email: string; username: string | null }[];
+  const users = userRepo.listBasic();
 
   if (users.length === 0) {
     res.json({ hasAccount: false });
@@ -3152,8 +3034,7 @@ dashboardRouter.get('/admin/accounts', (_req: Request, res: Response) => {
   }
 
   const user = users[0];
-  const equipment = db.prepare('SELECT mower_sn, charger_sn, mower_version, charger_version FROM equipment WHERE user_id = ?')
-    .all(user.app_user_id) as { mower_sn: string; charger_sn: string | null; mower_version: string | null; charger_version: string | null }[];
+  const equipment = equipmentRepo.findByUserId(user.app_user_id);
 
   const devices: { type: string; sn: string; version?: string }[] = [];
   const seen = new Set<string>();
@@ -3175,8 +3056,8 @@ dashboardRouter.get('/admin/accounts', (_req: Request, res: Response) => {
 // CORS nodig: cert-check doet een cross-origin fetch (http → https, andere scheme = andere origin)
 dashboardRouter.get('/setup/status', (_req: Request, res: Response) => {
   res.set('Access-Control-Allow-Origin', '*');
-  const row = db.prepare('SELECT COUNT(*) as count FROM users').get() as { count: number };
-  res.json({ hasUsers: row.count > 0 });
+  const count = userRepo.count();
+  res.json({ hasUsers: count > 0 });
 });
 
 // POST /api/dashboard/setup/create-user — maak de eerste gebruiker aan (alleen als DB leeg is)
@@ -3188,8 +3069,8 @@ dashboardRouter.post('/setup/create-user', async (req: Request, res: Response) =
     return;
   }
 
-  const row = db.prepare('SELECT COUNT(*) as count FROM users').get() as { count: number };
-  if (row.count > 0) {
+  const count = userRepo.count();
+  if (count > 0) {
     res.status(409).json({ ok: false, error: 'Er bestaat al een gebruiker. Gebruik de inlogpagina.' });
     return;
   }
@@ -3198,10 +3079,7 @@ dashboardRouter.post('/setup/create-user', async (req: Request, res: Response) =
   const hash = await bcrypt.hash(password, 10);
   const appUserId = uuidv4();
 
-  db.prepare(`
-    INSERT INTO users (app_user_id, email, password, username, created_at)
-    VALUES (?, ?, ?, ?, datetime('now'))
-  `).run(appUserId, email.trim().toLowerCase(), hash, username?.trim() ?? '');
+  userRepo.create(appUserId, email.trim().toLowerCase(), hash, username?.trim() ?? '');
 
   console.log(`[SETUP] Eerste gebruiker aangemaakt: ${email}`);
   res.json({ ok: true });
@@ -3228,8 +3106,7 @@ dashboardRouter.post('/admin/import', async (req: Request, res: Response) => {
 
   // 1. Maak of update gebruiker
   const normalizedEmail = email.trim().toLowerCase();
-  const existingUser = db.prepare('SELECT app_user_id, id FROM users WHERE email = ?')
-    .get(normalizedEmail) as { app_user_id: string; id: number } | undefined;
+  const existingUser = userRepo.findByEmail(normalizedEmail);
 
   let appUserId: string;
   let userId: number;
@@ -3237,91 +3114,78 @@ dashboardRouter.post('/admin/import', async (req: Request, res: Response) => {
   if (existingUser) {
     // Update wachtwoord als de gebruiker al bestaat
     const hash = await bcrypt.hash(password, 10);
-    db.prepare('UPDATE users SET password = ? WHERE app_user_id = ?')
-      .run(hash, existingUser.app_user_id);
+    userRepo.updatePassword(existingUser.app_user_id, hash);
     appUserId = existingUser.app_user_id;
     userId = existingUser.id;
     console.log(`[admin/import] Bestaande gebruiker bijgewerkt: ${normalizedEmail}`);
   } else {
     const hash = await bcrypt.hash(password, 10);
     appUserId = uuidv4();
-    db.prepare(`
-      INSERT INTO users (app_user_id, email, password, username, created_at)
-      VALUES (?, ?, ?, ?, datetime('now'))
-    `).run(appUserId, normalizedEmail, hash, deviceName ?? '');
-    userId = (db.prepare('SELECT id FROM users WHERE app_user_id = ?').get(appUserId) as { id: number }).id;
+    userRepo.create(appUserId, normalizedEmail, hash, deviceName ?? '');
+    userId = (userRepo.findById(appUserId) as { id: number }).id;
     console.log(`[admin/import] Nieuwe gebruiker aangemaakt: ${normalizedEmail}`);
   }
 
   // 2. Seed equipment_lora_cache voor het laadstation
   if (charger.address != null && charger.channel != null) {
-    const existingCache = db.prepare('SELECT sn FROM equipment_lora_cache WHERE sn = ?')
-      .get(charger.sn);
-    if (existingCache) {
-      db.prepare('UPDATE equipment_lora_cache SET charger_address = ?, charger_channel = ? WHERE sn = ?')
-        .run(String(charger.address), String(charger.channel), charger.sn);
-    } else {
-      db.prepare('INSERT INTO equipment_lora_cache (sn, charger_address, charger_channel) VALUES (?, ?, ?)')
-        .run(charger.sn, String(charger.address), String(charger.channel));
-    }
+    equipmentRepo.setLoraCache(charger.sn, String(charger.address), String(charger.channel));
   }
 
   // 3. Maak charger equipment record aan (of update bestaande)
-  const existingCharger = db.prepare('SELECT equipment_id FROM equipment WHERE mower_sn = ?')
-    .get(charger.sn) as { equipment_id: string } | undefined;
+  const existingCharger = equipmentRepo.findByMowerSn(charger.sn);
 
   if (existingCharger) {
-    db.prepare(`
-      UPDATE equipment
-      SET user_id = ?, charger_address = COALESCE(?, charger_address),
-          charger_channel = COALESCE(?, charger_channel),
-          mac_address = COALESCE(?, mac_address),
-          equipment_nick_name = COALESCE(?, equipment_nick_name)
-      WHERE equipment_id = ?
-    `).run(appUserId, charger.address != null ? String(charger.address) : null,
-           charger.channel != null ? String(charger.channel) : null,
-           charger.mac ?? null, deviceName ?? null, existingCharger.equipment_id);
+    equipmentRepo.updateDashboardImportCharger(
+      existingCharger.equipment_id,
+      appUserId,
+      charger.address != null ? String(charger.address) : null,
+      charger.channel != null ? String(charger.channel) : null,
+      charger.mac ?? null,
+      deviceName ?? null,
+    );
     console.log(`[admin/import] Charger ${charger.sn} bijgewerkt`);
   } else {
     const equipmentId = uuidv4();
-    db.prepare(`
-      INSERT INTO equipment
-        (equipment_id, user_id, mower_sn, charger_sn, equipment_type_h, equipment_nick_name,
-         charger_address, charger_channel, mac_address)
-      VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?)
-    `).run(equipmentId, appUserId, charger.sn, charger.sn.slice(0, 5),
-           deviceName ?? null,
-           charger.address != null ? String(charger.address) : null,
-           charger.channel != null ? String(charger.channel) : null,
-           charger.mac ?? null);
+    equipmentRepo.create({
+      equipment_id: equipmentId,
+      user_id: appUserId,
+      mower_sn: charger.sn,
+      charger_sn: null,
+      equipment_type_h: charger.sn.slice(0, 5),
+      nick_name: deviceName ?? null,
+      charger_address: charger.address != null ? String(charger.address) : null,
+      charger_channel: charger.channel != null ? String(charger.channel) : null,
+      mac_address: charger.mac ?? null,
+    });
     console.log(`[admin/import] Charger ${charger.sn} aangemaakt`);
   }
 
   // 4. Maak mower equipment record aan (als mower SN beschikbaar)
   if (mower?.sn) {
-    const existingMower = db.prepare('SELECT equipment_id FROM equipment WHERE mower_sn = ?')
-      .get(mower.sn) as { equipment_id: string } | undefined;
+    const existingMower = equipmentRepo.findByMowerSn(mower.sn);
 
     if (existingMower) {
-      db.prepare(`
-        UPDATE equipment
-        SET user_id = ?, charger_sn = COALESCE(?, charger_sn),
-            mac_address = COALESCE(?, mac_address),
-            mower_version = COALESCE(?, mower_version),
-            equipment_nick_name = COALESCE(?, equipment_nick_name)
-        WHERE equipment_id = ?
-      `).run(appUserId, charger.sn, mower.mac ?? null, mower.version ?? null,
-             deviceName ?? null, existingMower.equipment_id);
+      equipmentRepo.updateDashboardImportMower(
+        existingMower.equipment_id,
+        appUserId,
+        charger.sn,
+        mower.mac ?? null,
+        mower.version ?? null,
+        deviceName ?? null,
+      );
       console.log(`[admin/import] Maaier ${mower.sn} bijgewerkt`);
     } else {
       const equipmentId = uuidv4();
-      db.prepare(`
-        INSERT INTO equipment
-          (equipment_id, user_id, mower_sn, charger_sn, equipment_type_h, equipment_nick_name,
-           mac_address, mower_version)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(equipmentId, appUserId, mower.sn, charger.sn, mower.sn.slice(0, 5),
-             deviceName ?? null, mower.mac ?? null, mower.version ?? null);
+      equipmentRepo.create({
+        equipment_id: equipmentId,
+        user_id: appUserId,
+        mower_sn: mower.sn,
+        charger_sn: charger.sn,
+        equipment_type_h: mower.sn.slice(0, 5),
+        nick_name: deviceName ?? null,
+        mac_address: mower.mac ?? null,
+        mower_version: mower.version ?? null,
+      });
       console.log(`[admin/import] Maaier ${mower.sn} aangemaakt`);
     }
   }

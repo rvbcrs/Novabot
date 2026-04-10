@@ -218,18 +218,10 @@ async function autoDetectBleMac(sn: string, remoteIp: string): Promise<void> {
   console.log(`${C.cyan}[ARP] Auto-detected MAC voor ${sn}: WiFi STA=${wifiMac} → BLE=${bleMac}${C.reset}`);
 
   // Sla BLE MAC op in device_registry (update bestaand record)
-  // TODO: no repo method for conditional mac_address update (WHERE mac_address IS NULL)
-  db.prepare(`
-    UPDATE device_registry SET mac_address = ?
-    WHERE sn = ? AND mac_address IS NULL
-  `).run(bleMac, sn);
+  deviceRepo.updateMacIfMissingBySn(sn, bleMac);
 
   // Sla ook op in equipment tabel
-  // TODO: no repo method for conditional mac_address update on equipment
-  db.prepare(`
-    UPDATE equipment SET mac_address = ?
-    WHERE (mower_sn = ? OR charger_sn = ?) AND mac_address IS NULL
-  `).run(bleMac, sn, sn);
+  equipmentRepo.updateMacAddress(sn, bleMac, true);
 }
 
 function extractMac(s: string): string | null {
@@ -249,26 +241,11 @@ function extractSn(s: string): string | null {
 }
 
 function upsertDevice(clientId: string, sn: string | null, mac: string | null, username: string | null) {
-  // TODO: deviceRepo.upsertDevice uses INSERT OR REPLACE (overwrites all fields),
-  // but this needs COALESCE to preserve existing sn/mac — keep custom query
-  db.prepare(`
-    INSERT INTO device_registry (mqtt_client_id, sn, mac_address, mqtt_username, last_seen)
-    VALUES (?, ?, ?, ?, datetime('now'))
-    ON CONFLICT(mqtt_client_id) DO UPDATE SET
-      sn           = COALESCE(excluded.sn, sn),
-      mac_address  = COALESCE(excluded.mac_address, mac_address),
-      mqtt_username= excluded.mqtt_username,
-      last_seen    = excluded.last_seen
-  `).run(clientId, sn ?? null, mac ?? null, username ?? null);
+  deviceRepo.upsertDevicePreserving(clientId, sn, mac, username);
 
   // Koppel mac_address ook terug aan de equipment rij als die al bestaat
   if (sn && mac) {
-    // TODO: no repo method for conditional mac_address update on equipment
-    db.prepare(`
-      UPDATE equipment
-      SET mac_address = ?
-      WHERE (mower_sn = ? OR charger_sn = ?) AND mac_address IS NULL
-    `).run(mac, sn, sn);
+    equipmentRepo.updateMacAddress(sn, mac, true);
   }
 
   // Auto-create equipment record if device connects but has no equipment entry.
@@ -484,7 +461,7 @@ export async function startMqttBroker(): Promise<void> {
               console.log(`${C.cyan}[MAP-PROXY] App vraagt get_map_list voor ${sn} — server beantwoordt${C.reset}`);
 
               // Haal kaarten uit DB (zelfde query als queryEquipmentMap)
-              const dbMaps = mapRepo.findWithArea(sn);
+              const dbMaps = mapRepo.findWithAreaOrderByMapId(sn);
 
               if (dbMaps.length > 0) {
                 // Bouw ZIP md5 als die bestaat
@@ -563,7 +540,7 @@ export async function startMqttBroker(): Promise<void> {
                 }
               } else {
                 // Geen map_id → stuur outlines voor ALLE kaarten
-                const allMaps = mapRepo.findWithArea(sn);
+                const allMaps = mapRepo.findWithAreaOrderByMapId(sn);
 
                 let delay = 200;
                 for (const mapRow of allMaps) {
@@ -841,9 +818,7 @@ export async function startMqttBroker(): Promise<void> {
             const isCharger = forwardSn.startsWith('LFIC');
             const isMower = forwardSn.startsWith('LFIN');
             if (isCharger) {
-              // TODO: equipmentRepo.updateVersions takes mowerSn, not chargerSn — no matching method
-              db.prepare('UPDATE equipment SET charger_version = ? WHERE charger_sn = ?')
-                .run(String(versionStr), forwardSn);
+              equipmentRepo.updateChargerVersionByChargerSn(forwardSn, String(versionStr));
             } else if (isMower) {
               equipmentRepo.updateVersions(forwardSn, String(versionStr));
             }
@@ -952,9 +927,8 @@ export async function startMqttBroker(): Promise<void> {
             // Sla IP-adres op in device_registry (voor SSH map-upload)
             if (!isApp && socket.remoteAddress) {
               const cleanIp = socket.remoteAddress.replace(/^::ffff:/, '');
-              // TODO: no repo method for updating ip_address on device_registry
               try {
-                db.prepare('UPDATE device_registry SET ip_address = ? WHERE sn = ?').run(cleanIp, snMatch[0]);
+                deviceRepo.updateIpBySn(snMatch[0], cleanIp);
               } catch { /* tabel nog niet gemigrated */ }
             }
 
@@ -1080,24 +1054,14 @@ export function getBrokerDiagnostics(): {
 export function lookupMac(sn: string): string | null {
   // 1. Zoek in device_registry — prefer echte device entries (mqtt_username = SN)
   //    boven app-client entries (mqtt_username = 'app:SN') die een ander MAC hebben
-  // TODO: no repo method for filtered device_registry lookup by mqtt_username
-  const devRow = db.prepare(`
-    SELECT mac_address FROM device_registry
-    WHERE sn = ? AND mac_address IS NOT NULL AND mqtt_username = ?
-    ORDER BY last_seen DESC LIMIT 1
-  `).get(sn, sn) as { mac_address: string } | undefined;
-  if (devRow) return devRow.mac_address;
+  const preferredMac = deviceRepo.findPreferredMacBySnAndUsername(sn, sn);
+  if (preferredMac) return preferredMac;
 
   // 2. Fallback: elke device_registry entry BEHALVE app-clients
   //    App-clients (mqtt_username = 'app:SN') hadden eerder een verkeerd MAC
   //    van ARP auto-detectie (iPhone MAC i.p.v. maaier MAC).
-  // TODO: no repo method for filtered device_registry lookup excluding app clients
-  const regRow = db.prepare(`
-    SELECT mac_address FROM device_registry
-    WHERE sn = ? AND mac_address IS NOT NULL AND mqtt_username NOT LIKE 'app:%'
-    ORDER BY last_seen DESC LIMIT 1
-  `).get(sn) as { mac_address: string } | undefined;
-  if (regRow) return regRow.mac_address;
+  const fallbackMac = deviceRepo.findMacBySnExcludingApp(sn);
+  if (fallbackMac) return fallbackMac;
 
   // 3. Fallback: zoek in equipment tabel (gezet via admin API of eerdere binding)
   const eqRow = equipmentRepo.findBySn(sn);

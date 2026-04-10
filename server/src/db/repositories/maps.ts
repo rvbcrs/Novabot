@@ -65,6 +65,13 @@ export class MapRepository {
     "SELECT * FROM maps WHERE mower_sn = ? AND map_type = 'work' AND map_area IS NOT NULL ORDER BY updated_at DESC"
   );
   private _findWithArea = db.prepare('SELECT * FROM maps WHERE mower_sn = ? AND map_area IS NOT NULL ORDER BY updated_at DESC');
+  private _findWithAreaOrderByMapId = db.prepare(
+    'SELECT * FROM maps WHERE mower_sn = ? AND map_area IS NOT NULL ORDER BY map_id'
+  );
+  private _findByMowerSnAndTypeWithArea = db.prepare(
+    'SELECT * FROM maps WHERE mower_sn = ? AND map_type = ? AND map_area IS NOT NULL ORDER BY map_id'
+  );
+  private _listAll = db.prepare('SELECT * FROM maps ORDER BY updated_at DESC');
 
   // Map mutations
   private _create = db.prepare(`
@@ -76,11 +83,21 @@ export class MapRepository {
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
   `);
   private _updateName = db.prepare("UPDATE maps SET map_name = ?, updated_at = datetime('now') WHERE map_id = ?");
+  private _updateNameByIdAndMower = db.prepare(
+    "UPDATE maps SET map_name = ?, updated_at = datetime('now') WHERE map_id = ? AND mower_sn = ?"
+  );
   private _updateFileName = db.prepare("UPDATE maps SET file_name = ?, updated_at = datetime('now') WHERE map_id = ?");
+  private _updateAreaAndBoundsById = db.prepare(
+    "UPDATE maps SET map_area = ?, map_max_min = ?, updated_at = datetime('now') WHERE map_id = ?"
+  );
+  private _updateAreaAndBoundsByIdAndMower = db.prepare(
+    "UPDATE maps SET map_area = ?, map_max_min = ?, updated_at = datetime('now') WHERE map_id = ? AND mower_sn = ?"
+  );
 
   // Map deletes
   private _deleteById = db.prepare('DELETE FROM maps WHERE map_id = ?');
   private _deleteByMowerSn = db.prepare('DELETE FROM maps WHERE mower_sn = ?');
+  private _deleteByIdAndMower = db.prepare('DELETE FROM maps WHERE map_id = ? AND mower_sn = ?');
 
   // Map aggregates
   private _count = db.prepare('SELECT COUNT(*) as count FROM maps');
@@ -121,6 +138,18 @@ export class MapRepository {
     return this._findWithArea.all(mowerSn) as MapRow[];
   }
 
+  findWithAreaOrderByMapId(mowerSn: string): MapRow[] {
+    return this._findWithAreaOrderByMapId.all(mowerSn) as MapRow[];
+  }
+
+  findByMowerSnAndTypeWithArea(mowerSn: string, type: string): MapRow[] {
+    return this._findByMowerSnAndTypeWithArea.all(mowerSn, type) as MapRow[];
+  }
+
+  listAll(): MapRow[] {
+    return this._listAll.all() as MapRow[];
+  }
+
   // ── Map mutations ──
 
   create(data: CreateMapData): void {
@@ -153,8 +182,20 @@ export class MapRepository {
     this._updateName.run(name, mapId);
   }
 
+  updateNameByIdAndMower(mapId: string, mowerSn: string, name: string | null): void {
+    this._updateNameByIdAndMower.run(name, mapId, mowerSn);
+  }
+
   updateFileName(mapId: string, fileName: string): void {
     this._updateFileName.run(fileName, mapId);
+  }
+
+  updateAreaAndBoundsById(mapId: string, mapArea: string, mapMaxMin: string): void {
+    this._updateAreaAndBoundsById.run(mapArea, mapMaxMin, mapId);
+  }
+
+  updateAreaAndBoundsByIdAndMower(mapId: string, mowerSn: string, mapArea: string, mapMaxMin: string): void {
+    this._updateAreaAndBoundsByIdAndMower.run(mapArea, mapMaxMin, mapId, mowerSn);
   }
 
   // ── Map deletes ──
@@ -165,6 +206,10 @@ export class MapRepository {
 
   deleteByMowerSn(mowerSn: string): void {
     this._deleteByMowerSn.run(mowerSn);
+  }
+
+  deleteByIdAndMower(mapId: string, mowerSn: string): void {
+    this._deleteByIdAndMower.run(mapId, mowerSn);
   }
 
   // ── Map aggregates ──

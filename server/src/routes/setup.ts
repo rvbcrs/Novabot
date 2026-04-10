@@ -16,7 +16,6 @@
 import { Router, Request, Response } from 'express';
 import https from 'https';
 import crypto from 'crypto';
-import { db } from '../db/database.js';
 import { userRepo, equipmentRepo, deviceRepo, mapRepo } from '../db/repositories/index.js';
 import { isSetupComplete, invalidateSetupCache } from '../middleware/setupGuard.js';
 
@@ -244,14 +243,11 @@ setupRouter.post('/cloud-apply', async (req: Request, res: Response) => {
       }
 
       // 3. Register in device_registry (for MAC lookup) — INSERT OR IGNORE = idempotent
-      // TODO: deviceRepo.upsertDevice() uses INSERT OR REPLACE, but we need INSERT OR IGNORE here to avoid overwriting existing records
       if (mower?.sn && mower?.mac) {
-        db.prepare(`INSERT OR IGNORE INTO device_registry (mqtt_client_id, sn, mac_address, last_seen) VALUES (?, ?, ?, datetime('now'))`)
-          .run(`cloud_import_${mower.sn}`, mower.sn, mower.mac);
+        deviceRepo.insertIfMissing(`cloud_import_${mower.sn}`, mower.sn, mower.mac);
       }
       if (charger?.sn && charger?.mac) {
-        db.prepare(`INSERT OR IGNORE INTO device_registry (mqtt_client_id, sn, mac_address, last_seen) VALUES (?, ?, ?, datetime('now'))`)
-          .run(`cloud_import_${charger.sn}`, charger.sn, charger.mac);
+        deviceRepo.insertIfMissing(`cloud_import_${charger.sn}`, charger.sn, charger.mac);
       }
 
       // 4. LoRa cache — only insert if no existing entry (don't overwrite working config)
@@ -395,11 +391,7 @@ setupRouter.post('/skip', async (_req: Request, res: Response) => {
     const hashedPwd = await bcrypt.hash('admin', 10);
     const appUserId = `local_${Date.now()}`;
 
-    // TODO: userRepo.create() does INSERT (not INSERT OR IGNORE) — need an upsert method or keep raw SQL
-    db.prepare(`
-      INSERT OR IGNORE INTO users (app_user_id, email, password, username)
-      VALUES (?, ?, ?, ?)
-    `).run(appUserId, 'admin@local', hashedPwd, 'admin');
+    userRepo.createIfMissing(appUserId, 'admin@local', hashedPwd, 'admin');
 
     invalidateSetupCache();
     res.json({ ok: true, message: 'Local account created. Bind your mower via the Novabot app.' });
@@ -412,12 +404,7 @@ setupRouter.post('/skip', async (_req: Request, res: Response) => {
 
 setupRouter.get('/devices', (_req, res) => {
   const equipment = equipmentRepo.listAll();
-
-  // TODO: deviceRepo has no listAll() method that returns sn + mac_address + last_seen ordered by last_seen DESC
-  const registry = db.prepare(`
-    SELECT sn, mac_address, last_seen FROM device_registry
-    ORDER BY last_seen DESC
-  `).all();
+  const registry = deviceRepo.listAll();
 
   res.json({ equipment, registry });
 });
@@ -584,20 +571,11 @@ setupRouter.get('/dns-check', async (_req, res) => {
   ]);
 
   // Check if any connected mower has custom firmware (version contains "custom")
-  // TODO: equipmentRepo has no method to find by SN prefix + check version — need a findBySnPrefix() or similar
-  const mowerRow = db.prepare(`
-    SELECT mower_version FROM equipment WHERE mower_sn LIKE 'LFIN%' LIMIT 1
-  `).get() as { mower_version?: string } | undefined;
-
-  const hasCustomFirmware = !!(mowerRow?.mower_version && mowerRow.mower_version.includes('custom'));
+  const mowerVersion = equipmentRepo.findFirstMowerVersionByPrefix('LFIN%');
+  const hasCustomFirmware = !!(mowerVersion && mowerVersion.includes('custom'));
 
   // Check if a mower is currently connected (seen in last 5 minutes)
-  // TODO: deviceRepo.findRecentlyOnline() returns all recent devices, not filtered by SN prefix
-  const mowerConnected = !!(db.prepare(`
-    SELECT 1 FROM device_registry
-    WHERE sn LIKE 'LFIN%' AND datetime(last_seen) > datetime('now', '-5 minutes')
-    LIMIT 1
-  `).get());
+  const mowerConnected = deviceRepo.hasRecentlyOnlineBySnPrefix('LFIN%', 5);
 
   res.json({
     serverIp,

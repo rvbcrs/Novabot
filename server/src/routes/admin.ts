@@ -3,7 +3,6 @@
  * Geen auth vereist (draait achter eigen netwerk).
  */
 import { Router, Request, Response } from 'express';
-import { db } from '../db/database.js';
 import { deviceRepo, equipmentRepo } from '../db/repositories/index.js';
 import { DeviceRegistryRow } from '../types/index.js';
 import { scanForDevices, isBleAvailable } from '../ble/scanner.js';
@@ -192,9 +191,7 @@ adminRouter.post('/devices/:sn/mac', (req: Request, res: Response) => {
   }
 
   // Koppel ook terug aan equipment
-  // TODO: add equipmentRepo.updateMacBySn() method to avoid raw db.prepare
-  db.prepare('UPDATE equipment SET mac_address = ? WHERE (mower_sn = ? OR charger_sn = ?)')
-    .run(mac, sn, sn);
+  equipmentRepo.updateMacAddress(sn, mac);
 
   console.log(`[ADMIN] MAC geregistreerd: sn=${sn} mac=${mac}`);
   res.json({ sn, macAddress: mac, status: 'ok' });

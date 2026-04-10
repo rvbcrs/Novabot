@@ -93,6 +93,12 @@ export class MessageRepository {
   private _countWorkRecordsBySchedule = db.prepare(
     'SELECT COUNT(*) as cnt FROM work_records WHERE schedule_id = ?'
   );
+  private _findWorkRecordsByEquipmentId = db.prepare(
+    'SELECT * FROM work_records WHERE equipment_id = ? ORDER BY work_record_date DESC LIMIT ? OFFSET ?'
+  );
+  private _countWorkRecordsByEquipmentId = db.prepare(
+    'SELECT COUNT(*) as cnt FROM work_records WHERE equipment_id = ?'
+  );
 
   // ── Robot messages — methods ──
 
@@ -184,6 +190,14 @@ export class MessageRepository {
 
   countWorkRecordsBySchedule(scheduleId: string): number {
     return (this._countWorkRecordsBySchedule.get(scheduleId) as { cnt: number }).cnt;
+  }
+
+  findWorkRecordsByEquipmentId(equipmentId: string, limit: number, offset: number): WorkRecordRow[] {
+    return this._findWorkRecordsByEquipmentId.all(equipmentId, limit, offset) as WorkRecordRow[];
+  }
+
+  countWorkRecordsByEquipmentId(equipmentId: string): number {
+    return (this._countWorkRecordsByEquipmentId.get(equipmentId) as { cnt: number }).cnt;
   }
 }
 

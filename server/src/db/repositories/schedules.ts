@@ -59,8 +59,14 @@ export class ScheduleRepository {
   private _findByMowerSn = db.prepare(
     'SELECT * FROM dashboard_schedules WHERE mower_sn = ? ORDER BY created_at DESC'
   );
+  private _findByMowerSnOrderByStartTime = db.prepare(
+    'SELECT * FROM dashboard_schedules WHERE mower_sn = ? ORDER BY start_time'
+  );
   private _findById = db.prepare(
     'SELECT * FROM dashboard_schedules WHERE schedule_id = ?'
+  );
+  private _findByIdAndMower = db.prepare(
+    'SELECT * FROM dashboard_schedules WHERE schedule_id = ? AND mower_sn = ?'
   );
   private _findEnabled = db.prepare(
     'SELECT * FROM dashboard_schedules WHERE enabled = 1'
@@ -79,6 +85,9 @@ export class ScheduleRepository {
   );
   private _delete = db.prepare(
     'DELETE FROM dashboard_schedules WHERE schedule_id = ?'
+  );
+  private _deleteByIdAndMower = db.prepare(
+    'DELETE FROM dashboard_schedules WHERE schedule_id = ? AND mower_sn = ?'
   );
 
   // ── Rain sessions — prepared statements ──
@@ -124,6 +133,14 @@ export class ScheduleRepository {
 
   findById(scheduleId: string): ScheduleRow | undefined {
     return this._findById.get(scheduleId) as ScheduleRow | undefined;
+  }
+
+  findByIdAndMower(scheduleId: string, mowerSn: string): ScheduleRow | undefined {
+    return this._findByIdAndMower.get(scheduleId, mowerSn) as ScheduleRow | undefined;
+  }
+
+  findByMowerSnOrderByStartTime(sn: string): ScheduleRow[] {
+    return this._findByMowerSnOrderByStartTime.all(sn) as ScheduleRow[];
   }
 
   findEnabled(): ScheduleRow[] {
@@ -202,8 +219,53 @@ export class ScheduleRepository {
     db.prepare(`UPDATE dashboard_schedules SET ${fields.join(', ')} WHERE schedule_id = ?`).run(...values);
   }
 
+  updateByIdAndMower(scheduleId: string, mowerSn: string, data: Partial<ScheduleRow>): void {
+    const fields: string[] = [];
+    const values: unknown[] = [];
+
+    const updatable: Array<[keyof ScheduleRow, unknown]> = [
+      ['schedule_name', data.schedule_name],
+      ['start_time', data.start_time],
+      ['end_time', data.end_time],
+      ['weekdays', data.weekdays],
+      ['enabled', data.enabled],
+      ['map_id', data.map_id],
+      ['map_name', data.map_name],
+      ['cutting_height', data.cutting_height],
+      ['path_direction', data.path_direction],
+      ['work_mode', data.work_mode],
+      ['task_mode', data.task_mode],
+      ['edge_offset', data.edge_offset],
+      ['rain_pause', data.rain_pause],
+      ['rain_threshold_mm', data.rain_threshold_mm],
+      ['rain_threshold_probability', data.rain_threshold_probability],
+      ['rain_check_hours', data.rain_check_hours],
+      ['alternate_direction', data.alternate_direction],
+      ['alternate_step', data.alternate_step],
+    ];
+
+    for (const [key, value] of updatable) {
+      if (value !== undefined) {
+        fields.push(`${key} = ?`);
+        values.push(value);
+      }
+    }
+
+    if (fields.length === 0) return;
+
+    fields.push("updated_at = datetime('now')");
+    values.push(scheduleId, mowerSn);
+
+    db.prepare(`UPDATE dashboard_schedules SET ${fields.join(', ')} WHERE schedule_id = ? AND mower_sn = ?`)
+      .run(...values);
+  }
+
   delete(scheduleId: string): void {
     this._delete.run(scheduleId);
+  }
+
+  deleteByIdAndMower(scheduleId: string, mowerSn: string): void {
+    this._deleteByIdAndMower.run(scheduleId, mowerSn);
   }
 
   updateLastTriggered(scheduleId: string): void {

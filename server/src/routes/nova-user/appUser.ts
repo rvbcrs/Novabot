@@ -2,7 +2,6 @@ import { Router, Response } from 'express';
 import bcrypt from 'bcrypt';
 import crypto from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
-import { db } from '../../db/database.js';
 import { userRepo, equipmentRepo } from '../../db/repositories/index.js';
 import { authMiddleware, signToken } from '../../middleware/auth.js';
 import { AuthRequest, ok, fail, UserRow } from '../../types/index.js';
@@ -204,9 +203,7 @@ appUserRouter.get('/appUserInfo', authMiddleware, (req: AuthRequest, res: Respon
 // POST /api/nova-user/appUser/appUserInfoUpdate
 appUserRouter.post('/appUserInfoUpdate', authMiddleware, (req: AuthRequest, res: Response) => {
   const { username } = req.body as { username?: string };
-  // TODO: add userRepo.updateUsername() — no matching repo method for username update
-  db.prepare('UPDATE users SET username = ? WHERE app_user_id = ?')
-    .run(username ?? null, req.userId);
+  userRepo.updateUsername(req.userId!, username ?? null);
   res.json(ok());
 });
 
@@ -231,8 +228,7 @@ appUserRouter.post('/appUserPwdUpdate', authMiddleware, (req: AuthRequest, res: 
 
 // POST /api/nova-user/appUser/deleteAccount
 appUserRouter.post('/deleteAccount', authMiddleware, (req: AuthRequest, res: Response) => {
-  // TODO: add userRepo.delete() — no matching repo method for user deletion
-  db.prepare('DELETE FROM users WHERE app_user_id = ?').run(req.userId);
+  userRepo.deleteById(req.userId!);
   res.json(ok());
 });
 

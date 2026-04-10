@@ -17,3 +17,8 @@ export { MessageRepository, messageRepo } from './messages.js';
 export { ScheduleRepository, scheduleRepo } from './schedules.js';
 export { EmailCodeRepository, emailCodeRepo } from './emailCodes.js';
 export { CutGrassPlanRepository, cutGrassPlanRepo } from './cutGrassPlans.js';
+export { MapUploadRepository, mapUploadRepo } from './mapUploads.js';
+export { DeviceSettingsRepository, deviceSettingsRepo } from './deviceSettings.js';
+export { SignalHistoryRepository, signalHistoryRepo } from './signalHistory.js';
+export { VirtualWallRepository, virtualWallRepo } from './virtualWalls.js';
+export { OtaVersionRepository, otaVersionRepo } from './otaVersions.js';
