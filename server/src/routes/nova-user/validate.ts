@@ -1,6 +1,7 @@
 import { Router, Response } from 'express';
 import bcrypt from 'bcrypt';
 import { db } from '../../db/database.js';
+import { userRepo } from '../../db/repositories/index.js';
 import { ok, fail } from '../../types/index.js';
 
 export const validateRouter = Router();
@@ -20,6 +21,7 @@ validateRouter.post('/sendAppRegistEmailCode', (req, res: Response) => {
   if (!email) { res.json(fail('Email required', 400)); return; }
 
   const code = generateCode();
+  // TODO: no email_codes repo yet
   db.prepare(`
     INSERT INTO email_codes (email, code, type, expires_at)
     VALUES (?, ?, 'register', ?)
@@ -35,6 +37,7 @@ validateRouter.post('/validAppRegistEmailCode', (req, res: Response) => {
   const { email, code } = req.body as { email?: string; code?: string };
   if (!email || !code) { res.json(fail('Email and code required', 400)); return; }
 
+  // TODO: no email_codes repo yet
   const row = db.prepare(`
     SELECT * FROM email_codes
     WHERE email = ? AND code = ? AND type = 'register'
@@ -44,6 +47,7 @@ validateRouter.post('/validAppRegistEmailCode', (req, res: Response) => {
 
   if (!row) { res.json(fail('Invalid or expired code', 400)); return; }
 
+  // TODO: no email_codes repo yet
   db.prepare('UPDATE email_codes SET used = 1 WHERE email = ? AND code = ?').run(email, code);
   res.json(ok());
 });
@@ -53,10 +57,11 @@ validateRouter.post('/sendAppResetPwdEmailCode', (req, res: Response) => {
   const { email } = req.body as { email?: string };
   if (!email) { res.json(fail('Email required', 400)); return; }
 
-  const user = db.prepare('SELECT id FROM users WHERE email = ?').get(email);
+  const user = userRepo.findByEmail(email);
   if (!user) { res.json(fail('Email not found', 400)); return; }
 
   const code = generateCode();
+  // TODO: no email_codes repo yet
   db.prepare(`
     INSERT INTO email_codes (email, code, type, expires_at)
     VALUES (?, ?, 'reset_password', ?)
@@ -77,6 +82,7 @@ validateRouter.post('/verifyAndResetAppPwd', (req, res: Response) => {
     return;
   }
 
+  // TODO: no email_codes repo yet
   const row = db.prepare(`
     SELECT * FROM email_codes
     WHERE email = ? AND code = ? AND type = 'reset_password'
@@ -87,7 +93,9 @@ validateRouter.post('/verifyAndResetAppPwd', (req, res: Response) => {
   if (!row) { res.json(fail('Invalid or expired code', 400)); return; }
 
   const hashed = bcrypt.hashSync(newPassword, 10);
+  // TODO: userRepo.updatePassword takes appUserId, not email — no matching repo method
   db.prepare('UPDATE users SET password = ? WHERE email = ?').run(hashed, email);
+  // TODO: no email_codes repo yet
   db.prepare('UPDATE email_codes SET used = 1 WHERE email = ? AND code = ?').run(email, code);
   res.json(ok());
 });

@@ -14,6 +14,7 @@ messageRouter.get('/queryRobotMsgPageByUserId', authMiddleware, (req: AuthReques
   const limit = parseInt(req.query.limit as string ?? '20', 10);
   const offset = (page - 1) * limit;
 
+  // TODO: no robot_messages repo yet
   const total = (db.prepare('SELECT COUNT(*) as c FROM robot_messages WHERE user_id = ?').get(req.userId) as { c: number }).c;
   const rows  = db.prepare('SELECT * FROM robot_messages WHERE user_id = ? ORDER BY robot_msg_date DESC LIMIT ? OFFSET ?')
     .all(req.userId, limit, offset);
@@ -27,6 +28,7 @@ messageRouter.get('/queryRobotMsgPageByUserId', authMiddleware, (req: AuthReques
 //   securityRecordMsg, securityRecordUnread, sharingMsg, sharingUnread, sharingDate,
 //   promotionMsg, promotionUnread, promotionDate }
 messageRouter.post('/queryMsgMenuByUserId', authMiddleware, (req: AuthRequest, res: Response) => {
+  // TODO: no robot_messages / work_records repos yet
   const unreadRobot = (db.prepare('SELECT COUNT(*) as c FROM robot_messages WHERE user_id = ? AND robot_msg_unread = 1').get(req.userId) as { c: number }).c;
   const unreadWork  = (db.prepare('SELECT COUNT(*) as c FROM work_records   WHERE user_id = ? AND work_record_unread = 1').get(req.userId) as { c: number }).c;
   const latestWork  = db.prepare('SELECT work_record_date FROM work_records WHERE user_id = ? ORDER BY work_record_date DESC LIMIT 1').get(req.userId) as { work_record_date: string } | undefined;
@@ -55,9 +57,11 @@ messageRouter.post('/updateMsgByUserId', authMiddleware, (req: AuthRequest, res:
   const { messageIds } = req.body as { messageIds?: string[] };
   if (!messageIds?.length) {
     // Mark all read
+    // TODO: no robot_messages repo yet
     db.prepare('UPDATE robot_messages SET robot_msg_unread = 0 WHERE user_id = ?').run(req.userId);
   } else {
     const placeholders = messageIds.map(() => '?').join(',');
+    // TODO: no robot_messages repo yet
     db.prepare(`UPDATE robot_messages SET robot_msg_unread = 0 WHERE message_id IN (${placeholders}) AND user_id = ?`)
       .run(...messageIds, req.userId);
   }
@@ -68,9 +72,11 @@ messageRouter.post('/updateMsgByUserId', authMiddleware, (req: AuthRequest, res:
 messageRouter.post('/deleteMsgByUserId', authMiddleware, (req: AuthRequest, res: Response) => {
   const { messageIds } = req.body as { messageIds?: string[] };
   if (!messageIds?.length) {
+    // TODO: no robot_messages repo yet
     db.prepare('DELETE FROM robot_messages WHERE user_id = ?').run(req.userId);
   } else {
     const placeholders = messageIds.map(() => '?').join(',');
+    // TODO: no robot_messages repo yet
     db.prepare(`DELETE FROM robot_messages WHERE message_id IN (${placeholders}) AND user_id = ?`)
       .run(...messageIds, req.userId);
   }
@@ -85,6 +91,7 @@ messageRouter.get('/queryCutGrassRecordPageByUserId', authMiddleware, (req: Auth
   const limit = parseInt(req.query.limit as string ?? '20', 10);
   const offset = (page - 1) * limit;
 
+  // TODO: no work_records repo yet
   const total = (db.prepare('SELECT COUNT(*) as c FROM work_records WHERE user_id = ?').get(req.userId) as { c: number }).c;
   const rows  = db.prepare('SELECT * FROM work_records WHERE user_id = ? ORDER BY work_record_date DESC LIMIT ? OFFSET ?')
     .all(req.userId, limit, offset);
@@ -95,6 +102,7 @@ messageRouter.get('/queryCutGrassRecordPageByUserId', authMiddleware, (req: Auth
 // ── Internal helper: insert a robot message (called from MQTT bridge) ─────────
 
 export function insertRobotMessage(userId: string, equipmentId: string, msg: string): void {
+  // TODO: no robot_messages repo yet
   db.prepare(`
     INSERT INTO robot_messages (message_id, user_id, equipment_id, robot_msg, robot_msg_date, robot_msg_unread)
     VALUES (?, ?, ?, ?, datetime('now'), 1)
@@ -102,6 +110,7 @@ export function insertRobotMessage(userId: string, equipmentId: string, msg: str
 }
 
 export function insertWorkRecord(userId: string, equipmentId: string, status: string, workTime: number): void {
+  // TODO: no work_records repo yet
   db.prepare(`
     INSERT INTO work_records (record_id, user_id, equipment_id, work_record_date, work_status, work_time, work_record_unread)
     VALUES (?, ?, ?, datetime('now'), ?, ?, 1)

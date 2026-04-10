@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { db } from '../../db/database.js';
 import { authMiddleware } from '../../middleware/auth.js';
 import { AuthRequest, ok, fail, PlanRow } from '../../types/index.js';
+// TODO: no cut_grass_plans repo yet — all db.prepare calls remain direct
 
 export const cutGrassPlanRouter = Router();
 

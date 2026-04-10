@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { db } from '../../db/database.js';
+import { equipmentRepo } from '../../db/repositories/index.js';
 import { ok, fail } from '../../types/index.js';
 
 export const equipmentStateRouter = Router();
@@ -38,11 +39,10 @@ equipmentStateRouter.post('/saveCutGrassRecord', (req: Request, res: Response) =
   console.log(`[STATE] saveCutGrassRecord: sn=${sn} status=${workStatus ?? '-'} time=${workTime ?? '-'}min area=${workArea ?? '-'}m²`);
 
   // Zoek user_id + equipment_id via SN
-  const equip = db.prepare(
-    'SELECT equipment_id, user_id FROM equipment WHERE mower_sn = ?'
-  ).get(sn) as { equipment_id: string; user_id: string } | undefined;
+  const equip = equipmentRepo.findByMowerSn(sn);
 
   const recordId = uuidv4();
+  // TODO: no work_records repo yet
   db.prepare(`
     INSERT INTO work_records
       (record_id, user_id, equipment_id, date_time, work_time, work_area_m2,
