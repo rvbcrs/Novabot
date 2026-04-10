@@ -13,6 +13,14 @@ import { AuthRequest } from '../types/index.js';
 
 export const adminStatusRouter = Router();
 
+// Read version once at startup
+import fs from 'fs';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+const __dirname_admin = dirname(fileURLToPath(import.meta.url));
+let SERVER_VERSION = '?';
+try { SERVER_VERSION = JSON.parse(fs.readFileSync(join(__dirname_admin, '../../package.json'), 'utf8')).version; } catch { /* ignore */ }
+
 // GET /api/admin-status/overview
 adminStatusRouter.get('/overview', (_req: AuthRequest, res: Response) => {
   const uptime = process.uptime();
@@ -40,6 +48,7 @@ adminStatusRouter.get('/overview', (_req: AuthRequest, res: Response) => {
 
   res.json({
     server: {
+      version: SERVER_VERSION,
       uptime: Math.round(uptime),
       uptimeFormatted: `${Math.floor(uptime / 3600)}h ${Math.floor((uptime % 3600) / 60)}m`,
       nodeVersion: process.version,

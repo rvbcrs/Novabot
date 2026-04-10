@@ -501,7 +501,7 @@ async function loadAccount() {
   try {
     const d = await api('/overview');
     const s = d.server;
-    document.getElementById('serverInfo').textContent = 'uptime ' + s.uptimeFormatted + ' · ' + s.memoryMB + ' MB RAM';
+    document.getElementById('serverInfo').textContent = 'v' + (s.version || '?') + ' · uptime ' + s.uptimeFormatted + ' · ' + s.memoryMB + ' MB RAM';
     const u = d.currentUser || {};
     document.getElementById('account').innerHTML =
       '<div class="row"><span class="label">Email</span><span class="value">' + (u.email || '-') + '</span></div>' +
@@ -515,7 +515,7 @@ setInterval(async function() {
   try {
     var d = await api('/overview');
     var s = d.server;
-    document.getElementById('serverInfo').textContent = 'uptime ' + s.uptimeFormatted + ' · ' + s.memoryMB + ' MB RAM';
+    document.getElementById('serverInfo').textContent = 'v' + (s.version || '?') + ' · uptime ' + s.uptimeFormatted + ' · ' + s.memoryMB + ' MB RAM';
   } catch {}
 }, 30000);
 

@@ -691,9 +691,14 @@ setupRouter.get('/health', async (_req: Request, res: Response) => {
     });
   } catch { /* not RPi or no leases yet */ }
 
+  // Read version
+  let version = '?';
+  try { const { readFileSync } = await import('fs'); version = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).version; } catch { /* ignore */ }
+
   res.json({
     server: 'running',
     mqtt: 'running',
+    version,
     serverIp,
     apClients,
     users: userCount,
