@@ -13,6 +13,18 @@ export function adminPageHtml(): string {
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
   body{font-family:system-ui,-apple-system,sans-serif;background:#030712;color:#e0e0e0;min-height:100vh}
+  .modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.6);backdrop-filter:blur(4px);z-index:1000;display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity .2s}
+  .modal-overlay.show{opacity:1}
+  .modal-box{background:#1a1a2e;border:1px solid rgba(255,255,255,.1);border-radius:16px;padding:24px;max-width:400px;width:90%;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+  .modal-title{font-size:16px;font-weight:700;color:#fff;margin-bottom:8px}
+  .modal-msg{font-size:13px;color:#aaa;margin-bottom:20px;line-height:1.5;word-break:break-word}
+  .modal-btns{display:flex;gap:8px;justify-content:flex-end}
+  .modal-btn{padding:8px 20px;border-radius:8px;border:none;font-size:13px;font-weight:600;cursor:pointer;transition:opacity .15s}
+  .modal-btn:hover{opacity:.85}
+  .modal-btn-cancel{background:rgba(255,255,255,.08);color:#aaa}
+  .modal-btn-ok{background:#7c3aed;color:#fff}
+  .modal-btn-danger{background:#ef4444;color:#fff}
+  .modal-btn-success{background:#22c55e;color:#fff}
   .container{max-width:900px;margin:0 auto;padding:20px}
   h1{color:#00d4aa;font-size:24px;margin-bottom:4px}
   h2{color:#7c3aed;font-size:14px;text-transform:uppercase;letter-spacing:1px;margin-bottom:12px}
@@ -221,9 +233,47 @@ export function adminPageHtml(): string {
   </div>
 </div>
 
-<script src="/socket.io/socket.io.js"></script>
+<script src="/socket.io/socket.io.js" onerror="
+  // Socket.io not available on this port — try main server port
+  var s=document.createElement('script');
+  s.src=location.protocol+'//'+location.hostname+':${process.env.PORT ?? '3000'}/socket.io/socket.io.js';
+  document.head.appendChild(s);
+"></script>
 <script>
 let token = localStorage.getItem('admin_token') || '';
+
+// Modern modal dialogs (replaces alert/confirm)
+function showModal(title, msg, buttons) {
+  return new Promise(function(resolve) {
+    var overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    var box = document.createElement('div');
+    box.className = 'modal-box';
+    box.innerHTML = '<div class="modal-title">' + title + '</div><div class="modal-msg">' + msg + '</div>';
+    var btns = document.createElement('div');
+    btns.className = 'modal-btns';
+    buttons.forEach(function(b) {
+      var btn = document.createElement('button');
+      btn.className = 'modal-btn ' + (b.cls || 'modal-btn-ok');
+      btn.textContent = b.text;
+      btn.onclick = function() { overlay.classList.remove('show'); setTimeout(function() { overlay.remove(); }, 200); resolve(b.value); };
+      btns.appendChild(btn);
+    });
+    box.appendChild(btns);
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+    requestAnimationFrame(function() { overlay.classList.add('show'); });
+  });
+}
+function modalAlert(title, msg) {
+  return showModal(title, msg, [{ text: 'OK', value: true, cls: 'modal-btn-ok' }]);
+}
+function modalConfirm(title, msg) {
+  return showModal(title, msg, [
+    { text: 'Cancel', value: false, cls: 'modal-btn-cancel' },
+    { text: 'Confirm', value: true, cls: 'modal-btn-danger' },
+  ]);
+}
 let currentTab = 'devices';
 
 function switchTab(name) {
@@ -302,7 +352,7 @@ function formatLog(entry, searchTerm) {
   var dir = entry.direction || '';
   var sn = entry.sn || '';
   var topic = entry.topic ? entry.topic.replace('Dart/Receive_mqtt/','←').replace('Dart/Send_mqtt/','→').replace('Dart/Receive_server_mqtt/','⇐') : '';
-  var payload = (entry.payload || '').replace(/</g,'&lt;');
+  var payload = (entry.payload || '').split('<').join('&lt;');
   var q = searchTerm || '';
 
   // Highlight search term in sn, topic, payload
@@ -415,7 +465,17 @@ function addLog(entry) {
 }
 
 // Connect Socket.io for real-time logs
-var mqttSocket = io();
+var mqttSocket = (typeof io !== 'undefined') ? io() : null;
+if (!mqttSocket) {
+  // Socket.io loaded from different port — connect explicitly
+  setTimeout(function() {
+    if (typeof io !== 'undefined') {
+      mqttSocket = io(location.protocol + '//' + location.hostname + ':${process.env.PORT ?? '3000'}');
+      mqttSocket.on('mqtt:log', function(entry) { addLog(entry); });
+      mqttSocket.emit('mqtt:log:history');
+    }
+  }, 1000);
+}
 mqttSocket.on('mqtt:log', function(entry) { addLog(entry); });
 
 // Load initial logs
@@ -436,9 +496,11 @@ async function api(path, method='GET', body=null) {
   var ct = r.headers.get('content-type') || '';
   if (!ct.includes('json')) {
     var txt = await r.text();
-    // Extract error from HTML if present
-    var match = txt.match(/<pre>(.*?)<\/pre>/s);
-    throw new Error(match ? match[1].replace(/<[^>]+>/g, '').substring(0, 200) : 'Server error: ' + r.status);
+    var preStart = txt.indexOf(String.fromCharCode(60) + 'pre>');
+    var preEnd = txt.indexOf(String.fromCharCode(60) + '/pre>');
+    var inner = (preStart >= 0 && preEnd > preStart) ? txt.substring(preStart + 5, preEnd) : '';
+    var errMsg = inner ? inner.split('&nbsp;').join(' ').split('&lt;').join('').split('&gt;').join('').split(String.fromCharCode(60) + 'br>').join(' ').substring(0, 200) : 'Server error: ' + r.status;
+    throw new Error(errMsg);
   }
   var d = await r.json();
   if (!r.ok) throw new Error(d.error || d.message || 'Server error: ' + r.status);
@@ -648,30 +710,33 @@ async function bindDevice(sn) {
   try {
     await api('/bind-device', 'POST', { sn });
     loadMyDevices();
-  } catch(e) { alert('Bind failed: ' + e.message); }
+  } catch(e) { modalAlert('Bind Failed', e.message); }
 }
 
 async function unbindDevice(sn) {
-  if (!confirm('Unbind ' + sn + ' from your account?')) return;
+  var ok = await modalConfirm('Unbind Device', 'Unbind <b>' + sn + '</b> from your account?');
+  if (!ok) return;
   try {
     await api('/unbind-device', 'POST', { sn });
     loadMyDevices();
-  } catch(e) { alert('Unbind failed: ' + e.message); }
+  } catch(e) { modalAlert('Unbind Failed', e.message); }
 }
 
 async function removeDevice(sn) {
-  if (!confirm('Remove ' + sn + '? This deletes it from the database.')) return;
+  var ok = await modalConfirm('Remove Device', 'Remove <b>' + sn + '</b>? This deletes it from the database.');
+  if (!ok) return;
   try {
     await api('/remove-device', 'POST', { sn });
     loadMyDevices();
-  } catch(e) { alert('Remove failed: ' + e.message); }
+  } catch(e) { modalAlert('Remove Failed', e.message); }
 }
 
 async function pairMowerCharger(mowerSn, chargerSn) {
   try {
     await api('/pair-devices', 'POST', { mowerSn, chargerSn });
+    await modalAlert('Paired!', 'Mower <b>' + mowerSn + '</b> paired with charger <b>' + chargerSn + '</b>.');
     loadMyDevices();
-  } catch(e) { alert('Pair failed: ' + e.message); }
+  } catch(e) { modalAlert('Pair Failed', e.message); }
 }
 
 var dnsmasqRunning = false;
@@ -784,25 +849,34 @@ async function cloudImport() {
     });
     result.innerHTML = devHtml;
 
-    // Step 2: Import each device
+    // Step 2: Merge cloud records into paired sets, then import each pair in 1 call
     btn.textContent = 'Importing...';
+    // Cloud may return separate records for same pair — merge by matching chargerSn/mowerSn
+    var pairs = {};
+    all.forEach(function(equip) {
+      var key = (equip.chargerSn || '') + ':' + (equip.mowerSn || '');
+      if (!pairs[key]) pairs[key] = {};
+      var p = pairs[key];
+      p.deviceName = equip.userCustomDeviceName || equip.equipmentNickName || p.deviceName || 'My Novabot';
+      if (equip.chargerSn) p.charger = { sn: equip.chargerSn, address: equip.chargerAddress, channel: equip.chargerChannel, mac: equip.macAddress };
+      if (equip.mowerSn) p.mower = { sn: equip.mowerSn, mac: equip.macAddress, version: equip.sysVersion };
+    });
     let imported = 0;
-    for (const equip of all) {
-      const chargerSn = equip.chargerSn || (equip.sn && equip.sn.startsWith('LFIC') ? equip.sn : null);
-      const mowerSn = equip.mowerSn || (equip.sn && equip.sn.startsWith('LFIN') ? equip.sn : null);
+    for (var pk in pairs) {
+      var p = pairs[pk];
       const r = await fetch('/api/setup/cloud-apply', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({
           email, password: pass,
-          deviceName: equip.userCustomDeviceName || equip.equipmentNickName || 'My Novabot',
-          charger: chargerSn ? { sn: chargerSn, address: equip.chargerAddress, channel: equip.chargerChannel, mac: equip.macAddress } : undefined,
-          mower: mowerSn ? { sn: mowerSn, mac: equip.macAddress, version: equip.sysVersion } : undefined
+          deviceName: p.deviceName,
+          charger: p.charger || undefined,
+          mower: p.mower || undefined,
         })
       });
       const rj = await r.json();
       if (rj.ok) imported++;
-      else result.innerHTML += '<div style="color:#ef4444;font-size:12px">Failed to import ' + (mowerSn || chargerSn) + ': ' + (rj.error || 'unknown error') + '</div>';
+      else result.innerHTML += '<div style="color:#ef4444;font-size:12px">Failed: ' + (rj.error || 'unknown') + '</div>';
     }
 
     result.innerHTML += '<div style="color:#00d4aa;font-size:13px;margin-top:8px;font-weight:600">Imported ' + imported + ' device set(s)!</div>';
@@ -892,9 +966,9 @@ async function firstTimeCloudImport() {
 async function skipSetup() {
   try {
     await fetch('/api/setup/skip', {method:'POST'});
-    alert('Local account created!\\nEmail: admin@local\\nPassword: admin');
+    await modalAlert('Account Created', 'Email: <b>admin@local</b><br>Password: <b>admin</b>');
     location.reload();
-  } catch(e) { alert('Failed: ' + e.message); }
+  } catch(e) { modalAlert('Failed', e.message); }
 }
 
 function showLogin() {

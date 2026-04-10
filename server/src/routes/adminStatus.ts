@@ -200,6 +200,35 @@ adminStatusRouter.post('/pair-devices', (_req: AuthRequest, res: Response) => {
       }
     });
     pairTx();
+
+    // Sync LoRa cache — both devices should share the same LoRa address
+    // Use the charger's address as source of truth (charger reports its own LoRa)
+    const chargerLora = db.prepare('SELECT charger_address, charger_channel FROM equipment_lora_cache WHERE sn = ?')
+      .get(chargerSn) as { charger_address: string; charger_channel: string } | undefined;
+    const mowerLora = db.prepare('SELECT charger_address, charger_channel FROM equipment_lora_cache WHERE sn = ?')
+      .get(mowerSn) as { charger_address: string; charger_channel: string } | undefined;
+
+    if (chargerLora && !mowerLora) {
+      // Copy charger LoRa to mower
+      db.prepare('INSERT OR REPLACE INTO equipment_lora_cache (sn, charger_address, charger_channel) VALUES (?, ?, ?)')
+        .run(mowerSn, chargerLora.charger_address, chargerLora.charger_channel);
+    } else if (mowerLora && !chargerLora) {
+      // Copy mower LoRa to charger
+      db.prepare('INSERT OR REPLACE INTO equipment_lora_cache (sn, charger_address, charger_channel) VALUES (?, ?, ?)')
+        .run(chargerSn, mowerLora.charger_address, mowerLora.charger_channel);
+    } else if (chargerLora && mowerLora && chargerLora.charger_address !== mowerLora.charger_address) {
+      // Different addresses — use equipment table's charger_address as truth
+      const equipAddr = db.prepare('SELECT charger_address, charger_channel FROM equipment WHERE mower_sn = ? OR charger_sn = ? LIMIT 1')
+        .get(mowerSn, chargerSn) as { charger_address: number | null; charger_channel: number | null } | undefined;
+      if (equipAddr?.charger_address) {
+        db.prepare('UPDATE equipment_lora_cache SET charger_address = ?, charger_channel = ? WHERE sn = ?')
+          .run(equipAddr.charger_address, equipAddr.charger_channel ?? 16, mowerSn);
+        db.prepare('UPDATE equipment_lora_cache SET charger_address = ?, charger_channel = ? WHERE sn = ?')
+          .run(equipAddr.charger_address, equipAddr.charger_channel ?? 16, chargerSn);
+        console.log(`[Admin] Synced LoRa cache to address ${equipAddr.charger_address} for pair`);
+      }
+    }
+
     res.json({ ok: true });
   } catch (err) {
     console.error('[Admin] Pair failed:', err);
