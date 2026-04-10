@@ -129,6 +129,9 @@ if (PROXY_MODE === 'cloud') {
   // ── Setup wizard (always accessible) ────────────────────────────────────────
   app.use('/api/setup', setupRouter);
 
+  // Admin static assets — before setup guard so they're always accessible
+  app.use('/assets', express.static(path.resolve(__dirname, '../public')));
+
   // ── Setup guard: block app API routes until setup is complete ───────────────
   // MQTT broker and /api/setup/* always work. App routes return 503 until
   // the user completes the wizard (imports their LFI account + devices).
@@ -172,6 +175,7 @@ if (PROXY_MODE === 'cloud') {
   app.get('/admin', (_req, res) => {
     res.send(adminPageHtml());
   });
+
 
   // dashboard API — always mounted (setup/import routes needed by bootstrap wizard)
   app.use('/api/dashboard', dashboardRouter);

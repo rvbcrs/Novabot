@@ -250,9 +250,13 @@ services:
   opennova:
     ports:
       - "80:80"
-      - "1883:1883"
-      - "53:53/udp"     # ← Uncomment this line
+      - "443:443"       # HTTPS (required for Novabot app)
+      - "1883:1883"     # MQTT broker
+      - "53:53/udp"     # ← Add this for built-in DNS
     environment:
+      PORT: 80
+      JWT_SECRET: change_me_to_a_random_secret
+      ENABLE_TLS: "true"               # ← Required for Novabot app
       ENABLE_DNS: "true"               # ← Add this
       TARGET_IP: "192.168.0.100"       # ← Your server IP
       UPSTREAM_DNS: "8.8.8.8"          # ← Fallback DNS (Google)

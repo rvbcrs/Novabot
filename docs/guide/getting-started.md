@@ -54,7 +54,15 @@ Open your browser and go to:
 http://<server-ip>/admin
 ```
 
-Log in with the credentials you configured during setup (or the default admin account from cloud import).
+### First-time setup
+
+On first visit (empty database), the admin panel shows a **setup wizard**:
+
+1. Enter your **Novabot app email** and **password**
+2. Click **Connect & Import from Cloud**
+3. The server creates your account, imports your devices and maps from the cloud, and auto-pairs any devices already online
+
+After import, you're automatically logged into the admin panel.
 
 ### Verify DNS
 
@@ -67,9 +75,9 @@ If DNS is not configured, either:
 - Use the built-in **dnsmasq** (click Start) and point your router's DNS to the container IP
 - Or configure DNS rewrites in AdGuard Home / Pi-hole
 
-## Step 3: Import Your Devices
+## Step 3: Import Your Devices (if you skipped the wizard)
 
-On the admin **Settings** tab, scroll to **Cloud Import**:
+If you skipped the setup wizard, you can import from the admin **Settings** tab > **Cloud Import**:
 
 1. Enter your Novabot app email and password
 2. Click **Connect & Import**
@@ -77,19 +85,40 @@ On the admin **Settings** tab, scroll to **Cloud Import**:
 
 ## Step 4: Connect the Novabot App
 
-!!! warning "Important: Log out and log back in"
-    The Novabot app caches an authentication token from the Novabot cloud. This token is **not valid** on your local OpenNova server. You **must** log out of the app and log back in so the app receives a new token from your local server.
+### Install the SSL certificate (iOS required, Android optional)
 
-### First-time setup:
+The official Novabot app connects to `app.lfibot.com` via HTTPS. Since your DNS now redirects this to your local server, the app needs to trust your server's SSL certificate. Without it, iOS will refuse to connect.
+
+You can download the certificate from the admin panel: **Settings > Certificate Setup**.
+
+#### iOS
+
+1. Open `http://<server-ip>/admin` **on your iPhone/iPad**
+2. Go to **Settings > Certificate Setup** and tap **Download iOS Profile**
+3. Go to **Settings > General > VPN & Device Management**
+4. Tap the **OpenNova** profile and tap **Install**
+5. Go to **Settings > General > About > Certificate Trust Settings**
+6. Enable **OpenNova CA Certificate**
+
+#### Android
+
+1. Download the certificate from the admin panel (Settings > Certificate Setup)
+2. Go to **Settings > Security > Install certificate > CA certificate**
+3. Select the downloaded file and confirm
+
+!!! note "Why is this needed?"
+    Your OpenNova server generates a self-signed certificate for `app.lfibot.com`. The Novabot app uses HTTPS to communicate with the server. Without the certificate installed, iOS blocks the connection entirely and Android may show SSL errors.
+
+### Log out and log back in
+
+!!! warning "Important"
+    The Novabot app caches an authentication token from the Novabot cloud. This token is **not valid** on your local OpenNova server. You **must** log out of the app and log back in so the app receives a new token from your local server.
 
 1. **Open** the Novabot app
 2. Go to **Settings** (or Profile)
 3. **Log out** of your current account
 4. **Log back in** with the same email and password
 5. The app now connects to your local OpenNova server instead of the cloud
-
-!!! note "Why is this needed?"
-    The app stores a JWT authentication token. When DNS redirects `app.lfibot.com` to your server, the app still sends the old cloud token. Your server doesn't recognize this token and returns "Unauthorized". Logging out clears the old token, and logging in generates a new one from your server.
 
 ### Verify connection
 
@@ -143,5 +172,6 @@ The mower will navigate from the charger to the work area and begin coverage mow
 - If `error_status` is non-zero, the mower may need to be reset
 
 ### iOS app can't connect
-- iOS requires HTTPS. Install the mobileconfig profile from admin Settings > iOS Setup
-- Or use the OpenNova app which connects directly via HTTP
+- Make sure you installed the SSL certificate (see Step 4)
+- iOS requires HTTPS with a trusted certificate — without it the app silently fails
+- Verify the certificate is trusted: Settings > General > About > Certificate Trust Settings

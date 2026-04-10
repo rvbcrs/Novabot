@@ -1,6 +1,6 @@
 import { Router, Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
-import { db } from '../../db/database.js';
+import { messageRepo } from '../../db/repositories/index.js';
 import { authMiddleware } from '../../middleware/auth.js';
 import { AuthRequest, ok, fail } from '../../types/index.js';
 
@@ -14,9 +14,8 @@ messageRouter.get('/queryRobotMsgPageByUserId', authMiddleware, (req: AuthReques
   const limit = parseInt(req.query.limit as string ?? '20', 10);
   const offset = (page - 1) * limit;
 
-  const total = (db.prepare('SELECT COUNT(*) as c FROM robot_messages WHERE user_id = ?').get(req.userId) as { c: number }).c;
-  const rows  = db.prepare('SELECT * FROM robot_messages WHERE user_id = ? ORDER BY robot_msg_date DESC LIMIT ? OFFSET ?')
-    .all(req.userId, limit, offset);
+  const total = messageRepo.countMessages(req.userId!);
+  const rows  = messageRepo.findMessagesByUserId(req.userId!, limit, offset);
 
   res.json(ok({ total, page, limit, list: rows }));
 });
@@ -27,20 +26,20 @@ messageRouter.get('/queryRobotMsgPageByUserId', authMiddleware, (req: AuthReques
 //   securityRecordMsg, securityRecordUnread, sharingMsg, sharingUnread, sharingDate,
 //   promotionMsg, promotionUnread, promotionDate }
 messageRouter.post('/queryMsgMenuByUserId', authMiddleware, (req: AuthRequest, res: Response) => {
-  const unreadRobot = (db.prepare('SELECT COUNT(*) as c FROM robot_messages WHERE user_id = ? AND robot_msg_unread = 1').get(req.userId) as { c: number }).c;
-  const unreadWork  = (db.prepare('SELECT COUNT(*) as c FROM work_records   WHERE user_id = ? AND work_record_unread = 1').get(req.userId) as { c: number }).c;
-  const latestWork  = db.prepare('SELECT work_record_date FROM work_records WHERE user_id = ? ORDER BY work_record_date DESC LIMIT 1').get(req.userId) as { work_record_date: string } | undefined;
-  const latestRobot = db.prepare('SELECT robot_msg_date FROM robot_messages WHERE user_id = ? ORDER BY robot_msg_date DESC LIMIT 1').get(req.userId) as { robot_msg_date: string } | undefined;
+  const unreadRobot = messageRepo.countUnreadMessages(req.userId!);
+  const unreadWork  = messageRepo.countUnreadWorkRecords(req.userId!);
+  const latestWork  = messageRepo.getLatestWorkRecordDate(req.userId!);
+  const latestRobot = messageRepo.getLatestMessageDate(req.userId!);
 
   res.json(ok({
     workRecordMsg: null,
     workRecordUnread: unreadWork,
-    workRecordDate: latestWork?.work_record_date ?? null,
+    workRecordDate: latestWork,
     securityRecordMsg: null,
     securityRecordUnread: null,
     robotMsg: null,
     robotMsgUnread: unreadRobot,
-    robotMsgDate: latestRobot?.robot_msg_date ?? null,
+    robotMsgDate: latestRobot,
     sharingMsg: null,
     sharingUnread: null,
     sharingDate: null,
@@ -55,11 +54,9 @@ messageRouter.post('/updateMsgByUserId', authMiddleware, (req: AuthRequest, res:
   const { messageIds } = req.body as { messageIds?: string[] };
   if (!messageIds?.length) {
     // Mark all read
-    db.prepare('UPDATE robot_messages SET robot_msg_unread = 0 WHERE user_id = ?').run(req.userId);
+    messageRepo.markMessagesRead(req.userId!);
   } else {
-    const placeholders = messageIds.map(() => '?').join(',');
-    db.prepare(`UPDATE robot_messages SET robot_msg_unread = 0 WHERE message_id IN (${placeholders}) AND user_id = ?`)
-      .run(...messageIds, req.userId);
+    messageRepo.markMessagesReadByIds(messageIds, req.userId!);
   }
   res.json(ok());
 });
@@ -68,11 +65,9 @@ messageRouter.post('/updateMsgByUserId', authMiddleware, (req: AuthRequest, res:
 messageRouter.post('/deleteMsgByUserId', authMiddleware, (req: AuthRequest, res: Response) => {
   const { messageIds } = req.body as { messageIds?: string[] };
   if (!messageIds?.length) {
-    db.prepare('DELETE FROM robot_messages WHERE user_id = ?').run(req.userId);
+    messageRepo.deleteMessagesByUserId(req.userId!);
   } else {
-    const placeholders = messageIds.map(() => '?').join(',');
-    db.prepare(`DELETE FROM robot_messages WHERE message_id IN (${placeholders}) AND user_id = ?`)
-      .run(...messageIds, req.userId);
+    messageRepo.deleteMessagesByIds(messageIds, req.userId!);
   }
   res.json(ok());
 });
@@ -85,9 +80,8 @@ messageRouter.get('/queryCutGrassRecordPageByUserId', authMiddleware, (req: Auth
   const limit = parseInt(req.query.limit as string ?? '20', 10);
   const offset = (page - 1) * limit;
 
-  const total = (db.prepare('SELECT COUNT(*) as c FROM work_records WHERE user_id = ?').get(req.userId) as { c: number }).c;
-  const rows  = db.prepare('SELECT * FROM work_records WHERE user_id = ? ORDER BY work_record_date DESC LIMIT ? OFFSET ?')
-    .all(req.userId, limit, offset);
+  const total = messageRepo.countWorkRecords(req.userId!);
+  const rows  = messageRepo.findWorkRecordsByUserId(req.userId!, limit, offset);
 
   res.json(ok({ total, page, limit, list: rows }));
 });
@@ -95,15 +89,9 @@ messageRouter.get('/queryCutGrassRecordPageByUserId', authMiddleware, (req: Auth
 // ── Internal helper: insert a robot message (called from MQTT bridge) ─────────
 
 export function insertRobotMessage(userId: string, equipmentId: string, msg: string): void {
-  db.prepare(`
-    INSERT INTO robot_messages (message_id, user_id, equipment_id, robot_msg, robot_msg_date, robot_msg_unread)
-    VALUES (?, ?, ?, ?, datetime('now'), 1)
-  `).run(uuidv4(), userId, equipmentId, msg);
+  messageRepo.createMessage(uuidv4(), userId, equipmentId, msg);
 }
 
 export function insertWorkRecord(userId: string, equipmentId: string, status: string, workTime: number): void {
-  db.prepare(`
-    INSERT INTO work_records (record_id, user_id, equipment_id, work_record_date, work_status, work_time, work_record_unread)
-    VALUES (?, ?, ?, datetime('now'), ?, ?, 1)
-  `).run(uuidv4(), userId, equipmentId, status, workTime);
+  messageRepo.createWorkRecord(uuidv4(), userId, equipmentId, status, workTime);
 }

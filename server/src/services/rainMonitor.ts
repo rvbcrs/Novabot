@@ -15,50 +15,13 @@
  */
 
 import { randomUUID } from 'crypto';
-import { db } from '../db/database.js';
+import { scheduleRepo, mapRepo } from '../db/repositories/index.js';
 import { isDeviceOnline } from '../mqtt/broker.js';
 import { publishToDevice, goToChargePayload } from '../mqtt/mapSync.js';
 import { deviceCache } from '../mqtt/sensorData.js';
 import { getWeatherForecast, shouldPauseForRain } from './weatherService.js';
 import { emitScheduleEvent } from '../dashboard/socketHandler.js';
-
-// ── Types ──────────────────────────────────────────────────────────
-
-interface RainSession {
-  session_id: string;
-  schedule_id: string;
-  mower_sn: string;
-  state: 'paused' | 'resuming' | 'completed' | 'cancelled';
-  map_id: string | null;
-  map_name: string | null;
-  cutting_height: number;
-  path_direction: number;
-  work_mode: number;
-  task_mode: number;
-  edge_offset: number;
-  rain_threshold_mm: number;
-  rain_threshold_probability: number;
-  rain_check_hours: number;
-  paused_at: string;
-  resumed_at: string | null;
-}
-
-interface RainScheduleRow {
-  schedule_id: string;
-  mower_sn: string;
-  map_id: string | null;
-  map_name: string | null;
-  cutting_height: number;
-  path_direction: number;
-  work_mode: number;
-  task_mode: number;
-  edge_offset: number;
-  rain_threshold_mm: number;
-  rain_threshold_probability: number;
-  rain_check_hours: number;
-  alternate_direction: number;
-  alternate_step: number;
-}
+import type { RainSessionRow, ScheduleRow } from '../db/repositories/schedules.js';
 
 // ── State ──────────────────────────────────────────────────────────
 
@@ -72,14 +35,7 @@ const pendingGoCharge = new Set<string>();
 
 /** Haal charger GPS coördinaten op voor een maaier SN */
 function getChargerGps(mowerSn: string): { lat: number; lng: number } | null {
-  const cal = db.prepare(
-    `SELECT charger_lat, charger_lng FROM map_calibration WHERE mower_sn = ?`
-  ).get(mowerSn) as { charger_lat: number | null; charger_lng: number | null } | undefined;
-
-  if (cal?.charger_lat && cal?.charger_lng) {
-    return { lat: cal.charger_lat, lng: cal.charger_lng };
-  }
-  return null;
+  return mapRepo.getChargerGps(mowerSn);
 }
 
 /** Check of maaier momenteel aan het maaien is */
@@ -116,15 +72,6 @@ function isChargedAndReady(mowerSn: string): boolean {
   return true;
 }
 
-/** Haal de actieve rain_pause schedule op voor een maaier */
-function getActiveRainSchedule(mowerSn: string): RainScheduleRow | null {
-  return db.prepare(`
-    SELECT * FROM dashboard_schedules
-    WHERE mower_sn = ? AND enabled = 1 AND rain_pause = 1
-    ORDER BY last_triggered_at DESC LIMIT 1
-  `).get(mowerSn) as RainScheduleRow | null;
-}
-
 // ── Core logica ────────────────────────────────────────────────────
 
 /**
@@ -133,18 +80,13 @@ function getActiveRainSchedule(mowerSn: string): RainScheduleRow | null {
  */
 async function checkActiveMowers(): Promise<void> {
   // Haal alle maaiers op die een rain_pause schedule hebben
-  const schedules = db.prepare(`
-    SELECT DISTINCT mower_sn FROM dashboard_schedules
-    WHERE enabled = 1 AND rain_pause = 1
-  `).all() as Array<{ mower_sn: string }>;
+  const mowerSns = scheduleRepo.findDistinctMowersWithRainPause();
 
-  for (const { mower_sn } of schedules) {
+  for (const mower_sn of mowerSns) {
     if (!isDeviceOnline(mower_sn)) continue;
 
     // Check of er al een actieve rain session is voor deze maaier
-    const existing = db.prepare(
-      `SELECT session_id FROM rain_sessions WHERE mower_sn = ? AND state = 'paused'`
-    ).get(mower_sn) as { session_id: string } | undefined;
+    const existing = scheduleRepo.findRainSessionByMower(mower_sn, 'paused');
     if (existing) continue; // Al gepauzeerd, wordt afgehandeld door checkPausedSessions()
 
     // Check of maaier aan het maaien is
@@ -159,7 +101,7 @@ async function checkActiveMowers(): Promise<void> {
 
     try {
       const forecast = await getWeatherForecast(gps.lat, gps.lng);
-      const schedule = getActiveRainSchedule(mower_sn);
+      const schedule = scheduleRepo.findActiveRainSchedule(mower_sn);
       if (!schedule) continue;
 
       const rainComing = shouldPauseForRain(
@@ -181,23 +123,16 @@ async function checkActiveMowers(): Promise<void> {
 }
 
 /** Stuur maaier naar huis en maak een rain_session */
-function pauseForRain(mowerSn: string, schedule: RainScheduleRow): void {
+function pauseForRain(mowerSn: string, schedule: ScheduleRow): void {
   // Stuur go_to_charge
   publishToDevice(mowerSn, goToChargePayload(mowerSn));
   pendingGoCharge.add(mowerSn);
 
   // Maak rain session in DB
   const sessionId = randomUUID();
-  db.prepare(`
-    INSERT INTO rain_sessions (
-      session_id, schedule_id, mower_sn, state,
-      map_id, map_name, cutting_height, path_direction,
-      work_mode, task_mode, edge_offset,
-      rain_threshold_mm, rain_threshold_probability, rain_check_hours
-    ) VALUES (?, ?, ?, 'paused', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
+  scheduleRepo.createRainSession(
     sessionId, schedule.schedule_id, mowerSn,
-    schedule.map_id, schedule.map_name, schedule.cutting_height, schedule.path_direction,
+    schedule.map_id ?? null, schedule.map_name ?? null, schedule.cutting_height, schedule.path_direction,
     schedule.work_mode, schedule.task_mode, schedule.edge_offset,
     schedule.rain_threshold_mm, schedule.rain_threshold_probability, schedule.rain_check_hours,
   );
@@ -221,9 +156,7 @@ function pauseForRain(mowerSn: string, schedule: RainScheduleRow): void {
  * herstart de maaisessie.
  */
 async function checkPausedSessions(): Promise<void> {
-  const sessions = db.prepare(
-    `SELECT * FROM rain_sessions WHERE state = 'paused'`
-  ).all() as RainSession[];
+  const sessions = scheduleRepo.findPausedRainSessions();
 
   for (const session of sessions) {
     // Check of maaier online is
@@ -273,7 +206,7 @@ async function checkPausedSessions(): Promise<void> {
 }
 
 /** Herstart een gepauzeerde maaisessie */
-function resumeSession(session: RainSession): void {
+function resumeSession(session: RainSessionRow): void {
   // Stuur set_para_info met opgeslagen parameters
   publishToDevice(session.mower_sn, {
     set_para_info: {
@@ -296,10 +229,7 @@ function resumeSession(session: RainSession): void {
   });
 
   // Update sessie in DB
-  db.prepare(`
-    UPDATE rain_sessions SET state = 'resumed', resumed_at = datetime('now')
-    WHERE session_id = ?
-  `).run(session.session_id);
+  scheduleRepo.resumeRainSession(session.session_id);
 
   // Emit event naar dashboard
   emitScheduleEvent('rain:resumed', {
@@ -312,11 +242,8 @@ function resumeSession(session: RainSession): void {
 }
 
 /** Annuleer een rain session */
-function cancelSession(session: RainSession, reason: string): void {
-  db.prepare(`
-    UPDATE rain_sessions SET state = 'cancelled', completed_at = datetime('now')
-    WHERE session_id = ?
-  `).run(session.session_id);
+function cancelSession(session: RainSessionRow, reason: string): void {
+  scheduleRepo.cancelRainSession(session.session_id);
 
   emitScheduleEvent('rain:cancelled', {
     sessionId: session.session_id,
@@ -356,15 +283,11 @@ export function stopRainMonitor(): void {
 }
 
 /** Haal actieve rain sessions op (voor dashboard display) */
-export function getActiveRainSessions(mowerSn?: string): RainSession[] {
+export function getActiveRainSessions(mowerSn?: string): RainSessionRow[] {
   if (mowerSn) {
-    return db.prepare(
-      `SELECT * FROM rain_sessions WHERE mower_sn = ? AND state = 'paused' ORDER BY paused_at DESC`
-    ).all(mowerSn) as RainSession[];
+    return scheduleRepo.findPausedRainSessionsByMower(mowerSn);
   }
-  return db.prepare(
-    `SELECT * FROM rain_sessions WHERE state = 'paused' ORDER BY paused_at DESC`
-  ).all() as RainSession[];
+  return scheduleRepo.findPausedRainSessions();
 }
 
 /**
@@ -372,15 +295,10 @@ export function getActiveRainSessions(mowerSn?: string): RainSession[] {
  * Als er een actieve rain session is, markeer die als completed.
  */
 export function onMowingCompleted(mowerSn: string): void {
-  const session = db.prepare(
-    `SELECT * FROM rain_sessions WHERE mower_sn = ? AND state IN ('paused', 'resuming') ORDER BY paused_at DESC LIMIT 1`
-  ).get(mowerSn) as RainSession | undefined;
+  const session = scheduleRepo.findRainSessionForCompletion(mowerSn);
 
   if (session) {
-    db.prepare(`
-      UPDATE rain_sessions SET state = 'completed', completed_at = datetime('now')
-      WHERE session_id = ?
-    `).run(session.session_id);
+    scheduleRepo.completeRainSession(session.session_id);
 
     emitScheduleEvent('rain:completed', {
       sessionId: session.session_id,

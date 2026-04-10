@@ -203,6 +203,14 @@ export function emitDeviceOffline(sn: string): void {
   io?.emit('device:offline', { sn, timestamp: Date.now() });
 }
 
+export function emitDeviceBound(sn: string): void {
+  io?.emit('device:bound', { sn, timestamp: Date.now() });
+}
+
+export function emitDevicePaired(mowerSn: string, chargerSn: string): void {
+  io?.emit('device:paired', { mowerSn, chargerSn, timestamp: Date.now() });
+}
+
 export function emitTrailClear(sn: string): void {
   io?.emit('trail:clear', { sn, timestamp: Date.now() });
 }

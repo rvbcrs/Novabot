@@ -6,52 +6,18 @@
  * controleert het weer via Open-Meteo, en stuurt start_run als het droog is.
  */
 
-import { db } from '../db/database.js';
+import { scheduleRepo, mapRepo, messageRepo } from '../db/repositories/index.js';
 import { isDeviceOnline } from '../mqtt/broker.js';
 import { publishToDevice } from '../mqtt/mapSync.js';
 import { getWeatherForecast, shouldPauseForRain } from './weatherService.js';
 import { emitScheduleEvent } from '../dashboard/socketHandler.js';
-
-interface RainScheduleRow {
-  schedule_id: string;
-  mower_sn: string;
-  start_time: string;
-  end_time: string | null;
-  weekdays: string;
-  map_id: string | null;
-  map_name: string | null;
-  cutting_height: number;
-  path_direction: number;
-  work_mode: number;
-  task_mode: number;
-  alternate_direction: number;
-  alternate_step: number;
-  edge_offset: number;
-  rain_threshold_mm: number;
-  rain_threshold_probability: number;
-  rain_check_hours: number;
-  last_triggered_at: string | null;
-}
+import type { ScheduleRow } from '../db/repositories/schedules.js';
 
 let intervalId: ReturnType<typeof setInterval> | null = null;
 
 /** Haal charger GPS coördinaten op voor een maaier SN */
 function getChargerGps(mowerSn: string): { lat: number; lng: number } | null {
-  // Probeer map_calibration (handmatig ingesteld)
-  const cal = db.prepare(
-    `SELECT charger_lat, charger_lng FROM map_calibration WHERE mower_sn = ?`
-  ).get(mowerSn) as { charger_lat: number | null; charger_lng: number | null } | undefined;
-
-  if (cal?.charger_lat && cal?.charger_lng) {
-    return { lat: cal.charger_lat, lng: cal.charger_lng };
-  }
-
-  // Probeer charger GPS uit sensor cache (via equipment → charger_sn → device_registry)
-  const eq = db.prepare(`SELECT charger_sn FROM equipment WHERE mower_sn = ?`).get(mowerSn) as { charger_sn: string | null } | undefined;
-  if (!eq?.charger_sn) return null;
-
-  // Geen directe sensor cache in DB — fallback: null
-  return null;
+  return mapRepo.getChargerGps(mowerSn);
 }
 
 function checkSchedules() {
@@ -60,10 +26,7 @@ function checkSchedules() {
   const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
 
   // Haal alle enabled rain_pause schedules op
-  const rows = db.prepare(`
-    SELECT * FROM dashboard_schedules
-    WHERE enabled = 1 AND rain_pause = 1
-  `).all() as RainScheduleRow[];
+  const rows = scheduleRepo.findEnabledWithRainPause();
 
   for (const row of rows) {
     const weekdays: number[] = JSON.parse(row.weekdays);
@@ -103,7 +66,7 @@ function checkSchedules() {
 }
 
 async function checkWeatherAndTrigger(
-  row: RainScheduleRow,
+  row: ScheduleRow,
   gps: { lat: number; lng: number },
 ) {
   const forecast = await getWeatherForecast(gps.lat, gps.lng);
@@ -122,8 +85,7 @@ async function checkWeatherAndTrigger(
       reason: 'rain',
     });
     // Update last_triggered_at zodat we niet elke seconde opnieuw checken
-    db.prepare(`UPDATE dashboard_schedules SET last_triggered_at = datetime('now') WHERE schedule_id = ?`)
-      .run(row.schedule_id);
+    scheduleRepo.updateLastTriggered(row.schedule_id);
     return;
   }
 
@@ -131,14 +93,11 @@ async function checkWeatherAndTrigger(
   triggerSchedule(row);
 }
 
-function triggerSchedule(row: RainScheduleRow) {
+function triggerSchedule(row: ScheduleRow) {
   // Bereken effectieve richting (met alternerende rotatie)
   let effectiveDirection = row.path_direction;
   if (row.alternate_direction === 1) {
-    const triggerCount = db.prepare(
-      `SELECT COUNT(*) as cnt FROM work_records WHERE schedule_id = ?`
-    ).get(row.schedule_id) as { cnt: number } | undefined;
-    const count = triggerCount?.cnt ?? 0;
+    const count = messageRepo.countWorkRecordsBySchedule(row.schedule_id);
     effectiveDirection = (row.path_direction + count * (row.alternate_step ?? 90)) % 360;
   }
 
@@ -164,8 +123,7 @@ function triggerSchedule(row: RainScheduleRow) {
   });
 
   // Update last_triggered_at
-  db.prepare(`UPDATE dashboard_schedules SET last_triggered_at = datetime('now') WHERE schedule_id = ?`)
-    .run(row.schedule_id);
+  scheduleRepo.updateLastTriggered(row.schedule_id);
 
   emitScheduleEvent('weather:started', {
     scheduleId: row.schedule_id,

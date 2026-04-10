@@ -2,7 +2,7 @@ import { Router, Response } from 'express';
 import bcrypt from 'bcrypt';
 import crypto from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
-import { db } from '../../db/database.js';
+import { userRepo, equipmentRepo } from '../../db/repositories/index.js';
 import { authMiddleware, signToken } from '../../middleware/auth.js';
 import { AuthRequest, ok, fail, UserRow } from '../../types/index.js';
 import { callLfiCloud, encryptCloudPassword } from '../setup.js';
@@ -37,7 +37,7 @@ appUserRouter.post('/login', async (req, res: Response) => {
   }
 
   const normalizedEmail = email.trim().toLowerCase();
-  let user = db.prepare('SELECT * FROM users WHERE email = ?').get(normalizedEmail) as UserRow | undefined;
+  let user = userRepo.findByEmail(normalizedEmail) as UserRow | undefined;
   if (!user) {
     // User not found locally — try cloud login + auto-import
     try {
@@ -53,10 +53,8 @@ appUserRouter.post('/login', async (req, res: Response) => {
           // Cloud login OK — create local user
           const hash = bcrypt.hashSync(plainPw, 10);
           const appUserId = crypto.randomUUID();
-          const isFirst = (db.prepare('SELECT COUNT(*) as c FROM users').get() as { c: number }).c === 0;
-          db.prepare(
-            'INSERT INTO users (app_user_id, email, password, username, is_admin, created_at) VALUES (?, ?, ?, ?, ?, datetime(\'now\'))'
-          ).run(appUserId, normalizedEmail, hash, normalizedEmail.split('@')[0], isFirst ? 1 : 0);
+          const isFirst = userRepo.count() === 0;
+          userRepo.create(appUserId, normalizedEmail, hash, normalizedEmail.split('@')[0], isFirst);
           console.log('[Login] Auto-imported user from cloud: ' + email + ' (admin=' + isFirst + ')');
 
           // Fetch and import devices
@@ -70,23 +68,24 @@ appUserRouter.post('/login', async (req, res: Response) => {
             const chargerSn = equip.chargerSn as string | undefined;
             const primarySn = mowerSn ?? chargerSn;
             if (!primarySn) continue;
-            const existing = db.prepare('SELECT equipment_id FROM equipment WHERE mower_sn = ?').get(primarySn);
+            const existing = equipmentRepo.findByMowerSn(primarySn);
             if (!existing) {
-              db.prepare(
-                'INSERT INTO equipment (equipment_id, user_id, mower_sn, charger_sn, equipment_nick_name, charger_address, charger_channel, mac_address, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime(\'now\'))'
-              ).run(
-                crypto.randomUUID(), appUserId, primarySn, chargerSn ?? null,
-                (equip.userCustomDeviceName ?? equip.equipmentNickName ?? null) as string | null,
-                (equip.chargerAddress ?? null) as number | null,
-                (equip.chargerChannel ?? null) as number | null,
-                (equip.macAddress ?? null) as string | null,
-              );
+              equipmentRepo.create({
+                equipment_id: crypto.randomUUID(),
+                user_id: appUserId,
+                mower_sn: primarySn,
+                charger_sn: chargerSn ?? null,
+                nick_name: (equip.userCustomDeviceName ?? equip.equipmentNickName ?? null) as string | null,
+                charger_address: (equip.chargerAddress ?? null) as string | null,
+                charger_channel: (equip.chargerChannel ?? null) as string | null,
+                mac_address: (equip.macAddress ?? null) as string | null,
+              });
             }
           }
           console.log('[Login] Imported ' + pageList.length + ' device(s) for ' + email);
 
           // Re-fetch the newly created user
-          user = db.prepare('SELECT * FROM users WHERE email = ?').get(normalizedEmail) as UserRow | undefined;
+          user = userRepo.findByEmail(normalizedEmail) as UserRow | undefined;
         }
       }
     } catch (cloudErr) {
@@ -159,7 +158,7 @@ appUserRouter.post('/regist', async (req, res: Response) => {
   }
 
   const regEmail = email.trim().toLowerCase();
-  const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(regEmail);
+  const existing = userRepo.findByEmail(regEmail);
   if (existing) {
     res.json(fail('Email already registered', 400));
     return;
@@ -169,14 +168,11 @@ appUserRouter.post('/regist', async (req, res: Response) => {
   const plainPassword = tryDecryptAppPassword(password);
   const storedPassword = await bcrypt.hash(plainPassword, 10);
   const appUserId = uuidv4();
-  db.prepare(`
-    INSERT INTO users (app_user_id, email, password, username)
-    VALUES (?, ?, ?, ?)
-  `).run(appUserId, regEmail, storedPassword, username ?? null);
+  userRepo.create(appUserId, regEmail, storedPassword, username ?? regEmail.split('@')[0]);
 
-  const newUser = db.prepare('SELECT id FROM users WHERE app_user_id = ?').get(appUserId) as { id: number };
+  const newUser = userRepo.findById(appUserId);
   const token = signToken({ userId: appUserId, email: regEmail });
-  res.json(ok({ appUserId: newUser.id, email: regEmail, token }));
+  res.json(ok({ appUserId: newUser!.id, email: regEmail, token }));
 });
 
 // POST /api/nova-user/appUser/loginOut
@@ -191,7 +187,7 @@ appUserRouter.post('/loginOut', authMiddleware, (_req, res: Response) => {
 // De cloud laat toe dat elke user andermans info ophaalt (IDOR bug), wij niet.
 appUserRouter.get('/appUserInfo', authMiddleware, (req: AuthRequest, res: Response) => {
   const email = req.email;
-  const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email) as UserRow | undefined;
+  const user = userRepo.findByEmail(email!) as UserRow | undefined;
   if (!user) {
     res.json(fail('User not found', 404));
     return;
@@ -207,8 +203,7 @@ appUserRouter.get('/appUserInfo', authMiddleware, (req: AuthRequest, res: Respon
 // POST /api/nova-user/appUser/appUserInfoUpdate
 appUserRouter.post('/appUserInfoUpdate', authMiddleware, (req: AuthRequest, res: Response) => {
   const { username } = req.body as { username?: string };
-  db.prepare('UPDATE users SET username = ? WHERE app_user_id = ?')
-    .run(username ?? null, req.userId);
+  userRepo.updateUsername(req.userId!, username ?? null);
   res.json(ok());
 });
 
@@ -220,27 +215,26 @@ appUserRouter.post('/appUserPwdUpdate', authMiddleware, (req: AuthRequest, res: 
     return;
   }
 
-  const user = db.prepare('SELECT * FROM users WHERE app_user_id = ?').get(req.userId) as UserRow | undefined;
+  const user = userRepo.findById(req.userId!) as UserRow | undefined;
   if (!user || !bcrypt.compareSync(oldPassword, user.password)) {
     res.json(fail('Old password incorrect', 400));
     return;
   }
 
   const hashed = bcrypt.hashSync(newPassword, 10);
-  db.prepare('UPDATE users SET password = ? WHERE app_user_id = ?').run(hashed, req.userId);
+  userRepo.updatePassword(req.userId!, hashed);
   res.json(ok());
 });
 
 // POST /api/nova-user/appUser/deleteAccount
 appUserRouter.post('/deleteAccount', authMiddleware, (req: AuthRequest, res: Response) => {
-  db.prepare('DELETE FROM users WHERE app_user_id = ?').run(req.userId);
+  userRepo.deleteById(req.userId!);
   res.json(ok());
 });
 
 // POST /api/nova-user/appUser/updateAppUserMachineToken
 appUserRouter.post('/updateAppUserMachineToken', authMiddleware, (req: AuthRequest, res: Response) => {
   const { machineToken } = req.body as { machineToken?: string };
-  db.prepare('UPDATE users SET machine_token = ? WHERE app_user_id = ?')
-    .run(machineToken ?? null, req.userId);
+  userRepo.updateMachineToken(req.userId!, machineToken ?? '');
   res.json(ok());
 });
