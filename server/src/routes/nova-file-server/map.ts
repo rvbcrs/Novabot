@@ -26,18 +26,29 @@ const upload = multer({ dest: STORAGE_PATH });
  * DB bevat al lokale x,y meters (charger = 0,0) — output direct als CSV.
  */
 function generateCsvFromDb(sn: string, fileName: string): string | null {
+  const baseName = fileName.replace(/\.csv$/, '');
   const workMatch = fileName.match(/^map(\d+)_work\.csv$/);
   const obstacleMatch = fileName.match(/^map(\d+)_(\d+)_obstacle\.csv$/);
+  const unicomMatch = fileName.match(/^map\d+to(?:charge|map\d+)_?\d*_?unicom\.csv$/);
 
   let mapRow: MapRow | undefined;
 
-  if (workMatch) {
-    const mapIndex = parseInt(workMatch[1]);
-    const workMaps = mapRepo.findByMowerSnAndTypeWithArea(sn, 'work');
-    mapRow = workMaps[mapIndex];
-  } else if (obstacleMatch) {
-    const obstacleMaps = mapRepo.findByMowerSnAndTypeWithArea(sn, 'obstacle');
-    mapRow = obstacleMaps[parseInt(obstacleMatch[2])];
+  // First try: find by map_name (cloud import stores original filenames)
+  const allMaps = mapRepo.findWithAreaOrderByMapId(sn);
+  mapRow = allMaps.find(m => m.map_name === baseName || m.map_name === fileName || m.file_name === fileName);
+
+  // Fallback: find by index (mower-uploaded maps)
+  if (!mapRow) {
+    if (workMatch) {
+      const workMaps = mapRepo.findByMowerSnAndTypeWithArea(sn, 'work');
+      mapRow = workMaps[parseInt(workMatch[1])];
+    } else if (obstacleMatch) {
+      const obstacleMaps = mapRepo.findByMowerSnAndTypeWithArea(sn, 'obstacle');
+      mapRow = obstacleMaps[parseInt(obstacleMatch[2])];
+    } else if (unicomMatch) {
+      const unicomMaps = mapRepo.findByMowerSnAndTypeWithArea(sn, 'unicom');
+      mapRow = unicomMaps.find(m => m.map_name === baseName) ?? unicomMaps[0];
+    }
   }
 
   if (!mapRow?.map_area) return null;
@@ -65,6 +76,14 @@ function rowToDto(r: MapRow) {
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   };
+}
+
+/** Derive CSV filename from DB map_name. Cloud import stores "map0_work", mower uploads store full filename. */
+function csvFileName(mapName: string | null | undefined, fallback: string): string {
+  if (!mapName) return fallback + '.csv';
+  // If map_name already ends with .csv, use as-is
+  if (mapName.endsWith('.csv')) return mapName;
+  return mapName + '.csv';
 }
 
 // GET /api/nova-file-server/map/queryEquipmentMap?sn=
@@ -126,17 +145,20 @@ mapRouter.get('/queryEquipmentMap', authMiddleware, (req: AuthRequest, res: Resp
   }
 
   // Bouw work items met geneste obstacles
-  // NB: file_name in DB is de ZIP-bestandsnaam, NIET de CSV-bestandsnaam.
-  // Genereer altijd CSV-bestandsnamen conform firmware conventie.
+  // Gebruik map_name uit DB als filename (cloud import slaat originele naam op).
+  // Fallback naar firmware conventie als map_name ontbreekt.
   const work = workMaps.map((wm, idx) => {
-    const workFileName = `map${idx}_work.csv`;
+    const workFileName = csvFileName(wm.map_name, `map${idx}_work`);
 
-    // Zoek obstakels die bij dit werkgebied horen (zelfde mapIndex)
-    let obsCounter = 0;
+    // Zoek obstakels die bij dit werkgebied horen
+    // Match op map_name containing the map index OR the obstacle pattern
     const relatedObs = obstacleMaps
-      .filter(om => om.map_name?.includes(`${idx}`) || om.map_name?.includes(`obstacle_${idx}`))
-      .map(om => {
-        const obsFileName = `map${idx}_${obsCounter++}_obstacle.csv`;
+      .filter(om => {
+        const name = om.map_name ?? '';
+        return name.startsWith(`map${idx}_`) || name.includes(`obstacle_${idx}`);
+      })
+      .map((om, obsIdx) => {
+        const obsFileName = csvFileName(om.map_name, `map${idx}_${obsIdx}_obstacle`);
         return {
           fileName: obsFileName,
           alias: om.map_name ?? `obstacle_${idx}`,
@@ -159,9 +181,9 @@ mapRouter.get('/queryEquipmentMap', authMiddleware, (req: AuthRequest, res: Resp
     };
   });
 
-  // Bouw unicom items
+  // Bouw unicom items — gebruik originele map_name als filename
   const unicom = unicomMaps.map((um, idx) => {
-    const unicomFileName = `map${idx}tocharge_unicom.csv`;
+    const unicomFileName = csvFileName(um.map_name, `map${idx}tocharge_unicom`);
     return {
       fileName: unicomFileName,
       alias: um.map_name ?? `Channel ${idx + 1}`,
