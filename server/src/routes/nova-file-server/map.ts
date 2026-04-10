@@ -173,7 +173,7 @@ mapRouter.get('/queryEquipmentMap', authMiddleware, (req: AuthRequest, res: Resp
     return {
       fileName: workFileName,
       alias: wm.map_name ?? `Work area ${idx + 1}`,
-      type: 'work',
+      type: 'map',
       url: mapFileUrl(workFileName),
       fileHash: crypto.createHash('md5').update(wm.map_id).digest('hex'),
       mapArea: calcPolygonAreaM2(wm.map_area),

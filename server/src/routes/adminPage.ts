@@ -151,6 +151,7 @@ export function adminPageHtml(): string {
   <div class="tabs">
     <button class="tab active" onclick="switchTab('devices')">Devices</button>
     <button class="tab" onclick="switchTab('console')">Console</button>
+    <button class="tab" onclick="switchTab('maps')">Maps</button>
     <button class="tab" onclick="switchTab('settings')">Settings</button>
   </div>
 
@@ -186,6 +187,28 @@ export function adminPageHtml(): string {
         <input id="f_search" type="text" placeholder="Search (e.g. start_run, error, LFIN...)" oninput="renderLogs()" style="width:100%;padding:6px 10px;font-size:12px;background:#0d0d20;border:1px solid #333;border-radius:6px;color:#fff">
       </div>
       <div id="mqttConsole" style="height:calc(100vh - 320px);min-height:300px;overflow-y:auto;font-family:monospace;font-size:11px;padding:8px;background:#0a0a1a;line-height:1.6;word-break:break-all"></div>
+    </div>
+  </div>
+
+  <!-- Tab: Maps -->
+  <div id="tab_maps" style="display:none">
+    <div class="card">
+      <h2>Map Viewer <span class="refresh-btn" onclick="loadMaps()">↻</span></h2>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px">
+        <select id="mapMowerSelect" onchange="loadMaps()" style="flex:1;padding:8px 12px;background:#0d0d20;border:1px solid #333;border-radius:8px;color:#fff;font-size:13px">
+          <option value="">Select a mower...</option>
+        </select>
+      </div>
+      <div id="mapInfo" style="font-size:12px;color:#aaa;margin-bottom:8px"></div>
+      <div style="background:#0a0a1a;border:1px solid rgba(255,255,255,.06);border-radius:8px;overflow:hidden;position:relative">
+        <canvas id="mapCanvas" width="800" height="600" style="width:100%;display:block;background:#0a0a1a"></canvas>
+      </div>
+      <div id="mapLegend" style="display:none;margin-top:10px;display:flex;gap:16px;flex-wrap:wrap;font-size:11px;color:#aaa">
+        <span><span style="display:inline-block;width:12px;height:12px;background:rgba(34,197,94,.3);border:2px solid #166534;border-radius:2px;vertical-align:middle;margin-right:4px"></span>Work area</span>
+        <span><span style="display:inline-block;width:12px;height:12px;background:rgba(239,68,68,.3);border:2px solid #991b1b;border-radius:2px;vertical-align:middle;margin-right:4px"></span>Obstacle</span>
+        <span><span style="display:inline-block;width:12px;height:12px;background:transparent;border:2px solid #3b82f6;border-radius:2px;vertical-align:middle;margin-right:4px"></span>Channel</span>
+        <span><span style="display:inline-block;width:12px;height:12px;background:#f59e0b;border-radius:50%;vertical-align:middle;margin-right:4px"></span>Charger</span>
+      </div>
     </div>
   </div>
 
@@ -305,13 +328,15 @@ function switchTab(name) {
   var tabs = document.querySelectorAll('.tab');
   for (var i = 0; i < tabs.length; i++) tabs[i].classList.remove('active');
   // Activate clicked tab
-  var names = ['devices','console','settings'];
+  var names = ['devices','console','maps','settings'];
   for (var i = 0; i < names.length; i++) {
     document.getElementById('tab_' + names[i]).style.display = names[i] === name ? '' : 'none';
     if (names[i] === name) tabs[i].classList.add('active');
   }
   // Auto-check DNS + dnsmasq when switching to settings
   if (name === 'settings') { checkDns(); checkDnsmasqStatus(); }
+  // Load maps when switching to maps tab
+  if (name === 'maps') { populateMowerDropdown(); }
 }
 
 // ── MQTT Console ──────────────────────────────────────────────────
@@ -847,6 +872,233 @@ async function checkDns() {
   } catch(e) {
     el.innerHTML = '<div style="color:#ef4444">DNS check failed: ' + e.message + '</div>';
   }
+}
+
+// ── Maps Tab ──────────────────────────────────────────────────────
+var _mapsDropdownLoaded = false;
+
+async function populateMowerDropdown() {
+  var sel = document.getElementById('mapMowerSelect');
+  if (_mapsDropdownLoaded && sel.options.length > 1) return;
+  try {
+    var d = await api('/devices');
+    var devs = d.devices || [];
+    // Keep current selection
+    var prev = sel.value;
+    sel.innerHTML = '<option value="">Select a mower...</option>';
+    for (var i = 0; i < devs.length; i++) {
+      if (devs[i].device_type === 'mower') {
+        var opt = document.createElement('option');
+        opt.value = devs[i].sn;
+        opt.textContent = devs[i].sn;
+        sel.appendChild(opt);
+      }
+    }
+    _mapsDropdownLoaded = true;
+    // Auto-select if only one mower, or restore previous
+    if (prev && sel.querySelector('option[value="' + prev + '"]')) {
+      sel.value = prev;
+    } else if (sel.options.length === 2) {
+      sel.selectedIndex = 1;
+    }
+    if (sel.value) loadMaps();
+  } catch(e) {
+    document.getElementById('mapInfo').textContent = 'Failed to load devices: ' + e.message;
+  }
+}
+
+async function loadMaps() {
+  var sn = document.getElementById('mapMowerSelect').value;
+  var info = document.getElementById('mapInfo');
+  var canvas = document.getElementById('mapCanvas');
+  var legend = document.getElementById('mapLegend');
+  var ctx = canvas.getContext('2d');
+
+  if (!sn) {
+    info.textContent = '';
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    legend.style.display = 'none';
+    return;
+  }
+
+  info.textContent = 'Loading maps for ' + sn + '...';
+
+  try {
+    var r = await fetch('/api/dashboard/maps/' + encodeURIComponent(sn), {
+      headers: { 'Authorization': token }
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    var data = await r.json();
+    var maps = data.maps || [];
+
+    if (maps.length === 0) {
+      info.textContent = 'No maps found for ' + sn;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      legend.style.display = 'none';
+      return;
+    }
+
+    var workCount = maps.filter(function(m) { return m.mapType === 'work'; }).length;
+    info.textContent = workCount + ' work area(s) for ' + sn;
+    legend.style.display = 'flex';
+    renderMapCanvas(canvas, maps);
+  } catch(e) {
+    info.textContent = 'Failed to load maps: ' + e.message;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    legend.style.display = 'none';
+  }
+}
+
+function renderMapCanvas(canvas, maps) {
+  // Get device pixel ratio for sharp rendering
+  var dpr = window.devicePixelRatio || 1;
+  var rect = canvas.getBoundingClientRect();
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  var ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  var W = rect.width;
+  var H = rect.height;
+
+  ctx.clearRect(0, 0, W, H);
+
+  // Collect all points to find bounds
+  var allX = [0], allY = [0]; // include charger origin
+  for (var i = 0; i < maps.length; i++) {
+    var pts = maps[i].mapArea || [];
+    for (var j = 0; j < pts.length; j++) {
+      allX.push(pts[j].x);
+      allY.push(pts[j].y);
+    }
+  }
+
+  var minX = Math.min.apply(null, allX);
+  var maxX = Math.max.apply(null, allX);
+  var minY = Math.min.apply(null, allY);
+  var maxY = Math.max.apply(null, allY);
+
+  // Add padding
+  var pad = 40;
+  var rangeX = maxX - minX || 1;
+  var rangeY = maxY - minY || 1;
+  var scaleX = (W - pad * 2) / rangeX;
+  var scaleY = (H - pad * 2) / rangeY;
+  var scale = Math.min(scaleX, scaleY);
+
+  // Center the drawing
+  var drawW = rangeX * scale;
+  var drawH = rangeY * scale;
+  var offsetX = pad + (W - pad * 2 - drawW) / 2;
+  var offsetY = pad + (H - pad * 2 - drawH) / 2;
+
+  // Transform: local meters → canvas pixels (flip y-axis)
+  function tx(x) { return offsetX + (x - minX) * scale; }
+  function ty(y) { return offsetY + (maxY - y) * scale; } // flip Y
+
+  // Draw grid
+  ctx.strokeStyle = 'rgba(255,255,255,.04)';
+  ctx.lineWidth = 1;
+  // Calculate nice grid step
+  var gridStep = 1;
+  var maxRange = Math.max(rangeX, rangeY);
+  if (maxRange > 50) gridStep = 10;
+  else if (maxRange > 20) gridStep = 5;
+  else if (maxRange > 10) gridStep = 2;
+
+  var gx0 = Math.floor(minX / gridStep) * gridStep;
+  var gy0 = Math.floor(minY / gridStep) * gridStep;
+  for (var gx = gx0; gx <= maxX; gx += gridStep) {
+    var cx = tx(gx);
+    ctx.beginPath(); ctx.moveTo(cx, 0); ctx.lineTo(cx, H); ctx.stroke();
+  }
+  for (var gy = gy0; gy <= maxY; gy += gridStep) {
+    var cy = ty(gy);
+    ctx.beginPath(); ctx.moveTo(0, cy); ctx.lineTo(W, cy); ctx.stroke();
+  }
+
+  // Draw scale bar
+  ctx.fillStyle = '#555';
+  ctx.font = '10px system-ui';
+  ctx.textAlign = 'right';
+  ctx.fillText(rangeX.toFixed(1) + 'm x ' + rangeY.toFixed(1) + 'm', W - 10, H - 8);
+
+  // Draw each map polygon
+  for (var i = 0; i < maps.length; i++) {
+    var map = maps[i];
+    var pts = map.mapArea || [];
+    if (pts.length < 2) continue;
+
+    var type = (map.mapType || 'work').toLowerCase();
+    var isObstacle = type.indexOf('obstacle') >= 0 || type.indexOf('forbidden') >= 0;
+    var isUnicom = type.indexOf('unicom') >= 0 || type.indexOf('channel') >= 0 || type.indexOf('passage') >= 0;
+
+    ctx.beginPath();
+    ctx.moveTo(tx(pts[0].x), ty(pts[0].y));
+    for (var j = 1; j < pts.length; j++) {
+      ctx.lineTo(tx(pts[j].x), ty(pts[j].y));
+    }
+
+    if (isUnicom) {
+      // Draw as polyline (not filled)
+      ctx.strokeStyle = '#3b82f6';
+      ctx.lineWidth = 2.5;
+      ctx.stroke();
+    } else if (isObstacle) {
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(239,68,68,.25)';
+      ctx.fill();
+      ctx.strokeStyle = '#991b1b';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    } else {
+      // Work area (default)
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(34,197,94,.2)';
+      ctx.fill();
+      ctx.strokeStyle = '#166534';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+
+    // Draw map name label at centroid
+    if (pts.length > 0 && map.mapName) {
+      var cx = 0, cy = 0;
+      for (var j = 0; j < pts.length; j++) { cx += pts[j].x; cy += pts[j].y; }
+      cx /= pts.length; cy /= pts.length;
+      ctx.fillStyle = '#ccc';
+      ctx.font = '11px system-ui';
+      ctx.textAlign = 'center';
+      ctx.fillText(map.mapName, tx(cx), ty(cy) - 4);
+      // Show area for non-unicom
+      if (!isUnicom && pts.length >= 3) {
+        var area = 0;
+        for (var j = 0; j < pts.length; j++) {
+          var k = (j + 1) % pts.length;
+          area += pts[j].x * pts[k].y - pts[k].x * pts[j].y;
+        }
+        area = Math.abs(area) / 2;
+        ctx.fillStyle = '#888';
+        ctx.font = '10px system-ui';
+        ctx.fillText(area.toFixed(1) + ' m\\u00B2', tx(cx), ty(cy) + 10);
+      }
+    }
+  }
+
+  // Draw charger marker at origin (0,0)
+  var chargerX = tx(0);
+  var chargerY = ty(0);
+  ctx.beginPath();
+  ctx.arc(chargerX, chargerY, 6, 0, Math.PI * 2);
+  ctx.fillStyle = '#f59e0b';
+  ctx.fill();
+  ctx.strokeStyle = '#92400e';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  // Charger label
+  ctx.fillStyle = '#f59e0b';
+  ctx.font = '10px system-ui';
+  ctx.textAlign = 'center';
+  ctx.fillText('Charger', chargerX, chargerY - 10);
 }
 
 async function cloudImport() {

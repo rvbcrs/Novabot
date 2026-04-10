@@ -5,7 +5,8 @@ export default defineConfig({
     include: ['src/__tests__/**/*.test.ts'],
     environment: 'node',
     setupFiles: ['src/__tests__/setup.ts'],
-    // Sequential — all tests share one in-memory SQLite DB
+    // All tests share one in-memory SQLite DB — must run sequentially
+    fileParallelism: false,
     sequence: { concurrent: false },
   },
 });

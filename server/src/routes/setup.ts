@@ -16,6 +16,9 @@
 import { Router, Request, Response } from 'express';
 import https from 'https';
 import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
+import { execSync } from 'child_process';
 import { userRepo, equipmentRepo, deviceRepo, mapRepo } from '../db/repositories/index.js';
 import { isSetupComplete, invalidateSetupCache } from '../middleware/setupGuard.js';
 
@@ -369,7 +372,48 @@ setupRouter.post('/cloud-apply', async (req: Request, res: Response) => {
                 chargerGpsImported = true;
                 console.log(`[Setup] Charger GPS imported: lat=${poseY}, lng=${poseX}`);
               } else {
-                console.log(`[Setup] ChargingPose is local meters (x=${poseX}, y=${poseY}), not GPS — skipping calibration`);
+                console.log(`[Setup] ChargingPose is local meters (x=${poseX}, y=${poseY})`);
+              }
+            }
+
+            // Genereer _latest.zip zodat queryEquipmentMap md5 + chargingPose kan retourneren
+            if (mapsImported > 0) {
+              try {
+                const STORAGE = path.resolve(process.env.STORAGE_PATH ?? './storage', 'maps');
+                fs.mkdirSync(STORAGE, { recursive: true });
+                const tmpZipDir = path.join(STORAGE, `tmp_zip_${Date.now()}`);
+                const csvDir = path.join(tmpZipDir, 'csv_file');
+                fs.mkdirSync(csvDir, { recursive: true });
+
+                // Schrijf CSV's uit DB
+                const importedMaps = mapRepo.findWithAreaOrderByMapId(mower.sn);
+                const mapInfoObj: Record<string, unknown> = {};
+                for (const m of importedMaps) {
+                  if (!m.map_area) continue;
+                  const pts = JSON.parse(m.map_area) as Array<{ x: number; y: number }>;
+                  const csvName = m.file_name ?? (m.map_name + '.csv');
+                  fs.writeFileSync(path.join(csvDir, csvName), pts.map(p => `${p.x.toFixed(2)},${p.y.toFixed(2)}`).join('\n') + '\n');
+                  if (m.map_type === 'work') {
+                    // Shoelace area
+                    let a = 0;
+                    for (let i = 0; i < pts.length; i++) { const j = (i + 1) % pts.length; a += pts[i].x * pts[j].y - pts[j].x * pts[i].y; }
+                    mapInfoObj[csvName] = { map_size: Math.round(Math.abs(a / 2) * 100) / 100 };
+                  }
+                }
+                if (chargingPose?.x) {
+                  mapInfoObj['charging_pose'] = { x: parseFloat(chargingPose.x), y: parseFloat(chargingPose.y), orientation: parseFloat(chargingPose.orientation ?? '0') };
+                }
+                fs.writeFileSync(path.join(csvDir, 'map_info.json'), JSON.stringify(mapInfoObj, null, 2));
+
+                // Maak ZIP — ALTIJD nieuw bestand, nooit updaten
+                const zipPath = path.join(STORAGE, `${mower.sn}_latest.zip`);
+                if (fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
+                execSync(`cd "${tmpZipDir}" && zip -r "${zipPath}" csv_file/`, { stdio: 'pipe' });
+                fs.rmSync(tmpZipDir, { recursive: true, force: true });
+                mapZipSize = fs.statSync(zipPath).size;
+                console.log(`[Setup] Generated ${mower.sn}_latest.zip (${mapZipSize} bytes)`);
+              } catch (zipErr) {
+                console.warn(`[Setup] ZIP generation failed (non-fatal):`, zipErr);
               }
             }
           }
