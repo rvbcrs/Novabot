@@ -17,6 +17,7 @@ import { Router, Request, Response } from 'express';
 import https from 'https';
 import crypto from 'crypto';
 import { db } from '../db/database.js';
+import { userRepo, equipmentRepo, deviceRepo, mapRepo } from '../db/repositories/index.js';
 import { isSetupComplete, invalidateSetupCache } from '../middleware/setupGuard.js';
 
 export const setupRouter = Router();
@@ -88,9 +89,9 @@ export function callLfiCloud(
 // ── GET /status ──────────────────────────────────────────────────────────────
 
 setupRouter.get('/status', (_req, res) => {
-  const userCount = (db.prepare('SELECT COUNT(*) as count FROM users').get() as { count: number }).count;
-  const equipCount = (db.prepare('SELECT COUNT(*) as count FROM equipment').get() as { count: number }).count;
-  const deviceCount = (db.prepare('SELECT COUNT(*) as count FROM device_registry').get() as { count: number }).count;
+  const userCount = userRepo.count();
+  const equipCount = equipmentRepo.count();
+  const deviceCount = deviceRepo.countAll();
 
   res.json({
     setupComplete: isSetupComplete(),
@@ -178,22 +179,18 @@ setupRouter.post('/cloud-apply', async (req: Request, res: Response) => {
     const normalizedEmail = email.trim().toLowerCase();
 
     // 1. Create or update user
-    const existingUser = db.prepare('SELECT app_user_id FROM users WHERE email = ?')
-      .get(normalizedEmail) as { app_user_id: string } | undefined;
+    const existingUser = userRepo.findByEmail(normalizedEmail);
 
     let appUserId: string;
     if (existingUser) {
       appUserId = existingUser.app_user_id;
       const hash = await bcrypt.hash(password, 10);
-      db.prepare('UPDATE users SET password = ? WHERE app_user_id = ?').run(hash, appUserId);
+      userRepo.updatePassword(appUserId, hash);
       console.log(`[Setup] Updated user: ${normalizedEmail}`);
     } else {
       appUserId = crypto.randomUUID();
       const hash = await bcrypt.hash(password, 10);
-      db.prepare(`
-        INSERT INTO users (app_user_id, email, password, username, is_admin, created_at)
-        VALUES (?, ?, ?, ?, 1, datetime('now'))
-      `).run(appUserId, normalizedEmail, hash, normalizedEmail.split('@')[0]);
+      userRepo.create(appUserId, normalizedEmail, hash, normalizedEmail.split('@')[0], true);
       console.log(`[Setup] Created user: ${normalizedEmail} (admin)`);
     }
 
@@ -202,51 +199,52 @@ setupRouter.post('/cloud-apply', async (req: Request, res: Response) => {
     // Only create a new record if this device is truly new to the DB.
     if (mower?.sn || charger?.sn) {
       const mowerExists = mower?.sn
-        ? db.prepare('SELECT equipment_id FROM equipment WHERE mower_sn = ?').get(mower.sn)
+        ? equipmentRepo.findByMowerSn(mower.sn)
         : null;
       const chargerExists = charger?.sn
-        ? db.prepare('SELECT equipment_id FROM equipment WHERE charger_sn = ?').get(charger.sn)
+        ? equipmentRepo.findByChargerSn(charger.sn)
         : null;
 
       if (mowerExists || chargerExists) {
         // Device already in DB — only update user_id if not set (claim ownership)
-        const targetId = (mowerExists as any)?.equipment_id ?? (chargerExists as any)?.equipment_id;
-        db.prepare('UPDATE equipment SET user_id = COALESCE(user_id, ?) WHERE equipment_id = ?')
-          .run(appUserId, targetId);
+        const targetId = mowerExists?.equipment_id ?? chargerExists?.equipment_id;
+        equipmentRepo.claimOwnership(targetId!, appUserId);
         console.log(`[Setup] Equipment already exists: ${targetId} — claimed by ${appUserId}`);
       } else {
         // Truly new device — check if user has an incomplete record (missing mower or charger)
-        const incomplete = db.prepare(
-          'SELECT equipment_id, mower_sn, charger_sn FROM equipment WHERE user_id = ? AND (mower_sn IS NULL OR charger_sn IS NULL) LIMIT 1'
-        ).get(appUserId) as { equipment_id: string; mower_sn: string | null; charger_sn: string | null } | undefined;
+        const incomplete = equipmentRepo.findIncompleteByUserId(appUserId);
 
         if (incomplete && mower?.sn && !incomplete.mower_sn) {
           // Fill in missing mower on existing charger-only record
-          db.prepare('UPDATE equipment SET mower_sn = ?, mac_address = COALESCE(?, mac_address) WHERE equipment_id = ?')
-            .run(mower.sn, mower.mac ?? null, incomplete.equipment_id);
+          equipmentRepo.updateMowerSn(incomplete.equipment_id, mower.sn, mower.mac);
           console.log(`[Setup] Added mower ${mower.sn} to existing record ${incomplete.equipment_id}`);
         } else if (incomplete && charger?.sn && !incomplete.charger_sn) {
           // Fill in missing charger on existing mower-only record
-          db.prepare('UPDATE equipment SET charger_sn = ?, charger_address = ?, charger_channel = ? WHERE equipment_id = ?')
-            .run(charger.sn, charger.address ?? null, charger.channel ?? null, incomplete.equipment_id);
+          equipmentRepo.updateChargerSn(
+            incomplete.equipment_id, charger.sn,
+            charger.address != null ? String(charger.address) : undefined,
+            charger.channel != null ? String(charger.channel) : undefined,
+          );
           console.log(`[Setup] Added charger ${charger.sn} to existing record ${incomplete.equipment_id}`);
         } else {
           // Create brand new record
           const equipmentId = crypto.randomUUID();
-          db.prepare(`
-            INSERT INTO equipment (equipment_id, user_id, mower_sn, charger_sn, equipment_nick_name,
-              charger_address, charger_channel, mac_address, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-          `).run(
-            equipmentId, appUserId, mower?.sn ?? null, charger?.sn ?? null,
-            deviceName ?? null, charger?.address ?? null, charger?.channel ?? null,
-            (mower?.mac ?? charger?.mac) ?? null,
-          );
+          equipmentRepo.create({
+            equipment_id: equipmentId,
+            user_id: appUserId,
+            mower_sn: mower?.sn ?? '',
+            charger_sn: charger?.sn ?? null,
+            nick_name: deviceName ?? null,
+            charger_address: charger?.address != null ? String(charger.address) : null,
+            charger_channel: charger?.channel != null ? String(charger.channel) : null,
+            mac_address: (mower?.mac ?? charger?.mac) ?? null,
+          });
           console.log(`[Setup] Equipment created: mower=${mower?.sn ?? 'none'}, charger=${charger?.sn ?? 'none'}`);
         }
       }
 
       // 3. Register in device_registry (for MAC lookup) — INSERT OR IGNORE = idempotent
+      // TODO: deviceRepo.upsertDevice() uses INSERT OR REPLACE, but we need INSERT OR IGNORE here to avoid overwriting existing records
       if (mower?.sn && mower?.mac) {
         db.prepare(`INSERT OR IGNORE INTO device_registry (mqtt_client_id, sn, mac_address, last_seen) VALUES (?, ?, ?, datetime('now'))`)
           .run(`cloud_import_${mower.sn}`, mower.sn, mower.mac);
@@ -258,8 +256,7 @@ setupRouter.post('/cloud-apply', async (req: Request, res: Response) => {
 
       // 4. LoRa cache — only insert if no existing entry (don't overwrite working config)
       if (charger?.sn && charger?.address) {
-        db.prepare('INSERT OR IGNORE INTO equipment_lora_cache (sn, charger_address, charger_channel) VALUES (?, ?, ?)')
-          .run(charger.sn, charger.address, charger.channel ?? 16);
+        equipmentRepo.setLoraCacheIfNew(charger.sn, String(charger.address), String(charger.channel ?? 16));
       }
     }
 
@@ -329,14 +326,15 @@ setupRouter.post('/cloud-apply', async (req: Request, res: Response) => {
 
                     if (points.length >= 2) {
                       const mapId = uuidv4();
-                      const now = new Date().toISOString();
-                      db.prepare(`
-                        INSERT OR REPLACE INTO maps
-                          (map_id, mower_sn, map_name, map_area, file_name, file_size, map_type, created_at, updated_at)
-                        VALUES (?,?,?,?,?,?,?,?,?)
-                      `).run(mapId, mower.sn, fileName.replace('.csv', ''),
-                             JSON.stringify(points), fileName, csvData.length,
-                             mapType, now, now);
+                      mapRepo.upsert({
+                        map_id: mapId,
+                        mower_sn: mower.sn,
+                        map_name: fileName.replace('.csv', ''),
+                        map_area: JSON.stringify(points),
+                        file_name: fileName,
+                        file_size: csvData.length,
+                        map_type: mapType,
+                      });
                       mapsImported++;
                       console.log(`[Setup] Imported map: ${fileName} (${mapType}, ${points.length} points)`);
                     }
@@ -357,10 +355,14 @@ setupRouter.post('/cloud-apply', async (req: Request, res: Response) => {
               // GPS values are > 10, local meters are typically < 50
               const isGps = !isNaN(poseY) && Math.abs(poseY) > 10;
               if (isGps) {
-                db.prepare(`
-                  INSERT OR REPLACE INTO map_calibration (mower_sn, offset_lat, offset_lng, rotation, scale, charger_lat, charger_lng, updated_at)
-                  VALUES (?, 0, 0, 0, 1, ?, ?, datetime('now'))
-                `).run(mower.sn, poseY, poseX);  // y=lat, x=lng
+                mapRepo.setCalibration(mower.sn, {
+                  offset_lat: 0,
+                  offset_lng: 0,
+                  rotation: 0,
+                  scale: 1,
+                  charger_lat: poseY,   // y=lat
+                  charger_lng: poseX,   // x=lng
+                });
                 chargerGpsImported = true;
                 console.log(`[Setup] Charger GPS imported: lat=${poseY}, lng=${poseX}`);
               } else {
@@ -393,6 +395,7 @@ setupRouter.post('/skip', async (_req: Request, res: Response) => {
     const hashedPwd = await bcrypt.hash('admin', 10);
     const appUserId = `local_${Date.now()}`;
 
+    // TODO: userRepo.create() does INSERT (not INSERT OR IGNORE) — need an upsert method or keep raw SQL
     db.prepare(`
       INSERT OR IGNORE INTO users (app_user_id, email, password, username)
       VALUES (?, ?, ?, ?)
@@ -408,11 +411,9 @@ setupRouter.post('/skip', async (_req: Request, res: Response) => {
 // ── GET /devices ─────────────────────────────────────────────────────────────
 
 setupRouter.get('/devices', (_req, res) => {
-  const equipment = db.prepare(`
-    SELECT mower_sn, charger_sn, equipment_nick_name, mower_version, charger_version
-    FROM equipment
-  `).all();
+  const equipment = equipmentRepo.listAll();
 
+  // TODO: deviceRepo has no listAll() method that returns sn + mac_address + last_seen ordered by last_seen DESC
   const registry = db.prepare(`
     SELECT sn, mac_address, last_seen FROM device_registry
     ORDER BY last_seen DESC
@@ -583,6 +584,7 @@ setupRouter.get('/dns-check', async (_req, res) => {
   ]);
 
   // Check if any connected mower has custom firmware (version contains "custom")
+  // TODO: equipmentRepo has no method to find by SN prefix + check version — need a findBySnPrefix() or similar
   const mowerRow = db.prepare(`
     SELECT mower_version FROM equipment WHERE mower_sn LIKE 'LFIN%' LIMIT 1
   `).get() as { mower_version?: string } | undefined;
@@ -590,6 +592,7 @@ setupRouter.get('/dns-check', async (_req, res) => {
   const hasCustomFirmware = !!(mowerRow?.mower_version && mowerRow.mower_version.includes('custom'));
 
   // Check if a mower is currently connected (seen in last 5 minutes)
+  // TODO: deviceRepo.findRecentlyOnline() returns all recent devices, not filtered by SN prefix
   const mowerConnected = !!(db.prepare(`
     SELECT 1 FROM device_registry
     WHERE sn LIKE 'LFIN%' AND datetime(last_seen) > datetime('now', '-5 minutes')
@@ -644,27 +647,23 @@ setupRouter.post('/switch-wifi', async (req: Request, res: Response) => {
 setupRouter.get('/factory-lookup', (req: Request, res: Response) => {
   const sn = (req.query.sn as string || '').trim().toUpperCase();
   if (!sn) { res.json({ mac: null, error: 'sn required' }); return; }
-  const row = db.prepare('SELECT mac_address FROM device_factory WHERE sn = ?').get(sn) as { mac_address: string } | undefined;
-  res.json({ sn, mac: row?.mac_address || null });
+  const mac = deviceRepo.getFactoryMac(sn);
+  res.json({ sn, mac });
 });
 
 // ── Device connection count (for MQTT polling) ─────────────────────────────
 
 setupRouter.get('/health', async (_req: Request, res: Response) => {
-  const userCount = (db.prepare('SELECT COUNT(*) as count FROM users').get() as { count: number }).count;
-  const equipCount = (db.prepare('SELECT COUNT(*) as count FROM equipment').get() as { count: number }).count;
-  const deviceCount = (db.prepare('SELECT COUNT(*) as count FROM device_registry').get() as { count: number }).count;
+  const userCount = userRepo.count();
+  const equipCount = equipmentRepo.count();
+  const deviceCount = deviceRepo.countAll();
 
-  const recentDevice = db.prepare(`
-    SELECT sn, last_seen FROM device_registry
-    WHERE datetime(last_seen) > datetime('now', '-5 minutes')
-    ORDER BY last_seen DESC LIMIT 1
-  `).get() as { sn: string; last_seen: string } | undefined;
+  const recentDevices = deviceRepo.findRecentlyOnline(5);
+  const recentDevice = recentDevices.length > 0
+    ? { sn: recentDevices[0].sn, last_seen: recentDevices[0].last_seen }
+    : undefined;
 
-  const connectedCount = (db.prepare(`
-    SELECT COUNT(DISTINCT sn) as count FROM device_registry
-    WHERE sn IS NOT NULL AND datetime(last_seen) > datetime('now', '-1 minutes')
-  `).get() as { count: number }).count;
+  const connectedCount = deviceRepo.countOnline(1);
 
   // Own IP
   const { networkInterfaces } = await import('os');

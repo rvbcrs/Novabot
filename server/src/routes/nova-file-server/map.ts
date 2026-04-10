@@ -6,6 +6,7 @@ import crypto from 'crypto';
 import { execSync } from 'child_process';
 import { v4 as uuidv4 } from 'uuid';
 import { db } from '../../db/database.js';
+import { equipmentRepo, mapRepo } from '../../db/repositories/index.js';
 import { authMiddleware } from '../../middleware/auth.js';
 import { AuthRequest, ok, fail, MapRow } from '../../types/index.js';
 import { parseMapZip, type LocalPoint, type GpsPoint, polygonArea, gpsToLocal } from '../../mqtt/mapConverter.js';
@@ -33,11 +34,13 @@ function generateCsvFromDb(sn: string, fileName: string): string | null {
 
   if (workMatch) {
     const mapIndex = parseInt(workMatch[1]);
+    // TODO: add mapRepo.findByMowerSnAndTypeWithArea() — findByMowerSnAndType doesn't filter on map_area IS NOT NULL and has different ORDER BY
     const workMaps = db.prepare(
       "SELECT * FROM maps WHERE mower_sn = ? AND map_type = 'work' AND map_area IS NOT NULL ORDER BY map_id"
     ).all(sn) as MapRow[];
     mapRow = workMaps[mapIndex];
   } else if (obstacleMatch) {
+    // TODO: add mapRepo.findByMowerSnAndTypeWithArea() — same as above
     const obstacleMaps = db.prepare(
       "SELECT * FROM maps WHERE mower_sn = ? AND map_type = 'obstacle' AND map_area IS NOT NULL ORDER BY map_id"
     ).all(sn) as MapRow[];
@@ -85,16 +88,15 @@ mapRouter.get('/queryEquipmentMap', authMiddleware, (req: AuthRequest, res: Resp
   if (!sn) { res.json(fail('sn required', 400)); return; }
 
   // IDOR bescherming: controleer of dit apparaat van de huidige user is
-  const ownership = db.prepare(
-    'SELECT user_id FROM equipment WHERE (mower_sn = ? OR charger_sn = ?) AND user_id = ?'
-  ).get(sn, sn, req.userId);
-  if (!ownership) {
+  const equipRow = equipmentRepo.findBySn(sn);
+  if (!equipRow || equipRow.user_id !== req.userId) {
     console.log(`[MAP] queryEquipmentMap: IDOR blocked — sn=${sn} not owned by user`);
     res.json(ok({ data: null, md5: null, machineExtendedField: null }));
     return;
   }
 
-  // Haal alle kaarten op voor dit SN
+  // Haal alle kaarten op voor dit SN (met map_area, geordend op map_id)
+  // TODO: add mapRepo.findWithAreaOrderByMapId() — findWithArea uses ORDER BY updated_at DESC, route needs ORDER BY map_id
   const maps = db.prepare(
     'SELECT * FROM maps WHERE mower_sn = ? AND map_area IS NOT NULL ORDER BY map_id'
   ).all(sn) as MapRow[];
@@ -237,10 +239,8 @@ mapRouter.get('/downloadMapFile', authMiddleware, (req: AuthRequest, res: Respon
   if (!sn || !fileName) { res.status(400).json(fail('sn and fileName required', 400)); return; }
 
   // IDOR bescherming
-  const ownership = db.prepare(
-    'SELECT user_id FROM equipment WHERE (mower_sn = ? OR charger_sn = ?) AND user_id = ?'
-  ).get(sn, sn, req.userId);
-  if (!ownership) {
+  const equipRow = equipmentRepo.findBySn(sn);
+  if (!equipRow || equipRow.user_id !== req.userId) {
     res.status(403).json(fail('Access denied', 403));
     return;
   }
@@ -310,9 +310,8 @@ mapRouter.post('/fragmentUploadEquipmentMap', authMiddleware, upload.single('fil
 
   if (!sn || !uploadId) { res.json(fail('sn and uploadId required', 400)); return; }
 
-  const equipment = db.prepare('SELECT equipment_id FROM equipment WHERE mower_sn = ? AND user_id = ?')
-    .get(sn, req.userId);
-  if (!equipment) { res.json(fail('Equipment not found', 404)); return; }
+  const equipment = equipmentRepo.findByMowerSn(sn);
+  if (!equipment || equipment.user_id !== req.userId) { res.json(fail('Equipment not found', 404)); return; }
 
   // App stuurt mapArea als GPS [{lat,lng}] — converteer naar lokaal [{x,y}] vóór opslag
   let localMapArea = mapArea ?? null;
@@ -321,10 +320,9 @@ mapRouter.post('/fragmentUploadEquipmentMap', authMiddleware, upload.single('fil
     try {
       const pts = JSON.parse(mapArea);
       if (Array.isArray(pts) && pts.length > 0 && 'lat' in pts[0]) {
-        const cal = db.prepare('SELECT charger_lat, charger_lng FROM map_calibration WHERE mower_sn = ?')
-          .get(sn) as { charger_lat: number | null; charger_lng: number | null } | undefined;
-        if (cal?.charger_lat && cal?.charger_lng) {
-          const origin: GpsPoint = { lat: cal.charger_lat, lng: cal.charger_lng };
+        const cal = mapRepo.getChargerGps(sn);
+        if (cal) {
+          const origin: GpsPoint = { lat: cal.lat, lng: cal.lng };
           const localPts = pts.map((p: GpsPoint) => gpsToLocal(p, origin));
           localMapArea = JSON.stringify(localPts);
           localMapMaxMin = JSON.stringify({
@@ -341,15 +339,17 @@ mapRouter.post('/fragmentUploadEquipmentMap', authMiddleware, upload.single('fil
   // Single-chunk or simple upload (no fragmentation)
   if (!chunkIndex && !chunksTotal) {
     const mapId = uuidv4();
-    const now = new Date().toISOString();
     const fileName = req.file ? path.basename(req.file.path) : null;
 
-    db.prepare(`
-      INSERT OR REPLACE INTO maps
-        (map_id, mower_sn, map_name, map_area, map_max_min, file_name, file_size, created_at, updated_at)
-      VALUES (?,?,?,?,?,?,?,?,?)
-    `).run(mapId, sn, mapName ?? null, localMapArea, localMapMaxMin,
-           fileName, req.file?.size ?? null, now, now);
+    mapRepo.upsert({
+      map_id: mapId,
+      mower_sn: sn,
+      map_name: mapName ?? null,
+      map_area: localMapArea,
+      map_max_min: localMapMaxMin,
+      file_name: fileName,
+      file_size: req.file?.size ?? null,
+    });
 
     res.json(ok({ mapId, uploadId }));
     return;
@@ -360,6 +360,7 @@ mapRouter.post('/fragmentUploadEquipmentMap', authMiddleware, upload.single('fil
   const total = parseInt(chunksTotal ?? '1', 10);
   const totalSize = parseInt(fileSize ?? '0', 10);
 
+  // TODO: add mapUploadRepo — no repository for map_uploads table
   // Register upload session on first chunk
   const session = db.prepare('SELECT * FROM map_uploads WHERE upload_id = ?').get(uploadId);
   if (!session) {
@@ -402,13 +403,15 @@ mapRouter.post('/fragmentUploadEquipmentMap', authMiddleware, upload.single('fil
     });
 
     const mapId = uuidv4();
-    const now = new Date().toISOString();
-    db.prepare(`
-      INSERT OR REPLACE INTO maps
-        (map_id, mower_sn, map_name, map_area, map_max_min, file_name, file_size, created_at, updated_at)
-      VALUES (?,?,?,?,?,?,?,?,?)
-    `).run(mapId, sn, mapName ?? null, localMapArea, localMapMaxMin,
-           finalFileName, updated.file_size, now, now);
+    mapRepo.upsert({
+      map_id: mapId,
+      mower_sn: sn,
+      map_name: mapName ?? null,
+      map_area: localMapArea,
+      map_max_min: localMapMaxMin,
+      file_name: finalFileName,
+      file_size: updated.file_size,
+    });
 
     db.prepare('DELETE FROM map_uploads WHERE upload_id = ?').run(uploadId);
 
@@ -435,15 +438,14 @@ mapRouter.post('/updateEquipmentMapAlias', authMiddleware, (req: AuthRequest, re
   // App stuurt fileName (bv. "map0_work.csv") + sn i.p.v. mapId — resolve naar DB map_id
   if (!resolvedMapId && fileName) {
     // Gebruik sn direct uit body, of fallback naar equipment lookup
-    const mowerSn = bodySn || (db.prepare(
-      'SELECT mower_sn FROM equipment WHERE user_id = ? LIMIT 1'
-    ).get(req.userId) as { mower_sn: string } | undefined)?.mower_sn;
+    const mowerSn = bodySn || equipmentRepo.findByUserId(req.userId!)?.[0]?.mower_sn;
 
     if (mowerSn) {
       const workMatch = fileName.match(/^map(\d+)_work\.csv$/);
       const obstacleMatch = fileName.match(/^map(\d+)_(\d+)_obstacle\.csv$/);
       const unicomMatch = fileName.match(/^map(\d+)tocharge_unicom\.csv$/);
 
+      // TODO: add mapRepo.findByMowerSnAndTypeWithArea(sn, type) — current repo methods don't filter on map_area IS NOT NULL with ORDER BY map_id
       if (workMatch) {
         const idx = parseInt(workMatch[1]);
         const rows = db.prepare(
@@ -474,10 +476,7 @@ mapRouter.post('/updateEquipmentMapAlias', authMiddleware, (req: AuthRequest, re
     return;
   }
 
-  db.prepare(`
-    UPDATE maps SET map_name = ?, updated_at = ?
-    WHERE map_id = ?
-  `).run(newName, new Date().toISOString(), resolvedMapId);
+  mapRepo.updateName(resolvedMapId, newName ?? '');
   console.log(`[MAP] updateEquipmentMapAlias: ${resolvedMapId} → "${newName}"`);
   res.json(ok());
 });
@@ -565,21 +564,19 @@ mapRouter.post('/uploadEquipmentMap', upload.any(), (req: Request, res: Response
     const parsed = parseMapZip(finalPath);
     if (parsed && parsed.areas.length > 0) {
       // Check of er al maps in de DB staan voor deze maaier (bijv. dashboard-drawn)
+      // TODO: add mapRepo.findWithAreaByMowerSn() with map_type — findWithArea doesn't return map_type for filtering
       const existingMaps = db.prepare(
         "SELECT map_id, map_type FROM maps WHERE mower_sn = ? AND map_area IS NOT NULL"
       ).all(sn) as Array<{ map_id: string; map_type: string }>;
 
       if (existingMaps.length > 0) {
         // Maps bestaan al — maaier stuurt onze eigen ZIP terug. Alleen file_name bijwerken.
-        const now = new Date().toISOString();
         for (const em of existingMaps) {
-          db.prepare("UPDATE maps SET file_name = ?, updated_at = ? WHERE map_id = ?")
-            .run(finalFileName, now, em.map_id);
+          mapRepo.updateFileName(em.map_id, finalFileName);
         }
         console.log(`[MAP] uploadEquipmentMap: ${existingMaps.length} bestaande maps bijgewerkt voor ${sn} (geen duplicaten)`);
       } else {
         // Geen bestaande maps — sla elk werkgebied op (lokale coördinaten direct uit CSV)
-        const now = new Date().toISOString();
         for (const area of parsed.areas) {
           if (area.type !== 'work') continue;
           const areaMapId = uuidv4();
@@ -590,37 +587,47 @@ mapRouter.post('/uploadEquipmentMap', upload.any(), (req: Request, res: Response
             maxY: Math.max(...area.points.map(p => p.y)),
           };
 
-          db.prepare(`
-            INSERT OR REPLACE INTO maps
-              (map_id, mower_sn, map_name, map_area, map_max_min, file_name, file_size, map_type, created_at, updated_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?)
-          `).run(areaMapId, sn, mapName ?? `map${area.mapIndex}`, JSON.stringify(area.points),
-                 JSON.stringify(bounds), finalFileName, file.size, area.type, now, now);
+          mapRepo.upsert({
+            map_id: areaMapId,
+            mower_sn: sn,
+            map_name: mapName ?? `map${area.mapIndex}`,
+            map_area: JSON.stringify(area.points),
+            map_max_min: JSON.stringify(bounds),
+            file_name: finalFileName,
+            file_size: file.size,
+            map_type: area.type,
+          });
           console.log(`[MAP] Opgeslagen werkgebied map${area.mapIndex} voor ${sn} (${area.points.length} lokale punten)`);
         }
         // Sla obstakels op
         for (const area of parsed.areas) {
           if (area.type !== 'obstacle') continue;
           const obsMapId = uuidv4();
-          db.prepare(`
-            INSERT OR REPLACE INTO maps
-              (map_id, mower_sn, map_name, map_area, map_max_min, file_name, file_size, map_type, created_at, updated_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?)
-          `).run(obsMapId, sn, `obstacle_${area.mapIndex}_${area.subIndex ?? 0}`,
-                 JSON.stringify(area.points), null, finalFileName, file.size,
-                 'obstacle', now, now);
+          mapRepo.upsert({
+            map_id: obsMapId,
+            mower_sn: sn,
+            map_name: `obstacle_${area.mapIndex}_${area.subIndex ?? 0}`,
+            map_area: JSON.stringify(area.points),
+            map_max_min: null,
+            file_name: finalFileName,
+            file_size: file.size,
+            map_type: 'obstacle',
+          });
         }
         // Sla unicom (channel) paden op
         for (const area of parsed.areas) {
           if (area.type !== 'unicom') continue;
           const unicomMapId = uuidv4();
-          db.prepare(`
-            INSERT OR REPLACE INTO maps
-              (map_id, mower_sn, map_name, map_area, map_max_min, file_name, file_size, map_type, created_at, updated_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?)
-          `).run(unicomMapId, sn, `map${area.mapIndex}tocharge_unicom`,
-                 JSON.stringify(area.points), null, finalFileName, file.size,
-                 'unicom', now, now);
+          mapRepo.upsert({
+            map_id: unicomMapId,
+            mower_sn: sn,
+            map_name: `map${area.mapIndex}tocharge_unicom`,
+            map_area: JSON.stringify(area.points),
+            map_max_min: null,
+            file_name: finalFileName,
+            file_size: file.size,
+            map_type: 'unicom',
+          });
           console.log(`[MAP] Opgeslagen unicom kanaal map${area.mapIndex} voor ${sn} (${area.points.length} punten)`);
         }
         console.log(`[MAP] ZIP geparsed: ${parsed.areas.length} gebieden geëxtraheerd voor ${sn}`);
@@ -629,12 +636,15 @@ mapRouter.post('/uploadEquipmentMap', upload.any(), (req: Request, res: Response
       // ZIP parsing geeft geen gebieden — sla alleen het bestand op
       console.log(`[MAP] Geen kaartgebieden in ZIP voor ${sn}, bestand opgeslagen`);
       const mapId = uuidv4();
-      const now = new Date().toISOString();
-      db.prepare(`
-        INSERT OR REPLACE INTO maps
-          (map_id, mower_sn, map_name, map_area, map_max_min, file_name, file_size, created_at, updated_at)
-        VALUES (?,?,?,?,?,?,?,?,?)
-      `).run(mapId, sn, mapName, null, null, finalFileName, file.size, now, now);
+      mapRepo.upsert({
+        map_id: mapId,
+        mower_sn: sn,
+        map_name: mapName,
+        map_area: null,
+        map_max_min: null,
+        file_name: finalFileName,
+        file_size: file.size,
+      });
     }
   } catch (err) {
     console.error(`[MAP] ZIP parsing mislukt voor ${sn}:`, err);
