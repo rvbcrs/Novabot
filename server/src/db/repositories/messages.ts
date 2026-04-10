@@ -77,7 +77,7 @@ export class MessageRepository {
     'SELECT work_record_date FROM work_records WHERE user_id = ? ORDER BY work_record_date DESC LIMIT 1'
   );
   private _markWorkRecordsRead = db.prepare(
-    'UPDATE work_records SET robot_msg_unread = 0 WHERE user_id = ?'
+    'UPDATE work_records SET work_record_unread = 0 WHERE user_id = ?'
   );
   private _createWorkRecord = db.prepare(`
     INSERT INTO work_records (record_id, user_id, equipment_id, work_record_date, work_status, work_time, work_record_unread)
