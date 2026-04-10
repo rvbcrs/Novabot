@@ -248,22 +248,8 @@ function upsertDevice(clientId: string, sn: string | null, mac: string | null, u
     equipmentRepo.updateMacAddress(sn, mac, true);
   }
 
-  // Auto-create equipment record if device connects but has no equipment entry.
-  if (sn && sn.startsWith('LFI')) {
-    const existing = equipmentRepo.findBySn(sn);
-    if (!existing) {
-      const equipmentId = crypto.randomUUID();
-      const isCharger = sn.startsWith('LFIC');
-      // mower_sn has NOT NULL constraint — for charger-only, store SN in both columns
-      equipmentRepo.create({
-        equipment_id: equipmentId,
-        mower_sn: sn,
-        charger_sn: isCharger ? sn : null,
-        mac_address: mac,
-      });
-      console.log(`[MQTT] Auto-created equipment for ${sn} (${isCharger ? 'charger' : 'mower'})`);
-    }
-  }
+  // Equipment wordt automatisch aangemaakt door autoBindDevice() in onMowerConnected()
+  // (met user_id + auto-pair). Hier NIET meer aanmaken — dat gaf lege user_id records.
 }
 
 // Bijhouden welke clients al gelogd zijn (clientId -> timestamp eerste connect)
@@ -849,6 +835,20 @@ export async function startMqttBroker(): Promise<void> {
         if (typeof parsed.type === 'string' && parsed.type.endsWith('_respond') && forwardSn) {
           console.log(`${C.cyan}[RESPOND] ${parsed.type} from ${forwardSn}${C.reset}`);
           emitCommandRespond(forwardSn, parsed.type, parsed.message);
+
+          // Charger LoRa config: sla echte addr/channel op (overschrijft cloud-imported waarden)
+          if (parsed.type === 'get_lora_info_respond' && parsed.message?.value) {
+            const val = parsed.message.value as { addr?: number; channel?: number };
+            if (val.addr != null && val.channel != null) {
+              equipmentRepo.setLoraCache(forwardSn, String(val.addr), String(val.channel));
+              // Ook de gekoppelde mower bijwerken — mower channel = charger channel - 1
+              const eq = equipmentRepo.findByChargerSn(forwardSn);
+              if (eq?.mower_sn) {
+                equipmentRepo.setLoraCache(eq.mower_sn, String(val.addr), String(val.channel - 1));
+              }
+              console.log(`${C.cyan}[LORA] Real LoRa config from ${forwardSn}: addr=${val.addr} ch=${val.channel} (mower ch=${val.channel - 1})${C.reset}`);
+            }
+          }
         }
       } catch { /* geen JSON of geen map-bericht */ }
 

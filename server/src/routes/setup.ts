@@ -25,6 +25,7 @@ export const setupRouter = Router();
 // These are proven working — do NOT modify without testing against the real cloud.
 
 const LFI_CLOUD_HOST = '47.253.145.99';
+const LFI_CLOUD_SERVERNAME = 'app.lfibot.com';
 const APP_PW_KEY_IV = Buffer.from('1234123412ABCDEF', 'utf8');
 
 export function encryptCloudPassword(plainPassword: string): string {
@@ -250,10 +251,8 @@ setupRouter.post('/cloud-apply', async (req: Request, res: Response) => {
         deviceRepo.insertIfMissing(`cloud_import_${charger.sn}`, charger.sn, charger.mac);
       }
 
-      // 4. LoRa cache — only insert if no existing entry (don't overwrite working config)
-      if (charger?.sn && charger?.address) {
-        equipmentRepo.setLoraCacheIfNew(charger.sn, String(charger.address), String(charger.channel ?? 16));
-      }
+      // 4. LoRa cache — NIET vanuit cloud importeren, cloud waarden zijn onbetrouwbaar.
+      // Echte LoRa config wordt automatisch opgehaald via MQTT get_lora_info bij charger connect.
     }
 
     // 5. Import maps from cloud for each mower
@@ -294,15 +293,15 @@ setupRouter.post('/cloud-apply', async (req: Request, res: Response) => {
                 try {
                   // Download CSV as raw text (not JSON)
                   const csvData = await new Promise<string>((resolve, reject) => {
-                    // Always download from real cloud, not local DNS redirect
                     const parsedUrl = new URL(csvUrl, `https://${LFI_CLOUD_HOST}`);
-                    const headers = makeLfiHeaders(cloudToken);
+                    const isCloudHost = parsedUrl.hostname === LFI_CLOUD_SERVERNAME || parsedUrl.hostname === LFI_CLOUD_HOST;
                     const req = https.request({
-                      hostname: LFI_CLOUD_HOST,
+                      hostname: isCloudHost ? LFI_CLOUD_HOST : parsedUrl.hostname,
                       path: parsedUrl.pathname + parsedUrl.search,
                       method: 'GET',
-                      headers,
-                      rejectUnauthorized: false,
+                      ...(isCloudHost
+                        ? { headers: makeLfiHeaders(cloudToken), rejectUnauthorized: false }
+                        : {}),
                     }, (resp) => {
                       let data = '';
                       resp.on('data', (chunk: string) => { data += chunk; });

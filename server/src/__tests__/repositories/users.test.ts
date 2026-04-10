@@ -1,12 +1,5 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { db } from '../../db/database.js';
+import { describe, it, expect } from 'vitest';
 import { userRepo } from '../../db/repositories/index.js';
-
-// Clean tables before each test (respect FK order)
-beforeEach(() => {
-  db.exec('DELETE FROM equipment');
-  db.exec('DELETE FROM users');
-});
 
 describe('UserRepository', () => {
   const testUser = {

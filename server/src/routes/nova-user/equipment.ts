@@ -64,30 +64,58 @@ equipmentRouter.post('/userEquipmentList', authMiddleware, (req: AuthRequest, re
   const rows = equipmentRepo.findByUserId(req.userId!) as EquipmentRow[];
 
   const email = req.email ?? '';
+  // Tel het werkelijke aantal entries (1 per device, niet per equipment row)
+  const deviceCount = rows.reduce((n, r) => {
+    let c = 0;
+    if (r.mower_sn?.startsWith('LFIN')) c++;
+    if (r.charger_sn?.startsWith('LFIC')) c++;
+    return n + (c || 1);
+  }, 0);
   res.json(ok({
     pageNo: 1,
     pageSize: 10,
-    totalSize: rows.length,
-    totalPage: Math.ceil(rows.length / 10) || 1,
-    pageList: rows.map(r => {
-      const dto = rowToCloudDto(r, email);
-      const mac = lookupMac(dto.sn);
-      // Cloud userEquipmentList bevat GEEN userId per entry (anders dan getEquipmentBySN).
-      // Verwijder userId uit de spread om exact te matchen.
-      const { userId: _userId, ...dtoWithoutUserId } = dto;
-      const isCharger = dto.deviceType === 'charger';
-      return {
-        ...dtoWithoutUserId,
-        macAddress: mac ?? dto.macAddress,
-        videoTutorial: null,
-        wifiName: r.wifi_name ?? null,
-        wifiPassword: r.wifi_password ?? null,
-        model: isCharger ? 'N1000' : 'N2000',
-        photoId: null,
-        photoType: null,
-        photoDownload: null,
-        photoTime: null,
-      };
+    totalSize: deviceCount,
+    totalPage: Math.ceil(deviceCount / 10) || 1,
+    pageList: rows.flatMap(r => {
+      // Cloud retourneert aparte entries per device — als een row zowel mower als charger heeft, maak 2 entries
+      const entries: EquipmentRow[] = [];
+
+      // Mower entry (als mower_sn een echte mower is)
+      if (r.mower_sn?.startsWith('LFIN')) {
+        entries.push(r);
+      }
+
+      // Charger entry (als charger_sn een echte charger is)
+      if (r.charger_sn?.startsWith('LFIC')) {
+        // Maak een kopie met charger SN als primaire SN
+        entries.push({ ...r, mower_sn: r.charger_sn } as EquipmentRow);
+      }
+
+      // Fallback: als geen van beide, gebruik de row as-is
+      if (entries.length === 0) entries.push(r);
+
+      let entryIndex = 0;
+      return entries.map(entry => {
+        const dto = rowToCloudDto(entry, email);
+        const mac = lookupMac(dto.sn);
+        const { userId: _userId, ...dtoWithoutUserId } = dto;
+        const isCharger = dto.deviceType === 'charger';
+        // Cloud retourneert unieke equipmentId per device — offset charger entry
+        const uniqueId = dto.equipmentId + (entryIndex++);
+        return {
+          ...dtoWithoutUserId,
+          equipmentId: uniqueId,
+          macAddress: mac ?? dto.macAddress,
+          videoTutorial: null,
+          wifiName: r.wifi_name ?? null,
+          wifiPassword: r.wifi_password ?? null,
+          model: isCharger ? 'N1000' : 'N2000',
+          photoId: null,
+          photoType: null,
+          photoDownload: null,
+          photoTime: null,
+        };
+      });
     }),
   }));
 });
@@ -149,8 +177,11 @@ equipmentRouter.post('/getEquipmentBySN', authMiddleware, (req: AuthRequest, res
   const numericUserId = userRow?.id ?? 0;
 
   if (row) {
+    // Als de gevraagde SN de charger is, gebruik charger_sn als primaire SN voor de DTO
+    const isChargerQuery = sn === row.charger_sn && sn !== row.mower_sn;
+    const effectiveRow = isChargerQuery ? { ...row, mower_sn: row.charger_sn! } as EquipmentRow : row;
     // Cloud retourneert email="" in getEquipmentBySN (niet het echte email adres)
-    const dto = rowToCloudDto(row, '');
+    const dto = rowToCloudDto(effectiveRow, '');
 
     // IDOR bescherming: als het apparaat gebonden is aan een ANDERE user,
     // retourneer minimale info (geen MQTT credentials, MAC, WiFi data).

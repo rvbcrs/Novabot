@@ -13,7 +13,9 @@ import crypto from 'crypto';
 type Aedes = { publish: (packet: any, cb: (err?: Error | null) => void) => void; [key: string]: unknown };
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AedesPublishPacket = { topic: string; payload: Buffer | string; qos: 0 | 1 | 2; retain: boolean; [key: string]: any };
-import { mapRepo } from '../db/repositories/index.js';
+import { v4 as uuidv4 } from 'uuid';
+import { mapRepo, equipmentRepo, userRepo, deviceRepo } from '../db/repositories/index.js';
+import { emitDeviceBound, emitDevicePaired } from '../dashboard/socketHandler.js';
 import { gpsToLocal, type GpsPoint, type LocalPoint } from './mapConverter.js';
 import { tryDecrypt } from './decrypt.js';
 
@@ -72,6 +74,23 @@ export function setDemoInterceptor(fn: DemoInterceptor): void {
  */
 export function initMapSync(broker: Aedes): void {
   aedesBroker = broker;
+
+  // Periodieke auto-bind: check elke 30s of er ongebonden devices zijn
+  // Pakt alle situaties op: server startup, login, DB wipe, reconnect
+  function runAutoBindSweep() {
+    try {
+      const allDevices = deviceRepo.listLatestBySn();
+      for (const d of allDevices) {
+        if (d.sn?.startsWith('LFI')) {
+          autoBindDevice(d.sn);
+        }
+      }
+    } catch (err) {
+      console.error(`${TAG} Auto-bind sweep failed:`, err);
+    }
+  }
+  setTimeout(runAutoBindSweep, 10_000);
+  setInterval(runAutoBindSweep, 30_000);
 }
 
 /**
@@ -256,6 +275,65 @@ export function requestMapOutline(sn: string, mapId: string): void {
 }
 
 /**
+ * Auto-bind: als er een user account bestaat en dit device nog niet gebonden is,
+ * maak automatisch een equipment record aan. Als er al een incompleet record is
+ * (charger zonder mower of vice versa), vul het aan → auto-pair.
+ */
+function autoBindDevice(sn: string, attempt = 0): void {
+  const existing = equipmentRepo.findBySn(sn);
+  if (existing?.user_id) return; // al gebonden
+
+  const user = userRepo.findFirst();
+  if (!user) {
+    // Bij server restart kan de user DB nog niet geladen zijn — retry na 5s (max 3x)
+    if (attempt < 3) {
+      setTimeout(() => autoBindDevice(sn, attempt + 1), 5000);
+    }
+    return;
+  }
+
+  const isCharger = sn.startsWith('LFIC');
+
+  if (existing && !existing.user_id) {
+    equipmentRepo.claimOwnership(existing.equipment_id, user.app_user_id);
+    console.log(`${TAG} Auto-bind: ${sn} claimed by ${user.email}`);
+    emitDeviceBound(sn);
+    return;
+  }
+
+  // Zoek een incompleet record om aan te vullen (auto-pair)
+  // Incompleet = mower_sn niet LFIN (charger placeholder) of charger_sn NULL
+  const incomplete = equipmentRepo.findIncompleteByUserId(user.app_user_id);
+  if (incomplete && isCharger && !incomplete.charger_sn) {
+    // Mower-only record → voeg charger toe
+    equipmentRepo.updateChargerSn(incomplete.equipment_id, sn);
+    console.log(`${TAG} Auto-bind+pair: charger ${sn} paired with ${incomplete.mower_sn}`);
+    emitDeviceBound(sn);
+    emitDevicePaired(incomplete.mower_sn ?? '', sn);
+    return;
+  }
+  if (incomplete && !isCharger && !incomplete.mower_sn?.startsWith('LFIN')) {
+    // Charger-only record (mower_sn is charger SN placeholder) → voeg mower toe
+    equipmentRepo.updateMowerSn(incomplete.equipment_id, sn);
+    console.log(`${TAG} Auto-bind+pair: mower ${sn} paired with ${incomplete.charger_sn}`);
+    emitDeviceBound(sn);
+    emitDevicePaired(sn, incomplete.charger_sn ?? '');
+    return;
+  }
+
+  // Nieuw record — mower_sn heeft NOT NULL constraint, gebruik SN als placeholder voor chargers
+  const equipmentId = uuidv4();
+  equipmentRepo.create({
+    equipment_id: equipmentId,
+    user_id: user.app_user_id,
+    mower_sn: sn,
+    charger_sn: isCharger ? sn : null,
+  });
+  console.log(`${TAG} Auto-bind: ${sn} bound to ${user.email}`);
+  emitDeviceBound(sn);
+}
+
+/**
  * Automatisch gegevens opvragen wanneer een apparaat verbindt.
  * Wordt aangeroepen vanuit broker.ts authenticate handler.
  * Wacht 3 seconden zodat het apparaat tijd heeft om te settlen.
@@ -266,10 +344,19 @@ export function onMowerConnected(sn: string): void {
   pendingRequests.add(sn);
 
   setTimeout(() => {
+    // Auto-bind: als er een user is en dit device nog niet gebonden, bind automatisch
+    autoBindDevice(sn);
+
     // Firmware versie opvragen (charger + mower)
     // v0.4.0 charger vereist null (cJSON_IsNull check), v0.3.6 accepteert elke waarde
     console.log(`\x1b[38;5;208m${TAG} Firmware versie opvragen van ${sn}...\x1b[0m`);
     publishToDevice(sn, { ota_version_info: null });
+
+    // Charger: LoRa config opvragen (echte addr/channel)
+    if (sn.startsWith('LFIC')) {
+      console.log(`${TAG} Charger ${sn} verbonden — LoRa config opvragen...`);
+      publishToDevice(sn, { get_lora_info: null });
+    }
 
     // Maaier: kaartlijst opvragen
     if (sn.startsWith('LFIN')) {

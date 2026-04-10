@@ -134,12 +134,22 @@ dashboardRouter.get('/devices', (_req: Request, res: Response) => {
           if (!(key in sensors)) sensors[key] = val;
         }
       }
+      // Bepaal paired_with: het SN van de tegenpartij in dezelfde equipment record
+      let pairedWith: string | null = null;
+      if (eqRow) {
+        const mySn = d.sn!;
+        if (mySn === eqRow.mower_sn && eqRow.charger_sn) pairedWith = eqRow.charger_sn;
+        else if (mySn === eqRow.charger_sn && eqRow.mower_sn?.startsWith('LFIN')) pairedWith = eqRow.mower_sn;
+      }
+
       return {
         sn: d.sn!,
         macAddress: d.mac_address,
         lastSeen: d.last_seen,
         online: isDeviceOnline(d.sn!) || isDemoMode(d.sn!),
         deviceType: d.sn!.startsWith('LFIC') ? 'charger' as const : 'mower' as const,
+        is_bound: boundSns.has(d.sn!),
+        paired_with: pairedWith,
         nickname: eqRow?.equipment_nick_name ?? null,
         mowerIp: d.sn!.startsWith('LFIN') ? (eqRow?.mower_ip ?? null) : null,
         sensors,
@@ -177,30 +187,105 @@ dashboardRouter.get('/unbound-devices', (_req: Request, res: Response) => {
 });
 
 // POST /api/dashboard/bind-device — koppel een device aan het account (enkelvoudige gebruiker)
-dashboardRouter.post('/bind-device', (req: Request, res: Response) => {
+dashboardRouter.post('/bind-device', async (req: Request, res: Response) => {
   const { sn, name } = req.body as { sn?: string; name?: string };
   if (!sn) { res.status(400).json({ ok: false, error: 'sn required' }); return; }
 
-  // Haal de enige gebruiker op (single-user setup)
-  const user = userRepo.findFirst();
-  if (!user) { res.status(400).json({ ok: false, error: 'Geen gebruiker gevonden' }); return; }
+  // Haal de enige gebruiker op — maak er één aan als die niet bestaat
+  let user = userRepo.findFirst();
+  if (!user) {
+    const bcrypt = await import('bcrypt');
+    const appUserId = `local_${Date.now()}`;
+    const hash = await bcrypt.hash('admin', 10);
+    userRepo.createIfMissing(appUserId, 'admin@local', hash, 'admin');
+    user = userRepo.findFirst();
+    if (!user) { res.status(500).json({ ok: false, error: 'Could not create user' }); return; }
+    console.log(`[dashboard] bind-device: auto-created local admin account`);
+  }
 
+  const isCharger = sn.startsWith('LFIC');
   const existing = equipmentRepo.findBySn(sn);
 
   if (existing) {
-    // Bijwerken: user_id koppelen + eventueel naam
     equipmentRepo.updateUserAndNickName(existing.equipment_id, user.app_user_id, name ?? null);
   } else {
-    // Nieuw record aanmaken
-    const equipmentId = uuidv4();
-    const isCharger = sn.startsWith('LFIC');
-    equipmentRepo.create({
-      equipment_id: equipmentId,
-      user_id: user.app_user_id,
-      mower_sn: sn,
-      equipment_type_h: isCharger ? 'charger' : 'mower',
-      nick_name: name ?? null,
-    });
+    // Check of er een incompleet equipment record is (charger zonder mower of vice versa)
+    // zodat we charger + mower automatisch in hetzelfde record zetten
+    const incomplete = equipmentRepo.findIncompleteByUserId(user.app_user_id);
+    if (incomplete && isCharger && !incomplete.charger_sn) {
+      equipmentRepo.updateChargerSn(incomplete.equipment_id, sn);
+      console.log(`[dashboard] bind-device: added charger ${sn} to existing record ${incomplete.equipment_id}`);
+    } else if (incomplete && !isCharger && incomplete.charger_sn && !incomplete.mower_sn?.startsWith('LFIN')) {
+      equipmentRepo.updateMowerSn(incomplete.equipment_id, sn);
+      console.log(`[dashboard] bind-device: added mower ${sn} to existing record ${incomplete.equipment_id}`);
+    } else {
+      const equipmentId = uuidv4();
+      equipmentRepo.create({
+        equipment_id: equipmentId,
+        user_id: user.app_user_id,
+        mower_sn: isCharger ? null as unknown as string : sn,
+        charger_sn: isCharger ? sn : null,
+        nick_name: name ?? null,
+      });
+    }
+  }
+
+  // Auto-pair: zoek een tegenpartij (charger↔mower) die al gebonden is maar nog niet gepaird
+  // Match op LoRa address als beschikbaar, anders pair met het enige ongepaarde device
+  const myEq = equipmentRepo.findBySn(sn);
+  if (myEq) {
+    const allEq = equipmentRepo.findByUserId(user.app_user_id) ?? [];
+    const myIsComplete = isCharger
+      ? myEq.mower_sn?.startsWith('LFIN')
+      : !!myEq.charger_sn;
+
+    if (!myIsComplete) {
+      // Zoek een ongepaarde tegenpartij
+      let peerSn: string | null = null;
+
+      // Methode 1: match op LoRa address
+      const lora = equipmentRepo.getLoraCache(sn);
+      if (lora?.charger_address) {
+        const allLora = equipmentRepo.listLoraCache();
+        const peer = allLora.find(l =>
+          l.charger_address === lora.charger_address &&
+          l.sn !== sn &&
+          l.sn.startsWith(isCharger ? 'LFIN' : 'LFIC')
+        );
+        if (peer) peerSn = peer.sn;
+      }
+
+      // Methode 2: als er maar 1 ongepaarde tegenpartij is, pair direct
+      if (!peerSn) {
+        const candidates = allEq.filter(e => {
+          if (isCharger) return e.mower_sn?.startsWith('LFIN') && !e.charger_sn;
+          return e.charger_sn?.startsWith('LFIC') && !e.mower_sn?.startsWith('LFIN');
+        });
+        if (candidates.length === 1) {
+          peerSn = isCharger ? candidates[0].mower_sn! : candidates[0].charger_sn!;
+        }
+      }
+
+      if (peerSn) {
+        const peerEq = equipmentRepo.findBySn(peerSn);
+        if (peerEq && peerEq.equipment_id !== myEq.equipment_id) {
+          // Merge records: houd de mower record, voeg charger toe
+          const mowerEqId = isCharger ? peerEq.equipment_id : myEq.equipment_id;
+          const chargerEqId = isCharger ? myEq.equipment_id : peerEq.equipment_id;
+          const chargerSn = isCharger ? sn : peerSn;
+          const mowerSn = isCharger ? peerSn : sn;
+          equipmentRepo.updateChargerSn(mowerEqId, chargerSn);
+          equipmentRepo.deleteById(chargerEqId);
+          // Sync LoRa cache — mower channel = charger channel - 1
+          const loraData = equipmentRepo.getLoraCache(chargerSn);
+          if (loraData?.charger_address) {
+            const mowerChannel = String(Number(loraData.charger_channel ?? 16) - 1);
+            equipmentRepo.setLoraCache(mowerSn, loraData.charger_address, mowerChannel);
+          }
+          console.log(`[dashboard] bind-device: auto-paired ${mowerSn} + ${chargerSn}`);
+        }
+      }
+    }
   }
 
   console.log(`[dashboard] bind-device: sn=${sn} name=${name ?? '-'} gebonden aan user ${user.app_user_id}`);

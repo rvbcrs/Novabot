@@ -1,10 +1,5 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { db } from '../../db/database.js';
+import { describe, it, expect } from 'vitest';
 import { deviceRepo } from '../../db/repositories/index.js';
-
-beforeEach(() => {
-  db.exec('DELETE FROM device_registry');
-});
 
 describe('DeviceRepository', () => {
   describe('upsertDevice', () => {

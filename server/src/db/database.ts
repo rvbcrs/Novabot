@@ -10,7 +10,8 @@ const __dirname = path.dirname(__filename);
 dotenv.config();
 
 const dbPath = process.env.DB_PATH ?? './novabot.db';
-export const db = new Database(path.resolve(dbPath));
+// :memory: is a special SQLite token — path.resolve would turn it into a file path
+export const db = new Database(dbPath === ':memory:' ? ':memory:' : path.resolve(dbPath));
 
 // WAL mode for better concurrent read performance
 db.pragma('journal_mode = WAL');

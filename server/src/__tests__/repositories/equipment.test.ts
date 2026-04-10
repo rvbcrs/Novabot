@@ -1,13 +1,5 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { db } from '../../db/database.js';
+import { describe, it, expect } from 'vitest';
 import { equipmentRepo, userRepo } from '../../db/repositories/index.js';
-import crypto from 'crypto';
-
-beforeEach(() => {
-  db.exec('DELETE FROM equipment');
-  db.exec('DELETE FROM equipment_lora_cache');
-  db.exec('DELETE FROM users');
-});
 
 describe('EquipmentRepository', () => {
   const userId = 'test-user-001';

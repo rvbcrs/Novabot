@@ -11,6 +11,7 @@ import { execSync } from 'child_process';
 import { db } from '../db/database.js';
 import { userRepo, equipmentRepo, deviceRepo, mapRepo } from '../db/repositories/index.js';
 import { AuthRequest } from '../types/index.js';
+import { invalidateSetupCache } from '../middleware/setupGuard.js';
 
 export const adminStatusRouter = Router();
 
@@ -343,3 +344,20 @@ function getLocalIp(): string {
   }
   return '127.0.0.1';
 }
+
+// POST /api/admin-status/factory-reset — wipe all user data and return to setup
+adminStatusRouter.post('/factory-reset', (_req: AuthRequest, res: Response) => {
+  console.log('[Admin] FACTORY RESET initiated by', _req.userId);
+  db.pragma('foreign_keys = OFF');
+  const tables = ['users', 'equipment', 'maps', 'map_calibration', 'map_uploads', 'map_overlays',
+    'device_settings', 'work_records', 'robot_messages', 'dashboard_schedules',
+    'cut_grass_plans', 'email_codes', 'equipment_lora_cache', 'signal_history',
+    'virtual_walls', 'rain_sessions', 'pin_unlock_state'];
+  for (const table of tables) {
+    try { db.exec(`DELETE FROM "${table}"`); } catch { /* table may not exist */ }
+  }
+  db.pragma('foreign_keys = ON');
+  invalidateSetupCache();
+  console.log('[Admin] Factory reset complete — all user data deleted');
+  res.json({ ok: true });
+});

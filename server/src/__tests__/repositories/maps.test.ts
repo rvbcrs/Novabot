@@ -1,11 +1,5 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { db } from '../../db/database.js';
+import { describe, it, expect } from 'vitest';
 import { mapRepo } from '../../db/repositories/index.js';
-
-beforeEach(() => {
-  db.exec('DELETE FROM maps');
-  db.exec('DELETE FROM map_calibration');
-});
 
 describe('MapRepository', () => {
   const sn = 'LFIN0001';

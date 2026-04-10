@@ -10,6 +10,7 @@ export function adminPageHtml(): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>OpenNova Admin</title>
+<link rel="icon" type="image/png" href="/assets/OpenNova.png">
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
   body{font-family:system-ui,-apple-system,sans-serif;background:#030712;color:#e0e0e0;min-height:100vh}
@@ -45,6 +46,8 @@ export function adminPageHtml(): string {
   .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px}
   .dot-on{background:#00d4aa}
   .dot-off{background:#ef4444}
+  .pulse-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#f59e0b;animation:pulse 1.5s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
   .badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600}
   .badge-admin{background:rgba(124,58,237,.2);color:#a78bfa}
   .badge-dash{background:rgba(0,212,170,.15);color:#00d4aa}
@@ -103,16 +106,31 @@ export function adminPageHtml(): string {
 
 <!-- First-time setup (shown instead of login when DB is empty) -->
 <div id="firstTimeSetup" class="login-box" style="display:none">
-  <div class="card" style="padding:28px">
-    <h1 style="color:#00d4aa;margin-bottom:8px;text-align:center">Welcome to OpenNova</h1>
-    <p style="font-size:13px;color:#aaa;margin-bottom:20px;text-align:center">Import your devices from the Novabot cloud to get started.</p>
+  <div class="card" style="padding:20px 24px;max-width:420px;margin:0 auto">
+    <div style="text-align:center;margin-bottom:12px">
+      <img src="/assets/OpenNova.png" alt="OpenNova" style="width:200px;margin:0">
+      <p style="font-size:13px;color:#888;margin:2px 0 0 0">Your local cloud replacement for Novabot</p>
+    </div>
+
+    <div style="background:rgba(0,212,170,.06);border:1px solid rgba(0,212,170,.15);border-radius:8px;padding:14px;margin-bottom:20px">
+      <p style="font-size:12px;color:#aaa;margin:0 0 8px 0;font-weight:600;color:#00d4aa">First-time setup</p>
+      <p style="font-size:12px;color:#999;margin:0;line-height:1.5">Sign in with your <b style="color:#ccc">Novabot app</b> account. This will:</p>
+      <ul style="font-size:12px;color:#999;margin:8px 0 0 0;padding-left:18px;line-height:1.8">
+        <li>Create your local admin account</li>
+        <li>Import your devices (charger + mower)</li>
+        <li>Download your maps from the cloud</li>
+        <li>Auto-pair devices that are already online</li>
+      </ul>
+    </div>
+
     <input type="email" id="cloud_email_setup" placeholder="Novabot app email" style="margin-bottom:8px">
     <input type="password" id="cloud_pass_setup" placeholder="Novabot app password" style="margin-bottom:14px">
-    <button class="btn btn-green" style="width:100%;padding:12px" onclick="firstTimeCloudImport()" id="setupBtn">Connect &amp; Import from Cloud</button>
-    <div id="setupResult" style="margin-top:10px"></div>
-    <div style="text-align:center;color:#444;margin:16px 0;font-size:12px">— or —</div>
-    <button class="btn" style="width:100%;padding:10px;background:#333" onclick="skipSetup()">Skip — Create Local Account</button>
-    <p style="font-size:11px;color:#555;margin-top:8px;text-align:center">Creates admin@local with password admin</p>
+    <button class="btn btn-green" style="width:100%;padding:12px;font-size:14px" onclick="firstTimeCloudImport()" id="setupBtn">Connect &amp; Import from Cloud</button>
+    <div id="setupResult" style="margin-top:12px"></div>
+
+    <div style="text-align:center;color:#333;margin:18px 0;font-size:11px">&#8212; or &#8212;</div>
+    <button class="btn" style="width:100%;padding:10px;background:#252535;color:#777;font-size:12px" onclick="skipSetup()">Skip cloud import &#8212; create local account only</button>
+    <p style="font-size:10px;color:#444;margin-top:6px;text-align:center">You can always import from cloud later in Settings</p>
   </div>
 </div>
 
@@ -139,7 +157,7 @@ export function adminPageHtml(): string {
   <!-- Tab: Devices -->
   <div id="tab_devices">
     <div class="card">
-      <h2>My Devices <span class="refresh-btn" onclick="loadMyDevices()">↻</span></h2>
+      <h2>My Devices <span class="refresh-btn" onclick="loadMyDevices()">↻</span> <span id="deviceActivity" style="display:none;font-size:12px;font-weight:400;color:#f59e0b;margin-left:8px"><span class="pulse-dot"></span> <span id="deviceActivityText">discovering...</span></span></h2>
       <div id="myDevices">Loading...</div>
     </div>
   </div>
@@ -229,6 +247,12 @@ export function adminPageHtml(): string {
       </div>
       <button class="btn btn-purple" onclick="cloudImport()" id="cloudBtn">Connect &amp; Import</button>
       <div id="cloudResult" style="margin-top:8px"></div>
+    </div>
+
+    <div class="card" style="border:1px solid rgba(239,68,68,.3);background:rgba(239,68,68,.04)">
+      <h2 style="color:#ef4444">Danger Zone</h2>
+      <p style="font-size:12px;color:#aaa;margin-bottom:12px">Permanently delete all data and start fresh. This removes your account, all devices, maps, and settings. This action cannot be undone.</p>
+      <button class="btn btn-red" style="background:#dc2626" onclick="factoryReset()">Factory Reset</button>
     </div>
   </div>
 </div>
@@ -477,6 +501,43 @@ if (!mqttSocket) {
   }, 1000);
 }
 mqttSocket.on('mqtt:log', function(entry) { addLog(entry); });
+mqttSocket.on('device:online', function(d) {
+  if (token) loadMyDevices();
+  showToast(d.sn + ' came online', 'green');
+});
+mqttSocket.on('device:offline', function(d) {
+  if (token) loadMyDevices();
+  showToast(d.sn + ' went offline', 'gray');
+});
+mqttSocket.on('device:bound', function(d) {
+  if (token) loadMyDevices();
+  showActivity('binding ' + d.sn + '...', 3000);
+  showToast('Auto-bound ' + d.sn + ' to your account', 'green');
+});
+mqttSocket.on('device:paired', function(d) {
+  if (token) loadMyDevices();
+  showActivity('pairing devices...', 3000);
+  showToast('Auto-paired ' + (d.mowerSn || '?') + ' + ' + (d.chargerSn || '?'), 'green');
+});
+
+var _activityTimer = null;
+function showActivity(text, durationMs) {
+  var el = document.getElementById('deviceActivity');
+  var txt = document.getElementById('deviceActivityText');
+  if (!el || !txt) return;
+  txt.textContent = text;
+  el.style.display = 'inline';
+  if (_activityTimer) clearTimeout(_activityTimer);
+  _activityTimer = setTimeout(function() { el.style.display = 'none'; }, durationMs || 5000);
+}
+
+function showToast(msg, color) {
+  var el = document.createElement('div');
+  el.textContent = msg;
+  el.style.cssText = 'position:fixed;bottom:20px;right:20px;padding:10px 16px;border-radius:8px;font-size:13px;z-index:9999;transition:opacity .5s;color:#fff;background:' + (color === 'green' ? 'rgba(0,212,170,.9)' : color === 'gray' ? 'rgba(100,100,100,.9)' : 'rgba(0,212,170,.9)');
+  document.body.appendChild(el);
+  setTimeout(function() { el.style.opacity = '0'; setTimeout(function() { el.remove(); }, 500); }, 3000);
+}
 
 // Load initial logs
 fetch('/api/dashboard/mqtt-logs')
@@ -554,9 +615,13 @@ async function showApp() {
   loadAll();
 }
 
+var _refreshInterval = null;
 async function loadAll() {
   loadAccount();
   loadMyDevices();
+  // Auto-refresh device list every 30s for timestamp updates
+  if (_refreshInterval) clearInterval(_refreshInterval);
+  _refreshInterval = setInterval(function() { if (token) loadMyDevices(); }, 30000);
 }
 
 async function loadAccount() {
@@ -612,87 +677,57 @@ async function loadMyDevices() {
 
     let html = '';
 
-    // Group by LoRa address
-    const byAddr = {};
-    const unpaired = [];
+    // Group by equipment pairing (paired_with), then solo, then unbound
+    const paired = {};    // key = sorted SN pair → [dev, dev]
+    const solo = [];      // bound but not paired
+    const unbound = [];   // not bound at all
+
     for (const dev of devs) {
-      const addr = dev.lora_address;
-      if (addr != null) {
-        if (!byAddr[addr]) byAddr[addr] = [];
-        byAddr[addr].push(dev);
+      if (!dev.is_bound) {
+        unbound.push(dev);
+      } else if (dev.paired_with) {
+        var key = [dev.sn, dev.paired_with].sort().join(':');
+        if (!paired[key]) paired[key] = [];
+        paired[key].push(dev);
       } else {
-        unpaired.push(dev);
+        solo.push(dev);
       }
     }
 
-    // Render paired sets — online groups first
-    const addrs = Object.keys(byAddr).sort(function(a, b) {
-      var aOnline = byAddr[a].some(function(d) { return d.is_online; }) ? 0 : 1;
-      var bOnline = byAddr[b].some(function(d) { return d.is_online; }) ? 0 : 1;
-      return aOnline - bOnline;
-    });
-    for (const addr of addrs) {
-      const group = byAddr[addr];
-      const chargers = group.filter(function(d) { return d.device_type === 'charger'; });
-      const mowers = group.filter(function(d) { return d.device_type === 'mower'; });
+    // Render paired sets
+    for (const key in paired) {
+      const group = paired[key];
+      const charger = group.find(function(d) { return d.device_type === 'charger'; });
+      const mower = group.find(function(d) { return d.device_type === 'mower'; });
       const anyOnline = group.some(function(d) { return d.is_online; });
-      const isPaired = chargers.length > 0 && mowers.length > 0;
-      const hasDuplicates = chargers.length > 1 || mowers.length > 1;
+      var loraAddr = (charger && charger.lora_address) || (mower && mower.lora_address) || null;
 
       html += '<div style="margin-bottom:12px;padding:12px;background:rgba(255,255,255,.02);border:1px solid ' + (anyOnline ? 'rgba(0,212,170,.2)' : 'rgba(255,255,255,.06)') + ';border-radius:10px">';
       html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">';
-      html += '<span style="font-size:12px;font-weight:600;color:' + (isPaired ? '#00d4aa' : '#f59e0b') + '">' +
-        (isPaired ? '🔗 Paired Set' : '⚡ Charger Only') + '</span>';
-      html += '<span style="font-size:11px;color:#666">LoRa ' + addr + '</span>';
+      html += '<span style="font-size:12px;font-weight:600;color:#00d4aa">\uD83D\uDD17 Paired Set</span>';
+      html += '<span style="font-size:11px;color:#666">' + (loraAddr ? 'LoRa ' + loraAddr : 'LoRa pending...') + '</span>';
       html += '</div>';
-
-      if (!isPaired) {
-        html += '<div style="padding:4px 8px;margin-bottom:6px"><span style="color:#aaa;font-size:11px">' +
-          (mowers.length === 0
-            ? 'No mower paired on this LoRa address yet. The mower will be linked automatically when it connects, or you can pair it via BLE provisioning.'
-            : 'No charger found on this LoRa address. Provision the charger via BLE to link it.') +
-          '</span></div>';
-      }
-
-      if (hasDuplicates) {
-        html += '<div style="padding:6px 10px;background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.2);border-radius:6px;margin-bottom:8px">' +
-          '<span style="color:#ef4444;font-size:11px;font-weight:600">⚠ Multiple devices on same LoRa address!</span></div>';
-      }
-
-      for (const dev of group) {
-        html += devRow(dev);
-      }
+      for (const dev of group) { html += devRow(dev); }
       html += '</div>';
     }
 
-    // Unpaired devices (no LoRa address)
-    if (unpaired.length > 0) {
+    // Render solo bound devices (charger or mower without partner)
+    if (solo.length > 0) {
+      html += '<div style="margin-bottom:12px;padding:12px;background:rgba(255,255,255,.02);border:1px solid rgba(245,158,11,.15);border-radius:10px">';
+      html += '<div style="margin-bottom:4px"><span style="font-size:12px;font-weight:600;color:#f59e0b">Waiting for partner</span></div>';
+      html += '<div style="padding:4px 8px;margin-bottom:6px"><span style="color:#aaa;font-size:11px">' +
+        'Bound to your account. The partner device (charger or mower) will be paired automatically when it connects.</span></div>';
+      for (const dev of solo) { html += devRow(dev); }
+      html += '</div>';
+    }
+
+    // Render unbound devices
+    if (unbound.length > 0) {
       html += '<div style="margin-bottom:12px;padding:12px;background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.06);border-radius:10px">';
       html += '<div style="margin-bottom:4px"><span style="font-size:12px;font-weight:600;color:#aaa">New Devices</span></div>';
       html += '<div style="padding:4px 8px;margin-bottom:6px"><span style="color:#aaa;font-size:11px">' +
-        'These devices have connected but have no LoRa pairing yet. ' +
-        'They will be paired automatically after BLE provisioning, or when the charger and mower connect on the same LoRa address.' +
-        '</span></div>';
-      // Collect charger SNs for pair dropdown
-      var chargerSns = [];
-      for (var a in byAddr) { for (var dd of byAddr[a]) { if (dd.device_type === 'charger') chargerSns.push(dd.sn); } }
-
-      for (const dev of unpaired) {
-        html += devRow(dev);
-        // Add pair button for unpaired mowers
-        if (dev.device_type === 'mower' && chargerSns.length > 0) {
-          html += '<div style="padding:4px 8px;margin-top:4px">';
-          if (chargerSns.length === 1) {
-            html += '<button class="btn btn-sm btn-green" onclick="pairMowerCharger(\\'' + dev.sn + '\\', \\'' + chargerSns[0] + '\\')">Pair with ' + chargerSns[0] + '</button>';
-          } else {
-            html += '<select id="pair_charger_' + dev.sn + '" style="background:#1a1a2e;color:#fff;border:1px solid #333;border-radius:4px;padding:4px 8px;font-size:11px;margin-right:6px">';
-            for (var cs of chargerSns) { html += '<option value="' + cs + '">' + cs + '</option>'; }
-            html += '</select>';
-            html += '<button class="btn btn-sm btn-green" onclick="pairMowerCharger(\\'' + dev.sn + '\\', document.getElementById(\\'pair_charger_' + dev.sn + '\\').value)">Pair</button>';
-          }
-          html += '</div>';
-        }
-      }
+        'Connected via MQTT but not yet bound to your account. They will be auto-bound shortly, or click Bind.</span></div>';
+      for (const dev of unbound) { html += devRow(dev); }
       html += '</div>';
     }
 
@@ -853,15 +888,30 @@ async function cloudImport() {
     btn.textContent = 'Importing...';
     // Cloud may return separate records for same pair — merge by matching chargerSn/mowerSn
     var pairs = {};
+    // First pass: collect all chargers and mowers
+    var chargers = [], mowers = [];
     all.forEach(function(equip) {
-      var key = (equip.chargerSn || '') + ':' + (equip.mowerSn || '');
-      if (!pairs[key]) pairs[key] = {};
-      var p = pairs[key];
-      p.deviceName = equip.userCustomDeviceName || equip.equipmentNickName || p.deviceName || 'My Novabot';
-      if (equip.chargerSn) p.charger = { sn: equip.chargerSn, address: equip.chargerAddress, channel: equip.chargerChannel, mac: equip.macAddress };
-      if (equip.mowerSn) p.mower = { sn: equip.mowerSn, mac: equip.macAddress, version: equip.sysVersion };
+      var sn = equip.chargerSn || equip.mowerSn || equip.sn || '';
+      var name = equip.userCustomDeviceName || equip.equipmentNickName || 'My Novabot';
+      if (equip.chargerSn || String(sn).startsWith('LFIC')) {
+        chargers.push({ sn: equip.chargerSn || sn, address: equip.chargerAddress, channel: equip.chargerChannel, mac: equip.macAddress, name: name });
+      } else if (equip.mowerSn || String(sn).startsWith('LFIN')) {
+        mowers.push({ sn: equip.mowerSn || sn, mac: equip.macAddress, version: equip.sysVersion, name: name });
+      }
     });
-    let imported = 0;
+    // Pair chargers with mowers (1:1 by order, unpaired become solo entries)
+    var maxLen = Math.max(chargers.length, mowers.length, 1);
+    for (var pi = 0; pi < maxLen; pi++) {
+      var c = chargers[pi], m = mowers[pi];
+      var key = (c ? c.sn : '') + ':' + (m ? m.sn : '');
+      pairs[key] = {
+        deviceName: (m && m.name) || (c && c.name) || 'My Novabot',
+        charger: c ? { sn: c.sn, address: c.address, channel: c.channel, mac: c.mac } : undefined,
+        mower: m ? { sn: m.sn, mac: m.mac, version: m.version } : undefined,
+      };
+    }
+    var totalMaps = 0;
+    var failed = 0;
     for (var pk in pairs) {
       var p = pairs[pk];
       const r = await fetch('/api/setup/cloud-apply', {
@@ -875,11 +925,15 @@ async function cloudImport() {
         })
       });
       const rj = await r.json();
-      if (rj.ok) imported++;
-      else result.innerHTML += '<div style="color:#ef4444;font-size:12px">Failed: ' + (rj.error || 'unknown') + '</div>';
+      if (rj.ok) { if (rj.mapsImported) totalMaps += rj.mapsImported; }
+      else { failed++; result.innerHTML += '<div style="color:#ef4444;font-size:12px">Failed: ' + (rj.error || 'unknown') + '</div>'; }
     }
 
-    result.innerHTML += '<div style="color:#00d4aa;font-size:13px;margin-top:8px;font-weight:600">Imported ' + imported + ' device set(s)!</div>';
+    var pairCount = Object.keys(pairs).length - failed;
+    var msg = 'Imported ' + pairCount + ' device set(s)!';
+    if (totalMaps > 0) msg += ' (' + totalMaps + ' map(s))';
+    result.innerHTML += '<div style="color:#00d4aa;font-size:13px;margin-top:8px;font-weight:600">' + msg + '</div>';
+    result.innerHTML += '<div style="margin-top:8px;padding:8px 12px;background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.2);border-radius:6px;font-size:12px;color:#f59e0b">If the Novabot app is open, log out and log back in to see your devices.</div>';
     loadMyDevices();
   } catch(e) {
     result.innerHTML = '<div style="color:#ef4444;font-size:13px">Failed: ' + e.message + '</div>';
@@ -929,6 +983,8 @@ async function firstTimeCloudImport() {
       result.innerHTML += '<p style="color:#ef4444;font-size:11px">Account creation error: ' + accountErr.message + '</p>';
     }
 
+    var totalMapsSetup = 0;
+    var chargerGps = false;
     for (const equip of all) {
       const chargerSn = equip.chargerSn || (equip.sn && equip.sn.startsWith('LFIC') ? equip.sn : null);
       const mowerSn = equip.mowerSn || (equip.sn && equip.sn.startsWith('LFIN') ? equip.sn : null);
@@ -945,17 +1001,39 @@ async function firstTimeCloudImport() {
       if (applyData.error) {
         result.innerHTML += '<p style="color:#ef4444;font-size:11px">Error: ' + applyData.error + '</p>';
       }
+      if (applyData.mapsImported) totalMapsSetup += applyData.mapsImported;
+      if (applyData.chargerGpsImported) chargerGps = true;
     }
 
     var mapInfo = '';
-    if (d.mapsImported > 0) {
-      mapInfo = ' + ' + d.mapsImported + ' map area(s)';
-      if (d.chargerGpsImported) mapInfo += ' + charger GPS';
+    if (totalMapsSetup > 0) {
+      mapInfo = ' + ' + totalMapsSetup + ' map area(s)';
+      if (chargerGps) mapInfo += ' + charger GPS';
     } else {
       mapInfo = ' (no maps found on cloud)';
     }
-    result.innerHTML += '<p style="color:#00d4aa;font-size:13px;font-weight:600">Setup complete! ' + all.length + ' device(s)' + mapInfo + ' imported.</p><p style="color:#aaa;font-size:12px;margin-top:4px">You can now login with: ' + email + '</p>';
+    result.innerHTML += '<p style="color:#00d4aa;font-size:13px;font-weight:600">Setup complete! ' + all.length + ' device(s)' + mapInfo + ' imported.</p>';
+    result.innerHTML += '<div style="margin-top:8px;padding:8px 12px;background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.2);border-radius:6px;font-size:12px;color:#f59e0b">Open the Novabot app and log in with <b>' + email + '</b> to see your devices.</div>';
     btn.textContent = 'Done!';
+
+    // Auto-login met de zojuist aangemaakte credentials
+    try {
+      const loginRes = await fetch('/api/nova-user/appUser/login', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ email, password: pass })
+      });
+      const loginData = await loginRes.json();
+      var newToken = loginData.value && loginData.value.accessToken;
+      if (newToken) {
+        token = newToken;
+        localStorage.setItem('admin_token', token);
+        result.innerHTML += '<p style="color:#aaa;font-size:12px">Logging in...</p>';
+        setTimeout(() => showApp(), 1000);
+        return;
+      }
+    } catch(loginErr) { console.error('Auto-login failed:', loginErr); }
+
+    // Fallback: reload naar login scherm
     setTimeout(() => location.reload(), 2000);
   } catch(e) {
     result.innerHTML = '<p style="color:#ef4444;font-size:12px">Failed: ' + e.message + '</p>';
@@ -969,6 +1047,21 @@ async function skipSetup() {
     await modalAlert('Account Created', 'Email: <b>admin@local</b><br>Password: <b>admin</b>');
     location.reload();
   } catch(e) { modalAlert('Failed', e.message); }
+}
+
+async function factoryReset() {
+  var ok = await modalConfirm('Factory Reset', 'This will <b>permanently delete</b> all data:<br><br>&#8226; Your account<br>&#8226; All devices &amp; pairings<br>&#8226; All maps<br>&#8226; Schedules &amp; settings<br><br>This action <b>cannot be undone</b>.');
+  if (!ok) return;
+  try {
+    const r = await api('/factory-reset', 'POST');
+    if (r.ok) {
+      token = '';
+      localStorage.removeItem('admin_token');
+      showSetup();
+    }
+  } catch(e) {
+    modalAlert('Failed', e.message);
+  }
 }
 
 function showLogin() {

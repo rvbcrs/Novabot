@@ -69,7 +69,7 @@ export class EquipmentRepository {
   private _findBySnAndUser = db.prepare('SELECT * FROM equipment WHERE (mower_sn = ? OR charger_sn = ?) AND user_id = ?');
   private _findByIdAndUser = db.prepare('SELECT * FROM equipment WHERE id = ? AND user_id = ?');
   private _findIncompleteByUserId = db.prepare(
-    'SELECT * FROM equipment WHERE user_id = ? AND (mower_sn IS NULL OR charger_sn IS NULL) LIMIT 1'
+    "SELECT * FROM equipment WHERE user_id = ? AND (mower_sn IS NULL OR mower_sn NOT LIKE 'LFIN%' OR charger_sn IS NULL) LIMIT 1"
   );
   private _findByEquipmentId = db.prepare('SELECT * FROM equipment WHERE equipment_id = ?');
   private _findFirstMowerVersionByPrefix = db.prepare('SELECT mower_version FROM equipment WHERE mower_sn LIKE ? LIMIT 1');
