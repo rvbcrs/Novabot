@@ -90,6 +90,19 @@ export default function MappingScreen() {
 
   // ── State machine ──
   const [mappingState, setMappingState] = useState<MappingState>('idle');
+
+  // Reset state when screen regains focus (e.g. after goBack + re-navigate)
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('focus', () => {
+      if (mappingState === 'cancelled' || mappingState === 'done') {
+        setMappingState('idle');
+        setMappingMode(null);
+        setBusy(false);
+        setElapsed(0);
+      }
+    });
+    return unsubscribe;
+  }, [navigation, mappingState]);
   const [mapBuildType, setMapBuildType] = useState<MapBuildType>(initialBuildType ?? 'work');
   const [mappingMode, setMappingMode] = useState<MappingMode | null>(null);
   const [busy, setBusy] = useState(false);
@@ -298,6 +311,7 @@ export default function MappingScreen() {
   }, []);
 
   const stopJoystick = useCallback(() => {
+    if (!joystickActiveRef.current) return; // already stopped, skip duplicate stop_move
     joystickActiveRef.current = false;
     setJoystickActive(false);
     setThumbX(0);
@@ -425,6 +439,8 @@ export default function MappingScreen() {
     // Blutter: model="border"|"obstacle", manual=true|false, mapName, map0, type=0
     const model = mapBuildType === 'obstacle' ? 'obstacle' : 'border';
     sendCommand({ start_scan_map: { model, manual: true, mapName: 'map0', map0: '', type: 0, cmd_num: cmdNumRef.current++ } }, 'start_scan_map');
+    setTrailPoints([]);
+    lastTrailRef.current = null;
     setMappingState('mapping');
     setClosedCycleSeen(false);
     closedCycleDismissedRef.current = false;
