@@ -76,6 +76,9 @@ COPY --from=deps /app/server/package.json server/
 # Copy built dashboard
 COPY --from=build /app/dashboard/dist dashboard/dist
 
+# Copy static assets (logo, etc.)
+COPY server/public server/public
+
 # Copy factory device database (SN → MAC lookup for BLE provisioning)
 COPY server/cloud_devices_anonymous.json server/cloud_devices_anonymous.json
 
