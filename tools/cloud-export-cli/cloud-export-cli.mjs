@@ -6,7 +6,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import readline from 'readline';
-import { execFileSync } from 'child_process';
+import zlib from 'zlib';
 
 const VERSION = '1.0.0';
 
@@ -420,6 +420,110 @@ function uploadMultipart(urlPath, fields, fileField, token) {
   });
 }
 
+// ── ZIP helper (pure Node.js) ──────────────────────────────────────────────
+
+function createZip(sourceDir, destPath) {
+  const entries = [];
+
+  function collectFiles(dir, prefix) {
+    for (const name of fs.readdirSync(dir)) {
+      if (name === path.basename(destPath) || name === '.DS_Store') continue;
+      const full = path.join(dir, name);
+      const rel = prefix ? `${prefix}/${name}` : name;
+      const stat = fs.statSync(full);
+      if (stat.isDirectory()) {
+        collectFiles(full, rel);
+      } else {
+        entries.push({ rel, full, size: stat.size, mtime: stat.mtime });
+      }
+    }
+  }
+  collectFiles(sourceDir, '');
+
+  const parts = [];
+  const centralParts = [];
+  let offset = 0;
+
+  for (const entry of entries) {
+    const raw = fs.readFileSync(entry.full);
+    const compressed = zlib.deflateRawSync(raw);
+    const crc = crc32(raw);
+    const nameBytes = Buffer.from(entry.rel, 'utf8');
+    const useStore = compressed.length >= raw.length;
+    const data = useStore ? raw : compressed;
+    const method = useStore ? 0 : 8;
+
+    // DOS date/time from mtime
+    const d = entry.mtime;
+    const dosTime = (d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1);
+    const dosDate = ((d.getFullYear() - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate();
+
+    // Local file header (30 + name + data)
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);  // signature
+    local.writeUInt16LE(20, 4);           // version needed
+    local.writeUInt16LE(0, 6);            // flags
+    local.writeUInt16LE(method, 8);       // compression method
+    local.writeUInt16LE(dosTime, 10);
+    local.writeUInt16LE(dosDate, 12);
+    local.writeUInt32LE(crc, 14);
+    local.writeUInt32LE(data.length, 18);   // compressed size
+    local.writeUInt32LE(raw.length, 22);    // uncompressed size
+    local.writeUInt16LE(nameBytes.length, 26);
+    local.writeUInt16LE(0, 28);           // extra field length
+
+    const localEntry = Buffer.concat([local, nameBytes, data]);
+    parts.push(localEntry);
+
+    // Central directory entry (46 + name)
+    const central = Buffer.alloc(46);
+    central.writeUInt32LE(0x02014b50, 0);  // signature
+    central.writeUInt16LE(20, 4);           // version made by
+    central.writeUInt16LE(20, 6);           // version needed
+    central.writeUInt16LE(0, 8);            // flags
+    central.writeUInt16LE(method, 10);      // compression method
+    central.writeUInt16LE(dosTime, 12);
+    central.writeUInt16LE(dosDate, 14);
+    central.writeUInt32LE(crc, 16);
+    central.writeUInt32LE(data.length, 20); // compressed size
+    central.writeUInt32LE(raw.length, 24);  // uncompressed size
+    central.writeUInt16LE(nameBytes.length, 28);
+    central.writeUInt16LE(0, 30);           // extra field length
+    central.writeUInt16LE(0, 32);           // comment length
+    central.writeUInt16LE(0, 34);           // disk number start
+    central.writeUInt16LE(0, 36);           // internal attributes
+    central.writeUInt32LE(0, 38);           // external attributes
+    central.writeUInt32LE(offset, 42);      // local header offset
+
+    centralParts.push(Buffer.concat([central, nameBytes]));
+    offset += localEntry.length;
+  }
+
+  const centralDir = Buffer.concat(centralParts);
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0);
+  eocd.writeUInt16LE(0, 4);                        // disk number
+  eocd.writeUInt16LE(0, 6);                        // disk with central dir
+  eocd.writeUInt16LE(entries.length, 8);            // entries on this disk
+  eocd.writeUInt16LE(entries.length, 10);           // total entries
+  eocd.writeUInt32LE(centralDir.length, 12);        // central dir size
+  eocd.writeUInt32LE(offset, 16);                   // central dir offset
+  eocd.writeUInt16LE(0, 20);                        // comment length
+
+  fs.writeFileSync(destPath, Buffer.concat([...parts, centralDir, eocd]));
+}
+
+function crc32(buf) {
+  let crc = 0xFFFFFFFF;
+  for (let i = 0; i < buf.length; i++) {
+    crc ^= buf[i];
+    for (let j = 0; j < 8; j++) {
+      crc = (crc >>> 1) ^ (crc & 1 ? 0xEDB88320 : 0);
+    }
+  }
+  return (crc ^ 0xFFFFFFFF) >>> 0;
+}
+
 // ── Restore maps ────────────────────────────────────────────────────────────
 
 async function restoreMaps() {
@@ -485,7 +589,7 @@ async function restoreMaps() {
   done();
 
   // 4. Build upload plan and check existing cloud maps
-  const uploadPlan = []; // { sn, fileName, type, alias, mapArea, csvPath }
+  const uploadPlan = []; // { sn, fileName, type, alias, csvPath, size }
 
   for (const sn of targetSns) {
     step(`Checking existing cloud maps for ${sn}`);
@@ -538,7 +642,6 @@ async function restoreMaps() {
         uploadPlan.push({
           sn, fileName: sanitized, type,
           alias: item.alias ?? item.fileName,
-          mapArea: item.mapArea ?? null,
           csvPath,
           size: fs.statSync(csvPath).size,
         });
@@ -594,9 +697,9 @@ async function restoreMaps() {
         {
           sn: item.sn,
           uploadId,
-          fileSize: String(item.size),
+          chunkIndex: '0',
+          chunksTotal: '1',
           mapName: item.alias,
-          mapArea: item.mapArea,
         },
         { field: 'file', filename: item.fileName, path: item.csvPath },
         token,
@@ -906,20 +1009,16 @@ async function main() {
   };
   save(path.join(outputDir, 'export-summary.json'), summary);
 
-  // 11. Create ZIP (safe — no shell interpolation)
+  // 11. Create ZIP (pure Node.js — no external tools)
   step('Creating ZIP archive');
   const zipPath = path.join(outputDir, 'novabot-export.zip');
   try {
     if (fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
-    const filesToZip = fs.readdirSync(outputDir)
-      .filter(f => f !== 'novabot-export.zip' && f !== '.DS_Store');
-    execFileSync('zip', ['-r', 'novabot-export.zip', ...filesToZip], {
-      cwd: outputDir,
-      stdio: 'pipe',
-    });
+    createZip(outputDir, zipPath);
     done(zipPath);
-  } catch {
-    console.log('skipped (zip command not available)');
+  } catch (err) {
+    warn(`ZIP creation failed: ${err.message}`);
+    console.log('skipped');
   }
 
   // Done
