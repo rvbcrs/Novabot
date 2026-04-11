@@ -1332,8 +1332,8 @@ async function loadFirmwareVersions() {
       var v = _fwVersions[i];
       var devType = (v.device_type || v.deviceType || 'mower');
       var md5 = (v.md5 || '').substring(0, 10);
-      var notes = (v.release_notes || v.releaseNotes || '').replace(/\\\\n/g, '\\n');
-      var notesHtml = notes ? notes.replace(/\\n/g, '<br>').replace(/^- /gm, '&bull; ') : '<span style="color:#666">\u2014</span>';
+      var rawNotes = v.release_notes || v.releaseNotes || v.description || '';
+      var notesHtml = rawNotes ? rawNotes.split('\\n').join('<br>').replace(/- /g, '&bull; ') : '<span style="color:#666">\u2014</span>';
       html += '<tr>' +
         '<td style="color:#fff;font-weight:600;white-space:nowrap">' + (v.version || '?') + '</td>' +
         '<td><span style="color:' + (devType === 'charger' ? '#f59e0b' : '#00d4aa') + '">' + devType + '</span></td>' +
@@ -1497,7 +1497,7 @@ async function checkFirmwareUpdates() {
           '<div>' +
             '<span style="color:#fff;font-weight:600">' + fw.version + '</span>' +
             ' <span style="color:' + typeColor + ';font-size:12px">' + fw.device_type + '</span>' +
-            (fw.description ? '<div style="font-size:11px;color:#888;margin-top:2px">' + fw.description + '</div>' : '') +
+            (fw.description ? '<div style="font-size:11px;color:#888;margin-top:4px;line-height:1.6">' + fw.description.split('\\n').join('<br>').replace(/- /g, '&bull; ') + '</div>' : '') +
           '</div>' +
           '<button class="btn" style="padding:4px 12px;font-size:12px" onclick="downloadFirmwareByIdx(' + i + ')" id="fwDlBtn' + i + '">Download</button>' +
         '</div>';

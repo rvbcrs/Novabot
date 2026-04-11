@@ -1678,8 +1678,7 @@ cat > "$JSON_META" << METAEOF
   "device_type": "mower",
   "filename": "${DEB_BASENAME}",
   "md5": "${MD5}",
-  "description": "OpenNova custom mower firmware",
-  "release_notes": "${RELEASE_NOTES}"
+  "description": "${RELEASE_NOTES}"
 }
 METAEOF
 echo "  Metadata: $(basename "$JSON_META")"
@@ -1696,8 +1695,7 @@ entry = {
     'url': '${DOWNLOAD_BASE_URL}/${DEB_BASENAME}',
     'filename': '${DEB_BASENAME}',
     'md5': '${MD5}',
-    'description': 'OpenNova custom mower firmware',
-    'release_notes': '${RELEASE_NOTES}'
+    'description': '${RELEASE_NOTES}'
 }
 
 # Lees bestaand manifest of maak nieuw
