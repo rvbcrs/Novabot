@@ -7,13 +7,21 @@ import { Router, Response } from 'express';
 import os from 'os';
 import dns from 'dns';
 import crypto from 'crypto';
+import path from 'path';
 import { execSync } from 'child_process';
 import { db } from '../db/database.js';
 import { userRepo, equipmentRepo, deviceRepo, mapRepo } from '../db/repositories/index.js';
 import { AuthRequest } from '../types/index.js';
 import { invalidateSetupCache } from '../middleware/setupGuard.js';
+import { parseMapZip, polygonArea } from '../mqtt/mapConverter.js';
+import { v4 as uuidv4 } from 'uuid';
+import multer from 'multer';
 
 export const adminStatusRouter = Router();
+
+// Multer for ZIP upload (temp directory)
+const MAPS_STORAGE = path.resolve(process.env.STORAGE_PATH ?? './storage', 'maps');
+const upload = multer({ dest: os.tmpdir() });
 
 // Read version once at startup
 import fs from 'fs';
@@ -344,6 +352,85 @@ function getLocalIp(): string {
   }
   return '127.0.0.1';
 }
+
+// POST /api/admin-status/import-map-zip — import a Novabot map ZIP, always creating NEW map records
+adminStatusRouter.post('/import-map-zip', upload.single('file'), (req: AuthRequest, res: Response) => {
+  const sn = req.body?.sn as string | undefined;
+  const file = (req as any).file as Express.Multer.File | undefined;
+
+  if (!sn) {
+    res.status(400).json({ error: 'sn (mower serial) required' });
+    return;
+  }
+  if (!file) {
+    res.status(400).json({ error: 'file (ZIP) required' });
+    return;
+  }
+
+  try {
+    // Parse the ZIP using the existing mapConverter function
+    const parsed = parseMapZip(file.path);
+    if (!parsed || parsed.areas.length === 0) {
+      res.status(400).json({ error: 'No valid map areas found in ZIP' });
+      return;
+    }
+
+    let mapsImported = 0;
+
+    for (const area of parsed.areas) {
+      if (area.points.length < 2) continue;
+
+      const mapId = uuidv4();
+      const areaM2 = area.type !== 'unicom' && area.points.length >= 3
+        ? polygonArea(area.points)
+        : 0;
+
+      // Build a descriptive map name from the area metadata
+      let mapName: string;
+      if (area.type === 'work') {
+        mapName = `map${area.mapIndex}_work`;
+      } else if (area.type === 'obstacle') {
+        mapName = `map${area.mapIndex}_${area.subIndex ?? 0}_obstacle`;
+      } else {
+        mapName = `map${area.mapIndex}to${area.target ?? 'charge'}_unicom`;
+      }
+
+      // Compute bounding box
+      const xs = area.points.map(p => p.x);
+      const ys = area.points.map(p => p.y);
+      const mapMaxMin = JSON.stringify({
+        minX: Math.min(...xs), maxX: Math.max(...xs),
+        minY: Math.min(...ys), maxY: Math.max(...ys),
+      });
+
+      mapRepo.create({
+        map_id: mapId,
+        mower_sn: sn,
+        map_name: mapName,
+        map_area: JSON.stringify(area.points),
+        map_max_min: mapMaxMin,
+        map_type: area.type,
+      });
+      mapsImported++;
+    }
+
+    // Copy uploaded ZIP as _latest.zip for queryEquipmentMap
+    fs.mkdirSync(MAPS_STORAGE, { recursive: true });
+    const latestPath = path.join(MAPS_STORAGE, `${sn}_latest.zip`);
+    fs.copyFileSync(file.path, latestPath);
+
+    // Clean up temp file
+    try { fs.unlinkSync(file.path); } catch { /* ignore */ }
+
+    console.log(`[Admin] Imported ${mapsImported} map(s) from ZIP for ${sn}`);
+    res.json({ ok: true, mapsImported });
+  } catch (err) {
+    // Clean up temp file on error
+    try { fs.unlinkSync(file.path); } catch { /* ignore */ }
+    console.error('[Admin] Map ZIP import failed:', err);
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Import failed' });
+  }
+});
 
 // POST /api/admin-status/factory-reset — wipe all user data and return to setup
 adminStatusRouter.post('/factory-reset', (_req: AuthRequest, res: Response) => {

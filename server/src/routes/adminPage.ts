@@ -199,6 +199,11 @@ export function adminPageHtml(): string {
           <option value="">Select a mower...</option>
         </select>
       </div>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
+        <input type="file" id="mapZipFile" accept=".zip" style="flex:1;min-width:180px;padding:6px 10px;background:#0d0d20;border:1px solid #333;border-radius:8px;color:#fff;font-size:12px">
+        <button onclick="uploadMapZip()" style="padding:8px 16px;background:rgba(124,58,237,.2);color:#a78bfa;border:1px solid rgba(124,58,237,.3);border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap">Import ZIP</button>
+      </div>
+      <div id="mapUploadStatus" style="font-size:12px;margin-bottom:8px;display:none"></div>
       <div id="mapInfo" style="font-size:12px;color:#aaa;margin-bottom:8px"></div>
       <div style="background:#0a0a1a;border:1px solid rgba(255,255,255,.06);border-radius:8px;overflow:hidden;position:relative">
         <canvas id="mapCanvas" width="800" height="600" style="width:100%;display:block;background:#0a0a1a"></canvas>
@@ -209,6 +214,7 @@ export function adminPageHtml(): string {
         <span><span style="display:inline-block;width:12px;height:12px;background:transparent;border:2px solid #3b82f6;border-radius:2px;vertical-align:middle;margin-right:4px"></span>Channel</span>
         <span><span style="display:inline-block;width:12px;height:12px;background:#f59e0b;border-radius:50%;vertical-align:middle;margin-right:4px"></span>Charger</span>
       </div>
+      <div id="mapList" style="margin-top:12px"></div>
     </div>
   </div>
 
@@ -907,6 +913,62 @@ async function populateMowerDropdown() {
   }
 }
 
+async function uploadMapZip() {
+  var sn = document.getElementById('mapMowerSelect').value;
+  var fileInput = document.getElementById('mapZipFile');
+  var status = document.getElementById('mapUploadStatus');
+
+  status.style.display = 'block';
+
+  if (!sn) {
+    status.style.color = '#f87171';
+    status.textContent = 'Please select a mower first.';
+    return;
+  }
+
+  if (!fileInput.files || fileInput.files.length === 0) {
+    status.style.color = '#f87171';
+    status.textContent = 'Please select a ZIP file.';
+    return;
+  }
+
+  var file = fileInput.files[0];
+  if (!file.name.toLowerCase().endsWith('.zip')) {
+    status.style.color = '#f87171';
+    status.textContent = 'Only .zip files are accepted.';
+    return;
+  }
+
+  status.style.color = '#60a5fa';
+  status.textContent = 'Importing ' + file.name + ' (creates new maps)...';
+
+  try {
+    var fd = new FormData();
+    fd.append('file', file, file.name);
+    fd.append('sn', sn);
+
+    var r = await fetch('/api/admin-status/import-map-zip', {
+      method: 'POST',
+      headers: { 'Authorization': token },
+      body: fd
+    });
+
+    if (!r.ok) {
+      var errData = await r.json().catch(function() { return {}; });
+      throw new Error(errData.error || 'HTTP ' + r.status);
+    }
+    var result = await r.json();
+
+    status.style.color = '#00d4aa';
+    status.textContent = 'Imported ' + (result.mapsImported || 0) + ' map(s) from ' + file.name;
+    fileInput.value = '';
+    loadMaps();
+  } catch(e) {
+    status.style.color = '#f87171';
+    status.textContent = 'Import failed: ' + e.message;
+  }
+}
+
 async function loadMaps() {
   var sn = document.getElementById('mapMowerSelect').value;
   var info = document.getElementById('mapInfo');
@@ -914,10 +976,13 @@ async function loadMaps() {
   var legend = document.getElementById('mapLegend');
   var ctx = canvas.getContext('2d');
 
+  var mapList = document.getElementById('mapList');
+
   if (!sn) {
     info.textContent = '';
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     legend.style.display = 'none';
+    mapList.innerHTML = '';
     return;
   }
 
@@ -935,17 +1000,20 @@ async function loadMaps() {
       info.textContent = 'No maps found for ' + sn;
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       legend.style.display = 'none';
+      mapList.innerHTML = '';
       return;
     }
 
     var workCount = maps.filter(function(m) { return m.mapType === 'work'; }).length;
-    info.textContent = workCount + ' work area(s) for ' + sn;
+    info.textContent = workCount + ' work area(s), ' + maps.length + ' total for ' + sn;
     legend.style.display = 'flex';
     renderMapCanvas(canvas, maps);
+    renderMapList(mapList, maps, sn);
   } catch(e) {
     info.textContent = 'Failed to load maps: ' + e.message;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     legend.style.display = 'none';
+    mapList.innerHTML = '';
   }
 }
 
@@ -1099,6 +1167,51 @@ function renderMapCanvas(canvas, maps) {
   ctx.font = '10px system-ui';
   ctx.textAlign = 'center';
   ctx.fillText('Charger', chargerX, chargerY - 10);
+}
+
+function renderMapList(container, maps, sn) {
+  var typeIcons = { work: '\\u{1F7E9}', obstacle: '\\u{1F7E5}', unicom: '\\u{1F535}' };
+  var html = '<div style="font-size:12px;color:#aaa;margin-bottom:6px;font-weight:600">Maps (' + maps.length + ')</div>';
+  for (var i = 0; i < maps.length; i++) {
+    var m = maps[i];
+    var type = (m.mapType || 'work').toLowerCase();
+    var icon = typeIcons[type] || '\\u{2B1C}';
+    var name = m.mapName || ('map_' + (i + 1));
+    var areaStr = '';
+    if (type !== 'unicom' && m.mapArea && m.mapArea.length >= 3) {
+      var area = 0;
+      for (var j = 0; j < m.mapArea.length; j++) {
+        var k = (j + 1) % m.mapArea.length;
+        area += m.mapArea[j].x * m.mapArea[k].y - m.mapArea[k].x * m.mapArea[j].y;
+      }
+      area = Math.abs(area) / 2;
+      areaStr = ' (' + area.toFixed(1) + ' m\\u00B2)';
+    } else if (type === 'unicom' && m.mapArea) {
+      areaStr = ' (' + m.mapArea.length + ' pts)';
+    }
+    html += '<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 10px;'
+      + 'background:rgba(255,255,255,.03);border-radius:6px;margin-bottom:4px">'
+      + '<span style="color:#ddd;font-size:12px">' + icon + ' ' + name + '<span style="color:#888">' + areaStr + '</span>'
+      + ' <span style="color:#666;font-size:10px">' + type + '</span></span>'
+      + '<button onclick="deleteMap(\\'' + sn + '\\',\\'' + m.mapId + '\\',\\'' + name.replace(/'/g, "\\\\'") + '\\')" '
+      + 'style="padding:3px 10px;background:rgba(239,68,68,.15);color:#f87171;border:1px solid rgba(239,68,68,.3);'
+      + 'border-radius:6px;font-size:11px;cursor:pointer;font-weight:600">Delete</button></div>';
+  }
+  container.innerHTML = html;
+}
+
+async function deleteMap(sn, mapId, mapName) {
+  if (!confirm('Delete map "' + mapName + '"? This cannot be undone.')) return;
+  try {
+    var r = await fetch('/api/dashboard/maps/' + encodeURIComponent(sn) + '/' + encodeURIComponent(mapId), {
+      method: 'DELETE',
+      headers: { 'Authorization': token }
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    loadMaps();
+  } catch(e) {
+    alert('Delete failed: ' + e.message);
+  }
 }
 
 async function cloudImport() {
