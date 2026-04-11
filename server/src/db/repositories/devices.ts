@@ -137,7 +137,11 @@ export class DeviceRepository {
            CASE WHEN e.user_id IS NOT NULL THEN 1 ELSE 0 END as is_bound,
            CASE WHEN d.sn = e.mower_sn AND e.charger_sn IS NOT NULL THEN e.charger_sn
                 WHEN d.sn = e.charger_sn AND e.mower_sn IS NOT NULL AND e.mower_sn LIKE 'LFIN%' THEN e.mower_sn
-                ELSE NULL END as paired_with
+                ELSE NULL END as paired_with,
+           CASE WHEN d.sn LIKE 'LFIN%' THEN e.mower_version
+                WHEN d.sn LIKE 'LFIC%' THEN e.charger_version
+                ELSE NULL END as firmware_version,
+           COALESCE(e.is_opennova, 0) as is_opennova
     FROM device_registry d
     LEFT JOIN equipment e ON (e.mower_sn = d.sn OR e.charger_sn = d.sn)
     LEFT JOIN device_factory f ON f.sn = d.sn

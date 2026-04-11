@@ -719,6 +719,26 @@ export default function MapScreen() {
               <Ionicons name="download-outline" size={16} color={maps.length > 0 ? colors.white : colors.textMuted} />
               <Text style={[styles.actionBtnText, maps.length === 0 && { color: colors.textMuted }]}>{t('export')}</Text>
             </TouchableOpacity>
+            {maps.length > 0 && (
+              <TouchableOpacity
+                onPress={() => {
+                  Alert.alert(
+                    'Edit Map',
+                    'What would you like to add?',
+                    [
+                      { text: 'Add Work Area', onPress: () => (navigation as any).navigate('AppSettings', { screen: 'Mapping', params: { buildType: 'work' } }) },
+                      { text: 'Add Obstacle', onPress: () => (navigation as any).navigate('AppSettings', { screen: 'Mapping', params: { buildType: 'obstacle' } }) },
+                      { text: 'Cancel', style: 'cancel' },
+                    ]
+                  );
+                }}
+                style={[styles.actionBtn, { backgroundColor: 'rgba(245,158,11,0.2)', borderColor: 'rgba(245,158,11,0.3)' }]}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="pencil" size={16} color="#f59e0b" />
+                <Text style={[styles.actionBtnText, { color: '#f59e0b' }]}>Edit</Text>
+              </TouchableOpacity>
+            )}
             <TouchableOpacity onPress={fetchData} style={styles.headerBtn} activeOpacity={0.7}>
               <Ionicons name="refresh" size={20} color={colors.textDim} />
             </TouchableOpacity>

@@ -771,6 +771,16 @@ function devRow(dev) {
   const typeColor = isCharger ? '#f59e0b' : '#00d4aa';
   const typeName = isCharger ? 'Charger' : 'Mower';
   const bound = dev.is_bound;
+  const fw = dev.firmware_version || '';
+  const isON = dev.is_opennova;
+  var fwBadge = '';
+  if (fw) {
+    if (isON) {
+      fwBadge = '<span style="font-size:9px;background:rgba(0,212,170,.15);color:#00d4aa;padding:1px 6px;border-radius:3px;font-weight:600">OpenNova</span>';
+    } else {
+      fwBadge = '<span style="font-size:9px;background:rgba(245,158,11,.15);color:#f59e0b;padding:1px 6px;border-radius:3px;font-weight:600">Stock</span>';
+    }
+  }
   let actions = '';
   if (bound) {
     actions = '<button class="btn btn-sm" style="background:#374151;color:#aaa" onclick="unbindDevice(\\'' + dev.sn + '\\')">Unbind</button>';
@@ -778,12 +788,13 @@ function devRow(dev) {
     actions = '<button class="btn btn-sm btn-green" onclick="bindDevice(\\'' + dev.sn + '\\')">Bind</button> ' +
       '<button class="btn btn-sm btn-red" onclick="removeDevice(\\'' + dev.sn + '\\')">Remove</button>';
   }
-  return '<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.04);flex-wrap:wrap">' +
-    '<span style="color:' + typeColor + ';font-size:13px;min-width:80px">' + icon + ' ' + typeName + '</span>' +
-    '<span class="sn" style="flex:1;min-width:120px">' + (dev.sn || '-') + '</span>' +
-    '<span>' + dot(online) + (online ? '<span class="on" style="font-size:12px">Online</span>' : '<span class="off" style="font-size:12px">Offline</span>') + '</span>' +
-    '<span style="color:#666;font-size:11px;min-width:50px">' + ago(dev.last_seen) + '</span>' +
-    '<span style="white-space:nowrap">' + actions + '</span>' +
+  return '<div style="display:grid;grid-template-columns:90px 1fr 100px 80px 60px auto;align-items:center;gap:6px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.04)">' +
+    '<span style="color:' + typeColor + ';font-size:13px">' + icon + ' ' + typeName + '</span>' +
+    '<div><span class="sn">' + (dev.sn || '-') + '</span></div>' +
+    '<div style="text-align:center">' + (fw ? '<span style="font-size:11px;color:#888">' + fw + '</span>' : '') + '</div>' +
+    '<div style="text-align:center">' + fwBadge + '</div>' +
+    '<div>' + dot(online) + (online ? '<span class="on" style="font-size:11px">Online</span>' : '<span class="off" style="font-size:11px">Offline</span>') + '</div>' +
+    '<div style="text-align:right;white-space:nowrap">' + actions + '</div>' +
     '</div>';
 }
 

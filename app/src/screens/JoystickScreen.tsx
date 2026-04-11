@@ -97,7 +97,7 @@ export default function JoystickScreen() {
       holdType,
       mst: {
         x_w: Math.round(dist * lvl.linear * 100) / 100,
-        y_v: Math.round(Math.abs(dx) * lvl.angular * 100) / 100,
+        y_v: Math.round(dx * lvl.angular * 100) / 100,
         z_g: 0,
       },
     });

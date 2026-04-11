@@ -461,6 +461,11 @@ export async function provisionDevice(
 
 let _joystickDevice: Device | null = null;
 let _joystickConnected = false;
+let _joystickDisconnectCallback: (() => void) | null = null;
+
+export function onBleJoystickDisconnect(cb: () => void): void {
+  _joystickDisconnectCallback = cb;
+}
 
 /**
  * Connect to mower for BLE joystick control.
@@ -479,6 +484,15 @@ export async function bleJoystickConnect(deviceId: string): Promise<boolean> {
     _joystickDevice = await _joystickDevice.discoverAllServicesAndCharacteristics();
     _joystickConnected = true;
     bleLog(`[BLE-JOY] Connected!`);
+
+    // Monitor disconnect — auto-update state and log
+    mgr.onDeviceDisconnected(deviceId, (err, dev) => {
+      bleLog(`[BLE-JOY] Disconnected${err ? ': ' + err.message : ''}`);
+      _joystickConnected = false;
+      _joystickDevice = null;
+      if (_joystickDisconnectCallback) _joystickDisconnectCallback();
+    });
+
     return true;
   } catch (err: any) {
     bleLog(`[BLE-JOY] Connect failed: ${err.message}`);

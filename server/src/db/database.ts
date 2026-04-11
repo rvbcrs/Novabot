@@ -341,6 +341,10 @@ export function initDb(): void {
   try { db.exec(`ALTER TABLE equipment ADD COLUMN mower_ip TEXT`); }
   catch { /* kolom bestaat al */ }
 
+  // OpenNova firmware detectie (via extended MQTT response)
+  try { db.exec(`ALTER TABLE equipment ADD COLUMN is_opennova INTEGER DEFAULT 0`); }
+  catch { /* kolom bestaat al */ }
+
   // Feature: alternerende maairichting per schema
   for (const col of ['alternate_direction INTEGER DEFAULT 0', 'alternate_step INTEGER DEFAULT 90']) {
     try { db.exec(`ALTER TABLE dashboard_schedules ADD COLUMN ${col}`); }

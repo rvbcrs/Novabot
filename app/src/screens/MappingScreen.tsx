@@ -25,7 +25,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import {
   GestureDetector,
   Gesture,
@@ -43,20 +43,23 @@ import { useI18n } from '../i18n';
 import {
   bleJoystickConnect, bleJoystickDisconnect,
   bleJoystickStart, bleJoystickMove, bleJoystickStop,
-  isBleJoystickConnected, scanForDevices, type ScannedDevice,
+  isBleJoystickConnected, onBleJoystickDisconnect, scanForDevices, type ScannedDevice,
 } from '../services/ble';
 
 // ── Joystick constants (smaller than JoystickScreen) ──
 const { width: SCREEN_W } = Dimensions.get('window');
 const JOYSTICK_SIZE = Math.min(SCREEN_W * 0.50, 200);
 const THUMB_SIZE = 52;
-const DEAD_ZONE = 0.05;
+const DEAD_ZONE = 0.15;
 const THROTTLE_MS = 80;
 
+// Flutter app sends raw integer values directly (no float scaling).
+// BLE bleJoystickMove multiplies by 100, so these values × 100 = mst values.
+// Target range: ~100-300 for smooth movement.
 const SPEED_LEVELS = [
-  { labelKey: 'slow', linear: 0.15, angular: 0.3 },
-  { labelKey: 'normal', linear: 0.3, angular: 0.5 },
-  { labelKey: 'fast', linear: 0.5, angular: 0.8 },
+  { labelKey: 'slow', linear: 1.0, angular: 0.8 },
+  { labelKey: 'normal', linear: 2.0, angular: 1.5 },
+  { labelKey: 'fast', linear: 3.0, angular: 2.5 },
 ];
 
 function getHoldType(x: number, y: number): number {
@@ -81,9 +84,13 @@ export default function MappingScreen() {
   const sn = mower?.sn ?? '';
   const sensors = mower?.sensors ?? {};
 
+  // ── Route params (from MapScreen Edit button) ──
+  const route = useRoute();
+  const initialBuildType = (route.params as any)?.buildType as MapBuildType | undefined;
+
   // ── State machine ──
   const [mappingState, setMappingState] = useState<MappingState>('idle');
-  const [mapBuildType, setMapBuildType] = useState<MapBuildType>('work');
+  const [mapBuildType, setMapBuildType] = useState<MapBuildType>(initialBuildType ?? 'work');
   const [mappingMode, setMappingMode] = useState<MappingMode | null>(null);
   const [busy, setBusy] = useState(false);
   const [elapsed, setElapsed] = useState(0);
@@ -204,6 +211,23 @@ export default function MappingScreen() {
   // ── Keep speedRef in sync ──
   useEffect(() => { speedRef.current = speedLevel; }, [speedLevel]);
 
+  // ── BLE disconnect handler: update UI + auto-reconnect ──
+  useEffect(() => {
+    onBleJoystickDisconnect(() => {
+      setBleConnected(false);
+      // Stop joystick if active
+      if (joystickActiveRef.current) {
+        joystickActiveRef.current = false;
+        setJoystickActive(false);
+        if (bleIntervalRef.current) { clearInterval(bleIntervalRef.current); bleIntervalRef.current = null; }
+      }
+      // Auto-reconnect after 2s if still mapping
+      if (mappingState === 'mapping') {
+        setTimeout(() => connectBleJoystick(), 2000);
+      }
+    });
+  }, [mappingState, connectBleJoystick]);
+
   // ── Cleanup BLE joystick on unmount ──
   useEffect(() => {
     return () => {
@@ -263,18 +287,12 @@ export default function MappingScreen() {
       return;
     }
     const lvl = SPEED_LEVELS[speedRef.current];
-    // holdType based on dominant Y direction (forward/backward)
-    // Pure left/right uses holdType 1/2, but with forward component use 3/4
-    const holdType = Math.abs(dy) >= Math.abs(dx) * 0.3
-      ? (dy < 0 ? 3 : 4)   // forward (3) or backward (4) when Y is dominant
-      : (dx < 0 ? 1 : 2);  // left (1) or right (2) when pure sideways
+    // Mower: y_v = forward/backward, x_w = turn left/right
+    const holdType = getHoldType(dx, dy) || 3;
     currentHoldTypeRef.current = holdType;
-    // x_w = forward/backward magnitude from Y axis
-    // y_v = turning magnitude from X axis
-    // Both can be non-zero simultaneously → smooth curves!
     currentMstRef.current = {
-      x_w: Math.round(Math.abs(dy) * lvl.linear * 100) / 100,
-      y_v: Math.round(Math.abs(dx) * lvl.angular * 100) / 100,
+      x_w: Math.round(dx * lvl.angular * 100) / 100,
+      y_v: Math.round(-dy * lvl.linear * 100) / 100,
       z_g: 0,
     };
   }, []);
@@ -309,18 +327,16 @@ export default function MappingScreen() {
     currentHoldTypeRef.current = holdType;
     sendMove(nx, ny);
 
-    // Official app sends BOTH start_move AND mst every 300ms (Timer.periodic)
-    // Both commands are awaited sequentially (queued writes)
+    // Flutter protocol: start_move ONCE on touch, then mst repeated on timer
     if (!bleIntervalRef.current) {
-      // Send immediately on first touch
+      // Send start_move once to enter manual mode
       bleJoystickStart(holdType).then(() => bleJoystickMove(currentMstRef.current));
 
+      // Then only send mst on interval (official app ~2s, we use 200ms for smoother control)
       bleIntervalRef.current = setInterval(async () => {
         if (!joystickActiveRef.current) return;
-        // Every 300ms: start_move then mst (sequential, queued)
-        await bleJoystickStart(currentHoldTypeRef.current);
         await bleJoystickMove(currentMstRef.current);
-      }, 300);
+      }, 200);
     }
   }, [radius, sendMove]);
 
