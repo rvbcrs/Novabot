@@ -2546,11 +2546,23 @@ dashboardRouter.patch('/ota/versions/:id', (req: Request, res: Response) => {
   res.json({ ok: true, version: row });
 });
 
-// DELETE /api/dashboard/ota/versions/:id — verwijder een OTA versie
+// DELETE /api/dashboard/ota/versions/:id — verwijder een OTA versie + firmware bestand
 dashboardRouter.delete('/ota/versions/:id', (req: Request, res: Response) => {
   const id = parseInt(req.params.id);
+  const version = otaVersionRepo.findById(id);
+  if (version?.download_url) {
+    // Extract filename from download URL and delete the file
+    const filename = version.download_url.split('/').pop();
+    if (filename) {
+      const firmwarePath = path.resolve(process.env.FIRMWARE_PATH ?? process.env.STORAGE_PATH ?? './storage', 'firmware');
+      const filePath = path.join(firmwarePath, filename);
+      try { fs.unlinkSync(filePath); } catch { /* file may not exist */ }
+      // Also delete companion .json metadata file
+      try { fs.unlinkSync(filePath.replace(/\.(deb|bin)$/, '.json')); } catch {}
+    }
+  }
   otaVersionRepo.deleteById(id);
-  console.log(`\x1b[38;5;208m[OTA] Versie verwijderd: id=${id}\x1b[0m`);
+  console.log(`\x1b[38;5;208m[OTA] Versie + bestand verwijderd: id=${id}\x1b[0m`);
   res.json({ ok: true });
 });
 

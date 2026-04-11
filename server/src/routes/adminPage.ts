@@ -1400,8 +1400,11 @@ function onOtaDeviceChange() {
   // Show current version from device list
   var dev = _fwDevices.find(function(d) { return d.sn === sel.value; });
   if (dev) {
-    var curVer = (dev.sensors && (dev.sensors.version || dev.sensors.sw_version)) || 'unknown';
-    curDiv.innerHTML = 'Current firmware: <span style="color:#fff;font-weight:600">' + curVer + '</span>' +
+    var curVer = dev.firmware_version || 'unknown';
+    var isON = curVer.includes('custom');
+    var badge = isON ? ' <span style="font-size:9px;background:rgba(0,212,170,.15);color:#00d4aa;padding:1px 5px;border-radius:3px;font-weight:600">OpenNova</span>'
+      : (curVer !== 'unknown' ? ' <span style="font-size:9px;background:rgba(245,158,11,.15);color:#f59e0b;padding:1px 5px;border-radius:3px;font-weight:600">Stock</span>' : '');
+    curDiv.innerHTML = 'Current firmware: <span style="color:#fff;font-weight:600">' + curVer + '</span>' + badge +
       (dev.is_online ? ' <span class="on" style="font-size:11px">(online)</span>' : ' <span class="off" style="font-size:11px">(offline)</span>');
   }
 
