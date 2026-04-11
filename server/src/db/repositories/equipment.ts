@@ -114,6 +114,7 @@ export class EquipmentRepository {
     'UPDATE equipment SET mac_address = ? WHERE (mower_sn = ? OR charger_sn = ?) AND mac_address IS NULL'
   );
   private _updateMowerIp = db.prepare('UPDATE equipment SET mower_ip = ? WHERE mower_sn = ?');
+  private _setOpenNova = db.prepare('UPDATE equipment SET is_opennova = 1 WHERE mower_sn = ?');
   private _updateVersionsMower = db.prepare('UPDATE equipment SET mower_version = ? WHERE mower_sn = ?');
   private _updateVersionsCharger = db.prepare('UPDATE equipment SET charger_version = ? WHERE mower_sn = ?');
   private _updateVersionsBoth = db.prepare('UPDATE equipment SET mower_version = ?, charger_version = ? WHERE mower_sn = ?');
@@ -303,6 +304,10 @@ export class EquipmentRepository {
 
   updateMowerIp(mowerSn: string, ipAddress: string): number {
     return this._updateMowerIp.run(ipAddress, mowerSn).changes;
+  }
+
+  setOpenNova(mowerSn: string): void {
+    this._setOpenNova.run(mowerSn);
   }
 
   updateVersions(mowerSn: string, mowerVersion?: string, chargerVersion?: string): void {

@@ -928,7 +928,13 @@ def handle_set_lora_info(params, respond):
 
 # ── Command dispatch ──────────────────────────────────────────────────────
 
+def handle_is_opennova(params, respond):
+    """Report that this mower runs OpenNova firmware."""
+    respond("is_opennova_respond", {"result": True, "version": "1.0"})
+
+
 COMMANDS = {
+    "is_opennova": handle_is_opennova,
     "set_robot_reboot": handle_reboot,
     "get_system_info": handle_system_info,
     "verify_pin": handle_verify_pin,

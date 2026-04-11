@@ -367,8 +367,18 @@ export function onMowerConnected(sn: string): void {
       // in het ota_upgrade_cmd commando.
       console.log(`${TAG} Maaier ${sn} verbonden — kaarten opvragen...`);
       requestMapList(sn);
-      // NB: get_para_info wordt NIET gestuurd — maaier reageert er niet op.
-      // Settings state wordt lokaal bijgehouden wanneer set_para_info wordt gestuurd.
+
+      // OpenNova firmware detectie: alleen onze firmware heeft extended_commands.py
+      publishToExtended(sn, { is_opennova: {} });
+      const onON = (data: Record<string, unknown>) => {
+        if (data.is_opennova_respond) {
+          equipmentRepo.setOpenNova(sn);
+          console.log(`${TAG} OpenNova firmware confirmed for ${sn}`);
+          offExtendedResponse(sn, onON);
+        }
+      };
+      onExtendedResponse(sn, onON);
+      setTimeout(() => offExtendedResponse(sn, onON), 5000);
     }
 
     // Na 30 seconden de pending flag resetten zodat bij reconnect opnieuw gevraagd kan worden
