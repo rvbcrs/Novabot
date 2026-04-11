@@ -1332,12 +1332,13 @@ async function loadFirmwareVersions() {
       var v = _fwVersions[i];
       var devType = (v.device_type || v.deviceType || 'mower');
       var md5 = (v.md5 || '').substring(0, 10);
-      var notes = truncate(v.release_notes || v.releaseNotes || '', 40);
+      var notes = (v.release_notes || v.releaseNotes || '').replace(/\\n/g, '\n');
+      var notesHtml = notes ? notes.replace(/\n/g, '<br>').replace(/^- /gm, '&bull; ') : '<span style="color:#666">—</span>';
       html += '<tr>' +
-        '<td style="color:#fff;font-weight:600">' + (v.version || '?') + '</td>' +
+        '<td style="color:#fff;font-weight:600;white-space:nowrap">' + (v.version || '?') + '</td>' +
         '<td><span style="color:' + (devType === 'charger' ? '#f59e0b' : '#00d4aa') + '">' + devType + '</span></td>' +
         '<td style="color:#888;font-family:monospace;font-size:11px">' + md5 + (v.md5 && v.md5.length > 10 ? '...' : '') + '</td>' +
-        '<td style="color:#aaa">' + notes + '</td>' +
+        '<td style="color:#aaa;font-size:11px;line-height:1.6">' + notesHtml + '</td>' +
         '<td><button class="btn btn-sm btn-red" onclick="deleteFirmwareVersion(' + (v.id || v.ID) + ')">Delete</button></td>' +
         '</tr>';
     }
