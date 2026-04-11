@@ -1332,8 +1332,8 @@ async function loadFirmwareVersions() {
       var v = _fwVersions[i];
       var devType = (v.device_type || v.deviceType || 'mower');
       var md5 = (v.md5 || '').substring(0, 10);
-      var notes = (v.release_notes || v.releaseNotes || '').replace(/\\n/g, '\n');
-      var notesHtml = notes ? notes.replace(/\n/g, '<br>').replace(/^- /gm, '&bull; ') : '<span style="color:#666">—</span>';
+      var notes = (v.release_notes || v.releaseNotes || '').replace(/\\\\n/g, '\\n');
+      var notesHtml = notes ? notes.replace(/\\n/g, '<br>').replace(/^- /gm, '&bull; ') : '<span style="color:#666">\u2014</span>';
       html += '<tr>' +
         '<td style="color:#fff;font-weight:600;white-space:nowrap">' + (v.version || '?') + '</td>' +
         '<td><span style="color:' + (devType === 'charger' ? '#f59e0b' : '#00d4aa') + '">' + devType + '</span></td>' +
