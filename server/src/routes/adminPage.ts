@@ -88,6 +88,8 @@ export function adminPageHtml(): string {
   .refresh-btn:hover{color:#00d4aa}
   .menu-item{padding:8px 12px;font-size:12px;color:#ccc;cursor:pointer;border-radius:6px;white-space:nowrap}
   .menu-item:hover{background:rgba(255,255,255,.08)}
+  .ota-progress-bar{width:100%;height:8px;background:rgba(255,255,255,.06);border-radius:4px;overflow:hidden}
+  .ota-progress-fill{height:100%;background:#00d4aa;border-radius:4px;transition:width .5s ease}
 </style>
 </head>
 <body>
@@ -152,6 +154,7 @@ export function adminPageHtml(): string {
     <button class="tab active" onclick="switchTab('devices')">Devices</button>
     <button class="tab" onclick="switchTab('console')">Console</button>
     <button class="tab" onclick="switchTab('maps')">Maps</button>
+    <button class="tab" onclick="switchTab('firmware')">Firmware</button>
     <button class="tab" onclick="switchTab('settings')">Settings</button>
   </div>
 
@@ -194,6 +197,7 @@ export function adminPageHtml(): string {
   <div id="tab_maps" style="display:none">
     <div class="card">
       <h2>Map Viewer <span class="refresh-btn" onclick="loadMaps()">↻</span></h2>
+      <div style="padding:8px 12px;background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.15);border-radius:6px;margin-bottom:12px;font-size:11px;color:#d97706">Maps stored here are for <b>preview and app display only</b>. They are not synced to the mower. To mow, the mower needs its own maps created via the Novabot app mapping function.</div>
       <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px">
         <select id="mapMowerSelect" onchange="loadMaps()" style="flex:1;padding:8px 12px;background:#0d0d20;border:1px solid #333;border-radius:8px;color:#fff;font-size:13px">
           <option value="">Select a mower...</option>
@@ -215,6 +219,51 @@ export function adminPageHtml(): string {
         <span><span style="display:inline-block;width:12px;height:12px;background:#f59e0b;border-radius:50%;vertical-align:middle;margin-right:4px"></span>Charger</span>
       </div>
       <div id="mapList" style="margin-top:12px"></div>
+    </div>
+  </div>
+
+  <!-- Tab: Firmware -->
+  <div id="tab_firmware" style="display:none">
+    <div class="card">
+      <div style="margin-bottom:16px;padding:12px;background:rgba(0,212,170,.04);border:1px solid rgba(0,212,170,.1);border-radius:8px">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div>
+            <span style="font-weight:600;color:#00d4aa">Firmware Updates</span>
+            <span id="fwUpdateStatus" style="margin-left:8px;font-size:12px;color:#aaa"></span>
+          </div>
+          <button onclick="checkFirmwareUpdates()" id="fwCheckBtn" class="btn" style="padding:6px 14px;font-size:12px">Check for Updates</button>
+        </div>
+        <div id="fwUpdatesAvailable" style="margin-top:8px;display:none"></div>
+      </div>
+      <h2>Available Firmware <span class="refresh-btn" onclick="loadFirmwareVersions()">&#x21BB;</span></h2>
+      <div class="table-wrap">
+        <table id="fwTable">
+          <thead><tr><th>Version</th><th>Device</th><th>MD5</th><th>Notes</th><th></th></tr></thead>
+          <tbody id="fwTableBody"><tr><td colspan="5" style="color:#aaa">Loading...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Update Device</h2>
+      <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+        <select id="otaDeviceSelect" onchange="onOtaDeviceChange()" style="flex:1;min-width:180px;padding:8px 12px;background:#0d0d20;border:1px solid #333;border-radius:8px;color:#fff;font-size:13px">
+          <option value="">Select device...</option>
+        </select>
+        <select id="otaVersionSelect" style="flex:1;min-width:180px;padding:8px 12px;background:#0d0d20;border:1px solid #333;border-radius:8px;color:#fff;font-size:13px">
+          <option value="">Select version...</option>
+        </select>
+      </div>
+      <div id="otaCurrentVersion" style="font-size:12px;color:#aaa;margin-bottom:12px"></div>
+      <button class="btn btn-purple" onclick="startOtaUpdate()" style="padding:8px 20px">Start Update</button>
+
+      <div id="otaProgress" style="display:none;margin-top:16px;padding:12px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);border-radius:8px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <span id="otaStatusText" style="font-size:13px;font-weight:600;color:#aaa">Waiting...</span>
+          <span id="otaPctText" style="font-size:13px;font-weight:600;color:#00d4aa">0%</span>
+        </div>
+        <div class="ota-progress-bar"><div class="ota-progress-fill" id="otaProgressFill" style="width:0%"></div></div>
+      </div>
     </div>
   </div>
 
@@ -334,7 +383,7 @@ function switchTab(name) {
   var tabs = document.querySelectorAll('.tab');
   for (var i = 0; i < tabs.length; i++) tabs[i].classList.remove('active');
   // Activate clicked tab
-  var names = ['devices','console','maps','settings'];
+  var names = ['devices','console','maps','firmware','settings'];
   for (var i = 0; i < names.length; i++) {
     document.getElementById('tab_' + names[i]).style.display = names[i] === name ? '' : 'none';
     if (names[i] === name) tabs[i].classList.add('active');
@@ -343,6 +392,7 @@ function switchTab(name) {
   if (name === 'settings') { checkDns(); checkDnsmasqStatus(); }
   // Load maps when switching to maps tab
   if (name === 'maps') { populateMowerDropdown(); }
+  if (name === 'firmware') { loadFirmwareVersions(); populateOtaDeviceDropdown(); }
 }
 
 // ── MQTT Console ──────────────────────────────────────────────────
@@ -549,6 +599,43 @@ mqttSocket.on('device:paired', function(d) {
   if (token) loadMyDevices();
   showActivity('pairing devices...', 3000);
   showToast('Auto-paired ' + (d.mowerSn || '?') + ' + ' + (d.chargerSn || '?'), 'green');
+});
+mqttSocket.on('ota:event', function(evt) {
+  if (!evt) return;
+  var selDev = document.getElementById('otaDeviceSelect');
+  if (!selDev || !selDev.value) return;
+  // Filter by selected SN
+  if (evt.sn && evt.sn !== selDev.value) return;
+  var progressArea = document.getElementById('otaProgress');
+  var fill = document.getElementById('otaProgressFill');
+  var pctText = document.getElementById('otaPctText');
+  var statusText = document.getElementById('otaStatusText');
+  if (!progressArea || !fill) return;
+  progressArea.style.display = 'block';
+  var pct = typeof evt.progress === 'number' ? evt.progress : 0;
+  fill.style.width = pct + '%';
+  pctText.textContent = pct + '%';
+  // Determine status text from progress range
+  var label = 'Updating...';
+  if (evt.status === 'completed' || pct >= 100) {
+    label = 'Completed!';
+    fill.style.background = '#22c55e';
+    pctText.textContent = '100%';
+    fill.style.width = '100%';
+    showToast('OTA update completed for ' + (evt.sn || selDev.value), 'green');
+  } else if (evt.status === 'error' || evt.status === 'failed') {
+    label = 'Failed: ' + (evt.message || 'unknown error');
+    fill.style.background = '#ef4444';
+    pctText.style.color = '#ef4444';
+  } else if (pct <= 62) {
+    label = 'Downloading firmware... (' + pct + '%)';
+  } else if (pct <= 68) {
+    label = 'Unpacking firmware...';
+  } else {
+    label = 'Installing firmware...';
+  }
+  statusText.textContent = label;
+  statusText.style.color = (evt.status === 'error' || evt.status === 'failed') ? '#ef4444' : (evt.status === 'completed' || pct >= 100) ? '#22c55e' : '#aaa';
 });
 
 var _activityTimer = null;
@@ -1211,6 +1298,241 @@ async function deleteMap(sn, mapId, mapName) {
     loadMaps();
   } catch(e) {
     alert('Delete failed: ' + e.message);
+  }
+}
+
+// ── Firmware Tab ─────────────────────────────────────────────────
+var _fwVersions = [];
+var _fwDevices = [];
+
+async function loadFirmwareVersions() {
+  try {
+    var r = await fetch('/api/dashboard/ota/versions', { headers: { 'Authorization': token } });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    var d = await r.json();
+    _fwVersions = d.versions || d || [];
+    var tbody = document.getElementById('fwTableBody');
+    if (!_fwVersions.length) {
+      tbody.innerHTML = '<tr><td colspan="5" style="color:#666">No firmware versions found</td></tr>';
+      return;
+    }
+    var html = '';
+    for (var i = 0; i < _fwVersions.length; i++) {
+      var v = _fwVersions[i];
+      var devType = (v.device_type || v.deviceType || 'mower');
+      var md5 = (v.md5 || '').substring(0, 10);
+      var notes = truncate(v.release_notes || v.releaseNotes || '', 40);
+      html += '<tr>' +
+        '<td style="color:#fff;font-weight:600">' + (v.version || '?') + '</td>' +
+        '<td><span style="color:' + (devType === 'charger' ? '#f59e0b' : '#00d4aa') + '">' + devType + '</span></td>' +
+        '<td style="color:#888;font-family:monospace;font-size:11px">' + md5 + (v.md5 && v.md5.length > 10 ? '...' : '') + '</td>' +
+        '<td style="color:#aaa">' + notes + '</td>' +
+        '<td><button class="btn btn-sm btn-red" onclick="deleteFirmwareVersion(' + (v.id || v.ID) + ')">Delete</button></td>' +
+        '</tr>';
+    }
+    tbody.innerHTML = html;
+    // Also update version dropdown if a device is selected
+    onOtaDeviceChange();
+  } catch(e) {
+    document.getElementById('fwTableBody').innerHTML = '<tr><td colspan="5" style="color:#ef4444">Failed: ' + e.message + '</td></tr>';
+  }
+}
+
+async function deleteFirmwareVersion(id) {
+  var ok = await modalConfirm('Delete Firmware', 'Delete this firmware version? This cannot be undone.');
+  if (!ok) return;
+  try {
+    var r = await fetch('/api/dashboard/ota/versions/' + id, {
+      method: 'DELETE',
+      headers: { 'Authorization': token }
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    loadFirmwareVersions();
+    showToast('Firmware version deleted', 'green');
+  } catch(e) { modalAlert('Delete Failed', e.message); }
+}
+
+async function populateOtaDeviceDropdown() {
+  var sel = document.getElementById('otaDeviceSelect');
+  try {
+    var d = await api('/devices');
+    _fwDevices = d.devices || [];
+    var prev = sel.value;
+    sel.innerHTML = '<option value="">Select device...</option>';
+    for (var i = 0; i < _fwDevices.length; i++) {
+      var dev = _fwDevices[i];
+      var icon = dev.device_type === 'charger' ? '\\u26A1' : '\\uD83E\\uDD16';
+      var opt = document.createElement('option');
+      opt.value = dev.sn;
+      opt.textContent = icon + ' ' + dev.sn + (dev.is_online ? ' (online)' : ' (offline)');
+      opt.dataset.type = dev.device_type || 'mower';
+      sel.appendChild(opt);
+    }
+    if (prev && sel.querySelector('option[value="' + prev + '"]')) sel.value = prev;
+    onOtaDeviceChange();
+  } catch(e) { /* ignore */ }
+}
+
+function onOtaDeviceChange() {
+  var sel = document.getElementById('otaDeviceSelect');
+  var vSel = document.getElementById('otaVersionSelect');
+  var curDiv = document.getElementById('otaCurrentVersion');
+  vSel.innerHTML = '<option value="">Select version...</option>';
+  curDiv.textContent = '';
+
+  if (!sel.value) return;
+
+  // Determine device type
+  var opt = sel.options[sel.selectedIndex];
+  var devType = (opt.dataset && opt.dataset.type) || (sel.value.startsWith('LFIC') ? 'charger' : 'mower');
+
+  // Show current version from device list
+  var dev = _fwDevices.find(function(d) { return d.sn === sel.value; });
+  if (dev) {
+    var curVer = (dev.sensors && (dev.sensors.version || dev.sensors.sw_version)) || 'unknown';
+    curDiv.innerHTML = 'Current firmware: <span style="color:#fff;font-weight:600">' + curVer + '</span>' +
+      (dev.is_online ? ' <span class="on" style="font-size:11px">(online)</span>' : ' <span class="off" style="font-size:11px">(offline)</span>');
+  }
+
+  // Filter versions by device type
+  for (var i = 0; i < _fwVersions.length; i++) {
+    var v = _fwVersions[i];
+    var vType = (v.device_type || v.deviceType || 'mower');
+    if (vType !== devType) continue;
+    var o = document.createElement('option');
+    o.value = v.id || v.ID;
+    o.textContent = v.version + (v.release_notes || v.releaseNotes ? ' - ' + truncate(v.release_notes || v.releaseNotes, 30) : '');
+    vSel.appendChild(o);
+  }
+}
+
+async function startOtaUpdate() {
+  var sn = document.getElementById('otaDeviceSelect').value;
+  var versionId = document.getElementById('otaVersionSelect').value;
+  if (!sn) { modalAlert('No Device', 'Please select a device.'); return; }
+  if (!versionId) { modalAlert('No Version', 'Please select a firmware version.'); return; }
+
+  var vName = '';
+  for (var i = 0; i < _fwVersions.length; i++) {
+    if (String(_fwVersions[i].id || _fwVersions[i].ID) === String(versionId)) { vName = _fwVersions[i].version; break; }
+  }
+
+  var ok = await modalConfirm('Start OTA Update', 'Update <b>' + sn + '</b> to <b>' + (vName || 'selected version') + '</b>?<br><br>The device will reboot during the update.');
+  if (!ok) return;
+
+  // Reset progress UI
+  var progressArea = document.getElementById('otaProgress');
+  var fill = document.getElementById('otaProgressFill');
+  var pctText = document.getElementById('otaPctText');
+  var statusText = document.getElementById('otaStatusText');
+  progressArea.style.display = 'block';
+  fill.style.width = '0%';
+  fill.style.background = '#00d4aa';
+  pctText.textContent = '0%';
+  pctText.style.color = '#00d4aa';
+  statusText.textContent = 'Sending update command...';
+  statusText.style.color = '#aaa';
+
+  try {
+    var r = await fetch('/api/dashboard/ota/trigger/' + encodeURIComponent(sn), {
+      method: 'POST',
+      headers: { 'Authorization': token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ version_id: parseInt(versionId) })
+    });
+    if (!r.ok) {
+      var errData = await r.json().catch(function() { return {}; });
+      throw new Error(errData.error || errData.message || 'HTTP ' + r.status);
+    }
+    statusText.textContent = 'Update command sent. Waiting for device...';
+  } catch(e) {
+    statusText.textContent = 'Failed: ' + e.message;
+    statusText.style.color = '#ef4444';
+    fill.style.background = '#ef4444';
+  }
+}
+
+// ── Firmware Updates (Download from Cloud) ──────────────────────
+var _fwAvailable = [];
+
+async function checkFirmwareUpdates() {
+  var btn = document.getElementById('fwCheckBtn');
+  var status = document.getElementById('fwUpdateStatus');
+  var container = document.getElementById('fwUpdatesAvailable');
+  btn.disabled = true;
+  btn.textContent = 'Checking...';
+  status.textContent = '';
+  container.style.display = 'none';
+  container.innerHTML = '';
+  try {
+    var d = await api('/check-firmware-updates');
+    var available = (d.available || []).filter(function(fw) { return !fw.installed; });
+    _fwAvailable = d.available || [];
+    if (available.length === 0) {
+      status.textContent = 'All firmware up to date';
+      status.style.color = '#00d4aa';
+      container.style.display = 'none';
+    } else {
+      status.textContent = available.length + ' update(s) available';
+      status.style.color = '#f59e0b';
+      var html = '';
+      for (var i = 0; i < available.length; i++) {
+        var fw = available[i];
+        var typeColor = fw.device_type === 'charger' ? '#f59e0b' : '#00d4aa';
+        html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;' + (i > 0 ? 'border-top:1px solid rgba(255,255,255,.06)' : '') + '">' +
+          '<div>' +
+            '<span style="color:#fff;font-weight:600">' + fw.version + '</span>' +
+            ' <span style="color:' + typeColor + ';font-size:12px">' + fw.device_type + '</span>' +
+            (fw.description ? '<div style="font-size:11px;color:#888;margin-top:2px">' + fw.description + '</div>' : '') +
+          '</div>' +
+          '<button class="btn" style="padding:4px 12px;font-size:12px" onclick="downloadFirmwareByIdx(' + i + ')" id="fwDlBtn' + i + '">Download</button>' +
+        '</div>';
+      }
+      container.innerHTML = html;
+      container.style.display = 'block';
+    }
+    // Also show already-installed remote firmwares
+    var installed = (d.available || []).filter(function(fw) { return fw.installed; });
+    if (installed.length > 0 && available.length > 0) {
+      status.textContent += ' (' + installed.length + ' already installed)';
+    }
+  } catch(e) {
+    status.textContent = 'Failed: ' + e.message;
+    status.style.color = '#ef4444';
+  }
+  btn.disabled = false;
+  btn.textContent = 'Check for Updates';
+}
+
+function downloadFirmwareByIdx(idx) {
+  var available = _fwAvailable.filter(function(fw) { return !fw.installed; });
+  if (idx >= 0 && idx < available.length) downloadFirmware(available[idx], idx);
+}
+
+async function downloadFirmware(fw, btnIdx) {
+  var btn = document.getElementById('fwDlBtn' + btnIdx);
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Downloading...';
+    btn.style.opacity = '0.6';
+  }
+  try {
+    var d = await api('/download-firmware', 'POST', {
+      url: fw.url,
+      filename: fw.filename,
+      version: fw.version,
+      device_type: fw.device_type,
+      md5: fw.md5,
+      description: fw.description || ''
+    });
+    if (d.ok) {
+      showToast('Firmware ' + fw.version + ' downloaded (' + ((d.size || 0) / 1024 / 1024).toFixed(1) + ' MB)', 'green');
+      if (btn) { btn.textContent = 'Installed'; btn.style.color = '#00d4aa'; }
+      loadFirmwareVersions();
+      checkFirmwareUpdates();
+    }
+  } catch(e) {
+    modalAlert('Download Failed', e.message);
+    if (btn) { btn.disabled = false; btn.textContent = 'Download'; btn.style.opacity = '1'; }
   }
 }
 

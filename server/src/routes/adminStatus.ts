@@ -10,12 +10,15 @@ import crypto from 'crypto';
 import path from 'path';
 import { execSync } from 'child_process';
 import { db } from '../db/database.js';
-import { userRepo, equipmentRepo, deviceRepo, mapRepo } from '../db/repositories/index.js';
+import { userRepo, equipmentRepo, deviceRepo, mapRepo, otaVersionRepo } from '../db/repositories/index.js';
 import { AuthRequest } from '../types/index.js';
 import { invalidateSetupCache } from '../middleware/setupGuard.js';
 import { parseMapZip, polygonArea } from '../mqtt/mapConverter.js';
 import { v4 as uuidv4 } from 'uuid';
 import multer from 'multer';
+import https from 'https';
+
+const MANIFEST_URL = 'https://download.ramonvanbruggen.nl/file/opennova-manifest.json';
 
 export const adminStatusRouter = Router();
 
@@ -431,6 +434,162 @@ adminStatusRouter.post('/import-map-zip', upload.single('file'), (req: AuthReque
     res.status(500).json({ error: err instanceof Error ? err.message : 'Import failed' });
   }
 });
+
+// GET /api/admin-status/check-firmware-updates — compare remote manifest with local versions
+adminStatusRouter.get('/check-firmware-updates', async (_req: AuthRequest, res: Response) => {
+  try {
+    const manifest = await fetchJson(MANIFEST_URL) as { firmwares?: Array<{ version: string; device_type: string; url: string; md5: string; description: string; filename?: string }> };
+    const remoteFirmwares = manifest.firmwares || [];
+
+    // Get locally installed versions
+    const localVersions = otaVersionRepo.listAll();
+    const localVersionSet = new Set(localVersions.map(v => v.version));
+
+    const available = remoteFirmwares.map(fw => ({
+      ...fw,
+      filename: fw.filename || fw.url.split('/').pop() || `firmware_${fw.version}`,
+      installed: localVersionSet.has(fw.version),
+    }));
+
+    res.json({
+      available,
+      installed: localVersions.map(v => ({ version: v.version, device_type: v.device_type, md5: v.md5 })),
+    });
+  } catch (err) {
+    console.error('[Admin] Failed to check firmware updates:', err);
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Failed to fetch manifest' });
+  }
+});
+
+// POST /api/admin-status/download-firmware — download firmware from remote URL and register locally
+adminStatusRouter.post('/download-firmware', async (req: AuthRequest, res: Response) => {
+  const { url, filename, version, device_type, md5, description } = req.body as {
+    url?: string; filename?: string; version?: string; device_type?: string; md5?: string; description?: string;
+  };
+
+  if (!url || !filename || !version || !device_type) {
+    res.status(400).json({ error: 'url, filename, version, and device_type are required' });
+    return;
+  }
+
+  // Resolve firmware directory (same as dashboard.ts)
+  const firmwareDir = process.env.FIRMWARE_PATH ?? path.resolve(process.cwd(), 'firmware');
+  fs.mkdirSync(firmwareDir, { recursive: true });
+
+  const filePath = path.join(firmwareDir, filename);
+
+  try {
+    console.log(`[Admin] Downloading firmware ${version} from ${url}...`);
+
+    // Download the file
+    await downloadFile(url, filePath);
+
+    // Verify MD5
+    const fileBuffer = fs.readFileSync(filePath);
+    const fileMd5 = crypto.createHash('md5').update(fileBuffer).digest('hex');
+
+    if (md5 && fileMd5 !== md5) {
+      // Clean up failed download
+      try { fs.unlinkSync(filePath); } catch { /* ignore */ }
+      res.status(400).json({ error: `MD5 mismatch: expected ${md5}, got ${fileMd5}` });
+      return;
+    }
+
+    // Build local download URL for OTA
+    const targetIp = process.env.TARGET_IP ?? getLocalIp();
+    const port = process.env.PORT ?? '3000';
+    const localUrl = `http://${targetIp}:${port}/api/dashboard/firmware/${encodeURIComponent(filename)}`;
+
+    // Write companion JSON metadata
+    const metaPath = filePath.replace(/\.(deb|bin)$/, '.json');
+    fs.writeFileSync(metaPath, JSON.stringify({
+      version,
+      device_type,
+      filename,
+      md5: fileMd5,
+      description: description || '',
+    }, null, 2));
+
+    // syncFirmwareVersions() will pick it up via file watcher, but also create/update directly
+    const existing = otaVersionRepo.listAll().find(v => v.version === version && v.device_type === device_type);
+    if (existing) {
+      otaVersionRepo.updateById(existing.id, {
+        download_url: localUrl,
+        md5: fileMd5,
+        release_notes: description || existing.release_notes,
+      });
+    } else {
+      otaVersionRepo.create({
+        version,
+        device_type,
+        download_url: localUrl,
+        md5: fileMd5,
+        release_notes: description || null,
+      });
+    }
+
+    console.log(`[Admin] Firmware ${version} downloaded and registered (${(fileBuffer.length / 1024 / 1024).toFixed(1)} MB)`);
+    res.json({ ok: true, version, localPath: filePath, md5: fileMd5, size: fileBuffer.length });
+  } catch (err) {
+    // Clean up on error
+    try { fs.unlinkSync(filePath); } catch { /* ignore */ }
+    console.error('[Admin] Firmware download failed:', err);
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Download failed' });
+  }
+});
+
+/** Fetch JSON from an HTTPS URL */
+function fetchJson(url: string): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    https.get(url, { rejectUnauthorized: true }, (resp) => {
+      if (resp.statusCode && resp.statusCode >= 300 && resp.statusCode < 400 && resp.headers.location) {
+        // Follow redirect
+        fetchJson(resp.headers.location).then(resolve, reject);
+        return;
+      }
+      if (resp.statusCode !== 200) {
+        reject(new Error(`HTTP ${resp.statusCode} from ${url}`));
+        resp.resume();
+        return;
+      }
+      let data = '';
+      resp.on('data', (chunk: Buffer) => { data += chunk.toString(); });
+      resp.on('end', () => {
+        try { resolve(JSON.parse(data)); } catch (e) { reject(e); }
+      });
+      resp.on('error', reject);
+    }).on('error', reject);
+  });
+}
+
+/** Download a file from HTTPS URL to local path */
+function downloadFile(url: string, destPath: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const mod = url.startsWith('https') ? https : require('http');
+    mod.get(url, { rejectUnauthorized: true }, (resp: any) => {
+      if (resp.statusCode && resp.statusCode >= 300 && resp.statusCode < 400 && resp.headers.location) {
+        downloadFile(resp.headers.location, destPath).then(resolve, reject);
+        return;
+      }
+      if (resp.statusCode !== 200) {
+        reject(new Error(`HTTP ${resp.statusCode} downloading firmware`));
+        resp.resume();
+        return;
+      }
+      const fileStream = fs.createWriteStream(destPath);
+      resp.pipe(fileStream);
+      fileStream.on('finish', () => { fileStream.close(); resolve(); });
+      fileStream.on('error', (err: Error) => {
+        try { fs.unlinkSync(destPath); } catch { /* ignore */ }
+        reject(err);
+      });
+      resp.on('error', (err: Error) => {
+        try { fs.unlinkSync(destPath); } catch { /* ignore */ }
+        reject(err);
+      });
+    }).on('error', reject);
+  });
+}
 
 // POST /api/admin-status/factory-reset — wipe all user data and return to setup
 adminStatusRouter.post('/factory-reset', (_req: AuthRequest, res: Response) => {
