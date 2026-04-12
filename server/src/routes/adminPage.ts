@@ -82,6 +82,8 @@ export function adminPageHtml(): string {
     .btn{font-size:11px;padding:6px 10px}
     .login-box{margin:40px auto}
     .hide-mobile{display:none!important}
+    .tabs{flex-wrap:wrap}
+    .tab{padding:6px 12px;font-size:12px}
   }
   #app{display:none}
   .refresh-btn{float:right;cursor:pointer;color:#666;font-size:12px}
@@ -799,13 +801,13 @@ function devRow(dev) {
     actions = '<button class="btn btn-sm btn-green" onclick="bindDevice(\\'' + dev.sn + '\\')">Bind</button> ' +
       '<button class="btn btn-sm btn-red" onclick="removeDevice(\\'' + dev.sn + '\\')">Remove</button>';
   }
-  return '<div style="display:grid;grid-template-columns:90px 160px 140px 80px 70px auto;align-items:center;gap:8px;padding:8px 4px;border-bottom:1px solid rgba(255,255,255,.04)">' +
-    '<span style="color:' + typeColor + ';font-size:13px;white-space:nowrap">' + icon + ' ' + typeName + '</span>' +
-    '<div><span class="sn" style="font-size:12px">' + (dev.sn || '-') + '</span></div>' +
-    '<div style="text-align:right">' + (fw ? '<span style="font-size:11px;color:#888">' + fw + '</span>' : '') + '</div>' +
-    '<div style="text-align:center">' + fwBadge + '</div>' +
-    '<div style="text-align:center;white-space:nowrap">' + dot(online) + (online ? '<span class="on" style="font-size:11px">Online</span>' : '<span class="off" style="font-size:11px">Offline</span>') + '</div>' +
-    '<div style="text-align:right;white-space:nowrap">' + actions + '</div>' +
+  return '<div style="display:flex;align-items:center;gap:8px;padding:8px 4px;border-bottom:1px solid rgba(255,255,255,.04);flex-wrap:wrap">' +
+    '<span style="color:' + typeColor + ';font-size:13px;white-space:nowrap;min-width:80px">' + icon + ' ' + typeName + '</span>' +
+    '<span class="sn" style="font-size:12px">' + (dev.sn || '-') + '</span>' +
+    (fw ? '<span style="font-size:11px;color:#888">' + fw + '</span>' : '') +
+    fwBadge +
+    '<span style="margin-left:auto;white-space:nowrap">' + dot(online) + (online ? '<span class="on" style="font-size:11px">Online</span>' : '<span class="off" style="font-size:11px">Offline</span>') + '</span>' +
+    '<span style="white-space:nowrap">' + actions + '</span>' +
     '</div>';
 }
 
