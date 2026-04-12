@@ -33,9 +33,15 @@ function generateCsvFromDb(sn: string, fileName: string): string | null {
 
   let mapRow: MapRow | undefined;
 
-  // First try: find by map_name (cloud import stores original filenames)
+  // First try: find by file_name or map_name
   const allMaps = mapRepo.findWithAreaOrderByMapId(sn);
-  mapRow = allMaps.find(m => m.map_name === baseName || m.map_name === fileName || m.file_name === fileName);
+  mapRow = allMaps.find(m =>
+    m.file_name === fileName ||
+    m.map_name === baseName ||
+    m.map_name === fileName ||
+    // Fallback: match file_name without .csv extension
+    (m.file_name && m.file_name.replace('.csv', '') === baseName)
+  );
 
   // Fallback: find by index (mower-uploaded maps)
   if (!mapRow) {
@@ -147,18 +153,25 @@ mapRouter.get('/queryEquipmentMap', authMiddleware, (req: AuthRequest, res: Resp
   // Bouw work items met geneste obstacles
   // Gebruik map_name uit DB als filename (cloud import slaat originele naam op).
   // Fallback naar firmware conventie als map_name ontbreekt.
+  // file_name kan een ZIP zijn (van maaier upload) — gebruik alleen CSV bestandsnamen
+  function csvFileNameFromRecord(m: MapRow, fallback: string): string {
+    if (m.file_name && !m.file_name.endsWith('.zip')) return m.file_name;
+    return fallback;
+  }
+
   const work = workMaps.map((wm, idx) => {
-    const workFileName = wm.file_name ?? csvFileName(wm.map_name, `map${idx}_work`);
+    const workFileName = csvFileNameFromRecord(wm, `map${idx}_work.csv`);
 
     // Zoek obstakels die bij dit werkgebied horen
     // Match op file_name of map_name containing the map index
     const relatedObs = obstacleMaps
       .filter(om => {
-        const fn = om.file_name ?? om.map_name ?? '';
-        return fn.startsWith(`map${idx}_`) || fn.includes(`obstacle`);
+        // Skip ZIP filenames — gebruik CSV filename of map_name voor matching
+        const fn = (om.file_name && !om.file_name.endsWith('.zip')) ? om.file_name : (om.map_name ?? '');
+        return fn.startsWith(`map${idx}_`) || fn.includes(`obstacle_${idx}`) || fn.includes(`${idx}_obstacle`);
       })
       .map((om, obsIdx) => {
-        const obsFileName = om.file_name ?? csvFileName(om.map_name, `map${idx}_${obsIdx}_obstacle`);
+        const obsFileName = csvFileNameFromRecord(om, `map${idx}_${obsIdx}_obstacle.csv`);
         return {
           fileName: obsFileName,
           alias: om.map_name ?? `obstacle_${idx}`,
@@ -183,7 +196,7 @@ mapRouter.get('/queryEquipmentMap', authMiddleware, (req: AuthRequest, res: Resp
 
   // Bouw unicom items — file_name = echte bestandsnaam, map_name = alias
   const unicom = unicomMaps.map((um, idx) => {
-    const unicomFileName = um.file_name ?? csvFileName(um.map_name, `map${idx}tocharge_unicom`);
+    const unicomFileName = csvFileNameFromRecord(um, `map${idx}tocharge_unicom.csv`);
     return {
       fileName: unicomFileName,
       alias: um.map_name ?? `Channel ${idx + 1}`,
@@ -571,11 +584,9 @@ mapRouter.post('/uploadEquipmentMap', upload.any(), (req: Request, res: Response
       const existingMaps = mapRepo.findWithArea(sn);
 
       if (existingMaps.length > 0) {
-        // Maps bestaan al — maaier stuurt onze eigen ZIP terug. Alleen file_name bijwerken.
-        for (const em of existingMaps) {
-          mapRepo.updateFileName(em.map_id, finalFileName);
-        }
-        console.log(`[MAP] uploadEquipmentMap: ${existingMaps.length} bestaande maps bijgewerkt voor ${sn} (geen duplicaten)`);
+        // Maps bestaan al — maaier stuurt zijn ZIP terug. NIET file_name overschrijven
+        // met ZIP naam, anders breken de CSV download URLs in queryEquipmentMap.
+        console.log(`[MAP] uploadEquipmentMap: ${existingMaps.length} bestaande maps voor ${sn}, skip file_name update`);
       } else {
         // Geen bestaande maps — sla elk werkgebied op (lokale coördinaten direct uit CSV)
         for (const area of parsed.areas) {

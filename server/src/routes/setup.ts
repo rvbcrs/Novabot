@@ -394,7 +394,7 @@ setupRouter.post('/cloud-apply', async (req: Request, res: Response) => {
                 for (const m of importedMaps) {
                   if (!m.map_area) continue;
                   const pts = JSON.parse(m.map_area) as Array<{ x: number; y: number }>;
-                  const csvName = m.file_name ?? (m.map_name + '.csv');
+                  const csvName = (m.file_name && !m.file_name.endsWith('.zip')) ? m.file_name : (m.map_name + '.csv');
                   fs.writeFileSync(path.join(csvDir, csvName), pts.map(p => `${p.x.toFixed(2)},${p.y.toFixed(2)}`).join('\n') + '\n');
                   if (m.map_type === 'work') {
                     // Shoelace area
