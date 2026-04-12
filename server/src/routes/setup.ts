@@ -284,6 +284,9 @@ setupRouter.post('/cloud-apply', async (req: Request, res: Response) => {
             const unicomItems = (mapData.unicom ?? []) as Array<Record<string, unknown>>;
             console.log(`[Setup] Cloud maps: ${workItems.length} work, ${unicomItems.length} unicom for ${mower.sn}`);
 
+            // Wis bestaande maps om duplicaten te voorkomen bij re-import
+            mapRepo.deleteByMowerSn(mower.sn);
+
             // Download each map CSV from cloud and store in DB
             // Flatten: work items + their nested obstacles + unicom items
             const { v4: uuidv4 } = await import('uuid');
@@ -331,10 +334,11 @@ setupRouter.post('/cloud-apply', async (req: Request, res: Response) => {
 
                     if (points.length >= 2) {
                       const mapId = uuidv4();
+                      const alias = (item.alias as string | undefined) ?? fileName.replace('.csv', '');
                       mapRepo.upsert({
                         map_id: mapId,
                         mower_sn: mower.sn,
-                        map_name: fileName.replace('.csv', ''),
+                        map_name: alias,
                         map_area: JSON.stringify(points),
                         file_name: fileName,
                         file_size: csvData.length,

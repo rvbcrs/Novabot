@@ -1305,10 +1305,10 @@ else
     echo "  run_novabot.sh: open_decision hook al aanwezig — overslaan"
 fi
 
-# === Stap 5k: Open mqtt_node (mqtt_bridge.py) bundelen ===
-echo "[5k/9] Open mqtt_node bundelen..."
+# === Stap 5k: Open mqtt_node (mqtt_bridge.py) — DISABLED, niet production ready ===
+echo "[5k/9] Open mqtt_node — OVERGESLAGEN (niet production ready)"
 
-MQTT_BRIDGE_SRC="$SCRIPT_DIR/../open_node/mqtt_bridge.py"
+MQTT_BRIDGE_SRC=""  # Disabled
 if [ -f "$MQTT_BRIDGE_SRC" ]; then
     mkdir -p "$NOVABOT_ROOT/scripts"
     cp "$MQTT_BRIDGE_SRC" "$NOVABOT_ROOT/scripts/mqtt_bridge.py"
