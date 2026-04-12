@@ -148,17 +148,17 @@ mapRouter.get('/queryEquipmentMap', authMiddleware, (req: AuthRequest, res: Resp
   // Gebruik map_name uit DB als filename (cloud import slaat originele naam op).
   // Fallback naar firmware conventie als map_name ontbreekt.
   const work = workMaps.map((wm, idx) => {
-    const workFileName = csvFileName(wm.map_name, `map${idx}_work`);
+    const workFileName = wm.file_name ?? csvFileName(wm.map_name, `map${idx}_work`);
 
     // Zoek obstakels die bij dit werkgebied horen
-    // Match op map_name containing the map index OR the obstacle pattern
+    // Match op file_name of map_name containing the map index
     const relatedObs = obstacleMaps
       .filter(om => {
-        const name = om.map_name ?? '';
-        return name.startsWith(`map${idx}_`) || name.includes(`obstacle_${idx}`);
+        const fn = om.file_name ?? om.map_name ?? '';
+        return fn.startsWith(`map${idx}_`) || fn.includes(`obstacle`);
       })
       .map((om, obsIdx) => {
-        const obsFileName = csvFileName(om.map_name, `map${idx}_${obsIdx}_obstacle`);
+        const obsFileName = om.file_name ?? csvFileName(om.map_name, `map${idx}_${obsIdx}_obstacle`);
         return {
           fileName: obsFileName,
           alias: om.map_name ?? `obstacle_${idx}`,
@@ -181,9 +181,9 @@ mapRouter.get('/queryEquipmentMap', authMiddleware, (req: AuthRequest, res: Resp
     };
   });
 
-  // Bouw unicom items — gebruik originele map_name als filename
+  // Bouw unicom items — file_name = echte bestandsnaam, map_name = alias
   const unicom = unicomMaps.map((um, idx) => {
-    const unicomFileName = csvFileName(um.map_name, `map${idx}tocharge_unicom`);
+    const unicomFileName = um.file_name ?? csvFileName(um.map_name, `map${idx}tocharge_unicom`);
     return {
       fileName: unicomFileName,
       alias: um.map_name ?? `Channel ${idx + 1}`,
