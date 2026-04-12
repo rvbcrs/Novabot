@@ -1622,9 +1622,10 @@ cd "$SCRIPT_DIR"
 
 # Maak DEBIAN/control
 mkdir -p "$WORK_DIR/DEBIAN"
+DEB_VERSION="${VERSION#v}"  # Strip 'v' prefix — dpkg requires version starting with digit
 cat > "$WORK_DIR/DEBIAN/control" << CTRL
 Package: mvp
-Version: ${VERSION}
+Version: ${DEB_VERSION}
 Architecture: arm64
 Maintainer: Novabot Custom
 Description: Novabot mower firmware ${VERSION}

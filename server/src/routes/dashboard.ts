@@ -2657,8 +2657,17 @@ dashboardRouter.post('/ota/trigger/:sn', (req: Request, res: Response) => {
         version: otaVersion.version,
       },
     };
-    publishToDevice(sn, otaCommand);
-    console.log(`\x1b[38;5;208m[OTA] Encrypted ota_upgrade_cmd naar charger ${sn}\x1b[0m`);
+    // Charger v0.3.6 has NO AES — send plaintext. v0.4.0+ has AES.
+    const chargerVersion = fwVersion || '';
+    const chargerNeedsPlain = !chargerVersion.includes('0.4') && !chargerVersion.includes('0.5');
+    if (chargerNeedsPlain) {
+      const topic = `Dart/Send_mqtt/${sn}`;
+      publishToTopic(topic, otaCommand);
+      console.log(`\x1b[38;5;208m[OTA] PLAIN ota_upgrade_cmd naar charger ${sn} (${chargerVersion || 'unknown version'})\x1b[0m`);
+    } else {
+      publishToDevice(sn, otaCommand);
+      console.log(`\x1b[38;5;208m[OTA] Encrypted ota_upgrade_cmd naar charger ${sn}\x1b[0m`);
+    }
   } else {
     const mowerOtaCommand = {
       ota_upgrade_cmd: {
