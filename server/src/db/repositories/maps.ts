@@ -66,10 +66,10 @@ export class MapRepository {
   );
   private _findWithArea = db.prepare('SELECT * FROM maps WHERE mower_sn = ? AND map_area IS NOT NULL ORDER BY updated_at DESC');
   private _findWithAreaOrderByMapId = db.prepare(
-    'SELECT * FROM maps WHERE mower_sn = ? AND map_area IS NOT NULL ORDER BY map_id'
+    'SELECT * FROM maps WHERE mower_sn = ? AND map_area IS NOT NULL ORDER BY COALESCE(file_name, map_name), map_id'
   );
   private _findByMowerSnAndTypeWithArea = db.prepare(
-    'SELECT * FROM maps WHERE mower_sn = ? AND map_type = ? AND map_area IS NOT NULL ORDER BY map_id'
+    'SELECT * FROM maps WHERE mower_sn = ? AND map_type = ? AND map_area IS NOT NULL ORDER BY COALESCE(file_name, map_name), map_id'
   );
   private _listAll = db.prepare('SELECT * FROM maps ORDER BY updated_at DESC');
 

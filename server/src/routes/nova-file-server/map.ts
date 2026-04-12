@@ -163,12 +163,13 @@ mapRouter.get('/queryEquipmentMap', authMiddleware, (req: AuthRequest, res: Resp
     const workFileName = csvFileNameFromRecord(wm, `map${idx}_work.csv`);
 
     // Zoek obstakels die bij dit werkgebied horen
-    // Match op file_name of map_name containing the map index
+    // De work file_name bevat de map index: map0_work.csv → index 0
+    // Obstacles: map0_0_obstacle.csv, map0_1_obstacle.csv → prefix "map0_"
+    const workIndex = workFileName.match(/^map(\d+)_/)?.[1] ?? String(idx);
     const relatedObs = obstacleMaps
       .filter(om => {
-        // Skip ZIP filenames — gebruik CSV filename of map_name voor matching
         const fn = (om.file_name && !om.file_name.endsWith('.zip')) ? om.file_name : (om.map_name ?? '');
-        return fn.startsWith(`map${idx}_`) || fn.includes(`obstacle_${idx}`) || fn.includes(`${idx}_obstacle`);
+        return fn.startsWith(`map${workIndex}_`);
       })
       .map((om, obsIdx) => {
         const obsFileName = csvFileNameFromRecord(om, `map${idx}_${obsIdx}_obstacle.csv`);
@@ -194,17 +195,17 @@ mapRouter.get('/queryEquipmentMap', authMiddleware, (req: AuthRequest, res: Resp
     };
   });
 
-  // Bouw unicom items — file_name = echte bestandsnaam, map_name = alias
+  // Bouw unicom items — match cloud format: mapArea=null, obstacle=null
   const unicom = unicomMaps.map((um, idx) => {
     const unicomFileName = csvFileNameFromRecord(um, `map${idx}tocharge_unicom.csv`);
     return {
       fileName: unicomFileName,
+      fileHash: crypto.createHash('md5').update(um.map_id).digest('hex'),
       alias: um.map_name ?? `Channel ${idx + 1}`,
       type: 'unicom',
       url: mapFileUrl(unicomFileName),
-      fileHash: crypto.createHash('md5').update(um.map_id).digest('hex'),
-      mapArea: calcPolygonAreaM2(um.map_area),
-      obstacle: [],
+      mapArea: null,
+      obstacle: null,
     };
   });
 
