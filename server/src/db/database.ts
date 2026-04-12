@@ -345,6 +345,10 @@ export function initDb(): void {
   try { db.exec(`ALTER TABLE equipment ADD COLUMN is_opennova INTEGER DEFAULT 0`); }
   catch { /* kolom bestaat al */ }
 
+  // Active device selection (multi-mower support)
+  try { db.exec(`ALTER TABLE equipment ADD COLUMN is_active INTEGER DEFAULT 0`); }
+  catch { /* kolom bestaat al */ }
+
   // Feature: alternerende maairichting per schema
   for (const col of ['alternate_direction INTEGER DEFAULT 0', 'alternate_step INTEGER DEFAULT 90']) {
     try { db.exec(`ALTER TABLE dashboard_schedules ADD COLUMN ${col}`); }

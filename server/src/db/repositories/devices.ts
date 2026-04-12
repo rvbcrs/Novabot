@@ -141,7 +141,8 @@ export class DeviceRepository {
            CASE WHEN d.sn LIKE 'LFIN%' THEN e.mower_version
                 WHEN d.sn LIKE 'LFIC%' THEN e.charger_version
                 ELSE NULL END as firmware_version,
-           COALESCE(e.is_opennova, 0) as is_opennova
+           COALESCE(e.is_opennova, 0) as is_opennova,
+           COALESCE(e.is_active, 0) as is_active
     FROM device_registry d
     LEFT JOIN equipment e ON (e.mower_sn = d.sn OR e.charger_sn = d.sn)
     LEFT JOIN device_factory f ON f.sn = d.sn

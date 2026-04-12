@@ -2438,6 +2438,13 @@ interface OtaVersionRow {
   created_at: string;
 }
 
+// POST /api/dashboard/ota/sync — forceer firmware directory sync
+dashboardRouter.post('/ota/sync', (_req: Request, res: Response) => {
+  syncFirmwareVersions();
+  const rows = otaVersionRepo.listAll() as OtaVersionRow[];
+  res.json({ ok: true, synced: rows.length });
+});
+
 // GET /api/dashboard/ota/versions — lijst alle OTA versies
 dashboardRouter.get('/ota/versions', (_req: Request, res: Response) => {
   const rows = otaVersionRepo.listAll() as OtaVersionRow[];
@@ -2554,11 +2561,12 @@ dashboardRouter.delete('/ota/versions/:id', (req: Request, res: Response) => {
     // Extract filename from download URL and delete the file
     const filename = version.download_url.split('/').pop();
     if (filename) {
-      const firmwarePath = path.resolve(process.env.FIRMWARE_PATH ?? process.env.STORAGE_PATH ?? './storage', 'firmware');
+      const firmwarePath = path.resolve(process.env.FIRMWARE_PATH ?? path.join(process.env.STORAGE_PATH ?? './storage', 'firmware'));
       const filePath = path.join(firmwarePath, filename);
-      try { fs.unlinkSync(filePath); } catch { /* file may not exist */ }
-      // Also delete companion .json metadata file
-      try { fs.unlinkSync(filePath.replace(/\.(deb|bin)$/, '.json')); } catch {}
+      console.log(`[OTA] Deleting firmware file: ${filePath}`);
+      try { fs.unlinkSync(filePath); console.log(`[OTA] Deleted: ${filePath}`); } catch (e) { console.warn(`[OTA] Failed to delete ${filePath}:`, (e as Error).message); }
+      const jsonPath = filePath.replace(/\.(deb|bin)$/, '.json');
+      try { fs.unlinkSync(jsonPath); console.log(`[OTA] Deleted: ${jsonPath}`); } catch (e) { console.warn(`[OTA] Failed to delete ${jsonPath}:`, (e as Error).message); }
     }
   }
   otaVersionRepo.deleteById(id);

@@ -142,6 +142,25 @@ adminStatusRouter.post('/unbind-device', (_req: AuthRequest, res: Response) => {
   res.json({ ok: true });
 });
 
+// POST /api/admin-status/set-active-device — set which mower is active (shown in Novabot app)
+adminStatusRouter.post('/set-active-device', (_req: AuthRequest, res: Response) => {
+  const { sn } = _req.body as { sn?: string };
+  if (!sn) { res.status(400).json({ error: 'sn required' }); return; }
+
+  // Clear all is_active flags first, then set the selected one
+  db.exec('UPDATE equipment SET is_active = 0');
+  const eq = equipmentRepo.findBySn(sn);
+  if (eq) {
+    db.prepare('UPDATE equipment SET is_active = 1 WHERE equipment_id = ?').run(eq.equipment_id);
+    // Also set the paired charger as active
+    if (eq.charger_sn) {
+      db.prepare('UPDATE equipment SET is_active = 1 WHERE charger_sn = ? AND equipment_id = ?').run(eq.charger_sn, eq.equipment_id);
+    }
+  }
+  console.log('[Admin] Active device set to ' + sn);
+  res.json({ ok: true });
+});
+
 // POST /api/admin-status/pair-devices — pair mower with charger in equipment table
 adminStatusRouter.post('/pair-devices', (_req: AuthRequest, res: Response) => {
   const { mowerSn, chargerSn } = _req.body as { mowerSn?: string; chargerSn?: string };

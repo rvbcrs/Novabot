@@ -61,7 +61,17 @@ function rowToCloudDto(r: EquipmentRow, email: string) {
 // POST /api/nova-user/equipment/userEquipmentList
 // App stuurt: { appUserId, pageSize, pageNo }
 equipmentRouter.post('/userEquipmentList', authMiddleware, (req: AuthRequest, res: Response) => {
-  const rows = equipmentRepo.findByUserId(req.userId!) as EquipmentRow[];
+  let rows = equipmentRepo.findByUserId(req.userId!) as EquipmentRow[];
+
+  // Multi-device filter: als er een is_active device is, toon alleen die.
+  // Als er maar 1 mower is, toon altijd (geen filter nodig).
+  const mowerRows = rows.filter(r => r.mower_sn?.startsWith('LFIN'));
+  if (mowerRows.length > 1) {
+    const activeRows = rows.filter(r => (r as any).is_active);
+    if (activeRows.length > 0) {
+      rows = activeRows;
+    }
+  }
 
   const email = req.email ?? '';
   // Tel het werkelijke aantal entries (1 per device, niet per equipment row)

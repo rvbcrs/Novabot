@@ -99,9 +99,11 @@ export function adminPageHtml(): string {
   <div class="card" style="text-align:center;padding:32px">
     <h1 style="margin-bottom:16px">OpenNova Admin</h1>
     <p style="color:#666;font-size:13px;margin-bottom:24px">Login with your OpenNova account</p>
-    <input id="email" type="email" placeholder="Email" style="margin-bottom:10px"><br>
-    <input id="pass" type="password" placeholder="Password" style="margin-bottom:16px"><br>
-    <button class="btn btn-purple" style="width:100%;padding:12px" onclick="doLogin()">Login</button>
+    <form onsubmit="event.preventDefault(); doLogin();">
+      <input id="email" type="email" placeholder="Email" style="margin-bottom:10px"><br>
+      <input id="pass" type="password" placeholder="Password" style="margin-bottom:16px"><br>
+      <button type="submit" class="btn btn-purple" style="width:100%;padding:12px">Login</button>
+    </form>
     <p id="loginErr" style="color:#ef4444;font-size:12px;margin-top:10px"></p>
   </div>
 </div>
@@ -235,7 +237,7 @@ export function adminPageHtml(): string {
         </div>
         <div id="fwUpdatesAvailable" style="margin-top:8px;display:none"></div>
       </div>
-      <h2>Available Firmware <span class="refresh-btn" onclick="loadFirmwareVersions()">&#x21BB;</span></h2>
+      <h2>Available Firmware <span class="refresh-btn" onclick="syncAndLoadFirmware()">&#x21BB;</span></h2>
       <div class="table-wrap">
         <table id="fwTable">
           <thead><tr><th>Version</th><th>Device</th><th>MD5</th><th>Notes</th><th></th></tr></thead>
@@ -781,19 +783,28 @@ function devRow(dev) {
       fwBadge = '<span style="font-size:9px;background:rgba(245,158,11,.15);color:#f59e0b;padding:1px 6px;border-radius:3px;font-weight:600">Stock</span>';
     }
   }
+  var activeBadge = '';
+  if (!isCharger && dev.is_active) {
+    activeBadge = '<span style="font-size:9px;background:rgba(124,58,237,.2);color:#a78bfa;padding:1px 6px;border-radius:3px;font-weight:600;margin-left:4px">Active</span>';
+  }
   let actions = '';
   if (bound) {
-    actions = '<button class="btn btn-sm" style="background:#374151;color:#aaa" onclick="unbindDevice(\\'' + dev.sn + '\\')">Unbind</button>';
+    if (!isCharger) {
+      actions += dev.is_active
+        ? '<span style="font-size:11px;color:#a78bfa;margin-right:6px">Active</span>'
+        : '<button class="btn btn-sm" style="background:rgba(124,58,237,.2);color:#a78bfa;border:1px solid rgba(124,58,237,.3);font-size:11px;padding:2px 8px" onclick="setActiveDevice(\\'' + dev.sn + '\\')">Set Active</button> ';
+    }
+    actions += '<button class="btn btn-sm" style="background:#374151;color:#aaa" onclick="unbindDevice(\\'' + dev.sn + '\\')">Unbind</button>';
   } else {
     actions = '<button class="btn btn-sm btn-green" onclick="bindDevice(\\'' + dev.sn + '\\')">Bind</button> ' +
       '<button class="btn btn-sm btn-red" onclick="removeDevice(\\'' + dev.sn + '\\')">Remove</button>';
   }
-  return '<div style="display:grid;grid-template-columns:90px 1fr 100px 80px 60px auto;align-items:center;gap:6px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.04)">' +
-    '<span style="color:' + typeColor + ';font-size:13px">' + icon + ' ' + typeName + '</span>' +
-    '<div><span class="sn">' + (dev.sn || '-') + '</span></div>' +
-    '<div style="text-align:center">' + (fw ? '<span style="font-size:11px;color:#888">' + fw + '</span>' : '') + '</div>' +
+  return '<div style="display:grid;grid-template-columns:90px 160px 140px 80px 70px auto;align-items:center;gap:8px;padding:8px 4px;border-bottom:1px solid rgba(255,255,255,.04)">' +
+    '<span style="color:' + typeColor + ';font-size:13px;white-space:nowrap">' + icon + ' ' + typeName + '</span>' +
+    '<div><span class="sn" style="font-size:12px">' + (dev.sn || '-') + '</span></div>' +
+    '<div style="text-align:right">' + (fw ? '<span style="font-size:11px;color:#888">' + fw + '</span>' : '') + '</div>' +
     '<div style="text-align:center">' + fwBadge + '</div>' +
-    '<div>' + dot(online) + (online ? '<span class="on" style="font-size:11px">Online</span>' : '<span class="off" style="font-size:11px">Offline</span>') + '</div>' +
+    '<div style="text-align:center;white-space:nowrap">' + dot(online) + (online ? '<span class="on" style="font-size:11px">Online</span>' : '<span class="off" style="font-size:11px">Offline</span>') + '</div>' +
     '<div style="text-align:right;white-space:nowrap">' + actions + '</div>' +
     '</div>';
 }
@@ -875,6 +886,14 @@ async function bindDevice(sn) {
     await api('/bind-device', 'POST', { sn });
     loadMyDevices();
   } catch(e) { modalAlert('Bind Failed', e.message); }
+}
+
+async function setActiveDevice(sn) {
+  try {
+    await api('/set-active-device', 'POST', { sn });
+    showToast(sn + ' set as active device', 'green');
+    loadMyDevices();
+  } catch(e) { modalAlert('Failed', e.message); }
 }
 
 async function unbindDevice(sn) {
@@ -1316,6 +1335,11 @@ async function deleteMap(sn, mapId, mapName) {
 var _fwVersions = [];
 var _fwDevices = [];
 
+async function syncAndLoadFirmware() {
+  try { await fetch('/api/dashboard/ota/sync', { method: 'POST', headers: { 'Authorization': token } }); } catch {}
+  loadFirmwareVersions();
+}
+
 async function loadFirmwareVersions() {
   try {
     var r = await fetch('/api/dashboard/ota/versions', { headers: { 'Authorization': token } });
@@ -1527,8 +1551,9 @@ async function downloadFirmware(fw, btnIdx) {
   var btn = document.getElementById('fwDlBtn' + btnIdx);
   if (btn) {
     btn.disabled = true;
-    btn.textContent = 'Downloading...';
-    btn.style.opacity = '0.6';
+    btn.innerHTML = '<span class="pulse-dot" style="margin-right:6px"></span>Downloading ~35 MB...';
+    btn.style.opacity = '0.8';
+    btn.style.minWidth = '180px';
   }
   try {
     var d = await api('/download-firmware', 'POST', {
@@ -1541,7 +1566,7 @@ async function downloadFirmware(fw, btnIdx) {
     });
     if (d.ok) {
       showToast('Firmware ' + fw.version + ' downloaded (' + ((d.size || 0) / 1024 / 1024).toFixed(1) + ' MB)', 'green');
-      if (btn) { btn.textContent = 'Installed'; btn.style.color = '#00d4aa'; }
+      if (btn) { btn.innerHTML = '&#10003; Downloaded'; btn.style.color = '#00d4aa'; }
       loadFirmwareVersions();
       checkFirmwareUpdates();
     }
@@ -1802,6 +1827,7 @@ function showSetup() {
     } catch {
       token = '';
       localStorage.removeItem('admin_token');
+      showToast('Session expired — please log in again', 'gray');
     }
   }
 

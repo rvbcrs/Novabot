@@ -38,7 +38,7 @@ novabot-server/.env
 server/.env
 
 # ── Runtime data & databases ─────────────────────────
-novabot-data/
+data/
 **/*.db
 **/*.db-wal
 **/*.db-shm
@@ -64,4 +64,4 @@ research/cloud_devices_run_*.json
 nova-ota-device/.pio/
 nova-ota-device/ESP32-S3-Touch-LCD-2-Demo/
 .vscode/
-*.pklg
+*.pklgdata/

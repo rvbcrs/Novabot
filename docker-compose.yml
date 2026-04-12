@@ -41,7 +41,4 @@ services:
       # HA_MQTT_USER: mqtt
       # HA_MQTT_PASS: mqtt
     volumes:
-      - novabot-data:/data
-
-volumes:
-  novabot-data:
+      - ./data:/data
