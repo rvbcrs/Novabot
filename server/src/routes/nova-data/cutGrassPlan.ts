@@ -196,12 +196,25 @@ cutGrassPlanRouter.post('/updateCutGrassPlan', authMiddleware, (req: AuthRequest
 });
 
 // POST /api/nova-data/appManage/deleteCutGrassPlan
+// Novabot app stuurt: { id: <number>, deleteType: "all" }
 cutGrassPlanRouter.post('/deleteCutGrassPlan', authMiddleware, (req: AuthRequest, res: Response) => {
-  const { planId } = req.body as { planId?: string };
-  if (!planId) { res.json(fail('planId required', 400)); return; }
+  const { planId, id, deleteType } = req.body as { planId?: string; id?: number | string; deleteType?: string };
+  const resolvedPlanId = planId ?? (id != null ? String(id) : undefined);
 
-  cutGrassPlanRepo.delete(planId, req.userId!);
-  res.json(ok());
+  if (!resolvedPlanId) { res.json(fail('planId or id required', 400)); return; }
+
+  // id kan een hashcode integer zijn — zoek het echte plan
+  if (deleteType === 'all') {
+    // Verwijder alle plans voor deze user
+    const allPlans = cutGrassPlanRepo.findByUser(req.userId!);
+    for (const p of allPlans) {
+      cutGrassPlanRepo.delete((p as any).plan_id, req.userId!);
+    }
+    res.json(ok());
+  } else {
+    cutGrassPlanRepo.delete(resolvedPlanId, req.userId!);
+    res.json(ok());
+  }
 });
 
 // POST /api/nova-data/appManage/queryNewVersion
