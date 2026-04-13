@@ -215,6 +215,7 @@ interface MapRow {
   map_name: string | null;
   map_area: string | null;
   map_max_min: string | null;
+  file_name: string | null;
   map_type: string;
 }
 
@@ -264,10 +265,13 @@ export function generateMapZipFromDb(
     if (unicomRows[i]) {
       const unicomPoints: LocalPoint[] = JSON.parse(unicomRows[i].map_area!);
       if (unicomPoints && unicomPoints.length >= 2) {
+        // Haal target uit file_name/map_name: "map0tocharge_unicom" → "charge", "map0tomap1_0_unicom" → "map1_0"
+        const unicomName = unicomRows[i].file_name ?? unicomRows[i].map_name ?? '';
+        const targetMatch = unicomName.match(/^map\d+to(.+?)_?unicom/);
         areas.push({
           mapIndex: i,
           type: 'unicom',
-          target: 'charge',
+          target: targetMatch?.[1] ?? 'charge',
           points: unicomPoints,
         });
         continue;

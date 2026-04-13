@@ -196,8 +196,9 @@ mapRouter.get('/queryEquipmentMap', authMiddleware, (req: AuthRequest, res: Resp
   });
 
   // Bouw unicom items — match cloud format: mapArea=null, obstacle=null
+  // Fallback: gebruik map_name (bevat originele channel naam) als file_name ontbreekt
   const unicom = unicomMaps.map((um, idx) => {
-    const unicomFileName = csvFileNameFromRecord(um, `map${idx}tocharge_unicom.csv`);
+    const unicomFileName = csvFileNameFromRecord(um, csvFileName(um.map_name, `map${idx}_unicom`));
     return {
       fileName: unicomFileName,
       fileHash: crypto.createHash('md5').update(um.map_id).digest('hex'),
@@ -246,7 +247,14 @@ mapRouter.get('/queryEquipmentMap', authMiddleware, (req: AuthRequest, res: Resp
     } catch { /* geen map_info.json in ZIP */ }
   }
 
+  // Debug: log exact unicom data zodat we kunnen verifiëren wat de app ontvangt
   console.log(`[MAP] queryEquipmentMap: sn=${sn} → ${work.length} work, ${unicom.length} unicom, md5=${md5 ?? 'none'}`);
+  if (unicom.length > 0) {
+    console.log(`[MAP] queryEquipmentMap unicom details:`, unicom.map(u => ({ fileName: u.fileName, alias: u.alias })));
+  }
+  if (work.length > 0) {
+    console.log(`[MAP] queryEquipmentMap work details:`, work.map(w => ({ fileName: w.fileName, alias: w.alias, obstacles: w.obstacle.length })));
+  }
   res.json(ok({
     data: { work, unicom },
     md5,
