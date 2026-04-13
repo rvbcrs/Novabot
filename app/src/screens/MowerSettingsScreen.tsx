@@ -72,7 +72,17 @@ export default function MowerSettingsScreen() {
     })();
   }, [mowerSn, mowerOnline]);
 
-  // Load current values from sensor data + local storage
+  // Load current values from sensor data (updated via socket + sensor cache)
+  const sensorJson = mower ? JSON.stringify({
+    h: mower.sensors.defaultCuttingHeight,
+    o: mower.sensors.obstacle_avoidance_sensitivity,
+    p: mower.sensors.path_direction,
+    v: mower.sensors.manual_controller_v,
+    w: mower.sensors.manual_controller_w,
+    l: mower.sensors.headlight,
+    s: mower.sensors.sound,
+  }) : '';
+
   useEffect(() => {
     if (!mower) return;
     const s = mower.sensors;
@@ -98,7 +108,7 @@ export default function MowerSettingsScreen() {
     }
     if (s.headlight) setHeadlight(s.headlight === '2');
     if (s.sound) setSound(s.sound === '2');
-  }, [mower?.sn]);
+  }, [mower?.sn, sensorJson]);
 
   const sendSetting = useCallback(async (label: string, fn: (api: ApiClient) => Promise<unknown>) => {
     setSending(label);
@@ -112,18 +122,32 @@ export default function MowerSettingsScreen() {
   }, []);
 
   // Send full set_para_info with all current values (matches Flutter Advanced Settings Confirm)
+  // Also persists to server sensor cache so values survive app restart.
   const sendAllSettings = (overrides: Record<string, unknown> = {}) => {
-    sendSetting('all', (api) => api.sendCommand(mowerSn, {
-      set_para_info: {
-        sound: sound ? 2 : 0,
-        headlight: headlight ? 2 : 0,
-        path_direction: pathDirection,
-        obstacle_avoidance_sensitivity: sensitivity,
-        manual_controller_v: joystickSpeed,
-        manual_controller_w: joystickHandling,
-        ...overrides,
-      },
-    }));
+    const params = {
+      sound: sound ? 2 : 0,
+      headlight: headlight ? 2 : 0,
+      path_direction: pathDirection,
+      obstacle_avoidance_sensitivity: sensitivity,
+      manual_controller_v: joystickSpeed,
+      manual_controller_w: joystickHandling,
+      ...overrides,
+    };
+    sendSetting('all', async (api) => {
+      // 1. Stuur naar maaier via MQTT
+      await api.sendCommand(mowerSn, { set_para_info: params });
+      // 2. Persist in server sensor cache zodat settings bewaard blijven
+      const url = await getServerUrl();
+      if (url) {
+        await fetch(`${url}/api/dashboard/sensor-override/${encodeURIComponent(mowerSn)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(
+            Object.fromEntries(Object.entries(params).map(([k, v]) => [k, String(v)])),
+          ),
+        });
+      }
+    });
   };
 
   const handleCuttingHeight = (height: number) => {

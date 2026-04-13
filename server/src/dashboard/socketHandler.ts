@@ -38,10 +38,17 @@ export interface MqttLogEntry {
 const MAX_LOG_ENTRIES = 500;
 const logBuffer: MqttLogEntry[] = [];
 
+// Remote debug log relay callback
+let _logListener: ((entry: MqttLogEntry) => void) | null = null;
+export function onLogEntry(fn: ((entry: MqttLogEntry) => void) | null): void {
+  _logListener = fn;
+}
+
 export function pushMqttLog(entry: MqttLogEntry): void {
   logBuffer.push(entry);
   if (logBuffer.length > MAX_LOG_ENTRIES) logBuffer.splice(0, logBuffer.length - MAX_LOG_ENTRIES);
   io?.emit('mqtt:log', entry);
+  _logListener?.(entry);
 }
 
 export function getRecentLogs(): MqttLogEntry[] {

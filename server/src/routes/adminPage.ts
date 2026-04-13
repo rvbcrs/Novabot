@@ -333,6 +333,16 @@ export function adminPageHtml(): string {
       <div id="cloudResult" style="margin-top:8px"></div>
     </div>
 
+    <div class="card" style="border:1px solid rgba(59,130,246,.3);background:rgba(59,130,246,.04)">
+      <h2 style="color:#3b82f6">Remote Debug</h2>
+      <p style="font-size:12px;color:#aaa;margin-bottom:12px">Share your MQTT logs in real-time with someone who can help you troubleshoot. Enter their relay URL and enable sharing. Logs are sent for as long as this is enabled.</p>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <input type="text" id="relayUrl" placeholder="https://their-server/api/dashboard/remote-debug/receive" style="flex:1;min-width:250px">
+        <button class="btn btn-purple" id="relayToggle" onclick="toggleRelay()">Start Sharing</button>
+      </div>
+      <div id="relayStatus" style="margin-top:8px;font-size:12px;color:#666"></div>
+    </div>
+
     <div class="card" style="border:1px solid rgba(239,68,68,.3);background:rgba(239,68,68,.04)">
       <h2 style="color:#ef4444">Danger Zone</h2>
       <p style="font-size:12px;color:#aaa;margin-bottom:12px">Permanently delete all data and start fresh. This removes your account, all devices, maps, and settings. This action cannot be undone.</p>
@@ -1790,6 +1800,40 @@ async function skipSetup() {
     await modalAlert('Account Created', 'Email: <b>admin@local</b><br>Password: <b>admin</b>');
     location.reload();
   } catch(e) { modalAlert('Failed', e.message); }
+}
+
+// ── Remote Debug relay ──
+var _relayActive = false;
+function toggleRelay() {
+  var urlInput = document.getElementById('relayUrl');
+  var btn = document.getElementById('relayToggle');
+  var status = document.getElementById('relayStatus');
+  if (_relayActive) {
+    // Stop
+    api('/remote-debug/stop', 'POST').then(function() {
+      _relayActive = false;
+      btn.textContent = 'Start Sharing';
+      btn.style.background = '';
+      status.textContent = 'Sharing stopped.';
+      status.style.color = '#666';
+    });
+  } else {
+    // Start
+    var url = urlInput.value.trim();
+    if (!url) { status.textContent = 'Enter a relay URL first.'; status.style.color = '#ef4444'; return; }
+    api('/remote-debug/start', 'POST', { relayUrl: url }).then(function(r) {
+      if (r.ok) {
+        _relayActive = true;
+        btn.textContent = 'Stop Sharing';
+        btn.style.background = '#ef4444';
+        status.textContent = 'Sharing active — logs are being sent to ' + url;
+        status.style.color = '#22c55e';
+      } else {
+        status.textContent = 'Failed: ' + (r.error || 'unknown');
+        status.style.color = '#ef4444';
+      }
+    });
+  }
 }
 
 async function factoryReset() {

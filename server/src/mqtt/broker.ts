@@ -485,6 +485,8 @@ export async function startMqttBroker(): Promise<void> {
               } else {
                 console.log(`${C.cyan}[MAP-PROXY] Geen kaarten in database voor ${sn}, geen response${C.reset}`);
               }
+              // Commando wordt ook doorgestuurd naar de maaier (normaal cloud gedrag).
+              // De maaier beantwoordt get_map_list zelf, maar onze response is sneller.
             } else if ('get_map_outline' in parsed) {
               // ── Server-side map outline response ──
               // De app stuurt get_map_outline naar de maaier om het polygoon op te halen.
