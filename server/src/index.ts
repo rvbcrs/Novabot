@@ -80,7 +80,7 @@ app.use((req, res, next) => {
     .replace(/"passwd":"[^"]*"/g, '"passwd":"***"')
     .replace(/"token":"[^"]*"/g, '"token":"***"');
   // Compact logging: skip noisy endpoints
-  const isNoisy = req.path.includes('/network/connection') || req.path.includes('/up_status_info');
+  const isNoisy = req.path.includes('/network/connection') || req.path.includes('/up_status_info') || req.path.includes('/remote-debug/');
   if (!isNoisy || LOG_VERBOSE) {
     console.log(`[REQ] ${req.method} ${req.path} ${masked} (from ${srcIp})`);
     // Push HTTP requests naar admin console

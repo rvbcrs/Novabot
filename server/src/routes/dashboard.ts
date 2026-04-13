@@ -3394,3 +3394,8 @@ dashboardRouter.get('/remote-debug/logs', (req: Request, res: Response) => {
   const since = parseInt(req.query.since as string || '0', 10);
   res.json({ logs: _remoteLogBuffer.slice(since) });
 });
+
+dashboardRouter.delete('/remote-debug/logs', (_req: Request, res: Response) => {
+  _remoteLogBuffer.length = 0;
+  res.json({ ok: true });
+});
