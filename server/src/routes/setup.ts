@@ -431,91 +431,10 @@ setupRouter.post('/cloud-apply', async (req: Request, res: Response) => {
               console.warn(`[Setup] ⚠ ${importErrors} map(s) failed to import for ${mower.sn}`);
             }
 
-            // Auto-genereer paddata voor unicom channels met lege CSV.
-            // Cloud retourneert soms 0 bytes voor inter-map channels — by design.
-            // We vullen map_area aan zodat het pad op de kaart getekend kan worden.
-            const importedWorkMaps = mapRepo.findByMowerSnAndTypeWithArea(mower.sn, 'work');
-            const allUnicoms = mapRepo.findAllByMowerSnAndType(mower.sn, 'unicom');
-            for (const unicomItem of unicomItems as Array<Record<string, unknown>>) {
-              const fn = unicomItem.fileName as string;
-              if (!fn) continue;
-              // Check of dit unicom channel al paddata heeft (map_area niet null)
-              const existing = allUnicoms.find((u: { file_name: string | null; map_name: string | null }) =>
-                (u.file_name === fn) || (u.map_name === fn.replace('.csv', ''))
-              );
-              if (existing?.map_area) continue; // Heeft al paddata, skip
-
-              // Parse welke maps het channel verbindt: "map0tomap1_0_unicom.csv"
-              const match = fn.match(/^map(\d+)to(.+?)_?unicom\.csv$/);
-              if (!match) continue;
-              const fromIdx = parseInt(match[1]);
-              const target = match[2]; // "charge" of "map1_0"
-
-              console.log(`[Setup] Generating missing unicom: ${fn} (from map${fromIdx} to ${target})`);
-
-              // Zoek het from werkgebied
-              const fromWork = importedWorkMaps[fromIdx];
-              if (!fromWork?.map_area) {
-                console.warn(`[Setup] Cannot generate ${fn}: work map${fromIdx} not found`);
-                continue;
-              }
-
-              const fromPoints: Array<{ x: number; y: number }> = JSON.parse(fromWork.map_area);
-              let toPoint = { x: 0, y: 0 }; // default: charger (0,0)
-
-              if (target.startsWith('map')) {
-                // Inter-map channel: vind dichtstbijzijnd punt van doel werkgebied
-                const toIdxMatch = target.match(/^map(\d+)/);
-                const toIdx = toIdxMatch ? parseInt(toIdxMatch[1]) : -1;
-                const toWork = importedWorkMaps[toIdx];
-                if (toWork?.map_area) {
-                  const toPoints: Array<{ x: number; y: number }> = JSON.parse(toWork.map_area);
-                  // Centroid van doel
-                  toPoint = {
-                    x: toPoints.reduce((s, p) => s + p.x, 0) / toPoints.length,
-                    y: toPoints.reduce((s, p) => s + p.y, 0) / toPoints.length,
-                  };
-                }
-              }
-
-              // Vind dichtstbijzijnd punt van from werkgebied naar toPoint
-              let closestIdx = 0;
-              let closestDist = Infinity;
-              for (let j = 0; j < fromPoints.length; j++) {
-                const dx = fromPoints[j].x - toPoint.x;
-                const dy = fromPoints[j].y - toPoint.y;
-                const dist = Math.sqrt(dx * dx + dy * dy);
-                if (dist < closestDist) { closestDist = dist; closestIdx = j; }
-              }
-
-              // Genereer unicom pad: rechte lijn van toPoint naar closest punt op from werkgebied
-              const closest = fromPoints[closestIdx];
-              const steps = Math.max(5, Math.ceil(closestDist / 0.5));
-              const unicomPoints: Array<{ x: number; y: number }> = [];
-              for (let s = 0; s <= steps; s++) {
-                const t = s / steps;
-                unicomPoints.push({
-                  x: toPoint.x + t * (closest.x - toPoint.x),
-                  y: toPoint.y + t * (closest.y - toPoint.y),
-                });
-              }
-
-              // Update bestaand record (zonder map_area) met gegenereerde paddata
-              if (existing) {
-                mapRepo.updateAreaAndBoundsById(existing.map_id, JSON.stringify(unicomPoints), '{}');
-                console.log(`[Setup] ✓ Auto-filled: ${fn} (${unicomPoints.length} points, ${closestDist.toFixed(1)}m)`);
-              } else {
-                const genId = uuidv4();
-                mapRepo.upsert({
-                  map_id: genId, mower_sn: mower.sn,
-                  map_name: (unicomItem.alias as string) ?? fn.replace('.csv', ''),
-                  map_area: JSON.stringify(unicomPoints), file_name: fn,
-                  file_size: null, map_type: 'unicom',
-                });
-                mapsImported++;
-                console.log(`[Setup] ✓ Auto-generated: ${fn} (${unicomPoints.length} points, ${closestDist.toFixed(1)}m)`);
-              }
-            }
+            // Geen auto-generatie van unicom paddata meer.
+            // LFI cloud slaat inter-map unicom channels op als 0-byte CSV — by design.
+            // De app checkt alleen fileName.startsWith("mapX") voor zone selectie,
+            // NIET of er daadwerkelijk paddata is. Metadata-only records zijn voldoende.
 
             // Import chargingPose for map calibration
             const machineField = mapVal?.machineExtendedField as Record<string, unknown> | undefined;
