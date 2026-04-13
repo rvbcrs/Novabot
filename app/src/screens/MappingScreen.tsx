@@ -80,7 +80,11 @@ export default function MappingScreen() {
   const experimental = useExperimental();
   const { t } = useI18n();
 
-  const mower = [...devices.values()].find(d => d.deviceType === 'mower' && d.online);
+  // Maaier mqtt_node maakt korte verbindingen (connect → rapport → disconnect).
+  // Gebruik lastUpdate timestamp i.p.v. online flag — als recent bericht binnen 60s, beschouw als online.
+  const mower = [...devices.values()].find(d => d.deviceType === 'mower');
+  const mowerRecentlyActive = mower ? (Date.now() - (mower.lastUpdate ?? 0)) < 60_000 : false;
+  const mowerOnline = mower?.online || mowerRecentlyActive;
   const sn = mower?.sn ?? '';
   const sensors = mower?.sensors ?? {};
 
@@ -600,7 +604,7 @@ export default function MappingScreen() {
         </View>
 
         {/* ── Mower offline ── */}
-        {!mower?.online ? (
+        {!mowerOnline ? (
           <View style={styles.centerBox}>
             <Ionicons name="alert-circle" size={48} color={colors.red} />
             <Text style={styles.centerTitle}>{t('mowerOffline', undefined) || 'Mower Offline'}</Text>
@@ -626,7 +630,7 @@ export default function MappingScreen() {
                 </Text>
               </View>
               <View style={styles.checkRow}>
-                <View style={[styles.checkDot, { backgroundColor: mower.online ? colors.green : colors.red }]} />
+                <View style={[styles.checkDot, { backgroundColor: mowerOnline ? colors.green : colors.red }]} />
                 <Text style={styles.checkText}>{t('mqtt', undefined) || 'MQTT'}: {t('connected', undefined) || 'Connected'}</Text>
               </View>
               <View style={styles.checkRow}>

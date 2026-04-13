@@ -1809,30 +1809,32 @@ function toggleRelay() {
   var btn = document.getElementById('relayToggle');
   var status = document.getElementById('relayStatus');
   if (_relayActive) {
-    // Stop
-    api('/remote-debug/stop', 'POST').then(function() {
-      _relayActive = false;
-      btn.textContent = 'Start Sharing';
-      btn.style.background = '';
-      status.textContent = 'Sharing stopped.';
-      status.style.color = '#666';
-    });
+    fetch('/api/dashboard/remote-debug/stop', { method: 'POST', headers: { 'Content-Type': 'application/json' } })
+      .then(function(r) { return r.json(); })
+      .then(function() {
+        _relayActive = false;
+        btn.textContent = 'Start Sharing';
+        btn.style.background = '';
+        status.textContent = 'Sharing stopped.';
+        status.style.color = '#666';
+      });
   } else {
-    // Start
     var url = urlInput.value.trim();
     if (!url) { status.textContent = 'Enter a relay URL first.'; status.style.color = '#ef4444'; return; }
-    api('/remote-debug/start', 'POST', { relayUrl: url }).then(function(r) {
-      if (r.ok) {
-        _relayActive = true;
-        btn.textContent = 'Stop Sharing';
-        btn.style.background = '#ef4444';
-        status.textContent = 'Sharing active — logs are being sent to ' + url;
-        status.style.color = '#22c55e';
-      } else {
-        status.textContent = 'Failed: ' + (r.error || 'unknown');
-        status.style.color = '#ef4444';
-      }
-    });
+    fetch('/api/dashboard/remote-debug/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ relayUrl: url }) })
+      .then(function(r) { return r.json(); })
+      .then(function(r) {
+        if (r.ok) {
+          _relayActive = true;
+          btn.textContent = 'Stop Sharing';
+          btn.style.background = '#ef4444';
+          status.textContent = 'Sharing active — logs are being sent to ' + url;
+          status.style.color = '#22c55e';
+        } else {
+          status.textContent = 'Failed: ' + (r.error || 'unknown');
+          status.style.color = '#ef4444';
+        }
+      });
   }
 }
 

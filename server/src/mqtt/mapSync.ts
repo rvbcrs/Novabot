@@ -285,24 +285,27 @@ function autoBindDevice(sn: string, attempt = 0): void {
     // Al gebonden — maar check of dit device gepaird kan worden met een ander device.
     // Scenario: cloud import maakt mower record (charger_sn=NULL), charger auto-bindt apart.
     // Als er een incompleet record is, merge ze.
-    const user = userRepo.findFirst();
-    if (user) {
-      const isCharger = sn.startsWith('LFIC');
-      const incomplete = equipmentRepo.findIncompleteByUserId(user.app_user_id);
-      if (incomplete && isCharger && !incomplete.charger_sn && incomplete.equipment_id !== existing.equipment_id) {
-        // Mower-only record gevonden + charger heeft apart record → merge
-        equipmentRepo.updateChargerSn(incomplete.equipment_id, sn);
-        // Verwijder het losse charger record
-        equipmentRepo.deleteById(existing.equipment_id);
-        console.log(`${TAG} Auto-pair (merge): charger ${sn} merged into mower record ${incomplete.mower_sn}`);
-        emitDevicePaired(incomplete.mower_sn ?? '', sn);
-      } else if (incomplete && !isCharger && !incomplete.mower_sn?.startsWith('LFIN') && incomplete.equipment_id !== existing.equipment_id) {
-        // Charger-only record gevonden + mower heeft apart record → merge
-        equipmentRepo.updateMowerSn(incomplete.equipment_id, sn);
-        equipmentRepo.deleteById(existing.equipment_id);
-        console.log(`${TAG} Auto-pair (merge): mower ${sn} merged into charger record ${incomplete.charger_sn}`);
-        emitDevicePaired(sn, incomplete.charger_sn ?? '');
+    try {
+      const user = userRepo.findFirst();
+      if (user) {
+        const isCharger = sn.startsWith('LFIC');
+        const incomplete = equipmentRepo.findIncompleteByUserId(user.app_user_id);
+        if (incomplete && isCharger && !incomplete.charger_sn && incomplete.equipment_id !== existing.equipment_id) {
+          // Mower-only record gevonden + charger heeft apart record → merge
+          equipmentRepo.deleteById(existing.equipment_id);
+          equipmentRepo.updateChargerSn(incomplete.equipment_id, sn);
+          console.log(`${TAG} Auto-pair (merge): charger ${sn} merged into mower record ${incomplete.mower_sn}`);
+          emitDevicePaired(incomplete.mower_sn ?? '', sn);
+        } else if (incomplete && !isCharger && !incomplete.mower_sn?.startsWith('LFIN') && incomplete.equipment_id !== existing.equipment_id) {
+          // Charger-only record gevonden + mower heeft apart record → merge
+          equipmentRepo.deleteById(existing.equipment_id);
+          equipmentRepo.updateMowerSn(incomplete.equipment_id, sn);
+          console.log(`${TAG} Auto-pair (merge): mower ${sn} merged into charger record ${incomplete.charger_sn}`);
+          emitDevicePaired(sn, incomplete.charger_sn ?? '');
+        }
       }
+    } catch (err) {
+      console.warn(`${TAG} Auto-pair merge failed for ${sn}:`, (err as Error).message);
     }
     return;
   }
