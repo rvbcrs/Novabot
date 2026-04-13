@@ -248,9 +248,7 @@ export function publishEncryptedOnTopic(topic: string, sn: string, message: Reco
     retain: false,
     topic,
     payload,
-    brokerId: 'mapSync',
-    brokerCounter: 0,
-  } satisfies AedesPublishPacket;
+  } as AedesPublishPacket;
 
   aedesBroker.publish(packet, (err) => {
     if (err) console.error(`${TAG} Inject fout op ${topic}: ${err.message}`);

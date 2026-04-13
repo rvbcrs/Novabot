@@ -212,12 +212,16 @@ mapRouter.get('/queryEquipmentMap', authMiddleware, (req: AuthRequest, res: Resp
     };
   });
 
-  // Bereken MD5 van de ZIP als die bestaat
+  // Bereken MD5 — app vereist non-null md5, anders toont het "No Maps"
+  // Gebruik ZIP md5 als die bestaat, anders genereer hash uit DB map_ids
   let md5: string | null = null;
   const latestPath = path.join(STORAGE_PATH, `${sn}_latest.zip`);
   if (fs.existsSync(latestPath)) {
     const fileData = fs.readFileSync(latestPath);
     md5 = crypto.createHash('md5').update(fileData).digest('hex');
+  } else if (maps.length > 0) {
+    // Geen ZIP maar wel kaarten in DB — genereer stabiele hash uit map_ids
+    md5 = crypto.createHash('md5').update(maps.map(m => m.map_id).join(',')).digest('hex');
   }
 
   // ChargingPose uit de ZIP map_info.json (lokale meters, consistent met CSV polygonen)

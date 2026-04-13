@@ -392,6 +392,57 @@ export async function startMqttBroker(): Promise<void> {
     // dat het antwoord arriveert VOORDAT de listener actief is → timeout → "Get map failed".
     // Oplossing: vertraag maaier→app responses op Dart/Receive_mqtt/ met 150ms.
     if (client && packet.topic.startsWith('Dart/Receive_mqtt/LFIN') && !isAppClient(client.id)) {
+      // Intercepteer maaier's get_map_list_respond — vervang met onze DB versie
+      // zodat dashboard-getekende kaarten ook zichtbaar zijn in de Novabot app.
+      const sn = packet.topic.split('/').pop() ?? '';
+      if (sn) {
+        try {
+          const payloadBuf = Buffer.isBuffer(packet.payload) ? packet.payload : Buffer.from(packet.payload);
+          const decrypted = tryDecrypt(payloadBuf, sn);
+          const json = decrypted ?? payloadBuf.toString('utf8');
+          const parsed = JSON.parse(json);
+          // Maaier formaat: {"message":{"result":0,"value":{...}},"type":"get_map_list_respond"}
+          // OF: {"get_map_list_respond":{...}}
+          const isMapListResp = parsed.type === 'get_map_list_respond' || parsed.get_map_list_respond;
+          if (isMapListResp) {
+            const dbMaps = mapRepo.findWithAreaOrderByMapId(sn);
+            if (dbMaps.length > 0) {
+              const STORAGE_PATH = path.resolve(process.env.STORAGE_PATH ?? './storage', 'maps');
+              const zipPath = path.join(STORAGE_PATH, `${sn}_latest.zip`);
+              let zipMd5 = '';
+              if (fs.existsSync(zipPath)) {
+                zipMd5 = crypto.createHash('md5').update(fs.readFileSync(zipPath)).digest('hex');
+              } else {
+                zipMd5 = crypto.createHash('md5').update(dbMaps.map(m => m.map_id).join(',')).digest('hex');
+              }
+              // Gebruik MAAIER formaat: {"type":"get_map_list_respond","message":{"result":0,"value":{...}}}
+              // De app's startListenMqtt zoekt op type veld, niet op top-level key.
+              const replacement = {
+                type: 'get_map_list_respond',
+                message: {
+                  result: 0,
+                  value: {
+                    map_num: dbMaps.length,
+                    maps: dbMaps.map(m => ({ map_id: m.map_id, map_name: m.map_name ?? 'home', map_type: m.map_type ?? 'work' })),
+                    md5: zipMd5, name: `${sn}.zip`, zip_dir_empty: 0,
+                  },
+                },
+              };
+              // Re-encrypt en vervang packet payload
+              const KEY_PREFIX = 'abcdabcd1234';
+              const IV = Buffer.from('abcd1234abcd1234', 'utf8');
+              const key = Buffer.from(KEY_PREFIX + sn.slice(-4), 'utf8');
+              const plaintext = Buffer.from(JSON.stringify(replacement), 'utf8');
+              const padded = Buffer.alloc(Math.ceil(plaintext.length / 16) * 16, 0);
+              plaintext.copy(padded);
+              const cipher = crypto.createCipheriv('aes-128-cbc', key, IV);
+              cipher.setAutoPadding(false);
+              packet.payload = Buffer.concat([cipher.update(padded), cipher.final()]);
+              console.log(`${C.cyan}[MAP-PROXY] Replaced mower get_map_list_respond with DB version: ${dbMaps.length} maps${C.reset}`);
+            }
+          }
+        } catch { /* parse error, doorsturen ongewijzigd */ }
+      }
       setTimeout(() => callback(null), 150);
       return;
     }
@@ -435,58 +486,11 @@ export async function startMqttBroker(): Promise<void> {
               packet.payload = encrypted;
               console.log(`\x1b[38;5;208m[OTA-FIX] Re-encrypted: ${encrypted.length}B → maaier\x1b[0m`);
             } else if ('get_map_list' in parsed) {
-              // ── Server-side map response ──
-              // De app stuurt get_map_list naar de maaier. Als de maaier geen kaarten
-              // heeft (map_num=0), reageert hij niet en de app toont "Get map failed".
-              // Oplossing: server stuurt zelf een get_map_list_respond met de kaartdata
-              // uit de database, zodat de app de kaarten downloadt van onze server.
-              //
-              // BELANGRIJK: response MOET top-level key `get_map_list_respond` gebruiken,
-              // NIET {type: ..., message: ...} wrapping. De app (en onze eigen mapSync
-              // handler) parsen de EERSTE KEY van het JSON object.
-              console.log(`${C.cyan}[MAP-PROXY] App vraagt get_map_list voor ${sn} — server beantwoordt${C.reset}`);
-
-              // Haal kaarten uit DB (zelfde query als queryEquipmentMap)
-              const dbMaps = mapRepo.findWithAreaOrderByMapId(sn);
-
-              if (dbMaps.length > 0) {
-                // Bouw ZIP md5 als die bestaat
-                const STORAGE_PATH = path.resolve(process.env.STORAGE_PATH ?? './storage', 'maps');
-                const zipPath = path.join(STORAGE_PATH, `${sn}_latest.zip`);
-                let zipMd5 = '';
-                if (fs.existsSync(zipPath)) {
-                  zipMd5 = crypto.createHash('md5').update(fs.readFileSync(zipPath)).digest('hex');
-                }
-
-                const response = {
-                  get_map_list_respond: {
-                    result: 0,
-                    map_num: dbMaps.length,
-                    maps: dbMaps.map(m => ({
-                      map_id: m.map_id,
-                      map_name: m.map_name ?? 'home',
-                      map_type: m.map_type ?? 'work',
-                    })),
-                    md5: zipMd5,
-                    name: `${sn}.zip`,
-                    zip_dir_empty: 0,
-                  },
-                };
-                // Publiceer de response op het Receive topic zodat de app het ontvangt
-                // Gebruik setTimeout om de app tijd te geven de listener op te zetten
-                setTimeout(() => {
-                  publishEncryptedOnTopic(`Dart/Receive_mqtt/${sn}`, sn, response);
-                  console.log(`${C.cyan}[MAP-PROXY] get_map_list_respond gestuurd: ${dbMaps.length} kaart(en), md5=${zipMd5}${C.reset}`);
-                }, 200);
-
-                // NB: Geen proactieve report_state_map_outline meer na get_map_list.
-                // De app haalt de polygon via HTTP (queryEquipmentMap → downloadMapFile CSV).
-                // De outline wordt alleen gestuurd als de app expliciet get_map_outline vraagt.
-              } else {
-                console.log(`${C.cyan}[MAP-PROXY] Geen kaarten in database voor ${sn}, geen response${C.reset}`);
-              }
-              // Commando wordt ook doorgestuurd naar de maaier (normaal cloud gedrag).
-              // De maaier beantwoordt get_map_list zelf, maar onze response is sneller.
+              // ── get_map_list: doorsturen naar maaier ──
+              // Maaier antwoordt met get_map_list_respond. Die response wordt
+              // ONDERSCHEPT in de Dart/Receive_mqtt handler hierboven en vervangen
+              // met onze DB versie (inclusief dashboard-getekende kaarten).
+              console.log(`${C.cyan}[MAP-PROXY] get_map_list voor ${sn} — doorsturen naar maaier${C.reset}`);
             } else if ('get_map_outline' in parsed) {
               // ── Server-side map outline response ──
               // De app stuurt get_map_outline naar de maaier om het polygoon op te halen.

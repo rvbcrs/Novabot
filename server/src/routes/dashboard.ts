@@ -52,6 +52,17 @@ interface EquipmentRow {
 
 export const dashboardRouter = Router();
 
+// Load persisted device settings into in-memory sensor cache at startup.
+// This ensures settings (cutting height, path direction, etc.) survive container restarts.
+{
+  const rows = deviceSettingsRepo.listAll();
+  for (const row of rows) {
+    if (!deviceCache.has(row.sn)) deviceCache.set(row.sn, new Map());
+    deviceCache.get(row.sn)!.set(row.key, row.value);
+  }
+  if (rows.length > 0) console.log(`[SETTINGS] Loaded ${rows.length} persisted settings for ${new Set(rows.map(r => r.sn)).size} device(s)`);
+}
+
 // GET /api/dashboard/devices — alle devices met online status en cached sensor waarden
 // Toont alleen apparaten die gebonden zijn (in equipment tabel) of momenteel online zijn,
 // gedepliceerd op SN (meest recente entry per SN)
@@ -502,6 +513,7 @@ export function handlePlannedPathRespond(sn: string, data: Record<string, unknow
 }
 
 // POST /api/dashboard/sensor-override/:sn — manually set sensor values (for local preferences)
+// Writes to both in-memory cache (instant) AND device_settings DB (persistent across restarts).
 dashboardRouter.post('/sensor-override/:sn', (req: Request, res: Response) => {
   const { sn } = req.params;
   const overrides = req.body as Record<string, string>;
@@ -511,6 +523,8 @@ dashboardRouter.post('/sensor-override/:sn', (req: Request, res: Response) => {
   const snCache = deviceCache.get(sn)!;
   for (const [k, v] of Object.entries(overrides)) {
     snCache.set(k, String(v));
+    // Persist to DB so settings survive container restart
+    deviceSettingsRepo.upsert(sn, k, String(v));
   }
   res.json({ ok: true });
 });
