@@ -340,35 +340,22 @@ interface MapRow {
   updated_at: string;
 }
 
-// GET /api/dashboard/maps — alle kaarten (alle SNs)
+// GET /api/dashboard/maps — alle kaarten (alle SNs), lokale meters
 dashboardRouter.get('/maps', (_req: Request, res: Response) => {
   const rows = mapRepo.listAll() as MapRow[];
 
-  // Charger GPS per maaier ophalen voor local→GPS conversie
-  const chargerCache = new Map<string, GpsPoint | null>();
-  function getChargerGpsLocal(mowerSn: string): GpsPoint | null {
-    if (chargerCache.has(mowerSn)) return chargerCache.get(mowerSn)!;
-    const result = mapRepo.getChargerGps(mowerSn);
-    chargerCache.set(mowerSn, result);
-    return result;
-  }
-
   const maps = rows.map(r => {
-    let mapArea: GpsPoint[] = [];
+    let mapArea: LocalPoint[] = [];
     let mapMaxMin: Record<string, number> | null = null;
 
     if (r.map_area) {
-      const chargerGps = getChargerGpsLocal(r.mower_sn);
-      if (chargerGps) {
-        const localPoints: LocalPoint[] = JSON.parse(r.map_area);
-        mapArea = localPoints.map(p => localToGps(p, chargerGps));
-        const lats = mapArea.map(p => p.lat);
-        const lngs = mapArea.map(p => p.lng);
-        mapMaxMin = {
-          minLat: Math.min(...lats), maxLat: Math.max(...lats),
-          minLng: Math.min(...lngs), maxLng: Math.max(...lngs),
-        };
-      }
+      mapArea = JSON.parse(r.map_area);
+      const xs = mapArea.map(p => p.x);
+      const ys = mapArea.map(p => p.y);
+      mapMaxMin = {
+        minX: Math.min(...xs), maxX: Math.max(...xs),
+        minY: Math.min(...ys), maxY: Math.max(...ys),
+      };
     }
 
     return {
@@ -387,42 +374,26 @@ dashboardRouter.get('/maps', (_req: Request, res: Response) => {
 
 // GET /api/dashboard/maps/:sn — kaarten voor een maaier
 // Retourneert lokale meter coördinaten (charger = 0,0) + charger GPS voor conversie.
-// ?coords=gps forceert GPS output (voor Leaflet dashboard).
+// Dashboard converteert lokaal→GPS voor Leaflet rendering.
 dashboardRouter.get('/maps/:sn', (req: Request, res: Response) => {
   const { sn } = req.params;
-  const wantGps = req.query.coords === 'gps';
   const rows = mapRepo.findByMowerSn(sn);
 
-  // Charger GPS ophalen
+  // Charger GPS ophalen — dashboard gebruikt dit voor local→GPS conversie
   const chargerGps = mapRepo.getChargerGps(sn);
 
   const maps = rows.map(r => {
-    let mapArea: Array<{ x: number; y: number } | GpsPoint> = [];
+    let mapArea: LocalPoint[] = [];
     let mapMaxMin: Record<string, number> | null = null;
 
     if (r.map_area) {
-      const localPoints: LocalPoint[] = JSON.parse(r.map_area);
-
-      if (wantGps && chargerGps) {
-        // GPS output voor Leaflet dashboard
-        const gpsPoints = localPoints.map(p => localToGps(p, chargerGps));
-        mapArea = gpsPoints;
-        const lats = gpsPoints.map(p => p.lat);
-        const lngs = gpsPoints.map(p => p.lng);
-        mapMaxMin = {
-          minLat: Math.min(...lats), maxLat: Math.max(...lats),
-          minLng: Math.min(...lngs), maxLng: Math.max(...lngs),
-        };
-      } else {
-        // Lokale meters (default) — charger = (0,0)
-        mapArea = localPoints;
-        const xs = localPoints.map(p => p.x);
-        const ys = localPoints.map(p => p.y);
-        mapMaxMin = {
-          minX: Math.min(...xs), maxX: Math.max(...xs),
-          minY: Math.min(...ys), maxY: Math.max(...ys),
-        };
-      }
+      mapArea = JSON.parse(r.map_area);
+      const xs = mapArea.map(p => p.x);
+      const ys = mapArea.map(p => p.y);
+      mapMaxMin = {
+        minX: Math.min(...xs), maxX: Math.max(...xs),
+        minY: Math.min(...ys), maxY: Math.max(...ys),
+      };
     }
 
     return {
@@ -577,11 +548,13 @@ dashboardRouter.post('/maps/:sn/request-outline', (req: Request, res: Response) 
 });
 
 // POST /api/dashboard/maps/:sn — nieuwe kaart aanmaken (getekend op dashboard)
+// Accepteert lokale meters {x,y} direct (dashboard converteert GPS→lokaal zelf)
+// OF GPS {lat,lng} voor backwards compatibility (wordt geconverteerd)
 dashboardRouter.post('/maps/:sn', (req: Request, res: Response) => {
   const { sn } = req.params;
   const { mapName, mapArea, mapType } = req.body as {
     mapName?: string;
-    mapArea?: Array<{ lat: number; lng: number }>;
+    mapArea?: Array<{ x?: number; y?: number; lat?: number; lng?: number }>;
     mapType?: string;
   };
 
@@ -590,15 +563,22 @@ dashboardRouter.post('/maps/:sn', (req: Request, res: Response) => {
     return;
   }
 
-  // Charger GPS nodig voor GPS→lokaal conversie
-  const chargerGps = mapRepo.getChargerGps(sn);
-  if (!chargerGps) {
-    res.status(400).json({ error: 'Charger positie onbekend — plaats eerst de charger op de kaart' });
-    return;
+  // Detecteer of input lokale meters of GPS is
+  const isLocal = mapArea[0] && 'x' in mapArea[0] && mapArea[0].x !== undefined;
+  let localPoints: LocalPoint[];
+
+  if (isLocal) {
+    localPoints = mapArea.map(p => ({ x: p.x!, y: p.y! }));
+  } else {
+    // GPS input — converteer naar lokaal
+    const chargerGps = mapRepo.getChargerGps(sn);
+    if (!chargerGps) {
+      res.status(400).json({ error: 'Charger positie onbekend — plaats eerst de charger op de kaart' });
+      return;
+    }
+    localPoints = mapArea.map(p => gpsToLocal({ lat: p.lat!, lng: p.lng! }, chargerGps));
   }
 
-  // Converteer GPS→lokaal vóór opslag
-  const localPoints = mapArea.map(p => gpsToLocal(p, chargerGps));
   const bounds = {
     minX: Math.min(...localPoints.map(p => p.x)),
     maxX: Math.max(...localPoints.map(p => p.x)),
@@ -624,11 +604,8 @@ dashboardRouter.post('/maps/:sn', (req: Request, res: Response) => {
       mapId,
       mapName: mapName ?? null,
       mapType: typeSlug,
-      mapArea,        // Retourneer GPS voor frontend (ongewijzigd)
-      mapMaxMin: {    // GPS bounds voor frontend
-        minLat: Math.min(...mapArea.map(p => p.lat)), maxLat: Math.max(...mapArea.map(p => p.lat)),
-        minLng: Math.min(...mapArea.map(p => p.lng)), maxLng: Math.max(...mapArea.map(p => p.lng)),
-      },
+      mapArea: localPoints,
+      mapMaxMin: bounds,
       createdAt: new Date().toISOString(),
     },
   });
@@ -642,7 +619,7 @@ dashboardRouter.patch('/maps/:sn/:mapId', (req: Request, res: Response) => {
   const { sn, mapId } = req.params;
   const { mapName, mapArea } = req.body as {
     mapName?: string;
-    mapArea?: Array<{ lat: number; lng: number }>;
+    mapArea?: Array<{ x?: number; y?: number; lat?: number; lng?: number }>;
   };
 
   const row = mapRepo.findByIdAndMower(mapId, sn);
@@ -651,14 +628,23 @@ dashboardRouter.patch('/maps/:sn/:mapId', (req: Request, res: Response) => {
     return;
   }
 
-  // Update polygon punten als meegegeven — converteer GPS→lokaal
+  // Update polygon punten als meegegeven
+  // Accepteert lokale meters {x,y} direct OF GPS {lat,lng} (backwards compat)
   if (mapArea && Array.isArray(mapArea) && mapArea.length >= 3) {
-    const chargerGps = mapRepo.getChargerGps(sn);
-    if (!chargerGps) {
-      res.status(400).json({ error: 'Charger positie onbekend' });
-      return;
+    const isLocal = 'x' in mapArea[0] && mapArea[0].x !== undefined;
+    let localPoints: LocalPoint[];
+
+    if (isLocal) {
+      localPoints = mapArea.map(p => ({ x: p.x!, y: p.y! }));
+    } else {
+      const chargerGps = mapRepo.getChargerGps(sn);
+      if (!chargerGps) {
+        res.status(400).json({ error: 'Charger positie onbekend' });
+        return;
+      }
+      localPoints = mapArea.map(p => gpsToLocal({ lat: p.lat!, lng: p.lng! }, chargerGps));
     }
-    const localPoints = mapArea.map(p => gpsToLocal(p, chargerGps));
+
     const bounds = {
       minX: Math.min(...localPoints.map(p => p.x)),
       maxX: Math.max(...localPoints.map(p => p.x)),

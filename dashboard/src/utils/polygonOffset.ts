@@ -3,35 +3,10 @@
  * Works on GPS coordinates by converting to local meters first.
  */
 
-const DEG_TO_M = 111320; // meters per degree latitude
+import { localToGps, gpsToLocal, type GpsPoint, type LocalPoint } from './coords.js';
 
-interface LatLng {
-  lat: number;
-  lng: number;
-}
-
-interface Point {
-  x: number;
-  y: number;
-}
-
-/** Convert GPS to local meters relative to a center point */
-function gpsToLocal(p: LatLng, center: LatLng): Point {
-  const cosLat = Math.cos(center.lat * Math.PI / 180);
-  return {
-    x: (p.lng - center.lng) * DEG_TO_M * cosLat,
-    y: (p.lat - center.lat) * DEG_TO_M,
-  };
-}
-
-/** Convert local meters back to GPS */
-function localToGps(p: Point, center: LatLng): LatLng {
-  const cosLat = Math.cos(center.lat * Math.PI / 180);
-  return {
-    lat: center.lat + p.y / DEG_TO_M,
-    lng: center.lng + p.x / (DEG_TO_M * cosLat),
-  };
-}
+type LatLng = GpsPoint;
+type Point = LocalPoint;
 
 /** Compute centroid of a polygon */
 function centroid(points: LatLng[]): LatLng {

@@ -279,10 +279,25 @@ setupRouter.post('/cloud-apply', async (req: Request, res: Response) => {
           const mapVal = (mapResp as Record<string, unknown>).value as Record<string, unknown> | undefined;
           const mapData = mapVal?.data as Record<string, unknown> | undefined;
 
+          // Log de volledige cloud response keys + unicom array structuur
+          console.log(`[Setup] Cloud response keys: data=${mapData ? Object.keys(mapData).join(',') : 'null'} md5=${mapVal?.md5 ?? 'null'}`);
+          if (mapData) {
+            const rawUnicom = mapData.unicom;
+            console.log(`[Setup] Cloud unicom raw: type=${typeof rawUnicom} isArray=${Array.isArray(rawUnicom)} length=${Array.isArray(rawUnicom) ? rawUnicom.length : 'N/A'}`);
+            if (Array.isArray(rawUnicom)) {
+              for (const u of rawUnicom) console.log(`[Setup]   unicom: ${JSON.stringify({ fileName: u?.fileName, alias: u?.alias, type: u?.type, hasUrl: !!u?.url })}`);
+            }
+          }
+
           if (mapData) {
             const workItems = (mapData.work ?? []) as Array<Record<string, unknown>>;
             const unicomItems = (mapData.unicom ?? []) as Array<Record<string, unknown>>;
             console.log(`[Setup] Cloud maps: ${workItems.length} work, ${unicomItems.length} unicom for ${mower.sn}`);
+
+            // Log exact cloud unicom data — helpt bij debugging missing channels
+            for (const u of unicomItems) {
+              console.log(`[Setup] Cloud unicom item: fileName=${u.fileName} alias=${u.alias} url=${u.url ? 'yes' : 'MISSING'}`);
+            }
 
             // Wis bestaande maps om duplicaten te voorkomen bij re-import
             mapRepo.deleteByMowerSn(mower.sn);
@@ -297,60 +312,208 @@ setupRouter.post('/cloud-apply', async (req: Request, res: Response) => {
               for (const obs of obstacles) allItems.push({ ...obs, type: 'obstacle' });
             }
             for (const u of unicomItems) allItems.push(u);
+
+            // Helper: download CSV met retry (cloud kan traag zijn)
+            async function downloadCsvWithRetry(url: string, headers: Record<string, string>, maxRetries = 3): Promise<string> {
+              let lastErr: Error | null = null;
+              for (let attempt = 1; attempt <= maxRetries; attempt++) {
+                try {
+                  const data = await new Promise<string>((resolve, reject) => {
+                    const parsedUrl = new URL(url, `https://${LFI_CLOUD_HOST}`);
+                    const isCloud = parsedUrl.hostname === LFI_CLOUD_SERVERNAME || parsedUrl.hostname === LFI_CLOUD_HOST;
+                    const req = https.request({
+                      hostname: isCloud ? LFI_CLOUD_HOST : parsedUrl.hostname,
+                      path: parsedUrl.pathname + parsedUrl.search,
+                      method: 'GET',
+                      ...(isCloud
+                        ? { headers, rejectUnauthorized: false }
+                        : {}),
+                    }, (resp) => {
+                      // Check HTTP status — cloud kan 4xx/5xx retourneren
+                      if (resp.statusCode && resp.statusCode >= 400) {
+                        let body = '';
+                        resp.on('data', (chunk: string) => { body += chunk; });
+                        resp.on('end', () => reject(new Error(`HTTP ${resp.statusCode}: ${body.slice(0, 200)}`)));
+                        return;
+                      }
+                      let d = '';
+                      resp.on('data', (chunk: string) => { d += chunk; });
+                      resp.on('end', () => resolve(d));
+                    });
+                    req.on('error', reject);
+                    req.setTimeout(20000, () => { req.destroy(); reject(new Error('timeout')); });
+                    req.end();
+                  });
+                  return data;
+                } catch (err) {
+                  lastErr = err as Error;
+                  if (attempt < maxRetries) {
+                    console.warn(`[Setup] Download attempt ${attempt}/${maxRetries} failed, retrying in 2s...`);
+                    await new Promise(r => setTimeout(r, 2000));
+                  }
+                }
+              }
+              throw lastErr ?? new Error('download failed');
+            }
+
+            let importErrors = 0;
             for (const item of allItems) {
               const csvUrl = item.url as string | undefined;
               const fileName = item.fileName as string | undefined;
               const mapType = item.type === 'obstacle' ? 'obstacle' : item.type === 'unicom' ? 'unicom' : 'work';
 
-              if (csvUrl && fileName) {
-                try {
-                  // Download CSV as raw text (not JSON)
-                  const csvData = await new Promise<string>((resolve, reject) => {
-                    const parsedUrl = new URL(csvUrl, `https://${LFI_CLOUD_HOST}`);
-                    const isCloudHost = parsedUrl.hostname === LFI_CLOUD_SERVERNAME || parsedUrl.hostname === LFI_CLOUD_HOST;
-                    const req = https.request({
-                      hostname: isCloudHost ? LFI_CLOUD_HOST : parsedUrl.hostname,
-                      path: parsedUrl.pathname + parsedUrl.search,
-                      method: 'GET',
-                      ...(isCloudHost
-                        ? { headers: makeLfiHeaders(cloudToken), rejectUnauthorized: false }
-                        : {}),
-                    }, (resp) => {
-                      let data = '';
-                      resp.on('data', (chunk: string) => { data += chunk; });
-                      resp.on('end', () => resolve(data));
-                    });
-                    req.on('error', reject);
-                    req.setTimeout(15000, () => { req.destroy(); reject(new Error('timeout')); });
-                    req.end();
-                  });
+              if (!fileName) {
+                console.warn(`[Setup] Skipping item without fileName: type=${item.type}`);
+                importErrors++;
+                continue;
+              }
+              if (!csvUrl) {
+                console.warn(`[Setup] Skipping ${fileName}: no download URL in cloud response`);
+                importErrors++;
+                continue;
+              }
 
-                  if (csvData && csvData.length > 5 && csvData.includes(',')) {
-                    // Parse CSV: each line is "x,y" in local meters
-                    const points = csvData.trim().split('\n').map(line => {
-                      const [x, y] = line.trim().split(',').map(Number);
-                      return { x, y };
-                    }).filter(p => !isNaN(p.x) && !isNaN(p.y));
+              try {
+                const csvData = await downloadCsvWithRetry(csvUrl, makeLfiHeaders(cloudToken!));
+                let points: Array<{ x: number; y: number }> = [];
 
-                    if (points.length >= 2) {
-                      const mapId = uuidv4();
-                      const alias = (item.alias as string | undefined) ?? fileName.replace('.csv', '');
-                      mapRepo.upsert({
-                        map_id: mapId,
-                        mower_sn: mower.sn,
-                        map_name: alias,
-                        map_area: JSON.stringify(points),
-                        file_name: fileName,
-                        file_size: csvData.length,
-                        map_type: mapType,
-                      });
-                      mapsImported++;
-                      console.log(`[Setup] Imported map: ${fileName} (${mapType}, ${points.length} points)`);
-                    }
-                  }
-                } catch (dlErr) {
-                  console.warn(`[Setup] Failed to download ${fileName}:`, dlErr);
+                if (csvData && csvData.length > 5 && csvData.includes(',')) {
+                  // Parse CSV: each line is "x,y" in local meters
+                  points = csvData.trim().split('\n').map(line => {
+                    const [x, y] = line.trim().split(',').map(Number);
+                    return { x, y };
+                  }).filter(p => !isNaN(p.x) && !isNaN(p.y));
                 }
+
+                if (points.length < 2 && mapType !== 'unicom') {
+                  // Work/obstacle items MOETEN punten hebben voor rendering
+                  console.warn(`[Setup] ${fileName}: ${points.length} valid points (need ≥2), skipping`);
+                  importErrors++;
+                  continue;
+                }
+
+                const mapId = uuidv4();
+                const alias = (item.alias as string | undefined) ?? fileName.replace('.csv', '');
+                mapRepo.upsert({
+                  map_id: mapId,
+                  mower_sn: mower.sn,
+                  map_name: alias,
+                  map_area: points.length >= 2 ? JSON.stringify(points) : null,
+                  file_name: fileName,
+                  file_size: csvData.length,
+                  map_type: mapType,
+                });
+                mapsImported++;
+                if (points.length >= 2) {
+                  console.log(`[Setup] ✓ Imported: ${fileName} (${mapType}, ${points.length} points)`);
+                } else {
+                  // Unicom met lege CSV — by design (LFI cloud slaat geen paddata op voor inter-map channels)
+                  console.log(`[Setup] ✓ Imported: ${fileName} (${mapType}, metadata only — empty CSV is normal for inter-map channels)`);
+                }
+              } catch (dlErr) {
+                // Download volledig gefaald — voor unicom items alsnog opslaan (metadata)
+                if (mapType === 'unicom') {
+                  const mapId = uuidv4();
+                  const alias = (item.alias as string | undefined) ?? fileName!.replace('.csv', '');
+                  mapRepo.upsert({
+                    map_id: mapId, mower_sn: mower.sn, map_name: alias,
+                    map_area: null, file_name: fileName!, file_size: null, map_type: 'unicom',
+                  });
+                  mapsImported++;
+                  console.log(`[Setup] ✓ Imported: ${fileName} (unicom, metadata only — download failed but item preserved)`);
+                } else {
+                  importErrors++;
+                  console.error(`[Setup] ✗ FAILED ${fileName} after 3 retries:`, (dlErr as Error).message);
+                }
+              }
+            }
+            if (importErrors > 0) {
+              console.warn(`[Setup] ⚠ ${importErrors} map(s) failed to import for ${mower.sn}`);
+            }
+
+            // Auto-genereer paddata voor unicom channels met lege CSV.
+            // Cloud retourneert soms 0 bytes voor inter-map channels — by design.
+            // We vullen map_area aan zodat het pad op de kaart getekend kan worden.
+            const importedWorkMaps = mapRepo.findByMowerSnAndTypeWithArea(mower.sn, 'work');
+            const allUnicoms = mapRepo.findAllByMowerSnAndType(mower.sn, 'unicom');
+            for (const unicomItem of unicomItems as Array<Record<string, unknown>>) {
+              const fn = unicomItem.fileName as string;
+              if (!fn) continue;
+              // Check of dit unicom channel al paddata heeft (map_area niet null)
+              const existing = allUnicoms.find((u: { file_name: string | null; map_name: string | null }) =>
+                (u.file_name === fn) || (u.map_name === fn.replace('.csv', ''))
+              );
+              if (existing?.map_area) continue; // Heeft al paddata, skip
+
+              // Parse welke maps het channel verbindt: "map0tomap1_0_unicom.csv"
+              const match = fn.match(/^map(\d+)to(.+?)_?unicom\.csv$/);
+              if (!match) continue;
+              const fromIdx = parseInt(match[1]);
+              const target = match[2]; // "charge" of "map1_0"
+
+              console.log(`[Setup] Generating missing unicom: ${fn} (from map${fromIdx} to ${target})`);
+
+              // Zoek het from werkgebied
+              const fromWork = importedWorkMaps[fromIdx];
+              if (!fromWork?.map_area) {
+                console.warn(`[Setup] Cannot generate ${fn}: work map${fromIdx} not found`);
+                continue;
+              }
+
+              const fromPoints: Array<{ x: number; y: number }> = JSON.parse(fromWork.map_area);
+              let toPoint = { x: 0, y: 0 }; // default: charger (0,0)
+
+              if (target.startsWith('map')) {
+                // Inter-map channel: vind dichtstbijzijnd punt van doel werkgebied
+                const toIdxMatch = target.match(/^map(\d+)/);
+                const toIdx = toIdxMatch ? parseInt(toIdxMatch[1]) : -1;
+                const toWork = importedWorkMaps[toIdx];
+                if (toWork?.map_area) {
+                  const toPoints: Array<{ x: number; y: number }> = JSON.parse(toWork.map_area);
+                  // Centroid van doel
+                  toPoint = {
+                    x: toPoints.reduce((s, p) => s + p.x, 0) / toPoints.length,
+                    y: toPoints.reduce((s, p) => s + p.y, 0) / toPoints.length,
+                  };
+                }
+              }
+
+              // Vind dichtstbijzijnd punt van from werkgebied naar toPoint
+              let closestIdx = 0;
+              let closestDist = Infinity;
+              for (let j = 0; j < fromPoints.length; j++) {
+                const dx = fromPoints[j].x - toPoint.x;
+                const dy = fromPoints[j].y - toPoint.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                if (dist < closestDist) { closestDist = dist; closestIdx = j; }
+              }
+
+              // Genereer unicom pad: rechte lijn van toPoint naar closest punt op from werkgebied
+              const closest = fromPoints[closestIdx];
+              const steps = Math.max(5, Math.ceil(closestDist / 0.5));
+              const unicomPoints: Array<{ x: number; y: number }> = [];
+              for (let s = 0; s <= steps; s++) {
+                const t = s / steps;
+                unicomPoints.push({
+                  x: toPoint.x + t * (closest.x - toPoint.x),
+                  y: toPoint.y + t * (closest.y - toPoint.y),
+                });
+              }
+
+              // Update bestaand record (zonder map_area) met gegenereerde paddata
+              if (existing) {
+                mapRepo.updateAreaAndBoundsById(existing.map_id, JSON.stringify(unicomPoints), '{}');
+                console.log(`[Setup] ✓ Auto-filled: ${fn} (${unicomPoints.length} points, ${closestDist.toFixed(1)}m)`);
+              } else {
+                const genId = uuidv4();
+                mapRepo.upsert({
+                  map_id: genId, mower_sn: mower.sn,
+                  map_name: (unicomItem.alias as string) ?? fn.replace('.csv', ''),
+                  map_area: JSON.stringify(unicomPoints), file_name: fn,
+                  file_size: null, map_type: 'unicom',
+                });
+                mapsImported++;
+                console.log(`[Setup] ✓ Auto-generated: ${fn} (${unicomPoints.length} points, ${closestDist.toFixed(1)}m)`);
               }
             }
 

@@ -9,7 +9,7 @@ import {
   Fence, Target, XCircle, CheckCircle2,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import type { MapData, TrailPoint, MapCalibration } from '../../types';
+import type { MapData, TrailPoint, MapCalibration, GpsPoint } from '../../types';
 import {
   fetchMaps, fetchAllMaps, fetchTrail, clearTrail, fetchCalibration, saveCalibration,
   deleteMap, renameMap, updateMapArea, createMap, exportMaps,
@@ -18,6 +18,7 @@ import {
   calibrateCharger,
   type VirtualWall,
 } from '../../api/client';
+import { localToGps, gpsToLocal } from '../../utils/coords';
 import { useToast } from '../common/Toast';
 import { ConfirmDialog } from '../common/ConfirmDialog';
 import { PolygonEditor } from './PolygonEditor';
@@ -135,7 +136,7 @@ function RecenterMap({ position, hasManualInteraction, waitForFit }: { position:
 }
 
 /** Auto-fit map to polygon bounds on load */
-function FitToMaps({ maps, onFitted }: { maps: MapData[]; onFitted?: () => void }) {
+function FitToMaps({ maps, onFitted }: { maps: Array<{ mapArea: Array<{ lat: number; lng: number }> }>; onFitted?: () => void }) {
   const map = useMap();
   const [fitted, setFitted] = useState(false);
 
@@ -652,7 +653,7 @@ function CelebrationOverlay({ area, onDismiss }: { area: number; onDismiss: () =
   );
 }
 
-export function MowerMap({ sn, lat, lng, heading, signals, mowing, pathDirectionPreview, onMapSaved, liveOutline, patternPlacement, onMapClickForPattern, offsetPreview, coveredLanes }: Props) {
+export function MowerMap({ sn, lat, lng, heading, signals, mowing, pathDirectionPreview, onMapSaved: _onMapSaved, liveOutline, patternPlacement, onMapClickForPattern, offsetPreview, coveredLanes }: Props) {
   const { t } = useTranslation();
   const { toast } = useToast();
   const [maps, setMaps] = useState<MapData[]>([]);
@@ -712,6 +713,9 @@ export function MowerMap({ sn, lat, lng, heading, signals, mowing, pathDirection
   const [wallDrawMode, setWallDrawMode] = useState(false);
   const [wallFirstCorner, setWallFirstCorner] = useState<{ lat: number; lng: number } | null>(null);
 
+  // Charger GPS — used for local meter → GPS conversion for Leaflet display
+  const [chargerGps, setChargerGps] = useState<GpsPoint | null>(null);
+
   // Calibration state
   const [savedCal, setSavedCal] = useState<MapCalibration>(DEFAULT_CAL);
   const [editCal, setEditCal] = useState<MapCalibration | null>(null);
@@ -727,7 +731,10 @@ export function MowerMap({ sn, lat, lng, heading, signals, mowing, pathDirection
 
   useEffect(() => {
     if (sn) {
-      fetchMaps(sn).then(setMaps).catch(() => setMaps([]));
+      fetchMaps(sn).then(resp => {
+        setMaps(resp.maps);
+        setChargerGps(resp.chargerGps);
+      }).catch(() => setMaps([]));
       fetchTrail(sn).then(setTrail).catch(() => setTrail([]));
       fetchCalibration(sn).then(setSavedCal).catch(() => {});
     } else {
@@ -826,39 +833,48 @@ export function MowerMap({ sn, lat, lng, heading, signals, mowing, pathDirection
     return '#10b981';
   }, [editMode, drawType, editingMapId, maps, AREA_TYPE_META]);
 
-  // Save edited/drawn polygon — vertices zijn Leaflet GPS coords, server converteert naar lokaal.
+  // Convert local meter maps to GPS-projected maps for Leaflet rendering.
+  // All rendering code uses gpsMaps (with lat/lng). Only save/create uses local meters.
+  type GpsMapData = Omit<MapData, 'mapArea'> & { mapArea: Array<{ lat: number; lng: number }> };
+  const gpsMaps: GpsMapData[] = useMemo(() => {
+    if (!chargerGps) return [];
+    return maps.map(m => ({
+      ...m,
+      mapArea: m.mapArea.map(p => localToGps(p, chargerGps!)),
+    }));
+  }, [maps, chargerGps]);
+
+  // Save edited/drawn polygon — vertices zijn Leaflet GPS coords, converteer naar lokale meters voor API.
   const handleSavePolygon = useCallback(() => {
-    if (editVertices.length < 3) return;
-    const area = editVertices.map(([lat, lng]) => ({ lat, lng }));
+    if (editVertices.length < 3 || !chargerGps) return;
+    const gpsArea = editVertices.map(([lat, lng]) => ({ lat, lng }));
+    const localArea = gpsArea.map(p => gpsToLocal(p, chargerGps!));
 
     if (editMode === 'edit' && editingMapId) {
-      updateMapArea(sn, editingMapId, area).then(() => {
-        const updated = maps.find(m => m.mapId === editingMapId);
-        setMaps(prev => prev.map(m => m.mapId === editingMapId ? { ...m, mapArea: area } : m));
+      updateMapArea(sn, editingMapId, localArea).then(() => {
+        setMaps(prev => prev.map(m => m.mapId === editingMapId ? { ...m, mapArea: localArea } : m));
         setEditMode('none');
         setEditVertices([]);
         setEditingMapId(null);
-        if (updated) onMapSaved?.({ ...updated, mapArea: area });
       }).catch(() => {});
     } else if (editMode === 'draw') {
       const typeMeta = AREA_TYPE_META[drawType];
       const trimmedName = drawName.trim();
       const name = trimmedName || (() => {
-        const count = maps.filter(m => {
+        const count = gpsMaps.filter(m => {
           const s = getAreaStyle(m.mapType, m.mapId, m.mapName);
           return s.color === typeMeta.color;
         }).length;
         return `${typeMeta.label} ${count + 1}`;
       })();
-      createMap(sn, name, area, drawType).then(newMap => {
+      createMap(sn, name, localArea, drawType).then(newMap => {
         setMaps(prev => [...prev, newMap]);
         setEditMode('none');
         setEditVertices([]);
         setSelectedMapId(newMap.mapId);
-        onMapSaved?.(newMap);
       }).catch(() => {});
     }
-  }, [editVertices, editMode, editingMapId, sn, maps, drawType, drawName, AREA_TYPE_META, onMapSaved, savedCal]);
+  }, [editVertices, editMode, editingMapId, sn, gpsMaps, drawType, drawName, AREA_TYPE_META, chargerGps]);
 
   // Cancel edit/draw
   const cancelEditPolygon = useCallback(() => {
@@ -880,7 +896,7 @@ export function MowerMap({ sn, lat, lng, heading, signals, mowing, pathDirection
   const [userInteracted, setUserInteracted] = useState(false);
   const [mapsFitted, setMapsFitted] = useState(false);
 
-  const polygonMaps = maps.filter(m => m.mapArea.length >= 3);
+  const polygonMaps = gpsMaps.filter(m => m.mapArea.length >= 3);
   const trailPositions: [number, number][] = trail.map(p => [p.lat + activeCal.offsetLat, p.lng + activeCal.offsetLng]);
 
   // Mower heading icon (rotates with heading data)
@@ -1403,7 +1419,7 @@ export function MowerMap({ sn, lat, lng, heading, signals, mowing, pathDirection
                     setSavedCal(updated);
                     saveCalibration(sn, updated).then(() => {
                       toast(t('map.chargerSaved'), 'success');
-                      fetchMaps(sn).then(setMaps).catch(() => {});
+                      fetchMaps(sn).then(resp => { setMaps(resp.maps); setChargerGps(resp.chargerGps); }).catch(() => {});
                     });
                   }
                 },
@@ -1970,7 +1986,7 @@ export function MowerMap({ sn, lat, lng, heading, signals, mowing, pathDirection
                   setPendingChargerMove(null);
                   const result = await saveCalibration(sn, updated, { relocateCharger: true });
                   toast(t('map.chargerRelocated', { count: result.mapsRecalculated ?? 0 }), 'success');
-                  fetchMaps(sn).then(setMaps).catch(() => {});
+                  fetchMaps(sn).then(resp => { setMaps(resp.maps); setChargerGps(resp.chargerGps); }).catch(() => {});
                 }}
                 className="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-xl transition-colors"
               >
@@ -1987,7 +2003,7 @@ export function MowerMap({ sn, lat, lng, heading, signals, mowing, pathDirection
                   setPendingChargerMove(null);
                   saveCalibration(sn, updated).then(() => {
                     toast(t('map.chargerSaved'), 'success');
-                    fetchMaps(sn).then(setMaps).catch(() => {});
+                    fetchMaps(sn).then(resp => { setMaps(resp.maps); setChargerGps(resp.chargerGps); }).catch(() => {});
                   });
                 }}
                 className="w-full py-3 bg-white/10 hover:bg-white/15 text-gray-300 text-sm font-medium rounded-xl transition-colors"

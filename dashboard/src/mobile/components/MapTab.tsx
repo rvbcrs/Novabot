@@ -1,9 +1,8 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { ChevronRight, X, Play, Octagon, Scissors, CheckCircle2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import L from 'leaflet';
 import type { MowerDerived, MowerActivity } from '../MobilePage';
-import type { MapData } from '../../types';
+import type { MapData, LocalPoint } from '../../types';
 import { fetchMaps, sendCommand } from '../../api/client';
 import { MiniMap } from './MiniMap';
 import { JoystickControl } from '../../components/dashboard/JoystickControl';
@@ -35,22 +34,13 @@ const TYPE_COLOR: Record<string, string> = {
   unicom:   'bg-blue-500',
 };
 
-/** Compute polygon area in m² using the Shoelace formula with cos(lat) correction */
-function computeAreaM2(points: Array<{ lat: number; lng: number }>): number {
+/** Compute polygon area in m² using the Shoelace formula on local meter points */
+function computeAreaM2(points: LocalPoint[]): number {
   if (points.length < 3) return 0;
-  const toRad = Math.PI / 180;
-  const R = 6371000;
-  const avgLat = points.reduce((s, p) => s + p.lat, 0) / points.length;
-  const cosLat = Math.cos(avgLat * toRad);
-
   let area = 0;
   for (let i = 0; i < points.length; i++) {
     const j = (i + 1) % points.length;
-    const xi = points[i].lng * toRad * R * cosLat;
-    const yi = points[i].lat * toRad * R;
-    const xj = points[j].lng * toRad * R * cosLat;
-    const yj = points[j].lat * toRad * R;
-    area += xi * yj - xj * yi;
+    area += points[i].x * points[j].y - points[j].x * points[i].y;
   }
   return Math.abs(area / 2);
 }
@@ -77,7 +67,7 @@ export function MapTab({ mower, liveOutlines, coveredLanes }: Props) {
 
   useEffect(() => {
     if (!mower.sn) return;
-    fetchMaps(mower.sn).then(setMaps).catch(() => {});
+    fetchMaps(mower.sn).then(resp => setMaps(resp.maps)).catch(() => {});
   }, [mower.sn]);
 
   // Detect mowing completion: mowing → any other activity with progress >= 95%
@@ -97,10 +87,11 @@ export function MapTab({ mower, liveOutlines, coveredLanes }: Props) {
 
   const selectedMap = maps.find(m => m.mapId === selectedMapId) ?? null;
 
-  // Compute bounds for the selected polygon
+  // Compute bounds for the selected polygon (maps are in local meters, bounds not used for Leaflet)
   const focusBounds = useMemo(() => {
     if (!selectedMap || selectedMap.mapArea.length < 2) return null;
-    return L.latLngBounds(selectedMap.mapArea.map(p => [p.lat, p.lng] as [number, number]));
+    // MiniMap handles its own GPS conversion; focusBounds is not needed for rendering
+    return null;
   }, [selectedMap]);
 
   const handleMapItemTap = (mapId: string) => {

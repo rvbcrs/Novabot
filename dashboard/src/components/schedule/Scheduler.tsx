@@ -111,7 +111,7 @@ export function Scheduler({ sn, online, onPathDirectionChange }: Props) {
 
   useEffect(() => {
     fetchSchedules(sn).then(setSchedules).catch(() => {});
-    fetchMaps(sn).then(m => setMaps(m.filter(x => x.mapArea.length >= 3))).catch(() => {});
+    fetchMaps(sn).then(resp => setMaps(resp.maps.filter(x => x.mapArea.length >= 3))).catch(() => {});
     fetchRainSessions(sn).then(setRainSessions).catch(() => {});
   }, [sn]);
 

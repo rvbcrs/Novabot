@@ -5,12 +5,13 @@ import {
   Power, Camera, Gauge, Battery, Eye, MoreHorizontal,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import type { MapData } from '../../types';
+import type { MapData, GpsPoint, LocalPoint } from '../../types';
 import {
   sendCommand, fetchMaps, startPatrol, stopPatrol, rebootMower,
   setChargeThreshold, setMaxSpeed, previewPath,
   setDemoMode as setDemoModeApi, getDemoMode,
 } from '../../api/client';
+import { localToGps } from '../../utils/coords';
 import { useToast } from '../common/Toast';
 import { PatternPicker } from '../patterns/PatternPicker';
 import { loadPattern, transformToGps, type NormContour } from '../../utils/patternUtils.js';
@@ -22,7 +23,7 @@ const DIR_DEGREES = [0, 45, 90, 135, 180, 225, 270, 315];
 interface PendingPolygon {
   mapId: string;
   mapName: string;
-  mapArea: Array<{ lat: number; lng: number }>;
+  mapArea: LocalPoint[];
 }
 
 interface Props {
@@ -46,6 +47,7 @@ export function MowerControls({
   const [expanded, setExpanded] = useState(false);
   const [mappingExpanded, setMappingExpanded] = useState(false);
   const [maps, setMaps] = useState<MapData[]>([]);
+  const [chargerGps, setChargerGps] = useState<GpsPoint | null>(null);
   const [cuttingHeight, setCuttingHeight] = useState(40);
   const [pathDirection, setPathDirection] = useState(0);
   const [mapId, setMapId] = useState('');
@@ -95,7 +97,10 @@ export function MowerControls({
 
   useEffect(() => {
     if (expanded && maps.length === 0) {
-      fetchMaps(sn).then(m => setMaps(m.filter(x => x.mapType === 'work' && x.mapArea.length >= 3))).catch(() => {});
+      fetchMaps(sn).then(resp => {
+        setMaps(resp.maps.filter(x => x.mapType === 'work' && x.mapArea.length >= 3));
+        setChargerGps(resp.chargerGps);
+      }).catch(() => {});
     }
   }, [sn, expanded, maps.length]);
 
@@ -152,16 +157,17 @@ export function MowerControls({
       onOffsetPreviewChange?.(null);
       return;
     }
-    // Get current polygon source
-    const poly = pendingPolygon?.mapId === mapId
+    // Get current polygon source (local meters) and convert to GPS for offsetPolygon
+    const localPoly = pendingPolygon?.mapId === mapId
       ? pendingPolygon.mapArea
       : maps.find(m => m.mapId === mapId)?.mapArea;
-    if (poly && poly.length >= 3) {
-      onOffsetPreviewChange?.(offsetPolygon(poly, edgeOffset));
+    if (localPoly && localPoly.length >= 3 && chargerGps) {
+      const gpsPoly = localPoly.map(p => localToGps(p, chargerGps));
+      onOffsetPreviewChange?.(offsetPolygon(gpsPoly, edgeOffset));
     } else {
       onOffsetPreviewChange?.(null);
     }
-  }, [expanded, edgeOffset, mapId, patternMode, pendingPolygon, maps]);
+  }, [expanded, edgeOffset, mapId, patternMode, pendingPolygon, maps, chargerGps]);
 
   // Auto-clear reboot confirmation after 5s
   useEffect(() => {
@@ -216,12 +222,15 @@ export function MowerControls({
         startCmd.map_id = `pattern_${patternId}`;
         startCmd.map_name = `Pattern ${patternId}`;
       } else {
-        // Normal map mowing
+        // Normal map mowing — mapArea is in local meters, convert to GPS
         startCmd.map_id = mapId || '';
         startCmd.map_name = mapName || '';
-        polySource = pendingPolygon?.mapId === mapId
+        const localPoly = pendingPolygon?.mapId === mapId
           ? pendingPolygon.mapArea
           : maps.find(m => m.mapId === mapId)?.mapArea;
+        polySource = localPoly && chargerGps
+          ? localPoly.map(p => localToGps(p, chargerGps))
+          : undefined;
       }
 
       if (polySource && polySource.length >= 3) {
@@ -247,7 +256,7 @@ export function MowerControls({
     setBusy(false);
   }, [sn, cuttingHeight, pathDirection, edgeOffset, mapId, mapName, maps, pendingPolygon,
     patternMode, patternId, patternContours, patternCenter, patternSize, patternRotation,
-    onPathDirectionChange, onPatternPlacementChange, onStarted, t, toast]);
+    onPathDirectionChange, onPatternPlacementChange, onStarted, chargerGps, t, toast]);
 
   const disabled = busy || (!online && !demoActive);
   const btnBase = 'inline-flex items-center justify-center p-1 sm:p-1.5 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed';
@@ -263,9 +272,12 @@ export function MowerControls({
       if (patternMode && patternContours.length > 0 && patternCenter) {
         polySource = transformToGps(patternContours[0], patternCenter, patternSize, patternRotation);
       } else {
-        polySource = pendingPolygon?.mapId === mapId
+        const localPoly = pendingPolygon?.mapId === mapId
           ? pendingPolygon.mapArea
           : maps.find(m => m.mapId === mapId)?.mapArea;
+        polySource = localPoly && chargerGps
+          ? localPoly.map(p => localToGps(p, chargerGps))
+          : undefined;
       }
       if (!polySource || polySource.length < 3) {
         toast(t('controls.previewNoArea'), 'error');
@@ -282,7 +294,7 @@ export function MowerControls({
     }
     setPreviewing(false);
   }, [sn, patternMode, patternContours, patternCenter, patternSize, patternRotation,
-    pendingPolygon, mapId, maps, edgeOffset, pathDirection, t, toast]);
+    pendingPolygon, mapId, maps, edgeOffset, pathDirection, chargerGps, t, toast]);
 
   const patternReady = patternMode && patternId !== null && patternCenter !== null;
 

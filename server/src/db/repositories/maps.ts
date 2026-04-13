@@ -71,6 +71,10 @@ export class MapRepository {
   private _findByMowerSnAndTypeWithArea = db.prepare(
     'SELECT * FROM maps WHERE mower_sn = ? AND map_type = ? AND map_area IS NOT NULL ORDER BY COALESCE(file_name, map_name), map_id'
   );
+  // Unicom items hoeven geen map_area te hebben — de app checkt alleen fileName voor zone selectie
+  private _findByMowerSnAndType2 = db.prepare(
+    'SELECT * FROM maps WHERE mower_sn = ? AND map_type = ? ORDER BY COALESCE(file_name, map_name), map_id'
+  );
   private _listAll = db.prepare('SELECT * FROM maps ORDER BY updated_at DESC');
 
   // Map mutations
@@ -144,6 +148,11 @@ export class MapRepository {
 
   findByMowerSnAndTypeWithArea(mowerSn: string, type: string): MapRow[] {
     return this._findByMowerSnAndTypeWithArea.all(mowerSn, type) as MapRow[];
+  }
+
+  /** Alle maps van een type, inclusief zonder map_area (nodig voor unicom items) */
+  findAllByMowerSnAndType(mowerSn: string, type: string): MapRow[] {
+    return this._findByMowerSnAndType2.all(mowerSn, type) as MapRow[];
   }
 
   listAll(): MapRow[] {

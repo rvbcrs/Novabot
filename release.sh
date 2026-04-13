@@ -18,16 +18,20 @@ git commit -m "release: v$NEW"
 git tag "v$NEW"
 git push && git push --tags
 
-# Build Docker image
-echo "Building Docker image..."
-docker compose build --no-cache
+# Build + push multi-platform Docker image (amd64 + arm64)
+echo "Building Docker image (amd64 + arm64)..."
+docker buildx build --platform linux/amd64,linux/arm64 \
+  --builder multiplatform-builder \
+  -t "rvbcrs/opennova:latest" \
+  -t "rvbcrs/opennova:$NEW" \
+  --push --no-cache .
 
-# Tag and push
-docker tag rvbcrs/opennova:latest "rvbcrs/opennova:$NEW"
-echo "Pushing rvbcrs/opennova:latest + rvbcrs/opennova:$NEW..."
-docker push rvbcrs/opennova:latest
-docker push "rvbcrs/opennova:$NEW"
+# Restart local container with new image
+echo "Restarting local container..."
+docker compose down 2>/dev/null
+docker compose up -d 2>/dev/null
 
 echo ""
 echo "Released v$NEW"
 echo "  Docker: rvbcrs/opennova:latest + rvbcrs/opennova:$NEW"
+echo "  Local container restarted"

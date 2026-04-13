@@ -27,9 +27,9 @@ export function SchedulesTab({ sn, online }: Props) {
     Promise.all([
       fetchSchedules(sn),
       fetchMaps(sn),
-    ]).then(([s, m]) => {
+    ]).then(([s, mResp]) => {
       setSchedules(s);
-      setMaps(m);
+      setMaps(mResp.maps);
       setLoading(false);
     }).catch(() => setLoading(false));
   }, [sn]);

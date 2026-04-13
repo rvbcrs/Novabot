@@ -575,77 +575,86 @@ function addLog(entry) {
   }
 }
 
-// Connect Socket.io for real-time logs
-var mqttSocket = (typeof io !== 'undefined') ? io() : null;
-if (!mqttSocket) {
-  // Socket.io loaded from different port — connect explicitly
+// Connect Socket.io for real-time logs + events
+// All event listeners are registered in setupSocketListeners so they work
+// regardless of whether socket.io loaded from same origin or fallback port.
+var mqttSocket = null;
+function setupSocketListeners(sock) {
+  sock.on('mqtt:log', function(entry) { addLog(entry); });
+  sock.on('device:online', function(d) {
+    if (token) loadMyDevices();
+    showToast(d.sn + ' came online', 'green');
+  });
+  sock.on('device:offline', function(d) {
+    if (token) loadMyDevices();
+    showToast(d.sn + ' went offline', 'gray');
+  });
+  sock.on('device:bound', function(d) {
+    if (token) loadMyDevices();
+    showActivity('binding ' + d.sn + '...', 3000);
+    showToast('Auto-bound ' + d.sn + ' to your account', 'green');
+  });
+  sock.on('device:paired', function(d) {
+    if (token) loadMyDevices();
+    showActivity('pairing devices...', 3000);
+    showToast('Auto-paired ' + (d.mowerSn || '?') + ' + ' + (d.chargerSn || '?'), 'green');
+  });
+  sock.on('ota:event', function(evt) {
+    if (!evt) return;
+    var selDev = document.getElementById('otaDeviceSelect');
+    if (!selDev || !selDev.value) return;
+    // Filter by selected SN
+    if (evt.sn && evt.sn !== selDev.value) return;
+    var progressArea = document.getElementById('otaProgress');
+    var fill = document.getElementById('otaProgressFill');
+    var pctText = document.getElementById('otaPctText');
+    var statusText = document.getElementById('otaStatusText');
+    if (!progressArea || !fill) return;
+    progressArea.style.display = 'block';
+    var rawData = evt.data || evt;
+    var rawPct = rawData.percentage ?? rawData.progress ?? evt.progress ?? 0;
+    var pct = rawPct <= 1 ? Math.round(rawPct * 100) : Math.round(rawPct);
+    fill.style.width = pct + '%';
+    pctText.textContent = pct + '%';
+    // Determine status text from progress range
+    var evtStatus = rawData.status || evt.status || '';
+    var label = 'Updating...';
+    if (evtStatus === 'completed' || evtStatus === 'success' || pct >= 100) {
+      label = 'Completed!';
+      fill.style.background = '#22c55e';
+      pctText.textContent = '100%';
+      fill.style.width = '100%';
+      showToast('OTA update completed for ' + (evt.sn || selDev.value), 'green');
+    } else if (evtStatus === 'error' || evtStatus === 'failed') {
+      label = 'Failed: ' + (rawData.message || evt.message || 'unknown error');
+      fill.style.background = '#ef4444';
+      pctText.style.color = '#ef4444';
+    } else if (pct <= 62) {
+      label = 'Downloading firmware... (' + pct + '%)';
+    } else if (pct <= 68) {
+      label = 'Unpacking firmware...';
+    } else {
+      label = 'Installing firmware...';
+    }
+    statusText.textContent = label;
+    statusText.style.color = (evtStatus === 'error' || evtStatus === 'failed') ? '#ef4444' : (evtStatus === 'completed' || pct >= 100) ? '#22c55e' : '#aaa';
+  });
+  sock.emit('mqtt:log:history');
+}
+
+// Try connecting socket.io — same origin first, then explicit port fallback
+if (typeof io !== 'undefined') {
+  mqttSocket = io();
+  setupSocketListeners(mqttSocket);
+} else {
+  // Wait for fallback socket.io script to load
   setTimeout(function() {
     if (typeof io !== 'undefined') {
       mqttSocket = io(location.protocol + '//' + location.hostname + ':${process.env.PORT ?? '3000'}');
-      mqttSocket.on('mqtt:log', function(entry) { addLog(entry); });
-      mqttSocket.emit('mqtt:log:history');
+      setupSocketListeners(mqttSocket);
     }
-  }, 1000);
+  }, 1500);
 }
-mqttSocket.on('mqtt:log', function(entry) { addLog(entry); });
-mqttSocket.on('device:online', function(d) {
-  if (token) loadMyDevices();
-  showToast(d.sn + ' came online', 'green');
-});
-mqttSocket.on('device:offline', function(d) {
-  if (token) loadMyDevices();
-  showToast(d.sn + ' went offline', 'gray');
-});
-mqttSocket.on('device:bound', function(d) {
-  if (token) loadMyDevices();
-  showActivity('binding ' + d.sn + '...', 3000);
-  showToast('Auto-bound ' + d.sn + ' to your account', 'green');
-});
-mqttSocket.on('device:paired', function(d) {
-  if (token) loadMyDevices();
-  showActivity('pairing devices...', 3000);
-  showToast('Auto-paired ' + (d.mowerSn || '?') + ' + ' + (d.chargerSn || '?'), 'green');
-});
-mqttSocket.on('ota:event', function(evt) {
-  if (!evt) return;
-  var selDev = document.getElementById('otaDeviceSelect');
-  if (!selDev || !selDev.value) return;
-  // Filter by selected SN
-  if (evt.sn && evt.sn !== selDev.value) return;
-  var progressArea = document.getElementById('otaProgress');
-  var fill = document.getElementById('otaProgressFill');
-  var pctText = document.getElementById('otaPctText');
-  var statusText = document.getElementById('otaStatusText');
-  if (!progressArea || !fill) return;
-  progressArea.style.display = 'block';
-  var rawData = evt.data || evt;
-  var rawPct = rawData.percentage ?? rawData.progress ?? evt.progress ?? 0;
-  var pct = rawPct <= 1 ? Math.round(rawPct * 100) : Math.round(rawPct);
-  fill.style.width = pct + '%';
-  pctText.textContent = pct + '%';
-  // Determine status text from progress range
-  var evtStatus = rawData.status || evt.status || '';
-  var label = 'Updating...';
-  if (evtStatus === 'completed' || evtStatus === 'success' || pct >= 100) {
-    label = 'Completed!';
-    fill.style.background = '#22c55e';
-    pctText.textContent = '100%';
-    fill.style.width = '100%';
-    showToast('OTA update completed for ' + (evt.sn || selDev.value), 'green');
-  } else if (evtStatus === 'error' || evtStatus === 'failed') {
-    label = 'Failed: ' + (rawData.message || evt.message || 'unknown error');
-    fill.style.background = '#ef4444';
-    pctText.style.color = '#ef4444';
-  } else if (pct <= 62) {
-    label = 'Downloading firmware... (' + pct + '%)';
-  } else if (pct <= 68) {
-    label = 'Unpacking firmware...';
-  } else {
-    label = 'Installing firmware...';
-  }
-  statusText.textContent = label;
-  statusText.style.color = (evt.status === 'error' || evt.status === 'failed') ? '#ef4444' : (evt.status === 'completed' || pct >= 100) ? '#22c55e' : '#aaa';
-});
 
 var _activityTimer = null;
 function showActivity(text, durationMs) {

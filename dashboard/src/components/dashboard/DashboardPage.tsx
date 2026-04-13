@@ -7,7 +7,7 @@ import {
   ClipboardList, BarChart3, Menu, Lock,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import type { DeviceState, MqttLogEntry, BleLogEntry, MapData } from '../../types';
+import type { DeviceState, MqttLogEntry, BleLogEntry, MapData, LocalPoint } from '../../types';
 import type { OtaProgress } from '../../hooks/useDevices';
 import { MowerMap } from '../map/MowerMap';
 import { MowerStatus } from '../status/MowerStatus';
@@ -290,7 +290,7 @@ export function DashboardPage({ devices, loading, logs, bleLogs, otaProgress, li
   const [panelsMenuOpen, setPanelsMenuOpen] = useState(false);
   const [pathDirPreview, setPathDirPreview] = useState<number | null>(null);
   const [expandedChip, setExpandedChip] = useState<string | null>(null);
-  const [pendingPolygon, setPendingPolygon] = useState<{ mapId: string; mapName: string; mapArea: Array<{ lat: number; lng: number }> } | null>(null);
+  const [pendingPolygon, setPendingPolygon] = useState<{ mapId: string; mapName: string; mapArea: LocalPoint[] } | null>(null);
   const [stopBusy, setStopBusy] = useState(false);
   const [cameraOpen, setCameraOpen] = useState(false);
   const [joystickOpen, setJoystickOpen] = useState(false);

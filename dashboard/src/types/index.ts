@@ -32,13 +32,26 @@ export interface DeviceOnlineEvent {
   timestamp: number;
 }
 
+/** Local meter coordinates (charger = 0,0) */
+export interface LocalPoint { x: number; y: number }
+
+/** GPS coordinates */
+export interface GpsPoint { lat: number; lng: number }
+
 export interface MapData {
   mapId: string;
   mapName: string | null;
   mapType: 'work' | 'obstacle' | 'unicom';
-  mapArea: Array<{ lat: number; lng: number }>;
-  mapMaxMin: { minLat: number; maxLat: number; minLng: number; maxLng: number } | null;
+  mapArea: LocalPoint[];
+  mapMaxMin: { minX: number; maxX: number; minY: number; maxY: number } | null;
   createdAt: string;
+}
+
+/** Response from /maps/:sn includes charger GPS for local→GPS conversion */
+export interface MapsResponse {
+  maps: MapData[];
+  chargerGps: GpsPoint | null;
+  chargerOrientation: number;
 }
 
 export interface TrailPoint {

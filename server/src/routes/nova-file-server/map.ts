@@ -125,7 +125,9 @@ mapRouter.get('/queryEquipmentMap', authMiddleware, (req: AuthRequest, res: Resp
   // Groepeer per mapIndex: werk + bijbehorende obstakels
   const workMaps = maps.filter(m => m.map_type === 'work');
   const obstacleMaps = maps.filter(m => m.map_type === 'obstacle');
-  const unicomMaps = maps.filter(m => m.map_type === 'unicom');
+  // Unicom items apart ophalen ZONDER map_area filter — de app checkt alleen fileName
+  // voor zone selectie (startsWith check). CSV data is optioneel (alleen voor rendering).
+  const unicomMaps = mapRepo.findAllByMowerSnAndType(sn!, 'unicom');
 
   // Base URL voor map file downloads — server IP direct, geen NPM/DNS omweg
   const baseUrl = process.env.OTA_BASE_URL

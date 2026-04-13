@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef, type TouchEvent as ReactTouchEvent } from 'react';
 import { Play } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import type { MapData } from '../../types';
+import type { MapData, GpsPoint } from '../../types';
 import { sendCommand, fetchMaps } from '../../api/client';
+import { localToGps } from '../../utils/coords';
 import { useToast } from '../../components/common/Toast';
 
 interface Props {
@@ -23,6 +24,7 @@ export function StartMowSheet({ open, onClose, sn, onStarted, initialMapId = nul
   const [pathDirection, setPathDirection] = useState(0);
   const [mapId, setMapId] = useState<string | null>(null);
   const [maps, setMaps] = useState<MapData[]>([]);
+  const [chargerGps, setChargerGps] = useState<GpsPoint | null>(null);
 
   // Swipe-to-dismiss
   const sheetRef = useRef<HTMLDivElement>(null);
@@ -32,7 +34,7 @@ export function StartMowSheet({ open, onClose, sn, onStarted, initialMapId = nul
   // Load maps when opening
   useEffect(() => {
     if (!open || !sn) return;
-    fetchMaps(sn).then(setMaps).catch(() => {});
+    fetchMaps(sn).then(resp => { setMaps(resp.maps); setChargerGps(resp.chargerGps); }).catch(() => {});
     // Reset to defaults (pre-select area if provided)
     setCuttingHeight(40);
     setPathDirection(0);
@@ -58,11 +60,11 @@ export function StartMowSheet({ open, onClose, sn, onStarted, initialMapId = nul
         const selectedMap = maps.find(m => m.mapId === mapId);
         startCmd.map_id = mapId;
         startCmd.map_name = selectedMap?.mapName ?? '';
-        if (selectedMap?.mapArea && selectedMap.mapArea.length >= 3) {
-          startCmd.workArea = selectedMap.mapArea.map(p => ({
-            latitude: p.lat,
-            longitude: p.lng,
-          }));
+        if (selectedMap?.mapArea && selectedMap.mapArea.length >= 3 && chargerGps) {
+          startCmd.workArea = selectedMap.mapArea.map(p => {
+            const gps = localToGps(p, chargerGps!);
+            return { latitude: gps.lat, longitude: gps.lng };
+          });
           startCmd.cutGrassHeight = cuttingHeight;
         }
       }

@@ -2,8 +2,9 @@ import { useEffect, useState, useMemo } from 'react';
 import { MapContainer, TileLayer, Marker, Polygon, Polyline, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import { Layers, Gamepad2 } from 'lucide-react';
-import type { MapData, TrailPoint } from '../../types';
+import type { MapData, TrailPoint, GpsPoint } from '../../types';
 import { fetchMaps, fetchTrail } from '../../api/client';
+import { localToGps } from '../../utils/coords';
 import { CoverageStripes } from '../../components/map/MowerMap';
 
 // Fix Leaflet default marker icons in Vite
@@ -83,14 +84,14 @@ function makeChargerIcon() {
 
 // ── Inner components ────────────────────────────────────────────────
 
-function FitToMaps({ maps }: { maps: MapData[] }) {
+function FitToMaps({ gpsMaps }: { gpsMaps: Array<{ mapArea: Array<{ lat: number; lng: number }> }> }) {
   const map = useMap();
   const [fitted, setFitted] = useState(false);
 
   useEffect(() => {
-    if (fitted || maps.length === 0) return;
+    if (fitted || gpsMaps.length === 0) return;
     const allPoints: [number, number][] = [];
-    for (const m of maps) {
+    for (const m of gpsMaps) {
       for (const p of m.mapArea) {
         allPoints.push([p.lat, p.lng]);
       }
@@ -99,7 +100,7 @@ function FitToMaps({ maps }: { maps: MapData[] }) {
     const bounds = L.latLngBounds(allPoints);
     map.fitBounds(bounds, { padding: [40, 40], maxZoom: 22 });
     setFitted(true);
-  }, [map, maps, fitted]);
+  }, [map, gpsMaps, fitted]);
 
   return null;
 }
@@ -160,15 +161,28 @@ export function MiniMap({
   coveredLanes = null,
 }: Props) {
   const [maps, setMaps] = useState<MapData[]>([]);
+  const [chargerGps, setChargerGps] = useState<GpsPoint | null>(null);
   const [trail, setTrail] = useState<TrailPoint[]>([]);
   const [tileLayer, setTileLayer] = useState<'satellite' | 'street'>('satellite');
 
   // Fetch maps + trail
   useEffect(() => {
     if (!sn) return;
-    fetchMaps(sn).then(setMaps).catch(() => {});
+    fetchMaps(sn).then(resp => {
+      setMaps(resp.maps);
+      setChargerGps(resp.chargerGps);
+    }).catch(() => {});
     fetchTrail(sn).then(setTrail).catch(() => {});
   }, [sn]);
+
+  // Convert local meter maps to GPS for Leaflet rendering
+  const gpsMaps = useMemo(() => {
+    if (!chargerGps) return [];
+    return maps.map(m => ({
+      ...m,
+      mapArea: m.mapArea.map(p => localToGps(p, chargerGps!)) as Array<{ lat: number; lng: number }>,
+    }));
+  }, [maps, chargerGps]);
 
   const center: [number, number] = lat && lng ? [lat, lng] : DEFAULT_CENTER;
 
@@ -204,7 +218,7 @@ export function MiniMap({
         />
 
         {/* Work area polygons */}
-        {maps.map(m => {
+        {gpsMaps.map(m => {
           const style = getAreaStyle(m.mapType, m.mapId, m.mapName);
           const isSelected = m.mapId === selectedMapId;
           return (
@@ -236,7 +250,7 @@ export function MiniMap({
 
         {/* Coverage stripes (demo mowing) */}
         {coveredLanes && coveredLanes.length > 0 && (() => {
-          const wPolys = maps
+          const wPolys = gpsMaps
             .filter(m => getAreaStyle(m.mapType, m.mapId, m.mapName) === AREA_STYLES.work)
             .map(m => m.mapArea);
           return <CoverageStripes lanes={coveredLanes} workPolys={wPolys} />;
@@ -252,7 +266,7 @@ export function MiniMap({
           <Marker position={[lat, lng]} icon={mowerIcon} />
         )}
 
-        <FitToMaps maps={maps} />
+        <FitToMaps gpsMaps={gpsMaps} />
         <ResizeHandler />
         {lat && lng && !onTap && !focusBounds && <RecenterMap position={[lat, lng]} />}
         <FlyToBounds bounds={focusBounds} />

@@ -1,4 +1,4 @@
-import type { DeviceState, SensorDef, MapData, TrailPoint, MapCalibration, Schedule, WorkRecord, SignalHistoryPoint } from '../types';
+import type { DeviceState, SensorDef, MapData, MapsResponse, TrailPoint, MapCalibration, Schedule, WorkRecord, SignalHistoryPoint, LocalPoint } from '../types';
 
 const BASE = '/api/dashboard';
 
@@ -35,13 +35,17 @@ export async function fetchSensors(): Promise<SensorDef[]> {
   return data.sensors ?? [];
 }
 
-export async function fetchMaps(sn: string): Promise<MapData[]> {
-  const data = await (await get(`${BASE}/maps/${encodeURIComponent(sn)}?coords=gps`)).json();
-  return data.maps ?? [];
+export async function fetchMaps(sn: string): Promise<MapsResponse> {
+  const data = await (await get(`${BASE}/maps/${encodeURIComponent(sn)}`)).json();
+  return {
+    maps: data.maps ?? [],
+    chargerGps: data.chargerGps ?? null,
+    chargerOrientation: data.chargerOrientation ?? 0,
+  };
 }
 
 export async function fetchAllMaps(): Promise<MapData[]> {
-  const data = await (await get(`${BASE}/maps?coords=gps`)).json();
+  const data = await (await get(`${BASE}/maps`)).json();
   return data.maps ?? [];
 }
 
@@ -78,7 +82,7 @@ export async function renameMap(sn: string, mapId: string, mapName: string): Pro
   });
 }
 
-export async function updateMapArea(sn: string, mapId: string, mapArea: Array<{ lat: number; lng: number }>): Promise<void> {
+export async function updateMapArea(sn: string, mapId: string, mapArea: LocalPoint[]): Promise<void> {
   await fetch(`${BASE}/maps/${encodeURIComponent(sn)}/${encodeURIComponent(mapId)}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
@@ -86,7 +90,7 @@ export async function updateMapArea(sn: string, mapId: string, mapArea: Array<{ 
   });
 }
 
-export async function createMap(sn: string, mapName: string, mapArea: Array<{ lat: number; lng: number }>, mapType?: string): Promise<MapData> {
+export async function createMap(sn: string, mapName: string, mapArea: LocalPoint[], mapType?: string): Promise<MapData> {
   const data = await (await post(`${BASE}/maps/${encodeURIComponent(sn)}`, { mapName, mapArea, mapType })).json();
   return data.map;
 }
