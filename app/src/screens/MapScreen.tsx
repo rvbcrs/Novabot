@@ -53,7 +53,7 @@ import { Linking } from 'react-native';
 const { width: SCREEN_W } = Dimensions.get('window');
 const MAP_PADDING = 24;
 const MAP_SIZE = SCREEN_W - MAP_PADDING * 2;
-const INNER_PADDING = 20;
+const INNER_PADDING = 10;
 
 // ── Local meters → SVG coordinate conversion ───────────────────────
 // All map data is in local meters with charger at (0,0).
@@ -665,11 +665,11 @@ export default function MapScreen() {
     }
     if (trailLocal.length > 0) b = expandLocalBounds(b, computeLocalBounds(trailLocal));
     if (mowerLocal) b = expandLocalBounds(b, computeLocalBounds([mowerLocal]));
-    // Always include charger at origin
-    b = expandLocalBounds(b, computeLocalBounds([chargerLocal]));
+    // Include charger only if no maps (otherwise charger at origin can inflate bounds)
+    if (!b) b = expandLocalBounds(b, computeLocalBounds([chargerLocal]));
     if (b) {
-      const xPad = (b.maxX - b.minX) * 0.15 || 0.5;
-      const yPad = (b.maxY - b.minY) * 0.15 || 0.5;
+      const xPad = (b.maxX - b.minX) * 0.08 || 0.5;
+      const yPad = (b.maxY - b.minY) * 0.08 || 0.5;
       b = { minX: b.minX - xPad, maxX: b.maxX + xPad, minY: b.minY - yPad, maxY: b.maxY + yPad };
     }
     return b;

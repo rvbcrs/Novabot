@@ -739,14 +739,24 @@ dashboardRouter.post('/maps/:sn/export-zip', (req: Request, res: Response) => {
   }
 });
 
-// GET /api/dashboard/maps/:sn/download-zip — download het gegenereerde ZIP bestand
+// GET /api/dashboard/maps/:sn/download-zip — download ZIP (auto-genereer als nodig)
 dashboardRouter.get('/maps/:sn/download-zip', (req: Request, res: Response) => {
   const { sn } = req.params;
-  const zipPath = path.resolve(`storage/maps/${sn}.zip`);
+  let zipPath = path.resolve(`storage/maps/${sn}.zip`);
 
+  // Auto-genereer als de ZIP niet bestaat of verouderd is
   if (!existsSync(zipPath)) {
-    res.status(404).json({ error: 'ZIP niet gevonden — genereer eerst via POST export-zip' });
-    return;
+    try {
+      const generated = generateMapZipFromDb(sn, 0);
+      if (!generated) {
+        res.status(404).json({ error: 'Geen kaarten gevonden voor dit apparaat' });
+        return;
+      }
+      zipPath = generated;
+    } catch (err) {
+      res.status(500).json({ error: 'ZIP generatie mislukt', details: String(err) });
+      return;
+    }
   }
 
   res.download(zipPath, `${sn}.zip`);

@@ -861,6 +861,20 @@ export default function HomeScreen() {
                 <Text style={styles.errorMessage}>{mower.errorMsg}</Text>
               )}
             </View>
+            <TouchableOpacity
+              style={{ backgroundColor: 'rgba(239,68,68,0.15)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 }}
+              onPress={async () => {
+                try {
+                  const url = await getServerUrl();
+                  if (!url || !mower.sn) return;
+                  const api = new ApiClient(url);
+                  await api.sendCommand(mower.sn, { clear_error: {} });
+                  await api.sendCommand(mower.sn, { quit_mapping_mode: { value: 1, cmd_num: Date.now() % 100000 } });
+                } catch {}
+              }}
+            >
+              <Text style={{ color: colors.red, fontSize: 12, fontWeight: '600' }}>Clear</Text>
+            </TouchableOpacity>
           </View>
         )}
 

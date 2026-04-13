@@ -146,7 +146,8 @@ export default function MappingScreen() {
     || sensors.gps_state === 'ENABLE'
     || (sensors.latitude !== undefined && parseFloat(sensors.latitude) !== 0);
   const locQuality = parseInt(sensors.loc_quality ?? '0', 10);
-  const locReady = locQuality >= 80;
+  const locState = sensors.localization_state ?? '';
+  const locReady = locQuality >= 80 && locState !== 'NOT_INITIALIZED';
   const mappingReady = gpsValid && locReady;
   const battery = parseInt(sensors.battery_power ?? sensors.battery_capacity ?? '0', 10) || 0;
 
@@ -515,6 +516,16 @@ export default function MappingScreen() {
   const rechargeStatus = parseInt(sensors.recharge_status ?? '0', 10);
   const prevRechargeRef = useRef(0);
   const savingChargerPosRef = useRef(false);
+
+  // Reset recharge tracking wanneer we naar chargerPosition gaan
+  // zodat de transitie 0→>0 gedetecteerd kan worden, ook als de maaier al op de charger stond
+  useEffect(() => {
+    if (mappingState === 'chargerPosition') {
+      prevRechargeRef.current = 0;
+      savingChargerPosRef.current = false;
+    }
+  }, [mappingState]);
+
   useEffect(() => {
     if (mappingState === 'chargerPosition' && rechargeStatus > 0 && prevRechargeRef.current === 0 && !savingChargerPosRef.current) {
       savingChargerPosRef.current = true;

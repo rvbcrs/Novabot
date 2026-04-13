@@ -581,7 +581,8 @@ mapRouter.post('/uploadEquipmentMap', upload.any(), (req: Request, res: Response
   fs.copyFileSync(finalPath, latestPath);
 
   // Parse ZIP — lokale coördinaten direct uit CSV (geen GPS origin nodig)
-  let mapName: string | null = localFileName ?? null;
+  // Gebruik NIET de ZIP bestandsnaam als map_name — die is altijd "<SN>.zip"
+  let mapName: string | null = null;
 
   // Parse jsonBody metadata als aanwezig
   if (jsonBody) {
