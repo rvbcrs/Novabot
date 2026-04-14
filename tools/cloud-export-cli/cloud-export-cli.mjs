@@ -34,7 +34,6 @@ Required:
 Export options:
   --include-firmware  Download firmware binaries (large files)
   --include-secrets   Keep sensitive fields (WiFi passwords, MQTT creds) in export
-  --force             Overwrite existing export directory without prompting
 
 Restore options:
   --sn <mowerSN>      Mower SN to restore maps for (auto-detected if omitted)
@@ -42,6 +41,7 @@ Restore options:
   --yes, -y           Skip confirmation prompt
 
 General:
+  --force             Overwrite (export: existing directory; restore: existing cloud maps)
   --version, -v       Show version
   --help, -h          Show this help message
 `);
@@ -588,8 +588,8 @@ async function restoreMaps() {
   }
   done();
 
-  // 4. Build upload plan and check existing cloud maps
-  const uploadPlan = []; // { sn, fileName, type, alias, csvPath, size }
+  // 4. Build restore plan — one ZIP per mower SN
+  const restorePlan = []; // { sn, csvFiles: [{ fileName, csvPath, type, size }], meta }
 
   for (const sn of targetSns) {
     step(`Checking existing cloud maps for ${sn}`);
@@ -601,16 +601,19 @@ async function restoreMaps() {
       if (data && (data.work?.length > 0 || data.unicom?.length > 0)) {
         const workCount = data.work?.length ?? 0;
         const unicomCount = data.unicom?.length ?? 0;
-        done(`${workCount} work area(s), ${unicomCount} channel(s) already exist`);
-        warn(`Maps already exist in cloud for ${sn}. Skipping to avoid duplicates. Delete maps from the app first to force restore.`);
-        continue;
+        if (opts.force) {
+          done(`${workCount} work area(s), ${unicomCount} channel(s) exist — overwriting (--force)`);
+        } else {
+          done(`${workCount} work area(s), ${unicomCount} channel(s) already exist`);
+          warn(`Maps already exist in cloud for ${sn}. Skipping to avoid duplicates. Use --force to overwrite.`);
+          continue;
+        }
       }
       done('no maps — will restore');
     } catch {
       done('could not check — will attempt restore');
     }
 
-    // Read the backed-up map metadata
     const metaPath = path.join(mapsDir, `${sn}.json`);
     const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
     const mapData = meta.data;
@@ -621,6 +624,7 @@ async function restoreMaps() {
     }
 
     const csvDir = path.join(mapsDir, sn);
+    const csvFiles = [];
     const collectItems = (items, type) => {
       for (const item of (items ?? [])) {
         const sanitized = safeName(item.fileName);
@@ -629,7 +633,6 @@ async function restoreMaps() {
           continue;
         }
         const csvPath = path.join(csvDir, sanitized);
-        // Verify the resolved path is within the expected directory
         if (!path.resolve(csvPath).startsWith(path.resolve(csvDir) + path.sep)
             && path.resolve(csvPath) !== path.resolve(csvDir, sanitized)) {
           warn(`Path traversal blocked for: ${item.fileName}`);
@@ -639,13 +642,10 @@ async function restoreMaps() {
           warn(`File not found in backup: ${sanitized} — will skip`);
           continue;
         }
-        uploadPlan.push({
-          sn, fileName: sanitized, type,
-          alias: item.alias ?? item.fileName,
-          csvPath,
+        csvFiles.push({
+          fileName: sanitized, csvPath, type,
           size: fs.statSync(csvPath).size,
         });
-        // Collect obstacles nested under work items
         if (type === 'work') {
           collectItems(item.obstacle, 'obstacle');
         }
@@ -654,19 +654,27 @@ async function restoreMaps() {
 
     collectItems(mapData.work, 'work');
     collectItems(mapData.unicom, 'unicom');
+
+    if (csvFiles.length > 0) {
+      restorePlan.push({ sn, csvFiles, meta });
+    }
   }
 
-  if (uploadPlan.length === 0) {
+  if (restorePlan.length === 0) {
     console.log('\nNothing to restore.');
     printWarnings();
     return;
   }
 
   // 5. Show plan and confirm
-  console.log(`\nUpload plan (${uploadPlan.length} file(s)):`);
-  for (const item of uploadPlan) {
-    const sizeKb = (item.size / 1024).toFixed(1);
-    console.log(`  ${item.sn}/${item.fileName}  (${item.type}, ${sizeKb} KB)`);
+  console.log(`\nRestore plan:`);
+  for (const plan of restorePlan) {
+    const totalKb = (plan.csvFiles.reduce((n, f) => n + f.size, 0) / 1024).toFixed(1);
+    console.log(`  ${plan.sn}: ${plan.csvFiles.length} file(s), ${totalKb} KB total`);
+    for (const f of plan.csvFiles) {
+      const sizeKb = (f.size / 1024).toFixed(1);
+      console.log(`    ${f.fileName}  (${f.type}, ${sizeKb} KB)`);
+    }
   }
 
   if (opts.dryRun) {
@@ -677,57 +685,110 @@ async function restoreMaps() {
 
   if (!opts.yes) {
     console.log('');
-    const proceed = await confirm(`Upload ${uploadPlan.length} file(s) to the Novabot cloud?`);
+    const proceed = await confirm(`Upload map data for ${restorePlan.length} mower(s) to the Novabot cloud?`);
     if (!proceed) {
       console.log('Aborted.');
       return;
     }
   }
 
-  // 6. Execute uploads
-  let uploadCount = 0;
+  // 6. Build mower-format ZIP and upload via fragmentUploadEquipmentMap
+  let successCount = 0;
   let failCount = 0;
 
-  for (const item of uploadPlan) {
-    const uploadId = crypto.randomUUID();
-    step(`Uploading ${item.sn}/${item.fileName} (${item.type})`);
+  for (const plan of restorePlan) {
+    const tmpDir = path.join(inputDir, `.restore-tmp-${plan.sn}`);
+    const csvZipDir = path.join(tmpDir, 'csv_file');
+    const zipPath = path.join(tmpDir, `${plan.sn}.zip`);
+
     try {
+      // Build csv_file/ directory with CSVs + map_info.json
+      step(`Packaging ${plan.sn} (${plan.csvFiles.length} files)`);
+      fs.mkdirSync(csvZipDir, { recursive: true });
+
+      for (const f of plan.csvFiles) {
+        fs.copyFileSync(f.csvPath, path.join(csvZipDir, f.fileName));
+      }
+
+      // Create map_info.json with charging pose + map_size per work area
+      const cp = plan.meta.machineExtendedField?.chargingPose;
+      const mapInfo = {
+        charging_pose: {
+          x: parseFloat(cp?.x ?? '0'),
+          y: parseFloat(cp?.y ?? '0'),
+          orientation: parseFloat(cp?.orientation ?? '0'),
+        },
+      };
+
+      // Add map_size for each work area — required by the cloud to populate mapArea.
+      // Without this, the app shows "Map list is null".
+      const mapData = plan.meta.data;
+      for (const workArea of (mapData.work ?? [])) {
+        const fn = workArea.fileName;
+        if (!fn) continue;
+        if (workArea.mapArea) {
+          mapInfo[fn] = { map_size: parseFloat(workArea.mapArea) };
+        } else {
+          // Fallback: compute area from CSV points (Shoelace formula)
+          const csvPath = path.join(csvZipDir, fn);
+          if (fs.existsSync(csvPath)) {
+            const pts = fs.readFileSync(csvPath, 'utf8').trim().split('\n')
+              .map(l => l.split(',').map(Number))
+              .filter(([x, y]) => !isNaN(x) && !isNaN(y));
+            let area = 0;
+            for (let i = 0; i < pts.length; i++) {
+              const j = (i + 1) % pts.length;
+              area += pts[i][0] * pts[j][1] - pts[j][0] * pts[i][1];
+            }
+            mapInfo[fn] = { map_size: Math.round(Math.abs(area) / 2 * 100) / 100 };
+          }
+        }
+      }
+
+      fs.writeFileSync(
+        path.join(csvZipDir, 'map_info.json'),
+        JSON.stringify(mapInfo, null, 3) + '\n',
+      );
+      createZip(tmpDir, zipPath);
+      const zipSize = fs.statSync(zipPath).size;
+      done(`${(zipSize / 1024).toFixed(1)} KB`);
+
+      // Upload the ZIP via the app's upload endpoint (just sn + file, matching the real app)
+      step(`Uploading ${plan.sn} map ZIP`);
+
       const resp = await uploadMultipart(
         '/api/nova-file-server/map/fragmentUploadEquipmentMap',
         {
-          sn: item.sn,
-          uploadId,
-          chunkIndex: '0',
-          chunksTotal: '1',
-          mapName: item.alias,
+          sn: plan.sn,
         },
-        { field: 'file', filename: item.fileName, path: item.csvPath },
+        { field: 'file', filename: 'maps.zip', path: zipPath },
         token,
       );
 
       if (resp.success || resp.value?.mapId) {
         done(resp.value?.mapId ?? 'ok');
-        uploadCount++;
+        successCount++;
       } else {
         done('FAILED');
-        warn(`Upload failed for ${item.fileName}: ${resp.message ?? JSON.stringify(resp)}`);
+        warn(`Upload failed for ${plan.sn}: ${JSON.stringify(resp)}`);
         failCount++;
       }
     } catch (err) {
       done('ERROR');
-      warn(`Upload error for ${item.fileName}: ${err.message}`);
+      warn(`Upload error for ${plan.sn}: ${err.message}`);
       failCount++;
+    } finally {
+      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
     }
   }
 
   // 7. Verify maps landed in the cloud
   console.log('');
-  const verifiedSns = [...new Set(uploadPlan.map(i => i.sn))];
-  for (const sn of verifiedSns) {
-    step(`Verifying cloud maps for ${sn}`);
+  for (const plan of restorePlan) {
+    step(`Verifying cloud maps for ${plan.sn}`);
     try {
       const check = await callLfiCloud('GET',
-        `/api/nova-file-server/map/queryEquipmentMap?sn=${sn}&appUserId=${appUserId}`,
+        `/api/nova-file-server/map/queryEquipmentMap?sn=${plan.sn}&appUserId=${appUserId}`,
         null, token);
       const data = check.value?.data;
       const workCount = data?.work?.length ?? 0;
@@ -736,15 +797,15 @@ async function restoreMaps() {
         done(`${workCount} work area(s), ${unicomCount} channel(s) confirmed`);
       } else {
         done('no maps found — upload may not have taken effect');
-        warn(`Verification: no maps found for ${sn} after upload`);
+        warn(`Verification: no maps found for ${plan.sn} after upload`);
       }
     } catch {
       done('could not verify');
-      warn(`Could not verify maps for ${sn} after upload`);
+      warn(`Could not verify maps for ${plan.sn} after upload`);
     }
   }
 
-  console.log(`\nRestore complete: ${uploadCount} uploaded, ${failCount} failed.`);
+  console.log(`\nRestore complete: ${successCount} uploaded, ${failCount} failed.`);
   console.log('Open the Novabot app and check that your maps appear.');
   console.log('If the mower is online, it should sync the maps automatically.');
   printWarnings();

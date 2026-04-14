@@ -6,13 +6,22 @@ This is the CLI counterpart to the web-based [cloud-export](../cloud-export/) to
 
 ## Map Backup & Restore
 
-> **This solves a commonly requested feature:** when you replace your base station (warranty swap, defect, upgrade), the Novabot app deletes your maps. Re-mapping a yard can take 30+ minutes and requires good GPS conditions. This tool lets you back up your maps *before* the swap and restore them to the cloud afterward — no re-mapping required.
+> **Background:** when you replace your base station (warranty swap, defect, upgrade), the Novabot app's unbind/rebind flow often deletes your cloud maps. Re-mapping a yard can take 30+ minutes and requires good GPS conditions. This tool backs up your maps and can restore the **cloud copy** afterward.
 >
-> **Important details:**
-> - Maps are stored in the cloud by **mower serial number**, not charger SN. Replacing the charger doesn't inherently erase them, but the app's unbind/rebind flow often does.
-> - The mower also stores maps locally. In many cases it re-uploads them automatically after rebinding. The restore command is your safety net if that doesn't happen.
-> - A charger must be **unbound from its current account** before it can be added to a new account. The cloud enforces single-owner binding.
+> **Important: cloud-only restore.** This tool restores maps to the **LFI cloud** only. It cannot push maps to the mower itself. The Novabot app's map display is **mower-authoritative** — the app queries the mower via MQTT (`get_map_list`), and if the mower has no maps locally, the app shows "Map list is null" regardless of what's in the cloud.
+>
+> **When restore works:**
+> - The mower still has maps on its local filesystem (most common after a charger swap — you replaced the charger, not the mower). The mower re-uploads to the cloud automatically, or you restore the cloud copy and the app displays maps from the mower.
+> - You want a cloud backup for archival purposes (CSV files, obstacle boundaries, channel paths).
+>
+> **When restore is NOT enough:**
+> - The mower has lost its maps (factory reset, firmware wipe, mower replacement). The cloud copy will be restored, but the app won't display maps because the mower responds with `zip_dir_empty`. In this case you'll need to re-map, or use SSH/SCP to push CSVs directly to the mower at `/userdata/lfi/maps/home0/csv_file/`.
+>
+> **Other details:**
+> - Maps are stored in the cloud by **mower serial number**, not charger SN.
+> - A charger must be **unbound from its current account** before it can be added to a new account.
 > - **Back up your maps before you unbind.** Once you delete the base station in the app, cloud map data may be gone.
+> - The cloud's `fragmentUploadEquipmentMap` endpoint does not populate the `mapArea` field from uploaded data. After a restore, map areas will show as unknown in the cloud. This is a server-side limitation.
 
 ## Requirements
 
@@ -51,6 +60,7 @@ Options:
 - `--sn LFIN2XXXXXXXXX` — restore maps for a specific mower (auto-detected if omitted)
 - `--dry-run` — show what would be uploaded without doing it
 - `--yes` / `-y` — skip the confirmation prompt
+- `--force` — overwrite existing cloud maps (by default, restore skips mowers that already have maps)
 
 ## Base Station Swap Workflow
 
@@ -62,7 +72,21 @@ If you need to replace your charging station (e.g., warranty swap, upgrade):
 4. **Check** if maps survived — they usually do since they're stored on the mower itself
 5. **Restore** maps if they're missing from the cloud: `node cloud-export-cli.mjs restore-maps ...`
 
-Maps are stored by mower SN in the cloud, not charger SN. In most cases the mower retains its maps locally and re-uploads them automatically. The restore command is a safety net.
+Maps are stored by mower SN in the cloud, not charger SN. In most cases the mower retains its maps locally and re-uploads them automatically. The restore command is a safety net for the cloud copy.
+
+### How Map Display Works (App Architecture)
+
+The Novabot app's map display works as follows:
+
+1. **Cloud download** — on launch, the app downloads CSV files from cloud URLs for initial rendering
+2. **Mower query** — the app sends MQTT `get_map_list` to the mower
+3. **Mower response** — if the mower has maps, the app displays them; if `zip_dir_empty`, the app shows "Map list is null" and returns to the main screen
+
+The mower is the **authoritative source** for map display. Cloud data alone is not sufficient — the mower must also have the maps on its local filesystem (`/userdata/lfi/maps/home0/csv_file/`). Map data flows **one way**: mower → cloud. There is no MQTT command or cloud API to push maps from the cloud back to the mower.
+
+### Verified Against LFI Cloud
+
+The restore flow has been tested against the real LFI cloud (April 2026). A backup with 3 work areas, 5 obstacles, and 3 channels (11 CSV files) was successfully restored and verified via `queryEquipmentMap`. The cloud accepted and stored all files correctly. However, the app only displays maps when the mower also has them locally.
 
 ## Exported Data
 
