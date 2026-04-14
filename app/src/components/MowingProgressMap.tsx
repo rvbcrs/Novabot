@@ -29,6 +29,7 @@ interface Props {
   size?: number;
   trail?: LocalPoint[];     // mowed path in local meters
   plannedPaths?: Array<{ id: string; points: LocalPoint[] }>;  // planned mowing paths
+  obstacles?: Array<{ id: string; points: LocalPoint[] }>;    // obstacle polygons
   mowerPos?: LocalPoint | null;  // mower position in local meters
   mowerHeading?: number;    // radians
 }
@@ -90,7 +91,7 @@ function generateStripes(
   return lines;
 }
 
-export function MowingProgressMap({ polygon, progress, pathDirection, size = 200, trail, plannedPaths, mowerPos, mowerHeading }: Props) {
+export function MowingProgressMap({ polygon, progress, pathDirection, size = 200, trail, plannedPaths, obstacles, mowerPos, mowerHeading }: Props) {
   const padding = 14;
   const charger: LocalPoint = { x: 0, y: 0 };
 
@@ -175,6 +176,18 @@ export function MowingProgressMap({ polygon, progress, pathDirection, size = 200
             </G>
           );
         })()}
+
+        {/* Obstacles */}
+        {obstacles && obstacles.map((obs) => {
+          const obsSvg = obs.points.map(p => toSvg(p, bounds, size, padding));
+          return (
+            <SvgPolygon
+              key={`obs-${obs.id}`}
+              points={obsSvg.map(p => `${p.x},${p.y}`).join(' ')}
+              fill="rgba(239,68,68,0.25)" stroke="#ef4444" strokeWidth={1} strokeLinejoin="round" strokeDasharray="3,2"
+            />
+          );
+        })}
 
         {/* Outline on top */}
         <SvgPolygon points={pointsStr} fill="none" stroke="#22c55e" strokeWidth={1.5} strokeLinejoin="round" />

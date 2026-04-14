@@ -566,7 +566,7 @@ mapRouter.post('/uploadEquipmentMap', upload.any(), (req: Request, res: Response
   if (zipMd5) {
     const fileData = fs.readFileSync(file.path);
     const actualMd5 = crypto.createHash('md5').update(fileData).digest('hex');
-    if (actualMd5 !== zipMd5) {
+    if (actualMd5.toLowerCase() !== zipMd5.toLowerCase()) {
       console.warn(`[MAP] uploadEquipmentMap: MD5 mismatch: expected=${zipMd5} actual=${actualMd5}`);
     }
   }
@@ -599,12 +599,11 @@ mapRouter.post('/uploadEquipmentMap', upload.any(), (req: Request, res: Response
       // Check of er al maps in de DB staan voor deze maaier (bijv. dashboard-drawn)
       const existingMaps = mapRepo.findWithArea(sn);
 
-      if (existingMaps.length > 0) {
-        // Maps bestaan al — maaier stuurt zijn ZIP terug. NIET file_name overschrijven
-        // met ZIP naam, anders breken de CSV download URLs in queryEquipmentMap.
-        console.log(`[MAP] uploadEquipmentMap: ${existingMaps.length} bestaande maps voor ${sn}, skip file_name update`);
-      } else {
-        // Geen bestaande maps — sla elk werkgebied op (lokale coördinaten direct uit CSV)
+      const existingWorkMaps = existingMaps.filter(m => m.map_type === 'work');
+
+      // Work maps: alleen aanmaken als ze nog niet bestaan (voorkom overschrijven van
+      // dashboard-drawn maps of cloud-geïmporteerde maps met ZIP bestandsnamen)
+      if (existingWorkMaps.length === 0) {
         for (const area of parsed.areas) {
           if (area.type !== 'work') continue;
           const areaMapId = uuidv4();
@@ -627,39 +626,53 @@ mapRouter.post('/uploadEquipmentMap', upload.any(), (req: Request, res: Response
           });
           console.log(`[MAP] Opgeslagen werkgebied map${area.mapIndex} voor ${sn} (${area.points.length} lokale punten)`);
         }
-        // Sla obstakels op
-        for (const area of parsed.areas) {
-          if (area.type !== 'obstacle') continue;
-          const obsMapId = uuidv4();
-          mapRepo.upsert({
-            map_id: obsMapId,
-            mower_sn: sn,
-            map_name: `obstacle_${area.mapIndex}_${area.subIndex ?? 0}`,
-            map_area: JSON.stringify(area.points),
-            map_max_min: null,
-            file_name: finalFileName,
-            file_size: file.size,
-            map_type: 'obstacle',
-          });
-        }
-        // Sla unicom (channel) paden op
-        for (const area of parsed.areas) {
-          if (area.type !== 'unicom') continue;
-          const unicomMapId = uuidv4();
-          mapRepo.upsert({
-            map_id: unicomMapId,
-            mower_sn: sn,
-            map_name: `map${area.mapIndex}tocharge_unicom`,
-            map_area: JSON.stringify(area.points),
-            map_max_min: null,
-            file_name: finalFileName,
-            file_size: file.size,
-            map_type: 'unicom',
-          });
-          console.log(`[MAP] Opgeslagen unicom kanaal map${area.mapIndex} voor ${sn} (${area.points.length} punten)`);
-        }
-        console.log(`[MAP] ZIP geparsed: ${parsed.areas.length} gebieden geëxtraheerd voor ${sn}`);
+      } else {
+        console.log(`[MAP] uploadEquipmentMap: ${existingWorkMaps.length} bestaande work maps voor ${sn}, skip work map update`);
       }
+
+      // Obstacles: ALTIJD updaten — verwijder oude en sla nieuwe op.
+      // Obstacles worden apart toegevoegd na het initiële mappen.
+      const existingObstacles = mapRepo.findByMowerSnAndTypeWithArea(sn, 'obstacle');
+      for (const obs of existingObstacles) {
+        mapRepo.deleteById(obs.map_id);
+      }
+      for (const area of parsed.areas) {
+        if (area.type !== 'obstacle') continue;
+        const obsMapId = uuidv4();
+        mapRepo.upsert({
+          map_id: obsMapId,
+          mower_sn: sn,
+          map_name: `map${area.mapIndex}_${area.subIndex ?? 0}_obstacle`,
+          map_area: JSON.stringify(area.points),
+          map_max_min: null,
+          file_name: finalFileName,
+          file_size: file.size,
+          map_type: 'obstacle',
+        });
+        console.log(`[MAP] Opgeslagen obstacle map${area.mapIndex}_${area.subIndex ?? 0} voor ${sn} (${area.points.length} punten)`);
+      }
+
+      // Unicom: ALTIJD updaten — kanalen kunnen wijzigen bij nieuwe mapping
+      const existingUnicoms = mapRepo.findAllByMowerSnAndType(sn, 'unicom');
+      for (const uc of existingUnicoms) {
+        mapRepo.deleteById(uc.map_id);
+      }
+      for (const area of parsed.areas) {
+        if (area.type !== 'unicom') continue;
+        const unicomMapId = uuidv4();
+        mapRepo.upsert({
+          map_id: unicomMapId,
+          mower_sn: sn,
+          map_name: `map${area.mapIndex}tocharge_unicom`,
+          map_area: JSON.stringify(area.points),
+          map_max_min: null,
+          file_name: finalFileName,
+          file_size: file.size,
+          map_type: 'unicom',
+        });
+        console.log(`[MAP] Opgeslagen unicom kanaal map${area.mapIndex} voor ${sn} (${area.points.length} punten)`);
+      }
+      console.log(`[MAP] ZIP geparsed: ${parsed.areas.length} gebieden geëxtraheerd voor ${sn}`);
     } else {
       // ZIP parsing geeft geen gebieden — sla alleen het bestand op
       console.log(`[MAP] Geen kaartgebieden in ZIP voor ${sn}, bestand opgeslagen`);

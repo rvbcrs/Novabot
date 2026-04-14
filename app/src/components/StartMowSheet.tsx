@@ -35,7 +35,7 @@ interface Props {
   onStarted: (settings: { cuttingHeight: number; pathDirection: number }) => void;
   battery?: number;
   isWorking?: boolean;
-  currentCuttingHeight?: number;   // from sensor data (mm)
+  currentCuttingHeight?: number;   // from sensor data (cm, 2-9)
   currentPathDirection?: number;   // from sensor data (degrees)
 }
 
@@ -46,9 +46,8 @@ export function StartMowSheet({ visible, onClose, sn, onStarted, battery, isWork
   const [maps, setMaps] = useState<MapData[]>([]);
   const [allMaps, setAllMaps] = useState<MapData[]>([]);
   const [selectedMapId, setSelectedMapId] = useState<string | null>(null);
-  // cutterhigh = height in mm (20-90, steps of 10). Flutter slider: min=20, max=90, divisions=7.
-  // Values: 20, 30, 40, 50, 60, 70, 80, 90 (mm)
-  const [cuttingHeight, setCuttingHeight] = useState(50);
+  // cutterhigh = height in cm (2-9, steps of 1). Novabot Flutter app slider: min=2, max=9, divisions=7.
+  const [cuttingHeight, setCuttingHeight] = useState(5);
   const [pathDirection, setPathDirection] = useState(0);
   const [starting, setStarting] = useState(false);
   const [patternId, setPatternId] = useState<number | null>(null);
@@ -61,7 +60,7 @@ export function StartMowSheet({ visible, onClose, sn, onStarted, battery, isWork
   // Load maps when sheet opens
   useEffect(() => {
     if (!visible || !sn) return;
-    setCuttingHeight(currentCuttingHeight ?? 50);
+    setCuttingHeight(currentCuttingHeight ?? 5);
     setPathDirection(currentPathDirection ?? 0);
     setSelectedMapId(null);
     (async () => {
@@ -264,22 +263,22 @@ export function StartMowSheet({ visible, onClose, sn, onStarted, battery, isWork
             <View style={styles.section}>
               <View style={styles.labelRow}>
                 <Text style={styles.label}>{t('cuttingHeight')}</Text>
-                <Text style={styles.labelValue}>{cuttingHeight / 10} cm</Text>
+                <Text style={styles.labelValue}>{cuttingHeight} cm</Text>
               </View>
               <View style={styles.stepperRow}>
                 <TouchableOpacity
                   style={styles.stepperBtn}
-                  onPress={() => setCuttingHeight(Math.max(20, cuttingHeight - 10))}
+                  onPress={() => setCuttingHeight(Math.max(2, cuttingHeight - 1))}
                   activeOpacity={0.7}
                 >
                   <Ionicons name="remove" size={20} color={colors.white} />
                 </TouchableOpacity>
                 <View style={styles.stepperValue}>
-                  <Text style={styles.stepperText}>{cuttingHeight / 10} cm</Text>
+                  <Text style={styles.stepperText}>{cuttingHeight} cm</Text>
                 </View>
                 <TouchableOpacity
                   style={styles.stepperBtn}
-                  onPress={() => setCuttingHeight(Math.min(90, cuttingHeight + 10))}
+                  onPress={() => setCuttingHeight(Math.min(9, cuttingHeight + 1))}
                   activeOpacity={0.7}
                 >
                   <Ionicons name="add" size={20} color={colors.white} />

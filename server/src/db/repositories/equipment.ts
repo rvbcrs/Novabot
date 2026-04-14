@@ -109,9 +109,11 @@ export class EquipmentRepository {
     SET user_id = ?, equipment_nick_name = COALESCE(?, equipment_nick_name)
     WHERE equipment_id = ?
   `);
-  private _updateMacBySn = db.prepare('UPDATE equipment SET mac_address = ? WHERE mower_sn = ? OR charger_sn = ?');
+  // mac_address in equipment = ALTIJD de maaier BLE MAC, NOOIT charger MAC.
+  // De Novabot app matcht dit veld tegen BLE scan results voor mapping.
+  private _updateMacBySn = db.prepare('UPDATE equipment SET mac_address = ? WHERE mower_sn = ?');
   private _updateMacBySnIfMissing = db.prepare(
-    'UPDATE equipment SET mac_address = ? WHERE (mower_sn = ? OR charger_sn = ?) AND mac_address IS NULL'
+    'UPDATE equipment SET mac_address = ? WHERE mower_sn = ? AND mac_address IS NULL'
   );
   private _updateMowerIp = db.prepare('UPDATE equipment SET mower_ip = ? WHERE mower_sn = ?');
   private _setOpenNova = db.prepare('UPDATE equipment SET is_opennova = 1 WHERE mower_sn = ?');
@@ -296,9 +298,9 @@ export class EquipmentRepository {
 
   updateMacAddress(sn: string, mac: string, onlyIfMissing = false): void {
     if (onlyIfMissing) {
-      this._updateMacBySnIfMissing.run(mac, sn, sn);
+      this._updateMacBySnIfMissing.run(mac, sn);
     } else {
-      this._updateMacBySn.run(mac, sn, sn);
+      this._updateMacBySn.run(mac, sn);
     }
   }
 

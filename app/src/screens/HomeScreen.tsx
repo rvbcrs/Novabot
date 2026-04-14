@@ -83,7 +83,8 @@ function deriveMower(devices: Map<string, DeviceState>): MowerDerived | null {
   const rechargeStatus = parseInt(s.recharge_status ?? '0', 10);
   const msg = s.msg ?? '';
   const isOnDock = batteryState === 'CHARGING';
-  const isCoverageRunning = msg.includes('Work:RUNNING') || msg.includes('Work:NAVIGATING') || msg.includes('Work:COVERING') || msg.includes('Work:MOVING');
+  const isCoverageRunning = msg.includes('Work:RUNNING') || msg.includes('Work:NAVIGATING') || msg.includes('Work:COVERING') || msg.includes('Work:MOVING')
+    || msg.includes('Work:QUIT_PILE_INIT') || msg.includes('Work:SENSOR_INIT') || msg.includes('Work:INIT_SUCCESS') || msg.includes('Work:MAP_INIT');
   const isCoveragePaused = msg.includes('Work:PAUSED');
   const isReturning = rechargeStatus === 1 || msg.includes('Recharge: GOING') || msg.includes('Work:GO_PILE')
     || msg.includes('Work:BACK_CHARGER') || msg.includes('Work:DOCKING');
@@ -97,8 +98,8 @@ function deriveMower(devices: Map<string, DeviceState>): MowerDerived | null {
   let activity: MowerActivity = 'idle';
   if (isOffline) activity = 'idle';
   else if (hasError && !isOnDock) activity = 'error';
-  else if (s.start_edit_or_assistant_map_flag === '1') activity = 'mapping';
   else if (isCoverageRunning) activity = 'mowing';
+  else if (s.start_edit_or_assistant_map_flag === '1') activity = 'mapping';
   else if (isCoveragePaused) activity = 'paused';
   else if (isReturning && !isOnDock) activity = 'returning';
   else if (isOnDock) activity = 'charging';
@@ -261,6 +262,7 @@ export default function HomeScreen() {
   const [activeMapPolygon, setActiveMapPolygon] = useState<Array<{ x: number; y: number }>>([]);
   const [mowingTrail, setMowingTrail] = useState<Array<{ x: number; y: number }>>([]);
   const [plannedPaths, setPlannedPaths] = useState<Array<{ id: string; points: Array<{ x: number; y: number }> }>>([]);
+  const [obstaclePolygons, setObstaclePolygons] = useState<Array<{ id: string; points: Array<{ x: number; y: number }> }>>([]);
   // Track mowing settings for safety check + display
   const [mowSettings, setMowSettings] = useState<{ cuttingHeight: number; pathDirection: number } | null>(null);
   const demo = useDemo();
@@ -305,6 +307,8 @@ export default function HomeScreen() {
         const res = await api.fetchMaps(mower.sn);
         const workMap = res.maps?.find((m: any) => m.mapType === 'work');
         if (workMap && workMap.mapArea && workMap.mapArea.length >= 3) setActiveMapPolygon(workMap.mapArea);
+        const obs = (res.maps ?? []).filter((m: any) => m.mapType === 'obstacle' && m.mapArea?.length >= 3);
+        setObstaclePolygons(obs.map((m: any) => ({ id: m.mapId, points: m.mapArea })));
       } catch { /* ignore */ }
     })();
   }, [mower?.sn, demo.enabled]);
@@ -786,6 +790,7 @@ export default function HomeScreen() {
               size={240}
               trail={mowingTrail}
               plannedPaths={plannedPaths}
+              obstacles={obstaclePolygons}
               mowerPos={mower.mowerPosX != null && mower.mowerPosY != null ? { x: mower.mowerPosX, y: mower.mowerPosY } : null}
               mowerHeading={mower.mowerHeading ?? undefined}
             />
@@ -887,7 +892,7 @@ export default function HomeScreen() {
         <View style={styles.actionsCard}>
           <Text style={styles.actionsTitle}>{t('actions')}</Text>
 
-          {(displayActivity === 'idle' || displayActivity === 'charging') && (
+          {(displayActivity === 'idle' || displayActivity === 'charging' || displayActivity === 'error') && (
             <View style={styles.actionRow}>
               <TouchableOpacity
                 style={[
@@ -915,8 +920,8 @@ export default function HomeScreen() {
                   </>
                 )}
               </TouchableOpacity>
-              {/* Go Home button — only when mower is NOT on charger */}
-              {displayActivity === 'idle' && (
+              {/* Go Home button — when idle or error (not on charger) */}
+              {(displayActivity === 'idle' || displayActivity === 'error') && (
                 <TouchableOpacity
                   style={[styles.actionButton, styles.actionButtonBlue]}
                   onPress={() => { sendGoHome(mower.sn); setOptimisticActivity('returning'); }}

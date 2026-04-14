@@ -127,9 +127,7 @@ export function publishRawToDevice(sn: string, payload: Buffer, qos: 0 | 1 = 1):
     retain: false,
     topic,
     payload,
-    brokerId: 'mapSync',
-    brokerCounter: 0,
-  } satisfies AedesPublishPacket;
+  } as AedesPublishPacket;
   aedesBroker.publish(packet, (err) => {
     if (err) console.error(`${TAG} Raw publish fout naar ${topic}: ${err.message}`);
     else console.log(`${TAG} Raw payload (${payload.length}B) gestuurd naar ${topic} QoS=${qos}`);

@@ -3,11 +3,34 @@ import jwt from 'jsonwebtoken';
 import { AuthRequest, fail } from '../types/index.js';
 
 import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
 
-// Generate random secret if not set — tokens won't survive restart but it's secure
-const JWT_SECRET = process.env.JWT_SECRET || (() => {
+// JWT secret priority: env var → persistent file → generate + save
+const JWT_SECRET = (() => {
+  // 1. Explicit env var
+  if (process.env.JWT_SECRET) return process.env.JWT_SECRET;
+
+  // 2. Persistent file in data volume (survives rebuilds + restarts)
+  const dataDir = process.env.DB_PATH ? path.dirname(process.env.DB_PATH) : '/data';
+  const secretPath = path.join(dataDir, '.jwt_secret');
+  try {
+    const saved = fs.readFileSync(secretPath, 'utf8').trim();
+    if (saved.length >= 32) {
+      console.log('[AUTH] JWT_SECRET loaded from persistent file');
+      return saved;
+    }
+  } catch { /* file doesn't exist yet */ }
+
+  // 3. Generate and save for next time
   const secret = crypto.randomBytes(32).toString('hex');
-  console.warn('[AUTH] JWT_SECRET not set — using random secret (tokens expire on restart)');
+  try {
+    fs.mkdirSync(dataDir, { recursive: true });
+    fs.writeFileSync(secretPath, secret, { mode: 0o600 });
+    console.log('[AUTH] JWT_SECRET generated and saved to persistent file');
+  } catch (e) {
+    console.warn('[AUTH] JWT_SECRET generated but could not save:', (e as Error).message);
+  }
   return secret;
 })();
 

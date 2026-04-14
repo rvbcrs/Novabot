@@ -244,7 +244,10 @@ function upsertDevice(clientId: string, sn: string | null, mac: string | null, u
   deviceRepo.upsertDevicePreserving(clientId, sn, mac, username);
 
   // Koppel mac_address ook terug aan de equipment rij als die al bestaat
-  if (sn && mac) {
+  // ALLEEN voor mowers — charger MAC mag NOOIT in equipment.mac_address terechtkomen.
+  // De Novabot app gebruikt equipment.macAddress voor BLE scan matching bij mapping.
+  // Als daar de charger MAC staat, vindt de app de maaier niet via BLE.
+  if (sn && mac && sn.startsWith('LFIN')) {
     equipmentRepo.updateMacAddress(sn, mac, true);
   }
 
@@ -455,6 +458,41 @@ export async function startMqttBroker(): Promise<void> {
             packet.payload = Buffer.concat([cipher.update(padded), cipher.final()]);
             console.log(`${C.cyan}[MAP-PROXY] Fixed get_map_list_respond: ${mowerMaps.length} mower maps + ${extraMaps.length} dashboard maps = ${allMaps.length} total${C.reset}`);
           }
+
+          // Intercepteer report_state_map_outline — als de maaier alleen
+          // {status:"success", percentage:1} stuurt zonder map_position,
+          // stuur de polygon data uit onze DB als aanvulling.
+          // De Novabot app's uploadMapToServce() wacht op map_position data
+          // in report_state_map_outline — zonder dit toont de app "upload failed".
+          const isOutlineResp = parsed.report_state_map_outline;
+          if (isOutlineResp && isOutlineResp.status === 'success' && !isOutlineResp.map_position) {
+            const dbMaps = mapRepo.findWithAreaOrderByMapId(sn);
+            if (dbMaps.length > 0) {
+              // Stuur outline per kaart NA de maaier's response
+              let delay = 200;
+              for (const mapRow of dbMaps) {
+                if (!mapRow.map_area) continue;
+                try {
+                  const gpsPoints = localMapAreaToGps(mapRow.map_area, sn);
+                  if (!gpsPoints || gpsPoints.length < 3) continue;
+                  const outlineMsg = {
+                    report_state_map_outline: {
+                      status: 'success',
+                      map_id: mapRow.map_id,
+                      map_name: mapRow.map_name ?? 'home',
+                      map_type: mapRow.map_type ?? 'work',
+                      map_position: gpsPoints,
+                    },
+                  };
+                  setTimeout(() => {
+                    publishEncryptedOnTopic(`Dart/Receive_mqtt/${sn}`, sn, outlineMsg);
+                    console.log(`${C.cyan}[MAP-PROXY] Aanvulling report_state_map_outline: ${gpsPoints.length} punten voor ${mapRow.map_name}${C.reset}`);
+                  }, delay);
+                  delay += 100;
+                } catch { /* skip invalid map_area */ }
+              }
+            }
+          }
         } catch { /* parse error, doorsturen ongewijzigd */ }
       }
       setTimeout(() => callback(null), 150);
@@ -499,6 +537,35 @@ export async function startMqttBroker(): Promise<void> {
               const encrypted = Buffer.concat([cipher.update(padded), cipher.final()]);
               packet.payload = encrypted;
               console.log(`\x1b[38;5;208m[OTA-FIX] Re-encrypted: ${encrypted.length}B → maaier\x1b[0m`);
+            } else if ('delete_map' in parsed) {
+              // ── delete_map: app verwijdert kaart op maaier ──
+              // Verwijder ook uit onze DB, anders stuurt get_map_list_respond
+              // de kaart steeds opnieuw naar de app.
+              const delReq = parsed.delete_map as { map_name?: string; map_type?: string } | undefined;
+              const delName = delReq?.map_name;
+              if (delName && sn) {
+                const dbMaps = mapRepo.findWithAreaOrderByMapId(sn);
+                for (const m of dbMaps) {
+                  // Match op map_name OF file_name prefix (map0_work.csv → "map0")
+                  if (m.map_name === delName || (m.file_name && m.file_name.startsWith(delName))) {
+                    mapRepo.deleteById(m.map_id);
+                    console.log(`${C.cyan}[MAP-PROXY] delete_map: verwijderd uit DB: map_id=${m.map_id} map_name=${m.map_name}${C.reset}`);
+                  }
+                }
+                // Verwijder ook unicom maps die bij deze kaart horen
+                const allMaps = mapRepo.findAllByMowerSnAndType(sn, 'unicom');
+                for (const m of allMaps) {
+                  if (m.map_name?.includes(delName)) {
+                    mapRepo.deleteById(m.map_id);
+                    console.log(`${C.cyan}[MAP-PROXY] delete_map: unicom verwijderd uit DB: map_id=${m.map_id} map_name=${m.map_name}${C.reset}`);
+                  }
+                }
+              } else if (!delName && sn) {
+                // Geen specifieke map_name → verwijder alle maps voor deze maaier
+                mapRepo.deleteByMowerSn(sn);
+                console.log(`${C.cyan}[MAP-PROXY] delete_map: alle maps verwijderd uit DB voor ${sn}${C.reset}`);
+              }
+              console.log(`${C.cyan}[MAP-PROXY] delete_map voor ${sn} map=${delName ?? 'ALL'} — doorsturen naar maaier${C.reset}`);
             } else if ('get_map_list' in parsed) {
               // ── get_map_list: doorsturen naar maaier ──
               // Maaier antwoordt met get_map_list_respond. Die response wordt
@@ -506,71 +573,15 @@ export async function startMqttBroker(): Promise<void> {
               // met onze DB versie (inclusief dashboard-getekende kaarten).
               console.log(`${C.cyan}[MAP-PROXY] get_map_list voor ${sn} — doorsturen naar maaier${C.reset}`);
             } else if ('get_map_outline' in parsed) {
-              // ── Server-side map outline response ──
-              // De app stuurt get_map_outline naar de maaier om het polygoon op te halen.
-              // Als de maaier geen kaarten heeft, antwoordt hij niet → leeg kaartbeeld.
-              // Oplossing: server stuurt report_state_map_outline met polygoon uit database.
-              const outlineReq = parsed.get_map_outline as { map_id?: string } | undefined;
-              const mapId = outlineReq?.map_id;
-              console.log(`${C.cyan}[MAP-PROXY] App vraagt get_map_outline voor ${sn} map_id=${mapId}${C.reset}`);
+              // get_map_outline: doorsturen naar maaier, NIET intercepteren.
+              // De maaier antwoordt zelf met report_state_map_outline.
+              // Eerder intercepteerden we dit, maar dat interfereert met de
+              // Novabot app's uploadMapToServce flow na save_map.
+              const outlineReq = parsed.get_map_outline as { map_id?: string; map_name?: string } | undefined;
+              const mapId = outlineReq?.map_id ?? outlineReq?.map_name;
+              console.log(`${C.cyan}[MAP-PROXY] get_map_outline voor ${sn} map=${mapId} — doorsturen naar maaier${C.reset}`);
 
-              if (mapId) {
-                // Zoek specifieke kaart
-                const mapRow = mapRepo.findByIdAndMower(mapId, sn);
-
-                if (mapRow && mapRow.map_area) {
-                  try {
-                    const gpsPoints = localMapAreaToGps(mapRow.map_area, sn);
-                    if (gpsPoints && gpsPoints.length > 0) {
-                      const response = {
-                        report_state_map_outline: {
-                          status: 'success',
-                          map_id: mapRow.map_id,
-                          map_name: mapRow.map_name ?? 'home',
-                          map_type: mapRow.map_type ?? 'work',
-                          map_position: gpsPoints,
-                        },
-                      };
-                      setTimeout(() => {
-                        publishEncryptedOnTopic(`Dart/Receive_mqtt/${sn}`, sn, response);
-                        console.log(`${C.cyan}[MAP-PROXY] report_state_map_outline gestuurd: ${gpsPoints.length} punten voor ${mapId}${C.reset}`);
-                      }, 200);
-                    } else {
-                      console.log(`${C.cyan}[MAP-PROXY] Geen charger GPS voor local→GPS conversie (${mapId})${C.reset}`);
-                    }
-                  } catch (err) {
-                    console.log(`${C.cyan}[MAP-PROXY] map_area parse error voor ${mapId}: ${err}${C.reset}`);
-                  }
-                } else {
-                  console.log(`${C.cyan}[MAP-PROXY] Kaart ${mapId} niet gevonden in database${C.reset}`);
-                }
-              } else {
-                // Geen map_id → stuur outlines voor ALLE kaarten
-                const allMaps = mapRepo.findWithAreaOrderByMapId(sn);
-
-                let delay = 200;
-                for (const mapRow of allMaps) {
-                  if (!mapRow.map_area) continue;
-                  try {
-                    const gpsPoints = localMapAreaToGps(mapRow.map_area, sn);
-                    if (!gpsPoints || gpsPoints.length < 3) continue;
-                    const response = {
-                      report_state_map_outline: {
-                        status: 'success',
-                        map_id: mapRow.map_id,
-                        map_name: mapRow.map_name ?? 'home',
-                        map_type: mapRow.map_type ?? 'work',
-                        map_position: gpsPoints,
-                      },
-                    };
-                    setTimeout(() => {
-                      publishEncryptedOnTopic(`Dart/Receive_mqtt/${sn}`, sn, response);
-                      console.log(`${C.cyan}[MAP-PROXY] report_state_map_outline gestuurd: ${gpsPoints.length} punten voor ${mapRow.map_id}${C.reset}`);
-                    }, delay);
-                    delay += 100;
-                  } catch { /* skip invalid map_area */ }
-                }
-              }
+              // Commando wordt doorgestuurd naar maaier (geen interceptie meer)
             } else {
               console.log(`\x1b[38;5;208m[OTA-FIX] Geen ota_upgrade_cmd, doorsturen ongewijzigd\x1b[0m`);
             }

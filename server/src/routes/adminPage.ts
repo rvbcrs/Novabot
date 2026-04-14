@@ -316,9 +316,10 @@ export function adminPageHtml(): string {
           <li>Enable <b style="color:#e0e0e0">OpenNova CA Certificate</b></li>
         </ol>
       </div>
-      <a href="/api/setup/profile" class="btn btn-purple" style="display:block;text-align:center;text-decoration:none">Download iOS Profile (.mobileconfig)</a>
+      <a href="/api/setup/profile" class="btn btn-purple" style="display:block;text-align:center;text-decoration:none;margin-bottom:8px">Download iOS Profile (.mobileconfig)</a>
+      <a href="/api/setup/cert" class="btn btn-purple" style="display:block;text-align:center;text-decoration:none;background:rgba(34,197,94,.15);border-color:rgba(34,197,94,.3)">Download Android Certificate (.crt)</a>
       <p style="font-size:11px;color:#666;margin-top:8px;text-align:center">
-        On Android: download the certificate and install it via Settings → Security → Install certificate → CA certificate.
+        Android: Settings → Security → Install certificate → CA certificate
       </p>
     </div>
 

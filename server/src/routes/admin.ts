@@ -190,8 +190,10 @@ adminRouter.post('/devices/:sn/mac', (req: Request, res: Response) => {
     deviceRepo.upsertDevice(`manual:${sn}`, sn, mac);
   }
 
-  // Koppel ook terug aan equipment
-  equipmentRepo.updateMacAddress(sn, mac);
+  // Koppel ook terug aan equipment — alleen voor mowers (charger MAC mag niet in equipment)
+  if (sn.startsWith('LFIN')) {
+    equipmentRepo.updateMacAddress(sn, mac);
+  }
 
   console.log(`[ADMIN] MAC geregistreerd: sn=${sn} mac=${mac}`);
   res.json({ sn, macAddress: mac, status: 'ok' });
