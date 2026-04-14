@@ -1140,7 +1140,7 @@ export default function HomeScreen() {
           onStarted={(settings) => { setCommandLoading(null); setOptimisticActivity('mowing'); setMowSettings(settings); setMowingTrail([]); }}
           battery={mower.battery}
           isWorking={displayActivity === 'mowing' || displayActivity === 'mapping'}
-          currentCuttingHeight={parseInt(devices.get(mower.sn)?.sensors?.defaultCuttingHeight ?? devices.get(mower.sn)?.sensors?.target_height ?? '', 10) || undefined}
+          currentCuttingHeight={parseInt(devices.get(mower.sn)?.sensors?.target_height ?? '', 10) || undefined}
           currentPathDirection={parseInt(devices.get(mower.sn)?.sensors?.path_direction ?? '', 10) || undefined}
         />
       )}

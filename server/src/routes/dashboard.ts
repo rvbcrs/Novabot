@@ -3325,10 +3325,35 @@ dashboardRouter.post('/admin/import', async (req: Request, res: Response) => {
 
 // ── Remote Debug — log relay ────────────────────────────────────
 
-// SENDER: David's server stuurt logs naar een remote relay URL
+// SENDER: user's server stuurt logs naar een remote relay URL
 let _relayUrl: string | null = null;
 let _relayBatch: unknown[] = [];
 let _relayTimer: ReturnType<typeof setInterval> | null = null;
+
+// Load persisted relay URL at startup
+try {
+  const dataDir = process.env.DB_PATH ? path.dirname(process.env.DB_PATH) : '/data';
+  const savedUrl = fs.readFileSync(path.join(dataDir, '.remote_debug_url'), 'utf8').trim();
+  if (savedUrl) {
+    _relayUrl = savedUrl;
+    onLogEntry((entry) => { _relayBatch.push(entry); });
+    _relayTimer = setInterval(async () => {
+      if (!_relayUrl || _relayBatch.length === 0) return;
+      const batch = _relayBatch.splice(0);
+      // Attach all known mower SNs to the batch
+      const mowerSns = [...new Set(batch.map((e: any) => e.sn).filter(Boolean))];
+      try {
+        await fetch(_relayUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ logs: batch, sns: mowerSns, ts: Date.now() }),
+          signal: AbortSignal.timeout(5000),
+        });
+      } catch { /* relay unavailable, drop batch */ }
+    }, 2000);
+    console.log(`[REMOTE-DEBUG] Relay auto-started → ${savedUrl}`);
+  }
+} catch { /* no saved URL */ }
 
 dashboardRouter.post('/remote-debug/start', (req: Request, res: Response) => {
   const { relayUrl } = req.body as { relayUrl?: string };
@@ -3336,6 +3361,12 @@ dashboardRouter.post('/remote-debug/start', (req: Request, res: Response) => {
 
   _relayUrl = relayUrl;
   _relayBatch = [];
+
+  // Persist URL so it survives restarts
+  try {
+    const dataDir = process.env.DB_PATH ? path.dirname(process.env.DB_PATH) : '/data';
+    fs.writeFileSync(path.join(dataDir, '.remote_debug_url'), relayUrl);
+  } catch { /* ignore */ }
 
   // Register log listener
   onLogEntry((entry) => {
@@ -3347,11 +3378,12 @@ dashboardRouter.post('/remote-debug/start', (req: Request, res: Response) => {
   _relayTimer = setInterval(async () => {
     if (!_relayUrl || _relayBatch.length === 0) return;
     const batch = _relayBatch.splice(0);
+    const mowerSns = [...new Set(batch.map((e: any) => e.sn).filter(Boolean))];
     try {
       await fetch(_relayUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ logs: batch, ts: Date.now() }),
+        body: JSON.stringify({ logs: batch, sns: mowerSns, ts: Date.now() }),
         signal: AbortSignal.timeout(5000),
       });
     } catch { /* relay unavailable, drop batch */ }
@@ -3366,60 +3398,70 @@ dashboardRouter.post('/remote-debug/stop', (_req: Request, res: Response) => {
   onLogEntry(null);
   if (_relayTimer) { clearInterval(_relayTimer); _relayTimer = null; }
   _relayBatch = [];
+  // Remove persisted URL
+  try {
+    const dataDir = process.env.DB_PATH ? path.dirname(process.env.DB_PATH) : '/data';
+    fs.unlinkSync(path.join(dataDir, '.remote_debug_url'));
+  } catch { /* ignore */ }
   console.log('[REMOTE-DEBUG] Relay stopped');
   res.json({ ok: true });
 });
 
-// RECEIVER: jouw server ontvangt logs van remote instances
-// GET toont live log viewer, POST ontvangt log batches
-const _remoteLogBuffer: unknown[] = [];
+dashboardRouter.get('/remote-debug/status', (_req: Request, res: Response) => {
+  res.json({ active: !!_relayUrl, url: _relayUrl });
+});
+
+// RECEIVER: ontvangt logs van remote instances, georganiseerd per SN
+const _remoteLogsBySn = new Map<string, unknown[]>();
 const MAX_REMOTE_LOGS = 2000;
 
 dashboardRouter.post('/remote-debug/receive', (req: Request, res: Response) => {
-  const { logs } = req.body as { logs?: unknown[] };
-  if (Array.isArray(logs)) {
-    for (const l of logs) _remoteLogBuffer.push(l);
-    if (_remoteLogBuffer.length > MAX_REMOTE_LOGS) _remoteLogBuffer.splice(0, _remoteLogBuffer.length - MAX_REMOTE_LOGS);
+  const { logs, sns } = req.body as { logs?: unknown[]; sns?: string[] };
+  if (!Array.isArray(logs)) { res.json({ ok: false }); return; }
+
+  for (const entry of logs) {
+    const sn = (entry as any).sn as string | undefined;
+    const key = sn || (sns?.[0]) || 'unknown';
+    if (!_remoteLogsBySn.has(key)) _remoteLogsBySn.set(key, []);
+    const buf = _remoteLogsBySn.get(key)!;
+    buf.push(entry);
+    if (buf.length > MAX_REMOTE_LOGS) buf.splice(0, buf.length - MAX_REMOTE_LOGS);
   }
-  res.json({ ok: true, buffered: _remoteLogBuffer.length });
+
+  const total = [..._remoteLogsBySn.values()].reduce((n, b) => n + b.length, 0);
+  res.json({ ok: true, devices: _remoteLogsBySn.size, buffered: total });
 });
 
-dashboardRouter.get('/remote-debug/view', (_req: Request, res: Response) => {
-  res.setHeader('Content-Type', 'text/html');
-  const html = [
-    '<!DOCTYPE html><html><head><title>Remote Debug Viewer</title>',
-    '<style>body{background:#0a0a1a;color:#ccc;font:12px/1.6 monospace;padding:16px;margin:0}',
-    '.log{border-bottom:1px solid #1a1a2e;padding:4px 0;white-space:pre-wrap;word-break:break-all}',
-    '.log .ts{color:#666}.log .sn{color:#3b82f6}.log .topic{color:#8b5cf6}.log .payload{color:#aaa}',
-    '.log.connect{color:#22c55e}.log.disconnect{color:#ef4444}',
-    'h1{color:#fff;font-size:16px;margin:0 0 16px}#status{color:#22c55e;font-size:11px}#count{color:#666;font-size:11px}',
-    '</style></head><body>',
-    '<h1>Remote Debug Viewer <span id="status">polling...</span> <span id="count"></span></h1>',
-    '<div id="logs"></div>',
-    '<script>',
-    'var seen=0;function poll(){',
-    'fetch("/api/dashboard/remote-debug/logs?since="+seen).then(function(r){return r.json()}).then(function(d){',
-    'var c=document.getElementById("logs"),entries=d.logs||[];',
-    'document.getElementById("count").textContent=entries.length+" new, "+seen+" total";',
-    'for(var i=0;i<entries.length;i++){var e=entries[i],div=document.createElement("div");',
-    'div.className="log "+(e.type||"");var ts=new Date(e.ts).toLocaleTimeString();',
-    'div.innerHTML="<span class=ts>"+ts+"</span> <span class=sn>"+(e.sn||"-")+"</span> "+(e.type||"")+" <span class=topic>"+(e.topic||"")+"</span> <span class=payload>"+(e.payload||"").substring(0,300)+"</span>";',
-    'c.appendChild(div);seen++}',
-    'if(entries.length>0)window.scrollTo(0,document.body.scrollHeight);',
-    'document.getElementById("status").textContent=entries.length>0?"live \\u25cf":"waiting..."',
-    '}).catch(function(){document.getElementById("status").textContent="error"})}',
-    'setInterval(poll,2000);poll();',
-    '</script></body></html>',
-  ].join('\n');
-  res.send(html);
+// GET /remote-debug/devices — list all SNs with log counts
+dashboardRouter.get('/remote-debug/devices', (_req: Request, res: Response) => {
+  const devices = [..._remoteLogsBySn.entries()].map(([sn, logs]) => ({
+    sn, count: logs.length,
+    lastTs: logs.length > 0 ? (logs[logs.length - 1] as any).ts : null,
+  }));
+  res.json({ devices });
 });
 
+// GET /remote-debug/logs?sn=X&since=N — logs for a specific SN
 dashboardRouter.get('/remote-debug/logs', (req: Request, res: Response) => {
+  const sn = req.query.sn as string | undefined;
   const since = parseInt(req.query.since as string || '0', 10);
-  res.json({ logs: _remoteLogBuffer.slice(since) });
+  if (sn) {
+    const buf = _remoteLogsBySn.get(sn) ?? [];
+    res.json({ logs: buf.slice(since) });
+  } else {
+    // Legacy: return all logs combined
+    const all: unknown[] = [];
+    for (const buf of _remoteLogsBySn.values()) all.push(...buf);
+    res.json({ logs: all.slice(since) });
+  }
 });
 
-dashboardRouter.delete('/remote-debug/logs', (_req: Request, res: Response) => {
-  _remoteLogBuffer.length = 0;
+dashboardRouter.delete('/remote-debug/logs', (req: Request, res: Response) => {
+  const sn = req.query.sn as string | undefined;
+  if (sn) {
+    _remoteLogsBySn.delete(sn);
+  } else {
+    _remoteLogsBySn.clear();
+  }
   res.json({ ok: true });
 });

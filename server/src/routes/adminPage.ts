@@ -335,13 +335,25 @@ export function adminPageHtml(): string {
     </div>
 
     <div class="card" style="border:1px solid rgba(59,130,246,.3);background:rgba(59,130,246,.04)">
-      <h2 style="color:#3b82f6">Remote Debug</h2>
-      <p style="font-size:12px;color:#aaa;margin-bottom:12px">Share your MQTT logs in real-time with someone who can help you troubleshoot. Enter their relay URL and enable sharing. Logs are sent for as long as this is enabled.</p>
+      <h2 style="color:#3b82f6">Remote Debug — Send Logs</h2>
+      <p style="font-size:12px;color:#aaa;margin-bottom:12px">Share your MQTT logs in real-time with someone who can help you troubleshoot. Enter their relay URL and enable sharing.</p>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <input type="text" id="relayUrl" placeholder="https://their-server/api/dashboard/remote-debug/receive" style="flex:1;min-width:250px">
         <button class="btn btn-purple" id="relayToggle" onclick="toggleRelay()">Start Sharing</button>
       </div>
       <div id="relayStatus" style="margin-top:8px;font-size:12px;color:#666"></div>
+    </div>
+
+    <div class="card" style="border:1px solid rgba(34,197,94,.3);background:rgba(34,197,94,.04)">
+      <h2 style="color:#22c55e">Remote Debug — Receive Logs</h2>
+      <p style="font-size:12px;color:#aaa;margin-bottom:12px">View logs received from other OpenNova users who are sharing their debug data with you.</p>
+      <div id="remoteDevices" style="margin-bottom:12px"></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px" id="remoteSnTabs"></div>
+      <div id="remoteLogs" style="background:#0a0a1a;border-radius:8px;padding:12px;font:11px/1.6 monospace;color:#aaa;max-height:400px;overflow-y:auto;display:none"></div>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button class="btn" style="font-size:11px" onclick="refreshRemoteDevices()">Refresh</button>
+        <button class="btn" style="font-size:11px;background:rgba(239,68,68,.2);border-color:rgba(239,68,68,.3)" onclick="clearRemoteLogs()">Clear All</button>
+      </div>
     </div>
 
     <div class="card" style="border:1px solid rgba(239,68,68,.3);background:rgba(239,68,68,.04)">
@@ -592,13 +604,17 @@ function addLog(entry) {
 var mqttSocket = null;
 function setupSocketListeners(sock) {
   sock.on('mqtt:log', function(entry) { addLog(entry); });
+  var _lastOnline = {};
   sock.on('device:online', function(d) {
     if (token) loadMyDevices();
-    showToast(d.sn + ' came online', 'green');
+    var now = Date.now();
+    if (!_lastOnline[d.sn] || now - _lastOnline[d.sn] > 60000) {
+      showToast(d.sn + ' came online', 'green');
+    }
+    _lastOnline[d.sn] = now;
   });
   sock.on('device:offline', function(d) {
     if (token) loadMyDevices();
-    showToast(d.sn + ' went offline', 'gray');
   });
   sock.on('device:bound', function(d) {
     if (token) loadMyDevices();
@@ -766,6 +782,8 @@ var _refreshInterval = null;
 async function loadAll() {
   loadAccount();
   loadMyDevices();
+  loadRelayStatus();
+  refreshRemoteDevices();
   // Auto-refresh device list every 30s for timestamp updates
   if (_refreshInterval) clearInterval(_refreshInterval);
   _refreshInterval = setInterval(function() { if (token) loadMyDevices(); }, 30000);
@@ -1805,6 +1823,21 @@ async function skipSetup() {
 
 // ── Remote Debug relay ──
 var _relayActive = false;
+
+// Load relay status on page load
+function loadRelayStatus() {
+  fetch('/api/dashboard/remote-debug/status').then(function(r){return r.json()}).then(function(d) {
+    if (d.active && d.url) {
+      _relayActive = true;
+      document.getElementById('relayUrl').value = d.url;
+      document.getElementById('relayToggle').textContent = 'Stop Sharing';
+      document.getElementById('relayToggle').style.background = '#ef4444';
+      document.getElementById('relayStatus').textContent = 'Sharing active — logs are being sent to ' + d.url;
+      document.getElementById('relayStatus').style.color = '#22c55e';
+    }
+  }).catch(function(){});
+}
+
 function toggleRelay() {
   var urlInput = document.getElementById('relayUrl');
   var btn = document.getElementById('relayToggle');
@@ -1837,6 +1870,81 @@ function toggleRelay() {
         }
       });
   }
+}
+
+// ── Remote Debug receiver ──
+var _activeRemoteSn = null;
+var _remoteLogSeen = 0;
+var _remoteLogTimer = null;
+
+function refreshRemoteDevices() {
+  fetch('/api/dashboard/remote-debug/devices').then(function(r){return r.json()}).then(function(d) {
+    var container = document.getElementById('remoteSnTabs');
+    var devInfo = document.getElementById('remoteDevices');
+    var devices = d.devices || [];
+    if (devices.length === 0) {
+      devInfo.innerHTML = '<span style="color:#666;font-size:12px">No remote devices connected. Users need to enable log sharing in their admin panel.</span>';
+      container.innerHTML = '';
+      return;
+    }
+    devInfo.innerHTML = '<span style="color:#22c55e;font-size:12px">' + devices.length + ' device(s) sharing logs</span>';
+    container.innerHTML = '';
+    devices.forEach(function(dev) {
+      var btn = document.createElement('button');
+      btn.className = 'btn' + (dev.sn === _activeRemoteSn ? ' btn-purple' : '');
+      btn.style.fontSize = '12px';
+      btn.textContent = dev.sn + ' (' + dev.count + ')';
+      btn.onclick = function() { selectRemoteSn(dev.sn); };
+      container.appendChild(btn);
+    });
+  }).catch(function(){});
+}
+
+function selectRemoteSn(sn) {
+  _activeRemoteSn = sn;
+  _remoteLogSeen = 0;
+  document.getElementById('remoteLogs').style.display = 'block';
+  document.getElementById('remoteLogs').innerHTML = '';
+  refreshRemoteDevices();
+  // Start polling
+  if (_remoteLogTimer) clearInterval(_remoteLogTimer);
+  pollRemoteLogs();
+  _remoteLogTimer = setInterval(pollRemoteLogs, 2000);
+}
+
+function pollRemoteLogs() {
+  if (!_activeRemoteSn) return;
+  fetch('/api/dashboard/remote-debug/logs?sn=' + encodeURIComponent(_activeRemoteSn) + '&since=' + _remoteLogSeen)
+    .then(function(r){return r.json()})
+    .then(function(d) {
+      var container = document.getElementById('remoteLogs');
+      var entries = d.logs || [];
+      for (var i = 0; i < entries.length; i++) {
+        var e = entries[i];
+        var div = document.createElement('div');
+        div.style.borderBottom = '1px solid #1a1a2e';
+        div.style.padding = '2px 0';
+        var ts = e.ts ? new Date(e.ts).toLocaleTimeString() : '';
+        var type = e.type || '';
+        var color = type === 'connect' ? '#22c55e' : type === 'disconnect' ? '#ef4444' : '#aaa';
+        div.innerHTML = '<span style="color:#666">' + ts + '</span> ' +
+          '<span style="color:' + color + '">' + type + '</span> ' +
+          '<span style="color:#8b5cf6">' + (e.topic || '') + '</span> ' +
+          '<span style="color:#aaa">' + ((e.payload || '').substring(0, 400)) + '</span>';
+        container.appendChild(div);
+        _remoteLogSeen++;
+      }
+      if (entries.length > 0) container.scrollTop = container.scrollHeight;
+    }).catch(function(){});
+}
+
+function clearRemoteLogs() {
+  var url = _activeRemoteSn ? '/api/dashboard/remote-debug/logs?sn=' + encodeURIComponent(_activeRemoteSn) : '/api/dashboard/remote-debug/logs';
+  fetch(url, { method: 'DELETE' }).then(function() {
+    document.getElementById('remoteLogs').innerHTML = '';
+    _remoteLogSeen = 0;
+    refreshRemoteDevices();
+  });
 }
 
 async function factoryReset() {

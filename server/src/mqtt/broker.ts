@@ -619,6 +619,26 @@ export async function startMqttBroker(): Promise<void> {
       || user.startsWith('app:');
     const clientType = isAppClient ? 'APP' : 'DEV';
 
+    // Vangnet tegen dubbele clientId verbindingen (bijv. twee mqtt_node processen
+    // op de maaier na een crash). Als een device clientId al verbonden is EN
+    // actief data stuurt (< 30s), weiger de nieuwe verbinding.
+    // TODO: permanente fix in firmware — mqtt_node_monitor.sh die dubbele processen killt.
+    if (!isAppClient && clientId.startsWith('LFI')) {
+      const existingClient = (broker as any).clients?.[clientId];
+      if (existingClient?.connected) {
+        // Check of de bestaande verbinding recent actief was (< 30s)
+        const lastActivity = seenClients.get(clientId) ?? 0;
+        const age = now - lastActivity;
+        if (age < 30_000) {
+          const existingAddr = existingClient.conn?.remoteAddress ?? '?';
+          const remoteAddr = (client as any).conn?.remoteAddress ?? '?';
+          console.log(`${C.red}[MQTT] BLOCKED duplicate connect: ${clientId} from ${remoteAddr} — already active via ${existingAddr} (${Math.round(age / 1000)}s ago)${C.reset}`);
+          callback(new Error('Device already connected'), false);
+          return;
+        }
+      }
+    }
+
     const cc = isAppClient ? C.blue : (clientId.startsWith('LFIN') || clientId.includes('LFIN') ? C.green : C.yellow);
     if (isReconnect) {
       console.log(`${cc}[MQTT] RECONNECT ${clientType} clientId="${clientId}" sn=${sn ?? '?'}${C.reset}`);
