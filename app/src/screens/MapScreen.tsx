@@ -370,15 +370,19 @@ export default function MapScreen() {
 
   // ── Import ZIP ───────────────────────────────────────────────────
   const handleMapAction = (map: MapData) => {
+    const typeLabel = map.mapType === 'obstacle' ? (t('obstacle') || 'Obstacle')
+      : map.mapType === 'unicom' ? (t('channel') || 'Channel')
+      : (t('map') || 'Map');
+    const renameLabel = `${t('rename') || 'Rename'} ${typeLabel}`;
     Alert.alert(
-      map.mapName || map.mapType,
+      map.mapName || typeLabel,
       undefined,
       [
         {
-          text: t('renameMap'),
+          text: renameLabel,
           onPress: () => {
             Alert.prompt(
-              t('renameMap'),
+              renameLabel,
               t('enterNewName'),
               async (newName) => {
                 if (!newName?.trim()) return;

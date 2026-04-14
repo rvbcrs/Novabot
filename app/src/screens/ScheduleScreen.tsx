@@ -17,6 +17,7 @@ import {
   Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { Swipeable } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors } from '../theme/colors';
 import { useMowerState } from '../hooks/useMowerState';
@@ -29,12 +30,7 @@ import { useI18n } from '../i18n';
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const DAYS_FULL = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-const HEIGHT_OPTIONS = [20, 30, 40, 50, 60, 70, 80];
-const DIRECTION_OPTIONS = [
-  { angle: 0, label: 'N' }, { angle: 45, label: 'NE' }, { angle: 90, label: 'E' },
-  { angle: 135, label: 'SE' }, { angle: 180, label: 'S' }, { angle: 225, label: 'SW' },
-  { angle: 270, label: 'W' }, { angle: 315, label: 'NW' },
-];
+const HEIGHT_OPTIONS = [2, 3, 4, 5, 6, 7, 8, 9]; // cm (matches Novabot app slider)
 
 export default function ScheduleScreen() {
   const insets = useSafeAreaInsets();
@@ -67,7 +63,8 @@ export default function ScheduleScreen() {
       if (!url) return;
       const api = new ApiClient(url);
       const data = await api.getSchedules(mowerSn);
-      setSchedules(Array.isArray(data) ? data : []);
+      const list = Array.isArray(data) ? data : (data as any)?.schedules ?? [];
+      setSchedules(list);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load schedules');
     } finally {
@@ -93,10 +90,52 @@ export default function ScheduleScreen() {
     }
   };
 
-  const handleDelete = (schedule: Schedule) => {
+  const handleDelete = (schedule: Schedule, dayIdx?: number) => {
+    const sid = schedule.id ?? (schedule as any).scheduleId;
+    const weekdays: number[] = (schedule as any).weekdays ?? [];
+    const time = (schedule as any).startTime ?? `${pad(schedule.start_hour ?? 0)}:${pad(schedule.start_minute ?? 0)}`;
+
+    // Multi-day schedule: ask to remove just this day or all
+    if (weekdays.length > 1 && dayIdx != null) {
+      Alert.alert(
+        t('delete'),
+        `Delete ${time} schedule for ${DAYS_FULL[dayIdx]} only, or all days?`,
+        [
+          { text: t('cancel'), style: 'cancel' },
+          {
+            text: `${DAYS[dayIdx]} only`,
+            onPress: async () => {
+              try {
+                const url = await getServerUrl();
+                if (!url) return;
+                const api = new ApiClient(url);
+                const newDays = weekdays.filter(d => d !== dayIdx);
+                await api.updateSchedule(mowerSn, sid, { weekdays: newDays });
+                fetchSchedules();
+              } catch { /* ignore */ }
+            },
+          },
+          {
+            text: 'All days',
+            style: 'destructive',
+            onPress: async () => {
+              try {
+                const url = await getServerUrl();
+                if (!url) return;
+                const api = new ApiClient(url);
+                await api.deleteSchedule(mowerSn, sid);
+                setSchedules((prev) => prev.filter((s) => (s.id ?? (s as any).scheduleId) !== sid));
+              } catch { /* ignore */ }
+            },
+          },
+        ],
+      );
+      return;
+    }
+
     Alert.alert(
       t('delete'),
-      `Delete ${DAYS_FULL[schedule.day_of_week]} ${pad(schedule.start_hour)}:${pad(schedule.start_minute)} schedule?`,
+      `Delete ${time} schedule?`,
       [
         { text: t('cancel'), style: 'cancel' },
         {
@@ -107,8 +146,8 @@ export default function ScheduleScreen() {
               const url = await getServerUrl();
               if (!url) return;
               const api = new ApiClient(url);
-              await api.deleteSchedule(mowerSn, schedule.id);
-              setSchedules((prev) => prev.filter((s) => s.id !== schedule.id));
+              await api.deleteSchedule(mowerSn, sid);
+              setSchedules((prev) => prev.filter((s) => (s.id ?? (s as any).scheduleId) !== sid));
             } catch {
               // Silently fail
             }
@@ -128,18 +167,23 @@ export default function ScheduleScreen() {
     setShowEditor(true);
   };
 
-  // Group schedules by day
+  // Group schedules by day — a schedule with weekdays [1,3,5] appears under each day
   const byDay = useMemo(() => {
     const grouped: Record<number, Schedule[]> = {};
     for (const s of schedules) {
-      if (!grouped[s.day_of_week]) grouped[s.day_of_week] = [];
-      grouped[s.day_of_week].push(s);
+      const days: number[] = (s as any).weekdays ?? [s.day_of_week ?? 0];
+      for (const d of days) {
+        if (!grouped[d]) grouped[d] = [];
+        grouped[d].push(s);
+      }
     }
-    // Sort each day's schedules by time
+    // Sort each day's schedules by startTime
     for (const day of Object.keys(grouped)) {
-      grouped[Number(day)].sort(
-        (a, b) => a.start_hour * 60 + a.start_minute - (b.start_hour * 60 + b.start_minute),
-      );
+      grouped[Number(day)].sort((a, b) => {
+        const aTime = (a as any).startTime ?? `${pad(a.start_hour ?? 0)}:${pad(a.start_minute ?? 0)}`;
+        const bTime = (b as any).startTime ?? `${pad(b.start_hour ?? 0)}:${pad(b.start_minute ?? 0)}`;
+        return aTime.localeCompare(bTime);
+      });
     }
     return grouped;
   }, [schedules]);
@@ -202,27 +246,47 @@ export default function ScheduleScreen() {
             <View key={dayIdx} style={styles.dayGroup}>
               <Text style={styles.dayLabel}>{DAYS_FULL[dayIdx]}</Text>
               {daySchedules.map((s) => (
+                <Swipeable
+                  key={`${dayIdx}-${s.id ?? (s as any).scheduleId}`}
+                  renderRightActions={() => (
+                    <TouchableOpacity
+                      style={styles.swipeDelete}
+                      onPress={() => handleDelete(s, dayIdx)}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons name="trash" size={22} color={colors.white} />
+                    </TouchableOpacity>
+                  )}
+                >
                 <TouchableOpacity
-                  key={s.id}
                   style={[styles.scheduleCard, !s.enabled && styles.scheduleCardDisabled]}
                   onPress={() => handleEdit(s)}
-                  onLongPress={() => handleDelete(s)}
                   activeOpacity={0.7}
                 >
                   <View style={styles.scheduleLeft}>
                     <Text style={[styles.scheduleTime, !s.enabled && styles.textDisabled]}>
-                      {pad(s.start_hour)}:{pad(s.start_minute)}
+                      {(s as any).startTime ?? `${pad(s.start_hour ?? 0)}:${pad(s.start_minute ?? 0)}`}
                     </Text>
                     <View style={styles.scheduleChips}>
-                      <Text style={styles.scheduleDuration}>{s.duration_minutes} min</Text>
+                      <Text style={styles.scheduleDuration}>{(() => {
+                        if (s.duration_minutes) return `${s.duration_minutes} min`;
+                        const st = (s as any).startTime as string | undefined;
+                        const et = (s as any).endTime as string | undefined;
+                        if (st && et) {
+                          const [sh, sm] = st.split(':').map(Number);
+                          const [eh, em] = et.split(':').map(Number);
+                          return `${(eh * 60 + em) - (sh * 60 + sm)} min`;
+                        }
+                        return '';
+                      })()}</Text>
                       {(s.cuttingHeight ?? s.cutting_height) != null && (
                         <Text style={styles.scheduleChip}>
-                          {((s.cuttingHeight ?? s.cutting_height ?? 40) / 10).toFixed(1)} cm
+                          {s.cuttingHeight ?? s.cutting_height} cm
                         </Text>
                       )}
                       {(s.pathDirection ?? s.path_direction) != null && (
                         <Text style={styles.scheduleChip}>
-                          {DIRECTION_OPTIONS.find((d) => d.angle === (s.pathDirection ?? s.path_direction))?.label ?? `${s.pathDirection ?? s.path_direction}°`}
+                          {s.pathDirection ?? s.path_direction}°
                         </Text>
                       )}
                       {(s.rainPause ?? s.rain_pause) && (
@@ -239,6 +303,7 @@ export default function ScheduleScreen() {
                     thumbColor={s.enabled ? colors.emerald : '#6b7280'}
                   />
                 </TouchableOpacity>
+                </Swipeable>
               ))}
             </View>
           );
@@ -276,13 +341,18 @@ function ScheduleEditor({
 }) {
   const { t } = useI18n();
   const isEdit = schedule != null;
-  const [day, setDay] = useState(schedule?.day_of_week ?? 1);
+  const [selectedDays, setSelectedDays] = useState<number[]>(
+    isEdit ? [schedule!.day_of_week] : [1, 2, 3, 4, 5] // default weekdays
+  );
+  const toggleDay = (d: number) => {
+    setSelectedDays(prev => prev.includes(d) ? prev.filter(x => x !== d) : [...prev, d]);
+  };
   const [hour, setHour] = useState(String(schedule?.start_hour ?? 9));
   const [minute, setMinute] = useState(pad(schedule?.start_minute ?? 0));
   const [duration, setDuration] = useState(String(schedule?.duration_minutes ?? 60));
-  const [cuttingHeight, setCuttingHeight] = useState(schedule?.cuttingHeight ?? schedule?.cutting_height ?? 40);
-  const [pathDir, setPathDir] = useState(schedule?.pathDirection ?? schedule?.path_direction ?? 0);
-  const [rainPause, setRainPause] = useState(schedule?.rainPause ?? schedule?.rain_pause ?? false);
+  const [cuttingHeight, setCuttingHeight] = useState(schedule?.cuttingHeight ?? schedule?.cutting_height ?? 5);
+  const [pathDir, setPathDir] = useState(schedule?.pathDirection ?? schedule?.path_direction ?? 120);
+  const [rainPause, setRainPause] = useState(schedule?.rainPause ?? schedule?.rain_pause ?? true);
   const [saving, setSaving] = useState(false);
 
   const handleSave = async () => {
@@ -291,25 +361,37 @@ function ScheduleEditor({
       const url = await getServerUrl();
       if (!url) return;
       const api = new ApiClient(url);
-      const payload = {
-        day_of_week: day,
-        start_hour: parseInt(hour, 10) || 0,
-        start_minute: parseInt(minute, 10) || 0,
-        duration_minutes: parseInt(duration, 10) || 60,
+      const startH = parseInt(hour, 10) || 0;
+      const startM = parseInt(minute, 10) || 0;
+      const durationMin = parseInt(duration, 10) || 60;
+      const endH = Math.floor((startH * 60 + startM + durationMin) / 60) % 24;
+      const endM = (startH * 60 + startM + durationMin) % 60;
+      const base = {
+        startTime: `${pad(startH)}:${pad(startM)}`,
+        endTime: `${pad(endH)}:${pad(endM)}`,
+        start_hour: startH,
+        start_minute: startM,
+        duration_minutes: durationMin,
         enabled: true,
         cuttingHeight: cuttingHeight,
         pathDirection: pathDir,
         rainPause: rainPause,
       };
 
+      if (selectedDays.length === 0) {
+        Alert.alert('Error', 'Select at least one day');
+        return;
+      }
+
       if (isEdit) {
-        await api.updateSchedule(mowerSn, schedule!.id, payload);
+        await api.updateSchedule(mowerSn, schedule!.id, { ...base, weekdays: selectedDays });
       } else {
-        await api.createSchedule(mowerSn, payload);
+        await api.createSchedule(mowerSn, { ...base, weekdays: [...selectedDays].sort() });
       }
       onSaved();
-    } catch {
-      // Silently fail
+    } catch (e) {
+      console.error('[Schedule] Save failed:', e);
+      Alert.alert('Error', e instanceof Error ? e.message : 'Save failed');
     } finally {
       setSaving(false);
     }
@@ -326,16 +408,18 @@ function ScheduleEditor({
             </TouchableOpacity>
           </View>
 
-          {/* Day selector */}
-          <Text style={editorStyles.label}>{t('day')}</Text>
+          <ScrollView showsVerticalScrollIndicator={false}>
+
+          {/* Day selector (multi-select for new, single for edit) */}
+          <Text style={editorStyles.label}>{isEdit ? t('day') : (t('days') || 'Days')}</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={editorStyles.dayRow}>
             {DAYS.map((d, i) => (
               <TouchableOpacity
                 key={i}
-                style={[editorStyles.dayChip, day === i && editorStyles.dayChipActive]}
-                onPress={() => setDay(i)}
+                style={[editorStyles.dayChip, selectedDays.includes(i) && editorStyles.dayChipActive]}
+                onPress={() => isEdit ? setSelectedDays([i]) : toggleDay(i)}
               >
-                <Text style={[editorStyles.dayChipText, day === i && editorStyles.dayChipTextActive]}>
+                <Text style={[editorStyles.dayChipText, selectedDays.includes(i) && editorStyles.dayChipTextActive]}>
                   {d}
                 </Text>
               </TouchableOpacity>
@@ -379,37 +463,29 @@ function ScheduleEditor({
 
           {/* Cutting Height */}
           <Text style={editorStyles.label}>{t('cuttingHeight')}</Text>
-          <View style={editorStyles.chipRow}>
-            {HEIGHT_OPTIONS.map((h) => (
-              <TouchableOpacity
-                key={h}
-                style={[editorStyles.chip, cuttingHeight === h && editorStyles.chipActive]}
-                onPress={() => setCuttingHeight(h)}
-              >
-                <Text style={[editorStyles.chipText, cuttingHeight === h && editorStyles.chipTextActive]}>
-                  {(h / 10).toFixed(1)}
-                </Text>
-              </TouchableOpacity>
-            ))}
+          <View style={editorStyles.stepperRow}>
+            <TouchableOpacity style={editorStyles.stepperBtn} onPress={() => setCuttingHeight(Math.max(2, cuttingHeight - 1))}>
+              <Ionicons name="remove" size={18} color={colors.white} />
+            </TouchableOpacity>
+            <Text style={editorStyles.stepperValue}>{cuttingHeight} cm</Text>
+            <TouchableOpacity style={editorStyles.stepperBtn} onPress={() => setCuttingHeight(Math.min(9, cuttingHeight + 1))}>
+              <Ionicons name="add" size={18} color={colors.white} />
+            </TouchableOpacity>
           </View>
 
           {/* Mowing Direction */}
           <Text style={editorStyles.label}>{t('pathDirection')}</Text>
-          <View style={{ alignItems: 'center', marginBottom: 12 }}>
+          <View style={{ alignItems: 'center', marginBottom: 8 }}>
             <MowingDirectionPreview direction={pathDir} size={90} />
           </View>
-          <View style={editorStyles.chipRow}>
-            {DIRECTION_OPTIONS.map((d) => (
-              <TouchableOpacity
-                key={d.angle}
-                style={[editorStyles.dirChip, pathDir === d.angle && editorStyles.dirChipActive]}
-                onPress={() => setPathDir(d.angle)}
-              >
-                <Text style={[editorStyles.dirText, pathDir === d.angle && editorStyles.dirTextActive]}>
-                  {d.label}
-                </Text>
-              </TouchableOpacity>
-            ))}
+          <View style={editorStyles.stepperRow}>
+            <TouchableOpacity style={editorStyles.stepperBtn} onPress={() => setPathDir((pathDir - 10 + 360) % 360)}>
+              <Ionicons name="remove" size={18} color={colors.white} />
+            </TouchableOpacity>
+            <Text style={editorStyles.stepperValue}>{pathDir}°</Text>
+            <TouchableOpacity style={editorStyles.stepperBtn} onPress={() => setPathDir((pathDir + 10) % 360)}>
+              <Ionicons name="add" size={18} color={colors.white} />
+            </TouchableOpacity>
           </View>
 
           {/* Rain pause toggle */}
@@ -425,6 +501,8 @@ function ScheduleEditor({
               thumbColor={rainPause ? '#60a5fa' : '#666'}
             />
           </View>
+
+          </ScrollView>
 
           {/* Save button */}
           <TouchableOpacity
@@ -476,6 +554,10 @@ const styles = StyleSheet.create({
   emptyCardSubtext: { fontSize: 13, color: colors.textMuted, marginTop: 4 },
   dayGroup: { marginBottom: 20 },
   dayLabel: { fontSize: 14, fontWeight: '600', color: colors.textDim, marginBottom: 8, marginLeft: 4 },
+  swipeDelete: {
+    backgroundColor: '#ef4444', justifyContent: 'center', alignItems: 'center',
+    width: 70, borderRadius: 14, marginBottom: 8, marginLeft: 8,
+  },
   scheduleCard: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     backgroundColor: colors.card, borderRadius: 14,
@@ -495,7 +577,7 @@ const editorStyles = StyleSheet.create({
   overlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.5)' },
   sheet: {
     backgroundColor: colors.bg, borderTopLeftRadius: 24, borderTopRightRadius: 24,
-    padding: 24, paddingBottom: 40,
+    padding: 24, paddingBottom: 40, maxHeight: '90%',
   },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 },
   title: { fontSize: 20, fontWeight: '700', color: colors.white },
@@ -550,6 +632,14 @@ const editorStyles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: 'rgba(255,255,255,0.06)',
   },
+  stepperRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 16, marginBottom: 8,
+  },
+  stepperBtn: {
+    width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.1)',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  stepperValue: { fontSize: 18, fontWeight: '700', color: colors.white, minWidth: 60, textAlign: 'center' },
   rainTitle: { fontSize: 14, fontWeight: '600', color: colors.white },
   rainSub: { fontSize: 11, color: colors.textMuted, marginTop: 2 },
 });

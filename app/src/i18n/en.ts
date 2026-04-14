@@ -84,9 +84,17 @@ export default {
   mapsAlreadyExist: 'Maps already exist',
   mapsAlreadyExistMsg: 'This mower already has map(s). Import will add new maps. Continue?',
   renameMap: 'Rename Map',
+  rename: 'Rename',
+  obstacle: 'Obstacle',
+  channel: 'Channel',
+  map: 'Map',
   enterNewName: 'Enter a new name:',
   deleteMap: 'Delete Map?',
   deleteMapConfirm: 'This cannot be undone.',
+  returnHome: 'Return Home',
+  returnHomeDesc: 'How should the mower return to the charging station?',
+  endTaskReturn: 'End task & return',
+  pauseTaskReturn: 'Pause task & return',
   pinchToZoom: 'Pinch to zoom \u00B7 Double-tap to reset',
 
   // ── Mapping ───────────────────────────────────────────────────

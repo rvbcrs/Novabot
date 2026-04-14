@@ -250,10 +250,8 @@ export class ApiClient {
     });
   }
 
-  async deleteSchedule(sn: string, scheduleId: number): Promise<{ ok: boolean }> {
-    return this.request('POST', `/api/dashboard/schedules/${enc(sn)}/${scheduleId}`, {
-      body: { _method: 'DELETE' },
-    });
+  async deleteSchedule(sn: string, scheduleId: number | string): Promise<{ ok: boolean }> {
+    return this.request('DELETE', `/api/dashboard/schedules/${enc(sn)}/${enc(String(scheduleId))}`);
   }
 
   // ── Work History ─────────────────────────────────────────────────────

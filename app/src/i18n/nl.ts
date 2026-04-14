@@ -84,9 +84,17 @@ export default {
   mapsAlreadyExist: 'Kaarten bestaan al',
   mapsAlreadyExistMsg: 'Deze maaier heeft al kaarten. Import voegt nieuwe toe. Doorgaan?',
   renameMap: 'Kaart hernoemen',
+  rename: 'Hernoem',
+  obstacle: 'Obstakel',
+  channel: 'Kanaal',
+  map: 'Kaart',
   enterNewName: 'Voer een nieuwe naam in:',
   deleteMap: 'Kaart verwijderen?',
   deleteMapConfirm: 'Dit kan niet ongedaan worden.',
+  returnHome: 'Terug naar station',
+  returnHomeDesc: 'Hoe moet de maaier terugkeren naar het laadstation?',
+  endTaskReturn: 'Stop taak & terug',
+  pauseTaskReturn: 'Pauzeer taak & terug',
   pinchToZoom: 'Knijp om te zoomen \u00B7 Dubbeltik om te resetten',
 
   // ── Mapping ───────────────────────────────────────────────────

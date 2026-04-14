@@ -10,6 +10,7 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import * as SplashScreen from 'expo-splash-screen';
 import * as NavigationBar from 'expo-navigation-bar';
 import { View, Platform } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from './src/theme/colors';
 import { DemoProvider } from './src/context/DemoContext';
@@ -293,7 +294,7 @@ export default function App() {
     <I18nProvider>
     <ExperimentalProvider>
     <PatternProvider>
-    <View style={{ flex: 1 }} onLayout={onLayoutRootView}>
+    <GestureHandlerRootView style={{ flex: 1 }} onLayout={onLayoutRootView}>
       <NavigationContainer theme={DarkTheme} ref={navigationRef}>
         <StatusBar style="light" />
         {isAuthenticated ? (
@@ -316,7 +317,7 @@ export default function App() {
           </AuthStack.Navigator>
         )}
       </NavigationContainer>
-    </View>
+    </GestureHandlerRootView>
     </PatternProvider>
     </ExperimentalProvider>
     </I18nProvider>

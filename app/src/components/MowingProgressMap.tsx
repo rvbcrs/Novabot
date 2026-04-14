@@ -130,13 +130,15 @@ export function MowingProgressMap({ polygon, progress, pathDirection, size = 200
 
         {/* Planned mowing paths OR direction stripes as fallback */}
         {plannedPaths && plannedPaths.length > 0 ? (
-          plannedPaths.map((path) => (
-            <Polyline
-              key={`plan-${path.id}`}
-              points={path.points.map(p => toSvg(p, bounds, size, padding)).map(p => `${p.x},${p.y}`).join(' ')}
-              fill="none" stroke="rgba(255,255,255,0.3)" strokeWidth={1} strokeLinecap="round" strokeLinejoin="round"
-            />
-          ))
+          <G clipPath="url(#polyClipHome)">
+            {plannedPaths.map((path) => (
+              <Polyline
+                key={`plan-${path.id}`}
+                points={path.points.map(p => toSvg(p, bounds, size, padding)).map(p => `${p.x},${p.y}`).join(' ')}
+                fill="none" stroke="rgba(255,255,255,0.3)" strokeWidth={1} strokeLinecap="round" strokeLinejoin="round"
+              />
+            ))}
+          </G>
         ) : (
           <G clipPath="url(#polyClipHome)">
             {stripes.map((l, i) => (

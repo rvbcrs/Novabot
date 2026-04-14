@@ -14,9 +14,12 @@ import {
   ActivityIndicator,
   ScrollView,
   Platform,
+  useWindowDimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useNavigation } from '@react-navigation/native';
+import * as ScreenOrientation from 'expo-screen-orientation';
 import { colors } from '../theme/colors';
 import { useMowerState } from '../hooks/useMowerState';
 import { getServerUrl } from '../services/auth';
@@ -36,6 +39,26 @@ export default function CameraScreen() {
   const insets = useSafeAreaInsets();
   const { devices } = useMowerState();
   const { t } = useI18n();
+  const { width, height } = useWindowDimensions();
+  const isLandscape = width > height;
+  const navigation = useNavigation();
+
+  // Hide tab bar in landscape
+  useEffect(() => {
+    navigation.setOptions({
+      tabBarStyle: isLandscape
+        ? { display: 'none' as const }
+        : undefined,
+    });
+  }, [isLandscape, navigation]);
+
+  // Allow landscape rotation on this screen, reset on leave
+  useEffect(() => {
+    ScreenOrientation.unlockAsync();
+    return () => {
+      ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
+    };
+  }, []);
 
   const mower = [...devices.values()].find(d => d.deviceType === 'mower' && d.online);
   const sn = mower?.sn ?? '';
@@ -100,9 +123,9 @@ export default function CameraScreen() {
   };
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top }]}>
-      {/* Topic selector bar */}
-      <View style={styles.topBar}>
+    <View style={[styles.container, { paddingTop: isLandscape ? 0 : insets.top }]}>
+      {/* Topic selector bar — hidden in landscape */}
+      {!isLandscape && <View style={styles.topBar}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.topicRow}>
           {CAMERA_TOPICS.map(({ key, label }) => (
             <TouchableOpacity
@@ -130,7 +153,7 @@ export default function CameraScreen() {
             <Ionicons name="refresh" size={18} color={colors.textDim} />
           </TouchableOpacity>
         </View>
-      </View>
+      </View>}
 
       {/* Camera view */}
       <View style={styles.cameraArea}>
@@ -169,8 +192,8 @@ export default function CameraScreen() {
         )}
       </View>
 
-      {/* Info bar */}
-      {mower?.online && (
+      {/* Info bar — hidden in landscape */}
+      {!isLandscape && mower?.online && (
         <View style={styles.infoBar}>
           <Text style={styles.infoText}>{sn}</Text>
           <Text style={styles.infoText}>Topic: {selectedTopic}</Text>

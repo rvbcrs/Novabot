@@ -99,7 +99,7 @@ function deriveMower(devices: Map<string, DeviceState>): MowerDerived | null {
   if (isOffline) activity = 'idle';
   else if (hasError && !isOnDock) activity = 'error';
   else if (isCoverageRunning) activity = 'mowing';
-  else if (s.start_edit_or_assistant_map_flag === '1') activity = 'mapping';
+  else if (s.start_edit_or_assistant_map_flag === '1' && taskMode !== 1) activity = 'mapping';
   else if (isCoveragePaused) activity = 'paused';
   else if (isReturning && !isOnDock) activity = 'returning';
   else if (isOnDock) activity = 'charging';
@@ -837,6 +837,12 @@ export default function HomeScreen() {
               <View style={styles.chip}>
                 <Ionicons name="thermometer" size={11} color={colors.textDim} />
                 <Text style={styles.chipText}>{devices.get(mower.sn)?.sensors?.cpu_temperature}°</Text>
+              </View>
+            )}
+            {(displayActivity === 'mowing') && devices.get(mower.sn)?.sensors?.target_height && (
+              <View style={styles.chip}>
+                <Ionicons name="resize" size={11} color={colors.textDim} />
+                <Text style={styles.chipText}>{devices.get(mower.sn)?.sensors?.target_height} cm</Text>
               </View>
             )}
             {!mower.online && (

@@ -172,9 +172,7 @@ export function publishToDevice(sn: string, command: Record<string, unknown>): v
     retain: false,
     topic,
     payload: Buffer.from(json),
-    brokerId: 'mapSync',
-    brokerCounter: 0,
-  } satisfies AedesPublishPacket;
+  } as AedesPublishPacket;
 
   aedesBroker.publish(packet, (err) => {
     if (err) {
@@ -202,9 +200,7 @@ export function publishToTopic(topic: string, message: Record<string, unknown>):
     retain: false,
     topic,
     payload: Buffer.from(json),
-    brokerId: 'mapSync',
-    brokerCounter: 0,
-  } satisfies AedesPublishPacket;
+  } as AedesPublishPacket;
   aedesBroker.publish(packet, (err) => {
     if (err) console.error(`${TAG} Publish fout naar ${topic}: ${err.message}`);
     else console.log(`${TAG} Gestuurd naar ${topic}: ${json}`);
@@ -275,6 +271,32 @@ export function requestMapOutline(sn: string, mapId: string): void {
  * maak automatisch een equipment record aan. Als er al een incompleet record is
  * (charger zonder mower of vice versa), vul het aan → auto-pair.
  */
+/**
+ * Bij het mergen van twee equipment records: kopieer belangrijke velden
+ * van het te-verwijderen record (source) naar het bewaard blijvende record (target),
+ * maar alleen als het target die velden nog niet heeft.
+ */
+function preserveFieldsOnMerge(source: Record<string, unknown>, target: Record<string, unknown>): void {
+  const targetSn = (target.mower_sn as string) ?? '';
+  // mac_address: alleen overnemen als het een maaier BLE MAC is (niet charger 48:27:E2:)
+  if (source.mac_address && !target.mac_address && !(source.mac_address as string).startsWith('48:27:E2:')) {
+    equipmentRepo.updateMacAddress(targetSn, source.mac_address as string);
+    console.log(`${TAG} Merge: preserved mac_address ${source.mac_address}`);
+  }
+  // mower_ip
+  if (source.mower_ip && !target.mower_ip) {
+    equipmentRepo.updateMowerIp(targetSn, source.mower_ip as string);
+    console.log(`${TAG} Merge: preserved mower_ip ${source.mower_ip}`);
+  }
+  // firmware versions
+  const mowerV = source.mower_version as string | undefined;
+  const chargerV = source.charger_version as string | undefined;
+  if (mowerV && !target.mower_version || chargerV && !target.charger_version) {
+    equipmentRepo.updateVersions(targetSn, mowerV ?? undefined, chargerV ?? undefined);
+    console.log(`${TAG} Merge: preserved versions mower=${mowerV} charger=${chargerV}`);
+  }
+}
+
 function autoBindDevice(sn: string, attempt = 0): void {
   const existing = equipmentRepo.findBySn(sn);
   if (existing?.user_id) {
@@ -288,12 +310,16 @@ function autoBindDevice(sn: string, attempt = 0): void {
         const incomplete = equipmentRepo.findIncompleteByUserId(user.app_user_id);
         if (incomplete && isCharger && !incomplete.charger_sn && incomplete.equipment_id !== existing.equipment_id) {
           // Mower-only record gevonden + charger heeft apart record → merge
+          // Bewaar belangrijke velden van het te-verwijderen record
+          preserveFieldsOnMerge(existing as any, incomplete as any);
           equipmentRepo.deleteById(existing.equipment_id);
           equipmentRepo.updateChargerSn(incomplete.equipment_id, sn);
           console.log(`${TAG} Auto-pair (merge): charger ${sn} merged into mower record ${incomplete.mower_sn}`);
           emitDevicePaired(incomplete.mower_sn ?? '', sn);
         } else if (incomplete && !isCharger && !incomplete.mower_sn?.startsWith('LFIN') && incomplete.equipment_id !== existing.equipment_id) {
           // Charger-only record gevonden + mower heeft apart record → merge
+          // Bewaar belangrijke velden van het te-verwijderen record
+          preserveFieldsOnMerge(existing as any, incomplete as any);
           equipmentRepo.deleteById(existing.equipment_id);
           equipmentRepo.updateMowerSn(incomplete.equipment_id, sn);
           console.log(`${TAG} Auto-pair (merge): mower ${sn} merged into charger record ${incomplete.charger_sn}`);
