@@ -177,10 +177,7 @@ export function StartMowSheet({ visible, onClose, sn, onStarted, battery, isWork
       // This matches the official Novabot app where set_para_info is sent from
       // Advanced Settings (separate screen), not during the start mowing flow.
 
-      // Start mowing — try new protocol first, then old
-      // Flutter decompilation (LawnPageLogic::startMowing, 0x92cf0c):
-      // New: {start_navigation: {mapName: "test", cutterhigh, area, cmd_num}}
-      // Old: {start_run: {mapName: null, area, cutterhigh}, targetIsMower: false}
+      // Start mowing — Flutter v2.4.0 stuurt start_navigation direct
       const cmdNum = Date.now() % 100000;
       const navCmd = {
         start_navigation: {
@@ -193,7 +190,7 @@ export function StartMowSheet({ visible, onClose, sn, onStarted, battery, isWork
       console.log('[StartMow] Sending start_navigation:', JSON.stringify(navCmd));
       const navResult = await api.sendCommand(sn, navCmd);
 
-      // If start_navigation fails or device is offline, try old protocol
+      // Fallback: old protocol
       if (!navResult.ok) {
         console.log('[StartMow] start_navigation failed, trying start_run');
         const runCmd = {

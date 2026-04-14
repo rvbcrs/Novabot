@@ -392,8 +392,9 @@ export async function startMqttBroker(): Promise<void> {
     // dat het antwoord arriveert VOORDAT de listener actief is → timeout → "Get map failed".
     // Oplossing: vertraag maaier→app responses op Dart/Receive_mqtt/ met 150ms.
     if (client && packet.topic.startsWith('Dart/Receive_mqtt/LFIN') && !isAppClient(client.id)) {
-      // Intercepteer maaier's get_map_list_respond — vervang met onze DB versie
-      // zodat dashboard-getekende kaarten ook zichtbaar zijn in de Novabot app.
+      // Intercepteer maaier's get_map_list_respond — fix zip_dir_empty maar
+      // BEHOUD de maaier's eigen map_ids. Die zijn nodig voor coverage trail matching
+      // (cover_path.map_id moet overeenkomen met get_map_list map_ids).
       const sn = packet.topic.split('/').pop() ?? '';
       if (sn) {
         try {
@@ -401,45 +402,58 @@ export async function startMqttBroker(): Promise<void> {
           const decrypted = tryDecrypt(payloadBuf, sn);
           const json = decrypted ?? payloadBuf.toString('utf8');
           const parsed = JSON.parse(json);
-          // Maaier formaat: {"message":{"result":0,"value":{...}},"type":"get_map_list_respond"}
-          // OF: {"get_map_list_respond":{...}}
           const isMapListResp = parsed.type === 'get_map_list_respond' || parsed.get_map_list_respond;
           if (isMapListResp) {
+            // Extract maaier's originele value
+            const mowerValue = parsed.message?.value ?? parsed.get_map_list_respond ?? {};
+            const mowerMaps = mowerValue.maps ?? [];
             const dbMaps = mapRepo.findWithAreaOrderByMapId(sn);
-            if (dbMaps.length > 0) {
-              const STORAGE_PATH = path.resolve(process.env.STORAGE_PATH ?? './storage', 'maps');
-              const zipPath = path.join(STORAGE_PATH, `${sn}_latest.zip`);
-              let zipMd5 = '';
-              if (fs.existsSync(zipPath)) {
-                zipMd5 = crypto.createHash('md5').update(fs.readFileSync(zipPath)).digest('hex');
-              } else {
-                zipMd5 = crypto.createHash('md5').update(dbMaps.map(m => m.map_id).join(',')).digest('hex');
-              }
-              // Gebruik MAAIER formaat: {"type":"get_map_list_respond","message":{"result":0,"value":{...}}}
-              // De app's startListenMqtt zoekt op type veld, niet op top-level key.
-              const replacement = {
-                type: 'get_map_list_respond',
-                message: {
-                  result: 0,
-                  value: {
-                    map_num: dbMaps.length,
-                    maps: dbMaps.map(m => ({ map_id: m.map_id, map_name: m.map_name ?? 'home', map_type: m.map_type ?? 'work' })),
-                    md5: zipMd5, name: `${sn}.zip`, zip_dir_empty: 0,
-                  },
-                },
-              };
-              // Re-encrypt en vervang packet payload
-              const KEY_PREFIX = 'abcdabcd1234';
-              const IV = Buffer.from('abcd1234abcd1234', 'utf8');
-              const key = Buffer.from(KEY_PREFIX + sn.slice(-4), 'utf8');
-              const plaintext = Buffer.from(JSON.stringify(replacement), 'utf8');
-              const padded = Buffer.alloc(Math.ceil(plaintext.length / 16) * 16, 0);
-              plaintext.copy(padded);
-              const cipher = crypto.createCipheriv('aes-128-cbc', key, IV);
-              cipher.setAutoPadding(false);
-              packet.payload = Buffer.concat([cipher.update(padded), cipher.final()]);
-              console.log(`${C.cyan}[MAP-PROXY] Replaced mower get_map_list_respond with DB version: ${dbMaps.length} maps${C.reset}`);
+
+            // Behoud maaier's maps met hun eigen IDs voor coverage matching.
+            // Voeg alleen dashboard-getekende kaarten toe (die de maaier niet kent).
+            const mowerMapNames = new Set(mowerMaps.map((m: Record<string, unknown>) => m.map_name));
+            const extraMaps = dbMaps
+              .filter(m => !mowerMapNames.has(m.map_name))
+              .map(m => ({ map_id: m.map_id, map_name: m.map_name ?? 'home', map_type: m.map_type ?? 'work' }));
+            const allMaps = [...mowerMaps, ...extraMaps];
+
+            // Fix zip_dir_empty en md5
+            const STORAGE_PATH = path.resolve(process.env.STORAGE_PATH ?? './storage', 'maps');
+            const zipPath = path.join(STORAGE_PATH, `${sn}_latest.zip`);
+            let zipMd5 = mowerValue.md5 ?? '';
+            if (!zipMd5 && fs.existsSync(zipPath)) {
+              zipMd5 = crypto.createHash('md5').update(fs.readFileSync(zipPath)).digest('hex');
             }
+            if (!zipMd5 && dbMaps.length > 0) {
+              zipMd5 = crypto.createHash('md5').update(dbMaps.map(m => m.map_id).join(',')).digest('hex');
+            }
+
+            const fixed = {
+              type: 'get_map_list_respond',
+              message: {
+                result: 0,
+                value: {
+                  ...mowerValue,
+                  map_num: allMaps.length,
+                  maps: allMaps,
+                  md5: zipMd5,
+                  name: mowerValue.name ?? `${sn}.zip`,
+                  zip_dir_empty: allMaps.length > 0 ? 0 : (mowerValue.zip_dir_empty ?? 1),
+                },
+              },
+            };
+
+            // Re-encrypt en vervang packet payload
+            const KEY_PREFIX = 'abcdabcd1234';
+            const IV = Buffer.from('abcd1234abcd1234', 'utf8');
+            const key = Buffer.from(KEY_PREFIX + sn.slice(-4), 'utf8');
+            const plaintext = Buffer.from(JSON.stringify(fixed), 'utf8');
+            const padded = Buffer.alloc(Math.ceil(plaintext.length / 16) * 16, 0);
+            plaintext.copy(padded);
+            const cipher = crypto.createCipheriv('aes-128-cbc', key, IV);
+            cipher.setAutoPadding(false);
+            packet.payload = Buffer.concat([cipher.update(padded), cipher.final()]);
+            console.log(`${C.cyan}[MAP-PROXY] Fixed get_map_list_respond: ${mowerMaps.length} mower maps + ${extraMaps.length} dashboard maps = ${allMaps.length} total${C.reset}`);
           }
         } catch { /* parse error, doorsturen ongewijzigd */ }
       }
