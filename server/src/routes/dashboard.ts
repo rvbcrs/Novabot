@@ -3434,10 +3434,14 @@ dashboardRouter.post('/remote-debug/receive', (req: Request, res: Response) => {
 
 // GET /remote-debug/devices — list all SNs with log counts
 dashboardRouter.get('/remote-debug/devices', (_req: Request, res: Response) => {
-  const devices = [..._remoteLogsBySn.entries()].map(([sn, logs]) => ({
-    sn, count: logs.length,
-    lastTs: logs.length > 0 ? (logs[logs.length - 1] as any).ts : null,
-  }));
+  // Alleen maaier SNs tonen (LFIN*) — charger en unknown logs zijn al
+  // gefilterd via de Mower/Charger/App/System checkboxen in de console
+  const devices = [..._remoteLogsBySn.entries()]
+    .filter(([sn]) => sn.startsWith('LFIN'))
+    .map(([sn, logs]) => ({
+      sn, count: logs.length,
+      lastTs: logs.length > 0 ? (logs[logs.length - 1] as any).ts : null,
+    }));
   res.json({ devices });
 });
 
@@ -3446,8 +3450,17 @@ dashboardRouter.get('/remote-debug/logs', (req: Request, res: Response) => {
   const sn = req.query.sn as string | undefined;
   const since = parseInt(req.query.since as string || '0', 10);
   if (sn) {
-    const buf = _remoteLogsBySn.get(sn) ?? [];
-    res.json({ logs: buf.slice(since) });
+    // Retourneer logs van de gevraagde SN + bijbehorende charger + unknown
+    // zodat de console het volledige beeld toont (gefilterd via checkboxen)
+    const all: unknown[] = [];
+    for (const [key, buf] of _remoteLogsBySn.entries()) {
+      if (key === sn || key.startsWith('LFIC') || key === 'unknown') {
+        all.push(...buf);
+      }
+    }
+    // Sorteer op timestamp
+    all.sort((a: any, b: any) => (a.ts ?? 0) - (b.ts ?? 0));
+    res.json({ logs: all.slice(since) });
   } else {
     // Legacy: return all logs combined
     const all: unknown[] = [];

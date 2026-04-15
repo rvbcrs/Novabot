@@ -196,6 +196,17 @@ export default function MapScreen() {
   const [plannedPaths, setPlannedPaths] = useState<Array<{ id: string; points: LocalPoint[] }>>([]);
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
+  const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null); // null = all zones
+
+  // Filter maps based on selected zone
+  const workMaps = useMemo(() => maps.filter(m => m.mapType === 'work'), [maps]);
+  const visibleMaps = useMemo(() => {
+    if (!selectedZoneId) return maps; // all maps
+    const selectedWork = maps.find(m => m.mapId === selectedZoneId);
+    if (!selectedWork) return maps;
+    // Show selected work map + all obstacles + all unicoms
+    return maps.filter(m => m.mapId === selectedZoneId || m.mapType === 'obstacle' || m.mapType === 'unicom');
+  }, [maps, selectedZoneId]);
 
   const mower = useMemo(() => [...devices.values()].find((d) => d.deviceType === 'mower') ?? null, [devices]);
 
@@ -663,7 +674,7 @@ export default function MapScreen() {
 
   const bounds = useMemo(() => {
     let b: LocalBounds | null = null;
-    for (const m of maps) {
+    for (const m of visibleMaps) {
       if (m.mapType === 'unicom') continue;
       b = expandLocalBounds(b, computeLocalBounds(m.mapArea));
     }
@@ -677,9 +688,9 @@ export default function MapScreen() {
       b = { minX: b.minX - xPad, maxX: b.maxX + xPad, minY: b.minY - yPad, maxY: b.maxY + yPad };
     }
     return b;
-  }, [maps, trailLocal, mowerLocal]);
+  }, [visibleMaps, trailLocal, mowerLocal]);
 
-  const hasData = maps.length > 0 || trailLocal.length > 0 || mowerLocal;
+  const hasData = visibleMaps.length > 0 || trailLocal.length > 0 || mowerLocal;
 
   return (
     <GestureHandlerRootView style={[styles.container, { paddingTop: insets.top }]}>
@@ -748,6 +759,31 @@ export default function MapScreen() {
             </TouchableOpacity>
         </View>
 
+        {/* Zone selector tabs — only show if multiple work maps */}
+        {workMaps.length > 1 && (
+          <View style={{ flexDirection: 'row', paddingHorizontal: 20, marginBottom: 8, gap: 6 }}>
+            <TouchableOpacity
+              style={[styles.zoneTab, !selectedZoneId && styles.zoneTabActive]}
+              onPress={() => setSelectedZoneId(null)}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.zoneTabText, !selectedZoneId && styles.zoneTabTextActive]}>{t('allAreas') || 'All'}</Text>
+            </TouchableOpacity>
+            {workMaps.map(m => (
+              <TouchableOpacity
+                key={m.mapId}
+                style={[styles.zoneTab, selectedZoneId === m.mapId && styles.zoneTabActive]}
+                onPress={() => setSelectedZoneId(selectedZoneId === m.mapId ? null : m.mapId)}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.zoneTabText, selectedZoneId === m.mapId && styles.zoneTabTextActive]}>
+                  {m.mapName || `Zone ${workMaps.indexOf(m) + 1}`}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
+
         {loading && <ActivityIndicator size="small" color={colors.emerald} style={{ marginTop: 32 }} />}
 
         {!loading && !hasData && !bounds && (
@@ -786,7 +822,7 @@ export default function MapScreen() {
                   {/* Polygon clip paths for coverage stripes */}
                   {isMowing && mowingProgress > 0 && (
                     <Defs>
-                      {maps.filter((m) => m.mapType === 'work' && m.mapArea?.length >= 3).map((m) => {
+                      {visibleMaps.filter((m) => m.mapType === 'work' && m.mapArea?.length >= 3).map((m) => {
                         const svgPts = m.mapArea.map((p) => localToSvg(p, bounds, MAP_SIZE, INNER_PADDING));
                         return (
                           <ClipPath key={`clip-${m.mapId}`} id={`clip-${m.mapId}`}>
@@ -798,7 +834,7 @@ export default function MapScreen() {
                   )}
 
                   {/* Polygons */}
-                  {maps.map((m) => {
+                  {visibleMaps.map((m) => {
                     if (!m.mapArea || m.mapArea.length < 3) return null;
                     if (m.mapType === 'unicom') return null;
                     const c = MAP_COLORS[m.mapType] ?? MAP_COLORS.work;
@@ -1045,6 +1081,13 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
   content: { flex: 1, padding: MAP_PADDING },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
+  zoneTab: {
+    paddingHorizontal: 14, paddingVertical: 6, borderRadius: 16,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+  },
+  zoneTabActive: { backgroundColor: colors.emerald },
+  zoneTabText: { fontSize: 13, fontWeight: '600', color: colors.textDim },
+  zoneTabTextActive: { color: colors.white },
   title: { fontSize: 28, fontWeight: '700', color: colors.white },
   headerButtons: { flexDirection: 'row', gap: 8 },
   actionBtn: {

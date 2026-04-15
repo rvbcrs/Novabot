@@ -258,6 +258,9 @@ function upsertDevice(clientId: string, sn: string | null, mac: string | null, u
 // Bijhouden welke clients al gelogd zijn (clientId -> timestamp eerste connect)
 const seenClients = new Map<string, number>();
 
+// Track wanneer de app een commando stuurt per SN (voor respond delay matching)
+const pendingAppCommands = new Map<string, number>();
+
 // Onderdruk herhaalde up_status_info logs (toon alleen elke 30e keer)
 let statusLogCounter = 0;
 
@@ -393,18 +396,23 @@ export async function startMqttBroker(): Promise<void> {
     // Race condition fix: de app stuurt een commando (bijv. get_map_list) en start
     // daarna pas de timeout listener. Op een lokaal netwerk antwoordt de maaier zo snel
     // dat het antwoord arriveert VOORDAT de listener actief is → timeout → "Get map failed".
-    // Oplossing: vertraag maaier→app responses op Dart/Receive_mqtt/ met 150ms.
+    // Oplossing: vertraag ALLEEN de specifieke respond-berichten die een race condition
+    // hebben (get_map_list_respond, start_navigation_respond, etc.) — niet ALLE berichten.
+    // Reguliere status updates (report_state_*) worden onvertraagd doorgestuurd.
     if (client && packet.topic.startsWith('Dart/Receive_mqtt/LFIN') && !isAppClient(client.id)) {
       // Intercepteer maaier's get_map_list_respond — fix zip_dir_empty maar
       // BEHOUD de maaier's eigen map_ids. Die zijn nodig voor coverage trail matching
       // (cover_path.map_id moet overeenkomen met get_map_list map_ids).
       const sn = packet.topic.split('/').pop() ?? '';
+      let isRespondType = false;
       if (sn) {
         try {
           const payloadBuf = Buffer.isBuffer(packet.payload) ? packet.payload : Buffer.from(packet.payload);
           const decrypted = tryDecrypt(payloadBuf, sn);
           const json = decrypted ?? payloadBuf.toString('utf8');
           const parsed = JSON.parse(json);
+          // Detect respond-type berichten voor selective delay
+          isRespondType = json.includes('_respond');
           const isMapListResp = parsed.type === 'get_map_list_respond' || parsed.get_map_list_respond;
           if (isMapListResp) {
             // Extract maaier's originele value
@@ -414,10 +422,18 @@ export async function startMqttBroker(): Promise<void> {
 
             // Behoud maaier's maps met hun eigen IDs voor coverage matching.
             // Voeg alleen dashboard-getekende kaarten toe (die de maaier niet kent).
+            // KRITIEK: map_id MOET numeriek zijn (1, 2, 3...) — matcht met
+            // cover_path.map_id en current_map_ids in status reports.
+            // UUID's worden NOOIT als map_id naar buiten gestuurd.
             const mowerMapNames = new Set(mowerMaps.map((m: Record<string, unknown>) => m.map_name));
+            const existingMaxId = mowerMaps.reduce((max: number, m: Record<string, unknown>) => {
+              const id = typeof m.map_id === 'number' ? m.map_id : parseInt(String(m.map_id)) || 0;
+              return Math.max(max, id);
+            }, 0);
+            let nextId = existingMaxId + 1;
             const extraMaps = dbMaps
               .filter(m => !mowerMapNames.has(m.map_name))
-              .map(m => ({ map_id: m.map_id, map_name: m.map_name ?? 'home', map_type: m.map_type ?? 'work' }));
+              .map(m => ({ map_id: nextId++, map_name: m.map_name ?? 'home', map_type: m.map_type ?? 'work' }));
             const allMaps = [...mowerMaps, ...extraMaps];
 
             // Fix zip_dir_empty en md5
@@ -495,7 +511,22 @@ export async function startMqttBroker(): Promise<void> {
           }
         } catch { /* parse error, doorsturen ongewijzigd */ }
       }
-      setTimeout(() => callback(null), 150);
+      // Respond-berichten: alleen vertragen als de app RECENT (< 2s geleden)
+      // een bijbehorend commando stuurde. Dit voorkomt onnodige delay op
+      // unsolicited responds (bijv. report_state_map_outline na boot).
+      if (isRespondType && sn) {
+        const pendingTs = pendingAppCommands.get(sn);
+        const age = pendingTs ? Date.now() - pendingTs : Infinity;
+        if (age < 2000) {
+          // App stuurde recent een commando — vertraag response zodat listener klaar is
+          setTimeout(() => callback(null), 500);
+          pendingAppCommands.delete(sn);
+        } else {
+          callback(null);
+        }
+      } else {
+        callback(null);
+      }
       return;
     }
 
@@ -504,6 +535,8 @@ export async function startMqttBroker(): Promise<void> {
       const sn = packet.topic.split('/').pop() ?? '';
       console.log(`${C.blue}[MQTT] PUBLISH  ${client.id.slice(0, 30)} →DEV ${packet.topic}  [app→mower ${payloadBuf.length}B]${C.reset}`);
       if (sn) {
+        // Registreer dat de app een commando stuurt — voor respond delay matching
+        pendingAppCommands.set(sn, Date.now());
         const decrypted = tryDecrypt(payloadBuf, sn);
         if (decrypted) {
           console.log(`${C.blue}[MQTT] APP→DEV  ${sn}: ${decrypted.slice(0, 300)}${C.reset}`);

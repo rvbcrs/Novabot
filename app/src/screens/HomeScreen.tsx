@@ -305,8 +305,13 @@ export default function HomeScreen() {
         if (!url) return;
         const api = new ApiClient(url);
         const res = await api.fetchMaps(mower.sn);
-        const workMap = res.maps?.find((m: any) => m.mapType === 'work');
-        if (workMap && workMap.mapArea && workMap.mapArea.length >= 3) setActiveMapPolygon(workMap.mapArea);
+        // Show the currently mowing zone, or the first work map as default
+        const workMaps = (res.maps ?? []).filter((m: any) => m.mapType === 'work' && m.mapArea?.length >= 3);
+        const currentMapIds = parseInt(devices.get(mower.sn)?.sensors?.current_map_ids ?? '0', 10);
+        // current_map_ids: 1=map0, 2=map1, etc. (1-indexed during mowing, 0=none)
+        const activeIdx = currentMapIds > 0 ? currentMapIds - 1 : 0;
+        const activeWork = workMaps[activeIdx] ?? workMaps[0];
+        if (activeWork) setActiveMapPolygon(activeWork.mapArea);
         const obs = (res.maps ?? []).filter((m: any) => m.mapType === 'obstacle' && m.mapArea?.length >= 3);
         setObstaclePolygons(obs.map((m: any) => ({ id: m.mapId, points: m.mapArea })));
       } catch { /* ignore */ }
