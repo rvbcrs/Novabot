@@ -630,11 +630,14 @@ mapRouter.post('/uploadEquipmentMap', upload.any(), (req: Request, res: Response
         console.log(`[MAP] uploadEquipmentMap: ${existingWorkMaps.length} bestaande work maps voor ${sn}, skip work map update`);
       }
 
-      // Obstacles: ALTIJD updaten — verwijder oude en sla nieuwe op.
-      // Obstacles worden apart toegevoegd na het initiële mappen.
-      const existingObstacles = mapRepo.findByMowerSnAndTypeWithArea(sn, 'obstacle');
-      for (const obs of existingObstacles) {
-        mapRepo.deleteById(obs.map_id);
+      // Obstacles: alleen updaten als de ZIP daadwerkelijk obstacle data bevat.
+      // Als de ZIP geen obstacles heeft, laat bestaande INTACT.
+      const parsedObstacles = parsed.areas.filter(a => a.type === 'obstacle');
+      if (parsedObstacles.length > 0) {
+        const existingObstacles = mapRepo.findByMowerSnAndTypeWithArea(sn, 'obstacle');
+        for (const obs of existingObstacles) {
+          mapRepo.deleteById(obs.map_id);
+        }
       }
       for (const area of parsed.areas) {
         if (area.type !== 'obstacle') continue;
@@ -652,10 +655,16 @@ mapRouter.post('/uploadEquipmentMap', upload.any(), (req: Request, res: Response
         console.log(`[MAP] Opgeslagen obstacle map${area.mapIndex}_${area.subIndex ?? 0} voor ${sn} (${area.points.length} punten)`);
       }
 
-      // Unicom: ALTIJD updaten — kanalen kunnen wijzigen bij nieuwe mapping
-      const existingUnicoms = mapRepo.findAllByMowerSnAndType(sn, 'unicom');
-      for (const uc of existingUnicoms) {
-        mapRepo.deleteById(uc.map_id);
+      // Unicom: alleen updaten als de ZIP daadwerkelijk unicom data bevat.
+      // Als de ZIP geen unicoms heeft (0-byte CSVs → overgeslagen door parser),
+      // laat de bestaande unicoms INTACT. Voorkomt dat cloud-geïmporteerde
+      // of maaier-geuploade unicoms verloren gaan.
+      const parsedUnicoms = parsed.areas.filter(a => a.type === 'unicom');
+      if (parsedUnicoms.length > 0) {
+        const existingUnicoms = mapRepo.findAllByMowerSnAndType(sn, 'unicom');
+        for (const uc of existingUnicoms) {
+          mapRepo.deleteById(uc.map_id);
+        }
       }
       for (const area of parsed.areas) {
         if (area.type !== 'unicom') continue;

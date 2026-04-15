@@ -904,6 +904,71 @@ else
     echo "  run_novabot.sh: daemon_node al aanwezig — overslaan"
 fi
 
+# 5c-4. mqtt_node duplicate process monitor
+# Als daemon_node mqtt_node herstart na een crash maar het oude proces nog draait,
+# heb je twee mqtt_node processen met dezelfde MQTT clientId. Die kicken elkaar
+# eindeloos → verbinding instabiel. Deze monitor killt het dubbele proces.
+cat > "$NOVABOT_ROOT/scripts/mqtt_node_monitor.sh" << 'MQTTMON'
+#!/bin/bash
+# CUSTOM: Monitor voor dubbele mqtt_node processen
+# Draait elke 10 seconden. Als er meer dan 1 mqtt_node draait:
+# - Bewaar degene met een actieve MQTT verbinding (poort 1883)
+# - Kill de rest
+# Als geen van beide een verbinding heeft, bewaar de nieuwste (hoogste PID)
+
+LOG="/userdata/ota/custom_firmware.log"
+
+while true; do
+    PIDS=$(pgrep -f "/mqtt_node " 2>/dev/null)
+    COUNT=$(echo "$PIDS" | grep -c .)
+
+    if [ "$COUNT" -gt 1 ]; then
+        # Vind PID met actieve MQTT verbinding
+        ACTIVE_PID=$(ss -tnp 2>/dev/null | grep ':1883' | grep mqtt_node | grep -oP 'pid=\K[0-9]+' | head -1)
+
+        if [ -z "$ACTIVE_PID" ]; then
+            # Geen actieve verbinding — bewaar nieuwste PID
+            ACTIVE_PID=$(echo "$PIDS" | sort -n | tail -1)
+        fi
+
+        for PID in $PIDS; do
+            if [ "$PID" != "$ACTIVE_PID" ]; then
+                kill -9 "$PID" 2>/dev/null
+                echo "[$(date)] mqtt_node_monitor: killed duplicate PID $PID (kept $ACTIVE_PID)" >> "$LOG"
+            fi
+        done
+    fi
+
+    sleep 10
+done
+MQTTMON
+chmod +x "$NOVABOT_ROOT/scripts/mqtt_node_monitor.sh"
+echo "  mqtt_node_monitor.sh aangemaakt"
+
+# Voeg monitor launch toe aan run_novabot.sh start) blok
+if [ -f "$RUN_NOVABOT" ] && ! grep -q "mqtt_node_monitor" "$RUN_NOVABOT"; then
+    MONITOR_BLOCK="/tmp/mqtt_monitor_block.sh"
+    cat > "$MONITOR_BLOCK" << 'MONEOF'
+
+  # CUSTOM: mqtt_node duplicate process monitor
+  # Voorkomt dat twee mqtt_node processen elkaar eindeloos kicken
+  killall -q mqtt_node_monitor.sh 2>/dev/null
+  bash /root/novabot/scripts/mqtt_node_monitor.sh &
+MONEOF
+    sed -i '' '/daemon_process daemon_node/r /tmp/mqtt_monitor_block.sh' "$RUN_NOVABOT"
+    rm -f "$MONITOR_BLOCK"
+
+    # Stop blok: kill monitor bij stop
+    MONITOR_STOP="/tmp/mqtt_monitor_stop.sh"
+    cat > "$MONITOR_STOP" << 'MONSTOP'
+  killall -q mqtt_node_monitor.sh 2>/dev/null
+MONSTOP
+    sed -i '' '/killall -q -9 mqtt_node/r /tmp/mqtt_monitor_stop.sh' "$RUN_NOVABOT"
+    rm -f "$MONITOR_STOP"
+
+    echo "  run_novabot.sh: mqtt_node_monitor start + stop toegevoegd"
+fi
+
 # === Stap 5d: Camera stream service toevoegen ===
 echo "[5d/9] Camera stream service toevoegen..."
 
