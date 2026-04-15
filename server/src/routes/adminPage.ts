@@ -346,10 +346,24 @@ export function adminPageHtml(): string {
 
     <div class="card" style="border:1px solid rgba(34,197,94,.3);background:rgba(34,197,94,.04)">
       <h2 style="color:#22c55e">Remote Debug — Receive Logs</h2>
-      <p style="font-size:12px;color:#aaa;margin-bottom:12px">View logs received from other OpenNova users who are sharing their debug data with you.</p>
-      <div id="remoteDevices" style="margin-bottom:12px"></div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px" id="remoteSnTabs"></div>
-      <div id="remoteLogs" style="background:#0a0a1a;border-radius:8px;padding:12px;font:11px/1.6 monospace;color:#aaa;max-height:400px;overflow-y:auto;display:none"></div>
+      <p style="font-size:12px;color:#aaa;margin-bottom:8px">View logs received from other OpenNova users who are sharing their debug data with you.</p>
+      <div id="remoteDevices" style="margin-bottom:8px"></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px" id="remoteSnTabs"></div>
+      <div id="remoteConsoleWrap" style="display:none">
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:6px">
+          <input type="text" id="rf_search" placeholder="Filter..." oninput="renderRemoteLogs()" style="width:160px;font-size:11px;padding:4px 8px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);border-radius:6px;color:#fff">
+          <label style="font-size:11px;cursor:pointer;display:flex;align-items:center;gap:3px"><input type="checkbox" id="rf_mower" checked onchange="renderRemoteLogs()"><span style="color:#22c55e">Mower</span></label>
+          <label style="font-size:11px;cursor:pointer;display:flex;align-items:center;gap:3px"><input type="checkbox" id="rf_charger" checked onchange="renderRemoteLogs()"><span style="color:#eab308">Charger</span></label>
+          <label style="font-size:11px;cursor:pointer;display:flex;align-items:center;gap:3px"><input type="checkbox" id="rf_app" checked onchange="renderRemoteLogs()"><span style="color:#3b82f6">App</span></label>
+          <label style="font-size:11px;cursor:pointer;display:flex;align-items:center;gap:3px"><input type="checkbox" id="rf_system" checked onchange="renderRemoteLogs()"><span style="color:#aaa">System</span></label>
+          <div style="display:flex;gap:4px;margin-left:auto">
+            <button onclick="remoteLogBuf=[];renderRemoteLogs()" style="background:rgba(239,68,68,.15);color:#f87171;border:1px solid rgba(239,68,68,.2);border-radius:6px;padding:4px 12px;font-size:11px;cursor:pointer">Clear</button>
+            <button onclick="copyRemoteConsole()" style="background:rgba(59,130,246,.15);color:#60a5fa;border:1px solid rgba(59,130,246,.2);border-radius:6px;padding:4px 12px;font-size:11px;cursor:pointer">Copy</button>
+          </div>
+          <label style="font-size:11px;color:#aaa;cursor:pointer;display:flex;align-items:center;gap:3px"><input type="checkbox" id="rf_autoscroll" checked>Auto-scroll</label>
+        </div>
+        <div id="remoteLogs" style="background:#0a0a1a;border-radius:8px;padding:8px;font:11px/1.6 monospace;color:#aaa;height:400px;overflow-y:auto"></div>
+      </div>
       <div style="display:flex;gap:8px;margin-top:8px">
         <button class="btn" style="font-size:11px" onclick="refreshRemoteDevices()">Refresh</button>
         <button class="btn" style="font-size:11px;background:rgba(239,68,68,.2);border-color:rgba(239,68,68,.3)" onclick="clearRemoteLogs()">Clear All</button>
@@ -1876,6 +1890,8 @@ function toggleRelay() {
 var _activeRemoteSn = null;
 var _remoteLogSeen = 0;
 var _remoteLogTimer = null;
+var remoteLogBuf = [];
+var MAX_REMOTE_CONSOLE = 500;
 
 function refreshRemoteDevices() {
   fetch('/api/dashboard/remote-debug/devices').then(function(r){return r.json()}).then(function(d) {
@@ -1903,10 +1919,10 @@ function refreshRemoteDevices() {
 function selectRemoteSn(sn) {
   _activeRemoteSn = sn;
   _remoteLogSeen = 0;
-  document.getElementById('remoteLogs').style.display = 'block';
+  remoteLogBuf = [];
+  document.getElementById('remoteConsoleWrap').style.display = 'block';
   document.getElementById('remoteLogs').innerHTML = '';
   refreshRemoteDevices();
-  // Start polling
   if (_remoteLogTimer) clearInterval(_remoteLogTimer);
   pollRemoteLogs();
   _remoteLogTimer = setInterval(pollRemoteLogs, 2000);
@@ -1917,32 +1933,89 @@ function pollRemoteLogs() {
   fetch('/api/dashboard/remote-debug/logs?sn=' + encodeURIComponent(_activeRemoteSn) + '&since=' + _remoteLogSeen)
     .then(function(r){return r.json()})
     .then(function(d) {
-      var container = document.getElementById('remoteLogs');
       var entries = d.logs || [];
       for (var i = 0; i < entries.length; i++) {
-        var e = entries[i];
-        var div = document.createElement('div');
-        div.style.borderBottom = '1px solid #1a1a2e';
-        div.style.padding = '2px 0';
-        var ts = e.ts ? new Date(e.ts).toLocaleTimeString() : '';
-        var type = e.type || '';
-        var color = type === 'connect' ? '#22c55e' : type === 'disconnect' ? '#ef4444' : '#aaa';
-        div.innerHTML = '<span style="color:#666">' + ts + '</span> ' +
-          '<span style="color:' + color + '">' + type + '</span> ' +
-          '<span style="color:#8b5cf6">' + (e.topic || '') + '</span> ' +
-          '<span style="color:#aaa">' + ((e.payload || '').substring(0, 400)) + '</span>';
-        container.appendChild(div);
+        remoteLogBuf.push(entries[i]);
         _remoteLogSeen++;
       }
-      if (entries.length > 0) container.scrollTop = container.scrollHeight;
+      if (remoteLogBuf.length > MAX_REMOTE_CONSOLE) remoteLogBuf.splice(0, remoteLogBuf.length - MAX_REMOTE_CONSOLE);
+      if (entries.length > 0) renderRemoteLogs();
     }).catch(function(){});
+}
+
+// Reuse the same classifyLog, logColor, typeIcon, formatLog, matchesSearch, highlightTerm from MQTT console
+function formatRemoteLog(entry, q) {
+  var cls = classifyLog(entry);
+  var color = logColor(cls);
+  var t = entry.ts ? new Date(entry.ts) : new Date();
+  var time = t.toLocaleTimeString('nl-NL', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  var icon = typeIcon(entry.type);
+  var sn = entry.sn || '';
+  var topic = entry.topic ? entry.topic.replace('Dart/Receive_mqtt/','\\u2190').replace('Dart/Send_mqtt/','\\u2192').replace('Dart/Receive_server_mqtt/','\\u21D0') : '';
+  var payload = truncate((entry.payload || '').split('<').join('&lt;'), 300);
+  if (q) { sn = highlightTerm(sn, q); topic = highlightTerm(topic, q); payload = highlightTerm(payload, q); }
+  return '<div style="color:' + color + ';border-bottom:1px solid #1a1a2e;padding:1px 0">' +
+    '<span style="color:#555">' + time + '</span> ' + icon + ' ' +
+    '<span style="font-weight:700">' + (entry.type || '').toUpperCase() + '</span> ' +
+    (sn ? '<span style="opacity:.7">' + sn + '</span> ' : '') +
+    (entry.direction ? '<span style="color:#aaa">' + entry.direction + '</span> ' : '') +
+    (topic ? '<span style="color:#aaa">' + topic + '</span> ' : '') +
+    (payload ? '<span style="opacity:.6">' + payload + '</span>' : '') +
+    '</div>';
+}
+
+function renderRemoteLogs() {
+  var fm = document.getElementById('rf_mower').checked;
+  var fc = document.getElementById('rf_charger').checked;
+  var fa = document.getElementById('rf_app').checked;
+  var fs = document.getElementById('rf_system').checked;
+  var q = (document.getElementById('rf_search').value || '').toLowerCase().trim();
+  var el = document.getElementById('remoteLogs');
+  var html = '';
+  for (var i = 0; i < remoteLogBuf.length; i++) {
+    var cls = classifyLog(remoteLogBuf[i]);
+    if (cls === 'mower' && !fm) continue;
+    if (cls === 'charger' && !fc) continue;
+    if (cls === 'app' && !fa) continue;
+    if (cls === 'system' && !fs) continue;
+    if (!matchesSearch(remoteLogBuf[i], q)) continue;
+    html += formatRemoteLog(remoteLogBuf[i], q);
+  }
+  el.innerHTML = html;
+  if (document.getElementById('rf_autoscroll').checked) el.scrollTop = el.scrollHeight;
+}
+
+function copyRemoteConsole() {
+  var fm = document.getElementById('rf_mower').checked;
+  var fc = document.getElementById('rf_charger').checked;
+  var fa = document.getElementById('rf_app').checked;
+  var fs = document.getElementById('rf_system').checked;
+  var q = (document.getElementById('rf_search').value || '').toLowerCase().trim();
+  var lines = [];
+  for (var i = 0; i < remoteLogBuf.length; i++) {
+    var e = remoteLogBuf[i];
+    var cls = classifyLog(e);
+    if (cls === 'mower' && !fm) continue;
+    if (cls === 'charger' && !fc) continue;
+    if (cls === 'app' && !fa) continue;
+    if (cls === 'system' && !fs) continue;
+    if (!matchesSearch(e, q)) continue;
+    var t = e.ts ? new Date(e.ts) : new Date();
+    var time = t.toLocaleTimeString('nl-NL', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    lines.push(time + ' ' + (e.type || '').toUpperCase() + ' ' + (e.sn || '') + ' ' + (e.direction || '') + ' ' + (e.topic || '') + ' ' + (e.payload || ''));
+  }
+  navigator.clipboard.writeText(lines.join('\\n')).then(function() {
+    event.target.textContent = 'Copied!';
+    setTimeout(function() { event.target.textContent = 'Copy'; }, 1500);
+  });
 }
 
 function clearRemoteLogs() {
   var url = _activeRemoteSn ? '/api/dashboard/remote-debug/logs?sn=' + encodeURIComponent(_activeRemoteSn) : '/api/dashboard/remote-debug/logs';
   fetch(url, { method: 'DELETE' }).then(function() {
-    document.getElementById('remoteLogs').innerHTML = '';
+    remoteLogBuf = [];
     _remoteLogSeen = 0;
+    document.getElementById('remoteLogs').innerHTML = '';
     refreshRemoteDevices();
   });
 }

@@ -55,11 +55,12 @@ const THROTTLE_MS = 80;
 
 // Flutter app sends raw integer values directly (no float scaling).
 // BLE bleJoystickMove multiplies by 100, so these values × 100 = mst values.
-// Target range: ~100-300 for smooth movement.
+// Novabot app has no speed selector — joystick position = speed directly.
+// These values are tuned for comfortable mapping speed.
 const SPEED_LEVELS = [
-  { labelKey: 'slow', linear: 1.0, angular: 0.8 },
-  { labelKey: 'normal', linear: 2.0, angular: 1.5 },
-  { labelKey: 'fast', linear: 3.0, angular: 2.5 },
+  { labelKey: 'slow', linear: 0.5, angular: 0.4 },
+  { labelKey: 'normal', linear: 1.0, angular: 0.8 },
+  { labelKey: 'fast', linear: 2.0, angular: 1.5 },
 ];
 
 function getHoldType(x: number, y: number): number {
