@@ -3017,6 +3017,29 @@ dashboardRouter.post('/pin/:sn/raw', (req: Request, res: Response) => {
 
 import http from 'http';
 
+// GET /api/dashboard/camera/:sn/info — retourneert directe maaier camera URLs
+// App gebruikt dit om direct met de maaier te verbinden (geen proxy/Cloudflare)
+dashboardRouter.get('/camera/:sn/info', (req: Request, res: Response) => {
+  const sn = req.params.sn;
+  const port = parseInt(req.query.port as string) || 8000;
+  const isPrivateIp = (addr: string) =>
+    /^10\./.test(addr) || /^172\.(1[6-9]|2\d|3[01])\./.test(addr) || /^192\.168\./.test(addr);
+  const ipRow = equipmentRepo.findResolvedMowerIp(sn);
+  const ip = (req.query.ip as string)
+    ?? ipRow?.mower_ip
+    ?? (ipRow?.detected_ip && isPrivateIp(ipRow.detected_ip) ? ipRow.detected_ip : undefined);
+  if (!ip) {
+    res.status(404).json({ error: 'Maaier IP onbekend' });
+    return;
+  }
+  res.json({
+    ip,
+    port,
+    streamUrl: `http://${ip}:${port}/stream`,
+    snapshotUrl: `http://${ip}:${port}/snapshot`,
+  });
+});
+
 // GET /api/dashboard/camera/:sn/stream — proxy MJPEG stream van de maaier
 dashboardRouter.get('/camera/:sn/stream', (req: Request, res: Response) => {
   let ip = req.query.ip as string | undefined;

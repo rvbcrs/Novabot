@@ -1,16 +1,15 @@
 /**
- * Camera screen — live snapshot feed from the mower's cameras.
+ * Camera screen — MJPEG live stream from the mower's cameras.
  *
- * Polls JPEG snapshots from the server's camera proxy endpoint.
- * Supports multiple camera topics: front, front_hd, tof_gray, tof_depth, aruco.
+ * Fetches mower's direct IP via /camera/:sn/info, then renders
+ * MJPEG stream via <img> tag in WebView (WebKit renders MJPEG natively).
  */
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
-  Image,
   ActivityIndicator,
   ScrollView,
   Platform,
@@ -24,10 +23,7 @@ import * as ScreenOrientation from 'expo-screen-orientation';
 import { colors } from '../theme/colors';
 import { useMowerState } from '../hooks/useMowerState';
 import { getServerUrl } from '../services/auth';
-import { getSocket } from '../services/socket';
 import { useI18n } from '../i18n';
-
-// Camera uses MJPEG stream via WebView — no polling needed
 
 const CAMERA_TOPICS = [
   { key: 'front', label: 'Front' },
@@ -44,16 +40,12 @@ export default function CameraScreen() {
   const isLandscape = width > height;
   const navigation = useNavigation();
 
-  // Hide tab bar in landscape
   useEffect(() => {
     navigation.setOptions({
-      tabBarStyle: isLandscape
-        ? { display: 'none' as const }
-        : undefined,
+      tabBarStyle: isLandscape ? { display: 'none' as const } : undefined,
     });
   }, [isLandscape, navigation]);
 
-  // Allow landscape rotation on this screen, reset on leave
   useEffect(() => {
     ScreenOrientation.unlockAsync();
     return () => {
@@ -63,29 +55,43 @@ export default function CameraScreen() {
 
   const mower = [...devices.values()].find(d => d.deviceType === 'mower' && d.online);
   const sn = mower?.sn ?? '';
-  const mowerIp = mower?.sensors?.ip_address ?? '';
 
   const [selectedTopic, setSelectedTopic] = useState('front');
   const [streamUrl, setStreamUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [hasError, setHasError] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
   const [lightOn, setLightOn] = useState(false);
+  const [streamKey, setStreamKey] = useState(0);
 
-  // Build MJPEG stream URL
+  // Fetch mower's direct camera URL from server
   useEffect(() => {
-    if (!mower?.online || !sn) { setStreamUrl(null); return; }
+    if (!mower?.online || !sn) {
+      setStreamUrl(null);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setHasError(false);
+    setErrorMsg('');
     (async () => {
       try {
         const serverUrl = await getServerUrl();
-        if (!serverUrl) return;
-        setStreamUrl(`${serverUrl}/api/dashboard/camera/${encodeURIComponent(sn)}/stream?ip=${mowerIp}&port=8000&topic=${selectedTopic}`);
-      } catch {
+        if (!serverUrl) { setErrorMsg('No server URL'); setHasError(true); return; }
+        const res = await fetch(`${serverUrl}/api/dashboard/camera/${encodeURIComponent(sn)}/info`);
+        const json = await res.json();
+        if (json.streamUrl) {
+          setStreamUrl(`${json.streamUrl}?topic=${selectedTopic}`);
+        } else {
+          setErrorMsg(json.error ?? 'No stream URL');
+          setHasError(true);
+        }
+      } catch (e) {
+        setErrorMsg(e instanceof Error ? e.message : 'Fetch failed');
         setHasError(true);
       }
     })();
-  }, [mower?.online, sn, mowerIp, selectedTopic]);
+  }, [mower?.online, sn, selectedTopic, streamKey]);
 
   const handleTopicChange = (key: string) => {
     setSelectedTopic(key);
@@ -96,58 +102,61 @@ export default function CameraScreen() {
   const reload = () => {
     setHasError(false);
     setLoading(true);
-    // Force stream URL refresh by toggling topic
-    const current = selectedTopic;
-    setSelectedTopic('');
-    setTimeout(() => setSelectedTopic(current), 100);
+    setStreamKey(k => k + 1);
   };
 
-  const toggleLight = () => {
+  const toggleLight = async () => {
     const next = !lightOn;
     setLightOn(next);
-    getServerUrl().then(url => {
-      if (url) fetch(`${url}/api/dashboard/command/${encodeURIComponent(sn)}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ command: { set_para_info: { headlight: next ? 2 : 0 } } }),
-      });
+    const url = await getServerUrl();
+    if (url) fetch(`${url}/api/dashboard/command/${encodeURIComponent(sn)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ command: { set_para_info: { headlight: next ? 2 : 0 } } }),
     });
   };
 
+  const streamHtml = streamUrl ? `<!DOCTYPE html>
+<html><head>
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#000;width:100vw;height:100vh;display:flex;align-items:center;justify-content:center;overflow:hidden}
+img{max-width:100%;max-height:100%;object-fit:contain}
+</style>
+</head><body>
+<img src="${streamUrl}" />
+</body></html>` : '';
+
   return (
     <View style={[styles.container, { paddingTop: isLandscape ? 0 : insets.top }]}>
-      {/* Topic selector bar — hidden in landscape */}
-      {!isLandscape && <View style={styles.topBar}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.topicRow}>
-          {CAMERA_TOPICS.map(({ key, label }) => (
-            <TouchableOpacity
-              key={key}
-              style={[styles.topicBtn, selectedTopic === key && styles.topicBtnActive]}
-              onPress={() => handleTopicChange(key)}
-              activeOpacity={0.7}
-            >
-              <Text style={[styles.topicText, selectedTopic === key && styles.topicTextActive]}>
-                {label}
-              </Text>
+      {!isLandscape && (
+        <View style={styles.topBar}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.topicRow}>
+            {CAMERA_TOPICS.map(({ key, label }) => (
+              <TouchableOpacity
+                key={key}
+                style={[styles.topicBtn, selectedTopic === key && styles.topicBtnActive]}
+                onPress={() => handleTopicChange(key)}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.topicText, selectedTopic === key && styles.topicTextActive]}>
+                  {label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+          <View style={styles.topBarActions}>
+            <TouchableOpacity onPress={toggleLight} style={styles.iconBtn} activeOpacity={0.7}>
+              <Ionicons name="flashlight" size={18} color={lightOn ? colors.amber : colors.textMuted} />
             </TouchableOpacity>
-          ))}
-        </ScrollView>
-
-        <View style={styles.topBarActions}>
-          <TouchableOpacity onPress={toggleLight} style={styles.iconBtn} activeOpacity={0.7}>
-            <Ionicons
-              name="flashlight"
-              size={18}
-              color={lightOn ? colors.amber : colors.textMuted}
-            />
-          </TouchableOpacity>
-          <TouchableOpacity onPress={reload} style={styles.iconBtn} activeOpacity={0.7}>
-            <Ionicons name="refresh" size={18} color={colors.textDim} />
-          </TouchableOpacity>
+            <TouchableOpacity onPress={reload} style={styles.iconBtn} activeOpacity={0.7}>
+              <Ionicons name="refresh" size={18} color={colors.textDim} />
+            </TouchableOpacity>
+          </View>
         </View>
-      </View>}
+      )}
 
-      {/* Camera view */}
       <View style={styles.cameraArea}>
         {!mower?.online ? (
           <View style={styles.centerMsg}>
@@ -159,43 +168,44 @@ export default function CameraScreen() {
           <View style={styles.centerMsg}>
             <Ionicons name="camera-outline" size={48} color={colors.textMuted} />
             <Text style={styles.centerTitle}>{t('cameraUnavailable')}</Text>
-            <Text style={styles.centerSub}>{t('cameraRunning')}</Text>
+            <Text style={styles.centerSub}>{errorMsg}</Text>
             <TouchableOpacity style={styles.retryBtn} onPress={reload} activeOpacity={0.7}>
               <Text style={styles.retryText}>{t('retry')}</Text>
             </TouchableOpacity>
           </View>
-        ) : (
-          <>
-            {loading && !streamUrl && (
+        ) : streamUrl ? (
+          <View style={styles.streamContainer}>
+            <WebView
+              key={streamKey}
+              source={{ html: streamHtml }}
+              style={styles.stream}
+              scrollEnabled={false}
+              onLoadEnd={() => setLoading(false)}
+              javaScriptEnabled={false}
+              originWhitelist={['*']}
+              mixedContentMode="always"
+              allowsInlineMediaPlayback
+            />
+            {loading && (
               <View style={styles.loadingOverlay}>
                 <ActivityIndicator size="large" color={colors.emerald} />
                 <Text style={styles.loadingText}>{t('connectingCamera')}</Text>
               </View>
             )}
-            {/* MJPEG stream via WebView — smooth, no polling flicker */}
-            {streamUrl && (
-              <WebView
-                source={{ html: `<html><body style="margin:0;background:#000;display:flex;align-items:center;justify-content:center;height:100vh"><img src="${streamUrl}" style="max-width:100%;max-height:100%;object-fit:contain" onerror="document.body.innerHTML='<p style=color:#666;font-family:sans-serif;text-align:center>Camera unavailable</p>'" onload="document.body.style.background='#000'"/></body></html>` }}
-                style={styles.cameraImage}
-                scrollEnabled={false}
-                onLoadStart={() => setLoading(true)}
-                onLoadEnd={() => setLoading(false)}
-                onError={() => setHasError(true)}
-                javaScriptEnabled={false}
-                mediaPlaybackRequiresUserAction={false}
-                allowsInlineMediaPlayback
-              />
-            )}
-          </>
-        )}
+          </View>
+        ) : loading ? (
+          <View style={styles.loadingOverlay}>
+            <ActivityIndicator size="large" color={colors.emerald} />
+            <Text style={styles.loadingText}>{t('connectingCamera')}</Text>
+          </View>
+        ) : null}
       </View>
 
-      {/* Info bar — hidden in landscape */}
-      {!isLandscape && mower?.online && (
+      {!isLandscape && mower?.online && streamUrl && (
         <View style={styles.infoBar}>
           <Text style={styles.infoText}>{sn}</Text>
-          <Text style={styles.infoText}>Topic: {selectedTopic}</Text>
-          <Text style={styles.infoText}>{mowerIp || 'IP unknown'}</Text>
+          <Text style={styles.infoText}>{selectedTopic}</Text>
+          <Text style={styles.infoText} numberOfLines={1}>{streamUrl}</Text>
         </View>
       )}
     </View>
@@ -218,50 +228,37 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     backgroundColor: 'rgba(255,255,255,0.08)',
   },
-  topicBtnActive: {
-    backgroundColor: colors.emerald,
-  },
+  topicBtnActive: { backgroundColor: colors.emerald },
   topicText: { fontSize: 12, fontWeight: '600', color: colors.textMuted },
   topicTextActive: { color: colors.white },
   topBarActions: { flexDirection: 'row', gap: 4, marginLeft: 'auto' },
   iconBtn: { padding: 8 },
-  cameraArea: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
+  cameraArea: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  streamContainer: { width: '100%', flex: 1 },
+  stream: { flex: 1, backgroundColor: '#000' },
   centerMsg: { alignItems: 'center', gap: 8, paddingHorizontal: 32 },
   centerTitle: { fontSize: 18, fontWeight: '600', color: colors.white },
   centerSub: { fontSize: 13, color: colors.textMuted, textAlign: 'center' },
   retryBtn: {
-    marginTop: 12,
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 10,
-    backgroundColor: 'rgba(255,255,255,0.1)',
+    marginTop: 12, paddingHorizontal: 20, paddingVertical: 10,
+    borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.1)',
   },
   retryText: { fontSize: 14, fontWeight: '600', color: colors.white },
   loadingOverlay: {
-    position: 'absolute',
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.7)',
     justifyContent: 'center',
     alignItems: 'center',
     gap: 8,
   },
   loadingText: { fontSize: 12, color: colors.textMuted },
-  cameraImage: {
-    width: '100%',
-    height: '100%',
-  },
   infoBar: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    flexDirection: 'row', justifyContent: 'space-between',
+    paddingHorizontal: 12, paddingVertical: 6,
     backgroundColor: 'rgba(0,0,0,0.9)',
   },
   infoText: {
-    fontSize: 10,
-    color: 'rgba(255,255,255,0.3)',
+    fontSize: 9, color: 'rgba(255,255,255,0.3)',
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
   },
 });
