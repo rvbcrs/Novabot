@@ -235,6 +235,7 @@ export default function MapScreen() {
   const [plannedPaths, setPlannedPaths] = useState<Array<{ id: string; points: LocalPoint[] }>>([]);
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
+  const [actionsMenuVisible, setActionsMenuVisible] = useState(false);
   const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null); // null = all zones
   const [panelExpanded, setPanelExpanded] = useState(true);
   const [sheetState, setSheetState] = useState<{
