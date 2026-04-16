@@ -874,16 +874,7 @@ export default function MapScreen() {
 
         <View style={styles.header}>
           <Text style={styles.title}>{t('mapTitle')}</Text>
-        </View>
-        <View style={styles.toolbarRow}>
-            <TouchableOpacity
-              onPress={() => (navigation as any).navigate('AppSettings', { screen: 'Mapping' })}
-              style={styles.toolbarPrimary}
-              activeOpacity={0.82}
-            >
-              <Ionicons name="add-circle-outline" size={18} color={colors.white} />
-              <Text style={styles.toolbarPrimaryText}>{t('create')}</Text>
-            </TouchableOpacity>
+          <View style={styles.headerActions}>
             <TouchableOpacity
               onPress={handleHeaderActionsMenu}
               style={styles.toolbarMenuButton}
@@ -896,6 +887,14 @@ export default function MapScreen() {
                 <Ionicons name="ellipsis-horizontal" size={18} color={colors.white} />
               )}
             </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => (navigation as any).navigate('AppSettings', { screen: 'Mapping' })}
+              style={styles.addButton}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="add" size={22} color={colors.white} />
+            </TouchableOpacity>
+          </View>
         </View>
 
         {loading && <ActivityIndicator size="small" color={colors.emerald} style={{ marginTop: 32 }} />}
@@ -1408,6 +1407,14 @@ export default function MapScreen() {
           </View>
         </View>
       </Modal>
+
+      <AppActionSheet
+        visible={sheetState.visible}
+        title={sheetState.title}
+        message={sheetState.message}
+        actions={sheetState.actions}
+        onClose={() => setSheetState(prev => ({ ...prev, visible: false }))}
+      />
     </GestureHandlerRootView>
   );
 }
@@ -1417,36 +1424,21 @@ const styles = StyleSheet.create({
   content: { flex: 1, padding: MAP_PADDING },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
   title: { fontSize: 28, fontWeight: '700', color: colors.white },
-  toolbarRow: {
+  headerActions: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    marginBottom: 12,
-    paddingHorizontal: 20,
   },
-  toolbarPrimary: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    height: 44,
-    borderRadius: 16,
+  addButton: {
+    width: 40, height: 40, borderRadius: 20,
     backgroundColor: colors.emerald,
-  },
-  toolbarPrimaryText: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: colors.white,
+    alignItems: 'center', justifyContent: 'center',
   },
   toolbarMenuButton: {
-    width: 48,
-    height: 44,
-    borderRadius: 16,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     backgroundColor: 'rgba(255,255,255,0.14)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.12)',
-    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
   },

@@ -3019,12 +3019,21 @@ import http from 'http';
 
 // GET /api/dashboard/camera/:sn/stream — proxy MJPEG stream van de maaier
 dashboardRouter.get('/camera/:sn/stream', (req: Request, res: Response) => {
-  const ip = req.query.ip as string;
+  let ip = req.query.ip as string | undefined;
   const port = parseInt(req.query.port as string) || 8000;
 
+  // Auto-resolve mower IP als niet meegegeven (zelfde logica als snapshot endpoint)
   if (!ip) {
-    res.status(400).json({ error: 'ip query parameter is vereist' });
-    return;
+    const sn = req.params.sn;
+    const isPrivateIp = (addr: string) =>
+      /^10\./.test(addr) || /^172\.(1[6-9]|2\d|3[01])\./.test(addr) || /^192\.168\./.test(addr);
+    const ipRow = equipmentRepo.findResolvedMowerIp(sn);
+    ip = ipRow?.mower_ip
+      ?? (ipRow?.detected_ip && isPrivateIp(ipRow.detected_ip) ? ipRow.detected_ip : undefined);
+    if (!ip) {
+      res.status(404).json({ error: 'Maaier IP onbekend' });
+      return;
+    }
   }
 
   // Disable Express timeout — MJPEG stream is infinite
