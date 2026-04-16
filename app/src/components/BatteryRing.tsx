@@ -1,6 +1,6 @@
 /**
  * SVG circle ring showing battery percentage.
- * Green >60%, amber 20-60%, red <20%.
+ * Green >=65%, amber 35-64%, red <35%.
  */
 import React from 'react';
 import { View, StyleSheet } from 'react-native';
@@ -15,8 +15,8 @@ interface BatteryRingProps {
 }
 
 function getBatteryColor(pct: number): string {
-  if (pct > 60) return colors.green;
-  if (pct >= 20) return colors.amber;
+  if (pct >= 65) return colors.green;
+  if (pct >= 35) return colors.amber;
   return colors.red;
 }
 

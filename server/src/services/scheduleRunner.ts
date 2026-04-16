@@ -2,44 +2,71 @@
  * Schedule Runner — achtergrondproces dat maaischema's met rain_pause=1 beheert.
  *
  * Schema's met rain_pause worden NIET als timer_task naar de maaier gestuurd.
- * In plaats daarvan checkt deze runner elke 60s of het tijd is om te starten,
+ * In plaats daarvan checkt deze runner periodiek of een starttijd net is bereikt,
  * controleert het weer via Open-Meteo, en stuurt start_run als het droog is.
  */
 
 import { scheduleRepo, mapRepo, messageRepo } from '../db/repositories/index.js';
 import { isDeviceOnline } from '../mqtt/broker.js';
 import { publishToDevice } from '../mqtt/mapSync.js';
+import { startMowing } from './mowingService.js';
 import { getWeatherForecast, shouldPauseForRain } from './weatherService.js';
 import { emitScheduleEvent } from '../dashboard/socketHandler.js';
 import type { ScheduleRow } from '../db/repositories/schedules.js';
 
 let intervalId: ReturnType<typeof setInterval> | null = null;
+const CHECK_INTERVAL_MS = 30_000;
+const TRIGGER_WINDOW_MS = 5 * 60_000; // 5 minuten window — ruim genoeg voor restarts
 
 /** Haal charger GPS coördinaten op voor een maaier SN */
 function getChargerGps(mowerSn: string): { lat: number; lng: number } | null {
   return mapRepo.getChargerGps(mowerSn);
 }
 
+function getScheduleOccurrence(row: ScheduleRow, now: Date): Date | null {
+  const weekdays: number[] = JSON.parse(row.weekdays);
+  const currentDay = now.getDay(); // 0=Sunday
+  if (!weekdays.includes(currentDay)) return null;
+
+  const [hourText = '0', minuteText = '0'] = row.start_time.split(':');
+  const hour = Number(hourText);
+  const minute = Number(minuteText);
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null;
+
+  const occurrence = new Date(now);
+  occurrence.setHours(hour, minute, 0, 0);
+  return occurrence;
+}
+
 function checkSchedules() {
   const now = new Date();
-  const currentDay = now.getDay(); // 0=Sunday
-  const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
 
-  // Haal alle enabled rain_pause schedules op
-  const rows = scheduleRepo.findEnabledWithRainPause();
+  // Haal ALLE enabled schedules op — de runner handelt alles af
+  const rows = scheduleRepo.findEnabled();
+  if (rows.length > 0) {
+    const day = now.getDay();
+    const time = `${now.getHours()}:${String(now.getMinutes()).padStart(2,'0')}`;
+    console.log(`[ScheduleRunner] Checking ${rows.length} schedule(s) at ${time} (day=${day})`);
+  }
 
   for (const row of rows) {
-    const weekdays: number[] = JSON.parse(row.weekdays);
-    if (!weekdays.includes(currentDay)) continue;
+    const scheduledAt = getScheduleOccurrence(row, now);
+    if (!scheduledAt) {
+      // Niet vandaag
+      continue;
+    }
+    const sinceScheduledMs = now.getTime() - scheduledAt.getTime();
+    if (sinceScheduledMs < 0 || sinceScheduledMs > TRIGGER_WINDOW_MS) {
+      // Buiten trigger window
+      continue;
+    }
 
-    // Check of het de juiste starttijd is (exact match op HH:MM)
-    if (row.start_time !== currentTime) continue;
-
-    // Voorkom dubbele trigger: check of al getriggerd in deze minuut
+    // Voorkom dubbele trigger voor dezelfde geplande run.
     if (row.last_triggered_at) {
       const lastTriggered = new Date(row.last_triggered_at);
-      const diffMs = now.getTime() - lastTriggered.getTime();
-      if (diffMs < 120_000) continue; // < 2 minuten geleden
+      if (!Number.isNaN(lastTriggered.getTime()) && lastTriggered.getTime() >= scheduledAt.getTime()) {
+        continue;
+      }
     }
 
     // Check of maaier online is
@@ -48,20 +75,21 @@ function checkSchedules() {
       continue;
     }
 
-    // Haal GPS coördinaten op voor weercheck
-    const gps = getChargerGps(row.mower_sn);
-    if (!gps) {
-      console.log(`[ScheduleRunner] ${row.schedule_id}: geen GPS coördinaten, start zonder weercheck`);
+    // Rain pause: check weer als ingeschakeld, anders direct starten
+    if (row.rain_pause) {
+      const gps = getChargerGps(row.mower_sn);
+      if (!gps) {
+        console.log(`[ScheduleRunner] ${row.schedule_id}: geen GPS coördinaten, start zonder weercheck`);
+        triggerSchedule(row);
+        continue;
+      }
+      checkWeatherAndTrigger(row, gps).catch(err => {
+        console.error(`[ScheduleRunner] Weather check failed for ${row.schedule_id}:`, err);
+        triggerSchedule(row);
+      });
+    } else {
       triggerSchedule(row);
-      continue;
     }
-
-    // Async weercheck
-    checkWeatherAndTrigger(row, gps).catch(err => {
-      console.error(`[ScheduleRunner] Weather check failed for ${row.schedule_id}:`, err);
-      // Bij weather API fout: start gewoon (beter maaien dan niet maaien)
-      triggerSchedule(row);
-    });
   }
 }
 
@@ -101,26 +129,14 @@ function triggerSchedule(row: ScheduleRow) {
     effectiveDirection = (row.path_direction + count * (row.alternate_step ?? 90)) % 360;
   }
 
-  // Stuur set_para_info
-  publishToDevice(row.mower_sn, {
-    set_para_info: {
-      cutGrassHeight: row.cutting_height,
-      defaultCuttingHeight: row.cutting_height,
-      target_height: row.cutting_height,
-      path_direction: effectiveDirection,
-    },
+  // Start maaien via centrale mowingService
+  const result = startMowing({
+    sn: row.mower_sn,
+    cuttingHeight: row.cutting_height ?? 5,
+    pathDirection: effectiveDirection,
+    area: 1,
   });
-
-  // Stuur start_run (direct starten, niet als timer_task)
-  publishToDevice(row.mower_sn, {
-    start_run: {
-      map_id: row.map_id ?? '',
-      map_name: row.map_name ?? '',
-      work_mode: row.work_mode,
-      task_mode: row.task_mode,
-      path_direction: effectiveDirection,
-    },
-  });
+  console.log(`[ScheduleRunner] ${row.schedule_id}: ${result.ok ? 'started' : 'FAILED: ' + result.error} (height=${row.cutting_height}, dir=${effectiveDirection})`);
 
   // Update last_triggered_at
   scheduleRepo.updateLastTriggered(row.schedule_id);
@@ -134,8 +150,9 @@ function triggerSchedule(row: ScheduleRow) {
 
 export function startScheduleRunner(): void {
   if (intervalId) return;
-  intervalId = setInterval(checkSchedules, 60_000);
-  console.log('[ScheduleRunner] Started, checking every 60s');
+  checkSchedules();
+  intervalId = setInterval(checkSchedules, CHECK_INTERVAL_MS);
+  console.log(`[ScheduleRunner] Started, checking every ${CHECK_INTERVAL_MS / 1000}s`);
 }
 
 export function stopScheduleRunner(): void {

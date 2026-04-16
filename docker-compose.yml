@@ -18,6 +18,8 @@ services:
       - "1883:1883"   # MQTT broker
       # - "53:53/udp" # DNS (optional — requires ENABLE_DNS + TARGET_IP)
     environment:
+      # Timezone — must match the timezone used by the app when creating schedules
+      TZ: ${TZ:-Europe/Amsterdam}
       PORT: 80
       DB_PATH: /data/novabot.db
       STORAGE_PATH: /data/storage

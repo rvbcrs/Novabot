@@ -341,14 +341,20 @@ function ScheduleEditor({
 }) {
   const { t } = useI18n();
   const isEdit = schedule != null;
+  const initialDays = isEdit
+    ? (schedule!.weekdays.length > 0 ? schedule!.weekdays : [schedule!.day_of_week])
+    : [1, 2, 3, 4, 5];
+  const initialStartTime = schedule?.startTime
+    ?? `${pad(schedule?.start_hour ?? 9)}:${pad(schedule?.start_minute ?? 0)}`;
+  const [initialHour = '09', initialMinute = '00'] = initialStartTime.split(':');
   const [selectedDays, setSelectedDays] = useState<number[]>(
-    isEdit ? [schedule!.day_of_week] : [1, 2, 3, 4, 5] // default weekdays
+    initialDays,
   );
   const toggleDay = (d: number) => {
     setSelectedDays(prev => prev.includes(d) ? prev.filter(x => x !== d) : [...prev, d]);
   };
-  const [hour, setHour] = useState(String(schedule?.start_hour ?? 9));
-  const [minute, setMinute] = useState(pad(schedule?.start_minute ?? 0));
+  const [hour, setHour] = useState(initialHour);
+  const [minute, setMinute] = useState(initialMinute);
   const [duration, setDuration] = useState(String(schedule?.duration_minutes ?? 60));
   const [cuttingHeight, setCuttingHeight] = useState(schedule?.cuttingHeight ?? schedule?.cutting_height ?? 5);
   const [pathDir, setPathDir] = useState(schedule?.pathDirection ?? schedule?.path_direction ?? 120);
@@ -383,10 +389,12 @@ function ScheduleEditor({
         return;
       }
 
+      const sortedDays = [...selectedDays].sort((a, b) => a - b);
+
       if (isEdit) {
-        await api.updateSchedule(mowerSn, schedule!.id, { ...base, weekdays: selectedDays });
+        await api.updateSchedule(mowerSn, schedule!.id, { ...base, weekdays: sortedDays });
       } else {
-        await api.createSchedule(mowerSn, { ...base, weekdays: [...selectedDays].sort() });
+        await api.createSchedule(mowerSn, { ...base, weekdays: sortedDays });
       }
       onSaved();
     } catch (e) {
@@ -417,7 +425,7 @@ function ScheduleEditor({
               <TouchableOpacity
                 key={i}
                 style={[editorStyles.dayChip, selectedDays.includes(i) && editorStyles.dayChipActive]}
-                onPress={() => isEdit ? setSelectedDays([i]) : toggleDay(i)}
+                onPress={() => toggleDay(i)}
               >
                 <Text style={[editorStyles.dayChipText, selectedDays.includes(i) && editorStyles.dayChipTextActive]}>
                   {d}

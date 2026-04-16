@@ -112,6 +112,8 @@ export default function MappingScreen() {
   const [mappingMode, setMappingMode] = useState<MappingMode | null>(null);
   const [busy, setBusy] = useState(false);
   const [elapsed, setElapsed] = useState(0);
+  const [activeMapName, setActiveMapName] = useState('map0');
+  const [chargerAction, setChargerAction] = useState<'autoDock' | 'savePosition' | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // ── Joystick state ──
@@ -230,23 +232,6 @@ export default function MappingScreen() {
   // ── Keep speedRef in sync ──
   useEffect(() => { speedRef.current = speedLevel; }, [speedLevel]);
 
-  // ── BLE disconnect handler: update UI + auto-reconnect ──
-  useEffect(() => {
-    onBleJoystickDisconnect(() => {
-      setBleConnected(false);
-      // Stop joystick if active
-      if (joystickActiveRef.current) {
-        joystickActiveRef.current = false;
-        setJoystickActive(false);
-        if (bleIntervalRef.current) { clearInterval(bleIntervalRef.current); bleIntervalRef.current = null; }
-      }
-      // Auto-reconnect after 2s if still mapping
-      if (mappingState === 'mapping') {
-        setTimeout(() => connectBleJoystick(), 2000);
-      }
-    });
-  }, [mappingState, connectBleJoystick]);
-
   // ── Cleanup BLE joystick on unmount ──
   useEffect(() => {
     return () => {
@@ -264,6 +249,35 @@ export default function MappingScreen() {
     socket.emit('joystick:cmd', { sn, command });
     console.log(`[Mapping] Sent: ${label}`);
     setTimeout(() => setBusy(false), 1500);
+  }, [sn]);
+
+  const waitForRespond = useCallback((command: string, timeoutMs: number): Promise<boolean> => {
+    return new Promise((resolve) => {
+      const socket = getSocket();
+      if (!socket || !sn) {
+        resolve(false);
+        return;
+      }
+
+      const cleanup = () => {
+        clearTimeout(timer);
+        socket.off('command:respond', handler);
+      };
+
+      const timer = setTimeout(() => {
+        cleanup();
+        resolve(false);
+      }, timeoutMs);
+
+      const handler = (e: { sn: string; command: string }) => {
+        if (e.sn === sn && e.command === command) {
+          cleanup();
+          resolve(true);
+        }
+      };
+
+      socket.on('command:respond', handler);
+    });
   }, [sn]);
 
   // ── BLE joystick: connect to mower ──
@@ -294,6 +308,23 @@ export default function MappingScreen() {
     setBleConnecting(false);
     if (!ok) Alert.alert('BLE', 'Failed to connect to mower via BLE.');
   }, [bleConnected, bleConnecting]);
+
+  // ── BLE disconnect handler: update UI + auto-reconnect ──
+  useEffect(() => {
+    onBleJoystickDisconnect(() => {
+      setBleConnected(false);
+      // Stop joystick if active
+      if (joystickActiveRef.current) {
+        joystickActiveRef.current = false;
+        setJoystickActive(false);
+        if (bleIntervalRef.current) { clearInterval(bleIntervalRef.current); bleIntervalRef.current = null; }
+      }
+      // Auto-reconnect after 2s if still mapping
+      if (mappingState === 'mapping') {
+        setTimeout(() => connectBleJoystick(), 2000);
+      }
+    });
+  }, [mappingState, connectBleJoystick]);
 
   // ── BLE joystick move (updates ref, interval sends) ──
   // x_w = forward/backward speed (from Y axis), y_v = turn speed (from X axis)
@@ -433,24 +464,40 @@ export default function MappingScreen() {
   // ── Begin Recording: user reached start point, now start actual recording ──
   const handleBeginRecording = async () => {
     // Clear server-side GPS trail before starting new recording
+    let existingWorkMapCount = 0;
     try {
       const url = await getServerUrl();
       if (url && sn) {
         await fetch(`${url}/api/dashboard/trail/${encodeURIComponent(sn)}`, { method: 'DELETE' });
         console.log('[Mapping] Server trail cleared');
+        // Check how many work maps already exist — determines start_scan_map vs add_scan_map
+        const mapsRes = await fetch(`${url}/api/dashboard/maps/${encodeURIComponent(sn)}`).then(r => r.json()).catch(() => ({ maps: [] }));
+        existingWorkMapCount = (mapsRes.maps ?? []).filter((m: any) => m.mapType === 'work').length;
       }
     } catch {}
 
-    // Exact payload from official Novabot app (Flutter decompilation):
-    // Blutter: model="border"|"obstacle", manual=true|false, mapName, map0, type=0
+    // Novabot Flutter app logic (blutter decompilation):
+    // - No existing maps: start_scan_map with mapName="map0"
+    // - Existing maps: add_scan_map with mapName="map1", "map2", etc. (_getMapName)
     const model = mapBuildType === 'obstacle' ? 'obstacle' : 'border';
-    sendCommand({ start_scan_map: { model, manual: true, mapName: 'map0', map0: '', type: 0, cmd_num: cmdNumRef.current++ } }, 'start_scan_map');
+    const mapName = `map${existingWorkMapCount}`;
+    setActiveMapName(mapName);
+
+    if (existingWorkMapCount === 0) {
+      // First map — start_scan_map
+      sendCommand({ start_scan_map: { model, manual: true, mapName, map0: '', type: 0, cmd_num: cmdNumRef.current++ } }, 'start_scan_map');
+      console.log(`[Mapping] Recording started (NEW map: ${mapName})`);
+    } else {
+      // Additional map — add_scan_map
+      sendCommand({ add_scan_map: { model, manual: true, mapName, cmd_num: cmdNumRef.current++ } }, 'add_scan_map');
+      console.log(`[Mapping] Recording started (ADD map: ${mapName}, ${existingWorkMapCount} existing)`);
+    }
+
     setTrailPoints([]);
     lastTrailRef.current = null;
     setMappingState('mapping');
     setClosedCycleSeen(false);
     closedCycleDismissedRef.current = false;
-    console.log('[Mapping] Recording started!');
   };
 
   // ── Stop & Save (exact flow from official Novabot app) ──
@@ -469,22 +516,7 @@ export default function MappingScreen() {
           text: t('stopAndSave', undefined) || 'Stop & Save',
           onPress: async () => {
             if (joystickActiveRef.current) stopJoystick();
-            const socket = getSocket();
-
-            // Helper: wait for a specific _respond via Socket.io (with timeout)
-            const waitForRespond = (cmd: string, timeoutMs: number): Promise<boolean> => {
-              return new Promise((resolve) => {
-                const timer = setTimeout(() => { resolve(false); }, timeoutMs);
-                const handler = (e: { sn: string; command: string; data: unknown }) => {
-                  if (e.sn === sn && e.command === cmd) {
-                    clearTimeout(timer);
-                    socket?.off('command:respond', handler);
-                    resolve(true);
-                  }
-                };
-                socket?.on('command:respond', handler);
-              });
-            };
+            const mapType = mapBuildType === 'obstacle' ? 1 : 0;
 
             // Step 1: stop_scan_map → wait for stop_scan_map_respond
             // Exact payload: {"stop_scan_map": {"value": true, "cmd_num": N}}
@@ -495,15 +527,16 @@ export default function MappingScreen() {
             console.log(`[Mapping] Step 1: stop_scan_map_respond ${stopOk ? 'OK' : 'TIMEOUT'}`);
 
             // Step 2: save_map → wait for save_map_respond
-            // Exact payload: {"save_map": {"mapName": "map0", "type": 0, "cmd_num": N}}
+            // Exact payload: {"save_map": {"mapName": "mapX", "type": N, "cmd_num": N}}
             await new Promise(r => setTimeout(r, 1000));
-            sendCommand({ save_map: { mapName: 'map0', type: 0, cmd_num: cmdNumRef.current++ } }, 'save_map');
+            sendCommand({ save_map: { mapName: activeMapName, type: mapType, cmd_num: cmdNumRef.current++ } }, 'save_map');
             console.log('[Mapping] Step 2: save_map sent, waiting for respond...');
             const saveOk = await waitForRespond('save_map_respond', 30000);
             console.log(`[Mapping] Step 2: save_map_respond ${saveOk ? 'OK' : 'TIMEOUT'}`);
 
             // Step 3: go to charger positioning screen
             // User drives mower to ~50cm from charger, then presses Auto Dock
+            setChargerAction(null);
             setMappingState('chargerPosition');
             console.log('[Mapping] Step 3: drive to charger → user controls via joystick');
           },
@@ -524,33 +557,26 @@ export default function MappingScreen() {
     if (mappingState === 'chargerPosition') {
       prevRechargeRef.current = 0;
       savingChargerPosRef.current = false;
+      setChargerAction(null);
     }
   }, [mappingState]);
 
   useEffect(() => {
     if (mappingState === 'chargerPosition' && rechargeStatus > 0 && prevRechargeRef.current === 0 && !savingChargerPosRef.current) {
       savingChargerPosRef.current = true;
+      setChargerAction('savePosition');
       console.log('[Mapping] Step 5: Mower docked! Sending save_recharge_pos...');
-      sendCommand({ save_recharge_pos: { mapName: 'map0', map0: '', cmd_num: cmdNumRef.current++ } }, 'save_recharge_pos');
+      sendCommand({ save_recharge_pos: { mapName: activeMapName, map0: '', cmd_num: cmdNumRef.current++ } }, 'save_recharge_pos');
 
-      // Wait for save_recharge_pos_respond
-      const socket = getSocket();
-      const timer = setTimeout(() => {
-        console.log('[Mapping] save_recharge_pos_respond TIMEOUT — marking done anyway');
+      (async () => {
+        const responded = await waitForRespond('save_recharge_pos_respond', 15000);
+        console.log(`[Mapping] save_recharge_pos_respond ${responded ? 'OK' : 'TIMEOUT'} — marking done`);
+        setChargerAction(null);
         setMappingState('done');
-      }, 15000);
-      const handler = (e: { sn: string; command: string }) => {
-        if (e.sn === sn && e.command === 'save_recharge_pos_respond') {
-          clearTimeout(timer);
-          socket?.off('command:respond', handler);
-          console.log('[Mapping] Step 5: save_recharge_pos_respond OK — DONE!');
-          setMappingState('done');
-        }
-      };
-      socket?.on('command:respond', handler);
+      })();
     }
     prevRechargeRef.current = rechargeStatus;
-  }, [rechargeStatus, mappingState, sendCommand, sn]);
+  }, [activeMapName, rechargeStatus, mappingState, sendCommand, sn, waitForRespond]);
 
   // ── Cancel / Discard ──
   const handleCancel = () => {
@@ -576,20 +602,11 @@ export default function MappingScreen() {
 
   // ── Manual charger position save (fallback if auto_recharge doesn't dock) ──
   const handleSaveChargerPos = async () => {
-    sendCommand({ save_recharge_pos: { mapName: 'map0', map0: '', cmd_num: cmdNumRef.current++ } }, 'save_recharge_pos');
-    const socket = getSocket();
-    const responded = await new Promise<boolean>((resolve) => {
-      const timer = setTimeout(() => resolve(false), 10000);
-      const handler = (e: { sn: string; command: string }) => {
-        if (e.sn === sn && e.command === 'save_recharge_pos_respond') {
-          clearTimeout(timer);
-          socket?.off('command:respond', handler);
-          resolve(true);
-        }
-      };
-      socket?.on('command:respond', handler);
-    });
+    setChargerAction('savePosition');
+    sendCommand({ save_recharge_pos: { mapName: activeMapName, map0: '', cmd_num: cmdNumRef.current++ } }, 'save_recharge_pos');
+    const responded = await waitForRespond('save_recharge_pos_respond', 10000);
     console.log(`[Mapping] Manual save_recharge_pos_respond: ${responded ? 'OK' : 'TIMEOUT'}`);
+    setChargerAction(null);
     setMappingState('done');
   };
 
@@ -980,8 +997,14 @@ export default function MappingScreen() {
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 12 }}>
                 <View style={{ width: 12, height: 12, borderRadius: 6,
                   backgroundColor: rechargeStatus > 0 ? colors.emerald : colors.amber }} />
-                <Text style={{ color: rechargeStatus > 0 ? colors.emerald : colors.textMuted, fontSize: 14 }}>
-                  {rechargeStatus > 0 ? 'Docked — saving position...' : 'Position the mower near the charger'}
+                <Text style={{ color: rechargeStatus > 0 ? colors.emerald : colors.text, fontSize: 14, fontWeight: '600' }}>
+                  {rechargeStatus > 0
+                    ? 'Docked — saving position...'
+                    : chargerAction === 'autoDock'
+                      ? 'Auto docking in progress...'
+                      : chargerAction === 'savePosition'
+                        ? 'Saving charger position...'
+                        : 'Position the mower near the charger'}
                 </Text>
               </View>
             </View>
@@ -1017,21 +1040,42 @@ export default function MappingScreen() {
                 style={[styles.stopMapBtn, { backgroundColor: colors.emerald, flex: 1 }]}
                 onPress={() => {
                   if (joystickActiveRef.current) stopJoystick();
+                  setChargerAction('autoDock');
                   sendCommand({ auto_recharge: { cmd_num: cmdNumRef.current++ } }, 'auto_recharge');
                   console.log('[Mapping] auto_recharge sent');
                 }}
+                disabled={chargerAction === 'autoDock' || chargerAction === 'savePosition' || rechargeStatus > 0}
                 activeOpacity={0.7}
               >
-                <Ionicons name="navigate" size={20} color={colors.white} />
-                <Text style={styles.actionText}>Auto Dock</Text>
+                {chargerAction === 'autoDock' && rechargeStatus === 0 ? (
+                  <>
+                    <ActivityIndicator size="small" color={colors.white} />
+                    <Text style={styles.actionText}>Auto Docking...</Text>
+                  </>
+                ) : (
+                  <>
+                    <Ionicons name="navigate" size={20} color={colors.white} />
+                    <Text style={styles.actionText}>Auto Dock</Text>
+                  </>
+                )}
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.cancelBtn, { flex: 1 }]}
                 onPress={handleSaveChargerPos}
+                disabled={chargerAction === 'savePosition' || rechargeStatus > 0}
                 activeOpacity={0.7}
               >
-                <Ionicons name="checkmark-circle" size={20} color={colors.emerald} />
-                <Text style={[styles.actionText, { color: colors.emerald }]}>Save Position Here</Text>
+                {chargerAction === 'savePosition' ? (
+                  <>
+                    <ActivityIndicator size="small" color={colors.emerald} />
+                    <Text style={[styles.actionText, { color: colors.emerald }]}>Saving...</Text>
+                  </>
+                ) : (
+                  <>
+                    <Ionicons name="checkmark-circle" size={20} color={colors.emerald} />
+                    <Text style={[styles.actionText, { color: colors.emerald }]}>Save Position Here</Text>
+                  </>
+                )}
               </TouchableOpacity>
             </View>
           </View>
@@ -1345,7 +1389,7 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   chargerTitle: { fontSize: 20, fontWeight: '700', color: colors.white },
-  chargerDesc: { fontSize: 14, color: colors.textDim, textAlign: 'center', lineHeight: 20 },
+  chargerDesc: { fontSize: 15, color: colors.text, textAlign: 'center', lineHeight: 22 },
   chargerHint: {
     fontSize: 12,
     color: colors.amber,

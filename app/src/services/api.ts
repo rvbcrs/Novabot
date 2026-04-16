@@ -39,21 +39,35 @@ export interface MapData {
 export interface ChargerGps { lat: number; lng: number }
 
 export interface Schedule {
-  id: number;
+  id: string;
+  scheduleId: string;
   sn: string;
+  mowerSn?: string;
   day_of_week: number; // 0=Sun, 1=Mon, ...
+  weekdays: number[];
   start_hour: number;
   start_minute: number;
+  startTime: string;
+  endTime?: string | null;
   duration_minutes: number;
   enabled: boolean;
   map_id?: string;
+  map_name?: string | null;
+  mapId?: string | null;
+  mapName?: string | null;
   cutting_height?: number;
   path_direction?: number;
   cuttingHeight?: number;    // server returns camelCase
   pathDirection?: number;    // server returns camelCase
   rain_pause?: boolean;
   rainPause?: boolean;       // server returns camelCase
+  workMode?: number;
+  taskMode?: number;
+  lastTriggeredAt?: string | null;
   created_at: string;
+  createdAt?: string;
+  updated_at?: string;
+  updatedAt?: string;
 }
 
 export interface WorkRecord {
@@ -99,6 +113,107 @@ export interface RobotMessage {
   read: boolean;
 }
 
+interface ScheduleDto {
+  scheduleId?: string;
+  mowerSn?: string;
+  startTime?: string;
+  endTime?: string | null;
+  weekdays?: number[];
+  enabled?: boolean;
+  mapId?: string | null;
+  mapName?: string | null;
+  cuttingHeight?: number;
+  pathDirection?: number;
+  workMode?: number;
+  taskMode?: number;
+  rainPause?: boolean;
+  lastTriggeredAt?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface ScheduleWritePayload {
+  scheduleName?: string;
+  startTime?: string;
+  endTime?: string | null;
+  weekdays?: number[];
+  enabled?: boolean;
+  mapId?: string | null;
+  mapName?: string | null;
+  cuttingHeight?: number;
+  pathDirection?: number;
+  workMode?: number;
+  taskMode?: number;
+  rainPause?: boolean;
+  start_hour?: number;
+  start_minute?: number;
+  duration_minutes?: number;
+  cutting_height?: number;
+  path_direction?: number;
+  rain_pause?: boolean;
+}
+
+type ScheduleLike = Partial<Schedule> & ScheduleDto;
+
+function normalizeSchedule(input: ScheduleLike): Schedule {
+  const scheduleId = String(input.scheduleId ?? input.id ?? '');
+  const mowerSn = input.mowerSn ?? input.sn ?? '';
+  const weekdays = Array.isArray(input.weekdays)
+    ? [...(input.weekdays ?? [])]
+    : [input.day_of_week ?? 0];
+  const startTime =
+    input.startTime
+    ?? `${String(input.start_hour ?? 0).padStart(2, '0')}:${String(input.start_minute ?? 0).padStart(2, '0')}`;
+  const [startHour = 0, startMinute = 0] = startTime.split(':').map((part) => Number(part) || 0);
+  const endTime = input.endTime ?? null;
+  const durationMinutes = (() => {
+    if (typeof input.duration_minutes === 'number') return input.duration_minutes;
+    if (!endTime) return 60;
+    const [endHour = 0, endMinute = 0] = endTime.split(':').map((part) => Number(part) || 0);
+    const startTotal = startHour * 60 + startMinute;
+    const endTotal = endHour * 60 + endMinute;
+    const rawDelta = endTotal - startTotal;
+    return rawDelta > 0 ? rawDelta : rawDelta + 24 * 60;
+  })();
+  const cuttingHeight = input.cuttingHeight ?? input.cutting_height;
+  const pathDirection = input.pathDirection ?? input.path_direction;
+  const rainPause = input.rainPause ?? input.rain_pause;
+  const createdAt = input.createdAt ?? input.created_at ?? '';
+  const updatedAt = input.updatedAt ?? input.updated_at ?? createdAt;
+
+  return {
+    id: scheduleId,
+    scheduleId,
+    sn: mowerSn,
+    mowerSn,
+    day_of_week: weekdays[0] ?? 0,
+    weekdays,
+    start_hour: startHour,
+    start_minute: startMinute,
+    startTime,
+    endTime,
+    duration_minutes: durationMinutes,
+    enabled: input.enabled ?? false,
+    map_id: input.mapId ?? input.map_id,
+    map_name: input.mapName ?? input.map_name,
+    mapId: input.mapId ?? input.map_id ?? null,
+    mapName: input.mapName ?? input.map_name ?? null,
+    cutting_height: cuttingHeight,
+    path_direction: pathDirection,
+    cuttingHeight,
+    pathDirection,
+    rain_pause: rainPause,
+    rainPause,
+    workMode: input.workMode,
+    taskMode: input.taskMode,
+    lastTriggeredAt: input.lastTriggeredAt ?? null,
+    created_at: createdAt,
+    createdAt,
+    updated_at: updatedAt,
+    updatedAt,
+  };
+}
+
 export class ApiClient {
   private baseUrl: string;
 
@@ -108,7 +223,7 @@ export class ApiClient {
   }
 
   private async request<T>(
-    method: 'GET' | 'POST' | 'DELETE',
+    method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
     path: string,
     options?: {
       body?: Record<string, unknown>;
@@ -228,13 +343,18 @@ export class ApiClient {
   // ── Schedules ────────────────────────────────────────────────────────
 
   async getSchedules(sn: string): Promise<Schedule[]> {
-    return this.request<Schedule[]>('GET', `/api/dashboard/schedules/${enc(sn)}`);
+    const response = await this.request<{ schedules?: Array<Schedule | ScheduleDto> } | Array<Schedule | ScheduleDto>>(
+      'GET',
+      `/api/dashboard/schedules/${enc(sn)}`,
+    );
+    const rows = Array.isArray(response) ? response : response.schedules ?? [];
+    return rows.map((row) => normalizeSchedule(row));
   }
 
   async createSchedule(
     sn: string,
-    schedule: Omit<Schedule, 'id' | 'sn' | 'created_at'>,
-  ): Promise<{ ok: boolean; id: number }> {
+    schedule: ScheduleWritePayload,
+  ): Promise<{ ok: boolean; schedule?: Schedule }> {
     return this.request('POST', `/api/dashboard/schedules/${enc(sn)}`, {
       body: schedule as unknown as Record<string, unknown>,
     });
@@ -242,11 +362,11 @@ export class ApiClient {
 
   async updateSchedule(
     sn: string,
-    scheduleId: number,
-    updates: Partial<Omit<Schedule, 'id' | 'sn' | 'created_at'>>,
+    scheduleId: number | string,
+    updates: ScheduleWritePayload,
   ): Promise<{ ok: boolean }> {
-    return this.request('POST', `/api/dashboard/schedules/${enc(sn)}/${scheduleId}`, {
-      body: { ...updates, _method: 'PATCH' } as Record<string, unknown>,
+    return this.request('PATCH', `/api/dashboard/schedules/${enc(sn)}/${enc(String(scheduleId))}`, {
+      body: updates as Record<string, unknown>,
     });
   }
 

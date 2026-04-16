@@ -38,7 +38,7 @@ import Svg, {
 import * as DocumentPicker from 'expo-document-picker';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { colors } from '../theme/colors';
 import { useMowerState } from '../hooks/useMowerState';
 import { ApiClient, type MapData, type TrailPoint, type LocalPoint, type ChargerGps } from '../services/api';
@@ -259,6 +259,18 @@ export default function MapScreen() {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
+  useFocusEffect(
+    useCallback(() => {
+      fetchData();
+    }, [fetchData]),
+  );
+
+  useEffect(() => {
+    if (selectedZoneId && !workMaps.some(m => m.mapId === selectedZoneId)) {
+      setSelectedZoneId(null);
+    }
+  }, [selectedZoneId, workMaps]);
+
   // Auto-refresh trail every 3s during mowing
   useEffect(() => {
     if (!isMowing || !mower?.sn || demo.enabled) return;
@@ -307,50 +319,6 @@ export default function MapScreen() {
       translateX.value = withTiming(0, { duration: 300 });
       translateY.value = withTiming(0, { duration: 300 });
     });
-
-  // Pattern placement: convert tap position to local meters, then to GPS for pattern context
-  const handleMapTap = useCallback((evt: { nativeEvent: { locationX: number; locationY: number } }) => {
-    if (!patternCtx.isPlacing || !bounds) return;
-    const x = evt.nativeEvent.locationX;
-    const y = evt.nativeEvent.locationY;
-    const drawSize = MAP_SIZE - INNER_PADDING * 2;
-    const xRange = bounds.maxX - bounds.minX || 0.1;
-    const yRange = bounds.maxY - bounds.minY || 0.1;
-    const mapScale = Math.min(drawSize / xRange, drawSize / yRange);
-    const xOffset = (drawSize - xRange * mapScale) / 2;
-    const yOffset = (drawSize - yRange * mapScale) / 2;
-    // Inverse of localToSvg (which flips both axes):
-    // svgX = padding + (maxX - localX) * scale + xOffset → localX = maxX - (svgX - padding - xOffset) / scale
-    // svgY = padding + (localY - minY) * scale + yOffset → localY = minY + (svgY - padding - yOffset) / scale
-    const localX = bounds.maxX - (x - INNER_PADDING - xOffset) / mapScale;
-    const localY = bounds.minY + (y - INNER_PADDING - yOffset) / mapScale;
-    // Convert to GPS if chargerGpsOrigin available, otherwise use local coords directly
-    if (chargerGpsOrigin) {
-      const metersPerDegreeLat = 111320;
-      const metersPerDegreeLng = 111320 * Math.cos(chargerGpsOrigin.lat * Math.PI / 180);
-      patternCtx.setCenter(
-        chargerGpsOrigin.lat + localY / metersPerDegreeLat,
-        chargerGpsOrigin.lng + localX / metersPerDegreeLng,
-      );
-    } else {
-      // No GPS origin — use local meters as pseudo-GPS (pattern will render in local coords)
-      patternCtx.setCenter(localY, localX);
-    }
-  }, [patternCtx, bounds, chargerGpsOrigin]);
-
-  const handleTapGesture = (x: number, y: number) => {
-    handleMapTap({ nativeEvent: { locationX: x, locationY: y } } as any);
-  };
-
-  const singleTapGesture = Gesture.Tap()
-    .numberOfTaps(1)
-    .onEnd((e) => {
-      if (patternCtx.isPlacing) {
-        runOnJS(handleTapGesture)(e.x, e.y);
-      }
-    });
-
-  const composedGesture = Gesture.Simultaneous(pinchGesture, panGesture, doubleTapGesture, singleTapGesture);
 
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [
@@ -689,6 +657,50 @@ export default function MapScreen() {
     }
     return b;
   }, [visibleMaps, trailLocal, mowerLocal]);
+
+  // Pattern placement: convert tap position to local meters, then to GPS for pattern context
+  const handleMapTap = useCallback((evt: { nativeEvent: { locationX: number; locationY: number } }) => {
+    if (!patternCtx.isPlacing || !bounds) return;
+    const x = evt.nativeEvent.locationX;
+    const y = evt.nativeEvent.locationY;
+    const drawSize = MAP_SIZE - INNER_PADDING * 2;
+    const xRange = bounds.maxX - bounds.minX || 0.1;
+    const yRange = bounds.maxY - bounds.minY || 0.1;
+    const mapScale = Math.min(drawSize / xRange, drawSize / yRange);
+    const xOffset = (drawSize - xRange * mapScale) / 2;
+    const yOffset = (drawSize - yRange * mapScale) / 2;
+    // Inverse of localToSvg (which flips both axes):
+    // svgX = padding + (maxX - localX) * scale + xOffset → localX = maxX - (svgX - padding - xOffset) / scale
+    // svgY = padding + (localY - minY) * scale + yOffset → localY = minY + (svgY - padding - yOffset) / scale
+    const localX = bounds.maxX - (x - INNER_PADDING - xOffset) / mapScale;
+    const localY = bounds.minY + (y - INNER_PADDING - yOffset) / mapScale;
+    // Convert to GPS if chargerGpsOrigin available, otherwise use local coords directly
+    if (chargerGpsOrigin) {
+      const metersPerDegreeLat = 111320;
+      const metersPerDegreeLng = 111320 * Math.cos(chargerGpsOrigin.lat * Math.PI / 180);
+      patternCtx.setCenter(
+        chargerGpsOrigin.lat + localY / metersPerDegreeLat,
+        chargerGpsOrigin.lng + localX / metersPerDegreeLng,
+      );
+    } else {
+      // No GPS origin — use local meters as pseudo-GPS (pattern will render in local coords)
+      patternCtx.setCenter(localY, localX);
+    }
+  }, [patternCtx, bounds, chargerGpsOrigin]);
+
+  const handleTapGesture = (x: number, y: number) => {
+    handleMapTap({ nativeEvent: { locationX: x, locationY: y } } as any);
+  };
+
+  const singleTapGesture = Gesture.Tap()
+    .numberOfTaps(1)
+    .onEnd((e) => {
+      if (patternCtx.isPlacing) {
+        runOnJS(handleTapGesture)(e.x, e.y);
+      }
+    });
+
+  const composedGesture = Gesture.Simultaneous(pinchGesture, panGesture, doubleTapGesture, singleTapGesture);
 
   const hasData = visibleMaps.length > 0 || trailLocal.length > 0 || mowerLocal;
 

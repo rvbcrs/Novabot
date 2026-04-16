@@ -1,7 +1,7 @@
 /**
  * Home screen — real-time mower status and action buttons.
  */
-import React, { useMemo, useState, useEffect, useRef } from 'react';
+import React, { useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -16,13 +16,14 @@ import {
   Modal,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import Svg, { Path as SvgPath } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { colors } from '../theme/colors';
 import { BatteryRing } from '../components/BatteryRing';
 import { MowerScene } from '../components/mower/MowerScene';
 import { useMowerState } from '../hooks/useMowerState';
-import { ApiClient } from '../services/api';
+import { ApiClient, type Schedule } from '../services/api';
 import { getServerUrl } from '../services/auth';
 import { DemoBanner } from '../components/DemoBanner';
 import { MowingProgressMap } from '../components/MowingProgressMap';
@@ -180,12 +181,65 @@ function getActivityColor(activity: MowerActivity): string {
   }
 }
 
+function getBatteryGlowColor(percentage: number): string {
+  if (percentage >= 65) return 'rgba(34, 197, 94, 0.18)';
+  if (percentage >= 35) return 'rgba(245, 158, 11, 0.16)';
+  return 'rgba(239, 68, 68, 0.18)';
+}
+
+function getNextScheduleDisplay(
+  schedules: Schedule[],
+  now = new Date(),
+): { day: string; time: string } | null {
+  const enabled = schedules.filter((schedule) => schedule.enabled);
+  if (enabled.length === 0) return null;
+
+  const daysShort = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const currentDay = now.getDay();
+  const currentMinutes = now.getHours() * 60 + now.getMinutes();
+  let bestDelta = Number.POSITIVE_INFINITY;
+  let bestSchedule: { day: string; time: string } | null = null;
+
+  for (const schedule of enabled) {
+    const weekdays = schedule.weekdays.length > 0 ? schedule.weekdays : [schedule.day_of_week];
+    const [startHour = 0, startMinute = 0] = schedule.startTime.split(':').map((part) => Number(part) || 0);
+    const scheduleMinutes = startHour * 60 + startMinute;
+
+    for (const weekday of weekdays) {
+      let dayDelta = weekday - currentDay;
+      if (dayDelta < 0) dayDelta += 7;
+      if (dayDelta === 0 && scheduleMinutes <= currentMinutes) dayDelta = 7;
+
+      const totalDelta = dayDelta * 24 * 60 + (scheduleMinutes - currentMinutes);
+      if (totalDelta < bestDelta) {
+        bestDelta = totalDelta;
+        bestSchedule = {
+          day: daysShort[weekday] ?? daysShort[0],
+          time: schedule.startTime,
+        };
+      }
+    }
+  }
+
+  return bestSchedule;
+}
+
+const MOWER_SVG_PATH = "M8.75 7C7.55 7.02 6.52 7.15 5.65 7.53C4.79 7.9 4.02 8.71 4.02 9.72V13.77C2.77 14.96 1.98 16.63 1.98 18.48C1.98 22.07 4.91 25 8.5 25C9.75 25 10.89 24.62 11.86 24H21.81C22.36 24.61 23.14 25 24.02 25C24.89 25 25.67 24.61 26.22 24H26.9C28.59 24 30.02 22.65 30.02 20.96V18.9C30.02 16.27 28.24 14.08 25.85 12.35C23.47 10.63 20.38 9.3 17.3 8.38C14.22 7.47 11.16 6.97 8.75 7ZM8.78 9C10.88 8.97 13.81 9.43 16.73 10.3C19.65 11.17 22.57 12.45 24.68 13.97C26.42 15.23 27.55 16.6 27.89 18H14.92C14.66 14.65 11.92 11.96 8.5 11.96C7.62 11.96 6.78 12.14 6.02 12.46V9.72C6.02 9.58 5.99 9.56 6.45 9.36C6.9 9.17 7.73 9.02 8.78 9ZM8.5 13.96C11.01 13.96 13.02 15.98 13.02 18.48C13.02 20.99 11.01 23 8.5 23C5.99 23 3.98 20.99 3.98 18.48C3.98 15.98 5.99 13.96 8.5 13.96ZM14.71 20H28.02V20.96C28.02 21.53 27.55 22 26.9 22H13.86C14.24 21.39 14.53 20.72 14.71 20Z";
+
+function MowerIcon({ size, color }: { size: number; color: string }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 32 32">
+      <SvgPath d={MOWER_SVG_PATH} fill={color} />
+    </Svg>
+  );
+}
+
 function getActivityIcon(
   activity: MowerActivity,
 ): React.ComponentProps<typeof Ionicons>['name'] {
   switch (activity) {
     case 'mowing':
-      return 'leaf';
+      return 'leaf'; // overridden by custom SVG in render
     case 'charging':
       return 'battery-charging';
     case 'returning':
@@ -267,27 +321,55 @@ export default function HomeScreen() {
   const [mowSettings, setMowSettings] = useState<{ cuttingHeight: number; pathDirection: number } | null>(null);
   const demo = useDemo();
 
-  // Fetch device sets + map count from server
+  // Fetch device sets + map count + next schedule from server
   const [serverMapCount, setServerMapCount] = useState(0);
+  const [nextSchedule, setNextSchedule] = useState<{ day: string; time: string } | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const loadHomeMeta = useCallback(async () => {
+    if (demo.enabled) {
+      setServerMapCount(0);
+      setNextSchedule(null);
+      return;
+    }
+
+    try {
+      setNextSchedule(null);
+      const url = await getServerUrl();
+      if (!url) return;
+      const api = new ApiClient(url);
+      const res = await api.getDeviceSets();
+      setDeviceSets(res.sets ?? []);
+
+      if (!mower?.sn) {
+        setServerMapCount(0);
+        return;
+      }
+
+      const mapsRes = await api.fetchMaps(mower.sn).catch(() => ({ maps: [] }));
+      const workMaps = (mapsRes.maps ?? []).filter((map: any) => map.mapType === 'work');
+      setServerMapCount(workMaps.length);
+
+      const schedules = await api.getSchedules(mower.sn).catch(() => []);
+      setNextSchedule(getNextScheduleDisplay(schedules));
+    } catch {
+      // Ignore transient refresh failures on the home screen
+    }
+  }, [demo.enabled, mower?.sn]);
+
   useEffect(() => {
-    if (demo.enabled) return;
-    (async () => {
-      try {
-        const url = await getServerUrl();
-        if (!url) return;
-        const api = new ApiClient(url);
-        const res = await api.getDeviceSets();
-        setDeviceSets(res.sets ?? []);
-        // Also check if mower has maps on the server
-        const mowerDev = [...devices.values()].find(d => d.deviceType === 'mower');
-        if (mowerDev?.sn) {
-          const mapsRes = await api.fetchMaps(mowerDev.sn).catch(() => ({ maps: [] }));
-          const workMaps = (mapsRes.maps ?? []).filter((m: any) => m.mapType === 'work');
-          setServerMapCount(workMaps.length);
-        }
-      } catch { /* ignore */ }
-    })();
-  }, [connected, devices.size, demo.enabled]);
+    void loadHomeMeta();
+  }, [loadHomeMeta, connected]);
+
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      const socket = getSocket();
+      if (socket) socket.emit('request:snapshot');
+      await loadHomeMeta();
+    } finally {
+      setRefreshing(false);
+    }
+  }, [loadHomeMeta]);
 
   // Fetch first work polygon for mowing progress display
   useEffect(() => {
@@ -712,14 +794,15 @@ export default function HomeScreen() {
   // Apply optimistic override if set
   const displayActivity = activityOverride ?? mower.activity;
   const activityColor = getActivityColor(displayActivity);
+  const batteryGlowColor = getBatteryGlowColor(mower.battery);
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
-      <ScrollView contentContainerStyle={styles.scroll} refreshControl={
-        <RefreshControl refreshing={false} tintColor={colors.purple} onRefresh={() => {
-          const socket = getSocket();
-          if (socket) socket.emit('request:snapshot');
-        }} />
+      <ScrollView contentContainerStyle={[
+        styles.scroll,
+        { paddingBottom: Math.max(insets.bottom + 120, 132) },
+      ]} refreshControl={
+        <RefreshControl refreshing={refreshing} tintColor={colors.purple} onRefresh={handleRefresh} />
       }>
         {/* Global demo toggle */}
 
@@ -764,11 +847,15 @@ export default function HomeScreen() {
         <View style={styles.statusCard}>
           {/* Activity header */}
           <View style={styles.activityRow}>
-            <Ionicons
-              name={getActivityIcon(displayActivity)}
-              size={24}
-              color={activityColor}
-            />
+            {displayActivity === 'mowing' ? (
+              <MowerIcon size={24} color={activityColor} />
+            ) : (
+              <Ionicons
+                name={getActivityIcon(displayActivity)}
+                size={24}
+                color={activityColor}
+              />
+            )}
             <Text style={[styles.activityLabel, { color: activityColor }]}>
               {getActivityLabel(displayActivity, t)}
             </Text>
@@ -801,12 +888,11 @@ export default function HomeScreen() {
             />
           ) : (
             /* Battery ring + mower image (default) */
-            <View style={[styles.batteryContainer, { shadowColor: GLOW_COLOR[displayActivity], shadowRadius: 30, shadowOpacity: 1 }]}>
+            <View style={[styles.batteryContainer, { shadowColor: batteryGlowColor, shadowRadius: 26, shadowOpacity: 1 }]}>
               <BatteryRing
                 percentage={mower.battery}
                 size={160}
                 strokeWidth={10}
-                color={displayActivity === 'idle' ? undefined : getActivityColor(displayActivity)}
               />
               <Animated.View style={[styles.batteryTextOverlay, { transform: [{ translateY: bounceAnim }, { scale: pulseAnim }] }]}>
                 <Image
@@ -824,26 +910,29 @@ export default function HomeScreen() {
             </View>
           )}
 
-          {/* Signal chips */}
-          <View style={styles.chipsRow}>
-            {mower.wifiRssi != null && (
-              <View style={styles.chip}>
-                <Ionicons name="wifi" size={11} color={colors.textDim} />
-                <Text style={styles.chipText}>{mower.wifiRssi}</Text>
-              </View>
-            )}
-            {mower.rtkSat != null && (
-              <View style={styles.chip}>
-                <Ionicons name="navigate" size={11} color={colors.textDim} />
-                <Text style={styles.chipText}>{mower.rtkSat} sat</Text>
-              </View>
-            )}
-            {devices.get(mower.sn)?.sensors?.cpu_temperature && (
-              <View style={styles.chip}>
-                <Ionicons name="thermometer" size={11} color={colors.textDim} />
-                <Text style={styles.chipText}>{devices.get(mower.sn)?.sensors?.cpu_temperature}°</Text>
-              </View>
-            )}
+          <View style={styles.chipsGroup}>
+            <View style={styles.chipsRow}>
+              {mower.wifiRssi != null && (
+                <View style={styles.chip}>
+                  <Ionicons name="wifi" size={11} color={colors.textDim} />
+                  <Text style={styles.chipText}>{mower.wifiRssi}</Text>
+                </View>
+              )}
+              {mower.rtkSat != null && (
+                <View style={styles.chip}>
+                  <Ionicons name="navigate" size={11} color={colors.textDim} />
+                  <Text style={styles.chipText}>{mower.rtkSat} sat</Text>
+                </View>
+              )}
+              {devices.get(mower.sn)?.sensors?.cpu_temperature != null && (
+                <View style={styles.chip}>
+                  <Ionicons name="thermometer" size={11} color={colors.textDim} />
+                  <Text style={styles.chipText}>{devices.get(mower.sn)?.sensors?.cpu_temperature}°</Text>
+                </View>
+              )}
+            </View>
+
+            <View style={styles.chipsRow}>
             {(displayActivity === 'mowing') && devices.get(mower.sn)?.sensors?.target_height && (
               <View style={styles.chip}>
                 <Ionicons name="resize" size={11} color={colors.textDim} />
@@ -852,14 +941,18 @@ export default function HomeScreen() {
             )}
             {!mower.online && (
               <View style={[styles.chip, styles.chipOffline]}>
-                <Ionicons
-                  name="cloud-offline"
-                  size={11}
-                  color={colors.red}
-                />
-                <Text style={[styles.chipText, { color: colors.red }]}>
-                  {t('offline')}
-                </Text>
+                <Ionicons name="cloud-offline" size={11} color={colors.red} />
+                <Text style={[styles.chipText, { color: colors.red }]}>{t('offline')}</Text>
+              </View>
+            )}
+            </View>
+
+            {nextSchedule && (displayActivity === 'idle' || displayActivity === 'charging') && (
+              <View style={styles.nextScheduleRow}>
+                <View style={[styles.chip, styles.nextScheduleChip]}>
+                  <MowerIcon size={14} color={colors.emerald} />
+                  <Text style={[styles.chipText, { color: colors.emerald }]}>Next mow: {nextSchedule.day} {nextSchedule.time}</Text>
+                </View>
               </View>
             )}
           </View>
@@ -931,8 +1024,8 @@ export default function HomeScreen() {
                   </>
                 )}
               </TouchableOpacity>
-              {/* Go Home button — when idle or error (not on charger) */}
-              {(displayActivity === 'idle' || displayActivity === 'error') && (
+              {/* Go Home button — when idle or error, but NOT on charger */}
+              {(displayActivity === 'idle' || displayActivity === 'error') && !mower.batteryCharging && (
                 <TouchableOpacity
                   style={[styles.actionButton, styles.actionButtonBlue]}
                   onPress={() => { sendGoHome(mower.sn); setOptimisticActivity('returning'); }}
@@ -1168,14 +1261,14 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bg,
   },
   scroll: {
-    padding: 24,
-    paddingBottom: 32,
+    paddingHorizontal: 16,
+    paddingTop: 12,
   },
   topBar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 20,
+    marginBottom: 14,
   },
   topBarIcons: {
     flexDirection: 'row',
@@ -1448,15 +1541,17 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     borderWidth: 1,
     borderColor: colors.cardBorder,
-    padding: 24,
+    paddingHorizontal: 18,
+    paddingTop: 18,
+    paddingBottom: 14,
     alignItems: 'center',
-    marginBottom: 16,
+    marginBottom: 12,
   },
   activityRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    marginBottom: 20,
+    marginBottom: 14,
   },
   activityLabel: {
     fontSize: 22,
@@ -1510,10 +1605,15 @@ const styles = StyleSheet.create({
     color: colors.textDim,
     marginLeft: 1,
   },
+  chipsGroup: {
+    width: '100%',
+    gap: 6,
+  },
   chipsRow: {
     flexDirection: 'row',
     gap: 6,
     justifyContent: 'center',
+    flexWrap: 'wrap',
   },
   chip: {
     flexDirection: 'row',
@@ -1526,6 +1626,16 @@ const styles = StyleSheet.create({
   },
   chipOffline: {
     backgroundColor: 'rgba(239,68,68,0.1)',
+  },
+  nextScheduleRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+  },
+  nextScheduleChip: {
+    backgroundColor: 'rgba(34,197,94,0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(34,197,94,0.2)',
+    paddingVertical: 2,
   },
   chipText: {
     fontSize: 11,
@@ -1561,8 +1671,8 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     borderWidth: 1,
     borderColor: colors.cardBorder,
-    padding: 20,
-    marginBottom: 16,
+    padding: 16,
+    marginBottom: 12,
   },
   actionsTitle: {
     fontSize: 13,
@@ -1570,7 +1680,7 @@ const styles = StyleSheet.create({
     color: colors.textDim,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
-    marginBottom: 16,
+    marginBottom: 12,
   },
   actionRow: {
     flexDirection: 'row',

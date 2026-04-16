@@ -64,7 +64,7 @@ RUN cd server/node_modules/better-sqlite3 && \
 # ── Stage 3: Runtime ──────────────────────────────────────────────────────────
 FROM node:20-alpine
 
-RUN apk add --no-cache dnsmasq nginx openssl
+RUN apk add --no-cache dnsmasq nginx openssl tzdata
 
 WORKDIR /app
 
