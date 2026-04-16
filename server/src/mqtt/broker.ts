@@ -16,21 +16,9 @@ import { startHomeAssistantBridge, forwardToHomeAssistant, publishDeviceOnline, 
 import { updateDeviceData, clearDeviceData } from './sensorData.js';
 import { isDemoMode } from '../services/demoSimulator.js';
 import { forwardToDashboard, emitDeviceOnline, emitDeviceOffline, pushMqttLog, emitOtaEvent, emitPinEvent, emitExtendedEvent, emitCommandRespond } from '../dashboard/socketHandler.js';
-import { initMapSync, onMowerConnected, handleMapMessage, publishEncryptedOnTopic, handleExtendedResponse } from './mapSync.js';
-import { localToGps, type GpsPoint, type LocalPoint } from './mapConverter.js';
+import { initMapSync, onMowerConnected, handleMapMessage, handleExtendedResponse } from './mapSync.js';
 
 const PROXY_MODE = process.env.PROXY_MODE ?? 'local';
-
-/** Converteer lokale map_area uit DB naar GPS punten voor de app */
-function localMapAreaToGps(mapArea: string, mowerSn: string): GpsPoint[] | null {
-  try {
-    const localPoints: LocalPoint[] = JSON.parse(mapArea);
-    if (!Array.isArray(localPoints) || localPoints.length === 0) return null;
-    const origin = mapRepo.getChargerGps(mowerSn);
-    if (!origin) return null;
-    return localPoints.map(p => localToGps(p, origin));
-  } catch { return null; }
-}
 
 // ANSI kleuren voor terminal logging
 const C = {
@@ -400,9 +388,9 @@ export async function startMqttBroker(): Promise<void> {
     // hebben (get_map_list_respond, start_navigation_respond, etc.) — niet ALLE berichten.
     // Reguliere status updates (report_state_*) worden onvertraagd doorgestuurd.
     if (client && packet.topic.startsWith('Dart/Receive_mqtt/LFIN') && !isAppClient(client.id)) {
-      // Intercepteer maaier's get_map_list_respond — fix zip_dir_empty maar
-      // BEHOUD de maaier's eigen map_ids. Die zijn nodig voor coverage trail matching
-      // (cover_path.map_id moet overeenkomen met get_map_list map_ids).
+      // Cloud-identiek: GEEN interceptie van get_map_list_respond of andere maaier→app berichten.
+      // De echte Novabot cloud modificeert MQTT berichten niet — het is puur maaier↔app.
+      // Map data komt via HTTP queryEquipmentMap, niet via MQTT manipulatie.
       const sn = packet.topic.split('/').pop() ?? '';
       let isRespondType = false;
       if (sn) {
@@ -410,105 +398,8 @@ export async function startMqttBroker(): Promise<void> {
           const payloadBuf = Buffer.isBuffer(packet.payload) ? packet.payload : Buffer.from(packet.payload);
           const decrypted = tryDecrypt(payloadBuf, sn);
           const json = decrypted ?? payloadBuf.toString('utf8');
-          const parsed = JSON.parse(json);
           // Detect respond-type berichten voor selective delay
           isRespondType = json.includes('_respond');
-          const isMapListResp = parsed.type === 'get_map_list_respond' || parsed.get_map_list_respond;
-          if (isMapListResp) {
-            // Extract maaier's originele value
-            const mowerValue = parsed.message?.value ?? parsed.get_map_list_respond ?? {};
-            const mowerMaps = mowerValue.maps ?? [];
-            const dbMaps = mapRepo.findWithAreaOrderByMapId(sn);
-
-            // Behoud maaier's maps met hun eigen IDs voor coverage matching.
-            // Voeg alleen dashboard-getekende kaarten toe (die de maaier niet kent).
-            // KRITIEK: map_id MOET numeriek zijn (1, 2, 3...) — matcht met
-            // cover_path.map_id en current_map_ids in status reports.
-            // UUID's worden NOOIT als map_id naar buiten gestuurd.
-            const mowerMapNames = new Set(mowerMaps.map((m: Record<string, unknown>) => m.map_name));
-            const existingMaxId = mowerMaps.reduce((max: number, m: Record<string, unknown>) => {
-              const id = typeof m.map_id === 'number' ? m.map_id : parseInt(String(m.map_id)) || 0;
-              return Math.max(max, id);
-            }, 0);
-            let nextId = existingMaxId + 1;
-            const extraMaps = dbMaps
-              .filter(m => !mowerMapNames.has(m.map_name))
-              .map(m => ({ map_id: nextId++, map_name: m.map_name ?? 'home', map_type: m.map_type ?? 'work' }));
-            const allMaps = [...mowerMaps, ...extraMaps];
-
-            // Fix zip_dir_empty en md5
-            const STORAGE_PATH = path.resolve(process.env.STORAGE_PATH ?? './storage', 'maps');
-            const zipPath = path.join(STORAGE_PATH, `${sn}_latest.zip`);
-            let zipMd5 = mowerValue.md5 ?? '';
-            if (!zipMd5 && fs.existsSync(zipPath)) {
-              zipMd5 = crypto.createHash('md5').update(fs.readFileSync(zipPath)).digest('hex');
-            }
-            if (!zipMd5 && dbMaps.length > 0) {
-              zipMd5 = crypto.createHash('md5').update(dbMaps.map(m => m.map_id).join(',')).digest('hex');
-            }
-
-            const fixed = {
-              type: 'get_map_list_respond',
-              message: {
-                result: 0,
-                value: {
-                  ...mowerValue,
-                  map_num: allMaps.length,
-                  maps: allMaps,
-                  md5: zipMd5,
-                  name: mowerValue.name ?? `${sn}.zip`,
-                  zip_dir_empty: allMaps.length > 0 ? 0 : (mowerValue.zip_dir_empty ?? 1),
-                },
-              },
-            };
-
-            // Re-encrypt en vervang packet payload
-            const KEY_PREFIX = 'abcdabcd1234';
-            const IV = Buffer.from('abcd1234abcd1234', 'utf8');
-            const key = Buffer.from(KEY_PREFIX + sn.slice(-4), 'utf8');
-            const plaintext = Buffer.from(JSON.stringify(fixed), 'utf8');
-            const padded = Buffer.alloc(Math.ceil(plaintext.length / 16) * 16, 0);
-            plaintext.copy(padded);
-            const cipher = crypto.createCipheriv('aes-128-cbc', key, IV);
-            cipher.setAutoPadding(false);
-            packet.payload = Buffer.concat([cipher.update(padded), cipher.final()]);
-            console.log(`${C.cyan}[MAP-PROXY] Fixed get_map_list_respond: ${mowerMaps.length} mower maps + ${extraMaps.length} dashboard maps = ${allMaps.length} total${C.reset}`);
-          }
-
-          // Intercepteer report_state_map_outline — als de maaier alleen
-          // {status:"success", percentage:1} stuurt zonder map_position,
-          // stuur de polygon data uit onze DB als aanvulling.
-          // De Novabot app's uploadMapToServce() wacht op map_position data
-          // in report_state_map_outline — zonder dit toont de app "upload failed".
-          const isOutlineResp = parsed.report_state_map_outline;
-          if (isOutlineResp && isOutlineResp.status === 'success' && !isOutlineResp.map_position) {
-            const dbMaps = mapRepo.findWithAreaOrderByMapId(sn);
-            if (dbMaps.length > 0) {
-              // Stuur outline per kaart NA de maaier's response
-              let delay = 200;
-              for (const mapRow of dbMaps) {
-                if (!mapRow.map_area) continue;
-                try {
-                  const gpsPoints = localMapAreaToGps(mapRow.map_area, sn);
-                  if (!gpsPoints || gpsPoints.length < 3) continue;
-                  const outlineMsg = {
-                    report_state_map_outline: {
-                      status: 'success',
-                      map_id: mapRow.map_id,
-                      map_name: mapRow.map_name ?? 'home',
-                      map_type: mapRow.map_type ?? 'work',
-                      map_position: gpsPoints,
-                    },
-                  };
-                  setTimeout(() => {
-                    publishEncryptedOnTopic(`Dart/Receive_mqtt/${sn}`, sn, outlineMsg);
-                    console.log(`${C.cyan}[MAP-PROXY] Aanvulling report_state_map_outline: ${gpsPoints.length} punten voor ${mapRow.map_name}${C.reset}`);
-                  }, delay);
-                  delay += 100;
-                } catch { /* skip invalid map_area */ }
-              }
-            }
-          }
         } catch { /* parse error, doorsturen ongewijzigd */ }
       }
       // Respond-berichten: alleen vertragen als de app RECENT (< 2s geleden)
@@ -601,9 +492,8 @@ export async function startMqttBroker(): Promise<void> {
               console.log(`${C.cyan}[MAP-PROXY] delete_map voor ${sn} map=${delName ?? 'ALL'} — doorsturen naar maaier${C.reset}`);
             } else if ('get_map_list' in parsed) {
               // ── get_map_list: doorsturen naar maaier ──
-              // Maaier antwoordt met get_map_list_respond. Die response wordt
-              // ONDERSCHEPT in de Dart/Receive_mqtt handler hierboven en vervangen
-              // met onze DB versie (inclusief dashboard-getekende kaarten).
+              // Maaier antwoordt met get_map_list_respond direct naar de app (ongewijzigd).
+              // Map data voor de app komt via HTTP queryEquipmentMap, niet via MQTT.
               console.log(`${C.cyan}[MAP-PROXY] get_map_list voor ${sn} — doorsturen naar maaier${C.reset}`);
             } else if ('get_map_outline' in parsed) {
               // get_map_outline: doorsturen naar maaier, NIET intercepteren.
