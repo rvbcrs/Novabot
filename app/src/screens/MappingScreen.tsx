@@ -114,6 +114,9 @@ export default function MappingScreen() {
   const [elapsed, setElapsed] = useState(0);
   const [activeMapName, setActiveMapName] = useState('map0');
   const [chargerAction, setChargerAction] = useState<'autoDock' | 'savePosition' | null>(null);
+  const chargerFailureHandledRef = useRef(false);
+  const autoDockRequestedRef = useRef(false);
+  const prevAutoDockFailedRef = useRef(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // ── Joystick state ──
@@ -279,6 +282,21 @@ export default function MappingScreen() {
       socket.on('command:respond', handler);
     });
   }, [sn]);
+
+  const getNextWorkMapName = useCallback((maps: Array<{ mapName?: string | null; mapType?: string | null }>): string => {
+    const usedNames = new Set<string>();
+
+    for (const map of maps) {
+      if (map.mapType !== 'work') continue;
+      const rawName = String(map.mapName ?? '');
+      const match = rawName.match(/^map(\d+)(?:$|_work$)/i);
+      if (match) usedNames.add(`map${match[1]}`);
+    }
+
+    let nextIndex = 0;
+    while (usedNames.has(`map${nextIndex}`)) nextIndex += 1;
+    return `map${nextIndex}`;
+  }, []);
 
   // ── BLE joystick: connect to mower ──
   const connectBleJoystick = useCallback(async () => {
@@ -465,6 +483,7 @@ export default function MappingScreen() {
   const handleBeginRecording = async () => {
     // Clear server-side GPS trail before starting new recording
     let existingWorkMapCount = 0;
+    let nextWorkMapName = 'map0';
     try {
       const url = await getServerUrl();
       if (url && sn) {
@@ -472,7 +491,9 @@ export default function MappingScreen() {
         console.log('[Mapping] Server trail cleared');
         // Check how many work maps already exist — determines start_scan_map vs add_scan_map
         const mapsRes = await fetch(`${url}/api/dashboard/maps/${encodeURIComponent(sn)}`).then(r => r.json()).catch(() => ({ maps: [] }));
-        existingWorkMapCount = (mapsRes.maps ?? []).filter((m: any) => m.mapType === 'work').length;
+        const existingMaps = mapsRes.maps ?? [];
+        existingWorkMapCount = existingMaps.filter((m: any) => m.mapType === 'work').length;
+        nextWorkMapName = getNextWorkMapName(existingMaps);
       }
     } catch {}
 
@@ -480,16 +501,17 @@ export default function MappingScreen() {
     // - No existing maps: start_scan_map with mapName="map0"
     // - Existing maps: add_scan_map with mapName="map1", "map2", etc. (_getMapName)
     const model = mapBuildType === 'obstacle' ? 'obstacle' : 'border';
-    const mapName = `map${existingWorkMapCount}`;
+    const scanType = mapBuildType === 'obstacle' ? 1 : 0;
+    const mapName = mapBuildType === 'work' ? nextWorkMapName : `map${existingWorkMapCount}`;
     setActiveMapName(mapName);
 
     if (existingWorkMapCount === 0) {
       // First map — start_scan_map
-      sendCommand({ start_scan_map: { model, manual: true, mapName, map0: '', type: 0, cmd_num: cmdNumRef.current++ } }, 'start_scan_map');
+      sendCommand({ start_scan_map: { model, manual: true, mapName, map0: '', type: scanType, cmd_num: cmdNumRef.current++ } }, 'start_scan_map');
       console.log(`[Mapping] Recording started (NEW map: ${mapName})`);
     } else {
       // Additional map — add_scan_map
-      sendCommand({ add_scan_map: { model, manual: true, mapName, cmd_num: cmdNumRef.current++ } }, 'add_scan_map');
+      sendCommand({ add_scan_map: { model, manual: true, mapName, type: scanType, cmd_num: cmdNumRef.current++ } }, 'add_scan_map');
       console.log(`[Mapping] Recording started (ADD map: ${mapName}, ${existingWorkMapCount} existing)`);
     }
 
@@ -502,8 +524,8 @@ export default function MappingScreen() {
 
   // ── Stop & Save (exact flow from official Novabot app) ──
   // Flutter: stop_scan_map → delay → save_map → uploadMapToServer
-  //          → auto_recharge (mower drives itself to charger!)
-  //          → wait for mower to dock → save_recharge_pos → DONE
+  //          → user positions mower near charger → auto_recharge
+  //          → wait for MQTT dock state → save_recharge_pos → DONE
   const handleStop = () => {
     Alert.alert(
       t('stopMapping', undefined) || 'Stop Mapping',
@@ -534,6 +556,15 @@ export default function MappingScreen() {
             const saveOk = await waitForRespond('save_map_respond', 30000);
             console.log(`[Mapping] Step 2: save_map_respond ${saveOk ? 'OK' : 'TIMEOUT'}`);
 
+            // Step 2b: mirror Flutter uploadMapToServce() by requesting all map outlines.
+            // We intentionally still request this after the save phase even if the respond was late,
+            // because the original bug was that additional maps never got uploaded back to the server.
+            if (!saveOk) {
+              console.warn('[Mapping] save_map_respond timeout — requesting get_map_outline anyway');
+            }
+            sendCommand({ get_map_outline: { map_name: 'all', cmd_num: cmdNumRef.current++ } }, 'get_map_outline');
+            console.log('[Mapping] Step 2b: get_map_outline sent to trigger mower ZIP upload');
+
             // Step 3: go to charger positioning screen
             // User drives mower to ~50cm from charger, then presses Auto Dock
             setChargerAction(null);
@@ -545,38 +576,114 @@ export default function MappingScreen() {
     );
   };
 
-  // ── Monitor recharge_status: when mower docks, save charger position ──
-  // Flutter app: waits for recharge_status > 0 → save_recharge_pos → save_recharge_pos_respond → done
+  // ── Monitor MQTT dock state and mirror the Flutter charger flow ──
+  // The official app does not treat "auto_recharge clicked" as success.
+  // It watches live mower status and only saves charger position after the
+  // mower is actually docked. It also surfaces a retry state on auto-dock failure.
+  const taskMode = parseInt(sensors.task_mode ?? '0', 10);
+  const workStatus = parseInt(sensors.work_status ?? '0', 10);
   const rechargeStatus = parseInt(sensors.recharge_status ?? '0', 10);
-  const prevRechargeRef = useRef(0);
+  const errorStatus = parseInt(String(sensors.error_status ?? '0').match(/\d+/)?.[0] ?? '0', 10);
+  const batteryState = String(sensors.battery_state ?? '').toUpperCase();
+  const rawMowerMsg = String(sensors.msg ?? '');
+  const mowerMsg = rawMowerMsg.toUpperCase();
+  const autoDockInProgress = rechargeStatus === 1
+    || mowerMsg.includes('RECHARGE: GOING')
+    || mowerMsg.includes('WORK:GO_PILE')
+    || mowerMsg.includes('WORK:BACK_CHARGER')
+    || mowerMsg.includes('WORK:DOCKING');
+  const dockedOnCharger = rechargeStatus === 9
+    || batteryState === 'CHARGING'
+    || mowerMsg.includes('RECHARGE: FINISHED')
+    || mowerMsg.includes('WORK:CHARGING');
+  const autoDockFailed = rechargeStatus === 2
+    || errorStatus === 0x2e
+    || mowerMsg.includes('RECHARGE: FAILED')
+    || mowerMsg.includes('RETURN TO CHARGING STATION FAILED');
   const savingChargerPosRef = useRef(false);
 
-  // Reset recharge tracking wanneer we naar chargerPosition gaan
-  // zodat de transitie 0→>0 gedetecteerd kan worden, ook als de maaier al op de charger stond
+  // Reset charger-flow tracking when entering the dock step.
   useEffect(() => {
     if (mappingState === 'chargerPosition') {
-      prevRechargeRef.current = 0;
       savingChargerPosRef.current = false;
+      chargerFailureHandledRef.current = false;
+      autoDockRequestedRef.current = false;
+      prevAutoDockFailedRef.current = false;
       setChargerAction(null);
     }
   }, [mappingState]);
 
   useEffect(() => {
-    if (mappingState === 'chargerPosition' && rechargeStatus > 0 && prevRechargeRef.current === 0 && !savingChargerPosRef.current) {
-      savingChargerPosRef.current = true;
-      setChargerAction('savePosition');
-      console.log('[Mapping] Step 5: Mower docked! Sending save_recharge_pos...');
-      sendCommand({ save_recharge_pos: { mapName: activeMapName, map0: '', cmd_num: cmdNumRef.current++ } }, 'save_recharge_pos');
+    const failureTransitioned = autoDockFailed && !prevAutoDockFailedRef.current;
+    prevAutoDockFailedRef.current = autoDockFailed;
 
-      (async () => {
-        const responded = await waitForRespond('save_recharge_pos_respond', 15000);
-        console.log(`[Mapping] save_recharge_pos_respond ${responded ? 'OK' : 'TIMEOUT'} — marking done`);
-        setChargerAction(null);
-        setMappingState('done');
-      })();
+    if (
+      mappingState !== 'chargerPosition'
+      || savingChargerPosRef.current
+      || !autoDockRequestedRef.current
+      || !failureTransitioned
+      || chargerFailureHandledRef.current
+    ) {
+      return;
     }
-    prevRechargeRef.current = rechargeStatus;
-  }, [activeMapName, rechargeStatus, mappingState, sendCommand, sn, waitForRespond]);
+
+    chargerFailureHandledRef.current = true;
+    autoDockRequestedRef.current = false;
+    setChargerAction(null);
+    console.log(
+      `[Mapping] Auto dock failed via MQTT ` +
+      `(task_mode=${taskMode}, work_status=${workStatus}, recharge_status=${rechargeStatus}, ` +
+      `error_status=${errorStatus}, battery_state=${batteryState}, msg="${rawMowerMsg}")`,
+    );
+    Alert.alert(
+      'Auto Dock Failed',
+      'Returning to the charging station failed. Retry Auto Dock or save the charger position manually.',
+    );
+  }, [
+    autoDockFailed,
+    batteryState,
+    errorStatus,
+    mappingState,
+    rawMowerMsg,
+    rechargeStatus,
+    taskMode,
+    workStatus,
+  ]);
+
+  useEffect(() => {
+    if (mappingState !== 'chargerPosition' || !dockedOnCharger || savingChargerPosRef.current) {
+      return;
+    }
+
+    savingChargerPosRef.current = true;
+    chargerFailureHandledRef.current = false;
+    autoDockRequestedRef.current = false;
+    setChargerAction('savePosition');
+    console.log(
+      `[Mapping] Dock detected via MQTT ` +
+      `(task_mode=${taskMode}, work_status=${workStatus}, recharge_status=${rechargeStatus}, ` +
+      `battery_state=${batteryState}, msg="${rawMowerMsg}") → save_recharge_pos`,
+    );
+    sendCommand({ save_recharge_pos: { mapName: activeMapName, map0: '', cmd_num: cmdNumRef.current++ } }, 'save_recharge_pos');
+
+    (async () => {
+      const responded = await waitForRespond('save_recharge_pos_respond', 15000);
+      console.log(`[Mapping] save_recharge_pos_respond ${responded ? 'OK' : 'TIMEOUT'} — marking done`);
+      setChargerAction(null);
+      setMappingState('done');
+    })();
+  }, [
+    activeMapName,
+    batteryState,
+    dockedOnCharger,
+    mappingState,
+    rawMowerMsg,
+    rechargeStatus,
+    sendCommand,
+    taskMode,
+    waitForRespond,
+    workStatus,
+  ]);
 
   // ── Cancel / Discard ──
   const handleCancel = () => {
@@ -602,6 +709,8 @@ export default function MappingScreen() {
 
   // ── Manual charger position save (fallback if auto_recharge doesn't dock) ──
   const handleSaveChargerPos = async () => {
+    autoDockRequestedRef.current = false;
+    savingChargerPosRef.current = true;
     setChargerAction('savePosition');
     sendCommand({ save_recharge_pos: { mapName: activeMapName, map0: '', cmd_num: cmdNumRef.current++ } }, 'save_recharge_pos');
     const responded = await waitForRespond('save_recharge_pos_respond', 10000);
@@ -985,26 +1094,30 @@ export default function MappingScreen() {
                 <Ionicons name="battery-charging" size={56} color={colors.emerald} />
               </View>
               <Text style={styles.chargerTitle}>
-                {rechargeStatus > 0 ? 'Docked!' : 'Drive to Charger'}
+                {dockedOnCharger ? 'Docked!' : autoDockFailed ? 'Docking Failed' : 'Drive to Charger'}
               </Text>
               <Text style={styles.chargerDesc}>
-                {rechargeStatus > 0
+                {dockedOnCharger
                   ? 'Mower is on the charger. Saving charger position...'
+                  : autoDockFailed
+                    ? 'NOVABOT could not finish docking automatically.\n\nDrive it back near the charger and retry "Auto Dock", or use "Save Position Here" if it is already correctly positioned.'
                   : 'Drive the mower to approximately 50cm in front of the charger, facing it directly.\n\nThen tap "Auto Dock" to let the mower park itself.'}
               </Text>
 
               {/* Status */}
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 12 }}>
                 <View style={{ width: 12, height: 12, borderRadius: 6,
-                  backgroundColor: rechargeStatus > 0 ? colors.emerald : colors.amber }} />
-                <Text style={{ color: rechargeStatus > 0 ? colors.emerald : colors.text, fontSize: 14, fontWeight: '600' }}>
-                  {rechargeStatus > 0
+                  backgroundColor: dockedOnCharger ? colors.emerald : autoDockFailed ? colors.red : colors.amber }} />
+                <Text style={{ color: dockedOnCharger ? colors.emerald : autoDockFailed ? colors.red : colors.text, fontSize: 14, fontWeight: '600' }}>
+                  {dockedOnCharger
                     ? 'Docked — saving position...'
-                    : chargerAction === 'autoDock'
-                      ? 'Auto docking in progress...'
+                    : autoDockFailed
+                      ? 'Auto docking failed — retry or save manually'
                       : chargerAction === 'savePosition'
                         ? 'Saving charger position...'
-                        : 'Position the mower near the charger'}
+                        : chargerAction === 'autoDock' || autoDockInProgress
+                          ? 'Auto docking in progress...'
+                          : 'Position the mower near the charger'}
                 </Text>
               </View>
             </View>
@@ -1040,14 +1153,20 @@ export default function MappingScreen() {
                 style={[styles.stopMapBtn, { backgroundColor: colors.emerald, flex: 1 }]}
                 onPress={() => {
                   if (joystickActiveRef.current) stopJoystick();
+                  autoDockRequestedRef.current = true;
+                  chargerFailureHandledRef.current = false;
                   setChargerAction('autoDock');
                   sendCommand({ auto_recharge: { cmd_num: cmdNumRef.current++ } }, 'auto_recharge');
                   console.log('[Mapping] auto_recharge sent');
+                  (async () => {
+                    const responded = await waitForRespond('auto_recharge_respond', 10000);
+                    console.log(`[Mapping] auto_recharge_respond ${responded ? 'OK' : 'TIMEOUT'}`);
+                  })();
                 }}
-                disabled={chargerAction === 'autoDock' || chargerAction === 'savePosition' || rechargeStatus > 0}
+                disabled={chargerAction === 'autoDock' || chargerAction === 'savePosition' || dockedOnCharger}
                 activeOpacity={0.7}
               >
-                {chargerAction === 'autoDock' && rechargeStatus === 0 ? (
+                {chargerAction === 'autoDock' && !dockedOnCharger ? (
                   <>
                     <ActivityIndicator size="small" color={colors.white} />
                     <Text style={styles.actionText}>Auto Docking...</Text>
@@ -1062,7 +1181,7 @@ export default function MappingScreen() {
               <TouchableOpacity
                 style={[styles.cancelBtn, { flex: 1 }]}
                 onPress={handleSaveChargerPos}
-                disabled={chargerAction === 'savePosition' || rechargeStatus > 0}
+                disabled={chargerAction === 'savePosition' || dockedOnCharger}
                 activeOpacity={0.7}
               >
                 {chargerAction === 'savePosition' ? (

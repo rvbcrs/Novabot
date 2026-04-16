@@ -43,11 +43,18 @@ export type RootStackParams = ProvisionStackParams;
 // ── Main Tab Navigator ───────────────────────────────────────────────────────
 
 export type MainTabParams = {
-  Home: undefined;
+  Home: {
+    openStartMow?: boolean;
+    preselectedMapId?: string | null;
+  } | undefined;
   Map: undefined;
   Control: undefined;
   Camera: undefined;
-  Schedules: undefined;
+  Schedules: {
+    openEditor?: boolean;
+    preselectedMapId?: string | null;
+    preselectedMapName?: string | null;
+  } | undefined;
   History: undefined;
   AppSettings: undefined;
   ProvisionTab: undefined;

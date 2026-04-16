@@ -33,13 +33,24 @@ interface Props {
   onClose: () => void;
   sn: string;
   onStarted: (settings: { cuttingHeight: number; pathDirection: number }) => void;
+  initialSelectedMapId?: string | null;
   battery?: number;
   isWorking?: boolean;
   currentCuttingHeight?: number;   // from sensor data (cm, 2-9)
   currentPathDirection?: number;   // from sensor data (degrees)
 }
 
-export function StartMowSheet({ visible, onClose, sn, onStarted, battery, isWorking, currentCuttingHeight, currentPathDirection }: Props) {
+export function StartMowSheet({
+  visible,
+  onClose,
+  sn,
+  onStarted,
+  initialSelectedMapId,
+  battery,
+  isWorking,
+  currentCuttingHeight,
+  currentPathDirection,
+}: Props) {
   const navigation = useNavigation();
   const pattern = usePattern();
   const { t } = useI18n();
@@ -62,7 +73,6 @@ export function StartMowSheet({ visible, onClose, sn, onStarted, battery, isWork
     if (!visible || !sn) return;
     setCuttingHeight(currentCuttingHeight ?? 5);
     setPathDirection(currentPathDirection ?? 0);
-    setSelectedMapId(null);
     (async () => {
       try {
         const url = await getServerUrl();
@@ -73,10 +83,15 @@ export function StartMowSheet({ visible, onClose, sn, onStarted, battery, isWork
         setAllMaps(all);
         const workMaps = all.filter(m => m.mapType === 'work' && m.mapArea?.length >= 3);
         setMaps(workMaps);
-        if (workMaps.length === 1) setSelectedMapId(workMaps[0].mapId);
+        const requestedMap = initialSelectedMapId
+          ? workMaps.find((map) => map.mapId === initialSelectedMapId)
+          : null;
+        if (requestedMap) setSelectedMapId(requestedMap.mapId);
+        else if (workMaps.length === 1) setSelectedMapId(workMaps[0].mapId);
+        else setSelectedMapId(null);
       } catch { /* ignore */ }
     })();
-  }, [visible, sn]);
+  }, [visible, sn, currentCuttingHeight, currentPathDirection, initialSelectedMapId]);
 
   // Check if a unicom (channel) exists for the selected map
   const hasUnicom = allMaps.some(m => m.mapType === 'unicom' && m.mapArea?.length >= 2);

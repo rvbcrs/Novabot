@@ -12,11 +12,14 @@ import {
   Dimensions,
   ActivityIndicator,
   Alert,
+  Modal,
+  ScrollView,
 } from 'react-native';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withTiming,
+  withSpring,
   runOnJS,
 } from 'react-native-reanimated';
 import {
@@ -44,6 +47,7 @@ import { useMowerState } from '../hooks/useMowerState';
 import { ApiClient, type MapData, type TrailPoint, type LocalPoint, type ChargerGps } from '../services/api';
 import { getServerUrl } from '../services/auth';
 import { DemoBanner } from '../components/DemoBanner';
+import { AppActionSheet, type AppActionSheetItem } from '../components/AppActionSheet';
 import { useDemo } from '../context/DemoContext';
 import { usePattern } from '../context/PatternContext';
 import { contourToSvgPath, transformToGps } from '../utils/patternUtils';
@@ -52,7 +56,11 @@ import { Linking } from 'react-native';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 const MAP_PADDING = 24;
-const MAP_SIZE = SCREEN_W - MAP_PADDING * 2;
+const MAP_SIZE = Math.min(SCREEN_W - MAP_PADDING * 2, 332);
+const PANEL_PAGE_WIDTH = SCREEN_W - MAP_PADDING * 2;
+const ZONE_PANEL_HEIGHT = 274;
+const ZONE_PANEL_PEEK = 146;
+const ZONE_PANEL_COLLAPSED_OFFSET = ZONE_PANEL_HEIGHT - ZONE_PANEL_PEEK;
 const INNER_PADDING = 10;
 
 // ── Local meters → SVG coordinate conversion ───────────────────────
@@ -113,6 +121,37 @@ function localToSvg(point: LocalPoint, bounds: LocalBounds, size: number, paddin
   const x = padding + (bounds.maxX - point.x) * scale + (drawSize - xRange * scale) / 2;
   const y = padding + (point.y - bounds.minY) * scale + (drawSize - yRange * scale) / 2;
   return { x, y };
+}
+
+function polygonAreaSqMeters(points: LocalPoint[]): number {
+  if (points.length < 3) return 0;
+  let area = 0;
+  for (let i = 0; i < points.length; i += 1) {
+    const next = points[(i + 1) % points.length];
+    area += points[i].x * next.y - next.x * points[i].y;
+  }
+  return Math.abs(area) / 2;
+}
+
+function formatAreaLabel(areaSqMeters: number): string {
+  if (areaSqMeters >= 100) return `${Math.round(areaSqMeters)} m²`;
+  if (areaSqMeters >= 10) return `${areaSqMeters.toFixed(1).replace(/\.0$/, '')} m²`;
+  return `${areaSqMeters.toFixed(1)} m²`;
+}
+
+function formatEtaLabel(areaSqMeters: number): string {
+  if (areaSqMeters <= 0) return '0.5 h';
+  const estimatedHours = Math.max(0.5, areaSqMeters / 102);
+  return `${estimatedHours.toFixed(1).replace(/\.0$/, '')} h`;
+}
+
+function getMapFamilyKey(map: Pick<MapData, 'mapId' | 'mapName'>): string | null {
+  const candidates = [map.mapId, map.mapName].filter(Boolean) as string[];
+  for (const candidate of candidates) {
+    const match = candidate.match(/^(map\d+)/i);
+    if (match) return match[1].toLowerCase();
+  }
+  return null;
 }
 
 // ── Map type colors ──────────────────────────────────────────────────
@@ -197,16 +236,44 @@ export default function MapScreen() {
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
   const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null); // null = all zones
+  const [panelExpanded, setPanelExpanded] = useState(true);
+  const [sheetState, setSheetState] = useState<{
+    visible: boolean;
+    title: string;
+    message?: string;
+    actions: AppActionSheetItem[];
+  }>({ visible: false, title: '', actions: [] });
+  const zoneCarouselRef = useRef<ScrollView | null>(null);
+  const panelOffsetY = useSharedValue(0);
+  const panelStartY = useSharedValue(0);
 
-  // Filter maps based on selected zone
   const workMaps = useMemo(() => maps.filter(m => m.mapType === 'work'), [maps]);
+  const selectedWorkMap = useMemo(
+    () => workMaps.find(m => m.mapId === selectedZoneId) ?? workMaps[0] ?? null,
+    [selectedZoneId, workMaps],
+  );
+  const selectedWorkIndex = useMemo(
+    () => (selectedWorkMap ? workMaps.findIndex(m => m.mapId === selectedWorkMap.mapId) : -1),
+    [selectedWorkMap, workMaps],
+  );
+  const selectedFamilyKey = useMemo(
+    () => (selectedWorkMap ? getMapFamilyKey(selectedWorkMap) : null),
+    [selectedWorkMap],
+  );
+
   const visibleMaps = useMemo(() => {
-    if (!selectedZoneId) return maps; // all maps
-    const selectedWork = maps.find(m => m.mapId === selectedZoneId);
-    if (!selectedWork) return maps;
-    // Show selected work map + all obstacles + all unicoms
-    return maps.filter(m => m.mapId === selectedZoneId || m.mapType === 'obstacle' || m.mapType === 'unicom');
-  }, [maps, selectedZoneId]);
+    if (!selectedWorkMap) return maps;
+    return maps.filter((map) => {
+      if (map.mapId === selectedWorkMap.mapId) return true;
+      if (map.mapType === 'work') return false;
+      if (!selectedFamilyKey) return workMaps.length === 1;
+      return getMapFamilyKey(map) === selectedFamilyKey;
+    });
+  }, [maps, selectedFamilyKey, selectedWorkMap, workMaps.length]);
+  const legendMaps = useMemo(
+    () => visibleMaps.filter((map) => map.mapId !== selectedWorkMap?.mapId),
+    [selectedWorkMap, visibleMaps],
+  );
 
   const mower = useMemo(() => [...devices.values()].find((d) => d.deviceType === 'mower') ?? null, [devices]);
 
@@ -266,10 +333,26 @@ export default function MapScreen() {
   );
 
   useEffect(() => {
-    if (selectedZoneId && !workMaps.some(m => m.mapId === selectedZoneId)) {
+    if (workMaps.length === 0) {
       setSelectedZoneId(null);
+      return;
+    }
+    if (!selectedZoneId || !workMaps.some(m => m.mapId === selectedZoneId)) {
+      setSelectedZoneId(workMaps[0].mapId);
     }
   }, [selectedZoneId, workMaps]);
+
+  useEffect(() => {
+    if (selectedWorkIndex < 0 || workMaps.length <= 1) return;
+    zoneCarouselRef.current?.scrollTo({ x: selectedWorkIndex * PANEL_PAGE_WIDTH, animated: true });
+  }, [selectedWorkIndex, workMaps.length]);
+
+  useEffect(() => {
+    if (workMaps.length === 0) {
+      panelOffsetY.value = 0;
+      setPanelExpanded(false);
+    }
+  }, [panelOffsetY, workMaps.length]);
 
   // Auto-refresh trail every 3s during mowing
   useEffect(() => {
@@ -328,6 +411,40 @@ export default function MapScreen() {
     ],
   }));
 
+  const snapPanel = useCallback((expand: boolean) => {
+    panelOffsetY.value = withSpring(expand ? 0 : ZONE_PANEL_COLLAPSED_OFFSET, {
+      damping: 18,
+      stiffness: 180,
+      mass: 0.9,
+    });
+    setPanelExpanded(expand);
+  }, [panelOffsetY]);
+
+  const panelGesture = Gesture.Pan()
+    .activeOffsetY([-8, 8])
+    .failOffsetX([-18, 18])
+    .onStart(() => {
+      panelStartY.value = panelOffsetY.value;
+    })
+    .onUpdate((event) => {
+      const next = panelStartY.value + event.translationY;
+      panelOffsetY.value = Math.min(Math.max(next, 0), ZONE_PANEL_COLLAPSED_OFFSET);
+    })
+    .onEnd((event) => {
+      const projected = panelOffsetY.value + event.velocityY * 0.05;
+      const shouldExpand = projected < ZONE_PANEL_COLLAPSED_OFFSET * 0.45;
+      panelOffsetY.value = withSpring(shouldExpand ? 0 : ZONE_PANEL_COLLAPSED_OFFSET, {
+        damping: 18,
+        stiffness: 180,
+        mass: 0.9,
+      });
+      runOnJS(setPanelExpanded)(shouldExpand);
+    });
+
+  const panelAnimatedStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: panelOffsetY.value }],
+  }));
+
   // ── Export ZIP ───────────────────────────────────────────────────
   const handleExport = async () => {
     if (!mower?.sn || maps.length === 0) return;
@@ -348,17 +465,45 @@ export default function MapScreen() {
   };
 
   // ── Import ZIP ───────────────────────────────────────────────────
+  const handleDeleteMap = useCallback((map: MapData) => {
+    setSheetState({
+      visible: true,
+      title: t('deleteMap'),
+      message: t('deleteMapConfirm'),
+      actions: [
+        {
+          label: t('delete'),
+          icon: 'trash-outline',
+          destructive: true,
+          onPress: async () => {
+            try {
+              const url = await getServerUrl();
+              if (!url || !mower) return;
+              await fetch(`${url}/api/dashboard/maps/${encodeURIComponent(mower.sn)}/${encodeURIComponent(map.mapId)}`, {
+                method: 'DELETE',
+              });
+              fetchData();
+            } catch {
+              Alert.alert(t('error'), 'Delete failed');
+            }
+          },
+        },
+      ],
+    });
+  }, [fetchData, mower, t]);
+
   const handleMapAction = (map: MapData) => {
     const typeLabel = map.mapType === 'obstacle' ? (t('obstacle') || 'Obstacle')
       : map.mapType === 'unicom' ? (t('channel') || 'Channel')
       : (t('map') || 'Map');
     const renameLabel = `${t('rename') || 'Rename'} ${typeLabel}`;
-    Alert.alert(
-      map.mapName || typeLabel,
-      undefined,
-      [
+    setSheetState({
+      visible: true,
+      title: map.mapName || typeLabel,
+      actions: [
         {
-          text: renameLabel,
+          label: renameLabel,
+          icon: 'create-outline',
           onPress: () => {
             Alert.prompt(
               renameLabel,
@@ -382,35 +527,13 @@ export default function MapScreen() {
           },
         },
         {
-          text: t('delete'),
-          style: 'destructive',
-          onPress: () => {
-            Alert.alert(
-              t('deleteMap'),
-              t('deleteMapConfirm'),
-              [
-                { text: t('cancel'), style: 'cancel' },
-                {
-                  text: t('delete'),
-                  style: 'destructive',
-                  onPress: async () => {
-                    try {
-                      const url = await getServerUrl();
-                      if (!url || !mower) return;
-                      await fetch(`${url}/api/dashboard/maps/${encodeURIComponent(mower.sn)}/${encodeURIComponent(map.mapId)}`, {
-                        method: 'DELETE',
-                      });
-                      fetchData();
-                    } catch { Alert.alert(t('error'), 'Delete failed'); }
-                  },
-                },
-              ],
-            );
-          },
+          label: t('delete'),
+          icon: 'trash-outline',
+          destructive: true,
+          onPress: () => handleDeleteMap(map),
         },
-        { text: t('cancel'), style: 'cancel' },
       ],
-    );
+    });
   };
 
   const [cloudImporting, setCloudImporting] = useState(false);
@@ -629,6 +752,42 @@ export default function MapScreen() {
     }
   };
 
+  const showImportOptions = useCallback(() => {
+    Alert.alert(t('importMap'), undefined, [
+      { text: t('fromFile'), onPress: handleImport },
+      { text: t('fromCloud'), onPress: handleCloudImport },
+      { text: t('cancel'), style: 'cancel' },
+    ]);
+  }, [handleCloudImport, handleImport, t]);
+
+  const handleHeaderActionsMenu = useCallback(() => {
+    setSheetState({
+      visible: true,
+      title: 'Map actions',
+      actions: [
+        {
+          label: t('import'),
+          subtitle: 'Import from file or cloud backup',
+          icon: 'cloud-upload-outline',
+          onPress: showImportOptions,
+        },
+        {
+          label: t('export'),
+          subtitle: 'Download the current map package',
+          icon: 'download-outline',
+          disabled: maps.length === 0,
+          onPress: handleExport,
+        },
+        {
+          label: 'Refresh',
+          subtitle: 'Reload zones and map overlays',
+          icon: 'refresh-outline',
+          onPress: fetchData,
+        },
+      ],
+    });
+  }, [fetchData, handleExport, maps.length, showImportOptions, t]);
+
   // ── Compute bounds ───────────────────────────────────────────────
   // Trail is already in local meters from server (map_position_x/y based)
   const trailLocal: LocalPoint[] = useMemo(() => {
@@ -703,6 +862,9 @@ export default function MapScreen() {
   const composedGesture = Gesture.Simultaneous(pinchGesture, panGesture, doubleTapGesture, singleTapGesture);
 
   const hasData = visibleMaps.length > 0 || trailLocal.length > 0 || mowerLocal;
+  const selectedAreaSqMeters = selectedWorkMap ? polygonAreaSqMeters(selectedWorkMap.mapArea) : 0;
+  const relatedObstacleCount = legendMaps.filter((map) => map.mapType === 'obstacle').length;
+  const relatedChannelCount = legendMaps.filter((map) => map.mapType === 'unicom').length;
 
   return (
     <GestureHandlerRootView style={[styles.container, { paddingTop: insets.top }]}>
@@ -712,89 +874,28 @@ export default function MapScreen() {
         <View style={styles.header}>
           <Text style={styles.title}>{t('mapTitle')}</Text>
         </View>
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingHorizontal: 20, marginBottom: 12 }}>
+        <View style={styles.toolbarRow}>
             <TouchableOpacity
               onPress={() => (navigation as any).navigate('AppSettings', { screen: 'Mapping' })}
-              style={[styles.actionBtn, { backgroundColor: 'rgba(168,85,247,0.2)', borderColor: 'rgba(168,85,247,0.3)' }]}
-              activeOpacity={0.7}
+              style={styles.toolbarPrimary}
+              activeOpacity={0.82}
             >
-              <Ionicons name="add-circle-outline" size={16} color={colors.purple} />
-              <Text style={[styles.actionBtnText, { color: colors.purple }]}>{t('create')}</Text>
+              <Ionicons name="add-circle-outline" size={18} color={colors.white} />
+              <Text style={styles.toolbarPrimaryText}>{t('create')}</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              onPress={() => {
-                Alert.alert(t('importMap'), undefined, [
-                  { text: t('fromFile'), onPress: handleImport },
-                  { text: t('fromCloud'), onPress: handleCloudImport },
-                  { text: t('cancel'), style: 'cancel' },
-                ]);
-              }}
-              style={[styles.actionBtn, styles.actionBtnGreen]}
-              activeOpacity={0.7}
+              onPress={handleHeaderActionsMenu}
+              style={styles.toolbarMenuButton}
+              activeOpacity={0.82}
               disabled={importing || cloudImporting}
             >
               {(importing || cloudImporting) ? (
                 <ActivityIndicator size="small" color={colors.white} />
               ) : (
-                <>
-                  <Ionicons name="cloud-upload-outline" size={16} color={colors.white} />
-                  <Text style={styles.actionBtnText}>{t('import')}</Text>
-                </>
+                <Ionicons name="ellipsis-horizontal" size={18} color={colors.white} />
               )}
             </TouchableOpacity>
-            <TouchableOpacity onPress={handleExport} style={styles.actionBtn} activeOpacity={0.7} disabled={maps.length === 0}>
-              <Ionicons name="download-outline" size={16} color={maps.length > 0 ? colors.white : colors.textMuted} />
-              <Text style={[styles.actionBtnText, maps.length === 0 && { color: colors.textMuted }]}>{t('export')}</Text>
-            </TouchableOpacity>
-            {maps.length > 0 && (
-              <TouchableOpacity
-                onPress={() => {
-                  Alert.alert(
-                    'Edit Map',
-                    'What would you like to add?',
-                    [
-                      { text: 'Add Work Area', onPress: () => (navigation as any).navigate('AppSettings', { screen: 'Mapping', params: { buildType: 'work' } }) },
-                      { text: 'Add Obstacle', onPress: () => (navigation as any).navigate('AppSettings', { screen: 'Mapping', params: { buildType: 'obstacle' } }) },
-                      { text: 'Cancel', style: 'cancel' },
-                    ]
-                  );
-                }}
-                style={[styles.actionBtn, { backgroundColor: 'rgba(245,158,11,0.2)', borderColor: 'rgba(245,158,11,0.3)' }]}
-                activeOpacity={0.7}
-              >
-                <Ionicons name="pencil" size={16} color="#f59e0b" />
-                <Text style={[styles.actionBtnText, { color: '#f59e0b' }]}>Edit</Text>
-              </TouchableOpacity>
-            )}
-            <TouchableOpacity onPress={fetchData} style={styles.headerBtn} activeOpacity={0.7}>
-              <Ionicons name="refresh" size={20} color={colors.textDim} />
-            </TouchableOpacity>
         </View>
-
-        {/* Zone selector tabs — only show if multiple work maps */}
-        {workMaps.length > 1 && (
-          <View style={{ flexDirection: 'row', paddingHorizontal: 20, marginBottom: 8, gap: 6 }}>
-            <TouchableOpacity
-              style={[styles.zoneTab, !selectedZoneId && styles.zoneTabActive]}
-              onPress={() => setSelectedZoneId(null)}
-              activeOpacity={0.7}
-            >
-              <Text style={[styles.zoneTabText, !selectedZoneId && styles.zoneTabTextActive]}>{t('allAreas') || 'All'}</Text>
-            </TouchableOpacity>
-            {workMaps.map(m => (
-              <TouchableOpacity
-                key={m.mapId}
-                style={[styles.zoneTab, selectedZoneId === m.mapId && styles.zoneTabActive]}
-                onPress={() => setSelectedZoneId(selectedZoneId === m.mapId ? null : m.mapId)}
-                activeOpacity={0.7}
-              >
-                <Text style={[styles.zoneTabText, selectedZoneId === m.mapId && styles.zoneTabTextActive]}>
-                  {m.mapName || `Zone ${workMaps.indexOf(m) + 1}`}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        )}
 
         {loading && <ActivityIndicator size="small" color={colors.emerald} style={{ marginTop: 32 }} />}
 
@@ -816,17 +917,39 @@ export default function MapScreen() {
 
         {/* SVG Map with pan + zoom */}
         {bounds && (
-          <View style={styles.mapContainer}>
-            <GestureDetector gesture={composedGesture}>
-              <Animated.View style={[styles.mapInner, animatedStyle]}>
-                <Svg width={MAP_SIZE} height={MAP_SIZE} viewBox={`0 0 ${MAP_SIZE} ${MAP_SIZE}`}>
+          <View style={styles.mapExperience}>
+            <View style={styles.mapContainer}>
+              {selectedWorkMap && (
+                <View pointerEvents="none" style={styles.mapHero}>
+                  <View>
+                    <Text style={styles.mapHeroEyebrow}>
+                      {workMaps.length > 1 ? `Map ${selectedWorkIndex + 1} of ${workMaps.length}` : 'Active map'}
+                    </Text>
+                    <Text style={styles.mapHeroTitle}>
+                      {selectedWorkMap.mapName || `Zone ${selectedWorkIndex + 1}`}
+                    </Text>
+                    <Text style={styles.mapHeroMeta}>
+                      {formatAreaLabel(selectedAreaSqMeters)}
+                      {relatedObstacleCount > 0 ? ` · ${relatedObstacleCount} obstacle${relatedObstacleCount === 1 ? '' : 's'}` : ''}
+                      {relatedChannelCount > 0 ? ` · ${relatedChannelCount} channel${relatedChannelCount === 1 ? '' : 's'}` : ''}
+                    </Text>
+                  </View>
+                  {workMaps.length > 1 && (
+                    <Text style={styles.mapHeroHint}>Swipe below</Text>
+                  )}
+                </View>
+              )}
+
+              <GestureDetector gesture={composedGesture}>
+                <Animated.View style={[styles.mapInner, animatedStyle]}>
+                  <Svg width={MAP_SIZE} height={MAP_SIZE} viewBox={`0 0 ${MAP_SIZE} ${MAP_SIZE}`}>
                   {/* Grid */}
                   {Array.from({ length: 5 }, (_, i) => {
                     const pos = INNER_PADDING + ((MAP_SIZE - INNER_PADDING * 2) / 4) * i;
                     return (
                       <G key={`grid-${i}`}>
-                        <Line x1={INNER_PADDING} y1={pos} x2={MAP_SIZE - INNER_PADDING} y2={pos} stroke="rgba(255,255,255,0.04)" strokeWidth={1} />
-                        <Line x1={pos} y1={INNER_PADDING} x2={pos} y2={MAP_SIZE - INNER_PADDING} stroke="rgba(255,255,255,0.04)" strokeWidth={1} />
+                        <Line x1={INNER_PADDING} y1={pos} x2={MAP_SIZE - INNER_PADDING} y2={pos} stroke="rgba(255,255,255,0.05)" strokeWidth={1} />
+                        <Line x1={pos} y1={INNER_PADDING} x2={pos} y2={MAP_SIZE - INNER_PADDING} stroke="rgba(255,255,255,0.05)" strokeWidth={1} />
                       </G>
                     );
                   })}
@@ -935,17 +1058,155 @@ export default function MapScreen() {
                       );
                     });
                   })()}
-                </Svg>
-              </Animated.View>
-            </GestureDetector>
+                  </Svg>
+                </Animated.View>
+              </GestureDetector>
 
-            {/* Zoom hint / placement hint */}
-            {patternCtx.isPlacing ? (
-              <Text style={[styles.zoomHint, { color: colors.purple }]}>
-                {patternCtx.placement?.center ? 'Tap to reposition · Adjust size below' : 'Tap on the map to place the pattern'}
-              </Text>
-            ) : (
-              <Text style={styles.zoomHint}>{t('pinchToZoom')}</Text>
+              {/* Zoom hint / placement hint */}
+              {patternCtx.isPlacing ? (
+                <Text style={[styles.zoomHint, { color: colors.purple }]}>
+                  {patternCtx.placement?.center ? 'Tap to reposition · Adjust size below' : 'Tap on the map to place the pattern'}
+                </Text>
+              ) : (
+                <Text style={styles.zoomHint}>{t('pinchToZoom')}</Text>
+              )}
+            </View>
+
+            {selectedWorkMap && (
+              <View style={styles.zonePanelShell}>
+                <View style={styles.zonePanelViewport}>
+                  <GestureDetector gesture={panelGesture}>
+                    <Animated.View style={[styles.zonePanelAnimatedLayer, panelAnimatedStyle]}>
+                      <ScrollView
+                        ref={zoneCarouselRef}
+                        horizontal
+                        pagingEnabled
+                        scrollEnabled={workMaps.length > 1}
+                        showsHorizontalScrollIndicator={false}
+                        onMomentumScrollEnd={(event) => {
+                          const nextIndex = Math.round(event.nativeEvent.contentOffset.x / PANEL_PAGE_WIDTH);
+                          const nextMap = workMaps[nextIndex];
+                          if (nextMap && nextMap.mapId !== selectedZoneId) {
+                            setSelectedZoneId(nextMap.mapId);
+                          }
+                        }}
+                      >
+                        {workMaps.map((map, index) => {
+                          const areaSqMeters = polygonAreaSqMeters(map.mapArea);
+                          const familyKey = getMapFamilyKey(map);
+                          const linkedMaps = maps.filter((candidate) => {
+                            if (candidate.mapId === map.mapId || candidate.mapType === 'work') return false;
+                            if (!familyKey) return workMaps.length === 1;
+                            return getMapFamilyKey(candidate) === familyKey;
+                          });
+                          const obstacleCount = linkedMaps.filter((candidate) => candidate.mapType === 'obstacle').length;
+                          const channelCount = linkedMaps.filter((candidate) => candidate.mapType === 'unicom').length;
+
+                          return (
+                            <View key={map.mapId} style={[styles.zonePanelPage, { width: PANEL_PAGE_WIDTH }]}>
+                              <View style={styles.zonePanelCard}>
+                                <TouchableOpacity
+                                  style={styles.zoneDragHandleWrap}
+                                  onPress={() => snapPanel(!panelExpanded)}
+                                  activeOpacity={0.8}
+                                >
+                                  <View style={styles.zoneDragHandle} />
+                                  <Text style={styles.zoneDragLabel}>
+                                    {panelExpanded ? 'Swipe down for overview' : 'Swipe up for details'}
+                                  </Text>
+                                </TouchableOpacity>
+
+                                <View style={styles.zonePanelHeader}>
+                                  <View style={styles.zonePanelTitleWrap}>
+                                    <Text style={styles.zonePanelEyebrow}>Work Map</Text>
+                                    <Text style={styles.zonePanelTitle}>{map.mapName || `Zone ${index + 1}`}</Text>
+                                  </View>
+                                  <View style={styles.zonePanelActions}>
+                                    <TouchableOpacity style={styles.zonePanelIconButton} onPress={() => handleMapAction(map)} activeOpacity={0.7}>
+                                      <Ionicons name="create-outline" size={20} color={colors.white} />
+                                    </TouchableOpacity>
+                                    <TouchableOpacity style={styles.zonePanelIconButton} onPress={() => handleDeleteMap(map)} activeOpacity={0.7}>
+                                      <Ionicons name="trash-outline" size={20} color={colors.white} />
+                                    </TouchableOpacity>
+                                  </View>
+                                </View>
+
+                                <View style={styles.zoneMetricRow}>
+                                  <View style={styles.zoneMetricCard}>
+                                    <Text style={styles.zoneMetricLabel}>Size</Text>
+                                    <Text style={styles.zoneMetricValue}>{formatAreaLabel(areaSqMeters)}</Text>
+                                  </View>
+                                  <View style={styles.zoneMetricCard}>
+                                    <Text style={styles.zoneMetricLabel}>Est. mow</Text>
+                                    <Text style={styles.zoneMetricValue}>{formatEtaLabel(areaSqMeters)}</Text>
+                                  </View>
+                                </View>
+
+                                  <View style={styles.zoneInfoRow}>
+                                    <View style={styles.zoneInfoChip}>
+                                    <Ionicons name="scan-outline" size={14} color={colors.text} />
+                                    <Text style={styles.zoneInfoText}>
+                                      {obstacleCount > 0 ? `${obstacleCount} obstacle${obstacleCount === 1 ? '' : 's'}` : 'Clean zone'}
+                                    </Text>
+                                  </View>
+                                  <View style={styles.zoneInfoChip}>
+                                    <Ionicons name="git-branch-outline" size={14} color={colors.text} />
+                                    <Text style={styles.zoneInfoText}>
+                                      {channelCount > 0 ? `${channelCount} channel${channelCount === 1 ? '' : 's'}` : 'Direct dock path'}
+                                    </Text>
+                                  </View>
+                                </View>
+
+                                <View style={styles.zoneButtonRow}>
+                                  <TouchableOpacity
+                                    style={[styles.zoneActionButton, styles.zoneActionPrimary]}
+                                    onPress={() => (navigation as any).navigate('Home', {
+                                      openStartMow: true,
+                                      preselectedMapId: map.mapId,
+                                    })}
+                                    activeOpacity={0.8}
+                                  >
+                                    <Ionicons name="play-outline" size={18} color={colors.white} />
+                                    <Text style={styles.zoneActionPrimaryText}>{t('startMowing')}</Text>
+                                  </TouchableOpacity>
+                                  <TouchableOpacity
+                                    style={styles.zoneActionButton}
+                                    onPress={() => (navigation as any).navigate('Schedules', {
+                                      openEditor: true,
+                                      preselectedMapId: map.mapId,
+                                      preselectedMapName: map.mapName ?? null,
+                                    })}
+                                    activeOpacity={0.8}
+                                  >
+                                    <Ionicons name="time-outline" size={18} color={colors.text} />
+                                    <Text style={styles.zoneActionText}>{t('schedule')}</Text>
+                                  </TouchableOpacity>
+                                </View>
+                              </View>
+                            </View>
+                          );
+                        })}
+                      </ScrollView>
+                    </Animated.View>
+                  </GestureDetector>
+                </View>
+
+                {workMaps.length > 1 && (
+                  <View style={styles.zonePagerDots}>
+                    {workMaps.map((map, index) => (
+                      <TouchableOpacity
+                        key={map.mapId}
+                        style={[
+                          styles.zonePagerDot,
+                          index === selectedWorkIndex && styles.zonePagerDotActive,
+                        ]}
+                        onPress={() => setSelectedZoneId(map.mapId)}
+                        activeOpacity={0.8}
+                      />
+                    ))}
+                  </View>
+                )}
+              </View>
             )}
           </View>
         )}
@@ -1024,9 +1285,9 @@ export default function MapScreen() {
         )}
 
         {/* Legend */}
-        {maps.length > 0 && (
+        {(legendMaps.length > 0 || (!selectedWorkMap && maps.length > 0)) && (
           <View style={styles.legend}>
-            {maps.filter((m) => m.mapType !== 'unicom').map((m) => {
+            {(selectedWorkMap ? legendMaps : maps.filter((m) => m.mapType !== 'unicom')).map((m) => {
               const c = MAP_COLORS[m.mapType] ?? MAP_COLORS.work;
               return (
                 <TouchableOpacity
@@ -1085,6 +1346,67 @@ export default function MapScreen() {
           </View>
         )}
       </View>
+
+      <Modal visible={actionsMenuVisible} transparent animationType="fade" onRequestClose={() => setActionsMenuVisible(false)}>
+        <View style={styles.actionsSheetOverlay}>
+          <TouchableOpacity style={styles.actionsSheetBackdrop} activeOpacity={1} onPress={() => setActionsMenuVisible(false)} />
+          <View style={styles.actionsSheet}>
+            <View style={styles.actionsSheetHandle} />
+            <Text style={styles.actionsSheetTitle}>Map actions</Text>
+
+            <TouchableOpacity
+              style={styles.actionsSheetItem}
+              onPress={() => runFromActionsMenu(showImportOptions)}
+              activeOpacity={0.82}
+            >
+              <View style={styles.actionsSheetIconWrap}>
+                <Ionicons name="cloud-upload-outline" size={18} color={colors.white} />
+              </View>
+              <View style={styles.actionsSheetTextWrap}>
+                <Text style={styles.actionsSheetItemTitle}>{t('import')}</Text>
+                <Text style={styles.actionsSheetItemSub}>Import from file or cloud backup</Text>
+              </View>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.actionsSheetItem, maps.length === 0 && styles.actionsSheetItemDisabled]}
+              onPress={() => maps.length > 0 && runFromActionsMenu(handleExport)}
+              activeOpacity={0.82}
+              disabled={maps.length === 0}
+            >
+              <View style={[styles.actionsSheetIconWrap, maps.length === 0 && styles.actionsSheetIconWrapDisabled]}>
+                <Ionicons name="download-outline" size={18} color={maps.length > 0 ? colors.white : colors.textMuted} />
+              </View>
+              <View style={styles.actionsSheetTextWrap}>
+                <Text style={[styles.actionsSheetItemTitle, maps.length === 0 && styles.actionsSheetItemTitleDisabled]}>{t('export')}</Text>
+                <Text style={styles.actionsSheetItemSub}>Download the current map package</Text>
+              </View>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.actionsSheetItem}
+              onPress={() => runFromActionsMenu(fetchData)}
+              activeOpacity={0.82}
+            >
+              <View style={styles.actionsSheetIconWrap}>
+                <Ionicons name="refresh-outline" size={18} color={colors.white} />
+              </View>
+              <View style={styles.actionsSheetTextWrap}>
+                <Text style={styles.actionsSheetItemTitle}>Refresh</Text>
+                <Text style={styles.actionsSheetItemSub}>Reload zones and map overlays</Text>
+              </View>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.actionsSheetCancel}
+              onPress={() => setActionsMenuVisible(false)}
+              activeOpacity={0.82}
+            >
+              <Text style={styles.actionsSheetCancelText}>{t('cancel')}</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </GestureHandlerRootView>
   );
 }
@@ -1093,26 +1415,39 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
   content: { flex: 1, padding: MAP_PADDING },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
-  zoneTab: {
-    paddingHorizontal: 14, paddingVertical: 6, borderRadius: 16,
-    backgroundColor: 'rgba(255,255,255,0.06)',
-  },
-  zoneTabActive: { backgroundColor: colors.emerald },
-  zoneTabText: { fontSize: 13, fontWeight: '600', color: colors.textDim },
-  zoneTabTextActive: { color: colors.white },
   title: { fontSize: 28, fontWeight: '700', color: colors.white },
-  headerButtons: { flexDirection: 'row', gap: 8 },
-  actionBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    paddingHorizontal: 12, height: 34, borderRadius: 17,
-    backgroundColor: 'rgba(255,255,255,0.08)',
+  toolbarRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 12,
+    paddingHorizontal: 20,
   },
-  actionBtnGreen: { backgroundColor: colors.emerald },
-  actionBtnText: { fontSize: 13, fontWeight: '600', color: colors.white },
-  headerBtn: {
-    width: 36, height: 36, borderRadius: 18,
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    alignItems: 'center', justifyContent: 'center',
+  toolbarPrimary: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    height: 44,
+    borderRadius: 16,
+    backgroundColor: colors.emerald,
+  },
+  toolbarPrimaryText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: colors.white,
+  },
+  toolbarMenuButton: {
+    width: 48,
+    height: 44,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255,255,255,0.14)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   emptyState: { alignItems: 'center', paddingVertical: 60 },
   emptyIcon: {
@@ -1128,13 +1463,228 @@ const styles = StyleSheet.create({
     backgroundColor: colors.emerald, borderRadius: 12,
   },
   importButtonText: { fontSize: 15, fontWeight: '600', color: colors.white },
+  mapExperience: { marginTop: 4, marginBottom: 12 },
   mapContainer: {
-    backgroundColor: colors.card, borderRadius: 20,
-    borderWidth: 1, borderColor: colors.cardBorder,
-    overflow: 'hidden', alignItems: 'center',
+    backgroundColor: colors.card,
+    borderRadius: 28,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    overflow: 'hidden',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOpacity: 0.24,
+    shadowRadius: 22,
+    shadowOffset: { width: 0, height: 14 },
+    elevation: 10,
   },
   mapInner: { width: MAP_SIZE, height: MAP_SIZE },
-  zoomHint: { fontSize: 11, color: colors.textMuted, textAlign: 'center', paddingVertical: 6 },
+  mapHero: {
+    position: 'absolute',
+    top: 16,
+    left: 16,
+    right: 16,
+    zIndex: 5,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
+  mapHeroEyebrow: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+    color: colors.textMuted,
+    marginBottom: 4,
+  },
+  mapHeroTitle: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: colors.white,
+  },
+  mapHeroMeta: {
+    marginTop: 4,
+    fontSize: 12,
+    color: colors.textDim,
+    fontWeight: '600',
+  },
+  mapHeroHint: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.white,
+    backgroundColor: 'rgba(3,7,18,0.68)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    overflow: 'hidden',
+  },
+  zoomHint: { fontSize: 11, color: colors.textMuted, textAlign: 'center', paddingVertical: 8 },
+  zonePanelShell: {
+    marginTop: -8,
+    paddingBottom: Math.max(8, MAP_PADDING),
+  },
+  zonePanelViewport: {
+    height: ZONE_PANEL_HEIGHT,
+    overflow: 'hidden',
+  },
+  zonePanelAnimatedLayer: {
+    flex: 1,
+  },
+  zonePanelPage: {
+    paddingHorizontal: 2,
+  },
+  zonePanelCard: {
+    height: ZONE_PANEL_HEIGHT,
+    backgroundColor: '#1b2747',
+    borderRadius: 24,
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.14)',
+    shadowColor: '#000',
+    shadowOpacity: 0.32,
+    shadowRadius: 24,
+    shadowOffset: { width: 0, height: 14 },
+    elevation: 8,
+  },
+  zoneDragHandleWrap: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingBottom: 8,
+  },
+  zoneDragHandle: {
+    width: 54,
+    height: 6,
+    borderRadius: 999,
+    backgroundColor: 'rgba(255,255,255,0.24)',
+    marginBottom: 8,
+  },
+  zoneDragLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.textMuted,
+  },
+  zonePanelHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: 12,
+  },
+  zonePanelTitleWrap: { flex: 1 },
+  zonePanelEyebrow: {
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+    color: colors.textDim,
+    marginBottom: 4,
+  },
+  zonePanelTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: colors.white,
+  },
+  zonePanelActions: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  zonePanelIconButton: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  zoneMetricRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 14,
+  },
+  zoneMetricCard: {
+    flex: 1,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 16,
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+  },
+  zoneMetricLabel: {
+    fontSize: 12,
+    color: colors.textDim,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  zoneMetricValue: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: colors.white,
+  },
+  zoneInfoRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginTop: 12,
+  },
+  zoneInfoChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+  },
+  zoneInfoText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.text,
+  },
+  zoneButtonRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 14,
+  },
+  zoneActionButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 16,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+  },
+  zoneActionPrimary: {
+    backgroundColor: colors.emerald,
+  },
+  zoneActionText: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: colors.text,
+  },
+  zoneActionPrimaryText: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: colors.white,
+  },
+  zonePagerDots: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 12,
+  },
+  zonePagerDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: 'rgba(255,255,255,0.28)',
+  },
+  zonePagerDotActive: {
+    width: 20,
+    backgroundColor: colors.emerald,
+  },
   legend: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginTop: 12, paddingHorizontal: 4 },
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   legendDot: { width: 10, height: 10, borderRadius: 5 },
@@ -1146,4 +1696,91 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 12,
   },
   chipText: { fontSize: 12, color: colors.textDim, fontVariant: ['tabular-nums'] },
+  actionsSheetOverlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    backgroundColor: 'rgba(0,0,0,0.42)',
+  },
+  actionsSheetBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  actionsSheet: {
+    backgroundColor: '#10182e',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingHorizontal: 18,
+    paddingTop: 12,
+    paddingBottom: 22,
+    borderTopWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  actionsSheetHandle: {
+    width: 52,
+    height: 5,
+    borderRadius: 999,
+    alignSelf: 'center',
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    marginBottom: 12,
+  },
+  actionsSheetTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: colors.white,
+    marginBottom: 14,
+  },
+  actionsSheetItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 12,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
+    marginBottom: 10,
+  },
+  actionsSheetItemDisabled: {
+    opacity: 0.45,
+  },
+  actionsSheetIconWrap: {
+    width: 40,
+    height: 40,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.08)',
+  },
+  actionsSheetIconWrapDisabled: {
+    backgroundColor: 'rgba(255,255,255,0.04)',
+  },
+  actionsSheetTextWrap: {
+    flex: 1,
+  },
+  actionsSheetItemTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: colors.white,
+  },
+  actionsSheetItemTitleDisabled: {
+    color: colors.textMuted,
+  },
+  actionsSheetItemSub: {
+    marginTop: 2,
+    fontSize: 12,
+    color: colors.textDim,
+  },
+  actionsSheetCancel: {
+    marginTop: 6,
+    paddingVertical: 14,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.06)',
+  },
+  actionsSheetCancelText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: colors.white,
+  },
 });

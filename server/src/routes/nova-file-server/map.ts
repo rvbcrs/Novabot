@@ -92,6 +92,51 @@ function csvFileName(mapName: string | null | undefined, fallback: string): stri
   return mapName + '.csv';
 }
 
+function buildBounds(points: LocalPoint[]): string | null {
+  if (points.length === 0) return null;
+
+  const bounds = {
+    minX: Math.min(...points.map(p => p.x)),
+    maxX: Math.max(...points.map(p => p.x)),
+    minY: Math.min(...points.map(p => p.y)),
+    maxY: Math.max(...points.map(p => p.y)),
+  };
+
+  return JSON.stringify(bounds);
+}
+
+function canonicalWorkMapName(name: string | null | undefined): string | null {
+  if (!name) return null;
+  const match = name.match(/^map(\d+)(?:$|_work$)/i);
+  return match ? `map${match[1]}` : null;
+}
+
+function parsedAreaName(area: { mapIndex: number; type: 'work' | 'obstacle' | 'unicom'; subIndex?: number; target?: string }, workNameOverride?: string | null): string {
+  switch (area.type) {
+    case 'work':
+      return workNameOverride ?? `map${area.mapIndex}`;
+    case 'obstacle':
+      return `map${area.mapIndex}_${area.subIndex ?? 0}_obstacle`;
+    case 'unicom':
+      return `map${area.mapIndex}to${area.target ?? 'charge'}_unicom`;
+  }
+}
+
+function matchesParsedArea(
+  row: { map_type: string; map_name: string | null },
+  area: { mapIndex: number; type: 'work' | 'obstacle' | 'unicom'; subIndex?: number; target?: string },
+): boolean {
+  if (row.map_type !== area.type) return false;
+
+  if (area.type === 'work') {
+    const expected = `map${area.mapIndex}`;
+    const canonical = canonicalWorkMapName(row.map_name);
+    return canonical === expected;
+  }
+
+  return row.map_name === parsedAreaName(area);
+}
+
 // GET /api/nova-file-server/map/queryEquipmentMap?sn=
 //
 // De app (v2.4.0) verwacht een JSON object als `data`, NIET base64:
@@ -612,87 +657,36 @@ mapRouter.post('/uploadEquipmentMap', upload.any(), (req: Request, res: Response
   try {
     const parsed = parseMapZip(finalPath);
     if (parsed && parsed.areas.length > 0) {
-      // Check of er al maps in de DB staan voor deze maaier (bijv. dashboard-drawn)
-      const existingMaps = mapRepo.findWithArea(sn);
+      // Merge mower-uploaded areas by logical area name instead of dropping them when maps already exist.
+      // This keeps map0 intact while allowing additional work areas like map1/map2 to be added later.
+      const existingRows = mapRepo.findByMowerSn(sn);
+      const workAreas = parsed.areas.filter(area => area.type === 'work');
+      const workNameOverride = mapName && workAreas.length === 1 ? mapName : null;
 
-      if (existingMaps.length > 0) {
-        // Maps bestaan al — maaier stuurt zijn ZIP terug. NIET overschrijven.
-        // Obstacles worden WEL toegevoegd als ze nog niet bestaan (nieuw na mapping).
-        const existingObstacles = mapRepo.findByMowerSnAndTypeWithArea(sn, 'obstacle');
-        if (existingObstacles.length === 0) {
-          for (const area of parsed.areas) {
-            if (area.type !== 'obstacle') continue;
-            const obsMapId = uuidv4();
-            mapRepo.upsert({
-              map_id: obsMapId,
-              mower_sn: sn,
-              map_name: `map${area.mapIndex}_${area.subIndex ?? 0}_obstacle`,
-              map_area: JSON.stringify(area.points),
-              map_max_min: null,
-              file_name: finalFileName,
-              file_size: file.size,
-              map_type: 'obstacle',
-            });
-            console.log(`[MAP] Toegevoegd obstacle map${area.mapIndex}_${area.subIndex ?? 0} voor ${sn} (${area.points.length} punten)`);
-          }
-        }
-        console.log(`[MAP] uploadEquipmentMap: ${existingMaps.length} bestaande maps voor ${sn}, skip work/unicom update`);
-      } else {
-        // Geen bestaande maps — sla alles op (werk, obstacles, unicom)
-        for (const area of parsed.areas) {
-          if (area.type !== 'work') continue;
-          const areaMapId = uuidv4();
-          const bounds = {
-            minX: Math.min(...area.points.map(p => p.x)),
-            maxX: Math.max(...area.points.map(p => p.x)),
-            minY: Math.min(...area.points.map(p => p.y)),
-            maxY: Math.max(...area.points.map(p => p.y)),
-          };
+      for (const area of parsed.areas) {
+        const nextName = parsedAreaName(area, area.type === 'work' ? workNameOverride : null);
+        const existingRow = existingRows.find(row => matchesParsedArea(row, area));
+        const nextMapId = existingRow?.map_id ?? uuidv4();
+        const nextBounds = area.type === 'work' ? buildBounds(area.points) : null;
 
-          mapRepo.upsert({
-            map_id: areaMapId,
-            mower_sn: sn,
-            map_name: mapName ?? `map${area.mapIndex}`,
-            map_area: JSON.stringify(area.points),
-            map_max_min: JSON.stringify(bounds),
-            file_name: finalFileName,
-            file_size: file.size,
-            map_type: area.type,
-          });
-          console.log(`[MAP] Opgeslagen werkgebied map${area.mapIndex} voor ${sn} (${area.points.length} lokale punten)`);
-        }
-        for (const area of parsed.areas) {
-          if (area.type !== 'obstacle') continue;
-          const obsMapId = uuidv4();
-          mapRepo.upsert({
-            map_id: obsMapId,
-            mower_sn: sn,
-            map_name: `map${area.mapIndex}_${area.subIndex ?? 0}_obstacle`,
-            map_area: JSON.stringify(area.points),
-            map_max_min: null,
-            file_name: finalFileName,
-            file_size: file.size,
-            map_type: 'obstacle',
-          });
-          console.log(`[MAP] Opgeslagen obstacle map${area.mapIndex}_${area.subIndex ?? 0} voor ${sn} (${area.points.length} punten)`);
-        }
-        for (const area of parsed.areas) {
-          if (area.type !== 'unicom') continue;
-          const unicomMapId = uuidv4();
-          mapRepo.upsert({
-            map_id: unicomMapId,
-            mower_sn: sn,
-          map_name: `map${area.mapIndex}tocharge_unicom`,
+        mapRepo.upsert({
+          map_id: nextMapId,
+          mower_sn: sn,
+          map_name: nextName,
           map_area: JSON.stringify(area.points),
-          map_max_min: null,
+          map_max_min: nextBounds,
           file_name: finalFileName,
           file_size: file.size,
-          map_type: 'unicom',
+          map_type: area.type,
         });
-        console.log(`[MAP] Opgeslagen unicom kanaal map${area.mapIndex} voor ${sn} (${area.points.length} punten)`);
+
+        console.log(
+          `[MAP] ${existingRow ? 'Bijgewerkt' : 'Opgeslagen'} ${nextName} ` +
+          `(${area.type}, ${area.points.length} punten) voor ${sn}`,
+        );
       }
-        console.log(`[MAP] ZIP geparsed: ${parsed.areas.length} gebieden geëxtraheerd voor ${sn}`);
-      }
+
+      console.log(`[MAP] ZIP geparsed: ${parsed.areas.length} gebieden geëxtraheerd voor ${sn}`);
     } else {
       // ZIP parsing geeft geen gebieden — sla alleen het bestand op
       console.log(`[MAP] Geen kaartgebieden in ZIP voor ${sn}, bestand opgeslagen`);

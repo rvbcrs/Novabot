@@ -19,14 +19,16 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { Swipeable } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import { colors } from '../theme/colors';
 import { useMowerState } from '../hooks/useMowerState';
-import { ApiClient, type Schedule } from '../services/api';
+import { ApiClient, type MapData, type Schedule } from '../services/api';
 import { getServerUrl } from '../services/auth';
 import { useDemo } from '../context/DemoContext';
 import { DemoBanner } from '../components/DemoBanner';
 import { MowingDirectionPreview } from '../components/MowingDirectionPreview';
 import { useI18n } from '../i18n';
+import type { MainTabParams } from '../navigation/types';
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const DAYS_FULL = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -34,6 +36,8 @@ const HEIGHT_OPTIONS = [2, 3, 4, 5, 6, 7, 8, 9]; // cm (matches Novabot app slid
 
 export default function ScheduleScreen() {
   const insets = useSafeAreaInsets();
+  const navigation = useNavigation();
+  const route = useRoute<RouteProp<MainTabParams, 'Schedules'>>();
   const { devices } = useMowerState();
   const { t } = useI18n();
   const [schedules, setSchedules] = useState<Schedule[]>([]);
@@ -42,6 +46,7 @@ export default function ScheduleScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [showEditor, setShowEditor] = useState(false);
   const [editingSchedule, setEditingSchedule] = useState<Schedule | null>(null);
+  const [editorPrefill, setEditorPrefill] = useState<{ mapId: string | null; mapName: string | null } | null>(null);
 
   const mowerSn = useMemo(() => {
     return [...devices.values()].find((d) => d.deviceType === 'mower')?.sn ?? '';
@@ -157,15 +162,35 @@ export default function ScheduleScreen() {
     );
   };
 
-  const handleAdd = () => {
+  const handleAdd = (prefill?: { mapId: string | null; mapName: string | null } | null) => {
     setEditingSchedule(null);
+    setEditorPrefill(prefill ?? null);
     setShowEditor(true);
   };
 
   const handleEdit = (schedule: Schedule) => {
     setEditingSchedule(schedule);
+    setEditorPrefill(null);
     setShowEditor(true);
   };
+
+  useEffect(() => {
+    if (!route.params?.openEditor) return;
+    handleAdd({
+      mapId: route.params.preselectedMapId ?? null,
+      mapName: route.params.preselectedMapName ?? null,
+    });
+    (navigation as any).setParams({
+      openEditor: false,
+      preselectedMapId: null,
+      preselectedMapName: null,
+    });
+  }, [
+    navigation,
+    route.params?.openEditor,
+    route.params?.preselectedMapId,
+    route.params?.preselectedMapName,
+  ]);
 
   // Group schedules by day — a schedule with weekdays [1,3,5] appears under each day
   const byDay = useMemo(() => {
@@ -212,7 +237,7 @@ export default function ScheduleScreen() {
         {/* Header */}
         <View style={styles.header}>
           <Text style={styles.title}>{t('schedules')}</Text>
-          <TouchableOpacity style={styles.addButton} onPress={handleAdd} activeOpacity={0.7}>
+          <TouchableOpacity style={styles.addButton} onPress={() => handleAdd()} activeOpacity={0.7}>
             <Ionicons name="add" size={22} color={colors.white} />
           </TouchableOpacity>
         </View>
@@ -289,6 +314,11 @@ export default function ScheduleScreen() {
                           {s.pathDirection ?? s.path_direction}°
                         </Text>
                       )}
+                      {(s.mapName ?? s.map_name) && (
+                        <Text style={styles.scheduleChip}>
+                          {s.mapName ?? s.map_name}
+                        </Text>
+                      )}
                       {(s.rainPause ?? s.rain_pause) && (
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
                           <Ionicons name="rainy" size={12} color="#60a5fa" />
@@ -315,9 +345,15 @@ export default function ScheduleScreen() {
         <ScheduleEditor
           mowerSn={mowerSn}
           schedule={editingSchedule}
-          onClose={() => setShowEditor(false)}
+          initialMapId={editorPrefill?.mapId ?? null}
+          initialMapName={editorPrefill?.mapName ?? null}
+          onClose={() => {
+            setShowEditor(false);
+            setEditorPrefill(null);
+          }}
           onSaved={() => {
             setShowEditor(false);
+            setEditorPrefill(null);
             fetchSchedules();
           }}
         />
@@ -331,11 +367,15 @@ export default function ScheduleScreen() {
 function ScheduleEditor({
   mowerSn,
   schedule,
+  initialMapId,
+  initialMapName,
   onClose,
   onSaved,
 }: {
   mowerSn: string;
   schedule: Schedule | null;
+  initialMapId?: string | null;
+  initialMapName?: string | null;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -359,7 +399,36 @@ function ScheduleEditor({
   const [cuttingHeight, setCuttingHeight] = useState(schedule?.cuttingHeight ?? schedule?.cutting_height ?? 5);
   const [pathDir, setPathDir] = useState(schedule?.pathDirection ?? schedule?.path_direction ?? 120);
   const [rainPause, setRainPause] = useState(schedule?.rainPause ?? schedule?.rain_pause ?? true);
+  const [availableMaps, setAvailableMaps] = useState<MapData[]>([]);
+  const [selectedMapId, setSelectedMapId] = useState<string | null>(
+    schedule?.mapId ?? schedule?.map_id ?? initialMapId ?? null,
+  );
+  const [selectedMapName, setSelectedMapName] = useState<string | null>(
+    schedule?.mapName ?? schedule?.map_name ?? initialMapName ?? null,
+  );
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const url = await getServerUrl();
+        if (!url) return;
+        const api = new ApiClient(url);
+        const res = await api.fetchMaps(mowerSn);
+        if (!active) return;
+        const workMaps = (res.maps ?? []).filter((map) => map.mapType === 'work' && map.mapArea?.length >= 3);
+        setAvailableMaps(workMaps);
+        if (selectedMapId) {
+          const matched = workMaps.find((map) => map.mapId === selectedMapId);
+          if (matched) setSelectedMapName(matched.mapName ?? matched.mapId);
+        }
+      } catch {
+        if (active) setAvailableMaps([]);
+      }
+    })();
+    return () => { active = false; };
+  }, [mowerSn, selectedMapId]);
 
   const handleSave = async () => {
     setSaving(true);
@@ -379,6 +448,8 @@ function ScheduleEditor({
         start_minute: startM,
         duration_minutes: durationMin,
         enabled: true,
+        mapId: selectedMapId,
+        mapName: selectedMapName,
         cuttingHeight: cuttingHeight,
         pathDirection: pathDir,
         rainPause: rainPause,
@@ -419,6 +490,35 @@ function ScheduleEditor({
           <ScrollView showsVerticalScrollIndicator={false}>
 
           {/* Day selector (multi-select for new, single for edit) */}
+          <Text style={editorStyles.label}>{t('workArea')}</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={editorStyles.dayRow}>
+            <TouchableOpacity
+              style={[editorStyles.dayChip, selectedMapId == null && editorStyles.dayChipActive]}
+              onPress={() => {
+                setSelectedMapId(null);
+                setSelectedMapName(null);
+              }}
+            >
+              <Text style={[editorStyles.dayChipText, selectedMapId == null && editorStyles.dayChipTextActive]}>
+                {t('allAreas')}
+              </Text>
+            </TouchableOpacity>
+            {availableMaps.map((map) => (
+              <TouchableOpacity
+                key={map.mapId}
+                style={[editorStyles.dayChip, selectedMapId === map.mapId && editorStyles.dayChipActive]}
+                onPress={() => {
+                  setSelectedMapId(map.mapId);
+                  setSelectedMapName(map.mapName ?? map.mapId);
+                }}
+              >
+                <Text style={[editorStyles.dayChipText, selectedMapId === map.mapId && editorStyles.dayChipTextActive]}>
+                  {map.mapName || map.mapId}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+
           <Text style={editorStyles.label}>{isEdit ? t('day') : (t('days') || 'Days')}</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={editorStyles.dayRow}>
             {DAYS.map((d, i) => (

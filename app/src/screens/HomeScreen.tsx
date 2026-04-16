@@ -18,7 +18,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import Svg, { Path as SvgPath } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import { colors } from '../theme/colors';
 import { BatteryRing } from '../components/BatteryRing';
 import { MowerScene } from '../components/mower/MowerScene';
@@ -35,6 +35,7 @@ import { RainOverlay } from '../components/RainOverlay';
 import { useI18n } from '../i18n';
 import { getSocket } from '../services/socket';
 import type { DeviceState, MowerActivity } from '../types';
+import type { MainTabParams } from '../navigation/types';
 
 // ── Derive mower status ──────────────────────────────────────────────
 
@@ -273,6 +274,7 @@ const GLOW_COLOR: Record<MowerActivity, string> = {
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
+  const route = useRoute<RouteProp<MainTabParams, 'Home'>>();
   const { devices, connected } = useMowerState();
   const { t } = useI18n();
   const mower = useMemo(() => deriveMower(devices), [devices]);
@@ -287,6 +289,7 @@ export default function HomeScreen() {
   }>>([]);
   const [commandLoading, setCommandLoading] = useState<string | null>(null);
   const [showStartMow, setShowStartMow] = useState(false);
+  const [startMowInitialMapId, setStartMowInitialMapId] = useState<string | null>(null);
   const [commandError, setCommandError] = useState('');
   // Optimistic activity override — shows expected state immediately while waiting for MQTT update
   const [activityOverride, setActivityOverride] = useState<MowerActivity | null>(null);
@@ -359,6 +362,16 @@ export default function HomeScreen() {
   useEffect(() => {
     void loadHomeMeta();
   }, [loadHomeMeta, connected]);
+
+  useEffect(() => {
+    if (!route.params?.openStartMow) return;
+    setStartMowInitialMapId(route.params.preselectedMapId ?? null);
+    setShowStartMow(true);
+    (navigation as any).setParams({
+      openStartMow: false,
+      preselectedMapId: null,
+    });
+  }, [navigation, route.params?.openStartMow, route.params?.preselectedMapId]);
 
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -1006,10 +1019,14 @@ export default function HomeScreen() {
                     : styles.actionButtonGreen,
                   { flex: 1 },
                 ]}
-                onPress={() => mower.mapNum === 0 && serverMapCount === 0
-                  ? (navigation as any).navigate('AppSettings', { screen: 'Mapping' })
-                  : setShowStartMow(true)
-                }
+                onPress={() => {
+                  if (mower.mapNum === 0 && serverMapCount === 0) {
+                    (navigation as any).navigate('AppSettings', { screen: 'Mapping' });
+                    return;
+                  }
+                  setStartMowInitialMapId(null);
+                  setShowStartMow(true);
+                }}
                 disabled={commandLoading !== null || !mower.online || mower.hasError}
                 activeOpacity={0.7}
               >
@@ -1233,9 +1250,13 @@ export default function HomeScreen() {
       {mower && (
         <StartMowSheet
           visible={showStartMow}
-          onClose={() => setShowStartMow(false)}
+          onClose={() => {
+            setShowStartMow(false);
+            setStartMowInitialMapId(null);
+          }}
           sn={mower.sn}
           onStarted={(settings) => { setCommandLoading(null); setOptimisticActivity('mowing'); setMowSettings(settings); setMowingTrail([]); }}
+          initialSelectedMapId={startMowInitialMapId}
           battery={mower.battery}
           isWorking={displayActivity === 'mowing' || displayActivity === 'mapping'}
           currentCuttingHeight={parseInt(devices.get(mower.sn)?.sensors?.target_height ?? '', 10) || undefined}
