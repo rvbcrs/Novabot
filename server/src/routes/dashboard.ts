@@ -473,16 +473,10 @@ const plannedPathCache = new Map<string, Array<{ id: string; points: Array<{ x: 
 dashboardRouter.get('/planned-path/:sn', (req: Request, res: Response) => {
   const { sn } = req.params;
   const cached = plannedPathCache.get(sn);
-  if (cached && cached.length > 0) {
-    res.json({ paths: cached });
-  } else {
-    // Request from mower via MQTT (only works while mowing)
-    if (isDeviceOnline(sn)) {
-      publishToDevice(sn, { get_map_plan_path: { map_name: 'all' } });
-      console.log(`[PLAN-PATH] Requested get_map_plan_path from ${sn}`);
-    }
-    res.json({ paths: [] });
-  }
+  // Cloud-identiek: NOOIT proactief commando's sturen naar de maaier.
+  // get_map_plan_path verstoorde mapping sessies (add_scan_map) doordat
+  // het continu gepolld werd en de maaier uit mapping mode haalde.
+  res.json({ paths: cached && cached.length > 0 ? cached : [] });
 });
 
 /** Parse and cache planned path from MQTT respond or file */

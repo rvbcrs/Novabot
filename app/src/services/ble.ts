@@ -583,3 +583,20 @@ export async function bleJoystickStop(): Promise<void> {
 export function isBleJoystickConnected(): boolean {
   return _joystickConnected;
 }
+
+/**
+ * Send a BLE command with ble_start/ble_end framing (like BleTools.writeData()).
+ *
+ * The Novabot app sends mapping commands (start_scan_map, add_scan_map, save_map,
+ * stop_erase_map, auto_recharge, save_recharge_pos) via this framed method,
+ * NOT via MQTT. Joystick commands use writeDataForMove() (no framing).
+ */
+export async function sendBleCommand(command: Record<string, unknown>): Promise<void> {
+  if (!_joystickDevice || !_joystickConnected) {
+    console.log('[BLE] sendBleCommand: not connected');
+    return;
+  }
+  const json = JSON.stringify(command);
+  console.log(`[BLE] sendBleCommand: ${json}`);
+  await writeFrame(_joystickDevice, MOWER_SERVICE, MOWER_WRITE, json, false);
+}

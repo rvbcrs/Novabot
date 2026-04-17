@@ -6,7 +6,7 @@
  */
 import React, { useMemo } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
-import Svg, { Polyline, Polygon, Circle, Line, G } from 'react-native-svg';
+import Svg, { Polyline, Polygon, Circle, Line, G, Image as SvgImage } from 'react-native-svg';
 import { colors } from '../theme/colors';
 
 export interface ExistingMapOverlay {
@@ -145,8 +145,8 @@ function LiveMapViewInner({ points, orientation, closed, height = 150, existingM
           />
         )}
 
-        {/* Current position glow + direction arrow (trail mode) */}
-        {hasTrail && (
+        {/* Current position glow (trail mode, no mowerPosition) */}
+        {hasTrail && !mowerSvg && (
           <>
             <Circle cx={cursorX} cy={cursorY} r={8} fill={lineColor} opacity={0.25} />
             <Circle cx={cursorX} cy={cursorY} r={5} fill={colors.white} />
@@ -164,24 +164,24 @@ function LiveMapViewInner({ points, orientation, closed, height = 150, existingM
           </>
         )}
 
-        {/* Mower position marker (standalone, when no trail) */}
-        {!hasTrail && mowerSvg && (
-          <>
-            <Circle cx={mowerSvg.sx} cy={mowerSvg.sy} r={10} fill={colors.emerald} opacity={0.25} />
-            <Circle cx={mowerSvg.sx} cy={mowerSvg.sy} r={6} fill={colors.emerald} />
-            <G opacity={0.9}>
-              <Line
-                x1={mowerSvg.sx}
-                y1={mowerSvg.sy}
-                x2={mowerSvg.sx + arrowDx}
-                y2={mowerSvg.sy + arrowDy}
-                stroke={colors.emerald}
-                strokeWidth={2}
-                strokeLinecap="round"
+        {/* Mower icon (standalone marker or at end of trail) */}
+        {mowerSvg && (() => {
+          const mx = hasTrail ? cursorX : mowerSvg.sx;
+          const my = hasTrail ? cursorY : mowerSvg.sy;
+          const degHeading = -(orientation * 180 / Math.PI) + 180;
+          const mowerSize = 20;
+          return (
+            <G transform={`translate(${mx}, ${my}) rotate(${degHeading})`}>
+              <SvgImage
+                x={-mowerSize / 2}
+                y={-mowerSize * 0.35}
+                width={mowerSize}
+                height={mowerSize * 0.68}
+                href={require('../../assets/lawn_mower.png')}
               />
             </G>
-          </>
-        )}
+          );
+        })()}
       </Svg>
 
       {/* Point count label */}

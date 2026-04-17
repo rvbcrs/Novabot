@@ -43,7 +43,7 @@ import { useI18n } from '../i18n';
 import {
   bleJoystickConnect, bleJoystickDisconnect,
   bleJoystickStart, bleJoystickMove, bleJoystickStop,
-  isBleJoystickConnected, onBleJoystickDisconnect, scanForDevices, type ScannedDevice,
+  isBleJoystickConnected, onBleJoystickDisconnect, scanForDevices, sendBleCommand, type ScannedDevice,
 } from '../services/ble';
 
 // ── Joystick constants (smaller than JoystickScreen) ──
@@ -70,7 +70,7 @@ function getHoldType(x: number, y: number): number {
   return x < 0 ? 1 : 2; // left(1), right(2)
 }
 
-type MappingState = 'idle' | 'preMapping' | 'mapping' | 'stopping' | 'chargerPosition' | 'done' | 'cancelled';
+type MappingState = 'idle' | 'calibrating' | 'preMapping' | 'mapping' | 'stopping' | 'chargerPosition' | 'done' | 'cancelled';
 type MappingMode = 'autonomous' | 'manual';
 type MapBuildType = 'work' | 'obstacle';
 
@@ -210,49 +210,53 @@ export default function MappingScreen() {
     ? { x: parseFloat(mapPosX) || 0, y: parseFloat(mapPosY) || 0 }
     : null;
 
-  // ── Live outline from maaier via Socket.io (report_state_map_outline → map:outline) ──
-  // This replaces the slow map_position_x/y polling with the maaier's own boundary polygon
+  // ── Trail: server-side collection polled every 1s ──
+  // Server collects every MQTT map_position update (never misses a point).
+  // App polls the complete trail — no gaps from missed socket events.
+  // Fallback: if server trail is empty, collect client-side from sensor updates.
+  const trailPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const serverTrailActiveRef = useRef(false);
   useEffect(() => {
-    if (mappingState !== 'mapping' && mappingState !== 'preMapping') return;
-    const socket = getSocket();
-    if (!socket) return;
-
-    const handleOutline = (data: { sn: string; localPoints?: Array<{x: number; y: number}> }) => {
-      if (data.sn !== sn || !data.localPoints?.length) return;
-      outlineActiveRef.current = true;
-      setTrailPoints(data.localPoints);
+    if (mappingState !== 'mapping') {
+      if (trailPollRef.current) { clearInterval(trailPollRef.current); trailPollRef.current = null; }
+      if (mappingState === 'idle' || mappingState === 'calibrating' || mappingState === 'preMapping') {
+        setTrailPoints([]);
+        lastTrailRef.current = null;
+        serverTrailActiveRef.current = false;
+      }
+      return;
+    }
+    const fetchTrail = async () => {
+      try {
+        const url = await getServerUrl();
+        if (!url || !sn) return;
+        const res = await fetch(`${url}/api/dashboard/trail/${encodeURIComponent(sn)}`);
+        const json = await res.json();
+        const trail = json.trail as Array<{x: number; y: number}> | undefined;
+        if (trail && trail.length > 0) {
+          serverTrailActiveRef.current = true;
+          setTrailPoints(trail);
+        }
+      } catch { /* ignore */ }
     };
-
-    socket.on('map:outline', handleOutline);
-    return () => { socket.off('map:outline', handleOutline); };
+    fetchTrail();
+    trailPollRef.current = setInterval(fetchTrail, 1000);
+    return () => { if (trailPollRef.current) clearInterval(trailPollRef.current); };
   }, [mappingState, sn]);
 
-  // Fallback: collect trail from map_position sensor data (slower, ~3-5s interval)
-  // Used when maaier doesn't send report_state_map_outline
-  const outlineActiveRef = useRef(false);
+  // Fallback: client-side trail collection if server trail is empty
   useEffect(() => {
     if (mappingState !== 'mapping') return;
-    if (outlineActiveRef.current) return; // outline is providing data, skip fallback
+    if (serverTrailActiveRef.current) return;
     if (mapPosX === undefined || mapPosY === undefined) return;
-
     const x = parseFloat(mapPosX);
     const y = parseFloat(mapPosY);
     if (isNaN(x) || isNaN(y)) return;
-
     const last = lastTrailRef.current;
     if (last && Math.abs(last.x - x) < 0.01 && Math.abs(last.y - y) < 0.01) return;
-
     lastTrailRef.current = { x, y };
     setTrailPoints(prev => [...prev, { x, y }]);
   }, [mappingState, mapPosX, mapPosY]);
-
-  // Reset trail when starting fresh or returning to idle
-  useEffect(() => {
-    if (mappingState === 'idle' || mappingState === 'preMapping') {
-      setTrailPoints([]);
-      lastTrailRef.current = null;
-    }
-  }, [mappingState]);
 
   // ── Detect if already mapping (from sensor data on screen open) ──
   const isMappingActive = sensors.start_edit_or_assistant_map_flag === '1' ||
@@ -288,14 +292,15 @@ export default function MappingScreen() {
   }, []);
 
   // ── MQTT command helper ──
-  const sendCommand = useCallback((command: Record<string, unknown>, label: string) => {
-    const socket = getSocket();
-    if (!socket || !sn) return;
+  // Send mapping commands via BLE (exact Novabot app behavior — all mapping
+  // commands go via BLE writeData with framing, NOT via MQTT)
+  const sendCommand = useCallback(async (command: Record<string, unknown>, label: string) => {
     setBusy(true);
-    socket.emit('joystick:cmd', { sn, command });
+    console.log(`[Mapping] Sending via BLE: ${label}`);
+    await sendBleCommand(command);
     console.log(`[Mapping] Sent: ${label}`);
     setTimeout(() => setBusy(false), 1500);
-  }, [sn]);
+  }, []);
 
   const waitForRespond = useCallback((command: string, timeoutMs: number): Promise<boolean> => {
     return new Promise((resolve) => {
@@ -493,7 +498,8 @@ export default function MappingScreen() {
               Alert.alert('BLE', 'BLE not connected — check Bluetooth and proximity.');
             }
 
-            // Go to pre-mapping: joystick active, drive to start point, NOT recording yet
+            // Clean up any stale mapping state from a previous session
+            sendCommand({ quit_mapping_mode: { value: 1, cmd_num: cmdNumRef.current++ } }, 'quit_mapping_mode (cleanup)');
             setMappingMode('manual');
             setMappingState('preMapping');
           },
@@ -540,29 +546,29 @@ export default function MappingScreen() {
       }
     } catch {}
 
-    // Novabot Flutter app logic (blutter decompilation):
-    // - No existing maps: start_scan_map with mapName="map0"
-    // - Existing maps: add_scan_map with mapName="map1", "map2", etc. (_getMapName)
-    const model = mapBuildType === 'obstacle' ? 'obstacle' : 'border';
-    const scanType = mapBuildType === 'obstacle' ? 1 : 0;
+    // EXACT Novabot app flow (blutter decompilation build_map_page/logic.dart):
+    // - First map (buildMapType 0): start_scan_map { model, manual, mapName, map0, type, cmd_num }
+    // - Additional maps (buildMapType 1+): add_scan_map { mapName, type: null, cmd_num }
     const mapName = mapBuildType === 'work' ? nextWorkMapName : `map${existingWorkMapCount}`;
     setActiveMapName(mapName);
 
     if (existingWorkMapCount === 0) {
-      // First map — start_scan_map
+      const model = mapBuildType === 'obstacle' ? 'obstacle' : 'border';
+      const scanType = mapBuildType === 'obstacle' ? 1 : 0;
       sendCommand({ start_scan_map: { model, manual: true, mapName, map0: '', type: scanType, cmd_num: cmdNumRef.current++ } }, 'start_scan_map');
-      console.log(`[Mapping] Recording started (NEW map: ${mapName})`);
     } else {
-      // Additional map — add_scan_map
-      sendCommand({ add_scan_map: { model, manual: true, mapName, type: scanType, cmd_num: cmdNumRef.current++ } }, 'add_scan_map');
-      console.log(`[Mapping] Recording started (ADD map: ${mapName}, ${existingWorkMapCount} existing)`);
+      // add_scan_map: only mapName + type (null) + cmd_num — NO model, NO manual
+      sendCommand({ add_scan_map: { mapName, type: null, cmd_num: cmdNumRef.current++ } }, 'add_scan_map');
     }
+    console.log(`[Mapping] Recording started (${existingWorkMapCount === 0 ? 'start' : 'add'}_scan_map, map: ${mapName}, ${existingWorkMapCount} existing)`);
 
+    // Mower calibrates motors after start_scan_map (~10s) — show calibrating screen
     setTrailPoints([]);
     lastTrailRef.current = null;
-    setMappingState('mapping');
     setClosedCycleSeen(false);
     closedCycleDismissedRef.current = false;
+    setMappingState('calibrating');
+    setTimeout(() => setMappingState('mapping'), 10000);
   };
 
   // ── Stop & Save (exact flow from official Novabot app) ──
@@ -583,20 +589,20 @@ export default function MappingScreen() {
             if (joystickActiveRef.current) stopJoystick();
             const mapType = mapBuildType === 'obstacle' ? 1 : 0;
 
-            // Step 1: stop_scan_map → wait for stop_scan_map_respond
-            // Exact payload: {"stop_scan_map": {"value": true, "cmd_num": N}}
+            // Step 1: stop_erase_map → wait for respond (6s timeout)
+            // Novabot app: clickStop() sends stop_erase_map (NOT stop_scan_map)
             setMappingState('stopping');
-            sendCommand({ stop_scan_map: { value: true, cmd_num: cmdNumRef.current++ } }, 'stop_scan_map');
-            console.log('[Mapping] Step 1: stop_scan_map sent, waiting for respond...');
-            const stopOk = await waitForRespond('stop_scan_map_respond', 10000);
-            console.log(`[Mapping] Step 1: stop_scan_map_respond ${stopOk ? 'OK' : 'TIMEOUT'}`);
+            sendCommand({ stop_erase_map: { cmd_num: cmdNumRef.current++ } }, 'stop_erase_map');
+            console.log('[Mapping] Step 1: stop_erase_map sent, waiting for respond...');
+            const stopOk = await waitForRespond('stop_erase_map_respond', 6000);
+            console.log(`[Mapping] Step 1: stop_erase_map_respond ${stopOk ? 'OK' : 'TIMEOUT'}`);
 
-            // Step 2: save_map → wait for save_map_respond
-            // Exact payload: {"save_map": {"mapName": "mapX", "type": N, "cmd_num": N}}
+            // Step 2: save_map → wait for respond (12s timeout)
+            // Novabot app: save_map { mapName, type, cmd_num } with 12s timeout
             await new Promise(r => setTimeout(r, 1000));
             sendCommand({ save_map: { mapName: activeMapName, type: mapType, cmd_num: cmdNumRef.current++ } }, 'save_map');
             console.log('[Mapping] Step 2: save_map sent, waiting for respond...');
-            const saveOk = await waitForRespond('save_map_respond', 30000);
+            const saveOk = await waitForRespond('save_map_respond', 12000);
             console.log(`[Mapping] Step 2: save_map_respond ${saveOk ? 'OK' : 'TIMEOUT'}`);
 
             // Step 2b: mirror Flutter uploadMapToServce() by requesting all map outlines.
@@ -608,11 +614,16 @@ export default function MappingScreen() {
             sendCommand({ get_map_outline: { map_name: 'all', cmd_num: cmdNumRef.current++ } }, 'get_map_outline');
             console.log('[Mapping] Step 2b: get_map_outline sent to trigger mower ZIP upload');
 
-            // Step 3: go to charger positioning screen
-            // User drives mower to ~50cm from charger, then presses Auto Dock
-            setChargerAction(null);
-            setMappingState('chargerPosition');
-            console.log('[Mapping] Step 3: drive to charger → user controls via joystick');
+            // Step 3: charger positioning — only for FIRST map (map0)
+            // Novabot app: 2nd+ maps skip charger docking (charging_pose already saved)
+            if (activeMapName === 'map0') {
+              setChargerAction(null);
+              setMappingState('chargerPosition');
+              console.log('[Mapping] Step 3: drive to charger → user controls via joystick');
+            } else {
+              console.log('[Mapping] Step 3: skipped charger positioning (map1+, charging_pose already saved)');
+              setMappingState('done');
+            }
           },
         },
       ],
@@ -740,7 +751,7 @@ export default function MappingScreen() {
           style: 'destructive',
           onPress: () => {
             if (joystickActiveRef.current) stopJoystick();
-            sendCommand({ stop_scan_map: { value: true, cmd_num: cmdNumRef.current++ } }, 'stop_scan_map (cancel)');
+            sendCommand({ stop_erase_map: { cmd_num: cmdNumRef.current++ } }, 'stop_erase_map (cancel)');
             sendCommand({ quit_mapping_mode: { value: 1, cmd_num: cmdNumRef.current++ } }, 'quit_mapping_mode');
             setMappingState('cancelled');
             setTimeout(() => navigation.goBack(), 500);
@@ -900,6 +911,25 @@ export default function MappingScreen() {
             </View>
           </ScrollView>
 
+        /* ── Calibrating: mower initializing motors ── */
+        ) : mappingState === 'calibrating' ? (
+          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', gap: 16, paddingHorizontal: 32 }}>
+            <ActivityIndicator size="large" color={colors.emerald} />
+            <Text style={{ color: colors.white, fontSize: 20, fontWeight: '700' }}>
+              Calibrating Motors
+            </Text>
+            <Text style={{ color: colors.textMuted, fontSize: 14, textAlign: 'center', lineHeight: 20 }}>
+              The mower is initializing its motors and sensors.{'\n'}This takes about 10 seconds.
+            </Text>
+            <View style={styles.statsChips}>
+              <Text style={[styles.sensorChip, { backgroundColor: bleConnected ? 'rgba(0,212,170,0.15)' : 'rgba(239,68,68,0.15)', color: bleConnected ? colors.emerald : colors.red }]}>
+                BLE: {bleConnected ? 'OK' : 'OFF'}
+              </Text>
+              <Text style={styles.sensorChip}>Loc: {locQuality}%</Text>
+              <Text style={styles.sensorChip}>Bat: {battery}%</Text>
+            </View>
+          </View>
+
         /* ── Pre-mapping: map view + joystick overlay — drive to start point ── */
         ) : mappingState === 'preMapping' ? (
           <View style={{ flex: 1 }}>
@@ -1021,6 +1051,7 @@ export default function MappingScreen() {
               closed={ifClosedCycle}
               height={150}
               existingMaps={existingMaps}
+              mowerPosition={mowerLocal}
             />
 
             {/* Mode-specific content */}
