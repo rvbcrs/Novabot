@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { mapRepo } from '../../db/repositories/index.js';
+import { deriveCanonicalName } from '../../db/repositories/maps.js';
 
 describe('MapRepository', () => {
   const sn = 'LFIN0001';
@@ -116,6 +117,64 @@ describe('MapRepository', () => {
     it('returns empty array and no-ops when target does not exist', () => {
       const deleted = mapRepo.deleteWithCascade('nonexistent', sn);
       expect(deleted).toEqual([]);
+    });
+  });
+
+  describe('canonical_name', () => {
+    it('derives map0 from map_name for bare work slots', () => {
+      expect(deriveCanonicalName({ file_name: null, map_name: 'map0', map_type: 'work' })).toBe('map0');
+    });
+
+    it('derives map0 from map0_work.csv file_name', () => {
+      expect(deriveCanonicalName({ file_name: 'map0_work.csv', map_name: 'Backyard', map_type: 'work' })).toBe('map0');
+    });
+
+    it('derives obstacle canonical from file_name', () => {
+      expect(deriveCanonicalName({ file_name: 'map1_3_obstacle.csv', map_name: 'tree', map_type: 'obstacle' })).toBe('map1_3_obstacle');
+    });
+
+    it('derives unicom canonical from file_name', () => {
+      expect(deriveCanonicalName({ file_name: 'map0tomap1_0_unicom.csv', map_name: null, map_type: 'unicom' })).toBe('map0tomap1_0_unicom');
+      expect(deriveCanonicalName({ file_name: 'map0tocharge_unicom.csv', map_name: null, map_type: 'unicom' })).toBe('map0tocharge_unicom');
+    });
+
+    it('ignores shared ZIP file_name and falls back to map_name', () => {
+      const zip = 'LFIN0001_1234567890.zip';
+      expect(deriveCanonicalName({ file_name: zip, map_name: 'map0', map_type: 'work' })).toBe('map0');
+      expect(deriveCanonicalName({ file_name: zip, map_name: 'map0tomap1_0_unicom', map_type: 'unicom' })).toBe('map0tomap1_0_unicom');
+    });
+
+    it('returns null for non-canonical names', () => {
+      expect(deriveCanonicalName({ file_name: null, map_name: 'Backyard', map_type: 'work' })).toBeNull();
+      expect(deriveCanonicalName({ file_name: 'random.bin', map_name: null, map_type: 'work' })).toBeNull();
+    });
+
+    it('auto-derives canonical_name on create', () => {
+      mapRepo.create({ map_id: 'w0', mower_sn: sn, map_name: 'Backyard', file_name: 'map0_work.csv', map_type: 'work' });
+      const row = mapRepo.findById('w0')!;
+      expect(row.canonical_name).toBe('map0');
+    });
+
+    it('findBySnAndCanonical returns the same row regardless of alias', () => {
+      mapRepo.create({ map_id: 'w0', mower_sn: sn, map_name: 'Backyard', file_name: 'map0_work.csv', map_type: 'work' });
+      const found = mapRepo.findBySnAndCanonical(sn, 'map0');
+      expect(found).toBeDefined();
+      expect(found!.map_id).toBe('w0');
+      expect(found!.map_name).toBe('Backyard');
+    });
+
+    it('UNIQUE index blocks duplicate (mower_sn, canonical_name)', () => {
+      mapRepo.create({ map_id: 'w0a', mower_sn: sn, map_name: 'First', file_name: 'map0_work.csv', map_type: 'work' });
+      expect(() =>
+        mapRepo.create({ map_id: 'w0b', mower_sn: sn, map_name: 'Duplicate', file_name: 'map0_work.csv', map_type: 'work' })
+      ).toThrow();
+    });
+
+    it('allows same canonical_name across different mowers', () => {
+      mapRepo.create({ map_id: 'm1w0', mower_sn: sn, map_name: 'A', file_name: 'map0_work.csv', map_type: 'work' });
+      mapRepo.create({ map_id: 'm2w0', mower_sn: 'LFIN9999', map_name: 'B', file_name: 'map0_work.csv', map_type: 'work' });
+      expect(mapRepo.findBySnAndCanonical(sn, 'map0')?.map_id).toBe('m1w0');
+      expect(mapRepo.findBySnAndCanonical('LFIN9999', 'map0')?.map_id).toBe('m2w0');
     });
   });
 

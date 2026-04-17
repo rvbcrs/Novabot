@@ -6,6 +6,7 @@ import crypto from 'crypto';
 import { execSync } from 'child_process';
 import { v4 as uuidv4 } from 'uuid';
 import { equipmentRepo, mapRepo, mapUploadRepo } from '../../db/repositories/index.js';
+import { deriveCanonicalName } from '../../db/repositories/maps.js';
 import { authMiddleware } from '../../middleware/auth.js';
 import { AuthRequest, ok, fail, MapRow } from '../../types/index.js';
 import { parseMapZip, type LocalPoint, type GpsPoint, polygonArea, gpsToLocal } from '../../mqtt/mapConverter.js';
@@ -439,9 +440,24 @@ mapRouter.post('/fragmentUploadEquipmentMap', authMiddleware, upload.single('fil
 
   // Single-chunk or simple upload (no fragmentation)
   if (!chunkIndex && !chunksTotal) {
-    const mapId = uuidv4();
     const fileName = req.file ? path.basename(req.file.path) : null;
 
+    // Dedup: as de app een re-upload doet voor een bestaande firmware slot
+    // (bv. `map0`), hergebruik dan de bestaande row. De user alias (mapName)
+    // mag bijgewerkt worden; de canonical file_name blijft die van de maaier.
+    const canonical = deriveCanonicalName({ file_name: fileName, map_name: mapName ?? null, map_type: 'work' });
+    const existing = canonical ? mapRepo.findBySnAndCanonical(sn, canonical) : undefined;
+
+    if (existing) {
+      if (mapName && mapName !== existing.map_name) {
+        mapRepo.updateNameByIdAndMower(existing.map_id, sn, mapName);
+      }
+      console.log(`[MAP] fragmentUploadEquipmentMap: reused existing map_id=${existing.map_id} for ${sn}/${canonical}`);
+      res.json(ok({ mapId: existing.map_id, uploadId }));
+      return;
+    }
+
+    const mapId = uuidv4();
     mapRepo.upsert({
       map_id: mapId,
       mower_sn: sn,
@@ -450,6 +466,7 @@ mapRouter.post('/fragmentUploadEquipmentMap', authMiddleware, upload.single('fil
       map_max_min: localMapMaxMin,
       file_name: fileName,
       file_size: req.file?.size ?? null,
+      canonical_name: canonical,
     });
 
     res.json(ok({ mapId, uploadId }));
@@ -502,6 +519,20 @@ mapRouter.post('/fragmentUploadEquipmentMap', authMiddleware, upload.single('fil
       out.end();
     });
 
+    // Dedup op (sn, canonical_name) voor re-uploads vanuit Novabot app.
+    const canonical = deriveCanonicalName({ file_name: finalFileName, map_name: mapName ?? null, map_type: 'work' });
+    const existing = canonical ? mapRepo.findBySnAndCanonical(sn, canonical) : undefined;
+
+    if (existing) {
+      if (mapName && mapName !== existing.map_name) {
+        mapRepo.updateNameByIdAndMower(existing.map_id, sn, mapName);
+      }
+      console.log(`[MAP] fragmentUploadEquipmentMap: reused existing map_id=${existing.map_id} for ${sn}/${canonical}`);
+      mapUploadRepo.deleteById(uploadId);
+      res.json(ok({ mapId: existing.map_id, uploadId, complete: true }));
+      return;
+    }
+
     const mapId = uuidv4();
     mapRepo.upsert({
       map_id: mapId,
@@ -511,6 +542,7 @@ mapRouter.post('/fragmentUploadEquipmentMap', authMiddleware, upload.single('fil
       map_max_min: localMapMaxMin,
       file_name: finalFileName,
       file_size: updated.file_size,
+      canonical_name: canonical,
     });
 
     mapUploadRepo.deleteById(uploadId);

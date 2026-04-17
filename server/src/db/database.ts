@@ -313,6 +313,102 @@ export function initDb(): void {
   } catch {
     // Kolom bestaat al — geen actie nodig
   }
+
+  // Voeg canonical_name kolom toe aan maps (migratie – firmware slot identifier)
+  // Gebruikt voor (mower_sn, canonical_name) UNIQUE dedup zodat re-uploads vanuit
+  // Novabot app (user alias) geen duplicate rows maken naast de eigen upload van
+  // de maaier. Waarde bv. `map0`, `map0_0_obstacle`, `map0tocharge_unicom`.
+  try {
+    db.exec(`ALTER TABLE maps ADD COLUMN canonical_name TEXT`);
+    console.log('[DB] Migrated: added maps.canonical_name');
+  } catch {
+    // Kolom bestaat al — geen actie nodig
+  }
+
+  // Backfill canonical_name, dedup bestaande rows en zet UNIQUE index.
+  // Idempotent: bij tweede run vindt de SELECT geen NULL canonical_name meer.
+  {
+    const needsBackfill = db.prepare(
+      'SELECT COUNT(*) as c FROM maps WHERE canonical_name IS NULL'
+    ).get() as { c: number };
+
+    if (needsBackfill.c > 0) {
+      // Herbouw deriveCanonicalName inline (vermijdt circulaire import).
+      const deriveCanonical = (row: { file_name: string | null; map_name: string | null; map_type: string | null }): string | null => {
+        const tryParse = (value: string | null): string | null => {
+          if (!value) return null;
+          const base = value.endsWith('.csv') ? value.slice(0, -4) : value;
+          if (/\.zip$/i.test(value) || /^LFI[NC]\d+_\d+/.test(base)) return null;
+          if (/^map\d+$/.test(base) && (row.map_type === 'work' || !row.map_type)) return base;
+          const workMatch = base.match(/^(map\d+)_work$/);
+          if (workMatch) return workMatch[1];
+          if (/^map\d+_\d+_obstacle$/.test(base)) return base;
+          if (/^map\d+tomap\d+_\d+_unicom$/.test(base)) return base;
+          if (/^map\d+tocharge_unicom$/.test(base)) return base;
+          return null;
+        };
+        return tryParse(row.file_name) ?? tryParse(row.map_name);
+      };
+
+      const rows = db.prepare(
+        'SELECT map_id, mower_sn, file_name, map_name, map_type FROM maps WHERE canonical_name IS NULL'
+      ).all() as Array<{ map_id: string; mower_sn: string; file_name: string | null; map_name: string | null; map_type: string | null }>;
+
+      const updateCanonical = db.prepare('UPDATE maps SET canonical_name = ? WHERE map_id = ?');
+      let filled = 0;
+      for (const row of rows) {
+        const canonical = deriveCanonical(row);
+        if (canonical) {
+          updateCanonical.run(canonical, row.map_id);
+          filled++;
+        }
+      }
+      if (filled > 0) console.log(`[DB] Backfilled canonical_name on ${filled} map row(s)`);
+
+      // Dedup: bij (mower_sn, canonical_name) duplicates, bewaar de nieuwste
+      // (hoogste updated_at) en verwijder de rest. Meestal staat de app's
+      // ZIP-upload en de maaier's CSV-upload naast elkaar — de maaier's upload
+      // heeft doorgaans een hogere updated_at en bevat de canonical file_name.
+      const duplicates = db.prepare(`
+        SELECT mower_sn, canonical_name, COUNT(*) as c
+        FROM maps
+        WHERE canonical_name IS NOT NULL
+        GROUP BY mower_sn, canonical_name
+        HAVING c > 1
+      `).all() as Array<{ mower_sn: string; canonical_name: string; c: number }>;
+
+      let removed = 0;
+      for (const dup of duplicates) {
+        const allRows = db.prepare(
+          'SELECT map_id, map_name, file_name, updated_at FROM maps WHERE mower_sn = ? AND canonical_name = ? ORDER BY updated_at DESC'
+        ).all(dup.mower_sn, dup.canonical_name) as Array<{ map_id: string; map_name: string | null; file_name: string | null; updated_at: string }>;
+
+        const keeper = allRows[0];
+        // Pak een user-alias uit de oudere rijen als de keeper er geen heeft.
+        if (!keeper.map_name) {
+          const alias = allRows.slice(1).find(r => r.map_name)?.map_name;
+          if (alias) {
+            db.prepare("UPDATE maps SET map_name = ? WHERE map_id = ?").run(alias, keeper.map_id);
+          }
+        }
+        for (const row of allRows.slice(1)) {
+          db.prepare('DELETE FROM maps WHERE map_id = ?').run(row.map_id);
+          removed++;
+        }
+      }
+      if (removed > 0) {
+        console.log(`[DB] Deduped ${removed} duplicate map row(s) by (mower_sn, canonical_name)`);
+      }
+    }
+
+    // UNIQUE index op (mower_sn, canonical_name) — alleen waar canonical_name niet NULL is,
+    // zodat legacy rijen zonder canonical_name elkaar niet blokkeren.
+    db.exec(
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_maps_sn_canonical
+       ON maps(mower_sn, canonical_name)
+       WHERE canonical_name IS NOT NULL`
+    );
+  }
   // Migreer bestaande kaarten op basis van map_id en map_name patronen (idempotent)
   const migrated = db.prepare(`
     UPDATE maps SET map_type = 'obstacle'
