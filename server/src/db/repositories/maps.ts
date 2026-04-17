@@ -53,6 +53,30 @@ export interface SetCalibrationData {
   gps_charger_lng?: number | null;
 }
 
+/**
+ * Extract the canonical `mapN` prefix (e.g. "map0", "map12") from a row.
+ * Prefers file_name (always holds the mower's internal name) and falls back
+ * to map_name (used on installs that store the shared ZIP as file_name).
+ */
+function extractCanonicalPrefix(row: Pick<MapRow, 'file_name' | 'map_name'>): string | null {
+  const fileMatch = row.file_name?.match(/^(map\d+)(?=[_t])/);
+  if (fileMatch) return fileMatch[1];
+  const nameMatch = row.map_name?.match(/^(map\d+)(?:$|[_t])/);
+  return nameMatch ? nameMatch[1] : null;
+}
+
+/** Check whether `row` is a dependent of the map identified by `prefix`. */
+function isRelatedByPrefix(row: Pick<MapRow, 'file_name' | 'map_name'>, prefix: string): boolean {
+  const candidates = [row.file_name, row.map_name].filter((v): v is string => !!v);
+  // Obstacles owned by this map: e.g. map1_0_obstacle, map1_3_obstacle.csv
+  const obstacleRe = new RegExp(`^${prefix}_\\d+_obstacle(\\.|$)`);
+  // Unicoms starting from this map: e.g. map1tocharge_unicom, map1tomap2_0_unicom
+  const outgoingRe = new RegExp(`^${prefix}to[a-z0-9]+(_|\\.|$)`);
+  // Unicoms ending at this map: e.g. map0tomap1_0_unicom
+  const incomingRe = new RegExp(`to${prefix}(_|\\.|$)`);
+  return candidates.some(v => obstacleRe.test(v) || outgoingRe.test(v) || incomingRe.test(v));
+}
+
 export class MapRepository {
   // ── Prepared statements (cached for performance) ──
 
@@ -219,6 +243,43 @@ export class MapRepository {
 
   deleteByIdAndMower(mapId: string, mowerSn: string): void {
     this._deleteByIdAndMower.run(mapId, mowerSn);
+  }
+
+  /**
+   * Delete a work-map row AND its related obstacle/unicom rows in one transaction.
+   * Related rows are matched by canonical `mapN` prefix extracted from file_name
+   * (e.g. `map1_work.csv` → prefix `map1`) or map_name (e.g. `map1`).
+   *
+   * Cascades:
+   *   - obstacles: file_name LIKE `{prefix}_%_obstacle%` (or map_name for shared-zip installs)
+   *   - outgoing unicom: `{prefix}to%` (including `{prefix}tocharge_unicom`)
+   *   - incoming unicom: `%to{prefix}\_%` (trailing underscore avoids matching `map10` via `map1`)
+   *
+   * Returns the list of rows that were deleted, so callers can unlink the
+   * associated files and emit a single auto-push afterwards.
+   */
+  deleteWithCascade(mapId: string, mowerSn: string): MapRow[] {
+    const target = this.findByIdAndMower(mapId, mowerSn);
+    if (!target) return [];
+
+    const prefix = extractCanonicalPrefix(target);
+    const deleted: MapRow[] = [target];
+
+    const tx = db.transaction(() => {
+      this._deleteByIdAndMower.run(mapId, mowerSn);
+      if (prefix) {
+        const candidates = db.prepare('SELECT * FROM maps WHERE mower_sn = ? AND map_id != ?').all(mowerSn, mapId) as MapRow[];
+        for (const row of candidates) {
+          if (isRelatedByPrefix(row, prefix)) {
+            this._deleteById.run(row.map_id);
+            deleted.push(row);
+          }
+        }
+      }
+    });
+    tx();
+
+    return deleted;
   }
 
   // ── Map aggregates ──

@@ -678,7 +678,7 @@ dashboardRouter.patch('/maps/:sn/:mapId', (req: Request, res: Response) => {
   if (mapArea) autoPushMapsInBackground(sn);
 });
 
-// DELETE /api/dashboard/maps/:sn/:mapId — verwijder een kaart
+// DELETE /api/dashboard/maps/:sn/:mapId — verwijder een kaart (incl. bijbehorende obstakels en unicom-kanalen)
 dashboardRouter.delete('/maps/:sn/:mapId', (req: Request, res: Response) => {
   const { sn, mapId } = req.params;
 
@@ -688,16 +688,23 @@ dashboardRouter.delete('/maps/:sn/:mapId', (req: Request, res: Response) => {
     return;
   }
 
-  // Verwijder eventueel opgeslagen bestand
-  if (row.file_name) {
-    const filePath = path.resolve('storage/maps', row.file_name);
+  const deleted = mapRepo.deleteWithCascade(mapId, sn);
+
+  const removedFiles = new Set<string>();
+  for (const d of deleted) {
+    if (!d.file_name || removedFiles.has(d.file_name)) continue;
+    // Alleen unlinken als het bestand niet nog door een andere (niet-verwijderde) row wordt gedeeld
+    const stillReferenced = mapRepo.findByMowerSn(sn).some(r => r.file_name === d.file_name);
+    if (stillReferenced) continue;
+    removedFiles.add(d.file_name);
+    const filePath = path.resolve('storage/maps', d.file_name);
     if (existsSync(filePath)) {
       try { unlinkSync(filePath); } catch { /* ignore */ }
     }
   }
 
-  mapRepo.deleteByIdAndMower(mapId, sn);
-  res.json({ ok: true });
+  console.log(`[DELETE] ${sn}: cascade verwijderd ${deleted.length} row(s) (root: ${row.map_name ?? row.file_name ?? mapId})`);
+  res.json({ ok: true, deleted: deleted.length });
 
   // Auto-push naar maaier (bijgewerkte kaarten zonder de verwijderde)
   autoPushMapsInBackground(sn);

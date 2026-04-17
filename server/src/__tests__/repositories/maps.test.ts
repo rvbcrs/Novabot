@@ -78,6 +78,47 @@ describe('MapRepository', () => {
     });
   });
 
+  describe('deleteWithCascade', () => {
+    it('cascades obstacles and unicom channels matching the canonical prefix', () => {
+      // Mirror the real mower layout — work rows carry file_name like "map1_work.csv"
+      mapRepo.create({ map_id: 'w0', mower_sn: sn, map_name: 'Zone0', file_name: 'map0_work.csv', map_type: 'work' });
+      mapRepo.create({ map_id: 'w1', mower_sn: sn, map_name: 'Zone1', file_name: 'map1_work.csv', map_type: 'work' });
+      mapRepo.create({ map_id: 'w2', mower_sn: sn, map_name: 'Zone2', file_name: 'map2_work.csv', map_type: 'work' });
+      mapRepo.create({ map_id: 'o1a', mower_sn: sn, map_name: 'tree', file_name: 'map1_0_obstacle.csv', map_type: 'obstacle' });
+      mapRepo.create({ map_id: 'o1b', mower_sn: sn, map_name: 'bush', file_name: 'map1_3_obstacle.csv', map_type: 'obstacle' });
+      mapRepo.create({ map_id: 'u01', mower_sn: sn, map_name: 'ch01', file_name: 'map0tomap1_0_unicom.csv', map_type: 'unicom' });
+      mapRepo.create({ map_id: 'u12', mower_sn: sn, map_name: 'ch12', file_name: 'map1tomap2_0_unicom.csv', map_type: 'unicom' });
+      mapRepo.create({ map_id: 'u0c', mower_sn: sn, map_name: 'charge0', file_name: 'map0tocharge_unicom.csv', map_type: 'unicom' });
+      // Sibling that must survive (map10 must NOT match map1)
+      mapRepo.create({ map_id: 'w10', mower_sn: sn, map_name: 'Zone10', file_name: 'map10_work.csv', map_type: 'work' });
+
+      const deleted = mapRepo.deleteWithCascade('w1', sn);
+      const deletedIds = deleted.map(d => d.map_id).sort();
+      expect(deletedIds).toEqual(['o1a', 'o1b', 'u01', 'u12', 'w1']);
+
+      const remaining = mapRepo.findByMowerSn(sn).map(r => r.map_id).sort();
+      expect(remaining).toEqual(['u0c', 'w0', 'w10', 'w2']);
+    });
+
+    it('falls back to map_name when file_name is the shared ZIP', () => {
+      // Installs that persist the shared ZIP name carry canonical names in map_name
+      const zip = 'LFIN0001_latest.zip';
+      mapRepo.create({ map_id: 'w0', mower_sn: sn, map_name: 'map0', file_name: zip, map_type: 'work' });
+      mapRepo.create({ map_id: 'u01', mower_sn: sn, map_name: 'map0tomap1_0_unicom', file_name: zip, map_type: 'unicom' });
+      mapRepo.create({ map_id: 'u0c', mower_sn: sn, map_name: 'map0tocharge_unicom', file_name: zip, map_type: 'unicom' });
+
+      const deleted = mapRepo.deleteWithCascade('w0', sn);
+      const deletedIds = deleted.map(d => d.map_id).sort();
+      expect(deletedIds).toEqual(['u01', 'u0c', 'w0']);
+      expect(mapRepo.countByMowerSn(sn)).toBe(0);
+    });
+
+    it('returns empty array and no-ops when target does not exist', () => {
+      const deleted = mapRepo.deleteWithCascade('nonexistent', sn);
+      expect(deleted).toEqual([]);
+    });
+  });
+
   describe('calibration', () => {
     it('set and get calibration', () => {
       mapRepo.setCalibration(sn, {

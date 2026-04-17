@@ -546,19 +546,17 @@ export default function MappingScreen() {
       }
     } catch {}
 
-    // EXACT Novabot app flow (blutter decompilation build_map_page/logic.dart):
-    // - First map (buildMapType 0): start_scan_map { model, manual, mapName, map0, type, cmd_num }
-    // - Additional maps (buildMapType 1+): add_scan_map { mapName, type: null, cmd_num }
+    // EXACT Novabot app flow (blutter v2.4.0 build_map_page/logic.dart clickStart):
+    // - First map:       start_scan_map { model: "manual", mapName: "map0", type: null, cmd_num }
+    // - Additional maps: add_scan_map   { model: "manual", mapName: <name>, type: null, cmd_num }
+    // Flutter hardcodes mapName="map0" for start_scan_map regardless of selected buildMapType.
     const mapName = mapBuildType === 'work' ? nextWorkMapName : `map${existingWorkMapCount}`;
     setActiveMapName(mapName);
 
     if (existingWorkMapCount === 0) {
-      const model = mapBuildType === 'obstacle' ? 'obstacle' : 'border';
-      const scanType = mapBuildType === 'obstacle' ? 1 : 0;
-      sendCommand({ start_scan_map: { model, manual: true, mapName, map0: '', type: scanType, cmd_num: cmdNumRef.current++ } }, 'start_scan_map');
+      sendCommand({ start_scan_map: { model: 'manual', mapName: 'map0', type: null, cmd_num: cmdNumRef.current++ } }, 'start_scan_map');
     } else {
-      // add_scan_map: only mapName + type (null) + cmd_num — NO model, NO manual
-      sendCommand({ add_scan_map: { mapName, type: null, cmd_num: cmdNumRef.current++ } }, 'add_scan_map');
+      sendCommand({ add_scan_map: { model: 'manual', mapName, type: null, cmd_num: cmdNumRef.current++ } }, 'add_scan_map');
     }
     console.log(`[Mapping] Recording started (${existingWorkMapCount === 0 ? 'start' : 'add'}_scan_map, map: ${mapName}, ${existingWorkMapCount} existing)`);
 
@@ -589,16 +587,19 @@ export default function MappingScreen() {
             if (joystickActiveRef.current) stopJoystick();
             const mapType = mapBuildType === 'obstacle' ? 1 : 0;
 
-            // Step 1: stop_erase_map → wait for respond (6s timeout)
-            // Novabot app: clickStop() sends stop_erase_map (NOT stop_scan_map)
+            // Step 1: stop_scan_map → wait for respond (20s timeout)
+            // Flutter clickDone() sends stop_scan_map { value, cmd_num } — NOT stop_erase_map (that's cancel).
+            // value = true when buildMapType is the work-map enum (Obj!BuildMapType@a4b901), else false.
             setMappingState('stopping');
-            sendCommand({ stop_erase_map: { cmd_num: cmdNumRef.current++ } }, 'stop_erase_map');
-            console.log('[Mapping] Step 1: stop_erase_map sent, waiting for respond...');
-            const stopOk = await waitForRespond('stop_erase_map_respond', 6000);
-            console.log(`[Mapping] Step 1: stop_erase_map_respond ${stopOk ? 'OK' : 'TIMEOUT'}`);
+            const value = mapBuildType === 'work';
+            sendCommand({ stop_scan_map: { value, cmd_num: cmdNumRef.current++ } }, 'stop_scan_map');
+            console.log('[Mapping] Step 1: stop_scan_map sent, waiting for respond...');
+            const stopOk = await waitForRespond('stop_scan_map_respond', 20000);
+            console.log(`[Mapping] Step 1: stop_scan_map_respond ${stopOk ? 'OK' : 'TIMEOUT'}`);
 
             // Step 2: save_map → wait for respond (12s timeout)
-            // Novabot app: save_map { mapName, type, cmd_num } with 12s timeout
+            // Flutter _writeSaveMap(): save_map { mapName, type, cmd_num } with 12s timeout.
+            // Triggered from _getMsgFromDevice when stop_scan_map_respond arrives.
             await new Promise(r => setTimeout(r, 1000));
             sendCommand({ save_map: { mapName: activeMapName, type: mapType, cmd_num: cmdNumRef.current++ } }, 'save_map');
             console.log('[Mapping] Step 2: save_map sent, waiting for respond...');
