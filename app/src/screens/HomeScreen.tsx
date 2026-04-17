@@ -659,7 +659,9 @@ export default function HomeScreen() {
   if (noMower || mowerOffline) {
     return (
       <View style={[styles.container, { paddingTop: insets.top }]}>
-        <ScrollView contentContainerStyle={styles.emptyScroll}>
+        <ScrollView contentContainerStyle={styles.emptyScroll} refreshControl={
+          <RefreshControl refreshing={refreshing} tintColor={colors.purple} onRefresh={handleRefresh} />
+        }>
 
 
           {/* Device sets — sorted: sets with online devices first */}
@@ -1155,27 +1157,6 @@ export default function HomeScreen() {
                   </>
                 )}
               </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.actionButton, styles.actionButtonBlue]}
-                onPress={() =>
-                  { sendGoHome(mower.sn); setOptimisticActivity('returning'); }
-                }
-                disabled={commandLoading !== null}
-                activeOpacity={0.7}
-              >
-                {commandLoading === 'home' ? (
-                  <ActivityIndicator size="small" color={colors.white} />
-                ) : (
-                  <>
-                    <Ionicons name="home" size={20} color={colors.white} />
-                  </>
-                )}
-              </TouchableOpacity>
-            </View>
-          )}
-
-          {displayActivity === 'error' && (
-            <View style={styles.actionRow}>
               <TouchableOpacity
                 style={[styles.actionButton, styles.actionButtonBlue]}
                 onPress={() =>

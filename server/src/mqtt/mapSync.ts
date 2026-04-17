@@ -54,7 +54,7 @@ export function goToChargePayload(sn: string): Record<string, unknown> {
 const pendingRequests = new Set<string>();
 
 // Callback voor live outline updates → dashboard via Socket.io
-type OutlineEmitter = (sn: string, points: Array<{ lat: number; lng: number }>) => void;
+type OutlineEmitter = (sn: string, points: Array<{ lat: number; lng: number }>, localPoints: Array<{ x: number; y: number }>) => void;
 let outlineEmitter: OutlineEmitter | null = null;
 
 export function setOutlineEmitter(fn: OutlineEmitter): void {
@@ -631,8 +631,8 @@ function handleMapOutlineResponse(sn: string, data: unknown): void {
 
   console.log(`${TAG} Kaart "${displayName}" (${mapId}) opgeslagen: ${localPoints.length} punten (lokaal), bounds: ${JSON.stringify(bounds)}`);
 
-  // Stuur live outline naar dashboard via Socket.io (GPS voor Leaflet)
-  outlineEmitter?.(sn, points);
+  // Stuur live outline naar dashboard via Socket.io (GPS + lokaal)
+  outlineEmitter?.(sn, points, localPoints);
 }
 
 /**

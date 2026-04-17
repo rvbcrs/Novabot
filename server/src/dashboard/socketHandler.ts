@@ -66,7 +66,7 @@ export function initDashboardSocket(httpServer: HttpServer): void {
   });
 
   // Stuur live kaart-outlines naar dashboard tijdens actief mappen
-  setOutlineEmitter((sn, points) => io!.emit('map:outline', { sn, points, timestamp: Date.now() }));
+  setOutlineEmitter((sn, points, localPoints) => io!.emit('map:outline', { sn, points, localPoints, timestamp: Date.now() }));
 
   // Start BLE logger — uses io.emit for broadcasting
   initBleLogger((event, data) => io!.emit(event, data));

@@ -146,6 +146,9 @@ export default function MappingScreen() {
   const [trailPoints, setTrailPoints] = useState<Array<{x: number; y: number}>>([]);
   const lastTrailRef = useRef<{x: number; y: number} | null>(null);
 
+  // ── Existing maps (shown greyed-out during mapping) ──
+  const [existingMaps, setExistingMaps] = useState<Array<{ mapId: string; mapType: string; points: Array<{x: number; y: number}> }>>([]);
+
   // ── Sensor readiness ──
   const gpsValid = sensors.gps_valid === '1'
     || sensors.gps_satellites !== undefined
@@ -156,6 +159,23 @@ export default function MappingScreen() {
   const locReady = locQuality >= 80 && locState !== 'NOT_INITIALIZED';
   const mappingReady = gpsValid && locReady;
   const battery = parseInt(sensors.battery_power ?? sensors.battery_capacity ?? '0', 10) || 0;
+
+  // ── Load existing maps (shown as grey overlay during mapping) ──
+  useEffect(() => {
+    if (!sn) return;
+    (async () => {
+      try {
+        const url = await getServerUrl();
+        if (!url) return;
+        const api = new ApiClient(url);
+        const res = await api.fetchMaps(sn);
+        const loaded = (res.maps ?? [])
+          .filter((m: any) => m.mapArea?.length >= 3)
+          .map((m: any) => ({ mapId: m.mapId, mapType: m.mapType ?? 'work', points: m.mapArea }));
+        setExistingMaps(loaded);
+      } catch { /* ignore */ }
+    })();
+  }, [sn]);
 
   // ── Detect closed cycle: mower sensor OR proximity of last point to first point ──
   const ifClosedCycle = sensors.if_closed_cycle === '1';
@@ -182,20 +202,43 @@ export default function MappingScreen() {
     }
   }, [ifClosedCycle, mappingState, closedCycleSeen, trailPoints]);
 
-  // ── Collect trail points from map_position sensor data ──
+  // ── Mower position from sensor data ──
   const mapPosX = sensors.map_position_x;
   const mapPosY = sensors.map_position_y;
   const mapOrientation = parseFloat(sensors.map_position_orientation ?? '0') || 0;
+  const mowerLocal = mapPosX != null && mapPosY != null
+    ? { x: parseFloat(mapPosX) || 0, y: parseFloat(mapPosY) || 0 }
+    : null;
 
+  // ── Live outline from maaier via Socket.io (report_state_map_outline → map:outline) ──
+  // This replaces the slow map_position_x/y polling with the maaier's own boundary polygon
+  useEffect(() => {
+    if (mappingState !== 'mapping' && mappingState !== 'preMapping') return;
+    const socket = getSocket();
+    if (!socket) return;
+
+    const handleOutline = (data: { sn: string; localPoints?: Array<{x: number; y: number}> }) => {
+      if (data.sn !== sn || !data.localPoints?.length) return;
+      outlineActiveRef.current = true;
+      setTrailPoints(data.localPoints);
+    };
+
+    socket.on('map:outline', handleOutline);
+    return () => { socket.off('map:outline', handleOutline); };
+  }, [mappingState, sn]);
+
+  // Fallback: collect trail from map_position sensor data (slower, ~3-5s interval)
+  // Used when maaier doesn't send report_state_map_outline
+  const outlineActiveRef = useRef(false);
   useEffect(() => {
     if (mappingState !== 'mapping') return;
+    if (outlineActiveRef.current) return; // outline is providing data, skip fallback
     if (mapPosX === undefined || mapPosY === undefined) return;
 
     const x = parseFloat(mapPosX);
     const y = parseFloat(mapPosY);
     if (isNaN(x) || isNaN(y)) return;
 
-    // Skip duplicate points (same position)
     const last = lastTrailRef.current;
     if (last && Math.abs(last.x - x) < 0.01 && Math.abs(last.y - y) < 0.01) return;
 
@@ -857,29 +900,38 @@ export default function MappingScreen() {
             </View>
           </ScrollView>
 
-        /* ── Pre-mapping: drive to start point, NOT recording yet ── */
+        /* ── Pre-mapping: map view + joystick overlay — drive to start point ── */
         ) : mappingState === 'preMapping' ? (
-          <View style={styles.mappingContent}>
-            <View style={[styles.card, { alignItems: 'center', paddingVertical: 20 }]}>
-              <Ionicons name="navigate-outline" size={40} color={colors.amber} />
-              <Text style={{ color: colors.white, fontSize: 18, fontWeight: '700', marginTop: 12 }}>
-                Drive to Start Point
-              </Text>
-              <Text style={{ color: colors.textMuted, fontSize: 14, textAlign: 'center', marginTop: 8, lineHeight: 20 }}>
-                Use the joystick to drive the mower from the charger to where you want to start mapping the boundary.{'\n\n'}
-                Press "Begin Recording" when you're at the start point.
-              </Text>
+          <View style={{ flex: 1 }}>
+            {/* Map with existing maps + live mower position */}
+            <View style={{ flex: 1, justifyContent: 'center' }}>
+              <LiveMapView
+                points={[]}
+                orientation={mapOrientation}
+                closed={false}
+                height={SCREEN_W - 32}
+                existingMaps={existingMaps}
+                mowerPosition={mowerLocal}
+              />
             </View>
 
-            {/* Joystick */}
-            <View style={styles.joystickArea}>
-              <View style={styles.speedInfo}>
-                {joystickActive ? (
-                  <Text style={styles.speedText}>{(joystickDist * SPEED_LEVELS[speedLevel].linear).toFixed(2)} m/s</Text>
-                ) : (
-                  <Text style={[styles.speedText, { color: colors.textMuted }]}>Drag to drive</Text>
-                )}
+            {/* Joystick overlay (semi-transparent, bottom of screen) */}
+            <View style={styles.preMappingOverlay}>
+              <View style={styles.preMappingHeader}>
+                <Text style={styles.preMappingTitle}>Drive to Start Point</Text>
+                <View style={styles.speedRow}>
+                  {SPEED_LEVELS.map((lvl, i) => (
+                    <TouchableOpacity key={i}
+                      style={[styles.speedBtn, speedLevel === i && styles.speedBtnActive]}
+                      onPress={() => setSpeedLevel(i)} activeOpacity={0.7}>
+                      <Text style={[styles.speedBtnText, speedLevel === i && { color: colors.white }]}>
+                        {t(lvl.labelKey, undefined) || lvl.labelKey}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
               </View>
+
               <View style={styles.joystickContainer}>
                 <GestureDetector gesture={panGesture}>
                   <View style={[styles.joystickBase, { width: JOYSTICK_SIZE, height: JOYSTICK_SIZE }]}>
@@ -894,35 +946,23 @@ export default function MappingScreen() {
                   </View>
                 </GestureDetector>
               </View>
-              <View style={styles.speedRow}>
-                {SPEED_LEVELS.map((lvl, i) => (
-                  <TouchableOpacity key={i}
-                    style={[styles.speedBtn, speedLevel === i && styles.speedBtnActive]}
-                    onPress={() => setSpeedLevel(i)} activeOpacity={0.7}>
-                    <Text style={[styles.speedBtnText, speedLevel === i && { color: colors.white }]}>
-                      {t(lvl.labelKey, undefined) || lvl.labelKey}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </View>
 
-            {/* Begin Recording button */}
-            <View style={styles.actionRow}>
-              <TouchableOpacity style={styles.cancelBtn} onPress={() => {
-                if (joystickActiveRef.current) stopJoystick();
-                setMappingState('idle');
-                setMappingMode(null);
-              }} activeOpacity={0.7}>
-                <Ionicons name="close-circle" size={20} color={colors.red} />
-                <Text style={[styles.actionText, { color: colors.red }]}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.stopMapBtn, { backgroundColor: colors.emerald }]}
-                onPress={handleBeginRecording} activeOpacity={0.7}>
-                <Ionicons name="radio-button-on" size={20} color={colors.white} />
-                <Text style={styles.actionText}>Begin Recording</Text>
-              </TouchableOpacity>
+              <View style={styles.actionRow}>
+                <TouchableOpacity style={styles.cancelBtn} onPress={() => {
+                  if (joystickActiveRef.current) stopJoystick();
+                  setMappingState('idle');
+                  setMappingMode(null);
+                }} activeOpacity={0.7}>
+                  <Ionicons name="close-circle" size={20} color={colors.red} />
+                  <Text style={[styles.actionText, { color: colors.red }]}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.stopMapBtn, { backgroundColor: colors.emerald }]}
+                  onPress={handleBeginRecording} activeOpacity={0.7}>
+                  <Ionicons name="radio-button-on" size={20} color={colors.white} />
+                  <Text style={styles.actionText}>Begin Recording</Text>
+                </TouchableOpacity>
+              </View>
             </View>
           </View>
 
@@ -980,6 +1020,7 @@ export default function MappingScreen() {
               orientation={mapOrientation}
               closed={ifClosedCycle}
               height={150}
+              existingMaps={existingMaps}
             />
 
             {/* Mode-specific content */}
@@ -1089,6 +1130,36 @@ export default function MappingScreen() {
         /* ── Charger positioning: drive to ~50cm, then auto-dock ── */
         ) : mappingState === 'chargerPosition' ? (
           <View style={styles.chargerContent}>
+            {/* Connection + error status bar */}
+            <View style={styles.statsBar}>
+              <View style={styles.statsChips}>
+                <Text style={[styles.sensorChip, { backgroundColor: bleConnected ? 'rgba(0,212,170,0.15)' : 'rgba(239,68,68,0.15)', color: bleConnected ? colors.emerald : colors.red }]}>
+                  BLE: {bleConnected ? 'OK' : bleConnecting ? '...' : 'OFF'}
+                </Text>
+                <Text style={[styles.sensorChip, { backgroundColor: mowerOnline ? 'rgba(0,212,170,0.15)' : 'rgba(239,68,68,0.15)', color: mowerOnline ? colors.emerald : colors.red }]}>
+                  MQTT: {mowerOnline ? 'OK' : 'OFF'}
+                </Text>
+                <Text style={styles.sensorChip}>
+                  Bat: {battery}%
+                </Text>
+                {parseInt(sensors.error_status ?? '0', 10) > 0 && (
+                  <Text style={[styles.sensorChip, { backgroundColor: 'rgba(239,68,68,0.15)', color: colors.red }]}>
+                    Error: {sensors.error_status}
+                  </Text>
+                )}
+              </View>
+            </View>
+
+            {/* Error banner */}
+            {parseInt(sensors.error_status ?? '0', 10) > 0 && (
+              <View style={{ backgroundColor: 'rgba(239,68,68,0.1)', borderRadius: 12, padding: 12, marginBottom: 4, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <Ionicons name="warning" size={18} color={colors.red} />
+                <Text style={{ color: colors.red, fontSize: 13, flex: 1 }}>
+                  {sensors.error_msg ?? `Error ${sensors.error_status}`}
+                </Text>
+              </View>
+            )}
+
             <View style={styles.chargerCard}>
               <View style={styles.chargerIconContainer}>
                 <Ionicons name="battery-charging" size={56} color={colors.emerald} />
@@ -1104,7 +1175,7 @@ export default function MappingScreen() {
                   : 'Drive the mower to approximately 50cm in front of the charger, facing it directly.\n\nThen tap "Auto Dock" to let the mower park itself.'}
               </Text>
 
-              {/* Status */}
+              {/* Dock status */}
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 12 }}>
                 <View style={{ width: 12, height: 12, borderRadius: 6,
                   backgroundColor: dockedOnCharger ? colors.emerald : autoDockFailed ? colors.red : colors.amber }} />
@@ -1241,6 +1312,21 @@ const styles = StyleSheet.create({
   title: { fontSize: 24, fontWeight: '800', color: colors.white },
   content: { flex: 1, paddingHorizontal: 16 },
   mappingContent: { flex: 1, paddingHorizontal: 16, gap: 8 },
+  preMappingOverlay: {
+    paddingHorizontal: 16,
+    paddingBottom: 8,
+    gap: 8,
+  },
+  preMappingHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  preMappingTitle: {
+    color: colors.white,
+    fontSize: 15,
+    fontWeight: '700',
+  },
   centerBox: { flex: 1, justifyContent: 'center', alignItems: 'center', gap: 12, paddingHorizontal: 32 },
   centerTitle: { fontSize: 20, fontWeight: '700', color: colors.white, textAlign: 'center' },
   centerSub: { fontSize: 14, color: colors.textMuted, textAlign: 'center' },

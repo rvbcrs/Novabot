@@ -16,7 +16,7 @@ import { startHomeAssistantBridge, forwardToHomeAssistant, publishDeviceOnline, 
 import { updateDeviceData, clearDeviceData } from './sensorData.js';
 import { isDemoMode } from '../services/demoSimulator.js';
 import { forwardToDashboard, emitDeviceOnline, emitDeviceOffline, pushMqttLog, emitOtaEvent, emitPinEvent, emitExtendedEvent, emitCommandRespond } from '../dashboard/socketHandler.js';
-import { initMapSync, onMowerConnected, handleMapMessage, handleExtendedResponse } from './mapSync.js';
+import { initMapSync, handleMapMessage, handleExtendedResponse } from './mapSync.js';
 
 const PROXY_MODE = process.env.PROXY_MODE ?? 'local';
 
@@ -591,7 +591,11 @@ export async function startMqttBroker(): Promise<void> {
       onlineBySn.get(sn)!.add(clientId);
       publishDeviceOnline(sn);
       emitDeviceOnline(sn);
-      onMowerConnected(sn);
+      // Cloud-identiek: GEEN proactieve commando's sturen bij connect.
+      // onMowerConnected() stuurde ota_version_info, get_map_list, etc.
+      // Dit veroorzaakte crash loops bij David's maaier (mqtt_node crasht
+      // als commando's te snel na connect binnenkomen).
+      // De cloud stuurt nooit proactief commando's naar apparaten.
     }
 
     (callback as Function)(null, true);

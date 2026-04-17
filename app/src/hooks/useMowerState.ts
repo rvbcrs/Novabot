@@ -67,9 +67,11 @@ export function useMowerState(): UseMowerStateResult {
       if (existing) {
         next.set(e.sn, { ...existing, online: true, lastUpdate: Date.now() });
       } else {
+        // New device — derive type from SN prefix
+        const deviceType = e.sn?.startsWith('LFIC') ? 'charger' : 'mower';
         next.set(e.sn, {
           sn: e.sn,
-          deviceType: e.deviceType as 'charger' | 'mower',
+          deviceType: (e as any).deviceType ?? deviceType,
           online: true,
           sensors: {},
           lastUpdate: Date.now(),
@@ -77,6 +79,8 @@ export function useMowerState(): UseMowerStateResult {
       }
       return next;
     });
+    // Request fresh snapshot so we get full sensor data for the newly online device
+    socketRef.current?.emit('request:snapshot');
   }, []);
 
   const handleDeviceOffline = useCallback((e: DeviceOnlineEvent) => {
