@@ -163,34 +163,54 @@ export default function MowerSettingsScreen() {
     });
   };
 
+  // Send ONLY the field the user changed. Sending the whole bundle every time
+  // (the previous behaviour) quietly overrode the other settings — e.g. every
+  // path_direction slider event carried `headlight: 0`, which resets the dock
+  // LED from 255 back to dim via the server's led_bridge translation
+  // (dashboard.ts:1508-1510). Novabot sends individual fields per change and
+  // only emits a full bundle on the Advanced Settings "Confirm" button.
+  const sendSingle = (params: Record<string, unknown>) => sendSetting('single', async (api) => {
+    await api.sendCommand(mowerSn, { set_para_info: params });
+    const url = await getServerUrl();
+    if (url) {
+      await fetch(`${url}/api/dashboard/sensor-override/${encodeURIComponent(mowerSn)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(
+          Object.fromEntries(Object.entries(params).map(([k, v]) => [k, String(v)])),
+        ),
+      });
+    }
+  });
+
   const handleSensitivity = (level: number) => {
     setSensitivity(level);
-    sendAllSettings({ obstacle_avoidance_sensitivity: level });
+    sendSingle({ obstacle_avoidance_sensitivity: level });
   };
 
   const handlePathDirection = (angle: number) => {
     setPathDirection(angle);
-    sendAllSettings({ path_direction: angle });
+    sendSingle({ path_direction: angle });
   };
 
   const handleJoystickSpeed = (val: number) => {
     setJoystickSpeed(val);
-    sendAllSettings({ manual_controller_v: val });
+    sendSingle({ manual_controller_v: val });
   };
 
   const handleJoystickHandling = (val: number) => {
     setJoystickHandling(val);
-    sendAllSettings({ manual_controller_w: val });
+    sendSingle({ manual_controller_w: val });
   };
 
   const handleHeadlight = (on: boolean) => {
     setHeadlight(on);
-    sendAllSettings({ headlight: on ? 2 : 0 });
+    sendSingle({ headlight: on ? 2 : 0 });
   };
 
   const handleSound = (on: boolean) => {
     setSound(on);
-    sendAllSettings({ sound: on ? 2 : 0 });
+    sendSingle({ sound: on ? 2 : 0 });
   };
 
   if (!mowerSn) {

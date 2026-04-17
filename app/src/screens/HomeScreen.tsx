@@ -53,6 +53,7 @@ interface MowerDerived {
   errorCode: string | undefined;
   errorMsg: string | undefined;
   hasError: boolean;
+  hasSoftWarning: boolean;
   mapNum: number;
   mowerPosX: number | null;
   mowerPosY: number | null;
@@ -67,12 +68,30 @@ function deriveMower(devices: Map<string, DeviceState>): MowerDerived | null {
   const workStatus = s.work_status ?? '0';
   const isOffline = !mower.online;
   // Error status from report_state_robot.
-  // Non-blocking errors (LoRa warnings etc.) should not block the UI.
+  //
+  // Firmware emits "Robot soft(<subsystem>) error!!! maybe retry or reboot can
+  // solve this" for transient init/race failures — Novabot treats these as
+  // dismissable popups ("Software not initialized, please wait and retry") and
+  // keeps the UI usable. Only hard faults (out-of-bounds, PIN lock, hardware
+  // open failures) should actually block the Mow button.
+  //
+  // Codes catalogued from /root/novabot/install/compound_decision/.../robot_decision strings.
+  // Non-blocking (Novabot shows a dismissable popup and keeps the mow button active):
+  //   8   Lora disconnect warning
+  //   120 Robot soft(mapping)error
+  //   122 Robot soft(follow path action)error (nav2 lifecycle not active yet)
+  //   123 Robot soft(coverage action)error
+  //   125 Robot soft(coverage stop)error
+  //   126 Recharge failed (user can still start a new mow)
+  // Blocking (leave out of this list):
+  //   107 Load map failed, 124 Out of bounds, 151 Boot PIN lock,
+  //   152 Emergency stop PIN, plus all hardware errors (camera/chassis/utm/crash).
+  const NON_BLOCKING_ERRORS = [8, 120, 122, 123, 125, 126];
   const errorStatusRaw = parseInt(s.error_status?.match(/\d+/)?.[0] ?? '0', 10);
-  const NON_BLOCKING_ERRORS = [8]; // 8 = LoRa disconnect warning, not a real fault
   const hasError = Boolean(
     errorStatusRaw > 0 && !NON_BLOCKING_ERRORS.includes(errorStatusRaw),
   );
+  const hasSoftWarning = errorStatusRaw > 0 && NON_BLOCKING_ERRORS.includes(errorStatusRaw);
 
   // Activity detection based on firmware report_state_robot fields:
   // - battery_state: "CHARGING" (on dock) / "DISCHARGED" (off dock)
@@ -130,6 +149,7 @@ function deriveMower(devices: Map<string, DeviceState>): MowerDerived | null {
     errorCode: s.error_code,
     errorMsg: s.error_msg,
     hasError,
+    hasSoftWarning,
     mapNum: parseInt(s.map_num ?? '0', 10) || 0,
     mowerPosX: parseFloat(s.map_position_x ?? '') || null,
     mowerPosY: parseFloat(s.map_position_y ?? '') || null,
@@ -291,6 +311,9 @@ export default function HomeScreen() {
   const [showStartMow, setShowStartMow] = useState(false);
   const [startMowInitialMapId, setStartMowInitialMapId] = useState<string | null>(null);
   const [commandError, setCommandError] = useState('');
+  // Track which soft-error codes the user already dismissed this session so
+  // the banner doesn't pop back every time report_state_robot cycles.
+  const [dismissedSoftErrors, setDismissedSoftErrors] = useState<Set<number>>(new Set());
   // Optimistic activity override — shows expected state immediately while waiting for MQTT update
   const [activityOverride, setActivityOverride] = useState<MowerActivity | null>(null);
   const activityOverrideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -362,6 +385,15 @@ export default function HomeScreen() {
   useEffect(() => {
     void loadHomeMeta();
   }, [loadHomeMeta, connected]);
+
+  // Refresh map count / schedules when the screen regains focus, otherwise
+  // returning here from MappingScreen leaves serverMapCount stuck at 0 and the
+  // mow button keeps saying "No map — create map first" even after a successful
+  // save (the home screen never unmounts and the deps above don't change).
+  useEffect(() => {
+    const unsub = navigation.addListener('focus', () => { void loadHomeMeta(); });
+    return unsub;
+  }, [navigation, loadHomeMeta]);
 
   useEffect(() => {
     if (!route.params?.openStartMow) return;
@@ -1001,6 +1033,33 @@ export default function HomeScreen() {
             </TouchableOpacity>
           </View>
         )}
+
+        {/* Soft warning banner — dismissable, does NOT block the Mow button.
+            Matches Novabot's UX: shows the firmware's own message so the user
+            can read it, dismiss, and continue if they want. */}
+        {mower.hasSoftWarning && (() => {
+          const code = parseInt(String(mower.errorStatus ?? '0').match(/\d+/)?.[0] ?? '0', 10);
+          if (dismissedSoftErrors.has(code)) return null;
+          return (
+            <View style={[styles.errorCard, { backgroundColor: 'rgba(245,158,11,0.1)', borderColor: '#f59e0b' }]}>
+              <Ionicons name="warning-outline" size={22} color="#f59e0b" />
+              <View style={styles.errorContent}>
+                <Text style={[styles.errorTitle, { color: '#f59e0b' }]}>
+                  Warning {mower.errorStatus ?? ''}
+                </Text>
+                <Text style={styles.errorMessage}>
+                  {mower.errorMsg || 'Software not initialized. Please wait a moment and try again.'}
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={{ backgroundColor: 'rgba(245,158,11,0.2)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 }}
+                onPress={() => setDismissedSoftErrors(prev => new Set(prev).add(code))}
+              >
+                <Text style={{ color: '#f59e0b', fontSize: 12, fontWeight: '600' }}>Dismiss</Text>
+              </TouchableOpacity>
+            </View>
+          );
+        })()}
 
         {/* Rain overlay */}
         <View style={{ marginBottom: 16 }}>

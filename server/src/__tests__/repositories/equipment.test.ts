@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { equipmentRepo, userRepo } from '../../db/repositories/index.js';
+import { equipmentRepo, userRepo, deviceRepo } from '../../db/repositories/index.js';
 
 describe('EquipmentRepository', () => {
   const userId = 'test-user-001';
@@ -151,6 +151,76 @@ describe('EquipmentRepository', () => {
       });
       equipmentRepo.claimOwnership('eq-1', 'other-user');
       expect(equipmentRepo.findByMowerSn('LFIN0001')!.user_id).toBe(userId); // NOT changed
+    });
+  });
+
+  describe('mac_address backfill from device_factory', () => {
+    function seedFactory(mower = '70:4A:0E:4A:99:CF', charger = '48:27:E2:AA:BB:CC') {
+      deviceRepo.importFactoryDevices([
+        { sn: 'LFIN0001', device_type: 'mower', mac_address: mower },
+        { sn: 'LFIC0001', device_type: 'charger', mac_address: charger },
+      ]);
+    }
+
+    it('create() fills in mac_address from factory when caller passes null', () => {
+      createUser();
+      seedFactory();
+      equipmentRepo.create({
+        equipment_id: 'eq-1',
+        user_id: userId,
+        mower_sn: 'LFIN0001',
+        charger_sn: 'LFIC0001',
+        // intentionally no mac_address
+      });
+      expect(equipmentRepo.findByMowerSn('LFIN0001')!.mac_address).toBe('70:4A:0E:4A:99:CF');
+    });
+
+    it('create() never substitutes the charger MAC onto a mower row', () => {
+      createUser();
+      // Factory has only a charger entry for this SN pair — must NOT leak onto equipment
+      deviceRepo.importFactoryDevices([
+        { sn: 'LFIC0001', device_type: 'charger', mac_address: '48:27:E2:AA:BB:CC' },
+      ]);
+      equipmentRepo.create({
+        equipment_id: 'eq-1',
+        user_id: userId,
+        mower_sn: 'LFIN0001',
+        charger_sn: 'LFIC0001',
+      });
+      expect(equipmentRepo.findByMowerSn('LFIN0001')!.mac_address).toBeNull();
+    });
+
+    it('create() preserves an explicit mac_address (no factory override)', () => {
+      createUser();
+      seedFactory('70:4A:0E:4A:99:CF');
+      equipmentRepo.create({
+        equipment_id: 'eq-1',
+        user_id: userId,
+        mower_sn: 'LFIN0001',
+        mac_address: 'EXPLICIT:MAC',
+      });
+      expect(equipmentRepo.findByMowerSn('LFIN0001')!.mac_address).toBe('EXPLICIT:MAC');
+    });
+
+    it('backfillMissingMacsFromFactory() heals existing rows with null MAC', () => {
+      createUser();
+      // Row was created BEFORE factory data was available
+      equipmentRepo.create({ equipment_id: 'eq-1', user_id: userId, mower_sn: 'LFIN0001' });
+      expect(equipmentRepo.findByMowerSn('LFIN0001')!.mac_address).toBeNull();
+      seedFactory();
+
+      const healed = equipmentRepo.backfillMissingMacsFromFactory();
+      expect(healed).toBe(1);
+      expect(equipmentRepo.findByMowerSn('LFIN0001')!.mac_address).toBe('70:4A:0E:4A:99:CF');
+    });
+
+    it('backfillMissingMacsFromFactory() is idempotent', () => {
+      createUser();
+      seedFactory();
+      equipmentRepo.create({ equipment_id: 'eq-1', user_id: userId, mower_sn: 'LFIN0001' });
+      // First call heals it; second call should find nothing to do
+      equipmentRepo.backfillMissingMacsFromFactory();
+      expect(equipmentRepo.backfillMissingMacsFromFactory()).toBe(0);
     });
   });
 });

@@ -70,9 +70,39 @@ function getHoldType(x: number, y: number): number {
   return x < 0 ? 1 : 2; // left(1), right(2)
 }
 
-type MappingState = 'idle' | 'calibrating' | 'preMapping' | 'mapping' | 'stopping' | 'chargerPosition' | 'done' | 'cancelled';
+type MappingState = 'idle' | 'preMapping' | 'mapping' | 'stopping' | 'chargerPosition' | 'done' | 'cancelled';
 type MappingMode = 'autonomous' | 'manual';
-type MapBuildType = 'work' | 'obstacle';
+// Verified against Flutter v2.4.0 clickStart branches (BuildMapPageLogic L12873):
+//   work          → add_scan_map type:null  (creates map0/map1/map2)
+//   obstacle      → add_scan_map type:2     (obstacle inside an existing work map)
+//   unicom        → add_scan_map type:4     (channel between two work maps, e.g. map0tomap1_0_unicom)
+//   charge_unicom → add_scan_map type:8     (channel from a work map to the charger, e.g. map0tocharge_unicom)
+// The mower firmware generates the canonical CSV filename based on start/end position at scan time.
+type MapBuildType = 'work' | 'obstacle' | 'unicom' | 'charge_unicom';
+
+function buildTypeToScanType(t: MapBuildType): number {
+  // Verified against a successful Novabot-app session that produced
+  // map0tomap1_0_unicom.csv + map1tomap2_0_unicom.csv on 2026-04-17
+  // (mqtt_node_20260416_075337_2699.log, 11:51-12:06):
+  //   add_scan_map {mapName:"map1", type:0, ...}   → work area
+  //   add_scan_map {mapName:"map1", type:2, ...}   → map-to-map unicom
+  // The earlier Flutter decompilation assigned type:4 to unicom because I
+  // matched the wrong BuildMapType enum (a4b901 vs a4b921). The firmware
+  // actually interprets type:4 as MAPPING_EDIT_MODE, which is why our
+  // previous unicom attempts merged into the work polygon instead of
+  // writing a separate CSV.
+  switch (t) {
+    case 'work': return 0;
+    case 'obstacle': return 2;      // NOT verified — needs confirmation
+    case 'unicom': return 2;        // verified: map-to-map channel
+    case 'charge_unicom': return 8; // NOT verified — Novabot generates charge
+                                    // unicom implicitly via save_recharge_pos
+  }
+}
+
+// NOTE: buildTypeToSaveMapType / buildTypeToStopScanValue were removed —
+// the save/stop flow now follows the verified Novabot two-save protocol
+// inline in handleStop (sub + total for work, single total for unicom).
 
 export default function MappingScreen() {
   const insets = useSafeAreaInsets();
@@ -147,7 +177,84 @@ export default function MappingScreen() {
   const lastTrailRef = useRef<{x: number; y: number} | null>(null);
 
   // ── Existing maps (shown greyed-out during mapping) ──
-  const [existingMaps, setExistingMaps] = useState<Array<{ mapId: string; mapType: string; points: Array<{x: number; y: number}> }>>([]);
+  const [existingMaps, setExistingMaps] = useState<Array<{ mapId: string; mapType: string; mapName?: string; fileName?: string; points: Array<{x: number; y: number}> }>>([]);
+
+  // ── Track last saved map to inform the post-save "create channel" CTA ──
+  const [lastSaved, setLastSaved] = useState<{ mapName: string; buildType: MapBuildType } | null>(null);
+  // When the user taps "Create Channel" we capture which map the scan must
+  // start in, so the follow-up add_scan_map gets the right mapName even if
+  // `lastSaved` / `existingMaps` are cleared or stale. Use a ref to avoid
+  // re-renders and keep the value available inside handleStart closures.
+  const pendingChannelFromRef = useRef<string | null>(null);
+  // Track which work maps the mower has visited during the current unicom
+  // scan. The firmware fails the save with "pass_areas < 2" unless the
+  // trajectory actually touches two separate work polygons, so we show a
+  // live counter and only signal "ready" once the set hits 2.
+  const unicomVisitedMapsRef = useRef<Set<string>>(new Set());
+
+  // Missing unicom channels that the user must draw before leaving the
+  // mapping flow. A mower cannot traverse between work maps without the
+  // explicit mapXtomapY_N_unicom path, so OpenNova enforces creation —
+  // Novabot doesn't block it, it just offers the option via a separate
+  // ChooseMapType screen; we decided a mandatory flow is safer.
+  //
+  // We derive this in two ways and prefer whichever produces a missing pair:
+  //   1. From `lastSaved`: if the user just saved mapN (N>0) as a work map,
+  //      we immediately know a channel between map(N-1) and mapN is required.
+  //      This avoids waiting for the mower ZIP upload + DB round-trip before
+  //      the blocker appears.
+  //   2. From `existingMaps`: scan the live DB for any consecutive work-map
+  //      pair without a unicom between them (catches historic gaps).
+  const missingMapChannels = (() => {
+    const missing: Array<{ from: string; to: string }> = [];
+    // Novabot's channel-drawing convention is to start in the NEWER map
+    // (the one the user just added) and drive back into the older one. The
+    // mower firmware uses the position at add_scan_map time as the "from"
+    // side. So we list `from` = newer map, `to` = older map — the UI tells
+    // the user "drive from mapN to mapN-1".
+
+    // 1. Immediate derivation from the just-saved map name.
+    if (lastSaved?.buildType === 'work') {
+      const m = lastSaved.mapName.match(/^map(\d+)/);
+      if (m) {
+        const idx = parseInt(m[1], 10);
+        if (idx > 0) {
+          const from = `map${idx}`;       // new map (start here)
+          const to = `map${idx - 1}`;     // older map (end here)
+          const hasIt = existingMaps.some(row =>
+            row.mapType === 'unicom' &&
+            (row.mapName?.includes(`${from}to${to}`) ||
+             row.fileName?.includes(`${from}to${to}`) ||
+             row.mapName?.includes(`${to}to${from}`) ||
+             row.fileName?.includes(`${to}to${from}`))
+          );
+          if (!hasIt) missing.push({ from, to });
+        }
+      }
+    }
+    // 2. Scan DB for older gaps (any pair of adjacent work maps).
+    const hasUnicom = (a: string, b: string) => existingMaps.some(row =>
+      row.mapType === 'unicom' &&
+      (row.mapName?.includes(`${a}to${b}`) || row.fileName?.includes(`${a}to${b}`))
+    );
+    const canonicalNames = existingMaps
+      .filter(m => m.mapType === 'work')
+      .map(m => (m.fileName?.match(/^(map\d+)/)?.[1]) ?? (m.mapName?.match(/^(map\d+)/)?.[1]))
+      .filter((v): v is string => !!v)
+      .sort();
+    for (let i = canonicalNames.length - 1; i > 0; i--) {
+      const from = canonicalNames[i];         // newer
+      const to = canonicalNames[i - 1];       // older
+      if (!hasUnicom(from, to) && !hasUnicom(to, from)
+        && !missing.some(p => p.from === from && p.to === to)) {
+        missing.push({ from, to });
+      }
+    }
+    return missing;
+  })();
+  const mustCreateChannel = missingMapChannels.length > 0
+    && mappingState === 'done'
+    && lastSaved?.buildType !== 'unicom';
 
   // ── Sensor readiness ──
   const gpsValid = sensors.gps_valid === '1'
@@ -160,22 +267,34 @@ export default function MappingScreen() {
   const mappingReady = gpsValid && locReady;
   const battery = parseInt(sensors.battery_power ?? sensors.battery_capacity ?? '0', 10) || 0;
 
-  // ── Load existing maps (shown as grey overlay during mapping) ──
-  useEffect(() => {
+  // ── Load existing maps (shown as grey overlay during mapping + used to enable/disable mode options) ──
+  const refreshExistingMaps = useCallback(async () => {
     if (!sn) return;
-    (async () => {
-      try {
-        const url = await getServerUrl();
-        if (!url) return;
-        const api = new ApiClient(url);
-        const res = await api.fetchMaps(sn);
-        const loaded = (res.maps ?? [])
-          .filter((m: any) => m.mapArea?.length >= 3)
-          .map((m: any) => ({ mapId: m.mapId, mapType: m.mapType ?? 'work', points: m.mapArea }));
-        setExistingMaps(loaded);
-      } catch { /* ignore */ }
-    })();
+    try {
+      const url = await getServerUrl();
+      if (!url) return;
+      const api = new ApiClient(url);
+      const res = await api.fetchMaps(sn);
+      const loaded = (res.maps ?? [])
+        .filter((m: any) => m.mapArea?.length >= 3)
+        .map((m: any) => ({
+          mapId: m.mapId,
+          mapType: m.mapType ?? 'work',
+          mapName: m.mapName,
+          fileName: m.fileName,
+          points: m.mapArea,
+        }));
+      setExistingMaps(loaded);
+    } catch { /* ignore */ }
   }, [sn]);
+
+  useEffect(() => { refreshExistingMaps(); }, [refreshExistingMaps]);
+
+  // Refresh when the screen regains focus so the mode selector reflects freshly created maps.
+  useEffect(() => {
+    const unsub = navigation.addListener('focus', () => { refreshExistingMaps(); });
+    return unsub;
+  }, [navigation, refreshExistingMaps]);
 
   // ── Detect closed cycle: mower sensor OR proximity of last point to first point ──
   const ifClosedCycle = sensors.if_closed_cycle === '1';
@@ -219,7 +338,7 @@ export default function MappingScreen() {
   useEffect(() => {
     if (mappingState !== 'mapping') {
       if (trailPollRef.current) { clearInterval(trailPollRef.current); trailPollRef.current = null; }
-      if (mappingState === 'idle' || mappingState === 'calibrating' || mappingState === 'preMapping') {
+      if (mappingState === 'idle' || mappingState === 'preMapping') {
         setTrailPoints([]);
         lastTrailRef.current = null;
         serverTrailActiveRef.current = false;
@@ -517,7 +636,10 @@ export default function MappingScreen() {
         {
           text: 'Start',
           onPress: () => {
-            sendCommand({ start_assistant_build_map: { cmd_num: cmdNumRef.current++ } }, 'start_assistant_build_map');
+            // Flutter onAotuMappingClick (logic.dart L14653) hardcodes `type: 2` to enter
+            // autonomous mode. Without this field the mower keeps the previous mode
+            // setting — L14689 shows `mov x16, #2` immediately before StoreField.
+            sendCommand({ start_assistant_build_map: { type: 2, cmd_num: cmdNumRef.current++ } }, 'start_assistant_build_map');
             setMappingMode('autonomous');
             setMappingState('mapping');
             setClosedCycleSeen(false);
@@ -546,27 +668,56 @@ export default function MappingScreen() {
       }
     } catch {}
 
-    // EXACT Novabot app flow (blutter v2.4.0 build_map_page/logic.dart clickStart):
-    // - First map:       start_scan_map { model: "manual", mapName: "map0", type: null, cmd_num }
-    // - Additional maps: add_scan_map   { model: "manual", mapName: <name>, type: null, cmd_num }
-    // Flutter hardcodes mapName="map0" for start_scan_map regardless of selected buildMapType.
-    const mapName = mapBuildType === 'work' ? nextWorkMapName : `map${existingWorkMapCount}`;
+    // EXACT Novabot app flow — verified against live BLE mqtt log 2026-04-17 21:45:
+    // - First map EVER:  start_scan_map { model: "manual", mapName: "map0", type: 0, cmd_num }
+    // - Additional:      add_scan_map   { model: "manual", mapName: <name>, type: <0|2|4|8>, cmd_num }
+    // The `type` value selects what kind of area the mower is scanning:
+    //   0 = work map, 2 = obstacle, 4 = map-to-map unicom, 8 = charge unicom.
+    // Non-work modes require at least one existing work map.
+    if (existingWorkMapCount === 0 && mapBuildType !== 'work') {
+      Alert.alert(
+        'First map must be a work area',
+        'Create a work map first before drawing obstacles or channels.',
+      );
+      return;
+    }
+
+    // `mapName` tells the mower the START map for this scan. Rules:
+    //   work:   the next free slot (map0/map1/map2)
+    //   unicom: the newly added work map — the one the user is physically
+    //           standing in when the scan begins. `pendingChannelFromRef`
+    //           is set by the blocker's "Create Channel" button so we don't
+    //           rely on possibly-stale existingMaps.
+    //   other:  fall back to the latest work map.
+    const latestWorkMap = (() => {
+      const names = existingMaps
+        .filter(m => m.mapType === 'work')
+        .map(m => (m.fileName?.match(/^(map\d+)/)?.[1]) ?? (m.mapName?.match(/^(map\d+)/)?.[1]))
+        .filter((v): v is string => !!v)
+        .sort();
+      return names[names.length - 1] ?? 'map0';
+    })();
+    const mapName = mapBuildType === 'work'
+      ? nextWorkMapName
+      : (pendingChannelFromRef.current ?? latestWorkMap);
     setActiveMapName(mapName);
 
+    const scanType = buildTypeToScanType(mapBuildType);
     if (existingWorkMapCount === 0) {
-      sendCommand({ start_scan_map: { model: 'manual', mapName: 'map0', type: null, cmd_num: cmdNumRef.current++ } }, 'start_scan_map');
+      sendCommand({ start_scan_map: { model: 'manual', mapName: 'map0', type: 0, cmd_num: cmdNumRef.current++ } }, 'start_scan_map');
     } else {
-      sendCommand({ add_scan_map: { model: 'manual', mapName, type: null, cmd_num: cmdNumRef.current++ } }, 'add_scan_map');
+      sendCommand({ add_scan_map: { model: 'manual', mapName, type: scanType, cmd_num: cmdNumRef.current++ } }, 'add_scan_map');
     }
-    console.log(`[Mapping] Recording started (${existingWorkMapCount === 0 ? 'start' : 'add'}_scan_map, map: ${mapName}, ${existingWorkMapCount} existing)`);
+    console.log(`[Mapping] Recording started (${existingWorkMapCount === 0 ? 'start' : 'add'}_scan_map, map: ${mapName}, type: ${scanType}, buildType: ${mapBuildType}, ${existingWorkMapCount} existing)`);
 
-    // Mower calibrates motors after start_scan_map (~10s) — show calibrating screen
     setTrailPoints([]);
     lastTrailRef.current = null;
     setClosedCycleSeen(false);
     closedCycleDismissedRef.current = false;
-    setMappingState('calibrating');
-    setTimeout(() => setMappingState('mapping'), 10000);
+    // Reset the unicom-visited set — this live counter is only meaningful for
+    // the current scan, not accumulated across sessions.
+    unicomVisitedMapsRef.current = new Set();
+    setMappingState('mapping');
   };
 
   // ── Stop & Save (exact flow from official Novabot app) ──
@@ -585,44 +736,105 @@ export default function MappingScreen() {
           text: t('stopAndSave', undefined) || 'Stop & Save',
           onPress: async () => {
             if (joystickActiveRef.current) stopJoystick();
-            const mapType = mapBuildType === 'obstacle' ? 1 : 0;
 
-            // Step 1: stop_scan_map → wait for respond (20s timeout)
-            // Flutter clickDone() sends stop_scan_map { value, cmd_num } — NOT stop_erase_map (that's cancel).
-            // value = true when buildMapType is the work-map enum (Obj!BuildMapType@a4b901), else false.
+            // Exact sequence verified against a successful Novabot session that
+            // produced map0tomap1_0_unicom.csv (mqtt_node_20260416_075337_2699.log,
+            // 11:57:28 work save and 11:58:52 unicom save):
+            //
+            //   Work map (map1, map2):
+            //     stop_scan_map {value:false}
+            //     save_map      {type:0}   ← sub
+            //     save_map      {type:1}   ← total, 2-3 s later
+            //     get_map_outline
+            //
+            //   Unicom scan (after work map already saved):
+            //     stop_scan_map {value:true}
+            //     save_map      {type:1}   ← directly, NO type:0 step
+            //     get_map_outline
+            const isUnicom = mapBuildType === 'unicom' || mapBuildType === 'charge_unicom';
+
             setMappingState('stopping');
-            const value = mapBuildType === 'work';
-            sendCommand({ stop_scan_map: { value, cmd_num: cmdNumRef.current++ } }, 'stop_scan_map');
-            console.log('[Mapping] Step 1: stop_scan_map sent, waiting for respond...');
+            sendCommand(
+              { stop_scan_map: { value: isUnicom, cmd_num: cmdNumRef.current++ } },
+              'stop_scan_map',
+            );
+            console.log(`[Mapping] Step 1: stop_scan_map {value:${isUnicom}} sent`);
             const stopOk = await waitForRespond('stop_scan_map_respond', 20000);
             console.log(`[Mapping] Step 1: stop_scan_map_respond ${stopOk ? 'OK' : 'TIMEOUT'}`);
 
-            // Step 2: save_map → wait for respond (12s timeout)
-            // Flutter _writeSaveMap(): save_map { mapName, type, cmd_num } with 12s timeout.
-            // Triggered from _getMsgFromDevice when stop_scan_map_respond arrives.
             await new Promise(r => setTimeout(r, 1000));
-            sendCommand({ save_map: { mapName: activeMapName, type: mapType, cmd_num: cmdNumRef.current++ } }, 'save_map');
-            console.log('[Mapping] Step 2: save_map sent, waiting for respond...');
-            const saveOk = await waitForRespond('save_map_respond', 12000);
-            console.log(`[Mapping] Step 2: save_map_respond ${saveOk ? 'OK' : 'TIMEOUT'}`);
 
-            // Step 2b: mirror Flutter uploadMapToServce() by requesting all map outlines.
-            // We intentionally still request this after the save phase even if the respond was late,
-            // because the original bug was that additional maps never got uploaded back to the server.
-            if (!saveOk) {
-              console.warn('[Mapping] save_map_respond timeout — requesting get_map_outline anyway');
+            if (isUnicom) {
+              // Unicom gets a single save_map {type:1}
+              sendCommand(
+                { save_map: { mapName: activeMapName, type: 1, cmd_num: cmdNumRef.current++ } },
+                'save_map (unicom total)',
+              );
+              const saveOk = await waitForRespond('save_map_respond', 12000);
+              console.log(`[Mapping] Step 2: unicom save_map_respond ${saveOk ? 'OK' : 'TIMEOUT'}`);
+              // Channel scan complete — next scan is unrelated.
+              pendingChannelFromRef.current = null;
+            } else {
+              // Work / obstacle: sub save FIRST, then total save
+              sendCommand(
+                { save_map: { mapName: activeMapName, type: 0, cmd_num: cmdNumRef.current++ } },
+                'save_map (sub)',
+              );
+              const subOk = await waitForRespond('save_map_respond', 12000);
+              console.log(`[Mapping] Step 2a: sub save_map_respond ${subOk ? 'OK' : 'TIMEOUT'}`);
+              await new Promise(r => setTimeout(r, 3000));
+              sendCommand(
+                { save_map: { mapName: activeMapName, type: 1, cmd_num: cmdNumRef.current++ } },
+                'save_map (total)',
+              );
+              const totalOk = await waitForRespond('save_map_respond', 12000);
+              console.log(`[Mapping] Step 2b: total save_map_respond ${totalOk ? 'OK' : 'TIMEOUT'}`);
             }
-            sendCommand({ get_map_outline: { map_name: 'all', cmd_num: cmdNumRef.current++ } }, 'get_map_outline');
-            console.log('[Mapping] Step 2b: get_map_outline sent to trigger mower ZIP upload');
 
-            // Step 3: charger positioning — only for FIRST map (map0)
-            // Novabot app: 2nd+ maps skip charger docking (charging_pose already saved)
-            if (activeMapName === 'map0') {
+            sendCommand({ get_map_outline: { map_name: 'all', cmd_num: cmdNumRef.current++ } }, 'get_map_outline');
+            console.log('[Mapping] Step 3: get_map_outline sent to trigger mower ZIP upload');
+
+            // Record what we just saved so the done-screen can suggest follow-up channels.
+            setLastSaved({ mapName: activeMapName, buildType: mapBuildType });
+
+            // Optimistically add the just-scanned map to existingMaps so the
+            // follow-up unicom screen can render both shapes immediately. The
+            // real row takes ~5–15 s to reach the server DB (mower ZIP upload
+            // → parse).
+            if (trailPoints.length >= 3) {
+              const optimisticMap = {
+                mapId: `optimistic-${activeMapName}-${Date.now()}`,
+                mapType: mapBuildType === 'obstacle' ? 'obstacle'
+                  : isUnicom ? 'unicom'
+                  : 'work',
+                mapName: activeMapName,
+                fileName: `${activeMapName}_${mapBuildType === 'obstacle' ? '0_obstacle' : isUnicom ? 'unicom' : 'work'}.csv`,
+                points: [...trailPoints],
+              };
+              setExistingMaps(prev => {
+                const withoutDup = prev.filter(m =>
+                  !(m.mapName === optimisticMap.mapName && m.mapType === optimisticMap.mapType),
+                );
+                return [...withoutDup, optimisticMap];
+              });
+            }
+
+            // Delay the refresh so the mower has time to upload its ZIP + the
+            // server can parse it. Firing refreshExistingMaps immediately here
+            // replaced the optimistic stub with server data that hadn't caught
+            // up yet, causing the new map1 to disappear from the next screen.
+            // 8 s is comfortably longer than the observed ~5 s upload latency.
+            setTimeout(() => { void refreshExistingMaps(); }, 8000);
+
+            // Step 3: charger positioning — only for the FIRST work map (map0).
+            // Additional work maps (map1/map2) share the charging pose saved with map0.
+            // Obstacle/unicom/charge_unicom scans never trigger dock positioning.
+            if (mapBuildType === 'work' && activeMapName === 'map0') {
               setChargerAction(null);
               setMappingState('chargerPosition');
               console.log('[Mapping] Step 3: drive to charger → user controls via joystick');
             } else {
-              console.log('[Mapping] Step 3: skipped charger positioning (map1+, charging_pose already saved)');
+              console.log(`[Mapping] Step 3: skipped charger positioning (buildType=${mapBuildType}, activeMap=${activeMapName})`);
               setMappingState('done');
             }
           },
@@ -719,11 +931,47 @@ export default function MappingScreen() {
       `(task_mode=${taskMode}, work_status=${workStatus}, recharge_status=${rechargeStatus}, ` +
       `battery_state=${batteryState}, msg="${rawMowerMsg}") → save_recharge_pos`,
     );
-    sendCommand({ save_recharge_pos: { mapName: activeMapName, map0: '', cmd_num: cmdNumRef.current++ } }, 'save_recharge_pos');
+    // Flutter _saveChargePosition (logic.dart L7236) sends ONLY { mapName: "map0", cmd_num }.
+// The literal "map0" is loaded from pp+0x16430 — it's never dynamic. The extra
+// `map0: ''` field we used to send was NOT in the Flutter payload and the
+// mower firmware silently rejected the whole command, which is why
+// map0tocharge_unicom never appeared on disk.
+sendCommand({ save_recharge_pos: { mapName: 'map0', cmd_num: cmdNumRef.current++ } }, 'save_recharge_pos');
 
     (async () => {
-      const responded = await waitForRespond('save_recharge_pos_respond', 15000);
-      console.log(`[Mapping] save_recharge_pos_respond ${responded ? 'OK' : 'TIMEOUT'} — marking done`);
+      // Flutter _saveChargePosition passes 0x14=20s to _writeDataToDevice (logic.dart 0x8ffa2c).
+      const responded = await waitForRespond('save_recharge_pos_respond', 20000);
+      console.log(`[Mapping] save_recharge_pos_respond ${responded ? 'OK' : 'TIMEOUT'}`);
+
+      // Re-trigger save_map AFTER the charger pose is committed. Flutter's
+      // _getMsgFromDevice handler for save_recharge_pos_respond (logic.dart
+      // L10688) schedules `Future.delayed(Duration(milliseconds: 500))` at
+      // addr 0x906744 (pp+0x4d90 = Duration(500000 µs)) and then calls
+      // _writeSaveMap() at 0x906764. Without this second save_map the mower
+      // never regenerates its ZIP to include map0tocharge_unicom.csv, which
+      // is why charge unicom never appeared on disk earlier.
+      await new Promise(r => setTimeout(r, 500));
+      // type:1 = "total map" — mower generates map.pgm/map.png/map.yaml (the
+      // occupancy grid the C++ robot_decision tries to load at start_navigation).
+      // The first save_map after stop_scan_map is type:0 ("sub map") and only
+      // writes csv_file/x3_csv_file. Confirmed via mower log line:
+      //   "Save map request: 1 map0 — Saving total map!!!"
+      // Sending type:0 here (what we did before) never produced map.yaml →
+      // Error 107 "Load map failed" at start_navigation.
+      sendCommand(
+        { save_map: { mapName: 'map0', type: 1, cmd_num: cmdNumRef.current++ } },
+        'save_map (post-recharge, total)',
+      );
+      const savedAgain = await waitForRespond('save_map_respond', 12000);
+      console.log(`[Mapping] post-recharge save_map_respond ${savedAgain ? 'OK' : 'TIMEOUT'}`);
+
+      // Ask the mower to push its refreshed ZIP (same trigger the Flutter
+      // app uses via uploadMapToServce → get_map_outline request).
+      sendCommand(
+        { get_map_outline: { map_name: 'all', cmd_num: cmdNumRef.current++ } },
+        'get_map_outline (post-recharge)',
+      );
+
       setChargerAction(null);
       setMappingState('done');
     })();
@@ -767,9 +1015,31 @@ export default function MappingScreen() {
     autoDockRequestedRef.current = false;
     savingChargerPosRef.current = true;
     setChargerAction('savePosition');
-    sendCommand({ save_recharge_pos: { mapName: activeMapName, map0: '', cmd_num: cmdNumRef.current++ } }, 'save_recharge_pos');
-    const responded = await waitForRespond('save_recharge_pos_respond', 10000);
+    // Flutter _saveChargePosition (logic.dart L7236) sends ONLY { mapName: "map0", cmd_num }.
+// The literal "map0" is loaded from pp+0x16430 — it's never dynamic. The extra
+// `map0: ''` field we used to send was NOT in the Flutter payload and the
+// mower firmware silently rejected the whole command, which is why
+// map0tocharge_unicom never appeared on disk.
+sendCommand({ save_recharge_pos: { mapName: 'map0', cmd_num: cmdNumRef.current++ } }, 'save_recharge_pos');
+    const responded = await waitForRespond('save_recharge_pos_respond', 20000);
     console.log(`[Mapping] Manual save_recharge_pos_respond: ${responded ? 'OK' : 'TIMEOUT'}`);
+
+    // Mirror Flutter's post-response follow-up (see auto-save path above):
+    // wait 500 ms, send save_map again, request outline to trigger the
+    // updated ZIP upload that includes map0tocharge_unicom.
+    await new Promise(r => setTimeout(r, 500));
+    // type:1 = "total map" — see auto-save branch above for rationale.
+    sendCommand(
+      { save_map: { mapName: 'map0', type: 1, cmd_num: cmdNumRef.current++ } },
+      'save_map (post-recharge manual, total)',
+    );
+    const savedAgain = await waitForRespond('save_map_respond', 12000);
+    console.log(`[Mapping] Manual post-recharge save_map_respond: ${savedAgain ? 'OK' : 'TIMEOUT'}`);
+    sendCommand(
+      { get_map_outline: { map_name: 'all', cmd_num: cmdNumRef.current++ } },
+      'get_map_outline (post-recharge manual)',
+    );
+
     setChargerAction(null);
     setMappingState('done');
   };
@@ -788,9 +1058,21 @@ export default function MappingScreen() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <View style={[styles.container, { paddingTop: insets.top }]}>
-        {/* Header */}
+        {/* Header — back-button is disabled while a mandatory unicom is pending */}
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
+          <TouchableOpacity
+            onPress={() => {
+              if (mustCreateChannel) {
+                Alert.alert(
+                  'Channel required',
+                  `You have multiple work maps. Create the channel from ${missingMapChannels[0].from} to ${missingMapChannels[0].to} before leaving.`,
+                );
+                return;
+              }
+              navigation.goBack();
+            }}
+            style={[styles.backBtn, mustCreateChannel && { opacity: 0.4 }]}
+          >
             <Ionicons name="arrow-back" size={24} color={colors.white} />
           </TouchableOpacity>
           <Text style={styles.title}>{t('createMap', undefined) || 'Create Map'}</Text>
@@ -841,25 +1123,43 @@ export default function MappingScreen() {
             <View style={styles.card}>
               <Text style={styles.cardTitle}>{t('mappingMode', undefined) || 'MAPPING MODE'}</Text>
 
-              {/* Map type selector */}
-              <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
-                <TouchableOpacity
-                  style={[styles.modeBtn, { flex: 1, paddingVertical: 10 }, mapBuildType === 'work' && { borderColor: colors.emerald, borderWidth: 1.5 }]}
-                  onPress={() => setMapBuildType('work')}
-                  activeOpacity={0.7}
-                >
-                  <Ionicons name="map" size={20} color={mapBuildType === 'work' ? colors.emerald : colors.textMuted} />
-                  <Text style={[styles.modeBtnTitle, { fontSize: 13 }, mapBuildType !== 'work' && { color: colors.textMuted }]}>Work Area</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.modeBtn, { flex: 1, paddingVertical: 10 }, mapBuildType === 'obstacle' && { borderColor: '#f59e0b', borderWidth: 1.5 }]}
-                  onPress={() => setMapBuildType('obstacle')}
-                  activeOpacity={0.7}
-                >
-                  <Ionicons name="warning" size={20} color={mapBuildType === 'obstacle' ? '#f59e0b' : colors.textMuted} />
-                  <Text style={[styles.modeBtnTitle, { fontSize: 13 }, mapBuildType !== 'obstacle' && { color: colors.textMuted }]}>Obstacle</Text>
-                </TouchableOpacity>
+              {/* Map type selector.
+                  Obstacle and unicom require at least one existing work map.
+                  Charger channel is NOT exposed — the mower creates it implicitly
+                  from the map0 → charger positioning flow after the first work map save. */}
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+                {(
+                  [
+                    { key: 'work' as MapBuildType, label: 'Work Area', icon: 'map', color: colors.emerald, needsWork: false },
+                    { key: 'obstacle' as MapBuildType, label: 'Obstacle', icon: 'warning', color: '#f59e0b', needsWork: true },
+                    { key: 'unicom' as MapBuildType, label: 'Map Channel', icon: 'swap-horizontal', color: '#3b82f6', needsWork: true },
+                  ] as const
+                ).map(opt => {
+                  const disabled = opt.needsWork && existingMaps.filter(m => m.mapType === 'work').length === 0;
+                  const active = mapBuildType === opt.key;
+                  return (
+                    <TouchableOpacity
+                      key={opt.key}
+                      style={[
+                        styles.modeBtn,
+                        { flex: 1, paddingVertical: 10, opacity: disabled ? 0.4 : 1 },
+                        active && { borderColor: opt.color, borderWidth: 1.5 },
+                      ]}
+                      onPress={() => !disabled && setMapBuildType(opt.key)}
+                      disabled={disabled}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons name={opt.icon as any} size={20} color={active ? opt.color : colors.textMuted} />
+                      <Text style={[styles.modeBtnTitle, { fontSize: 13 }, !active && { color: colors.textMuted }]}>{opt.label}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
               </View>
+              {mapBuildType === 'unicom' && (
+                <Text style={[styles.modeBtnSub, { marginBottom: 12, color: colors.textMuted }]}>
+                  Drive from one work map to another. The mower records the path and names it mapXtomapY_N_unicom.
+                </Text>
+              )}
 
               <TouchableOpacity
                 style={[styles.modeBtn, !mappingReady && styles.modeBtnDisabled]}
@@ -911,25 +1211,6 @@ export default function MappingScreen() {
               )}
             </View>
           </ScrollView>
-
-        /* ── Calibrating: mower initializing motors ── */
-        ) : mappingState === 'calibrating' ? (
-          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', gap: 16, paddingHorizontal: 32 }}>
-            <ActivityIndicator size="large" color={colors.emerald} />
-            <Text style={{ color: colors.white, fontSize: 20, fontWeight: '700' }}>
-              Calibrating Motors
-            </Text>
-            <Text style={{ color: colors.textMuted, fontSize: 14, textAlign: 'center', lineHeight: 20 }}>
-              The mower is initializing its motors and sensors.{'\n'}This takes about 10 seconds.
-            </Text>
-            <View style={styles.statsChips}>
-              <Text style={[styles.sensorChip, { backgroundColor: bleConnected ? 'rgba(0,212,170,0.15)' : 'rgba(239,68,68,0.15)', color: bleConnected ? colors.emerald : colors.red }]}>
-                BLE: {bleConnected ? 'OK' : 'OFF'}
-              </Text>
-              <Text style={styles.sensorChip}>Loc: {locQuality}%</Text>
-              <Text style={styles.sensorChip}>Bat: {battery}%</Text>
-            </View>
-          </View>
 
         /* ── Pre-mapping: map view + joystick overlay — drive to start point ── */
         ) : mappingState === 'preMapping' ? (
@@ -1013,6 +1294,52 @@ export default function MappingScreen() {
                 </TouchableOpacity>
               </View>
             )}
+
+            {/* Unicom scan guide — the mower firmware rejects the save with
+                "pass_areas < 2" when the trajectory only touches one work map.
+                Show live which work polygon the mower is currently inside so
+                the user knows when they've crossed into the second map. */}
+            {mapBuildType === 'unicom' && (() => {
+              const workMaps = existingMaps.filter(m => m.mapType === 'work');
+              const isInside = (pt: { x: number; y: number } | null, poly: Array<{ x: number; y: number }>) => {
+                if (!pt || poly.length < 3) return false;
+                let inside = false;
+                for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+                  const xi = poly[i].x, yi = poly[i].y;
+                  const xj = poly[j].x, yj = poly[j].y;
+                  const intersect = yi > pt.y !== yj > pt.y
+                    && pt.x < ((xj - xi) * (pt.y - yi)) / (yj - yi) + xi;
+                  if (intersect) inside = !inside;
+                }
+                return inside;
+              };
+              const currentIn = mowerLocal
+                ? workMaps.find(m => isInside(mowerLocal, m.points))
+                : null;
+              const currentMapName = currentIn
+                ? (currentIn.fileName?.match(/^(map\d+)/)?.[1]) ?? currentIn.mapName ?? null
+                : null;
+              const visitedRef = unicomVisitedMapsRef.current;
+              if (currentMapName && !visitedRef.has(currentMapName)) visitedRef.add(currentMapName);
+              const visitedCount = visitedRef.size;
+
+              return (
+                <View style={[styles.closedBanner, { backgroundColor: visitedCount >= 2 ? 'rgba(0,212,170,0.12)' : 'rgba(245,158,11,0.12)' }]}>
+                  <Ionicons
+                    name={visitedCount >= 2 ? 'checkmark-circle' : 'navigate-outline'}
+                    size={18}
+                    color={visitedCount >= 2 ? colors.green : '#f59e0b'}
+                  />
+                  <Text style={[styles.closedBannerText, { flex: 1 }]}>
+                    {visitedCount >= 2
+                      ? `✓ Door beide maps gereden — je kan stoppen en opslaan`
+                      : currentMapName
+                        ? `In ${currentMapName}. Rij door de gap tot IN de andere map.`
+                        : `Niet in een work-map. Rij tot binnen ${pendingChannelFromRef.current ?? 'map1'} om te beginnen.`}
+                  </Text>
+                </View>
+              );
+            })()}
 
             {/* Stats bar */}
             <View style={styles.statsBar}>
@@ -1259,11 +1586,33 @@ export default function MappingScreen() {
                   autoDockRequestedRef.current = true;
                   chargerFailureHandledRef.current = false;
                   setChargerAction('autoDock');
-                  sendCommand({ auto_recharge: { cmd_num: cmdNumRef.current++ } }, 'auto_recharge');
-                  console.log('[Mapping] auto_recharge sent');
+                  // After a mapping session the mower's nav2 lifecycle stack
+                  // needs to re-activate before FollowPath can service a dock
+                  // request — this takes ~2-3 min and produces Error 122
+                  // "follow path action error — software not initialized" until
+                  // it finishes. Retry on 122 up to 5× with 20s spacing.
                   (async () => {
-                    const responded = await waitForRespond('auto_recharge_respond', 10000);
-                    console.log(`[Mapping] auto_recharge_respond ${responded ? 'OK' : 'TIMEOUT'}`);
+                    const maxAttempts = 6;
+                    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+                      sendCommand({ auto_recharge: { cmd_num: cmdNumRef.current++ } }, `auto_recharge (try ${attempt}/${maxAttempts})`);
+                      console.log(`[Mapping] auto_recharge attempt ${attempt} sent`);
+                      await waitForRespond('auto_recharge_respond', 10000);
+                      // Watch for error_status 122 (nav2 not ready) within 6 s.
+                      const started = Date.now();
+                      let gotError122 = false;
+                      while (Date.now() - started < 6000) {
+                        const errStatus = parseInt(String(sensors.error_status ?? '0').match(/\d+/)?.[0] ?? '0', 10);
+                        if (errStatus === 122) { gotError122 = true; break; }
+                        // If dock progressed (recharge_status 1 or 9) we're done.
+                        const rs = parseInt(String(sensors.recharge_status ?? '0'), 10);
+                        if (rs === 1 || rs === 9) break;
+                        await new Promise(r => setTimeout(r, 500));
+                      }
+                      if (!gotError122) { console.log('[Mapping] auto_recharge accepted (no 122)'); return; }
+                      console.warn(`[Mapping] auto_recharge attempt ${attempt}: error 122, retry in 20s`);
+                      await new Promise(r => setTimeout(r, 20000));
+                    }
+                    console.warn('[Mapping] auto_recharge: nav2 still not ready after retries, user can use Manual Save');
                   })();
                 }}
                 disabled={chargerAction === 'autoDock' || chargerAction === 'savePosition' || dockedOnCharger}
@@ -1304,20 +1653,77 @@ export default function MappingScreen() {
 
         /* ── Done ── */
         ) : mappingState === 'done' ? (
-          <View style={styles.centerBox}>
-            <Ionicons name="checkmark-circle" size={64} color={colors.green} />
-            <Text style={styles.centerTitle}>Map Saved</Text>
-            <Text style={styles.centerSub}>
-              Your garden map and charger position have been saved successfully.
-            </Text>
-            <TouchableOpacity
-              style={styles.doneBtn}
-              onPress={() => navigation.goBack()}
-              activeOpacity={0.7}
-            >
-              <Text style={styles.doneBtnText}>{t('ok', undefined) || 'Done'}</Text>
-            </TouchableOpacity>
-          </View>
+          (() => {
+            // Missing channel state comes from the hoisted `missingMapChannels`
+            // / `mustCreateChannel` values so the header back-button can enforce
+            // the same rule.
+            const savedLabel = lastSaved?.buildType === 'unicom'
+              ? 'Channel saved'
+              : lastSaved?.buildType === 'obstacle'
+                ? 'Obstacle saved'
+                : 'Map saved';
+            return (
+              <View style={styles.centerBox}>
+                <Ionicons
+                  name={mustCreateChannel ? 'alert-circle' : 'checkmark-circle'}
+                  size={64}
+                  color={mustCreateChannel ? '#3b82f6' : colors.green}
+                />
+                <Text style={styles.centerTitle}>{savedLabel}</Text>
+                <Text style={styles.centerSub}>
+                  {mustCreateChannel
+                    ? `You now have multiple work maps. Before you can leave this screen, draw a channel from ${missingMapChannels[0].from} to ${missingMapChannels[0].to} so the mower can move between them.`
+                    : lastSaved?.buildType === 'work'
+                      ? 'Your map has been uploaded.'
+                      : 'The mower stored the path.'}
+                </Text>
+
+                {mustCreateChannel ? (
+                  <TouchableOpacity
+                    style={[styles.doneBtn, { marginTop: 20, backgroundColor: '#3b82f6', width: '100%' }]}
+                    onPress={async () => {
+                      // Capture the required start map for the upcoming unicom scan
+                      // so handleStart can send the correct mapName regardless of
+                      // any lastSaved / existingMaps staleness.
+                      pendingChannelFromRef.current = missingMapChannels[0].from;
+                      setMapBuildType('unicom');
+                      setLastSaved(null);
+                      // Skip the mode-selection screen — for a required channel
+                      // the mode is always manual + joystick. Mirror the essential
+                      // steps from handleStartManual without the confirmation alert.
+                      setBleConnecting(true);
+                      await connectBleJoystick();
+                      setBleConnecting(false);
+                      if (!isBleJoystickConnected()) {
+                        Alert.alert('BLE', 'BLE not connected — check Bluetooth and proximity.');
+                        setMappingState('idle');
+                        return;
+                      }
+                      sendCommand(
+                        { quit_mapping_mode: { value: 1, cmd_num: cmdNumRef.current++ } },
+                        'quit_mapping_mode (cleanup)',
+                      );
+                      setMappingMode('manual');
+                      setMappingState('preMapping');
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.doneBtnText}>
+                      Create Channel {missingMapChannels[0].from} → {missingMapChannels[0].to}
+                    </Text>
+                  </TouchableOpacity>
+                ) : (
+                  <TouchableOpacity
+                    style={[styles.doneBtn, { marginTop: 16 }]}
+                    onPress={() => navigation.goBack()}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.doneBtnText}>{t('ok', undefined) || 'Done'}</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            );
+          })()
 
         /* ── Cancelled (brief, auto-navigates back) ── */
         ) : (

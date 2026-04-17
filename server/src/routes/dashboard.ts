@@ -690,6 +690,11 @@ dashboardRouter.delete('/maps/:sn/:mapId', (req: Request, res: Response) => {
 
   const deleted = mapRepo.deleteWithCascade(mapId, sn);
 
+  // STORAGE_PATH env var lands the ZIPs under e.g. /data/storage/maps in Docker.
+  // The old code used a cwd-relative path (./storage/maps) which silently
+  // skipped unlink when the server runs from /app/server, leaving orphaned
+  // ZIPs on disk after a delete.
+  const mapsStorage = path.resolve(process.env.STORAGE_PATH ?? './storage', 'maps');
   const removedFiles = new Set<string>();
   for (const d of deleted) {
     if (!d.file_name || removedFiles.has(d.file_name)) continue;
@@ -697,9 +702,18 @@ dashboardRouter.delete('/maps/:sn/:mapId', (req: Request, res: Response) => {
     const stillReferenced = mapRepo.findByMowerSn(sn).some(r => r.file_name === d.file_name);
     if (stillReferenced) continue;
     removedFiles.add(d.file_name);
-    const filePath = path.resolve('storage/maps', d.file_name);
+    const filePath = path.join(mapsStorage, d.file_name);
     if (existsSync(filePath)) {
       try { unlinkSync(filePath); } catch { /* ignore */ }
+    }
+    // Also drop the `<SN>_latest.zip` pointer when we wipe the last map row,
+    // otherwise queryEquipmentMap keeps serving a stale ZIP with the deleted map.
+    const remaining = mapRepo.findByMowerSn(sn);
+    if (remaining.length === 0) {
+      const latest = path.join(mapsStorage, `${sn}_latest.zip`);
+      if (existsSync(latest)) {
+        try { unlinkSync(latest); } catch { /* ignore */ }
+      }
     }
   }
 

@@ -262,15 +262,8 @@ export default function MapScreen() {
     [selectedWorkMap],
   );
 
-  const visibleMaps = useMemo(() => {
-    if (!selectedWorkMap) return maps;
-    return maps.filter((map) => {
-      if (map.mapId === selectedWorkMap.mapId) return true;
-      if (map.mapType === 'work') return false;
-      if (!selectedFamilyKey) return workMaps.length === 1;
-      return getMapFamilyKey(map) === selectedFamilyKey;
-    });
-  }, [maps, selectedFamilyKey, selectedWorkMap, workMaps.length]);
+  // Show ALL maps always — selected work map is green, others are greyed out
+  const visibleMaps = useMemo(() => maps, [maps]);
   const legendMaps = useMemo(
     () => visibleMaps.filter((map) => map.mapId !== selectedWorkMap?.mapId),
     [selectedWorkMap, visibleMaps],
@@ -869,7 +862,7 @@ export default function MapScreen() {
 
   return (
     <GestureHandlerRootView style={[styles.container, { paddingTop: insets.top }]}>
-      <View style={styles.content}>
+      <ScrollView style={styles.content} contentContainerStyle={{ paddingBottom: Math.max(insets.bottom + 80, 96) }}>
 
 
         <View style={styles.header}>
@@ -972,12 +965,17 @@ export default function MapScreen() {
                   {visibleMaps.map((m) => {
                     if (!m.mapArea || m.mapArea.length < 3) return null;
                     if (m.mapType === 'unicom') return null;
-                    const c = MAP_COLORS[m.mapType] ?? MAP_COLORS.work;
+                    // Selected work map = green, other work maps = grey, obstacles = red
+                    const isSelected = selectedWorkMap && m.mapId === selectedWorkMap.mapId;
+                    const isUnselectedWork = m.mapType === 'work' && !isSelected;
+                    const c = isUnselectedWork
+                      ? { fill: 'rgba(255,255,255,0.12)', stroke: 'rgba(255,255,255,0.4)' }
+                      : (MAP_COLORS[m.mapType] ?? MAP_COLORS.work);
                     const svgPts = m.mapArea.map((p) => localToSvg(p, bounds, MAP_SIZE, INNER_PADDING));
                     const pts = svgPts.map((p) => `${p.x},${p.y}`).join(' ');
                     return (
                       <G key={m.mapId}>
-                        <SvgPolygon points={pts} fill={c.fill} stroke={c.stroke} strokeWidth={2} strokeLinejoin="round" />
+                        <SvgPolygon points={pts} fill={c.fill} stroke={c.stroke} strokeWidth={isSelected ? 2 : 1.5} strokeLinejoin="round" />
                         {/* Direction stripes (thin — planned mow direction) */}
                         {isMowing && m.mapType === 'work' && (
                           <G clipPath={`url(#clip-${m.mapId})`}>
@@ -1074,9 +1072,6 @@ export default function MapScreen() {
 
             {selectedWorkMap && (
               <View style={styles.zonePanelShell}>
-                <View style={styles.zonePanelViewport}>
-                  <GestureDetector gesture={panelGesture}>
-                    <Animated.View style={[styles.zonePanelAnimatedLayer, panelAnimatedStyle]}>
                       <ScrollView
                         ref={zoneCarouselRef}
                         horizontal
@@ -1105,58 +1100,50 @@ export default function MapScreen() {
                           return (
                             <View key={map.mapId} style={[styles.zonePanelPage, { width: PANEL_PAGE_WIDTH }]}>
                               <View style={styles.zonePanelCard}>
-                                <TouchableOpacity
-                                  style={styles.zoneDragHandleWrap}
-                                  onPress={() => snapPanel(!panelExpanded)}
-                                  activeOpacity={0.8}
-                                >
-                                  <View style={styles.zoneDragHandle} />
-                                  <Text style={styles.zoneDragLabel}>
-                                    {panelExpanded ? 'Swipe down for overview' : 'Swipe up for details'}
-                                  </Text>
-                                </TouchableOpacity>
-
+                                {/* Header: title + actions */}
                                 <View style={styles.zonePanelHeader}>
                                   <View style={styles.zonePanelTitleWrap}>
-                                    <Text style={styles.zonePanelEyebrow}>Work Map</Text>
                                     <Text style={styles.zonePanelTitle}>{map.mapName || `Zone ${index + 1}`}</Text>
                                   </View>
                                   <View style={styles.zonePanelActions}>
                                     <TouchableOpacity style={styles.zonePanelIconButton} onPress={() => handleMapAction(map)} activeOpacity={0.7}>
-                                      <Ionicons name="create-outline" size={20} color={colors.white} />
+                                      <Ionicons name="create-outline" size={18} color={colors.white} />
                                     </TouchableOpacity>
                                     <TouchableOpacity style={styles.zonePanelIconButton} onPress={() => handleDeleteMap(map)} activeOpacity={0.7}>
-                                      <Ionicons name="trash-outline" size={20} color={colors.white} />
+                                      <Ionicons name="trash-outline" size={18} color={colors.white} />
                                     </TouchableOpacity>
                                   </View>
                                 </View>
 
-                                <View style={styles.zoneMetricRow}>
-                                  <View style={styles.zoneMetricCard}>
-                                    <Text style={styles.zoneMetricLabel}>Size</Text>
-                                    <Text style={styles.zoneMetricValue}>{formatAreaLabel(areaSqMeters)}</Text>
-                                  </View>
-                                  <View style={styles.zoneMetricCard}>
-                                    <Text style={styles.zoneMetricLabel}>Est. mow</Text>
-                                    <Text style={styles.zoneMetricValue}>{formatEtaLabel(areaSqMeters)}</Text>
-                                  </View>
-                                </View>
-
-                                  <View style={styles.zoneInfoRow}>
-                                    <View style={styles.zoneInfoChip}>
-                                    <Ionicons name="scan-outline" size={14} color={colors.text} />
-                                    <Text style={styles.zoneInfoText}>
-                                      {obstacleCount > 0 ? `${obstacleCount} obstacle${obstacleCount === 1 ? '' : 's'}` : 'Clean zone'}
-                                    </Text>
+                                {/* Compact metrics + legend row */}
+                                <View style={styles.zoneInfoRow}>
+                                  <View style={styles.zoneInfoChip}>
+                                    <Ionicons name="resize-outline" size={12} color={colors.textDim} />
+                                    <Text style={styles.zoneInfoText}>{formatAreaLabel(areaSqMeters)}</Text>
                                   </View>
                                   <View style={styles.zoneInfoChip}>
-                                    <Ionicons name="git-branch-outline" size={14} color={colors.text} />
-                                    <Text style={styles.zoneInfoText}>
-                                      {channelCount > 0 ? `${channelCount} channel${channelCount === 1 ? '' : 's'}` : 'Direct dock path'}
-                                    </Text>
+                                    <Ionicons name="time-outline" size={12} color={colors.textDim} />
+                                    <Text style={styles.zoneInfoText}>{formatEtaLabel(areaSqMeters)}</Text>
                                   </View>
+                                  {obstacleCount > 0 && (
+                                    <View style={styles.zoneInfoChip}>
+                                      <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#ef4444' }} />
+                                      <Text style={styles.zoneInfoText}>{obstacleCount} obstacle{obstacleCount === 1 ? '' : 's'}</Text>
+                                    </View>
+                                  )}
+                                  <View style={styles.zoneInfoChip}>
+                                    <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#f59e0b' }} />
+                                    <Text style={styles.zoneInfoText}>Charger</Text>
+                                  </View>
+                                  {mowerLocal && (
+                                    <View style={styles.zoneInfoChip}>
+                                      <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: colors.emerald }} />
+                                      <Text style={styles.zoneInfoText}>Mower</Text>
+                                    </View>
+                                  )}
                                 </View>
 
+                                {/* Action buttons */}
                                 <View style={styles.zoneButtonRow}>
                                   <TouchableOpacity
                                     style={[styles.zoneActionButton, styles.zoneActionPrimary]}
@@ -1166,7 +1153,7 @@ export default function MapScreen() {
                                     })}
                                     activeOpacity={0.8}
                                   >
-                                    <Ionicons name="play-outline" size={18} color={colors.white} />
+                                    <Ionicons name="play-outline" size={16} color={colors.white} />
                                     <Text style={styles.zoneActionPrimaryText}>{t('startMowing')}</Text>
                                   </TouchableOpacity>
                                   <TouchableOpacity
@@ -1178,7 +1165,7 @@ export default function MapScreen() {
                                     })}
                                     activeOpacity={0.8}
                                   >
-                                    <Ionicons name="time-outline" size={18} color={colors.text} />
+                                    <Ionicons name="time-outline" size={16} color={colors.text} />
                                     <Text style={styles.zoneActionText}>{t('schedule')}</Text>
                                   </TouchableOpacity>
                                 </View>
@@ -1187,23 +1174,25 @@ export default function MapScreen() {
                           );
                         })}
                       </ScrollView>
-                    </Animated.View>
-                  </GestureDetector>
-                </View>
 
                 {workMaps.length > 1 && (
-                  <View style={styles.zonePagerDots}>
-                    {workMaps.map((map, index) => (
-                      <TouchableOpacity
-                        key={map.mapId}
-                        style={[
-                          styles.zonePagerDot,
-                          index === selectedWorkIndex && styles.zonePagerDotActive,
-                        ]}
-                        onPress={() => setSelectedZoneId(map.mapId)}
-                        activeOpacity={0.8}
-                      />
-                    ))}
+                  <View style={styles.zonePagerWrap}>
+                    <Text style={styles.zonePagerLabel}>
+                      {selectedWorkIndex + 1} / {workMaps.length} zones — swipe to switch
+                    </Text>
+                    <View style={styles.zonePagerDots}>
+                      {workMaps.map((map, index) => (
+                        <TouchableOpacity
+                          key={map.mapId}
+                          style={[
+                            styles.zonePagerDot,
+                            index === selectedWorkIndex && styles.zonePagerDotActive,
+                          ]}
+                          onPress={() => setSelectedZoneId(map.mapId)}
+                          activeOpacity={0.8}
+                        />
+                      ))}
+                    </View>
                   </View>
                 )}
               </View>
@@ -1284,37 +1273,6 @@ export default function MapScreen() {
           </View>
         )}
 
-        {/* Legend */}
-        {(legendMaps.length > 0 || (!selectedWorkMap && maps.length > 0)) && (
-          <View style={styles.legend}>
-            {(selectedWorkMap ? legendMaps : maps.filter((m) => m.mapType !== 'unicom')).map((m) => {
-              const c = MAP_COLORS[m.mapType] ?? MAP_COLORS.work;
-              return (
-                <TouchableOpacity
-                  key={m.mapId}
-                  style={styles.legendItem}
-                  onLongPress={() => handleMapAction(m)}
-                  onPress={() => handleMapAction(m)}
-                  activeOpacity={0.7}
-                >
-                  <View style={[styles.legendDot, { backgroundColor: c.stroke }]} />
-                  <Text style={styles.legendText}>{m.mapName || m.mapType}</Text>
-                  <Ionicons name="ellipsis-horizontal" size={14} color={colors.textMuted} style={{ marginLeft: 4 }} />
-                </TouchableOpacity>
-              );
-            })}
-            <View style={styles.legendItem}>
-              <View style={[styles.legendDot, { backgroundColor: '#f59e0b' }]} />
-              <Text style={styles.legendText}>Charger</Text>
-            </View>
-            {mowerLocal && (
-              <View style={styles.legendItem}>
-                <View style={[styles.legendDot, { backgroundColor: colors.emerald }]} />
-                <Text style={styles.legendText}>Mower</Text>
-              </View>
-            )}
-          </View>
-        )}
 
         {/* Status chips */}
         {mower && (
@@ -1345,7 +1303,7 @@ export default function MapScreen() {
             )}
           </View>
         )}
-      </View>
+      </ScrollView>
 
       <Modal visible={actionsMenuVisible} transparent animationType="fade" onRequestClose={() => setActionsMenuVisible(false)}>
         <View style={styles.actionsSheetOverlay}>
@@ -1514,33 +1472,24 @@ const styles = StyleSheet.create({
   },
   zoomHint: { fontSize: 11, color: colors.textMuted, textAlign: 'center', paddingVertical: 8 },
   zonePanelShell: {
-    marginTop: -8,
-    paddingBottom: Math.max(8, MAP_PADDING),
-  },
-  zonePanelViewport: {
-    height: ZONE_PANEL_HEIGHT,
-    overflow: 'hidden',
-  },
-  zonePanelAnimatedLayer: {
-    flex: 1,
+    marginTop: 12,
   },
   zonePanelPage: {
     paddingHorizontal: 2,
   },
   zonePanelCard: {
-    height: ZONE_PANEL_HEIGHT,
     backgroundColor: '#1b2747',
-    borderRadius: 24,
-    paddingHorizontal: 16,
-    paddingTop: 16,
-    paddingBottom: 14,
+    borderRadius: 18,
+    paddingHorizontal: 14,
+    paddingTop: 12,
+    paddingBottom: 12,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.14)',
     shadowColor: '#000',
-    shadowOpacity: 0.32,
-    shadowRadius: 24,
-    shadowOffset: { width: 0, height: 14 },
-    elevation: 8,
+    shadowOpacity: 0.24,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 6,
   },
   zoneDragHandleWrap: {
     alignItems: 'center',
@@ -1566,16 +1515,9 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   zonePanelTitleWrap: { flex: 1 },
-  zonePanelEyebrow: {
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: 0.5,
-    color: colors.textDim,
-    marginBottom: 4,
-  },
   zonePanelTitle: {
-    fontSize: 18,
-    fontWeight: '800',
+    fontSize: 16,
+    fontWeight: '700',
     color: colors.white,
   },
   zonePanelActions: {
@@ -1583,90 +1525,76 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   zonePanelIconButton: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     backgroundColor: 'rgba(255,255,255,0.08)',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  zoneMetricRow: {
-    flexDirection: 'row',
-    gap: 12,
-    marginTop: 14,
-  },
-  zoneMetricCard: {
-    flex: 1,
-    backgroundColor: 'rgba(255,255,255,0.05)',
-    borderRadius: 16,
-    paddingVertical: 14,
-    paddingHorizontal: 14,
-  },
-  zoneMetricLabel: {
-    fontSize: 12,
-    color: colors.textDim,
-    fontWeight: '700',
-    marginBottom: 4,
-  },
-  zoneMetricValue: {
-    fontSize: 20,
-    fontWeight: '800',
-    color: colors.white,
-  },
   zoneInfoRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 10,
-    marginTop: 12,
+    gap: 6,
+    marginTop: 8,
   },
   zoneInfoChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
     borderRadius: 999,
     backgroundColor: 'rgba(255,255,255,0.06)',
   },
   zoneInfoText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
     color: colors.text,
   },
   zoneButtonRow: {
     flexDirection: 'row',
-    gap: 12,
-    marginTop: 14,
+    gap: 10,
+    marginTop: 10,
   },
   zoneActionButton: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
-    paddingVertical: 16,
-    borderRadius: 18,
+    gap: 6,
+    paddingVertical: 12,
+    borderRadius: 14,
     backgroundColor: 'rgba(255,255,255,0.08)',
   },
   zoneActionPrimary: {
     backgroundColor: colors.emerald,
   },
   zoneActionText: {
-    fontSize: 16,
-    fontWeight: '800',
+    fontSize: 14,
+    fontWeight: '700',
     color: colors.text,
   },
   zoneActionPrimaryText: {
-    fontSize: 16,
-    fontWeight: '800',
+    fontSize: 14,
+    fontWeight: '700',
     color: colors.white,
+  },
+  zonePagerWrap: {
+    alignItems: 'center',
+    marginTop: 12,
+    gap: 6,
+  },
+  zonePagerLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.textMuted,
   },
   zonePagerDots: {
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
     gap: 8,
-    marginTop: 12,
   },
   zonePagerDot: {
     width: 8,

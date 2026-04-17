@@ -1,6 +1,21 @@
 # Mowing Flow — Complete Reference
 
-Gebaseerd op Flutter Novabot app v2.4.0 decompilatie (blutter).
+Gebaseerd op Flutter Novabot app v2.4.0 decompilatie (blutter), geverifieerd 2026-04-17.
+
+Bronbestand: `pages/home_page/view/mower_status/online_view.dart` (blutter decompilatie)
+
+## Methode / Regel Referentie (online_view.dart)
+
+| Methode | Regel | Commando |
+|---------|-------|---------|
+| `_clickStart` | L2342 | `start_navigation` |
+| `_clickPause` | L2744 | `pause_navigation` |
+| `_clickContinue` | L1720 | `resume_navigation` |
+| `_endAndBack` | L4133 | `stop_navigation` |
+| `gotoCharging` | L3182 | `go_pile {}` |
+| `gotoCharging` | L3266 | `go_to_charge { cmd_num, chargerpile: { latitude: 200, longitude: 200 } }` |
+
+---
 
 ## Protocol Selectie
 
@@ -44,7 +59,7 @@ Response: `set_para_info_respond` met `result: 0`
 ```json
 {"start_navigation": {"mapName": "test", "cutterhigh": 40, "area": 1, "cmd_num": 12345}}
 ```
-- `mapName`: altijd `"test"` (hardcoded in Flutter app)
+- `mapName`: altijd `"test"` — **hardcoded literal string** (`pp+0x11c10`), NIET de echte kaartnaam
 - `area`: **1** = map0, **10** = map1, **200** = map2
 - `cutterhigh`: snijhoogte (mm)
 - `cmd_num`: auto-incrementing counter

@@ -513,6 +513,27 @@ export function initDb(): void {
     }
   }
 
+  // Heal any equipment rows where the mower BLE MAC was never stored
+  // (e.g. cloud returned empty list, manual pair skipped it). Without this
+  // the Novabot app cannot match a BLE advertisement → mapping fails.
+  {
+    const healed = db.prepare(`
+      UPDATE equipment
+      SET mac_address = (
+        SELECT f.mac_address FROM device_factory f
+        WHERE f.sn = equipment.mower_sn AND f.device_type = 'mower' AND f.mac_address IS NOT NULL
+      )
+      WHERE (mac_address IS NULL OR mac_address = '')
+        AND EXISTS (
+          SELECT 1 FROM device_factory f
+          WHERE f.sn = equipment.mower_sn AND f.device_type = 'mower' AND f.mac_address IS NOT NULL
+        )
+    `).run().changes;
+    if (healed > 0) {
+      console.log(`[DB] Backfilled mower BLE MAC on ${healed} equipment row(s) from device_factory`);
+    }
+  }
+
   console.log('[DB] Database initialised');
 }
 

@@ -21,6 +21,7 @@ import {
   GestureHandlerRootView,
 } from 'react-native-gesture-handler';
 import { runOnJS } from 'react-native-reanimated';
+import { WebView } from 'react-native-webview';
 import { colors } from '../theme/colors';
 import { useMowerState } from '../hooks/useMowerState';
 import { getSocket } from '../services/socket';
@@ -167,14 +168,37 @@ export default function JoystickScreen() {
 
   const battery = parseInt(mower?.sensors?.battery_power ?? mower?.sensors?.battery_capacity ?? '0', 10) || 0;
 
+  // ── Camera stream ──
+  const [streamUrl, setStreamUrl] = useState<string | null>(null);
+  const [cameraVisible, setCameraVisible] = useState(true);
+
+  useEffect(() => {
+    if (!mower?.online || !sn) { setStreamUrl(null); return; }
+    (async () => {
+      try {
+        const serverUrl = await getServerUrl();
+        if (!serverUrl) return;
+        const res = await fetch(`${serverUrl}/api/dashboard/camera/${encodeURIComponent(sn)}/info`);
+        const json = await res.json();
+        if (json.streamUrl) setStreamUrl(`${json.streamUrl}?topic=front`);
+      } catch { /* ignore */ }
+    })();
+  }, [mower?.online, sn]);
+
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <View style={[styles.container, { paddingTop: insets.top }]}>
 
-
         {/* Header */}
         <View style={styles.header}>
-          <Text style={styles.title}>{t('manualControl')}</Text>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Text style={styles.title}>{t('manualControl')}</Text>
+            {streamUrl && (
+              <TouchableOpacity onPress={() => setCameraVisible(!cameraVisible)} activeOpacity={0.7}>
+                <Ionicons name={cameraVisible ? 'videocam' : 'videocam-off'} size={22} color={cameraVisible ? colors.emerald : colors.textMuted} />
+              </TouchableOpacity>
+            )}
+          </View>
           {mower && (
             <View style={styles.statusRow}>
               <View style={[styles.dot, { backgroundColor: mower.online ? colors.green : colors.red }]} />
@@ -194,6 +218,24 @@ export default function JoystickScreen() {
           </View>
         ) : (
           <>
+            {/* Camera stream */}
+            {cameraVisible && streamUrl && (
+              <View style={styles.cameraContainer}>
+                <WebView
+                source={{
+                  html: `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no"><style>*{margin:0;padding:0;touch-action:none;pointer-events:none}body{background:#000;width:100vw;height:100%;display:flex;align-items:center;justify-content:center;overflow:hidden}img{max-width:100%;max-height:100%;object-fit:contain;pointer-events:none}</style></head><body><img src="${streamUrl}" /></body></html>`,
+                }}
+                style={styles.cameraStream}
+                scrollEnabled={false}
+                javaScriptEnabled={false}
+                originWhitelist={['*']}
+                mixedContentMode="always"
+                allowsInlineMediaPlayback
+                overScrollMode="never"
+              />
+              </View>
+            )}
+
             {/* Speed status */}
             <View style={styles.speedInfo}>
               {active ? (
@@ -297,6 +339,19 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.bg,
     alignItems: 'center',
+  },
+  cameraContainer: {
+    width: '100%',
+    height: 180,
+    backgroundColor: '#000',
+    borderRadius: 12,
+    overflow: 'hidden',
+    marginHorizontal: 16,
+    marginBottom: 4,
+  },
+  cameraStream: {
+    flex: 1,
+    backgroundColor: '#000',
   },
   header: {
     width: '100%',

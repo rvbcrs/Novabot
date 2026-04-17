@@ -239,7 +239,10 @@ setupRouter.post('/cloud-apply', async (req: Request, res: Response) => {
             nick_name: deviceName ?? null,
             charger_address: charger?.address != null ? String(charger.address) : null,
             charger_channel: charger?.channel != null ? String(charger.channel) : null,
-            mac_address: (mower?.mac ?? charger?.mac) ?? null,
+            // Only the mower BLE MAC belongs here — the charger MAC (48:27:E2:*)
+            // would otherwise leak in and break BLE matching in the Novabot app.
+            // equipmentRepo.create() backfills from device_factory when null.
+            mac_address: mower?.mac ?? null,
           });
           console.log(`[Setup] Equipment created: mower=${mower?.sn ?? 'none'}, charger=${charger?.sn ?? 'none'}`);
         }
@@ -252,6 +255,10 @@ setupRouter.post('/cloud-apply', async (req: Request, res: Response) => {
       if (charger?.sn && charger?.mac) {
         deviceRepo.insertIfMissing(`cloud_import_${charger.sn}`, charger.sn, charger.mac);
       }
+
+      // 3b. Ensure mower BLE MAC is populated even when the cloud returned
+      // no MAC (happens for accounts where the mower isn't listed in LFI cloud).
+      equipmentRepo.backfillMissingMacsFromFactory();
 
       // 4. LoRa cache — NIET vanuit cloud importeren, cloud waarden zijn onbetrouwbaar.
       // Echte LoRa config wordt automatisch opgehaald via MQTT get_lora_info bij charger connect.

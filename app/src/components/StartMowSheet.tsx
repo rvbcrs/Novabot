@@ -96,22 +96,17 @@ export function StartMowSheet({
   // Check if a unicom (channel) exists for the selected map
   const hasUnicom = allMaps.some(m => m.mapType === 'unicom' && m.mapArea?.length >= 2);
 
-  // Send set_para_info when user changes path direction (matches Flutter Advanced Settings flow)
+  // Send set_para_info ONLY with path_direction — matching Novabot (verified via
+  // mower mqtt_node log). Sending the full bundle (sound/headlight/sensitivity/
+  // manual_controller_*) overrides user settings every time the compass moves:
+  // specifically `headlight: 0` was flipping the dock LED from 255 back to off
+  // via the server's led_bridge translation (dashboard.ts:1508-1510).
   const sendPathDirection = async (deg: number) => {
     try {
       const url = await getServerUrl();
       if (!url || !sn) return;
       const api = new ApiClient(url);
-      await api.sendCommand(sn, {
-        set_para_info: {
-          sound: 0,
-          headlight: 0,
-          path_direction: deg,
-          obstacle_avoidance_sensitivity: 1,
-          manual_controller_v: 300,
-          manual_controller_w: 300,
-        },
-      });
+      await api.sendCommand(sn, { set_para_info: { path_direction: deg } });
       console.log(`[StartMow] set_para_info sent: path_direction=${deg}`);
     } catch { /* ignore */ }
   };

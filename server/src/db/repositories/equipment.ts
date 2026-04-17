@@ -115,6 +115,35 @@ export class EquipmentRepository {
   private _updateMacBySnIfMissing = db.prepare(
     'UPDATE equipment SET mac_address = ? WHERE mower_sn = ? AND mac_address IS NULL'
   );
+  // Backfill MAC from device_factory. The `f.device_type = 'mower'` guard is
+  // critical: without it a charger row in device_factory could leak its MAC
+  // onto the equipment record, and the Novabot app would fail to match BLE
+  // advertisements (see memory: ble-mac-address-critical).
+  private _backfillMacFromFactoryOne = db.prepare(`
+    UPDATE equipment
+    SET mac_address = (
+      SELECT f.mac_address FROM device_factory f
+      WHERE f.sn = equipment.mower_sn AND f.device_type = 'mower' AND f.mac_address IS NOT NULL
+    )
+    WHERE equipment.mower_sn = ?
+      AND (equipment.mac_address IS NULL OR equipment.mac_address = '')
+      AND EXISTS (
+        SELECT 1 FROM device_factory f
+        WHERE f.sn = equipment.mower_sn AND f.device_type = 'mower' AND f.mac_address IS NOT NULL
+      )
+  `);
+  private _backfillMacFromFactoryAll = db.prepare(`
+    UPDATE equipment
+    SET mac_address = (
+      SELECT f.mac_address FROM device_factory f
+      WHERE f.sn = equipment.mower_sn AND f.device_type = 'mower' AND f.mac_address IS NOT NULL
+    )
+    WHERE (equipment.mac_address IS NULL OR equipment.mac_address = '')
+      AND EXISTS (
+        SELECT 1 FROM device_factory f
+        WHERE f.sn = equipment.mower_sn AND f.device_type = 'mower' AND f.mac_address IS NOT NULL
+      )
+  `);
   private _updateMowerIp = db.prepare('UPDATE equipment SET mower_ip = ? WHERE mower_sn = ?');
   private _setOpenNova = db.prepare('UPDATE equipment SET is_opennova = 1 WHERE mower_sn = ?');
   private _updateVersionsMower = db.prepare('UPDATE equipment SET mower_version = ? WHERE mower_sn = ?');
@@ -266,6 +295,12 @@ export class EquipmentRepository {
       data.charger_version ?? null,
       data.mower_ip ?? null,
     );
+    // Ensure mower BLE MAC is set even when the caller didn't supply one
+    // (e.g. cloud returned empty list for this account). The Novabot app
+    // refuses BLE mapping without this field.
+    if (!data.mac_address && data.mower_sn) {
+      this._backfillMacFromFactoryOne.run(data.mower_sn);
+    }
   }
 
   updateMowerSn(equipmentId: string, mowerSn: string, mac?: string): void {
@@ -273,7 +308,17 @@ export class EquipmentRepository {
       this._updateMowerSnWithMac.run(mowerSn, mac, equipmentId);
     } else {
       this._updateMowerSn.run(mowerSn, equipmentId);
+      this._backfillMacFromFactoryOne.run(mowerSn);
     }
+  }
+
+  /**
+   * Fill in `mac_address` from `device_factory` for every equipment row that
+   * is missing it. Idempotent and safe to call on boot.
+   * @returns number of rows that received a MAC.
+   */
+  backfillMissingMacsFromFactory(): number {
+    return this._backfillMacFromFactoryAll.run().changes;
   }
 
   updateChargerSn(equipmentId: string, chargerSn: string, address?: string, channel?: string): void {
