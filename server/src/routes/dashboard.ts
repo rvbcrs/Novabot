@@ -23,6 +23,7 @@ import crypto from 'crypto';
 import { generateMapZipFromDb, gpsToLocal, localToGps, parseMapZip, type GpsPoint, type LocalPoint } from '../mqtt/mapConverter.js';
 import { existsSync, unlinkSync, readFileSync, readdirSync, createReadStream, statSync, watch, mkdirSync, copyFileSync } from 'fs';
 import { isDemoMode, setDemoMode as setDemo, getDemoStatus } from '../services/demoSimulator.js';
+import { resolveMowerIp } from '../services/mowerIpDiscovery.js';
 import { execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
@@ -303,10 +304,15 @@ dashboardRouter.post('/bind-device', async (req: Request, res: Response) => {
   res.json({ ok: true });
 });
 
-// DELETE /api/dashboard/devices/:sn — verwijder een device uit de registry
+// DELETE /api/dashboard/devices/:sn — verwijder een device uit alle stores.
+// Vroeger ruimde dit alleen device_registry op, waardoor de prullenbak in de
+// Home tab niets leek te doen voor stale LoRa-cache rijen (LFIC0001 etc).
+// Nu: device_registry + equipment_lora_cache, en bij volledige equipment row
+// ook de equipment-link zodat een uitgebonden device geen zombie wordt.
 dashboardRouter.delete('/devices/:sn', (req: Request, res: Response) => {
   const { sn } = req.params;
   deviceRepo.deleteBySn(sn);
+  equipmentRepo.deleteLoraCache(sn);
   res.json({ ok: true });
 });
 
@@ -818,7 +824,7 @@ function generatePosJson(charger: GpsPoint): Record<string, unknown> {
 // ── Auto-push kaarten naar maaier (fire-and-forget) ─────────────────────────
 // Wordt aangeroepen na map create/update/delete zodat de maaier altijd up-to-date is.
 // Zoekt zelf de charger GPS op via dezelfde fallback chain als de endpoint.
-function autoPushMapsInBackground(sn: string): void {
+async function autoPushMapsInBackground(sn: string): Promise<void> {
   // Zoek charger GPS: live cache → map_calibration
   let chargerGps: GpsPoint | null = null;
 
@@ -849,13 +855,10 @@ function autoPushMapsInBackground(sn: string): void {
     return;
   }
 
-  // Controleer of maaier IP bekend is
-  const ipRow = equipmentRepo.findResolvedMowerIp(sn);
-
-  const isPrivateIp = (addr: string) =>
-    /^10\./.test(addr) || /^172\.(1[6-9]|2\d|3[01])\./.test(addr) || /^192\.168\./.test(addr);
-  const ip = ipRow?.mower_ip
-    ?? (ipRow?.detected_ip && isPrivateIp(ipRow.detected_ip) ? ipRow.detected_ip : null);
+  // Resolve mower IP — gebruikt manual > discovered (mDNS) > MQTT-private fallback.
+  // AUTO-PUSH is fire-and-forget vanuit een DB hook, dus we wachten kort op
+  // discovery zodat de eerste push na boot ook werkt.
+  const ip = await resolveMowerIp(sn, { awaitDiscovery: true });
 
   if (!ip) {
     console.log(`[AUTO-PUSH] Maaier IP onbekend voor ${sn}, skip push`);
@@ -881,23 +884,19 @@ dashboardRouter.post('/maps/:sn/push-to-mower', async (req: Request, res: Respon
   const { sn } = req.params;
   const body = req.body as { chargingStation?: GpsPoint; chargingOrientation?: number };
 
-  // Haal maaier IP op:
-  // 1. Handmatig geconfigureerd in equipment.mower_ip (altijd bruikbaar)
-  // 2. Auto-detect uit device_registry.ip_address — alleen als het een privé-IP is
-  //    (niet in Docker: Docker NATt alles naar een publiek CDN-IP)
-  const isPrivateIp = (addr: string) =>
-    /^10\./.test(addr) || /^172\.(1[6-9]|2\d|3[01])\./.test(addr) || /^192\.168\./.test(addr);
-
+  // Resolve mower IP — manual > discovered (mDNS) > MQTT-private fallback.
+  // Triggers mDNS lookup als nog niet bekend, zodat de gebruiker geen IP
+  // handmatig hoeft in te stellen na een factory reset.
   const ipRow = equipmentRepo.findResolvedMowerIp(sn);
-
-  const ip = ipRow?.mower_ip
-    ?? (ipRow?.detected_ip && isPrivateIp(ipRow.detected_ip) ? ipRow.detected_ip : null);
+  const ip = await resolveMowerIp(sn, { awaitDiscovery: true });
 
   if (!ip) {
     res.status(404).json({ error: 'Maaier IP onbekend — stel het in via het apparaat paneel (klik op de maaier chip → SSH IP veld)' });
     return;
   }
-  console.log(`[SSH] Maaier IP: ${ip} (${ipRow?.mower_ip ? 'handmatig' : 'auto-detect'}`);
+  const source = ipRow?.mower_ip ? 'handmatig'
+    : (ipRow?.discovered_ip ? 'mDNS' : 'MQTT auto-detect');
+  console.log(`[SSH] Maaier IP: ${ip} (${source})`);
 
   // Haal laadstation GPS op — prioriteit: live sensor cache → map_calibration → request body
   let chargingStation = body.chargingStation;
@@ -1939,16 +1938,50 @@ dashboardRouter.get('/rain-sessions', (_req: Request, res: Response) => {
 });
 
 // GET /api/dashboard/rain-forecast/:sn — regen voorspelling voor een maaier
+//
+// GPS resolutie cascade — Open-Meteo grid is ~1km, dus iedere bron in de
+// buurt van de maaier voldoet:
+//   1. mapRepo.getChargerGps()    — door gebruiker op kaart geplaatst (precies)
+//   2. live mower GPS-snapshot     — werkt zelfs zonder calibration (de maaier
+//                                    rapporteert lat/lng via report_state_timer)
+//   3. live charger GPS-snapshot  — fallback als de maaier geen fix heeft
+// Zonder deze cascade returnt het endpoint `{available:false}` zodra een
+// gebruiker net een nieuwe maaier paireert maar nog geen charger op de kaart
+// heeft geplaatst — exact het scenario waarbij Walter / Ramon "geen regen
+// warning" zien terwijl het buiten plenst.
 dashboardRouter.get('/rain-forecast/:sn', async (req: Request, res: Response) => {
   const { sn } = req.params;
-  // Haal charger GPS op
+
+  let lat: number | null = null;
+  let lng: number | null = null;
+
   const chargerGps = mapRepo.getChargerGps(sn);
-  if (!chargerGps) {
+  if (chargerGps) {
+    lat = chargerGps.lat;
+    lng = chargerGps.lng;
+  } else {
+    const tryLive = (snap: Record<string, string> | null | undefined) => {
+      if (!snap) return false;
+      const la = parseFloat(snap.latitude ?? '');
+      const ln = parseFloat(snap.longitude ?? '');
+      if (!isNaN(la) && !isNaN(ln) && la !== 0 && ln !== 0) {
+        lat = la; lng = ln;
+        return true;
+      }
+      return false;
+    };
+    if (!tryLive(getDeviceSnapshot(sn))) {
+      const eqRow = equipmentRepo.findByMowerSn(sn);
+      if (eqRow?.charger_sn) tryLive(getDeviceSnapshot(eqRow.charger_sn));
+    }
+  }
+
+  if (lat == null || lng == null) {
     res.json({ available: false });
     return;
   }
   try {
-    const forecast = await getWeatherForecast(chargerGps.lat, chargerGps.lng);
+    const forecast = await getWeatherForecast(lat, lng);
     const now = new Date();
     // Zoek het eerste droge uur (neerslag < 0.1mm EN kans < 30%)
     let clearAt: string | null = null;
@@ -2736,20 +2769,34 @@ dashboardRouter.get('/lora/next-address', (_req: Request, res: Response) => {
 
 // GET /api/dashboard/device-sets — group devices into charger↔mower sets based on LoRa address
 dashboardRouter.get('/device-sets', (_req: Request, res: Response) => {
-  // Get all LoRa pairings
-  const loraRows = equipmentRepo.listLoraCache().map(row => ({
-    sn: row.sn,
-    charger_address: row.charger_address != null ? Number(row.charger_address) : null,
-    charger_channel: row.charger_channel != null ? Number(row.charger_channel) : null,
-  }));
-
-  // Get all known devices with online status
+  // Devices that have ever connected via MQTT (real-world presence).
   const deviceRows = deviceRepo.listLatestBySn()
     .filter(row => row.sn != null)
     .map(row => ({
       sn: row.sn as string,
       mac_address: row.mac_address,
       last_seen: row.last_seen,
+    }));
+  const seenSns = new Set(deviceRows.map(r => r.sn));
+
+  // Devices that the user has explicitly bound (equipment table).
+  const boundSns = new Set<string>();
+  for (const eq of equipmentRepo.listBoundSnForExistingUsers()) {
+    if (eq.mower_sn) boundSns.add(eq.mower_sn);
+    if (eq.charger_sn) boundSns.add(eq.charger_sn);
+  }
+
+  // Filter LoRa cache to skip "ghosts" — entries that have a LoRa cache row but
+  // never appeared in MQTT registry AND aren't bound. These are leftovers from
+  // (a) previous test data lekkage vóór de vitest isolation fix and (b) the
+  // hardcoded INSERT OR IGNORE seeds we removed in database.ts. Without this
+  // filter every fresh install would have shown phantom paired sets.
+  const loraRows = equipmentRepo.listLoraCache()
+    .filter(row => seenSns.has(row.sn) || boundSns.has(row.sn))
+    .map(row => ({
+      sn: row.sn,
+      charger_address: row.charger_address != null ? Number(row.charger_address) : null,
+      charger_channel: row.charger_channel != null ? Number(row.charger_channel) : null,
     }));
 
   const allSns = new Set(deviceRows.map(r => r.sn));
@@ -2768,18 +2815,34 @@ dashboardRouter.get('/device-sets', (_req: Request, res: Response) => {
     paired.add(r.sn);
   }
 
-  // Build sets
   const sets: Array<{
     loraAddress: number | null;
     charger: { sn: string; online: boolean } | null;
     mower: { sn: string; online: boolean } | null;
   }> = [];
 
+  // LoRa-cache pairings first (most authoritative — set during BLE provisioning)
   for (const [addr, pair] of byAddr) {
     sets.push({
       loraAddress: addr,
       charger: pair.charger ? { sn: pair.charger, online: isDeviceOnline(pair.charger) } : null,
       mower: pair.mower ? { sn: pair.mower, online: isDeviceOnline(pair.mower) } : null,
+    });
+  }
+
+  // Fall back: equipment table pairing. When the LoRa cache hasn't been
+  // populated (or got wiped) but the user has a real charger↔mower binding
+  // in the equipment table, group them as one set so they show up paired
+  // in the Home tab instead of as two lonely cards.
+  for (const eq of equipmentRepo.listBoundSnForExistingUsers()) {
+    if (!eq.mower_sn || !eq.charger_sn) continue;
+    if (paired.has(eq.mower_sn) || paired.has(eq.charger_sn)) continue;
+    paired.add(eq.mower_sn);
+    paired.add(eq.charger_sn);
+    sets.push({
+      loraAddress: null,
+      charger: { sn: eq.charger_sn, online: isDeviceOnline(eq.charger_sn) },
+      mower: { sn: eq.mower_sn, online: isDeviceOnline(eq.mower_sn) },
     });
   }
 
@@ -3033,16 +3096,14 @@ dashboardRouter.post('/pin/:sn/raw', (req: Request, res: Response) => {
 import http from 'http';
 
 // GET /api/dashboard/camera/:sn/info — retourneert directe maaier camera URLs
-// App gebruikt dit om direct met de maaier te verbinden (geen proxy/Cloudflare)
-dashboardRouter.get('/camera/:sn/info', (req: Request, res: Response) => {
+// App gebruikt dit om direct met de maaier te verbinden (geen proxy/Cloudflare).
+// Trigger mDNS discovery bij eerste call zodat een onbekende mower zichzelf
+// kan vinden zonder dat de gebruiker handmatig een IP moet invoeren.
+dashboardRouter.get('/camera/:sn/info', async (req: Request, res: Response) => {
   const sn = req.params.sn;
   const port = parseInt(req.query.port as string) || 8000;
-  const isPrivateIp = (addr: string) =>
-    /^10\./.test(addr) || /^172\.(1[6-9]|2\d|3[01])\./.test(addr) || /^192\.168\./.test(addr);
-  const ipRow = equipmentRepo.findResolvedMowerIp(sn);
-  const ip = (req.query.ip as string)
-    ?? ipRow?.mower_ip
-    ?? (ipRow?.detected_ip && isPrivateIp(ipRow.detected_ip) ? ipRow.detected_ip : undefined);
+  const queryIp = req.query.ip as string | undefined;
+  const ip = queryIp ?? (await resolveMowerIp(sn, { awaitDiscovery: true }));
   if (!ip) {
     res.status(404).json({ error: 'Maaier IP onbekend' });
     return;
@@ -3056,18 +3117,12 @@ dashboardRouter.get('/camera/:sn/info', (req: Request, res: Response) => {
 });
 
 // GET /api/dashboard/camera/:sn/stream — proxy MJPEG stream van de maaier
-dashboardRouter.get('/camera/:sn/stream', (req: Request, res: Response) => {
+dashboardRouter.get('/camera/:sn/stream', async (req: Request, res: Response) => {
   let ip = req.query.ip as string | undefined;
   const port = parseInt(req.query.port as string) || 8000;
 
-  // Auto-resolve mower IP als niet meegegeven (zelfde logica als snapshot endpoint)
   if (!ip) {
-    const sn = req.params.sn;
-    const isPrivateIp = (addr: string) =>
-      /^10\./.test(addr) || /^172\.(1[6-9]|2\d|3[01])\./.test(addr) || /^192\.168\./.test(addr);
-    const ipRow = equipmentRepo.findResolvedMowerIp(sn);
-    ip = ipRow?.mower_ip
-      ?? (ipRow?.detected_ip && isPrivateIp(ipRow.detected_ip) ? ipRow.detected_ip : undefined);
+    ip = (await resolveMowerIp(req.params.sn, { awaitDiscovery: true })) ?? undefined;
     if (!ip) {
       res.status(404).json({ error: 'Maaier IP onbekend' });
       return;
@@ -3102,18 +3157,12 @@ dashboardRouter.get('/camera/:sn/stream', (req: Request, res: Response) => {
 });
 
 // GET /api/dashboard/camera/:sn/snapshot — single JPEG snapshot
-dashboardRouter.get('/camera/:sn/snapshot', (req: Request, res: Response) => {
+dashboardRouter.get('/camera/:sn/snapshot', async (req: Request, res: Response) => {
   let ip = req.query.ip as string | undefined;
   const port = parseInt(req.query.port as string) || 8000;
 
-  // Auto-resolve mower IP als niet meegegeven
   if (!ip) {
-    const sn = req.params.sn;
-    const isPrivateIp = (addr: string) =>
-      /^10\./.test(addr) || /^172\.(1[6-9]|2\d|3[01])\./.test(addr) || /^192\.168\./.test(addr);
-    const ipRow = equipmentRepo.findResolvedMowerIp(sn);
-    ip = ipRow?.mower_ip
-      ?? (ipRow?.detected_ip && isPrivateIp(ipRow.detected_ip) ? ipRow.detected_ip : undefined);
+    ip = (await resolveMowerIp(req.params.sn, { awaitDiscovery: true })) ?? undefined;
     if (!ip) {
       res.status(404).json({ error: 'Maaier IP onbekend' });
       return;

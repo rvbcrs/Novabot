@@ -163,6 +163,8 @@ export default {
 
   // ── Rain ──────────────────────────────────────────────────────
   rainDetected: 'Regen gedetecteerd',
+  rainExpected: 'Regen op komst',
+  rainArrivesAt: 'Rond {{time}}',
   pausedSince: 'Gepauzeerd sinds',
   dryInMin: 'Droog over ~{{min}} min',
   dryAt: 'Droog om ~{{time}}',

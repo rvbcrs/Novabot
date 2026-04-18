@@ -92,13 +92,21 @@ export default function JoystickScreen() {
 
     const holdType = getHoldType(dx, dy);
     const lvl = SPEED_LEVELS[speedRef.current];
-    // holdType determines direction, mst provides positive magnitudes
+    // start_move (`holdType`) already encodes direction (1 left, 2 right, 3 fwd,
+    // 4 back) — `mst` only carries unsigned magnitudes. Earlier code passed `dx`
+    // signed for `y_v` which mixed direction into the angular term and made the
+    // mower swing erratically when "forward" was held with any horizontal drift.
+    // x_w = linear magnitude on the dominant axis; y_v = angular magnitude on the
+    // off-axis. Both unsigned.
+    const ax = Math.abs(dx);
+    const ay = Math.abs(dy);
+    const linearAxis = ay >= ax ? ay : ax;
     socket.emit('joystick:move', {
       sn,
       holdType,
       mst: {
-        x_w: Math.round(dist * lvl.linear * 100) / 100,
-        y_v: Math.round(dx * lvl.angular * 100) / 100,
+        x_w: Math.round(linearAxis * lvl.linear * 100) / 100,
+        y_v: Math.round(ax * lvl.angular * 100) / 100,
         z_g: 0,
       },
     });
@@ -174,14 +182,16 @@ export default function JoystickScreen() {
 
   useEffect(() => {
     if (!mower?.online || !sn) { setStreamUrl(null); return; }
+    // Use the server's proxy route, NOT the direct mower-IP URL from /info.
+    // Reasons: (a) `/info` 404s when the mower's LAN IP isn't yet known to
+    // the server (mDNS still warming up after boot), which used to leave the
+    // joystick screen permanently camera-less. (b) the proxy works regardless
+    // of whether the app device is on the same LAN as the mower — important
+    // for remote / VPN access. CameraScreen.tsx uses the same approach.
     (async () => {
-      try {
-        const serverUrl = await getServerUrl();
-        if (!serverUrl) return;
-        const res = await fetch(`${serverUrl}/api/dashboard/camera/${encodeURIComponent(sn)}/info`);
-        const json = await res.json();
-        if (json.streamUrl) setStreamUrl(`${json.streamUrl}?topic=front`);
-      } catch { /* ignore */ }
+      const serverUrl = await getServerUrl();
+      if (!serverUrl) return;
+      setStreamUrl(`${serverUrl}/api/dashboard/camera/${encodeURIComponent(sn)}/stream?topic=front`);
     })();
   }, [mower?.online, sn]);
 

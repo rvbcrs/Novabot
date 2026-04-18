@@ -1965,13 +1965,19 @@ class OpenRobotDecision(Node):
         self.call_service_async(
             self.cli_preposition_camera, req_cam, 'preposition_camera(aruco)')
 
-        # When dark: set auto_recharge_server brightness_adjustment_value to 255.
-        # Default value is 1 (LED nearly off at night) — way too dim for ArUco detection.
-        # auto_recharge_server publishes led_set = brightness_adjustment_value when dark.
+        # LED brightness for ArUco detection while docking.
+        #   Day:   LED level 1 is bright enough; we publish it ourselves.
+        #   Night: auto_recharge_server publishes brightness_adjustment_value
+        #          to /led_set itself once total_gain crosses the dark
+        #          threshold. We bump that param to 255 so its publish is
+        #          actually visible. We must NOT publish our own _set_led(1)
+        #          afterwards — `/led_set` is last-write-wins, and 1 over 255
+        #          wipes out the boost (this caused the "255 → 1 during dock"
+        #          regression the user reported).
         if self._camera_is_dark:
             self._set_recharge_led_brightness(255)
-
-        self._set_led(1)  # LED aan voor ArUco camera zicht (ook 's nachts)
+        else:
+            self._set_led(1)
         self.get_logger().info('Recharge: Starting AutoCharging action')
         self._set_state(TaskMode.RECHARGING, WorkStatus.ALIGN_PILE,
                         recharge_status=RechargeStatus.DOCKING)

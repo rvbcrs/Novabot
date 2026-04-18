@@ -61,6 +61,7 @@ export default {
   rainDetectionSub: 'Pause automatique en cas de pluie et reprise quand il fait sec',
   noSchedules: 'Pas encore de plannings', tapToAdd: 'Appuyez sur + pour ajouter un planning',
   rainDetected: 'Pluie détectée', pausedSince: 'En pause depuis',
+  rainExpected: 'Pluie attendue', rainArrivesAt: 'Vers {{time}}',
   dryInMin: 'Sec dans ~{{min}} min', dryAt: 'Sec vers ~{{time}}',
   settings: 'Réglages', experimentalFeatures: 'Fonctions expérimentales',
   experimentalSub: 'Activer les fonctions bêta comme la cartographie automatique',

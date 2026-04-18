@@ -1,8 +1,41 @@
 #!/bin/bash
-# Release script: bump patch version, build + push Docker image
+# Release script: run tests, bump patch version, build + push Docker image.
+# Tests run FIRST — a failing test aborts before any commit, tag or push.
 set -e
 
 cd "$(dirname "$0")"
+
+# ── Pick a node ≥18 (vitest needs it; the system /usr/local/bin/node is v8) ──
+need_modern_node() {
+  command -v node >/dev/null 2>&1 || return 1
+  local major
+  major=$(node -p "process.versions.node.split('.')[0]" 2>/dev/null) || return 1
+  [ "$major" -ge 18 ]
+}
+
+if ! need_modern_node; then
+  # Fall back to the newest nvm-installed node ≥18.
+  if [ -d "$HOME/.nvm/versions/node" ]; then
+    NVM_LATEST=$(ls -1 "$HOME/.nvm/versions/node" 2>/dev/null \
+      | sed 's/^v//' \
+      | awk -F. '$1 >= 18' \
+      | sort -t. -k1,1n -k2,2n -k3,3n \
+      | tail -1)
+    if [ -n "$NVM_LATEST" ]; then
+      export PATH="$HOME/.nvm/versions/node/v$NVM_LATEST/bin:$PATH"
+      echo "Using node v$NVM_LATEST from nvm"
+    fi
+  fi
+fi
+
+if ! need_modern_node; then
+  echo "ERROR: node ≥18 required for vitest. Install via nvm or upgrade /usr/local/bin/node." >&2
+  exit 1
+fi
+
+# ── Tests must pass before we commit / tag / build / push ──
+echo "Running server tests..."
+( cd server && npm test --silent )
 
 # Version = date.time (e.g. 2026.0410.1523)
 NEW=$(date +"%Y.%m%d.%H%M")

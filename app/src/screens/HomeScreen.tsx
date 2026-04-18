@@ -920,6 +920,7 @@ export default function HomeScreen() {
             </View>
           )}
 
+
           {/* Mowing/mapping: show progress map instead of battery ring */}
           {(displayActivity === 'mowing' || displayActivity === 'mapping') && activeMapPolygon.length >= 3 ? (
             <MowingProgressMap
@@ -940,6 +941,7 @@ export default function HomeScreen() {
                 percentage={mower.battery}
                 size={160}
                 strokeWidth={10}
+                charging={mower.batteryCharging}
               />
               <Animated.View style={[styles.batteryTextOverlay, { transform: [{ translateY: bounceAnim }, { scale: pulseAnim }] }]}>
                 <Image

@@ -223,4 +223,37 @@ describe('EquipmentRepository', () => {
       expect(equipmentRepo.backfillMissingMacsFromFactory()).toBe(0);
     });
   });
+
+  describe('discovered_ip', () => {
+    it('setDiscoveredIp persists IP and stamps discovered_ip_at', () => {
+      createUser();
+      equipmentRepo.create({ equipment_id: 'eq-1', user_id: userId, mower_sn: 'LFIN0001' });
+
+      equipmentRepo.setDiscoveredIp('LFIN0001', '192.168.0.100');
+      const row = equipmentRepo.findResolvedMowerIp('LFIN0001');
+      expect(row?.discovered_ip).toBe('192.168.0.100');
+      expect(row?.discovered_ip_at).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
+    });
+
+    it('setDiscoveredIp with null clears the discovered IP', () => {
+      createUser();
+      equipmentRepo.create({ equipment_id: 'eq-1', user_id: userId, mower_sn: 'LFIN0001' });
+      equipmentRepo.setDiscoveredIp('LFIN0001', '192.168.0.100');
+      equipmentRepo.setDiscoveredIp('LFIN0001', null);
+      expect(equipmentRepo.findResolvedMowerIp('LFIN0001')?.discovered_ip).toBeNull();
+    });
+
+    it('listDiscoverable returns every LFI* mower', () => {
+      createUser();
+      equipmentRepo.create({ equipment_id: 'eq-1', user_id: userId, mower_sn: 'LFIN0001' });
+      equipmentRepo.create({ equipment_id: 'eq-2', user_id: userId, mower_sn: 'LFIN0002', mower_ip: '192.168.0.101' });
+
+      const list = equipmentRepo.listDiscoverable();
+      expect(list.length).toBe(2);
+      expect(list.map(r => r.mower_sn).sort()).toEqual(['LFIN0001', 'LFIN0002']);
+      // mower_ip is included so the discovery loop can skip user-pinned rows
+      const pinned = list.find(r => r.mower_sn === 'LFIN0002');
+      expect(pinned?.mower_ip).toBe('192.168.0.101');
+    });
+  });
 });

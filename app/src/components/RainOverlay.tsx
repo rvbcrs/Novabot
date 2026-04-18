@@ -1,7 +1,16 @@
 /**
- * RainOverlay — shows a banner when mowing is paused due to rain.
- * Displays rain session info + forecast with bar chart.
- * Matches dashboard RainOverlay behavior.
+ * RainOverlay — rain-aware banner with two modes:
+ *
+ *   PAUSED  — mowing was halted by the rain monitor; full banner with
+ *             paused-since timestamp, animated drops and forecast bars.
+ *   WARNING — no active session, but the forecast shows incoming rain
+ *             within the next ~3 hours. Compact banner so users get a
+ *             heads-up even when the mower is idle (Ramon: "het gaat
+ *             zo regenen maar ik zie niets in de app").
+ *
+ * Forecast comes from /api/dashboard/rain-forecast/:sn which now resolves
+ * GPS via map_calibration → live mower snapshot → charger snapshot, so
+ * the banner works without any manual map setup.
  */
 import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, Animated, Easing } from 'react-native';
@@ -90,9 +99,30 @@ export function RainOverlay({ mowerSn }: Props) {
     return () => animations.forEach(a => a.stop());
   }, [session]);
 
-  if (!session) return null;
+  // Detect "rain coming soon" — any forecast hour in the next 3h that exceeds
+  // the same thresholds the rain monitor uses (≥0.1mm OR probability ≥ 50%).
+  // Mirrors the server-side rule in rainMonitor.ts so the warning fires for
+  // exactly the same showers the monitor would pause on.
+  const RAIN_MM = 0.1;
+  const RAIN_PROB = 50;
+  const WARN_HORIZON_MS = 3 * 60 * 60 * 1000;
+  const incomingRain = (() => {
+    if (!forecast?.upcoming?.length) return null;
+    const now = Date.now();
+    for (const h of forecast.upcoming) {
+      const at = new Date(h.time).getTime();
+      if (at < now || at - now > WARN_HORIZON_MS) continue;
+      if (h.mm >= RAIN_MM || h.prob >= RAIN_PROB) return { ...h, atMs: at };
+    }
+    return null;
+  })();
 
-  const pausedAt = new Date(session.paused_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  // Nothing to show — neither paused nor incoming rain.
+  if (!session && !incomingRain) return null;
+
+  const pausedAt = session
+    ? new Date(session.paused_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : '';
 
   let clearLabel: string | null = null;
   if (forecast?.clearAt) {
@@ -126,21 +156,41 @@ export function RainOverlay({ mowerSn }: Props) {
     );
   });
 
+  // WARNING mode: no session yet, but rain is forecast within 3h.
+  const isWarning = !session && !!incomingRain;
+  const warningAt = incomingRain
+    ? new Date(incomingRain.atMs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : '';
+
   return (
-    <View style={styles.container}>
-      {/* Rain drops animation */}
-      <View style={styles.rainLayer} pointerEvents="none">
-        {drops}
-      </View>
+    <View style={[styles.container, isWarning && styles.containerWarning]}>
+      {/* Rain drops animation — only in PAUSED mode (warning is calm/quiet) */}
+      {!isWarning && (
+        <View style={styles.rainLayer} pointerEvents="none">
+          {drops}
+        </View>
+      )}
 
       {/* Header */}
       <View style={styles.header}>
-        <View style={styles.iconCircle}>
-          <Ionicons name="rainy" size={20} color="#60a5fa" />
+        <View style={[styles.iconCircle, isWarning && styles.iconCircleWarning]}>
+          <Ionicons
+            name={isWarning ? 'rainy-outline' : 'rainy'}
+            size={20}
+            color={isWarning ? '#fbbf24' : '#60a5fa'}
+          />
         </View>
         <View style={{ flex: 1 }}>
-          <Text style={styles.title}>{t('rainDetected')}</Text>
-          <Text style={styles.subtitle}>{t('pausedSince')} {pausedAt}</Text>
+          <Text style={[styles.title, isWarning && styles.titleWarning]}>
+            {isWarning
+              ? (t('rainExpected') || 'Rain expected')
+              : t('rainDetected')}
+          </Text>
+          <Text style={styles.subtitle}>
+            {isWarning
+              ? (t('rainArrivesAt', { time: warningAt }) || `Around ${warningAt} · ${incomingRain?.mm.toFixed(1)}mm · ${incomingRain?.prob}%`)
+              : `${t('pausedSince')} ${pausedAt}`}
+          </Text>
         </View>
       </View>
 
@@ -189,6 +239,10 @@ const styles = StyleSheet.create({
     gap: 10,
     overflow: 'hidden',
   },
+  containerWarning: {
+    backgroundColor: 'rgba(120,53,15,0.5)',
+    borderColor: 'rgba(251,191,36,0.25)',
+  },
   rainLayer: {
     ...StyleSheet.absoluteFillObject,
     zIndex: 0,
@@ -208,7 +262,9 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(96,165,250,0.2)',
     justifyContent: 'center', alignItems: 'center',
   },
+  iconCircleWarning: { backgroundColor: 'rgba(251,191,36,0.18)' },
   title: { fontSize: 13, fontWeight: '600', color: '#bfdbfe' },
+  titleWarning: { color: '#fde68a' },
   subtitle: { fontSize: 11, color: 'rgba(147,197,253,0.6)', marginTop: 2 },
   forecastRow: { flexDirection: 'row', gap: 3 },
   forecastCol: { flex: 1, alignItems: 'center', gap: 3 },

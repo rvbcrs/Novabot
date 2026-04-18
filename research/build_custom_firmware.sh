@@ -743,6 +743,22 @@ PYEOF
 fi  # end of: if [ -z "\${MQTT_ADDRESS}" ] ... else
 
 echo "[\$(date)] HTTP → \${HTTP_ADDRESS}, MQTT → \${MQTT_ADDRESS}:\${MQTT_PORT_NUM}" >> /userdata/ota/custom_firmware.log
+
+# ── Per-SN avahi hostname ────────────────────────────────────────────────
+# OpenNova server's mowerIpDiscovery service prefers <sn>.local over the
+# legacy novabot.local so multi-mower setups don't collide on a single name.
+# Idempotent: only rewrites + restarts avahi when the hostname differs.
+SN_CODE=\$(python3 -c "import json; print(json.load(open('\$MQTT_CONFIG_FILE')).get('sn',{}).get('value',{}).get('code',''))" 2>/dev/null | tr 'A-Z' 'a-z')
+if [ -n "\$SN_CODE" ] && [ -f /etc/avahi/avahi-daemon.conf ]; then
+    CURRENT_HOST=\$(grep -E '^host-name=' /etc/avahi/avahi-daemon.conf | head -1 | cut -d= -f2)
+    if [ "\$CURRENT_HOST" != "\$SN_CODE" ]; then
+        sed -i "s/^host-name=.*/host-name=\$SN_CODE/" /etc/avahi/avahi-daemon.conf
+        echo "\$SN_CODE" > /etc/hostname 2>/dev/null || true
+        hostname "\$SN_CODE" 2>/dev/null || true
+        systemctl restart avahi-daemon 2>/dev/null || pkill -HUP avahi-daemon 2>/dev/null || true
+        log "avahi host-name → \$SN_CODE.local (was \$CURRENT_HOST.local)"
+    fi
+fi
 URLSCRIPT
 chmod +x "$NOVABOT_ROOT/scripts/set_server_urls.sh"
 echo "  set_server_urls.sh aangemaakt"

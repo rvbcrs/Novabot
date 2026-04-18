@@ -61,6 +61,7 @@ export default {
   rainDetectionSub: 'Mähen bei Regen pausieren und bei trockenem Wetter fortsetzen',
   noSchedules: 'Noch keine Zeitpläne', tapToAdd: 'Tippen Sie + um einen Zeitplan hinzuzufügen',
   rainDetected: 'Regen erkannt', pausedSince: 'Pausiert seit',
+  rainExpected: 'Regen erwartet', rainArrivesAt: 'Gegen {{time}}',
   dryInMin: 'Trocken in ~{{min}} Min', dryAt: 'Trocken um ~{{time}}',
   settings: 'Einstellungen', experimentalFeatures: 'Experimentelle Funktionen',
   experimentalSub: 'Beta-Funktionen wie automatische Kartierung aktivieren',

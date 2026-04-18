@@ -63,6 +63,12 @@ startScheduleRunner();
 import { startRainMonitor } from './services/rainMonitor.js';
 startRainMonitor();
 
+// ── Mower IP discovery (mDNS + camera-port verify) ────────────────────────
+// Houdt equipment.discovered_ip vers zodat camera/info en push-to-mower
+// werken zonder dat de gebruiker handmatig een IP hoeft in te stellen.
+import { startMowerIpDiscovery } from './services/mowerIpDiscovery.js';
+startMowerIpDiscovery();
+
 // ── Express app ───────────────────────────────────────────────────────────────
 const app = express();
 

@@ -70,7 +70,7 @@ function getHoldType(x: number, y: number): number {
   return x < 0 ? 1 : 2; // left(1), right(2)
 }
 
-type MappingState = 'idle' | 'preMapping' | 'mapping' | 'stopping' | 'chargerPosition' | 'done' | 'cancelled';
+type MappingState = 'idle' | 'calibrating' | 'preMapping' | 'mapping' | 'stopping' | 'chargerPosition' | 'done' | 'cancelled';
 type MappingMode = 'autonomous' | 'manual';
 // Verified against Flutter v2.4.0 clickStart branches (BuildMapPageLogic L12873):
 //   work          → add_scan_map type:null  (creates map0/map1/map2)
@@ -717,7 +717,12 @@ export default function MappingScreen() {
     // Reset the unicom-visited set — this live counter is only meaningful for
     // the current scan, not accumulated across sessions.
     unicomVisitedMapsRef.current = new Set();
-    setMappingState('mapping');
+    // Calibrating screen: the firmware ignores joystick input for ~8s after
+    // entering mapping mode (motors + sensors initialise). Show a clear
+    // "please wait" state so the user doesn't yank the joystick into
+    // a no-op gulf and assume the build is broken.
+    setMappingState('calibrating');
+    setTimeout(() => setMappingState('mapping'), 8000);
   };
 
   // ── Stop & Save (exact flow from official Novabot app) ──
@@ -1211,6 +1216,32 @@ sendCommand({ save_recharge_pos: { mapName: 'map0', cmd_num: cmdNumRef.current++
               )}
             </View>
           </ScrollView>
+
+        /* ── Calibrating: mower initialising motors + sensors (~8s) ── */
+        ) : mappingState === 'calibrating' ? (
+          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', gap: 16, paddingHorizontal: 32 }}>
+            <ActivityIndicator size="large" color={colors.emerald} />
+            <Text style={{ color: colors.white, fontSize: 20, fontWeight: '700' }}>
+              {t('calibratingMotors', undefined) || 'Calibrating Motors'}
+            </Text>
+            <Text style={{ color: colors.textMuted, fontSize: 14, textAlign: 'center', lineHeight: 20 }}>
+              {t('calibratingHint', undefined)
+                || 'The mower is initialising its motors and sensors.\nThis takes about 8 seconds.'}
+            </Text>
+            <View style={styles.statsChips}>
+              <Text style={[
+                styles.sensorChip,
+                {
+                  backgroundColor: bleConnected ? 'rgba(0,212,170,0.15)' : 'rgba(239,68,68,0.15)',
+                  color: bleConnected ? colors.emerald : colors.red,
+                },
+              ]}>
+                BLE: {bleConnected ? 'OK' : 'OFF'}
+              </Text>
+              <Text style={styles.sensorChip}>Loc: {locQuality}%</Text>
+              <Text style={styles.sensorChip}>Bat: {battery}%</Text>
+            </View>
+          </View>
 
         /* ── Pre-mapping: map view + joystick overlay — drive to start point ── */
         ) : mappingState === 'preMapping' ? (

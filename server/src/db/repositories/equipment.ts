@@ -41,6 +41,18 @@ export interface BoundEquipmentSnRow {
 export interface ResolvedMowerIpRow {
   mower_ip: string | null;
   detected_ip: string | null;
+  /** Auto-discovered LAN IP via mDNS + camera-port verify. Null if never resolved. */
+  discovered_ip: string | null;
+  /** ISO datetime when discovered_ip was last verified. Used for freshness check. */
+  discovered_ip_at: string | null;
+}
+
+/** List entry for the discovery loop — only the fields it needs to act on. */
+export interface DiscoverableMowerRow {
+  mower_sn: string;
+  mower_ip: string | null;
+  discovered_ip: string | null;
+  discovered_ip_at: string | null;
 }
 
 export interface CreateEquipmentData {
@@ -176,11 +188,19 @@ export class EquipmentRepository {
     WHERE equipment_id = ?
   `);
   private _findResolvedMowerIp = db.prepare(`
-    SELECT e.mower_ip, d.ip_address as detected_ip
+    SELECT e.mower_ip, e.discovered_ip, e.discovered_ip_at, d.ip_address as detected_ip
     FROM equipment e
     LEFT JOIN device_registry d ON d.sn = e.mower_sn AND d.ip_address IS NOT NULL
     WHERE e.mower_sn = ?
     ORDER BY d.last_seen DESC LIMIT 1
+  `);
+  private _setDiscoveredIp = db.prepare(
+    "UPDATE equipment SET discovered_ip = ?, discovered_ip_at = datetime('now') WHERE mower_sn = ?"
+  );
+  private _listDiscoverable = db.prepare(`
+    SELECT mower_sn, mower_ip, discovered_ip, discovered_ip_at
+    FROM equipment
+    WHERE mower_sn LIKE 'LFI%'
   `);
   private _swapChargerFirstToPaired = db.prepare(
     'UPDATE equipment SET charger_sn = mower_sn, mower_sn = ? WHERE equipment_id = ?'
@@ -405,6 +425,16 @@ export class EquipmentRepository {
 
   findResolvedMowerIp(mowerSn: string): ResolvedMowerIpRow | undefined {
     return this._findResolvedMowerIp.get(mowerSn) as ResolvedMowerIpRow | undefined;
+  }
+
+  /** Persist a freshly-resolved LAN IP for a mower. Pass null to clear. */
+  setDiscoveredIp(mowerSn: string, ip: string | null): void {
+    this._setDiscoveredIp.run(ip, mowerSn);
+  }
+
+  /** Mowers eligible for the discovery loop (any LFI* SN). */
+  listDiscoverable(): DiscoverableMowerRow[] {
+    return this._listDiscoverable.all() as DiscoverableMowerRow[];
   }
 
   swapChargerFirstToPaired(equipmentId: string, mowerSn: string): void {

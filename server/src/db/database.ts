@@ -172,12 +172,10 @@ export function initDb(): void {
       charger_channel TEXT
     );
 
-    -- Pre-seed bekende apparaten zodat getEquipmentBySN direct chargerAddress kan teruggeven
-    -- vóórdat het apparaat ooit gebonden is geweest (nodig voor eerste BLE provisioning).
-    INSERT OR IGNORE INTO equipment_lora_cache (sn, charger_address, charger_channel)
-    VALUES ('LFIC1230700004', '718', '16');
-    INSERT OR IGNORE INTO equipment_lora_cache (sn, charger_address, charger_channel)
-    VALUES ('LFIN2230700238', '718', '15');
+    -- (Geen pre-seed van equipment_lora_cache — dat was Ramon-specifieke testdata
+    --  die anders bij elke fresh install als "phantom paired set" in de Home tab
+    --  van andere gebruikers verscheen. LoRa cache wordt vanzelf gevuld zodra een
+    --  charger via MQTT/BLE provisioned wordt.)
 
     -- Voeg mac_address kolom toe aan equipment als die nog niet bestaat
     -- (SQLite ondersteunt geen IF NOT EXISTS op kolommen, dus via try-catch in code)
@@ -435,6 +433,14 @@ export function initDb(): void {
 
   // Handmatig geconfigureerd maaier IP voor SSH upload (migratie)
   try { db.exec(`ALTER TABLE equipment ADD COLUMN mower_ip TEXT`); }
+  catch { /* kolom bestaat al */ }
+
+  // Auto-discovered LAN IP via mDNS (`novabot.local`) + verificatie probe.
+  // Wordt periodiek vernieuwd door mowerIpDiscovery service. Geprefereerd boven
+  // device_registry.ip_address (dat soms een Cloudflare/proxy IP is bij remote setups).
+  try { db.exec(`ALTER TABLE equipment ADD COLUMN discovered_ip TEXT`); }
+  catch { /* kolom bestaat al */ }
+  try { db.exec(`ALTER TABLE equipment ADD COLUMN discovered_ip_at TEXT`); }
   catch { /* kolom bestaat al */ }
 
   // OpenNova firmware detectie (via extended MQTT response)
