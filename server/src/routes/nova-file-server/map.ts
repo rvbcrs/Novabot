@@ -6,7 +6,7 @@ import crypto from 'crypto';
 import { execSync } from 'child_process';
 import { v4 as uuidv4 } from 'uuid';
 import { equipmentRepo, mapRepo, mapUploadRepo } from '../../db/repositories/index.js';
-import { deriveCanonicalName } from '../../db/repositories/maps.js';
+import { deriveCanonicalName, isCanonicalMapName } from '../../db/repositories/maps.js';
 import { authMiddleware } from '../../middleware/auth.js';
 import { AuthRequest, ok, fail, MapRow } from '../../types/index.js';
 import { parseMapZip, type LocalPoint, type GpsPoint, polygonArea, gpsToLocal } from '../../mqtt/mapConverter.js';
@@ -449,7 +449,15 @@ mapRouter.post('/fragmentUploadEquipmentMap', authMiddleware, upload.single('fil
     const existing = canonical ? mapRepo.findBySnAndCanonical(sn, canonical) : undefined;
 
     if (existing) {
-      if (mapName && mapName !== existing.map_name) {
+      // Only update map_name when (a) existing has no user alias yet, OR
+      // (b) the incoming name is itself a user alias (not a canonical slot
+      // name like `map0`). This prevents the app's cached cloud re-upload
+      // from clobbering user aliases like "achter"/"zij" with "map0"/"map1".
+      if (
+        mapName &&
+        mapName !== existing.map_name &&
+        (isCanonicalMapName(existing.map_name) || !isCanonicalMapName(mapName))
+      ) {
         mapRepo.updateNameByIdAndMower(existing.map_id, sn, mapName);
       }
       console.log(`[MAP] fragmentUploadEquipmentMap: reused existing map_id=${existing.map_id} for ${sn}/${canonical}`);
@@ -524,7 +532,12 @@ mapRouter.post('/fragmentUploadEquipmentMap', authMiddleware, upload.single('fil
     const existing = canonical ? mapRepo.findBySnAndCanonical(sn, canonical) : undefined;
 
     if (existing) {
-      if (mapName && mapName !== existing.map_name) {
+      // See fragmentUploadEquipmentMap single-chunk branch — preserve user alias.
+      if (
+        mapName &&
+        mapName !== existing.map_name &&
+        (isCanonicalMapName(existing.map_name) || !isCanonicalMapName(mapName))
+      ) {
         mapRepo.updateNameByIdAndMower(existing.map_id, sn, mapName);
       }
       console.log(`[MAP] fragmentUploadEquipmentMap: reused existing map_id=${existing.map_id} for ${sn}/${canonical}`);
@@ -696,8 +709,15 @@ mapRouter.post('/uploadEquipmentMap', upload.any(), (req: Request, res: Response
       const workNameOverride = mapName && workAreas.length === 1 ? mapName : null;
 
       for (const area of parsed.areas) {
-        const nextName = parsedAreaName(area, area.type === 'work' ? workNameOverride : null);
         const existingRow = existingRows.find(row => matchesParsedArea(row, area));
+        const canonicalName = parsedAreaName(area, area.type === 'work' ? workNameOverride : null);
+        // Preserve user alias on re-upload: parsedAreaName() always returns
+        // a canonical slot label (`map0`, `mapN_N_obstacle`, ...). If the
+        // existing row already carries a user alias (e.g. "achter", "zij"),
+        // keep it instead of clobbering it on every mower ZIP push.
+        const nextName = existingRow && !isCanonicalMapName(existingRow.map_name)
+          ? existingRow.map_name
+          : canonicalName;
         const nextMapId = existingRow?.map_id ?? uuidv4();
         const nextBounds = area.type === 'work' ? buildBounds(area.points) : null;
 

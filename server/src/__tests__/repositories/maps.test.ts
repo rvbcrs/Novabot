@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { mapRepo } from '../../db/repositories/index.js';
-import { deriveCanonicalName } from '../../db/repositories/maps.js';
+import { deriveCanonicalName, isCanonicalMapName } from '../../db/repositories/maps.js';
 
 describe('MapRepository', () => {
   const sn = 'LFIN0001';
@@ -168,6 +168,21 @@ describe('MapRepository', () => {
       expect(() =>
         mapRepo.create({ map_id: 'w0b', mower_sn: sn, map_name: 'Duplicate', file_name: 'map0_work.csv', map_type: 'work' })
       ).toThrow();
+    });
+
+    it('isCanonicalMapName recognises slot labels but not user aliases', () => {
+      expect(isCanonicalMapName(null)).toBe(true);
+      expect(isCanonicalMapName('')).toBe(true);
+      expect(isCanonicalMapName('map0')).toBe(true);
+      expect(isCanonicalMapName('map12')).toBe(true);
+      expect(isCanonicalMapName('map1_3_obstacle')).toBe(true);
+      expect(isCanonicalMapName('map0tomap1_0_unicom')).toBe(true);
+      expect(isCanonicalMapName('map0tocharge_unicom')).toBe(true);
+      // User aliases must not be classified as canonical
+      expect(isCanonicalMapName('achter')).toBe(false);
+      expect(isCanonicalMapName('zij')).toBe(false);
+      expect(isCanonicalMapName('Backyard')).toBe(false);
+      expect(isCanonicalMapName('map0_renamed')).toBe(false);
     });
 
     it('allows same canonical_name across different mowers', () => {

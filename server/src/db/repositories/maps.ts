@@ -113,6 +113,23 @@ export function deriveCanonicalName(
   return tryParse(row.file_name) ?? tryParse(row.map_name);
 }
 
+/**
+ * True when `name` is a firmware-canonical slot label (e.g. `map0`,
+ * `map0_3_obstacle`, `map0tomap1_0_unicom`, `map0tocharge_unicom`) or null.
+ *
+ * Used to protect user-set aliases from being overwritten when the mower
+ * (or the Novabot app's cached cloud copy) re-uploads a map with its
+ * canonical name as `mapName`. If the existing row already has a user
+ * alias like "achter" or "zij", we keep it.
+ */
+export function isCanonicalMapName(name: string | null | undefined): boolean {
+  if (!name) return true;
+  return /^map\d+$/.test(name)
+    || /^map\d+_\d+_obstacle$/.test(name)
+    || /^map\d+tomap\d+_\d+_unicom$/.test(name)
+    || /^map\d+tocharge_unicom$/.test(name);
+}
+
 /** Check whether `row` is a dependent of the map identified by `prefix`. */
 function isRelatedByPrefix(row: Pick<MapRow, 'file_name' | 'map_name'>, prefix: string): boolean {
   const candidates = [row.file_name, row.map_name].filter((v): v is string => !!v);
