@@ -58,8 +58,24 @@ export function authMiddleware(req: AuthRequest, res: Response, next: NextFuncti
     const decoded = jwt.verify(token, JWT_SECRET) as JwtPayload;
     req.userId = decoded.userId;
     req.email = decoded.email;
+    if (process.env.AUTH_DEBUG === '1') {
+      console.log(`[AUTH] OK ${req.method} ${req.path} userId=${decoded.userId.slice(0,8)} (token...${token.slice(-12)})`);
+    }
     next();
-  } catch {
+  } catch (err) {
+    // Log enough context to triage the most common 401 causes — wrong secret
+    // (after factory_reset / .jwt_secret regeneration), wrong algorithm, or
+    // outright forged tokens. We never log the token itself.
+    const decoded = (() => {
+      try { return jwt.decode(token); } catch { return null; }
+    })();
+    const reason = err instanceof Error ? err.message : String(err);
+    console.warn(
+      `[AUTH] reject ${req.method} ${req.path}: ${reason}`,
+      decoded && typeof decoded === 'object'
+        ? `(payload userId=${(decoded as any).userId}, exp=${(decoded as any).exp}, token...${token.slice(-12)})`
+        : `(unparseable token, ...${token.slice(-12)})`,
+    );
     res.json(fail('Token invalid or expired', 401));
   }
 }

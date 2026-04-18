@@ -64,6 +64,11 @@ export interface Schedule {
   workMode?: number;
   taskMode?: number;
   lastTriggeredAt?: string | null;
+  scheduleName?: string | null;
+  /** Server-derived: this schedule is the one currently being executed by the mower. */
+  currentlyRunning?: boolean;
+  /** Server-derived: ISO timestamp when the rain monitor paused this schedule's session, or null. */
+  rainPausedAt?: string | null;
   created_at: string;
   createdAt?: string;
   updated_at?: string;
@@ -399,6 +404,21 @@ export class ApiClient {
 
   async setHeadlight(sn: string, on: boolean): Promise<CommandResult> {
     return this.sendCommand(sn, { set_para_info: { headlight: on ? 1 : 0 } });
+  }
+
+  // ── Equipment nickname ───────────────────────────────────────────────
+
+  /** Rename a mower (or charger). Mirrors Novabot v2.4.0's
+   *  /api/nova-user/equipment/updateEquipmentNickName payload shape so the
+   *  same endpoint serves both apps. */
+  /** Rename a mower via the dashboard endpoint (no JWT needed — local-network
+   *  only, consistent with the rest of OpenNova's app→server traffic). The
+   *  Novabot-compat `/api/nova-user/equipment/updateEquipmentNickName` route
+   *  still exists for the official Novabot app. */
+  async updateEquipmentNickName(sn: string, nickname: string): Promise<{ ok: boolean }> {
+    return this.request('PATCH', `/api/dashboard/equipment/${encodeURIComponent(sn)}/nickname`, {
+      body: { nickname },
+    });
   }
 
   // ── Joystick (manual control) ────────────────────────────────────────

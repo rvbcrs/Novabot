@@ -18,6 +18,7 @@ import { ApiClient, type WorkRecord } from '../services/api';
 import { getServerUrl } from '../services/auth';
 import { useDemo } from '../context/DemoContext';
 import { DemoBanner } from '../components/DemoBanner';
+import { formatTime as fmtTime, formatDate as fmtDate } from '../lib/format';
 
 export default function HistoryScreen() {
   const insets = useSafeAreaInsets();
@@ -162,11 +163,11 @@ function formatDate(iso: string): string {
 
   if (d.toDateString() === today.toDateString()) return 'Today';
   if (d.toDateString() === yesterday.toDateString()) return 'Yesterday';
-  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+  return fmtDate(d);
 }
 
 function formatTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  return fmtTime(iso);
 }
 
 function formatDuration(seconds: number): string {

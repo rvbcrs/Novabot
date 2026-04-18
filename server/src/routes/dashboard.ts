@@ -316,6 +316,23 @@ dashboardRouter.delete('/devices/:sn', (req: Request, res: Response) => {
   res.json({ ok: true });
 });
 
+// PATCH /api/dashboard/equipment/:sn/nickname — hernoem maaier (geen JWT)
+//
+// OpenNova app gebruikt vrijwel alle endpoints onder /api/dashboard/*; de
+// /api/nova-user/equipment/updateEquipmentNickName variant vereist JWT en
+// failt op stale cached tokens. Dit endpoint is consistent met de rest van
+// dashboard-API en werkt direct na een rebuild zonder re-login. Returns 404
+// als de SN niet bestaat in equipment.
+dashboardRouter.patch('/equipment/:sn/nickname', (req: Request, res: Response) => {
+  const { sn } = req.params;
+  const { nickname } = req.body as { nickname?: string };
+  const eq = equipmentRepo.findByMowerSn(sn);
+  if (!eq) { res.status(404).json({ error: 'Equipment not found' }); return; }
+  if (!eq.user_id) { res.status(409).json({ error: 'Equipment has no owner' }); return; }
+  equipmentRepo.updateNickNameByMowerSnAndUser(sn, eq.user_id, (nickname ?? '').trim() || null);
+  res.json({ ok: true });
+});
+
 // PATCH /api/dashboard/equipment/:sn/mower-ip — sla maaier IP op voor SSH upload
 dashboardRouter.patch('/equipment/:sn/mower-ip', (req: Request, res: Response) => {
   const { sn } = req.params;
@@ -1705,10 +1722,57 @@ function scheduleRowToDto(r: ScheduleRow) {
 }
 
 // GET /api/dashboard/schedules/:sn — alle schedules voor een maaier
+//
+// Per row enriched with live status fields so the app's Schedules tab can
+// show at a glance which schedule (if any) is currently mowing or paused
+// because of rain. Without this the user sees a flat list and has to
+// cross-reference time-of-day in their head.
+//
+//   currentlyRunning  — true when this schedule fired in the last 12h AND
+//                       the mower is in timer-task mode AND not on the
+//                       dock. Picks the most recent fired schedule when
+//                       multiple are eligible (e.g. legacy duplicates).
+//   rainPausedAt      — ISO timestamp when the rain monitor paused this
+//                       schedule's session, null otherwise.
 dashboardRouter.get('/schedules/:sn', (req: Request, res: Response) => {
   const { sn } = req.params;
   const rows = scheduleRepo.findByMowerSnOrderByStartTime(sn) as ScheduleRow[];
-  res.json({ schedules: rows.map(scheduleRowToDto) });
+
+  // Build "rain-paused" lookup by schedule_id.
+  const rainBySchedule = new Map<string, string>();  // schedule_id → paused_at
+  for (const s of getActiveRainSessions(sn)) {
+    if (s.state === 'paused') rainBySchedule.set(s.schedule_id, s.paused_at);
+  }
+
+  // Detect "currently mowing" schedule by combining live mower state
+  // with last_triggered_at. Mower must be (a) in timer-task mode and
+  // (b) not docked / charging for it to count as actively running.
+  const snap = getDeviceSnapshot(sn);
+  const taskMode = parseInt(snap?.task_mode ?? '0', 10);
+  const onDock = snap?.battery_state === 'CHARGING' || snap?.charging === '1';
+  const isTimerRunning = taskMode === 1 && !onDock;
+  let activeScheduleId: string | null = null;
+  if (isTimerRunning) {
+    const RECENT_MS = 12 * 60 * 60 * 1000;  // 12h window
+    let latest = 0;
+    for (const r of rows) {
+      if (!r.last_triggered_at) continue;
+      const t = Date.parse(r.last_triggered_at + 'Z');
+      if (Number.isNaN(t)) continue;
+      if (Date.now() - t > RECENT_MS) continue;
+      if (t > latest) { latest = t; activeScheduleId = r.schedule_id; }
+    }
+  }
+
+  const enriched = rows.map(r => {
+    const dto = scheduleRowToDto(r);
+    return {
+      ...dto,
+      currentlyRunning: r.schedule_id === activeScheduleId,
+      rainPausedAt: rainBySchedule.get(r.schedule_id) ?? null,
+    };
+  });
+  res.json({ schedules: enriched });
 });
 
 // POST /api/dashboard/schedules/:sn — nieuw schedule aanmaken

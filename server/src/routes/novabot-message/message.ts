@@ -8,16 +8,41 @@ export const messageRouter = Router();
 
 // ── Robot messages ────────────────────────────────────────────────────────────
 
-// GET /api/novabot-message/message/queryRobotMsgPageByUserId
-messageRouter.get('/queryRobotMsgPageByUserId', authMiddleware, (req: AuthRequest, res: Response) => {
-  const page  = parseInt(req.query.page  as string ?? '1', 10);
-  const limit = parseInt(req.query.limit as string ?? '20', 10);
-  const offset = (page - 1) * limit;
+// POST /api/novabot-message/message/queryRobotMsgPageByUserId
+//
+// Novabot v2.4.0 sends:
+//   { appUserId, pageNo, pageSize, timezone }   (POST + JSON body)
+// (We previously exposed this as GET, which produced a 404 in the app.
+// `appUserId` here is the cloud's numeric user id and isn't used — we always
+// scope by the JWT's `req.userId` so users only see their own messages.)
+//
+// Response shape expected by `RobotMessageEntity.fromJson` + the working/robot
+// records pages: `{ pageList: [...], pageNo, pageSize, totalCount }`. Field
+// names on each row mirror the Novabot model — `contentEn`, `createrTime`,
+// `level` (verified via blutter `pages/user/message_page/model/`).
+function readPagination(req: AuthRequest): { pageNo: number; pageSize: number; offset: number } {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const pageNo = Math.max(1, parseInt(String(body.pageNo ?? req.query.pageNo ?? '1'), 10) || 1);
+  const pageSize = Math.max(1, Math.min(100, parseInt(String(body.pageSize ?? req.query.pageSize ?? '20'), 10) || 20));
+  return { pageNo, pageSize, offset: (pageNo - 1) * pageSize };
+}
 
-  const total = messageRepo.countMessages(req.userId!);
-  const rows  = messageRepo.findMessagesByUserId(req.userId!, limit, offset);
+messageRouter.post('/queryRobotMsgPageByUserId', authMiddleware, (req: AuthRequest, res: Response) => {
+  const { pageNo, pageSize, offset } = readPagination(req);
+  const totalCount = messageRepo.countMessages(req.userId!);
+  const rows = messageRepo.findMessagesByUserId(req.userId!, pageSize, offset);
 
-  res.json(ok({ total, page, limit, list: rows }));
+  const pageList = rows.map(r => ({
+    id: r.id,
+    messageId: r.message_id,
+    equipmentId: r.equipment_id,
+    contentEn: r.robot_msg,
+    createrTime: r.robot_msg_date,
+    level: 0,
+    unread: r.robot_msg_unread === 1,
+  }));
+
+  res.json(ok({ pageList, pageNo, pageSize, totalCount }));
 });
 
 // POST /api/novabot-message/message/queryMsgMenuByUserId
@@ -74,16 +99,34 @@ messageRouter.post('/deleteMsgByUserId', authMiddleware, (req: AuthRequest, res:
 
 // ── Work / mowing records ─────────────────────────────────────────────────────
 
-// GET /api/novabot-message/message/queryCutGrassRecordPageByUserId
-messageRouter.get('/queryCutGrassRecordPageByUserId', authMiddleware, (req: AuthRequest, res: Response) => {
-  const page  = parseInt(req.query.page  as string ?? '1', 10);
-  const limit = parseInt(req.query.limit as string ?? '20', 10);
-  const offset = (page - 1) * limit;
+// POST /api/novabot-message/message/queryCutGrassRecordPageByUserId
+//
+// Novabot v2.4.0 sends a POST with `{appUserId, pageNo, pageSize, timezone}`.
+// Field names on each row come from `WorkMessageEntity.fromJson`:
+//   workTime, dateTime, workArea, workStatus, selectMap, startWay, cutGrassHeight
+// (verified via blutter `pages/user/message_page/model/work_message_entity.dart`).
+messageRouter.post('/queryCutGrassRecordPageByUserId', authMiddleware, (req: AuthRequest, res: Response) => {
+  const { pageNo, pageSize, offset } = readPagination(req);
+  const totalCount = messageRepo.countWorkRecords(req.userId!);
+  const rows = messageRepo.findWorkRecordsByUserId(req.userId!, pageSize, offset);
 
-  const total = messageRepo.countWorkRecords(req.userId!);
-  const rows  = messageRepo.findWorkRecordsByUserId(req.userId!, limit, offset);
+  const pageList = rows.map(r => ({
+    id: r.id,
+    recordId: r.record_id,
+    equipmentId: r.equipment_id,
+    workTime: r.work_time ?? 0,
+    dateTime: r.date_time ?? r.work_record_date,
+    workArea: r.work_area_m2 != null ? String(r.work_area_m2) : '',
+    workStatus: r.work_status ?? '',
+    selectMap: r.map_names ?? '',
+    startWay: r.start_way ?? '',
+    cutGrassHeight: r.cut_grass_height ?? 0,
+    week: r.week ?? '',
+    scheduleId: r.schedule_id ?? '',
+    unread: r.work_record_unread === 1,
+  }));
 
-  res.json(ok({ total, page, limit, list: rows }));
+  res.json(ok({ pageList, pageNo, pageSize, totalCount }));
 });
 
 // ── Internal helper: insert a robot message (called from MQTT bridge) ─────────

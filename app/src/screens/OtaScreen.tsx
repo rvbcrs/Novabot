@@ -18,6 +18,7 @@ import { colors } from '../theme/colors';
 import { useMowerState } from '../hooks/useMowerState';
 import { ApiClient, type OtaVersion } from '../services/api';
 import { getServerUrl } from '../services/auth';
+import { formatDate } from '../lib/format';
 
 export default function OtaScreen() {
   const insets = useSafeAreaInsets();
@@ -228,7 +229,7 @@ function VersionCard({
       <View style={versionStyles.header}>
         <Text style={versionStyles.versionText}>{version.version}</Text>
         <Text style={versionStyles.date}>
-          {new Date(version.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
+          {formatDate(version.created_at)}
         </Text>
       </View>
 

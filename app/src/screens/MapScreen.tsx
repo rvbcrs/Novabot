@@ -877,7 +877,7 @@ export default function MapScreen() {
               {(importing || cloudImporting) ? (
                 <ActivityIndicator size="small" color={colors.white} />
               ) : (
-                <Ionicons name="ellipsis-horizontal" size={18} color={colors.white} />
+                <Ionicons name="ellipsis-horizontal" size={16} color={colors.white} />
               )}
             </TouchableOpacity>
             <TouchableOpacity
@@ -885,7 +885,7 @@ export default function MapScreen() {
               style={styles.addButton}
               activeOpacity={0.7}
             >
-              <Ionicons name="add" size={22} color={colors.white} />
+              <Ionicons name="add" size={18} color={colors.white} />
             </TouchableOpacity>
           </View>
         </View>
@@ -1019,8 +1019,12 @@ export default function MapScreen() {
                   {/* Mower icon + heading */}
                   {mowerLocal && (() => {
                     const mp = localToSvg(mowerLocal!, bounds, MAP_SIZE, INNER_PADDING);
-                    // Icon points RIGHT at 0°; flipped X-axis → negate heading; +360 offset (270+90)
-                    const degHeading = -(heading * 180 / Math.PI) + 180;
+                    // Icon asset's "front" points LEFT in the source PNG, so the
+                    // previous +180 offset rotated it backwards (front and back
+                    // swapped on screen). Drop the offset so 0° heading shows
+                    // the mower facing the user's right (= +X local), matching
+                    // the firmware's heading convention.
+                    const degHeading = -(heading * 180 / Math.PI);
                     const mowerSize = 20;
                     return (
                       <G transform={`translate(${mp.x}, ${mp.y}) rotate(${degHeading})`}>
@@ -1115,33 +1119,45 @@ export default function MapScreen() {
                                   </View>
                                 </View>
 
-                                {/* Compact metrics + legend row */}
-                                <View style={styles.zoneInfoRow}>
-                                  <View style={styles.zoneInfoChip}>
-                                    <Ionicons name="resize-outline" size={12} color={colors.textDim} />
-                                    <Text style={styles.zoneInfoText}>{formatAreaLabel(areaSqMeters)}</Text>
+                                {/* Big tile metrics — Size + Est. mow as prominent cards.
+                                    Restored from the older swipe-up panel design that read
+                                    cleaner than the chip strip. Smaller indicator chips
+                                    (obstacles/channels/charger/mower) sit underneath. */}
+                                <View style={styles.zoneMetricRow}>
+                                  <View style={styles.zoneMetricCard}>
+                                    <Text style={styles.zoneMetricLabel}>{t('size', undefined) || 'Size'}</Text>
+                                    <Text style={styles.zoneMetricValue}>{formatAreaLabel(areaSqMeters)}</Text>
                                   </View>
-                                  <View style={styles.zoneInfoChip}>
-                                    <Ionicons name="time-outline" size={12} color={colors.textDim} />
-                                    <Text style={styles.zoneInfoText}>{formatEtaLabel(areaSqMeters)}</Text>
+                                  <View style={styles.zoneMetricCard}>
+                                    <Text style={styles.zoneMetricLabel}>{t('estMow', undefined) || 'Est. mow'}</Text>
+                                    <Text style={styles.zoneMetricValue}>{formatEtaLabel(areaSqMeters)}</Text>
                                   </View>
-                                  {obstacleCount > 0 && (
-                                    <View style={styles.zoneInfoChip}>
-                                      <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#ef4444' }} />
-                                      <Text style={styles.zoneInfoText}>{obstacleCount} obstacle{obstacleCount === 1 ? '' : 's'}</Text>
-                                    </View>
-                                  )}
-                                  <View style={styles.zoneInfoChip}>
-                                    <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#f59e0b' }} />
-                                    <Text style={styles.zoneInfoText}>Charger</Text>
-                                  </View>
-                                  {mowerLocal && (
-                                    <View style={styles.zoneInfoChip}>
-                                      <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: colors.emerald }} />
-                                      <Text style={styles.zoneInfoText}>Mower</Text>
-                                    </View>
-                                  )}
                                 </View>
+
+                                {/* Only show obstacle / channel chips when there's actually
+                                    something to report — placeholder text ("Clean zone" /
+                                    "Direct dock path") was clutter without a clear meaning.
+                                    Charger / Mower legend lives in the map panel above. */}
+                                {(obstacleCount > 0 || channelCount > 0) && (
+                                  <View style={styles.zoneInfoRow}>
+                                    {obstacleCount > 0 && (
+                                      <View style={styles.zoneInfoChip}>
+                                        <Ionicons name="scan-outline" size={12} color={colors.textDim} />
+                                        <Text style={styles.zoneInfoText}>
+                                          {`${obstacleCount} ${obstacleCount === 1 ? (t('obstacle', undefined) || 'obstacle') : (t('obstacles', undefined) || 'obstacles')}`}
+                                        </Text>
+                                      </View>
+                                    )}
+                                    {channelCount > 0 && (
+                                      <View style={styles.zoneInfoChip}>
+                                        <Ionicons name="git-branch-outline" size={12} color={colors.textDim} />
+                                        <Text style={styles.zoneInfoText}>
+                                          {`${channelCount} ${channelCount === 1 ? (t('channel', undefined) || 'channel') : (t('channels', undefined) || 'channels')}`}
+                                        </Text>
+                                      </View>
+                                    )}
+                                  </View>
+                                )}
 
                                 {/* Action buttons */}
                                 <View style={styles.zoneButtonRow}>
@@ -1380,22 +1396,22 @@ export default function MapScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
   content: { flex: 1, padding: MAP_PADDING },
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
-  title: { fontSize: 28, fontWeight: '700', color: colors.white },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
+  title: { fontSize: 22, fontWeight: '700', color: colors.white },
   headerActions: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 8,
   },
   addButton: {
-    width: 40, height: 40, borderRadius: 20,
+    width: 32, height: 32, borderRadius: 16,
     backgroundColor: colors.emerald,
     alignItems: 'center', justifyContent: 'center',
   },
   toolbarMenuButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     backgroundColor: 'rgba(255,255,255,0.14)',
     alignItems: 'center',
     justifyContent: 'center',
@@ -1532,11 +1548,35 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  zoneMetricRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 10,
+  },
+  zoneMetricCard: {
+    flex: 1,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 14,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+  },
+  zoneMetricLabel: {
+    fontSize: 11,
+    color: colors.textDim,
+    fontWeight: '700',
+    marginBottom: 2,
+  },
+  zoneMetricValue: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: colors.white,
+    fontVariant: ['tabular-nums'],
+  },
   zoneInfoRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 6,
-    marginTop: 8,
+    marginTop: 12,
   },
   zoneInfoChip: {
     flexDirection: 'row',

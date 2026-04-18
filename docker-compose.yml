@@ -26,6 +26,9 @@ services:
       FIRMWARE_PATH: /data/firmware
       ENABLE_TLS: "true"
 
+      # Tijdelijk: log iedere succesvolle JWT auth zodat we wisselende tokens kunnen tracen
+      AUTH_DEBUG: "1"
+
       # Optional: enable web dashboard (default: disabled)
       ENABLE_DASHBOARD: "true"
 

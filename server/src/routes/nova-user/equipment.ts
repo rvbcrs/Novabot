@@ -410,14 +410,30 @@ equipmentRouter.post('/unboundEquipment', authMiddleware, (req: AuthRequest, res
 });
 
 // POST /api/nova-user/equipment/updateEquipmentNickName
+//
+// Novabot v2.4.0 sends `{ sn, appUserId, equipmentNickName }` — NOT
+// `equipmentId` (the cloud's numeric pk). Bekend issue dat ook in de officiële
+// app niet werkte zolang de cloud sn niet accepteerde. We accepteren beide
+// zodat oude clients (die nog wel equipmentId sturen) ook blijven werken.
 equipmentRouter.post('/updateEquipmentNickName', authMiddleware, (req: AuthRequest, res: Response) => {
-  const { equipmentId, equipmentNickName } = req.body as {
-    equipmentId?: number; equipmentNickName?: string;
+  const { equipmentId, sn, equipmentNickName, userCustomDeviceName } = req.body as {
+    equipmentId?: number; sn?: string;
+    equipmentNickName?: string; userCustomDeviceName?: string;
   };
-  if (equipmentId == null) { res.json(fail('equipmentId required', 400)); return; }
+  const name = equipmentNickName ?? userCustomDeviceName ?? null;
 
-  equipmentRepo.updateNickNameByIdAndUser(equipmentId, req.userId!, equipmentNickName ?? null);
-  res.json(ok());
+  if (sn) {
+    const changed = equipmentRepo.updateNickNameByMowerSnAndUser(sn, req.userId!, name);
+    if (changed === 0) { res.json(fail('Equipment not found for user', 404)); return; }
+    res.json(ok());
+    return;
+  }
+  if (equipmentId != null) {
+    equipmentRepo.updateNickNameByIdAndUser(equipmentId, req.userId!, name);
+    res.json(ok());
+    return;
+  }
+  res.json(fail('sn or equipmentId required', 400));
 });
 
 // POST /api/nova-user/equipment/updateEquipmentVersion

@@ -1147,15 +1147,31 @@ sendCommand({ save_recharge_pos: { mapName: 'map0', cmd_num: cmdNumRef.current++
                       key={opt.key}
                       style={[
                         styles.modeBtn,
-                        { flex: 1, paddingVertical: 10, opacity: disabled ? 0.4 : 1 },
+                        {
+                          flex: 1,
+                          flexDirection: 'column',
+                          paddingVertical: 12,
+                          paddingHorizontal: 6,
+                          gap: 6,
+                          opacity: disabled ? 0.4 : 1,
+                        },
                         active && { borderColor: opt.color, borderWidth: 1.5 },
                       ]}
                       onPress={() => !disabled && setMapBuildType(opt.key)}
                       disabled={disabled}
                       activeOpacity={0.7}
                     >
-                      <Ionicons name={opt.icon as any} size={20} color={active ? opt.color : colors.textMuted} />
-                      <Text style={[styles.modeBtnTitle, { fontSize: 13 }, !active && { color: colors.textMuted }]}>{opt.label}</Text>
+                      <Ionicons name={opt.icon as any} size={22} color={active ? opt.color : colors.textDim} />
+                      <Text
+                        style={[
+                          styles.modeBtnTitle,
+                          { fontSize: 12, textAlign: 'center', lineHeight: 14 },
+                          !active && { color: colors.textDim },
+                        ]}
+                        numberOfLines={2}
+                      >
+                        {opt.label}
+                      </Text>
                     </TouchableOpacity>
                   );
                 })}
@@ -1246,33 +1262,38 @@ sendCommand({ save_recharge_pos: { mapName: 'map0', cmd_num: cmdNumRef.current++
         /* ── Pre-mapping: map view + joystick overlay — drive to start point ── */
         ) : mappingState === 'preMapping' ? (
           <View style={{ flex: 1 }}>
-            {/* Map with existing maps + live mower position */}
-            <View style={{ flex: 1, justifyContent: 'center' }}>
+            {/* Map with existing maps + live mower position. Bounded height so
+                the joystick + action buttons below have guaranteed space and
+                the controls don't overlap the map's bottom edge. */}
+            <View style={{ alignItems: 'center', marginBottom: 4 }}>
               <LiveMapView
                 points={[]}
                 orientation={mapOrientation}
                 closed={false}
-                height={SCREEN_W - 32}
+                height={Math.min(SCREEN_W - 32, 320)}
                 existingMaps={existingMaps}
                 mowerPosition={mowerLocal}
               />
             </View>
 
-            {/* Joystick overlay (semi-transparent, bottom of screen) */}
+            {/* Joystick overlay — title + speed selector now stack vertically
+                so the speed buttons get the full row width and don't get
+                squeezed into the title (Ramon: "snelheids knoppen lopen door
+                het map panel"). */}
             <View style={styles.preMappingOverlay}>
               <View style={styles.preMappingHeader}>
                 <Text style={styles.preMappingTitle}>Drive to Start Point</Text>
-                <View style={styles.speedRow}>
-                  {SPEED_LEVELS.map((lvl, i) => (
-                    <TouchableOpacity key={i}
-                      style={[styles.speedBtn, speedLevel === i && styles.speedBtnActive]}
-                      onPress={() => setSpeedLevel(i)} activeOpacity={0.7}>
-                      <Text style={[styles.speedBtnText, speedLevel === i && { color: colors.white }]}>
-                        {t(lvl.labelKey, undefined) || lvl.labelKey}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
+              </View>
+              <View style={styles.speedRow}>
+                {SPEED_LEVELS.map((lvl, i) => (
+                  <TouchableOpacity key={i}
+                    style={[styles.speedBtn, speedLevel === i && styles.speedBtnActive]}
+                    onPress={() => setSpeedLevel(i)} activeOpacity={0.7}>
+                    <Text style={[styles.speedBtnText, speedLevel === i && { color: colors.white }]}>
+                      {t(lvl.labelKey, undefined) || lvl.labelKey}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
               </View>
 
               <View style={styles.joystickContainer}>
@@ -1552,7 +1573,7 @@ sendCommand({ save_recharge_pos: { mapName: 'map0', cmd_num: cmdNumRef.current++
 
             <View style={styles.chargerCard}>
               <View style={styles.chargerIconContainer}>
-                <Ionicons name="battery-charging" size={56} color={colors.emerald} />
+                <Ionicons name="battery-charging" size={32} color={colors.emerald} />
               </View>
               <Text style={styles.chargerTitle}>
                 {dockedOnCharger ? 'Docked!' : autoDockFailed ? 'Docking Failed' : 'Drive to Charger'}
@@ -1561,12 +1582,12 @@ sendCommand({ save_recharge_pos: { mapName: 'map0', cmd_num: cmdNumRef.current++
                 {dockedOnCharger
                   ? 'Mower is on the charger. Saving charger position...'
                   : autoDockFailed
-                    ? 'NOVABOT could not finish docking automatically.\n\nDrive it back near the charger and retry "Auto Dock", or use "Save Position Here" if it is already correctly positioned.'
-                  : 'Drive the mower to approximately 50cm in front of the charger, facing it directly.\n\nThen tap "Auto Dock" to let the mower park itself.'}
+                    ? 'NOVABOT could not finish docking. Drive it back near the charger and retry, or "Save Position Here" if it is already correctly positioned.'
+                  : 'Drive the mower to ~50cm in front of the charger, facing it directly. Then tap "Auto Dock".'}
               </Text>
 
               {/* Dock status */}
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 12 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 6 }}>
                 <View style={{ width: 12, height: 12, borderRadius: 6,
                   backgroundColor: dockedOnCharger ? colors.emerald : autoDockFailed ? colors.red : colors.amber }} />
                 <Text style={{ color: dockedOnCharger ? colors.emerald : autoDockFailed ? colors.red : colors.text, fontSize: 14, fontWeight: '600' }}>
@@ -1583,15 +1604,17 @@ sendCommand({ save_recharge_pos: { mapName: 'map0', cmd_num: cmdNumRef.current++
               </View>
             </View>
 
-            {/* Joystick — always visible */}
+            {/* Joystick — always visible. 0.7× scale + tighter gap so the
+                Auto Dock + Save buttons below have room (was overlapping the
+                speed selector at the bottom on iPhone-sized screens). */}
             <View style={styles.joystickArea}>
               <View style={styles.joystickContainer}>
                 <GestureDetector gesture={panGesture}>
-                  <View style={[styles.joystickBase, { width: JOYSTICK_SIZE * 0.8, height: JOYSTICK_SIZE * 0.8 }]}>
+                  <View style={[styles.joystickBase, { width: JOYSTICK_SIZE * 0.7, height: JOYSTICK_SIZE * 0.7 }]}>
                     <View style={styles.crossV} />
                     <View style={styles.crossH} />
                     <View style={[styles.thumb, joystickActive && styles.thumbActive,
-                      { transform: [{ translateX: thumbX * 0.8 }, { translateY: thumbY * 0.8 }] }]} />
+                      { transform: [{ translateX: thumbX * 0.7 }, { translateY: thumbY * 0.7 }] }]} />
                   </View>
                 </GestureDetector>
               </View>
@@ -1783,17 +1806,16 @@ const styles = StyleSheet.create({
   mappingContent: { flex: 1, paddingHorizontal: 16, gap: 8 },
   preMappingOverlay: {
     paddingHorizontal: 16,
+    paddingTop: 12,
     paddingBottom: 8,
-    gap: 8,
+    gap: 10,
   },
   preMappingHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
   },
   preMappingTitle: {
     color: colors.white,
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: '700',
   },
   centerBox: { flex: 1, justifyContent: 'center', alignItems: 'center', gap: 12, paddingHorizontal: 32 },
@@ -1974,6 +1996,7 @@ const styles = StyleSheet.create({
   },
   speedRow: {
     flexDirection: 'row',
+    justifyContent: 'center',
     gap: 10,
   },
   speedBtn: {
@@ -2042,28 +2065,27 @@ const styles = StyleSheet.create({
   actionText: { fontSize: 15, fontWeight: '700', color: colors.white },
 
   // ── Charger positioning ──
-  chargerContent: { flex: 1, paddingHorizontal: 16, justifyContent: 'space-between' },
+  chargerContent: { flex: 1, paddingHorizontal: 16, justifyContent: 'space-between', gap: 8 },
   chargerCard: {
     backgroundColor: colors.card,
-    borderRadius: 16,
-    padding: 24,
+    borderRadius: 14,
+    padding: 14,
     borderWidth: 1,
     borderColor: colors.cardBorder,
     alignItems: 'center',
-    gap: 12,
-    marginTop: 16,
+    gap: 8,
+    marginTop: 8,
   },
   chargerIconContainer: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
+    width: 52,
+    height: 52,
+    borderRadius: 26,
     backgroundColor: 'rgba(0,212,170,0.1)',
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 4,
   },
-  chargerTitle: { fontSize: 20, fontWeight: '700', color: colors.white },
-  chargerDesc: { fontSize: 15, color: colors.text, textAlign: 'center', lineHeight: 22 },
+  chargerTitle: { fontSize: 17, fontWeight: '700', color: colors.white },
+  chargerDesc: { fontSize: 13, color: colors.text, textAlign: 'center', lineHeight: 18 },
   chargerHint: {
     fontSize: 12,
     color: colors.amber,

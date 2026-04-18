@@ -24,7 +24,7 @@ import { BatteryRing } from '../components/BatteryRing';
 import { MowerScene } from '../components/mower/MowerScene';
 import { useMowerState } from '../hooks/useMowerState';
 import { ApiClient, type Schedule } from '../services/api';
-import { getServerUrl } from '../services/auth';
+import { getServerUrl, getToken } from '../services/auth';
 import { DemoBanner } from '../components/DemoBanner';
 import { MowingProgressMap } from '../components/MowingProgressMap';
 import HistoryScreen from './HistoryScreen';
@@ -689,12 +689,27 @@ export default function HomeScreen() {
 
 
   if (noMower || mowerOffline) {
+    // Pick a SN to query rain forecast against — prefer the (offline) mower
+    // from devices, else fall back to any mower SN we have in deviceSets.
+    // This lets the rain warning appear even when the mower is offline.
+    const rainSn = mower?.sn
+      ?? deviceSets.find(s => s.mower?.sn)?.mower?.sn
+      ?? '';
+
     return (
       <View style={[styles.container, { paddingTop: insets.top }]}>
         <ScrollView contentContainerStyle={styles.emptyScroll} refreshControl={
           <RefreshControl refreshing={refreshing} tintColor={colors.purple} onRefresh={handleRefresh} />
         }>
 
+          {/* Rain overlay — shown above device list so the user sees an
+              incoming rain warning even when the mower is offline (Ramon:
+              "ik verwacht nu regen te zien op het home screen"). */}
+          {rainSn !== '' && (
+            <View style={{ marginBottom: 16 }}>
+              <RainOverlay mowerSn={rainSn} />
+            </View>
+          )}
 
           {/* Device sets — sorted: sets with online devices first */}
           {[...deviceSets]
@@ -887,8 +902,42 @@ export default function HomeScreen() {
           </View>
         </View>
 
-        {/* Mower animation scene */}
-        <MowerScene activity={displayActivity} battery={mower.battery} mowingProgress={mower.mowingProgress} />
+        {/* Mower animation scene — nickname overlay in top-left, tap to rename. */}
+        <MowerScene
+          activity={displayActivity}
+          battery={mower.battery}
+          mowingProgress={mower.mowingProgress}
+          nickname={devices.get(mower.sn)?.nickname || mower.sn}
+          onPressNickname={() => {
+            Alert.prompt(
+              t('renameMower', undefined) || 'Rename Mower',
+              t('enterNewName', undefined) || 'Enter a new name:',
+              [
+                { text: t('cancel', undefined) || 'Cancel', style: 'cancel' },
+                {
+                  text: t('rename', undefined) || 'Rename',
+                  onPress: async (newName?: string) => {
+                    const trimmed = (newName ?? '').trim();
+                    if (!trimmed) return;
+                    try {
+                      const url = await getServerUrl();
+                      if (!url) return;
+                      const api = new ApiClient(url);
+                      await api.updateEquipmentNickName(mower.sn, trimmed);
+                      // Pull fresh snapshot so the new name appears immediately.
+                      const socket = getSocket();
+                      socket?.emit('request:snapshot');
+                    } catch (err) {
+                      console.warn('[HomeScreen] rename mower failed:', err);
+                    }
+                  },
+                },
+              ],
+              'plain-text',
+              devices.get(mower.sn)?.nickname || '',
+            );
+          }}
+        />
 
         {/* Status card */}
         <View style={styles.statusCard}>
@@ -1007,6 +1056,14 @@ export default function HomeScreen() {
           </View>
         </View>
 
+        {/* Rain overlay — placed right under the status card so it's
+            visually paired with the battery panel (was buried below the
+            error / warning banners which kept it off-screen most of the
+            time). Auto-hides when there's no rain forecast within 3h. */}
+        <View style={{ marginBottom: 16 }}>
+          <RainOverlay mowerSn={mower.sn} />
+        </View>
+
         {/* Error display */}
         {mower.hasError && (
           <View style={styles.errorCard}>
@@ -1062,11 +1119,6 @@ export default function HomeScreen() {
             </View>
           );
         })()}
-
-        {/* Rain overlay */}
-        <View style={{ marginBottom: 16 }}>
-          <RainOverlay mowerSn={mower.sn} />
-        </View>
 
         {/* Action buttons */}
         <View style={styles.actionsCard}>

@@ -11,7 +11,7 @@
  *  - BatteryIndicator: battery icon (top-right)
  */
 import React, { useMemo, useEffect } from 'react';
-import { View, StyleSheet } from 'react-native';
+import { View, StyleSheet, Text, TouchableOpacity } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import Animated, {
   useSharedValue,
@@ -34,6 +34,10 @@ interface Props {
   battery: number;
   mowingProgress?: number;
   height?: number;
+  /** Optional mower nickname; rendered in the top-left corner of the tile. */
+  nickname?: string | null;
+  /** Tap-to-rename callback fired when the user taps the nickname. */
+  onPressNickname?: () => void;
 }
 
 // ── Dashboard gradient colors (exact match) ──────────────────────────
@@ -75,7 +79,7 @@ function getSkyOverlayColors(activity: MowerActivity): [string, string] {
 
 // ── Component ────────────────────────────────────────────────────────
 
-export function MowerScene({ activity, battery, mowingProgress = 0, height = 140 }: Props) {
+export function MowerScene({ activity, battery, mowingProgress = 0, height = 140, nickname, onPressNickname }: Props) {
   const gradientColors = useMemo(() => getGradientColors(activity, battery), [activity, battery]);
   const skyColors = useMemo(() => getSkyOverlayColors(activity), [activity]);
   const grassColor = useMemo(() => getGrassColor(activity, battery), [activity, battery]);
@@ -157,6 +161,20 @@ export function MowerScene({ activity, battery, mowingProgress = 0, height = 140
 
       {/* Battery indicator (top-right) */}
       <BatteryIndicator battery={battery} />
+
+      {/* Mower nickname (top-left). Tap to rename if onPressNickname is wired. */}
+      {nickname != null && nickname !== '' && (
+        <TouchableOpacity
+          style={styles.nicknameWrap}
+          onPress={onPressNickname}
+          disabled={!onPressNickname}
+          activeOpacity={onPressNickname ? 0.7 : 1}
+        >
+          <Text style={styles.nicknameText} numberOfLines={1}>
+            {nickname}
+          </Text>
+        </TouchableOpacity>
+      )}
     </View>
   );
 }
@@ -167,6 +185,22 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     marginBottom: 16,
     position: 'relative',
+  },
+  nicknameWrap: {
+    position: 'absolute',
+    top: 10,
+    left: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+    maxWidth: '60%',
+  },
+  nicknameText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '700',
+    letterSpacing: 0.2,
   },
   skyOverlay: {
     position: 'absolute',

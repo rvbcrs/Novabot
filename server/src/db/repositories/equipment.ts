@@ -116,6 +116,9 @@ export class EquipmentRepository {
   private _updateNickNameByIdAndUser = db.prepare(
     'UPDATE equipment SET equipment_nick_name = ? WHERE id = ? AND user_id = ?'
   );
+  private _updateNickNameByMowerSnAndUser = db.prepare(
+    'UPDATE equipment SET equipment_nick_name = ? WHERE mower_sn = ? AND user_id = ?'
+  );
   private _updateUserAndNickName = db.prepare(`
     UPDATE equipment
     SET user_id = ?, equipment_nick_name = COALESCE(?, equipment_nick_name)
@@ -355,6 +358,15 @@ export class EquipmentRepository {
 
   updateNickNameByIdAndUser(id: number, userId: string, name: string | null): void {
     this._updateNickNameByIdAndUser.run(name, id, userId);
+  }
+
+  /**
+   * Update nickname by mower SN — used by Novabot's `updateEquipmentNickName`
+   * which sends `sn` (not `equipmentId`). Returns rows changed so callers can
+   * 404 when no matching equipment row is owned by the user.
+   */
+  updateNickNameByMowerSnAndUser(mowerSn: string, userId: string, name: string | null): number {
+    return this._updateNickNameByMowerSnAndUser.run(name, mowerSn, userId).changes;
   }
 
   updateUserAndNickName(equipmentId: string, userId: string, name?: string | null): void {

@@ -94,4 +94,5 @@ export interface SnapshotDevice {
   deviceType: string;
   online: boolean;
   sensors: Record<string, string>;
+  nickname?: string | null;
 }

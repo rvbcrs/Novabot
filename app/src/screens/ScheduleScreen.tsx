@@ -81,6 +81,15 @@ export default function ScheduleScreen() {
     fetchSchedules();
   }, [fetchSchedules]);
 
+  // Refresh schedules every 30s while the screen is mounted so the
+  // "currently running" / "paused by rain" badges stay current without the
+  // user having to pull-to-refresh.
+  useEffect(() => {
+    if (!mowerSn || demo.enabled) return;
+    const interval = setInterval(fetchSchedules, 30_000);
+    return () => clearInterval(interval);
+  }, [mowerSn, demo.enabled, fetchSchedules]);
+
   const handleToggle = async (schedule: Schedule) => {
     try {
       const url = await getServerUrl();
@@ -242,6 +251,37 @@ export default function ScheduleScreen() {
           </TouchableOpacity>
         </View>
 
+        {/* Global status banner — visible at the top of the list so the user
+            doesn't have to scan every row. Three states: running / rain
+            paused / nothing active. Hidden while loading the first time. */}
+        {!loading && (() => {
+          const running = schedules.find(x => x.currentlyRunning);
+          const rainPaused = !running && schedules.find(x => x.rainPausedAt);
+          if (running) {
+            return (
+              <View style={[styles.globalBanner, styles.globalBannerRunning]}>
+                <View style={styles.statusDot} />
+                <Text style={styles.globalBannerRunningText}>
+                  {t('scheduleActiveBanner', {
+                    name: running.scheduleName ?? running.mapName ?? running.startTime,
+                  })}
+                </Text>
+              </View>
+            );
+          }
+          if (rainPaused) {
+            return (
+              <View style={[styles.globalBanner, styles.globalBannerRain]}>
+                <Ionicons name="rainy" size={14} color="#fbbf24" />
+                <Text style={styles.globalBannerRainText}>
+                  {t('scheduleRainBanner', undefined) || 'Mowing paused due to rain'}
+                </Text>
+              </View>
+            );
+          }
+          return null;
+        })()}
+
         {loading && (
           <ActivityIndicator size="small" color={colors.emerald} style={{ marginTop: 32 }} />
         )}
@@ -284,14 +324,37 @@ export default function ScheduleScreen() {
                   )}
                 >
                 <TouchableOpacity
-                  style={[styles.scheduleCard, !s.enabled && styles.scheduleCardDisabled]}
+                  style={[
+                    styles.scheduleCard,
+                    !s.enabled && styles.scheduleCardDisabled,
+                    s.currentlyRunning && styles.scheduleCardRunning,
+                    !!s.rainPausedAt && styles.scheduleCardRainPaused,
+                  ]}
                   onPress={() => handleEdit(s)}
                   activeOpacity={0.7}
                 >
                   <View style={styles.scheduleLeft}>
-                    <Text style={[styles.scheduleTime, !s.enabled && styles.textDisabled]}>
-                      {(s as any).startTime ?? `${pad(s.start_hour ?? 0)}:${pad(s.start_minute ?? 0)}`}
-                    </Text>
+                    <View style={styles.scheduleHeaderRow}>
+                      <Text style={[styles.scheduleTime, !s.enabled && styles.textDisabled]}>
+                        {(s as any).startTime ?? `${pad(s.start_hour ?? 0)}:${pad(s.start_minute ?? 0)}`}
+                      </Text>
+                      {s.currentlyRunning && (
+                        <View style={styles.statusBadgeRunning}>
+                          <View style={styles.statusDot} />
+                          <Text style={styles.statusBadgeRunningText}>
+                            {t('scheduleRunning', undefined) || 'Running now'}
+                          </Text>
+                        </View>
+                      )}
+                      {!s.currentlyRunning && s.rainPausedAt && (
+                        <View style={styles.statusBadgeRain}>
+                          <Ionicons name="rainy" size={11} color="#fbbf24" />
+                          <Text style={styles.statusBadgeRainText}>
+                            {t('schedulePausedRain', undefined) || 'Paused — rain'}
+                          </Text>
+                        </View>
+                      )}
+                    </View>
                     <View style={styles.scheduleChips}>
                       <Text style={styles.scheduleDuration}>{(() => {
                         if (s.duration_minutes) return `${s.duration_minutes} min`;
@@ -672,12 +735,65 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: colors.cardBorder,
     padding: 16, marginBottom: 8,
   },
+  globalBanner: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    paddingHorizontal: 14, paddingVertical: 10, borderRadius: 12,
+    marginBottom: 16, borderWidth: 1,
+  },
+  globalBannerRunning: {
+    backgroundColor: 'rgba(0,212,170,0.12)',
+    borderColor: 'rgba(0,212,170,0.4)',
+  },
+  globalBannerRunningText: {
+    flex: 1, fontSize: 14, fontWeight: '600', color: colors.emerald,
+  },
+  globalBannerRain: {
+    backgroundColor: 'rgba(120,53,15,0.25)',
+    borderColor: 'rgba(251,191,36,0.35)',
+  },
+  globalBannerRainText: {
+    flex: 1, fontSize: 14, fontWeight: '600', color: '#fde68a',
+  },
   scheduleCardDisabled: { opacity: 0.5 },
+  scheduleCardRunning: {
+    borderColor: colors.emerald,
+    backgroundColor: 'rgba(0,212,170,0.10)',
+    shadowColor: colors.emerald,
+    shadowOffset: { width: 0, height: 0 },
+    shadowRadius: 12,
+    shadowOpacity: 0.4,
+  },
+  scheduleCardRainPaused: {
+    borderColor: 'rgba(251,191,36,0.45)',
+    backgroundColor: 'rgba(120,53,15,0.18)',
+  },
   scheduleLeft: { gap: 4, flex: 1 },
+  scheduleHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap' },
   scheduleTime: { fontSize: 24, fontWeight: '700', color: colors.white, fontVariant: ['tabular-nums'] },
   scheduleChips: { flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginTop: 2 },
   scheduleDuration: { fontSize: 13, color: colors.textDim },
   scheduleChip: { fontSize: 11, color: colors.textMuted, backgroundColor: 'rgba(255,255,255,0.06)', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, overflow: 'hidden' },
+  statusBadgeRunning: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8,
+    backgroundColor: 'rgba(0,212,170,0.18)',
+    borderWidth: 1, borderColor: 'rgba(0,212,170,0.45)',
+  },
+  statusBadgeRunningText: {
+    fontSize: 11, fontWeight: '700', color: colors.emerald, letterSpacing: 0.3,
+  },
+  statusDot: {
+    width: 7, height: 7, borderRadius: 4, backgroundColor: colors.emerald,
+  },
+  statusBadgeRain: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8,
+    backgroundColor: 'rgba(251,191,36,0.15)',
+    borderWidth: 1, borderColor: 'rgba(251,191,36,0.35)',
+  },
+  statusBadgeRainText: {
+    fontSize: 11, fontWeight: '600', color: '#fbbf24', letterSpacing: 0.3,
+  },
   textDisabled: { color: colors.textMuted },
 });
 

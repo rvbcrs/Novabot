@@ -85,11 +85,23 @@ export function initDashboardSocket(httpServer: HttpServer): void {
         ) latest ON d.sn = latest.sn AND d.last_seen = latest.max_seen
       `).all() as DeviceRegistryRow[];
 
-      const equipment = db.prepare('SELECT mower_sn, charger_sn FROM equipment').all() as { mower_sn: string; charger_sn: string | null }[];
+      const equipment = db.prepare(
+        'SELECT mower_sn, charger_sn, equipment_nick_name FROM equipment'
+      ).all() as { mower_sn: string; charger_sn: string | null; equipment_nick_name: string | null }[];
       const boundSns = new Set<string>();
+      // Per-SN nickname so the home tile can show "Botty" instead of the bare
+      // SN. Both the mower and the paired charger get the same nickname so
+      // either device row in the snapshot carries it.
+      const nickBySn = new Map<string, string>();
       for (const e of equipment) {
-        if (e.mower_sn) boundSns.add(e.mower_sn);
-        if (e.charger_sn) boundSns.add(e.charger_sn);
+        if (e.mower_sn) {
+          boundSns.add(e.mower_sn);
+          if (e.equipment_nick_name) nickBySn.set(e.mower_sn, e.equipment_nick_name);
+        }
+        if (e.charger_sn) {
+          boundSns.add(e.charger_sn);
+          if (e.equipment_nick_name) nickBySn.set(e.charger_sn, e.equipment_nick_name);
+        }
       }
 
       return registry
@@ -99,6 +111,7 @@ export function initDashboardSocket(httpServer: HttpServer): void {
           deviceType: r.sn!.startsWith('LFIC') ? 'charger' : 'mower',
           online: isDeviceOnline(r.sn!) || demoModeChecker?.(r.sn!) === true,
           sensors: snapshots[r.sn!] ?? {},
+          nickname: nickBySn.get(r.sn!) ?? null,
         }));
     }
 

@@ -38,6 +38,7 @@ export function useMowerState(): UseMowerStateResult {
           online: d.online,
           sensors: d.sensors,
           lastUpdate: Date.now(),
+          nickname: d.nickname ?? null,
         });
       }
       setDevices(map);

@@ -18,6 +18,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
 import { getServerUrl } from '../services/auth';
 import { useI18n } from '../i18n';
+import { formatTime } from '../lib/format';
 
 interface RainSession {
   session_id: string;
@@ -68,13 +69,31 @@ export function RainOverlay({ mowerSn }: Props) {
     return () => { active = false; clearInterval(interval); };
   }, [mowerSn]);
 
+  // Compute "incoming rain in next 3h" up here so both the JSX render and
+  // the animation useEffect can react to it. Without this lift the drops
+  // wouldn't animate in WARNING mode.
+  const RAIN_MM = 0.1;
+  const RAIN_PROB = 50;
+  const WARN_HORIZON_MS = 3 * 60 * 60 * 1000;
+  const incomingRain = (() => {
+    if (!forecast?.upcoming?.length) return null;
+    const now = Date.now();
+    for (const h of forecast.upcoming) {
+      const at = new Date(h.time).getTime();
+      if (at < now || at - now > WARN_HORIZON_MS) continue;
+      if (h.mm >= RAIN_MM || h.prob >= RAIN_PROB) return { ...h, atMs: at };
+    }
+    return null;
+  })();
+  const showOverlay = !!session || !!incomingRain;
+
   // Rain animation — 20 drops with staggered timing
   const dropAnims = useRef(
     Array.from({ length: 20 }, () => new Animated.Value(0))
   ).current;
 
   useEffect(() => {
-    if (!session) return;
+    if (!showOverlay) return;
     const animations = dropAnims.map((anim, i) => {
       const delay = (i * 137) % 2500; // staggered start
       const duration = 700 + (i * 43) % 500;
@@ -97,31 +116,13 @@ export function RainOverlay({ mowerSn }: Props) {
     });
     animations.forEach(a => a.start());
     return () => animations.forEach(a => a.stop());
-  }, [session]);
-
-  // Detect "rain coming soon" — any forecast hour in the next 3h that exceeds
-  // the same thresholds the rain monitor uses (≥0.1mm OR probability ≥ 50%).
-  // Mirrors the server-side rule in rainMonitor.ts so the warning fires for
-  // exactly the same showers the monitor would pause on.
-  const RAIN_MM = 0.1;
-  const RAIN_PROB = 50;
-  const WARN_HORIZON_MS = 3 * 60 * 60 * 1000;
-  const incomingRain = (() => {
-    if (!forecast?.upcoming?.length) return null;
-    const now = Date.now();
-    for (const h of forecast.upcoming) {
-      const at = new Date(h.time).getTime();
-      if (at < now || at - now > WARN_HORIZON_MS) continue;
-      if (h.mm >= RAIN_MM || h.prob >= RAIN_PROB) return { ...h, atMs: at };
-    }
-    return null;
-  })();
+  }, [showOverlay]);
 
   // Nothing to show — neither paused nor incoming rain.
-  if (!session && !incomingRain) return null;
+  if (!showOverlay) return null;
 
   const pausedAt = session
-    ? new Date(session.paused_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    ? formatTime(session.paused_at)
     : '';
 
   let clearLabel: string | null = null;
@@ -131,7 +132,7 @@ export function RainOverlay({ mowerSn }: Props) {
     if (diffMin <= 60) {
       clearLabel = t('dryInMin', { min: String(diffMin) });
     } else {
-      clearLabel = t('dryAt', { time: clearDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) });
+      clearLabel = t('dryAt', { time: formatTime(clearDate) });
     }
   }
 
@@ -159,29 +160,24 @@ export function RainOverlay({ mowerSn }: Props) {
   // WARNING mode: no session yet, but rain is forecast within 3h.
   const isWarning = !session && !!incomingRain;
   const warningAt = incomingRain
-    ? new Date(incomingRain.atMs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    ? formatTime(incomingRain.atMs)
     : '';
 
   return (
-    <View style={[styles.container, isWarning && styles.containerWarning]}>
-      {/* Rain drops animation — only in PAUSED mode (warning is calm/quiet) */}
-      {!isWarning && (
-        <View style={styles.rainLayer} pointerEvents="none">
-          {drops}
-        </View>
-      )}
+    <View style={styles.container}>
+      {/* Rain drops animation — same look in both PAUSED and WARNING so an
+          incoming-rain forecast feels just as visible as an active pause. */}
+      <View style={styles.rainLayer} pointerEvents="none">
+        {drops}
+      </View>
 
       {/* Header */}
       <View style={styles.header}>
-        <View style={[styles.iconCircle, isWarning && styles.iconCircleWarning]}>
-          <Ionicons
-            name={isWarning ? 'rainy-outline' : 'rainy'}
-            size={20}
-            color={isWarning ? '#fbbf24' : '#60a5fa'}
-          />
+        <View style={styles.iconCircle}>
+          <Ionicons name="rainy" size={20} color="#60a5fa" />
         </View>
         <View style={{ flex: 1 }}>
-          <Text style={[styles.title, isWarning && styles.titleWarning]}>
+          <Text style={styles.title}>
             {isWarning
               ? (t('rainExpected') || 'Rain expected')
               : t('rainDetected')}
@@ -200,7 +196,7 @@ export function RainOverlay({ mowerSn }: Props) {
           {forecast.upcoming.slice(0, 8).map((h, i) => {
             const intensity = Math.min(h.mm / 2, 1);
             const barHeight = Math.max(intensity, h.prob / 100);
-            const time = new Date(h.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            const time = formatTime(h.time);
             return (
               <View key={i} style={styles.forecastCol}>
                 <View style={styles.forecastBarBg}>
@@ -239,10 +235,6 @@ const styles = StyleSheet.create({
     gap: 10,
     overflow: 'hidden',
   },
-  containerWarning: {
-    backgroundColor: 'rgba(120,53,15,0.5)',
-    borderColor: 'rgba(251,191,36,0.25)',
-  },
   rainLayer: {
     ...StyleSheet.absoluteFillObject,
     zIndex: 0,
@@ -262,9 +254,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(96,165,250,0.2)',
     justifyContent: 'center', alignItems: 'center',
   },
-  iconCircleWarning: { backgroundColor: 'rgba(251,191,36,0.18)' },
   title: { fontSize: 13, fontWeight: '600', color: '#bfdbfe' },
-  titleWarning: { color: '#fde68a' },
   subtitle: { fontSize: 11, color: 'rgba(147,197,253,0.6)', marginTop: 2 },
   forecastRow: { flexDirection: 'row', gap: 3 },
   forecastCol: { flex: 1, alignItems: 'center', gap: 3 },
