@@ -245,9 +245,10 @@ export function generateMapZipFromDb(
 
   const areas: MapArea[] = [];
 
-  // Splits DB rijen in werk en unicom
+  // Splits DB rijen in werk, unicom en obstakels
   const workRows = rows.filter(r => r.map_type === 'work');
   const unicomRows = rows.filter(r => r.map_type === 'unicom');
+  const obstacleRows = rows.filter(r => r.map_type === 'obstacle');
 
   for (let i = 0; i < workRows.length; i++) {
     const row = workRows[i];
@@ -260,6 +261,39 @@ export function generateMapZipFromDb(
       type: 'work',
       points,
     });
+
+    // Obstacles van dit werkgebied — file_name begint met "mapN_" (bijv. "map0_3_obstacle.csv").
+    // We vinden het sub-index terug uit de filename zodat ze dezelfde canonieke CSV namen
+    // krijgen als de maaier zelf zou genereren (map0_0_obstacle, map0_3_obstacle, ...).
+    // Check both map_name AND file_name — some DB rows have the canonical name
+    // ("map0_3_obstacle") in map_name with a ZIP bundle name in file_name. Match
+    // whichever holds the "mapN_..._obstacle" pattern.
+    const prefix = `map${i}`;
+    const obstaclePattern = new RegExp(`^${prefix}_\\d+_obstacle`);
+    const myObstacles = obstacleRows.filter(r => {
+      return (
+        (r.map_name && obstaclePattern.test(r.map_name)) ||
+        (r.file_name && obstaclePattern.test(r.file_name))
+      );
+    });
+    for (const obs of myObstacles) {
+      try {
+        const obsPoints: LocalPoint[] = JSON.parse(obs.map_area!);
+        if (!obsPoints || obsPoints.length < 3) continue;
+        // Extract sub-index from whichever field carries the canonical name.
+        const canonical = (obs.map_name && obstaclePattern.test(obs.map_name))
+          ? obs.map_name
+          : obs.file_name ?? '';
+        const match = canonical.match(/^map\d+_(\d+)_obstacle/);
+        const subIndex = match ? parseInt(match[1], 10) : areas.filter(a => a.type === 'obstacle' && a.mapIndex === i).length;
+        areas.push({
+          mapIndex: i,
+          type: 'obstacle',
+          subIndex,
+          points: obsPoints,
+        });
+      } catch { /* skip malformed row */ }
+    }
 
     // Zoek een handmatig getekend unicom kanaal voor dit werkgebied
     if (unicomRows[i]) {

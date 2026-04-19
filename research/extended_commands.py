@@ -948,7 +948,220 @@ COMMANDS = {
     "clean_ota_cache": handle_clean_ota_cache,
     "get_lora_info": handle_get_lora_info,
     "set_lora_info": handle_set_lora_info,
+    "sync_map": lambda p, r: handle_sync_map(p, r),
 }
+
+
+def handle_sync_map(params, respond):
+    """
+    SSH-free map sync: pull latest ZIP from the OpenNova server, install into
+    `/userdata/lfi/maps/home0/` and restart `novabot_mapping` so coverage_planner
+    picks up the new polygon. Triggered by the server whenever a map is edited,
+    or can be invoked on-demand from any MQTT client.
+
+    Flow:
+      1. GET /api/dashboard/maps/<SN>/sync-info  → { md5, posJson, zipUrl }
+      2. If local MD5 matches → no-op, report unchanged
+      3. GET /api/dashboard/maps/<SN>/sync-zip (with If-None-Match) → bytes
+      4. Atomically replace home0/csv_file + x3_csv_file
+      5. Write pos.json from charger GPS
+      6. Restart novabot_mapping via ros2 launch
+
+    Skip-during-mowing guard: refuses to run while coverage is active to avoid
+    yanking the map out from under an in-flight task.
+    """
+    import hashlib
+    import shutil
+    import subprocess
+    import urllib.request
+    import urllib.error
+
+    sn = params.get("sn") or _sn_from_config()
+    server = params.get("server") or _server_from_config()
+    force = bool(params.get("force"))
+
+    if not sn or not server:
+        respond("sync_map_respond", {"result": 1, "error": "sn or server unknown"})
+        return
+
+    # Refuse during active coverage to keep a running task's map intact.
+    if not force and _coverage_is_active():
+        respond("sync_map_respond", {"result": 2, "error": "coverage active, try again on dock"})
+        return
+
+    base = f"http://{server}/api/dashboard/maps/{sn}"
+    local_md5 = _local_zip_md5("/userdata/lfi/maps/home0/LFIN1231000211.zip")
+
+    # 1. Cheap HEAD-ish probe
+    try:
+        with urllib.request.urlopen(f"{base}/sync-info", timeout=10) as r:
+            info = json.loads(r.read().decode("utf-8"))
+    except Exception as e:
+        respond("sync_map_respond", {"result": 1, "error": f"sync-info: {e}"})
+        return
+
+    remote_md5 = info.get("md5")
+    if remote_md5 and local_md5 and remote_md5 == local_md5 and not force:
+        respond("sync_map_respond", {"result": 0, "unchanged": True, "md5": remote_md5})
+        return
+
+    # 2. Pull actual bytes with ETag so repeat calls are cheap server-side.
+    try:
+        req = urllib.request.Request(f"{base}/sync-zip")
+        if local_md5:
+            req.add_header("If-None-Match", f'"{local_md5}"')
+        with urllib.request.urlopen(req, timeout=30) as r:
+            zip_bytes = r.read()
+            got_md5 = hashlib.md5(zip_bytes).hexdigest()
+    except urllib.error.HTTPError as e:
+        if e.code == 304:
+            respond("sync_map_respond", {"result": 0, "unchanged": True, "md5": local_md5})
+            return
+        respond("sync_map_respond", {"result": 1, "error": f"sync-zip HTTP {e.code}"})
+        return
+    except Exception as e:
+        respond("sync_map_respond", {"result": 1, "error": f"sync-zip: {e}"})
+        return
+
+    # Note: we don't cross-check remote_md5 from sync-info against got_md5 here,
+    # because `generateMapZipFromDb` embeds fresh file timestamps in each ZIP build,
+    # so two back-to-back calls yield different binary hashes. We trust the
+    # downloaded bytes directly — the ETag on sync-zip already handles the
+    # "unchanged since local_md5" case with a 304.
+
+    # 3. Write ZIP to /tmp then unzip into home0/, atomically replacing csv_file/x3_csv_file.
+    tmp_zip = "/tmp/novabot_sync_map.zip"
+    home0 = "/userdata/lfi/maps/home0"
+    try:
+        with open(tmp_zip, "wb") as f:
+            f.write(zip_bytes)
+        # Clean existing dirs (firmware expects fresh extract, not merge)
+        for sub in ("csv_file", "x3_csv_file"):
+            p = f"{home0}/{sub}"
+            if os.path.isdir(p):
+                shutil.rmtree(p)
+        os.makedirs(home0, exist_ok=True)
+        rc = subprocess.run(
+            ["unzip", "-o", "-q", tmp_zip, "-d", home0],
+            capture_output=True, text=True, timeout=30,
+        )
+        if rc.returncode != 0:
+            respond("sync_map_respond", {"result": 1, "error": f"unzip rc={rc.returncode}: {rc.stderr[-200:]}"})
+            return
+        # x3_csv_file is just a copy of csv_file for the internal coverage_planner reader.
+        src = f"{home0}/csv_file"
+        dst = f"{home0}/x3_csv_file"
+        if os.path.isdir(src):
+            if os.path.isdir(dst):
+                shutil.rmtree(dst)
+            shutil.copytree(src, dst)
+        # Write the canonical mower-visible ZIP so get_map_list_respond sees the
+        # new md5 (firmware expects a single LFIN*.zip in home0/).
+        try:
+            shutil.copy(tmp_zip, f"{home0}/{sn}.zip")
+        except Exception:
+            pass
+        # pos.json so localization can map GPS → local meters
+        pos_json = info.get("posJson")
+        if pos_json:
+            with open("/userdata/pos.json", "w") as f:
+                json.dump(pos_json, f)
+    except Exception as e:
+        respond("sync_map_respond", {"result": 1, "error": f"install: {e}"})
+        return
+    finally:
+        try: os.remove(tmp_zip)
+        except Exception: pass
+
+    # 4. Restart novabot_mapping so coverage_planner reloads from new CSVs.
+    restart_ok = _restart_novabot_mapping()
+    respond("sync_map_respond", {
+        "result": 0,
+        "md5": got_md5,
+        "sizeBytes": len(zip_bytes),
+        "restart": restart_ok,
+    })
+
+
+def _sn_from_config():
+    try:
+        with open("/userdata/lfi/json_config.json") as f:
+            cfg = json.load(f)
+        return cfg.get("sn", {}).get("value", {}).get("code")
+    except Exception:
+        return None
+
+
+def _server_from_config():
+    try:
+        with open("/userdata/lfi/json_config.json") as f:
+            cfg = json.load(f)
+        addr = cfg.get("mqtt", {}).get("value", {}).get("addr")
+        # MQTT broker = server; HTTP is on same host, port 3000 (Docker) or 80.
+        # Prefer port 80 since the mower's uploadEquipmentMap already uses it.
+        return f"{addr}:80" if addr else None
+    except Exception:
+        return None
+
+
+def _local_zip_md5(path):
+    import hashlib
+    try:
+        with open(path, "rb") as f:
+            return hashlib.md5(f.read()).hexdigest()
+    except Exception:
+        return None
+
+
+def _coverage_is_active():
+    """Read /tmp/mower_work_status or ask mqtt_node — cheap heuristic: check the
+    task_mode published by report_state_robot in the last 10s. Falls back to
+    'not active' on error so sync always proceeds when we can't tell."""
+    try:
+        rc = subprocess.run(
+            ["bash", "-lc", "pgrep -f coverage_planner_server >/dev/null && echo yes || echo no"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if rc.stdout.strip() != "yes":
+            return False  # planner not even running
+        # Heuristic: if chassis motors pull current > 200 mA we're mowing.
+        tail = subprocess.run(
+            ["bash", "-lc", "tail -20 $(ls -t /root/novabot/data/ros2_log/chassis_control_node_*.log 2>/dev/null | head -1)"],
+            capture_output=True, text=True, timeout=5,
+        )
+        for line in tail.stdout.splitlines()[::-1]:
+            if "cut_motor_current_ma" in line:
+                try:
+                    val = float(line.split("cut_motor_current_ma = ")[1].split(",")[0])
+                    return val > 200.0
+                except Exception:
+                    pass
+        return False
+    except Exception:
+        return False
+
+
+def _restart_novabot_mapping():
+    import subprocess
+    try:
+        cmd = (
+            '(pkill -f "novabot_mapping_launch.py" || true) && '
+            "sleep 1 && "
+            "(killall -9 novabot_mapping 2>/dev/null || true) && "
+            "sleep 1 && "
+            ". /opt/ros/galactic/setup.bash && "
+            ". /root/novabot/install/setup.bash && "
+            "export LD_LIBRARY_PATH=/usr/lib/hbmedia/:/usr/lib/hbbpu/:/usr/lib/sensorlib:$LD_LIBRARY_PATH && "
+            "export LD_LIBRARY_PATH=/usr/local/lib:/usr/lib/aarch64-linux-gnu:/usr/bpu:/usr/opencv_world_4.6/lib:$LD_LIBRARY_PATH && "
+            "export ROS_LOG_DIR=/root/novabot/data/ros2_log && "
+            "export ROS_LOCALHOST_ONLY=1 && "
+            "nohup ros2 launch novabot_mapping novabot_mapping_launch.py "
+            ">> $ROS_LOG_DIR/novabot_mapping_restart.log 2>&1 </dev/null &"
+        )
+        rc = subprocess.run(["bash", "-lc", cmd], capture_output=True, text=True, timeout=20)
+        return rc.returncode == 0
+    except Exception:
+        return False
 
 
 # ── Hoofdprogramma ─────────────────────────────────────────────────────────

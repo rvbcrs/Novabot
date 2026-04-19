@@ -256,6 +256,20 @@ export default function MapScreen() {
   const panelOffsetY = useSharedValue(0);
   const panelStartY = useSharedValue(0);
 
+  // ── Polygon edit mode ─────────────────────────────────────────────
+  // User taps pencil → enters edit mode on selectedWorkMap.
+  //   Tap on a polygon vertex → add to anchors (max 2).
+  //   With 2 anchors → segment between is "active". Drag the handle at its
+  //   midpoint to translate all vertices in the segment. Live cm indicator.
+  //   Save → PATCH server → auto-push to mower → refresh.
+  const [editMode, setEditMode] = useState(false);
+  const [editMapId, setEditMapId] = useState<string | null>(null);
+  const [editVertices, setEditVertices] = useState<LocalPoint[] | null>(null);
+  const [editAnchors, setEditAnchors] = useState<number[]>([]); // vertex indices
+  const [editDragOffset, setEditDragOffset] = useState({ dx: 0, dy: 0 }); // meters
+  const editDragStartRef = useRef({ dx: 0, dy: 0 });
+  const [editSaving, setEditSaving] = useState(false);
+
   const workMaps = useMemo(() => maps.filter(m => m.mapType === 'work'), [maps]);
   const selectedWorkMap = useMemo(
     () => workMaps.find(m => m.mapId === selectedZoneId) ?? workMaps[0] ?? null,
@@ -861,7 +875,139 @@ export default function MapScreen() {
       }
     });
 
-  const composedGesture = Gesture.Simultaneous(pinchGesture, panGesture, doubleTapGesture, singleTapGesture);
+  // Edit-mode drag: translates the active segment by the finger delta. Divides by
+  // both the map's metre-to-pixel scale AND the current zoom so drag feels correct
+  // when zoomed in. Runs only when 2 anchors are set.
+  const editDragStartBaselineRef = useRef({ dx: 0, dy: 0 });
+  const editDragEnabled = editMode && editAnchors.length === 2;
+
+  const setEditOffsetFromPan = (px: number, py: number, zoom: number) => {
+    const effectiveScale = svgScale * Math.max(zoom, 0.001);
+    // SVG flips both axes (localToSvg does `(maxX - x)` and `(y - minY)`).
+    // So a right-pan in screen space corresponds to a negative metre dx.
+    const dxM = -px / effectiveScale;
+    const dyM = py / effectiveScale;
+    setEditDragOffset({
+      dx: editDragStartBaselineRef.current.dx + dxM,
+      dy: editDragStartBaselineRef.current.dy + dyM,
+    });
+  };
+
+  const captureEditDragBaseline = () => {
+    editDragStartBaselineRef.current = { ...editDragOffset };
+  };
+
+  const editPanGesture = Gesture.Pan()
+    .enabled(editDragEnabled)
+    .minDistance(2)
+    .onBegin(() => {
+      runOnJS(captureEditDragBaseline)();
+    })
+    .onUpdate((e) => {
+      const z = scale.value;
+      runOnJS(setEditOffsetFromPan)(e.translationX, e.translationY, z);
+    });
+
+  const composedGesture = editDragEnabled
+    ? Gesture.Exclusive(editPanGesture, pinchGesture, doubleTapGesture, singleTapGesture)
+    : Gesture.Simultaneous(pinchGesture, panGesture, doubleTapGesture, singleTapGesture);
+
+  // ── Edit-mode helpers ─────────────────────────────────────────────
+  // Returns the set of vertex indices that are "active" (between the two anchors,
+  // using the shorter path around the closed polygon).
+  const activeVertexIndices = useMemo<Set<number>>(() => {
+    if (!editVertices || editAnchors.length !== 2) return new Set();
+    const n = editVertices.length;
+    const [a, b] = [...editAnchors].sort((x, y) => x - y);
+    const forwardLen = b - a;
+    const backwardLen = n - forwardLen;
+    const set = new Set<number>();
+    if (forwardLen <= backwardLen) {
+      for (let i = a; i <= b; i++) set.add(i);
+    } else {
+      for (let i = b; i < n; i++) set.add(i);
+      for (let i = 0; i <= a; i++) set.add(i);
+    }
+    return set;
+  }, [editVertices, editAnchors]);
+
+  // Returns the SVG-space scale (pixels per metre) used by the current render.
+  // Needed to convert a finger-pan (pixels) into metre offsets.
+  const svgScale = useMemo(() => {
+    if (!bounds) return 1;
+    const drawSize = MAP_SIZE - INNER_PADDING * 2;
+    const xRange = bounds.maxX - bounds.minX || 0.1;
+    const yRange = bounds.maxY - bounds.minY || 0.1;
+    return Math.min(drawSize / xRange, drawSize / yRange);
+  }, [bounds]);
+
+  const editActiveSegmentLength = useMemo(() => {
+    if (!editVertices || activeVertexIndices.size === 0) return 0;
+    // Total length of the active segment in metres (sum of Euclidean edge lengths).
+    const ordered = [...activeVertexIndices].sort((a, b) => a - b);
+    let len = 0;
+    for (let i = 1; i < ordered.length; i++) {
+      const p = editVertices[ordered[i - 1]];
+      const q = editVertices[ordered[i]];
+      len += Math.sqrt((p.x - q.x) ** 2 + (p.y - q.y) ** 2);
+    }
+    return len;
+  }, [editVertices, activeVertexIndices]);
+
+  const enterEditMode = useCallback(() => {
+    if (!selectedWorkMap?.mapArea) return;
+    setEditMode(true);
+    setEditMapId(selectedWorkMap.mapId);
+    setEditVertices(selectedWorkMap.mapArea.map(p => ({ ...p })));
+    setEditAnchors([]);
+    setEditDragOffset({ dx: 0, dy: 0 });
+  }, [selectedWorkMap]);
+
+  const exitEditMode = useCallback(() => {
+    setEditMode(false);
+    setEditMapId(null);
+    setEditVertices(null);
+    setEditAnchors([]);
+    setEditDragOffset({ dx: 0, dy: 0 });
+  }, []);
+
+  const toggleAnchor = useCallback((vertexIdx: number) => {
+    setEditAnchors(prev => {
+      if (prev.includes(vertexIdx)) return prev.filter(i => i !== vertexIdx);
+      if (prev.length >= 2) return [prev[1], vertexIdx]; // drop oldest
+      return [...prev, vertexIdx];
+    });
+    // Reset drag when anchor set changes so we don't carry offsets across segments.
+    setEditDragOffset({ dx: 0, dy: 0 });
+  }, []);
+
+  const applyEditOffset = useCallback(() => {
+    if (!editVertices || activeVertexIndices.size === 0) return editVertices;
+    const { dx, dy } = editDragOffset;
+    if (dx === 0 && dy === 0) return editVertices;
+    return editVertices.map((p, i) =>
+      activeVertexIndices.has(i) ? { x: p.x + dx, y: p.y + dy } : p,
+    );
+  }, [editVertices, activeVertexIndices, editDragOffset]);
+
+  const saveEdit = useCallback(async () => {
+    if (!editMapId || !mower?.sn) return;
+    const next = applyEditOffset();
+    if (!next) return;
+    setEditSaving(true);
+    try {
+      const url = await getServerUrl();
+      if (!url) return;
+      await fetch(`${url}/api/dashboard/maps/${encodeURIComponent(mower.sn)}/${encodeURIComponent(editMapId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mapArea: next }),
+      });
+      await fetchData();
+      exitEditMode();
+    } catch { /* ignore */ }
+    finally { setEditSaving(false); }
+  }, [editMapId, mower?.sn, applyEditOffset, fetchData, exitEditMode]);
 
   const hasData = visibleMaps.length > 0 || trailLocal.length > 0 || mowerLocal;
   const selectedAreaSqMeters = selectedWorkMap ? polygonAreaSqMeters(selectedWorkMap.mapArea) : 0;
@@ -888,6 +1034,15 @@ export default function MapScreen() {
                 <Ionicons name="ellipsis-horizontal" size={16} color={colors.white} />
               )}
             </TouchableOpacity>
+            {selectedWorkMap && !editMode && (
+              <TouchableOpacity
+                onPress={enterEditMode}
+                style={styles.toolbarMenuButton}
+                activeOpacity={0.82}
+              >
+                <Ionicons name="create-outline" size={16} color={colors.white} />
+              </TouchableOpacity>
+            )}
             <TouchableOpacity
               onPress={() => (navigation as any).navigate('Mapping')}
               style={styles.addButton}
@@ -1006,6 +1161,92 @@ export default function MapScreen() {
                     );
                   })}
 
+                  {/* Edit-mode overlay: vertex dots + active segment highlight */}
+                  {editMode && editVertices && editMapId && bounds && (() => {
+                    // Render the polygon as it would look WITH the current drag applied,
+                    // so the user sees live feedback.
+                    const shifted = applyEditOffset() ?? editVertices;
+                    const svgPts = shifted.map(p => localToSvg(p, bounds, MAP_SIZE, INNER_PADDING));
+                    const activePts = [...activeVertexIndices]
+                      .sort((a, b) => {
+                        // keep the active run in polygon order for drawing a polyline
+                        const n = shifted.length;
+                        const [lo, hi] = [...editAnchors].sort((x, y) => x - y);
+                        const forward = hi - lo;
+                        const backward = n - forward;
+                        const cw = forward <= backward;
+                        if (cw) return a - b;
+                        // Reorder so wrap-around segment is drawn contiguously
+                        return ((a - hi + n) % n) - ((b - hi + n) % n);
+                      });
+
+                    // Thin out visible dots — polygons with >200 points would drown the canvas.
+                    // Always show anchors. Show every Nth vertex so the user can tap precisely
+                    // without losing visibility at low zoom.
+                    const step = Math.max(1, Math.round(shifted.length / 150));
+
+                    // Midpoint of the active segment for the drag handle.
+                    let midIdx: number | null = null;
+                    if (activePts.length > 1) {
+                      midIdx = activePts[Math.floor(activePts.length / 2)];
+                    }
+
+                    return (
+                      <G>
+                        {/* Active segment highlight */}
+                        {activePts.length > 1 && (
+                          <Polyline
+                            points={activePts.map(i => `${svgPts[i].x},${svgPts[i].y}`).join(' ')}
+                            fill="none"
+                            stroke="#f59e0b"
+                            strokeWidth={3.5}
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            opacity={0.9}
+                          />
+                        )}
+
+                        {/* Vertex dots — tappable anchors */}
+                        {svgPts.map((p, i) => {
+                          const isAnchor = editAnchors.includes(i);
+                          if (!isAnchor && i % step !== 0) return null;
+                          return (
+                            <Circle
+                              key={`edit-vx-${i}`}
+                              cx={p.x}
+                              cy={p.y}
+                              r={isAnchor ? 5 : 2.5}
+                              fill={isAnchor ? '#f59e0b' : 'rgba(255,255,255,0.5)'}
+                              stroke={isAnchor ? '#000' : 'none'}
+                              strokeWidth={isAnchor ? 1 : 0}
+                              onPress={() => toggleAnchor(i)}
+                            />
+                          );
+                        })}
+
+                        {/* Drag handle on active segment midpoint */}
+                        {midIdx != null && (
+                          <G>
+                            <Circle
+                              cx={svgPts[midIdx].x}
+                              cy={svgPts[midIdx].y}
+                              r={14}
+                              fill="rgba(245,158,11,0.2)"
+                              stroke="#f59e0b"
+                              strokeWidth={2}
+                            />
+                            <Circle
+                              cx={svgPts[midIdx].x}
+                              cy={svgPts[midIdx].y}
+                              r={6}
+                              fill="#f59e0b"
+                            />
+                          </G>
+                        )}
+                      </G>
+                    );
+                  })()}
+
                   {/* Planned mowing path (only while mowing) */}
                   {isMowing && plannedPaths.length > 0 && plannedPaths.map((path) => (
                     <Polyline
@@ -1082,14 +1323,64 @@ export default function MapScreen() {
                 </Animated.View>
               </GestureDetector>
 
-              {/* Zoom hint / placement hint */}
-              {patternCtx.isPlacing ? (
+              {/* Zoom hint / placement hint / edit hint */}
+              {editMode ? (
+                <Text style={[styles.zoomHint, { color: '#f59e0b' }]}>
+                  {editAnchors.length === 0
+                    ? 'Tap two polygon points to select a segment'
+                    : editAnchors.length === 1
+                    ? 'Tap a second point to close the segment'
+                    : 'Drag anywhere on the map to move the segment'}
+                </Text>
+              ) : patternCtx.isPlacing ? (
                 <Text style={[styles.zoomHint, { color: colors.purple }]}>
                   {patternCtx.placement?.center ? 'Tap to reposition · Adjust size below' : 'Tap on the map to place the pattern'}
                 </Text>
               ) : (
                 <Text style={styles.zoomHint}>{t('pinchToZoom')}</Text>
               )}
+
+              {/* Edit-mode footer: live distance + Save/Cancel */}
+              {editMode && (() => {
+                const totalMoveM = Math.sqrt(editDragOffset.dx ** 2 + editDragOffset.dy ** 2);
+                const totalMoveCm = Math.round(totalMoveM * 100);
+                return (
+                  <View style={styles.editBar}>
+                    <View style={styles.editBarInfo}>
+                      <Ionicons name="move-outline" size={16} color="#f59e0b" />
+                      <Text style={styles.editBarText}>
+                        {editAnchors.length < 2
+                          ? `${editAnchors.length}/2 anchors`
+                          : totalMoveCm === 0
+                          ? `Segment ready · ${editActiveSegmentLength.toFixed(2)} m`
+                          : `Shifted ${totalMoveCm} cm`}
+                      </Text>
+                    </View>
+                    <View style={styles.editBarActions}>
+                      <TouchableOpacity
+                        style={[styles.editBarBtn, styles.editBarBtnCancel]}
+                        onPress={exitEditMode}
+                        disabled={editSaving}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={styles.editBarBtnTextCancel}>Cancel</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.editBarBtn, styles.editBarBtnSave, (editSaving || editAnchors.length < 2 || (editDragOffset.dx === 0 && editDragOffset.dy === 0)) && { opacity: 0.5 }]}
+                        onPress={saveEdit}
+                        disabled={editSaving || editAnchors.length < 2 || (editDragOffset.dx === 0 && editDragOffset.dy === 0)}
+                        activeOpacity={0.7}
+                      >
+                        {editSaving ? (
+                          <ActivityIndicator size="small" color={colors.white} />
+                        ) : (
+                          <Text style={styles.editBarBtnTextSave}>Save</Text>
+                        )}
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                );
+              })()}
             </View>
 
             {selectedWorkMap && (
@@ -1449,6 +1740,27 @@ const styles = StyleSheet.create({
   },
   importButtonText: { fontSize: 15, fontWeight: '600', color: colors.white },
   mapExperience: { marginTop: 4, marginBottom: 12 },
+  editBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: 'rgba(245,158,11,0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(245,158,11,0.3)',
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    marginHorizontal: 16,
+    marginTop: 8,
+  },
+  editBarInfo: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 },
+  editBarText: { color: '#fcd34d', fontSize: 13, fontWeight: '600' },
+  editBarActions: { flexDirection: 'row', gap: 8 },
+  editBarBtn: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 8 },
+  editBarBtnCancel: { backgroundColor: 'rgba(255,255,255,0.08)' },
+  editBarBtnSave: { backgroundColor: '#f59e0b' },
+  editBarBtnTextCancel: { color: colors.text, fontSize: 13, fontWeight: '600' },
+  editBarBtnTextSave: { color: colors.white, fontSize: 13, fontWeight: '700' },
   mapContainer: {
     backgroundColor: colors.card,
     borderRadius: 28,

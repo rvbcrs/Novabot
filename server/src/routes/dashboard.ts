@@ -800,6 +800,81 @@ dashboardRouter.get('/maps/:sn/download-zip', (req: Request, res: Response) => {
   res.download(zipPath, `${sn}.zip`);
 });
 
+// ── Sync-pull: mower-initiated map fetch (replaces SFTP push) ────────────────
+// The mower's extended_commands.py polls / gets pinged on MQTT and calls this
+// endpoint to pick up the latest ZIP. No SSH needed — the mower downloads over
+// plain HTTP inside the same LAN as its MQTT broker.
+
+// GET /api/dashboard/maps/:sn/sync-info — cheap HEAD-like check, returns MD5 +
+// charger GPS so the mower can decide whether to re-download and generate pos.json.
+dashboardRouter.get('/maps/:sn/sync-info', async (req: Request, res: Response) => {
+  const { sn } = req.params;
+  try {
+    const zipPath = generateMapZipFromDb(sn, 0);
+    if (!zipPath) { res.status(404).json({ error: 'no maps' }); return; }
+
+    const { createHash } = await import('crypto');
+    const { readFileSync } = await import('fs');
+    const md5 = createHash('md5').update(readFileSync(zipPath)).digest('hex');
+
+    // Charger GPS (live cache → map_calibration → mower snapshot)
+    const eqRow = equipmentRepo.findByMowerSn(sn);
+    let charger: GpsPoint | null = null;
+    if (eqRow?.charger_sn) {
+      const snap = getDeviceSnapshot(eqRow.charger_sn);
+      const lat = parseFloat(snap?.latitude ?? '');
+      const lng = parseFloat(snap?.longitude ?? '');
+      if (!isNaN(lat) && !isNaN(lng) && lat !== 0 && lng !== 0) charger = { lat, lng };
+    }
+    if (!charger) charger = mapRepo.getChargerGps(sn);
+    if (!charger) {
+      const mowerSnap = getDeviceSnapshot(sn);
+      const lat = parseFloat(mowerSnap?.latitude ?? '');
+      const lng = parseFloat(mowerSnap?.longitude ?? '');
+      if (!isNaN(lat) && !isNaN(lng) && lat !== 0 && lng !== 0) charger = { lat, lng };
+    }
+
+    res.json({
+      md5,
+      sizeBytes: readFileSync(zipPath).length,
+      posJson: charger ? generatePosJson(charger) : null,
+      // Mower will hit /api/dashboard/maps/:sn/sync-zip to pull the bytes
+      zipUrl: `/api/dashboard/maps/${encodeURIComponent(sn)}/sync-zip`,
+    });
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+// GET /api/dashboard/maps/:sn/sync-zip — actual ZIP bytes with MD5 ETag.
+// Mower sends If-None-Match to skip download when unchanged.
+dashboardRouter.get('/maps/:sn/sync-zip', async (req: Request, res: Response) => {
+  const { sn } = req.params;
+  try {
+    const zipPath = generateMapZipFromDb(sn, 0);
+    if (!zipPath) { res.status(404).json({ error: 'no maps' }); return; }
+
+    const { createHash } = await import('crypto');
+    const { readFileSync } = await import('fs');
+    const buf = readFileSync(zipPath);
+    const md5 = createHash('md5').update(buf).digest('hex');
+    const etag = `"${md5}"`;
+
+    if (req.headers['if-none-match'] === etag) {
+      res.status(304).end();
+      return;
+    }
+
+    res.setHeader('ETag', etag);
+    res.setHeader('X-Map-Md5', md5);
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Length', String(buf.length));
+    res.send(buf);
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
 // ── UTM conversie voor pos.json ──────────────────────────────────────────────
 function generatePosJson(charger: GpsPoint): Record<string, unknown> {
   const { lat, lng } = charger;
@@ -842,300 +917,31 @@ function generatePosJson(charger: GpsPoint): Record<string, unknown> {
 // Wordt aangeroepen na map create/update/delete zodat de maaier altijd up-to-date is.
 // Zoekt zelf de charger GPS op via dezelfde fallback chain als de endpoint.
 async function autoPushMapsInBackground(sn: string): Promise<void> {
-  // Zoek charger GPS: live cache → map_calibration
-  let chargerGps: GpsPoint | null = null;
-
-  const eqRow = equipmentRepo.findByMowerSn(sn);
-  if (eqRow?.charger_sn) {
-    const snap = getDeviceSnapshot(eqRow.charger_sn);
-    const lat = parseFloat(snap?.latitude ?? '');
-    const lng = parseFloat(snap?.longitude ?? '');
-    if (!isNaN(lat) && !isNaN(lng) && lat !== 0 && lng !== 0) {
-      chargerGps = { lat, lng };
-    }
-  }
-  if (!chargerGps) {
-    chargerGps = mapRepo.getChargerGps(sn);
-  }
-  // Fallback: maaier GPS (staat waarschijnlijk op charger)
-  if (!chargerGps) {
-    const mowerSnap = getDeviceSnapshot(sn);
-    const lat = parseFloat(mowerSnap?.latitude ?? '');
-    const lng = parseFloat(mowerSnap?.longitude ?? '');
-    if (!isNaN(lat) && !isNaN(lng) && lat !== 0 && lng !== 0) {
-      chargerGps = { lat, lng };
-    }
-  }
-
-  if (!chargerGps) {
-    console.log(`[AUTO-PUSH] Geen charger GPS beschikbaar voor ${sn}, skip push`);
-    return;
-  }
-
-  // Resolve mower IP — gebruikt manual > discovered (mDNS) > MQTT-private fallback.
-  // AUTO-PUSH is fire-and-forget vanuit een DB hook, dus we wachten kort op
-  // discovery zodat de eerste push na boot ook werkt.
-  const ip = await resolveMowerIp(sn, { awaitDiscovery: true });
-
-  if (!ip) {
-    console.log(`[AUTO-PUSH] Maaier IP onbekend voor ${sn}, skip push`);
-    return;
-  }
-
-  // Fire-and-forget: roep push-to-mower endpoint aan via interne fetch
-  const port = process.env.PORT ?? '3000';
-  const url = `http://127.0.0.1:${port}/api/dashboard/maps/${encodeURIComponent(sn)}/push-to-mower`;
-  console.log(`[AUTO-PUSH] Trigger push naar maaier ${sn} (${ip})...`);
-  fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ chargingStation: chargerGps }),
-  }).then(r => {
-    if (r.ok) console.log(`[AUTO-PUSH] Kaarten gepusht naar ${sn}`);
-    else r.text().then(t => console.warn(`[AUTO-PUSH] Push mislukt voor ${sn}: ${t}`));
-  }).catch(err => console.warn(`[AUTO-PUSH] Push fout voor ${sn}:`, err));
-}
-
-// POST /api/dashboard/maps/:sn/push-to-mower — upload kaarten via SSH/SFTP naar de maaier
-dashboardRouter.post('/maps/:sn/push-to-mower', async (req: Request, res: Response) => {
-  const { sn } = req.params;
-  const body = req.body as { chargingStation?: GpsPoint; chargingOrientation?: number };
-
-  // Resolve mower IP — manual > discovered (mDNS) > MQTT-private fallback.
-  // Triggers mDNS lookup als nog niet bekend, zodat de gebruiker geen IP
-  // handmatig hoeft in te stellen na een factory reset.
-  const ipRow = equipmentRepo.findResolvedMowerIp(sn);
-  const ip = await resolveMowerIp(sn, { awaitDiscovery: true });
-
-  if (!ip) {
-    res.status(404).json({ error: 'Maaier IP onbekend — stel het in via het apparaat paneel (klik op de maaier chip → SSH IP veld)' });
-    return;
-  }
-  const source = ipRow?.mower_ip ? 'handmatig'
-    : (ipRow?.discovered_ip ? 'mDNS' : 'MQTT auto-detect');
-  console.log(`[SSH] Maaier IP: ${ip} (${source})`);
-
-  // Haal laadstation GPS op — prioriteit: live sensor cache → map_calibration → request body
-  let chargingStation = body.chargingStation;
-
-  if (!chargingStation?.lat || !chargingStation?.lng) {
-    // 1. Zoek de charger SN die bij deze maaier hoort
-    const eqRow = equipmentRepo.findByMowerSn(sn);
-    if (eqRow?.charger_sn) {
-      const snap = getDeviceSnapshot(eqRow.charger_sn);
-      const lat = parseFloat(snap?.latitude ?? '');
-      const lng = parseFloat(snap?.longitude ?? '');
-      if (!isNaN(lat) && !isNaN(lng) && lat !== 0 && lng !== 0) {
-        chargingStation = { lat, lng };
-        console.log(`[SSH] Charger GPS uit live cache: ${lat}, ${lng} (${eqRow.charger_sn})`);
-      }
-    }
-  }
-
-  if (!chargingStation?.lat || !chargingStation?.lng) {
-    // 2. Fallback: handmatig ingevoerde charger positie uit map_calibration
-    const calGps = mapRepo.getChargerGps(sn);
-    if (calGps) {
-      chargingStation = calGps;
-      console.log(`[SSH] Charger GPS uit map_calibration: ${calGps.lat}, ${calGps.lng}`);
-    }
-  }
-
-  if (!chargingStation?.lat || !chargingStation?.lng) {
-    res.status(400).json({ error: 'Laadstation GPS onbekend — laadstation moet online zijn of handmatig geplaatst worden op de kaart' });
-    return;
-  }
-
-  // Genereer ZIP
-  let zipPath: string | null;
+  // Update the on-disk "<SN>_latest.zip" and ping the mower over MQTT — the
+  // mower's extended_commands.py handles the actual pull + install. This path
+  // is SSH-free and works regardless of mower IP/mDNS availability.
   try {
-    zipPath = generateMapZipFromDb(sn, body.chargingOrientation ?? 0);
-  } catch (err) {
-    res.status(500).json({ error: `ZIP generatie mislukt: ${err}` });
-    return;
-  }
-  if (!zipPath) {
-    // Geen kaarten meer — verwijder ALLE kaartbestanden op de maaier
-    // 1. Stuur MQTT delete_map om in-memory kaartdata in novabot_mapping te wissen
-    publishToDevice(sn, { delete_map: { map_name: 'map0', map_type: 0 } });
-    console.log(`[DELETE] MQTT delete_map gestuurd naar ${sn}`);
-
-    // 2. Verwijder alle bestanden in de map directory via SSH
-    //    (map0.pgm, map0.yaml, map0.png, *.zip, csv_file/, x3_csv_file/, covered_path/, planned_path/)
-    try {
-      const { Client } = await import('ssh2');
-      const cleanOp = new Promise<void>((resolve, reject) => {
-        const conn = new Client();
-        conn.on('ready', () => {
-          const cmd = 'rm -rf /userdata/lfi/maps/home0/*';
-          conn.exec(cmd, (err, stream) => {
-            if (err) { conn.end(); reject(err); return; }
-            stream.on('close', () => { conn.end(); resolve(); });
-            stream.on('data', () => {});
-            stream.stderr.on('data', () => {});
-          });
-        });
-        conn.on('error', reject);
-        conn.connect({ host: ip, port: 22, username: 'root', password: 'novabot', readyTimeout: 8000 });
-      });
-      await Promise.race([cleanOp, new Promise<void>((_, rej) => setTimeout(() => rej(new Error('timeout')), 15000))]);
-      console.log(`[SSH] Alle kaartbestanden verwijderd op maaier ${sn}`);
-    } catch (err) {
-      console.warn(`[SSH] Kon kaartbestanden niet verwijderen op maaier:`, err);
-    }
-    // Verwijder ook _latest.zip
-    try {
+    const zipPath = generateMapZipFromDb(sn, 0);
+    if (zipPath) {
       const mapsStorage = path.resolve(process.env.STORAGE_PATH ?? './storage', 'maps');
-      const latestZip = path.join(mapsStorage, `${sn}_latest.zip`);
-      if (existsSync(latestZip)) unlinkSync(latestZip);
-    } catch { /* ignore */ }
-    res.json({ ok: true, cleared: true });
-    return;
-  }
-
-  // Bewaar een kopie als _latest.zip zodat de app de kaart kan ophalen via queryEquipmentMap
-  try {
-    const mapsStorage = path.resolve(process.env.STORAGE_PATH ?? './storage', 'maps');
-    mkdirSync(mapsStorage, { recursive: true });
-    copyFileSync(zipPath, path.join(mapsStorage, `${sn}_latest.zip`));
-    console.log(`[SSH] ZIP kopie opgeslagen als ${sn}_latest.zip voor queryEquipmentMap`);
+      const latest = path.join(mapsStorage, `${sn}_latest.zip`);
+      try { copyFileSync(zipPath, latest); } catch { /* ignore */ }
+    }
   } catch (err) {
-    console.warn(`[SSH] Kon ZIP kopie niet opslaan:`, err);
+    console.warn(`[AUTO-PUSH] ZIP regenerate fout voor ${sn}:`, err);
   }
 
-  // SSH verbinding en SFTP upload
+  // MQTT kick: extended_commands.py on the mower subscribes to
+  // novabot/extended/<SN> and will pull the new ZIP from our sync-info/sync-zip
+  // endpoints. No SSH, no mower-IP lookup needed.
   try {
-    const { Client } = await import('ssh2');
-    const safeZipPath = zipPath as string;
-
-    const sshOp = new Promise<void>((resolve, reject) => {
-      const conn = new Client();
-
-      conn.on('ready', () => {
-        console.log(`[SSH] Verbonden met ${ip}, start SFTP`);
-        // 1. Upload ZIP via SFTP
-        conn.sftp((sftpErr, sftp) => {
-          if (sftpErr) { conn.end(); reject(sftpErr); return; }
-          console.log(`[SSH] SFTP subsystem gereed, start upload`);
-
-          const remote = '/tmp/novabot_maps.zip';
-          const writeStream = sftp.createWriteStream(remote);
-          const readStream = createReadStream(safeZipPath);
-
-          // Gebruik een flag: 'close' én 'finish' kunnen allebei vuren, run maar één keer
-          let cmdStarted = false;
-          const runCmd = () => {
-            if (cmdStarted) return;
-            cmdStarted = true;
-            console.log(`[SSH] Upload klaar, start unzip commando`);
-            // 2. Verwijder oude kaarten en pak ZIP uit naar BEIDE directories
-            // csv_file = app-formaat (voor upload/download)
-            // x3_csv_file = intern formaat (novabot_mapping leest hieruit voor coverage tasks)
-            // 2b. Genereer pos.json (UTM referentie) zodat localization GPS→lokaal kan mappen
-            const posJson = generatePosJson(chargingStation!);
-            const posJsonEscaped = JSON.stringify(posJson).replace(/'/g, "'\\''");
-            const cmd = [
-              'rm -rf /userdata/lfi/maps/home0/csv_file',
-              'rm -rf /userdata/lfi/maps/home0/x3_csv_file',
-              `unzip -o -q ${remote} -d /userdata/lfi/maps/home0`,
-              'cp -r /userdata/lfi/maps/home0/csv_file /userdata/lfi/maps/home0/x3_csv_file',
-              `rm ${remote}`,
-              `echo '${posJsonEscaped}' > /userdata/pos.json`,
-            ].join(' && ');
-
-            conn.exec(cmd, (execErr, stream) => {
-              if (execErr) { conn.end(); reject(execErr); return; }
-              let stderr = '';
-              stream.on('data', () => { /* drain stdout */ });
-              stream.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
-              stream.on('close', (code: number) => {
-                console.log(`[SSH] Unzip klaar, exit code: ${code}`);
-                if (code !== 0) {
-                  conn.end();
-                  reject(new Error(`SSH commando mislukt (code ${code}): ${stderr}`));
-                  return;
-                }
-
-                // 3. Herstart alleen novabot_mapping (niet hele maaier rebooten!)
-                // novabot_mapping leest map_info.json bij start en publiceert
-                // generate_map_file_name naar mqtt_node via CycloneDDS/loopback.
-                console.log(`[SSH] Herstart novabot_mapping...`);
-                const restartCmd = [
-                  '(pkill -f "novabot_mapping_launch.py" || true)',
-                  'sleep 1',
-                  '(killall -9 novabot_mapping 2>/dev/null || true)',
-                  'sleep 1',
-                  '. /opt/ros/galactic/setup.bash',
-                  '. /root/novabot/install/setup.bash',
-                  'export LD_LIBRARY_PATH=/usr/lib/hbmedia/:/usr/lib/hbbpu/:/usr/lib/sensorlib:$LD_LIBRARY_PATH',
-                  'export LD_LIBRARY_PATH=/usr/local/lib:/usr/lib/aarch64-linux-gnu:/usr/bpu:/usr/opencv_world_4.6/lib:$LD_LIBRARY_PATH',
-                  'export ROS_LOG_DIR=/root/novabot/data/ros2_log',
-                  'export ROS_LOCALHOST_ONLY=1',
-                  'nohup ros2 launch novabot_mapping novabot_mapping_launch.py >> $ROS_LOG_DIR/novabot_mapping_restart.log 2>&1 </dev/null &',
-                ].join(' && ');
-
-                conn.exec(restartCmd, (restartErr, restartStream) => {
-                  if (restartErr) {
-                    console.error(`[SSH] Restart exec fout: ${restartErr.message}`);
-                    conn.end();
-                    resolve(); // Upload was succesvol, restart is bonus
-                    return;
-                  }
-                  restartStream.on('data', () => {});
-                  restartStream.stderr.on('data', () => {});
-                  restartStream.on('close', () => {
-                    console.log(`[SSH] novabot_mapping herstart geïnitieerd`);
-                    conn.end();
-                    resolve();
-                  });
-                });
-              });
-            });
-          };
-
-          // ssh2 SFTP WriteStream emits 'close' of 'finish' afhankelijk van versie
-          writeStream.once('close', runCmd);
-          writeStream.once('finish', runCmd);
-          writeStream.on('error', (e: Error) => { conn.end(); reject(e); });
-          readStream.on('error', (e: Error) => { conn.end(); reject(e); });
-          readStream.pipe(writeStream);
-        });
-      });
-
-      conn.on('error', reject);
-
-      conn.connect({
-        host: ip,
-        port: 22,
-        username: 'root',
-        password: 'novabot',
-        readyTimeout: 8000,
-      });
-    });
-
-    // Voeg een overall timeout toe zodat de request nooit eeuwig hangt
-    const timeout = new Promise<void>((_, reject) =>
-      setTimeout(() => reject(new Error('SSH upload timeout (35s)')), 35000)
-    );
-    await Promise.race([sshOp, timeout]);
-
-    // Na ~5s herstart novabot_mapping en publiceert map data naar mqtt_node.
-    // Stuur na 8s een get_map_list om de nieuwe kaarten op te halen.
-    setTimeout(() => requestMapList(sn), 8000);
-
-    // Maaier staat op het laadstation — sla huidige positie op als charger positie
-    setTimeout(() => {
-      publishToDevice(sn, { save_recharge_pos: { mapName: 'map0', map0: '', cmd_num: getNextCmdNum(sn) } });
-      console.log(`[SSH] save_recharge_pos gestuurd naar ${sn} (maaier op charger)`);
-    }, 10000);
-
-    console.log(`[SSH] Kaarten geüpload + novabot_mapping herstart op ${sn} (${ip})`);
-    res.json({ ok: true, ip, sn });
+    const { publishToExtended } = await import('../mqtt/mapSync.js');
+    publishToExtended(sn, { sync_map: {} });
+    console.log(`[AUTO-PUSH] MQTT sync_map kick sent to ${sn}`);
   } catch (err) {
-    console.error(`[SSH] Upload mislukt naar ${sn} (${ip}):`, err);
-    res.status(500).json({ error: `SSH upload mislukt: ${err instanceof Error ? err.message : err}` });
+    console.warn(`[AUTO-PUSH] MQTT trigger fout voor ${sn}:`, err);
   }
-});
+}
 
 // POST /api/dashboard/maps/:sn/dock-and-save — stuur maaier naar station (go_to_charge + ArUco)
 // en sla charger positie op zodra de maaier gedockt is.
