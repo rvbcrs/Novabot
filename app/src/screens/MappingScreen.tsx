@@ -93,7 +93,10 @@ function buildTypeToScanType(t: MapBuildType): number {
   // writing a separate CSV.
   switch (t) {
     case 'work': return 0;
-    case 'obstacle': return 2;      // NOT verified — needs confirmation
+    case 'obstacle': return 1;      // VERIFIED 2026-04-19 via live Novabot-app
+                                    // capture on LFIN1231000211 mqtt_node log:
+                                    //   add_scan_map {mapName:"map", type:1}
+                                    //   → generate_map_file_name = map0_0_obstacle.csv
     case 'unicom': return 2;        // verified: map-to-map channel
     case 'charge_unicom': return 8; // NOT verified — Novabot generates charge
                                     // unicom implicitly via save_recharge_pos
@@ -702,11 +705,17 @@ export default function MappingScreen() {
       : (pendingChannelFromRef.current ?? latestWorkMap);
     setActiveMapName(mapName);
 
+    // Novabot app sends mapName:"map" (literal) for obstacle scans, NOT the
+    // parent work-map name. Verified 2026-04-19 via live Novabot-app capture
+    // on LFIN1231000211. Firmware derives the parent from the active context
+    // and auto-indexes the obstacle CSV (e.g. map0_0_obstacle.csv).
+    const wireMapName = mapBuildType === 'obstacle' ? 'map' : mapName;
+
     const scanType = buildTypeToScanType(mapBuildType);
     if (existingWorkMapCount === 0) {
       sendCommand({ start_scan_map: { model: 'manual', mapName: 'map0', type: 0, cmd_num: cmdNumRef.current++ } }, 'start_scan_map');
     } else {
-      sendCommand({ add_scan_map: { model: 'manual', mapName, type: scanType, cmd_num: cmdNumRef.current++ } }, 'add_scan_map');
+      sendCommand({ add_scan_map: { model: 'manual', mapName: wireMapName, type: scanType, cmd_num: cmdNumRef.current++ } }, 'add_scan_map');
     }
     console.log(`[Mapping] Recording started (${existingWorkMapCount === 0 ? 'start' : 'add'}_scan_map, map: ${mapName}, type: ${scanType}, buildType: ${mapBuildType}, ${existingWorkMapCount} existing)`);
 
@@ -780,16 +789,19 @@ export default function MappingScreen() {
               // Channel scan complete — next scan is unrelated.
               pendingChannelFromRef.current = null;
             } else {
-              // Work / obstacle: sub save FIRST, then total save
+              // Work / obstacle: sub save FIRST, then total save.
+              // Obstacle uses mapName:"map" (literal) — verified 2026-04-19 via
+              // live Novabot-app capture. Work uses the real map name (map0/map1/...).
+              const saveMapName = mapBuildType === 'obstacle' ? 'map' : activeMapName;
               sendCommand(
-                { save_map: { mapName: activeMapName, type: 0, cmd_num: cmdNumRef.current++ } },
+                { save_map: { mapName: saveMapName, type: 0, cmd_num: cmdNumRef.current++ } },
                 'save_map (sub)',
               );
               const subOk = await waitForRespond('save_map_respond', 12000);
               console.log(`[Mapping] Step 2a: sub save_map_respond ${subOk ? 'OK' : 'TIMEOUT'}`);
               await new Promise(r => setTimeout(r, 3000));
               sendCommand(
-                { save_map: { mapName: activeMapName, type: 1, cmd_num: cmdNumRef.current++ } },
+                { save_map: { mapName: saveMapName, type: 1, cmd_num: cmdNumRef.current++ } },
                 'save_map (total)',
               );
               const totalOk = await waitForRespond('save_map_respond', 12000);
@@ -1270,7 +1282,8 @@ sendCommand({ save_recharge_pos: { mapName: 'map0', cmd_num: cmdNumRef.current++
                 points={[]}
                 orientation={mapOrientation}
                 closed={false}
-                height={Math.min(SCREEN_W - 32, 320)}
+                height={Math.min(SCREEN_W - 32, 240)}
+                width={Math.min(SCREEN_W - 32, 240)}
                 existingMaps={existingMaps}
                 mowerPosition={mowerLocal}
               />

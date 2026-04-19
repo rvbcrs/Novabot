@@ -86,21 +86,33 @@ export function initDashboardSocket(httpServer: HttpServer): void {
       `).all() as DeviceRegistryRow[];
 
       const equipment = db.prepare(
-        'SELECT mower_sn, charger_sn, equipment_nick_name FROM equipment'
-      ).all() as { mower_sn: string; charger_sn: string | null; equipment_nick_name: string | null }[];
+        'SELECT mower_sn, charger_sn, equipment_nick_name, mower_version, charger_version FROM equipment'
+      ).all() as {
+        mower_sn: string;
+        charger_sn: string | null;
+        equipment_nick_name: string | null;
+        mower_version: string | null;
+        charger_version: string | null;
+      }[];
       const boundSns = new Set<string>();
       // Per-SN nickname so the home tile can show "Botty" instead of the bare
       // SN. Both the mower and the paired charger get the same nickname so
       // either device row in the snapshot carries it.
       const nickBySn = new Map<string, string>();
+      // Per-SN firmware version so the app's OTA screen can show the charger
+      // version (mower version comes via sensors.sw_version; charger only
+      // reports via ota_version_info_respond which is stored in equipment).
+      const versionBySn = new Map<string, string>();
       for (const e of equipment) {
         if (e.mower_sn) {
           boundSns.add(e.mower_sn);
           if (e.equipment_nick_name) nickBySn.set(e.mower_sn, e.equipment_nick_name);
+          if (e.mower_version) versionBySn.set(e.mower_sn, e.mower_version);
         }
         if (e.charger_sn) {
           boundSns.add(e.charger_sn);
           if (e.equipment_nick_name) nickBySn.set(e.charger_sn, e.equipment_nick_name);
+          if (e.charger_version) versionBySn.set(e.charger_sn, e.charger_version);
         }
       }
 
@@ -112,6 +124,7 @@ export function initDashboardSocket(httpServer: HttpServer): void {
           online: isDeviceOnline(r.sn!) || demoModeChecker?.(r.sn!) === true,
           sensors: snapshots[r.sn!] ?? {},
           nickname: nickBySn.get(r.sn!) ?? null,
+          firmwareVersion: versionBySn.get(r.sn!) ?? null,
         }));
     }
 

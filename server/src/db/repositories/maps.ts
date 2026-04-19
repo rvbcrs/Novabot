@@ -378,6 +378,30 @@ export class MapRepository {
     return deleted;
   }
 
+  /**
+   * Delete every row referencing `prefix` (e.g. `map1`) on this mower:
+   * work map, obstacles, and all unicoms where the prefix appears as an
+   * endpoint (`map1to*`, `*tomap1_*`, `map1tocharge_unicom`).
+   *
+   * Used by `delete_map`: even when the work-map row is missing from our DB,
+   * any leftover unicoms referencing the prefix still get cleaned up.
+   */
+  deleteByPrefix(mowerSn: string, prefix: string): MapRow[] {
+    const allRows = this.findByMowerSn(mowerSn);
+    const deleted: MapRow[] = [];
+    const tx = db.transaction(() => {
+      for (const row of allRows) {
+        if (isRelatedByPrefix(row, prefix)
+            || extractCanonicalPrefix(row) === prefix) {
+          this._deleteById.run(row.map_id);
+          deleted.push(row);
+        }
+      }
+    });
+    tx();
+    return deleted;
+  }
+
   // ── Map aggregates ──
 
   count(): number {

@@ -39,6 +39,7 @@ export function useMowerState(): UseMowerStateResult {
           sensors: d.sensors,
           lastUpdate: Date.now(),
           nickname: d.nickname ?? null,
+          firmwareVersion: d.firmwareVersion ?? null,
         });
       }
       setDevices(map);

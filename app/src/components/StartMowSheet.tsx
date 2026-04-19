@@ -57,7 +57,16 @@ export function StartMowSheet({
   const [maps, setMaps] = useState<MapData[]>([]);
   const [allMaps, setAllMaps] = useState<MapData[]>([]);
   const [selectedMapId, setSelectedMapId] = useState<string | null>(null);
-  // cutterhigh = height in cm (2-9, steps of 1). Novabot Flutter app slider: min=2, max=9, divisions=7.
+  // Cutting height in user cm (2-9). Wire value is `cm - 2` (e.g. 4cm → cutterhigh:2).
+  // Verified 2026-04-19 via a live Novabot-app capture on LFIN1231000211
+  // (mqtt_node_20260419_163617_821948.log @ 18:18:09):
+  //   User selected 4cm → MQTT {"start_navigation":{..."cutterhigh":2...}}
+  //   → robot_decision "Start task ... height: 40"
+  //   → coverage_planner "Setting blade height to : 40"
+  //   → chassis set_blade_height_cb(5) → BLADE_HEIGHT_GET = 40 mm ✓
+  // Firmware formula: physical_mm = (cutterhigh + 2) * 10.
+  // Earlier debug runs grepped the WRONG mqtt_node log (PID 2828 had already crashed
+  // before the Novabot test), which is why I briefly got the direction reversed.
   const [cuttingHeight, setCuttingHeight] = useState(5);
   const [pathDirection, setPathDirection] = useState(0);
   const [starting, setStarting] = useState(false);
@@ -71,7 +80,23 @@ export function StartMowSheet({
   // Load maps when sheet opens
   useEffect(() => {
     if (!visible || !sn) return;
-    setCuttingHeight(currentCuttingHeight ?? 5);
+    // `currentCuttingHeight` comes from sensor cache. We accept multiple encodings
+    // because legacy server/app versions used different units:
+    //   20-90 → legacy mm (firmware mm), cm = value / 10
+    //   10-90 → legacy mm variant, same conversion
+    //    3-11 → legacy `cm + 2` wire value (our earlier bug), cm = value - 2
+    //    0-9  → NEW wire value post-fix = `cm + 2`... wait no, NEW wire = cm - 2
+    //           so value = cm - 2 means user cm = value + 2 (for 0..7)
+    //   2-9   → already user cm
+    const raw = currentCuttingHeight ?? 5;
+    let cm = 5;
+    if (raw >= 20 && raw <= 90) cm = Math.round(raw / 10);           // mm
+    else if (raw >= 10 && raw < 20) cm = Math.round(raw / 10);       // mm edge
+    else if (raw >= 0 && raw <= 7) cm = raw + 2;                     // new wire
+    else if (raw >= 2 && raw <= 9) cm = raw;                         // user cm
+    if (cm < 2) cm = 2;
+    if (cm > 9) cm = 9;
+    setCuttingHeight(cm);
     setPathDirection(currentPathDirection ?? 0);
     (async () => {
       try {
@@ -131,7 +156,7 @@ export function StartMowSheet({
         [
           {
             text: t('create') || 'Create',
-            onPress: () => { onClose(); (navigation as any).navigate('AppSettings', { screen: 'Mapping' }); },
+            onPress: () => { onClose(); (navigation as any).navigate('Map', { screen: 'Mapping' }); },
           },
           { text: t('cancel') || 'Cancel', style: 'cancel' },
         ],
@@ -147,7 +172,7 @@ export function StartMowSheet({
         [
           {
             text: t('create') || 'Create',
-            onPress: () => { onClose(); (navigation as any).navigate('AppSettings', { screen: 'Mapping', params: { mode: 'channel' } }); },
+            onPress: () => { onClose(); (navigation as any).navigate('Map', { screen: 'Mapping', params: { mode: 'channel' } }); },
           },
           { text: t('cancel') || 'Cancel', style: 'cancel' },
           { text: t('startAnyway') || 'Start Anyway', style: 'destructive', onPress: () => doStart() },
@@ -162,8 +187,48 @@ export function StartMowSheet({
       return;
     }
 
+    // 5. rainForecastIntercept: rain expected within ~3h (warn, not block)
+    const rain = await fetchIncomingRain(sn);
+    if (rain) {
+      const timeLabel = new Date(rain.atMs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      Alert.alert(
+        t('rainWarningTitle') || 'Rain Expected',
+        t('rainWarningDesc', {
+          time: timeLabel,
+          mm: rain.mm.toFixed(1),
+          prob: String(rain.prob),
+        }) || `Rain is forecast around ${timeLabel} (${rain.mm.toFixed(1)}mm · ${rain.prob}%). Start mowing anyway?`,
+        [
+          { text: t('cancel') || 'Cancel', style: 'cancel' },
+          { text: t('startAnyway') || 'Start Anyway', style: 'destructive', onPress: () => doStart() },
+        ],
+      );
+      return;
+    }
+
     doStart();
   };
+
+  // Returns the first hour within the next ~3h where rain is likely, or null.
+  async function fetchIncomingRain(mowerSn: string): Promise<{ atMs: number; mm: number; prob: number } | null> {
+    try {
+      const url = await getServerUrl();
+      if (!url || !mowerSn) return null;
+      const res = await fetch(`${url}/api/dashboard/rain-forecast/${encodeURIComponent(mowerSn)}`);
+      const data = await res.json() as { available?: boolean; upcoming?: Array<{ time: string; mm: number; prob: number }> };
+      if (!data.available || !data.upcoming?.length) return null;
+      const now = Date.now();
+      const horizon = 3 * 60 * 60 * 1000;
+      for (const h of data.upcoming) {
+        const at = new Date(h.time).getTime();
+        if (at < now || at - now > horizon) continue;
+        if (h.mm >= 0.1 || h.prob >= 50) return { atMs: at, mm: h.mm, prob: h.prob };
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
 
   const doStart = async () => {
     setStarting(true);
@@ -186,12 +251,15 @@ export function StartMowSheet({
       // This matches the official Novabot app where set_para_info is sent from
       // Advanced Settings (separate screen), not during the start mowing flow.
 
+      // Wire value = display cm − 2 (see cuttingHeight comment). For 4cm → 2.
+      const wireHeight = Math.max(0, cuttingHeight - 2);
+
       // Start mowing — Flutter v2.4.0 stuurt start_navigation direct
       const cmdNum = Date.now() % 100000;
       const navCmd = {
         start_navigation: {
           mapName: 'test',
-          cutterhigh: cuttingHeight,
+          cutterhigh: wireHeight,
           area: areaParam,
           cmd_num: cmdNum,
         },
@@ -203,14 +271,16 @@ export function StartMowSheet({
       if (!navResult.ok) {
         console.log('[StartMow] start_navigation failed, trying start_run');
         const runCmd = {
-          start_run: { mapName: null, area: areaParam, cutterhigh: cuttingHeight },
+          start_run: { mapName: null, area: areaParam, cutterhigh: wireHeight },
           targetIsMower: false,
         };
         console.log('[StartMow] Sending start_run:', JSON.stringify(runCmd));
         await api.sendCommand(sn, runCmd);
       }
 
-      onStarted({ cuttingHeight, pathDirection });
+      // Report back display cm so HomeScreen's mismatch check compares like-for-like
+      // (target_height will equal wireHeight = cm+2, not cm).
+      onStarted({ cuttingHeight: wireHeight, pathDirection });
       onClose();
     } catch (err) { console.log('[StartMow] ERROR:', err); }
     setStarting(false);
@@ -269,7 +339,7 @@ export function StartMowSheet({
               </View>
             )}
 
-            {/* Cutting height */}
+            {/* Cutting height — user cm (2-9). Wire value is cm+2 (see doStart). */}
             <View style={styles.section}>
               <View style={styles.labelRow}>
                 <Text style={styles.label}>{t('cuttingHeight')}</Text>

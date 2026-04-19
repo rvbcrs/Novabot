@@ -86,7 +86,10 @@ function deriveMower(devices: Map<string, DeviceState>): MowerDerived | null {
   // Blocking (leave out of this list):
   //   107 Load map failed, 124 Out of bounds, 151 Boot PIN lock,
   //   152 Emergency stop PIN, plus all hardware errors (camera/chassis/utm/crash).
-  const NON_BLOCKING_ERRORS = [8, 120, 122, 123, 125, 126];
+  // 132 = "Data transmission loss, robot will auto continue task if received valid
+  // data" — self-recovers, shown as warning only.
+  // 113 = transient sensor/perception warning that also auto-recovers.
+  const NON_BLOCKING_ERRORS = [8, 113, 120, 122, 123, 125, 126, 132];
   const errorStatusRaw = parseInt(s.error_status?.match(/\d+/)?.[0] ?? '0', 10);
   const hasError = Boolean(
     errorStatusRaw > 0 && !NON_BLOCKING_ERRORS.includes(errorStatusRaw),
@@ -445,20 +448,42 @@ export default function HomeScreen() {
     })();
   }, [mower?.sn, demo.enabled]);
 
-  // Safety check: verify mower cutting height matches what we set
-  // target_height from firmware = (cutterhigh + 2) * 10 (based on Flutter decompilation)
+  // Safety check: verify mower cutting height matches what we set.
+  // Firmware echoes cutterhigh verbatim as target_height. Both wire values are
+  // `cm + 2` (e.g. user picks 4cm → cutterhigh:6 → target_height:6). Verified
+  // 2026-04-19 from live logs on LFIN1231000211. Tolerance = 1 wire unit.
+  //
+  // Grace period: the firmware takes 3-8s to apply cutterhigh and echo it in
+  // target_height. Early reports can still show the previous value (e.g. 2 during
+  // dock/raise state). Wait until target_height stops changing before triggering
+  // the mismatch alert, otherwise we false-positive every mow start.
   const heightCheckDone = useRef(false);
+  const heightFirstSeenRef = useRef<{ value: number; ts: number } | null>(null);
   useEffect(() => {
-    if (!mower || !mowSettings || mower.activity !== 'mowing') { heightCheckDone.current = false; return; }
+    if (!mower || !mowSettings || mower.activity !== 'mowing') {
+      heightCheckDone.current = false;
+      heightFirstSeenRef.current = null;
+      return;
+    }
     const reportedHeight = parseInt(devices.get(mower.sn)?.sensors?.target_height ?? '0', 10);
     if (reportedHeight === 0 || heightCheckDone.current) return;
-    // Both target_height and cuttingHeight are in mm (20-90 range)
-    // Allow 15mm tolerance for firmware rounding
-    if (Math.abs(reportedHeight - mowSettings.cuttingHeight) > 15) {
+
+    // Only evaluate once the same value has been stable for 6 seconds.
+    const now = Date.now();
+    const seen = heightFirstSeenRef.current;
+    if (!seen || seen.value !== reportedHeight) {
+      heightFirstSeenRef.current = { value: reportedHeight, ts: now };
+      return;
+    }
+    if (now - seen.ts < 6000) return;
+
+    // Both target_height and mowSettings.cuttingHeight are wire values (cm - 2, range 0-7).
+    // Display as `wire + 2` cm. Allow 1 unit tolerance for firmware rounding.
+    if (Math.abs(reportedHeight - mowSettings.cuttingHeight) > 1) {
       heightCheckDone.current = true;
       Alert.alert(
         'Cutting Height Mismatch!',
-        `Expected ${mowSettings.cuttingHeight / 10}cm but mower reports ${(reportedHeight / 10).toFixed(1)}cm. Stop mowing for safety?`,
+        `Expected ${mowSettings.cuttingHeight + 2}cm but mower reports ${reportedHeight + 2}cm. Stop mowing for safety?`,
         [
           { text: 'Stop', style: 'destructive', onPress: () => {
             sendCommand(mower.sn, { stop_navigation: { cmd_num: ++cmdNumRef.current } }, 'stop');
@@ -1034,7 +1059,9 @@ export default function HomeScreen() {
             {(displayActivity === 'mowing') && devices.get(mower.sn)?.sensors?.target_height && (
               <View style={styles.chip}>
                 <Ionicons name="resize" size={11} color={colors.textDim} />
-                <Text style={styles.chipText}>{devices.get(mower.sn)?.sensors?.target_height} cm</Text>
+                <Text style={styles.chipText}>
+                  {parseInt(devices.get(mower.sn)!.sensors.target_height ?? '0', 10) + 2} cm
+                </Text>
               </View>
             )}
             {!mower.online && (
@@ -1136,7 +1163,7 @@ export default function HomeScreen() {
                 ]}
                 onPress={() => {
                   if (mower.mapNum === 0 && serverMapCount === 0) {
-                    (navigation as any).navigate('AppSettings', { screen: 'Mapping' });
+                    (navigation as any).navigate('Map', { screen: 'Mapping' });
                     return;
                   }
                   setStartMowInitialMapId(null);

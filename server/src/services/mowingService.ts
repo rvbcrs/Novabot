@@ -16,7 +16,17 @@ import { isDeviceOnline } from '../mqtt/broker.js';
 
 export interface MowingParams {
   sn: string;
-  cuttingHeight?: number;   // cm (2-9), default 5
+  /**
+   * User-facing cutting height in cm (2-9). Wire value sent to mqtt_node is `cm - 2`.
+   * Verified 2026-04-19 via live Novabot-app capture on LFIN1231000211
+   * (mqtt_node_20260419_163617_821948.log @ 18:18:09):
+   *   user picks 4cm → MQTT cutterhigh:2 → physical blade 40mm ✓
+   *   user picks 6cm → MQTT cutterhigh:4 → physical blade 60mm
+   * Firmware formula: physical_mm = (cutterhigh + 2) * 10.
+   *
+   * Auto-normalisation accepts multiple encodings from legacy callers.
+   */
+  cuttingHeight?: number;
   pathDirection?: number;   // degrees (0-359), default 120
   area?: number;            // 1=map0, 10=map1, 200=map2
 }
@@ -52,19 +62,31 @@ export function startMowing(params: MowingParams): MowingResult {
   if (!sn) return { ok: false, error: 'sn required' };
   if (!isDeviceOnline(sn)) return { ok: false, error: 'mower offline' };
 
-  const cmdNum = Date.now() % 100000;
+  // Normalise input to user cm (2-9), then compute wire value (cm-2).
+  // Accept multiple encodings because older callers used different scales:
+  //   2..9   → user cm (new preferred)
+  //   20..90 → legacy mm → divide by 10
+  //   3..11  → legacy `cm + 2` wire from previous bug → subtract 2
+  //   0..7   → already correct wire value → add 2 to get cm
+  let displayCm: number;
+  if (cuttingHeight >= 20) displayCm = Math.round(cuttingHeight / 10);
+  else if (cuttingHeight >= 3 && cuttingHeight <= 11) displayCm = cuttingHeight - 2;
+  else if (cuttingHeight >= 0 && cuttingHeight <= 2) displayCm = cuttingHeight + 2;
+  else displayCm = cuttingHeight;
+  displayCm = Math.max(2, Math.min(9, displayCm));
+  const cutterhigh = Math.max(0, displayCm - 2);
 
-  // Exact same payload as HomeScreen StartMowSheet
+  const cmdNum = Date.now() % 100000;
   sendEncryptedCommand(sn, {
     start_navigation: {
       mapName: 'test',
-      cutterhigh: cuttingHeight,
+      cutterhigh,
       area,
       cmd_num: cmdNum,
     },
   });
 
-  console.log(`[MowingService] Started: sn=${sn} height=${cuttingHeight}cm dir=${pathDirection}° area=${area}`);
+  console.log(`[MowingService] Started: sn=${sn} cutterhigh=${cutterhigh} (=${cutterhigh - 2}cm) dir=${pathDirection}° area=${area}`);
   return { ok: true };
 }
 

@@ -16,7 +16,7 @@ import { startHomeAssistantBridge, forwardToHomeAssistant, publishDeviceOnline, 
 import { updateDeviceData, clearDeviceData } from './sensorData.js';
 import { isDemoMode } from '../services/demoSimulator.js';
 import { forwardToDashboard, emitDeviceOnline, emitDeviceOffline, pushMqttLog, emitOtaEvent, emitPinEvent, emitExtendedEvent, emitCommandRespond } from '../dashboard/socketHandler.js';
-import { initMapSync, handleMapMessage, handleExtendedResponse } from './mapSync.js';
+import { initMapSync, handleMapMessage, handleExtendedResponse, handleDeviceResponse } from './mapSync.js';
 
 const PROXY_MODE = process.env.PROXY_MODE ?? 'local';
 
@@ -468,20 +468,15 @@ export async function startMqttBroker(): Promise<void> {
               const delReq = parsed.delete_map as { map_name?: string; map_type?: string } | undefined;
               const delName = delReq?.map_name;
               if (delName && sn) {
-                const dbMaps = mapRepo.findWithAreaOrderByMapId(sn);
-                for (const m of dbMaps) {
-                  // Match op map_name OF file_name prefix (map0_work.csv → "map0")
-                  if (m.map_name === delName || (m.file_name && m.file_name.startsWith(delName))) {
-                    mapRepo.deleteById(m.map_id);
-                    console.log(`${C.cyan}[MAP-PROXY] delete_map: verwijderd uit DB: map_id=${m.map_id} map_name=${m.map_name}${C.reset}`);
-                  }
-                }
-                // Verwijder ook unicom maps die bij deze kaart horen
-                const allMaps = mapRepo.findAllByMowerSnAndType(sn, 'unicom');
-                for (const m of allMaps) {
-                  if (m.map_name?.includes(delName)) {
-                    mapRepo.deleteById(m.map_id);
-                    console.log(`${C.cyan}[MAP-PROXY] delete_map: unicom verwijderd uit DB: map_id=${m.map_id} map_name=${m.map_name}${C.reset}`);
+                // Leid prefix af (bv. "map1_work.csv" → "map1", "map1" → "map1")
+                // en verwijder alles wat deze prefix refereert: work map, obstakels
+                // EN unicoms die map1 als endpoint hebben (*map1to* of *tomap1_*).
+                const prefixMatch = delName.match(/^(map\d+)/);
+                const prefix = prefixMatch ? prefixMatch[1] : null;
+                if (prefix) {
+                  const deleted = mapRepo.deleteByPrefix(sn, prefix);
+                  for (const d of deleted) {
+                    console.log(`${C.cyan}[MAP-PROXY] delete_map: verwijderd uit DB: map_id=${d.map_id} map_name=${d.map_name}${C.reset}`);
                   }
                 }
               } else if (!delName && sn) {
@@ -758,6 +753,7 @@ export async function startMqttBroker(): Promise<void> {
       try {
         const parsed = JSON.parse(effectiveJson);
         handleMapMessage(forwardSn, parsed);
+        handleDeviceResponse(forwardSn, parsed);
         // OTA voortgang → push naar dashboard via socket
         // Charger formaat: {"type":"ota_upgrade_state","message":{...}}
         // Maaier formaat:  {"ota_upgrade_state":{...}}
@@ -814,17 +810,14 @@ export async function startMqttBroker(): Promise<void> {
           console.log(`${C.cyan}[RESPOND] ${parsed.type} from ${forwardSn}${C.reset}`);
           emitCommandRespond(forwardSn, parsed.type, parsed.message);
 
-          // Charger LoRa config: sla echte addr/channel op (overschrijft cloud-imported waarden)
+          // Charger LoRa config: sla echte addr/channel op (overschrijft cloud-imported waarden).
+          // De mower wordt NIET meer afgeleid — die wordt los gequeried via extended topic
+          // (get_lora_info via novabot/extended/<SN>, handled by extended_commands.py).
           if (parsed.type === 'get_lora_info_respond' && parsed.message?.value) {
             const val = parsed.message.value as { addr?: number; channel?: number };
             if (val.addr != null && val.channel != null) {
               equipmentRepo.setLoraCache(forwardSn, String(val.addr), String(val.channel));
-              // Ook de gekoppelde mower bijwerken — mower channel = charger channel - 1
-              const eq = equipmentRepo.findByChargerSn(forwardSn);
-              if (eq?.mower_sn) {
-                equipmentRepo.setLoraCache(eq.mower_sn, String(val.addr), String(val.channel - 1));
-              }
-              console.log(`${C.cyan}[LORA] Real LoRa config from ${forwardSn}: addr=${val.addr} ch=${val.channel} (mower ch=${val.channel - 1})${C.reset}`);
+              console.log(`${C.cyan}[LORA] Real LoRa config from ${forwardSn}: addr=${val.addr} ch=${val.channel}${C.reset}`);
             }
           }
         }

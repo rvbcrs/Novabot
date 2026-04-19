@@ -58,6 +58,33 @@ export default function JoystickScreen() {
   const mower = [...devices.values()].find(d => d.deviceType === 'mower' && d.online);
   const sn = mower?.sn ?? '';
 
+  // Disable manual control while the mower is autonomously busy — mowing, mapping,
+  // or returning to the dock. Sending start_move / mst during an active task can
+  // corrupt the nav2 plan or cause the firmware to enter an inconsistent state.
+  // Matches the activity detection logic from HomeScreen.
+  const busyWithTask = (() => {
+    const s = mower?.sensors ?? {};
+    const msg = s.msg ?? '';
+    const taskMode = parseInt(s.task_mode ?? '0', 10);
+    const rechargeStatus = parseInt(s.recharge_status ?? '0', 10);
+    const batteryState = (s.battery_state ?? '').toUpperCase();
+    const workStatus = s.work_status ?? '';
+    const onDock = batteryState === 'CHARGING';
+    const coverageRunning = msg.includes('Work:RUNNING')
+      || msg.includes('Work:COVERING') || msg.includes('Work:NAVIGATING')
+      || msg.includes('Work:MOVING') || msg.includes('Work:QUIT_PILE_INIT')
+      || msg.includes('Work:SENSOR_INIT') || msg.includes('Work:INIT_SUCCESS')
+      || msg.includes('Work:MAP_INIT') || msg.includes('Work:PAUSED');
+    const returning = rechargeStatus === 1 || msg.includes('Recharge: GOING')
+      || msg.includes('Work:GO_PILE') || msg.includes('Work:BACK_CHARGER')
+      || msg.includes('Work:DOCKING');
+    const stickyMowing = !onDock && taskMode === 1 && !returning
+      && workStatus !== '0' && workStatus !== '9'
+      && !msg.includes('Work:FINISHED') && !msg.includes('Work:CANCELLED');
+    const mapping = s.start_edit_or_assistant_map_flag === '1' && taskMode !== 1;
+    return coverageRunning || returning || stickyMowing || mapping;
+  })();
+
   const [active, setActive] = useState(false);
   const [thumbX, setThumbX] = useState(0);
   const [thumbY, setThumbY] = useState(0);
@@ -80,6 +107,7 @@ export default function JoystickScreen() {
   }, [sn]);
 
   const sendMove = useCallback((dx: number, dy: number) => {
+    if (busyWithTask) return;
     const dist = Math.sqrt(dx * dx + dy * dy);
     if (dist < DEAD_ZONE) return;
 
@@ -225,6 +253,16 @@ export default function JoystickScreen() {
             <Ionicons name="alert-circle" size={32} color={colors.red} />
             <Text style={styles.offlineText}>{t('mowerOffline')}</Text>
             <Text style={styles.offlineSubtext}>{t('connectMowerToMap')}</Text>
+          </View>
+        ) : busyWithTask ? (
+          <View style={styles.offlineBox}>
+            <Ionicons name="lock-closed" size={32} color={colors.amber} />
+            <Text style={[styles.offlineText, { color: colors.amber }]}>
+              {t('manualControlLocked') || 'Manual control locked'}
+            </Text>
+            <Text style={styles.offlineSubtext}>
+              {t('manualControlLockedDesc') || 'Stop the current task before driving the mower manually.'}
+            </Text>
           </View>
         ) : (
           <>

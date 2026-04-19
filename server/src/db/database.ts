@@ -503,6 +503,18 @@ export function initDb(): void {
     CREATE INDEX IF NOT EXISTS rain_sessions_mower ON rain_sessions(mower_sn, state);
   `);
 
+  // Feature: per-mower rain auto-pause settings (used by rainMonitor for non-schedule sessions)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS rain_settings (
+      mower_sn              TEXT    PRIMARY KEY,
+      enabled               INTEGER NOT NULL DEFAULT 1,
+      threshold_mm          REAL    NOT NULL DEFAULT 0.1,
+      threshold_probability INTEGER NOT NULL DEFAULT 50,
+      lookahead_hours       REAL    NOT NULL DEFAULT 0.5,
+      updated_at            TEXT    NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+
   // Feature: virtual walls (no-go zones) per maaier
   db.exec(`
     CREATE TABLE IF NOT EXISTS virtual_walls (

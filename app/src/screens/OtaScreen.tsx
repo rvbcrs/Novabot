@@ -11,8 +11,10 @@ import {
   ScrollView,
   ActivityIndicator,
   Alert,
+  Image,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors } from '../theme/colors';
 import { useMowerState } from '../hooks/useMowerState';
@@ -22,6 +24,7 @@ import { formatDate } from '../lib/format';
 
 export default function OtaScreen() {
   const insets = useSafeAreaInsets();
+  const navigation = useNavigation();
   const { devices } = useMowerState();
   const [versions, setVersions] = useState<OtaVersion[]>([]);
   const [loading, setLoading] = useState(true);
@@ -100,7 +103,17 @@ export default function OtaScreen() {
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <ScrollView contentContainerStyle={styles.scroll}>
-        <Text style={styles.title}>Firmware Updates</Text>
+        <View style={styles.header}>
+          <TouchableOpacity
+            onPress={() => navigation.goBack()}
+            style={styles.backBtn}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="arrow-back" size={24} color={colors.white} />
+          </TouchableOpacity>
+          <Text style={styles.title}>Firmware Updates</Text>
+        </View>
 
         {/* Current device versions */}
         <View style={styles.section}>
@@ -108,10 +121,10 @@ export default function OtaScreen() {
           <View style={styles.card}>
             {mower && (
               <DeviceVersionRow
-                icon="construct-outline"
+                iconAsset={require('../../assets/lawn_mower.png')}
                 label="Mower"
                 sn={mower.sn}
-                version={mower.sensors.sw_version ?? mower.sensors.mower_version ?? 'Unknown'}
+                version={mower.sensors.sw_version ?? mower.sensors.mower_version ?? mower.firmwareVersion ?? null}
                 online={mower.online}
               />
             )}
@@ -120,7 +133,7 @@ export default function OtaScreen() {
                 icon="flash-outline"
                 label="Charger"
                 sn={charger.sn}
-                version={charger.sensors.charger_version ?? charger.sensors.sw_version ?? 'Unknown'}
+                version={charger.sensors.charger_version ?? charger.sensors.sw_version ?? charger.firmwareVersion ?? null}
                 online={charger.online}
               />
             )}
@@ -185,25 +198,37 @@ export default function OtaScreen() {
 
 function DeviceVersionRow({
   icon,
+  iconAsset,
   label,
   sn,
   version,
   online,
 }: {
-  icon: React.ComponentProps<typeof Ionicons>['name'];
+  icon?: React.ComponentProps<typeof Ionicons>['name'];
+  iconAsset?: number;
   label: string;
   sn: string;
-  version: string;
+  version: string | null;
   online: boolean;
 }) {
+  const tint = label === 'Mower' ? colors.emerald : colors.amber;
+  // Firmware strings already start with "v" (e.g. "v6.0.2-custom-21").
+  // Only prepend "v" when it's a bare semver to avoid "vv..." double prefix.
+  const versionLabel = version
+    ? (/^v/i.test(version) ? version : `v${version}`)
+    : 'Unknown';
   return (
     <View style={rowStyles.container}>
-      <Ionicons name={icon} size={20} color={label === 'Mower' ? colors.emerald : colors.amber} />
+      {iconAsset ? (
+        <Image source={iconAsset} style={{ width: 22, height: 22, tintColor: tint }} resizeMode="contain" />
+      ) : icon ? (
+        <Ionicons name={icon} size={20} color={tint} />
+      ) : null}
       <View style={rowStyles.info}>
         <Text style={rowStyles.label}>{label}</Text>
         <Text style={rowStyles.sn}>{sn}</Text>
       </View>
-      <Text style={rowStyles.version}>v{version}</Text>
+      <Text style={rowStyles.version}>{versionLabel}</Text>
       <View style={[rowStyles.dot, { backgroundColor: online ? colors.green : colors.red }]} />
     </View>
   );
@@ -273,7 +298,21 @@ function VersionCard({
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
   scroll: { padding: 24, paddingBottom: 32 },
-  title: { fontSize: 28, fontWeight: '700', color: colors.white, marginBottom: 24 },
+  title: { fontSize: 28, fontWeight: '700', color: colors.white },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: 24,
+  },
+  backBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   section: { marginBottom: 24 },
   sectionTitle: {
     fontSize: 13, fontWeight: '600', color: colors.textDim,

@@ -464,6 +464,29 @@ export function handleExtendedResponse(sn: string, payload: string): void {
   } catch { /* ignore */ }
 }
 
+// ── Device responses (Dart/Receive_mqtt/<SN>) ────────────────────────────────
+
+type DeviceResponseHandler = (data: Record<string, unknown>) => void;
+const _devResponseHandlers = new Map<string, Set<DeviceResponseHandler>>();
+
+export function onDeviceResponse(sn: string, handler: DeviceResponseHandler): void {
+  if (!_devResponseHandlers.has(sn)) _devResponseHandlers.set(sn, new Set());
+  _devResponseHandlers.get(sn)!.add(handler);
+}
+
+export function offDeviceResponse(sn: string, handler: DeviceResponseHandler): void {
+  _devResponseHandlers.get(sn)?.delete(handler);
+}
+
+/** Call from broker.ts when a parsed message arrives on Dart/Receive_mqtt/<SN>. */
+export function handleDeviceResponse(sn: string, parsed: Record<string, unknown>): void {
+  const handlers = _devResponseHandlers.get(sn);
+  if (!handlers || handlers.size === 0) return;
+  for (const h of handlers) {
+    try { h(parsed); } catch { /* ignore */ }
+  }
+}
+
 /**
  * Verwerk een inkomend MQTT bericht dat kaart-gerelateerd kan zijn.
  * Retourneert true als het bericht afgehandeld is.

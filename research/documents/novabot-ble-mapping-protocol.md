@@ -311,17 +311,61 @@ Note: `stop_scan_map` uses `value:false` for work maps. `value:true` only for un
 
 ## 7. Mower Firmware CSV Naming Convention
 
-The app sends only short `mapName` values (`"map0"`, `"map1"`, etc.). The mower firmware generates the canonical ZIP-internal CSV filenames from the mapName, the scan type, and its own internal counters:
+The app sends only short `mapName` values. The mower firmware generates the canonical ZIP-internal CSV filenames from the mapName, the scan type, and its own internal counters. **Corrected 2026-04-19 from a live Novabot-app capture** — the previous table was based on decompile guesses and had obstacle wrong.
 
-| mapName sent | type | Example CSV filename inside ZIP |
-|-------------|------|--------------------------------|
-| `map0` | `0` | `map0_work.csv` |
-| `map1` | `0` | `map1_work.csv` |
-| `map1` | `2` | `map1_0_obstacle.csv`, `map1_3_obstacle.csv` (auto-indexed) |
-| `map0` | `4` | `map0tomap1_0_unicom.csv` (from/to derived by firmware from trajectory) |
-| `map0` | `8` | `map0tocharge_unicom.csv` |
+| Scan kind | mapName sent | type | Generated CSV filename |
+|-----------|-------------|------|-----------------------|
+| Work map 0 | `"map0"` | `0` | `map0_work.csv` |
+| Work map 1 | `"map1"` | `0` | `map1_work.csv` |
+| **Obstacle** | **`"map"`** (literal) | **`1`** | `map0_0_obstacle.csv`, `map0_1_obstacle.csv` ... (auto-indexed, parent from active context) |
+| Unicom (map↔map) | `"map1"` (source map) | `2` | `map0tomap1_0_unicom.csv` (from/to derived from trajectory) |
+| Charge unicom | *(implicit via `save_recharge_pos`)* | — | `mapXtocharge_unicom.csv` |
 
-The `fromXtoY` portion is determined by the mower tracking its start/end positions during the unicom scan.
+Key: **obstacle uses the literal string `"map"` for mapName — NOT the parent work map name**. The firmware keeps the active work-map context from the previous `start_scan_map`/`add_scan_map` and auto-indexes the obstacle.
+
+The `fromXtoY` portion on unicoms is determined by the mower tracking its start/end positions during the scan.
+
+### 7.1. Obstacle Flow — Verified Live Capture (2026-04-19)
+
+Captured on LFIN1231000211 via `/root/novabot/data/ros2_log/mqtt_node_*.log` while using the official Novabot app to add one obstacle:
+
+```
+# 1. Enter obstacle scan mode (work map already exists)
+cmd_msgrcv_pipe_read {"add_scan_map":{"model":"manual","mapName":"map","type":1,"cmd_num":536457258}}
+→ strJson_send {"message":{"result":0,"value":{"map_position":{"x":...,"y":...}}},"type":"add_scan_map_respond"}
+
+# 2. User drives around the obstacle via joystick (mst commands)
+
+# 3. Stop scanning
+cmd_msgrcv_pipe_read {"stop_scan_map":{"value":false,"cmd_num":536457259}}
+→ strJson_send {"message":{"result":0,"value":null},"type":"stop_scan_map_respond"}
+
+# 4. Save — sub phase (firmware writes the obstacle CSV here)
+cmd_msgrcv_pipe_read {"save_map":{"mapName":"map","type":0,"cmd_num":536457260}}
+→ generate_map_file_name = map0_0_obstacle.csv
+→ strJson_send {"message":{"result":0,"value":0},"type":"save_map_respond"}
+
+# 5. Save — total phase (firmware updates map.pgm/png/yaml)
+cmd_msgrcv_pipe_read {"save_map":{"mapName":"map","type":1,"cmd_num":536457261}}
+→ strJson_send {"message":{"result":0,"value":0},"type":"save_map_respond"}
+
+# 6. Trigger ZIP upload
+cmd_msgrcv_pipe_read {"get_map_outline":{...}}
+→ strJson_send {"message":{"result":0,"value":null},"type":"get_map_outline_respond"}
+→ strJson_send {"message":{"result":0,"value":{"md5":"...","name":"LFIN1231000211.zip","zip_dir_empty":0}},"type":"get_map_list_respond"}
+```
+
+### 7.2. OpenNova Fix Applied 2026-04-19
+
+OpenNova's obstacle flow was sending the wrong `type` and `mapName`. Fixed in `app/src/screens/MappingScreen.tsx`:
+
+| Field | OpenNova before | OpenNova after (matches Novabot) |
+|-------|----------------|----------------------------------|
+| `buildTypeToScanType('obstacle')` | `2` | **`1`** |
+| `add_scan_map.mapName` for obstacle | `activeMapName` (e.g. `"map0"`) | literal **`"map"`** |
+| `save_map.mapName` for obstacle | `activeMapName` | literal **`"map"`** |
+| `stop_scan_map.value` | `false` | ✅ `false` (unchanged — was already correct) |
+| `save_map` sub+total sequence | ✅ both `type:0` then `type:1` | ✅ (unchanged) |
 
 ---
 

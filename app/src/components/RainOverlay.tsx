@@ -199,6 +199,7 @@ export function RainOverlay({ mowerSn }: Props) {
             const time = formatTime(h.time);
             return (
               <View key={i} style={styles.forecastCol}>
+                <Text style={styles.forecastProb}>{Math.round(h.prob)}%</Text>
                 <View style={styles.forecastBarBg}>
                   <View style={[styles.forecastBar, {
                     height: `${Math.max(barHeight * 100, 8)}%`,
@@ -267,6 +268,7 @@ const styles = StyleSheet.create({
   },
   forecastBar: { width: '100%', borderRadius: 3 },
   forecastTime: { fontSize: 8, color: 'rgba(96,165,250,0.5)' },
+  forecastProb: { fontSize: 8, fontWeight: '600', color: 'rgba(191,219,254,0.75)' },
   clearRow: {
     flexDirection: 'row', alignItems: 'center', gap: 6,
     paddingTop: 8, borderTopWidth: 1, borderTopColor: 'rgba(96,165,250,0.1)',

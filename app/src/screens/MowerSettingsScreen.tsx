@@ -12,6 +12,7 @@ import {
   RefreshControl,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors } from '../theme/colors';
 import { MowingDirectionPreview } from '../components/MowingDirectionPreview';
@@ -39,6 +40,7 @@ const CONTROLLER_LEVELS = [
 
 export default function MowerSettingsScreen() {
   const insets = useSafeAreaInsets();
+  const navigation = useNavigation();
   const { devices } = useMowerState();
   const [cuttingHeight, setCuttingHeight] = useState(50);
   const [sensitivity, setSensitivity] = useState(2);
@@ -48,6 +50,12 @@ export default function MowerSettingsScreen() {
   const [headlight, setHeadlight] = useState(false);
   const [sound, setSound] = useState(false);
   const [sending, setSending] = useState('');
+
+  // Rain auto-pause — loaded from /api/dashboard/rain-settings/:sn, per-mower.
+  const [rainEnabled, setRainEnabled] = useState(true);
+  const [rainMm, setRainMm] = useState(0.1);
+  const [rainProb, setRainProb] = useState(50);
+  const [rainHours, setRainHours] = useState(0.5);
 
   const mowerSn = useMemo(() => {
     return [...devices.values()].find((d) => d.deviceType === 'mower')?.sn ?? '';
@@ -109,6 +117,46 @@ export default function MowerSettingsScreen() {
     if (s.headlight) setHeadlight(s.headlight === '2');
     if (s.sound) setSound(s.sound === '2');
   }, [mower?.sn, sensorJson]);
+
+  // Load rain auto-pause settings (server-side, not part of the mower's own sensor cache)
+  useEffect(() => {
+    if (!mowerSn) return;
+    (async () => {
+      try {
+        const url = await getServerUrl();
+        if (!url) return;
+        const res = await fetch(`${url}/api/dashboard/rain-settings/${encodeURIComponent(mowerSn)}`);
+        const data = await res.json() as {
+          enabled: boolean; thresholdMm: number; thresholdProbability: number; lookaheadHours: number;
+        };
+        setRainEnabled(data.enabled);
+        setRainMm(data.thresholdMm);
+        setRainProb(data.thresholdProbability);
+        setRainHours(data.lookaheadHours);
+      } catch { /* ignore */ }
+    })();
+  }, [mowerSn]);
+
+  const saveRain = useCallback(async (patch: Partial<{
+    enabled: boolean; thresholdMm: number; thresholdProbability: number; lookaheadHours: number;
+  }>) => {
+    if (!mowerSn) return;
+    if (patch.enabled !== undefined) setRainEnabled(patch.enabled);
+    if (patch.thresholdMm !== undefined) setRainMm(patch.thresholdMm);
+    if (patch.thresholdProbability !== undefined) setRainProb(patch.thresholdProbability);
+    if (patch.lookaheadHours !== undefined) setRainHours(patch.lookaheadHours);
+    try {
+      const url = await getServerUrl();
+      if (!url) return;
+      await fetch(`${url}/api/dashboard/rain-settings/${encodeURIComponent(mowerSn)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      });
+    } catch { /* ignore */ }
+  }, [mowerSn]);
+
+  const handleRainEnabled = (value: boolean) => saveRain({ enabled: value });
 
   const sendSetting = useCallback(async (label: string, fn: (api: ApiClient) => Promise<unknown>) => {
     setSending(label);
@@ -232,7 +280,17 @@ export default function MowerSettingsScreen() {
           if (socket) socket.emit('request:snapshot');
         }} />
       }>
-        <Text style={styles.title}>Mower Settings</Text>
+        <View style={styles.header}>
+          <TouchableOpacity
+            onPress={() => navigation.goBack()}
+            style={styles.backBtn}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="arrow-back" size={24} color={colors.white} />
+          </TouchableOpacity>
+          <Text style={styles.title}>Mower Settings</Text>
+        </View>
 
         {!mowerOnline && (
           <View style={styles.offlineBanner}>
@@ -355,6 +413,84 @@ export default function MowerSettingsScreen() {
           </View>
         </View>
 
+        {/* Rain auto-pause */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>RAIN AUTO-PAUSE</Text>
+          <View style={styles.card}>
+            <TouchableOpacity
+              style={styles.optionRow}
+              onPress={() => void handleRainEnabled(!rainEnabled)}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="rainy-outline" size={20} color={rainEnabled ? colors.emerald : colors.textMuted} />
+              <View style={{ flex: 1, marginLeft: 12 }}>
+                <Text style={styles.optionLabel}>Pause when raining</Text>
+                <Text style={styles.optionSub}>
+                  {rainEnabled
+                    ? `≥ ${rainMm.toFixed(1)} mm or ≥ ${rainProb}% within ${(rainHours * 60) | 0} min`
+                    : 'Mower will keep mowing in the rain'}
+                </Text>
+              </View>
+              <View style={[styles.toggle, rainEnabled && styles.toggleActive]}>
+                <View style={[styles.toggleThumb, rainEnabled && styles.toggleThumbActive]} />
+              </View>
+            </TouchableOpacity>
+            {rainEnabled && (
+              <>
+                <View style={styles.sliderRow}>
+                  <Text style={styles.sliderLabel}>Min rainfall</Text>
+                  <Text style={styles.sliderValue}>{rainMm.toFixed(1)} mm</Text>
+                </View>
+                <View style={styles.chipGrid}>
+                  {[0.1, 0.2, 0.5, 1.0, 2.0].map(v => (
+                    <TouchableOpacity
+                      key={v}
+                      style={[styles.chip, Math.abs(rainMm - v) < 0.05 && styles.chipActive]}
+                      onPress={() => void saveRain({ thresholdMm: v })}
+                    >
+                      <Text style={[styles.chipText, Math.abs(rainMm - v) < 0.05 && styles.chipTextActive]}>
+                        {v.toFixed(1)}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+                <View style={styles.sliderRow}>
+                  <Text style={styles.sliderLabel}>Min probability</Text>
+                  <Text style={styles.sliderValue}>{rainProb}%</Text>
+                </View>
+                <View style={styles.chipGrid}>
+                  {[30, 50, 70, 90].map(v => (
+                    <TouchableOpacity
+                      key={v}
+                      style={[styles.chip, rainProb === v && styles.chipActive]}
+                      onPress={() => void saveRain({ thresholdProbability: v })}
+                    >
+                      <Text style={[styles.chipText, rainProb === v && styles.chipTextActive]}>{v}%</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+                <View style={styles.sliderRow}>
+                  <Text style={styles.sliderLabel}>Look ahead</Text>
+                  <Text style={styles.sliderValue}>{(rainHours * 60) | 0} min</Text>
+                </View>
+                <View style={styles.chipGrid}>
+                  {[0.5, 1, 2, 3].map(v => (
+                    <TouchableOpacity
+                      key={v}
+                      style={[styles.chip, Math.abs(rainHours - v) < 0.05 && styles.chipActive]}
+                      onPress={() => void saveRain({ lookaheadHours: v })}
+                    >
+                      <Text style={[styles.chipText, Math.abs(rainHours - v) < 0.05 && styles.chipTextActive]}>
+                        {v < 1 ? `${(v * 60) | 0}m` : `${v}h`}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </>
+            )}
+          </View>
+        </View>
+
         {/* Headlight & Sound */}
         <View style={[styles.section, !mowerOnline && styles.sectionDisabled]} pointerEvents={mowerOnline ? 'auto' : 'none'}>
           <Text style={styles.sectionTitle}>OTHER</Text>
@@ -383,7 +519,21 @@ export default function MowerSettingsScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
   scroll: { padding: 24, paddingBottom: 32 },
-  title: { fontSize: 28, fontWeight: '700', color: colors.white, marginBottom: 24 },
+  title: { fontSize: 28, fontWeight: '700', color: colors.white },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: 24,
+  },
+  backBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   emptyState: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 },
   emptyTitle: { fontSize: 22, fontWeight: '700', color: colors.white, marginTop: 16 },
   offlineBanner: {
@@ -407,7 +557,17 @@ const styles = StyleSheet.create({
   },
   chipGrid: {
     flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'center',
+    marginBottom: 8,
   },
+  optionSub: {
+    fontSize: 12, color: colors.textMuted, marginTop: 2,
+  },
+  sliderRow: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    marginTop: 12, marginBottom: 6, paddingHorizontal: 4,
+  },
+  sliderLabel: { fontSize: 13, color: colors.textDim, fontWeight: '500' },
+  sliderValue: { fontSize: 13, color: colors.white, fontWeight: '600', fontVariant: ['tabular-nums'] },
   chip: {
     paddingHorizontal: 14, paddingVertical: 8, borderRadius: 10,
     backgroundColor: 'rgba(255,255,255,0.06)',

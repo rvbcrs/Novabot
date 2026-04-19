@@ -86,8 +86,11 @@ export function adminPageHtml(): string {
     .tab{padding:6px 12px;font-size:12px}
   }
   #app{display:none}
-  .dev-row{display:grid;grid-template-columns:90px 170px 130px 80px 70px 1fr;align-items:center;gap:6px;padding:8px 4px;border-bottom:1px solid rgba(255,255,255,.04);font-size:12px}
+  .dev-row{display:grid;grid-template-columns:90px 170px 130px 80px 120px 70px 1fr;align-items:center;gap:6px;padding:8px 4px;border-bottom:1px solid rgba(255,255,255,.04);font-size:12px}
   @media(max-width:800px){.dev-row{grid-template-columns:80px 1fr;gap:4px}}
+  .lora-chip{font-size:10px;color:#a78bfa;background:rgba(124,58,237,.08);border:1px solid rgba(124,58,237,.2);padding:2px 6px;border-radius:4px;white-space:nowrap}
+  .lora-missing{font-size:10px;color:#666;background:rgba(255,255,255,.04);border:1px dashed rgba(255,255,255,.1);padding:2px 6px;border-radius:4px;cursor:pointer}
+  .lora-missing:hover{color:#a78bfa;border-color:rgba(124,58,237,.3)}
   .refresh-btn{float:right;cursor:pointer;color:#666;font-size:12px}
   .refresh-btn:hover{color:#00d4aa}
   .menu-item{padding:8px 12px;font-size:12px;color:#ccc;cursor:pointer;border-radius:6px;white-space:nowrap}
@@ -858,14 +861,50 @@ function devRow(dev) {
     actions = '<button class="btn btn-sm btn-green" onclick="bindDevice(\\'' + dev.sn + '\\')">Bind</button> ' +
       '<button class="btn btn-sm btn-red" onclick="removeDevice(\\'' + dev.sn + '\\')">Remove</button>';
   }
+  var loraCell = '';
+  if (dev.lora_address) {
+    var chPart = dev.lora_channel ? ' · ch' + dev.lora_channel : '';
+    loraCell = '<span class="lora-chip" title="LoRa addr / channel">📡 ' + dev.lora_address + chPart + '</span>';
+  } else if (online) {
+    // Stock mowers (no OpenNova) ignore get_lora_info; query the paired charger instead —
+    // broker.ts writes mower_channel = charger_channel-1 to cache on charger response.
+    var canQueryDirect = isCharger || dev.is_opennova;
+    var querySn = canQueryDirect ? dev.sn : (dev.paired_with || '');
+    var queryType = canQueryDirect ? dev.device_type : 'charger';
+    if (querySn) {
+      var title = canQueryDirect ? 'Query LoRa config via MQTT' : 'Query paired charger (stock firmware ignores direct mower query)';
+      loraCell = '<span class="lora-missing" title="' + title + '" onclick="queryLora(\\'' + querySn + '\\', \\'' + queryType + '\\')">LoRa ?</span>';
+    } else {
+      loraCell = '<span style="font-size:10px;color:#555">—</span>';
+    }
+  } else {
+    loraCell = '<span style="font-size:10px;color:#555">—</span>';
+  }
   return '<div class="dev-row">' +
     '<span style="color:' + typeColor + '">' + icon + ' ' + typeName + '</span>' +
     '<span class="sn">' + (dev.sn || '-') + '</span>' +
     '<span style="color:#888">' + (fw || '') + '</span>' +
     '<span>' + fwBadge + '</span>' +
+    '<span>' + loraCell + '</span>' +
     '<span style="white-space:nowrap">' + dot(online) + (online ? '<span class="on">Online</span>' : '<span class="off">Offline</span>') + '</span>' +
     '<span style="text-align:right;white-space:nowrap">' + actions + '</span>' +
     '</div>';
+}
+
+async function queryLora(sn, deviceType) {
+  try {
+    var path = deviceType === 'charger' ? '/lora/query-charger/' + sn : '/lora/query-mower/' + sn;
+    showToast('Querying LoRa config from ' + sn + '...', 'blue');
+    var r = await fetch('/api/dashboard' + path, { method: 'POST', headers: { 'Authorization': token } });
+    if (!r.ok) {
+      var err = await r.json().catch(function() { return { error: 'Query failed' }; });
+      throw new Error(err.error || 'Query failed');
+    }
+    showToast('LoRa config received', 'green');
+    loadMyDevices();
+  } catch (e) {
+    modalAlert('LoRa Query Failed', e.message);
+  }
 }
 
 async function loadMyDevices() {
@@ -899,12 +938,26 @@ async function loadMyDevices() {
       const charger = group.find(function(d) { return d.device_type === 'charger'; });
       const mower = group.find(function(d) { return d.device_type === 'mower'; });
       const anyOnline = group.some(function(d) { return d.is_online; });
-      var loraAddr = (charger && charger.lora_address) || (mower && mower.lora_address) || null;
+      var chargerLora = charger && charger.lora_address
+        ? charger.lora_address + (charger.lora_channel ? '/ch' + charger.lora_channel : '')
+        : null;
+      var mowerLora = mower && mower.lora_address
+        ? mower.lora_address + (mower.lora_channel ? '/ch' + mower.lora_channel : '')
+        : null;
+      var loraSummary = '';
+      if (chargerLora || mowerLora) {
+        var parts = [];
+        if (chargerLora) parts.push('Charger ' + chargerLora);
+        if (mowerLora) parts.push('Mower ' + mowerLora);
+        loraSummary = '\uD83D\uDCE1 ' + parts.join(' · ');
+      } else {
+        loraSummary = 'LoRa pending...';
+      }
 
       html += '<div style="margin-bottom:12px;padding:12px;background:rgba(255,255,255,.02);border:1px solid ' + (anyOnline ? 'rgba(0,212,170,.2)' : 'rgba(255,255,255,.06)') + ';border-radius:10px">';
       html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">';
       html += '<span style="font-size:12px;font-weight:600;color:#00d4aa">\uD83D\uDD17 Paired Set</span>';
-      html += '<span style="font-size:11px;color:#666">' + (loraAddr ? 'LoRa ' + loraAddr : 'LoRa pending...') + '</span>';
+      html += '<span style="font-size:11px;color:#888">' + loraSummary + '</span>';
       html += '</div>';
       for (const dev of group) { html += devRow(dev); }
       html += '</div>';
@@ -931,6 +984,42 @@ async function loadMyDevices() {
     }
 
     document.getElementById('myDevices').innerHTML = html;
+
+    // Auto-query LoRa config for online devices missing cache data (once per session).
+    // Mower query only works on OpenNova firmware (extended_commands.py handler);
+    // stock mqtt_node ignores get_lora_info, so skip to avoid 10s wait.
+    window._loraAutoQueried = window._loraAutoQueried || new Set();
+    window._onAutoDetected = window._onAutoDetected || new Set();
+    for (const dev of devs) {
+      if (dev.is_online && dev.device_type === 'mower' && !dev.is_opennova && !window._onAutoDetected.has(dev.sn)) {
+        window._onAutoDetected.add(dev.sn);
+        (function(mowerSn) {
+          fetch('/api/dashboard/opennova/detect/' + mowerSn, { method: 'POST', headers: { 'Authorization': token } })
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+              if (d && d.isOpenNova) {
+                // Also query LoRa directly from the mower (not derived from charger).
+                fetch('/api/dashboard/lora/query-mower/' + mowerSn, { method: 'POST', headers: { 'Authorization': token } })
+                  .finally(function() { setTimeout(loadMyDevices, 300); });
+                window._loraAutoQueried.add(mowerSn);
+              }
+            })
+            .catch(function() {});
+        })(dev.sn);
+      }
+      if (!dev.is_online || dev.lora_address || window._loraAutoQueried.has(dev.sn)) continue;
+      if (dev.device_type === 'charger') {
+        window._loraAutoQueried.add(dev.sn);
+        fetch('/api/dashboard/lora/query-charger/' + dev.sn, { method: 'POST', headers: { 'Authorization': token } })
+          .then(function(r) { if (r.ok) setTimeout(loadMyDevices, 500); })
+          .catch(function() { /* manual LoRa ? button still works */ });
+      } else if (dev.device_type === 'mower' && dev.is_opennova) {
+        window._loraAutoQueried.add(dev.sn);
+        fetch('/api/dashboard/lora/query-mower/' + dev.sn, { method: 'POST', headers: { 'Authorization': token } })
+          .then(function(r) { if (r.ok) setTimeout(loadMyDevices, 500); })
+          .catch(function() {});
+      }
+    }
   } catch { document.getElementById('myDevices').textContent = 'Failed to load'; }
 }
 

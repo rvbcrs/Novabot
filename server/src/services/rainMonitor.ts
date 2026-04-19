@@ -15,7 +15,7 @@
  */
 
 import { randomUUID } from 'crypto';
-import { scheduleRepo, mapRepo } from '../db/repositories/index.js';
+import { scheduleRepo, mapRepo, rainSettingsRepo } from '../db/repositories/index.js';
 import { isDeviceOnline } from '../mqtt/broker.js';
 import { publishToDevice, goToChargePayload } from '../mqtt/mapSync.js';
 import { deviceCache } from '../mqtt/sensorData.js';
@@ -51,8 +51,26 @@ function isMowing(mowerSn: string): boolean {
   const workStatus = sensors.get('work_status');
   if (workStatus === '1') return true; // COVER state
 
+  // Parse `msg` field — exactly mirrors HomeScreen activity detection
+  const msg = sensors.get('msg') ?? '';
+  const taskMode = parseInt(sensors.get('task_mode') ?? '0', 10);
+  const rechargeStatus = parseInt(sensors.get('recharge_status') ?? '0', 10);
+  const batteryState = (sensors.get('battery_state') ?? '').toUpperCase();
+  const onDock = batteryState === 'CHARGING';
+  const coverageRunning = msg.includes('Work:RUNNING') || msg.includes('Work:COVERING')
+    || msg.includes('Work:NAVIGATING') || msg.includes('Work:MOVING');
+  const returning = rechargeStatus === 1 || msg.includes('Recharge: GOING')
+    || msg.includes('Work:GO_PILE') || msg.includes('Work:BACK_CHARGER')
+    || msg.includes('Work:DOCKING');
+  if (coverageRunning || (taskMode === 1 && !onDock && !returning)) return true;
   return false;
 }
+
+/** Default thresholds for manual (non-scheduled) rain-pause sessions. */
+const DEFAULT_RAIN_MM = 0.1;
+const DEFAULT_RAIN_PROB = 50;
+const DEFAULT_RAIN_HOURS = 0.5; // lookahead window while mowing
+const MANUAL_SCHEDULE_ID = 'manual';
 
 /** Check of maaier aan het laden is en batterij voldoende is */
 function isChargedAndReady(mowerSn: string): boolean {
@@ -79,10 +97,17 @@ function isChargedAndReady(mowerSn: string): boolean {
  * Als regen verwacht wordt → stuur go_to_charge en maak een rain_session.
  */
 async function checkActiveMowers(): Promise<void> {
-  // Haal alle maaiers op die een rain_pause schedule hebben
-  const mowerSns = scheduleRepo.findDistinctMowersWithRainPause();
+  // Check EVERY mower that is currently online and mowing, regardless of whether
+  // a rain_pause schedule exists. Scheduled sessions use the schedule's thresholds;
+  // manual sessions use the DEFAULT_RAIN_* values below.
+  //
+  // Candidate set = union of (scheduled rain_pause mowers) and (all currently-
+  // mowing online mowers as seen by deviceCache/isMowing).
+  const scheduled = new Set(scheduleRepo.findDistinctMowersWithRainPause());
+  const candidates = new Set<string>(scheduled);
+  for (const sn of getAllCachedMowerSns()) candidates.add(sn);
 
-  for (const mower_sn of mowerSns) {
+  for (const mower_sn of candidates) {
     if (!isDeviceOnline(mower_sn)) continue;
 
     // Check of er al een actieve rain session is voor deze maaier
@@ -95,25 +120,28 @@ async function checkActiveMowers(): Promise<void> {
     // Skip als we al een go_to_charge hebben gestuurd (wacht op state change)
     if (pendingGoCharge.has(mower_sn)) continue;
 
+    // Haal per-maaier settings (user-configurable via /api/dashboard/rain-settings).
+    // Scheduled sessies hebben eigen thresholds op de schedule row; die hebben
+    // voorrang. Voor manual sessies vallen we terug op de per-maaier settings.
+    const schedule = scheduleRepo.findActiveRainSchedule(mower_sn);
+    const settings = rainSettingsRepo.getEffective(mower_sn);
+    if (!schedule && !settings.enabled) continue; // user disabled auto-pause
+
     // Haal GPS op voor weercheck
     const gps = getChargerGps(mower_sn);
     if (!gps) continue; // Geen GPS = geen weercheck mogelijk
 
     try {
       const forecast = await getWeatherForecast(gps.lat, gps.lng);
-      const schedule = scheduleRepo.findActiveRainSchedule(mower_sn);
-      if (!schedule) continue;
+      const rainMm = schedule?.rain_threshold_mm ?? settings.thresholdMm;
+      const rainProb = schedule?.rain_threshold_probability ?? settings.thresholdProbability;
+      const rainHours = schedule ? DEFAULT_RAIN_HOURS : settings.lookaheadHours;
 
-      const rainComing = shouldPauseForRain(
-        forecast,
-        schedule.rain_threshold_mm,
-        schedule.rain_threshold_probability,
-        // Kijk 30 minuten vooruit voor actieve sessies (korter dan bij start)
-        0.5,
-      );
+      const rainComing = shouldPauseForRain(forecast, rainMm, rainProb, rainHours);
 
       if (rainComing) {
-        console.log(`[RainMonitor] Regen verwacht voor ${mower_sn}, stuur go_to_charge`);
+        const kind = schedule ? `scheduled (${schedule.schedule_id})` : 'manual';
+        console.log(`[RainMonitor] Rain expected for ${mower_sn} (${kind}) — sending go_to_charge`);
         pauseForRain(mower_sn, schedule);
       }
     } catch (err) {
@@ -122,30 +150,52 @@ async function checkActiveMowers(): Promise<void> {
   }
 }
 
+/** Return every SN we have cached sensor data for that looks like a mower. */
+function getAllCachedMowerSns(): string[] {
+  const out: string[] = [];
+  for (const sn of deviceCache.keys()) {
+    if (sn.startsWith('LFIN')) out.push(sn);
+  }
+  return out;
+}
+
 /** Stuur maaier naar huis en maak een rain_session */
-function pauseForRain(mowerSn: string, schedule: ScheduleRow): void {
+function pauseForRain(mowerSn: string, schedule: ScheduleRow | null | undefined): void {
   // Stuur go_to_charge
   publishToDevice(mowerSn, goToChargePayload(mowerSn));
   pendingGoCharge.add(mowerSn);
 
-  // Maak rain session in DB
+  // Maak rain session in DB. Voor manual sessions gebruiken we sentinel schedule_id.
+  // Map/height/path_direction komen uit live sensor cache zodat we een sessie kunnen
+  // herstarten (voor scheduled sessies worden deze uit de schedule gebruikt).
+  const sensors = deviceCache.get(mowerSn);
   const sessionId = randomUUID();
   scheduleRepo.createRainSession(
-    sessionId, schedule.schedule_id, mowerSn,
-    schedule.map_id ?? null, schedule.map_name ?? null, schedule.cutting_height, schedule.path_direction,
-    schedule.work_mode, schedule.task_mode, schedule.edge_offset,
-    schedule.rain_threshold_mm, schedule.rain_threshold_probability, schedule.rain_check_hours,
+    sessionId,
+    schedule?.schedule_id ?? MANUAL_SCHEDULE_ID,
+    mowerSn,
+    schedule?.map_id ?? null,
+    schedule?.map_name ?? null,
+    schedule?.cutting_height ?? parseInt(sensors?.get('target_height') ?? '5', 10),
+    schedule?.path_direction ?? parseInt(sensors?.get('path_direction') ?? '120', 10),
+    schedule?.work_mode ?? 0,
+    schedule?.task_mode ?? 0,
+    schedule?.edge_offset ?? 0,
+    schedule?.rain_threshold_mm ?? DEFAULT_RAIN_MM,
+    schedule?.rain_threshold_probability ?? DEFAULT_RAIN_PROB,
+    schedule?.rain_check_hours ?? DEFAULT_RAIN_HOURS,
   );
 
   // Emit event naar dashboard
   emitScheduleEvent('rain:paused', {
     sessionId,
-    scheduleId: schedule.schedule_id,
+    scheduleId: schedule?.schedule_id ?? MANUAL_SCHEDULE_ID,
     mowerSn,
     reason: 'rain_detected_during_mowing',
+    manual: !schedule,
   });
 
-  console.log(`[RainMonitor] Rain session ${sessionId} created for ${mowerSn}`);
+  console.log(`[RainMonitor] Rain session ${sessionId} created for ${mowerSn} (${schedule ? 'scheduled' : 'manual'})`);
 
   // Clear pendingGoCharge na 2 minuten (genoeg tijd voor maaier om te reageren)
   setTimeout(() => pendingGoCharge.delete(mowerSn), 120_000);

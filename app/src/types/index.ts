@@ -19,6 +19,7 @@ export interface DeviceState {
   lastUpdate: number;
   nickname?: string | null;
   mowerIp?: string | null;
+  firmwareVersion?: string | null;
 }
 
 export interface MowerStatus {
@@ -95,4 +96,5 @@ export interface SnapshotDevice {
   online: boolean;
   sensors: Record<string, string>;
   nickname?: string | null;
+  firmwareVersion?: string | null;
 }

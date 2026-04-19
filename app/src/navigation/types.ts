@@ -61,6 +61,13 @@ export type MainTabParams = {
   Messages: undefined;
 };
 
+// ── Map Stack (nested in Map tab — hosts MappingScreen as a sub-flow) ──
+
+export type MapStackParams = {
+  MapMain: undefined;
+  Mapping: { mode?: string } | undefined;
+};
+
 // ── Settings Stack (nested in Settings tab) ─────────────────────────
 
 export type SettingsStackParams = {

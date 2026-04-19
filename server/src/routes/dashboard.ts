@@ -2001,6 +2001,33 @@ dashboardRouter.get('/rain-sessions', (_req: Request, res: Response) => {
   res.json({ sessions });
 });
 
+// GET /api/dashboard/rain-settings/:sn — per-mower auto-pause settings
+dashboardRouter.get('/rain-settings/:sn', async (req: Request, res: Response) => {
+  const { rainSettingsRepo } = await import('../db/repositories/index.js');
+  res.json(rainSettingsRepo.getEffective(req.params.sn));
+});
+
+// PUT /api/dashboard/rain-settings/:sn — update per-mower auto-pause settings
+dashboardRouter.put('/rain-settings/:sn', async (req: Request, res: Response) => {
+  const { rainSettingsRepo } = await import('../db/repositories/index.js');
+  const body = req.body as {
+    enabled?: boolean;
+    thresholdMm?: number;
+    thresholdProbability?: number;
+    lookaheadHours?: number;
+  };
+  // Clamp to sane ranges so a fat-fingered input can't disable detection.
+  const clamp = (v: number | undefined, lo: number, hi: number) =>
+    v === undefined ? undefined : Math.max(lo, Math.min(hi, v));
+  rainSettingsRepo.set(req.params.sn, {
+    enabled: body.enabled,
+    thresholdMm: clamp(body.thresholdMm, 0, 10),
+    thresholdProbability: clamp(body.thresholdProbability, 0, 100),
+    lookaheadHours: clamp(body.lookaheadHours, 0.25, 6),
+  });
+  res.json(rainSettingsRepo.getEffective(req.params.sn));
+});
+
 // GET /api/dashboard/rain-forecast/:sn — regen voorspelling voor een maaier
 //
 // GPS resolutie cascade — Open-Meteo grid is ~1km, dus iedere bron in de
@@ -3001,12 +3028,76 @@ dashboardRouter.post('/lora/query-mower/:mowerSn', async (req: Request, res: Res
       resolved = true;
       clearTimeout(timeout);
       offExtendedResponse(mowerSn, handler);
-      res.json(data.get_lora_info_respond);
+      const resp = data.get_lora_info_respond as { addr?: number; channel?: number };
+      if (resp?.addr != null && resp?.channel != null) {
+        equipmentRepo.setLoraCache(mowerSn, String(resp.addr), String(resp.channel));
+        console.log(`[LORA] Mower ${mowerSn} reported addr=${resp.addr} ch=${resp.channel}`);
+      }
+      res.json(resp);
     }
   };
 
   onExtendedResponse(mowerSn, handler);
   publishToExtended(mowerSn, { get_lora_info: {} });
+});
+
+// POST /api/dashboard/lora/query-charger/:chargerSn — ask charger for its LoRa config via MQTT
+dashboardRouter.post('/lora/query-charger/:chargerSn', async (req: Request, res: Response) => {
+  const { chargerSn } = req.params;
+  const { publishToDevice, onDeviceResponse, offDeviceResponse } = await import('../mqtt/mapSync.js');
+
+  let resolved = false;
+  const timeout = setTimeout(() => {
+    if (!resolved) {
+      resolved = true;
+      offDeviceResponse(chargerSn, handler);
+      res.status(504).json({ error: 'Charger did not respond (timeout)' });
+    }
+  }, 10000);
+
+  const handler = (data: Record<string, unknown>) => {
+    if (resolved) return;
+    // Charger reply: {"type":"get_lora_info_respond","message":{"result":0,"value":{addr,channel,hc,lc}}}
+    if (data.type === 'get_lora_info_respond') {
+      resolved = true;
+      clearTimeout(timeout);
+      offDeviceResponse(chargerSn, handler);
+      res.json(data.message);
+    }
+  };
+
+  onDeviceResponse(chargerSn, handler);
+  publishToDevice(chargerSn, { get_lora_info: null });
+});
+
+// POST /api/dashboard/opennova/detect/:mowerSn — probe mower for OpenNova firmware
+dashboardRouter.post('/opennova/detect/:mowerSn', async (req: Request, res: Response) => {
+  const { mowerSn } = req.params;
+  const { publishToExtended, onExtendedResponse, offExtendedResponse } = await import('../mqtt/mapSync.js');
+
+  let resolved = false;
+  const timeout = setTimeout(() => {
+    if (!resolved) {
+      resolved = true;
+      offExtendedResponse(mowerSn, handler);
+      // No response = stock firmware (silently ignored)
+      res.json({ isOpenNova: false });
+    }
+  }, 5000);
+
+  const handler = (data: Record<string, unknown>) => {
+    if (resolved) return;
+    if (data.is_opennova_respond) {
+      resolved = true;
+      clearTimeout(timeout);
+      offExtendedResponse(mowerSn, handler);
+      equipmentRepo.setOpenNova(mowerSn);
+      res.json({ isOpenNova: true, version: (data.is_opennova_respond as { version?: string })?.version });
+    }
+  };
+
+  onExtendedResponse(mowerSn, handler);
+  publishToExtended(mowerSn, { is_opennova: {} });
 });
 
 // POST /api/dashboard/lora/set-mower/:mowerSn — set mower LoRa config via MQTT

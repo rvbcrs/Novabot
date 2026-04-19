@@ -37,7 +37,7 @@ export default {
   unpairedDevice: 'Unpaired device',
   pairWithCharger: 'Pair with charger',
   connectMower: 'Connect mower',
-  reProvisionMower: 'Re-provision Mower',
+  reProvisionMower: 'Provision',
   noMapCreateFirst: 'No Map — Create one first',
   clearErrorFirst: 'Clear error first',
   startMowing: 'Start Mowing',
@@ -110,6 +110,8 @@ export default {
   createMap: 'Create Map',
   mowerOffline: 'Mower Offline',
   connectMowerToMap: 'Connect the mower to create a map',
+  manualControlLocked: 'Manual control locked',
+  manualControlLockedDesc: 'Stop the current task before driving the mower manually.',
   readinessCheck: 'Readiness Check',
   gps: 'GPS',
   gpsOk: 'OK',
@@ -182,6 +184,8 @@ export default {
   pausedSince: 'Paused since',
   dryInMin: 'Dry in ~{{min}} min',
   dryAt: 'Dry at ~{{time}}',
+  rainWarningTitle: 'Rain Expected',
+  rainWarningDesc: 'Rain is forecast around {{time}} ({{mm}}mm · {{prob}}%). Start mowing anyway?',
 
   // ── Settings ──────────────────────────────────────────────────
   settings: 'Settings',

@@ -321,3 +321,61 @@ export class ScheduleRepository {
 }
 
 export const scheduleRepo = new ScheduleRepository();
+
+// ── Per-mower rain auto-pause settings ──────────────────────────────
+
+export interface RainSettingsRow {
+  mower_sn: string;
+  enabled: number;
+  threshold_mm: number;
+  threshold_probability: number;
+  lookahead_hours: number;
+  updated_at: string;
+}
+
+export interface RainSettingsUpdate {
+  enabled?: boolean;
+  thresholdMm?: number;
+  thresholdProbability?: number;
+  lookaheadHours?: number;
+}
+
+class RainSettingsRepository {
+  private _get = db.prepare('SELECT * FROM rain_settings WHERE mower_sn = ?');
+  private _upsert = db.prepare(`
+    INSERT INTO rain_settings (mower_sn, enabled, threshold_mm, threshold_probability, lookahead_hours, updated_at)
+    VALUES (?, ?, ?, ?, ?, datetime('now'))
+    ON CONFLICT(mower_sn) DO UPDATE SET
+      enabled = excluded.enabled,
+      threshold_mm = excluded.threshold_mm,
+      threshold_probability = excluded.threshold_probability,
+      lookahead_hours = excluded.lookahead_hours,
+      updated_at = datetime('now')
+  `);
+
+  get(mowerSn: string): RainSettingsRow | null {
+    return (this._get.get(mowerSn) as RainSettingsRow | undefined) ?? null;
+  }
+
+  /** Return the effective settings, falling back to sane defaults per mower. */
+  getEffective(mowerSn: string): { enabled: boolean; thresholdMm: number; thresholdProbability: number; lookaheadHours: number } {
+    const row = this.get(mowerSn);
+    return {
+      enabled: row ? row.enabled === 1 : true,
+      thresholdMm: row?.threshold_mm ?? 0.1,
+      thresholdProbability: row?.threshold_probability ?? 50,
+      lookaheadHours: row?.lookahead_hours ?? 0.5,
+    };
+  }
+
+  set(mowerSn: string, update: RainSettingsUpdate): void {
+    const current = this.getEffective(mowerSn);
+    const enabled = update.enabled ?? current.enabled;
+    const mm = update.thresholdMm ?? current.thresholdMm;
+    const prob = update.thresholdProbability ?? current.thresholdProbability;
+    const hours = update.lookaheadHours ?? current.lookaheadHours;
+    this._upsert.run(mowerSn, enabled ? 1 : 0, mm, prob, hours);
+  }
+}
+
+export const rainSettingsRepo = new RainSettingsRepository();

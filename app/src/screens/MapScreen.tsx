@@ -154,6 +154,14 @@ function getMapFamilyKey(map: Pick<MapData, 'mapId' | 'mapName'>): string | null
   return null;
 }
 
+// The `mapXtocharge_unicom` row is auto-generated when a map is saved
+// (it's the charger connection). It shouldn't count as a user channel —
+// users only care about real map-to-map unicoms (`mapXtomapY_N_unicom`).
+function isChargerUnicom(map: Pick<MapData, 'mapName'> & { fileName?: string | null }): boolean {
+  const candidates = [map.mapName, (map as { fileName?: string | null }).fileName].filter((v): v is string => !!v);
+  return candidates.some(v => /tocharge_unicom/i.test(v));
+}
+
 // ── Map type colors ──────────────────────────────────────────────────
 
 const MAP_COLORS: Record<string, { fill: string; stroke: string }> = {
@@ -858,7 +866,7 @@ export default function MapScreen() {
   const hasData = visibleMaps.length > 0 || trailLocal.length > 0 || mowerLocal;
   const selectedAreaSqMeters = selectedWorkMap ? polygonAreaSqMeters(selectedWorkMap.mapArea) : 0;
   const relatedObstacleCount = legendMaps.filter((map) => map.mapType === 'obstacle').length;
-  const relatedChannelCount = legendMaps.filter((map) => map.mapType === 'unicom').length;
+  const relatedChannelCount = legendMaps.filter((map) => map.mapType === 'unicom' && !isChargerUnicom(map)).length;
 
   return (
     <GestureHandlerRootView style={[styles.container, { paddingTop: insets.top }]}>
@@ -881,7 +889,7 @@ export default function MapScreen() {
               )}
             </TouchableOpacity>
             <TouchableOpacity
-              onPress={() => (navigation as any).navigate('AppSettings', { screen: 'Mapping' })}
+              onPress={() => (navigation as any).navigate('Mapping')}
               style={styles.addButton}
               activeOpacity={0.7}
             >
@@ -961,8 +969,15 @@ export default function MapScreen() {
                     </Defs>
                   )}
 
-                  {/* Polygons */}
-                  {visibleMaps.map((m) => {
+                  {/* Polygons — work first, then obstacles so red overlays stay visible
+                      on top of the translucent green work fill. Unicoms are handled
+                      separately below. */}
+                  {[...visibleMaps]
+                    .sort((a, b) => {
+                      const order = (t: string) => (t === 'work' ? 0 : t === 'obstacle' ? 1 : 2);
+                      return order(a.mapType) - order(b.mapType);
+                    })
+                    .map((m) => {
                     if (!m.mapArea || m.mapArea.length < 3) return null;
                     if (m.mapType === 'unicom') return null;
                     // Selected work map = green, other work maps = grey, obstacles = red
@@ -973,9 +988,12 @@ export default function MapScreen() {
                       : (MAP_COLORS[m.mapType] ?? MAP_COLORS.work);
                     const svgPts = m.mapArea.map((p) => localToSvg(p, bounds, MAP_SIZE, INNER_PADDING));
                     const pts = svgPts.map((p) => `${p.x},${p.y}`).join(' ');
+                    // Obstacles are often tiny (sub-meter) against a large work polygon, so a
+                    // thicker stroke keeps them legible at the default zoom level.
+                    const strokeWidth = m.mapType === 'obstacle' ? 2.5 : isSelected ? 2 : 1.5;
                     return (
                       <G key={m.mapId}>
-                        <SvgPolygon points={pts} fill={c.fill} stroke={c.stroke} strokeWidth={isSelected ? 2 : 1.5} strokeLinejoin="round" />
+                        <SvgPolygon points={pts} fill={c.fill} stroke={c.stroke} strokeWidth={strokeWidth} strokeLinejoin="round" />
                         {/* Direction stripes (thin — planned mow direction) */}
                         {isMowing && m.mapType === 'work' && (
                           <G clipPath={`url(#clip-${m.mapId})`}>
@@ -1099,7 +1117,7 @@ export default function MapScreen() {
                             return getMapFamilyKey(candidate) === familyKey;
                           });
                           const obstacleCount = linkedMaps.filter((candidate) => candidate.mapType === 'obstacle').length;
-                          const channelCount = linkedMaps.filter((candidate) => candidate.mapType === 'unicom').length;
+                          const channelCount = linkedMaps.filter((candidate) => candidate.mapType === 'unicom' && !isChargerUnicom(candidate)).length;
 
                           return (
                             <View key={map.mapId} style={[styles.zonePanelPage, { width: PANEL_PAGE_WIDTH }]}>

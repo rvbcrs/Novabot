@@ -37,7 +37,7 @@ export default {
   unpairedDevice: 'Ongekoppeld apparaat',
   pairWithCharger: 'Koppelen met laadstation',
   connectMower: 'Maaier verbinden',
-  reProvisionMower: 'Maaier opnieuw configureren',
+  reProvisionMower: 'Provision',
   noMapCreateFirst: 'Geen kaart — Maak er eerst een',
   clearErrorFirst: 'Los eerst de fout op',
   startMowing: 'Start maaien',
@@ -110,6 +110,8 @@ export default {
   createMap: 'Kaart maken',
   mowerOffline: 'Maaier offline',
   connectMowerToMap: 'Verbind de maaier om een kaart te maken',
+  manualControlLocked: 'Handmatige bediening vergrendeld',
+  manualControlLockedDesc: 'Stop de huidige taak voordat je de maaier handmatig bedient.',
   readinessCheck: 'Gereedheidscheck',
   gps: 'GPS',
   gpsOk: 'OK',
@@ -182,6 +184,8 @@ export default {
   pausedSince: 'Gepauzeerd sinds',
   dryInMin: 'Droog over ~{{min}} min',
   dryAt: 'Droog om ~{{time}}',
+  rainWarningTitle: 'Regen verwacht',
+  rainWarningDesc: 'Rond {{time}} wordt regen verwacht ({{mm}}mm · {{prob}}%). Toch beginnen met maaien?',
 
   // ── Settings ──────────────────────────────────────────────────
   settings: 'Instellingen',

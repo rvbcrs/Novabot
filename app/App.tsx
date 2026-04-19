@@ -22,6 +22,7 @@ import type {
   AuthStackParams,
   ProvisionStackParams,
   MainTabParams,
+  MapStackParams,
   SettingsStackParams,
 } from './src/navigation/types';
 import { getToken, getServerUrl } from './src/services/auth';
@@ -58,6 +59,7 @@ import ProvisionScreen from './src/screens/ProvisionScreen';
 const AuthStack = createNativeStackNavigator<AuthStackParams>();
 const ProvisionStack = createNativeStackNavigator<ProvisionStackParams>();
 const SettingsStack = createNativeStackNavigator<SettingsStackParams>();
+const MapStack = createNativeStackNavigator<MapStackParams>();
 const Tab = createBottomTabNavigator<MainTabParams>();
 
 // ── Theme ────────────────────────────────────────────────────────────────────
@@ -119,9 +121,19 @@ function SettingsTabScreen({
       </SettingsStack.Screen>
       <SettingsStack.Screen name="OTA" component={OtaScreen} />
       <SettingsStack.Screen name="MowerSettings" component={MowerSettingsScreen} />
-      <SettingsStack.Screen name="Mapping" component={MappingScreen} />
       <SettingsStack.Screen name="ProvisionFlow" component={ProvisionTabScreen} />
     </SettingsStack.Navigator>
+  );
+}
+
+// ── Map Tab (nested stack: MapScreen → MappingScreen as a sub-flow) ──
+
+function MapTabScreen() {
+  return (
+    <MapStack.Navigator screenOptions={screenOptions}>
+      <MapStack.Screen name="MapMain" component={MapScreen} />
+      <MapStack.Screen name="Mapping" component={MappingScreen} />
+    </MapStack.Navigator>
   );
 }
 
@@ -158,7 +170,16 @@ function MainTabs({ onLogout, onGoToProvision }: { onLogout: () => void; onGoToP
       })}
     >
       <Tab.Screen name="Home" component={HomeScreen} options={{ tabBarLabel: t('tabHome') }} />
-      <Tab.Screen name="Map" component={MapScreen} options={{ tabBarLabel: t('tabMap') }} />
+      <Tab.Screen
+        name="Map"
+        component={MapTabScreen}
+        options={{ tabBarLabel: t('tabMap') }}
+        listeners={({ navigation }) => ({
+          tabPress: () => {
+            (navigation as any).navigate('Map', { screen: 'MapMain' });
+          },
+        })}
+      />
       <Tab.Screen name="Control" component={JoystickScreen} options={{ tabBarLabel: t('tabControl') }} />
       <Tab.Screen name="Camera" component={CameraScreen} options={{ tabBarLabel: t('tabCamera') }} />
       <Tab.Screen name="Schedules" component={ScheduleScreen} options={{ tabBarLabel: t('tabSchedule') }} />
@@ -169,7 +190,7 @@ function MainTabs({ onLogout, onGoToProvision }: { onLogout: () => void; onGoToP
         options={{ tabBarLabel: t('tabSettings'), unmountOnBlur: true }}
         listeners={({ navigation }) => ({
           tabPress: () => {
-            navigation.navigate('AppSettings', { screen: 'SettingsMain' });
+            (navigation as any).navigate('AppSettings', { screen: 'SettingsMain' });
           },
         })}
       >

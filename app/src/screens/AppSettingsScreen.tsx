@@ -267,7 +267,7 @@ export default function AppSettingsScreen({
             activeOpacity={0.7}
           >
             <Ionicons name="bluetooth-outline" size={20} color={colors.emerald} />
-            <Text style={styles.actionLabel}>Re-provision Device</Text>
+            <Text style={styles.actionLabel}>Provision</Text>
             <Ionicons name="chevron-forward" size={18} color={colors.textDim} />
           </TouchableOpacity>
         </Section>
