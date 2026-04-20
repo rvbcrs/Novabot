@@ -926,6 +926,260 @@ def handle_set_lora_info(params, respond):
         respond("set_lora_info_respond", {"result": 1, "error": str(e)})
 
 
+# ── Preview / plan path readers (workaround voor stock mqtt_node buffer overflow) ──
+# Stock mqtt_node crasht bij get_preview_cover_path / get_map_plan_path wanneer
+# de betreffende JSON file groter dan ~8KB is (bewezen via glibc FORTIFY abort).
+# Deze handlers lezen de file direct en sturen de inhoud via extended channel.
+
+PLANNED_PATH_DIR = "/userdata/lfi/maps/home0/planned_path"
+
+
+def handle_get_preview_cover_path(params, respond):
+    path = f"{PLANNED_PATH_DIR}/preview_planned_path.json"
+    try:
+        size = os.path.getsize(path)
+        with open(path, "r") as f:
+            content = json.load(f)
+        log(f"get_preview_cover_path: {size}B gelezen")
+        respond("get_preview_cover_path_respond", {"result": 0, "value": content})
+    except FileNotFoundError:
+        log(f"get_preview_cover_path: {path} niet gevonden")
+        respond("get_preview_cover_path_respond", {"result": 0, "value": None})
+    except Exception as e:
+        log(f"get_preview_cover_path: FOUT {e}")
+        respond("get_preview_cover_path_respond", {"result": 0, "error": str(e)})
+
+
+def handle_get_map_plan_path(params, respond):
+    path = f"{PLANNED_PATH_DIR}/planned_path.json"
+    try:
+        size = os.path.getsize(path)
+        with open(path, "r") as f:
+            content = json.load(f)
+        log(f"get_map_plan_path: {size}B gelezen")
+        respond("get_map_plan_path_respond", {"result": 0, "value": content})
+    except FileNotFoundError:
+        log(f"get_map_plan_path: {path} niet gevonden")
+        respond("get_map_plan_path_respond", {"result": 0, "value": None})
+    except Exception as e:
+        log(f"get_map_plan_path: FOUT {e}")
+        respond("get_map_plan_path_respond", {"result": 0, "error": str(e)})
+
+
+# ── Debug helpers (remote diagnosis zonder SSH) ───────────────────────────
+
+def _latest_log_file(pattern):
+    """Zoek het meest recente log-bestand dat matcht met <pattern>."""
+    import glob
+    files = sorted(glob.glob(pattern), key=lambda p: os.path.getmtime(p), reverse=True)
+    return files[0] if files else None
+
+
+def handle_get_mqtt_log(params, respond):
+    """
+    Fetch de laatste N regels van de mqtt_error log op de mower.
+
+    params:
+      lines: int (default 100, max 2000)
+      grep: string — optioneel, filter regels met substring match
+      file: "error" | "info" (default "error") — welke log-bron
+    """
+    try:
+        n = min(int(params.get("lines", 100)), 2000)
+        pattern = params.get("grep", "") or ""
+        kind = params.get("file", "error")
+
+        if kind == "error":
+            log_path = _latest_log_file("/root/novabot/data/ros2_log/mqtt_error_*.log")
+        else:
+            log_path = _latest_log_file("/root/novabot/data/ros2_log/mqtt_node_*.log")
+
+        if not log_path:
+            respond("get_mqtt_log_respond", {"result": 0, "value": {"lines": [], "error": "no log file"}})
+            return
+
+        # tail -n wordt efficiënter dan volledige read bij grote logs
+        import subprocess
+        result = subprocess.run(["tail", "-n", str(n), log_path], capture_output=True, text=True, timeout=10)
+        lines = result.stdout.splitlines()
+
+        if pattern:
+            lines = [ln for ln in lines if pattern in ln]
+
+        log(f"get_mqtt_log: {len(lines)} regels uit {log_path}")
+        respond("get_mqtt_log_respond", {
+            "result": 0,
+            "value": {
+                "file": log_path,
+                "lines": lines,
+                "count": len(lines),
+            },
+        })
+    except Exception as e:
+        log(f"get_mqtt_log: FOUT {e}")
+        respond("get_mqtt_log_respond", {"result": 1, "error": str(e)})
+
+
+_ROS_LOG_DIR = "/root/novabot/data/ros2_log"
+
+# Known log sources — prefix of log filename. Extra aliases voor handig gebruik.
+_LOG_SOURCES = {
+    "mqtt": "mqtt_node",              # mqtt_node info (stdout)
+    "mqtt_error": "mqtt_error",       # mqtt_node stderr incl glibc crashes
+    "robot_decision": "robot_decision",
+    "chassis_control": "chassis_control_node",
+    "coverage_planner": "coverage_planner_server",
+    "nav2": "nav2_single_node_navigator",
+    "timer_record": "timer_record",
+    "novabot_mapping": "novabot_mapping",
+    "localization": "robot_combination_localization",
+}
+
+
+def handle_list_ros_logs(params, respond):
+    """List beschikbare ROS log sources + hun recentste bestand + grootte."""
+    import glob, time
+    result = {}
+    try:
+        for alias, prefix in _LOG_SOURCES.items():
+            pattern = f"{_ROS_LOG_DIR}/{prefix}_*.log"
+            files = glob.glob(pattern)
+            if not files:
+                continue
+            files.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+            latest = files[0]
+            try:
+                st = os.stat(latest)
+                result[alias] = {
+                    "path": latest,
+                    "size": st.st_size,
+                    "mtime_iso": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(st.st_mtime)),
+                    "total_instances": len(files),
+                }
+            except Exception:
+                result[alias] = None
+        respond("list_ros_logs_respond", {"result": 0, "value": result})
+    except Exception as e:
+        log(f"list_ros_logs: FOUT {e}")
+        respond("list_ros_logs_respond", {"result": 1, "error": str(e)})
+
+
+def handle_get_ros_log(params, respond):
+    """
+    Generieke ROS log fetcher met filter ondersteuning.
+
+    params:
+      source: string  — alias uit _LOG_SOURCES (default "mqtt_error")
+      lines:  int     — aantal laatste regels (default 200, max 2000)
+      grep:   string  — optional substring filter
+      level:  string  — optional "INFO" | "WARN" | "ERROR" — filter op log level prefix
+      since:  int     — unix timestamp: alleen regels met hogere timestamp (mits log
+                        format met [timestamp] prefix)
+    """
+    try:
+        source = params.get("source", "mqtt_error")
+        prefix = _LOG_SOURCES.get(source, source)  # fallback: raw prefix
+
+        import glob
+        files = sorted(glob.glob(f"{_ROS_LOG_DIR}/{prefix}_*.log"),
+                       key=lambda p: os.path.getmtime(p), reverse=True)
+        if not files:
+            respond("get_ros_log_respond", {"result": 0, "value": {"lines": [], "error": f"no log for source={source}"}})
+            return
+        log_path = files[0]
+
+        n = min(int(params.get("lines", 200)), 2000)
+        import subprocess
+        res = subprocess.run(["tail", "-n", str(n), log_path], capture_output=True, text=True, timeout=10)
+        lines = res.stdout.splitlines()
+
+        grep = params.get("grep", "") or ""
+        level = params.get("level", "") or ""
+        since = params.get("since", 0) or 0
+
+        def ts_of(line):
+            # Match "[2026-04-20-08:52:58]" or "[1776667978.383...]" formats
+            try:
+                if line.startswith("[") and line[1:5].isdigit() and line[5] == "-":
+                    # [2026-04-20-08:52:58]
+                    import time as _t
+                    stamp = line[1:20]
+                    return int(_t.mktime(_t.strptime(stamp, "%Y-%m-%d-%H:%M:%S")))
+            except Exception:
+                pass
+            return 0
+
+        filtered = []
+        for ln in lines:
+            if level and f"[{level.upper()}]" not in ln:
+                continue
+            if grep and grep not in ln:
+                continue
+            if since and ts_of(ln) < since:
+                continue
+            filtered.append(ln)
+
+        log(f"get_ros_log[{source}]: {len(filtered)}/{len(lines)} regels na filter")
+        respond("get_ros_log_respond", {
+            "result": 0,
+            "value": {
+                "source": source,
+                "file": log_path,
+                "lines": filtered,
+                "count": len(filtered),
+                "raw_count": len(lines),
+            },
+        })
+    except Exception as e:
+        log(f"get_ros_log: FOUT {e}")
+        respond("get_ros_log_respond", {"result": 1, "error": str(e)})
+
+
+def handle_stat_path_files(params, respond):
+    """
+    Return sizes + mtimes van path files zodat we overflow-risico kunnen inschatten
+    zonder SSH.
+    """
+    import time
+    files = {}
+    for name in ["planned_path.json", "preview_planned_path.json", "current_planned_path.json"]:
+        path = f"{PLANNED_PATH_DIR}/{name}"
+        try:
+            st = os.stat(path)
+            files[name] = {
+                "size": st.st_size,
+                "mtime": int(st.st_mtime),
+                "mtime_iso": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(st.st_mtime)),
+            }
+        except FileNotFoundError:
+            files[name] = None
+        except Exception as e:
+            files[name] = {"error": str(e)}
+
+    # Ook de zip van de actieve map en aantal obstakels (proxy voor preview complexiteit)
+    csv_dir = "/userdata/lfi/maps/home0/csv_file"
+    csv_info = None
+    try:
+        entries = os.listdir(csv_dir)
+        csv_info = {
+            "total_files": len(entries),
+            "obstacles": sum(1 for e in entries if "obstacle" in e),
+            "work_csvs": sum(1 for e in entries if "_work.csv" in e),
+            "unicom_csvs": sum(1 for e in entries if "unicom" in e),
+        }
+    except Exception as e:
+        csv_info = {"error": str(e)}
+
+    respond("stat_path_files_respond", {
+        "result": 0,
+        "value": {
+            "planned_path_dir": PLANNED_PATH_DIR,
+            "files": files,
+            "csv_file_summary": csv_info,
+        },
+    })
+
+
 # ── Command dispatch ──────────────────────────────────────────────────────
 
 def handle_is_opennova(params, respond):
@@ -948,6 +1202,12 @@ COMMANDS = {
     "clean_ota_cache": handle_clean_ota_cache,
     "get_lora_info": handle_get_lora_info,
     "set_lora_info": handle_set_lora_info,
+    "get_preview_cover_path": handle_get_preview_cover_path,
+    "get_map_plan_path": handle_get_map_plan_path,
+    "get_mqtt_log": handle_get_mqtt_log,
+    "get_ros_log": handle_get_ros_log,
+    "list_ros_logs": handle_list_ros_logs,
+    "stat_path_files": handle_stat_path_files,
     "sync_map": lambda p, r: handle_sync_map(p, r),
 }
 
