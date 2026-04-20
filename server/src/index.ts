@@ -72,8 +72,31 @@ startMowerIpDiscovery();
 // ── Express app ───────────────────────────────────────────────────────────────
 const app = express();
 
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+// In PROXY_MODE=cloud capturen we de raw body VOOR express.json() zodat
+// multipart uploads (mower ZIP uploads) intact blijven. express.json() zou
+// anders multipart-bodies niet parsen maar wel de stream "claimen", waardoor
+// req.body leeg blijft en onze proxy een lege body naar upstream stuurt.
+if (PROXY_MODE === 'cloud') {
+  app.use((req, _res, next) => {
+    const chunks: Buffer[] = [];
+    req.on('data', (chunk: Buffer) => chunks.push(chunk));
+    req.on('end', () => {
+      (req as unknown as { rawBody: Buffer }).rawBody = Buffer.concat(chunks);
+      // Parse JSON zodat bestaande logger (regel 83) niet crasht op req.body
+      const ct = req.headers['content-type'] ?? '';
+      if (ct.includes('application/json') && chunks.length > 0) {
+        try { req.body = JSON.parse(Buffer.concat(chunks).toString('utf-8')); } catch { req.body = {}; }
+      } else {
+        req.body = {};
+      }
+      next();
+    });
+    req.on('error', next);
+  });
+} else {
+  app.use(express.json({ limit: '50mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+}
 
 // Request/response logger — controlled by LOG_LEVEL env var
 const LOG_VERBOSE = process.env.LOG_LEVEL === 'verbose';

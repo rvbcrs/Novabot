@@ -16,7 +16,7 @@ import { startHomeAssistantBridge, forwardToHomeAssistant, publishDeviceOnline, 
 import { updateDeviceData, clearDeviceData } from './sensorData.js';
 import { isDemoMode } from '../services/demoSimulator.js';
 import { forwardToDashboard, emitDeviceOnline, emitDeviceOffline, pushMqttLog, emitOtaEvent, emitPinEvent, emitExtendedEvent, emitCommandRespond } from '../dashboard/socketHandler.js';
-import { initMapSync, handleMapMessage, handleExtendedResponse, handleDeviceResponse } from './mapSync.js';
+import { initMapSync, handleMapMessage, handleExtendedResponse, handleDeviceResponse, publishToExtended, onExtendedResponse, offExtendedResponse, publishEncryptedOnTopic } from './mapSync.js';
 
 const PROXY_MODE = process.env.PROXY_MODE ?? 'local';
 
@@ -344,7 +344,12 @@ export async function startMqttBroker(): Promise<void> {
   // aedes v1.0.0: `Aedes` is een named export, `createBroker` is een static method
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { Aedes: AedesClass } = await import('aedes') as any;
-  const broker = await AedesClass.createBroker();
+  // heartbeatInterval verhoogd van default 60s naar 120s zodat de app tijdens
+  // langere TCP reads van grote payloads (bijv. get_preview_cover_path_respond
+  // ~26KB) niet per abuis door keepalive timeout wordt gedisconnect.
+  const broker = await AedesClass.createBroker({
+    heartbeatInterval: 120000,
+  });
 
   // Initialiseer mapSync met de broker zodat we MQTT commands kunnen publiceren
   initMapSync(broker);
@@ -485,6 +490,63 @@ export async function startMqttBroker(): Promise<void> {
                 console.log(`${C.cyan}[MAP-PROXY] delete_map: alle maps verwijderd uit DB voor ${sn}${C.reset}`);
               }
               console.log(`${C.cyan}[MAP-PROXY] delete_map voor ${sn} map=${delName ?? 'ALL'} — doorsturen naar maaier${C.reset}`);
+            } else if ('get_preview_cover_path' in parsed || 'get_map_plan_path' in parsed) {
+              // ── Stock mqtt_node buffer overflow workaround ──
+              // Stock mqtt_node crasht met `*** buffer overflow detected ***` (glibc
+              // __fortify_fail) bij get_preview_cover_path / get_map_plan_path wanneer
+              // de JSON file groter is dan ~8 KB. De firmware serialiseert het
+              // bestand byte-voor-byte als JSON int array (file_len bytes → ~4× JSON).
+              // Workaround: blokkeer het commando naar de mower en haal de data op
+              // via onze extended_commands.py backchannel die geen last heeft van
+              // deze bug. Herpak als wrapped respond voor de app.
+              const cmd = 'get_preview_cover_path' in parsed ? 'get_preview_cover_path' : 'get_map_plan_path';
+              const respondCmd = `${cmd}_respond` as const;
+              console.log(`${C.cyan}[PATH-INTERCEPT] ${cmd} geblokkeerd (stock mqtt_node overflow) — ophalen via extended channel${C.reset}`);
+
+              // Register handler BEFORE sending request (race-free)
+              const timeout = setTimeout(() => {
+                offExtendedResponse(sn, handler);
+                console.warn(`${C.red}[PATH-INTERCEPT] Geen antwoord van extended_commands voor ${cmd} binnen 10s${C.reset}`);
+                // Fallback: stuur result=0 zodat app niet blijft hangen
+                publishEncryptedOnTopic(`Dart/Receive_mqtt/${sn}`, sn, {
+                  message: { result: 0, value: null },
+                  type: respondCmd,
+                });
+              }, 10_000);
+
+              const handler = (data: Record<string, unknown>) => {
+                const respondData = data[respondCmd] as { result?: number; value?: unknown; error?: string } | undefined;
+                if (!respondData) return;
+                clearTimeout(timeout);
+                offExtendedResponse(sn, handler);
+                console.log(`${C.cyan}[PATH-INTERCEPT] ${respondCmd} ontvangen van extended, doorsturen naar app${C.reset}`);
+
+                // App-native format (bevestigd via blutter analyse):
+                //   {type, message:{result, value:{data: [byte1,byte2,...]}}}
+                // De Novabot Flutter app leest `message.value.data` als List<int>,
+                // decodeert UTF-8 → JSON en dat is de echte path data.
+                // Stock mqtt_node doet hetzelfde — wij moeten dat matchen.
+                let valueField: Record<string, unknown> = {};
+                if (respondData.value != null && typeof respondData.value === 'object') {
+                  const contentBytes = Buffer.from(JSON.stringify(respondData.value), 'utf-8');
+                  valueField = { data: Array.from(contentBytes) };
+                }
+                publishEncryptedOnTopic(`Dart/Receive_mqtt/${sn}`, sn, {
+                  message: { result: respondData.result ?? 0, value: valueField },
+                  type: respondCmd,
+                });
+              };
+              onExtendedResponse(sn, handler);
+
+              // Request data via extended channel (no AES, separate topic)
+              publishToExtended(sn, { [cmd]: parsed[cmd] ?? {} });
+
+              // BLOKKEER het originele commando richting mower — maar NIET via callback(Error)
+              // want dat disconnect de app-client. In plaats daarvan routeren we naar een
+              // dummy topic waar de mower niet op subscribed.
+              packet.topic = `BLOCKED/${packet.topic}`;
+              callback(null);
+              return;
             } else if ('get_map_list' in parsed) {
               // ── get_map_list: doorsturen naar maaier ──
               // Maaier antwoordt met get_map_list_respond direct naar de app (ongewijzigd).

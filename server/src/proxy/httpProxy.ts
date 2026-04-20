@@ -15,11 +15,16 @@ const parsed = new URL(UPSTREAM);
 const isHttps = parsed.protocol === 'https:';
 
 export function cloudHttpProxy(req: Request, res: Response, _next: NextFunction): void {
-  const bodyChunks: Buffer[] = [];
-
-  // Collect the raw body (Express may have already parsed it)
-  const rawBody = JSON.stringify(req.body);
-  const bodyBuf = Buffer.from(rawBody === 'undefined' ? '' : rawBody, 'utf-8');
+  // In PROXY_MODE=cloud gebruikt index.ts een raw-body capture middleware die
+  // de volledige request body in req.rawBody opslaat — ongeacht content-type.
+  // Dit is cruciaal voor multipart/form-data (mower ZIP uploads) die door
+  // express.json() niet geparsed worden.
+  const rawBody = (req as unknown as { rawBody?: Buffer }).rawBody;
+  const bodyBuf = rawBody && rawBody.length > 0
+    ? rawBody
+    : (req.body && Object.keys(req.body).length > 0
+        ? Buffer.from(JSON.stringify(req.body), 'utf-8')
+        : Buffer.alloc(0));
 
   const headers: Record<string, string> = {};
   // Forward relevant headers
@@ -41,11 +46,12 @@ export function cloudHttpProxy(req: Request, res: Response, _next: NextFunction)
   // Log ALLE request headers (cruciaal voor vergelijking cloud vs lokaal)
   console.log(`${tag} >>> Headers: ${JSON.stringify(headers)}`);
   if (bodyBuf.length > 0 && bodyBuf.length < 4096) {
+    const bodyStr = bodyBuf.toString('utf-8');
     try {
-      const pretty = JSON.stringify(JSON.parse(rawBody), null, 2);
+      const pretty = JSON.stringify(JSON.parse(bodyStr), null, 2);
       console.log(`${tag} >>> Body:\n${pretty}`);
     } catch {
-      console.log(`${tag} >>> Body: ${rawBody}`);
+      console.log(`${tag} >>> Body: ${bodyStr}`);
     }
   } else if (bodyBuf.length >= 4096) {
     console.log(`${tag} >>> Body: (${bodyBuf.length} bytes, te groot voor log)`);
