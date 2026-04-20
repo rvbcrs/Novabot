@@ -12,6 +12,7 @@ import {
   TouchableOpacity,
   Dimensions,
   Platform,
+  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -24,8 +25,10 @@ import { runOnJS } from 'react-native-reanimated';
 import { WebView } from 'react-native-webview';
 import { colors } from '../theme/colors';
 import { useMowerState } from '../hooks/useMowerState';
+import { useHeadlightBrightness } from '../hooks/useHeadlightBrightness';
 import { getSocket } from '../services/socket';
 import { getServerUrl } from '../services/auth';
+import { ApiClient } from '../services/api';
 import { DemoBanner } from '../components/DemoBanner';
 import { useDemo } from '../context/DemoContext';
 import { useI18n } from '../i18n';
@@ -36,10 +39,12 @@ const THUMB_SIZE = 64;
 const DEAD_ZONE = 0.05;
 const THROTTLE_MS = 80;
 
+// Matcht BLE joystick (MappingScreen.tsx) — die snelheden zijn live
+// bewezen comfortabel en reageren 1:1 op firmware (mst *100 = gebruikt).
 const SPEED_LEVELS = [
-  { labelKey: 'slow', linear: 0.15, angular: 0.3 },
-  { labelKey: 'normal', linear: 0.3, angular: 0.5 },
-  { labelKey: 'fast', linear: 0.5, angular: 0.8 },
+  { labelKey: 'slow', linear: 0.5, angular: 0.4 },
+  { labelKey: 'normal', linear: 1.0, angular: 0.8 },
+  { labelKey: 'fast', linear: 2.0, angular: 1.5 },
 ];
 
 function getHoldType(x: number, y: number): number {
@@ -90,21 +95,100 @@ export default function JoystickScreen() {
   const [thumbY, setThumbY] = useState(0);
   const [speedLevel, setSpeedLevel] = useState(1);
   const [lightOn, setLightOn] = useState(false);
+  const { brightness: headlightBrightness } = useHeadlightBrightness();
+  // Manual mowing — blade motor control. OFF by default, user moet bevestigen
+  // via confirm-dialog. Auto-off bij: unmount, joystick-stop, mower-error,
+  // mower-offline, of task-busy. Wordt aangestuurd via extended_commands.py
+  // backchannel (blade_on / blade_off), omdat de standaard MQTT API geen
+  // blade-motor commando buiten coverage tasks heeft.
+  const [bladeOn, setBladeOn] = useState(false);
+  const bladeOnRef = useRef(false);
   const activeRef = useRef(false);
   const lastSendRef = useRef(0);
   const speedRef = useRef(1);
 
   useEffect(() => { speedRef.current = speedLevel; }, [speedLevel]);
 
-  // Cleanup on unmount
+  // Cleanup on unmount — stop joystick + guarantee blade off. Safety-critical:
+  // if user navigates away while blade spinning, we turn it off.
   useEffect(() => {
     return () => {
       if (activeRef.current) {
         const socket = getSocket();
         if (socket) socket.emit('joystick:stop', { sn });
       }
+      if (bladeOnRef.current) {
+        (async () => {
+          try {
+            const url = await getServerUrl();
+            if (!url) return;
+            const api = new ApiClient(url);
+            await api.sendExtended(sn, { blade_off: {} });
+          } catch { /* best-effort */ }
+        })();
+      }
     };
   }, [sn]);
+
+  // Auto-off the blade if the mower goes offline or enters an error / busy
+  // state while manually mowing. The firmware's own safety also kicks in on
+  // tilt/overcurrent, but this gives faster UI feedback and doesn't rely on
+  // the hardware fault path.
+  useEffect(() => {
+    if (!bladeOnRef.current) return;
+    const online = !!mower?.online;
+    const errorStatus = parseInt(mower?.sensors?.error_status ?? '0', 10);
+    if (online && !busyWithTask && errorStatus === 0) return;
+    (async () => {
+      bladeOnRef.current = false;
+      setBladeOn(false);
+      try {
+        const url = await getServerUrl();
+        if (!url) return;
+        const api = new ApiClient(url);
+        await api.sendExtended(sn, { blade_off: {} });
+      } catch { /* ignore */ }
+    })();
+  }, [mower?.online, mower?.sensors?.error_status, busyWithTask, sn]);
+
+  const toggleBlade = useCallback(() => {
+    if (bladeOnRef.current) {
+      // Turn off — no confirmation, always allowed.
+      bladeOnRef.current = false;
+      setBladeOn(false);
+      (async () => {
+        try {
+          const url = await getServerUrl();
+          if (!url) return;
+          const api = new ApiClient(url);
+          await api.sendExtended(sn, { blade_off: {} });
+        } catch { /* ignore */ }
+      })();
+      return;
+    }
+    // Turn on — explicit confirmation to prevent accidents.
+    Alert.alert(
+      t('bladeOnConfirmTitle') || 'Start blade?',
+      t('bladeOnConfirmBody') || 'This spins the cutting blade at full speed while you drive manually. Keep hands and feet clear of the mower. Auto-stops if the app closes or the mower goes offline.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Start blade',
+          style: 'destructive',
+          onPress: async () => {
+            bladeOnRef.current = true;
+            setBladeOn(true);
+            try {
+              const url = await getServerUrl();
+              if (!url) return;
+              const api = new ApiClient(url);
+              await api.sendExtended(sn, { blade_on: { speed: 3000 } });
+            } catch { /* ignore */ }
+          },
+        },
+      ],
+    );
+  }, [sn, t]);
 
   const sendMove = useCallback((dx: number, dy: number) => {
     if (busyWithTask) return;
@@ -120,21 +204,23 @@ export default function JoystickScreen() {
 
     const holdType = getHoldType(dx, dy);
     const lvl = SPEED_LEVELS[speedRef.current];
-    // start_move (`holdType`) already encodes direction (1 left, 2 right, 3 fwd,
-    // 4 back) — `mst` only carries unsigned magnitudes. Earlier code passed `dx`
-    // signed for `y_v` which mixed direction into the angular term and made the
-    // mower swing erratically when "forward" was held with any horizontal drift.
-    // x_w = linear magnitude on the dominant axis; y_v = angular magnitude on the
-    // off-axis. Both unsigned.
-    const ax = Math.abs(dx);
-    const ay = Math.abs(dy);
-    const linearAxis = ay >= ax ? ay : ax;
+    // Match de BLE joystick semantiek (MappingScreen.tsx sendMove) exact —
+    // die werkt bewezen live op dezelfde firmware:
+    //   x_w = angular (turn left/right), SIGNED — negatief is links
+    //   y_v = linear  (forward/backward), SIGNED — negatief is achteruit
+    //   z_g = 0
+    // De eerdere "unsigned magnitudes" variant stuurde alleen positieve
+    // waarden en verwarde firmware omdat die de sign nodig heeft voor de
+    // richting per as. Ook waren x_w/y_v rollen verwisseld t.o.v. BLE wat
+    // "vooruit" liet interpreteren als "turn only" → erratisch gedrag.
+    //
+    // dy is in schermcoord (naar beneden = positief), dus -dy = voorwaarts.
     socket.emit('joystick:move', {
       sn,
       holdType,
       mst: {
-        x_w: Math.round(linearAxis * lvl.linear * 100) / 100,
-        y_v: Math.round(ax * lvl.angular * 100) / 100,
+        x_w: Math.round(dx * lvl.angular * 100) / 100,
+        y_v: Math.round(-dy * lvl.linear * 100) / 100,
         z_g: 0,
       },
     });
@@ -227,15 +313,56 @@ export default function JoystickScreen() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <View style={[styles.container, { paddingTop: insets.top }]}>
 
-        {/* Header */}
+        {/* Header — title, plus compact toggle-iconen rechts voor camera
+            en koplamp. Vervangt de oude onderkant-knop want die viel vaak
+            onder de joystick / buiten beeld op kleine schermen. */}
         <View style={styles.header}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
             <Text style={styles.title}>{t('manualControl')}</Text>
-            {streamUrl && (
-              <TouchableOpacity onPress={() => setCameraVisible(!cameraVisible)} activeOpacity={0.7}>
-                <Ionicons name={cameraVisible ? 'videocam' : 'videocam-off'} size={22} color={cameraVisible ? colors.emerald : colors.textMuted} />
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 18 }}>
+              {/* Blade — alleen zichtbaar als mower online is en niet in een
+                  coverage task zit. Rood + outline wanneer uit, rood + fill
+                  wanneer aan. Kleuring nadrukkelijk "gevaar" omdat dit een
+                  echt cutting-mes aanzet. Bevestig-dialog voor aan. */}
+              {mower?.online && !busyWithTask && (
+                <TouchableOpacity
+                  onPress={toggleBlade}
+                  activeOpacity={0.7}
+                  style={bladeOn ? styles.bladeBtnActive : undefined}
+                >
+                  <Ionicons
+                    name={bladeOn ? 'cut' : 'cut-outline'}
+                    size={22}
+                    color={bladeOn ? colors.red : colors.textMuted}
+                  />
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity
+                onPress={() => {
+                  const next = !lightOn;
+                  setLightOn(next);
+                  getServerUrl().then(url => {
+                    if (url) fetch(`${url}/api/dashboard/command/${encodeURIComponent(sn)}`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ command: { set_para_info: { headlight: next ? headlightBrightness : 0 } } }),
+                    });
+                  });
+                }}
+                activeOpacity={0.7}
+              >
+                <Ionicons
+                  name={lightOn ? 'flashlight' : 'flashlight-outline'}
+                  size={22}
+                  color={lightOn ? colors.amber : colors.textMuted}
+                />
               </TouchableOpacity>
-            )}
+              {streamUrl && (
+                <TouchableOpacity onPress={() => setCameraVisible(!cameraVisible)} activeOpacity={0.7}>
+                  <Ionicons name={cameraVisible ? 'videocam' : 'videocam-off'} size={22} color={cameraVisible ? colors.emerald : colors.textMuted} />
+                </TouchableOpacity>
+              )}
+            </View>
           </View>
           {mower && (
             <View style={styles.statusRow}>
@@ -247,6 +374,19 @@ export default function JoystickScreen() {
             </View>
           )}
         </View>
+
+        {/* BLADE ON banner — heel zichtbaar wanneer het mes draait, plus een
+            tap-om-uit-te-schakelen zodat je zonder naar de kleine header te
+            hoeven ook snel kan stoppen. */}
+        {bladeOn && (
+          <TouchableOpacity onPress={toggleBlade} activeOpacity={0.85} style={styles.bladeBanner}>
+            <Ionicons name="warning" size={16} color={colors.red} />
+            <Text style={{ color: colors.red, fontWeight: '700', fontSize: 13, flex: 1 }}>
+              Blade is spinning — tap to stop
+            </Text>
+            <Ionicons name="stop-circle" size={18} color={colors.red} />
+          </TouchableOpacity>
+        )}
 
         {!mower?.online && !demo.enabled ? (
           <View style={styles.offlineBox}>
@@ -356,25 +496,9 @@ export default function JoystickScreen() {
               <Text style={styles.stopText}>{t('emergencyStop')}</Text>
             </TouchableOpacity>
 
-            {/* Headlight toggle */}
-            <TouchableOpacity
-              style={[styles.lightBtn, lightOn && styles.lightBtnActive]}
-              onPress={() => {
-                const next = !lightOn;
-                setLightOn(next);
-                getServerUrl().then(url => {
-                  if (url) fetch(`${url}/api/dashboard/command/${encodeURIComponent(sn)}`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ command: { set_para_info: { headlight: next ? 2 : 0 } } }),
-                  });
-                });
-              }}
-              activeOpacity={0.7}
-            >
-              <Ionicons name={lightOn ? 'flashlight' : 'flashlight-outline'} size={20} color={lightOn ? colors.amber : colors.textMuted} />
-              <Text style={[styles.lightText, !lightOn && { color: colors.textMuted }]}>{lightOn ? t('lightOn') : t('headlight')}</Text>
-            </TouchableOpacity>
+            {/* (Headlight verplaatst naar de header, naast het camera-icoon.
+                Eerder stond hier een grote toggle die buiten beeld viel op
+                kleine schermen.) */}
           </>
         )}
       </View>
@@ -559,6 +683,28 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(245,158,11,0.15)',
     borderWidth: 1,
     borderColor: 'rgba(245,158,11,0.3)',
+  },
+  bladeBtnActive: {
+    // Subtle rode glow achter het cut-icoon zodra de mes motor draait.
+    // Padding zodat de border niet over andere iconen valt.
+    padding: 2,
+    borderRadius: 10,
+    backgroundColor: 'rgba(239,68,68,0.18)',
+    borderWidth: 1,
+    borderColor: 'rgba(239,68,68,0.55)',
+  },
+  bladeBanner: {
+    marginTop: 8,
+    marginHorizontal: 16,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    backgroundColor: 'rgba(239,68,68,0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(239,68,68,0.55)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   lightText: {
     fontSize: 13,

@@ -34,6 +34,9 @@ interface Props {
   sn: string;
   onStarted: (settings: { cuttingHeight: number; pathDirection: number }) => void;
   initialSelectedMapId?: string | null;
+  /** Als true: niet auto-selecteren wanneer er 1 werkzone is — forceer
+   *  altijd bewuste zone-keuze. Gebruikt vanuit de "Specific zone" flow. */
+  forceZonePicker?: boolean;
   battery?: number;
   isWorking?: boolean;
   currentCuttingHeight?: number;   // from sensor data (cm, 2-9)
@@ -46,6 +49,7 @@ export function StartMowSheet({
   sn,
   onStarted,
   initialSelectedMapId,
+  forceZonePicker,
   battery,
   isWorking,
   currentCuttingHeight,
@@ -112,11 +116,11 @@ export function StartMowSheet({
           ? workMaps.find((map) => map.mapId === initialSelectedMapId)
           : null;
         if (requestedMap) setSelectedMapId(requestedMap.mapId);
-        else if (workMaps.length === 1) setSelectedMapId(workMaps[0].mapId);
+        else if (workMaps.length === 1 && !forceZonePicker) setSelectedMapId(workMaps[0].mapId);
         else setSelectedMapId(null);
       } catch { /* ignore */ }
     })();
-  }, [visible, sn, currentCuttingHeight, currentPathDirection, initialSelectedMapId]);
+  }, [visible, sn, currentCuttingHeight, currentPathDirection, initialSelectedMapId, forceZonePicker]);
 
   // Check if a unicom (channel) exists for the selected map
   const hasUnicom = allMaps.some(m => m.mapType === 'unicom' && m.mapArea?.length >= 2);

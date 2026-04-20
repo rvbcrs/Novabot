@@ -505,28 +505,209 @@ dashboardRouter.get('/planned-path/:sn', (req: Request, res: Response) => {
 /** Parse and cache planned path from MQTT respond or file */
 export function handlePlannedPathRespond(sn: string, data: Record<string, unknown>): void {
   try {
-    const paths: Array<{ id: string; points: Array<{ x: number; y: number }> }> = [];
-    // Format: {"1": {"0": "x y,x y,...", "100": "x y,..."}}
-    for (const mapKey of Object.keys(data)) {
-      const subPaths = data[mapKey];
-      if (typeof subPaths !== 'object' || !subPaths) continue;
-      for (const subKey of Object.keys(subPaths as Record<string, string>)) {
-        const pointsStr = (subPaths as Record<string, string>)[subKey];
-        if (typeof pointsStr !== 'string') continue;
-        const points = pointsStr.split(',').map(p => {
-          const parts = p.trim().split(/\s+/).map(Number);
-          return { x: parts[0], y: parts[1] };
-        }).filter(p => !isNaN(p.x) && !isNaN(p.y));
-        if (points.length >= 2) {
-          paths.push({ id: `${mapKey}_${subKey}`, points });
-        }
-      }
-    }
+    const paths = parsePlannedPathJson(data);
     plannedPathCache.set(sn, paths);
     console.log(`[PLAN-PATH] Cached ${paths.length} sub-paths for ${sn}`);
   } catch (err) {
     console.error(`[PLAN-PATH] Parse error:`, err);
   }
+}
+
+// GET /api/dashboard/preview-path/:sn — preview cover path
+// Requests via MQTT: {get_preview_cover_path: {map_name: "all"}}
+// Response cached from get_preview_cover_path_respond (via our broker intercept)
+const previewPathCache = new Map<string, Array<{ id: string; points: Array<{ x: number; y: number }> }>>();
+
+dashboardRouter.get('/preview-path/:sn', (req: Request, res: Response) => {
+  const { sn } = req.params;
+  const cached = previewPathCache.get(sn);
+  res.json({ paths: cached && cached.length > 0 ? cached : [] });
+});
+
+export function handlePreviewPathRespond(sn: string, data: Record<string, unknown>): void {
+  try {
+    const paths = parsePlannedPathJson(data);
+    previewPathCache.set(sn, paths);
+    console.log(`[PREVIEW-PATH] Cached ${paths.length} sub-paths for ${sn}`);
+  } catch (err) {
+    console.error(`[PREVIEW-PATH] Parse error:`, err);
+  }
+}
+
+// ── SAFETY: never trigger generate_preview_cover_path while a coverage
+// task is active. De maaier antwoordt dan met error 128 ("Cannot preview
+// when cover task working!!!") en breekt de huidige maai-sessie af. Dit
+// werd eens uitgelokt door een race tussen de app's idle-refresh effect en
+// een reconnect waardoor activity kort op 'idle' stond. Server-side guard
+// voorkomt dat nu hard, ongeacht wat de app verstuurt.
+function isCoverageActive(sn: string): boolean {
+  const sensors = deviceCache.get(sn);
+  if (!sensors) return false;
+  const msg = sensors.get('msg') ?? '';
+  const workStatus = sensors.get('work_status') ?? '';
+  const taskMode = parseInt(sensors.get('task_mode') ?? '0', 10);
+  // Work:RUNNING, Work:COVERING, Work:NAVIGATING, Work:MOVING — actief maaien
+  if (msg.includes('Work:RUNNING') || msg.includes('Work:COVERING')
+      || msg.includes('Work:NAVIGATING') || msg.includes('Work:MOVING')) {
+    return true;
+  }
+  // work_status:9 = COVERAGE FINISHED but task not cleared — mower's coverage
+  // planner is still "busy" from its point of view, and generate_preview
+  // will still 128-error. Block until task_mode drops to 0.
+  if (workStatus === '9' && taskMode === 1) return true;
+  // Safe fallback: COVERAGE mode with any non-idle state
+  if (msg.includes('Mode:COVERAGE') && !msg.includes('Work:STANDBY') && !msg.includes('Work:IDLE')) {
+    return true;
+  }
+  return false;
+}
+
+// POST /api/dashboard/refresh-preview-path/:sn
+// Server-side trigger: stuurt generate_preview_cover_path naar mqtt_node,
+// wacht kort, vraagt daarna via onze extended_commands backchannel de JSON
+// (die we NIET via mqtt_node kunnen ophalen vanwege de buffer overflow bug).
+// Vult previewPathCache. Retourneert de parsed paths.
+//
+// Wordt o.a. aangeroepen door de OpenNova app zodra de user een maai-sessie
+// voorbereidt, zodat de echte preview lijntjes getoond worden i.p.v. de
+// default rechte strepen in de richting van path_direction.
+dashboardRouter.post('/refresh-preview-path/:sn', async (req: Request, res: Response) => {
+  const { sn } = req.params;
+  const body = (req.body ?? {}) as { map_ids?: number | number[]; cov_direction?: number };
+  const mapIds = body.map_ids ?? 1;
+  const covDirection = typeof body.cov_direction === 'number' ? body.cov_direction : undefined;
+
+  if (!isDeviceOnline(sn)) {
+    res.status(503).json({ ok: false, error: 'device offline' });
+    return;
+  }
+
+  // HARD GUARD — generate_preview_cover_path during an active coverage
+  // task crashes the session with error 128 on the mower. Never send it.
+  if (isCoverageActive(sn)) {
+    console.log(`[PREVIEW-REFRESH] BLOCKED for ${sn} — coverage task active (would trigger error 128)`);
+    const paths = previewPathCache.get(sn) ?? [];
+    res.status(409).json({
+      ok: false,
+      error: 'coverage task active — generate_preview would error-128 the mower',
+      paths,
+      count: paths.length,
+    });
+    return;
+  }
+
+  try {
+    const { publishToDevice, publishToExtended, onExtendedResponse, offExtendedResponse } = await import('../mqtt/mapSync.js');
+
+    // 1. Trigger preview generation via normal MQTT — mqtt_node handles this fine.
+    const cmdNum = Date.now() & 0x7fffffff;
+    const genPayload: Record<string, unknown> = { cmd_num: cmdNum, map_ids: mapIds };
+    if (covDirection !== undefined) genPayload.cov_direction = covDirection;
+    publishToDevice(sn, { generate_preview_cover_path: genPayload });
+    console.log(`[PREVIEW-REFRESH] generate_preview_cover_path sent to ${sn} (cmd=${cmdNum})`);
+
+    // 2. Wait a bit — coverage_planner typically needs 1-3 s to finish.
+    await new Promise((r) => setTimeout(r, 3500));
+
+    // 3. Ask extended_commands for the content. This avoids the mqtt_node
+    //    buffer overflow path entirely. Our broker intercept normally handles
+    //    this when the app sends it — here we short-circuit direct from server.
+    const contentPromise = new Promise<Record<string, unknown> | null>((resolve) => {
+      const timer = setTimeout(() => {
+        offExtendedResponse(sn, handler);
+        resolve(null);
+      }, 8000);
+      const handler = (data: Record<string, unknown>) => {
+        const resp = data['get_preview_cover_path_respond'] as { result?: number; value?: unknown; error?: string } | undefined;
+        if (!resp) return;
+        clearTimeout(timer);
+        offExtendedResponse(sn, handler);
+        if (resp.result === 0 && resp.value && typeof resp.value === 'object') {
+          resolve(resp.value as Record<string, unknown>);
+        } else {
+          resolve(null);
+        }
+      };
+      onExtendedResponse(sn, handler);
+      publishToExtended(sn, { get_preview_cover_path: { map_name: 'all' } });
+    });
+
+    const content = await contentPromise;
+    if (!content) {
+      res.status(504).json({ ok: false, error: 'no preview response within timeout (extended_commands.py running on mower?)' });
+      return;
+    }
+
+    handlePreviewPathRespond(sn, content);
+    const paths = previewPathCache.get(sn) ?? [];
+    res.json({ ok: true, paths, count: paths.length, cmd_num: cmdNum });
+  } catch (err) {
+    console.error(`[PREVIEW-REFRESH] Error:`, err);
+    res.status(500).json({ ok: false, error: (err as Error).message });
+  }
+});
+
+// POST /api/dashboard/refresh-plan-path/:sn — zelfde patroon voor live plan path.
+// Gebruik tijdens mowing als je de echte paden (niet de preview) wil ophalen.
+dashboardRouter.post('/refresh-plan-path/:sn', async (req: Request, res: Response) => {
+  const { sn } = req.params;
+  if (!isDeviceOnline(sn)) {
+    res.status(503).json({ ok: false, error: 'device offline' });
+    return;
+  }
+  try {
+    const { publishToExtended, onExtendedResponse, offExtendedResponse } = await import('../mqtt/mapSync.js');
+    const contentPromise = new Promise<Record<string, unknown> | null>((resolve) => {
+      const timer = setTimeout(() => {
+        offExtendedResponse(sn, handler);
+        resolve(null);
+      }, 8000);
+      const handler = (data: Record<string, unknown>) => {
+        const resp = data['get_map_plan_path_respond'] as { result?: number; value?: unknown } | undefined;
+        if (!resp) return;
+        clearTimeout(timer);
+        offExtendedResponse(sn, handler);
+        if (resp.result === 0 && resp.value && typeof resp.value === 'object') {
+          resolve(resp.value as Record<string, unknown>);
+        } else {
+          resolve(null);
+        }
+      };
+      onExtendedResponse(sn, handler);
+      publishToExtended(sn, { get_map_plan_path: { map_name: 'all' } });
+    });
+    const content = await contentPromise;
+    if (!content) {
+      res.status(504).json({ ok: false, error: 'no plan path response within timeout' });
+      return;
+    }
+    handlePlannedPathRespond(sn, content);
+    const paths = plannedPathCache.get(sn) ?? [];
+    res.json({ ok: true, paths, count: paths.length });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: (err as Error).message });
+  }
+});
+
+/** Parse {"1": {"0": "x y,x y,...", "100": "x y,..."}} format to array of sub-paths */
+function parsePlannedPathJson(data: Record<string, unknown>): Array<{ id: string; points: Array<{ x: number; y: number }> }> {
+  const paths: Array<{ id: string; points: Array<{ x: number; y: number }> }> = [];
+  for (const mapKey of Object.keys(data)) {
+    const subPaths = data[mapKey];
+    if (typeof subPaths !== 'object' || !subPaths) continue;
+    for (const subKey of Object.keys(subPaths as Record<string, string>)) {
+      const pointsStr = (subPaths as Record<string, string>)[subKey];
+      if (typeof pointsStr !== 'string') continue;
+      const points = pointsStr.split(',').map(p => {
+        const parts = p.trim().split(/\s+/).map(Number);
+        return { x: parts[0], y: parts[1] };
+      }).filter(p => !isNaN(p.x) && !isNaN(p.y));
+      if (points.length >= 2) {
+        paths.push({ id: `${mapKey}_${subKey}`, points });
+      }
+    }
+  }
+  return paths;
 }
 
 // POST /api/dashboard/sensor-override/:sn — manually set sensor values (for local preferences)

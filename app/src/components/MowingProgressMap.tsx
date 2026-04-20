@@ -1,9 +1,16 @@
 /**
  * MowingProgressMap — live mini map during mowing.
  * Shows polygon, coverage stripes, mower trail, mower position + heading, charger.
+ * Optional interactive mode: pinch-to-zoom + pan + double-tap to reset.
  */
-import React, { useMemo } from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import React, { useMemo, useState } from 'react';
+import { View, Text, StyleSheet, type LayoutChangeEvent } from 'react-native';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withTiming,
+} from 'react-native-reanimated';
+import { GestureDetector, Gesture } from 'react-native-gesture-handler';
 import Svg, {
   Polygon as SvgPolygon,
   Polyline,
@@ -26,12 +33,19 @@ interface Props {
   polygon: LocalPoint[];
   progress: number;         // 0-100 (cov_ratio)
   pathDirection: number;    // degrees
-  size?: number;
+  size?: number;            // If omitted the map fills its parent (onLayout).
+  fill?: boolean;           // Force "fill parent" mode even if size given (HomeScreen expanded view).
+  interactive?: boolean;    // Enable pinch + pan + double-tap gestures.
   trail?: LocalPoint[];     // mowed path in local meters
   plannedPaths?: Array<{ id: string; points: LocalPoint[] }>;  // planned mowing paths
+  finishedAreas?: string[]; // IDs of planned paths fully covered (from mower's finished_area)
+  activeAreaId?: string;    // ID of the planned path currently being mowed (from covering_area.area_id)
+  activeAreaPoints?: number; // # points of the active sub-path already mowed (from covering_area.points)
+  liveCoverSegment?: LocalPoint[]; // recent cover_path.covered.covering points
   obstacles?: Array<{ id: string; points: LocalPoint[] }>;    // obstacle polygons
   mowerPos?: LocalPoint | null;  // mower position in local meters
   mowerHeading?: number;    // radians
+  showProgressOverlay?: boolean; // show big percentage overlay (default: true)
 }
 
 function toSvg(
@@ -91,7 +105,80 @@ function generateStripes(
   return lines;
 }
 
-export function MowingProgressMap({ polygon, progress, pathDirection, size = 200, trail, plannedPaths, obstacles, mowerPos, mowerHeading }: Props) {
+export function MowingProgressMap({
+  polygon,
+  progress,
+  pathDirection,
+  size,
+  fill,
+  interactive = false,
+  trail,
+  plannedPaths,
+  finishedAreas,
+  activeAreaId,
+  activeAreaPoints,
+  liveCoverSegment,
+  obstacles,
+  mowerPos,
+  mowerHeading,
+  showProgressOverlay = true,
+}: Props) {
+  const finishedSet = useMemo(
+    () => new Set(finishedAreas ?? []),
+    [finishedAreas],
+  );
+  const useFill = fill || size == null;
+  const [measured, setMeasured] = useState<number>(0);
+  const renderSize = useFill ? (measured || 200) : (size ?? 200);
+
+  // ── Gesture state (only used when `interactive` is true) ─────────
+  const scale = useSharedValue(1);
+  const translateX = useSharedValue(0);
+  const translateY = useSharedValue(0);
+  const savedScale = useSharedValue(1);
+  const savedTranslateX = useSharedValue(0);
+  const savedTranslateY = useSharedValue(0);
+
+  const pinchGesture = Gesture.Pinch()
+    .onStart(() => {
+      savedScale.value = scale.value;
+    })
+    .onUpdate((e) => {
+      scale.value = Math.min(Math.max(savedScale.value * e.scale, 0.5), 8);
+    });
+
+  const panGesture = Gesture.Pan()
+    .onStart(() => {
+      savedTranslateX.value = translateX.value;
+      savedTranslateY.value = translateY.value;
+    })
+    .onUpdate((e) => {
+      translateX.value = savedTranslateX.value + e.translationX;
+      translateY.value = savedTranslateY.value + e.translationY;
+    });
+
+  const doubleTapGesture = Gesture.Tap()
+    .numberOfTaps(2)
+    .onEnd(() => {
+      scale.value = withTiming(1, { duration: 260 });
+      translateX.value = withTiming(0, { duration: 260 });
+      translateY.value = withTiming(0, { duration: 260 });
+    });
+
+  const composedGesture = Gesture.Simultaneous(
+    pinchGesture,
+    panGesture,
+    doubleTapGesture,
+  );
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [
+      { translateX: translateX.value },
+      { translateY: translateY.value },
+      { scale: scale.value },
+    ],
+  }));
+
   const padding = 14;
   const charger: LocalPoint = { x: 0, y: 0 };
 
@@ -102,103 +189,203 @@ export function MowingProgressMap({ polygon, progress, pathDirection, size = 200
     return computeBounds(polygon, extra);
   }, [polygon, mowerPos, trail]);
 
-  const svgPoints = useMemo(() => polygon.map(p => toSvg(p, bounds, size, padding)), [polygon, bounds, size]);
+  const svgPoints = useMemo(
+    () => polygon.map(p => toSvg(p, bounds, renderSize, padding)),
+    [polygon, bounds, renderSize],
+  );
   const pointsStr = svgPoints.map(p => `${p.x},${p.y}`).join(' ');
   // Add 180° to compensate for both-axes-flipped rendering in toSvg
-  const stripes = useMemo(() => generateStripes({ minX: padding, maxX: size - padding, minY: padding, maxY: size - padding }, pathDirection + 180, progress, 5), [size, pathDirection, progress]);
+  const stripes = useMemo(
+    () => generateStripes(
+      { minX: padding, maxX: renderSize - padding, minY: padding, maxY: renderSize - padding },
+      pathDirection + 180,
+      progress,
+      5,
+    ),
+    [renderSize, pathDirection, progress],
+  );
 
-  const trailSvg = useMemo(() =>
-    (trail ?? []).map(p => toSvg(p, bounds, size, padding)),
-    [trail, bounds, size]);
+  const trailSvg = useMemo(
+    () => (trail ?? []).map(p => toSvg(p, bounds, renderSize, padding)),
+    [trail, bounds, renderSize],
+  );
 
-  const chargerSvg = toSvg(charger, bounds, size, padding);
-  const mowerSvg = mowerPos ? toSvg(mowerPos, bounds, size, padding) : null;
+  const chargerSvg = toSvg(charger, bounds, renderSize, padding);
+  const mowerSvg = mowerPos ? toSvg(mowerPos, bounds, renderSize, padding) : null;
 
-  if (svgPoints.length < 3) return null;
+  const onLayout = useFill
+    ? (e: LayoutChangeEvent) => {
+        const { width, height } = e.nativeEvent.layout;
+        const s = Math.min(width, height);
+        if (s > 0 && Math.abs(s - measured) > 1) setMeasured(s);
+      }
+    : undefined;
+
+  if (svgPoints.length < 3) {
+    // Keep the slot so the panel doesn't collapse when we don't have a polygon yet.
+    return useFill ? <View style={styles.flex} onLayout={onLayout} /> : null;
+  }
+
+  const svgContent = (
+    <Svg width={renderSize} height={renderSize} viewBox={`0 0 ${renderSize} ${renderSize}`}>
+      <Defs>
+        <ClipPath id="polyClipHome">
+          <SvgPolygon points={pointsStr} />
+        </ClipPath>
+      </Defs>
+
+      {/* Polygon background */}
+      <SvgPolygon points={pointsStr} fill="rgba(34,197,94,0.12)" stroke="#22c55e" strokeWidth={1.5} strokeLinejoin="round" />
+
+      {/* Planned mowing paths OR direction stripes as fallback.
+          Finished sub-areas (from mower's cover_path.covered.finished_area)
+          render as the "mowed" line — persists across app reloads because
+          the mower re-reports finished_area every report_state_timer_data tick. */}
+      {plannedPaths && plannedPaths.length > 0 ? (
+        <G clipPath="url(#polyClipHome)">
+          {/* 1. Alle nog niet-voltooide planned paths — dunne witte hint-lijn.
+              Inclusief het actieve sub-path zodat ook daar de volledige plan-
+              lijn zichtbaar blijft; de al-gedekte portie wordt hieronder in
+              emerald overheen getekend. */}
+          {plannedPaths.filter(p => !finishedSet.has(p.id)).map((path) => (
+            <Polyline
+              key={`plan-${path.id}`}
+              points={path.points.map(p => toSvg(p, bounds, renderSize, padding)).map(p => `${p.x},${p.y}`).join(' ')}
+              fill="none" stroke="rgba(255,255,255,0.22)" strokeWidth={1} strokeLinecap="round" strokeLinejoin="round"
+            />
+          ))}
+          {/* 2. Finished sub-areas — thick dark green, like Novabot's mowed line */}
+          {plannedPaths.filter(p => finishedSet.has(p.id)).map((path) => (
+            <Polyline
+              key={`done-${path.id}`}
+              points={path.points.map(p => toSvg(p, bounds, renderSize, padding)).map(p => `${p.x},${p.y}`).join(' ')}
+              fill="none" stroke="rgba(34,197,94,0.85)" strokeWidth={3.5} strokeLinecap="round" strokeLinejoin="round"
+            />
+          ))}
+          {/* 3. Currently mowing sub-area — split on activeAreaPoints so the
+              mower icon always sits at the "frontier" between done and to-do
+              (matches Novabot's rendering). The portion UP TO the current
+              point count renders as solid emerald (like finished sub-paths);
+              the rest is thin stippel showing what's still coming. */}
+          {activeAreaId && plannedPaths.filter(p => p.id === activeAreaId).map((path) => {
+            // Alleen de al-gedekte portie van het actieve sub-path tekenen —
+            // net zoals Novabot doet. De to-do-portie helemaal niet tonen zodat
+            // de mower icon vanzelf op de "frontier" komt te staan zonder dat
+            // er een tweede kleurvlak aan de toekomstige kant verschijnt.
+            const splitAt = Math.max(0, Math.min(
+              typeof activeAreaPoints === 'number' && activeAreaPoints > 0
+                ? activeAreaPoints
+                : 0,
+              path.points.length,
+            ));
+            const done = path.points.slice(0, splitAt);
+            if (done.length < 2) return null;
+            const toStr = (pts: LocalPoint[]) => pts.map(p => toSvg(p, bounds, renderSize, padding)).map(p => `${p.x},${p.y}`).join(' ');
+            return (
+              <Polyline
+                key={`active-${path.id}`}
+                points={toStr(done)}
+                fill="none" stroke="rgba(34,197,94,0.85)" strokeWidth={3.5} strokeLinecap="round" strokeLinejoin="round"
+              />
+            );
+          })}
+        </G>
+      ) : (
+        <G clipPath="url(#polyClipHome)">
+          {stripes.map((l, i) => (
+            <Line key={i} x1={l.x1} y1={l.y1} x2={l.x2} y2={l.y2} stroke="rgba(34,197,94,0.15)" strokeWidth={1} />
+          ))}
+        </G>
+      )}
+
+      {/* Mowed trail (thick — shows actual GPS/odom positions this session;
+          layered on top of finished_area to show the live movement accurately) */}
+      {trailSvg.length > 1 && (
+        <G clipPath="url(#polyClipHome)">
+          <Polyline
+            points={trailSvg.map(p => `${p.x},${p.y}`).join(' ')}
+            fill="none" stroke="rgba(34,197,94,0.5)" strokeWidth={6} strokeLinecap="round" strokeLinejoin="round"
+          />
+        </G>
+      )}
+
+      {/* Live cover segment from mower (covering) — tiny red tip of where
+          the mower is actually cutting right now. */}
+      {liveCoverSegment && liveCoverSegment.length >= 2 && (
+        <G clipPath="url(#polyClipHome)">
+          <Polyline
+            points={liveCoverSegment.map(p => toSvg(p, bounds, renderSize, padding)).map(p => `${p.x},${p.y}`).join(' ')}
+            fill="none" stroke="#fbbf24" strokeWidth={3} strokeLinecap="round"
+          />
+        </G>
+      )}
+
+      {/* Charger */}
+      <Circle cx={chargerSvg.x} cy={chargerSvg.y} r={7} fill="rgba(245,158,11,0.2)" stroke="#f59e0b" strokeWidth={1.5} />
+      <Path d={`M${chargerSvg.x - 2} ${chargerSvg.y - 3} L${chargerSvg.x + 2} ${chargerSvg.y - 3} L${chargerSvg.x + 0.5} ${chargerSvg.y} L${chargerSvg.x + 2} ${chargerSvg.y} L${chargerSvg.x - 1} ${chargerSvg.y + 3.5} L${chargerSvg.x} ${chargerSvg.y + 0.5} L${chargerSvg.x - 1.5} ${chargerSvg.y + 0.5} Z`} fill="#f59e0b" />
+
+      {/* Mower icon + heading */}
+      {mowerSvg && (() => {
+        // Icon points RIGHT at 0°; flipped X-axis → negate heading; +360 offset
+        const degHeading = mowerHeading != null ? -(mowerHeading * 180 / Math.PI) + 180 : 0;
+        const mowerSize = 16;
+        return (
+          <G transform={`translate(${mowerSvg.x}, ${mowerSvg.y}) rotate(${degHeading})`}>
+            <SvgImage
+              x={-mowerSize / 2}
+              y={-mowerSize * 0.35}
+              width={mowerSize}
+              height={mowerSize * 0.68}
+              href={require('../../assets/lawn_mower.png')}
+            />
+          </G>
+        );
+      })()}
+
+      {/* Obstacles */}
+      {obstacles && obstacles.map((obs) => {
+        const obsSvg = obs.points.map(p => toSvg(p, bounds, renderSize, padding));
+        return (
+          <SvgPolygon
+            key={`obs-${obs.id}`}
+            points={obsSvg.map(p => `${p.x},${p.y}`).join(' ')}
+            fill="rgba(239,68,68,0.25)" stroke="#ef4444" strokeWidth={1} strokeLinejoin="round" strokeDasharray="3,2"
+          />
+        );
+      })}
+
+      {/* Outline on top */}
+      <SvgPolygon points={pointsStr} fill="none" stroke="#22c55e" strokeWidth={1.5} strokeLinejoin="round" />
+    </Svg>
+  );
+
+  const outerStyle = useFill ? styles.flex : { width: renderSize, height: renderSize };
+
+  if (interactive) {
+    return (
+      <View style={[styles.container, outerStyle]} onLayout={onLayout}>
+        <GestureDetector gesture={composedGesture}>
+          <Animated.View style={[{ width: renderSize, height: renderSize }, animatedStyle]}>
+            {svgContent}
+          </Animated.View>
+        </GestureDetector>
+        {showProgressOverlay && (
+          <View pointerEvents="none" style={styles.overlay}>
+            <Text style={styles.progressText}>{progress}%</Text>
+          </View>
+        )}
+      </View>
+    );
+  }
 
   return (
-    <View style={[styles.container, { width: size, height: size }]}>
-      <Svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
-        <Defs>
-          <ClipPath id="polyClipHome">
-            <SvgPolygon points={pointsStr} />
-          </ClipPath>
-        </Defs>
-
-        {/* Polygon background */}
-        <SvgPolygon points={pointsStr} fill="rgba(34,197,94,0.12)" stroke="#22c55e" strokeWidth={1.5} strokeLinejoin="round" />
-
-        {/* Planned mowing paths OR direction stripes as fallback */}
-        {plannedPaths && plannedPaths.length > 0 ? (
-          <G clipPath="url(#polyClipHome)">
-            {plannedPaths.map((path) => (
-              <Polyline
-                key={`plan-${path.id}`}
-                points={path.points.map(p => toSvg(p, bounds, size, padding)).map(p => `${p.x},${p.y}`).join(' ')}
-                fill="none" stroke="rgba(255,255,255,0.3)" strokeWidth={1} strokeLinecap="round" strokeLinejoin="round"
-              />
-            ))}
-          </G>
-        ) : (
-          <G clipPath="url(#polyClipHome)">
-            {stripes.map((l, i) => (
-              <Line key={i} x1={l.x1} y1={l.y1} x2={l.x2} y2={l.y2} stroke="rgba(34,197,94,0.15)" strokeWidth={1} />
-            ))}
-          </G>
-        )}
-
-        {/* Mowed trail (thick — shows actual coverage) */}
-        {trailSvg.length > 1 && (
-          <G clipPath="url(#polyClipHome)">
-            <Polyline
-              points={trailSvg.map(p => `${p.x},${p.y}`).join(' ')}
-              fill="none" stroke="rgba(34,197,94,0.5)" strokeWidth={6} strokeLinecap="round" strokeLinejoin="round"
-            />
-          </G>
-        )}
-
-        {/* Charger */}
-        <Circle cx={chargerSvg.x} cy={chargerSvg.y} r={7} fill="rgba(245,158,11,0.2)" stroke="#f59e0b" strokeWidth={1.5} />
-        <Path d={`M${chargerSvg.x - 2} ${chargerSvg.y - 3} L${chargerSvg.x + 2} ${chargerSvg.y - 3} L${chargerSvg.x + 0.5} ${chargerSvg.y} L${chargerSvg.x + 2} ${chargerSvg.y} L${chargerSvg.x - 1} ${chargerSvg.y + 3.5} L${chargerSvg.x} ${chargerSvg.y + 0.5} L${chargerSvg.x - 1.5} ${chargerSvg.y + 0.5} Z`} fill="#f59e0b" />
-
-        {/* Mower icon + heading */}
-        {mowerSvg && (() => {
-          // Icon points RIGHT at 0°; flipped X-axis → negate heading; +360 offset
-          const degHeading = mowerHeading != null ? -(mowerHeading * 180 / Math.PI) + 180 : 0;
-          const mowerSize = 16;
-          return (
-            <G transform={`translate(${mowerSvg.x}, ${mowerSvg.y}) rotate(${degHeading})`}>
-              <SvgImage
-                x={-mowerSize / 2}
-                y={-mowerSize * 0.35}
-                width={mowerSize}
-                height={mowerSize * 0.68}
-                href={require('../../assets/lawn_mower.png')}
-              />
-            </G>
-          );
-        })()}
-
-        {/* Obstacles */}
-        {obstacles && obstacles.map((obs) => {
-          const obsSvg = obs.points.map(p => toSvg(p, bounds, size, padding));
-          return (
-            <SvgPolygon
-              key={`obs-${obs.id}`}
-              points={obsSvg.map(p => `${p.x},${p.y}`).join(' ')}
-              fill="rgba(239,68,68,0.25)" stroke="#ef4444" strokeWidth={1} strokeLinejoin="round" strokeDasharray="3,2"
-            />
-          );
-        })}
-
-        {/* Outline on top */}
-        <SvgPolygon points={pointsStr} fill="none" stroke="#22c55e" strokeWidth={1.5} strokeLinejoin="round" />
-      </Svg>
-
-      {/* Progress overlay */}
-      <View style={styles.overlay}>
-        <Text style={styles.progressText}>{progress}%</Text>
-      </View>
+    <View style={[styles.container, outerStyle]} onLayout={onLayout}>
+      {svgContent}
+      {showProgressOverlay && (
+        <View pointerEvents="none" style={styles.overlay}>
+          <Text style={styles.progressText}>{progress}%</Text>
+        </View>
+      )}
     </View>
   );
 }
@@ -208,6 +395,11 @@ const styles = StyleSheet.create({
     position: 'relative',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  flex: {
+    flex: 1,
+    width: '100%',
+    height: '100%',
   },
   overlay: {
     position: 'absolute',

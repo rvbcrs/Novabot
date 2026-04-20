@@ -365,12 +365,66 @@ The `extended_commands.py` Python service runs alongside `mqtt_node` and handles
 
 ### Available Commands
 
+All commands are sent as `{<command>: <payload>}` on `novabot/extended/<SN>`. The handler responds with `{<command>_respond: <result>}` on `novabot/extended_response/<SN>` (see `respond()` helper in `extended_commands.py`). Response shape is typically `{result: 0|1, value: ...}` where `result=0` means success.
+
+#### Device & State
+
 | Command | Payload | Description |
 |---------|---------|-------------|
+| `is_opennova` | `{}` | Ping marker — returns `{"opennova": true, "version": "..."}` so the server can verify a mower is running custom firmware |
 | `set_robot_reboot` | `{}` | System reboot with 3s delay |
-| `get_system_info` | `{}` | CPU temp, uptime, disk, memory, ROS nodes |
-| `save_camera_image` | `{}` | Camera snapshot (delegated to camera_stream.py) |
-| `verify_pin` | `{"code": "1234"}` | PIN verify via `pin_verify_ros2.py` subprocess |
+| `get_system_info` | `{}` | CPU temp, uptime, disk, memory, ROS nodes summary |
+| `clear_error` | `{}` | Serial-level error clear via STM32 (`serial_clear_error()`) — complements MQTT `clear_error` when mqtt_node is unresponsive |
+
+#### PIN Verification
+
+| Command | Payload | Description |
+|---------|---------|-------------|
+| `verify_pin` | `{"code": "1234"}` | PIN verify via `pin_verify_ros2.py` subprocess (bypasses broken stock C++ action client) |
+| `query_pin` | `{}` | Return stored device PIN from `/userdata/device_pin.json` |
+
+#### Perception / Semantic
+
+| Command | Payload | Description |
+|---------|---------|-------------|
+| `set_perception_mode` | `{"mode": 0\|1\|2}` | Switch perception node perception mode |
+| `set_semantic_mode` | `{"mode": 0\|1}` | Toggle semantic segmentation |
+| `get_perception_status` | `{}` | Return current perception+semantic config |
+
+#### Network / Config
+
+| Command | Payload | Description |
+|---------|---------|-------------|
+| `set_mqtt_config` | `{"host": "...", "port": 1883}` | Update `/userdata/lfi/json_config.json` mqtt section + restart mqtt_node |
+| `set_wifi_config` | `{"ssid": "...", "psk": "..."}` | Update wpa_supplicant + reconnect |
+| `clean_ota_cache` | `{}` | Wipe `/userdata/lfi/update/` before retrying OTA |
+
+#### LoRa
+
+| Command | Payload | Description |
+|---------|---------|-------------|
+| `get_lora_info` | `{}` | Read LoRa addr + channel from `/userdata/lfi/lora_info.json` |
+| `set_lora_info` | `{"addr": 718, "channel": 15}` | Update LoRa config + restart LoRa service |
+
+#### Map / Path Backchannel (buffer-overflow workaround)
+
+The stock `mqtt_node`'s `get_preview_cover_path` / `get_map_plan_path` handlers have a `__fortify_fail` buffer overflow that crashes the whole MQTT daemon when the planned path JSON is larger than a certain size (~16 KB). We avoid those entirely by reading the files directly from disk via this backchannel.
+
+| Command | Payload | Description |
+|---------|---------|-------------|
+| `get_preview_cover_path` | `{"map_name": "all"}` | Read `/userdata/lfi/maps/home0/planned_path/preview_planned_path.json` and return its parsed content. Broker intercept redirects app→mower requests here transparently |
+| `get_map_plan_path` | `{"map_name": "all"}` | Read `/userdata/lfi/maps/home0/planned_path/planned_path.json` (live plan during coverage) |
+| `stat_path_files` | `{}` | List sizes + mtimes of all files in `planned_path/` — diagnostic for the "no preview" issue |
+
+#### Log Retrieval (Mower Debug tab)
+
+| Command | Payload | Description |
+|---------|---------|-------------|
+| `list_ros_logs` | `{}` | Return the list of `*.log` files in the most recent `ros2_log/` session directory with sizes |
+| `get_ros_log` | `{"name": "mqtt_node_...", "lines": 500, "grep": "error", "level": "WARN"}` | Read the last N lines of a specific ROS log, optionally filtered by substring and/or log-level |
+| `get_mqtt_log` | `{"lines": 200, "grep": "...", "level": "..."}` | Same as `get_ros_log` but auto-targeted at the most recent `mqtt_node_*.log` — convenience for the admin UI |
+
+The log handlers return `{result: 0, value: {name, total_lines, returned, content}}` so the admin panel can paginate client-side without re-fetching.
 
 ### PIN Verify Workaround (`pin_verify_ros2.py`)
 

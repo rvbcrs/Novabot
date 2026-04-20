@@ -521,6 +521,23 @@ export async function startMqttBroker(): Promise<void> {
                 offExtendedResponse(sn, handler);
                 console.log(`${C.cyan}[PATH-INTERCEPT] ${respondCmd} ontvangen van extended, doorsturen naar app${C.reset}`);
 
+                // Vul de dashboard cache zodat de OpenNova app (en Novabot app)
+                // deze data ook via GET /api/dashboard/planned-path/:sn of
+                // /preview-path/:sn kan ophalen. Anders valt de app terug op
+                // rechte direction stripes tijdens mowing.
+                if (respondData.value && typeof respondData.value === 'object') {
+                  try {
+                    const { handlePlannedPathRespond, handlePreviewPathRespond } = require('../routes/dashboard.js');
+                    if (cmd === 'get_map_plan_path') {
+                      handlePlannedPathRespond(sn, respondData.value as Record<string, unknown>);
+                    } else {
+                      handlePreviewPathRespond(sn, respondData.value as Record<string, unknown>);
+                    }
+                  } catch (e) {
+                    console.warn(`${C.red}[PATH-INTERCEPT] Cache update faalde: ${(e as Error).message}${C.reset}`);
+                  }
+                }
+
                 // App-native format (bevestigd via blutter analyse):
                 //   {type, message:{result, value:{data: [byte1,byte2,...]}}}
                 // De Novabot Flutter app leest `message.value.data` als List<int>,

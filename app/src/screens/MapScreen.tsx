@@ -37,6 +37,7 @@ import Svg, {
   Defs,
   ClipPath,
   Image as SvgImage,
+  Text as SvgText,
 } from 'react-native-svg';
 import * as DocumentPicker from 'expo-document-picker';
 import { Ionicons } from '@expo/vector-icons';
@@ -160,6 +161,24 @@ function getMapFamilyKey(map: Pick<MapData, 'mapId' | 'mapName'>): string | null
 function isChargerUnicom(map: Pick<MapData, 'mapName'> & { fileName?: string | null }): boolean {
   const candidates = [map.mapName, (map as { fileName?: string | null }).fileName].filter((v): v is string => !!v);
   return candidates.some(v => /tocharge_unicom/i.test(v));
+}
+
+/**
+ * Returns true if the mower-generated default obstacle name should be
+ * considered "no meaningful name". Firmware's save_map generates file names
+ * like map0_0_obstacle / map1_2_obstacle via generate_map_file_name; the DB
+ * often stores the base (with or without .csv, with or without number
+ * suffixes) as mapName. Only when the user has picked a real label via the
+ * Rename sheet do we show a text overlay on the polygon.
+ */
+function isCustomObstacleName(name: string | null | undefined): name is string {
+  if (!name) return false;
+  const trimmed = name.trim();
+  if (!trimmed) return false;
+  // map0_0_obstacle / map12_3_obstacle.csv / obstacle / obstacle_0 → all default
+  if (/^map\d+_\d+_obstacle(\.csv)?$/i.test(trimmed)) return false;
+  if (/^obstacle(_\d+)?(\.csv)?$/i.test(trimmed)) return false;
+  return true;
 }
 
 // ── Map type colors ──────────────────────────────────────────────────
@@ -307,7 +326,28 @@ export default function MapScreen() {
   // Use local map_position_orientation (radians) for heading on local map
   const heading = parseFloat(mower?.sensors.map_position_orientation ?? '0') || 0;
   const msg = mower?.sensors.msg ?? '';
-  const isMowing = msg.includes('Work:RUNNING') || msg.includes('Work:NAVIGATING') || msg.includes('Work:COVERING') || msg.includes('Work:MOVING');
+  const isMowing = msg.includes('Work:RUNNING') || msg.includes('Work:NAVIGATING') || msg.includes('Work:COVERING') || msg.includes('Work:MOVING')
+    || msg.includes('Work:BOUNDARY_COVERING') || msg.includes('Work:AVOIDING');
+  // Voortgangs-state uit report_state_timer_data.cover_path.covered — elke
+  // MQTT tick door server geforward als sensor-velden. finished_area is een
+  // space-separated lijst van voltooide planned_path sub-gebied indices,
+  // covering_area_id is het gebied waar de maaier nu mee bezig is.
+  const coverMapId = mower?.sensors.cover_map_id;
+  const finishedAreaSet = useMemo<Set<string>>(() => {
+    const raw = mower?.sensors.finished_area;
+    if (!raw) return new Set();
+    const ids = raw.trim().split(/\s+/).filter(Boolean);
+    // plannedPaths[].id = "{map_id}_{sub_id}" — accepteer beide formats
+    const out = new Set<string>(ids);
+    if (coverMapId) ids.forEach(sub => out.add(`${coverMapId}_${sub}`));
+    return out;
+  }, [mower?.sensors.finished_area, coverMapId]);
+  const activeAreaId = (() => {
+    const raw = mower?.sensors.covering_area_id;
+    if (!raw) return undefined;
+    return coverMapId ? `${coverMapId}_${raw}` : raw;
+  })();
+  const activeAreaPoints = parseInt(mower?.sensors.covering_area_points ?? '0', 10) || 0;
   const covRatioRaw = parseFloat(mower?.sensors.cov_ratio ?? '0') || 0;
   const covRatio = covRatioRaw <= 1 ? Math.round(covRatioRaw * 100) : Math.round(covRatioRaw);
   const mowingProgress = parseInt(mower?.sensors.mowing_progress ?? '0', 10) || 0;
@@ -327,15 +367,21 @@ export default function MapScreen() {
       const url = await getServerUrl();
       if (!url) return;
       const api = new ApiClient(url);
-      const [mapsRes, trailRes, pathsRes] = await Promise.all([
+      const [mapsRes, trailRes, pathsRes, previewRes] = await Promise.all([
         api.fetchMaps(sn).catch(() => ({ maps: [], chargerGps: null })),
         api.getTrail(sn).catch(() => []),
         api.getPlannedPath(sn).catch(() => []),
+        api.getPreviewPath(sn).catch(() => []),
       ]);
       setMaps(mapsRes.maps ?? []);
       setChargerGpsOrigin(mapsRes.chargerGps ?? null);
       setTrail(Array.isArray(trailRes) ? trailRes : (trailRes as any).trail ?? []);
-      setPlannedPaths(Array.isArray(pathsRes) ? pathsRes : []);
+      // Prefer plan_path tijdens maaien (live refresh), anders preview_path
+      // (statische berekening gebaseerd op de laatste maaisessie). Beide
+      // hebben hetzelfde formaat: [{ id: "{map_id}_{sub_id}", points: [...] }].
+      const plan = Array.isArray(pathsRes) ? pathsRes : [];
+      const preview = Array.isArray(previewRes) ? previewRes : [];
+      setPlannedPaths(plan.length > 0 ? plan : preview);
     } catch { /* ignore */ }
     finally { setLoading(false); }
   }, [mower?.sn, demo.enabled]);
@@ -867,11 +913,58 @@ export default function MapScreen() {
     handleMapTap({ nativeEvent: { locationX: x, locationY: y } } as any);
   };
 
+  const obstacleHitboxesRef = useRef<Array<{ map: MapData; pts: Array<{ x: number; y: number }> }>>([]);
+
+  const pointInPolygonSvg = (x: number, y: number, pts: Array<{ x: number; y: number }>): boolean => {
+    let inside = false;
+    for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+      const xi = pts[i].x, yi = pts[i].y;
+      const xj = pts[j].x, yj = pts[j].y;
+      const intersect = ((yi > y) !== (yj > y))
+        && (x < ((xj - xi) * (y - yi)) / ((yj - yi) || 1e-9) + xi);
+      if (intersect) inside = !inside;
+    }
+    return inside;
+  };
+
+  const checkObstacleTap = (sx: number, sy: number, _rawX: number, _rawY: number) => {
+    const hits = obstacleHitboxesRef.current;
+    for (let i = hits.length - 1; i >= 0; i--) {
+      if (pointInPolygonSvg(sx, sy, hits[i].pts)) {
+        handleMapAction(hits[i].map);
+        return;
+      }
+    }
+  };
+
+  useEffect(() => {
+    if (!bounds) {
+      obstacleHitboxesRef.current = [];
+      return;
+    }
+    obstacleHitboxesRef.current = maps
+      .filter(m => m.mapType === 'obstacle' && Array.isArray(m.mapArea) && m.mapArea.length >= 3)
+      .map(m => ({
+        map: m,
+        pts: (m.mapArea as LocalPoint[]).map(p => localToSvg(p, bounds, MAP_SIZE, INNER_PADDING)),
+      }));
+  }, [maps, bounds]);
+
   const singleTapGesture = Gesture.Tap()
     .numberOfTaps(1)
     .onEnd((e) => {
+      'worklet';
+      // RNGH geeft e.x/e.y in het layout-coord systeem van de Animated.View —
+      // dat is vóór de transform — en dat is dezelfde ruimte waarin we de
+      // SVG polygonen tekenen via localToSvg(). Dus directe hit-test: geen
+      // inverse transform nodig (de gesture handler doet die al intern).
+      // Bewezen via debug markers op 2026-04-20: groen bolletje (e.x,e.y)
+      // landde op de vinger, gele kruis (c + (e.x-c)/s) zat naar center toe
+      // geschoven — klassiek over-correctie pattern.
       if (patternCtx.isPlacing) {
         runOnJS(handleTapGesture)(e.x, e.y);
+      } else {
+        runOnJS(checkObstacleTap)(e.x, e.y, e.x, e.y);
       }
     });
 
@@ -1146,9 +1239,53 @@ export default function MapScreen() {
                     // Obstacles are often tiny (sub-meter) against a large work polygon, so a
                     // thicker stroke keeps them legible at the default zoom level.
                     const strokeWidth = m.mapType === 'obstacle' ? 2.5 : isSelected ? 2 : 1.5;
+                    // Obstacles tap-to-rename — matcht Novabot UX. Opent de
+                    // zelfde action sheet die handleMapAction anders via de
+                    // zone-carousel laat zien (Rename / Delete). We gebruiken
+                    // Svg's onPress (react-native-svg) — werkt binnen onze
+                    // GestureDetector zonder conflict met pinch/pan (die
+                    // triggeren op 2 vingers / grote translatie).
+                    const onObstaclePress = m.mapType === 'obstacle'
+                      ? () => handleMapAction(m)
+                      : undefined;
                     return (
                       <G key={m.mapId}>
-                        <SvgPolygon points={pts} fill={c.fill} stroke={c.stroke} strokeWidth={strokeWidth} strokeLinejoin="round" />
+                        <SvgPolygon
+                          points={pts}
+                          fill={c.fill}
+                          stroke={c.stroke}
+                          strokeWidth={strokeWidth}
+                          strokeLinejoin="round"
+                          onPress={onObstaclePress}
+                        />
+                        {/* Label: alleen tonen als de user een echte naam heeft
+                            gekozen. De firmware genereert default namen volgens
+                            patroon map{N}_{M}_obstacle (zie
+                            generate_map_file_name in save_map service) —
+                            die willen we verbergen omdat ze zero user value
+                            toevoegen. User tikt dan gewoon op de polygon zelf
+                            om te hernoemen. Zodra een echte naam gezet is
+                            (via Rename sheet) toont hij het label. */}
+                        {m.mapType === 'obstacle' && isCustomObstacleName(m.mapName) && (() => {
+                          const cx = svgPts.reduce((s, p) => s + p.x, 0) / svgPts.length;
+                          const cy = svgPts.reduce((s, p) => s + p.y, 0) / svgPts.length;
+                          return (
+                            <SvgText
+                              x={cx}
+                              y={cy}
+                              fontSize={10}
+                              fontWeight="700"
+                              fill="rgba(255,255,255,0.92)"
+                              stroke="rgba(0,0,0,0.5)"
+                              strokeWidth={0.6}
+                              textAnchor="middle"
+                              alignmentBaseline="middle"
+                              onPress={onObstaclePress}
+                            >
+                              {m.mapName}
+                            </SvgText>
+                          );
+                        })()}
                         {/* Direction stripes (thin — planned mow direction) */}
                         {isMowing && m.mapType === 'work' && (
                           <G clipPath={`url(#clip-${m.mapId})`}>
@@ -1247,14 +1384,51 @@ export default function MapScreen() {
                     );
                   })()}
 
-                  {/* Planned mowing path (only while mowing) */}
-                  {isMowing && plannedPaths.length > 0 && plannedPaths.map((path) => (
-                    <Polyline
-                      key={`plan-${path.id}`}
-                      points={path.points.map((p) => localToSvg(p, bounds, MAP_SIZE, INNER_PADDING)).map((p) => `${p.x},${p.y}`).join(' ')}
-                      fill="none" stroke="rgba(255,255,255,0.35)" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round"
-                    />
-                  ))}
+                  {/* Planned mowing path — altijd zichtbaar (ook idle) zodat
+                      je de preview lijntjes ziet. Gekleurd naar voortgang:
+                      gedekt = emerald, bezig = stippel, nog te doen = dun wit.
+                      Data komt uit plannedPathCache (mowing) of previewPathCache
+                      (idle); ids matchen tegen finished_area uit de mower. */}
+                  {plannedPaths.length > 0 && (
+                    <>
+                      {/* Alle niet-voltooide sub-paths (incl. actieve) als
+                          dunne witte hint-lijnen. De gedekte portie van het
+                          actieve sub-path wordt hieronder in emerald overheen
+                          getekend zodat je zowel het plan als de voortgang
+                          tegelijk ziet. */}
+                      {plannedPaths.filter(p => !finishedAreaSet.has(p.id)).map((path) => (
+                        <Polyline
+                          key={`plan-${path.id}`}
+                          points={path.points.map((p) => localToSvg(p, bounds, MAP_SIZE, INNER_PADDING)).map((p) => `${p.x},${p.y}`).join(' ')}
+                          fill="none" stroke="rgba(255,255,255,0.28)" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round"
+                        />
+                      ))}
+                      {plannedPaths.filter(p => finishedAreaSet.has(p.id)).map((path) => (
+                        <Polyline
+                          key={`done-${path.id}`}
+                          points={path.points.map((p) => localToSvg(p, bounds, MAP_SIZE, INNER_PADDING)).map((p) => `${p.x},${p.y}`).join(' ')}
+                          fill="none" stroke="rgba(34,197,94,0.85)" strokeWidth={4} strokeLinecap="round" strokeLinejoin="round"
+                        />
+                      ))}
+                      {activeAreaId && plannedPaths.filter(p => p.id === activeAreaId).map((path) => {
+                        // Alleen gedekte portie van actieve sub-path tonen,
+                        // zoals Novabot. Geen stippel/hint voor de toekomstige
+                        // kant — mower icon komt vanzelf aan de frontier.
+                        const splitAt = Math.max(0, Math.min(activeAreaPoints, path.points.length));
+                        const done = path.points.slice(0, splitAt);
+                        if (done.length < 2) return null;
+                        const toStr = (pts: LocalPoint[]) =>
+                          pts.map((p) => localToSvg(p, bounds, MAP_SIZE, INNER_PADDING)).map((p) => `${p.x},${p.y}`).join(' ');
+                        return (
+                          <Polyline
+                            key={`active-${path.id}`}
+                            points={toStr(done)}
+                            fill="none" stroke="rgba(34,197,94,0.85)" strokeWidth={4} strokeLinecap="round" strokeLinejoin="round"
+                          />
+                        );
+                      })}
+                    </>
+                  )}
 
                   {/* Mowed trail (only while mowing) */}
                   {isMowing && trailLocal.length > 1 && (
@@ -1278,12 +1452,11 @@ export default function MapScreen() {
                   {/* Mower icon + heading */}
                   {mowerLocal && (() => {
                     const mp = localToSvg(mowerLocal!, bounds, MAP_SIZE, INNER_PADDING);
-                    // Icon asset's "front" points LEFT in the source PNG, so the
-                    // previous +180 offset rotated it backwards (front and back
-                    // swapped on screen). Drop the offset so 0° heading shows
-                    // the mower facing the user's right (= +X local), matching
-                    // the firmware's heading convention.
-                    const degHeading = -(heading * 180 / Math.PI);
+                    // Icon points RIGHT at 0°; localToSvg flips the X-axis, so
+                    // we negate heading AND add 180° so the mower renders
+                    // forward-facing on screen. Matches MowingProgressMap
+                    // (HomeScreen) which uses the same transform.
+                    const degHeading = -(heading * 180 / Math.PI) + 180;
                     const mowerSize = 20;
                     return (
                       <G transform={`translate(${mp.x}, ${mp.y}) rotate(${degHeading})`}>
@@ -1468,32 +1641,88 @@ export default function MapScreen() {
                                   </View>
                                 )}
 
-                                {/* Action buttons */}
-                                <View style={styles.zoneButtonRow}>
-                                  <TouchableOpacity
-                                    style={[styles.zoneActionButton, styles.zoneActionPrimary]}
-                                    onPress={() => (navigation as any).navigate('Home', {
-                                      openStartMow: true,
-                                      preselectedMapId: map.mapId,
-                                    })}
-                                    activeOpacity={0.8}
-                                  >
-                                    <Ionicons name="play-outline" size={16} color={colors.white} />
-                                    <Text style={styles.zoneActionPrimaryText}>{t('startMowing')}</Text>
-                                  </TouchableOpacity>
-                                  <TouchableOpacity
-                                    style={styles.zoneActionButton}
-                                    onPress={() => (navigation as any).navigate('Schedules', {
-                                      openEditor: true,
-                                      preselectedMapId: map.mapId,
-                                      preselectedMapName: map.mapName ?? null,
-                                    })}
-                                    activeOpacity={0.8}
-                                  >
-                                    <Ionicons name="time-outline" size={16} color={colors.text} />
-                                    <Text style={styles.zoneActionText}>{t('schedule')}</Text>
-                                  </TouchableOpacity>
-                                </View>
+                                {/* Action buttons. De Start-knop wordt alleen uitgeschakeld
+                                    wanneer we zeker weten dat starten zinloos is:
+                                    - offline
+                                    - blokkerende error (niet-soft, niet dock-failed)
+                                    - ACTIEF aan het maaien / terug-rijden / kaart maken
+                                    Bij een soft warning (bv. dock-failed) moet de user
+                                    die eerst oplossen via de banner; dat is 'n aparte flow
+                                    maar blokkeert de knop met 'Dock failed — fix first'.
+                                    Zonder task_mode===1 alleen: de taak kan geregistreerd
+                                    staan maar in Work:WAIT / FINISHED hangen — dat is
+                                    "klaar", niet "al aan het maaien". */}
+                                {(() => {
+                                  const rechargeStatus = parseInt(mower?.sensors.recharge_status ?? '0', 10);
+                                  const errorStatusRaw = parseInt(mower?.sensors.error_status?.match(/\d+/)?.[0] ?? '0', 10);
+                                  const NON_BLOCKING = [8, 113, 120, 122, 123, 125, 126, 132];
+                                  const hasHardError = errorStatusRaw > 0 && !NON_BLOCKING.includes(errorStatusRaw);
+                                  const dockFailed = msg.includes('Recharge: FAILED');
+                                  const dockGoing = msg.includes('Recharge: GOING')
+                                    || msg.includes('Work:GO_PILE') || msg.includes('Work:BACK_CHARGER')
+                                    || msg.includes('Work:DOCKING')
+                                    || (rechargeStatus === 1 && !dockFailed);
+                                  const isMapping = msg.includes('Mode:MAPPING') || mower?.sensors.start_edit_or_assistant_map_flag === '1';
+                                  // Firmware zet Work:USER_STOP bij pause via app — zie HomeScreen comment.
+                                  const isPaused = msg.includes('Work:PAUSED') || msg.includes('Work:USER_STOP');
+
+                                  let disabledLabel: string | null = null;
+                                  if (!mower?.online) disabledLabel = t('mowerOffline');
+                                  else if (hasHardError) disabledLabel = t('clearErrorFirst');
+                                  else if (dockFailed) disabledLabel = t('dockReturnFailed', undefined) || 'Dock failed — fix first';
+                                  else if (isMowing) disabledLabel = t('alreadyMowing', undefined) || 'Already mowing';
+                                  else if (isMapping) disabledLabel = t('mappingInProgress', undefined) || 'Mapping in progress';
+                                  else if (isPaused) disabledLabel = t('paused', undefined) || 'Paused';
+                                  else if (dockGoing) disabledLabel = t('dockReturnInProgress', undefined) || 'Returning to dock';
+                                  const startDisabled = disabledLabel !== null;
+                                  const primaryLabel = disabledLabel ?? t('startMowing');
+                                  return (
+                                    <View style={styles.zoneButtonRow}>
+                                      <TouchableOpacity
+                                        style={[
+                                          styles.zoneActionButton,
+                                          styles.zoneActionPrimary,
+                                          startDisabled && styles.zoneActionDisabled,
+                                        ]}
+                                        onPress={() => {
+                                          if (startDisabled) return;
+                                          (navigation as any).navigate('Home', {
+                                            openStartMow: true,
+                                            preselectedMapId: map.mapId,
+                                          });
+                                        }}
+                                        disabled={startDisabled}
+                                        activeOpacity={0.8}
+                                      >
+                                        <Ionicons
+                                          name="play-outline"
+                                          size={16}
+                                          color={startDisabled ? colors.textMuted : colors.white}
+                                        />
+                                        <Text
+                                          style={[
+                                            styles.zoneActionPrimaryText,
+                                            startDisabled && { color: colors.textMuted },
+                                          ]}
+                                        >
+                                          {primaryLabel}
+                                        </Text>
+                                      </TouchableOpacity>
+                                      <TouchableOpacity
+                                        style={styles.zoneActionButton}
+                                        onPress={() => (navigation as any).navigate('Schedules', {
+                                          openEditor: true,
+                                          preselectedMapId: map.mapId,
+                                          preselectedMapName: map.mapName ?? null,
+                                        })}
+                                        activeOpacity={0.8}
+                                      >
+                                        <Ionicons name="time-outline" size={16} color={colors.text} />
+                                        <Text style={styles.zoneActionText}>{t('schedule')}</Text>
+                                      </TouchableOpacity>
+                                    </View>
+                                  );
+                                })()}
                               </View>
                             </View>
                           );
@@ -1939,6 +2168,10 @@ const styles = StyleSheet.create({
   },
   zoneActionPrimary: {
     backgroundColor: colors.emerald,
+  },
+  zoneActionDisabled: {
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    opacity: 0.7,
   },
   zoneActionText: {
     fontSize: 14,

@@ -64,6 +64,9 @@ export const SENSORS: SensorDef[] = [
   { field: 'cov_ratio',        name: 'Coverage Ratio',    component: 'sensor', icon: 'mdi:percent', state_class: 'measurement', unit: '%' },
   { field: 'cov_area',         name: 'Coverage Area',     component: 'sensor', icon: 'mdi:texture-box', state_class: 'measurement', unit: 'm²' },
   { field: 'cov_work_time',    name: 'Coverage Work Time', component: 'sensor', icon: 'mdi:timer', state_class: 'measurement', unit: 's' },
+  { field: 'cov_estimate_time',name: 'Coverage Estimated Remaining', component: 'sensor', icon: 'mdi:timer-sand', state_class: 'measurement', unit: 'min' },
+  { field: 'cov_remaining_area', name: 'Coverage Remaining Area', component: 'sensor', icon: 'mdi:texture-box', state_class: 'measurement', unit: 'm²' },
+  { field: 'valid_cov_work_time', name: 'Valid Coverage Work Time', component: 'sensor', icon: 'mdi:timer-check', state_class: 'measurement', unit: 'min', entity_category: 'diagnostic' },
   { field: 'cpu_temperature',  name: 'CPU Temperature',   component: 'sensor', icon: 'mdi:thermometer', device_class: 'temperature', state_class: 'measurement', unit: '°C' },
   { field: 'sw_version',       name: 'Firmware Version',  component: 'sensor', icon: 'mdi:tag',                  entity_category: 'diagnostic' },
   { field: 'loc_quality',      name: 'Location Quality',  component: 'sensor', icon: 'mdi:crosshairs-gps', state_class: 'measurement', unit: '%' },
@@ -96,6 +99,18 @@ export const SENSORS: SensorDef[] = [
 
   // report_state_timer_data
   { field: 'localization_state', name: 'Localization',    component: 'sensor', icon: 'mdi:crosshairs-question' },
+
+  // Cover path voortgang (uit report_state_timer_data.cover_path.covered).
+  // finished_area = space-separated indices van voltooide planned_path
+  // sub-gebieden; covering_area_id = sub-gebied dat nu gemaaid wordt.
+  // Deze state leeft op de maaier en overleeft app-restart: elke MQTT tick
+  // bevat de actuele stand.
+  { field: 'cover_map_id',          name: 'Cover Map ID',          component: 'sensor', icon: 'mdi:map-marker', entity_category: 'diagnostic' },
+  { field: 'finished_area',         name: 'Finished Sub-Areas',    component: 'sensor', icon: 'mdi:check-all', entity_category: 'diagnostic' },
+  { field: 'covering_area_id',      name: 'Current Sub-Area',      component: 'sensor', icon: 'mdi:target', entity_category: 'diagnostic' },
+  { field: 'covering_area_points',  name: 'Current Sub-Area Pts',  component: 'sensor', icon: 'mdi:dots-horizontal', entity_category: 'diagnostic' },
+  { field: 'covering_points',       name: 'Recent Cover Segment',  component: 'sensor', icon: 'mdi:vector-polyline', entity_category: 'diagnostic' },
+  { field: 'missed_points',         name: 'Missed Points',         component: 'sensor', icon: 'mdi:map-marker-question', entity_category: 'diagnostic' },
 ];
 
 // Commando's die geneste data-objecten bevatten die we willen verwerken
@@ -481,6 +496,76 @@ export function updateDeviceData(sn: string, payload: Buffer): Map<string, strin
       if (snValues.get(field) !== loc.localization_state) {
         snValues.set(field, loc.localization_state);
         changes.set(field, translateValue(field, loc.localization_state));
+      }
+    }
+  }
+
+  // ── Extract cover_path voortgang uit report_state_timer_data ─────
+  //
+  // De maaier rapporteert in report_state_timer_data.cover_path.covered welke
+  // sub-gebieden van de planned_path af zijn, welk sub-gebied nu bezig is,
+  // en een klein live segmentje met de recente positie. Deze state leeft op
+  // de maaier en overleeft dus app-restart / reconnect: elke nieuwe tick
+  // bevat de volledige huidige stand.
+  //
+  // Formaat (bewezen via live MQTT capture 2026-04-20):
+  //   cover_path.covered = {
+  //     covering:      "2.48 -1.62,2.49 -1.63",          // huidig segmentje (comma-sep)
+  //     covering_area: { area_id: "14", points: "4" },    // actief sub-gebied
+  //     finished_area: " 0 1 2 3 4 5 6 7 8 9 10 11 12 13", // space-sep indices
+  //     missed:        "3.68 -6.07;3.51 -5.51;..."         // ; -sep gemiste punten
+  //   }
+  //
+  // We kopiëren deze velden naar sensorstate zodat de app ze via socket krijgt.
+  if (commandName === 'report_state_timer_data' && typeof dataObj.cover_path === 'object' && dataObj.cover_path !== null) {
+    const cp = dataObj.cover_path as Record<string, unknown>;
+    if (typeof cp.map_id !== 'undefined' && cp.map_id !== null) {
+      const v = String(cp.map_id);
+      if (snValues.get('cover_map_id') !== v) {
+        snValues.set('cover_map_id', v);
+        changes.set('cover_map_id', v);
+      }
+    }
+    const covered = cp.covered as Record<string, unknown> | undefined;
+    if (covered && typeof covered === 'object') {
+      if (typeof covered.finished_area === 'string') {
+        // Normaliseer leading/trailing spaces, single-space separator
+        const v = covered.finished_area.trim().replace(/\s+/g, ' ');
+        if (snValues.get('finished_area') !== v) {
+          snValues.set('finished_area', v);
+          changes.set('finished_area', v);
+        }
+      }
+      if (typeof covered.covering_area === 'object' && covered.covering_area !== null) {
+        const ca = covered.covering_area as Record<string, unknown>;
+        if (ca.area_id !== undefined && ca.area_id !== null) {
+          const aid = String(ca.area_id);
+          if (snValues.get('covering_area_id') !== aid) {
+            snValues.set('covering_area_id', aid);
+            changes.set('covering_area_id', aid);
+          }
+        }
+        if (ca.points !== undefined && ca.points !== null) {
+          const pts = String(ca.points);
+          if (snValues.get('covering_area_points') !== pts) {
+            snValues.set('covering_area_points', pts);
+            changes.set('covering_area_points', pts);
+          }
+        }
+      }
+      if (typeof covered.covering === 'string') {
+        const v = covered.covering;
+        if (snValues.get('covering_points') !== v) {
+          snValues.set('covering_points', v);
+          changes.set('covering_points', v);
+        }
+      }
+      if (typeof covered.missed === 'string') {
+        const v = covered.missed;
+        if (snValues.get('missed_points') !== v) {
+          snValues.set('missed_points', v);
+          changes.set('missed_points', v);
+        }
       }
     }
   }

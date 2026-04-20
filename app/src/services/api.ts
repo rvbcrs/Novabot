@@ -400,6 +400,53 @@ export class ApiClient {
     return res.paths ?? [];
   }
 
+  /** Rename a map (work zone, obstacle, unicom…) — server updates the DB row
+   *  and (if the mower is online) also sends `rename_map` MQTT so the mower
+   *  persists the new name in its own CSV metadata. */
+  async renameMap(sn: string, mapId: string, mapName: string): Promise<void> {
+    await this.request('PATCH', `/api/dashboard/maps/${enc(sn)}/${enc(mapId)}`, {
+      body: { mapName },
+    });
+  }
+
+  /** Send a command to the mower's extended_commands.py backchannel (topic
+   *  `novabot/extended/<SN>`). Used for things the stock MQTT API doesn't
+   *  expose — blade control, perception modes, log retrieval, etc. */
+  async sendExtended(sn: string, command: Record<string, unknown>): Promise<{ ok: boolean; command: string }> {
+    return this.request('POST', `/api/dashboard/extended/${enc(sn)}`, { body: command });
+  }
+
+  /** Preview coverage path — what the mower WILL mow, gefetchte via onze
+   *  broker intercept van get_preview_cover_path_respond. Veel nauwkeuriger
+   *  dan gegenereerde rechte strepen omdat dit het ECHTE pad is dat de
+   *  coverage planner heeft berekend. */
+  async getPreviewPath(sn: string): Promise<Array<{ id: string; points: LocalPoint[] }>> {
+    const res = await this.request<{ paths: Array<{ id: string; points: LocalPoint[] }> }>('GET', `/api/dashboard/preview-path/${enc(sn)}`);
+    return res.paths ?? [];
+  }
+
+  /** Server-triggered preview generation: stuurt generate_preview_cover_path
+   *  naar de mower, wacht tot de coverage planner klaar is, haalt het pad op
+   *  via extended_commands en retourneert de parsed paths. Gebruik dit wanneer
+   *  je een verse preview nodig hebt (bv. na wijziging van path direction of
+   *  bij openen van start-mow flow). */
+  async refreshPreviewPath(sn: string, opts?: { covDirection?: number; mapIds?: number | number[] }): Promise<Array<{ id: string; points: LocalPoint[] }>> {
+    const body: Record<string, unknown> = {};
+    if (opts?.covDirection !== undefined) body.cov_direction = opts.covDirection;
+    if (opts?.mapIds !== undefined) body.map_ids = opts.mapIds;
+    const res = await this.request<{ ok: boolean; paths: Array<{ id: string; points: LocalPoint[] }>; error?: string }>('POST', `/api/dashboard/refresh-preview-path/${enc(sn)}`, body);
+    if (!res.ok) throw new Error(res.error || 'refresh-preview-path failed');
+    return res.paths ?? [];
+  }
+
+  /** Server-triggered plan path fetch — voor gebruik tijdens mowing als je de
+   *  echte berekende paden (niet de gegenereerde rechte strepen) wilt tonen. */
+  async refreshPlanPath(sn: string): Promise<Array<{ id: string; points: LocalPoint[] }>> {
+    const res = await this.request<{ ok: boolean; paths: Array<{ id: string; points: LocalPoint[] }>; error?: string }>('POST', `/api/dashboard/refresh-plan-path/${enc(sn)}`, {});
+    if (!res.ok) throw new Error(res.error || 'refresh-plan-path failed');
+    return res.paths ?? [];
+  }
+
   // ── Headlight ────────────────────────────────────────────────────────
 
   async setHeadlight(sn: string, on: boolean): Promise<CommandResult> {

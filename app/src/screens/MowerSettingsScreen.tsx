@@ -16,7 +16,9 @@ import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors } from '../theme/colors';
 import { MowingDirectionPreview } from '../components/MowingDirectionPreview';
+import { SimpleSlider } from '../components/SimpleSlider';
 import { useMowerState } from '../hooks/useMowerState';
+import { useHeadlightBrightness } from '../hooks/useHeadlightBrightness';
 import { getSocket } from '../services/socket';
 import { ApiClient } from '../services/api';
 import { getServerUrl } from '../services/auth';
@@ -49,6 +51,7 @@ export default function MowerSettingsScreen() {
   const [joystickHandling, setJoystickHandling] = useState(300);
   const [headlight, setHeadlight] = useState(false);
   const [sound, setSound] = useState(false);
+  const { brightness: headlightBrightness, setBrightness: setHeadlightBrightness } = useHeadlightBrightness();
   const [sending, setSending] = useState('');
 
   // Rain auto-pause — loaded from /api/dashboard/rain-settings/:sn, per-mower.
@@ -253,7 +256,19 @@ export default function MowerSettingsScreen() {
 
   const handleHeadlight = (on: boolean) => {
     setHeadlight(on);
-    sendSingle({ headlight: on ? 2 : 0 });
+    // Stuurt de gekozen brightness waarde (0-255) wanneer aan, 0 wanneer uit.
+    // De firmware forward deze waarde 1:1 naar de charger LED (via led_set),
+    // en gebruikt hem ook voor de mower headlight. 255 = vol vermogen, zoals
+    // nodig voor ArUco bij night docking.
+    sendSingle({ headlight: on ? headlightBrightness : 0 });
+  };
+
+  const handleHeadlightBrightness = (val: number) => {
+    setHeadlightBrightness(val);
+    // Als de lamp al aan staat, stuur de nieuwe brightness meteen live door
+    // zodat de gebruiker het effect direct ziet tijdens het slepen (en onCommit
+    // van de slider pas bij release vuurt → geen spam tijdens dragging).
+    if (headlight) sendSingle({ headlight: val });
   };
 
   const handleSound = (on: boolean) => {
@@ -502,6 +517,19 @@ export default function MowerSettingsScreen() {
                 <View style={[styles.toggleThumb, headlight && styles.toggleThumbActive]} />
               </View>
             </TouchableOpacity>
+            <View style={{ paddingHorizontal: 16, paddingVertical: 10 }}>
+              <SimpleSlider
+                label="Brightness"
+                valueSuffix=""
+                min={0}
+                max={255}
+                step={1}
+                value={headlightBrightness}
+                fillColor={headlight ? colors.amber : 'rgba(245,158,11,0.4)'}
+                onChange={setHeadlightBrightness}
+                onCommit={handleHeadlightBrightness}
+              />
+            </View>
             <TouchableOpacity style={styles.optionRow} onPress={() => handleSound(!sound)} activeOpacity={0.7}>
               <Ionicons name={sound ? 'volume-high' : 'volume-mute'} size={20} color={sound ? colors.emerald : colors.textMuted} />
               <Text style={[styles.optionLabel, { flex: 1, marginLeft: 12 }]}>Speaker</Text>

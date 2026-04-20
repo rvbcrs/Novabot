@@ -32,6 +32,7 @@ import MessagesScreen from './MessagesScreen';
 import { useDemo } from '../context/DemoContext';
 import { StartMowSheet } from '../components/StartMowSheet';
 import { RainOverlay } from '../components/RainOverlay';
+import { AppActionSheet, type AppActionSheetItem } from '../components/AppActionSheet';
 import { useI18n } from '../i18n';
 import { getSocket } from '../services/socket';
 import type { DeviceState, MowerActivity } from '../types';
@@ -54,10 +55,55 @@ interface MowerDerived {
   errorMsg: string | undefined;
   hasError: boolean;
   hasSoftWarning: boolean;
+  dockFailed: boolean;
   mapNum: number;
   mowerPosX: number | null;
   mowerPosY: number | null;
   mowerHeading: number | null;
+}
+
+// ── Cover path helpers ──────────────────────────────────────────────
+//
+// Mower publishes cover_path.covered via report_state_timer_data.  Server
+// (sensorData.ts) forwards the raw strings through the sensor state pipe;
+// we just parse them here for the live map view.
+
+function parseFinishedAreas(
+  raw: string | undefined,
+  mapId: string | undefined,
+): string[] | undefined {
+  if (!raw) return undefined;
+  // Mower stream: " 0 1 2 3 4 5 6 7 8 9 10 11 12 13" → sub-area indices.
+  // Server gives plannedPaths[].id = "{map_id}_{sub_id}" (e.g. "1_0", "1_100")
+  // so we prefix each index with the active cover_map_id to match. Also emit
+  // the bare index so components built against the raw format still work.
+  const ids = raw.trim().split(/\s+/).filter(s => s.length > 0);
+  if (mapId && mapId.length > 0) {
+    return ids.flatMap(sub => [`${mapId}_${sub}`, sub]);
+  }
+  return ids;
+}
+
+function prefixedAreaId(
+  raw: string | undefined,
+  mapId: string | undefined,
+): string | undefined {
+  if (!raw) return undefined;
+  if (mapId && mapId.length > 0) return `${mapId}_${raw}`;
+  return raw;
+}
+
+function parseCoveringPoints(raw: string | undefined): Array<{ x: number; y: number }> | undefined {
+  if (!raw) return undefined;
+  // "2.48 -1.62,2.49 -1.63" — comma separates points, space separates x/y
+  const points: Array<{ x: number; y: number }> = [];
+  for (const chunk of raw.split(',')) {
+    const [xs, ys] = chunk.trim().split(/\s+/);
+    const x = parseFloat(xs);
+    const y = parseFloat(ys);
+    if (!isNaN(x) && !isNaN(y)) points.push({ x, y });
+  }
+  return points.length > 0 ? points : undefined;
 }
 
 function deriveMower(devices: Map<string, DeviceState>): MowerDerived | null {
@@ -81,15 +127,19 @@ function deriveMower(devices: Map<string, DeviceState>): MowerDerived | null {
   //   120 Robot soft(mapping)error
   //   122 Robot soft(follow path action)error (nav2 lifecycle not active yet)
   //   123 Robot soft(coverage action)error
+  //   124 Robot out of working area — Novabot shows a popup ("please move robot
+  //       inside working area to start"), user tikt OK en kan verder. Hij moet
+  //       wel handmatig of via Home de mower terug binnen het gebied krijgen
+  //       voordat 'ie weer kan maaien, maar de app blokkeert niet.
   //   125 Robot soft(coverage stop)error
   //   126 Recharge failed (user can still start a new mow)
   // Blocking (leave out of this list):
-  //   107 Load map failed, 124 Out of bounds, 151 Boot PIN lock,
+  //   107 Load map failed, 151 Boot PIN lock,
   //   152 Emergency stop PIN, plus all hardware errors (camera/chassis/utm/crash).
   // 132 = "Data transmission loss, robot will auto continue task if received valid
   // data" — self-recovers, shown as warning only.
   // 113 = transient sensor/perception warning that also auto-recovers.
-  const NON_BLOCKING_ERRORS = [8, 113, 120, 122, 123, 125, 126, 132];
+  const NON_BLOCKING_ERRORS = [8, 113, 120, 122, 123, 124, 125, 126, 132];
   const errorStatusRaw = parseInt(s.error_status?.match(/\d+/)?.[0] ?? '0', 10);
   const hasError = Boolean(
     errorStatusRaw > 0 && !NON_BLOCKING_ERRORS.includes(errorStatusRaw),
@@ -108,10 +158,23 @@ function deriveMower(devices: Map<string, DeviceState>): MowerDerived | null {
   const msg = s.msg ?? '';
   const isOnDock = batteryState === 'CHARGING';
   const isCoverageRunning = msg.includes('Work:RUNNING') || msg.includes('Work:NAVIGATING') || msg.includes('Work:COVERING') || msg.includes('Work:MOVING')
-    || msg.includes('Work:QUIT_PILE_INIT') || msg.includes('Work:SENSOR_INIT') || msg.includes('Work:INIT_SUCCESS') || msg.includes('Work:MAP_INIT');
-  const isCoveragePaused = msg.includes('Work:PAUSED');
-  const isReturning = rechargeStatus === 1 || msg.includes('Recharge: GOING') || msg.includes('Work:GO_PILE')
-    || msg.includes('Work:BACK_CHARGER') || msg.includes('Work:DOCKING');
+    || msg.includes('Work:QUIT_PILE_INIT') || msg.includes('Work:SENSOR_INIT') || msg.includes('Work:INIT_SUCCESS') || msg.includes('Work:MAP_INIT')
+    || msg.includes('Work:BOUNDARY_COVERING') || msg.includes('Work:AVOIDING');
+  // Pauze-state: de firmware zet `Work:USER_STOP` wanneer je pauzeert via app
+  // of hardware-knop (verified live 2026-04-20). `Work:PAUSED` is het ROS-niveau
+  // pause dat zelden in msg verschijnt. We dekken beide.
+  const isCoveragePaused = (msg.includes('Work:PAUSED') || msg.includes('Work:USER_STOP'))
+    && taskMode === 1 && !isOnDock;
+  // Recharge: FAILED — maaier reed naar dock maar kon niet dokken (miste de
+  // charger, sensor glitch, of weg geblokt). Novabot toont hier meteen een
+  // "Return to charge failed, please retry or manually move" popup.
+  // recharge_status blijft op 1 hangen, maar Recharge: FAILED in msg is de
+  // kanoniek waarheid. Behandel dit als een error-situatie zodat de UI uit
+  // de "Returning" lus komt.
+  const isDockFailed = msg.includes('Recharge: FAILED');
+  const isReturning = (rechargeStatus === 1 || msg.includes('Recharge: GOING') || msg.includes('Work:GO_PILE')
+    || msg.includes('Work:BACK_CHARGER') || msg.includes('Work:DOCKING'))
+    && !isDockFailed;
   // "Sticky" mowing: off dock + coverage mode + work not explicitly stopped/finished
   // Prevents flicker during lane transitions (brief Work:WAIT between lanes)
   // But NOT sticky when returning home or explicitly cancelled/finished
@@ -122,6 +185,7 @@ function deriveMower(devices: Map<string, DeviceState>): MowerDerived | null {
   let activity: MowerActivity = 'idle';
   if (isOffline) activity = 'idle';
   else if (hasError && !isOnDock) activity = 'error';
+  else if (isDockFailed && !isOnDock) activity = 'error';
   else if (isCoverageRunning) activity = 'mowing';
   else if (s.start_edit_or_assistant_map_flag === '1' && taskMode !== 1) activity = 'mapping';
   else if (isCoveragePaused) activity = 'paused';
@@ -153,6 +217,7 @@ function deriveMower(devices: Map<string, DeviceState>): MowerDerived | null {
     errorMsg: s.error_msg,
     hasError,
     hasSoftWarning,
+    dockFailed: isDockFailed,
     mapNum: parseInt(s.map_num ?? '0', 10) || 0,
     mowerPosX: parseFloat(s.map_position_x ?? '') || null,
     mowerPosY: parseFloat(s.map_position_y ?? '') || null,
@@ -317,6 +382,23 @@ export default function HomeScreen() {
   // Track which soft-error codes the user already dismissed this session so
   // the banner doesn't pop back every time report_state_robot cycles.
   const [dismissedSoftErrors, setDismissedSoftErrors] = useState<Set<number>>(new Set());
+  // Long-pause safety: RTK / localization drift na een langere pauze kan de
+  // maaier bij resume de verkeerde kant op sturen (gebeurde 2026-04-20 op
+  // Ramon's tuin — 83 min pauze → resume → ROBOT_OUT_OF_MAP_HANDLE → error
+  // 140 coverage planner crash → maaier reed achteruit de stoep op). We
+  // tracken de start-tijd van USER_STOP / PAUSED en waarschuwen de user
+  // boven de 15 min zodat hij zelf kiest: resume anyway, of stop & return.
+  const [pauseStartedAt, setPauseStartedAt] = useState<number | null>(null);
+  const [pauseNowMs, setPauseNowMs] = useState<number>(0);
+  const LONG_PAUSE_THRESHOLD_MS = 15 * 60 * 1000;
+  const [dismissedLongPauseWarning, setDismissedLongPauseWarning] = useState(false);
+  // Start-modes action sheet (opent via de chevron naast de Start-knop) —
+  // alternatieve start-commando's zoals edge-only / boundary follow.
+  const [showStartModeSheet, setShowStartModeSheet] = useState(false);
+  // Force StartMowSheet om zone-keuze te vragen (ook bij één zone). Gebruikt
+  // door "Specific zone" item in de start-modes sheet zodat de user altijd
+  // bewust een zone kiest i.p.v. auto-selected.
+  const [startMowForceZone, setStartMowForceZone] = useState(false);
   // Optimistic activity override — shows expected state immediately while waiting for MQTT update
   const [activityOverride, setActivityOverride] = useState<MowerActivity | null>(null);
   const activityOverrideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -388,6 +470,78 @@ export default function HomeScreen() {
   useEffect(() => {
     void loadHomeMeta();
   }, [loadHomeMeta, connected]);
+
+  // ── Long-pause safety tracking ────────────────────────────────────
+  // Set pauseStartedAt zodra we USER_STOP / PAUSED zien, en wis hem zodra
+  // de maaier weer iets anders doet (MOVING / COVERING / FINISHED). De
+  // 30s interval geeft een live-tickende duur voor de banner.
+  useEffect(() => {
+    if (mower?.activity === 'paused') {
+      if (pauseStartedAt == null) {
+        setPauseStartedAt(Date.now());
+        setPauseNowMs(Date.now());
+        setDismissedLongPauseWarning(false);
+      }
+    } else {
+      if (pauseStartedAt != null) {
+        setPauseStartedAt(null);
+        setDismissedLongPauseWarning(false);
+      }
+    }
+  }, [mower?.activity, pauseStartedAt]);
+  useEffect(() => {
+    if (pauseStartedAt == null) return;
+    const i = setInterval(() => setPauseNowMs(Date.now()), 30_000);
+    return () => clearInterval(i);
+  }, [pauseStartedAt]);
+
+  // ── Auto-safety: ROBOT_OUT_OF_MAP_HANDLE na lange pauze = stop it NU ──
+  // Als de maaier binnen 2 minuten na resume in ROBOT_OUT_OF_MAP_HANDLE
+  // komt en we zien dat hij voor > 15 min gepauzeerd was, is dit bijna
+  // zeker localization drift. Verdere retries crashen de coverage planner
+  // (error 140) en fysiek reed de mower achteruit in Ramon's test. Stop
+  // hem direct + clear error voordat het erger wordt.
+  const lastResumeAtRef = useRef<number | null>(null);
+  const autoSafetyFiredRef = useRef(false);
+  useEffect(() => {
+    // Detect "we just resumed from a long pause"
+    const msg = devices.get(mower?.sn ?? '')?.sensors?.msg ?? '';
+    const wasLongPause = pauseStartedAt != null
+      && (Date.now() - pauseStartedAt) > LONG_PAUSE_THRESHOLD_MS;
+    if (mower?.activity === 'mowing' && wasLongPause && lastResumeAtRef.current == null) {
+      lastResumeAtRef.current = Date.now();
+      autoSafetyFiredRef.current = false;
+    }
+    if (mower?.activity === 'idle' || mower?.activity === 'charging') {
+      lastResumeAtRef.current = null;
+      autoSafetyFiredRef.current = false;
+    }
+    // Trigger safety stop
+    if (
+      !autoSafetyFiredRef.current
+      && lastResumeAtRef.current != null
+      && (Date.now() - lastResumeAtRef.current) < 2 * 60 * 1000
+      && msg.includes('ROBOT_OUT_OF_MAP_HANDLE')
+    ) {
+      autoSafetyFiredRef.current = true;
+      (async () => {
+        try {
+          const url = await getServerUrl();
+          if (!url || !mower?.sn) return;
+          const api = new ApiClient(url);
+          console.warn('[LONG-PAUSE-SAFETY] ROBOT_OUT_OF_MAP_HANDLE after long-pause resume — auto-stopping');
+          await api.sendCommand(mower.sn, { stop_navigation: { cmd_num: Date.now() % 100000 } });
+          await new Promise(r => setTimeout(r, 300));
+          await api.sendCommand(mower.sn, { clear_error: {} });
+          Alert.alert(
+            'Safety stop',
+            'Mower went outside the map after a long pause. Automatically stopped before the coverage planner crashed. Move the mower back inside the work area to continue.',
+            [{ text: 'OK' }],
+          );
+        } catch { /* ignore */ }
+      })();
+    }
+  }, [mower?.activity, mower?.sn, pauseStartedAt, devices, LONG_PAUSE_THRESHOLD_MS]);
 
   // Refresh map count / schedules when the screen regains focus, otherwise
   // returning here from MappingScreen leaves serverMapCount stuck at 0 and the
@@ -497,10 +651,17 @@ export default function HomeScreen() {
     }
   }, [mower?.sn, mower?.activity, mowSettings, devices]);
 
-  // Auto-refresh trail every 3s during mowing
+  // Auto-refresh trail every 3s during mowing — ook planned path ophalen (live)
+  // Elke 10s een verse refresh van plan_path via onze server (triggert
+  // extended_commands op mower).
   useEffect(() => {
-    if (!mower || (mower.activity !== 'mowing' && mower.activity !== 'mapping') || demo.enabled) return;
+    if (!mower || demo.enabled) return;
+    const isActive = mower.activity === 'mowing' || mower.activity === 'mapping';
+    const isReturning = mower.activity === 'returning';
+    if (!isActive && !isReturning) return;
+    let tick = 0;
     const refresh = async () => {
+      tick++;
       try {
         const url = await getServerUrl();
         if (!url) return;
@@ -512,12 +673,78 @@ export default function HomeScreen() {
         const trail = Array.isArray(trailRes) ? trailRes : (trailRes as any).trail ?? [];
         setMowingTrail(trail.map((p: any) => ({ x: p.x ?? 0, y: p.y ?? 0 })));
         if (Array.isArray(pathsRes) && pathsRes.length > 0) setPlannedPaths(pathsRes);
+
+        // Elke ~10s een verse plan path pullen via extended_commands.
+        // Alleen tijdens active mowing/mapping — NIET tijdens returning, want
+        // dan riskeren we dat generate_preview de recharge flow verstoort.
+        // Voor returning is de reeds gecachte plannedPath + finished_area
+        // voldoende; nieuwe data komt pas bij de volgende maai-sessie.
+        if (isActive && tick % 3 === 1) {
+          api.refreshPlanPath(mower.sn).then((fresh) => {
+            if (Array.isArray(fresh) && fresh.length > 0) setPlannedPaths(fresh);
+          }).catch(() => { /* ignore */ });
+        }
       } catch { /* ignore */ }
     };
     refresh();
     const interval = setInterval(refresh, 3000);
     return () => clearInterval(interval);
   }, [mower?.activity, mower?.sn, demo.enabled]);
+
+  // Idle state: toon bestaande cached preview, en trigger op achtergrond een
+  // refresh zodat de preview up-to-date is (houdt rekening met huidige
+  // path_direction). Zo krijgt de user echte berekende lijntjes i.p.v.
+  // gegenereerde rechte strepen — zonder dat de Novabot app iets hoeft te doen.
+  useEffect(() => {
+    if (!mower || demo.enabled) return;
+    if (mower.activity === 'mowing' || mower.activity === 'mapping') return;
+    // SAFETY: refreshPreviewPath triggers generate_preview_cover_path on the
+    // mower. That ROS service errors with code 128 ("Cannot preview when
+    // cover task working") if the coverage task is still active — which
+    // happens even when app-side activity briefly flips to "idle" during
+    // reconnect or while the mower is in Work:FINISHED but task_mode=1.
+    // Only trigger a fresh generate when we're REALLY sure the mower is idle
+    // (charging on dock, or clear idle/standby msg). Cached read is always safe.
+    const mowerOnline = mower.online;
+    const mowerState = devices.get(mower.sn);
+    const msg = mowerState?.sensors?.msg ?? '';
+    const taskMode = parseInt(mowerState?.sensors?.task_mode ?? '0', 10);
+    const workStatus = mowerState?.sensors?.work_status ?? '';
+    const errorStatus = parseInt(mowerState?.sensors?.error_status ?? '0', 10);
+    const batteryCharging = mowerState?.sensors?.battery_state === 'CHARGING';
+    const clearlyIdle =
+      batteryCharging
+      || msg.includes('Work:STANDBY')
+      || msg.includes('Work:IDLE')
+      || (taskMode === 0 && workStatus !== '9' && errorStatus === 0);
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const url = await getServerUrl();
+        if (!url) return;
+        const api = new ApiClient(url);
+
+        // Eerst de cache: instant display als iets beschikbaar is (altijd veilig)
+        const cached = await api.getPreviewPath(mower.sn).catch(() => []);
+        if (cancelled) return;
+        if (Array.isArray(cached) && cached.length > 0) setPlannedPaths(cached);
+
+        // Dan op achtergrond een fresh preview triggeren. Alleen als mower
+        // online is EN we zeker weten dat coverage niet actief is — anders
+        // crasht de sessie op de mower. Cache-only is prima als we twijfelen.
+        if (!mowerOnline || !clearlyIdle) return;
+        const fresh = await api.refreshPreviewPath(mower.sn, {
+          covDirection: mowSettings?.pathDirection,
+          mapIds: 1,
+        }).catch(() => []);
+        if (cancelled) return;
+        if (Array.isArray(fresh) && fresh.length > 0) setPlannedPaths(fresh);
+      } catch { /* ignore */ }
+    })();
+
+    return () => { cancelled = true; };
+  }, [mower?.activity, mower?.sn, mower?.online, mowSettings?.pathDirection, demo.enabled, devices]);
 
   // Mower bounce animation (subtle bob when active)
   const bounceAnim = useRef(new Animated.Value(0)).current;
@@ -980,34 +1207,53 @@ export default function HomeScreen() {
             <Text style={[styles.activityLabel, { color: activityColor }]}>
               {getActivityLabel(displayActivity, t)}
             </Text>
-            {mower.mowingProgress > 0 && (displayActivity === 'mowing' || displayActivity === 'mapping') && (
+            {mower.mowingProgress > 0 && (displayActivity === 'mowing' || displayActivity === 'mapping' || displayActivity === 'returning') && (
               <Text style={[styles.progressText, { color: activityColor }]}>
                 {mower.mowingProgress}%
               </Text>
             )}
           </View>
 
-          {/* Progress bar */}
-          {mower.mowingProgress > 0 && (displayActivity === 'mowing' || displayActivity === 'mapping') && (
+          {/* Progress bar — ook tijdens terugkeren naar de dock, zodat je de
+              laatste coverage-state blijft zien totdat een volgende taak start.
+              Novabot app doet hetzelfde: "Returning to the charging station"
+              + "Progress: 88%" voor de afgelopen sessie. */}
+          {mower.mowingProgress > 0 && (displayActivity === 'mowing' || displayActivity === 'mapping' || displayActivity === 'returning') && (
             <View style={styles.progressTrack}>
               <View style={[styles.progressFill, { width: `${mower.mowingProgress}%` as any, backgroundColor: activityColor }]} />
             </View>
           )}
 
 
-          {/* Mowing/mapping: show progress map instead of battery ring */}
-          {(displayActivity === 'mowing' || displayActivity === 'mapping') && activeMapPolygon.length >= 3 ? (
-            <MowingProgressMap
-              polygon={activeMapPolygon}
-              progress={mower.mowingProgress}
-              pathDirection={mowSettings?.pathDirection ?? mower.pathDirection}
-              size={240}
-              trail={mowingTrail}
-              plannedPaths={plannedPaths}
-              obstacles={obstaclePolygons}
-              mowerPos={mower.mowerPosX != null && mower.mowerPosY != null ? { x: mower.mowerPosX, y: mower.mowerPosY } : null}
-              mowerHeading={mower.mowerHeading ?? undefined}
-            />
+          {/* Mowing/mapping/returning: show progress map instead of battery ring.
+              Returning gebruikt dezelfde kaart zodat je ziet waar de maaier geweest
+              is (finished_area blijft in de cover_path state van de maaier zolang
+              task_mode=1) en waar hij nu naartoe rijdt. */}
+          {(displayActivity === 'mowing' || displayActivity === 'mapping' || displayActivity === 'returning') && activeMapPolygon.length >= 3 ? (
+            <View style={styles.mowingMapPanel}>
+              <MowingProgressMap
+                polygon={activeMapPolygon}
+                progress={mower.mowingProgress}
+                pathDirection={mowSettings?.pathDirection ?? mower.pathDirection}
+                fill
+                interactive
+                trail={mowingTrail}
+                plannedPaths={plannedPaths}
+                finishedAreas={parseFinishedAreas(
+                  devices.get(mower.sn)?.sensors?.finished_area,
+                  devices.get(mower.sn)?.sensors?.cover_map_id,
+                )}
+                activeAreaId={prefixedAreaId(
+                  devices.get(mower.sn)?.sensors?.covering_area_id,
+                  devices.get(mower.sn)?.sensors?.cover_map_id,
+                )}
+                activeAreaPoints={parseInt(devices.get(mower.sn)?.sensors?.covering_area_points ?? '0', 10) || undefined}
+                liveCoverSegment={parseCoveringPoints(devices.get(mower.sn)?.sensors?.covering_points)}
+                obstacles={obstaclePolygons}
+                mowerPos={mower.mowerPosX != null && mower.mowerPosY != null ? { x: mower.mowerPosX, y: mower.mowerPosY } : null}
+                mowerHeading={mower.mowerHeading ?? undefined}
+              />
+            </View>
           ) : (
             /* Battery ring + mower image (default) */
             <View style={[styles.batteryContainer, { shadowColor: batteryGlowColor, shadowRadius: 26, shadowOpacity: 1 }]}>
@@ -1064,6 +1310,40 @@ export default function HomeScreen() {
                 </Text>
               </View>
             )}
+            {/* ETA chip — shown during active mowing. cov_estimate_time is
+                in minutes (firmware convention, verified 2026-04-20). We also
+                show elapsed cov_work_time so the user has both numbers.
+                Hidden when returning/docking/idle because the estimate is
+                stale or meaningless there. */}
+            {(displayActivity === 'mowing') && (() => {
+              const etaMin = parseFloat(devices.get(mower.sn)?.sensors?.cov_estimate_time ?? '');
+              const elapsedMin = parseFloat(devices.get(mower.sn)?.sensors?.cov_work_time ?? '');
+              const fmt = (mins: number) => {
+                if (!isFinite(mins) || mins <= 0) return null;
+                if (mins < 60) return `${Math.round(mins)}m`;
+                const h = Math.floor(mins / 60);
+                const m = Math.round(mins - h * 60);
+                return m === 0 ? `${h}h` : `${h}h ${m}m`;
+              };
+              const etaLabel = fmt(etaMin);
+              const elapsedLabel = fmt(elapsedMin);
+              return (
+                <>
+                  {etaLabel && (
+                    <View style={styles.chip}>
+                      <Ionicons name="timer-outline" size={11} color={colors.textDim} />
+                      <Text style={styles.chipText}>~{etaLabel} left</Text>
+                    </View>
+                  )}
+                  {elapsedLabel && (
+                    <View style={styles.chip}>
+                      <Ionicons name="time-outline" size={11} color={colors.textDim} />
+                      <Text style={styles.chipText}>{elapsedLabel}</Text>
+                    </View>
+                  )}
+                </>
+              );
+            })()}
             {!mower.online && (
               <View style={[styles.chip, styles.chipOffline]}>
                 <Ionicons name="cloud-offline" size={11} color={colors.red} />
@@ -1120,10 +1400,65 @@ export default function HomeScreen() {
           </View>
         )}
 
+        {/* Dock-failed banner — shown when the mower attempted to return to
+            the charger but could not dock (physical miss, sensor glitch, or
+            path blocked). Mirrors Novabot's "Return to charge failed, please
+            retry or manually move NOVABOT back" popup but inline so it stays
+            actionable. Provides Retry (go_to_charge) and Cancel (stop_navigation
+            + clear_error) so the user is not stuck in a phantom "Returning" UI. */}
+        {mower.dockFailed && (
+          <View style={[styles.errorCard, { backgroundColor: 'rgba(245,158,11,0.12)', borderColor: '#f59e0b' }]}>
+            <Ionicons name="home-outline" size={22} color="#f59e0b" />
+            <View style={styles.errorContent}>
+              <Text style={[styles.errorTitle, { color: '#f59e0b' }]}>
+                Return to charger failed
+              </Text>
+              <Text style={styles.errorMessage}>
+                The mower couldn't dock. Retry, or move it back to the charger manually.
+              </Text>
+            </View>
+            <View style={{ flexDirection: 'row', gap: 6 }}>
+              <TouchableOpacity
+                style={{ backgroundColor: 'rgba(59,130,246,0.18)', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}
+                onPress={async () => {
+                  try {
+                    const url = await getServerUrl();
+                    if (!url || !mower.sn) return;
+                    const api = new ApiClient(url);
+                    await api.sendCommand(mower.sn, { clear_error: {} });
+                    await new Promise((r) => setTimeout(r, 400));
+                    sendGoHome(mower.sn);
+                    setOptimisticActivity('returning');
+                  } catch {}
+                }}
+              >
+                <Text style={{ color: '#3b82f6', fontSize: 12, fontWeight: '600' }}>Retry</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={{ backgroundColor: 'rgba(239,68,68,0.18)', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}
+                onPress={async () => {
+                  try {
+                    const url = await getServerUrl();
+                    if (!url || !mower.sn) return;
+                    const api = new ApiClient(url);
+                    await api.sendCommand(mower.sn, { stop_navigation: { cmd_num: Date.now() % 100000 } });
+                    await new Promise((r) => setTimeout(r, 300));
+                    await api.sendCommand(mower.sn, { clear_error: {} });
+                    await api.sendCommand(mower.sn, { quit_mapping_mode: { value: 1, cmd_num: Date.now() % 100000 } });
+                    setOptimisticActivity('idle');
+                  } catch {}
+                }}
+              >
+                <Text style={{ color: colors.red, fontSize: 12, fontWeight: '600' }}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+
         {/* Soft warning banner — dismissable, does NOT block the Mow button.
             Matches Novabot's UX: shows the firmware's own message so the user
             can read it, dismiss, and continue if they want. */}
-        {mower.hasSoftWarning && (() => {
+        {mower.hasSoftWarning && !mower.dockFailed && (() => {
           const code = parseInt(String(mower.errorStatus ?? '0').match(/\d+/)?.[0] ?? '0', 10);
           if (dismissedSoftErrors.has(code)) return null;
           return (
@@ -1153,36 +1488,62 @@ export default function HomeScreen() {
 
           {(displayActivity === 'idle' || displayActivity === 'charging' || displayActivity === 'error') && (
             <View style={styles.actionRow}>
-              <TouchableOpacity
-                style={[
-                  styles.actionButton,
-                  (mower.hasError || mower.mapNum === 0 && serverMapCount === 0)
-                    ? styles.actionButtonDisabled
-                    : styles.actionButtonGreen,
-                  { flex: 1 },
-                ]}
-                onPress={() => {
-                  if (mower.mapNum === 0 && serverMapCount === 0) {
-                    (navigation as any).navigate('Map', { screen: 'Mapping' });
-                    return;
-                  }
-                  setStartMowInitialMapId(null);
-                  setShowStartMow(true);
-                }}
-                disabled={commandLoading !== null || !mower.online || mower.hasError}
-                activeOpacity={0.7}
-              >
-                {commandLoading === 'start' ? (
-                  <ActivityIndicator size="small" color={colors.white} />
-                ) : (
-                  <>
-                    <Ionicons name="play" size={20} color={mower.hasError || mower.mapNum === 0 && serverMapCount === 0 ? colors.textMuted : colors.white} />
-                    <Text style={[styles.actionButtonText, (mower.hasError || mower.mapNum === 0 && serverMapCount === 0) && { color: colors.textMuted }]}>
-                      {mower.mapNum === 0 && serverMapCount === 0 ? t('noMapCreateFirst') : mower.hasError ? t('clearErrorFirst') : t('startMowing')}
-                    </Text>
-                  </>
-                )}
-              </TouchableOpacity>
+              {/* Split action: main "Start Mowing" + chevron voor extra modi */}
+              {(() => {
+                const noMap = mower.mapNum === 0 && serverMapCount === 0;
+                const startDisabled = !mower.online || mower.hasError || noMap;
+                const canShowChevron = (displayActivity === 'idle' || displayActivity === 'charging')
+                  && mower.online && !mower.hasError && !noMap;
+                return (
+                  <View style={[styles.splitButtonWrap, startDisabled && { opacity: 1 }]}>
+                    <TouchableOpacity
+                      style={[
+                        styles.splitButtonMain,
+                        startDisabled ? styles.actionButtonDisabled : styles.actionButtonGreen,
+                      ]}
+                      onPress={() => {
+                        if (noMap) {
+                          (navigation as any).navigate('Map', { screen: 'Mapping' });
+                          return;
+                        }
+                        setStartMowInitialMapId(null);
+                        setShowStartMow(true);
+                      }}
+                      disabled={commandLoading !== null || startDisabled}
+                      activeOpacity={0.7}
+                    >
+                      {commandLoading === 'start' ? (
+                        <ActivityIndicator size="small" color={colors.white} />
+                      ) : (
+                        <>
+                          <Ionicons name="play" size={20} color={startDisabled ? colors.textMuted : colors.white} />
+                          <Text style={[styles.actionButtonText, startDisabled && { color: colors.textMuted }]}>
+                            {/* "Start" i.p.v. "Start Mowing" — korter label
+                                zodat het op smalle schermen blijft passen naast
+                                de chevron. Disabled-states tonen wel de volledige
+                                reden (no map / clear error). */}
+                            {noMap ? t('noMapCreateFirst') : mower.hasError ? t('clearErrorFirst') : t('start')}
+                          </Text>
+                        </>
+                      )}
+                    </TouchableOpacity>
+                    {canShowChevron && (
+                      <>
+                        <View style={styles.splitButtonDivider} />
+                        <TouchableOpacity
+                          style={[styles.splitButtonChevron, styles.actionButtonGreen]}
+                          onPress={() => setShowStartModeSheet(true)}
+                          disabled={commandLoading !== null}
+                          activeOpacity={0.7}
+                          accessibilityLabel="Show more start options"
+                        >
+                          <Ionicons name="chevron-down" size={18} color={colors.white} />
+                        </TouchableOpacity>
+                      </>
+                    )}
+                  </View>
+                );
+              })()}
               {/* Go Home button — when idle or error, but NOT on charger */}
               {(displayActivity === 'idle' || displayActivity === 'error') && !mower.batteryCharging && (
                 <TouchableOpacity
@@ -1220,23 +1581,10 @@ export default function HomeScreen() {
                   </>
                 )}
               </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.actionButton, styles.actionButtonRed]}
-                onPress={() => {
-                  sendCommand(mower.sn, { stop_navigation: { cmd_num: ++cmdNumRef.current } }, 'stop');
-                  setOptimisticActivity('idle');
-                }}
-                disabled={commandLoading !== null}
-                activeOpacity={0.7}
-              >
-                {commandLoading === 'stop' ? (
-                  <ActivityIndicator size="small" color={colors.white} />
-                ) : (
-                  <>
-                    <Ionicons name="stop-circle" size={20} color={colors.white} />
-                  </>
-                )}
-              </TouchableOpacity>
+              {/* Stop-knop weggelaten tijdens mowing — als je wil stoppen
+                  klik je Home (End task & return / Pause then dock).
+                  Een blote stop_navigation laat de maaier midden op het gazon
+                  staan wat zelden is wat je wilt; Home handelt dat netjes af. */}
               <TouchableOpacity
                 style={[styles.actionButton, styles.actionButtonBlue]}
                 onPress={() => {
@@ -1278,43 +1626,111 @@ export default function HomeScreen() {
             </View>
           )}
 
-          {displayActivity === 'paused' && (
-            <View style={styles.actionRow}>
-              <TouchableOpacity
-                style={[styles.actionButton, styles.actionButtonGreen]}
-                onPress={() => {
-                  sendCommand(mower.sn, { resume_navigation: { cmd_num: ++cmdNumRef.current } }, 'resume');
-                  setOptimisticActivity('mowing');
-                }}
-                disabled={commandLoading !== null}
-                activeOpacity={0.7}
-              >
-                {commandLoading === 'resume' ? (
-                  <ActivityIndicator size="small" color={colors.white} />
-                ) : (
-                  <>
-                    <Ionicons name="play" size={20} color={colors.white} />
-                  </>
+          {displayActivity === 'paused' && (() => {
+            // Pauze-duur berekenen voor UX-waarschuwing. Boven de drempel
+            // blokkeren we de Resume-knop NIET (firmware kan alsnog goed
+            // gaan), maar we tonen een opvallende waarschuwing + een extra
+            // "Stop & return" optie omdat resume na lange pauze risicovol is.
+            const pausedMs = pauseStartedAt != null ? pauseNowMs - pauseStartedAt : 0;
+            const pausedMin = Math.floor(pausedMs / 60000);
+            const isLongPause = pausedMs > LONG_PAUSE_THRESHOLD_MS;
+            const pausedLabel = pausedMin >= 60
+              ? `${Math.floor(pausedMin / 60)}h ${pausedMin % 60}m`
+              : `${pausedMin}m`;
+            return (
+              <>
+                {isLongPause && !dismissedLongPauseWarning && (
+                  <View style={[styles.errorCard, { backgroundColor: 'rgba(245,158,11,0.12)', borderColor: '#f59e0b', marginHorizontal: 0, marginBottom: 10 }]}>
+                    <Ionicons name="warning-outline" size={22} color="#f59e0b" />
+                    <View style={styles.errorContent}>
+                      <Text style={[styles.errorTitle, { color: '#f59e0b' }]}>
+                        Paused for {pausedLabel}
+                      </Text>
+                      <Text style={styles.errorMessage}>
+                        Long pauses can cause localization drift. Resume may drive the mower off the map (firmware error 140). Consider stopping and starting a fresh session from the dock.
+                      </Text>
+                    </View>
+                    <TouchableOpacity
+                      style={{ backgroundColor: 'rgba(245,158,11,0.18)', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}
+                      onPress={() => setDismissedLongPauseWarning(true)}
+                    >
+                      <Text style={{ color: '#f59e0b', fontSize: 12, fontWeight: '600' }}>Dismiss</Text>
+                    </TouchableOpacity>
+                  </View>
                 )}
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.actionButton, styles.actionButtonBlue]}
-                onPress={() =>
-                  { sendGoHome(mower.sn); setOptimisticActivity('returning'); }
-                }
-                disabled={commandLoading !== null}
-                activeOpacity={0.7}
-              >
-                {commandLoading === 'home' ? (
-                  <ActivityIndicator size="small" color={colors.white} />
-                ) : (
-                  <>
-                    <Ionicons name="home" size={20} color={colors.white} />
-                  </>
-                )}
-              </TouchableOpacity>
-            </View>
-          )}
+                <View style={styles.actionRow}>
+                  <TouchableOpacity
+                    style={[
+                      styles.actionButton,
+                      isLongPause ? styles.actionButtonAmber : styles.actionButtonGreen,
+                    ]}
+                    onPress={() => {
+                      if (isLongPause) {
+                        Alert.alert(
+                          `Paused for ${pausedLabel}`,
+                          'Long pauses can cause localization drift. The mower may drive outside the map on resume. Continue anyway?',
+                          [
+                            { text: 'Cancel', style: 'cancel' },
+                            {
+                              text: 'Resume anyway', style: 'destructive',
+                              onPress: () => {
+                                sendCommand(mower.sn, { resume_navigation: { cmd_num: ++cmdNumRef.current } }, 'resume');
+                                setOptimisticActivity('mowing');
+                              },
+                            },
+                          ],
+                        );
+                      } else {
+                        sendCommand(mower.sn, { resume_navigation: { cmd_num: ++cmdNumRef.current } }, 'resume');
+                        setOptimisticActivity('mowing');
+                      }
+                    }}
+                    disabled={commandLoading !== null}
+                    activeOpacity={0.7}
+                  >
+                    {commandLoading === 'resume' ? (
+                      <ActivityIndicator size="small" color={colors.white} />
+                    ) : (
+                      <Ionicons name="play" size={20} color={colors.white} />
+                    )}
+                  </TouchableOpacity>
+                  {isLongPause && (
+                    <TouchableOpacity
+                      style={[styles.actionButton, styles.actionButtonRed]}
+                      onPress={async () => {
+                        try {
+                          const url = await getServerUrl();
+                          if (!url || !mower?.sn) return;
+                          const api = new ApiClient(url);
+                          await api.sendCommand(mower.sn, { stop_navigation: { cmd_num: Date.now() % 100000 } });
+                          await new Promise(r => setTimeout(r, 300));
+                          await api.sendCommand(mower.sn, { clear_error: {} });
+                          await api.sendCommand(mower.sn, { quit_mapping_mode: { value: 1, cmd_num: Date.now() % 100000 } });
+                          setOptimisticActivity('idle');
+                        } catch {}
+                      }}
+                      disabled={commandLoading !== null}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons name="stop" size={20} color={colors.white} />
+                    </TouchableOpacity>
+                  )}
+                  <TouchableOpacity
+                    style={[styles.actionButton, styles.actionButtonBlue]}
+                    onPress={() => { sendGoHome(mower.sn); setOptimisticActivity('returning'); }}
+                    disabled={commandLoading !== null}
+                    activeOpacity={0.7}
+                  >
+                    {commandLoading === 'home' ? (
+                      <ActivityIndicator size="small" color={colors.white} />
+                    ) : (
+                      <Ionicons name="home" size={20} color={colors.white} />
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </>
+            );
+          })()}
 
           {displayActivity === 'returning' && (
             <View style={styles.actionRow}>
@@ -1374,16 +1790,153 @@ export default function HomeScreen() {
           onClose={() => {
             setShowStartMow(false);
             setStartMowInitialMapId(null);
+            setStartMowForceZone(false);
           }}
           sn={mower.sn}
           onStarted={(settings) => { setCommandLoading(null); setOptimisticActivity('mowing'); setMowSettings(settings); setMowingTrail([]); }}
           initialSelectedMapId={startMowInitialMapId}
+          forceZonePicker={startMowForceZone}
           battery={mower.battery}
           isWorking={displayActivity === 'mowing' || displayActivity === 'mapping'}
           currentCuttingHeight={parseInt(devices.get(mower.sn)?.sensors?.target_height ?? '', 10) || undefined}
           currentPathDirection={parseInt(devices.get(mower.sn)?.sensors?.path_direction ?? '', 10) || undefined}
         />
       )}
+
+      {/* Start-mode alternatives opened via the chevron next to Start Mowing. */}
+      {mower && (() => {
+        // Gebruik serverMapCount die al in loadHomeMeta is geteld (alleen
+        // work-maps met mapArea >= 3). Scheelt ook dubbele map-fetch.
+        const workZoneCount = serverMapCount;
+        const mowerLat = parseFloat(devices.get(mower.sn)?.sensors?.latitude ?? '');
+        const mowerLng = parseFloat(devices.get(mower.sn)?.sensors?.longitude ?? '');
+        const hasMowerGps = isFinite(mowerLat) && isFinite(mowerLng)
+          && mowerLat !== 0 && mowerLng !== 0;
+
+        const items: AppActionSheetItem[] = [
+          {
+            label: 'Full mow',
+            subtitle: 'Cover the entire work area with your chosen pattern',
+            icon: 'play-circle-outline',
+            onPress: () => {
+              setStartMowInitialMapId(null);
+              setStartMowForceZone(false);
+              setShowStartMow(true);
+            },
+          },
+        ];
+
+        // Specific zone — only useful if there are multiple zones; with one
+        // zone "full mow" already mows that single zone, so this entry would
+        // just duplicate it.
+        if (workZoneCount > 1) {
+          items.push({
+            label: 'Specific zone',
+            subtitle: 'Pick one zone to mow (skip the others)',
+            icon: 'layers-outline',
+            onPress: () => {
+              setStartMowInitialMapId(null);
+              setStartMowForceZone(true);
+              setShowStartMow(true);
+            },
+          });
+        }
+
+        items.push({
+          label: 'Edges only',
+          subtitle: 'Drive along the boundary once (boundary follow)',
+          icon: 'ellipse-outline',
+          onPress: () => {
+            Alert.alert(
+              'Edge mowing',
+              'The mower will drive along the boundary of your work area only — good for a quick edge trim without a full mow. Continue?',
+              [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                  text: 'Start',
+                  onPress: () => {
+                    sendCommand(mower.sn, { start_patrol: null }, 'patrol');
+                    setOptimisticActivity('mowing');
+                  },
+                },
+              ],
+            );
+          },
+        });
+
+        // Spot mow — send start_run with a small circular workArea (~2 m
+        // radius, 12 GPS points) centered on the mower's CURRENT position.
+        // Typical workflow: drive mower to the spot you want trimmed with
+        // the Control joystick, then tap this option. Firmware interprets
+        // this as SPECIFIED_AREA (cov_mode=1) and does a mini coverage pass.
+        items.push({
+          label: 'Spot mow',
+          subtitle: hasMowerGps
+            ? 'Mow a small 2m circle at the mower\'s current position'
+            : 'Needs GPS fix — waiting for mower position',
+          icon: 'locate-outline',
+          disabled: !hasMowerGps,
+          onPress: () => {
+            if (!hasMowerGps) return;
+            Alert.alert(
+              'Spot mow',
+              'The mower will mow a small 2m radius circle at its current position. Make sure it\'s already at the spot you want trimmed (use the Control joystick first if needed). Continue?',
+              [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                  text: 'Start here',
+                  onPress: async () => {
+                    try {
+                      const url = await getServerUrl();
+                      if (!url) return;
+                      const api = new ApiClient(url);
+                      // Build 12-vertex circle polygon in GPS coords.
+                      // 2m radius in meters → degrees:
+                      //   lat:  R / 111_320
+                      //   lng:  R / (111_320 * cos(lat_rad))
+                      const R = 2.0;
+                      const latRad = (mowerLat * Math.PI) / 180;
+                      const dLat = R / 111_320;
+                      const dLng = R / (111_320 * Math.max(Math.cos(latRad), 0.01));
+                      const N = 12;
+                      const polygon: Array<{ latitude: number; longitude: number }> = [];
+                      for (let i = 0; i < N; i++) {
+                        const a = (i / N) * 2 * Math.PI;
+                        polygon.push({
+                          latitude: mowerLat + Math.sin(a) * dLat,
+                          longitude: mowerLng + Math.cos(a) * dLng,
+                        });
+                      }
+                      const wire = Math.max(0, (mowSettings?.cuttingHeight ?? 5) - 2);
+                      await api.sendCommand(mower.sn, {
+                        start_run: {
+                          mapNames: ['home'],
+                          cutGrassHeight: (wire + 2) * 10, // mm
+                          startWay: 1, // SPECIFIED_AREA
+                          workArea: polygon,
+                          schedule: false,
+                          scheduleId: '',
+                        },
+                      });
+                      setOptimisticActivity('mowing');
+                    } catch {}
+                  },
+                },
+              ],
+            );
+          },
+        });
+
+        return (
+          <AppActionSheet
+            visible={showStartModeSheet}
+            title={t('startMowing')}
+            message="Choose a mowing mode"
+            onClose={() => setShowStartModeSheet(false)}
+            actions={items}
+          />
+        );
+      })()}
 
       <Modal visible={showAlerts} animationType="slide" presentationStyle="pageSheet">
         <View style={styles.modalHeader}>
@@ -1722,6 +2275,22 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginBottom: 10,
   },
+  mowingMapPanel: {
+    // Cancel statusCard's horizontal padding (18) so the map spans the full
+    // card width edge-to-edge — matches Novabot's large square preview inside
+    // the status panel. aspectRatio keeps it a square so pan/zoom feels right.
+    alignSelf: 'stretch',
+    marginHorizontal: -18,
+    width: undefined,
+    aspectRatio: 1,
+    marginTop: 4,
+    marginBottom: 12,
+    backgroundColor: 'rgba(15,23,42,0.35)',
+    borderRadius: 14,
+    overflow: 'hidden',
+    alignItems: 'stretch',
+    justifyContent: 'center',
+  },
   batteryTextOverlay: {
     position: 'absolute',
     alignItems: 'center',
@@ -1859,6 +2428,34 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
     color: colors.white,
+  },
+  // Split-action button — hoofd-knop + kleine chevron-knop aan de rechterkant.
+  // Beide helften delen hoogte + achtergrond; een dunne verticale divider
+  // scheidt ze optisch zodat het duidelijk is dat de chevron een aparte
+  // tap-target is (gebruikt voor de Edges-only dropdown).
+  splitButtonWrap: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    height: 48,
+    borderRadius: 12,
+    overflow: 'hidden',
+  },
+  splitButtonMain: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  splitButtonDivider: {
+    width: StyleSheet.hairlineWidth,
+    backgroundColor: 'rgba(0,0,0,0.25)',
+  },
+  splitButtonChevron: {
+    width: 42,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   offlineNote: {
     fontSize: 13,

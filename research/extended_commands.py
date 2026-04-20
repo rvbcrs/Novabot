@@ -1187,6 +1187,71 @@ def handle_is_opennova(params, respond):
     respond("is_opennova_respond", {"result": True, "version": "1.0"})
 
 
+# ── Manual mowing — blade motor control (off-path from coverage tasks) ────
+#
+# The mower's standard MQTT API has no way to turn the blade motor on/off
+# outside a coverage task — start_navigation implicitly enables it, and
+# stop_navigation disables it. For manual / spot mowing while driving with
+# the joystick we publish directly to the chassis's blade_speed_set topic
+# (std_msgs/Int16, sub_setBladeSpeed_cb in chassis_serial_protocol.md).
+#
+# Safety: the OpenNova app includes auto-off on joystick disconnect,
+# screen leave, mower error, and has a confirmation dialog before enabling.
+# Firmware-level safety (tilt sensor, blade overcurrent) still applies on
+# the STM32 side and will kill the motor on any fault.
+
+def _publish_blade_speed(speed: int) -> str:
+    """Publish an Int16 to /chassis/blade_speed_set via ros2 topic pub --once.
+
+    Returns '' on success, error string on failure. We source the ROS 2
+    environment first since this runs under the systemd-launched service
+    context where /opt/ros may not be on PATH by default.
+    """
+    cmd = (
+        "source /opt/ros/galactic/setup.bash 2>/dev/null; "
+        "source /root/novabot/install/setup.bash 2>/dev/null; "
+        f"ros2 topic pub --once /chassis/blade_speed_set std_msgs/msg/Int16 "
+        f"'data: {int(speed)}'"
+    )
+    try:
+        r = subprocess.run(
+            ["bash", "-c", cmd],
+            capture_output=True, text=True, timeout=4,
+        )
+        if r.returncode != 0:
+            return (r.stderr or r.stdout or "unknown error").strip()[:200]
+        return ""
+    except subprocess.TimeoutExpired:
+        return "timeout"
+    except Exception as e:
+        return str(e)[:200]
+
+
+def handle_blade_on(params, respond):
+    """Turn the blade motor ON. Optional {speed: int} sets RPM (default 3000)."""
+    speed = int((params or {}).get("speed", 3000))
+    # Clamp to something sensible — the chassis firmware has its own max.
+    if speed < 500: speed = 500
+    if speed > 3600: speed = 3600
+    err = _publish_blade_speed(speed)
+    respond("blade_on_respond", {"result": 0 if not err else 1, "speed": speed, "error": err})
+
+
+def handle_blade_off(params, respond):
+    """Turn the blade motor OFF (speed 0)."""
+    err = _publish_blade_speed(0)
+    respond("blade_off_respond", {"result": 0 if not err else 1, "error": err})
+
+
+def handle_blade_speed(params, respond):
+    """Set arbitrary blade speed 0-3600. 0 = off."""
+    speed = int((params or {}).get("speed", 0))
+    if speed < 0: speed = 0
+    if speed > 3600: speed = 3600
+    err = _publish_blade_speed(speed)
+    respond("blade_speed_respond", {"result": 0 if not err else 1, "speed": speed, "error": err})
+
+
 COMMANDS = {
     "is_opennova": handle_is_opennova,
     "set_robot_reboot": handle_reboot,
@@ -1208,6 +1273,9 @@ COMMANDS = {
     "get_ros_log": handle_get_ros_log,
     "list_ros_logs": handle_list_ros_logs,
     "stat_path_files": handle_stat_path_files,
+    "blade_on": handle_blade_on,
+    "blade_off": handle_blade_off,
+    "blade_speed": handle_blade_speed,
     "sync_map": lambda p, r: handle_sync_map(p, r),
 }
 

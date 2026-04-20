@@ -162,6 +162,7 @@ export function adminPageHtml(): string {
   <div class="tabs">
     <button class="tab active" onclick="switchTab('devices')">Devices</button>
     <button class="tab" onclick="switchTab('console')">Console</button>
+    <button class="tab" onclick="switchTab('mowerdebug')">Mower Debug</button>
     <button class="tab" onclick="switchTab('maps')">Maps</button>
     <button class="tab" onclick="switchTab('firmware')">Firmware</button>
     <button class="tab" onclick="switchTab('settings')">Settings</button>
@@ -199,6 +200,77 @@ export function adminPageHtml(): string {
         <input id="f_search" type="text" placeholder="Search (e.g. start_run, error, LFIN...)" oninput="renderLogs()" style="width:100%;padding:6px 10px;font-size:12px;background:#0d0d20;border:1px solid #333;border-radius:6px;color:#fff">
       </div>
       <div id="mqttConsole" style="height:calc(100vh - 320px);min-height:300px;overflow-y:auto;font-family:monospace;font-size:11px;padding:8px;background:#0a0a1a;line-height:1.6;word-break:break-all"></div>
+    </div>
+  </div>
+
+  <!-- Tab: Mower Debug -->
+  <div id="tab_mowerdebug" style="display:none">
+    <div class="card">
+      <h2>Mower Debug (via extended_commands)</h2>
+      <p style="font-size:12px;color:#aaa;margin-bottom:12px">
+        Haal live logs + diagnostiek op van de mower zonder SSH. Vereist custom firmware ≥ v6.0.2-custom-24 (met get_ros_log + stat_path_files handlers).
+      </p>
+
+      <!-- Device picker + quick actions -->
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
+        <select id="mdMowerSelect" style="flex:1;min-width:180px;padding:8px 12px;background:#0d0d20;border:1px solid #333;border-radius:8px;color:#fff;font-size:13px">
+          <option value="">Select a mower...</option>
+        </select>
+        <button onclick="mdQuickAction('list_ros_logs')" style="padding:8px 12px;background:rgba(124,58,237,.2);color:#a78bfa;border:1px solid rgba(124,58,237,.3);border-radius:8px;font-size:12px;font-weight:600;cursor:pointer">List log sources</button>
+        <button onclick="mdQuickAction('stat_path_files')" style="padding:8px 12px;background:rgba(245,158,11,.2);color:#fbbf24;border:1px solid rgba(245,158,11,.3);border-radius:8px;font-size:12px;font-weight:600;cursor:pointer">Path files info</button>
+        <button onclick="mdQuickAction('get_system_info')" style="padding:8px 12px;background:rgba(34,197,94,.2);color:#4ade80;border:1px solid rgba(34,197,94,.3);border-radius:8px;font-size:12px;font-weight:600;cursor:pointer">System info</button>
+      </div>
+
+      <!-- Log fetch form -->
+      <div style="background:#0a0a1a;border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:12px;margin-bottom:12px">
+        <h3 style="margin:0 0 10px;font-size:13px;color:#ddd">Fetch log lines</h3>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-bottom:10px">
+          <div>
+            <label style="display:block;font-size:11px;color:#888;margin-bottom:3px">Source</label>
+            <select id="mdLogSource" style="width:100%;padding:6px 10px;background:#0d0d20;border:1px solid #333;border-radius:6px;color:#fff;font-size:12px">
+              <option value="mqtt_error">mqtt_error (stderr/crash)</option>
+              <option value="mqtt">mqtt (info)</option>
+              <option value="robot_decision">robot_decision</option>
+              <option value="chassis_control">chassis_control</option>
+              <option value="coverage_planner">coverage_planner</option>
+              <option value="nav2">nav2</option>
+              <option value="timer_record">timer_record</option>
+              <option value="novabot_mapping">novabot_mapping</option>
+              <option value="localization">localization</option>
+            </select>
+          </div>
+          <div>
+            <label style="display:block;font-size:11px;color:#888;margin-bottom:3px">Lines (max 2000)</label>
+            <input id="mdLogLines" type="number" value="200" min="10" max="2000" style="width:100%;padding:6px 10px;background:#0d0d20;border:1px solid #333;border-radius:6px;color:#fff;font-size:12px">
+          </div>
+          <div>
+            <label style="display:block;font-size:11px;color:#888;margin-bottom:3px">Level</label>
+            <select id="mdLogLevel" style="width:100%;padding:6px 10px;background:#0d0d20;border:1px solid #333;border-radius:6px;color:#fff;font-size:12px">
+              <option value="">any</option>
+              <option value="INFO">INFO</option>
+              <option value="WARN">WARN</option>
+              <option value="ERROR">ERROR</option>
+              <option value="DEBUG">DEBUG</option>
+            </select>
+          </div>
+          <div>
+            <label style="display:block;font-size:11px;color:#888;margin-bottom:3px">Grep substring</label>
+            <input id="mdLogGrep" type="text" placeholder="e.g. preview_cover" style="width:100%;padding:6px 10px;background:#0d0d20;border:1px solid #333;border-radius:6px;color:#fff;font-size:12px">
+          </div>
+        </div>
+        <button onclick="mdFetchLog()" style="padding:8px 18px;background:rgba(34,197,94,.2);color:#4ade80;border:1px solid rgba(34,197,94,.3);border-radius:8px;font-size:12px;font-weight:600;cursor:pointer">Fetch</button>
+        <span id="mdStatus" style="margin-left:10px;font-size:11px;color:#888"></span>
+      </div>
+
+      <!-- Client-side additional filter + output -->
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
+        <input id="mdOutputFilter" type="text" placeholder="Client-side filter (live)" oninput="mdRenderOutput()" style="flex:1;min-width:200px;padding:6px 10px;background:#0d0d20;border:1px solid #333;border-radius:6px;color:#fff;font-size:12px">
+        <label style="font-size:11px;cursor:pointer;display:flex;align-items:center;gap:3px;color:#ccc"><input type="checkbox" id="mdOnlyErrors" onchange="mdRenderOutput()"> Errors only</label>
+        <label style="font-size:11px;cursor:pointer;display:flex;align-items:center;gap:3px;color:#ccc"><input type="checkbox" id="mdOnlyWarns" onchange="mdRenderOutput()"> Warns</label>
+        <button onclick="mdCopyOutput()" style="padding:6px 12px;background:rgba(59,130,246,.15);color:#60a5fa;border:1px solid rgba(59,130,246,.2);border-radius:6px;font-size:11px;cursor:pointer">Copy visible</button>
+        <button onclick="mdOutputLines=[];mdRenderOutput()" style="padding:6px 12px;background:rgba(239,68,68,.15);color:#f87171;border:1px solid rgba(239,68,68,.2);border-radius:6px;font-size:11px;cursor:pointer">Clear</button>
+      </div>
+      <div id="mdOutput" style="height:calc(100vh - 460px);min-height:260px;overflow-y:auto;font-family:monospace;font-size:11px;padding:10px;background:#0a0a1a;border:1px solid rgba(255,255,255,.06);border-radius:8px;line-height:1.55;word-break:break-all;color:#ccc"></div>
     </div>
   </div>
 
@@ -429,13 +501,14 @@ function switchTab(name) {
   var tabs = document.querySelectorAll('.tab');
   for (var i = 0; i < tabs.length; i++) tabs[i].classList.remove('active');
   // Activate clicked tab
-  var names = ['devices','console','maps','firmware','settings'];
+  var names = ['devices','console','mowerdebug','maps','firmware','settings'];
   for (var i = 0; i < names.length; i++) {
     document.getElementById('tab_' + names[i]).style.display = names[i] === name ? '' : 'none';
     if (names[i] === name) tabs[i].classList.add('active');
   }
   // Auto-check DNS + dnsmasq when switching to settings
   if (name === 'settings') { checkDns(); checkDnsmasqStatus(); }
+  if (name === 'mowerdebug') { mdPopulateDropdown(); }
   // Load maps when switching to maps tab
   if (name === 'maps') { populateMowerDropdown(); }
   if (name === 'firmware') { loadFirmwareVersions(); populateOtaDeviceDropdown(); }
@@ -615,6 +688,239 @@ function addLog(entry) {
   }
 }
 
+// ── Mower Debug (extended_commands) ──────────────────────────────
+var mdOutputLines = [];
+var mdCurrentMeta = null;
+var mdPendingCommand = null;
+var mdPendingTimeout = null;
+
+function mdPopulateDropdown() {
+  fetch('/api/dashboard/devices').then(function(r){return r.json();}).then(function(d){
+    var sel = document.getElementById('mdMowerSelect');
+    var prev = sel.value;
+    sel.innerHTML = '<option value="">Select a mower...</option>';
+    var devs = (d.devices || d || []).filter(function(x){ return (x.sn || '').indexOf('LFIN') === 0; });
+    for (var i = 0; i < devs.length; i++) {
+      var opt = document.createElement('option');
+      opt.value = devs[i].sn;
+      opt.textContent = (devs[i].nickname || devs[i].sn) + ' (' + devs[i].sn + ')';
+      sel.appendChild(opt);
+    }
+    if (prev) sel.value = prev;
+    // Auto-select single mower
+    if (!sel.value && devs.length === 1) sel.value = devs[0].sn;
+  }).catch(function(){ /* ignore */ });
+}
+
+function mdSetStatus(text, color) {
+  var s = document.getElementById('mdStatus');
+  s.textContent = text || '';
+  s.style.color = color || '#888';
+}
+
+function mdSendCommand(cmdName, params) {
+  var sn = document.getElementById('mdMowerSelect').value;
+  if (!sn) { mdSetStatus('No mower selected', '#f87171'); return false; }
+
+  if (mdPendingTimeout) clearTimeout(mdPendingTimeout);
+  mdPendingCommand = cmdName;
+  mdSetStatus('Sending ' + cmdName + '...', '#fbbf24');
+
+  var body = {};
+  body[cmdName] = params || {};
+  fetch('/api/dashboard/extended/' + encodeURIComponent(sn), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }).then(function(r){ return r.json(); }).then(function(d){
+    if (d.ok) {
+      mdSetStatus('Waiting for ' + cmdName + '_respond...', '#fbbf24');
+      mdPendingTimeout = setTimeout(function(){
+        mdSetStatus('Timeout — no response within 15s', '#f87171');
+        mdPendingCommand = null;
+      }, 15000);
+    } else {
+      mdSetStatus('Error: ' + (d.error || 'unknown'), '#f87171');
+      mdPendingCommand = null;
+    }
+  }).catch(function(e){
+    mdSetStatus('HTTP error: ' + e.message, '#f87171');
+    mdPendingCommand = null;
+  });
+  return true;
+}
+
+function mdQuickAction(cmd) {
+  mdSendCommand(cmd, {});
+}
+
+function mdFetchLog() {
+  var params = {
+    source: document.getElementById('mdLogSource').value,
+    lines: parseInt(document.getElementById('mdLogLines').value) || 200,
+    level: document.getElementById('mdLogLevel').value || undefined,
+    grep: document.getElementById('mdLogGrep').value || undefined,
+  };
+  // Server expects the same keys; strip undefined
+  for (var k in params) if (params[k] === undefined || params[k] === '') delete params[k];
+  mdSendCommand('get_ros_log', params);
+}
+
+function mdHandleExtendedResponse(ev) {
+  // ev = {sn, command, data, timestamp}
+  // Ignore if not our pending command (or from different mower)
+  var selSn = document.getElementById('mdMowerSelect').value;
+  if (selSn && ev.sn !== selSn) return;
+
+  var respondKey = (mdPendingCommand || '').replace(/_respond$/, '') + '_respond';
+  if (ev.command !== respondKey && !String(ev.command).startsWith(mdPendingCommand || '')) {
+    // Not the command we were waiting for — still log it as info
+    mdAppendLine('[other] ' + ev.command + ' = ' + JSON.stringify(ev.data).slice(0, 500));
+    return;
+  }
+
+  if (mdPendingTimeout) { clearTimeout(mdPendingTimeout); mdPendingTimeout = null; }
+  mdSetStatus('Received ' + ev.command, '#4ade80');
+
+  var data = ev.data || {};
+  if (data.result !== 0 && data.result !== true) {
+    mdAppendLine('[ERROR] ' + ev.command + ' → result=' + data.result + ' error=' + (data.error || '(none)'));
+    mdPendingCommand = null;
+    return;
+  }
+  var value = data.value;
+
+  if (mdPendingCommand === 'get_ros_log') {
+    if (value && Array.isArray(value.lines)) {
+      mdOutputLines = []; // replace, not append
+      mdCurrentMeta = { source: value.source, file: value.file, raw: value.raw_count, shown: value.count };
+      for (var i = 0; i < value.lines.length; i++) mdOutputLines.push(value.lines[i]);
+      mdRenderOutput();
+    }
+  } else if (mdPendingCommand === 'list_ros_logs') {
+    mdOutputLines = [];
+    mdCurrentMeta = null;
+    mdAppendLine('# list_ros_logs — available log sources');
+    mdAppendLine('');
+    if (value && typeof value === 'object') {
+      for (var src in value) {
+        var info = value[src] || {};
+        mdAppendLine(src.padEnd(22) + ' ' + (info.size || '?').toString().padStart(10) + 'B  ' + (info.mtime_iso || '') + '  instances=' + (info.total_instances || 0));
+        mdAppendLine('  ' + (info.path || ''));
+      }
+    }
+    mdRenderOutput();
+  } else if (mdPendingCommand === 'stat_path_files') {
+    mdOutputLines = [];
+    mdCurrentMeta = null;
+    mdAppendLine('# stat_path_files');
+    mdAppendLine('dir: ' + (value && value.planned_path_dir));
+    mdAppendLine('');
+    if (value && value.files) {
+      for (var fn in value.files) {
+        var f = value.files[fn];
+        if (!f) { mdAppendLine(fn + ' — NOT FOUND'); continue; }
+        if (f.error) { mdAppendLine(fn + ' — error: ' + f.error); continue; }
+        mdAppendLine(fn.padEnd(30) + ' ' + (f.size + '').padStart(10) + 'B  ' + (f.mtime_iso || ''));
+      }
+    }
+    if (value && value.csv_file_summary) {
+      mdAppendLine('');
+      mdAppendLine('csv_file/ summary: ' + JSON.stringify(value.csv_file_summary));
+    }
+    mdRenderOutput();
+  } else if (mdPendingCommand === 'get_system_info') {
+    mdOutputLines = [];
+    mdCurrentMeta = null;
+    mdAppendLine('# get_system_info');
+    if (value && typeof value === 'object') {
+      for (var k in value) mdAppendLine(k.padEnd(22) + ' = ' + JSON.stringify(value[k]));
+    }
+    mdRenderOutput();
+  } else {
+    // Generic fallback — dump the value
+    mdAppendLine('# ' + ev.command);
+    mdAppendLine(JSON.stringify(value, null, 2));
+    mdRenderOutput();
+  }
+
+  mdPendingCommand = null;
+}
+
+function mdAppendLine(line) {
+  mdOutputLines.push(line);
+  // Cap total lines to avoid memory blowup
+  if (mdOutputLines.length > 5000) mdOutputLines.splice(0, mdOutputLines.length - 5000);
+}
+
+function mdRenderOutput() {
+  var el = document.getElementById('mdOutput');
+  if (!el) return;
+  var q = (document.getElementById('mdOutputFilter').value || '').toLowerCase();
+  var onlyErrors = document.getElementById('mdOnlyErrors').checked;
+  var onlyWarns = document.getElementById('mdOnlyWarns').checked;
+
+  var html = '';
+  if (mdCurrentMeta) {
+    html += '<div style="color:#888;font-style:italic;margin-bottom:6px">source=' + mdCurrentMeta.source +
+            ' • file=' + (mdCurrentMeta.file || '') +
+            ' • raw=' + (mdCurrentMeta.raw || 0) +
+            ' → shown=' + (mdCurrentMeta.shown || 0) + '</div>';
+  }
+
+  var visible = 0;
+  for (var i = 0; i < mdOutputLines.length; i++) {
+    var ln = mdOutputLines[i];
+    var lower = ln.toLowerCase();
+    if (q && lower.indexOf(q) < 0) continue;
+    var isError = lower.indexOf('[error]') >= 0 || lower.indexOf('fatal') >= 0 || lower.indexOf('buffer overflow') >= 0 || lower.indexOf('segfault') >= 0;
+    var isWarn = lower.indexOf('[warn]') >= 0 || lower.indexOf('warning') >= 0;
+    if (onlyErrors && !isError) continue;
+    if (onlyWarns && !isWarn && !onlyErrors) continue;
+
+    var color = '#ccc';
+    if (isError) color = '#f87171';
+    else if (isWarn) color = '#fbbf24';
+    else if (lower.indexOf('[info]') >= 0) color = '#9ca3af';
+
+    var displayLine = ln.split('<').join('&lt;');
+    if (q) {
+      var idx = displayLine.toLowerCase().indexOf(q);
+      if (idx >= 0) {
+        displayLine = displayLine.substring(0, idx) +
+          '<mark style="background:#facc15;color:#000;border-radius:2px;padding:0 1px">' +
+          displayLine.substring(idx, idx + q.length) + '</mark>' +
+          displayLine.substring(idx + q.length);
+      }
+    }
+    html += '<div style="color:' + color + '">' + displayLine + '</div>';
+    visible++;
+  }
+
+  el.innerHTML = html || '<span style="color:#555">No lines match the current filter.</span>';
+  el.scrollTop = el.scrollHeight;
+}
+
+function mdCopyOutput() {
+  var q = (document.getElementById('mdOutputFilter').value || '').toLowerCase();
+  var onlyErrors = document.getElementById('mdOnlyErrors').checked;
+  var onlyWarns = document.getElementById('mdOnlyWarns').checked;
+  var lines = [];
+  for (var i = 0; i < mdOutputLines.length; i++) {
+    var ln = mdOutputLines[i];
+    var lower = ln.toLowerCase();
+    if (q && lower.indexOf(q) < 0) continue;
+    var isError = lower.indexOf('[error]') >= 0 || lower.indexOf('fatal') >= 0;
+    var isWarn = lower.indexOf('[warn]') >= 0 || lower.indexOf('warning') >= 0;
+    if (onlyErrors && !isError) continue;
+    if (onlyWarns && !isWarn && !onlyErrors) continue;
+    lines.push(ln);
+  }
+  navigator.clipboard.writeText(lines.join('\\n')).then(function(){
+    mdSetStatus('Copied ' + lines.length + ' lines', '#4ade80');
+  });
+}
+
 // Connect Socket.io for real-time logs + events
 // All event listeners are registered in setupSocketListeners so they work
 // regardless of whether socket.io loaded from same origin or fallback port.
@@ -682,6 +988,9 @@ function setupSocketListeners(sock) {
     }
     statusText.textContent = label;
     statusText.style.color = (evtStatus === 'error' || evtStatus === 'failed') ? '#ef4444' : (evtStatus === 'completed' || pct >= 100) ? '#22c55e' : '#aaa';
+  });
+  sock.on('extended:response', function(ev) {
+    try { mdHandleExtendedResponse(ev); } catch (e) { console.error('mdHandleExtendedResponse error', e); }
   });
   sock.emit('mqtt:log:history');
 }

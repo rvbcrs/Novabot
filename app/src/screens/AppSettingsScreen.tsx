@@ -47,7 +47,6 @@ export default function AppSettingsScreen({
   const [scanning, setScanning] = useState(false);
   const [discoveredServers, setDiscoveredServers] = useState<string[]>([]);
   const [email, setEmail] = useState('');
-  const [headlightOn, setHeadlightOn] = useState(false);
   const [showJoystick, setShowJoystick] = useState(false);
   const devMode = useDevMode();
   const experimental = useExperimental();
@@ -78,26 +77,6 @@ export default function AppSettingsScreen({
       }
     })();
   }, []);
-
-  // Track headlight from sensor data
-  useEffect(() => {
-    if (mower?.sensors.headlight === '1') setHeadlightOn(true);
-    else if (mower?.sensors.headlight === '0') setHeadlightOn(false);
-  }, [mower?.sensors.headlight]);
-
-  const toggleHeadlight = async () => {
-    if (!mower) return;
-    const newState = !headlightOn;
-    setHeadlightOn(newState);
-    try {
-      const url = await getServerUrl();
-      if (!url) return;
-      const api = new ApiClient(url);
-      await api.setHeadlight(mower.sn, newState);
-    } catch {
-      setHeadlightOn(!newState); // revert
-    }
-  };
 
   const handleChangeServer = async (newUrl: string) => {
     const normalized = newUrl.trim().replace(/\/+$/, '');
@@ -210,21 +189,8 @@ export default function AppSettingsScreen({
           <SettingsRow icon="mail-outline" label="Email" value={email || 'Unknown'} />
         </Section>
 
-        {/* Controls */}
-        {mower?.online && (
-          <Section title="CONTROLS">
-            <View style={rowStyles.container}>
-              <Ionicons name="flashlight-outline" size={20} color={colors.textDim} />
-              <Text style={rowStyles.label}>Headlight</Text>
-              <Switch
-                value={headlightOn}
-                onValueChange={toggleHeadlight}
-                trackColor={{ false: '#374151', true: 'rgba(0,212,170,0.3)' }}
-                thumbColor={headlightOn ? colors.emerald : '#6b7280'}
-              />
-            </View>
-          </Section>
-        )}
+        {/* Headlight toggle + brightness slider leven in Mower Settings
+            (één plek, met 0-255 brightness control). Hier geen duplicaat. */}
 
         {/* Actions */}
         <Section title="ACTIONS">
