@@ -594,7 +594,15 @@ export class ApiClient {
   // ── OTA ──────────────────────────────────────────────────────────────
 
   async getOtaVersions(): Promise<OtaVersion[]> {
-    return this.request<OtaVersion[]>('GET', '/api/dashboard/ota/versions');
+    // Server retourneert { ok: true, versions: [...] } sinds de auto-sync
+    // toegevoegd is; oudere server-versies gaven een kale array terug. We
+    // accepteren beide vormen defensief zodat de app blijft werken bij
+    // gemixte deployments.
+    const res = await this.request<OtaVersion[] | { ok: boolean; versions: OtaVersion[] }>(
+      'GET', '/api/dashboard/ota/versions',
+    );
+    if (Array.isArray(res)) return res;
+    return (res as { versions?: OtaVersion[] }).versions ?? [];
   }
 
   async getFirmwareFiles(): Promise<FirmwareFile[]> {

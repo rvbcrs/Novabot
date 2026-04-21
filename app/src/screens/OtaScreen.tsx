@@ -2,7 +2,7 @@
  * OTA screen — view firmware versions, trigger updates.
  * Ported from dashboard OtaManager.
  */
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -12,6 +12,7 @@ import {
   ActivityIndicator,
   Alert,
   Image,
+  Modal,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
@@ -20,7 +21,16 @@ import { colors } from '../theme/colors';
 import { useMowerState } from '../hooks/useMowerState';
 import { ApiClient, type OtaVersion } from '../services/api';
 import { getServerUrl } from '../services/auth';
+import { getSocket } from '../services/socket';
 import { formatDate } from '../lib/format';
+
+interface OtaProgressEntry {
+  status: string;       // 'upgrade' | 'success' | 'failed' | 'error' | ...
+  percentage: number | null;
+  timestamp: number;
+  targetVersion?: string;
+  deviceLabel?: string;
+}
 
 export default function OtaScreen() {
   const insets = useSafeAreaInsets();
@@ -30,6 +40,11 @@ export default function OtaScreen() {
   const [loading, setLoading] = useState(true);
   const [triggeringSn, setTriggeringSn] = useState<string | null>(null);
   const [triggerResult, setTriggerResult] = useState<Record<string, string>>({});
+  // OTA progress, keyed by SN. Populated via 'ota:event' socket broadcasts
+  // from the server (broker.ts forwards raw mower ota_upgrade_state into
+  // this event). Modal opens when there's an active status <2 min old.
+  const [otaProgress, setOtaProgress] = useState<Map<string, OtaProgressEntry>>(new Map());
+  const targetVersionRef = useRef<Record<string, { version: string; label: string }>>({});
 
   const mower = useMemo(() => {
     return [...devices.values()].find((d) => d.deviceType === 'mower') ?? null;
@@ -58,6 +73,62 @@ export default function OtaScreen() {
     fetchVersions();
   }, [fetchVersions]);
 
+  // Subscribe to 'ota:event' socket broadcasts — server emits these whenever
+  // the mower reports ota_upgrade_state / ota_upgrade_cmd_respond via MQTT.
+  // Payload matches the dashboard: { sn, eventType:'state', data:{status, percentage|progress}, timestamp }
+  // percentage can be 0-1 (fraction) or 0-100; we normalize to 0-100.
+  useEffect(() => {
+    const socket = getSocket();
+    if (!socket) return;
+    const handler = (e: { sn: string; eventType: string; data: Record<string, unknown>; timestamp: number }) => {
+      if (e.eventType !== 'state') return;
+      const data = e.data ?? {};
+      const rawPct = (data.percentage ?? data.progress ?? data.percent) as number | string | undefined;
+      let pct: number | null = null;
+      if (rawPct != null) {
+        const n = Number(rawPct);
+        if (isFinite(n)) pct = n <= 1 ? n * 100 : n;
+      }
+      setOtaProgress(prev => {
+        const next = new Map(prev);
+        const ref = targetVersionRef.current[e.sn];
+        next.set(e.sn, {
+          status: String(data.status ?? data.state ?? 'updating'),
+          percentage: pct,
+          timestamp: e.timestamp,
+          targetVersion: ref?.version,
+          deviceLabel: ref?.label,
+        });
+        return next;
+      });
+    };
+    socket.on('ota:event', handler);
+    return () => { socket.off('ota:event', handler); };
+  }, []);
+
+  // Determine which device (if any) has an active, recent OTA session to
+  // render as a modal. "Active" = status not success/failed/error AND within
+  // 2 minutes; "terminal" states stay visible 10s so the user sees "OK" /
+  // "FAIL" before the modal auto-closes.
+  const activeOta = useMemo(() => {
+    const now = Date.now();
+    for (const [sn, p] of otaProgress) {
+      const age = now - p.timestamp;
+      const terminal = p.status === 'success' || p.status === 'failed' || p.status === 'error';
+      if (terminal && age < 10_000) return { sn, progress: p };
+      if (!terminal && age < 120_000) return { sn, progress: p };
+    }
+    return null;
+  }, [otaProgress]);
+
+  const dismissOta = useCallback((sn: string) => {
+    setOtaProgress(prev => {
+      const next = new Map(prev);
+      next.delete(sn);
+      return next;
+    });
+  }, []);
+
   const handleTrigger = (version: OtaVersion, sn: string, deviceLabel: string) => {
     const currentVersion = sn === mower?.sn
       ? mower?.sensors.sw_version ?? mower?.sensors.mower_version ?? '?'
@@ -73,6 +144,25 @@ export default function OtaScreen() {
           onPress: async () => {
             setTriggeringSn(sn);
             setTriggerResult((prev) => ({ ...prev, [sn]: 'sending' }));
+            // Remember target version + device label so the progress modal
+            // can show "Updating mower to v6.0.2-custom-24" instead of a
+            // naked SN. Cleared when modal dismisses.
+            targetVersionRef.current[sn] = { version: version.version, label: deviceLabel };
+            // Seed an immediate "pending" entry so the modal opens right away
+            // even before the mower's first ota_upgrade_state arrives — this
+            // mirrors the dashboard's UX where clicking Update instantly shows
+            // a progress bar at 0%.
+            setOtaProgress(prev => {
+              const next = new Map(prev);
+              next.set(sn, {
+                status: 'starting',
+                percentage: null,
+                timestamp: Date.now(),
+                targetVersion: version.version,
+                deviceLabel,
+              });
+              return next;
+            });
             try {
               const url = await getServerUrl();
               if (!url) return;
@@ -147,40 +237,56 @@ export default function OtaScreen() {
           <ActivityIndicator size="small" color={colors.emerald} style={{ marginTop: 16 }} />
         )}
 
-        {/* Available firmware versions */}
-        {mowerVersions.length > 0 && (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>MOWER FIRMWARE</Text>
-            {mowerVersions.map((v) => (
-              <VersionCard
-                key={v.id}
-                version={v}
-                device={mower}
-                deviceLabel="Mower"
-                onTrigger={handleTrigger}
-                triggering={triggeringSn === mower?.sn}
-                result={mower ? triggerResult[mower.sn] : undefined}
-              />
-            ))}
-          </View>
-        )}
+        {/* Available firmware versions. We berekenen de currentVersion hier
+            (met dezelfde fallback chain als CURRENT VERSIONS bovenin, incl.
+            device.firmwareVersion) en geven hem door aan VersionCard, zodat
+            de "Installed" detectie consistent is. Zonder dit matcht mower wel
+            (sw_version sensor is gezet) maar charger niet — die rapporteert
+            zijn version soms pas na een tweede device:update via de DB
+            firmwareVersion kolom. */}
+        {(() => {
+          const mowerCurrent = mower?.sensors.sw_version ?? mower?.sensors.mower_version ?? mower?.firmwareVersion ?? null;
+          const chargerCurrent = charger?.sensors.charger_version ?? charger?.sensors.sw_version ?? charger?.firmwareVersion ?? null;
+          return (
+            <>
+              {mowerVersions.length > 0 && (
+                <View style={styles.section}>
+                  <Text style={styles.sectionTitle}>MOWER FIRMWARE</Text>
+                  {mowerVersions.map((v) => (
+                    <VersionCard
+                      key={v.id}
+                      version={v}
+                      device={mower}
+                      deviceLabel="Mower"
+                      currentVersion={mowerCurrent}
+                      onTrigger={handleTrigger}
+                      triggering={triggeringSn === mower?.sn}
+                      result={mower ? triggerResult[mower.sn] : undefined}
+                    />
+                  ))}
+                </View>
+              )}
 
-        {chargerVersions.length > 0 && (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>CHARGER FIRMWARE</Text>
-            {chargerVersions.map((v) => (
-              <VersionCard
-                key={v.id}
-                version={v}
-                device={charger}
-                deviceLabel="Charger"
-                onTrigger={handleTrigger}
-                triggering={triggeringSn === charger?.sn}
-                result={charger ? triggerResult[charger.sn] : undefined}
-              />
-            ))}
-          </View>
-        )}
+              {chargerVersions.length > 0 && (
+                <View style={styles.section}>
+                  <Text style={styles.sectionTitle}>CHARGER FIRMWARE</Text>
+                  {chargerVersions.map((v) => (
+                    <VersionCard
+                      key={v.id}
+                      version={v}
+                      device={charger}
+                      deviceLabel="Charger"
+                      currentVersion={chargerCurrent}
+                      onTrigger={handleTrigger}
+                      triggering={triggeringSn === charger?.sn}
+                      result={charger ? triggerResult[charger.sn] : undefined}
+                    />
+                  ))}
+                </View>
+              )}
+            </>
+          );
+        })()}
 
         {!loading && versions.length === 0 && (
           <View style={styles.emptyCard}>
@@ -192,6 +298,86 @@ export default function OtaScreen() {
           </View>
         )}
       </ScrollView>
+
+      {/* OTA progress modal — matcht dashboard's OtaManager visual. Opent
+          zodra we een ota:event ontvangen (of meteen na een triggerOta call
+          dankzij de optimistic "starting" entry). Auto-sluit 10s na success
+          /failed. Tijdens een actieve upgrade niet dismissable behalve via
+          Cancel — de maaier kan niet halverwege gestopt worden. */}
+      <Modal
+        visible={!!activeOta}
+        transparent
+        animationType="fade"
+        onRequestClose={() => { /* block back-gesture during active upgrade */ }}
+      >
+        {activeOta && (() => {
+          const p = activeOta.progress;
+          const isDone = p.status === 'success';
+          const isFail = p.status === 'failed' || p.status === 'error';
+          const isActive = !isDone && !isFail;
+          const title = isDone ? 'Update complete' : isFail ? 'Update failed' : 'Updating firmware';
+          const subtitle = p.deviceLabel && p.targetVersion
+            ? (isDone ? `${p.deviceLabel} → ${p.targetVersion}` : `${p.deviceLabel} → ${p.targetVersion}`)
+            : activeOta.sn;
+          const pctLabel = p.percentage != null ? `${p.percentage.toFixed(0)}%` : (isActive ? 'Preparing…' : '');
+          const phaseLabel = (() => {
+            if (isDone) return 'Device will reboot and come back online shortly.';
+            if (isFail) return 'The device could not apply the update. You can retry in a few minutes.';
+            if (p.percentage == null) return 'Waiting for the device to start the download…';
+            if (p.percentage < 62) return 'Downloading firmware…';
+            if (p.percentage < 68) return 'Unpacking…';
+            return 'Installing + restarting…';
+          })();
+          const barColor = isDone ? colors.emerald : isFail ? colors.red : colors.amber;
+          return (
+            <View style={styles.otaModalBackdrop}>
+              <View style={styles.otaModalCard}>
+                <View style={styles.otaModalIconWrap}>
+                  {isActive && <ActivityIndicator size="large" color={colors.amber} />}
+                  {isDone && <Ionicons name="checkmark-circle" size={42} color={colors.emerald} />}
+                  {isFail && <Ionicons name="close-circle" size={42} color={colors.red} />}
+                </View>
+                <Text style={styles.otaModalTitle}>{title}</Text>
+                <Text style={styles.otaModalSubtitle}>{subtitle}</Text>
+
+                <View style={styles.otaModalProgressRow}>
+                  <Text style={[styles.otaModalPhase, { color: barColor }]}>{phaseLabel}</Text>
+                  {pctLabel !== '' && (
+                    <Text style={[styles.otaModalPct, { color: barColor }]}>{pctLabel}</Text>
+                  )}
+                </View>
+                <View style={styles.otaModalBarTrack}>
+                  <View
+                    style={[
+                      styles.otaModalBarFill,
+                      {
+                        width: `${Math.max(0, Math.min(100, p.percentage ?? (isActive ? 4 : 100)))}%` as any,
+                        backgroundColor: barColor,
+                      },
+                    ]}
+                  />
+                </View>
+
+                {isActive && (
+                  <Text style={styles.otaModalHint}>
+                    Don't close the app or turn off the device. This can take 15-30 minutes.
+                  </Text>
+                )}
+
+                {(isDone || isFail) && (
+                  <TouchableOpacity
+                    style={[styles.otaModalBtn, { backgroundColor: isDone ? colors.emerald : colors.red }]}
+                    onPress={() => dismissOta(activeOta.sn)}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.otaModalBtnText}>{isDone ? 'Close' : 'Dismiss'}</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+          );
+        })()}
+      </Modal>
     </View>
   );
 }
@@ -238,6 +424,7 @@ function VersionCard({
   version,
   device,
   deviceLabel,
+  currentVersion,
   onTrigger,
   triggering,
   result,
@@ -245,10 +432,19 @@ function VersionCard({
   version: OtaVersion;
   device: { sn: string; online: boolean; sensors: Record<string, string> } | null;
   deviceLabel: string;
+  currentVersion: string | null;
   onTrigger: (v: OtaVersion, sn: string, label: string) => void;
   triggering: boolean;
   result?: string;
 }) {
+  // Compare requested firmware version with what is actually running on the
+  // device. Accepts with/without leading "v" and trims whitespace — some
+  // firmware reports "6.0.2-custom-24", the DB keeps the "v" prefix. When
+  // they match we show an "Installed" badge instead of an Update button.
+  const normalize = (s: string | null | undefined): string =>
+    (s ?? '').trim().toLowerCase().replace(/^v/, '');
+  const isInstalled = normalize(version.version) === normalize(currentVersion);
+
   return (
     <View style={versionStyles.card}>
       <View style={versionStyles.header}>
@@ -262,7 +458,14 @@ function VersionCard({
         <Text style={versionStyles.notes}>{version.release_notes}</Text>
       )}
 
-      {device && device.online && (
+      {isInstalled && (
+        <View style={versionStyles.installedRow}>
+          <Ionicons name="checkmark-circle" size={16} color={colors.emerald} />
+          <Text style={versionStyles.installedText}>Installed on {deviceLabel}</Text>
+        </View>
+      )}
+
+      {!isInstalled && device && device.online && (
         <TouchableOpacity
           style={[versionStyles.triggerButton, triggering && { opacity: 0.5 }]}
           onPress={() => onTrigger(version, device.sn, deviceLabel)}
@@ -282,7 +485,7 @@ function VersionCard({
         </TouchableOpacity>
       )}
 
-      {device && !device.online && (
+      {!isInstalled && device && !device.online && (
         <Text style={versionStyles.offlineNote}>{deviceLabel} is offline</Text>
       )}
 
@@ -330,6 +533,88 @@ const styles = StyleSheet.create({
   },
   emptyCardText: { fontSize: 16, fontWeight: '600', color: colors.textDim, marginTop: 12 },
   emptyCardSubtext: { fontSize: 13, color: colors.textMuted, marginTop: 4, textAlign: 'center' },
+  // OTA progress modal
+  otaModalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  otaModalCard: {
+    width: '100%',
+    maxWidth: 420,
+    backgroundColor: colors.card,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    padding: 24,
+    alignItems: 'center',
+  },
+  otaModalIconWrap: {
+    height: 56,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+  },
+  otaModalTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: colors.white,
+    marginBottom: 4,
+  },
+  otaModalSubtitle: {
+    fontSize: 13,
+    color: colors.textDim,
+    marginBottom: 20,
+    fontVariant: ['tabular-nums'],
+  },
+  otaModalProgressRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    alignSelf: 'stretch',
+    marginBottom: 6,
+  },
+  otaModalPhase: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  otaModalPct: {
+    fontSize: 14,
+    fontWeight: '700',
+    fontVariant: ['tabular-nums'],
+  },
+  otaModalBarTrack: {
+    alignSelf: 'stretch',
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    overflow: 'hidden',
+  },
+  otaModalBarFill: {
+    height: '100%',
+    borderRadius: 5,
+  },
+  otaModalHint: {
+    marginTop: 14,
+    fontSize: 12,
+    color: colors.textMuted,
+    textAlign: 'center',
+    lineHeight: 18,
+  },
+  otaModalBtn: {
+    marginTop: 18,
+    alignSelf: 'stretch',
+    paddingVertical: 12,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  otaModalBtnText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: colors.white,
+  },
 });
 
 const rowStyles = StyleSheet.create({
@@ -360,5 +645,19 @@ const versionStyles = StyleSheet.create({
   },
   triggerText: { fontSize: 14, fontWeight: '600', color: colors.white },
   offlineNote: { fontSize: 13, color: colors.textMuted, textAlign: 'center', marginTop: 4 },
+  installedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 10,
+    backgroundColor: 'rgba(34,197,94,0.08)',
+    borderRadius: 10,
+  },
+  installedText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.emerald,
+  },
   result: { fontSize: 13, fontWeight: '600', marginTop: 8, textAlign: 'center' },
 });

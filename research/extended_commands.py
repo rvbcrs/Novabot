@@ -1204,22 +1204,33 @@ def _publish_blade_speed(speed: int) -> str:
     """Publish an Int16 to /chassis/blade_speed_set via ros2 topic pub --once.
 
     Returns '' on success, error string on failure. We source the ROS 2
-    environment first since this runs under the systemd-launched service
-    context where /opt/ros may not be on PATH by default.
+    environment AND set ROS_LOCALHOST_ONLY=1 — the Novabot ROS nodes all
+    run with this env var (chassis_control_node included), so any DDS
+    participant that wants to find them must match. Without it, ros2 only
+    sees /parameter_events + /rosout and the publish effectively hits
+    nothing.
+
+    Timeout bumped to 12s because ros2 topic pub --once needs DDS participant
+    init + discovery of subscribers before publishing. On this Horizon X3
+    hardware that regularly takes 6-10s. Also uses `--times 1` semantically
+    same as --once but prints less and returns faster.
     """
     cmd = (
+        "export ROS_LOCALHOST_ONLY=1; "
         "source /opt/ros/galactic/setup.bash 2>/dev/null; "
         "source /root/novabot/install/setup.bash 2>/dev/null; "
         f"ros2 topic pub --once /chassis/blade_speed_set std_msgs/msg/Int16 "
-        f"'data: {int(speed)}'"
+        f"'{{data: {int(speed)}}}' 2>&1"
     )
     try:
         r = subprocess.run(
             ["bash", "-c", cmd],
-            capture_output=True, text=True, timeout=4,
+            capture_output=True, text=True, timeout=12,
         )
         if r.returncode != 0:
             return (r.stderr or r.stdout or "unknown error").strip()[:200]
+        # Success also when stdout contains "publishing #1" — ros2 prints
+        # the message it sent. An empty stdout+0 return still counts as OK.
         return ""
     except subprocess.TimeoutExpired:
         return "timeout"
