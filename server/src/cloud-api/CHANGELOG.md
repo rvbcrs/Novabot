@@ -2,6 +2,11 @@
 
 Format: most-recent first. Each entry is dated and names the endpoint(s) affected.
 
+## 2026-04-23 — Contract-test harness
+
+- Add `cloud-api/__tests__/testHarness.ts`: express app factory (no MQTT/socket),
+  user + equipment seeders, JWT signer. Enables per-endpoint contract tests.
+
 ## 2026-04-23 — Route move (phase 3)
 
 - Physical move of nova-user, nova-data, nova-file-server, nova-network,
