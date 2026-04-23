@@ -1,0 +1,4 @@
+# Novabot-app cloud-API replica — frozen contract.
+# Changes require CHANGELOG + fixture update + explicit reviewer approval.
+/server/src/cloud-api/                          @rvbcrs
+/server/src/cloud-api/__tests__/fixtures/       @rvbcrs

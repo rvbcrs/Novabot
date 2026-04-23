@@ -2,6 +2,10 @@
 
 Format: most-recent first. Each entry is dated and names the endpoint(s) affected.
 
+## 2026-04-23 — CODEOWNERS for cloud-api
+
+- Add `.github/CODEOWNERS` requiring @rvbcrs review on cloud-api paths.
+
 ## 2026-04-23 — Add CHANGELOG pre-commit guard
 
 - Add `server/scripts/check-cloud-api-changelog.sh` and wire into `.husky/pre-commit`.
