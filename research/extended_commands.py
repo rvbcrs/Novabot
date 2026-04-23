@@ -1075,6 +1075,133 @@ def handle_start_boundary_follow(params, respond):
         respond("start_boundary_follow_respond", {"result": 1, "error": str(e)})
 
 
+def handle_start_edge_cut(params, respond):
+    """Start real edge-cutting via the stock orchestrator.
+
+    Calls `/robot_decision/start_cov_task` (decision_msgs/srv/StartCoverageTask)
+    with `cov_mode: 2` (BOUNDARY_COV). robot_decision then:
+      1. Loads the work map via `/decision_assistant/load_map "/map.yaml"`.
+      2. Validates the robot is inside the polygon ("working zone").
+      3. Dispatches the `coverage_planner/action/BoundaryFollow` action with
+         a fully populated coverage_planner context.
+
+    This replaces the earlier direct `/boundary_follow` dispatch which failed
+    with NO_VALID_BOUNDARY because the coverage_planner_server had no map
+    loaded.
+
+    Params (all optional):
+      mapName:      default "map0_work"
+      bladeHeight:  wire value 0..7 (userCm − 2), default 3 (= 50 mm)
+      light:        0..255, default 0
+
+    Response:
+      success → {result: 0, cov_mode: 2, map: <name>, blade: <h>}
+      failure → {result: 1, error: <class>, detail: <stdout tail>}
+
+    The service call is blocking with a 15 s timeout so the MQTT reply
+    reflects service-level success/failure. The BOUNDARY_COVERING loop
+    runs inside robot_decision after the service returns, independent of
+    the MQTT round-trip.
+    """
+    # Defensive prelude — same cleanup the direct-action path used.
+    _kill_ros2_action_clients()
+    _call_cover_task_stop()
+    _clear_costmaps()
+
+    try:
+        map_name = str((params or {}).get("mapName", "map0_work"))
+        blade = int((params or {}).get("bladeHeight", 3))
+        if blade < 0: blade = 0
+        if blade > 7: blade = 7
+        light = int((params or {}).get("light", 0))
+        if light < 0: light = 0
+        if light > 255: light = 255
+    except (TypeError, ValueError) as e:
+        respond("start_edge_cut_respond", {"result": 1, "error": f"param type error: {e}"})
+        return
+
+    # YAML goal for decision_msgs/srv/StartCoverageTask. Bash single-quoting
+    # keeps the braces and array literals intact on the ros2 CLI.
+    req_yaml = (
+        "'{"
+        "cov_mode: 2, "
+        "request_type: 11, "
+        f"map_names: [\"{map_name}\"], "
+        f"blade_heights: [{blade}], "
+        f"light: {light}, "
+        "specify_perception_level: false, "
+        "perception_level: 0, "
+        "blade_info_level: 0, "
+        "night_light: false, "
+        "enable_loc_weak_mapping: false, "
+        "enable_loc_weak_working: false, "
+        "specify_direction: false, "
+        "cov_direction: 0, "
+        "map_ids: 0"
+        "}'"
+    )
+
+    cmd = (
+        "source /opt/ros/galactic/setup.bash && "
+        "source /root/novabot/install/setup.bash 2>/dev/null && "
+        "timeout 15 ros2 service call /robot_decision/start_cov_task "
+        "decision_msgs/srv/StartCoverageTask " + req_yaml +
+        " 2>&1 | tee -a /tmp/edge_cut.log"
+    )
+
+    # Match the DDS transport used by the running ROS nodes — without the
+    # shared-memory CYCLONEDDS_URI the CLI client can't discover
+    # /robot_decision/start_cov_task.
+    env = {
+        **os.environ,
+        "ROS_DOMAIN_ID": "0",
+        "ROS_LOCALHOST_ONLY": "1",
+        "RMW_IMPLEMENTATION": "rmw_cyclonedds_cpp",
+        "CYCLONEDDS_URI": "file:///root/novabot/shm_config/shm_cyclonedds.xml",
+    }
+
+    try:
+        proc = subprocess.run(
+            ["bash", "-c", cmd], env=env,
+            capture_output=True, text=True, timeout=20,
+        )
+        out = (proc.stdout or "") + (proc.stderr or "")
+    except subprocess.TimeoutExpired:
+        log("start_edge_cut: ros2 service call timed out")
+        respond("start_edge_cut_respond", {"result": 1, "error": "service_timeout"})
+        return
+    except Exception as e:
+        log(f"start_edge_cut subprocess error: {e}")
+        respond("start_edge_cut_respond", {"result": 1, "error": f"subprocess: {e}"})
+        return
+
+    tail = out[-400:] if len(out) > 400 else out
+    log(f"start_edge_cut out: {tail}")
+
+    # ros2 service call prints either "response:\n  ... result=True" on
+    # success or "result=False" on service-level failure. We classify the
+    # common failure modes so the app can show a useful toast.
+    lowered = out.lower()
+    if "result=true" in lowered:
+        respond("start_edge_cut_respond", {
+            "result": 0,
+            "cov_mode": 2,
+            "map": map_name,
+            "blade": blade,
+        })
+    elif "result=false" in lowered:
+        if "working zone" in lowered or "not in mapping" in lowered:
+            err = "robot_outside_zone"
+        elif "load map" in lowered or "error_load_map" in lowered:
+            err = "map_load_failed"
+        else:
+            err = "service_rejected"
+        respond("start_edge_cut_respond", {"result": 1, "error": err, "detail": tail})
+    else:
+        # e.g. "Waiting for service..." (service not found)
+        respond("start_edge_cut_respond", {"result": 1, "error": "no_service_response", "detail": tail})
+
+
 def handle_recalibrate_charging_pose(params, respond):
     """Overwrite map_info.json charging_pose with a caller-supplied (x, y, theta).
 
