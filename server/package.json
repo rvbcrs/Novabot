@@ -13,7 +13,7 @@
     "build:all": "npm run build && npm run build --prefix ../dashboard",
     "start": "node dist/index.js",
     "lint": "eslint --ext .ts src/",
-    "prepare": "cd .. && husky"
+    "prepare": "cd .. && husky || true"
   },
   "dependencies": {
     "@stoprocent/noble": "^2.3.16",
@@ -29,7 +29,8 @@
     "multer": "^2.0.0",
     "multicast-dns": "^7.2.5",
     "socket.io": "^4.8.3",
-    "uuid": "^9.0.1"
+    "uuid": "^9.0.1",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@types/bcrypt": "^5.0.2",
@@ -49,7 +50,6 @@
     "supertest": "^7.2.2",
     "tsx": "^4.7.2",
     "typescript": "^5.4.3",
-    "vitest": "^4.1.4",
-    "zod": "^3.25.76"
+    "vitest": "^4.1.4"
   }
 }

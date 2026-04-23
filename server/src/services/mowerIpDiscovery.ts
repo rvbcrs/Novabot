@@ -126,7 +126,14 @@ function multicastDnsLookup(host: string, ms: number): Promise<string | null> {
   });
 }
 
-/** HEAD-probe the camera service to confirm this IP belongs to a novabot. */
+/** Probe the camera service to confirm this IP belongs to a novabot.
+ *
+ * Uses HEAD with a best-effort fallback: the camera service at :8000 is a
+ * minimal Python HTTP handler that returns 501 on HEAD (method not supported)
+ * but serves 200 on GET. We treat ANY HTTP status as "service is alive" —
+ * a 501 response proves the host exists and speaks HTTP, which is all we
+ * need for IP verification. Connect errors / timeouts still fail the check.
+ */
 function verifyCameraReachable(ip: string, ms: number): Promise<boolean> {
   return new Promise(resolve => {
     const req = http.request({
@@ -137,9 +144,9 @@ function verifyCameraReachable(ip: string, ms: number): Promise<boolean> {
       timeout: ms,
     }, res => {
       res.resume();
-      // Camera service returns 200 on success; anything 2xx/3xx means "reachable".
-      const ok = (res.statusCode ?? 0) >= 200 && (res.statusCode ?? 0) < 400;
-      resolve(ok);
+      // Any HTTP response (incl. 501 "HEAD not implemented") means a live
+      // service answered — the host exists and speaks HTTP on port 8000.
+      resolve(true);
     });
     req.on('error', () => resolve(false));
     req.on('timeout', () => { req.destroy(); resolve(false); });
