@@ -1238,11 +1238,20 @@ dashboardRouter.post('/maps/:sn/recalibrate-charging-pose', async (req: Request,
     return;
   }
 
-  const xRaw = sensors.get('x');
-  const yRaw = sensors.get('y');
-  const thetaRaw = sensors.get('theta');
+  // CRITICAL — use `map_position_*` from report_state_timer_data, NOT
+  // `x/y/theta` from report_state_robot. Stock mqtt_node has a bug where
+  // report_state_robot.y mirrors x verbatim (both fields equal), which
+  // corrupts the charger pose (y becomes wrong). Verified live on
+  // LFIN1231000211 (2026-04-23): robot.x==robot.y, but
+  // timer_data.localization.map_position reports distinct x/y.
+  const xRaw = sensors.get('map_position_x');
+  const yRaw = sensors.get('map_position_y');
+  const thetaRaw = sensors.get('map_position_orientation');
   if (xRaw == null || yRaw == null || thetaRaw == null) {
-    res.status(400).json({ ok: false, error: 'Mower pose (x/y/theta) not yet reported' });
+    res.status(400).json({
+      ok: false,
+      error: 'Mower map_position not yet reported — need a report_state_timer_data message first. Try again in ~5s.',
+    });
     return;
   }
   const x = Number(xRaw);
@@ -1250,6 +1259,15 @@ dashboardRouter.post('/maps/:sn/recalibrate-charging-pose', async (req: Request,
   const theta = Number(thetaRaw);
   if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(theta)) {
     res.status(400).json({ ok: false, error: `Invalid pose: x=${xRaw} y=${yRaw} theta=${thetaRaw}` });
+    return;
+  }
+  // Defensive: if somehow x and y are bit-identical the caller hit the
+  // report_state_robot bug upstream. Refuse the write.
+  if (xRaw === yRaw && x !== 0) {
+    res.status(400).json({
+      ok: false,
+      error: `Suspicious pose — x and y are exactly equal (${x}). Mower firmware is reporting bogus localization. Wait for a fresh timer_data update and retry.`,
+    });
     return;
   }
 
