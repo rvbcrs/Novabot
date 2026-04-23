@@ -17,6 +17,10 @@ import { DemoProvider } from './src/context/DemoContext';
 import { DevModeProvider, useDevMode } from './src/context/DevModeContext';
 import { PatternProvider } from './src/context/PatternContext';
 import { ExperimentalProvider } from './src/context/ExperimentalContext';
+import {
+  ActiveMowerProvider,
+  clearPersistedActiveMowerSn,
+} from './src/context/ActiveMowerContext';
 import { I18nProvider, useI18n } from './src/i18n';
 import type {
   AuthStackParams,
@@ -303,6 +307,7 @@ export default function App() {
 
   const handleLogout = useCallback(() => {
     disconnectSocket();
+    clearPersistedActiveMowerSn().catch(() => {});
     setIsAuthenticated(false);
   }, []);
 
@@ -323,7 +328,9 @@ export default function App() {
       <NavigationContainer theme={DarkTheme} ref={navigationRef}>
         <StatusBar style="light" />
         {isAuthenticated ? (
-          <AuthenticatedApp onLogout={handleLogout} onGoToProvision={handleGoToProvision} />
+          <ActiveMowerProvider>
+            <AuthenticatedApp onLogout={handleLogout} onGoToProvision={handleGoToProvision} />
+          </ActiveMowerProvider>
         ) : (
           <AuthStack.Navigator screenOptions={screenOptions}>
             <AuthStack.Screen name="Login">
