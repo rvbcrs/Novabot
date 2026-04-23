@@ -11,7 +11,9 @@
     "test:watch": "vitest",
     "build": "tsc --noEmitOnError false",
     "build:all": "npm run build && npm run build --prefix ../dashboard",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "lint": "eslint --ext .ts src/",
+    "prepare": "cd .. && husky"
   },
   "dependencies": {
     "@stoprocent/noble": "^2.3.16",
@@ -37,10 +39,17 @@
     "@types/multer": "^2.0.0",
     "@types/multicast-dns": "^7.2.4",
     "@types/node": "^20.11.30",
+    "@types/supertest": "^6.0.3",
     "@types/uuid": "^9.0.8",
+    "@typescript-eslint/eslint-plugin": "^7.18.0",
+    "@typescript-eslint/parser": "^7.18.0",
     "concurrently": "^9.2.1",
+    "eslint": "^8.57.1",
+    "husky": "^9.1.7",
+    "supertest": "^7.2.2",
     "tsx": "^4.7.2",
     "typescript": "^5.4.3",
-    "vitest": "^4.1.4"
+    "vitest": "^4.1.4",
+    "zod": "^3.25.76"
   }
 }
