@@ -15,6 +15,7 @@ import express from 'express';
 import './db/database.js';
 import { startMqttBroker } from './mqtt/broker.js';
 import { cloudHttpProxy } from './proxy/httpProxy.js';
+import { mountCloudApi } from './cloud-api/index.js';
 import { initDashboardSocket, pushMqttLog } from './dashboard/socketHandler.js';
 import { adminStatusRouter } from './routes/adminStatus.js';
 import { adminPageHtml } from './routes/adminPage.js';
@@ -172,6 +173,9 @@ if (PROXY_MODE === 'cloud') {
   // MQTT broker and /api/setup/* always work. App routes return 503 until
   // the user completes the wizard (imports their LFI account + devices).
   app.use(setupGuard);
+
+  // Cloud-API frozen surface (scaffold; routes wired in Task 9).
+  mountCloudApi(app);
 
   // nova-user service
   // Alias: app roept /api/nova-user/user/... aan (niet /appUser/)
