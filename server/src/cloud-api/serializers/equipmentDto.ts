@@ -118,6 +118,39 @@ export const userEquipmentListResponseSchema = z.object({
 });
 
 /**
+ * Single-SN lookup entry, returned by
+ * `POST /api/nova-user/equipment/getEquipmentBySN` when a row exists OR when
+ * the auto-create (`deviceIsKnown`) branch fires. The handler returns the
+ * full `cloudEquipmentDtoSchema` shape via spread:
+ *
+ *   res.json(ok({ ...rowToCloudDto(row, email), userId, macAddress }));
+ *
+ * so every DTO field is present. The `userId` override keeps it a number
+ * (0 = unbound, numericUserId = own device, 999 = IDOR sentinel) and
+ * `macAddress` may be null when BLE is intentionally skipped. No extra
+ * fields (`wifiName`, `model`, `photoId`, …) are added here — unlike
+ * `userEquipmentList`, `getEquipmentBySN` stays close to the raw DTO.
+ */
+export const getEquipmentBySnEntrySchema = cloudEquipmentDtoSchema;
+
+/**
+ * Full response envelope for `getEquipmentBySN`. The handler always emits via
+ * `ok(...)` in every branch (row found, auto-created, unknown-with-factory),
+ * so `success`/`code`/`message`/`dateline` mirror that helper's output.
+ *
+ * `value` is nullable on paper because `ok()` permits it, but every branch
+ * of the live handler returns a populated object — a null value would signal
+ * a regression.
+ */
+export const getEquipmentBySnResponseSchema = z.object({
+  success:  z.boolean(),
+  code:     z.number(),
+  value:    getEquipmentBySnEntrySchema.nullable(),
+  message:  z.string().nullable(),
+  dateline: z.number().optional(),
+});
+
+/**
  * Build the cloud-compatible DTO for one equipment row. Mirrors the legacy
  * implementation in `nova-user/equipment.ts` 1:1 — behaviour must NOT change
  * until a CHANGELOG entry says otherwise.

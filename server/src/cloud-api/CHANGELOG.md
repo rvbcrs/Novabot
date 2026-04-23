@@ -2,6 +2,11 @@
 
 Format: most-recent first. Each entry is dated and names the endpoint(s) affected.
 
+## 2026-04-23 — Contract test: getEquipmentBySN
+
+- Zod schema `getEquipmentBySnResponseSchema`; charger vs mower shape
+  verified; LoRa defaults (718/16) asserted.
+
 ## 2026-04-23 — Contract test: userEquipmentList
 
 - Zod schema `userEquipmentListResponseSchema` + 3 contract tests:
