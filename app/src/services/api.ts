@@ -639,6 +639,27 @@ export class ApiClient {
     return this.request('POST', '/api/dashboard/equipment/set-active', { body: { sn } });
   }
 
+  /**
+   * Recalibrate the charger pose stored in the mower's map_info.json with
+   * the mower's current reported x/y/theta. Use when coverage paths drift
+   * off-target because the map frame is mis-aligned with the physical
+   * dock. Mower must be physically on dock with battery_state=CHARGING,
+   * otherwise the server returns 400 unless `force: true` is passed.
+   */
+  async recalibrateChargingPose(
+    sn: string,
+    opts: { force?: boolean } = {},
+  ): Promise<{
+    ok: boolean;
+    pose?: { x: number; y: number; theta: number };
+    error?: string;
+    batteryState?: string;
+  }> {
+    return this.request('POST', `/api/dashboard/maps/${enc(sn)}/recalibrate-charging-pose`, {
+      body: { force: opts.force === true },
+    });
+  }
+
   // ── Cutting Height ───────────────────────────────────────────────────
 
   async setCuttingHeight(sn: string, height: number): Promise<CommandResult> {

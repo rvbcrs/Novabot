@@ -866,6 +866,84 @@ def handle_clean_ota_cache(params, respond):
         respond("clean_ota_cache_respond", {"result": 1, "error": str(e)})
 
 
+def handle_recalibrate_charging_pose(params, respond):
+    """Overwrite map_info.json charging_pose with a caller-supplied (x, y, theta).
+
+    Used after a map-frame drift event (e.g. heading-discovery happened at a
+    different starting point than the original mapping session). The server
+    reads the mower's own `report_state_robot` x/y/theta while the mower is
+    verified on its dock and passes them in as params. The handler updates
+    `map_info.json` in BOTH `csv_file/` and `x3_csv_file/` so the firmware's
+    two read paths stay consistent.
+
+    Required params:
+      x:     float — charger x in current map frame (meters)
+      y:     float — charger y in current map frame (meters)
+      theta: float — charger orientation in current map frame (radians)
+
+    Optional:
+      home: str — home dir under /userdata/lfi/maps. Default "home0".
+    """
+    home = params.get("home", "home0") if isinstance(params, dict) else "home0"
+    try:
+        x = float(params["x"])
+        y = float(params["y"])
+        theta = float(params["theta"])
+    except (KeyError, TypeError, ValueError) as e:
+        respond("recalibrate_charging_pose_respond", {
+            "result": 1,
+            "error": f"require numeric x/y/theta: {e}",
+        })
+        return
+
+    # Sanity bounds — map frame is meters, typical ~100m box.
+    if not all(-500 <= v <= 500 for v in (x, y)) or not -10 <= theta <= 10:
+        respond("recalibrate_charging_pose_respond", {
+            "result": 1,
+            "error": f"pose out of bounds: x={x} y={y} theta={theta}",
+        })
+        return
+
+    base = f"/userdata/lfi/maps/{home}"
+    targets = [f"{base}/csv_file/map_info.json", f"{base}/x3_csv_file/map_info.json"]
+
+    updated = {}
+    try:
+        for path in targets:
+            if not os.path.exists(path):
+                # One of the dirs may be missing — skip quietly, continue.
+                continue
+            with open(path) as f:
+                info = json.load(f)
+            info["charging_pose"] = {
+                "x": x,
+                "y": y,
+                "orientation": theta,
+            }
+            tmp = path + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(info, f, indent=3)
+                f.write("\n")
+            os.replace(tmp, path)
+            updated[path] = info["charging_pose"]
+
+        if not updated:
+            respond("recalibrate_charging_pose_respond", {
+                "result": 1,
+                "error": f"no map_info.json found under {base}",
+            })
+            return
+
+        log(f"recalibrate_charging_pose: wrote x={x} y={y} theta={theta} to {list(updated.keys())}")
+        respond("recalibrate_charging_pose_respond", {
+            "result": 0,
+            "updated": updated,
+        })
+    except Exception as e:
+        log(f"recalibrate_charging_pose error: {e}")
+        respond("recalibrate_charging_pose_respond", {"result": 1, "error": str(e)})
+
+
 def handle_finalize_map_files(params, respond):
     """Normalise home0 map filenames after a ZIP-restore or save_map type:1.
 
@@ -1413,6 +1491,7 @@ COMMANDS = {
     "set_wifi_config": handle_set_wifi_config,
     "clean_ota_cache": handle_clean_ota_cache,
     "finalize_map_files": handle_finalize_map_files,
+    "recalibrate_charging_pose": handle_recalibrate_charging_pose,
     "get_lora_info": handle_get_lora_info,
     "set_lora_info": handle_set_lora_info,
     "get_preview_cover_path": handle_get_preview_cover_path,

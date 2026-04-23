@@ -1215,6 +1215,87 @@ dashboardRouter.post('/maps/:sn/calibrate-charger', (req: Request, res: Response
   res.json({ ok: true });
 });
 
+// POST /api/dashboard/maps/:sn/recalibrate-charging-pose — overschrijf
+// map_info.json charging_pose met de huidige gerapporteerde mower pose.
+// Gebruik scenario: na ZIP-restore of post-heading-discovery blijkt het
+// map-frame gedraaid/verschoven t.o.v. de fysieke charger. Mower duwt
+// fysiek op dock, battery_state == CHARGING, dan triggert user dit endpoint.
+// Server leest de laatste x/y/theta uit de sensor cache en stuurt
+// extended_command `recalibrate_charging_pose` met die waarden. De mower
+// schrijft het naar csv_file/ én x3_csv_file/ map_info.json.
+dashboardRouter.post('/maps/:sn/recalibrate-charging-pose', async (req: Request, res: Response) => {
+  const { sn } = req.params;
+  const { force } = req.body as { force?: boolean };
+
+  if (!isDeviceOnline(sn)) {
+    res.status(404).json({ ok: false, error: 'Device is offline' });
+    return;
+  }
+
+  const sensors = deviceCache.get(sn);
+  if (!sensors) {
+    res.status(404).json({ ok: false, error: 'No sensor data cached for this mower' });
+    return;
+  }
+
+  const xRaw = sensors.get('x');
+  const yRaw = sensors.get('y');
+  const thetaRaw = sensors.get('theta');
+  if (xRaw == null || yRaw == null || thetaRaw == null) {
+    res.status(400).json({ ok: false, error: 'Mower pose (x/y/theta) not yet reported' });
+    return;
+  }
+  const x = Number(xRaw);
+  const y = Number(yRaw);
+  const theta = Number(thetaRaw);
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(theta)) {
+    res.status(400).json({ ok: false, error: `Invalid pose: x=${xRaw} y=${yRaw} theta=${thetaRaw}` });
+    return;
+  }
+
+  // Safety: user must confirm by passing force=true OR mower must be docked.
+  const batteryState = (sensors.get('battery_state') ?? '').toUpperCase();
+  const onDock = batteryState === 'CHARGING';
+  if (!onDock && !force) {
+    res.status(400).json({
+      ok: false,
+      error: `Battery state is '${batteryState}', not CHARGING. Put mower on dock first, or POST with {"force": true} to override.`,
+      batteryState,
+    });
+    return;
+  }
+
+  // Wire up extended-response listener BEFORE publishing to avoid race.
+  const { publishToExtended, onExtendedResponse, offExtendedResponse } = await import('../mqtt/mapSync.js');
+
+  const result = await new Promise<{ ok: boolean; respond?: Record<string, unknown>; timeout?: boolean }>((resolve) => {
+    let settled = false;
+    const handler = (data: Record<string, unknown>) => {
+      const respond = data.recalibrate_charging_pose_respond as Record<string, unknown> | undefined;
+      if (!respond) return;
+      if (settled) return;
+      settled = true;
+      offExtendedResponse(sn, handler);
+      resolve({ ok: respond.result === 0, respond });
+    };
+    onExtendedResponse(sn, handler);
+    publishToExtended(sn, { recalibrate_charging_pose: { x, y, theta } });
+    setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      offExtendedResponse(sn, handler);
+      resolve({ ok: false, timeout: true });
+    }, 8000);
+  });
+
+  console.log(`[CALIBRATE-POSE] ${sn}: x=${x} y=${y} theta=${theta} result=${JSON.stringify(result)}`);
+  if (result.timeout) {
+    res.status(504).json({ ok: false, error: 'Mower did not respond within 8s', pose: { x, y, theta } });
+    return;
+  }
+  res.json({ ok: result.ok, pose: { x, y, theta }, respond: result.respond });
+});
+
 // POST /api/dashboard/maps/:sn/import-zip — importeer kaarten uit een Novabot ZIP
 dashboardRouter.post('/maps/:sn/import-zip', (req: Request, res: Response) => {
   const { sn } = req.params;

@@ -288,6 +288,11 @@ export function adminPageHtml(): string {
         <input type="file" id="mapZipFile" accept=".zip" style="flex:1;min-width:180px;padding:6px 10px;background:#0d0d20;border:1px solid #333;border-radius:8px;color:#fff;font-size:12px">
         <button onclick="uploadMapZip()" style="padding:8px 16px;background:rgba(124,58,237,.2);color:#a78bfa;border:1px solid rgba(124,58,237,.3);border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap">Import ZIP</button>
       </div>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap;padding:8px 12px;background:rgba(239,68,68,.05);border:1px solid rgba(239,68,68,.2);border-radius:8px">
+        <div style="font-size:11px;color:#aaa;flex:1;min-width:260px">Recovery — wrong charger pose causes mower to drive off target. Put mower physically on dock (battery CHARGING) then press <b>Recalibrate Charging Pose</b> to overwrite map_info.json with the current reported pose.</div>
+        <button onclick="recalibrateChargingPose()" style="padding:8px 16px;background:rgba(239,68,68,.15);color:#fca5a5;border:1px solid rgba(239,68,68,.3);border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap">Recalibrate Charging Pose</button>
+      </div>
+      <div id="mapRecalStatus" style="font-size:12px;margin-bottom:8px;display:none"></div>
       <div id="mapUploadStatus" style="font-size:12px;margin-bottom:8px;display:none"></div>
       <div id="mapInfo" style="font-size:12px;color:#aaa;margin-bottom:8px"></div>
       <div style="background:#0a0a1a;border:1px solid rgba(255,255,255,.06);border-radius:8px;overflow:hidden;position:relative">
@@ -1840,6 +1845,62 @@ async function uploadMapZip() {
   } catch(e) {
     status.style.color = '#f87171';
     status.textContent = 'Import failed: ' + e.message;
+  }
+}
+
+async function recalibrateChargingPose() {
+  var sn = document.getElementById('mapMowerSelect').value;
+  var status = document.getElementById('mapRecalStatus');
+  status.style.display = 'block';
+
+  if (!sn) {
+    status.style.color = '#f87171';
+    status.textContent = 'Please select a mower first.';
+    return;
+  }
+
+  var confirmMsg = 'Overwrite charging pose on ' + sn + ' with current mower pose?\\n\\n' +
+    'Physical mower MUST be on its dock with battery_state=CHARGING.\\n' +
+    'This writes map_info.json in both csv_file/ and x3_csv_file/.';
+  if (!confirm(confirmMsg)) return;
+
+  status.style.color = '#60a5fa';
+  status.textContent = 'Sending recalibrate command to ' + sn + '...';
+
+  try {
+    var r = await fetch('/api/dashboard/maps/' + encodeURIComponent(sn) + '/recalibrate-charging-pose', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    var result = await r.json().catch(function() { return {}; });
+
+    if (r.status === 400 && (result.batteryState || '').toUpperCase() !== 'CHARGING') {
+      // Safety gate fired — ask once more with force
+      var forceConfirm = 'Mower battery_state is "' + (result.batteryState || 'unknown') + '" (expected CHARGING).\\n\\n' +
+        'Override the safety check and recalibrate anyway?';
+      if (!confirm(forceConfirm)) {
+        status.style.color = '#f87171';
+        status.textContent = 'Cancelled. Place mower on dock first.';
+        return;
+      }
+      r = await fetch('/api/dashboard/maps/' + encodeURIComponent(sn) + '/recalibrate-charging-pose', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ force: true }),
+      });
+      result = await r.json().catch(function() { return {}; });
+    }
+
+    if (!r.ok || !result.ok) {
+      throw new Error(result.error || ('HTTP ' + r.status));
+    }
+    var p = result.pose || {};
+    status.style.color = '#00d4aa';
+    status.textContent = 'Recalibrated — x=' + p.x + ' y=' + p.y + ' theta=' + p.theta;
+  } catch(e) {
+    status.style.color = '#f87171';
+    status.textContent = 'Recalibrate failed: ' + e.message;
   }
 }
 
