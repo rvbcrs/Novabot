@@ -25,7 +25,6 @@ import {
 import { runOnJS } from 'react-native-reanimated';
 import { WebView } from 'react-native-webview';
 import { colors } from '../theme/colors';
-import { useMowerState } from '../hooks/useMowerState';
 import { useActiveMower } from '../hooks/useActiveMower';
 import { useHeadlightBrightness } from '../hooks/useHeadlightBrightness';
 import { getSocket } from '../services/socket';
@@ -58,7 +57,6 @@ function getHoldType(x: number, y: number): number {
 
 export default function JoystickScreen() {
   const insets = useSafeAreaInsets();
-  const { devices } = useMowerState();
   const demo = useDemo();
   const { t } = useI18n();
 

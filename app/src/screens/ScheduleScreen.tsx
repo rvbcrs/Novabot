@@ -21,7 +21,6 @@ import { Swipeable } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import { colors } from '../theme/colors';
-import { useMowerState } from '../hooks/useMowerState';
 import { useActiveMower } from '../hooks/useActiveMower';
 import { ApiClient, type MapData, type Schedule } from '../services/api';
 import { getServerUrl } from '../services/auth';
@@ -39,7 +38,6 @@ export default function ScheduleScreen() {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
   const route = useRoute<RouteProp<MainTabParams, 'Schedules'>>();
-  const { devices } = useMowerState();
   const { t } = useI18n();
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [loading, setLoading] = useState(true);

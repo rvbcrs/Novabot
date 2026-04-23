@@ -13,7 +13,6 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors } from '../theme/colors';
-import { useMowerState } from '../hooks/useMowerState';
 import { useActiveMower } from '../hooks/useActiveMower';
 import { ApiClient, type WorkRecord } from '../services/api';
 import { getServerUrl } from '../services/auth';
@@ -23,7 +22,6 @@ import { formatTime as fmtTime, formatDate as fmtDate } from '../lib/format';
 
 export default function HistoryScreen() {
   const insets = useSafeAreaInsets();
-  const { devices } = useMowerState();
   const [records, setRecords] = useState<WorkRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);

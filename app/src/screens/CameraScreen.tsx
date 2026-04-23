@@ -21,7 +21,6 @@ import { useNavigation } from '@react-navigation/native';
 import { WebView } from 'react-native-webview';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { colors } from '../theme/colors';
-import { useMowerState } from '../hooks/useMowerState';
 import { useActiveMower } from '../hooks/useActiveMower';
 import { getServerUrl } from '../services/auth';
 import { useI18n } from '../i18n';
@@ -35,7 +34,6 @@ const CAMERA_TOPICS = [
 
 export default function CameraScreen() {
   const insets = useSafeAreaInsets();
-  const { devices } = useMowerState();
   const { t } = useI18n();
   const { width, height } = useWindowDimensions();
   const isLandscape = width > height;
