@@ -866,6 +866,57 @@ def handle_clean_ota_cache(params, respond):
         respond("clean_ota_cache_respond", {"result": 1, "error": str(e)})
 
 
+def handle_finalize_map_files(params, respond):
+    """Normalise home0 map filenames after a ZIP-restore or save_map type:1.
+
+    robot_decision (stock C++ binary) hardcodes the path
+    `/userdata/lfi/maps/home0/map0.yaml` in its coverage pre-check and
+    raises Error_code: 118 when that exact filename is missing — even if
+    the firmware's own save_map handler just wrote `map.yaml` / `map.pgm`
+    / `map.png`. Running this handler copies the generic names onto the
+    indexed variant so coverage finds its input.
+
+    Idempotent: if the generic files already exist we copy them every
+    call; if they don't exist we report which ones are missing so the
+    caller knows whether save_map type:1 still needs to run first.
+
+    Params (optional):
+      index: int  — map index, default 0. Generates map<index>.yaml etc.
+      home:  str  — home dir under /userdata/lfi/maps. Default "home0".
+    """
+    import shutil
+    home = params.get("home", "home0") if isinstance(params, dict) else "home0"
+    idx = params.get("index", 0) if isinstance(params, dict) else 0
+    base = f"/userdata/lfi/maps/{home}"
+
+    sources = {"yaml": f"{base}/map.yaml", "pgm": f"{base}/map.pgm", "png": f"{base}/map.png"}
+    targets = {
+        "yaml": f"{base}/map{idx}.yaml",
+        "pgm": f"{base}/map{idx}.pgm",
+        "png": f"{base}/map{idx}.png",
+    }
+
+    missing = [k for k, p in sources.items() if not os.path.exists(p)]
+    if missing:
+        respond("finalize_map_files_respond", {
+            "result": 1,
+            "error": f"generic source files missing: {missing}. Run save_map type:1 first.",
+        })
+        return
+
+    copied = {}
+    try:
+        for key, src in sources.items():
+            dst = targets[key]
+            shutil.copyfile(src, dst)
+            copied[key] = dst
+        log(f"finalize_map_files: copied {list(copied.values())}")
+        respond("finalize_map_files_respond", {"result": 0, "copied": copied})
+    except Exception as e:
+        log(f"finalize_map_files error: {e}")
+        respond("finalize_map_files_respond", {"result": 1, "error": str(e)})
+
+
 def handle_get_lora_info(params, respond):
     """Read LoRa config from json_config.json."""
     cfg_file = "/userdata/lfi/json_config.json"
@@ -1361,6 +1412,7 @@ COMMANDS = {
     "set_mqtt_config": handle_set_mqtt_config,
     "set_wifi_config": handle_set_wifi_config,
     "clean_ota_cache": handle_clean_ota_cache,
+    "finalize_map_files": handle_finalize_map_files,
     "get_lora_info": handle_get_lora_info,
     "set_lora_info": handle_set_lora_info,
     "get_preview_cover_path": handle_get_preview_cover_path,
