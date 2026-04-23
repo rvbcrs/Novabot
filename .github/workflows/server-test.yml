@@ -1,0 +1,54 @@
+name: server-test
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - server/**
+      - .github/workflows/server-test.yml
+  pull_request:
+    paths:
+      - server/**
+      - .github/workflows/server-test.yml
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    defaults:
+      run:
+        working-directory: server
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: server/package-lock.json
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Type-check
+        run: npx tsc --noEmit
+
+      - name: Lint (scoped to cloud-api + boundary zone)
+        run: |
+          npx eslint \
+            'src/cloud-api/**/*.ts' \
+            'src/routes/dashboard.ts' \
+            'src/routes/admin*.ts' \
+            'src/routes/setup.ts' \
+            --max-warnings=0 \
+            --no-error-on-unmatched-pattern
+
+      - name: Unit + contract + regression tests
+        run: npm test
+
+      # Live LFI dual-call tests are intentionally NOT run in CI — they hit
+      # a real external cloud and require credentials. Run them locally when
+      # you want a live sanity check:
+      #   RUN_LIVE_LFI=1 LFI_EMAIL=... LFI_PASSWORD=... npm test

@@ -2,6 +2,24 @@
 
 Format: most-recent first. Each entry is dated and names the endpoint(s) affected.
 
+## 2026-04-23 — Regression tests vs LFI fixtures + live dual-call
+
+- `__tests__/contract/regression.lfi-fixtures.test.ts`: for every hot
+  endpoint, load `fixtures/<name>.lfi.json` (captured from real LFI
+  cloud via `scripts/capture-lfi-fixtures.mjs`), assert the fixture
+  itself parses against our Zod schema, assert our server response
+  parses against the same schema, and assert server response keys are
+  a SUPERSET of LFI's (no dropped fields; extras allowed). Tests are
+  auto-skipped if the fixture is missing so CI stays green without
+  LFI credentials.
+- `__tests__/contract/live.lfi-dual-call.test.ts`: env-gated live
+  sanity check. `RUN_LIVE_LFI=1 LFI_EMAIL=… LFI_PASSWORD=…` runs a
+  login + userEquipmentList + getEquipmentBySN(mower+charger) +
+  queryEquipmentMap + checkOtaNewVersion against the real cloud and
+  validates each response against our schema. Skipped by default.
+- Added `.github/workflows/server-test.yml`: CI runs tsc + scoped
+  ESLint + `npm test` on every push touching `server/**`.
+
 ## 2026-04-23 — Contract test: login
 
 - `appUserDto.ts` schema `loginResponseSchema`; JWT presence + wrong-pw
