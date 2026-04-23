@@ -124,7 +124,7 @@ export function MowerPickerChevron({ onAddMower, onRename }: MowerPickerChevronP
                   accessibilityLabel={`Switch to ${mowerDisplayName(m)}`}
                 >
                   <StatusDot online={m.online} />
-                  <View style={styles.labelColumn}>
+                  <View style={styles.labelColumnRow}>
                     <Text style={styles.rowName} numberOfLines={1} ellipsizeMode="tail">
                       {mowerDisplayName(m)}
                     </Text>
@@ -210,6 +210,10 @@ const styles = StyleSheet.create({
     marginRight: 8,
   },
   labelColumn: {
+    flexShrink: 1,
+    marginRight: 4,
+  },
+  labelColumnRow: {
     flex: 1,
     flexShrink: 1,
     marginRight: 4,
