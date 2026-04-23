@@ -28,6 +28,7 @@ CLAUDE.md
 .claude/
 .husky/_
 **/.agent/
+.worktrees/
 server/captured/
 docs/reference/
 docs/TESTER-GUIDE.md
