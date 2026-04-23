@@ -1,12 +1,16 @@
 /**
  * Home-header picker. Shows the active mower's display name plus a status
- * dot; when there are two or more bound mowers, a tap opens an inline
- * dropdown with a row per mower. No full-screen modal — the dropdown is
- * absolute-positioned so the Home screen stays in view.
+ * dot and firmware version; when there are two or more bound mowers, a tap
+ * opens an inline dropdown with a row per mower. No full-screen modal — the
+ * dropdown is absolute-positioned so the Home screen stays in view.
  *
  * N = 0: renders nothing (Home has its own empty state).
  * N = 1: renders the name + dot as static text (no chevron).
  * N >= 2: renders the chevron; tapping toggles the dropdown.
+ *
+ * The trigger row also hosts an optional pencil icon that opens a rename
+ * flow for the CURRENTLY ACTIVE mower (dropdown rows never expose rename —
+ * they only switch).
  */
 import React, { useState } from 'react';
 import {
@@ -19,12 +23,19 @@ import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
 import { useActiveMower } from '../hooks/useActiveMower';
 import { mowerDisplayName } from '../utils/mowerDisplay';
+import type { DeviceState } from '../types';
 
 interface MowerPickerChevronProps {
   onAddMower?: () => void;
+  /** Opens rename flow for the currently active mower. */
+  onRename?: () => void;
 }
 
-export function MowerPickerChevron({ onAddMower }: MowerPickerChevronProps = {}) {
+function firmwareVersion(m: DeviceState): string | null {
+  return m.sensors?.sw_version || m.sensors?.mower_version || null;
+}
+
+export function MowerPickerChevron({ onAddMower, onRename }: MowerPickerChevronProps = {}) {
   const { mowers, activeMower, activeMowerSn, setActiveMowerSn } = useActiveMower();
   const [open, setOpen] = useState(false);
 
@@ -33,6 +44,8 @@ export function MowerPickerChevron({ onAddMower }: MowerPickerChevronProps = {})
   const canOpen = count >= 2 || !!onAddMower;
 
   if (count === 0 || !activeMower) return null;
+
+  const activeVersion = firmwareVersion(activeMower);
 
   return (
     <View style={styles.wrap}>
@@ -49,9 +62,31 @@ export function MowerPickerChevron({ onAddMower }: MowerPickerChevronProps = {})
         }
       >
         <StatusDot online={activeMower.online} />
-        <Text style={styles.name} numberOfLines={1} ellipsizeMode="tail">
-          {mowerDisplayName(activeMower)}
-        </Text>
+        <View style={styles.labelColumn}>
+          <Text style={styles.name} numberOfLines={1} ellipsizeMode="tail">
+            {mowerDisplayName(activeMower)}
+          </Text>
+          {activeVersion && (
+            <Text style={styles.subtitle} numberOfLines={1} ellipsizeMode="tail">
+              {activeVersion}
+            </Text>
+          )}
+        </View>
+        {onRename && (
+          <Pressable
+            onPress={(e) => {
+              e.stopPropagation();
+              setOpen(false);
+              onRename();
+            }}
+            hitSlop={10}
+            style={styles.editBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Rename active mower"
+          >
+            <Ionicons name="pencil" size={15} color={colors.textMuted} />
+          </Pressable>
+        )}
         {canOpen && (
           <Ionicons
             name={open ? 'chevron-up' : 'chevron-down'}
@@ -73,6 +108,7 @@ export function MowerPickerChevron({ onAddMower }: MowerPickerChevronProps = {})
           <View style={styles.dropdown}>
             {mowers.map((m) => {
               const selected = m.sn === activeMowerSn;
+              const version = firmwareVersion(m);
               return (
                 <Pressable
                   key={m.sn}
@@ -88,9 +124,16 @@ export function MowerPickerChevron({ onAddMower }: MowerPickerChevronProps = {})
                   accessibilityLabel={`Switch to ${mowerDisplayName(m)}`}
                 >
                   <StatusDot online={m.online} />
-                  <Text style={styles.rowName} numberOfLines={1} ellipsizeMode="tail">
-                    {mowerDisplayName(m)}
-                  </Text>
+                  <View style={styles.labelColumn}>
+                    <Text style={styles.rowName} numberOfLines={1} ellipsizeMode="tail">
+                      {mowerDisplayName(m)}
+                    </Text>
+                    {version && (
+                      <Text style={styles.subtitle} numberOfLines={1} ellipsizeMode="tail">
+                        {version}
+                      </Text>
+                    )}
+                  </View>
                   {selected && (
                     <Ionicons
                       name="checkmark"
@@ -166,11 +209,26 @@ const styles = StyleSheet.create({
     borderRadius: 5,
     marginRight: 8,
   },
+  labelColumn: {
+    flex: 1,
+    flexShrink: 1,
+    marginRight: 4,
+  },
   name: {
     color: colors.text,
     fontSize: 16,
     fontWeight: '600',
-    maxWidth: 220,
+  },
+  subtitle: {
+    color: colors.textMuted,
+    fontSize: 11,
+    fontWeight: '500',
+    marginTop: 1,
+  },
+  editBtn: {
+    paddingHorizontal: 4,
+    paddingVertical: 4,
+    marginLeft: 4,
   },
   chevron: {
     marginLeft: 6,
@@ -211,7 +269,6 @@ const styles = StyleSheet.create({
     backgroundColor: colors.cardBorder,
   },
   rowName: {
-    flex: 1,
     color: colors.text,
     fontSize: 15,
     fontWeight: '500',

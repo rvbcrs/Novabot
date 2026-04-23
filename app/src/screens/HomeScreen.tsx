@@ -369,6 +369,40 @@ export default function HomeScreen() {
   const { activeMower } = useActiveMower();
   const { t } = useI18n();
   const mower = useMemo(() => deriveMower(activeMower), [activeMower]);
+  // Rename flow for the active mower — wired to the pencil icon inside the
+  // MowerPickerChevron trigger. Keeping it here (instead of inside the
+  // chevron component) so HomeScreen stays the single owner of API + socket
+  // calls; the chevron just fires the callback.
+  const renameActiveMower = useCallback(() => {
+    if (!mower) return;
+    Alert.prompt(
+      t('renameMower', undefined) || 'Rename Mower',
+      t('enterNewName', undefined) || 'Enter a new name:',
+      [
+        { text: t('cancel', undefined) || 'Cancel', style: 'cancel' },
+        {
+          text: t('rename', undefined) || 'Rename',
+          onPress: async (newName?: string) => {
+            const trimmed = (newName ?? '').trim();
+            if (!trimmed) return;
+            try {
+              const url = await getServerUrl();
+              if (!url) return;
+              const api = new ApiClient(url);
+              await api.updateEquipmentNickName(mower.sn, trimmed);
+              // Pull fresh snapshot so the new name appears immediately.
+              const socket = getSocket();
+              socket?.emit('request:snapshot');
+            } catch (err) {
+              console.warn('[HomeScreen] rename mower failed:', err);
+            }
+          },
+        },
+      ],
+      'plain-text',
+      devices.get(mower.sn)?.nickname || '',
+    );
+  }, [mower, devices, t]);
   const charger = useMemo(() => {
     const chargers = [...devices.values()].filter((d) => d.deviceType === 'charger');
     return chargers.find((c) => c.online) ?? chargers[0] ?? null;
@@ -1159,21 +1193,15 @@ export default function HomeScreen() {
 
         {/* Top bar: connection + alert/history icons */}
         <View style={styles.topBar}>
-          {/* Mower info — chevron picker shows active mower + lets user switch when N>=2 */}
-          <View style={[styles.connectionRow, { flexWrap: 'wrap' }]}>
+          {/* Mower info — chevron picker shows active mower name + firmware
+              version + rename icon; dropdown switches between bound mowers. */}
+          <View style={styles.connectionRow}>
             <MowerPickerChevron
               onAddMower={() =>
                 (navigation as any).navigate('AppSettings', { screen: 'ProvisionFlow' })
               }
+              onRename={renameActiveMower}
             />
-            {mower.online && (devices.get(mower.sn)?.sensors?.sw_version || devices.get(mower.sn)?.sensors?.mower_version) && (
-              <>
-                <View style={styles.connectionSpacer} />
-                <Text style={[styles.connectionText, { color: colors.textMuted }]}>
-                  {devices.get(mower.sn)?.sensors?.sw_version ?? devices.get(mower.sn)?.sensors?.mower_version}
-                </Text>
-              </>
-            )}
           </View>
 
           {/* Alert + History icons */}
@@ -1188,41 +1216,12 @@ export default function HomeScreen() {
           </View>
         </View>
 
-        {/* Mower animation scene — nickname overlay in top-left, tap to rename. */}
+        {/* Mower animation scene — nickname + rename live in the picker
+            chevron now, so the scene is purely the animation. */}
         <MowerScene
           activity={displayActivity}
           battery={mower.battery}
           mowingProgress={mower.mowingProgress}
-          nickname={devices.get(mower.sn)?.nickname || mower.sn}
-          onPressNickname={() => {
-            Alert.prompt(
-              t('renameMower', undefined) || 'Rename Mower',
-              t('enterNewName', undefined) || 'Enter a new name:',
-              [
-                { text: t('cancel', undefined) || 'Cancel', style: 'cancel' },
-                {
-                  text: t('rename', undefined) || 'Rename',
-                  onPress: async (newName?: string) => {
-                    const trimmed = (newName ?? '').trim();
-                    if (!trimmed) return;
-                    try {
-                      const url = await getServerUrl();
-                      if (!url) return;
-                      const api = new ApiClient(url);
-                      await api.updateEquipmentNickName(mower.sn, trimmed);
-                      // Pull fresh snapshot so the new name appears immediately.
-                      const socket = getSocket();
-                      socket?.emit('request:snapshot');
-                    } catch (err) {
-                      console.warn('[HomeScreen] rename mower failed:', err);
-                    }
-                  },
-                },
-              ],
-              'plain-text',
-              devices.get(mower.sn)?.nickname || '',
-            );
-          }}
         />
 
         {/* Status card */}
