@@ -66,3 +66,6 @@ nova-ota-device/.pio/
 nova-ota-device/ESP32-S3-Touch-LCD-2-Demo/
 .vscode/
 *.pklgdata/
+
+# JWT secret generated during tests
+server/.jwt_secret
