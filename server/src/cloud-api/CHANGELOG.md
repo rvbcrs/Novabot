@@ -2,6 +2,11 @@
 
 Format: most-recent first. Each entry is dated and names the endpoint(s) affected.
 
+## 2026-04-23 — Contract test: queryEquipmentMap
+
+- `mapDto.ts` with Zod schema for the response; md5-is-uppercase/null
+  assertion; null-data path tested; IDOR null-payload parity tested.
+
 ## 2026-04-23 — Contract test: getEquipmentBySN
 
 - Zod schema `getEquipmentBySnResponseSchema`; charger vs mower shape
