@@ -22,6 +22,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import { colors } from '../theme/colors';
 import { useMowerState } from '../hooks/useMowerState';
+import { useActiveMower } from '../hooks/useActiveMower';
 import { ApiClient, type MapData, type Schedule } from '../services/api';
 import { getServerUrl } from '../services/auth';
 import { useDemo } from '../context/DemoContext';
@@ -48,9 +49,8 @@ export default function ScheduleScreen() {
   const [editingSchedule, setEditingSchedule] = useState<Schedule | null>(null);
   const [editorPrefill, setEditorPrefill] = useState<{ mapId: string | null; mapName: string | null } | null>(null);
 
-  const mowerSn = useMemo(() => {
-    return [...devices.values()].find((d) => d.deviceType === 'mower')?.sn ?? '';
-  }, [devices]);
+  const { activeMowerSn } = useActiveMower();
+  const mowerSn = activeMowerSn ?? '';
 
   const demo = useDemo();
 

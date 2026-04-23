@@ -14,6 +14,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors } from '../theme/colors';
 import { useMowerState } from '../hooks/useMowerState';
+import { useActiveMower } from '../hooks/useActiveMower';
 import { ApiClient, type WorkRecord } from '../services/api';
 import { getServerUrl } from '../services/auth';
 import { useDemo } from '../context/DemoContext';
@@ -28,9 +29,8 @@ export default function HistoryScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
 
-  const mowerSn = useMemo(() => {
-    return [...devices.values()].find((d) => d.deviceType === 'mower')?.sn ?? '';
-  }, [devices]);
+  const { activeMowerSn } = useActiveMower();
+  const mowerSn = activeMowerSn ?? '';
 
   const demo = useDemo();
 
