@@ -2,6 +2,17 @@
 
 Format: most-recent first. Each entry is dated and names the endpoint(s) affected.
 
+## 2026-04-23 — Contract test: login
+
+- `appUserDto.ts` schema `loginResponseSchema`; JWT presence + wrong-pw
+  failure mode asserted. Also locks: `appUserId` is integer (row PK, not
+  UUID), empty-string defaults for unset profile fields, HTTP 200 on
+  failure (envelope-level `success:false`/`code:400`), and `/user` vs
+  `/appUser` route alias parity. Plaintext passwords accepted because the
+  handler's `tryDecryptAppPassword` falls back to raw on non-AES input;
+  no network call needed (cloud fallback only fires when local user is
+  missing, and `seedUser` seeds locally).
+
 ## 2026-04-23 — Contract test: checkOtaNewVersion
 
 - `otaDto.ts` schema; `upgradeFlag ∈ {0,1}` asserted; `http://` URL
