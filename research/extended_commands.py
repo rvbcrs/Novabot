@@ -866,6 +866,37 @@ def handle_clean_ota_cache(params, respond):
         respond("clean_ota_cache_respond", {"result": 1, "error": str(e)})
 
 
+def _clear_costmaps():
+    """Clear both nav2 costmaps to drop stale obstacle observations.
+
+    When the mower drove into shrubs, those shrubs land in the local +
+    global costmap as persistent obstacles. Any subsequent boundary /
+    coverage attempt then finds them in the 0.5m look-ahead window and
+    aborts with "Controller patience exceeded". The clear_entirely_* nav2
+    services wipe the layers so the next planner run starts with a fresh
+    map. Fire-and-forget — non-blocking.
+    """
+    try:
+        cmd = (
+            "source /opt/ros/galactic/setup.bash && "
+            "source /root/novabot/install/setup.bash 2>/dev/null && "
+            "for svc in /global_costmap/clear_entirely_global_costmap /local_costmap/clear_entirely_local_costmap; do "
+            "  nohup timeout 5 ros2 service call \"$svc\" nav2_msgs/srv/ClearEntireCostmap '{}' "
+            "  >> /tmp/clear_costmap.log 2>&1 & "
+            "done"
+        )
+        env = {
+            **os.environ,
+            "ROS_DOMAIN_ID": "0",
+            "ROS_LOCALHOST_ONLY": "1",
+            "RMW_IMPLEMENTATION": "rmw_cyclonedds_cpp",
+            "CYCLONEDDS_URI": "file:///root/novabot/shm_config/shm_cyclonedds.xml",
+        }
+        subprocess.Popen(["bash", "-c", cmd], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
+
+
 def _kill_ros2_action_clients():
     """Kill any lingering `ros2 action send_goal` client processes.
 
@@ -968,6 +999,13 @@ def handle_start_boundary_follow(params, respond):
     # LFIN1231000211 (test goal from 30 min earlier kept recomputing paths).
     _kill_ros2_action_clients()
     _call_cover_task_stop()
+
+    # Clear costmaps so stale obstacle observations (e.g. the shrubs we drove
+    # into earlier) don't block the boundary planner. Verified live: without
+    # clearing, nav2 reported "Obstacle layer in front 0.5m position cost:
+    # 255 → Controller patience exceeded → ABORTED" within seconds of the
+    # action start.
+    _clear_costmaps()
 
     try:
         follow_mode = int(params.get("follow_mode", 2))
