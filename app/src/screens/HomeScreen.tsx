@@ -1904,7 +1904,28 @@ export default function HomeScreen() {
               }).catch(() => { /* non-fatal */ });
 
               if (picked.mode === 'edge') {
-                sendCommand(mower.sn, { start_patrol: null }, 'patrol');
+                // Stock `start_patrol` MQTT handler is a stub — it only
+                // returns result:0 without triggering any action. Real edge
+                // cutting goes through the `/boundary_follow` ROS action
+                // (coverage_planner/action/BoundaryFollow). Our extended
+                // commands handler dispatches the action goal directly.
+                // Convert user cm → chassis blade index (9 - userCm), same
+                // mapping as the blade_on flow (JoystickScreen / CuttingHeightModal).
+                const bladeIdx = Math.max(0, Math.min(7, 9 - heightCm));
+                await api.sendExtended(mower.sn, {
+                  start_boundary_follow: {
+                    follow_mode: 2,           // BOUNDARY_CUTTING_MODE
+                    enable_coverage: true,
+                    more_close_to_boundary: false,
+                    close_loop_stop: true,
+                    start_follow_wait: false,
+                    debug_mode: false,
+                    inflation_radius: 0.0,
+                    blade_height: bladeIdx,
+                    max_time: 1800,
+                  },
+                }).catch(() => { /* non-fatal, optimistic UI still set */ });
+                setOptimisticActivity('mowing');
               } else if (picked.mode === 'spot' && picked.spotPolygon) {
                 await api.sendCommand(mower.sn, {
                   start_run: {

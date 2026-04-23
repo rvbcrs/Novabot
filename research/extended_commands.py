@@ -866,6 +866,105 @@ def handle_clean_ota_cache(params, respond):
         respond("clean_ota_cache_respond", {"result": 1, "error": str(e)})
 
 
+def handle_start_boundary_follow(params, respond):
+    """Start real edge-cutting via the `/boundary_follow` ROS2 action.
+
+    The stock `api_start_patrol` MQTT handler is a stub — it only returns
+    `result:0` and never triggers any action. The actual edge-cutting path
+    goes through the `coverage_planner/action/BoundaryFollow` action which
+    lives on `/boundary_follow` (verified live on LFIN1231000211 via
+    `ros2 action list`). Calling it from here bypasses the broken stock
+    handler.
+
+    Goal schema (coverage_planner/action/BoundaryFollow):
+      follow_mode: 0=ASSIST_MAPPING, 1=AUTO_MAPPING, 2=BOUNDARY_CUTTING.
+      enable_coverage: bool — true = blade on while following.
+      more_close_to_boundary: bool.
+      close_loop_stop: bool — stop when the loop closes (full round trip).
+      start_follow_wait: bool — wait before starting.
+      debug_mode: bool.
+      inflation_radius: float32 — extra stand-off.
+      blade_height: uint8 — chassis inverted index (9 - userCm).
+
+    Params (optional, with safe defaults for edge-cutting):
+      follow_mode:          default 2 (BOUNDARY_CUTTING_MODE).
+      enable_coverage:      default True.
+      more_close_to_boundary: default False.
+      close_loop_stop:      default True.
+      start_follow_wait:    default False.
+      debug_mode:           default False.
+      inflation_radius:     default 0.0.
+      blade_height:         default 5 (≈ 40 mm via chassis index).
+      max_time:             default 60.0 (seconds), run in background.
+    """
+    try:
+        follow_mode = int(params.get("follow_mode", 2))
+        enable_coverage = bool(params.get("enable_coverage", True))
+        more_close = bool(params.get("more_close_to_boundary", False))
+        close_loop = bool(params.get("close_loop_stop", True))
+        wait_start = bool(params.get("start_follow_wait", False))
+        debug = bool(params.get("debug_mode", False))
+        inflation = float(params.get("inflation_radius", 0.0))
+        blade = int(params.get("blade_height", 5))
+        max_time = float(params.get("max_time", 60.0))
+    except (TypeError, ValueError) as e:
+        respond("start_boundary_follow_respond", {"result": 1, "error": f"param type error: {e}"})
+        return
+
+    # Goal YAML — ros2 action CLI accepts single-quoted YAML on the cmdline.
+    # Braces have to stay inside the quotes so bash brace-expansion leaves
+    # them alone (same trick as set_lora_info).
+    goal_yaml = (
+        "'{"
+        f"follow_mode: {follow_mode}, "
+        f"enable_coverage: {str(enable_coverage).lower()}, "
+        f"more_close_to_boundary: {str(more_close).lower()}, "
+        f"close_loop_stop: {str(close_loop).lower()}, "
+        f"start_follow_wait: {str(wait_start).lower()}, "
+        f"debug_mode: {str(debug).lower()}, "
+        f"inflation_radius: {inflation}, "
+        f"blade_height: {blade}"
+        "}'"
+    )
+
+    try:
+        # Fire-and-forget: kick off the action in the background so we can
+        # respond to MQTT without blocking for the full mowing run.
+        cmd = (
+            "source /opt/ros/galactic/setup.bash && "
+            "source /root/novabot/install/setup.bash 2>/dev/null && "
+            "nohup timeout " + str(int(max_time)) + " "
+            "ros2 action send_goal /boundary_follow "
+            "coverage_planner/action/BoundaryFollow "
+            + goal_yaml +
+            " >> /tmp/boundary_follow.log 2>&1 &"
+        )
+        # Match the shared-memory DDS config used by the running nodes
+        # (mqtt_node, coverage_planner_server, nav2 etc). Without the
+        # CYCLONEDDS_URI pointing at shm_cyclonedds.xml the CLI client
+        # runs on a different DDS transport and can't discover the
+        # /boundary_follow action server.
+        env = {
+            **os.environ,
+            "ROS_DOMAIN_ID": "0",
+            "ROS_LOCALHOST_ONLY": "1",
+            "RMW_IMPLEMENTATION": "rmw_cyclonedds_cpp",
+            "CYCLONEDDS_URI": "file:///root/novabot/shm_config/shm_cyclonedds.xml",
+        }
+        subprocess.Popen(["bash", "-c", cmd], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        log(f"start_boundary_follow dispatched: mode={follow_mode} coverage={enable_coverage} blade={blade}")
+        respond("start_boundary_follow_respond", {
+            "result": 0,
+            "follow_mode": follow_mode,
+            "enable_coverage": enable_coverage,
+            "blade_height": blade,
+        })
+    except Exception as e:
+        log(f"start_boundary_follow error: {e}")
+        respond("start_boundary_follow_respond", {"result": 1, "error": str(e)})
+
+
 def handle_recalibrate_charging_pose(params, respond):
     """Overwrite map_info.json charging_pose with a caller-supplied (x, y, theta).
 
@@ -1492,6 +1591,7 @@ COMMANDS = {
     "clean_ota_cache": handle_clean_ota_cache,
     "finalize_map_files": handle_finalize_map_files,
     "recalibrate_charging_pose": handle_recalibrate_charging_pose,
+    "start_boundary_follow": handle_start_boundary_follow,
     "get_lora_info": handle_get_lora_info,
     "set_lora_info": handle_set_lora_info,
     "get_preview_cover_path": handle_get_preview_cover_path,
