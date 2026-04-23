@@ -22,7 +22,7 @@ Allow users who own more than one mower to select which mower is the "active" on
 | Question | Decision |
 |----------|----------|
 | Where does the picker live? | Home-tab header only. Other tabs inherit the global active mower. |
-| Persistence across restarts? | Last choice remembered in AsyncStorage, with fallback to first available mower if stored SN no longer exists. |
+| Persistence across restarts? | Last choice remembered in expo-secure-store, with fallback to first available mower if stored SN no longer exists. |
 | Offline mowers in picker? | Shown and selectable, rendered with a red status-dot. |
 | Picker UI style? | Dropdown chevron (inline list). |
 | Nickname fallback when empty? | Full mower SN (e.g. `LFIN1231000211`). |
@@ -44,15 +44,15 @@ interface ActiveMowerContextValue {
 
 **Provider placement:** wraps `AuthenticatedApp` in `App.tsx`, inside the other context providers (`DevModeProvider`, `DemoProvider`, `I18nProvider`, `ExperimentalProvider`, `PatternProvider`).
 
-**Storage key:** `novabot:activeMowerSn` in AsyncStorage.
+**Storage key:** `novabot:activeMowerSn` in expo-secure-store.
 
 **Startup flow:**
-1. On provider mount, read `novabot:activeMowerSn` from AsyncStorage.
+1. On provider mount, read `novabot:activeMowerSn` from expo-secure-store.
 2. Wait for `useMowerState().devices` to populate (socket handshake).
 3. Validate: if stored SN is present among current mowers → keep active.
 4. Otherwise → set active to the first mower (`mowers[0]?.sn ?? null`) and overwrite storage.
 
-**Logout flow:** call `AsyncStorage.removeItem('novabot:activeMowerSn')` inside `handleLogout` in `App.tsx`. Prevents the stored SN from leaking into a different user's session.
+**Logout flow:** call `expo-secure-store.removeItem('novabot:activeMowerSn')` inside `handleLogout` in `App.tsx`. Prevents the stored SN from leaking into a different user's session.
 
 ### Hook — `useActiveMower`
 
@@ -91,8 +91,8 @@ export function useActiveMower() {
 New file: `app/src/utils/mowerDisplay.ts`
 
 ```ts
-export function mowerDisplayName(mower: { sn: string; nickName?: string | null }): string {
-  return mower.nickName || mower.sn;
+export function mowerDisplayName(mower: { sn: string; nickname?: string | null }): string {
+  return mower.nickname || mower.sn;
 }
 ```
 
