@@ -20,12 +20,17 @@ import { colors } from '../theme/colors';
 import { useActiveMower } from '../hooks/useActiveMower';
 import { mowerDisplayName } from '../utils/mowerDisplay';
 
-export function MowerPickerChevron() {
+interface MowerPickerChevronProps {
+  onAddMower?: () => void;
+}
+
+export function MowerPickerChevron({ onAddMower }: MowerPickerChevronProps = {}) {
   const { mowers, activeMower, activeMowerSn, setActiveMowerSn } = useActiveMower();
   const [open, setOpen] = useState(false);
 
   const count = mowers.length;
-  const canSwitch = count >= 2;
+  // Dropdown opens when there are multiple mowers OR when we have an "Add mower" action to show.
+  const canOpen = count >= 2 || !!onAddMower;
 
   if (count === 0 || !activeMower) return null;
 
@@ -33,13 +38,13 @@ export function MowerPickerChevron() {
     <View style={styles.wrap}>
       <Pressable
         style={styles.trigger}
-        onPress={() => canSwitch && setOpen((v) => !v)}
-        disabled={!canSwitch}
+        onPress={() => canOpen && setOpen((v) => !v)}
+        disabled={!canOpen}
         hitSlop={8}
         accessibilityRole="button"
         accessibilityLabel={
-          canSwitch
-            ? `Active mower ${mowerDisplayName(activeMower)}. Tap to switch.`
+          canOpen
+            ? `Active mower ${mowerDisplayName(activeMower)}. Tap to switch or add.`
             : `Active mower ${mowerDisplayName(activeMower)}.`
         }
       >
@@ -47,7 +52,7 @@ export function MowerPickerChevron() {
         <Text style={styles.name} numberOfLines={1} ellipsizeMode="tail">
           {mowerDisplayName(activeMower)}
         </Text>
-        {canSwitch && (
+        {canOpen && (
           <Ionicons
             name={open ? 'chevron-up' : 'chevron-down'}
             size={16}
@@ -97,6 +102,34 @@ export function MowerPickerChevron() {
                 </Pressable>
               );
             })}
+            {onAddMower && (
+              <>
+                <View style={styles.divider} />
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.addRow,
+                    pressed && styles.rowPressed,
+                  ]}
+                  onPress={() => {
+                    setOpen(false);
+                    onAddMower();
+                  }}
+                  hitSlop={8}
+                  accessibilityRole="button"
+                  accessibilityLabel="Add a new mower"
+                >
+                  <Ionicons
+                    name="add-circle-outline"
+                    size={18}
+                    color={colors.emerald}
+                    style={styles.addIcon}
+                  />
+                  <Text style={styles.addLabel} numberOfLines={1} ellipsizeMode="tail">
+                    Add mower
+                  </Text>
+                </Pressable>
+              </>
+            )}
           </View>
         </>
       )}
@@ -185,5 +218,26 @@ const styles = StyleSheet.create({
   },
   check: {
     marginLeft: 8,
+  },
+  divider: {
+    height: 1,
+    backgroundColor: colors.cardBorder,
+    marginVertical: 4,
+  },
+  addRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    minHeight: 44,
+  },
+  addIcon: {
+    marginRight: 8,
+  },
+  addLabel: {
+    flex: 1,
+    color: colors.emerald,
+    fontSize: 15,
+    fontWeight: '600',
   },
 });

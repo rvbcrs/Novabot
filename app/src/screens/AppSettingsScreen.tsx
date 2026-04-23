@@ -231,8 +231,8 @@ export default function AppSettingsScreen({
             onPress={onGoToProvision}
             activeOpacity={0.7}
           >
-            <Ionicons name="bluetooth-outline" size={20} color={colors.emerald} />
-            <Text style={styles.actionLabel}>Provision</Text>
+            <Ionicons name="add-circle-outline" size={20} color={colors.emerald} />
+            <Text style={styles.actionLabel}>Add mower</Text>
             <Ionicons name="chevron-forward" size={18} color={colors.textDim} />
           </TouchableOpacity>
         </Section>

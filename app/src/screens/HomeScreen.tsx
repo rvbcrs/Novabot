@@ -1161,7 +1161,11 @@ export default function HomeScreen() {
         <View style={styles.topBar}>
           {/* Mower info — chevron picker shows active mower + lets user switch when N>=2 */}
           <View style={[styles.connectionRow, { flexWrap: 'wrap' }]}>
-            <MowerPickerChevron />
+            <MowerPickerChevron
+              onAddMower={() =>
+                (navigation as any).navigate('AppSettings', { screen: 'ProvisionFlow' })
+              }
+            />
             {mower.online && (devices.get(mower.sn)?.sensors?.sw_version || devices.get(mower.sn)?.sensors?.mower_version) && (
               <>
                 <View style={styles.connectionSpacer} />
