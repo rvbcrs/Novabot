@@ -2,6 +2,14 @@
 
 Format: most-recent first. Each entry is dated and names the endpoint(s) affected.
 
+## 2026-04-23 — Contract test: userEquipmentList
+
+- Zod schema `userEquipmentListResponseSchema` + 3 contract tests:
+  shape, critical field values (chargerAddress 718, chargerChannel 16,
+  account/password for charger, nullable for mower), is_active filter.
+- `vitest.config.ts` now also includes `src/cloud-api/__tests__/**/*.test.ts`
+  so contract tests under the cloud-api tree are picked up.
+
 ## 2026-04-23 — Contract-test harness
 
 - Add `cloud-api/__tests__/testHarness.ts`: express app factory (no MQTT/socket),

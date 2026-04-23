@@ -75,6 +75,49 @@ export const cloudEquipmentDtoSchema = z.object({
 export type CloudEquipmentDto = z.infer<typeof cloudEquipmentDtoSchema>;
 
 /**
+ * Per-entry shape returned by `POST /api/nova-user/equipment/userEquipmentList`.
+ * Mirrors the route handler in `cloud-api/routes/equipment.ts` — the handler
+ * strips `userId` and adds several extra fields before emitting each pageList
+ * entry, so this schema extends `cloudEquipmentDtoSchema` minus `userId`.
+ */
+export const userEquipmentListEntrySchema = cloudEquipmentDtoSchema
+  .omit({ userId: true })
+  .extend({
+    // Route handler overrides `equipmentId` with `dto.equipmentId + entryIndex`
+    // where the base `dto.equipmentId` is `r.id ?? 1` (so a number in practice).
+    // Keep the union tolerant in case the serializer evolves to strings.
+    equipmentId:   z.union([z.string(), z.number()]),
+    macAddress:    z.string().nullable(),
+    videoTutorial: z.string().nullable(),
+    wifiName:      z.string().nullable(),
+    wifiPassword:  z.string().nullable(),
+    model:         z.string(),
+    photoId:       z.string().nullable(),
+    photoType:     z.string().nullable(),
+    photoDownload: z.string().nullable(),
+    photoTime:     z.string().nullable(),
+  });
+
+/**
+ * Full paginated response for `userEquipmentList`. `value` is nullable because
+ * the underlying `ok()` helper permits `value: null` for empty results even
+ * though the live handler always returns a populated object.
+ */
+export const userEquipmentListResponseSchema = z.object({
+  success: z.boolean(),
+  code:    z.number(),
+  value: z.object({
+    pageNo:    z.number(),
+    pageSize:  z.number(),
+    totalSize: z.number(),
+    totalPage: z.number(),
+    pageList:  z.array(userEquipmentListEntrySchema),
+  }).nullable(),
+  message:  z.string().nullable(),
+  dateline: z.number().optional(),
+});
+
+/**
  * Build the cloud-compatible DTO for one equipment row. Mirrors the legacy
  * implementation in `nova-user/equipment.ts` 1:1 — behaviour must NOT change
  * until a CHANGELOG entry says otherwise.

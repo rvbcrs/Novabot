@@ -2,7 +2,10 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
-    include: ['src/__tests__/**/*.test.ts'],
+    include: [
+      'src/__tests__/**/*.test.ts',
+      'src/cloud-api/__tests__/**/*.test.ts',
+    ],
     environment: 'node',
     setupFiles: ['src/__tests__/setup.ts'],
     // DB_PATH is set here so the test database module reads ':memory:' at
