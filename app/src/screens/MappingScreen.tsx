@@ -35,6 +35,7 @@ import { runOnJS } from 'react-native-reanimated';
 import { colors } from '../theme/colors';
 import { LiveMapView } from '../components/LiveMapView';
 import { useMowerState } from '../hooks/useMowerState';
+import { useActiveMower } from '../hooks/useActiveMower';
 import { getSocket } from '../services/socket';
 import { ApiClient } from '../services/api';
 import { getServerUrl } from '../services/auth';
@@ -116,7 +117,7 @@ export default function MappingScreen() {
 
   // Maaier mqtt_node maakt korte verbindingen (connect → rapport → disconnect).
   // Gebruik lastUpdate timestamp i.p.v. online flag — als recent bericht binnen 60s, beschouw als online.
-  const mower = [...devices.values()].find(d => d.deviceType === 'mower');
+  const { activeMower: mower } = useActiveMower();
   const mowerRecentlyActive = mower ? (Date.now() - (mower.lastUpdate ?? 0)) < 60_000 : false;
   const mowerOnline = mower?.online || mowerRecentlyActive;
   const sn = mower?.sn ?? '';

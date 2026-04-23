@@ -45,6 +45,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { colors } from '../theme/colors';
 import { useMowerState } from '../hooks/useMowerState';
+import { useActiveMower } from '../hooks/useActiveMower';
 import { ApiClient, type MapData, type TrailPoint, type LocalPoint, type ChargerGps } from '../services/api';
 import { getServerUrl } from '../services/auth';
 import { DemoBanner } from '../components/DemoBanner';
@@ -320,7 +321,7 @@ export default function MapScreen() {
     [selectedWorkMap, visibleMaps],
   );
 
-  const mower = useMemo(() => [...devices.values()].find((d) => d.deviceType === 'mower') ?? null, [devices]);
+  const { activeMower: mower } = useActiveMower();
 
   // Mower position from ROS2 localization (map_position_x/y) — already in local meters, much more accurate than GPS
   const mowerLocal: LocalPoint | null = useMemo(() => {
