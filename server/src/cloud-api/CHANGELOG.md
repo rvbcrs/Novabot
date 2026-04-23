@@ -2,6 +2,16 @@
 
 Format: most-recent first. Each entry is dated and names the endpoint(s) affected.
 
+## 2026-04-23 — Serializer + helpers move (step 1/2)
+
+- Add `cloud-api/serializers/equipmentDto.ts` with Zod schema +
+  `rowToCloudDto` mirroring the existing `nova-user/equipment.ts` impl.
+  Explicit field picks; no spread operators.
+- Add `cloud-api/helpers/response.ts` (`ok`/`fail`) and
+  `cloud-api/helpers/lookupMac.ts` as private copies. Old versions remain in
+  place; Task 9 will switch route imports over.
+- No wire-level change.
+
 ## 2026-04-23 — CODEOWNERS for cloud-api
 
 - Add `.github/CODEOWNERS` requiring @rvbcrs review on cloud-api paths.
