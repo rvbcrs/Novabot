@@ -866,6 +866,71 @@ def handle_clean_ota_cache(params, respond):
         respond("clean_ota_cache_respond", {"result": 1, "error": str(e)})
 
 
+def _kill_ros2_action_clients():
+    """Kill any lingering `ros2 action send_goal` client processes.
+
+    When the action CLI is killed externally (timeout, SIGKILL) the
+    server-side goal handle can linger in ACCEPTED/EXECUTING state —
+    the boundary-follow planner keeps publishing nav2 paths, and a
+    physical bump / manual drive-off can wake the planner up and cause
+    the mower to drive autonomously. Killing the CLI process alone is
+    not enough; we also need to call the service-level stop (below).
+    """
+    try:
+        subprocess.run(
+            ["bash", "-c", "pkill -f 'ros2 action send_goal' 2>/dev/null; pkill -f 'ros2 action.*boundary_follow' 2>/dev/null"],
+            capture_output=True, timeout=5,
+        )
+    except Exception:
+        pass
+
+
+def _call_cover_task_stop():
+    """Fire cover_task_stop (std_srvs/SetBool) and detach.
+
+    The service call can take ~3-6s to complete (iceoryx warmup + service
+    discovery). We don't wait — the important thing is that the call is
+    dispatched so the coverage_planner_server drops its active goal. We
+    return immediately so the MQTT response to the client isn't blocked.
+    """
+    try:
+        cmd = (
+            "source /opt/ros/galactic/setup.bash && "
+            "source /root/novabot/install/setup.bash 2>/dev/null && "
+            "nohup timeout 10 ros2 service call /coverage_planner_server/cover_task_stop "
+            "std_srvs/srv/SetBool '{data: true}' "
+            ">> /tmp/cover_task_stop.log 2>&1 &"
+        )
+        env = {
+            **os.environ,
+            "ROS_DOMAIN_ID": "0",
+            "ROS_LOCALHOST_ONLY": "1",
+            "RMW_IMPLEMENTATION": "rmw_cyclonedds_cpp",
+            "CYCLONEDDS_URI": "file:///root/novabot/shm_config/shm_cyclonedds.xml",
+        }
+        subprocess.Popen(["bash", "-c", cmd], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return "dispatched"
+    except Exception as e:
+        return f"err: {e}"
+
+
+def handle_stop_boundary_follow(params, respond):
+    """Cancel an in-flight boundary-follow task.
+
+    Two-step cleanup:
+      1. Kill any lingering `ros2 action send_goal` CLI processes so no
+         retry-loop keeps refreshing the goal.
+      2. Call `/coverage_planner_server/cover_task_stop` service so the
+         server drops its internal goal handle.
+
+    Safe to call repeatedly — both operations are idempotent.
+    """
+    _kill_ros2_action_clients()
+    svc_out = _call_cover_task_stop()
+    log(f"stop_boundary_follow: {svc_out[:200]}")
+    respond("stop_boundary_follow_respond", {"result": 0, "svc": svc_out[:200]})
+
+
 def handle_start_boundary_follow(params, respond):
     """Start real edge-cutting via the `/boundary_follow` ROS2 action.
 
@@ -897,6 +962,13 @@ def handle_start_boundary_follow(params, respond):
       blade_height:         default 5 (≈ 40 mm via chassis index).
       max_time:             default 60.0 (seconds), run in background.
     """
+    # Defensive: cancel any pre-existing boundary-follow goal before starting
+    # a new one. A lingering server-side goal handle can cause the mower to
+    # auto-drive when manually moved — live-observed 2026-04-23 on
+    # LFIN1231000211 (test goal from 30 min earlier kept recomputing paths).
+    _kill_ros2_action_clients()
+    _call_cover_task_stop()
+
     try:
         follow_mode = int(params.get("follow_mode", 2))
         enable_coverage = bool(params.get("enable_coverage", True))
@@ -1592,6 +1664,7 @@ COMMANDS = {
     "finalize_map_files": handle_finalize_map_files,
     "recalibrate_charging_pose": handle_recalibrate_charging_pose,
     "start_boundary_follow": handle_start_boundary_follow,
+    "stop_boundary_follow": handle_stop_boundary_follow,
     "get_lora_info": handle_get_lora_info,
     "set_lora_info": handle_set_lora_info,
     "get_preview_cover_path": handle_get_preview_cover_path,

@@ -1685,6 +1685,15 @@ export default function HomeScreen() {
                         text: t('endTaskReturn') || 'End task & return',
                         onPress: () => {
                           sendCommand(mower.sn, { stop_navigation: { cmd_num: ++cmdNumRef.current } }, 'stop');
+                          // Idempotent: clears any lingering boundary-follow goal.
+                          (async () => {
+                            try {
+                              const url = await getServerUrl();
+                              if (!url) return;
+                              const api = new ApiClient(url);
+                              await api.sendExtended(mower.sn, { stop_boundary_follow: {} });
+                            } catch { /* non-fatal */ }
+                          })();
                           setTimeout(() => { sendGoHome(mower.sn); }, 500);
                           setOptimisticActivity('returning');
                         },
@@ -1825,9 +1834,20 @@ export default function HomeScreen() {
             <View style={styles.actionRow}>
               <TouchableOpacity
                 style={[styles.actionButton, styles.actionButtonRed]}
-                onPress={() =>
-                  sendCommand(mower.sn, { stop_navigation: { cmd_num: ++cmdNumRef.current } }, 'stop')
-                }
+                onPress={() => {
+                  sendCommand(mower.sn, { stop_navigation: { cmd_num: ++cmdNumRef.current } }, 'stop');
+                  // Also cancel any in-flight boundary-follow goal — a
+                  // lingering server-side goal handle can otherwise keep
+                  // driving the mower autonomously even after stop_navigation.
+                  (async () => {
+                    try {
+                      const url = await getServerUrl();
+                      if (!url) return;
+                      const api = new ApiClient(url);
+                      await api.sendExtended(mower.sn, { stop_boundary_follow: {} });
+                    } catch { /* non-fatal */ }
+                  })();
+                }}
                 disabled={commandLoading !== null}
                 activeOpacity={0.7}
               >
