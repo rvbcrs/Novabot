@@ -629,6 +629,16 @@ export class ApiClient {
     });
   }
 
+  /**
+   * Mark a mower as the active equipment pair on the server. The cloud-API
+   * (userEquipmentList) filters on `is_active=1` so the official Novabot app
+   * only ever sees one pair at a time. OpenNova itself is unaffected — the
+   * app still addresses every mower directly.
+   */
+  async setActiveMower(sn: string): Promise<{ ok: boolean; activeMowerSn?: string; error?: string }> {
+    return this.request('POST', '/api/dashboard/equipment/set-active', { body: { sn } });
+  }
+
   // ── Cutting Height ───────────────────────────────────────────────────
 
   async setCuttingHeight(sn: string, height: number): Promise<CommandResult> {

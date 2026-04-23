@@ -53,6 +53,7 @@ export function initDb(): void {
       charger_version     TEXT,
       charger_address     TEXT,
       charger_channel     TEXT,
+      is_active           INTEGER NOT NULL DEFAULT 0,
       created_at          TEXT    NOT NULL DEFAULT (datetime('now')),
       FOREIGN KEY (user_id) REFERENCES users(app_user_id)
     );
@@ -238,6 +239,30 @@ export function initDb(): void {
   try {
     db.exec(`ALTER TABLE equipment ADD COLUMN mac_address TEXT`);
     console.log('[DB] Migrated: added equipment.mac_address');
+  } catch {
+    // Kolom bestaat al — geen actie nodig
+  }
+
+  // Voeg is_active kolom toe aan equipment (migratie – veilig om te herhalen).
+  // Max één actief equipment per user; de cloud-API endpoints (userEquipmentList,
+  // getEquipmentBySN) filteren hierop zodat de officiële Novabot-app maar één
+  // pair ziet terwijl OpenNova alle pairs kan bedienen.
+  try {
+    db.exec(`ALTER TABLE equipment ADD COLUMN is_active INTEGER NOT NULL DEFAULT 0`);
+    console.log('[DB] Migrated: added equipment.is_active');
+    // Seed: per user de eerste rij (oudste id) als actief markeren zodat
+    // bestaande installaties niet plots "geen device" tonen in Novabot-app.
+    const seeded = db.prepare(`
+      UPDATE equipment SET is_active = 1
+      WHERE id IN (
+        SELECT MIN(id) FROM equipment
+        WHERE user_id IS NOT NULL
+        GROUP BY user_id
+      )
+    `).run();
+    if (seeded.changes > 0) {
+      console.log(`[DB] Seeded is_active=1 for ${seeded.changes} existing equipment row(s)`);
+    }
   } catch {
     // Kolom bestaat al — geen actie nodig
   }

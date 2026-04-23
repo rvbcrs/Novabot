@@ -447,6 +447,52 @@ export class EquipmentRepository {
     this._claimOwnership.run(userId, equipmentId);
   }
 
+  /**
+   * Mark one equipment row as the active one for its user, all others inactive.
+   * Transactional: first clear is_active for the user, then set it on the
+   * target row. The cloud-API endpoints (`userEquipmentList`,
+   * `getEquipmentBySN`) filter on `is_active=1` so the official Novabot app
+   * only ever sees one mower+charger pair at a time, while OpenNova can still
+   * address all pairs via the dashboard routes.
+   *
+   * @returns true on success, false if the SN is not bound to a user.
+   */
+  setActiveByMowerSn(mowerSn: string): boolean {
+    const row = this._findByMowerSn.get(mowerSn) as EquipmentRow | undefined;
+    if (!row || !row.user_id) return false;
+    const userId = row.user_id;
+    const txn = db.transaction(() => {
+      db.prepare('UPDATE equipment SET is_active = 0 WHERE user_id = ?').run(userId);
+      db.prepare('UPDATE equipment SET is_active = 1 WHERE mower_sn = ? AND user_id = ?').run(mowerSn, userId);
+    });
+    txn();
+    return true;
+  }
+
+  /** Returns the active mower SN for a user, or null when none is marked. */
+  getActiveMowerSn(userId: string): string | null {
+    const row = db.prepare(
+      'SELECT mower_sn FROM equipment WHERE user_id = ? AND is_active = 1 LIMIT 1',
+    ).get(userId) as { mower_sn: string } | undefined;
+    return row?.mower_sn ?? null;
+  }
+
+  /**
+   * Ensure a user has exactly one active row. If none is active yet (e.g.
+   * right after the user's first `bindingEquipment`), promote the oldest row.
+   * Called from the binding endpoint so new users get a sane default.
+   */
+  ensureOneActiveForUser(userId: string): void {
+    const hasActive = db.prepare(
+      'SELECT 1 FROM equipment WHERE user_id = ? AND is_active = 1 LIMIT 1',
+    ).get(userId);
+    if (hasActive) return;
+    db.prepare(`
+      UPDATE equipment SET is_active = 1
+      WHERE id = (SELECT MIN(id) FROM equipment WHERE user_id = ?)
+    `).run(userId);
+  }
+
   rebind(equipmentId: string, userId: string, chargerChannel?: string | null, chargerAddress?: string | null, nickName?: string | null): void {
     this._rebind.run(userId, chargerChannel ?? null, chargerAddress ?? null, nickName ?? null, equipmentId);
   }

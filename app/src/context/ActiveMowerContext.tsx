@@ -15,6 +15,8 @@ import React, {
   useState,
 } from 'react';
 import * as SecureStore from 'expo-secure-store';
+import { getServerUrl } from '../services/auth';
+import { ApiClient } from '../services/api';
 
 const STORE_KEY = 'novabot:activeMowerSn';
 
@@ -57,6 +59,19 @@ export function ActiveMowerProvider({ children }: { children: React.ReactNode })
     setActiveMowerSnState(sn);
     if (sn) {
       SecureStore.setItemAsync(STORE_KEY, sn).catch(() => {});
+      // Sync naar server zodat de officiële Novabot-app alleen deze pair
+      // ziet via userEquipmentList. Fire-and-forget — UI wacht niet, fouten
+      // zijn niet-fataal (kan offline zijn of server niet bereikbaar).
+      (async () => {
+        try {
+          const url = await getServerUrl();
+          if (!url) return;
+          const api = new ApiClient(url);
+          await api.setActiveMower(sn);
+        } catch {
+          // Ignore — de lokale keuze werkt ook zonder server-sync.
+        }
+      })();
     } else {
       SecureStore.deleteItemAsync(STORE_KEY).catch(() => {});
     }

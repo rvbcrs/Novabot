@@ -2114,6 +2114,37 @@ dashboardRouter.post('/stop-navigation/:sn', (req: Request, res: Response) => {
   res.json({ ok: true, command: 'stop_navigation' });
 });
 
+// POST /api/dashboard/equipment/set-active — zet actief equipment voor de user
+// van de opgegeven mower. Alleen is_active=1 equipment is zichtbaar voor de
+// officiële Novabot-app (userEquipmentList/getEquipmentBySN), zodat die maar
+// één mower+charger pair tegelijk ziet. OpenNova zelf kan via dashboard-routes
+// alle pairs bedienen.
+dashboardRouter.post('/equipment/set-active', (req: Request, res: Response) => {
+  const { sn } = req.body as { sn?: string };
+  if (!sn || typeof sn !== 'string') {
+    res.status(400).json({ ok: false, error: 'sn required' });
+    return;
+  }
+  const ok = equipmentRepo.setActiveByMowerSn(sn);
+  if (!ok) {
+    res.status(404).json({ ok: false, error: 'mower_sn not bound to a user' });
+    return;
+  }
+  console.log(`[Equipment] Active set to ${sn}`);
+  res.json({ ok: true, activeMowerSn: sn });
+});
+
+// GET /api/dashboard/equipment/active?user=<user_id> — huidige actieve SN
+dashboardRouter.get('/equipment/active', (req: Request, res: Response) => {
+  const userId = String(req.query.user ?? '');
+  if (!userId) {
+    res.status(400).json({ ok: false, error: 'user query param required' });
+    return;
+  }
+  const sn = equipmentRepo.getActiveMowerSn(userId);
+  res.json({ ok: true, activeMowerSn: sn });
+});
+
 // POST /api/dashboard/patrol/:sn — start randmaaien (patrol mode)
 dashboardRouter.post('/patrol/:sn', (req: Request, res: Response) => {
   publishToDevice(req.params.sn, { start_patrol: null });

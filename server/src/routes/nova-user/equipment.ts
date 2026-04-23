@@ -414,6 +414,11 @@ equipmentRouter.post('/bindingEquipment', authMiddleware, (req: AuthRequest, res
     charger_address: chargerAddress,
   });
 
+  // Zorg dat de user altijd één active equipment row heeft. Eerste binding
+  // van een user → deze wordt active. Bestaande users die al een active
+  // hebben raken die niet kwijt.
+  equipmentRepo.ensureOneActiveForUser(req.userId!);
+
   console.log(`[equipment] bindingEquipment: sn=${sn} chargerSn=${chargerSn ?? '-'} channel=${chargerChannel} addr=${chargerAddress} equipmentId=${equipmentId}`);
   res.json(ok(1));  // Cloud retourneert value:1 bij success
 });
