@@ -2,6 +2,11 @@
 
 Format: most-recent first. Each entry is dated and names the endpoint(s) affected.
 
+## 2026-04-23 — Contract test: checkOtaNewVersion
+
+- `otaDto.ts` schema; `upgradeFlag ∈ {0,1}` asserted; `http://` URL
+  enforced per CLAUDE.md OTA rules (https is explicitly rejected).
+
 ## 2026-04-23 — Contract test: queryEquipmentMap
 
 - `mapDto.ts` with Zod schema for the response; md5-is-uppercase/null
