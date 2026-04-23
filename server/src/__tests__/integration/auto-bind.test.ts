@@ -204,7 +204,7 @@ describe('findIncompleteByUserId', () => {
   });
 });
 
-describe('LoRa cache — mower channel = charger channel - 1', () => {
+describe('LoRa cache — mower en charger op identiek paar', () => {
   it('setLoraCache stores address and channel', () => {
     equipmentRepo.setLoraCache('LFIC1230700004', '718', '16');
 
@@ -214,19 +214,20 @@ describe('LoRa cache — mower channel = charger channel - 1', () => {
     expect(cache!.charger_channel).toBe('16');
   });
 
-  it('mower gets charger_channel - 1', () => {
-    const chargerChannel = 16;
-    const mowerChannel = chargerChannel - 1; // 15
+  it('mower krijgt IDENTIEK channel als charger (zelfde LoRa-paar)', () => {
+    // Bijgewerkt 22 apr 2026: mower en charger gebruiken HETZELFDE channel,
+    // niet charger-1. Bewezen met working-lora-pair addr=718 ch=17 beide.
+    const channel = 16;
 
-    equipmentRepo.setLoraCache('LFIC1230700004', '718', String(chargerChannel));
-    equipmentRepo.setLoraCache('LFIN2230700238', '718', String(mowerChannel));
+    equipmentRepo.setLoraCache('LFIC1230700004', '718', String(channel));
+    equipmentRepo.setLoraCache('LFIN2230700238', '718', String(channel));
 
     const chargerLora = equipmentRepo.getLoraCache('LFIC1230700004');
     const mowerLora = equipmentRepo.getLoraCache('LFIN2230700238');
 
-    expect(Number(chargerLora!.charger_channel)).toBe(16);
-    expect(Number(mowerLora!.charger_channel)).toBe(15);
-    expect(Number(chargerLora!.charger_channel) - 1).toBe(Number(mowerLora!.charger_channel));
+    expect(Number(chargerLora!.charger_channel)).toBe(channel);
+    expect(Number(mowerLora!.charger_channel)).toBe(channel);
+    expect(chargerLora!.charger_address).toBe(mowerLora!.charger_address);
   });
 
   it('syncLoraPair sets same address for both devices', () => {

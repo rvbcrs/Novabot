@@ -128,9 +128,16 @@ export function scanForDevices(
       if (!device?.name || seen.has(device.id)) return;
       seen.add(device.id);
 
+      // Name matching is case-INSENSITIEF. Firmware broadcastet soms
+      // "NOVABOT" (charger-bootloader), "Novabot" (mower AP-mode), of
+      // "novabot" (custom-firmware build). Allemaal geldig als mower.
+      // Idem voor "CHARGER_PILE" / "Charger_Pile". De BLE-prefix check
+      // (LFIC/LFIN in de SN) is al case-sensitief want dat zijn vaste
+      // firmware-constanten.
+      const nameUpper = (device.name ?? '').toUpperCase();
       let type: DeviceType | 'unknown' = 'unknown';
-      if (device.name === 'CHARGER_PILE' || device.name?.startsWith('LFIC')) type = 'charger';
-      if (device.name === 'NOVABOT' || device.name === 'Novabot' || device.name?.startsWith('LFIN')) type = 'mower';
+      if (nameUpper === 'CHARGER_PILE' || device.name?.startsWith('LFIC')) type = 'charger';
+      if (nameUpper === 'NOVABOT' || device.name?.startsWith('LFIN')) type = 'mower';
 
       onDevice({ id: device.id, name: device.name, rssi: device.rssi ?? -100, type });
     });
@@ -438,6 +445,20 @@ export async function provisionDevice(
       ? JSON.stringify({ set_cfg_info: 1 })
       : JSON.stringify({ set_cfg_info: { cfg_value: 1, tz: 'Europe/Amsterdam' } });
     await cmd(cfgPayload, 'set_cfg_info', 15000);
+
+    // Best-effort explicit reboot. Stock firmware sometimes only restarts
+    // networking after set_cfg_info, which can leave mqtt_node in a
+    // MQTT_EVENT_INIT_NET_ERROR loop after LoRa/WiFi reconfig. A full reboot
+    // clears the init state cleanly. This is fire-and-forget — if firmware
+    // doesn't support set_robot_reboot over BLE, the disconnect below still
+    // wraps up the flow correctly.
+    try {
+      await cmd(JSON.stringify({ set_robot_reboot: {} }), 'set_robot_reboot', 3000);
+    } catch (e) {
+      // Expected: firmware may disconnect BLE before ack, or may not support
+      // this command at all. Either way we continue with normal teardown.
+      bleLog(`[BLE] set_robot_reboot (best-effort) error: ${(e as Error)?.message ?? e}`);
+    }
 
     // Cleanup subscriptions
     for (const sub of notifySubs) sub.remove();

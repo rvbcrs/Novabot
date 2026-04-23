@@ -33,6 +33,7 @@ import { useDemo } from '../context/DemoContext';
 import { StartMowSheet } from '../components/StartMowSheet';
 import { RainOverlay } from '../components/RainOverlay';
 import { AppActionSheet, type AppActionSheetItem } from '../components/AppActionSheet';
+import CuttingHeightPickerModal from '../components/CuttingHeightPickerModal';
 import { useI18n } from '../i18n';
 import { getSocket } from '../services/socket';
 import type { DeviceState, MowerActivity } from '../types';
@@ -378,6 +379,19 @@ export default function HomeScreen() {
   const [commandLoading, setCommandLoading] = useState<string | null>(null);
   const [showStartMow, setShowStartMow] = useState(false);
   const [startMowInitialMapId, setStartMowInitialMapId] = useState<string | null>(null);
+  // Cutting height picker voor edge/spot — user-spec 2026-04-21:
+  // ELKE maai-actie moet om de hoogte vragen voordat het command afvuurt.
+  // Voor "Full mow" regelt StartMowSheet dat al. Voor edge/spot hadden we
+  // geen hoogte-dialog → die hoogte werd dan default 5cm (wire 3) zonder
+  // user-confirm. Nu via CuttingHeightPickerModal.
+  const [heightPicker, setHeightPicker] = useState<null | {
+    mode: 'edge' | 'spot';
+    title: string;
+    message: string;
+    confirmLabel: string;
+    /** Voor spot-mow: de GPS polygon die we al hebben berekend. */
+    spotPolygon?: Array<{ latitude: number; longitude: number }>;
+  }>(null);
   const [commandError, setCommandError] = useState('');
   // Track which soft-error codes the user already dismissed this session so
   // the banner doesn't pop back every time report_state_robot cycles.
@@ -603,9 +617,10 @@ export default function HomeScreen() {
   }, [mower?.sn, demo.enabled]);
 
   // Safety check: verify mower cutting height matches what we set.
-  // Firmware echoes cutterhigh verbatim as target_height. Both wire values are
-  // `cm + 2` (e.g. user picks 4cm → cutterhigh:6 → target_height:6). Verified
-  // 2026-04-19 from live logs on LFIN1231000211. Tolerance = 1 wire unit.
+  // Firmware echoes cutterhigh verbatim as target_height. Both are the wire
+  // enum `cm − 2` per CLAUDE.md cutting-height-mapping (user 4cm → cutterhigh:2
+  // → target_height:2). Verified 2026-04-19 from live logs on LFIN1231000211.
+  // Tolerance = 1 wire unit.
   //
   // Grace period: the firmware takes 3-8s to apply cutterhigh and echo it in
   // target_height. Early reports can still show the previous value (e.g. 2 during
@@ -694,31 +709,31 @@ export default function HomeScreen() {
   // Idle state: toon bestaande cached preview, en trigger op achtergrond een
   // refresh zodat de preview up-to-date is (houdt rekening met huidige
   // path_direction). Zo krijgt de user echte berekende lijntjes i.p.v.
-  // gegenereerde rechte strepen — zonder dat de Novabot app iets hoeft te doen.
+  // gegenereerde rechte strepen.
+  //
+  // KRITIEK (fix 2026-04-21): Deze useEffect had `devices` in z'n deps,
+  // wat betekent dat hij bij ELKE MQTT sensor-update opnieuw vuurt (~elke
+  // 2s). Dat produceerde een cascade van POST /refresh-preview-path naar
+  // de server — live zichtbaar in de docker logs als spam. Fix:
+  //  - `devices` uit deps, sensor-snapshot via ref lezen
+  //  - throttle: min 60s tussen refreshes (cached read doet de rest)
+  //  - vroege return als mower offline
+  const devicesRef = useRef(devices);
+  useEffect(() => { devicesRef.current = devices; }, [devices]);
+  const lastPreviewRefreshAt = useRef<number>(0);
   useEffect(() => {
     if (!mower || demo.enabled) return;
     if (mower.activity === 'mowing' || mower.activity === 'mapping') return;
-    // SAFETY: refreshPreviewPath triggers generate_preview_cover_path on the
-    // mower. That ROS service errors with code 128 ("Cannot preview when
-    // cover task working") if the coverage task is still active — which
-    // happens even when app-side activity briefly flips to "idle" during
-    // reconnect or while the mower is in Work:FINISHED but task_mode=1.
-    // Only trigger a fresh generate when we're REALLY sure the mower is idle
-    // (charging on dock, or clear idle/standby msg). Cached read is always safe.
-    const mowerOnline = mower.online;
-    const mowerState = devices.get(mower.sn);
-    const msg = mowerState?.sensors?.msg ?? '';
-    const taskMode = parseInt(mowerState?.sensors?.task_mode ?? '0', 10);
-    const workStatus = mowerState?.sensors?.work_status ?? '';
-    const errorStatus = parseInt(mowerState?.sensors?.error_status ?? '0', 10);
-    const batteryCharging = mowerState?.sensors?.battery_state === 'CHARGING';
-    const clearlyIdle =
-      batteryCharging
-      || msg.includes('Work:STANDBY')
-      || msg.includes('Work:IDLE')
-      || (taskMode === 0 && workStatus !== '9' && errorStatus === 0);
-    let cancelled = false;
+    // Mower offline → GEEN refresh trigger. Zonder deze guard stuurt de app
+    // oneindig generate_preview commands naar een mower die niet antwoordt,
+    // wat de server logs totaal volspamde (bewezen live 2026-04-21).
+    if (!mower.online) return;
 
+    const PREVIEW_REFRESH_MIN_INTERVAL_MS = 60_000;
+    const now = Date.now();
+    const doFreshRefresh = now - lastPreviewRefreshAt.current >= PREVIEW_REFRESH_MIN_INTERVAL_MS;
+
+    let cancelled = false;
     (async () => {
       try {
         const url = await getServerUrl();
@@ -730,10 +745,27 @@ export default function HomeScreen() {
         if (cancelled) return;
         if (Array.isArray(cached) && cached.length > 0) setPlannedPaths(cached);
 
-        // Dan op achtergrond een fresh preview triggeren. Alleen als mower
-        // online is EN we zeker weten dat coverage niet actief is — anders
-        // crasht de sessie op de mower. Cache-only is prima als we twijfelen.
-        if (!mowerOnline || !clearlyIdle) return;
+        if (!doFreshRefresh) return;
+
+        // SAFETY: refreshPreviewPath triggert generate_preview_cover_path op
+        // de mower. Die ROS service errort met code 128 als coverage al
+        // actief is. We lezen de sensor-state via ref (buiten deps) zodat
+        // een state-update niet de useEffect herstart.
+        const mowerState = devicesRef.current.get(mower.sn);
+        const msg = mowerState?.sensors?.msg ?? '';
+        const taskMode = parseInt(mowerState?.sensors?.task_mode ?? '0', 10);
+        const workStatus = mowerState?.sensors?.work_status ?? '';
+        const errorStatus = parseInt(mowerState?.sensors?.error_status ?? '0', 10);
+        const batteryCharging = mowerState?.sensors?.battery_state === 'CHARGING';
+        const clearlyIdle =
+          batteryCharging
+          || msg.includes('Work:STANDBY')
+          || msg.includes('Work:IDLE')
+          || (taskMode === 0 && workStatus !== '9' && errorStatus === 0);
+
+        if (!clearlyIdle) return;
+
+        lastPreviewRefreshAt.current = now;
         const fresh = await api.refreshPreviewPath(mower.sn, {
           covDirection: mowSettings?.pathDirection,
           mapIds: 1,
@@ -744,7 +776,7 @@ export default function HomeScreen() {
     })();
 
     return () => { cancelled = true; };
-  }, [mower?.activity, mower?.sn, mower?.online, mowSettings?.pathDirection, demo.enabled, devices]);
+  }, [mower?.activity, mower?.sn, mower?.online, mowSettings?.pathDirection, demo.enabled]);
 
   // Mower bounce animation (subtle bob when active)
   const bounceAnim = useRef(new Animated.Value(0)).current;
@@ -881,7 +913,9 @@ export default function HomeScreen() {
         }
 
         // 3. If LoRa doesn't match, update the mower
-        const mowerChannel = chargerLora.channel - 1;  // Mower is always charger channel - 1
+        // Mower en charger staan altijd op IDENTIEKE addr+channel (bewezen
+        // working-lora-pair 22 apr 2026, addr=718 ch=17 beide devices).
+        const mowerChannel = chargerLora.channel;
         if (mowerLora.addr !== chargerLora.address || mowerLora.channel !== mowerChannel) {
           Alert.alert(
             t('loraMismatch'),
@@ -1782,6 +1816,60 @@ export default function HomeScreen() {
         <HistoryScreen />
       </Modal>
 
+      {/* Cutting-height picker voor edge & spot mow. Vuurt het juiste commando
+          af met de gekozen hoogte — edge heeft geen hoogte-parameter in de
+          firmware, dus we zetten de hoogte vóór start_patrol via set_para_info. */}
+      {mower && heightPicker && (
+        <CuttingHeightPickerModal
+          visible={!!heightPicker}
+          title={heightPicker.title}
+          message={heightPicker.message}
+          confirmLabel={heightPicker.confirmLabel}
+          initialHeightCm={mowSettings?.cuttingHeight != null
+            ? mowSettings.cuttingHeight + 2
+            : parseInt(devices.get(mower.sn)?.sensors?.target_height ?? '', 10)
+              ? parseInt(devices.get(mower.sn)?.sensors?.target_height ?? '5', 10) + 2
+              : 5}
+          onCancel={() => setHeightPicker(null)}
+          onConfirm={async (heightCm) => {
+            const picked = heightPicker;
+            setHeightPicker(null);
+            if (!mower) return;
+            // Wire value = display cm − 2 (see cutting-height-mapping.md).
+            const wire = Math.max(0, heightCm - 2);
+            try {
+              const url = await getServerUrl();
+              if (!url) return;
+              const api = new ApiClient(url);
+              // Pre-set de hoogte. Voor start_run gaat cutGrassHeight in het
+              // command zelf; voor start_patrol is er geen height-param, dus
+              // we sturen set_para_info eerst.
+              await api.sendCommand(mower.sn, {
+                set_para_info: { defaultCuttingHeight: wire },
+              }).catch(() => { /* non-fatal */ });
+
+              if (picked.mode === 'edge') {
+                sendCommand(mower.sn, { start_patrol: null }, 'patrol');
+              } else if (picked.mode === 'spot' && picked.spotPolygon) {
+                await api.sendCommand(mower.sn, {
+                  start_run: {
+                    mapNames: ['home'],
+                    cutGrassHeight: (wire + 2) * 10, // mm
+                    startWay: 1, // SPECIFIED_AREA
+                    workArea: picked.spotPolygon,
+                    schedule: false,
+                    scheduleId: '',
+                  },
+                });
+              }
+              setOptimisticActivity('mowing');
+              // Update local mowSettings so subsequent status checks line up.
+              setMowSettings({ cuttingHeight: wire, pathDirection: mowSettings?.pathDirection ?? 120 });
+            } catch {}
+          }}
+        />
+      )}
+
       {/* Alerts modal */}
       {/* Start Mow Sheet */}
       {mower && (
@@ -1847,20 +1935,13 @@ export default function HomeScreen() {
           subtitle: 'Drive along the boundary once (boundary follow)',
           icon: 'ellipse-outline',
           onPress: () => {
-            Alert.alert(
-              'Edge mowing',
-              'The mower will drive along the boundary of your work area only — good for a quick edge trim without a full mow. Continue?',
-              [
-                { text: 'Cancel', style: 'cancel' },
-                {
-                  text: 'Start',
-                  onPress: () => {
-                    sendCommand(mower.sn, { start_patrol: null }, 'patrol');
-                    setOptimisticActivity('mowing');
-                  },
-                },
-              ],
-            );
+            // User-spec: ook edge-mow vraagt om bevestiging + maaihoogte.
+            setHeightPicker({
+              mode: 'edge',
+              title: 'Edge mowing',
+              message: 'The mower will drive along the boundary of your work area — good for a quick edge trim. Pick the cutting height, then Start.',
+              confirmLabel: 'Start edges',
+            });
           },
         });
 
@@ -1878,52 +1959,30 @@ export default function HomeScreen() {
           disabled: !hasMowerGps,
           onPress: () => {
             if (!hasMowerGps) return;
-            Alert.alert(
-              'Spot mow',
-              'The mower will mow a small 2m radius circle at its current position. Make sure it\'s already at the spot you want trimmed (use the Control joystick first if needed). Continue?',
-              [
-                { text: 'Cancel', style: 'cancel' },
-                {
-                  text: 'Start here',
-                  onPress: async () => {
-                    try {
-                      const url = await getServerUrl();
-                      if (!url) return;
-                      const api = new ApiClient(url);
-                      // Build 12-vertex circle polygon in GPS coords.
-                      // 2m radius in meters → degrees:
-                      //   lat:  R / 111_320
-                      //   lng:  R / (111_320 * cos(lat_rad))
-                      const R = 2.0;
-                      const latRad = (mowerLat * Math.PI) / 180;
-                      const dLat = R / 111_320;
-                      const dLng = R / (111_320 * Math.max(Math.cos(latRad), 0.01));
-                      const N = 12;
-                      const polygon: Array<{ latitude: number; longitude: number }> = [];
-                      for (let i = 0; i < N; i++) {
-                        const a = (i / N) * 2 * Math.PI;
-                        polygon.push({
-                          latitude: mowerLat + Math.sin(a) * dLat,
-                          longitude: mowerLng + Math.cos(a) * dLng,
-                        });
-                      }
-                      const wire = Math.max(0, (mowSettings?.cuttingHeight ?? 5) - 2);
-                      await api.sendCommand(mower.sn, {
-                        start_run: {
-                          mapNames: ['home'],
-                          cutGrassHeight: (wire + 2) * 10, // mm
-                          startWay: 1, // SPECIFIED_AREA
-                          workArea: polygon,
-                          schedule: false,
-                          scheduleId: '',
-                        },
-                      });
-                      setOptimisticActivity('mowing');
-                    } catch {}
-                  },
-                },
-              ],
-            );
+            // Build 12-vertex circle polygon in GPS coords. 2m radius:
+            //   lat:  R / 111_320
+            //   lng:  R / (111_320 * cos(lat_rad))
+            const R = 2.0;
+            const latRad = (mowerLat * Math.PI) / 180;
+            const dLat = R / 111_320;
+            const dLng = R / (111_320 * Math.max(Math.cos(latRad), 0.01));
+            const N = 12;
+            const polygon: Array<{ latitude: number; longitude: number }> = [];
+            for (let i = 0; i < N; i++) {
+              const a = (i / N) * 2 * Math.PI;
+              polygon.push({
+                latitude: mowerLat + Math.sin(a) * dLat,
+                longitude: mowerLng + Math.cos(a) * dLng,
+              });
+            }
+            // User-spec: ook spot-mow vraagt om bevestiging + maaihoogte.
+            setHeightPicker({
+              mode: 'spot',
+              title: 'Spot mow',
+              message: 'The mower will mow a 2m radius circle at its current position. Make sure it\'s already at the spot you want trimmed (use the Control joystick first if needed).',
+              confirmLabel: 'Start here',
+              spotPolygon: polygon,
+            });
           },
         });
 

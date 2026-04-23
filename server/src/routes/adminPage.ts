@@ -768,6 +768,22 @@ function mdFetchLog() {
 
 function mdHandleExtendedResponse(ev) {
   // ev = {sn, command, data, timestamp}
+
+  // ── LoRa editor hook ─────────────────────────────────────────────
+  // Check FIRST zodat een openstaand LoRa-edit modal de set/get respond
+  // krijgt ongeacht de debug-screen state. Matcht op sn.
+  if (window._loraEditPending && ev.sn === window._loraEditPending.sn) {
+    var p = window._loraEditPending;
+    if (ev.command === 'set_lora_info_respond' && p.phase === 'set' && typeof p.onSetRespond === 'function') {
+      p.onSetRespond(ev.data);
+      return;
+    }
+    if (ev.command === 'get_lora_info_respond' && p.phase === 'verify' && typeof p.onGetRespond === 'function') {
+      p.onGetRespond(ev.data);
+      return;
+    }
+  }
+
   // Ignore if not our pending command (or from different mower)
   var selSn = document.getElementById('mdMowerSelect').value;
   if (selSn && ev.sn !== selSn) return;
@@ -992,6 +1008,11 @@ function setupSocketListeners(sock) {
   sock.on('extended:response', function(ev) {
     try { mdHandleExtendedResponse(ev); } catch (e) { console.error('mdHandleExtendedResponse error', e); }
   });
+  // Charger uses standard Dart/Receive_mqtt/ → 'command:respond' socket event.
+  // Used door de live LoRa editor voor chargers (LFIC*).
+  sock.on('command:respond', function(ev) {
+    try { mdHandleCommandRespond(ev); } catch (e) { console.error('mdHandleCommandRespond error', e); }
+  });
   sock.emit('mqtt:log:history');
 }
 
@@ -1145,7 +1166,13 @@ function devRow(dev) {
   const typeName = isCharger ? 'Charger' : 'Mower';
   const bound = dev.is_bound;
   const fw = dev.firmware_version || '';
-  const isON = dev.is_opennova;
+  // is_opennova flag wordt server-side gezet door de MQTT extended_commands
+  // detect handler — requireert dat het device ONLINE is. Offline devices
+  // krijgen dan per ongeluk "Stock". Als de firmware-string "custom" of
+  // "opennova" bevat, is het sowieso custom firmware. Derive lokaal voor
+  // de badge zodat offline custom-XX mowers niet onterecht als Stock tonen.
+  const fwLower = (fw || '').toLowerCase();
+  const isON = dev.is_opennova || fwLower.indexOf('custom') >= 0 || fwLower.indexOf('opennova') >= 0;
   var fwBadge = '';
   if (fw) {
     if (isON) {
@@ -1158,25 +1185,41 @@ function devRow(dev) {
   if (!isCharger && dev.is_active) {
     activeBadge = '<span style="font-size:9px;background:rgba(124,58,237,.2);color:#a78bfa;padding:1px 6px;border-radius:3px;font-weight:600;margin-left:4px">Active</span>';
   }
+  // Activate = groen (positive action), Deactivate = rood (undo/warning).
+  // Inline buttons — passen binnen de bestaande .dev-row grid kolom zonder
+  // extra wrappers. min-width=82 houdt de knoppen visueel uniform tussen
+  // rijen zodat Unbind onder elkaar uitlijnt.
+  const btnBase = 'font-size:11px;padding:4px 12px;border-radius:6px;font-weight:600;margin-left:6px';
   let actions = '';
   if (bound) {
     if (!isCharger) {
       actions += dev.is_active
-        ? '<span style="font-size:11px;color:#a78bfa;margin-right:6px">Active</span>'
-        : '<button class="btn btn-sm" style="background:rgba(124,58,237,.2);color:#a78bfa;border:1px solid rgba(124,58,237,.3);font-size:11px;padding:2px 8px" onclick="setActiveDevice(\\'' + dev.sn + '\\')">Set Active</button> ';
+        ? '<button class="btn btn-sm" style="background:rgba(239,68,68,.15);color:#ef4444;border:1px solid rgba(239,68,68,.4);min-width:82px;' + btnBase + '" title="Click to deactivate this mower" onclick="deactivateDevice(\\'' + dev.sn + '\\')">Deactivate</button>'
+        : '<button class="btn btn-sm" style="background:rgba(34,197,94,.15);color:#22c55e;border:1px solid rgba(34,197,94,.4);min-width:82px;' + btnBase + '" title="Set this mower as the active one" onclick="setActiveDevice(\\'' + dev.sn + '\\')">Activate</button>';
     }
-    actions += '<button class="btn btn-sm" style="background:#374151;color:#aaa" onclick="unbindDevice(\\'' + dev.sn + '\\')">Unbind</button>';
+    actions += '<button class="btn btn-sm" style="background:rgba(255,255,255,.04);color:#aaa;border:1px solid rgba(255,255,255,.1);min-width:64px;' + btnBase + '" onclick="unbindDevice(\\'' + dev.sn + '\\')">Unbind</button>';
+    actions += '<button class="btn btn-sm" style="background:rgba(239,68,68,.08);color:#ef4444;border:1px solid rgba(239,68,68,.3);min-width:88px;' + btnBase + '" title="Delete device + block MQTT reconnect for 30min — for re-provisioning via Novabot app" onclick="banishDevice(\\'' + dev.sn + '\\')">Delete + Banish</button>';
   } else {
-    actions = '<button class="btn btn-sm btn-green" onclick="bindDevice(\\'' + dev.sn + '\\')">Bind</button> ' +
-      '<button class="btn btn-sm btn-red" onclick="removeDevice(\\'' + dev.sn + '\\')">Remove</button>';
+    actions += '<button class="btn btn-sm btn-green" style="min-width:64px;' + btnBase + '" onclick="bindDevice(\\'' + dev.sn + '\\')">Bind</button>' +
+      '<button class="btn btn-sm btn-red" style="min-width:64px;' + btnBase + '" onclick="removeDevice(\\'' + dev.sn + '\\')">Remove</button>';
   }
   var loraCell = '';
   if (dev.lora_address) {
     var chPart = dev.lora_channel ? ' · ch' + dev.lora_channel : '';
-    loraCell = '<span class="lora-chip" title="LoRa addr / channel">📡 ' + dev.lora_address + chPart + '</span>';
+    // Edit button — alleen voor MOWERS met OpenNova firmware.
+    // Chargers (ESP32) accepteren set_lora_info NIET via MQTT —
+    // bewezen met log-capture 2026-04-21: get_lora_info respond OK,
+    // set_lora_info silent-ignored. Voor charger-LoRa wijzigen moet
+    // je BLE re-provisioning gebruiken.
+    var canEdit = online && !isCharger && dev.is_opennova;
+    var editBtn = canEdit
+      ? '<button class="lora-edit-btn" title="Edit LoRa via MQTT" onclick="openLoraEditor(\\'' + dev.sn + '\\', ' + dev.lora_address + ', ' + (dev.lora_channel || 'null') + ')" style="margin-left:4px;background:transparent;border:none;color:#888;cursor:pointer;padding:0;font-size:11px">✏️</button>'
+      : '';
+    loraCell = '<span class="lora-chip" title="LoRa addr / channel">📡 ' + dev.lora_address + chPart + '</span>' + editBtn;
   } else if (online) {
     // Stock mowers (no OpenNova) ignore get_lora_info; query the paired charger instead —
-    // broker.ts writes mower_channel = charger_channel-1 to cache on charger response.
+    // broker.ts spiegelt charger's addr+channel 1:1 naar de mower cache
+    // (mower en charger staan op hetzelfde LoRa-paar, zie working-lora-pair).
     var canQueryDirect = isCharger || dev.is_opennova;
     var querySn = canQueryDirect ? dev.sn : (dev.paired_with || '');
     var queryType = canQueryDirect ? dev.device_type : 'charger';
@@ -1218,11 +1261,79 @@ async function queryLora(sn, deviceType) {
 
 async function loadMyDevices() {
   try {
-    const d = await api('/devices');
+    const [d, pendingResp, bannedResp] = await Promise.all([
+      api('/devices'),
+      fetch('/api/dashboard/lora/pending', { headers: { 'Authorization': token } })
+        .then(function(r) { return r.ok ? r.json() : { ok: false, pending: [] }; })
+        .catch(function() { return { ok: false, pending: [] }; }),
+      fetch('/api/admin-status/banned-devices', { headers: { 'Authorization': token } })
+        .then(function(r) { return r.ok ? r.json() : { banned: [] }; })
+        .catch(function() { return { banned: [] }; }),
+    ]);
     const devs = d.devices || [];
-    if (!devs.length) { document.getElementById('myDevices').textContent = 'No devices found. Import from cloud or wait for devices to connect via MQTT.'; return; }
+    const pending = (pendingResp && pendingResp.pending) || [];
+    const banned = (bannedResp && bannedResp.banned) || [];
+    if (!devs.length && !pending.length && !banned.length) { document.getElementById('myDevices').textContent = 'No devices found. Import from cloud or wait for devices to connect via MQTT.'; return; }
 
     let html = '';
+
+    // ── Banned devices bar ────────────────────────────────────────────
+    // Toont SN's die via "Delete + Banish" geblokkeerd zijn. Broker weigert
+    // hun CONNECT tot de ban expireert of de user handmatig unbanned.
+    if (banned.length > 0) {
+      html += '<div style="margin-bottom:12px;padding:12px;background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.3);border-radius:10px">';
+      html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">';
+      html += '<span style="font-size:12px;font-weight:600;color:#ef4444">\u26D4 Banned (MQTT reconnect geblokkeerd)</span>';
+      html += '<span style="font-size:11px;color:#888">Use this window to re-provision via the Novabot app</span>';
+      html += '</div>';
+      for (var bi = 0; bi < banned.length; bi++) {
+        var b = banned[bi];
+        var minsLeft = Math.ceil(b.msRemaining / 60000);
+        html += '<div style="display:flex;align-items:center;gap:10px;padding:8px;background:rgba(255,255,255,.03);border-radius:8px;margin-bottom:4px">';
+        html += '<span style="font-size:18px">\uD83D\uDEAB</span>';
+        html += '<div style="flex:1">';
+        html += '<div style="color:#fecaca;font-weight:600;font-size:14px">' + b.sn + '</div>';
+        html += '<div style="color:#888;font-size:11px">ban expires in ' + minsLeft + ' min (' + new Date(b.expiresAt).toLocaleTimeString() + ')</div>';
+        html += '</div>';
+        html += '<button onclick="unbanishDevice(\\'' + b.sn + '\\')" style="background:rgba(34,197,94,.15);border:1px solid rgba(34,197,94,.4);color:#22c55e;font-size:11px;padding:4px 10px;border-radius:6px;cursor:pointer;font-weight:600">Unban now</button>';
+        html += '</div>';
+      }
+      html += '</div>';
+    }
+
+    // ── Pending provisioning section (top — most recent user action) ──
+    // Toont reserveringen gemaakt via POST /lora/resolve die nog niet
+    // geclaimd zijn door een online MQTT device. Wordt automatisch
+    // verborgen als de mower boot en broker de pending row promoteert.
+    if (pending.length > 0) {
+      html += '<div style="margin-bottom:12px;padding:12px;background:rgba(139,92,246,.06);border:1px solid rgba(139,92,246,.3);border-radius:10px">';
+      html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">';
+      html += '<span style="font-size:12px;font-weight:600;color:#a78bfa">\u23F3 Provisioning pending</span>';
+      html += '<span style="font-size:11px;color:#888">Waiting for first MQTT connect…</span>';
+      html += '</div>';
+      for (var i = 0; i < pending.length; i++) {
+        var p = pending[i];
+        var ageText = p.ageSeconds != null
+          ? (p.ageSeconds < 60 ? p.ageSeconds + 's ago' : Math.floor(p.ageSeconds / 60) + 'm ago')
+          : '';
+        var icon = p.type === 'charger' ? '\u26A1' : '\uD83D\uDD27';
+        var typeLabel = p.type === 'charger' ? 'Charger' : 'Mower';
+        html += '<div style="display:flex;align-items:center;gap:10px;padding:8px;background:rgba(255,255,255,.03);border-radius:8px;margin-bottom:4px">';
+        html += '<span style="font-size:18px">' + icon + '</span>';
+        html += '<div style="flex:1">';
+        html += '<div style="color:#e2d1ff;font-weight:600;font-size:14px">' + typeLabel + '</div>';
+        html += '<div style="color:#888;font-size:11px">LoRa ' + p.address + '/ch' + p.channel + ' · reserved ' + ageText + '</div>';
+        html += '</div>';
+        html += '<button onclick="cancelPending(\\'' + p.pendingSn + '\\')" style="background:transparent;border:1px solid rgba(239,68,68,.4);color:#ef4444;font-size:11px;padding:4px 10px;border-radius:6px;cursor:pointer">Cancel</button>';
+        html += '</div>';
+      }
+      html += '</div>';
+    }
+
+    if (!devs.length) {
+      document.getElementById('myDevices').innerHTML = html;
+      return;
+    }
 
     // Group by equipment pairing (paired_with), then solo, then unbound
     const paired = {};    // key = sorted SN pair → [dev, dev]
@@ -1345,12 +1456,201 @@ async function bindDevice(sn) {
   } catch(e) { modalAlert('Bind Failed', e.message); }
 }
 
+async function cancelPending(pendingSn) {
+  var ok = await modalConfirm('Cancel Provisioning', 'Release the reserved LoRa address for <b>' + pendingSn + '</b>?<br><br>The device will not auto-pair when it comes online.');
+  if (!ok) return;
+  try {
+    await fetch('/api/dashboard/lora/pending/' + encodeURIComponent(pendingSn), {
+      method: 'DELETE',
+      headers: { 'Authorization': token },
+    });
+    loadMyDevices();
+  } catch(e) { modalAlert('Cancel Failed', e.message || String(e)); }
+}
+
 async function setActiveDevice(sn) {
   try {
     await api('/set-active-device', 'POST', { sn });
     showToast(sn + ' set as active device', 'green');
     loadMyDevices();
   } catch(e) { modalAlert('Failed', e.message); }
+}
+
+// Live LoRa editor — send new addr/channel via MQTT extended_commands
+// (set_lora_info) and verify via get_lora_info response from the mower.
+// Success = mower reports back the exact same addr/channel we sent.
+// This bypasses BLE (no re-provisioning needed).
+window._loraEditPending = null;
+async function openLoraEditor(sn, currentAddr, currentChannel) {
+  // Route depends on device type:
+  //   Charger (LFIC*): standard MQTT via /api/dashboard/command/<SN>
+  //                    responses come on socket event 'command:respond'
+  //   Mower   (LFIN*): extended_commands via /api/dashboard/extended/<SN>
+  //                    responses come on socket event 'extended:response'
+  var isCharger = /^LFIC/i.test(sn);
+  var apiPath = isCharger ? '/api/dashboard/command/' : '/api/dashboard/extended/';
+  var socketEvent = isCharger ? 'command:respond' : 'extended:response';
+  // Build modal
+  var overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:10000;padding:20px';
+  overlay.innerHTML =
+    '<div style="background:#1a1a2e;border:1px solid rgba(255,255,255,.1);border-radius:12px;padding:20px;max-width:420px;width:100%;font-size:13px;color:#e2e2e2">' +
+      '<div style="font-size:16px;font-weight:700;margin-bottom:4px">Edit LoRa — ' + sn + '</div>' +
+      '<div style="color:#888;font-size:12px;margin-bottom:16px">Current: <b>' + currentAddr + '</b> / ch<b>' + (currentChannel || '?') + '</b></div>' +
+      '<div style="margin-bottom:12px">' +
+        '<label style="display:block;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">New address</label>' +
+        '<input id="lora-edit-addr" type="number" value="' + currentAddr + '" style="width:100%;padding:8px 12px;border-radius:8px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);color:#fff;font-size:14px">' +
+      '</div>' +
+      '<div style="margin-bottom:16px">' +
+        '<label style="display:block;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">New channel</label>' +
+        '<input id="lora-edit-ch" type="number" value="' + (currentChannel || 16) + '" style="width:100%;padding:8px 12px;border-radius:8px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);color:#fff;font-size:14px">' +
+      '</div>' +
+      '<div id="lora-edit-status" style="min-height:36px;padding:10px;border-radius:8px;background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.06);font-size:12px;color:#888;margin-bottom:12px">Ready to send. Click Save to apply.</div>' +
+      '<div style="display:flex;gap:8px;justify-content:flex-end">' +
+        '<button id="lora-edit-cancel" class="btn btn-sm" style="background:rgba(255,255,255,.04);color:#aaa;border:1px solid rgba(255,255,255,.1);padding:8px 16px;border-radius:8px;font-weight:600">Cancel</button>' +
+        '<button id="lora-edit-save" class="btn btn-sm" style="background:rgba(34,197,94,.15);color:#22c55e;border:1px solid rgba(34,197,94,.4);padding:8px 16px;border-radius:8px;font-weight:600">Save + Verify</button>' +
+      '</div>' +
+    '</div>';
+  document.body.appendChild(overlay);
+  var status = overlay.querySelector('#lora-edit-status');
+  var setStatus = function(text, color) {
+    status.textContent = text;
+    status.style.color = color || '#888';
+  };
+  var cleanup = function() {
+    window._loraEditPending = null;
+    overlay.remove();
+  };
+  overlay.querySelector('#lora-edit-cancel').onclick = cleanup;
+  overlay.onclick = function(e) { if (e.target === overlay) cleanup(); };
+
+  overlay.querySelector('#lora-edit-save').onclick = async function() {
+    var newAddr = parseInt(overlay.querySelector('#lora-edit-addr').value, 10);
+    var newCh = parseInt(overlay.querySelector('#lora-edit-ch').value, 10);
+    if (!Number.isFinite(newAddr) || !Number.isFinite(newCh)) {
+      setStatus('Invalid addr or channel', '#ef4444');
+      return;
+    }
+
+    // Helper: POST naar juiste endpoint (command= charger, extended= mower).
+    // Charger MQTT verwacht {cmd: {...}} wrapper; extended doet plat.
+    var postCmd = function(body) {
+      var payload = isCharger ? { command: body } : body;
+      return fetch(apiPath + encodeURIComponent(sn), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': token },
+        body: JSON.stringify(payload),
+      });
+    };
+
+    // Payload verschilt: charger wil hc/lc, mower (extended) neemt {addr,channel}
+    var setPayload = isCharger
+      ? { set_lora_info: { addr: newAddr, channel: newCh, hc: 20, lc: 14 } }
+      : { set_lora_info: { addr: newAddr, channel: newCh } };
+    var getPayload = isCharger
+      ? { get_lora_info: null }
+      : { get_lora_info: {} };
+
+    window._loraEditPending = {
+      sn: sn,
+      phase: 'set',
+      isCharger: isCharger,
+      expectedAddr: newAddr,
+      expectedCh: newCh,
+      onSetRespond: function(body) {
+        if (body && (body.result === 0 || body.result === 1)) {
+          setStatus('Set OK. Querying back for verification...', '#a78bfa');
+          window._loraEditPending.phase = 'verify';
+          postCmd(getPayload).catch(function(e) {
+            setStatus('Readback send failed: ' + e.message, '#ef4444');
+          });
+        } else {
+          setStatus('set_lora_info rejected (result=' + (body && body.result) + ')', '#ef4444');
+          window._loraEditPending = null;
+        }
+      },
+      onGetRespond: function(body) {
+        // Charger body: {result:0, value:{addr, channel, hc, lc}}
+        // Mower   body: {result:0, addr, channel, hc, lc}
+        var actual = body && (body.value || body);
+        if (!body || body.result !== 0 || !actual || actual.addr == null) {
+          setStatus('get_lora_info failed (result=' + (body && body.result) + ')', '#ef4444');
+        } else if (Number(actual.addr) === newAddr && Number(actual.channel) === newCh) {
+          setStatus('✅ Verified on device: addr=' + actual.addr + ' ch=' + actual.channel, '#22c55e');
+          setTimeout(function() { cleanup(); loadMyDevices(); }, 1500);
+          return;
+        } else {
+          setStatus('⚠ Mismatch — device reports addr=' + actual.addr + ' ch=' + actual.channel, '#f59e0b');
+          setTimeout(function() { cleanup(); loadMyDevices(); }, 2500);
+          return;
+        }
+        window._loraEditPending = null;
+      },
+    };
+
+    setStatus('Sending set_lora_info addr=' + newAddr + ' ch=' + newCh + '...', '#a78bfa');
+    try {
+      var res = await postCmd(setPayload);
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+    } catch (e) {
+      setStatus('Send failed: ' + e.message, '#ef4444');
+      window._loraEditPending = null;
+    }
+
+    // 10s global timeout
+    setTimeout(function() {
+      if (window._loraEditPending) {
+        setStatus('Timeout — no response from device within 10s', '#ef4444');
+        window._loraEditPending = null;
+      }
+    }, 10000);
+  };
+}
+
+// Socket handler voor charger "command:respond" events — wordt opgevangen
+// door de main socket listener (zie setupSocketListeners).
+function mdHandleCommandRespond(ev) {
+  if (!window._loraEditPending) return;
+  if (ev.sn !== window._loraEditPending.sn) return;
+  if (!window._loraEditPending.isCharger) return; // mower volgt extended
+  var p = window._loraEditPending;
+  if (ev.command === 'set_lora_info_respond' && p.phase === 'set' && typeof p.onSetRespond === 'function') {
+    p.onSetRespond(ev.data);
+  } else if (ev.command === 'get_lora_info_respond' && p.phase === 'verify' && typeof p.onGetRespond === 'function') {
+    p.onGetRespond(ev.data);
+  }
+}
+
+async function deactivateDevice(sn) {
+  try {
+    await api('/deactivate-device', 'POST', { sn });
+    showToast(sn + ' deactivated', 'amber');
+    loadMyDevices();
+  } catch(e) { modalAlert('Failed', e.message); }
+}
+
+async function banishDevice(sn) {
+  var ok = await modalConfirm(
+    'Delete + Banish device',
+    'Delete <b>' + sn + '</b> from the dashboard <u>and</u> block MQTT reconnects + auto-bind for 2 hours?<br><br>' +
+    'Use this if you want to re-provision the device via the official Novabot app. ' +
+    'Maps and schedules stay in the DB. The device will be rejected by the broker until the ban expires ' +
+    '(or you unbanish via the banned bar at the top).'
+  );
+  if (!ok) return;
+  try {
+    await api('/banish-device', 'POST', { sn, minutes: 120 });
+    showToast(sn + ' deleted + banned for 2h', 'amber');
+    loadMyDevices();
+  } catch(e) { modalAlert('Banish Failed', e.message || String(e)); }
+}
+
+async function unbanishDevice(sn) {
+  try {
+    await api('/unbanish-device', 'POST', { sn });
+    showToast(sn + ' unbanned', 'green');
+    loadMyDevices();
+  } catch(e) { modalAlert('Unban Failed', e.message || String(e)); }
 }
 
 async function unbindDevice(sn) {

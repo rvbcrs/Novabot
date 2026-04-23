@@ -3,7 +3,8 @@ import { v4 as uuidv4 } from 'uuid';
 import { equipmentRepo, userRepo, deviceRepo } from '../../db/repositories/index.js';
 import { authMiddleware } from '../../middleware/auth.js';
 import { AuthRequest, ok, fail, EquipmentRow } from '../../types/index.js';
-import { lookupMac, isDeviceOnline, forceDisconnectDevice } from '../../mqtt/broker.js';
+import { lookupMac, isDeviceOnline, forceDisconnectDevice, banishSn } from '../../mqtt/broker.js';
+import { db } from '../../db/database.js';
 import { getBleMacForType } from '../../ble/bleLogger.js';
 import { deviceCache } from '../../mqtt/sensorData.js';
 import { forwardToDashboard } from '../../dashboard/socketHandler.js';
@@ -190,8 +191,40 @@ equipmentRouter.post('/getEquipmentBySN', authMiddleware, (req: AuthRequest, res
     // Als de gevraagde SN de charger is, gebruik charger_sn als primaire SN voor de DTO
     const isChargerQuery = sn === row.charger_sn && sn !== row.mower_sn;
     const effectiveRow = isChargerQuery ? { ...row, mower_sn: row.charger_sn! } as EquipmentRow : row;
+
+    // KRITIEK (2026-04-22): voor charger-queries MOETEN charger-specifieke
+    // velden (MAC, MQTT creds, LoRa) uit device_factory komen — NIET uit de
+    // equipment pair-row. Pair row heeft pair-shared data (charger_address
+    // = pair LoRa addr; mac_address = vaak mower's MAC) waardoor charger
+    // queries anders verkeerde/oude/andere-device data retourneren (bewezen
+    // bug LFIC1231000319 kreeg Ramon's LFIC1230700004 creds).
+    if (isChargerQuery) {
+      const chargerFactory = deviceRepo.getFactoryDevice(sn);
+      if (chargerFactory) {
+        effectiveRow.mac_address = chargerFactory.mac_address ?? effectiveRow.mac_address;
+        effectiveRow.charger_address = chargerFactory.charger_address != null
+          ? String(chargerFactory.charger_address) : effectiveRow.charger_address;
+        effectiveRow.charger_channel = chargerFactory.charger_channel != null
+          ? String(chargerFactory.charger_channel) : effectiveRow.charger_channel;
+        // Also override mac used elsewhere in this function so the finalResponse
+        // eerder in de flow overschrijft niet per ongeluk met een iPhone-MAC.
+        mac = chargerFactory.mac_address ?? mac;
+        console.log(`[equipment] getEquipmentBySN: charger ${sn} → using device_factory data (mac=${chargerFactory.mac_address}, addr=${chargerFactory.charger_address}, ch=${chargerFactory.charger_channel})`);
+      }
+    }
+
     // Cloud retourneert email="" in getEquipmentBySN (niet het echte email adres)
     const dto = rowToCloudDto(effectiveRow, '');
+
+    // Voor chargers: override account/password met de charger-specifieke
+    // credentials uit device_factory (niet de pair's gedeelde MQTT creds).
+    if (isChargerQuery) {
+      const chargerFactory = deviceRepo.getFactoryDevice(sn);
+      if (chargerFactory) {
+        if (chargerFactory.mqtt_account) dto.account = chargerFactory.mqtt_account;
+        if (chargerFactory.mqtt_password) dto.password = chargerFactory.mqtt_password;
+      }
+    }
 
     // IDOR bescherming: als het apparaat gebonden is aan een ANDERE user,
     // retourneer minimale info (geen MQTT credentials, MAC, WiFi data).
@@ -386,6 +419,22 @@ equipmentRouter.post('/bindingEquipment', authMiddleware, (req: AuthRequest, res
 });
 
 // POST /api/nova-user/equipment/unboundEquipment
+// User-spec 2026-04-22: bij verwijderen via Novabot app MOET een cascade
+// delete gebeuren voor ALLES wat met het device te maken heeft, BEHALVE
+// maps (user-created tekeningen van werkgebieden). Zo hoeft de user niet
+// handmatig DB te schoonmaken na een unbind.
+//
+// Tables purged:
+//   equipment, equipment_lora_cache, device_registry, cut_grass_plans,
+//   work_records, robot_messages, signal_history, dashboard_schedules,
+//   rain_sessions, device_settings
+//
+// Tables PRESERVED (user data):
+//   maps, map_uploads, map_calibration, virtual_walls
+//
+// Bonus: voegt SN toe aan ban-list voor 2u zodat auto-bind + broker re-connect
+// niet direct de equipment row opnieuw aanmaakt na de cleanup (bewezen issue
+// 2026-04-22 waarbij elke 30s auto-bind terug kwam).
 equipmentRouter.post('/unboundEquipment', authMiddleware, (req: AuthRequest, res: Response) => {
   // App stuurt {sn, appUserId} — niet equipmentId zoals eerder aangenomen
   const { sn, equipmentId } = req.body as { sn?: string; equipmentId?: number };
@@ -400,13 +449,62 @@ equipmentRouter.post('/unboundEquipment', authMiddleware, (req: AuthRequest, res
 
   if (!equip) { res.json(ok()); return; }
 
-  // Niet verwijderen — alleen user_id op NULL zetten (zoals de cloud doet).
-  // De cloud verwijdert apparaten nooit uit hun database (geïmporteerd bij fabriek).
-  // Als we DELETE doen, retourneert getEquipmentBySN een "nieuw apparaat" met equipmentId=0,
-  // waardoor de app volledige BLE provisioning triggert die de maaier's WiFi reset.
-  equipmentRepo.unbindById(equip.id);
-  console.log(`[equipment] unboundEquipment: sn=${sn ?? '?'} id=${equip.id} unbound (user_id=NULL)`);
-  res.json(ok());
+  const mowerSn = equip.mower_sn;
+  const chargerSn = equip.charger_sn;
+  const equipmentIdStr = equip.equipment_id;
+  const snsToClean: string[] = [];
+  if (mowerSn) snsToClean.push(mowerSn);
+  if (chargerSn && chargerSn !== mowerSn) snsToClean.push(chargerSn);
+
+  try {
+    const tx = db.transaction(() => {
+      // 1. Equipment + pair-binding
+      db.prepare('DELETE FROM equipment WHERE equipment_id = ?').run(equipmentIdStr);
+
+      // 2. Per-SN tabellen — maps NIET! (mower_sn referenties blijven intact)
+      for (const s of snsToClean) {
+        db.prepare('DELETE FROM equipment_lora_cache WHERE sn = ?').run(s);
+        db.prepare('DELETE FROM device_registry WHERE sn = ?').run(s);
+        db.prepare('DELETE FROM signal_history WHERE sn = ?').run(s);
+        // device_settings heeft sn kolom
+        try { db.prepare('DELETE FROM device_settings WHERE sn = ?').run(s); } catch { /* ignore missing col */ }
+        // rain_sessions heeft mower_sn kolom
+        try { db.prepare('DELETE FROM rain_sessions WHERE mower_sn = ?').run(s); } catch { /* ignore */ }
+      }
+
+      // 3. Per-equipment_id tabellen (cut_grass_plans, work_records, robot_messages)
+      db.prepare('DELETE FROM cut_grass_plans WHERE equipment_id = ?').run(equipmentIdStr);
+      try { db.prepare('DELETE FROM work_records WHERE equipment_id = ?').run(equipmentIdStr); } catch { /* ignore */ }
+      try { db.prepare('DELETE FROM robot_messages WHERE equipment_id = ?').run(equipmentIdStr); } catch { /* ignore */ }
+
+      // 4. Dashboard schedules (zijn mower-gebonden)
+      if (mowerSn) {
+        try { db.prepare('DELETE FROM dashboard_schedules WHERE mower_sn = ?').run(mowerSn); } catch { /* ignore */ }
+      }
+
+      // 5. KEEP: maps, map_uploads, map_calibration, virtual_walls
+      //    User's werkgebied-tekeningen. Worden hergebruikt bij re-binding
+      //    van dezelfde mower_sn (de factory-level identifier).
+    });
+    tx();
+
+    // 6. Force disconnect zodat device een clean reconnect doet. GEEN BAN —
+    //    user wil na delete waarschijnlijk direct re-provisionen via de app.
+    //    Ban komt alleen via de expliciete "Delete + Banish" dashboard knop.
+    //    (Bug 2026-04-22: 2h ban brak de Novabot app re-provisioning flow
+    //    omdat charger nooit meer online kon na BLE completion.)
+    for (const s of snsToClean) {
+      try { forceDisconnectDevice(s); } catch { /* ignore */ }
+    }
+
+    console.log(`[equipment] unboundEquipment: cascade delete voor sn=${sn ?? '?'} equipment_id=${equipmentIdStr} (SNs=[${snsToClean.join(',')}]) — maps preserved, no ban`);
+    res.json(ok());
+  } catch (err) {
+    console.log(`[equipment] unboundEquipment cascade error: ${err}`);
+    // Fallback: in elk geval user_id op null zetten zodat de unbind minimaal slaagt
+    equipmentRepo.unbindById(equip.id);
+    res.json(ok());
+  }
 });
 
 // POST /api/nova-user/equipment/updateEquipmentNickName

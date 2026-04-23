@@ -198,46 +198,67 @@ mapRouter.get('/queryEquipmentMap', authMiddleware, (req: AuthRequest, res: Resp
     } catch { return '0'; }
   }
 
-  // Bouw work items met geneste obstacles
-  // Gebruik map_name uit DB als filename (cloud import slaat originele naam op).
-  // Fallback naar firmware conventie als map_name ontbreekt.
-  // file_name kan een ZIP zijn (van maaier upload) — gebruik alleen CSV bestandsnamen
-  function csvFileNameFromRecord(m: MapRow, fallback: string): string {
+  // Bouw work items met geneste obstacles.
+  // BIJGEWERKT 23 apr 2026: fileName moet exact de Novabot-app conventie volgen:
+  //   - work:     `mapN_work.csv`     (canonical_name is slechts `mapN`, suffix toevoegen)
+  //   - obstacle: `mapN_M_obstacle.csv` (canonical_name is al volledig — alleen `.csv`)
+  //   - unicom:   `mapNtocharge_unicom.csv` (canonical_name is al volledig)
+  // De routing-key voor filtering is ALTIJD canonical_name (nooit user-alias).
+  function csvFileNameForObstacle(m: MapRow, fallback: string): string {
+    if (m.canonical_name) return m.canonical_name.endsWith('.csv') ? m.canonical_name : m.canonical_name + '.csv';
     if (m.file_name && !m.file_name.endsWith('.zip')) return m.file_name;
     return fallback;
   }
 
+  function csvFileNameForWork(m: MapRow, fallback: string): string {
+    // Work canonical_name is "map0" — fileName moet "map0_work.csv" zijn.
+    if (m.canonical_name && /^map\d+$/.test(m.canonical_name)) return `${m.canonical_name}_work.csv`;
+    if (m.canonical_name) return m.canonical_name.endsWith('.csv') ? m.canonical_name : m.canonical_name + '.csv';
+    if (m.file_name && !m.file_name.endsWith('.zip')) return m.file_name;
+    return fallback;
+  }
+
+  // Helper: geef de routing-key van een map (canonical eerst, dan file_name/map_name).
+  // Gebruikt voor startsWith(`mapN_`) filters — MOET canonical_name zijn omdat
+  // user-aliases geen firmware-conventie volgen.
+  function routingKey(m: MapRow): string {
+    if (m.canonical_name) return m.canonical_name;
+    if (m.file_name && !m.file_name.endsWith('.zip')) return m.file_name;
+    return m.map_name ?? '';
+  }
+
   const work = workMaps.map((wm, idx) => {
-    const workFileName = csvFileNameFromRecord(wm, `map${idx}_work.csv`);
+    const workFileName = csvFileNameForWork(wm, `map${idx}_work.csv`);
 
     // Zoek obstakels die bij dit werkgebied horen
-    // De work file_name bevat de map index: map0_work.csv → index 0
-    // Obstacles: map0_0_obstacle.csv, map0_1_obstacle.csv → prefix "map0_"
-    const workIndex = workFileName.match(/^map(\d+)_/)?.[1] ?? String(idx);
+    // Filter op canonical_name (bijv. "map0_0_obstacle") — die volgt altijd
+    // de firmware-conventie, óók als user een alias heeft ingevuld.
+    const workIndex = routingKey(wm).match(/^map(\d+)/)?.[1] ?? String(idx);
     const relatedObs = obstacleMaps
-      .filter(om => {
-        const fn = (om.file_name && !om.file_name.endsWith('.zip')) ? om.file_name : (om.map_name ?? '');
-        return fn.startsWith(`map${workIndex}_`);
-      })
+      .filter(om => routingKey(om).startsWith(`map${workIndex}_`))
       .map((om, obsIdx) => {
-        const obsFileName = csvFileNameFromRecord(om, `map${idx}_${obsIdx}_obstacle.csv`);
+        const obsFileName = csvFileNameForObstacle(om, `map${idx}_${obsIdx}_obstacle.csv`);
+        // Obstacle response-structuur MOET exact matchen met LFI cloud:
+        // alleen fileName, fileHash, alias, type, url. GEEN mapArea of obstacle.
+        // De Novabot app parset obstacles strikt en toont "no maps" bij
+        // afwijkende velden (geverifieerd via cloud_lookup response 23 apr 2026).
         return {
           fileName: obsFileName,
-          alias: om.map_name ?? `obstacle_${idx}`,
+          fileHash: crypto.createHash('md5').update(om.map_id).digest('hex'),
+          alias: om.map_name ?? obsFileName.replace(/\.csv$/, ''),
           type: 'obstacle',
           url: mapFileUrl(obsFileName),
-          fileHash: crypto.createHash('md5').update(om.map_id).digest('hex'),
-          mapArea: calcPolygonAreaM2(om.map_area),
-          obstacle: [],
         };
       });
 
+    // Work-item veld-volgorde matcht cloud: fileName, fileHash, alias, type,
+    // url, mapArea, obstacle.
     return {
       fileName: workFileName,
+      fileHash: crypto.createHash('md5').update(wm.map_id).digest('hex'),
       alias: wm.map_name ?? `Work area ${idx + 1}`,
       type: 'map',
       url: mapFileUrl(workFileName),
-      fileHash: crypto.createHash('md5').update(wm.map_id).digest('hex'),
       mapArea: calcPolygonAreaM2(wm.map_area),
       obstacle: relatedObs,
     };
@@ -245,45 +266,50 @@ mapRouter.get('/queryEquipmentMap', authMiddleware, (req: AuthRequest, res: Resp
 
   // Bouw unicom items — fileName MOET beginnen met "mapX" zodat de Novabot app
   // zone selectie werkt (app doet fileName.startsWith("map0") check).
-  // Gebruik file_name als dat al het juiste formaat heeft, anders genereer uit map_name.
+  // BIJGEWERKT 23 apr 2026: prefer canonical_name (firmware-conventie) boven
+  // file_name/map_name zodat user-aliases geen filter-bugs veroorzaken.
   const unicom = unicomMaps.map((um, idx) => {
     let unicomFileName = '';
-    // Prefer file_name als het het mapXto... formaat heeft (niet ZIP)
-    if (um.file_name && !um.file_name.endsWith('.zip') && /^map\d+/.test(um.file_name)) {
+    // Prefer canonical_name (bijv. "map0tocharge_unicom") — altijd firmware format.
+    if (um.canonical_name) {
+      unicomFileName = um.canonical_name.endsWith('.csv') ? um.canonical_name : um.canonical_name + '.csv';
+    }
+    // Fallback: file_name als het het mapXto... formaat heeft (niet ZIP)
+    else if (um.file_name && !um.file_name.endsWith('.zip') && /^map\d+/.test(um.file_name)) {
       unicomFileName = um.file_name;
     }
-    // Prefer map_name als het het mapXto... formaat heeft
+    // Fallback: map_name als het het mapXto... formaat heeft
     else if (um.map_name && /^map\d+to/.test(um.map_name)) {
       unicomFileName = um.map_name.endsWith('.csv') ? um.map_name : um.map_name + '.csv';
     }
-    // Fallback: genereer mapXtocharge_unicom.csv formaat
-    // Probeer map index uit map_name te halen (bijv. "unicom1" → 1, "charge" → 0)
+    // Laatste fallback: genereer mapXtocharge_unicom.csv formaat
     else {
       const nameIdx = um.map_name?.match(/\d+/)?.[0];
       const mapIdx = nameIdx != null ? parseInt(nameIdx) : idx;
       unicomFileName = `map${mapIdx}tocharge_unicom.csv`;
     }
+    // Unicom response-structuur matcht LFI cloud: alleen fileName, fileHash,
+    // alias, type, url. GEEN mapArea of obstacle velden (zelfs niet null).
     return {
       fileName: unicomFileName,
       fileHash: crypto.createHash('md5').update(um.map_id).digest('hex'),
       alias: um.map_name ?? `Channel ${idx + 1}`,
       type: 'unicom',
       url: mapFileUrl(unicomFileName),
-      mapArea: null,
-      obstacle: null,
     };
   });
 
-  // Bereken MD5 — app vereist non-null md5, anders toont het "No Maps"
-  // Gebruik ZIP md5 als die bestaat, anders genereer hash uit DB map_ids
+  // Bereken MD5 — app vereist non-null md5, anders toont het "No Maps".
+  // Cloud response gebruikt UPPERCASE hex (bijv. "1EA65A7B..."); we matchen
+  // dat 1:1 voor Novabot-app compatibiliteit.
   let md5: string | null = null;
   const latestPath = path.join(STORAGE_PATH, `${sn}_latest.zip`);
   if (fs.existsSync(latestPath)) {
     const fileData = fs.readFileSync(latestPath);
-    md5 = crypto.createHash('md5').update(fileData).digest('hex');
+    md5 = crypto.createHash('md5').update(fileData).digest('hex').toUpperCase();
   } else if (maps.length > 0) {
     // Geen ZIP maar wel kaarten in DB — genereer stabiele hash uit map_ids
-    md5 = crypto.createHash('md5').update(maps.map(m => m.map_id).join(',')).digest('hex');
+    md5 = crypto.createHash('md5').update(maps.map(m => m.map_id).join(',')).digest('hex').toUpperCase();
   }
 
   // ChargingPose uit de ZIP map_info.json (lokale meters, consistent met CSV polygonen)

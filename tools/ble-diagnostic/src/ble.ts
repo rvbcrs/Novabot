@@ -180,21 +180,39 @@ export async function scanDevices(
   const peripheralMap = new Map<string, Peripheral>();
 
   const onDiscover = (peripheral: Peripheral) => {
-    const mfgData = peripheral.advertisement?.manufacturerData;
-    if (!mfgData || mfgData.length < 8) return;
-
-    const companyId = mfgData.readUInt16LE(0);
-    if (companyId !== NOVABOT_COMPANY_ID) return;
-
-    const mac = Array.from(mfgData.subarray(2, 8))
-      .map(b => b.toString(16).padStart(2, '0').toUpperCase())
-      .join(':');
-
     const name = peripheral.advertisement?.localName ?? 'Unknown';
+    const nameLower = name.toLowerCase();
+    const nameIsNovabot =
+      nameLower === 'charger_pile' ||
+      nameLower === 'novabot' ||
+      nameLower.startsWith('lfic') ||
+      nameLower.startsWith('lfin');
+
+    // Accept either: (a) manufacturer-data with Novabot company ID (oude
+    // firmware), OR (b) BLE localName = CHARGER_PILE / NOVABOT (nieuwere
+    // firmware v0.4.0+). Zonder deze tweede route missen we alle v0.4+
+    // chargers die geen manufacturer data meer broadcasten.
+    const mfgData = peripheral.advertisement?.manufacturerData;
+    const hasMfgData = mfgData && mfgData.length >= 8 && mfgData.readUInt16LE(0) === NOVABOT_COMPANY_ID;
+
+    if (!hasMfgData && !nameIsNovabot) return;
+
+    let mac: string;
+    if (hasMfgData) {
+      mac = Array.from(mfgData!.subarray(2, 8))
+        .map(b => b.toString(16).padStart(2, '0').toUpperCase())
+        .join(':');
+    } else {
+      // Geen manufacturer data → gebruik peripheral.id / address als identifier.
+      // Op macOS CoreBluetooth is dit een UUID, op Linux is het echt de MAC.
+      mac = (peripheral.address && peripheral.address !== 'unknown')
+        ? peripheral.address.toUpperCase()
+        : (peripheral.id ?? '').toUpperCase();
+    }
+
     const rssi = peripheral.rssi ?? -999;
 
     let type: 'charger' | 'mower' | 'unknown' = 'unknown';
-    const nameLower = name.toLowerCase();
     if (nameLower.includes('charger') || nameLower.includes('lfic')) {
       type = 'charger';
     } else if (nameLower.includes('novabot') || nameLower.includes('lfin')) {

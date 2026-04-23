@@ -16,7 +16,7 @@ import { startHomeAssistantBridge, forwardToHomeAssistant, publishDeviceOnline, 
 import { updateDeviceData, clearDeviceData } from './sensorData.js';
 import { isDemoMode } from '../services/demoSimulator.js';
 import { forwardToDashboard, emitDeviceOnline, emitDeviceOffline, pushMqttLog, emitOtaEvent, emitPinEvent, emitExtendedEvent, emitCommandRespond } from '../dashboard/socketHandler.js';
-import { initMapSync, handleMapMessage, handleExtendedResponse, handleDeviceResponse, publishToExtended, onExtendedResponse, offExtendedResponse, publishEncryptedOnTopic } from './mapSync.js';
+import { initMapSync, handleMapMessage, handleExtendedResponse, handleDeviceResponse, publishToExtended, onExtendedResponse, offExtendedResponse, publishEncryptedOnTopic, notifyRespond } from './mapSync.js';
 
 const PROXY_MODE = process.env.PROXY_MODE ?? 'local';
 
@@ -255,8 +255,59 @@ let statusLogCounter = 0;
 // Bijhouden welke SN's momenteel verbonden zijn (SN -> Set van clientId's)
 const onlineBySn = new Map<string, Set<string>>();
 
+// Laatste PUBLISH tijdstip per SN, voor stale-detection. Zonder deze check
+// toont de app een mower als online (charging, 100%, etc.) tot aedes's
+// heartbeat-timeout (120s) de client opruimt. Als de mower abrupt uitgaat
+// (power off, battery pull) sturen we niks meer maar onlineBySn blijft
+// gepopuleerd tot de keepalive expireert — user ziet stale UI.
+//
+// De sweeper hieronder markeert een SN offline als er >45s geen PUBLISH
+// is gezien. De mower reports state elke ~2s, dus 45s stilte = echt dood.
+const lastPublishBySn = new Map<string, number>();
+const STALE_SN_MS = 45_000;
+
 // Raw TCP sockets per SN opslaan voor directe PUBLISH bypass
 const rawSocketBySn = new Map<string, net.Socket>();
+
+// Tijdelijk blokkeerde SNs — gebruikt door "Delete + Banish" flow wanneer
+// user een device via Novabot-app wil re-provisionen. Device blijft op onze
+// server binnenkomen tot z'n MQTT addr verandert. Ban voorkomt dat
+// auto-accept de DB weer vult na delete. Map: sn → expiry timestamp.
+const bannedSns = new Map<string, number>();
+
+export function banishSn(sn: string, durationMs: number = 30 * 60 * 1000): void {
+  const expiry = Date.now() + durationMs;
+  bannedSns.set(sn, expiry);
+  console.log(`[BAN] ${sn} banned for ${Math.round(durationMs / 60000)}min (until ${new Date(expiry).toISOString()})`);
+  // Force-disconnect eventuele lopende sessie
+  try { forceDisconnectDevice(sn); } catch { /* ignore */ }
+}
+
+export function unbanSn(sn: string): void {
+  bannedSns.delete(sn);
+  console.log(`[BAN] ${sn} unbanned`);
+}
+
+export function isSnBanned(sn: string): boolean {
+  const expiry = bannedSns.get(sn);
+  if (expiry == null) return false;
+  if (Date.now() >= expiry) {
+    bannedSns.delete(sn);
+    return false;
+  }
+  return true;
+}
+
+export function listBannedSns(): Array<{ sn: string; expiresAt: string; msRemaining: number }> {
+  const now = Date.now();
+  const result: Array<{ sn: string; expiresAt: string; msRemaining: number }> = [];
+  for (const [sn, expiry] of bannedSns) {
+    if (expiry > now) {
+      result.push({ sn, expiresAt: new Date(expiry).toISOString(), msRemaining: expiry - now });
+    }
+  }
+  return result;
+}
 
 // Track subscriptions per clientId → Set<topic>
 const clientSubscriptions = new Map<string, Set<string>>();
@@ -316,10 +367,16 @@ export function writeRawPublish(sn: string, payload: Buffer, qos: 0 | 1 = 0): bo
   }
 }
 
-/** Geeft true als het apparaat met dit SN momenteel verbonden is met de MQTT broker */
+/** Geeft true als het apparaat met dit SN momenteel verbonden is met de MQTT broker
+ *  én niet meer dan STALE_SN_MS geleden een PUBLISH stuurde. Zonder die laatste
+ *  check blijft de app "Charging 100%" tonen na een power-off totdat aedes
+ *  z'n keepalive expireert (kan tot 2 min duren). */
 export function isDeviceOnline(sn: string): boolean {
   const clients = onlineBySn.get(sn);
-  return clients !== undefined && clients.size > 0;
+  if (clients === undefined || clients.size === 0) return false;
+  const lastPub = lastPublishBySn.get(sn);
+  if (lastPub != null && Date.now() - lastPub > STALE_SN_MS) return false;
+  return true;
 }
 
 /**
@@ -602,6 +659,17 @@ export async function startMqttBroker(): Promise<void> {
     const sn  = extractSn(clientId) ?? extractSn(user);
     const mac = extractMac(clientId) ?? extractMac(user) ?? extractMac(pass);
 
+    // Ban check — weiger verbinding als SN tijdelijk geblokkeerd is door
+    // "Delete + Banish" flow. Zo blijft device weg uit de DB tot user hem
+    // via Novabot app re-provisioned naar een andere MQTT broker.
+    if (sn && isSnBanned(sn)) {
+      const err = new Error('banned');
+      (err as any).returnCode = 4; // MQTT 3.1.1: bad username/password
+      console.log(`[BAN] Rejected connect from banned ${sn} (clientId=${clientId})`);
+      callback(err, false);
+      return;
+    }
+
     const now = Date.now();
     const lastSeen = seenClients.get(clientId) ?? 0;
     const isReconnect = lastSeen > 0 && (now - lastSeen) < 5 * 60 * 1000;
@@ -665,6 +733,44 @@ export async function startMqttBroker(): Promise<void> {
       onlineBySn.get(sn)!.add(clientId);
       publishDeviceOnline(sn);
       emitDeviceOnline(sn);
+
+      // Pending-provisioning claim: als er een PENDING_* entry in de LoRa
+      // cache staat voor dit device-type, vervang die entry door de echte
+      // SN. Dit sluit de loop van de provisioning flow: `/lora/resolve`
+      // reserveerde de addr/channel onder een placeholder SN omdat we
+      // tijdens BLE-scan geen echte SN hebben (iOS anon-UUID probleem);
+      // wanneer het device nu voor het eerst online komt met z'n echte
+      // LFIN*/LFIC* SN, promotie we de row. Daarna ziet HomeScreen meteen
+      // het nieuwe device paaren met z'n charger.
+      try {
+        const wantType = sn.startsWith('LFIC') ? 'CHARGER' : sn.startsWith('LFIN') ? 'MOWER' : null;
+        if (wantType) {
+          const cache = equipmentRepo.listLoraCache();
+          const pending = cache
+            .filter((r: { sn: string }) => r.sn.startsWith(`PENDING_${wantType}_`))
+            .sort((a: { sn: string }, b: { sn: string }) => a.sn.localeCompare(b.sn)); // oudste eerst (ts in sn)
+          if (pending.length > 0) {
+            const oldest = pending[0];
+            // Alleen de oudste pending binnen 10 min consumeren — verouderde
+            // placeholders ruimen we op via de sweeper. sn formaat:
+            // `PENDING_<TYPE>_<ts>_<addr>`.
+            const parts = oldest.sn.split('_');
+            const tsMs = parts.length >= 3 ? parseInt(parts[2], 10) : 0;
+            const ageOk = Number.isFinite(tsMs) && (Date.now() - tsMs) < 10 * 60 * 1000;
+            if (ageOk) {
+              console.log(`${C.cyan}[LORA] Claiming pending ${oldest.sn} → ${sn} (addr=${oldest.charger_address} ch=${oldest.charger_channel})${C.reset}`);
+              equipmentRepo.deleteLoraCache(oldest.sn);
+              equipmentRepo.setLoraCache(
+                sn,
+                String(oldest.charger_address ?? ''),
+                String(oldest.charger_channel ?? ''),
+              );
+            }
+          }
+        }
+      } catch (e) {
+        console.log(`${C.red}[LORA] Pending claim error for ${sn}: ${e}${C.reset}`);
+      }
       // Cloud-identiek: GEEN proactieve commando's sturen bij connect.
       // onMowerConnected() stuurde ota_version_info, get_map_list, etc.
       // Dit veroorzaakte crash loops bij David's maaier (mqtt_node crasht
@@ -730,6 +836,19 @@ export async function startMqttBroker(): Promise<void> {
     const payloadBuf = Buffer.isBuffer(packet.payload) ? packet.payload : Buffer.from(packet.payload);
     const direction = packet.topic.startsWith('Dart/Send_mqtt/') ? '→DEV' :
                       packet.topic.startsWith('Dart/Receive_mqtt/') ? '←DEV' : '';
+
+    // Track lastPublish voor stale-detection (zie isDeviceOnline). Alleen
+    // PUBLISH vanuit een LFI-client telt (PINGREQ is transport-level en
+    // kan doorgaan zonder app-level activiteit).
+    if (client.id.startsWith('LFI')) {
+      const snFromClient = client.id.replace(/_.*$/, '');
+      lastPublishBySn.set(snFromClient, Date.now());
+    } else if (direction === '←DEV') {
+      const snFromTopic = packet.topic.split('/').pop() ?? '';
+      if (snFromTopic.startsWith('LFI')) {
+        lastPublishBySn.set(snFromTopic, Date.now());
+      }
+    }
 
     // Ontsleutel versleutelde berichten (LFIN maaier + LFIC charger v0.4.0+)
     const deviceSn = client.id.startsWith('LFIN') ? client.id.replace(/_.*$/, '') :
@@ -882,12 +1001,15 @@ export async function startMqttBroker(): Promise<void> {
           if (key.endsWith('_respond') && forwardSn) {
             console.log(`${C.cyan}[RESPOND] ${key} from ${forwardSn}${C.reset}`);
             emitCommandRespond(forwardSn, key, parsed[key]);
+            // Wek eventuele awaitCommand() callers in mapSync
+            notifyRespond(forwardSn, key, parsed[key]);
           }
         }
         // Also handle charger-style responds: {"type":"xxx_respond","message":{...}}
         if (typeof parsed.type === 'string' && parsed.type.endsWith('_respond') && forwardSn) {
           console.log(`${C.cyan}[RESPOND] ${parsed.type} from ${forwardSn}${C.reset}`);
           emitCommandRespond(forwardSn, parsed.type, parsed.message);
+          notifyRespond(forwardSn, parsed.type, parsed.message);
 
           // Charger LoRa config: sla echte addr/channel op (overschrijft cloud-imported waarden).
           // De mower wordt NIET meer afgeleid — die wordt los gequeried via extended topic
@@ -922,6 +1044,30 @@ export async function startMqttBroker(): Promise<void> {
         }
         // Forward to mapSync response handlers (used by dashboard API endpoints)
         handleExtendedResponse(extSn, payloadBuf.toString());
+
+        // Authoritative LoRa sync — als de mower zelf zijn LoRa-config
+        // rapporteert (via get_lora_info_respond of set_lora_info_respond),
+        // is dát de echte waarheid. Cache bijwerken zodat DB nooit meer
+        // achter kan lopen op de mower (bewezen scenario 2026-04-21: user
+        // provisioned ch18 via BLE, oude DB entry bleef op ch19 omdat
+        // de BLE-flow geen real SN had om registerLora te callen).
+        //
+        // Formaten die we accepteren:
+        //   { get_lora_info_respond: { result:0, addr, channel, hc, lc } }
+        //   { set_lora_info_respond: { result:0, addr, channel } }
+        //
+        // Alleen bij result=0 — een fout-response moet de cache NIET overschrijven.
+        if (extSn && (cmdName === 'get_lora_info_respond' || cmdName === 'set_lora_info_respond')) {
+          const body = parsed[cmdName] as { result?: number; addr?: number; channel?: number };
+          if (body?.result === 0 && body.addr != null && body.channel != null) {
+            try {
+              equipmentRepo.setLoraCache(extSn, String(body.addr), String(body.channel));
+              console.log(`${C.cyan}[LORA] Authoritative sync from ${extSn} (${cmdName}): addr=${body.addr} ch=${body.channel}${C.reset}`);
+            } catch (e) {
+              console.log(`${C.red}[LORA] Failed to sync cache for ${extSn}: ${e}${C.reset}`);
+            }
+          }
+        }
       } catch { /* geen JSON */ }
     }
   });
@@ -1072,6 +1218,40 @@ export async function startMqttBroker(): Promise<void> {
   server.listen(mqttPort, '0.0.0.0', () => {
     console.log(`${C.cyan}[MQTT] Broker luistert op port ${mqttPort}${C.reset}`);
   });
+
+  // ── Stale device sweeper ──────────────────────────────────────
+  // Aedes' eigen keepalive check is traag (heartbeatInterval 120s + 1.5×
+  // client-keepalive). Dat is te traag voor een fijne UX: na power-off van
+  // de maaier blijft de app tot 2 min "Charging 100%" tonen. Deze sweeper
+  // kijkt elke 15s of een online-markeerde SN >STALE_SN_MS (45s) stil is;
+  // zo ja, forceer disconnect en wis sensor cache — app toont onmiddellijk
+  // offline state.
+  setInterval(() => {
+    const now = Date.now();
+    for (const [sn, clientSet] of onlineBySn) {
+      if (clientSet.size === 0) continue;
+      const lastPub = lastPublishBySn.get(sn);
+      if (lastPub == null) continue; // nooit PUBLISH gezien → laat aedes dit afhandelen
+      if (now - lastPub < STALE_SN_MS) continue; // vers
+
+      console.log(`${C.yellow}[MQTT] Stale sweeper: ${sn} stil sinds ${Math.round((now - lastPub) / 1000)}s → forceer offline${C.reset}`);
+      // Forceer TCP close zodat eventuele halfdode verbinding opgeruimd wordt.
+      // rawSocketBySn wordt in onPublish/connect bijgehouden.
+      try { forceDisconnectDevice(sn); } catch { /* ignore */ }
+      // Wis state en stuur offline event naar dashboard/app zodat de UI
+      // meteen updatet zonder op refresh te wachten.
+      clientSet.clear();
+      onlineBySn.delete(sn);
+      lastPublishBySn.delete(sn);
+      try {
+        clearDeviceData(sn);
+        publishDeviceOffline(sn);
+        emitDeviceOffline(sn);
+      } catch (e) {
+        console.log(`${C.red}[MQTT] Stale sweeper cleanup error voor ${sn}: ${e}${C.reset}`);
+      }
+    }
+  }, 15_000);
 }
 
 /**
@@ -1099,24 +1279,37 @@ export function getBrokerDiagnostics(): {
 }
 
 // Hulpfunctie voor equipment.ts: zoek het BLE MAC-adres op voor een gegeven SN.
-// Zoekt eerst in device_registry (alleen echte apparaat-entries, geen app-clients),
-// en valt daarna terug op de equipment tabel (handmatig of eerder geregistreerd).
+//
+// Priority — gewijzigd 22 apr 2026 (bug #mower-mac-swap):
+// 1. `device_factory` — AUTHORITATIEF per-SN (READ-ONLY tabel, één SN = één MAC).
+//    Altijd veilig: kan structureel geen andere SN-MAC combinaties lekken.
+// 2. device_registry preferred (mqtt_username = SN) — live, real device entry.
+// 3. device_registry excluding 'app:SN' — andere non-app entry, fallback.
+// 4. equipment.mac_address — ALLEEN als `mower_sn === sn`. Dit veld is gedeeld
+//    tussen mower+charger in dezelfde row, dus voor charger-SN nooit teruggeven.
+//    Conventie (zie memory ble-mac-address-critical.md): equipment.mac_address
+//    is altijd de MOWER BLE MAC.
 export function lookupMac(sn: string): string | null {
-  // 1. Zoek in device_registry — prefer echte device entries (mqtt_username = SN)
-  //    boven app-client entries (mqtt_username = 'app:SN') die een ander MAC hebben
+  // 1. Factory-tabel — kan niet verkeerd zijn, één SN = één MAC (read-only bron).
+  const factoryMac = deviceRepo.getFactoryMac(sn);
+  if (factoryMac) return factoryMac;
+
+  // 2. device_registry preferred: echte device entries (mqtt_username = SN)
+  //    boven app-client entries (mqtt_username = 'app:SN') die een ander MAC hebben.
   const preferredMac = deviceRepo.findPreferredMacBySnAndUsername(sn, sn);
   if (preferredMac) return preferredMac;
 
-  // 2. Fallback: elke device_registry entry BEHALVE app-clients
-  //    App-clients (mqtt_username = 'app:SN') hadden eerder een verkeerd MAC
-  //    van ARP auto-detectie (iPhone MAC i.p.v. maaier MAC).
+  // 3. device_registry fallback: elke entry BEHALVE app-clients.
+  //    App-clients hadden eerder een verkeerd MAC van ARP auto-detectie.
   const fallbackMac = deviceRepo.findMacBySnExcludingApp(sn);
   if (fallbackMac) return fallbackMac;
 
-  // 3. Fallback: zoek in equipment tabel (gezet via admin API of eerdere binding)
+  // 4. equipment.mac_address — alleen als het SN de MOWER van die row is.
+  //    Voor charger SN-lookups nooit teruggeven: equipment row bevat één gedeeld
+  //    mac_address veld voor (mower_sn, charger_sn) pair en de conventie is dat
+  //    dit altijd de mower MAC is. Zie memory ble-mac-address-critical.md.
   const eqRow = equipmentRepo.findBySn(sn);
-  if (eqRow?.mac_address) return eqRow.mac_address;
+  if (eqRow?.mac_address && eqRow.mower_sn === sn) return eqRow.mac_address;
 
-  // 4. Fallback: factory device lookup table (cloud_devices_anonymous.json import)
-  return deviceRepo.getFactoryMac(sn);
+  return null;
 }

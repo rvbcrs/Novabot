@@ -7,6 +7,7 @@
  */
 
 import { db } from '../db/database.js';
+import { equipmentRepo } from '../db/repositories/equipment.js';
 
 // ── Sensor definities ────────────────────────────────────────────
 
@@ -418,6 +419,15 @@ export function updateDeviceData(sn: string, payload: Buffer): Map<string, strin
     data = mapped;
   }
 
+  // Sync version van MQTT-sensor naar equipment.mower_version DB-kolom.
+  // Zonder dit blijft de DB op de pre-OTA versie plakken (observed 2026-04-21
+  // na upgrade naar custom-24 → app toonde nog steeds custom-21 in admin
+  // panel want die leest uit equipment.mower_version, niet uit de sensor).
+  // We doen dit alleen als de sw_version daadwerkelijk wijzigt (changes set)
+  // zodat we geen onnodige DB writes elke 2s doen.
+  // NB: gebeurt verderop, na de changes loop die sw_version toevoegt aan
+  // de Map. We laten die loop eerst de wijziging detecteren.
+
   if (!deviceCache.has(sn)) deviceCache.set(sn, new Map());
   const snValues = deviceCache.get(sn)!;
 
@@ -612,6 +622,23 @@ export function updateDeviceData(sn: string, payload: Buffer): Map<string, strin
   // Charger GPS positie wordt NIET automatisch bijgewerkt — GPS jitter (2-3m) verschuift
   // de conversie-origin en daarmee alle kaartpolygonen. Charger positie wordt eenmalig
   // ingesteld via dashboard of bij eerste mapping sessie.
+
+  // Sync sw_version / charger_version naar equipment DB wanneer ze wijzigen.
+  // Zonder dit blijft de admin panel + firmware screen een oude versie tonen
+  // na OTA (observed 2026-04-21 na upgrade naar custom-24). We schrijven alleen
+  // bij échte wijzigingen zodat we geen continue DB writes krijgen.
+  if (changes.has('sw_version') || changes.has('mqtt_version')) {
+    const v = snValues.get('sw_version') || snValues.get('mqtt_version');
+    if (v) {
+      try {
+        if (sn.startsWith('LFIN')) {
+          equipmentRepo.updateVersions(sn, v);
+        } else if (sn.startsWith('LFIC')) {
+          equipmentRepo.updateChargerVersionByChargerSn(sn, v);
+        }
+      } catch { /* ignore DB errors — equipment row may not exist yet */ }
+    }
+  }
 
   // Sample signal history elke 30s
   if (changes.size > 0) {

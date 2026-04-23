@@ -1200,57 +1200,102 @@ def handle_is_opennova(params, respond):
 # Firmware-level safety (tilt sensor, blade overcurrent) still applies on
 # the STM32 side and will kill the motor on any fault.
 
-def _publish_blade_speed(speed: int) -> str:
-    """Publish an Int16 to /chassis/blade_speed_set via ros2 topic pub --once.
+def _publish_topic_bg(topic: str, type_name: str, payload_yaml: str) -> str:
+    """Fire-and-forget ROS 2 topic publish via a background subprocess.
 
-    Returns '' on success, error string on failure. We source the ROS 2
-    environment AND set ROS_LOCALHOST_ONLY=1 — the Novabot ROS nodes all
-    run with this env var (chassis_control_node included), so any DDS
-    participant that wants to find them must match. Without it, ros2 only
-    sees /parameter_events + /rosout and the publish effectively hits
-    nothing.
+    DON'T wait for ros2 topic pub --once to finish — DDS participant init
+    + subscriber discovery on this Horizon X3 routinely takes 6-10s. If we
+    block the paho-mqtt on_message callback for that long, subsequent
+    extended commands queue up and eventually time out (observed live when
+    the user rapid-toggled the blade button).
 
-    Timeout bumped to 12s because ros2 topic pub --once needs DDS participant
-    init + discovery of subscribers before publishing. On this Horizon X3
-    hardware that regularly takes 6-10s. Also uses `--times 1` semantically
-    same as --once but prints less and returns faster.
+    ROS_LOCALHOST_ONLY=1 is mandatory — the Novabot ROS nodes all run with
+    it and DDS discovery only works when participants match.
+
+    Returns '' on success (= subprocess spawned), error string on launch
+    failure. The firmware receives the actual message ~1-10s later.
     """
+    # RMW_IMPLEMENTATION=rmw_cyclonedds_cpp is CRITICAL — the Novabot nodes
+    # all run on cyclonedds (chassis_control, robot_decision, etc.). Default
+    # ros2 uses fastrtps which can't see cyclonedds participants at all.
+    # Observed live 2026-04-21: ros2 topic pub printed "publishing #1" fine
+    # but chassis_control_node's log showed NO blade messages received.
     cmd = (
         "export ROS_LOCALHOST_ONLY=1; "
+        "export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp; "
         "source /opt/ros/galactic/setup.bash 2>/dev/null; "
         "source /root/novabot/install/setup.bash 2>/dev/null; "
-        f"ros2 topic pub --once /chassis/blade_speed_set std_msgs/msg/Int16 "
-        f"'{{data: {int(speed)}}}' 2>&1"
+        f"ros2 topic pub --once {topic} {type_name} '{payload_yaml}' "
+        f">>/tmp/extcmd_pub.log 2>&1"
     )
     try:
-        r = subprocess.run(
+        # start_new_session detaches from our process group; stdio fully
+        # closed so Popen doesn't hold pipes open. Process lives until
+        # ros2 topic pub exits on its own.
+        subprocess.Popen(
             ["bash", "-c", cmd],
-            capture_output=True, text=True, timeout=12,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
         )
-        if r.returncode != 0:
-            return (r.stderr or r.stdout or "unknown error").strip()[:200]
-        # Success also when stdout contains "publishing #1" — ros2 prints
-        # the message it sent. An empty stdout+0 return still counts as OK.
         return ""
-    except subprocess.TimeoutExpired:
-        return "timeout"
     except Exception as e:
         return str(e)[:200]
 
 
+def _publish_blade_speed(speed: int) -> str:
+    return _publish_topic_bg(
+        "/blade_speed_set",
+        "std_msgs/msg/Int16",
+        f"{{data: {int(speed)}}}",
+    )
+
+
+def _publish_blade_height(level: int) -> str:
+    """Level 0-7 where 0 = blades retracted (stored, not cutting) and
+    1-7 = cutting heights. Index maps to physical mm: mm = 90 − level*10,
+    so level 5 = 40mm (default mowing height)."""
+    return _publish_topic_bg(
+        "/blade_height_set",
+        "std_msgs/msg/UInt8",
+        f"{{data: {int(level)}}}",
+    )
+
+
 def handle_blade_on(params, respond):
-    """Turn the blade motor ON. Optional {speed: int} sets RPM (default 3000)."""
+    """Turn the blade motor ON. Optional {speed: int} sets RPM (default 3000),
+    {height: int} sets blade height level 0-7 (default 5 = 40mm). Height is
+    pushed BEFORE speed so the blades are in cutting position before the
+    motor spins up."""
     speed = int((params or {}).get("speed", 3000))
+    height = (params or {}).get("height")
     # Clamp to something sensible — the chassis firmware has its own max.
     if speed < 500: speed = 500
     if speed > 3600: speed = 3600
-    err = _publish_blade_speed(speed)
-    respond("blade_on_respond", {"result": 0 if not err else 1, "speed": speed, "error": err})
+    err_h = ""
+    if height is not None:
+        h = int(height)
+        if h < 0: h = 0
+        if h > 7: h = 7
+        err_h = _publish_blade_height(h)
+    err_s = _publish_blade_speed(speed)
+    err = err_h or err_s
+    respond("blade_on_respond", {
+        "result": 0 if not err else 1,
+        "speed": speed,
+        "height": height,
+        "error": err,
+    })
 
 
 def handle_blade_off(params, respond):
-    """Turn the blade motor OFF (speed 0)."""
-    err = _publish_blade_speed(0)
+    """Turn the blade motor OFF (speed 0) AND retract blades (height 0).
+    Retracting is important safety: blades UP = physically safer when
+    mower is picked up, moved, or stuck."""
+    err1 = _publish_blade_speed(0)
+    err2 = _publish_blade_height(0)
+    err = err1 or err2
     respond("blade_off_respond", {"result": 0 if not err else 1, "error": err})
 
 
@@ -1261,6 +1306,17 @@ def handle_blade_speed(params, respond):
     if speed > 3600: speed = 3600
     err = _publish_blade_speed(speed)
     respond("blade_speed_respond", {"result": 0 if not err else 1, "speed": speed, "error": err})
+
+
+def handle_blade_height(params, respond):
+    """Set blade height level 0-7. 0 = retracted / not cutting, 1-7 = cutting
+    heights (level = (90 − mm)/10). App typically sends level 2-7 for mowing
+    and 0 when stopping."""
+    level = int((params or {}).get("level", 0))
+    if level < 0: level = 0
+    if level > 7: level = 7
+    err = _publish_blade_height(level)
+    respond("blade_height_respond", {"result": 0 if not err else 1, "level": level, "error": err})
 
 
 COMMANDS = {
@@ -1287,6 +1343,7 @@ COMMANDS = {
     "blade_on": handle_blade_on,
     "blade_off": handle_blade_off,
     "blade_speed": handle_blade_speed,
+    "blade_height": handle_blade_height,
     "sync_map": lambda p, r: handle_sync_map(p, r),
 }
 

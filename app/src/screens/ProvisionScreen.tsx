@@ -3,11 +3,13 @@ import {
   View,
   Text,
   TouchableOpacity,
+  TextInput,
   StyleSheet,
   ScrollView,
   Animated,
   ActivityIndicator,
   Platform,
+  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -74,9 +76,66 @@ export default function ProvisionScreen({ navigation, route }: Props) {
   const startedRef = useRef(false);
   const provisionStartTime = useRef(0);
 
+  // Manual LoRa override — user kan addr/channel invullen om de
+  // auto-assign vanuit de server te overrulen. Handig bij migraties of
+  // wanneer je weet welk paar bij elkaar hoort (bv. charger + mower moet
+  // op zelfde addr, ongeacht DB state). Leeg = auto.
+  //
+  // We houden de waardes zowel in state (voor UI) als in refs (voor
+  // runProvisioning). De ref-kopie elimineert elke kans op stale closures
+  // (bewezen issue 2026-04-21: user typte 51154, useCallback deps hadden
+  // loraAddrOverride, toch kwam auto-assign branch uit runProvisioning).
+  // Met een ref werkt het zelfs als Metro een oudere bundle heeft gecached
+  // of als React batching de render nog niet heeft gecommit op het
+  // moment van onPress.
+  const [loraAddrOverride, setLoraAddrOverride] = useState<string>('');
+  const [loraChannelOverride, setLoraChannelOverride] = useState<string>('');
+  const loraAddrOverrideRef = useRef<string>('');
+  const loraChannelOverrideRef = useRef<string>('');
+  useEffect(() => { loraAddrOverrideRef.current = loraAddrOverride; }, [loraAddrOverride]);
+  useEffect(() => { loraChannelOverrideRef.current = loraChannelOverride; }, [loraChannelOverride]);
+  const [loraConflict, setLoraConflict] = useState<null | { sn: string; addr: number | null; channel: number | null }[]>(null);
+  const [acknowledgedConflict, setAcknowledgedConflict] = useState(false);
+
+  // Pending LoRa registrations per deviceType — gevuld na een succesvolle BLE
+  // provisioning wanneer we GEEN echte SN hebben (iOS anon-UUID issue). Zodra
+  // het corresponderende device via MQTT online komt met een echte SN,
+  // draint pollDeviceStatus dit naar `/lora/register` zodat de DB direct
+  // de override/auto-assign waarden bevat. Dat maakt de DB-state onafhankelijk
+  // van de broker.ts get_lora_info_respond auto-sync (die ook werkt, maar pas
+  // na eerste MQTT poll van extended_commands).
+  const pendingLoraReg = useRef<Map<'charger' | 'mower', { addr: number; channel: number }>>(new Map());
+  const completedLoraReg = useRef<Set<string>>(new Set());
+  // Expliciete start — user moet zelf op "Start provisioning" tikken
+  // zodat LoRa-override kan worden ingevuld voordat het BLE-proces start.
+  const [hasStarted, setHasStarted] = useState(false);
+
   // Success animation
   const successScale = useRef(new Animated.Value(0)).current;
   const successOpacity = useRef(new Animated.Value(0)).current;
+
+  // Debounced LoRa conflict check — triggert zodra de user een addr invult
+  // en meer dan 350ms stopt met typen. Toont de SNs van conflicterende
+  // apparaten zodat je bewust kan besluiten om (a) een ander addr te kiezen
+  // of (b) "ok, is mijn bedoeling" en acknowledgen.
+  useEffect(() => {
+    setAcknowledgedConflict(false);
+    const addrStr = loraAddrOverride.trim();
+    if (!addrStr) { setLoraConflict(null); return; }
+    const addr = parseInt(addrStr, 10);
+    if (!Number.isFinite(addr) || addr < 0) { setLoraConflict(null); return; }
+    const channel = loraChannelOverride.trim() ? parseInt(loraChannelOverride.trim(), 10) : undefined;
+    const t = setTimeout(async () => {
+      try {
+        const url = await getServerUrl();
+        if (!url) return;
+        const api = new ApiClient(url);
+        const r = await api.checkLoraAvailability(addr, channel);
+        setLoraConflict(r.conflicts.length > 0 ? r.conflicts : null);
+      } catch { /* ignore */ }
+    }, 350);
+    return () => clearTimeout(t);
+  }, [loraAddrOverride, loraChannelOverride]);
 
   const updateDeviceState = useCallback(
     (deviceId: string, updater: (prev: DeviceState) => DeviceState) => {
@@ -96,44 +155,130 @@ export default function ProvisionScreen({ navigation, route }: Props) {
     provisionStartTime.current = Date.now();
     const results: boolean[] = [];
 
-    // Fetch LoRa params from server before provisioning
+    // Pre-check: als de user een LoRa addr heeft ingevuld dat al in gebruik
+    // is en NIET expliciet bevestigd, abort met een duidelijke melding. Dit
+    // voorkomt dat je per ongeluk een al-geprovisioned apparaat opnieuw
+    // provisioned en daarmee z'n LoRa pair breekt.
+    //
+    // KRITIEK: lees via refs — NIET via captured state. Zie de ref-setup
+    // bovenaan de component. Als de runProvisioning closure een oude
+    // `loraAddrOverride` value had gezien (wat in de praktijk gebeurd is
+    // op 2026-04-21 ondanks useCallback deps), dan zou auto-assign
+    // gedraaid worden met 718/16 ipv de user's 51154/18. Ref-read vermijdt
+    // dat volledig.
+    const manualAddrStr = loraAddrOverrideRef.current.trim();
+    const manualAddr = manualAddrStr ? parseInt(manualAddrStr, 10) : null;
+    const manualChannelStr = loraChannelOverrideRef.current.trim();
+    const manualChannel = manualChannelStr ? parseInt(manualChannelStr, 10) : null;
+
+    // Log ALTIJD wat we daadwerkelijk hebben gelezen, zodat het in de
+    // on-screen BLE debug log staat als onomstotelijk bewijs dat de
+    // override-waardes wel/niet zijn doorgekomen. Scheelt eindeloos
+    // "heb je de velden wel ingevuld?" discussies.
+    bleLog(
+      `[LoRa] Read override from UI → addr="${manualAddrStr}" (${manualAddr}), ` +
+      `channel="${manualChannelStr}" (${manualChannel}), ` +
+      `acknowledgedConflict=${acknowledgedConflict}`,
+    );
+    if (manualAddr != null && loraConflict && loraConflict.length > 0 && !acknowledgedConflict) {
+      Alert.alert(
+        'LoRa address already in use',
+        `Address ${manualAddr}${manualChannel != null ? ` / channel ${manualChannel}` : ''} is assigned to: ${loraConflict.map(c => c.sn).join(', ')}\n\nProvisioning will overwrite the LoRa parameters on the target device and break its existing pair. Tap the warning badge to acknowledge and continue.`,
+      );
+      return;
+    }
+
+    // Fetch LoRa params from server before provisioning (only when no manual override)
     let chargerLoraParams: { addr: number; channel: number; hc: number; lc: number } | undefined;
     let mowerLoraParams: { addr: number; channel: number; hc: number; lc: number } | undefined;
-    try {
-      const serverUrl = await getServerUrl();
-      if (serverUrl) {
-        const api = new ApiClient(serverUrl);
-        const hasCharger = devices.some(d => d.type === 'charger');
-        const hasMower = devices.some(d => d.type === 'mower');
 
-        if (hasCharger) {
-          // New charger: get next free LoRa address
-          const resp = await api.getNextLoraAddress();
-          chargerLoraParams = { addr: resp.address, channel: resp.channel, hc: resp.hc, lc: resp.lc };
-          bleLog(`[LoRa] Charger will get address: ${resp.address}, channel: ${resp.channel}`);
-        }
+    const hasCharger = devices.some(d => d.type === 'charger');
+    const hasMower = devices.some(d => d.type === 'mower');
 
-        if (hasMower) {
-          // Mower: find the online charger and get its LoRa params
-          try {
-            const setsRes = await api.getDeviceSets();
-            // Find a charger that's online and has LoRa params, or the one being provisioned now
-            const onlineSet = setsRes.sets?.find(s => s.charger?.online && s.loraAddress);
-            if (onlineSet && onlineSet.loraAddress) {
-              mowerLoraParams = { addr: onlineSet.loraAddress, channel: 16, hc: 20, lc: 14 };
-              bleLog(`[LoRa] Mower will pair with charger ${onlineSet.charger?.sn} (addr=${onlineSet.loraAddress})`);
-            } else if (chargerLoraParams) {
-              // Pairing with the charger being provisioned in this same session
-              mowerLoraParams = chargerLoraParams;
-              bleLog(`[LoRa] Mower will pair with charger from this session (addr=${chargerLoraParams.addr})`);
-            }
-          } catch {
-            bleLog('[LoRa] Could not fetch device sets for mower pairing');
+    // ── Manual override mode ──────────────────────────────────────
+    // User-spec 2026-04-22 (bijgewerkt):
+    //   Het "channel" veld in de UI = het CHARGER+MOWER channel (identiek).
+    //   Mower en charger zitten ALTIJD op hetzelfde LoRa-paar (zelfde addr,
+    //   zelfde channel). Bewezen 22 apr 2026 met working-lora-pair addr=718
+    //   ch=17. De oudere "mower = channel - 1" regel was onjuist.
+    if (manualAddr != null && Number.isFinite(manualAddr)) {
+      const userChannel = manualChannel != null && Number.isFinite(manualChannel) ? manualChannel : 16;
+      if (hasCharger && hasMower) {
+        // Pair: user-value is gemeenschappelijk channel voor beide devices.
+        chargerLoraParams = { addr: manualAddr, channel: userChannel, hc: 20, lc: 14 };
+        mowerLoraParams   = { addr: manualAddr, channel: userChannel, hc: 20, lc: 14 };
+        bleLog(`[LoRa] MANUAL OVERRIDE (pair): addr=${manualAddr} ch=${userChannel} (charger + mower identiek)`);
+      } else if (hasCharger) {
+        chargerLoraParams = { addr: manualAddr, channel: userChannel, hc: 20, lc: 14 };
+        bleLog(`[LoRa] MANUAL OVERRIDE (charger only): addr=${manualAddr}/ch=${userChannel}`);
+      } else {
+        // mower only
+        mowerLoraParams = { addr: manualAddr, channel: userChannel, hc: 20, lc: 14 };
+        bleLog(`[LoRa] MANUAL OVERRIDE (mower only): addr=${manualAddr}/ch=${userChannel}`);
+      }
+
+      // Defense in depth: ook via de extended_commands backchannel sturen
+      // als het doel-apparaat al online is via MQTT. De BLE-route werkt
+      // óók op een al-geprovisioned mower (bewezen 2026-04-21), maar als
+      // de BLE stap om wat voor reden dan ook faalt, pakt de MQTT-
+      // backchannel het op. Beide routes zijn idempotent.
+      try {
+        const serverUrl = await getServerUrl();
+        if (serverUrl) {
+          const api = new ApiClient(serverUrl);
+          for (const dev of devices) {
+            const sn = (dev as { sn?: string }).sn;
+            if (!sn) continue;
+            const forThis = dev.type === 'charger' ? chargerLoraParams : mowerLoraParams;
+            if (!forThis) continue;
+            try {
+              await api.sendExtended(sn, {
+                set_lora_info: { addr: forThis.addr, channel: forThis.channel },
+              });
+              bleLog(`[LoRa] extended_commands set_lora_info sent to ${sn} (ch=${forThis.channel})`);
+            } catch { /* device may be offline, will rely on BLE path */ }
           }
         }
+      } catch { /* ignore */ }
+    } else {
+      // ── Auto-assign mode ──────────────────────────────────────
+      // User-spec: server-side `/lora/resolve` doet authoritative pair-aware
+      // resolution. Charger = max(charger addrs)+1. Mower = paart met orphan
+      // charger (IDENTIEK addr + channel — mower en charger op hetzelfde paar).
+      try {
+        const serverUrl = await getServerUrl();
+        if (serverUrl) {
+          const api = new ApiClient(serverUrl);
+
+          if (hasCharger) {
+            const resp = await api.resolveLora('charger');
+            chargerLoraParams = { addr: resp.address, channel: resp.channel, hc: resp.hc, lc: resp.lc };
+            bleLog(`[LoRa] Auto (charger): addr=${resp.address} ch=${resp.channel} (${resp.basis})`);
+          }
+
+          if (hasMower) {
+            const resp = await api.resolveLora('mower');
+            mowerLoraParams = { addr: resp.address, channel: resp.channel, hc: resp.hc, lc: resp.lc };
+            bleLog(`[LoRa] Auto (mower): addr=${resp.address} ch=${resp.channel} (${resp.basis})`);
+
+            // Edge case: mower + charger in dezelfde sessie zonder override.
+            // Als de charger nieuw is (net door ons berekend in deze session),
+            // moet de mower met die NIEUWE charger paren op IDENTIEK addr+ch
+            // (niet met een oude orphan).
+            if (chargerLoraParams) {
+              mowerLoraParams = {
+                addr: chargerLoraParams.addr,
+                channel: chargerLoraParams.channel,
+                hc: 20,
+                lc: 14,
+              };
+              bleLog(`[LoRa] Mower pair with in-session charger: addr=${mowerLoraParams.addr} ch=${mowerLoraParams.channel} (identiek aan charger)`);
+            }
+          }
+        }
+      } catch (e) {
+        bleLog(`[LoRa] Could not fetch from server, using defaults: ${e}`);
       }
-    } catch (e) {
-      bleLog(`[LoRa] Could not fetch from server, using defaults: ${e}`);
     }
 
     for (const dev of devices) {
@@ -183,17 +328,44 @@ export default function ProvisionScreen({ navigation, route }: Props) {
         },
       );
 
-      // After successful charger provisioning, register LoRa params on server
-      if (ok && deviceType === 'charger' && chargerLoraParams) {
-        try {
-          const serverUrl = await getServerUrl();
-          if (serverUrl) {
-            const api = new ApiClient(serverUrl);
-            await api.registerLora(dev.name ?? dev.id, chargerLoraParams.addr, chargerLoraParams.channel);
-            bleLog(`[LoRa] Registered charger LoRa: addr=${chargerLoraParams.addr} ch=${chargerLoraParams.channel}`);
+      // After successful provisioning, register LoRa params on server for
+      // BOTH charger + mower so equipment_lora_cache is consistent en de
+      // TRUTH per direct in de DB staat — geen wachten op eventuele MQTT
+      // get_lora_info_respond auto-sync.
+      //
+      // Twee paden:
+      //  (A) We HEBBEN een echte SN (dev.sn van MQTT hello, of dev.name met
+      //      LFIN/LFIC prefix) → direct POST /lora/register.
+      //  (B) We hebben GEEN echte SN (iOS anon-UUID, "NOVABOT"/"CHARGER_PILE"
+      //      names) → queue de params in pendingLoraReg. pollDeviceStatus
+      //      drain't de queue zodra een matching SN via MQTT online komt.
+      //      Zonder deze queue bleef de DB stale op oude waarden na een
+      //      re-provision met override (live bug 2026-04-21).
+      if (ok) {
+        const loraForReg = deviceType === 'charger' ? chargerLoraParams : mowerLoraParams;
+        if (loraForReg) {
+          const devAny = dev as { name?: string; sn?: string; id?: string };
+          const rawSn = devAny.sn ?? devAny.name ?? devAny.id ?? '';
+          const isRealSn = rawSn.startsWith('LFIN') || rawSn.startsWith('LFIC');
+          if (isRealSn) {
+            try {
+              const serverUrl = await getServerUrl();
+              if (serverUrl) {
+                const api = new ApiClient(serverUrl);
+                await api.registerLora(rawSn, loraForReg.addr, loraForReg.channel);
+                completedLoraReg.current.add(rawSn);
+                bleLog(`[LoRa] Registered ${deviceType} ${rawSn}: addr=${loraForReg.addr} ch=${loraForReg.channel}`);
+              }
+            } catch (e) {
+              bleLog(`[LoRa] Failed to register ${rawSn}: ${e}`);
+            }
+          } else {
+            pendingLoraReg.current.set(deviceType, {
+              addr: loraForReg.addr,
+              channel: loraForReg.channel,
+            });
+            bleLog(`[LoRa] Queued registration for ${deviceType} (addr=${loraForReg.addr} ch=${loraForReg.channel}) — waits for real SN via MQTT`);
           }
-        } catch (e) {
-          bleLog(`[LoRa] Failed to register: ${e}`);
         }
       }
 
@@ -202,7 +374,13 @@ export default function ProvisionScreen({ navigation, route }: Props) {
 
     setAllDone(true);
     setAllSuccess(results.every(Boolean));
-  }, [devices, mqttAddr, mqttPort, wifiSsid, wifiPassword, updateDeviceState]);
+  }, [
+    devices, mqttAddr, mqttPort, wifiSsid, wifiPassword, updateDeviceState,
+    // loraAddrOverride/channel worden NIET uit state gelezen maar uit refs
+    // (zie hierboven), dus niet nodig in deps. loraConflict +
+    // acknowledgedConflict blijven wel state-reads → in deps.
+    loraConflict, acknowledgedConflict,
+  ]);
 
   useEffect(() => {
     // Set up BLE log capture
@@ -210,11 +388,9 @@ export default function ProvisionScreen({ navigation, route }: Props) {
     return () => setBleLogCallback(null);
   }, []);
 
-  useEffect(() => {
-    if (startedRef.current) return;
-    startedRef.current = true;
-    runProvisioning();
-  }, [runProvisioning]);
+  // Provisioning start NIET meer automatisch zodra het scherm opent —
+  // anders kan de user geen LoRa-override invullen. Nu expliciete "Start"
+  // knop in de UI; runProvisioning alleen na user tap.
 
   // Check server reachability + device MQTT status when provisioning completes
   const [deviceOnline, setDeviceOnline] = useState<Record<string, boolean>>({});
@@ -281,6 +457,29 @@ export default function ProvisionScreen({ navigation, route }: Props) {
               for (const dev of devices) status[dev.id] = true;
               setDeviceOnline(status);
               bleLog(`[MQTT-POLL] New device online: ${lastSn} (${Math.round(age/1000)}s ago)`);
+
+              // Drain pending LoRa registration queue — we weten nu eindelijk
+              // de echte SN achter de BLE-scan anon-UUID. Match op SN prefix
+              // (LFIC=charger, LFIN=mower) en registreer met de override/
+              // auto-assign waardes die we bij BLE-succes hebben gequeued.
+              try {
+                const devType: 'charger' | 'mower' | null =
+                  lastSn.startsWith('LFIC') ? 'charger' :
+                  lastSn.startsWith('LFIN') ? 'mower' : null;
+                const pending = devType ? pendingLoraReg.current.get(devType) : null;
+                if (devType && pending && !completedLoraReg.current.has(lastSn)) {
+                  const serverUrl = await getServerUrl();
+                  if (serverUrl) {
+                    const api = new ApiClient(serverUrl);
+                    await api.registerLora(lastSn, pending.addr, pending.channel);
+                    completedLoraReg.current.add(lastSn);
+                    pendingLoraReg.current.delete(devType);
+                    bleLog(`[LoRa] Drained pending registration → ${devType} ${lastSn}: addr=${pending.addr} ch=${pending.channel}`);
+                  }
+                }
+              } catch (regErr: any) {
+                bleLog(`[LoRa] Pending registration drain failed: ${regErr?.message ?? regErr}`);
+              }
             } else {
               bleLog(`[MQTT-POLL] ${lastSn} was already online before provisioning`);
             }
@@ -324,6 +523,31 @@ export default function ProvisionScreen({ navigation, route }: Props) {
 
   const handleProvisionAnother = () => {
     navigation.navigate('DeviceChoice', { mqttAddr, mqttPort });
+  };
+
+  /** Terug naar het Settings tabblad (SettingsMain).
+   *
+   *  ProvisionScreen zit 3 navigator-lagen diep:
+   *    MainTab.AppSettings → SettingsStack.ProvisionFlow → ProvisionStack.Provision
+   *
+   *  popToTop() op onze eigen stack landt op DeviceChoice (de root van
+   *  ProvisionStack) — dat is niet wat we willen. We moeten UIT de
+   *  ProvisionFlow stack via `getParent()` en dan naar `SettingsMain`
+   *  binnen de SettingsStack. Als de parent-lookup faalt (edge case bij
+   *  screen unmount), fallback op goBack. */
+  const handleBackToSettings = () => {
+    try {
+      // Parent = SettingsStack. navigate('SettingsMain') pop't de nested
+      // ProvisionFlow screen én toont SettingsMain (een stack-reset).
+      const parent = (navigation as unknown as { getParent?: () => { navigate: (n: string) => void } | null | undefined }).getParent?.();
+      if (parent) {
+        parent.navigate('SettingsMain');
+        return;
+      }
+    } catch { /* ignore */ }
+    const nav = navigation as unknown as { popToTop?: () => void; goBack: () => void };
+    if (typeof nav.popToTop === 'function') nav.popToTop();
+    else nav.goBack();
   };
 
   const handleOtaTrigger = async () => {
@@ -399,15 +623,30 @@ export default function ProvisionScreen({ navigation, route }: Props) {
   return (
     <View style={styles.container}>
       <ScrollView contentContainerStyle={styles.scroll}>
-        {/* Header */}
+        {/* Header met terug-pijl. De pijl pakt je uit de hele provisioning
+            flow (BleScan/DeviceChoice/Provision) en brengt je in één tik
+            terug op SettingsMain. Werkt in elke fase — tijdens provisioning
+            (abort), na success, of bij een error. */}
         <View style={styles.header}>
-          <Text style={styles.title}>Provisioning</Text>
+          <View style={styles.headerRow}>
+            <TouchableOpacity
+              onPress={handleBackToSettings}
+              activeOpacity={0.7}
+              style={styles.backButton}
+              accessibilityLabel="Back to Settings"
+            >
+              <Ionicons name="arrow-back" size={22} color={colors.white} />
+            </TouchableOpacity>
+            <Text style={styles.title}>Provisioning</Text>
+          </View>
           <Text style={styles.subtitle}>
             {allDone
               ? allSuccess
                 ? 'All devices provisioned successfully!'
                 : 'Provisioning completed with errors.'
-              : 'Configuring your devices via BLE...'}
+              : hasStarted
+                ? 'Configuring your devices via BLE...'
+                : 'Review the LoRa settings below, then tap Start.'}
           </Text>
         </View>
 
@@ -491,6 +730,117 @@ export default function ProvisionScreen({ navigation, route }: Props) {
               </View>
             )}
           </Animated.View>
+        )}
+
+        {/* Advanced: LoRa override — tekstboxes die de auto-assign overrulen.
+            Leeg = auto vanuit server (safe default). Ingevuld = exact deze
+            addr/channel. Bij een conflict met een ander geregistreerd device
+            in de DB verschijnt een waarschuwing; je moet 'm expliciet
+            acknowledgen voordat provisioning doorgaat. Alleen zichtbaar
+            vóórdat provisioning gestart is — daarna wordt de kaart
+            verborgen zodat de voortgang vrij staat. */}
+        {!hasStarted && !allDone && (
+          <View style={styles.loraCard}>
+            <Text style={styles.loraTitle}>LoRa parameters (optional)</Text>
+            <Text style={styles.loraSubtitle}>
+              Leave empty for auto-assign. Fill in when you need to match a
+              specific charger/mower pair.
+            </Text>
+            <View style={styles.loraInputRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.loraInputLabel}>Address</Text>
+                <TextInput
+                  style={styles.loraInput}
+                  value={loraAddrOverride}
+                  onChangeText={(v) => {
+                    // Update ref ONMIDDELLIJK (synchronoous, geen render-wait)
+                    // zodat runProvisioning direct de juiste waarde ziet, zelfs
+                    // als user millimeters na 'n keystroke al op Start tikt.
+                    loraAddrOverrideRef.current = v;
+                    setLoraAddrOverride(v);
+                  }}
+                  onEndEditing={(e) => {
+                    // iOS: forceer dat de native TextInput buffer z'n laatste
+                    // waarde commit. Zonder dit kan na fast-type → tap een
+                    // char missen in de gecaptured state.
+                    const v = e.nativeEvent.text;
+                    loraAddrOverrideRef.current = v;
+                    setLoraAddrOverride(v);
+                  }}
+                  placeholder="e.g. 718"
+                  placeholderTextColor={colors.textMuted}
+                  keyboardType="number-pad"
+                  maxLength={6}
+                />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.loraInputLabel}>Channel</Text>
+                <TextInput
+                  style={styles.loraInput}
+                  value={loraChannelOverride}
+                  onChangeText={(v) => {
+                    loraChannelOverrideRef.current = v;
+                    setLoraChannelOverride(v);
+                  }}
+                  onEndEditing={(e) => {
+                    const v = e.nativeEvent.text;
+                    loraChannelOverrideRef.current = v;
+                    setLoraChannelOverride(v);
+                  }}
+                  placeholder="16"
+                  placeholderTextColor={colors.textMuted}
+                  keyboardType="number-pad"
+                  maxLength={3}
+                />
+              </View>
+            </View>
+            {loraConflict && loraConflict.length > 0 && (
+              <TouchableOpacity
+                style={[styles.loraWarning, acknowledgedConflict && styles.loraWarningAcknowledged]}
+                onPress={() => setAcknowledgedConflict(!acknowledgedConflict)}
+                activeOpacity={0.7}
+              >
+                <Ionicons
+                  name={acknowledgedConflict ? 'checkmark-circle' : 'warning'}
+                  size={16}
+                  color={acknowledgedConflict ? colors.emerald : colors.amber}
+                />
+                <Text style={[styles.loraWarningText, acknowledgedConflict && { color: colors.textDim }]}>
+                  {acknowledgedConflict
+                    ? `Acknowledged — provisioning will overwrite ${loraConflict.map(c => c.sn).join(', ')}`
+                    : `This LoRa is already used by: ${loraConflict.map(c => c.sn).join(', ')} — tap to acknowledge`}
+                </Text>
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity
+              style={styles.startProvisionBtn}
+              onPress={() => {
+                // Lees via refs — zie comment bij runProvisioning. De state
+                // kan op iOS net-net achter lopen op de TextInput als de
+                // user na typen direct op Start tikt zonder onBlur fire.
+                const manualAddrStr = loraAddrOverrideRef.current.trim();
+                bleLog(
+                  `[LoRa] Start button → override read addr="${manualAddrStr}" ` +
+                  `channel="${loraChannelOverrideRef.current.trim()}" ` +
+                  `(state.addr="${loraAddrOverride}" state.channel="${loraChannelOverride}")`,
+                );
+                if (manualAddrStr && loraConflict && loraConflict.length > 0 && !acknowledgedConflict) {
+                  Alert.alert(
+                    'LoRa address already in use',
+                    `Tap the warning above to acknowledge before starting provisioning.`,
+                  );
+                  return;
+                }
+                setHasStarted(true);
+                startedRef.current = true;
+                runProvisioning();
+              }}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="play-circle" size={20} color={colors.white} />
+              <Text style={styles.startProvisionText}>Start provisioning</Text>
+            </TouchableOpacity>
+          </View>
         )}
 
         {/* Device progress cards */}
@@ -594,7 +944,9 @@ export default function ProvisionScreen({ navigation, route }: Props) {
         )}
       </ScrollView>
 
-      {/* Bottom bar */}
+      {/* Bottom bar — alleen de primaire actie (Provision Another / Retry).
+          De "terug naar Settings" knop is nu de header back-arrow, dus
+          die hoeft hier niet meer te staan. */}
       {allDone && (
         <View style={styles.bottomBar}>
           {!allSuccess && (
@@ -609,11 +961,11 @@ export default function ProvisionScreen({ navigation, route }: Props) {
           )}
           <TouchableOpacity
             style={[styles.doneButton, !allSuccess && { flex: 1 }]}
-            onPress={handleProvisionAnother}
+            onPress={allSuccess ? handleProvisionAnother : handleBackToSettings}
             activeOpacity={0.7}
           >
             <Text style={styles.doneButtonText}>
-              {allSuccess ? 'Provision Another' : 'Back to Devices'}
+              {allSuccess ? 'Provision Another' : 'Back to Settings'}
             </Text>
             <Ionicons name="arrow-forward" size={18} color={colors.white} />
           </TouchableOpacity>
@@ -636,11 +988,24 @@ const styles = StyleSheet.create({
   header: {
     marginBottom: 24,
   },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 8,
+  },
+  backButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.06)',
+  },
   title: {
     fontSize: 28,
     fontWeight: '700',
     color: colors.white,
-    marginBottom: 8,
   },
   subtitle: {
     fontSize: 15,
@@ -680,6 +1045,86 @@ const styles = StyleSheet.create({
     borderColor: colors.cardBorder,
     padding: 20,
     marginBottom: 16,
+  },
+  loraCard: {
+    backgroundColor: colors.card,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    padding: 16,
+    marginBottom: 16,
+  },
+  loraTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: colors.white,
+    marginBottom: 2,
+  },
+  loraSubtitle: {
+    fontSize: 12,
+    color: colors.textDim,
+    marginBottom: 12,
+    lineHeight: 17,
+  },
+  loraInputRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  loraInputLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: colors.textMuted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 4,
+  },
+  loraInput: {
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 15,
+    color: colors.white,
+    fontVariant: ['tabular-nums'],
+  },
+  loraWarning: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 12,
+    padding: 10,
+    borderRadius: 10,
+    backgroundColor: 'rgba(245,158,11,0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(245,158,11,0.35)',
+  },
+  loraWarningAcknowledged: {
+    backgroundColor: 'rgba(34,197,94,0.1)',
+    borderColor: 'rgba(34,197,94,0.3)',
+  },
+  loraWarningText: {
+    flex: 1,
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.amber,
+    lineHeight: 16,
+  },
+  startProvisionBtn: {
+    marginTop: 14,
+    paddingVertical: 14,
+    borderRadius: 12,
+    backgroundColor: colors.emerald,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  startProvisionText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: colors.white,
   },
   deviceHeader: {
     flexDirection: 'row',

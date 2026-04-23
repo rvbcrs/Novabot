@@ -10,6 +10,8 @@ import crypto from 'crypto';
 import path from 'path';
 import { execSync } from 'child_process';
 import { db } from '../db/database.js';
+import { isDeviceOnline, banishSn, unbanSn, listBannedSns } from '../mqtt/broker.js';
+import { awaitCommand, publishToDevice } from '../mqtt/mapSync.js';
 import { userRepo, equipmentRepo, deviceRepo, mapRepo, otaVersionRepo } from '../db/repositories/index.js';
 import { AuthRequest } from '../types/index.js';
 import { invalidateSetupCache } from '../middleware/setupGuard.js';
@@ -97,7 +99,18 @@ adminStatusRouter.get('/users', (_req: AuthRequest, res: Response) => {
 
 // GET /api/admin-status/devices — known Novabot devices with online status
 adminStatusRouter.get('/devices', (_req: AuthRequest, res: Response) => {
-  const devices = deviceRepo.listAdminDevices();
+  const rows = deviceRepo.listAdminDevices();
+
+  // Override is_online met de runtime broker state. De SQL threshold
+  // (`julianday('now') - last_seen < 0.003` = 259s) is te traag voor een
+  // fijne UX — na een abrupt power-off / WiFi drop blijft de UI tot
+  // ~4 minuten "Online" tonen. De MQTT broker weet binnen 45s (stale
+  // sweeper, zie broker.ts) dat het device stil is. Gebruik die als
+  // waarheid zodat de admin UI in sync is met /device-sets.
+  const devices = rows.map(r => ({
+    ...r,
+    is_online: r.sn && isDeviceOnline(r.sn) ? 1 : 0,
+  }));
 
   res.json({ devices });
 });
@@ -132,6 +145,126 @@ adminStatusRouter.post('/bind-device', (_req: AuthRequest, res: Response) => {
   res.json({ ok: true });
 });
 
+// POST /api/admin-status/send-command — generic MQTT command sender
+//
+// Stuurt een Dart/Send_mqtt/<SN> command naar een device en (optioneel) wacht
+// op het bijbehorende *_respond. Antwoord bevat ofwel de response-data, ofwel
+// { sent: true } als noWait=true.
+//
+// Body: {
+//   sn: string,                 // Doelapparaat (LFIN* of LFIC*)
+//   command: string,            // bijv. "get_signal_info", "get_lora_info"
+//   payload?: unknown,          // JSON payload, default null
+//   timeoutMs?: number,         // max wachttijd voor respond, default 5000
+//   noWait?: boolean            // true = fire-and-forget
+// }
+adminStatusRouter.post('/send-command', async (req: AuthRequest, res: Response) => {
+  const { sn, command, payload, timeoutMs, noWait } = req.body as {
+    sn?: string;
+    command?: string;
+    payload?: unknown;
+    timeoutMs?: number;
+    noWait?: boolean;
+  };
+
+  if (!sn || !command) {
+    res.status(400).json({ error: 'sn and command required' });
+    return;
+  }
+  if (!isDeviceOnline(sn)) {
+    res.status(409).json({ error: 'device not online', sn });
+    return;
+  }
+
+  try {
+    if (noWait) {
+      publishToDevice(sn, { [command]: payload ?? null });
+      console.log(`[Admin] send-command (noWait) ${command} → ${sn}`);
+      res.json({ ok: true, sent: true, sn, command });
+      return;
+    }
+
+    console.log(`[Admin] send-command ${command} → ${sn} (await respond)`);
+    const data = await awaitCommand(sn, command, payload ?? null, timeoutMs ?? 5000);
+    res.json({ ok: true, sn, command, respond: data });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'send-command failed';
+    console.warn(`[Admin] send-command ${command} → ${sn} failed: ${msg}`);
+    res.status(504).json({ error: msg, sn, command });
+  }
+});
+
+// POST /api/admin-status/banish-device — delete device fully + block MQTT
+// reconnects for N minutes. Gebruikt door de "Delete + Banish" flow wanneer
+// user een device wil re-provisionen via de officiële Novabot app. Zonder
+// deze ban zou ons broker de device binnen 30s weer accepteren (DNS van
+// mqtt.lfibot.com → onze server). Ban voorkomt dat + wist DB rijen zodat
+// user een clean-slate kan bouwen. Na ban-expiry connect device normaal
+// opnieuw.
+adminStatusRouter.post('/banish-device', (_req: AuthRequest, res: Response) => {
+  const { sn, minutes } = _req.body as { sn?: string; minutes?: number };
+  if (!sn) { res.status(400).json({ error: 'sn required' }); return; }
+  const durationMs = Math.max(1, Math.min(minutes ?? 120, 1440)) * 60 * 1000;
+
+  // Full cascade delete — MAPS BLIJVEN (user-spec 2026-04-22). Zelfde
+  // cleanup als /api/nova-user/equipment/unboundEquipment: wist equipment
+  // + alle per-SN / per-equipment_id tabellen, maar laat maps/map_uploads/
+  // map_calibration/virtual_walls staan.
+  try {
+    const equip = equipmentRepo.findBySn(sn);
+    const mowerSn = equip?.mower_sn;
+    const chargerSn = equip?.charger_sn;
+    const equipmentIdStr = equip?.equipment_id;
+    const snsToClean: string[] = [sn];
+    if (mowerSn && !snsToClean.includes(mowerSn)) snsToClean.push(mowerSn);
+    if (chargerSn && !snsToClean.includes(chargerSn)) snsToClean.push(chargerSn);
+
+    const tx = db.transaction(() => {
+      if (equipmentIdStr) {
+        db.prepare('DELETE FROM equipment WHERE equipment_id = ?').run(equipmentIdStr);
+        db.prepare('DELETE FROM cut_grass_plans WHERE equipment_id = ?').run(equipmentIdStr);
+        try { db.prepare('DELETE FROM work_records WHERE equipment_id = ?').run(equipmentIdStr); } catch { /* ignore */ }
+        try { db.prepare('DELETE FROM robot_messages WHERE equipment_id = ?').run(equipmentIdStr); } catch { /* ignore */ }
+      }
+      for (const s of snsToClean) {
+        db.prepare('DELETE FROM equipment_lora_cache WHERE sn = ?').run(s);
+        db.prepare('DELETE FROM device_registry WHERE sn = ?').run(s);
+        try { db.prepare('DELETE FROM signal_history WHERE sn = ?').run(s); } catch { /* ignore */ }
+        try { db.prepare('DELETE FROM device_settings WHERE sn = ?').run(s); } catch { /* ignore */ }
+        try { db.prepare('DELETE FROM rain_sessions WHERE mower_sn = ?').run(s); } catch { /* ignore */ }
+      }
+      if (mowerSn) {
+        try { db.prepare('DELETE FROM dashboard_schedules WHERE mower_sn = ?').run(mowerSn); } catch { /* ignore */ }
+      }
+      // MAPS/map_uploads/map_calibration/virtual_walls BLIJVEN INTACT.
+    });
+    tx();
+    console.log(`[BAN] Full cascade delete voor ${sn} (equip=${equipmentIdStr}, SNs=[${snsToClean.join(',')}]) — maps preserved`);
+  } catch (e) {
+    console.log(`[BAN] Cascade error for ${sn}: ${e}`);
+  }
+
+  // 2. Voeg toe aan in-memory ban list + force-disconnect eventuele actieve sessie
+  banishSn(sn, durationMs);
+
+  res.json({ ok: true, sn, banExpiresInMs: durationMs });
+});
+
+// POST /api/admin-status/unbanish-device — release a banned SN early so het
+// device weer normaal mag connecten. Zonder call expired de ban automatisch
+// na de durationMs van banish-device.
+adminStatusRouter.post('/unbanish-device', (_req: AuthRequest, res: Response) => {
+  const { sn } = _req.body as { sn?: string };
+  if (!sn) { res.status(400).json({ error: 'sn required' }); return; }
+  unbanSn(sn);
+  res.json({ ok: true, sn });
+});
+
+// GET /api/admin-status/banned-devices — lijst van actieve bans voor UI.
+adminStatusRouter.get('/banned-devices', (_req: AuthRequest, res: Response) => {
+  res.json({ banned: listBannedSns() });
+});
+
 // POST /api/admin-status/unbind-device — remove user_id from equipment (keep device)
 adminStatusRouter.post('/unbind-device', (_req: AuthRequest, res: Response) => {
   const { sn } = _req.body as { sn?: string };
@@ -158,6 +291,25 @@ adminStatusRouter.post('/set-active-device', (_req: AuthRequest, res: Response) 
     }
   }
   console.log('[Admin] Active device set to ' + sn);
+  res.json({ ok: true });
+});
+
+// POST /api/admin-status/deactivate-device — clear is_active for a specific
+// mower (of alle als geen sn wordt meegegeven). Gebruikt door de dashboard
+// "Deactivate" knop naast een active mower zodat de user een actieve
+// mower expliciet kan uitzetten zonder direct een andere te activeren.
+adminStatusRouter.post('/deactivate-device', (_req: AuthRequest, res: Response) => {
+  const { sn } = _req.body as { sn?: string };
+  if (sn) {
+    const eq = equipmentRepo.findBySn(sn);
+    if (eq) {
+      db.prepare('UPDATE equipment SET is_active = 0 WHERE equipment_id = ?').run(eq.equipment_id);
+      console.log('[Admin] Deactivated device ' + sn + ' (equipment ' + eq.equipment_id + ')');
+    }
+  } else {
+    db.exec('UPDATE equipment SET is_active = 0');
+    console.log('[Admin] Deactivated ALL devices');
+  }
   res.json({ ok: true });
 });
 

@@ -288,11 +288,17 @@ dashboardRouter.post('/bind-device', async (req: Request, res: Response) => {
           const mowerSn = isCharger ? peerSn : sn;
           equipmentRepo.updateChargerSn(mowerEqId, chargerSn);
           equipmentRepo.deleteById(chargerEqId);
-          // Sync LoRa cache — mower channel = charger channel - 1
+          // Sync LoRa cache — mower krijgt IDENTIEKE addr+channel als charger.
+          // De oude "mower = charger.channel - 1" regel is aantoonbaar onjuist
+          // (bewezen 22 apr 2026, working-lora-pair: beide devices op addr=718
+          // ch=17). Mower en charger zitten op HETZELFDE LoRa-paar.
           const loraData = equipmentRepo.getLoraCache(chargerSn);
           if (loraData?.charger_address) {
-            const mowerChannel = String(Number(loraData.charger_channel ?? 16) - 1);
-            equipmentRepo.setLoraCache(mowerSn, loraData.charger_address, mowerChannel);
+            equipmentRepo.setLoraCache(
+              mowerSn,
+              loraData.charger_address,
+              loraData.charger_channel ?? '16',
+            );
           }
           console.log(`[dashboard] bind-device: auto-paired ${mowerSn} + ${chargerSn}`);
         }
@@ -2834,6 +2840,9 @@ dashboardRouter.post('/ota/trigger/:sn', (req: Request, res: Response) => {
 // ── LoRa address allocation ──────────────────────────────────────
 
 // GET /api/dashboard/lora/next-address — get next free LoRa address for a new charger
+// (Legacy: type-agnostic next free addr. Blijft staan voor bestaande callers,
+// maar nieuwe code zou /lora/resolve?type=... moeten gebruiken voor pair-aware
+// auto-assign.)
 dashboardRouter.get('/lora/next-address', (_req: Request, res: Response) => {
   const usedAddresses = new Set(equipmentRepo.listUsedLoraAddresses());
   // Start at 718 (Novabot default), find next unused
@@ -2843,6 +2852,230 @@ dashboardRouter.get('/lora/next-address', (_req: Request, res: Response) => {
   }
 
   res.json({ address: nextAddr, channel: 16, hc: 20, lc: 14 });
+});
+
+// GET /api/dashboard/lora/resolve?type=charger|mower — authoritative address
+// resolution voor provisioning, pair-aware per user-spec 2026-04-21
+// (bijgewerkt 22 apr 2026):
+//
+//   CHARGER: address = max(bestaande charger addrs) + 1 (start 718 als leeg),
+//            channel = default 16
+//   MOWER:   zoek "orphan" charger (charger in cache zonder gepaarde mower op
+//            hetzelfde addr). address = orphan.addr, channel = orphan.channel
+//            (zelfde addr EN zelfde channel — live geverifieerd 22 apr 2026:
+//            beide devices op addr=718 ch=17, werkend RTK-paar).
+//            Als geen orphan: address = max(bestaande mower addrs) + 1,
+//            channel = 16 (zelfde default als charger).
+//
+// Returns { ok, address, channel, hc, lc, basis } waarbij `basis` uitlegt welke
+// regel getriggerd is — handig voor UI weergave en debugging.
+dashboardRouter.get('/lora/resolve', (req: Request, res: Response) => {
+  const type = String(req.query.type ?? '').toLowerCase();
+  if (type !== 'charger' && type !== 'mower') {
+    res.status(400).json({ ok: false, error: 'type=charger|mower required' });
+    return;
+  }
+
+  // Categorize cache entries by SN prefix. Entries met "CHARGER_PILE" of
+  // andere generieke BLE-namen worden genegeerd (vervuiling door iOS anon-UUID
+  // registraties, zie ble-provisioning-facts.md).
+  //
+  // KRITIEK — de cache bevat historisch ook "ghost" rijen van devices die
+  // nooit meer online komen (zoals test-mowers uit oude cloud imports).
+  // Zonder die eruit te filteren zou een orphan charger niet als orphan
+  // gezien worden als er een ghost-mower aan dezelfde addr "gepaird"
+  // bleef. Vandaar: alleen mower-rijen meetellen die ook echt bestaan
+  // (bound aan een user in de equipment tabel, OF recent online gezien
+  // via MQTT). Dit matcht het `/device-sets` filter (seenSns || boundSns).
+  //
+  // PENDING_CHARGER_* / PENDING_MOWER_* tellen ook mee — anders zouden
+  // parallelle provisionings dezelfde addr krijgen.
+  const cache = equipmentRepo.listLoraCache();
+  const toRow = (r: { sn: string; charger_address: string | null; charger_channel: string | null }) => ({
+    sn: r.sn,
+    addr: r.charger_address != null ? Number(r.charger_address) : NaN,
+    channel: r.charger_channel != null ? Number(r.charger_channel) : NaN,
+  });
+
+  // Actieve-SN set: bound aan een user OF recent online via MQTT.
+  const activeSns = new Set<string>();
+  for (const eq of equipmentRepo.listBoundSnForExistingUsers()) {
+    if (eq.mower_sn) activeSns.add(eq.mower_sn);
+    if (eq.charger_sn) activeSns.add(eq.charger_sn);
+  }
+  try {
+    for (const row of deviceRepo.listLatestBySn()) {
+      if (row.sn) activeSns.add(row.sn);
+    }
+  } catch { /* ignore */ }
+
+  const isActiveOrPending = (sn: string, typePrefix: 'LFIC' | 'LFIN', pendingType: 'CHARGER' | 'MOWER'): boolean => {
+    if (sn.startsWith(`PENDING_${pendingType}_`)) return true;
+    if (!sn.startsWith(typePrefix)) return false;
+    return activeSns.has(sn);
+  };
+
+  const chargerRows = cache
+    .filter((r: { sn: string }) => isActiveOrPending(r.sn, 'LFIC', 'CHARGER'))
+    .map(toRow)
+    .filter((r: { addr: number }) => Number.isFinite(r.addr));
+  const mowerRows = cache
+    .filter((r: { sn: string }) => isActiveOrPending(r.sn, 'LFIN', 'MOWER'))
+    .map(toRow)
+    .filter((r: { addr: number }) => Number.isFinite(r.addr));
+
+  // Helper om na resolve ook direct een PENDING row in de cache te zetten,
+  // zodat (a) volgende /lora/resolve calls dezelfde addr niet opnieuw geven
+  // en (b) we later de row promoten naar de echte SN zodra het device
+  // voor het eerst online komt via MQTT. De "claim" logic zit in broker.ts
+  // `authenticate` → `onlineBySn.add`. Een onclaimed pending wordt na 10
+  // min opgeruimd door de sweeper hieronder.
+  const reservePending = (typeUpper: 'CHARGER' | 'MOWER', addr: number, ch: number): string => {
+    const pendingSn = `PENDING_${typeUpper}_${Date.now()}_${addr}`;
+    try {
+      equipmentRepo.setLoraCache(pendingSn, String(addr), String(ch));
+    } catch (e) {
+      console.log(`[LORA] Could not reserve pending ${pendingSn}: ${e}`);
+    }
+    return pendingSn;
+  };
+
+  if (type === 'charger') {
+    const usedChargerAddrs = new Set(chargerRows.map(r => r.addr));
+    let addr = 718;
+    while (usedChargerAddrs.has(addr)) addr++;
+    const basis = chargerRows.length === 0 ? 'first-charger' : 'charger-incremented';
+    const pendingSn = reservePending('CHARGER', addr, 16);
+    res.json({ ok: true, address: addr, channel: 16, hc: 20, lc: 14, basis, pendingSn });
+    return;
+  }
+
+  // type === 'mower'
+  // Orphan charger = charger zonder pair (geen mower-rij met hetzelfde addr)
+  const mowerAddrs = new Set(mowerRows.map(r => r.addr));
+  const orphanCharger = chargerRows.find(c => !mowerAddrs.has(c.addr));
+
+  if (orphanCharger) {
+    const addr = orphanCharger.addr;
+    // Mower krijgt HETZELFDE channel als de charger (niet channel-1, zie boven).
+    const ch = Number.isFinite(orphanCharger.channel) ? orphanCharger.channel : 16;
+    const pendingSn = reservePending('MOWER', addr, ch);
+    res.json({
+      ok: true, address: addr, channel: ch, hc: 20, lc: 14,
+      basis: `paired-with-orphan-${orphanCharger.sn}`,
+      pendingSn,
+    });
+    return;
+  }
+
+  // Geen orphan charger → neem hoogste mower addr + 1, channel default 16
+  // (zelfde als charger default, mower+charger staan altijd op identiek paar).
+  const maxMowerAddr = mowerRows.length > 0 ? Math.max(...mowerRows.map(r => r.addr)) : 717;
+  const addr = maxMowerAddr + 1;
+  const pendingSn = reservePending('MOWER', addr, 16);
+  res.json({
+    ok: true, address: addr, channel: 16, hc: 20, lc: 14,
+    basis: mowerRows.length === 0 ? 'first-mower' : 'mower-incremented-no-orphan',
+    pendingSn,
+  });
+});
+
+// GET /api/dashboard/lora/pending — list unclaimed pending reservations.
+// Gebruikt door de dashboard "Provisioning pending" sectie zodat users
+// direct na een BLE-provisioning zien dat hun maaier gereserveerd is in
+// de DB, zelfs voordat het device voor het eerst online komt. Auto-cleanup
+// na 10 min via de sweeper hieronder.
+dashboardRouter.get('/lora/pending', (_req: Request, res: Response) => {
+  try {
+    const cache = equipmentRepo.listLoraCache();
+    const now = Date.now();
+    const pending = cache
+      .filter((r: { sn: string }) => r.sn.startsWith('PENDING_'))
+      .map((r: { sn: string; charger_address: string | null; charger_channel: string | null }) => {
+        const parts = r.sn.split('_');
+        const typeUpper = parts[1] ?? 'UNKNOWN';
+        const tsMs = parts.length >= 3 ? parseInt(parts[2], 10) : 0;
+        const ageSeconds = Number.isFinite(tsMs) ? Math.floor((now - tsMs) / 1000) : null;
+        return {
+          pendingSn: r.sn,
+          type: typeUpper.toLowerCase(),
+          address: r.charger_address != null ? Number(r.charger_address) : null,
+          channel: r.charger_channel != null ? Number(r.charger_channel) : null,
+          createdAt: Number.isFinite(tsMs) ? new Date(tsMs).toISOString() : null,
+          ageSeconds,
+        };
+      })
+      .sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''));
+    res.json({ ok: true, pending });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e) });
+  }
+});
+
+// DELETE /api/dashboard/lora/pending/:pendingSn — cancel een pending
+// provisioning handmatig (user klikt Cancel op de dashboard card als hij
+// doorheeft dat de mower nooit online komt).
+dashboardRouter.delete('/lora/pending/:pendingSn', (req: Request, res: Response) => {
+  const { pendingSn } = req.params;
+  if (!pendingSn.startsWith('PENDING_')) {
+    res.status(400).json({ ok: false, error: 'only PENDING_* sns allowed' });
+    return;
+  }
+  equipmentRepo.deleteLoraCache(pendingSn);
+  console.log(`[LORA] Manual cancel pending ${pendingSn}`);
+  res.json({ ok: true });
+});
+
+// Pending cleanup sweeper — ruim placeholders ouder dan 10 min op. Als
+// een provisioning-sessie is afgebroken of het device nooit online komt,
+// moet z'n LoRa-reservering na een redelijke tijd teruggeven worden.
+setInterval(() => {
+  try {
+    const cache = equipmentRepo.listLoraCache();
+    const now = Date.now();
+    for (const row of cache as Array<{ sn: string }>) {
+      if (!row.sn.startsWith('PENDING_')) continue;
+      const parts = row.sn.split('_');
+      const tsMs = parts.length >= 3 ? parseInt(parts[2], 10) : 0;
+      if (!Number.isFinite(tsMs)) continue;
+      if (now - tsMs > 10 * 60 * 1000) {
+        console.log(`[LORA] Cleanup pending ${row.sn} (age > 10 min)`);
+        equipmentRepo.deleteLoraCache(row.sn);
+      }
+    }
+  } catch { /* ignore */ }
+}, 60_000);
+
+// GET /api/dashboard/lora/check?addr=718&channel=16 — check whether a given
+// LoRa addr/channel is already in use. Returns the SNs of conflicting devices.
+// Gebruikt door de provisioning-UI om een waarschuwing te tonen voordat de
+// user een address kiest dat al op een bestaand apparaat draait (observed
+// 2026-04-21: accidentally re-provisioned test mower to a conflicting addr
+// because BLE scan showed anonymized iOS UUIDs instead of MAC/SN).
+dashboardRouter.get('/lora/check', (req: Request, res: Response) => {
+  const addr = parseInt(String(req.query.addr ?? ''), 10);
+  const channel = req.query.channel != null
+    ? parseInt(String(req.query.channel), 10)
+    : null;
+  if (!Number.isFinite(addr) || addr < 0) {
+    res.status(400).json({ ok: false, error: 'addr required' });
+    return;
+  }
+  const rows = equipmentRepo.listLoraCache()
+    .filter((r: { sn: string }) => !r.sn.startsWith('PENDING_')) // placeholders niet in user-facing conflict lijst
+    .filter((r: { charger_address: number | null | string; charger_channel: number | null | string; sn: string }) => {
+      const rowAddr = r.charger_address != null ? Number(r.charger_address) : null;
+      const rowCh = r.charger_channel != null ? Number(r.charger_channel) : null;
+      if (rowAddr !== addr) return false;
+      if (channel != null && rowCh != null && rowCh !== channel) return false;
+      return true;
+    })
+    .map((r: { sn: string; charger_address: number | null | string; charger_channel: number | null | string }) => ({
+      sn: r.sn,
+      addr: r.charger_address != null ? Number(r.charger_address) : null,
+      channel: r.charger_channel != null ? Number(r.charger_channel) : null,
+    }));
+  res.json({ ok: true, conflicts: rows, inUse: rows.length > 0 });
 });
 
 // GET /api/dashboard/device-sets — group devices into charger↔mower sets based on LoRa address

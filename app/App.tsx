@@ -187,7 +187,11 @@ function MainTabs({ onLogout, onGoToProvision }: { onLogout: () => void; onGoToP
       {/* Settings — always last, reset nested stack to root on tab press */}
       <Tab.Screen
         name="AppSettings"
-        options={{ tabBarLabel: t('tabSettings'), unmountOnBlur: true }}
+        // `unmountOnBlur` was removed from BottomTabNavigationOptions in v7.
+        // The same effect is achieved here via the tabPress listener below,
+        // which always resets the nested stack back to SettingsMain when the
+        // user taps the tab.
+        options={{ tabBarLabel: t('tabSettings') }}
         listeners={({ navigation }) => ({
           tabPress: () => {
             (navigation as any).navigate('AppSettings', { screen: 'SettingsMain' });

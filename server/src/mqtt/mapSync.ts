@@ -18,6 +18,7 @@ import { mapRepo, equipmentRepo, userRepo, deviceRepo } from '../db/repositories
 import { emitDeviceBound, emitDevicePaired } from '../dashboard/socketHandler.js';
 import { gpsToLocal, type GpsPoint, type LocalPoint } from './mapConverter.js';
 import { tryDecrypt } from './decrypt.js';
+import { isSnBanned } from './broker.js';
 
 const TAG = '[MAP-SYNC]';
 
@@ -183,6 +184,77 @@ export function publishToDevice(sn: string, command: Record<string, unknown>): v
   });
 }
 
+// ── Pending-response resolvers ───────────────────────────────────────────────
+// Koppelt MQTT *_respond berichten aan blocking-wait callers (awaitCommand).
+// Key: `${sn}|${respondType}` waarbij respondType bijv. "get_signal_info_respond".
+type PendingResolver = (data: unknown) => void;
+const pendingResolvers = new Map<string, PendingResolver[]>();
+
+/**
+ * Wordt aangeroepen door broker.ts zodra een *_respond bericht van een device
+ * binnenkomt. Alle wachtende `awaitCommand` callers voor dit (sn, respondType)
+ * worden one-shot opgelost.
+ */
+export function notifyRespond(sn: string, respondType: string, data: unknown): void {
+  const key = `${sn}|${respondType}`;
+  const resolvers = pendingResolvers.get(key);
+  if (!resolvers || resolvers.length === 0) return;
+  pendingResolvers.delete(key);
+  for (const resolver of resolvers) {
+    try { resolver(data); } catch (err) { console.error(`${TAG} Pending resolver throw:`, err); }
+  }
+}
+
+/**
+ * Stuur een MQTT command naar een device en wacht op het bijbehorende _respond.
+ * Voorbeeld:
+ *   const { channel, addr } = await awaitCommand(sn, 'get_lora_info', null, 5000);
+ *
+ * @param sn        Doelapparaat SN (LFIN... of LFIC...)
+ * @param command   Command naam zonder `_respond`, bijv. "get_signal_info"
+ * @param payload   JSON payload (of null voor commands zonder args)
+ * @param timeoutMs Max wachttijd (default 5000)
+ * @returns         De inhoud van het `_respond` bericht (maaier-stijl: direct de waarde; charger-stijl: de `message` property)
+ */
+export function awaitCommand(
+  sn: string,
+  command: string,
+  payload: unknown = null,
+  timeoutMs = 5000,
+): Promise<unknown> {
+  const respondType = `${command}_respond`;
+  const key = `${sn}|${respondType}`;
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      // Probeer resolver te verwijderen
+      const list = pendingResolvers.get(key);
+      if (list) {
+        const idx = list.indexOf(resolver);
+        if (idx >= 0) list.splice(idx, 1);
+        if (list.length === 0) pendingResolvers.delete(key);
+      }
+      reject(new Error(`Timeout na ${timeoutMs}ms wachtend op ${respondType} van ${sn}`));
+    }, timeoutMs);
+
+    const resolver: PendingResolver = (data) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(data);
+    };
+
+    const existing = pendingResolvers.get(key) ?? [];
+    existing.push(resolver);
+    pendingResolvers.set(key, existing);
+
+    publishToDevice(sn, { [command]: payload });
+  });
+}
+
 /**
  * Publiceer een onversleuteld JSON bericht naar een willekeurig MQTT topic.
  * Gebruikt voor custom bridge-scripts op de maaier (bijv. led_bridge.py).
@@ -298,15 +370,37 @@ function preserveFieldsOnMerge(source: Record<string, unknown>, target: Record<s
 }
 
 function autoBindDevice(sn: string, attempt = 0): void {
+  // Respect ban list — als user "Delete + Banish" heeft gedaan, mag de
+  // auto-bind sweep dit device NIET opnieuw binden. Anders verlies je de
+  // "banned" state binnen 30s en blijft de Novabot app "device is bound"
+  // error geven bij re-provisioning (bewezen 2026-04-22).
+  if (isSnBanned(sn)) {
+    return;
+  }
+
   const existing = equipmentRepo.findBySn(sn);
   if (existing?.user_id) {
     // Al gebonden — maar check of dit device gepaird kan worden met een ander device.
     // Scenario: cloud import maakt mower record (charger_sn=NULL), charger auto-bindt apart.
     // Als er een incompleet record is, merge ze.
+    //
+    // CRITICAL: nooit een record samenvoegen dat al zelf compleet is (échte pair),
+    // want dan vernietigen we een werkende pairing. Observed 2026-04-21: Ramon
+    // provisioned een tweede charger → elke 30s flipte de mower heen-en-weer
+    // tussen pair A en de nieuwe eenzame charger omdat de merge-logica dacht
+    // "er is een incompleet record, vul maar aan". Alleen mergen als het
+    // bestaande record zelf ook incompleet is (placeholder of missing counterpart).
     try {
       const user = userRepo.findFirst();
       if (user) {
         const isCharger = sn.startsWith('LFIC');
+        const existingIsComplete = isCharger
+          ? (existing.mower_sn?.startsWith('LFIN') ?? false)
+          : ((existing.charger_sn?.length ?? 0) > 0 && existing.mower_sn?.startsWith('LFIN'));
+        if (existingIsComplete) {
+          // Don't touch a working pair. Log once so we see it, but no-op.
+          return;
+        }
         const incomplete = equipmentRepo.findIncompleteByUserId(user.app_user_id);
         if (incomplete && isCharger && !incomplete.charger_sn && incomplete.equipment_id !== existing.equipment_id) {
           // Mower-only record gevonden + charger heeft apart record → merge

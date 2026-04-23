@@ -60,6 +60,13 @@ export interface MapRow {
   file_name: string | null;
   file_size: number | null;
   map_type: string;
+  /**
+   * Firmware-canonical slot id: `map0`, `map1`, `map0_0_obstacle`,
+   * `map0tocharge_unicom`, etc. Gebruikt voor alle routing/filtering in
+   * `/queryEquipmentMap` — user-aliases in `map_name` volgen de firmware
+   * conventie niet en leiden anders tot missing-obstacle bugs.
+   */
+  canonical_name: string | null;
   created_at: string;
   updated_at: string;
 }

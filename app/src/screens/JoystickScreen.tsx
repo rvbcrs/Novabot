@@ -13,6 +13,7 @@ import {
   Dimensions,
   Platform,
   Alert,
+  Modal,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -103,6 +104,9 @@ export default function JoystickScreen() {
   // blade-motor commando buiten coverage tasks heeft.
   const [bladeOn, setBladeOn] = useState(false);
   const bladeOnRef = useRef(false);
+  // Modal state + last-used cutting height (user cm, 2-9, wire = cm-2)
+  const [showBladeSheet, setShowBladeSheet] = useState(false);
+  const [bladeHeight, setBladeHeight] = useState(5); // 5cm = level 3 = 60mm
   const activeRef = useRef(false);
   const lastSendRef = useRef(0);
   const speedRef = useRef(1);
@@ -166,29 +170,33 @@ export default function JoystickScreen() {
       })();
       return;
     }
-    // Turn on — explicit confirmation to prevent accidents.
-    Alert.alert(
-      t('bladeOnConfirmTitle') || 'Start blade?',
-      t('bladeOnConfirmBody') || 'This spins the cutting blade at full speed while you drive manually. Keep hands and feet clear of the mower. Auto-stops if the app closes or the mower goes offline.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Start blade',
-          style: 'destructive',
-          onPress: async () => {
-            bladeOnRef.current = true;
-            setBladeOn(true);
-            try {
-              const url = await getServerUrl();
-              if (!url) return;
-              const api = new ApiClient(url);
-              await api.sendExtended(sn, { blade_on: { speed: 3000 } });
-            } catch { /* ignore */ }
-          },
-        },
-      ],
-    );
-  }, [sn, t]);
+    // Turn on — toon de hoogte-picker modal zodat de user een maai-hoogte
+    // kiest. Blades MOETEN in cutting positie staan voor het mes fysiek
+    // kan snijden; zonder blade_height stap draait alleen de motor maar
+    // gebeurt er niks. De modal regelt de bevestiging + hoogte-keuze in
+    // één stap. Persist gekozen hoogte in state zodat volgende keer weer
+    // dezelfde default verschijnt.
+    setShowBladeSheet(true);
+  }, []);
+
+  // Start blade met gekozen hoogte. blade_on publisht naar
+  // /blade_height_set (chassis inverted index): mm = 90 − level*10,
+  // dus level = 9 − userCm. User 4cm → level 5 → 40mm physical.
+  // Default gebruiker-cm = 5 (50mm).
+  const startBladeWithHeight = useCallback((userCm: number) => {
+    setShowBladeSheet(false);
+    const level = Math.max(0, Math.min(7, 9 - userCm));
+    bladeOnRef.current = true;
+    setBladeOn(true);
+    (async () => {
+      try {
+        const url = await getServerUrl();
+        if (!url) return;
+        const api = new ApiClient(url);
+        await api.sendExtended(sn, { blade_on: { speed: 3000, height: level } });
+      } catch { /* ignore */ }
+    })();
+  }, [sn]);
 
   const sendMove = useCallback((dx: number, dy: number) => {
     if (busyWithTask) return;
@@ -502,6 +510,79 @@ export default function JoystickScreen() {
           </>
         )}
       </View>
+
+      {/* Blade height picker — geopend vanuit het ✂️ icoon in de header.
+          User kiest een maai-hoogte (2-9 cm, matcht StartMowSheet) voordat
+          het mes aangaat. Height wordt samen met speed naar de mower
+          gestuurd in één blade_on commando (blade_height_set dan
+          blade_speed_set, atomisch op server-side). */}
+      <Modal
+        visible={showBladeSheet}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowBladeSheet(false)}
+      >
+        <View style={styles.bladeSheetBackdrop}>
+          <TouchableOpacity
+            style={StyleSheet.absoluteFill}
+            activeOpacity={1}
+            onPress={() => setShowBladeSheet(false)}
+          />
+          <View style={styles.bladeSheetCard}>
+            <View style={{ alignItems: 'center', marginBottom: 8 }}>
+              <Ionicons name="warning" size={28} color={colors.red} />
+            </View>
+            <Text style={styles.bladeSheetTitle}>Start blade</Text>
+            <Text style={styles.bladeSheetSubtitle}>
+              Choose cutting height. The blades will extend and spin up —
+              keep hands and feet clear. Auto-stops if the app closes or the
+              mower goes offline.
+            </Text>
+
+            <Text style={styles.bladeSheetLabel}>Cutting height</Text>
+            <View style={styles.bladeSheetHeightRow}>
+              {[2, 3, 4, 5, 6, 7, 8, 9].map((cm) => (
+                <TouchableOpacity
+                  key={cm}
+                  style={[
+                    styles.bladeSheetHeightChip,
+                    bladeHeight === cm && styles.bladeSheetHeightChipActive,
+                  ]}
+                  onPress={() => setBladeHeight(cm)}
+                  activeOpacity={0.7}
+                >
+                  <Text
+                    style={[
+                      styles.bladeSheetHeightText,
+                      bladeHeight === cm && styles.bladeSheetHeightTextActive,
+                    ]}
+                  >
+                    {cm} cm
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 20 }}>
+              <TouchableOpacity
+                style={[styles.bladeSheetBtn, { backgroundColor: 'rgba(255,255,255,0.08)' }]}
+                onPress={() => setShowBladeSheet(false)}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.bladeSheetBtnText, { color: colors.textDim }]}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.bladeSheetBtn, { backgroundColor: colors.red }]}
+                onPress={() => startBladeWithHeight(bladeHeight)}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="cut" size={18} color={colors.white} />
+                <Text style={styles.bladeSheetBtnText}>Start blade</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </GestureHandlerRootView>
   );
 }
@@ -692,6 +773,86 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(239,68,68,0.18)',
     borderWidth: 1,
     borderColor: 'rgba(239,68,68,0.55)',
+  },
+  bladeSheetBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  bladeSheetCard: {
+    width: '100%',
+    maxWidth: 420,
+    backgroundColor: colors.card,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(239,68,68,0.35)',
+    padding: 24,
+  },
+  bladeSheetTitle: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: colors.white,
+    textAlign: 'center',
+    marginBottom: 4,
+  },
+  bladeSheetSubtitle: {
+    fontSize: 13,
+    color: colors.textDim,
+    textAlign: 'center',
+    marginBottom: 20,
+    lineHeight: 18,
+  },
+  bladeSheetLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.textMuted,
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+    marginBottom: 10,
+  },
+  bladeSheetHeightRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  bladeSheetHeightChip: {
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+    minWidth: 54,
+    alignItems: 'center',
+  },
+  bladeSheetHeightChipActive: {
+    backgroundColor: 'rgba(239,68,68,0.2)',
+    borderColor: 'rgba(239,68,68,0.7)',
+  },
+  bladeSheetHeightText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.textDim,
+    fontVariant: ['tabular-nums'],
+  },
+  bladeSheetHeightTextActive: {
+    color: colors.white,
+  },
+  bladeSheetBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 12,
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  bladeSheetBtnText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: colors.white,
   },
   bladeBanner: {
     marginTop: 8,

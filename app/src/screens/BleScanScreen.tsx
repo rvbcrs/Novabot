@@ -116,8 +116,16 @@ export default function BleScanScreen({ navigation, route }: Props) {
     });
   };
 
+  // "unknown" devices (random bluetooth troep in de buurt — Airpods, TVs,
+  // printers, "Empty Example" firmware dongles, etc.) zijn sowieso niet
+  // selecteerbaar als mower/charger. We toonden ze gedimmed "voor context"
+  // maar dat leverde pagina's vol noise op. User-spec 2026-04-21: verberg
+  // ze volledig. Matching devices (charger/mower) zie je altijd, ook als ze
+  // niet in de gevraagde mode matchen.
   const matchingDevices = devices.filter((d) => isMatchingDevice(d, deviceMode));
-  const otherDevices = devices.filter((d) => !isMatchingDevice(d, deviceMode));
+  const otherDevices = devices.filter(
+    (d) => !isMatchingDevice(d, deviceMode) && d.type !== 'unknown',
+  );
   const hasSelection = selectedIds.size > 0;
 
   const renderDevice = (item: ScannedDevice, isMatch: boolean) => {
@@ -170,7 +178,13 @@ export default function BleScanScreen({ navigation, route }: Props) {
         <Text style={styles.subtitle}>
           {scanning
             ? 'Scanning for nearby devices...'
-            : `Found ${devices.length} device${devices.length !== 1 ? 's' : ''}`}
+            : (() => {
+                const visibleCount = matchingDevices.length + otherDevices.length;
+                const hidden = devices.length - visibleCount;
+                return hidden > 0
+                  ? `Found ${visibleCount} Novabot device${visibleCount !== 1 ? 's' : ''} (${hidden} other hidden)`
+                  : `Found ${visibleCount} device${visibleCount !== 1 ? 's' : ''}`;
+              })()}
         </Text>
       </View>
 

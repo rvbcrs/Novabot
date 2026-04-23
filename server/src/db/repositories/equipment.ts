@@ -211,18 +211,19 @@ export class EquipmentRepository {
   private _setMowerAndChargerSn = db.prepare(
     'UPDATE equipment SET mower_sn = ?, charger_sn = ? WHERE equipment_id = ?'
   );
+  // mac_address velden weggelaten uit beide UPDATE statements: zie
+  // updateMacAddress(). Het equipment.mac_address veld wordt altijd via
+  // _backfillMacFromFactoryOne geüpdatet uit device_factory.
   private _updateDashboardImportCharger = db.prepare(`
     UPDATE equipment
     SET user_id = ?, charger_address = COALESCE(?, charger_address),
         charger_channel = COALESCE(?, charger_channel),
-        mac_address = COALESCE(?, mac_address),
         equipment_nick_name = COALESCE(?, equipment_nick_name)
     WHERE equipment_id = ?
   `);
   private _updateDashboardImportMower = db.prepare(`
     UPDATE equipment
     SET user_id = ?, charger_sn = COALESCE(?, charger_sn),
-        mac_address = COALESCE(?, mac_address),
         mower_version = COALESCE(?, mower_version),
         equipment_nick_name = COALESCE(?, equipment_nick_name)
     WHERE equipment_id = ?
@@ -304,6 +305,10 @@ export class EquipmentRepository {
   // ── Equipment mutations ──
 
   create(data: CreateEquipmentData): void {
+    // mac_address wordt NIET uit de caller overgenomen — zie updateMacAddress().
+    // Equipment.mac_address is altijd een mirror van device_factory[mower_sn].
+    // Oude callers die mac_address meegaven (setup.ts wizard, cloud-import)
+    // krijgen automatisch het juiste MAC via de backfill hieronder.
     this._create.run(
       data.equipment_id,
       data.user_id ?? null,
@@ -313,26 +318,23 @@ export class EquipmentRepository {
       data.equipment_type_h ?? null,
       data.charger_address ?? null,
       data.charger_channel ?? null,
-      data.mac_address ?? null,
+      null,                       // mac_address — altijd via factory-backfill
       data.mower_version ?? null,
       data.charger_version ?? null,
       data.mower_ip ?? null,
     );
-    // Ensure mower BLE MAC is set even when the caller didn't supply one
-    // (e.g. cloud returned empty list for this account). The Novabot app
-    // refuses BLE mapping without this field.
-    if (!data.mac_address && data.mower_sn) {
+    if (data.mower_sn) {
       this._backfillMacFromFactoryOne.run(data.mower_sn);
     }
   }
 
-  updateMowerSn(equipmentId: string, mowerSn: string, mac?: string): void {
-    if (mac) {
-      this._updateMowerSnWithMac.run(mowerSn, mac, equipmentId);
-    } else {
-      this._updateMowerSn.run(mowerSn, equipmentId);
-      this._backfillMacFromFactoryOne.run(mowerSn);
-    }
+  updateMowerSn(equipmentId: string, mowerSn: string, _mac?: string): void {
+    // mac-parameter wordt genegeerd: equipment.mac_address is altijd een mirror
+    // van device_factory[mower_sn].mac_address. Zie updateMacAddress() voor de
+    // reden. De backward-compatible signatuur blijft bestaan voor bestaande
+    // callers (setup.ts, mapSync.ts, adminStatus.ts, tests).
+    this._updateMowerSn.run(mowerSn, equipmentId);
+    this._backfillMacFromFactoryOne.run(mowerSn);
   }
 
   /**
@@ -373,12 +375,26 @@ export class EquipmentRepository {
     this._updateUserAndNickName.run(userId, name ?? null, equipmentId);
   }
 
-  updateMacAddress(sn: string, mac: string, onlyIfMissing = false): void {
-    if (onlyIfMissing) {
-      this._updateMacBySnIfMissing.run(mac, sn);
-    } else {
-      this._updateMacBySn.run(mac, sn);
+  /**
+   * equipment.mac_address = ALTIJD mirror van device_factory[mower_sn].mac_address.
+   *
+   * Deze functie ignoreert de aangeleverde `mac` parameter volledig en triggert
+   * een factory-backfill. Dat voorkomt dat runtime-paths (MQTT CONNECT, ARP,
+   * setup-wizard, admin API, BLE scan, etc.) zelfstandig een MAC het equipment
+   * record in schrijven. De factory-tabel is READ-ONLY en per-SN uniek, dus de
+   * enige betrouwbare bron. Historisch hebben runtime writes de charger-MAC in
+   * de mower's row laten belanden (bug 22 apr 2026).
+   *
+   * Signatuur is bewaard voor backward compatibility met bestaande callers;
+   * parameters anders dan `sn` worden genegeerd.
+   */
+  updateMacAddress(sn: string, _mac?: string, _onlyIfMissing = false): void {
+    if (!sn.startsWith('LFIN')) {
+      // equipment.mac_address is mower-only; voor charger SN's valt er niks
+      // te backfillen (geen mower_sn match).
+      return;
     }
+    this._backfillMacFromFactoryOne.run(sn);
   }
 
   updateMowerIp(mowerSn: string, ipAddress: string): number {
@@ -462,14 +478,13 @@ export class EquipmentRepository {
     userId: string,
     chargerAddress?: string | null,
     chargerChannel?: string | null,
-    macAddress?: string | null,
+    _macAddress?: string | null,    // genegeerd — zie updateMacAddress()
     nickName?: string | null,
   ): void {
     this._updateDashboardImportCharger.run(
       userId,
       chargerAddress ?? null,
       chargerChannel ?? null,
-      macAddress ?? null,
       nickName ?? null,
       equipmentId,
     );
@@ -479,18 +494,20 @@ export class EquipmentRepository {
     equipmentId: string,
     userId: string,
     chargerSn?: string | null,
-    macAddress?: string | null,
+    _macAddress?: string | null,    // genegeerd — zie updateMacAddress()
     mowerVersion?: string | null,
     nickName?: string | null,
   ): void {
     this._updateDashboardImportMower.run(
       userId,
       chargerSn ?? null,
-      macAddress ?? null,
       mowerVersion ?? null,
       nickName ?? null,
       equipmentId,
     );
+    // Backfill mac_address uit device_factory voor alle rijen die 'm nog missen.
+    // Dit is idempotent en dekt de net-ge-update rij.
+    this._backfillMacFromFactoryAll.run();
   }
 
   // ── Deletes ──

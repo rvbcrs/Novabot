@@ -263,6 +263,16 @@ export default function MapScreen() {
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
   const [actionsMenuVisible, setActionsMenuVisible] = useState(false);
+  // Small helper used by the action-sheet items: close the sheet first, then
+  // run the requested handler so the modal animates out before any dialog /
+  // navigation fires.
+  const runFromActionsMenu = useCallback((fn: () => void) => {
+    setActionsMenuVisible(false);
+    // next tick so the modal begins its close animation before work runs
+    setTimeout(() => {
+      try { fn(); } catch (err) { console.error('[MapScreen] actions menu handler error:', err); }
+    }, 0);
+  }, []);
   const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null); // null = all zones
   const [panelExpanded, setPanelExpanded] = useState(true);
   const [sheetState, setSheetState] = useState<{

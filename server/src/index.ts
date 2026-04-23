@@ -69,6 +69,13 @@ startRainMonitor();
 import { startMowerIpDiscovery } from './services/mowerIpDiscovery.js';
 startMowerIpDiscovery();
 
+// ── LoRa auto-sync — detect addr/channel drift on charger (lc→hc scan) ────
+// Polls alle ONLINE LFI* devices elke 60s via get_lora_info; broker.ts
+// schrijft dan de actuele waardes naar equipment_lora_cache. Voorkomt
+// dat UI stale data toont nadat een charger z'n channel zelf verplaatst.
+import { startLoraAutoSync } from './services/loraAutoSync.js';
+startLoraAutoSync();
+
 // ── Express app ───────────────────────────────────────────────────────────────
 const app = express();
 

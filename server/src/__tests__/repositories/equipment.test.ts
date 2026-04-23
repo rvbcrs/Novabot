@@ -190,7 +190,10 @@ describe('EquipmentRepository', () => {
       expect(equipmentRepo.findByMowerSn('LFIN0001')!.mac_address).toBeNull();
     });
 
-    it('create() preserves an explicit mac_address (no factory override)', () => {
+    it('create() factory MAC always wins over caller-supplied mac_address', () => {
+      // CLAUDE.md invariant: equipment.mac_address MUST be the mower BLE MAC
+      // from device_factory. Callers must not be able to override it — this
+      // is what prevented charger MAC leaks in older provisioning paths.
       createUser();
       seedFactory('70:4A:0E:4A:99:CF');
       equipmentRepo.create({
@@ -199,7 +202,7 @@ describe('EquipmentRepository', () => {
         mower_sn: 'LFIN0001',
         mac_address: 'EXPLICIT:MAC',
       });
-      expect(equipmentRepo.findByMowerSn('LFIN0001')!.mac_address).toBe('EXPLICIT:MAC');
+      expect(equipmentRepo.findByMowerSn('LFIN0001')!.mac_address).toBe('70:4A:0E:4A:99:CF');
     });
 
     it('backfillMissingMacsFromFactory() heals existing rows with null MAC', () => {

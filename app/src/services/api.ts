@@ -559,6 +559,64 @@ export class ApiClient {
     return this.request('GET', '/api/dashboard/lora/next-address');
   }
 
+  /** Pair-aware LoRa resolution voor provisioning (server-side truth).
+   *  Regels conform user-spec 2026-04-22 (bijgewerkt na live verificatie):
+   *  - charger: max(bestaande charger addrs) + 1, channel 16
+   *  - mower:   paart met orphan charger (IDENTIEKE addr EN channel), of
+   *             max(bestaande mower addrs) + 1 als geen orphan (channel 16).
+   *  Mower en charger zitten altijd op HETZELFDE LoRa-paar (addr+channel
+   *  identiek), bewezen 22 apr 2026 bij working-lora-pair addr=718 ch=17.
+   *  `basis` legt uit welke regel werd getriggerd (UI/debug).
+   *
+   *  Fallback: als de server nog de oude code draait (endpoint 404), val
+   *  terug op `/lora/next-address` + `listLoraCache` client-side. Zo werkt
+   *  de app ook voor users die nog niet docker-rebuilded hebben.
+   */
+  async resolveLora(type: 'charger' | 'mower'): Promise<{
+    ok: boolean;
+    address: number;
+    channel: number;
+    hc: number;
+    lc: number;
+    basis: string;
+  }> {
+    try {
+      return await this.request('GET', `/api/dashboard/lora/resolve?type=${type}`);
+    } catch (e) {
+      const msg = String((e as Error)?.message ?? e);
+      if (!msg.includes('404')) throw e;
+      // Server = oude versie → fallback via getNextLoraAddress + getDeviceSets.
+      if (type === 'charger') {
+        const resp = await this.getNextLoraAddress();
+        return { ok: true, address: resp.address, channel: resp.channel, hc: resp.hc, lc: resp.lc, basis: 'legacy-next-address' };
+      }
+      // mower: zoek paired charger via device-sets
+      try {
+        const sets = await this.getDeviceSets();
+        const orphan = sets.sets?.find(s => s.charger?.online && s.loraAddress && !s.mower);
+        if (orphan?.loraAddress) {
+          // Oude server heeft geen channel data → default ch16 (zelfde als charger).
+          return { ok: true, address: orphan.loraAddress, channel: 16, hc: 20, lc: 14, basis: 'legacy-orphan-charger' };
+        }
+      } catch { /* ignore */ }
+      // Geen orphan: gebruik next-address + ch16 (zelfde default als charger).
+      const resp = await this.getNextLoraAddress();
+      return { ok: true, address: resp.address, channel: 16, hc: 20, lc: 14, basis: 'legacy-mower-fallback' };
+    }
+  }
+
+  /** Check if a LoRa addr (+ optional channel) is already assigned. Returns
+   *  the list of devices using the same addr so the UI can warn the user
+   *  before provisioning onto a conflicting address. */
+  async checkLoraAvailability(addr: number, channel?: number): Promise<{
+    ok: boolean;
+    inUse: boolean;
+    conflicts: Array<{ sn: string; addr: number | null; channel: number | null }>;
+  }> {
+    const q = channel != null ? `?addr=${addr}&channel=${channel}` : `?addr=${addr}`;
+    return this.request('GET', `/api/dashboard/lora/check${q}`);
+  }
+
   /** Get LoRa params for a specific charger (for mower provisioning) */
   async getLoraForCharger(chargerSn: string): Promise<{ address: number; channel: number; hc: number; lc: number }> {
     return this.request('GET', `/api/dashboard/lora/for-charger/${enc(chargerSn)}`);
