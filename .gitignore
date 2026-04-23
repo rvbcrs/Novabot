@@ -26,6 +26,7 @@ research/*
 # ── Project-internal files ────────────────────────────
 CLAUDE.md
 .claude/
+.husky/_
 **/.agent/
 server/captured/
 docs/reference/

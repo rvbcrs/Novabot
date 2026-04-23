@@ -1,0 +1,12 @@
+# cloud-api contract guard
+bash server/scripts/check-cloud-api-changelog.sh
+
+# Scoped ESLint — only the files the boundary rule cares about. Pre-existing
+# lint debt elsewhere in the tree is tracked separately.
+cd server && npx eslint \
+  'src/cloud-api/**/*.ts' \
+  'src/routes/dashboard.ts' \
+  'src/routes/admin*.ts' \
+  'src/routes/setup.ts' \
+  --max-warnings=0 \
+  --no-error-on-unmatched-pattern
