@@ -141,7 +141,14 @@ function deriveMower(mower: DeviceState | null): MowerDerived | null {
   // 132 = "Data transmission loss, robot will auto continue task if received valid
   // data" — self-recovers, shown as warning only.
   // 113 = transient sensor/perception warning that also auto-recovers.
-  const NON_BLOCKING_ERRORS = [8, 113, 120, 122, 123, 124, 125, 126, 132];
+  // 118 = "Input data for coverage action is wrong, maybe file not exists!".
+  //       Firmware raises this when the map.yaml / map0.yaml files needed by
+  //       the coverage planner are missing — typically after a ZIP-restore
+  //       or when save_map type:1 never ran. The flag lingers even after
+  //       recovery, so we treat it as a soft warning and let the user try
+  //       again (retrying triggers a fresh coverage request, which clears
+  //       the flag on success).
+  const NON_BLOCKING_ERRORS = [8, 113, 118, 120, 122, 123, 124, 125, 126, 132];
   const errorStatusRaw = parseInt(s.error_status?.match(/\d+/)?.[0] ?? '0', 10);
   const hasError = Boolean(
     errorStatusRaw > 0 && !NON_BLOCKING_ERRORS.includes(errorStatusRaw),
