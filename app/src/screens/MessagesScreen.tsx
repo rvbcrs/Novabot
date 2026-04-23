@@ -13,6 +13,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors } from '../theme/colors';
 import { useMowerState } from '../hooks/useMowerState';
+import { useActiveMower } from '../hooks/useActiveMower';
 
 // Error code → human-readable message (from Novabot app mower_error_text.dart)
 const ERROR_MESSAGES: Record<string, string> = {
@@ -72,9 +73,7 @@ export default function MessagesScreen() {
   const insets = useSafeAreaInsets();
   const { devices, connected } = useMowerState();
 
-  const mower = useMemo(() => {
-    return [...devices.values()].find((d) => d.deviceType === 'mower') ?? null;
-  }, [devices]);
+  const { activeMower: mower } = useActiveMower();
 
   const charger = useMemo(() => {
     return [...devices.values()].find((d) => d.deviceType === 'charger') ?? null;

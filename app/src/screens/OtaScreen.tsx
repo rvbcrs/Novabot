@@ -19,6 +19,7 @@ import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors } from '../theme/colors';
 import { useMowerState } from '../hooks/useMowerState';
+import { useActiveMower } from '../hooks/useActiveMower';
 import { ApiClient, type OtaVersion } from '../services/api';
 import { getServerUrl } from '../services/auth';
 import { getSocket } from '../services/socket';
@@ -46,9 +47,7 @@ export default function OtaScreen() {
   const [otaProgress, setOtaProgress] = useState<Map<string, OtaProgressEntry>>(new Map());
   const targetVersionRef = useRef<Record<string, { version: string; label: string }>>({});
 
-  const mower = useMemo(() => {
-    return [...devices.values()].find((d) => d.deviceType === 'mower') ?? null;
-  }, [devices]);
+  const { activeMower: mower } = useActiveMower();
 
   const charger = useMemo(() => {
     return [...devices.values()].find((d) => d.deviceType === 'charger') ?? null;

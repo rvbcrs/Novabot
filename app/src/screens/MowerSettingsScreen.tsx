@@ -18,6 +18,7 @@ import { colors } from '../theme/colors';
 import { MowingDirectionPreview } from '../components/MowingDirectionPreview';
 import { SimpleSlider } from '../components/SimpleSlider';
 import { useMowerState } from '../hooks/useMowerState';
+import { useActiveMower } from '../hooks/useActiveMower';
 import { useHeadlightBrightness } from '../hooks/useHeadlightBrightness';
 import { getSocket } from '../services/socket';
 import { ApiClient } from '../services/api';
@@ -60,13 +61,8 @@ export default function MowerSettingsScreen() {
   const [rainProb, setRainProb] = useState(50);
   const [rainHours, setRainHours] = useState(0.5);
 
-  const mowerSn = useMemo(() => {
-    return [...devices.values()].find((d) => d.deviceType === 'mower')?.sn ?? '';
-  }, [devices]);
-
-  const mower = useMemo(() => {
-    return [...devices.values()].find((d) => d.deviceType === 'mower') ?? null;
-  }, [devices]);
+  const { activeMower: mower, activeMowerSn } = useActiveMower();
+  const mowerSn = activeMowerSn ?? '';
 
   const mowerOnline = mower?.online ?? false;
 

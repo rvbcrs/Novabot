@@ -20,6 +20,7 @@ import { getServerUrl, setServerUrl as saveServerUrl, getToken, clearToken } fro
 import { initSocket, disconnectSocket } from '../services/socket';
 import { discoverServers } from '../services/discovery';
 import { useMowerState } from '../hooks/useMowerState';
+import { useActiveMower } from '../hooks/useActiveMower';
 import { ApiClient } from '../services/api';
 import { JoystickControl } from '../components/JoystickControl';
 import { useDevMode } from '../context/DevModeContext';
@@ -52,9 +53,7 @@ export default function AppSettingsScreen({
   const experimental = useExperimental();
   const { language, setLanguage, t } = useI18n();
 
-  const mower = useMemo(() => {
-    return [...devices.values()].find((d) => d.deviceType === 'mower') ?? null;
-  }, [devices]);
+  const { activeMower: mower } = useActiveMower();
 
   const charger = useMemo(() => {
     return [...devices.values()].find((d) => d.deviceType === 'charger') ?? null;
