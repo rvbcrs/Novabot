@@ -51,6 +51,7 @@ adminStatusRouter.get('/overview', (_req: AuthRequest, res: Response) => {
   let dbSize = 0;
   try {
     const dbPath = process.env.DB_PATH || 'novabot.db';
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
     const fs = require('fs');
     const stat = fs.statSync(dbPath);
     dbSize = stat.size;
@@ -443,6 +444,7 @@ adminStatusRouter.post('/reset-password', (req: AuthRequest, res: Response) => {
   if (!userId || !newPassword) { res.status(400).json({ error: 'userId and newPassword required' }); return; }
   if (newPassword.length < 6) { res.status(400).json({ error: 'Password must be at least 6 characters' }); return; }
 
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
   const bcrypt = require('bcrypt');
   const hash = bcrypt.hashSync(newPassword, 10);
   userRepo.updatePassword(userId, hash);
@@ -496,6 +498,7 @@ adminStatusRouter.post('/dnsmasq', (req: AuthRequest, res: Response) => {
     try {
       // Write dnsmasq config
       const config = `no-resolv\nserver=${upstreamDns}\naddress=/lfibot.com/${serverIp}\nlisten-address=0.0.0.0\nbind-interfaces\nno-hosts\n`;
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
       require('fs').writeFileSync('/etc/dnsmasq.conf', config);
       // Kill existing if running, then start
       try { execSync('pkill -x dnsmasq', { stdio: 'ignore' }); } catch { /* not running */ }
@@ -555,6 +558,7 @@ adminStatusRouter.post('/import-map-zip', upload.single('file'), (req: AuthReque
       if (area.points.length < 2) continue;
 
       const mapId = uuidv4();
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const areaM2 = area.type !== 'unicom' && area.points.length >= 3
         ? polygonArea(area.points)
         : 0;

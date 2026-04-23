@@ -42,6 +42,7 @@ interface DeviceRegistryRow {
   last_seen: string | null;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 interface EquipmentRow {
   mower_sn: string;
   charger_sn: string | null;
@@ -1336,6 +1337,7 @@ dashboardRouter.post('/maps/:sn/upload-zip', async (req: Request, res: Response)
 
 // ── Map calibratie endpoints ──────────────────────────────────────
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 interface CalibrationRow {
   mower_sn: string;
   offset_lat: number;
@@ -2258,6 +2260,7 @@ dashboardRouter.post('/extended/:sn', (req: Request, res: Response) => {
 });
 
 // ── Static firmware file serving ────────────────────────────────
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 import express from 'express';
 
 const firmwareDir = process.env.FIRMWARE_PATH ?? path.resolve(__dirname, '../../firmware');
@@ -2579,6 +2582,7 @@ function extractFirmwareVersion(filePath: string): string | null {
  */
 function compareVersions(a: string, b: string): number {
   // Strip 'v' prefix en splits op . en -
+  // eslint-disable-next-line no-useless-escape
   const normalize = (v: string) => v.replace(/^v/i, '').split(/[.\-]/).map(p => {
     const n = parseInt(p, 10);
     return isNaN(n) ? p : n;
@@ -3163,6 +3167,7 @@ dashboardRouter.get('/device-sets', (_req: Request, res: Response) => {
       charger_channel: row.charger_channel != null ? Number(row.charger_channel) : null,
     }));
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const allSns = new Set(deviceRows.map(r => r.sn));
 
   // Group by LoRa address

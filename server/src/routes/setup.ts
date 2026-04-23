@@ -321,6 +321,7 @@ setupRouter.post('/cloud-apply', async (req: Request, res: Response) => {
             for (const u of unicomItems) allItems.push(u);
 
             // Helper: download CSV met retry (cloud kan traag zijn)
+            // eslint-disable-next-line no-inner-declarations
             async function downloadCsvWithRetry(url: string, headers: Record<string, string>, maxRetries = 3): Promise<string> {
               let lastErr: Error | null = null;
               for (let attempt = 1; attempt <= maxRetries; attempt++) {
@@ -565,6 +566,7 @@ setupRouter.get('/devices', (_req, res) => {
 
 setupRouter.get('/profile', async (_req, res) => {
   const fs = await import('fs');
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const path = await import('path');
   const crypto = await import('crypto');
 
