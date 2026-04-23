@@ -107,19 +107,21 @@ export const cloudEquipmentDtoSchema = z.object({
 export type CloudEquipmentDto = z.infer<typeof cloudEquipmentDtoSchema>;
 
 export function rowToCloudDto(row: EquipmentRow, email: string): CloudEquipmentDto {
-  const isCharger = /* derive from row */;
+  // Semantics preserved from the existing implementation in
+  // server/src/routes/nova-user/equipment.ts — this migration is organisational
+  // only. The explicit field list is the contract; logic stays as-is.
   return {
-    sn: row.mower_sn,
-    deviceType: isCharger ? 'charger' : 'mower',
-    userId: row.user_id ? 0 : 0,  // preserve existing semantics
-    chargerAddress: isCharger ? (row.charger_address ? Number(row.charger_address) : 718) : null,
-    chargerChannel: isCharger ? (row.charger_channel ? Number(row.charger_channel) : 16) : null,
-    macAddress: row.mac_address ?? null,
-    sysVersion: isCharger ? row.charger_version : row.mower_version,
-    account: isCharger ? 'li9hep19' : null,
-    password: isCharger ? 'jzd4wac6' : null,
+    sn: /* existing logic */,
+    deviceType: /* existing logic */,
+    userId: /* existing logic */,
+    chargerAddress: /* existing logic */,
+    chargerChannel: /* existing logic */,
+    macAddress: /* existing logic */,
+    sysVersion: /* existing logic */,
+    account: /* existing logic */,
+    password: /* existing logic */,
     equipmentId: row.equipment_id,
-    // … etc
+    // … every other field on the DTO, explicitly
   };
 }
 ```
