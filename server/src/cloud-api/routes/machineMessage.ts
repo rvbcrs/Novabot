@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { equipmentRepo, messageRepo } from '../../db/repositories/index.js';
-import { ok, fail } from '../../types/index.js';
+import { ok } from '../../types/index.js';
 
 export const machineMessageRouter = Router();
 

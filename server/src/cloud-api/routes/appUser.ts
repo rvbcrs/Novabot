@@ -5,7 +5,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { userRepo, equipmentRepo } from '../../db/repositories/index.js';
 import { authMiddleware, signToken } from '../../middleware/auth.js';
 import { AuthRequest, ok, fail, UserRow } from '../../types/index.js';
-import { callLfiCloud, encryptCloudPassword } from '../setup.js';
+import { callLfiCloud, encryptCloudPassword } from '../../services/lfiCloud.js';
 
 // De Novabot app versleutelt wachtwoorden met AES-128-CBC voor verzending.
 // key = IV = "1234123412ABCDEF" (16 bytes), output = base64

@@ -15,78 +15,24 @@
 
 import { Router, Request, Response } from 'express';
 import https from 'https';
-import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { userRepo, equipmentRepo, deviceRepo, mapRepo } from '../db/repositories/index.js';
 import { isSetupComplete, invalidateSetupCache } from '../middleware/setupGuard.js';
+// LFI cloud helpers were extracted to `src/services/lfiCloud.ts` on 2026-04-23
+// so cloud-api routes can import them without reaching into `routes/setup.ts`
+// (the cloud-api freeze forbids that direction). Re-export here so existing
+// external callers (none today, but kept for safety) keep working.
+import {
+  callLfiCloud,
+  encryptCloudPassword,
+  makeLfiHeaders,
+  LFI_CLOUD_HOST,
+  LFI_CLOUD_SERVERNAME,
+} from '../services/lfiCloud.js';
+export { callLfiCloud, encryptCloudPassword };
 
 export const setupRouter = Router();
-
-// ── LFI Cloud API helpers (copied from bootstrap/src/server.ts) ──────────────
-// These are proven working — do NOT modify without testing against the real cloud.
-
-const LFI_CLOUD_HOST = '47.253.145.99';
-const LFI_CLOUD_SERVERNAME = 'app.lfibot.com';
-const APP_PW_KEY_IV = Buffer.from('1234123412ABCDEF', 'utf8');
-
-export function encryptCloudPassword(plainPassword: string): string {
-  const cipher = crypto.createCipheriv('aes-128-cbc', APP_PW_KEY_IV, APP_PW_KEY_IV);
-  let encrypted = cipher.update(plainPassword, 'utf8', 'base64');
-  encrypted += cipher.final('base64');
-  return encrypted;
-}
-
-function makeLfiHeaders(token: string): Record<string, string> {
-  const echostr = 'p' + crypto.randomBytes(6).toString('hex');
-  const ts = String(Date.now());
-  const nonce = crypto.createHash('sha1').update('qtzUser', 'utf8').digest('hex');
-  const sig = crypto.createHash('sha256')
-    .update(echostr + nonce + ts + token, 'utf8').digest('hex');
-  return {
-    'Host': 'app.lfibot.com',
-    'Authorization': token,
-    'Content-Type': 'application/json;charset=UTF-8',
-    'source': 'app',
-    'userlanguage': 'en',
-    'echostr': echostr,
-    'nonce': nonce,
-    'timestamp': ts,
-    'signature': sig,
-  };
-}
-
-export function callLfiCloud(
-  method: string, urlPath: string,
-  body: Record<string, unknown> | null, token = ''
-): Promise<Record<string, unknown>> {
-  return new Promise((resolve, reject) => {
-    const bodyStr = body ? JSON.stringify(body) : '';
-    const headers: Record<string, string> = {
-      ...makeLfiHeaders(token),
-      ...(bodyStr ? { 'Content-Length': String(Buffer.byteLength(bodyStr)) } : {}),
-    };
-    const opts: https.RequestOptions = {
-      hostname: LFI_CLOUD_HOST,
-      path: urlPath,
-      method,
-      headers,
-      rejectUnauthorized: false,
-    };
-    const req = https.request(opts, (res) => {
-      let data = '';
-      res.on('data', (chunk: string) => { data += chunk; });
-      res.on('end', () => {
-        try { resolve(JSON.parse(data)); }
-        catch { reject(new Error(`Cloud API invalid JSON: ${data.slice(0, 200)}`)); }
-      });
-    });
-    req.on('error', reject);
-    req.setTimeout(15000, () => { req.destroy(); reject(new Error('Cloud API timeout')); });
-    if (bodyStr) req.write(bodyStr);
-    req.end();
-  });
-}
 
 // ── GET /status ──────────────────────────────────────────────────────────────
 

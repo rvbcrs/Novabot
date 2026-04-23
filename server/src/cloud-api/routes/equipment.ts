@@ -3,15 +3,23 @@ import { v4 as uuidv4 } from 'uuid';
 import { equipmentRepo, userRepo, deviceRepo } from '../../db/repositories/index.js';
 import { authMiddleware } from '../../middleware/auth.js';
 import { AuthRequest, ok, fail, EquipmentRow } from '../../types/index.js';
-import { lookupMac, isDeviceOnline, forceDisconnectDevice, banishSn } from '../../mqtt/broker.js';
+import { lookupMac, isDeviceOnline, forceDisconnectDevice } from '../../mqtt/broker.js';
 import { db } from '../../db/database.js';
 import { getBleMacForType } from '../../ble/bleLogger.js';
 import { deviceCache } from '../../mqtt/sensorData.js';
 import { forwardToDashboard } from '../../dashboard/socketHandler.js';
+// rowToCloudDto lives in the cloud-api serializer as of 2026-04-23 (Task 9).
+// Behaviour is identical — same defaults, same conditionals, same sentinels.
+// The function was previously defined locally in this file; the local copy has
+// been removed in favour of the shared, frozen serializer implementation.
+import { rowToCloudDto } from '../serializers/equipmentDto.js';
 
 export const equipmentRouter = Router();
 
-// MQTT credentials die de cloud teruggeeft — charger gebruikt deze om te verbinden met de broker
+// MQTT credentials die de cloud teruggeeft — charger gebruikt deze om te
+// verbinden met de broker. Nog steeds lokaal nodig voor de "unknown device"
+// fallback-branch in getEquipmentBySN (zie onder). De serializer heeft z'n
+// eigen private kopie voor row-to-DTO conversie.
 const MQTT_ACCOUNT  = 'li9hep19';
 const MQTT_PASSWORD = 'jzd4wac6';
 
@@ -23,40 +31,6 @@ function snToEquipmentType(sn: string): string {
 function snToDeviceType(sn: string): string {
   // LFIC = charger, LFIN = mower
   return sn.startsWith('LFIC') ? 'charger' : 'mower';
-}
-
-// Bouw een response-object dat exact overeenkomt met de echte cloud
-function rowToCloudDto(r: EquipmentRow, email: string) {
-  // mower_sn is altijd de primaire key (ook bij charger-only binding waar charger SN in mower_sn staat)
-  const sn = r.mower_sn;
-  const deviceType = snToDeviceType(sn);
-  const isCharger = deviceType === 'charger';
-  // Cloud retourneert mower firmware voor mowers (v6.0.0/v5.7.1), charger firmware voor chargers (v0.3.6)
-  const sysVersion = isCharger
-    ? (r.charger_version ?? 'v0.3.6')
-    : (r.mower_version ?? 'v5.7.1');
-  return {
-    equipmentId:       r.id ?? 1,
-    email:             email,
-    deviceType:        deviceType,
-    sn:                sn,
-    equipmentCode:     sn,
-    equipmentName:     sn,
-    equipmentNickName: r.equipment_nick_name ?? '',
-    equipmentType:     snToEquipmentType(sn),
-    userId:            0,
-    sysVersion:        sysVersion,
-    period:            isCharger ? '2029-02-22 00:00:00' : '2026-11-16 00:00:00',
-    status:            1,
-    activationTime:    r.created_at ?? new Date().toISOString().replace('T', ' ').slice(0, 19),
-    importTime:        r.created_at ?? new Date().toISOString().replace('T', ' ').slice(0, 19),
-    batteryState:      null,
-    macAddress:        r.mac_address ?? null,
-    chargerAddress:    isCharger ? (r.charger_address ? Number(r.charger_address) : 718) : null,
-    chargerChannel:    isCharger ? (r.charger_channel ? Number(r.charger_channel) : 16) : null,
-    account:           isCharger ? MQTT_ACCOUNT : null,
-    password:          isCharger ? MQTT_PASSWORD : null,
-  };
 }
 
 // POST /api/nova-user/equipment/userEquipmentList
@@ -371,7 +345,7 @@ equipmentRouter.post('/bindingEquipment', authMiddleware, (req: AuthRequest, res
   const body = req.body as Record<string, string | undefined>;
   const mowerSn        = body.mowerSn;
   const chargerSn      = body.chargerSn;
-  const equipmentTypeH = body.equipmentTypeH;
+  const _equipmentTypeH = body.equipmentTypeH;
   // App stuurt 'userCustomDeviceName'; accepteer ook legacy 'equipmentNickName'
   const nickName       = body.userCustomDeviceName ?? body.equipmentNickName ?? null;
   // chargerChannel wordt gestuurd als het toegewezen LoRa kanaal (uit set_lora_info_respond.value)

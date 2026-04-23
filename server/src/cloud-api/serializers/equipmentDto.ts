@@ -21,7 +21,13 @@
  *   - password: charger → 'jzd4wac6', mower → null
  */
 import { z } from 'zod';
-import type { EquipmentRow } from '../../db/repositories/equipment.js';
+// Use the shared `EquipmentRow` from `types/index.ts` — this is the shape the
+// original local `rowToCloudDto` in `nova-user/equipment.ts` accepted before
+// the Task 9 move. The `db/repositories/equipment.ts` interface is stricter
+// (adds `mower_ip`, `user_id: string | null`) and would reject callers that
+// still use the `types/index.ts` shape. Keeping the loose `types/index.ts`
+// import preserves behaviour 1:1.
+import type { EquipmentRow } from '../../types/index.js';
 
 // MQTT credentials die de cloud teruggeeft — charger gebruikt deze om te
 // verbinden met de broker. Gekopieerd uit `nova-user/equipment.ts`.

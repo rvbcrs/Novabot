@@ -66,7 +66,7 @@ cutGrassPlanRouter.get('/queryCutGrassPlan', authMiddleware, (req: AuthRequest, 
   res.json(ok((rows as PlanRow[]).map(rowToDto)));
 });
 cutGrassPlanRouter.post('/queryCutGrassPlan', authMiddleware, (req: AuthRequest, res: Response) => {
-  const { equipmentId, sn } = req.body as { equipmentId?: string; sn?: string };
+  const { equipmentId, sn: _sn } = req.body as { equipmentId?: string; sn?: string };
   const rows = equipmentId
     ? cutGrassPlanRepo.findByEquipmentAndUser(equipmentId, req.userId!)
     : cutGrassPlanRepo.findByUser(req.userId!);

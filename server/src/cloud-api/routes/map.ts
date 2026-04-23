@@ -72,7 +72,7 @@ function generateCsvFromDb(sn: string, fileName: string): string | null {
   }
 }
 
-function rowToDto(r: MapRow) {
+function _rowToDto(r: MapRow) {
   return {
     mapId: r.map_id,
     mowerSn: r.mower_sn,
@@ -86,7 +86,7 @@ function rowToDto(r: MapRow) {
 }
 
 /** Derive CSV filename from DB map_name. Cloud import stores "map0_work", mower uploads store full filename. */
-function csvFileName(mapName: string | null | undefined, fallback: string): string {
+function _csvFileName(mapName: string | null | undefined, fallback: string): string {
   if (!mapName) return fallback + '.csv';
   // If map_name already ends with .csv, use as-is
   if (mapName.endsWith('.csv')) return mapName;

@@ -2,6 +2,22 @@
 
 Format: most-recent first. Each entry is dated and names the endpoint(s) affected.
 
+## 2026-04-23 — Route move (phase 3)
+
+- Physical move of nova-user, nova-data, nova-file-server, nova-network,
+  novabot-message routes into `cloud-api/routes/`. External URLs unchanged;
+  internal imports rewritten to stay inside `cloud-api/*`, `db/`, `mqtt/`,
+  `types/`, `middleware/`.
+- `rowToCloudDto` now lives only in `cloud-api/serializers/equipmentDto.ts`;
+  local copy in `nova-user/equipment.ts` removed.
+- `callLfiCloud` / `encryptCloudPassword` (plus `makeLfiHeaders`,
+  `LFI_CLOUD_HOST`, `LFI_CLOUD_SERVERNAME`) extracted from `routes/setup.ts`
+  into `services/lfiCloud.ts` so the moved `appUser.ts` can import them
+  without reaching into `routes/setup*` (forbidden by the cloud-api freeze
+  ESLint rule). `routes/setup.ts` still re-exports `callLfiCloud` and
+  `encryptCloudPassword` for backward-compat.
+- No response-shape change.
+
 ## 2026-04-23 — Serializer + helpers move (step 1/2)
 
 - Add `cloud-api/serializers/equipmentDto.ts` with Zod schema +

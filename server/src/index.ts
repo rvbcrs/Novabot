@@ -25,18 +25,10 @@ import { dashboardRouter, initFirmwareSync } from './routes/dashboard.js';
 const PROXY_MODE = process.env.PROXY_MODE ?? 'local';
 
 // Route modules
-import { appUserRouter }      from './routes/nova-user/appUser.js';
-import { validateRouter }     from './routes/nova-user/validate.js';
-import { equipmentRouter }    from './routes/nova-user/equipment.js';
-import { otaUpgradeRouter }   from './routes/nova-user/otaUpgrade.js';
-import { cutGrassPlanRouter } from './routes/nova-data/cutGrassPlan.js';
-import { mapRouter }          from './routes/nova-file-server/map.js';
-import { logRouter }          from './routes/nova-file-server/log.js';
-import { messageRouter }      from './routes/novabot-message/message.js';
-import { machineMessageRouter } from './routes/novabot-message/machineMessage.js';
-import { equipmentStateRouter } from './routes/nova-data/equipmentState.js';
+// Cloud-API routes (nova-*, novabot-message, nova-message alias) moved into
+// `./cloud-api/` on 2026-04-23 (Task 9). They are now mounted via
+// `mountCloudApi(app)`; do not re-import them here.
 import { adminRouter }        from './routes/admin.js';
-import { networkRouter }      from './routes/nova-network/network.js';
 import { setupRouter }        from './routes/setup.js';
 import { setupGuard, isSetupComplete } from './middleware/setupGuard.js';
 
@@ -174,36 +166,11 @@ if (PROXY_MODE === 'cloud') {
   // the user completes the wizard (imports their LFI account + devices).
   app.use(setupGuard);
 
-  // Cloud-API frozen surface (scaffold; routes wired in Task 9).
+  // Cloud-API frozen surface — wires every /api/nova-*\/* and
+  // /api/novabot-message/* (plus /api/nova-message/* alias) endpoint onto the
+  // app. Previously inline here; moved into cloud-api/index.ts on 2026-04-23.
+  // Path list + router bindings are identical — see cloud-api/CHANGELOG.md.
   mountCloudApi(app);
-
-  // nova-user service
-  // Alias: app roept /api/nova-user/user/... aan (niet /appUser/)
-  // Validate routes ook under /user/ — app kan sendAppRegistEmailCode e.d. via /user/ aanroepen
-  app.use('/api/nova-user/user',       validateRouter);
-  app.use('/api/nova-user/user',       appUserRouter);
-  app.use('/api/nova-user/appUser',    appUserRouter);
-  app.use('/api/nova-user/validate',   validateRouter);
-  app.use('/api/nova-user/equipment',  equipmentRouter);
-  app.use('/api/nova-user/otaUpgrade', otaUpgradeRouter);
-
-  // nova-data service
-  app.use('/api/nova-data/appManage',       cutGrassPlanRouter);
-  app.use('/api/nova-data/cutGrassPlan',    cutGrassPlanRouter);
-  app.use('/api/nova-data/equipmentState',  equipmentStateRouter);
-
-  // nova-file-server service
-  app.use('/api/nova-file-server/map', mapRouter);
-  app.use('/api/nova-file-server/log', logRouter);
-
-  // novabot-message service (maaier stuurt naar nova-message, app naar novabot-message)
-  app.use('/api/novabot-message/message',        messageRouter);
-  app.use('/api/novabot-message/machineMessage',  machineMessageRouter);
-  app.use('/api/nova-message/message',            messageRouter);
-  app.use('/api/nova-message/machineMessage',     machineMessageRouter);
-
-  // nova-network service (aangeroepen door charger firmware via HTTP)
-  app.use('/api/nova-network/network', networkRouter);
 
   // admin (lokaal gebruik, geen auth)
   app.use('/api/admin', adminRouter);

@@ -2,7 +2,7 @@ import { Router, Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { messageRepo } from '../../db/repositories/index.js';
 import { authMiddleware } from '../../middleware/auth.js';
-import { AuthRequest, ok, fail } from '../../types/index.js';
+import { AuthRequest, ok } from '../../types/index.js';
 
 export const messageRouter = Router();
 
