@@ -23,6 +23,8 @@ import { colors } from '../theme/colors';
 import { BatteryRing } from '../components/BatteryRing';
 import { MowerScene } from '../components/mower/MowerScene';
 import { useMowerState } from '../hooks/useMowerState';
+import { useActiveMower } from '../hooks/useActiveMower';
+import { MowerPickerChevron } from '../components/MowerPickerChevron';
 import { ApiClient, type Schedule } from '../services/api';
 import { getServerUrl, getToken } from '../services/auth';
 import { DemoBanner } from '../components/DemoBanner';
@@ -107,8 +109,7 @@ function parseCoveringPoints(raw: string | undefined): Array<{ x: number; y: num
   return points.length > 0 ? points : undefined;
 }
 
-function deriveMower(devices: Map<string, DeviceState>): MowerDerived | null {
-  const mower = [...devices.values()].find((d) => d.deviceType === 'mower');
+function deriveMower(mower: DeviceState | null): MowerDerived | null {
   if (!mower) return null;
 
   const s = mower.sensors;
@@ -365,8 +366,9 @@ export default function HomeScreen() {
   const navigation = useNavigation();
   const route = useRoute<RouteProp<MainTabParams, 'Home'>>();
   const { devices, connected } = useMowerState();
+  const { activeMower } = useActiveMower();
   const { t } = useI18n();
-  const mower = useMemo(() => deriveMower(devices), [devices]);
+  const mower = useMemo(() => deriveMower(activeMower), [activeMower]);
   const charger = useMemo(() => {
     const chargers = [...devices.values()].filter((d) => d.deviceType === 'charger');
     return chargers.find((c) => c.online) ?? chargers[0] ?? null;
@@ -1157,15 +1159,9 @@ export default function HomeScreen() {
 
         {/* Top bar: connection + alert/history icons */}
         <View style={styles.topBar}>
-          {/* Mower info */}
-          <View style={styles.connectionRow}>
-            <View
-              style={[
-                styles.connectionDot,
-                { backgroundColor: mower.online ? colors.green : colors.red },
-              ]}
-            />
-            <Text style={styles.connectionText}>{mower.sn}</Text>
+          {/* Mower info — chevron picker shows active mower + lets user switch when N>=2 */}
+          <View style={[styles.connectionRow, { flexWrap: 'wrap' }]}>
+            <MowerPickerChevron />
             {mower.online && (devices.get(mower.sn)?.sensors?.sw_version || devices.get(mower.sn)?.sensors?.mower_version) && (
               <>
                 <View style={styles.connectionSpacer} />
