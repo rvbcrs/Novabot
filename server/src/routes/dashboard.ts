@@ -2941,6 +2941,28 @@ dashboardRouter.get('/lora/resolve', (req: Request, res: Response) => {
   };
 
   if (type === 'charger') {
+    // Symmetrisch met mower-branch: zoek eerst een orphan mower — een mower
+    // waarvoor geen charger op dezelfde addr bestaat. Dan weten we dat deze
+    // user eerder een mower heeft geprovisioneerd en nu een (her)provisioning
+    // van de charger doet. Charger pakt dan mower's bestaande addr+channel,
+    // zodat het pair niet drift op max+1. Dit voorkomt bug waarbij een her-
+    // geprovisioneerde charger op 719 eindigt terwijl de gebonden mower op 718
+    // blijft — wat Error 8 (LoRa comm fail) + Error 132 veroorzaakt.
+    const chargerAddrs = new Set(chargerRows.map(r => r.addr));
+    const orphanMower = mowerRows.find(m => !chargerAddrs.has(m.addr));
+
+    if (orphanMower) {
+      const addr = orphanMower.addr;
+      const ch = Number.isFinite(orphanMower.channel) ? orphanMower.channel : 16;
+      const pendingSn = reservePending('CHARGER', addr, ch);
+      res.json({
+        ok: true, address: addr, channel: ch, hc: 20, lc: 14,
+        basis: `paired-with-orphan-${orphanMower.sn}`,
+        pendingSn,
+      });
+      return;
+    }
+
     const usedChargerAddrs = new Set(chargerRows.map(r => r.addr));
     let addr = 718;
     while (usedChargerAddrs.has(addr)) addr++;

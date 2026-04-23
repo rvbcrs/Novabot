@@ -886,7 +886,16 @@ def handle_get_lora_info(params, respond):
 
 
 def handle_set_lora_info(params, respond):
-    """Write LoRa config to json_config.json and restart mqtt_node to apply."""
+    """Write LoRa config to json_config.json, push to chassis radio, restart mqtt_node.
+
+    Writing the json file alone is not enough: the actual LoRa radio lives on
+    the chassis MCU and is only updated via the /chassis_lora_set ROS action.
+    Without that call the file reports the new config but the radio keeps
+    hopping on the old addr/channel, causing Error 8 (LoRa comm fail) and
+    Error 132 (data transmission loss). Observed live 2026-04-23 after an
+    in-app set_lora_info: file said 719/14, chassis stayed on old pair until
+    an explicit ros2 action send_goal pushed it.
+    """
     cfg_file = "/userdata/lfi/json_config.json"
     addr = params.get("addr")
     channel = params.get("channel")
@@ -912,14 +921,34 @@ def handle_set_lora_info(params, respond):
 
         log(f"LoRa config set: addr={addr} channel={channel} hc={hc} lc={lc}")
 
-        # Restart mqtt_node so it picks up the new LoRa config
-        # (daemon_node will auto-restart it)
+        # Push to chassis radio so the new config goes live immediately.
+        # The YAML goal is wrapped in single quotes inside the bash -c string
+        # so the braces don't trigger shell brace-expansion.
+        chassis_err = None
+        try:
+            goal_yaml = f"'{{channel: {int(channel)}, addr: {int(addr)}}}'"
+            result = ros2_run([
+                'ros2', 'action', 'send_goal', '/chassis_lora_set',
+                'novabot_msgs/action/ChassisLoraSet', goal_yaml,
+            ], timeout=15)
+            if result.returncode != 0 or 'SUCCEEDED' not in (result.stdout or ''):
+                chassis_err = f"chassis push failed (rc={result.returncode}): {result.stdout or result.stderr}"
+                log(chassis_err)
+            else:
+                log(f"Chassis LoRa updated: addr={addr} channel={channel}")
+        except Exception as e:
+            chassis_err = f"chassis push exception: {e}"
+            log(chassis_err)
+
+        # Restart mqtt_node so it picks up the new LoRa config on reconnect
+        # (daemon_node will auto-restart it).
         os.system("killall mqtt_node 2>/dev/null")
 
         respond("set_lora_info_respond", {
             "result": 0,
             "addr": int(addr),
             "channel": int(channel),
+            "chassis_error": chassis_err,
         })
     except Exception as e:
         log(f"set_lora_info error: {e}")
