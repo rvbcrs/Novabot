@@ -17,7 +17,7 @@ import {
 } from '../db/repositories/index.js';
 import { getAllDeviceSnapshots, getDeviceSnapshot, SENSORS, getGpsTrail, clearGpsTrail, getLocalTrail, clearLocalTrail, deviceCache, translateValue, markPinVerified } from '../mqtt/sensorData.js';
 import { isDeviceOnline, writeRawPublish, getBrokerDiagnostics } from '../mqtt/broker.js';
-import { getRecentLogs, forwardToDashboard, onLogEntry } from '../dashboard/socketHandler.js';
+import { getRecentLogs, forwardToDashboard, onLogEntry, emitMapsChanged } from '../dashboard/socketHandler.js';
 import { requestMapList, requestMapOutline, publishToDevice, publishRawToDevice, publishEncryptedOnTopic, publishToTopic, goToChargePayload, getNextCmdNum } from '../mqtt/mapSync.js';
 import crypto from 'crypto';
 import { generateMapZipFromDb, gpsToLocal, localToGps, parseMapZip, type GpsPoint, type LocalPoint } from '../mqtt/mapConverter.js';
@@ -930,6 +930,24 @@ dashboardRouter.delete('/maps/:sn/:mapId', (req: Request, res: Response) => {
 
   console.log(`[DELETE] ${sn}: cascade verwijderd ${deleted.length} row(s) (root: ${row.map_name ?? row.file_name ?? mapId})`);
   res.json({ ok: true, deleted: deleted.length });
+
+  // Tell the mower to drop the map from its own state. Without this the
+  // firmware keeps reporting map_num=1 + current_map_ids=1, the sensor
+  // cache stays stale, and HomeScreen / coverage checks keep behaving as
+  // if the map still exists even though the DB is empty.
+  //
+  // Payload shape matches the official Novabot app's delete flow
+  // (blutter: lawn_page/logic.dart → {delete_map:{map_name:"map0"}}).
+  // We use row.map_name when present, else fall back to 'map0'.
+  if (isDeviceOnline(sn) && row.map_name) {
+    const mapName = row.map_name;
+    publishToDevice(sn, { delete_map: { map_name: mapName, cmd_num: getNextCmdNum(sn) } });
+    console.log(`[DELETE] ${sn}: delete_map MQTT sent for ${mapName}`);
+  }
+
+  // Notify connected dashboard/app clients so they can refetch without
+  // waiting for the next mower sensor update.
+  emitMapsChanged(sn, mapId);
 
   // Auto-push naar maaier (bijgewerkte kaarten zonder de verwijderde)
   autoPushMapsInBackground(sn);

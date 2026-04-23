@@ -248,6 +248,10 @@ export function emitTrailClear(sn: string): void {
   io?.emit('trail:clear', { sn, timestamp: Date.now() });
 }
 
+export function emitMapsChanged(sn: string, mapId?: string): void {
+  io?.emit('maps:changed', { sn, mapId, timestamp: Date.now() });
+}
+
 /** Forward MQTT _respond messages to app (mapping flow, etc.) */
 export function emitCommandRespond(sn: string, command: string, data: unknown): void {
   io?.emit('command:respond', { sn, command, data, timestamp: Date.now() });

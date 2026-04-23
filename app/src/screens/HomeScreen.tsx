@@ -528,6 +528,20 @@ export default function HomeScreen() {
     void loadHomeMeta();
   }, [loadHomeMeta, connected]);
 
+  // Server emits `maps:changed` whenever a map is created / deleted. Refetch
+  // so the Start button immediately reflects the new DB state even if the
+  // mower hasn't updated its report_state_robot.map_num sensor yet.
+  useEffect(() => {
+    const socket = getSocket();
+    if (!socket) return;
+    const handler = (e: { sn: string }) => {
+      if (!e?.sn || (mower?.sn && e.sn !== mower.sn)) return;
+      void loadHomeMeta();
+    };
+    socket.on('maps:changed', handler);
+    return () => { socket.off('maps:changed', handler); };
+  }, [loadHomeMeta, mower?.sn]);
+
   // ── Long-pause safety tracking ────────────────────────────────────
   // Set pauseStartedAt zodra we USER_STOP / PAUSED zien, en wis hem zodra
   // de maaier weer iets anders doet (MOVING / COVERING / FINISHED). De
@@ -1559,7 +1573,13 @@ export default function HomeScreen() {
             <View style={styles.actionRow}>
               {/* Split action: main "Start Mowing" + chevron voor extra modi */}
               {(() => {
-                const noMap = mower.mapNum === 0 && serverMapCount === 0;
+                // Server-DB is authoritative for "is there a map": mower's
+                // report_state_robot.map_num is a lagging sensor that keeps
+                // reporting 1 for a while after a delete until the firmware
+                // processes delete_map MQTT (if it ever does). Using server
+                // count alone keeps the Start button in sync with the map
+                // list the user actually sees.
+                const noMap = serverMapCount === 0;
                 const startDisabled = !mower.online || mower.hasError || noMap;
                 const canShowChevron = (displayActivity === 'idle' || displayActivity === 'charging')
                   && mower.online && !mower.hasError && !noMap;
