@@ -26,6 +26,7 @@ import { runOnJS } from 'react-native-reanimated';
 import { WebView } from 'react-native-webview';
 import { colors } from '../theme/colors';
 import { useMowerState } from '../hooks/useMowerState';
+import { useActiveMower } from '../hooks/useActiveMower';
 import { useHeadlightBrightness } from '../hooks/useHeadlightBrightness';
 import { getSocket } from '../services/socket';
 import { getServerUrl } from '../services/auth';
@@ -61,7 +62,8 @@ export default function JoystickScreen() {
   const demo = useDemo();
   const { t } = useI18n();
 
-  const mower = [...devices.values()].find(d => d.deviceType === 'mower' && d.online);
+  const { activeMower } = useActiveMower();
+  const mower = activeMower && activeMower.online ? activeMower : null;
   const sn = mower?.sn ?? '';
 
   // Disable manual control while the mower is autonomously busy — mowing, mapping,

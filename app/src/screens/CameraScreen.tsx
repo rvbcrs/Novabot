@@ -22,6 +22,7 @@ import { WebView } from 'react-native-webview';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { colors } from '../theme/colors';
 import { useMowerState } from '../hooks/useMowerState';
+import { useActiveMower } from '../hooks/useActiveMower';
 import { getServerUrl } from '../services/auth';
 import { useI18n } from '../i18n';
 
@@ -53,7 +54,8 @@ export default function CameraScreen() {
     };
   }, []);
 
-  const mower = [...devices.values()].find(d => d.deviceType === 'mower' && d.online);
+  const { activeMower } = useActiveMower();
+  const mower = activeMower && activeMower.online ? activeMower : null;
   const sn = mower?.sn ?? '';
 
   const [selectedTopic, setSelectedTopic] = useState('front');
