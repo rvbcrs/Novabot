@@ -366,7 +366,7 @@ export default function HomeScreen() {
   const navigation = useNavigation();
   const route = useRoute<RouteProp<MainTabParams, 'Home'>>();
   const { devices, connected } = useMowerState();
-  const { activeMower } = useActiveMower();
+  const { activeMower, activeMowerSn, setActiveMowerSn } = useActiveMower();
   const { t } = useI18n();
   const mower = useMemo(() => deriveMower(activeMower), [activeMower]);
   // Rename flow for the active mower — wired to the pencil icon inside the
@@ -1101,6 +1101,35 @@ export default function HomeScreen() {
                           <Ionicons name="trash-outline" size={16} color={colors.textMuted} />
                         </TouchableOpacity>
                       )}
+                    </View>
+                  )}
+
+                  {/* Activate button — visible op elk paired set dat NIET de
+                      huidige actieve is. Klap-switch de active mower. De
+                      Novabot-app filtert userEquipmentList op is_active dus
+                      na tap ziet die app alleen dit pair. */}
+                  {paired && set.mower!.sn !== activeMowerSn && (
+                    <TouchableOpacity
+                      style={styles.addDeviceRow}
+                      onPress={() => setActiveMowerSn(set.mower!.sn)}
+                      activeOpacity={0.7}
+                    >
+                      <View style={[styles.deviceIcon, { backgroundColor: 'rgba(0,212,170,0.15)' }]}>
+                        <Ionicons name="power" size={16} color={colors.emerald} />
+                      </View>
+                      <Text style={[styles.addDeviceText, { color: colors.emerald, fontWeight: '700' }]}>
+                        Activate this set
+                      </Text>
+                      <Ionicons name="chevron-forward" size={16} color={colors.emerald} />
+                    </TouchableOpacity>
+                  )}
+
+                  {paired && set.mower!.sn === activeMowerSn && (
+                    <View style={[styles.addDeviceRow, { opacity: 0.6 }]}>
+                      <View style={[styles.deviceIcon, { backgroundColor: 'rgba(0,212,170,0.1)' }]}>
+                        <Ionicons name="checkmark-circle" size={16} color={colors.emerald} />
+                      </View>
+                      <Text style={[styles.addDeviceText, { color: colors.emerald }]}>Active</Text>
                     </View>
                   )}
 
