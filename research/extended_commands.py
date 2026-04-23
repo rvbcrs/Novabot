@@ -18,6 +18,7 @@ Vereist: Python 3.8+
 
 import json
 import os
+import re
 import signal
 import socket
 import struct
@@ -1110,6 +1111,9 @@ def handle_start_edge_cut(params, respond):
 
     try:
         map_name = str((params or {}).get("mapName", "map0_work"))
+        if not re.fullmatch(r"[A-Za-z0-9_\-]+", map_name):
+            respond("start_edge_cut_respond", {"result": 1, "error": "invalid_map_name"})
+            return
         blade = int((params or {}).get("bladeHeight", 3))
         if blade < 0: blade = 0
         if blade > 7: blade = 7
