@@ -1166,10 +1166,12 @@ def handle_start_edge_cut(params, respond):
                                 cur_task_planned = float(val)
                         except ValueError:
                             pass
-                        # Rate-limit MQTT pubs to ~1 Hz — the CLI bursts
-                        # blocks every few seconds anyway.
+                        # End-of-block trigger: the CLI prints fields in a
+                        # fixed order and `finished_times` is the last one
+                        # we see. Rate-limit to ~1 Hz; the CLI bursts feedback
+                        # every 2-3s anyway.
                         now = time.monotonic()
-                        if key == "total_missed_area" and (now - last_pub) > 1.0:
+                        if key == "finished_times" and (now - last_pub) > 1.0:
                             respond("edge_cut_status", {
                                 "active": True,
                                 "work_status": cur_work_status,

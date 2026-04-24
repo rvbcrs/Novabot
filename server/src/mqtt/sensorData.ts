@@ -600,9 +600,17 @@ export function updateDeviceData(sn: string, payload: Buffer): Map<string, strin
   // Dit commando veroorzaakt mqtt_node disconnect bij sommige maaiers.
   // De app stuurt dit commando zelf als het nodig is.
 
-  // Append trails wanneer de maaier actief beweegt (maaien, navigeren, mapping)
+  // Append trails wanneer de maaier actief beweegt (maaien, navigeren, mapping, edge-cut).
+  // Edge-cut bypasst robot_decision, dus `msg` reflecteert dat pad niet —
+  // `edge_active` wordt door onze extended_response handler gezet zodra de
+  // NTCP monitor thread rapporteert.
   const currentMsg = snValues.get('msg') ?? '';
-  const isActive = currentMsg.includes('Work:RUNNING') || currentMsg.includes('Work:NAVIGATING') || currentMsg.includes('Work:COVERING') || currentMsg.includes('Work:MOVING');
+  const edgeActive = snValues.get('edge_active') === '1';
+  const isActive = edgeActive
+    || currentMsg.includes('Work:RUNNING')
+    || currentMsg.includes('Work:NAVIGATING')
+    || currentMsg.includes('Work:COVERING')
+    || currentMsg.includes('Work:MOVING');
 
   if (isActive) {
     // GPS trail

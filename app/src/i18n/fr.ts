@@ -4,7 +4,7 @@ export default {
   connected: 'Connecté', disconnected: 'Déconnecté',
   tabHome: 'Accueil', tabMap: 'Carte', tabControl: 'Commande', tabCamera: 'Caméra',
   tabSchedule: 'Planning', tabSettings: 'Réglages',
-  idle: 'Inactif', mowing: 'Tonte', charging: 'En charge', returning: 'Retour',
+  idle: 'Inactif', mowing: 'Tonte', edgeCutting: 'Tonte des bords', charging: 'En charge', returning: 'Retour',
   paused: 'En pause', mapping: 'Cartographie', errorState: 'Erreur',
   noMowerFound: 'Aucune tondeuse trouvée',
   connectingToServer: 'Connexion au serveur...',

@@ -4,7 +4,7 @@ export default {
   connected: 'Verbunden', disconnected: 'Getrennt',
   tabHome: 'Home', tabMap: 'Karte', tabControl: 'Steuerung', tabCamera: 'Kamera',
   tabSchedule: 'Zeitplan', tabSettings: 'Einstellungen',
-  idle: 'Inaktiv', mowing: 'Mähen', charging: 'Laden', returning: 'Zurückkehren',
+  idle: 'Inaktiv', mowing: 'Mähen', edgeCutting: 'Kantenschnitt', charging: 'Laden', returning: 'Zurückkehren',
   paused: 'Pausiert', mapping: 'Kartierung', errorState: 'Fehler',
   noMowerFound: 'Kein Mäher gefunden',
   connectingToServer: 'Verbindung zum Server...',

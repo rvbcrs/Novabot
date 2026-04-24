@@ -23,6 +23,7 @@ export default {
   // ── Home ──────────────────────────────────────────────────────
   idle: 'Inactief',
   mowing: 'Maaien',
+  edgeCutting: 'Rand maaien',
   charging: 'Opladen',
   returning: 'Terugkeren',
   paused: 'Gepauzeerd',

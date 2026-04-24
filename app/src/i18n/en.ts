@@ -23,6 +23,7 @@ export default {
   // ── Home ──────────────────────────────────────────────────────
   idle: 'Idle',
   mowing: 'Mowing',
+  edgeCutting: 'Edge cutting',
   charging: 'Charging',
   returning: 'Returning',
   paused: 'Paused',
