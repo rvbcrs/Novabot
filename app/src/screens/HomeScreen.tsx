@@ -1934,9 +1934,9 @@ export default function HomeScreen() {
                 // StartCoverageTask.blade_heights (mm = (level + 2) * 10).
                 await api.sendExtended(mower.sn, {
                   start_edge_cut: {
-                    mapId: 1,
-                    bladeHeight: wire,
-                    light: 0,
+                    mapName: 'map0',
+                    // heightCm → mm (BoundaryFollow action expects mm, clamped to 20..90)
+                    bladeHeight: heightCm * 10,
                   },
                 }).catch(() => { /* non-fatal, optimistic UI still set */ });
                 setOptimisticActivity('mowing');
