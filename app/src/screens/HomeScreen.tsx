@@ -219,6 +219,14 @@ function deriveMower(mower: DeviceState | null): MowerDerived | null {
       parseInt(s.battery_power ?? s.battery_capacity ?? '0', 10) || 0,
     batteryCharging: activity === 'charging',
     mowingProgress: (() => {
+      // During edge_cutting, progress comes from the NTCP monitor's
+      // covered_ratio — mqtt_node's cov_ratio doesn't track a task
+      // that we bypassed robot_decision for.
+      if (s.edge_active === '1') {
+        const er = parseFloat(s.edge_covered_ratio ?? '0');
+        if (er > 0 && er <= 1) return Math.round(er * 100);
+        return 0;
+      }
       const ratio = parseFloat(s.cov_ratio ?? '0');
       // cov_ratio is 0.0-1.0 (fraction), convert to 0-100 percentage
       if (ratio > 0 && ratio <= 1) return Math.round(ratio * 100);
@@ -858,7 +866,7 @@ export default function HomeScreen() {
 
   useEffect(() => {
     if (!mower) return;
-    const isMoving = mower.activity === 'mowing' || mower.activity === 'returning' || mower.activity === 'mapping';
+    const isMoving = mower.activity === 'mowing' || mower.activity === 'edge_cutting' || mower.activity === 'returning' || mower.activity === 'mapping';
     if (isMoving) {
       // Continuous bounce
       Animated.loop(
@@ -1293,7 +1301,7 @@ export default function HomeScreen() {
         <View style={styles.statusCard}>
           {/* Activity header */}
           <View style={styles.activityRow}>
-            {displayActivity === 'mowing' ? (
+            {displayActivity === 'mowing' || displayActivity === 'edge_cutting' ? (
               <MowerIcon size={24} color={activityColor} />
             ) : (
               <Ionicons
@@ -1305,7 +1313,7 @@ export default function HomeScreen() {
             <Text style={[styles.activityLabel, { color: activityColor }]}>
               {getActivityLabel(displayActivity, t)}
             </Text>
-            {mower.mowingProgress > 0 && (displayActivity === 'mowing' || displayActivity === 'mapping' || displayActivity === 'returning') && (
+            {mower.mowingProgress > 0 && (displayActivity === 'mowing' || displayActivity === 'edge_cutting' || displayActivity === 'mapping' || displayActivity === 'returning') && (
               <Text style={[styles.progressText, { color: activityColor }]}>
                 {mower.mowingProgress}%
               </Text>
@@ -1316,7 +1324,7 @@ export default function HomeScreen() {
               laatste coverage-state blijft zien totdat een volgende taak start.
               Novabot app doet hetzelfde: "Returning to the charging station"
               + "Progress: 88%" voor de afgelopen sessie. */}
-          {mower.mowingProgress > 0 && (displayActivity === 'mowing' || displayActivity === 'mapping' || displayActivity === 'returning') && (
+          {mower.mowingProgress > 0 && (displayActivity === 'mowing' || displayActivity === 'edge_cutting' || displayActivity === 'mapping' || displayActivity === 'returning') && (
             <View style={styles.progressTrack}>
               <View style={[styles.progressFill, { width: `${mower.mowingProgress}%` as any, backgroundColor: activityColor }]} />
             </View>
@@ -1327,7 +1335,7 @@ export default function HomeScreen() {
               Returning gebruikt dezelfde kaart zodat je ziet waar de maaier geweest
               is (finished_area blijft in de cover_path state van de maaier zolang
               task_mode=1) en waar hij nu naartoe rijdt. */}
-          {(displayActivity === 'mowing' || displayActivity === 'mapping' || displayActivity === 'returning') && activeMapPolygon.length >= 3 ? (
+          {(displayActivity === 'mowing' || displayActivity === 'edge_cutting' || displayActivity === 'mapping' || displayActivity === 'returning') && activeMapPolygon.length >= 3 ? (
             <View style={styles.mowingMapPanel}>
               <MowingProgressMap
                 polygon={activeMapPolygon}
@@ -1990,7 +1998,7 @@ export default function HomeScreen() {
           initialSelectedMapId={startMowInitialMapId}
           forceZonePicker={startMowForceZone}
           battery={mower.battery}
-          isWorking={displayActivity === 'mowing' || displayActivity === 'mapping'}
+          isWorking={displayActivity === 'mowing' || displayActivity === 'edge_cutting' || displayActivity === 'mapping'}
           currentCuttingHeight={parseInt(devices.get(mower.sn)?.sensors?.target_height ?? '', 10) || undefined}
           currentPathDirection={parseInt(devices.get(mower.sn)?.sensors?.path_direction ?? '', 10) || undefined}
         />
