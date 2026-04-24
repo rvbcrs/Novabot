@@ -20,7 +20,7 @@ import Svg, { Path as SvgPath } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import { colors } from '../theme/colors';
-import { useTheme } from '../theme';
+import { useTheme, useStyles, type Colors } from '../theme';
 import { BatteryRing } from '../components/BatteryRing';
 import { MowerScene } from '../components/mower/MowerScene';
 import { useMowerState } from '../hooks/useMowerState';
@@ -420,7 +420,8 @@ export default function HomeScreen() {
   const { devices, connected } = useMowerState();
   const { activeMower, activeMowerSn, setActiveMowerSn } = useActiveMower();
   const { t } = useI18n();
-  const { colorScheme } = useTheme();
+  const { colorScheme, colors } = useTheme();
+  const styles = useStyles(makeStyles);
   const hero = HERO_PALETTE[colorScheme];
   const mower = useMemo(() => deriveMower(activeMower), [activeMower]);
   // Rename flow for the active mower — wired to the pencil icon inside the
@@ -2146,10 +2147,10 @@ export default function HomeScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (c: Colors) => StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.bg,
+    backgroundColor: c.bg,
   },
   scroll: {
     paddingHorizontal: 16,
@@ -2181,12 +2182,12 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: colors.red,
+    backgroundColor: c.red,
     borderWidth: 1.5,
-    borderColor: colors.bg,
+    borderColor: c.bg,
   },
   modalHeader: {
-    backgroundColor: colors.bg,
+    backgroundColor: c.bg,
     flexDirection: 'row',
     justifyContent: 'flex-end',
     paddingHorizontal: 16,
@@ -2212,7 +2213,7 @@ const styles = StyleSheet.create({
   },
   connectionText: {
     fontSize: 13,
-    color: colors.textDim,
+    color: c.textDim,
   },
   connectionSpacer: {
     width: 16,
@@ -2229,10 +2230,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 16,
-    backgroundColor: colors.card,
+    backgroundColor: c.card,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: colors.cardBorder,
+    borderColor: c.cardBorder,
     padding: 16,
     marginBottom: 16,
   },
@@ -2245,18 +2246,18 @@ const styles = StyleSheet.create({
   offlineMowerTitle: {
     fontSize: 16,
     fontWeight: '600',
-    color: colors.red,
+    color: c.red,
     marginBottom: 2,
   },
   offlineMowerSn: {
     fontSize: 11,
-    color: colors.textDim,
+    color: c.textDim,
     fontFamily: 'monospace',
     marginBottom: 6,
   },
   offlineMowerHint: {
     fontSize: 12,
-    color: colors.textMuted,
+    color: c.textMuted,
     lineHeight: 16,
   },
   emptyIconCircle: {
@@ -2271,20 +2272,20 @@ const styles = StyleSheet.create({
   emptyTitle: {
     fontSize: 22,
     fontWeight: '700',
-    color: colors.white,
+    color: c.white,
     marginBottom: 8,
   },
   emptySubtitle: {
     fontSize: 15,
-    color: colors.textDim,
+    color: c.textDim,
     textAlign: 'center',
     lineHeight: 22,
   },
   setCard: {
-    backgroundColor: colors.card,
+    backgroundColor: c.card,
     borderRadius: 18,
     borderWidth: 1,
-    borderColor: colors.cardBorder,
+    borderColor: c.cardBorder,
     marginBottom: 16,
     overflow: 'hidden',
   },
@@ -2303,13 +2304,13 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 13,
     fontWeight: '600',
-    color: colors.textDim,
+    color: c.textDim,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
   },
   setLora: {
     fontSize: 10,
-    color: colors.textMuted,
+    color: c.textMuted,
     fontFamily: 'monospace',
   },
   addDeviceRow: {
@@ -2324,7 +2325,7 @@ const styles = StyleSheet.create({
   addDeviceText: {
     flex: 1,
     fontSize: 14,
-    color: colors.emerald,
+    color: c.emerald,
     fontWeight: '500',
   },
   deviceIcon: {
@@ -2344,11 +2345,11 @@ const styles = StyleSheet.create({
   deviceName: {
     fontSize: 14,
     fontWeight: '600',
-    color: colors.white,
+    color: c.white,
   },
   deviceSn: {
     fontSize: 11,
-    color: colors.textDim,
+    color: c.textDim,
     fontFamily: 'monospace',
     marginTop: 1,
   },
@@ -2378,15 +2379,15 @@ const styles = StyleSheet.create({
   hintText: {
     flex: 1,
     fontSize: 13,
-    color: colors.textMuted,
+    color: c.textMuted,
     lineHeight: 18,
   },
   chargerCard: {
     width: '100%',
-    backgroundColor: colors.card,
+    backgroundColor: c.card,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: colors.cardBorder,
+    borderColor: c.cardBorder,
     padding: 16,
     marginBottom: 24,
   },
@@ -2398,11 +2399,11 @@ const styles = StyleSheet.create({
   chargerTitle: {
     fontSize: 15,
     fontWeight: '600',
-    color: colors.white,
+    color: c.white,
   },
   chargerSn: {
     fontSize: 11,
-    color: colors.textDim,
+    color: c.textDim,
     fontFamily: 'monospace',
     marginTop: 2,
   },
@@ -2419,19 +2420,19 @@ const styles = StyleSheet.create({
     marginTop: 20,
     paddingVertical: 12,
     paddingHorizontal: 24,
-    backgroundColor: colors.emerald,
+    backgroundColor: c.emerald,
     borderRadius: 12,
   },
   addMowerText: {
     fontSize: 16,
     fontWeight: '600',
-    color: colors.white,
+    color: c.white,
   },
   statusCard: {
-    backgroundColor: colors.card,
+    backgroundColor: c.card,
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: colors.cardBorder,
+    borderColor: c.cardBorder,
     paddingHorizontal: 18,
     paddingTop: 18,
     paddingBottom: 14,
@@ -2504,12 +2505,12 @@ const styles = StyleSheet.create({
   batteryPercentage: {
     fontSize: 24,
     fontWeight: '700',
-    color: colors.white,
+    color: c.white,
   },
   batteryPercSign: {
     fontSize: 12,
     fontWeight: '600',
-    color: colors.textDim,
+    color: c.textDim,
     marginLeft: 1,
   },
   chipsGroup: {
@@ -2546,7 +2547,7 @@ const styles = StyleSheet.create({
   },
   chipText: {
     fontSize: 11,
-    color: colors.textDim,
+    color: c.textDim,
   },
   errorCard: {
     flexDirection: 'row',
@@ -2565,7 +2566,7 @@ const styles = StyleSheet.create({
   errorTitle: {
     fontSize: 15,
     fontWeight: '600',
-    color: colors.red,
+    color: c.red,
     marginBottom: 4,
   },
   errorMessage: {
@@ -2574,17 +2575,17 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   actionsCard: {
-    backgroundColor: colors.card,
+    backgroundColor: c.card,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: colors.cardBorder,
+    borderColor: c.cardBorder,
     padding: 16,
     marginBottom: 12,
   },
   actionsTitle: {
     fontSize: 13,
     fontWeight: '600',
-    color: colors.textDim,
+    color: c.textDim,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
     marginBottom: 12,
@@ -2603,16 +2604,16 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   actionButtonGreen: {
-    backgroundColor: colors.green,
+    backgroundColor: c.green,
   },
   actionButtonAmber: {
-    backgroundColor: colors.amber,
+    backgroundColor: c.amber,
   },
   actionButtonBlue: {
-    backgroundColor: colors.blue,
+    backgroundColor: c.blue,
   },
   actionButtonRed: {
-    backgroundColor: colors.red,
+    backgroundColor: c.red,
   },
   actionButtonGray: {
     backgroundColor: 'rgba(255,255,255,0.1)',
@@ -2623,7 +2624,7 @@ const styles = StyleSheet.create({
   actionButtonText: {
     fontSize: 15,
     fontWeight: '600',
-    color: colors.white,
+    color: c.white,
   },
   // Split-action button — hoofd-knop + kleine chevron-knop aan de rechterkant.
   // Beide helften delen hoogte + achtergrond; een dunne verticale divider
@@ -2655,7 +2656,7 @@ const styles = StyleSheet.create({
   },
   offlineNote: {
     fontSize: 13,
-    color: colors.textMuted,
+    color: c.textMuted,
     textAlign: 'center',
     marginTop: 8,
   },
@@ -2667,11 +2668,11 @@ const styles = StyleSheet.create({
   },
   commandErrorText: {
     fontSize: 13,
-    color: colors.red,
+    color: c.red,
   },
   snText: {
     fontSize: 12,
-    color: colors.textMuted,
+    color: c.textMuted,
     textAlign: 'center',
     fontFamily: 'monospace',
   },

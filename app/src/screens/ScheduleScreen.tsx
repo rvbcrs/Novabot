@@ -20,7 +20,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Swipeable } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
-import { colors } from '../theme/colors';
+import { useStyles, useTheme, type Colors } from '../theme';
 import { useActiveMower } from '../hooks/useActiveMower';
 import { ApiClient, type MapData, type Schedule } from '../services/api';
 import { getServerUrl } from '../services/auth';
@@ -39,6 +39,8 @@ export default function ScheduleScreen() {
   const navigation = useNavigation();
   const route = useRoute<RouteProp<MainTabParams, 'Schedules'>>();
   const { t } = useI18n();
+  const styles = useStyles(makeStyles);
+  const { colors } = useTheme();
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -441,6 +443,8 @@ function ScheduleEditor({
   onSaved: () => void;
 }) {
   const { t } = useI18n();
+  const editorStyles = useStyles(makeEditorStyles);
+  const { colors } = useTheme();
   const isEdit = schedule != null;
   const initialDays = isEdit
     ? (schedule!.weekdays.length > 0 ? schedule!.weekdays : [schedule!.day_of_week])
@@ -696,41 +700,41 @@ function pad(n: number): string {
   return n.toString().padStart(2, '0');
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.bg },
+const makeStyles = (c: Colors) => StyleSheet.create({
+  container: { flex: 1, backgroundColor: c.bg },
   scroll: { padding: 24, paddingBottom: 32 },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
-  title: { fontSize: 28, fontWeight: '700', color: colors.white },
+  title: { fontSize: 28, fontWeight: '700', color: c.white },
   addButton: {
     width: 40, height: 40, borderRadius: 20,
-    backgroundColor: colors.emerald,
+    backgroundColor: c.emerald,
     alignItems: 'center', justifyContent: 'center',
   },
   errorBox: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
     backgroundColor: 'rgba(239,68,68,0.1)', borderRadius: 12, padding: 12, marginBottom: 16,
   },
-  errorText: { flex: 1, fontSize: 14, color: colors.red },
+  errorText: { flex: 1, fontSize: 14, color: c.red },
   emptyState: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 },
-  emptyTitle: { fontSize: 22, fontWeight: '700', color: colors.white, marginTop: 16 },
-  emptySubtitle: { fontSize: 15, color: colors.textDim, textAlign: 'center', marginTop: 8 },
+  emptyTitle: { fontSize: 22, fontWeight: '700', color: c.white, marginTop: 16 },
+  emptySubtitle: { fontSize: 15, color: c.textDim, textAlign: 'center', marginTop: 8 },
   emptyCard: {
     alignItems: 'center', padding: 40,
-    backgroundColor: colors.card, borderRadius: 16,
-    borderWidth: 1, borderColor: colors.cardBorder,
+    backgroundColor: c.card, borderRadius: 16,
+    borderWidth: 1, borderColor: c.cardBorder,
   },
-  emptyCardText: { fontSize: 16, fontWeight: '600', color: colors.textDim, marginTop: 12 },
-  emptyCardSubtext: { fontSize: 13, color: colors.textMuted, marginTop: 4 },
+  emptyCardText: { fontSize: 16, fontWeight: '600', color: c.textDim, marginTop: 12 },
+  emptyCardSubtext: { fontSize: 13, color: c.textMuted, marginTop: 4 },
   dayGroup: { marginBottom: 20 },
-  dayLabel: { fontSize: 14, fontWeight: '600', color: colors.textDim, marginBottom: 8, marginLeft: 4 },
+  dayLabel: { fontSize: 14, fontWeight: '600', color: c.textDim, marginBottom: 8, marginLeft: 4 },
   swipeDelete: {
     backgroundColor: '#ef4444', justifyContent: 'center', alignItems: 'center',
     width: 70, borderRadius: 14, marginBottom: 8, marginLeft: 8,
   },
   scheduleCard: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    backgroundColor: colors.card, borderRadius: 14,
-    borderWidth: 1, borderColor: colors.cardBorder,
+    backgroundColor: c.card, borderRadius: 14,
+    borderWidth: 1, borderColor: c.cardBorder,
     padding: 16, marginBottom: 8,
   },
   globalBanner: {
@@ -743,7 +747,7 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(0,212,170,0.4)',
   },
   globalBannerRunningText: {
-    flex: 1, fontSize: 14, fontWeight: '600', color: colors.emerald,
+    flex: 1, fontSize: 14, fontWeight: '600', color: c.emerald,
   },
   globalBannerRain: {
     backgroundColor: 'rgba(120,53,15,0.25)',
@@ -754,9 +758,9 @@ const styles = StyleSheet.create({
   },
   scheduleCardDisabled: { opacity: 0.5 },
   scheduleCardRunning: {
-    borderColor: colors.emerald,
+    borderColor: c.emerald,
     backgroundColor: 'rgba(0,212,170,0.10)',
-    shadowColor: colors.emerald,
+    shadowColor: c.emerald,
     shadowOffset: { width: 0, height: 0 },
     shadowRadius: 12,
     shadowOpacity: 0.4,
@@ -767,10 +771,10 @@ const styles = StyleSheet.create({
   },
   scheduleLeft: { gap: 4, flex: 1 },
   scheduleHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap' },
-  scheduleTime: { fontSize: 24, fontWeight: '700', color: colors.white, fontVariant: ['tabular-nums'] },
+  scheduleTime: { fontSize: 24, fontWeight: '700', color: c.white, fontVariant: ['tabular-nums'] },
   scheduleChips: { flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginTop: 2 },
-  scheduleDuration: { fontSize: 13, color: colors.textDim },
-  scheduleChip: { fontSize: 11, color: colors.textMuted, backgroundColor: 'rgba(255,255,255,0.06)', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, overflow: 'hidden' },
+  scheduleDuration: { fontSize: 13, color: c.textDim },
+  scheduleChip: { fontSize: 11, color: c.textMuted, backgroundColor: 'rgba(255,255,255,0.06)', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, overflow: 'hidden' },
   statusBadgeRunning: {
     flexDirection: 'row', alignItems: 'center', gap: 6,
     paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8,
@@ -778,10 +782,10 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: 'rgba(0,212,170,0.45)',
   },
   statusBadgeRunningText: {
-    fontSize: 11, fontWeight: '700', color: colors.emerald, letterSpacing: 0.3,
+    fontSize: 11, fontWeight: '700', color: c.emerald, letterSpacing: 0.3,
   },
   statusDot: {
-    width: 7, height: 7, borderRadius: 4, backgroundColor: colors.emerald,
+    width: 7, height: 7, borderRadius: 4, backgroundColor: c.emerald,
   },
   statusBadgeRain: {
     flexDirection: 'row', alignItems: 'center', gap: 4,
@@ -792,58 +796,58 @@ const styles = StyleSheet.create({
   statusBadgeRainText: {
     fontSize: 11, fontWeight: '600', color: '#fbbf24', letterSpacing: 0.3,
   },
-  textDisabled: { color: colors.textMuted },
+  textDisabled: { color: c.textMuted },
 });
 
-const editorStyles = StyleSheet.create({
+const makeEditorStyles = (c: Colors) => StyleSheet.create({
   overlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.5)' },
   sheet: {
-    backgroundColor: colors.bg, borderTopLeftRadius: 24, borderTopRightRadius: 24,
+    backgroundColor: c.bg, borderTopLeftRadius: 24, borderTopRightRadius: 24,
     padding: 24, paddingBottom: 40, maxHeight: '90%',
   },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 },
-  title: { fontSize: 20, fontWeight: '700', color: colors.white },
-  label: { fontSize: 13, fontWeight: '600', color: colors.textDim, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8, marginTop: 16 },
+  title: { fontSize: 20, fontWeight: '700', color: c.white },
+  label: { fontSize: 13, fontWeight: '600', color: c.textDim, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8, marginTop: 16 },
   dayRow: { flexDirection: 'row', marginBottom: 8 },
   dayChip: {
     paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20,
     backgroundColor: 'rgba(255,255,255,0.06)', marginRight: 8,
   },
-  dayChipActive: { backgroundColor: colors.emerald },
-  dayChipText: { fontSize: 14, fontWeight: '600', color: colors.textDim },
-  dayChipTextActive: { color: colors.white },
+  dayChipActive: { backgroundColor: c.emerald },
+  dayChipText: { fontSize: 14, fontWeight: '600', color: c.textDim },
+  dayChipTextActive: { color: c.white },
   timeRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   timeInput: {
-    width: 60, height: 48, backgroundColor: colors.inputBg,
-    borderRadius: 12, borderWidth: 1, borderColor: colors.inputBorder,
-    textAlign: 'center', fontSize: 20, fontWeight: '700', color: colors.white,
+    width: 60, height: 48, backgroundColor: c.inputBg,
+    borderRadius: 12, borderWidth: 1, borderColor: c.inputBorder,
+    textAlign: 'center', fontSize: 20, fontWeight: '700', color: c.white,
   },
-  timeSeparator: { fontSize: 24, fontWeight: '700', color: colors.textDim },
+  timeSeparator: { fontSize: 24, fontWeight: '700', color: c.textDim },
   input: {
-    height: 48, backgroundColor: colors.inputBg,
-    borderRadius: 12, borderWidth: 1, borderColor: colors.inputBorder,
-    paddingHorizontal: 16, fontSize: 16, color: colors.white,
+    height: 48, backgroundColor: c.inputBg,
+    borderRadius: 12, borderWidth: 1, borderColor: c.inputBorder,
+    paddingHorizontal: 16, fontSize: 16, color: c.white,
   },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: {
     paddingHorizontal: 14, paddingVertical: 8, borderRadius: 10,
     backgroundColor: 'rgba(255,255,255,0.06)',
   },
-  chipActive: { backgroundColor: colors.emerald },
-  chipText: { fontSize: 14, fontWeight: '600', color: colors.textDim },
-  chipTextActive: { color: colors.white },
+  chipActive: { backgroundColor: c.emerald },
+  chipText: { fontSize: 14, fontWeight: '600', color: c.textDim },
+  chipTextActive: { color: c.white },
   dirChip: {
     width: 44, paddingVertical: 8, borderRadius: 10, alignItems: 'center' as const,
     backgroundColor: 'rgba(255,255,255,0.06)',
   },
-  dirChipActive: { backgroundColor: colors.purple },
-  dirText: { fontSize: 14, fontWeight: '700', color: colors.textDim },
-  dirTextActive: { color: colors.white },
+  dirChipActive: { backgroundColor: c.purple },
+  dirText: { fontSize: 14, fontWeight: '700', color: c.textDim },
+  dirTextActive: { color: c.white },
   saveButton: {
-    height: 48, borderRadius: 12, backgroundColor: colors.emerald,
+    height: 48, borderRadius: 12, backgroundColor: c.emerald,
     alignItems: 'center', justifyContent: 'center', marginTop: 24,
   },
-  saveButtonText: { fontSize: 16, fontWeight: '600', color: colors.white },
+  saveButtonText: { fontSize: 16, fontWeight: '600', color: c.white },
   rainRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -861,7 +865,7 @@ const editorStyles = StyleSheet.create({
     width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.1)',
     alignItems: 'center', justifyContent: 'center',
   },
-  stepperValue: { fontSize: 18, fontWeight: '700', color: colors.white, minWidth: 60, textAlign: 'center' },
-  rainTitle: { fontSize: 14, fontWeight: '600', color: colors.white },
-  rainSub: { fontSize: 11, color: colors.textMuted, marginTop: 2 },
+  stepperValue: { fontSize: 18, fontWeight: '700', color: c.white, minWidth: 60, textAlign: 'center' },
+  rainTitle: { fontSize: 14, fontWeight: '600', color: c.white },
+  rainSub: { fontSize: 11, color: c.textMuted, marginTop: 2 },
 });
