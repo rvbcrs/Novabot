@@ -29,6 +29,7 @@ CLAUDE.md
 .husky/_
 **/.agent/
 .worktrees/
+.superpowers/
 server/captured/
 docs/reference/
 docs/TESTER-GUIDE.md
