@@ -281,7 +281,7 @@ function ThemedApp({
   handleLogout,
   handleGoToProvision,
 }: {
-  navigationRef: React.RefObject<NavigationContainerRef<MainTabParams>>;
+  navigationRef: React.RefObject<NavigationContainerRef<MainTabParams> | null>;
   isAuthenticated: boolean;
   handleLoginSuccess: (_token: string, serverUrl: string) => void;
   handleLogout: () => void;
