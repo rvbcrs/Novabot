@@ -28,6 +28,15 @@ export default {
   returning: 'Terugkeren',
   paused: 'Gepauzeerd',
   mapping: 'Kaart maken',
+
+  // Appearance
+  appearance: 'Uiterlijk',
+  appearanceAuto: 'Auto',
+  appearanceLight: 'Licht',
+  appearanceDark: 'Donker',
+  appearanceAutoCaption: 'Auto volgt je systeeminstelling.',
+  appearanceLightCaption: 'Lichte modus staat altijd aan.',
+  appearanceDarkCaption: 'Donkere modus staat altijd aan.',
   errorState: 'Fout',
   noMowerFound: 'Geen maaier gevonden',
   connectingToServer: 'Verbinden met server...',

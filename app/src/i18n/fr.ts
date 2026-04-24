@@ -101,4 +101,8 @@ export default {
   size: 'Surface', estMow: 'Durée tonte',
   cleanZone: 'Sans obstacles', directDockPath: 'Trajet direct',
   charger: 'Station', mower: 'Tondeuse',
+  appearance: 'Apparence', appearanceAuto: 'Auto', appearanceLight: 'Clair', appearanceDark: 'Sombre',
+  appearanceAutoCaption: "Auto suit le réglage de votre système.",
+  appearanceLightCaption: 'Le mode clair est toujours activé.',
+  appearanceDarkCaption: 'Le mode sombre est toujours activé.',
 };
