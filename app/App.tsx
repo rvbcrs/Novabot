@@ -1,8 +1,9 @@
-import React, { useCallback, useEffect, useState, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import {
   NavigationContainer,
   DefaultTheme,
+  DarkTheme as RNDarkTheme,
   NavigationContainerRef,
 } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -13,6 +14,7 @@ import { View, Platform } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from './src/theme/colors';
+import { ThemeProvider, useTheme, type Colors } from './src/theme';
 import { DemoProvider } from './src/context/DemoContext';
 import { DevModeProvider, useDevMode } from './src/context/DevModeContext';
 import { PatternProvider } from './src/context/PatternContext';
@@ -68,29 +70,32 @@ const Tab = createBottomTabNavigator<MainTabParams>();
 
 // ── Theme ────────────────────────────────────────────────────────────────────
 
-const DarkTheme = {
-  ...DefaultTheme,
-  dark: true,
-  colors: {
-    ...DefaultTheme.colors,
-    primary: colors.emerald,
-    background: colors.bg,
-    card: colors.bg,
-    text: colors.text,
-    border: colors.cardBorder,
-    notification: colors.emerald,
-  },
-};
-
-const screenOptions = {
-  headerShown: false,
-  contentStyle: { backgroundColor: colors.bg },
-  animation: 'slide_from_right' as const,
-};
+function buildNavTheme(colorScheme: 'light' | 'dark', c: Colors) {
+  const base = colorScheme === 'dark' ? RNDarkTheme : DefaultTheme;
+  return {
+    ...base,
+    dark: colorScheme === 'dark',
+    colors: {
+      ...base.colors,
+      primary: c.emerald,
+      background: c.bg,
+      card: c.bg,
+      text: c.text,
+      border: c.cardBorder,
+      notification: c.emerald,
+    },
+  };
+}
 
 // ── Provision Tab (nested stack) ─────────────────────────────────────────────
 
 function ProvisionTabScreen() {
+  const { colors: c } = useTheme();
+  const screenOptions = useMemo(() => ({
+    headerShown: false,
+    contentStyle: { backgroundColor: c.bg },
+    animation: 'slide_from_right' as const,
+  }), [c.bg]);
   return (
     <ProvisionStack.Navigator screenOptions={screenOptions}>
       <ProvisionStack.Screen name="Settings" component={SettingsScreen} />
@@ -111,6 +116,12 @@ function SettingsTabScreen({
   onLogout: () => void;
   onGoToProvision: () => void;
 }) {
+  const { colors: c } = useTheme();
+  const screenOptions = useMemo(() => ({
+    headerShown: false,
+    contentStyle: { backgroundColor: c.bg },
+    animation: 'slide_from_right' as const,
+  }), [c.bg]);
   return (
     <SettingsStack.Navigator screenOptions={screenOptions}>
       <SettingsStack.Screen name="SettingsMain">
@@ -133,6 +144,12 @@ function SettingsTabScreen({
 // ── Map Tab (nested stack: MapScreen → MappingScreen as a sub-flow) ──
 
 function MapTabScreen() {
+  const { colors: c } = useTheme();
+  const screenOptions = useMemo(() => ({
+    headerShown: false,
+    contentStyle: { backgroundColor: c.bg },
+    animation: 'slide_from_right' as const,
+  }), [c.bg]);
   return (
     <MapStack.Navigator screenOptions={screenOptions}>
       <MapStack.Screen name="MapMain" component={MapScreen} />
@@ -145,21 +162,22 @@ function MapTabScreen() {
 
 function MainTabs({ onLogout, onGoToProvision }: { onLogout: () => void; onGoToProvision: () => void }) {
   const { t } = useI18n();
+  const { colors: c } = useTheme();
   return (
     <Tab.Navigator
       initialRouteName="Home"
       screenOptions={({ route }) => ({
         headerShown: false,
         tabBarStyle: {
-          backgroundColor: colors.bg,
-          borderTopColor: colors.cardBorder,
+          backgroundColor: c.bg,
+          borderTopColor: c.cardBorder,
           borderTopWidth: 1,
           height: Platform.OS === 'ios' ? 88 : 64,
           paddingBottom: Platform.OS === 'ios' ? 28 : 8,
           paddingTop: 8,
         },
-        tabBarActiveTintColor: colors.emerald,
-        tabBarInactiveTintColor: colors.textMuted,
+        tabBarActiveTintColor: c.emerald,
+        tabBarInactiveTintColor: c.textMuted,
         tabBarLabelStyle: { fontSize: 11, fontWeight: '600' },
         tabBarIcon: ({ color, size }) => {
           let iconName: React.ComponentProps<typeof Ionicons>['name'] = 'home';
@@ -217,6 +235,7 @@ function MainTabs({ onLogout, onGoToProvision }: { onLogout: () => void; onGoToP
 
 function AuthenticatedApp({ onLogout, onGoToProvision }: { onLogout: () => void; onGoToProvision: () => void }) {
   const { unlocked } = useDevMode();
+  const { colors: c } = useTheme();
 
   // Always show full tabs — locked mode only hides certain features, not tabs
   return <MainTabs onLogout={onLogout} onGoToProvision={onGoToProvision} />;
@@ -227,15 +246,15 @@ function AuthenticatedApp({ onLogout, onGoToProvision }: { onLogout: () => void;
       screenOptions={({ route }) => ({
         headerShown: false,
         tabBarStyle: {
-          backgroundColor: colors.bg,
-          borderTopColor: colors.cardBorder,
+          backgroundColor: c.bg,
+          borderTopColor: c.cardBorder,
           borderTopWidth: 1,
           height: Platform.OS === 'ios' ? 88 : 64,
           paddingBottom: Platform.OS === 'ios' ? 28 : 8,
           paddingTop: 8,
         },
-        tabBarActiveTintColor: colors.emerald,
-        tabBarInactiveTintColor: colors.textMuted,
+        tabBarActiveTintColor: c.emerald,
+        tabBarInactiveTintColor: c.textMuted,
         tabBarLabelStyle: { fontSize: 11, fontWeight: '600' },
         tabBarIcon: ({ color, size }) => {
           const iconName = route.name === 'ProvisionTab' ? 'bluetooth' : 'settings';
@@ -251,6 +270,68 @@ function AuthenticatedApp({ onLogout, onGoToProvision }: { onLogout: () => void;
       </Tab.Screen>
     </Tab.Navigator>
   );
+}
+
+// ── ThemedApp — reads active theme, renders NavigationContainer ──────────────
+
+function ThemedApp({
+  navigationRef,
+  isAuthenticated,
+  handleLoginSuccess,
+  handleLogout,
+  handleGoToProvision,
+}: {
+  navigationRef: React.RefObject<NavigationContainerRef<MainTabParams>>;
+  isAuthenticated: boolean;
+  handleLoginSuccess: (_token: string, serverUrl: string) => void;
+  handleLogout: () => void;
+  handleGoToProvision: () => void;
+}) {
+  const { colorScheme, colors: c } = useTheme();
+  const navTheme = useMemo(() => buildNavTheme(colorScheme, c), [colorScheme, c]);
+  const screenOptions = useMemo(() => ({
+    headerShown: false,
+    contentStyle: { backgroundColor: c.bg },
+    animation: 'slide_from_right' as const,
+  }), [c.bg]);
+
+  // Re-apply Android navigation bar background when color scheme changes.
+  useEffect(() => {
+    if (Platform.OS === 'android') {
+      NavigationBar.setBackgroundColorAsync(c.bg);
+    }
+  }, [c.bg]);
+
+  return (
+    <NavigationContainer theme={navTheme} ref={navigationRef}>
+      {isAuthenticated ? (
+        <ActiveMowerProvider>
+          <AuthenticatedApp onLogout={handleLogout} onGoToProvision={handleGoToProvision} />
+        </ActiveMowerProvider>
+      ) : (
+        <AuthStack.Navigator screenOptions={screenOptions}>
+          <AuthStack.Screen name="Login">
+            {(props) => (
+              <LoginScreen {...props} onLoginSuccess={handleLoginSuccess} />
+            )}
+          </AuthStack.Screen>
+          <AuthStack.Screen name="Register">
+            {(props) => (
+              <RegisterScreen
+                {...props}
+                onLoginSuccess={handleLoginSuccess}
+              />
+            )}
+          </AuthStack.Screen>
+        </AuthStack.Navigator>
+      )}
+    </NavigationContainer>
+  );
+}
+
+function StatusBarThemed() {
+  const { colorScheme } = useTheme();
+  return <StatusBar style={colorScheme === 'light' ? 'dark' : 'light'} />;
 }
 
 // ── App ──────────────────────────────────────────────────────────────────────
@@ -284,7 +365,6 @@ export default function App() {
     if (Platform.OS === 'android') {
       NavigationBar.setVisibilityAsync('hidden');
       NavigationBar.setBehaviorAsync('overlay-swipe');
-      NavigationBar.setBackgroundColorAsync(colors.bg);
     }
     // Wait for auth check, then show app
     const timer = setTimeout(() => setAppReady(true), 1500);
@@ -319,41 +399,27 @@ export default function App() {
   if (!appReady || !authChecked) return null;
 
   return (
+    <ThemeProvider>
     <DevModeProvider>
     <DemoProvider>
     <I18nProvider>
     <ExperimentalProvider>
     <PatternProvider>
     <GestureHandlerRootView style={{ flex: 1 }} onLayout={onLayoutRootView}>
-      <NavigationContainer theme={DarkTheme} ref={navigationRef}>
-        <StatusBar style="light" />
-        {isAuthenticated ? (
-          <ActiveMowerProvider>
-            <AuthenticatedApp onLogout={handleLogout} onGoToProvision={handleGoToProvision} />
-          </ActiveMowerProvider>
-        ) : (
-          <AuthStack.Navigator screenOptions={screenOptions}>
-            <AuthStack.Screen name="Login">
-              {(props) => (
-                <LoginScreen {...props} onLoginSuccess={handleLoginSuccess} />
-              )}
-            </AuthStack.Screen>
-            <AuthStack.Screen name="Register">
-              {(props) => (
-                <RegisterScreen
-                  {...props}
-                  onLoginSuccess={handleLoginSuccess}
-                />
-              )}
-            </AuthStack.Screen>
-          </AuthStack.Navigator>
-        )}
-      </NavigationContainer>
+      <ThemedApp
+        navigationRef={navigationRef}
+        isAuthenticated={isAuthenticated}
+        handleLoginSuccess={handleLoginSuccess}
+        handleLogout={handleLogout}
+        handleGoToProvision={handleGoToProvision}
+      />
+      <StatusBarThemed />
     </GestureHandlerRootView>
     </PatternProvider>
     </ExperimentalProvider>
     </I18nProvider>
     </DemoProvider>
     </DevModeProvider>
+    </ThemeProvider>
   );
 }
