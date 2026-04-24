@@ -20,6 +20,7 @@ import Svg, { Path as SvgPath } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import { colors } from '../theme/colors';
+import { useTheme } from '../theme';
 import { BatteryRing } from '../components/BatteryRing';
 import { MowerScene } from '../components/mower/MowerScene';
 import { useMowerState } from '../hooks/useMowerState';
@@ -389,6 +390,27 @@ const GLOW_COLOR: Record<MowerActivity, string> = {
   error:        'rgba(239, 68, 68, 0.20)',
 };
 
+// ── Hero palette (light-mode pastel variant, spec visual choice B) ───
+
+const HERO_PALETTE = {
+  dark: {
+    gradientFrom: '#065f46',
+    gradientTo: '#059669',
+    text: '#ffffff',
+    chipBg: 'rgba(255,255,255,0.05)',
+    chipText: colors.textDim,
+    subtitleText: 'rgba(255,255,255,0.7)',
+  },
+  light: {
+    gradientFrom: '#d4f0d4',
+    gradientTo: '#a8d5aa',
+    text: '#1b3a1d',
+    chipBg: 'rgba(27,58,29,0.12)',
+    chipText: '#1b3a1d',
+    subtitleText: 'rgba(27,58,29,0.65)',
+  },
+} as const;
+
 // ── Component ────────────────────────────────────────────────────────
 
 export default function HomeScreen() {
@@ -398,6 +420,8 @@ export default function HomeScreen() {
   const { devices, connected } = useMowerState();
   const { activeMower, activeMowerSn, setActiveMowerSn } = useActiveMower();
   const { t } = useI18n();
+  const { colorScheme } = useTheme();
+  const hero = HERO_PALETTE[colorScheme];
   const mower = useMemo(() => deriveMower(activeMower), [activeMower]);
   // Rename flow for the active mower — wired to the pencil icon inside the
   // MowerPickerChevron trigger. Keeping it here (instead of inside the
@@ -1375,8 +1399,8 @@ export default function HomeScreen() {
                   style={styles.mowerImage}
                 />
                 <View style={styles.batteryRow}>
-                  <Text style={styles.batteryPercentage}>{mower.battery}</Text>
-                  <Text style={styles.batteryPercSign}>%</Text>
+                  <Text style={[styles.batteryPercentage, { color: hero.text }]}>{mower.battery}</Text>
+                  <Text style={[styles.batteryPercSign, { color: hero.subtitleText }]}>%</Text>
                   {mower.batteryCharging && (
                     <Ionicons name="flash" size={14} color={colors.blue} style={{ marginLeft: 2 }} />
                   )}

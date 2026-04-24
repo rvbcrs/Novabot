@@ -4,26 +4,32 @@
  */
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
+import type { ColorScheme } from '../../theme';
 
 interface Props {
   battery: number;
+  colorScheme?: ColorScheme;
 }
 
-export function BatteryIndicator({ battery }: Props) {
+export function BatteryIndicator({ battery, colorScheme = 'dark' }: Props) {
   const color = battery >= 30 ? '#34d399' : battery >= 15 ? '#fbbf24' : '#ef4444';
   const fillWidth = Math.max(battery, 5);
+  const isLight = colorScheme === 'light';
+  const outlineBorderColor = isLight ? 'rgba(27,58,29,0.3)' : 'rgba(255,255,255,0.3)';
+  const nubColor = isLight ? 'rgba(27,58,29,0.3)' : 'rgba(255,255,255,0.3)';
+  const textColor = isLight ? 'rgba(27,58,29,0.8)' : 'rgba(255,255,255,0.7)';
 
   return (
     <View style={styles.container}>
       {/* Battery outline */}
-      <View style={styles.batteryOutline}>
+      <View style={[styles.batteryOutline, { borderColor: outlineBorderColor }]}>
         {/* Battery nub */}
-        <View style={styles.batteryNub} />
+        <View style={[styles.batteryNub, { backgroundColor: nubColor }]} />
         {/* Fill */}
         <View style={[styles.batteryFill, { width: `${fillWidth}%` as any, backgroundColor: color }]} />
       </View>
       {/* Percentage text */}
-      <Text style={styles.text}>{battery}%</Text>
+      <Text style={[styles.text, { color: textColor }]}>{battery}%</Text>
     </View>
   );
 }
@@ -42,7 +48,6 @@ const styles = StyleSheet.create({
     height: 14,
     borderRadius: 2,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.3)',
     position: 'relative',
     overflow: 'hidden',
   },
@@ -54,7 +59,6 @@ const styles = StyleSheet.create({
     height: 6,
     borderTopRightRadius: 2,
     borderBottomRightRadius: 2,
-    backgroundColor: 'rgba(255,255,255,0.3)',
   },
   batteryFill: {
     position: 'absolute',
@@ -66,7 +70,6 @@ const styles = StyleSheet.create({
   text: {
     fontSize: 10,
     fontWeight: '700',
-    color: 'rgba(255,255,255,0.7)',
     fontVariant: ['tabular-nums'],
   },
 });
