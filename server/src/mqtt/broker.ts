@@ -13,7 +13,7 @@ import { DeviceRegistryRow } from '../types/index.js';
 import { startMqttBridge } from '../proxy/mqttBridge.js';
 import { tryDecrypt } from './decrypt.js';
 import { startHomeAssistantBridge, forwardToHomeAssistant, publishDeviceOnline, publishDeviceOffline } from './homeassistant.js';
-import { updateDeviceData, clearDeviceData } from './sensorData.js';
+import { updateDeviceData, clearDeviceData, deviceCache } from './sensorData.js';
 import { isDemoMode } from '../services/demoSimulator.js';
 import { forwardToDashboard, emitDeviceOnline, emitDeviceOffline, pushMqttLog, emitOtaEvent, emitPinEvent, emitExtendedEvent, emitCommandRespond } from '../dashboard/socketHandler.js';
 import { initMapSync, handleMapMessage, handleExtendedResponse, handleDeviceResponse, publishToExtended, onExtendedResponse, offExtendedResponse, publishEncryptedOnTopic, notifyRespond } from './mapSync.js';
@@ -1044,6 +1044,39 @@ export async function startMqttBroker(): Promise<void> {
         }
         // Forward to mapSync response handlers (used by dashboard API endpoints)
         handleExtendedResponse(extSn, payloadBuf.toString());
+
+        // Edge-cut state — mirror the firmware's edge_cut_status events
+        // into the sensor cache so the app can derive activity='edge_cutting'
+        // directly from deviceState.sensors. The firmware emits this periodically
+        // while NTCP only_edge_mode runs and once more (active:false) on finish.
+        if (extSn && cmdName === 'edge_cut_status') {
+          const body = parsed[cmdName] as {
+            active?: boolean;
+            work_status?: number;
+            covered_ratio?: number;
+            task_covered_area?: number;
+            task_planned_area?: number;
+            result_status?: number | null;
+          };
+          if (body) {
+            if (!deviceCache.has(extSn)) deviceCache.set(extSn, new Map());
+            const cache = deviceCache.get(extSn)!;
+            const changes = new Map<string, string>();
+            const set = (k: string, v: string | number | null | undefined) => {
+              if (v == null) return;
+              const sv = String(v);
+              cache.set(k, sv);
+              changes.set(k, sv);
+            };
+            set('edge_active', body.active ? '1' : '0');
+            set('edge_work_status', body.work_status);
+            set('edge_covered_ratio', body.covered_ratio);
+            set('edge_task_covered_area', body.task_covered_area);
+            set('edge_task_planned_area', body.task_planned_area);
+            if (body.result_status != null) set('edge_result_status', body.result_status);
+            forwardToDashboard(extSn, changes);
+          }
+        }
 
         // Authoritative LoRa sync — als de mower zelf zijn LoRa-config
         // rapporteert (via get_lora_info_respond of set_lora_info_respond),

@@ -1068,13 +1068,14 @@ def handle_start_edge_cut(params, respond):
         "}'"
     )
 
+    # `--feedback` emits Feedback: blocks as they arrive, which we parse in
+    # a background thread to relay to the app via extended_response MQTT.
     cmd = (
         "source /opt/ros/galactic/setup.bash && "
         "source /root/novabot/install/setup.bash 2>/dev/null && "
-        "nohup timeout 1800 ros2 action send_goal "
+        "exec timeout 1800 ros2 action send_goal --feedback "
         "/navigate_through_coverage_paths "
-        "coverage_planner/action/NavigateThroughCoveragePaths " + goal_yaml +
-        " >> /tmp/edge_cut.log 2>&1 &"
+        "coverage_planner/action/NavigateThroughCoveragePaths " + goal_yaml
     )
 
     # Match the shared-memory DDS transport the ROS nodes use — without
@@ -1089,21 +1090,119 @@ def handle_start_edge_cut(params, respond):
     }
 
     try:
-        subprocess.Popen(
+        proc = subprocess.Popen(
             ["bash", "-c", cmd], env=env,
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, bufsize=1,
         )
     except Exception as e:
         log(f"start_edge_cut dispatch error: {e}")
         respond("start_edge_cut_respond", {"result": 1, "error": f"dispatch_failed: {e}"})
         return
 
-    log(f"start_edge_cut dispatched: map={map_name} blade={blade_mm}mm")
+    log(f"start_edge_cut dispatched: map={map_name} blade={blade_mm}mm pid={proc.pid}")
     respond("start_edge_cut_respond", {
         "result": 0,
         "map": map_name,
         "blade_mm": blade_mm,
     })
+    # Start the running-state event so the app can flip activity → edge_cutting
+    # immediately (don't wait for first Feedback block, which can lag ~2s).
+    respond("edge_cut_status", {
+        "active": True,
+        "work_status": 150,  # BOUNDARY_COVERING — optimistic
+        "covered_ratio": 0.0,
+        "task_covered_area": 0.0,
+        "task_planned_area": 0.0,
+    })
+
+    # Monitor thread: parse ros2 action send_goal output.
+    # The CLI emits blocks like:
+    #   Feedback:
+    #       work_status: 150
+    #       covered_ratio: 0.0
+    #       ...
+    #   Result:
+    #       result_status: 100
+    #       ...
+    def _monitor_edge_cut(p, log_path="/tmp/edge_cut.log"):
+        import re as _re
+        last_pub = 0.0
+        cur_work_status = 150
+        cur_ratio = 0.0
+        cur_task_covered = 0.0
+        cur_task_planned = 0.0
+        in_feedback = False
+        in_result = False
+        result_status = None
+        try:
+            with open(log_path, "a") as lf:
+                assert p.stdout is not None
+                for line in p.stdout:
+                    lf.write(line)
+                    lf.flush()
+                    stripped = line.strip()
+                    if stripped == "Feedback:":
+                        in_feedback, in_result = True, False
+                        continue
+                    if stripped == "Result:":
+                        in_feedback, in_result = False, True
+                        continue
+                    if not stripped or stripped.startswith("Goal"):
+                        continue
+                    kv = _re.match(r"([a-zA-Z_]+):\s*(.+)", stripped)
+                    if not kv:
+                        continue
+                    key, val = kv.group(1), kv.group(2).strip()
+                    if in_feedback:
+                        try:
+                            if key == "work_status":
+                                cur_work_status = int(val)
+                            elif key == "covered_ratio":
+                                cur_ratio = float(val)
+                            elif key == "task_covered_area":
+                                cur_task_covered = float(val)
+                            elif key == "task_planned_area":
+                                cur_task_planned = float(val)
+                        except ValueError:
+                            pass
+                        # Rate-limit MQTT pubs to ~1 Hz — the CLI bursts
+                        # blocks every few seconds anyway.
+                        now = time.monotonic()
+                        if key == "total_missed_area" and (now - last_pub) > 1.0:
+                            respond("edge_cut_status", {
+                                "active": True,
+                                "work_status": cur_work_status,
+                                "covered_ratio": round(cur_ratio, 3),
+                                "task_covered_area": round(cur_task_covered, 2),
+                                "task_planned_area": round(cur_task_planned, 2),
+                            })
+                            last_pub = now
+                    elif in_result:
+                        if key == "result_status":
+                            try:
+                                result_status = int(val)
+                            except ValueError:
+                                pass
+                p.wait(timeout=5)
+        except Exception as e:
+            log(f"edge_cut monitor error: {e}")
+        finally:
+            respond("edge_cut_status", {
+                "active": False,
+                "work_status": 0,
+                "covered_ratio": round(cur_ratio, 3),
+                "task_covered_area": round(cur_task_covered, 2),
+                "task_planned_area": round(cur_task_planned, 2),
+                "result_status": result_status,
+                "exit_code": p.returncode,
+            })
+            log(f"edge_cut monitor end: result_status={result_status} exit={p.returncode}")
+
+    threading.Thread(
+        target=_monitor_edge_cut, args=(proc,),
+        daemon=True, name="edge-cut-monitor",
+    ).start()
 
 
 def handle_recalibrate_charging_pose(params, respond):

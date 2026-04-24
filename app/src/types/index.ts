@@ -5,6 +5,7 @@
 export type MowerActivity =
   | 'idle'
   | 'mowing'
+  | 'edge_cutting'
   | 'returning'
   | 'charging'
   | 'error'

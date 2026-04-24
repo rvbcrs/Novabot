@@ -191,10 +191,18 @@ function deriveMower(mower: DeviceState | null): MowerDerived | null {
     && !msg.includes('Work:FINISHED') && !msg.includes('Work:CANCELLED')
     && workStatus !== '0' && workStatus !== '9';
 
+  // Edge-cut state is surfaced by the firmware via extended_response edge_cut_status
+  // → server writes `edge_active` ('0'/'1') + supporting fields to the sensor cache.
+  // Because we bypass robot_decision when dispatching NTCP with only_edge_mode, the
+  // regular msg/work_status fields don't reflect BOUNDARY_COVERING. This dedicated
+  // sensor is the one source of truth for the edge-cutting activity.
+  const isEdgeCutting = s.edge_active === '1' && !isOnDock;
+
   let activity: MowerActivity = 'idle';
   if (isOffline) activity = 'idle';
   else if (hasError && !isOnDock) activity = 'error';
   else if (isDockFailed && !isOnDock) activity = 'error';
+  else if (isEdgeCutting) activity = 'edge_cutting';
   else if (isCoverageRunning) activity = 'mowing';
   else if (s.start_edit_or_assistant_map_flag === '1' && taskMode !== 1) activity = 'mapping';
   else if (isCoveragePaused) activity = 'paused';
@@ -238,6 +246,7 @@ function deriveMower(mower: DeviceState | null): MowerDerived | null {
 
 const ACTIVITY_KEYS: Record<MowerActivity, string> = {
   mowing: 'mowing',
+  edge_cutting: 'edgeCutting',
   charging: 'charging',
   returning: 'returning',
   paused: 'paused',
@@ -250,6 +259,7 @@ function getActivityLabel(activity: MowerActivity, t?: (key: string) => string):
   if (t) return t(ACTIVITY_KEYS[activity] ?? 'idle');
   switch (activity) {
     case 'mowing': return 'Mowing';
+    case 'edge_cutting': return 'Edge cutting';
     case 'charging': return 'Charging';
     case 'returning': return 'Returning';
     case 'paused': return 'Paused';
@@ -263,6 +273,8 @@ function getActivityColor(activity: MowerActivity): string {
   switch (activity) {
     case 'mowing':
       return colors.green;
+    case 'edge_cutting':
+      return colors.amber;
     case 'charging':
       return colors.blue;
     case 'returning':
@@ -338,6 +350,8 @@ function getActivityIcon(
   switch (activity) {
     case 'mowing':
       return 'leaf'; // overridden by custom SVG in render
+    case 'edge_cutting':
+      return 'scan-outline';
     case 'charging':
       return 'battery-charging';
     case 'returning':
@@ -357,13 +371,14 @@ function getActivityIcon(
 // ── Glow colors per activity (matching dashboard StatusHeroCard) ────
 
 const GLOW_COLOR: Record<MowerActivity, string> = {
-  idle:      'transparent',
-  mowing:    'rgba(16, 185, 129, 0.20)',
-  charging:  'rgba(59, 130, 246, 0.20)',
-  returning: 'rgba(245, 158, 11, 0.15)',
-  paused:    'rgba(234, 179, 8, 0.12)',
-  mapping:   'rgba(168, 85, 247, 0.15)',
-  error:     'rgba(239, 68, 68, 0.20)',
+  idle:         'transparent',
+  mowing:       'rgba(16, 185, 129, 0.20)',
+  edge_cutting: 'rgba(245, 158, 11, 0.20)',
+  charging:     'rgba(59, 130, 246, 0.20)',
+  returning:    'rgba(245, 158, 11, 0.15)',
+  paused:       'rgba(234, 179, 8, 0.12)',
+  mapping:      'rgba(168, 85, 247, 0.15)',
+  error:        'rgba(239, 68, 68, 0.20)',
 };
 
 // ── Component ────────────────────────────────────────────────────────
@@ -728,7 +743,7 @@ export default function HomeScreen() {
   // extended_commands op mower).
   useEffect(() => {
     if (!mower || demo.enabled) return;
-    const isActive = mower.activity === 'mowing' || mower.activity === 'mapping';
+    const isActive = mower.activity === 'mowing' || mower.activity === 'edge_cutting' || mower.activity === 'mapping';
     const isReturning = mower.activity === 'returning';
     if (!isActive && !isReturning) return;
     let tick = 0;
@@ -1935,11 +1950,11 @@ export default function HomeScreen() {
                 await api.sendExtended(mower.sn, {
                   start_edge_cut: {
                     mapName: 'map0',
-                    // heightCm → mm (BoundaryFollow action expects mm, clamped to 20..90)
+                    // heightCm → mm (NTCP goal's blade_height is mm, clamped 20..90)
                     bladeHeight: heightCm * 10,
                   },
                 }).catch(() => { /* non-fatal, optimistic UI still set */ });
-                setOptimisticActivity('mowing');
+                setOptimisticActivity('edge_cutting');
               } else if (picked.mode === 'spot' && picked.spotPolygon) {
                 await api.sendCommand(mower.sn, {
                   start_run: {
@@ -1951,8 +1966,8 @@ export default function HomeScreen() {
                     scheduleId: '',
                   },
                 });
+                setOptimisticActivity('mowing');
               }
-              setOptimisticActivity('mowing');
               // Update local mowSettings so subsequent status checks line up.
               setMowSettings({ cuttingHeight: wire, pathDirection: mowSettings?.pathDirection ?? 120 });
             } catch {}
