@@ -22,7 +22,56 @@ import Svg, {
   Path,
   Image as SvgImage,
 } from 'react-native-svg';
-import { colors } from '../theme/colors';
+import { useTheme, useStyles, type Colors } from '../theme';
+
+type MapScheme = 'light' | 'dark';
+
+const MAP_PALETTE: Record<MapScheme, {
+  polygonFill: string;
+  polygonStroke: string;
+  plannedStroke: string;
+  finishedStroke: string;
+  stripeStroke: string;
+  trailStroke: string;
+  liveCoverStroke: string;
+  chargerCircleFill: string;
+  chargerCircleStroke: string;
+  chargerBoltFill: string;
+  obstacleFill: string;
+  obstacleStroke: string;
+  progressTextColor: string;
+}> = {
+  dark: {
+    polygonFill: 'rgba(34,197,94,0.12)',
+    polygonStroke: '#22c55e',
+    plannedStroke: 'rgba(255,255,255,0.22)',
+    finishedStroke: 'rgba(34,197,94,0.85)',
+    stripeStroke: 'rgba(34,197,94,0.15)',
+    trailStroke: 'rgba(34,197,94,0.5)',
+    liveCoverStroke: '#fbbf24',
+    chargerCircleFill: 'rgba(245,158,11,0.2)',
+    chargerCircleStroke: '#f59e0b',
+    chargerBoltFill: '#f59e0b',
+    obstacleFill: 'rgba(239,68,68,0.25)',
+    obstacleStroke: '#ef4444',
+    progressTextColor: '#ffffff',
+  },
+  light: {
+    polygonFill: 'rgba(34,197,94,0.25)',
+    polygonStroke: '#16a34a',
+    plannedStroke: 'rgba(21,128,61,0.45)',
+    finishedStroke: 'rgba(21,128,61,0.85)',
+    stripeStroke: 'rgba(22,163,74,0.28)',
+    trailStroke: '#15803d',
+    liveCoverStroke: '#f59e0b',
+    chargerCircleFill: 'rgba(245,158,11,0.2)',
+    chargerCircleStroke: '#f59e0b',
+    chargerBoltFill: '#f59e0b',
+    obstacleFill: 'rgba(239,68,68,0.25)',
+    obstacleStroke: '#ef4444',
+    progressTextColor: '#14532d',
+  },
+};
 
 interface LocalPoint {
   x: number;
@@ -105,6 +154,33 @@ function generateStripes(
   return lines;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const makeStyles = (_c: Colors) => StyleSheet.create({
+  container: {
+    position: 'relative',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  flex: {
+    flex: 1,
+    width: '100%',
+    height: '100%',
+  },
+  overlay: {
+    position: 'absolute',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  progressText: {
+    fontSize: 28,
+    fontWeight: '800',
+    // color is set per-scheme via mapPalette.progressTextColor in the render tree.
+    textShadowColor: 'rgba(0,0,0,0.6)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 4,
+  },
+});
+
 export function MowingProgressMap({
   polygon,
   progress,
@@ -123,6 +199,10 @@ export function MowingProgressMap({
   mowerHeading,
   showProgressOverlay = true,
 }: Props) {
+  const { colorScheme } = useTheme();
+  const mapPalette = MAP_PALETTE[colorScheme];
+  const styles = useStyles(makeStyles);
+
   const finishedSet = useMemo(
     () => new Set(finishedAreas ?? []),
     [finishedAreas],
@@ -235,7 +315,7 @@ export function MowingProgressMap({
       </Defs>
 
       {/* Polygon background */}
-      <SvgPolygon points={pointsStr} fill="rgba(34,197,94,0.12)" stroke="#22c55e" strokeWidth={1.5} strokeLinejoin="round" />
+      <SvgPolygon points={pointsStr} fill={mapPalette.polygonFill} stroke={mapPalette.polygonStroke} strokeWidth={1.5} strokeLinejoin="round" />
 
       {/* Planned mowing paths OR direction stripes as fallback.
           Finished sub-areas (from mower's cover_path.covered.finished_area)
@@ -251,7 +331,7 @@ export function MowingProgressMap({
             <Polyline
               key={`plan-${path.id}`}
               points={path.points.map(p => toSvg(p, bounds, renderSize, padding)).map(p => `${p.x},${p.y}`).join(' ')}
-              fill="none" stroke="rgba(255,255,255,0.22)" strokeWidth={1} strokeLinecap="round" strokeLinejoin="round"
+              fill="none" stroke={mapPalette.plannedStroke} strokeWidth={1} strokeLinecap="round" strokeLinejoin="round"
             />
           ))}
           {/* 2. Finished sub-areas — thick dark green, like Novabot's mowed line */}
@@ -259,7 +339,7 @@ export function MowingProgressMap({
             <Polyline
               key={`done-${path.id}`}
               points={path.points.map(p => toSvg(p, bounds, renderSize, padding)).map(p => `${p.x},${p.y}`).join(' ')}
-              fill="none" stroke="rgba(34,197,94,0.85)" strokeWidth={3.5} strokeLinecap="round" strokeLinejoin="round"
+              fill="none" stroke={mapPalette.finishedStroke} strokeWidth={3.5} strokeLinecap="round" strokeLinejoin="round"
             />
           ))}
           {/* 3. Currently mowing sub-area — split on activeAreaPoints so the
@@ -285,7 +365,7 @@ export function MowingProgressMap({
               <Polyline
                 key={`active-${path.id}`}
                 points={toStr(done)}
-                fill="none" stroke="rgba(34,197,94,0.85)" strokeWidth={3.5} strokeLinecap="round" strokeLinejoin="round"
+                fill="none" stroke={mapPalette.finishedStroke} strokeWidth={3.5} strokeLinecap="round" strokeLinejoin="round"
               />
             );
           })}
@@ -293,7 +373,7 @@ export function MowingProgressMap({
       ) : (
         <G clipPath="url(#polyClipHome)">
           {stripes.map((l, i) => (
-            <Line key={i} x1={l.x1} y1={l.y1} x2={l.x2} y2={l.y2} stroke="rgba(34,197,94,0.15)" strokeWidth={1} />
+            <Line key={i} x1={l.x1} y1={l.y1} x2={l.x2} y2={l.y2} stroke={mapPalette.stripeStroke} strokeWidth={1} />
           ))}
         </G>
       )}
@@ -304,7 +384,7 @@ export function MowingProgressMap({
         <G clipPath="url(#polyClipHome)">
           <Polyline
             points={trailSvg.map(p => `${p.x},${p.y}`).join(' ')}
-            fill="none" stroke="rgba(34,197,94,0.5)" strokeWidth={6} strokeLinecap="round" strokeLinejoin="round"
+            fill="none" stroke={mapPalette.trailStroke} strokeWidth={6} strokeLinecap="round" strokeLinejoin="round"
           />
         </G>
       )}
@@ -315,14 +395,14 @@ export function MowingProgressMap({
         <G clipPath="url(#polyClipHome)">
           <Polyline
             points={liveCoverSegment.map(p => toSvg(p, bounds, renderSize, padding)).map(p => `${p.x},${p.y}`).join(' ')}
-            fill="none" stroke="#fbbf24" strokeWidth={3} strokeLinecap="round"
+            fill="none" stroke={mapPalette.liveCoverStroke} strokeWidth={3} strokeLinecap="round"
           />
         </G>
       )}
 
       {/* Charger */}
-      <Circle cx={chargerSvg.x} cy={chargerSvg.y} r={7} fill="rgba(245,158,11,0.2)" stroke="#f59e0b" strokeWidth={1.5} />
-      <Path d={`M${chargerSvg.x - 2} ${chargerSvg.y - 3} L${chargerSvg.x + 2} ${chargerSvg.y - 3} L${chargerSvg.x + 0.5} ${chargerSvg.y} L${chargerSvg.x + 2} ${chargerSvg.y} L${chargerSvg.x - 1} ${chargerSvg.y + 3.5} L${chargerSvg.x} ${chargerSvg.y + 0.5} L${chargerSvg.x - 1.5} ${chargerSvg.y + 0.5} Z`} fill="#f59e0b" />
+      <Circle cx={chargerSvg.x} cy={chargerSvg.y} r={7} fill={mapPalette.chargerCircleFill} stroke={mapPalette.chargerCircleStroke} strokeWidth={1.5} />
+      <Path d={`M${chargerSvg.x - 2} ${chargerSvg.y - 3} L${chargerSvg.x + 2} ${chargerSvg.y - 3} L${chargerSvg.x + 0.5} ${chargerSvg.y} L${chargerSvg.x + 2} ${chargerSvg.y} L${chargerSvg.x - 1} ${chargerSvg.y + 3.5} L${chargerSvg.x} ${chargerSvg.y + 0.5} L${chargerSvg.x - 1.5} ${chargerSvg.y + 0.5} Z`} fill={mapPalette.chargerBoltFill} />
 
       {/* Mower icon + heading */}
       {mowerSvg && (() => {
@@ -349,13 +429,13 @@ export function MowingProgressMap({
           <SvgPolygon
             key={`obs-${obs.id}`}
             points={obsSvg.map(p => `${p.x},${p.y}`).join(' ')}
-            fill="rgba(239,68,68,0.25)" stroke="#ef4444" strokeWidth={1} strokeLinejoin="round" strokeDasharray="3,2"
+            fill={mapPalette.obstacleFill} stroke={mapPalette.obstacleStroke} strokeWidth={1} strokeLinejoin="round" strokeDasharray="3,2"
           />
         );
       })}
 
       {/* Outline on top */}
-      <SvgPolygon points={pointsStr} fill="none" stroke="#22c55e" strokeWidth={1.5} strokeLinejoin="round" />
+      <SvgPolygon points={pointsStr} fill="none" stroke={mapPalette.polygonStroke} strokeWidth={1.5} strokeLinejoin="round" />
     </Svg>
   );
 
@@ -371,7 +451,7 @@ export function MowingProgressMap({
         </GestureDetector>
         {showProgressOverlay && (
           <View pointerEvents="none" style={styles.overlay}>
-            <Text style={styles.progressText}>{progress}%</Text>
+            <Text style={[styles.progressText, { color: mapPalette.progressTextColor }]}>{progress}%</Text>
           </View>
         )}
       </View>
@@ -383,35 +463,9 @@ export function MowingProgressMap({
       {svgContent}
       {showProgressOverlay && (
         <View pointerEvents="none" style={styles.overlay}>
-          <Text style={styles.progressText}>{progress}%</Text>
+          <Text style={[styles.progressText, { color: mapPalette.progressTextColor }]}>{progress}%</Text>
         </View>
       )}
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    position: 'relative',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  flex: {
-    flex: 1,
-    width: '100%',
-    height: '100%',
-  },
-  overlay: {
-    position: 'absolute',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  progressText: {
-    fontSize: 28,
-    fontWeight: '800',
-    color: colors.white,
-    textShadowColor: 'rgba(0,0,0,0.6)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 4,
-  },
-});
