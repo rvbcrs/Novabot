@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { colors } from '../theme/colors';
+import { useStyles, useTheme, type Colors } from '../theme';
 import { useActiveMower } from '../hooks/useActiveMower';
 import { ApiClient, type WorkRecord } from '../services/api';
 import { getServerUrl } from '../services/auth';
@@ -21,6 +21,8 @@ import { DemoBanner } from '../components/DemoBanner';
 import { formatTime as fmtTime, formatDate as fmtDate } from '../lib/format';
 
 export default function HistoryScreen() {
+  const styles = useStyles(makeStyles);
+  const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const [records, setRecords] = useState<WorkRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -108,9 +110,9 @@ export default function HistoryScreen() {
         {records.map((r) => (
           <View key={r.id} style={styles.recordCard}>
             <View style={styles.recordHeader}>
-              <View style={[styles.statusDot, { backgroundColor: statusColor(r.status) }]} />
+              <View style={[styles.statusDot, { backgroundColor: statusColor(r.status, colors) }]} />
               <Text style={styles.recordDate}>{formatDate(r.start_time)}</Text>
-              <Text style={[styles.recordStatus, { color: statusColor(r.status) }]}>
+              <Text style={[styles.recordStatus, { color: statusColor(r.status, colors) }]}>
                 {r.status}
               </Text>
             </View>
@@ -136,6 +138,8 @@ export default function HistoryScreen() {
 }
 
 function StatChip({ icon, value }: { icon: React.ComponentProps<typeof Ionicons>['name']; value: string }) {
+  const chipStyles = useStyles(makeChipStyles);
+  const { colors } = useTheme();
   return (
     <View style={chipStyles.container}>
       <Ionicons name={icon} size={14} color={colors.textDim} />
@@ -144,12 +148,12 @@ function StatChip({ icon, value }: { icon: React.ComponentProps<typeof Ionicons>
   );
 }
 
-function statusColor(status: string): string {
+function statusColor(status: string, c: Colors): string {
   switch (status.toLowerCase()) {
-    case 'completed': return colors.green;
-    case 'interrupted': return colors.amber;
-    case 'error': return colors.red;
-    default: return colors.textDim;
+    case 'completed': return c.green;
+    case 'interrupted': return c.amber;
+    case 'error': return c.red;
+    default: return c.textDim;
   }
 }
 
@@ -177,42 +181,42 @@ function formatDuration(seconds: number): string {
   return `${hours}h ${rem}m`;
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.bg },
+const makeStyles = (c: Colors) => StyleSheet.create({
+  container: { flex: 1, backgroundColor: c.bg },
   scroll: { padding: 24, paddingBottom: 32 },
-  title: { fontSize: 28, fontWeight: '700', color: colors.white, marginBottom: 20 },
+  title: { fontSize: 28, fontWeight: '700', color: c.white, marginBottom: 20 },
   emptyState: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 },
-  emptyTitle: { fontSize: 22, fontWeight: '700', color: colors.white, marginTop: 16 },
-  emptySubtitle: { fontSize: 15, color: colors.textDim, textAlign: 'center', marginTop: 8 },
+  emptyTitle: { fontSize: 22, fontWeight: '700', color: c.white, marginTop: 16 },
+  emptySubtitle: { fontSize: 15, color: c.textDim, textAlign: 'center', marginTop: 8 },
   errorBox: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
     backgroundColor: 'rgba(239,68,68,0.1)', borderRadius: 12, padding: 12, marginBottom: 16,
   },
-  errorText: { flex: 1, fontSize: 14, color: colors.red },
+  errorText: { flex: 1, fontSize: 14, color: c.red },
   emptyCard: {
     alignItems: 'center', padding: 40,
-    backgroundColor: colors.card, borderRadius: 16,
-    borderWidth: 1, borderColor: colors.cardBorder,
+    backgroundColor: c.card, borderRadius: 16,
+    borderWidth: 1, borderColor: c.cardBorder,
   },
-  emptyCardText: { fontSize: 16, fontWeight: '600', color: colors.textDim, marginTop: 12 },
+  emptyCardText: { fontSize: 16, fontWeight: '600', color: c.textDim, marginTop: 12 },
   recordCard: {
-    backgroundColor: colors.card, borderRadius: 16,
-    borderWidth: 1, borderColor: colors.cardBorder,
+    backgroundColor: c.card, borderRadius: 16,
+    borderWidth: 1, borderColor: c.cardBorder,
     padding: 16, marginBottom: 12,
   },
   recordHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 },
   statusDot: { width: 8, height: 8, borderRadius: 4 },
-  recordDate: { flex: 1, fontSize: 15, fontWeight: '600', color: colors.white },
+  recordDate: { flex: 1, fontSize: 15, fontWeight: '600', color: c.white },
   recordStatus: { fontSize: 12, fontWeight: '600', textTransform: 'capitalize' },
   recordStats: { flexDirection: 'row', gap: 10, flexWrap: 'wrap', marginBottom: 8 },
-  recordTimeRange: { fontSize: 12, color: colors.textMuted, fontVariant: ['tabular-nums'] },
+  recordTimeRange: { fontSize: 12, color: c.textMuted, fontVariant: ['tabular-nums'] },
 });
 
-const chipStyles = StyleSheet.create({
+const makeChipStyles = (c: Colors) => StyleSheet.create({
   container: {
     flexDirection: 'row', alignItems: 'center', gap: 4,
     paddingHorizontal: 10, paddingVertical: 4,
     backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 12,
   },
-  text: { fontSize: 12, color: colors.textDim },
+  text: { fontSize: 12, color: c.textDim },
 });

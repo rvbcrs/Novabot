@@ -13,7 +13,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import * as SecureStore from 'expo-secure-store';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { colors } from '../theme/colors';
+import { useStyles, useTheme, type Colors } from '../theme';
 import type { RootStackParams } from '../navigation/types';
 import { discoverServers, type DiscoveredServer } from '../services/discovery';
 import { getServerUrl } from '../services/auth';
@@ -24,6 +24,8 @@ const STORE_KEY_ADDR = 'mqtt_addr';
 const STORE_KEY_PORT = 'mqtt_port';
 
 export default function SettingsScreen({ navigation }: Props) {
+  const styles = useStyles(makeStyles);
+  const { colors } = useTheme();
   const [mqttAddr, setMqttAddr] = useState('192.168.0.177');
   const [mqttPort, setMqttPort] = useState('1883');
   const [loaded, setLoaded] = useState(false);
@@ -211,10 +213,10 @@ export default function SettingsScreen({ navigation }: Props) {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (c: Colors) => StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.bg,
+    backgroundColor: c.bg,
   },
   scroll: {
     flexGrow: 1,
@@ -237,20 +239,20 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 28,
     fontWeight: '700',
-    color: colors.white,
+    color: c.white,
     marginBottom: 8,
   },
   subtitle: {
     fontSize: 15,
-    color: colors.textDim,
+    color: c.textDim,
     textAlign: 'center',
     lineHeight: 22,
   },
   discoveryCard: {
-    backgroundColor: colors.card,
+    backgroundColor: c.card,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: colors.cardBorder,
+    borderColor: c.cardBorder,
     padding: 16,
     marginBottom: 16,
   },
@@ -263,7 +265,7 @@ const styles = StyleSheet.create({
   discoveryTitle: {
     fontSize: 13,
     fontWeight: '600',
-    color: colors.textDim,
+    color: c.textDim,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
   },
@@ -292,43 +294,43 @@ const styles = StyleSheet.create({
     width: 10,
     height: 10,
     borderRadius: 5,
-    backgroundColor: colors.textMuted,
+    backgroundColor: c.textMuted,
   },
   serverDotSelected: {
-    backgroundColor: colors.emerald,
+    backgroundColor: c.emerald,
   },
   serverIp: {
     fontSize: 16,
     fontWeight: '600',
-    color: colors.text,
+    color: c.text,
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
   },
   serverIpSelected: {
-    color: colors.white,
+    color: c.white,
   },
   serverLabel: {
     fontSize: 12,
-    color: colors.textDim,
+    color: c.textDim,
     marginTop: 2,
   },
   noServers: {
     fontSize: 13,
-    color: colors.textMuted,
+    color: c.textMuted,
     textAlign: 'center',
     paddingVertical: 8,
   },
   card: {
-    backgroundColor: colors.card,
+    backgroundColor: c.card,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: colors.cardBorder,
+    borderColor: c.cardBorder,
     padding: 20,
     marginBottom: 32,
   },
   label: {
     fontSize: 13,
     fontWeight: '600',
-    color: colors.textDim,
+    color: c.textDim,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
     marginBottom: 8,
@@ -336,10 +338,10 @@ const styles = StyleSheet.create({
   inputRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.inputBg,
+    backgroundColor: c.inputBg,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: colors.inputBorder,
+    borderColor: c.inputBorder,
     height: 48,
     paddingHorizontal: 12,
   },
@@ -349,25 +351,25 @@ const styles = StyleSheet.create({
   input: {
     flex: 1,
     fontSize: 16,
-    color: colors.white,
+    color: c.white,
     height: 48,
   },
   button: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.emerald,
+    backgroundColor: c.emerald,
     height: 48,
     borderRadius: 12,
     gap: 8,
   },
   buttonDisabled: {
-    backgroundColor: colors.emeraldDark,
+    backgroundColor: c.emeraldDark,
     opacity: 0.5,
   },
   buttonText: {
     fontSize: 16,
     fontWeight: '600',
-    color: colors.white,
+    color: c.white,
   },
 });

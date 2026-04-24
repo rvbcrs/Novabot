@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { colors } from '../theme/colors';
+import { useStyles, useTheme, type Colors } from '../theme';
 import type { RootStackParams } from '../navigation/types';
 import {
   provisionDevice,
@@ -50,6 +50,8 @@ type DeviceState = {
 };
 
 export default function ProvisionScreen({ navigation, route }: Props) {
+  const styles = useStyles(makeStyles);
+  const { colors } = useTheme();
   const { mqttAddr, mqttPort, wifiSsid, wifiPassword, devices } = route.params;
   const [deviceStates, setDeviceStates] = useState<Map<string, DeviceState>>(
     () => {
@@ -975,10 +977,10 @@ export default function ProvisionScreen({ navigation, route }: Props) {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (c: Colors) => StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.bg,
+    backgroundColor: c.bg,
   },
   scroll: {
     padding: 24,
@@ -1005,11 +1007,11 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 28,
     fontWeight: '700',
-    color: colors.white,
+    color: c.white,
   },
   subtitle: {
     fontSize: 15,
-    color: colors.textDim,
+    color: c.textDim,
     lineHeight: 22,
   },
   successBanner: {
@@ -1029,40 +1031,40 @@ const styles = StyleSheet.create({
   successTitle: {
     fontSize: 32,
     fontWeight: '800',
-    color: colors.green,
+    color: c.green,
     marginBottom: 8,
   },
   successSubtitle: {
     fontSize: 15,
-    color: colors.textDim,
+    color: c.textDim,
     textAlign: 'center',
     lineHeight: 22,
   },
   deviceCard: {
-    backgroundColor: colors.card,
+    backgroundColor: c.card,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: colors.cardBorder,
+    borderColor: c.cardBorder,
     padding: 20,
     marginBottom: 16,
   },
   loraCard: {
-    backgroundColor: colors.card,
+    backgroundColor: c.card,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: colors.cardBorder,
+    borderColor: c.cardBorder,
     padding: 16,
     marginBottom: 16,
   },
   loraTitle: {
     fontSize: 15,
     fontWeight: '700',
-    color: colors.white,
+    color: c.white,
     marginBottom: 2,
   },
   loraSubtitle: {
     fontSize: 12,
-    color: colors.textDim,
+    color: c.textDim,
     marginBottom: 12,
     lineHeight: 17,
   },
@@ -1073,7 +1075,7 @@ const styles = StyleSheet.create({
   loraInputLabel: {
     fontSize: 11,
     fontWeight: '600',
-    color: colors.textMuted,
+    color: c.textMuted,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
     marginBottom: 4,
@@ -1086,7 +1088,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
     fontSize: 15,
-    color: colors.white,
+    color: c.white,
     fontVariant: ['tabular-nums'],
   },
   loraWarning: {
@@ -1108,14 +1110,14 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 12,
     fontWeight: '600',
-    color: colors.amber,
+    color: c.amber,
     lineHeight: 16,
   },
   startProvisionBtn: {
     marginTop: 14,
     paddingVertical: 14,
     borderRadius: 12,
-    backgroundColor: colors.emerald,
+    backgroundColor: c.emerald,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -1124,7 +1126,7 @@ const styles = StyleSheet.create({
   startProvisionText: {
     fontSize: 15,
     fontWeight: '700',
-    color: colors.white,
+    color: c.white,
   },
   deviceHeader: {
     flexDirection: 'row',
@@ -1136,7 +1138,7 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 16,
     fontWeight: '600',
-    color: colors.white,
+    color: c.white,
   },
   successBadge: {
     flexDirection: 'row',
@@ -1150,7 +1152,7 @@ const styles = StyleSheet.create({
   successBadgeText: {
     fontSize: 12,
     fontWeight: '600',
-    color: colors.green,
+    color: c.green,
   },
   stepsContainer: {
     marginLeft: 4,
@@ -1166,10 +1168,10 @@ const styles = StyleSheet.create({
     height: 8,
   },
   stepLineActive: {
-    backgroundColor: colors.emerald,
+    backgroundColor: c.emerald,
   },
   stepLineInactive: {
-    backgroundColor: colors.textMuted,
+    backgroundColor: c.textMuted,
   },
   stepIndicatorRow: {
     flexDirection: 'row',
@@ -1185,47 +1187,47 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   stepDotCompleted: {
-    backgroundColor: colors.green,
+    backgroundColor: c.green,
   },
   stepDotActive: {
-    backgroundColor: colors.emerald,
+    backgroundColor: c.emerald,
   },
   stepDotError: {
-    backgroundColor: colors.red,
+    backgroundColor: c.red,
   },
   stepDotPending: {
     backgroundColor: 'transparent',
     borderWidth: 2,
-    borderColor: colors.textMuted,
+    borderColor: c.textMuted,
   },
   stepPulse: {
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: colors.white,
+    backgroundColor: c.white,
   },
   stepLabel: {
     fontSize: 14,
   },
   stepLabelCompleted: {
-    color: colors.green,
+    color: c.green,
     fontWeight: '500',
   },
   stepLabelActive: {
-    color: colors.emerald,
+    color: c.emerald,
     fontWeight: '600',
   },
   stepLabelError: {
-    color: colors.red,
+    color: c.red,
     fontWeight: '500',
   },
   stepLabelPending: {
-    color: colors.textMuted,
+    color: c.textMuted,
   },
   statusMessage: {
     marginTop: 12,
     fontSize: 13,
-    color: colors.textDim,
+    color: c.textDim,
     fontStyle: 'italic',
   },
   otaButton: {
@@ -1236,11 +1238,11 @@ const styles = StyleSheet.create({
     marginTop: 16,
     paddingVertical: 12,
     paddingHorizontal: 20,
-    backgroundColor: colors.purple,
+    backgroundColor: c.purple,
     borderRadius: 12,
   },
   otaButtonText: {
-    color: colors.white,
+    color: c.white,
     fontSize: 14,
     fontWeight: '600',
   },
@@ -1261,7 +1263,7 @@ const styles = StyleSheet.create({
   debugTitle: {
     fontSize: 12,
     fontWeight: '700',
-    color: colors.amber,
+    color: c.amber,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
     marginBottom: 8,
@@ -1272,7 +1274,7 @@ const styles = StyleSheet.create({
   debugLine: {
     fontSize: 10,
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-    color: colors.textDim,
+    color: c.textDim,
     lineHeight: 16,
   },
   onlineStatus: {
@@ -1286,7 +1288,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   otaStatusText: {
-    color: colors.textDim,
+    color: c.textDim,
     fontSize: 13,
   },
   bottomBar: {
@@ -1300,8 +1302,8 @@ const styles = StyleSheet.create({
     paddingBottom: 34,
     gap: 12,
     borderTopWidth: 1,
-    borderTopColor: colors.cardBorder,
-    backgroundColor: colors.bg,
+    borderTopColor: c.cardBorder,
+    backgroundColor: c.bg,
   },
   retryButton: {
     flexDirection: 'row',
@@ -1310,15 +1312,15 @@ const styles = StyleSheet.create({
     height: 48,
     paddingHorizontal: 20,
     borderRadius: 12,
-    backgroundColor: colors.card,
+    backgroundColor: c.card,
     borderWidth: 1,
-    borderColor: colors.cardBorder,
+    borderColor: c.cardBorder,
     gap: 6,
   },
   retryButtonText: {
     fontSize: 15,
     fontWeight: '600',
-    color: colors.text,
+    color: c.text,
   },
   doneButton: {
     flex: 1,
@@ -1327,12 +1329,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     height: 48,
     borderRadius: 12,
-    backgroundColor: colors.emerald,
+    backgroundColor: c.emerald,
     gap: 8,
   },
   doneButtonText: {
     fontSize: 15,
     fontWeight: '600',
-    color: colors.white,
+    color: c.white,
   },
 });

@@ -11,12 +11,14 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { colors } from '../theme/colors';
+import { useStyles, useTheme, type Colors } from '../theme';
 import type { RootStackParams } from '../navigation/types';
 
 type Props = NativeStackScreenProps<RootStackParams, 'Wifi'>;
 
 export default function WifiScreen({ navigation, route }: Props) {
+  const styles = useStyles(makeStyles);
+  const { colors } = useTheme();
   const { mqttAddr, mqttPort, deviceMode } = route.params;
   const [ssid, setSsid] = useState('');
   const [password, setPassword] = useState('');
@@ -124,10 +126,10 @@ export default function WifiScreen({ navigation, route }: Props) {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (c: Colors) => StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.bg,
+    backgroundColor: c.bg,
   },
   scroll: {
     flexGrow: 1,
@@ -150,27 +152,27 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 28,
     fontWeight: '700',
-    color: colors.white,
+    color: c.white,
     marginBottom: 8,
   },
   subtitle: {
     fontSize: 15,
-    color: colors.textDim,
+    color: c.textDim,
     textAlign: 'center',
     lineHeight: 22,
   },
   card: {
-    backgroundColor: colors.card,
+    backgroundColor: c.card,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: colors.cardBorder,
+    borderColor: c.cardBorder,
     padding: 20,
     marginBottom: 20,
   },
   label: {
     fontSize: 13,
     fontWeight: '600',
-    color: colors.textDim,
+    color: c.textDim,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
     marginBottom: 8,
@@ -178,10 +180,10 @@ const styles = StyleSheet.create({
   inputRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.inputBg,
+    backgroundColor: c.inputBg,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: colors.inputBorder,
+    borderColor: c.inputBorder,
     height: 48,
     paddingHorizontal: 12,
   },
@@ -191,7 +193,7 @@ const styles = StyleSheet.create({
   input: {
     flex: 1,
     fontSize: 16,
-    color: colors.white,
+    color: c.white,
     height: 48,
   },
   infoCard: {
@@ -208,25 +210,25 @@ const styles = StyleSheet.create({
   infoText: {
     flex: 1,
     fontSize: 13,
-    color: colors.amber,
+    color: c.amber,
     lineHeight: 20,
   },
   button: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.emerald,
+    backgroundColor: c.emerald,
     height: 48,
     borderRadius: 12,
     gap: 8,
   },
   buttonDisabled: {
-    backgroundColor: colors.emeraldDark,
+    backgroundColor: c.emeraldDark,
     opacity: 0.5,
   },
   buttonText: {
     fontSize: 16,
     fontWeight: '600',
-    color: colors.white,
+    color: c.white,
   },
 });
