@@ -19,7 +19,6 @@ import { Ionicons } from '@expo/vector-icons';
 import Svg, { Path as SvgPath } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
-import { colors } from '../theme/colors';
 import { useTheme, useStyles, type Colors } from '../theme';
 import { BatteryRing } from '../components/BatteryRing';
 import { MowerScene } from '../components/mower/MowerScene';
@@ -278,25 +277,25 @@ function getActivityLabel(activity: MowerActivity, t?: (key: string) => string):
   }
 }
 
-function getActivityColor(activity: MowerActivity): string {
+function getActivityColor(activity: MowerActivity, c: Colors): string {
   switch (activity) {
     case 'mowing':
-      return colors.green;
+      return c.green;
     case 'edge_cutting':
-      return colors.amber;
+      return c.amber;
     case 'charging':
-      return colors.blue;
+      return c.blue;
     case 'returning':
-      return colors.blue;
+      return c.blue;
     case 'paused':
-      return colors.amber;
+      return c.amber;
     case 'error':
-      return colors.red;
+      return c.red;
     case 'mapping':
-      return colors.purple;
+      return c.purple;
     case 'idle':
     default:
-      return colors.textDim;
+      return c.textDim;
   }
 }
 
@@ -398,7 +397,8 @@ const HERO_PALETTE = {
     gradientTo: '#059669',
     text: '#ffffff',
     chipBg: 'rgba(255,255,255,0.05)',
-    chipText: colors.textDim,
+    chipText: '#9ca3af', // darkColors.textDim — hard-coded so HERO_PALETTE.dark stays palette-independent
+
     subtitleText: 'rgba(255,255,255,0.7)',
   },
   light: {
@@ -1275,7 +1275,7 @@ export default function HomeScreen() {
 
   // Apply optimistic override if set
   const displayActivity = activityOverride ?? mower.activity;
-  const activityColor = getActivityColor(displayActivity);
+  const activityColor = getActivityColor(displayActivity, colors);
   const batteryGlowColor = getBatteryGlowColor(mower.battery);
 
   return (
