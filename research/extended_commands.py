@@ -978,18 +978,27 @@ def handle_start_edge_cut(params, respond):
     loaded.
 
     Params (all optional):
-      mapName:      default "map0_work"
+      mapId:        map_ids value, 1..N (1=map0, per stock app area-mapping).
+                    Default 1. Use this (not mapName) — robot_decision prefers
+                    map_ids when > 0 and its internal lookup expects the numeric
+                    index, not the CSV filename.
       bladeHeight:  wire value 0..7 (userCm − 2), default 3 (= 50 mm)
       light:        0..255, default 0
 
     Response:
-      success → {result: 0, cov_mode: 2, map: <name>, blade: <h>}
+      success → {result: 0, cov_mode: 2, map_id: <id>, blade: <h>}
       failure → {result: 1, error: <class>, detail: <stdout tail>}
 
     The service call is blocking with a 15 s timeout so the MQTT reply
     reflects service-level success/failure. The BOUNDARY_COVERING loop
     runs inside robot_decision after the service returns, independent of
     the MQTT round-trip.
+
+    Historical note: earlier versions sent `map_names:["map0_work"]` with
+    `map_ids:0`. robot_decision then built path `/userdata/lfi/maps/home0/map0_work`
+    which does not exist, and rejected with Error_code 118 ("Input data for
+    coverage action is wrong, maybe file not exists!"). Verified live on
+    LFIN1231000211 2026-04-24.
     """
     # Only clear stale costmap observations (non-blocking, fire-and-forget).
     # Do NOT call cover_task_stop here: it puts robot_decision into REQUEST_STOP
@@ -1000,10 +1009,8 @@ def handle_start_edge_cut(params, respond):
     _clear_costmaps()
 
     try:
-        map_name = str((params or {}).get("mapName", "map0_work"))
-        if not re.fullmatch(r"[A-Za-z0-9_\-]+", map_name):
-            respond("start_edge_cut_respond", {"result": 1, "error": "invalid_map_name"})
-            return
+        map_id = int((params or {}).get("mapId", 1))
+        if map_id < 1: map_id = 1
         blade = int((params or {}).get("bladeHeight", 3))
         if blade < 0: blade = 0
         if blade > 7: blade = 7
@@ -1016,11 +1023,14 @@ def handle_start_edge_cut(params, respond):
 
     # YAML goal for decision_msgs/srv/StartCoverageTask. Bash single-quoting
     # keeps the braces and array literals intact on the ros2 CLI.
+    # map_ids > 0 takes precedence; map_names left empty so robot_decision
+    # uses its internal `/userdata/lfi/maps/home0/map{N-1}.yaml` lookup.
     req_yaml = (
         "'{"
         "cov_mode: 2, "
         "request_type: 11, "
-        f"map_names: [\"{map_name}\"], "
+        f"map_ids: {map_id}, "
+        "map_names: [], "
         f"blade_heights: [{blade}], "
         f"light: {light}, "
         "specify_perception_level: false, "
@@ -1030,8 +1040,7 @@ def handle_start_edge_cut(params, respond):
         "enable_loc_weak_mapping: false, "
         "enable_loc_weak_working: false, "
         "specify_direction: false, "
-        "cov_direction: 0, "
-        "map_ids: 0"
+        "cov_direction: 0"
         "}'"
     )
 
@@ -1080,7 +1089,7 @@ def handle_start_edge_cut(params, respond):
         respond("start_edge_cut_respond", {
             "result": 0,
             "cov_mode": 2,
-            "map": map_name,
+            "map_id": map_id,
             "blade": blade,
         })
     elif "result=false" in lowered:

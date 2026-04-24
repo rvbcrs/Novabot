@@ -1934,7 +1934,7 @@ export default function HomeScreen() {
                 // StartCoverageTask.blade_heights (mm = (level + 2) * 10).
                 await api.sendExtended(mower.sn, {
                   start_edge_cut: {
-                    mapName: 'map0_work',
+                    mapId: 1,
                     bladeHeight: wire,
                     light: 0,
                   },
