@@ -15,7 +15,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, Animated, Easing } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { colors } from '../theme/colors';
+import { useStyles, type Colors } from '../theme';
 import { getServerUrl } from '../services/auth';
 import { useI18n } from '../i18n';
 import { formatTime } from '../lib/format';
@@ -41,6 +41,7 @@ export function RainOverlay({ mowerSn }: Props) {
   const { t } = useI18n();
   const [session, setSession] = useState<RainSession | null>(null);
   const [forecast, setForecast] = useState<RainForecast | null>(null);
+  const styles = useStyles(makeStyles);
 
   useEffect(() => {
     if (!mowerSn) return;
@@ -226,7 +227,7 @@ export function RainOverlay({ mowerSn }: Props) {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (_c: Colors) => StyleSheet.create({
   container: {
     backgroundColor: 'rgba(30,58,138,0.6)',
     borderRadius: 16,

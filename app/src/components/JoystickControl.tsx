@@ -15,7 +15,7 @@ import {
   Dimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { colors } from '../theme/colors';
+import { useStyles, useTheme, type Colors } from '../theme';
 import { ApiClient } from '../services/api';
 import { getServerUrl } from '../services/auth';
 
@@ -52,6 +52,8 @@ export function JoystickControl({ sn, onClose }: Props) {
   const velocityRef = useRef({ xw: 0, yv: 0 });
   const startedRef = useRef(false);
   const apiRef = useRef<ApiClient | null>(null);
+  const styles = useStyles(makeStyles);
+  const { colors } = useTheme();
 
   useEffect(() => {
     (async () => {
@@ -210,9 +212,9 @@ export function JoystickControl({ sn, onClose }: Props) {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (c: Colors) => StyleSheet.create({
   container: {
-    backgroundColor: colors.bg,
+    backgroundColor: c.bg,
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     padding: 24,
@@ -226,7 +228,7 @@ const styles = StyleSheet.create({
     width: '100%',
     marginBottom: 16,
   },
-  title: { fontSize: 20, fontWeight: '700', color: colors.white },
+  title: { fontSize: 20, fontWeight: '700', color: c.white },
   speedChip: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -237,7 +239,7 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     marginBottom: 24,
   },
-  speedText: { fontSize: 13, fontWeight: '700', color: colors.emerald },
+  speedText: { fontSize: 13, fontWeight: '700', color: c.emerald },
   joystickContainer: {
     width: JOYSTICK_SIZE + 40,
     height: JOYSTICK_SIZE + 40,
@@ -290,8 +292,8 @@ const styles = StyleSheet.create({
     width: '100%',
     height: 48,
     borderRadius: 12,
-    backgroundColor: colors.red,
+    backgroundColor: c.red,
     marginTop: 24,
   },
-  stopText: { fontSize: 16, fontWeight: '700', color: colors.white },
+  stopText: { fontSize: 16, fontWeight: '700', color: c.white },
 });

@@ -5,6 +5,7 @@
 import React, { useMemo } from 'react';
 import { View, StyleSheet } from 'react-native';
 import Svg, { Rect, Line, ClipPath, Defs, Polygon, Circle } from 'react-native-svg';
+import { useStyles, type Colors } from '../theme';
 
 interface Props {
   direction: number; // degrees: 0=N, 90=E, etc.
@@ -12,6 +13,7 @@ interface Props {
 }
 
 export function MowingDirectionPreview({ direction, size = 100 }: Props) {
+  const styles = useStyles(makeStyles);
   const padding = 10;
   const lawnSize = size - padding * 2;
 
@@ -129,7 +131,7 @@ export function MowingDirectionPreview({ direction, size = 100 }: Props) {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (_c: Colors) => StyleSheet.create({
   container: {
     alignItems: 'center',
     justifyContent: 'center',

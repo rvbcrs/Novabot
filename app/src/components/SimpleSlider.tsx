@@ -10,7 +10,7 @@ import React, { useState, useCallback } from 'react';
 import { View, Text, StyleSheet, LayoutChangeEvent, type ViewStyle } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { runOnJS } from 'react-native-reanimated';
-import { colors } from '../theme/colors';
+import { useStyles, useTheme, type Colors } from '../theme';
 
 interface Props {
   value: number;
@@ -44,6 +44,8 @@ export function SimpleSlider({
   disabled = false,
 }: Props) {
   const [width, setWidth] = useState(0);
+  const styles = useStyles(makeStyles);
+  const { colors } = useTheme();
 
   const onLayout = (e: LayoutChangeEvent) => {
     setWidth(e.nativeEvent.layout.width);
@@ -140,7 +142,7 @@ export function SimpleSlider({
 const TRACK_HEIGHT = 6;
 const THUMB_SIZE = 20;
 
-const styles = StyleSheet.create({
+const makeStyles = (c: Colors) => StyleSheet.create({
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -148,12 +150,12 @@ const styles = StyleSheet.create({
   },
   label: {
     fontSize: 13,
-    color: colors.textDim,
+    color: c.textDim,
     fontWeight: '600',
   },
   value: {
     fontSize: 13,
-    color: colors.white,
+    color: c.white,
     fontWeight: '700',
     fontVariant: ['tabular-nums'],
   },

@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Modal, View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { colors } from '../theme/colors';
+import { useStyles, useTheme, type Colors } from '../theme';
 import { useI18n } from '../i18n';
 
 type Props = {
@@ -39,6 +39,8 @@ export default function CuttingHeightPickerModal({
 }: Props) {
   const { t } = useI18n();
   const [height, setHeight] = useState(initialHeightCm);
+  const styles = useStyles(makeStyles);
+  const { colors } = useTheme();
 
   useEffect(() => {
     if (visible) setHeight(initialHeightCm);
@@ -108,7 +110,7 @@ export default function CuttingHeightPickerModal({
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (c: Colors) => StyleSheet.create({
   backdrop: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.55)',
@@ -119,10 +121,10 @@ const styles = StyleSheet.create({
   card: {
     width: '100%',
     maxWidth: 420,
-    backgroundColor: colors.card,
+    backgroundColor: c.card,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: colors.cardBorder,
+    borderColor: c.cardBorder,
     padding: 20,
   },
   header: {
@@ -134,11 +136,11 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 17,
     fontWeight: '700',
-    color: colors.white,
+    color: c.white,
   },
   message: {
     fontSize: 14,
-    color: colors.textDim,
+    color: c.textDim,
     lineHeight: 19,
     marginBottom: 12,
   },
@@ -155,14 +157,14 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 13,
     fontWeight: '600',
-    color: colors.textMuted,
+    color: c.textMuted,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
   },
   labelValue: {
     fontSize: 15,
     fontWeight: '700',
-    color: colors.emerald,
+    color: c.emerald,
   },
   stepperRow: {
     flexDirection: 'row',
@@ -189,7 +191,7 @@ const styles = StyleSheet.create({
   stepperText: {
     fontSize: 16,
     fontWeight: '700',
-    color: colors.white,
+    color: c.white,
     fontVariant: ['tabular-nums'],
   },
   buttonRow: {
@@ -213,14 +215,14 @@ const styles = StyleSheet.create({
   cancelText: {
     fontSize: 14,
     fontWeight: '600',
-    color: colors.text,
+    color: c.text,
   },
   confirmButton: {
-    backgroundColor: colors.emerald,
+    backgroundColor: c.emerald,
   },
   confirmText: {
     fontSize: 14,
     fontWeight: '700',
-    color: colors.white,
+    color: c.white,
   },
 });

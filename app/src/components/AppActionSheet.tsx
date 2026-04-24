@@ -8,7 +8,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { colors } from '../theme/colors';
+import { useStyles, useTheme, type Colors } from '../theme';
 
 export type AppActionSheetItem = {
   label: string;
@@ -37,6 +37,8 @@ export function AppActionSheet({
   onClose,
 }: Props) {
   const insets = useSafeAreaInsets();
+  const styles = useStyles(makeStyles);
+  const { colors } = useTheme();
 
   const handleAction = (action: AppActionSheetItem) => {
     if (action.disabled) return;
@@ -94,7 +96,7 @@ export function AppActionSheet({
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (c: Colors) => StyleSheet.create({
   overlay: {
     flex: 1,
     justifyContent: 'flex-end',
@@ -123,13 +125,13 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 18,
     fontWeight: '800',
-    color: colors.white,
+    color: c.white,
     marginBottom: 6,
   },
   message: {
     fontSize: 13,
     lineHeight: 18,
-    color: colors.textDim,
+    color: c.textDim,
     marginBottom: 14,
   },
   item: {
@@ -164,18 +166,18 @@ const styles = StyleSheet.create({
   itemTitle: {
     fontSize: 15,
     fontWeight: '700',
-    color: colors.white,
+    color: c.white,
   },
   itemTitleDestructive: {
     color: '#fecdd3',
   },
   itemTitleDisabled: {
-    color: colors.textMuted,
+    color: c.textMuted,
   },
   itemSub: {
     marginTop: 2,
     fontSize: 12,
-    color: colors.textDim,
+    color: c.textDim,
   },
   cancel: {
     marginTop: 6,
@@ -188,6 +190,6 @@ const styles = StyleSheet.create({
   cancelText: {
     fontSize: 15,
     fontWeight: '700',
-    color: colors.white,
+    color: c.white,
   },
 });

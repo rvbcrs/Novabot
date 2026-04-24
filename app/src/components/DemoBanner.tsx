@@ -5,11 +5,13 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, Switch, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { colors } from '../theme/colors';
+import { useStyles, useTheme, type Colors } from '../theme';
 import { useDemo } from '../context/DemoContext';
 
 export function DemoBanner() {
   const { enabled, toggle, activity, cycleActivity } = useDemo();
+  const styles = useStyles(makeStyles);
+  const { colors } = useTheme();
 
   return (
     <View style={[styles.container, enabled && styles.containerActive]}>
@@ -44,7 +46,7 @@ export function DemoBanner() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (c: Colors) => StyleSheet.create({
   container: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -64,7 +66,7 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 13,
     fontWeight: '600',
-    color: colors.textMuted,
+    color: c.textMuted,
   },
   labelActive: {
     color: '#c084fc',

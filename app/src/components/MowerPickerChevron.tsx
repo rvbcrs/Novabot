@@ -20,7 +20,7 @@ import {
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { colors } from '../theme/colors';
+import { useStyles, useTheme, type Colors } from '../theme';
 import { useActiveMower } from '../hooks/useActiveMower';
 import { mowerDisplayName } from '../utils/mowerDisplay';
 import type { DeviceState } from '../types';
@@ -38,6 +38,8 @@ function firmwareVersion(m: DeviceState): string | null {
 export function MowerPickerChevron({ onAddMower, onRename }: MowerPickerChevronProps = {}) {
   const { mowers, activeMower, activeMowerSn, setActiveMowerSn } = useActiveMower();
   const [open, setOpen] = useState(false);
+  const styles = useStyles(makeStyles);
+  const { colors } = useTheme();
 
   const count = mowers.length;
   // Dropdown opens when there are multiple mowers OR when we have an "Add mower" action to show.
@@ -61,7 +63,7 @@ export function MowerPickerChevron({ onAddMower, onRename }: MowerPickerChevronP
             : `Active mower ${mowerDisplayName(activeMower)}.`
         }
       >
-        <StatusDot online={activeMower.online} />
+        <StatusDot online={activeMower.online} styles={styles} />
         <View style={styles.labelColumn}>
           <Text style={styles.name} numberOfLines={1} ellipsizeMode="tail">
             {mowerDisplayName(activeMower)}
@@ -123,7 +125,7 @@ export function MowerPickerChevron({ onAddMower, onRename }: MowerPickerChevronP
                   accessibilityRole="button"
                   accessibilityLabel={`Switch to ${mowerDisplayName(m)}`}
                 >
-                  <StatusDot online={m.online} />
+                  <StatusDot online={m.online} styles={styles} />
                   <View style={styles.labelColumnRow}>
                     <Text style={styles.rowName} numberOfLines={1} ellipsizeMode="tail">
                       {mowerDisplayName(m)}
@@ -180,18 +182,20 @@ export function MowerPickerChevron({ onAddMower, onRename }: MowerPickerChevronP
   );
 }
 
-function StatusDot({ online }: { online: boolean }) {
+type StylesType = ReturnType<typeof makeStyles>;
+
+function StatusDot({ online, styles }: { online: boolean; styles: StylesType }) {
   return (
     <View
       style={[
         styles.dot,
-        { backgroundColor: online ? colors.emerald : '#E5484D' },
+        { backgroundColor: online ? '#00d4aa' : '#E5484D' },
       ]}
     />
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (c: Colors) => StyleSheet.create({
   wrap: {
     position: 'relative',
     zIndex: 100,
@@ -219,12 +223,12 @@ const styles = StyleSheet.create({
     marginRight: 4,
   },
   name: {
-    color: colors.text,
+    color: c.text,
     fontSize: 16,
     fontWeight: '600',
   },
   subtitle: {
-    color: colors.textMuted,
+    color: c.textMuted,
     fontSize: 11,
     fontWeight: '500',
     marginTop: 1,
@@ -249,8 +253,8 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 40,
     left: 0,
-    backgroundColor: colors.bg,
-    borderColor: colors.cardBorder,
+    backgroundColor: c.bg,
+    borderColor: c.cardBorder,
     borderWidth: 1,
     borderRadius: 10,
     paddingVertical: 4,
@@ -270,10 +274,10 @@ const styles = StyleSheet.create({
     minHeight: 44,
   },
   rowPressed: {
-    backgroundColor: colors.cardBorder,
+    backgroundColor: c.cardBorder,
   },
   rowName: {
-    color: colors.text,
+    color: c.text,
     fontSize: 15,
     fontWeight: '500',
   },
@@ -282,7 +286,7 @@ const styles = StyleSheet.create({
   },
   divider: {
     height: 1,
-    backgroundColor: colors.cardBorder,
+    backgroundColor: c.cardBorder,
     marginVertical: 4,
   },
   addRow: {
@@ -297,7 +301,7 @@ const styles = StyleSheet.create({
   },
   addLabel: {
     flex: 1,
-    color: colors.emerald,
+    color: c.emerald,
     fontSize: 15,
     fontWeight: '600',
   },

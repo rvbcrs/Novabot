@@ -5,7 +5,7 @@
 import React, { useMemo } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
-import { colors } from '../theme/colors';
+import { useStyles, type Colors } from '../theme';
 import { loadAllPatterns, contourToSvgPath } from '../utils/patternUtils';
 
 interface Props {
@@ -17,6 +17,7 @@ const THUMB = 52;
 const PAD = 3;
 
 export function PatternPicker({ selected, onSelect }: Props) {
+  const styles = useStyles(makeStyles);
   const patterns = useMemo(() => loadAllPatterns(), []);
 
   const thumbPaths = useMemo(() => {
@@ -67,7 +68,7 @@ export function PatternPicker({ selected, onSelect }: Props) {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (c: Colors) => StyleSheet.create({
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -77,13 +78,13 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 12,
     fontWeight: '600',
-    color: colors.textMuted,
+    color: c.textMuted,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
   },
   clearBtn: {
     fontSize: 12,
-    color: colors.purple,
+    color: c.purple,
     fontWeight: '600',
   },
   grid: {
