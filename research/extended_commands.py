@@ -18,6 +18,7 @@ Vereist: Python 3.8+
 
 import json
 import os
+import re
 import signal
 import socket
 import struct
@@ -962,117 +963,147 @@ def handle_stop_boundary_follow(params, respond):
     respond("stop_boundary_follow_respond", {"result": 0, "svc": svc_out[:200]})
 
 
-def handle_start_boundary_follow(params, respond):
-    """Start real edge-cutting via the `/boundary_follow` ROS2 action.
+def handle_start_edge_cut(params, respond):
+    """Start edge-cutting via /navigate_through_coverage_paths action.
 
-    The stock `api_start_patrol` MQTT handler is a stub — it only returns
-    `result:0` and never triggers any action. The actual edge-cutting path
-    goes through the `coverage_planner/action/BoundaryFollow` action which
-    lives on `/boundary_follow` (verified live on LFIN1231000211 via
-    `ros2 action list`). Calling it from here bypasses the broken stock
-    handler.
+    Single dispatch, verified live on LFIN1231000211 2026-04-24:
+      `coverage_planner/action/NavigateThroughCoveragePaths` with
+      `only_edge_mode:true` + `include_edge:true` +
+      `coverage_type:0` (COVERAGE_BY_FILE) + the map yaml.
 
-    Goal schema (coverage_planner/action/BoundaryFollow):
-      follow_mode: 0=ASSIST_MAPPING, 1=AUTO_MAPPING, 2=BOUNDARY_CUTTING.
-      enable_coverage: bool — true = blade on while following.
-      more_close_to_boundary: bool.
-      close_loop_stop: bool — stop when the loop closes (full round trip).
-      start_follow_wait: bool — wait before starting.
-      debug_mode: bool.
-      inflation_radius: float32 — extra stand-off.
-      blade_height: uint8 — chassis inverted index (9 - userCm).
+    coverage_planner internally plans the full cover paths, then the
+    `only_edge_mode` branch discards the fill paths and keeps only the
+    boundary rings. It logs:
+      "Only edge mode, only covering boundary path !!!!"
+      "Current work status: BOUNDARY_COVERING"
+      "Setting blade height to : <blade_mm>"
+    and drives nav2 FollowPath segment-by-segment along the polygon.
 
-    Params (optional, with safe defaults for edge-cutting):
-      follow_mode:          default 2 (BOUNDARY_CUTTING_MODE).
-      enable_coverage:      default True.
-      more_close_to_boundary: default False.
-      close_loop_stop:      default True.
-      start_follow_wait:    default False.
-      debug_mode:           default False.
-      inflation_radius:     default 0.0.
-      blade_height:         default 5 (≈ 40 mm via chassis index).
-      max_time:             default 60.0 (seconds), run in background.
+    The other paths we tried (all dead ends — see
+    research/documents/edge-cut-flow.md):
+      - /robot_decision/start_cov_task cov_mode:2 silently falls through
+        to normal COVERING.
+      - MQTT start_patrol is a JSON-echo stub in mqtt_node, no ROS call.
+      - /robot_decision/start_assistant_mapping gates on work_status
+        0x82/0x83/0x8d/0x8e, only reachable via the destructive
+        start_scan_map flow.
+      - Direct /boundary_follow action uses the local costmap, not the
+        saved polygon — aborts "No valid boundary need robot!!!" unless
+        the robot is already next to lethal cells the planner can latch.
+
+    Params (all optional):
+      mapName:      map base name (no extension). Default "map0".
+                    Path built as /userdata/lfi/maps/home0/<name>.yaml.
+                    Whitelisted to `[A-Za-z0-9_-]+` to avoid shell
+                    injection (flows into the action goal YAML).
+      bladeHeight:  NTCP goal `blade_height` in mm. Default 40 mm
+                    (= 4 cm). Clamped to 20..90 here; coverage_planner
+                    itself also clamps anything <20mm.
+
+    Response:
+      accepted → {result: 0, map: <name>, blade_mm: <h>}
+      bad param → {result: 1, error: "invalid_map_name" | "param type error"}
+      dispatch error → {result: 1, error: "dispatch_failed: ..."}
+
+    Notes:
+      - The action runs long (up to the 1800 s internal timeout). We
+        fire-and-forget via Popen so MQTT responds promptly. Completion
+        status and mower motion lands in /tmp/edge_cut.log.
+      - `reset_coverage_map:true` drops any prior normal-coverage progress.
+        If we ever want edge as a finishing pass, expose a
+        `resetCoverage` param to flip it.
+      - Stop path stays on `stop_boundary_follow` →
+        /coverage_planner_server/cover_task_stop, which cancels NTCP the
+        same way it cancels BoundaryFollow.
     """
-    # Defensive: cancel any pre-existing boundary-follow goal before starting
-    # a new one. A lingering server-side goal handle can cause the mower to
-    # auto-drive when manually moved — live-observed 2026-04-23 on
-    # LFIN1231000211 (test goal from 30 min earlier kept recomputing paths).
-    _kill_ros2_action_clients()
-    _call_cover_task_stop()
-
-    # Clear costmaps so stale obstacle observations (e.g. the shrubs we drove
-    # into earlier) don't block the boundary planner. Verified live: without
-    # clearing, nav2 reported "Obstacle layer in front 0.5m position cost:
-    # 255 → Controller patience exceeded → ABORTED" within seconds of the
-    # action start.
+    # Safe non-blocking cleanup: clear any stale obstacle observations
+    # in the nav2 costmaps so the edge planner doesn't inherit false
+    # blockers from a prior run. Do NOT call cover_task_stop here — it
+    # races with any in-flight task state transitions.
     _clear_costmaps()
 
     try:
-        follow_mode = int(params.get("follow_mode", 2))
-        enable_coverage = bool(params.get("enable_coverage", True))
-        more_close = bool(params.get("more_close_to_boundary", False))
-        close_loop = bool(params.get("close_loop_stop", True))
-        wait_start = bool(params.get("start_follow_wait", False))
-        debug = bool(params.get("debug_mode", False))
-        inflation = float(params.get("inflation_radius", 0.0))
-        blade = int(params.get("blade_height", 5))
-        max_time = float(params.get("max_time", 60.0))
+        map_name = str((params or {}).get("mapName", "map0"))
+        if not re.fullmatch(r"[A-Za-z0-9_\-]+", map_name):
+            respond("start_edge_cut_respond", {"result": 1, "error": "invalid_map_name"})
+            return
+        blade_mm = int((params or {}).get("bladeHeight", 40))
+        if blade_mm < 20: blade_mm = 20
+        if blade_mm > 90: blade_mm = 90
     except (TypeError, ValueError) as e:
-        respond("start_boundary_follow_respond", {"result": 1, "error": f"param type error: {e}"})
+        respond("start_edge_cut_respond", {"result": 1, "error": f"param type error: {e}"})
         return
 
-    # Goal YAML — ros2 action CLI accepts single-quoted YAML on the cmdline.
-    # Braces have to stay inside the quotes so bash brace-expansion leaves
-    # them alone (same trick as set_lora_info).
+    map_yaml = f"/userdata/lfi/maps/home0/{map_name}.yaml"
+
+    # NTCP goal — single YAML string for ros2 action send_goal CLI.
+    # Fields that differ from the "normal mow" goal: only_edge_mode=true
+    # and include_edge=true (both required — include_edge enables the
+    # edge planner to run, only_edge_mode tells it to drop the fill).
     goal_yaml = (
         "'{"
-        f"follow_mode: {follow_mode}, "
-        f"enable_coverage: {str(enable_coverage).lower()}, "
-        f"more_close_to_boundary: {str(more_close).lower()}, "
-        f"close_loop_stop: {str(close_loop).lower()}, "
-        f"start_follow_wait: {str(wait_start).lower()}, "
-        f"debug_mode: {str(debug).lower()}, "
-        f"inflation_radius: {inflation}, "
-        f"blade_height: {blade}"
+        f"map_yaml: \"{map_yaml}\", "
+        "coverage_type: 0, "
+        "reset_coverage_map: true, "
+        "return_to_start: false, "
+        "ignore_start_for_planning: false, "
+        "disable_recover: false, "
+        "enable_tf_action_abort_as_stop: false, "
+        "include_edge: true, "
+        "mixed_edge: false, "
+        "setting_blade_height: true, "
+        f"blade_height: {blade_mm}, "
+        "grass_height: 0, "
+        "auto_repeat_num: false, "
+        "target_repeat_times: 1, "
+        "debug_mode: false, "
+        "adaptive_mode: 1, "
+        "specify_direction: false, "
+        "cov_direction: 0, "
+        "only_edge_mode: true, "
+        "enable_check_walkable: false, "
+        "back_avoid_mode: false, "
+        "test_long_length: 0.0, "
+        "test_short_length: 0.0"
         "}'"
     )
 
-    try:
-        # Fire-and-forget: kick off the action in the background so we can
-        # respond to MQTT without blocking for the full mowing run.
-        cmd = (
-            "source /opt/ros/galactic/setup.bash && "
-            "source /root/novabot/install/setup.bash 2>/dev/null && "
-            "nohup timeout " + str(int(max_time)) + " "
-            "ros2 action send_goal /boundary_follow "
-            "coverage_planner/action/BoundaryFollow "
-            + goal_yaml +
-            " >> /tmp/boundary_follow.log 2>&1 &"
-        )
-        # Match the shared-memory DDS config used by the running nodes
-        # (mqtt_node, coverage_planner_server, nav2 etc). Without the
-        # CYCLONEDDS_URI pointing at shm_cyclonedds.xml the CLI client
-        # runs on a different DDS transport and can't discover the
-        # /boundary_follow action server.
-        env = {
-            **os.environ,
-            "ROS_DOMAIN_ID": "0",
-            "ROS_LOCALHOST_ONLY": "1",
-            "RMW_IMPLEMENTATION": "rmw_cyclonedds_cpp",
-            "CYCLONEDDS_URI": "file:///root/novabot/shm_config/shm_cyclonedds.xml",
-        }
-        subprocess.Popen(["bash", "-c", cmd], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    cmd = (
+        "source /opt/ros/galactic/setup.bash && "
+        "source /root/novabot/install/setup.bash 2>/dev/null && "
+        "nohup timeout 1800 ros2 action send_goal "
+        "/navigate_through_coverage_paths "
+        "coverage_planner/action/NavigateThroughCoveragePaths " + goal_yaml +
+        " >> /tmp/edge_cut.log 2>&1 &"
+    )
 
-        log(f"start_boundary_follow dispatched: mode={follow_mode} coverage={enable_coverage} blade={blade}")
-        respond("start_boundary_follow_respond", {
-            "result": 0,
-            "follow_mode": follow_mode,
-            "enable_coverage": enable_coverage,
-            "blade_height": blade,
-        })
+    # Match the shared-memory DDS transport the ROS nodes use — without
+    # CYCLONEDDS_URI pointing at shm_cyclonedds.xml the CLI client cannot
+    # discover /navigate_through_coverage_paths.
+    env = {
+        **os.environ,
+        "ROS_DOMAIN_ID": "0",
+        "ROS_LOCALHOST_ONLY": "1",
+        "RMW_IMPLEMENTATION": "rmw_cyclonedds_cpp",
+        "CYCLONEDDS_URI": "file:///root/novabot/shm_config/shm_cyclonedds.xml",
+    }
+
+    try:
+        subprocess.Popen(
+            ["bash", "-c", cmd], env=env,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
     except Exception as e:
-        log(f"start_boundary_follow error: {e}")
-        respond("start_boundary_follow_respond", {"result": 1, "error": str(e)})
+        log(f"start_edge_cut dispatch error: {e}")
+        respond("start_edge_cut_respond", {"result": 1, "error": f"dispatch_failed: {e}"})
+        return
+
+    log(f"start_edge_cut dispatched: map={map_name} blade={blade_mm}mm")
+    respond("start_edge_cut_respond", {
+        "result": 0,
+        "map": map_name,
+        "blade_mm": blade_mm,
+    })
 
 
 def handle_recalibrate_charging_pose(params, respond):
@@ -1701,7 +1732,7 @@ COMMANDS = {
     "clean_ota_cache": handle_clean_ota_cache,
     "finalize_map_files": handle_finalize_map_files,
     "recalibrate_charging_pose": handle_recalibrate_charging_pose,
-    "start_boundary_follow": handle_start_boundary_follow,
+    "start_edge_cut": handle_start_edge_cut,
     "stop_boundary_follow": handle_stop_boundary_follow,
     "get_lora_info": handle_get_lora_info,
     "set_lora_info": handle_set_lora_info,

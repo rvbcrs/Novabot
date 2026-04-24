@@ -1924,25 +1924,19 @@ export default function HomeScreen() {
               }).catch(() => { /* non-fatal */ });
 
               if (picked.mode === 'edge') {
-                // Stock `start_patrol` MQTT handler is a stub — it only
-                // returns result:0 without triggering any action. Real edge
-                // cutting goes through the `/boundary_follow` ROS action
-                // (coverage_planner/action/BoundaryFollow). Our extended
-                // commands handler dispatches the action goal directly.
-                // Convert user cm → chassis blade index (9 - userCm), same
-                // mapping as the blade_on flow (JoystickScreen / CuttingHeightModal).
-                const bladeIdx = Math.max(0, Math.min(7, 9 - heightCm));
+                // Stock `start_patrol` MQTT handler is a stub. Stock `start_run`
+                // also can't reach cov_mode=2 (BOUNDARY_COV). We instead send the
+                // extended command `start_edge_cut`, which makes a service call
+                // to `/robot_decision/start_cov_task` so robot_decision loads
+                // the map, validates the working zone, and dispatches the
+                // `/boundary_follow` action with a populated context.
+                // `wire = heightCm - 2` is the stock level encoding used by
+                // StartCoverageTask.blade_heights (mm = (level + 2) * 10).
                 await api.sendExtended(mower.sn, {
-                  start_boundary_follow: {
-                    follow_mode: 2,           // BOUNDARY_CUTTING_MODE
-                    enable_coverage: true,
-                    more_close_to_boundary: false,
-                    close_loop_stop: true,
-                    start_follow_wait: false,
-                    debug_mode: false,
-                    inflation_radius: 0.0,
-                    blade_height: bladeIdx,
-                    max_time: 1800,
+                  start_edge_cut: {
+                    mapName: 'map0',
+                    // heightCm → mm (BoundaryFollow action expects mm, clamped to 20..90)
+                    bladeHeight: heightCm * 10,
                   },
                 }).catch(() => { /* non-fatal, optimistic UI still set */ });
                 setOptimisticActivity('mowing');
