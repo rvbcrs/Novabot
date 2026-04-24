@@ -1070,10 +1070,14 @@ def handle_start_edge_cut(params, respond):
 
     # `--feedback` emits Feedback: blocks as they arrive, which we parse in
     # a background thread to relay to the app via extended_response MQTT.
+    # stdbuf -oL forces the ros2 CLI to line-buffer its stdout — without it,
+    # Python blocks buffers the whole stream and we only see feedback after
+    # the action finishes (observed live 2026-04-24 — only 2-3 events during
+    # a 4-min session instead of 80+).
     cmd = (
         "source /opt/ros/galactic/setup.bash && "
         "source /root/novabot/install/setup.bash 2>/dev/null && "
-        "exec timeout 1800 ros2 action send_goal --feedback "
+        "exec stdbuf -oL timeout 1800 ros2 action send_goal --feedback "
         "/navigate_through_coverage_paths "
         "coverage_planner/action/NavigateThroughCoveragePaths " + goal_yaml
     )
