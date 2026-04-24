@@ -991,9 +991,12 @@ def handle_start_edge_cut(params, respond):
     runs inside robot_decision after the service returns, independent of
     the MQTT round-trip.
     """
-    # Defensive prelude — same cleanup the direct-action path used.
-    _kill_ros2_action_clients()
-    _call_cover_task_stop()
+    # Only clear stale costmap observations (non-blocking, fire-and-forget).
+    # Do NOT call cover_task_stop here: it puts robot_decision into REQUEST_STOP
+    # and races with the start_cov_task we are about to issue — observed live
+    # 2026-04-24 on LFIN1231000211: result=True returned but no dispatch
+    # because working status was REQUEST_STOP. robot_decision handles any
+    # already-running task internally.
     _clear_costmaps()
 
     try:
