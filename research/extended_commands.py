@@ -964,54 +964,62 @@ def handle_stop_boundary_follow(params, respond):
 
 
 def handle_start_edge_cut(params, respond):
-    """Start real edge-cutting via direct coverage_planner + /boundary_follow.
+    """Start edge-cutting via /navigate_through_coverage_paths action.
 
-    Two-step dispatch verified live on LFIN1231000211 2026-04-24:
-      1. `/coverage_planner_server/coverage_by_file` with `include_edge:true`
-         → coverage_planner computes an edge-only path and loads the
-         boundary geometry into its internal state. Without this step,
-         the BoundaryFollow action aborts with NO_VALID_BOUNDARY.
-      2. `/boundary_follow` action goal (follow_mode:BOUNDARY_CUTTING=2,
-         enable_coverage:true). coverage_planner transitions through
-         BOUNDARY_MOVING → BOUNDARY_FOLLOWING and drives nav2's
-         FollowPath controller along the loaded boundary.
+    Single dispatch, verified live on LFIN1231000211 2026-04-24:
+      `coverage_planner/action/NavigateThroughCoveragePaths` with
+      `only_edge_mode:true` + `include_edge:true` +
+      `coverage_type:0` (COVERAGE_BY_FILE) + the map yaml.
 
-    This bypasses robot_decision. The stock `start_cov_task` service on
-    robot_decision does NOT honour cov_mode=2 in this firmware — it
-    silently falls through to the normal COVERING state machine (observed
-    live: Work:COVERING never Work:BOUNDARY_COVERING). Going direct is
-    the only path that actually reaches BOUNDARY_FOLLOWING.
+    coverage_planner internally plans the full cover paths, then the
+    `only_edge_mode` branch discards the fill paths and keeps only the
+    boundary rings. It logs:
+      "Only edge mode, only covering boundary path !!!!"
+      "Current work status: BOUNDARY_COVERING"
+      "Setting blade height to : <blade_mm>"
+    and drives nav2 FollowPath segment-by-segment along the polygon.
+
+    The other paths we tried (all dead ends — see
+    research/documents/edge-cut-flow.md):
+      - /robot_decision/start_cov_task cov_mode:2 silently falls through
+        to normal COVERING.
+      - MQTT start_patrol is a JSON-echo stub in mqtt_node, no ROS call.
+      - /robot_decision/start_assistant_mapping gates on work_status
+        0x82/0x83/0x8d/0x8e, only reachable via the destructive
+        start_scan_map flow.
+      - Direct /boundary_follow action uses the local costmap, not the
+        saved polygon — aborts "No valid boundary need robot!!!" unless
+        the robot is already next to lethal cells the planner can latch.
 
     Params (all optional):
-      mapName:      work-area CSV base name (without extension). Default
-                    "map0". The map yaml path is built as
-                    /userdata/lfi/maps/home0/<mapName>.yaml. Whitelisted
-                    to `[A-Za-z0-9_-]+` to avoid shell injection.
-      bladeHeight:  coverage_planner `blade_height` field in millimetres,
-                    clamped to 20..90. Default 40 mm. Note this is a
-                    different encoding from StartCoverageTask — the
-                    action's field is mm, clamped to the blade's physical
-                    range (coverage_planner clamps anything <20mm to 20).
-      light:        reserved, currently ignored on this path.
+      mapName:      map base name (no extension). Default "map0".
+                    Path built as /userdata/lfi/maps/home0/<name>.yaml.
+                    Whitelisted to `[A-Za-z0-9_-]+` to avoid shell
+                    injection (flows into the action goal YAML).
+      bladeHeight:  NTCP goal `blade_height` in mm. Default 40 mm
+                    (= 4 cm). Clamped to 20..90 here; coverage_planner
+                    itself also clamps anything <20mm.
 
     Response:
       accepted → {result: 0, map: <name>, blade_mm: <h>}
       bad param → {result: 1, error: "invalid_map_name" | "param type error"}
-      service reject → {result: 1, error: "coverage_by_file_failed", detail}
-      action reject → {result: 1, error: "boundary_follow_dispatch_failed", detail}
+      dispatch error → {result: 1, error: "dispatch_failed: ..."}
 
-    Note: accepted=0 means the action was dispatched. Completion / motion
-    success still depends on localization being valid at trigger time and
-    the robot being in a place the boundary is reachable from. If the
-    robot has just booted or just un-docked without a fresh LOC_SUCCESS,
-    the nav2 controller will abort the follow path ("Follow path aborted
-    … py:<stale-pose>"). Callers should ensure localization is settled
-    before invoking.
+    Notes:
+      - The action runs long (up to the 1800 s internal timeout). We
+        fire-and-forget via Popen so MQTT responds promptly. Completion
+        status and mower motion lands in /tmp/edge_cut.log.
+      - `reset_coverage_map:true` drops any prior normal-coverage progress.
+        If we ever want edge as a finishing pass, expose a
+        `resetCoverage` param to flip it.
+      - Stop path stays on `stop_boundary_follow` →
+        /coverage_planner_server/cover_task_stop, which cancels NTCP the
+        same way it cancels BoundaryFollow.
     """
-    # Only clear stale costmap observations (non-blocking, fire-and-forget).
-    # Do NOT call cover_task_stop here: it puts robot_decision into REQUEST_STOP
-    # and races with any subsequent command — observed live 2026-04-24 on
-    # LFIN1231000211.
+    # Safe non-blocking cleanup: clear any stale obstacle observations
+    # in the nav2 costmaps so the edge planner doesn't inherit false
+    # blockers from a prior run. Do NOT call cover_task_stop here — it
+    # races with any in-flight task state transitions.
     _clear_costmaps()
 
     try:
@@ -1028,55 +1036,50 @@ def handle_start_edge_cut(params, respond):
 
     map_yaml = f"/userdata/lfi/maps/home0/{map_name}.yaml"
 
-    # Step 1: generate the edge coverage path (also loads boundary into
-    # coverage_planner_server state). Blocks up to 15 s.
-    step1_req = (
+    # NTCP goal — single YAML string for ros2 action send_goal CLI.
+    # Fields that differ from the "normal mow" goal: only_edge_mode=true
+    # and include_edge=true (both required — include_edge enables the
+    # edge planner to run, only_edge_mode tells it to drop the fill).
+    goal_yaml = (
         "'{"
         f"map_yaml: \"{map_yaml}\", "
+        "coverage_type: 0, "
+        "reset_coverage_map: true, "
+        "return_to_start: false, "
+        "ignore_start_for_planning: false, "
+        "disable_recover: false, "
+        "enable_tf_action_abort_as_stop: false, "
         "include_edge: true, "
+        "mixed_edge: false, "
+        "setting_blade_height: true, "
+        f"blade_height: {blade_mm}, "
+        "grass_height: 0, "
+        "auto_repeat_num: false, "
+        "target_repeat_times: 1, "
+        "debug_mode: false, "
+        "adaptive_mode: 1, "
         "specify_direction: false, "
-        "cov_direction: 0"
+        "cov_direction: 0, "
+        "only_edge_mode: true, "
+        "enable_check_walkable: false, "
+        "back_avoid_mode: false, "
+        "test_long_length: 0.0, "
+        "test_short_length: 0.0"
         "}'"
-    )
-    step1_cmd = (
-        "source /opt/ros/galactic/setup.bash && "
-        "source /root/novabot/install/setup.bash 2>/dev/null && "
-        "timeout 15 ros2 service call /coverage_planner_server/coverage_by_file "
-        "coverage_planner/srv/CoveragePathsByFile " + step1_req +
-        " 2>&1 | tee -a /tmp/edge_cut.log"
     )
 
-    # Step 2: dispatch the BoundaryFollow action. Fire-and-forget via
-    # nohup so the Python handler responds to MQTT promptly — the action
-    # runs for the full mowing session (possibly 30+ min) inside
-    # coverage_planner_server.
-    step2_req = (
-        "'{"
-        "follow_mode: 2, "
-        "enable_coverage: true, "
-        "more_close_to_boundary: false, "
-        "close_loop_stop: true, "
-        "start_follow_wait: false, "
-        "debug_mode: false, "
-        "inflation_radius: 0.0, "
-        f"blade_height: {blade_mm}"
-        "}'"
-    )
-    step2_cmd = (
+    cmd = (
         "source /opt/ros/galactic/setup.bash && "
         "source /root/novabot/install/setup.bash 2>/dev/null && "
-        "nohup timeout 1800 ros2 action send_goal /boundary_follow "
-        "coverage_planner/action/BoundaryFollow " + step2_req +
+        "nohup timeout 1800 ros2 action send_goal "
+        "/navigate_through_coverage_paths "
+        "coverage_planner/action/NavigateThroughCoveragePaths " + goal_yaml +
         " >> /tmp/edge_cut.log 2>&1 &"
     )
 
-    # Verify Step 1 before Step 2 — if the plan fails we want the caller
-    # to know, not silently swallow it.
-    cmd = step1_cmd
-
-    # Match the DDS transport used by the running ROS nodes — without the
-    # shared-memory CYCLONEDDS_URI the CLI client can't discover
-    # /robot_decision/start_cov_task.
+    # Match the shared-memory DDS transport the ROS nodes use — without
+    # CYCLONEDDS_URI pointing at shm_cyclonedds.xml the CLI client cannot
+    # discover /navigate_through_coverage_paths.
     env = {
         **os.environ,
         "ROS_DOMAIN_ID": "0",
@@ -1086,50 +1089,16 @@ def handle_start_edge_cut(params, respond):
     }
 
     try:
-        proc = subprocess.run(
-            ["bash", "-c", cmd], env=env,
-            capture_output=True, text=True, timeout=20,
-        )
-        out = (proc.stdout or "") + (proc.stderr or "")
-    except subprocess.TimeoutExpired:
-        log("start_edge_cut: ros2 service call timed out")
-        respond("start_edge_cut_respond", {"result": 1, "error": "service_timeout"})
-        return
-    except Exception as e:
-        log(f"start_edge_cut subprocess error: {e}")
-        respond("start_edge_cut_respond", {"result": 1, "error": f"subprocess: {e}"})
-        return
-
-    tail = out[-400:] if len(out) > 400 else out
-    log(f"start_edge_cut step1 out: {tail}")
-
-    # coverage_by_file prints "success=True" or "success=False" in response.
-    # Check before dispatching step 2 so a failed plan doesn't trigger a
-    # doomed action goal.
-    lowered = out.lower()
-    if "success=true" not in lowered:
-        if "waiting for service" in lowered:
-            err = "no_service_response"
-        elif "success=false" in lowered:
-            err = "coverage_by_file_failed"
-        else:
-            err = "coverage_by_file_unknown"
-        respond("start_edge_cut_respond", {"result": 1, "error": err, "detail": tail})
-        return
-
-    # Step 2: fire-and-forget the BoundaryFollow action. The long-running
-    # mowing session stays inside coverage_planner_server. Any abort
-    # (stale pose, costmap block, user stop) lands in /tmp/edge_cut.log.
-    try:
         subprocess.Popen(
-            ["bash", "-c", step2_cmd], env=env,
+            ["bash", "-c", cmd], env=env,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
     except Exception as e:
-        log(f"start_edge_cut step2 dispatch error: {e}")
-        respond("start_edge_cut_respond", {"result": 1, "error": f"boundary_follow_dispatch_failed: {e}"})
+        log(f"start_edge_cut dispatch error: {e}")
+        respond("start_edge_cut_respond", {"result": 1, "error": f"dispatch_failed: {e}"})
         return
 
+    log(f"start_edge_cut dispatched: map={map_name} blade={blade_mm}mm")
     respond("start_edge_cut_respond", {
         "result": 0,
         "map": map_name,
