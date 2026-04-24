@@ -13,7 +13,6 @@ import * as NavigationBar from 'expo-navigation-bar';
 import { View, Platform } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Ionicons } from '@expo/vector-icons';
-import { colors } from './src/theme/colors';
 import { ThemeProvider, useTheme, type Colors } from './src/theme';
 import { DemoProvider } from './src/context/DemoContext';
 import { DevModeProvider, useDevMode } from './src/context/DevModeContext';

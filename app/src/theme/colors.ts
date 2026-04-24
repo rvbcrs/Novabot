@@ -41,7 +41,3 @@ export const lightColors = {
 };
 
 export type Colors = typeof darkColors;
-
-// Back-compat export — so files that haven't been migrated yet keep working
-// against the dark palette. Remove after full migration is done.
-export const colors: Colors = darkColors;
