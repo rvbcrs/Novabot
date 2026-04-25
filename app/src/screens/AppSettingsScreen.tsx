@@ -22,7 +22,6 @@ import { discoverServers } from '../services/discovery';
 import { useMowerState } from '../hooks/useMowerState';
 import { useActiveMower } from '../hooks/useActiveMower';
 import { ApiClient } from '../services/api';
-import { JoystickControl } from '../components/JoystickControl';
 import { useDevMode } from '../context/DevModeContext';
 import { useExperimental } from '../context/ExperimentalContext';
 import { useI18n, LANGUAGES } from '../i18n';
@@ -50,7 +49,6 @@ export default function AppSettingsScreen({
   const [scanning, setScanning] = useState(false);
   const [discoveredServers, setDiscoveredServers] = useState<string[]>([]);
   const [email, setEmail] = useState('');
-  const [showJoystick, setShowJoystick] = useState(false);
   const devMode = useDevMode();
   const experimental = useExperimental();
   const { language, setLanguage, t } = useI18n();
@@ -227,17 +225,6 @@ export default function AppSettingsScreen({
 
         {/* Actions */}
         <Section title="ACTIONS">
-          {mower?.online && (
-            <TouchableOpacity
-              style={styles.actionRow}
-              onPress={() => setShowJoystick(true)}
-              activeOpacity={0.7}
-            >
-              <Ionicons name="game-controller-outline" size={20} color={colors.purple} />
-              <Text style={styles.actionLabel}>Manual Control</Text>
-              <Ionicons name="chevron-forward" size={18} color={colors.textDim} />
-            </TouchableOpacity>
-          )}
           {onGoToMowerSettings && (
             <TouchableOpacity
               style={styles.actionRow}
@@ -336,14 +323,6 @@ export default function AppSettingsScreen({
         </TouchableOpacity>
       </ScrollView>
 
-      {/* Joystick modal */}
-      {showJoystick && mower && (
-        <Modal visible animationType="slide" transparent>
-          <View style={styles.modalOverlay}>
-            <JoystickControl sn={mower.sn} onClose={() => setShowJoystick(false)} />
-          </View>
-        </Modal>
-      )}
     </View>
   );
 }

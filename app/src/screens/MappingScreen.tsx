@@ -1093,7 +1093,7 @@ sendCommand({ save_recharge_pos: { mapName: 'map0', cmd_num: cmdNumRef.current++
             }}
             style={[styles.backBtn, mustCreateChannel && { opacity: 0.4 }]}
           >
-            <Ionicons name="arrow-back" size={24} color={colors.white} />
+            <Ionicons name="arrow-back" size={24} color={colors.text} />
           </TouchableOpacity>
           <Text style={styles.title}>{t('createMap', undefined) || 'Create Map'}</Text>
         </View>

@@ -637,7 +637,7 @@ export default function ProvisionScreen({ navigation, route }: Props) {
               style={styles.backButton}
               accessibilityLabel="Back to Settings"
             >
-              <Ionicons name="arrow-back" size={22} color={colors.white} />
+              <Ionicons name="arrow-back" size={22} color={colors.text} />
             </TouchableOpacity>
             <Text style={styles.title}>Provisioning</Text>
           </View>
