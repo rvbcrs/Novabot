@@ -251,9 +251,12 @@ const makeStyles = (c: Colors) => StyleSheet.create({
     width: JOYSTICK_SIZE,
     height: JOYSTICK_SIZE,
     borderRadius: JOYSTICK_SIZE / 2,
-    borderWidth: 2,
-    borderColor: c.cardBorder,
-    backgroundColor: c.inputBg,
+    borderWidth: 3,
+    // Tinted neutral that reads on both schemes (~10% opacity gray) so the
+    // pad has a clear shape regardless of background. Border darker for
+    // outline definition.
+    borderColor: 'rgba(125,125,125,0.45)',
+    backgroundColor: 'rgba(125,125,125,0.10)',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -261,13 +264,13 @@ const makeStyles = (c: Colors) => StyleSheet.create({
     position: 'absolute',
     width: '60%',
     height: 1,
-    backgroundColor: c.cardBorder,
+    backgroundColor: 'rgba(125,125,125,0.30)',
   },
   crosshairV: {
     position: 'absolute',
     width: 1,
     height: '60%',
-    backgroundColor: c.cardBorder,
+    backgroundColor: 'rgba(125,125,125,0.30)',
   },
   thumb: {
     width: THUMB_SIZE,
