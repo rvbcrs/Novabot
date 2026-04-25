@@ -90,9 +90,12 @@ function buildNavTheme(colorScheme: 'light' | 'dark', c: Colors) {
   };
 }
 
-// Gradient stops for the light-mode app-level background. Top → bottom,
-// soft green pastel fading to the warm off-white that matches lightColors.bg.
-const LIGHT_BG_GRADIENT: [string, string, string] = ['#d4ead2', '#e8f0d9', '#faf8f3'];
+// Gradient stops for the light-mode app-level background. Subtle green
+// wash from top-left to middle-right, fading to the warm off-white that
+// matches lightColors-derived card backgrounds.
+const LIGHT_BG_GRADIENT: [string, string] = ['#dde9d4', '#faf8f3'];
+const LIGHT_BG_GRADIENT_START = { x: 0, y: 0 } as const;     // top-left
+const LIGHT_BG_GRADIENT_END = { x: 1, y: 0.5 } as const;     // middle-right
 
 // ── Provision Tab (nested stack) ─────────────────────────────────────────────
 
@@ -344,7 +347,12 @@ function ThemedApp({
   if (colorScheme === 'light') {
     return (
       <View style={styles.flex}>
-        <LinearGradient colors={LIGHT_BG_GRADIENT} style={StyleSheet.absoluteFill} />
+        <LinearGradient
+          colors={LIGHT_BG_GRADIENT}
+          start={LIGHT_BG_GRADIENT_START}
+          end={LIGHT_BG_GRADIENT_END}
+          style={StyleSheet.absoluteFill}
+        />
         {navContent}
       </View>
     );
