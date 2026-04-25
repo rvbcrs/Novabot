@@ -2624,7 +2624,10 @@ const makeStyles = (c: Colors) => StyleSheet.create({
   actionButtonText: {
     fontSize: 15,
     fontWeight: '600',
-    color: c.text,
+    // Action buttons (Start Mowing, Go Home) sit on emerald/blue backgrounds
+    // — keep text white in both modes for contrast. The bulk c.white→c.text
+    // sweep was wrong here.
+    color: c.white,
   },
   // Split-action button — hoofd-knop + kleine chevron-knop aan de rechterkant.
   // Beide helften delen hoogte + achtergrond; een dunne verticale divider

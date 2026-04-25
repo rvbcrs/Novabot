@@ -106,26 +106,26 @@ const makeStyles = (c: Colors) => StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
   },
   sheet: {
-    backgroundColor: '#10182e',
+    backgroundColor: c.card,
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     paddingHorizontal: 18,
     paddingTop: 12,
     borderTopWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
+    borderColor: c.cardBorder,
   },
   handle: {
     width: 52,
     height: 5,
     borderRadius: 999,
     alignSelf: 'center',
-    backgroundColor: 'rgba(255,255,255,0.18)',
+    backgroundColor: c.cardBorder,
     marginBottom: 12,
   },
   title: {
     fontSize: 18,
     fontWeight: '800',
-    color: c.white,
+    color: c.text,
     marginBottom: 6,
   },
   message: {
@@ -141,9 +141,9 @@ const makeStyles = (c: Colors) => StyleSheet.create({
     paddingVertical: 14,
     paddingHorizontal: 12,
     borderRadius: 16,
-    backgroundColor: 'rgba(255,255,255,0.05)',
+    backgroundColor: c.inputBg,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.06)',
+    borderColor: c.cardBorder,
     marginBottom: 10,
   },
   itemDisabled: {
@@ -155,10 +155,13 @@ const makeStyles = (c: Colors) => StyleSheet.create({
     borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: c.inputBg,
+    borderWidth: 1,
+    borderColor: c.cardBorder,
   },
   iconWrapDisabled: {
-    backgroundColor: 'rgba(255,255,255,0.04)',
+    backgroundColor: c.inputBg,
+    opacity: 0.6,
   },
   textWrap: {
     flex: 1,
@@ -166,10 +169,10 @@ const makeStyles = (c: Colors) => StyleSheet.create({
   itemTitle: {
     fontSize: 15,
     fontWeight: '700',
-    color: c.white,
+    color: c.text,
   },
   itemTitleDestructive: {
-    color: '#fecdd3',
+    color: c.red,
   },
   itemTitleDisabled: {
     color: c.textMuted,
@@ -185,11 +188,13 @@ const makeStyles = (c: Colors) => StyleSheet.create({
     borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.06)',
+    backgroundColor: c.inputBg,
+    borderWidth: 1,
+    borderColor: c.cardBorder,
   },
   cancelText: {
     fontSize: 15,
     fontWeight: '700',
-    color: c.white,
+    color: c.text,
   },
 });
