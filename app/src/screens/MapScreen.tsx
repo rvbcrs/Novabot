@@ -1606,10 +1606,10 @@ export default function MapScreen() {
                                   </View>
                                   <View style={styles.zonePanelActions}>
                                     <TouchableOpacity style={styles.zonePanelIconButton} onPress={() => handleMapAction(map)} activeOpacity={0.7}>
-                                      <Ionicons name="create-outline" size={18} color={colors.white} />
+                                      <Ionicons name="create-outline" size={18} color={colors.text} />
                                     </TouchableOpacity>
                                     <TouchableOpacity style={styles.zonePanelIconButton} onPress={() => handleDeleteMap(map)} activeOpacity={0.7}>
-                                      <Ionicons name="trash-outline" size={18} color={colors.white} />
+                                      <Ionicons name="trash-outline" size={18} color={colors.text} />
                                     </TouchableOpacity>
                                   </View>
                                 </View>
@@ -2181,14 +2181,17 @@ const makeStyles = (c: Colors) => StyleSheet.create({
     gap: 6,
     paddingVertical: 12,
     borderRadius: 14,
-    backgroundColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: c.inputBg,
+    borderWidth: 1,
+    borderColor: c.cardBorder,
   },
   zoneActionPrimary: {
     backgroundColor: c.emerald,
+    borderWidth: 0,
   },
   zoneActionDisabled: {
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    opacity: 0.7,
+    backgroundColor: c.inputBg,
+    opacity: 0.5,
   },
   zoneActionText: {
     fontSize: 14,
