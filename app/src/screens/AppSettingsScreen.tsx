@@ -15,7 +15,8 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useTheme, useStyles, type Colors, type ThemeMode, type MowerColor } from '../theme';
+import { useTheme, useStyles, type Colors, type ThemeMode } from '../theme';
+import { useMowerColor, type MowerColor } from '../hooks/useMowerColor';
 import { getServerUrl, setServerUrl as saveServerUrl, getToken, clearToken } from '../services/auth';
 import { initSocket, disconnectSocket } from '../services/socket';
 import { discoverServers } from '../services/discovery';
@@ -40,7 +41,9 @@ export default function AppSettingsScreen({
   onGoToMowerSettings,
 }: AppSettingsScreenProps) {
   const insets = useSafeAreaInsets();
-  const { mode, setMode, mowerColor, setMowerColor, colors } = useTheme();
+  const { mode, setMode, colors } = useTheme();
+  const { activeMower } = useActiveMower();
+  const { mowerColor, setMowerColor } = useMowerColor(activeMower?.sn);
   const styles = useStyles(makeStyles);
   const { devices, connected } = useMowerState();
   const [serverUrl, setServerUrl] = useState('');
@@ -142,24 +145,26 @@ export default function AppSettingsScreen({
           <Text style={styles.segmentCaption}>{t(captionKey[mode])}</Text>
         </View>
 
-        {/* Mower colour */}
-        <View style={styles.appearanceSection}>
-          <Text style={styles.sectionTitle}>{t('mowerColor')}</Text>
-          <View style={styles.segment}>
-            {(['white', 'grey'] as MowerColor[]).map((mc) => (
-              <TouchableOpacity
-                key={mc}
-                style={[styles.segmentItem, mc === mowerColor && styles.segmentItemActive]}
-                onPress={() => { setMowerColor(mc); }}
-                activeOpacity={0.7}
-              >
-                <Text style={[styles.segmentLabel, mc === mowerColor && styles.segmentLabelActive]}>
-                  {mc === 'white' ? t('mowerColorWhite') : t('mowerColorGrey')}
-                </Text>
-              </TouchableOpacity>
-            ))}
+        {/* Mower colour — per active mower SN */}
+        {activeMower?.sn && (
+          <View style={styles.appearanceSection}>
+            <Text style={styles.sectionTitle}>{t('mowerColor')}</Text>
+            <View style={styles.segment}>
+              {(['white', 'grey'] as MowerColor[]).map((mc) => (
+                <TouchableOpacity
+                  key={mc}
+                  style={[styles.segmentItem, mc === mowerColor && styles.segmentItemActive]}
+                  onPress={() => { setMowerColor(mc); }}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.segmentLabel, mc === mowerColor && styles.segmentLabelActive]}>
+                    {mc === 'white' ? t('mowerColorWhite') : t('mowerColorGrey')}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
           </View>
-        </View>
+        )}
 
         {/* Server info */}
         <Section title="SERVER">

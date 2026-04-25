@@ -4,7 +4,8 @@
  */
 import React, { useEffect } from 'react';
 import { View, Image, StyleSheet } from 'react-native';
-import { useTheme } from '../../theme';
+import { useMowerColor } from '../../hooks/useMowerColor';
+import { useActiveMower } from '../../hooks/useActiveMower';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -107,7 +108,8 @@ export function AnimatedMower({ activity, battery }: Props) {
   const isPaused = activity === 'paused';
   const isError = activity === 'error';
   const isOffline = activity === 'idle' && battery === 0;
-  const { mowerColor } = useTheme();
+  const { activeMower } = useActiveMower();
+  const { mowerColor } = useMowerColor(activeMower?.sn);
   const isGrey = mowerColor === 'grey';
 
   useEffect(() => {
