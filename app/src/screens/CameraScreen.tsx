@@ -215,37 +215,44 @@ img{max-width:100%;max-height:100%;object-fit:contain}
 }
 
 const makeStyles = (c: Colors) => StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#000' },
+  container: { flex: 1, backgroundColor: c.bg },
   topBar: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 8,
     paddingVertical: 8,
-    backgroundColor: 'rgba(0,0,0,0.9)',
+    backgroundColor: c.card,
+    borderBottomWidth: 1,
+    borderBottomColor: c.cardBorder,
   },
   topicRow: { gap: 6, paddingRight: 8 },
   topicBtn: {
     paddingHorizontal: 14,
     paddingVertical: 6,
     borderRadius: 16,
-    backgroundColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: c.inputBg,
+    borderWidth: 1,
+    borderColor: c.cardBorder,
   },
-  topicBtnActive: { backgroundColor: c.emerald },
-  topicText: { fontSize: 12, fontWeight: '600', color: c.textMuted },
+  topicBtnActive: { backgroundColor: c.emerald, borderColor: c.emerald },
+  topicText: { fontSize: 12, fontWeight: '600', color: c.text },
   topicTextActive: { color: c.white },
   topBarActions: { flexDirection: 'row', gap: 4, marginLeft: 'auto' },
   iconBtn: { padding: 8 },
   cameraArea: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   streamContainer: { width: '100%', flex: 1 },
+  // Stream itself stays #000 — that's the video viewport, black is correct
+  // when no frame is loaded.
   stream: { flex: 1, backgroundColor: '#000' },
   centerMsg: { alignItems: 'center', gap: 8, paddingHorizontal: 32 },
-  centerTitle: { fontSize: 18, fontWeight: '600', color: c.white },
+  centerTitle: { fontSize: 18, fontWeight: '600', color: c.text },
   centerSub: { fontSize: 13, color: c.textMuted, textAlign: 'center' },
   retryBtn: {
     marginTop: 12, paddingHorizontal: 20, paddingVertical: 10,
-    borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 10, backgroundColor: c.inputBg,
+    borderWidth: 1, borderColor: c.cardBorder,
   },
-  retryText: { fontSize: 14, fontWeight: '600', color: c.white },
+  retryText: { fontSize: 14, fontWeight: '600', color: c.text },
   loadingOverlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0,0,0,0.7)',
