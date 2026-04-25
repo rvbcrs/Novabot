@@ -73,8 +73,8 @@ export function AppActionSheet({
                     action.disabled
                       ? colors.textMuted
                       : action.destructive
-                        ? '#fda4af'
-                        : colors.white
+                        ? colors.red
+                        : colors.text
                   }
                 />
               </View>
