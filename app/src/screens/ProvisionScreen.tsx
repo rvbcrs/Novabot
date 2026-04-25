@@ -1303,7 +1303,7 @@ const makeStyles = (c: Colors) => StyleSheet.create({
     gap: 12,
     borderTopWidth: 1,
     borderTopColor: c.cardBorder,
-    backgroundColor: c.bg,
+    backgroundColor: c.card,
   },
   retryButton: {
     flexDirection: 'row',

@@ -214,9 +214,11 @@ export function JoystickControl({ sn, onClose }: Props) {
 
 const makeStyles = (c: Colors) => StyleSheet.create({
   container: {
-    backgroundColor: c.bg,
+    backgroundColor: c.card,
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
+    borderTopWidth: 1,
+    borderColor: c.cardBorder,
     padding: 24,
     paddingBottom: 40,
     alignItems: 'center',

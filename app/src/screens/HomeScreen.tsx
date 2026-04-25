@@ -2187,7 +2187,7 @@ const makeStyles = (c: Colors) => StyleSheet.create({
     borderColor: c.bg,
   },
   modalHeader: {
-    backgroundColor: c.bg,
+    backgroundColor: c.card,
     flexDirection: 'row',
     justifyContent: 'flex-end',
     paddingHorizontal: 16,

@@ -253,7 +253,7 @@ const makeStyles = (c: Colors) => StyleSheet.create({
     position: 'absolute',
     top: 40,
     left: 0,
-    backgroundColor: c.bg,
+    backgroundColor: c.card,
     borderColor: c.cardBorder,
     borderWidth: 1,
     borderRadius: 10,
