@@ -617,7 +617,7 @@ const makeStyles = (c: Colors) => StyleSheet.create({
   title: {
     fontSize: 28,
     fontWeight: '800',
-    color: c.white,
+    color: c.text,
   },
   statusRow: {
     flexDirection: 'row',
