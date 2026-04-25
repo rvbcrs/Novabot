@@ -21,7 +21,9 @@ export const darkColors = {
 };
 
 export const lightColors = {
-  bg: '#faf8f3',
+  // Transparent so the App-level LinearGradient shows through every screen
+  // container. Cards keep their own solid 'card' colour.
+  bg: 'transparent',
   card: '#ffffff',
   cardBorder: '#e8e2d0',
   text: '#2a2620',

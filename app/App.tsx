@@ -10,7 +10,8 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import * as SplashScreen from 'expo-splash-screen';
 import * as NavigationBar from 'expo-navigation-bar';
-import { View, Platform } from 'react-native';
+import { View, Platform, StyleSheet } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Ionicons } from '@expo/vector-icons';
 import { ThemeProvider, useTheme, type Colors } from './src/theme';
@@ -71,14 +72,17 @@ const Tab = createBottomTabNavigator<MainTabParams>();
 
 function buildNavTheme(colorScheme: 'light' | 'dark', c: Colors) {
   const base = colorScheme === 'dark' ? RNDarkTheme : DefaultTheme;
+  // In light mode the App-level LinearGradient is the visible background;
+  // NavigationContainer + tab bar render transparent so the gradient shows.
+  const isLight = colorScheme === 'light';
   return {
     ...base,
-    dark: colorScheme === 'dark',
+    dark: !isLight,
     colors: {
       ...base.colors,
       primary: c.emerald,
-      background: c.bg,
-      card: c.bg,
+      background: isLight ? 'transparent' : c.bg,
+      card: isLight ? 'transparent' : c.bg,
       text: c.text,
       border: c.cardBorder,
       notification: c.emerald,
@@ -86,15 +90,19 @@ function buildNavTheme(colorScheme: 'light' | 'dark', c: Colors) {
   };
 }
 
+// Gradient stops for the light-mode app-level background. Top → bottom,
+// soft green pastel fading to the warm off-white that matches lightColors.bg.
+const LIGHT_BG_GRADIENT: [string, string, string] = ['#d4ead2', '#e8f0d9', '#faf8f3'];
+
 // ── Provision Tab (nested stack) ─────────────────────────────────────────────
 
 function ProvisionTabScreen() {
-  const { colors: c } = useTheme();
+  const { colors: c, colorScheme } = useTheme();
   const screenOptions = useMemo(() => ({
     headerShown: false,
-    contentStyle: { backgroundColor: c.bg },
+    contentStyle: { backgroundColor: colorScheme === "light" ? "transparent" : c.bg },
     animation: 'slide_from_right' as const,
-  }), [c.bg]);
+  }), [c.bg, colorScheme]);
   return (
     <ProvisionStack.Navigator screenOptions={screenOptions}>
       <ProvisionStack.Screen name="Settings" component={SettingsScreen} />
@@ -115,12 +123,12 @@ function SettingsTabScreen({
   onLogout: () => void;
   onGoToProvision: () => void;
 }) {
-  const { colors: c } = useTheme();
+  const { colors: c, colorScheme } = useTheme();
   const screenOptions = useMemo(() => ({
     headerShown: false,
-    contentStyle: { backgroundColor: c.bg },
+    contentStyle: { backgroundColor: colorScheme === "light" ? "transparent" : c.bg },
     animation: 'slide_from_right' as const,
-  }), [c.bg]);
+  }), [c.bg, colorScheme]);
   return (
     <SettingsStack.Navigator screenOptions={screenOptions}>
       <SettingsStack.Screen name="SettingsMain">
@@ -143,12 +151,12 @@ function SettingsTabScreen({
 // ── Map Tab (nested stack: MapScreen → MappingScreen as a sub-flow) ──
 
 function MapTabScreen() {
-  const { colors: c } = useTheme();
+  const { colors: c, colorScheme } = useTheme();
   const screenOptions = useMemo(() => ({
     headerShown: false,
-    contentStyle: { backgroundColor: c.bg },
+    contentStyle: { backgroundColor: colorScheme === "light" ? "transparent" : c.bg },
     animation: 'slide_from_right' as const,
-  }), [c.bg]);
+  }), [c.bg, colorScheme]);
   return (
     <MapStack.Navigator screenOptions={screenOptions}>
       <MapStack.Screen name="MapMain" component={MapScreen} />
@@ -161,19 +169,20 @@ function MapTabScreen() {
 
 function MainTabs({ onLogout, onGoToProvision }: { onLogout: () => void; onGoToProvision: () => void }) {
   const { t } = useI18n();
-  const { colors: c } = useTheme();
+  const { colors: c, colorScheme } = useTheme();
   return (
     <Tab.Navigator
       initialRouteName="Home"
       screenOptions={({ route }) => ({
         headerShown: false,
         tabBarStyle: {
-          backgroundColor: c.bg,
+          backgroundColor: colorScheme === 'light' ? 'transparent' : c.bg,
           borderTopColor: c.cardBorder,
-          borderTopWidth: 1,
+          borderTopWidth: colorScheme === 'light' ? 0 : 1,
           height: Platform.OS === 'ios' ? 88 : 64,
           paddingBottom: Platform.OS === 'ios' ? 28 : 8,
           paddingTop: 8,
+          ...(colorScheme === 'light' ? { elevation: 0 } : {}),
         },
         tabBarActiveTintColor: c.emerald,
         tabBarInactiveTintColor: c.textMuted,
@@ -234,7 +243,7 @@ function MainTabs({ onLogout, onGoToProvision }: { onLogout: () => void; onGoToP
 
 function AuthenticatedApp({ onLogout, onGoToProvision }: { onLogout: () => void; onGoToProvision: () => void }) {
   const { unlocked } = useDevMode();
-  const { colors: c } = useTheme();
+  const { colors: c, colorScheme } = useTheme();
 
   // Always show full tabs — locked mode only hides certain features, not tabs
   return <MainTabs onLogout={onLogout} onGoToProvision={onGoToProvision} />;
@@ -245,12 +254,13 @@ function AuthenticatedApp({ onLogout, onGoToProvision }: { onLogout: () => void;
       screenOptions={({ route }) => ({
         headerShown: false,
         tabBarStyle: {
-          backgroundColor: c.bg,
+          backgroundColor: colorScheme === 'light' ? 'transparent' : c.bg,
           borderTopColor: c.cardBorder,
-          borderTopWidth: 1,
+          borderTopWidth: colorScheme === 'light' ? 0 : 1,
           height: Platform.OS === 'ios' ? 88 : 64,
           paddingBottom: Platform.OS === 'ios' ? 28 : 8,
           paddingTop: 8,
+          ...(colorScheme === 'light' ? { elevation: 0 } : {}),
         },
         tabBarActiveTintColor: c.emerald,
         tabBarInactiveTintColor: c.textMuted,
@@ -290,9 +300,9 @@ function ThemedApp({
   const navTheme = useMemo(() => buildNavTheme(colorScheme, c), [colorScheme, c]);
   const screenOptions = useMemo(() => ({
     headerShown: false,
-    contentStyle: { backgroundColor: c.bg },
+    contentStyle: { backgroundColor: colorScheme === "light" ? "transparent" : c.bg },
     animation: 'slide_from_right' as const,
-  }), [c.bg]);
+  }), [c.bg, colorScheme]);
 
   // Re-apply Android navigation bar background when color scheme changes.
   useEffect(() => {
@@ -301,7 +311,7 @@ function ThemedApp({
     }
   }, [c.bg]);
 
-  return (
+  const navContent = (
     <NavigationContainer theme={navTheme} ref={navigationRef}>
       {isAuthenticated ? (
         <ActiveMowerProvider>
@@ -326,7 +336,25 @@ function ThemedApp({
       )}
     </NavigationContainer>
   );
+
+  // In light mode, render an app-level LinearGradient as the visible
+  // background. Every navigator and screen renders transparent on top so
+  // the gradient shows through. In dark mode we keep the existing solid
+  // backgrounds — gradients on a near-black palette read as banding.
+  if (colorScheme === 'light') {
+    return (
+      <View style={styles.flex}>
+        <LinearGradient colors={LIGHT_BG_GRADIENT} style={StyleSheet.absoluteFill} />
+        {navContent}
+      </View>
+    );
+  }
+  return navContent;
 }
+
+const styles = StyleSheet.create({
+  flex: { flex: 1 },
+});
 
 function StatusBarThemed() {
   const { colorScheme } = useTheme();
