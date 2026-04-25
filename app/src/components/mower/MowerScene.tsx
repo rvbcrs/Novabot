@@ -22,6 +22,7 @@ import Animated, {
   Easing,
 } from 'react-native-reanimated';
 import type { MowerActivity } from '../../types';
+import { useTheme } from '../../theme';
 import { NightSky } from './NightSky';
 import { ScrollingEnvironment } from './ScrollingEnvironment';
 import { ChargingStation } from './ChargingStation';
@@ -42,48 +43,80 @@ interface Props {
 
 // ── Dashboard gradient colors (exact match) ──────────────────────────
 
-function getGradientColors(activity: MowerActivity, battery: number): [string, string, string] {
+type Scheme = 'light' | 'dark';
+
+function getGradientColors(
+  activity: MowerActivity, battery: number, scheme: Scheme,
+): [string, string, string] {
   const isOffline = activity === 'idle' && battery === 0;
-  if (isOffline) return ['#374151', '#1f2937', '#374151'];
+  if (isOffline) {
+    return scheme === 'light'
+      ? ['#e2dccf', '#d4cdb8', '#e2dccf']
+      : ['#374151', '#1f2937', '#374151'];
+  }
   switch (activity) {
     case 'error':
-      return ['#1c1917', '#292524', '#422006'];
+      return scheme === 'light'
+        ? ['#fce7e7', '#f5d4d4', '#f0d8d8']
+        : ['#1c1917', '#292524', '#422006'];
     case 'charging':
-      return ['#0c1929', '#0f172a', '#1e3a5f'];
+      return scheme === 'light'
+        ? ['#e0e9f5', '#cbd9ec', '#a8bfdb']
+        : ['#0c1929', '#0f172a', '#1e3a5f'];
     default:
-      return ['#065f46', '#047857', '#059669'];
+      return scheme === 'light'
+        ? ['#d4f0d4', '#bce0bc', '#a8d5aa']
+        : ['#065f46', '#047857', '#059669'];
   }
 }
 
-function getGrassColor(activity: MowerActivity, battery: number): string {
+function getGrassColor(activity: MowerActivity, battery: number, scheme: Scheme): string {
   const isOffline = activity === 'idle' && battery === 0;
-  if (isOffline) return '#4b5563';
-  if (activity === 'charging') return '#1e3a5f';
-  return '#34d399';
+  if (isOffline) return scheme === 'light' ? '#a39680' : '#4b5563';
+  if (activity === 'charging') return scheme === 'light' ? '#a8bfdb' : '#1e3a5f';
+  return scheme === 'light' ? '#86c98a' : '#34d399';
 }
 
-function getGroundColor(activity: MowerActivity, battery: number): string {
+function getGroundColor(activity: MowerActivity, battery: number, scheme: Scheme): string {
   const isOffline = activity === 'idle' && battery === 0;
-  if (isOffline) return '#374151';
-  if (activity === 'charging') return '#0f172a';
-  return '#065f46';
+  if (isOffline) return scheme === 'light' ? '#8a7a4d' : '#374151';
+  if (activity === 'charging') return scheme === 'light' ? '#8da9c4' : '#0f172a';
+  return scheme === 'light' ? '#5fa066' : '#065f46';
 }
 
 // Dashboard: sky gradient overlay
-function getSkyOverlayColors(activity: MowerActivity): [string, string] {
+function getSkyOverlayColors(activity: MowerActivity, scheme: Scheme): [string, string] {
   if (activity === 'charging') {
-    return ['rgba(15,23,42,0.8)', 'transparent'];
+    return scheme === 'light'
+      ? ['rgba(168,191,219,0.35)', 'transparent']
+      : ['rgba(15,23,42,0.8)', 'transparent'];
   }
-  return ['rgba(16,185,129,0.15)', 'transparent'];
+  return scheme === 'light'
+    ? ['rgba(34,197,94,0.10)', 'transparent']
+    : ['rgba(16,185,129,0.15)', 'transparent'];
 }
 
 // ── Component ────────────────────────────────────────────────────────
 
 export function MowerScene({ activity, battery, mowingProgress = 0, height = 140, nickname, onPressNickname }: Props) {
-  const gradientColors = useMemo(() => getGradientColors(activity, battery), [activity, battery]);
-  const skyColors = useMemo(() => getSkyOverlayColors(activity), [activity]);
-  const grassColor = useMemo(() => getGrassColor(activity, battery), [activity, battery]);
-  const groundColor = useMemo(() => getGroundColor(activity, battery), [activity, battery]);
+  const { colorScheme } = useTheme();
+
+  const gradientColors = useMemo(
+    () => getGradientColors(activity, battery, colorScheme),
+    [activity, battery, colorScheme],
+  );
+  const skyColors = useMemo(
+    () => getSkyOverlayColors(activity, colorScheme),
+    [activity, colorScheme],
+  );
+  const grassColor = useMemo(
+    () => getGrassColor(activity, battery, colorScheme),
+    [activity, battery, colorScheme],
+  );
+  const groundColor = useMemo(
+    () => getGroundColor(activity, battery, colorScheme),
+    [activity, battery, colorScheme],
+  );
 
   const isCharging = activity === 'charging';
   const isReturning = activity === 'returning';
@@ -160,7 +193,7 @@ export function MowerScene({ activity, battery, mowingProgress = 0, height = 140
       )}
 
       {/* Battery indicator (top-right) */}
-      <BatteryIndicator battery={battery} />
+      <BatteryIndicator battery={battery} colorScheme={colorScheme} />
 
       {/* Mower nickname (top-left). Tap to rename if onPressNickname is wired. */}
       {nickname != null && nickname !== '' && (

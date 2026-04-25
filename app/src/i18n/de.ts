@@ -101,4 +101,9 @@ export default {
   size: 'Fläche', estMow: 'Mähdauer',
   cleanZone: 'Keine Hindernisse', directDockPath: 'Direkter Pfad',
   charger: 'Ladestation', mower: 'Mäher',
+  appearance: 'Erscheinungsbild', appearanceAuto: 'Auto', appearanceLight: 'Hell', appearanceDark: 'Dunkel',
+  appearanceAutoCaption: 'Auto folgt deiner Systemeinstellung.',
+  appearanceLightCaption: 'Heller Modus ist immer aktiv.',
+  appearanceDarkCaption: 'Dunkler Modus ist immer aktiv.',
+  mowerColor: 'Mäher-Farbe', mowerColorWhite: 'Weiß', mowerColorGrey: 'Grau',
 };

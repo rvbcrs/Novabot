@@ -20,7 +20,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { WebView } from 'react-native-webview';
 import * as ScreenOrientation from 'expo-screen-orientation';
-import { colors } from '../theme/colors';
+import { useStyles, useTheme, type Colors } from '../theme';
 import { useActiveMower } from '../hooks/useActiveMower';
 import { getServerUrl } from '../services/auth';
 import { useI18n } from '../i18n';
@@ -35,6 +35,8 @@ const CAMERA_TOPICS = [
 export default function CameraScreen() {
   const insets = useSafeAreaInsets();
   const { t } = useI18n();
+  const styles = useStyles(makeStyles);
+  const { colors } = useTheme();
   const { width, height } = useWindowDimensions();
   const isLandscape = width > height;
   const navigation = useNavigation();
@@ -212,38 +214,45 @@ img{max-width:100%;max-height:100%;object-fit:contain}
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#000' },
+const makeStyles = (c: Colors) => StyleSheet.create({
+  container: { flex: 1, backgroundColor: c.bg },
   topBar: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 8,
     paddingVertical: 8,
-    backgroundColor: 'rgba(0,0,0,0.9)',
+    backgroundColor: c.card,
+    borderBottomWidth: 1,
+    borderBottomColor: c.cardBorder,
   },
   topicRow: { gap: 6, paddingRight: 8 },
   topicBtn: {
     paddingHorizontal: 14,
     paddingVertical: 6,
     borderRadius: 16,
-    backgroundColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: c.inputBg,
+    borderWidth: 1,
+    borderColor: c.cardBorder,
   },
-  topicBtnActive: { backgroundColor: colors.emerald },
-  topicText: { fontSize: 12, fontWeight: '600', color: colors.textMuted },
-  topicTextActive: { color: colors.white },
+  topicBtnActive: { backgroundColor: c.emerald, borderColor: c.emerald },
+  topicText: { fontSize: 12, fontWeight: '600', color: c.text },
+  topicTextActive: { color: c.text },
   topBarActions: { flexDirection: 'row', gap: 4, marginLeft: 'auto' },
   iconBtn: { padding: 8 },
   cameraArea: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   streamContainer: { width: '100%', flex: 1 },
+  // Stream itself stays #000 — that's the video viewport, black is correct
+  // when no frame is loaded.
   stream: { flex: 1, backgroundColor: '#000' },
   centerMsg: { alignItems: 'center', gap: 8, paddingHorizontal: 32 },
-  centerTitle: { fontSize: 18, fontWeight: '600', color: colors.white },
-  centerSub: { fontSize: 13, color: colors.textMuted, textAlign: 'center' },
+  centerTitle: { fontSize: 18, fontWeight: '600', color: c.text },
+  centerSub: { fontSize: 13, color: c.textMuted, textAlign: 'center' },
   retryBtn: {
     marginTop: 12, paddingHorizontal: 20, paddingVertical: 10,
-    borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 10, backgroundColor: c.inputBg,
+    borderWidth: 1, borderColor: c.cardBorder,
   },
-  retryText: { fontSize: 14, fontWeight: '600', color: colors.white },
+  retryText: { fontSize: 14, fontWeight: '600', color: c.text },
   loadingOverlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0,0,0,0.7)',
@@ -251,7 +260,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
   },
-  loadingText: { fontSize: 12, color: colors.textMuted },
+  loadingText: { fontSize: 12, color: c.textMuted },
   infoBar: {
     flexDirection: 'row', justifyContent: 'space-between',
     paddingHorizontal: 12, paddingVertical: 6,

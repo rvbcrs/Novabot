@@ -43,7 +43,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
-import { colors } from '../theme/colors';
+import { useStyles, useTheme, type Colors } from '../theme';
 import { useMowerState } from '../hooks/useMowerState';
 import { useActiveMower } from '../hooks/useActiveMower';
 import { ApiClient, type MapData, type TrailPoint, type LocalPoint, type ChargerGps } from '../services/api';
@@ -257,6 +257,8 @@ export default function MapScreen() {
   const { devices, connected } = useMowerState();
   const demo = useDemo();
   const { t } = useI18n();
+  const styles = useStyles(makeStyles);
+  const { colors } = useTheme();
   const [maps, setMaps] = useState<MapData[]>([]);
   const [chargerGpsOrigin, setChargerGpsOrigin] = useState<ChargerGps | null>(null);
   const [trail, setTrail] = useState<TrailPoint[]>([]);
@@ -1133,9 +1135,9 @@ export default function MapScreen() {
               disabled={importing || cloudImporting}
             >
               {(importing || cloudImporting) ? (
-                <ActivityIndicator size="small" color={colors.white} />
+                <ActivityIndicator size="small" color={colors.text} />
               ) : (
-                <Ionicons name="ellipsis-horizontal" size={16} color={colors.white} />
+                <Ionicons name="ellipsis-horizontal" size={16} color={colors.text} />
               )}
             </TouchableOpacity>
             {selectedWorkMap && !editMode && (
@@ -1144,7 +1146,7 @@ export default function MapScreen() {
                 style={styles.toolbarMenuButton}
                 activeOpacity={0.82}
               >
-                <Ionicons name="create-outline" size={16} color={colors.white} />
+                <Ionicons name="create-outline" size={16} color={colors.text} />
               </TouchableOpacity>
             )}
             <TouchableOpacity
@@ -1604,10 +1606,10 @@ export default function MapScreen() {
                                   </View>
                                   <View style={styles.zonePanelActions}>
                                     <TouchableOpacity style={styles.zonePanelIconButton} onPress={() => handleMapAction(map)} activeOpacity={0.7}>
-                                      <Ionicons name="create-outline" size={18} color={colors.white} />
+                                      <Ionicons name="create-outline" size={18} color={colors.text} />
                                     </TouchableOpacity>
                                     <TouchableOpacity style={styles.zonePanelIconButton} onPress={() => handleDeleteMap(map)} activeOpacity={0.7}>
-                                      <Ionicons name="trash-outline" size={18} color={colors.white} />
+                                      <Ionicons name="trash-outline" size={18} color={colors.text} />
                                     </TouchableOpacity>
                                   </View>
                                 </View>
@@ -1942,11 +1944,11 @@ export default function MapScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.bg },
+const makeStyles = (c: Colors) => StyleSheet.create({
+  container: { flex: 1, backgroundColor: c.bg },
   content: { flex: 1, padding: MAP_PADDING },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
-  title: { fontSize: 22, fontWeight: '700', color: colors.white },
+  title: { fontSize: 22, fontWeight: '700', color: c.text },
   headerActions: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1954,14 +1956,16 @@ const styles = StyleSheet.create({
   },
   addButton: {
     width: 32, height: 32, borderRadius: 16,
-    backgroundColor: colors.emerald,
+    backgroundColor: c.emerald,
     alignItems: 'center', justifyContent: 'center',
   },
   toolbarMenuButton: {
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: 'rgba(255,255,255,0.14)',
+    backgroundColor: c.inputBg,
+    borderWidth: 1,
+    borderColor: c.cardBorder,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1971,14 +1975,14 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,212,170,0.1)',
     alignItems: 'center', justifyContent: 'center', marginBottom: 24,
   },
-  emptyTitle: { fontSize: 22, fontWeight: '700', color: colors.white, marginBottom: 8 },
-  emptySubtitle: { fontSize: 15, color: colors.textDim, textAlign: 'center', marginBottom: 20 },
+  emptyTitle: { fontSize: 22, fontWeight: '700', color: c.text, marginBottom: 8 },
+  emptySubtitle: { fontSize: 15, color: c.textDim, textAlign: 'center', marginBottom: 20 },
   importButton: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
     paddingHorizontal: 20, paddingVertical: 12,
-    backgroundColor: colors.emerald, borderRadius: 12,
+    backgroundColor: c.emerald, borderRadius: 12,
   },
-  importButtonText: { fontSize: 15, fontWeight: '600', color: colors.white },
+  importButtonText: { fontSize: 15, fontWeight: '600', color: c.white },
   mapExperience: { marginTop: 4, marginBottom: 12 },
   editBar: {
     flexDirection: 'row',
@@ -1999,13 +2003,13 @@ const styles = StyleSheet.create({
   editBarBtn: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 8 },
   editBarBtnCancel: { backgroundColor: 'rgba(255,255,255,0.08)' },
   editBarBtnSave: { backgroundColor: '#f59e0b' },
-  editBarBtnTextCancel: { color: colors.text, fontSize: 13, fontWeight: '600' },
-  editBarBtnTextSave: { color: colors.white, fontSize: 13, fontWeight: '700' },
+  editBarBtnTextCancel: { color: c.text, fontSize: 13, fontWeight: '600' },
+  editBarBtnTextSave: { color: c.white, fontSize: 13, fontWeight: '700' },
   mapContainer: {
-    backgroundColor: colors.card,
+    backgroundColor: c.card,
     borderRadius: 28,
     borderWidth: 1,
-    borderColor: colors.cardBorder,
+    borderColor: c.cardBorder,
     overflow: 'hidden',
     alignItems: 'center',
     shadowColor: '#000',
@@ -2030,24 +2034,24 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: 0.6,
     textTransform: 'uppercase',
-    color: colors.textMuted,
+    color: c.textMuted,
     marginBottom: 4,
   },
   mapHeroTitle: {
     fontSize: 22,
     fontWeight: '800',
-    color: colors.white,
+    color: c.white,
   },
   mapHeroMeta: {
     marginTop: 4,
     fontSize: 12,
-    color: colors.textDim,
+    color: c.textDim,
     fontWeight: '600',
   },
   mapHeroHint: {
     fontSize: 12,
     fontWeight: '700',
-    color: colors.white,
+    color: c.white,
     backgroundColor: 'rgba(3,7,18,0.68)',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.08)',
@@ -2056,7 +2060,7 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     overflow: 'hidden',
   },
-  zoomHint: { fontSize: 11, color: colors.textMuted, textAlign: 'center', paddingVertical: 8 },
+  zoomHint: { fontSize: 11, color: c.textMuted, textAlign: 'center', paddingVertical: 8 },
   zonePanelShell: {
     marginTop: 12,
   },
@@ -2064,15 +2068,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: 2,
   },
   zonePanelCard: {
-    backgroundColor: '#1b2747',
+    backgroundColor: c.card,
     borderRadius: 18,
     paddingHorizontal: 14,
     paddingTop: 12,
     paddingBottom: 12,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.14)',
+    borderColor: c.cardBorder,
     shadowColor: '#000',
-    shadowOpacity: 0.24,
+    shadowOpacity: 0.12,
     shadowRadius: 16,
     shadowOffset: { width: 0, height: 8 },
     elevation: 6,
@@ -2086,13 +2090,13 @@ const styles = StyleSheet.create({
     width: 54,
     height: 6,
     borderRadius: 999,
-    backgroundColor: 'rgba(255,255,255,0.24)',
+    backgroundColor: c.cardBorder,
     marginBottom: 8,
   },
   zoneDragLabel: {
     fontSize: 12,
     fontWeight: '700',
-    color: colors.textMuted,
+    color: c.textMuted,
   },
   zonePanelHeader: {
     flexDirection: 'row',
@@ -2104,7 +2108,7 @@ const styles = StyleSheet.create({
   zonePanelTitle: {
     fontSize: 16,
     fontWeight: '700',
-    color: colors.white,
+    color: c.text,
   },
   zonePanelActions: {
     flexDirection: 'row',
@@ -2114,7 +2118,9 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: c.inputBg,
+    borderWidth: 1,
+    borderColor: c.cardBorder,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -2125,21 +2131,23 @@ const styles = StyleSheet.create({
   },
   zoneMetricCard: {
     flex: 1,
-    backgroundColor: 'rgba(255,255,255,0.05)',
+    backgroundColor: c.inputBg,
     borderRadius: 14,
     paddingVertical: 10,
     paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: c.cardBorder,
   },
   zoneMetricLabel: {
     fontSize: 11,
-    color: colors.textDim,
+    color: c.textDim,
     fontWeight: '700',
     marginBottom: 2,
   },
   zoneMetricValue: {
     fontSize: 16,
     fontWeight: '800',
-    color: colors.white,
+    color: c.text,
     fontVariant: ['tabular-nums'],
   },
   zoneInfoRow: {
@@ -2160,7 +2168,7 @@ const styles = StyleSheet.create({
   zoneInfoText: {
     fontSize: 11,
     fontWeight: '700',
-    color: colors.text,
+    color: c.text,
   },
   zoneButtonRow: {
     flexDirection: 'row',
@@ -2175,24 +2183,27 @@ const styles = StyleSheet.create({
     gap: 6,
     paddingVertical: 12,
     borderRadius: 14,
-    backgroundColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: c.inputBg,
+    borderWidth: 1,
+    borderColor: c.cardBorder,
   },
   zoneActionPrimary: {
-    backgroundColor: colors.emerald,
+    backgroundColor: c.emerald,
+    borderWidth: 0,
   },
   zoneActionDisabled: {
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    opacity: 0.7,
+    backgroundColor: c.inputBg,
+    opacity: 0.5,
   },
   zoneActionText: {
     fontSize: 14,
     fontWeight: '700',
-    color: colors.text,
+    color: c.text,
   },
   zoneActionPrimaryText: {
     fontSize: 14,
     fontWeight: '700',
-    color: colors.white,
+    color: c.white,
   },
   zonePagerWrap: {
     alignItems: 'center',
@@ -2202,7 +2213,7 @@ const styles = StyleSheet.create({
   zonePagerLabel: {
     fontSize: 12,
     fontWeight: '600',
-    color: colors.textMuted,
+    color: c.textMuted,
   },
   zonePagerDots: {
     flexDirection: 'row',
@@ -2218,19 +2229,19 @@ const styles = StyleSheet.create({
   },
   zonePagerDotActive: {
     width: 20,
-    backgroundColor: colors.emerald,
+    backgroundColor: c.emerald,
   },
   legend: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginTop: 12, paddingHorizontal: 4 },
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   legendDot: { width: 10, height: 10, borderRadius: 5 },
-  legendText: { fontSize: 12, color: colors.textDim },
+  legendText: { fontSize: 12, color: c.textDim },
   statusRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 16 },
   chip: {
     flexDirection: 'row', alignItems: 'center', gap: 6,
     paddingHorizontal: 10, paddingVertical: 6,
     backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 12,
   },
-  chipText: { fontSize: 12, color: colors.textDim, fontVariant: ['tabular-nums'] },
+  chipText: { fontSize: 12, color: c.textDim, fontVariant: ['tabular-nums'] },
   actionsSheetOverlay: {
     flex: 1,
     justifyContent: 'flex-end',
@@ -2240,27 +2251,27 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
   },
   actionsSheet: {
-    backgroundColor: '#10182e',
+    backgroundColor: c.card,
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     paddingHorizontal: 18,
     paddingTop: 12,
     paddingBottom: 22,
     borderTopWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
+    borderColor: c.cardBorder,
   },
   actionsSheetHandle: {
     width: 52,
     height: 5,
     borderRadius: 999,
     alignSelf: 'center',
-    backgroundColor: 'rgba(255,255,255,0.18)',
+    backgroundColor: c.cardBorder,
     marginBottom: 12,
   },
   actionsSheetTitle: {
     fontSize: 18,
     fontWeight: '800',
-    color: colors.white,
+    color: c.text,
     marginBottom: 14,
   },
   actionsSheetItem: {
@@ -2295,15 +2306,15 @@ const styles = StyleSheet.create({
   actionsSheetItemTitle: {
     fontSize: 15,
     fontWeight: '700',
-    color: colors.white,
+    color: c.white,
   },
   actionsSheetItemTitleDisabled: {
-    color: colors.textMuted,
+    color: c.textMuted,
   },
   actionsSheetItemSub: {
     marginTop: 2,
     fontSize: 12,
-    color: colors.textDim,
+    color: c.textDim,
   },
   actionsSheetCancel: {
     marginTop: 6,
@@ -2316,6 +2327,6 @@ const styles = StyleSheet.create({
   actionsSheetCancelText: {
     fontSize: 15,
     fontWeight: '700',
-    color: colors.white,
+    color: c.white,
   },
 });

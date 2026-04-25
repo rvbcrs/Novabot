@@ -7,7 +7,7 @@
 import React, { useMemo } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import Svg, { Polyline, Polygon, Circle, Line, G, Image as SvgImage, Text as SvgText, Rect } from 'react-native-svg';
-import { colors } from '../theme/colors';
+import { useStyles, useTheme, type Colors } from '../theme';
 
 export interface ExistingMapOverlay {
   mapId: string;
@@ -29,6 +29,9 @@ const PADDING_RATIO = 0.20; // 20% padding around bounding box
 const ARROW_LEN = 10;       // direction arrow length in SVG units
 
 function LiveMapViewInner({ points, orientation, closed, height = 150, width, existingMaps = [], mowerPosition }: LiveMapViewProps) {
+  const styles = useStyles(makeStyles);
+  const { colors } = useTheme();
+
   // Compute bounding box (including existing maps + mower position), scale, and projected points.
   // Also computes a closing-distance label matching the Novabot app: straight-line distance
   // between trail[0] and trail[last], rendered at the midpoint (e.g. "3.5 m"). Novabot uses this
@@ -269,9 +272,9 @@ function LiveMapViewInner({ points, orientation, closed, height = 150, width, ex
 // Memoize: only rerender when props actually change
 export const LiveMapView = React.memo(LiveMapViewInner);
 
-const styles = StyleSheet.create({
+const makeStyles = (c: Colors) => StyleSheet.create({
   container: {
-    backgroundColor: colors.card,
+    backgroundColor: c.card,
     borderRadius: 12,
     overflow: 'hidden',
     justifyContent: 'center',
@@ -279,10 +282,10 @@ const styles = StyleSheet.create({
     marginHorizontal: 16,
     marginBottom: 8,
     borderWidth: 1,
-    borderColor: colors.cardBorder,
+    borderColor: c.cardBorder,
   },
   waitingText: {
-    color: colors.textMuted,
+    color: c.textMuted,
     fontSize: 13,
     fontStyle: 'italic',
   },
@@ -290,7 +293,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     bottom: 4,
     right: 8,
-    color: colors.textMuted,
+    color: c.textMuted,
     fontSize: 10,
   },
 });

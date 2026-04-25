@@ -7,6 +7,7 @@ import React, { useMemo } from 'react';
 import { View, StyleSheet } from 'react-native';
 import { WebView } from 'react-native-webview';
 import type { MowerActivity } from '../types';
+import { useStyles, type Colors } from '../theme';
 
 interface Props {
   activity: MowerActivity;
@@ -16,6 +17,7 @@ interface Props {
 }
 
 export function MowerScene({ activity, battery, mowingProgress = 0, height = 160 }: Props) {
+  const styles = useStyles(makeStyles);
   // Build the HTML once, update via postMessage when activity changes
   const html = useMemo(() => buildMowerHtml(activity, battery, mowingProgress), [activity, battery, mowingProgress]);
 
@@ -149,7 +151,7 @@ const MOWER_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 80">
   <rect x="10" y="55" width="25" height="4" rx="2" fill="#059669" opacity="0.8"/>
 </svg>`;
 
-const styles = StyleSheet.create({
+const makeStyles = (_c: Colors) => StyleSheet.create({
   container: {
     borderRadius: 20,
     overflow: 'hidden',

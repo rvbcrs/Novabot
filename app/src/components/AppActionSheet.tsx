@@ -8,7 +8,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { colors } from '../theme/colors';
+import { useStyles, useTheme, type Colors } from '../theme';
 
 export type AppActionSheetItem = {
   label: string;
@@ -37,6 +37,8 @@ export function AppActionSheet({
   onClose,
 }: Props) {
   const insets = useSafeAreaInsets();
+  const styles = useStyles(makeStyles);
+  const { colors } = useTheme();
 
   const handleAction = (action: AppActionSheetItem) => {
     if (action.disabled) return;
@@ -71,8 +73,8 @@ export function AppActionSheet({
                     action.disabled
                       ? colors.textMuted
                       : action.destructive
-                        ? '#fda4af'
-                        : colors.white
+                        ? colors.red
+                        : colors.text
                   }
                 />
               </View>
@@ -94,7 +96,7 @@ export function AppActionSheet({
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (c: Colors) => StyleSheet.create({
   overlay: {
     flex: 1,
     justifyContent: 'flex-end',
@@ -104,32 +106,32 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
   },
   sheet: {
-    backgroundColor: '#10182e',
+    backgroundColor: c.card,
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     paddingHorizontal: 18,
     paddingTop: 12,
     borderTopWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
+    borderColor: c.cardBorder,
   },
   handle: {
     width: 52,
     height: 5,
     borderRadius: 999,
     alignSelf: 'center',
-    backgroundColor: 'rgba(255,255,255,0.18)',
+    backgroundColor: c.cardBorder,
     marginBottom: 12,
   },
   title: {
     fontSize: 18,
     fontWeight: '800',
-    color: colors.white,
+    color: c.text,
     marginBottom: 6,
   },
   message: {
     fontSize: 13,
     lineHeight: 18,
-    color: colors.textDim,
+    color: c.textDim,
     marginBottom: 14,
   },
   item: {
@@ -139,9 +141,9 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     paddingHorizontal: 12,
     borderRadius: 16,
-    backgroundColor: 'rgba(255,255,255,0.05)',
+    backgroundColor: c.inputBg,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.06)',
+    borderColor: c.cardBorder,
     marginBottom: 10,
   },
   itemDisabled: {
@@ -153,10 +155,13 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: c.inputBg,
+    borderWidth: 1,
+    borderColor: c.cardBorder,
   },
   iconWrapDisabled: {
-    backgroundColor: 'rgba(255,255,255,0.04)',
+    backgroundColor: c.inputBg,
+    opacity: 0.6,
   },
   textWrap: {
     flex: 1,
@@ -164,18 +169,18 @@ const styles = StyleSheet.create({
   itemTitle: {
     fontSize: 15,
     fontWeight: '700',
-    color: colors.white,
+    color: c.text,
   },
   itemTitleDestructive: {
-    color: '#fecdd3',
+    color: c.red,
   },
   itemTitleDisabled: {
-    color: colors.textMuted,
+    color: c.textMuted,
   },
   itemSub: {
     marginTop: 2,
     fontSize: 12,
-    color: colors.textDim,
+    color: c.textDim,
   },
   cancel: {
     marginTop: 6,
@@ -183,11 +188,13 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.06)',
+    backgroundColor: c.inputBg,
+    borderWidth: 1,
+    borderColor: c.cardBorder,
   },
   cancelText: {
     fontSize: 15,
     fontWeight: '700',
-    color: colors.white,
+    color: c.text,
   },
 });

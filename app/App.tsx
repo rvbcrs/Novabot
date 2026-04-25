@@ -1,18 +1,20 @@
-import React, { useCallback, useEffect, useState, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import {
   NavigationContainer,
   DefaultTheme,
+  DarkTheme as RNDarkTheme,
   NavigationContainerRef,
 } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import * as SplashScreen from 'expo-splash-screen';
 import * as NavigationBar from 'expo-navigation-bar';
-import { View, Platform } from 'react-native';
+import { View, Platform, StyleSheet } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Ionicons } from '@expo/vector-icons';
-import { colors } from './src/theme/colors';
+import { ThemeProvider, useTheme, type Colors } from './src/theme';
 import { DemoProvider } from './src/context/DemoContext';
 import { DevModeProvider, useDevMode } from './src/context/DevModeContext';
 import { PatternProvider } from './src/context/PatternContext';
@@ -68,29 +70,42 @@ const Tab = createBottomTabNavigator<MainTabParams>();
 
 // ── Theme ────────────────────────────────────────────────────────────────────
 
-const DarkTheme = {
-  ...DefaultTheme,
-  dark: true,
-  colors: {
-    ...DefaultTheme.colors,
-    primary: colors.emerald,
-    background: colors.bg,
-    card: colors.bg,
-    text: colors.text,
-    border: colors.cardBorder,
-    notification: colors.emerald,
-  },
-};
+function buildNavTheme(colorScheme: 'light' | 'dark', c: Colors) {
+  const base = colorScheme === 'dark' ? RNDarkTheme : DefaultTheme;
+  // In light mode the App-level LinearGradient is the visible background;
+  // NavigationContainer + tab bar render transparent so the gradient shows.
+  const isLight = colorScheme === 'light';
+  return {
+    ...base,
+    dark: !isLight,
+    colors: {
+      ...base.colors,
+      primary: c.emerald,
+      background: isLight ? 'transparent' : c.bg,
+      card: isLight ? 'transparent' : c.bg,
+      text: c.text,
+      border: c.cardBorder,
+      notification: c.emerald,
+    },
+  };
+}
 
-const screenOptions = {
-  headerShown: false,
-  contentStyle: { backgroundColor: colors.bg },
-  animation: 'slide_from_right' as const,
-};
+// Gradient stops for the light-mode app-level background. Subtle green
+// wash from top-left to middle-right, fading to the warm off-white that
+// matches lightColors-derived card backgrounds.
+const LIGHT_BG_GRADIENT: [string, string] = ['#dde9d4', '#faf8f3'];
+const LIGHT_BG_GRADIENT_START = { x: 0, y: 0 } as const;     // top-left
+const LIGHT_BG_GRADIENT_END = { x: 1, y: 0.5 } as const;     // middle-right
 
 // ── Provision Tab (nested stack) ─────────────────────────────────────────────
 
 function ProvisionTabScreen() {
+  const { colors: c, colorScheme } = useTheme();
+  const screenOptions = useMemo(() => ({
+    headerShown: false,
+    contentStyle: { backgroundColor: colorScheme === "light" ? "transparent" : c.bg },
+    animation: 'slide_from_right' as const,
+  }), [c.bg, colorScheme]);
   return (
     <ProvisionStack.Navigator screenOptions={screenOptions}>
       <ProvisionStack.Screen name="Settings" component={SettingsScreen} />
@@ -111,6 +126,12 @@ function SettingsTabScreen({
   onLogout: () => void;
   onGoToProvision: () => void;
 }) {
+  const { colors: c, colorScheme } = useTheme();
+  const screenOptions = useMemo(() => ({
+    headerShown: false,
+    contentStyle: { backgroundColor: colorScheme === "light" ? "transparent" : c.bg },
+    animation: 'slide_from_right' as const,
+  }), [c.bg, colorScheme]);
   return (
     <SettingsStack.Navigator screenOptions={screenOptions}>
       <SettingsStack.Screen name="SettingsMain">
@@ -133,6 +154,12 @@ function SettingsTabScreen({
 // ── Map Tab (nested stack: MapScreen → MappingScreen as a sub-flow) ──
 
 function MapTabScreen() {
+  const { colors: c, colorScheme } = useTheme();
+  const screenOptions = useMemo(() => ({
+    headerShown: false,
+    contentStyle: { backgroundColor: colorScheme === "light" ? "transparent" : c.bg },
+    animation: 'slide_from_right' as const,
+  }), [c.bg, colorScheme]);
   return (
     <MapStack.Navigator screenOptions={screenOptions}>
       <MapStack.Screen name="MapMain" component={MapScreen} />
@@ -145,21 +172,23 @@ function MapTabScreen() {
 
 function MainTabs({ onLogout, onGoToProvision }: { onLogout: () => void; onGoToProvision: () => void }) {
   const { t } = useI18n();
+  const { colors: c, colorScheme } = useTheme();
   return (
     <Tab.Navigator
       initialRouteName="Home"
       screenOptions={({ route }) => ({
         headerShown: false,
         tabBarStyle: {
-          backgroundColor: colors.bg,
-          borderTopColor: colors.cardBorder,
-          borderTopWidth: 1,
+          backgroundColor: colorScheme === 'light' ? 'transparent' : c.bg,
+          borderTopColor: c.cardBorder,
+          borderTopWidth: colorScheme === 'light' ? 0 : 1,
           height: Platform.OS === 'ios' ? 88 : 64,
           paddingBottom: Platform.OS === 'ios' ? 28 : 8,
           paddingTop: 8,
+          ...(colorScheme === 'light' ? { elevation: 0 } : {}),
         },
-        tabBarActiveTintColor: colors.emerald,
-        tabBarInactiveTintColor: colors.textMuted,
+        tabBarActiveTintColor: c.emerald,
+        tabBarInactiveTintColor: c.textMuted,
         tabBarLabelStyle: { fontSize: 11, fontWeight: '600' },
         tabBarIcon: ({ color, size }) => {
           let iconName: React.ComponentProps<typeof Ionicons>['name'] = 'home';
@@ -217,6 +246,7 @@ function MainTabs({ onLogout, onGoToProvision }: { onLogout: () => void; onGoToP
 
 function AuthenticatedApp({ onLogout, onGoToProvision }: { onLogout: () => void; onGoToProvision: () => void }) {
   const { unlocked } = useDevMode();
+  const { colors: c, colorScheme } = useTheme();
 
   // Always show full tabs — locked mode only hides certain features, not tabs
   return <MainTabs onLogout={onLogout} onGoToProvision={onGoToProvision} />;
@@ -227,15 +257,16 @@ function AuthenticatedApp({ onLogout, onGoToProvision }: { onLogout: () => void;
       screenOptions={({ route }) => ({
         headerShown: false,
         tabBarStyle: {
-          backgroundColor: colors.bg,
-          borderTopColor: colors.cardBorder,
-          borderTopWidth: 1,
+          backgroundColor: colorScheme === 'light' ? 'transparent' : c.bg,
+          borderTopColor: c.cardBorder,
+          borderTopWidth: colorScheme === 'light' ? 0 : 1,
           height: Platform.OS === 'ios' ? 88 : 64,
           paddingBottom: Platform.OS === 'ios' ? 28 : 8,
           paddingTop: 8,
+          ...(colorScheme === 'light' ? { elevation: 0 } : {}),
         },
-        tabBarActiveTintColor: colors.emerald,
-        tabBarInactiveTintColor: colors.textMuted,
+        tabBarActiveTintColor: c.emerald,
+        tabBarInactiveTintColor: c.textMuted,
         tabBarLabelStyle: { fontSize: 11, fontWeight: '600' },
         tabBarIcon: ({ color, size }) => {
           const iconName = route.name === 'ProvisionTab' ? 'bluetooth' : 'settings';
@@ -251,6 +282,91 @@ function AuthenticatedApp({ onLogout, onGoToProvision }: { onLogout: () => void;
       </Tab.Screen>
     </Tab.Navigator>
   );
+}
+
+// ── ThemedApp — reads active theme, renders NavigationContainer ──────────────
+
+function ThemedApp({
+  navigationRef,
+  isAuthenticated,
+  handleLoginSuccess,
+  handleLogout,
+  handleGoToProvision,
+}: {
+  navigationRef: React.RefObject<NavigationContainerRef<MainTabParams> | null>;
+  isAuthenticated: boolean;
+  handleLoginSuccess: (_token: string, serverUrl: string) => void;
+  handleLogout: () => void;
+  handleGoToProvision: () => void;
+}) {
+  const { colorScheme, colors: c } = useTheme();
+  const navTheme = useMemo(() => buildNavTheme(colorScheme, c), [colorScheme, c]);
+  const screenOptions = useMemo(() => ({
+    headerShown: false,
+    contentStyle: { backgroundColor: colorScheme === "light" ? "transparent" : c.bg },
+    animation: 'slide_from_right' as const,
+  }), [c.bg, colorScheme]);
+
+  // Re-apply Android navigation bar background when color scheme changes.
+  useEffect(() => {
+    if (Platform.OS === 'android') {
+      NavigationBar.setBackgroundColorAsync(c.bg);
+    }
+  }, [c.bg]);
+
+  const navContent = (
+    <NavigationContainer theme={navTheme} ref={navigationRef}>
+      {isAuthenticated ? (
+        <ActiveMowerProvider>
+          <AuthenticatedApp onLogout={handleLogout} onGoToProvision={handleGoToProvision} />
+        </ActiveMowerProvider>
+      ) : (
+        <AuthStack.Navigator screenOptions={screenOptions}>
+          <AuthStack.Screen name="Login">
+            {(props) => (
+              <LoginScreen {...props} onLoginSuccess={handleLoginSuccess} />
+            )}
+          </AuthStack.Screen>
+          <AuthStack.Screen name="Register">
+            {(props) => (
+              <RegisterScreen
+                {...props}
+                onLoginSuccess={handleLoginSuccess}
+              />
+            )}
+          </AuthStack.Screen>
+        </AuthStack.Navigator>
+      )}
+    </NavigationContainer>
+  );
+
+  // In light mode, render an app-level LinearGradient as the visible
+  // background. Every navigator and screen renders transparent on top so
+  // the gradient shows through. In dark mode we keep the existing solid
+  // backgrounds — gradients on a near-black palette read as banding.
+  if (colorScheme === 'light') {
+    return (
+      <View style={styles.flex}>
+        <LinearGradient
+          colors={LIGHT_BG_GRADIENT}
+          start={LIGHT_BG_GRADIENT_START}
+          end={LIGHT_BG_GRADIENT_END}
+          style={StyleSheet.absoluteFill}
+        />
+        {navContent}
+      </View>
+    );
+  }
+  return navContent;
+}
+
+const styles = StyleSheet.create({
+  flex: { flex: 1 },
+});
+
+function StatusBarThemed() {
+  const { colorScheme } = useTheme();
+  return <StatusBar style={colorScheme === 'light' ? 'dark' : 'light'} />;
 }
 
 // ── App ──────────────────────────────────────────────────────────────────────
@@ -284,7 +400,6 @@ export default function App() {
     if (Platform.OS === 'android') {
       NavigationBar.setVisibilityAsync('hidden');
       NavigationBar.setBehaviorAsync('overlay-swipe');
-      NavigationBar.setBackgroundColorAsync(colors.bg);
     }
     // Wait for auth check, then show app
     const timer = setTimeout(() => setAppReady(true), 1500);
@@ -319,41 +434,27 @@ export default function App() {
   if (!appReady || !authChecked) return null;
 
   return (
+    <ThemeProvider>
     <DevModeProvider>
     <DemoProvider>
     <I18nProvider>
     <ExperimentalProvider>
     <PatternProvider>
     <GestureHandlerRootView style={{ flex: 1 }} onLayout={onLayoutRootView}>
-      <NavigationContainer theme={DarkTheme} ref={navigationRef}>
-        <StatusBar style="light" />
-        {isAuthenticated ? (
-          <ActiveMowerProvider>
-            <AuthenticatedApp onLogout={handleLogout} onGoToProvision={handleGoToProvision} />
-          </ActiveMowerProvider>
-        ) : (
-          <AuthStack.Navigator screenOptions={screenOptions}>
-            <AuthStack.Screen name="Login">
-              {(props) => (
-                <LoginScreen {...props} onLoginSuccess={handleLoginSuccess} />
-              )}
-            </AuthStack.Screen>
-            <AuthStack.Screen name="Register">
-              {(props) => (
-                <RegisterScreen
-                  {...props}
-                  onLoginSuccess={handleLoginSuccess}
-                />
-              )}
-            </AuthStack.Screen>
-          </AuthStack.Navigator>
-        )}
-      </NavigationContainer>
+      <ThemedApp
+        navigationRef={navigationRef}
+        isAuthenticated={isAuthenticated}
+        handleLoginSuccess={handleLoginSuccess}
+        handleLogout={handleLogout}
+        handleGoToProvision={handleGoToProvision}
+      />
+      <StatusBarThemed />
     </GestureHandlerRootView>
     </PatternProvider>
     </ExperimentalProvider>
     </I18nProvider>
     </DemoProvider>
     </DevModeProvider>
+    </ThemeProvider>
   );
 }

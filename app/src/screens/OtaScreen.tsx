@@ -17,7 +17,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { colors } from '../theme/colors';
+import { useStyles, useTheme, type Colors } from '../theme';
 import { useMowerState } from '../hooks/useMowerState';
 import { useActiveMower } from '../hooks/useActiveMower';
 import { ApiClient, type OtaVersion } from '../services/api';
@@ -37,6 +37,8 @@ export default function OtaScreen() {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
   const { devices } = useMowerState();
+  const styles = useStyles(makeStyles);
+  const { colors } = useTheme();
   const [versions, setVersions] = useState<OtaVersion[]>([]);
   const [loading, setLoading] = useState(true);
   const [triggeringSn, setTriggeringSn] = useState<string | null>(null);
@@ -199,7 +201,7 @@ export default function OtaScreen() {
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
             activeOpacity={0.7}
           >
-            <Ionicons name="arrow-back" size={24} color={colors.white} />
+            <Ionicons name="arrow-back" size={24} color={colors.text} />
           </TouchableOpacity>
           <Text style={styles.title}>Firmware Updates</Text>
         </View>
@@ -396,6 +398,8 @@ function DeviceVersionRow({
   version: string | null;
   online: boolean;
 }) {
+  const rowStyles = useStyles(makeRowStyles);
+  const { colors } = useTheme();
   const tint = label === 'Mower' ? colors.emerald : colors.amber;
   // Firmware strings already start with "v" (e.g. "v6.0.2-custom-21").
   // Only prepend "v" when it's a bare semver to avoid "vv..." double prefix.
@@ -436,6 +440,8 @@ function VersionCard({
   triggering: boolean;
   result?: string;
 }) {
+  const versionStyles = useStyles(makeVersionStyles);
+  const { colors } = useTheme();
   // Compare requested firmware version with what is actually running on the
   // device. Accepts with/without leading "v" and trims whitespace — some
   // firmware reports "6.0.2-custom-24", the DB keeps the "v" prefix. When
@@ -497,10 +503,10 @@ function VersionCard({
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.bg },
+const makeStyles = (c: Colors) => StyleSheet.create({
+  container: { flex: 1, backgroundColor: c.bg },
   scroll: { padding: 24, paddingBottom: 32 },
-  title: { fontSize: 28, fontWeight: '700', color: colors.white },
+  title: { fontSize: 28, fontWeight: '700', color: c.text },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -517,21 +523,21 @@ const styles = StyleSheet.create({
   },
   section: { marginBottom: 24 },
   sectionTitle: {
-    fontSize: 13, fontWeight: '600', color: colors.textDim,
+    fontSize: 13, fontWeight: '600', color: c.textDim,
     textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8, marginLeft: 4,
   },
   card: {
-    backgroundColor: colors.card, borderRadius: 16,
-    borderWidth: 1, borderColor: colors.cardBorder, overflow: 'hidden',
+    backgroundColor: c.card, borderRadius: 16,
+    borderWidth: 1, borderColor: c.cardBorder, overflow: 'hidden',
   },
-  emptyText: { fontSize: 14, color: colors.textMuted, padding: 16, textAlign: 'center' },
+  emptyText: { fontSize: 14, color: c.textMuted, padding: 16, textAlign: 'center' },
   emptyCard: {
     alignItems: 'center', padding: 40,
-    backgroundColor: colors.card, borderRadius: 16,
-    borderWidth: 1, borderColor: colors.cardBorder,
+    backgroundColor: c.card, borderRadius: 16,
+    borderWidth: 1, borderColor: c.cardBorder,
   },
-  emptyCardText: { fontSize: 16, fontWeight: '600', color: colors.textDim, marginTop: 12 },
-  emptyCardSubtext: { fontSize: 13, color: colors.textMuted, marginTop: 4, textAlign: 'center' },
+  emptyCardText: { fontSize: 16, fontWeight: '600', color: c.textDim, marginTop: 12 },
+  emptyCardSubtext: { fontSize: 13, color: c.textMuted, marginTop: 4, textAlign: 'center' },
   // OTA progress modal
   otaModalBackdrop: {
     flex: 1,
@@ -543,10 +549,10 @@ const styles = StyleSheet.create({
   otaModalCard: {
     width: '100%',
     maxWidth: 420,
-    backgroundColor: colors.card,
+    backgroundColor: c.card,
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: colors.cardBorder,
+    borderColor: c.cardBorder,
     padding: 24,
     alignItems: 'center',
   },
@@ -559,12 +565,12 @@ const styles = StyleSheet.create({
   otaModalTitle: {
     fontSize: 20,
     fontWeight: '700',
-    color: colors.white,
+    color: c.text,
     marginBottom: 4,
   },
   otaModalSubtitle: {
     fontSize: 13,
-    color: colors.textDim,
+    color: c.textDim,
     marginBottom: 20,
     fontVariant: ['tabular-nums'],
   },
@@ -598,7 +604,7 @@ const styles = StyleSheet.create({
   otaModalHint: {
     marginTop: 14,
     fontSize: 12,
-    color: colors.textMuted,
+    color: c.textMuted,
     textAlign: 'center',
     lineHeight: 18,
   },
@@ -612,38 +618,38 @@ const styles = StyleSheet.create({
   otaModalBtnText: {
     fontSize: 15,
     fontWeight: '700',
-    color: colors.white,
+    color: c.text,
   },
 });
 
-const rowStyles = StyleSheet.create({
+const makeRowStyles = (c: Colors) => StyleSheet.create({
   container: {
     flexDirection: 'row', alignItems: 'center', padding: 16, gap: 12,
     borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.05)',
   },
   info: { flex: 1 },
-  label: { fontSize: 15, fontWeight: '600', color: colors.white },
-  sn: { fontSize: 11, color: colors.textDim, fontFamily: 'monospace', marginTop: 2 },
-  version: { fontSize: 14, fontWeight: '600', color: colors.emerald, fontFamily: 'monospace' },
+  label: { fontSize: 15, fontWeight: '600', color: c.text },
+  sn: { fontSize: 11, color: c.textDim, fontFamily: 'monospace', marginTop: 2 },
+  version: { fontSize: 14, fontWeight: '600', color: c.emerald, fontFamily: 'monospace' },
   dot: { width: 8, height: 8, borderRadius: 4 },
 });
 
-const versionStyles = StyleSheet.create({
+const makeVersionStyles = (c: Colors) => StyleSheet.create({
   card: {
-    backgroundColor: colors.card, borderRadius: 14,
-    borderWidth: 1, borderColor: colors.cardBorder,
+    backgroundColor: c.card, borderRadius: 14,
+    borderWidth: 1, borderColor: c.cardBorder,
     padding: 16, marginBottom: 10,
   },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
-  versionText: { fontSize: 18, fontWeight: '700', color: colors.white, fontFamily: 'monospace' },
-  date: { fontSize: 12, color: colors.textMuted },
-  notes: { fontSize: 13, color: colors.textDim, marginBottom: 12, lineHeight: 18 },
+  versionText: { fontSize: 18, fontWeight: '700', color: c.text, fontFamily: 'monospace' },
+  date: { fontSize: 12, color: c.textMuted },
+  notes: { fontSize: 13, color: c.textDim, marginBottom: 12, lineHeight: 18 },
   triggerButton: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    gap: 8, height: 40, borderRadius: 10, backgroundColor: colors.blue,
+    gap: 8, height: 40, borderRadius: 10, backgroundColor: c.blue,
   },
-  triggerText: { fontSize: 14, fontWeight: '600', color: colors.white },
-  offlineNote: { fontSize: 13, color: colors.textMuted, textAlign: 'center', marginTop: 4 },
+  triggerText: { fontSize: 14, fontWeight: '600', color: c.text },
+  offlineNote: { fontSize: 13, color: c.textMuted, textAlign: 'center', marginTop: 4 },
   installedRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -656,7 +662,7 @@ const versionStyles = StyleSheet.create({
   installedText: {
     fontSize: 13,
     fontWeight: '600',
-    color: colors.emerald,
+    color: c.emerald,
   },
   result: { fontSize: 13, fontWeight: '600', marginTop: 8, textAlign: 'center' },
 });

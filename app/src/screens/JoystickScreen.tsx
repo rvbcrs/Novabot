@@ -24,7 +24,7 @@ import {
 } from 'react-native-gesture-handler';
 import { runOnJS } from 'react-native-reanimated';
 import { WebView } from 'react-native-webview';
-import { colors } from '../theme/colors';
+import { useStyles, useTheme, type Colors } from '../theme';
 import { useActiveMower } from '../hooks/useActiveMower';
 import { useHeadlightBrightness } from '../hooks/useHeadlightBrightness';
 import { getSocket } from '../services/socket';
@@ -59,6 +59,8 @@ export default function JoystickScreen() {
   const insets = useSafeAreaInsets();
   const demo = useDemo();
   const { t } = useI18n();
+  const styles = useStyles(makeStyles);
+  const { colors } = useTheme();
 
   const { activeMower } = useActiveMower();
   const mower = activeMower && activeMower.online ? activeMower : null;
@@ -587,10 +589,10 @@ export default function JoystickScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (c: Colors) => StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.bg,
+    backgroundColor: c.bg,
     alignItems: 'center',
   },
   cameraContainer: {
@@ -615,7 +617,7 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 28,
     fontWeight: '800',
-    color: colors.white,
+    color: c.text,
   },
   statusRow: {
     flexDirection: 'row',
@@ -630,7 +632,7 @@ const styles = StyleSheet.create({
   },
   statusText: {
     fontSize: 13,
-    color: colors.textDim,
+    color: c.textDim,
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
   },
   offlineBox: {
@@ -642,11 +644,11 @@ const styles = StyleSheet.create({
   offlineText: {
     fontSize: 18,
     fontWeight: '600',
-    color: colors.white,
+    color: c.white,
   },
   offlineSubtext: {
     fontSize: 14,
-    color: colors.textMuted,
+    color: c.textMuted,
   },
   speedInfo: {
     marginVertical: 8,
@@ -655,7 +657,7 @@ const styles = StyleSheet.create({
   speedText: {
     fontSize: 16,
     fontWeight: '700',
-    color: colors.emerald,
+    color: c.emerald,
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
   },
   joystickContainer: {
@@ -663,9 +665,11 @@ const styles = StyleSheet.create({
   },
   joystickBase: {
     borderRadius: JOYSTICK_SIZE / 2,
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.12)',
+    // Neutral semi-transparent so the pad reads on both schemes — slight
+    // gray tint against light gradient AND against dark navy.
+    backgroundColor: 'rgba(125,125,125,0.10)',
+    borderWidth: 3,
+    borderColor: 'rgba(125,125,125,0.45)',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -673,19 +677,19 @@ const styles = StyleSheet.create({
     position: 'absolute',
     width: 1,
     height: '100%',
-    backgroundColor: 'rgba(255,255,255,0.06)',
+    backgroundColor: 'rgba(125,125,125,0.30)',
   },
   crossH: {
     position: 'absolute',
     height: 1,
     width: '100%',
-    backgroundColor: 'rgba(255,255,255,0.06)',
+    backgroundColor: 'rgba(125,125,125,0.30)',
   },
   dirLabel: {
     position: 'absolute',
     fontSize: 11,
     fontWeight: '600',
-    color: 'rgba(255,255,255,0.2)',
+    color: c.textMuted,
   },
   dirTop: { top: 8, alignSelf: 'center' },
   dirBottom: { bottom: 8, alignSelf: 'center' },
@@ -695,14 +699,14 @@ const styles = StyleSheet.create({
     width: THUMB_SIZE,
     height: THUMB_SIZE,
     borderRadius: THUMB_SIZE / 2,
-    backgroundColor: 'rgba(255,255,255,0.15)',
+    backgroundColor: 'rgba(125,125,125,0.35)',
     borderWidth: 2,
-    borderColor: 'rgba(255,255,255,0.2)',
+    borderColor: 'rgba(125,125,125,0.55)',
   },
   thumbActive: {
-    backgroundColor: colors.emerald,
-    borderColor: colors.white,
-    shadowColor: colors.emerald,
+    backgroundColor: c.emerald,
+    borderColor: c.white,
+    shadowColor: c.emerald,
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.5,
     shadowRadius: 12,
@@ -726,12 +730,12 @@ const styles = StyleSheet.create({
   },
   speedBtnActive: {
     backgroundColor: 'rgba(16,185,129,0.2)',
-    borderColor: colors.emerald,
+    borderColor: c.emerald,
   },
   speedBtnText: {
     fontSize: 13,
     fontWeight: '600',
-    color: colors.textMuted,
+    color: c.textMuted,
   },
   stopBtn: {
     flexDirection: 'row',
@@ -748,7 +752,7 @@ const styles = StyleSheet.create({
   stopText: {
     fontSize: 15,
     fontWeight: '700',
-    color: colors.white,
+    color: c.white,
   },
   lightBtn: {
     flexDirection: 'row',
@@ -784,7 +788,7 @@ const styles = StyleSheet.create({
   bladeSheetCard: {
     width: '100%',
     maxWidth: 420,
-    backgroundColor: colors.card,
+    backgroundColor: c.card,
     borderRadius: 20,
     borderWidth: 1,
     borderColor: 'rgba(239,68,68,0.35)',
@@ -793,13 +797,13 @@ const styles = StyleSheet.create({
   bladeSheetTitle: {
     fontSize: 20,
     fontWeight: '800',
-    color: colors.white,
+    color: c.white,
     textAlign: 'center',
     marginBottom: 4,
   },
   bladeSheetSubtitle: {
     fontSize: 13,
-    color: colors.textDim,
+    color: c.textDim,
     textAlign: 'center',
     marginBottom: 20,
     lineHeight: 18,
@@ -807,7 +811,7 @@ const styles = StyleSheet.create({
   bladeSheetLabel: {
     fontSize: 12,
     fontWeight: '700',
-    color: colors.textMuted,
+    color: c.textMuted,
     letterSpacing: 0.5,
     textTransform: 'uppercase',
     marginBottom: 10,
@@ -834,11 +838,11 @@ const styles = StyleSheet.create({
   bladeSheetHeightText: {
     fontSize: 13,
     fontWeight: '600',
-    color: colors.textDim,
+    color: c.textDim,
     fontVariant: ['tabular-nums'],
   },
   bladeSheetHeightTextActive: {
-    color: colors.white,
+    color: c.white,
   },
   bladeSheetBtn: {
     flex: 1,
@@ -852,7 +856,7 @@ const styles = StyleSheet.create({
   bladeSheetBtnText: {
     fontSize: 15,
     fontWeight: '700',
-    color: colors.white,
+    color: c.white,
   },
   bladeBanner: {
     marginTop: 8,
@@ -869,7 +873,7 @@ const styles = StyleSheet.create({
   },
   lightText: {
     fontSize: 13,
-    color: colors.amber,
+    color: c.amber,
     fontWeight: '600',
   },
 });

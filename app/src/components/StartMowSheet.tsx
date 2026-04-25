@@ -18,7 +18,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import Svg, { Polygon, Line, G, Defs, ClipPath } from 'react-native-svg';
-import { colors } from '../theme/colors';
+import { useStyles, useTheme, type Colors } from '../theme';
 import { ApiClient, type MapData } from '../services/api';
 import { getServerUrl } from '../services/auth';
 import { useNavigation } from '@react-navigation/native';
@@ -80,6 +80,9 @@ export function StartMowSheet({
   const [patternCenter, setPatternCenter] = useState<{ lat: number; lng: number } | null>(null);
   const [edgeOffset, setEdgeOffset] = useState(0); // meters: negative=shrink, positive=expand
   const [previewing, setPreviewing] = useState(false);
+
+  const styles = useStyles(makeStyles);
+  const { colors } = useTheme();
 
   // Load maps when sheet opens
   useEffect(() => {
@@ -632,29 +635,29 @@ export function StartMowSheet({
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (c: Colors) => StyleSheet.create({
   overlay: { flex: 1, justifyContent: 'flex-end' },
   backdrop: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0,0,0,0.5)',
   },
   sheet: {
-    backgroundColor: colors.card,
+    backgroundColor: c.card,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     maxHeight: '80%',
     borderWidth: 1,
-    borderColor: colors.cardBorder,
+    borderColor: c.cardBorder,
     borderBottomWidth: 0,
   },
   handleBar: { alignItems: 'center', paddingVertical: 12 },
   handle: { width: 40, height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.2)' },
   content: { paddingHorizontal: 20, paddingBottom: Platform.OS === 'ios' ? 40 : 20, gap: 20 },
-  title: { fontSize: 20, fontWeight: '700', color: colors.white },
+  title: { fontSize: 20, fontWeight: '700', color: c.white },
   section: { gap: 8 },
   label: { fontSize: 13, fontWeight: '700', color: '#a0a0b0', textTransform: 'uppercase', letterSpacing: 0.5 },
   labelRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  labelValue: { fontSize: 14, fontWeight: '700', color: colors.white },
+  labelValue: { fontSize: 14, fontWeight: '700', color: c.white },
   mapGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   mapBtn: {
     paddingHorizontal: 14,
@@ -664,9 +667,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.08)',
   },
-  mapBtnActive: { backgroundColor: 'rgba(16,185,129,0.2)', borderColor: colors.emerald },
+  mapBtnActive: { backgroundColor: 'rgba(16,185,129,0.2)', borderColor: c.emerald },
   mapBtnText: { fontSize: 13, fontWeight: '600', color: '#a0a0b0' },
-  mapBtnTextActive: { color: colors.emerald },
+  mapBtnTextActive: { color: c.emerald },
   noMaps: { flexDirection: 'row', alignItems: 'center', gap: 8, padding: 12, backgroundColor: 'rgba(255,255,255,0.04)', borderRadius: 10 },
   noMapsText: { fontSize: 13, color: '#a0a0b0', flex: 1 },
   stepperRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
@@ -676,7 +679,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center', alignItems: 'center',
   },
   stepperValue: { flex: 1, alignItems: 'center' },
-  stepperText: { fontSize: 24, fontWeight: '700', color: colors.white },
+  stepperText: { fontSize: 24, fontWeight: '700', color: c.white },
   compassGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   compassBtn: {
     width: '22%',
@@ -686,9 +689,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  compassBtnActive: { backgroundColor: colors.emerald },
+  compassBtnActive: { backgroundColor: c.emerald },
   compassText: { fontSize: 13, fontWeight: '700', color: '#a0a0b0' },
-  compassTextActive: { color: colors.white },
+  compassTextActive: { color: c.white },
   actionRow: { flexDirection: 'row', gap: 12, paddingTop: 4 },
   cancelBtn: {
     flex: 1,
@@ -698,18 +701,18 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  cancelText: { fontSize: 14, fontWeight: '600', color: colors.textDim },
+  cancelText: { fontSize: 14, fontWeight: '600', color: c.textDim },
   startBtn: {
     flex: 1,
     height: 44,
     borderRadius: 12,
-    backgroundColor: colors.emerald,
+    backgroundColor: c.emerald,
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
     gap: 8,
   },
-  startText: { fontSize: 14, fontWeight: '700', color: colors.white },
+  startText: { fontSize: 14, fontWeight: '700', color: c.white },
   previewBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -732,7 +735,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(168,85,247,0.3)',
   },
-  placeOnMapText: { flex: 1, fontSize: 14, fontWeight: '600', color: colors.purple },
+  placeOnMapText: { flex: 1, fontSize: 14, fontWeight: '600', color: c.purple },
   placedInfo: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -744,5 +747,5 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(16,185,129,0.2)',
   },
-  placedText: { fontSize: 12, color: colors.emerald, fontFamily: 'monospace' },
+  placedText: { fontSize: 12, color: c.emerald, fontFamily: 'monospace' },
 });

@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { colors } from '../theme/colors';
+import { useStyles, useTheme, type Colors } from '../theme';
 import { useMowerState } from '../hooks/useMowerState';
 import { useActiveMower } from '../hooks/useActiveMower';
 
@@ -57,11 +57,13 @@ function getErrorSeverity(code: string): 'critical' | 'warning' | 'info' {
   return 'warning';
 }
 
-const SEVERITY_COLORS = {
-  critical: colors.red,
-  warning: colors.amber,
-  info: colors.blue,
-};
+function getSeverityColors(c: Colors) {
+  return {
+    critical: c.red,
+    warning: c.amber,
+    info: c.blue,
+  };
+}
 
 const SEVERITY_ICONS: Record<string, React.ComponentProps<typeof Ionicons>['name']> = {
   critical: 'alert-circle',
@@ -70,6 +72,9 @@ const SEVERITY_ICONS: Record<string, React.ComponentProps<typeof Ionicons>['name
 };
 
 export default function MessagesScreen() {
+  const styles = useStyles(makeStyles);
+  const { colors } = useTheme();
+  const SEVERITY_COLORS = getSeverityColors(colors);
   const insets = useSafeAreaInsets();
   const { devices, connected } = useMowerState();
 
@@ -215,27 +220,27 @@ export default function MessagesScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.bg },
+const makeStyles = (c: Colors) => StyleSheet.create({
+  container: { flex: 1, backgroundColor: c.bg },
   scroll: { padding: 24, paddingBottom: 32 },
-  title: { fontSize: 28, fontWeight: '700', color: colors.white, marginBottom: 24 },
+  title: { fontSize: 28, fontWeight: '700', color: c.text, marginBottom: 24 },
   disconnectedBanner: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
     backgroundColor: 'rgba(239,68,68,0.1)', borderRadius: 12, padding: 12, marginBottom: 20,
   },
-  disconnectedText: { fontSize: 14, color: colors.red },
+  disconnectedText: { fontSize: 14, color: c.red },
   allClear: { alignItems: 'center', paddingVertical: 60 },
   allClearIcon: { marginBottom: 16 },
-  allClearTitle: { fontSize: 22, fontWeight: '700', color: colors.white, marginBottom: 8 },
-  allClearSubtitle: { fontSize: 15, color: colors.textDim },
+  allClearTitle: { fontSize: 22, fontWeight: '700', color: c.text, marginBottom: 8 },
+  allClearSubtitle: { fontSize: 15, color: c.textDim },
   alertCard: {
-    backgroundColor: colors.card, borderRadius: 14,
-    borderWidth: 1, borderColor: colors.cardBorder,
+    backgroundColor: c.card, borderRadius: 14,
+    borderWidth: 1, borderColor: c.cardBorder,
     borderLeftWidth: 4, padding: 16, marginBottom: 12,
   },
   alertHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
   alertTitle: { flex: 1, fontSize: 15, fontWeight: '600' },
   deviceBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
   deviceBadgeText: { fontSize: 11, fontWeight: '600' },
-  alertDetail: { fontSize: 13, color: colors.textDim, lineHeight: 18, marginLeft: 28 },
+  alertDetail: { fontSize: 13, color: c.textDim, lineHeight: 18, marginLeft: 28 },
 });

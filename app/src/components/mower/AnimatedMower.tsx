@@ -4,6 +4,8 @@
  */
 import React, { useEffect } from 'react';
 import { View, Image, StyleSheet } from 'react-native';
+import { useMowerColor } from '../../hooks/useMowerColor';
+import { useActiveMower } from '../../hooks/useActiveMower';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -106,6 +108,9 @@ export function AnimatedMower({ activity, battery }: Props) {
   const isPaused = activity === 'paused';
   const isError = activity === 'error';
   const isOffline = activity === 'idle' && battery === 0;
+  const { activeMower } = useActiveMower();
+  const { mowerColor } = useMowerColor(activeMower?.sn);
+  const isGrey = mowerColor === 'grey';
 
   useEffect(() => {
     cancelAnimation(translateY);
@@ -197,11 +202,16 @@ export function AnimatedMower({ activity, battery }: Props) {
       ]}
     >
       <View style={styles.mowerFrame}>
-        {/* Body (without wheel) */}
+        {/* Body (without wheel) — asset varies per user-selected colour. */}
         <Image
-          source={isOffline
-            ? require('../../../assets/novabot-body-offline.png')
-            : require('../../../assets/novabot-body.png')
+          source={
+            isGrey
+              ? (isOffline
+                  ? require('../../../assets/novabot-body-grey-offline.png')
+                  : require('../../../assets/novabot-body-grey.png'))
+              : (isOffline
+                  ? require('../../../assets/novabot-body-offline.png')
+                  : require('../../../assets/novabot-body.png'))
           }
           style={styles.bodyImage}
           resizeMode="contain"

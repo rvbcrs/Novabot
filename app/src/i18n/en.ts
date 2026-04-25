@@ -28,6 +28,18 @@ export default {
   returning: 'Returning',
   paused: 'Paused',
   mapping: 'Mapping',
+
+  // Appearance
+  appearance: 'Appearance',
+  appearanceAuto: 'Auto',
+  appearanceLight: 'Light',
+  appearanceDark: 'Dark',
+  appearanceAutoCaption: 'Auto follows your system setting.',
+  appearanceLightCaption: 'Light mode is always on.',
+  appearanceDarkCaption: 'Dark mode is always on.',
+  mowerColor: 'Mower colour',
+  mowerColorWhite: 'White',
+  mowerColorGrey: 'Grey',
   errorState: 'Error',
   noMowerFound: 'No Mower Found',
   connectingToServer: 'Connecting to server...',

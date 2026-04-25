@@ -2,7 +2,7 @@ import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { colors } from '../theme/colors';
+import { useStyles, useTheme, type Colors } from '../theme';
 import type { RootStackParams } from '../navigation/types';
 
 type Props = NativeStackScreenProps<RootStackParams, 'DeviceChoice'>;
@@ -15,31 +15,36 @@ type DeviceOption = {
   color: string;
 };
 
-const deviceOptions: DeviceOption[] = [
-  {
-    mode: 'charger',
-    icon: 'flash',
-    title: 'Charger',
-    subtitle: 'Provision the charging station (ESP32)',
-    color: colors.amber,
-  },
-  {
-    mode: 'mower',
-    icon: 'construct',
-    title: 'Mower',
-    subtitle: 'Provision the robot mower',
-    color: colors.emerald,
-  },
-  {
-    mode: 'both',
-    icon: 'build',
-    title: 'Both',
-    subtitle: 'Provision charger and mower sequentially',
-    color: colors.purple,
-  },
-];
+function getDeviceOptions(c: Colors): DeviceOption[] {
+  return [
+    {
+      mode: 'charger',
+      icon: 'flash',
+      title: 'Charger',
+      subtitle: 'Provision the charging station (ESP32)',
+      color: c.amber,
+    },
+    {
+      mode: 'mower',
+      icon: 'construct',
+      title: 'Mower',
+      subtitle: 'Provision the robot mower',
+      color: c.emerald,
+    },
+    {
+      mode: 'both',
+      icon: 'build',
+      title: 'Both',
+      subtitle: 'Provision charger and mower sequentially',
+      color: c.purple,
+    },
+  ];
+}
 
 export default function DeviceChoiceScreen({ navigation, route }: Props) {
+  const styles = useStyles(makeStyles);
+  const { colors } = useTheme();
+  const deviceOptions = getDeviceOptions(colors);
   const { mqttAddr, mqttPort } = route.params;
 
   const handleSelect = (mode: 'charger' | 'mower' | 'both') => {
@@ -89,10 +94,10 @@ export default function DeviceChoiceScreen({ navigation, route }: Props) {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (c: Colors) => StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.bg,
+    backgroundColor: c.bg,
   },
   scroll: {
     padding: 24,
@@ -104,21 +109,21 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 28,
     fontWeight: '700',
-    color: colors.white,
+    color: c.text,
     marginBottom: 8,
   },
   subtitle: {
     fontSize: 15,
-    color: colors.textDim,
+    color: c.textDim,
     lineHeight: 22,
   },
   card: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.card,
+    backgroundColor: c.card,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: colors.cardBorder,
+    borderColor: c.cardBorder,
     padding: 20,
     marginBottom: 16,
   },
@@ -136,12 +141,12 @@ const styles = StyleSheet.create({
   cardTitle: {
     fontSize: 18,
     fontWeight: '600',
-    color: colors.white,
+    color: c.text,
     marginBottom: 4,
   },
   cardSubtitle: {
     fontSize: 14,
-    color: colors.textDim,
+    color: c.textDim,
     lineHeight: 20,
   },
   infoRow: {
@@ -153,6 +158,6 @@ const styles = StyleSheet.create({
   },
   infoText: {
     fontSize: 13,
-    color: colors.textDim,
+    color: c.textDim,
   },
 });

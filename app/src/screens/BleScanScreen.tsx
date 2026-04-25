@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { colors } from '../theme/colors';
+import { useStyles, useTheme, type Colors } from '../theme';
 import type { RootStackParams } from '../navigation/types';
 import { scanForDevices, type ScannedDevice, type DeviceType } from '../services/ble';
 
@@ -24,10 +24,10 @@ function isMatchingDevice(device: ScannedDevice, mode: 'charger' | 'mower' | 'bo
   return device.type === mode;
 }
 
-function getTypeBadgeColor(type: DeviceType | 'unknown'): string {
-  if (type === 'charger') return colors.amber;
-  if (type === 'mower') return colors.emerald;
-  return colors.textDim;
+function getTypeBadgeColor(type: DeviceType | 'unknown', c: Colors): string {
+  if (type === 'charger') return c.amber;
+  if (type === 'mower') return c.emerald;
+  return c.textDim;
 }
 
 function getTypeBadgeLabel(type: DeviceType | 'unknown'): string {
@@ -43,6 +43,8 @@ function getRssiIcon(rssi: number): keyof typeof Ionicons.glyphMap {
 }
 
 export default function BleScanScreen({ navigation, route }: Props) {
+  const styles = useStyles(makeStyles);
+  const { colors } = useTheme();
   const { mqttAddr, mqttPort, deviceMode, wifiSsid, wifiPassword } = route.params;
   const [devices, setDevices] = useState<ScannedDevice[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -130,7 +132,7 @@ export default function BleScanScreen({ navigation, route }: Props) {
 
   const renderDevice = (item: ScannedDevice, isMatch: boolean) => {
     const isSelected = selectedIds.has(item.id);
-    const badgeColor = getTypeBadgeColor(item.type);
+    const badgeColor = getTypeBadgeColor(item.type, colors);
 
     return (
       <TouchableOpacity
@@ -253,10 +255,10 @@ export default function BleScanScreen({ navigation, route }: Props) {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (c: Colors) => StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.bg,
+    backgroundColor: c.bg,
   },
   header: {
     paddingHorizontal: 24,
@@ -266,12 +268,12 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 28,
     fontWeight: '700',
-    color: colors.white,
+    color: c.text,
     marginBottom: 8,
   },
   subtitle: {
     fontSize: 15,
-    color: colors.textDim,
+    color: c.textDim,
   },
   scanningRow: {
     flexDirection: 'row',
@@ -282,7 +284,7 @@ const styles = StyleSheet.create({
   },
   scanningText: {
     fontSize: 14,
-    color: colors.emerald,
+    color: c.emerald,
   },
   list: {
     flex: 1,
@@ -295,15 +297,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: colors.card,
+    backgroundColor: c.card,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: colors.cardBorder,
+    borderColor: c.cardBorder,
     padding: 16,
     marginBottom: 10,
   },
   deviceRowSelected: {
-    borderColor: colors.emerald,
+    borderColor: c.emerald,
     backgroundColor: 'rgba(0,212,170,0.05)',
   },
   deviceRowDimmed: {
@@ -319,19 +321,19 @@ const styles = StyleSheet.create({
     height: 22,
     borderRadius: 11,
     borderWidth: 2,
-    borderColor: colors.textDim,
+    borderColor: c.textDim,
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 12,
   },
   radioOuterSelected: {
-    borderColor: colors.emerald,
+    borderColor: c.emerald,
   },
   radioInner: {
     width: 12,
     height: 12,
     borderRadius: 6,
-    backgroundColor: colors.emerald,
+    backgroundColor: c.emerald,
   },
   deviceInfo: {
     flex: 1,
@@ -339,15 +341,15 @@ const styles = StyleSheet.create({
   deviceName: {
     fontSize: 16,
     fontWeight: '600',
-    color: colors.white,
+    color: c.text,
     marginBottom: 2,
   },
   deviceNameDim: {
-    color: colors.textDim,
+    color: c.textDim,
   },
   deviceId: {
     fontSize: 11,
-    color: colors.textDim,
+    color: c.textDim,
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
   },
   deviceRight: {
@@ -372,7 +374,7 @@ const styles = StyleSheet.create({
   },
   rssiText: {
     fontSize: 11,
-    color: colors.textDim,
+    color: c.textDim,
   },
   emptyState: {
     alignItems: 'center',
@@ -382,11 +384,11 @@ const styles = StyleSheet.create({
   emptyText: {
     fontSize: 18,
     fontWeight: '600',
-    color: colors.textDim,
+    color: c.textDim,
   },
   emptySubtext: {
     fontSize: 14,
-    color: colors.textMuted,
+    color: c.textMuted,
     textAlign: 'center',
   },
   sectionNote: {
@@ -395,7 +397,7 @@ const styles = StyleSheet.create({
   },
   sectionNoteText: {
     fontSize: 12,
-    color: colors.textMuted,
+    color: c.textMuted,
     textAlign: 'center',
   },
   bottomBar: {
@@ -405,7 +407,7 @@ const styles = StyleSheet.create({
     paddingBottom: 34,
     gap: 12,
     borderTopWidth: 1,
-    borderTopColor: colors.cardBorder,
+    borderTopColor: c.cardBorder,
   },
   rescanButton: {
     flexDirection: 'row',
@@ -414,15 +416,15 @@ const styles = StyleSheet.create({
     height: 48,
     paddingHorizontal: 20,
     borderRadius: 12,
-    backgroundColor: colors.card,
+    backgroundColor: c.card,
     borderWidth: 1,
-    borderColor: colors.cardBorder,
+    borderColor: c.cardBorder,
     gap: 6,
   },
   rescanText: {
     fontSize: 15,
     fontWeight: '600',
-    color: colors.text,
+    color: c.text,
   },
   provisionButton: {
     flex: 1,
@@ -431,16 +433,16 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     height: 48,
     borderRadius: 12,
-    backgroundColor: colors.emerald,
+    backgroundColor: c.emerald,
     gap: 8,
   },
   buttonDisabled: {
-    backgroundColor: colors.emeraldDark,
+    backgroundColor: c.emeraldDark,
     opacity: 0.5,
   },
   provisionButtonText: {
     fontSize: 15,
     fontWeight: '600',
-    color: colors.white,
+    color: c.text,
   },
 });

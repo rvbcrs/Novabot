@@ -15,7 +15,7 @@ import {
   Dimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { colors } from '../theme/colors';
+import { useStyles, useTheme, type Colors } from '../theme';
 import { ApiClient } from '../services/api';
 import { getServerUrl } from '../services/auth';
 
@@ -52,6 +52,8 @@ export function JoystickControl({ sn, onClose }: Props) {
   const velocityRef = useRef({ xw: 0, yv: 0 });
   const startedRef = useRef(false);
   const apiRef = useRef<ApiClient | null>(null);
+  const styles = useStyles(makeStyles);
+  const { colors } = useTheme();
 
   useEffect(() => {
     (async () => {
@@ -210,11 +212,13 @@ export function JoystickControl({ sn, onClose }: Props) {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (c: Colors) => StyleSheet.create({
   container: {
-    backgroundColor: colors.bg,
+    backgroundColor: c.card,
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
+    borderTopWidth: 1,
+    borderColor: c.cardBorder,
     padding: 24,
     paddingBottom: 40,
     alignItems: 'center',
@@ -226,7 +230,7 @@ const styles = StyleSheet.create({
     width: '100%',
     marginBottom: 16,
   },
-  title: { fontSize: 20, fontWeight: '700', color: colors.white },
+  title: { fontSize: 20, fontWeight: '700', color: c.text },
   speedChip: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -237,7 +241,7 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     marginBottom: 24,
   },
-  speedText: { fontSize: 13, fontWeight: '700', color: colors.emerald },
+  speedText: { fontSize: 13, fontWeight: '700', color: c.emerald },
   joystickContainer: {
     width: JOYSTICK_SIZE + 40,
     height: JOYSTICK_SIZE + 40,
@@ -249,8 +253,12 @@ const styles = StyleSheet.create({
     width: JOYSTICK_SIZE,
     height: JOYSTICK_SIZE,
     borderRadius: JOYSTICK_SIZE / 2,
-    borderWidth: 2,
-    borderColor: 'rgba(255,255,255,0.15)',
+    borderWidth: 3,
+    // Tinted neutral that reads on both schemes (~10% opacity gray) so the
+    // pad has a clear shape regardless of background. Border darker for
+    // outline definition.
+    borderColor: 'rgba(125,125,125,0.45)',
+    backgroundColor: 'rgba(125,125,125,0.10)',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -258,13 +266,13 @@ const styles = StyleSheet.create({
     position: 'absolute',
     width: '60%',
     height: 1,
-    backgroundColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: 'rgba(125,125,125,0.30)',
   },
   crosshairV: {
     position: 'absolute',
     width: 1,
     height: '60%',
-    backgroundColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: 'rgba(125,125,125,0.30)',
   },
   thumb: {
     width: THUMB_SIZE,
@@ -276,7 +284,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     fontSize: 14,
     fontWeight: '700',
-    color: 'rgba(255,255,255,0.2)',
+    color: c.textMuted,
   },
   dirTop: { top: 0 },
   dirBottom: { bottom: 0 },
@@ -290,8 +298,8 @@ const styles = StyleSheet.create({
     width: '100%',
     height: 48,
     borderRadius: 12,
-    backgroundColor: colors.red,
+    backgroundColor: c.red,
     marginTop: 24,
   },
-  stopText: { fontSize: 16, fontWeight: '700', color: colors.white },
+  stopText: { fontSize: 16, fontWeight: '700', color: c.white },
 });

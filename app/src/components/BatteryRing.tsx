@@ -28,7 +28,7 @@ import Animated, {
   interpolate,
   Extrapolation,
 } from 'react-native-reanimated';
-import { colors } from '../theme/colors';
+import { useStyles, useTheme, type Colors } from '../theme';
 
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
 
@@ -42,12 +42,6 @@ interface BatteryRingProps {
   charging?: boolean;
 }
 
-function getBatteryColor(pct: number): string {
-  if (pct >= 65) return colors.green;
-  if (pct >= 35) return colors.amber;
-  return colors.red;
-}
-
 export function BatteryRing({
   percentage,
   size = 120,
@@ -55,6 +49,15 @@ export function BatteryRing({
   color,
   charging = false,
 }: BatteryRingProps) {
+  const styles = useStyles(makeStyles);
+  const { colors } = useTheme();
+
+  function getBatteryColor(pct: number): string {
+    if (pct >= 65) return colors.green;
+    if (pct >= 35) return colors.amber;
+    return colors.red;
+  }
+
   const radius = (size - strokeWidth) / 2;
   const circumference = 2 * Math.PI * radius;
   const clampedPct = Math.max(0, Math.min(100, percentage));
@@ -248,7 +251,7 @@ export function BatteryRing({
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (_c: Colors) => StyleSheet.create({
   container: {
     alignItems: 'center',
     justifyContent: 'center',

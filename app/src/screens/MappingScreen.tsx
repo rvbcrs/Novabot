@@ -32,7 +32,7 @@ import {
   GestureHandlerRootView,
 } from 'react-native-gesture-handler';
 import { runOnJS } from 'react-native-reanimated';
-import { colors } from '../theme/colors';
+import { useStyles, useTheme, type Colors } from '../theme';
 import { LiveMapView } from '../components/LiveMapView';
 import { useMowerState } from '../hooks/useMowerState';
 import { useActiveMower } from '../hooks/useActiveMower';
@@ -114,6 +114,8 @@ export default function MappingScreen() {
   const { devices } = useMowerState();
   const experimental = useExperimental();
   const { t } = useI18n();
+  const styles = useStyles(makeStyles);
+  const { colors } = useTheme();
 
   // Maaier mqtt_node maakt korte verbindingen (connect → rapport → disconnect).
   // Gebruik lastUpdate timestamp i.p.v. online flag — als recent bericht binnen 60s, beschouw als online.
@@ -1091,7 +1093,7 @@ sendCommand({ save_recharge_pos: { mapName: 'map0', cmd_num: cmdNumRef.current++
             }}
             style={[styles.backBtn, mustCreateChannel && { opacity: 0.4 }]}
           >
-            <Ionicons name="arrow-back" size={24} color={colors.white} />
+            <Ionicons name="arrow-back" size={24} color={colors.text} />
           </TouchableOpacity>
           <Text style={styles.title}>{t('createMap', undefined) || 'Create Map'}</Text>
         </View>
@@ -1805,8 +1807,8 @@ sendCommand({ save_recharge_pos: { mapName: 'map0', cmd_num: cmdNumRef.current++
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.bg },
+const makeStyles = (c: Colors) => StyleSheet.create({
+  container: { flex: 1, backgroundColor: c.bg },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1815,7 +1817,7 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   backBtn: { padding: 4 },
-  title: { fontSize: 24, fontWeight: '800', color: colors.white },
+  title: { fontSize: 24, fontWeight: '800', color: c.text },
   content: { flex: 1, paddingHorizontal: 16 },
   mappingContent: { flex: 1, paddingHorizontal: 16, gap: 8 },
   preMappingOverlay: {
@@ -1828,30 +1830,30 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   preMappingTitle: {
-    color: colors.white,
+    color: c.text,
     fontSize: 16,
     fontWeight: '700',
   },
   centerBox: { flex: 1, justifyContent: 'center', alignItems: 'center', gap: 12, paddingHorizontal: 32 },
-  centerTitle: { fontSize: 20, fontWeight: '700', color: colors.white, textAlign: 'center' },
-  centerSub: { fontSize: 14, color: colors.textMuted, textAlign: 'center' },
+  centerTitle: { fontSize: 20, fontWeight: '700', color: c.text, textAlign: 'center' },
+  centerSub: { fontSize: 14, color: c.textMuted, textAlign: 'center' },
 
   // ── Card styles ──
   card: {
-    backgroundColor: colors.card,
+    backgroundColor: c.card,
     borderRadius: 16,
     padding: 16,
     borderWidth: 1,
-    borderColor: colors.cardBorder,
+    borderColor: c.cardBorder,
     gap: 12,
   },
-  cardTitle: { fontSize: 15, fontWeight: '700', color: colors.white, textTransform: 'uppercase', letterSpacing: 1 },
+  cardTitle: { fontSize: 15, fontWeight: '700', color: c.text, textTransform: 'uppercase', letterSpacing: 1 },
   checkRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   checkDot: { width: 8, height: 8, borderRadius: 4 },
-  checkText: { fontSize: 14, color: colors.textDim },
+  checkText: { fontSize: 14, color: c.textDim },
   warning: {
     fontSize: 12,
-    color: colors.amber,
+    color: c.amber,
     backgroundColor: 'rgba(245,158,11,0.1)',
     borderRadius: 8,
     padding: 10,
@@ -1878,8 +1880,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  modeBtnTitle: { fontSize: 15, fontWeight: '600', color: colors.white },
-  modeBtnSub: { fontSize: 12, color: colors.textMuted, marginTop: 2 },
+  modeBtnTitle: { fontSize: 15, fontWeight: '600', color: c.text },
+  modeBtnSub: { fontSize: 12, color: c.textMuted, marginTop: 2 },
 
   // ── Closed cycle banner ──
   closedBanner: {
@@ -1893,19 +1895,19 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(34,197,94,0.25)',
   },
-  closedBannerText: { flex: 1, fontSize: 13, fontWeight: '600', color: colors.green },
+  closedBannerText: { flex: 1, fontSize: 13, fontWeight: '600', color: c.green },
 
   // ── Stats bar ──
   statsBar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: colors.card,
+    backgroundColor: c.card,
     borderRadius: 12,
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderWidth: 1,
-    borderColor: colors.cardBorder,
+    borderColor: c.cardBorder,
   },
   statItem: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   pulseContainer: { justifyContent: 'center', alignItems: 'center' },
@@ -1921,18 +1923,18 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: colors.red,
+    backgroundColor: c.red,
   },
   timerText: {
     fontSize: 16,
     fontWeight: '700',
-    color: colors.white,
+    color: c.text,
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
   },
   statsChips: { flexDirection: 'row', gap: 6 },
   sensorChip: {
     fontSize: 10,
-    color: colors.textDim,
+    color: c.textDim,
     backgroundColor: 'rgba(255,255,255,0.06)',
     paddingHorizontal: 8,
     paddingVertical: 3,
@@ -1940,7 +1942,7 @@ const styles = StyleSheet.create({
   },
   closedChip: {
     backgroundColor: 'rgba(34,197,94,0.15)',
-    color: colors.green,
+    color: c.green,
   },
 
   // ── Joystick area ──
@@ -1949,7 +1951,7 @@ const styles = StyleSheet.create({
   speedText: {
     fontSize: 14,
     fontWeight: '700',
-    color: colors.emerald,
+    color: c.emerald,
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
   },
   joystickContainer: { alignItems: 'center' },
@@ -2000,9 +2002,9 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.2)',
   },
   thumbActive: {
-    backgroundColor: colors.emerald,
-    borderColor: colors.white,
-    shadowColor: colors.emerald,
+    backgroundColor: c.emerald,
+    borderColor: c.white,
+    shadowColor: c.emerald,
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.5,
     shadowRadius: 12,
@@ -2026,12 +2028,12 @@ const styles = StyleSheet.create({
   },
   speedBtnActive: {
     backgroundColor: 'rgba(16,185,129,0.2)',
-    borderColor: colors.emerald,
+    borderColor: c.emerald,
   },
   speedBtnText: {
     fontSize: 12,
     fontWeight: '600',
-    color: colors.textMuted,
+    color: c.textMuted,
   },
 
   // ── Autonomous area ──
@@ -2042,8 +2044,8 @@ const styles = StyleSheet.create({
     gap: 8,
     paddingHorizontal: 24,
   },
-  autonomousTitle: { fontSize: 18, fontWeight: '700', color: colors.purple },
-  autonomousSub: { fontSize: 14, color: colors.textMuted, textAlign: 'center', lineHeight: 20 },
+  autonomousTitle: { fontSize: 18, fontWeight: '700', color: c.purple },
+  autonomousSub: { fontSize: 14, color: c.textMuted, textAlign: 'center', lineHeight: 20 },
 
   // ── Action buttons ──
   actionRow: {
@@ -2071,21 +2073,21 @@ const styles = StyleSheet.create({
     gap: 8,
     paddingVertical: 14,
     borderRadius: 12,
-    backgroundColor: colors.purple,
+    backgroundColor: c.purple,
   },
   stopMapBtnReady: {
-    backgroundColor: colors.green,
+    backgroundColor: c.green,
   },
-  actionText: { fontSize: 15, fontWeight: '700', color: colors.white },
+  actionText: { fontSize: 15, fontWeight: '700', color: c.text },
 
   // ── Charger positioning ──
   chargerContent: { flex: 1, paddingHorizontal: 16, justifyContent: 'space-between', gap: 8 },
   chargerCard: {
-    backgroundColor: colors.card,
+    backgroundColor: c.card,
     borderRadius: 14,
     padding: 14,
     borderWidth: 1,
-    borderColor: colors.cardBorder,
+    borderColor: c.cardBorder,
     alignItems: 'center',
     gap: 8,
     marginTop: 8,
@@ -2098,11 +2100,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  chargerTitle: { fontSize: 17, fontWeight: '700', color: colors.white },
-  chargerDesc: { fontSize: 13, color: colors.text, textAlign: 'center', lineHeight: 18 },
+  chargerTitle: { fontSize: 17, fontWeight: '700', color: c.text },
+  chargerDesc: { fontSize: 13, color: c.text, textAlign: 'center', lineHeight: 18 },
   chargerHint: {
     fontSize: 12,
-    color: colors.amber,
+    color: c.amber,
     textAlign: 'center',
     marginTop: 4,
     fontStyle: 'italic',
@@ -2115,9 +2117,9 @@ const styles = StyleSheet.create({
     gap: 8,
     paddingVertical: 16,
     borderRadius: 14,
-    backgroundColor: colors.emerald,
+    backgroundColor: c.emerald,
   },
-  chargerSaveBtnText: { fontSize: 16, fontWeight: '700', color: colors.white },
+  chargerSaveBtnText: { fontSize: 16, fontWeight: '700', color: c.text },
 
   // ── Done ──
   doneBtn: {
@@ -2125,7 +2127,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 40,
     paddingVertical: 14,
     borderRadius: 12,
-    backgroundColor: colors.emerald,
+    backgroundColor: c.emerald,
   },
-  doneBtnText: { fontSize: 16, fontWeight: '700', color: colors.white },
+  doneBtnText: { fontSize: 16, fontWeight: '700', color: c.text },
 });

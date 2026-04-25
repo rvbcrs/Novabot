@@ -15,7 +15,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { colors } from '../theme/colors';
+import { useStyles, useTheme, type Colors } from '../theme';
 import { MowingDirectionPreview } from '../components/MowingDirectionPreview';
 import { SimpleSlider } from '../components/SimpleSlider';
 import { useMowerState } from '../hooks/useMowerState';
@@ -43,6 +43,8 @@ const CONTROLLER_LEVELS = [
 ];
 
 export default function MowerSettingsScreen() {
+  const styles = useStyles(makeStyles);
+  const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
   const { devices } = useMowerState();
@@ -357,7 +359,7 @@ export default function MowerSettingsScreen() {
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
             activeOpacity={0.7}
           >
-            <Ionicons name="arrow-back" size={24} color={colors.white} />
+            <Ionicons name="arrow-back" size={24} color={colors.text} />
           </TouchableOpacity>
           <Text style={styles.title}>Mower Settings</Text>
         </View>
@@ -620,10 +622,10 @@ export default function MowerSettingsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.bg },
+const makeStyles = (c: Colors) => StyleSheet.create({
+  container: { flex: 1, backgroundColor: c.bg },
   scroll: { padding: 24, paddingBottom: 32 },
-  title: { fontSize: 28, fontWeight: '700', color: colors.white },
+  title: { fontSize: 28, fontWeight: '700', color: c.text },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -639,24 +641,24 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   emptyState: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 },
-  emptyTitle: { fontSize: 22, fontWeight: '700', color: colors.white, marginTop: 16 },
+  emptyTitle: { fontSize: 22, fontWeight: '700', color: c.text, marginTop: 16 },
   offlineBanner: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
     backgroundColor: 'rgba(245,158,11,0.1)', borderRadius: 12, padding: 12, marginBottom: 20,
   },
-  offlineText: { flex: 1, fontSize: 13, color: colors.amber, lineHeight: 18 },
+  offlineText: { flex: 1, fontSize: 13, color: c.amber, lineHeight: 18 },
   section: { marginBottom: 24 },
   sectionDisabled: { opacity: 0.3 },
   sectionTitle: {
-    fontSize: 13, fontWeight: '600', color: colors.textDim,
+    fontSize: 13, fontWeight: '600', color: c.textDim,
     textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8, marginLeft: 4,
   },
   card: {
-    backgroundColor: colors.card, borderRadius: 16,
-    borderWidth: 1, borderColor: colors.cardBorder, padding: 16,
+    backgroundColor: c.card, borderRadius: 16,
+    borderWidth: 1, borderColor: c.cardBorder, padding: 16,
   },
   currentValue: {
-    fontSize: 32, fontWeight: '700', color: colors.emerald,
+    fontSize: 32, fontWeight: '700', color: c.emerald,
     textAlign: 'center', marginBottom: 16, fontVariant: ['tabular-nums'],
   },
   chipGrid: {
@@ -664,21 +666,21 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   optionSub: {
-    fontSize: 12, color: colors.textMuted, marginTop: 2,
+    fontSize: 12, color: c.textMuted, marginTop: 2,
   },
   sliderRow: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
     marginTop: 12, marginBottom: 6, paddingHorizontal: 4,
   },
-  sliderLabel: { fontSize: 13, color: colors.textDim, fontWeight: '500' },
-  sliderValue: { fontSize: 13, color: colors.white, fontWeight: '600', fontVariant: ['tabular-nums'] },
+  sliderLabel: { fontSize: 13, color: c.textDim, fontWeight: '500' },
+  sliderValue: { fontSize: 13, color: c.text, fontWeight: '600', fontVariant: ['tabular-nums'] },
   chip: {
     paddingHorizontal: 14, paddingVertical: 8, borderRadius: 10,
     backgroundColor: 'rgba(255,255,255,0.06)',
   },
-  chipActive: { backgroundColor: colors.emerald },
-  chipText: { fontSize: 14, fontWeight: '600', color: colors.textDim },
-  chipTextActive: { color: colors.white },
+  chipActive: { backgroundColor: c.emerald },
+  chipText: { fontSize: 14, fontWeight: '600', color: c.textDim },
+  chipTextActive: { color: c.text },
   optionRow: {
     flexDirection: 'row', alignItems: 'center', gap: 14, padding: 14,
     borderRadius: 12, marginBottom: 6,
@@ -686,16 +688,16 @@ const styles = StyleSheet.create({
   optionRowActive: { backgroundColor: 'rgba(0,212,170,0.08)' },
   radio: {
     width: 22, height: 22, borderRadius: 11, borderWidth: 2,
-    borderColor: colors.textMuted, alignItems: 'center', justifyContent: 'center',
+    borderColor: c.textMuted, alignItems: 'center', justifyContent: 'center',
   },
-  radioActive: { borderColor: colors.emerald },
+  radioActive: { borderColor: c.emerald },
   radioInner: {
-    width: 12, height: 12, borderRadius: 6, backgroundColor: colors.emerald,
+    width: 12, height: 12, borderRadius: 6, backgroundColor: c.emerald,
   },
   optionInfo: { flex: 1 },
-  optionLabel: { fontSize: 16, fontWeight: '600', color: colors.white },
-  optionLabelActive: { color: colors.emerald },
-  optionDesc: { fontSize: 12, color: colors.textMuted, marginTop: 2 },
+  optionLabel: { fontSize: 16, fontWeight: '600', color: c.text },
+  optionLabelActive: { color: c.emerald },
+  optionDesc: { fontSize: 12, color: c.textMuted, marginTop: 2 },
   previewRow: {
     alignItems: 'center',
     marginBottom: 16,
@@ -704,7 +706,7 @@ const styles = StyleSheet.create({
   directionLabel: {
     fontSize: 14,
     fontWeight: '600',
-    color: colors.textDim,
+    color: c.textDim,
   },
   compassGrid: {
     flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'center',
@@ -713,10 +715,10 @@ const styles = StyleSheet.create({
     width: 64, paddingVertical: 10, borderRadius: 12, alignItems: 'center',
     backgroundColor: 'rgba(255,255,255,0.06)',
   },
-  compassChipActive: { backgroundColor: colors.purple },
-  compassText: { fontSize: 16, fontWeight: '700', color: colors.textDim },
-  compassTextActive: { color: colors.white },
-  compassAngle: { fontSize: 10, color: colors.textMuted, marginTop: 2 },
+  compassChipActive: { backgroundColor: c.purple },
+  compassText: { fontSize: 16, fontWeight: '700', color: c.textDim },
+  compassTextActive: { color: c.text },
+  compassAngle: { fontSize: 10, color: c.textMuted, marginTop: 2 },
   stepBtn: {
     width: 36, height: 36, borderRadius: 18,
     backgroundColor: 'rgba(255,255,255,0.1)',
@@ -728,14 +730,14 @@ const styles = StyleSheet.create({
     justifyContent: 'center', paddingHorizontal: 2,
   },
   toggleActive: {
-    backgroundColor: colors.emerald,
+    backgroundColor: c.emerald,
   },
   toggleThumb: {
     width: 20, height: 20, borderRadius: 10,
-    backgroundColor: colors.textMuted,
+    backgroundColor: c.textMuted,
   },
   toggleThumbActive: {
-    backgroundColor: colors.white,
+    backgroundColor: c.white,
     alignSelf: 'flex-end',
   },
 });
