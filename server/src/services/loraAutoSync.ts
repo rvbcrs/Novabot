@@ -21,7 +21,7 @@
  */
 
 import { isDeviceOnline } from '../mqtt/broker.js';
-import { deviceRepo } from '../db/repositories/index.js';
+import { deviceRepo, equipmentRepo } from '../db/repositories/index.js';
 import { publishToDevice, publishToExtended } from '../mqtt/mapSync.js';
 
 const POLL_INTERVAL_MS = 60_000; // 1 min
@@ -45,15 +45,27 @@ export function startLoraAutoSync(): void {
         setTimeout(() => {
           try {
             if (sn.startsWith('LFIC')) {
-              // Charger: standard MQTT command topic
               publishToDevice(sn, { get_lora_info: null });
             } else if (sn.startsWith('LFIN')) {
-              // Mower: extended_commands topic (OpenNova only, but harmless
-              // if stock — response just won't come)
               publishToExtended(sn, { get_lora_info: {} });
             }
           } catch (e) {
             console.log(`[LoRa-AutoSync] publish failed for ${sn}: ${e}`);
+          }
+
+          // Firmware version fetch als nog niet bekend in DB.
+          // ota_version_info werkt op het standaard MQTT topic voor zowel
+          // mower als charger. Broker ota_version_info_respond handler
+          // schrijft `mower_version` / `charger_version` in equipment.
+          try {
+            const eq = equipmentRepo.findBySn(sn);
+            const isCharger = sn.startsWith('LFIC');
+            const currentVersion = isCharger ? eq?.charger_version : eq?.mower_version;
+            if (!currentVersion) {
+              publishToDevice(sn, { ota_version_info: null });
+            }
+          } catch (e) {
+            console.log(`[LoRa-AutoSync] version check failed for ${sn}: ${e}`);
           }
         }, idx * STAGGER_MS);
       });
