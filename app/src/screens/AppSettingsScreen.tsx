@@ -389,7 +389,7 @@ const makeStyles = (c: Colors) => StyleSheet.create({
   // Layout
   container: { flex: 1, backgroundColor: c.bg },
   scroll: { padding: 24, paddingBottom: 32 },
-  title: { fontSize: 28, fontWeight: '700', color: c.white, marginBottom: 24 },
+  title: { fontSize: 28, fontWeight: '700', color: c.text, marginBottom: 24 },
   section: { marginBottom: 24 },
   sectionTitle: {
     fontSize: 13, fontWeight: '600', color: c.textDim,
@@ -402,7 +402,7 @@ const makeStyles = (c: Colors) => StyleSheet.create({
   actionRow: {
     flexDirection: 'row', alignItems: 'center', padding: 16, gap: 12,
   },
-  actionLabel: { flex: 1, fontSize: 16, color: c.white },
+  actionLabel: { flex: 1, fontSize: 16, color: c.text },
   logoutButton: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
     height: 48, borderRadius: 12,
@@ -425,7 +425,7 @@ const makeStyles = (c: Colors) => StyleSheet.create({
   input: {
     flex: 1, height: 44, backgroundColor: c.inputBg,
     borderRadius: 10, borderWidth: 1, borderColor: c.inputBorder,
-    paddingHorizontal: 14, fontSize: 15, color: c.white,
+    paddingHorizontal: 14, fontSize: 15, color: c.text,
   },
   discoverBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
@@ -437,11 +437,11 @@ const makeStyles = (c: Colors) => StyleSheet.create({
     paddingVertical: 10, paddingHorizontal: 12,
     backgroundColor: 'rgba(0,212,170,0.08)', borderRadius: 10,
   },
-  serverUrl: { fontSize: 14, color: c.white, fontFamily: 'monospace' },
+  serverUrl: { fontSize: 14, color: c.text, fontFamily: 'monospace' },
   buttonRow: { flexDirection: 'row', gap: 10, marginTop: 4 },
   cancelBtn: {
     flex: 1, height: 40, borderRadius: 10, alignItems: 'center', justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.06)',
+    backgroundColor: c.inputBg, borderWidth: 1, borderColor: c.cardBorder,
   },
   cancelText: { fontSize: 14, fontWeight: '600', color: c.textDim },
   saveBtn: {
@@ -453,10 +453,10 @@ const makeStyles = (c: Colors) => StyleSheet.create({
   // Row styles (formerly rowStyles)
   rowContainer: {
     flexDirection: 'row', alignItems: 'center', padding: 16, gap: 12,
-    borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.05)',
+    borderBottomWidth: 1, borderBottomColor: c.cardBorder,
   },
   rowLabel: { fontSize: 15, color: c.textDim },
-  rowValue: { flex: 1, fontSize: 15, color: c.white, textAlign: 'right' },
+  rowValue: { flex: 1, fontSize: 15, color: c.text, textAlign: 'right' },
 
   // Appearance segment
   appearanceSection: {
