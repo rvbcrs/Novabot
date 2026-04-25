@@ -1135,9 +1135,9 @@ export default function MapScreen() {
               disabled={importing || cloudImporting}
             >
               {(importing || cloudImporting) ? (
-                <ActivityIndicator size="small" color={colors.white} />
+                <ActivityIndicator size="small" color={colors.text} />
               ) : (
-                <Ionicons name="ellipsis-horizontal" size={16} color={colors.white} />
+                <Ionicons name="ellipsis-horizontal" size={16} color={colors.text} />
               )}
             </TouchableOpacity>
             {selectedWorkMap && !editMode && (
@@ -1146,7 +1146,7 @@ export default function MapScreen() {
                 style={styles.toolbarMenuButton}
                 activeOpacity={0.82}
               >
-                <Ionicons name="create-outline" size={16} color={colors.white} />
+                <Ionicons name="create-outline" size={16} color={colors.text} />
               </TouchableOpacity>
             )}
             <TouchableOpacity
@@ -1963,7 +1963,9 @@ const makeStyles = (c: Colors) => StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: 'rgba(255,255,255,0.14)',
+    backgroundColor: c.inputBg,
+    borderWidth: 1,
+    borderColor: c.cardBorder,
     alignItems: 'center',
     justifyContent: 'center',
   },
