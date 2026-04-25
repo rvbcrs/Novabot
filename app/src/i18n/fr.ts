@@ -105,4 +105,5 @@ export default {
   appearanceAutoCaption: "Auto suit le réglage de votre système.",
   appearanceLightCaption: 'Le mode clair est toujours activé.',
   appearanceDarkCaption: 'Le mode sombre est toujours activé.',
+  mowerColor: 'Couleur du robot', mowerColorWhite: 'Blanc', mowerColorGrey: 'Gris',
 };

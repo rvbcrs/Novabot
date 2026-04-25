@@ -105,4 +105,5 @@ export default {
   appearanceAutoCaption: 'Auto folgt deiner Systemeinstellung.',
   appearanceLightCaption: 'Heller Modus ist immer aktiv.',
   appearanceDarkCaption: 'Dunkler Modus ist immer aktiv.',
+  mowerColor: 'Mäher-Farbe', mowerColorWhite: 'Weiß', mowerColorGrey: 'Grau',
 };
