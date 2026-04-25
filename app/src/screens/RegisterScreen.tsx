@@ -264,7 +264,7 @@ const makeStyles = (c: Colors) => StyleSheet.create({
   title: {
     fontSize: 32,
     fontWeight: '700',
-    color: c.white,
+    color: c.text,
     marginBottom: 8,
   },
   subtitle: {
@@ -305,7 +305,7 @@ const makeStyles = (c: Colors) => StyleSheet.create({
   input: {
     flex: 1,
     fontSize: 16,
-    color: c.white,
+    color: c.text,
     height: 48,
   },
   errorBox: {
@@ -341,7 +341,7 @@ const makeStyles = (c: Colors) => StyleSheet.create({
   buttonText: {
     fontSize: 16,
     fontWeight: '600',
-    color: c.white,
+    color: c.text,
   },
   loginLink: {
     alignItems: 'center',

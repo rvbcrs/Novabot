@@ -2272,7 +2272,7 @@ const makeStyles = (c: Colors) => StyleSheet.create({
   emptyTitle: {
     fontSize: 22,
     fontWeight: '700',
-    color: c.white,
+    color: c.text,
     marginBottom: 8,
   },
   emptySubtitle: {
@@ -2345,7 +2345,7 @@ const makeStyles = (c: Colors) => StyleSheet.create({
   deviceName: {
     fontSize: 14,
     fontWeight: '600',
-    color: c.white,
+    color: c.text,
   },
   deviceSn: {
     fontSize: 11,
@@ -2399,7 +2399,7 @@ const makeStyles = (c: Colors) => StyleSheet.create({
   chargerTitle: {
     fontSize: 15,
     fontWeight: '600',
-    color: c.white,
+    color: c.text,
   },
   chargerSn: {
     fontSize: 11,
@@ -2426,7 +2426,7 @@ const makeStyles = (c: Colors) => StyleSheet.create({
   addMowerText: {
     fontSize: 16,
     fontWeight: '600',
-    color: c.white,
+    color: c.text,
   },
   statusCard: {
     backgroundColor: c.card,
@@ -2505,7 +2505,7 @@ const makeStyles = (c: Colors) => StyleSheet.create({
   batteryPercentage: {
     fontSize: 24,
     fontWeight: '700',
-    color: c.white,
+    color: c.text,
   },
   batteryPercSign: {
     fontSize: 12,
@@ -2624,7 +2624,7 @@ const makeStyles = (c: Colors) => StyleSheet.create({
   actionButtonText: {
     fontSize: 15,
     fontWeight: '600',
-    color: c.white,
+    color: c.text,
   },
   // Split-action button — hoofd-knop + kleine chevron-knop aan de rechterkant.
   // Beide helften delen hoogte + achtergrond; een dunne verticale divider

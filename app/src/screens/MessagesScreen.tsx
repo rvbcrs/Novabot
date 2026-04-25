@@ -223,7 +223,7 @@ export default function MessagesScreen() {
 const makeStyles = (c: Colors) => StyleSheet.create({
   container: { flex: 1, backgroundColor: c.bg },
   scroll: { padding: 24, paddingBottom: 32 },
-  title: { fontSize: 28, fontWeight: '700', color: c.white, marginBottom: 24 },
+  title: { fontSize: 28, fontWeight: '700', color: c.text, marginBottom: 24 },
   disconnectedBanner: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
     backgroundColor: 'rgba(239,68,68,0.1)', borderRadius: 12, padding: 12, marginBottom: 20,
@@ -231,7 +231,7 @@ const makeStyles = (c: Colors) => StyleSheet.create({
   disconnectedText: { fontSize: 14, color: c.red },
   allClear: { alignItems: 'center', paddingVertical: 60 },
   allClearIcon: { marginBottom: 16 },
-  allClearTitle: { fontSize: 22, fontWeight: '700', color: c.white, marginBottom: 8 },
+  allClearTitle: { fontSize: 22, fontWeight: '700', color: c.text, marginBottom: 8 },
   allClearSubtitle: { fontSize: 15, color: c.textDim },
   alertCard: {
     backgroundColor: c.card, borderRadius: 14,

@@ -152,7 +152,7 @@ const makeStyles = (c: Colors) => StyleSheet.create({
   title: {
     fontSize: 28,
     fontWeight: '700',
-    color: c.white,
+    color: c.text,
     marginBottom: 8,
   },
   subtitle: {
@@ -193,7 +193,7 @@ const makeStyles = (c: Colors) => StyleSheet.create({
   input: {
     flex: 1,
     fontSize: 16,
-    color: c.white,
+    color: c.text,
     height: 48,
   },
   infoCard: {
@@ -229,6 +229,6 @@ const makeStyles = (c: Colors) => StyleSheet.create({
   buttonText: {
     fontSize: 16,
     fontWeight: '600',
-    color: c.white,
+    color: c.text,
   },
 });

@@ -506,7 +506,7 @@ function VersionCard({
 const makeStyles = (c: Colors) => StyleSheet.create({
   container: { flex: 1, backgroundColor: c.bg },
   scroll: { padding: 24, paddingBottom: 32 },
-  title: { fontSize: 28, fontWeight: '700', color: c.white },
+  title: { fontSize: 28, fontWeight: '700', color: c.text },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -565,7 +565,7 @@ const makeStyles = (c: Colors) => StyleSheet.create({
   otaModalTitle: {
     fontSize: 20,
     fontWeight: '700',
-    color: c.white,
+    color: c.text,
     marginBottom: 4,
   },
   otaModalSubtitle: {
@@ -618,7 +618,7 @@ const makeStyles = (c: Colors) => StyleSheet.create({
   otaModalBtnText: {
     fontSize: 15,
     fontWeight: '700',
-    color: c.white,
+    color: c.text,
   },
 });
 
@@ -628,7 +628,7 @@ const makeRowStyles = (c: Colors) => StyleSheet.create({
     borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.05)',
   },
   info: { flex: 1 },
-  label: { fontSize: 15, fontWeight: '600', color: c.white },
+  label: { fontSize: 15, fontWeight: '600', color: c.text },
   sn: { fontSize: 11, color: c.textDim, fontFamily: 'monospace', marginTop: 2 },
   version: { fontSize: 14, fontWeight: '600', color: c.emerald, fontFamily: 'monospace' },
   dot: { width: 8, height: 8, borderRadius: 4 },
@@ -641,14 +641,14 @@ const makeVersionStyles = (c: Colors) => StyleSheet.create({
     padding: 16, marginBottom: 10,
   },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
-  versionText: { fontSize: 18, fontWeight: '700', color: c.white, fontFamily: 'monospace' },
+  versionText: { fontSize: 18, fontWeight: '700', color: c.text, fontFamily: 'monospace' },
   date: { fontSize: 12, color: c.textMuted },
   notes: { fontSize: 13, color: c.textDim, marginBottom: 12, lineHeight: 18 },
   triggerButton: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
     gap: 8, height: 40, borderRadius: 10, backgroundColor: c.blue,
   },
-  triggerText: { fontSize: 14, fontWeight: '600', color: c.white },
+  triggerText: { fontSize: 14, fontWeight: '600', color: c.text },
   offlineNote: { fontSize: 13, color: c.textMuted, textAlign: 'center', marginTop: 4 },
   installedRow: {
     flexDirection: 'row',

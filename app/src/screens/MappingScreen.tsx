@@ -1817,7 +1817,7 @@ const makeStyles = (c: Colors) => StyleSheet.create({
     gap: 12,
   },
   backBtn: { padding: 4 },
-  title: { fontSize: 24, fontWeight: '800', color: c.white },
+  title: { fontSize: 24, fontWeight: '800', color: c.text },
   content: { flex: 1, paddingHorizontal: 16 },
   mappingContent: { flex: 1, paddingHorizontal: 16, gap: 8 },
   preMappingOverlay: {
@@ -1830,12 +1830,12 @@ const makeStyles = (c: Colors) => StyleSheet.create({
     alignItems: 'center',
   },
   preMappingTitle: {
-    color: c.white,
+    color: c.text,
     fontSize: 16,
     fontWeight: '700',
   },
   centerBox: { flex: 1, justifyContent: 'center', alignItems: 'center', gap: 12, paddingHorizontal: 32 },
-  centerTitle: { fontSize: 20, fontWeight: '700', color: c.white, textAlign: 'center' },
+  centerTitle: { fontSize: 20, fontWeight: '700', color: c.text, textAlign: 'center' },
   centerSub: { fontSize: 14, color: c.textMuted, textAlign: 'center' },
 
   // ── Card styles ──
@@ -1847,7 +1847,7 @@ const makeStyles = (c: Colors) => StyleSheet.create({
     borderColor: c.cardBorder,
     gap: 12,
   },
-  cardTitle: { fontSize: 15, fontWeight: '700', color: c.white, textTransform: 'uppercase', letterSpacing: 1 },
+  cardTitle: { fontSize: 15, fontWeight: '700', color: c.text, textTransform: 'uppercase', letterSpacing: 1 },
   checkRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   checkDot: { width: 8, height: 8, borderRadius: 4 },
   checkText: { fontSize: 14, color: c.textDim },
@@ -1880,7 +1880,7 @@ const makeStyles = (c: Colors) => StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  modeBtnTitle: { fontSize: 15, fontWeight: '600', color: c.white },
+  modeBtnTitle: { fontSize: 15, fontWeight: '600', color: c.text },
   modeBtnSub: { fontSize: 12, color: c.textMuted, marginTop: 2 },
 
   // ── Closed cycle banner ──
@@ -1928,7 +1928,7 @@ const makeStyles = (c: Colors) => StyleSheet.create({
   timerText: {
     fontSize: 16,
     fontWeight: '700',
-    color: c.white,
+    color: c.text,
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
   },
   statsChips: { flexDirection: 'row', gap: 6 },
@@ -2078,7 +2078,7 @@ const makeStyles = (c: Colors) => StyleSheet.create({
   stopMapBtnReady: {
     backgroundColor: c.green,
   },
-  actionText: { fontSize: 15, fontWeight: '700', color: c.white },
+  actionText: { fontSize: 15, fontWeight: '700', color: c.text },
 
   // ── Charger positioning ──
   chargerContent: { flex: 1, paddingHorizontal: 16, justifyContent: 'space-between', gap: 8 },
@@ -2100,7 +2100,7 @@ const makeStyles = (c: Colors) => StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  chargerTitle: { fontSize: 17, fontWeight: '700', color: c.white },
+  chargerTitle: { fontSize: 17, fontWeight: '700', color: c.text },
   chargerDesc: { fontSize: 13, color: c.text, textAlign: 'center', lineHeight: 18 },
   chargerHint: {
     fontSize: 12,
@@ -2119,7 +2119,7 @@ const makeStyles = (c: Colors) => StyleSheet.create({
     borderRadius: 14,
     backgroundColor: c.emerald,
   },
-  chargerSaveBtnText: { fontSize: 16, fontWeight: '700', color: c.white },
+  chargerSaveBtnText: { fontSize: 16, fontWeight: '700', color: c.text },
 
   // ── Done ──
   doneBtn: {
@@ -2129,5 +2129,5 @@ const makeStyles = (c: Colors) => StyleSheet.create({
     borderRadius: 12,
     backgroundColor: c.emerald,
   },
-  doneBtnText: { fontSize: 16, fontWeight: '700', color: c.white },
+  doneBtnText: { fontSize: 16, fontWeight: '700', color: c.text },
 });

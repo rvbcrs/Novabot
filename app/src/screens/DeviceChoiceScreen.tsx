@@ -109,7 +109,7 @@ const makeStyles = (c: Colors) => StyleSheet.create({
   title: {
     fontSize: 28,
     fontWeight: '700',
-    color: c.white,
+    color: c.text,
     marginBottom: 8,
   },
   subtitle: {
@@ -141,7 +141,7 @@ const makeStyles = (c: Colors) => StyleSheet.create({
   cardTitle: {
     fontSize: 18,
     fontWeight: '600',
-    color: c.white,
+    color: c.text,
     marginBottom: 4,
   },
   cardSubtitle: {

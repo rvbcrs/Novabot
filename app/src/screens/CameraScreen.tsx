@@ -236,7 +236,7 @@ const makeStyles = (c: Colors) => StyleSheet.create({
   },
   topicBtnActive: { backgroundColor: c.emerald, borderColor: c.emerald },
   topicText: { fontSize: 12, fontWeight: '600', color: c.text },
-  topicTextActive: { color: c.white },
+  topicTextActive: { color: c.text },
   topBarActions: { flexDirection: 'row', gap: 4, marginLeft: 'auto' },
   iconBtn: { padding: 8 },
   cameraArea: { flex: 1, justifyContent: 'center', alignItems: 'center' },

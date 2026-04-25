@@ -268,7 +268,7 @@ const makeStyles = (c: Colors) => StyleSheet.create({
   title: {
     fontSize: 28,
     fontWeight: '700',
-    color: c.white,
+    color: c.text,
     marginBottom: 8,
   },
   subtitle: {
@@ -341,7 +341,7 @@ const makeStyles = (c: Colors) => StyleSheet.create({
   deviceName: {
     fontSize: 16,
     fontWeight: '600',
-    color: c.white,
+    color: c.text,
     marginBottom: 2,
   },
   deviceNameDim: {
@@ -443,6 +443,6 @@ const makeStyles = (c: Colors) => StyleSheet.create({
   provisionButtonText: {
     fontSize: 15,
     fontWeight: '600',
-    color: c.white,
+    color: c.text,
   },
 });

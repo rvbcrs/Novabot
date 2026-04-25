@@ -625,7 +625,7 @@ export default function MowerSettingsScreen() {
 const makeStyles = (c: Colors) => StyleSheet.create({
   container: { flex: 1, backgroundColor: c.bg },
   scroll: { padding: 24, paddingBottom: 32 },
-  title: { fontSize: 28, fontWeight: '700', color: c.white },
+  title: { fontSize: 28, fontWeight: '700', color: c.text },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -641,7 +641,7 @@ const makeStyles = (c: Colors) => StyleSheet.create({
     justifyContent: 'center',
   },
   emptyState: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 },
-  emptyTitle: { fontSize: 22, fontWeight: '700', color: c.white, marginTop: 16 },
+  emptyTitle: { fontSize: 22, fontWeight: '700', color: c.text, marginTop: 16 },
   offlineBanner: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
     backgroundColor: 'rgba(245,158,11,0.1)', borderRadius: 12, padding: 12, marginBottom: 20,
@@ -673,14 +673,14 @@ const makeStyles = (c: Colors) => StyleSheet.create({
     marginTop: 12, marginBottom: 6, paddingHorizontal: 4,
   },
   sliderLabel: { fontSize: 13, color: c.textDim, fontWeight: '500' },
-  sliderValue: { fontSize: 13, color: c.white, fontWeight: '600', fontVariant: ['tabular-nums'] },
+  sliderValue: { fontSize: 13, color: c.text, fontWeight: '600', fontVariant: ['tabular-nums'] },
   chip: {
     paddingHorizontal: 14, paddingVertical: 8, borderRadius: 10,
     backgroundColor: 'rgba(255,255,255,0.06)',
   },
   chipActive: { backgroundColor: c.emerald },
   chipText: { fontSize: 14, fontWeight: '600', color: c.textDim },
-  chipTextActive: { color: c.white },
+  chipTextActive: { color: c.text },
   optionRow: {
     flexDirection: 'row', alignItems: 'center', gap: 14, padding: 14,
     borderRadius: 12, marginBottom: 6,
@@ -695,7 +695,7 @@ const makeStyles = (c: Colors) => StyleSheet.create({
     width: 12, height: 12, borderRadius: 6, backgroundColor: c.emerald,
   },
   optionInfo: { flex: 1 },
-  optionLabel: { fontSize: 16, fontWeight: '600', color: c.white },
+  optionLabel: { fontSize: 16, fontWeight: '600', color: c.text },
   optionLabelActive: { color: c.emerald },
   optionDesc: { fontSize: 12, color: c.textMuted, marginTop: 2 },
   previewRow: {
@@ -717,7 +717,7 @@ const makeStyles = (c: Colors) => StyleSheet.create({
   },
   compassChipActive: { backgroundColor: c.purple },
   compassText: { fontSize: 16, fontWeight: '700', color: c.textDim },
-  compassTextActive: { color: c.white },
+  compassTextActive: { color: c.text },
   compassAngle: { fontSize: 10, color: c.textMuted, marginTop: 2 },
   stepBtn: {
     width: 36, height: 36, borderRadius: 18,

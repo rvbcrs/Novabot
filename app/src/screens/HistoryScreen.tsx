@@ -184,9 +184,9 @@ function formatDuration(seconds: number): string {
 const makeStyles = (c: Colors) => StyleSheet.create({
   container: { flex: 1, backgroundColor: c.bg },
   scroll: { padding: 24, paddingBottom: 32 },
-  title: { fontSize: 28, fontWeight: '700', color: c.white, marginBottom: 20 },
+  title: { fontSize: 28, fontWeight: '700', color: c.text, marginBottom: 20 },
   emptyState: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 },
-  emptyTitle: { fontSize: 22, fontWeight: '700', color: c.white, marginTop: 16 },
+  emptyTitle: { fontSize: 22, fontWeight: '700', color: c.text, marginTop: 16 },
   emptySubtitle: { fontSize: 15, color: c.textDim, textAlign: 'center', marginTop: 8 },
   errorBox: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
@@ -206,7 +206,7 @@ const makeStyles = (c: Colors) => StyleSheet.create({
   },
   recordHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 },
   statusDot: { width: 8, height: 8, borderRadius: 4 },
-  recordDate: { flex: 1, fontSize: 15, fontWeight: '600', color: c.white },
+  recordDate: { flex: 1, fontSize: 15, fontWeight: '600', color: c.text },
   recordStatus: { fontSize: 12, fontWeight: '600', textTransform: 'capitalize' },
   recordStats: { flexDirection: 'row', gap: 10, flexWrap: 'wrap', marginBottom: 8 },
   recordTimeRange: { fontSize: 12, color: c.textMuted, fontVariant: ['tabular-nums'] },

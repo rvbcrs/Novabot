@@ -1007,7 +1007,7 @@ const makeStyles = (c: Colors) => StyleSheet.create({
   title: {
     fontSize: 28,
     fontWeight: '700',
-    color: c.white,
+    color: c.text,
   },
   subtitle: {
     fontSize: 15,
@@ -1059,7 +1059,7 @@ const makeStyles = (c: Colors) => StyleSheet.create({
   loraTitle: {
     fontSize: 15,
     fontWeight: '700',
-    color: c.white,
+    color: c.text,
     marginBottom: 2,
   },
   loraSubtitle: {
@@ -1088,7 +1088,7 @@ const makeStyles = (c: Colors) => StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
     fontSize: 15,
-    color: c.white,
+    color: c.text,
     fontVariant: ['tabular-nums'],
   },
   loraWarning: {
@@ -1126,7 +1126,7 @@ const makeStyles = (c: Colors) => StyleSheet.create({
   startProvisionText: {
     fontSize: 15,
     fontWeight: '700',
-    color: c.white,
+    color: c.text,
   },
   deviceHeader: {
     flexDirection: 'row',
@@ -1138,7 +1138,7 @@ const makeStyles = (c: Colors) => StyleSheet.create({
     flex: 1,
     fontSize: 16,
     fontWeight: '600',
-    color: c.white,
+    color: c.text,
   },
   successBadge: {
     flexDirection: 'row',
@@ -1242,7 +1242,7 @@ const makeStyles = (c: Colors) => StyleSheet.create({
     borderRadius: 12,
   },
   otaButtonText: {
-    color: c.white,
+    color: c.text,
     fontSize: 14,
     fontWeight: '600',
   },
@@ -1335,6 +1335,6 @@ const makeStyles = (c: Colors) => StyleSheet.create({
   doneButtonText: {
     fontSize: 15,
     fontWeight: '600',
-    color: c.white,
+    color: c.text,
   },
 });
