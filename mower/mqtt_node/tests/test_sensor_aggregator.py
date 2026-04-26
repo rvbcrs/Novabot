@@ -17,7 +17,8 @@ def test_report_state_robot_minimum_fields():
     agg.update_loc_quality(85)
     payload = agg.build_report_state_robot()
     assert payload['battery_power'] == 87
-    assert payload['battery_state'] == 'DISCHARGED'
+    # battery_state belongs in report_state_timer_data, not here
+    assert 'battery_state' not in payload
     assert payload['x'] == 1.2
     assert payload['y'] == -0.5
     assert payload['theta'] == 0.7
@@ -39,8 +40,17 @@ def test_report_state_timer_data_includes_localization_subtree():
     assert payload['localization']['localization_state'] == 'RUNNING'
 
 
-def test_report_state_exception_event_driven():
+def test_report_exception_state_uses_stock_field_names():
     agg = SensorAggregator()
-    agg.update_incident(error_lora=True, error_lora_msg='Lora disconnect')
-    payload = agg.build_report_state_exception()
-    assert payload['robot_error_status'] == 8  # LoRa bit
+    agg.update_signal(wifi_rssi=54, rtk_sat=31)
+    agg.update_incident(button_stop=False, chassis_err=0,
+                        no_set_pin_code=False, rtk=True)
+    payload = agg.build_report_exception_state()
+    assert payload == {
+        'button_stop': False,
+        'chassis_err': 0,
+        'no_set_pin_code': False,
+        'rtk': True,
+        'rtk_sat': 31,
+        'wifi_rssi': 54,
+    }

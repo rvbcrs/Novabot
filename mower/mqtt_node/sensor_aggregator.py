@@ -106,9 +106,14 @@ class SensorAggregator:
 
     # ── Build methods (called from publish timer) ──────────────────
     def build_report_state_robot(self) -> Dict[str, Any]:
+        """Match stock 'report_state_robot' topic exactly.
+
+        Per research/documents/mqtt_node-payload-catalog.md:
+        battery_state, wifi_rssi, rtk_sat do NOT belong here —
+        they live in timer_data and report_exception_state respectively.
+        """
         return {
             'battery_power': self._battery.power_percent,
-            'battery_state': self._battery.state,
             'task_mode': self._task_mode,
             'work_status': self._work_status,
             'recharge_status': self._recharge_status,
@@ -122,8 +127,6 @@ class SensorAggregator:
             'cpu_temperature': self._cpu_temperature,
             'cpu_usage': self._cpu_usage,
             'loc_quality': self._loc_quality,
-            'wifi_rssi': self._wifi_rssi,
-            'rtk_sat': self._rtk_sat,
             'x': self._pose.x,
             'y': self._pose.y,
             'theta': self._pose.theta,
@@ -149,25 +152,26 @@ class SensorAggregator:
             },
             'plan_path': 0,
             'preview_cover_path': 0,
-            'start_edit_or_assistant_map_flag': 0,
+            # 16 = mapping/edit mode available (constant per catalog)
+            'start_edit_or_assistant_map_flag': 16,
             'timer_task': 0,
             'if_closed_cycle': 0,
+            # 16 = unicom+obstacle scan available (constant per catalog)
+            'if_scan_unicom_obstacle': 16,
         }
 
-    def build_report_state_exception(self) -> Dict[str, Any]:
-        # Per audit (mqtt_node-command-catalog.md), error_status bits map:
-        # bit3 (=8) = LORA_ERROR
+    def build_report_exception_state(self) -> Dict[str, Any]:
+        """Match stock 'report_exception_state' topic exactly.
+
+        Stock keys (per research/documents/mqtt_node-payload-catalog.md):
+          button_stop, chassis_err, no_set_pin_code, rtk, rtk_sat, wifi_rssi
+        """
         bits = self._incident_bits
-        status = 0
-        if bits.get('error_lora'):
-            status |= 8
         return {
-            'robot_error_status': status,
-            'robot_error_msg': bits.get('error_lora_msg', ''),
-            'robot_button_stop': bool(bits.get('button_stop', False)),
-            'robot_collision': bool(bits.get('collision', False)),
-            'robot_overturn': bool(bits.get('overturn', False)),
-            'robot_tilt': bool(bits.get('tilt', False)),
-            'robot_upraise': bool(bits.get('upraise', False)),
-            'robot_wheel_stall': int(bits.get('wheel_stall', 0)),
+            'button_stop': bool(bits.get('button_stop', False)),
+            'chassis_err': int(bits.get('chassis_err', 0)),
+            'no_set_pin_code': bool(bits.get('no_set_pin_code', False)),
+            'rtk': bool(bits.get('rtk', False)),
+            'rtk_sat': int(self._rtk_sat),
+            'wifi_rssi': int(self._wifi_rssi),
         }

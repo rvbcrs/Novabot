@@ -1,0 +1,21 @@
+{
+  "command": "report_exception_state",
+  "stock_payload": {
+    "button_stop": false,
+    "chassis_err": 0,
+    "no_set_pin_code": false,
+    "rtk": true,
+    "rtk_sat": 31,
+    "wifi_rssi": 54
+  },
+  "input_state": {
+    "wifi_rssi": 54,
+    "rtk_sat": 31,
+    "incident": {
+      "button_stop": false,
+      "chassis_err": 0,
+      "no_set_pin_code": false,
+      "rtk": true
+    }
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "command": "report_state_timer_data",
+  "stock_payload": {
+    "battery_capacity": 99,
+    "battery_state": "CHARGING",
+    "cover_path": {
+      "covered": {
+        "covering_area": {
+          "area_id": "0",
+          "points": "0"
+        },
+        "finished_area": "",
+        "missed": "-0.55 -1.53;0.46 -2.35;"
+      },
+      "finished_maps": "1",
+      "map_id": "1"
+    },
+    "if_closed_cycle": 0,
+    "if_mower_can_finish": false,
+    "if_scan_unicom_obstacle": 16,
+    "localization": {
+      "gps_position": {
+        "altitude": 10.2586,
+        "latitude": 52.14088850272,
+        "longitude": 6.23103584366,
+        "state": "ENABLE"
+      },
+      "localization_state": "RUNNING",
+      "map_position": {
+        "orientation": 1.645022005916297,
+        "x": -0.9472338984198632,
+        "y": 0.2601609644737307
+      }
+    },
+    "plan_path": 0,
+    "preview_cover_path": 0,
+    "start_edit_or_assistant_map_flag": 16,
+    "timer_task": 0
+  },
+  "input_state": {
+    "battery_power": 99,
+    "battery_state": "CHARGING",
+    "gps_lat": 52.14088850272,
+    "gps_lng": 6.23103584366,
+    "gps_alt": 10.2586,
+    "gps_state": "ENABLE",
+    "loc_state": "RUNNING",
+    "x": -0.9472338984198632,
+    "y": 0.2601609644737307,
+    "theta": 1.645022005916297
+  }
+}
