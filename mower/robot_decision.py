@@ -438,7 +438,7 @@ class OpenRobotDecision(Node):
         self.service_handlers = ServiceHandlers(self)
 
         # ─── DecisionAssistant (Fase 7: slip escape, loc recovery) ───
-        self.assistant = DecisionAssistant(self)
+        self.assistant = DecisionAssistant(host_node=self)
 
         # ─── Timers ───
         self.status_timer = self.create_timer(0.5, self._publish_status)
@@ -2437,12 +2437,17 @@ def main(args=None):
     # without deadlocking (each runs in its own thread)
     executor = MultiThreadedExecutor(num_threads=4)
     executor.add_node(node)
+    executor.add_node(node.assistant)  # /decision_assistant namespace
 
     def signal_handler(sig, frame):
         node.get_logger().info('Shutting down open robot_decision...')
         # Don't send zero velocity at shutdown — let motors coast freely
         try:
             executor.shutdown(timeout_sec=1.0)
+        except Exception:
+            pass
+        try:
+            node.assistant.destroy_node()
         except Exception:
             pass
         try:
@@ -2466,6 +2471,10 @@ def main(args=None):
         # Don't send zero velocity — let motors coast freely
         try:
             executor.shutdown(timeout_sec=1.0)
+        except Exception:
+            pass
+        try:
+            node.assistant.destroy_node()
         except Exception:
             pass
         try:
