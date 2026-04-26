@@ -554,12 +554,20 @@ export default function MapScreen() {
             try {
               const url = await getServerUrl();
               if (!url || !mower) return;
-              await fetch(`${url}/api/dashboard/maps/${encodeURIComponent(mower.sn)}/${encodeURIComponent(map.mapId)}`, {
-                method: 'DELETE',
-              });
+              const target = `${url}/api/dashboard/maps/${encodeURIComponent(mower.sn)}/${encodeURIComponent(map.mapId)}`;
+              console.log(`[deleteMap] DELETE ${target}`);
+              const res = await fetch(target, { method: 'DELETE' });
+              const bodyText = await res.text().catch(() => '<no body>');
+              console.log(`[deleteMap] HTTP ${res.status} body=${bodyText.slice(0, 200)}`);
+              if (!res.ok) {
+                Alert.alert(t('error'), `Delete failed: HTTP ${res.status}\n${bodyText.slice(0, 200)}`);
+                return;
+              }
               fetchData();
-            } catch {
-              Alert.alert(t('error'), 'Delete failed');
+            } catch (e) {
+              const msg = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+              console.warn('[deleteMap] threw:', msg);
+              Alert.alert(t('error'), `Delete failed: ${msg}`);
             }
           },
         },
