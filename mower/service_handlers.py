@@ -386,23 +386,37 @@ class ServiceHandlers:
             self.log.error('start_assistant_mapping: boundary follow failed to start')
 
     def _handle_start_erase(self, request, response):
-        """Start auto-erase mapping path. Type: std_srvs/SetBool."""
+        """Start auto-erase mapping path. Type: std_srvs/SetBool.
+
+        Closed-binary parity: launches a worker thread that calls
+        cli_erase_map_mode and tracks completion. State transitions to
+        AUTO_ERASE_MAPPING_SUCCESS or AUTO_ERASE_MAPPING_FAILED so mqtt_node
+        sees the finish event."""
         self.log.info(f'SetBool: start_erase, data={request.data}')
+        import threading
+        threading.Thread(target=self._run_erase, daemon=True).start()
+        response.success = True
+        response.message = 'Erase mode started'
+        return response
+
+    def _run_erase(self):
+        """Background thread for erase mapping.
+        Handles the MappingControl service call and state transitions."""
         n = self.node
         n._set_state(TaskMode.MAPPING, WorkStatus.AUTO_ERASE_MAPPING)
-
-        # Control erase mode via dedicated erase service
         req = MappingControlSrv.Request()
         req.map_file_name = n.current_map_name or 'home0'
         req.child_map_file_name = ''
         req.obstacle_file_name = ''
         req.unicom_area_file_name = ''
         req.type = 1  # CLEAR_REBUILD_MAP
-        self._call_service(n.cli_erase_map_mode, req)
-
-        response.success = True
-        response.message = 'Erase mode started'
-        return response
+        result = self._call_service(n.cli_erase_map_mode, req)
+        if result and getattr(result, 'result', False):
+            n._set_state(TaskMode.MAPPING,
+                         WorkStatus.AUTO_ERASE_MAPPING_SUCCESS)
+        else:
+            n._set_state(TaskMode.MAPPING,
+                         WorkStatus.AUTO_ERASE_MAPPING_FAILED)
 
     def _handle_stop_task(self, request, response):
         """Stop or resume current task. Closed binary semantics:
