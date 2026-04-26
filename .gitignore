@@ -23,6 +23,9 @@ research/*
 !research/ros2_msg_definitions/
 !research/*.py
 !research/*.md
+!research/ghidra_output/
+research/ghidra_output/*.rep
+research/ghidra_output/*.gpr
 
 # ── Project-internal files ────────────────────────────
 CLAUDE.md
