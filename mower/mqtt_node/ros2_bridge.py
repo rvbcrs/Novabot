@@ -369,6 +369,228 @@ class Ros2Bridge(Node):
     # path is needed in future, a cli_reset_data client must first be added
     # to __init__ (after confirming the endpoint appears in the live graph).
 
+    # ── Mapping handlers ─────────────────────────────────────────────────
+
+    def handle_start_scan_map(self, payload: dict) -> dict:
+        """Handle MQTT ``start_scan_map`` — begin a new mapping session.
+
+        MQTT JSON shape (catalog RE-5 §start_scan_map, decompile:341434):
+          { "start_scan_map": { "cmd_num": <int>, "model": "<string>",
+                                "mapName": "<string>", "type": <int> } }
+
+        ROS 2 endpoint: /robot_decision/start_mapping  (decision_msgs/srv/StartMap)
+        Schema: research/ros2_msg_definitions/decision_msgs/srv/StartMap.srv
+
+        Field mapping (request):
+          model   → request.model   (string — mapping model name)
+          mapName → request.mapname (string — map file name)
+          type    → request.type    (uint8; 0 = work map, 1 = obstacle map)
+          cmd_num → (dedup guard, NOT forwarded to ROS2)
+
+        Field mapping (response):
+          result  → uint8 (0 = success)
+          data    → informational string
+        """
+        inner = payload if not isinstance(payload.get('start_scan_map'), dict) \
+            else payload['start_scan_map']
+
+        req = StartMap.Request()
+        req.model = str(inner.get('model', ''))       # string
+        req.mapname = str(inner.get('mapName', ''))   # string
+        try:
+            req.type = int(inner.get('type', 0))      # uint8
+        except (TypeError, ValueError):
+            log.warning('handle_start_scan_map: invalid type=%r, using 0',
+                        inner.get('type'))
+            req.type = 0
+
+        resp = self.call_service(self.cli_start_mapping, req)
+        if resp is None:
+            return {'result': 1, 'msg': 'start_mapping timeout or unavailable'}
+        return {'result': 0 if resp.result == 0 else 1,
+                'msg': resp.data or 'start_scan_map_respond'}
+
+    def handle_add_scan_map(self, payload: dict) -> dict:
+        """Handle MQTT ``add_scan_map`` — add an area to an ongoing mapping session.
+
+        MQTT JSON shape (catalog RE-5 §add_scan_map, decompile:340269):
+          { "add_scan_map": { "cmd_num": <int>, "mapName": "<string>",
+                              "type": <int> } }
+
+        ROS 2 endpoint: /robot_decision/add_area  (decision_msgs/srv/StartMap)
+        Schema: research/ros2_msg_definitions/decision_msgs/srv/StartMap.srv
+
+        Field mapping (request):
+          mapName → request.mapname (string)
+          type    → request.type    (uint8; 0 = unicom/work boundary, 1 = obstacle)
+                    Note: obstacle live-capture uses type:1; unicom uses type:0.
+                    See research/documents/novabot-ble-mapping-protocol.md.
+          model   → request.model   (string; not present in add_scan_map MQTT
+                                     payload, left as empty string default)
+          cmd_num → (dedup guard, NOT forwarded to ROS2)
+
+        Field mapping (response):
+          result  → uint8 (0 = success)
+          data    → informational string
+        """
+        inner = payload if not isinstance(payload.get('add_scan_map'), dict) \
+            else payload['add_scan_map']
+
+        req = StartMap.Request()
+        req.mapname = str(inner.get('mapName', ''))   # string
+        req.model = str(inner.get('model', ''))       # string (not in MQTT payload; default '')
+        try:
+            req.type = int(inner.get('type', 0))      # uint8
+        except (TypeError, ValueError):
+            log.warning('handle_add_scan_map: invalid type=%r, using 0',
+                        inner.get('type'))
+            req.type = 0
+
+        resp = self.call_service(self.cli_add_area, req)
+        if resp is None:
+            return {'result': 1, 'msg': 'add_area timeout or unavailable'}
+        return {'result': 0 if resp.result == 0 else 1,
+                'msg': resp.data or 'add_scan_map_respond'}
+
+    def handle_save_map(self, payload: dict) -> dict:
+        """Handle MQTT ``save_map`` — finalise a sub-map or total map.
+
+        Sent TWICE per mapping session:
+          type:0 — sub map (writes csv_file + x3_csv_file)
+          type:1 — total map (generates map.pgm / map.png / map.yaml)
+        See CLAUDE.md "BLE Mapping — save_map type:0 vs type:1" for
+        the exact timing (500ms Flutter delay between them).
+
+        MQTT JSON shape (catalog RE-5 §save_map, decompile:339763):
+          { "save_map": { "cmd_num": <int>, "mapName": "<string>",
+                          "type": <int> } }
+
+        ROS 2 endpoint: /robot_decision/save_map  (decision_msgs/srv/SaveMap)
+        Schema: research/ros2_msg_definitions/decision_msgs/srv/SaveMap.srv
+
+        Field mapping (request):
+          mapName    → request.mapname    (string)
+          type       → request.type       (int64; 0 = sub, 1 = total)
+          resolution → request.resolution (float32; not in MQTT payload,
+                                           ROS2 default used — decompile §save_map
+                                           does not extract resolution from JSON)
+          cmd_num    → (dedup guard, NOT forwarded to ROS2)
+
+        Field mapping (response):
+          result     → uint8 (0 = success)
+          error_code → uint8 (1=overlap other map, 2=overlap unicom, 3=cross multi maps)
+          data       → informational string
+        """
+        inner = payload if not isinstance(payload.get('save_map'), dict) \
+            else payload['save_map']
+
+        req = SaveMap.Request()
+        req.mapname = str(inner.get('mapName', ''))   # string
+        try:
+            req.type = int(inner.get('type', 0))      # int64
+        except (TypeError, ValueError):
+            log.warning('handle_save_map: invalid type=%r, using 0',
+                        inner.get('type'))
+            req.type = 0
+        # resolution: not present in MQTT payload; use ROS2 default (0.0)
+        req.resolution = 0.0                          # float32
+
+        resp = self.call_service(self.cli_save_map, req)
+        if resp is None:
+            return {'result': 1, 'msg': 'save_map timeout or unavailable'}
+        return {'result': 0 if resp.result == 0 else 1,
+                'msg': resp.data or 'save_map_respond',
+                'error_code': int(resp.error_code)}
+
+    def handle_delete_map(self, payload: dict) -> dict:
+        """Handle MQTT ``delete_map`` — delete a named map.
+
+        MQTT JSON shape (catalog RE-5 §delete_map, decompile:345258):
+          { "delete_map": { "mapName": "<string>", "maptype": <uint8> } }
+
+        ROS 2 endpoint: /robot_decision/delete_map  (decision_msgs/srv/DeleteMap)
+        Schema: research/ros2_msg_definitions/decision_msgs/srv/DeleteMap.srv
+
+        Field mapping (request):
+          mapName  → request.mapname  (string)
+          maptype  → request.maptype  (uint8; exact enum values unknown — Ghidra
+                                       deep-dive needed; forwarded verbatim)
+
+        Field mapping (response):
+          result      → uint8 (0 = success)
+          description → string
+        """
+        inner = payload if not isinstance(payload.get('delete_map'), dict) \
+            else payload['delete_map']
+
+        req = DeleteMap.Request()
+        req.mapname = str(inner.get('mapName', ''))   # string
+        try:
+            req.maptype = int(inner.get('maptype', 0))  # uint8
+        except (TypeError, ValueError):
+            log.warning('handle_delete_map: invalid maptype=%r, using 0',
+                        inner.get('maptype'))
+            req.maptype = 0
+
+        resp = self.call_service(self.cli_delete_map, req)
+        if resp is None:
+            return {'result': 1, 'msg': 'delete_map timeout or unavailable'}
+        return {'result': 0 if resp.result == 0 else 1,
+                'msg': resp.description or 'delete_map_respond'}
+
+    def handle_quit_mapping_mode(self, payload: dict) -> dict:
+        """Handle MQTT ``quit_mapping_mode`` — exit mapping mode.
+
+        MQTT JSON shape (catalog RE-5 §quit_mapping_mode, decompile:338506):
+          { "quit_mapping_mode": <any> }
+
+        ROS 2 endpoint: /robot_decision/quit_mapping_mode  (std_srvs/srv/Empty)
+        Schema: research/ros2_msg_definitions/std_srvs/srv/Empty.srv
+
+        Empty.Request has no fields — just call the service.
+        Empty.Response has no fields either; success is inferred from the call
+        completing without timeout.
+        """
+        req = Empty.Request()
+        # No request or response fields on Empty (schema: only --- separator)
+
+        resp = self.call_service(self.cli_quit_mapping, req)
+        if resp is None:
+            return {'result': 1, 'msg': 'quit_mapping_mode timeout or unavailable'}
+        # Empty response has no success flag — treat any non-None response as success
+        return {'result': 0, 'msg': 'quit_mapping_mode_respond'}
+
+    def handle_start_assistant_build_map(self, payload: dict) -> dict:
+        """Handle MQTT ``start_assistant_build_map`` — start autonomous mapping.
+
+        MQTT JSON shape (catalog RE-5 §start_assistant_build_map, decompile:342434):
+          { "start_assistant_build_map": { "cmd_num": <int>, "value": <bool> } }
+
+        ROS 2 endpoint: /robot_decision/start_assistant_mapping  (std_srvs/srv/SetBool)
+        Schema: research/ros2_msg_definitions/std_srvs/srv/SetBool.srv
+
+        Field mapping (request):
+          value   → request.data  (bool; True = start, False = stop autonomous mapping)
+          cmd_num → (dedup guard, NOT forwarded to ROS2)
+
+        Field mapping (response):
+          success → bool
+          message → string
+        """
+        inner = payload if not isinstance(
+            payload.get('start_assistant_build_map'), dict) \
+            else payload['start_assistant_build_map']
+
+        req = SetBool.Request()
+        req.data = bool(inner.get('value', True))     # bool
+
+        resp = self.call_service(self.cli_start_assistant_mapping, req)
+        if resp is None:
+            return {'result': 1,
+                    'msg': 'start_assistant_mapping timeout or unavailable'}
+        return {'result': 0 if resp.success else 1,
+                'msg': resp.message or 'start_assistant_build_map_respond'}
+
     # ── Generic helpers ────────────────────────────────────────────────
     def call_service(self, client, request, timeout: float = 5.0):
         """Synchronous service call. Returns response or None on timeout.
