@@ -338,14 +338,16 @@ class OpenRobotDecision(Node):
             ClearCostmapAroundRobot,
             '/global_costmap/clear_around_global_costmap',
             callback_group=self.client_cb_group)
+        # TODO(open_decision): closed binary uses /nav2_single_node_navigator/free_move_around
+        #   for the boot drive-back sequence (undock/heading discovery). No call sites yet;
+        #   wire when implementing the drive-back boot phase.
         self.cli_free_move_around = self.create_client(
             FreeMoveAround,
             '/nav2_single_node_navigator/free_move_around',
             callback_group=self.client_cb_group)
-        self.cli_covered_path_json = self.create_client(
-            SetBool,
-            '/coverage_planner_server/covered_path_json',
-            callback_group=self.client_cb_group)
+        # cli_covered_path_json REMOVED: relay is already wired via topic subscription
+        #   (create_subscription '/coverage_planner_server/covered_path_json' → _on_covered_path
+        #    → covered_path_pub). Service client had zero call sites.
         self.cli_maybe_stuck = self.create_client(
             SetBool,
             '/nav2_single_node_navigator/robot_maybe_stuck',
@@ -358,9 +360,17 @@ class OpenRobotDecision(Node):
         self.cli_preposition_camera = self.create_client(
             SetBool, '/camera/preposition/start_camera',
             callback_group=self.client_cb_group)
+        # TODO(open_decision): save_camera_image() wraps this client but has zero call sites.
+        #   Closed binary calls /camera/preposition/save_camera during obstacle detection and
+        #   after mowing sessions. Wire when implementing image-save triggers.
         self.cli_preposition_save = self.create_client(
             SaveFileSrv, '/camera/preposition/save_camera',
             callback_group=self.client_cb_group)
+        # TODO(open_decision): report_camera_hw_exception() wraps this client but has zero
+        #   call sites. Note: receiving hw_exception is wired via topic subscription
+        #   (_on_camera_hw_exception). This client is the *sending* direction — used by closed
+        #   binary to notify the camera node of an error state. Wire when implementing
+        #   camera error reporting.
         self.cli_preposition_hw_exception = self.create_client(
             SetBool, '/camera/preposition/hardware_exception',
             callback_group=self.client_cb_group)
@@ -372,6 +382,9 @@ class OpenRobotDecision(Node):
             callback_group=self.client_cb_group)
 
         # ─── Perception service CLIENTS (v10) ───
+        # TODO(open_decision): save_pcd_image() wraps this client but has zero call sites.
+        #   Closed binary calls /perception/save_pcd_img to save point-cloud + RGB frames
+        #   during obstacle events. Wire when implementing PCD save triggers.
         self.cli_save_pcd_img = self.create_client(
             SaveFileSrv, '/perception/save_pcd_img',
             callback_group=self.client_cb_group)
@@ -403,6 +416,10 @@ class OpenRobotDecision(Node):
         # ─── Chassis extended PUBLISHERS (v10) ───
         self.led_buzzer_pub = self.create_publisher(
             UInt8, '/chassis_node/led_buzzer_switch_set', RELIABLE_QOS)
+        # TODO(open_decision): set_led_level() wraps this client but has zero call sites.
+        #   Note: *reading* LED level is wired via topic subscription (_on_led_level).
+        #   This client is the *setting* direction — used by closed binary to set brightness
+        #   (e.g. LED=255 for night docking). Wire when implementing LED brightness control.
         self.cli_led_level = self.create_client(
             SetUint8Srv, '/chassis_node/led_level',
             callback_group=self.client_cb_group)
@@ -517,20 +534,33 @@ class OpenRobotDecision(Node):
         self.declare_parameter('coverage_times', 1)
         self.declare_parameter('gazebo_debug_mode', False)
         self.declare_parameter('low_battery_power', 20)
+        # TODO(open_decision): full_battery_power — declared but never read. Closed binary
+        #   uses this as the upper hysteresis threshold to stop charging. Wire when
+        #   implementing charging hysteresis logic.
         self.declare_parameter('full_battery_power', 96)
         self.declare_parameter('charge_back_percentage', 1)
         self.declare_parameter('enable_loc_recover', True)
+        # TODO(open_decision): enable_slipping_recover — declared but never read. Closed
+        #   binary gates the slip-recovery flow on this flag. Wire in on_motor_current /
+        #   slip-escalation path.
         self.declare_parameter('enable_slipping_recover', True)
         self.declare_parameter('load_map_path', '/userdata/lfi/maps/home0')
+        # TODO(open_decision): empty_map_path — declared but never read. Closed binary uses
+        #   this path to locate the template empty-map directory when generating a new map.
         self.declare_parameter('empty_map_path', '/userdata/lfi/maps/')
         self.declare_parameter('save_utm_path', '/userdata/pos.json')
         self.declare_parameter('enable_loc_unstable_handle', False)
         self.declare_parameter('quit_pile_distance', 2.0)
+        # TODO(open_decision): follow_path_id — declared but never read. Closed binary passes
+        #   this to nav2 to select the path-follower plugin (e.g. PurePursuitReverseFollow).
         self.declare_parameter('follow_path_id',
                                'FollowPathPurePursuitReverseFollow')
         self.declare_parameter('loc_mapping_confidence', 69)
         self.declare_parameter('loc_cover_confidence', 40)
         self.declare_parameter('loc_recover_confidence', 89)
+        # TODO(open_decision): default_perception_level — declared but never read. Closed
+        #   binary initialises perception_level from this param at startup. Wire when
+        #   implementing perception-level initialisation.
         self.declare_parameter('default_perception_level', 1)
         self.declare_parameter('min_perception_level', 0)
         self.declare_parameter('detect_out_of_boundary', True)
@@ -538,11 +568,16 @@ class OpenRobotDecision(Node):
         self.declare_parameter('image_darkness_thresh', 60.0)
         self.declare_parameter('image_darkness_thresh_lower', 5.0)
         self.declare_parameter('enable_save_image', True)
+        # TODO(open_decision): max_save_image_count — declared but never read. Closed binary
+        #   caps the number of saved images per session using this value. Wire when
+        #   implementing save_camera_image / save_pcd_image call sites.
         self.declare_parameter('max_save_image_count', 80)
         self.declare_parameter('enable_led_light', True)
         self.declare_parameter('check_camera_clean', True)
         self.declare_parameter('enable_rtk_init_check', True)
         self.declare_parameter('enable_low_power_mode', True)
+        # TODO(open_decision): enable_led_feedback_check — declared but never read. Closed
+        #   binary uses this to gate a LED-state validation loop after setting brightness.
         self.declare_parameter('enable_led_feedback_check', False)
         self.declare_parameter('check_process', [
             '/nav2_single_node_navigator',
@@ -554,6 +589,9 @@ class OpenRobotDecision(Node):
         ])
         self.declare_parameter('planned_path_file',
                                '/userdata/lfi/maps/home0/planned_path')
+        # TODO(open_decision): covering_path_file — declared but never read. Closed binary
+        #   writes the accumulated covered-path JSON to this path for persistence across
+        #   sessions. Wire when implementing covered-path file persistence.
         self.declare_parameter('covering_path_file',
                                '/userdata/lfi/maps/home0/covered_path')
         self.declare_parameter('boundary_offset', 0.35)
@@ -1533,6 +1571,8 @@ class OpenRobotDecision(Node):
         self.call_service_async(
             self.cli_tof_camera, req, 'tof_camera(stop)')
 
+    # TODO(open_decision): save_camera_image — zero call sites. Closed binary calls this
+    #   during obstacle events and after session end (paired with max_save_image_count).
     def save_camera_image(self, filename=''):
         """Save current camera image via preposition camera."""
         if not self.get_parameter('enable_save_image').value:
@@ -1542,6 +1582,8 @@ class OpenRobotDecision(Node):
         self.call_service_async(
             self.cli_preposition_save, req, 'preposition_save')
 
+    # TODO(open_decision): save_pcd_image — zero call sites. Closed binary calls this
+    #   alongside save_camera_image to capture ToF point cloud + RGB on obstacle events.
     def save_pcd_image(self, filename=''):
         """Save point cloud + image data."""
         if not self.get_parameter('save_tof_rgb').value:
@@ -1551,6 +1593,9 @@ class OpenRobotDecision(Node):
         self.call_service_async(
             self.cli_save_pcd_img, req, 'save_pcd_img')
 
+    # TODO(open_decision): report_camera_hw_exception — zero call sites. Closed binary
+    #   calls this to notify the camera node when a hardware fault is detected
+    #   (distinct from _on_camera_hw_exception which *receives* such notifications).
     def report_camera_hw_exception(self, has_exception):
         """Report camera hardware exception to camera node."""
         req = SetBool.Request()
@@ -1768,6 +1813,10 @@ class OpenRobotDecision(Node):
         led_buzzer_msg.data = value
         self.led_buzzer_pub.publish(led_buzzer_msg)
 
+    # TODO(open_decision): set_led_level — zero call sites. Closed binary calls this to set
+    #   LED brightness (e.g. 255 for night docking). Note: _on_led_level *reads* the current
+    #   LED level via topic; this method *sets* it via service. Wire when implementing
+    #   LED brightness control during docking/task transitions.
     def set_led_level(self, level):
         """Set LED brightness level."""
         req = SetUint8Srv.Request()
