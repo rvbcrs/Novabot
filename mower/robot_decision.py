@@ -400,10 +400,9 @@ class OpenRobotDecision(Node):
             '/auto_recharge_server/set_parameters',
             callback_group=self.client_cb_group)
 
-        # ─── Chassis extended CLIENTS (v10) ───
-        self.cli_led_buzzer = self.create_client(
-            SetUint8Srv, '/chassis_node/led_buzzer_switch_set',
-            callback_group=self.client_cb_group)
+        # ─── Chassis extended PUBLISHERS (v10) ───
+        self.led_buzzer_pub = self.create_publisher(
+            UInt8, '/chassis_node/led_buzzer_switch_set', RELIABLE_QOS)
         self.cli_led_level = self.create_client(
             SetUint8Srv, '/chassis_node/led_level',
             callback_group=self.client_cb_group)
@@ -1765,11 +1764,9 @@ class OpenRobotDecision(Node):
     def set_led_buzzer(self, value):
         """Set LED/buzzer via chassis node.
         Bit field: bit0=LED, bit1=buzzer, etc."""
-        req = SetUint8Srv.Request()
-        req.value = value
-        self.call_service_async(
-            self.cli_led_buzzer, req,
-            f'led_buzzer({value})')
+        led_buzzer_msg = UInt8()
+        led_buzzer_msg.data = value
+        self.led_buzzer_pub.publish(led_buzzer_msg)
 
     def set_led_level(self, level):
         """Set LED brightness level."""
