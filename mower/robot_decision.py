@@ -38,6 +38,7 @@ from rclpy.action import ActionClient
 from builtin_interfaces.msg import Time as TimeMsg
 
 from decision_msgs.msg import RobotStatus, CovTaskResult
+from decision_msgs.action import SlipEscaping, LocRecoverMoving
 from novabot_msgs.msg import (
     ChassisBatteryMessage,
     ChassisIncident,
@@ -414,6 +415,18 @@ class OpenRobotDecision(Node):
         self._nav_goal_handle = None
         self._charging_goal_handle = None
         self._charger_pose_stamped = None
+
+        # ─── DecisionAssistant ACTION CLIENTS (Phase 1: auto-escalation) ───
+        self.slip_escape_client = ActionClient(
+            self, SlipEscaping,
+            '/decision_assistant/slipping_escape',
+            callback_group=self.client_cb_group)
+        self.loc_recover_client = ActionClient(
+            self, LocRecoverMoving,
+            '/decision_assistant/loc_recover_moving',
+            callback_group=self.client_cb_group)
+        self._slip_goal_handle = None
+        self._loc_recover_goal_handle = None
 
         # ─── ArUco localization (heading discovery) ───
         self.cli_enable_aruco = self.create_client(
