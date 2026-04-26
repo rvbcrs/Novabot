@@ -1,0 +1,6 @@
+# verified 2026-04-26 (live SSH from 192.168.0.100)
+int64 control_mode
+string map_file_name
+---
+bool result
+string message

@@ -1,0 +1,9 @@
+# verified 2026-04-26 (live SSH from 192.168.0.100)
+#goal definition
+builtin_interfaces/Duration time
+---
+#result definition
+builtin_interfaces/Duration total_elapsed_time
+---
+#feedback
+builtin_interfaces/Duration time_left

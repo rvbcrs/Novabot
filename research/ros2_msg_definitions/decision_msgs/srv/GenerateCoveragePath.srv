@@ -1,0 +1,6 @@
+# verified 2026-04-26 (live SSH from 192.168.0.100)
+uint32 map_ids #割草地图_id，当map_id大于0时优先使用这个， 兼容旧的格式接口
+bool specify_direction
+uint8 cov_direction  # 规划主方向0-180
+---
+bool result

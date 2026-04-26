@@ -20,6 +20,7 @@ NOVABOT_*.*apk
 # ── Research (entire directory — development only) ───
 research/*
 !research/documents/
+!research/ros2_msg_definitions/
 !research/*.py
 !research/*.md
 

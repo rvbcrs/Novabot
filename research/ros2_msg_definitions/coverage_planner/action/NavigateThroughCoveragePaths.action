@@ -1,0 +1,75 @@
+# verified 2026-04-26 (live SSH from 192.168.0.100)
+# 1 - goal definition
+
+uint8 COVERAGE_BY_FILE=0
+uint8 COVERAGE_BY_MAP=1
+uint8 COVERAGE_BY_COSTMAP=2
+uint8 COVERAGE_TEST=3  # 手动设置弓字行
+uint8 COVERAGE_LINE_TEST=4 # 直线往复测试
+uint8 COVERAGE_SQUARE_TEST=5 # 方形往复测试
+uint8 COVERAGE_VISION=6 # 视觉DEMO
+string map_yaml
+uint8 coverage_type
+bool reset_coverage_map
+bool return_to_start
+bool ignore_start_for_planning # if ignore, using zero for start point
+bool disable_recover # whether to disable recover for missing cutting area
+bool enable_tf_action_abort_as_stop  #if true, when your localization or action has problem, task will stop instead of abort
+bool include_edge # for edge/boundary cutting
+bool mixed_edge # whether using semantic costmap with global costmap for edge/boundary follow
+bool setting_blade_height # if true, planner will setting blade height by topic
+uint8 blade_height # target blade height
+uint8 grass_height # current grass height, used to  determine blade height if you setting auto_repeat_num
+bool auto_repeat_num # auto setting blade height, if setting_blade_height as True，repeat_num with be replaced
+int32 target_repeat_times #target repeat number
+bool debug_mode # debug mode will pub coverage path and some other data with high frequency
+uint8 adaptive_mode # move speed when mowing , 0 constant mode, 1 reciprocal mode, 2 difference mode
+bool specify_direction # whether to specify direction
+uint8 cov_direction # specified cov direction
+bool only_edge_mode #  with only edge mode
+bool enable_check_walkable #  whether enable to check path is workable with costmap
+bool back_avoid_mode #
+# test param
+float32 test_long_length      # 长边长度
+float32 test_short_length      # 短边长度
+---
+#2 - result definition
+uint8 TF_RELATED_EXCEPTION=1
+uint8 INPUT_RELATED_EXCEPTION=2
+uint8 CANCELED=3
+uint8 NO_FIXED_RTK_FOR_START=4
+uint8 CURRENT_STUCK_OR_OUT_MAP=5
+uint8 NAV_TO_POSE_ACTION_EXCEPTION=6
+uint8 NO_PATH_TO_GOAL=7
+uint8 PARTIALLY_FINISHED=90
+uint8 FINISHED=100
+uint8 result_status
+string msg
+float32 total_covered_area #当前覆盖总面积
+float32 task_planned_area # 当前规划总面积
+float32 task_covered_area  # 此次任务覆盖面积
+float32 covered_ratio  # 覆盖率
+int32 obstacle_avoid_count # 未知障碍物避障次数
+float32 navigation_time  # 总共耗时
+float32 total_missed_area  # missed covering area
+float32 recovered_missed_area  #recovered missed covering  area
+---
+#3 - feedback definition
+uint8 STOP=0
+uint8 EXCEPTION_STOP=1
+uint8 RECOVERABLE_STUCK_STOP=2
+uint8 COVERING=100
+uint8 AVOIDING=120
+uint8 BOUNDARY_COVERING=150
+uint8 RECOVERING=200
+uint8 MOVING=250
+uint8 work_status
+
+float32 total_covered_area #当前覆盖总面积
+float32 task_planned_area # 当前规划总面积
+float32 task_covered_area  # 此次任务覆盖面积
+float32 covered_ratio  # 覆盖率
+float32 estimate_remaining_time # 估计剩余覆盖时间(以秒估计)
+int32 obstacle_avoid_count # 未知障碍物避障次数
+float32 navigation_time  # 总共耗时
+int32 finished_times # finished times for current task

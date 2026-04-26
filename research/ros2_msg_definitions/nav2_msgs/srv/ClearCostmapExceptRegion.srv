@@ -1,0 +1,6 @@
+# verified 2026-04-26 (live SSH from 192.168.0.100)
+# Clears the costmap except a rectangular region specified by reset_distance
+
+float32 reset_distance
+---
+std_msgs/Empty response

@@ -1,0 +1,8 @@
+# verified 2026-04-26 (live SSH from 192.168.0.100)
+
+# DeleteMap srv
+uint8 maptype
+string mapname
+---
+uint8 result
+string description

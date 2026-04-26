@@ -1,0 +1,5 @@
+# verified 2026-04-26 (live SSH from 192.168.0.100)
+uint32 value # e.g. for level or value for some service setting
+---
+bool success   # indicate successful run of set uint32 service
+string message # informational, e.g. for error messages

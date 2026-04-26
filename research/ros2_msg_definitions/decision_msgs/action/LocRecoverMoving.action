@@ -1,0 +1,11 @@
+# verified 2026-04-26 (live SSH from 192.168.0.100)
+# 1 - goal definition
+float32 max_time
+uint8 recover_type # 0 is loc bad recover behavior, 1 is robot out map recover
+---
+#2 - result definition
+uint8 SUCCESS=0
+uint8 FAILED=1
+uint8 result
+---
+#3 - feedback definition

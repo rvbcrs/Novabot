@@ -1,0 +1,13 @@
+# verified 2026-04-26 (live SSH from 192.168.0.100)
+# Get the coverage_path
+
+geometry_msgs/Pose start_pose
+nav_msgs/OccupancyGrid obstacle_grid
+nav_msgs/OccupancyGrid coverage_grid
+---
+# Result code defintions
+uint8 RESULT_SUCCESS=0
+uint8 RESULT_FAILURE=255
+
+nav_msgs/Path[] coverage_paths
+uint8 result

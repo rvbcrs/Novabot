@@ -1,0 +1,5 @@
+# verified 2026-04-26 (live SSH from 192.168.0.100)
+string utm_info_path  # utm origin info for load
+---
+string msg
+bool result # true is ok, false is not ok

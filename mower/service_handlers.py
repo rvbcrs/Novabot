@@ -781,38 +781,32 @@ class ServiceHandlers:
         map_yaml = f'{load_map_path}/map.yaml'
 
         req = CoveragePathsByFile.Request()
-        req.map_yaml_file = map_yaml
-        # start_pose: leave as zero Pose — preview just generates the path
-        # for the requested map. Direction control is via the action goal,
-        # not the srv (the srv only returns paths).
+        # Live firmware field is `map_yaml` (NOT `map_yaml_file` — verified
+        # 2026-04-26 from /root/novabot/install coverage_planner srv).
+        req.map_yaml = map_yaml
+        # Direction control is via the action goal, not the srv.
 
         result = self._call_service(
             n.cli_coverage_by_file, req, timeout=10.0)
-        if result and getattr(result, 'result',
-                              CoveragePathsByFile.Response.RESULT_FAILURE
-                              ) == CoveragePathsByFile.Response.RESULT_SUCCESS:
-            # Serialize coverage_paths to JSON for the preview publisher.
-            # mqtt_node + dashboard expect: {paths: [{points: [{x,y}, ...]}, ...]}
-            import json as _json
-            paths_payload = []
-            for p in result.coverage_paths:
-                pts = [
-                    {'x': float(ps.pose.position.x),
-                     'y': float(ps.pose.position.y)}
-                    for ps in p.poses
-                ]
-                paths_payload.append({'points': pts})
+        # Live CoveragePathsByFile.srv response (verified 2026-04-26):
+        #   bool success, string msg, string path_json, float32 planned_area
+        # (the old coverage_paths: nav_msgs/Path[] form no longer exists)
+        if result and getattr(result, 'success', False):
+            # path_json is already a JSON string containing coverage paths.
+            # Publish it directly for the preview publisher.
             from std_msgs.msg import String
             path_msg = String()
-            path_msg.data = _json.dumps({'paths': paths_payload})
+            path_json = getattr(result, 'path_json', '{"paths":[]}')
+            path_msg.data = path_json
             n.preview_path_pub.publish(path_msg)
             self.log.info(
-                f'GenerateCoveragePath: success, {len(paths_payload)} paths')
+                f'GenerateCoveragePath: success, '
+                f'planned_area={getattr(result, "planned_area", "?")}m²')
             response.result = True
         else:
             self.log.warn(
                 f'GenerateCoveragePath: failed '
-                f'(result={getattr(result, "result", None)})')
+                f'(msg={getattr(result, "msg", None)})')
             response.result = False
         return response
 

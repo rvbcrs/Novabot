@@ -1,0 +1,8 @@
+# verified 2026-04-26 (live SSH from 192.168.0.100)
+uint8 LAWN_COVER=0
+uint8 FREE_MOVE=1
+uint8 BOUNDARY_FOLLOW=2
+uint8 IGNORE_SEMANTIC=3
+uint8 semantic_mode
+---
+bool result

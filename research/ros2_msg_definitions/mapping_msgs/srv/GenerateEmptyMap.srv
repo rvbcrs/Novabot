@@ -1,0 +1,8 @@
+# verified 2026-04-26 (live SSH from 192.168.0.100)
+string map_path
+float32 resolution
+float32 width
+float32 height
+---
+bool result
+string empty_map_directory

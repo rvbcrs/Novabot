@@ -1387,15 +1387,15 @@ class OpenRobotDecision(Node):
             self.get_parameter('coverage_times').value)
         goal.debug_mode = False
         goal.adaptive_mode = 0  # constant mode
-        # cov_direction_change is a BOOL 90° flip (not a numeric angle).
-        # `cov_direction` (numeric) was the closed binary's pre-action
-        # behaviour; the live action only supports the bool flip, so any
-        # non-zero direction triggers a 90° rotation of the default sweep.
-        # cov_mode angles are coarse-mapped to the 90° flip flag.
-        goal.cov_direction_change = bool(cov_direction != 0)
+        # Live action fields (verified 2026-04-26): specify_direction (bool) +
+        # cov_direction (uint8 angle 0-180).
+        # `cov_direction_change` (bool 90° flip) was REMOVED from the live firmware;
+        # the current interface uses explicit angle + enable flag instead.
+        goal.specify_direction = bool(cov_direction != 0)
+        goal.cov_direction = int(cov_direction) & 0xFF  # uint8
         # Test-mode lengths stay at default (0.0).
         # Fields that do NOT exist on this action (do not set):
-        #   only_edge_mode, polygon_area, specify_direction, cov_direction (numeric)
+        #   only_edge_mode, polygon_area, cov_direction_change
 
         self._cov_start_time = time.monotonic()
 
@@ -1670,7 +1670,8 @@ class OpenRobotDecision(Node):
             # status LED stays alive).
             try:
                 req = SetUint8Srv.Request()
-                req.data = 255 if self._camera_is_dark else 1
+                # SetUint8.srv field is `value`, not `data` (verified 2026-04-26)
+                req.value = 255 if self._camera_is_dark else 1
                 if self.cli_led_level.service_is_ready():
                     self.cli_led_level.call_async(req)
                 else:
