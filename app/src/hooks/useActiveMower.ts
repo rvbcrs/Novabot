@@ -12,7 +12,7 @@
  *     so the picker UI does not reshuffle on unrelated socket updates).
  *   - `setActiveMowerSn(sn)` writes through to SecureStore.
  */
-import { useEffect, useMemo, useRef } from 'react';
+import { useMemo } from 'react';
 import { useMowerState } from './useMowerState';
 import { useActiveMowerContext } from '../context/ActiveMowerContext';
 import type { DeviceState } from '../types';
@@ -45,26 +45,14 @@ export function useActiveMower(): UseActiveMowerResult {
     return mowers[0] ?? null;
   }, [devices, activeMowerSn, mowers]);
 
-  // Auto-switch: als de actieve mower offline is én er een andere mower
-  // online is, promoot de online mower tot actief. Voorkomt dat een user
-  // met twee pairs vastzit op een offline pair terwijl het andere pair
-  // wel bereikbaar is (zowel OpenNova als Novabot app profiteren, de
-  // Novabot app filtert userEquipmentList op is_active serverside).
-  // De autoSwitchedRef voorkomt dat dit direct terugklapt wanneer de
-  // offline mower even online terug flapt — één keer per offline-episode.
-  const autoSwitchedRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (!hydrated || mowers.length < 2) return;
-    if (!activeMower || activeMower.online) {
-      autoSwitchedRef.current = null;
-      return;
-    }
-    if (autoSwitchedRef.current === activeMower.sn) return;
-    const onlineAlternative = mowers.find((m) => m.online && m.sn !== activeMower.sn);
-    if (!onlineAlternative) return;
-    autoSwitchedRef.current = activeMower.sn;
-    setActiveMowerSn(onlineAlternative.sn);
-  }, [hydrated, activeMower, mowers, setActiveMowerSn]);
+  // NOTE: auto-switch was REMOVED on 2026-04-26 (user explicitly asked for
+  // manual-only switching). The previous behaviour silently promoted an
+  // online mower whenever the active one went briefly offline, which leaked
+  // the OTHER mower's maps/trail/cover-path data into the active mower's
+  // screens (observed: deleted-and-restarted mapping on .211 showed .238's
+  // 2336-pt work polygon as a ghost overlay because the app had auto-flipped
+  // SN during a network blip). Users with multiple mowers must now switch
+  // manually via the device picker.
 
   return {
     activeMower,
