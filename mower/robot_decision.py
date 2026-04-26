@@ -259,11 +259,11 @@ class OpenRobotDecision(Node):
         self.create_subscription(
             String, '/coverage_planner_server/covered_path_json',
             self._on_covered_path, RELIABLE_QOS)
+        self.create_subscription(
+            Bool, '/chassis_node/init_ok',
+            self._on_init_ok, RELIABLE_QOS)
 
         # ─── Service CLIENTS (boot) ───
-        self.cli_init_ok = self.create_client(
-            EmptySrv, '/chassis_node/init_ok',
-            callback_group=self.client_cb_group)
         self.cli_load_utm = self.create_client(
             LoadUtmOriginInfo, 'load_utm_origin_info',
             callback_group=self.client_cb_group)
@@ -481,7 +481,7 @@ class OpenRobotDecision(Node):
 
         self.boot_checks_done = False
         self.boot_phase = 'SYSTEM_CHECK_INIT'
-        self._boot_init_ok_future = None
+        self._boot_init_ok_received = False
         self._boot_load_utm_future = None
         self._boot_loc_warned = False
         self.undock_timer = self.create_timer(0.1, self._undock_tick)
@@ -560,22 +560,12 @@ class OpenRobotDecision(Node):
 
         elif self.boot_phase == 'SENSOR_INIT':
             self._set_state(TaskMode.FREE, WorkStatus.SENSOR_INIT)
-            if self._boot_init_ok_future is None:
-                if self.cli_init_ok.wait_for_service(timeout_sec=0.0):
-                    req = EmptySrv.Request()
-                    self._boot_init_ok_future = self.cli_init_ok.call_async(req)
-                    self.get_logger().info(
-                        'Boot: SENSOR_INIT — calling /chassis_node/init_ok')
-                elif elapsed > 10.0:
-                    self.get_logger().warn(
-                        'Boot: /chassis_node/init_ok not available, skipping')
-                    self.boot_phase = 'INIT_MOWER'
-            elif self._boot_init_ok_future.done():
-                try:
-                    self._boot_init_ok_future.result()
-                    self.get_logger().info('Boot: SENSOR_INIT — chassis init OK')
-                except Exception as e:
-                    self.get_logger().warn(f'Boot: init_ok failed: {e}')
+            if self._boot_init_ok_received:
+                self.get_logger().info('Boot: SENSOR_INIT — chassis init OK')
+                self.boot_phase = 'INIT_MOWER'
+            elif elapsed > 10.0:
+                self.get_logger().warn(
+                    'Boot: /chassis_node/init_ok not received within 10s, skipping')
                 self.boot_phase = 'INIT_MOWER'
 
         elif self.boot_phase == 'INIT_MOWER':
@@ -2342,6 +2332,13 @@ class OpenRobotDecision(Node):
         self.get_logger().warn(
             'Robot out of working zone — sending LocRecoverMoving goal')
         self._send_loc_recover_goal(recover_type=1)
+
+    def _on_init_ok(self, msg: Bool):
+        """Chassis node publishes /chassis_node/init_ok Bool topic on boot.
+        Used during SENSOR_INIT phase to confirm hardware is ready.
+        Latch the flag so boot can proceed."""
+        if msg.data:
+            self._boot_init_ok_received = True
 
     def _send_slip_goal(self, max_escape_time: float = 10.0):
         """Send SlipEscaping goal to /decision_assistant/slipping_escape.
