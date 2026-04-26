@@ -113,15 +113,27 @@ export function scanForDevices(
   durationMs: number,
   onDevice: (dev: ScannedDevice) => void,
   onDone: () => void,
+  /**
+   * Optional MAC filter. When set, only devices whose `device.id` matches
+   * (case-insensitive, colons stripped) are emitted. On Android `device.id`
+   * IS the MAC — filter works. On iOS `device.id` is an anonymous per-app
+   * UUID — the filter never matches and is therefore ignored (caller must
+   * handle iOS multi-mower disambiguation in another way, e.g. picker UI).
+   */
+  filterMac?: string | null,
 ): () => void {
   const mgr = getBleManager();
   const seen = new Set<string>();
   let cancelled = false;
   let scanTimer: ReturnType<typeof setTimeout> | null = null;
+  const wantMac = filterMac ? filterMac.replace(/:/g, '').toLowerCase() : null;
+  // iOS hides MAC; the filter is a no-op there. Skip the filter entirely so
+  // we don't accidentally drop every device.
+  const filterActive = wantMac && Platform.OS === 'android';
 
   const doScan = () => {
     if (cancelled) return;
-    bleLog(`[BLE] Starting scan (${durationMs}ms)...`);
+    bleLog(`[BLE] Starting scan (${durationMs}ms)${filterActive ? ` filterMac=${wantMac}` : ''}...`);
 
     mgr.startDeviceScan(null, { allowDuplicates: false }, (error, device) => {
       if (error) { bleLog(`[BLE] Scan error: ${error.message}`); return; }
@@ -138,6 +150,17 @@ export function scanForDevices(
       let type: DeviceType | 'unknown' = 'unknown';
       if (nameUpper === 'CHARGER_PILE' || device.name?.startsWith('LFIC')) type = 'charger';
       if (nameUpper === 'NOVABOT' || device.name?.startsWith('LFIN')) type = 'mower';
+
+      // Android-only MAC filter — if the active mower's MAC is known and
+      // doesn't match this advertisement, suppress the result so the
+      // wrong mower can't be auto-picked when 2+ are within range.
+      if (filterActive && type === 'mower') {
+        const idNormalized = device.id.replace(/:/g, '').toLowerCase();
+        if (idNormalized !== wantMac) {
+          bleLog(`[BLE] Skipping mower ${device.id} — does not match active MAC ${wantMac}`);
+          return;
+        }
+      }
 
       onDevice({ id: device.id, name: device.name, rssi: device.rssi ?? -100, type });
     });

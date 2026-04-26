@@ -475,33 +475,78 @@ export default function MappingScreen() {
   }, []);
 
   // ── BLE joystick: connect to mower ──
+  // CRITICAL: must connect to the ACTIVE mower's BLE radio specifically.
+  // Without filtering, scanForDevices picks the first "Novabot" advertisement
+  // it sees — when 2+ mowers are within range that can be the WRONG mower
+  // and the joystick will physically drive the wrong robot (observed on
+  // 2026-04-26: user selected .211 in app, joystick drove .238 backwards).
+  // Filter is MAC-based on Android; on iOS the OS only exposes anonymous
+  // per-app UUIDs so we collect ALL nearby mower advertisements and refuse
+  // to auto-connect when more than one is found, surfacing an explicit
+  // picker / warning to the user instead.
+  const targetMac = (mower?.macAddress ?? '').trim() || null;
   const connectBleJoystick = useCallback(async () => {
     if (bleConnected || bleConnecting) return;
     setBleConnecting(true);
 
-    // Scan for mower BLE device
-    let mowerDeviceId: string | null = null;
+    const isIos = Platform.OS === 'ios';
+    // Collect ALL mower advertisements during the full scan window. We need
+    // to know whether 2+ mowers are nearby to decide whether to abort.
+    const candidates: ScannedDevice[] = [];
     await new Promise<void>((resolve) => {
-      const cancel = scanForDevices(8000, (dev: ScannedDevice) => {
-        if (dev.type === 'mower') {
-          mowerDeviceId = dev.id;
-          cancel();
-          resolve();
-        }
-      }, () => resolve());
+      const cancel = scanForDevices(
+        6000,
+        (dev: ScannedDevice) => {
+          if (dev.type !== 'mower') return;
+          candidates.push(dev);
+          // Android with MAC filter: scanForDevices already dropped non-matches,
+          // so the first emit IS the active mower — short-circuit immediately.
+          if (!isIos && targetMac) {
+            cancel();
+            resolve();
+          }
+        },
+        () => resolve(),
+        // Pass the active mower's MAC to scanForDevices (Android-only effect).
+        targetMac,
+      );
     });
 
-    if (!mowerDeviceId) {
-      Alert.alert('BLE', 'Mower not found via BLE. Make sure Bluetooth is enabled and mower is nearby.');
+    if (candidates.length === 0) {
+      Alert.alert(
+        'BLE',
+        targetMac
+          ? `Active mower (${mower?.sn ?? '?'}) not found via BLE. Make sure Bluetooth is enabled and the correct mower is nearby. ` +
+            `Searched MAC: ${targetMac}.`
+          : 'Mower not found via BLE. Make sure Bluetooth is enabled and mower is nearby.',
+      );
       setBleConnecting(false);
       return;
     }
 
-    const ok = await bleJoystickConnect(mowerDeviceId);
+    let chosen: ScannedDevice;
+    if (candidates.length === 1) {
+      chosen = candidates[0];
+    } else if (isIos && targetMac) {
+      // iOS can't filter by MAC — refuse to guess. Pick the strongest signal
+      // and warn the user; the user must move the OTHER mower further away
+      // or power it down to disambiguate.
+      candidates.sort((a, b) => b.rssi - a.rssi);
+      Alert.alert(
+        'Multiple mowers detected',
+        `Found ${candidates.length} Novabot mowers nearby. iOS does not expose MAC addresses, so the app cannot tell them apart by Bluetooth alone. ` +
+          `Connecting to the strongest signal (RSSI ${candidates[0].rssi}). If the wrong mower starts moving, STOP, move the other mower further away, and retry.`,
+      );
+      chosen = candidates[0];
+    } else {
+      chosen = candidates[0];
+    }
+
+    const ok = await bleJoystickConnect(chosen.id);
     setBleConnected(ok);
     setBleConnecting(false);
     if (!ok) Alert.alert('BLE', 'Failed to connect to mower via BLE.');
-  }, [bleConnected, bleConnecting]);
+  }, [bleConnected, bleConnecting, mower?.sn, targetMac]);
 
   // ── BLE disconnect handler: update UI + auto-reconnect ──
   useEffect(() => {

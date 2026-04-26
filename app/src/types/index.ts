@@ -21,6 +21,14 @@ export interface DeviceState {
   nickname?: string | null;
   mowerIp?: string | null;
   firmwareVersion?: string | null;
+  /**
+   * BLE MAC address from server's equipment table. Used by MappingScreen
+   * to filter BLE scan results so the joystick connects to the ACTIVE mower
+   * (not whichever mower advertises first when 2+ are within range).
+   * Null on iOS where `device.id` is an anonymous per-app UUID rather than
+   * the real MAC — see ble-scan-sn-identification.md memory.
+   */
+  macAddress?: string | null;
 }
 
 export interface MowerStatus {
@@ -98,4 +106,5 @@ export interface SnapshotDevice {
   sensors: Record<string, string>;
   nickname?: string | null;
   firmwareVersion?: string | null;
+  macAddress?: string | null;
 }

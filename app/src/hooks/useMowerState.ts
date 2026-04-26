@@ -40,6 +40,7 @@ export function useMowerState(): UseMowerStateResult {
           lastUpdate: Date.now(),
           nickname: d.nickname ?? null,
           firmwareVersion: d.firmwareVersion ?? null,
+          macAddress: d.macAddress ?? null,
         });
       }
       setDevices(map);
