@@ -164,6 +164,100 @@ class Ros2Bridge(Node):
         log.info('ros2_bridge: node up with %d service clients + 2 action clients',
                  sum(1 for n in dir(self) if n.startswith('cli_')))
 
+    # ── Command handlers ──────────────────────────────────────────────
+
+    def handle_start_navigation(self, mqtt_payload: dict) -> dict:
+        """Handle MQTT ``start_navigation`` (also triggered by ``start_run``).
+
+        MQTT JSON shape (catalog RE-5 §start_run / start_navigation):
+          { "start_navigation": { "cmd_num": <int>, "area": <int>, "cutterhigh": <uint8> } }
+
+        ROS 2 endpoint: /robot_decision/start_cov_task  (StartCoverageTask)
+        Schema: research/ros2_msg_definitions/decision_msgs/srv/StartCoverageTask.srv
+
+        Field mapping (catalog RE-5 §start_run, decompile mqtt_node_decompiled.c:347738-347744):
+          area       → request.map_ids       (uint32)
+          cutterhigh → request.blade_heights (uint8[], index 0; formula: cutterhigh = user_cm − 2)
+          (hardcoded) request.request_type   = 11 (0xb = MQTT normal start)
+          (hardcoded) request.cov_mode       = 0  (NORMAL)
+        """
+        inner = mqtt_payload if not isinstance(mqtt_payload.get('start_navigation'), dict) \
+            else mqtt_payload['start_navigation']
+
+        req = StartCoverageTask.Request()
+        req.cov_mode = 0  # StartCoverageTask.NORMAL
+        req.request_type = 11  # 0xb — MQTT normal start (decompile:347738)
+
+        area = inner.get('area')
+        if area is not None:
+            try:
+                req.map_ids = int(area)
+            except (TypeError, ValueError):
+                log.warning('handle_start_navigation: invalid area=%r, using 0', area)
+                req.map_ids = 0
+        else:
+            req.map_ids = 0
+
+        cutterhigh = inner.get('cutterhigh')
+        if cutterhigh is not None:
+            try:
+                req.blade_heights = [int(cutterhigh)]
+            except (TypeError, ValueError):
+                log.warning('handle_start_navigation: invalid cutterhigh=%r, skipping', cutterhigh)
+                req.blade_heights = []
+        else:
+            req.blade_heights = []
+
+        resp = self.call_service(self.cli_start_cov_task, req)
+        if resp is None:
+            return {'result': 1, 'msg': 'start_cov_task timeout or unavailable'}
+        return {'result': 0 if resp.result else 1,
+                'msg': 'start_navigation_respond'}
+
+    # Alias: the MQTT docs call this start_run; the binary key is start_navigation.
+    handle_start_run = handle_start_navigation
+
+    def handle_stop_task(self, mqtt_payload: dict) -> dict:
+        """Handle MQTT ``stop_task`` (also ``stop_run`` / ``stop_navigation``).
+
+        MQTT JSON shape (catalog RE-5 §stop_run / stop_task):
+          { "stop_task": <any> }
+
+        ROS 2 endpoint: /robot_decision/stop_task  (std_srvs/srv/SetBool)
+        Schema: research/ros2_msg_definitions/std_srvs/srv/SetBool.srv
+
+        Field mapping:
+          data = True  (stop the current task)
+        """
+        req = SetBool.Request()
+        req.data = True  # True = stop (catalog: "likely true = stop")
+
+        resp = self.call_service(self.cli_stop_task, req)
+        if resp is None:
+            return {'result': 1, 'msg': 'stop_task timeout or unavailable'}
+        return {'result': 0 if resp.success else 1,
+                'msg': resp.message or 'stop_task_respond'}
+
+    def handle_stop_to_charge(self, mqtt_payload: dict) -> dict:
+        """Handle MQTT ``stop_to_charge``.
+
+        MQTT JSON shape (catalog RE-5 §stop_to_charge, decompile:349576):
+          { "stop_to_charge": <any> }
+
+        ROS 2 endpoint: /robot_decision/cancel_recharge  (std_srvs/srv/Trigger)
+        Schema: research/ros2_msg_definitions/std_srvs/srv/Trigger.srv
+
+        Trigger.Request has no fields — just call the service.
+        """
+        req = Trigger.Request()
+        # No request fields on Trigger (schema: empty request section)
+
+        resp = self.call_service(self.cli_cancel_recharge, req)
+        if resp is None:
+            return {'result': 1, 'msg': 'cancel_recharge timeout or unavailable'}
+        return {'result': 0 if resp.success else 1,
+                'msg': resp.message or 'stop_to_charge_respond'}
+
     # ── Generic helpers ────────────────────────────────────────────────
     def call_service(self, client, request, timeout: float = 5.0):
         """Synchronous service call. Returns response or None on timeout.
