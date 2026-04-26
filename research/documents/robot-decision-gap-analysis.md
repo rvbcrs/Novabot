@@ -11,6 +11,63 @@ Inputs to this analysis:
 
 ---
 
+## 0. Field-name verification rule (MANDATORY)
+
+After the 2026-04-26 audit (`research/documents/field-name-audit-2026-04-26.md`)
+surfaced **8 fabricated field names** that would have crashed at runtime
+(C1–C6 + I1/I3 — Mapping.srv `main_id`, SetChargingPose.Response
+`map_to_charging_dis`, CovTaskResult `cov_ratio/cov_area/cov_work_time`,
+DeleteMap.Request `map_file_name`, /novabot_mapping/mapping_data topic
+mistaken for a service, ChassisIncident `error_lift_motor_error`,
+plus type mismatches), every msg/srv/action assignment in `mower/`
+MUST be backed by one of:
+
+1. **Live SSH ground truth** — read the actual `.srv/.action/.msg` file
+   on the production mower (`192.168.0.100`) at
+   `/focal-xj3-arm64/root/novabot/install/<pkg>/share/<pkg>/<kind>/<File>.<ext>`.
+   Cite the exact file in the source comment if any field is non-obvious.
+
+2. **`research/ros2_msg_definitions/`** — the in-repo cache of those
+   files. Authoritative ONLY when the file in the repo bears a
+   `# verified <date>` header line confirming a recent SSH read.
+
+3. **`research/documents/field-name-audit-2026-04-26.md`** — the
+   exhaustive cross-check report. Use ONLY for fields explicitly listed
+   in its VERIFIED section.
+
+**Forbidden as ground truth:**
+- `research/documents/robot_decision_reverse_engineering.md` — superseded;
+  contains speculative field names.
+- Blutter / Flutter app source — those are MQTT payload field names, NOT
+  ROS message field names. The two diverge (e.g. MQTT joystick `x_w` vs
+  ROS CloudMoveCmd `linear_x`).
+- `research/documents/closed_decision_inventory.md` — has live endpoint
+  NAMES but NOT field names.
+- "It looks like it should work" / blutter cross-reference — never.
+
+**Process for any new code that constructs a `<Type>.Request()`,
+`<Type>.Goal()`, or assigns to `msg.<field>`:**
+
+1. Read the live `.srv/.action/.msg` file (one of the three sources above).
+2. Verify every field assignment matches a real field name + type.
+3. Add a short citation comment if the field was non-obvious:
+   ```python
+   # Field set per coverage_planner/srv/CoveragePathsByFile.srv (live mower
+   # 2026-04-26). DO NOT add only_edge_mode / polygon_area — those don't
+   # exist on this srv.
+   req.map_yaml_file = map_yaml
+   ```
+
+4. If you genuinely need a field that doesn't exist on the live interface,
+   that's a firmware-side change — document it as a deferred TODO, do
+   NOT fabricate.
+
+**Test coverage requirement:** the next sub-project (Phase C of the
+2026-04-26 follow-up) adds AST-based field-name verification tests so
+this rule is enforced at CI time. See `mower/tests/test_field_name_verification.py`.
+
+---
+
 ## 1. Executive Summary
 
 **Coverage estimate vs 100% port: ~55%.** The open Python node implements the boot state machine, mowing/recharge happy paths, manual mapping, and most service-server signatures, but it has one architectural break (action servers on the wrong node), one pub/sub-vs-service break (`map_position`), and several behavioural gaps that will silently misbehave on real hardware.
