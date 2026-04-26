@@ -255,6 +255,9 @@ class OpenRobotDecision(Node):
         self.create_subscription(
             MappingPolygon, 'mapping_polygon',
             self._on_mapping_polygon, SENSOR_QOS)
+        self.create_subscription(
+            Bool, '/decision_assistant/robot_out_working_zone',
+            self._on_out_of_zone, RELIABLE_QOS)
 
         # ─── Service CLIENTS (boot) ───
         self.cli_init_ok = self.create_client(
@@ -2276,6 +2279,21 @@ class OpenRobotDecision(Node):
             self.loc_quality = 50
         else:
             self.loc_quality = max(0, msg.status)
+
+    def _on_out_of_zone(self, msg):
+        """Assistant signals robot is outside the working zone polygon. Trigger
+        LocRecoverMoving with recover_type=1 (out-of-map). Closed binary does
+        the same auto-escalation."""
+        if not msg.data:
+            return
+        if self.task_mode != TaskMode.COVER:
+            return
+        if self.work_status == WorkStatus.ROBOT_OUT_OF_MAP_HANDLE:
+            return  # already handling
+        self._set_state(TaskMode.COVER, WorkStatus.ROBOT_OUT_OF_MAP_HANDLE)
+        self.get_logger().warn(
+            'Robot out of working zone — sending LocRecoverMoving goal')
+        self._send_loc_recover_goal(recover_type=1)
 
     def _on_odom(self, msg: Odometry):
         self.odom_received = True
