@@ -358,7 +358,7 @@ export function StartMowSheet({
                   onPress={() => setCuttingHeight(Math.max(2, cuttingHeight - 1))}
                   activeOpacity={0.7}
                 >
-                  <Ionicons name="remove" size={20} color={colors.white} />
+                  <Ionicons name="remove" size={20} color={colors.emerald} />
                 </TouchableOpacity>
                 <View style={styles.stepperValue}>
                   <Text style={styles.stepperText}>{cuttingHeight} cm</Text>
@@ -368,7 +368,7 @@ export function StartMowSheet({
                   onPress={() => setCuttingHeight(Math.min(9, cuttingHeight + 1))}
                   activeOpacity={0.7}
                 >
-                  <Ionicons name="add" size={20} color={colors.white} />
+                  <Ionicons name="add" size={20} color={colors.emerald} />
                 </TouchableOpacity>
               </View>
             </View>
@@ -389,7 +389,7 @@ export function StartMowSheet({
                   }}
                   activeOpacity={0.7}
                 >
-                  <Ionicons name="remove" size={20} color={colors.white} />
+                  <Ionicons name="remove" size={20} color={colors.emerald} />
                 </TouchableOpacity>
                 <View style={styles.stepperValue}>
                   <Text style={styles.stepperText}>{pathDirection}°</Text>
@@ -403,7 +403,7 @@ export function StartMowSheet({
                   }}
                   activeOpacity={0.7}
                 >
-                  <Ionicons name="add" size={20} color={colors.white} />
+                  <Ionicons name="add" size={20} color={colors.emerald} />
                 </TouchableOpacity>
               </View>
             </View>
@@ -524,7 +524,7 @@ export function StartMowSheet({
                 <View style={styles.section}>
                   <Text style={styles.label}>{patternId ? t('tapToPlacePattern') : t('preview')}</Text>
                   <View
-                    style={{ alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.03)', borderRadius: 12, padding: 8 }}
+                    style={{ alignItems: 'center', backgroundColor: colors.inputBg, borderRadius: 12, padding: 8 }}
                     onStartShouldSetResponder={() => !!patternId}
                     onResponderRelease={handlePreviewTap}
                   >
@@ -570,32 +570,32 @@ export function StartMowSheet({
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                     <Text style={{ color: colors.textMuted, fontSize: 12 }}>{t('patternSize')}:</Text>
                     <TouchableOpacity
-                      style={{ padding: 6, backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 6 }}
+                      style={{ padding: 6, backgroundColor: colors.inputBg, borderWidth: 1, borderColor: colors.cardBorder, borderRadius: 6 }}
                       onPress={() => setPatternSize(Math.max(1, patternSize - 1))}
                     >
-                      <Ionicons name="remove" size={14} color={colors.white} />
+                      <Ionicons name="remove" size={14} color={colors.emerald} />
                     </TouchableOpacity>
-                    <Text style={{ color: colors.white, fontWeight: '700', fontSize: 14, width: 36, textAlign: 'center' }}>{patternSize}m</Text>
+                    <Text style={{ color: colors.text, fontWeight: '700', fontSize: 14, width: 36, textAlign: 'center' }}>{patternSize}m</Text>
                     <TouchableOpacity
-                      style={{ padding: 6, backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 6 }}
+                      style={{ padding: 6, backgroundColor: colors.inputBg, borderWidth: 1, borderColor: colors.cardBorder, borderRadius: 6 }}
                       onPress={() => setPatternSize(Math.min(50, patternSize + 1))}
                     >
-                      <Ionicons name="add" size={14} color={colors.white} />
+                      <Ionicons name="add" size={14} color={colors.emerald} />
                     </TouchableOpacity>
 
                     <Text style={{ color: colors.textMuted, fontSize: 12, marginLeft: 8 }}>{t('patternRotation')}:</Text>
                     <TouchableOpacity
-                      style={{ padding: 6, backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 6 }}
+                      style={{ padding: 6, backgroundColor: colors.inputBg, borderWidth: 1, borderColor: colors.cardBorder, borderRadius: 6 }}
                       onPress={() => setPatternRotation((patternRotation + 345) % 360)}
                     >
-                      <Ionicons name="return-up-back" size={14} color={colors.white} />
+                      <Ionicons name="return-up-back" size={14} color={colors.emerald} />
                     </TouchableOpacity>
-                    <Text style={{ color: colors.white, fontWeight: '700', fontSize: 14, width: 36, textAlign: 'center' }}>{patternRotation}°</Text>
+                    <Text style={{ color: colors.text, fontWeight: '700', fontSize: 14, width: 36, textAlign: 'center' }}>{patternRotation}°</Text>
                     <TouchableOpacity
-                      style={{ padding: 6, backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 6 }}
+                      style={{ padding: 6, backgroundColor: colors.inputBg, borderWidth: 1, borderColor: colors.cardBorder, borderRadius: 6 }}
                       onPress={() => setPatternRotation((patternRotation + 15) % 360)}
                     >
-                      <Ionicons name="return-up-forward" size={14} color={colors.white} />
+                      <Ionicons name="return-up-forward" size={14} color={colors.emerald} />
                     </TouchableOpacity>
                   </View>
                   {!patternCenter && (
@@ -651,53 +651,59 @@ const makeStyles = (c: Colors) => StyleSheet.create({
     borderBottomWidth: 0,
   },
   handleBar: { alignItems: 'center', paddingVertical: 12 },
-  handle: { width: 40, height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.2)' },
+  handle: { width: 40, height: 4, borderRadius: 2, backgroundColor: 'rgba(125,125,125,0.4)' },
   content: { paddingHorizontal: 20, paddingBottom: Platform.OS === 'ios' ? 40 : 20, gap: 20 },
-  title: { fontSize: 20, fontWeight: '700', color: c.white },
+  title: { fontSize: 20, fontWeight: '700', color: c.text },
   section: { gap: 8 },
-  label: { fontSize: 13, fontWeight: '700', color: '#a0a0b0', textTransform: 'uppercase', letterSpacing: 0.5 },
+  label: { fontSize: 13, fontWeight: '700', color: c.textMuted, textTransform: 'uppercase', letterSpacing: 0.5 },
   labelRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  labelValue: { fontSize: 14, fontWeight: '700', color: c.white },
+  labelValue: { fontSize: 14, fontWeight: '700', color: c.text },
   mapGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   mapBtn: {
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 10,
-    backgroundColor: 'rgba(255,255,255,0.06)',
+    backgroundColor: c.inputBg,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
+    borderColor: c.cardBorder,
   },
   mapBtnActive: { backgroundColor: 'rgba(16,185,129,0.2)', borderColor: c.emerald },
-  mapBtnText: { fontSize: 13, fontWeight: '600', color: '#a0a0b0' },
+  mapBtnText: { fontSize: 13, fontWeight: '600', color: c.textDim },
   mapBtnTextActive: { color: c.emerald },
-  noMaps: { flexDirection: 'row', alignItems: 'center', gap: 8, padding: 12, backgroundColor: 'rgba(255,255,255,0.04)', borderRadius: 10 },
-  noMapsText: { fontSize: 13, color: '#a0a0b0', flex: 1 },
+  noMaps: { flexDirection: 'row', alignItems: 'center', gap: 8, padding: 12, backgroundColor: c.inputBg, borderRadius: 10 },
+  noMapsText: { fontSize: 13, color: c.textDim, flex: 1 },
   stepperRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   stepperBtn: {
     width: 40, height: 40, borderRadius: 10,
-    backgroundColor: 'rgba(255,255,255,0.1)',
+    backgroundColor: c.inputBg,
+    borderWidth: 1,
+    borderColor: c.cardBorder,
     justifyContent: 'center', alignItems: 'center',
   },
   stepperValue: { flex: 1, alignItems: 'center' },
-  stepperText: { fontSize: 24, fontWeight: '700', color: c.white },
+  stepperText: { fontSize: 24, fontWeight: '700', color: c.text },
   compassGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   compassBtn: {
     width: '22%',
     height: 36,
     borderRadius: 8,
-    backgroundColor: 'rgba(255,255,255,0.06)',
+    backgroundColor: c.inputBg,
+    borderWidth: 1,
+    borderColor: c.cardBorder,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  compassBtnActive: { backgroundColor: c.emerald },
-  compassText: { fontSize: 13, fontWeight: '700', color: '#a0a0b0' },
+  compassBtnActive: { backgroundColor: c.emerald, borderColor: c.emerald },
+  compassText: { fontSize: 13, fontWeight: '700', color: c.textDim },
   compassTextActive: { color: c.white },
   actionRow: { flexDirection: 'row', gap: 12, paddingTop: 4 },
   cancelBtn: {
     flex: 1,
     height: 44,
     borderRadius: 12,
-    backgroundColor: 'rgba(255,255,255,0.06)',
+    backgroundColor: c.inputBg,
+    borderWidth: 1,
+    borderColor: c.cardBorder,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -720,9 +726,9 @@ const makeStyles = (c: Colors) => StyleSheet.create({
     gap: 8,
     paddingVertical: 10,
     borderRadius: 10,
-    backgroundColor: 'rgba(255,255,255,0.06)',
+    backgroundColor: c.inputBg,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
+    borderColor: c.cardBorder,
   },
   placeOnMapBtn: {
     flexDirection: 'row',

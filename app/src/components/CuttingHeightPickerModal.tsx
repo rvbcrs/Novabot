@@ -72,7 +72,7 @@ export default function CuttingHeightPickerModal({
                 onPress={() => setHeight(h => Math.max(2, h - 1))}
                 activeOpacity={0.7}
               >
-                <Ionicons name="remove" size={20} color={colors.white} />
+                <Ionicons name="remove" size={22} color={colors.emerald} />
               </TouchableOpacity>
               <View style={styles.stepperValue}>
                 <Text style={styles.stepperText}>{height} cm</Text>
@@ -82,7 +82,7 @@ export default function CuttingHeightPickerModal({
                 onPress={() => setHeight(h => Math.min(9, h + 1))}
                 activeOpacity={0.7}
               >
-                <Ionicons name="add" size={20} color={colors.white} />
+                <Ionicons name="add" size={22} color={colors.emerald} />
               </TouchableOpacity>
             </View>
           </View>
@@ -136,7 +136,7 @@ const makeStyles = (c: Colors) => StyleSheet.create({
   title: {
     fontSize: 17,
     fontWeight: '700',
-    color: c.white,
+    color: c.text,
   },
   message: {
     fontSize: 14,
@@ -175,7 +175,9 @@ const makeStyles = (c: Colors) => StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 10,
-    backgroundColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: c.inputBg,
+    borderWidth: 1,
+    borderColor: c.cardBorder,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -184,14 +186,15 @@ const makeStyles = (c: Colors) => StyleSheet.create({
     height: 44,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.12)',
+    borderColor: c.cardBorder,
+    backgroundColor: c.inputBg,
     alignItems: 'center',
     justifyContent: 'center',
   },
   stepperText: {
     fontSize: 16,
     fontWeight: '700',
-    color: c.white,
+    color: c.text,
     fontVariant: ['tabular-nums'],
   },
   buttonRow: {
@@ -208,9 +211,9 @@ const makeStyles = (c: Colors) => StyleSheet.create({
     gap: 6,
   },
   cancelButton: {
-    backgroundColor: 'rgba(255,255,255,0.06)',
+    backgroundColor: c.inputBg,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.12)',
+    borderColor: c.cardBorder,
   },
   cancelText: {
     fontSize: 14,
