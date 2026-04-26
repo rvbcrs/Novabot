@@ -683,16 +683,31 @@ class ServiceHandlers:
     # ─── Charging ──────────────────────────────────────────────
 
     def _handle_nav_to_recharge(self, request, response):
-        """Navigate to recharge station. Type: decision_msgs/Charging."""
-        self.log.info('Charging: nav_to_recharge')
+        """Navigate to charging dock with optional guide pose. Closed binary
+        rejects if currently mapping ('Recharge with guide pose mode only
+        support no mapping mode')."""
+        self.log.info(
+            f'Charging: nav_to_recharge mode={request.mode} '
+            f'pose=({request.pose_x:.2f}, {request.pose_y:.2f}, '
+            f'{request.pose_theta:.2f})')
         n = self.node
         if n.task_mode == TaskMode.CHARGING:
-            self.log.info('Already charging!')
             response.result = 0
             response.description = 'Already charging'
             return response
-        # Start full recharge sequence (navigate → dock)
-        n.start_recharge()
+        if n.task_mode == TaskMode.MAPPING:
+            self.log.warn(
+                'Recharge with guide pose mode only support no mapping mode')
+            response.result = 0
+            response.description = (
+                'Recharge with guide pose mode only support no mapping mode')
+            return response
+
+        guide_pose = None
+        if request.mode == '1':  # guide pose mode (mode field is string in srv)
+            guide_pose = (float(request.pose_x), float(request.pose_y),
+                          float(request.pose_theta))
+        n.start_recharge(guide_pose=guide_pose)
         response.result = 1
         response.description = 'Navigating to charger'
         return response

@@ -1733,11 +1733,36 @@ class OpenRobotDecision(Node):
 
     # ─── Charging / Auto-recharge (Fase 6) ──────────────────
 
-    def start_recharge(self):
-        """Start full recharge sequence: read charger pose → navigate → dock."""
+    def start_recharge(self, guide_pose=None):
+        """Start full recharge sequence: read charger pose → navigate → dock.
+
+        If guide_pose=(x, y, theta) is provided (from nav_to_recharge
+        guide-pose mode), navigate directly to that pose instead of reading
+        the cached charger pose from disk.
+        """
         self.get_logger().info('Recharge: Starting recharge sequence')
         self._set_state(TaskMode.RECHARGING, WorkStatus.RETURN_TO_PILE,
                         recharge_status=RechargeStatus.NAVIGATING)
+
+        if guide_pose is not None:
+            # Guide pose override: build PoseStamped directly from supplied
+            # (x, y, theta) tuple and navigate without reading saved pose.
+            x, y, theta = guide_pose
+            ps = PoseStamped()
+            ps.header.frame_id = 'map'
+            ps.header.stamp = TimeMsg(sec=0, nanosec=0)
+            ps.pose.position.x = x
+            ps.pose.position.y = y
+            ps.pose.position.z = 0.0
+            # Convert yaw to quaternion (roll=0, pitch=0)
+            ps.pose.orientation.x = 0.0
+            ps.pose.orientation.y = 0.0
+            ps.pose.orientation.z = math.sin(theta / 2.0)
+            ps.pose.orientation.w = math.cos(theta / 2.0)
+            self.get_logger().info(
+                f'Recharge: Using guide pose ({x:.2f}, {y:.2f}, {theta:.2f})')
+            self._navigate_to_charger(ps)
+            return
 
         # Read saved charger pose
         req = SetChargingPoseSrv.Request()
