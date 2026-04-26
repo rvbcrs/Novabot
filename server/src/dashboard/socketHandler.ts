@@ -86,13 +86,14 @@ export function initDashboardSocket(httpServer: HttpServer): void {
       `).all() as DeviceRegistryRow[];
 
       const equipment = db.prepare(
-        'SELECT mower_sn, charger_sn, equipment_nick_name, mower_version, charger_version FROM equipment'
+        'SELECT mower_sn, charger_sn, equipment_nick_name, mower_version, charger_version, mac_address FROM equipment'
       ).all() as {
         mower_sn: string;
         charger_sn: string | null;
         equipment_nick_name: string | null;
         mower_version: string | null;
         charger_version: string | null;
+        mac_address: string | null;
       }[];
       const boundSns = new Set<string>();
       // Per-SN nickname so the home tile can show "Botty" instead of the bare
@@ -103,11 +104,19 @@ export function initDashboardSocket(httpServer: HttpServer): void {
       // version (mower version comes via sensors.sw_version; charger only
       // reports via ota_version_info_respond which is stored in equipment).
       const versionBySn = new Map<string, string>();
+      // Per-SN BLE MAC so the app can filter scan results when 2+ mowers are
+      // within range — without this, scanForDevices picks whichever mower
+      // advertises first, potentially driving the WRONG mower in mapping mode.
+      // Source: equipment.mac_address (per CLAUDE.md "BLE MAC backfill —
+      // KRITIEK"). Falls back to device_registry.mac_address if equipment
+      // row is missing the MAC.
+      const macBySn = new Map<string, string>();
       for (const e of equipment) {
         if (e.mower_sn) {
           boundSns.add(e.mower_sn);
           if (e.equipment_nick_name) nickBySn.set(e.mower_sn, e.equipment_nick_name);
           if (e.mower_version) versionBySn.set(e.mower_sn, e.mower_version);
+          if (e.mac_address) macBySn.set(e.mower_sn, e.mac_address);
         }
         if (e.charger_sn) {
           boundSns.add(e.charger_sn);
@@ -125,6 +134,8 @@ export function initDashboardSocket(httpServer: HttpServer): void {
           sensors: snapshots[r.sn!] ?? {},
           nickname: nickBySn.get(r.sn!) ?? null,
           firmwareVersion: versionBySn.get(r.sn!) ?? null,
+          // Equipment MAC takes precedence; fall back to registry MAC if absent.
+          macAddress: macBySn.get(r.sn!) ?? r.mac_address ?? null,
         }));
     }
 
