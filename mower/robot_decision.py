@@ -2009,16 +2009,76 @@ class OpenRobotDecision(Node):
             self.get_logger().warn(f'Heading cache schrijven mislukt: {e}')
 
     def _start_heading_discovery(self) -> None:
-        """Rijd van dock af + draai rond totdat heading bekend is, dan auto-dock."""
+        """Drive reverse ~1 m via free_move_around (closed-binary parity) to
+        refresh GPS heading, then spin until LOC_SUCCESS, then auto-dock.
+
+        Closed binary uses /nav2_single_node_navigator/free_move_around with
+        quit_pile_distance (default 1.0 m) for this QUIT_PILE_INIT phase.
+        free_move_around allows movement without a loaded map — critical here
+        because localization has not yet succeeded.
+
+        Falls back to forward-drive + spin if the service is unavailable.
+
+        OPERATOR NOTE: ensure clear space BEHIND the mower before activating.
+        """
+        dist = float(self.get_parameter('quit_pile_distance').value)
+        if not self.cli_free_move_around.wait_for_service(timeout_sec=2.0):
+            self.get_logger().warn(
+                'Heading discovery: free_move_around unavailable — '
+                'falling back to forward+spin')
+            self._fallback_forward_spin_heading_discovery()
+            return
+
         self.get_logger().info(
-            f'Heading discovery: rijd {DRIVE_OFF_TIME_S}s van dock af...')
+            f'Heading discovery: reverse {dist:.1f} m via free_move_around '
+            '(closed-binary parity)...')
+        req = FreeMoveAround.Request()
+        # using_input_pose=False → service moves the robot without a target pose;
+        # radius carries the desired movement distance (same as quit_pile_distance).
+        req.using_input_pose = False
+        req.radius = dist
+        req.local_costmap = False
+        req.global_costmap = False
+
+        future = self.cli_free_move_around.call_async(req)
+
+        def _on_free_move_done(fut):
+            try:
+                result = fut.result()
+                self.get_logger().info(
+                    f'Heading discovery: free_move_around done '
+                    f'(result={result.result})')
+            except Exception as e:
+                self.get_logger().warn(
+                    f'Heading discovery: free_move_around failed ({e}) '
+                    '— starting spin phase anyway')
+            # Regardless of service outcome: proceed to spin phase to collect
+            # GPS track data until LOC_SUCCESS (or timeout).
+            self._heading_phase = 'spinning'
+            self._heading_phase_start = time.monotonic()
+            if self._heading_timer is None:
+                self._heading_timer = self.create_timer(
+                    0.2, self._heading_discovery_tick)
+
+        future.add_done_callback(_on_free_move_done)
+        # Set phase immediately so safety checks in _update_charger_state can
+        # cancel the heading timer if charger contact is detected mid-flight.
+        self._heading_phase = 'free_move_pending'
+
+    def _fallback_forward_spin_heading_discovery(self) -> None:
+        """Fallback heading discovery: drive forward then spin (original
+        implementation). Used when free_move_around is not available."""
+        self.get_logger().info(
+            f'Heading discovery (fallback): rijd {DRIVE_OFF_TIME_S}s van dock af...')
         self._heading_phase = 'drive_off'
         self._heading_phase_start = time.monotonic()
         self._heading_timer = self.create_timer(
             0.2, self._heading_discovery_tick)
 
     def _heading_discovery_tick(self) -> None:
-        """Timer callback: beheert drive-off + spin totdat heading verkregen."""
+        """Timer callback: beheert drive-off + spin totdat heading verkregen.
+        Used both by fallback path (drive_off → spinning) and by the
+        free_move_around path (spinning only, after callback fires)."""
         # Safety: abort heading discovery if no longer in appropriate state.
         if self.task_mode not in (TaskMode.FREE,) or self.is_on_charger:
             self.cmd_vel_pub.publish(Twist())  # Stop motors
@@ -2029,6 +2089,10 @@ class OpenRobotDecision(Node):
             self.get_logger().info(
                 f'Heading discovery: aborted (mode={self.task_mode}, '
                 f'on_charger={self.is_on_charger})')
+            return
+
+        # free_move_around is in flight — do nothing, wait for async callback.
+        if self._heading_phase == 'free_move_pending':
             return
 
         elapsed = time.monotonic() - self._heading_phase_start

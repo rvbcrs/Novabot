@@ -7,6 +7,7 @@ Run with mower on charger, working zone clear, dry conditions.
    - Stop stock C++ binary: `pkill -f /root/novabot/install/.*/robot_decision`.
    - Start Python: `bash /userdata/open_decision/start.sh` (with ROS_LOCALHOST_ONLY=1).
    - Expect: `/robot_decision` + `/decision_assistant` nodes; 18 services on robot_decision; 2 actions on decision_assistant.
+   - **OPERATOR**: ensure clear space BEHIND the mower (≥ `quit_pile_distance` m, default 1.0 m) before proceeding — the open implementation now drives REVERSE during heading discovery via `free_move_around` (matching closed binary). If the `/nav2_single_node_navigator/free_move_around` service is unavailable the node falls back to forward+spin automatically (log line: "falling back to forward+spin").
 
 2. **map_position publisher**
    - `ros2 topic hz /robot_decision/map_position` should report ~2 Hz.
