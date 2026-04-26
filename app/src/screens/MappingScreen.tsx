@@ -482,16 +482,22 @@ export default function MappingScreen() {
   // 2026-04-26: user selected .211 in app, joystick drove .238 backwards).
   // Filter is MAC-based on Android; on iOS the OS only exposes anonymous
   // per-app UUIDs so we collect ALL nearby mower advertisements and refuse
-  // to auto-connect when more than one is found, surfacing an explicit
-  // picker / warning to the user instead.
+  // to auto-connect when more than one is found.
   const targetMac = (mower?.macAddress ?? '').trim() || null;
-  const connectBleJoystick = useCallback(async () => {
-    if (bleConnected || bleConnecting) return;
+
+  // Visible status during BLE flow so the user does not click again thinking
+  // nothing is happening (the scan is silent in the OS layer).
+  const [bleStatus, setBleStatus] = useState<string | null>(null);
+
+  type BleConnectResult = 'connected' | 'not-found' | 'multi-mower' | 'connect-failed';
+
+  const connectBleJoystick = useCallback(async (): Promise<BleConnectResult> => {
+    if (bleConnected) return 'connected';
+    if (bleConnecting) return 'connect-failed';
     setBleConnecting(true);
+    setBleStatus('Scanning for mower...');
 
     const isIos = Platform.OS === 'ios';
-    // Collect ALL mower advertisements during the full scan window. We need
-    // to know whether 2+ mowers are nearby to decide whether to abort.
     const candidates: ScannedDevice[] = [];
     await new Promise<void>((resolve) => {
       const cancel = scanForDevices(
@@ -507,45 +513,56 @@ export default function MappingScreen() {
           }
         },
         () => resolve(),
-        // Pass the active mower's MAC to scanForDevices (Android-only effect).
         targetMac,
       );
     });
 
     if (candidates.length === 0) {
+      setBleConnecting(false);
+      setBleStatus(null);
       Alert.alert(
-        'BLE',
+        'BLE — mower not found',
         targetMac
           ? `Active mower (${mower?.sn ?? '?'}) not found via BLE. Make sure Bluetooth is enabled and the correct mower is nearby. ` +
             `Searched MAC: ${targetMac}.`
-          : 'Mower not found via BLE. Make sure Bluetooth is enabled and mower is nearby.',
+          : 'No Novabot mower found via BLE. Make sure Bluetooth is enabled and the mower is nearby.',
       );
-      setBleConnecting(false);
-      return;
+      return 'not-found';
     }
 
-    let chosen: ScannedDevice;
-    if (candidates.length === 1) {
-      chosen = candidates[0];
-    } else if (isIos && targetMac) {
-      // iOS can't filter by MAC — refuse to guess. Pick the strongest signal
-      // and warn the user; the user must move the OTHER mower further away
-      // or power it down to disambiguate.
+    if (candidates.length > 1 && isIos && !targetMac /* never true today, kept for symmetry */) {
+      // unreachable
+    }
+
+    if (candidates.length > 1 && isIos) {
+      // iOS cannot filter by MAC — refuse to guess. Caller will navigate
+      // back so the user disambiguates physically before retrying.
       candidates.sort((a, b) => b.rssi - a.rssi);
+      const list = candidates
+        .map((c, i) => `  ${i + 1}. ${c.name} (RSSI ${c.rssi})`)
+        .join('\n');
+      setBleConnecting(false);
+      setBleStatus(null);
       Alert.alert(
         'Multiple mowers detected',
-        `Found ${candidates.length} Novabot mowers nearby. iOS does not expose MAC addresses, so the app cannot tell them apart by Bluetooth alone. ` +
-          `Connecting to the strongest signal (RSSI ${candidates[0].rssi}). If the wrong mower starts moving, STOP, move the other mower further away, and retry.`,
+        `Found ${candidates.length} Novabot mowers within Bluetooth range:\n\n${list}\n\n` +
+          'iOS does not expose MAC addresses, so the app cannot tell them apart. Move the OTHER mower further away ' +
+          '(or power it down) and try again.',
       );
-      chosen = candidates[0];
-    } else {
-      chosen = candidates[0];
+      return 'multi-mower';
     }
 
+    const chosen = candidates[0];
+    setBleStatus(`Connecting to ${chosen.name}...`);
     const ok = await bleJoystickConnect(chosen.id);
     setBleConnected(ok);
     setBleConnecting(false);
-    if (!ok) Alert.alert('BLE', 'Failed to connect to mower via BLE.');
+    setBleStatus(null);
+    if (!ok) {
+      Alert.alert('BLE', 'Failed to connect to mower via BLE.');
+      return 'connect-failed';
+    }
+    return 'connected';
   }, [bleConnected, bleConnecting, mower?.sn, targetMac]);
 
   // ── BLE disconnect handler: update UI + auto-reconnect ──
@@ -660,15 +677,19 @@ export default function MappingScreen() {
         {
           text: 'Start',
           onPress: async () => {
-            // Connect BLE joystick first
-            setBleConnecting(true);
-            await connectBleJoystick();
-            setBleConnecting(false);
-
-            const bleOk = isBleJoystickConnected();
-            console.log(`[Mapping] BLE connected: ${bleOk}`);
-            if (!bleOk) {
-              Alert.alert('BLE', 'BLE not connected — check Bluetooth and proximity.');
+            // Connect BLE joystick first. connectBleJoystick now manages the
+            // visible bleStatus + bleConnecting state itself, so DON'T flip
+            // bleConnecting here — let the helper drive the UI.
+            const result = await connectBleJoystick();
+            if (result !== 'connected') {
+              // not-found / multi-mower / connect-failed → abort the mapping
+              // flow entirely. We must NOT proceed to preMapping because the
+              // joystick is either unconnected (scanning failed) or possibly
+              // bound to the wrong mower (multi-mower disambiguation needed).
+              // Bounce the user back to MapScreen so they retry from a clean
+              // state once the underlying issue is resolved.
+              navigation.goBack();
+              return;
             }
 
             // Clean up any stale mapping state from a previous session
@@ -1889,6 +1910,24 @@ sendCommand({ save_recharge_pos: { mapName: 'map0', cmd_num: cmdNumRef.current++
             <Text style={styles.centerTitle}>Mapping Cancelled</Text>
           </View>
         )}
+
+        {/* BLE scan / connect overlay — visible whenever bleConnecting is
+            true. Without this the BLE flow looks completely silent (the OS
+            scan happens in the background) and users tap the Start button
+            again thinking nothing is happening. */}
+        {bleConnecting ? (
+          <View style={styles.bleOverlay} pointerEvents="auto">
+            <View style={styles.bleOverlayCard}>
+              <ActivityIndicator size="large" color={colors.emerald} />
+              <Text style={styles.bleOverlayTitle}>
+                {bleStatus ?? 'Connecting via Bluetooth...'}
+              </Text>
+              <Text style={styles.bleOverlayHint}>
+                Hold the phone close to the mower. Scanning may take up to 6s.
+              </Text>
+            </View>
+          </View>
+        ) : null}
       </View>
     </GestureHandlerRootView>
   );
@@ -1924,6 +1963,40 @@ const makeStyles = (c: Colors) => StyleSheet.create({
   centerBox: { flex: 1, justifyContent: 'center', alignItems: 'center', gap: 12, paddingHorizontal: 32 },
   centerTitle: { fontSize: 20, fontWeight: '700', color: c.text, textAlign: 'center' },
   centerSub: { fontSize: 14, color: c.textMuted, textAlign: 'center' },
+
+  bleOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 32,
+    zIndex: 1000,
+  },
+  bleOverlayCard: {
+    backgroundColor: c.card,
+    borderRadius: 16,
+    paddingVertical: 28,
+    paddingHorizontal: 32,
+    alignItems: 'center',
+    gap: 14,
+    minWidth: 260,
+    maxWidth: 360,
+  },
+  bleOverlayTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: c.text,
+    textAlign: 'center',
+  },
+  bleOverlayHint: {
+    fontSize: 13,
+    color: c.textMuted,
+    textAlign: 'center',
+  },
 
   // ── Card styles ──
   card: {
