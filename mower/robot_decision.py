@@ -38,6 +38,7 @@ from rclpy.action import ActionClient
 from builtin_interfaces.msg import Time as TimeMsg
 
 from decision_msgs.msg import RobotStatus, CovTaskResult
+from decision_msgs.action import SlipEscaping, LocRecoverMoving
 from novabot_msgs.msg import (
     ChassisBatteryMessage,
     ChassisIncident,
@@ -70,7 +71,8 @@ from nav2_pro_msgs.srv import FreeMoveAround
 from general_msgs.srv import SetUint8 as SetUint8Srv, SaveFile as SaveFileSrv
 
 from nav_msgs.msg import Odometry
-from geometry_msgs.msg import Twist, PoseStamped
+from geometry_msgs.msg import Twist, PoseStamped, Pose, PolygonStamped, Point32
+from sensor_msgs.msg import PointCloud2
 from std_msgs.msg import UInt8, UInt32, Int16, String, Bool
 
 from state_machine import (
@@ -165,13 +167,15 @@ class OpenRobotDecision(Node):
         self.target_height = 40
         self.request_map_ids = 0
         self.current_map_ids = 0
-        self.perception_level = 1
+        self.perception_level = self.get_parameter('default_perception_level').value
         self.light = 0
 
         # ─── Charger / undock state ───
         self.is_on_charger = False
         self._charge_stop_active = False  # ChassisIncident charge_stop flag
         self._undocking = False
+        self._low_battery_armed = True   # hysteresis: re-arm after level recovers above low+back
+        self.lora_ok = True              # LoRa link state tracked by _on_incident
         self._undock_start_time = 0.0
         self._undock_target_time = 0.0
         self._undock_after_state = None
@@ -207,6 +211,12 @@ class OpenRobotDecision(Node):
             String, '/robot_decision/planned_json', RELIABLE_QOS)
         self.preview_path_pub = self.create_publisher(
             String, '/robot_decision/preview_planned_json', RELIABLE_QOS)
+        # /robot_decision/map_position — continuous Pose stream consumed by
+        # mqtt_node + dashboard for live robot dot. Closed binary publishes
+        # this; open used to expose it as a Common service which the dashboard
+        # never polled.
+        self.map_position_pub = self.create_publisher(
+            Pose, '/robot_decision/map_position', RELIABLE_QOS)
 
         # Motor control publishers (Fase 3)
         self.cmd_vel_pub = self.create_publisher(
@@ -227,9 +237,6 @@ class OpenRobotDecision(Node):
             ChassisBatteryMessage, 'battery_message',
             self._on_battery, SENSOR_QOS)
         self.create_subscription(
-            ChassisBatteryMessage, 'battery_message',
-            self._on_battery, RELIABLE_QOS)
-        self.create_subscription(
             ChassisIncident, 'chassis_incident',
             self._on_incident, SENSOR_QOS)
         self.create_subscription(
@@ -248,11 +255,31 @@ class OpenRobotDecision(Node):
         self.create_subscription(
             MappingPolygon, 'mapping_polygon',
             self._on_mapping_polygon, SENSOR_QOS)
+        self.create_subscription(
+            Bool, '/decision_assistant/robot_out_working_zone',
+            self._on_out_of_zone, RELIABLE_QOS)
+        self.create_subscription(
+            String, '/coverage_planner_server/covered_path_json',
+            self._on_covered_path, RELIABLE_QOS)
+        self.create_subscription(
+            Bool, '/chassis_node/init_ok',
+            self._on_init_ok, RELIABLE_QOS)
+
+        # ─── Lifecycle topic subscriptions ───
+        self.create_subscription(
+            UInt8, '/chassis_node/led_level',
+            self._on_led_level, RELIABLE_QOS)
+        self.create_subscription(
+            Bool, '/camera/preposition/hardware_exception',
+            self._on_camera_hw_exception, RELIABLE_QOS)
+        self.create_subscription(
+            Bool, '/system/shared_memory_error',
+            self._on_shm_error, RELIABLE_QOS)
+        self.create_subscription(
+            PointCloud2, '/camera/tof/point_cloud',
+            self._on_tof, SENSOR_QOS)
 
         # ─── Service CLIENTS (boot) ───
-        self.cli_init_ok = self.create_client(
-            EmptySrv, '/chassis_node/init_ok',
-            callback_group=self.client_cb_group)
         self.cli_load_utm = self.create_client(
             LoadUtmOriginInfo, 'load_utm_origin_info',
             callback_group=self.client_cb_group)
@@ -263,8 +290,10 @@ class OpenRobotDecision(Node):
         # ─── Mapping service CLIENTS (Fase 4) ───
         # Service names verified from novabot_mapping binary analysis
         # All use /novabot_mapping/ prefix, types from C++ mangled names
+        # Live service name is /novabot_mapping/mapping (NOT mapping_data which is a topic).
+        # Verified 2026-04-26 via ros2 service list on live mower.
         self.cli_mapping_data = self.create_client(
-            MappingSrv, '/novabot_mapping/mapping_data',
+            MappingSrv, '/novabot_mapping/mapping',
             callback_group=self.client_cb_group)
         self.cli_recording_edge = self.create_client(
             RecordingSrv, '/novabot_mapping/recording_edge',
@@ -289,6 +318,9 @@ class OpenRobotDecision(Node):
         self.cli_load_map = self.create_client(
             LoadMap, '/map_server/load_map',
             callback_group=self.client_cb_group)
+        self.cli_assistant_load_map = self.create_client(
+            LoadMap, '/decision_assistant/load_map',
+            callback_group=self.client_cb_group)
         self.cli_perception = self.create_client(
             SetBool, '/perception/do_perception',
             callback_group=self.client_cb_group)
@@ -309,14 +341,16 @@ class OpenRobotDecision(Node):
             ClearCostmapAroundRobot,
             '/global_costmap/clear_around_global_costmap',
             callback_group=self.client_cb_group)
+        # TODO(open_decision): closed binary uses /nav2_single_node_navigator/free_move_around
+        #   for the boot drive-back sequence (undock/heading discovery). No call sites yet;
+        #   wire when implementing the drive-back boot phase.
         self.cli_free_move_around = self.create_client(
             FreeMoveAround,
             '/nav2_single_node_navigator/free_move_around',
             callback_group=self.client_cb_group)
-        self.cli_covered_path_json = self.create_client(
-            SetBool,
-            '/coverage_planner_server/covered_path_json',
-            callback_group=self.client_cb_group)
+        # cli_covered_path_json REMOVED: relay is already wired via topic subscription
+        #   (create_subscription '/coverage_planner_server/covered_path_json' → _on_covered_path
+        #    → covered_path_pub). Service client had zero call sites.
         self.cli_maybe_stuck = self.create_client(
             SetBool,
             '/nav2_single_node_navigator/robot_maybe_stuck',
@@ -329,9 +363,17 @@ class OpenRobotDecision(Node):
         self.cli_preposition_camera = self.create_client(
             SetBool, '/camera/preposition/start_camera',
             callback_group=self.client_cb_group)
+        # TODO(open_decision): save_camera_image() wraps this client but has zero call sites.
+        #   Closed binary calls /camera/preposition/save_camera during obstacle detection and
+        #   after mowing sessions. Wire when implementing image-save triggers.
         self.cli_preposition_save = self.create_client(
             SaveFileSrv, '/camera/preposition/save_camera',
             callback_group=self.client_cb_group)
+        # TODO(open_decision): report_camera_hw_exception() wraps this client but has zero
+        #   call sites. Note: receiving hw_exception is wired via topic subscription
+        #   (_on_camera_hw_exception). This client is the *sending* direction — used by closed
+        #   binary to notify the camera node of an error state. Wire when implementing
+        #   camera error reporting.
         self.cli_preposition_hw_exception = self.create_client(
             SetBool, '/camera/preposition/hardware_exception',
             callback_group=self.client_cb_group)
@@ -343,6 +385,9 @@ class OpenRobotDecision(Node):
             callback_group=self.client_cb_group)
 
         # ─── Perception service CLIENTS (v10) ───
+        # TODO(open_decision): save_pcd_image() wraps this client but has zero call sites.
+        #   Closed binary calls /perception/save_pcd_img to save point-cloud + RGB frames
+        #   during obstacle events. Wire when implementing PCD save triggers.
         self.cli_save_pcd_img = self.create_client(
             SaveFileSrv, '/perception/save_pcd_img',
             callback_group=self.client_cb_group)
@@ -360,9 +405,8 @@ class OpenRobotDecision(Node):
         self.cli_detection_mode = self.create_client(
             SetBool, '/local_costmap/set_detection_mode',
             callback_group=self.client_cb_group)
-        self.cli_prohibited_points = self.create_client(
-            SetBool, '/local_costmap/prohibited_points',
-            callback_group=self.client_cb_group)
+        self.prohibited_points_pub = self.create_publisher(
+            PolygonStamped, '/local_costmap/prohibited_points', RELIABLE_QOS)
         self.cli_costmap_set_params = self.create_client(
             SetParamsSrv,
             '/local_costmap/local_costmap_rclcpp_node/set_parameters',
@@ -372,10 +416,13 @@ class OpenRobotDecision(Node):
             '/auto_recharge_server/set_parameters',
             callback_group=self.client_cb_group)
 
-        # ─── Chassis extended CLIENTS (v10) ───
-        self.cli_led_buzzer = self.create_client(
-            SetUint8Srv, '/chassis_node/led_buzzer_switch_set',
-            callback_group=self.client_cb_group)
+        # ─── Chassis extended PUBLISHERS (v10) ───
+        self.led_buzzer_pub = self.create_publisher(
+            UInt8, '/chassis_node/led_buzzer_switch_set', RELIABLE_QOS)
+        # TODO(open_decision): set_led_level() wraps this client but has zero call sites.
+        #   Note: *reading* LED level is wired via topic subscription (_on_led_level).
+        #   This client is the *setting* direction — used by closed binary to set brightness
+        #   (e.g. LED=255 for night docking). Wire when implementing LED brightness control.
         self.cli_led_level = self.create_client(
             SetUint8Srv, '/chassis_node/led_level',
             callback_group=self.client_cb_group)
@@ -415,10 +462,26 @@ class OpenRobotDecision(Node):
         self._charging_goal_handle = None
         self._charger_pose_stamped = None
 
+        # ─── DecisionAssistant ACTION CLIENTS (Phase 1: auto-escalation) ───
+        self.slip_escape_client = ActionClient(
+            self, SlipEscaping,
+            '/decision_assistant/slipping_escape',
+            callback_group=self.client_cb_group)
+        self.loc_recover_client = ActionClient(
+            self, LocRecoverMoving,
+            '/decision_assistant/loc_recover_moving',
+            callback_group=self.client_cb_group)
+        self._slip_goal_handle = None
+        self._loc_recover_goal_handle = None
+
         # ─── ArUco localization (heading discovery) ───
         self.cli_enable_aruco = self.create_client(
             SetBool, '/enable_aruco_localization',
             callback_group=self.client_cb_group)
+
+        # ─── Lifecycle topic state ───
+        self._led_level: int = 0          # mirrors /chassis_node/led_level
+        self._tof_last_seen: float = 0.0  # monotonic ts of last ToF point cloud
 
         # ─── Camera darkness detection (night docking) ───
         # Subscribe to preposition camera total_gain (AGC output: high = dark scene).
@@ -438,7 +501,7 @@ class OpenRobotDecision(Node):
         self.service_handlers = ServiceHandlers(self)
 
         # ─── DecisionAssistant (Fase 7: slip escape, loc recovery) ───
-        self.assistant = DecisionAssistant(self)
+        self.assistant = DecisionAssistant(host_node=self)
 
         # ─── Timers ───
         self.status_timer = self.create_timer(0.5, self._publish_status)
@@ -455,7 +518,7 @@ class OpenRobotDecision(Node):
 
         self.boot_checks_done = False
         self.boot_phase = 'SYSTEM_CHECK_INIT'
-        self._boot_init_ok_future = None
+        self._boot_init_ok_received = False
         self._boot_load_utm_future = None
         self._boot_loc_warned = False
         self.undock_timer = self.create_timer(0.1, self._undock_tick)
@@ -474,19 +537,33 @@ class OpenRobotDecision(Node):
         self.declare_parameter('coverage_times', 1)
         self.declare_parameter('gazebo_debug_mode', False)
         self.declare_parameter('low_battery_power', 20)
+        # TODO(open_decision): full_battery_power — declared but never read. Closed binary
+        #   uses this as the upper hysteresis threshold to stop charging. Wire when
+        #   implementing charging hysteresis logic.
         self.declare_parameter('full_battery_power', 96)
+        self.declare_parameter('charge_back_percentage', 1)
         self.declare_parameter('enable_loc_recover', True)
+        # TODO(open_decision): enable_slipping_recover — declared but never read. Closed
+        #   binary gates the slip-recovery flow on this flag. Wire in on_motor_current /
+        #   slip-escalation path.
         self.declare_parameter('enable_slipping_recover', True)
         self.declare_parameter('load_map_path', '/userdata/lfi/maps/home0')
+        # TODO(open_decision): empty_map_path — declared but never read. Closed binary uses
+        #   this path to locate the template empty-map directory when generating a new map.
         self.declare_parameter('empty_map_path', '/userdata/lfi/maps/')
         self.declare_parameter('save_utm_path', '/userdata/pos.json')
         self.declare_parameter('enable_loc_unstable_handle', False)
         self.declare_parameter('quit_pile_distance', 2.0)
+        # TODO(open_decision): follow_path_id — declared but never read. Closed binary passes
+        #   this to nav2 to select the path-follower plugin (e.g. PurePursuitReverseFollow).
         self.declare_parameter('follow_path_id',
                                'FollowPathPurePursuitReverseFollow')
         self.declare_parameter('loc_mapping_confidence', 69)
         self.declare_parameter('loc_cover_confidence', 40)
         self.declare_parameter('loc_recover_confidence', 89)
+        # TODO(open_decision): default_perception_level — declared but never read. Closed
+        #   binary initialises perception_level from this param at startup. Wire when
+        #   implementing perception-level initialisation.
         self.declare_parameter('default_perception_level', 1)
         self.declare_parameter('min_perception_level', 0)
         self.declare_parameter('detect_out_of_boundary', True)
@@ -494,11 +571,16 @@ class OpenRobotDecision(Node):
         self.declare_parameter('image_darkness_thresh', 60.0)
         self.declare_parameter('image_darkness_thresh_lower', 5.0)
         self.declare_parameter('enable_save_image', True)
+        # TODO(open_decision): max_save_image_count — declared but never read. Closed binary
+        #   caps the number of saved images per session using this value. Wire when
+        #   implementing save_camera_image / save_pcd_image call sites.
         self.declare_parameter('max_save_image_count', 80)
         self.declare_parameter('enable_led_light', True)
         self.declare_parameter('check_camera_clean', True)
         self.declare_parameter('enable_rtk_init_check', True)
         self.declare_parameter('enable_low_power_mode', True)
+        # TODO(open_decision): enable_led_feedback_check — declared but never read. Closed
+        #   binary uses this to gate a LED-state validation loop after setting brightness.
         self.declare_parameter('enable_led_feedback_check', False)
         self.declare_parameter('check_process', [
             '/nav2_single_node_navigator',
@@ -510,9 +592,17 @@ class OpenRobotDecision(Node):
         ])
         self.declare_parameter('planned_path_file',
                                '/userdata/lfi/maps/home0/planned_path')
+        # TODO(open_decision): covering_path_file — declared but never read. Closed binary
+        #   writes the accumulated covered-path JSON to this path for persistence across
+        #   sessions. Wire when implementing covered-path file persistence.
         self.declare_parameter('covering_path_file',
                                '/userdata/lfi/maps/home0/covered_path')
         self.declare_parameter('boundary_offset', 0.35)
+        self.declare_parameter('include_edge', True)
+        self.declare_parameter('recharge_retry_times', 0)
+        self.declare_parameter('escape_plan_switch', 0)
+        self.declare_parameter('collect_image', 1)
+        self.declare_parameter('do_camera_switch', 0)
         self.declare_parameter('save_tof_rgb', True)
         self.declare_parameter('cpu_temp_thresh', 93.9)
         self.declare_parameter('enable_out_of_map_recover', True)
@@ -533,22 +623,12 @@ class OpenRobotDecision(Node):
 
         elif self.boot_phase == 'SENSOR_INIT':
             self._set_state(TaskMode.FREE, WorkStatus.SENSOR_INIT)
-            if self._boot_init_ok_future is None:
-                if self.cli_init_ok.wait_for_service(timeout_sec=0.0):
-                    req = EmptySrv.Request()
-                    self._boot_init_ok_future = self.cli_init_ok.call_async(req)
-                    self.get_logger().info(
-                        'Boot: SENSOR_INIT — calling /chassis_node/init_ok')
-                elif elapsed > 10.0:
-                    self.get_logger().warn(
-                        'Boot: /chassis_node/init_ok not available, skipping')
-                    self.boot_phase = 'INIT_MOWER'
-            elif self._boot_init_ok_future.done():
-                try:
-                    self._boot_init_ok_future.result()
-                    self.get_logger().info('Boot: SENSOR_INIT — chassis init OK')
-                except Exception as e:
-                    self.get_logger().warn(f'Boot: init_ok failed: {e}')
+            if self._boot_init_ok_received:
+                self.get_logger().info('Boot: SENSOR_INIT — chassis init OK')
+                self.boot_phase = 'INIT_MOWER'
+            elif elapsed > 10.0:
+                self.get_logger().warn(
+                    'Boot: /chassis_node/init_ok not received within 10s, skipping')
                 self.boot_phase = 'INIT_MOWER'
 
         elif self.boot_phase == 'INIT_MOWER':
@@ -896,9 +976,10 @@ class OpenRobotDecision(Node):
                     pose = result.charging_pose
                     self._charger_pose_x = pose.position.x
                     self._charger_pose_y = pose.position.y
+                    # SetChargingPose.Response has no map_to_charging_dis field (live verified 2026-04-26).
                     self.get_logger().info(
                         f'Mapping: Charger pose saved, '
-                        f'dist={result.map_to_charging_dis:.2f}m')
+                        f'pos=({pose.position.x:.2f}, {pose.position.y:.2f})')
                 else:
                     self.get_logger().warn(
                         f'Mapping: Save charger pose failed: '
@@ -915,9 +996,9 @@ class OpenRobotDecision(Node):
         req = MappingSrv.Request()
         req.resolution = 0.05
         req.type = 0  # sub-map
-        req.main_id = 0
+        # Mapping.srv has only resolution + type fields (no main_id, live verified 2026-04-26)
         self.call_service_async(
-            self.cli_mapping_data, req, 'mapping_data(sub-map)')
+            self.cli_mapping_data, req, 'mapping(sub-map)')
 
     def generate_whole_map(self):
         """Generate whole map (type=1) from all sub-maps."""
@@ -925,9 +1006,9 @@ class OpenRobotDecision(Node):
         req = MappingSrv.Request()
         req.resolution = 0.05
         req.type = 1  # whole map
-        req.main_id = 0
+        # Mapping.srv has only resolution + type fields (no main_id, live verified 2026-04-26)
         self.call_service_async(
-            self.cli_mapping_data, req, 'mapping_data(whole-map)')
+            self.cli_mapping_data, req, 'mapping(whole-map)')
 
     def _on_mapping_polygon(self, msg: MappingPolygon):
         """Handle mapping polygon data from novabot_mapping."""
@@ -968,7 +1049,6 @@ class OpenRobotDecision(Node):
         Uses a persistent subscription that stays active (no destroy to avoid
         executor conflicts in Galactic)."""
         if not hasattr(self, '_perception_data_received'):
-            from sensor_msgs.msg import PointCloud2
             self._perception_data_received = False
 
             def on_points(msg):
@@ -1107,6 +1187,8 @@ class OpenRobotDecision(Node):
         goal.debug_mode = False
         goal.inflation_radius = 0.0
         goal.blade_height = 0
+        # TODO(open_decision): wire boundary_offset when BoundaryFollow.Goal supports it
+        # Currently boundary_offset param is declared but BoundaryFollow.Goal has no field for it.
 
         send_future = self.boundary_follow_client.send_goal_async(
             goal, feedback_callback=self._on_boundary_feedback)
@@ -1177,7 +1259,7 @@ class OpenRobotDecision(Node):
                                 WorkStatus.MAPPING_STOP_RECORD)
 
                 # Step 1: Save charger pose (synchronous)
-                ok = self.service_handlers._save_charging_pose_internal(
+                ok, _dist = self.service_handlers._save_charging_pose_internal(
                     self.current_map_name or 'home0', 'map0')
                 if not ok:
                     self.get_logger().warn(
@@ -1224,13 +1306,44 @@ class OpenRobotDecision(Node):
 
     # ─── Coverage/Mowing (Fase 5) ────────────────────────────
 
-    def start_coverage(self, map_yaml, blade_height=40,
-                       include_edge=False, specify_direction=False,
-                       cov_direction=0, perception_level=1):
-        """Start coverage mowing via NavigateThroughCoveragePaths action."""
+    def start_coverage(self, *, map_yaml: str, blade_height: int = 40,
+                       include_edge: bool = False,
+                       only_edge_mode: bool = False,
+                       polygon_area=None,
+                       specify_direction: bool = False,
+                       cov_direction: float = 0.0,
+                       perception_level: int = 0):
+        """Start coverage mowing via NavigateThroughCoveragePaths action.
+
+        NavigateThroughCoveragePaths.action fields (live mower, verified
+        2026-04-26) that do NOT exist on the goal:
+          - only_edge_mode  → kept in signature for API compat; logs warning
+          - polygon_area    → kept in signature for API compat; logs warning
+          - specify_direction → removed (no such field)
+          - cov_direction (numeric) → coarse-mapped to cov_direction_change (bool)
+
+        True boundary-only mowing (only_edge_mode) requires start_edge_cut via
+        extended_commands.py → NTCP with only_edge_mode:true at ROS level
+        (see memory edge-cut-ntcp.md).  cov_mode=1 SPECIFIED_AREA requires a
+        separate mechanism not yet implemented here.
+        """
         self.get_logger().info(
             f'Coverage: Starting with map={map_yaml} '
             f'blade={blade_height} edge={include_edge}')
+
+        if polygon_area is not None:
+            self.get_logger().warn(
+                'start_coverage: polygon_area not supported by '
+                'NavigateThroughCoveragePaths.action — ignoring. cov_mode=1 '
+                '(SPECIFIED_AREA) requires a different mechanism not yet '
+                'implemented (likely a separate service).')
+        if only_edge_mode:
+            self.get_logger().warn(
+                'start_coverage: only_edge_mode field does NOT exist on '
+                'NavigateThroughCoveragePaths.action. Closed-binary edge-cut '
+                'goes via extended_commands start_edge_cut → NTCP, NOT this '
+                'action. include_edge=True will at least add the boundary '
+                'pass to the coverage trace.')
 
         if not self.coverage_action_client.wait_for_server(timeout_sec=5.0):
             self.get_logger().error(
@@ -1254,29 +1367,35 @@ class OpenRobotDecision(Node):
         # Set perception level (enables perception + inference model + seg level)
         self.set_perception_level(perception_level)
 
-        # Build goal
+        # Build goal — fields verified against live mower action definition
+        # (focal-xj3-arm64:/root/novabot/install/coverage_planner/share/
+        #  coverage_planner/action/NavigateThroughCoveragePaths, 2026-04-26).
         goal = NavigateThroughCoveragePaths.Goal()
         goal.map_yaml = map_yaml
-        goal.coverage_type = 0  # COVERAGE_BY_FILE
-        goal.return_to_start = True
+        goal.coverage_type = NavigateThroughCoveragePaths.Goal.COVERAGE_BY_FILE
         goal.reset_coverage_map = True
-        goal.setting_blade_height = True
-        goal.blade_height = blade_height
-        goal.adaptive_mode = 1  # reciprocal
-        goal.include_edge = include_edge
-        goal.specify_direction = specify_direction
-        goal.cov_direction = cov_direction
-        goal.target_repeat_times = self.get_parameter(
-            'coverage_times').value
-        goal.auto_repeat_num = False
-        goal.ignore_start_for_planning = False
+        goal.return_to_start = False
         goal.disable_recover = False
         goal.enable_tf_action_abort_as_stop = False
+        goal.include_edge = bool(include_edge)
         goal.mixed_edge = False
+        goal.setting_blade_height = blade_height > 0
+        goal.blade_height = int(blade_height)
+        goal.grass_height = 0
+        goal.auto_repeat_num = False
+        goal.target_repeat_times = int(
+            self.get_parameter('coverage_times').value)
         goal.debug_mode = False
-        goal.only_edge_mode = False
-        goal.enable_check_walkable = False
-        goal.back_avoid_mode = False
+        goal.adaptive_mode = 0  # constant mode
+        # Live action fields (verified 2026-04-26): specify_direction (bool) +
+        # cov_direction (uint8 angle 0-180).
+        # `cov_direction_change` (bool 90° flip) was REMOVED from the live firmware;
+        # the current interface uses explicit angle + enable flag instead.
+        goal.specify_direction = bool(cov_direction != 0)
+        goal.cov_direction = int(cov_direction) & 0xFF  # uint8
+        # Test-mode lengths stay at default (0.0).
+        # Fields that do NOT exist on this action (do not set):
+        #   only_edge_mode, polygon_area, cov_direction_change
 
         self._cov_start_time = time.monotonic()
 
@@ -1348,11 +1467,18 @@ class OpenRobotDecision(Node):
             f'ratio={result.covered_ratio:.0%} '
             f'time={elapsed:.0f}s msg="{result.msg}"')
 
-        # Publish CovTaskResult
+        # Publish CovTaskResult using live decision_msgs/CovTaskResult fields.
+        # Fields cov_ratio/cov_area/cov_work_time do NOT exist (live verified 2026-04-26).
+        # Live fields: start_time, end_time, map_num, finished_num, work_status,
+        #              error_status, map_ids, area, target_height, request_type
         cov_result = CovTaskResult()
-        cov_result.cov_ratio = result.covered_ratio
-        cov_result.cov_area = result.total_covered_area
-        cov_result.cov_work_time = elapsed
+        now_msg = self.get_clock().now().to_msg()
+        cov_result.start_time = self.start_time.to_msg()
+        cov_result.end_time = now_msg
+        cov_result.work_status = int(result.result_status)
+        cov_result.area = result.total_covered_area
+        cov_result.target_height = int(self.target_height)
+        cov_result.map_ids = int(self.request_map_ids or 0)
         self.cov_result_pub.publish(cov_result)
 
         # Map result_status to state transition
@@ -1483,6 +1609,8 @@ class OpenRobotDecision(Node):
         self.call_service_async(
             self.cli_tof_camera, req, 'tof_camera(stop)')
 
+    # TODO(open_decision): save_camera_image — zero call sites. Closed binary calls this
+    #   during obstacle events and after session end (paired with max_save_image_count).
     def save_camera_image(self, filename=''):
         """Save current camera image via preposition camera."""
         if not self.get_parameter('enable_save_image').value:
@@ -1492,6 +1620,8 @@ class OpenRobotDecision(Node):
         self.call_service_async(
             self.cli_preposition_save, req, 'preposition_save')
 
+    # TODO(open_decision): save_pcd_image — zero call sites. Closed binary calls this
+    #   alongside save_camera_image to capture ToF point cloud + RGB on obstacle events.
     def save_pcd_image(self, filename=''):
         """Save point cloud + image data."""
         if not self.get_parameter('save_tof_rgb').value:
@@ -1501,6 +1631,9 @@ class OpenRobotDecision(Node):
         self.call_service_async(
             self.cli_save_pcd_img, req, 'save_pcd_img')
 
+    # TODO(open_decision): report_camera_hw_exception — zero call sites. Closed binary
+    #   calls this to notify the camera node when a hardware fault is detected
+    #   (distinct from _on_camera_hw_exception which *receives* such notifications).
     def report_camera_hw_exception(self, has_exception):
         """Report camera hardware exception to camera node."""
         req = SetBool.Request()
@@ -1530,6 +1663,47 @@ class OpenRobotDecision(Node):
                 f'(gain={gain}, thresh={thresh})')
             # Set detection mode: True=ignore tof height (for dark/night operation)
             self.set_detection_mode(self._camera_is_dark)
+
+            # Bump LED brightness in dark, restore minimum in bright. Closed
+            # binary semantics: 255 = max brightness for ArUco visibility at
+            # night-docking, 1 = minimum (off-ish but not fully off so the
+            # status LED stays alive).
+            try:
+                req = SetUint8Srv.Request()
+                # SetUint8.srv field is `value`, not `data` (verified 2026-04-26)
+                req.value = 255 if self._camera_is_dark else 1
+                if self.cli_led_level.service_is_ready():
+                    self.cli_led_level.call_async(req)
+                else:
+                    self.get_logger().debug(
+                        'cli_led_level not ready; skipping LED brightness update')
+            except Exception as e:
+                self.get_logger().warn(f'led_level call failed: {e}')
+
+    # ─── Lifecycle callbacks ───────────────────────────────────────────────────
+
+    def _on_led_level(self, msg):
+        """Mirror chassis_node LED brightness for downstream decisions."""
+        self._led_level = int(msg.data)
+
+    def _on_camera_hw_exception(self, msg):
+        """Camera HW failure → demote to RECOVER_ERROR_STOP with CAMERA_ERROR."""
+        if not msg.data:
+            return
+        self.get_logger().warn('Camera hardware exception reported')
+        self._set_state(self.task_mode, WorkStatus.RECOVER_ERROR_STOP,
+                        error_status=ErrorStatus.CAMERA_ERROR)
+
+    def _on_shm_error(self, msg):
+        """Shared-memory error → STOP with RECOVER_ERROR_STOP."""
+        if not msg.data:
+            return
+        self.get_logger().error('Shared memory error reported')
+        self._set_state(TaskMode.STOP, WorkStatus.RECOVER_ERROR_STOP)
+
+    def _on_tof(self, msg):
+        """Track ToF liveness via last-seen timestamp."""
+        self._tof_last_seen = time.monotonic()
 
     def set_camera_gain(self, gain):
         """Set camera total gain (exposure control)."""
@@ -1661,13 +1835,20 @@ class OpenRobotDecision(Node):
             self.cli_auto_recharge_set_params, req,
             f'recharge_led_brightness({value})')
 
-    def set_prohibited_points(self, enabled):
-        """Enable/disable prohibited points in costmap."""
-        req = SetBool.Request()
-        req.data = enabled
-        self.call_service_async(
-            self.cli_prohibited_points, req,
-            f'prohibited_points({"on" if enabled else "off"})')
+    def push_prohibited_zones(self, polygon_points):
+        """Publish a no-go polygon to /local_costmap/prohibited_points so nav2
+        avoids the user-defined zones. polygon_points: iterable of (x, y)
+        tuples in map frame."""
+        msg = PolygonStamped()
+        msg.header.frame_id = 'map'
+        msg.header.stamp = self.get_clock().now().to_msg()
+        for x, y in polygon_points:
+            p = Point32()
+            p.x = float(x)
+            p.y = float(y)
+            p.z = 0.0
+            msg.polygon.points.append(p)
+        self.prohibited_points_pub.publish(msg)
 
     def report_maybe_stuck(self, stuck):
         """Report to nav2 that robot may be stuck."""
@@ -1682,12 +1863,14 @@ class OpenRobotDecision(Node):
     def set_led_buzzer(self, value):
         """Set LED/buzzer via chassis node.
         Bit field: bit0=LED, bit1=buzzer, etc."""
-        req = SetUint8Srv.Request()
-        req.value = value
-        self.call_service_async(
-            self.cli_led_buzzer, req,
-            f'led_buzzer({value})')
+        led_buzzer_msg = UInt8()
+        led_buzzer_msg.data = value
+        self.led_buzzer_pub.publish(led_buzzer_msg)
 
+    # TODO(open_decision): set_led_level — zero call sites. Closed binary calls this to set
+    #   LED brightness (e.g. 255 for night docking). Note: _on_led_level *reads* the current
+    #   LED level via topic; this method *sets* it via service. Wire when implementing
+    #   LED brightness control during docking/task transitions.
     def set_led_level(self, level):
         """Set LED brightness level."""
         req = SetUint8Srv.Request()
@@ -1698,11 +1881,36 @@ class OpenRobotDecision(Node):
 
     # ─── Charging / Auto-recharge (Fase 6) ──────────────────
 
-    def start_recharge(self):
-        """Start full recharge sequence: read charger pose → navigate → dock."""
+    def start_recharge(self, guide_pose=None):
+        """Start full recharge sequence: read charger pose → navigate → dock.
+
+        If guide_pose=(x, y, theta) is provided (from nav_to_recharge
+        guide-pose mode), navigate directly to that pose instead of reading
+        the cached charger pose from disk.
+        """
         self.get_logger().info('Recharge: Starting recharge sequence')
         self._set_state(TaskMode.RECHARGING, WorkStatus.RETURN_TO_PILE,
                         recharge_status=RechargeStatus.NAVIGATING)
+
+        if guide_pose is not None:
+            # Guide pose override: build PoseStamped directly from supplied
+            # (x, y, theta) tuple and navigate without reading saved pose.
+            x, y, theta = guide_pose
+            ps = PoseStamped()
+            ps.header.frame_id = 'map'
+            ps.header.stamp = TimeMsg(sec=0, nanosec=0)
+            ps.pose.position.x = x
+            ps.pose.position.y = y
+            ps.pose.position.z = 0.0
+            # Convert yaw to quaternion (roll=0, pitch=0)
+            ps.pose.orientation.x = 0.0
+            ps.pose.orientation.y = 0.0
+            ps.pose.orientation.z = math.sin(theta / 2.0)
+            ps.pose.orientation.w = math.cos(theta / 2.0)
+            self.get_logger().info(
+                f'Recharge: Using guide pose ({x:.2f}, {y:.2f}, {theta:.2f})')
+            self._navigate_to_charger(ps)
+            return
 
         # Read saved charger pose
         req = SetChargingPoseSrv.Request()
@@ -1719,9 +1927,9 @@ class OpenRobotDecision(Node):
             result = future.result()
             if result.result:
                 pose = result.charging_pose
+                # SetChargingPose.Response has no map_to_charging_dis field (live verified 2026-04-26).
                 self.get_logger().info(
                     f'Recharge: Charger pose read, '
-                    f'dist={result.map_to_charging_dis:.2f}m, '
                     f'pos=({pose.position.x:.2f},{pose.position.y:.2f})')
                 # Build PoseStamped for navigation.
                 # Use stamp=Time(0) so TF lookups use "latest available" instead
@@ -1854,16 +2062,76 @@ class OpenRobotDecision(Node):
             self.get_logger().warn(f'Heading cache schrijven mislukt: {e}')
 
     def _start_heading_discovery(self) -> None:
-        """Rijd van dock af + draai rond totdat heading bekend is, dan auto-dock."""
+        """Drive reverse ~1 m via free_move_around (closed-binary parity) to
+        refresh GPS heading, then spin until LOC_SUCCESS, then auto-dock.
+
+        Closed binary uses /nav2_single_node_navigator/free_move_around with
+        quit_pile_distance (default 1.0 m) for this QUIT_PILE_INIT phase.
+        free_move_around allows movement without a loaded map — critical here
+        because localization has not yet succeeded.
+
+        Falls back to forward-drive + spin if the service is unavailable.
+
+        OPERATOR NOTE: ensure clear space BEHIND the mower before activating.
+        """
+        dist = float(self.get_parameter('quit_pile_distance').value)
+        if not self.cli_free_move_around.wait_for_service(timeout_sec=2.0):
+            self.get_logger().warn(
+                'Heading discovery: free_move_around unavailable — '
+                'falling back to forward+spin')
+            self._fallback_forward_spin_heading_discovery()
+            return
+
         self.get_logger().info(
-            f'Heading discovery: rijd {DRIVE_OFF_TIME_S}s van dock af...')
+            f'Heading discovery: reverse {dist:.1f} m via free_move_around '
+            '(closed-binary parity)...')
+        req = FreeMoveAround.Request()
+        # using_input_pose=False → service moves the robot without a target pose;
+        # radius carries the desired movement distance (same as quit_pile_distance).
+        req.using_input_pose = False
+        req.radius = dist
+        req.local_costmap = False
+        req.global_costmap = False
+
+        future = self.cli_free_move_around.call_async(req)
+
+        def _on_free_move_done(fut):
+            try:
+                result = fut.result()
+                self.get_logger().info(
+                    f'Heading discovery: free_move_around done '
+                    f'(result={result.result})')
+            except Exception as e:
+                self.get_logger().warn(
+                    f'Heading discovery: free_move_around failed ({e}) '
+                    '— starting spin phase anyway')
+            # Regardless of service outcome: proceed to spin phase to collect
+            # GPS track data until LOC_SUCCESS (or timeout).
+            self._heading_phase = 'spinning'
+            self._heading_phase_start = time.monotonic()
+            if self._heading_timer is None:
+                self._heading_timer = self.create_timer(
+                    0.2, self._heading_discovery_tick)
+
+        future.add_done_callback(_on_free_move_done)
+        # Set phase immediately so safety checks in _update_charger_state can
+        # cancel the heading timer if charger contact is detected mid-flight.
+        self._heading_phase = 'free_move_pending'
+
+    def _fallback_forward_spin_heading_discovery(self) -> None:
+        """Fallback heading discovery: drive forward then spin (original
+        implementation). Used when free_move_around is not available."""
+        self.get_logger().info(
+            f'Heading discovery (fallback): rijd {DRIVE_OFF_TIME_S}s van dock af...')
         self._heading_phase = 'drive_off'
         self._heading_phase_start = time.monotonic()
         self._heading_timer = self.create_timer(
             0.2, self._heading_discovery_tick)
 
     def _heading_discovery_tick(self) -> None:
-        """Timer callback: beheert drive-off + spin totdat heading verkregen."""
+        """Timer callback: beheert drive-off + spin totdat heading verkregen.
+        Used both by fallback path (drive_off → spinning) and by the
+        free_move_around path (spinning only, after callback fires)."""
         # Safety: abort heading discovery if no longer in appropriate state.
         if self.task_mode not in (TaskMode.FREE,) or self.is_on_charger:
             self.cmd_vel_pub.publish(Twist())  # Stop motors
@@ -1874,6 +2142,10 @@ class OpenRobotDecision(Node):
             self.get_logger().info(
                 f'Heading discovery: aborted (mode={self.task_mode}, '
                 f'on_charger={self.is_on_charger})')
+            return
+
+        # free_move_around is in flight — do nothing, wait for async callback.
+        if self._heading_phase == 'free_move_pending':
             return
 
         elapsed = time.monotonic() - self._heading_phase_start
@@ -2137,13 +2409,21 @@ class OpenRobotDecision(Node):
         self._update_charger_state()
         if self.battery_power > 0 and self.boot_checks_done:
             low_thresh = self.get_parameter('low_battery_power').value
+            back = self.get_parameter('charge_back_percentage').value
+            # Hysteresis: re-arm low-battery trigger after the level has gone
+            # back ABOVE low+back (closed-binary semantics).
+            if not self._low_battery_armed:
+                if self.battery_power >= low_thresh + back:
+                    self._low_battery_armed = True
             if (self.battery_power <= low_thresh
+                    and self._low_battery_armed
                     and self.task_mode == TaskMode.COVER):
                 self.get_logger().warn(
-                    f'Low battery ({self.battery_power}%), '
-                    f'cancelling coverage and returning to charger!')
-                self.cancel_coverage()
+                    f'Battery low ({self.battery_power}% <= {low_thresh}%), '
+                    f'cancelling coverage and starting recharge')
+                self._cancel_active_actions()
                 self.start_recharge()
+                self._low_battery_armed = False
             # Low power sleep mode: if idle and battery critically low
             elif (self.battery_power <= low_thresh
                     and self.task_mode == TaskMode.FREE
@@ -2155,6 +2435,25 @@ class OpenRobotDecision(Node):
                 self._set_state(TaskMode.FREE, WorkStatus.LOWER_POWER_STOP,
                                 error_status=ErrorStatus.LOW_BATTERY)
                 self.start_recharge()
+
+            # Full-battery: exit CHARGING and auto-resume prior coverage task.
+            # Intentionally independent of the low-battery branch above —
+            # these two checks must never share a branch (full-battery is only
+            # reachable in TaskMode.CHARGING, low-battery only in COVER/FREE).
+            full_thresh = self.get_parameter('full_battery_power').value
+            if (self.battery_power >= full_thresh
+                    and self.task_mode == TaskMode.CHARGING):
+                self.get_logger().info(
+                    f'Battery full ({self.battery_power}% >= {full_thresh}%), '
+                    f'exiting CHARGING')
+                self._cancel_active_actions()
+                self._set_state(TaskMode.FREE, WorkStatus.INIT_SUCCESS)
+                if getattr(self, '_last_cov_request', None) is not None:
+                    self.get_logger().info('Auto-resuming prior coverage task')
+                    from decision_msgs.srv import StartCoverageTask
+                    resp = StartCoverageTask.Response()
+                    self.service_handlers._handle_start_cov_task(
+                        self._last_cov_request, resp)
 
     def _on_incident(self, msg: ChassisIncident):
         if msg.error_set_flag != self._last_error_flag:
@@ -2199,6 +2498,10 @@ class OpenRobotDecision(Node):
         # no_set_pin_code = same category, ignore
         # (These are expected with patched STM32 v3.6.7+)
 
+        # Track LoRa link state so DecisionAssistant._lora_recover_loop
+        # can poll it instead of bailing immediately.
+        self.lora_ok = not msg.error_lora
+
         # Real errors — only check non-charger, non-PIN flags
         if msg.error_push_button_stop:
             self.error_status = ErrorStatus.PUSH_BUTTON_STOP
@@ -2234,7 +2537,9 @@ class OpenRobotDecision(Node):
             self.error_status = ErrorStatus.USB_BUSY
         elif msg.error_usb_not_ok_error:
             self.error_status = ErrorStatus.USB_NOT_OK
-        elif msg.error_lift_motor_error:
+        # ChassisIncident.msg has no error_lift_motor_error field (live verified 2026-04-26).
+        # Guard with hasattr so this branch is silently skipped if field is absent.
+        elif hasattr(msg, 'error_lift_motor_error') and msg.error_lift_motor_error:
             self.error_status = ErrorStatus.LIFT_MOTOR_ERROR
 
         # Handle incidents during active tasks
@@ -2258,6 +2563,94 @@ class OpenRobotDecision(Node):
         else:
             self.loc_quality = max(0, msg.status)
 
+    def _on_out_of_zone(self, msg):
+        """Assistant signals robot is outside the working zone polygon. Trigger
+        LocRecoverMoving with recover_type=1 (out-of-map). Closed binary does
+        the same auto-escalation."""
+        if not msg.data:
+            return
+        if self.task_mode != TaskMode.COVER:
+            return
+        if self.work_status == WorkStatus.ROBOT_OUT_OF_MAP_HANDLE:
+            return  # already handling
+        self._set_state(TaskMode.COVER, WorkStatus.ROBOT_OUT_OF_MAP_HANDLE)
+        self.get_logger().warn(
+            'Robot out of working zone — sending LocRecoverMoving goal')
+        self._send_loc_recover_goal(recover_type=1)
+
+    def _on_init_ok(self, msg: Bool):
+        """Chassis node publishes /chassis_node/init_ok Bool topic on boot.
+        Used during SENSOR_INIT phase to confirm hardware is ready.
+        Latch the flag so boot can proceed."""
+        if msg.data:
+            self._boot_init_ok_received = True
+
+    def _send_slip_goal(self, max_escape_time: float = 10.0):
+        """Send SlipEscaping goal to /decision_assistant/slipping_escape.
+        Reentrant-safe: if a goal is already running we bail out."""
+        if not self.get_parameter('enable_slipping_recover').value:
+            self.get_logger().debug(
+                'enable_slipping_recover=False; skipping SlipEscaping goal')
+            return
+        if self._slip_goal_handle is not None:
+            return
+        if not self.slip_escape_client.wait_for_server(timeout_sec=1.0):
+            self.get_logger().warn(
+                'slipping_escape action server not available')
+            return
+        goal = SlipEscaping.Goal()
+        goal.max_escape_time = float(max_escape_time)
+
+        def _on_response(future):
+            handle = future.result()
+            if not handle or not handle.accepted:
+                self.get_logger().warn('slipping_escape goal rejected')
+                self._slip_goal_handle = None
+                return
+            self._slip_goal_handle = handle
+            handle.get_result_async().add_done_callback(_on_result)
+
+        def _on_result(future):
+            res = future.result()
+            self._slip_goal_handle = None
+            self.get_logger().info(
+                f'slipping_escape result: {getattr(res, "result", None)}')
+
+        self.slip_escape_client.send_goal_async(goal).add_done_callback(_on_response)
+
+    def _send_loc_recover_goal(self, recover_type: int = 0,
+                               max_time: float = 30.0):
+        if not self.get_parameter('enable_loc_recover').value:
+            self.get_logger().debug(
+                'enable_loc_recover=False; skipping LocRecoverMoving goal')
+            return
+        if self._loc_recover_goal_handle is not None:
+            return
+        if not self.loc_recover_client.wait_for_server(timeout_sec=1.0):
+            self.get_logger().warn(
+                'loc_recover_moving action server not available')
+            return
+        goal = LocRecoverMoving.Goal()
+        goal.max_time = float(max_time)
+        goal.recover_type = int(recover_type)
+
+        def _on_response(future):
+            handle = future.result()
+            if not handle or not handle.accepted:
+                self.get_logger().warn('loc_recover_moving goal rejected')
+                self._loc_recover_goal_handle = None
+                return
+            self._loc_recover_goal_handle = handle
+            handle.get_result_async().add_done_callback(_on_result)
+
+        def _on_result(future):
+            res = future.result()
+            self._loc_recover_goal_handle = None
+            self.get_logger().info(
+                f'loc_recover_moving result: {getattr(res, "result", None)}')
+
+        self.loc_recover_client.send_goal_async(goal).add_done_callback(_on_response)
+
     def _on_odom(self, msg: Odometry):
         self.odom_received = True
         self.odom_linear_x = msg.twist.twist.linear.x
@@ -2268,6 +2661,12 @@ class OpenRobotDecision(Node):
         siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
         cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
         self.theta = math.atan2(siny_cosp, cosy_cosp)
+
+    def _on_covered_path(self, msg: String):
+        """Forward coverage_planner_server's covered_path_json to mqtt_node's
+        expected /robot_decision/covered_path_json topic. Closed binary does
+        the same relay."""
+        self.covered_path_pub.publish(msg)
 
     # ─── Status summary ───────────────────────────────────────────
 
@@ -2393,8 +2792,8 @@ class OpenRobotDecision(Node):
         msg.merged_work_status = self._get_merged_status()
         msg.msg = self.msg_text
         msg.error_msg = self.error_msg
-        msg.request_map_ids = self.request_map_ids
-        msg.current_map_ids = self.current_map_ids
+        msg.request_map_ids = int(self.request_map_ids or 0)
+        msg.current_map_ids = int(self.current_map_ids or 0)
         msg.cov_ratio = self.cov_ratio
         msg.cov_area = self.cov_area
         msg.cov_remaining_area = self.cov_remaining_area
@@ -2405,11 +2804,16 @@ class OpenRobotDecision(Node):
         msg.pause_time = self.pause_time
         msg.cov_map_path = self.cov_map_path
         msg.target_height = self.target_height
-        msg.light = self.light
+        msg.light = int(getattr(self, '_led_level', 0))
         msg.perception_level = self.perception_level
         msg.battery_power = self.battery_power
         msg.cpu_temperature = self._get_cpu_temp()
-        msg.cpu_usage = 0
+        try:
+            with open('/proc/loadavg') as f:
+                # cpu_usage is uint8 (0-255); clamp to avoid overflow for load > 2.55
+                msg.cpu_usage = min(255, int(float(f.read().split()[0]) * 100.0))
+        except Exception:
+            msg.cpu_usage = 0
         msg.memory_remaining = self._get_memory_remaining()
         msg.disk_remaining = self._get_disk_remaining()
         msg.loc_quality = self.loc_quality
@@ -2421,6 +2825,17 @@ class OpenRobotDecision(Node):
         msg.start_time = self.start_time.to_msg()
         msg.end_time = now.to_msg()
         self.status_pub.publish(msg)
+
+        # Live position for mqtt_node / dashboard
+        pose = Pose()
+        pose.position.x = float(self.x)
+        pose.position.y = float(self.y)
+        pose.position.z = 0.0
+        # quaternion from yaw
+        half = self.theta * 0.5
+        pose.orientation.z = math.sin(half)
+        pose.orientation.w = math.cos(half)
+        self.map_position_pub.publish(pose)
 
         # Periodic safety checks (runs at 2Hz via status timer)
         self.assistant.check_cpu_temp()
@@ -2437,12 +2852,17 @@ def main(args=None):
     # without deadlocking (each runs in its own thread)
     executor = MultiThreadedExecutor(num_threads=4)
     executor.add_node(node)
+    executor.add_node(node.assistant)  # /decision_assistant namespace
 
     def signal_handler(sig, frame):
         node.get_logger().info('Shutting down open robot_decision...')
         # Don't send zero velocity at shutdown — let motors coast freely
         try:
             executor.shutdown(timeout_sec=1.0)
+        except Exception:
+            pass
+        try:
+            node.assistant.destroy_node()
         except Exception:
             pass
         try:
@@ -2466,6 +2886,10 @@ def main(args=None):
         # Don't send zero velocity — let motors coast freely
         try:
             executor.shutdown(timeout_sec=1.0)
+        except Exception:
+            pass
+        try:
+            node.assistant.destroy_node()
         except Exception:
             pass
         try:

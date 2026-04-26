@@ -1,0 +1,172 @@
+=== service servers ===
+/decision_assistant/describe_parameters
+/decision_assistant/get_parameter_types
+/decision_assistant/get_parameters
+/decision_assistant/list_parameters
+/decision_assistant/load_map
+/decision_assistant/set_parameters
+/decision_assistant/set_parameters_atomically
+/robot_decision/add_area
+/robot_decision/auto_recharge
+/robot_decision/cancel_recharge
+/robot_decision/cancel_task
+/robot_decision/delete_map
+/robot_decision/describe_parameters
+/robot_decision/generate_preview_cover_path
+/robot_decision/get_parameter_types
+/robot_decision/get_parameters
+/robot_decision/list_parameters
+/robot_decision/map_stop_record
+/robot_decision/nav_to_recharge
+/robot_decision/quit_mapping_mode
+/robot_decision/reset_data
+/robot_decision/reset_mapping
+/robot_decision/save_charging_pose
+/robot_decision/save_map
+/robot_decision/set_parameters
+/robot_decision/set_parameters_atomically
+/robot_decision/start_assistant_mapping
+/robot_decision/start_cov_task
+/robot_decision/start_erase
+/robot_decision/start_mapping
+/robot_decision/stop_task
+
+=== action servers ===
+/decision_assistant/loc_recover_moving
+/decision_assistant/slipping_escape
+
+=== node info: /robot_decision ===
+/robot_decision
+  Subscribers:
+    /battery_message: novabot_msgs/msg/ChassisBatteryMessage
+    /camera/preposition/hardware_exception: std_msgs/msg/Bool
+    /camera/preposition/total_gain: std_msgs/msg/UInt32
+    /camera/tof/point_cloud: sensor_msgs/msg/PointCloud2
+    /chassis_incident: novabot_msgs/msg/ChassisIncident
+    /chassis_node/init_ok: std_msgs/msg/Bool
+    /chassis_node/led_level: std_msgs/msg/UInt8
+    /cloud_move_cmd: novabot_msgs/msg/CloudMoveCmd
+    /coverage_planner_server/covered_path_json: std_msgs/msg/String
+    /decision_assistant/move_abnormal: std_msgs/msg/UInt8
+    /decision_assistant/robot_out_working_zone: std_msgs/msg/Bool
+    /novabot/init_mower: std_msgs/msg/UInt8
+    /novabot_mapping/mapping_data: mapping_msgs/msg/Polygon
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+    /robot_combination_localization/odom: nav_msgs/msg/Odometry
+    /system/shared_memory_error: std_msgs/msg/Bool
+  Publishers:
+    /blade_height_set: std_msgs/msg/UInt8
+    /chassis_node/led_buzzer_switch_set: std_msgs/msg/UInt8
+    /cmd_vel: geometry_msgs/msg/Twist
+    /led_set: std_msgs/msg/UInt8
+    /local_costmap/prohibited_points: geometry_msgs/msg/PolygonStamped
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+    /release_charge_lock: std_msgs/msg/UInt8
+    /robot_decision/cov_task_result: decision_msgs/msg/CovTaskResult
+    /robot_decision/covered_path_json: std_msgs/msg/String
+    /robot_decision/map_position: geometry_msgs/msg/Pose
+    /robot_decision/planned_json: std_msgs/msg/String
+    /robot_decision/preview_planned_json: std_msgs/msg/String
+    /robot_decision/robot_status: decision_msgs/msg/RobotStatus
+  Service Servers:
+    /robot_decision/add_area: decision_msgs/srv/StartMap
+    /robot_decision/auto_recharge: std_srvs/srv/Trigger
+    /robot_decision/cancel_recharge: std_srvs/srv/Trigger
+    /robot_decision/cancel_task: std_srvs/srv/Trigger
+    /robot_decision/delete_map: decision_msgs/srv/DeleteMap
+    /robot_decision/describe_parameters: rcl_interfaces/srv/DescribeParameters
+    /robot_decision/generate_preview_cover_path: decision_msgs/srv/GenerateCoveragePath
+    /robot_decision/get_parameter_types: rcl_interfaces/srv/GetParameterTypes
+    /robot_decision/get_parameters: rcl_interfaces/srv/GetParameters
+    /robot_decision/list_parameters: rcl_interfaces/srv/ListParameters
+    /robot_decision/map_stop_record: std_srvs/srv/SetBool
+    /robot_decision/nav_to_recharge: decision_msgs/srv/Charging
+    /robot_decision/quit_mapping_mode: std_srvs/srv/Empty
+    /robot_decision/reset_data: std_srvs/srv/SetBool
+    /robot_decision/reset_mapping: decision_msgs/srv/StartMap
+    /robot_decision/save_charging_pose: mapping_msgs/srv/SetChargingPose
+    /robot_decision/save_map: decision_msgs/srv/SaveMap
+    /robot_decision/set_parameters: rcl_interfaces/srv/SetParameters
+    /robot_decision/set_parameters_atomically: rcl_interfaces/srv/SetParametersAtomically
+    /robot_decision/start_assistant_mapping: std_srvs/srv/SetBool
+    /robot_decision/start_cov_task: decision_msgs/srv/StartCoverageTask
+    /robot_decision/start_erase: std_srvs/srv/SetBool
+    /robot_decision/start_mapping: decision_msgs/srv/StartMap
+    /robot_decision/stop_task: std_srvs/srv/SetBool
+  Service Clients:
+    /camera/panoramic/start_camera: std_srvs/srv/SetBool
+    /camera/preposition/save_camera: std_srvs/srv/Empty
+    /camera/preposition/start_camera: std_srvs/srv/SetBool
+    /camera/tof/start_camera: std_srvs/srv/SetBool
+    /coverage_planner_server/cover_task_stop: std_srvs/srv/SetBool
+    /coverage_planner_server/coverage_by_file: coverage_planner/srv/CoveragePathsByFile
+    /decision_assistant/load_map: nav2_msgs/srv/LoadMap
+    /enable_aruco_localization: std_srvs/srv/SetBool
+    /global_costmap/clear_around_global_costmap: nav2_msgs/srv/ClearCostmapAroundRobot
+    /ignore_collision_hall_warning: std_srvs/srv/SetBool
+    /load_utm_origin_info: localization_msgs/srv/LoadUtmOriginInfo
+    /local_costmap/clear_around_local_costmap: nav2_msgs/srv/ClearCostmapAroundRobot
+    /local_costmap/set_detection_mode: std_srvs/srv/SetBool
+    /local_costmap/set_semantic_mode: nav2_msgs/srv/SemanticMode
+    /map_server/load_map: nav2_msgs/srv/LoadMap
+    /novabot_mapping/control_erase_map_mode: std_srvs/srv/SetBool
+    /novabot_mapping/delete_current_edge: std_srvs/srv/SetBool
+    /novabot_mapping/generate_empty_map: mapping_msgs/srv/GenerateEmptyMap
+    /novabot_mapping/mapping: mapping_msgs/srv/Mapping
+    /novabot_mapping/mapping_control: mapping_msgs/srv/MappingControl
+    /novabot_mapping/recording_edge: mapping_msgs/srv/Recording
+    /novabot_mapping/recording_stop: std_srvs/srv/SetBool
+    /novabot_mapping/set_charging_pose: mapping_msgs/srv/SetChargingPose
+    /perception/do_perception: std_srvs/srv/SetBool
+    /perception/save_pcd_img: general_msgs/srv/SaveFile
+    /perception/set_infer_model: general_msgs/srv/SetUint8
+    /perception/set_seg_level: general_msgs/srv/SetUint8
+    /reset_utm_origin_info: std_srvs/srv/Empty
+    /save_utm_origin_info: localization_msgs/srv/SaveUtmOriginInfo
+  Action Servers:
+
+  Action Clients:
+    /auto_charging: automatic_recharge_msgs/action/AutoCharging
+    /boundary_follow: coverage_planner/action/BoundaryFollow
+    /decision_assistant/loc_recover_moving: decision_msgs/action/LocRecoverMoving
+    /decision_assistant/slipping_escape: decision_msgs/action/SlipEscaping
+    /follow_path: nav2_msgs/action/FollowPath
+    /navigate_through_coverage_paths: coverage_planner/action/NavigateThroughCoveragePaths
+
+=== node info: /decision_assistant ===
+/decision_assistant
+  Subscribers:
+    /cmd_vel: geometry_msgs/msg/Twist
+    /motor_current: novabot_msgs/msg/ChassisMotorCurrent
+    /nav2_single_node_navigator/robot_maybe_stuck: std_msgs/msg/Bool
+    /odom_raw: nav_msgs/msg/Odometry
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+    /robot_combination_localization/solution_map: nav_msgs/msg/OccupancyGrid
+  Publishers:
+    /cmd_vel: geometry_msgs/msg/Twist
+    /collision_range: sensor_msgs/msg/Range
+    /decision_assistant/escape_pose: geometry_msgs/msg/PoseStamped
+    /decision_assistant/move_abnormal: std_msgs/msg/UInt8
+    /decision_assistant/robot_out_working_zone: std_msgs/msg/Bool
+    /parameter_events: rcl_interfaces/msg/ParameterEvent
+  Service Servers:
+    /decision_assistant/describe_parameters: rcl_interfaces/srv/DescribeParameters
+    /decision_assistant/get_parameter_types: rcl_interfaces/srv/GetParameterTypes
+    /decision_assistant/get_parameters: rcl_interfaces/srv/GetParameters
+    /decision_assistant/list_parameters: rcl_interfaces/srv/ListParameters
+    /decision_assistant/load_map: nav2_msgs/srv/LoadMap
+    /decision_assistant/set_parameters: rcl_interfaces/srv/SetParameters
+    /decision_assistant/set_parameters_atomically: rcl_interfaces/srv/SetParametersAtomically
+  Service Clients:
+    /nav2_single_node_navigator/free_move_around: nav2_pro_msgs/srv/FreeMoveAround
+  Action Servers:
+    /decision_assistant/loc_recover_moving: decision_msgs/action/LocRecoverMoving
+    /decision_assistant/slipping_escape: decision_msgs/action/SlipEscaping
+  Action Clients:
+    /navigate_to_pose: nav2_msgs/action/NavigateToPose
+
+=== param dump (robot_decision) ===
+Saving to:  ./robot_decision.yaml
+
+=== param dump (decision_assistant) ===
+Saving to:  ./decision_assistant.yaml

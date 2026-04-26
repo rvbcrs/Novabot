@@ -1,0 +1,33 @@
+# verified 2026-04-26 (live SSH from 192.168.0.100)
+#goal
+geometry_msgs/PoseStamped charge_pose # setting charge pose if overwrite setting true, otherwise ignore this
+bool overwrite # whether overwrite existing setting charging pose and guide pose
+bool non_charging_pose_mode # enable start recharge procedure with no setting charging pose
+bool enable_no_visual_recharge #if true, when no visual signal and  charge pose was set, robot will also try recharge
+uint8 max_retry  # max retry time
+bool disable_charge_check # just move back to charge station, and don't check if robot is charging
+bool keep_alive # true: keep action running until charging success to 99%
+bool rotate_searching # robot to searching for visual signal
+---
+#result 充电返回的状态
+uint8 SUCCESS=100
+# uint8 END_WITHOUT_CHARGING=99
+# uint8 TF_OR_ACTION_FAIL=2
+uint8 NO_VISUAL_SIGNAL=3
+# uint8 NO_ODOM_UPDATE=4
+uint8 NO_CHARGE_POSE_SET=5
+uint8 NAV_TO_GUIDE_POSE_EXCEPTION=6
+uint8 CANCELED = 7
+uint8 ARUCO_SERVICE_EXCEPTION=8
+uint8 MOVE_ROBOT_EXCEPTION=9
+uint8 TF_RELATED_EXCEPTION=10
+uint8 NAV_TO_POSE_ACTION_FAIL=11
+uint8 RECHARGE_FAIL=12
+uint8 OVERTIME_WORK=13
+string message
+bool charge_status
+uint8 code
+---
+#feedback 当前正处于哪个充电步骤
+string charging_phase
+bool in_align_mode # whether in auto recharge mode(except step back or nav to guide pose)

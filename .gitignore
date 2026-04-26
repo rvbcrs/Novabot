@@ -20,6 +20,7 @@ NOVABOT_*.*apk
 # ── Research (entire directory — development only) ───
 research/*
 !research/documents/
+!research/ros2_msg_definitions/
 !research/*.py
 !research/*.md
 
@@ -60,6 +61,7 @@ stm32-firmware/.vscode/
 **/__pycache__/
 *.pyc
 *.pyo
+mower/.pytest_cache/
 
 # Cloud scan — raw data bevat persoonlijke info (emails, wifi passwords)
 research/cloud_devices.json
@@ -72,3 +74,8 @@ nova-ota-device/ESP32-S3-Touch-LCD-2-Demo/
 # JWT secret generated during tests
 server/.jwt_secret
 app/node_modules
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key

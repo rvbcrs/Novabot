@@ -1,0 +1,12 @@
+# verified 2026-04-26 (live SSH from 192.168.0.100)
+# Get the coverage_path
+string map_yaml
+bool include_edge
+bool specify_direction # whether to specify direction
+uint8 cov_direction # specified cov direction
+---
+# Result code definitions
+bool success
+string msg
+string path_json
+float32 planned_area

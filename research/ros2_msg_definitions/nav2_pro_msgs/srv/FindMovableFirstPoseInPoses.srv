@@ -1,0 +1,7 @@
+# verified 2026-04-26 (live SSH from 192.168.0.100)
+# Confirm if robot is movable in costmap according to radius(in this area, robot can free move in any position)
+geometry_msgs/PoseStamped[] poses
+bool local_costmap
+bool global_costmap
+---
+int32 index # if find, return valid index, otherwise return -1

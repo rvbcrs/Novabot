@@ -9,12 +9,12 @@ the mower is stuck (slipping) or has bad localization.
 Also monitors motor current + odom to proactively detect slip.
 
 Action servers (matching original C++ binary):
-  - SlipEscaping: escape from wheel slip situation
-  - LocRecoverMoving: recover from localization loss or out-of-map
+  - slipping_escape: escape from wheel slip situation
+  - loc_recover_moving: recover from localization loss or out-of-map
 
 Published topics:
   - /decision_assistant/escape_pose (PoseStamped)
-  - /decision_assistant/robot_out_working_zone (UInt8)
+  - /decision_assistant/robot_out_working_zone (Bool)
   - /decision_assistant/move_abnormal (UInt8)
 """
 
@@ -22,9 +22,16 @@ import math
 import time
 import threading
 
+from rclpy.node import Node
 from rclpy.action import ActionServer, CancelResponse, GoalResponse
-from geometry_msgs.msg import Twist, PoseStamped
-from std_msgs.msg import UInt8
+from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.qos import (
+    QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy)
+from geometry_msgs.msg import PoseStamped
+from std_msgs.msg import UInt8, Bool
+from sensor_msgs.msg import Range
+from nav2_msgs.srv import LoadMap
+from novabot_msgs.msg import CloudMoveCmd
 
 from decision_msgs.action import SlipEscaping, LocRecoverMoving
 
@@ -39,17 +46,21 @@ CANNOT_MOVE_ANGULAR_DIFF = 0.5  # rad
 CANNOT_MOVE_LINEAR_DIFF = 0.15  # m
 
 
-class DecisionAssistant:
-    """Handles slip escape, localization recovery, and movement monitoring."""
+class DecisionAssistant(Node):
+    """Owns the /decision_assistant namespace. Slip escape + localization
+    recovery action servers live here so nav2/coverage_planner find them on
+    their original ROS graph names (/decision_assistant/slipping_escape and
+    /decision_assistant/loc_recover_moving), exactly like the closed C++
+    binary.
 
-    def __init__(self, node):
-        """Initialize DecisionAssistant with reference to main node.
+    Reads pose/state from the host robot_decision node passed in as
+    ``host_node``; never registers callbacks on that node.
+    """
 
-        Args:
-            node: OpenRobotDecision node instance
-        """
-        self.node = node
-        self._logger = node.get_logger()
+    def __init__(self, host_node):
+        super().__init__('decision_assistant')
+        self.host = host_node
+        self._logger = self.get_logger()
 
         # ─── Slip detection state ───
         self._prev_x = 0.0
@@ -58,58 +69,93 @@ class DecisionAssistant:
         self._prev_odom_time = 0.0
         self._slip_count = 0
         self._slip_detected = False
-        self._motor_current_threshold = 10.0  # A (from config)
+        self._motor_current_threshold = 10.0  # A
 
-        # ─── Escape state ───
+        # ─── Escape / recover state ───
         self._escaping = False
         self._escape_goal_handle = None
-
-        # ─── Recovery state ───
         self._recovering = False
         self._recover_goal_handle = None
 
-        # ─── Declare parameters ───
-        node.declare_parameter('escape_angular_vel', ESCAPE_ANGULAR_VEL)
-        node.declare_parameter('escape_linear_vel', ESCAPE_LINEAR_VEL)
-        node.declare_parameter('straight_slipping_dis_diff',
+        # ─── Parameters (declared on THIS node) ───
+        self.declare_parameter('escape_angular_vel', ESCAPE_ANGULAR_VEL)
+        self.declare_parameter('escape_linear_vel', ESCAPE_LINEAR_VEL)
+        self.declare_parameter('straight_slipping_dis_diff',
                                STRAIGHT_SLIP_DIS_DIFF)
-        node.declare_parameter('rotate_slipping_yaw_diff',
+        self.declare_parameter('rotate_slipping_yaw_diff',
                                ROTATE_SLIP_YAW_DIFF)
-        node.declare_parameter('cannot_move_angular_diff',
+        self.declare_parameter('cannot_move_angular_diff',
                                CANNOT_MOVE_ANGULAR_DIFF)
-        node.declare_parameter('cannot_move_linear_diff',
+        self.declare_parameter('cannot_move_linear_diff',
                                CANNOT_MOVE_LINEAR_DIFF)
 
-        # ─── Publishers ───
-        from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
+        # ─── Callback group for actions ───
+        self.action_cb_group = ReentrantCallbackGroup()
+
         reliable_qos = QoSProfile(
             reliability=QoSReliabilityPolicy.RELIABLE,
             history=QoSHistoryPolicy.KEEP_LAST, depth=10)
 
-        self.escape_pose_pub = node.create_publisher(
+        # ─── Publishers (under /decision_assistant/) ───
+        self.escape_pose_pub = self.create_publisher(
             PoseStamped, '/decision_assistant/escape_pose', reliable_qos)
-        self.out_of_zone_pub = node.create_publisher(
-            UInt8, '/decision_assistant/robot_out_working_zone', reliable_qos)
-        self.move_abnormal_pub = node.create_publisher(
+        # NOTE: bool not uint8 — closed binary publishes Bool. Subscriber side
+        # in robot_decision must match. See Task 2.4.
+        self.out_of_zone_pub = self.create_publisher(
+            Bool, '/decision_assistant/robot_out_working_zone', reliable_qos)
+        self.move_abnormal_pub = self.create_publisher(
             UInt8, '/decision_assistant/move_abnormal', reliable_qos)
 
-        # ─── Action SERVERS ───
+        self.collision_range_pub = self.create_publisher(
+            Range, '/collision_range', reliable_qos)
+        self._min_obstacle_dist: float = -1.0
+        # 5 Hz timer for collision_range publishing — mqtt_node maps it to
+        # obstacle_distance for the app.
+        self._collision_range_timer = self.create_timer(
+            0.2, self._publish_collision_range_tick)
+
+        # ─── Action SERVERS (closed-binary names) ───
         self._slip_action_server = ActionServer(
-            node, SlipEscaping, 'slip_escaping',
+            self, SlipEscaping, 'slipping_escape',
             execute_callback=self._execute_slip_escape,
             goal_callback=self._goal_cb,
             cancel_callback=self._cancel_cb,
-            callback_group=node.service_cb_group)
-
+            callback_group=self.action_cb_group)
         self._loc_recover_server = ActionServer(
-            node, LocRecoverMoving, 'loc_recover',
+            self, LocRecoverMoving, 'loc_recover_moving',
             execute_callback=self._execute_loc_recover,
             goal_callback=self._goal_cb,
             cancel_callback=self._cancel_cb,
-            callback_group=node.service_cb_group)
+            callback_group=self.action_cb_group)
 
-        self._logger.info('DecisionAssistant: action servers created '
-                          '(slip_escaping, loc_recover)')
+        # ─── load_map service (closed exposes this for working-zone polygon) ───
+        self._loaded_map_url: str | None = None
+        self._load_map_srv = self.create_service(
+            LoadMap, '/decision_assistant/load_map',
+            self._handle_load_map,
+            callback_group=self.action_cb_group)
+
+        self._logger.info(
+            'DecisionAssistant node up: actions slipping_escape + '
+            'loc_recover_moving on /decision_assistant')
+
+    def _handle_load_map(self, request, response):
+        self._loaded_map_url = request.map_url
+        self._logger.info(
+            f'load_map: cached map_url={request.map_url}')
+        response.result = LoadMap.Response.RESULT_SUCCESS
+        return response
+
+    def _publish_collision_range_tick(self):
+        msg = Range()
+        msg.header.frame_id = 'base_link'
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.radiation_type = Range.INFRARED
+        msg.field_of_view = 1.57
+        msg.min_range = 0.0
+        msg.max_range = 5.0
+        msg.range = float(self._min_obstacle_dist)
+        self.collision_range_pub.publish(msg)
 
     # ─── Goal / Cancel callbacks ─────────────────────────────────
 
@@ -140,20 +186,20 @@ class DecisionAssistant:
         self._escape_goal_handle = goal_handle
         result = SlipEscaping.Result()
 
-        escape_vel = self.node.get_parameter('escape_linear_vel').value
-        escape_ang = self.node.get_parameter('escape_angular_vel').value
-        dis_thresh = self.node.get_parameter(
+        escape_vel = self.get_parameter('escape_linear_vel').value
+        escape_ang = self.get_parameter('escape_angular_vel').value
+        dis_thresh = self.get_parameter(
             'straight_slipping_dis_diff').value
 
         start_time = time.monotonic()
-        start_x, start_y = self.node.x, self.node.y
+        start_x, start_y = self.host.x, self.host.y
 
         # Publish escape pose
         ps = PoseStamped()
         ps.header.frame_id = 'map'
-        ps.header.stamp = self.node.get_clock().now().to_msg()
-        ps.pose.position.x = self.node.x
-        ps.pose.position.y = self.node.y
+        ps.header.stamp = self.host.get_clock().now().to_msg()
+        ps.pose.position.x = self.host.x
+        ps.pose.position.y = self.host.y
         self.escape_pose_pub.publish(ps)
 
         phase = 0  # 0=backup, 1=rotate
@@ -166,17 +212,11 @@ class DecisionAssistant:
                 result.result = SlipEscaping.Result.FAILED
                 return result
 
-            twist = Twist()
             if phase == 0:
-                # Back up
-                twist.linear.x = -escape_vel
-                twist.angular.z = 0.0
+                lin, ang = -escape_vel, 0.0
             else:
-                # Rotate
-                twist.linear.x = 0.0
-                twist.angular.z = escape_ang
-
-            self.node.cmd_vel_pub.publish(twist)
+                lin, ang = 0.0, escape_ang
+            self._publish_cloud_move(lin, ang)
             time.sleep(0.1)
 
             # Switch phase every 1 second
@@ -184,8 +224,8 @@ class DecisionAssistant:
             phase = int(elapsed) % 2
 
             # Check if we've moved enough
-            dx = self.node.x - start_x
-            dy = self.node.y - start_y
+            dx = self.host.x - start_x
+            dy = self.host.y - start_y
             dist = math.sqrt(dx * dx + dy * dy)
             if dist > dis_thresh * 3:  # moved significantly
                 self._logger.info(
@@ -234,7 +274,7 @@ class DecisionAssistant:
         self._recover_goal_handle = goal_handle
         result = LocRecoverMoving.Result()
 
-        loc_thresh = self.node.get_parameter('loc_recover_confidence').value
+        loc_thresh = self.host.get_parameter('loc_recover_confidence').value
         start_time = time.monotonic()
 
         while time.monotonic() - start_time < max_time:
@@ -246,24 +286,19 @@ class DecisionAssistant:
                 result.result = LocRecoverMoving.Result.FAILED
                 return result
 
-            twist = Twist()
             if recover_type == 0:
                 # Localization bad: drive slowly and rotate
-                twist.linear.x = 0.2
-                twist.angular.z = 0.5
+                self._publish_cloud_move(0.2, 0.5)
             else:
                 # Out of map: reverse slowly
-                twist.linear.x = -0.2
-                twist.angular.z = 0.0
-
-            self.node.cmd_vel_pub.publish(twist)
+                self._publish_cloud_move(-0.2, 0.0)
             time.sleep(0.2)
 
             # Check if localization recovered
-            if self.node.loc_quality >= loc_thresh:
+            if self.host.loc_quality >= loc_thresh:
                 self._logger.info(
                     f'LocRecover: Success! '
-                    f'quality={self.node.loc_quality} >= {loc_thresh}')
+                    f'quality={self.host.loc_quality} >= {loc_thresh}')
                 self._stop_motors()
                 self._recovering = False
                 result.result = LocRecoverMoving.Result.SUCCESS
@@ -275,7 +310,7 @@ class DecisionAssistant:
         self._recovering = False
         self._logger.warn(
             f'LocRecover: Timeout after {max_time:.1f}s, '
-            f'quality={self.node.loc_quality}')
+            f'quality={self.host.loc_quality}')
         result.result = LocRecoverMoving.Result.FAILED
         goal_handle.succeed()
         return result
@@ -288,9 +323,9 @@ class DecisionAssistant:
         Called from robot_decision._on_motor_current callback.
         Compares motor current with actual movement from odom.
         """
-        if not self.node.boot_checks_done:
+        if not self.host.boot_checks_done:
             return
-        if self.node.task_mode not in (TaskMode.COVER, TaskMode.MAPPING):
+        if self.host.task_mode not in (TaskMode.COVER, TaskMode.MAPPING):
             self._slip_count = 0
             self._slip_detected = False
             return
@@ -302,24 +337,24 @@ class DecisionAssistant:
         self._prev_odom_time = now
 
         # Position delta
-        dx = self.node.x - self._prev_x
-        dy = self.node.y - self._prev_y
+        dx = self.host.x - self._prev_x
+        dy = self.host.y - self._prev_y
         dist = math.sqrt(dx * dx + dy * dy)
 
         # Rotation delta (handle wrap)
-        dtheta = abs(self.node.theta - self._prev_theta)
+        dtheta = abs(self.host.theta - self._prev_theta)
         if dtheta > math.pi:
             dtheta = 2 * math.pi - dtheta
 
-        self._prev_x = self.node.x
-        self._prev_y = self.node.y
-        self._prev_theta = self.node.theta
+        self._prev_x = self.host.x
+        self._prev_y = self.host.y
+        self._prev_theta = self.host.theta
 
         # Get thresholds from params
-        current_thresh = self.node.get_parameter('slipping_motor_current').value
-        dis_thresh = self.node.get_parameter(
+        current_thresh = self.host.get_parameter('slipping_motor_current').value
+        dis_thresh = self.get_parameter(
             'straight_slipping_dis_diff').value
-        yaw_thresh = self.node.get_parameter(
+        yaw_thresh = self.get_parameter(
             'rotate_slipping_yaw_diff').value
 
         # Check if motors are consuming current but mower isn't moving
@@ -332,16 +367,15 @@ class DecisionAssistant:
                     self._logger.warn(
                         f'Slip detected! current={avg_current:.1f}A '
                         f'dist={dist:.3f}m dtheta={dtheta:.3f}rad')
-
-                    # Publish abnormal movement
                     msg = UInt8()
                     msg.data = 1
                     self.move_abnormal_pub.publish(msg)
-
-                    # Set work status
-                    if self.node.task_mode == TaskMode.COVER:
-                        self.node._set_state(
+                    if self.host.task_mode == TaskMode.COVER:
+                        self.host._set_state(
                             TaskMode.COVER, WorkStatus.SLIPPING_HANDLE)
+                        # Auto-escalate: send SlipEscaping goal so coverage
+                        # actually recovers (closed-binary parity).
+                        self.host._send_slip_goal(max_escape_time=15.0)
             else:
                 self._slip_count = max(0, self._slip_count - 1)
                 if self._slip_count == 0:
@@ -358,7 +392,7 @@ class DecisionAssistant:
 
         Decides whether to pause, stop, or cancel the current task.
         """
-        n = self.node
+        n = self.host
         if n.task_mode not in (TaskMode.COVER, TaskMode.MAPPING):
             return  # Only handle during active tasks
 
@@ -412,8 +446,11 @@ class DecisionAssistant:
             self._logger.warn(
                 f'Communication error during task: {error_status.name}')
             if error_status == ErrorStatus.LORA_ERROR:
+                self._logger.warn('Try to rotate to recover lora connect')
                 n._set_state(n.task_mode, WorkStatus.LORA_ERROR_HANDLE,
                              error_status=error_status)
+                threading.Thread(
+                    target=self._lora_recover_loop, daemon=True).start()
             else:
                 n._set_state(n.task_mode, WorkStatus.LOC_ERROR_HANDLE,
                              error_status=error_status)
@@ -422,7 +459,7 @@ class DecisionAssistant:
         """Check CPU temperature and handle overheating.
         Called periodically from status publisher.
         """
-        n = self.node
+        n = self.host
         temp = n._get_cpu_temp()
         thresh = n.get_parameter('cpu_temp_thresh').value
         if temp > thresh and n.task_mode == TaskMode.COVER:
@@ -437,24 +474,25 @@ class DecisionAssistant:
         """Check localization quality during tasks.
         Called periodically from status publisher.
         """
-        n = self.node
+        n = self.host
         if n.task_mode != TaskMode.COVER:
             return
         if not n.get_parameter('enable_loc_recover').value:
             return
 
         loc_cover = n.get_parameter('loc_cover_confidence').value
-        if n.loc_quality < loc_cover and n.loc_quality > 0:
+        if 0 < n.loc_quality < loc_cover:
             self._logger.warn(
                 f'Localization quality low during coverage: '
                 f'{n.loc_quality} < {loc_cover}')
             n._set_state(TaskMode.COVER, WorkStatus.LOC_ERROR_HANDLE)
+            n._send_loc_recover_goal(recover_type=0, max_time=30.0)
 
     def check_loc_drift(self):
         """Check for localization drift/instability during tasks.
         Called periodically from status publisher.
         """
-        n = self.node
+        n = self.host
         if n.task_mode != TaskMode.COVER:
             return
         if not n.get_parameter('enable_loc_unstable_handle').value:
@@ -476,7 +514,7 @@ class DecisionAssistant:
         """Check if robot is outside the working zone.
         Called periodically from status publisher.
         """
-        n = self.node
+        n = self.host
         if n.task_mode != TaskMode.COVER:
             return
         if not n.get_parameter('enable_out_of_map_recover').value:
@@ -488,16 +526,37 @@ class DecisionAssistant:
         # The actual boundary check is done by nav2/coverage_planner
         # We just monitor for the ROBOT_OUT_OF_MAP_HANDLE state
         if n.work_status == WorkStatus.ROBOT_OUT_OF_MAP_HANDLE:
-            msg = UInt8()
-            msg.data = 1
+            msg = Bool()
+            msg.data = True
             self.out_of_zone_pub.publish(msg)
 
     # ─── Helpers ─────────────────────────────────────────────────
 
+    def _publish_cloud_move(self, linear_x: float, angular_z: float):
+        """Slip / loc-recover bypass: cmd_vel is gated by CChassisControl, so
+        recovery commands MUST go through cloud_move_cmd which is the
+        unobstructed path. The closed binary uses the same path."""
+        cmd = CloudMoveCmd()
+        cmd.linear_x = float(linear_x)
+        cmd.angular_wheel = float(angular_z)
+        self.host.cloud_move_pub.publish(cmd)
+
     def _stop_motors(self):
-        """Send zero velocity command."""
-        twist = Twist()
-        self.node.cmd_vel_pub.publish(twist)
+        """Send zero velocity command (cloud_move_cmd, not cmd_vel)."""
+        self._publish_cloud_move(0.0, 0.0)
+
+    def _lora_recover_loop(self):
+        """Slow-rotate up to 30s waiting for LoRa to recover. Closed-binary
+        parity. Bails when host.lora_ok flips True."""
+        deadline = time.monotonic() + 30.0
+        while time.monotonic() < deadline:
+            if getattr(self.host, 'lora_ok', True):
+                self._logger.info('LoRa recovered')
+                return
+            self._publish_cloud_move(0.0, 0.5)
+            time.sleep(0.2)
+        self._publish_cloud_move(0.0, 0.0)
+        self._logger.warn('LoRa recovery timeout')
 
     @property
     def is_escaping(self):

@@ -1,0 +1,46 @@
+robot_decision:
+  ros__parameters:
+    coverage_times: 1
+    gazebo_debug_mode: False
+    low_battery_power: 20
+    full_battery_power: 96
+    enable_loc_recover: True
+    enable_slipping_recover: True
+    load_map_path: "/userdata/lfi/maps/home0"
+    empty_map_path: "/userdata/lfi/maps/"
+    save_utm_path: "/userdata/pos.json"
+    enable_loc_unstable_hanle: false #是否允许定位误差太大时进行恢复处理
+    quit_pile_distance: 1.0 # 退桩距离
+    follow_path_id: "FollowPathPurePursuitReverseFollow"
+    loc_mapping_confidence: 69 # recommand 69
+    loc_cover_confidence: 40   # recomannd 50
+    loc_recover_confidence: 89   # 定位恢复所需要的置信度
+    default_perception_level: 1 # 0 detection 1 segmentation
+    min_perception_level: 0 # 0 detection 1 segmentation
+    detect_out_of_boundary: True
+    slipping_motor_current: 10
+    image_darkness_thresh: 60.0
+    image_darkness_thresh_lower: 5.0
+    enable_save_image: True
+    max_save_image_count: 80
+    enable_led_light: True
+    check_camera_clean: True
+    enable_rtk_init_check: True
+    enable_low_power_mode: True
+    enable_led_feedback_check: False #ignore response from led 
+    check_process: [ "/nav2_single_node_navigator","/robot_decision","/coverage_planner_server",
+                     "/robot_combination_localization","/chassis_control_node","novabot_mapping"]
+    planned_path_file: /userdata/lfi/maps/home0/planned_path
+    covering_path_file:  /userdata/lfi/maps/home0/covered_path
+    boundary_offset: 0.35
+    save_tof_rgb: True # True for saving tof and rgb, False only saving rgb
+    cpu_temp_thresh: 93.9
+    enable_out_of_map_recover: True
+decision_assistant:
+  ros__parameters:
+    escape_angular_vel: 1.5
+    escape_linear_vel: 0.5
+    straight_slipping_dis_diff: 0.07
+    rotate_slipping_yaw_diff: 0.11
+    cannot_move_angular_diff: 0.5
+    cannot_move_linear_diff: 0.15

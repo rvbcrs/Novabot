@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "Novabot",
+  "project_id": "47f8a771-1054-4aa3-8018-6b407887d68d"
+}

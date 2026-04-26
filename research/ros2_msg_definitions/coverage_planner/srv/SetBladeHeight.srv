@@ -1,0 +1,4 @@
+# verified 2026-04-26 (live SSH from 192.168.0.100)
+# Get the coverage_path
+uint8 blade_height # target blade height
+---

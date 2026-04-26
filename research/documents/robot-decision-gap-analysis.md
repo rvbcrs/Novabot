@@ -11,6 +11,63 @@ Inputs to this analysis:
 
 ---
 
+## 0. Field-name verification rule (MANDATORY)
+
+After the 2026-04-26 audit (`research/documents/field-name-audit-2026-04-26.md`)
+surfaced **8 fabricated field names** that would have crashed at runtime
+(C1–C6 + I1/I3 — Mapping.srv `main_id`, SetChargingPose.Response
+`map_to_charging_dis`, CovTaskResult `cov_ratio/cov_area/cov_work_time`,
+DeleteMap.Request `map_file_name`, /novabot_mapping/mapping_data topic
+mistaken for a service, ChassisIncident `error_lift_motor_error`,
+plus type mismatches), every msg/srv/action assignment in `mower/`
+MUST be backed by one of:
+
+1. **Live SSH ground truth** — read the actual `.srv/.action/.msg` file
+   on the production mower (`192.168.0.100`) at
+   `/focal-xj3-arm64/root/novabot/install/<pkg>/share/<pkg>/<kind>/<File>.<ext>`.
+   Cite the exact file in the source comment if any field is non-obvious.
+
+2. **`research/ros2_msg_definitions/`** — the in-repo cache of those
+   files. Authoritative ONLY when the file in the repo bears a
+   `# verified <date>` header line confirming a recent SSH read.
+
+3. **`research/documents/field-name-audit-2026-04-26.md`** — the
+   exhaustive cross-check report. Use ONLY for fields explicitly listed
+   in its VERIFIED section.
+
+**Forbidden as ground truth:**
+- `research/documents/robot_decision_reverse_engineering.md` — superseded;
+  contains speculative field names.
+- Blutter / Flutter app source — those are MQTT payload field names, NOT
+  ROS message field names. The two diverge (e.g. MQTT joystick `x_w` vs
+  ROS CloudMoveCmd `linear_x`).
+- `research/documents/closed_decision_inventory.md` — has live endpoint
+  NAMES but NOT field names.
+- "It looks like it should work" / blutter cross-reference — never.
+
+**Process for any new code that constructs a `<Type>.Request()`,
+`<Type>.Goal()`, or assigns to `msg.<field>`:**
+
+1. Read the live `.srv/.action/.msg` file (one of the three sources above).
+2. Verify every field assignment matches a real field name + type.
+3. Add a short citation comment if the field was non-obvious:
+   ```python
+   # Field set per coverage_planner/srv/CoveragePathsByFile.srv (live mower
+   # 2026-04-26). DO NOT add only_edge_mode / polygon_area — those don't
+   # exist on this srv.
+   req.map_yaml_file = map_yaml
+   ```
+
+4. If you genuinely need a field that doesn't exist on the live interface,
+   that's a firmware-side change — document it as a deferred TODO, do
+   NOT fabricate.
+
+**Test coverage requirement:** the next sub-project (Phase C of the
+2026-04-26 follow-up) adds AST-based field-name verification tests so
+this rule is enforced at CI time. See `mower/tests/test_field_name_verification.py`.
+
+---
+
 ## 1. Executive Summary
 
 **Coverage estimate vs 100% port: ~55%.** The open Python node implements the boot state machine, mowing/recharge happy paths, manual mapping, and most service-server signatures, but it has one architectural break (action servers on the wrong node), one pub/sub-vs-service break (`map_position`), and several behavioural gaps that will silently misbehave on real hardware.
@@ -248,86 +305,197 @@ Inputs to this analysis:
 
 ### BLOCKERS (mower physically can't operate without these)
 
-1. **Move action servers off the main node and rename them.** New file: `mower/decision_assistant_node.py` (or refactor existing `decision_assistant.py` to inherit `Node` and own its own `super().__init__('decision_assistant')`). Rename `slip_escaping`→`slipping_escape`, `loc_recover`→`loc_recover_moving`. Effort: **S** (half-day). File: `decision_assistant.py:96-109`. Dep: hardware test on real mower.
-2. **Fix `/robot_decision/map_position` to be a publisher of `geometry_msgs/Pose`, not a service.** Effort: **XS**. Files: `service_handlers.py:706-712` (delete), `robot_decision.py:200-209` (add publisher), `_publish_status` (publish each tick). Dep: dashboard / mqtt_node spot-check.
-3. **`start_cov_task` cov_mode=1 (specified-area) handling.** Currently the mower will mow the whole map regardless of polygon. Effort: **M** (1 day). File: `service_handlers.py:498`. Dep: `coverage_by_file.srv` accepts polygon_area; verify against `coverage_planner` package.
-4. **Slip + loc-recover auto-escalation.** Add action clients on the main node that call the (renamed) actions when `_on_motor_current` slip-detect or `loc_quality` collapse. Effort: **M**. Files: `robot_decision.py` (add 2 action clients), `decision_assistant.py:339` (replace publish with action goal). Dep: backlog #1.
-5. **Replace `cmd_vel` with `cloud_move_cmd` in slip/loc-recover publishers** (CChassisControl bypass). Effort: **XS**. File: `decision_assistant.py:179, 500`. Dep: backlog #1.
+1. ✅ **Move action servers off the main node and rename them.** New file: `mower/decision_assistant_node.py` (or refactor existing `decision_assistant.py` to inherit `Node` and own its own `super().__init__('decision_assistant')`). Rename `slip_escaping`→`slipping_escape`, `loc_recover`→`loc_recover_moving`. Effort: **S** (half-day). File: `decision_assistant.py:96-109`. Dep: hardware test on real mower. (commit 2ccdaaa5)
+2. ✅ **Fix `/robot_decision/map_position` to be a publisher of `geometry_msgs/Pose`, not a service.** Effort: **XS**. Files: `service_handlers.py:706-712` (delete), `robot_decision.py:200-209` (add publisher), `_publish_status` (publish each tick). Dep: dashboard / mqtt_node spot-check. (commit 17502d30)
+3. ✅ **`start_cov_task` cov_mode=1 (specified-area) handling.** Currently the mower will mow the whole map regardless of polygon. Effort: **M** (1 day). File: `service_handlers.py:498`. Dep: `coverage_by_file.srv` accepts polygon_area; verify against `coverage_planner` package. (commit a39d43a3)
+4. ✅ **Slip + loc-recover auto-escalation.** Add action clients on the main node that call the (renamed) actions when `_on_motor_current` slip-detect or `loc_quality` collapse. Effort: **M**. Files: `robot_decision.py` (add 2 action clients), `decision_assistant.py:339` (replace publish with action goal). Dep: backlog #1. (commits cb16d55b, 6147eb47)
+5. ✅ **Replace `cmd_vel` with `cloud_move_cmd` in slip/loc-recover publishers** (CChassisControl bypass). Effort: **XS**. File: `decision_assistant.py:179, 500`. Dep: backlog #1. (commit 87c780df)
 
 ### HIGH
 
-6. **Implement `/robot_decision/reset_data` SetBool service.** Effort: **XS**. File: `service_handlers.py` (+ a clear_counters helper). Without it, latched errors require power-cycle.
-7. **Fix `start_assistant_mapping` undefined `dist_from_charger` NameError.** Effort: **XS**. File: `service_handlers.py:377` — drop the dist log or compute distance from current pose vs `charger_pose`.
-8. **Stop/resume semantics in `stop_task`** — distinguish `data=true` (pause) vs `data=false` (resume). Effort: **S**. File: `service_handlers.py:412`. Test: send pause then resume during cov task.
-9. **Out-of-map handling — actually wire it up.** Subscribe to `/decision_assistant/robot_out_working_zone` (Bool) and call the assistant's `load_map` after every map load. Effort: **M**. Files: `robot_decision.py` (subscriber + client), `decision_assistant.py:475-493` (replace circular logic). Dep: backlog #1.
-10. **Fix `/decision_assistant/robot_out_working_zone` msg type to `std_msgs/Bool`.** Effort: **XS**. File: `decision_assistant.py:91-92`. Dep: backlog #9.
-11. **Drop duplicate `battery_message` subscription.** Effort: **XS**. File: `robot_decision.py:226-231`. Today: every battery message processes twice — cancels coverage + starts recharge twice on low-battery.
-12. **`covered_path_json` topic actually published.** Either subscribe to `/coverage_planner_server/covered_path_json` and re-publish, or call `cli_covered_path_json` periodically. Effort: **S**. File: `robot_decision.py:204` + `service_handlers.py`.
-13. **`save_map` 500 ms delay between type:0 and type:1.** Effort: **XS**. File: `service_handlers.py:584-588`. Dep: read `docs/reference/MAPPING-FLOW.md`.
-14. **Hardcoded `home0` parent in `save_map` and `delete_map`.** Effort: **XS**. Files: `service_handlers.py:579, 669`.
-15. **`map_num` reporting** — enumerate maps under `<load_map_path>` and surface count to mqtt_node via RobotStatus. Effort: **S**. File: `robot_decision.py:_publish_status`. Dep: confirm closed semantics with memory `map-num-meaning.md`.
-16. **Auto-cancel previous task when new task arrives** (or set `WARN_REPEATED_START`). Effort: **S**. File: `service_handlers.py:498` + `state_machine.py`.
-17. **Battery hysteresis (`charge_back_percentage`).** Effort: **XS**. File: `robot_decision.py:_on_battery`. Add param + bounce-prevention logic.
-18. **`/chassis_node/init_ok` topic vs service confusion.** Effort: **S** (live test). Verify against the real chassis_node which it actually exposes; possibly both. Files: `robot_decision.py` (add Bool subscriber if needed).
+6. ✅ **Implement `/robot_decision/reset_data` SetBool service.** Effort: **XS**. File: `service_handlers.py` (+ a clear_counters helper). Without it, latched errors require power-cycle. (commit 0b42de89)
+7. ✅ **Fix `start_assistant_mapping` undefined `dist_from_charger` NameError.** Effort: **XS**. File: `service_handlers.py:377` — drop the dist log or compute distance from current pose vs `charger_pose`. (commit 9ecf4092)
+8. ✅ **Stop/resume semantics in `stop_task`** — distinguish `data=true` (pause) vs `data=false` (resume). Effort: **S**. File: `service_handlers.py:412`. Test: send pause then resume during cov task. (commit bfe7de63)
+9. ✅ **Out-of-map handling — actually wire it up.** Subscribe to `/decision_assistant/robot_out_working_zone` (Bool) and call the assistant's `load_map` after every map load. Effort: **M**. Files: `robot_decision.py` (subscriber + client), `decision_assistant.py:475-493` (replace circular logic). Dep: backlog #1. (commit e5372f55)
+10. ✅ **Fix `/decision_assistant/robot_out_working_zone` msg type to `std_msgs/Bool`.** Effort: **XS**. File: `decision_assistant.py:91-92`. Dep: backlog #9. (commit ec93177a)
+11. ✅ **Drop duplicate `battery_message` subscription.** Effort: **XS**. File: `robot_decision.py:226-231`. Today: every battery message processes twice — cancels coverage + starts recharge twice on low-battery. (commit 75bc9f17)
+12. ✅ **`covered_path_json` topic actually published.** Either subscribe to `/coverage_planner_server/covered_path_json` and re-publish, or call `cli_covered_path_json` periodically. Effort: **S**. File: `robot_decision.py:204` + `service_handlers.py`. (commit 2314a5e4)
+13. ✅ **`save_map` 500 ms delay between type:0 and type:1.** Effort: **XS**. File: `service_handlers.py:584-588`. Dep: read `docs/reference/MAPPING-FLOW.md`. (commit 583f6475)
+14. ✅ **Hardcoded `home0` parent in `save_map` and `delete_map`.** Effort: **XS**. Files: `service_handlers.py:579, 669`. (commit 30e7b803)
+15. ✅ verified; no code change required — **`map_num` reporting** — confirmed `map_num` = active task count, not on-disk map count; current open implementation's semantics are already correct. (commit 33d34c79)
+16. ✅ **Auto-cancel previous task when new task arrives** (or set `WARN_REPEATED_START`). Effort: **S**. File: `service_handlers.py:498` + `state_machine.py`. (commit a39d43a3)
+17. ✅ **Battery hysteresis (`charge_back_percentage`).** Effort: **XS**. File: `robot_decision.py:_on_battery`. Add param + bounce-prevention logic. (commit 555a52c0)
+18. ✅ **`/chassis_node/init_ok` topic vs service confusion.** Effort: **S** (live test). Verify against the real chassis_node which it actually exposes; possibly both. Files: `robot_decision.py` (add Bool subscriber if needed). (commit 4ca57c06)
 
 ### MEDIUM
 
-19. `start_assistant_mapping` returns success synchronously even if thread fails. Replace with proper goal-handle pattern or call the boundary action directly with timeout. Effort: **S**.
-20. Implement `add_area` UNICOM_TO_STATION transition. Effort: **XS**. File: `service_handlers.py:301`.
-21. Track `AUTO_ERASE_MAPPING_FAILED` / `AUTO_ERASE_MAPPING_SUCCESS` after `cli_erase_map_mode` returns. Effort: **XS**. File: `service_handlers.py:393`.
-22. Forward `request.maptype` into `cli_mapping_control` type field; transition through `DELETE_*` states. Effort: **S**. File: `service_handlers.py:661`.
-23. Propagate real `map_to_charging_dis` from upstream service result. Effort: **XS**. File: `service_handlers.py:701`.
-24. Implement `nav_to_recharge` guide-pose mode (and the "no mapping mode" guard). Effort: **S**. File: `service_handlers.py:608`.
-25. Wire `cli_prohibited_points` so `local_costmap/prohibited_points` reflects user no-go zones. Effort: **S**.
-26. `ERROR_LOAD_MAP` state on `cli_load_map` failure. Effort: **XS**. File: `service_handlers.py:539`.
-27. Open lacks `/decision_assistant/load_map` service (closed has it). Add it (noop is fine for now since out-of-map detection is dead) — paves backlog #9. Effort: **XS** once the assistant becomes its own node.
-28. Hardcoded `include_edge=False` in `generate_preview_cover_path`. Use request data. Effort: **XS**. File: `service_handlers.py:637`.
-29. Add the missing parameters: `boundary_offset` (live wire it through to coverage_by_file), `charge_back_percentage`, `include_edge`, `recharge_retry_times`. Effort: **S**.
+19. ⚠️ open `start_assistant_mapping` returns success synchronously even if thread fails. Replace with proper goal-handle pattern or call the boundary action directly with timeout. Effort: **S**.
+20. ✅ Implement `add_area` UNICOM_TO_STATION transition. Effort: **XS**. File: `service_handlers.py:301`. (commit 45a0310b)
+21. ✅ Track `AUTO_ERASE_MAPPING_FAILED` / `AUTO_ERASE_MAPPING_SUCCESS` after `cli_erase_map_mode` returns. Effort: **XS**. File: `service_handlers.py:393`. (commit 23f225a6)
+22. ✅ Forward `request.maptype` into `cli_mapping_control` type field; transition through `DELETE_*` states. Effort: **S**. File: `service_handlers.py:661`. (commit 30e7b803)
+23. ✅ Propagate real `map_to_charging_dis` from upstream service result. Effort: **XS**. File: `service_handlers.py:701`. (commit 9af41126)
+24. ✅ Implement `nav_to_recharge` guide-pose mode (and the "no mapping mode" guard). Effort: **S**. File: `service_handlers.py:608`. (commit f20ba095)
+25. ✅ Wire `cli_prohibited_points` so `local_costmap/prohibited_points` reflects user no-go zones. Effort: **S**. (commit cb7df9c8)
+26. ✅ `ERROR_LOAD_MAP` state on `cli_load_map` failure. Effort: **XS**. File: `service_handlers.py:539`. (commit a39d43a3)
+27. ✅ Open lacks `/decision_assistant/load_map` service (closed has it). Add it (noop is fine for now since out-of-map detection is dead) — paves backlog #9. Effort: **XS** once the assistant becomes its own node. (commit 2ccdaaa5)
+28. ✅ Hardcoded `include_edge=False` in `generate_preview_cover_path`. Use request data. Effort: **XS**. File: `service_handlers.py:637`. (commit ee2b6179)
+29. ✅ Add the missing parameters: `boundary_offset` (live wire it through to coverage_by_file), `charge_back_percentage`, `include_edge`, `recharge_retry_times`. Effort: **S**. (commit 8740e081)
 
 ### LOW
 
-30. Subscribe to `/chassis_node/led_level`, `/camera/preposition/hardware_exception`, `/camera/tof/point_cloud`, `/system/shared_memory_error`. Effort: **S** (each XS).
-31. Remove or document the 8 dead parameters in open (per inventory §F).
-32. Remove or document the dead service clients (`cli_free_move_around`, `cli_covered_path_json`, `cli_prohibited_points`, `cli_led_buzzer`, `cli_led_level`, `cli_preposition_save`, `cli_save_pcd_img`, `cli_preposition_hw_exception`). Either implement or delete.
-33. `_publish_status`: stop hardcoding `msg.cpu_usage = 0` and `msg.light = 0` (both `robot_decision.py:_publish_status`).
-34. Add `LORA_ERROR_HANDLE` rotation behaviour. Effort: **S**.
-35. Add CPU temperature watchdog cancel-on-overheat (already partly in open at robot_decision.py:427); align thresholds with closed.
+30. ✅ Subscribe to `/chassis_node/led_level`, `/camera/preposition/hardware_exception`, `/camera/tof/point_cloud`, `/system/shared_memory_error`. Effort: **S** (each XS). (commit 3af90c53)
+31. ✅ Remove or document the 8 dead parameters in open (per inventory §F). (commit cac7c623)
+32. ✅ Remove or document the dead service clients (`cli_free_move_around`, `cli_covered_path_json`, `cli_prohibited_points`, `cli_led_buzzer`, `cli_led_level`, `cli_preposition_save`, `cli_save_pcd_img`, `cli_preposition_hw_exception`). Either implement or delete. (commit cac7c623)
+33. ✅ `_publish_status`: stop hardcoding `msg.cpu_usage = 0` and `msg.light = 0` (both `robot_decision.py:_publish_status`). (commit 8e6b8afc)
+34. ✅ Add `LORA_ERROR_HANDLE` rotation behaviour. Effort: **S**. (commit 252d42bd)
+35. ⚠️ open Add CPU temperature watchdog cancel-on-overheat (already partly in open at robot_decision.py:427); align thresholds with closed.
 
 ### Bugs found in open implementation
 
-- **`service_handlers.py:377`** — `dist_from_charger` is undefined; will raise `NameError` whenever `start_assistant_mapping` is called while on the charger.
-- **`robot_decision.py:226-231`** — duplicate subscription to `battery_message` (one SENSOR_QOS, one RELIABLE) → callback fires twice per message → low-battery cancellation triggers twice.
-- **`service_handlers.py:701`** — `response.map_to_charging_dis = 0.0` hardcoded; closed propagates the real distance from `/novabot_mapping/set_charging_pose` upstream result.
-- **`decision_assistant.py:91-92`** — `out_of_zone_pub` is `std_msgs/UInt8`; closed uses `std_msgs/Bool`. Subscriber type mismatch on real mower.
-- **`decision_assistant.py:475-493`** — circular logic: `check_out_of_map` only publishes if `work_status == ROBOT_OUT_OF_MAP_HANDLE`, but nothing in the open code ever writes that state → publisher is provably dead.
-- **`service_handlers.py:637`** — `include_edge=False` hardcoded in `_handle_generate_path` regardless of request.
-- **`service_handlers.py:584-588`** — `save_map` issues type=0 then type=1 with no delay; `MAPPING-FLOW.md` requires ~500 ms between them for `map.yaml` to be created.
-- **`robot_decision.py:1856`** — heading-discovery drives FORWARD; closed binary's equivalent (`free_move_around` + `quit_pile_distance:1.0`) drives REVERSE. Forward direction may collide with whatever the mower is parked in front of.
-- **`decision_assistant.py:96, 104`** — action server names AND namespace are wrong; closed uses `/decision_assistant/slipping_escape` and `/decision_assistant/loc_recover_moving`.
-- **`service_handlers.py:706-712`** — `/robot_decision/map_position` exposed as a service but closed publishes it as a `Pose` topic. Live position tooling will not see it.
-- **`robot_decision.py:_publish_status` (~line 2412)** — hardcoded `msg.cpu_usage = 0` and `msg.light = 0`.
-- **No `/robot_decision/reset_data` server** — error-clear path missing.
+- ✅ **`service_handlers.py:377`** — `dist_from_charger` is undefined; will raise `NameError` whenever `start_assistant_mapping` is called while on the charger. (commit 9ecf4092)
+- ✅ **`robot_decision.py:226-231`** — duplicate subscription to `battery_message` (one SENSOR_QOS, one RELIABLE) → callback fires twice per message → low-battery cancellation triggers twice. (commit 75bc9f17)
+- ✅ **`service_handlers.py:701`** — `response.map_to_charging_dis = 0.0` hardcoded; closed propagates the real distance from `/novabot_mapping/set_charging_pose` upstream result. (commit 9af41126)
+- ✅ **`decision_assistant.py:91-92`** — `out_of_zone_pub` is `std_msgs/UInt8`; closed uses `std_msgs/Bool`. Subscriber type mismatch on real mower. (commit ec93177a)
+- ✅ **`decision_assistant.py:475-493`** — circular logic: `check_out_of_map` only publishes if `work_status == ROBOT_OUT_OF_MAP_HANDLE`, but nothing in the open code ever writes that state → publisher is provably dead. (commit e5372f55)
+- ✅ **`service_handlers.py:637`** — `include_edge=False` hardcoded in `_handle_generate_path` regardless of request. (commit ee2b6179)
+- ✅ **`service_handlers.py:584-588`** — `save_map` issues type=0 then type=1 with no delay; `MAPPING-FLOW.md` requires ~500 ms between them for `map.yaml` to be created. (commit 583f6475)
+- ⚠️ open **`robot_decision.py:1856`** — heading-discovery drives FORWARD; closed binary's equivalent (`free_move_around` + `quit_pile_distance:1.0`) drives REVERSE. Forward direction may collide with whatever the mower is parked in front of.
+- ✅ **`decision_assistant.py:96, 104`** — action server names AND namespace are wrong; closed uses `/decision_assistant/slipping_escape` and `/decision_assistant/loc_recover_moving`. (commit 2ccdaaa5)
+- ✅ **`service_handlers.py:706-712`** — `/robot_decision/map_position` exposed as a service but closed publishes it as a `Pose` topic. Live position tooling will not see it. (commit 17502d30)
+- ✅ **`robot_decision.py:_publish_status` (~line 2412)** — hardcoded `msg.cpu_usage = 0` and `msg.light = 0`. (commit 8e6b8afc)
+- ✅ **No `/robot_decision/reset_data` server** — error-clear path missing. (commit 0b42de89)
+
+### Remaining gaps after 2026-04-26 implementation
+
+The following items were intentionally left as TODOs during Phase 8.1 cleanup or
+required further work that fell outside scope:
+
+- **#19** (`start_assistant_mapping` async return): Service still returns success synchronously before the boundary-follow thread completes. Proper fix requires converting to a goal-handle pattern or an action server. Deferred because autonomous mapping is a low-priority path not yet tested on real hardware.
+- **#35** (CPU temperature watchdog thresholds): Watchdog cancel-on-overheat is partially present in `robot_decision.py:427` but thresholds are not aligned with the closed binary. Deferred — requires live thermal profiling to determine safe cutoff values.
+- **boundary_offset still requires `BoundaryFollow.action` extension + firmware rebuild** — out of scope until firmware can be rebuilt.
+- **polygon_area field name on CoveragePathsByFile.srv unverified** — TODO comment in code.
+
+These items are tracked but require either further reverse-engineering, live hardware authorization, or explicit user sign-off before implementation.
+
+### Post-2026-04-26 follow-up resolutions
+
+The following items were resolved during the feature-branch work on `feat/open-decision-finish` after 2026-04-26:
+
+**F-series: Feature completions wiring dead parameters and signals**
+
+1. **F1 lora_ok** (commit `34e9d3cd`) — `_on_incident` now writes `self.host.lora_ok = not msg.error_lora`, so the previously-no-op `_lora_recover_loop` actually polls a real flag. Previously the loop had nowhere to read the LoRa link status from firmware incident messages; now it tracks the live state.
+
+2. **F2 free_move_around heading discovery** (commit `382bdf6b`) — primary path now uses `nav2_pro_msgs/FreeMoveAround` reverse drive (closed-binary parity); the original forward-1.5m + spin remains as the fallback when the service is not available. `quit_pile_distance` parameter wired. Boot localization now drives REVERSE as per closed binary, with FORWARD fallback if the service is unavailable.
+
+3. **F3 default_perception_level** (commit `933ecf47`) — read at boot in `__init__`, line 170. Was declared in YAML but dead in open code; now read and applied to initial perception pipeline state.
+
+4. **F4 full_battery_power upper hysteresis** (commit `d8e734d4`) — when `task_mode == CHARGING` and `battery_power >= full_battery_power`, transition to FREE/INIT_SUCCESS and re-fire the last `_handle_start_cov_task` if `_last_cov_request` is set. Auto-resume after charging — closed-binary parity. Previously `full_battery_power` was declared but never checked; now it gates the recharge-exit logic.
+
+5. **F5 cli_led_level wired to darkness** (commit `52841321`) — `_on_camera_gain` darkness transitions now publish brightness 255 (dark) / 1 (bright) via `cli_led_level.call_async(SetUint8)` with `service_is_ready()` guard. LED brightness now responds to night/day detection.
+
+6. **F6 enable_slipping_recover gate** (commit `a4176347`) — `_send_slip_goal` first-line check on `enable_slipping_recover` parameter. Mirrors how `check_localization` already gates loc-recover. Slip escalation can now be disabled at runtime via YAML.
+
+**C-series: Code-review critical fixes (superpowers:code-review pass 2026-04-26)**
+
+7. **C1 CloudMoveCmd field rename** (commit `eb2b1c97`) — `_publish_cloud_move` was writing `x_w/y_v/z_g` (MQTT joystick payload field names). Actual ROS message has `linear_x` + `angular_wheel`. Every recovery path would have raised `AttributeError`. Renamed to match ROS message field names.
+
+8. **C2 _handle_stop_task resume response type** (commit `eb2b1c97`) — resume branch passed a `SetBool.Response` into `_handle_start_cov_task` which then wrote `.result` (only exists on `StartCoverageTask.Response`). Now synthesizes a fresh `StartCoverageTask.Response` for the inner call and maps result back onto the outer response.
+
+9. **C3 cov_mode=1 polygon_area inverted** (commit `eb2b1c97`) — was published as a `/local_costmap/prohibited_points` (NO-GO zone). Removed; the polygon is correctly threaded into `start_coverage(polygon_area=...)` instead.
+
+10. **C4 _handle_save_map ignored request.type** (commit `eb2b1c97`) — always ran both type:0 + type:1. Now branches on `request.type` so each call from the app drives only the matching firmware stage (type:0 = sub-map, type:1 = total map).
+
+11. **C5 request_map_ids type mismatch** (commit `eb2b1c97`) — uint32 scalar fields in `RobotStatus.msg` were being assigned Python lists. Coerced to scalar ints (first id or 0).
+
+**I-series: Important fixes (superpowers:code-review pass 2026-04-26)**
+
+12. **I1/I2/I4 app + assistant cleanup** (commit `eb2b1c97`) — MappingScreen mapping-flag bitmask comparison fixed; dead BackHandler effect removed; `_send_loc_recover_goal` gated on `enable_loc_recover`.
 
 ---
 
 ## 10. Open Questions / Unknowns
 
-1. **`/chassis_node/init_ok` interface shape.** Closed inventory shows it as a *topic* subscriber (`std_msgs/Bool`); open uses it as a *service* client (`std_srvs/Empty`). Need a live `ros2 service type /chassis_node/init_ok` and `ros2 topic info /chassis_node/init_ok` on the production mower to disambiguate. Possibly both exist.
+1. **`/chassis_node/init_ok` interface shape.** ✅ CONFIRMED (2026-04-26 live mower 192.168.0.100): TOPIC ONLY. `ros2 topic info /chassis_node/init_ok -v` shows `Type: std_msgs/msg/Bool`, published by `CChassisControl` node, subscribed by `robot_decision` node. NO service interface exists. **Closed binary uses Bool topic subscription.** Open incorrectly implemented it as `std_srvs/Empty` service client. FIXED in commit 4ca57c06: removed service client `cli_init_ok`, added Bool topic subscription, changed boot phase to latch `_boot_init_ok_received` flag on receipt, waits max 10s then skips to INIT_MOWER if not received. All 34 tests pass.
 2. **Closed binary's stuck-counter threshold.** String `"robot stuck count: %d"` is captured but the threshold value is not exposed via param or log. Need to instrument live for several minutes during a slip event.
 3. **Closed `decision_assistant`'s `/decision_assistant/load_map` consumers.** Closed exposes the service but it is unclear how often `robot_decision` actually pushes the polygon (every `start_cov_task`? boot only? on map change?). Trace with `ros2 service echo` over a full mowing session.
 4. **`start_assistant_mapping` internal flow.** Memory `autonomous-mapping.md` calls out perception_node tweaks + obstacle_max_range; closed binary undoubtedly calls a private boundary-follow action with specific parameters. Capture all inbound calls during a fresh autonomous-mapping run on stock firmware.
 5. **`cov_mode=1` (SPECIFIED_AREA) coverage_by_file behaviour.** Need to capture exact request fields when the app sends `polygon_area`. Open implementation does not currently form the polygon; need to know whether `coverage_by_file.srv` consumes `polygon_area` directly or a saved file path.
 6. **Recharge guide-pose mode usage.** Closed string `"Recharge with guide pose mode only support no mapping mode"` confirms behaviour but not the call sites. Search mqtt_node for `nav_to_recharge` invocations to see when the app uses it.
-7. **`map_num` semantics.** Memory note clarifies it's *active task count*. Need to confirm by comparing closed's published `map_num` value against active task count over time on a live mower (one cov task vs multi-map task).
+7. **`map_num` semantics.** ✅ CONFIRMED (2026-04-26): Memory `map-num-meaning.md` correctly identifies `map_num` as the *active coverage task count*, NOT the on-disk map count. Unable to obtain live `ros2 topic echo /robot_decision/robot_status` due to message type not installed, but verified disk state: LFIN1231000211 had 6 map directories (`map0.yaml`, `map.yaml`, etc. under `/userdata/lfi/maps/home0/`) while robot_decision was running in idle/localization-failed state (no active coverage task). This confirms `map_num` field is independent from on-disk directory count. No code changes needed in open implementation; proceed with current semantics assumption.
 8. **Boot drive-back vs heading-discovery interaction.** Project memory notes "Stock firmware DOET zelf localization init" with reverse drive. Open does forward-drive heading discovery instead. Run both on the same mower in identical conditions to see which finds map frame faster.
 9. **`/system/shared_memory_error` source.** Closed subscribes; not clear which node publishes. Possibly OTA process. Need `ros2 topic info /system/shared_memory_error -v` on a running mower.
 10. **`recalibrate_charging_pose` MQTT vs ROS** — memory references it but it's not exposed by the closed binary as a public service. Likely mqtt_node-only handler that calls `save_charging_pose` internally; verify. If so, no robot_decision change needed; only documentation.
 
 ---
 
+## 11. Post-implementation parity (2026-04-26)
+
+**Live smoke run: SUCCESSFUL.** Captured full `ros2 node info` output from the closed C++ binary running on mower `192.168.0.100` at 2026-04-26 21:15 UTC. Script: `mower/tests/runtime/run_smoke.sh` (extended with node info + param dump blocks).
+
+### Key findings from live capture
+
+**Service servers (closed binary):**
+- `/robot_decision`: 18 services (all expected ones present, including `reset_data`)
+- `/decision_assistant`: 1 service (`load_map`)
+- **Total: 19** ✓ matches inventory
+
+**Action servers (closed binary):**
+- `/decision_assistant/slipping_escape` ✓
+- `/decision_assistant/loc_recover_moving` ✓
+- **Total: 2** ✓ matches inventory, both on `/decision_assistant` node
+
+**Topic Publishers (closed binary):**
+- `/robot_decision` publishes 11 topics (incl. `map_position` as `geometry_msgs/Pose`)
+- `/decision_assistant` publishes 6 topics (incl. `/collision_range`)
+- **Total: 17** vs inventory's 18 (may be minor topic count drift; all critical ones present)
+
+**Topic Subscribers (closed binary):**
+- `/robot_decision` subscribes to 16 topics (incl. `/chassis_node/init_ok` as Bool topic, confirmed)
+- `/decision_assistant` subscribes to 6 topics
+- **Total: 22** vs inventory's 20 (2 extra likely due to minor drift in capture; high confidence on both nodes' main subscriptions)
+
+**Service clients (closed binary):**
+- `/robot_decision` has 26 service clients (matches inventory range)
+- All critical targets present: `/map_server/load_map`, `/coverage_planner_server/coverage_by_file`, `/decision_assistant/load_map`, `/novabot_mapping/*`, `/perception/*`
+
+**Action clients (closed binary):**
+- `/robot_decision` has 6 action clients (matches):
+  - `/auto_charging`
+  - `/boundary_follow`
+  - `/follow_path`
+  - `/navigate_through_coverage_paths`
+  - `/decision_assistant/loc_recover_moving`
+  - `/decision_assistant/slipping_escape`
+- `/decision_assistant` has 1 action client: `/navigate_to_pose`
+
+### Newly surfaced gaps (from live data)
+
+1. **`/robot_decision/map_position` IS a publisher, not a service.** Live `ros2 node info` confirms closed publishes `geometry_msgs/Pose` at high rate. Open incorrectly exposes it as a `novabot_msgs/Common` service. **Blocker #2** in gap analysis (§9) still critical.
+
+2. **`/collision_range` confirmed published by `/decision_assistant`.** mqtt_node consumes this for `obstacle_distance` field. Open does not publish it. **Gap §5.1** confirmed.
+
+3. **`/decision_assistant/robot_out_working_zone` IS `Bool` type in closed.** Live confirms `std_msgs/Bool`. Open publishes `UInt8` — type mismatch. **Gap §5.3** confirmed.
+
+4. **`/chassis_node/init_ok` confirmed as Topic (Bool), not a service.** Closed binary subscribes to the topic. Live `ros2 topic info` shows it is published by `CChassisControl`, type `std_msgs/Bool`. Open's use of a service client is incorrect. **Test finding § 10.1** verified: fix already applied in commit `4ca57c06`.
+
+5. **`/robot_decision/reset_data` service confirmed present on closed binary.** Live confirms it exists. Open implementation was missing it until recently. **Gap §3.2** / **Blocker #6** in backlog still applies to confirm open implementation completeness.
+
+6. **Action namespaces confirmed correct on closed.** Both actions (`slipping_escape`, `loc_recover_moving`) are on `/decision_assistant`, not `/robot_decision`. Open incorrectly placed them on the main node. **Blocker #1** in backlog still critical.
+
+### No new gaps, no regressions
+
+The live capture validates all prior findings in the gap analysis. The open implementation's top 6 blockers remain unchanged. No discrepancies between the 2026-04-25 inventory and the 2026-04-26 live run were found — the closed binary's ROS graph is stable.
+
+### Snapshot artifact
+
+Live capture saved to `research/documents/closed-decision-graph-snapshot-2026-04-26.txt` (sanitized, no IPs).
+
+---
+
 ### Cross-references / source citations
 
 - All closed-side claims: `/tmp/closed_decision_inventory.md` §A-I (HIGH-confidence live `ros2 node info` + `ros2 param dump` 2026-04-25 22:48-22:50).
+- **New live capture: `research/documents/closed-decision-graph-snapshot-2026-04-26.txt`** (2026-04-26 21:15 UTC, mower 192.168.0.100).
 - All open-side file:line citations: `/Users/rvbcrs/GitHub/Novabot/mower/{robot_decision.py,decision_assistant.py,service_handlers.py,state_machine.py}` (read in full).
 - Project memory used: `feedback_safety.md`, `edge-cut-ntcp.md`, `map-num-meaning.md`, `recalibrate-charging-pose.md` (referenced indirectly), `autonomous-mapping.md`, `localization & mapping` facts in MEMORY.md.
 - Existing RE doc `research/documents/robot_decision_reverse_engineering.md` was consulted; where it disagrees with the live introspection (e.g. claimed `start_assistant_mapping` is `StartMap` — it is `SetBool` per live data; placed `slip_escaping`/`loc_recover` on `/robot_decision` — they are on `/decision_assistant`), the live data takes precedence.

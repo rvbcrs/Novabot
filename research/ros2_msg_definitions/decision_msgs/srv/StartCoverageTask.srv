@@ -1,0 +1,28 @@
+# verified 2026-04-26 (live SSH from 192.168.0.100)
+uint8 NORMAL=0 #正常选地图割草模式
+uint8 SPECIFIED_AREA=1 # 指定地图划区割草模式
+uint8 BOUNDARY_COV=2  # 贴边割草模式
+uint8 INFO_CLOSE=1 
+uint8 INFO_BUZZER=2
+uint8 INFO_LED=3
+uint8 INFO_BUZZER_LED=4
+uint8 cov_mode # 割草模式
+# 请求类型，不同设备请求和不同类型， 待定
+# 1 开头的mqtt/app启动  11 普通启动   12 排期割草  13  14
+# 2 开头的MCU启动命     21  普通启动  22 排期割草  23   24
+uint8 request_type
+uint32 map_ids #割草地图_id，当map_id大于0时优先使用这个， 兼容旧的格式接口
+string[] map_names  # 指定地图
+geometry_msgs/Point[]  polygon_area# 划定区域
+uint8[]  blade_heights # 割草高度，为兼容旧接口0-7级，实际高度为 级别+2*10
+bool specify_direction
+uint8 cov_direction  # 规划主方向0-180
+uint8 light # 0 灯光亮度
+bool specify_perception_level # 是否指定感知等级
+uint8 perception_level # 感知等级 0 关闭避障  1检测  2分割  3分割灵敏度高
+uint8 blade_info_level #  0默认设置， led蜂鸣器开关 1全部关闭；2打开蜂鸣器、关闭led；3关闭蜂鸣器、打开led；4全部打开
+bool night_light #是否允许夜间开灯
+bool enable_loc_weak_mapping #是否允许定位状态弱时建图，如果不允许则会产生建图失败
+bool enable_loc_weak_working #是否允许定位状态弱时割草，如果不允许则会直接暂停或者结束割草
+---
+bool result

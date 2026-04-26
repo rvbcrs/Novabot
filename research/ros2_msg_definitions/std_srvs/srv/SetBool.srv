@@ -1,0 +1,5 @@
+# verified 2026-04-26 (live SSH from 192.168.0.100 /opt/ros/galactic)
+bool data # e.g. for hardware enabling / disabling
+---
+bool success   # indicate successful run of triggered service
+string message # informational, e.g. for error messages

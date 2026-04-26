@@ -1,0 +1,23 @@
+# verified 2026-04-26 (live SSH from 192.168.0.100)
+#goal definition
+geometry_msgs/PoseStamped pose
+string behavior_tree
+string controller_id
+string goal_checker_id
+---
+#result definition
+uint8 SUCCESS=0
+uint8 PLAN_FAILED=1
+uint8 FOLLOW_FAILED=2
+uint8 MOVE_FAILED=3
+uint8 GOAL_COLLISION=4
+uint8 STUCK=5
+uint8 UNKNOWN=9
+uint8 status
+std_msgs/Empty result
+---
+geometry_msgs/PoseStamped current_pose
+builtin_interfaces/Duration navigation_time
+builtin_interfaces/Duration estimated_time_remaining
+int16 number_of_recoveries
+float32 distance_remaining

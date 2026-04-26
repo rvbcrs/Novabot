@@ -1,0 +1,29 @@
+# verified 2026-04-26 (live SSH from 192.168.0.100)
+# 1 - goal definition
+
+# follow type definition
+uint8 ASSIST_MAPPING_MODE=0 # only valid for start point and no close loop check
+uint8 AUTO_MAPPING_MODE=1 # auto searching start point and follow boundary, and detect close loop
+uint8 BOUNDARY_CUTTING_MODE=2 # cutting mode
+
+uint8 follow_mode
+bool enable_coverage # whether enable cutting
+bool more_close_to_boundary # whether get more closer to boundary
+bool close_loop_stop
+bool start_follow_wait # when start following boundary, whether wait for specified time
+bool debug_mode
+float32 inflation_radius
+uint8 blade_height # target blade height
+---
+#2 - result definition
+uint8 LOOP_CLOSED=0
+uint8 NO_VALID_BOUNDARY=1
+uint8 CANCELLED=2
+uint8 FOLLOW_FAILED=3
+uint8 SEARCHING_START_FAILED=4
+uint8 TF_RELATED_EXCEPTION=5
+uint8 NAV_TO_POSE_ACTION_EXCEPTION=6
+uint8 status
+string msg
+---
+#3 - feedback definition
