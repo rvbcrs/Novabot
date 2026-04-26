@@ -1202,7 +1202,7 @@ class OpenRobotDecision(Node):
                                 WorkStatus.MAPPING_STOP_RECORD)
 
                 # Step 1: Save charger pose (synchronous)
-                ok = self.service_handlers._save_charging_pose_internal(
+                ok, _dist = self.service_handlers._save_charging_pose_internal(
                     self.current_map_name or 'home0', 'map0')
                 if not ok:
                     self.get_logger().warn(

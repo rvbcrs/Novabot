@@ -233,13 +233,13 @@ class ServiceHandlers:
         req.child_map_file_name = child_name
         result = self._call_service(n.cli_set_charging_pose, req)
         if result and result.result:
+            dist = float(getattr(result, 'map_to_charging_dis', 0.0))
             self.log.info(
-                f'Mapping: Saved charging pose, '
-                f'distance={result.map_to_charging_dis:.2f}m')
-            return True
+                f'Mapping: Saved charging pose, distance={dist:.2f}m')
+            return True, dist
         else:
             self.log.warn('Mapping: Save charging pose failed')
-            return False
+            return False, 0.0
 
     def _generate_map(self, map_type, resolution=0.05):
         """Generate sub-map (type=0) or whole map (type=1)."""
@@ -780,11 +780,11 @@ class ServiceHandlers:
                      WorkStatus.SETTING_CHARGING_STATION)
 
         # Forward to novabot_mapping's set_charging_pose
-        ok = self._save_charging_pose_internal(
+        ok, dist = self._save_charging_pose_internal(
             map_name=request.map_file_name or 'home0',
             child_name=request.child_map_file_name or 'map0')
 
-        response.result = ok
-        response.map_to_charging_dis = 0.0
+        response.result = 1 if ok else 0
+        response.map_to_charging_dis = float(dist)
         return response
 
