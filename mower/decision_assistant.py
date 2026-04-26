@@ -446,8 +446,11 @@ class DecisionAssistant(Node):
             self._logger.warn(
                 f'Communication error during task: {error_status.name}')
             if error_status == ErrorStatus.LORA_ERROR:
+                self._logger.warn('Try to rotate to recover lora connect')
                 n._set_state(n.task_mode, WorkStatus.LORA_ERROR_HANDLE,
                              error_status=error_status)
+                threading.Thread(
+                    target=self._lora_recover_loop, daemon=True).start()
             else:
                 n._set_state(n.task_mode, WorkStatus.LOC_ERROR_HANDLE,
                              error_status=error_status)
@@ -542,6 +545,19 @@ class DecisionAssistant(Node):
     def _stop_motors(self):
         """Send zero velocity command (cloud_move_cmd, not cmd_vel)."""
         self._publish_cloud_move(0.0, 0.0)
+
+    def _lora_recover_loop(self):
+        """Slow-rotate up to 30s waiting for LoRa to recover. Closed-binary
+        parity. Bails when host.lora_ok flips True."""
+        deadline = time.monotonic() + 30.0
+        while time.monotonic() < deadline:
+            if getattr(self.host, 'lora_ok', True):
+                self._logger.info('LoRa recovered')
+                return
+            self._publish_cloud_move(0.0, 0.5)
+            time.sleep(0.2)
+        self._publish_cloud_move(0.0, 0.0)
+        self._logger.warn('LoRa recovery timeout')
 
     @property
     def is_escaping(self):
