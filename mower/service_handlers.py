@@ -293,27 +293,28 @@ class ServiceHandlers:
         return response
 
     def _handle_add_area(self, request, response):
-        """Add obstacle/unicom area during mapping.
-        type=1: obstacle, type=2: unicom passage."""
+        """Add obstacle (1), unicom (2), or unicom→station (3)."""
         self.log.info(f'StartMap: add area, type={request.type}')
         n = self.node
-
         if request.type == 1:
-            # Stop current work area recording, start obstacle recording
             self._stop_recording()
             n._set_state(TaskMode.MAPPING,
                          WorkStatus.MANUAL_MAPPING_OBSTACLE)
-            ok = self._start_recording(1)  # obstacle
+            ok = self._start_recording(1)
         elif request.type == 2:
-            # Stop current recording, start unicom recording
             self._stop_recording()
             n._set_state(TaskMode.MAPPING,
                          WorkStatus.MANUAL_MAPPING_UNICOM)
-            ok = self._start_recording(2)  # unicom
+            ok = self._start_recording(2)
+        elif request.type == 3:
+            self._stop_recording()
+            n._set_state(TaskMode.MAPPING,
+                         WorkStatus.MANUAL_MAPPING_UNICOM_TO_STATION)
+            self.log.info('Start mapping unicom/passage to charge station')
+            ok = self._start_recording(2)  # unicom path; mapping_node logs context
         else:
             self.log.warn(f'Unknown area type: {request.type}')
             ok = False
-
         response.result = 1 if ok else 0
         response.data = ''
         return response
