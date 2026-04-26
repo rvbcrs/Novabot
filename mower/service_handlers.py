@@ -368,7 +368,7 @@ class ServiceHandlers:
         if needs_undock:
             self.log.info(
                 f'start_assistant_mapping: undocking first '
-                f'(is_on_charger={n.is_on_charger}, dist={dist_from_charger:.2f}m)')
+                f'(is_on_charger={n.is_on_charger})')
             n.request_undock(after_state=(
                 TaskMode.MAPPING,
                 WorkStatus.ASSISTANT_MAPPING_WORKING_ZONE))
