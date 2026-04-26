@@ -611,14 +611,23 @@ export function updateDeviceData(sn: string, payload: Buffer): Map<string, strin
   const currentMsg = snValues.get('msg') ?? '';
   const edgeActive = snValues.get('edge_active') === '1';
   const taskMode = snValues.get('task_mode') ?? '';
+  const workStatus = snValues.get('work_status') ?? '';
   const mappingFlag = snValues.get('start_edit_or_assistant_map_flag') === '1';
+  // work_status numeric values from original v1.0.0 (ad7bb872): 1=mowing, 5=mapping.
+  // The b1924ef2 refactor switched to msg-text patterns and lost the numeric
+  // mapping detection — user firmware reports work_status=5 during mapping
+  // even when msg text doesn't include any of the patterns below. Keep both
+  // detections so any firmware variant gets the trail captured.
   const mappingActive = mappingFlag
     || taskMode === '3'
+    || workStatus === '5'
     || currentMsg.includes('Mode:MAPPING')
     || currentMsg.includes('USER_MAP')
     || currentMsg.includes('ASSISTANT_MAP');
+  const mowingByStatus = workStatus === '1';
   const isActive = edgeActive
     || mappingActive
+    || mowingByStatus
     || currentMsg.includes('Work:RUNNING')
     || currentMsg.includes('Work:NAVIGATING')
     || currentMsg.includes('Work:COVERING')
