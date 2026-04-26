@@ -343,6 +343,34 @@ export function cleanupSignalHistory(): void {
 // Cache van laatst bekende waarden per SN per veld (ruwe waarde)
 export const deviceCache = new Map<string, Map<string, string>>();
 
+// ── Dock pose capture ───────────────────────────────────────────
+// Stock firmware's heading-discovery drives the mower physically before
+// declaring its localization origin (0,0). The polygon stored on disk is
+// therefore relative to a post-discovery pose, NOT the physical dock.
+// The app used to render the charger icon at hardcoded (0,0) which lands
+// somewhere INSIDE the polygon for that reason.
+// Workaround: snapshot map_position_x/y/orientation the moment the mower
+// reports it is on the charger (recharge_status numeric == 9 OR
+// battery_state == "CHARGING"). That captures the real dock pose in the
+// same local frame as the polygon. The app reads this via the device
+// snapshot and renders the charger icon there.
+export interface DockPose { x: number; y: number; orientation: number; capturedAt: number }
+const dockPoseBySn = new Map<string, DockPose>();
+
+export function getDockPose(sn: string): DockPose | null {
+  return dockPoseBySn.get(sn) ?? null;
+}
+
+function isDockedByValues(snValues: Map<string, string>): boolean {
+  const rs = snValues.get('recharge_status') ?? '';
+  // recharge_status raw is numeric — '9' = docked / charging finished.
+  // Catch both raw and translated forms so this works regardless of
+  // ordering (translateValue runs in another path).
+  if (rs === '9' || rs.startsWith('Charging')) return true;
+  const bs = (snValues.get('battery_state') ?? '').toUpperCase();
+  return bs === 'CHARGING' || bs === 'FULL';
+}
+
 // ── PIN verify suppressie ────────────────────────────────────────
 // Na PIN verify blijft mqtt_node error_status 151 rapporteren omdat alleen
 // de STM32 MCU de error cleart — de Linux-kant weet daar niets van.
@@ -648,6 +676,26 @@ export function updateDeviceData(sn: string, payload: Buffer): Map<string, strin
       const mx = parseFloat(snValues.get('map_position_x') ?? '');
       const my = parseFloat(snValues.get('map_position_y') ?? '');
       if (!isNaN(mx) && !isNaN(my)) appendLocalTrailPoint(sn, mx, my);
+    }
+  }
+
+  // Dock pose capture — independent of isActive. Whenever the mower
+  // reports it is currently on the charger, snapshot its map_position so
+  // the app can render the charger icon at the real dock location instead
+  // of hardcoded (0,0). Captures both during initial dock and on every
+  // subsequent report while docked (in case localization drifts after
+  // re-dock). Only stores when a valid map_position is present.
+  if (isDockedByValues(snValues)) {
+    const mx = parseFloat(snValues.get('map_position_x') ?? '');
+    const my = parseFloat(snValues.get('map_position_y') ?? '');
+    const mo = parseFloat(snValues.get('map_position_orientation') ?? '0');
+    if (!isNaN(mx) && !isNaN(my) && (mx !== 0 || my !== 0)) {
+      dockPoseBySn.set(sn, {
+        x: mx,
+        y: my,
+        orientation: isNaN(mo) ? 0 : mo,
+        capturedAt: Date.now(),
+      });
     }
   }
 

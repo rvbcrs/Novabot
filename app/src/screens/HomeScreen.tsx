@@ -1390,6 +1390,7 @@ export default function HomeScreen() {
                 obstacles={obstaclePolygons}
                 mowerPos={mower.mowerPosX != null && mower.mowerPosY != null ? { x: mower.mowerPosX, y: mower.mowerPosY } : null}
                 mowerHeading={mower.mowerHeading ?? undefined}
+                chargerPose={devices.get(mower.sn)?.dockPose ?? null}
               />
             </View>
           ) : (

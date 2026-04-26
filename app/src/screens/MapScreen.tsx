@@ -871,8 +871,15 @@ export default function MapScreen() {
     return trail.map(p => ({ x: (p as any).x ?? 0, y: (p as any).y ?? 0 }));
   }, [trail]);
 
-  // Charger is always at origin (0,0)
-  const chargerLocal: LocalPoint = { x: 0, y: 0 };
+  // Charger position. Stock heading-discovery shifts the mower's
+  // localization origin away from the physical dock, so the polygon's
+  // (0,0) is NOT where the dock is. The server captures the mower's
+  // map_position whenever the mower reports being docked and exposes
+  // it as dockPose; render the icon there. Fallback (0,0) if the
+  // server has not yet seen the mower docked since startup.
+  const chargerLocal: LocalPoint = mower?.dockPose
+    ? { x: mower.dockPose.x, y: mower.dockPose.y }
+    : { x: 0, y: 0 };
 
   const bounds = useMemo(() => {
     let b: LocalBounds | null = null;

@@ -29,6 +29,14 @@ export interface DeviceState {
    * the real MAC — see ble-scan-sn-identification.md memory.
    */
   macAddress?: string | null;
+  /**
+   * Last-known map_position the server saw the mower at while it reported
+   * being docked. Used to render the charger icon at the real dock location
+   * instead of the polygon's local origin (0,0) — stock heading-discovery
+   * shifts the localization origin away from the physical dock so the dock
+   * pose is non-zero in map frame.
+   */
+  dockPose?: { x: number; y: number; orientation: number } | null;
 }
 
 export interface MowerStatus {
@@ -107,4 +115,5 @@ export interface SnapshotDevice {
   nickname?: string | null;
   firmwareVersion?: string | null;
   macAddress?: string | null;
+  dockPose?: { x: number; y: number; orientation: number } | null;
 }
