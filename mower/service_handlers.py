@@ -34,9 +34,6 @@ Service type mapping (mqtt_node is CLIENT of these):
   mapping_msgs/SetChargingPose:
     /robot_decision/save_charging_pose
 
-  NOT in mqtt_node clients (our own):
-    /robot_decision/map_position  (novabot_msgs/Common — kept for compatibility)
-
 Mapping service CLIENTS (Fase 4, verified from novabot_mapping binary):
   /novabot_mapping/mapping_data          mapping_msgs/Mapping           Generate sub/total map
   /novabot_mapping/recording_edge        mapping_msgs/Recording         Start recording (type 0/1/2)
@@ -61,7 +58,6 @@ from decision_msgs.srv import (
     Charging as ChargingSrv, GenerateCoveragePath, DeleteMap,
 )
 from std_srvs.srv import SetBool, Trigger, Empty
-from novabot_msgs.srv import Common as NovabotCommon
 from mapping_msgs.srv import (
     Recording as RecordingSrv,
     MappingControl as MappingControlSrv,
@@ -83,7 +79,7 @@ class ServiceHandlers:
         self._create_servers()
 
     def _create_servers(self):
-        """Create all 18 service servers that mqtt_node calls.
+        """Create all 17 service servers that mqtt_node calls.
         Types MUST match mqtt_node's service clients exactly."""
         n = self.node
         cb = n.service_cb_group
@@ -159,12 +155,7 @@ class ServiceHandlers:
             SetChargingPoseSrv, '/robot_decision/save_charging_pose',
             self._handle_save_charging_pose, callback_group=cb)
 
-        # Map position (novabot_msgs/Common — not in mqtt_node clients but kept)
-        n.create_service(
-            NovabotCommon, '/robot_decision/map_position',
-            self._handle_map_position, callback_group=cb)
-
-        self.log.info('Created 18 service servers for mqtt_node')
+        self.log.info('Created 17 service servers for mqtt_node')
 
     # ─── Helper: synchronous service call ─────────────────────
 
@@ -701,12 +692,3 @@ class ServiceHandlers:
         response.map_to_charging_dis = 0.0
         return response
 
-    # ─── Map position (novabot_msgs/Common — own service) ────
-
-    def _handle_map_position(self, request, response):
-        """Get current map position."""
-        n = self.node
-        response.result = 1
-        response.data = (f'{{"x": {n.x:.4f}, "y": {n.y:.4f}, '
-                         f'"theta": {n.theta:.4f}}}')
-        return response

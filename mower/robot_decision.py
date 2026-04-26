@@ -71,7 +71,7 @@ from nav2_pro_msgs.srv import FreeMoveAround
 from general_msgs.srv import SetUint8 as SetUint8Srv, SaveFile as SaveFileSrv
 
 from nav_msgs.msg import Odometry
-from geometry_msgs.msg import Twist, PoseStamped
+from geometry_msgs.msg import Twist, PoseStamped, Pose
 from std_msgs.msg import UInt8, UInt32, Int16, String, Bool
 
 from state_machine import (
@@ -208,6 +208,12 @@ class OpenRobotDecision(Node):
             String, '/robot_decision/planned_json', RELIABLE_QOS)
         self.preview_path_pub = self.create_publisher(
             String, '/robot_decision/preview_planned_json', RELIABLE_QOS)
+        # /robot_decision/map_position — continuous Pose stream consumed by
+        # mqtt_node + dashboard for live robot dot. Closed binary publishes
+        # this; open used to expose it as a Common service which the dashboard
+        # never polled.
+        self.map_position_pub = self.create_publisher(
+            Pose, '/robot_decision/map_position', RELIABLE_QOS)
 
         # Motor control publishers (Fase 3)
         self.cmd_vel_pub = self.create_publisher(
@@ -2434,6 +2440,17 @@ class OpenRobotDecision(Node):
         msg.start_time = self.start_time.to_msg()
         msg.end_time = now.to_msg()
         self.status_pub.publish(msg)
+
+        # Live position for mqtt_node / dashboard
+        pose = Pose()
+        pose.position.x = float(self.x)
+        pose.position.y = float(self.y)
+        pose.position.z = 0.0
+        # quaternion from yaw
+        half = self.theta * 0.5
+        pose.orientation.z = math.sin(half)
+        pose.orientation.w = math.cos(half)
+        self.map_position_pub.publish(pose)
 
         # Periodic safety checks (runs at 2Hz via status timer)
         self.assistant.check_cpu_temp()
