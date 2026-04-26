@@ -71,7 +71,7 @@ from nav2_pro_msgs.srv import FreeMoveAround
 from general_msgs.srv import SetUint8 as SetUint8Srv, SaveFile as SaveFileSrv
 
 from nav_msgs.msg import Odometry
-from geometry_msgs.msg import Twist, PoseStamped, Pose
+from geometry_msgs.msg import Twist, PoseStamped, Pose, PolygonStamped, Point32
 from std_msgs.msg import UInt8, UInt32, Int16, String, Bool
 
 from state_machine import (
@@ -374,9 +374,8 @@ class OpenRobotDecision(Node):
         self.cli_detection_mode = self.create_client(
             SetBool, '/local_costmap/set_detection_mode',
             callback_group=self.client_cb_group)
-        self.cli_prohibited_points = self.create_client(
-            SetBool, '/local_costmap/prohibited_points',
-            callback_group=self.client_cb_group)
+        self.prohibited_points_pub = self.create_publisher(
+            PolygonStamped, '/local_costmap/prohibited_points', RELIABLE_QOS)
         self.cli_costmap_set_params = self.create_client(
             SetParamsSrv,
             '/local_costmap/local_costmap_rclcpp_node/set_parameters',
@@ -1688,13 +1687,20 @@ class OpenRobotDecision(Node):
             self.cli_auto_recharge_set_params, req,
             f'recharge_led_brightness({value})')
 
-    def set_prohibited_points(self, enabled):
-        """Enable/disable prohibited points in costmap."""
-        req = SetBool.Request()
-        req.data = enabled
-        self.call_service_async(
-            self.cli_prohibited_points, req,
-            f'prohibited_points({"on" if enabled else "off"})')
+    def push_prohibited_zones(self, polygon_points):
+        """Publish a no-go polygon to /local_costmap/prohibited_points so nav2
+        avoids the user-defined zones. polygon_points: iterable of (x, y)
+        tuples in map frame."""
+        msg = PolygonStamped()
+        msg.header.frame_id = 'map'
+        msg.header.stamp = self.get_clock().now().to_msg()
+        for x, y in polygon_points:
+            p = Point32()
+            p.x = float(x)
+            p.y = float(y)
+            p.z = 0.0
+            msg.polygon.points.append(p)
+        self.prohibited_points_pub.publish(msg)
 
     def report_maybe_stuck(self, stuck):
         """Report to nav2 that robot may be stuck."""

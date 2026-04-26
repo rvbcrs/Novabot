@@ -639,6 +639,18 @@ class ServiceHandlers:
         elif cov_mode == 2:
             pass  # only_edge / include_edge set above
 
+        if cov_mode == 1 and polygon_area is not None:
+            try:
+                # polygon_area is a list of {x, y} or [x, y] entries from the request
+                pts = [
+                    (getattr(pt, 'x', pt[0] if hasattr(pt, '__getitem__') else 0.0),
+                     getattr(pt, 'y', pt[1] if hasattr(pt, '__getitem__') else 0.0))
+                    for pt in polygon_area
+                ]
+                n.push_prohibited_zones(pts)
+            except Exception as e:
+                self.log.warn(f'push_prohibited_zones failed: {e}')
+
         ok = n.start_coverage(
             map_yaml=map_yaml,
             blade_height=blade_height,
