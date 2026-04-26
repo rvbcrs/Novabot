@@ -404,20 +404,30 @@ class ServiceHandlers:
         return response
 
     def _handle_stop_task(self, request, response):
-        """Stop current task. Type: std_srvs/SetBool."""
+        """Stop or resume current task. Closed binary semantics:
+          data=true  -> pause (USER_STOP, cancel running goals)
+          data=false -> resume (re-issue the last coverage goal if available)
+        Logs 'Receiving cov continue command!!!' on resume."""
         self.log.info(f'SetBool: stop_task, data={request.data}')
         n = self.node
-        prev_mode = n.task_mode
+        if request.data:
+            if n.task_mode == TaskMode.MAPPING and n._mapping_active:
+                self._stop_recording()
+            n._set_state(TaskMode.FREE, WorkStatus.USER_STOP)
+            n._cancel_active_actions()
+            response.success = True
+            response.message = 'Paused'
+            return response
 
-        # If mapping, stop recording first
-        if n.task_mode == TaskMode.MAPPING and n._mapping_active:
-            self._stop_recording()
-
-        n._set_state(TaskMode.FREE, WorkStatus.USER_STOP)
-        n._cancel_active_actions()
-        response.success = True
-        response.message = f'Stopped from {prev_mode.name}'
-        return response
+        # Resume
+        self.log.info('Receiving cov continue command!!!')
+        if not getattr(n, '_last_cov_request', None):
+            self.log.warn('No prior coverage task to resume')
+            response.success = False
+            response.message = 'No prior task to resume'
+            return response
+        # Re-fire the last request via _handle_start_cov_task
+        return self._handle_start_cov_task(n._last_cov_request, response)
 
     def _handle_map_stop_record(self, request, response):
         """Stop map recording (MQTT stop_scan_map). Type: std_srvs/SetBool."""
