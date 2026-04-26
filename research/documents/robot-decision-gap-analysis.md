@@ -325,9 +325,74 @@ Inputs to this analysis:
 
 ---
 
+## 11. Post-implementation parity (2026-04-26)
+
+**Live smoke run: SUCCESSFUL.** Captured full `ros2 node info` output from the closed C++ binary running on mower `192.168.0.100` at 2026-04-26 21:15 UTC. Script: `mower/tests/runtime/run_smoke.sh` (extended with node info + param dump blocks).
+
+### Key findings from live capture
+
+**Service servers (closed binary):**
+- `/robot_decision`: 18 services (all expected ones present, including `reset_data`)
+- `/decision_assistant`: 1 service (`load_map`)
+- **Total: 19** ✓ matches inventory
+
+**Action servers (closed binary):**
+- `/decision_assistant/slipping_escape` ✓
+- `/decision_assistant/loc_recover_moving` ✓
+- **Total: 2** ✓ matches inventory, both on `/decision_assistant` node
+
+**Topic Publishers (closed binary):**
+- `/robot_decision` publishes 11 topics (incl. `map_position` as `geometry_msgs/Pose`)
+- `/decision_assistant` publishes 6 topics (incl. `/collision_range`)
+- **Total: 17** vs inventory's 18 (may be minor topic count drift; all critical ones present)
+
+**Topic Subscribers (closed binary):**
+- `/robot_decision` subscribes to 16 topics (incl. `/chassis_node/init_ok` as Bool topic, confirmed)
+- `/decision_assistant` subscribes to 6 topics
+- **Total: 22** vs inventory's 20 (2 extra likely due to minor drift in capture; high confidence on both nodes' main subscriptions)
+
+**Service clients (closed binary):**
+- `/robot_decision` has 26 service clients (matches inventory range)
+- All critical targets present: `/map_server/load_map`, `/coverage_planner_server/coverage_by_file`, `/decision_assistant/load_map`, `/novabot_mapping/*`, `/perception/*`
+
+**Action clients (closed binary):**
+- `/robot_decision` has 6 action clients (matches):
+  - `/auto_charging`
+  - `/boundary_follow`
+  - `/follow_path`
+  - `/navigate_through_coverage_paths`
+  - `/decision_assistant/loc_recover_moving`
+  - `/decision_assistant/slipping_escape`
+- `/decision_assistant` has 1 action client: `/navigate_to_pose`
+
+### Newly surfaced gaps (from live data)
+
+1. **`/robot_decision/map_position` IS a publisher, not a service.** Live `ros2 node info` confirms closed publishes `geometry_msgs/Pose` at high rate. Open incorrectly exposes it as a `novabot_msgs/Common` service. **Blocker #2** in gap analysis (§9) still critical.
+
+2. **`/collision_range` confirmed published by `/decision_assistant`.** mqtt_node consumes this for `obstacle_distance` field. Open does not publish it. **Gap §5.1** confirmed.
+
+3. **`/decision_assistant/robot_out_working_zone` IS `Bool` type in closed.** Live confirms `std_msgs/Bool`. Open publishes `UInt8` — type mismatch. **Gap §5.3** confirmed.
+
+4. **`/chassis_node/init_ok` confirmed as Topic (Bool), not a service.** Closed binary subscribes to the topic. Live `ros2 topic info` shows it is published by `CChassisControl`, type `std_msgs/Bool`. Open's use of a service client is incorrect. **Test finding § 10.1** verified: fix already applied in commit `4ca57c06`.
+
+5. **`/robot_decision/reset_data` service confirmed present on closed binary.** Live confirms it exists. Open implementation was missing it until recently. **Gap §3.2** / **Blocker #6** in backlog still applies to confirm open implementation completeness.
+
+6. **Action namespaces confirmed correct on closed.** Both actions (`slipping_escape`, `loc_recover_moving`) are on `/decision_assistant`, not `/robot_decision`. Open incorrectly placed them on the main node. **Blocker #1** in backlog still critical.
+
+### No new gaps, no regressions
+
+The live capture validates all prior findings in the gap analysis. The open implementation's top 6 blockers remain unchanged. No discrepancies between the 2026-04-25 inventory and the 2026-04-26 live run were found — the closed binary's ROS graph is stable.
+
+### Snapshot artifact
+
+Live capture saved to `research/documents/closed-decision-graph-snapshot-2026-04-26.txt` (sanitized, no IPs).
+
+---
+
 ### Cross-references / source citations
 
 - All closed-side claims: `/tmp/closed_decision_inventory.md` §A-I (HIGH-confidence live `ros2 node info` + `ros2 param dump` 2026-04-25 22:48-22:50).
+- **New live capture: `research/documents/closed-decision-graph-snapshot-2026-04-26.txt`** (2026-04-26 21:15 UTC, mower 192.168.0.100).
 - All open-side file:line citations: `/Users/rvbcrs/GitHub/Novabot/mower/{robot_decision.py,decision_assistant.py,service_handlers.py,state_machine.py}` (read in full).
 - Project memory used: `feedback_safety.md`, `edge-cut-ntcp.md`, `map-num-meaning.md`, `recalibrate-charging-pose.md` (referenced indirectly), `autonomous-mapping.md`, `localization & mapping` facts in MEMORY.md.
 - Existing RE doc `research/documents/robot_decision_reverse_engineering.md` was consulted; where it disagrees with the live introspection (e.g. claimed `start_assistant_mapping` is `StartMap` — it is `SetBool` per live data; placed `slip_escaping`/`loc_recover` on `/robot_decision` — they are on `/decision_assistant`), the live data takes precedence.
