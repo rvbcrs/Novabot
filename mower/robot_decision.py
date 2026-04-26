@@ -234,9 +234,6 @@ class OpenRobotDecision(Node):
             ChassisBatteryMessage, 'battery_message',
             self._on_battery, SENSOR_QOS)
         self.create_subscription(
-            ChassisBatteryMessage, 'battery_message',
-            self._on_battery, RELIABLE_QOS)
-        self.create_subscription(
             ChassisIncident, 'chassis_incident',
             self._on_incident, SENSOR_QOS)
         self.create_subscription(
