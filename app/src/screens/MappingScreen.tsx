@@ -369,10 +369,13 @@ export default function MappingScreen() {
     return () => { if (trailPollRef.current) clearInterval(trailPollRef.current); };
   }, [mappingState, sn]);
 
-  // Fallback: client-side trail collection if server trail is empty
+  // Fallback: client-side trail collection. Always runs during mapping so a
+  // mid-session server stall (e.g. firmware msg pattern dropping out of the
+  // server's isActive filter) doesn't freeze the live trail. The server poll
+  // overwrites trailPoints with its richer version when it does return data,
+  // and ignores empty responses, so the two paths cooperate cleanly.
   useEffect(() => {
     if (mappingState !== 'mapping') return;
-    if (serverTrailActiveRef.current) return;
     if (mapPosX === undefined || mapPosY === undefined) return;
     const x = parseFloat(mapPosX);
     const y = parseFloat(mapPosY);
@@ -888,6 +891,12 @@ export default function MappingScreen() {
     || mowerMsg.includes('RECHARGE: FAILED')
     || mowerMsg.includes('RETURN TO CHARGING STATION FAILED');
   const savingChargerPosRef = useRef(false);
+  // Edge-detection so we never trust stale dockedOnCharger at entry. Firmware
+  // latches recharge_status=9 and battery_state="CHARGING" from the previous
+  // dock cycle even after the mower drove off for mapping. Without this guard
+  // we'd save the charging pose at whatever pose the mower happened to be in
+  // the moment it entered the chargerPosition step.
+  const sawNonDockedSinceEntryRef = useRef(false);
 
   // Reset charger-flow tracking when entering the dock step.
   useEffect(() => {
@@ -896,9 +905,13 @@ export default function MappingScreen() {
       chargerFailureHandledRef.current = false;
       autoDockRequestedRef.current = false;
       prevAutoDockFailedRef.current = false;
+      // If we enter while still flagged as docked it's stale latched state.
+      // Require the dock flag to drop to false at least once before we trust
+      // the next true reading.
+      sawNonDockedSinceEntryRef.current = !dockedOnCharger;
       setChargerAction(null);
     }
-  }, [mappingState]);
+  }, [mappingState, dockedOnCharger]);
 
   useEffect(() => {
     const failureTransitioned = autoDockFailed && !prevAutoDockFailedRef.current;
@@ -938,7 +951,19 @@ export default function MappingScreen() {
   ]);
 
   useEffect(() => {
-    if (mappingState !== 'chargerPosition' || !dockedOnCharger || savingChargerPosRef.current) {
+    if (mappingState !== 'chargerPosition' || savingChargerPosRef.current) {
+      return;
+    }
+    // Track the falling edge so we know the mower physically left the
+    // charger after the chargerPosition step started. Without this we
+    // would honour the latched "docked" state from before mapping began.
+    if (!dockedOnCharger) {
+      sawNonDockedSinceEntryRef.current = true;
+      return;
+    }
+    if (!sawNonDockedSinceEntryRef.current) {
+      // dockedOnCharger is true but it never flipped to false since we
+      // entered chargerPosition — treat as stale, wait for a real cycle.
       return;
     }
 
