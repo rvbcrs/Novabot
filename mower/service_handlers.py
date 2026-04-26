@@ -108,6 +108,9 @@ class ServiceHandlers:
         n.create_service(
             SetBool, '/robot_decision/map_stop_record',
             self._handle_map_stop_record, callback_group=cb)
+        n.create_service(
+            SetBool, '/robot_decision/reset_data',
+            self._handle_reset_data, callback_group=cb)
 
         # Trigger services (std_srvs/Trigger)
         n.create_service(
@@ -155,7 +158,7 @@ class ServiceHandlers:
             SetChargingPoseSrv, '/robot_decision/save_charging_pose',
             self._handle_save_charging_pose, callback_group=cb)
 
-        self.log.info('Created 17 service servers for mqtt_node')
+        self.log.info('Created 18 service servers for mqtt_node')
 
     # ─── Helper: synchronous service call ─────────────────────
 
@@ -482,6 +485,31 @@ class ServiceHandlers:
             self._stop_recording()
 
         n._set_state(TaskMode.FREE, WorkStatus.INIT_SUCCESS)
+        return response
+
+    def _handle_reset_data(self, request, response):
+        """Clear in-memory task counters/state after a fault. Closed binary
+        logs 'Reset task data successfully!!!'. Without this MQTT clients
+        cannot recover from latched faults."""
+        self.log.info(
+            f'SetBool: reset_data, data={request.data}')
+        n = self.node
+        n._cancel_active_actions()
+        if hasattr(n, 'error_status'):
+            n.error_status = 0
+        if hasattr(n, 'cov_ratio'):
+            n.cov_ratio = 0.0
+        if hasattr(n, 'cov_area'):
+            n.cov_area = 0.0
+        if hasattr(n, 'cov_work_time'):
+            n.cov_work_time = 0.0
+        if hasattr(n, 'current_map_ids'):
+            n.current_map_ids = []
+        if hasattr(n, 'request_map_ids'):
+            n.request_map_ids = []
+        n._set_state(TaskMode.FREE, WorkStatus.INIT_SUCCESS)
+        response.success = True
+        response.message = 'Reset task data successfully'
         return response
 
     # ─── Coverage task ──────────────────────────────────────────
