@@ -167,7 +167,7 @@ class OpenRobotDecision(Node):
         self.target_height = 40
         self.request_map_ids = 0
         self.current_map_ids = 0
-        self.perception_level = 1
+        self.perception_level = self.get_parameter('default_perception_level').value
         self.light = 0
 
         # ─── Charger / undock state ───
