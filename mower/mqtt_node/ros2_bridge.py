@@ -258,6 +258,117 @@ class Ros2Bridge(Node):
         return {'result': 0 if resp.success else 1,
                 'msg': resp.message or 'stop_to_charge_respond'}
 
+    def handle_auto_recharge(self, payload: dict) -> dict:
+        """Handle MQTT ``auto_recharge``.
+
+        MQTT JSON shape (catalog RE-5 §auto_recharge, decompile:349064):
+          { "auto_recharge": <any> }
+
+        ROS 2 endpoint: /robot_decision/auto_recharge  (std_srvs/srv/Trigger)
+        Schema: research/ros2_msg_definitions/std_srvs/srv/Trigger.srv
+
+        Trigger.Request has no fields — just call the service.
+        Response fields: success (bool), message (string).
+        """
+        req = Trigger.Request()
+        # No request fields on Trigger (schema: empty request section)
+
+        resp = self.call_service(self.cli_auto_recharge, req)
+        if resp is None:
+            return {'result': 1, 'msg': 'auto_recharge timeout or unavailable'}
+        return {'result': 0 if resp.success else 1,
+                'msg': resp.message or 'auto_recharge_respond'}
+
+    def handle_nav_to_recharge(self, payload: dict) -> dict:
+        """Handle MQTT ``go_to_charge`` (mapped as nav_to_recharge).
+
+        MQTT JSON shape (catalog RE-5 §go_to_charge, decompile:350102):
+          { "go_to_charge": <any> }
+
+        ROS 2 endpoint: /robot_decision/nav_to_recharge  (decision_msgs/srv/Charging)
+        Schema: research/ros2_msg_definitions/decision_msgs/srv/Charging.srv
+
+        Catalog notes (RE-5 §go_to_charge, line 135):
+          "The ROS2 request fields (name, pose_x, pose_y, pose_theta, mode)
+           are populated from internal state — exact mapping <unknown — needs
+           Ghidra deep-dive> beyond the MQTT key name."
+
+        We populate what we can from the payload (if present); otherwise the
+        firmware fills fields from its own internal state on the ROS2 side.
+        Fields per schema: name (string), pose_x (float32), pose_y (float32),
+        pose_theta (float32), mode (string).
+        Response fields: result (uint8), description (string).
+        """
+        inner = payload if not isinstance(payload.get('go_to_charge'), dict) \
+            else payload['go_to_charge']
+
+        req = ChargingSrv.Request()
+        # Populate from payload if present; defaults match empty/zero state.
+        req.name = str(inner.get('name', ''))           # string
+        req.pose_x = float(inner.get('pose_x', 0.0))   # float32
+        req.pose_y = float(inner.get('pose_y', 0.0))   # float32
+        req.pose_theta = float(inner.get('pose_theta', 0.0))  # float32
+        req.mode = str(inner.get('mode', ''))           # string
+
+        resp = self.call_service(self.cli_nav_to_recharge, req)
+        if resp is None:
+            return {'result': 1, 'msg': 'nav_to_recharge timeout or unavailable'}
+        return {'result': 0 if resp.result == 0 else 1,
+                'msg': resp.description or 'go_to_charge_respond'}
+
+    # Alias: MQTT docs call this go_to_charge; ROS2 endpoint is nav_to_recharge.
+    handle_go_to_charge = handle_nav_to_recharge
+
+    def handle_cancel_task(self, payload: dict) -> dict:
+        """Handle MQTT ``cancel_task``.
+
+        MQTT JSON shape: { "cancel_task": <any> }
+        (The string "/robot_decision/cancel_task" appears in
+        mqtt_node-strings.md:688 and graph-snapshot.txt:56, confirming the
+        client is wired in mqtt_node. No separate catalog entry exists as of
+        Phase 2 — the MQTT key is inferred from the endpoint name.)
+
+        ROS 2 endpoint: /robot_decision/cancel_task  (std_srvs/srv/Trigger)
+        Schema: research/ros2_msg_definitions/std_srvs/srv/Trigger.srv
+
+        Trigger.Request has no fields — just call the service.
+        Response fields: success (bool), message (string).
+        """
+        req = Trigger.Request()
+        # No request fields on Trigger (schema: empty request section)
+
+        resp = self.call_service(self.cli_cancel_task, req)
+        if resp is None:
+            return {'result': 1, 'msg': 'cancel_task timeout or unavailable'}
+        return {'result': 0 if resp.success else 1,
+                'msg': resp.message or 'cancel_task_respond'}
+
+    def handle_cancel_recharge(self, payload: dict) -> dict:
+        """Handle MQTT ``cancel_recharge``.
+
+        This is a direct-name alias for ``stop_to_charge``.  The underlying
+        ROS 2 endpoint is /robot_decision/cancel_recharge (Trigger).
+        ``handle_stop_to_charge`` is the canonical implementation;
+        ``handle_cancel_recharge`` delegates to it so both MQTT key spellings
+        are handled by the same logic.
+
+        MQTT JSON shape: { "cancel_recharge": <any> }
+
+        ROS 2 endpoint: /robot_decision/cancel_recharge  (std_srvs/srv/Trigger)
+        Schema: research/ros2_msg_definitions/std_srvs/srv/Trigger.srv
+        Response fields: success (bool), message (string).
+        """
+        return self.handle_stop_to_charge(payload)
+
+    # NOTE: handle_reset_data is intentionally NOT implemented.
+    # /robot_decision/reset_data (std_srvs/SetBool) is a SERVICE SERVER on
+    # robot_decision, not a service client of mqtt_node.  It does NOT appear
+    # in research/documents/mqtt_node-graph-snapshot.txt under /mqtt_node's
+    # Service Clients section.  cli_reset_data therefore does not exist on
+    # this bridge and cannot be called here.  If a direct MQTT→reset_data
+    # path is needed in future, a cli_reset_data client must first be added
+    # to __init__ (after confirming the endpoint appears in the live graph).
+
     # ── Generic helpers ────────────────────────────────────────────────
     def call_service(self, client, request, timeout: float = 5.0):
         """Synchronous service call. Returns response or None on timeout.
