@@ -173,6 +173,7 @@ class OpenRobotDecision(Node):
         self.is_on_charger = False
         self._charge_stop_active = False  # ChassisIncident charge_stop flag
         self._undocking = False
+        self._low_battery_armed = True   # hysteresis: re-arm after level recovers above low+back
         self._undock_start_time = 0.0
         self._undock_target_time = 0.0
         self._undock_after_state = None
@@ -500,6 +501,7 @@ class OpenRobotDecision(Node):
         self.declare_parameter('gazebo_debug_mode', False)
         self.declare_parameter('low_battery_power', 20)
         self.declare_parameter('full_battery_power', 96)
+        self.declare_parameter('charge_back_percentage', 1)
         self.declare_parameter('enable_loc_recover', True)
         self.declare_parameter('enable_slipping_recover', True)
         self.declare_parameter('load_map_path', '/userdata/lfi/maps/home0')
@@ -2197,13 +2199,21 @@ class OpenRobotDecision(Node):
         self._update_charger_state()
         if self.battery_power > 0 and self.boot_checks_done:
             low_thresh = self.get_parameter('low_battery_power').value
+            back = self.get_parameter('charge_back_percentage').value
+            # Hysteresis: re-arm low-battery trigger after the level has gone
+            # back ABOVE low+back (closed-binary semantics).
+            if not self._low_battery_armed:
+                if self.battery_power >= low_thresh + back:
+                    self._low_battery_armed = True
             if (self.battery_power <= low_thresh
+                    and self._low_battery_armed
                     and self.task_mode == TaskMode.COVER):
                 self.get_logger().warn(
-                    f'Low battery ({self.battery_power}%), '
-                    f'cancelling coverage and returning to charger!')
-                self.cancel_coverage()
+                    f'Battery low ({self.battery_power}% <= {low_thresh}%), '
+                    f'cancelling coverage and starting recharge')
+                self._cancel_active_actions()
                 self.start_recharge()
+                self._low_battery_armed = False
             # Low power sleep mode: if idle and battery critically low
             elif (self.battery_power <= low_thresh
                     and self.task_mode == TaskMode.FREE
