@@ -35,7 +35,7 @@ Service type mapping (mqtt_node is CLIENT of these):
     /robot_decision/save_charging_pose
 
 Mapping service CLIENTS (Fase 4, verified from novabot_mapping binary):
-  /novabot_mapping/mapping_data          mapping_msgs/Mapping           Generate sub/total map
+  /novabot_mapping/mapping               mapping_msgs/Mapping           Generate sub/total map
   /novabot_mapping/recording_edge        mapping_msgs/Recording         Start recording (type 0/1/2)
   /novabot_mapping/recording_stop        mapping_msgs/Recording         Stop recording
   /novabot_mapping/set_charging_pose     mapping_msgs/SetChargingPose   Save charger position
@@ -233,10 +233,10 @@ class ServiceHandlers:
         req.child_map_file_name = child_name
         result = self._call_service(n.cli_set_charging_pose, req)
         if result and result.result:
-            dist = float(getattr(result, 'map_to_charging_dis', 0.0))
-            self.log.info(
-                f'Mapping: Saved charging pose, distance={dist:.2f}m')
-            return True, dist
+            # SetChargingPose.Response has no map_to_charging_dis field (live verified 2026-04-26).
+            # Distance is not available from the response; log pose if needed via charging_pose.
+            self.log.info('Mapping: Saved charging pose')
+            return True, 0.0
         else:
             self.log.warn('Mapping: Save charging pose failed')
             return False, 0.0
@@ -247,7 +247,7 @@ class ServiceHandlers:
         req = MappingSrv.Request()
         req.resolution = resolution
         req.type = map_type
-        req.main_id = 0
+        # NOTE: Mapping.srv has no main_id field (live verified 2026-04-26)
         result = self._call_service(n.cli_mapping_data, req, timeout=10.0)
         if result and result.result:
             self.log.info(
@@ -567,15 +567,14 @@ class ServiceHandlers:
 
         self.log.info(
             f'StartCoverageTask: cov_mode={request.cov_mode}, '
-            f'map_ids={list(request.map_ids)}, '
+            f'map_ids={request.map_ids}, '
             f'blade_heights={list(request.blade_heights)}, '
             f'direction={request.cov_direction}, '
             f'perception={request.perception_level}, '
             f'polygon_area_pts={len(getattr(request, "polygon_area", []) or [])}')
 
-        n.request_map_ids = (
-            int(request.map_ids[0]) if request.map_ids else 0
-        )
+        # map_ids is a scalar uint32, NOT an array (live verified 2026-04-26).
+        n.request_map_ids = int(request.map_ids)
         n._last_cov_request = request  # store for stop_task resume (Task 4.3)
         blade_height = (request.blade_heights[0]
                         if request.blade_heights else 40)
@@ -824,10 +823,13 @@ class ServiceHandlers:
         request.maptype to /novabot_mapping/mapping_control. Closed binary
         transitions through DELETE_CHILD_MAP / DELETE_OBSTACLE /
         DELETE_UINICOM (spelling preserved to mirror C++ enum)."""
+        # DeleteMap.Request has only maptype + mapname (no map_file_name field, live verified 2026-04-26).
+        # Parent map name is derived from current node state.
+        n = self.node
+        parent_name = n.current_map_name or 'home0'
         self.log.info(
             f'DeleteMap: maptype={request.maptype}, '
-            f'mapname={request.mapname}, parent={request.map_file_name}')
-        n = self.node
+            f'mapname={request.mapname}, parent={parent_name}')
         state_map = {
             1: WorkStatus.DELETE_CHILD_MAP,
             2: WorkStatus.DELETE_OBSTACLE,
@@ -838,7 +840,7 @@ class ServiceHandlers:
             n._set_state(TaskMode.MAPPING, target_state)
 
         req = MappingControlSrv.Request()
-        req.map_file_name = request.map_file_name or 'home0'
+        req.map_file_name = parent_name
         req.child_map_file_name = request.mapname if request.maptype == 1 else ''
         req.obstacle_file_name = request.mapname if request.maptype == 2 else ''
         req.unicom_area_file_name = request.mapname if request.maptype == 3 else ''
@@ -869,6 +871,7 @@ class ServiceHandlers:
             child_name=request.child_map_file_name or 'map0')
 
         response.result = 1 if ok else 0
-        response.map_to_charging_dis = float(dist)
+        # SetChargingPose.Response has no map_to_charging_dis field (live verified 2026-04-26).
+        # Distance is not exposed by this response type; omit.
         return response
 

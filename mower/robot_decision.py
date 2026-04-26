@@ -290,8 +290,10 @@ class OpenRobotDecision(Node):
         # ─── Mapping service CLIENTS (Fase 4) ───
         # Service names verified from novabot_mapping binary analysis
         # All use /novabot_mapping/ prefix, types from C++ mangled names
+        # Live service name is /novabot_mapping/mapping (NOT mapping_data which is a topic).
+        # Verified 2026-04-26 via ros2 service list on live mower.
         self.cli_mapping_data = self.create_client(
-            MappingSrv, '/novabot_mapping/mapping_data',
+            MappingSrv, '/novabot_mapping/mapping',
             callback_group=self.client_cb_group)
         self.cli_recording_edge = self.create_client(
             RecordingSrv, '/novabot_mapping/recording_edge',
@@ -974,9 +976,10 @@ class OpenRobotDecision(Node):
                     pose = result.charging_pose
                     self._charger_pose_x = pose.position.x
                     self._charger_pose_y = pose.position.y
+                    # SetChargingPose.Response has no map_to_charging_dis field (live verified 2026-04-26).
                     self.get_logger().info(
                         f'Mapping: Charger pose saved, '
-                        f'dist={result.map_to_charging_dis:.2f}m')
+                        f'pos=({pose.position.x:.2f}, {pose.position.y:.2f})')
                 else:
                     self.get_logger().warn(
                         f'Mapping: Save charger pose failed: '
@@ -993,9 +996,9 @@ class OpenRobotDecision(Node):
         req = MappingSrv.Request()
         req.resolution = 0.05
         req.type = 0  # sub-map
-        req.main_id = 0
+        # Mapping.srv has only resolution + type fields (no main_id, live verified 2026-04-26)
         self.call_service_async(
-            self.cli_mapping_data, req, 'mapping_data(sub-map)')
+            self.cli_mapping_data, req, 'mapping(sub-map)')
 
     def generate_whole_map(self):
         """Generate whole map (type=1) from all sub-maps."""
@@ -1003,9 +1006,9 @@ class OpenRobotDecision(Node):
         req = MappingSrv.Request()
         req.resolution = 0.05
         req.type = 1  # whole map
-        req.main_id = 0
+        # Mapping.srv has only resolution + type fields (no main_id, live verified 2026-04-26)
         self.call_service_async(
-            self.cli_mapping_data, req, 'mapping_data(whole-map)')
+            self.cli_mapping_data, req, 'mapping(whole-map)')
 
     def _on_mapping_polygon(self, msg: MappingPolygon):
         """Handle mapping polygon data from novabot_mapping."""
@@ -1464,11 +1467,18 @@ class OpenRobotDecision(Node):
             f'ratio={result.covered_ratio:.0%} '
             f'time={elapsed:.0f}s msg="{result.msg}"')
 
-        # Publish CovTaskResult
+        # Publish CovTaskResult using live decision_msgs/CovTaskResult fields.
+        # Fields cov_ratio/cov_area/cov_work_time do NOT exist (live verified 2026-04-26).
+        # Live fields: start_time, end_time, map_num, finished_num, work_status,
+        #              error_status, map_ids, area, target_height, request_type
         cov_result = CovTaskResult()
-        cov_result.cov_ratio = result.covered_ratio
-        cov_result.cov_area = result.total_covered_area
-        cov_result.cov_work_time = elapsed
+        now_msg = self.get_clock().now().to_msg()
+        cov_result.start_time = self.start_time.to_msg()
+        cov_result.end_time = now_msg
+        cov_result.work_status = int(result.result_status)
+        cov_result.area = result.total_covered_area
+        cov_result.target_height = int(self.target_height)
+        cov_result.map_ids = int(self.request_map_ids or 0)
         self.cov_result_pub.publish(cov_result)
 
         # Map result_status to state transition
@@ -1916,9 +1926,9 @@ class OpenRobotDecision(Node):
             result = future.result()
             if result.result:
                 pose = result.charging_pose
+                # SetChargingPose.Response has no map_to_charging_dis field (live verified 2026-04-26).
                 self.get_logger().info(
                     f'Recharge: Charger pose read, '
-                    f'dist={result.map_to_charging_dis:.2f}m, '
                     f'pos=({pose.position.x:.2f},{pose.position.y:.2f})')
                 # Build PoseStamped for navigation.
                 # Use stamp=Time(0) so TF lookups use "latest available" instead
@@ -2526,7 +2536,9 @@ class OpenRobotDecision(Node):
             self.error_status = ErrorStatus.USB_BUSY
         elif msg.error_usb_not_ok_error:
             self.error_status = ErrorStatus.USB_NOT_OK
-        elif msg.error_lift_motor_error:
+        # ChassisIncident.msg has no error_lift_motor_error field (live verified 2026-04-26).
+        # Guard with hasattr so this branch is silently skipped if field is absent.
+        elif hasattr(msg, 'error_lift_motor_error') and msg.error_lift_motor_error:
             self.error_status = ErrorStatus.LIFT_MOTOR_ERROR
 
         # Handle incidents during active tasks
@@ -2797,9 +2809,10 @@ class OpenRobotDecision(Node):
         msg.cpu_temperature = self._get_cpu_temp()
         try:
             with open('/proc/loadavg') as f:
-                msg.cpu_usage = float(f.read().split()[0]) * 100.0
+                # cpu_usage is uint8 (0-255); clamp to avoid overflow for load > 2.55
+                msg.cpu_usage = min(255, int(float(f.read().split()[0]) * 100.0))
         except Exception:
-            msg.cpu_usage = 0.0
+            msg.cpu_usage = 0
         msg.memory_remaining = self._get_memory_remaining()
         msg.disk_remaining = self._get_disk_remaining()
         msg.loc_quality = self.loc_quality
