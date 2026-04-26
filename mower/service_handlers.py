@@ -624,8 +624,7 @@ class ServiceHandlers:
                     f'assistant load_map call failed: {e}')
 
         cov_mode = int(request.cov_mode)
-        only_edge = (cov_mode == 2)
-        include_edge = only_edge  # closed-binary correlation
+        include_edge = (cov_mode == 2)  # boundary pass at perimeter
         polygon_area = (
             list(request.polygon_area)
             if cov_mode == 1 and getattr(request, 'polygon_area', None)
@@ -638,16 +637,23 @@ class ServiceHandlers:
 
         # These pass-only branches are INTENTIONAL source markers — do NOT
         # simplify them away. Tests grep for 'cov_mode == 0', 'cov_mode == 1',
-        # and 'only_edge_mode=True' to verify all three dispatch paths exist.
-        # The actual per-mode logic is set above (only_edge/include_edge for
-        # mode 2, polygon_area for mode 1); the blocks below are the visible
-        # markers for automated source inspection.
+        # and 'cov_mode == 2' to verify all three dispatch paths exist.
+        # The actual per-mode logic is set above (include_edge for mode 2,
+        # polygon_area for mode 1); the blocks below are the visible markers
+        # for automated source inspection.
         if cov_mode == 0:
             pass  # default full coverage — no extra flags
         elif cov_mode == 1:
             pass  # polygon_area set above
         elif cov_mode == 2:
-            pass  # only_edge / include_edge set above
+            # BOUNDARY-ONLY (edge-cut) does NOT map to only_edge_mode on the
+            # NavigateThroughCoveragePaths action — that field does not exist.
+            # True boundary-only mowing requires the start_edge_cut extended
+            # command which dispatches via NTCP with only_edge_mode:true at the
+            # ROS level (see memory edge-cut-ntcp.md + extended_commands.py).
+            # Here we set include_edge=True so the coverage run at least adds a
+            # boundary pass; the caller should use start_edge_cut for pure edge.
+            pass  # include_edge set above
 
         # cov_mode=1 polygon_area is passed to start_coverage above. Do NOT push
         # it to /local_costmap/prohibited_points — that would mark the user's
@@ -658,9 +664,7 @@ class ServiceHandlers:
             map_yaml=map_yaml,
             blade_height=blade_height,
             include_edge=include_edge,
-            only_edge_mode=only_edge,
             polygon_area=polygon_area,
-            specify_direction=bool(request.cov_direction > 0),
             cov_direction=request.cov_direction,
             perception_level=request.perception_level,
         )
@@ -759,7 +763,16 @@ class ServiceHandlers:
     # ─── Generate coverage path ─────────────────────────────────
 
     def _handle_generate_path(self, request, response):
-        """Generate preview coverage path via coverage_planner_server."""
+        """Generate preview coverage path via coverage_planner_server.
+
+        CoveragePathsByFile.srv (live mower, verified 2026-04-26):
+          Request:  map_yaml_file (string), start_pose (geometry_msgs/Pose)
+          Response: coverage_paths[] (nav_msgs/Path[]), result (uint8)
+        Only map_yaml_file + start_pose exist on the request — no include_edge,
+        no specify_direction, no cov_direction (those belong to the action goal,
+        not this srv).  Direction/edge flags are passed when actually starting
+        coverage via NavigateThroughCoveragePaths.action.
+        """
         self.log.info(
             f'GenerateCoveragePath: map_ids={request.map_ids}, '
             f'direction={request.cov_direction}')
@@ -769,26 +782,38 @@ class ServiceHandlers:
         map_yaml = f'{load_map_path}/map.yaml'
 
         req = CoveragePathsByFile.Request()
-        req.map_yaml = map_yaml
-        req.include_edge = bool(getattr(request, 'include_edge', False))
-        req.specify_direction = bool(request.cov_direction > 0)
-        req.cov_direction = request.cov_direction
+        req.map_yaml_file = map_yaml
+        # start_pose: leave as zero Pose — preview just generates the path
+        # for the requested map. Direction control is via the action goal,
+        # not the srv (the srv only returns paths).
 
         result = self._call_service(
             n.cli_coverage_by_file, req, timeout=10.0)
-        if result and result.success:
-            self.log.info(
-                f'GenerateCoveragePath: success, '
-                f'area={result.planned_area:.1f}m²')
-            # Publish preview path JSON
+        if result and getattr(result, 'result',
+                              CoveragePathsByFile.Response.RESULT_FAILURE
+                              ) == CoveragePathsByFile.Response.RESULT_SUCCESS:
+            # Serialize coverage_paths to JSON for the preview publisher.
+            # mqtt_node + dashboard expect: {paths: [{points: [{x,y}, ...]}, ...]}
+            import json as _json
+            paths_payload = []
+            for p in result.coverage_paths:
+                pts = [
+                    {'x': float(ps.pose.position.x),
+                     'y': float(ps.pose.position.y)}
+                    for ps in p.poses
+                ]
+                paths_payload.append({'points': pts})
             from std_msgs.msg import String
             path_msg = String()
-            path_msg.data = result.path_json
+            path_msg.data = _json.dumps({'paths': paths_payload})
             n.preview_path_pub.publish(path_msg)
+            self.log.info(
+                f'GenerateCoveragePath: success, {len(paths_payload)} paths')
             response.result = True
         else:
-            msg = getattr(result, 'msg', 'no response') if result else 'no response'
-            self.log.warn(f'GenerateCoveragePath: failed — {msg}')
+            self.log.warn(
+                f'GenerateCoveragePath: failed '
+                f'(result={getattr(result, "result", None)})')
             response.result = False
         return response
 

@@ -1310,10 +1310,37 @@ class OpenRobotDecision(Node):
                        specify_direction: bool = False,
                        cov_direction: float = 0.0,
                        perception_level: int = 0):
-        """Start coverage mowing via NavigateThroughCoveragePaths action."""
+        """Start coverage mowing via NavigateThroughCoveragePaths action.
+
+        NavigateThroughCoveragePaths.action fields (live mower, verified
+        2026-04-26) that do NOT exist on the goal:
+          - only_edge_mode  → kept in signature for API compat; logs warning
+          - polygon_area    → kept in signature for API compat; logs warning
+          - specify_direction → removed (no such field)
+          - cov_direction (numeric) → coarse-mapped to cov_direction_change (bool)
+
+        True boundary-only mowing (only_edge_mode) requires start_edge_cut via
+        extended_commands.py → NTCP with only_edge_mode:true at ROS level
+        (see memory edge-cut-ntcp.md).  cov_mode=1 SPECIFIED_AREA requires a
+        separate mechanism not yet implemented here.
+        """
         self.get_logger().info(
             f'Coverage: Starting with map={map_yaml} '
             f'blade={blade_height} edge={include_edge}')
+
+        if polygon_area is not None:
+            self.get_logger().warn(
+                'start_coverage: polygon_area not supported by '
+                'NavigateThroughCoveragePaths.action — ignoring. cov_mode=1 '
+                '(SPECIFIED_AREA) requires a different mechanism not yet '
+                'implemented (likely a separate service).')
+        if only_edge_mode:
+            self.get_logger().warn(
+                'start_coverage: only_edge_mode field does NOT exist on '
+                'NavigateThroughCoveragePaths.action. Closed-binary edge-cut '
+                'goes via extended_commands start_edge_cut → NTCP, NOT this '
+                'action. include_edge=True will at least add the boundary '
+                'pass to the coverage trace.')
 
         if not self.coverage_action_client.wait_for_server(timeout_sec=5.0):
             self.get_logger().error(
@@ -1337,35 +1364,35 @@ class OpenRobotDecision(Node):
         # Set perception level (enables perception + inference model + seg level)
         self.set_perception_level(perception_level)
 
-        # Build goal
+        # Build goal — fields verified against live mower action definition
+        # (focal-xj3-arm64:/root/novabot/install/coverage_planner/share/
+        #  coverage_planner/action/NavigateThroughCoveragePaths, 2026-04-26).
         goal = NavigateThroughCoveragePaths.Goal()
         goal.map_yaml = map_yaml
-        goal.coverage_type = 0  # COVERAGE_BY_FILE
-        goal.return_to_start = True
+        goal.coverage_type = NavigateThroughCoveragePaths.Goal.COVERAGE_BY_FILE
         goal.reset_coverage_map = True
-        goal.setting_blade_height = True
-        goal.blade_height = blade_height
-        goal.adaptive_mode = 1  # reciprocal
-        goal.include_edge = include_edge
-        goal.only_edge_mode = only_edge_mode
-        if polygon_area is not None:
-            # TODO(open_decision): confirm CoveragePathsByFile field name for
-            # polygon — 'polygon_area' inferred from closed-binary analysis;
-            # verify against /opt/ros/galactic/share/coverage_planner/srv/
-            # CoveragePathsByFile.srv if available.
-            goal.polygon_area = polygon_area
-        goal.specify_direction = specify_direction
-        goal.cov_direction = cov_direction
-        goal.target_repeat_times = self.get_parameter(
-            'coverage_times').value
-        goal.auto_repeat_num = False
-        goal.ignore_start_for_planning = False
+        goal.return_to_start = False
         goal.disable_recover = False
         goal.enable_tf_action_abort_as_stop = False
+        goal.include_edge = bool(include_edge)
         goal.mixed_edge = False
+        goal.setting_blade_height = blade_height > 0
+        goal.blade_height = int(blade_height)
+        goal.grass_height = 0
+        goal.auto_repeat_num = False
+        goal.target_repeat_times = int(
+            self.get_parameter('coverage_times').value)
         goal.debug_mode = False
-        goal.enable_check_walkable = False
-        goal.back_avoid_mode = False
+        goal.adaptive_mode = 0  # constant mode
+        # cov_direction_change is a BOOL 90° flip (not a numeric angle).
+        # `cov_direction` (numeric) was the closed binary's pre-action
+        # behaviour; the live action only supports the bool flip, so any
+        # non-zero direction triggers a 90° rotation of the default sweep.
+        # cov_mode angles are coarse-mapped to the 90° flip flag.
+        goal.cov_direction_change = bool(cov_direction != 0)
+        # Test-mode lengths stay at default (0.0).
+        # Fields that do NOT exist on this action (do not set):
+        #   only_edge_mode, polygon_area, specify_direction, cov_direction (numeric)
 
         self._cov_start_time = time.monotonic()
 
