@@ -153,7 +153,15 @@ function deriveMower(mower: DeviceState | null): MowerDerived | null {
   const hasError = Boolean(
     errorStatusRaw > 0 && !NON_BLOCKING_ERRORS.includes(errorStatusRaw),
   );
-  const hasSoftWarning = errorStatusRaw > 0 && NON_BLOCKING_ERRORS.includes(errorStatusRaw);
+  const batteryState = s.battery_state?.toUpperCase() ?? '';
+  const isChargingNow = batteryState === 'CHARGING' || batteryState === 'FINISHED';
+  const STALE_WHEN_CHARGING = [124, 126];
+  const isStaleChargeError =
+    isChargingNow && STALE_WHEN_CHARGING.includes(errorStatusRaw);
+  const hasSoftWarning =
+    errorStatusRaw > 0 &&
+    NON_BLOCKING_ERRORS.includes(errorStatusRaw) &&
+    !isStaleChargeError;
 
   // Activity detection based on firmware report_state_robot fields:
   // - battery_state: "CHARGING" (on dock) / "DISCHARGED" (off dock)
@@ -161,7 +169,6 @@ function deriveMower(mower: DeviceState | null): MowerDerived | null {
   // - work_status: 0=WAIT, 1=WORKING, 9=FINISHED (firmware-specific, not reliable alone)
   // - recharge_status: 0=IDLE, 1=GOING, 9=FINISHED
   // - msg: "Mode:COVERAGE Work:RUNNING" etc.
-  const batteryState = s.battery_state?.toUpperCase() ?? '';
   const taskMode = parseInt(s.task_mode ?? '0', 10);
   const rechargeStatus = parseInt(s.recharge_status ?? '0', 10);
   const msg = s.msg ?? '';
@@ -1508,7 +1515,7 @@ export default function HomeScreen() {
             <Ionicons name="alert-circle" size={22} color={colors.red} />
             <View style={styles.errorContent}>
               <Text style={styles.errorTitle}>
-                Error {mower.errorStatus ?? mower.errorCode ?? ''}
+                Error {String(mower.errorStatus ?? mower.errorCode ?? '').match(/\d+/)?.[0] ?? ''}
               </Text>
               {mower.errorMsg && (
                 <Text style={styles.errorMessage}>{mower.errorMsg}</Text>
@@ -1521,7 +1528,7 @@ export default function HomeScreen() {
                   const url = await getServerUrl();
                   if (!url || !mower.sn) return;
                   const api = new ApiClient(url);
-                  await api.sendCommand(mower.sn, { clear_error: {} });
+                  await api.clearError(mower.sn);
                   await api.sendCommand(mower.sn, { quit_mapping_mode: { value: 1, cmd_num: Date.now() % 100000 } });
                 } catch {}
               }}
@@ -1597,7 +1604,7 @@ export default function HomeScreen() {
               <Ionicons name="warning-outline" size={22} color="#f59e0b" />
               <View style={styles.errorContent}>
                 <Text style={[styles.errorTitle, { color: '#f59e0b' }]}>
-                  Warning {mower.errorStatus ?? ''}
+                  Warning {String(mower.errorStatus ?? '').match(/\d+/)?.[0] ?? ''}
                 </Text>
                 <Text style={styles.errorMessage}>
                   {mower.errorMsg || 'Software not initialized. Please wait a moment and try again.'}
@@ -1605,7 +1612,19 @@ export default function HomeScreen() {
               </View>
               <TouchableOpacity
                 style={{ backgroundColor: 'rgba(245,158,11,0.2)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 }}
-                onPress={() => setDismissedSoftErrors(prev => new Set(prev).add(code))}
+                onPress={async () => {
+                  setDismissedSoftErrors(prev => {
+                    const next = new Set(prev);
+                    next.add(code);
+                    return next;
+                  });
+                  try {
+                    const url = await getServerUrl();
+                    if (!url || !mower.sn) return;
+                    const api = new ApiClient(url);
+                    await api.clearError(mower.sn);
+                  } catch {}
+                }}
               >
                 <Text style={{ color: '#f59e0b', fontSize: 12, fontWeight: '600' }}>Dismiss</Text>
               </TouchableOpacity>
@@ -1985,6 +2004,10 @@ export default function HomeScreen() {
                     mapName: 'map0',
                     // heightCm → mm (NTCP goal's blade_height is mm, clamped 20..90)
                     bladeHeight: heightCm * 10,
+                    // Stock start_cov_task drives ~1m off the dock as preamble.
+                    // NTCP path bypasses robot_decision so we tell the handler
+                    // to do the same back-off when the mower is on the charger.
+                    departFromDock: mower.activity === 'charging',
                   },
                 }).catch(() => { /* non-fatal, optimistic UI still set */ });
                 setOptimisticActivity('edge_cutting');

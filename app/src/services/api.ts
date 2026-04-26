@@ -325,6 +325,14 @@ export class ApiClient {
     );
   }
 
+  async clearError(sn: string): Promise<{ ok: boolean }> {
+    return this.request<{ ok: boolean }>(
+      'POST',
+      `/api/dashboard/error/${encodeURIComponent(sn)}/clear`,
+      { body: {} },
+    );
+  }
+
   /**
    * Fetch map data for a given serial number.
    */
