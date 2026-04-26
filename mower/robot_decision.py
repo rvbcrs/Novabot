@@ -2607,11 +2607,15 @@ class OpenRobotDecision(Node):
         msg.pause_time = self.pause_time
         msg.cov_map_path = self.cov_map_path
         msg.target_height = self.target_height
-        msg.light = self.light
+        msg.light = int(getattr(self, '_led_level', 0))
         msg.perception_level = self.perception_level
         msg.battery_power = self.battery_power
         msg.cpu_temperature = self._get_cpu_temp()
-        msg.cpu_usage = 0
+        try:
+            with open('/proc/loadavg') as f:
+                msg.cpu_usage = float(f.read().split()[0]) * 100.0
+        except Exception:
+            msg.cpu_usage = 0.0
         msg.memory_remaining = self._get_memory_remaining()
         msg.disk_remaining = self._get_disk_remaining()
         msg.loc_quality = self.loc_quality
