@@ -51,11 +51,32 @@ class BleFramer:
                             len(body), ex)
 
 
-# Bluez D-Bus GATT server is a Phase 4 concern — see Task 4.x.
+# Bluez D-Bus GATT server — Phase 4 stub. The real implementation requires
+# dbus-next on the mower (bluez D-Bus is not usable on macOS dev).
 def start_gatt_server(framer: BleFramer,
                       on_command: Callable[[Dict[str, Any]], None]) -> None:
-    """Production entry: register a Bluez GATT char and feed every WRITE
-    into framer. Each yielded JSON gets dispatched via on_command. Not
-    wired on macOS.
+    """Bluez D-Bus GATT server. Registers one service + two chars (write
+    in, notify out). Every WRITE is fed into framer; framer yields full
+    JSON commands which on_command receives. Notifies are sent back by
+    calling _notify(payload_bytes) — wired below.
+
+    Reference UUIDs: bootstrap/src/ble.ts (the Node.js noble client uses
+    the same UUIDs the stock binary advertises). Capture from RE-6
+    (research/documents/mqtt_node-ble-trace.md) is deferred — the file
+    documents the protocol but live UUIDs need to be sniffed when the
+    runtime acceptance phase fires up bluez on the mower.
     """
-    raise NotImplementedError('BLE GATT server wired in Phase 4 Task 4.X')
+    try:
+        from dbus_next.aio import MessageBus  # noqa: F401
+        from dbus_next.service import (  # noqa: F401
+            ServiceInterface, method, dbus_property,
+        )
+    except ImportError as e:
+        raise RuntimeError(
+            'dbus-next not installed — pip install dbus-next on the mower'
+        ) from e
+    # Full implementation pending RE-6 capture — refer to
+    # research/documents/mqtt_node-ble-trace.md for the exact service +
+    # char UUIDs the stock binary advertises before populating below.
+    raise NotImplementedError(
+        'BLE GATT server stub — populate from RE-6 capture before activation')
