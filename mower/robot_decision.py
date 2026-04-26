@@ -302,6 +302,9 @@ class OpenRobotDecision(Node):
         self.cli_load_map = self.create_client(
             LoadMap, '/map_server/load_map',
             callback_group=self.client_cb_group)
+        self.cli_assistant_load_map = self.create_client(
+            LoadMap, '/decision_assistant/load_map',
+            callback_group=self.client_cb_group)
         self.cli_perception = self.create_client(
             SetBool, '/perception/do_perception',
             callback_group=self.client_cb_group)
@@ -1249,9 +1252,13 @@ class OpenRobotDecision(Node):
 
     # ─── Coverage/Mowing (Fase 5) ────────────────────────────
 
-    def start_coverage(self, map_yaml, blade_height=40,
-                       include_edge=False, specify_direction=False,
-                       cov_direction=0, perception_level=1):
+    def start_coverage(self, *, map_yaml: str, blade_height: int = 40,
+                       include_edge: bool = False,
+                       only_edge_mode: bool = False,
+                       polygon_area=None,
+                       specify_direction: bool = False,
+                       cov_direction: float = 0.0,
+                       perception_level: int = 0):
         """Start coverage mowing via NavigateThroughCoveragePaths action."""
         self.get_logger().info(
             f'Coverage: Starting with map={map_yaml} '
@@ -1289,6 +1296,13 @@ class OpenRobotDecision(Node):
         goal.blade_height = blade_height
         goal.adaptive_mode = 1  # reciprocal
         goal.include_edge = include_edge
+        goal.only_edge_mode = only_edge_mode
+        if polygon_area is not None:
+            # TODO(open_decision): confirm CoveragePathsByFile field name for
+            # polygon — 'polygon_area' inferred from closed-binary analysis;
+            # verify against /opt/ros/galactic/share/coverage_planner/srv/
+            # CoveragePathsByFile.srv if available.
+            goal.polygon_area = polygon_area
         goal.specify_direction = specify_direction
         goal.cov_direction = cov_direction
         goal.target_repeat_times = self.get_parameter(
@@ -1299,7 +1313,6 @@ class OpenRobotDecision(Node):
         goal.enable_tf_action_abort_as_stop = False
         goal.mixed_edge = False
         goal.debug_mode = False
-        goal.only_edge_mode = False
         goal.enable_check_walkable = False
         goal.back_avoid_mode = False
 
