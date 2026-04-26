@@ -1627,6 +1627,21 @@ class OpenRobotDecision(Node):
             # Set detection mode: True=ignore tof height (for dark/night operation)
             self.set_detection_mode(self._camera_is_dark)
 
+            # Bump LED brightness in dark, restore minimum in bright. Closed
+            # binary semantics: 255 = max brightness for ArUco visibility at
+            # night-docking, 1 = minimum (off-ish but not fully off so the
+            # status LED stays alive).
+            try:
+                req = SetUint8Srv.Request()
+                req.data = 255 if self._camera_is_dark else 1
+                if self.cli_led_level.service_is_ready():
+                    self.cli_led_level.call_async(req)
+                else:
+                    self.get_logger().debug(
+                        'cli_led_level not ready; skipping LED brightness update')
+            except Exception as e:
+                self.get_logger().warn(f'led_level call failed: {e}')
+
     # ─── Lifecycle callbacks ───────────────────────────────────────────────────
 
     def _on_led_level(self, msg):
