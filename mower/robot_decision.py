@@ -539,6 +539,11 @@ class OpenRobotDecision(Node):
         self.declare_parameter('covering_path_file',
                                '/userdata/lfi/maps/home0/covered_path')
         self.declare_parameter('boundary_offset', 0.35)
+        self.declare_parameter('include_edge', True)
+        self.declare_parameter('recharge_retry_times', 0)
+        self.declare_parameter('escape_plan_switch', 0)
+        self.declare_parameter('collect_image', 1)
+        self.declare_parameter('do_camera_switch', 0)
         self.declare_parameter('save_tof_rgb', True)
         self.declare_parameter('cpu_temp_thresh', 93.9)
         self.declare_parameter('enable_out_of_map_recover', True)
@@ -1123,6 +1128,8 @@ class OpenRobotDecision(Node):
         goal.debug_mode = False
         goal.inflation_radius = 0.0
         goal.blade_height = 0
+        # TODO(open_decision): wire boundary_offset when BoundaryFollow.Goal supports it
+        # Currently boundary_offset param is declared but BoundaryFollow.Goal has no field for it.
 
         send_future = self.boundary_follow_client.send_goal_async(
             goal, feedback_callback=self._on_boundary_feedback)
