@@ -211,3 +211,5 @@ class ErrorStatus(IntEnum):
     HARDWARE_ERROR = 106
     # App-visible error_status 151 = PIN lock
     PIN_LOCK = 151
+    # Camera hardware failure (preposition sensor exception)
+    CAMERA_ERROR = 107

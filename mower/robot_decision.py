@@ -72,6 +72,7 @@ from general_msgs.srv import SetUint8 as SetUint8Srv, SaveFile as SaveFileSrv
 
 from nav_msgs.msg import Odometry
 from geometry_msgs.msg import Twist, PoseStamped, Pose, PolygonStamped, Point32
+from sensor_msgs.msg import PointCloud2
 from std_msgs.msg import UInt8, UInt32, Int16, String, Bool
 
 from state_machine import (
@@ -263,6 +264,20 @@ class OpenRobotDecision(Node):
             Bool, '/chassis_node/init_ok',
             self._on_init_ok, RELIABLE_QOS)
 
+        # ─── Lifecycle topic subscriptions ───
+        self.create_subscription(
+            UInt8, '/chassis_node/led_level',
+            self._on_led_level, RELIABLE_QOS)
+        self.create_subscription(
+            Bool, '/camera/preposition/hardware_exception',
+            self._on_camera_hw_exception, RELIABLE_QOS)
+        self.create_subscription(
+            Bool, '/system/shared_memory_error',
+            self._on_shm_error, RELIABLE_QOS)
+        self.create_subscription(
+            PointCloud2, '/camera/tof/point_cloud',
+            self._on_tof, SENSOR_QOS)
+
         # ─── Service CLIENTS (boot) ───
         self.cli_load_utm = self.create_client(
             LoadUtmOriginInfo, 'load_utm_origin_info',
@@ -444,6 +459,10 @@ class OpenRobotDecision(Node):
         self.cli_enable_aruco = self.create_client(
             SetBool, '/enable_aruco_localization',
             callback_group=self.client_cb_group)
+
+        # ─── Lifecycle topic state ───
+        self._led_level: int = 0          # mirrors /chassis_node/led_level
+        self._tof_last_seen: float = 0.0  # monotonic ts of last ToF point cloud
 
         # ─── Camera darkness detection (night docking) ───
         # Subscribe to preposition camera total_gain (AGC output: high = dark scene).
@@ -989,7 +1008,6 @@ class OpenRobotDecision(Node):
         Uses a persistent subscription that stays active (no destroy to avoid
         executor conflicts in Galactic)."""
         if not hasattr(self, '_perception_data_received'):
-            from sensor_msgs.msg import PointCloud2
             self._perception_data_received = False
 
             def on_points(msg):
@@ -1563,6 +1581,31 @@ class OpenRobotDecision(Node):
                 f'(gain={gain}, thresh={thresh})')
             # Set detection mode: True=ignore tof height (for dark/night operation)
             self.set_detection_mode(self._camera_is_dark)
+
+    # ─── Lifecycle callbacks ───────────────────────────────────────────────────
+
+    def _on_led_level(self, msg):
+        """Mirror chassis_node LED brightness for downstream decisions."""
+        self._led_level = int(msg.data)
+
+    def _on_camera_hw_exception(self, msg):
+        """Camera HW failure → demote to RECOVER_ERROR_STOP with CAMERA_ERROR."""
+        if not msg.data:
+            return
+        self.get_logger().warn('Camera hardware exception reported')
+        self._set_state(self.task_mode, WorkStatus.RECOVER_ERROR_STOP,
+                        error_status=ErrorStatus.CAMERA_ERROR)
+
+    def _on_shm_error(self, msg):
+        """Shared-memory error → STOP with RECOVER_ERROR_STOP."""
+        if not msg.data:
+            return
+        self.get_logger().error('Shared memory error reported')
+        self._set_state(TaskMode.STOP, WorkStatus.RECOVER_ERROR_STOP)
+
+    def _on_tof(self, msg):
+        """Track ToF liveness via last-seen timestamp."""
+        self._tof_last_seen = time.monotonic()
 
     def set_camera_gain(self, gain):
         """Set camera total gain (exposure control)."""
