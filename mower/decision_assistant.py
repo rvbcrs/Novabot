@@ -29,6 +29,7 @@ from rclpy.qos import (
     QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy)
 from geometry_msgs.msg import PoseStamped
 from std_msgs.msg import UInt8, Bool
+from sensor_msgs.msg import Range
 from nav2_msgs.srv import LoadMap
 from novabot_msgs.msg import CloudMoveCmd
 
@@ -105,6 +106,14 @@ class DecisionAssistant(Node):
         self.move_abnormal_pub = self.create_publisher(
             UInt8, '/decision_assistant/move_abnormal', reliable_qos)
 
+        self.collision_range_pub = self.create_publisher(
+            Range, '/collision_range', reliable_qos)
+        self._min_obstacle_dist: float = -1.0
+        # 5 Hz timer for collision_range publishing — mqtt_node maps it to
+        # obstacle_distance for the app.
+        self._collision_range_timer = self.create_timer(
+            0.2, self._publish_collision_range_tick)
+
         # ─── Action SERVERS (closed-binary names) ───
         self._slip_action_server = ActionServer(
             self, SlipEscaping, 'slipping_escape',
@@ -136,6 +145,17 @@ class DecisionAssistant(Node):
             f'load_map: cached map_url={request.map_url}')
         response.result = LoadMap.Response.RESULT_SUCCESS
         return response
+
+    def _publish_collision_range_tick(self):
+        msg = Range()
+        msg.header.frame_id = 'base_link'
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.radiation_type = Range.INFRARED
+        msg.field_of_view = 1.57
+        msg.min_range = 0.0
+        msg.max_range = 5.0
+        msg.range = float(self._min_obstacle_dist)
+        self.collision_range_pub.publish(msg)
 
     # ─── Goal / Cancel callbacks ─────────────────────────────────
 
