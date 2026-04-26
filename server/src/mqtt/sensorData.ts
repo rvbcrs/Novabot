@@ -604,9 +604,21 @@ export function updateDeviceData(sn: string, payload: Buffer): Map<string, strin
   // Edge-cut bypasst robot_decision, dus `msg` reflecteert dat pad niet —
   // `edge_active` wordt door onze extended_response handler gezet zodra de
   // NTCP monitor thread rapporteert.
+  // Mapping: firmware rapporteert task_mode=3 / start_edit_or_assistant_map_flag=1
+  // en msg patronen als "Mode:MAPPING Work:USER_MAP_*". Zonder mapping erbij
+  // vroor de live trail mid-sessie zodra de chassis state weg-rolde van
+  // Work:MOVING — paarse lijn verdween, gebied werd grijs.
   const currentMsg = snValues.get('msg') ?? '';
   const edgeActive = snValues.get('edge_active') === '1';
+  const taskMode = snValues.get('task_mode') ?? '';
+  const mappingFlag = snValues.get('start_edit_or_assistant_map_flag') === '1';
+  const mappingActive = mappingFlag
+    || taskMode === '3'
+    || currentMsg.includes('Mode:MAPPING')
+    || currentMsg.includes('USER_MAP')
+    || currentMsg.includes('ASSISTANT_MAP');
   const isActive = edgeActive
+    || mappingActive
     || currentMsg.includes('Work:RUNNING')
     || currentMsg.includes('Work:NAVIGATING')
     || currentMsg.includes('Work:COVERING')

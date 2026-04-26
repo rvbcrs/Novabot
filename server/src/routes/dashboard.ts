@@ -928,6 +928,15 @@ dashboardRouter.delete('/maps/:sn/:mapId', (req: Request, res: Response) => {
     }
   }
 
+  // Clear in-memory caches so the app stops drawing the deleted map's
+  // coverage / preview paths and live trail. Without this the MapScreen
+  // keeps the planned-path overlay (the grey ghost shape) until the
+  // server is restarted.
+  plannedPathCache.delete(sn);
+  previewPathCache.delete(sn);
+  clearLocalTrail(sn);
+  clearGpsTrail(sn);
+
   console.log(`[DELETE] ${sn}: cascade verwijderd ${deleted.length} row(s) (root: ${row.map_name ?? row.file_name ?? mapId})`);
   res.json({ ok: true, deleted: deleted.length });
 
@@ -3639,6 +3648,40 @@ dashboardRouter.post('/pin/:sn/raw', (req: Request, res: Response) => {
   publishToDevice(sn, { dev_pin_info: { cfg_value, code } });
   console.log(`[PIN] Raw PIN command voor ${sn}: cfg_value=${cfg_value}, code=${code}`);
   res.json({ ok: true, action: 'raw', cfg_value });
+});
+
+// POST /api/dashboard/error/:sn/clear — clear latched error_status (e.g. 126 recharge failed)
+// Stock firmware latches error_status until state machine resets. cancel_recharge
+// (ROS service /robot_decision/cancel_recharge, mapped to MQTT `stop_to_charge`) clears
+// the recharge-failed latch. We also send `clear_error: {}` for custom-firmware paths
+// and optimistically wipe error fields in sensor cache so UI updates immediately.
+dashboardRouter.post('/error/:sn/clear', (req: Request, res: Response) => {
+  const { sn } = req.params;
+  if (!isDeviceOnline(sn)) {
+    res.status(404).json({ error: 'Device is offline' });
+    return;
+  }
+
+  publishToDevice(sn, { stop_to_charge: {} });
+  publishToDevice(sn, { clear_error: {} });
+
+  const snCache = deviceCache.get(sn);
+  if (snCache) {
+    const errorFields = ['error_status', 'error_msg', 'error_code'];
+    const cleared = new Map<string, string>();
+    for (const f of errorFields) {
+      if (snCache.has(f)) {
+        snCache.set(f, '0');
+        cleared.set(f, translateValue(f, '0'));
+      }
+    }
+    if (cleared.size > 0) {
+      forwardToDashboard(sn, cleared);
+      console.log(`[ErrorClear] Cleared error fields in cache for ${sn}`);
+    }
+  }
+
+  res.json({ ok: true });
 });
 
 // ── Camera proxy ──────────────────────────────────────────────────────────────
