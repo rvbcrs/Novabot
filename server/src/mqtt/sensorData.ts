@@ -612,7 +612,10 @@ export function updateDeviceData(sn: string, payload: Buffer): Map<string, strin
   const edgeActive = snValues.get('edge_active') === '1';
   const taskMode = snValues.get('task_mode') ?? '';
   const workStatus = snValues.get('work_status') ?? '';
-  const mappingFlag = snValues.get('start_edit_or_assistant_map_flag') === '1';
+  // Bitmask, not boolean. Live LFIN1231000211 reports values like 16 during
+  // mapping. Treat any non-zero value as active.
+  const mappingFlagRaw = snValues.get('start_edit_or_assistant_map_flag') ?? '0';
+  const mappingFlag = mappingFlagRaw !== '0' && mappingFlagRaw !== '';
   // work_status numeric values from original v1.0.0 (ad7bb872): 1=mowing, 5=mapping.
   // The b1924ef2 refactor switched to msg-text patterns and lost the numeric
   // mapping detection — user firmware reports work_status=5 during mapping
