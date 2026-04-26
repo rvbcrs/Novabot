@@ -2383,6 +2383,25 @@ class OpenRobotDecision(Node):
                                 error_status=ErrorStatus.LOW_BATTERY)
                 self.start_recharge()
 
+            # Full-battery: exit CHARGING and auto-resume prior coverage task.
+            # Intentionally independent of the low-battery branch above —
+            # these two checks must never share a branch (full-battery is only
+            # reachable in TaskMode.CHARGING, low-battery only in COVER/FREE).
+            full_thresh = self.get_parameter('full_battery_power').value
+            if (self.battery_power >= full_thresh
+                    and self.task_mode == TaskMode.CHARGING):
+                self.get_logger().info(
+                    f'Battery full ({self.battery_power}% >= {full_thresh}%), '
+                    f'exiting CHARGING')
+                self._cancel_active_actions()
+                self._set_state(TaskMode.FREE, WorkStatus.INIT_SUCCESS)
+                if getattr(self, '_last_cov_request', None) is not None:
+                    self.get_logger().info('Auto-resuming prior coverage task')
+                    from decision_msgs.srv import StartCoverageTask
+                    resp = StartCoverageTask.Response()
+                    self.service_handlers._handle_start_cov_task(
+                        self._last_cov_request, resp)
+
     def _on_incident(self, msg: ChassisIncident):
         if msg.error_set_flag != self._last_error_flag:
             if msg.error_set_flag != 0:
