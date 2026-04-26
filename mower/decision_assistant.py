@@ -357,16 +357,15 @@ class DecisionAssistant(Node):
                     self._logger.warn(
                         f'Slip detected! current={avg_current:.1f}A '
                         f'dist={dist:.3f}m dtheta={dtheta:.3f}rad')
-
-                    # Publish abnormal movement
                     msg = UInt8()
                     msg.data = 1
                     self.move_abnormal_pub.publish(msg)
-
-                    # Set work status
                     if self.host.task_mode == TaskMode.COVER:
                         self.host._set_state(
                             TaskMode.COVER, WorkStatus.SLIPPING_HANDLE)
+                        # Auto-escalate: send SlipEscaping goal so coverage
+                        # actually recovers (closed-binary parity).
+                        self.host._send_slip_goal(max_escape_time=15.0)
             else:
                 self._slip_count = max(0, self._slip_count - 1)
                 if self._slip_count == 0:

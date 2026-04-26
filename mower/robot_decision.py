@@ -2298,6 +2298,64 @@ class OpenRobotDecision(Node):
             'Robot out of working zone — sending LocRecoverMoving goal')
         self._send_loc_recover_goal(recover_type=1)
 
+    def _send_slip_goal(self, max_escape_time: float = 10.0):
+        """Send SlipEscaping goal to /decision_assistant/slipping_escape.
+        Reentrant-safe: if a goal is already running we bail out."""
+        if self._slip_goal_handle is not None:
+            return
+        if not self.slip_escape_client.wait_for_server(timeout_sec=1.0):
+            self.get_logger().warn(
+                'slipping_escape action server not available')
+            return
+        goal = SlipEscaping.Goal()
+        goal.max_escape_time = float(max_escape_time)
+
+        def _on_response(future):
+            handle = future.result()
+            if not handle or not handle.accepted:
+                self.get_logger().warn('slipping_escape goal rejected')
+                self._slip_goal_handle = None
+                return
+            self._slip_goal_handle = handle
+            handle.get_result_async().add_done_callback(_on_result)
+
+        def _on_result(future):
+            res = future.result()
+            self._slip_goal_handle = None
+            self.get_logger().info(
+                f'slipping_escape result: {getattr(res, "result", None)}')
+
+        self.slip_escape_client.send_goal_async(goal).add_done_callback(_on_response)
+
+    def _send_loc_recover_goal(self, recover_type: int = 0,
+                               max_time: float = 30.0):
+        if self._loc_recover_goal_handle is not None:
+            return
+        if not self.loc_recover_client.wait_for_server(timeout_sec=1.0):
+            self.get_logger().warn(
+                'loc_recover_moving action server not available')
+            return
+        goal = LocRecoverMoving.Goal()
+        goal.max_time = float(max_time)
+        goal.recover_type = int(recover_type)
+
+        def _on_response(future):
+            handle = future.result()
+            if not handle or not handle.accepted:
+                self.get_logger().warn('loc_recover_moving goal rejected')
+                self._loc_recover_goal_handle = None
+                return
+            self._loc_recover_goal_handle = handle
+            handle.get_result_async().add_done_callback(_on_result)
+
+        def _on_result(future):
+            res = future.result()
+            self._loc_recover_goal_handle = None
+            self.get_logger().info(
+                f'loc_recover_moving result: {getattr(res, "result", None)}')
+
+        self.loc_recover_client.send_goal_async(goal).add_done_callback(_on_response)
+
     def _on_odom(self, msg: Odometry):
         self.odom_received = True
         self.odom_linear_x = msg.twist.twist.linear.x
