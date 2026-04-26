@@ -645,39 +645,30 @@ class ServiceHandlers:
     # ─── Save map ──────────────────────────────────────────────
 
     def _handle_save_map(self, request, response):
-        """Save map: MQTT save_map.
-        Full flow from original binary:
+        """Save map (decision_msgs/SaveMap). Closed binary flow:
           1. Stop recording
           2. Save charging pose
-          3. Generate sub-map
-          4. Generate total map"""
+          3. Generate sub-map (type=0)
+          4. Wait ~500ms (map.yaml creation per docs/reference/MAPPING-FLOW.md)
+          5. Generate total/whole map (type=1)
+        """
         self.log.info(
-            f'Save map request: type={request.type} '
-            f'name={request.mapname}')
+            f'Save map request: type={request.type}, '
+            f'mapname={request.mapname}, parent={getattr(request, "map_file_name", "N/A")}')
         n = self.node
-
         n._set_state(TaskMode.MAPPING, WorkStatus.MAPPING_STOP_RECORD)
-
-        # 1. Stop recording
         self._stop_recording()
 
-        # 2. Save charging pose
-        map_name = 'home0'
+        parent_name = getattr(request, 'map_file_name', None) or n.current_map_name or 'home0'
         child_name = request.mapname or 'map0'
-        self._save_charging_pose_internal(map_name, child_name)
+        self._save_charging_pose_internal(parent_name, child_name)
 
-        # 3. Generate sub-map
-        ok, error_code = self._generate_map(0)  # type=0: sub-map
-
-        # 4. Generate total/whole map
+        ok, error_code = self._generate_map(0)  # sub-map
         if ok:
-            ok, error_code = self._generate_map(1)  # type=1: total map
-
-        # 5. Save UTM origin (Fase 8)
+            time.sleep(0.5)  # MAPPING-FLOW: 500ms before total map generation
+            ok, error_code = self._generate_map(1)
         if ok:
             n.save_utm_origin()
-
-        if ok:
             self.log.info('Mapping: Map saved successfully!')
             n._set_state(TaskMode.FREE, WorkStatus.INIT_SUCCESS)
         else:
