@@ -73,3 +73,8 @@ nova-ota-device/ESP32-S3-Touch-LCD-2-Demo/
 # JWT secret generated during tests
 server/.jwt_secret
 app/node_modules
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
