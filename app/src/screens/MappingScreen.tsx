@@ -896,9 +896,24 @@ export default function MappingScreen() {
   // dock cycle even after the mower drove off for mapping. Without this guard
   // we'd save the charging pose at whatever pose the mower happened to be in
   // the moment it entered the chargerPosition step.
-  const sawNonDockedSinceEntryRef = useRef(false);
+  // STATE (not ref): UI text + button-disable need to react to falling-edge
+  // confirmation. A ref doesn't trigger re-render, so users got "Docked!"
+  // shown with disabled buttons while save-guard correctly blocked save —
+  // leaving them stuck. State + derived `confirmedDocked` keeps both halves
+  // (save logic + UI) coherent.
+  const [sawNonDockedSinceEntry, setSawNonDockedSinceEntry] = useState(false);
+  // Edge-confirmed dock. UI uses this for "Docked!" state instead of raw
+  // dockedOnCharger so stale latched flags from before mapping don't flip
+  // the UI before the firmware has actually updated.
+  const confirmedDocked = dockedOnCharger && sawNonDockedSinceEntry;
 
   // Reset charger-flow tracking when entering the dock step.
+  // IMPORTANT: deps deliberately exclude dockedOnCharger. With it included,
+  // every dockedOnCharger flip re-ran the body and reset sawNonDocked back
+  // to !current, which destroyed the falling-edge memory the save-guard
+  // relies on. We want sawNonDocked initialized exactly ONCE per
+  // chargerPosition entry — based on whatever dockedOnCharger reads at
+  // that moment from the closure.
   useEffect(() => {
     if (mappingState === 'chargerPosition') {
       savingChargerPosRef.current = false;
@@ -908,10 +923,11 @@ export default function MappingScreen() {
       // If we enter while still flagged as docked it's stale latched state.
       // Require the dock flag to drop to false at least once before we trust
       // the next true reading.
-      sawNonDockedSinceEntryRef.current = !dockedOnCharger;
+      setSawNonDockedSinceEntry(!dockedOnCharger);
       setChargerAction(null);
     }
-  }, [mappingState, dockedOnCharger]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mappingState]);
 
   useEffect(() => {
     const failureTransitioned = autoDockFailed && !prevAutoDockFailedRef.current;
@@ -958,10 +974,10 @@ export default function MappingScreen() {
     // charger after the chargerPosition step started. Without this we
     // would honour the latched "docked" state from before mapping began.
     if (!dockedOnCharger) {
-      sawNonDockedSinceEntryRef.current = true;
+      if (!sawNonDockedSinceEntry) setSawNonDockedSinceEntry(true);
       return;
     }
-    if (!sawNonDockedSinceEntryRef.current) {
+    if (!sawNonDockedSinceEntry) {
       // dockedOnCharger is true but it never flipped to false since we
       // entered chargerPosition — treat as stale, wait for a real cycle.
       return;
@@ -1027,6 +1043,7 @@ sendCommand({ save_recharge_pos: { mapName: 'map0', cmd_num: cmdNumRef.current++
     mappingState,
     rawMowerMsg,
     rechargeStatus,
+    sawNonDockedSinceEntry,
     sendCommand,
     taskMode,
     waitForRespond,
@@ -1617,10 +1634,10 @@ sendCommand({ save_recharge_pos: { mapName: 'map0', cmd_num: cmdNumRef.current++
                 <Ionicons name="battery-charging" size={32} color={colors.emerald} />
               </View>
               <Text style={styles.chargerTitle}>
-                {dockedOnCharger ? 'Docked!' : autoDockFailed ? 'Docking Failed' : 'Drive to Charger'}
+                {confirmedDocked ? 'Docked!' : autoDockFailed ? 'Docking Failed' : 'Drive to Charger'}
               </Text>
               <Text style={styles.chargerDesc}>
-                {dockedOnCharger
+                {confirmedDocked
                   ? 'Mower is on the charger. Saving charger position...'
                   : autoDockFailed
                     ? 'NOVABOT could not finish docking. Drive it back near the charger and retry, or "Save Position Here" if it is already correctly positioned.'
@@ -1630,9 +1647,9 @@ sendCommand({ save_recharge_pos: { mapName: 'map0', cmd_num: cmdNumRef.current++
               {/* Dock status */}
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 6 }}>
                 <View style={{ width: 12, height: 12, borderRadius: 6,
-                  backgroundColor: dockedOnCharger ? colors.emerald : autoDockFailed ? colors.red : colors.amber }} />
-                <Text style={{ color: dockedOnCharger ? colors.emerald : autoDockFailed ? colors.red : colors.text, fontSize: 14, fontWeight: '600' }}>
-                  {dockedOnCharger
+                  backgroundColor: confirmedDocked ? colors.emerald : autoDockFailed ? colors.red : colors.amber }} />
+                <Text style={{ color: confirmedDocked ? colors.emerald : autoDockFailed ? colors.red : colors.text, fontSize: 14, fontWeight: '600' }}>
+                  {confirmedDocked
                     ? 'Docked — saving position...'
                     : autoDockFailed
                       ? 'Auto docking failed — retry or save manually'
@@ -1710,10 +1727,10 @@ sendCommand({ save_recharge_pos: { mapName: 'map0', cmd_num: cmdNumRef.current++
                     console.warn('[Mapping] auto_recharge: nav2 still not ready after retries, user can use Manual Save');
                   })();
                 }}
-                disabled={chargerAction === 'autoDock' || chargerAction === 'savePosition' || dockedOnCharger}
+                disabled={chargerAction === 'autoDock' || chargerAction === 'savePosition' || confirmedDocked}
                 activeOpacity={0.7}
               >
-                {chargerAction === 'autoDock' && !dockedOnCharger ? (
+                {chargerAction === 'autoDock' && !confirmedDocked ? (
                   <>
                     <ActivityIndicator size="small" color={colors.white} />
                     <Text style={styles.actionText}>Auto Docking...</Text>
@@ -1728,7 +1745,7 @@ sendCommand({ save_recharge_pos: { mapName: 'map0', cmd_num: cmdNumRef.current++
               <TouchableOpacity
                 style={[styles.cancelBtn, { flex: 1 }]}
                 onPress={handleSaveChargerPos}
-                disabled={chargerAction === 'savePosition' || dockedOnCharger}
+                disabled={chargerAction === 'savePosition' || confirmedDocked}
                 activeOpacity={0.7}
               >
                 {chargerAction === 'savePosition' ? (
