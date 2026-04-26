@@ -591,6 +591,104 @@ class Ros2Bridge(Node):
         return {'result': 0 if resp.success else 1,
                 'msg': resp.message or 'start_assistant_build_map_respond'}
 
+    def handle_get_preview_cover_path(self, payload: dict) -> dict:
+        """Handle MQTT ``get_preview_cover_path`` — serve the cached preview path.
+
+        MQTT JSON shape (catalog RE-5 §get_preview_cover_path,
+        decompile:319628):
+          { "get_preview_cover_path": <any> }
+
+        ROS 2 endpoint: NONE.
+        The stock mqtt_node does NOT make a ROS2 service call for this
+        command.  Instead, `api_get_preview_cover_path` reads the file
+          /userdata/lfi/maps/home0/planned_path/preview_planned_path.json
+        and publishes its content directly back to the app on
+        `Dart/Receive_mqtt/<SN>`.
+
+        # NOTE: No cli_* for this command — no ROS2 service client is
+        # wired (or needed) in __init__.  The handler reads the on-disk
+        # JSON file and returns its parsed content.  Because the open
+        # mqtt_node must avoid the stock buffer-overflow bug (see
+        # research/memory/get-preview-cover-path-crash.md), we let the
+        # caller stream the file in chunks or use a size guard — that
+        # logic lives in the MQTT publisher, not here.  This method only
+        # reads + deserialises.
+
+        CRITICAL: stock mqtt_node overflows its send buffer for large
+        preview paths.  See research/memory/get-preview-cover-path-crash.md.
+        """
+        import json
+        import os
+
+        preview_path_file = (
+            '/userdata/lfi/maps/home0/planned_path/preview_planned_path.json'
+        )
+        if not os.path.exists(preview_path_file):
+            log.warning('handle_get_preview_cover_path: file not found: %s',
+                        preview_path_file)
+            return {'result': 1, 'msg': 'preview_planned_path.json not found'}
+
+        try:
+            with open(preview_path_file, 'r', encoding='utf-8') as fh:
+                data = json.load(fh)
+        except (OSError, json.JSONDecodeError) as exc:
+            log.warning('handle_get_preview_cover_path: read error: %s', exc)
+            return {'result': 1, 'msg': f'read error: {exc}'}
+
+        # Caller (MQTT publisher) wraps this in the respond envelope.
+        # Return the parsed data so the publisher can forward it verbatim.
+        return {'result': 0, 'msg': 'get_preview_cover_path_respond',
+                'data': data}
+
+    def handle_save_recharge_pos(self, payload: dict) -> dict:
+        """Handle MQTT ``save_recharge_pos`` — write charging pose to map.
+
+        MQTT JSON shape (catalog RE-5 §save_recharge_pos,
+        decompile:346293):
+          { "save_recharge_pos": { "cmd_num": <int>, "mapName": "<string>" } }
+
+        ROS 2 endpoint: /robot_decision/save_charging_pose
+        Endpoint type:  mapping_msgs/srv/SetChargingPose
+        Schema: research/ros2_msg_definitions/mapping_msgs/srv/SetChargingPose.srv
+
+        Field mapping (request):
+          control_mode       = 1  (write operation; 0 = read per schema comment)
+          map_file_name      → mapName from payload (total-map name, e.g. "map0")
+          child_map_file_name → mapName from payload (sub-map name; exact
+                                split <unknown — needs Ghidra deep-dive of
+                                api_save_recharge_pos:346293>; using mapName
+                                for both until Ghidra clarifies)
+
+        Field mapping (response):
+          result  → bool (True = success)
+          message → string
+          NOTE: `map_to_charging_dis` (float32) is present in the response
+          schema but is NOT read here — the stock mqtt_node does not
+          forward it to the app (audit C2, open-decision project).
+
+        Post-condition: Flutter sends `save_map type:1` 500ms after
+        `save_recharge_pos_respond` (see CLAUDE.md §BLE Mapping).
+        """
+        inner = payload if not isinstance(payload.get('save_recharge_pos'), dict) \
+            else payload['save_recharge_pos']
+
+        map_name = str(inner.get('mapName', ''))  # e.g. "map0"
+
+        req = SetChargingPose.Request()
+        req.control_mode = 1           # uint8 — 1 = write
+        req.map_file_name = map_name   # string — total map name
+        # child_map_file_name: exact decompile mapping unknown (Ghidra needed);
+        # using mapName verbatim — same field the stock binary most likely
+        # passes per catalog note (api_save_recharge_pos:346293).
+        req.child_map_file_name = map_name  # string
+
+        resp = self.call_service(self.cli_save_charging_pose, req)
+        if resp is None:
+            return {'result': 1, 'msg': 'save_charging_pose timeout or unavailable'}
+        # NOTE: resp.map_to_charging_dis intentionally NOT read (audit C2).
+        return {'result': 0 if resp.result else 1,
+                'msg': resp.message or 'save_recharge_pos_respond'}
+
     # ── Generic helpers ────────────────────────────────────────────────
     def call_service(self, client, request, timeout: float = 5.0):
         """Synchronous service call. Returns response or None on timeout.
