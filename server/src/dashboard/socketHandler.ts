@@ -3,7 +3,7 @@
  */
 import { Server as HttpServer } from 'http';
 import { Server as SocketServer } from 'socket.io';
-import { getAllDeviceSnapshots } from '../mqtt/sensorData.js';
+import { getAllDeviceSnapshots, getDockPose } from '../mqtt/sensorData.js';
 import { isDeviceOnline } from '../mqtt/broker.js';
 import { db } from '../db/database.js';
 import { initBleLogger, sendBleLogHistory } from '../ble/bleLogger.js';
@@ -127,16 +127,23 @@ export function initDashboardSocket(httpServer: HttpServer): void {
 
       return registry
         .filter(r => boundSns.has(r.sn!) || isDeviceOnline(r.sn!) || demoModeChecker?.(r.sn!))
-        .map(r => ({
-          sn: r.sn!,
-          deviceType: r.sn!.startsWith('LFIC') ? 'charger' : 'mower',
-          online: isDeviceOnline(r.sn!) || demoModeChecker?.(r.sn!) === true,
-          sensors: snapshots[r.sn!] ?? {},
-          nickname: nickBySn.get(r.sn!) ?? null,
-          firmwareVersion: versionBySn.get(r.sn!) ?? null,
-          // Equipment MAC takes precedence; fall back to registry MAC if absent.
-          macAddress: macBySn.get(r.sn!) ?? r.mac_address ?? null,
-        }));
+        .map(r => {
+          const dock = getDockPose(r.sn!);
+          return {
+            sn: r.sn!,
+            deviceType: r.sn!.startsWith('LFIC') ? 'charger' : 'mower',
+            online: isDeviceOnline(r.sn!) || demoModeChecker?.(r.sn!) === true,
+            sensors: snapshots[r.sn!] ?? {},
+            nickname: nickBySn.get(r.sn!) ?? null,
+            firmwareVersion: versionBySn.get(r.sn!) ?? null,
+            macAddress: macBySn.get(r.sn!) ?? r.mac_address ?? null,
+            // Last-known map_position the mower reported while it said it
+            // was docked. App renders the charger icon here instead of
+            // hardcoded (0,0). Null when the mower has not yet been seen
+            // docked since server start.
+            dockPose: dock ? { x: dock.x, y: dock.y, orientation: dock.orientation } : null,
+          };
+        });
     }
 
     // Send snapshot on connect

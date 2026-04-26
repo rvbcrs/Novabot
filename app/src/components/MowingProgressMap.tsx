@@ -95,6 +95,14 @@ interface Props {
   mowerPos?: LocalPoint | null;  // mower position in local meters
   mowerHeading?: number;    // radians
   showProgressOverlay?: boolean; // show big percentage overlay (default: true)
+  /**
+   * Real dock pose in map frame. Null falls back to (0,0). Stock
+   * heading-discovery shifts the localization origin away from the
+   * physical dock, so the polygon's (0,0) is NOT where the dock is —
+   * the user-visible discrepancy is "charger icon floats inside the
+   * polygon when in reality the dock is on the boundary edge".
+   */
+  chargerPose?: LocalPoint | null;
 }
 
 function toSvg(
@@ -198,6 +206,7 @@ export function MowingProgressMap({
   mowerPos,
   mowerHeading,
   showProgressOverlay = true,
+  chargerPose,
 }: Props) {
   const { colorScheme } = useTheme();
   const mapPalette = MAP_PALETTE[colorScheme];
@@ -260,7 +269,10 @@ export function MowingProgressMap({
   }));
 
   const padding = 14;
-  const charger: LocalPoint = { x: 0, y: 0 };
+  // Use the captured dock pose if available; fall back to (0,0).
+  const charger: LocalPoint = chargerPose
+    ? { x: chargerPose.x, y: chargerPose.y }
+    : { x: 0, y: 0 };
 
   const bounds = useMemo(() => {
     const extra = [charger];
