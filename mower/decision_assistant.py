@@ -27,9 +27,10 @@ from rclpy.action import ActionServer, CancelResponse, GoalResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.qos import (
     QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy)
-from geometry_msgs.msg import Twist, PoseStamped
+from geometry_msgs.msg import PoseStamped
 from std_msgs.msg import UInt8, Bool
 from nav2_msgs.srv import LoadMap
+from novabot_msgs.msg import CloudMoveCmd
 
 from decision_msgs.action import SlipEscaping, LocRecoverMoving
 
@@ -191,17 +192,11 @@ class DecisionAssistant(Node):
                 result.result = SlipEscaping.Result.FAILED
                 return result
 
-            twist = Twist()
             if phase == 0:
-                # Back up
-                twist.linear.x = -escape_vel
-                twist.angular.z = 0.0
+                lin, ang = -escape_vel, 0.0
             else:
-                # Rotate
-                twist.linear.x = 0.0
-                twist.angular.z = escape_ang
-
-            self.host.cmd_vel_pub.publish(twist)
+                lin, ang = 0.0, escape_ang
+            self._publish_cloud_move(lin, ang)
             time.sleep(0.1)
 
             # Switch phase every 1 second
@@ -271,17 +266,12 @@ class DecisionAssistant(Node):
                 result.result = LocRecoverMoving.Result.FAILED
                 return result
 
-            twist = Twist()
             if recover_type == 0:
                 # Localization bad: drive slowly and rotate
-                twist.linear.x = 0.2
-                twist.angular.z = 0.5
+                self._publish_cloud_move(0.2, 0.5)
             else:
                 # Out of map: reverse slowly
-                twist.linear.x = -0.2
-                twist.angular.z = 0.0
-
-            self.host.cmd_vel_pub.publish(twist)
+                self._publish_cloud_move(-0.2, 0.0)
             time.sleep(0.2)
 
             # Check if localization recovered
@@ -519,10 +509,19 @@ class DecisionAssistant(Node):
 
     # ─── Helpers ─────────────────────────────────────────────────
 
+    def _publish_cloud_move(self, linear_x: float, angular_z: float):
+        """Slip / loc-recover bypass: cmd_vel is gated by CChassisControl, so
+        recovery commands MUST go through cloud_move_cmd which is the
+        unobstructed path. The closed binary uses the same path."""
+        cmd = CloudMoveCmd()
+        cmd.x_w = float(linear_x)
+        cmd.y_v = float(angular_z)
+        cmd.z_g = 0.0
+        self.host.cloud_move_pub.publish(cmd)
+
     def _stop_motors(self):
-        """Send zero velocity command."""
-        twist = Twist()
-        self.host.cmd_vel_pub.publish(twist)
+        """Send zero velocity command (cloud_move_cmd, not cmd_vel)."""
+        self._publish_cloud_move(0.0, 0.0)
 
     @property
     def is_escaping(self):
