@@ -468,11 +468,12 @@ class DecisionAssistant(Node):
             return
 
         loc_cover = n.get_parameter('loc_cover_confidence').value
-        if n.loc_quality < loc_cover and n.loc_quality > 0:
+        if 0 < n.loc_quality < loc_cover:
             self._logger.warn(
                 f'Localization quality low during coverage: '
                 f'{n.loc_quality} < {loc_cover}')
             n._set_state(TaskMode.COVER, WorkStatus.LOC_ERROR_HANDLE)
+            n._send_loc_recover_goal(recover_type=0, max_time=30.0)
 
     def check_loc_drift(self):
         """Check for localization drift/instability during tasks.
