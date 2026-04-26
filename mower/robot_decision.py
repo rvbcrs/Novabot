@@ -2548,6 +2548,10 @@ class OpenRobotDecision(Node):
     def _send_slip_goal(self, max_escape_time: float = 10.0):
         """Send SlipEscaping goal to /decision_assistant/slipping_escape.
         Reentrant-safe: if a goal is already running we bail out."""
+        if not self.get_parameter('enable_slipping_recover').value:
+            self.get_logger().debug(
+                'enable_slipping_recover=False; skipping SlipEscaping goal')
+            return
         if self._slip_goal_handle is not None:
             return
         if not self.slip_escape_client.wait_for_server(timeout_sec=1.0):
