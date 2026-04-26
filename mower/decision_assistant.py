@@ -537,9 +537,8 @@ class DecisionAssistant(Node):
         recovery commands MUST go through cloud_move_cmd which is the
         unobstructed path. The closed binary uses the same path."""
         cmd = CloudMoveCmd()
-        cmd.x_w = float(linear_x)
-        cmd.y_v = float(angular_z)
-        cmd.z_g = 0.0
+        cmd.linear_x = float(linear_x)
+        cmd.angular_wheel = float(angular_z)
         self.host.cloud_move_pub.publish(cmd)
 
     def _stop_motors(self):

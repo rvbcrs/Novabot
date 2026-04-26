@@ -441,8 +441,16 @@ class ServiceHandlers:
             response.success = False
             response.message = 'No prior task to resume'
             return response
-        # Re-fire the last request via _handle_start_cov_task
-        return self._handle_start_cov_task(n._last_cov_request, response)
+        # Resume — synthesize a StartCoverageTask.Response for the inner call,
+        # then map its result back onto the SetBool.Response we owe mqtt_node.
+        from decision_msgs.srv import StartCoverageTask as _SCT
+        inner_resp = _SCT.Response()
+        self._handle_start_cov_task(n._last_cov_request, inner_resp)
+        response.success = bool(inner_resp.result)
+        response.message = (
+            'Resumed' if inner_resp.result
+            else 'Resume failed (start handler returned 0)')
+        return response
 
     def _handle_map_stop_record(self, request, response):
         """Stop map recording (MQTT stop_scan_map). Type: std_srvs/SetBool."""
@@ -529,9 +537,9 @@ class ServiceHandlers:
         if hasattr(n, 'cov_work_time'):
             n.cov_work_time = 0.0
         if hasattr(n, 'current_map_ids'):
-            n.current_map_ids = []
+            n.current_map_ids = 0
         if hasattr(n, 'request_map_ids'):
-            n.request_map_ids = []
+            n.request_map_ids = 0
         n._set_state(TaskMode.FREE, WorkStatus.INIT_SUCCESS)
         response.success = True
         response.message = 'Reset task data successfully'
@@ -565,7 +573,9 @@ class ServiceHandlers:
             f'perception={request.perception_level}, '
             f'polygon_area_pts={len(getattr(request, "polygon_area", []) or [])}')
 
-        n.request_map_ids = list(request.map_ids)
+        n.request_map_ids = (
+            int(request.map_ids[0]) if request.map_ids else 0
+        )
         n._last_cov_request = request  # store for stop_task resume (Task 4.3)
         blade_height = (request.blade_heights[0]
                         if request.blade_heights else 40)
@@ -639,17 +649,10 @@ class ServiceHandlers:
         elif cov_mode == 2:
             pass  # only_edge / include_edge set above
 
-        if cov_mode == 1 and polygon_area is not None:
-            try:
-                # polygon_area is a list of {x, y} or [x, y] entries from the request
-                pts = [
-                    (getattr(pt, 'x', pt[0] if hasattr(pt, '__getitem__') else 0.0),
-                     getattr(pt, 'y', pt[1] if hasattr(pt, '__getitem__') else 0.0))
-                    for pt in polygon_area
-                ]
-                n.push_prohibited_zones(pts)
-            except Exception as e:
-                self.log.warn(f'push_prohibited_zones failed: {e}')
+        # cov_mode=1 polygon_area is passed to start_coverage above. Do NOT push
+        # it to /local_costmap/prohibited_points — that would mark the user's
+        # intended mowing area as a NO-GO zone. Closed binary keeps prohibited
+        # zones strictly for explicit obstacle layers, never for cov polygons.
 
         ok = n.start_coverage(
             map_yaml=map_yaml,
@@ -672,12 +675,11 @@ class ServiceHandlers:
     # ─── Save map ──────────────────────────────────────────────
 
     def _handle_save_map(self, request, response):
-        """Save map (decision_msgs/SaveMap). Closed binary flow:
-          1. Stop recording
-          2. Save charging pose
-          3. Generate sub-map (type=0)
-          4. Wait ~500ms (map.yaml creation per docs/reference/MAPPING-FLOW.md)
-          5. Generate total/whole map (type=1)
+        """Save map (decision_msgs/SaveMap). The app sends two calls per session:
+          type:0 (sub map) — immediately after stop_scan_map_respond
+          type:1 (total map) — ~500 ms later, after save_recharge_pos_respond
+        We honour the split: only run the matching stage on each call.
+        The app drives the inter-stage cadence; no sleep here.
         """
         self.log.info(
             f'Save map request: type={request.type}, '
@@ -686,21 +688,36 @@ class ServiceHandlers:
         n._set_state(TaskMode.MAPPING, WorkStatus.MAPPING_STOP_RECORD)
         self._stop_recording()
 
-        parent_name = getattr(request, 'map_file_name', None) or n.current_map_name or 'home0'
+        parent_name = (getattr(request, 'map_file_name', None)
+                       or n.current_map_name or 'home0')
         child_name = request.mapname or 'map0'
-        self._save_charging_pose_internal(parent_name, child_name)
 
-        ok, error_code = self._generate_map(0)  # sub-map
-        if ok:
-            time.sleep(0.5)  # MAPPING-FLOW: 500ms before total map generation
+        save_type = int(request.type)
+        if save_type == 0:
+            # Sub map. Save the charging pose first so the firmware records
+            # the dock anchor used by every later map_yaml load.
+            self._save_charging_pose_internal(parent_name, child_name)
+            ok, error_code = self._generate_map(0)
+        elif save_type == 1:
+            # Total map. App fires this ~500 ms after type:0; the firmware
+            # has already accepted the sub stage, just regenerate map.yaml /
+            # map.pgm here. Don't re-save the charging pose — the type:0
+            # call already did it for this session.
             ok, error_code = self._generate_map(1)
+            if ok:
+                n.save_utm_origin()
+        else:
+            self.log.warn(f'Save map: unknown type={save_type}; rejecting')
+            ok, error_code = False, 0
+
         if ok:
-            n.save_utm_origin()
-            self.log.info('Mapping: Map saved successfully!')
-            n._set_state(TaskMode.FREE, WorkStatus.INIT_SUCCESS)
+            self.log.info(
+                f'Mapping: type={save_type} stage saved successfully')
+            if save_type == 1:
+                n._set_state(TaskMode.FREE, WorkStatus.INIT_SUCCESS)
         else:
             self.log.error(
-                f'Mapping: Map save failed (error_code={error_code})')
+                f'Mapping: save type={save_type} failed (error_code={error_code})')
 
         response.result = 1 if ok else 0
         response.data = ''

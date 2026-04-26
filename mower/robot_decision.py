@@ -2580,6 +2580,10 @@ class OpenRobotDecision(Node):
 
     def _send_loc_recover_goal(self, recover_type: int = 0,
                                max_time: float = 30.0):
+        if not self.get_parameter('enable_loc_recover').value:
+            self.get_logger().debug(
+                'enable_loc_recover=False; skipping LocRecoverMoving goal')
+            return
         if self._loc_recover_goal_handle is not None:
             return
         if not self.loc_recover_client.wait_for_server(timeout_sec=1.0):
@@ -2748,8 +2752,8 @@ class OpenRobotDecision(Node):
         msg.merged_work_status = self._get_merged_status()
         msg.msg = self.msg_text
         msg.error_msg = self.error_msg
-        msg.request_map_ids = self.request_map_ids
-        msg.current_map_ids = self.current_map_ids
+        msg.request_map_ids = int(self.request_map_ids or 0)
+        msg.current_map_ids = int(self.current_map_ids or 0)
         msg.cov_ratio = self.cov_ratio
         msg.cov_area = self.cov_area
         msg.cov_remaining_area = self.cov_remaining_area

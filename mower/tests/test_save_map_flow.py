@@ -1,12 +1,10 @@
-"""save_map must honor parent map name + include 500ms delay between type:0 and type:1.
+"""save_map must honor parent map name + branch on request.type.
 
 References: docs/reference/MAPPING-FLOW.md
-- type:0 (sub-map) generates csv_file + x3_csv_file
-- 500ms delay required for map.yaml creation
-- type:1 (total map) generates map.pgm + map.png + map.yaml
-
-Without the delay, /map_server/load_map fails with Error 107 "Load map failed"
-because map.yaml doesn't exist yet.
+- type:0 (sub-map) generates csv_file + x3_csv_file, saves charging pose
+- type:1 (total map) generates map.pgm + map.png + map.yaml, saves UTM origin
+- The app sends two separate calls with ~500ms gap; handler only runs the
+  matching stage (no sleep inside the handler — app drives the cadence).
 """
 from pathlib import Path
 
@@ -23,14 +21,15 @@ def test_save_map_uses_request_map_name_not_hardcoded():
         "save_map must not hardcode parent='home0' — use request fields or node state.")
 
 
-def test_save_map_has_500ms_delay_between_type0_and_type1():
-    """MAPPING-FLOW.md requires ~500ms gap between save_map type:0 and type:1.
+def test_save_map_branches_on_request_type():
+    """save_map must branch on request.type (0=sub, 1=total).
 
-    This delay allows map.yaml to be created by the firmware before
-    save_map type:1 is called.
+    The app sends two separate calls (type:0 then type:1 ~500ms later).
+    The handler must only run the matching stage — running both on every
+    call would double-generate files and race the firmware.
     """
     src = SVC.read_text()
     body = src.split('def _handle_save_map')[1].split('def ')[0]
-    assert '0.5' in body and 'time.sleep' in body, (
-        'MAPPING-FLOW.md requires ~500ms gap between save_map type:0 and '
-        'type:1 so map.yaml can be created.')
+    assert 'save_type == 0' in body and 'save_type == 1' in body, (
+        'save_map must branch on save_type (0=sub, 1=total) to honour the '
+        'two-call protocol the app uses.')

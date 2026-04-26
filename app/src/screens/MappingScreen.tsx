@@ -415,23 +415,14 @@ export default function MappingScreen() {
   // (type:1) + get_map_outline; aborting half-way corrupts the map.
   useEffect(() => {
     if (Platform.OS !== 'android') return;
-    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      // Returning true tells the OS we handled it (i.e. swallow).
-      return false; // default: allow back EXCEPT during savePosition (next ref)
-    });
-    return () => sub.remove();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
-    if (Platform.OS !== 'android') return;
     if (chargerAction !== 'savePosition') return;
     const sub = BackHandler.addEventListener('hardwareBackPress', () => true);
     return () => sub.remove();
   }, [chargerAction]);
 
   // ── Detect if already mapping (from sensor data on screen open) ──
-  const isMappingActive = sensors.start_edit_or_assistant_map_flag === '1' ||
+  const mapFlagRaw = sensors.start_edit_or_assistant_map_flag ?? '0';
+  const isMappingActive = (mapFlagRaw !== '0' && mapFlagRaw !== '') ||
     sensors.task_mode === '3';
 
   useEffect(() => {
