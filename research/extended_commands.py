@@ -898,6 +898,82 @@ def _clear_costmaps():
         pass
 
 
+def _depart_pile(seconds: float = 4.0, linear: float = 0.25):
+    """Drive backward to leave the charging dock before starting a task.
+
+    Stock `start_cov_task` performs an automatic ~1m back-off from the
+    pile as part of its preamble. The NTCP edge-cut path bypasses
+    robot_decision and would otherwise try to plan from the dock, where
+    the planner refuses to move (close-to-lethal start pose).
+
+    Sequence:
+      1. Cancel any active recharge so auto_charging stops driving.
+      2. Publish a steady-state Twist on /cmd_vel for `seconds` seconds.
+         Default 4s @ 0.25 m/s = ~1.0 m back-off, matching the firmware.
+      3. Send a zero Twist to bring the chassis to a stop before the
+         coverage planner takes over.
+
+    Blocking — caller decides when to invoke. Only call this when the
+    mower is confirmed on the dock; backing up off-pile may bump into an
+    obstacle the local costmap hasn't seen.
+    """
+    env = {
+        **os.environ,
+        "ROS_DOMAIN_ID": "0",
+        "ROS_LOCALHOST_ONLY": "1",
+        "RMW_IMPLEMENTATION": "rmw_cyclonedds_cpp",
+        "CYCLONEDDS_URI": "file:///root/novabot/shm_config/shm_cyclonedds.xml",
+    }
+
+    log(f"depart_pile: starting {seconds}s reverse @ {linear} m/s")
+
+    cancel_cmd = (
+        "source /opt/ros/galactic/setup.bash && "
+        "source /root/novabot/install/setup.bash 2>/dev/null && "
+        "timeout 4 ros2 service call /robot_decision/cancel_recharge std_srvs/srv/Trigger '{}' "
+        ">> /tmp/depart_pile.log 2>&1"
+    )
+    try:
+        subprocess.run(["bash", "-c", cancel_cmd], env=env, timeout=6)
+    except Exception as e:
+        log(f"depart_pile: cancel_recharge failed: {e}")
+
+    twist = (
+        f"'{{linear: {{x: -{linear}, y: 0.0, z: 0.0}}, "
+        f"angular: {{x: 0.0, y: 0.0, z: 0.0}}}}'"
+    )
+    drive_cmd = (
+        "source /opt/ros/galactic/setup.bash && "
+        "source /root/novabot/install/setup.bash 2>/dev/null && "
+        f"timeout {seconds + 1:.1f} ros2 topic pub --rate 10 /cmd_vel "
+        f"geometry_msgs/msg/Twist {twist} >> /tmp/depart_pile.log 2>&1"
+    )
+    try:
+        proc = subprocess.Popen(["bash", "-c", drive_cmd], env=env)
+        time.sleep(seconds)
+        proc.terminate()
+        try:
+            proc.wait(timeout=2)
+        except Exception:
+            proc.kill()
+    except Exception as e:
+        log(f"depart_pile: cmd_vel publish failed: {e}")
+
+    stop_twist = "'{linear: {x: 0.0, y: 0.0, z: 0.0}, angular: {x: 0.0, y: 0.0, z: 0.0}}'"
+    stop_cmd = (
+        "source /opt/ros/galactic/setup.bash && "
+        "source /root/novabot/install/setup.bash 2>/dev/null && "
+        f"timeout 2 ros2 topic pub --once /cmd_vel geometry_msgs/msg/Twist {stop_twist} "
+        ">> /tmp/depart_pile.log 2>&1"
+    )
+    try:
+        subprocess.run(["bash", "-c", stop_cmd], env=env, timeout=4)
+    except Exception as e:
+        log(f"depart_pile: zero-twist publish failed: {e}")
+
+    log("depart_pile: done")
+
+
 def _kill_ros2_action_clients():
     """Kill any lingering `ros2 action send_goal` client processes.
 
@@ -1030,9 +1106,17 @@ def handle_start_edge_cut(params, respond):
         blade_mm = int((params or {}).get("bladeHeight", 40))
         if blade_mm < 20: blade_mm = 20
         if blade_mm > 90: blade_mm = 90
+        depart_from_dock = bool((params or {}).get("departFromDock", False))
     except (TypeError, ValueError) as e:
         respond("start_edge_cut_respond", {"result": 1, "error": f"param type error: {e}"})
         return
+
+    # Mirror the stock start_cov_task preamble: when launching from the
+    # dock, drive ~1m back so NTCP can plan from a free pose. The app
+    # only sets departFromDock=true when activity=charging — keeps a
+    # mid-lawn re-trigger from blindly reversing into an obstacle.
+    if depart_from_dock:
+        _depart_pile()
 
     map_yaml = f"/userdata/lfi/maps/home0/{map_name}.yaml"
 
@@ -1250,11 +1334,17 @@ def handle_recalibrate_charging_pose(params, respond):
         return
 
     base = f"/userdata/lfi/maps/{home}"
-    targets = [f"{base}/csv_file/map_info.json", f"{base}/x3_csv_file/map_info.json"]
+    json_targets = [f"{base}/csv_file/map_info.json", f"{base}/x3_csv_file/map_info.json"]
+    # auto_recharge_server reads the dock pose from this YAML at startup AND
+    # whenever it re-arms after a docking attempt. Without rewriting it the
+    # robot keeps driving toward the stale pose even though both map_info.json
+    # files already point at the new one — that's the "edit only takes effect
+    # after we change another file too" symptom.
+    yaml_target = "/userdata/lfi/charging_station_file/charging_station.yaml"
 
     updated = {}
     try:
-        for path in targets:
+        for path in json_targets:
             if not os.path.exists(path):
                 # One of the dirs may be missing — skip quietly, continue.
                 continue
@@ -1271,6 +1361,17 @@ def handle_recalibrate_charging_pose(params, respond):
                 f.write("\n")
             os.replace(tmp, path)
             updated[path] = info["charging_pose"]
+
+        if os.path.exists(yaml_target) or os.path.isdir(os.path.dirname(yaml_target)):
+            try:
+                os.makedirs(os.path.dirname(yaml_target), exist_ok=True)
+                tmp = yaml_target + ".tmp"
+                with open(tmp, "w") as f:
+                    f.write(f"charging_pose: [{x}, {y}, {theta}]\n")
+                os.replace(tmp, yaml_target)
+                updated[yaml_target] = {"x": x, "y": y, "orientation": theta}
+            except Exception as e:
+                log(f"recalibrate_charging_pose: yaml write failed: {e}")
 
         if not updated:
             respond("recalibrate_charging_pose_respond", {
