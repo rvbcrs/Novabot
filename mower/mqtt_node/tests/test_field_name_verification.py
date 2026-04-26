@@ -107,3 +107,46 @@ def test_no_fabricated_field_names():
                 f'(no package mapping):\n' + '\n'.join(skipped[:10])
             )
         raise AssertionError(msg)
+
+
+def test_no_fabricated_endpoint_names():
+    """Service / action / topic NAMES used by `create_client`,
+    `create_publisher`, `create_subscription`, `create_service`,
+    `ActionClient`, `ActionServer` must appear in the live mower's
+    snapshot at research/documents/mqtt_node-graph-snapshot.txt.
+
+    Catches typos like `/novabot_mapping/mapping_data` (which is a topic,
+    not a service) — the same regression class that bit the open
+    robot_decision project before it shipped.
+    """
+    import re
+    snap = (REPO_ROOT / 'research' / 'documents'
+            / 'mqtt_node-graph-snapshot.txt').read_text()
+
+    src = '\n'.join(
+        f.read_text() for f in PACKAGE_DIR.glob('*.py')
+        if not f.name.startswith('test_')
+    )
+    endpoint_re = re.compile(
+        r"(?:create_client|create_publisher|create_subscription|"
+        r"create_service|ActionClient|ActionServer)\s*\("
+        r"[^)]*?'(/[^']+)'", re.DOTALL,
+    )
+    endpoints = set(endpoint_re.findall(src))
+
+    OPEN_ONLY: set[str] = set()  # populate as needed during Phase 2
+
+    missing: list[str] = []
+    for ep in sorted(endpoints):
+        if ep in OPEN_ONLY:
+            continue
+        if ep not in snap:
+            missing.append(ep)
+
+    if missing:
+        raise AssertionError(
+            f'{len(missing)} endpoint(s) not found in the live snapshot:\n  '
+            + '\n  '.join(missing)
+            + '\n\nEither the endpoint is fabricated, or the snapshot needs '
+            'a refresh. Re-run Task 1.3 Step 1 to recapture.'
+        )
