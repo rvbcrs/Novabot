@@ -22,6 +22,8 @@ import {
   Dimensions,
   Platform,
   ScrollView,
+  Modal,
+  BackHandler,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -407,6 +409,26 @@ export default function MappingScreen() {
     lastTrailRef.current = { x, y };
     setTrailPoints(prev => [...prev, { x, y }]);
   }, [mappingState, mapPosX, mapPosY]);
+
+  // Block Android hardware back during the saving-charger-position
+  // sequence. The save fires save_recharge_pos + post-recharge save_map
+  // (type:1) + get_map_outline; aborting half-way corrupts the map.
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      // Returning true tells the OS we handled it (i.e. swallow).
+      return false; // default: allow back EXCEPT during savePosition (next ref)
+    });
+    return () => sub.remove();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    if (chargerAction !== 'savePosition') return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => true);
+    return () => sub.remove();
+  }, [chargerAction]);
 
   // ── Detect if already mapping (from sensor data on screen open) ──
   const isMappingActive = sensors.start_edit_or_assistant_map_flag === '1' ||
@@ -870,7 +892,12 @@ export default function MappingScreen() {
             const stopOk = await waitForRespond('stop_scan_map_respond', 20000);
             console.log(`[Mapping] Step 1: stop_scan_map_respond ${stopOk ? 'OK' : 'TIMEOUT'}`);
 
-            await new Promise(r => setTimeout(r, 1000));
+            // Per docs/reference/MAPPING-FLOW.md the firmware only needs
+            // ~500 ms between stop_scan_map and the first save_map. The
+            // previous 1 s + 3 s pattern was conservative padding that
+            // turned the post-Stop "Saving" spinner into a 50-second wait
+            // (user feedback 2026-04-26). Match the documented minimum.
+            await new Promise(r => setTimeout(r, 500));
 
             if (isUnicom) {
               // Unicom gets a single save_map {type:1}
@@ -893,7 +920,10 @@ export default function MappingScreen() {
               );
               const subOk = await waitForRespond('save_map_respond', 12000);
               console.log(`[Mapping] Step 2a: sub save_map_respond ${subOk ? 'OK' : 'TIMEOUT'}`);
-              await new Promise(r => setTimeout(r, 3000));
+              // 500ms is the documented minimum between type:0 (sub) and
+              // type:1 (total) save_map calls. The earlier 3 s padding was
+              // the dominant contributor to the 50-second post-Stop wait.
+              await new Promise(r => setTimeout(r, 500));
               sendCommand(
                 { save_map: { mapName: saveMapName, type: 1, cmd_num: cmdNumRef.current++ } },
                 'save_map (total)',
@@ -1950,6 +1980,34 @@ sendCommand({ save_recharge_pos: { mapName: 'map0', cmd_num: cmdNumRef.current++
             </View>
           </View>
         ) : null}
+
+        {/* Saving-charger-position blocker — fires automatically the moment
+            the dock state is edge-confirmed. The save sends save_recharge_pos
+            + post-recharge save_map (type:1) + get_map_outline; cancelling
+            mid-sequence corrupts the saved map. Block ALL interaction
+            (back arrow, Auto Dock, Discard, tab bar) until the save flow
+            completes. Modal renders ABOVE the navigator so it covers the
+            tab bar too; onRequestClose absorbs the Android hardware-back. */}
+        <Modal
+          visible={chargerAction === 'savePosition'}
+          transparent
+          animationType="fade"
+          statusBarTranslucent
+          onRequestClose={() => { /* swallow Android back */ }}
+        >
+          <View style={styles.bleOverlay} pointerEvents="auto">
+            <View style={styles.bleOverlayCard}>
+              <ActivityIndicator size="large" color={colors.emerald} />
+              <Text style={styles.bleOverlayTitle}>
+                Saving charger position...
+              </Text>
+              <Text style={styles.bleOverlayHint}>
+                Do not move the mower or close the app. Finalising the map
+                takes ~10 seconds.
+              </Text>
+            </View>
+          </View>
+        </Modal>
       </View>
     </GestureHandlerRootView>
   );
