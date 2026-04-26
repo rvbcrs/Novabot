@@ -1,0 +1,7 @@
+# Runtime deps (installed inside the on-mower deployment).
+# Pinned to the versions verified against the on-mower Python 3.10
+# install during the RE phase.
+paho-mqtt>=1.6,<2.0
+cryptography>=41.0,<43.0
+dbus-next>=0.2.3,<0.3
+requests>=2.28,<3.0
