@@ -79,6 +79,7 @@ class WorkStatus(IntEnum):
     DELETE_CHILD_MAP = 200
     DELETE_OBSTACLE = 201
     DELETE_UNICOM = 202
+    DELETE_UINICOM = 202  # closed-binary spelling preserved (mirrors C++ enum typo)
     ERROR_LOAD_MAP = 203
 
     # Misc

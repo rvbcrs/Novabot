@@ -736,25 +736,35 @@ class ServiceHandlers:
     # ─── Delete map ────────────────────────────────────────────
 
     def _handle_delete_map(self, request, response):
-        """Delete map or sub-map via mapping_control service."""
+        """Delete sub-map (1) / obstacle (2) / unicom (3) by forwarding
+        request.maptype to /novabot_mapping/mapping_control. Closed binary
+        transitions through DELETE_CHILD_MAP / DELETE_OBSTACLE /
+        DELETE_UINICOM (spelling preserved to mirror C++ enum)."""
         self.log.info(
             f'DeleteMap: maptype={request.maptype}, '
-            f'mapname={request.mapname}')
+            f'mapname={request.mapname}, parent={request.map_file_name}')
         n = self.node
+        state_map = {
+            1: WorkStatus.DELETE_CHILD_MAP,
+            2: WorkStatus.DELETE_OBSTACLE,
+            3: WorkStatus.DELETE_UINICOM,
+        }
+        target_state = state_map.get(int(request.maptype))
+        if target_state is not None:
+            n._set_state(TaskMode.MAPPING, target_state)
 
         req = MappingControlSrv.Request()
-        req.map_file_name = 'home0'
-        req.child_map_file_name = request.mapname
-        req.obstacle_file_name = ''
-        req.unicom_area_file_name = ''
-        # type=3: delete sub-map, type=5: delete whole map (deprecated)
-        req.type = 3
+        req.map_file_name = request.map_file_name or 'home0'
+        req.child_map_file_name = request.mapname if request.maptype == 1 else ''
+        req.obstacle_file_name = request.mapname if request.maptype == 2 else ''
+        req.unicom_area_file_name = request.mapname if request.maptype == 3 else ''
+        req.type = int(request.maptype)
         result = self._call_service(n.cli_mapping_control, req)
         ok = result.result if result else False
 
+        n._set_state(TaskMode.FREE, WorkStatus.INIT_SUCCESS)
         response.result = 1 if ok else 0
-        response.description = ('Map deleted' if ok
-                                else 'Delete failed')
+        response.description = 'Map deleted' if ok else 'Delete failed'
         return response
 
     # ─── Save charging pose (mapping_msgs/SetChargingPose) ───
