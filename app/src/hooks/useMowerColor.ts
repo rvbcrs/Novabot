@@ -13,7 +13,9 @@ import * as SecureStore from 'expo-secure-store';
 
 export type MowerColor = 'white' | 'grey';
 
-const KEY_PREFIX = 'mowerColor:';
+// SecureStore keys allow ONLY alphanumerics, '.', '-', '_'. The colon in
+// the original prefix triggered "Invalid key" warnings on every read/write.
+const KEY_PREFIX = 'mowerColor_';
 const DEFAULT_COLOR: MowerColor = 'white';
 
 const cache = new Map<string, MowerColor>();
