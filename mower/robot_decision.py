@@ -258,6 +258,9 @@ class OpenRobotDecision(Node):
         self.create_subscription(
             Bool, '/decision_assistant/robot_out_working_zone',
             self._on_out_of_zone, RELIABLE_QOS)
+        self.create_subscription(
+            String, '/coverage_planner_server/covered_path_json',
+            self._on_covered_path, RELIABLE_QOS)
 
         # ─── Service CLIENTS (boot) ───
         self.cli_init_ok = self.create_client(
@@ -2305,6 +2308,12 @@ class OpenRobotDecision(Node):
         siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
         cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
         self.theta = math.atan2(siny_cosp, cosy_cosp)
+
+    def _on_covered_path(self, msg: String):
+        """Forward coverage_planner_server's covered_path_json to mqtt_node's
+        expected /robot_decision/covered_path_json topic. Closed binary does
+        the same relay."""
+        self.covered_path_pub.publish(msg)
 
     # ─── Status summary ───────────────────────────────────────────
 
