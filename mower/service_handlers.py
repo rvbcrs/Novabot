@@ -711,7 +711,7 @@ class ServiceHandlers:
 
         req = CoveragePathsByFile.Request()
         req.map_yaml = map_yaml
-        req.include_edge = False
+        req.include_edge = bool(getattr(request, 'include_edge', False))
         req.specify_direction = bool(request.cov_direction > 0)
         req.cov_direction = request.cov_direction
 
