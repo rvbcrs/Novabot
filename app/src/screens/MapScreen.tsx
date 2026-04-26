@@ -1675,7 +1675,17 @@ export default function MapScreen() {
                                     || msg.includes('Work:GO_PILE') || msg.includes('Work:BACK_CHARGER')
                                     || msg.includes('Work:DOCKING')
                                     || (rechargeStatus === 1 && !dockFailed);
-                                  const isMapping = msg.includes('Mode:MAPPING') || mower?.sensors.start_edit_or_assistant_map_flag === '1';
+                                  // isMapping must reflect ACTIVE mapping work — not just the
+                                  // post-mapping echo "Mode:MAPPING Work:FINISHED" the firmware
+                                  // briefly broadcasts after Stop & Save. Use the work-state
+                                  // pattern (USER_MAP / ASSISTANT_MAP) and the non-zero
+                                  // start-flag bitmask (firmware reports 16, not 1).
+                                  const mapFlagRaw = mower?.sensors.start_edit_or_assistant_map_flag ?? '0';
+                                  const isMapping = (
+                                    msg.includes('Work:USER_MAP') ||
+                                    msg.includes('Work:ASSISTANT_MAP') ||
+                                    (mapFlagRaw !== '0' && mapFlagRaw !== '')
+                                  ) && !msg.includes('Work:FINISHED') && !msg.includes('Work:WAIT');
                                   // Firmware zet Work:USER_STOP bij pause via app — zie HomeScreen comment.
                                   const isPaused = msg.includes('Work:PAUSED') || msg.includes('Work:USER_STOP');
 
