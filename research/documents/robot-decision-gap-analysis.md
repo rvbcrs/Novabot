@@ -315,9 +315,44 @@ required further work that fell outside scope:
 
 - **#19** (`start_assistant_mapping` async return): Service still returns success synchronously before the boundary-follow thread completes. Proper fix requires converting to a goal-handle pattern or an action server. Deferred because autonomous mapping is a low-priority path not yet tested on real hardware.
 - **#35** (CPU temperature watchdog thresholds): Watchdog cancel-on-overheat is partially present in `robot_decision.py:427` but thresholds are not aligned with the closed binary. Deferred — requires live thermal profiling to determine safe cutoff values.
-- **Heading-discovery direction** (Bug item): Open drives FORWARD 1.5 m; closed drives REVERSE ~1 m via `free_move_around`. The forward direction risks a collision if the mower is parked against an obstacle. Deferred pending explicit hardware authorization — changing direction of physical movement requires user confirmation before deployment.
+- **boundary_offset still requires `BoundaryFollow.action` extension + firmware rebuild** — out of scope until firmware can be rebuilt.
+- **polygon_area field name on CoveragePathsByFile.srv unverified** — TODO comment in code.
 
 These items are tracked but require either further reverse-engineering, live hardware authorization, or explicit user sign-off before implementation.
+
+### Post-2026-04-26 follow-up resolutions
+
+The following items were resolved during the feature-branch work on `feat/open-decision-finish` after 2026-04-26:
+
+**F-series: Feature completions wiring dead parameters and signals**
+
+1. **F1 lora_ok** (commit `34e9d3cd`) — `_on_incident` now writes `self.host.lora_ok = not msg.error_lora`, so the previously-no-op `_lora_recover_loop` actually polls a real flag. Previously the loop had nowhere to read the LoRa link status from firmware incident messages; now it tracks the live state.
+
+2. **F2 free_move_around heading discovery** (commit `382bdf6b`) — primary path now uses `nav2_pro_msgs/FreeMoveAround` reverse drive (closed-binary parity); the original forward-1.5m + spin remains as the fallback when the service is not available. `quit_pile_distance` parameter wired. Boot localization now drives REVERSE as per closed binary, with FORWARD fallback if the service is unavailable.
+
+3. **F3 default_perception_level** (commit `933ecf47`) — read at boot in `__init__`, line 170. Was declared in YAML but dead in open code; now read and applied to initial perception pipeline state.
+
+4. **F4 full_battery_power upper hysteresis** (commit `d8e734d4`) — when `task_mode == CHARGING` and `battery_power >= full_battery_power`, transition to FREE/INIT_SUCCESS and re-fire the last `_handle_start_cov_task` if `_last_cov_request` is set. Auto-resume after charging — closed-binary parity. Previously `full_battery_power` was declared but never checked; now it gates the recharge-exit logic.
+
+5. **F5 cli_led_level wired to darkness** (commit `52841321`) — `_on_camera_gain` darkness transitions now publish brightness 255 (dark) / 1 (bright) via `cli_led_level.call_async(SetUint8)` with `service_is_ready()` guard. LED brightness now responds to night/day detection.
+
+6. **F6 enable_slipping_recover gate** (commit `a4176347`) — `_send_slip_goal` first-line check on `enable_slipping_recover` parameter. Mirrors how `check_localization` already gates loc-recover. Slip escalation can now be disabled at runtime via YAML.
+
+**C-series: Code-review critical fixes (superpowers:code-review pass 2026-04-26)**
+
+7. **C1 CloudMoveCmd field rename** (commit `eb2b1c97`) — `_publish_cloud_move` was writing `x_w/y_v/z_g` (MQTT joystick payload field names). Actual ROS message has `linear_x` + `angular_wheel`. Every recovery path would have raised `AttributeError`. Renamed to match ROS message field names.
+
+8. **C2 _handle_stop_task resume response type** (commit `eb2b1c97`) — resume branch passed a `SetBool.Response` into `_handle_start_cov_task` which then wrote `.result` (only exists on `StartCoverageTask.Response`). Now synthesizes a fresh `StartCoverageTask.Response` for the inner call and maps result back onto the outer response.
+
+9. **C3 cov_mode=1 polygon_area inverted** (commit `eb2b1c97`) — was published as a `/local_costmap/prohibited_points` (NO-GO zone). Removed; the polygon is correctly threaded into `start_coverage(polygon_area=...)` instead.
+
+10. **C4 _handle_save_map ignored request.type** (commit `eb2b1c97`) — always ran both type:0 + type:1. Now branches on `request.type` so each call from the app drives only the matching firmware stage (type:0 = sub-map, type:1 = total map).
+
+11. **C5 request_map_ids type mismatch** (commit `eb2b1c97`) — uint32 scalar fields in `RobotStatus.msg` were being assigned Python lists. Coerced to scalar ints (first id or 0).
+
+**I-series: Important fixes (superpowers:code-review pass 2026-04-26)**
+
+12. **I1/I2/I4 app + assistant cleanup** (commit `eb2b1c97`) — MappingScreen mapping-flag bitmask comparison fixed; dead BackHandler effect removed; `_send_loc_recover_goal` gated on `enable_loc_recover`.
 
 ---
 
