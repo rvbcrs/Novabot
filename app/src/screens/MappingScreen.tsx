@@ -360,21 +360,29 @@ export default function MappingScreen() {
         const trail = json.trail as Array<{x: number; y: number}> | undefined;
         if (!trail || trail.length === 0) return;
         serverTrailActiveRef.current = true;
-        // Don't overwrite — merge. Server-side mapping trail capture only
-        // appends on map_position_x/y change (rate ≈ once every 5s from
-        // report_state_timer_data). The client-side fallback (below) appends
-        // every sensor update from the same map_position fields. If we
-        // simply do setTrailPoints(trail) every 1s, we wipe the denser
-        // client points each tick and the visible trail collapses to the
-        // server's slow cadence (observed: 3 points in 54s of mapping).
+        // Dedup-merge. Earlier "use longer array" comparison locked the
+        // visible trail in place: once the client fallback appended even
+        // ONE local point, the server's later additions no longer made
+        // the array strictly longer (server appends on >5cm change while
+        // the client appends on >1cm), so prev would beat trail forever
+        // and new server points never showed up. Build a map keyed by
+        // rounded position and union both sources.
         setTrailPoints(prev => {
-          if (prev.length === 0) return trail;
-          // If server has more points than the local copy, prefer server
-          // (it persisted across reloads / regained clients).
-          if (trail.length > prev.length) return trail;
-          // Otherwise: keep the longer local array. Both come from the same
-          // map_position stream so the local one is a strict superset.
-          return prev;
+          const seen = new Map<string, { x: number; y: number }>();
+          const key = (p: { x: number; y: number }) =>
+            `${p.x.toFixed(2)},${p.y.toFixed(2)}`;
+          const merged: Array<{ x: number; y: number }> = [];
+          // Preserve order: prev first (so historical sequence is kept),
+          // then any new server points that weren't already in prev.
+          for (const p of prev) {
+            const k = key(p);
+            if (!seen.has(k)) { seen.set(k, p); merged.push(p); }
+          }
+          for (const p of trail) {
+            const k = key(p);
+            if (!seen.has(k)) { seen.set(k, p); merged.push(p); }
+          }
+          return merged.length === prev.length ? prev : merged;
         });
       } catch { /* ignore */ }
     };
