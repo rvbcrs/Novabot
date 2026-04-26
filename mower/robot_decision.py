@@ -175,6 +175,7 @@ class OpenRobotDecision(Node):
         self._charge_stop_active = False  # ChassisIncident charge_stop flag
         self._undocking = False
         self._low_battery_armed = True   # hysteresis: re-arm after level recovers above low+back
+        self.lora_ok = True              # LoRa link state tracked by _on_incident
         self._undock_start_time = 0.0
         self._undock_target_time = 0.0
         self._undock_after_state = None
@@ -2360,6 +2361,10 @@ class OpenRobotDecision(Node):
         # no_pin_code = STM32 PIN lock NOP patch → always set, ignore
         # no_set_pin_code = same category, ignore
         # (These are expected with patched STM32 v3.6.7+)
+
+        # Track LoRa link state so DecisionAssistant._lora_recover_loop
+        # can poll it instead of bailing immediately.
+        self.lora_ok = not msg.error_lora
 
         # Real errors — only check non-charger, non-PIN flags
         if msg.error_push_button_stop:
