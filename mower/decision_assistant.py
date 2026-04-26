@@ -24,8 +24,12 @@ import threading
 
 from rclpy.node import Node
 from rclpy.action import ActionServer, CancelResponse, GoalResponse
+from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.qos import (
+    QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy)
 from geometry_msgs.msg import Twist, PoseStamped
-from std_msgs.msg import UInt8
+from std_msgs.msg import UInt8, Bool
+from nav2_msgs.srv import LoadMap
 
 from decision_msgs.action import SlipEscaping, LocRecoverMoving
 
@@ -82,14 +86,10 @@ class DecisionAssistant(Node):
                                CANNOT_MOVE_ANGULAR_DIFF)
         self.declare_parameter('cannot_move_linear_diff',
                                CANNOT_MOVE_LINEAR_DIFF)
-        self.declare_parameter('loc_recover_confidence', 89)
 
         # ─── Callback group for actions ───
-        from rclpy.callback_groups import ReentrantCallbackGroup
         self.action_cb_group = ReentrantCallbackGroup()
 
-        from rclpy.qos import (
-            QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy)
         reliable_qos = QoSProfile(
             reliability=QoSReliabilityPolicy.RELIABLE,
             history=QoSHistoryPolicy.KEEP_LAST, depth=10)
@@ -99,7 +99,6 @@ class DecisionAssistant(Node):
             PoseStamped, '/decision_assistant/escape_pose', reliable_qos)
         # NOTE: bool not uint8 — closed binary publishes Bool. Subscriber side
         # in robot_decision must match. See Task 2.4.
-        from std_msgs.msg import Bool
         self.out_of_zone_pub = self.create_publisher(
             Bool, '/decision_assistant/robot_out_working_zone', reliable_qos)
         self.move_abnormal_pub = self.create_publisher(
@@ -120,7 +119,6 @@ class DecisionAssistant(Node):
             callback_group=self.action_cb_group)
 
         # ─── load_map service (closed exposes this for working-zone polygon) ───
-        from nav2_msgs.srv import LoadMap
         self._loaded_map_url: str | None = None
         self._load_map_srv = self.create_service(
             LoadMap, '/decision_assistant/load_map',
@@ -135,8 +133,7 @@ class DecisionAssistant(Node):
         self._loaded_map_url = request.map_url
         self._logger.info(
             f'load_map: cached map_url={request.map_url}')
-        from nav2_msgs.srv import LoadMap as _L
-        response.result = _L.Response.RESULT_SUCCESS
+        response.result = LoadMap.Response.RESULT_SUCCESS
         return response
 
     # ─── Goal / Cancel callbacks ─────────────────────────────────
@@ -262,7 +259,7 @@ class DecisionAssistant(Node):
         self._recover_goal_handle = goal_handle
         result = LocRecoverMoving.Result()
 
-        loc_thresh = self.get_parameter('loc_recover_confidence').value
+        loc_thresh = self.host.get_parameter('loc_recover_confidence').value
         start_time = time.monotonic()
 
         while time.monotonic() - start_time < max_time:
@@ -516,7 +513,6 @@ class DecisionAssistant(Node):
         # The actual boundary check is done by nav2/coverage_planner
         # We just monitor for the ROBOT_OUT_OF_MAP_HANDLE state
         if n.work_status == WorkStatus.ROBOT_OUT_OF_MAP_HANDLE:
-            from std_msgs.msg import Bool
             msg = Bool()
             msg.data = True
             self.out_of_zone_pub.publish(msg)
