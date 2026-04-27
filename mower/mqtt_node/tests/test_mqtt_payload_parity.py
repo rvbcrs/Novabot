@@ -38,13 +38,35 @@ def _drive(agg: SensorAggregator, state: dict) -> None:
                           work_status=state.get('work_status', 0),
                           recharge_status=state.get('recharge_status', 0),
                           msg=state.get('msg', ''))
+    extras_keys = ('prev_task_mode', 'prev_work_status', 'prev_recharge_status',
+                   'current_map_ids', 'request_map_ids', 'map_num',
+                   'finished_num', 'light', 'perception_level')
+    if any(k in state for k in extras_keys):
+        agg.update_status_extras(**{k: state.get(k, 0) for k in extras_keys})
     if 'error_status' in state or 'error_msg' in state:
         agg.update_error(error_status=state.get('error_status', 0),
                          error_msg=state.get('error_msg', ''))
-    if 'cov_ratio' in state or 'cov_area' in state or 'cov_work_time' in state:
-        agg.update_coverage(ratio=state.get('cov_ratio', 0.0),
-                            area=state.get('cov_area', 0.0),
-                            work_time=state.get('cov_work_time', 0.0))
+    cov_keys = ('cov_ratio', 'cov_area', 'cov_work_time', 'valid_cov_work_time',
+                'avoiding_obstacle_time', 'cov_estimate_time',
+                'cov_remaining_area', 'cov_map_path')
+    if any(k in state for k in cov_keys):
+        agg.update_coverage(
+            ratio=state.get('cov_ratio', 0.0),
+            area=state.get('cov_area', 0.0),
+            work_time=state.get('cov_work_time', 0.0),
+            valid_work_time=state.get('valid_cov_work_time', 0.0),
+            avoiding_obstacle_time=state.get('avoiding_obstacle_time', 0.0),
+            estimate_time=state.get('cov_estimate_time', 0.0),
+            remaining_area=state.get('cov_remaining_area', 0.0),
+            map_path=state.get('cov_map_path', ''))
+    mapping_keys = ('if_closed_cycle', 'if_mower_can_finish',
+                    'if_scan_unicom_obstacle',
+                    'start_edit_or_assistant_map_flag')
+    if any(k in state for k in mapping_keys):
+        agg.update_mapping_flags(
+            **{k: state[k] for k in mapping_keys if k in state})
+    if 'cover_path' in state:
+        agg.update_cover_path(state['cover_path'])
     if 'cpu_temperature' in state or 'cpu_usage' in state:
         agg.update_cpu(temp=state.get('cpu_temperature', 0),
                        usage=state.get('cpu_usage', 0))

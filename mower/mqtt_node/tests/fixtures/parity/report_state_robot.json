@@ -45,12 +45,26 @@
     "cov_ratio": 0.09902821481227875,
     "cov_area": 1.2712500095367432,
     "cov_work_time": 0,
+    "valid_cov_work_time": 0,
+    "avoiding_obstacle_time": 0,
+    "cov_estimate_time": 6.939000606536865,
+    "cov_remaining_area": 11.565000534057617,
+    "cov_map_path": "",
     "cpu_temperature": 46,
     "cpu_usage": 48,
     "loc_quality": 80,
     "target_height": 1,
     "x": -0.9449852705001831,
     "y": -0.9449852705001831,
-    "theta": 1.6450220346450806
+    "theta": 1.6450220346450806,
+    "current_map_ids": 1,
+    "request_map_ids": 1,
+    "map_num": 1,
+    "finished_num": 0,
+    "light": 0,
+    "perception_level": 0,
+    "prev_task_mode": 1,
+    "prev_work_status": 50,
+    "prev_recharge_status": 193
   }
 }

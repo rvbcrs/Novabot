@@ -47,6 +47,19 @@
     "loc_state": "RUNNING",
     "x": -0.9472338984198632,
     "y": 0.2601609644737307,
-    "theta": 1.645022005916297
+    "theta": 1.645022005916297,
+    "cover_path": {
+      "covered": {
+        "covering_area": {"area_id": "0", "points": "0"},
+        "finished_area": "",
+        "missed": "-0.55 -1.53;0.46 -2.35;"
+      },
+      "finished_maps": "1",
+      "map_id": "1"
+    },
+    "if_closed_cycle": 0,
+    "if_mower_can_finish": false,
+    "if_scan_unicom_obstacle": 16,
+    "start_edit_or_assistant_map_flag": 16
   }
 }

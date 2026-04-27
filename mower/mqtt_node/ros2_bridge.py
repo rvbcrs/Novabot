@@ -192,6 +192,7 @@ class Ros2Bridge(Node):
             ChassisBatteryMessage, ChassisIncident, BestPos,
         )
         from sensor_msgs.msg import NavSatFix
+        from std_msgs.msg import Bool, String
 
         self._agg = aggregator
 
@@ -210,13 +211,44 @@ class Ros2Bridge(Node):
         self.create_subscription(
             NavSatFix, '/gps_raw',
             self._on_gps, 10, callback_group=self._cb)
-        log.info('ros2_bridge: aggregator bound, 5 topic subscriptions live')
+
+        # cover_path subtree for report_state_timer_data
+        self.create_subscription(
+            String, '/robot_decision/covered_path_json',
+            self._on_covered_path_json, 10, callback_group=self._cb)
+
+        # Mapping flags emitted in report_state_timer_data (live graph
+        # snapshot Subscribers section)
+        self.create_subscription(
+            Bool, '/novabot_mapping/if_closed_cycle',
+            lambda m: self._agg.update_mapping_flags(
+                if_closed_cycle=int(bool(m.data))) if self._agg else None,
+            10, callback_group=self._cb)
+        self.create_subscription(
+            Bool, '/novabot_mapping/if_unicom_can_stop',
+            lambda m: self._agg.update_mapping_flags(
+                if_mower_can_finish=bool(m.data)) if self._agg else None,
+            10, callback_group=self._cb)
+        self.create_subscription(
+            Bool, '/novabot_mapping/in_map_area',
+            lambda m: self._agg.update_mapping_flags(
+                if_scan_unicom_obstacle=int(bool(m.data))) if self._agg else None,
+            10, callback_group=self._cb)
+        self.create_subscription(
+            Bool, '/novabot_mapping/start_build_unicom_area',
+            lambda m: self._agg.update_mapping_flags(
+                start_edit_or_assistant_map_flag=int(bool(m.data))) if self._agg else None,
+            10, callback_group=self._cb)
+
+        log.info('ros2_bridge: aggregator bound, 10 topic subscriptions live')
 
     # ── Aggregator callbacks ──────────────────────────────────────────
 
     def _on_robot_status(self, msg) -> None:
         """decision_msgs/msg/RobotStatus — primary feed for report_state_robot.
         Schema: research/ros2_msg_definitions/decision_msgs/msg/RobotStatus.msg
+        Maps all 30 stock fields verified against the live container log
+        capture from LFIN1231000211 2026-04-27.
         """
         if self._agg is None:
             return
@@ -225,13 +257,28 @@ class Ros2Bridge(Node):
             work_status=int(msg.work_status),
             recharge_status=int(msg.recharge_status),
             msg=str(msg.msg))
+        self._agg.update_status_extras(
+            prev_task_mode=int(msg.prev_task_mode),
+            prev_work_status=int(msg.prev_work_status),
+            prev_recharge_status=int(msg.prev_recharge_status),
+            current_map_ids=int(msg.current_map_ids),
+            request_map_ids=int(msg.request_map_ids),
+            map_num=int(msg.map_num),
+            finished_num=int(msg.finished_num),
+            light=int(msg.light),
+            perception_level=int(msg.perception_level))
         self._agg.update_error(
             error_status=int(msg.error_status),
             error_msg=str(msg.error_msg))
         self._agg.update_coverage(
             ratio=float(msg.cov_ratio),
             area=float(msg.cov_area),
-            work_time=float(msg.cov_work_time))
+            work_time=float(msg.cov_work_time),
+            valid_work_time=float(msg.valid_cov_work_time),
+            avoiding_obstacle_time=float(msg.avoiding_obstacle_time),
+            estimate_time=float(msg.cov_estimate_time),
+            remaining_area=float(msg.cov_remaining_area),
+            map_path=str(msg.cov_map_path))
         self._agg.update_cpu(
             temp=int(msg.cpu_temperature),
             usage=int(msg.cpu_usage))
@@ -295,6 +342,27 @@ class Ros2Bridge(Node):
             lng=float(msg.longitude),
             alt=float(msg.altitude),
             state=state)
+
+    def _on_covered_path_json(self, msg) -> None:
+        """std_msgs/msg/String — JSON-encoded cover_path subtree for
+        report_state_timer_data. Stock format
+        (catalog mqtt_node-payload-catalog.md report_state_timer_data
+        cover_path):
+            {"covered": {"covering_area": {...}, "finished_area": "",
+                         "missed": "..."},
+             "finished_maps": "1", "map_id": "1"}
+        Bad JSON is logged and dropped — keeps last good cached subtree.
+        """
+        if self._agg is None:
+            return
+        import json
+        try:
+            data = json.loads(msg.data)
+        except Exception as e:
+            log.warning('covered_path_json: bad JSON (%s): %s',
+                        e, msg.data[:120])
+            return
+        self._agg.update_cover_path(data)
 
     # ── Command handlers ──────────────────────────────────────────────
 
