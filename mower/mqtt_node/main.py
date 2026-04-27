@@ -59,8 +59,7 @@ def main():
     rclpy.init()
     bridge = Ros2Bridge()
     aggregator = SensorAggregator()
-    if hasattr(bridge, 'bind_aggregator'):
-        bridge.bind_aggregator(aggregator)
+    bridge.bind_aggregator(aggregator)
 
     # MQTT side: register every command on the bridge.
     # MQTT key → handler (keys per ros2_bridge docstrings + RE-5 catalog)
@@ -115,6 +114,34 @@ def main():
     http = HttpClient(host=cfg.http_host, port=cfg.http_port, sn=sn)
     http.start()
 
+    # Periodic state report publish (matches stock ~2.3 s cadence —
+    # see research/documents/mqtt_node-payload-catalog.md report_state_robot).
+    publish_period_sec = 2.3
+    publish_stop = threading.Event()
+
+    def publish_state_reports():
+        while not publish_stop.is_set():
+            try:
+                for builder_name in ('report_state_robot',
+                                     'report_state_timer_data',
+                                     'report_exception_state'):
+                    builder = getattr(aggregator, f'build_{builder_name}', None)
+                    if builder is None:
+                        continue
+                    body = builder()
+                    payload = json.dumps({builder_name: body},
+                                         separators=(',', ':')).encode('utf-8')
+                    mqtt.publish(outbound_topic, payload, encrypted=True)
+            except Exception:
+                log.exception('publish_state_reports iteration failed')
+            publish_stop.wait(publish_period_sec)
+
+    publish_thread = threading.Thread(
+        target=publish_state_reports,
+        daemon=True,
+        name='mqtt_node_publish_loop')
+    publish_thread.start()
+
     # ROS2 spin
     executor = MultiThreadedExecutor(num_threads=4)
     executor.add_node(bridge)
@@ -132,6 +159,8 @@ def main():
         while not stop_evt.is_set():
             executor.spin_once(timeout_sec=1.0)
     finally:
+        publish_stop.set()
+        publish_thread.join(timeout=2.0)
         http.stop()
         mqtt.loop_stop()
         mqtt.disconnect()

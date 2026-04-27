@@ -164,6 +164,130 @@ class Ros2Bridge(Node):
         log.info('ros2_bridge: node up with %d service clients + 2 action clients',
                  sum(1 for n in dir(self) if n.startswith('cli_')))
 
+        # Aggregator wiring (set by bind_aggregator). The bridge subscribes
+        # to /robot_decision/robot_status, /battery_message, /chassis_incident,
+        # /bestpos_parsed_data, /gps_raw — those topics drive every field
+        # in report_state_robot / report_state_timer_data /
+        # report_exception_state.
+        self._agg = None
+        self._battery_state = 'UNKNOWN'
+
+    def bind_aggregator(self, aggregator) -> None:
+        """Wire ROS topic subscriptions that feed the SensorAggregator.
+
+        Topics taken from research/documents/mqtt_node-graph-snapshot.txt
+        (live SSH from /mqtt_node node info on LFIN1231000211).
+        Schemas verified at research/ros2_msg_definitions/.
+        """
+        from decision_msgs.msg import RobotStatus
+        from novabot_msgs.msg import (
+            ChassisBatteryMessage, ChassisIncident, BestPos,
+        )
+        from sensor_msgs.msg import NavSatFix
+
+        self._agg = aggregator
+
+        self.create_subscription(
+            RobotStatus, '/robot_decision/robot_status',
+            self._on_robot_status, 10, callback_group=self._cb)
+        self.create_subscription(
+            ChassisBatteryMessage, '/battery_message',
+            self._on_battery, 10, callback_group=self._cb)
+        self.create_subscription(
+            ChassisIncident, '/chassis_incident',
+            self._on_incident, 10, callback_group=self._cb)
+        self.create_subscription(
+            BestPos, '/bestpos_parsed_data',
+            self._on_bestpos, 10, callback_group=self._cb)
+        self.create_subscription(
+            NavSatFix, '/gps_raw',
+            self._on_gps, 10, callback_group=self._cb)
+        log.info('ros2_bridge: aggregator bound, 5 topic subscriptions live')
+
+    # ── Aggregator callbacks ──────────────────────────────────────────
+
+    def _on_robot_status(self, msg) -> None:
+        """decision_msgs/msg/RobotStatus — primary feed for report_state_robot.
+        Schema: research/ros2_msg_definitions/decision_msgs/msg/RobotStatus.msg
+        """
+        if self._agg is None:
+            return
+        self._agg.update_status(
+            task_mode=int(msg.task_mode),
+            work_status=int(msg.work_status),
+            recharge_status=int(msg.recharge_status),
+            msg=str(msg.msg))
+        self._agg.update_error(
+            error_status=int(msg.error_status),
+            error_msg=str(msg.error_msg))
+        self._agg.update_coverage(
+            ratio=float(msg.cov_ratio),
+            area=float(msg.cov_area),
+            work_time=float(msg.cov_work_time))
+        self._agg.update_cpu(
+            temp=int(msg.cpu_temperature),
+            usage=int(msg.cpu_usage))
+        self._agg.update_loc_quality(int(msg.loc_quality))
+        self._agg.update_target_height(int(msg.target_height))
+        self._agg.update_pose(
+            x=float(msg.x), y=float(msg.y), theta=float(msg.theta))
+        self._agg.update_battery(
+            power_percent=int(msg.battery_power),
+            state=self._battery_state)
+
+    def _on_battery(self, msg) -> None:
+        """novabot_msgs/msg/ChassisBatteryMessage — battery_state string.
+        battery_current_ma > 0 → CHARGING; rsoc>=99 → FULL; else DISCHARGING.
+        """
+        if msg.battery_current_ma > 0:
+            self._battery_state = 'CHARGING'
+        elif msg.battery_rsoc_percent >= 99:
+            self._battery_state = 'FULL'
+        else:
+            self._battery_state = 'DISCHARGING'
+        if self._agg is not None:
+            self._agg.update_battery(
+                power_percent=int(msg.battery_rsoc_percent),
+                state=self._battery_state)
+
+    def _on_incident(self, msg) -> None:
+        """novabot_msgs/msg/ChassisIncident — feeds report_exception_state.
+        chassis_err = error_set_flag bitmask; rtk = healthy when not error_rtk.
+        """
+        if self._agg is None:
+            return
+        self._agg.update_incident(
+            button_stop=bool(msg.error_push_button_stop),
+            chassis_err=int(msg.error_set_flag),
+            no_set_pin_code=bool(msg.error_no_set_pin_code),
+            rtk=not bool(msg.error_rtk),
+        )
+
+    def _on_bestpos(self, msg) -> None:
+        """novabot_msgs/msg/BestPos — RTK satellite count.
+        sol_in_svs = sats used in solution. wifi_rssi cached separately.
+        """
+        if self._agg is None:
+            return
+        # Preserve any cached wifi_rssi already in the aggregator
+        self._agg.update_signal(
+            wifi_rssi=getattr(self._agg, '_wifi_rssi', 0),
+            rtk_sat=int(msg.sol_in_svs),
+        )
+
+    def _on_gps(self, msg) -> None:
+        """sensor_msgs/msg/NavSatFix — gps_position for timer_data.
+        status.status >= 0 → ENABLE (NavSatStatus.STATUS_FIX or better).
+        """
+        if self._agg is None:
+            return
+        state = 'ENABLE' if msg.status.status >= 0 else 'DISABLE'
+        self._agg.update_gps(
+            lat=float(msg.latitude),
+            lng=float(msg.longitude),
+            alt=float(msg.altitude),
+            state=state)
+
     # ── Command handlers ──────────────────────────────────────────────
 
     def handle_start_navigation(self, mqtt_payload: dict) -> dict:
