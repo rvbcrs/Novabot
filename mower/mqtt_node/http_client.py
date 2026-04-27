@@ -1,5 +1,13 @@
 """Periodic HTTP loops the stock binary runs.
 
+Confirmed endpoints (research/documents/mqtt_node-strings.md:752-767):
+  /api/nova-network/network/connection — periodic health check (verified)
+  /api/nova-data/cut                   — cut-grass work record (multipart)
+  /api/nova-data/equipment             — equipment state heartbeat
+  /api/nova-message/machine            — machine messages
+  /api/nova-user/equipment/machine     — equipment management
+  /api/nova-file-server/map/upload     — map upload (event-driven, not periodic)
+
 net_check_fun:
 - Endpoint: POST http://<host>:<port>/api/nova-network/network/connection
 - Period: 30 seconds
@@ -9,13 +17,15 @@ net_check_fun:
   has its own watchdog.
 
 http_work_fun:
-- Sensor sync to the local server (same host, different endpoint).
-- Period: 60 seconds
+- Stock posts multipart cut-grass records to /api/nova-data/cut and
+  equipment state to /api/nova-data/equipment. Body shape NOT yet
+  reverse-engineered (gap analysis §9). Loop is intentionally inert
+  until we have real payload schemas — sending bogus JSON would just
+  log errors on the server.
 """
 from __future__ import annotations
 import logging
 import threading
-import time
 from typing import Optional
 
 import requests
@@ -43,14 +53,6 @@ class HttpClient:
         except Exception as e:
             log.warning('net_check failed (%s): %s', url, e)
 
-    def http_work_once(self) -> None:
-        url = self._url('/api/nova-work/sync')
-        try:
-            r = requests.post(url, json={'sn': self.sn}, timeout=5)
-            log.debug('http_work %s → %s', url, r.status_code)
-        except Exception as e:
-            log.warning('http_work failed (%s): %s', url, e)
-
     # ── Loop helpers ───────────────────────────────────────────────
     def _loop(self, fn, period_sec: float) -> None:
         while not self._stop.is_set():
@@ -58,13 +60,11 @@ class HttpClient:
             self._stop.wait(period_sec)
 
     def start(self) -> None:
-        t1 = threading.Thread(target=self._loop, args=(self.net_check_once, 30.0),
-                              daemon=True, name='net_check_fun')
-        t2 = threading.Thread(target=self._loop, args=(self.http_work_once, 60.0),
-                              daemon=True, name='http_work_fun')
-        for t in (t1, t2):
-            t.start()
-            self._threads.append(t)
+        t = threading.Thread(target=self._loop,
+                             args=(self.net_check_once, 30.0),
+                             daemon=True, name='net_check_fun')
+        t.start()
+        self._threads.append(t)
 
     def stop(self) -> None:
         self._stop.set()
