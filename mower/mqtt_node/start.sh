@@ -2,7 +2,10 @@
 # Activate open_mqtt_node on this mower. Kills the stock mqtt_node
 # (systemd will not respawn it while OURS holds the same node name in
 # the ROS graph) and execs main.py.
-set -euo pipefail
+#
+# Note: cannot use `set -u` — galactic setup.bash references unset
+# AMENT_TRACE_SETUP_FILES.
+set -eo pipefail
 
 cd /userdata/open_mqtt_node
 
@@ -18,5 +21,6 @@ sleep 2
 export PYTHONPATH="/userdata/open_mqtt_node:${PYTHONPATH:-}"
 export ROS_LOCALHOST_ONLY=1
 . /opt/ros/galactic/setup.bash
+. /root/novabot/install/setup.bash
 
 exec python3 main.py

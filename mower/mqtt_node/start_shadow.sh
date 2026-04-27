@@ -11,7 +11,9 @@
 #
 # Use this for parity observation. Stock binary keeps the app alive;
 # we observe what we WOULD do via the shadow topic.
-set -euo pipefail
+# Note: cannot use `set -u` — galactic setup.bash references unset
+# AMENT_TRACE_SETUP_FILES.
+set -eo pipefail
 
 cd /userdata/open_mqtt_node
 

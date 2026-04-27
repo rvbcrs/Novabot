@@ -28,8 +28,32 @@ log = logging.getLogger('mqtt_node.main')
 
 
 def _detect_sn() -> str:
-    """SN comes from /userdata/factory/sn or /etc/sn — fall back to
-    SN env var for dev/host runs."""
+    """SN sources, in order of preference:
+
+    1. SN env var (dev/host runs, also useful for shadow tests)
+    2. /userdata/lfi/json_config.json sn.value.code (live mower —
+       verified on LFIN1231000211 2026-04-27)
+    3. /userdata/factory/sn (legacy — never observed on this firmware
+       but kept for compatibility)
+    4. /etc/sn (legacy)
+    """
+    sn = os.environ.get('SN')
+    if sn:
+        return sn
+
+    cfg_path = Path('/userdata/lfi/json_config.json')
+    if cfg_path.exists():
+        try:
+            data = json.loads(cfg_path.read_text())
+            sn_section = data.get('sn', {})
+            value = sn_section.get('value') if isinstance(sn_section, dict) else None
+            if isinstance(value, dict):
+                code = value.get('code')
+                if isinstance(code, str) and code.strip():
+                    return code.strip()
+        except Exception:
+            pass
+
     for p in ('/userdata/factory/sn', '/etc/sn'):
         try:
             sn = Path(p).read_text().strip()
@@ -37,12 +61,10 @@ def _detect_sn() -> str:
                 return sn
         except Exception:
             pass
-    sn = os.environ.get('SN')
-    if not sn:
-        raise RuntimeError(
-            'Cannot determine mower SN — set SN env var or populate '
-            '/userdata/factory/sn')
-    return sn
+
+    raise RuntimeError(
+        'Cannot determine mower SN — set SN env var or populate '
+        '/userdata/lfi/json_config.json sn.value.code')
 
 
 def main():
