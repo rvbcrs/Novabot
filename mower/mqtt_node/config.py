@@ -50,8 +50,12 @@ def load(json_path: Path = DEFAULT_JSON,
         try:
             data = json.loads(json_path.read_text())
             mqtt = data.get('mqtt', {}) or {}
-            mqtt_host = mqtt.get('server', mqtt_host)
-            mqtt_port = int(mqtt.get('port', mqtt_port))
+            # Live mower shape (verified on LFIN1231000211 2026-04-27):
+            #   {"mqtt": {"set": 1, "value": {"addr": "<host>", "port": <p>}}}
+            # Older test shape: {"mqtt": {"server": "<host>", "port": <p>}}
+            value = mqtt.get('value') if isinstance(mqtt.get('value'), dict) else mqtt
+            mqtt_host = value.get('addr', value.get('server', mqtt_host))
+            mqtt_port = int(value.get('port', mqtt_port))
         except Exception:
             pass
 

@@ -72,3 +72,16 @@ def test_shadow_mode_env_falsy(tmp_path, monkeypatch, val):
     monkeypatch.setenv('OPEN_MQTT_NODE_SHADOW', val)
     cfg = load(json_path=json_cfg, http_addr_path=addr)
     assert cfg.shadow_mode is False
+
+
+def test_load_live_mower_json_shape(tmp_path, monkeypatch):
+    """Live mower /userdata/lfi/json_config.json wraps mqtt config in
+    {"set": 1, "value": {...}} with addr key. Verified on LFIN1231000211
+    2026-04-27."""
+    json_cfg = write(tmp_path, 'json_config.json', textwrap.dedent('''\
+        {"mqtt": {"set": 1, "value": {"addr": "192.168.0.222", "port": 1883}}}
+    '''))
+    addr = write(tmp_path, 'http_address.txt', '192.168.0.222:80')
+    cfg = load(json_path=json_cfg, http_addr_path=addr)
+    assert cfg.mqtt_host == '192.168.0.222'
+    assert cfg.mqtt_port == 1883
