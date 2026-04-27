@@ -21,6 +21,7 @@ import { adminStatusRouter } from './routes/adminStatus.js';
 import { adminPageHtml } from './routes/adminPage.js';
 import { authMiddleware, adminMiddleware, dashboardMiddleware } from './middleware/auth.js';
 import { dashboardRouter, initFirmwareSync } from './routes/dashboard.js';
+import { eventsRouter } from './notifications/route.js';
 
 const PROXY_MODE = process.env.PROXY_MODE ?? 'local';
 
@@ -186,6 +187,9 @@ if (PROXY_MODE === 'cloud') {
 
   // dashboard API — always mounted (setup/import routes needed by bootstrap wizard)
   app.use('/api/dashboard', dashboardRouter);
+
+  // Notification event ring (HTTP polling for HA / scripts)
+  app.use('/api/events', eventsRouter);
 
   // ── Maaier firmware log upload (geen /api/ prefix, geen auth) ───────────────
   app.post('/x3/log/upload', express.raw({ type: '*/*', limit: '50mb' }), (req, res) => {

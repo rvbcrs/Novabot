@@ -8,6 +8,7 @@
 
 import { db } from '../db/database.js';
 import { equipmentRepo } from '../db/repositories/equipment.js';
+import { detectAndDispatch } from '../notifications/eventDetector.js';
 
 // ── Sensor definities ────────────────────────────────────────────
 
@@ -723,6 +724,18 @@ export function updateDeviceData(sn: string, payload: Buffer): Map<string, strin
   // Sample signal history elke 30s
   if (changes.size > 0) {
     sampleSignalHistory(sn, snValues);
+  }
+
+  // Notification event detection — only mowers, only when there were
+  // changes (skip duplicate-frame ticks that the cache filtered out).
+  // The detector tracks its own per-SN snapshot and emits events only on
+  // real transitions, so calling here is cheap.
+  if (changes.size > 0 && sn.startsWith('LFIN')) {
+    try {
+      detectAndDispatch(sn, snValues);
+    } catch (err) {
+      console.warn('[NOTIFY] detectAndDispatch failed:', err);
+    }
   }
 
   return changes.size > 0 ? changes : null;
