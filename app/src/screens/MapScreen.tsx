@@ -266,6 +266,10 @@ export default function MapScreen() {
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
   const [actionsMenuVisible, setActionsMenuVisible] = useState(false);
+  // Plus icon → choice sheet: work area / obstacle / channel.
+  // Obstacle + channel require an existing work map (matches the
+  // MappingScreen mode-selector gating at MappingScreen.tsx:1309).
+  const [addMenuVisible, setAddMenuVisible] = useState(false);
   // Small helper used by the action-sheet items: close the sheet first, then
   // run the requested handler so the modal animates out before any dialog /
   // navigation fires.
@@ -1165,7 +1169,7 @@ export default function MapScreen() {
               </TouchableOpacity>
             )}
             <TouchableOpacity
-              onPress={() => (navigation as any).navigate('Mapping')}
+              onPress={() => setAddMenuVisible(true)}
               style={styles.addButton}
               activeOpacity={0.7}
             >
@@ -1950,6 +1954,88 @@ export default function MapScreen() {
             <TouchableOpacity
               style={styles.actionsSheetCancel}
               onPress={() => setActionsMenuVisible(false)}
+              activeOpacity={0.82}
+            >
+              <Text style={styles.actionsSheetCancelText}>{t('cancel')}</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={addMenuVisible} transparent animationType="fade" onRequestClose={() => setAddMenuVisible(false)}>
+        <View style={styles.actionsSheetOverlay}>
+          <TouchableOpacity style={styles.actionsSheetBackdrop} activeOpacity={1} onPress={() => setAddMenuVisible(false)} />
+          <View style={styles.actionsSheet}>
+            <View style={styles.actionsSheetHandle} />
+            <Text style={styles.actionsSheetTitle}>What do you want to add?</Text>
+
+            {(() => {
+              const noWork = workMaps.length === 0;
+              const items = [
+                {
+                  key: 'work',
+                  title: t('workArea') || 'Work area',
+                  sub: 'Outline a new mowing zone',
+                  icon: 'map-outline',
+                  iconColor: colors.emerald,
+                  disabled: false,
+                },
+                {
+                  key: 'obstacle',
+                  title: t('obstacle') || 'Obstacle',
+                  sub: noWork
+                    ? 'Add a no-go area inside a work zone (work area required)'
+                    : 'Add a no-go area inside an existing work zone',
+                  icon: 'warning-outline',
+                  iconColor: '#f59e0b',
+                  disabled: noWork,
+                },
+                {
+                  key: 'unicom',
+                  title: t('mapChannel') || 'Channel',
+                  sub: noWork
+                    ? 'Connect two work zones (work area required)'
+                    : 'Connect two existing work zones',
+                  icon: 'swap-horizontal-outline',
+                  iconColor: '#3b82f6',
+                  disabled: noWork,
+                },
+              ] as const;
+
+              return items.map(item => (
+                <TouchableOpacity
+                  key={item.key}
+                  style={[styles.actionsSheetItem, item.disabled && styles.actionsSheetItemDisabled]}
+                  onPress={() => {
+                    if (item.disabled) return;
+                    setAddMenuVisible(false);
+                    setTimeout(() => {
+                      (navigation as any).navigate('Mapping', { buildType: item.key });
+                    }, 0);
+                  }}
+                  activeOpacity={0.82}
+                  disabled={item.disabled}
+                >
+                  <View style={[styles.actionsSheetIconWrap, item.disabled && styles.actionsSheetIconWrapDisabled]}>
+                    <Ionicons
+                      name={item.icon as any}
+                      size={18}
+                      color={item.disabled ? colors.textMuted : item.iconColor}
+                    />
+                  </View>
+                  <View style={styles.actionsSheetTextWrap}>
+                    <Text style={[styles.actionsSheetItemTitle, item.disabled && styles.actionsSheetItemTitleDisabled]}>
+                      {item.title}
+                    </Text>
+                    <Text style={styles.actionsSheetItemSub}>{item.sub}</Text>
+                  </View>
+                </TouchableOpacity>
+              ));
+            })()}
+
+            <TouchableOpacity
+              style={styles.actionsSheetCancel}
+              onPress={() => setAddMenuVisible(false)}
               activeOpacity={0.82}
             >
               <Text style={styles.actionsSheetCancelText}>{t('cancel')}</Text>
