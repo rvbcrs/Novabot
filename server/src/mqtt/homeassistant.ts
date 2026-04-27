@@ -17,6 +17,16 @@ const HA_MQTT_PASS       = process.env.HA_MQTT_PASS ?? '';
 const HA_DISCOVERY_PREFIX = process.env.HA_DISCOVERY_PREFIX ?? 'homeassistant';
 const THROTTLE_MS        = parseInt(process.env.HA_THROTTLE_MS ?? '2000', 10);
 
+// Public URL the HA image entity hits to fetch the rendered map. HA's
+// MQTT image platform follows the URL we publish to `url_topic` and
+// caches it until the next publish — we re-publish on every throttled
+// sensor tick (with a ?ts=… cache-buster) so the image refreshes ~every
+// HA_THROTTLE_MS milliseconds.
+const RENDER_BASE_URL = process.env.RENDER_BASE_URL ?? '';
+// Throttle map-image refreshes separately — repainting the SVG is cheap
+// but spamming HA's image fetch every 2 s is overkill.
+const MAP_IMAGE_THROTTLE_MS = parseInt(process.env.HA_MAP_THROTTLE_MS ?? '15000', 10);
+
 let haClient: MqttClient | null = null;
 let connected = false;
 
@@ -111,11 +121,70 @@ function publishAllDiscoveryConfigs(): void {
   publishedConfigs.clear();
   for (const [sn, fields] of deviceCache.entries()) {
     publishOnlineDiscoveryConfig(sn);
+    publishMapImageDiscoveryConfig(sn);
     for (const field of fields.keys()) {
       const sensor = SENSORS.find(s => s.field === field);
       if (sensor) publishDiscoveryConfig(sn, sensor);
     }
   }
+}
+
+// ── Map image entity ─────────────────────────────────────────────
+//
+// HA's MQTT image platform fetches the URL we publish on `url_topic`
+// whenever a fresh value lands on the topic. This gives the user a
+// live mower-map dashboard tile out of the box — no custom Lovelace
+// card, no YAML.
+//
+// Mowers only (chargers don't have a map). Skips silently if
+// RENDER_BASE_URL is unset.
+
+function publishMapImageDiscoveryConfig(sn: string): void {
+  if (!haClient || !connected) return;
+  if (!RENDER_BASE_URL) return;
+  if (!sn.startsWith('LFIN')) return;
+
+  const configKey = `${sn}:map_image`;
+  if (publishedConfigs.has(configKey)) return;
+
+  const objectId = `novabot_${sn}_map`;
+  const configTopic = `${HA_DISCOVERY_PREFIX}/image/${objectId}/config`;
+
+  const config = {
+    name: 'Map',
+    unique_id: objectId,
+    object_id: objectId,
+    url_topic: `novabot/${sn}/map_url`,
+    content_type: 'image/svg+xml',
+    icon: 'mdi:map',
+    device: makeDevice(sn),
+    availability: [
+      { topic: `novabot/${sn}/availability`, payload_available: 'online', payload_not_available: 'offline' },
+      { topic: 'novabot/bridge/status', payload_available: 'online', payload_not_available: 'offline' },
+    ],
+    availability_mode: 'all',
+  };
+
+  haClient.publish(configTopic, JSON.stringify(config), { retain: true, qos: 1 }, (err) => {
+    if (!err) publishedConfigs.add(configKey);
+  });
+}
+
+const lastMapPublish = new Map<string, number>();
+
+function publishMapImageUrl(sn: string): void {
+  if (!haClient || !connected) return;
+  if (!RENDER_BASE_URL) return;
+  if (!sn.startsWith('LFIN')) return;
+
+  const now = Date.now();
+  const last = lastMapPublish.get(sn) ?? 0;
+  if (now - last < MAP_IMAGE_THROTTLE_MS) return;
+  lastMapPublish.set(sn, now);
+
+  // ?ts=… busts both the HA fetch cache AND any HTTP intermediary cache.
+  const url = `${RENDER_BASE_URL.replace(/\/$/, '')}/api/render/map/${sn}.svg?ts=${now}`;
+  haClient.publish(`novabot/${sn}/map_url`, url, { retain: true });
 }
 
 // ── State publishing ─────────────────────────────────────────────
@@ -159,6 +228,10 @@ export function forwardToHomeAssistant(
       haClient.publish(`novabot/${sn}/${field}`, displayValue, { retain: true });
     }
   }
+
+  // Publiceer ook de map-image URL (eigen throttle, zie publishMapImageUrl)
+  publishMapImageDiscoveryConfig(sn);
+  publishMapImageUrl(sn);
 }
 
 // ── Online/offline status ────────────────────────────────────────
