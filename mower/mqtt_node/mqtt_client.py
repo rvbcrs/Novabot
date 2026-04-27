@@ -38,8 +38,10 @@ class MqttClient:
 
     def connect(self) -> None:
         self._cli.connect(self.host, self.port, keepalive=self.keepalive)
+        # Subscribe to inbound only (app → mower). Dart/Receive_mqtt is the
+        # outbound (mower → app) direction we PUBLISH to — subscribing
+        # would create a feedback loop on our own responses.
         self._cli.subscribe(f'Dart/Send_mqtt/{self.sn}')
-        self._cli.subscribe(f'Dart/Receive_mqtt/{self.sn}')
 
     def publish(self, topic: str, payload: bytes, encrypted: bool = True,
                 qos: int = 1) -> None:

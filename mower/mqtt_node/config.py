@@ -3,9 +3,11 @@
 Sources (in precedence order):
 1. Environment variables (BROKER_HOST, BROKER_PORT, AES_BYPASS_SNS,
    ROS_DOMAIN_ID, MAP_DIR)
-2. /userdata/json_config.json — mqtt section
-3. /userdata/ota/http_address.txt — host:port (NO http:// prefix per
+2. /userdata/lfi/json_config.json — mqtt section
+3. /userdata/lfi/http_address.txt — host:port (NO http:// prefix per
    CLAUDE.md)
+
+Live binary string evidence: research/documents/mqtt_node-strings.md:752-753.
 """
 from __future__ import annotations
 import json
@@ -15,8 +17,8 @@ from pathlib import Path
 from typing import Set
 
 
-DEFAULT_JSON = Path('/userdata/json_config.json')
-DEFAULT_HTTP_ADDR = Path('/userdata/ota/http_address.txt')
+DEFAULT_JSON = Path('/userdata/lfi/json_config.json')
+DEFAULT_HTTP_ADDR = Path('/userdata/lfi/http_address.txt')
 DEFAULT_MAP_DIR = Path('/userdata/lfi/maps/')
 
 
