@@ -2,6 +2,16 @@
 
 Format: most-recent first. Each entry is dated and names the endpoint(s) affected.
 
+## 2026-04-27 — Work records: parse mower multipart body
+
+- `routes/equipmentState.ts`: `POST /api/nova-data/equipmentState/saveCutGrassRecord`
+  now uses `multer.none()` to parse the mower's multipart/form-data body.
+  Numeric fields are coerced (workTime, workArea, cutGrassHeight); list
+  fields (mapNames, week) are JSON-stringified before insert. Previously
+  every record was silently discarded as "lege body", masking a fully
+  wired DB pipeline. App's `queryCutGrassRecordPageByUserId` will now
+  return real rows once a mowing session completes.
+
 ## 2026-04-23 — Regression tests vs LFI fixtures + live dual-call
 
 - `__tests__/contract/regression.lfi-fixtures.test.ts`: for every hot
