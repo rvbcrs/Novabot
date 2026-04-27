@@ -52,12 +52,18 @@ def main():
 
     cfg = load_config()
     sn = _detect_sn()
-    log.info('open_mqtt_node starting for %s, broker %s:%s',
-             sn, cfg.mqtt_host, cfg.mqtt_port)
+    if cfg.shadow_mode:
+        log.warning('open_mqtt_node SHADOW MODE for %s, broker %s:%s — '
+                    'service calls logged only, outbound MQTT goes to '
+                    'Dart/Receive_mqtt_shadow/<SN>',
+                    sn, cfg.mqtt_host, cfg.mqtt_port)
+    else:
+        log.info('open_mqtt_node starting for %s, broker %s:%s',
+                 sn, cfg.mqtt_host, cfg.mqtt_port)
 
     # ROS 2 init
     rclpy.init()
-    bridge = Ros2Bridge()
+    bridge = Ros2Bridge(shadow_mode=cfg.shadow_mode)
     aggregator = SensorAggregator()
     bridge.bind_aggregator(aggregator)
 
@@ -90,7 +96,10 @@ def main():
 
     # MQTT client glue
     mqtt = MqttClient(host=cfg.mqtt_host, port=cfg.mqtt_port, sn=sn)
-    outbound_topic = f'Dart/Receive_mqtt/{sn}'
+    outbound_topic = (
+        f'Dart/Receive_mqtt_shadow/{sn}' if cfg.shadow_mode
+        else f'Dart/Receive_mqtt/{sn}'
+    )
 
     def publish_respond(respond_key: str, body: dict) -> None:
         wrapped = json.dumps({respond_key: body}, separators=(',', ':')).encode('utf-8')

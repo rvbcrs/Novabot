@@ -52,9 +52,17 @@ log = logging.getLogger('mqtt_node.ros2_bridge')
 
 
 class Ros2Bridge(Node):
-    def __init__(self):
-        super().__init__('mqtt_node')
+    def __init__(self, shadow_mode: bool = False):
+        # Shadow mode runs alongside the stock /mqtt_node binary —
+        # different node name avoids DDS clash. Service calls are
+        # logged-only (see call_service).
+        node_name = 'open_mqtt_node_shadow' if shadow_mode else 'mqtt_node'
+        super().__init__(node_name)
+        self._shadow_mode = shadow_mode
         self._cb = ReentrantCallbackGroup()
+        if shadow_mode:
+            log.warning('ros2_bridge: SHADOW MODE — service/action calls '
+                        'will be logged but not executed')
 
         # ── Service clients ────────────────────────────────────────────
         # Names come from research/documents/mqtt_node-graph-snapshot.txt
@@ -821,6 +829,10 @@ class Ros2Bridge(Node):
         callback group rather than blocking on a single-threaded executor
         — same pattern open_decision uses.
         """
+        if self._shadow_mode:
+            log.info('SHADOW: would call %s with %r',
+                     client.srv_name, request)
+            return None
         if not client.wait_for_service(timeout_sec=1.0):
             log.warning('ros2_bridge: %s not available', client.srv_name)
         future = client.call_async(request)

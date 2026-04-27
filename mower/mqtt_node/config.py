@@ -30,6 +30,13 @@ class Config:
     http_port: int
     map_dir: Path = DEFAULT_MAP_DIR
     aes_bypass_sns: Set[str] = field(default_factory=set)
+    # Shadow mode: run alongside the stock /mqtt_node binary for parity
+    # observation. Different ROS node name (open_mqtt_node_shadow) and
+    # different outbound MQTT topic (Dart/Receive_mqtt_shadow/<SN>) so the
+    # app keeps receiving stock responses. Service/action calls are
+    # logged-only — handlers see "service unavailable" and produce fake
+    # error responds that go to the shadow topic only.
+    shadow_mode: bool = False
 
 
 def load(json_path: Path = DEFAULT_JSON,
@@ -75,6 +82,9 @@ def load(json_path: Path = DEFAULT_JSON,
 
     map_dir = Path(os.environ.get('MAP_DIR', str(DEFAULT_MAP_DIR)))
 
+    shadow_mode = os.environ.get('OPEN_MQTT_NODE_SHADOW', '0').lower() in (
+        '1', 'true', 'yes', 'on')
+
     return Config(
         mqtt_host=mqtt_host,
         mqtt_port=mqtt_port,
@@ -82,4 +92,5 @@ def load(json_path: Path = DEFAULT_JSON,
         http_port=http_port,
         map_dir=map_dir,
         aes_bypass_sns=bypass,
+        shadow_mode=shadow_mode,
     )
