@@ -3717,3 +3717,26 @@ Plan complete and saved to `docs/superpowers/plans/2026-04-26-open-mqtt-node.md`
 **2. Inline Execution** — Execute tasks in this session using executing-plans, batch execution with checkpoints
 
 Which approach?
+
+---
+
+## Completion (2026-04-27)
+
+All Phase 0–5 tasks are complete on branch `feat/open-mqtt-node`. The branch is ready for code review + hardware acceptance.
+
+**Test status:** 34 unit + parity tests passing on Mac dev (no rclpy required for those).
+
+**Next steps:**
+
+1. Run `superpowers:code-reviewer` over the entire branch (full diff vs `master`).
+2. Resolve any CRITICAL findings inline before activation.
+3. Walk the user through `mower/mqtt_node/tests/runtime/acceptance_checklist.md` on the dev mower (192.168.0.100). Capture stock baseline first via `parity_capture.sh`.
+4. On user sign-off: tag `pre-open-mqtt-node-activation`, then merge to `master`.
+
+**Known follow-ups deferred past acceptance** (tracked in `research/documents/mqtt_node-gap-analysis.md` §9):
+
+- BLE GATT D-Bus server real implementation (needs RE-6 UUID capture)
+- OTA atomic install into `/userdata/ota` (currently stops at staged tar.gz)
+- 14 missing `report_state_robot` fields + `cover_path` subtree + replace hardcoded `16` constants
+- BLE provisioning command parsers (set_wifi_info / set_lora_info / set_mqtt_info / set_cfg_info dispatch from framer)
+- Wider MQTT inbound coverage (~34 commands still mapped to stock-only)
