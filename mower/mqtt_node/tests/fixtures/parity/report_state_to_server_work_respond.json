@@ -1,0 +1,58 @@
+{
+  "command": "report_state_to_server_work_respond",
+  "stock_payload": {
+    "type": "report_state_to_server_work_respond",
+    "message": {
+      "result": 0,
+      "value": {
+        "battery_power": 99,
+        "cpu_temperature": 46,
+        "cpu_usage": 44,
+        "disk_remaining": 7910,
+        "error_status": 0,
+        "gps_altitude": 10.247,
+        "gps_latitude": 52.14088848442,
+        "gps_longitude": 6.2310358287,
+        "gps_sat_num": 33,
+        "gps_status": 1,
+        "hv": "v0.0.1",
+        "loc_quality": 80,
+        "memory_remaining": 2357,
+        "ov": "V0.3.2",
+        "recharge_status": 9,
+        "sv": "v6.0.2-custom-24",
+        "task_mode": 2,
+        "timer_task": 0,
+        "wifi_rssi": 54,
+        "work_status": 9,
+        "working_time": 1591
+      }
+    }
+  },
+  "input_state": {
+    "battery_power": 99,
+    "battery_state": "CHARGING",
+    "cpu_temperature": 46,
+    "cpu_usage": 44,
+    "error_status": 0,
+    "loc_quality": 80,
+    "task_mode": 2,
+    "work_status": 9,
+    "recharge_status": 9,
+    "msg": "",
+    "gps_lat": 52.14088848442,
+    "gps_lng": 6.2310358287,
+    "gps_alt": 10.247,
+    "gps_state": "ENABLE",
+    "gps_sat_num": 33,
+    "gps_status": 1,
+    "wifi_rssi": 54,
+    "rtk_sat": 33,
+    "sv": "v6.0.2-custom-24",
+    "hv": "v0.0.1",
+    "ov": "V0.3.2",
+    "disk_mb": 7910,
+    "memory_mb": 2357,
+    "working_time_min": 1591
+  }
+}

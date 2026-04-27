@@ -1,0 +1,31 @@
+{
+  "command": "report_state_to_server_exception_respond",
+  "stock_payload": {
+    "type": "report_state_to_server_exception_respond",
+    "message": {
+      "result": 0,
+      "value": {
+        "robot_button_stop": false,
+        "robot_collision": false,
+        "robot_error_msg": "Error_code: 8 Lora disconnect for some time,may causing localization not good!!!",
+        "robot_error_status": 8,
+        "robot_overturn": false,
+        "robot_tilt": false,
+        "robot_upraise": false,
+        "robot_wheel_stall": 0
+      }
+    }
+  },
+  "input_state": {
+    "error_status": 8,
+    "error_msg": "Error_code: 8 Lora disconnect for some time,may causing localization not good!!!",
+    "incident": {
+      "button_stop": false,
+      "collision": false,
+      "overturn": false,
+      "tilt": false,
+      "upraise": false,
+      "wheel_stall": 0
+    }
+  }
+}

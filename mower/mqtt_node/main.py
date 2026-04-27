@@ -8,9 +8,13 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
+import shutil
 import signal
+import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 
 import rclpy
@@ -67,6 +71,87 @@ def _detect_sn() -> str:
         '/userdata/lfi/json_config.json sn.value.code')
 
 
+def _detect_versions() -> dict:
+    """Read sv/hv/ov from on-disk sources.
+
+    sv (software): parse /userdata/ota/upgrade_pkg/mower_firmware_*.deb
+       filename; falls back to '' if no .deb is staged.
+    ov (OS): /userdata/lfi/system_version.txt (e.g. 'V0.3.2').
+    hv (hardware): hardcoded 'v0.0.1' to match the stock catalog —
+       /userdata/lfi/mcu_message.json only carries an int that the
+       stock binary never seems to surface.
+    """
+    sv = ''
+    pkg_dir = Path('/userdata/ota/upgrade_pkg')
+    if pkg_dir.is_dir():
+        for f in pkg_dir.iterdir():
+            m = re.match(r'mower_firmware_(.+)\.deb$', f.name)
+            if m:
+                sv = m.group(1)
+                break
+
+    ov = ''
+    try:
+        ov = Path('/userdata/lfi/system_version.txt').read_text().strip()
+    except Exception:
+        pass
+
+    return {'sv': sv, 'hv': 'v0.0.1', 'ov': ov}
+
+
+def _read_system_metrics() -> dict:
+    """Snapshot polled system metrics for report_state_to_server_work_respond.
+
+    Returns mb counts + working_time_min (since boot).
+    """
+    disk_mb = 0
+    try:
+        v = os.statvfs('/userdata')
+        disk_mb = (v.f_bavail * v.f_frsize) // (1024 * 1024)
+    except Exception:
+        pass
+
+    memory_mb = 0
+    try:
+        with open('/proc/meminfo') as f:
+            for line in f:
+                if line.startswith('MemAvailable:'):
+                    memory_mb = int(line.split()[1]) // 1024
+                    break
+    except Exception:
+        pass
+
+    working_time_min = 0
+    try:
+        with open('/proc/uptime') as f:
+            working_time_min = int(float(f.read().split()[0]) // 60)
+    except Exception:
+        pass
+
+    return {
+        'disk_mb': disk_mb,
+        'memory_mb': memory_mb,
+        'working_time_min': working_time_min,
+    }
+
+
+def _read_wifi_rssi() -> int:
+    """Read wifi signal strength from /proc/net/wireless.
+    Returns 0 on failure (matches stock behavior when no wifi).
+    Format: link quality (0-70) — we keep the raw integer to match the
+    stock catalog's value range (54 in the live capture).
+    """
+    try:
+        with open('/proc/net/wireless') as f:
+            for line in f.readlines()[2:]:
+                parts = line.split()
+                if len(parts) >= 3:
+                    return int(float(parts[2].rstrip('.')))
+    except Exception:
+        pass
+    return 0
+
+
 def main():
     logging.basicConfig(
         level=logging.INFO,
@@ -88,6 +173,12 @@ def main():
     bridge = Ros2Bridge(shadow_mode=cfg.shadow_mode)
     aggregator = SensorAggregator()
     bridge.bind_aggregator(aggregator)
+
+    # One-shot version read (sv/hv/ov)
+    versions = _detect_versions()
+    aggregator.update_versions(**versions)
+    log.info('versions: sv=%r ov=%r hv=%r',
+             versions['sv'], versions['ov'], versions['hv'])
 
     # MQTT side: register every command on the bridge.
     # MQTT key → handler (keys per ros2_bridge docstrings + RE-5 catalog)
@@ -121,6 +212,10 @@ def main():
     outbound_topic = (
         f'Dart/Receive_mqtt_shadow/{sn}' if cfg.shadow_mode
         else f'Dart/Receive_mqtt/{sn}'
+    )
+    server_topic = (
+        f'Dart/Receive_server_mqtt_shadow/{sn}' if cfg.shadow_mode
+        else f'Dart/Receive_server_mqtt/{sn}'
     )
 
     def publish_respond(respond_key: str, body: dict) -> None:
@@ -173,6 +268,43 @@ def main():
         name='mqtt_node_publish_loop')
     publish_thread.start()
 
+    # Server-only reports (Dart/Receive_server_mqtt/<SN>) — 60 s cadence.
+    # Same loop also polls /proc + statvfs + /proc/net/wireless for the
+    # system metrics that go inside report_state_to_server_work_respond.
+    server_period_sec = 60.0
+
+    def publish_server_reports():
+        while not publish_stop.is_set():
+            try:
+                metrics = _read_system_metrics()
+                aggregator.update_system_metrics(**metrics)
+                aggregator.update_signal(
+                    wifi_rssi=_read_wifi_rssi(),
+                    rtk_sat=getattr(aggregator, '_rtk_sat', 0),
+                )
+                # Stock binary publishes BOTH every 60 s — exception is
+                # documented as event-driven but the catalog only saw it
+                # once per 30 min window. Mirror the cadence here for
+                # parity; receivers idempotently read either.
+                for builder_name in (
+                        'report_state_to_server_work_respond',
+                        'report_state_to_server_exception_respond'):
+                    builder = getattr(aggregator, f'build_{builder_name}', None)
+                    if builder is None:
+                        continue
+                    body = builder()
+                    payload = json.dumps(body, separators=(',', ':')).encode('utf-8')
+                    mqtt.publish(server_topic, payload, encrypted=True)
+            except Exception:
+                log.exception('publish_server_reports iteration failed')
+            publish_stop.wait(server_period_sec)
+
+    server_thread = threading.Thread(
+        target=publish_server_reports,
+        daemon=True,
+        name='mqtt_node_server_loop')
+    server_thread.start()
+
     # ROS2 spin
     executor = MultiThreadedExecutor(num_threads=4)
     executor.add_node(bridge)
@@ -192,6 +324,7 @@ def main():
     finally:
         publish_stop.set()
         publish_thread.join(timeout=2.0)
+        server_thread.join(timeout=2.0)
         http.stop()
         mqtt.loop_stop()
         mqtt.disconnect()

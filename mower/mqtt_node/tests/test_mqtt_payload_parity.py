@@ -67,6 +67,18 @@ def _drive(agg: SensorAggregator, state: dict) -> None:
             **{k: state[k] for k in mapping_keys if k in state})
     if 'cover_path' in state:
         agg.update_cover_path(state['cover_path'])
+    if any(k in state for k in ('sv', 'hv', 'ov')):
+        agg.update_versions(sv=state.get('sv', ''),
+                            hv=state.get('hv', ''),
+                            ov=state.get('ov', ''))
+    if any(k in state for k in ('disk_mb', 'memory_mb', 'working_time_min')):
+        agg.update_system_metrics(
+            disk_mb=state.get('disk_mb', 0),
+            memory_mb=state.get('memory_mb', 0),
+            working_time_min=state.get('working_time_min', 0))
+    if 'gps_sat_num' in state or 'gps_status' in state:
+        agg.update_gps_quality(sat_num=state.get('gps_sat_num', 0),
+                               status=state.get('gps_status', 0))
     if 'cpu_temperature' in state or 'cpu_usage' in state:
         agg.update_cpu(temp=state.get('cpu_temperature', 0),
                        usage=state.get('cpu_usage', 0))

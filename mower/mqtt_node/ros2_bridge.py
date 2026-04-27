@@ -306,21 +306,41 @@ class Ros2Bridge(Node):
                 state=self._battery_state)
 
     def _on_incident(self, msg) -> None:
-        """novabot_msgs/msg/ChassisIncident — feeds report_exception_state.
+        """novabot_msgs/msg/ChassisIncident — feeds both
+        report_exception_state (app) and
+        report_state_to_server_exception_respond (server).
         chassis_err = error_set_flag bitmask; rtk = healthy when not error_rtk.
+
+        Schema fields verified against
+        research/ros2_msg_definitions/novabot_msgs/msg/ChassisIncident.msg
+        (live SSH 2026-04-26).
         """
         if self._agg is None:
             return
+        wheel_stall = int(
+            bool(msg.error_left_motor_stall_stop)
+            + bool(msg.error_right_motor_stall_stop)
+            + bool(msg.error_blade_motor_stall_stop)
+        )
         self._agg.update_incident(
+            # App-side (report_exception_state)
             button_stop=bool(msg.error_push_button_stop),
             chassis_err=int(msg.error_set_flag),
             no_set_pin_code=bool(msg.error_no_set_pin_code),
             rtk=not bool(msg.error_rtk),
+            # Server-side (report_state_to_server_exception_respond robot_*)
+            collision=bool(msg.error_collision_stop),
+            overturn=bool(msg.error_turn_over),
+            tilt=bool(msg.error_tile_stop),
+            upraise=bool(msg.error_upraise_stop),
+            wheel_stall=wheel_stall,
         )
 
     def _on_bestpos(self, msg) -> None:
-        """novabot_msgs/msg/BestPos — RTK satellite count.
-        sol_in_svs = sats used in solution. wifi_rssi cached separately.
+        """novabot_msgs/msg/BestPos — RTK satellite count + GPS quality.
+        sol_in_svs = sats used in solution; svs = total tracked.
+        pos_type 48..56 = NARROW_INT range = RTK fix locked.
+        wifi_rssi cached separately (system-level metric, not ROS).
         """
         if self._agg is None:
             return
@@ -328,6 +348,12 @@ class Ros2Bridge(Node):
         self._agg.update_signal(
             wifi_rssi=getattr(self._agg, '_wifi_rssi', 0),
             rtk_sat=int(msg.sol_in_svs),
+        )
+        # gps_status: 1 when we have any positional fix (pos_type > NONE).
+        # gps_sat_num matches stock 'tracked sat' total = svs (33 in catalog).
+        self._agg.update_gps_quality(
+            sat_num=int(msg.svs),
+            status=1 if int(msg.pos_type) > 0 else 0,
         )
 
     def _on_gps(self, msg) -> None:

@@ -96,6 +96,16 @@ class SensorAggregator:
 
         self._incident_bits: Dict[str, bool] = {}
 
+        # ── Versions + system metrics (server-only reports) ──
+        self._sv: str = ''   # software version, e.g. v6.0.2-custom-24
+        self._hv: str = ''   # hardware version, e.g. v0.0.1
+        self._ov: str = ''   # OS version, e.g. V0.3.2
+        self._disk_remaining_mb: int = 0
+        self._memory_remaining_mb: int = 0
+        self._working_time_min: int = 0
+        self._gps_sat_num: int = 0
+        self._gps_status: int = 0  # 1 = GPS active
+
     # ── Update methods (called from ros2 callbacks) ────────────────
     def update_battery(self, *, power_percent: int, state: str) -> None:
         self._battery = _Battery(power_percent=power_percent, state=state)
@@ -175,6 +185,27 @@ class SensorAggregator:
     def update_incident(self, **bits: bool) -> None:
         for k, v in bits.items():
             self._incident_bits[k] = bool(v)
+
+    def update_versions(self, *, sv: str = '', hv: str = '', ov: str = '') -> None:
+        """Set the three version strings emitted in
+        report_state_to_server_work_respond. Called once at main.py
+        startup from on-disk sources."""
+        self._sv = str(sv)
+        self._hv = str(hv)
+        self._ov = str(ov)
+
+    def update_system_metrics(self, *, disk_mb: int = 0, memory_mb: int = 0,
+                              working_time_min: int = 0) -> None:
+        """Polled metrics from /proc + statvfs (every ~30 s in main.py)."""
+        self._disk_remaining_mb = int(disk_mb)
+        self._memory_remaining_mb = int(memory_mb)
+        self._working_time_min = int(working_time_min)
+
+    def update_gps_quality(self, *, sat_num: int = 0, status: int = 0) -> None:
+        """GPS satellite count + status flag (1 = active) for the server
+        work respond. Cached from /gps_raw or /bestpos_parsed_data."""
+        self._gps_sat_num = int(sat_num)
+        self._gps_status = int(status)
 
     def update_cover_path(self, path: Dict[str, Any]) -> None:
         """Cache the cover_path subtree emitted in report_state_timer_data.
@@ -284,4 +315,66 @@ class SensorAggregator:
             'rtk': bool(bits.get('rtk', False)),
             'rtk_sat': int(self._rtk_sat),
             'wifi_rssi': int(self._wifi_rssi),
+        }
+
+    # ── Server-only reports (Dart/Receive_server_mqtt/<SN>) ──────────
+    def build_report_state_to_server_work_respond(self) -> Dict[str, Any]:
+        """Match stock server-only periodic heartbeat
+        (research/documents/mqtt_node-payload-catalog.md). Envelope shape:
+            { "type": "report_state_to_server_work_respond",
+              "message": { "result": 0, "value": { ...21 fields... } } }
+        """
+        return {
+            'type': 'report_state_to_server_work_respond',
+            'message': {
+                'result': 0,
+                'value': {
+                    'battery_power': self._battery.power_percent,
+                    'cpu_temperature': self._cpu_temperature,
+                    'cpu_usage': self._cpu_usage,
+                    'disk_remaining': self._disk_remaining_mb,
+                    'error_status': self._error_status,
+                    'gps_altitude': self._gps.altitude,
+                    'gps_latitude': self._gps.latitude,
+                    'gps_longitude': self._gps.longitude,
+                    'gps_sat_num': self._gps_sat_num,
+                    'gps_status': self._gps_status,
+                    'hv': self._hv,
+                    'loc_quality': self._loc_quality,
+                    'memory_remaining': self._memory_remaining_mb,
+                    'ov': self._ov,
+                    'recharge_status': self._recharge_status,
+                    'sv': self._sv,
+                    'task_mode': self._task_mode,
+                    'timer_task': 0,
+                    'wifi_rssi': self._wifi_rssi,
+                    'work_status': self._work_status,
+                    'working_time': self._working_time_min,
+                },
+            },
+        }
+
+    def build_report_state_to_server_exception_respond(self) -> Dict[str, Any]:
+        """Match stock server-only event-driven exception report.
+        Uses robot_* prefixed fields (different from app-side
+        report_exception_state). Envelope shape:
+            { "type": "report_state_to_server_exception_respond",
+              "message": { "result": 0, "value": { ...8 fields... } } }
+        """
+        bits = self._incident_bits
+        return {
+            'type': 'report_state_to_server_exception_respond',
+            'message': {
+                'result': 0,
+                'value': {
+                    'robot_button_stop': bool(bits.get('button_stop', False)),
+                    'robot_collision': bool(bits.get('collision', False)),
+                    'robot_error_msg': self._error_msg,
+                    'robot_error_status': self._error_status,
+                    'robot_overturn': bool(bits.get('overturn', False)),
+                    'robot_tilt': bool(bits.get('tilt', False)),
+                    'robot_upraise': bool(bits.get('upraise', False)),
+                    'robot_wheel_stall': int(bits.get('wheel_stall', 0)),
+                },
+            },
         }
