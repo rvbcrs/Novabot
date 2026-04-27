@@ -279,3 +279,48 @@ P2.13 ble_handler.py  — GATT server + BLE provisioning commands
 ```
 
 A reader of this gap analysis can plan Phase 2 implementation order without reopening any other file.
+
+---
+
+## 9. Status as of 2026-04-27
+
+After Phase 0–4 of `docs/superpowers/plans/2026-04-26-open-mqtt-node.md`:
+
+- AES, MQTT client, command dispatcher, ROS2 bridge skeleton + ~16 command handlers, sensor aggregator, HTTP loops, OTA client, BLE frame parser → all implemented + unit-tested on Mac dev (34 tests pass)
+- BLE GATT D-Bus server stub (real wiring requires bluez on the mower + RE-6 UUID trace)
+- Activation/rollback scripts ready (`deploy.sh`, `start.sh`, `rollback.sh`)
+- Runtime parity harness ready (manual; `parity_capture.sh` + `parity_smoke.sh` + acceptance checklist)
+- Payload parity test framework + 3 fixtures (idle capture: report_state_robot, report_state_timer_data, report_exception_state)
+
+### Coverage estimate vs stock binary
+
+| Surface | Wired | Stock | % |
+|---|---|---|---|
+| MQTT inbound commands | 16 | ~50 | 32% |
+| MQTT outbound reports | 3 | ~10 | 30% |
+| ROS2 service clients | 16 | ~30 | 53% |
+| ROS2 action clients | 6 | 6 | 100% |
+| BLE handler | framer done | framer + GATT | partial |
+| OTA | download + verify + stage | + atomic install | partial |
+| HTTP | net_check + http_work | same | 100% |
+
+### Gaps surfaced by parity tests
+
+The Phase 3 parity test framework caught these divergences from stock and forced corrections in `sensor_aggregator.py`:
+
+- `battery_state` was emitted in `build_report_state_robot` — should be in `build_report_state_timer_data` only
+- `wifi_rssi`, `rtk_sat` were emitted in `build_report_state_robot` — should be in `build_report_exception_state` only
+- Builder name was `build_report_state_exception` (our invention) — renamed to `build_report_exception_state` to match stock topic
+- Exception fields used `robot_*` prefix (our invention) — renamed to stock-exact `button_stop`, `chassis_err`, `no_set_pin_code`, `rtk`, `rtk_sat`, `wifi_rssi`
+
+### Remaining gaps not yet surfaced (no fixture pressure yet)
+
+- `report_state_robot` extras we don't emit: `avoiding_obstacle_time`, `cov_estimate_time`, `cov_map_path`, `cov_remaining_area`, `current_map_ids`, `finished_num`, `light`, `map_num`, `perception_level`, `prev_recharge_status`, `prev_task_mode`, `prev_work_status`, `request_map_ids`, `valid_cov_work_time`
+- `report_state_timer_data` extras we don't emit: `cover_path` subtree, `if_mower_can_finish`
+- `start_edit_or_assistant_map_flag` and `if_scan_unicom_obstacle` hardcoded to `16` in our builder — should track real ROS state, not constants
+- BLE provisioning commands not parsed in framer dispatcher (set_wifi_info, set_lora_info, set_mqtt_info, set_cfg_info)
+- Domain whitelist removal verified in `mqtt_client.py` — set_mqtt_info `addr` field bypasses any host check (intentional, this is *the* unique feature of the open replacement)
+
+### Resolution path
+
+Remaining work tracked in a follow-up plan once hardware acceptance signs off. The merge gate is the acceptance checklist at `mower/mqtt_node/tests/runtime/acceptance_checklist.md` — runtime parity smoke + user sign-off.
