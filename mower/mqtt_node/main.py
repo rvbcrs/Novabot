@@ -91,6 +91,13 @@ def main():
 
     # MQTT client glue
     mqtt = MqttClient(host=cfg.mqtt_host, port=cfg.mqtt_port, sn=sn)
+    outbound_topic = f'Dart/Receive_mqtt/{sn}'
+
+    def publish_respond(respond_key: str, body: dict) -> None:
+        wrapped = json.dumps({respond_key: body}, separators=(',', ':')).encode('utf-8')
+        mqtt.publish(outbound_topic, wrapped, encrypted=True)
+
+    dispatcher.set_respond_publisher(publish_respond)
 
     def on_inbound(_sn, _topic, payload_bytes):
         try:
