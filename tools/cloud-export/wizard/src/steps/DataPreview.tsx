@@ -37,6 +37,10 @@ export default function DataPreview({ loginData, onDone }: Props) {
   const [workRecordCount, setWorkRecordCount] = useState<number | null>(null);
   const [messageCount, setMessageCount] = useState<number | null>(null);
   const [includeFirmware, setIncludeFirmware] = useState(false);
+  // Optional override SN for the OTA firmware lookup. Lets the user
+  // probe whether a non-bound mower (e.g. someone else's beta unit)
+  // has a newer version than what the cloud offers them by default.
+  const [firmwareSnOverride, setFirmwareSnOverride] = useState('');
   const [exporting, setExporting] = useState(false);
   const [steps, setSteps] = useState<ExportStep[]>([]);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -81,6 +85,7 @@ export default function DataPreview({ loginData, onDone }: Props) {
         password: loginData.password,
         devices: loginData.devices,
         includeFirmware,
+        firmwareSnOverride: firmwareSnOverride.trim() || undefined,
       }),
     });
 
@@ -178,6 +183,31 @@ export default function DataPreview({ loginData, onDone }: Props) {
                 <p className="text-xs text-gray-500 mt-1">{t('export.firmware_warning')}</p>
               </div>
             </label>
+
+            {/* Firmware SN override — checks OTA for a specific mower SN
+                instead of the user's own. Useful for probing beta-channel
+                firmware (e.g. a v6.0.3 attached to someone else's unit). */}
+            {includeFirmware && (
+              <div className="bg-white/5 rounded-xl p-4 space-y-2">
+                <label className="block text-sm text-gray-300">
+                  Firmware lookup SN <span className="text-xs text-gray-500">(optional)</span>
+                </label>
+                <input
+                  type="text"
+                  value={firmwareSnOverride}
+                  onChange={e => setFirmwareSnOverride(e.target.value)}
+                  placeholder="e.g. LFIN2231200027"
+                  spellCheck={false}
+                  autoCapitalize="characters"
+                  className="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:outline-none focus:border-sky-500"
+                />
+                <p className="text-xs text-gray-500">
+                  Leave blank to use your bound mowers. Set to a specific SN
+                  to query that unit's OTA channel (e.g. someone reporting a
+                  newer firmware than the cloud serves you).
+                </p>
+              </div>
+            )}
 
             <button
               onClick={handleExport}

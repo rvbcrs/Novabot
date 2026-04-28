@@ -255,7 +255,6 @@ services:
       - "53:53/udp"     # ← Add this for built-in DNS
     environment:
       PORT: 80
-      JWT_SECRET: change_me_to_a_random_secret
       ENABLE_TLS: "true"               # ← Required for Novabot app
       ENABLE_DNS: "true"               # ← Add this
       TARGET_IP: "192.168.0.100"       # ← Your server IP

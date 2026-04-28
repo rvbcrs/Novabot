@@ -595,7 +595,7 @@ export function createServer(): http.Server {
 
   // ── API: Discover OpenNova servers on the network ────────────────────────
   // Strategy 1: mDNS (opennovabot.local)
-  // Strategy 2: HTTP probe on local subnet port 3000 (/api/nova-user/equipment/*)
+  // Strategy 2: HTTP probe on local subnet port 80 (/api/nova-user/equipment/*)
   app.get('/api/discover', async (_req, res) => {
     const servers: { ip: string; source: string }[] = [];
     const net = require('os').networkInterfaces();
@@ -619,7 +619,7 @@ export function createServer(): http.Server {
       await mdnsPromise;
     } catch {}
 
-    // 2. Probe local subnet for OpenNova server on port 3000
+    // 2. Probe local subnet for OpenNova server on port 80
     // Find local IP and scan .1-.254 with fast TCP connect + HTTP check
     const localIps: string[] = [];
     for (const ifaces of Object.values(net)) {
@@ -636,7 +636,7 @@ export function createServer(): http.Server {
       const candidates = [1, 177, 100, 2, 3, 4, 5, 6, 7, 8, 9, 10, 50, 200];
       async function probeOpenNova(ip: string): Promise<boolean> {
         try {
-          const r = await fetch(`http://${ip}:3000/api/setup/health`, {
+          const r = await fetch(`http://${ip}/api/setup/health`, {
             signal: AbortSignal.timeout(1500),
           });
           const body = await r.json() as Record<string, unknown>;
@@ -660,7 +660,7 @@ export function createServer(): http.Server {
     // 3. Also check own IP
     if (localIps.length > 0 && !servers.some(s => s.ip === localIps[0])) {
       try {
-        const r = await fetch(`http://${localIps[0]}:3000/api/setup/health`, {
+        const r = await fetch(`http://${localIps[0]}/api/setup/health`, {
           signal: AbortSignal.timeout(1000),
         });
         const body = await r.json() as Record<string, unknown>;
@@ -888,7 +888,7 @@ export function createServer(): http.Server {
     if (serverAddr === 'mqtt.lfibot.com') {
       // Mower is connected to the MAIN server's MQTT broker (via DNS rewrite)
       // → send OTA via the main server's dashboard API instead of bootstrap's own broker
-      const mainServerUrl = 'http://localhost:3000';
+      const mainServerUrl = 'http://localhost';
       try {
         // First register the firmware version on the main server
         const regResp = await fetch(`${mainServerUrl}/api/dashboard/ota/versions`, {
@@ -940,7 +940,7 @@ export function createServer(): http.Server {
     if (serverAddr === 'mqtt.lfibot.com') {
       try {
         const { io: ioClient } = await import('socket.io-client');
-        const serverSocket = ioClient('http://localhost:3000', { transports: ['websocket'] });
+        const serverSocket = ioClient('http://localhost', { transports: ['websocket'] });
         serverSocket.on('ota:event', (data: { sn: string; eventType: string; data: any }) => {
           if (data.sn !== sn) return;
           const otaData = data.data || {};
@@ -982,8 +982,8 @@ export function createServer(): http.Server {
   app.get('/api/existing-account', async (_req, res) => {
     // Approach 1: Try the API endpoint (works after container rebuild)
     const candidates = selectedIp
-      ? [`http://${selectedIp}`, 'http://localhost:3000']
-      : ['http://localhost:3000'];
+      ? [`http://${selectedIp}`, 'http://localhost']
+      : ['http://localhost'];
 
     for (const base of candidates) {
       try {
@@ -1112,8 +1112,8 @@ export function createServer(): http.Server {
 
     // Try Docker container first, fall back to local dev server (localhost:3000)
     const candidates = selectedIp
-      ? [`http://${selectedIp}`, 'http://localhost:3000']
-      : ['http://localhost:3000'];
+      ? [`http://${selectedIp}`, 'http://localhost']
+      : ['http://localhost'];
 
     let lastError = '';
     for (const base of candidates) {

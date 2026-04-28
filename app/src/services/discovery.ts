@@ -17,7 +17,7 @@ async function probeServer(ip: string): Promise<boolean> {
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT);
-    const res = await fetch(`http://${ip}:3000/api/setup/health`, {
+    const res = await fetch(`http://${ip}/api/setup/health`, {
       signal: controller.signal,
     });
     clearTimeout(timer);

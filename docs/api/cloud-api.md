@@ -1,7 +1,7 @@
 # Cloud API (App → Server)
 
 All endpoints below are called by the **Novabot Flutter app**.
-Original base URL: `https://app.lfibot.com` → local `http://<server-ip>:3000`
+Original base URL: `https://app.lfibot.com` → local `http://<server-ip>` (port 80)
 
 All authenticated endpoints require a JWT `Authorization` header.
 See [Authentication](authentication.md) for details.

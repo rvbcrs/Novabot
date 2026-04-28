@@ -307,7 +307,7 @@ export default function App() {
   }, []);
 
   const openDashboard = useCallback(() => {
-    const url = `http://${state.mqttAddr.split(':')[0]}:3000`;
+    const url = `http://${state.mqttAddr.split(':')[0]}`;
     window.open(url, '_blank', 'noopener,noreferrer');
   }, [state.mqttAddr]);
 

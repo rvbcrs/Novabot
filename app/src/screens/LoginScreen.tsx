@@ -58,7 +58,7 @@ export default function LoginScreen({ navigation, onLoginSuccess }: Props) {
 
     setScanning(true);
     discoverServers((server) => {
-      setServerUrlState(`http://${server.ip}:3000`);
+      setServerUrlState(`http://${server.ip}`);
     }).finally(() => setScanning(false));
   }, [loaded, serverUrl]);
 
@@ -159,7 +159,7 @@ export default function LoginScreen({ navigation, onLoginSuccess }: Props) {
                 setServerUrlState(text);
                 setError('');
               }}
-              placeholder="http://192.168.0.177:3000"
+              placeholder="http://192.168.0.222"
               placeholderTextColor={colors.textMuted}
               autoCapitalize="none"
               autoCorrect={false}

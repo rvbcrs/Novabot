@@ -24,6 +24,8 @@ import { BatteryRing } from '../components/BatteryRing';
 import { MowerScene } from '../components/mower/MowerScene';
 import { useMowerState } from '../hooks/useMowerState';
 import { useActiveMower } from '../hooks/useActiveMower';
+import { useActiveMowerContext } from '../context/ActiveMowerContext';
+import { useMowQueue } from '../context/MowQueueContext';
 import { MowerPickerChevron } from '../components/MowerPickerChevron';
 import { ApiClient, type Schedule } from '../services/api';
 import { getServerUrl, getToken } from '../services/auth';
@@ -426,6 +428,8 @@ export default function HomeScreen() {
   const route = useRoute<RouteProp<MainTabParams, 'Home'>>();
   const { devices, connected } = useMowerState();
   const { activeMower, activeMowerSn, setActiveMowerSn } = useActiveMower();
+  const { activeMowerSn: pickedMowerSn, hydrated: activePickHydrated } = useActiveMowerContext();
+  const { queue: mowQueue } = useMowQueue();
   const { t } = useI18n();
   const { colorScheme, colors } = useTheme();
   const styles = useStyles(makeStyles);
@@ -582,6 +586,27 @@ export default function HomeScreen() {
   useEffect(() => {
     void loadHomeMeta();
   }, [loadHomeMeta, connected]);
+
+  // Auto-select the only online set so the user doesn't have to tap
+  // "Activate this set" when there's nothing to disambiguate. Runs only
+  // when the picker hasn't been hydrated to a real choice yet — never
+  // overrides an explicit user pick. Triggers when deviceSets changes.
+  useEffect(() => {
+    if (!activePickHydrated) return;
+    if (pickedMowerSn) return;
+    const setsWithMower = deviceSets.filter((s) => s.mower);
+    if (setsWithMower.length === 0) return;
+    const onlineSets = setsWithMower.filter(
+      (s) => s.mower?.online || s.charger?.online,
+    );
+    const candidate =
+      onlineSets.length === 1
+        ? onlineSets[0]
+        : setsWithMower.length === 1
+          ? setsWithMower[0]
+          : null;
+    if (candidate?.mower) setActiveMowerSn(candidate.mower.sn);
+  }, [deviceSets, activePickHydrated, pickedMowerSn, setActiveMowerSn]);
 
   // Server emits `maps:changed` whenever a map is created / deleted. Refetch
   // so the Start button immediately reflects the new DB state even if the
@@ -1361,6 +1386,31 @@ export default function HomeScreen() {
               <View style={[styles.progressFill, { width: `${mower.mowingProgress}%` as any, backgroundColor: activityColor }]} />
             </View>
           )}
+
+          {/* Multi-map queue banner — visible while sequential mowing
+              is active. Shows "current of total" so the user knows the
+              session is part of a larger sweep, plus the next zone
+              that will fire after the current one finishes. */}
+          {mowQueue && mowQueue.sn === mower.sn && mowQueue.remaining.length > 0 && (() => {
+            const total = mowQueue.remaining.length;
+            const next = mowQueue.remaining[0];
+            const upcoming = mowQueue.remaining.slice(1).map(r => r.mapName).join(', ');
+            return (
+              <View style={[styles.queueBanner, { borderColor: activityColor }]}>
+                <Ionicons name="layers-outline" size={16} color={activityColor} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.queueBannerTitle}>
+                    {t('multiMapMowing', undefined) || 'Multi-zone mowing'}
+                  </Text>
+                  <Text style={styles.queueBannerSub}>
+                    {(t('mowingNow', undefined) || 'Mowing')} {next.mapName}
+                    {total > 1 ? ` · ${total - 1} ${t('zonesLeft', undefined) || 'zones left'}` : ''}
+                    {upcoming ? ` (${(t('next', undefined) || 'next')}: ${upcoming})` : ''}
+                  </Text>
+                </View>
+              </View>
+            );
+          })()}
 
 
           {/* Mowing/mapping/returning: show progress map instead of battery ring.
@@ -2489,6 +2539,27 @@ const makeStyles = (c: Colors) => StyleSheet.create({
   progressFill: {
     height: '100%',
     borderRadius: 3,
+  },
+  queueBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    backgroundColor: 'rgba(15,23,42,0.04)',
+    marginBottom: 12,
+  },
+  queueBannerTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: c.text,
+    marginBottom: 2,
+  },
+  queueBannerSub: {
+    fontSize: 11,
+    color: c.textDim,
   },
   batteryContainer: {
     position: 'relative',

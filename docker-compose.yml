@@ -39,10 +39,19 @@ services:
       # ENABLE_DNS: "true"
       # UPSTREAM_DNS: 8.8.8.8
 
-      # Optional: Home Assistant MQTT bridge
-      # HA_MQTT_HOST: 192.168.0.248
-      # HA_MQTT_PORT: 1883
-      # HA_MQTT_USER: mqtt
-      # HA_MQTT_PASS: mqtt
+      # Home Assistant MQTT bridge — auto-discover mowers + map images
+      HA_MQTT_HOST: ${HA_MQTT_HOST:-}
+      HA_MQTT_PORT: ${HA_MQTT_PORT:-1883}
+      HA_MQTT_USER: ${HA_MQTT_USER:-}
+      HA_MQTT_PASS: ${HA_MQTT_PASS:-}
+
+      # Public base URL of the OpenNova server — needed so HA can fetch
+      # the rendered map SVG via image entity. Without this the bridge
+      # still publishes sensors but no image entity is discovered.
+      RENDER_BASE_URL: ${RENDER_BASE_URL:-http://192.168.0.222}
+
+      # Min interval (ms) between map image republishes. Default 15s
+      # keeps HA responsive without spamming the broker.
+      HA_MAP_THROTTLE_MS: ${HA_MAP_THROTTLE_MS:-15000}
     volumes:
       - ./data:/data

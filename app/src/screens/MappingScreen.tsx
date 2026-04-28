@@ -421,15 +421,18 @@ export default function MappingScreen() {
   }, [chargerAction]);
 
   // ── Detect if already mapping (from sensor data on screen open) ──
-  const mapFlagRaw = sensors.start_edit_or_assistant_map_flag ?? '0';
-  const isMappingActive = (mapFlagRaw !== '0' && mapFlagRaw !== '') ||
-    sensors.task_mode === '3';
-
-  useEffect(() => {
-    if (isMappingActive && mappingState === 'idle') {
-      setMappingState('mapping');
-    }
-  }, [isMappingActive, mappingState]);
+  // Used by the idle-state UI to surface a "session in progress" banner
+  // instead of silently jumping past the mode-selection chooser.
+  //
+  // We trust ONLY msg + task_mode — start_edit_or_assistant_map_flag is a
+  // derived value inside mqtt_node that has been observed to stay set
+  // after a failed save sequence (live capture 2026-04-27 on
+  // LFIN1231000211: msg=COVERAGE Work:WAIT yet flag=1, indefinitely).
+  // The mower's authoritative human-visible state is the msg string from
+  // RobotStatus.
+  const robotMsg = String(sensors.msg ?? '');
+  const isMappingActive = sensors.task_mode === '3'
+    || robotMsg.includes('Mode:MAPPING');
 
   // ── Elapsed timer ──
   useEffect(() => {
@@ -1289,6 +1292,36 @@ sendCommand({ save_recharge_pos: { mapName: 'map0', cmd_num: cmdNumRef.current++
                 </Text>
               )}
             </View>
+
+            {/* Resume banner — surfaces only when the mower reports an
+                active mapping/edit flag. Lets users explicitly decide
+                whether to resume vs start a fresh session, instead of
+                being auto-skipped past the chooser. */}
+            {isMappingActive && (
+              <View style={[styles.card, { borderColor: colors.amber, borderWidth: 1 }]}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                  <Ionicons name="time-outline" size={20} color={colors.amber} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.cardTitle, { marginBottom: 2 }]}>
+                      {t('mappingSessionDetected', undefined) || 'Mapping session in progress'}
+                    </Text>
+                    <Text style={[styles.modeBtnSub, { color: colors.textDim }]}>
+                      {t('mappingSessionResumeHint', undefined) ||
+                        'The mower is still in mapping mode. Pick a type below to continue, or cancel from the mower.'}
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    onPress={() => setMappingState('mapping')}
+                    style={[styles.modeBtn, { paddingHorizontal: 12, paddingVertical: 8 }]}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[styles.modeBtnTitle, { color: colors.amber, fontSize: 12 }]}>
+                      {t('resume', undefined) || 'Resume'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
 
             {/* Mode selection */}
             <View style={styles.card}>

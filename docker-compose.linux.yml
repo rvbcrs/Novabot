@@ -19,7 +19,6 @@ services:
     environment:
       PORT: 80
       PROXY_MODE: ${PROXY_MODE:-local}
-      JWT_SECRET: ${JWT_SECRET:-change_me_to_a_long_random_secret}
       DB_PATH: /data/novabot.db
       STORAGE_PATH: /data/storage
       FIRMWARE_PATH: /data/firmware

@@ -98,7 +98,7 @@ export default function AppSettingsScreen({
     setScanning(true);
     setDiscoveredServers([]);
     discoverServers((server) => {
-      const url = `http://${server.ip}:3000`;
+      const url = `http://${server.ip}`;
       setDiscoveredServers((prev) => prev.includes(url) ? prev : [...prev, url]);
     }).finally(() => setScanning(false));
   };
@@ -189,7 +189,7 @@ export default function AppSettingsScreen({
                   style={styles.input}
                   value={editingUrl}
                   onChangeText={setEditingUrl}
-                  placeholder="http://192.168.0.177:3000"
+                  placeholder="http://192.168.0.222"
                   placeholderTextColor={colors.textMuted}
                   autoCapitalize="none"
                   autoCorrect={false}

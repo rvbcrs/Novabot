@@ -150,12 +150,16 @@ function publishMapImageDiscoveryConfig(sn: string): void {
   const objectId = `novabot_${sn}_map`;
   const configTopic = `${HA_DISCOVERY_PREFIX}/image/${objectId}/config`;
 
+  // NOTE: `content_type` is mutually exclusive with `url_topic` in HA's MQTT
+  // image platform — when fetching by URL, HA derives the MIME type from the
+  // HTTP response Content-Type header. Including `content_type` here causes
+  // the discovery to fail with "Option content_type can not be used together
+  // with url_topic" and the entity is silently dropped.
   const config = {
     name: 'Map',
     unique_id: objectId,
     object_id: objectId,
     url_topic: `novabot/${sn}/map_url`,
-    content_type: 'image/svg+xml',
     icon: 'mdi:map',
     device: makeDevice(sn),
     availability: [
@@ -183,7 +187,10 @@ function publishMapImageUrl(sn: string): void {
   lastMapPublish.set(sn, now);
 
   // ?ts=… busts both the HA fetch cache AND any HTTP intermediary cache.
-  const url = `${RENDER_BASE_URL.replace(/\/$/, '')}/api/render/map/${sn}.svg?ts=${now}`;
+  // PNG, not SVG — HA's image_proxy returns 500 on SVG content fetched via
+  // `url_topic` (HA expects raster). Resvg server-side rasterizes the same
+  // SVG so HA renders the image cleanly with no client-side conversion.
+  const url = `${RENDER_BASE_URL.replace(/\/$/, '')}/api/render/map/${sn}.png?ts=${now}`;
   haClient.publish(`novabot/${sn}/map_url`, url, { retain: true });
 }
 

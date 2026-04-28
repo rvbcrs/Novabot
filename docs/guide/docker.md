@@ -49,7 +49,6 @@ services:
       - "1883:1883"   # MQTT broker
     environment:
       PORT: 80
-      JWT_SECRET: change_me_to_a_random_secret  # Generate one with: openssl rand -hex 32
       ENABLE_TLS: "true"  # Required for the official Novabot app (HTTPS)
     volumes:
       - novabot-data:/data
@@ -57,9 +56,6 @@ services:
 volumes:
   novabot-data:
 ```
-
-!!! warning "Change the JWT_SECRET"
-    Replace `change_me_to_a_random_secret` with a random string. You can generate one with `openssl rand -hex 32`. If you don't change it, a random secret is generated at startup (tokens won't survive container restarts).
 
 ### 3. Start the container
 
@@ -118,7 +114,6 @@ If the Novabot cloud is down or automatic login doesn't work:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `JWT_SECRET` | `change_me_to_a_random_secret` | Secret key for authentication tokens. **Change this!** |
 | `PORT` | `80` | Internal HTTP port (mapped to 3000 externally) |
 | `DB_PATH` | `/data/novabot.db` | SQLite database location |
 | `STORAGE_PATH` | `/data/storage` | Upload storage (maps, firmware) |
@@ -188,7 +183,6 @@ Entities will auto-appear in Home Assistant under the device name matching the m
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `JWT_SECRET` | — | Auth token secret (**required**) |
 | `PORT` | `80` | Internal HTTP port |
 | `DB_PATH` | `/data/novabot.db` | Database path |
 | `STORAGE_PATH` | `/data/storage` | File storage path |

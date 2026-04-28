@@ -55,7 +55,6 @@ services:
       - "1883:1883"    # MQTT broker
     environment:
       PORT: 80
-      JWT_SECRET: change-this-to-something-random
       ENABLE_TLS: "true"
       DB_PATH: /data/novabot.db
       STORAGE_PATH: /data/storage

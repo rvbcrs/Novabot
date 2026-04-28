@@ -170,6 +170,65 @@ function translateLocalization(raw: string): string {
   }
 }
 
+// WorkStatus enum mapping — mirrors state_machine.WorkStatus in mower/.
+// Published as numeric int in RobotStatus.work_status. Display in HA needs
+// human-readable labels because raw values like 9 / 100 / 150 are opaque.
+const WORK_STATUS_LABELS: Record<number, string> = {
+  0: 'Idle',
+  1: 'Sensor init',
+  2: 'GPS init',
+  3: 'Localization init',
+  9: 'Ready',
+  10: 'Leaving dock',
+  20: 'Mapping work zone',
+  21: 'Mapping obstacle',
+  22: 'Mapping channel',
+  23: 'Mapping channel→station',
+  24: 'Auto-mapping work zone',
+  25: 'Auto-mapping obstacle',
+  26: 'Mapping stop record',
+  27: 'Mapping edit',
+  28: 'Auto-erase mapping',
+  29: 'Auto-erase failed',
+  30: 'Auto-erase success',
+  31: 'Setting charger pose',
+  50: 'Returning to dock',
+  51: 'Aligning dock',
+  52: 'Visual search dock',
+  70: 'Finished once',
+  71: 'Failed once',
+  72: 'Cancelled',
+  73: 'Start requested',
+  74: 'Start repeated warning',
+  80: 'Localization error',
+  81: 'LoRa error',
+  82: 'Slipping',
+  83: 'Out of map',
+  84: 'Recovering',
+  85: 'Low power',
+  86: 'Time limit',
+  87: 'User stopped',
+  88: 'User recharge',
+  100: 'Mowing',
+  101: 'Edge cutting',
+  102: 'Re-covering missed',
+  103: 'Driving',
+  110: 'Patrolling',
+  120: 'Avoiding obstacle',
+  150: 'Edge cutting',
+  200: 'Deleting child map',
+  201: 'Deleting obstacle',
+  202: 'Deleting channel',
+  203: 'Map load error',
+  250: 'Driving',
+};
+
+function translateWorkStatus(raw: string): string {
+  const n = parseInt(raw, 10);
+  if (isNaN(n)) return raw;
+  return WORK_STATUS_LABELS[n] ?? `State ${n}`;
+}
+
 export function translateValue(field: string, rawValue: string): string {
   switch (field) {
     case 'charger_status': {
@@ -197,6 +256,8 @@ export function translateValue(field: string, rawValue: string): string {
       if (n === 1) return 'Charging';
       return `Charging (${n})`;
     }
+    case 'work_status':
+      return translateWorkStatus(rawValue);
     case 'battery_state':
       return translateBatteryState(rawValue);
     case 'localization_state':

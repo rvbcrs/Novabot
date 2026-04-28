@@ -294,13 +294,18 @@ export function createServer(): express.Express {
 
   // ── POST /api/export ─────────────────────────────────────────────────────
   app.post('/api/export', async (req, res) => {
-    const { accessToken, appUserId, email, password, devices, includeFirmware } = req.body as {
+    const { accessToken, appUserId, email, password, devices, includeFirmware, firmwareSnOverride } = req.body as {
       accessToken: string;
       appUserId: number;
       email: string;
       password: string;
       devices: Record<string, unknown>[];
       includeFirmware?: boolean;
+      // Optional: override which SN is sent in checkOtaNewVersion. Useful
+      // when probing whether a newer firmware exists for someone else's
+      // mower (e.g. a beta-channel SN like LFIN2231200027 reporting v6.0.3).
+      // Falls back to 'SCAN' when omitted (cloud's anonymous lookup token).
+      firmwareSnOverride?: string;
     };
 
     // Create unique session
@@ -492,34 +497,51 @@ export function createServer(): express.Express {
       }
       setStepStatus('schedules', 'done');
 
-      // 7. Firmware versions
+      // 7. Firmware versions — walk the OTA chain dynamically so we pick up
+      // versions that aren't in our hardcoded list (e.g. v6.0.3 betas). For
+      // each equipmentType, start at v0.0.0 and keep feeding the previous
+      // result back as the "current version" until the cloud stops returning
+      // new info. Also probe a few well-known seed versions so we still
+      // discover branches the chain doesn't reach (e.g. older LTS lines).
       setStepStatus('firmware', 'running');
       const firmwareInfo: Record<string, unknown> = { charger: [], mower: [] };
-      const chargerVersions = ['v0.0.0', 'v0.3.6', 'v0.4.0'];
-      const mowerVersions = ['v0.0.0', 'v5.7.1', 'v6.0.0', 'v6.0.2'];
+      const otaSn = firmwareSnOverride && firmwareSnOverride.trim()
+        ? firmwareSnOverride.trim()
+        : 'SCAN';
+      const chargerSeeds = ['v0.0.0', 'v0.3.6', 'v0.4.0'];
+      const mowerSeeds = ['v0.0.0', 'v5.7.1', 'v6.0.0', 'v6.0.2', 'v6.0.3'];
 
-      for (const ver of chargerVersions) {
-        try {
-          const r = await callLfiCloud('GET',
-            `/api/nova-user/otaUpgrade/checkOtaNewVersion?version=${ver}&upgradeType=serviceUpgrade&equipmentType=LFIC1&sn=SCAN`,
-            null, token
-          );
-          if (r.value && (r.value as Record<string, unknown>).version) {
-            (firmwareInfo.charger as unknown[]).push(r.value);
+      const walkOtaChain = async (
+        equipmentType: string,
+        seeds: string[],
+        bucket: unknown[],
+      ) => {
+        const seenVersions = new Set<string>();
+        for (const seed of seeds) {
+          let current = seed;
+          let hops = 0;
+          while (hops < 12) { // hard cap so cloud-loops can't hang export
+            hops += 1;
+            try {
+              const r = await callLfiCloud('GET',
+                `/api/nova-user/otaUpgrade/checkOtaNewVersion?version=${encodeURIComponent(current)}&upgradeType=serviceUpgrade&equipmentType=${encodeURIComponent(equipmentType)}&sn=${encodeURIComponent(otaSn)}`,
+                null, token,
+              );
+              const value = r.value as Record<string, unknown> | undefined;
+              const ver = typeof value?.version === 'string' ? value.version : '';
+              if (!ver || seenVersions.has(ver)) break;
+              seenVersions.add(ver);
+              bucket.push(value);
+              current = ver; // continue walk: ask cloud "what comes after this?"
+            } catch {
+              break;
+            }
           }
-        } catch { /* skip */ }
-      }
-      for (const ver of mowerVersions) {
-        try {
-          const r = await callLfiCloud('GET',
-            `/api/nova-user/otaUpgrade/checkOtaNewVersion?version=${ver}&upgradeType=serviceUpgrade&equipmentType=LFIN2&sn=SCAN`,
-            null, token
-          );
-          if (r.value && (r.value as Record<string, unknown>).version) {
-            (firmwareInfo.mower as unknown[]).push(r.value);
-          }
-        } catch { /* skip */ }
-      }
+        }
+      };
+
+      await walkOtaChain('LFIC1', chargerSeeds, firmwareInfo.charger as unknown[]);
+      await walkOtaChain('LFIN2', mowerSeeds, firmwareInfo.mower as unknown[]);
       writeJson(path.join(outputDir, 'firmware.json'), firmwareInfo);
 
       // Download firmware binaries if requested

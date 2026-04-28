@@ -26,6 +26,8 @@ research/*
 !research/ghidra_output/
 research/ghidra_output/*.rep
 research/ghidra_output/*.gpr
+# Untracked ROS msg dir (research-only)
+research/ros2_msg_definitions/novabot_msgs/
 
 # ── Project-internal files ────────────────────────────
 CLAUDE.md

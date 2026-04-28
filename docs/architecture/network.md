@@ -13,7 +13,7 @@ graph LR
     App[Novabot App] -->|DNS query: mqtt.lfibot.com| DNS[novabot-dns<br/>dnsmasq]
     DNS -->|Response: 192.168.x.x| App
     App -->|MQTT connect 192.168.x.x:1883| Server[novabot-server]
-    App -->|HTTP POST 192.168.x.x:3000| Server
+    App -->|HTTP POST 192.168.x.x:80| Server
 ```
 
 ### DNS Configuration Options

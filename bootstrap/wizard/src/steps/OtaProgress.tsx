@@ -200,7 +200,7 @@ export default function OtaProgress({ log, mower, otaStatus, otaProgress, otaTim
             <li>{t('progress.timeoutStep1')}</li>
             <li>{t('progress.timeoutStep2')}</li>
             <li>{t('progress.timeoutStep3')}</li>
-            <li>{t('progress.timeoutStep4')} <span className="font-mono text-red-300">http://novabot.local:3000</span></li>
+            <li>{t('progress.timeoutStep4')} <span className="font-mono text-red-300">http://novabot.local</span></li>
           </ol>
         </div>
       )}

@@ -238,7 +238,7 @@ flowchart TD
 The mDNS discovery is implemented as a raw Python socket query (no external dependencies). It queries for `opennovabot.local`, which is advertised by the bootstrap wizard running on the host machine.
 
 !!! warning "Critical: `http_address.txt` format"
-    The firmware prepends `http://` when building URLs. The file must contain ONLY `host:port` (e.g. `192.168.0.177:3000`), with **NO** `http://` prefix and **NO** trailing newline. The build script uses `printf "%s"` instead of `echo` for this reason.
+    The firmware prepends `http://` when building URLs. The file must contain ONLY `host:port` (e.g. `192.168.0.222`), with **NO** `http://` prefix and **NO** trailing newline. The build script uses `printf "%s"` instead of `echo` for this reason.
 
 !!! warning "Critical: `json_config.json` handling"
     NEVER overwrite the entire file. It contains BLE-provisioned data (WiFi, LoRa, SN) that would be lost. The build script uses a Python JSON merge that updates ONLY the `mqtt` section, with atomic writes (`.tmp` -> verify -> `os.replace`), factory backup (`.factory`, created once), and rolling backup (`.bak`).
@@ -293,7 +293,7 @@ sequenceDiagram
     "cmd": "upgrade",
     "type": "full",
     "content": "app",
-    "url": "http://your-server:3000/api/dashboard/firmware/download/mower_firmware_v6.0.2-custom-16.deb",
+    "url": "http://your-server/api/dashboard/firmware/download/mower_firmware_v6.0.2-custom-16.deb",
     "version": "v6.0.2-custom-16",
     "md5": "abcdef1234567890abcdef1234567890"
   }
@@ -319,13 +319,13 @@ Send via the dashboard OTA trigger endpoint or mosquitto_pub:
 
 ```bash
 # Via dashboard (recommended)
-curl -X POST http://your-server:3000/api/dashboard/ota/trigger/LFIN2230700238 \
+curl -X POST http://your-server/api/dashboard/ota/trigger/LFIN2230700238 \
   -H 'Content-Type: application/json' \
   -d '{"version_id": 1}'
 
 # Via mosquitto_pub (manual)
 mosquitto_pub -h localhost -t "Dart/Send_mqtt/LFIN2230700238" \
-  -m '{"ota_upgrade_cmd":{"cmd":"upgrade","type":"full","content":"app","url":"http://192.168.0.177:3000/api/dashboard/firmware/download/mower_firmware_v6.0.2-custom-16.deb","version":"v6.0.2-custom-16","md5":"..."}}'
+  -m '{"ota_upgrade_cmd":{"cmd":"upgrade","type":"full","content":"app","url":"http://192.168.0.222/api/dashboard/firmware/download/mower_firmware_v6.0.2-custom-16.deb","version":"v6.0.2-custom-16","md5":"..."}}'
 ```
 <!-- /PRIVATE -->
 
@@ -597,7 +597,7 @@ The mower's `mqtt_node` reads the HTTP server URL from `/userdata/lfi/http_addre
 Custom firmware overrides this file at every boot to ensure it always points to the local server, even if the mower's firmware tries to reset it.
 
 !!! warning "File format"
-    The firmware prepends `http://` when building URLs. Write ONLY `host:port` to this file (e.g. `192.168.0.177:3000`), with NO `http://` prefix and NO trailing newline. Use `printf "%s"` not `echo`.
+    The firmware prepends `http://` when building URLs. Write ONLY `host:port` to this file (e.g. `192.168.0.222`), with NO `http://` prefix and NO trailing newline. Use `printf "%s"` not `echo`.
 
 ---
 

@@ -275,7 +275,7 @@ export default function Done2({ deviceMode, chargerConnected, mowerConnected, ch
                   </Step>
 
                   <Step n={3} title="Option C: NGINX Proxy Manager">
-                    <p>If you use NGINX Proxy Manager, create proxy hosts for <code className="text-gray-400">app.lfibot.com</code> → <code className="text-gray-400">http://{serverIp}:3000</code>. This also enables HTTPS/TLS for iOS (which requires TLS for the API).</p>
+                    <p>If you use NGINX Proxy Manager, create proxy hosts for <code className="text-gray-400">app.lfibot.com</code> → <code className="text-gray-400">http://{serverIp}</code>. This also enables HTTPS/TLS for iOS (which requires TLS for the API).</p>
                   </Step>
                 </div>
 

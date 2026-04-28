@@ -54,10 +54,17 @@ export function useActiveMower(): UseActiveMowerResult {
   // SN during a network blip). Users with multiple mowers must now switch
   // manually via the device picker.
 
+  // Return the user's *intent* (context value) for activeMowerSn. Falling back
+  // to activeMower.sn would mask the picked SN when the chosen mower isn't in
+  // the socket-tracked `devices` map (e.g. offline). That broke the
+  // "Activate this set" button on HomeScreen — clicking did update the
+  // context, but the returned activeMowerSn snapped back to mowers[0].sn,
+  // so the comparator `set.mower.sn !== activeMowerSn` stayed true and the
+  // button looked like a no-op.
   return {
     activeMower,
     mowers,
-    activeMowerSn: activeMower?.sn ?? null,
+    activeMowerSn: activeMowerSn ?? activeMower?.sn ?? null,
     setActiveMowerSn,
     hydrated,
   };

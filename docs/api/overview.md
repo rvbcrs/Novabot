@@ -5,7 +5,7 @@ The Novabot ecosystem has **three categories** of HTTP API endpoints:
 ## 1. Cloud API (App → Server)
 
 These endpoints are called by the **Flutter app** and are the original cloud API replicated locally.
-Base URL: `https://app.lfibot.com` → local `http://<server-ip>:3000`
+Base URL: `https://app.lfibot.com` → local `http://<server-ip>` (port 80)
 
 | Service | Path Prefix | Auth | Endpoints |
 |---------|------------|------|-----------|

@@ -9,7 +9,7 @@ Replace the Novabot cloud with your own local server. Your mower and charging st
 A single Docker container that includes everything your Novabot needs:
 
 - **MQTT Broker** (port 1883) — mower and charger connect here
-- **Cloud API** (port 3000) — compatible with the official Novabot app
+- **Cloud API** (ports 80/443) — compatible with the official Novabot app
 - **DNS Server** (optional) — redirects `mqtt.lfibot.com` to your server
 - **TLS/HTTPS** (optional) — for iOS Novabot app compatibility
 
@@ -37,7 +37,6 @@ services:
       - "1883:1883"   # MQTT broker
     environment:
       PORT: 80
-      JWT_SECRET: change_me_to_a_random_secret
       ENABLE_TLS: "true"
     volumes:
       - novabot-data:/data
@@ -95,7 +94,6 @@ ports:
   - "53:53/udp"       # DNS
 environment:
   PORT: 80
-  JWT_SECRET: your_secret_here
   ENABLE_DNS: "true"
   TARGET_IP: "192.168.0.100"   # Your server's LAN IP
 ```
@@ -152,7 +150,6 @@ If the automatic login doesn't work (e.g., Novabot cloud is down), you can use t
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `JWT_SECRET` | — | Auth token secret (**required** — generate with `openssl rand -hex 32`) |
 | `PORT` | `80` | Internal HTTP port |
 | `ENABLE_DNS` | `false` | Enable built-in DNS redirect |
 | `TARGET_IP` | — | Your server's LAN IP (required for DNS/TLS) |
@@ -187,7 +184,6 @@ ports:
   - "443:443"         # HTTPS for iOS
 environment:
   PORT: 80
-  JWT_SECRET: your_secret_here
   ENABLE_TLS: "true"
   TARGET_IP: "192.168.0.100"   # Your server's LAN IP
 ```
@@ -288,7 +284,7 @@ sudo systemctl disable systemd-resolved
 docker compose logs opennova
 ```
 
-Common issues: port 1883 already in use (another MQTT broker), missing JWT_SECRET.
+Common issues: port 1883 already in use (another MQTT broker), missing TARGET_IP.
 
 ## Supported Devices
 

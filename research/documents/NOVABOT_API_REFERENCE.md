@@ -68,7 +68,7 @@ Dashboard endpoints use: `{ "ok": true, ... }` or `{ "error": "..." }`
 
 ### 1.1 Cloud API — App ↔ Server
 
-Base URL: `https://app.lfibot.com` → local `http://<server>:3000`
+Base URL: `https://app.lfibot.com` → local `http://<server>` (port 80)
 
 #### User Management
 

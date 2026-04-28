@@ -24,6 +24,7 @@ import { getServerUrl } from '../services/auth';
 import { useNavigation } from '@react-navigation/native';
 import { PatternPicker } from './PatternPicker';
 import { usePattern } from '../context/PatternContext';
+import { useMowQueue } from '../context/MowQueueContext';
 import { transformToGps } from '../utils/patternUtils';
 import { offsetLocalPolygon } from '../utils/polygonOffset';
 import { useI18n } from '../i18n';
@@ -58,9 +59,13 @@ export function StartMowSheet({
   const navigation = useNavigation();
   const pattern = usePattern();
   const { t } = useI18n();
+  const { enqueue } = useMowQueue();
   const [maps, setMaps] = useState<MapData[]>([]);
   const [allMaps, setAllMaps] = useState<MapData[]>([]);
-  const [selectedMapId, setSelectedMapId] = useState<string | null>(null);
+  // Multi-select. Empty = nothing chosen, button disabled. One = single
+  // map start (existing single-shot path). 2+ = enqueue sequential
+  // mowing via MowQueueContext.
+  const [selectedMapIds, setSelectedMapIds] = useState<Set<string>>(new Set());
   // Cutting height in user cm (2-9). Wire value is `cm - 2` (e.g. 4cm → cutterhigh:2).
   // Verified 2026-04-19 via a live Novabot-app capture on LFIN1231000211
   // (mqtt_node_20260419_163617_821948.log @ 18:18:09):
@@ -118,9 +123,16 @@ export function StartMowSheet({
         const requestedMap = initialSelectedMapId
           ? workMaps.find((map) => map.mapId === initialSelectedMapId)
           : null;
-        if (requestedMap) setSelectedMapId(requestedMap.mapId);
-        else if (workMaps.length === 1 && !forceZonePicker) setSelectedMapId(workMaps[0].mapId);
-        else setSelectedMapId(null);
+        if (requestedMap) {
+          setSelectedMapIds(new Set([requestedMap.mapId]));
+        } else if (workMaps.length === 1 && !forceZonePicker) {
+          setSelectedMapIds(new Set([workMaps[0].mapId]));
+        } else {
+          // Default to "all maps selected" so the common case (mow
+          // everything) needs zero taps. Empty set forces the user to
+          // pick something; that's only useful when forceZonePicker.
+          setSelectedMapIds(forceZonePicker ? new Set() : new Set(workMaps.map(m => m.mapId)));
+        }
       } catch { /* ignore */ }
     })();
   }, [visible, sn, currentCuttingHeight, currentPathDirection, initialSelectedMapId, forceZonePicker]);
@@ -241,12 +253,39 @@ export function StartMowSheet({
     setStarting(true);
     try {
       if (!sn) { console.log('[StartMow] NO SN!'); return; }
+      if (selectedMapIds.size === 0) { console.log('[StartMow] NO MAP SELECTED'); return; }
       const url = await getServerUrl();
       if (!url) { console.log('[StartMow] NO SERVER URL!'); return; }
       const api = new ApiClient(url);
 
-      // Map area parameter: 1=map0, 10=map1, 200=map2 (Flutter decompilation)
-      const selectedIdx = maps.findIndex(m => m.mapId === selectedMapId);
+      // Wire value = display cm − 2 (see cuttingHeight comment). For 4cm → 2.
+      const wireHeight = Math.max(0, cuttingHeight - 2);
+
+      // Maintain the order in which the maps appear in the work-map list
+      // so the area-encoding (1=map0, 10=map1, 200=map2) is stable.
+      const orderedMapIds = maps
+        .filter(m => selectedMapIds.has(m.mapId))
+        .map(m => m.mapId);
+
+      if (orderedMapIds.length > 1) {
+        // Multi-map: hand off to the queue. The queue sends the FIRST
+        // start_navigation immediately and watches Work:FINISHED to
+        // dispatch the next.
+        await api.clearTrail(sn).catch(() => {});
+        await enqueue({
+          sn,
+          mapIds: orderedMapIds,
+          cuttingHeight,
+          pathDirection,
+        });
+        console.log(`[StartMow] enqueued ${orderedMapIds.length} maps:`, orderedMapIds.join(','));
+        onStarted({ cuttingHeight: wireHeight, pathDirection });
+        onClose();
+        return;
+      }
+
+      // Single-map path (legacy, identical to pre-multi-select behaviour).
+      const selectedIdx = maps.findIndex(m => m.mapId === orderedMapIds[0]);
       const mapIdx = selectedIdx >= 0 ? selectedIdx : 0;
       const areaParam = mapIdx === 0 ? 1 : mapIdx === 1 ? 10 : 200;
 
@@ -257,9 +296,6 @@ export function StartMowSheet({
       // direction in the compass picker below — not here at start time.
       // This matches the official Novabot app where set_para_info is sent from
       // Advanced Settings (separate screen), not during the start mowing flow.
-
-      // Wire value = display cm − 2 (see cuttingHeight comment). For 4cm → 2.
-      const wireHeight = Math.max(0, cuttingHeight - 2);
 
       // Start mowing — Flutter v2.4.0 stuurt start_navigation direct
       const cmdNum = Date.now() % 100000;
@@ -309,32 +345,57 @@ export function StartMowSheet({
           <ScrollView contentContainerStyle={styles.content}>
             <Text style={styles.title}>{t('startMowTitle')}</Text>
 
-            {/* Work area selection */}
+            {/* Work area selection (multi-select).
+                Tapping "All" toggles every map; tapping a single map
+                chip toggles its membership. Two or more selected
+                triggers the sequential queue when Start is pressed. */}
             {workMaps.length > 0 && (
               <View style={styles.section}>
                 <Text style={styles.label}>{t('workArea')}</Text>
                 <View style={styles.mapGrid}>
                   <TouchableOpacity
-                    style={[styles.mapBtn, selectedMapId === null && styles.mapBtnActive]}
-                    onPress={() => setSelectedMapId(null)}
+                    style={[
+                      styles.mapBtn,
+                      selectedMapIds.size === workMaps.length && styles.mapBtnActive,
+                    ]}
+                    onPress={() => {
+                      if (selectedMapIds.size === workMaps.length) {
+                        setSelectedMapIds(new Set());
+                      } else {
+                        setSelectedMapIds(new Set(workMaps.map(m => m.mapId)));
+                      }
+                    }}
                     activeOpacity={0.7}
                   >
-                    <Text style={[styles.mapBtnText, selectedMapId === null && styles.mapBtnTextActive]}>
+                    <Text style={[
+                      styles.mapBtnText,
+                      selectedMapIds.size === workMaps.length && styles.mapBtnTextActive,
+                    ]}>
                       {t('allAreas')}
                     </Text>
                   </TouchableOpacity>
-                  {workMaps.map(m => (
-                    <TouchableOpacity
-                      key={m.mapId}
-                      style={[styles.mapBtn, selectedMapId === m.mapId && styles.mapBtnActive]}
-                      onPress={() => setSelectedMapId(m.mapId)}
-                      activeOpacity={0.7}
-                    >
-                      <Text style={[styles.mapBtnText, selectedMapId === m.mapId && styles.mapBtnTextActive]}>
-                        {m.mapName || m.mapId}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
+                  {workMaps.map(m => {
+                    const active = selectedMapIds.has(m.mapId);
+                    return (
+                      <TouchableOpacity
+                        key={m.mapId}
+                        style={[styles.mapBtn, active && styles.mapBtnActive]}
+                        onPress={() => {
+                          setSelectedMapIds(prev => {
+                            const next = new Set(prev);
+                            if (next.has(m.mapId)) next.delete(m.mapId);
+                            else next.add(m.mapId);
+                            return next;
+                          });
+                        }}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={[styles.mapBtnText, active && styles.mapBtnTextActive]}>
+                          {m.mapName || m.mapId}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
                 </View>
               </View>
             )}
@@ -441,11 +502,11 @@ export function StartMowSheet({
               </View>
             </View>
 
-            {/* Inline map preview */}
+            {/* Inline map preview — preview shows the FIRST selected
+                map (in work-map order). Multi-select: user sees their
+                first choice; the queue handles the rest. */}
             {(() => {
-              const previewMap = selectedMapId
-                ? maps.find(m => m.mapId === selectedMapId)
-                : maps[0];
+              const previewMap = maps.find(m => selectedMapIds.has(m.mapId)) ?? maps[0];
               const poly = previewMap?.mapArea;
               if (!poly || poly.length < 3) return null;
 
@@ -613,9 +674,12 @@ export function StartMowSheet({
                 <Text style={styles.cancelText}>{t('cancel')}</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.startBtn, (starting || workMaps.length === 0) && { opacity: 0.5 }]}
+                style={[
+                  styles.startBtn,
+                  (starting || workMaps.length === 0 || selectedMapIds.size === 0) && { opacity: 0.5 },
+                ]}
                 onPress={handleStart}
-                disabled={starting || workMaps.length === 0}
+                disabled={starting || workMaps.length === 0 || selectedMapIds.size === 0}
                 activeOpacity={0.7}
               >
                 {starting ? (

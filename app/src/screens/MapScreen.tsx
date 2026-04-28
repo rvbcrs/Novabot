@@ -341,6 +341,16 @@ export default function MapScreen() {
   const msg = mower?.sensors.msg ?? '';
   const isMowing = msg.includes('Work:RUNNING') || msg.includes('Work:NAVIGATING') || msg.includes('Work:COVERING') || msg.includes('Work:MOVING')
     || msg.includes('Work:BOUNDARY_COVERING') || msg.includes('Work:AVOIDING');
+  // Mapping mode = mower is recording a new map / obstacle / channel.
+  // We trust ONLY the msg + task_mode here — start_edit_or_assistant_map_flag
+  // is unreliable (mqtt_node's internal mapping flag has been observed to
+  // stay set after a failed save sequence even though the mower has long
+  // returned to COVERAGE/WAIT state). msg is the authoritative human-
+  // visible state from RobotStatus and updates immediately.
+  const taskModeRaw = mower?.sensors.task_mode ?? '0';
+  const isMapping = taskModeRaw === '3' || msg.includes('Mode:MAPPING');
+  const showTrail = isMowing || isMapping;
+  const showCoverPath = isMowing;
   // Voortgangs-state uit report_state_timer_data.cover_path.covered — elke
   // MQTT tick door server geforward als sensor-velden. finished_area is een
   // space-separated lijst van voltooide planned_path sub-gebied indices,
@@ -1417,7 +1427,11 @@ export default function MapScreen() {
                       gedekt = emerald, bezig = stippel, nog te doen = dun wit.
                       Data komt uit plannedPathCache (mowing) of previewPathCache
                       (idle); ids matchen tegen finished_area uit de mower. */}
-                  {plannedPaths.length > 0 && (
+                  {/* Cover path lines (planned + finished sub-areas) only
+                      while the mower is actually mowing — never during a
+                      mapping session, where they obscure the trail being
+                      drawn. */}
+                  {showCoverPath && plannedPaths.length > 0 && (
                     <>
                       {/* Alle niet-voltooide sub-paths (incl. actieve) als
                           dunne witte hint-lijnen. De gedekte portie van het
@@ -1458,8 +1472,10 @@ export default function MapScreen() {
                     </>
                   )}
 
-                  {/* Mowed trail (only while mowing) */}
-                  {isMowing && trailLocal.length > 1 && (
+                  {/* Trail — visible while mowing AND while mapping. During
+                      mapping the user must see what they're drawing
+                      (work-area outline, obstacle perimeter, channel). */}
+                  {showTrail && trailLocal.length > 1 && (
                     <Polyline
                       points={trailLocal.map((p) => localToSvg(p, bounds, MAP_SIZE, INNER_PADDING)).map((p) => `${p.x},${p.y}`).join(' ')}
                       fill="none" stroke="rgba(34,197,94,0.5)" strokeWidth={5} strokeLinecap="round" strokeLinejoin="round"

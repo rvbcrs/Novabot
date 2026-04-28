@@ -401,7 +401,7 @@ export default function ProvisionScreen({ navigation, route }: Props) {
     if (!allDone || !allSuccess) return;
 
     const checkServer = async () => {
-      const url = `http://${mqttAddr}:3000/api/setup/health`;
+      const url = `http://${mqttAddr}/api/setup/health`;
       bleLog(`[SERVER] Checking ${url}...`);
       try {
         const controller = new AbortController();
@@ -426,7 +426,7 @@ export default function ProvisionScreen({ navigation, route }: Props) {
       try {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), 5000);
-        const res = await fetch(`http://${mqttAddr}:3000/api/setup/health`, {
+        const res = await fetch(`http://${mqttAddr}/api/setup/health`, {
           signal: controller.signal,
         });
         clearTimeout(timer);
@@ -557,7 +557,7 @@ export default function ProvisionScreen({ navigation, route }: Props) {
     setOtaMessage('Checking for firmware updates...');
     try {
       // Check OTA versions available on the server
-      const checkRes = await fetch(`http://${mqttAddr}:3000/api/dashboard/ota/versions`);
+      const checkRes = await fetch(`http://${mqttAddr}/api/dashboard/ota/versions`);
       if (!checkRes.ok) throw new Error('Server not reachable');
       const versions = await checkRes.json();
 
@@ -577,7 +577,7 @@ export default function ProvisionScreen({ navigation, route }: Props) {
         const latest = versions.data[0];
         setOtaMessage(`Sending firmware ${latest.version} to ${dev.name}...`);
 
-        const triggerRes = await fetch(`http://${mqttAddr}:3000/api/dashboard/ota/trigger/${dev.name}`, {
+        const triggerRes = await fetch(`http://${mqttAddr}/api/dashboard/ota/trigger/${dev.name}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ version_id: latest.id }),

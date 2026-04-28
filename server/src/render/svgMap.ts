@@ -12,7 +12,7 @@
  * input shape.
  */
 import { mapRepo } from '../db/repositories/maps.js';
-import { deviceCache, getLocalTrail } from '../mqtt/sensorData.js';
+import { deviceCache, getLocalTrail, translateValue } from '../mqtt/sensorData.js';
 
 interface Pt { x: number; y: number }
 
@@ -64,6 +64,23 @@ function readMowerPose(sn: string): { pose: Pt | null; theta: number } {
   const theta = parseFloat(cache.get('map_position_orientation') ?? '0') || 0;
   if (!Number.isFinite(x) || !Number.isFinite(y)) return { pose: null, theta };
   return { pose: { x, y }, theta };
+}
+
+// Read work_status + recharge_status as user-facing text so an overlay can
+// always show what the mower is doing — useful when no work polygon exists
+// yet (e.g. fresh setup, after map delete) and the canvas would otherwise
+// look empty.
+function readStatusBadge(sn: string): string | null {
+  const cache = deviceCache.get(sn);
+  if (!cache) return null;
+  const ws = cache.get('work_status');
+  const rs = cache.get('recharge_status');
+  const battery = cache.get('battery_capacity');
+  const parts: string[] = [];
+  if (ws) parts.push(translateValue('work_status', ws));
+  if (rs && parseInt(rs, 10) > 0) parts.push(translateValue('recharge_status', rs));
+  if (battery) parts.push(`${battery}%`);
+  return parts.length ? parts.join(' • ') : null;
 }
 
 function readProgressLabel(sn: string): string | null {
@@ -202,6 +219,34 @@ export function renderMowerMapSvg(sn: string): string {
 
   const titleLabel = `<text class="label" x="12" y="20">Mower ${sn}</text>`;
 
+  // Status badge — always visible, top-right. Shows work-status text +
+  // recharge state + battery so the picture-entity is never empty even when
+  // no work map / trail / mower-pose data is available.
+  const status = readStatusBadge(sn);
+  const statusBadge = status
+    ? `<g>
+         <rect x="${SVG_W - Math.max(120, status.length * 7) - 12}" y="10"
+               width="${Math.max(120, status.length * 7)}" height="22" rx="4"
+               fill="#0f172a" opacity="0.78" />
+         <text class="badge" x="${SVG_W - Math.max(120, status.length * 7) - 4}" y="25"
+               text-anchor="end">${status}</text>
+       </g>`
+    : '';
+
+  // No-data overlay — full-canvas hint when there's nothing to draw (no
+  // work polygon, no trail, no mower pose). Mirrors the picture-entity
+  // overlay UX the user asked for.
+  const hasContent = maps.length > 0 || trail.length > 0 || pose;
+  const emptyOverlay = !hasContent
+    ? `<g>
+         <rect x="${SVG_W / 2 - 130}" y="${SVG_H / 2 - 30}" width="260" height="60"
+               rx="8" fill="#0f172a" opacity="0.82" />
+         <text class="badge" x="${SVG_W / 2}" y="${SVG_H / 2 - 8}" text-anchor="middle">No work map yet</text>
+         <text class="label" x="${SVG_W / 2}" y="${SVG_H / 2 + 14}" text-anchor="middle"
+               style="fill:#cbd5e1">Start mapping in the OpenNova app</text>
+       </g>`
+    : '';
+
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${SVG_W} ${SVG_H}" width="${SVG_W}" height="${SVG_H}">
   <style>${STYLE}</style>
@@ -212,5 +257,7 @@ export function renderMowerMapSvg(sn: string): string {
   ${mowerSvg}
   ${badge}
   ${titleLabel}
+  ${statusBadge}
+  ${emptyOverlay}
 </svg>`;
 }

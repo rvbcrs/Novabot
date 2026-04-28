@@ -23,6 +23,7 @@ import {
   ActiveMowerProvider,
   clearPersistedActiveMowerSn,
 } from './src/context/ActiveMowerContext';
+import { MowQueueProvider } from './src/context/MowQueueContext';
 import { I18nProvider, useI18n } from './src/i18n';
 import type {
   AuthStackParams,
@@ -318,7 +319,9 @@ function ThemedApp({
     <NavigationContainer theme={navTheme} ref={navigationRef}>
       {isAuthenticated ? (
         <ActiveMowerProvider>
-          <AuthenticatedApp onLogout={handleLogout} onGoToProvision={handleGoToProvision} />
+          <MowQueueProvider>
+            <AuthenticatedApp onLogout={handleLogout} onGoToProvision={handleGoToProvision} />
+          </MowQueueProvider>
         </ActiveMowerProvider>
       ) : (
         <AuthStack.Navigator screenOptions={screenOptions}>
