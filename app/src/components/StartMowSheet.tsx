@@ -298,9 +298,24 @@ export function StartMowSheet({
         .map(m => m.mapId);
 
       if (orderedMapIds.length > 1) {
-        // Multi-map: hand off to the queue. The queue sends the FIRST
-        // start_navigation immediately and watches Work:FINISHED to
-        // dispatch the next.
+        // Multi-map: hand off to the queue. Pre-swap the first map so the
+        // initial start_navigation lands on the right slot. The queue
+        // performs additional swaps before each subsequent dispatch
+        // (see MowQueueContext).
+        const firstMap = maps.find(m => m.mapId === orderedMapIds[0]) ?? maps[0];
+        const firstSlot = (() => {
+          const m = (firstMap?.canonicalName ?? '').match(/^map(\d+)/);
+          return m ? parseInt(m[1], 10) : 0;
+        })();
+        try {
+          await api.setActiveMapSlot(sn, firstSlot);
+        } catch (e) {
+          console.log('[StartMow] setActiveMapSlot failed (queue head):', e);
+          const msg = e instanceof Error ? e.message : 'swap failed';
+          Alert.alert(t('startMowFailed') || 'Could not start', msg);
+          setStarting(false);
+          return;
+        }
         await api.clearTrail(sn).catch(() => {});
         await enqueue({
           sn,
@@ -314,12 +329,9 @@ export function StartMowSheet({
         return;
       }
 
-      // Single-map path (legacy, identical to pre-multi-select behaviour).
-      // Issue #14 / #18: derive the firmware `area` enum from the canonical
-      // slot identifier (map0/map1/map2) so the user's selection lines up
-      // with the mower's internal index. Sorting by updated_at + using array
-      // index produced "select front, mow trampo" because the alphabetical
-      // app order didn't match the firmware's creation order.
+      // Single-map path. Use canonicalName for the firmware slot index so
+      // we always dispatch the map the user actually picked (not the array
+      // position). Issue #14 / #18.
       const selectedMap = maps.find(m => m.mapId === orderedMapIds[0]) ?? maps[0];
       const canonicalIdx = (() => {
         const m = (selectedMap?.canonicalName ?? '').match(/^map(\d+)/);
@@ -327,9 +339,22 @@ export function StartMowSheet({
       })();
       const fallbackIdx = maps.findIndex(m => m.mapId === orderedMapIds[0]);
       const mapIdx = canonicalIdx ?? (fallbackIdx >= 0 ? fallbackIdx : 0);
-      // Firmware `area` enum: map0=1, map1=10, map2=200. Confirmed in
-      // docs/reference/MOWING-FLOW.md. Three slots only (firmware limit).
-      const areaParam = mapIdx === 0 ? 1 : mapIdx === 1 ? 10 : 200;
+
+      // Multi-map support (spec 2026-05-04): ask the server to swap the
+      // mower's active map.yaml to the selected slot before dispatching
+      // start_navigation. After a successful swap, area is irrelevant —
+      // the loaded map.yaml IS the requested map. We send area=0 to avoid
+      // the legacy 1/10/200 enum.
+      try {
+        await api.setActiveMapSlot(sn, mapIdx);
+      } catch (e) {
+        console.log('[StartMow] setActiveMapSlot failed:', e);
+        const msg = e instanceof Error ? e.message : 'swap failed';
+        Alert.alert(t('startMowFailed') || 'Could not start', msg);
+        setStarting(false);
+        return;
+      }
+      const areaParam = 0;
 
       // 0. Clear old trail from previous session
       await api.clearTrail(sn).catch(() => {});
