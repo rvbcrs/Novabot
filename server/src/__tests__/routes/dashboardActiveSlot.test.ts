@@ -163,6 +163,16 @@ describe('POST /api/dashboard/maps/:sn/active-slot', () => {
       .send({ slot: 1 });
     expect(r.status).toBe(500);
   });
+
+  it('translates mower result:1 (mower-side copy failure) to 500', async () => {
+    ackWith({ result: 1, error: 'copy failed: [Errno 28] No space left on device' });
+    const r = await request(app)
+      .post(`/api/dashboard/maps/${SN}/active-slot`)
+      .send({ slot: 1 });
+    expect(r.status).toBe(500);
+    expect(r.body.ok).toBe(false);
+    expect(String(r.body.error)).toContain('copy failed');
+  });
 });
 
 describe('GET /api/dashboard/maps/:sn/active-slot', () => {

@@ -2425,6 +2425,11 @@ dashboardRouter.post('/maps/:sn/active-slot', async (req: Request, res: Response
       error: `${mowerErr} — stop mowing first`,
       respond: result.respond,
     });
+  } else if (code === 1) {
+    // Mower-side disk write failure (shutil.copy2 / os.replace). This is
+    // a server-side infrastructure problem, NOT a client bug — return 500
+    // so callers don't treat a transient mower fs issue as their own fault.
+    res.status(500).json({ ok: false, error: mowerErr, respond: result.respond });
   } else if (code === 4) {
     res.status(500).json({ ok: false, error: mowerErr, respond: result.respond });
   } else {
