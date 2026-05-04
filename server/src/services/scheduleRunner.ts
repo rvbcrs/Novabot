@@ -23,6 +23,18 @@ function getChargerGps(mowerSn: string): { lat: number; lng: number } | null {
   return mapRepo.getChargerGps(mowerSn);
 }
 
+/** Resolve the firmware slot index from the schedule's stored mapId.
+ *  Reads canonical_name on the maps row and parses the trailing
+ *  digits ("map7_work" -> 7). Returns null when the row is missing or
+ *  the canonical_name doesn't match. */
+function resolveSlotForSchedule(row: ScheduleRow): number | null {
+  if (!row.map_id) return null;
+  const mapRow = mapRepo.findById(row.map_id);
+  const canonical = mapRow?.canonical_name ?? '';
+  const m = canonical.match(/^map(\d+)/);
+  return m ? parseInt(m[1], 10) : null;
+}
+
 function getScheduleOccurrence(row: ScheduleRow, now: Date): Date | null {
   const weekdays: number[] = JSON.parse(row.weekdays);
   const currentDay = now.getDay(); // 0=Sunday
@@ -128,6 +140,44 @@ async function checkWeatherAndTrigger(
 }
 
 function triggerSchedule(row: ScheduleRow) {
+  // Multi-map support: ensure the mower has the right slot loaded into
+  // its active map.yaml before kicking off the mow. Skips when the
+  // schedule is bound to a slot we can't resolve (legacy rows). Spec:
+  // docs/superpowers/specs/2026-05-04-multi-map-swap-active-slot.md
+  const slot = resolveSlotForSchedule(row);
+  if (slot != null) {
+    void (async () => {
+      try {
+        const { publishToExtended, onExtendedResponse, offExtendedResponse } =
+          await import('../mqtt/mapSync.js');
+        await new Promise<void>(resolve => {
+          let settled = false;
+          const handler = (data: Record<string, unknown>) => {
+            if (!data.swap_active_map_respond || settled) return;
+            settled = true;
+            offExtendedResponse(row.mower_sn, handler);
+            resolve();
+          };
+          onExtendedResponse(row.mower_sn, handler);
+          publishToExtended(row.mower_sn, { swap_active_map: { slot } });
+          setTimeout(() => {
+            if (settled) return;
+            settled = true;
+            offExtendedResponse(row.mower_sn, handler);
+            resolve();  // never block the mow on swap timeout
+          }, 15000);
+        });
+      } catch (err) {
+        console.error(`[ScheduleRunner] swap_active_map failed for ${row.mower_sn} slot=${slot}:`, err);
+      }
+      runStartMowing(row);
+    })();
+    return;
+  }
+  runStartMowing(row);
+}
+
+function runStartMowing(row: ScheduleRow) {
   // Bereken effectieve richting (met alternerende rotatie)
   let effectiveDirection = row.path_direction;
   if (row.alternate_direction === 1) {
