@@ -1991,6 +1991,7 @@ COMMANDS = {
     "blade_off": handle_blade_off,
     "blade_speed": handle_blade_speed,
     "blade_height": handle_blade_height,
+    "swap_active_map": lambda p, r: handle_swap_active_map(p, r),
     "sync_map": lambda p, r: handle_sync_map(p, r),
 }
 
@@ -2299,6 +2300,108 @@ def _restart_auto_recharge_server():
         return rc.returncode in (0, 1)
     except Exception:
         return False
+
+
+def handle_swap_active_map(params, respond):
+    """Copy mapN.{yaml,pgm,png} over the active map.{yaml,pgm,png} slot
+    and reload the nav stack via /map_server/load_map. Lifts the stock
+    firmware's effective 3-map limit (see docs/superpowers/specs/
+    2026-05-04-multi-map-swap-active-slot.md).
+
+    Result codes:
+      0 = success
+      1 = bad request (negative/missing slot) or copy failure
+      2 = requested slot was never mapped on this mower
+      3 = coverage is active — refuse mid-task
+      4 = files copied but LoadMap ROS call failed
+    """
+    import os
+    import shutil
+    import subprocess
+
+    slot_raw = params.get("slot", -1)
+    try:
+        slot = int(slot_raw)
+    except (TypeError, ValueError):
+        respond("swap_active_map_respond",
+                {"result": 1, "error": f"slot must be integer, got {slot_raw!r}"})
+        return
+    if slot < 0:
+        respond("swap_active_map_respond",
+                {"result": 1, "error": "slot must be non-negative"})
+        return
+
+    home = "/userdata/lfi/maps/home0"
+    src_yaml = f"{home}/map{slot}.yaml"
+    src_pgm = f"{home}/map{slot}.pgm"
+    src_png = f"{home}/map{slot}.png"
+
+    if not (os.path.exists(src_yaml) and os.path.exists(src_pgm)):
+        respond("swap_active_map_respond", {
+            "result": 2,
+            "error": f"map{slot} not mapped on this mower (yaml/pgm missing)",
+            "slot": slot,
+        })
+        return
+
+    if _coverage_is_active():
+        respond("swap_active_map_respond", {
+            "result": 3,
+            "error": "coverage active, swap refused — stop the running task first",
+            "slot": slot,
+        })
+        return
+
+    try:
+        for src, dst_name in (
+            (src_yaml, "map.yaml"),
+            (src_pgm, "map.pgm"),
+            (src_png, "map.png"),
+        ):
+            if not os.path.exists(src):
+                continue  # png is optional; yaml/pgm checked above
+            tmp = f"{home}/{dst_name}.tmp"
+            shutil.copy2(src, tmp)
+            os.replace(tmp, f"{home}/{dst_name}")
+    except Exception as e:
+        respond("swap_active_map_respond", {
+            "result": 1,
+            "error": f"copy failed: {e}",
+            "slot": slot,
+        })
+        return
+
+    cmd = (
+        ". /opt/ros/galactic/setup.bash && "
+        ". /root/novabot/install/setup.bash && "
+        "export ROS_LOCALHOST_ONLY=1 && "
+        "ros2 service call /map_server/load_map nav2_msgs/srv/LoadMap "
+        f'"{{map_url: \\"{home}/map.yaml\\"}}"'
+    )
+    try:
+        rc = subprocess.run(
+            ["bash", "-lc", cmd],
+            capture_output=True, text=True, timeout=15,
+        )
+    except subprocess.TimeoutExpired:
+        respond("swap_active_map_respond", {
+            "result": 4,
+            "error": "LoadMap ros2 service call timed out (15s)",
+            "slot": slot,
+        })
+        return
+
+    if rc.returncode != 0:
+        respond("swap_active_map_respond", {
+            "result": 4,
+            "error": "LoadMap call failed",
+            "load_rc": rc.returncode,
+            "load_stderr": rc.stderr[-200:] if rc.stderr else None,
+            "slot": slot,
+        })
+        return
+
+    respond("swap_active_map_respond", {"result": 0, "slot": slot})
 
 
 def _rerun_set_server_urls():
