@@ -8,7 +8,7 @@
 
 import { scheduleRepo, mapRepo, messageRepo } from '../db/repositories/index.js';
 import { isDeviceOnline } from '../mqtt/broker.js';
-import { publishToDevice } from '../mqtt/mapSync.js';
+import { publishToExtended, onExtendedResponse, offExtendedResponse } from '../mqtt/mapSync.js';
 import { startMowing } from './mowingService.js';
 import { getWeatherForecast, shouldPauseForRain } from './weatherService.js';
 import { emitScheduleEvent } from '../dashboard/socketHandler.js';
@@ -148,8 +148,6 @@ function triggerSchedule(row: ScheduleRow) {
   if (slot != null) {
     void (async () => {
       try {
-        const { publishToExtended, onExtendedResponse, offExtendedResponse } =
-          await import('../mqtt/mapSync.js');
         await new Promise<void>(resolve => {
           let settled = false;
           const handler = (data: Record<string, unknown>) => {
@@ -170,14 +168,17 @@ function triggerSchedule(row: ScheduleRow) {
       } catch (err) {
         console.error(`[ScheduleRunner] swap_active_map failed for ${row.mower_sn} slot=${slot}:`, err);
       }
-      runStartMowing(row);
+      // Swap completed (success or timeout — the mower may have
+      // partially loaded the new map either way). Use area=0 so the
+      // legacy enum doesn't fight the post-swap state.
+      runStartMowing(row, 0);
     })();
     return;
   }
   runStartMowing(row);
 }
 
-function runStartMowing(row: ScheduleRow) {
+function runStartMowing(row: ScheduleRow, areaOverride?: number) {
   // Bereken effectieve richting (met alternerende rotatie)
   let effectiveDirection = row.path_direction;
   if (row.alternate_direction === 1) {
@@ -190,7 +191,10 @@ function runStartMowing(row: ScheduleRow) {
     sn: row.mower_sn,
     cuttingHeight: row.cutting_height ?? 5,
     pathDirection: effectiveDirection,
-    area: 1,
+    // After a successful slot swap the loaded map.yaml IS the requested
+    // map — area is irrelevant, so caller passes 0. Legacy schedules
+    // without a slot swap stay on area=1 (matches old behavior).
+    area: areaOverride ?? 1,
   });
   console.log(`[ScheduleRunner] ${row.schedule_id}: ${result.ok ? 'started' : 'FAILED: ' + result.error} (height=${row.cutting_height}, dir=${effectiveDirection})`);
 
