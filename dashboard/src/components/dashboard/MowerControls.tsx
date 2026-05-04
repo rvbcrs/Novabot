@@ -12,7 +12,7 @@ import {
   setDemoMode as setDemoModeApi, getDemoMode,
 } from '../../api/client';
 import { localToGps } from '../../utils/coords';
-import { mmToCutterhigh, workIndexToArea, nextCmdNum } from '../../utils/mqtt';
+import { mmToCutterhigh, nextCmdNum } from '../../utils/mqtt';
 import { useToast } from '../common/Toast';
 import { PatternPicker } from '../patterns/PatternPicker';
 import { loadPattern, transformToGps, type NormContour } from '../../utils/patternUtils.js';
@@ -281,14 +281,33 @@ export function MowerControls({
           ? workMaps.find(m => m.mapId === mapId)
           : workMaps[0];
         const mapIdx = targetMap ? workMaps.indexOf(targetMap) : 0;
-        const areaParam = workIndexToArea(Math.max(0, mapIdx));
         const resolvedMapName = targetMap?.mapName ?? 'test';
+
+        // Multi-map support (spec 2026-05-04): swap the active map slot
+        // before dispatching so the dashboard can mow any work map, not
+        // only the first 3 covered by the legacy area enum. Translate
+        // mapIdx → slot via the same parse rule the app uses.
+        try {
+          const swapRes = await fetch(`/api/dashboard/maps/${encodeURIComponent(sn)}/active-slot`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ slot: mapIdx }),
+          });
+          if (!swapRes.ok) {
+            const text = await swapRes.text().catch(() => '');
+            throw new Error(`HTTP ${swapRes.status}: ${text}`);
+          }
+        } catch (err) {
+          toast(`✗ ${t('controls.startMowing')}: swap failed (${String(err)})`, 'error');
+          setBusy(false);
+          return;
+        }
 
         const cmdNum = nextCmdNum();
         const navPayload: Record<string, unknown> = {
           mapName: resolvedMapName,
           cutterhigh: wireHeight,
-          area: areaParam,
+          area: 0,  // post-swap, map.yaml IS the requested map
           cmd_num: cmdNum,
         };
         const navResult = await sendCommand(sn, { start_navigation: navPayload });
@@ -296,7 +315,7 @@ export function MowerControls({
         if (!navResult.ok) {
           // Fallback: old firmware protocol (matches app StartMowSheet.tsx line 317)
           await sendCommand(sn, {
-            start_run: { mapName: null, area: areaParam, cutterhigh: wireHeight },
+            start_run: { mapName: null, area: 0, cutterhigh: wireHeight },
           });
         }
 
