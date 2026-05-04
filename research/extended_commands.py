@@ -1991,8 +1991,8 @@ COMMANDS = {
     "blade_off": handle_blade_off,
     "blade_speed": handle_blade_speed,
     "blade_height": handle_blade_height,
-    "swap_active_map": lambda p, r: handle_swap_active_map(p, r),
     "sync_map": lambda p, r: handle_sync_map(p, r),
+    "swap_active_map": lambda p, r: handle_swap_active_map(p, r),
 }
 
 
@@ -2352,6 +2352,10 @@ def handle_swap_active_map(params, respond):
         })
         return
 
+    # Two-phase atomic copy: first stage all .tmp files, then commit via
+    # os.replace. If staging fails partway, clean up any .tmp leftovers
+    # and bail before mutating map.* — the active slot stays consistent.
+    staged = []  # list of (tmp_path, final_path) to commit on success
     try:
         for src, dst_name in (
             (src_yaml, "map.yaml"),
@@ -2362,8 +2366,17 @@ def handle_swap_active_map(params, respond):
                 continue  # png is optional; yaml/pgm checked above
             tmp = f"{home}/{dst_name}.tmp"
             shutil.copy2(src, tmp)
-            os.replace(tmp, f"{home}/{dst_name}")
+            staged.append((tmp, f"{home}/{dst_name}"))
+        # All copies succeeded — commit atomically.
+        for tmp, final in staged:
+            os.replace(tmp, final)
     except Exception as e:
+        # Cleanup any staged .tmp files that didn't get committed.
+        for tmp, _ in staged:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
         respond("swap_active_map_respond", {
             "result": 1,
             "error": f"copy failed: {e}",
@@ -2371,17 +2384,18 @@ def handle_swap_active_map(params, respond):
         })
         return
 
-    cmd = (
-        ". /opt/ros/galactic/setup.bash && "
-        ". /root/novabot/install/setup.bash && "
-        "export ROS_LOCALHOST_ONLY=1 && "
-        "ros2 service call /map_server/load_map nav2_msgs/srv/LoadMap "
-        f'"{{map_url: \\"{home}/map.yaml\\"}}"'
-    )
+    # Use ros2_run() so the RMW_IMPLEMENTATION + ROS_LOCALHOST_ONLY env
+    # matches every other ROS2 service call in this file. Without that
+    # the call may fail to discover /map_server on the running graph.
     try:
-        rc = subprocess.run(
-            ["bash", "-lc", cmd],
-            capture_output=True, text=True, timeout=15,
+        rc = ros2_run(
+            [
+                "ros2", "service", "call",
+                "/map_server/load_map",
+                "nav2_msgs/srv/LoadMap",
+                f'"{{map_url: \\"{home}/map.yaml\\"}}"',
+            ],
+            timeout=15,
         )
     except subprocess.TimeoutExpired:
         respond("swap_active_map_respond", {
