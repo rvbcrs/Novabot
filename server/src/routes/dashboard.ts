@@ -2438,6 +2438,110 @@ dashboardRouter.get('/rain-sessions/:sn', (req: Request, res: Response) => {
   res.json({ sessions });
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Active map slot — multi-map support (>3 work maps).
+// Spec: docs/superpowers/specs/2026-05-04-multi-map-swap-active-slot.md
+//
+// POST /api/dashboard/maps/:sn/active-slot { slot: number }
+//   Tells the mower to copy mapN.{yaml,pgm,png} over the active map.* slot
+//   and reload the nav stack. Idempotent — second call with the same slot
+//   is satisfied from the deviceCache.
+//
+// GET /api/dashboard/maps/:sn/active-slot
+//   Returns the cached active slot (or null when never set).
+// ─────────────────────────────────────────────────────────────────────────────
+
+dashboardRouter.post('/maps/:sn/active-slot', async (req: Request, res: Response) => {
+  const { sn } = req.params;
+  const slotRaw = (req.body as { slot?: unknown }).slot;
+  if (typeof slotRaw !== 'number' || !Number.isInteger(slotRaw) || slotRaw < 0) {
+    res.status(400).json({ ok: false, error: 'slot must be a non-negative integer' });
+    return;
+  }
+  const slot = slotRaw;
+
+  if (!isDeviceOnline(sn)) {
+    res.status(404).json({ ok: false, error: 'Device is offline' });
+    return;
+  }
+
+  // Ensure a cache entry exists for this device so callers can reliably check
+  // .has('active_map_slot') after a failed swap (returns false, not undefined).
+  if (!deviceCache.has(sn)) deviceCache.set(sn, new Map());
+
+  // Idempotency: if cache says we're already on this slot, skip MQTT.
+  const cached = deviceCache.get(sn)!.get('active_map_slot');
+  if (cached === String(slot)) {
+    res.json({ ok: true, slot, cached: true });
+    return;
+  }
+
+  const { publishToExtended, onExtendedResponse, offExtendedResponse } =
+    await import('../mqtt/mapSync.js');
+
+  type Result = { ok: boolean; respond?: Record<string, unknown>; timeout?: boolean };
+  const result = await new Promise<Result>(resolve => {
+    let settled = false;
+    const handler = (data: Record<string, unknown>) => {
+      const r = data.swap_active_map_respond as Record<string, unknown> | undefined;
+      if (!r || settled) return;
+      settled = true;
+      offExtendedResponse(sn, handler);
+      resolve({ ok: r.result === 0, respond: r });
+    };
+    onExtendedResponse(sn, handler);
+    publishToExtended(sn, { swap_active_map: { slot } });
+    setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      offExtendedResponse(sn, handler);
+      resolve({ ok: false, timeout: true });
+    }, 15000);
+  });
+
+  if (result.timeout) {
+    res.status(504).json({ ok: false, error: 'mower did not ack within 15s', slot });
+    return;
+  }
+  if (result.ok) {
+    deviceCache.get(sn)!.set('active_map_slot', String(slot));
+    forwardToDashboard(sn, new Map([['active_map_slot', String(slot)]]));
+    res.json({ ok: true, slot, respond: result.respond });
+    return;
+  }
+
+  // Translate mower error codes to HTTP statuses.
+  const code = (result.respond?.result as number | undefined) ?? -1;
+  const mowerErr = String(result.respond?.error ?? 'swap failed');
+  if (code === 2) {
+    res.status(400).json({
+      ok: false,
+      error: `${mowerErr} — map first via the app`,
+      respond: result.respond,
+    });
+  } else if (code === 3) {
+    res.status(409).json({
+      ok: false,
+      error: `${mowerErr} — stop mowing first`,
+      respond: result.respond,
+    });
+  } else if (code === 1) {
+    // Mower-side disk write failure (shutil.copy2 / os.replace). This is
+    // a server-side infrastructure problem, NOT a client bug — return 500
+    // so callers don't treat a transient mower fs issue as their own fault.
+    res.status(500).json({ ok: false, error: mowerErr, respond: result.respond });
+  } else if (code === 4) {
+    res.status(500).json({ ok: false, error: mowerErr, respond: result.respond });
+  } else {
+    res.status(400).json({ ok: false, error: mowerErr, respond: result.respond });
+  }
+});
+
+dashboardRouter.get('/maps/:sn/active-slot', (req: Request, res: Response) => {
+  const cached = deviceCache.get(req.params.sn)?.get('active_map_slot');
+  res.json({ slot: cached != null ? parseInt(cached, 10) : null });
+});
+
 // POST /api/dashboard/rain-ignore-session/:sn — user vinkte "Negeer regen
 // deze sessie" aan in StartMowSheet. Server slaat per-mower vlag op die de
 // rain monitor doet skippen tot de sessie eindigt (work_status terug naar

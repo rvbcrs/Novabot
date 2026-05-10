@@ -8,7 +8,7 @@
 
 import { scheduleRepo, mapRepo, messageRepo } from '../db/repositories/index.js';
 import { isDeviceOnline } from '../mqtt/broker.js';
-import { publishToDevice } from '../mqtt/mapSync.js';
+import { publishToExtended, onExtendedResponse, offExtendedResponse } from '../mqtt/mapSync.js';
 import { startMowing } from './mowingService.js';
 import { getWeatherForecast, shouldPauseForRain } from './weatherService.js';
 import { emitScheduleEvent } from '../dashboard/socketHandler.js';
@@ -21,6 +21,18 @@ const TRIGGER_WINDOW_MS = 5 * 60_000; // 5 minuten window — ruim genoeg voor r
 /** Haal charger GPS coördinaten op voor een maaier SN */
 function getChargerGps(mowerSn: string): { lat: number; lng: number } | null {
   return mapRepo.getChargerGps(mowerSn);
+}
+
+/** Resolve the firmware slot index from the schedule's stored mapId.
+ *  Reads canonical_name on the maps row and parses the trailing
+ *  digits ("map7_work" -> 7). Returns null when the row is missing or
+ *  the canonical_name doesn't match. */
+function resolveSlotForSchedule(row: ScheduleRow): number | null {
+  if (!row.map_id) return null;
+  const mapRow = mapRepo.findById(row.map_id);
+  const canonical = mapRow?.canonical_name ?? '';
+  const m = canonical.match(/^map(\d+)/);
+  return m ? parseInt(m[1], 10) : null;
 }
 
 function getScheduleOccurrence(row: ScheduleRow, now: Date): Date | null {
@@ -128,6 +140,45 @@ async function checkWeatherAndTrigger(
 }
 
 function triggerSchedule(row: ScheduleRow) {
+  // Multi-map support: ensure the mower has the right slot loaded into
+  // its active map.yaml before kicking off the mow. Skips when the
+  // schedule is bound to a slot we can't resolve (legacy rows). Spec:
+  // docs/superpowers/specs/2026-05-04-multi-map-swap-active-slot.md
+  const slot = resolveSlotForSchedule(row);
+  if (slot != null) {
+    void (async () => {
+      try {
+        await new Promise<void>(resolve => {
+          let settled = false;
+          const handler = (data: Record<string, unknown>) => {
+            if (!data.swap_active_map_respond || settled) return;
+            settled = true;
+            offExtendedResponse(row.mower_sn, handler);
+            resolve();
+          };
+          onExtendedResponse(row.mower_sn, handler);
+          publishToExtended(row.mower_sn, { swap_active_map: { slot } });
+          setTimeout(() => {
+            if (settled) return;
+            settled = true;
+            offExtendedResponse(row.mower_sn, handler);
+            resolve();  // never block the mow on swap timeout
+          }, 15000);
+        });
+      } catch (err) {
+        console.error(`[ScheduleRunner] swap_active_map failed for ${row.mower_sn} slot=${slot}:`, err);
+      }
+      // Swap completed (success or timeout — the mower may have
+      // partially loaded the new map either way). Use area=0 so the
+      // legacy enum doesn't fight the post-swap state.
+      runStartMowing(row, 0);
+    })();
+    return;
+  }
+  runStartMowing(row);
+}
+
+function runStartMowing(row: ScheduleRow, areaOverride?: number) {
   // Bereken effectieve richting (met alternerende rotatie)
   let effectiveDirection = row.path_direction;
   if (row.alternate_direction === 1) {
@@ -140,7 +191,10 @@ function triggerSchedule(row: ScheduleRow) {
     sn: row.mower_sn,
     cuttingHeight: row.cutting_height ?? 5,
     pathDirection: effectiveDirection,
-    area: 1,
+    // After a successful slot swap the loaded map.yaml IS the requested
+    // map — area is irrelevant, so caller passes 0. Legacy schedules
+    // without a slot swap stay on area=1 (matches old behavior).
+    area: areaOverride ?? 1,
   });
   console.log(`[ScheduleRunner] ${row.schedule_id}: ${result.ok ? 'started' : 'FAILED: ' + result.error} (height=${row.cutting_height}, dir=${effectiveDirection})`);
 

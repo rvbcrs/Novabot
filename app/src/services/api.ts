@@ -352,6 +352,21 @@ export class ApiClient {
     );
   }
 
+  async setActiveMapSlot(sn: string, slot: number): Promise<{ ok: boolean; slot: number; cached?: boolean; error?: string }> {
+    return this.request<{ ok: boolean; slot: number; cached?: boolean; error?: string }>(
+      'POST',
+      `/api/dashboard/maps/${encodeURIComponent(sn)}/active-slot`,
+      { body: { slot } },
+    );
+  }
+
+  async getActiveMapSlot(sn: string): Promise<{ slot: number | null }> {
+    return this.request<{ slot: number | null }>(
+      'GET',
+      `/api/dashboard/maps/${encodeURIComponent(sn)}/active-slot`,
+    );
+  }
+
   /**
    * Register an Expo push token for a bound mower. Idempotent on the
    * server side — re-registering with the same (token, sn) is a no-op

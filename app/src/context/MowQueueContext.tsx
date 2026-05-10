@@ -201,11 +201,21 @@ export function MowQueueProvider({ children }: { children: React.ReactNode }) {
       const wireHeight = Math.max(0, state.cuttingHeight - 2);
       const cmdNum = Date.now() % 100000;
       console.log(`[MowQueue] dispatch ${head.mapName} (idx=${head.mapIdx}) cutterhigh=${wireHeight}`);
+      // Multi-map support (spec 2026-05-04): swap the active map slot
+      // before each dispatch so the queue can mow ANY canonical slot,
+      // not just map0/1/2. Treat swap failure as a fatal queue error
+      // — better to abort cleanly than mow the wrong polygon.
+      try {
+        await api.setActiveMapSlot(state.sn, head.mapIdx);
+      } catch (err) {
+        console.warn(`[MowQueue] setActiveMapSlot failed for slot=${head.mapIdx}:`, err);
+        return;
+      }
       await api.sendCommand(state.sn, {
         start_navigation: {
           mapName: 'test',
+          area: 0,  // map.yaml swap above makes the legacy area enum irrelevant
           cutterhigh: wireHeight,
-          area: areaParamFromIdx(head.mapIdx),
           cmd_num: cmdNum,
         },
       });
