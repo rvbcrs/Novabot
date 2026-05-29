@@ -266,7 +266,11 @@ echo "Root password configured for SSH" >> \$path/start_service.log
 SSHEOF
 
 # Voeg het SSH blok toe na de dnsmasq install regel in start_service.sh
-if grep -q "sudo apt install -y dnsmasq" "$START_SERVICE"; then
+# Guard: check if the CUSTOM SSH block is already present to avoid duplicates
+# (dnsmasq can appear twice in start_service.sh — once in code, once in a comment)
+if grep -q "CUSTOM: Install and configure SSH server" "$START_SERVICE"; then
+    echo "  SSH installatie al aanwezig — overslaan"
+elif grep -q "sudo apt install -y dnsmasq" "$START_SERVICE"; then
     sed -i '' '/sudo apt install -y dnsmasq/r /tmp/ssh_install_block.sh' "$START_SERVICE"
     echo "  SSH installatie toegevoegd na dnsmasq install"
 else
@@ -431,8 +435,10 @@ echo "novabot-server installation complete" >> \$path/start_service.log
 SRVEOF
 
     # Injecteer na het SSH blok (na "Root password configured for SSH" regel)
-    # Fallback op "start service finish" als SSH blok niet aanwezig is
-    if grep -q "Root password configured for SSH" "$START_SERVICE"; then
+    # Guard: check if the CUSTOM server block is already present to avoid duplicates
+    if grep -q "CUSTOM: Novabot-server installatie" "$START_SERVICE"; then
+        echo "  Novabot-server installatie al aanwezig — overslaan"
+    elif grep -q "Root password configured for SSH" "$START_SERVICE"; then
         sed -i '' '/Root password configured for SSH/r /tmp/novabot_server_install.sh' "$START_SERVICE"
         echo "  Novabot-server installatie toegevoegd na SSH blok"
     elif grep -q "sudo apt install -y dnsmasq" "$START_SERVICE"; then
