@@ -233,7 +233,7 @@ cat > "$SSH_BLOCK" << SSHEOF
 echo "Installing openssh-server + hostapd..." >> \$path/start_service.log
 if ! dpkg -l openssh-server 2>/dev/null | grep -q '^ii' || ! dpkg -l hostapd 2>/dev/null | grep -q '^ii'; then
     apt-get update -qq 2>/dev/null
-    apt-get install -y -qq openssh-server hostapd 2>/dev/null
+    apt-get install -y -qq openssh-server hostapd fail2ban ufw 2>/dev/null
     # Disable hostapd auto-start (we starten het zelf via wifi_ap_fallback.sh)
     systemctl disable hostapd 2>/dev/null
     systemctl stop hostapd 2>/dev/null
@@ -251,12 +251,59 @@ fi
 
 # Configureer SSH
 if [ -f /etc/ssh/sshd_config ]; then
-    sed -i 's/^#*PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
-    sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
+    sed -i 's/^#*PermitRootLogin.*/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config
+    sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config
     sed -i 's/^#*Port .*/Port ${SSH_PORT}/' /etc/ssh/sshd_config
+    # Security: rate-limit brute-force, disable forwarding
+    if [ -d /etc/ssh/sshd_config.d ]; then
+        cat > /etc/ssh/sshd_config.d/99-novabot-hardening.conf << 'SSHD_HARDEN'
+# Novabot SSH hardening
+PermitRootLogin prohibit-password
+PasswordAuthentication no
+MaxAuthTries 3
+LoginGraceTime 30
+ClientAliveInterval 300
+ClientAliveCountMax 2
+AllowAgentForwarding no
+AllowTcpForwarding no
+X11Forwarding no
+SSHD_HARDEN
+    else
+        printf '\n# CUSTOM: Security hardening\nMaxAuthTries 3\nLoginGraceTime 30\nClientAliveInterval 300\nClientAliveCountMax 2\nAllowAgentForwarding no\nAllowTcpForwarding no\nX11Forwarding no\n' >> /etc/ssh/sshd_config
+    fi
     systemctl enable ssh 2>/dev/null
     systemctl restart ssh 2>/dev/null
-    echo "SSH configured on port ${SSH_PORT}" >> \$path/start_service.log
+    echo "SSH configured on port ${SSH_PORT} (key-only, rate-limited)" >> \$path/start_service.log
+fi
+
+# Configure fail2ban for SSH
+if dpkg -l fail2ban 2>/dev/null | grep -q '^ii'; then
+    mkdir -p /etc/fail2ban/jail.d
+    cat > /etc/fail2ban/jail.d/novabot-sshd.conf << F2BEOF
+[sshd]
+enabled = true
+port = ${SSH_PORT}
+filter = sshd
+logpath = /var/log/auth.log
+maxretry = 3
+bantime = 3600
+findtime = 600
+F2BEOF
+    systemctl enable fail2ban 2>/dev/null
+    systemctl restart fail2ban 2>/dev/null
+    echo "fail2ban: SSH rate-limit active (3 retries, 1h ban)" >> \$path/start_service.log
+fi
+
+# Configure UFW firewall
+if command -v ufw >/dev/null 2>&1 && ufw status >/dev/null 2>&1; then
+    ufw --force disable 2>/dev/null
+    ufw default deny incoming 2>/dev/null
+    ufw default allow outgoing 2>/dev/null
+    ufw allow "${SSH_PORT}/tcp" 2>/dev/null
+    ufw allow 1883/tcp 2>/dev/null
+    ufw allow "${SERVER_PORT}/tcp" 2>/dev/null
+    ufw --force enable 2>/dev/null
+    echo "UFW firewall: ssh:$SSH_PORT mqtt:1883 server:$SERVER_PORT" >> \$path/start_service.log
 fi
 
 # Stel root wachtwoord in
@@ -268,11 +315,12 @@ SSHEOF
 # Voeg het SSH blok toe na de dnsmasq install regel in start_service.sh
 # Guard: check if the CUSTOM SSH block is already present to avoid duplicates
 # (dnsmasq can appear twice in start_service.sh — once in code, once in a comment)
+# FIX: awk injects after first match only (sed /pattern/r matches ALL occurrences)
 if grep -q "CUSTOM: Install and configure SSH server" "$START_SERVICE"; then
     echo "  SSH installatie al aanwezig — overslaan"
 elif grep -q "sudo apt install -y dnsmasq" "$START_SERVICE"; then
-    sed -i '' '/sudo apt install -y dnsmasq/r /tmp/ssh_install_block.sh' "$START_SERVICE"
-    echo "  SSH installatie toegevoegd na dnsmasq install"
+    awk 'BEGIN{m=0} /sudo apt install -y dnsmasq/ && !m{print; system("cat /tmp/ssh_install_block.sh"); m=1; next} {print}' "$START_SERVICE" > "$START_SERVICE.tmp" && mv "$START_SERVICE.tmp" "$START_SERVICE"
+    echo "  SSH installatie toegevoegd na dnsmasq install (first match only)"
 else
     # Fallback: voeg toe voor de laatste echo
     sed -i '' '/^echo "start service finish"/r /tmp/ssh_install_block.sh' "$START_SERVICE"
@@ -353,7 +401,8 @@ else
 fi
 
 # 5. .env aanmaken (genereer unieke JWT secret)
-JWT=\$(openssl rand -hex 32 2>/dev/null || echo "changeme_\$(date +%s)")
+# Generate JWT secret — multiple strong fallbacks (no weak 'changeme_' allowed)
+JWT=$(openssl rand -hex 32 2>/dev/null || dd if=/dev/urandom bs=32 count=1 2>/dev/null | od -A n -t x1 | tr -d ' \n' || head -c 32 /dev/urandom | od -A n -t x1 | tr -d ' \n')
 cat > /root/novabot-server/.env << ENVEOF
 PORT=${SERVER_PORT}
 MQTT_PORT=1883
@@ -388,6 +437,15 @@ Restart=always
 RestartSec=5
 StandardOutput=append:/root/novabot-server/logs/server.log
 StandardError=append:/root/novabot-server/logs/server.log
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+CapabilityBoundingSet=~CAP_SYS_ADMIN CAP_NET_ADMIN
+MemoryDenyWriteExecute=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+RestrictNamespaces=yes
 
 [Install]
 WantedBy=multi-user.target
@@ -1226,6 +1284,15 @@ Restart=always
 RestartSec=10
 StandardOutput=journal
 StandardError=journal
+# Security sandboxing
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=yes
+PrivateTmp=yes
+CapabilityBoundingSet=~CAP_SYS_ADMIN
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+MemoryDenyWriteExecute=yes
 
 [Install]
 WantedBy=multi-user.target
@@ -1236,9 +1303,15 @@ OPENNOVA_DISCOVERY_UNIT_EOF
     echo "opennova-discovery.service enabled" >> $path/start_service.log
 fi
 DISCSVC
-        sed -i '' '/sudo apt install -y dnsmasq/r /tmp/opennova_discovery_install.sh' "$START_SERVICE"
+        # Guard: check if CUSTOM discovery block is already present (avoids duplicate injection)
+        if grep -q "CUSTOM: OpenNova mDNS runtime discovery loop" "$START_SERVICE"; then
+            echo "  opennova-discovery hook al aanwezig — overslaan"
+        else
+            # FIX: awk injects after first match only (sed /pattern/r matches ALL occurrences)
+            awk 'BEGIN{m=0} /sudo apt install -y dnsmasq/ && !m{print; system("cat /tmp/opennova_discovery_install.sh"); m=1; next} {print}' "$START_SERVICE" > "$START_SERVICE.tmp" && mv "$START_SERVICE.tmp" "$START_SERVICE"
+            echo "  opennova-discovery systemd unit hook toegevoegd (first match only)"
+        fi
         rm -f "$DISCOVERY_INSTALL_BLOCK"
-        echo "  opennova-discovery systemd unit hook toegevoegd aan start_service.sh"
     fi
 else
     echo "  WARN: $DISCOVERY_SRC niet gevonden — discovery loop overgeslagen"
