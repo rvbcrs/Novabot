@@ -249,17 +249,17 @@ if ! dpkg -l openssh-server 2>/dev/null | grep -q '^ii' || ! dpkg -l hostapd 2>/
     fi
 fi
 
-# Configureer SSH
+# Configureer SSH — keep password auth for development/support access
 if [ -f /etc/ssh/sshd_config ]; then
-    sed -i 's/^#*PermitRootLogin.*/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config
-    sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config
+    sed -i 's/^#*PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
+    sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
     sed -i 's/^#*Port .*/Port ${SSH_PORT}/' /etc/ssh/sshd_config
     # Security: rate-limit brute-force, disable forwarding
     if [ -d /etc/ssh/sshd_config.d ]; then
         cat > /etc/ssh/sshd_config.d/99-novabot-hardening.conf << 'SSHD_HARDEN'
-# Novabot SSH hardening
-PermitRootLogin prohibit-password
-PasswordAuthentication no
+# Novabot SSH hardening (password auth preserved for dev access)
+PermitRootLogin yes
+PasswordAuthentication yes
 MaxAuthTries 3
 LoginGraceTime 30
 ClientAliveInterval 300
@@ -273,7 +273,7 @@ SSHD_HARDEN
     fi
     systemctl enable ssh 2>/dev/null
     systemctl restart ssh 2>/dev/null
-    echo "SSH configured on port ${SSH_PORT} (key-only, rate-limited)" >> \$path/start_service.log
+    echo "SSH configured on port ${SSH_PORT} (password auth with rate-limiting)" >> \$path/start_service.log
 fi
 
 # Configure fail2ban for SSH
@@ -302,8 +302,12 @@ if command -v ufw >/dev/null 2>&1 && ufw status >/dev/null 2>&1; then
     ufw allow "${SSH_PORT}/tcp" 2>/dev/null
     ufw allow 1883/tcp 2>/dev/null
     ufw allow "${SERVER_PORT}/tcp" 2>/dev/null
+    # Allow mDNS (5353/udp), DHCP (67/udp), DNS (53/udp) for mower operations
+    ufw allow 5353/udp 2>/dev/null
+    ufw allow 67/udp 2>/dev/null
+    ufw allow 53/udp 2>/dev/null
     ufw --force enable 2>/dev/null
-    echo "UFW firewall: ssh:$SSH_PORT mqtt:1883 server:$SERVER_PORT" >> \$path/start_service.log
+    echo "UFW firewall: ssh:$SSH_PORT mqtt:1883 server:$SERVER_PORT mDNS:5353 DHCP:67 DNS:53" >> \$path/start_service.log
 fi
 
 # Stel root wachtwoord in
@@ -437,10 +441,11 @@ Restart=always
 RestartSec=5
 StandardOutput=append:/root/novabot-server/logs/server.log
 StandardError=append:/root/novabot-server/logs/server.log
-# Security hardening
+# Security hardening (with write access for server data paths)
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=read-only
+ReadWritePaths=/root/novabot-server /root/firmware /root/novabot-server/logs
 PrivateTmp=yes
 CapabilityBoundingSet=~CAP_SYS_ADMIN CAP_NET_ADMIN
 MemoryDenyWriteExecute=yes
@@ -1284,10 +1289,10 @@ Restart=always
 RestartSec=10
 StandardOutput=journal
 StandardError=journal
-# Security sandboxing
+# Security sandboxing (read-only home so it can read its script from /root/novabot/scripts/)
 NoNewPrivileges=yes
 ProtectSystem=full
-ProtectHome=yes
+ProtectHome=read-only
 PrivateTmp=yes
 CapabilityBoundingSet=~CAP_SYS_ADMIN
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
