@@ -91,6 +91,28 @@ permanent op de kaart), `faeces`/`dirt`/`sunlight`/`glass`/`unlabeled`/
 - Verifiëren in de eerste app-taak: RN-fetch pakt de gzip transparant uit
   (OkHttp/NSURLSession doen dat op de Content-Encoding header).
 
+### 5. Live groei (periodieke tussentijdse upload) — amendement, door Ramon gevraagd
+
+De kaart moet zichtbaar groeien TIJDENS het maaien, niet pas na het docken.
+Gekozen: periodieke incrementele upload (geen echte streaming — bewuste
+afweging: minuut-live tegen een fractie van de complexiteit, en robuust
+tegen WiFi-gaten).
+
+- **Maaier**: tijdens een actieve sessie uploadt de daemon elke **60 s** het
+  actuele sessie-grid (terrein én objectlaag) naar de bestaande endpoints,
+  met `&session=<start-ts>&final=0`. De eind-flush stuurt `final=1`.
+- **Server**: bewaart de actieve sessie APART (`<sn>.active.tgr/.tgo` +
+  onthouden sessie-id). Tussentijdse uploads met dezelfde sessie-id
+  VERVANGEN de actieve laag (idempotent — telt niet 60× mee). Bij
+  `final=1` (of een nieuwe sessie-id) wordt de sessie definitief in de
+  TGM-ring gevouwen en de actieve laag gewist.
+- **Display**: GET-endpoints mergen on-the-fly TGM + actieve laag, zodat
+  de viewer altijd het levende beeld ziet.
+- **Viewer** (dashboard + app): pollt elke **20 s** zolang de maaier
+  actief is (activity uit de bestaande socket-state), anders niet.
+- Backwards-compat: uploads ZONDER session-parameter gedragen zich als
+  final=1 (het huidige daemon-gedrag blijft geldig tijdens de migratie).
+
 ## Fase 0 — verificatie vóór de bouw (op .244)
 
 1. Publiceert `/perception/points_labeled` tijdens het maaien? Rate?
