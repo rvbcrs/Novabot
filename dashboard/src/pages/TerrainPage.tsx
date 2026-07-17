@@ -297,6 +297,15 @@ export default function TerrainPage({ sn }: { sn: string }) {
 
       // werk-polygonen als overlay-lijnen 5 cm boven het terrein — statisch,
       // niet meegenomen in de 20s-poll (verandert niet tijdens het kijken)
+      // Obstacle-polygonen uit de 2D-kaart als rode contouren op het terrein
+      for (const m of maps.filter(m => m.mapType === 'obstacle' && m.mapArea?.length)) {
+        const pts = m.mapArea.map(p => new THREE.Vector3(p.x, p.y, 0.08));
+        pts.push(pts[0].clone());
+        const line = new THREE.Line(
+          new THREE.BufferGeometry().setFromPoints(pts),
+          new THREE.LineBasicMaterial({ color: 0xef4444 }));
+        scene.add(line);
+      }
       for (const m of maps.filter(m => m.mapType === 'work' && m.mapArea?.length)) {
         const pts = m.mapArea.map(p => new THREE.Vector3(p.x, p.y, 0.05));
         pts.push(pts[0].clone());

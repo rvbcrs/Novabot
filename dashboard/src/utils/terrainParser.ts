@@ -52,5 +52,8 @@ export function parseObjects(buf: ArrayBuffer): ObjectData {
 }
 
 // label → kleur: 10=laadstation (blauw), 8=struik (groen), 5/6=obstakel (oranje)
-export const LABEL_COLORS: Record<number, string> = { 10: '#3b82f6', 8: '#22c55e', 5: '#f97316', 6: '#f97316' };
+// 1 (background) = in de praktijk begroeiing langs de randen (het seg-model
+// gebruikt de echte bush-klasse zelden) → olijfgroen. Let op: een trampoline
+// is óók 'background' en kleurt dus mee groen — bekende v1-beperking.
+export const LABEL_COLORS: Record<number, string> = { 1: '#6b8e23', 10: '#3b82f6', 8: '#22c55e', 5: '#f97316', 6: '#f97316' };
 export const LABEL_DEFAULT_COLOR = '#d6d3d1';
