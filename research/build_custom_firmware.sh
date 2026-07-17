@@ -1751,8 +1751,13 @@ if [ -f "$TERRAIN_SRC" ] && [ -f "$TERRAIN_LAUNCHER_SRC" ]; then
 
   # CUSTOM: Terrain-scan daemon starten (ToF-hoogtegrid tijdens maaien, upload naar server)
   # Zie research/terrain_scan.py + docs/superpowers/specs/2026-07-17-terrain-3d-map-design.md
+  # start_terrain.sh is zelf een respawn-lus (boot-race + crash-herstel) — double-spawn
+  # guard moet daarom ZOWEL de lus-shell als het python-kleinkind killen, anders overleeft
+  # de oude lus de guard en respawnt hij binnen 15s een tweede daemon naast de nieuwe.
+  # Bracket-notatie (pkill -f '[x]xx') zodat deze regels nooit zichzelf matchen.
   if [ -f "/root/novabot/scripts/start_terrain.sh" ]; then
-      pkill -f "/root/novabot/scripts/terrain_scan.py" 2>/dev/null
+      pkill -f '[s]tart_terrain.sh' 2>/dev/null
+      pkill -f '[t]errain_scan.py' 2>/dev/null
       (/root/novabot/scripts/start_terrain.sh >> $LOGS_PATH/terrain_scan.log 2>&1) &
       echo "terrain_scan started" >> $LOGS_PATH/terrain_scan.log
   fi
@@ -1762,9 +1767,13 @@ TERRAINEOF
         echo "  run_novabot.sh: terrain-scan launch toegevoegd aan start)"
 
         # Voeg terrain-scan kill toe aan stop) blok
+        # Zelfde reden als hierboven: killall -q -9 terrain_scan.py alleen raakt de
+        # lus-shell niet — die zou de daemon binnen 15s weer opstarten, dus "stop"
+        # zou niet echt stoppen. Kill beide met dezelfde bracket-pkills.
         TERRAIN_STOP_BLOCK="/tmp/terrain_stop_block.sh"
         cat > "$TERRAIN_STOP_BLOCK" << 'TERRAINEOF'
-  killall -q -9 terrain_scan.py
+  pkill -f '[s]tart_terrain.sh' 2>/dev/null
+  pkill -f '[t]errain_scan.py' 2>/dev/null
 TERRAINEOF
         sed -i '' '/killall -q -9 daemon_monitor.sh/r /tmp/terrain_stop_block.sh' "$RUN_NOVABOT"
         rm -f "$TERRAIN_STOP_BLOCK"
