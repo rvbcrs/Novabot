@@ -2,7 +2,8 @@
  * Terrain-grid uploads van de maaier (terrain_scan.py).
  * POST /api/nova-file-server/terrain/uploadTerrainGrid?sn=<SN>  (TGR1 → TGM1)
  * POST /api/nova-file-server/terrain/uploadObjectGrid?sn=<SN>   (TGO1 → TGMO)
- * Body: raw octet-stream, max 8 MB.
+ * Body: raw octet-stream, max 16 MB (OBJ_MAX_ENTRIES 500k × 17 B ≈ 8,5 MB
+ * cap-vol object-grid moet nog binnen de limit passen).
  *
  * Live-sessie semantiek (`?session=<id>&final=0|1`):
  * - final=0 met session → schrijf een actieve-sessie-laag naar
@@ -133,7 +134,7 @@ function handleUpload(req: Request, res: Response, fmt: UploadFormat): void {
   res.json(ok(null));
 }
 
-const rawBody = express.raw({ type: 'application/octet-stream', limit: '8mb' });
+const rawBody = express.raw({ type: 'application/octet-stream', limit: '16mb' });
 
 terrainRouter.post('/uploadTerrainGrid', rawBody, (req: Request, res: Response) => {
   handleUpload(req, res, {

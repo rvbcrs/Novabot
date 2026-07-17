@@ -2,6 +2,12 @@
 
 Format: most-recent first. Each entry is dated and names the endpoint(s) affected.
 
+## 2026-07-17 — terrain: upload-limit naar 16mb
+
+- `uploadTerrainGrid`/`uploadObjectGrid`: raw-body limit van 8mb naar 16mb.
+  OBJ_MAX_ENTRIES 500k × 17 B ≈ 8,5 MB > 8mb, dus een cap-volle object-grid
+  final-upload kreeg 413 en bleef eeuwig retryen.
+
 ## 2026-07-17 — terrain: gedeelde sessie-meta overleeft tot beide types final zijn
 
 - Fix in uploadTerrainGrid/uploadObjectGrid: bij `final=1` werd `<sn>.active.json`
