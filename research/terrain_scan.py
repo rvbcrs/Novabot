@@ -260,7 +260,7 @@ def main():
     rclpy.init()
     node = Node("terrain_scan")
     st = {"pose": None, "pose_t": 0.0, "grid": {}, "last_frame": 0.0,
-          "last_cloud": 0.0, "frames": 0,
+          "last_data": 0.0, "frames": 0,
           "obj": {}, "session": None, "last_live": 0.0, "last_obj_frame": 0.0}
 
     def on_odom(msg):
@@ -276,7 +276,7 @@ def main():
                 f"terrain: onverwachte point_step {msg.point_step} (verwacht 16) — frame overgeslagen")
             return
         now = time.time()
-        st["last_cloud"] = now
+        st["last_data"] = now
         if now - st["last_frame"] < FRAME_INTERVAL:
             return
         if st["pose"] is None or now - st["pose_t"] > POSE_MAX_AGE:
@@ -292,6 +292,7 @@ def main():
 
     def on_labeled(msg):
         now = time.time()
+        st["last_data"] = now  # elk labeled-bericht bewijst dat de perceptie leeft
         if len(msg.data) == 0:
             return  # leeg frame: geen obstakel in beeld (fase-0 feit)
         if msg.point_step != 13:
@@ -362,7 +363,7 @@ def main():
 
     while rclpy.ok():
         rclpy.spin_once(node, timeout_sec=2.0)
-        if st["grid"] and time.time() - st["last_cloud"] > FLUSH_AFTER_IDLE:
+        if (st["grid"] or st["obj"]) and time.time() - st["last_data"] > FLUSH_AFTER_IDLE:
             flush()
 
         now = time.time()
