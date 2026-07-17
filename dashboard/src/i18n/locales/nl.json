@@ -421,6 +421,9 @@
       "coverageRefresh": "Ververs vanaf maaier"
     }
   },
+  "terrain": {
+    "title": "Terrein"
+  },
   "schedule": {
     "title": "Maaischema's",
     "new": "Nieuw",

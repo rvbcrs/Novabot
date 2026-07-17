@@ -374,6 +374,9 @@
       "coverageRefresh": "Refresh from mower"
     }
   },
+  "terrain": {
+    "title": "Terrain"
+  },
   "schedule": {
     "title": "Mowing Schedules",
     "new": "New",

@@ -358,6 +358,9 @@
       "coverageRefresh": "Vom Mäher aktualisieren"
     }
   },
+  "terrain": {
+    "title": "Gelände"
+  },
   "schedule": {
     "title": "Mähpläne",
     "new": "Neu",

@@ -358,6 +358,9 @@
       "coverageRefresh": "Actualiser depuis la tondeuse"
     }
   },
+  "terrain": {
+    "title": "Terrain"
+  },
   "schedule": {
     "title": "Planifications de tonte",
     "new": "Nouveau",

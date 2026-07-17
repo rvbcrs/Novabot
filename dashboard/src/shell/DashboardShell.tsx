@@ -1,4 +1,6 @@
-import { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
+import { useTranslation } from 'react-i18next';
+import { Mountain } from 'lucide-react';
 import { Header } from './Header';
 import { Drawer } from './Drawer';
 import { DeviceChips } from './DeviceChips';
@@ -20,19 +22,23 @@ import { MdnsConflictBanner } from './MdnsConflictBanner';
 import { UpdateBanner } from './UpdateBanner';
 import { ErrorDisplay } from '../components/status/ErrorDisplay';
 
-type Tab = 'map' | 'schedule' | 'records' | 'settings';
+// Lazy-loaded so three.js (the 3D terrain viewer) stays out of the main bundle.
+const TerrainPage = lazy(() => import('../pages/TerrainPage'));
 
-const TABS: Array<{ id: Tab; label: string }> = [
-  { id: 'map', label: 'Map' },
-  { id: 'schedule', label: 'Schedule' },
-  { id: 'records', label: 'Records' },
-  { id: 'settings', label: 'Settings' },
-];
+type Tab = 'map' | 'schedule' | 'records' | 'settings' | 'terrain';
 
 function ShellInner() {
+  const { t } = useTranslation();
   const { devices, loading, connected, otaProgress, liveOutlines, coveredLanes } = useDevices();
   const { activeMower, activeMowerSn, setActiveMowerSn, knownMowers } = useActiveMower(devices);
   const charger = [...devices.values()].find(d => d.deviceType === 'charger') ?? null;
+  const TABS: Array<{ id: Tab; label: string; icon?: React.ComponentType<{ className?: string }> }> = [
+    { id: 'map', label: 'Map' },
+    { id: 'schedule', label: 'Schedule' },
+    { id: 'records', label: 'Records' },
+    { id: 'settings', label: 'Settings' },
+    { id: 'terrain', label: t('terrain.title'), icon: Mountain },
+  ];
   const [tab, setTab] = useState<Tab>('map');
   const [drawerOpen, setDrawerOpen] = useState(false);
   // The enlarged server-log lives here (not in the drawer) so it stays open
@@ -142,17 +148,18 @@ function ShellInner() {
         />
         {/* Tabs (middle) */}
         <nav className="flex items-center gap-1 p-0.5 rounded-xl bg-zinc-800/40 border border-zinc-700/60">
-          {TABS.map(t => (
+          {TABS.map(tabDef => (
             <button
-              key={t.id}
-              onClick={() => setTab(t.id)}
-              className={`px-3.5 py-1.5 text-sm font-medium rounded-lg transition-colors ${
-                tab === t.id
+              key={tabDef.id}
+              onClick={() => setTab(tabDef.id)}
+              className={`px-3.5 py-1.5 text-sm font-medium rounded-lg transition-colors flex items-center gap-1.5 ${
+                tab === tabDef.id
                   ? 'bg-zinc-700 text-zinc-100 shadow-sm'
                   : 'text-zinc-400 hover:text-zinc-100 hover:bg-zinc-700/40'
               }`}
             >
-              {t.label}
+              {tabDef.icon && <tabDef.icon className="w-3.5 h-3.5" />}
+              {tabDef.label}
             </button>
           ))}
         </nav>
@@ -204,6 +211,15 @@ function ShellInner() {
         {tab === 'schedule' && <SchedulePage mower={activeMower} />}
         {tab === 'records' && <WorkRecordsPage mower={activeMower} />}
         {tab === 'settings' && <SettingsPage mower={activeMower} />}
+        {tab === 'terrain' && (
+          activeMower ? (
+            <Suspense fallback={<div className="p-8 text-zinc-500">Loading…</div>}>
+              <TerrainPage sn={activeMower.sn} />
+            </Suspense>
+          ) : (
+            <div className="p-8 text-zinc-500">{t('pages.selectMower')}</div>
+          )
+        )}
       </main>
 
       <Drawer open={drawerOpen} onClose={() => setDrawerOpen(false)}>
