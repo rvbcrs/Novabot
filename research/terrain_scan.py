@@ -197,6 +197,10 @@ def main():
         st["pose_t"] = time.time()
 
     def on_cloud(msg):
+        if msg.point_step != 16:
+            node.get_logger().warn(
+                f"terrain: onverwachte point_step {msg.point_step} (verwacht 16) — frame overgeslagen")
+            return
         now = time.time()
         st["last_cloud"] = now
         if now - st["last_frame"] < FRAME_INTERVAL:
