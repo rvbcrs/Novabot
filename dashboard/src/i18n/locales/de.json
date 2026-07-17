@@ -423,7 +423,10 @@
       "empty": "Keine aktiven Pläne.",
       "loading": "Lade Zeitplan…",
       "error": "Laden des Zeitplans fehlgeschlagen"
-    }
+    },
+    "skipNext": "Nächsten Lauf überspringen",
+    "skipNextActive": "Nächster Lauf wird übersprungen — klicken zum Abbrechen",
+    "skipNextBadge": "überspringt"
   },
   "rain": {
     "since": "Seit {{time}}",

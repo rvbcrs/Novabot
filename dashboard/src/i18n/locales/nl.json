@@ -486,7 +486,10 @@
       "empty": "Geen actieve schema's.",
       "loading": "Tijdlijn laden…",
       "error": "Tijdlijn laden mislukt"
-    }
+    },
+    "skipNext": "Volgende run overslaan",
+    "skipNextActive": "Volgende run wordt overgeslagen — klik om te annuleren",
+    "skipNextBadge": "slaat over:"
   },
   "rain": {
     "since": "Sinds {{time}}",

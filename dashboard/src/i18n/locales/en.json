@@ -439,7 +439,10 @@
       "empty": "No enabled schedules.",
       "loading": "Loading schedule timeline…",
       "error": "Failed to load schedule timeline"
-    }
+    },
+    "skipNext": "Skip next run",
+    "skipNextActive": "Next run will be skipped — click to cancel",
+    "skipNextBadge": "skips"
   },
   "rain": {
     "since": "Since {{time}}",

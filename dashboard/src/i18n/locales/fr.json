@@ -423,7 +423,10 @@
       "empty": "Aucun planning actif.",
       "loading": "Chargement du calendrier…",
       "error": "Échec du chargement du calendrier"
-    }
+    },
+    "skipNext": "Passer la prochaine tonte",
+    "skipNextActive": "La prochaine tonte sera passée — cliquer pour annuler",
+    "skipNextBadge": "passe le"
   },
   "rain": {
     "since": "Depuis {{time}}",

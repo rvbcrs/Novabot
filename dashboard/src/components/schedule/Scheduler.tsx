@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Clock, Plus, Minus, Trash2, Send, X, ChevronRight, Calendar,
-  Compass, AlertTriangle, CloudRain, RefreshCw, Ruler,
+  Compass, AlertTriangle, CloudRain, RefreshCw, Ruler, PauseCircle,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { Schedule, MapData } from '../../types';
@@ -168,6 +168,32 @@ export function Scheduler({ sn, online, onPathDirectionChange }: Props) {
     const updated = await updateSchedule(sn, scheduleId, { enabled }).catch(() => null);
     if (updated) {
       setSchedules(prev => prev.map(s => s.scheduleId === scheduleId ? updated : s));
+    }
+  }, [sn]);
+
+  // Datum (YYYY-MM-DD) van de eerstvolgende run van dit schema, in browser-
+  // lokale tijd (= de tijdzone die het schema bij opslaan meekreeg).
+  const nextOccurrenceDate = (s: Schedule): string => {
+    const now = new Date();
+    const [h = 0, m = 0] = s.startTime.split(':').map(Number);
+    for (let i = 0; i < 8; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + i);
+      if (i === 0 && (now.getHours() > h || (now.getHours() === h && now.getMinutes() >= m))) continue;
+      if (s.weekdays.length === 0 || s.weekdays.includes(d.getDay())) {
+        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      }
+    }
+    return '';
+  };
+
+  // "Sla de volgende run over" — zet skip_date op de datum van de volgende
+  // occurrence; nogmaals klikken annuleert de skip (skipDate: null).
+  const handleSkipNext = useCallback(async (s: Schedule) => {
+    const skipDate = s.skipDate ? null : nextOccurrenceDate(s);
+    if (skipDate === '') return;
+    const updated = await updateSchedule(sn, s.scheduleId, { skipDate }).catch(() => null);
+    if (updated) {
+      setSchedules(prev => prev.map(row => row.scheduleId === s.scheduleId ? updated : row));
     }
   }, [sn]);
 
@@ -549,6 +575,19 @@ export function Scheduler({ sn, online, onPathDirectionChange }: Props) {
                 )}
               </div>
               <div className="flex items-center gap-1">
+                {s.enabled && (
+                  <button
+                    onClick={() => handleSkipNext(s)}
+                    className={`p-1 rounded transition-colors ${
+                      s.skipDate
+                        ? 'text-amber-400 bg-amber-900/30 hover:bg-amber-900/50'
+                        : 'text-gray-500 hover:text-amber-400 hover:bg-amber-900/30'
+                    }`}
+                    title={s.skipDate ? `${t('schedule.skipNextActive')} (${s.skipDate})` : t('schedule.skipNext')}
+                  >
+                    <PauseCircle className="w-3.5 h-3.5" />
+                  </button>
+                )}
                 {online && s.enabled && (
                   <button
                     onClick={() => handleSend(s.scheduleId)}
@@ -586,10 +625,16 @@ export function Scheduler({ sn, online, onPathDirectionChange }: Props) {
               <span className="text-gray-600">|</span>
               <span className="inline-flex items-center gap-0.5">
                 <Compass className="w-3 h-3" />
-                {s.pathDirection}&deg;
+                {s.nextPathDirection ?? s.pathDirection}&deg;
                 {s.alternateDirection && <RefreshCw className="w-2.5 h-2.5 text-emerald-400" />}
               </span>
               <span>{(s.cuttingHeight / 10).toFixed(1)} cm</span>
+              {s.skipDate && (
+                <span className="inline-flex items-center gap-0.5 text-amber-400">
+                  <PauseCircle className="w-3 h-3" />
+                  {t('schedule.skipNextBadge')} {s.skipDate}
+                </span>
+              )}
               {s.edgeOffset !== 0 && (
                 <span className="inline-flex items-center gap-0.5 text-emerald-400">
                   <Ruler className="w-2.5 h-2.5" />
