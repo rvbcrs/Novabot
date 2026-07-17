@@ -57,6 +57,7 @@ import { contourToSvgPath, transformToGps } from '../utils/patternUtils';
 import { findMissingChannels } from '../utils/mapChannels';
 import { useI18n } from '../i18n';
 import { Linking } from 'react-native';
+import TerrainView3D from '../components/TerrainView3D';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 const MAP_PADDING = 24;
@@ -297,6 +298,7 @@ export default function MapScreen() {
   const { devices, connected } = useMowerState();
   const demo = useDemo();
   const { t } = useI18n();
+  const [view3d, setView3d] = useState(false);
   const styles = useStyles(makeStyles);
   const { colors, colorScheme } = useTheme();
   const [maps, setMaps] = useState<MapData[]>([]);
@@ -1150,6 +1152,14 @@ export default function MapScreen() {
           <Text style={styles.title}>{t('mapTitle')}</Text>
           <View style={styles.headerActions}>
             <TouchableOpacity
+              onPress={() => setView3d(v => !v)}
+              style={styles.toolbarMenuButton}
+              activeOpacity={0.82}
+              accessibilityLabel={view3d ? (t('map2dView', undefined) || '2D-kaart') : (t('map3dView', undefined) || '3D-weergave')}
+            >
+              <Ionicons name={view3d ? 'map-outline' : 'cube-outline'} size={16} color={colors.text} />
+            </TouchableOpacity>
+            <TouchableOpacity
               onPress={handleHeaderActionsMenu}
               style={styles.toolbarMenuButton}
               activeOpacity={0.82}
@@ -1249,8 +1259,15 @@ export default function MapScreen() {
           </View>
         )}
 
+        {/* 3D terrain view */}
+        {view3d && (
+          <View style={{ height: 420 }}>
+            <TerrainView3D sn={mower?.sn ?? ''} />
+          </View>
+        )}
+
         {/* SVG Map with pan + zoom */}
-        {bounds && (
+        {!view3d && bounds && (
           <View style={styles.mapExperience}>
             <View style={styles.mapContainer}>
               {selectedWorkMap && (
