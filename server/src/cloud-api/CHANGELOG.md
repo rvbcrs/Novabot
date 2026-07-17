@@ -2,6 +2,12 @@
 
 Format: most-recent first. Each entry is dated and names the endpoint(s) affected.
 
+## 2026-07-17 — terrain: uploadTerrainGrid endpoint
+
+- Nieuw: `POST /api/nova-file-server/terrain/uploadTerrainGrid?sn=` — raw
+  TGR1 sessie-grid van terrain_scan.py; merge naar TGM1 op disk +
+  terrain_grids metadata. Zie spec 2026-07-17-terrain-3d-map-design.md.
+
 ## 2026-07-04 — uploadEquipmentMap: preserve map alias on re-upload (#66)
 
 Two coupled fixes — either alone still lost the alias on the second mow:
