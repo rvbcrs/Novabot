@@ -41,7 +41,12 @@ function buildTerrainMesh(t: TerrainData): THREE.Mesh {
   }
   const span = Math.max(hMax - hMin, 0.05);
 
-  const geo = new THREE.PlaneGeometry(W * t.cellSize, H * t.cellSize, W - 1, H - 1);
+  // Afmetingen (1,1) zijn irrelevant: we overschrijven zo meteen alle vertex-
+  // posities expliciet met kaartcoördinaten. PlaneGeometry's eigen assenstelsel
+  // bouwt vertices als (x, −y) — daar tegenin vechten met een geo.translate()
+  // levert een verticaal gespiegeld terrein t.o.v. de polygon-overlay (die
+  // p.y ongeflipt gebruikt). Door zelf (wx, wy, z) te zetten valt dat weg.
+  const geo = new THREE.PlaneGeometry(1, 1, W - 1, H - 1);
   const pos = geo.attributes.position as THREE.BufferAttribute;
   const colors = new Float32Array(pos.count * 3);
   for (let vy = 0; vy < H; vy++) {
@@ -49,14 +54,17 @@ function buildTerrainMesh(t: TerrainData): THREE.Mesh {
       const vi = vy * W + vx;
       const hVal = grid[vi];
       const z = Number.isNaN(hVal) ? hMin : hVal;
-      pos.setZ(vi, z);
+      const wx = (minX + vx) * t.cellSize + t.cellSize / 2; // celcentrum, kaartframe
+      const wy = (minY + vy) * t.cellSize + t.cellSize / 2;
+      pos.setXYZ(vi, wx, wy, z);
       const [r, g, b] = Number.isNaN(hVal) ? [0.10, 0.12, 0.16] : heightColor((z - hMin) / span);
       colors[vi * 3] = r; colors[vi * 3 + 1] = g; colors[vi * 3 + 2] = b;
     }
   }
-  // plaats het vlak op de juiste kaartcoördinaten (celcentra)
-  geo.translate((minX + (W - 1) / 2) * t.cellSize + t.cellSize / 2,
-                (minY + (H - 1) / 2) * t.cellSize + t.cellSize / 2, 0);
+  // GEEN geo.translate meer — vertices staan al op kaartcoördinaten. De
+  // vertexvolgorde (vi = vy*W+vx) blijft gelijk aan PlaneGeometry's row-major
+  // topologie, dus de triangulatie blijft geldig; het materiaal is DoubleSide
+  // dus een eventuele winding-inversie door de handmatige Y is onschadelijk.
   geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
   geo.computeVertexNormals();
   return new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }));
