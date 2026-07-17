@@ -114,6 +114,15 @@ describe('GET /api/dashboard/terrain/:sn', () => {
     expect(res.status).toBe(404);
   });
 
+  it('400 bij een sn met een geëncodeerde slash (path-traversal guard)', async () => {
+    // Express decodeURIComponent()-t de :sn param NA het matchen van de
+    // route, dus '..%2f..%2fx' matcht als één path-segment en wordt
+    // daarna '../../x' — zonder de sn-regex-guard zou dit buiten
+    // STORAGE_PATH/terrain kunnen lezen.
+    const res = await request(app).get('/api/dashboard/terrain/..%2f..%2fx');
+    expect(res.status).toBe(400);
+  });
+
   it('levert gzip TGR1 als het TGM-bestand bestaat', async () => {
     const dir = path.resolve(process.env.STORAGE_PATH ?? './storage', 'terrain');
     fs.mkdirSync(dir, { recursive: true });

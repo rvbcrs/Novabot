@@ -730,6 +730,7 @@ dashboardRouter.delete('/trail/:sn', (req: Request, res: Response) => {
 // 3D-terreinviewer. 404 zolang er nog geen enkele sessie geüpload is.
 dashboardRouter.get('/terrain/:sn', (req: Request, res: Response) => {
   const { sn } = req.params;
+  if (!/^LFI[A-Z]\d+$/.test(sn)) { res.status(400).json({ error: 'invalid sn' }); return; }
   const tgmPath = path.resolve(process.env.STORAGE_PATH ?? './storage', 'terrain', `${sn}.tgm`);
   if (!fs.existsSync(tgmPath)) {
     res.status(404).json({ error: 'geen terrein voor deze maaier' });
