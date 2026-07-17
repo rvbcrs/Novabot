@@ -238,9 +238,10 @@ def _upload_bytes(payload, http_address, url):
 
 def _rotate_sessions():
     import os
-    files = sorted(f for f in os.listdir(SESSION_DIR) if f.endswith(".tgr"))
-    for f in files[:-MAX_SESSION_FILES]:
-        os.remove(os.path.join(SESSION_DIR, f))
+    for ext in (".tgr", ".tgo"):
+        files = sorted(f for f in os.listdir(SESSION_DIR) if f.endswith(ext))
+        for f in files[:-MAX_SESSION_FILES]:
+            os.remove(os.path.join(SESSION_DIR, f))
 
 
 def main():
