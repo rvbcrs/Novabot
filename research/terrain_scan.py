@@ -158,6 +158,12 @@ def serialize_objects(objgrid, cell_size):
     return bytes(out)
 
 
+def flush_basename(session, now):
+    """Bestandsnaam-ts van een sessie: ALTIJD de sessie-start-ts (zelfde id
+    als de live-uploads — anders telt de server de sessie dubbel)."""
+    return f"session_{session if session is not None else int(now)}"
+
+
 # ── ROS-schil (draait alleen op de maaier) ─────────────────────────────
 SESSION_DIR = "/userdata/lfi/terrain"
 MAX_SESSION_FILES = 5
@@ -292,9 +298,9 @@ def main():
 
     def on_labeled(msg):
         now = time.time()
-        st["last_data"] = now  # elk labeled-bericht bewijst dat de perceptie leeft
         if len(msg.data) == 0:
-            return  # leeg frame: geen obstakel in beeld (fase-0 feit)
+            return  # leeg frame: geen obstakel in beeld (fase-0 feit) — telt niet als activiteit
+        st["last_data"] = now  # niet-leeg labeled-bericht bewijst dat de perceptie leeft
         if msg.point_step != 13:
             node.get_logger().warn(
                 f"terrain: onverwachte labeled point_step {msg.point_step} (verwacht 13) — frame overgeslagen")
@@ -314,15 +320,15 @@ def main():
         if not st["grid"] and not st["obj"]:
             return
         try:
-            ts_now = int(time.time())
+            base = flush_basename(st["session"], time.time())
             if st["grid"]:
-                path = os.path.join(SESSION_DIR, f"session_{ts_now}.tgr")
+                path = os.path.join(SESSION_DIR, f"{base}.tgr")
                 with open(path, "wb") as f:
                     f.write(serialize_grid(st["grid"], CELL))
                 node.get_logger().info(
                     f"terrain: sessie {path} ({len(st['grid'])} cellen, {st['frames']} frames)")
             if st["obj"]:
-                path_o = os.path.join(SESSION_DIR, f"session_{ts_now}.tgo")
+                path_o = os.path.join(SESSION_DIR, f"{base}.tgo")
                 with open(path_o, "wb") as f:
                     f.write(serialize_objects(st["obj"], CELL))
                 node.get_logger().info(

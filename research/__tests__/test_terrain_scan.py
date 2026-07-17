@@ -129,4 +129,9 @@ assert u == "http://192.168.0.247:8080/api/nova-file-server/terrain/uploadTerrai
 u2 = ts.upload_url("host", "uploadObjectGrid", "LFIN0001", None, 1)
 assert u2 == "http://host/api/nova-file-server/terrain/uploadObjectGrid?sn=LFIN0001&final=1", u2
 
+# ── flush_basename: final-upload MOET dezelfde sessie-id gebruiken als de
+# live-uploads (anders vouwt de server de sessie dubbel) ──
+assert ts.flush_basename(1784300000, 1784300500.7) == "session_1784300000"
+assert ts.flush_basename(None, 1784300500.7) == "session_1784300500"
+
 print("test_terrain_scan: ALLES OK")
