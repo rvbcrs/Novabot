@@ -673,6 +673,25 @@ export function initDb(): void {
   try { db.exec(`ALTER TABLE dashboard_schedules ADD COLUMN trigger_count INTEGER DEFAULT 0`); }
   catch { /* kolom bestaat al */ }
 
+  // "Sla deze dag over"-knop (app + dashboard). YYYY-MM-DD in de schema-
+  // tijdzone; zelf-wissend zodra de runner die dag daadwerkelijk overslaat.
+  // Datum-gericht (niet een booleaans "volgende run"): in de app hangt één
+  // schema onder élke gekozen weekdag, dus de knop moet één DAG raken.
+  try { db.exec(`ALTER TABLE dashboard_schedules ADD COLUMN skip_date TEXT`); }
+  catch { /* kolom bestaat al */ }
+
+  // 3D-terreinkaart: metadata per maaier; het grid zelf staat als TGM1-
+  // bestand op disk (STORAGE_PATH/terrain/<sn>.tgm).
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS terrain_grids (
+      mower_sn   TEXT PRIMARY KEY,
+      cell_size  REAL NOT NULL DEFAULT 0.05,
+      sessions   INTEGER NOT NULL DEFAULT 0,
+      cells      INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+
   // Feature #51: "every N days" schedule mode. interval_days > 0 takes
   // precedence over weekdays — the schedule fires when
   // (today_local - interval_anchor_date) is a multiple of interval_days.
