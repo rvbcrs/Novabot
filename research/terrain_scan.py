@@ -28,14 +28,21 @@ _ZC = np.array([math.cos(_TH), 0.0, -math.sin(_TH)])
 _T = np.array([0.0, 0.0, CAM_HEIGHT])
 
 
-def cam_to_base(pts):
-    """(N,4) cam-optical x/y/z/conf → (M,3) base-frame, gefilterd."""
+def cam_to_base_mask(pts):
+    """Boolean-masker van cam_to_base's filters, zodat een aanroeper parallelle
+    arrays (labels) synchroon kan uitdunnen."""
     ok = (pts[:, 3] >= CONF_MIN) & np.isfinite(pts[:, 2]) \
         & (pts[:, 2] >= RANGE_MIN) & (pts[:, 2] <= RANGE_MAX)
+    base = pts[:, 0:1] * _XC + pts[:, 1:2] * _YC + pts[:, 2:3] * _ZC + _T
+    ok &= (base[:, 2] >= HEIGHT_MIN) & (base[:, 2] <= HEIGHT_MAX)
+    return ok
+
+
+def cam_to_base(pts):
+    """(N,4) cam-optical x/y/z/conf → (M,3) base-frame, gefilterd."""
+    ok = cam_to_base_mask(pts)
     p = pts[ok, :3].astype(np.float64)
-    base = p[:, 0:1] * _XC + p[:, 1:2] * _YC + p[:, 2:3] * _ZC + _T
-    hok = (base[:, 2] >= HEIGHT_MIN) & (base[:, 2] <= HEIGHT_MAX)
-    return base[hok]
+    return p[:, 0:1] * _XC + p[:, 1:2] * _YC + p[:, 2:3] * _ZC + _T
 
 
 def yaw_from_quat(qx, qy, qz, qw):
@@ -90,6 +97,64 @@ def serialize_grid(grid, cell_size):
     for key, (s, c) in grid.items():
         ix, iy = _unpack(key)
         out += struct.pack("<iifI", ix, iy, s / c, c)
+    return bytes(out)
+
+
+# ── Objectlaag (spec-amendement: hoogte-gedreven, klasse = alleen kleur) ──
+OBJ_HEIGHT_MIN = 0.10                              # m boven wielvlak
+OBJ_EXCLUDE_LABELS = frozenset({2, 3, 4, 7, 12})   # lawn/road/terrain/dynamic/sunlight
+OBJ_MAX_ENTRIES = 500_000                          # RAM-cap (cel,label)-entries
+
+
+def parse_labeled(data):
+    """Packed points_labeled-buffer (13 B/punt: x,y,z f32 + label u8) →
+    ((N,4) float32 met conf=1.0 zodat cam_to_base herbruikbaar is, (N,) u8)."""
+    raw = np.frombuffer(data, dtype=np.uint8).reshape(-1, 13)
+    xyz = raw[:, :12].copy().view(np.float32).reshape(-1, 3)
+    pts4 = np.column_stack([xyz, np.ones(len(xyz), dtype=np.float32)]).astype(np.float32)
+    return pts4, raw[:, 12].copy()
+
+
+def accumulate_objects(objgrid, pts_map, labels):
+    """Kaartframe-punten + labels → {(ix,iy,label): [max_h, cnt]}.
+    Hoogte-gedreven: > OBJ_HEIGHT_MIN, exclusie-labels eruit."""
+    if len(pts_map) == 0:
+        return
+    keep = (pts_map[:, 2] > OBJ_HEIGHT_MIN) & ~np.isin(labels, list(OBJ_EXCLUDE_LABELS))
+    pts = pts_map[keep]
+    labs = labels[keep]
+    if len(pts) == 0:
+        return
+    ix = np.floor(pts[:, 0] / CELL).astype(np.int64)
+    iy = np.floor(pts[:, 1] / CELL).astype(np.int64)
+    comp = ((ix + 1_048_576) << 25) | ((iy + 1_048_576) << 4) | labs.astype(np.int64)
+    uniq, inv = np.unique(comp, return_inverse=True)
+    gmax = np.full(len(uniq), -np.inf)
+    np.maximum.at(gmax, inv, pts[:, 2])
+    cnts = np.bincount(inv)
+    for c, mh, ct in zip(uniq.tolist(), gmax.tolist(), cnts.tolist()):
+        lab = c & 0xF
+        giy = ((c >> 4) & 0x1FFFFF) - 1_048_576
+        gix = (c >> 25) - 1_048_576
+        key = (gix, giy, lab)
+        e = objgrid.get(key)
+        if e is None:
+            if len(objgrid) >= OBJ_MAX_ENTRIES:
+                continue  # ponytail: cap = stil stoppen met nieuwe entries
+            objgrid[key] = [mh, int(ct)]
+        else:
+            e[0] = max(e[0], mh)
+            e[1] += int(ct)
+
+
+def serialize_objects(objgrid, cell_size):
+    """Objectgrid → TGO1 (17 B/entry, zie plan-header)."""
+    out = bytearray()
+    out += b"TGO1"
+    out += struct.pack("<d", cell_size)
+    out += struct.pack("<i", len(objgrid))
+    for (ix, iy, lab), (mh, cnt) in objgrid.items():
+        out += struct.pack("<iiBfI", ix, iy, lab, mh, cnt)
     return bytes(out)
 
 

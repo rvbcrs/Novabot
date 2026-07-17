@@ -75,4 +75,46 @@ blob2 = ts.serialize_grid(grid2, ts.CELL)
 ix, iy, mean, cnt = struct.unpack_from("<iifI", blob2, 16)
 assert (ix, iy) == (-2, -3) and cnt == 1, (ix, iy, cnt)
 
+# ── objectkern (Task 1 objects-plan) ──
+# parse_labeled: packed 13B → (N,4)+labels
+packed = bytearray()
+for (x, y, z, lab) in [(0.1, 0.2, 1.0, 1), (0.0, -0.1, 1.5, 10)]:
+    packed += struct.pack("<fffB", x, y, z, lab)
+pts4, labs = ts.parse_labeled(bytes(packed))
+assert pts4.shape == (2, 4) and labs.shape == (2,), (pts4.shape, labs.shape)
+assert abs(pts4[1, 2] - 1.5) < 1e-6 and labs[1] == 10
+assert (pts4[:, 3] == 1.0).all()  # conf gefaket op 1.0 voor cam_to_base
+
+# cam_to_base_mask is consistent met cam_to_base
+m = ts.cam_to_base_mask(pts4)
+assert m.shape == (2,) and m.dtype == bool
+assert len(ts.cam_to_base(pts4)) == int(m.sum())
+
+# accumulate_objects: hoogte-filter, label-exclusie, max-hoogte per (cel,label)
+og = {}
+pm = np.array([[0.02, 0.02, 0.50], [0.03, 0.03, 0.30], [0.02, 0.02, 0.05],
+               [0.52, 0.02, 0.40], [0.02, 0.52, 0.60]])
+lb = np.array([1, 1, 1, 2, 7], dtype=np.uint8)  # lawn(2) en dynamic(7) vallen af
+ts.accumulate_objects(og, pm, lb)
+assert set(og.keys()) == {(0, 0, 1)}, og.keys()          # 0.05m < OBJ_HEIGHT_MIN valt af
+assert abs(og[(0, 0, 1)][0] - 0.50) < 1e-6               # max, niet mean
+assert og[(0, 0, 1)][1] == 2                              # cnt telt beide punten >0.10
+
+# serialize_objects round-trip
+blob_o = ts.serialize_objects(og, ts.CELL)
+assert blob_o[:4] == b"TGO1"
+n_o, = struct.unpack_from("<i", blob_o, 12)
+assert n_o == 1
+ix, iy, lab_o, mh, cnt_o = struct.unpack_from("<iiBfI", blob_o, 16)
+assert (ix, iy, lab_o, cnt_o) == (0, 0, 1, 2) and abs(mh - 0.5) < 1e-6
+
+# OBJ_MAX_ENTRIES-cap
+old_cap_o = ts.OBJ_MAX_ENTRIES
+ts.OBJ_MAX_ENTRIES = 1
+og2 = {}
+ts.accumulate_objects(og2, np.array([[0.02, 0.02, 0.5]]), np.array([1], dtype=np.uint8))
+ts.accumulate_objects(og2, np.array([[0.52, 0.52, 0.5]]), np.array([1], dtype=np.uint8))
+assert len(og2) == 1
+ts.OBJ_MAX_ENTRIES = old_cap_o
+
 print("test_terrain_scan: ALLES OK")
