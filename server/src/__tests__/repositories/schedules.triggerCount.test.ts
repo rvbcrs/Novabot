@@ -16,8 +16,11 @@ describe('ScheduleRepository.trigger_count', () => {
     scheduleRepo.incrementTriggerCount('alt-1');
     expect(scheduleRepo.findById('alt-1')?.trigger_count).toBe(2);
 
-    // dag 0: 60°, dag 1: 60+90=150° — de formule uit triggerSchedule
+    // De formule uit triggerSchedule: modulo 180 (richting = lijn-oriëntatie),
+    // dus een 60°-schema met stap 90 alterneert 60 → 150 → 60 → ...
     const row = scheduleRepo.findById('alt-1')!;
-    expect((60 + row.trigger_count * 90) % 360).toBe(240);
+    expect((60 + row.trigger_count * 90) % 180).toBe(60);   // count=2 → weer 60
+    expect((60 + 1 * 90) % 180).toBe(150);                  // count=1 → 150
+    expect((60 + 3 * 90) % 180).toBe(150);                  // count=3 → weer 150
   });
 });

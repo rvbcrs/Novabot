@@ -37,6 +37,9 @@ export interface ScheduleRow {
   timezone: string | null;
   /** Aantal geslaagde runner-starts; drijft de alternate_direction rotatie. */
   trigger_count: number;
+  /** YYYY-MM-DD (schema-tijdzone) van de dag die overgeslagen moet worden;
+   *  zelf-wissend zodra de runner die dag skipt. NULL = niets overslaan. */
+  skip_date: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -221,6 +224,7 @@ export class ScheduleRepository {
       ['interval_days', data.interval_days],
       ['interval_anchor_date', data.interval_anchor_date],
       ['timezone', data.timezone],
+      ['skip_date', data.skip_date],
     ];
 
     for (const [key, value] of updatable) {
@@ -264,6 +268,7 @@ export class ScheduleRepository {
       ['interval_days', data.interval_days],
       ['interval_anchor_date', data.interval_anchor_date],
       ['timezone', data.timezone],
+      ['skip_date', data.skip_date],
     ];
 
     for (const [key, value] of updatable) {

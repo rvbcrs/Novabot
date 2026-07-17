@@ -49,6 +49,9 @@ interface SnapshotState {
  * 122/123 coverage failures) still notify.
  */
 const SUPPRESSED_ERROR_CODES = new Set([
+  2,    // "Already in running task" — geweigerde dubbele start; verwacht
+        // bijproduct van de mow_zone→start_navigation fallback in de app.
+        // De taak draait gewoon, dus een push zou vals alarm zijn.
   8,    // LoRa flicker — happens every few minutes on a noisy site
   113,  // transient sensor/perception warning, auto-recovers
   132,  // data transmission loss, auto-recovers within seconds

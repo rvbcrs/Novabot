@@ -77,6 +77,12 @@ function wallClock(now: Date, tz: string | null) {
   }
 }
 
+/** Kalenderdag (YYYY-MM-DD) van `now` in de tijdzone van het schema. */
+export function scheduleDayKey(row: ScheduleRow, now: Date): string {
+  const wc = wallClock(now, row.timezone ?? null);
+  return `${wc.year}-${String(wc.month).padStart(2, '0')}-${String(wc.day).padStart(2, '0')}`;
+}
+
 export function getScheduleOccurrence(row: ScheduleRow, now: Date): Date | null {
   const wc = wallClock(now, row.timezone ?? null);
 
@@ -144,6 +150,23 @@ function checkSchedules() {
       const lastTriggered = new Date(row.last_triggered_at.replace(' ', 'T') + 'Z');
       if (!Number.isNaN(lastTriggered.getTime()) && lastTriggered.getTime() >= scheduledAt.getTime()) {
         continue;
+      }
+    }
+
+    // Gebruiker drukte op "sla deze dag over" (app/dashboard). Datum-gericht
+    // en zelf-wissend: alleen de occurrence op skip_date wordt overgeslagen,
+    // en last_triggered_at wordt gestempeld zodat het 5-min window niet
+    // alsnog hertriggert. Een verlopen skip_date wordt opgeruimd.
+    if (row.skip_date) {
+      const todayKey = scheduleDayKey(row, now);
+      if (row.skip_date === todayKey) {
+        scheduleRepo.update(row.schedule_id, { skip_date: null });
+        scheduleRepo.updateLastTriggered(row.schedule_id);
+        logScheduleDecision(row, false, 'SKIPPED', `user skipped ${todayKey}`);
+        continue;
+      }
+      if (row.skip_date < todayKey) {
+        scheduleRepo.update(row.schedule_id, { skip_date: null });
       }
     }
 
@@ -243,7 +266,9 @@ function triggerSchedule(row: ScheduleRow) {
   let effectiveDirection = row.path_direction;
   if (row.alternate_direction === 1) {
     const count = row.trigger_count ?? 0;
-    effectiveDirection = (row.path_direction + count * (row.alternate_step ?? 90)) % 360;
+    // Modulo 180: een maairichting is een lijn-oriëntatie (240° == 60°).
+    // Met stap 90 alterneert een 60°-schema dus netjes tussen 60 en 150.
+    effectiveDirection = (row.path_direction + count * (row.alternate_step ?? 90)) % 180;
   }
 
   // Honour the schedule's map selection (was hardcoded area:1 → always mowed

@@ -3210,6 +3210,7 @@ interface ScheduleRow {
   interval_anchor_date: string | null;
   timezone: string | null;
   trigger_count: number;
+  skip_date: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -3240,6 +3241,14 @@ function scheduleRowToDto(r: ScheduleRow) {
     intervalDays: r.interval_days ?? 0,
     intervalAnchorDate: r.interval_anchor_date,
     timezone: r.timezone ?? null,
+    skipDate: r.skip_date ?? null,
+    // Richting die de VOLGENDE run daadwerkelijk gebruikt. Bij alternate
+    // rotatie is dat base + trigger_count×step — de kaarten toonden eerst
+    // altijd de basisrichting, wat elke dag "60°" liet zien terwijl de
+    // runner allang doorroteerde.
+    nextPathDirection: r.alternate_direction === 1
+      ? (r.path_direction + (r.trigger_count ?? 0) * (r.alternate_step ?? 90)) % 180
+      : r.path_direction,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   };
@@ -3432,6 +3441,7 @@ dashboardRouter.patch('/schedules/:sn/:scheduleId', (req: Request, res: Response
     interval_days: body.intervalDays as number | undefined,
     interval_anchor_date: body.intervalAnchorDate as string | undefined,
     timezone: body.timezone as string | undefined,
+    skip_date: body.skipDate !== undefined ? (body.skipDate as string | null) : undefined,
   });
 
   const row = scheduleRepo.findById(scheduleId) as ScheduleRow;
@@ -3466,7 +3476,8 @@ dashboardRouter.post('/schedules/:sn/:scheduleId/send', (req: Request, res: Resp
   let effectiveDirection = row.path_direction;
   if (row.alternate_direction === 1) {
     const count = row.trigger_count ?? 0;
-    effectiveDirection = (row.path_direction + count * (row.alternate_step ?? 90)) % 360;
+    // Modulo 180: maairichting is een lijn-oriëntatie (240° == 60°).
+    effectiveDirection = (row.path_direction + count * (row.alternate_step ?? 90)) % 180;
   }
 
   publishToDevice(sn, {
