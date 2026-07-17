@@ -11,6 +11,7 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber/native';
 import * as THREE from 'three';
 import { parseTerrain, parseObjects, LABEL_COLORS, LABEL_DEFAULT_COLOR, type TerrainData, type ObjectData } from '../utils/terrainParser';
 import { getServerUrl } from '../services/auth';
+import { ApiClient } from '../services/api';
 import { useMowerState } from '../hooks/useMowerState';
 import { useI18n } from '../i18n';
 import { useTheme } from '../theme';
@@ -75,6 +76,11 @@ function useOrbitGestures(camState: React.MutableRefObject<{ theta: number; phi:
   const last = useRef<{ x: number; y: number; d: number | null }>({ x: 0, y: 0, d: null });
   return useRef(PanResponder.create({
     onStartShouldSetPanResponder: () => true,
+    // Capture-fase: win de touch VOOR een omliggende ScrollView hem claimt —
+    // zonder dit werken orbit/pinch niet binnen het Map-scherm.
+    onStartShouldSetPanResponderCapture: () => true,
+    onMoveShouldSetPanResponder: () => true,
+    onMoveShouldSetPanResponderCapture: () => true,
     onPanResponderTerminationRequest: () => false, // orbit-drag mag niet gestolen worden door een omliggende ScrollView
     onPanResponderGrant: (e) => {
       const t = e.nativeEvent.touches;
@@ -162,6 +168,10 @@ export default function TerrainView3D({ sn }: { sn: string }) {
   const [status, setStatus] = useState<ViewStatus>('loading');
   const [terrain, setTerrain] = useState<TerrainScene | null>(null);
   const [voxelMesh, setVoxelMesh] = useState<THREE.InstancedMesh | null>(null);
+  // Werk- (groen) en obstakel- (rood) contouren uit de 2D-kaart; eenmalig
+  // geladen (veranderen niet tijdens het kijken).
+  const [polyLines, setPolyLines] = useState<THREE.Line[]>([]);
+  const polyLoadedRef = useRef(false);
 
   const terrainRef = useRef<TerrainScene | null>(null);
   const voxelRef = useRef<THREE.InstancedMesh | null>(null);
@@ -215,6 +225,23 @@ export default function TerrainView3D({ sn }: { sn: string }) {
         setVoxelMesh(null);
         setStatus('empty');
         return;
+      }
+
+      if (!polyLoadedRef.current) {
+        polyLoadedRef.current = true;
+        try {
+          const { maps } = await new ApiClient(base).fetchMaps(sn);
+          const lines: THREE.Line[] = [];
+          for (const m of maps) {
+            const pts = (m.mapArea ?? []).map((pt) => new THREE.Vector3(pt.x, pt.y, m.mapType === 'obstacle' ? 0.08 : 0.05));
+            if (pts.length < 3 || (m.mapType !== 'work' && m.mapType !== 'obstacle')) continue;
+            pts.push(pts[0].clone());
+            lines.push(new THREE.Line(
+              new THREE.BufferGeometry().setFromPoints(pts),
+              new THREE.LineBasicMaterial({ color: m.mapType === 'obstacle' ? 0xef4444 : 0x34d399 })));
+          }
+          if (mountedRef.current) setPolyLines(lines);
+        } catch { /* contouren zijn nice-to-have; terrein rendert ook zonder */ }
       }
 
       const built = buildTerrainGeometry(terrainData);
@@ -271,6 +298,13 @@ export default function TerrainView3D({ sn }: { sn: string }) {
       clearInterval(interval);
       disposeTerrain();
       disposeVoxels();
+      setPolyLines((lines) => {
+        for (const l of lines) {
+          l.geometry.dispose();
+          (l.material as THREE.Material).dispose();
+        }
+        return [];
+      });
     };
   }, [load, disposeTerrain, disposeVoxels]);
 
@@ -314,6 +348,7 @@ export default function TerrainView3D({ sn }: { sn: string }) {
             <meshStandardMaterial vertexColors />
           </mesh>
           {voxelMesh && <primitive object={voxelMesh} />}
+          {polyLines.map((l, i) => <primitive key={i} object={l} />)}
           {markerPos && (
             <mesh position={[markerPos.x, markerPos.y, markerPos.z]} rotation={[Math.PI / 2, 0, 0]}>
               <coneGeometry args={[0.15, 0.3, 12]} />

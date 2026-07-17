@@ -1145,7 +1145,7 @@ export default function MapScreen() {
 
   return (
     <GestureHandlerRootView style={[styles.container, { paddingTop: insets.top }]}>
-      <ScrollView style={styles.content} contentContainerStyle={{ paddingBottom: Math.max(insets.bottom + 80, 96) }}>
+      <ScrollView style={styles.content} scrollEnabled={!view3d} contentContainerStyle={{ paddingBottom: Math.max(insets.bottom + 80, 96) }}>
 
 
         <View style={styles.header}>
