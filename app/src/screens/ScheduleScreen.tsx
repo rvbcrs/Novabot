@@ -123,6 +123,108 @@ export default function ScheduleScreen() {
     }
   };
 
+  const dayKeyOf = (d: Date): string =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+  // Datum (YYYY-MM-DD) van de gegeven weekdag in DEZE week (ma t/m zo).
+  // Het scherm is een week-overzicht: maandag blijft déze maandag, ook als
+  // die al geweest is — er schuift niets stilletjes naar volgende week door.
+  const thisWeekDateForWeekday = (weekday: number): string => {
+    const now = new Date();
+    const isoNow = now.getDay() === 0 ? 7 : now.getDay();
+    const isoTarget = weekday === 0 ? 7 : weekday;
+    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + (isoTarget - isoNow));
+    return dayKeyOf(d);
+  };
+
+  // Is de occurrence op deze datum al gepasseerd?
+  const occurrencePassed = (dateKey: string, startTime: string): boolean => {
+    const now = new Date();
+    const todayKey = dayKeyOf(now);
+    if (dateKey < todayKey) return true;
+    if (dateKey > todayKey) return false;
+    const [h = 0, m = 0] = startTime.split(':').map(Number);
+    return now.getHours() > h || (now.getHours() === h && now.getMinutes() >= m);
+  };
+
+  // Eerstvolgende occurrence-datum van het schema (over alle weekdagen) —
+  // het anker waar nextPathDirection van de server bij hoort.
+  const nextRunKey = (s: Schedule): string => {
+    const weekdays: number[] = (s as any).weekdays ?? [];
+    const [h = 0, m = 0] = ((s as any).startTime ?? '0:0').split(':').map(Number);
+    const now = new Date();
+    for (let i = 0; i < 8; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + i);
+      if (i === 0 && (now.getHours() > h || (now.getHours() === h && now.getMinutes() >= m))) continue;
+      if (weekdays.length === 0 || weekdays.includes(d.getDay())) return dayKeyOf(d);
+    }
+    return '';
+  };
+
+  // Eerstvolgende occurrence-datum voor interval-schema's (elke N dagen
+  // vanaf anchor).
+  const nextDateForInterval = (schedule: Schedule): string => {
+    const interval = schedule.intervalDays ?? 0;
+    const anchor = schedule.intervalAnchorDate;
+    if (!interval || !anchor) return '';
+    const [ay = 0, am = 1, ad = 1] = anchor.split('-').map(Number);
+    const anchorMs = new Date(ay, am - 1, ad).getTime();
+    const now = new Date();
+    const [h = 0, m = 0] = (schedule.startTime ?? '0:0').split(':').map(Number);
+    for (let i = 0; i < interval + 1; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + i);
+      const daysSince = Math.round((d.getTime() - anchorMs) / 86_400_000);
+      if (daysSince < 0 || daysSince % interval !== 0) continue;
+      if (i === 0 && (now.getHours() > h || (now.getHours() === h && now.getMinutes() >= m))) continue;
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    }
+    return '';
+  };
+
+  // Richting van de occurrence op targetDate, teken-bewust geprojecteerd
+  // vanaf de eerstvolgende run (waar nextPathDirection van de server bij
+  // hoort). Voor dagen eerder in de week rekent hij dus TERUG: wat draaide
+  // die dag. Modulo 180: maairichting is een lijn-oriëntatie (240° == 60°).
+  // ponytail: projectie neemt aan dat elke run echt startte — een regen- of
+  // dag-skip roteert de teller niet door; display-only, geen stuurlogica.
+  const directionForDate = (s: Schedule, targetDate: string): number | null => {
+    const base = s.nextPathDirection ?? s.pathDirection ?? s.path_direction;
+    if (base == null) return null;
+    if (!s.alternateDirection || !targetDate) return base;
+    const step = s.alternateStep ?? 90;
+    const anchor = nextRunKey(s);
+    if (!anchor || anchor === targetDate) return base;
+    const weekdays: number[] = (s as any).weekdays ?? [];
+    const [ay = 0, am = 1, ad = 1] = anchor.split('-').map(Number);
+    const dir = targetDate > anchor ? 1 : -1;
+    let k = 0;
+    const d = new Date(ay, am - 1, ad);
+    for (let guard = 0; guard < 15; guard++) {
+      d.setDate(d.getDate() + dir);
+      if (weekdays.length === 0 || weekdays.includes(d.getDay())) k += dir;
+      if (dayKeyOf(d) === targetDate) break;
+    }
+    return ((base + k * step) % 180 + 180) % 180;
+  };
+
+  // "Sla deze dag over" — datum-gericht: alleen de gedrukte dag wordt
+  // geskipt. Nogmaals tikken op de gemarkeerde dag annuleert de skip.
+  const handleSkipDate = async (schedule: Schedule, date: string) => {
+    if (!date) return;
+    const next = schedule.skipDate === date ? null : date;
+    try {
+      const url = await getServerUrl();
+      if (!url) return;
+      const api = new ApiClient(url);
+      await api.updateSchedule(mowerSn, schedule.id, { skipDate: next });
+      setSchedules((prev) =>
+        prev.map((s) => (s.id === schedule.id ? { ...s, skipDate: next } : s)),
+      );
+    } catch {
+      // Silently fail, could add toast
+    }
+  };
+
   const handleDelete = (schedule: Schedule, dayIdx?: number) => {
     const sid = schedule.id ?? (schedule as any).scheduleId;
     const weekdays: number[] = (schedule as any).weekdays ?? [];
@@ -340,14 +442,20 @@ export default function ScheduleScreen() {
           </View>
         )}
 
-        {/* Schedule list grouped by day */}
-        {DAYS.map((dayName, dayIdx) => {
+        {/* Schedule list grouped by day. Maandag eerst (EU-weekconventie;
+            JS getDay() 0=zondag blijft intern ongewijzigd). */}
+        {[1, 2, 3, 4, 5, 6, 0].map((dayIdx) => {
           const daySchedules = byDay[dayIdx];
           if (!daySchedules || daySchedules.length === 0) return null;
           return (
             <View key={dayIdx} style={styles.dayGroup}>
               <Text style={styles.dayLabel}>{DAYS_FULL[dayIdx]}</Text>
-              {daySchedules.map((s) => (
+              {daySchedules.map((s) => {
+                // Week-overzicht: de kaart hoort bij de kalenderdag van DEZE
+                // week; een gepasseerde dag dimt en toont wat er toen draaide.
+                const cardDate = thisWeekDateForWeekday(dayIdx);
+                const cardPassed = occurrencePassed(cardDate, (s as any).startTime ?? '0:0');
+                return (
                 <Swipeable
                   key={`${dayIdx}-${s.id ?? (s as any).scheduleId}`}
                   renderRightActions={() => (
@@ -366,6 +474,7 @@ export default function ScheduleScreen() {
                     !s.enabled && styles.scheduleCardDisabled,
                     s.currentlyRunning && styles.scheduleCardRunning,
                     !!s.rainPausedAt && styles.scheduleCardRainPaused,
+                    cardPassed && !s.currentlyRunning && { opacity: 0.45 },
                   ]}
                   onPress={() => handleEdit(s)}
                   activeOpacity={0.7}
@@ -374,6 +483,12 @@ export default function ScheduleScreen() {
                     <View style={styles.scheduleHeaderRow}>
                       <Text style={[styles.scheduleTime, !s.enabled && styles.textDisabled]}>
                         {(s as any).startTime ?? `${pad(s.start_hour ?? 0)}:${pad(s.start_minute ?? 0)}`}
+                      </Text>
+                      <Text style={styles.scheduleDateHint}>
+                        {(() => {
+                          const [y = 0, m = 1, d = 1] = cardDate.split('-').map(Number);
+                          return new Date(y, m - 1, d).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+                        })()}
                       </Text>
                       {s.currentlyRunning && (
                         <View style={styles.statusBadgeRunning}>
@@ -388,6 +503,14 @@ export default function ScheduleScreen() {
                           <Ionicons name="rainy" size={11} color="#fbbf24" />
                           <Text style={styles.statusBadgeRainText}>
                             {t('schedulePausedRain', undefined) || 'Paused — rain'}
+                          </Text>
+                        </View>
+                      )}
+                      {!s.currentlyRunning && !s.rainPausedAt && s.skipDate === cardDate && (
+                        <View style={styles.statusBadgeRain}>
+                          <Ionicons name="pause-circle" size={11} color="#fbbf24" />
+                          <Text style={styles.statusBadgeRainText}>
+                            {t('scheduleSkipNextBadge', undefined) || 'Skipped'}
                           </Text>
                         </View>
                       )}
@@ -409,11 +532,15 @@ export default function ScheduleScreen() {
                           {s.cuttingHeight ?? s.cutting_height} cm
                         </Text>
                       )}
-                      {(s.pathDirection ?? s.path_direction) != null && (
-                        <Text style={styles.scheduleChip}>
-                          {s.pathDirection ?? s.path_direction}°
-                        </Text>
-                      )}
+                      {(() => {
+                        const deg = directionForDate(s, cardDate);
+                        if (deg == null) return null;
+                        return (
+                          <Text style={styles.scheduleChip}>
+                            {deg}°{s.alternateDirection ? ' ↻' : ''}
+                          </Text>
+                        );
+                      })()}
                       <Text style={styles.scheduleChip}>
                         {(s.mapName ?? s.map_name) || t('allAreas')}
                       </Text>
@@ -424,6 +551,20 @@ export default function ScheduleScreen() {
                       )}
                     </View>
                   </View>
+                  {s.enabled && !cardPassed && (
+                    <TouchableOpacity
+                      onPress={() => handleSkipDate(s, cardDate)}
+                      style={{ padding: 6, marginRight: 2 }}
+                      activeOpacity={0.7}
+                      accessibilityLabel={t('scheduleSkipNext', undefined) || 'Skip this day'}
+                    >
+                      <Ionicons
+                        name={s.skipDate === cardDate ? 'pause-circle' : 'pause-circle-outline'}
+                        size={22}
+                        color={s.skipDate === cardDate ? '#fbbf24' : '#6b7280'}
+                      />
+                    </TouchableOpacity>
+                  )}
                   <Switch
                     value={s.enabled}
                     onValueChange={() => handleToggle(s)}
@@ -432,7 +573,8 @@ export default function ScheduleScreen() {
                   />
                 </TouchableOpacity>
                 </Swipeable>
-              ))}
+                );
+              })}
             </View>
           );
         })}
@@ -473,11 +615,27 @@ export default function ScheduleScreen() {
                       <Text style={[styles.scheduleTime, !s.enabled && styles.textDisabled]}>
                         {(s as any).startTime ?? `${pad(s.start_hour ?? 0)}:${pad(s.start_minute ?? 0)}`}
                       </Text>
+                      <Text style={styles.scheduleDateHint}>
+                        {(() => {
+                          const cd = nextDateForInterval(s);
+                          if (!cd) return '';
+                          const [y = 0, m = 1, d = 1] = cd.split('-').map(Number);
+                          return new Date(y, m - 1, d).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+                        })()}
+                      </Text>
                       {s.currentlyRunning && (
                         <View style={styles.statusBadgeRunning}>
                           <View style={styles.statusDot} />
                           <Text style={styles.statusBadgeRunningText}>
                             {t('scheduleRunning', undefined) || 'Running now'}
+                          </Text>
+                        </View>
+                      )}
+                      {!s.currentlyRunning && !!s.skipDate && (
+                        <View style={styles.statusBadgeRain}>
+                          <Ionicons name="pause-circle" size={11} color="#fbbf24" />
+                          <Text style={styles.statusBadgeRainText}>
+                            {(t('scheduleSkipNextBadge', undefined) || 'Skipped')} {s.skipDate}
                           </Text>
                         </View>
                       )}
@@ -504,6 +662,24 @@ export default function ScheduleScreen() {
                       )}
                     </View>
                   </View>
+                  {s.enabled && (() => {
+                    const cardDate = nextDateForInterval(s);
+                    const active = !!s.skipDate && s.skipDate === cardDate;
+                    return (
+                      <TouchableOpacity
+                        onPress={() => handleSkipDate(s, cardDate)}
+                        style={{ padding: 6, marginRight: 2 }}
+                        activeOpacity={0.7}
+                        accessibilityLabel={t('scheduleSkipNext', undefined) || 'Skip this day'}
+                      >
+                        <Ionicons
+                          name={active ? 'pause-circle' : 'pause-circle-outline'}
+                          size={22}
+                          color={active ? '#fbbf24' : '#6b7280'}
+                        />
+                      </TouchableOpacity>
+                    );
+                  })()}
                   <Switch
                     value={s.enabled}
                     onValueChange={() => handleToggle(s)}
@@ -1025,6 +1201,7 @@ const makeStyles = (c: Colors) => StyleSheet.create({
   scheduleLeft: { gap: 4, flex: 1 },
   scheduleHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap' },
   scheduleTime: { fontSize: 24, fontWeight: '700', color: c.text, fontVariant: ['tabular-nums'] },
+  scheduleDateHint: { fontSize: 12, color: c.textDim, marginLeft: 8 },
   scheduleChips: { flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginTop: 2 },
   scheduleDuration: { fontSize: 13, color: c.textDim },
   scheduleChip: { fontSize: 11, color: c.textMuted, backgroundColor: 'rgba(255,255,255,0.06)', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, overflow: 'hidden' },

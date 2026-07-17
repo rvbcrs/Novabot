@@ -23,6 +23,8 @@ import { useNavigation, useRoute, type RouteProp } from '@react-navigation/nativ
 import { useTheme, useStyles, type Colors } from '../theme';
 import { BatteryRing } from '../components/BatteryRing';
 import { MowerScene } from '../components/mower/MowerScene';
+import { MOWER_SVG_PATH } from '../components/mower/mowerIconPath';
+import { UnicomTransitAnimation } from '../components/UnicomTransitAnimation';
 import { useMowerState } from '../hooks/useMowerState';
 import { useActiveMower } from '../hooks/useActiveMower';
 import { useActiveMowerContext } from '../context/ActiveMowerContext';
@@ -95,6 +97,10 @@ interface MowerDerived {
   /** Forwarded from `DeviceState.firmwareVersion` so the capability gates
    *  (edge cut, joystick, camera) can read it without a second lookup. */
   firmwareVersion: string | null;
+  /** Target zone slot (e.g. "map3") from the latest `mow_zone_status`, used
+   *  by the `following_unicom` copy ("Moving to {{zone}}..."). Null when no
+   *  mow_zone transit has streamed a status yet. */
+  mowZoneMap: string | null;
 }
 
 function previewMapIdsFromMaps(maps: MapData[]): number {
@@ -158,13 +164,17 @@ function deriveMower(mower: DeviceState | null): MowerDerived | null {
   // 139 = "Charging station position error" — fires on a spurious [0,0,0]
   //       charging pose (map_info.json) even when the dock is physically fine.
   //       Treat as a warning so it never blocks operating the mower.
-  const NON_BLOCKING_ERRORS = [8, 113, 118, 120, 122, 123, 124, 125, 126, 132, 139];
+  // 2 =  "Already in running task" — een geweigerde dubbele start terwijl de
+  //       taak gewoon loopt. Sinds de mow_zone→start_navigation fallback in
+  //       StartMowSheet is dit een verwacht race-bijproduct: de maai draait
+  //       prima, dus blokkeren/badgen is misleidend. Alleen in Berichten.
+  const NON_BLOCKING_ERRORS = [2, 8, 113, 118, 120, 122, 123, 124, 125, 126, 132, 139];
   // Codes the stock Novabot app NEVER surfaces to the user — they fire so
   // often (LoRa flicker, transient perception/data-loss) and self-recover so
   // quickly that showing a banner each time becomes noise. Mirror that
   // suppression so OpenNova matches stock UX. Same set as the server-side
   // SUPPRESSED_ERROR_CODES in eventDetector.ts that gates ntfy.
-  const HIDDEN_TRANSIENT_ERRORS = [8, 113, 132];
+  const HIDDEN_TRANSIENT_ERRORS = [2, 8, 113, 132];
   const errorStatusRaw = parseInt(s.error_status?.match(/\d+/)?.[0] ?? '0', 10);
   const hasError = Boolean(
     errorStatusRaw > 0 && !NON_BLOCKING_ERRORS.includes(errorStatusRaw),
@@ -234,8 +244,14 @@ function deriveMower(mower: DeviceState | null): MowerDerived | null {
   // (mower not actively executing a coverage path):
   //   '0'/'Idle', '9'/'Ready', '70'/'Finished once', '72'/'Cancelled'
   const IDLE_WORK_STATES = ['0', '9', '70', '72', 'Idle', 'Ready', 'Finished once', 'Cancelled'];
+  // Work:FAILED counts as idle too: a mow that failed to START (e.g. Error 124
+  // "out of working area") lands in Work:FAILED but the firmware keeps reporting
+  // task_mode:1 + work_status:1 (WORKING). Without this the app shows a phantom
+  // "mowing" state with a Stop button that does nothing — the mower isn't mowing,
+  // so the firmware rejects Stop with "not in working status". Trust the msg.
   const isMowingSticky = !isOnDock && taskMode === 1 && !isReturning
     && !msg.includes('Work:FINISHED') && !msg.includes('Work:CANCELLED')
+    && !msg.includes('Work:FAILED')
     && !IDLE_WORK_STATES.includes(workStatus);
 
   // Edge-cut state is surfaced by the firmware via extended_response edge_cut_status
@@ -244,6 +260,17 @@ function deriveMower(mower: DeviceState | null): MowerDerived | null {
   // regular msg/work_status fields don't reflect BOUNDARY_COVERING. This dedicated
   // sensor is the one source of truth for the edge-cutting activity.
   const isEdgeCutting = s.edge_active === '1' && !isOnDock;
+
+  // mow_zone overlay state (research/documents/unicom-follow-transit-design.md):
+  // the mower-side `mow_zone` orchestrator streams `{ phase, map }` on the
+  // extended_response channel while it drives the recorded unicom line
+  // between zones. The server mirrors this into `mow_zone_phase` /
+  // `mow_zone_map` (mirrors the edge_active pattern above). Only the
+  // `following_unicom` phase gets its own activity — `undocking` and
+  // `covering` fall back to the normal report_state_robot detection above,
+  // and `done`/`error` simply stop matching here so the state clears itself
+  // once the next phase update arrives.
+  const isFollowingUnicom = s.mow_zone_phase === 'following_unicom' && !isOnDock;
 
   // Mapping detection mirrors MappingScreen (the authoritative one): trust
   // msg + task_mode, and treat the post-save echo (Work:FINISHED / Work:WAIT)
@@ -261,6 +288,7 @@ function deriveMower(mower: DeviceState | null): MowerDerived | null {
   else if (hasError && !isOnDock) activity = 'error';
   else if (isDockFailed && !isOnDock) activity = 'error';
   else if (isEdgeCutting) activity = 'edge_cutting';
+  else if (isFollowingUnicom) activity = 'following_unicom';
   else if (isCoverageRunning) activity = 'mowing';
   else if (isMappingActive) activity = 'mapping';
   else if (isCoveragePaused) activity = 'paused';
@@ -321,6 +349,7 @@ function deriveMower(mower: DeviceState | null): MowerDerived | null {
     // Live driving speed (m/s), derived server-side from the pose stream.
     driveSpeed: parseFloat(s.mow_speed ?? '') || 0,
     firmwareVersion: mower.firmwareVersion ?? null,
+    mowZoneMap: s.mow_zone_map ?? null,
   };
 }
 
@@ -329,6 +358,10 @@ function deriveMower(mower: DeviceState | null): MowerDerived | null {
 const ACTIVITY_KEYS: Record<MowerActivity, string> = {
   mowing: 'mowing',
   edge_cutting: 'edgeCutting',
+  // Short chip label (no placeholder) — the interpolated "Moving to {{zone}}"
+  // sentence lives in its own render block below (uses the 'followingUnicom'
+  // i18n key directly with the {{zone}} param).
+  following_unicom: 'followingUnicomShort',
   charging: 'charging',
   returning: 'returning',
   paused: 'paused',
@@ -342,6 +375,7 @@ function getActivityLabel(activity: MowerActivity, t?: (key: string) => string):
   switch (activity) {
     case 'mowing': return 'Mowing';
     case 'edge_cutting': return 'Edge cutting';
+    case 'following_unicom': return 'Moving between zones';
     case 'charging': return 'Charging';
     case 'returning': return 'Returning';
     case 'paused': return 'Paused';
@@ -357,6 +391,8 @@ function getActivityColor(activity: MowerActivity, c: Colors): string {
       return c.green;
     case 'edge_cutting':
       return c.amber;
+    case 'following_unicom':
+      return c.emerald;
     case 'charging':
       return c.blue;
     case 'returning':
@@ -415,8 +451,6 @@ function getNextScheduleDisplay(
 
   return bestSchedule;
 }
-
-const MOWER_SVG_PATH = "M8.75 7C7.55 7.02 6.52 7.15 5.65 7.53C4.79 7.9 4.02 8.71 4.02 9.72V13.77C2.77 14.96 1.98 16.63 1.98 18.48C1.98 22.07 4.91 25 8.5 25C9.75 25 10.89 24.62 11.86 24H21.81C22.36 24.61 23.14 25 24.02 25C24.89 25 25.67 24.61 26.22 24H26.9C28.59 24 30.02 22.65 30.02 20.96V18.9C30.02 16.27 28.24 14.08 25.85 12.35C23.47 10.63 20.38 9.3 17.3 8.38C14.22 7.47 11.16 6.97 8.75 7ZM8.78 9C10.88 8.97 13.81 9.43 16.73 10.3C19.65 11.17 22.57 12.45 24.68 13.97C26.42 15.23 27.55 16.6 27.89 18H14.92C14.66 14.65 11.92 11.96 8.5 11.96C7.62 11.96 6.78 12.14 6.02 12.46V9.72C6.02 9.58 5.99 9.56 6.45 9.36C6.9 9.17 7.73 9.02 8.78 9ZM8.5 13.96C11.01 13.96 13.02 15.98 13.02 18.48C13.02 20.99 11.01 23 8.5 23C5.99 23 3.98 20.99 3.98 18.48C3.98 15.98 5.99 13.96 8.5 13.96ZM14.71 20H28.02V20.96C28.02 21.53 27.55 22 26.9 22H13.86C14.24 21.39 14.53 20.72 14.71 20Z";
 
 function MowerIcon({ size, color }: { size: number; color: string }) {
   return (
@@ -485,6 +519,8 @@ function getActivityIcon(
       return 'leaf'; // overridden by custom SVG in render
     case 'edge_cutting':
       return 'scan-outline';
+    case 'following_unicom':
+      return 'git-network-outline';
     case 'charging':
       return 'battery-charging';
     case 'returning':
@@ -504,14 +540,15 @@ function getActivityIcon(
 // ── Glow colors per activity (matching dashboard StatusHeroCard) ────
 
 const GLOW_COLOR: Record<MowerActivity, string> = {
-  idle:         'transparent',
-  mowing:       'rgba(16, 185, 129, 0.20)',
-  edge_cutting: 'rgba(245, 158, 11, 0.20)',
-  charging:     'rgba(59, 130, 246, 0.20)',
-  returning:    'rgba(245, 158, 11, 0.15)',
-  paused:       'rgba(234, 179, 8, 0.12)',
-  mapping:      'rgba(168, 85, 247, 0.15)',
-  error:        'rgba(239, 68, 68, 0.20)',
+  idle:              'transparent',
+  mowing:            'rgba(16, 185, 129, 0.20)',
+  edge_cutting:      'rgba(245, 158, 11, 0.20)',
+  following_unicom:  'rgba(0, 212, 170, 0.20)',
+  charging:          'rgba(59, 130, 246, 0.20)',
+  returning:         'rgba(245, 158, 11, 0.15)',
+  paused:            'rgba(234, 179, 8, 0.12)',
+  mapping:           'rgba(168, 85, 247, 0.15)',
+  error:             'rgba(239, 68, 68, 0.20)',
 };
 
 // ── Hero palette (light-mode pastel variant, spec visual choice B) ───
@@ -748,6 +785,10 @@ export default function HomeScreen() {
   useEffect(() => {
     if (!freshSession) return;
     const s = mower ? devices.get(mower.sn)?.sensors : undefined;
+    // Transiënt lege sensor-snapshot (socket reconnect / gedropt veld) telt
+    // niet als "verse data" — anders flikkert de oude coverage terug omdat
+    // de fingerprint heel even naar "|" springt.
+    if (s?.finished_area === undefined && s?.cover_map_id === undefined) return;
     const fp = `${s?.finished_area ?? ''}|${s?.cover_map_id ?? ''}`;
     if (
       fp !== freshSessionFingerprint.current ||
@@ -761,6 +802,33 @@ export default function HomeScreen() {
       }
     }
   }, [devices, mower?.sn, effectiveActivity, freshSession]);
+  // Sessie gestart buiten de app om (schema / dashboard / andere telefoon):
+  // activity springt van dock/idle naar mowing zonder dat StartMowSheet.onStarted
+  // draaide. Zonder gate toont de kaart dan minutenlang de cover-paths van de
+  // VORIGE sessie (firmware echoot die tot de nieuwe coverage echt begint).
+  // Zelfde suppressie als onStarted: lokale overlays wissen + carried-over
+  // coverage verbergen tot de fingerprint verandert. Bewust NIET bij
+  // returning→mowing (regen-hervatting: zelfde sessie, coverage is echt).
+  const prevActivityForFreshRef = useRef<MowerActivity | null>(null);
+  useEffect(() => {
+    const prev = prevActivityForFreshRef.current;
+    prevActivityForFreshRef.current = effectiveActivity;
+    const startedOutsideApp =
+      (effectiveActivity === 'mowing' || effectiveActivity === 'edge_cutting') &&
+      (prev === 'idle' || prev === 'charging');
+    // freshSession al aan = start kwam via StartMowSheet.onStarted (die zet
+    // optimistic activity en de gate in dezelfde batch) — niets te doen.
+    if (!startedOutsideApp || freshSession) return;
+    setMowingTrail([]);
+    setPlannedPaths([]);
+    const s = mower ? devices.get(mower.sn)?.sensors : undefined;
+    freshSessionFingerprint.current = `${s?.finished_area ?? ''}|${s?.cover_map_id ?? ''}`;
+    setFreshSession(true);
+    if (freshSessionTimer.current) clearTimeout(freshSessionTimer.current);
+    freshSessionTimer.current = setTimeout(() => setFreshSession(false), 180000);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [effectiveActivity, freshSession, mower?.sn]);
+
   useEffect(() => {
     const prev = prevActivityRef.current;
     prevActivityRef.current = effectiveActivity;
@@ -1885,6 +1953,21 @@ export default function HomeScreen() {
             </View>
           )}
 
+          {/* Following-unicom overlay: the mower is driving the recorded
+              map-to-map transit line (mow_zone orchestrator, phase
+              "following_unicom"). Shows the Novabot map-to-map animation +
+              copy naming the destination zone. Clears itself automatically
+              once the phase moves to "covering"/"done"/"error" — deriveMower
+              only sets this activity while mow_zone_phase === 'following_unicom'. */}
+          {displayActivity === 'following_unicom' && (
+            <View style={styles.unicomTransitBox}>
+              <UnicomTransitAnimation />
+              <Text style={[styles.unicomTransitText, { color: colors.textDim }]}>
+                {t('followingUnicom', { zone: mower.mowZoneMap ?? '' })}
+              </Text>
+            </View>
+          )}
+
           {/* Return-reason chip — appears when the modal has been dismissed but
               the mower is still back on the dock. Tap to re-open the modal. */}
           {returnReason && !reasonModalVisible && liveReturn &&
@@ -2008,6 +2091,21 @@ export default function HomeScreen() {
                 <View style={[styles.chip, styles.chipHighlight]}>
                   <Ionicons name="resize" size={13} color="#4ade80" />
                   <Text style={styles.chipHighlightText}>{cm} cm</Text>
+                </View>
+              );
+            })()}
+            {(() => {
+              // Maairichting — zelfde bron als de kaart (mowSettings van de
+              // gestarte sessie, fallback firmware-echo), dus de chip toont
+              // wat er werkelijk naar de maaier gestuurd is.
+              const active =
+                displayActivity === 'mowing' || displayActivity === 'edge_cutting';
+              const deg = mowSettings?.pathDirection ?? mower.pathDirection;
+              if (!active || deg == null || !Number.isFinite(deg)) return null;
+              return (
+                <View style={[styles.chip, styles.chipHighlight]}>
+                  <Ionicons name="compass-outline" size={13} color="#4ade80" />
+                  <Text style={styles.chipHighlightText}>{Math.round(deg)}°</Text>
                 </View>
               );
             })()}
@@ -3515,6 +3613,16 @@ const makeStyles = (c: Colors) => StyleSheet.create({
     color: c.red,
     fontWeight: '600',
     flex: 1,
+  },
+  unicomTransitBox: {
+    alignItems: 'center',
+    marginTop: 8,
+    gap: 6,
+  },
+  unicomTransitText: {
+    fontSize: 12,
+    fontWeight: '500',
+    textAlign: 'center',
   },
   returnReasonChip: {
     flexDirection: 'row',

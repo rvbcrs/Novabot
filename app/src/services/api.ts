@@ -109,6 +109,10 @@ export interface Schedule {
   currentlyRunning?: boolean;
   /** Server-derived: ISO timestamp when the rain monitor paused this schedule's session, or null. */
   rainPausedAt?: string | null;
+  /** YYYY-MM-DD van de dag die overgeslagen wordt; zelf-wissend na de skip. */
+  skipDate?: string | null;
+  /** Richting die de volgende run echt gebruikt (base + alternate rotatie). */
+  nextPathDirection?: number;
   created_at: string;
   createdAt?: string;
   updated_at?: string;
@@ -195,6 +199,8 @@ interface ScheduleDto {
   taskMode?: number;
   rainPause?: boolean;
   lastTriggeredAt?: string | null;
+  skipDate?: string | null;
+  nextPathDirection?: number;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -216,6 +222,7 @@ export interface ScheduleWritePayload {
   intervalAnchorDate?: string | null;
   alternateDirection?: boolean;
   alternateStep?: number;
+  skipDate?: string | null;
   start_hour?: number;
   start_minute?: number;
   duration_minutes?: number;
@@ -282,6 +289,8 @@ function normalizeSchedule(input: ScheduleLike): Schedule {
     intervalAnchorDate: (input as { intervalAnchorDate?: string | null }).intervalAnchorDate ?? null,
     alternateDirection: (input as { alternateDirection?: boolean }).alternateDirection ?? false,
     alternateStep: (input as { alternateStep?: number }).alternateStep ?? 90,
+    skipDate: input.skipDate ?? null,
+    nextPathDirection: input.nextPathDirection ?? pathDirection,
     created_at: createdAt,
     createdAt,
     updated_at: updatedAt,
@@ -488,12 +497,25 @@ export class ApiClient {
     return rows.map((row) => normalizeSchedule(row));
   }
 
+  // Telefoon-tijdzone meesturen zodat de server-side runner start_time in de
+  // zone van de gebruiker vuurt i.p.v. de container-TZ. Zelfde detectie als
+  // BLE-provisioning (ble.ts): expo-localization eerst, dan Intl.
+  private async deviceTimezone(): Promise<string | undefined> {
+    try {
+      const Localization = await import('expo-localization');
+      const tz = Localization.getCalendars?.()?.[0]?.timeZone;
+      if (tz) return tz;
+    } catch { /* ignore */ }
+    try { return Intl.DateTimeFormat().resolvedOptions().timeZone || undefined; }
+    catch { return undefined; }
+  }
+
   async createSchedule(
     sn: string,
     schedule: ScheduleWritePayload,
   ): Promise<{ ok: boolean; schedule?: Schedule }> {
     return this.request('POST', `/api/dashboard/schedules/${enc(sn)}`, {
-      body: schedule as unknown as Record<string, unknown>,
+      body: { timezone: await this.deviceTimezone(), ...schedule } as unknown as Record<string, unknown>,
     });
   }
 
@@ -503,7 +525,7 @@ export class ApiClient {
     updates: ScheduleWritePayload,
   ): Promise<{ ok: boolean }> {
     return this.request('PATCH', `/api/dashboard/schedules/${enc(sn)}/${enc(String(scheduleId))}`, {
-      body: updates as Record<string, unknown>,
+      body: { timezone: await this.deviceTimezone(), ...updates } as Record<string, unknown>,
     });
   }
 
@@ -555,6 +577,20 @@ export class ApiClient {
    *  expose — blade control, perception modes, log retrieval, etc. */
   async sendExtended(sn: string, command: Record<string, unknown>): Promise<{ ok: boolean; command: string }> {
     return this.request('POST', `/api/dashboard/extended/${enc(sn)}`, { body: command });
+  }
+
+  /** Start a normal mow via the mower-side `mow_zone` orchestrator (research/
+   *  documents/unicom-follow-transit-design.md). Replaces the old direct
+   *  `start_navigation` send: the mower-side orchestrator now undocks, drives
+   *  the recorded map-to-map unicom line when a transit is needed, then runs
+   *  coverage through robot_decision, streaming phase updates
+   *  (`mow_zone_status`) back on the extended_response channel. `direction`
+   *  is the mow angle in degrees (0-180), or null to use the saved default. */
+  async mowZone(
+    sn: string,
+    payload: { map: string; cutterhigh: number; area?: number; direction?: number | null },
+  ): Promise<{ ok: boolean; command: string }> {
+    return this.sendExtended(sn, { mow_zone: payload });
   }
 
   /** Read-only mapping preflight health gate (OpenNova firmware only). Returns

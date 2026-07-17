@@ -2,7 +2,8 @@
  * StartMowSheet — bottom sheet for starting a mowing session.
  * Matches dashboard StartMowSheet: map selection, cutting height, path direction.
  *
- * Flow: set_para_info (height+direction) → start_run (with map + workArea)
+ * Flow: set_para_info (height+direction) → mow_zone (mower-side orchestrator:
+ * undock -> follow_unicom transit if needed -> coverage via robot_decision)
  */
 import React, { useState, useEffect, useRef } from 'react';
 import {
@@ -23,6 +24,7 @@ import { useStyles, useTheme, type Colors } from '../theme';
 import { ApiClient, type LocalPoint, type MapData } from '../services/api';
 import { getServerUrl } from '../services/auth';
 import { useNavigation } from '@react-navigation/native';
+import { useMowerState } from '../hooks/useMowerState';
 import { PatternPicker } from './PatternPicker';
 import { usePattern } from '../context/PatternContext';
 import { transformToGps } from '../utils/patternUtils';
@@ -81,6 +83,11 @@ export function StartMowSheet({
   const navigation = useNavigation();
   const pattern = usePattern();
   const { t } = useI18n();
+  // Live sensor cache — via een ref zodat de async start-flow de ACTUELE
+  // waarde kan pollen (de closure zou anders de render-time snapshot zien).
+  const { devices } = useMowerState();
+  const devicesRef = useRef(devices);
+  devicesRef.current = devices;
   const [maps, setMaps] = useState<MapData[]>([]);
   const [allMaps, setAllMaps] = useState<MapData[]>([]);
   // Multi-select. Empty = nothing chosen, button disabled. Any number of maps
@@ -429,28 +436,61 @@ export function StartMowSheet({
         await new Promise((resolve) => setTimeout(resolve, 1500));
       }
 
-      // Start mowing — Flutter v2.4.0 stuurt start_navigation direct
-      const cmdNum = Date.now() % 100000;
-      const navCmd = {
-        start_navigation: {
-          mapName: 'test',
-          cutterhigh: wireHeight,
-          area: areaParam,
-          cmd_num: cmdNum,
-        },
+      // Start mowing — the mower-side `mow_zone` orchestrator now owns the
+      // whole sequence (undock -> follow the recorded unicom transit when
+      // needed -> coverage via robot_decision), streaming phase updates back
+      // so HomeScreen can show the "following unicom" animation. `map` is the
+      // FIRST selected zone's canonical slot; the firmware's own area
+      // bitmask (areaParam) still drives multi-zone sequencing once coverage
+      // starts, same as before.
+      const mapSlot = selectedMap?.canonicalName ?? selectedMap?.mapName ?? 'map0';
+      const mowZonePayload = {
+        map: mapSlot,
+        cutterhigh: wireHeight,
+        area: areaParam,
+        direction: pathDirection ?? null,
       };
-      console.log('[StartMow] Sending start_navigation:', JSON.stringify(navCmd));
-      const navResult = await api.sendCommand(sn, navCmd);
-
-      // Fallback: old protocol
-      if (!navResult.ok) {
-        console.log('[StartMow] start_navigation failed, trying start_run');
-        const runCmd = {
-          start_run: { mapName: null, area: areaParam, cutterhigh: wireHeight },
-          targetIsMower: false,
+      console.log('[StartMow] Sending mow_zone:', JSON.stringify(mowZonePayload));
+      // mow_zone is fire-and-forget op de server (publishExtendedCommand):
+      // ok:true betekent alleen dat het MQTT-bericht verstuurd is, NIET dat de
+      // maaier het kent. Stock firmware heeft geen extended_commands.py en
+      // oudere custom builds missen de mow_zone handler — dan gebeurt er stil
+      // niets. Daarom: kort wachten op de eerste fase-update van de
+      // orchestrator (mow_zone_phase in de sensor cache); blijft die uit, dan
+      // klassiek starten. Dubbelstart kan niet: is de mow_zone tóch bezig
+      // (signaal kwijt), dan wijst de firmware de tweede start af met
+      // Error 2 "Already in running task".
+      const phaseBefore = devicesRef.current.get(sn)?.sensors?.mow_zone_phase ?? null;
+      const navResult = await api.mowZone(sn, mowZonePayload);
+      let mowZoneAlive = false;
+      if (navResult.ok) {
+        const deadline = Date.now() + 5000;
+        while (Date.now() < deadline) {
+          const phase = devicesRef.current.get(sn)?.sensors?.mow_zone_phase ?? null;
+          if (phase !== null && phase !== phaseBefore) { mowZoneAlive = true; break; }
+          await new Promise((resolve) => setTimeout(resolve, 500));
+        }
+      }
+      if (!mowZoneAlive) {
+        // Klassiek pad — exact de pre-mow_zone flow (incl. legacy start_run
+        // fallback), zodat stock firmware en oudere custom builds blijven werken.
+        console.log('[StartMow] mow_zone niet bevestigd — fallback naar start_navigation');
+        const navCmd = {
+          start_navigation: {
+            mapName: 'test',
+            cutterhigh: wireHeight,
+            area: areaParam,
+            cmd_num: Date.now() % 100000,
+          },
         };
-        console.log('[StartMow] Sending start_run:', JSON.stringify(runCmd));
-        await api.sendCommand(sn, runCmd);
+        const classic = await api.sendCommand(sn, navCmd);
+        if (!classic.ok) {
+          console.log('[StartMow] start_navigation failed, trying start_run');
+          await api.sendCommand(sn, {
+            start_run: { mapName: null, area: areaParam, cutterhigh: wireHeight },
+            targetIsMower: false,
+          });
+        }
       }
 
       // Report back display cm so HomeScreen's mismatch check compares like-for-like
