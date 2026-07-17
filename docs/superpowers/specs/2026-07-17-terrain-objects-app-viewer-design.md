@@ -34,11 +34,21 @@ sinds de smoke van vandaag: 75k cellen per beurt, mediaan 701 samples/cel).
 met RGB-segmentatie (BiSeNet-v2, 14 klassen) en publiceert gelabelde
 3D-punten tijdens het maaien. Wij bouwen géén eigen fusie.
 
-**Persistente klassen die de kaart op gaan:** `bush` (8), `fixed obstacle`
-(5), `static obstacle` (6), `charging station` (10).
-**Bewust NIET opgeslagen:** `dynamic obstacle` (7 — mensen/dieren horen niet
-permanent op de kaart), `faeces`/`dirt`/`sunlight`/`glass`/`unlabeled`/
-`background`/`lawn`/`road`/`terrain` (ruis of al gedekt door het terrein).
+**AMENDEMENT na fase 0 (2026-07-17, capture op .100 bij de trampoline):**
+het model gebruikt de nette obstakel-klassen in de praktijk nauwelijks —
+38% van de punten was `background`, en de hoogte-analyse toont dat dáár de
+echte objecten zitten (mediaan 0,16 m, p90 0,42 m = trampoline-frame),
+terwijl `lawn` keurig op de grond ligt (mediaan −0,06 m). Daarom is de
+selectie **hoogte-gedreven, niet klasse-gedreven**:
+
+- **Objectlaag** = elk gelabeld punt met base-hoogte > **0,10 m** boven het
+  wielvlak, BEHALVE labels `lawn` (2), `road` (3), `terrain` (4) — dat ís
+  het terrein — en `dynamic obstacle` (7, mensen/dieren) en `sunlight`
+  (12, reflectie-ruis).
+- **Klasse bepaalt alleen de kleur**: `charging station` blauw, `bush`
+  groen (als hij ooit voorkomt), `fixed/static obstacle` oranje, al het
+  overige (incl. `background`) een neutrale object-kleur. Een trampoline
+  verschijnt dus met zijn echte vorm, zonder naamlabel.
 
 ## Componenten
 
