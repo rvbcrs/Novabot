@@ -27,9 +27,12 @@ assert np.allclose(out[0], p_b, atol=1e-3), out[0]
 pts_low = pts.copy(); pts_low[0, 3] = 0.1
 assert len(ts.cam_to_base(pts_low)) == 0
 
-# hoogte-outlier: punt 2 m boven wielvlak valt af
-p_hi = R.T @ (np.array([0.8, 0.2, 2.0]) - np.array([0, 0, ts.CAM_HEIGHT]))
-assert len(ts.cam_to_base(np.array([[p_hi[0], p_hi[1], p_hi[2], 0.9]], dtype=np.float32))) == 0
+# hoogte-outliers: binnen dieptebereik maar buiten [HEIGHT_MIN, HEIGHT_MAX]
+for p_bad in ([1.8, 0.0, 1.6], [1.8, 0.0, -0.4]):   # 1.6 > 1.5 en -0.4 < -0.3
+    p_c_bad = R.T @ (np.array(p_bad) - np.array([0, 0, ts.CAM_HEIGHT]))
+    assert ts.RANGE_MIN <= p_c_bad[2] <= ts.RANGE_MAX  # bewijs: allén hoogte filtert
+    got = ts.cam_to_base(np.array([[p_c_bad[0], p_c_bad[1], p_c_bad[2], 0.9]], dtype=np.float32))
+    assert len(got) == 0, (p_bad, got)
 
 # ── base_to_map: 90° yaw ──
 m = ts.base_to_map(np.array([[0.8, 0.2, 0.05]]), 2.0, 3.0, math.pi / 2)
@@ -38,6 +41,17 @@ assert np.allclose(m[0], [2.0 - 0.2, 3.0 + 0.8, 0.05], atol=1e-6), m[0]
 # ── yaw_from_quat: 90° om z ──
 q = (0.0, 0.0, math.sin(math.pi / 4), math.cos(math.pi / 4))
 assert abs(ts.yaw_from_quat(*q) - math.pi / 2) < 1e-6
+
+# ── MAX_CELLS-cap: bestaande cellen blijven tellen, nieuwe cellen worden stil genegeerd ──
+old_cap = ts.MAX_CELLS
+ts.MAX_CELLS = 1
+grid3 = {}
+ts.accumulate(grid3, np.array([[0.02, 0.02, 0.10]]))          # cel 1 → past
+ts.accumulate(grid3, np.array([[0.52, 0.52, 0.20]]))          # nieuwe cel → geweigerd (cap)
+ts.accumulate(grid3, np.array([[0.03, 0.03, 0.30]]))          # bestaande cel → telt bij
+assert len(grid3) == 1, grid3
+assert list(grid3.values())[0][1] == 2
+ts.MAX_CELLS = old_cap
 
 # ── accumulate + serialize round-trip ──
 grid = {}

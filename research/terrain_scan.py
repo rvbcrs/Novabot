@@ -52,10 +52,6 @@ def base_to_map(pts, x, y, yaw):
     return out
 
 
-def _pack(ix, iy):
-    return (int(ix) << 32) | (int(iy) & 0xFFFFFFFF)
-
-
 def _unpack(key):
     ix = key >> 32
     iy = key & 0xFFFFFFFF
