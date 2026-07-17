@@ -123,4 +123,10 @@ ts.accumulate_objects(og3, np.array([[0.02, 0.02, 0.50], [0.02, 0.02, 0.60]]),
                       np.array([1, 16], dtype=np.uint8))
 assert set(og3.keys()) == {(0, 0, 1), (0, 0, 16)}, og3.keys()
 
+# ── upload_url: pure URL-helper voor live/final uploads ──
+u = ts.upload_url("192.168.0.247:8080", "uploadTerrainGrid", "LFIN1231000211", 1784300000, 0)
+assert u == "http://192.168.0.247:8080/api/nova-file-server/terrain/uploadTerrainGrid?sn=LFIN1231000211&session=1784300000&final=0", u
+u2 = ts.upload_url("host", "uploadObjectGrid", "LFIN0001", None, 1)
+assert u2 == "http://host/api/nova-file-server/terrain/uploadObjectGrid?sn=LFIN0001&final=1", u2
+
 print("test_terrain_scan: ALLES OK")

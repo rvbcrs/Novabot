@@ -165,6 +165,14 @@ FRAME_INTERVAL = 0.5      # s → max 2 fps
 POSE_MAX_AGE = 0.5        # s — geen verse pose = frame overslaan
 FLUSH_AFTER_IDLE = 120.0  # s zonder ToF-frames terwijl er data is → sessie klaar
 UPLOAD_TIMEOUT = 30
+LIVE_INTERVAL = 60.0      # s tussen tussentijdse uploads tijdens een sessie
+
+
+def upload_url(http_address, endpoint, sn, session, final):
+    url = f"http://{http_address}/api/nova-file-server/terrain/{endpoint}?sn={sn}"
+    if session is not None:
+        url += f"&session={session}"
+    return url + f"&final={final}"
 
 
 def _read_config():
@@ -219,13 +227,11 @@ def _read_config():
         _t.sleep(60)
 
 
-def _upload(path, http_address, sn):
+def _upload_bytes(payload, http_address, url):
     import urllib.request
-    url = f"http://{http_address}/api/nova-file-server/terrain/uploadTerrainGrid?sn={sn}"
-    with open(path, "rb") as f:
-        req = urllib.request.Request(
-            url, data=f.read(), method="POST",
-            headers={"Content-Type": "application/octet-stream"})
+    req = urllib.request.Request(
+        url, data=payload, method="POST",
+        headers={"Content-Type": "application/octet-stream"})
     with urllib.request.urlopen(req, timeout=UPLOAD_TIMEOUT) as resp:
         return 200 <= resp.status < 300
 
@@ -239,6 +245,7 @@ def _rotate_sessions():
 
 def main():
     import os
+    import re
     import time
 
     import rclpy
@@ -252,7 +259,8 @@ def main():
     rclpy.init()
     node = Node("terrain_scan")
     st = {"pose": None, "pose_t": 0.0, "grid": {}, "last_frame": 0.0,
-          "last_cloud": 0.0, "frames": 0}
+          "last_cloud": 0.0, "frames": 0,
+          "obj": {}, "session": None, "last_live": 0.0, "last_obj_frame": 0.0}
 
     def on_odom(msg):
         p = msg.pose.pose
@@ -273,34 +281,74 @@ def main():
         if st["pose"] is None or now - st["pose_t"] > POSE_MAX_AGE:
             return
         st["last_frame"] = now
+        if st["session"] is None:
+            st["session"] = int(time.time())
         pts = np.frombuffer(bytes(msg.data), dtype=np.float32).reshape(-1, 4)
         base = cam_to_base(pts)
         x, y, yaw = st["pose"]
         accumulate(st["grid"], base_to_map(base, x, y, yaw))
         st["frames"] += 1
 
+    def on_labeled(msg):
+        now = time.time()
+        if len(msg.data) == 0:
+            return  # leeg frame: geen obstakel in beeld (fase-0 feit)
+        if msg.point_step != 13:
+            node.get_logger().warn(
+                f"terrain: onverwachte labeled point_step {msg.point_step} (verwacht 13) — frame overgeslagen")
+            return
+        if st["pose"] is None or now - st["pose_t"] > POSE_MAX_AGE:
+            return
+        if now - st.get("last_obj_frame", 0.0) < FRAME_INTERVAL:
+            return
+        st["last_obj_frame"] = now
+        pts4, labels = parse_labeled(bytes(msg.data))
+        m = cam_to_base_mask(pts4)
+        base = cam_to_base(pts4)
+        x, y, yaw = st["pose"]
+        accumulate_objects(st["obj"], base_to_map(base, x, y, yaw), labels[m])
+
     def flush():
-        if not st["grid"]:
+        if not st["grid"] and not st["obj"]:
             return
         try:
-            path = os.path.join(SESSION_DIR, f"session_{int(time.time())}.tgr")
-            with open(path, "wb") as f:
-                f.write(serialize_grid(st["grid"], CELL))
-            node.get_logger().info(
-                f"terrain: sessie {path} ({len(st['grid'])} cellen, {st['frames']} frames)")
+            ts_now = int(time.time())
+            if st["grid"]:
+                path = os.path.join(SESSION_DIR, f"session_{ts_now}.tgr")
+                with open(path, "wb") as f:
+                    f.write(serialize_grid(st["grid"], CELL))
+                node.get_logger().info(
+                    f"terrain: sessie {path} ({len(st['grid'])} cellen, {st['frames']} frames)")
+            if st["obj"]:
+                path_o = os.path.join(SESSION_DIR, f"session_{ts_now}.tgo")
+                with open(path_o, "wb") as f:
+                    f.write(serialize_objects(st["obj"], CELL))
+                node.get_logger().info(
+                    f"terrain: objectsessie {path_o} ({len(st['obj'])} entries)")
             _rotate_sessions()
         except Exception as e:  # noqa: BLE001 — disk-IO mag de daemon nooit killen
             node.get_logger().warn(f"terrain: sessie wegschrijven faalde: {e} — sessie verloren")
         finally:
             st["grid"] = {}
             st["frames"] = 0
+            st["obj"] = {}
+            st["session"] = None
         # upload alles wat er nog ligt (incl. eerdere gefaalde uploads)
         for fn in sorted(os.listdir(SESSION_DIR)):
-            if not fn.endswith(".tgr"):
+            if fn.endswith(".tgr"):
+                endpoint = "uploadTerrainGrid"
+            elif fn.endswith(".tgo"):
+                endpoint = "uploadObjectGrid"
+            else:
                 continue
+            m = re.match(r"session_(\d+)\.tg[ro]$", fn)
+            fsession = int(m.group(1)) if m else None
             fp = os.path.join(SESSION_DIR, fn)
             try:
-                if _upload(fp, http_address, sn):
+                with open(fp, "rb") as f:
+                    payload = f.read()
+                url = upload_url(http_address, endpoint, sn, fsession, 1)
+                if _upload_bytes(payload, http_address, url):
                     os.remove(fp)
                     node.get_logger().info(f"terrain: geüpload {fn}")
             except Exception as e:  # noqa: BLE001 — offline is normaal, later opnieuw
@@ -309,11 +357,25 @@ def main():
 
     node.create_subscription(Odometry, "/robot_combination_localization/odom", on_odom, 10)
     node.create_subscription(PointCloud2, "/camera/tof/point_cloud", on_cloud, 5)
+    node.create_subscription(PointCloud2, "/perception/points_labeled", on_labeled, 5)
 
     while rclpy.ok():
         rclpy.spin_once(node, timeout_sec=2.0)
         if st["grid"] and time.time() - st["last_cloud"] > FLUSH_AFTER_IDLE:
             flush()
+
+        now = time.time()
+        if (st["grid"] or st["obj"]) and st["session"] is not None \
+                and now - st["last_live"] >= LIVE_INTERVAL:
+            st["last_live"] = now
+            try:
+                _upload_bytes(serialize_grid(st["grid"], CELL), http_address,
+                              upload_url(http_address, "uploadTerrainGrid", sn, st["session"], 0))
+                if st["obj"]:
+                    _upload_bytes(serialize_objects(st["obj"], CELL), http_address,
+                                  upload_url(http_address, "uploadObjectGrid", sn, st["session"], 0))
+            except Exception as e:  # noqa: BLE001 — live is best-effort; final flush is de waarheid
+                node.get_logger().warn(f"terrain: live-upload faalde: {e}")
 
 
 if __name__ == "__main__":
