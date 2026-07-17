@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseTgr1, mergeIntoTgm1, tgm1ToDisplayTgr1, tgm1CellCount } from '../../services/terrainGrid.js';
+import { parseTgr1, mergeIntoTgm1, tgm1ToDisplayTgr1, tgm1CellCount, parseTgo1, mergeIntoTgmo, tgmoToDisplayTgo1, tgmoCellCount } from '../../services/terrainGrid.js';
 
 function tgr1(cells: Array<[number, number, number, number]>, cellSize = 0.05): Buffer {
   const buf = Buffer.alloc(16 + cells.length * 16);
@@ -54,5 +54,40 @@ describe('terrainGrid', () => {
   it('parse van afgekapt TGM1 gooit nette Error', () => {
     const tgm = mergeIntoTgm1(null, tgr1([[0, 0, 0.1, 1]]));
     expect(() => tgm1ToDisplayTgr1(tgm.subarray(0, tgm.length - 5))).toThrow(/truncated/);
+  });
+});
+
+function tgo1(cells: Array<[number, number, number, number, number]>, cellSize = 0.05): Buffer {
+  const buf = Buffer.alloc(16 + cells.length * 17);
+  buf.write('TGO1', 0, 'ascii');
+  buf.writeDoubleLE(cellSize, 4);
+  buf.writeInt32LE(cells.length, 12);
+  cells.forEach(([ix, iy, label, maxH, cnt], i) => {
+    const o = 16 + i * 17;
+    buf.writeInt32LE(ix, o); buf.writeInt32LE(iy, o + 4);
+    buf.writeUInt8(label, o + 8); buf.writeFloatLE(maxH, o + 9); buf.writeUInt32LE(cnt, o + 13);
+  });
+  return buf;
+}
+
+describe('terrainGrid objects (TGO1/TGMO)', () => {
+  it('parseTgo1 round-trip + truncation', () => {
+    const p = parseTgo1(tgo1([[2, -3, 1, 0.45, 9]]));
+    expect(p.cells.get('2,-3,1')).toEqual({ maxH: expect.closeTo(0.45, 5), cnt: 9 });
+    expect(() => parseTgo1(Buffer.from('NOPE'))).toThrow(/bad magic/);
+    const t = tgo1([[0, 0, 1, 0.2, 1]]);
+    expect(() => parseTgo1(t.subarray(0, t.length - 3))).toThrow(/truncated/);
+  });
+
+  it('mergeIntoTgmo + display-mediaan + 7-ring', () => {
+    let tgmo: Buffer | null = null;
+    for (const h of [0.10, 0.30, 0.20]) tgmo = mergeIntoTgmo(tgmo, tgo1([[0, 0, 1, h, 2]]));
+    expect(tgmoCellCount(tgmo!)).toBe(1);
+    const disp = parseTgo1(tgmoToDisplayTgo1(tgmo!));
+    expect(disp.cells.get('0,0,1')!.maxH).toBeCloseTo(0.20, 5);
+    expect(disp.cells.get('0,0,1')!.cnt).toBe(6);
+    for (let i = 1; i <= 9; i++) tgmo = mergeIntoTgmo(tgmo, tgo1([[1, 1, 10, i / 10, 1]]));
+    const d2 = parseTgo1(tgmoToDisplayTgo1(tgmo!));
+    expect(d2.cells.get('1,1,10')!.maxH).toBeCloseTo(0.6, 5); // slots 3..9
   });
 });

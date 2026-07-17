@@ -8,6 +8,10 @@ const TGR_HEADER = 16;
 const TGR_CELL = 16;
 const TGM_HEADER = 16;
 const TGM_CELL = 41;
+const TGO_HEADER = 16;
+const TGO_CELL = 17;
+const TGMO_HEADER = 16;
+const TGMO_CELL = 42;
 const SLOTS = 7;
 
 export interface Tgr1 { cellSize: number; cells: Map<string, { mean: number; cnt: number }> }
@@ -95,6 +99,93 @@ export function tgm1ToDisplayTgr1(tgm: Buffer): Buffer {
     out.writeInt32LE(ix, o); out.writeInt32LE(iy, o + 4);
     out.writeFloatLE(median, o + 8);
     out.writeUInt32LE(c.cnt, o + 12);
+  }
+  return out;
+}
+
+export interface Tgo1 { cellSize: number; cells: Map<string, { maxH: number; cnt: number }> }
+
+export function parseTgo1(buf: Buffer): Tgo1 {
+  if (buf.length < TGO_HEADER || buf.toString('ascii', 0, 4) !== 'TGO1') throw new Error('bad magic');
+  const cellSize = buf.readDoubleLE(4);
+  const n = buf.readInt32LE(12);
+  if (buf.length < TGO_HEADER + n * TGO_CELL) throw new Error('truncated TGO1');
+  const cells = new Map<string, { maxH: number; cnt: number }>();
+  for (let i = 0; i < n; i++) {
+    const o = TGO_HEADER + i * TGO_CELL;
+    cells.set(`${buf.readInt32LE(o)},${buf.readInt32LE(o + 4)},${buf.readUInt8(o + 8)}`,
+      { maxH: buf.readFloatLE(o + 9), cnt: buf.readUInt32LE(o + 13) });
+  }
+  return { cellSize, cells };
+}
+
+interface TgmoCell { samples: number[]; cnt: number }
+
+function parseTgmo(buf: Buffer): { cellSize: number; cells: Map<string, TgmoCell> } {
+  if (buf.length < TGMO_HEADER || buf.toString('ascii', 0, 4) !== 'TGMO') throw new Error('bad magic');
+  const cellSize = buf.readDoubleLE(4);
+  const n = buf.readInt32LE(12);
+  if (buf.length < TGMO_HEADER + n * TGMO_CELL) throw new Error('truncated TGMO');
+  const cells = new Map<string, TgmoCell>();
+  for (let i = 0; i < n; i++) {
+    const o = TGMO_HEADER + i * TGMO_CELL;
+    const k = buf.readUInt8(o + 9);
+    const samples: number[] = [];
+    for (let s = 0; s < k; s++) samples.push(buf.readFloatLE(o + 10 + s * 4));
+    cells.set(`${buf.readInt32LE(o)},${buf.readInt32LE(o + 4)},${buf.readUInt8(o + 8)}`,
+      { samples, cnt: buf.readUInt32LE(o + 38) });
+  }
+  return { cellSize, cells };
+}
+
+function writeTgmo(cellSize: number, cells: Map<string, TgmoCell>): Buffer {
+  const buf = Buffer.alloc(TGMO_HEADER + cells.size * TGMO_CELL);
+  buf.write('TGMO', 0, 'ascii');
+  buf.writeDoubleLE(cellSize, 4);
+  buf.writeInt32LE(cells.size, 12);
+  let i = 0;
+  for (const [key, c] of cells) {
+    const o = TGMO_HEADER + i++ * TGMO_CELL;
+    const [ix, iy, label] = key.split(',').map(Number);
+    buf.writeInt32LE(ix, o); buf.writeInt32LE(iy, o + 4); buf.writeUInt8(label, o + 8);
+    buf.writeUInt8(c.samples.length, o + 9);
+    c.samples.forEach((v, s) => buf.writeFloatLE(v, o + 10 + s * 4));
+    buf.writeUInt32LE(Math.min(c.cnt, 0xFFFFFFFF), o + 38);
+  }
+  return buf;
+}
+
+export function mergeIntoTgmo(existing: Buffer | null, session: Buffer): Buffer {
+  const s = parseTgo1(session);
+  const base = existing ? parseTgmo(existing) : { cellSize: s.cellSize, cells: new Map<string, TgmoCell>() };
+  for (const [key, cell] of s.cells) {
+    const cur = base.cells.get(key) ?? { samples: [], cnt: 0 };
+    cur.samples.push(cell.maxH);
+    if (cur.samples.length > SLOTS) cur.samples.shift();
+    cur.cnt += cell.cnt;
+    base.cells.set(key, cur);
+  }
+  return writeTgmo(base.cellSize, base.cells);
+}
+
+export function tgmoCellCount(tgmo: Buffer): number { return tgmo.readInt32LE(12); }
+
+export function tgmoToDisplayTgo1(tgmo: Buffer): Buffer {
+  const { cellSize, cells } = parseTgmo(tgmo);
+  const out = Buffer.alloc(TGO_HEADER + cells.size * TGO_CELL);
+  out.write('TGO1', 0, 'ascii');
+  out.writeDoubleLE(cellSize, 4);
+  out.writeInt32LE(cells.size, 12);
+  let i = 0;
+  for (const [key, c] of cells) {
+    const o = TGO_HEADER + i++ * TGO_CELL;
+    const [ix, iy, label] = key.split(',').map(Number);
+    const sorted = [...c.samples].sort((a, b) => a - b);
+    const mid = sorted.length >> 1;
+    const median = sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+    out.writeInt32LE(ix, o); out.writeInt32LE(iy, o + 4); out.writeUInt8(label, o + 8);
+    out.writeFloatLE(median, o + 9);
+    out.writeUInt32LE(Math.min(c.cnt, 0xFFFFFFFF), o + 13);
   }
   return out;
 }
