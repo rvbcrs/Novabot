@@ -117,4 +117,10 @@ ts.accumulate_objects(og2, np.array([[0.52, 0.52, 0.5]]), np.array([1], dtype=np
 assert len(og2) == 1
 ts.OBJ_MAX_ENTRIES = old_cap_o
 
+# label >= 16 moet correct blijven (8-bits composite key, niet 4-bits)
+og3 = {}
+ts.accumulate_objects(og3, np.array([[0.02, 0.02, 0.50], [0.02, 0.02, 0.60]]),
+                      np.array([1, 16], dtype=np.uint8))
+assert set(og3.keys()) == {(0, 0, 1), (0, 0, 16)}, og3.keys()
+
 print("test_terrain_scan: ALLES OK")

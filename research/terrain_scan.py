@@ -127,15 +127,15 @@ def accumulate_objects(objgrid, pts_map, labels):
         return
     ix = np.floor(pts[:, 0] / CELL).astype(np.int64)
     iy = np.floor(pts[:, 1] / CELL).astype(np.int64)
-    comp = ((ix + 1_048_576) << 25) | ((iy + 1_048_576) << 4) | labs.astype(np.int64)
+    comp = ((ix + 1_048_576) << 29) | ((iy + 1_048_576) << 8) | labs.astype(np.int64)
     uniq, inv = np.unique(comp, return_inverse=True)
     gmax = np.full(len(uniq), -np.inf)
     np.maximum.at(gmax, inv, pts[:, 2])
     cnts = np.bincount(inv)
     for c, mh, ct in zip(uniq.tolist(), gmax.tolist(), cnts.tolist()):
-        lab = c & 0xF
-        giy = ((c >> 4) & 0x1FFFFF) - 1_048_576
-        gix = (c >> 25) - 1_048_576
+        lab = c & 0xFF
+        giy = ((c >> 8) & 0x1FFFFF) - 1_048_576
+        gix = (c >> 29) - 1_048_576
         key = (gix, giy, lab)
         e = objgrid.get(key)
         if e is None:
