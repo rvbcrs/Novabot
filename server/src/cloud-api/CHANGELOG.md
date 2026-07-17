@@ -2,6 +2,16 @@
 
 Format: most-recent first. Each entry is dated and names the endpoint(s) affected.
 
+## 2026-07-17 — terrain: gedeelde sessie-meta overleeft tot beide types final zijn
+
+- Fix in uploadTerrainGrid/uploadObjectGrid: bij `final=1` werd `<sn>.active.json`
+  altijd verwijderd, ook als het ándere type (terrain vs object) nog een
+  actieve niet-finale laag had. Een latere sessie-wissel detecteerde die
+  orphan dan niet meer en `foldActive` vouwde hem nooit in — de volgende
+  non-final upload overschreef hem stilletjes. Nu: alleen het eigen actieve
+  bestand (.tgr/.tgo) weg bij final; de gedeelde meta pas als het andere
+  type's actieve bestand er ook niet meer is.
+
 ## 2026-07-17 — terrain: live sessies + object-laag
 
 - uploadTerrainGrid/uploadObjectGrid accepteren `session`+`final`: tussentijdse

@@ -14,6 +14,14 @@
  *   (`foldActive`, crash-herstel/sessie-wissel), dan de actieve laag van
  *   déze sessie weggooien en de binnenkomende body definitief mergen in
  *   TGM1/TGMO + metadata bijwerken (sessions_delta 1).
+ *   `<sn>.active.json` is GEDEELD tussen terrain en objects (één sessie-id
+ *   voor beide lagen) — bij final wordt alleen het eigen actieve bestand
+ *   (.tgr of .tgo) verwijderd; de meta zelf pas als het andere type óók al
+ *   weg is. Anders verliest een terrain-final=1 het spoor van een nog
+ *   actieve .active.tgo (of vice versa): een latere sessie-wissel zou de
+ *   orphan dan niet meer detecteren (`activeSession()` vindt geen meta-
+ *   bestand meer) en `foldActive` zou hem nooit invouwen — de volgende
+ *   non-final upload van dat type overschrijft de orphan dan stilletjes.
  */
 import express, { Router, Request, Response } from 'express';
 import fs from 'fs';
@@ -103,8 +111,17 @@ function handleUpload(req: Request, res: Response, fmt: UploadFormat): void {
   }
 
   // final (of legacy zonder session): de actieve laag van deze sessie is
-  // vervangen door de definitieve body — weggooien en body mergen.
-  for (const p of [activeBodyPath, paths.meta]) { try { fs.unlinkSync(p); } catch { /* al weg */ } }
+  // vervangen door de definitieve body — eigen actieve bestand weg, body
+  // mergen. `.active.json` is gedeeld met het andere type (terrain/object):
+  // pas verwijderen als dat andere type's actieve bestand er ook niet meer
+  // is, anders raakt een nog-actieve andere-type-laag zijn sessie-koppeling
+  // kwijt en wordt hij bij de volgende non-final upload stilletjes overschreven
+  // in plaats van via foldActive ingevouwen.
+  try { fs.unlinkSync(activeBodyPath); } catch { /* al weg */ }
+  const otherActivePath = fmt.activeFile === 'tgr' ? paths.tgo : paths.tgr;
+  if (!fs.existsSync(otherActivePath)) {
+    try { fs.unlinkSync(paths.meta); } catch { /* al weg */ }
+  }
 
   const mergedPath = path.join(TERRAIN_DIR, `${sn}.${fmt.mergedExt}`);
   const existing = fs.existsSync(mergedPath) ? fs.readFileSync(mergedPath) : null;

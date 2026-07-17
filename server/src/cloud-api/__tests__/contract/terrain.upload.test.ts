@@ -94,4 +94,24 @@ describe('POST /api/nova-file-server/terrain/uploadTerrainGrid', () => {
       .set('Content-Type', 'application/octet-stream').send(tgo1Cells([[3, 4, 1, 0.5, 7]])).expect(200);
     expect(terrainGridRepo.findBySn('LFIN2230700238')!.obj_sessions).toBeGreaterThanOrEqual(1);
   });
+
+  it('terrain final=1 laat een .active.tgo van dezelfde sessie ongemoeid; latere sessie-wissel vouwt hem alsnog in', async () => {
+    const app = buildTestApp();
+    const sn = 'LFIN2230700239';
+    // object-laag start als actieve sessie S1 (final=0)
+    await request(app).post(`/api/nova-file-server/terrain/uploadObjectGrid?sn=${sn}&session=S1&final=0`)
+      .set('Content-Type', 'application/octet-stream').send(tgo1Cells([[2, 2, 3, 0.4, 2]])).expect(200);
+    // een terrain-upload finalt dezelfde sessie — mag de gedeelde .active.json
+    // NIET wissen zolang .active.tgo (object-laag, zelfde sessie) nog bestaat
+    await request(app).post(`/api/nova-file-server/terrain/uploadTerrainGrid?sn=${sn}&session=S1&final=1`)
+      .set('Content-Type', 'application/octet-stream').send(tgr1Cells([[0, 0, 0.1, 1]])).expect(200);
+    const before = terrainGridRepo.findBySn(sn);
+    // een NIEUWE sessie start een non-final object-upload — moet eerst de
+    // achtergebleven S1-object-laag invouwen (foldActive) in plaats van hem
+    // stilletjes te overschrijven
+    await request(app).post(`/api/nova-file-server/terrain/uploadObjectGrid?sn=${sn}&session=S2&final=0`)
+      .set('Content-Type', 'application/octet-stream').send(tgo1Cells([[9, 9, 5, 0.9, 1]])).expect(200);
+    const after = terrainGridRepo.findBySn(sn)!;
+    expect(after.obj_sessions).toBe((before?.obj_sessions ?? 0) + 1);
+  });
 });
