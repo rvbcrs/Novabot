@@ -113,31 +113,45 @@ def _read_config():
       Fallback als leeg/ontbrekend: json_config.json → mqtt.value.addr + ":8080".
     - json_config.json → sn.value.code (genest, geen platte "sn" key), bv.
       {"sn": {"set": 1, "value": {"code": "LFIN2230700238"}}}.
+
+    Retryt geduldig: bij boot kan de config later komen dan deze daemon
+    start, en zonder config kan de daemon toch niets — nooit crashen op IO
+    (fix na review Task 2, geen supervisor in start_terrain.sh).
     """
     import json
+    import sys
+    import time as _t
 
-    http_address = None
-    try:
-        with open("/userdata/lfi/http_address.txt") as f:
-            line = f.read().strip()
-        if line:
-            if line.startswith("http://"):
-                line = line[len("http://"):]
-            elif line.startswith("https://"):
-                line = line[len("https://"):]
-            http_address = line.rstrip("/")
-    except OSError:
-        pass
+    while True:
+        try:
+            http_address = None
+            try:
+                with open("/userdata/lfi/http_address.txt") as f:
+                    line = f.read().strip()
+                if line:
+                    if line.startswith("http://"):
+                        line = line[len("http://"):]
+                    elif line.startswith("https://"):
+                        line = line[len("https://"):]
+                    http_address = line.rstrip("/")
+            except OSError:
+                pass
 
-    with open("/userdata/lfi/json_config.json") as f:
-        cfg = json.load(f)
+            with open("/userdata/lfi/json_config.json") as f:
+                cfg = json.load(f)
 
-    if not http_address:
-        addr = cfg.get("mqtt", {}).get("value", {}).get("addr")
-        http_address = f"{addr}:8080" if addr else None
+            if not http_address:
+                addr = cfg["mqtt"]["value"]["addr"]
+                http_address = f"{addr}:8080" if addr else None
 
-    sn = cfg.get("sn", {}).get("value", {}).get("code")
-    return http_address, sn
+            sn = cfg["sn"]["value"]["code"]
+
+            if http_address and sn:
+                return http_address, sn
+        except Exception as e:  # noqa: BLE001 — config-IO mag de daemon nooit killen
+            print(f"terrain: config nog niet leesbaar ({e}), retry over 60s",
+                  file=sys.stderr, flush=True)
+        _t.sleep(60)
 
 
 def _upload(path, http_address, sn):
@@ -199,14 +213,18 @@ def main():
     def flush():
         if not st["grid"]:
             return
-        path = os.path.join(SESSION_DIR, f"session_{int(time.time())}.tgr")
-        with open(path, "wb") as f:
-            f.write(serialize_grid(st["grid"], CELL))
-        node.get_logger().info(
-            f"terrain: sessie {path} ({len(st['grid'])} cellen, {st['frames']} frames)")
-        st["grid"] = {}
-        st["frames"] = 0
-        _rotate_sessions()
+        try:
+            path = os.path.join(SESSION_DIR, f"session_{int(time.time())}.tgr")
+            with open(path, "wb") as f:
+                f.write(serialize_grid(st["grid"], CELL))
+            node.get_logger().info(
+                f"terrain: sessie {path} ({len(st['grid'])} cellen, {st['frames']} frames)")
+            _rotate_sessions()
+        except Exception as e:  # noqa: BLE001 — disk-IO mag de daemon nooit killen
+            node.get_logger().warn(f"terrain: sessie wegschrijven faalde: {e} — sessie verloren")
+        finally:
+            st["grid"] = {}
+            st["frames"] = 0
         # upload alles wat er nog ligt (incl. eerdere gefaalde uploads)
         for fn in sorted(os.listdir(SESSION_DIR)):
             if not fn.endswith(".tgr"):
