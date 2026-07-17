@@ -75,6 +75,7 @@ function useOrbitGestures(camState: React.MutableRefObject<{ theta: number; phi:
   const last = useRef<{ x: number; y: number; d: number | null }>({ x: 0, y: 0, d: null });
   return useRef(PanResponder.create({
     onStartShouldSetPanResponder: () => true,
+    onPanResponderTerminationRequest: () => false, // orbit-drag mag niet gestolen worden door een omliggende ScrollView
     onPanResponderGrant: (e) => {
       const t = e.nativeEvent.touches;
       last.current = { x: t[0].pageX, y: t[0].pageY, d: null };
@@ -113,6 +114,7 @@ function OrbitCamera({ target, camState }: { target: THREE.Vector3; camState: Re
 }
 
 /** Zelfde logica als dashboard's buildObjectVoxels (TerrainPage.tsx) — één InstancedMesh, kleur per instance. */
+// NB: cam_to_base clipt op HEIGHT_MAX 1.5 m — objecten hoger dan 1.5 m tonen tot die hoogte (bewuste v1-keuze).
 function buildObjectVoxels(objs: ObjectData, groundAt: (x: number, y: number) => number): THREE.InstancedMesh {
   const geo = new THREE.BoxGeometry(objs.cellSize, objs.cellSize, 1);
   geo.translate(0, 0, 0.5); // schalen vanaf de voet

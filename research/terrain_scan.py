@@ -101,6 +101,7 @@ def serialize_grid(grid, cell_size):
 
 
 # ── Objectlaag (spec-amendement: hoogte-gedreven, klasse = alleen kleur) ──
+# NB: cam_to_base clipt op HEIGHT_MAX 1.5 m — objecten hoger dan 1.5 m tonen tot die hoogte (bewuste v1-keuze).
 OBJ_HEIGHT_MIN = 0.10                              # m boven wielvlak
 OBJ_EXCLUDE_LABELS = frozenset({2, 3, 4, 7, 12})   # lawn/road/terrain/dynamic/sunlight
 OBJ_MAX_ENTRIES = 500_000                          # RAM-cap (cel,label)-entries

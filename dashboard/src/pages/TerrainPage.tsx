@@ -327,10 +327,14 @@ export default function TerrainPage({ sn }: { sn: string }) {
         markerRef.current.visible = true;
 
         const pts = trailPointsRef.current;
-        pts.push(new THREE.Vector3(pos.x, pos.y, g + 0.02));
-        while (pts.length > TRAIL_MAX_POINTS) pts.shift();
-        trailLineRef.current.geometry.dispose();
-        trailLineRef.current.geometry = new THREE.BufferGeometry().setFromPoints(pts);
+        const last = pts[pts.length - 1];
+        const moved = !last || Math.hypot(pos.x - last.x, pos.y - last.y) > 0.01;
+        if (moved) {
+          pts.push(new THREE.Vector3(pos.x, pos.y, g + 0.02));
+          while (pts.length > TRAIL_MAX_POINTS) pts.shift();
+          trailLineRef.current.geometry.dispose();
+          trailLineRef.current.geometry = new THREE.BufferGeometry().setFromPoints(pts);
+        }
       };
       updateMarkerFnRef.current(livePosRef.current); // direct syncen met wat er al binnen is
 
@@ -353,15 +357,19 @@ export default function TerrainPage({ sn }: { sn: string }) {
       // scene-inhoud vervangen (rebuild dispose't de oude meshes zelf).
       intervalId = setInterval(async () => {
         if (disposed) return;
-        const [terrainRes, freshObjects] = await Promise.all([
-          apiFetch(`/api/dashboard/terrain/${encodeURIComponent(sn)}`),
-          loadObjects(),
-        ]);
-        if (disposed || !terrainRes.ok) return;
-        const freshTerrain = parseTerrain(await terrainRes.arrayBuffer());
-        if (disposed) return;
-        rebuild(scene, freshTerrain, freshObjects);
-        updateMarkerFnRef.current(livePosRef.current);
+        try {
+          const [terrainRes, freshObjects] = await Promise.all([
+            apiFetch(`/api/dashboard/terrain/${encodeURIComponent(sn)}`),
+            loadObjects(),
+          ]);
+          if (disposed || !terrainRes.ok) return;
+          const freshTerrain = parseTerrain(await terrainRes.arrayBuffer());
+          if (disposed) return;
+          rebuild(scene, freshTerrain, freshObjects);
+          updateMarkerFnRef.current(livePosRef.current);
+        } catch (err) {
+          console.warn('terrain: 20s-poll refresh mislukt', err);
+        }
       }, POLL_INTERVAL_MS);
     })().catch(() => setStatus('error'));
 
