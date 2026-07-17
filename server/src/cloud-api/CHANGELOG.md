@@ -2,6 +2,12 @@
 
 Format: most-recent first. Each entry is dated and names the endpoint(s) affected.
 
+## 2026-07-17 — terrain: live sessies + object-laag
+
+- uploadTerrainGrid/uploadObjectGrid accepteren `session`+`final`: tussentijdse
+  uploads (final=0) vervangen een actieve-sessie-laag; final=1 vouwt in de
+  merge-ring. Nieuw: uploadObjectGrid (TGO1). Zie objects-spec 2026-07-17.
+
 ## 2026-07-17 — terrain: uploadTerrainGrid endpoint
 
 - Nieuw: `POST /api/nova-file-server/terrain/uploadTerrainGrid?sn=` — raw

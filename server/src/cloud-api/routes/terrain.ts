@@ -1,46 +1,147 @@
 /**
  * Terrain-grid uploads van de maaier (terrain_scan.py).
- * POST /api/nova-file-server/terrain/uploadTerrainGrid?sn=<SN>
- * Body: raw TGR1 (application/octet-stream, max 8 MB).
- * Merget direct in STORAGE_PATH/terrain/<sn>.tgm en werkt terrain_grids bij.
+ * POST /api/nova-file-server/terrain/uploadTerrainGrid?sn=<SN>  (TGR1 → TGM1)
+ * POST /api/nova-file-server/terrain/uploadObjectGrid?sn=<SN>   (TGO1 → TGMO)
+ * Body: raw octet-stream, max 8 MB.
+ *
+ * Live-sessie semantiek (`?session=<id>&final=0|1`):
+ * - final=0 met session → schrijf een actieve-sessie-laag naar
+ *   `<sn>.active.tgr`/`.tgo` + `<sn>.active.json` ({"session"}). Dezelfde
+ *   sessie-id vervangt gewoon dat bestand; de persistente TGM/TGMO-merge en
+ *   metadata blijven ongemoeid.
+ * - final=1, geen session-param, of een ándere session-id dan de actieve →
+ *   eerst een eventuele ANDERE actieve sessie definitief invouwen
+ *   (`foldActive`, crash-herstel/sessie-wissel), dan de actieve laag van
+ *   déze sessie weggooien en de binnenkomende body definitief mergen in
+ *   TGM1/TGMO + metadata bijwerken (sessions_delta 1).
  */
 import express, { Router, Request, Response } from 'express';
 import fs from 'fs';
 import path from 'path';
 import { ok, fail } from '../../types/index.js';
-import { parseTgr1, mergeIntoTgm1, tgm1CellCount } from '../../services/terrainGrid.js';
+import {
+  parseTgr1, mergeIntoTgm1, tgm1CellCount,
+  parseTgo1, mergeIntoTgmo, tgmoCellCount,
+} from '../../services/terrainGrid.js';
 import { terrainGridRepo } from '../../db/repositories/index.js';
 
 const TERRAIN_DIR = path.resolve(process.env.STORAGE_PATH ?? './storage', 'terrain');
 
 export const terrainRouter = Router();
 
-terrainRouter.post(
-  '/uploadTerrainGrid',
-  express.raw({ type: 'application/octet-stream', limit: '8mb' }),
-  (req: Request, res: Response) => {
-    const sn = String(req.query.sn ?? '');
-    if (!/^LFI[A-Z]\d+$/.test(sn)) { res.status(400).json(fail('sn required', 400)); return; }
-    const body = req.body as Buffer;
-    if (!Buffer.isBuffer(body) || body.length < 16) { res.status(400).json(fail('empty body', 400)); return; }
+const activePaths = (sn: string) => ({
+  tgr: path.join(TERRAIN_DIR, `${sn}.active.tgr`),
+  tgo: path.join(TERRAIN_DIR, `${sn}.active.tgo`),
+  meta: path.join(TERRAIN_DIR, `${sn}.active.json`),
+});
 
-    let session;
-    try { session = parseTgr1(body); }
-    catch { res.status(400).json(fail('invalid TGR1', 400)); return; }
+function activeSession(sn: string): string | null {
+  const p = activePaths(sn).meta;
+  try { return JSON.parse(fs.readFileSync(p, 'utf8')).session ?? null; }
+  catch { return null; }
+}
 
-    fs.mkdirSync(TERRAIN_DIR, { recursive: true });
+/** Vouw een achtergebleven actieve sessie definitief in (crash-herstel of
+ *  sessie-wissel zonder final). */
+function foldActive(sn: string): void {
+  const a = activePaths(sn);
+  if (fs.existsSync(a.tgr)) {
     const tgmPath = path.join(TERRAIN_DIR, `${sn}.tgm`);
     const existing = fs.existsSync(tgmPath) ? fs.readFileSync(tgmPath) : null;
-    const merged = mergeIntoTgm1(existing, body);
+    const merged = mergeIntoTgm1(existing, fs.readFileSync(a.tgr));
     fs.writeFileSync(tgmPath, merged);
+    terrainGridRepo.upsertMeta({ mower_sn: sn, cell_size: 0.05, cells: tgm1CellCount(merged), sessions_delta: 1 });
+  }
+  if (fs.existsSync(a.tgo)) {
+    const tgmoPath = path.join(TERRAIN_DIR, `${sn}.tgmo`);
+    const existing = fs.existsSync(tgmoPath) ? fs.readFileSync(tgmoPath) : null;
+    const merged = mergeIntoTgmo(existing, fs.readFileSync(a.tgo));
+    fs.writeFileSync(tgmoPath, merged);
+    terrainGridRepo.upsertObjMeta({ mower_sn: sn, cells: tgmoCellCount(merged), sessions_delta: 1 });
+  }
+  for (const p of Object.values(a)) { try { fs.unlinkSync(p); } catch { /* al weg */ } }
+}
 
-    terrainGridRepo.upsertMeta({
-      mower_sn: sn,
-      cell_size: session.cellSize,
-      cells: tgm1CellCount(merged),
-      sessions_delta: 1,
-    });
-    console.log(`[TERRAIN] sessie gemerged voor ${sn}: ${session.cells.size} sessie-cellen → ${tgm1CellCount(merged)} totaal`);
+interface UploadFormat {
+  /** Welk .active.* bestand deze upload gebruikt. */
+  activeFile: 'tgr' | 'tgo';
+  /** Bestandsextensie van het persistente merge-bestand (.tgm / .tgmo). */
+  mergedExt: 'tgm' | 'tgmo';
+  parse: (buf: Buffer) => { cellSize: number };
+  badMagicMsg: string;
+  merge: (existing: Buffer | null, session: Buffer) => Buffer;
+  /** Schrijf de merge-metadata (terrain_grids) weg voor de definitieve body. */
+  persistFinal: (sn: string, cellSize: number, merged: Buffer) => void;
+  logLabel: string;
+}
+
+function handleUpload(req: Request, res: Response, fmt: UploadFormat): void {
+  const sn = String(req.query.sn ?? '');
+  if (!/^LFI[A-Z]\d+$/.test(sn)) { res.status(400).json(fail('sn required', 400)); return; }
+  const body = req.body as Buffer;
+  if (!Buffer.isBuffer(body) || body.length < 16) { res.status(400).json(fail('empty body', 400)); return; }
+
+  let parsed: { cellSize: number };
+  try { parsed = fmt.parse(body); }
+  catch { res.status(400).json(fail(fmt.badMagicMsg, 400)); return; }
+
+  fs.mkdirSync(TERRAIN_DIR, { recursive: true });
+
+  const session = req.query.session ? String(req.query.session) : null;
+  const isFinal = String(req.query.final ?? '1') === '1';
+  const cur = activeSession(sn);
+  if (cur && session !== cur) foldActive(sn); // sessie-wissel: oude eerst invouwen
+
+  const paths = activePaths(sn);
+  const activeBodyPath = fmt.activeFile === 'tgr' ? paths.tgr : paths.tgo;
+
+  if (session && !isFinal) {
+    fs.writeFileSync(activeBodyPath, body);
+    fs.writeFileSync(paths.meta, JSON.stringify({ session }));
     res.json(ok(null));
-  },
-);
+    return;
+  }
+
+  // final (of legacy zonder session): de actieve laag van deze sessie is
+  // vervangen door de definitieve body — weggooien en body mergen.
+  for (const p of [activeBodyPath, paths.meta]) { try { fs.unlinkSync(p); } catch { /* al weg */ } }
+
+  const mergedPath = path.join(TERRAIN_DIR, `${sn}.${fmt.mergedExt}`);
+  const existing = fs.existsSync(mergedPath) ? fs.readFileSync(mergedPath) : null;
+  const merged = fmt.merge(existing, body);
+  fs.writeFileSync(mergedPath, merged);
+  fmt.persistFinal(sn, parsed.cellSize, merged);
+
+  console.log(`[TERRAIN] ${fmt.logLabel} sessie gemerged voor ${sn}`);
+  res.json(ok(null));
+}
+
+const rawBody = express.raw({ type: 'application/octet-stream', limit: '8mb' });
+
+terrainRouter.post('/uploadTerrainGrid', rawBody, (req: Request, res: Response) => {
+  handleUpload(req, res, {
+    activeFile: 'tgr',
+    mergedExt: 'tgm',
+    parse: parseTgr1,
+    badMagicMsg: 'invalid TGR1',
+    merge: mergeIntoTgm1,
+    persistFinal: (sn, cellSize, merged) => {
+      terrainGridRepo.upsertMeta({ mower_sn: sn, cell_size: cellSize, cells: tgm1CellCount(merged), sessions_delta: 1 });
+    },
+    logLabel: 'terrein',
+  });
+});
+
+terrainRouter.post('/uploadObjectGrid', rawBody, (req: Request, res: Response) => {
+  handleUpload(req, res, {
+    activeFile: 'tgo',
+    mergedExt: 'tgmo',
+    parse: parseTgo1,
+    badMagicMsg: 'invalid TGO1',
+    merge: mergeIntoTgmo,
+    persistFinal: (sn, _cellSize, merged) => {
+      terrainGridRepo.upsertObjMeta({ mower_sn: sn, cells: tgmoCellCount(merged), sessions_delta: 1 });
+    },
+    logLabel: 'object',
+  });
+});

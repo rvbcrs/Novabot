@@ -33,7 +33,7 @@ import { execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import zlib from 'zlib';
-import { tgm1ToDisplayTgr1 } from '../services/terrainGrid.js';
+import { tgm1ToDisplayTgr1, mergeIntoTgm1, mergeIntoTgmo, tgmoToDisplayTgo1 } from '../services/terrainGrid.js';
 import { networkInterfaces } from 'os';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
@@ -726,27 +726,54 @@ dashboardRouter.delete('/trail/:sn', (req: Request, res: Response) => {
   res.json({ ok: true });
 });
 
-// GET /api/dashboard/terrain/:sn — display-hoogtegrid (gzip TGR1) voor de
-// 3D-terreinviewer. 404 zolang er nog geen enkele sessie geüpload is.
+/** Stuur een display-grid buffer: gzipped tenzij `?raw=1`. */
+function sendGrid(res: Response, display: Buffer, raw: boolean): void {
+  res.setHeader('Content-Type', 'application/octet-stream');
+  if (raw) { res.send(display); return; }
+  res.setHeader('Content-Encoding', 'gzip');
+  res.send(zlib.gzipSync(display));
+}
+
+// GET /api/dashboard/terrain/:sn — display-hoogtegrid (gzip TGR1, of raw met
+// ?raw=1) voor de 3D-terreinviewer. Merget de persistente TGM1 on-the-fly met
+// een eventuele actieve (nog niet gefinaliseerde) live-sessie-laag, zodat de
+// viewer tijdens het scannen al bijwerkt. 404 pas als bèide lagen ontbreken.
 dashboardRouter.get('/terrain/:sn', (req: Request, res: Response) => {
   const { sn } = req.params;
   if (!/^LFI[A-Z]\d+$/.test(sn)) { res.status(400).json({ error: 'invalid sn' }); return; }
-  const tgmPath = path.resolve(process.env.STORAGE_PATH ?? './storage', 'terrain', `${sn}.tgm`);
-  if (!fs.existsSync(tgmPath)) {
-    res.status(404).json({ error: 'geen terrein voor deze maaier' });
-    return;
-  }
-  let display: Buffer;
+  const dir = path.resolve(process.env.STORAGE_PATH ?? './storage', 'terrain');
+  const tgmPath = path.join(dir, `${sn}.tgm`);
+  const activePath = path.join(dir, `${sn}.active.tgr`);
+  const base = fs.existsSync(tgmPath) ? fs.readFileSync(tgmPath) : null;
+  const active = fs.existsSync(activePath) ? fs.readFileSync(activePath) : null;
+  if (!base && !active) { res.status(404).json({ error: 'geen terrein voor deze maaier' }); return; }
   try {
-    display = tgm1ToDisplayTgr1(fs.readFileSync(tgmPath));
+    const merged = active ? mergeIntoTgm1(base, active) : base!;
+    sendGrid(res, tgm1ToDisplayTgr1(merged), req.query.raw === '1');
   } catch (err) {
-    console.error(`[TERRAIN] corrupt TGM-bestand voor ${sn}:`, err);
-    res.status(500).json({ error: 'terreindata kon niet gelezen worden' });
-    return;
+    console.error(`[TERRAIN] display ${sn} faalde:`, err);
+    res.status(500).json({ error: 'terreindata corrupt' });
   }
-  res.setHeader('Content-Type', 'application/octet-stream');
-  res.setHeader('Content-Encoding', 'gzip');
-  res.send(zlib.gzipSync(display));
+});
+
+// GET /api/dashboard/terrain-objects/:sn — display-objectgrid (TGO1), zelfde
+// merge/raw/404-semantiek als /terrain/:sn maar dan voor de TGMO-laag.
+dashboardRouter.get('/terrain-objects/:sn', (req: Request, res: Response) => {
+  const { sn } = req.params;
+  if (!/^LFI[A-Z]\d+$/.test(sn)) { res.status(400).json({ error: 'invalid sn' }); return; }
+  const dir = path.resolve(process.env.STORAGE_PATH ?? './storage', 'terrain');
+  const tgmoPath = path.join(dir, `${sn}.tgmo`);
+  const activePath = path.join(dir, `${sn}.active.tgo`);
+  const base = fs.existsSync(tgmoPath) ? fs.readFileSync(tgmoPath) : null;
+  const active = fs.existsSync(activePath) ? fs.readFileSync(activePath) : null;
+  if (!base && !active) { res.status(404).json({ error: 'geen objecten voor deze maaier' }); return; }
+  try {
+    const merged = active ? mergeIntoTgmo(base, active) : base!;
+    sendGrid(res, tgmoToDisplayTgo1(merged), req.query.raw === '1');
+  } catch (err) {
+    console.error(`[TERRAIN] object-display ${sn} faalde:`, err);
+    res.status(500).json({ error: 'objectdata corrupt' });
+  }
 });
 
 // GET /api/dashboard/planned-path/:sn — planned mowing path

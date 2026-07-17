@@ -692,6 +692,13 @@ export function initDb(): void {
     );
   `);
 
+  // Object-laag (TGMO/TGO1) — losstaande sessie/cel-tellers naast de
+  // hoogte-laag (cell_size/sessions/cells hierboven blijven terrein-only).
+  for (const col of ['obj_cells INTEGER DEFAULT 0', 'obj_sessions INTEGER DEFAULT 0']) {
+    try { db.exec(`ALTER TABLE terrain_grids ADD COLUMN ${col}`); }
+    catch { /* kolom bestaat al */ }
+  }
+
   // Feature #51: "every N days" schedule mode. interval_days > 0 takes
   // precedence over weekdays — the schedule fires when
   // (today_local - interval_anchor_date) is a multiple of interval_days.

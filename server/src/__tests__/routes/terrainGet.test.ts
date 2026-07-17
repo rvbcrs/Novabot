@@ -88,7 +88,7 @@ vi.mock('../../services/mowerIpDiscovery.js', () => ({
 
 // ── Now import dashboard.ts (after mocks are in place) ───────────
 import { dashboardRouter } from '../../routes/dashboard.js';
-import { mergeIntoTgm1 } from '../../services/terrainGrid.js';
+import { mergeIntoTgm1, mergeIntoTgmo, parseTgr1, parseTgo1 } from '../../services/terrainGrid.js';
 
 // Minimal Express wrapper — mirrors how index.ts mounts the router
 const app = express();
@@ -104,6 +104,21 @@ function tgr1(cells: Array<[number, number, number, number]>): Buffer {
     const o = 16 + i * 16;
     buf.writeInt32LE(ix, o); buf.writeInt32LE(iy, o + 4);
     buf.writeFloatLE(mean, o + 8); buf.writeUInt32LE(cnt, o + 12);
+  });
+  return buf;
+}
+
+/** [ix, iy, label, maxH, cnt] per cel. */
+function tgo1(cells: Array<[number, number, number, number, number]>): Buffer {
+  const buf = Buffer.alloc(16 + cells.length * 17);
+  buf.write('TGO1', 0, 'ascii');
+  buf.writeDoubleLE(0.05, 4);
+  buf.writeInt32LE(cells.length, 12);
+  cells.forEach(([ix, iy, label, maxH, cnt], i) => {
+    const o = 16 + i * 17;
+    buf.writeInt32LE(ix, o); buf.writeInt32LE(iy, o + 4);
+    buf.writeUInt8(label, o + 8);
+    buf.writeFloatLE(maxH, o + 9); buf.writeUInt32LE(cnt, o + 13);
   });
   return buf;
 }
@@ -163,5 +178,38 @@ describe('GET /api/dashboard/terrain/:sn', () => {
     const res = await request(app).get('/api/dashboard/terrain/LFIN9999999999');
     expect(res.status).toBe(500);
     expect(res.body).toHaveProperty('error');
+  });
+
+  it('display bevat de actieve laag; raw=1 is ongecomprimeerd', async () => {
+    // schrijf persistente TGM + actieve laag
+    const dir = path.resolve(process.env.STORAGE_PATH ?? './storage', 'terrain');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'LFIN2230700238.tgm'), mergeIntoTgm1(null, tgr1([[0, 0, 0.2, 5]])));
+    fs.writeFileSync(path.join(dir, 'LFIN2230700238.active.tgr'), tgr1([[9, 9, 0.9, 1]]));
+    fs.writeFileSync(path.join(dir, 'LFIN2230700238.active.json'), JSON.stringify({ session: '42' }));
+    const res = await request(app).get('/api/dashboard/terrain/LFIN2230700238?raw=1')
+      .buffer(true).parse((r, cb) => { const c: Buffer[] = []; r.on('data', d => c.push(d)); r.on('end', () => cb(null, Buffer.concat(c))); });
+    expect(res.status).toBe(200);
+    expect(res.headers['content-encoding']).toBeUndefined();
+    const disp = parseTgr1(res.body as Buffer);
+    expect(disp.cells.has('9,9')).toBe(true);   // actieve laag zichtbaar
+    expect(disp.cells.has('0,0')).toBe(true);
+  });
+});
+
+describe('GET /api/dashboard/terrain-objects/:sn', () => {
+  it('GET terrain-objects levert TGO1-display', async () => {
+    const dir = path.resolve(process.env.STORAGE_PATH ?? './storage', 'terrain');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'LFIN2230700238.tgmo'), mergeIntoTgmo(null, tgo1([[1, 1, 10, 0.3, 4]])));
+    const res = await request(app).get('/api/dashboard/terrain-objects/LFIN2230700238?raw=1')
+      .buffer(true).parse((r, cb) => { const c: Buffer[] = []; r.on('data', d => c.push(d)); r.on('end', () => cb(null, Buffer.concat(c))); });
+    expect(res.status).toBe(200);
+    expect(parseTgo1(res.body as Buffer).cells.has('1,1,10')).toBe(true);
+  });
+
+  it('404 zonder objecten', async () => {
+    const res = await request(app).get('/api/dashboard/terrain-objects/LFIN0000000002');
+    expect(res.status).toBe(404);
   });
 });

@@ -25,6 +25,21 @@ function tgr1Cells(cells: Array<[number, number, number, number]>): Buffer {
   return buf;
 }
 
+/** [ix, iy, label, maxH, cnt] per cel. */
+function tgo1Cells(cells: Array<[number, number, number, number, number]>): Buffer {
+  const buf = Buffer.alloc(16 + cells.length * 17);
+  buf.write('TGO1', 0, 'ascii');
+  buf.writeDoubleLE(0.05, 4);
+  buf.writeInt32LE(cells.length, 12);
+  cells.forEach(([ix, iy, label, maxH, cnt], i) => {
+    const o = 16 + i * 17;
+    buf.writeInt32LE(ix, o); buf.writeInt32LE(iy, o + 4);
+    buf.writeUInt8(label, o + 8);
+    buf.writeFloatLE(maxH, o + 9); buf.writeUInt32LE(cnt, o + 13);
+  });
+  return buf;
+}
+
 describe('POST /api/nova-file-server/terrain/uploadTerrainGrid', () => {
   it('accepteert TGR1, merget en registreert metadata', async () => {
     const app = buildTestApp();
@@ -57,5 +72,26 @@ describe('POST /api/nova-file-server/terrain/uploadTerrainGrid', () => {
       .set('Content-Type', 'application/octet-stream')
       .send(tgr1Cells([[0, 0, 0.1, 1]]));
     expect(res.status).toBe(400);
+  });
+
+  it('live-sessie: final=0 vervangt actieve laag, final=1 vouwt één keer in', async () => {
+    const app = buildTestApp();
+    const S = 'sn=LFIN2230700238&session=111&final=0';
+    await request(app).post(`/api/nova-file-server/terrain/uploadTerrainGrid?${S}`)
+      .set('Content-Type', 'application/octet-stream').send(tgr1Cells([[0, 0, 0.1, 5]])).expect(200);
+    await request(app).post(`/api/nova-file-server/terrain/uploadTerrainGrid?${S}`)
+      .set('Content-Type', 'application/octet-stream').send(tgr1Cells([[0, 0, 0.1, 5], [1, 0, 0.2, 3]])).expect(200);
+    const before = terrainGridRepo.findBySn('LFIN2230700238');
+    await request(app).post('/api/nova-file-server/terrain/uploadTerrainGrid?sn=LFIN2230700238&session=111&final=1')
+      .set('Content-Type', 'application/octet-stream').send(tgr1Cells([[0, 0, 0.1, 5], [1, 0, 0.2, 3]])).expect(200);
+    const after = terrainGridRepo.findBySn('LFIN2230700238')!;
+    expect(after.sessions).toBe((before?.sessions ?? 0) + 1);  // tussentijdse uploads telden NIET
+  });
+
+  it('uploadObjectGrid accepteert TGO1 en registreert obj-metadata', async () => {
+    const app = buildTestApp();
+    await request(app).post('/api/nova-file-server/terrain/uploadObjectGrid?sn=LFIN2230700238&final=1')
+      .set('Content-Type', 'application/octet-stream').send(tgo1Cells([[3, 4, 1, 0.5, 7]])).expect(200);
+    expect(terrainGridRepo.findBySn('LFIN2230700238')!.obj_sessions).toBeGreaterThanOrEqual(1);
   });
 });
