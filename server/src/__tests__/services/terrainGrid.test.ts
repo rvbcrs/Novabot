@@ -43,4 +43,16 @@ describe('terrainGrid', () => {
     // slots = sessies 3..9 → mediaan 0.6
     expect(disp.cells.get('1,1')!.mean).toBeCloseTo(0.6, 5);
   });
+
+  it('display-mediaan bij even aantal sessies middelt de twee middelste', () => {
+    let tgm: Buffer | null = null;
+    for (const v of [0.1, 0.4, 0.2, 0.3]) tgm = mergeIntoTgm1(tgm, tgr1([[0, 0, v, 1]]));
+    const disp = parseTgr1(tgm1ToDisplayTgr1(tgm!));
+    expect(disp.cells.get('0,0')!.mean).toBeCloseTo(0.25, 5); // (0.2+0.3)/2
+  });
+
+  it('parse van afgekapt TGM1 gooit nette Error', () => {
+    const tgm = mergeIntoTgm1(null, tgr1([[0, 0, 0.1, 1]]));
+    expect(() => tgm1ToDisplayTgr1(tgm.subarray(0, tgm.length - 5))).toThrow(/truncated/);
+  });
 });

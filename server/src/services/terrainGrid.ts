@@ -29,9 +29,10 @@ export function parseTgr1(buf: Buffer): Tgr1 {
 interface TgmCell { k: number; samples: number[]; cnt: number }
 
 function parseTgm1(buf: Buffer): { cellSize: number; cells: Map<string, TgmCell> } {
-  if (buf.toString('ascii', 0, 4) !== 'TGM1') throw new Error('bad magic');
+  if (buf.length < TGM_HEADER || buf.toString('ascii', 0, 4) !== 'TGM1') throw new Error('bad magic');
   const cellSize = buf.readDoubleLE(4);
   const n = buf.readInt32LE(12);
+  if (buf.length < TGM_HEADER + n * TGM_CELL) throw new Error('truncated TGM1');
   const cells = new Map<string, TgmCell>();
   for (let i = 0; i < n; i++) {
     const o = TGM_HEADER + i * TGM_CELL;
@@ -56,7 +57,7 @@ function writeTgm1(cellSize: number, cells: Map<string, TgmCell>): Buffer {
     buf.writeInt32LE(ix, o); buf.writeInt32LE(iy, o + 4);
     buf.writeUInt8(c.samples.length, o + 8);
     c.samples.forEach((v, s) => buf.writeFloatLE(v, o + 9 + s * 4));
-    buf.writeUInt32LE(c.cnt, o + 37);
+    buf.writeUInt32LE(Math.min(c.cnt, 0xFFFFFFFF), o + 37);
   }
   return buf;
 }
