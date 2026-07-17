@@ -91,3 +91,143 @@ def serialize_grid(grid, cell_size):
         ix, iy = _unpack(key)
         out += struct.pack("<iifI", ix, iy, s / c, c)
     return bytes(out)
+
+
+# ── ROS-schil (draait alleen op de maaier) ─────────────────────────────
+SESSION_DIR = "/userdata/lfi/terrain"
+MAX_SESSION_FILES = 5
+FRAME_INTERVAL = 0.5      # s → max 2 fps
+POSE_MAX_AGE = 0.5        # s — geen verse pose = frame overslaan
+FLUSH_AFTER_IDLE = 120.0  # s zonder ToF-frames terwijl er data is → sessie klaar
+UPLOAD_TIMEOUT = 30
+
+
+def _read_config():
+    """Resolve (http_address, sn) net als extended_commands.py:
+    _server_from_config() / _sn_from_config() op de maaier.
+
+    Discovery (2026-07-17, LFIN2230700238): er is GEEN "http_address" key
+    in json_config.json. De echte bronnen zijn:
+    - /userdata/lfi/http_address.txt — door set_server_urls.sh geschreven
+      "<host>:<port>" (optioneel http(s):// prefix), bv. "opennova.local:8080".
+      Fallback als leeg/ontbrekend: json_config.json → mqtt.value.addr + ":8080".
+    - json_config.json → sn.value.code (genest, geen platte "sn" key), bv.
+      {"sn": {"set": 1, "value": {"code": "LFIN2230700238"}}}.
+    """
+    import json
+
+    http_address = None
+    try:
+        with open("/userdata/lfi/http_address.txt") as f:
+            line = f.read().strip()
+        if line:
+            if line.startswith("http://"):
+                line = line[len("http://"):]
+            elif line.startswith("https://"):
+                line = line[len("https://"):]
+            http_address = line.rstrip("/")
+    except OSError:
+        pass
+
+    with open("/userdata/lfi/json_config.json") as f:
+        cfg = json.load(f)
+
+    if not http_address:
+        addr = cfg.get("mqtt", {}).get("value", {}).get("addr")
+        http_address = f"{addr}:8080" if addr else None
+
+    sn = cfg.get("sn", {}).get("value", {}).get("code")
+    return http_address, sn
+
+
+def _upload(path, http_address, sn):
+    import urllib.request
+    url = f"http://{http_address}/api/nova-file-server/terrain/uploadTerrainGrid?sn={sn}"
+    with open(path, "rb") as f:
+        req = urllib.request.Request(
+            url, data=f.read(), method="POST",
+            headers={"Content-Type": "application/octet-stream"})
+    with urllib.request.urlopen(req, timeout=UPLOAD_TIMEOUT) as resp:
+        return 200 <= resp.status < 300
+
+
+def _rotate_sessions():
+    import os
+    files = sorted(f for f in os.listdir(SESSION_DIR) if f.endswith(".tgr"))
+    for f in files[:-MAX_SESSION_FILES]:
+        os.remove(os.path.join(SESSION_DIR, f))
+
+
+def main():
+    import os
+    import time
+
+    import rclpy
+    from rclpy.node import Node
+    from nav_msgs.msg import Odometry
+    from sensor_msgs.msg import PointCloud2
+
+    os.makedirs(SESSION_DIR, exist_ok=True)
+    http_address, sn = _read_config()
+
+    rclpy.init()
+    node = Node("terrain_scan")
+    st = {"pose": None, "pose_t": 0.0, "grid": {}, "last_frame": 0.0,
+          "last_cloud": 0.0, "frames": 0}
+
+    def on_odom(msg):
+        p = msg.pose.pose
+        st["pose"] = (p.position.x, p.position.y,
+                      yaw_from_quat(p.orientation.x, p.orientation.y,
+                                    p.orientation.z, p.orientation.w))
+        st["pose_t"] = time.time()
+
+    def on_cloud(msg):
+        now = time.time()
+        st["last_cloud"] = now
+        if now - st["last_frame"] < FRAME_INTERVAL:
+            return
+        if st["pose"] is None or now - st["pose_t"] > POSE_MAX_AGE:
+            return
+        st["last_frame"] = now
+        pts = np.frombuffer(bytes(msg.data), dtype=np.float32).reshape(-1, 4)
+        base = cam_to_base(pts)
+        x, y, yaw = st["pose"]
+        accumulate(st["grid"], base_to_map(base, x, y, yaw))
+        st["frames"] += 1
+
+    def flush():
+        if not st["grid"]:
+            return
+        path = os.path.join(SESSION_DIR, f"session_{int(time.time())}.tgr")
+        with open(path, "wb") as f:
+            f.write(serialize_grid(st["grid"], CELL))
+        node.get_logger().info(
+            f"terrain: sessie {path} ({len(st['grid'])} cellen, {st['frames']} frames)")
+        st["grid"] = {}
+        st["frames"] = 0
+        _rotate_sessions()
+        # upload alles wat er nog ligt (incl. eerdere gefaalde uploads)
+        for fn in sorted(os.listdir(SESSION_DIR)):
+            if not fn.endswith(".tgr"):
+                continue
+            fp = os.path.join(SESSION_DIR, fn)
+            try:
+                if _upload(fp, http_address, sn):
+                    os.remove(fp)
+                    node.get_logger().info(f"terrain: geüpload {fn}")
+            except Exception as e:  # noqa: BLE001 — offline is normaal, later opnieuw
+                node.get_logger().warn(f"terrain: upload {fn} faalde: {e}")
+                break
+
+    node.create_subscription(Odometry, "/robot_combination_localization/odom", on_odom, 10)
+    node.create_subscription(PointCloud2, "/camera/tof/point_cloud", on_cloud, 5)
+
+    while rclpy.ok():
+        rclpy.spin_once(node, timeout_sec=2.0)
+        if st["grid"] and time.time() - st["last_cloud"] > FLUSH_AFTER_IDLE:
+            flush()
+
+
+if __name__ == "__main__":
+    main()
