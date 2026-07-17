@@ -32,6 +32,8 @@ import { resolveMowerIp } from '../services/mowerIpDiscovery.js';
 import { execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
+import zlib from 'zlib';
+import { tgm1ToDisplayTgr1 } from '../services/terrainGrid.js';
 import { networkInterfaces } from 'os';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
@@ -722,6 +724,28 @@ dashboardRouter.delete('/trail/:sn', (req: Request, res: Response) => {
   clearGpsTrail(sn);
   clearLocalTrail(sn);
   res.json({ ok: true });
+});
+
+// GET /api/dashboard/terrain/:sn — display-hoogtegrid (gzip TGR1) voor de
+// 3D-terreinviewer. 404 zolang er nog geen enkele sessie geüpload is.
+dashboardRouter.get('/terrain/:sn', (req: Request, res: Response) => {
+  const { sn } = req.params;
+  const tgmPath = path.resolve(process.env.STORAGE_PATH ?? './storage', 'terrain', `${sn}.tgm`);
+  if (!fs.existsSync(tgmPath)) {
+    res.status(404).json({ error: 'geen terrein voor deze maaier' });
+    return;
+  }
+  let display: Buffer;
+  try {
+    display = tgm1ToDisplayTgr1(fs.readFileSync(tgmPath));
+  } catch (err) {
+    console.error(`[TERRAIN] corrupt TGM-bestand voor ${sn}:`, err);
+    res.status(500).json({ error: 'terreindata kon niet gelezen worden' });
+    return;
+  }
+  res.setHeader('Content-Type', 'application/octet-stream');
+  res.setHeader('Content-Encoding', 'gzip');
+  res.send(zlib.gzipSync(display));
 });
 
 // GET /api/dashboard/planned-path/:sn — planned mowing path
