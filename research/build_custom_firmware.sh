@@ -1729,6 +1729,51 @@ else
     echo "  seam_fix_daemon.py niet gevonden — overslaan"
 fi
 
+# === Stap 5h4: Terrain-scan daemon toevoegen ===
+echo "[5h4/9] Terrain-scan daemon toevoegen..."
+
+TERRAIN_SRC="$SCRIPT_DIR/terrain_scan.py"
+TERRAIN_LAUNCHER_SRC="$SCRIPT_DIR/start_terrain.sh"
+if [ -f "$TERRAIN_SRC" ] && [ -f "$TERRAIN_LAUNCHER_SRC" ]; then
+    cp "$TERRAIN_SRC" "$NOVABOT_ROOT/scripts/terrain_scan.py"
+    chmod +x "$NOVABOT_ROOT/scripts/terrain_scan.py"
+    cp "$TERRAIN_LAUNCHER_SRC" "$NOVABOT_ROOT/scripts/start_terrain.sh"
+    chmod +x "$NOVABOT_ROOT/scripts/start_terrain.sh"
+    echo "  terrain_scan.py + start_terrain.sh gekopieerd naar scripts/"
+
+    # Voeg terrain-scan launch toe aan run_novabot.sh start) blok
+    # start_terrain.sh source't zelf de ROS-env (NOOIT kaal python3 — rclpy heeft
+    # dat nodig, zelfde les als extended_commands.py). Double-spawn guard net als
+    # extended_commands: kill stale instance vóór spawn.
+    if [ -f "$RUN_NOVABOT" ] && ! grep -q "start_terrain.sh" "$RUN_NOVABOT"; then
+        TERRAIN_START_BLOCK="/tmp/terrain_start_block.sh"
+        cat > "$TERRAIN_START_BLOCK" << 'TERRAINEOF'
+
+  # CUSTOM: Terrain-scan daemon starten (ToF-hoogtegrid tijdens maaien, upload naar server)
+  # Zie research/terrain_scan.py + docs/superpowers/specs/2026-07-17-terrain-3d-map-design.md
+  if [ -f "/root/novabot/scripts/start_terrain.sh" ]; then
+      pkill -f "/root/novabot/scripts/terrain_scan.py" 2>/dev/null
+      (/root/novabot/scripts/start_terrain.sh >> $LOGS_PATH/terrain_scan.log 2>&1) &
+      echo "terrain_scan started" >> $LOGS_PATH/terrain_scan.log
+  fi
+TERRAINEOF
+        sed -i '' '/start_test.sh/r /tmp/terrain_start_block.sh' "$RUN_NOVABOT"
+        rm -f "$TERRAIN_START_BLOCK"
+        echo "  run_novabot.sh: terrain-scan launch toegevoegd aan start)"
+
+        # Voeg terrain-scan kill toe aan stop) blok
+        TERRAIN_STOP_BLOCK="/tmp/terrain_stop_block.sh"
+        cat > "$TERRAIN_STOP_BLOCK" << 'TERRAINEOF'
+  killall -q -9 terrain_scan.py
+TERRAINEOF
+        sed -i '' '/killall -q -9 daemon_monitor.sh/r /tmp/terrain_stop_block.sh' "$RUN_NOVABOT"
+        rm -f "$TERRAIN_STOP_BLOCK"
+        echo "  run_novabot.sh: terrain-scan kill toegevoegd aan stop)"
+    fi
+else
+    echo "  terrain_scan.py of start_terrain.sh niet gevonden — overslaan"
+fi
+
 # === Stap 5i: STM32 MCU firmware — KEEP STOCK v3.6.0 ===
 # DISABLED: v3.6.7 pin_unlock causes motor lock issues (blade calibration broken).
 # The stock v3.6.0 from the source .deb is kept as-is.
@@ -2304,6 +2349,7 @@ echo "    ✓ http_address.txt + json_config.json worden bij elke boot gezet"
 [ -f "$NOVABOT_ROOT/scripts/camera_stream.py" ] && echo "    ✓ Camera MJPEG stream op poort 8000 (auto-start na 15s)"
 [ -f "$NOVABOT_ROOT/scripts/led_bridge.py" ] && echo "    ✓ LED bridge: MQTT → ROS /led_set (headlight controle)"
 [ -f "$NOVABOT_ROOT/scripts/extended_commands.py" ] && echo "    ✓ Extended commands: reboot, camera snapshot, system info (auto-start na 12s)"
+[ -f "$NOVABOT_ROOT/scripts/terrain_scan.py" ] && echo "    ✓ Terrain-scan daemon: ToF-hoogtegrid tijdens maaien, upload naar server"
 echo "    ✓ STM32 MCU: stock v3.6.0 (pin_unlock patch disabled)"
 grep -q "open_decision" "$RUN_NOVABOT" 2>/dev/null && echo "    ✓ Open robot_decision boot hook (Python vervangt C++ na 20s)"
 [ -f "$NOVABOT_ROOT/scripts/mqtt_bridge.py" ] && echo "    ✓ Open mqtt_node (mqtt_bridge.py vervangt stock mqtt_node — geen domain whitelist)"
