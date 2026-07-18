@@ -19,4 +19,14 @@ describe('terrainCrops wiskunde', () => {
     expect(b.left).toBeGreaterThanOrEqual(0);
     expect(b.left + b.width).toBeLessThanOrEqual(960);
   });
+  it('crop is altijd vierkant en integer, ook dichtbij op breedbeeld', () => {
+    const b = cropBox({ cx: 0.5, cy: 0 }, { x: 0, y: 0, yaw: 0 }, 960, 540);
+    expect(b.width).toBe(b.height);
+    expect(b.width).toBeLessThanOrEqual(540);
+    for (const v of [b.left, b.top, b.width, b.height]) expect(Number.isInteger(v)).toBe(true);
+    expect(b.left).toBeGreaterThanOrEqual(0);
+    expect(b.top).toBeGreaterThanOrEqual(0);
+    expect(b.left + b.width).toBeLessThanOrEqual(960);
+    expect(b.top + b.height).toBeLessThanOrEqual(540);
+  });
 });

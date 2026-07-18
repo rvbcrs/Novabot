@@ -47,7 +47,8 @@ export function cropBox(cluster: ClusterPoint, pose: Pose, imgW: number, imgH: n
   const angle = normalizeAngle(Math.atan2(dy, dx) - pose.yaw);
 
   const u = 0.5 - angle / FOV;
-  const side = clamp((imgW * 0.9) / Math.max(dist, 1e-6), imgW * 0.25, imgW * 0.9);
+  const rawSide = clamp((imgW * 0.9) / Math.max(dist, 1e-6), imgW * 0.25, imgW * 0.9);
+  const side = Math.round(Math.min(imgH, imgW, rawSide));
 
   const cxPx = u * imgW;
   const cyPx = 0.55 * imgH;
@@ -58,10 +59,7 @@ export function cropBox(cluster: ClusterPoint, pose: Pose, imgW: number, imgH: n
   left = clamp(left, 0, Math.max(0, imgW - side));
   top = clamp(top, 0, Math.max(0, imgH - side));
 
-  const width = Math.min(side, imgW);
-  const height = Math.min(side, imgH);
-
-  return { left, top, width, height };
+  return { left: Math.round(left), top: Math.round(top), width: side, height: side };
 }
 
 /** Snijdt `box` uit het JPEG op `jpegPath` en retourneert een JPEG-buffer. */
