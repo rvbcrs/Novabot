@@ -699,6 +699,32 @@ export function initDb(): void {
     catch { /* kolom bestaat al */ }
   }
 
+  // Object-herkenning: geclusterde detecties per maaier (cluster_key = grid-
+  // celsleutel, bv. "1,2"). class_name/confidence/crop_file komen van het
+  // classificatiemodel en worden bij elke her-classificatie ververst; een
+  // user_override (handmatige correctie in de dashboard-UI) overleeft dat —
+  // de ON CONFLICT-update in de repo raakt user_override bewust NIET aan.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS terrain_clusters (
+      mower_sn      TEXT NOT NULL,
+      cluster_key   TEXT NOT NULL,
+      cx            REAL,
+      cy            REAL,
+      min_x         REAL,
+      min_y         REAL,
+      max_x         REAL,
+      max_y         REAL,
+      cells         INTEGER,
+      max_h         REAL,
+      class_name    TEXT,
+      confidence    REAL,
+      crop_file     TEXT,
+      user_override TEXT,
+      updated_at    TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (mower_sn, cluster_key)
+    );
+  `);
+
   // Feature #51: "every N days" schedule mode. interval_days > 0 takes
   // precedence over weekdays — the schedule fires when
   // (today_local - interval_anchor_date) is a multiple of interval_days.
