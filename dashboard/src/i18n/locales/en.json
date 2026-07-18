@@ -375,7 +375,25 @@
     }
   },
   "terrain": {
-    "title": "Terrain"
+    "title": "Terrain",
+    "objectPanelTitle": "Object",
+    "objectUnknown": "Unknown object",
+    "objectConfidence": "Confidence",
+    "objectManualOverride": "Manually corrected",
+    "objectCorrectLabel": "Correct object",
+    "objectAuto": "Automatic (model)",
+    "objectClose": "Close",
+    "classTrampoline": "Trampoline",
+    "classTree": "Tree",
+    "classBush": "Bush",
+    "classChair": "Garden chair",
+    "classTable": "Garden table",
+    "classFlowerpot": "Flower pot",
+    "classBarrel": "Wooden barrel",
+    "classParasol": "Parasol",
+    "classPlayset": "Playground equipment",
+    "classFence": "Fence",
+    "classChargingStation": "Charging station"
   },
   "schedule": {
     "title": "Mowing Schedules",

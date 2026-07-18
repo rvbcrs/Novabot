@@ -359,7 +359,25 @@
     }
   },
   "terrain": {
-    "title": "Gelände"
+    "title": "Gelände",
+    "objectPanelTitle": "Objekt",
+    "objectUnknown": "Unbekanntes Objekt",
+    "objectConfidence": "Vertrauen",
+    "objectManualOverride": "Manuell korrigiert",
+    "objectCorrectLabel": "Objekt korrigieren",
+    "objectAuto": "Automatisch (Modell)",
+    "objectClose": "Schließen",
+    "classTrampoline": "Trampolin",
+    "classTree": "Baum",
+    "classBush": "Strauch",
+    "classChair": "Gartenstuhl",
+    "classTable": "Gartentisch",
+    "classFlowerpot": "Blumentopf",
+    "classBarrel": "Holzfass",
+    "classParasol": "Sonnenschirm",
+    "classPlayset": "Spielgerät",
+    "classFence": "Zaun",
+    "classChargingStation": "Ladestation"
   },
   "schedule": {
     "title": "Mähpläne",

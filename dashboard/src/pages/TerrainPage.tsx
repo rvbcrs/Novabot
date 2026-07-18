@@ -1,23 +1,61 @@
 /**
  * 3D-terreinviewer: heightmap-mesh uit het TGR1 display-grid, hoogte-
  * shading, orbit-controls, werk-polygonen als overlay-lijnen, object-voxels
- * uit het TGO1-objectgrid (met kleurgroep-legenda), live maaier-marker +
- * trail, en een 20s-poll die beide grids her-fetcht zonder geheugengroei.
- * Lazy-loaded — three.js blijft buiten de hoofdbundle.
+ * uit het TGO1-objectgrid (met kleurgroep-legenda), herkende object-clusters
+ * als GLB-modellen met klik-correctie-UI (object-recognition-glb Task 9),
+ * live maaier-marker + trail, en een 20s-poll die alles her-fetcht zonder
+ * geheugengroei. Lazy-loaded — three.js blijft buiten de hoofdbundle.
  */
 import { useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import {
   parseTerrain, parseObjects, LABEL_COLORS, LABEL_DEFAULT_COLOR,
   type TerrainData, type ObjectData,
 } from '../utils/terrainParser';
+import { CLUSTER_CLASSES, findClusterClass, glbForClass } from '../utils/clusterModels';
 import { apiFetch, fetchMaps, fetchDevices } from '../api/client';
 import { getSocket } from '../api/socket';
 import type { DeviceUpdateEvent } from '../types';
 
+/** Eén rij van GET /api/dashboard/terrain-clusters/:sn (Task 7/9). */
+interface TerrainCluster {
+  key: string;
+  cx: number; cy: number;
+  minX: number; minY: number; maxX: number; maxY: number;
+  cells: number; maxH: number;
+  className: string | null;
+  nl: string | null;
+  confidence: number | null;
+  userOverride: string | null;
+  photoUrl: string | null;
+}
+
+// GLTFLoader-cache op moduleniveau: één keer laden per klasse, daarna alleen
+// nog klonen. Blijft warm voor de levensduur van de app (ook na wisselen van
+// pagina/maaier) — de modellen zijn <10KB en het bespaart herhaald laden.
+const gltfLoader = new GLTFLoader();
+const modelLoadCache = new Map<string, Promise<THREE.Object3D>>();
+
+function loadClusterModel(glb: string): Promise<THREE.Object3D> {
+  let p = modelLoadCache.get(glb);
+  if (!p) {
+    p = new Promise<THREE.Object3D>((resolve, reject) => {
+      gltfLoader.load(`/models/${glb}`, (gltf) => resolve(gltf.scene), undefined, reject);
+    });
+    modelLoadCache.set(glb, p);
+  }
+  return p;
+}
+
 const POLL_INTERVAL_MS = 20_000;
 const TRAIL_MAX_POINTS = 50;
+// dropdown-waarde voor "geen override" — POST {className:null} wist de
+// user_override server-side, waarna de model-classificatie (indien boven de
+// confidence-drempel) weer effectief wordt.
+const AUTO_OVERRIDE_VALUE = '__auto__';
 
 // Kleurgroepen voor de legenda — labels per groep uit LABEL_COLORS (Global
 // Constraints): blauw=laadstation, groen=struik, oranje=obstakel,
@@ -119,22 +157,71 @@ function filterObjectsByLabels(objs: ObjectData, labels: number[] | null): Objec
   return { cellSize: objs.cellSize, ix, iy, label, h, cnt };
 }
 
-function buildObjectVoxels(objs: ObjectData, groundAt: (x: number, y: number) => number): THREE.InstancedMesh {
+/** Bbox van een cluster (uit terrain-clusters) + of die als GLB-model getekend wordt. */
+interface ClusterBBox {
+  key: string;
+  minX: number; minY: number; maxX: number; maxY: number;
+  hasModel: boolean;
+}
+
+function clusterBBoxesFrom(clusters: TerrainCluster[]): ClusterBBox[] {
+  return clusters.map((c) => ({
+    key: c.key, minX: c.minX, minY: c.minY, maxX: c.maxX, maxY: c.maxY,
+    hasModel: glbForClass(c.className) !== null,
+  }));
+}
+
+function findClusterAt(bboxes: ClusterBBox[], x: number, y: number): ClusterBBox | null {
+  for (const b of bboxes) {
+    if (x >= b.minX && x <= b.maxX && y >= b.minY && y <= b.maxY) return b;
+  }
+  return null;
+}
+
+/**
+ * Bouwt de voxel-InstancedMesh voor één kleurgroep. Cellen die binnen de bbox
+ * van een cluster mét GLB-model vallen worden overgeslagen (die tekenen we
+ * als 3D-model, niet als voxel — zie buildClusterModels). Voor overgebleven
+ * cellen onthouden we per instance welke cluster (indien van toepassing) ze
+ * raken, zodat een klik op die voxel ook het correctie-paneel kan openen.
+ * Retourneert null als er na filtering niets overblijft.
+ */
+function buildObjectVoxels(
+  objs: ObjectData,
+  groundAt: (x: number, y: number) => number,
+  bboxes: ClusterBBox[],
+): THREE.InstancedMesh | null {
+  const keep: number[] = [];
+  const clusterKeys: Array<string | null> = [];
+  for (let i = 0; i < objs.ix.length; i++) {
+    const x = objs.ix[i] * objs.cellSize + objs.cellSize / 2;
+    const y = objs.iy[i] * objs.cellSize + objs.cellSize / 2;
+    const hit = findClusterAt(bboxes, x, y);
+    if (hit?.hasModel) continue; // wordt als GLB-model getekend
+    keep.push(i);
+    clusterKeys.push(hit ? hit.key : null);
+  }
+  if (keep.length === 0) return null;
+
   const geo = new THREE.BoxGeometry(objs.cellSize, objs.cellSize, 1);
   geo.translate(0, 0, 0.5); // schalen vanaf de voet
-  const mesh = new THREE.InstancedMesh(geo, new THREE.MeshLambertMaterial(), objs.ix.length);
+  const mesh = new THREE.InstancedMesh(geo, new THREE.MeshLambertMaterial(), keep.length);
   const m = new THREE.Matrix4(); const c = new THREE.Color();
-  for (let i = 0; i < objs.ix.length; i++) {
+  for (let j = 0; j < keep.length; j++) {
+    const i = keep[j];
     const x = objs.ix[i] * objs.cellSize + objs.cellSize / 2;
     const y = objs.iy[i] * objs.cellSize + objs.cellSize / 2;
     const g = groundAt(x, y);
     const height = Math.max(objs.h[i] - g, 0.05);
     m.identity(); m.setPosition(x, y, g); m.scale(new THREE.Vector3(1, 1, height));
-    mesh.setMatrixAt(i, m);
-    mesh.setColorAt(i, c.set(LABEL_COLORS[objs.label[i]] ?? LABEL_DEFAULT_COLOR));
+    mesh.setMatrixAt(j, m);
+    mesh.setColorAt(j, c.set(LABEL_COLORS[objs.label[i]] ?? LABEL_DEFAULT_COLOR));
   }
   mesh.instanceMatrix.needsUpdate = true;
   if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+  // Klik-lookup: userData i.p.v. een aparte ref-map, zodat de mesh zelf
+  // volstaat als raycast-target (zie click-handler verderop).
+  mesh.userData.clusterKeys = clusterKeys;
   return mesh;
 }
 
@@ -145,12 +232,28 @@ function disposeMesh(obj: THREE.Mesh | THREE.Line | THREE.InstancedMesh | null |
   if (Array.isArray(mat)) mat.forEach(mm => mm.dispose()); else mat.dispose();
 }
 
+/**
+ * Verwijdert alle actieve model-instanties uit de scene. Bewust GEEN
+ * geometry/material .dispose() hier: Object3D.clone(true) deelt de
+ * onderliggende BufferGeometry/Material van de gecachete originele GLTF
+ * (modelLoadCache hierboven) — disposen zou die cache stukmaken voor elke
+ * volgende kloon van dezelfde klasse, ook op andere clusters/pagina's.
+ */
+function removeClusterModels(scene: THREE.Scene, instances: Map<string, THREE.Object3D>): void {
+  for (const inst of instances.values()) scene.remove(inst);
+  instances.clear();
+}
+
 export default function TerrainPage({ sn }: { sn: string }) {
+  const { t } = useTranslation();
   const mountRef = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<'loading' | 'empty' | 'ready' | 'error'>('loading');
   const [hasObjects, setHasObjects] = useState(false);
   const [legendVisible, setLegendVisible] = useState<Record<string, boolean>>(DEFAULT_LEGEND_VISIBLE);
   const [livePos, setLivePos] = useState<LivePos | null>(null);
+  const [clusters, setClusters] = useState<TerrainCluster[]>([]);
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [savingOverride, setSavingOverride] = useState(false);
 
   const legendVisibleRef = useRef<Record<string, boolean>>(DEFAULT_LEGEND_VISIBLE);
   const livePosRef = useRef<LivePos | null>(null);
@@ -158,11 +261,22 @@ export default function TerrainPage({ sn }: { sn: string }) {
 
   const terrainMeshRef = useRef<THREE.Mesh | null>(null);
   const voxelMeshesRef = useRef<Map<string, THREE.InstancedMesh>>(new Map());
+  const modelInstancesRef = useRef<Map<string, THREE.Object3D>>(new Map());
   const groundAtRef = useRef<(x: number, y: number) => number>(() => 0);
   const markerRef = useRef<THREE.Mesh | null>(null);
   const trailLineRef = useRef<THREE.Line | null>(null);
   const trailPointsRef = useRef<THREE.Vector3[]>([]);
   const updateMarkerFnRef = useRef<(pos: LivePos | null) => void>(() => {});
+
+  // Laatst bekende terrein/objecten/clusters, buiten de 20s-poll bereikbaar
+  // (o.a. voor de override-handler die na een POST alleen de clusters
+  // her-fetcht en de scene lokaal herbouwt via rebuildAllRef, zonder een
+  // volledige terrain-refetch nodig te hebben).
+  const terrainDataRef = useRef<TerrainData | null>(null);
+  const objectsDataRef = useRef<ObjectData | null>(null);
+  const clustersRef = useRef<TerrainCluster[]>([]);
+  const rebuildEpochRef = useRef(0);
+  const rebuildAllRef = useRef<(() => void) | null>(null);
 
   // Live maaier-positie: zelfde bron als MapTab (sensors.map_position_x/y +
   // theta), maar hier rechtstreeks op de gedeelde socket (getSocket()) i.p.v.
@@ -223,6 +337,8 @@ export default function TerrainPage({ sn }: { sn: string }) {
     let renderer: THREE.WebGLRenderer | null = null;
     let frameId = 0;
     let intervalId: ReturnType<typeof setInterval> | undefined;
+    let onPointerDown: ((e: PointerEvent) => void) | null = null;
+    let onPointerUp: ((e: PointerEvent) => void) | null = null;
     const polygonLines: THREE.Line[] = [];
 
     trailPointsRef.current = [];
@@ -241,9 +357,51 @@ export default function TerrainPage({ sn }: { sn: string }) {
       }
     }
 
-    // Vervangt terrein- en voxel-meshes in de scene; dispose't de oude
-    // geometrieën/materialen eerst zodat uren openstaan geen geheugen lekt.
-    function rebuild(scene: THREE.Scene, terrain: TerrainData, objects: ObjectData | null): THREE.Mesh {
+    async function loadClusters(): Promise<TerrainCluster[]> {
+      try {
+        const res = await apiFetch(`/api/dashboard/terrain-clusters/${encodeURIComponent(sn)}`);
+        if (!res.ok) return [];
+        const body = await res.json() as { clusters?: TerrainCluster[] };
+        return body.clusters ?? [];
+      } catch {
+        return [];
+      }
+    }
+
+    // Plaatst voor elke cluster met een className+GLB een genormaliseerd
+    // model (zie dashboard/public/models/SOURCES.md): geschaald naar de
+    // gemeten voetafdruk/hoogte, positie op (cx, cy, terreinhoogte). Laden is
+    // async+gecached (modelLoadCache) — een `epoch`-check voorkomt dat een
+    // trage load na een ondertussen alwéér gestarte rebuild alsnog een stale
+    // model toevoegt.
+    function buildClusterModels(scene: THREE.Scene, clusterList: TerrainCluster[], epoch: number): void {
+      removeClusterModels(scene, modelInstancesRef.current);
+      for (const cl of clusterList) {
+        const glb = glbForClass(cl.className);
+        if (!glb) continue;
+        loadClusterModel(glb).then((orig) => {
+          if (disposed || epoch !== rebuildEpochRef.current) return; // stale: nieuwe rebuild al bezig
+          const clone = orig.clone(true);
+          clone.traverse((o) => { o.userData.clusterKey = cl.key; });
+          const g = groundAtRef.current(cl.cx, cl.cy);
+          const sx = Math.max(cl.maxX - cl.minX, 0.15);
+          const sy = Math.max(cl.maxY - cl.minY, 0.15);
+          const sz = Math.max(cl.maxH - g, 0.1);
+          clone.scale.set(sx, sy, sz);
+          clone.position.set(cl.cx, cl.cy, g);
+          scene.add(clone);
+          modelInstancesRef.current.set(cl.key, clone);
+        }).catch((err) => console.warn(`terrain: model laden mislukt (${glb})`, err));
+      }
+    }
+
+    // Vervangt terrein-, voxel- en model-meshes in de scene; dispose't de
+    // oude geometrieën/materialen eerst zodat uren openstaan geen geheugen
+    // lekt (model-instanties zijn een uitzondering, zie removeClusterModels).
+    function rebuild(scene: THREE.Scene, terrain: TerrainData, objects: ObjectData | null, clusterList: TerrainCluster[]): THREE.Mesh {
+      rebuildEpochRef.current += 1;
+      const epoch = rebuildEpochRef.current;
+
       if (terrainMeshRef.current) { scene.remove(terrainMeshRef.current); disposeMesh(terrainMeshRef.current); }
       const mesh = buildTerrainMesh(terrain);
       scene.add(mesh);
@@ -253,18 +411,22 @@ export default function TerrainPage({ sn }: { sn: string }) {
       for (const vm of voxelMeshesRef.current.values()) { scene.remove(vm); disposeMesh(vm); }
       voxelMeshesRef.current.clear();
 
+      const bboxes = clusterBBoxesFrom(clusterList);
       let anyObjects = false;
       if (objects && objects.ix.length > 0) {
         for (const group of COLOR_GROUPS) {
           const filtered = filterObjectsByLabels(objects, group.labels);
           if (filtered.ix.length === 0) continue;
+          const vm = buildObjectVoxels(filtered, groundAtRef.current, bboxes);
+          if (!vm) continue; // alle cellen van deze groep vielen onder een gemodelleerd cluster
           anyObjects = true;
-          const vm = buildObjectVoxels(filtered, groundAtRef.current);
           vm.visible = legendVisibleRef.current[group.id] ?? true;
           scene.add(vm);
           voxelMeshesRef.current.set(group.id, vm);
         }
       }
+      buildClusterModels(scene, clusterList, epoch);
+      if (clusterList.some((c) => glbForClass(c.className))) anyObjects = true;
       setHasObjects(anyObjects);
       return mesh;
     }
@@ -274,12 +436,18 @@ export default function TerrainPage({ sn }: { sn: string }) {
       if (res.status === 404) { setStatus('empty'); return; }
       if (!res.ok) { setStatus('error'); return; }
       const terrain = parseTerrain(await res.arrayBuffer());
-      const [mapsResponse, objects] = await Promise.all([
+      const [mapsResponse, objects, clusterList] = await Promise.all([
         fetchMaps(sn).catch(() => null),
         loadObjects(),
+        loadClusters(),
       ]);
       const maps = mapsResponse?.maps ?? [];
       if (disposed || !mountRef.current) return;
+
+      terrainDataRef.current = terrain;
+      objectsDataRef.current = objects;
+      clustersRef.current = clusterList;
+      setClusters(clusterList);
 
       const el = mountRef.current;
       const scene = new THREE.Scene();
@@ -289,7 +457,7 @@ export default function TerrainPage({ sn }: { sn: string }) {
       renderer.setSize(el.clientWidth, el.clientHeight);
       el.appendChild(renderer.domElement);
 
-      const mesh = rebuild(scene, terrain, objects);
+      const mesh = rebuild(scene, terrain, objects, clusterList);
       scene.add(new THREE.AmbientLight(0xffffff, 0.55));
       const sun = new THREE.DirectionalLight(0xffffff, 0.9);
       sun.position.set(30, 20, 50);
@@ -362,19 +530,71 @@ export default function TerrainPage({ sn }: { sn: string }) {
       animate();
       setStatus('ready');
 
-      // 20s-poll zolang de pagina gemount is: beide grids her-fetchen en de
-      // scene-inhoud vervangen (rebuild dispose't de oude meshes zelf).
+      // Klik-op-object: raycast tegen zowel de GLB-model-instanties (userData.
+      // clusterKey op elke descendant, zie buildClusterModels) als de voxel-
+      // InstancedMeshes (userData.clusterKeys[instanceId], zie
+      // buildObjectVoxels). Een pointerdown/pointerup-afstandscheck onderscheidt
+      // een klik van een OrbitControls-drag (die anders per ongeluk een cluster
+      // zou selecteren).
+      const raycaster = new THREE.Raycaster();
+      let pointerDownAt: { x: number; y: number } | null = null;
+      onPointerDown = (e: PointerEvent) => { pointerDownAt = { x: e.clientX, y: e.clientY }; };
+      onPointerUp = (e: PointerEvent) => {
+        const start = pointerDownAt;
+        pointerDownAt = null;
+        if (!start || Math.hypot(e.clientX - start.x, e.clientY - start.y) > 5) return;
+        const rect = renderer!.domElement.getBoundingClientRect();
+        const ndc = new THREE.Vector2(
+          ((e.clientX - rect.left) / rect.width) * 2 - 1,
+          -((e.clientY - rect.top) / rect.height) * 2 + 1,
+        );
+        raycaster.setFromCamera(ndc, camera);
+        const targets: THREE.Object3D[] = [
+          ...modelInstancesRef.current.values(),
+          ...voxelMeshesRef.current.values(),
+        ];
+        const hits = raycaster.intersectObjects(targets, true);
+        for (const hit of hits) {
+          const obj = hit.object as THREE.Object3D & { isInstancedMesh?: boolean };
+          let key: string | null = null;
+          if (obj.isInstancedMesh) {
+            const keys = obj.userData.clusterKeys as Array<string | null> | undefined;
+            key = keys && hit.instanceId != null ? (keys[hit.instanceId] ?? null) : null;
+          } else {
+            key = (obj.userData.clusterKey as string | undefined) ?? null;
+          }
+          if (key) { setSelectedKey(key); return; }
+        }
+      };
+      renderer.domElement.addEventListener('pointerdown', onPointerDown);
+      renderer.domElement.addEventListener('pointerup', onPointerUp);
+
+      // Herbruikbaar voor de override-handler (React-event, buiten deze IIFE):
+      // her-tekent puur uit de laatst bekende refs, zonder terrain-refetch.
+      rebuildAllRef.current = () => {
+        if (!terrainDataRef.current) return;
+        rebuild(scene, terrainDataRef.current, objectsDataRef.current, clustersRef.current);
+        updateMarkerFnRef.current(livePosRef.current);
+      };
+
+      // 20s-poll zolang de pagina gemount is: grids + clusters her-fetchen en
+      // de scene-inhoud vervangen (rebuild dispose't de oude meshes zelf).
       intervalId = setInterval(async () => {
         if (disposed) return;
         try {
-          const [terrainRes, freshObjects] = await Promise.all([
+          const [terrainRes, freshObjects, freshClusters] = await Promise.all([
             apiFetch(`/api/dashboard/terrain/${encodeURIComponent(sn)}`),
             loadObjects(),
+            loadClusters(),
           ]);
           if (disposed || !terrainRes.ok) return;
           const freshTerrain = parseTerrain(await terrainRes.arrayBuffer());
           if (disposed) return;
-          rebuild(scene, freshTerrain, freshObjects);
+          terrainDataRef.current = freshTerrain;
+          objectsDataRef.current = freshObjects;
+          clustersRef.current = freshClusters;
+          setClusters(freshClusters);
+          rebuild(scene, freshTerrain, freshObjects, freshClusters);
           updateMarkerFnRef.current(livePosRef.current);
         } catch (err) {
           console.warn('terrain: 20s-poll refresh mislukt', err);
@@ -387,11 +607,16 @@ export default function TerrainPage({ sn }: { sn: string }) {
       cancelAnimationFrame(frameId);
       if (intervalId !== undefined) clearInterval(intervalId);
       updateMarkerFnRef.current = () => {};
+      rebuildAllRef.current = null;
+
+      if (renderer && onPointerDown) renderer.domElement.removeEventListener('pointerdown', onPointerDown);
+      if (renderer && onPointerUp) renderer.domElement.removeEventListener('pointerup', onPointerUp);
 
       disposeMesh(terrainMeshRef.current);
       terrainMeshRef.current = null;
       for (const vm of voxelMeshesRef.current.values()) disposeMesh(vm);
       voxelMeshesRef.current.clear();
+      modelInstancesRef.current.clear(); // geen dispose — zie removeClusterModels
       disposeMesh(markerRef.current);
       markerRef.current = null;
       disposeMesh(trailLineRef.current);
@@ -403,6 +628,37 @@ export default function TerrainPage({ sn }: { sn: string }) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sn]);
+
+  // Klik-correctie: POST de override, her-fetch de clusters en herbouw de
+  // scene lokaal (rebuildAllRef, zie hierboven) i.p.v. te wachten op de
+  // volgende 20s-poll.
+  async function handleOverrideChange(key: string, value: string): Promise<void> {
+    setSavingOverride(true);
+    try {
+      await apiFetch(`/api/dashboard/terrain-clusters/${encodeURIComponent(sn)}/${encodeURIComponent(key)}/override`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ className: value === AUTO_OVERRIDE_VALUE ? null : value }),
+      });
+    } catch (err) {
+      console.warn('terrain: override opslaan mislukt', err);
+    } finally {
+      setSavingOverride(false);
+    }
+    try {
+      const res = await apiFetch(`/api/dashboard/terrain-clusters/${encodeURIComponent(sn)}`);
+      if (res.ok) {
+        const body = await res.json() as { clusters?: TerrainCluster[] };
+        const fresh = body.clusters ?? [];
+        clustersRef.current = fresh;
+        setClusters(fresh);
+      }
+    } catch { /* volgende 20s-poll haalt het alsnog in */ }
+    rebuildAllRef.current?.();
+  }
+
+  const selectedCluster = selectedKey ? clusters.find((c) => c.key === selectedKey) ?? null : null;
+  const selectedClusterClass = selectedCluster ? findClusterClass(selectedCluster.className) : undefined;
 
   return (
     <div className="h-full w-full relative">
@@ -430,6 +686,48 @@ export default function TerrainPage({ sn }: { sn: string }) {
               {group.label}
             </label>
           ))}
+        </div>
+      )}
+      {selectedCluster && (
+        <div className="absolute bottom-3 left-3 bg-black/70 text-xs text-gray-200 rounded-lg p-3 space-y-2 backdrop-blur pointer-events-auto w-72">
+          <div className="flex items-center justify-between">
+            <div className="font-medium text-gray-300">{t('terrain.objectPanelTitle')}</div>
+            <button
+              onClick={() => setSelectedKey(null)}
+              className="text-gray-400 hover:text-gray-200 leading-none"
+              aria-label={t('terrain.objectClose')}
+            >
+              ✕
+            </button>
+          </div>
+          {selectedCluster.photoUrl && (
+            <img src={selectedCluster.photoUrl} alt="" className="w-full rounded max-h-32 object-cover" />
+          )}
+          <div className="text-gray-200">
+            {selectedClusterClass ? t(selectedClusterClass.i18nKey) : t('terrain.objectUnknown')}
+          </div>
+          {selectedCluster.confidence != null && (
+            <div className="text-gray-400">
+              {t('terrain.objectConfidence')}: {Math.round(selectedCluster.confidence * 100)}%
+            </div>
+          )}
+          {selectedCluster.userOverride && (
+            <div className="text-amber-400">{t('terrain.objectManualOverride')}</div>
+          )}
+          <div>
+            <label className="text-[9px] text-gray-500 uppercase tracking-wide">{t('terrain.objectCorrectLabel')}</label>
+            <select
+              value={selectedCluster.userOverride ?? AUTO_OVERRIDE_VALUE}
+              disabled={savingOverride}
+              onChange={(e) => { void handleOverrideChange(selectedCluster.key, e.target.value); }}
+              className="mt-1 w-full text-xs bg-gray-900 border border-gray-700 rounded px-2 py-1.5 text-gray-200 focus:outline-none focus:border-blue-500"
+            >
+              <option value={AUTO_OVERRIDE_VALUE}>{t('terrain.objectAuto')}</option>
+              {CLUSTER_CLASSES.map((c) => (
+                <option key={c.prompt} value={c.prompt}>{t(c.i18nKey)}</option>
+              ))}
+            </select>
+          </div>
         </div>
       )}
       <div ref={mountRef} className="h-full w-full" />

@@ -422,7 +422,25 @@
     }
   },
   "terrain": {
-    "title": "Terrein"
+    "title": "Terrein",
+    "objectPanelTitle": "Object",
+    "objectUnknown": "Onbekend object",
+    "objectConfidence": "Betrouwbaarheid",
+    "objectManualOverride": "Handmatig gecorrigeerd",
+    "objectCorrectLabel": "Corrigeer object",
+    "objectAuto": "Automatisch (model)",
+    "objectClose": "Sluiten",
+    "classTrampoline": "Trampoline",
+    "classTree": "Boom",
+    "classBush": "Struik",
+    "classChair": "Tuinstoel",
+    "classTable": "Tuintafel",
+    "classFlowerpot": "Bloempot",
+    "classBarrel": "Houten ton",
+    "classParasol": "Parasol",
+    "classPlayset": "Speeltoestel",
+    "classFence": "Schutting",
+    "classChargingStation": "Laadstation"
   },
   "schedule": {
     "title": "Maaischema's",

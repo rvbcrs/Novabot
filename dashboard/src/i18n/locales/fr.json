@@ -359,7 +359,25 @@
     }
   },
   "terrain": {
-    "title": "Terrain"
+    "title": "Terrain",
+    "objectPanelTitle": "Objet",
+    "objectUnknown": "Objet inconnu",
+    "objectConfidence": "Confiance",
+    "objectManualOverride": "Corrigé manuellement",
+    "objectCorrectLabel": "Corriger l'objet",
+    "objectAuto": "Automatique (modèle)",
+    "objectClose": "Fermer",
+    "classTrampoline": "Trampoline",
+    "classTree": "Arbre",
+    "classBush": "Buisson",
+    "classChair": "Chaise de jardin",
+    "classTable": "Table de jardin",
+    "classFlowerpot": "Pot de fleurs",
+    "classBarrel": "Tonneau en bois",
+    "classParasol": "Parasol",
+    "classPlayset": "Aire de jeux",
+    "classFence": "Clôture",
+    "classChargingStation": "Station de charge"
   },
   "schedule": {
     "title": "Planifications de tonte",
