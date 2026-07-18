@@ -59,5 +59,10 @@
     "tsx": "^4.7.2",
     "typescript": "^5.4.3",
     "vitest": "^4.1.4"
+  },
+  "overrides": {
+    "@huggingface/transformers": {
+      "sharp": "$sharp"
+    }
   }
 }

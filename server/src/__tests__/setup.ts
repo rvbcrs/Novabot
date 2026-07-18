@@ -11,11 +11,22 @@
  * every user-facing table.
  */
 import fs from 'fs';
+import http from 'http';
+import https from 'https';
 import os from 'os';
 import path from 'path';
 
 import { beforeEach, beforeAll, afterAll } from 'vitest';
 import { db } from '../db/database.js';
+
+// Node >= 19 zet keep-alive aan op de global agent. Supertest bindt per
+// request(app) een verse server op een ephemeral poort; met keep-alive poolt
+// superagent sockets per host:poort, en als de OS zo'n poort binnen dit
+// worker-proces hergebruikt voor een LATERE testserver krijgt een request de
+// gepoolde socket naar de oude (gesloten of verkeerde) server. Symptomen in
+// release-runs: "socket hang up" en 403's van routes zonder 403-pad.
+http.globalAgent = new http.Agent({ keepAlive: false });
+https.globalAgent = new https.Agent({ keepAlive: false });
 
 // Per test-BESTAND een eigen wegwerp-storage-dir. De gedeelde
 // /tmp/novabot-test-storage uit vitest.config.ts lekte state tussen
