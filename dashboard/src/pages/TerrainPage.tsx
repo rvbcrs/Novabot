@@ -383,12 +383,20 @@ export default function TerrainPage({ sn }: { sn: string }) {
           if (disposed || epoch !== rebuildEpochRef.current) return; // stale: nieuwe rebuild al bezig
           const clone = orig.clone(true);
           clone.traverse((o) => { o.userData.clusterKey = cl.key; });
-          const g = groundAtRef.current(cl.cx, cl.cy);
+          // Bbox-midden i.p.v. centroid (cx,cy): de voxel-exclusiezone in
+          // buildObjectVoxels() filtert op [minX,maxX]×[minY,maxY], niet op de
+          // centroid. Bij een asymmetrisch cluster (L-vorm, half gescand
+          // object) valt de centroid niet samen met het bbox-midden — het
+          // model zou dan aan één kant buiten de exclusiezone steken
+          // (overlapt echte voxels) en aan de andere kant een leeg gat laten.
+          const bboxCx = (cl.minX + cl.maxX) / 2;
+          const bboxCy = (cl.minY + cl.maxY) / 2;
+          const g = groundAtRef.current(bboxCx, bboxCy);
           const sx = Math.max(cl.maxX - cl.minX, 0.15);
           const sy = Math.max(cl.maxY - cl.minY, 0.15);
           const sz = Math.max(cl.maxH - g, 0.1);
           clone.scale.set(sx, sy, sz);
-          clone.position.set(cl.cx, cl.cy, g);
+          clone.position.set(bboxCx, bboxCy, g);
           scene.add(clone);
           modelInstancesRef.current.set(cl.key, clone);
         }).catch((err) => console.warn(`terrain: model laden mislukt (${glb})`, err));
