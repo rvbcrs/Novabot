@@ -118,14 +118,16 @@ def parse_labeled(data):
 
 def accumulate_objects(objgrid, pts_map, labels):
     """Kaartframe-punten + labels → {(ix,iy,label): [max_h, cnt]}.
-    Hoogte-gedreven: > OBJ_HEIGHT_MIN, exclusie-labels eruit."""
+    Hoogte-gedreven: > OBJ_HEIGHT_MIN, exclusie-labels eruit.
+    Retourneert het aantal geaccepteerde punten (int); bestaande aanroepen
+    mogen de return-waarde negeren."""
     if len(pts_map) == 0:
-        return
+        return 0
     keep = (pts_map[:, 2] > OBJ_HEIGHT_MIN) & ~np.isin(labels, list(OBJ_EXCLUDE_LABELS))
     pts = pts_map[keep]
     labs = labels[keep]
     if len(pts) == 0:
-        return
+        return 0
     ix = np.floor(pts[:, 0] / CELL).astype(np.int64)
     iy = np.floor(pts[:, 1] / CELL).astype(np.int64)
     comp = ((ix + 1_048_576) << 29) | ((iy + 1_048_576) << 8) | labs.astype(np.int64)
@@ -146,6 +148,7 @@ def accumulate_objects(objgrid, pts_map, labels):
         else:
             e[0] = max(e[0], mh)
             e[1] += int(ct)
+    return len(pts)
 
 
 def serialize_objects(objgrid, cell_size):
@@ -157,6 +160,25 @@ def serialize_objects(objgrid, cell_size):
     for (ix, iy, lab), (mh, cnt) in objgrid.items():
         out += struct.pack("<iiBfI", ix, iy, lab, mh, cnt)
     return bytes(out)
+
+
+# ── RGB-frame-capture (objectherkenning-plan Task 1) ──
+FRAME_MAX_PER_SESSION = 20
+FRAME_MIN_INTERVAL = 15.0   # s
+FRAME_MIN_OBJ_POINTS = 50   # object-punten in het laatste labeled-frame
+
+
+def should_capture_frame(now, last_frame_t, frames_count, last_obj_points):
+    """RGB-frame bewaren? Alleen met objecten in beeld, gethrottled, max 20."""
+    return (frames_count < FRAME_MAX_PER_SESSION
+            and now - last_frame_t >= FRAME_MIN_INTERVAL
+            and last_obj_points >= FRAME_MIN_OBJ_POINTS)
+
+
+def frame_url(http_address, sn, session, seq, pose):
+    x, y, yaw = pose
+    return (f"http://{http_address}/api/nova-file-server/terrain/uploadSessionFrame"
+            f"?sn={sn}&session={session}&seq={seq}&x={x:.3f}&y={y:.3f}&yaw={yaw:.4f}")
 
 
 def flush_basename(session, now):
@@ -259,7 +281,7 @@ def main():
     import rclpy
     from rclpy.node import Node
     from nav_msgs.msg import Odometry
-    from sensor_msgs.msg import PointCloud2
+    from sensor_msgs.msg import CompressedImage, PointCloud2
 
     os.makedirs(SESSION_DIR, exist_ok=True)
     http_address, sn = _read_config()
@@ -267,8 +289,10 @@ def main():
     rclpy.init()
     node = Node("terrain_scan")
     st = {"pose": None, "pose_t": 0.0, "grid": {}, "last_frame": 0.0,
-          "last_data": 0.0, "frames": 0,
-          "obj": {}, "session": None, "last_live": 0.0, "last_obj_frame": 0.0}
+          "last_data": 0.0, "tof_frames": 0,
+          "obj": {}, "session": None, "last_live": 0.0, "last_obj_frame": 0.0,
+          "frames": [], "frames_sent": set(), "last_frame_t": 0.0,
+          "last_obj_points": 0, "last_frame_warn_t": 0.0}
 
     def on_odom(msg):
         p = msg.pose.pose
@@ -295,7 +319,7 @@ def main():
         base = cam_to_base(pts)
         x, y, yaw = st["pose"]
         accumulate(st["grid"], base_to_map(base, x, y, yaw))
-        st["frames"] += 1
+        st["tof_frames"] += 1
 
     def on_labeled(msg):
         now = time.time()
@@ -315,7 +339,35 @@ def main():
         m = cam_to_base_mask(pts4)
         base = cam_to_base(pts4)
         x, y, yaw = st["pose"]
-        accumulate_objects(st["obj"], base_to_map(base, x, y, yaw), labels[m])
+        accepted = accumulate_objects(st["obj"], base_to_map(base, x, y, yaw), labels[m])
+        st["last_obj_points"] = int(accepted)
+
+    def on_rgb(msg):
+        now = time.time()
+        if st["pose"] is None or now - st["pose_t"] > POSE_MAX_AGE:
+            return
+        if not should_capture_frame(now, st["last_frame_t"], len(st["frames"]), st["last_obj_points"]):
+            return
+        st["last_frame_t"] = now
+        st["frames"].append((len(st["frames"]) + 1, st["pose"], bytes(msg.data)))
+        st["last_obj_points"] = 0  # één frame per object-passage
+
+    def _upload_frames():
+        # best-effort: fouten mogen de daemon nooit onderbreken, frames blijven
+        # in RAM tot de volgende poging of de finale flush.
+        for seq, pose, jpeg in st["frames"]:
+            if seq in st["frames_sent"]:
+                continue
+            try:
+                url = frame_url(http_address, sn, st["session"], seq, pose)
+                if _upload_bytes(jpeg, http_address, url):
+                    st["frames_sent"].add(seq)
+            except Exception as e:  # noqa: BLE001 — best-effort, throttled warn
+                now_w = time.time()
+                if now_w - st["last_frame_warn_t"] > LIVE_INTERVAL:
+                    st["last_frame_warn_t"] = now_w
+                    node.get_logger().warn(f"terrain: frame-upload faalde: {e}")
+                break
 
     def flush():
         if not st["grid"] and not st["obj"]:
@@ -327,21 +379,25 @@ def main():
                 with open(path, "wb") as f:
                     f.write(serialize_grid(st["grid"], CELL))
                 node.get_logger().info(
-                    f"terrain: sessie {path} ({len(st['grid'])} cellen, {st['frames']} frames)")
+                    f"terrain: sessie {path} ({len(st['grid'])} cellen, {st['tof_frames']} frames)")
             if st["obj"]:
                 path_o = os.path.join(SESSION_DIR, f"{base}.tgo")
                 with open(path_o, "wb") as f:
                     f.write(serialize_objects(st["obj"], CELL))
                 node.get_logger().info(
                     f"terrain: objectsessie {path_o} ({len(st['obj'])} entries)")
+            _upload_frames()
             _rotate_sessions()
         except Exception as e:  # noqa: BLE001 — disk-IO mag de daemon nooit killen
             node.get_logger().warn(f"terrain: sessie wegschrijven faalde: {e} — sessie verloren")
         finally:
             st["grid"] = {}
-            st["frames"] = 0
+            st["tof_frames"] = 0
             st["obj"] = {}
             st["session"] = None
+            st["frames"] = []
+            st["frames_sent"] = set()
+            st["last_obj_points"] = 0
         # upload alles wat er nog ligt (incl. eerdere gefaalde uploads)
         for fn in sorted(os.listdir(SESSION_DIR)):
             if fn.endswith(".tgr"):
@@ -367,6 +423,7 @@ def main():
     node.create_subscription(Odometry, "/robot_combination_localization/odom", on_odom, 10)
     node.create_subscription(PointCloud2, "/camera/tof/point_cloud", on_cloud, 5)
     node.create_subscription(PointCloud2, "/perception/points_labeled", on_labeled, 5)
+    node.create_subscription(CompressedImage, "/camera/preposition/image_half/compressed", on_rgb, 2)
 
     while rclpy.ok():
         rclpy.spin_once(node, timeout_sec=2.0)
@@ -385,6 +442,7 @@ def main():
                                   upload_url(http_address, "uploadObjectGrid", sn, st["session"], 0))
             except Exception as e:  # noqa: BLE001 — live is best-effort; final flush is de waarheid
                 node.get_logger().warn(f"terrain: live-upload faalde: {e}")
+            _upload_frames()
 
 
 if __name__ == "__main__":

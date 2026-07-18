@@ -134,4 +134,12 @@ assert u2 == "http://host/api/nova-file-server/terrain/uploadObjectGrid?sn=LFIN0
 assert ts.flush_basename(1784300000, 1784300500.7) == "session_1784300000"
 assert ts.flush_basename(None, 1784300500.7) == "session_1784300500"
 
+# ── RGB frame-capture helpers (objectherkenning-plan Task 1) ──
+assert ts.should_capture_frame(100.0, 80.0, 0, 500) is True      # >15s, obj in beeld
+assert ts.should_capture_frame(100.0, 90.0, 0, 500) is False     # te snel
+assert ts.should_capture_frame(100.0, 80.0, 20, 500) is False    # vol
+assert ts.should_capture_frame(100.0, 80.0, 0, 0) is False       # geen objecten in beeld
+u3 = ts.frame_url("host:8080", "LFIN0001", 123, 4, (1.23456, -7.8, 0.78539))
+assert u3 == "http://host:8080/api/nova-file-server/terrain/uploadSessionFrame?sn=LFIN0001&session=123&seq=4&x=1.235&y=-7.800&yaw=0.7854", u3
+
 print("test_terrain_scan: ALLES OK")
