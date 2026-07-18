@@ -39,6 +39,14 @@ interface TerrainCluster {
 const gltfLoader = new GLTFLoader();
 const modelLoadCache = new Map<string, Promise<THREE.Object3D>>();
 
+// Bestandsnamen waarvan het laden mislukt is (netwerk/parse-fout) — zelfde
+// levensduur als modelLoadCache (die de REJECTED promise blijft cachen, dus
+// een retry zou toch weer meteen falen). Een gefaalde klasse telt hierna als
+// "geen model" voor de voxel-bbox-exclusie: zonder dit filter zou een
+// cluster stil verdwijnen (voxels al uitgesloten omdat we een model
+// verwachtten, maar dat model komt er nooit — zie clusterBBoxesFrom).
+const failedGlbModels = new Set<string>();
+
 function loadClusterModel(glb: string): Promise<THREE.Object3D> {
   let p = modelLoadCache.get(glb);
   if (!p) {
@@ -165,10 +173,13 @@ interface ClusterBBox {
 }
 
 function clusterBBoxesFrom(clusters: TerrainCluster[]): ClusterBBox[] {
-  return clusters.map((c) => ({
-    key: c.key, minX: c.minX, minY: c.minY, maxX: c.maxX, maxY: c.maxY,
-    hasModel: glbForClass(c.className) !== null,
-  }));
+  return clusters.map((c) => {
+    const glb = glbForClass(c.className);
+    return {
+      key: c.key, minX: c.minX, minY: c.minY, maxX: c.maxX, maxY: c.maxY,
+      hasModel: glb !== null && !failedGlbModels.has(glb),
+    };
+  });
 }
 
 function findClusterAt(bboxes: ClusterBBox[], x: number, y: number): ClusterBBox | null {
@@ -399,7 +410,18 @@ export default function TerrainPage({ sn }: { sn: string }) {
           clone.position.set(bboxCx, bboxCy, g);
           scene.add(clone);
           modelInstancesRef.current.set(cl.key, clone);
-        }).catch((err) => console.warn(`terrain: model laden mislukt (${glb})`, err));
+        }).catch((err) => {
+          console.warn(`terrain: model laden mislukt (${glb}) — toont object als voxels`, err);
+          if (disposed || epoch !== rebuildEpochRef.current) return;
+          if (failedGlbModels.has(glb)) return; // al gemarkeerd — voorkomt een rebuild-loop
+          failedGlbModels.add(glb);
+          // Forceert een volledige rebuild: clusterBBoxesFrom() ziet nu
+          // hasModel:false voor deze klasse, dus buildObjectVoxels() laat de
+          // cellen van dit cluster weer als voxels verschijnen i.p.v. stil
+          // te verdwijnen (ze waren al uitgesloten toen we nog een model
+          // verwachtten).
+          rebuildAllRef.current?.();
+        });
       }
     }
 

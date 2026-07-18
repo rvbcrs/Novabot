@@ -182,6 +182,14 @@ function CameraCapture({ cameraRef }: { cameraRef: React.MutableRefObject<THREE.
   return null;
 }
 
+// Klassen waarvan het GLB-laden mislukt is (netwerk/parse-fout) — module-
+// niveau, zelfde levensduur als modelLoadCache (die zelf ook de REJECTED
+// promise blijft cachen, dus een retry zou toch weer meteen falen). Een
+// gefaalde klasse telt hierna als "geen model" voor de voxel-bbox-exclusie:
+// zonder dit filter zou een cluster stil verdwijnen (voxels al uitgesloten
+// omdat we een model verwachtten, maar dat model komt er nooit).
+const failedGlbModules = new Set<number>();
+
 /** Bbox van een cluster (uit terrain-clusters) + of die als GLB-model getekend wordt. */
 interface ClusterBBox {
   key: string;
@@ -190,10 +198,13 @@ interface ClusterBBox {
 }
 
 function clusterBBoxesFrom(clusters: TerrainCluster[]): ClusterBBox[] {
-  return clusters.map((c) => ({
-    key: c.key, minX: c.minX, minY: c.minY, maxX: c.maxX, maxY: c.maxY,
-    hasModel: glbModuleForClass(c.className) !== null,
-  }));
+  return clusters.map((c) => {
+    const glbModule = glbModuleForClass(c.className);
+    return {
+      key: c.key, minX: c.minX, minY: c.minY, maxX: c.maxX, maxY: c.maxY,
+      hasModel: glbModule !== null && !failedGlbModules.has(glbModule),
+    };
+  });
 }
 
 function findClusterAt(bboxes: ClusterBBox[], x: number, y: number): ClusterBBox | null {
@@ -334,6 +345,10 @@ export default function TerrainView3D({ sn }: { sn: string }) {
 
   const terrainRef = useRef<TerrainScene | null>(null);
   const voxelRef = useRef<THREE.InstancedMesh | null>(null);
+  // Laatst succesvol gefetchte objectdata — puur om, bij een GLB-laadfout,
+  // de voxel-InstancedMesh opnieuw te kunnen bouwen zonder een volledige
+  // terrain-refetch (zie rebuildVoxelsFromFailure hieronder).
+  const objDataRef = useRef<ObjectData | null>(null);
   const mountedRef = useRef(true);
   const cameraInitialized = useRef(false);
 
@@ -382,6 +397,24 @@ export default function TerrainView3D({ sn }: { sn: string }) {
     voxelRef.current = null;
   }, []);
 
+  // Herbouwt ALLEEN de voxel-InstancedMesh, uit de laatst bekende objectdata
+  // (objDataRef) + de huidige terreingrond (terrainRef). Gebruikt na een
+  // GLB-laadfout: de bbox van de gefaalde klasse telt dan niet meer als
+  // "heeft model" (zie failedGlbModules/clusterBBoxesFrom hierboven), dus
+  // deze rebuild laat de cellen van dat cluster weer als voxels verschijnen
+  // i.p.v. stil te verdwijnen.
+  const rebuildVoxelsFromFailure = useCallback((clusterList: TerrainCluster[]) => {
+    if (!mountedRef.current) return;
+    const groundAt = terrainRef.current?.groundAt;
+    const objData = objDataRef.current;
+    if (!groundAt || !objData) return;
+    const bboxes = clusterBBoxesFrom(clusterList);
+    const newVoxelMesh = buildObjectVoxels(objData, groundAt, bboxes);
+    disposeVoxels();
+    voxelRef.current = newVoxelMesh;
+    setVoxelMesh(newVoxelMesh);
+  }, [disposeVoxels]);
+
   // Plaatst voor elke cluster met een className+GLB een genormaliseerd
   // model (zie dashboard/public/models/SOURCES.md): geschaald naar de
   // gemeten voetafdruk/hoogte, positie op bbox-midden (niet cx/cy — zie
@@ -410,9 +443,14 @@ export default function TerrainView3D({ sn }: { sn: string }) {
         clone.position.set(bboxCx, bboxCy, g);
         modelInstancesRef.current.set(cl.key, clone);
         setModelInstances(Array.from(modelInstancesRef.current.entries()).map(([key, object]) => ({ key, object })));
-      }).catch((err) => console.warn(`terrain3d: model laden mislukt (className=${cl.className})`, err));
+      }).catch((err) => {
+        console.warn(`terrain3d: model laden mislukt (className=${cl.className}) — toont object als voxels`, err);
+        if (failedGlbModules.has(glbModule)) return; // al gemarkeerd — geen dubbele rebuild
+        failedGlbModules.add(glbModule);
+        rebuildVoxelsFromFailure(clusterList);
+      });
     }
-  }, []);
+  }, [rebuildVoxelsFromFailure]);
 
   const load = useCallback(async () => {
     try {
@@ -428,6 +466,7 @@ export default function TerrainView3D({ sn }: { sn: string }) {
         if (!mountedRef.current) return;
         disposeTerrain();
         disposeVoxels();
+        objDataRef.current = null;
         modelInstancesRef.current.clear();
         setModelInstances([]);
         setClusters([]);
@@ -446,6 +485,7 @@ export default function TerrainView3D({ sn }: { sn: string }) {
         if (!mountedRef.current) return;
         disposeTerrain();
         disposeVoxels();
+        objDataRef.current = null;
         modelInstancesRef.current.clear();
         setModelInstances([]);
         setClusters([]);
@@ -496,11 +536,15 @@ export default function TerrainView3D({ sn }: { sn: string }) {
       const bboxes = clusterBBoxesFrom(clusterList);
 
       let newVoxelMesh: THREE.InstancedMesh | null = null;
+      objDataRef.current = null;
       try {
         const objRes = await fetch(`${base}/api/dashboard/terrain-objects/${encodeURIComponent(sn)}?raw=1`);
         if (objRes.ok) {
           const objData = parseObjects(await objRes.arrayBuffer());
-          if (objData.ix.length > 0) newVoxelMesh = buildObjectVoxels(objData, built.groundAt, bboxes);
+          if (objData.ix.length > 0) {
+            objDataRef.current = objData; // bewaard voor rebuildVoxelsFromFailure (GLB-laadfout-fallback)
+            newVoxelMesh = buildObjectVoxels(objData, built.groundAt, bboxes);
+          }
         }
       } catch {
         newVoxelMesh = null;
