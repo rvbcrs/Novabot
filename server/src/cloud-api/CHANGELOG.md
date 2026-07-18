@@ -2,6 +2,13 @@
 
 Format: most-recent first. Each entry is dated and names the endpoint(s) affected.
 
+## 2026-07-18 — terrain: uploadSessionFrame endpoint
+
+- Nieuw: `uploadSessionFrame` (pose-gestempelde RGB-frames voor objectherkenning; spec 2026-07-18).
+  Raw JPEG (max 2 MB) + pose (`x`,`y`,`yaw`) opgeslagen als
+  `STORAGE_PATH/terrain/frames/<sn>/<session>_<seq>.jpg` + sidecar `.json`.
+  Max 20 frames per (sn,session), max 5 sessies aan frames per sn (oudste weg).
+
 ## 2026-07-17 — terrain: upload-limit naar 16mb
 
 - `uploadTerrainGrid`/`uploadObjectGrid`: raw-body limit van 8mb naar 16mb.

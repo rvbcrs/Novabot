@@ -163,3 +163,41 @@ terrainRouter.post('/uploadObjectGrid', rawBody, (req: Request, res: Response) =
     logLabel: 'object',
   });
 });
+
+/**
+ * Pose-gestempelde RGB-frames voor objectherkenning (spec 2026-07-18).
+ * POST /api/nova-file-server/terrain/uploadSessionFrame?sn&session&seq&x&y&yaw
+ * Body: raw JPEG, max 2 MB. Opgeslagen als
+ * STORAGE_PATH/terrain/frames/<sn>/<session>_<seq>.jpg + sidecar
+ * <...>.json ({x,y,yaw}). Rotatie: max 20 frames per (sn,session), max 5
+ * sessies aan frames per sn (oudste sessie-map weg).
+ */
+terrainRouter.post(
+  '/uploadSessionFrame',
+  express.raw({ type: 'application/octet-stream', limit: '2mb' }),
+  (req: Request, res: Response) => {
+    const sn = String(req.query.sn ?? '');
+    const session = String(req.query.session ?? '');
+    const seq = parseInt(String(req.query.seq ?? ''), 10);
+    const x = Number(req.query.x), y = Number(req.query.y), yaw = Number(req.query.yaw);
+    if (!/^LFI[A-Z]\d+$/.test(sn) || !/^\d+$/.test(session)
+        || !Number.isInteger(seq) || seq < 1 || seq > 20
+        || ![x, y, yaw].every(Number.isFinite)) {
+      res.status(400).json(fail('invalid frame params', 400)); return;
+    }
+    const body = req.body as Buffer;
+    if (!Buffer.isBuffer(body) || body.length < 4 || body[0] !== 0xff || body[1] !== 0xd8) {
+      res.status(400).json(fail('not a jpeg', 400)); return;
+    }
+    const dir = path.join(TERRAIN_DIR, 'frames', sn);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, `${session}_${seq}.jpg`), body);
+    fs.writeFileSync(path.join(dir, `${session}_${seq}.json`), JSON.stringify({ x, y, yaw }));
+    // rotatie: max 5 sessies aan frames per maaier (oudste sessie weg)
+    const sessions = [...new Set(fs.readdirSync(dir).map(f => f.split('_')[0]))].sort();
+    for (const old of sessions.slice(0, -5)) {
+      for (const f of fs.readdirSync(dir).filter(f => f.startsWith(`${old}_`))) fs.unlinkSync(path.join(dir, f));
+    }
+    res.json(ok(null));
+  },
+);

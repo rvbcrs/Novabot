@@ -115,3 +115,25 @@ describe('POST /api/nova-file-server/terrain/uploadTerrainGrid', () => {
     expect(after.obj_sessions).toBe((before?.obj_sessions ?? 0) + 1);
   });
 });
+
+describe('POST /api/nova-file-server/terrain/uploadSessionFrame', () => {
+  it('uploadSessionFrame bewaart jpeg + pose-sidecar en begrenst per sessie', async () => {
+    const app = buildTestApp();
+    const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 0xff, 0xd9]);
+    const res = await request(app)
+      .post('/api/nova-file-server/terrain/uploadSessionFrame?sn=LFIN2230700238&session=555&seq=1&x=1.5&y=-2.25&yaw=0.7854')
+      .set('Content-Type', 'application/octet-stream').send(jpeg);
+    expect(res.status).toBe(200);
+    const dir = path.resolve(process.env.STORAGE_PATH ?? './storage', 'terrain', 'frames', 'LFIN2230700238');
+    expect(fs.readFileSync(path.join(dir, '555_1.jpg')).equals(jpeg)).toBe(true);
+    expect(JSON.parse(fs.readFileSync(path.join(dir, '555_1.json'), 'utf8'))).toEqual({ x: 1.5, y: -2.25, yaw: 0.7854 });
+  });
+
+  it('uploadSessionFrame weigert ongeldige sn/seq', async () => {
+    const app = buildTestApp();
+    await request(app).post('/api/nova-file-server/terrain/uploadSessionFrame?sn=../x&session=1&seq=1&x=0&y=0&yaw=0')
+      .set('Content-Type', 'application/octet-stream').send(Buffer.from([0xff, 0xd8])).expect(400);
+    await request(app).post('/api/nova-file-server/terrain/uploadSessionFrame?sn=LFIN2230700238&session=1&seq=99&x=0&y=0&yaw=0')
+      .set('Content-Type', 'application/octet-stream').send(Buffer.from([0xff, 0xd8])).expect(400); // seq > 20
+  });
+});
