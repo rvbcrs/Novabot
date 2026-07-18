@@ -33,6 +33,15 @@ import {
   parseTgo1, mergeIntoTgmo, tgmoCellCount,
 } from '../../services/terrainGrid.js';
 import { terrainGridRepo } from '../../db/repositories/index.js';
+import { runRecognition } from '../../services/terrainRecognition.js';
+
+/** Fire-and-forget triggerpunt voor de objectherkenning-batch (Task 7) —
+ *  nooit awaiten, nooit een fout laten doorschieten naar de upload-response. */
+function triggerRecognition(sn: string): void {
+  void runRecognition(sn).catch((err) => {
+    console.warn(`[terrainRecognition] batch faalde voor ${sn}:`, err instanceof Error ? err.message : err);
+  });
+}
 
 const TERRAIN_DIR = path.resolve(process.env.STORAGE_PATH ?? './storage', 'terrain');
 
@@ -67,6 +76,7 @@ function foldActive(sn: string): void {
     const merged = mergeIntoTgmo(existing, fs.readFileSync(a.tgo));
     fs.writeFileSync(tgmoPath, merged);
     terrainGridRepo.upsertObjMeta({ mower_sn: sn, cells: tgmoCellCount(merged), sessions_delta: 1 });
+    triggerRecognition(sn);
   }
   for (const p of Object.values(a)) { try { fs.unlinkSync(p); } catch { /* al weg */ } }
 }
@@ -129,6 +139,7 @@ function handleUpload(req: Request, res: Response, fmt: UploadFormat): void {
   const merged = fmt.merge(existing, body);
   fs.writeFileSync(mergedPath, merged);
   fmt.persistFinal(sn, parsed.cellSize, merged);
+  if (fmt.mergedExt === 'tgmo') triggerRecognition(sn);
 
   console.log(`[TERRAIN] ${fmt.logLabel} sessie gemerged voor ${sn}`);
   res.json(ok(null));

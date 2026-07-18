@@ -33,7 +33,10 @@ import { execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import zlib from 'zlib';
-import { tgm1ToDisplayTgr1, mergeIntoTgm1, mergeIntoTgmo, tgmoToDisplayTgo1 } from '../services/terrainGrid.js';
+import { tgm1ToDisplayTgr1, mergeIntoTgm1, tgmoToDisplayTgo1 } from '../services/terrainGrid.js';
+import { loadMergedTgmo } from '../services/terrainRecognition.js';
+import { LABELS } from '../services/terrainClassifier.js';
+import { terrainClusterRepo } from '../db/repositories/index.js';
 import { networkInterfaces } from 'os';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
@@ -761,19 +764,77 @@ dashboardRouter.get('/terrain/:sn', (req: Request, res: Response) => {
 dashboardRouter.get('/terrain-objects/:sn', (req: Request, res: Response) => {
   const { sn } = req.params;
   if (!/^LFI[A-Z]\d+$/.test(sn)) { res.status(400).json({ error: 'invalid sn' }); return; }
-  const dir = path.resolve(process.env.STORAGE_PATH ?? './storage', 'terrain');
-  const tgmoPath = path.join(dir, `${sn}.tgmo`);
-  const activePath = path.join(dir, `${sn}.active.tgo`);
-  const base = fs.existsSync(tgmoPath) ? fs.readFileSync(tgmoPath) : null;
-  const active = fs.existsSync(activePath) ? fs.readFileSync(activePath) : null;
-  if (!base && !active) { res.status(404).json({ error: 'geen objecten voor deze maaier' }); return; }
   try {
-    const merged = active ? mergeIntoTgmo(base, active) : base!;
+    // loadMergedTgmo() is dezelfde merge (persistent + actieve laag) als
+    // runRecognition (Task 7) gebruikt — geen kopie-implementatie die kan
+    // divergeren tussen viewer en batch-job.
+    const merged = loadMergedTgmo(sn);
+    if (!merged) { res.status(404).json({ error: 'geen objecten voor deze maaier' }); return; }
     sendGrid(res, tgmoToDisplayTgo1(merged), req.query.raw === '1');
   } catch (err) {
     console.error(`[TERRAIN] object-display ${sn} faalde:`, err);
     res.status(500).json({ error: 'objectdata corrupt' });
   }
+});
+
+// GET /api/dashboard/terrain-clusters/:sn — geclusterde objectdetecties +
+// classificatie (objectherkenning-plan Task 7). className = user_override
+// als die gezet is, anders de model-classificatie; nl volgt diezelfde
+// effectieve className via de vaste LABELS-tabel.
+dashboardRouter.get('/terrain-clusters/:sn', (req: Request, res: Response) => {
+  const { sn } = req.params;
+  if (!/^LFI[A-Z]\d+$/.test(sn)) { res.status(400).json({ error: 'invalid sn' }); return; }
+  const clusters = terrainClusterRepo.findBySn(sn).map((row) => {
+    const className = row.user_override ?? row.class_name;
+    const nl = className ? (LABELS.find((l) => l.prompt === className)?.nl ?? null) : null;
+    return {
+      key: row.cluster_key,
+      cx: row.cx,
+      cy: row.cy,
+      minX: row.min_x,
+      minY: row.min_y,
+      maxX: row.max_x,
+      maxY: row.max_y,
+      cells: row.cells,
+      maxH: row.max_h,
+      className,
+      nl,
+      confidence: row.confidence,
+      userOverride: row.user_override,
+      photoUrl: row.crop_file ? `/api/dashboard/terrain-crops/${sn}/${row.crop_file}` : null,
+    };
+  });
+  res.json({ clusters });
+});
+
+// GET /api/dashboard/terrain-crops/:sn/:file — cluster-crop-foto. sn-regex +
+// bestandsnaam-whitelist (alleen cijfers/komma's/mintekens + ".jpg") is de
+// path-traversal-guard — geen DB-lookup nodig om de bytes te serveren.
+dashboardRouter.get('/terrain-crops/:sn/:file', (req: Request, res: Response) => {
+  const { sn, file } = req.params;
+  if (!/^LFI[A-Z]\d+$/.test(sn) || !/^[0-9,-]+\.jpg$/.test(file)) {
+    res.status(400).json({ error: 'invalid path' }); return;
+  }
+  const dir = path.resolve(process.env.STORAGE_PATH ?? './storage', 'terrain');
+  const filePath = path.join(dir, 'crops', sn, file);
+  if (!fs.existsSync(filePath)) { res.status(404).json({ error: 'foto niet gevonden' }); return; }
+  res.type('image/jpeg').send(fs.readFileSync(filePath));
+});
+
+// POST /api/dashboard/terrain-clusters/:sn/:key/override — handmatige
+// correctie van de classificatie. className moet in LABELS voorkomen, of
+// null om de override weer te wissen (model-classificatie herneemt het dan).
+dashboardRouter.post('/terrain-clusters/:sn/:key/override', (req: Request, res: Response) => {
+  const { sn, key } = req.params;
+  if (!/^LFI[A-Z]\d+$/.test(sn)) { res.status(400).json({ error: 'invalid sn' }); return; }
+  const className = (req.body ?? {}).className as string | null | undefined;
+  if (className !== null && !LABELS.some((l) => l.prompt === className)) {
+    res.status(400).json({ error: 'onbekende className' }); return;
+  }
+  const exists = terrainClusterRepo.findBySn(sn).some((r) => r.cluster_key === key);
+  if (!exists) { res.status(404).json({ error: 'cluster niet gevonden' }); return; }
+  terrainClusterRepo.setOverride(sn, key, className ?? null);
+  res.json({ ok: true });
 });
 
 // GET /api/dashboard/planned-path/:sn — planned mowing path

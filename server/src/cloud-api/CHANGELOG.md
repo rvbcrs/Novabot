@@ -2,6 +2,18 @@
 
 Format: most-recent first. Each entry is dated and names the endpoint(s) affected.
 
+## 2026-07-18 — terrain: recognition-batch trigger na object-grid final-fold
+
+- `uploadObjectGrid` (final=1) en `foldActive`'s object-tak roepen nu
+  fire-and-forget `runRecognition(sn)` aan (`server/src/services/
+  terrainRecognition.ts`, objectherkenning-plan Task 7) — clustert de TGMO-
+  laag, kiest per cluster het best-gerichte opgeslagen frame, cropt en
+  classificeert (SigLIP zero-shot), en upsert het resultaat in
+  `terrain_clusters`. Fouten worden gelogd, nooit doorgegeven aan de
+  upload-response. Nieuw op de dashboard-API: `GET /api/dashboard/
+  terrain-clusters/:sn`, `GET /api/dashboard/terrain-crops/:sn/:file`,
+  `POST /api/dashboard/terrain-clusters/:sn/:key/override`.
+
 ## 2026-07-18 — terrain: uploadSessionFrame review-fixes
 
 - `uploadSessionFrame` sessie-rotatie sorteerde lexicografisch, waardoor
