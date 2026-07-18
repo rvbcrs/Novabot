@@ -355,6 +355,8 @@ def main():
     def _upload_frames():
         # best-effort: fouten mogen de daemon nooit onderbreken, frames blijven
         # in RAM tot de volgende poging of de finale flush.
+        if st["session"] is None:
+            return  # geen sessie-id = frames niet correleerbaar; bewust overslaan
         for seq, pose, jpeg in st["frames"]:
             if seq in st["frames_sent"]:
                 continue
