@@ -87,19 +87,24 @@ export async function classifyCrop(
   if (!currentPipeline) {
     return null;
   }
-  const scores = await currentPipeline(jpeg);
-  let best: { label: string; score: number } | null = null;
-  for (const s of scores) {
-    if (!best || s.score > best.score) {
-      best = s;
+  try {
+    const scores = await currentPipeline(jpeg);
+    let best: { label: string; score: number } | null = null;
+    for (const s of scores) {
+      if (!best || s.score > best.score) {
+        best = s;
+      }
     }
-  }
-  if (!best || best.score < CONFIDENCE_MIN) {
+    if (!best || best.score < CONFIDENCE_MIN) {
+      return null;
+    }
+    const label = LABELS.find((l) => l.prompt === best!.label);
+    if (!label) {
+      return null;
+    }
+    return { className: label.prompt, nl: label.nl, confidence: best.score };
+  } catch (err) {
+    console.warn('[CLASSIFY] crop-classificatie faalde (corrupte jpeg?):', err);
     return null;
   }
-  const label = LABELS.find((l) => l.prompt === best!.label);
-  if (!label) {
-    return null;
-  }
-  return { className: label.prompt, nl: label.nl, confidence: best.score };
 }

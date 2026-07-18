@@ -15,4 +15,8 @@ describe('terrainClassifier', () => {
     _setPipelineForTest(null);
     expect(await classifyCrop(Buffer.from([0xff, 0xd8]))).toBeNull();
   });
+  it('pipeline-throw wordt null, geen rejection', async () => {
+    _setPipelineForTest(async () => { throw new Error('decode boom'); });
+    await expect(classifyCrop(Buffer.from([0x00]))).resolves.toBeNull();
+  });
 });
