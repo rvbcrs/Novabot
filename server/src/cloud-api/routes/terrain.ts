@@ -178,13 +178,14 @@ terrainRouter.post(
   (req: Request, res: Response) => {
     const sn = String(req.query.sn ?? '');
     const session = String(req.query.session ?? '');
-    const seq = parseInt(String(req.query.seq ?? ''), 10);
+    const seqRaw = String(req.query.seq ?? '');
     const x = Number(req.query.x), y = Number(req.query.y), yaw = Number(req.query.yaw);
     if (!/^LFI[A-Z]\d+$/.test(sn) || !/^\d+$/.test(session)
-        || !Number.isInteger(seq) || seq < 1 || seq > 20
+        || !/^([1-9]|1[0-9]|20)$/.test(seqRaw)
         || ![x, y, yaw].every(Number.isFinite)) {
       res.status(400).json(fail('invalid frame params', 400)); return;
     }
+    const seq = Number(seqRaw);
     const body = req.body as Buffer;
     if (!Buffer.isBuffer(body) || body.length < 4 || body[0] !== 0xff || body[1] !== 0xd8) {
       res.status(400).json(fail('not a jpeg', 400)); return;
@@ -193,8 +194,11 @@ terrainRouter.post(
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, `${session}_${seq}.jpg`), body);
     fs.writeFileSync(path.join(dir, `${session}_${seq}.json`), JSON.stringify({ x, y, yaw }));
-    // rotatie: max 5 sessies aan frames per maaier (oudste sessie weg)
-    const sessions = [...new Set(fs.readdirSync(dir).map(f => f.split('_')[0]))].sort();
+    // rotatie: max 5 sessies aan frames per maaier (oudste sessie weg).
+    // Numeriek sorteren: sessie-id's zijn niet gelijke lengte (bv. "9" vs "10"),
+    // lexicografische sort zou "10" vóór "9" evicten (stille data-loss).
+    const sessions = [...new Set(fs.readdirSync(dir).map(f => f.split('_')[0]))]
+      .sort((a, b) => Number(a) - Number(b));
     for (const old of sessions.slice(0, -5)) {
       for (const f of fs.readdirSync(dir).filter(f => f.startsWith(`${old}_`))) fs.unlinkSync(path.join(dir, f));
     }

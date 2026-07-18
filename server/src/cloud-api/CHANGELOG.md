@@ -2,6 +2,14 @@
 
 Format: most-recent first. Each entry is dated and names the endpoint(s) affected.
 
+## 2026-07-18 — terrain: uploadSessionFrame review-fixes
+
+- `uploadSessionFrame` sessie-rotatie sorteerde lexicografisch, waardoor
+  ongelijke-lengte sessie-id's (bv. "9" vs "10") de verkeerde sessie evicten
+  (stille data-loss). Fix: numerieke sort (`Number(a) - Number(b)`).
+- `seq`-query werd via `parseInt` gelezen, die accepteert `"1abc"`. Nu strikte
+  regex-validatie op de ruwe string (`1..20`) vóór conversie.
+
 ## 2026-07-18 — terrain: uploadSessionFrame endpoint
 
 - Nieuw: `uploadSessionFrame` (pose-gestempelde RGB-frames voor objectherkenning; spec 2026-07-18).

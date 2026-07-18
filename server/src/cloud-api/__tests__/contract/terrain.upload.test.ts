@@ -136,4 +136,20 @@ describe('POST /api/nova-file-server/terrain/uploadSessionFrame', () => {
     await request(app).post('/api/nova-file-server/terrain/uploadSessionFrame?sn=LFIN2230700238&session=1&seq=99&x=0&y=0&yaw=0')
       .set('Content-Type', 'application/octet-stream').send(Buffer.from([0xff, 0xd8])).expect(400); // seq > 20
   });
+
+  it('sessie-rotatie evict numeriek oudste, niet lexicografisch oudste', async () => {
+    const app = buildTestApp();
+    const sn = 'LFIN2230700240';
+    const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
+    for (const session of ['9', '10', '11', '12', '13', '14']) {
+      await request(app)
+        .post(`/api/nova-file-server/terrain/uploadSessionFrame?sn=${sn}&session=${session}&seq=1&x=0&y=0&yaw=0`)
+        .set('Content-Type', 'application/octet-stream').send(jpeg).expect(200);
+    }
+    const dir = path.resolve(process.env.STORAGE_PATH ?? './storage', 'terrain', 'frames', sn);
+    expect(fs.existsSync(path.join(dir, '9_1.jpg'))).toBe(false); // numeriek oudste: weg
+    for (const session of ['10', '11', '12', '13', '14']) {
+      expect(fs.existsSync(path.join(dir, `${session}_1.jpg`))).toBe(true);
+    }
+  });
 });
