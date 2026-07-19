@@ -378,7 +378,9 @@
     "classPlayset": "Spielgerät",
     "classFence": "Zaun",
     "classChargingStation": "Ladestation",
-    "classPool": "Pool"
+    "classPool": "Pool",
+    "classHydrangea": "Hortensie",
+    "classBall": "Ball"
   },
   "schedule": {
     "title": "Mähpläne",

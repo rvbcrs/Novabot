@@ -394,7 +394,9 @@
     "classPlayset": "Playground equipment",
     "classFence": "Fence",
     "classChargingStation": "Charging station",
-    "classPool": "Swimming pool"
+    "classPool": "Swimming pool",
+    "classHydrangea": "Hydrangea",
+    "classBall": "Ball"
   },
   "schedule": {
     "title": "Mowing Schedules",

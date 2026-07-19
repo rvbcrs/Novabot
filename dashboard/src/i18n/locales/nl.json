@@ -441,7 +441,9 @@
     "classPlayset": "Speeltoestel",
     "classFence": "Schutting",
     "classChargingStation": "Laadstation",
-    "classPool": "Zwembad"
+    "classPool": "Zwembad",
+    "classHydrangea": "Hortensia",
+    "classBall": "Bal"
   },
   "schedule": {
     "title": "Maaischema's",

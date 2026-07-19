@@ -73,14 +73,26 @@ function loadFrameCandidates(sn: string): FrameCandidate[] {
  * contract van `terrainCrops.scoreFrame` ("Lager = beter") het best-gerichte
  * frame. `null` als geen enkel frame binnen bereik valt (hoek/afstand-gate).
  */
-function pickBestFrame(cluster: Cluster, frames: FrameCandidate[]): FrameCandidate | null {
-  let best: FrameCandidate | null = null;
+function pickBestFrame(
+  cluster: Cluster,
+  frames: FrameCandidate[],
+): { frame: FrameCandidate; target: { cx: number; cy: number } } | null {
+  // Match op de ledencellen, niet het centroid: bij een langgerekte of
+  // gebogen border ligt het centroid midden in het gazon en kijkt geen
+  // enkel frame daarnaartoe. Fallback op het centroid voor (test)clusters
+  // zonder memberPoints.
+  const points: Array<[number, number]> = cluster.memberPoints?.length
+    ? cluster.memberPoints
+    : [[cluster.cx, cluster.cy]];
+  let best: { frame: FrameCandidate; target: { cx: number; cy: number } } | null = null;
   let bestScore = Infinity;
   for (const f of frames) {
-    const score = scoreFrame(cluster, f.pose);
-    if (score !== null && score < bestScore) {
-      bestScore = score;
-      best = f;
+    for (const [px, py] of points) {
+      const score = scoreFrame({ cx: px, cy: py }, f.pose);
+      if (score !== null && score < bestScore) {
+        bestScore = score;
+        best = { frame: f, target: { cx: px, cy: py } };
+      }
     }
   }
   return best;
@@ -156,9 +168,9 @@ export async function runRecognition(sn: string): Promise<number> {
         continue;
       }
 
-      const meta = await sharp(best.jpegPath).metadata();
-      const box = cropBox(cluster, best.pose, meta.width ?? 0, meta.height ?? 0);
-      const jpeg = await cropFrame(best.jpegPath, box);
+      const meta = await sharp(best.frame.jpegPath).metadata();
+      const box = cropBox(best.target, best.frame.pose, meta.width ?? 0, meta.height ?? 0);
+      const jpeg = await cropFrame(best.frame.jpegPath, box);
 
       const result = await classifyCrop(jpeg);
 

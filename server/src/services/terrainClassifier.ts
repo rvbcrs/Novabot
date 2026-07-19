@@ -16,6 +16,7 @@ export const LABELS: Array<{ prompt: string; nl: string; glb: string | null }> =
   { prompt: 'trampoline', nl: 'Trampoline', glb: 'trampoline.glb' },
   { prompt: 'tree', nl: 'Boom', glb: 'tree.glb' },
   { prompt: 'bush', nl: 'Struik', glb: 'bush.glb' },
+  { prompt: 'hydrangea', nl: 'Hortensia', glb: 'bush.glb' },
   { prompt: 'garden chair', nl: 'Tuinstoel', glb: 'chair.glb' },
   { prompt: 'garden table', nl: 'Tuintafel', glb: 'table.glb' },
   { prompt: 'flower pot with plant', nl: 'Bloempot', glb: 'flowerpot.glb' },
@@ -25,6 +26,7 @@ export const LABELS: Array<{ prompt: string; nl: string; glb: string | null }> =
   { prompt: 'fence', nl: 'Schutting', glb: null },
   { prompt: 'charging station', nl: 'Laadstation', glb: null },
   { prompt: 'swimming pool', nl: 'Zwembad', glb: null },
+  { prompt: 'ball', nl: 'Bal', glb: null },
 ];
 
 /**

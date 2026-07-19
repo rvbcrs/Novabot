@@ -378,7 +378,9 @@
     "classPlayset": "Aire de jeux",
     "classFence": "Clôture",
     "classChargingStation": "Station de charge",
-    "classPool": "Piscine"
+    "classPool": "Piscine",
+    "classHydrangea": "Hortensia",
+    "classBall": "Ballon"
   },
   "schedule": {
     "title": "Planifications de tonte",

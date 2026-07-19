@@ -4,7 +4,18 @@ export interface Cluster {
   key: string; cells: number;
   minX: number; minY: number; maxX: number; maxY: number;
   cx: number; cy: number; maxH: number; dominantLabel: number;
+  /**
+   * Wereld-coördinaten (celcentra, meters) van een deelverzameling van de
+   * ledencellen, max ~MEMBER_SAMPLE_MAX punten (gedecimeerd bij grote
+   * clusters). Voor frame-matching op de DICHTSTBIJZIJNDE rand van het
+   * cluster: het centroid van een langgerekte border ligt midden in het
+   * gazon en matcht nooit (les 2026-07-20, 81k-cellen hoefijzer-cluster).
+   */
+  memberPoints: Array<[number, number]>;
 }
+
+/** Max bemonsterde ledenpunten per cluster (geheugen/CPU-grens matching). */
+const MEMBER_SAMPLE_MAX = 800;
 
 const MIN_CELLS = 8;
 
@@ -47,6 +58,11 @@ export function clusterObjects(display: Tgo1): Cluster[] {
       hist.set(m.label, (hist.get(m.label) ?? 0) + m.cnt);
     }
     const dominantLabel = [...hist.entries()].sort((a, b) => b[1] - a[1])[0][0];
+    const stride = Math.max(1, Math.ceil(members.length / MEMBER_SAMPLE_MAX));
+    const memberPoints: Array<[number, number]> = [];
+    for (let i = 0; i < members.length; i += stride) {
+      memberPoints.push([members[i].ix * cs + cs / 2, members[i].iy * cs + cs / 2]);
+    }
     out.push({
       key: `${Math.floor(minIx / 10)},${Math.floor(minIy / 10)}`,
       cells: members.length,
@@ -54,7 +70,7 @@ export function clusterObjects(display: Tgo1): Cluster[] {
       maxX: (maxIx + 1) * cs, maxY: (maxIy + 1) * cs,
       cx: (sumX / members.length) * cs + cs / 2,
       cy: (sumY / members.length) * cs + cs / 2,
-      maxH, dominantLabel,
+      maxH, dominantLabel, memberPoints,
     });
   }
   return out.sort((a, b) => b.cells - a.cells);
