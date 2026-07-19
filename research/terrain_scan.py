@@ -166,13 +166,25 @@ def serialize_objects(objgrid, cell_size):
 FRAME_MAX_PER_SESSION = 20
 FRAME_MIN_INTERVAL = 15.0   # s
 FRAME_MIN_OBJ_POINTS = 50   # object-punten in het laatste labeled-frame
+FRAME_MIN_SPREAD_M = 3.0    # min afstand tussen opnamepunten (spreiding over de tuin)
 
 
-def should_capture_frame(now, last_frame_t, frames_count, last_obj_points):
-    """RGB-frame bewaren? Alleen met objecten in beeld, gethrottled, max 20."""
-    return (frames_count < FRAME_MAX_PER_SESSION
+def should_capture_frame(now, last_frame_t, frames_count, last_obj_points,
+                         pose=None, captured_poses=()):
+    """RGB-frame bewaren? Alleen met objecten in beeld, gethrottled, max 20,
+    en ruimtelijk gespreid: min 3 m tussen opnamepunten. Zonder spreiding was
+    het budget al op in de eerste tuinhoek terwijl de objecten verderop lagen
+    (les smoke 2026-07-20: alle 42 frames oost, alle clusters west)."""
+    if not (frames_count < FRAME_MAX_PER_SESSION
             and now - last_frame_t >= FRAME_MIN_INTERVAL
-            and last_obj_points >= FRAME_MIN_OBJ_POINTS)
+            and last_obj_points >= FRAME_MIN_OBJ_POINTS):
+        return False
+    if pose is not None:
+        px, py = pose[0], pose[1]
+        for cp in captured_poses:
+            if math.hypot(px - cp[0], py - cp[1]) < FRAME_MIN_SPREAD_M:
+                return False
+    return True
 
 
 def frame_url(http_address, sn, session, seq, pose):
@@ -346,7 +358,9 @@ def main():
         now = time.time()
         if st["pose"] is None or now - st["pose_t"] > POSE_MAX_AGE:
             return
-        if not should_capture_frame(now, st["last_frame_t"], len(st["frames"]), st["last_obj_points"]):
+        if not should_capture_frame(now, st["last_frame_t"], len(st["frames"]),
+                                    st["last_obj_points"], st["pose"],
+                                    [p for _, p, _ in st["frames"]]):
             return
         st["last_frame_t"] = now
         st["frames"].append((len(st["frames"]) + 1, st["pose"], bytes(msg.data)))
