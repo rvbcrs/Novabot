@@ -43,12 +43,11 @@ SSLEOF
       -extensions v3_ca
   fi
 
-  # Alpine nginx includes /etc/nginx/http.d/*.conf INSIDE the http{} block
-  # (Debian/Ubuntu use conf.d). The Ubuntu experiment switched this to conf.d
-  # and the alpine revert never restored it, so the server{} block landed in the
-  # main context → "server directive is not allowed here". Back to http.d.
-  mkdir -p /etc/nginx/http.d
-  cat > /etc/nginx/http.d/novabot.conf << NGINXEOF
+  # Debian nginx includes /etc/nginx/conf.d/*.conf INSIDE the http{} block
+  # (Alpine gebruikte http.d — image is sinds de node:20-slim switch Debian,
+  # nodig omdat onnxruntime/glibc niet op musl draait).
+  mkdir -p /etc/nginx/conf.d
+  cat > /etc/nginx/conf.d/novabot.conf << NGINXEOF
 server {
     listen 443 ssl;
     ssl_certificate     ${CERT_DIR}/server.crt;
@@ -65,7 +64,7 @@ server {
     }
 }
 NGINXEOF
-  rm -f /etc/nginx/http.d/default.conf
+  rm -f /etc/nginx/conf.d/default.conf /etc/nginx/sites-enabled/default
   nginx
   echo "  TLS:   port 443 (nginx → ${PORT})"
 fi

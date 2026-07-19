@@ -1,8 +1,8 @@
 # ── Stage 1: Build (TypeScript compilatie) ────────────────────────────────────
-FROM node:20-alpine AS build
+FROM node:20-slim AS build
 
 # Build tools for native modules (bcrypt, better-sqlite3)
-RUN apk add --no-cache python3 make g++ linux-headers
+RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
@@ -29,9 +29,9 @@ RUN cd dashboard && npm run build
 
 
 # ── Stage 2: Production dependencies (lean) ──────────────────────────────────
-FROM node:20-alpine AS deps
+FROM node:20-slim AS deps
 
-RUN apk add --no-cache python3 make g++ linux-headers
+RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
@@ -62,9 +62,9 @@ RUN cd server/node_modules/better-sqlite3 && \
 
 
 # ── Stage 3: Runtime ──────────────────────────────────────────────────────────
-FROM node:20-alpine
+FROM node:20-slim
 
-RUN apk add --no-cache dnsmasq nginx openssl tzdata zip sqlite sshpass openssh-client bash
+RUN apt-get update && apt-get install -y --no-install-recommends dnsmasq nginx openssl tzdata zip sqlite3 sshpass openssh-client bash ca-certificates && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
