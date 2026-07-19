@@ -377,7 +377,8 @@
     "classParasol": "Sonnenschirm",
     "classPlayset": "Spielgerät",
     "classFence": "Zaun",
-    "classChargingStation": "Ladestation"
+    "classChargingStation": "Ladestation",
+    "classPool": "Pool"
   },
   "schedule": {
     "title": "Mähpläne",

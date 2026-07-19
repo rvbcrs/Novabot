@@ -19,7 +19,7 @@ export interface ClusterClass {
 export const CLUSTER_CLASSES: ClusterClass[] = [
   { prompt: 'trampoline', i18nKey: 'terrain.classTrampoline', glb: 'trampoline.glb' },
   { prompt: 'tree', i18nKey: 'terrain.classTree', glb: 'tree.glb' },
-  { prompt: 'bush/hedge', i18nKey: 'terrain.classBush', glb: 'bush.glb' },
+  { prompt: 'bush', i18nKey: 'terrain.classBush', glb: 'bush.glb' },
   { prompt: 'garden chair', i18nKey: 'terrain.classChair', glb: 'chair.glb' },
   { prompt: 'garden table', i18nKey: 'terrain.classTable', glb: 'table.glb' },
   { prompt: 'flower pot with plant', i18nKey: 'terrain.classFlowerpot', glb: 'flowerpot.glb' },
@@ -28,6 +28,7 @@ export const CLUSTER_CLASSES: ClusterClass[] = [
   { prompt: 'playground equipment', i18nKey: 'terrain.classPlayset', glb: 'playset.glb' },
   { prompt: 'fence', i18nKey: 'terrain.classFence', glb: null },
   { prompt: 'charging station', i18nKey: 'terrain.classChargingStation', glb: null },
+  { prompt: 'swimming pool', i18nKey: 'terrain.classPool', glb: null },
 ];
 
 export function findClusterClass(prompt: string | null | undefined): ClusterClass | undefined {

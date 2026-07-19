@@ -393,7 +393,8 @@
     "classParasol": "Parasol",
     "classPlayset": "Playground equipment",
     "classFence": "Fence",
-    "classChargingStation": "Charging station"
+    "classChargingStation": "Charging station",
+    "classPool": "Swimming pool"
   },
   "schedule": {
     "title": "Mowing Schedules",

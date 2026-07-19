@@ -377,7 +377,8 @@
     "classParasol": "Parasol",
     "classPlayset": "Aire de jeux",
     "classFence": "Clôture",
-    "classChargingStation": "Station de charge"
+    "classChargingStation": "Station de charge",
+    "classPool": "Piscine"
   },
   "schedule": {
     "title": "Planifications de tonte",

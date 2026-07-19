@@ -15,7 +15,7 @@ import path from 'node:path';
 export const LABELS: Array<{ prompt: string; nl: string; glb: string | null }> = [
   { prompt: 'trampoline', nl: 'Trampoline', glb: 'trampoline.glb' },
   { prompt: 'tree', nl: 'Boom', glb: 'tree.glb' },
-  { prompt: 'bush/hedge', nl: 'Struik', glb: 'bush.glb' },
+  { prompt: 'bush', nl: 'Struik', glb: 'bush.glb' },
   { prompt: 'garden chair', nl: 'Tuinstoel', glb: 'chair.glb' },
   { prompt: 'garden table', nl: 'Tuintafel', glb: 'table.glb' },
   { prompt: 'flower pot with plant', nl: 'Bloempot', glb: 'flowerpot.glb' },
@@ -24,10 +24,28 @@ export const LABELS: Array<{ prompt: string; nl: string; glb: string | null }> =
   { prompt: 'playground equipment', nl: 'Speeltoestel', glb: 'playset.glb' },
   { prompt: 'fence', nl: 'Schutting', glb: null },
   { prompt: 'charging station', nl: 'Laadstation', glb: null },
+  { prompt: 'swimming pool', nl: 'Zwembad', glb: null },
 ];
 
-/** SigLIP-sigmoid-scores zijn laag-genormaliseerd — daaronder blijft voxels. */
-export const CONFIDENCE_MIN = 0.35;
+/**
+ * Achtergrond-vangers: doen mee als kandidaat zodat "geen object" ergens
+ * heen kan, maar een top-1 hierop betekent gewoon `null` (blijft voxels).
+ * Staan bewust NIET in LABELS — geen override-optie, geen GLB.
+ */
+export const SINK_PROMPTS = ['lawn'] as const;
+
+/**
+ * SigLIP scoort met sigmoids (niet softmax): absolute scores blijven laag,
+ * zelfs bij een overduidelijke winnaar (praktijkmeting 2026-07-20: struik
+ * 0.31, nummer 2 op 0.003). Daarom een marge-regel i.p.v. een hoge kale
+ * drempel: top-1 moet minimaal CONFIDENCE_MIN scoren ÉN MARGIN_RATIO keer
+ * boven de nummer 2 zitten.
+ */
+export const CONFIDENCE_MIN = 0.12;
+export const MARGIN_RATIO = 4;
+
+/** SigLIP is getraind met dit prompt-sjabloon; zonder blijven scores ~3x lager. */
+export const PROMPT_TEMPLATE = 'a photo of a {}';
 
 /** Eén classificatie-run over alle LABELS voor één crop. */
 type PipelineFn = (jpeg: Buffer) => Promise<Array<{ label: string; score: number }>>;
@@ -60,11 +78,13 @@ export async function initClassifier(): Promise<boolean> {
     const classifier = await pipeline('zero-shot-image-classification', 'Xenova/siglip-base-patch16-224', {
       cache_dir: cacheDir,
     });
-    const candidateLabels = LABELS.map((l) => l.prompt);
+    const candidateLabels = [...LABELS.map((l) => l.prompt), ...SINK_PROMPTS];
     currentPipeline = async (jpeg: Buffer) => {
       const blob = new Blob([jpeg], { type: 'image/jpeg' });
       const image = await RawImage.fromBlob(blob);
-      return classifier(image, candidateLabels) as Promise<Array<{ label: string; score: number }>>;
+      return classifier(image, candidateLabels, {
+        hypothesis_template: PROMPT_TEMPLATE,
+      }) as Promise<Array<{ label: string; score: number }>>;
     };
     return true;
   } catch (err) {
@@ -79,7 +99,9 @@ export async function initClassifier(): Promise<boolean> {
 
 /**
  * Classificeert één crop. Retourneert `null` als er (nog) geen pipeline
- * beschikbaar is, of als de topscore onder `CONFIDENCE_MIN` blijft.
+ * beschikbaar is, als de top-1 een achtergrond-vanger is (`SINK_PROMPTS`),
+ * of als de marge-regel faalt (top-1 < CONFIDENCE_MIN of niet MARGIN_RATIO
+ * keer boven de nummer 2).
  */
 export async function classifyCrop(
   jpeg: Buffer,
@@ -89,16 +111,19 @@ export async function classifyCrop(
   }
   try {
     const scores = await currentPipeline(jpeg);
-    let best: { label: string; score: number } | null = null;
-    for (const s of scores) {
-      if (!best || s.score > best.score) {
-        best = s;
-      }
-    }
+    const sorted = [...scores].sort((a, b) => b.score - a.score);
+    const best = sorted[0];
+    const second = sorted[1];
     if (!best || best.score < CONFIDENCE_MIN) {
       return null;
     }
-    const label = LABELS.find((l) => l.prompt === best!.label);
+    if (second && best.score < MARGIN_RATIO * second.score) {
+      return null;
+    }
+    if ((SINK_PROMPTS as readonly string[]).includes(best.label)) {
+      return null;
+    }
+    const label = LABELS.find((l) => l.prompt === best.label);
     if (!label) {
       return null;
     }
