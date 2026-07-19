@@ -33,6 +33,15 @@ need_modern_node || { echo "ERROR: node >=18 required for vitest." >&2; exit 1; 
 echo "Running server tests..."
 ( cd server && npm test --silent )
 
+# Smoke vóór de push: kan de AI-classifier (onnxruntime, glibc) laden in de
+# verse image? Les van 2026-07-19: Alpine/musl brak dit stil — tests draaien
+# met een gestubde classifier op de host en zien zoiets nooit.
+echo "Smoke: classifier-import in verse image (host-arch)..."
+docker buildx build --platform "linux/$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')" \
+  --builder multiplatform-builder -t opennova-smoke --load .
+docker run --rm --network none --workdir /app/server --entrypoint node opennova-smoke \
+  -e "import('@huggingface/transformers').then(()=>{console.log('smoke OK');process.exit(0)}).catch(e=>{console.error('smoke FAALT:',e.message);process.exit(1)})"
+
 echo "Building + pushing rvbcrs/opennova:beta (amd64 + arm64)..."
 docker buildx build --platform linux/amd64,linux/arm64 \
   --builder multiplatform-builder \
