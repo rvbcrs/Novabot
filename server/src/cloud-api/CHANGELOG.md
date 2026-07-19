@@ -2,6 +2,13 @@
 
 Format: most-recent first. Each entry is dated and names the endpoint(s) affected.
 
+## 2026-07-20 — terrain: uploadSessionFrame seq-cap 20 → 200
+
+- `uploadSessionFrame` accepteert nu `seq` 1..200 (was 1..20). De daemon
+  spreidt opnamepunten min 3 m; 200 is een veiligheidsplafond (~20 MB/sessie
+  max), rotatie blijft 5 sessies per SN. Les van de smoke 2026-07-20: het
+  budget van 20 was op in de eerste tuinhoek.
+
 ## 2026-07-18 — terrain: recognition-batch trigger na object-grid final-fold
 
 - `uploadObjectGrid` (final=1) en `foldActive`'s object-tak roepen nu

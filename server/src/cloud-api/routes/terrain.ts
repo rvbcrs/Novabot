@@ -180,7 +180,7 @@ terrainRouter.post('/uploadObjectGrid', rawBody, (req: Request, res: Response) =
  * POST /api/nova-file-server/terrain/uploadSessionFrame?sn&session&seq&x&y&yaw
  * Body: raw JPEG, max 2 MB. Opgeslagen als
  * STORAGE_PATH/terrain/frames/<sn>/<session>_<seq>.jpg + sidecar
- * <...>.json ({x,y,yaw}). Rotatie: max 20 frames per (sn,session), max 5
+ * <...>.json ({x,y,yaw}). Rotatie: max 200 frames per (sn,session), max 5
  * sessies aan frames per sn (oudste sessie-map weg).
  */
 terrainRouter.post(
@@ -192,7 +192,7 @@ terrainRouter.post(
     const seqRaw = String(req.query.seq ?? '');
     const x = Number(req.query.x), y = Number(req.query.y), yaw = Number(req.query.yaw);
     if (!/^LFI[A-Z]\d+$/.test(sn) || !/^\d+$/.test(session)
-        || !/^([1-9]|1[0-9]|20)$/.test(seqRaw)
+        || !/^([1-9]\d{0,2})$/.test(seqRaw) || Number(seqRaw) > 200
         || ![x, y, yaw].every(Number.isFinite)) {
       res.status(400).json(fail('invalid frame params', 400)); return;
     }

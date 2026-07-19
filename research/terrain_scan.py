@@ -163,7 +163,7 @@ def serialize_objects(objgrid, cell_size):
 
 
 # ── RGB-frame-capture (objectherkenning-plan Task 1) ──
-FRAME_MAX_PER_SESSION = 20
+FRAME_MAX_PER_SESSION = 200  # veiligheidsplafond; de 3m-spreiding is de echte begrenzer
 FRAME_MIN_INTERVAL = 15.0   # s
 FRAME_MIN_OBJ_POINTS = 50   # object-punten in het laatste labeled-frame
 FRAME_MIN_SPREAD_M = 3.0    # min afstand tussen opnamepunten (spreiding over de tuin)
@@ -171,7 +171,7 @@ FRAME_MIN_SPREAD_M = 3.0    # min afstand tussen opnamepunten (spreiding over de
 
 def should_capture_frame(now, last_frame_t, frames_count, last_obj_points,
                          pose=None, captured_poses=()):
-    """RGB-frame bewaren? Alleen met objecten in beeld, gethrottled, max 20,
+    """RGB-frame bewaren? Alleen met objecten in beeld, gethrottled, max 200,
     en ruimtelijk gespreid: min 3 m tussen opnamepunten. Zonder spreiding was
     het budget al op in de eerste tuinhoek terwijl de objecten verderop lagen
     (les smoke 2026-07-20: alle 42 frames oost, alle clusters west)."""

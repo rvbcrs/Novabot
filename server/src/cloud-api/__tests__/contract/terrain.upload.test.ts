@@ -133,8 +133,8 @@ describe('POST /api/nova-file-server/terrain/uploadSessionFrame', () => {
     const app = buildTestApp();
     await request(app).post('/api/nova-file-server/terrain/uploadSessionFrame?sn=../x&session=1&seq=1&x=0&y=0&yaw=0')
       .set('Content-Type', 'application/octet-stream').send(Buffer.from([0xff, 0xd8])).expect(400);
-    await request(app).post('/api/nova-file-server/terrain/uploadSessionFrame?sn=LFIN2230700238&session=1&seq=99&x=0&y=0&yaw=0')
-      .set('Content-Type', 'application/octet-stream').send(Buffer.from([0xff, 0xd8])).expect(400); // seq > 20
+    await request(app).post('/api/nova-file-server/terrain/uploadSessionFrame?sn=LFIN2230700238&session=1&seq=999&x=0&y=0&yaw=0')
+      .set('Content-Type', 'application/octet-stream').send(Buffer.from([0xff, 0xd8])).expect(400); // seq > 200
   });
 
   it('sessie-rotatie evict numeriek oudste, niet lexicografisch oudste', async () => {
