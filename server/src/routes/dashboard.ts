@@ -34,7 +34,7 @@ import fs from 'fs';
 import path from 'path';
 import zlib from 'zlib';
 import { tgm1ToDisplayTgr1, mergeIntoTgm1, tgmoToDisplayTgo1 } from '../services/terrainGrid.js';
-import { loadMergedTgmo } from '../services/terrainRecognition.js';
+import { loadMergedTgmo, runRecognition } from '../services/terrainRecognition.js';
 import { LABELS } from '../services/terrainClassifier.js';
 import { terrainClusterRepo } from '../db/repositories/index.js';
 import { networkInterfaces } from 'os';
@@ -775,6 +775,19 @@ dashboardRouter.get('/terrain-objects/:sn', (req: Request, res: Response) => {
     console.error(`[TERRAIN] object-display ${sn} faalde:`, err);
     res.status(500).json({ error: 'objectdata corrupt' });
   }
+});
+
+// POST /api/dashboard/terrain-clusters/:sn/recognize — handmatige trigger
+// van de herkenningsbatch op de al aanwezige object-grids. Normaal draait
+// die automatisch na de finale sessie-upload; deze route bestaat voor als
+// die run gemist is (bv. server-update tussen upload en batch).
+dashboardRouter.post('/terrain-clusters/:sn/recognize', (req: Request, res: Response) => {
+  const { sn } = req.params;
+  if (!/^LFI[A-Z]\d+$/.test(sn)) { res.status(400).json({ error: 'invalid sn' }); return; }
+  void runRecognition(sn).catch((err) => {
+    console.warn(`[Dashboard] handmatige recognition-run faalde voor ${sn}:`, err instanceof Error ? err.message : err);
+  });
+  res.status(202).json({ started: true });
 });
 
 // GET /api/dashboard/terrain-clusters/:sn — geclusterde objectdetecties +
