@@ -39,7 +39,7 @@ echo "Running server tests..."
 echo "Smoke: classifier-import in verse image (host-arch)..."
 docker buildx build --platform "linux/$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')" \
   --builder multiplatform-builder -t opennova-smoke --load .
-docker run --rm --network none --workdir /app/server --entrypoint node opennova-smoke \
+docker run --rm --platform "linux/$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')" --network none --workdir /app/server --entrypoint node opennova-smoke \
   -e "import('@huggingface/transformers').then(()=>{console.log('smoke OK');process.exit(0)}).catch(e=>{console.error('smoke FAALT:',e.message);process.exit(1)})"
 
 echo "Building + pushing rvbcrs/opennova:beta (amd64 + arm64)..."

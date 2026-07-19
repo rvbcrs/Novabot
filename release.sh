@@ -70,7 +70,7 @@ fi
 echo "Smoke: classifier-import in verse image (host-arch)..."
 docker buildx build --platform "linux/$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')" \
   --builder multiplatform-builder -t opennova-smoke --load "${CACHE_ARGS[@]}" .
-docker run --rm --network none --workdir /app/server --entrypoint node opennova-smoke \
+docker run --rm --platform "linux/$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')" --network none --workdir /app/server --entrypoint node opennova-smoke \
   -e "import('@huggingface/transformers').then(()=>{console.log('smoke OK');process.exit(0)}).catch(e=>{console.error('smoke FAALT:',e.message);process.exit(1)})"
 
 docker buildx build --platform linux/amd64,linux/arm64 \
