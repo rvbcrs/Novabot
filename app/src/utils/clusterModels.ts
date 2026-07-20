@@ -17,6 +17,8 @@ export const CLUSTER_MODELS: Record<string, number> = {
   tree: require('../../assets/models/tree.glb'),
   'bush': require('../../assets/models/bush.glb'),
   'hydrangea': require('../../assets/models/bush.glb'),
+  'swimming pool': require('../../assets/models/pool.glb'),
+  'ball': require('../../assets/models/ball.glb'),
   'garden chair': require('../../assets/models/chair.glb'),
   'garden table': require('../../assets/models/table.glb'),
   'flower pot with plant': require('../../assets/models/flowerpot.glb'),

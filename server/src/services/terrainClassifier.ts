@@ -25,8 +25,8 @@ export const LABELS: Array<{ prompt: string; nl: string; glb: string | null }> =
   { prompt: 'playground equipment', nl: 'Speeltoestel', glb: 'playset.glb' },
   { prompt: 'fence', nl: 'Schutting', glb: null },
   { prompt: 'charging station', nl: 'Laadstation', glb: null },
-  { prompt: 'swimming pool', nl: 'Zwembad', glb: null },
-  { prompt: 'ball', nl: 'Bal', glb: null },
+  { prompt: 'swimming pool', nl: 'Zwembad', glb: 'pool.glb' },
+  { prompt: 'ball', nl: 'Bal', glb: 'ball.glb' },
 ];
 
 /**

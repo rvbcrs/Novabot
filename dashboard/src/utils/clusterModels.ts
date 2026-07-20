@@ -38,8 +38,8 @@ export const CLUSTER_CLASSES: ClusterClass[] = [
   { prompt: 'playground equipment', i18nKey: 'terrain.classPlayset', glb: 'playset.glb', typicalH: 2 },
   { prompt: 'fence', i18nKey: 'terrain.classFence', glb: null },
   { prompt: 'charging station', i18nKey: 'terrain.classChargingStation', glb: null },
-  { prompt: 'swimming pool', i18nKey: 'terrain.classPool', glb: null },
-  { prompt: 'ball', i18nKey: 'terrain.classBall', glb: null },
+  { prompt: 'swimming pool', i18nKey: 'terrain.classPool', glb: 'pool.glb', typicalH: 0.9 },
+  { prompt: 'ball', i18nKey: 'terrain.classBall', glb: 'ball.glb' },
 ];
 
 export function findClusterClass(prompt: string | null | undefined): ClusterClass | undefined {

@@ -103,6 +103,9 @@ const TERRACOTTA = 0xb4552f;
 const METAL_DARK = 0x3a3d40;
 const FABRIC_RED = 0xa8362c;
 const PLASTIC_TEAL = 0x2f6f6a;
+const POOL_BLUE = 0x2f7fb4;
+const POOL_LINER = 0x9fb8c8;
+const BALL_PURPLE = 0x8a4fc0;
 
 function buildTrampoline() {
   const legs = new THREE.Group();
@@ -264,6 +267,20 @@ function buildPlayset() {
   return grp(frameFront, frameBack, topBar, swings);
 }
 
+function buildPool() {
+  // Opzetzwembad: lage cilindrische wand met blauw wateroppervlak + lichte rand.
+  const R = 0.95;
+  const wall = meshAt(new THREE.CylinderGeometry(R, R, 0.5, 24, 1, true), POOL_LINER, [0, 0.25, 0]);
+  const water = meshAt(new THREE.CylinderGeometry(R - 0.05, R - 0.05, 0.02, 24), POOL_BLUE, [0, 0.48, 0]);
+  const rim = meshAt(new THREE.TorusGeometry(R, 0.05, 6, 24), POOL_LINER, [0, 0.5, 0], [Math.PI / 2, 0, 0]);
+  return grp(wall, water, rim);
+}
+
+function buildBall() {
+  // Speelbal: gewoon een bol op de grond.
+  return grp(meshAt(new THREE.SphereGeometry(0.5, 16, 12), BALL_PURPLE, [0, 0.5, 0]));
+}
+
 const MODELS = {
   'trampoline.glb': buildTrampoline,
   'tree.glb': buildTree,
@@ -274,6 +291,8 @@ const MODELS = {
   'barrel.glb': buildBarrel,
   'parasol.glb': buildParasol,
   'playset.glb': buildPlayset,
+  'pool.glb': buildPool,
+  'ball.glb': buildBall,
 };
 
 // ---------------------------------------------------------------------------

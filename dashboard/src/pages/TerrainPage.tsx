@@ -10,6 +10,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { CropThumb } from '../components/CropThumb';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import {
   parseTerrain, parseObjects, LABEL_COLORS, LABEL_DEFAULT_COLOR,
@@ -801,9 +802,7 @@ export default function TerrainPage({ sn }: { sn: string }) {
                 onClick={() => focusCluster(c)}
                 className={`w-full text-left px-1.5 py-1 rounded flex items-center gap-2 hover:bg-white/10 ${actief ? 'bg-white/15' : ''}`}
               >
-                {c.photoUrl
-                  ? <img src={c.photoUrl} alt="" className="w-7 h-7 rounded object-cover shrink-0" />
-                  : <span className="w-7 h-7 rounded bg-white/10 shrink-0" />}
+                <CropThumb url={c.photoUrl} className="w-7 h-7 rounded object-cover shrink-0" />
                 <span className="min-w-0">
                   <span className="block truncate">
                     {klasse ? t(klasse.i18nKey) : t('terrain.objectUnknown')}
@@ -831,7 +830,7 @@ export default function TerrainPage({ sn }: { sn: string }) {
             </button>
           </div>
           {selectedCluster.photoUrl && (
-            <img src={selectedCluster.photoUrl} alt="" className="w-full rounded max-h-32 object-cover" />
+            <CropThumb url={selectedCluster.photoUrl} className="w-full rounded max-h-32 object-cover" />
           )}
           <div className="text-gray-200">
             {selectedClusterClass ? t(selectedClusterClass.i18nKey) : t('terrain.objectUnknown')}
