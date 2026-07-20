@@ -37,10 +37,33 @@ import { runRecognition } from '../../services/terrainRecognition.js';
 
 /** Fire-and-forget triggerpunt voor de objectherkenning-batch (Task 7) —
  *  nooit awaiten, nooit een fout laten doorschieten naar de upload-response. */
-function triggerRecognition(sn: string): void {
-  void runRecognition(sn).catch((err) => {
+function triggerRecognition(sn: string, opts?: { onlyUnclassified?: boolean }): void {
+  void runRecognition(sn, opts).catch((err) => {
     console.warn(`[terrainRecognition] batch faalde voor ${sn}:`, err instanceof Error ? err.message : err);
   });
+}
+
+/**
+ * Live classificeren tijdens het maaien: elke binnenkomende foto kan nieuwe
+ * objecten herkenbaar maken, maar een volledige batch per foto is te duur.
+ * Daarom gethrottled én alleen de nog-niet-geclassificeerde clusters; de
+ * finale run na de sessie evalueert alles opnieuw.
+ */
+const LIVE_MIN_INTERVAL_MS = 60_000;
+const liveLaatste = new Map<string, number>();
+const liveBezig = new Set<string>();
+
+function triggerLiveRecognition(sn: string): void {
+  const nu = Date.now();
+  if (liveBezig.has(sn)) return;
+  if (nu - (liveLaatste.get(sn) ?? 0) < LIVE_MIN_INTERVAL_MS) return;
+  liveLaatste.set(sn, nu);
+  liveBezig.add(sn);
+  void runRecognition(sn, { onlyUnclassified: true })
+    .catch((err) => {
+      console.warn(`[terrainRecognition] live-run faalde voor ${sn}:`, err instanceof Error ? err.message : err);
+    })
+    .finally(() => liveBezig.delete(sn));
 }
 
 const TERRAIN_DIR = path.resolve(process.env.STORAGE_PATH ?? './storage', 'terrain');
@@ -213,6 +236,9 @@ terrainRouter.post(
     for (const old of sessions.slice(0, -5)) {
       for (const f of fs.readdirSync(dir).filter(f => f.startsWith(`${old}_`))) fs.unlinkSync(path.join(dir, f));
     }
+    // Nieuwe foto kan nieuwe objecten herkenbaar maken → live classificeren
+    // (gethrottled, alleen nog-onbekende clusters).
+    triggerLiveRecognition(sn);
     res.json(ok(null));
   },
 );

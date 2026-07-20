@@ -390,6 +390,7 @@ export default function TerrainPage({ sn }: { sn: string }) {
       for (const cl of clusterList) {
         const glb = glbForClass(cl.className);
         if (!glb) continue;
+        const klasse = findClusterClass(cl.className);
         loadClusterModel(glb).then((orig) => {
           if (disposed || epoch !== rebuildEpochRef.current) return; // stale: nieuwe rebuild al bezig
           const clone = orig.clone(true);
@@ -405,7 +406,10 @@ export default function TerrainPage({ sn }: { sn: string }) {
           const g = groundAtRef.current(bboxCx, bboxCy);
           const sx = Math.max(cl.maxX - cl.minX, 0.15);
           const sy = Math.max(cl.maxY - cl.minY, 0.15);
-          const sz = Math.max(cl.maxH - g, 0.1);
+          // Hoogte: gemeten, maar minstens de typische hoogte van de klasse —
+          // de ToF ziet niet hoger dan 1,5 m, dus een boom meet 0,6 m.
+          const gemeten = Math.max(cl.maxH - g, 0.1);
+          const sz = Math.max(gemeten, klasse?.typicalH ?? 0);
           clone.scale.set(sx, sy, sz);
           clone.position.set(bboxCx, bboxCy, g);
           scene.add(clone);

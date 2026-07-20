@@ -1173,6 +1173,33 @@ export async function startMqttBroker(): Promise<void> {
           }
         }
 
+        // mow_zone overlay state — mirror the mower-side `mow_zone`
+        // orchestrator's phase stream (research/documents/
+        // unicom-follow-transit-design.md) into the sensor cache so the app
+        // can derive activity='following_unicom' directly from
+        // deviceState.sensors, same pattern as edge_cut_status above.
+        if (extSn && cmdName === 'mow_zone_status') {
+          const body = parsed[cmdName] as {
+            phase?: string;
+            map?: string;
+            error?: string;
+          };
+          if (body?.phase) {
+            if (!deviceCache.has(extSn)) deviceCache.set(extSn, new Map());
+            const cache = deviceCache.get(extSn)!;
+            const changes = new Map<string, string>();
+            const set = (k: string, v: string | number | null | undefined) => {
+              if (v == null) return;
+              const sv = String(v);
+              cache.set(k, sv);
+              changes.set(k, sv);
+            };
+            set('mow_zone_phase', body.phase);
+            set('mow_zone_map', body.map);
+            forwardToDashboard(extSn, changes);
+          }
+        }
+
         // Authoritative LoRa sync — als de mower zelf zijn LoRa-config
         // rapporteert (via get_lora_info_respond of set_lora_info_respond),
         // is dát de echte waarheid. Cache bijwerken zodat DB nooit meer

@@ -2,6 +2,13 @@
 
 Format: most-recent first. Each entry is dated and names the endpoint(s) affected.
 
+## 2026-07-20 — terrain: live classificeren tijdens het maaien
+
+- `uploadSessionFrame` triggert nu een gethrottelde herkenningsrun
+  (`runRecognition(sn, { onlyUnclassified: true })`, max 1x per 60 s per
+  maaier, nooit parallel). Alleen nog-onbekende clusters worden verwerkt; de
+  finale run na de sessie evalueert alles opnieuw en ruimt wezen op.
+
 ## 2026-07-20 — terrain: uploadSessionFrame seq-cap 20 → 200
 
 - `uploadSessionFrame` accepteert nu `seq` 1..200 (was 1..20). De daemon

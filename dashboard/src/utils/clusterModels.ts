@@ -14,19 +14,28 @@ export interface ClusterClass {
   i18nKey: string;
   /** bestandsnaam in dashboard/public/models/<naam>.glb, of null = geen 3D-model (blijft voxels) */
   glb: string | null;
+  /**
+   * Typische hoogte in meters voor het 3D-model. De ToF-camera kapt af op
+   * 1,5 m en ziet van een boom alleen de stamvoet (gemeten 0,6 m), waardoor
+   * een op de meting geschaald model als bonsai naast een haag van 0,7 m
+   * staat. Voor zulke klassen is de typische hoogte eerlijker dan de meting;
+   * het model wordt geschaald op max(gemeten, typisch). Weglaten = puur op
+   * de meting schalen (voor objecten die de maaier wél helemaal ziet).
+   */
+  typicalH?: number;
 }
 
 export const CLUSTER_CLASSES: ClusterClass[] = [
   { prompt: 'trampoline', i18nKey: 'terrain.classTrampoline', glb: 'trampoline.glb' },
-  { prompt: 'tree', i18nKey: 'terrain.classTree', glb: 'tree.glb' },
+  { prompt: 'tree', i18nKey: 'terrain.classTree', glb: 'tree.glb', typicalH: 3 },
   { prompt: 'bush', i18nKey: 'terrain.classBush', glb: 'bush.glb' },
   { prompt: 'hydrangea', i18nKey: 'terrain.classHydrangea', glb: 'bush.glb' },
   { prompt: 'garden chair', i18nKey: 'terrain.classChair', glb: 'chair.glb' },
   { prompt: 'garden table', i18nKey: 'terrain.classTable', glb: 'table.glb' },
   { prompt: 'flower pot with plant', i18nKey: 'terrain.classFlowerpot', glb: 'flowerpot.glb' },
   { prompt: 'wooden barrel', i18nKey: 'terrain.classBarrel', glb: 'barrel.glb' },
-  { prompt: 'parasol', i18nKey: 'terrain.classParasol', glb: 'parasol.glb' },
-  { prompt: 'playground equipment', i18nKey: 'terrain.classPlayset', glb: 'playset.glb' },
+  { prompt: 'parasol', i18nKey: 'terrain.classParasol', glb: 'parasol.glb', typicalH: 2.2 },
+  { prompt: 'playground equipment', i18nKey: 'terrain.classPlayset', glb: 'playset.glb', typicalH: 2 },
   { prompt: 'fence', i18nKey: 'terrain.classFence', glb: null },
   { prompt: 'charging station', i18nKey: 'terrain.classChargingStation', glb: null },
   { prompt: 'swimming pool', i18nKey: 'terrain.classPool', glb: null },

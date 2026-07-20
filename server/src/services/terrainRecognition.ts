@@ -105,7 +105,10 @@ function pickBestFrame(
  * `user_override` worden overgeslagen voor crop/classify (de override wint
  * toch altijd) maar krijgen wel hun geometrie ververst.
  */
-export async function runRecognition(sn: string): Promise<number> {
+export async function runRecognition(
+  sn: string,
+  opts?: { onlyUnclassified?: boolean },
+): Promise<number> {
   const ready = await initClassifier();
   if (!ready) return 0;
 
@@ -131,6 +134,9 @@ export async function runRecognition(sn: string): Promise<number> {
   for (const cluster of clusters) {
     try {
       const row = existingByKey.get(cluster.key);
+      if (opts?.onlyUnclassified && (row?.class_name || row?.user_override)) {
+        continue;  // live-run: alleen nog-onbekende objecten kosten tijd
+      }
       const geometry = {
         mower_sn: sn,
         cluster_key: cluster.key,
@@ -194,10 +200,9 @@ export async function runRecognition(sn: string): Promise<number> {
   // opknippen van een te groot component in tegels) niet meer bestaan,
   // moeten uit de tabel — anders blijven ze met hun oude geometrie én
   // eventuele handmatige correctie op de kaart liggen.
-  const verwijderd = terrainClusterRepo.deleteMissingForSn(
-    sn,
-    clusters.map((c) => c.key),
-  );
+  const verwijderd = opts?.onlyUnclassified
+    ? 0  // live-run raakt bestaande rijen niet aan
+    : terrainClusterRepo.deleteMissingForSn(sn, clusters.map((c) => c.key));
   if (verwijderd > 0) {
     console.log(`[terrainRecognition] ${verwijderd} verouderde cluster(s) opgeruimd voor ${sn}`);
   }

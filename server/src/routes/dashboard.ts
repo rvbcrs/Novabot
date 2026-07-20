@@ -35,6 +35,7 @@ import path from 'path';
 import zlib from 'zlib';
 import { tgm1ToDisplayTgr1, mergeIntoTgm1, tgmoToDisplayTgo1 } from '../services/terrainGrid.js';
 import { loadMergedTgmo, runRecognition } from '../services/terrainRecognition.js';
+import { groupClusters, groupKeysFor } from '../services/terrainClusterGroups.js';
 import { LABELS } from '../services/terrainClassifier.js';
 import { terrainClusterRepo } from '../db/repositories/index.js';
 import { networkInterfaces } from 'os';
@@ -797,24 +798,27 @@ dashboardRouter.post('/terrain-clusters/:sn/recognize', (req: Request, res: Resp
 dashboardRouter.get('/terrain-clusters/:sn', (req: Request, res: Response) => {
   const { sn } = req.params;
   if (!/^LFI[A-Z]\d+$/.test(sn)) { res.status(400).json({ error: 'invalid sn' }); return; }
-  const clusters = terrainClusterRepo.findBySn(sn).map((row) => {
-    const className = row.user_override ?? row.class_name;
-    const nl = className ? (LABELS.find((l) => l.prompt === className)?.nl ?? null) : null;
+  // Aangrenzende tegels met dezelfde klasse worden één object: een zwembad
+  // dat over vijf tegels ligt hoort één ding op de kaart te zijn, met één
+  // correctie (zie terrainClusterGroups.ts).
+  const clusters = groupClusters(terrainClusterRepo.findBySn(sn)).map((g) => {
+    const nl = g.className ? (LABELS.find((l) => l.prompt === g.className)?.nl ?? null) : null;
     return {
-      key: row.cluster_key,
-      cx: row.cx,
-      cy: row.cy,
-      minX: row.min_x,
-      minY: row.min_y,
-      maxX: row.max_x,
-      maxY: row.max_y,
-      cells: row.cells,
-      maxH: row.max_h,
-      className,
+      key: g.keys[0],
+      keys: g.keys,
+      cx: g.cx,
+      cy: g.cy,
+      minX: g.minX,
+      minY: g.minY,
+      maxX: g.maxX,
+      maxY: g.maxY,
+      cells: g.cells,
+      maxH: g.maxH,
+      className: g.className,
       nl,
-      confidence: row.confidence,
-      userOverride: row.user_override,
-      photoUrl: row.crop_file ? `/api/dashboard/terrain-crops/${sn}/${row.crop_file}` : null,
+      confidence: g.confidence,
+      userOverride: g.userOverride,
+      photoUrl: g.cropKey ? `/api/dashboard/terrain-crops/${sn}/${g.cropKey}.jpg` : null,
     };
   });
   res.json({ clusters });
@@ -825,7 +829,9 @@ dashboardRouter.get('/terrain-clusters/:sn', (req: Request, res: Response) => {
 // path-traversal-guard — geen DB-lookup nodig om de bytes te serveren.
 dashboardRouter.get('/terrain-crops/:sn/:file', (req: Request, res: Response) => {
   const { sn, file } = req.params;
-  if (!/^LFI[A-Z]\d+$/.test(sn) || !/^[0-9,-]+\.jpg$/.test(file)) {
+  // 't'-prefix hoort bij tegel-sleutels (clusterObjects knipt grote
+  // componenten op); zonder die letter kregen alle tegelfoto's een 400.
+  if (!/^LFI[A-Z]\d+$/.test(sn) || !/^t?[0-9,-]+\.jpg$/.test(file)) {
     res.status(400).json({ error: 'invalid path' }); return;
   }
   const dir = path.resolve(process.env.STORAGE_PATH ?? './storage', 'terrain');
@@ -844,10 +850,14 @@ dashboardRouter.post('/terrain-clusters/:sn/:key/override', (req: Request, res: 
   if (className !== null && !LABELS.some((l) => l.prompt === className)) {
     res.status(400).json({ error: 'onbekende className' }); return;
   }
-  const exists = terrainClusterRepo.findBySn(sn).some((r) => r.cluster_key === key);
-  if (!exists) { res.status(404).json({ error: 'cluster niet gevonden' }); return; }
-  terrainClusterRepo.setOverride(sn, key, className ?? null);
-  res.json({ ok: true });
+  const rows = terrainClusterRepo.findBySn(sn);
+  if (!rows.some((r) => r.cluster_key === key)) {
+    res.status(404).json({ error: 'cluster niet gevonden' }); return;
+  }
+  // Correctie geldt voor het hele object: alle tegels van dezelfde groep.
+  const keys = groupKeysFor(rows, key);
+  for (const k of keys) terrainClusterRepo.setOverride(sn, k, className ?? null);
+  res.json({ ok: true, updated: keys.length });
 });
 
 // GET /api/dashboard/planned-path/:sn — planned mowing path

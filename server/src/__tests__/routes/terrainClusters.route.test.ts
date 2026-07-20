@@ -109,11 +109,40 @@ describe('GET /api/dashboard/terrain-clusters/:sn', () => {
     const res = await request(app).get(`/api/dashboard/terrain-clusters/${SN}`);
     expect(res.status).toBe(200);
     expect(res.body.clusters).toEqual([{
-      key: '1,2', cx: 1.2, cy: 3.4, minX: 1, minY: 3, maxX: 2, maxY: 4,
+      key: '1,2', keys: ['1,2'], cx: 1.2, cy: 3.4, minX: 1, minY: 3, maxX: 2, maxY: 4,
       cells: 40, maxH: 0.6,
       className: 'trampoline', nl: 'Trampoline', confidence: 0.62,
       userOverride: null, photoUrl: `/api/dashboard/terrain-crops/${SN}/1,2.jpg`,
     }]);
+  });
+
+  it('correctie op één tegel geldt voor het hele samengevoegde object', async () => {
+    // Twee aangrenzende tegels met dezelfde klasse = één object; corrigeer je
+    // er één, dan hoort de buur mee te gaan (les 2026-07-20: het zwembad bleef
+    // anders als losse trampolines liggen).
+    const SN2 = 'LFIN0000000022';
+    const tegel = (key: string, minX: number) => ({
+      mower_sn: SN2, cluster_key: key, cx: minX + 1, cy: 1,
+      min_x: minX, min_y: 0, max_x: minX + 2, max_y: 2,
+      cells: 50, max_h: 0.5,
+      class_name: 'trampoline', confidence: 0.4, crop_file: `${key}.jpg`,
+    });
+    terrainClusterRepo.upsert(tegel('t0,0', 0));
+    terrainClusterRepo.upsert(tegel('t1,0', 2));
+
+    const lijst = await request(app).get(`/api/dashboard/terrain-clusters/${SN2}`);
+    expect(lijst.body.clusters).toHaveLength(1);           // één object, niet twee
+    expect(lijst.body.clusters[0].keys).toHaveLength(2);
+
+    const res = await request(app)
+      .post(`/api/dashboard/terrain-clusters/${SN2}/t0,0/override`)
+      .send({ className: 'swimming pool' });
+    expect(res.status).toBe(200);
+    expect(res.body.updated).toBe(2);
+
+    const na = await request(app).get(`/api/dashboard/terrain-clusters/${SN2}`);
+    expect(na.body.clusters).toHaveLength(1);
+    expect(na.body.clusters[0].className).toBe('swimming pool');
   });
 
   it('className = override (wint van het model) en nl volgt de override', async () => {
@@ -148,6 +177,18 @@ describe('GET /api/dashboard/terrain-crops/:sn/:file', () => {
   it('404 als de foto niet bestaat', async () => {
     const res = await request(app).get(`/api/dashboard/terrain-crops/${SN}/9,9.jpg`);
     expect(res.status).toBe(404);
+  });
+
+  it('accepteert tegel-sleutels met t-prefix (404, niet 400)', async () => {
+    // Tegels heten 't<x>,<y>'; die vielen eerder buiten de whitelist waardoor
+    // ELKE tegelfoto een 400 gaf (les 2026-07-20).
+    const res = await request(app).get(`/api/dashboard/terrain-crops/${SN}/t0,-7.jpg`);
+    expect(res.status).toBe(404);
+  });
+
+  it('400 bij een letter die geen t-prefix is', async () => {
+    const res = await request(app).get(`/api/dashboard/terrain-crops/${SN}/x0,-7.jpg`);
+    expect(res.status).toBe(400);
   });
 
   it('200 met de jpeg-bytes als de foto bestaat', async () => {
