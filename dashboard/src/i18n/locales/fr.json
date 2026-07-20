@@ -380,7 +380,9 @@
     "classChargingStation": "Station de charge",
     "classPool": "Piscine",
     "classHydrangea": "Hortensia",
-    "classBall": "Ballon"
+    "classBall": "Ballon",
+    "objectListTitle": "Objets détectés",
+    "objectCorrected": "corrigé"
   },
   "schedule": {
     "title": "Planifications de tonte",

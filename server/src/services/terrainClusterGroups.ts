@@ -42,8 +42,15 @@ export interface ClusterGroup {
   userOverride: string | null;
 }
 
-/** Speling waarbinnen twee tegels als buren gelden (tegelraster is 2 m). */
-const GAP_M = 0.3;
+/**
+ * Speling waarbinnen twee tegels als buren gelden. Ruim genomen (3 m, meer
+ * dan een tegel breed) omdat één fysiek object vaak in stukken uiteenvalt:
+ * het zwembad lag als twee groepen 2,5 m uit elkaar doordat de tussentegels
+ * niet herkend werden (les 2026-07-20). Alleen tegels met DEZELFDE klasse
+ * worden samengevoegd, dus twee losse struiken van dezelfde soort binnen 3 m
+ * worden bewust ook één object — dat is de prijs van deze keuze.
+ */
+const GAP_M = 3.0;
 
 function effectiveClass(row: GroupableRow): string | null {
   return row.user_override ?? row.class_name;

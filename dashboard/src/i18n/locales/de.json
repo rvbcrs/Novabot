@@ -380,7 +380,9 @@
     "classChargingStation": "Ladestation",
     "classPool": "Pool",
     "classHydrangea": "Hortensie",
-    "classBall": "Ball"
+    "classBall": "Ball",
+    "objectListTitle": "Erkannte Objekte",
+    "objectCorrected": "korrigiert"
   },
   "schedule": {
     "title": "Mähpläne",

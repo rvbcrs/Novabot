@@ -273,6 +273,7 @@ export default function TerrainPage({ sn }: { sn: string }) {
   const terrainMeshRef = useRef<THREE.Mesh | null>(null);
   const voxelMeshesRef = useRef<Map<string, THREE.InstancedMesh>>(new Map());
   const modelInstancesRef = useRef<Map<string, THREE.Object3D>>(new Map());
+  const outlinesRef = useRef<Map<string, THREE.Object3D>>(new Map());
   const groundAtRef = useRef<(x: number, y: number) => number>(() => 0);
   const markerRef = useRef<THREE.Mesh | null>(null);
   const trailLineRef = useRef<THREE.Line | null>(null);
@@ -284,6 +285,9 @@ export default function TerrainPage({ sn }: { sn: string }) {
   // her-fetcht en de scene lokaal herbouwt via rebuildAllRef, zonder een
   // volledige terrain-refetch nodig te hebben).
   const terrainDataRef = useRef<TerrainData | null>(null);
+  // Camera + controls bewaren zodat de objectenlijst naar een object kan vliegen.
+  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
+  const controlsRef = useRef<OrbitControls | null>(null);
   const objectsDataRef = useRef<ObjectData | null>(null);
   const clustersRef = useRef<TerrainCluster[]>([]);
   const rebuildEpochRef = useRef(0);
@@ -385,8 +389,43 @@ export default function TerrainPage({ sn }: { sn: string }) {
     // async+gecached (modelLoadCache) — een `epoch`-check voorkomt dat een
     // trage load na een ondertussen alwéér gestarte rebuild alsnog een stale
     // model toevoegt.
+    /**
+     * Markeert herkende objecten met een dunne omranding op hun bbox, zodat
+     * je op de kaart ziet WAAR iets herkend is — zonder die rand is een
+     * herkend zwembad niet te onderscheiden van willekeurige voxels.
+     */
+    function buildClusterOutlines(scene: THREE.Scene, clusterList: TerrainCluster[]): void {
+      for (const [, obj] of outlinesRef.current) {
+        scene.remove(obj);
+        (obj as THREE.LineSegments).geometry.dispose();
+      }
+      outlinesRef.current.clear();
+      for (const cl of clusterList) {
+        if (!cl.className) continue;
+        const cx = (cl.minX + cl.maxX) / 2;
+        const cy = (cl.minY + cl.maxY) / 2;
+        const g = groundAtRef.current(cx, cy);
+        const h = Math.max(cl.maxH - g, 0.2);
+        const geo = new THREE.BoxGeometry(
+          Math.max(cl.maxX - cl.minX, 0.2),
+          Math.max(cl.maxY - cl.minY, 0.2),
+          h,
+        );
+        const edges = new THREE.LineSegments(
+          new THREE.EdgesGeometry(geo),
+          new THREE.LineBasicMaterial({ color: 0xffd24a, transparent: true, opacity: 0.85 }),
+        );
+        geo.dispose();
+        edges.position.set(cx, cy, g + h / 2);
+        edges.userData.clusterKey = cl.key;
+        scene.add(edges);
+        outlinesRef.current.set(cl.key, edges);
+      }
+    }
+
     function buildClusterModels(scene: THREE.Scene, clusterList: TerrainCluster[], epoch: number): void {
       removeClusterModels(scene, modelInstancesRef.current);
+      buildClusterOutlines(scene, clusterList);
       for (const cl of clusterList) {
         const glb = glbForClass(cl.className);
         if (!glb) continue;
@@ -555,6 +594,8 @@ export default function TerrainPage({ sn }: { sn: string }) {
       camera.up.set(0, 0, 1);
       const controls = new OrbitControls(camera, renderer.domElement);
       controls.target.copy(center);
+      cameraRef.current = camera;
+      controlsRef.current = controls;
 
       const animate = () => {
         frameId = requestAnimationFrame(animate);
@@ -694,6 +735,30 @@ export default function TerrainPage({ sn }: { sn: string }) {
   const selectedCluster = selectedKey ? clusters.find((c) => c.key === selectedKey) ?? null : null;
   const selectedClusterClass = selectedCluster ? findClusterClass(selectedCluster.className) : undefined;
 
+  // Alleen herkende objecten in de lijst: onbekende clusters zijn voxels
+  // zonder naam en zouden de lijst met honderden regels vullen.
+  const namedClusters = clusters
+    .filter((c) => c.className)
+    .sort((a, b) => b.cells - a.cells);
+
+  /** Camera naar een object toe bewegen en het selecteren. */
+  function focusCluster(c: TerrainCluster): void {
+    setSelectedKey(c.key);
+    const cam = cameraRef.current;
+    const ctr = controlsRef.current;
+    if (!cam || !ctr) return;
+    const cx = (c.minX + c.maxX) / 2;
+    const cy = (c.minY + c.maxY) / 2;
+    const cz = groundAtRef.current(cx, cy);
+    // Afstand meeschalen met de objectgrootte, met een ondergrens zodat een
+    // klein object niet tot in de voxels wordt ingezoomd.
+    const span = Math.max(c.maxX - c.minX, c.maxY - c.minY, 1);
+    const dist = Math.max(span * 3, 6);
+    ctr.target.set(cx, cy, cz);
+    cam.position.set(cx, cy - dist, cz + dist * 0.7);
+    ctr.update();
+  }
+
   return (
     <div className="h-full w-full relative">
       {status === 'loading' && <div className="absolute inset-0 flex items-center justify-center text-gray-400">Terrein laden…</div>}
@@ -720,6 +785,37 @@ export default function TerrainPage({ sn }: { sn: string }) {
               {group.label}
             </label>
           ))}
+        </div>
+      )}
+      {status === 'ready' && namedClusters.length > 0 && (
+        <div className="absolute top-3 left-3 bg-black/60 text-xs text-gray-200 rounded-lg p-2 backdrop-blur pointer-events-auto w-56 max-h-[45vh] overflow-y-auto">
+          <div className="font-medium text-gray-300 px-1 pb-1.5">
+            {t('terrain.objectListTitle')} ({namedClusters.length})
+          </div>
+          {namedClusters.map((c) => {
+            const klasse = findClusterClass(c.className);
+            const actief = c.key === selectedKey;
+            return (
+              <button
+                key={c.key}
+                onClick={() => focusCluster(c)}
+                className={`w-full text-left px-1.5 py-1 rounded flex items-center gap-2 hover:bg-white/10 ${actief ? 'bg-white/15' : ''}`}
+              >
+                {c.photoUrl
+                  ? <img src={c.photoUrl} alt="" className="w-7 h-7 rounded object-cover shrink-0" />
+                  : <span className="w-7 h-7 rounded bg-white/10 shrink-0" />}
+                <span className="min-w-0">
+                  <span className="block truncate">
+                    {klasse ? t(klasse.i18nKey) : t('terrain.objectUnknown')}
+                  </span>
+                  <span className="block text-[10px] text-gray-400">
+                    {(c.maxX - c.minX).toFixed(1)}×{(c.maxY - c.minY).toFixed(1)} m
+                    {c.userOverride ? ` · ${t('terrain.objectCorrected')}` : ''}
+                  </span>
+                </span>
+              </button>
+            );
+          })}
         </div>
       )}
       {selectedCluster && (

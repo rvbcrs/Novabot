@@ -443,7 +443,9 @@
     "classChargingStation": "Laadstation",
     "classPool": "Zwembad",
     "classHydrangea": "Hortensia",
-    "classBall": "Bal"
+    "classBall": "Bal",
+    "objectListTitle": "Herkende objecten",
+    "objectCorrected": "gecorrigeerd"
   },
   "schedule": {
     "title": "Maaischema's",

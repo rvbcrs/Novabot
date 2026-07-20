@@ -37,12 +37,21 @@ describe('groupClusters', () => {
     expect(groepen).toHaveLength(2);
   });
 
-  it('voegt niet-aangrenzende tegels van dezelfde klasse niet samen', () => {
+  it('voegt ver uit elkaar liggende tegels van dezelfde klasse niet samen', () => {
     const groepen = groupClusters([
       tegel('a', 0, 0, 'bush'),
       tegel('ver', 9, 9, 'bush'),
     ]);
     expect(groepen).toHaveLength(2);
+  });
+
+  it('overbrugt een gat van 2,5 m tussen tegels van dezelfde klasse', () => {
+    // Het zwembad lag in twee stukken met onherkende tegels ertussen; met een
+    // marge van 3 m horen die weer bij elkaar (les 2026-07-20).
+    const a = tegel('a', 0, 0, 'swimming pool');
+    const b = { ...tegel('b', 0, 0, 'swimming pool'), cluster_key: 'b',
+                min_x: 4.5, max_x: 6.5, cx: 5.5 };
+    expect(groupClusters([a, b])).toHaveLength(1);
   });
 
   it('een correctie bepaalt de groep, niet de modelklasse', () => {

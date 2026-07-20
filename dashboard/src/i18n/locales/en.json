@@ -396,7 +396,9 @@
     "classChargingStation": "Charging station",
     "classPool": "Swimming pool",
     "classHydrangea": "Hydrangea",
-    "classBall": "Ball"
+    "classBall": "Ball",
+    "objectListTitle": "Detected objects",
+    "objectCorrected": "corrected"
   },
   "schedule": {
     "title": "Mowing Schedules",
