@@ -164,17 +164,22 @@ def serialize_objects(objgrid, cell_size):
 
 # ── RGB-frame-capture (objectherkenning-plan Task 1) ──
 FRAME_MAX_PER_SESSION = 200  # veiligheidsplafond; de 3m-spreiding is de echte begrenzer
-FRAME_MIN_INTERVAL = 15.0   # s
+# 1 s ontdubbelt alleen opeenvolgende camera-frames; de 3m-spreiding is de
+# echte begrenzer. Stond op 15 s en dat vocht met de spreiding: fotografeerde
+# de maaier struik A, dan werd boom B 4 m verderop (ruim buiten 3 m) tóch
+# geweigerd als er nog geen 15 s voorbij waren — waarna hij B alweer voorbij
+# was. Gevolg: één full-garden maaibeurt gaf maar 20 foto's (les 2026-07-20).
+FRAME_MIN_INTERVAL = 1.0    # s
 FRAME_MIN_OBJ_POINTS = 50   # object-punten in het laatste labeled-frame
 FRAME_MIN_SPREAD_M = 3.0    # min afstand tussen opnamepunten (spreiding over de tuin)
 
 
 def should_capture_frame(now, last_frame_t, frames_count, last_obj_points,
                          pose=None, captured_poses=()):
-    """RGB-frame bewaren? Alleen met objecten in beeld, gethrottled, max 200,
-    en ruimtelijk gespreid: min 3 m tussen opnamepunten. Zonder spreiding was
-    het budget al op in de eerste tuinhoek terwijl de objecten verderop lagen
-    (les smoke 2026-07-20: alle 42 frames oost, alle clusters west)."""
+    """RGB-frame bewaren? Alleen met objecten in beeld, licht ontdubbeld,
+    max 200, en ruimtelijk gespreid: min 3 m tussen opnamepunten. De spreiding
+    is de echte begrenzer (les smoke 2026-07-20: alle 42 frames oost, alle
+    clusters west; daarna: 15s-interval kapte een full-garden mow op 20)."""
     if not (frames_count < FRAME_MAX_PER_SESSION
             and now - last_frame_t >= FRAME_MIN_INTERVAL
             and last_obj_points >= FRAME_MIN_OBJ_POINTS):
@@ -331,7 +336,9 @@ def main():
           "last_data": 0.0, "tof_frames": 0,
           "obj": {}, "session": None, "last_live": 0.0, "last_obj_frame": 0.0,
           "frame_count": 0, "frame_poses": [], "last_frame_t": 0.0,
-          "last_obj_points": 0, "last_frame_warn_t": 0.0}
+          "last_obj_points": 0, "last_frame_warn_t": 0.0,
+          "rgb_seen": 0, "rgb_no_pose": 0, "rgb_rej_interval": 0,
+          "rgb_rej_noobj": 0, "rgb_rej_spread": 0, "rgb_rej_cap": 0}
 
     def on_odom(msg):
         p = msg.pose.pose
@@ -397,14 +404,22 @@ def main():
 
     def on_rgb(msg):
         now = time.time()
+        st["rgb_seen"] += 1
         if st["pose"] is None or now - st["pose_t"] > POSE_MAX_AGE:
+            st["rgb_no_pose"] += 1
             return
         if st["session"] is None:
             return  # zonder sessie-id is een frame niet te correleren
-        if not should_capture_frame(now, st["last_frame_t"], st["frame_count"],
-                                    st["last_obj_points"], st["pose"],
-                                    st["frame_poses"]):
-            return
+        # Diagnose: waarom wordt een frame NIET bewaard? (gelogd bij flush)
+        if now - st["last_frame_t"] < FRAME_MIN_INTERVAL:
+            st["rgb_rej_interval"] += 1; return
+        if st["last_obj_points"] < FRAME_MIN_OBJ_POINTS:
+            st["rgb_rej_noobj"] += 1; return
+        if any(math.hypot(st["pose"][0] - p[0], st["pose"][1] - p[1]) < FRAME_MIN_SPREAD_M
+               for p in st["frame_poses"]):
+            st["rgb_rej_spread"] += 1; return
+        if st["frame_count"] >= FRAME_MAX_PER_SESSION:
+            st["rgb_rej_cap"] += 1; return
         st["last_frame_t"] = now
         st["frame_count"] += 1
         st["frame_poses"].append(st["pose"])
@@ -488,6 +503,12 @@ def main():
                     f.write(serialize_objects(st["obj"], CELL))
                 node.get_logger().info(
                     f"terrain: objectsessie {path_o} ({len(st['obj'])} entries)")
+            node.get_logger().info(
+                f"terrain: frame-diag rgb_gezien={st['rgb_seen']} "
+                f"bewaard={st['frame_count']} | afgewezen: "
+                f"geen_pose={st['rgb_no_pose']} interval={st['rgb_rej_interval']} "
+                f"geen_object={st['rgb_rej_noobj']} spreiding={st['rgb_rej_spread']} "
+                f"cap={st['rgb_rej_cap']}")
             _upload_frames()
             _rotate_sessions()
         except Exception as e:  # noqa: BLE001 — disk-IO mag de daemon nooit killen
@@ -499,6 +520,8 @@ def main():
             st["session"] = None
             # frames zelf staan op schijf en blijven wachten tot ze geüpload
             # zijn; alleen de sessie-teller en spreidings-historie resetten
+            st["rgb_seen"] = st["rgb_no_pose"] = st["rgb_rej_interval"] = 0
+            st["rgb_rej_noobj"] = st["rgb_rej_spread"] = st["rgb_rej_cap"] = 0
             st["frame_count"] = 0
             st["frame_poses"] = []
             st["last_obj_points"] = 0
