@@ -41,3 +41,28 @@ describe('clusterObjects', () => {
     expect(clusterObjects(parseTgo1(tgo1(cells)))[0].key).toBe('1,2');
   });
 });
+
+describe('grote componenten opknippen', () => {
+  it('splitst een aaneengesloten strook van >2.5m in tegels van max 2m', () => {
+    // 100 cellen breed (5m bij 5cm) x 10 diep: één component, te breed.
+    const cells = new Map<string, { maxH: number; cnt: number }>();
+    for (let ix = 0; ix < 100; ix++) {
+      for (let iy = 0; iy < 10; iy++) cells.set(`${ix},${iy},1`, { maxH: 0.5, cnt: 3 });
+    }
+    const out = clusterObjects({ cellSize: 0.05, cells } as never);
+    expect(out.length).toBeGreaterThan(1);
+    for (const c of out) {
+      expect(c.maxX - c.minX).toBeLessThanOrEqual(2.0 + 1e-9);
+      expect(c.key.startsWith('t')).toBe(true);
+    }
+    expect(out.reduce((n, c) => n + c.cells, 0)).toBe(1000);
+  });
+
+  it('laat een klein object ongemoeid (één cluster, oude key-vorm)', () => {
+    const cells = new Map<string, { maxH: number; cnt: number }>();
+    for (let ix = 0; ix < 8; ix++) for (let iy = 0; iy < 4; iy++) cells.set(`${ix},${iy},1`, { maxH: 0.4, cnt: 2 });
+    const out = clusterObjects({ cellSize: 0.05, cells } as never);
+    expect(out).toHaveLength(1);
+    expect(out[0].key.startsWith('t')).toBe(false);
+  });
+});
