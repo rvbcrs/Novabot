@@ -98,4 +98,36 @@ describe('groupClusters', () => {
     expect(groupKeysFor(rijen, 'los')).toEqual(['los']);
     expect(groupKeysFor(rijen, 'onbekend')).toEqual(['onbekend']);
   });
+
+  it('overlappende clusters van verschillende klasse worden één object (dominante klasse wint)', () => {
+    // Het zwembad: deels 'swimming pool' (veel cellen), deels 'trampoline'
+    // (weinig cellen) op overlappende bboxen → één zwembad, geen dubbel model.
+    const pool = { ...tegel('pool', 0, 0, 'swimming pool', null, 700),
+                   min_x: 0, max_x: 2, min_y: 0, max_y: 2, cx: 1, cy: 1 };
+    const tramp = { ...tegel('tramp', 0, 0, 'trampoline', null, 60),
+                    min_x: 0.5, max_x: 2.5, min_y: 0.5, max_y: 2.5, cx: 1.5, cy: 1.5 };
+    const groepen = groupClusters([pool, tramp]);
+    expect(groepen).toHaveLength(1);
+    expect(groepen[0].className).toBe('swimming pool');
+    expect(groepen[0].keys.sort()).toEqual(['pool', 'tramp']);
+  });
+
+  it('rakende rastertegels van verschillende klasse blijven los (geen overlap)', () => {
+    // Tegels delen een rand (overlap 0) → mogen NIET op de overlap-regel
+    // samengaan, anders wordt de hele border weer één blob.
+    const a = { ...tegel('a', 0, 0, 'bush'), min_x: 0, max_x: 2, cx: 1 };
+    const b = { ...tegel('b', 0, 0, 'tree'), min_x: 2, max_x: 4, cx: 3 };
+    expect(groupClusters([a, b])).toHaveLength(2);
+  });
+
+  it('override wint als dominante klasse bij een overlappende groep', () => {
+    const pool = { ...tegel('pool', 0, 0, 'trampoline', 'swimming pool', 700),
+                   min_x: 0, max_x: 2, min_y: 0, max_y: 2, cx: 1, cy: 1 };
+    const tramp = { ...tegel('tramp', 0, 0, 'trampoline', null, 60),
+                    min_x: 0.5, max_x: 2.5, min_y: 0.5, max_y: 2.5, cx: 1.5, cy: 1.5 };
+    const g = groupClusters([pool, tramp])[0];
+    expect(g.className).toBe('swimming pool');
+    expect(g.userOverride).toBe('swimming pool');
+  });
+
 });

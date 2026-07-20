@@ -1,12 +1,20 @@
 /**
- * Aangrenzende tegels met dezelfde klasse samenvoegen tot één object.
+ * Clusters samenvoegen tot objecten voor de viewers.
  *
- * Sinds grote componenten in tegels van 2 m worden opgeknipt bestaat één
- * fysiek object (zwembad, haag) uit meerdere tegels. Elk kreeg een eigen
- * classificatie én een eigen correctie — corrigeer je er één, dan blijven de
- * buren op de oude klasse staan (les 2026-07-20: zwembad bleef als vijf
- * trampolines op de kaart liggen). De DB blijft per tegel; de viewers zien
- * één object per groep en een correctie geldt voor de hele groep.
+ * Twee soorten samenvoeging, allebei nodig door het opknippen in tegels:
+ *
+ *  1. OVERLAP (elke klasse): één fysiek object valt vaak in stukken uiteen die
+ *     ELKAAR OVERLAPPEN met verschillende labels — het zwembad werd deels
+ *     "zwembad", deels "trampoline" op overlappende cellen, waardoor twee
+ *     modellen door elkaar heen stonden (les 2026-07-20-avond). Overlappende
+ *     clusters horen bij hetzelfde object; de dominante klasse (meeste cellen)
+ *     wint.
+ *  2. GELIJKE KLASSE, aangrenzend (binnen GAP_M): een lange haag valt in
+ *     tegels uiteen die niet overlappen maar wel raken; die horen als één
+ *     object getekend en met één correctie bijgewerkt.
+ *
+ * De DB blijft per tegel; de viewers zien één object per groep en een
+ * correctie geldt voor de hele groep.
  */
 
 export interface GroupableRow {
@@ -43,20 +51,29 @@ export interface ClusterGroup {
 }
 
 /**
- * Speling waarbinnen twee tegels als buren gelden. 1 m overbrugt kleine
- * gaten in een doorlopend object (een haag met één gemiste tussentegel) maar
- * merget GEEN losse detecties die 2-3 m uit elkaar liggen. 3 m bleek te ruim:
- * de trampoline werd één uitgerekte blob doordat een losse detectie 2,5 m
- * noordelijker meegetrokken werd, waardoor het model naast de ronde
- * uitsparing kwam te staan (les 2026-07-20-avond).
+ * Speling waarbinnen twee tegels van DEZELFDE klasse als buren gelden. 1 m
+ * overbrugt kleine gaten in een doorlopend object (een haag met één gemiste
+ * tussentegel) maar merget geen losse detecties 2-3 m verderop.
  */
 const GAP_M = 1.0;
+
+/** Minimale bbox-overlap (m, beide assen) om clusters als hetzelfde fysieke
+ *  object te zien. Rastertegels RAKEN elkaar (overlap 0) en mogen daarom niet
+ *  op deze regel samengaan; alleen echte interne overlap telt. */
+const OVERLAP_M = 0.3;
 
 function effectiveClass(row: GroupableRow): string | null {
   return row.user_override ?? row.class_name;
 }
 
-/** Raken/overlappen de bboxen van a en b binnen GAP_M? */
+/** Bboxen a en b overlappen intern met minstens OVERLAP_M op beide assen. */
+function overlaps(a: GroupableRow, b: GroupableRow): boolean {
+  const ox = Math.min(a.max_x, b.max_x) - Math.max(a.min_x, b.min_x);
+  const oy = Math.min(a.max_y, b.max_y) - Math.max(a.min_y, b.min_y);
+  return ox >= OVERLAP_M && oy >= OVERLAP_M;
+}
+
+/** Bboxen a en b raken/overlappen binnen GAP_M op beide assen. */
 function adjacent(a: GroupableRow, b: GroupableRow): boolean {
   const overlapX = a.min_x - GAP_M <= b.max_x && b.min_x - GAP_M <= a.max_x;
   const overlapY = a.min_y - GAP_M <= b.max_y && b.min_y - GAP_M <= a.max_y;
@@ -64,42 +81,57 @@ function adjacent(a: GroupableRow, b: GroupableRow): boolean {
 }
 
 /**
- * Groepeert rijen: tegels met dezelfde effectieve klasse die aan elkaar
- * grenzen worden één groep. Rijen zonder klasse blijven altijd los (die
- * worden toch als voxels getoond en hebben geen correctie).
+ * Groepeert clusters via union-find: overlappende clusters (elke klasse) én
+ * aangrenzende clusters van dezelfde effectieve klasse komen in één groep. De
+ * groep krijgt de dominante klasse (meeste cellen), zodat een fysiek object
+ * dat deels verkeerd geклassificeerd is toch één label + één correctie heeft.
  */
 export function groupClusters(rows: GroupableRow[]): ClusterGroup[] {
-  const out: ClusterGroup[] = [];
-  const seen = new Set<string>();
+  const parent = new Map<string, string>();
+  const find = (k: string): string => {
+    let r = k;
+    while (parent.get(r) !== r) r = parent.get(r)!;
+    let c = k;
+    while (parent.get(c) !== r) { const n = parent.get(c)!; parent.set(c, r); c = n; }
+    return r;
+  };
+  const union = (a: string, b: string) => { parent.set(find(a), find(b)); };
 
-  for (const start of rows) {
-    if (seen.has(start.cluster_key)) continue;
-    const klasse = effectiveClass(start);
-    seen.add(start.cluster_key);
+  for (const r of rows) parent.set(r.cluster_key, r.cluster_key);
 
-    let members = [start];
-    if (klasse !== null) {
-      // Kettingreactie: buren van buren horen er ook bij (zodat een lange
-      // haag één object wordt en niet per tegelpaar uiteenvalt).
-      const wachtrij = [start];
-      while (wachtrij.length) {
-        const huidig = wachtrij.pop()!;
-        for (const kandidaat of rows) {
-          if (seen.has(kandidaat.cluster_key)) continue;
-          if (effectiveClass(kandidaat) !== klasse) continue;
-          if (!adjacent(huidig, kandidaat)) continue;
-          seen.add(kandidaat.cluster_key);
-          members.push(kandidaat);
-          wachtrij.push(kandidaat);
-        }
+  for (let i = 0; i < rows.length; i++) {
+    for (let j = i + 1; j < rows.length; j++) {
+      const a = rows[i], b = rows[j];
+      const sameClass = effectiveClass(a) !== null && effectiveClass(a) === effectiveClass(b);
+      if (overlaps(a, b) || (sameClass && adjacent(a, b))) {
+        union(a.cluster_key, b.cluster_key);
       }
     }
+  }
 
-    // Vertegenwoordiger = tegel met de meeste cellen: die heeft de beste
-    // foto en de betrouwbaarste classificatie van de groep.
-    members = members.sort((a, b) => b.cells - a.cells);
-    const hoofd = members[0];
+  const groepen = new Map<string, GroupableRow[]>();
+  for (const r of rows) {
+    const g = find(r.cluster_key);
+    (groepen.get(g) ?? groepen.set(g, []).get(g)!).push(r);
+  }
+
+  const out: ClusterGroup[] = [];
+  for (const members of groepen.values()) {
+    // Dominante effectieve klasse: som cellen per klasse, meeste wint.
+    const perKlasse = new Map<string, number>();
+    for (const m of members) {
+      const k = effectiveClass(m);
+      if (k) perKlasse.set(k, (perKlasse.get(k) ?? 0) + m.cells);
+    }
+    const className = [...perKlasse.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+
+    // Vertegenwoordiger + foto uit de tegel met de meeste cellen die de
+    // dominante klasse draagt (die crop hoort bij het getoonde label).
+    const sorted = [...members].sort((a, b) => b.cells - a.cells);
+    const hoofd = sorted.find((m) => effectiveClass(m) === className) ?? sorted[0];
     const cellenTotaal = members.reduce((s, m) => s + m.cells, 0);
+    // Override wint: als een lid handmatig gecorrigeerd is, geldt dat label.
+    const override = sorted.find((m) => m.user_override)?.user_override ?? null;
 
     out.push({
       keys: members.map((m) => m.cluster_key),
@@ -111,10 +143,11 @@ export function groupClusters(rows: GroupableRow[]): ClusterGroup[] {
       maxY: Math.max(...members.map((m) => m.max_y)),
       cells: cellenTotaal,
       maxH: Math.max(...members.map((m) => m.max_h)),
-      className: klasse,
+      className: override ?? className,
       confidence: hoofd.confidence,
-      cropKey: members.find((m) => m.crop_file)?.cluster_key ?? null,
-      userOverride: hoofd.user_override,
+      cropKey: (sorted.find((m) => effectiveClass(m) === (override ?? className) && m.crop_file)
+        ?? sorted.find((m) => m.crop_file))?.cluster_key ?? null,
+      userOverride: override,
     });
   }
 
