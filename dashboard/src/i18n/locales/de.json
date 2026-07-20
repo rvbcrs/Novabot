@@ -382,7 +382,8 @@
     "classHydrangea": "Hortensie",
     "classBall": "Ball",
     "objectListTitle": "Erkannte Objekte",
-    "objectCorrected": "korrigiert"
+    "objectCorrected": "korrigiert",
+    "minHeightLabel": "Min. Objekthöhe"
   },
   "schedule": {
     "title": "Mähpläne",

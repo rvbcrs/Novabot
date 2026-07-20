@@ -382,7 +382,8 @@
     "classHydrangea": "Hortensia",
     "classBall": "Ballon",
     "objectListTitle": "Objets détectés",
-    "objectCorrected": "corrigé"
+    "objectCorrected": "corrigé",
+    "minHeightLabel": "Hauteur min. objet"
   },
   "schedule": {
     "title": "Planifications de tonte",

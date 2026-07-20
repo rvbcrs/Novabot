@@ -445,7 +445,8 @@
     "classHydrangea": "Hortensia",
     "classBall": "Bal",
     "objectListTitle": "Herkende objecten",
-    "objectCorrected": "gecorrigeerd"
+    "objectCorrected": "gecorrigeerd",
+    "minHeightLabel": "Min. objecthoogte"
   },
   "schedule": {
     "title": "Maaischema's",

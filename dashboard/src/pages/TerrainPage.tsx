@@ -202,12 +202,16 @@ function buildObjectVoxels(
   objs: ObjectData,
   groundAt: (x: number, y: number) => number,
   bboxes: ClusterBBox[],
+  minH: number,
 ): THREE.InstancedMesh | null {
   const keep: number[] = [];
   const clusterKeys: Array<string | null> = [];
   for (let i = 0; i < objs.ix.length; i++) {
     const x = objs.ix[i] * objs.cellSize + objs.cellSize / 2;
     const y = objs.iy[i] * objs.cellSize + objs.cellSize / 2;
+    // Lage cellen (tot minH boven de grond) zijn meestal hoog gras/onkruid bij
+    // de randen — die maakten de bossages veel te dik. Instelbaar via de UI.
+    if (objs.h[i] - groundAt(x, y) < minH) continue;
     const hit = findClusterAt(bboxes, x, y);
     if (hit?.hasModel) continue; // wordt als GLB-model getekend
     keep.push(i);
@@ -266,6 +270,8 @@ export default function TerrainPage({ sn }: { sn: string }) {
   const [clusters, setClusters] = useState<TerrainCluster[]>([]);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [savingOverride, setSavingOverride] = useState(false);
+  const [minObjHeight, setMinObjHeight] = useState(0.1);
+  const minObjHeightRef = useRef(0.1);
 
   const legendVisibleRef = useRef<Record<string, boolean>>(DEFAULT_LEGEND_VISIBLE);
   const livePosRef = useRef<LivePos | null>(null);
@@ -491,7 +497,7 @@ export default function TerrainPage({ sn }: { sn: string }) {
         for (const group of COLOR_GROUPS) {
           const filtered = filterObjectsByLabels(objects, group.labels);
           if (filtered.ix.length === 0) continue;
-          const vm = buildObjectVoxels(filtered, groundAtRef.current, bboxes);
+          const vm = buildObjectVoxels(filtered, groundAtRef.current, bboxes, minObjHeightRef.current);
           if (!vm) continue; // alle cellen van deze groep vielen onder een gemodelleerd cluster
           anyObjects = true;
           vm.visible = legendVisibleRef.current[group.id] ?? true;
@@ -786,6 +792,19 @@ export default function TerrainPage({ sn }: { sn: string }) {
               {group.label}
             </label>
           ))}
+          <div className="pt-2 mt-1 border-t border-white/10">
+            <div className="text-gray-400 mb-1">{t('terrain.minHeightLabel')}: {Math.round(minObjHeight * 100)} cm</div>
+            <input
+              type="range" min={0.1} max={0.5} step={0.05} value={minObjHeight}
+              className="w-full"
+              onChange={(e) => {
+                const v = parseFloat(e.target.value);
+                setMinObjHeight(v);
+                minObjHeightRef.current = v;
+                rebuildAllRef.current?.();
+              }}
+            />
+          </div>
         </div>
       )}
       {status === 'ready' && namedClusters.length > 0 && (

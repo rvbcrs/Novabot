@@ -45,12 +45,19 @@ describe('groupClusters', () => {
     expect(groepen).toHaveLength(2);
   });
 
-  it('overbrugt een gat van 2,5 m tussen tegels van dezelfde klasse', () => {
-    // Het zwembad lag in twee stukken met onherkende tegels ertussen; met een
-    // marge van 3 m horen die weer bij elkaar (les 2026-07-20).
-    const a = tegel('a', 0, 0, 'swimming pool');
-    const b = { ...tegel('b', 0, 0, 'swimming pool'), cluster_key: 'b',
+  it('merget losse detecties 2,5 m uit elkaar NIET (voorkomt uitgerekte blob)', () => {
+    // 3 m bleek te ruim: de trampoline werd één blob doordat een losse
+    // detectie 2,5 m verderop meegetrokken werd. Met 1 m blijven ze los.
+    const a = tegel('a', 0, 0, 'trampoline');
+    const b = { ...tegel('b', 0, 0, 'trampoline'), cluster_key: 'b',
                 min_x: 4.5, max_x: 6.5, cx: 5.5 };
+    expect(groupClusters([a, b])).toHaveLength(2);
+  });
+
+  it('overbrugt wel een klein gat (<1 m) in een doorlopend object', () => {
+    const a = tegel('a', 0, 0, 'bush');
+    const b = { ...tegel('b', 0, 0, 'bush'), cluster_key: 'b',
+                min_x: 2.5, max_x: 4.5, cx: 3.5 };  // 0,5 m gat
     expect(groupClusters([a, b])).toHaveLength(1);
   });
 

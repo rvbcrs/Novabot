@@ -43,14 +43,14 @@ export interface ClusterGroup {
 }
 
 /**
- * Speling waarbinnen twee tegels als buren gelden. Ruim genomen (3 m, meer
- * dan een tegel breed) omdat één fysiek object vaak in stukken uiteenvalt:
- * het zwembad lag als twee groepen 2,5 m uit elkaar doordat de tussentegels
- * niet herkend werden (les 2026-07-20). Alleen tegels met DEZELFDE klasse
- * worden samengevoegd, dus twee losse struiken van dezelfde soort binnen 3 m
- * worden bewust ook één object — dat is de prijs van deze keuze.
+ * Speling waarbinnen twee tegels als buren gelden. 1 m overbrugt kleine
+ * gaten in een doorlopend object (een haag met één gemiste tussentegel) maar
+ * merget GEEN losse detecties die 2-3 m uit elkaar liggen. 3 m bleek te ruim:
+ * de trampoline werd één uitgerekte blob doordat een losse detectie 2,5 m
+ * noordelijker meegetrokken werd, waardoor het model naast de ronde
+ * uitsparing kwam te staan (les 2026-07-20-avond).
  */
-const GAP_M = 3.0;
+const GAP_M = 1.0;
 
 function effectiveClass(row: GroupableRow): string | null {
   return row.user_override ?? row.class_name;

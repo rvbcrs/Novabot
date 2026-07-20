@@ -398,7 +398,8 @@
     "classHydrangea": "Hydrangea",
     "classBall": "Ball",
     "objectListTitle": "Detected objects",
-    "objectCorrected": "corrected"
+    "objectCorrected": "corrected",
+    "minHeightLabel": "Min. object height"
   },
   "schedule": {
     "title": "Mowing Schedules",
