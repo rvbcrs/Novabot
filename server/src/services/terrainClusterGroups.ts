@@ -57,20 +57,30 @@ export interface ClusterGroup {
  */
 const GAP_M = 1.0;
 
-/** Minimale bbox-overlap (m, beide assen) om clusters als hetzelfde fysieke
- *  object te zien. Rastertegels RAKEN elkaar (overlap 0) en mogen daarom niet
- *  op deze regel samengaan; alleen echte interne overlap telt. */
-const OVERLAP_M = 0.3;
+/** Minimale overlap-fractie (van het KLEINSTE cluster) om twee clusters als
+ *  hetzelfde fysieke object te zien. Fractie i.p.v. absolute meters, want de
+ *  losse detecties op de rand van een groot object zijn vaak maar 0,2-0,3 m
+ *  breed maar liggen volledig ín dat object (les 2026-07-20-avond: het
+ *  trampoline-brokje 0,25 m zat helemaal in de zwembad-tegel). Rastertegels
+ *  RAKEN elkaar alleen (fractie 0) en gaan hier niet op samen. */
+const OVERLAP_FRAC = 0.5;
 
 function effectiveClass(row: GroupableRow): string | null {
   return row.user_override ?? row.class_name;
 }
 
-/** Bboxen a en b overlappen intern met minstens OVERLAP_M op beide assen. */
+function bboxArea(r: GroupableRow): number {
+  return Math.max(r.max_x - r.min_x, 0) * Math.max(r.max_y - r.min_y, 0);
+}
+
+/** Overlappen a en b met minstens OVERLAP_FRAC van het kleinste bbox-oppervlak? */
 function overlaps(a: GroupableRow, b: GroupableRow): boolean {
   const ox = Math.min(a.max_x, b.max_x) - Math.max(a.min_x, b.min_x);
   const oy = Math.min(a.max_y, b.max_y) - Math.max(a.min_y, b.min_y);
-  return ox >= OVERLAP_M && oy >= OVERLAP_M;
+  if (ox <= 0 || oy <= 0) return false;
+  const overlapArea = ox * oy;
+  const kleinste = Math.min(bboxArea(a), bboxArea(b));
+  return kleinste > 0 && overlapArea >= OVERLAP_FRAC * kleinste;
 }
 
 /** Bboxen a en b raken/overlappen binnen GAP_M op beide assen. */

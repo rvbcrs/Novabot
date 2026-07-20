@@ -130,4 +130,27 @@ describe('groupClusters', () => {
     expect(g.userOverride).toBe('swimming pool');
   });
 
+
+  it('klein brokje volledig in een groot object gaat op in dat object (dominant)', () => {
+    // Live-geval 2026-07-20: een trampoline-brokje van 0,25 m lag volledig in
+    // de zwembad-tegel maar overlapte maar 0,25 m — een absolute drempel van
+    // 0,3 m miste dat. Fractie-regel vangt het wel.
+    const pool = { ...tegel('pool', 0, 0, 'swimming pool', null, 800),
+                   min_x: 0, max_x: 2, min_y: -14, max_y: -12, cx: 1, cy: -13 };
+    const brok = { ...tegel('brok', 0, 0, 'trampoline', null, 12),
+                   min_x: 0.30, max_x: 0.55, min_y: -13.10, max_y: -12.85, cx: 0.42, cy: -12.97 };
+    const g = groupClusters([pool, brok]);
+    expect(g).toHaveLength(1);
+    expect(g[0].className).toBe('swimming pool');
+  });
+
+  it('object dat maar een klein randje raakt blijft los', () => {
+    const pool = { ...tegel('pool', 0, 0, 'swimming pool', null, 800),
+                   min_x: 0, max_x: 2, min_y: -14, max_y: -12, cx: 1, cy: -13 };
+    // noordelijk buurobject dat maar 0,05 m in de pool dipt (fractie « 0,5)
+    const tramp = { ...tegel('tramp', 0, 0, 'trampoline', null, 25),
+                    min_x: 1.30, max_x: 1.60, min_y: -12.05, max_y: -11.75, cx: 1.45, cy: -11.9 };
+    expect(groupClusters([pool, tramp])).toHaveLength(2);
+  });
+
 });
