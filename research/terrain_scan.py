@@ -193,6 +193,30 @@ def frame_url(http_address, sn, session, seq, pose):
             f"?sn={sn}&session={session}&seq={seq}&x={x:.3f}&y={y:.3f}&yaw={yaw:.4f}")
 
 
+# ── Frame-buffer op schijf ──
+# Frames gaan direct naar disk i.p.v. RAM: een crash, reboot of langdurig
+# wegvallende server kost dan geen foto's meer (de X3 heeft OOM-historie, dus
+# honderden JPEGs in het geheugen houden is sowieso onverstandig). Een frame
+# wordt pas verwijderd nadat de server de upload heeft bevestigd.
+PENDING_MAX_BYTES = 300 * 1024 * 1024   # vangnet als de server lang onbereikbaar is
+
+
+def frames_to_drop(entries, max_bytes=PENDING_MAX_BYTES):
+    """Welke wachtende frames moeten weg om onder `max_bytes` te blijven?
+
+    `entries` is [(naam, grootte)] met de OUDSTE eerst; die worden als eerste
+    geofferd. Retourneert de te verwijderen namen (kan leeg zijn).
+    """
+    total = sum(size for _, size in entries)
+    drop = []
+    for naam, size in entries:
+        if total <= max_bytes:
+            break
+        drop.append(naam)
+        total -= size
+    return drop
+
+
 def flush_basename(session, now):
     """Bestandsnaam-ts van een sessie: ALTIJD de sessie-start-ts (zelfde id
     als de live-uploads — anders telt de server de sessie dubbel)."""
@@ -201,6 +225,7 @@ def flush_basename(session, now):
 
 # ── ROS-schil (draait alleen op de maaier) ─────────────────────────────
 SESSION_DIR = "/userdata/lfi/terrain"
+PENDING_DIR = "/userdata/lfi/terrain/frames_pending"
 MAX_SESSION_FILES = 5
 FRAME_INTERVAL = 0.5      # s → max 2 fps
 POSE_MAX_AGE = 0.5        # s — geen verse pose = frame overslaan
@@ -286,6 +311,7 @@ def _rotate_sessions():
 
 
 def main():
+    import json
     import os
     import re
     import time
@@ -296,6 +322,7 @@ def main():
     from sensor_msgs.msg import CompressedImage, PointCloud2
 
     os.makedirs(SESSION_DIR, exist_ok=True)
+    os.makedirs(PENDING_DIR, exist_ok=True)
     http_address, sn = _read_config()
 
     rclpy.init()
@@ -303,7 +330,7 @@ def main():
     st = {"pose": None, "pose_t": 0.0, "grid": {}, "last_frame": 0.0,
           "last_data": 0.0, "tof_frames": 0,
           "obj": {}, "session": None, "last_live": 0.0, "last_obj_frame": 0.0,
-          "frames": [], "frames_sent": set(), "last_frame_t": 0.0,
+          "frame_count": 0, "frame_poses": [], "last_frame_t": 0.0,
           "last_obj_points": 0, "last_frame_warn_t": 0.0}
 
     def on_odom(msg):
@@ -354,36 +381,95 @@ def main():
         accepted = accumulate_objects(st["obj"], base_to_map(base, x, y, yaw), labels[m])
         st["last_obj_points"] = int(accepted)
 
+    def _write_pending_frame(session, seq, pose, jpeg):
+        """JPEG + pose-sidecar atomisch naar PENDING_DIR (tmp + rename, zodat
+        een half geschreven frame nooit opgepikt wordt)."""
+        stem = os.path.join(PENDING_DIR, f"{session}_{seq}")
+        with open(stem + ".jpg.tmp", "wb") as f:
+            f.write(jpeg)
+        os.rename(stem + ".jpg.tmp", stem + ".jpg")
+        x, y, yaw = pose
+        meta = {"session": session, "seq": seq,
+                "x": round(x, 3), "y": round(y, 3), "yaw": round(yaw, 4)}
+        with open(stem + ".json.tmp", "w") as f:
+            json.dump(meta, f)
+        os.rename(stem + ".json.tmp", stem + ".json")
+
     def on_rgb(msg):
         now = time.time()
         if st["pose"] is None or now - st["pose_t"] > POSE_MAX_AGE:
             return
-        if not should_capture_frame(now, st["last_frame_t"], len(st["frames"]),
+        if st["session"] is None:
+            return  # zonder sessie-id is een frame niet te correleren
+        if not should_capture_frame(now, st["last_frame_t"], st["frame_count"],
                                     st["last_obj_points"], st["pose"],
-                                    [p for _, p, _ in st["frames"]]):
+                                    st["frame_poses"]):
             return
         st["last_frame_t"] = now
-        st["frames"].append((len(st["frames"]) + 1, st["pose"], bytes(msg.data)))
+        st["frame_count"] += 1
+        st["frame_poses"].append(st["pose"])
+        try:
+            _write_pending_frame(st["session"], st["frame_count"], st["pose"],
+                                 bytes(msg.data))
+        except Exception as e:  # noqa: BLE001 — disk-IO mag de daemon nooit killen
+            node.get_logger().warn(f"terrain: frame wegschrijven faalde: {e}")
         st["last_obj_points"] = 0  # één frame per object-passage
 
+    def _trim_pending():
+        """Schijf-vangnet: oudste wachtende frames offeren boven de cap."""
+        try:
+            names = sorted(f for f in os.listdir(PENDING_DIR) if f.endswith(".jpg"))
+            entries = [(n, os.path.getsize(os.path.join(PENDING_DIR, n))) for n in names]
+        except OSError:
+            return
+        for naam in frames_to_drop(entries):
+            for pad in (os.path.join(PENDING_DIR, naam),
+                        os.path.join(PENDING_DIR, naam[:-4] + ".json")):
+                try:
+                    os.remove(pad)
+                except OSError:
+                    pass
+
     def _upload_frames():
-        # best-effort: fouten mogen de daemon nooit onderbreken, frames blijven
-        # in RAM tot de volgende poging of de finale flush.
-        if st["session"] is None:
-            return  # geen sessie-id = frames niet correleerbaar; bewust overslaan
-        for seq, pose, jpeg in st["frames"]:
-            if seq in st["frames_sent"]:
-                continue
+        """Uploadt alles wat in PENDING_DIR ligt — ook frames van eerdere
+        (gecrashte) sessies. Verwijderen gebeurt pas ná een bevestigde upload;
+        faalt er één, dan stoppen we en probeert de volgende tick opnieuw."""
+        try:
+            names = sorted(f for f in os.listdir(PENDING_DIR) if f.endswith(".jpg"))
+        except OSError:
+            return
+        for naam in names:
+            jpg = os.path.join(PENDING_DIR, naam)
+            meta_pad = jpg[:-4] + ".json"
             try:
-                url = frame_url(http_address, sn, st["session"], seq, pose)
-                if _upload_bytes(jpeg, http_address, url):
-                    st["frames_sent"].add(seq)
-            except Exception as e:  # noqa: BLE001 — best-effort, throttled warn
+                with open(meta_pad) as f:
+                    meta = json.load(f)
+                with open(jpg, "rb") as f:
+                    payload = f.read()
+                url = frame_url(http_address, sn, meta["session"], meta["seq"],
+                                (meta["x"], meta["y"], meta["yaw"]))
+                if not _upload_bytes(payload, http_address, url):
+                    break  # server weigerde: volgende tick opnieuw
+                os.remove(jpg)
+                try:
+                    os.remove(meta_pad)
+                except OSError:
+                    pass
+            except (FileNotFoundError, ValueError, KeyError):
+                # sidecar weg of onleesbaar → dit frame is verloren, opruimen
+                # zodat het de wachtrij niet blijft blokkeren
+                for pad in (jpg, meta_pad):
+                    try:
+                        os.remove(pad)
+                    except OSError:
+                        pass
+            except Exception as e:  # noqa: BLE001 — offline is normaal, later opnieuw
                 now_w = time.time()
                 if now_w - st["last_frame_warn_t"] > LIVE_INTERVAL:
                     st["last_frame_warn_t"] = now_w
                     node.get_logger().warn(f"terrain: frame-upload faalde: {e}")
                 break
+        _trim_pending()
 
     def flush():
         if not st["grid"] and not st["obj"]:
@@ -411,8 +497,10 @@ def main():
             st["tof_frames"] = 0
             st["obj"] = {}
             st["session"] = None
-            st["frames"] = []
-            st["frames_sent"] = set()
+            # frames zelf staan op schijf en blijven wachten tot ze geüpload
+            # zijn; alleen de sessie-teller en spreidings-historie resetten
+            st["frame_count"] = 0
+            st["frame_poses"] = []
             st["last_obj_points"] = 0
         # upload alles wat er nog ligt (incl. eerdere gefaalde uploads)
         for fn in sorted(os.listdir(SESSION_DIR)):
