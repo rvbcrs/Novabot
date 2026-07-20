@@ -189,5 +189,18 @@ export async function runRecognition(sn: string): Promise<number> {
       console.warn(`[terrainRecognition] cluster ${cluster.key} (${sn}) overgeslagen door fout:`, err instanceof Error ? err.message : err);
     }
   }
+
+  // Wezen opruimen: clusters die door een nieuwe clustering (bv. het
+  // opknippen van een te groot component in tegels) niet meer bestaan,
+  // moeten uit de tabel — anders blijven ze met hun oude geometrie én
+  // eventuele handmatige correctie op de kaart liggen.
+  const verwijderd = terrainClusterRepo.deleteMissingForSn(
+    sn,
+    clusters.map((c) => c.key),
+  );
+  if (verwijderd > 0) {
+    console.log(`[terrainRecognition] ${verwijderd} verouderde cluster(s) opgeruimd voor ${sn}`);
+  }
+
   return classified;
 }

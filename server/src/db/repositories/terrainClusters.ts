@@ -88,6 +88,27 @@ class TerrainClusterRepository {
   setOverride(sn: string, clusterKey: string, className: string | null): void {
     this._setOverride.run(className, sn, clusterKey);
   }
+
+  /**
+   * Verwijdert de rijen van deze maaier die NIET in `keepKeys` staan — de
+   * clusters die na een nieuwe clustering niet meer bestaan. Zonder deze stap
+   * blijven wezen eeuwig staan (les 2026-07-20: het 27x22 m "trampoline"-
+   * cluster bleef na het opknippen in tegels gewoon over de hele tuin liggen,
+   * inclusief de handmatige correctie erop).
+   *
+   * Retourneert het aantal verwijderde rijen. Bij een lege `keepKeys` wordt
+   * er NIETS verwijderd: dat duidt op een mislukte/lege clustering en mag
+   * nooit de hele tabel wissen.
+   */
+  deleteMissingForSn(sn: string, keepKeys: Iterable<string>): number {
+    const keep = [...keepKeys];
+    if (keep.length === 0) return 0;
+    const placeholders = keep.map(() => '?').join(',');
+    const stmt = db.prepare(
+      `DELETE FROM terrain_clusters WHERE mower_sn = ? AND cluster_key NOT IN (${placeholders})`
+    );
+    return stmt.run(sn, ...keep).changes;
+  }
 }
 
 export const terrainClusterRepo = new TerrainClusterRepository();
