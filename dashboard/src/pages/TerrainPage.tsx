@@ -76,7 +76,13 @@ const COLOR_GROUPS: Array<{ id: string; label: string; color: string; labels: nu
   { id: 'object', label: 'Object', color: LABEL_DEFAULT_COLOR, labels: null },
 ];
 const KNOWN_LABELS = new Set(COLOR_GROUPS.flatMap(g => g.labels ?? []));
-const DEFAULT_LEGEND_VISIBLE: Record<string, boolean> = Object.fromEntries(COLOR_GROUPS.map(g => [g.id, true]));
+// 'Object' (label 1 e.a.) staat standaard UIT: de firmware-segmentatie
+// markeert ~35% van de tuin als generiek object (hoogte t.o.v. wielvlak
+// vertekent op hellingen), wat het gazon onder groene voxel-soup bedelft.
+// De herkende 3D-modellen + omrandingen staan los van deze laag en blijven
+// gewoon zichtbaar; wie de ruwe detectie wil zien vinkt hem aan.
+const DEFAULT_LEGEND_VISIBLE: Record<string, boolean> = Object.fromEntries(
+  COLOR_GROUPS.map(g => [g.id, g.id !== 'object']));
 
 interface LivePos { x: number; y: number; theta: number }
 
