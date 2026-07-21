@@ -721,6 +721,9 @@ export function initDb(): void {
       crop_file     TEXT,
       user_override TEXT,
       model_file    TEXT,
+      size_override REAL,
+      height_override REAL,
+      z_offset      REAL,
       updated_at    TEXT NOT NULL DEFAULT (datetime('now')),
       PRIMARY KEY (mower_sn, cluster_key)
     );
@@ -728,6 +731,12 @@ export function initDb(): void {
   // custom 3D-model per object (2026-07-21) — overleeft her-classificatie
   try { db.exec(`ALTER TABLE terrain_clusters ADD COLUMN model_file TEXT`); }
   catch { /* kolom bestaat al */ }
+  // weergave-overrides (2026-07-21): maat/hoogte/z-verschuiving door de
+  // gebruiker — net als user_override nooit door de herkenning aangeraakt
+  for (const col of ['size_override REAL', 'height_override REAL', 'z_offset REAL']) {
+    try { db.exec(`ALTER TABLE terrain_clusters ADD COLUMN ${col}`); }
+    catch { /* kolom bestaat al */ }
+  }
 
   // Feature #51: "every N days" schedule mode. interval_days > 0 takes
   // precedence over weekdays — the schedule fires when

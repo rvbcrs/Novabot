@@ -113,7 +113,7 @@ describe('GET /api/dashboard/terrain-clusters/:sn', () => {
       cells: 40, maxH: 0.6,
       className: 'trampoline', nl: 'Trampoline', confidence: 0.62,
       userOverride: null, photoUrl: `/api/dashboard/terrain-crops/${SN}/1,2.jpg`,
-      modelFile: null,
+      modelFile: null, sizeOverride: null, heightOverride: null, zOffset: null,
     }]);
   });
 
@@ -343,6 +343,48 @@ describe('POST /api/dashboard/terrain-clusters/:sn/:key/override', () => {
     expect(cl.body.clusters[0].maxX - cl.body.clusters[0].minX).toBeCloseTo(3, 5);
     expect(cl.body.clusters[0].maxH).toBeCloseTo(2, 5);
     expect(cl.body.clusters[0].modelFile).toBe('resizetest.glb'); // model overleeft
+  });
+
+
+  it('display-overrides zetten en resetten', async () => {
+    const SN9 = 'LFIN0000000099';
+    await request(app).post(`/api/dashboard/terrain-clusters/${SN9}/add`)
+      .send({ x: 1, y: 1, className: 'trampoline' });
+    const r = await request(app)
+      .post(`/api/dashboard/terrain-clusters/${SN9}/m10,10/display`)
+      .send({ size: 3.5, height: 0.9, zOffset: -0.3 });
+    expect(r.status).toBe(200);
+    let cl = await request(app).get(`/api/dashboard/terrain-clusters/${SN9}`);
+    expect(cl.body.clusters[0].sizeOverride).toBeCloseTo(3.5, 5);
+    expect(cl.body.clusters[0].zOffset).toBeCloseTo(-0.3, 5);
+    // reset
+    await request(app).post(`/api/dashboard/terrain-clusters/${SN9}/m10,10/display`)
+      .send({ size: null, height: null, zOffset: null });
+    cl = await request(app).get(`/api/dashboard/terrain-clusters/${SN9}`);
+    expect(cl.body.clusters[0].sizeOverride).toBeNull();
+  });
+
+  it('model hernoemen: bestand hernoemd en objectverwijzing bijgewerkt', async () => {
+    const SN10 = 'LFIN0000000110';
+    const glb = Buffer.concat([Buffer.from('glTF'), Buffer.alloc(12)]);
+    await request(app).post('/api/dashboard/terrain-models/upload?name=lelijkenaam-x9')
+      .set('Content-Type', 'application/octet-stream').send(glb);
+    await request(app).post(`/api/dashboard/terrain-clusters/${SN10}/add`)
+      .send({ x: 1, y: 1, className: 'tree' });
+    await request(app).post(`/api/dashboard/terrain-clusters/${SN10}/m10,10/model`)
+      .send({ file: 'lelijkenaam-x9.glb' });
+
+    const ren = await request(app)
+      .post('/api/dashboard/terrain-models/lelijkenaam-x9.glb/rename')
+      .send({ name: 'Mooi Zwembad' });
+    expect(ren.status).toBe(200);
+    expect(ren.body.file).toBe('mooi-zwembad.glb');
+
+    const lijst = await request(app).get('/api/dashboard/terrain-models');
+    expect(lijst.body.models).toContain('mooi-zwembad.glb');
+    expect(lijst.body.models).not.toContain('lelijkenaam-x9.glb');
+    const cl = await request(app).get(`/api/dashboard/terrain-clusters/${SN10}`);
+    expect(cl.body.clusters[0].modelFile).toBe('mooi-zwembad.glb');
   });
 
 });

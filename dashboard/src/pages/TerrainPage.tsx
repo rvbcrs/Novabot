@@ -34,6 +34,9 @@ interface TerrainCluster {
   photoUrl: string | null;
   keys?: string[];
   modelFile?: string | null;
+  sizeOverride?: number | null;
+  heightOverride?: number | null;
+  zOffset?: number | null;
 }
 
 // GLTFLoader-cache op moduleniveau: één keer laden per klasse, daarna alleen
@@ -338,6 +341,7 @@ export default function TerrainPage({ sn }: { sn: string }) {
   // maten-bewerking van een geplaatst handmatig object (m-sleutel)
   const [editSize, setEditSize] = useState(1);
   const [editHeight, setEditHeight] = useState(0.5);
+  const [editZ, setEditZ] = useState(0);
 
   const legendVisibleRef = useRef<Record<string, boolean>>(DEFAULT_LEGEND_VISIBLE);
   const livePosRef = useRef<LivePos | null>(null);
@@ -347,6 +351,8 @@ export default function TerrainPage({ sn }: { sn: string }) {
   const voxelMeshesRef = useRef<Map<string, THREE.InstancedMesh>>(new Map());
   const modelInstancesRef = useRef<Map<string, THREE.Object3D>>(new Map());
   const outlinesRef = useRef<Map<string, THREE.Object3D>>(new Map());
+  const outlinesVisibleRef = useRef(true);
+  const [outlinesVisible, setOutlinesVisible] = useState(true);
   const groundAtRef = useRef<(x: number, y: number) => number>(() => 0);
   const markerRef = useRef<THREE.Mesh | null>(null);
   const trailLineRef = useRef<THREE.Line | null>(null);
@@ -491,6 +497,7 @@ export default function TerrainPage({ sn }: { sn: string }) {
         geo.dispose();
         edges.position.set(cx, cy, g + h / 2);
         edges.userData.clusterKey = cl.key;
+        edges.visible = outlinesVisibleRef.current;
         scene.add(edges);
         outlinesRef.current.set(cl.key, edges);
       }
@@ -519,14 +526,16 @@ export default function TerrainPage({ sn }: { sn: string }) {
           const bboxCx = (cl.minX + cl.maxX) / 2;
           const bboxCy = (cl.minY + cl.maxY) / 2;
           const g = groundAtRef.current(bboxCx, bboxCy);
-          const sx = Math.max(cl.maxX - cl.minX, 0.15);
-          const sy = Math.max(cl.maxY - cl.minY, 0.15);
+          // Gebruikers-overrides winnen van de meting (maat aanpasbaar voor
+          // ALLE objecten, ook gedetecteerde zoals de trampoline).
+          const sx = cl.sizeOverride ?? Math.max(cl.maxX - cl.minX, 0.15);
+          const sy = cl.sizeOverride ?? Math.max(cl.maxY - cl.minY, 0.15);
           // Hoogte: gemeten, maar minstens de typische hoogte van de klasse —
           // de ToF ziet niet hoger dan 1,5 m, dus een boom meet 0,6 m.
           const gemeten = Math.max(cl.maxH - g, 0.1);
-          const sz = Math.max(gemeten, klasse?.typicalH ?? 0);
+          const sz = cl.heightOverride ?? Math.max(gemeten, klasse?.typicalH ?? 0);
           clone.scale.set(sx, sy, sz);
-          clone.position.set(bboxCx, bboxCy, g);
+          clone.position.set(bboxCx, bboxCy, g + (cl.zOffset ?? 0));
           scene.add(clone);
           modelInstancesRef.current.set(cl.key, clone);
         }).catch((err) => {
@@ -890,19 +899,42 @@ export default function TerrainPage({ sn }: { sn: string }) {
     }
   }
 
-  async function handleResizeCommit(): Promise<void> {
-    const c = selectedCluster;
-    if (!c || !c.key.startsWith('m')) return;
+  async function handleModelRename(file: string, nieuweNaam: string): Promise<void> {
     setSavingOverride(true);
     try {
-      await apiFetch(`/api/dashboard/terrain-clusters/${encodeURIComponent(sn)}/add`, {
+      await apiFetch(`/api/dashboard/terrain-models/${encodeURIComponent(file)}/rename`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          x: c.cx, y: c.cy,
-          className: c.userOverride ?? c.className ?? 'tree',
-          size: editSize, height: editHeight,
-        }),
+        body: JSON.stringify({ name: nieuweNaam }),
+      });
+      const lijst = await apiFetch('/api/dashboard/terrain-models');
+      if (lijst.ok) {
+        const b = await lijst.json() as { models?: string[] };
+        setCustomModels(b.models ?? []);
+      }
+      const res = await apiFetch(`/api/dashboard/terrain-clusters/${encodeURIComponent(sn)}`);
+      if (res.ok) {
+        const body = await res.json() as { clusters?: TerrainCluster[] };
+        clustersRef.current = body.clusters ?? [];
+        setClusters(body.clusters ?? []);
+      }
+      rebuildAllRef.current?.();
+    } catch (err) {
+      console.warn('terrain: model hernoemen mislukt', err);
+    } finally {
+      setSavingOverride(false);
+    }
+  }
+
+  async function handleDisplayCommit(): Promise<void> {
+    const c = selectedCluster;
+    if (!c) return;
+    setSavingOverride(true);
+    try {
+      await apiFetch(`/api/dashboard/terrain-clusters/${encodeURIComponent(sn)}/${encodeURIComponent(c.key)}/display`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ size: editSize, height: editHeight, zOffset: editZ }),
       });
       const res = await apiFetch(`/api/dashboard/terrain-clusters/${encodeURIComponent(sn)}`);
       if (res.ok) {
@@ -912,7 +944,7 @@ export default function TerrainPage({ sn }: { sn: string }) {
       }
       rebuildAllRef.current?.();
     } catch (err) {
-      console.warn('terrain: maat aanpassen mislukt', err);
+      console.warn('terrain: weergave aanpassen mislukt', err);
     } finally {
       setSavingOverride(false);
     }
@@ -955,9 +987,12 @@ export default function TerrainPage({ sn }: { sn: string }) {
   const selectedClusterClass = selectedCluster ? findClusterClass(selectedCluster.className) : undefined;
 
   useEffect(() => {
-    if (selectedCluster?.key.startsWith('m')) {
-      setEditSize(Math.max(selectedCluster.maxX - selectedCluster.minX, 0.3));
-      setEditHeight(Math.max(selectedCluster.maxH, 0.2));
+    if (selectedCluster) {
+      setEditSize(selectedCluster.sizeOverride
+        ?? Math.max(selectedCluster.maxX - selectedCluster.minX, 0.3));
+      setEditHeight(selectedCluster.heightOverride
+        ?? Math.max(selectedCluster.maxH, 0.2));
+      setEditZ(selectedCluster.zOffset ?? 0);
     }
   }, [selectedCluster?.key]);  // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1011,6 +1046,19 @@ export default function TerrainPage({ sn }: { sn: string }) {
               {group.label}
             </label>
           ))}
+          <label className="flex items-center gap-2 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={outlinesVisible}
+              onChange={(e) => {
+                outlinesVisibleRef.current = e.target.checked;
+                setOutlinesVisible(e.target.checked);
+                for (const o of outlinesRef.current.values()) o.visible = e.target.checked;
+              }}
+            />
+            <span className="inline-block w-3 h-3 rounded-sm border border-yellow-400" />
+            {t('terrain.outlinesLabel')}
+          </label>
           <div className="pt-2 mt-1 border-t border-white/10">
             <div className="text-gray-400 mb-1">{t('terrain.minHeightLabel')}: {Math.round(minObjHeight * 100)} cm</div>
             <input
@@ -1168,23 +1216,36 @@ export default function TerrainPage({ sn }: { sn: string }) {
                 <option key={m} value={m}>{m.replace(/\.glb$/, '')}</option>
               ))}
             </select>
-            <label className="block mt-1.5 text-center text-[11px] text-blue-400 hover:text-blue-300 cursor-pointer">
-              {t('terrain.modelUpload')}
-              <input type="file" accept=".glb" className="hidden"
-                onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleModelUpload(f); e.target.value = ''; }} />
-            </label>
-            {selectedCluster.key.startsWith('m') && (
-              <>
-                <div className="text-gray-400 mt-1">{t('terrain.addSizeLabel')}: {editSize.toFixed(1)} m</div>
-                <input type="range" min={0.3} max={6} step={0.1} value={editSize} className="w-full"
-                  onChange={(e) => setEditSize(parseFloat(e.target.value))}
-                  onPointerUp={() => { void handleResizeCommit(); }} />
-                <div className="text-gray-400">{t('terrain.addHeightLabel')}: {editHeight.toFixed(1)} m</div>
-                <input type="range" min={0.2} max={4} step={0.1} value={editHeight} className="w-full"
-                  onChange={(e) => setEditHeight(parseFloat(e.target.value))}
-                  onPointerUp={() => { void handleResizeCommit(); }} />
-              </>
-            )}
+            <div className="flex items-center justify-between mt-1.5">
+              <label className="text-[11px] text-blue-400 hover:text-blue-300 cursor-pointer">
+                {t('terrain.modelUpload')}
+                <input type="file" accept=".glb" className="hidden"
+                  onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleModelUpload(f); e.target.value = ''; }} />
+              </label>
+              {selectedCluster.modelFile && (
+                <button
+                  className="text-[11px] text-blue-400 hover:text-blue-300"
+                  onClick={() => {
+                    const naam = window.prompt(t('terrain.modelRenamePrompt'), selectedCluster.modelFile!.replace(/\.glb$/, ''));
+                    if (naam) void handleModelRename(selectedCluster.modelFile!, naam);
+                  }}
+                >
+                  {t('terrain.modelRename')}
+                </button>
+              )}
+            </div>
+            <div className="text-gray-400 mt-1">{t('terrain.addSizeLabel')}: {editSize.toFixed(1)} m</div>
+            <input type="range" min={0.3} max={10} step={0.1} value={editSize} className="w-full"
+              onChange={(e) => setEditSize(parseFloat(e.target.value))}
+              onPointerUp={() => { void handleDisplayCommit(); }} />
+            <div className="text-gray-400">{t('terrain.addHeightLabel')}: {editHeight.toFixed(1)} m</div>
+            <input type="range" min={0.2} max={5} step={0.1} value={editHeight} className="w-full"
+              onChange={(e) => setEditHeight(parseFloat(e.target.value))}
+              onPointerUp={() => { void handleDisplayCommit(); }} />
+            <div className="text-gray-400">{t('terrain.zOffsetLabel')}: {editZ >= 0 ? '+' : ''}{editZ.toFixed(2)} m</div>
+            <input type="range" min={-1.5} max={1.5} step={0.05} value={editZ} className="w-full"
+              onChange={(e) => setEditZ(parseFloat(e.target.value))}
+              onPointerUp={() => { void handleDisplayCommit(); }} />
           </div>
         </div>
       )}

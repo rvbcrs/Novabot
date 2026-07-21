@@ -392,7 +392,11 @@
     "addHeightLabel": "Hauteur",
     "modelLabel": "Modèle 3D",
     "modelDefault": "Défaut (classe)",
-    "modelUpload": "Téléverser un .glb"
+    "modelUpload": "Téléverser un .glb",
+    "outlinesLabel": "Contours",
+    "zOffsetLabel": "Décalage Z",
+    "modelRename": "Renommer",
+    "modelRenamePrompt": "Nouveau nom pour ce modèle :"
   },
   "schedule": {
     "title": "Planifications de tonte",

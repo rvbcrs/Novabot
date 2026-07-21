@@ -408,7 +408,11 @@
     "addHeightLabel": "Height",
     "modelLabel": "3D model",
     "modelDefault": "Default (class)",
-    "modelUpload": "Upload custom .glb"
+    "modelUpload": "Upload custom .glb",
+    "outlinesLabel": "Outlines",
+    "zOffsetLabel": "Z offset",
+    "modelRename": "Rename",
+    "modelRenamePrompt": "New name for this model:"
   },
   "schedule": {
     "title": "Mowing Schedules",

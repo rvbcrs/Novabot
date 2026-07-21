@@ -822,6 +822,9 @@ dashboardRouter.get('/terrain-clusters/:sn', (req: Request, res: Response) => {
       userOverride: g.userOverride,
       photoUrl: g.cropKey ? `/api/dashboard/terrain-crops/${sn}/${g.cropKey}.jpg` : null,
       modelFile: g.modelFile,
+      sizeOverride: g.sizeOverride,
+      heightOverride: g.heightOverride,
+      zOffset: g.zOffset,
     };
   });
   res.json({ clusters });
@@ -898,6 +901,47 @@ dashboardRouter.post('/terrain-clusters/:sn/:key/model', (req: Request, res: Res
   const keys = groupKeysFor(rows, key);
   for (const k of keys) terrainClusterRepo.setModelFile(sn, k, file ?? null);
   res.json({ ok: true, updated: keys.length });
+});
+
+// POST /api/dashboard/terrain-clusters/:sn/:key/display — weergave-overrides
+// (voetafdruk/hoogte/z-verschuiving) voor het hele object; null = automatisch.
+dashboardRouter.post('/terrain-clusters/:sn/:key/display', (req: Request, res: Response) => {
+  const { sn, key } = req.params;
+  if (!/^LFI[A-Z]\d+$/.test(sn)) { res.status(400).json({ error: 'invalid sn' }); return; }
+  const b = (req.body ?? {}) as { size?: unknown; height?: unknown; zOffset?: unknown };
+  const clamp = (v: unknown, lo: number, hi: number): number | null => {
+    if (v == null) return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? Math.min(Math.max(n, lo), hi) : null;
+  };
+  const size = clamp(b.size, 0.3, 10);
+  const height = clamp(b.height, 0.2, 5);
+  const z = clamp(b.zOffset, -1.5, 1.5);
+  const rows = terrainClusterRepo.findBySn(sn);
+  if (!rows.some((r) => r.cluster_key === key)) { res.status(404).json({ error: 'cluster niet gevonden' }); return; }
+  const keys = groupKeysFor(rows, key);
+  for (const k of keys) terrainClusterRepo.setDisplay(sn, k, size, height, z);
+  res.json({ ok: true, updated: keys.length });
+});
+
+// POST /api/dashboard/terrain-models/:file/rename — geüpload model hernoemen;
+// alle objecten die het gebruiken verwijzen daarna naar de nieuwe naam.
+dashboardRouter.post('/terrain-models/:file/rename', (req: Request, res: Response) => {
+  const { file } = req.params;
+  if (!/^[a-z0-9_-]{1,40}\.glb$/.test(file)) { res.status(400).json({ error: 'invalid name' }); return; }
+  const naamRaw = String((req.body ?? {}).name ?? '');
+  const naam = naamRaw.toLowerCase().replace(/\.glb$/, '').replace(/[^a-z0-9_-]/g, '-').slice(0, 40);
+  if (!naam) { res.status(400).json({ error: 'naam vereist' }); return; }
+  const dir = CUSTOM_MODELS_DIR();
+  const oudPad = path.join(dir, file);
+  if (!fs.existsSync(oudPad)) { res.status(404).json({ error: 'model niet gevonden' }); return; }
+  const nieuwFile = `${naam}.glb`;
+  if (nieuwFile !== file && fs.existsSync(path.join(dir, nieuwFile))) {
+    res.status(409).json({ error: 'naam bestaat al' }); return;
+  }
+  fs.renameSync(oudPad, path.join(dir, nieuwFile));
+  terrainClusterRepo.renameModelFile(file, nieuwFile);
+  res.json({ ok: true, file: nieuwFile });
 });
 
 // POST /api/dashboard/terrain-clusters/:sn/add — handmatig object toevoegen

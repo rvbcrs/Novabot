@@ -16,6 +16,9 @@ export interface TerrainClusterRow {
   crop_file: string | null;
   user_override: string | null;
   model_file: string | null;
+  size_override: number | null;
+  height_override: number | null;
+  z_offset: number | null;
   updated_at: string;
 }
 
@@ -98,6 +101,25 @@ class TerrainClusterRepository {
 
   setModelFile(sn: string, clusterKey: string, file: string | null): void {
     this._setModelFile.run(file, sn, clusterKey);
+  }
+
+  private _setDisplay = db.prepare(`
+    UPDATE terrain_clusters
+    SET size_override = ?, height_override = ?, z_offset = ?, updated_at = datetime('now')
+    WHERE mower_sn = ? AND cluster_key = ?
+  `);
+
+  /** Weergave-overrides (alle drie tegelijk; null = terug naar automatisch). */
+  setDisplay(sn: string, clusterKey: string, size: number | null, height: number | null, z: number | null): void {
+    this._setDisplay.run(size, height, z, sn, clusterKey);
+  }
+
+  private _renameModel = db.prepare(`
+    UPDATE terrain_clusters SET model_file = ? WHERE model_file = ?
+  `);
+
+  renameModelFile(oldFile: string, newFile: string): number {
+    return this._renameModel.run(newFile, oldFile).changes;
   }
 
   /**

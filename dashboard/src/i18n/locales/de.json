@@ -392,7 +392,11 @@
     "addHeightLabel": "Höhe",
     "modelLabel": "3D-Modell",
     "modelDefault": "Standard (Klasse)",
-    "modelUpload": "Eigene .glb hochladen"
+    "modelUpload": "Eigene .glb hochladen",
+    "outlinesLabel": "Markierungen",
+    "zOffsetLabel": "Z-Versatz",
+    "modelRename": "Umbenennen",
+    "modelRenamePrompt": "Neuer Name für dieses Modell:"
   },
   "schedule": {
     "title": "Mähpläne",

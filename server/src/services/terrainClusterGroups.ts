@@ -32,6 +32,9 @@ export interface GroupableRow {
   crop_file: string | null;
   user_override: string | null;
   model_file?: string | null;
+  size_override?: number | null;
+  height_override?: number | null;
+  z_offset?: number | null;
 }
 
 export interface ClusterGroup {
@@ -50,6 +53,9 @@ export interface ClusterGroup {
   cropKey: string | null;
   userOverride: string | null;
   modelFile: string | null;
+  sizeOverride: number | null;
+  heightOverride: number | null;
+  zOffset: number | null;
 }
 
 /**
@@ -165,6 +171,9 @@ export function groupClusters(rows: GroupableRow[]): ClusterGroup[] {
         ?? sorted.find((m) => m.crop_file))?.cluster_key ?? null,
       userOverride: override,
       modelFile: sorted.find((m) => m.model_file)?.model_file ?? null,
+      sizeOverride: sorted.find((m) => m.size_override != null)?.size_override ?? null,
+      heightOverride: sorted.find((m) => m.height_override != null)?.height_override ?? null,
+      zOffset: sorted.find((m) => m.z_offset != null)?.z_offset ?? null,
     });
   }
 

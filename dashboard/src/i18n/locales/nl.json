@@ -455,7 +455,11 @@
     "addHeightLabel": "Hoogte",
     "modelLabel": "3D-model",
     "modelDefault": "Standaard (klasse)",
-    "modelUpload": "Eigen .glb uploaden"
+    "modelUpload": "Eigen .glb uploaden",
+    "outlinesLabel": "Markeringen",
+    "zOffsetLabel": "Hoogte-verschuiving",
+    "modelRename": "Hernoemen",
+    "modelRenamePrompt": "Nieuwe naam voor dit model:"
   },
   "schedule": {
     "title": "Maaischema's",
