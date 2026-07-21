@@ -401,7 +401,9 @@
     "objectCorrected": "corrected",
     "minHeightLabel": "Min. object height",
     "minCntLabel": "Min. observations",
-    "objectNone": "Not an object (remove)"
+    "objectNone": "Not an object (remove)",
+    "addObjectTitle": "Add object",
+    "addObjectButton": "Add"
   },
   "schedule": {
     "title": "Mowing Schedules",

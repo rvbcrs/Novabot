@@ -842,6 +842,36 @@ dashboardRouter.get('/terrain-crops/:sn/:file', (req: Request, res: Response) =>
   res.type('image/jpeg').send(fs.readFileSync(filePath));
 });
 
+// POST /api/dashboard/terrain-clusters/:sn/add — handmatig object toevoegen
+// op een aangeklikte plek. Sleutel krijgt een 'm'-prefix; runRecognition's
+// opruiming spaart die (handmatige objecten hebben geen voxel-cluster als
+// bestaansbewijs) en de herkenning classificeert ze nooit (user_override).
+dashboardRouter.post('/terrain-clusters/:sn/add', (req: Request, res: Response) => {
+  const { sn } = req.params;
+  if (!/^LFI[A-Z]\d+$/.test(sn)) { res.status(400).json({ error: 'invalid sn' }); return; }
+  const body = (req.body ?? {}) as { x?: unknown; y?: unknown; className?: unknown; size?: unknown };
+  const x = Number(body.x), y = Number(body.y);
+  const className = body.className as string;
+  const size = Math.min(Math.max(Number(body.size) || 1, 0.3), 6); // voetafdruk in m
+  if (!Number.isFinite(x) || !Number.isFinite(y) || Math.abs(x) > 500 || Math.abs(y) > 500) {
+    res.status(400).json({ error: 'invalid coords' }); return;
+  }
+  if (!LABELS.some((l) => l.prompt === className)) {
+    res.status(400).json({ error: 'onbekende className' }); return;
+  }
+  // sleutel raster-stabiel op 10cm zodat dubbel klikken op dezelfde plek
+  // hetzelfde object bijwerkt i.p.v. een tweede toe te voegen
+  const key = `m${Math.round(x * 10)},${Math.round(y * 10)}`;
+  terrainClusterRepo.upsert({
+    mower_sn: sn, cluster_key: key, cx: x, cy: y,
+    min_x: x - size / 2, min_y: y - size / 2, max_x: x + size / 2, max_y: y + size / 2,
+    cells: 1, max_h: 0.5,
+    class_name: className, confidence: null, crop_file: null,
+  });
+  terrainClusterRepo.setOverride(sn, key, className);
+  res.json({ ok: true, key });
+});
+
 // POST /api/dashboard/terrain-clusters/:sn/:key/override — handmatige
 // correctie van de classificatie. className moet in LABELS voorkomen, of
 // null om de override weer te wissen (model-classificatie herneemt het dan).

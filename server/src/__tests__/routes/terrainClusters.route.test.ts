@@ -254,4 +254,36 @@ describe('POST /api/dashboard/terrain-clusters/:sn/:key/override', () => {
     expect(row.user_override).toBe('__none__');       // maar niet uit de DB
   });
 
+
+  it('handmatig object toevoegen: verschijnt in de lijst met m-sleutel en override', async () => {
+    const SN4 = 'LFIN0000000044';
+    const res = await request(app)
+      .post(`/api/dashboard/terrain-clusters/${SN4}/add`)
+      .send({ x: 3.2, y: -5.1, className: 'tree' });
+    expect(res.status).toBe(200);
+    expect(res.body.key).toBe('m32,-51');
+
+    const lijst = await request(app).get(`/api/dashboard/terrain-clusters/${SN4}`);
+    expect(lijst.body.clusters).toHaveLength(1);
+    expect(lijst.body.clusters[0].className).toBe('tree');
+    expect(lijst.body.clusters[0].userOverride).toBe('tree');
+  });
+
+  it('handmatig object overleeft de wees-opruiming', async () => {
+    const SN5 = 'LFIN0000000055';
+    await request(app).post(`/api/dashboard/terrain-clusters/${SN5}/add`)
+      .send({ x: 1, y: 1, className: 'bush' });
+    // opruiming met een sleutelset waar het m-object NIET in zit
+    terrainClusterRepo.deleteMissingForSn(SN5, ['iets-anders']);
+    expect(terrainClusterRepo.findBySn(SN5)).toHaveLength(1);
+  });
+
+  it('add weigert onbekende klasse en rare coords', async () => {
+    const SN6 = 'LFIN0000000066';
+    await request(app).post(`/api/dashboard/terrain-clusters/${SN6}/add`)
+      .send({ x: 1, y: 1, className: 'ufo' }).expect(400);
+    await request(app).post(`/api/dashboard/terrain-clusters/${SN6}/add`)
+      .send({ x: 9999, y: 1, className: 'tree' }).expect(400);
+  });
+
 });

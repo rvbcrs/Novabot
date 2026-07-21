@@ -287,6 +287,9 @@ export default function TerrainPage({ sn }: { sn: string }) {
   const minObjHeightRef = useRef(0.1);
   const [minObjCnt, setMinObjCnt] = useState(3);
   const minObjCntRef = useRef(3);
+  // klik op leeg terrein → voorstel om daar handmatig een object toe te voegen
+  const [addAt, setAddAt] = useState<{ x: number; y: number } | null>(null);
+  const [addClass, setAddClass] = useState('tree');
 
   const legendVisibleRef = useRef<Record<string, boolean>>(DEFAULT_LEGEND_VISIBLE);
   const livePosRef = useRef<LivePos | null>(null);
@@ -560,14 +563,26 @@ export default function TerrainPage({ sn }: { sn: string }) {
 
       // werk-polygonen als overlay-lijnen 5 cm boven het terrein — statisch,
       // niet meegenomen in de 20s-poll (verandert niet tijdens het kijken)
-      // Obstacle-polygonen uit de 2D-kaart als rode contouren op het terrein
+      // Obstacle-polygonen als rood muurtje (ribbon) op het terrein: een
+      // 1px-lijn was op de 3D-kaart nauwelijks te zien.
       for (const m of maps.filter(m => m.mapType === 'obstacle' && m.mapArea?.length)) {
-        const pts = m.mapArea.map(p => new THREE.Vector3(p.x, p.y, 0.08));
-        pts.push(pts[0].clone());
-        const line = new THREE.Line(
-          new THREE.BufferGeometry().setFromPoints(pts),
-          new THREE.LineBasicMaterial({ color: 0xef4444 }));
-        scene.add(line);
+        const H = 0.35;
+        const ring = [...m.mapArea, m.mapArea[0]];
+        const pos: number[] = [];
+        for (let i = 0; i < ring.length - 1; i++) {
+          const a = ring[i], b = ring[i + 1];
+          const ga = groundAtRef.current(a.x, a.y);
+          const gb = groundAtRef.current(b.x, b.y);
+          // twee driehoeken per segment: (a-onder, b-onder, a-boven) + (a-boven, b-onder, b-boven)
+          pos.push(a.x, a.y, ga, b.x, b.y, gb, a.x, a.y, ga + H);
+          pos.push(a.x, a.y, ga + H, b.x, b.y, gb, b.x, b.y, gb + H);
+        }
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+        const wall = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+          color: 0xef4444, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false,
+        }));
+        scene.add(wall);
       }
       for (const m of maps.filter(m => m.mapType === 'work' && m.mapArea?.length)) {
         const pts = m.mapArea.map(p => new THREE.Vector3(p.x, p.y, 0.05));
@@ -660,8 +675,19 @@ export default function TerrainPage({ sn }: { sn: string }) {
           } else {
             key = (obj.userData.clusterKey as string | undefined) ?? null;
           }
-          if (key) { setSelectedKey(key); return; }
+          if (key) { setSelectedKey(key); setAddAt(null); return; }
         }
+        // Geen object geraakt: klik op het terrein zelf = plek om handmatig
+        // een object toe te voegen (bomen/potten zonder bruikbare foto).
+        if (terrainMeshRef.current) {
+          const grond = raycaster.intersectObject(terrainMeshRef.current, false);
+          if (grond.length) {
+            setSelectedKey(null);
+            setAddAt({ x: grond[0].point.x, y: grond[0].point.y });
+            return;
+          }
+        }
+        setAddAt(null);
       };
       renderer.domElement.addEventListener('pointerdown', onPointerDown);
       renderer.domElement.addEventListener('pointerup', onPointerUp);
@@ -729,6 +755,31 @@ export default function TerrainPage({ sn }: { sn: string }) {
   // Klik-correctie: POST de override, her-fetch de clusters en herbouw de
   // scene lokaal (rebuildAllRef, zie hierboven) i.p.v. te wachten op de
   // volgende 20s-poll.
+  async function handleAddObject(): Promise<void> {
+    if (!addAt) return;
+    setSavingOverride(true);
+    try {
+      await apiFetch(`/api/dashboard/terrain-clusters/${encodeURIComponent(sn)}/add`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ x: addAt.x, y: addAt.y, className: addClass }),
+      });
+      setAddAt(null);
+      const res = await apiFetch(`/api/dashboard/terrain-clusters/${encodeURIComponent(sn)}`);
+      if (res.ok) {
+        const body = await res.json() as { clusters?: TerrainCluster[] };
+        const fresh = body.clusters ?? [];
+        clustersRef.current = fresh;
+        setClusters(fresh);
+      }
+      rebuildAllRef.current?.();
+    } catch (err) {
+      console.warn('terrain: object toevoegen mislukt', err);
+    } finally {
+      setSavingOverride(false);
+    }
+  }
+
   async function handleOverrideChange(key: string, value: string): Promise<void> {
     if (value === NONE_OVERRIDE_VALUE) setSelectedKey(null);
     setSavingOverride(true);
@@ -861,6 +912,31 @@ export default function TerrainPage({ sn }: { sn: string }) {
               </button>
             );
           })}
+        </div>
+      )}
+      {addAt && !selectedCluster && (
+        <div className="absolute bottom-3 left-3 bg-black/70 text-xs text-gray-200 rounded-lg p-3 space-y-2 backdrop-blur pointer-events-auto w-72">
+          <div className="flex items-center justify-between">
+            <div className="font-medium text-gray-300">{t('terrain.addObjectTitle')}</div>
+            <button onClick={() => setAddAt(null)} className="text-gray-400 hover:text-white">✕</button>
+          </div>
+          <div className="text-gray-400">x={addAt.x.toFixed(1)} m, y={addAt.y.toFixed(1)} m</div>
+          <select
+            value={addClass}
+            className="mt-1 w-full text-xs bg-gray-900 border border-gray-700 rounded px-2 py-1.5 text-gray-200 focus:outline-none focus:border-blue-500"
+            onChange={(e) => setAddClass(e.target.value)}
+          >
+            {CLUSTER_CLASSES.map((c) => (
+              <option key={c.prompt} value={c.prompt}>{t(c.i18nKey)}</option>
+            ))}
+          </select>
+          <button
+            onClick={() => { void handleAddObject(); }}
+            disabled={savingOverride}
+            className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded px-2 py-1.5"
+          >
+            {t('terrain.addObjectButton')}
+          </button>
         </div>
       )}
       {selectedCluster && (

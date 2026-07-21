@@ -385,7 +385,9 @@
     "objectCorrected": "korrigiert",
     "minHeightLabel": "Min. Objekthöhe",
     "minCntLabel": "Min. Beobachtungen",
-    "objectNone": "Kein Objekt (entfernen)"
+    "objectNone": "Kein Objekt (entfernen)",
+    "addObjectTitle": "Objekt hinzufügen",
+    "addObjectButton": "Hinzufügen"
   },
   "schedule": {
     "title": "Mähpläne",

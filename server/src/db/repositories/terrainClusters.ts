@@ -104,8 +104,10 @@ class TerrainClusterRepository {
     const keep = [...keepKeys];
     if (keep.length === 0) return 0;
     const placeholders = keep.map(() => '?').join(',');
+    // 'm%'-sleutels zijn handmatig toegevoegde objecten: die hebben geen
+    // voxel-cluster als bestaansbewijs en mogen dus nooit als wees opgeruimd.
     const stmt = db.prepare(
-      `DELETE FROM terrain_clusters WHERE mower_sn = ? AND cluster_key NOT IN (${placeholders})`
+      `DELETE FROM terrain_clusters WHERE mower_sn = ? AND cluster_key NOT LIKE 'm%' AND cluster_key NOT IN (${placeholders})`
     );
     return stmt.run(sn, ...keep).changes;
   }

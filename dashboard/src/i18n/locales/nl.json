@@ -448,7 +448,9 @@
     "objectCorrected": "gecorrigeerd",
     "minHeightLabel": "Min. objecthoogte",
     "minCntLabel": "Min. waarnemingen",
-    "objectNone": "Geen object (verwijderen)"
+    "objectNone": "Geen object (verwijderen)",
+    "addObjectTitle": "Object toevoegen",
+    "addObjectButton": "Toevoegen"
   },
   "schedule": {
     "title": "Maaischema's",

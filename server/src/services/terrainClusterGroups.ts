@@ -112,6 +112,10 @@ export function groupClusters(rows: GroupableRow[]): ClusterGroup[] {
   for (let i = 0; i < rows.length; i++) {
     for (let j = i + 1; j < rows.length; j++) {
       const a = rows[i], b = rows[j];
+      // Handmatig toegevoegde objecten ('m'-prefix) blijven altijd zelfstandig:
+      // de gebruiker heeft die plek en klasse expliciet gekozen, dus een
+      // overlappende (mogelijk foute) detectie mag ze niet opslokken.
+      if (a.cluster_key.startsWith('m') || b.cluster_key.startsWith('m')) continue;
       const sameClass = effectiveClass(a) !== null && effectiveClass(a) === effectiveClass(b);
       if (overlaps(a, b) || (sameClass && adjacent(a, b))) {
         union(a.cluster_key, b.cluster_key);

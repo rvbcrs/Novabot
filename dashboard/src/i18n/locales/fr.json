@@ -385,7 +385,9 @@
     "objectCorrected": "corrigé",
     "minHeightLabel": "Hauteur min. objet",
     "minCntLabel": "Min. observations",
-    "objectNone": "Pas un objet (supprimer)"
+    "objectNone": "Pas un objet (supprimer)",
+    "addObjectTitle": "Ajouter un objet",
+    "addObjectButton": "Ajouter"
   },
   "schedule": {
     "title": "Planifications de tonte",
