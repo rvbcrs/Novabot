@@ -59,6 +59,33 @@ def base_to_map(pts, x, y, yaw):
     return out
 
 
+def quat_to_rot(qx, qy, qz, qw):
+    """Quaternion → 3x3 rotatiematrix (numpy)."""
+    n = math.sqrt(qx * qx + qy * qy + qz * qz + qw * qw) or 1.0
+    qx, qy, qz, qw = qx / n, qy / n, qz / n, qw / n
+    return np.array([
+        [1 - 2 * (qy * qy + qz * qz), 2 * (qx * qy - qz * qw), 2 * (qx * qz + qy * qw)],
+        [2 * (qx * qy + qz * qw), 1 - 2 * (qx * qx + qz * qz), 2 * (qy * qz - qx * qw)],
+        [2 * (qx * qz - qy * qw), 2 * (qy * qz + qx * qw), 1 - 2 * (qx * qx + qy * qy)],
+    ])
+
+
+def base_to_map_q(pts, x, y, quat):
+    """(M,3) base → kaartframe via de VOLLEDIGE oriëntatie (incl. pitch/roll).
+
+    De yaw-only variant negeerde de kanteling van de maaier: bij optrekken,
+    remmen of een oneffenheid wipt het wiel-vlak een paar graden en 'ziet' de
+    camera het gras 2 m vooruit tientallen centimeters te hoog. Samen met de
+    max-per-cel-regel stapelde dat op tot 35% valse objectdekking op vlak
+    gazon (les 2026-07-21). De odom-quaternion bevat pitch/roll al — gebruiken.
+    """
+    r = quat_to_rot(*quat)
+    out = pts @ r.T
+    out[:, 0] += x
+    out[:, 1] += y
+    return out
+
+
 def _unpack(key):
     ix = key >> 32
     iy = key & 0xFFFFFFFF
@@ -119,6 +146,13 @@ def parse_labeled(data):
 def accumulate_objects(objgrid, pts_map, labels):
     """Kaartframe-punten + labels → {(ix,iy,label): [max_h, cnt]}.
     Hoogte-gedreven: > OBJ_HEIGHT_MIN, exclusie-labels eruit.
+
+    `cnt` telt sinds 2026-07-21 het aantal FRAMES waarin de cel als object
+    gezien is (max 1 per aanroep), niet het aantal punten: één frame kan
+    tientallen punten in dezelfde cel leggen, waardoor een eenmalige misser
+    eruitzag als "vaak waargenomen" en het waarnemingen-ruisfilter in de
+    viewers niets kon uitrichten (blauwe laadstation-spikkels, groene soup).
+
     Retourneert het aantal geaccepteerde punten (int); bestaande aanroepen
     mogen de return-waarde negeren."""
     if len(pts_map) == 0:
@@ -134,8 +168,7 @@ def accumulate_objects(objgrid, pts_map, labels):
     uniq, inv = np.unique(comp, return_inverse=True)
     gmax = np.full(len(uniq), -np.inf)
     np.maximum.at(gmax, inv, pts[:, 2])
-    cnts = np.bincount(inv)
-    for c, mh, ct in zip(uniq.tolist(), gmax.tolist(), cnts.tolist()):
+    for c, mh in zip(uniq.tolist(), gmax.tolist()):
         lab = c & 0xFF
         giy = ((c >> 8) & 0x1FFFFF) - 1_048_576
         gix = (c >> 29) - 1_048_576
@@ -144,10 +177,10 @@ def accumulate_objects(objgrid, pts_map, labels):
         if e is None:
             if len(objgrid) >= OBJ_MAX_ENTRIES:
                 continue  # ponytail: cap = stil stoppen met nieuwe entries
-            objgrid[key] = [mh, int(ct)]
+            objgrid[key] = [mh, 1]
         else:
             e[0] = max(e[0], mh)
-            e[1] += int(ct)
+            e[1] += 1  # één frame = één waarneming, hoeveel punten er ook in vielen
     return len(pts)
 
 
@@ -335,6 +368,7 @@ def main():
     st = {"pose": None, "pose_t": 0.0, "grid": {}, "last_frame": 0.0,
           "last_data": 0.0, "tof_frames": 0,
           "obj": {}, "session": None, "last_live": 0.0, "last_obj_frame": 0.0,
+          "quat": (0.0, 0.0, 0.0, 1.0),
           "frame_count": 0, "frame_poses": [], "last_frame_t": 0.0,
           "last_obj_points": 0, "last_frame_warn_t": 0.0,
           "rgb_seen": 0, "rgb_no_pose": 0, "rgb_rej_interval": 0,
@@ -345,6 +379,8 @@ def main():
         st["pose"] = (p.position.x, p.position.y,
                       yaw_from_quat(p.orientation.x, p.orientation.y,
                                     p.orientation.z, p.orientation.w))
+        st["quat"] = (p.orientation.x, p.orientation.y,
+                      p.orientation.z, p.orientation.w)
         st["pose_t"] = time.time()
 
     def on_cloud(msg):
@@ -363,8 +399,8 @@ def main():
             st["session"] = int(time.time())
         pts = np.frombuffer(bytes(msg.data), dtype=np.float32).reshape(-1, 4)
         base = cam_to_base(pts)
-        x, y, yaw = st["pose"]
-        accumulate(st["grid"], base_to_map(base, x, y, yaw))
+        x, y, _ = st["pose"]
+        accumulate(st["grid"], base_to_map_q(base, x, y, st["quat"]))
         st["tof_frames"] += 1
 
     def on_labeled(msg):
@@ -384,8 +420,8 @@ def main():
         pts4, labels = parse_labeled(bytes(msg.data))
         m = cam_to_base_mask(pts4)
         base = cam_to_base(pts4)
-        x, y, yaw = st["pose"]
-        accepted = accumulate_objects(st["obj"], base_to_map(base, x, y, yaw), labels[m])
+        x, y, _ = st["pose"]
+        accepted = accumulate_objects(st["obj"], base_to_map_q(base, x, y, st["quat"]), labels[m])
         st["last_obj_points"] = int(accepted)
 
     def _write_pending_frame(session, seq, pose, jpeg):
