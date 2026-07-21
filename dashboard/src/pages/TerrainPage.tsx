@@ -333,7 +333,11 @@ export default function TerrainPage({ sn }: { sn: string }) {
   const [addClass, setAddClass] = useState('tree');
   const [addSize, setAddSize] = useState(1);
   const [addHeight, setAddHeight] = useState(0.5);
+  const [addModel, setAddModel] = useState('__default__');
   const [customModels, setCustomModels] = useState<string[]>([]);
+  // maten-bewerking van een geplaatst handmatig object (m-sleutel)
+  const [editSize, setEditSize] = useState(1);
+  const [editHeight, setEditHeight] = useState(0.5);
 
   const legendVisibleRef = useRef<Record<string, boolean>>(DEFAULT_LEGEND_VISIBLE);
   const livePosRef = useRef<LivePos | null>(null);
@@ -826,7 +830,7 @@ export default function TerrainPage({ sn }: { sn: string }) {
     }
   }
 
-  async function handleModelUpload(file: File): Promise<void> {
+  async function handleModelUpload(file: File): Promise<string | null> {
     setSavingOverride(true);
     try {
       const naam = file.name.replace(/\.glb$/i, '');
@@ -835,15 +839,17 @@ export default function TerrainPage({ sn }: { sn: string }) {
         headers: { 'Content-Type': 'application/octet-stream' },
         body: await file.arrayBuffer(),
       });
-      if (res.ok) {
-        const lijst = await apiFetch('/api/dashboard/terrain-models');
-        if (lijst.ok) {
-          const b = await lijst.json() as { models?: string[] };
-          setCustomModels(b.models ?? []);
-        }
+      if (!res.ok) return null;
+      const uploaded = (await res.json() as { file?: string }).file ?? null;
+      const lijst = await apiFetch('/api/dashboard/terrain-models');
+      if (lijst.ok) {
+        const b = await lijst.json() as { models?: string[] };
+        setCustomModels(b.models ?? []);
       }
+      return uploaded;
     } catch (err) {
       console.warn('terrain: model uploaden mislukt', err);
+      return null;
     } finally {
       setSavingOverride(false);
     }
@@ -853,11 +859,21 @@ export default function TerrainPage({ sn }: { sn: string }) {
     if (!addAt) return;
     setSavingOverride(true);
     try {
-      await apiFetch(`/api/dashboard/terrain-clusters/${encodeURIComponent(sn)}/add`, {
+      const addRes = await apiFetch(`/api/dashboard/terrain-clusters/${encodeURIComponent(sn)}/add`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ x: addAt.x, y: addAt.y, className: addClass, size: addSize, height: addHeight }),
       });
+      if (addRes.ok && addModel !== '__default__') {
+        const nieuweKey = (await addRes.json() as { key?: string }).key;
+        if (nieuweKey) {
+          await apiFetch(`/api/dashboard/terrain-clusters/${encodeURIComponent(sn)}/${encodeURIComponent(nieuweKey)}/model`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ file: addModel }),
+          });
+        }
+      }
       setAddAt(null);
       const res = await apiFetch(`/api/dashboard/terrain-clusters/${encodeURIComponent(sn)}`);
       if (res.ok) {
@@ -869,6 +885,34 @@ export default function TerrainPage({ sn }: { sn: string }) {
       rebuildAllRef.current?.();
     } catch (err) {
       console.warn('terrain: object toevoegen mislukt', err);
+    } finally {
+      setSavingOverride(false);
+    }
+  }
+
+  async function handleResizeCommit(): Promise<void> {
+    const c = selectedCluster;
+    if (!c || !c.key.startsWith('m')) return;
+    setSavingOverride(true);
+    try {
+      await apiFetch(`/api/dashboard/terrain-clusters/${encodeURIComponent(sn)}/add`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          x: c.cx, y: c.cy,
+          className: c.userOverride ?? c.className ?? 'tree',
+          size: editSize, height: editHeight,
+        }),
+      });
+      const res = await apiFetch(`/api/dashboard/terrain-clusters/${encodeURIComponent(sn)}`);
+      if (res.ok) {
+        const body = await res.json() as { clusters?: TerrainCluster[] };
+        clustersRef.current = body.clusters ?? [];
+        setClusters(body.clusters ?? []);
+      }
+      rebuildAllRef.current?.();
+    } catch (err) {
+      console.warn('terrain: maat aanpassen mislukt', err);
     } finally {
       setSavingOverride(false);
     }
@@ -909,6 +953,13 @@ export default function TerrainPage({ sn }: { sn: string }) {
 
   const selectedCluster = selectedKey ? clusters.find((c) => c.key === selectedKey) ?? null : null;
   const selectedClusterClass = selectedCluster ? findClusterClass(selectedCluster.className) : undefined;
+
+  useEffect(() => {
+    if (selectedCluster?.key.startsWith('m')) {
+      setEditSize(Math.max(selectedCluster.maxX - selectedCluster.minX, 0.3));
+      setEditHeight(Math.max(selectedCluster.maxH, 0.2));
+    }
+  }, [selectedCluster?.key]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   // Alleen herkende objecten in de lijst: onbekende clusters zijn voxels
   // zonder naam en zouden de lijst met honderden regels vullen.
@@ -1031,6 +1082,26 @@ export default function TerrainPage({ sn }: { sn: string }) {
               <option key={c.prompt} value={c.prompt}>{t(c.i18nKey)}</option>
             ))}
           </select>
+          <div className="text-[10px] uppercase tracking-wide text-gray-500 mt-1">{t('terrain.modelLabel')}</div>
+          <select
+            value={addModel}
+            className="mt-1 w-full text-xs bg-gray-900 border border-gray-700 rounded px-2 py-1.5 text-gray-200 focus:outline-none focus:border-blue-500"
+            onChange={(e) => setAddModel(e.target.value)}
+          >
+            <option value="__default__">{t('terrain.modelDefault')}</option>
+            {customModels.map((m) => (
+              <option key={m} value={m}>{m.replace(/\.glb$/, '')}</option>
+            ))}
+          </select>
+          <label className="block text-center text-[11px] text-blue-400 hover:text-blue-300 cursor-pointer">
+            {t('terrain.modelUpload')}
+            <input type="file" accept=".glb" className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) void handleModelUpload(f).then((up) => { if (up) setAddModel(up); });
+                e.target.value = '';
+              }} />
+          </label>
           <div className="text-gray-400 mt-1">{t('terrain.addSizeLabel')}: {addSize.toFixed(1)} m</div>
           <input type="range" min={0.3} max={6} step={0.1} value={addSize} className="w-full"
             onChange={(e) => setAddSize(parseFloat(e.target.value))} />
@@ -1102,6 +1173,18 @@ export default function TerrainPage({ sn }: { sn: string }) {
               <input type="file" accept=".glb" className="hidden"
                 onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleModelUpload(f); e.target.value = ''; }} />
             </label>
+            {selectedCluster.key.startsWith('m') && (
+              <>
+                <div className="text-gray-400 mt-1">{t('terrain.addSizeLabel')}: {editSize.toFixed(1)} m</div>
+                <input type="range" min={0.3} max={6} step={0.1} value={editSize} className="w-full"
+                  onChange={(e) => setEditSize(parseFloat(e.target.value))}
+                  onPointerUp={() => { void handleResizeCommit(); }} />
+                <div className="text-gray-400">{t('terrain.addHeightLabel')}: {editHeight.toFixed(1)} m</div>
+                <input type="range" min={0.2} max={4} step={0.1} value={editHeight} className="w-full"
+                  onChange={(e) => setEditHeight(parseFloat(e.target.value))}
+                  onPointerUp={() => { void handleResizeCommit(); }} />
+              </>
+            )}
           </div>
         </div>
       )}

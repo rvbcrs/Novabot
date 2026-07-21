@@ -325,4 +325,24 @@ describe('POST /api/dashboard/terrain-clusters/:sn/:key/override', () => {
     await request(app).get('/api/dashboard/terrain-models/..%2fx.glb').expect(400);
   });
 
+
+  it('re-add op dezelfde plek werkt als maat-update en behoudt model_file', async () => {
+    const SN8 = 'LFIN0000000088';
+    const glb = Buffer.concat([Buffer.from('glTF'), Buffer.alloc(12)]);
+    await request(app).post('/api/dashboard/terrain-models/upload?name=resizetest')
+      .set('Content-Type', 'application/octet-stream').send(glb);
+    await request(app).post(`/api/dashboard/terrain-clusters/${SN8}/add`)
+      .send({ x: 2, y: 2, className: 'tree', size: 1, height: 0.5 });
+    await request(app).post(`/api/dashboard/terrain-clusters/${SN8}/m20,20/model`)
+      .send({ file: 'resizetest.glb' });
+    // maat aanpassen via re-add op exact dezelfde coords
+    await request(app).post(`/api/dashboard/terrain-clusters/${SN8}/add`)
+      .send({ x: 2, y: 2, className: 'tree', size: 3, height: 2 });
+    const cl = await request(app).get(`/api/dashboard/terrain-clusters/${SN8}`);
+    expect(cl.body.clusters).toHaveLength(1);           // geen tweede object
+    expect(cl.body.clusters[0].maxX - cl.body.clusters[0].minX).toBeCloseTo(3, 5);
+    expect(cl.body.clusters[0].maxH).toBeCloseTo(2, 5);
+    expect(cl.body.clusters[0].modelFile).toBe('resizetest.glb'); // model overleeft
+  });
+
 });
