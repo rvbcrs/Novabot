@@ -821,6 +821,7 @@ dashboardRouter.get('/terrain-clusters/:sn', (req: Request, res: Response) => {
       confidence: g.confidence,
       userOverride: g.userOverride,
       photoUrl: g.cropKey ? `/api/dashboard/terrain-crops/${sn}/${g.cropKey}.jpg` : null,
+      modelFile: g.modelFile,
     };
   });
   res.json({ clusters });
@@ -842,6 +843,63 @@ dashboardRouter.get('/terrain-crops/:sn/:file', (req: Request, res: Response) =>
   res.type('image/jpeg').send(fs.readFileSync(filePath));
 });
 
+// ── Custom 3D-modellen (objectherkenning: eigen GLB's) ──────────────────────
+// Bibliotheek in STORAGE_PATH/models/custom/. Naam-whitelist is de
+// path-traversal-guard; magic-check weert niet-GLB uploads.
+const CUSTOM_MODELS_DIR = () => path.resolve(process.env.STORAGE_PATH ?? './storage', 'models', 'custom');
+
+dashboardRouter.get('/terrain-models', (_req: Request, res: Response) => {
+  const dir = CUSTOM_MODELS_DIR();
+  const files = fs.existsSync(dir) ? fs.readdirSync(dir).filter((f) => f.endsWith('.glb')).sort() : [];
+  res.json({ models: files });
+});
+
+dashboardRouter.get('/terrain-models/:file', (req: Request, res: Response) => {
+  const { file } = req.params;
+  if (!/^[a-z0-9_-]{1,40}\.glb$/.test(file)) { res.status(400).json({ error: 'invalid name' }); return; }
+  const fp = path.join(CUSTOM_MODELS_DIR(), file);
+  if (!fs.existsSync(fp)) { res.status(404).json({ error: 'model niet gevonden' }); return; }
+  res.type('model/gltf-binary').send(fs.readFileSync(fp));
+});
+
+dashboardRouter.post(
+  '/terrain-models/upload',
+  express.raw({ type: 'application/octet-stream', limit: '15mb' }),
+  (req: Request, res: Response) => {
+    const naamRaw = String(req.query.name ?? '');
+    const naam = naamRaw.toLowerCase().replace(/\.glb$/, '').replace(/[^a-z0-9_-]/g, '-').slice(0, 40);
+    if (!naam) { res.status(400).json({ error: 'naam vereist' }); return; }
+    const body = req.body as Buffer;
+    // GLB magic: 'glTF' (0x676c5446)
+    if (!Buffer.isBuffer(body) || body.length < 12 || body.toString('ascii', 0, 4) !== 'glTF') {
+      res.status(400).json({ error: 'geen geldig GLB-bestand' }); return;
+    }
+    const dir = CUSTOM_MODELS_DIR();
+    fs.mkdirSync(dir, { recursive: true });
+    const file = `${naam}.glb`;
+    fs.writeFileSync(path.join(dir, file), body);
+    res.json({ ok: true, file });
+  },
+);
+
+// POST /api/dashboard/terrain-clusters/:sn/:key/model — kies (of wis) het
+// custom 3D-model voor het hele object (alle tegels van de groep).
+dashboardRouter.post('/terrain-clusters/:sn/:key/model', (req: Request, res: Response) => {
+  const { sn, key } = req.params;
+  if (!/^LFI[A-Z]\d+$/.test(sn)) { res.status(400).json({ error: 'invalid sn' }); return; }
+  const file = (req.body ?? {}).file as string | null | undefined;
+  if (file != null) {
+    if (!/^[a-z0-9_-]{1,40}\.glb$/.test(file) || !fs.existsSync(path.join(CUSTOM_MODELS_DIR(), file))) {
+      res.status(400).json({ error: 'onbekend model' }); return;
+    }
+  }
+  const rows = terrainClusterRepo.findBySn(sn);
+  if (!rows.some((r) => r.cluster_key === key)) { res.status(404).json({ error: 'cluster niet gevonden' }); return; }
+  const keys = groupKeysFor(rows, key);
+  for (const k of keys) terrainClusterRepo.setModelFile(sn, k, file ?? null);
+  res.json({ ok: true, updated: keys.length });
+});
+
 // POST /api/dashboard/terrain-clusters/:sn/add — handmatig object toevoegen
 // op een aangeklikte plek. Sleutel krijgt een 'm'-prefix; runRecognition's
 // opruiming spaart die (handmatige objecten hebben geen voxel-cluster als
@@ -853,6 +911,7 @@ dashboardRouter.post('/terrain-clusters/:sn/add', (req: Request, res: Response) 
   const x = Number(body.x), y = Number(body.y);
   const className = body.className as string;
   const size = Math.min(Math.max(Number(body.size) || 1, 0.3), 6); // voetafdruk in m
+  const height = Math.min(Math.max(Number((body as { height?: unknown }).height) || 0.5, 0.2), 4); // m
   if (!Number.isFinite(x) || !Number.isFinite(y) || Math.abs(x) > 500 || Math.abs(y) > 500) {
     res.status(400).json({ error: 'invalid coords' }); return;
   }
@@ -865,7 +924,7 @@ dashboardRouter.post('/terrain-clusters/:sn/add', (req: Request, res: Response) 
   terrainClusterRepo.upsert({
     mower_sn: sn, cluster_key: key, cx: x, cy: y,
     min_x: x - size / 2, min_y: y - size / 2, max_x: x + size / 2, max_y: y + size / 2,
-    cells: 1, max_h: 0.5,
+    cells: 1, max_h: height,
     class_name: className, confidence: null, crop_file: null,
   });
   terrainClusterRepo.setOverride(sn, key, className);

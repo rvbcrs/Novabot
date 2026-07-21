@@ -31,6 +31,7 @@ export interface GroupableRow {
   confidence: number | null;
   crop_file: string | null;
   user_override: string | null;
+  model_file?: string | null;
 }
 
 export interface ClusterGroup {
@@ -48,6 +49,7 @@ export interface ClusterGroup {
   confidence: number | null;
   cropKey: string | null;
   userOverride: string | null;
+  modelFile: string | null;
 }
 
 /**
@@ -162,6 +164,7 @@ export function groupClusters(rows: GroupableRow[]): ClusterGroup[] {
       cropKey: (sorted.find((m) => effectiveClass(m) === (override ?? className) && m.crop_file)
         ?? sorted.find((m) => m.crop_file))?.cluster_key ?? null,
       userOverride: override,
+      modelFile: sorted.find((m) => m.model_file)?.model_file ?? null,
     });
   }
 

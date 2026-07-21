@@ -403,7 +403,12 @@
     "minCntLabel": "Min. observations",
     "objectNone": "Not an object (remove)",
     "addObjectTitle": "Add object",
-    "addObjectButton": "Add"
+    "addObjectButton": "Add",
+    "addSizeLabel": "Footprint",
+    "addHeightLabel": "Height",
+    "modelLabel": "3D model",
+    "modelDefault": "Default (class)",
+    "modelUpload": "Upload custom .glb"
   },
   "schedule": {
     "title": "Mowing Schedules",

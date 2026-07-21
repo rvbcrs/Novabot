@@ -113,6 +113,7 @@ describe('GET /api/dashboard/terrain-clusters/:sn', () => {
       cells: 40, maxH: 0.6,
       className: 'trampoline', nl: 'Trampoline', confidence: 0.62,
       userOverride: null, photoUrl: `/api/dashboard/terrain-crops/${SN}/1,2.jpg`,
+      modelFile: null,
     }]);
   });
 
@@ -284,6 +285,44 @@ describe('POST /api/dashboard/terrain-clusters/:sn/:key/override', () => {
       .send({ x: 1, y: 1, className: 'ufo' }).expect(400);
     await request(app).post(`/api/dashboard/terrain-clusters/${SN6}/add`)
       .send({ x: 9999, y: 1, className: 'tree' }).expect(400);
+  });
+
+
+  it('custom model: upload, lijst, serveren, koppelen aan object', async () => {
+    const SN7 = 'LFIN0000000077';
+    // mini-GLB: alleen de magic + padding (server checkt magic, geen parse)
+    const glb = Buffer.concat([Buffer.from('glTF'), Buffer.alloc(12)]);
+    const up = await request(app)
+      .post('/api/dashboard/terrain-models/upload?name=Mijn Stoel!')
+      .set('Content-Type', 'application/octet-stream')
+      .send(glb);
+    expect(up.status).toBe(200);
+    expect(up.body.file).toBe('mijn-stoel-.glb');
+
+    const lijst = await request(app).get('/api/dashboard/terrain-models');
+    expect(lijst.body.models).toContain('mijn-stoel-.glb');
+
+    const served = await request(app).get('/api/dashboard/terrain-models/mijn-stoel-.glb');
+    expect(served.status).toBe(200);
+
+    await request(app).post(`/api/dashboard/terrain-clusters/${SN7}/add`)
+      .send({ x: 1, y: 1, className: 'garden chair', height: 1.2 });
+    const key = 'm10,10';
+    const koppel = await request(app)
+      .post(`/api/dashboard/terrain-clusters/${SN7}/${key}/model`)
+      .send({ file: 'mijn-stoel-.glb' });
+    expect(koppel.status).toBe(200);
+
+    const cl = await request(app).get(`/api/dashboard/terrain-clusters/${SN7}`);
+    expect(cl.body.clusters[0].modelFile).toBe('mijn-stoel-.glb');
+    expect(cl.body.clusters[0].maxH).toBeCloseTo(1.2, 5);
+  });
+
+  it('model-upload weigert niet-GLB en traversal-namen', async () => {
+    await request(app).post('/api/dashboard/terrain-models/upload?name=x')
+      .set('Content-Type', 'application/octet-stream')
+      .send(Buffer.from('nietglb-data-hier')).expect(400);
+    await request(app).get('/api/dashboard/terrain-models/..%2fx.glb').expect(400);
   });
 
 });

@@ -450,7 +450,12 @@
     "minCntLabel": "Min. waarnemingen",
     "objectNone": "Geen object (verwijderen)",
     "addObjectTitle": "Object toevoegen",
-    "addObjectButton": "Toevoegen"
+    "addObjectButton": "Toevoegen",
+    "addSizeLabel": "Voetafdruk",
+    "addHeightLabel": "Hoogte",
+    "modelLabel": "3D-model",
+    "modelDefault": "Standaard (klasse)",
+    "modelUpload": "Eigen .glb uploaden"
   },
   "schedule": {
     "title": "Maaischema's",

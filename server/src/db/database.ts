@@ -720,10 +720,14 @@ export function initDb(): void {
       confidence    REAL,
       crop_file     TEXT,
       user_override TEXT,
+      model_file    TEXT,
       updated_at    TEXT NOT NULL DEFAULT (datetime('now')),
       PRIMARY KEY (mower_sn, cluster_key)
     );
   `);
+  // custom 3D-model per object (2026-07-21) — overleeft her-classificatie
+  try { db.exec(`ALTER TABLE terrain_clusters ADD COLUMN model_file TEXT`); }
+  catch { /* kolom bestaat al */ }
 
   // Feature #51: "every N days" schedule mode. interval_days > 0 takes
   // precedence over weekdays — the schedule fires when

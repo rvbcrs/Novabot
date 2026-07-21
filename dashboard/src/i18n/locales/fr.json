@@ -387,7 +387,12 @@
     "minCntLabel": "Min. observations",
     "objectNone": "Pas un objet (supprimer)",
     "addObjectTitle": "Ajouter un objet",
-    "addObjectButton": "Ajouter"
+    "addObjectButton": "Ajouter",
+    "addSizeLabel": "Emprise",
+    "addHeightLabel": "Hauteur",
+    "modelLabel": "Modèle 3D",
+    "modelDefault": "Défaut (classe)",
+    "modelUpload": "Téléverser un .glb"
   },
   "schedule": {
     "title": "Planifications de tonte",

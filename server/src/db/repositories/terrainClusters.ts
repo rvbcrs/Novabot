@@ -15,6 +15,7 @@ export interface TerrainClusterRow {
   confidence: number | null;
   crop_file: string | null;
   user_override: string | null;
+  model_file: string | null;
   updated_at: string;
 }
 
@@ -38,6 +39,12 @@ class TerrainClusterRepository {
   private _findBySn = db.prepare('SELECT * FROM terrain_clusters WHERE mower_sn = ?');
   private _setOverride = db.prepare(`
     UPDATE terrain_clusters SET user_override = ?, updated_at = datetime('now')
+    WHERE mower_sn = ? AND cluster_key = ?
+  `);
+  // custom 3D-model per object — net als user_override raakt de
+  // ON CONFLICT-update dit veld nooit aan (her-classificatie overleeft het).
+  private _setModelFile = db.prepare(`
+    UPDATE terrain_clusters SET model_file = ?, updated_at = datetime('now')
     WHERE mower_sn = ? AND cluster_key = ?
   `);
   // ON CONFLICT-update ververst model-velden + geometrie, maar raakt
@@ -87,6 +94,10 @@ class TerrainClusterRepository {
 
   setOverride(sn: string, clusterKey: string, className: string | null): void {
     this._setOverride.run(className, sn, clusterKey);
+  }
+
+  setModelFile(sn: string, clusterKey: string, file: string | null): void {
+    this._setModelFile.run(file, sn, clusterKey);
   }
 
   /**

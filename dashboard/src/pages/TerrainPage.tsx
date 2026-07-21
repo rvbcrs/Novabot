@@ -32,6 +32,8 @@ interface TerrainCluster {
   confidence: number | null;
   userOverride: string | null;
   photoUrl: string | null;
+  keys?: string[];
+  modelFile?: string | null;
 }
 
 // GLTFLoader-cache op moduleniveau: één keer laden per klasse, daarna alleen
@@ -55,6 +57,45 @@ function loadClusterModel(glb: string): Promise<THREE.Object3D> {
       gltfLoader.load(`/models/${glb}`, (gltf) => resolve(gltf.scene), undefined, reject);
     });
     modelLoadCache.set(glb, p);
+  }
+  return p;
+}
+
+/**
+ * Custom (geüploade) GLB: via fetch mét auth-token (zelfde reden als
+ * CropThumb — de route zit achter de auth-gate), daarna runtime genormaliseerd
+ * naar dezelfde unit-bbox als de gebundelde set (X/Y ±0.5, voet op Z=0, Z-up)
+ * zodat de bestaande schaal-logica ongewijzigd werkt. Cache-key 'custom:...'.
+ */
+function loadCustomModel(file: string): Promise<THREE.Object3D> {
+  const cacheKey = `custom:${file}`;
+  let p = modelLoadCache.get(cacheKey);
+  if (!p) {
+    p = (async () => {
+      const res = await apiFetch(`/api/dashboard/terrain-models/${encodeURIComponent(file)}`);
+      if (!res.ok) throw new Error(`model ${file}: HTTP ${res.status}`);
+      const buf = await res.arrayBuffer();
+      const gltf = await new Promise<{ scene: THREE.Object3D }>((resolve, reject) =>
+        gltfLoader.parse(buf, '', resolve, reject));
+      // normaliseren: meeste downloads zijn Y-up en willekeurig geschaald
+      const zUp = new THREE.Group();
+      zUp.rotation.x = Math.PI / 2; // Y-up → Z-up
+      zUp.add(gltf.scene);
+      const holder = new THREE.Group();
+      holder.add(zUp);
+      const box = new THREE.Box3().setFromObject(holder);
+      const size = new THREE.Vector3(); box.getSize(size);
+      const schaal = 1 / Math.max(size.x, size.y, size.z, 1e-6);
+      holder.scale.setScalar(schaal);
+      holder.updateMatrixWorld(true);
+      const box2 = new THREE.Box3().setFromObject(holder);
+      const centrum = new THREE.Vector3(); box2.getCenter(centrum);
+      const wrap = new THREE.Group();
+      holder.position.set(-centrum.x, -centrum.y, -box2.min.z);
+      wrap.add(holder);
+      return wrap as THREE.Object3D;
+    })();
+    modelLoadCache.set(cacheKey, p);
   }
   return p;
 }
@@ -290,6 +331,9 @@ export default function TerrainPage({ sn }: { sn: string }) {
   // klik op leeg terrein → voorstel om daar handmatig een object toe te voegen
   const [addAt, setAddAt] = useState<{ x: number; y: number } | null>(null);
   const [addClass, setAddClass] = useState('tree');
+  const [addSize, setAddSize] = useState(1);
+  const [addHeight, setAddHeight] = useState(0.5);
+  const [customModels, setCustomModels] = useState<string[]>([]);
 
   const legendVisibleRef = useRef<Record<string, boolean>>(DEFAULT_LEGEND_VISIBLE);
   const livePosRef = useRef<LivePos | null>(null);
@@ -453,9 +497,12 @@ export default function TerrainPage({ sn }: { sn: string }) {
       buildClusterOutlines(scene, clusterList);
       for (const cl of clusterList) {
         const glb = glbForClass(cl.className);
-        if (!glb) continue;
+        if (!glb && !cl.modelFile) continue;
         const klasse = findClusterClass(cl.className);
-        loadClusterModel(glb).then((orig) => {
+        const laden = cl.modelFile
+          ? loadCustomModel(cl.modelFile)
+          : loadClusterModel(glb!);
+        laden.then((orig) => {
           if (disposed || epoch !== rebuildEpochRef.current) return; // stale: nieuwe rebuild al bezig
           const clone = orig.clone(true);
           clone.traverse((o) => { o.userData.clusterKey = cl.key; });
@@ -479,10 +526,11 @@ export default function TerrainPage({ sn }: { sn: string }) {
           scene.add(clone);
           modelInstancesRef.current.set(cl.key, clone);
         }).catch((err) => {
-          console.warn(`terrain: model laden mislukt (${glb}) — toont object als voxels`, err);
+          const bron = cl.modelFile ? `custom:${cl.modelFile}` : glb!;
+          console.warn(`terrain: model laden mislukt (${bron}) — toont object als voxels`, err);
           if (disposed || epoch !== rebuildEpochRef.current) return;
-          if (failedGlbModels.has(glb)) return; // al gemarkeerd — voorkomt een rebuild-loop
-          failedGlbModels.add(glb);
+          if (failedGlbModels.has(bron)) return; // al gemarkeerd — voorkomt een rebuild-loop
+          failedGlbModels.add(bron);
           // Forceert een volledige rebuild: clusterBBoxesFrom() ziet nu
           // hasModel:false voor deze klasse, dus buildObjectVoxels() laat de
           // cellen van dit cluster weer als voxels verschijnen i.p.v. stil
@@ -755,6 +803,52 @@ export default function TerrainPage({ sn }: { sn: string }) {
   // Klik-correctie: POST de override, her-fetch de clusters en herbouw de
   // scene lokaal (rebuildAllRef, zie hierboven) i.p.v. te wachten op de
   // volgende 20s-poll.
+  async function handleModelChange(key: string, file: string): Promise<void> {
+    setSavingOverride(true);
+    try {
+      await apiFetch(`/api/dashboard/terrain-clusters/${encodeURIComponent(sn)}/${encodeURIComponent(key)}/model`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ file: file === '__default__' ? null : file }),
+      });
+      // cache voor dit object leeghalen zodat het nieuwe model echt laadt
+      const res = await apiFetch(`/api/dashboard/terrain-clusters/${encodeURIComponent(sn)}`);
+      if (res.ok) {
+        const body = await res.json() as { clusters?: TerrainCluster[] };
+        clustersRef.current = body.clusters ?? [];
+        setClusters(body.clusters ?? []);
+      }
+      rebuildAllRef.current?.();
+    } catch (err) {
+      console.warn('terrain: model kiezen mislukt', err);
+    } finally {
+      setSavingOverride(false);
+    }
+  }
+
+  async function handleModelUpload(file: File): Promise<void> {
+    setSavingOverride(true);
+    try {
+      const naam = file.name.replace(/\.glb$/i, '');
+      const res = await apiFetch(`/api/dashboard/terrain-models/upload?name=${encodeURIComponent(naam)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/octet-stream' },
+        body: await file.arrayBuffer(),
+      });
+      if (res.ok) {
+        const lijst = await apiFetch('/api/dashboard/terrain-models');
+        if (lijst.ok) {
+          const b = await lijst.json() as { models?: string[] };
+          setCustomModels(b.models ?? []);
+        }
+      }
+    } catch (err) {
+      console.warn('terrain: model uploaden mislukt', err);
+    } finally {
+      setSavingOverride(false);
+    }
+  }
+
   async function handleAddObject(): Promise<void> {
     if (!addAt) return;
     setSavingOverride(true);
@@ -762,7 +856,7 @@ export default function TerrainPage({ sn }: { sn: string }) {
       await apiFetch(`/api/dashboard/terrain-clusters/${encodeURIComponent(sn)}/add`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ x: addAt.x, y: addAt.y, className: addClass }),
+        body: JSON.stringify({ x: addAt.x, y: addAt.y, className: addClass, size: addSize, height: addHeight }),
       });
       setAddAt(null);
       const res = await apiFetch(`/api/dashboard/terrain-clusters/${encodeURIComponent(sn)}`);
@@ -805,6 +899,13 @@ export default function TerrainPage({ sn }: { sn: string }) {
     } catch { /* volgende 20s-poll haalt het alsnog in */ }
     rebuildAllRef.current?.();
   }
+
+  useEffect(() => {
+    apiFetch('/api/dashboard/terrain-models')
+      .then((r) => (r.ok ? r.json() : { models: [] }))
+      .then((b: { models?: string[] }) => setCustomModels(b.models ?? []))
+      .catch(() => { /* lijst is optioneel */ });
+  }, []);
 
   const selectedCluster = selectedKey ? clusters.find((c) => c.key === selectedKey) ?? null : null;
   const selectedClusterClass = selectedCluster ? findClusterClass(selectedCluster.className) : undefined;
@@ -930,6 +1031,12 @@ export default function TerrainPage({ sn }: { sn: string }) {
               <option key={c.prompt} value={c.prompt}>{t(c.i18nKey)}</option>
             ))}
           </select>
+          <div className="text-gray-400 mt-1">{t('terrain.addSizeLabel')}: {addSize.toFixed(1)} m</div>
+          <input type="range" min={0.3} max={6} step={0.1} value={addSize} className="w-full"
+            onChange={(e) => setAddSize(parseFloat(e.target.value))} />
+          <div className="text-gray-400">{t('terrain.addHeightLabel')}: {addHeight.toFixed(1)} m</div>
+          <input type="range" min={0.2} max={4} step={0.1} value={addHeight} className="w-full"
+            onChange={(e) => setAddHeight(parseFloat(e.target.value))} />
           <button
             onClick={() => { void handleAddObject(); }}
             disabled={savingOverride}
@@ -979,6 +1086,22 @@ export default function TerrainPage({ sn }: { sn: string }) {
               ))}
               <option value={NONE_OVERRIDE_VALUE}>{t('terrain.objectNone')}</option>
             </select>
+            <div className="text-[10px] uppercase tracking-wide text-gray-500 mt-2">{t('terrain.modelLabel')}</div>
+            <select
+              value={selectedCluster.modelFile ?? '__default__'}
+              className="mt-1 w-full text-xs bg-gray-900 border border-gray-700 rounded px-2 py-1.5 text-gray-200 focus:outline-none focus:border-blue-500"
+              onChange={(e) => { void handleModelChange(selectedCluster.key, e.target.value); }}
+            >
+              <option value="__default__">{t('terrain.modelDefault')}</option>
+              {customModels.map((m) => (
+                <option key={m} value={m}>{m.replace(/\.glb$/, '')}</option>
+              ))}
+            </select>
+            <label className="block mt-1.5 text-center text-[11px] text-blue-400 hover:text-blue-300 cursor-pointer">
+              {t('terrain.modelUpload')}
+              <input type="file" accept=".glb" className="hidden"
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleModelUpload(f); e.target.value = ''; }} />
+            </label>
           </div>
         </div>
       )}
