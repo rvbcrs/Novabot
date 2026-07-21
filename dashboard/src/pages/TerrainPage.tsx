@@ -65,6 +65,8 @@ const TRAIL_MAX_POINTS = 50;
 // user_override server-side, waarna de model-classificatie (indien boven de
 // confidence-drempel) weer effectief wordt.
 const AUTO_OVERRIDE_VALUE = '__auto__';
+// door de gebruiker afgewezen detectie — server filtert deze uit de lijst
+const NONE_OVERRIDE_VALUE = '__none__';
 
 // Kleurgroepen voor de legenda — labels per groep uit LABEL_COLORS (Global
 // Constraints): blauw=laadstation, groen=struik, oranje=obstakel,
@@ -728,6 +730,7 @@ export default function TerrainPage({ sn }: { sn: string }) {
   // scene lokaal (rebuildAllRef, zie hierboven) i.p.v. te wachten op de
   // volgende 20s-poll.
   async function handleOverrideChange(key: string, value: string): Promise<void> {
+    if (value === NONE_OVERRIDE_VALUE) setSelectedKey(null);
     setSavingOverride(true);
     try {
       await apiFetch(`/api/dashboard/terrain-clusters/${encodeURIComponent(sn)}/${encodeURIComponent(key)}/override`, {
@@ -898,6 +901,7 @@ export default function TerrainPage({ sn }: { sn: string }) {
               {CLUSTER_CLASSES.map((c) => (
                 <option key={c.prompt} value={c.prompt}>{t(c.i18nKey)}</option>
               ))}
+              <option value={NONE_OVERRIDE_VALUE}>{t('terrain.objectNone')}</option>
             </select>
           </div>
         </div>

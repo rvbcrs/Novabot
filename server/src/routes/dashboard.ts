@@ -801,7 +801,9 @@ dashboardRouter.get('/terrain-clusters/:sn', (req: Request, res: Response) => {
   // Aangrenzende tegels met dezelfde klasse worden één object: een zwembad
   // dat over vijf tegels ligt hoort één ding op de kaart te zijn, met één
   // correctie (zie terrainClusterGroups.ts).
-  const clusters = groupClusters(terrainClusterRepo.findBySn(sn)).map((g) => {
+  const clusters = groupClusters(terrainClusterRepo.findBySn(sn))
+    .filter((g) => g.className !== '__none__')
+    .map((g) => {
     const nl = g.className ? (LABELS.find((l) => l.prompt === g.className)?.nl ?? null) : null;
     return {
       key: g.keys[0],
@@ -847,7 +849,10 @@ dashboardRouter.post('/terrain-clusters/:sn/:key/override', (req: Request, res: 
   const { sn, key } = req.params;
   if (!/^LFI[A-Z]\d+$/.test(sn)) { res.status(400).json({ error: 'invalid sn' }); return; }
   const className = (req.body ?? {}).className as string | null | undefined;
-  if (className !== null && !LABELS.some((l) => l.prompt === className)) {
+  // '__none__' = door de gebruiker afgewezen detectie: blijft als override in
+  // de DB staan (zodat her-classificatie hem niet laat herleven) maar wordt
+  // uit elke weergave gefilterd.
+  if (className !== null && className !== '__none__' && !LABELS.some((l) => l.prompt === className)) {
     res.status(400).json({ error: 'onbekende className' }); return;
   }
   const rows = terrainClusterRepo.findBySn(sn);

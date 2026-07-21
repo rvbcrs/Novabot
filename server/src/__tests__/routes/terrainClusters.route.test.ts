@@ -235,4 +235,23 @@ describe('POST /api/dashboard/terrain-clusters/:sn/:key/override', () => {
     expect(res.status).toBe(200);
     expect(terrainClusterRepo.findBySn(SN)[0].user_override).toBeNull();
   });
+
+  it("'__none__'-override verwijdert het object uit de lijst maar bewaart de rij", async () => {
+    const SN3 = 'LFIN0000000033';
+    terrainClusterRepo.upsert({
+      mower_sn: SN3, cluster_key: 'fout', cx: 1, cy: 1,
+      min_x: 0, min_y: 0, max_x: 2, max_y: 2, cells: 50, max_h: 0.5,
+      class_name: 'trampoline', confidence: 0.4, crop_file: null,
+    });
+    const res = await request(app)
+      .post(`/api/dashboard/terrain-clusters/${SN3}/fout/override`)
+      .send({ className: '__none__' });
+    expect(res.status).toBe(200);
+
+    const lijst = await request(app).get(`/api/dashboard/terrain-clusters/${SN3}`);
+    expect(lijst.body.clusters).toEqual([]);          // weg uit de weergave
+    const row = terrainClusterRepo.findBySn(SN3)[0];
+    expect(row.user_override).toBe('__none__');       // maar niet uit de DB
+  });
+
 });

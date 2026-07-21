@@ -400,7 +400,8 @@
     "objectListTitle": "Detected objects",
     "objectCorrected": "corrected",
     "minHeightLabel": "Min. object height",
-    "minCntLabel": "Min. observations"
+    "minCntLabel": "Min. observations",
+    "objectNone": "Not an object (remove)"
   },
   "schedule": {
     "title": "Mowing Schedules",

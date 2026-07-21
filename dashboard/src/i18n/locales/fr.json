@@ -384,7 +384,8 @@
     "objectListTitle": "Objets détectés",
     "objectCorrected": "corrigé",
     "minHeightLabel": "Hauteur min. objet",
-    "minCntLabel": "Min. observations"
+    "minCntLabel": "Min. observations",
+    "objectNone": "Pas un objet (supprimer)"
   },
   "schedule": {
     "title": "Planifications de tonte",

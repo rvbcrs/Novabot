@@ -384,7 +384,8 @@
     "objectListTitle": "Erkannte Objekte",
     "objectCorrected": "korrigiert",
     "minHeightLabel": "Min. Objekthöhe",
-    "minCntLabel": "Min. Beobachtungen"
+    "minCntLabel": "Min. Beobachtungen",
+    "objectNone": "Kein Objekt (entfernen)"
   },
   "schedule": {
     "title": "Mähpläne",

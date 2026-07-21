@@ -447,7 +447,8 @@
     "objectListTitle": "Herkende objecten",
     "objectCorrected": "gecorrigeerd",
     "minHeightLabel": "Min. objecthoogte",
-    "minCntLabel": "Min. waarnemingen"
+    "minCntLabel": "Min. waarnemingen",
+    "objectNone": "Geen object (verwijderen)"
   },
   "schedule": {
     "title": "Maaischema's",
