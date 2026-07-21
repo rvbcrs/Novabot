@@ -446,7 +446,8 @@
     "classBall": "Bal",
     "objectListTitle": "Herkende objecten",
     "objectCorrected": "gecorrigeerd",
-    "minHeightLabel": "Min. objecthoogte"
+    "minHeightLabel": "Min. objecthoogte",
+    "minCntLabel": "Min. waarnemingen"
   },
   "schedule": {
     "title": "Maaischema's",

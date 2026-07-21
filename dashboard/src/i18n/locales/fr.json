@@ -383,7 +383,8 @@
     "classBall": "Ballon",
     "objectListTitle": "Objets détectés",
     "objectCorrected": "corrigé",
-    "minHeightLabel": "Hauteur min. objet"
+    "minHeightLabel": "Hauteur min. objet",
+    "minCntLabel": "Min. observations"
   },
   "schedule": {
     "title": "Planifications de tonte",

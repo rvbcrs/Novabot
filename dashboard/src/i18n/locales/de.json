@@ -383,7 +383,8 @@
     "classBall": "Ball",
     "objectListTitle": "Erkannte Objekte",
     "objectCorrected": "korrigiert",
-    "minHeightLabel": "Min. Objekthöhe"
+    "minHeightLabel": "Min. Objekthöhe",
+    "minCntLabel": "Min. Beobachtungen"
   },
   "schedule": {
     "title": "Mähpläne",

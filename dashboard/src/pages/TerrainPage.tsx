@@ -203,12 +203,17 @@ function buildObjectVoxels(
   groundAt: (x: number, y: number) => number,
   bboxes: ClusterBBox[],
   minH: number,
+  minCnt: number,
 ): THREE.InstancedMesh | null {
   const keep: number[] = [];
   const clusterKeys: Array<string | null> = [];
   for (let i = 0; i < objs.ix.length; i++) {
     const x = objs.ix[i] * objs.cellSize + objs.cellSize / 2;
     const y = objs.iy[i] * objs.cellSize + objs.cellSize / 2;
+    // Ruisfilter: een cel die maar een paar keer als object gezien is, is
+    // meestal een losse fout-detectie van de segmentatie (per frame maar ~3%
+    // niet-gazon; over een hele beurt smeren losse fouten uit). Instelbaar.
+    if (objs.cnt[i] < minCnt) continue;
     // Lage cellen (tot minH boven de grond) zijn meestal hoog gras/onkruid bij
     // de randen — die maakten de bossages veel te dik. Instelbaar via de UI.
     if (objs.h[i] - groundAt(x, y) < minH) continue;
@@ -272,6 +277,8 @@ export default function TerrainPage({ sn }: { sn: string }) {
   const [savingOverride, setSavingOverride] = useState(false);
   const [minObjHeight, setMinObjHeight] = useState(0.1);
   const minObjHeightRef = useRef(0.1);
+  const [minObjCnt, setMinObjCnt] = useState(3);
+  const minObjCntRef = useRef(3);
 
   const legendVisibleRef = useRef<Record<string, boolean>>(DEFAULT_LEGEND_VISIBLE);
   const livePosRef = useRef<LivePos | null>(null);
@@ -497,7 +504,7 @@ export default function TerrainPage({ sn }: { sn: string }) {
         for (const group of COLOR_GROUPS) {
           const filtered = filterObjectsByLabels(objects, group.labels);
           if (filtered.ix.length === 0) continue;
-          const vm = buildObjectVoxels(filtered, groundAtRef.current, bboxes, minObjHeightRef.current);
+          const vm = buildObjectVoxels(filtered, groundAtRef.current, bboxes, minObjHeightRef.current, minObjCntRef.current);
           if (!vm) continue; // alle cellen van deze groep vielen onder een gemodelleerd cluster
           anyObjects = true;
           vm.visible = legendVisibleRef.current[group.id] ?? true;
@@ -801,6 +808,17 @@ export default function TerrainPage({ sn }: { sn: string }) {
                 const v = parseFloat(e.target.value);
                 setMinObjHeight(v);
                 minObjHeightRef.current = v;
+                rebuildAllRef.current?.();
+              }}
+            />
+            <div className="text-gray-400 mt-2 mb-1">{t('terrain.minCntLabel')}: {minObjCnt}x</div>
+            <input
+              type="range" min={1} max={8} step={1} value={minObjCnt}
+              className="w-full"
+              onChange={(e) => {
+                const v = parseInt(e.target.value, 10);
+                setMinObjCnt(v);
+                minObjCntRef.current = v;
                 rebuildAllRef.current?.();
               }}
             />

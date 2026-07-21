@@ -399,7 +399,8 @@
     "classBall": "Ball",
     "objectListTitle": "Detected objects",
     "objectCorrected": "corrected",
-    "minHeightLabel": "Min. object height"
+    "minHeightLabel": "Min. object height",
+    "minCntLabel": "Min. observations"
   },
   "schedule": {
     "title": "Mowing Schedules",
