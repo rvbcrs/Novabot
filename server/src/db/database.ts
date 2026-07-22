@@ -828,6 +828,21 @@ export function initDb(): void {
     CREATE INDEX IF NOT EXISTS virtual_walls_sn ON virtual_walls(mower_sn);
   `);
 
+  // Feature: autonomous mapping sessions (route B, phase 1)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS auto_map_sessions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      sn TEXT NOT NULL,
+      mode TEXT NOT NULL,
+      phase TEXT NOT NULL DEFAULT 'preflight',
+      radius_m REAL NOT NULL DEFAULT 30,
+      result_code INTEGER,
+      error TEXT,
+      started_at TEXT NOT NULL DEFAULT (datetime('now')),
+      finished_at TEXT
+    );
+  `);
+
   // ── Migratie: map_area van GPS {lat,lng} naar lokaal {x,y} meters ──
   // Detectie: als het eerste punt in map_area een 'lat' veld heeft, is het GPS formaat.
   // Na migratie bevat map_area [{x,y}] lokale meters (charger = 0,0).
