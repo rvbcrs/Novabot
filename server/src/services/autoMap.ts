@@ -100,6 +100,7 @@ export async function startAutoMap(
   let cancelRequested = false;
 
   const finish = (phase: string, patch?: Parameters<typeof updatePhase>[2], detail?: Record<string, unknown>) => {
+    if (runState === 'closed') return; // dubbele finish (bv. late timeout na abort) mag de eindfase niet overschrijven
     runState = 'closed';
     const run = liveRuns.get(sn);
     if (run) { offExtendedResponse(sn, run.extHandler); liveRuns.delete(sn); }
@@ -203,6 +204,9 @@ export async function startAutoMap(
     } else {
       setPhase('preparing');
     }
+    // Sessie kan tijdens het wachten al beëindigd zijn (abort/stale event):
+    // dan geen volgmotor meer starten op een dode sessie.
+    if (runState !== 'running') return;
     publishExtendedCommand(sn, { start_auto_map_test: { radiusM, timeoutS: 1200 } });
   })();
 
