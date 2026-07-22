@@ -557,6 +557,7 @@
     "retry": "Opnieuw proberen",
     "reviewBanner": "De maaier heeft een kaart gemaakt. Controleer hem op de kaartweergave en accepteer of verwerp.",
     "reviewFailed": "Actie mislukt, probeer opnieuw.",
+    "stopFailed": "Stoppen mislukt, probeer opnieuw.",
     "done": "Klaar",
     "rejected": "Verworpen",
     "rejectedHint": "Je kunt de kaart op de maaier verwijderen via het bestaande kaartbeheer. Start daarna een nieuwe poging.",

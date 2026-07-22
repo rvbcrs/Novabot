@@ -510,6 +510,7 @@
     "retry": "Try again",
     "reviewBanner": "The mower created a map. Check it on the map view and accept or reject it.",
     "reviewFailed": "Action failed, try again.",
+    "stopFailed": "Stopping failed, try again.",
     "done": "Done",
     "rejected": "Rejected",
     "rejectedHint": "You can delete the map on the mower via the existing map management. Then start a new attempt.",

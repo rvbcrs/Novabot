@@ -65,8 +65,9 @@ async function startAutoMap(sn: string, mode: AutoMapMode, radiusM: number): Pro
   return { ok: res.ok && data.ok !== false, error: data.error };
 }
 
-async function stopAutoMap(sn: string): Promise<void> {
-  await apiFetch(`${BASE}/${encodeURIComponent(sn)}/stop`, { method: 'POST' });
+async function stopAutoMap(sn: string): Promise<{ ok: boolean }> {
+  const res = await apiFetch(`${BASE}/${encodeURIComponent(sn)}/stop`, { method: 'POST' });
+  return { ok: res.ok };
 }
 
 async function reviewAutoMap(sn: string, action: 'accept' | 'reject'): Promise<boolean> {
@@ -134,13 +135,24 @@ export function AutoMapPanel({ sn }: Props) {
   const [busy, setBusy] = useState(false);
   const [mode, setMode] = useState<AutoMapMode>('test');
   const [radiusM, setRadiusM] = useState(RADIUS_DEFAULT);
+  const [radiusText, setRadiusText] = useState(String(RADIUS_DEFAULT));
   const [error, setError] = useState<string | null>(null);
   const [dismissed, setDismissed] = useState(true);
   const lastPhaseRef = useRef<string | null>(null);
+  // Monotone sequence-teller tegen stale-response races: de 10s-poll en elk
+  // auto_map_progress-event doen elk hun eigen GET status. Zonder bewaking kan
+  // een tragere oudere response (of een fetch van een vorige sn) verse state
+  // overschrijven. Alleen de fetch die nog steeds de nieuwste seq is mag
+  // state toepassen; sn-wissel/unmount bumpt de seq zodat lopende fetches van
+  // de oude sn genegeerd worden. Zelfde bescherming als de cancelled-vlag in
+  // ReanchorWizard.tsx, maar dan ook tegen out-of-order responses.
+  const reqSeqRef = useRef(0);
 
   const refresh = useCallback(async () => {
+    const seq = ++reqSeqRef.current;
     try {
       const s = await fetchAutoMapStatus(sn);
+      if (seq !== reqSeqRef.current) return; // verouderd of sn gewisseld
       const prevPhase = lastPhaseRef.current;
       if (prevPhase === null) {
         setDismissed(TERMINAL_PHASES.has(s.phase));
@@ -156,6 +168,7 @@ export function AutoMapPanel({ sn }: Props) {
   }, [sn]);
 
   useEffect(() => {
+    reqSeqRef.current++;
     lastPhaseRef.current = null;
     setDismissed(true);
     setStatus(null);
@@ -170,16 +183,25 @@ export function AutoMapPanel({ sn }: Props) {
     socket.on('auto_map_progress', onProgress);
 
     return () => {
+      reqSeqRef.current++;
       clearInterval(timer);
       socket.off('auto_map_progress', onProgress);
     };
   }, [sn, refresh]);
 
   const handleStart = useCallback(async () => {
+    // Klem + parse ook vóór het starten van een sessie, niet alleen op blur —
+    // zo kan een niet-geblurde invoer (bv. direct op Start klikken) nooit een
+    // ongeklemde waarde naar de API sturen. Ongeldige invoer valt terug op de
+    // laatst geldige waarde (radiusM), net als bij onBlur.
+    const parsed = Number(radiusText);
+    const clamped = Number.isFinite(parsed) && radiusText.trim() !== '' ? clampRadius(parsed) : radiusM;
+    setRadiusM(clamped);
+    setRadiusText(String(clamped));
     setBusy(true);
     setError(null);
     try {
-      const r = await startAutoMap(sn, mode, radiusM);
+      const r = await startAutoMap(sn, mode, clamped);
       if (!r.ok) {
         setError(errorLabel(r.error, t));
       } else {
@@ -189,17 +211,21 @@ export function AutoMapPanel({ sn }: Props) {
     } finally {
       setBusy(false);
     }
-  }, [sn, mode, radiusM, refresh, t]);
+  }, [sn, mode, radiusText, refresh, t]);
 
   const handleStop = useCallback(async () => {
     setBusy(true);
+    setError(null);
     try {
-      await stopAutoMap(sn);
+      const r = await stopAutoMap(sn);
+      if (!r.ok) {
+        setError(t('autoMap.stopFailed', 'Stoppen mislukt, probeer opnieuw.'));
+      }
       void refresh();
     } finally {
       setBusy(false);
     }
-  }, [sn, refresh]);
+  }, [sn, refresh, t]);
 
   const handleReview = useCallback(async (action: 'accept' | 'reject') => {
     setBusy(true);
@@ -248,9 +274,20 @@ export function AutoMapPanel({ sn }: Props) {
               type="number"
               min={RADIUS_MIN}
               max={RADIUS_MAX}
-              value={radiusM}
-              onChange={e => setRadiusM(clampRadius(Number(e.target.value)))}
-              onBlur={e => setRadiusM(clampRadius(Number(e.target.value)))}
+              value={radiusText}
+              onChange={e => setRadiusText(e.target.value)}
+              onBlur={e => {
+                // Ongeldige invoer bij blur valt terug op de laatst geldige
+                // waarde; anders klemmen we naar 5..200. Tijdens het typen
+                // (onChange) laten we de string ongefilterd staan zodat "15"
+                // niet meteen naar "5" klemt bij de eerste toetsaanslag.
+                const parsed = Number(e.target.value);
+                const clamped = Number.isFinite(parsed) && e.target.value.trim() !== ''
+                  ? clampRadius(parsed)
+                  : radiusM;
+                setRadiusM(clamped);
+                setRadiusText(String(clamped));
+              }}
               className="w-20 bg-gray-800 border border-gray-600 rounded px-2 py-1 text-sm text-white focus:outline-none focus:border-sky-500"
             />
           </label>
