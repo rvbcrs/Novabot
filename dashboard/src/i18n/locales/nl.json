@@ -544,6 +544,45 @@
     "ignoreSession": "Negeer regen deze sessie",
     "ignoreSessionHint": "De maaier pauzeert dan niet automatisch bij regen tot deze sessie eindigt."
   },
+  "autoMap": {
+    "title": "Autonoom karteren",
+    "modeTest": "Testrit (zonder opname)",
+    "modeRecord": "Kaart maken",
+    "radiusLabel": "Geofence (m)",
+    "start": "Start",
+    "stop": "Stop",
+    "accept": "Kaart accepteren",
+    "reject": "Verwerpen",
+    "newAttempt": "Nieuwe poging",
+    "retry": "Opnieuw proberen",
+    "reviewBanner": "De maaier heeft een kaart gemaakt. Controleer hem op de kaartweergave en accepteer of verwerp.",
+    "reviewFailed": "Actie mislukt, probeer opnieuw.",
+    "done": "Klaar",
+    "rejected": "Verworpen",
+    "rejectedHint": "Je kunt de kaart op de maaier verwijderen via het bestaande kaartbeheer. Start daarna een nieuwe poging.",
+    "phase": {
+      "preflight": "Voorbereiden",
+      "preparing": "Voorbereiden",
+      "searchingBoundary": "Grasrand zoeken",
+      "following": "Rand volgen",
+      "recording": "Opnemen",
+      "finishing": "Kaart opslaan",
+      "awaitingReview": "Wacht op beoordeling",
+      "done": "Klaar",
+      "rejected": "Verworpen",
+      "error": "Fout",
+      "aborted": "Afgebroken"
+    },
+    "error": {
+      "unknown": "Onbekende fout",
+      "preflightBattery": "Accu moet boven 40% zijn",
+      "preflightRtk": "Wacht op RTK Fixed",
+      "alreadyRunning": "Er loopt al een sessie",
+      "geofence": "Geofence overschreden, rit gestopt",
+      "timeout": "Tijdslimiet bereikt",
+      "relayMissing": "lawn_edge_relay draait niet op de maaier"
+    }
+  },
   "reanchor": {
     "title": "Opnieuw verankeren",
     "bannerTitle": "Opnieuw verankeren nodig",

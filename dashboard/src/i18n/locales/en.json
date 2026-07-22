@@ -497,6 +497,45 @@
     "ignoreSession": "Ignore rain this session",
     "ignoreSessionHint": "The mower will not auto-pause for rain until this session ends."
   },
+  "autoMap": {
+    "title": "Autonomous mapping",
+    "modeTest": "Test drive (no recording)",
+    "modeRecord": "Create map",
+    "radiusLabel": "Geofence (m)",
+    "start": "Start",
+    "stop": "Stop",
+    "accept": "Accept map",
+    "reject": "Reject",
+    "newAttempt": "New attempt",
+    "retry": "Try again",
+    "reviewBanner": "The mower created a map. Check it on the map view and accept or reject it.",
+    "reviewFailed": "Action failed, try again.",
+    "done": "Done",
+    "rejected": "Rejected",
+    "rejectedHint": "You can delete the map on the mower via the existing map management. Then start a new attempt.",
+    "phase": {
+      "preflight": "Preparing",
+      "preparing": "Preparing",
+      "searchingBoundary": "Searching lawn edge",
+      "following": "Following edge",
+      "recording": "Recording",
+      "finishing": "Saving map",
+      "awaitingReview": "Awaiting review",
+      "done": "Done",
+      "rejected": "Rejected",
+      "error": "Error",
+      "aborted": "Aborted"
+    },
+    "error": {
+      "unknown": "Unknown error",
+      "preflightBattery": "Battery must be above 40%",
+      "preflightRtk": "Waiting for RTK Fixed",
+      "alreadyRunning": "A session is already running",
+      "geofence": "Geofence exceeded, drive stopped",
+      "timeout": "Time limit reached",
+      "relayMissing": "lawn_edge_relay is not running on the mower"
+    }
+  },
   "reanchor": {
     "title": "Re-anchor",
     "bannerTitle": "Re-anchor required",

@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { DeviceState } from '../types';
 import { MowerMap } from '../components/map/MowerMap';
+import { AutoMapPanel } from '../components/map/AutoMapPanel';
 import type { PatternPlacement } from '../components/patterns/PatternOverlay';
 
 type OtaProgressEntry = { status: string; percentage: number | null; timestamp: number };
@@ -42,39 +43,42 @@ export function MapTab({ mower, connected, liveOutlines, coveredLanes, previewRe
   const isMowing = mower.online && /Work:(RUNNING|COVERING|NAVIGATING|BOUNDARY_COVERING|AVOIDING|MOVING)/.test(msg);
 
   return (
-    <MowerMap
-      sn={mower.sn}
-      mowingActive={isMowing}
-      sensors={mower.sensors}
-      lat={mower.sensors.latitude}
-      lng={mower.sensors.longitude}
-      mapX={mower.sensors.map_position_x}
-      mapY={mower.sensors.map_position_y}
-      heading={mower.sensors.theta}
-      online={mower.online && connected}
-      signals={{
-        wifiRssi: mower.sensors.wifi_rssi,
-        rtkSat: mower.sensors.rtk_sat,
-        locQuality: mower.sensors.loc_quality,
-        batteryPower: mower.sensors.battery_power ?? mower.sensors.battery_capacity,
-        batteryState: mower.sensors.battery_state,
-      }}
-      mowing={{
-        mowingProgress: mower.sensors.mowing_progress,
-        coveringArea: mower.sensors.covering_area,
-        finishedArea: mower.sensors.finished_area,
-        workStatus: mower.sensors.work_status,
-        mowSpeed: mower.sensors.mow_speed,
-        covDirection: mower.sensors.cov_direction,
-      }}
-      liveOutline={liveOutlines.get(mower.sn) ?? null}
-      coveredLanes={coveredLanes.get(mower.sn) ?? null}
-      previewRequest={previewRequest}
-      patternPlacement={patternPlacement}
-      onMapClickForPattern={onMapClickForPattern}
-      controlsSlot={controlsSlot}
-      progressSuppressed={progressSuppressed}
-      onPreviewLoading={onPreviewLoading}
-    />
+    <div className="flex flex-col flex-1 min-h-0 gap-3">
+      <MowerMap
+        sn={mower.sn}
+        mowingActive={isMowing}
+        sensors={mower.sensors}
+        lat={mower.sensors.latitude}
+        lng={mower.sensors.longitude}
+        mapX={mower.sensors.map_position_x}
+        mapY={mower.sensors.map_position_y}
+        heading={mower.sensors.theta}
+        online={mower.online && connected}
+        signals={{
+          wifiRssi: mower.sensors.wifi_rssi,
+          rtkSat: mower.sensors.rtk_sat,
+          locQuality: mower.sensors.loc_quality,
+          batteryPower: mower.sensors.battery_power ?? mower.sensors.battery_capacity,
+          batteryState: mower.sensors.battery_state,
+        }}
+        mowing={{
+          mowingProgress: mower.sensors.mowing_progress,
+          coveringArea: mower.sensors.covering_area,
+          finishedArea: mower.sensors.finished_area,
+          workStatus: mower.sensors.work_status,
+          mowSpeed: mower.sensors.mow_speed,
+          covDirection: mower.sensors.cov_direction,
+        }}
+        liveOutline={liveOutlines.get(mower.sn) ?? null}
+        coveredLanes={coveredLanes.get(mower.sn) ?? null}
+        previewRequest={previewRequest}
+        patternPlacement={patternPlacement}
+        onMapClickForPattern={onMapClickForPattern}
+        controlsSlot={controlsSlot}
+        progressSuppressed={progressSuppressed}
+        onPreviewLoading={onPreviewLoading}
+      />
+      <AutoMapPanel sn={mower.sn} />
+    </div>
   );
 }
