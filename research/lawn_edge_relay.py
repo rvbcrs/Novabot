@@ -45,6 +45,40 @@ def relabel(data):
     return arr.tobytes()
 
 
+def main():
+    import rclpy
+    from rclpy.node import Node
+    from sensor_msgs.msg import PointCloud2
+
+    rclpy.init()
+    node = Node("lawn_edge_relay")
+    pub = node.create_publisher(PointCloud2, PUB_TOPIC, 5)
+    stats = {"in": 0, "out": 0, "bad": 0, "last_log": time.monotonic()}
+
+    def on_labeled(msg):
+        stats["in"] += 1
+        if msg.point_step != POINT_STEP:
+            # Onbekend formaat: ongewijzigd doorgeven zodat de costmap niet
+            # blind wordt, maar wel tellen zodat het in de log opvalt.
+            stats["bad"] += 1
+            pub.publish(msg)
+        else:
+            msg.data = relabel(bytes(msg.data))
+            pub.publish(msg)
+        stats["out"] += 1
+        now = time.monotonic()
+        if now - stats["last_log"] >= 60.0:
+            log(f"relay: in={stats['in']} out={stats['out']} bad_stride={stats['bad']}")
+            stats["last_log"] = now
+
+    node.create_subscription(PointCloud2, SUB_TOPIC, on_labeled, 5)
+    log(f"lawn_edge_relay actief: {SUB_TOPIC} -> {PUB_TOPIC}")
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    return 0
+
+
 if __name__ == "__main__":
-    from lawn_edge_relay_main import main  # placeholder tot Task 2; zie Step 3 daar
     sys.exit(main())
