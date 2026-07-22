@@ -62,6 +62,10 @@ import { getMowerFileCapability } from '../services/mowerFileCapability.js';
 import { getPolygonAnchor } from '../services/anchor.js';
 import { selectParaRepush } from '../mqtt/paraRepush.js';
 import { MOW_PARA_SETTLE_MS } from '../services/mowingService.js';
+import {
+  startAutoMap, stopAutoMap, getStatus as getAutoMapStatus,
+  acceptProposal, rejectProposal,
+} from '../services/autoMap.js';
 
 interface DeviceRegistryRow {
   mqtt_client_id: string;
@@ -6402,4 +6406,31 @@ dashboardRouter.delete('/remote-debug/logs', (req: Request, res: Response) => {
     _remoteLogsBySn.clear();
   }
   res.json({ ok: true });
+});
+
+// ── Autonoom karteren ────────────────────────────────────────────────────────
+dashboardRouter.post('/auto-map/:sn/start', async (req: Request, res: Response) => {
+  const { sn } = req.params;
+  const mode = req.body?.mode === 'record' ? 'record' : 'test';
+  const radiusM = Number(req.body?.radiusM) || undefined;
+  const result = await startAutoMap(sn, { mode, radiusM });
+  if (!result.ok) return res.status(409).json({ error: result.error });
+  res.json(result);
+});
+
+dashboardRouter.post('/auto-map/:sn/stop', (req: Request, res: Response) => {
+  stopAutoMap(req.params.sn);
+  res.json({ ok: true });
+});
+
+dashboardRouter.get('/auto-map/:sn/status', (req: Request, res: Response) => {
+  res.json(getAutoMapStatus(req.params.sn) ?? { phase: 'idle' });
+});
+
+dashboardRouter.post('/auto-map/:sn/accept', (req: Request, res: Response) => {
+  res.json({ ok: acceptProposal(req.params.sn) });
+});
+
+dashboardRouter.post('/auto-map/:sn/reject', (req: Request, res: Response) => {
+  res.json({ ok: rejectProposal(req.params.sn) });
 });

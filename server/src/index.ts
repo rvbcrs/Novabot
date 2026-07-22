@@ -403,6 +403,11 @@ const PORT = parseInt(process.env.PORT ?? '3000', 10);
 const server = http.createServer(app);
 initDashboardSocket(server);
 
+// ── Autonoom karteren: voortgang → dashboard-socket ────────────────────────
+import { onProgress as onAutoMapProgress } from './services/autoMap.js';
+import { emitAutoMapProgress } from './dashboard/socketHandler.js';
+onAutoMapProgress(emitAutoMapProgress);
+
 // Attach remote support WebSocket upgrade handler once `server` exists.
 if (process.env.REMOTE_SUPPORT_RELAY_ENABLED === 'true') {
   attachRemoteSupportWebSocket(server, (app as any)._remoteSupportRouter, {

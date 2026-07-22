@@ -319,6 +319,10 @@ export function emitDeviceOnline(sn: string): void {
   io?.emit('device:online', { sn, timestamp: Date.now() });
 }
 
+export function emitAutoMapProgress(p: { sn: string; sessionId: number; phase: string; detail?: Record<string, unknown> }): void {
+  io?.emit('auto_map_progress', p);
+}
+
 export function emitDeviceOffline(sn: string): void {
   io?.emit('device:offline', { sn, timestamp: Date.now() });
 }
