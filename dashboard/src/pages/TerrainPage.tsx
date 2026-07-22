@@ -17,7 +17,8 @@ import {
   type TerrainData, type ObjectData,
 } from '../utils/terrainParser';
 import { CLUSTER_CLASSES, findClusterClass, glbForClass } from '../utils/clusterModels';
-import { apiFetch, fetchMaps, fetchDevices } from '../api/client';
+import { apiFetch, fetchMaps, fetchDevices, fetchTrail } from '../api/client';
+import { CameraTile } from '../components/map/CameraTile';
 import { getSocket } from '../api/socket';
 import type { DeviceUpdateEvent } from '../types';
 
@@ -400,6 +401,9 @@ export default function TerrainPage({ sn }: { sn: string }) {
   const [editZ, setEditZ] = useState(0);
   const [moveKey, setMoveKey] = useState<string | null>(null);
   const moveKeyRef = useRef<string | null>(null);
+  // lopende verschuiving tijdens pijltjes-verplaatsen + debounce-timer
+  const nudgeRef = useRef<{ x: number; y: number } | null>(null);
+  const nudgeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const legendVisibleRef = useRef<Record<string, boolean>>(DEFAULT_LEGEND_VISIBLE);
   const livePosRef = useRef<LivePos | null>(null);
@@ -413,6 +417,8 @@ export default function TerrainPage({ sn }: { sn: string }) {
   const [outlinesVisible, setOutlinesVisible] = useState(true);
   const followRef = useRef(false);
   const [followMower, setFollowMower] = useState(false);
+  const [showCamera, setShowCamera] = useState(false);
+  const doneTrailRef = useRef<THREE.Line | null>(null);
   const groundAtRef = useRef<(x: number, y: number) => number>(() => 0);
   const markerRef = useRef<THREE.Object3D | null>(null);
   const trailLineRef = useRef<THREE.Line | null>(null);
@@ -509,6 +515,31 @@ export default function TerrainPage({ sn }: { sn: string }) {
       } catch {
         return null;
       }
+    }
+
+    /** Historische 'al gedaan'-trail van de server (zelfde bron als de
+     *  2D-kaart), gedrapeerd boven het terrein. */
+    async function loadDoneTrail(): Promise<Array<{ x: number; y: number }>> {
+      try {
+        // zelfde cast als MowerMap: de API levert lokale x/y-meters, het
+        // TrailPoint-type (lat/lng) is legacy
+        return (await fetchTrail(sn)) as unknown as Array<{ x: number; y: number }>;
+      } catch {
+        return [];
+      }
+    }
+
+    function applyDoneTrail(scene: THREE.Scene, pts: Array<{ x: number; y: number }>): void {
+      if (!doneTrailRef.current) {
+        const lijn = new THREE.Line(
+          new THREE.BufferGeometry(),
+          new THREE.LineBasicMaterial({ color: 0x34d399, transparent: true, opacity: 0.8 }));
+        scene.add(lijn);
+        doneTrailRef.current = lijn;
+      }
+      const v = pts.map((p2) => new THREE.Vector3(p2.x, p2.y, groundAtRef.current(p2.x, p2.y) + 0.15));
+      doneTrailRef.current.geometry.dispose();
+      doneTrailRef.current.geometry = new THREE.BufferGeometry().setFromPoints(v);
     }
 
     async function loadClusters(): Promise<TerrainCluster[]> {
@@ -655,10 +686,11 @@ export default function TerrainPage({ sn }: { sn: string }) {
       if (res.status === 404) { setStatus('empty'); return; }
       if (!res.ok) { setStatus('error'); return; }
       const terrain = parseTerrain(await res.arrayBuffer());
-      const [mapsResponse, objects, clusterList] = await Promise.all([
+      const [mapsResponse, objects, clusterList, doneTrail] = await Promise.all([
         fetchMaps(sn).catch(() => null),
         loadObjects(),
         loadClusters(),
+        loadDoneTrail(),
       ]);
       const maps = mapsResponse?.maps ?? [];
       if (disposed || !mountRef.current) return;
@@ -677,6 +709,7 @@ export default function TerrainPage({ sn }: { sn: string }) {
       el.appendChild(renderer.domElement);
 
       const mesh = rebuild(scene, terrain, objects, clusterList);
+      applyDoneTrail(scene, doneTrail);
       scene.add(new THREE.AmbientLight(0xffffff, 0.55));
       const sun = new THREE.DirectionalLight(0xffffff, 0.9);
       sun.position.set(30, 20, 50);
@@ -842,23 +875,6 @@ export default function TerrainPage({ sn }: { sn: string }) {
           }
           if (key) { setSelectedKey(key); setAddAt(null); return; }
         }
-        // Verplaats-modus: de volgende terreinklik is de nieuwe plek.
-        if (moveKeyRef.current && terrainMeshRef.current) {
-          const grond = raycaster.intersectObject(terrainMeshRef.current, false);
-          if (grond.length) {
-            const doelKey = moveKeyRef.current;
-            moveKeyRef.current = null;
-            setMoveKey(null);
-            const c = clustersRef.current.find((cl2) => cl2.key === doelKey);
-            if (c) {
-              const midX = (c.minX + c.maxX) / 2;
-              const midY = (c.minY + c.maxY) / 2;
-              void commitMove(c, (c.xOffset ?? 0) + (grond[0].point.x - midX),
-                                 (c.yOffset ?? 0) + (grond[0].point.y - midY));
-            }
-            return;
-          }
-        }
         // Geen object geraakt: klik op het terrein zelf = plek om handmatig
         // een object toe te voegen (bomen/potten zonder bruikbare foto).
         if (terrainMeshRef.current) {
@@ -887,10 +903,11 @@ export default function TerrainPage({ sn }: { sn: string }) {
       intervalId = setInterval(async () => {
         if (disposed) return;
         try {
-          const [terrainRes, freshObjects, freshClusters] = await Promise.all([
+          const [terrainRes, freshObjects, freshClusters, freshTrail] = await Promise.all([
             apiFetch(`/api/dashboard/terrain/${encodeURIComponent(sn)}`),
             loadObjects(),
             loadClusters(),
+            loadDoneTrail(),
           ]);
           if (disposed || !terrainRes.ok) return;
           const freshTerrain = parseTerrain(await terrainRes.arrayBuffer());
@@ -900,6 +917,7 @@ export default function TerrainPage({ sn }: { sn: string }) {
           clustersRef.current = freshClusters;
           setClusters(freshClusters);
           rebuild(scene, freshTerrain, freshObjects, freshClusters);
+          applyDoneTrail(scene, freshTrail);
           updateMarkerFnRef.current(livePosRef.current);
         } catch (err) {
           console.warn('terrain: 20s-poll refresh mislukt', err);
@@ -927,6 +945,8 @@ export default function TerrainPage({ sn }: { sn: string }) {
       markerRef.current = null;
       disposeMesh(trailLineRef.current);
       trailLineRef.current = null;
+      disposeMesh(doneTrailRef.current);
+      doneTrailRef.current = null;
       for (const line of polygonLines) disposeMesh(line);
 
       renderer?.dispose();
@@ -1126,6 +1146,44 @@ export default function TerrainPage({ sn }: { sn: string }) {
     rebuildAllRef.current?.();
   }
 
+  // Verplaatsen met de pijltjestoetsen: elke druk schuift het object 10 cm
+  // (met Shift 50 cm) over de kaart; het model beweegt direct mee en de
+  // verschuiving wordt 600 ms na de laatste druk opgeslagen.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent): void {
+      const key = moveKeyRef.current;
+      if (!key) return;
+      const richting: Record<string, [number, number]> = {
+        ArrowUp: [0, 1], ArrowDown: [0, -1], ArrowLeft: [-1, 0], ArrowRight: [1, 0],
+      };
+      if (e.key === 'Escape') { moveKeyRef.current = null; setMoveKey(null); return; }
+      const r = richting[e.key];
+      if (!r) return;
+      e.preventDefault();
+      const c = clustersRef.current.find((cl) => cl.key === key);
+      if (!c) return;
+      const stap = e.shiftKey ? 0.5 : 0.1;
+      const huidig = nudgeRef.current ?? { x: c.xOffset ?? 0, y: c.yOffset ?? 0 };
+      huidig.x += r[0] * stap;
+      huidig.y += r[1] * stap;
+      nudgeRef.current = huidig;
+      // direct visueel: model + omranding meeschuiven
+      const inst = modelInstancesRef.current.get(key);
+      if (inst) { inst.position.x += r[0] * stap; inst.position.y += r[1] * stap; }
+      const rand = outlinesRef.current.get(key);
+      if (rand) { rand.position.x += r[0] * stap; rand.position.y += r[1] * stap; }
+      if (nudgeTimerRef.current) clearTimeout(nudgeTimerRef.current);
+      nudgeTimerRef.current = setTimeout(() => {
+        const eind = nudgeRef.current;
+        nudgeRef.current = null;
+        const c2 = clustersRef.current.find((cl) => cl.key === key);
+        if (c2 && eind) void commitMove(c2, eind.x, eind.y);
+      }, 600);
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);  // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     apiFetch('/api/dashboard/terrain-models')
       .then((r) => (r.ok ? r.json() : { models: [] }))
@@ -1221,6 +1279,15 @@ export default function TerrainPage({ sn }: { sn: string }) {
             />
             <span className="inline-block w-3 h-3 rounded-sm bg-amber-400" />
             {t('terrain.followLabel')}
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={showCamera}
+              onChange={(e) => setShowCamera(e.target.checked)}
+            />
+            <span className="inline-block w-3 h-3 rounded-sm bg-emerald-400" />
+            {t('terrain.cameraLabel')}
           </label>
           <div className="pt-2 mt-1 border-t border-white/10">
             <div className="text-gray-400 mb-1">{t('terrain.minHeightLabel')}: {Math.round(minObjHeight * 100)} cm</div>
@@ -1422,6 +1489,11 @@ export default function TerrainPage({ sn }: { sn: string }) {
               {moveKey === selectedCluster.key ? t('terrain.moveActive') : t('terrain.moveButton')}
             </button>
           </div>
+        </div>
+      )}
+      {showCamera && (
+        <div className="absolute bottom-3 right-3 z-[1000] max-w-[calc(100vw-1.5rem)] pointer-events-auto">
+          <CameraTile sn={sn} onClose={() => setShowCamera(false)} />
         </div>
       )}
       <div ref={mountRef} className="h-full w-full" />

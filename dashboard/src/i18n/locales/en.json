@@ -414,8 +414,9 @@
     "modelRename": "Rename",
     "modelRenamePrompt": "New name for this model:",
     "moveButton": "Move",
-    "moveActive": "Click the map for the new spot…",
-    "followLabel": "Follow mower"
+    "moveActive": "Arrow keys = move (Shift = big step, Esc = done)",
+    "followLabel": "Follow mower",
+    "cameraLabel": "Camera"
   },
   "schedule": {
     "title": "Mowing Schedules",
