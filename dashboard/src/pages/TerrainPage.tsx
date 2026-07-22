@@ -17,7 +17,8 @@ import {
   type TerrainData, type ObjectData,
 } from '../utils/terrainParser';
 import { CLUSTER_CLASSES, findClusterClass, glbForClass } from '../utils/clusterModels';
-import { apiFetch, fetchMaps, fetchDevices, fetchTrail } from '../api/client';
+import { apiFetch, fetchMaps, fetchDevices, fetchTrail, getPlanPath, type CoveragePathEntry } from '../api/client';
+import { parseFinishedAreas, prefixedAreaId } from '../utils/coverPathProgress';
 import { CameraTile } from '../components/map/CameraTile';
 import { getSocket } from '../api/socket';
 import type { DeviceUpdateEvent } from '../types';
@@ -413,12 +414,18 @@ export default function TerrainPage({ sn }: { sn: string }) {
   const voxelMeshesRef = useRef<Map<string, THREE.InstancedMesh>>(new Map());
   const modelInstancesRef = useRef<Map<string, THREE.Object3D>>(new Map());
   const outlinesRef = useRef<Map<string, THREE.Object3D>>(new Map());
-  const outlinesVisibleRef = useRef(true);
-  const [outlinesVisible, setOutlinesVisible] = useState(true);
+  // standaard uit (2026-07-22, op verzoek): de gele kaders zijn vooral
+  // debug-hulp; via het vinkje 'Markeringen' weer aan te zetten
+  const outlinesVisibleRef = useRef(false);
+  const [outlinesVisible, setOutlinesVisible] = useState(false);
   const followRef = useRef(false);
   const [followMower, setFollowMower] = useState(false);
   const [showCamera, setShowCamera] = useState(false);
   const doneTrailRef = useRef<THREE.Line | null>(null);
+  const plannedPathsRef = useRef<CoveragePathEntry[]>([]);
+  const plannedLinesRef = useRef<THREE.Line[]>([]);
+  const progressRef = useRef<{ finished: string[] | undefined; activeId: string | undefined }>({ finished: undefined, activeId: undefined });
+  const redrawPlannedRef = useRef<(() => void) | null>(null);
   const groundAtRef = useRef<(x: number, y: number) => number>(() => 0);
   const markerRef = useRef<THREE.Object3D | null>(null);
   const trailLineRef = useRef<THREE.Line | null>(null);
@@ -450,9 +457,16 @@ export default function TerrainPage({ sn }: { sn: string }) {
     const sensors: Record<string, string> = {};
     setLivePos(null);
 
+    let progressSig = '';
     const applyToLivePos = () => {
       const x = parseFloat(sensors.map_position_x ?? '');
       const y = parseFloat(sensors.map_position_y ?? '');
+      // voortgang van het geplande pad (zelfde bron als de 2D-kaart)
+      const fin = parseFinishedAreas(sensors.finished_area, sensors.cover_map_id);
+      const act = prefixedAreaId(sensors.covering_area_id, sensors.cover_map_id);
+      progressRef.current = { finished: fin, activeId: act };
+      const sig = `${(fin ?? []).join(',')}|${act ?? ''}`;
+      if (sig !== progressSig) { progressSig = sig; redrawPlannedRef.current?.(); }
       if (!Number.isFinite(x) || !Number.isFinite(y)) return;
       const thetaRaw = parseFloat(sensors.theta ?? '0');
       setLivePos({ x, y, theta: Number.isFinite(thetaRaw) ? thetaRaw : 0 });
@@ -540,6 +554,33 @@ export default function TerrainPage({ sn }: { sn: string }) {
       const v = pts.map((p2) => new THREE.Vector3(p2.x, p2.y, groundAtRef.current(p2.x, p2.y) + 0.15));
       doneTrailRef.current.geometry.dispose();
       doneTrailRef.current.geometry = new THREE.BufferGeometry().setFromPoints(v);
+    }
+
+    /** Gepland maaipad + voortgang: gemaaid=groen, actief=oranje, rest=hint. */
+    function applyPlannedPath(scene: THREE.Scene): void {
+      for (const l of plannedLinesRef.current) { scene.remove(l); l.geometry.dispose(); (l.material as THREE.Material).dispose(); }
+      plannedLinesRef.current = [];
+      const { finished, activeId } = progressRef.current;
+      for (const entry of plannedPathsRef.current) {
+        if (!entry.points?.length) continue;
+        const klaar = finished?.includes(entry.id) ?? false;
+        const actief = entry.id === activeId;
+        const kleur = klaar ? 0x34d399 : actief ? 0xf59e0b : 0xd1d5db;
+        const lijn = new THREE.Line(
+          new THREE.BufferGeometry().setFromPoints(
+            entry.points.map((p2) => new THREE.Vector3(p2.x, p2.y, groundAtRef.current(p2.x, p2.y) + 0.12))),
+          new THREE.LineBasicMaterial({ color: kleur, transparent: true, opacity: klaar ? 0.9 : actief ? 0.95 : 0.3 }));
+        scene.add(lijn);
+        plannedLinesRef.current.push(lijn);
+      }
+    }
+
+    async function loadPlannedPaths(): Promise<void> {
+      try {
+        plannedPathsRef.current = await getPlanPath(sn);
+      } catch {
+        /* geen plan gecachet is prima */
+      }
     }
 
     async function loadClusters(): Promise<TerrainCluster[]> {
@@ -710,6 +751,9 @@ export default function TerrainPage({ sn }: { sn: string }) {
 
       const mesh = rebuild(scene, terrain, objects, clusterList);
       applyDoneTrail(scene, doneTrail);
+      await loadPlannedPaths();
+      applyPlannedPath(scene);
+      redrawPlannedRef.current = () => applyPlannedPath(scene);
       scene.add(new THREE.AmbientLight(0xffffff, 0.55));
       const sun = new THREE.DirectionalLight(0xffffff, 0.9);
       sun.position.set(30, 20, 50);
@@ -918,6 +962,8 @@ export default function TerrainPage({ sn }: { sn: string }) {
           setClusters(freshClusters);
           rebuild(scene, freshTerrain, freshObjects, freshClusters);
           applyDoneTrail(scene, freshTrail);
+          await loadPlannedPaths();
+          applyPlannedPath(scene);
           updateMarkerFnRef.current(livePosRef.current);
         } catch (err) {
           console.warn('terrain: 20s-poll refresh mislukt', err);
@@ -947,6 +993,9 @@ export default function TerrainPage({ sn }: { sn: string }) {
       trailLineRef.current = null;
       disposeMesh(doneTrailRef.current);
       doneTrailRef.current = null;
+      for (const l of plannedLinesRef.current) disposeMesh(l);
+      plannedLinesRef.current = [];
+      redrawPlannedRef.current = null;
       for (const line of polygonLines) disposeMesh(line);
 
       renderer?.dispose();
