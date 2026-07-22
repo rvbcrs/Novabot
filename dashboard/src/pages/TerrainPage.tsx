@@ -565,11 +565,13 @@ export default function TerrainPage({ sn }: { sn: string }) {
         if (!entry.points?.length) continue;
         const klaar = finished?.includes(entry.id) ?? false;
         const actief = entry.id === activeId;
-        const kleur = klaar ? 0x34d399 : actief ? 0xf59e0b : 0xd1d5db;
+        // resterend donker (leisteen): lichtgrijs op 30% viel volledig weg
+        // tegen het lichte terrein (les 2026-07-22)
+        const kleur = klaar ? 0x34d399 : actief ? 0xf59e0b : 0x334155;
         const lijn = new THREE.Line(
           new THREE.BufferGeometry().setFromPoints(
             entry.points.map((p2) => new THREE.Vector3(p2.x, p2.y, groundAtRef.current(p2.x, p2.y) + 0.12))),
-          new THREE.LineBasicMaterial({ color: kleur, transparent: true, opacity: klaar ? 0.9 : actief ? 0.95 : 0.3 }));
+          new THREE.LineBasicMaterial({ color: kleur, transparent: true, opacity: klaar ? 0.9 : actief ? 0.95 : 0.65 }));
         scene.add(lijn);
         plannedLinesRef.current.push(lijn);
       }
