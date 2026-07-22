@@ -70,11 +70,20 @@ export function CameraTile({ sn, topics = DEFAULT_TOPICS, onClose }: Props) {
       const res = await fetch(`${snapshotUrl}&_t=${Date.now()}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const blob = await res.blob();
+      // Een 200 met lege of niet-JPEG-body (camera bezet door een andere
+      // kijker, stream nog niet klaar) toonde een kapot <img>-icoon; dat is
+      // gewoon een gemiste frame → error-pad met retry.
+      if (blob.size < 100 || (blob.type && !blob.type.startsWith('image/'))) {
+        throw new Error('lege/ongeldige snapshot');
+      }
       if (!activeRef.current) return;
-      if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current);
+      const oud = blobUrlRef.current;
       const url = URL.createObjectURL(blob);
       blobUrlRef.current = url;
       setImageSrc(url);
+      // oude blob pas ná de render vrijgeven — direct revoken liet het
+      // nog-getoonde plaatje een frame lang op een dode URL wijzen
+      if (oud) setTimeout(() => URL.revokeObjectURL(oud), 1000);
       setLoading(false);
       setError(false);
       failRef.current = 0;
