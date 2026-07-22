@@ -114,6 +114,9 @@ function loadCustomModel(file: string): Promise<THREE.Object3D> {
 
 const POLL_INTERVAL_MS = 20_000;
 const TRAIL_MAX_POINTS = 50;
+// Vooruit-as-correctie voor het Novabot-model: theta=0 is kaart-oosten; als
+// het model met de neus de verkeerde kant op rijdt, hier ±PI/2 of PI bijstellen.
+const MOWER_YAW_OFFSET = 0;
 // dropdown-waarde voor "geen override" — POST {className:null} wist de
 // user_override server-side, waarna de model-classificatie (indien boven de
 // confidence-drempel) weer effectief wordt.
@@ -409,7 +412,7 @@ export default function TerrainPage({ sn }: { sn: string }) {
   const outlinesVisibleRef = useRef(true);
   const [outlinesVisible, setOutlinesVisible] = useState(true);
   const groundAtRef = useRef<(x: number, y: number) => number>(() => 0);
-  const markerRef = useRef<THREE.Mesh | null>(null);
+  const markerRef = useRef<THREE.Object3D | null>(null);
   const trailLineRef = useRef<THREE.Line | null>(null);
   const trailPointsRef = useRef<THREE.Vector3[]>([]);
   const updateMarkerFnRef = useRef<(pos: LivePos | null) => void>(() => {});
@@ -710,12 +713,45 @@ export default function TerrainPage({ sn }: { sn: string }) {
         polygonLines.push(line);
       }
 
-      // maaier-marker (gele cone) + trail van de laatste 50 posities
-      const marker = new THREE.Mesh(new THREE.ConeGeometry(0.15, 0.3, 12), new THREE.MeshBasicMaterial({ color: 0xfbbf24 }));
-      marker.visible = false;
-      scene.add(marker);
-      markerRef.current = marker;
-      const trail = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: 0xfbbf24 }));
+      // Maaier-marker: het echte Novabot-model (geoptimaliseerd, 3.8MB) met
+      // heading; gele cone als fallback tot het model geladen is (of faalt).
+      const markerGroep = new THREE.Group();
+      const fallbackCone = new THREE.Mesh(
+        new THREE.ConeGeometry(0.15, 0.3, 12),
+        new THREE.MeshBasicMaterial({ color: 0xfbbf24 }));
+      fallbackCone.rotation.x = Math.PI / 2; // cone-as (lokaal Y) → wereld-Z
+      markerGroep.add(fallbackCone);
+      markerGroep.visible = false;
+      scene.add(markerGroep);
+      markerRef.current = markerGroep;
+      loadClusterModel('novabot.glb').then((orig) => {
+        if (disposed) return;
+        const m = orig.clone(true);
+        // GLB is Y-up: X=lengte (1.90), Y=hoogte (0.91), Z=breedte (1.24).
+        // → Z-up draaien, uniform schalen naar echte maaierlengte 0.66 m,
+        //   wielen op z=0. MOWER_YAW_OFFSET corrigeert de vooruit-as.
+        const zUp = new THREE.Group();
+        zUp.rotation.x = Math.PI / 2;
+        zUp.add(m);
+        const houder = new THREE.Group();
+        houder.add(zUp);
+        const box = new THREE.Box3().setFromObject(houder);
+        const size = new THREE.Vector3(); box.getSize(size);
+        const schaal = 0.66 / Math.max(size.x, 1e-6);
+        houder.scale.setScalar(schaal);
+        houder.updateMatrixWorld(true);
+        const box2 = new THREE.Box3().setFromObject(houder);
+        const c = new THREE.Vector3(); box2.getCenter(c);
+        houder.position.set(-c.x, -c.y, -box2.min.z);
+        markerGroep.remove(fallbackCone);
+        fallbackCone.geometry.dispose();
+        markerGroep.add(houder);
+      }).catch(() => { /* cone blijft de fallback */ });
+
+      // Trail: dun buisje i.p.v. 1px-lijn, en ruim boven het gras zodat hij
+      // niet in het terrein wegvalt.
+      const TRAIL_Z = 0.18;
+      const trail = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: 0xfbbf24, transparent: true, opacity: 0.9 }));
       scene.add(trail);
       trailLineRef.current = trail;
 
@@ -723,17 +759,15 @@ export default function TerrainPage({ sn }: { sn: string }) {
         if (!markerRef.current || !trailLineRef.current) return;
         if (!pos) { markerRef.current.visible = false; return; }
         const g = groundAtRef.current(pos.x, pos.y);
-        markerRef.current.position.set(pos.x, pos.y, g + 0.15);
-        markerRef.current.quaternion.identity();
-        markerRef.current.rotateX(Math.PI / 2); // cone-as (lokaal Y) → wereld-Z (omhoog)
-        markerRef.current.rotateOnWorldAxis(new THREE.Vector3(0, 0, 1), pos.theta);
+        markerRef.current.position.set(pos.x, pos.y, g + 0.02);
+        markerRef.current.rotation.set(0, 0, pos.theta + MOWER_YAW_OFFSET);
         markerRef.current.visible = true;
 
         const pts = trailPointsRef.current;
         const last = pts[pts.length - 1];
         const moved = !last || Math.hypot(pos.x - last.x, pos.y - last.y) > 0.01;
         if (moved) {
-          pts.push(new THREE.Vector3(pos.x, pos.y, g + 0.02));
+          pts.push(new THREE.Vector3(pos.x, pos.y, g + TRAIL_Z));
           while (pts.length > TRAIL_MAX_POINTS) pts.shift();
           trailLineRef.current.geometry.dispose();
           trailLineRef.current.geometry = new THREE.BufferGeometry().setFromPoints(pts);
@@ -873,7 +907,8 @@ export default function TerrainPage({ sn }: { sn: string }) {
       for (const vm of voxelMeshesRef.current.values()) disposeMesh(vm);
       voxelMeshesRef.current.clear();
       modelInstancesRef.current.clear(); // geen dispose — zie removeClusterModels
-      disposeMesh(markerRef.current);
+      // marker is een Group (Novabot-model, gedeeld via modelLoadCache) —
+      // alleen de fallback-cone is eigen geometry en die is al opgeruimd
       markerRef.current = null;
       disposeMesh(trailLineRef.current);
       trailLineRef.current = null;
