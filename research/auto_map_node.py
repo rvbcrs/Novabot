@@ -62,6 +62,12 @@ def haversine_m(lat1, lng1, lat2, lng2):
     return 2 * r * math.asin(math.sqrt(a))
 
 
+def should_retry(code, attempt):
+    """Spec result-tabel: alleen SEARCHING_START_FAILED (4) krijgt één
+    automatische retry (vanaf ~2 m verderop), daarna abort."""
+    return code == 4 and attempt < 2
+
+
 def parse_action_result(text):
     """Parse `ros2 action send_goal`-uitvoer → (status, result_code).
 
@@ -167,6 +173,43 @@ def _cancel_follow(ec):
         pass
 
 
+def _drive_forward_retry(ec):
+    """~2 m vooruit rijden vóór een retry-poging na SEARCHING_START_FAILED
+    (code 4): 8 s lang Twist(linear.x=0.25) op /cmd_vel, dan een nul-Twist
+    om netjes te stoppen. Zelfde patroon als drive_backward in de
+    calibration-drive van extended_commands.py, maar vooruit i.p.v.
+    achteruit. Best-effort en volledig exception-tolerant: een rijfout hier
+    mag de sessie nooit stil laten sterven — de caller herstart gewoon de
+    goal ook als deze functie faalt."""
+    try:
+        import rclpy
+        from rclpy.node import Node
+        from geometry_msgs.msg import Twist
+        try:
+            rclpy.init()
+        except RuntimeError:
+            pass
+        node = Node(f"auto_map_retry_drive_{os.getpid()}_"
+                    f"{int(time.monotonic() * 1000) % 1000000}")
+        pub = node.create_publisher(Twist, "/cmd_vel", 10)
+        msg = Twist()
+        msg.linear.x = 0.25
+        end_at = time.monotonic() + 8.0
+        while time.monotonic() < end_at:
+            pub.publish(msg)
+            time.sleep(0.05)
+        stop = Twist()
+        for _ in range(5):
+            pub.publish(stop)
+            time.sleep(0.05)
+        node.destroy_node()
+    except Exception as ex:
+        try:
+            ec.log(f"[auto_map] retry-rit vooruit mislukte: {ex}")
+        except Exception:
+            pass
+
+
 def _wait_proc(proc):
     """Best-effort wachten op de CLI-client van de action-goal; bij timeout
     (proc reageert niet binnen 15 s) hard killen i.p.v. de sessie te laten
@@ -233,64 +276,81 @@ def _run_session_body(sess, ec):
         return
 
     # BoundaryFollow-goal via CLI, output naar ACTION_LOG voor result-parse.
-    try:
-        os.unlink(ACTION_LOG)
-    except OSError:
-        pass
-    with open(ACTION_LOG, "w") as logf:
-        proc = subprocess.Popen(
-            ["ros2", "action", "send_goal", "/boundary_follow",
-             "coverage_planner/action/BoundaryFollow", boundary_goal_yaml()],
-            stdout=logf, stderr=subprocess.STDOUT)
-    sess.status("searching_boundary")
+    # Eén automatische retry bij SEARCHING_START_FAILED (code 4, zie
+    # should_retry()): de maaier rijdt ~2 m vooruit en probeert de goal
+    # nogmaals. Alle abort-paden (stop/timeout/gps_stale/geofence) blijven
+    # binnen ELKE poging actief.
+    for attempt in (1, 2):
+        try:
+            os.unlink(ACTION_LOG)
+        except OSError:
+            pass
+        with open(ACTION_LOG, "w") as logf:
+            proc = subprocess.Popen(
+                ["ros2", "action", "send_goal", "/boundary_follow",
+                 "coverage_planner/action/BoundaryFollow", boundary_goal_yaml()],
+                stdout=logf, stderr=subprocess.STDOUT)
+        if attempt == 1:
+            sess.status("searching_boundary")
+        # attempt 2: de "searching_boundary"-status is al gepubliceerd door
+        # de retry-tak hieronder (met retry=2), dus hier niet nogmaals.
 
-    following_reported = False
-    while True:
-        time.sleep(2.0)
-        elapsed = time.monotonic() - sess.started
-        if sess.stop_requested:
-            _cancel_follow(ec)
-            _wait_proc(proc)
-            sess.status("aborted", error="user_stop")
-            return
-        if elapsed > sess.timeout_s:
-            _cancel_follow(ec)
-            _wait_proc(proc)
-            sess.status("aborted", error="timeout")
-            return
-        if sess.start_gps is not None and (
-                sess.last_fix_mono is None or
-                time.monotonic() - sess.last_fix_mono > GPS_STALE_S):
-            # Geen verse GPS meer (topic weg / GPS-thread dood) -> geofence
-            # werkt niet meer, dus stoppen i.p.v. blind doorrijden.
-            _cancel_follow(ec)
-            _wait_proc(proc)
-            sess.status("aborted", error="gps_stale")
-            return
-        if sess.last_gps and sess.start_gps:
-            d = haversine_m(sess.start_gps[0], sess.start_gps[1],
-                            sess.last_gps[0], sess.last_gps[1])
-            if d > sess.radius_m:
+        following_reported = False
+        result_code = None
+        while True:
+            time.sleep(2.0)
+            elapsed = time.monotonic() - sess.started
+            if sess.stop_requested:
                 _cancel_follow(ec)
                 _wait_proc(proc)
-                sess.status("aborted", error="geofence", dist_m=round(d, 1))
+                sess.status("aborted", error="user_stop")
                 return
-            if not following_reported and elapsed > 10:
-                following_reported = True
-                sess.status("following", dist_m=round(d, 1))
-        if proc.poll() is not None:
-            try:
-                with open(ACTION_LOG) as f:
-                    text = f.read()
-            except OSError:
-                text = ""
-            status, code = parse_action_result(text)
-            if code is None:
-                sess.status("error", error=f"action_exit_{proc.returncode}_no_result")
-            else:
-                sess.status("result", code=code,
-                            name=RESULT_NAMES.get(code, f"code_{code}"))
-            return
+            if elapsed > sess.timeout_s:
+                _cancel_follow(ec)
+                _wait_proc(proc)
+                sess.status("aborted", error="timeout")
+                return
+            if sess.start_gps is not None and (
+                    sess.last_fix_mono is None or
+                    time.monotonic() - sess.last_fix_mono > GPS_STALE_S):
+                # Geen verse GPS meer (topic weg / GPS-thread dood) -> geofence
+                # werkt niet meer, dus stoppen i.p.v. blind doorrijden.
+                _cancel_follow(ec)
+                _wait_proc(proc)
+                sess.status("aborted", error="gps_stale")
+                return
+            if sess.last_gps and sess.start_gps:
+                d = haversine_m(sess.start_gps[0], sess.start_gps[1],
+                                sess.last_gps[0], sess.last_gps[1])
+                if d > sess.radius_m:
+                    _cancel_follow(ec)
+                    _wait_proc(proc)
+                    sess.status("aborted", error="geofence", dist_m=round(d, 1))
+                    return
+                if not following_reported and elapsed > 10:
+                    following_reported = True
+                    sess.status("following", dist_m=round(d, 1))
+            if proc.poll() is not None:
+                try:
+                    with open(ACTION_LOG) as f:
+                        text = f.read()
+                except OSError:
+                    text = ""
+                status, code = parse_action_result(text)
+                if code is None:
+                    sess.status("error", error=f"action_exit_{proc.returncode}_no_result")
+                    return
+                result_code = code
+                break
+
+        if should_retry(result_code, attempt):
+            _drive_forward_retry(ec)
+            sess.status("searching_boundary", retry=attempt + 1)
+            continue
+
+        sess.status("result", code=result_code,
+                    name=RESULT_NAMES.get(result_code, f"code_{result_code}"))
+        return
 
 
 def _start_gps_watch(sess):

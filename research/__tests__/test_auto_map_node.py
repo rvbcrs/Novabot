@@ -46,10 +46,18 @@ def test_parse_action_result_incomplete():
     assert amn.parse_action_result("Waiting for an action server...") == (None, None)
 
 
+def test_should_retry_only_code4_once():
+    assert amn.should_retry(4, attempt=1) is True    # eerste keer: retry
+    assert amn.should_retry(4, attempt=2) is False   # daarna: abort
+    assert amn.should_retry(3, attempt=1) is False   # FOLLOW_FAILED: nooit
+    assert amn.should_retry(0, attempt=1) is False
+
+
 if __name__ == "__main__":
     test_goal_yaml()
     test_haversine_known_distance()
     test_parse_action_result_success()
     test_parse_action_result_follow_failed()
     test_parse_action_result_incomplete()
+    test_should_retry_only_code4_once()
     print("OK - alle auto_map_node helper-tests geslaagd")
