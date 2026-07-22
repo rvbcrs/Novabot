@@ -17,7 +17,7 @@ import {
   type TerrainData, type ObjectData,
 } from '../utils/terrainParser';
 import { CLUSTER_CLASSES, findClusterClass, glbForClass } from '../utils/clusterModels';
-import { apiFetch, fetchMaps, fetchDevices, fetchTrail, getPlanPath, type CoveragePathEntry } from '../api/client';
+import { apiFetch, fetchMaps, fetchDevices, fetchTrail, getPlanPath, refreshPlanPath, type CoveragePathEntry } from '../api/client';
 import { parseFinishedAreas, prefixedAreaId } from '../utils/coverPathProgress';
 import { CameraTile } from '../components/map/CameraTile';
 import { getSocket } from '../api/socket';
@@ -579,9 +579,15 @@ export default function TerrainPage({ sn }: { sn: string }) {
 
     async function loadPlannedPaths(): Promise<void> {
       try {
-        plannedPathsRef.current = await getPlanPath(sn);
+        // Cache eerst; is die leeg, vraag de maaier om een verse push
+        // (refresh-plan-path → get_map_plan_path) — de cache vult zich
+        // alleen zolang íéts hem opvraagt, dus zonder deze refresh bleef
+        // de terreinkaart leeg terwijl de 2D-kaart wel lijnen had.
+        let paths = await getPlanPath(sn);
+        if (paths.length === 0) paths = await refreshPlanPath(sn);
+        if (paths.length > 0) plannedPathsRef.current = paths;
       } catch {
-        /* geen plan gecachet is prima */
+        /* geen plan beschikbaar is prima — laat het laatste bekende staan */
       }
     }
 
