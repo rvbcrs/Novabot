@@ -805,15 +805,19 @@ dashboardRouter.get('/terrain-clusters/:sn', (req: Request, res: Response) => {
     .filter((g) => g.className !== '__none__')
     .map((g) => {
     const nl = g.className ? (LABELS.find((l) => l.prompt === g.className)?.nl ?? null) : null;
+    // x/y-verschuiving (verplaatst object) direct in de geometrie verwerken:
+    // viewers, omranding én voxel-exclusie volgen dan vanzelf.
+    const dx = g.xOffset ?? 0;
+    const dy = g.yOffset ?? 0;
     return {
       key: g.keys[0],
       keys: g.keys,
-      cx: g.cx,
-      cy: g.cy,
-      minX: g.minX,
-      minY: g.minY,
-      maxX: g.maxX,
-      maxY: g.maxY,
+      cx: g.cx + dx,
+      cy: g.cy + dy,
+      minX: g.minX + dx,
+      minY: g.minY + dy,
+      maxX: g.maxX + dx,
+      maxY: g.maxY + dy,
       cells: g.cells,
       maxH: g.maxH,
       className: g.className,
@@ -825,6 +829,8 @@ dashboardRouter.get('/terrain-clusters/:sn', (req: Request, res: Response) => {
       sizeOverride: g.sizeOverride,
       heightOverride: g.heightOverride,
       zOffset: g.zOffset,
+      xOffset: g.xOffset,
+      yOffset: g.yOffset,
     };
   });
   res.json({ clusters });
@@ -917,10 +923,14 @@ dashboardRouter.post('/terrain-clusters/:sn/:key/display', (req: Request, res: R
   const size = clamp(b.size, 0.3, 10);
   const height = clamp(b.height, 0.2, 5);
   const z = clamp(b.zOffset, -1.5, 1.5);
+  const bx = (b as { xOffset?: unknown }).xOffset;
+  const by = (b as { yOffset?: unknown }).yOffset;
+  const x = clamp(bx, -30, 30);
+  const y = clamp(by, -30, 30);
   const rows = terrainClusterRepo.findBySn(sn);
   if (!rows.some((r) => r.cluster_key === key)) { res.status(404).json({ error: 'cluster niet gevonden' }); return; }
   const keys = groupKeysFor(rows, key);
-  for (const k of keys) terrainClusterRepo.setDisplay(sn, k, size, height, z);
+  for (const k of keys) terrainClusterRepo.setDisplay(sn, k, size, height, z, x, y);
   res.json({ ok: true, updated: keys.length });
 });
 

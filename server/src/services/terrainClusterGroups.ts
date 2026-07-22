@@ -35,6 +35,8 @@ export interface GroupableRow {
   size_override?: number | null;
   height_override?: number | null;
   z_offset?: number | null;
+  x_offset?: number | null;
+  y_offset?: number | null;
 }
 
 export interface ClusterGroup {
@@ -56,6 +58,8 @@ export interface ClusterGroup {
   sizeOverride: number | null;
   heightOverride: number | null;
   zOffset: number | null;
+  xOffset: number | null;
+  yOffset: number | null;
 }
 
 /**
@@ -174,6 +178,8 @@ export function groupClusters(rows: GroupableRow[]): ClusterGroup[] {
       sizeOverride: sorted.find((m) => m.size_override != null)?.size_override ?? null,
       heightOverride: sorted.find((m) => m.height_override != null)?.height_override ?? null,
       zOffset: sorted.find((m) => m.z_offset != null)?.z_offset ?? null,
+      xOffset: sorted.find((m) => m.x_offset != null)?.x_offset ?? null,
+      yOffset: sorted.find((m) => m.y_offset != null)?.y_offset ?? null,
     });
   }
 

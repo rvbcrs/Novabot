@@ -724,6 +724,8 @@ export function initDb(): void {
       size_override REAL,
       height_override REAL,
       z_offset      REAL,
+      x_offset      REAL,
+      y_offset      REAL,
       updated_at    TEXT NOT NULL DEFAULT (datetime('now')),
       PRIMARY KEY (mower_sn, cluster_key)
     );
@@ -733,7 +735,7 @@ export function initDb(): void {
   catch { /* kolom bestaat al */ }
   // weergave-overrides (2026-07-21): maat/hoogte/z-verschuiving door de
   // gebruiker — net als user_override nooit door de herkenning aangeraakt
-  for (const col of ['size_override REAL', 'height_override REAL', 'z_offset REAL']) {
+  for (const col of ['size_override REAL', 'height_override REAL', 'z_offset REAL', 'x_offset REAL', 'y_offset REAL']) {
     try { db.exec(`ALTER TABLE terrain_clusters ADD COLUMN ${col}`); }
     catch { /* kolom bestaat al */ }
   }

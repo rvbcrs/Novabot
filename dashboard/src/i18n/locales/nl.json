@@ -459,7 +459,9 @@
     "outlinesLabel": "Markeringen",
     "zOffsetLabel": "Hoogte-verschuiving",
     "modelRename": "Hernoemen",
-    "modelRenamePrompt": "Nieuwe naam voor dit model:"
+    "modelRenamePrompt": "Nieuwe naam voor dit model:",
+    "moveButton": "Verplaatsen",
+    "moveActive": "Klik op de kaart voor de nieuwe plek…"
   },
   "schedule": {
     "title": "Maaischema's",

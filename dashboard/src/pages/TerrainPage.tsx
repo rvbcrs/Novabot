@@ -37,6 +37,8 @@ interface TerrainCluster {
   sizeOverride?: number | null;
   heightOverride?: number | null;
   zOffset?: number | null;
+  xOffset?: number | null;
+  yOffset?: number | null;
 }
 
 // GLTFLoader-cache op moduleniveau: één keer laden per klasse, daarna alleen
@@ -155,7 +157,49 @@ function heightColor(t: number): [number, number, number] {
   return stops[stops.length - 1][1];
 }
 
-function buildTerrainMesh(t: TerrainData): THREE.Mesh {
+/**
+ * Terrein onder gemodelleerde objecten vlaktrekken naar het mediaan-niveau
+ * van de rand eromheen: de ToF meet de trampolinemat/potranden als 'grond',
+ * waardoor het terrein dwars door het 3D-model heen prikte.
+ */
+function flattenUnderModels(grid: Float32Array, W: number, H: number,
+                            minX: number, minY: number, cellSize: number,
+                            bboxes: ClusterBBox[]): void {
+  for (const b of bboxes) {
+    if (!b.hasModel) continue;
+    const x0 = Math.floor(b.minX / cellSize) - minX, x1 = Math.ceil(b.maxX / cellSize) - minX;
+    const y0 = Math.floor(b.minY / cellSize) - minY, y1 = Math.ceil(b.maxY / cellSize) - minY;
+    // randring net buiten de bbox
+    const ring: number[] = [];
+    for (let vx = x0 - 2; vx <= x1 + 2; vx++) {
+      for (const vy of [y0 - 2, y1 + 2]) {
+        if (vx >= 0 && vx < W && vy >= 0 && vy < H) {
+          const h = grid[vy * W + vx];
+          if (!Number.isNaN(h)) ring.push(h);
+        }
+      }
+    }
+    for (let vy = y0 - 1; vy <= y1 + 1; vy++) {
+      for (const vx of [x0 - 2, x1 + 2]) {
+        if (vx >= 0 && vx < W && vy >= 0 && vy < H) {
+          const h = grid[vy * W + vx];
+          if (!Number.isNaN(h)) ring.push(h);
+        }
+      }
+    }
+    if (!ring.length) continue;
+    ring.sort((a, b2) => a - b2);
+    const vloer = ring[Math.floor(ring.length / 2)];
+    for (let vy = Math.max(y0, 0); vy <= Math.min(y1, H - 1); vy++) {
+      for (let vx = Math.max(x0, 0); vx <= Math.min(x1, W - 1); vx++) {
+        const i = vy * W + vx;
+        if (!Number.isNaN(grid[i]) && grid[i] > vloer) grid[i] = vloer;
+      }
+    }
+  }
+}
+
+function buildTerrainMesh(t: TerrainData, modelBBoxes: ClusterBBox[] = []): THREE.Mesh {
   // sparse cellen → dense bbox-grid met NaN-gaten
   let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
   for (let i = 0; i < t.ix.length; i++) {
@@ -169,6 +213,7 @@ function buildTerrainMesh(t: TerrainData): THREE.Mesh {
     grid[(t.iy[i] - minY) * W + (t.ix[i] - minX)] = t.h[i];
     if (t.h[i] < hMin) hMin = t.h[i]; if (t.h[i] > hMax) hMax = t.h[i];
   }
+  flattenUnderModels(grid, W, H, minX, minY, t.cellSize, modelBBoxes);
   const span = Math.max(hMax - hMin, 0.05);
 
   // Afmetingen (1,1) zijn irrelevant: we overschrijven zo meteen alle vertex-
@@ -235,9 +280,10 @@ interface ClusterBBox {
 function clusterBBoxesFrom(clusters: TerrainCluster[]): ClusterBBox[] {
   return clusters.map((c) => {
     const glb = glbForClass(c.className);
+    const bron = c.modelFile ? `custom:${c.modelFile}` : glb;
     return {
       key: c.key, minX: c.minX, minY: c.minY, maxX: c.maxX, maxY: c.maxY,
-      hasModel: glb !== null && !failedGlbModels.has(glb),
+      hasModel: bron !== null && !failedGlbModels.has(bron),
     };
   });
 }
@@ -349,6 +395,8 @@ export default function TerrainPage({ sn }: { sn: string }) {
   const [editSize, setEditSize] = useState(1);
   const [editHeight, setEditHeight] = useState(0.5);
   const [editZ, setEditZ] = useState(0);
+  const [moveKey, setMoveKey] = useState<string | null>(null);
+  const moveKeyRef = useRef<string | null>(null);
 
   const legendVisibleRef = useRef<Record<string, boolean>>(DEFAULT_LEGEND_VISIBLE);
   const livePosRef = useRef<LivePos | null>(null);
@@ -569,7 +617,7 @@ export default function TerrainPage({ sn }: { sn: string }) {
       const epoch = rebuildEpochRef.current;
 
       if (terrainMeshRef.current) { scene.remove(terrainMeshRef.current); disposeMesh(terrainMeshRef.current); }
-      const mesh = buildTerrainMesh(terrain);
+      const mesh = buildTerrainMesh(terrain, clusterBBoxesFrom(clusterList));
       scene.add(mesh);
       terrainMeshRef.current = mesh;
       groundAtRef.current = makeGroundLookup(terrain);
@@ -744,6 +792,23 @@ export default function TerrainPage({ sn }: { sn: string }) {
             key = (obj.userData.clusterKey as string | undefined) ?? null;
           }
           if (key) { setSelectedKey(key); setAddAt(null); return; }
+        }
+        // Verplaats-modus: de volgende terreinklik is de nieuwe plek.
+        if (moveKeyRef.current && terrainMeshRef.current) {
+          const grond = raycaster.intersectObject(terrainMeshRef.current, false);
+          if (grond.length) {
+            const doelKey = moveKeyRef.current;
+            moveKeyRef.current = null;
+            setMoveKey(null);
+            const c = clustersRef.current.find((cl2) => cl2.key === doelKey);
+            if (c) {
+              const midX = (c.minX + c.maxX) / 2;
+              const midY = (c.minY + c.maxY) / 2;
+              void commitMove(c, (c.xOffset ?? 0) + (grond[0].point.x - midX),
+                                 (c.yOffset ?? 0) + (grond[0].point.y - midY));
+            }
+            return;
+          }
         }
         // Geen object geraakt: klik op het terrein zelf = plek om handmatig
         // een object toe te voegen (bomen/potten zonder bruikbare foto).
@@ -933,6 +998,31 @@ export default function TerrainPage({ sn }: { sn: string }) {
     }
   }
 
+  async function commitMove(c: TerrainCluster, xOff: number, yOff: number): Promise<void> {
+    setSavingOverride(true);
+    try {
+      await apiFetch(`/api/dashboard/terrain-clusters/${encodeURIComponent(sn)}/${encodeURIComponent(c.key)}/display`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          size: c.sizeOverride ?? null, height: c.heightOverride ?? null,
+          zOffset: c.zOffset ?? null, xOffset: xOff, yOffset: yOff,
+        }),
+      });
+      const res = await apiFetch(`/api/dashboard/terrain-clusters/${encodeURIComponent(sn)}`);
+      if (res.ok) {
+        const body = await res.json() as { clusters?: TerrainCluster[] };
+        clustersRef.current = body.clusters ?? [];
+        setClusters(body.clusters ?? []);
+      }
+      rebuildAllRef.current?.();
+    } catch (err) {
+      console.warn('terrain: verplaatsen mislukt', err);
+    } finally {
+      setSavingOverride(false);
+    }
+  }
+
   async function handleDisplayCommit(): Promise<void> {
     const c = selectedCluster;
     if (!c) return;
@@ -941,7 +1031,10 @@ export default function TerrainPage({ sn }: { sn: string }) {
       await apiFetch(`/api/dashboard/terrain-clusters/${encodeURIComponent(sn)}/${encodeURIComponent(c.key)}/display`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ size: editSize, height: editHeight, zOffset: editZ }),
+        body: JSON.stringify({
+          size: editSize, height: editHeight, zOffset: editZ,
+          xOffset: c.xOffset ?? null, yOffset: c.yOffset ?? null,
+        }),
       });
       const res = await apiFetch(`/api/dashboard/terrain-clusters/${encodeURIComponent(sn)}`);
       if (res.ok) {
@@ -1253,6 +1346,18 @@ export default function TerrainPage({ sn }: { sn: string }) {
             <input type="range" min={-1.5} max={1.5} step={0.05} value={editZ} className="w-full"
               onChange={(e) => setEditZ(parseFloat(e.target.value))}
               onPointerUp={() => { void handleDisplayCommit(); }} />
+            <button
+              onClick={() => {
+                const actief = moveKey === selectedCluster.key;
+                moveKeyRef.current = actief ? null : selectedCluster.key;
+                setMoveKey(actief ? null : selectedCluster.key);
+              }}
+              className={`w-full mt-1 rounded px-2 py-1.5 ${moveKey === selectedCluster.key
+                ? 'bg-amber-600 hover:bg-amber-500 text-white'
+                : 'bg-gray-700 hover:bg-gray-600 text-gray-200'}`}
+            >
+              {moveKey === selectedCluster.key ? t('terrain.moveActive') : t('terrain.moveButton')}
+            </button>
           </div>
         </div>
       )}

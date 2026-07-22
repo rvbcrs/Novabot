@@ -412,7 +412,9 @@
     "outlinesLabel": "Outlines",
     "zOffsetLabel": "Z offset",
     "modelRename": "Rename",
-    "modelRenamePrompt": "New name for this model:"
+    "modelRenamePrompt": "New name for this model:",
+    "moveButton": "Move",
+    "moveActive": "Click the map for the new spot…"
   },
   "schedule": {
     "title": "Mowing Schedules",

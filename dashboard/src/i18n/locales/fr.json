@@ -396,7 +396,9 @@
     "outlinesLabel": "Contours",
     "zOffsetLabel": "Décalage Z",
     "modelRename": "Renommer",
-    "modelRenamePrompt": "Nouveau nom pour ce modèle :"
+    "modelRenamePrompt": "Nouveau nom pour ce modèle :",
+    "moveButton": "Déplacer",
+    "moveActive": "Cliquez la carte pour le nouvel emplacement…"
   },
   "schedule": {
     "title": "Planifications de tonte",

@@ -114,6 +114,7 @@ describe('GET /api/dashboard/terrain-clusters/:sn', () => {
       className: 'trampoline', nl: 'Trampoline', confidence: 0.62,
       userOverride: null, photoUrl: `/api/dashboard/terrain-crops/${SN}/1,2.jpg`,
       modelFile: null, sizeOverride: null, heightOverride: null, zOffset: null,
+      xOffset: null, yOffset: null,
     }]);
   });
 
@@ -385,6 +386,21 @@ describe('POST /api/dashboard/terrain-clusters/:sn/:key/override', () => {
     expect(lijst.body.models).not.toContain('lelijkenaam-x9.glb');
     const cl = await request(app).get(`/api/dashboard/terrain-clusters/${SN10}`);
     expect(cl.body.clusters[0].modelFile).toBe('mooi-zwembad.glb');
+  });
+
+
+  it('x/y-verschuiving verschuift de geometrie in de GET-respons', async () => {
+    const SN11 = 'LFIN0000000111';
+    await request(app).post(`/api/dashboard/terrain-clusters/${SN11}/add`)
+      .send({ x: 2, y: 2, className: 'tree', size: 1 });
+    await request(app).post(`/api/dashboard/terrain-clusters/${SN11}/m20,20/display`)
+      .send({ xOffset: 1.5, yOffset: -0.5 });
+    const cl = await request(app).get(`/api/dashboard/terrain-clusters/${SN11}`);
+    const c = cl.body.clusters[0];
+    expect(c.cx).toBeCloseTo(3.5, 5);
+    expect(c.cy).toBeCloseTo(1.5, 5);
+    expect(c.minX).toBeCloseTo(3.0, 5);   // 1.5 + 1.5
+    expect(c.xOffset).toBeCloseTo(1.5, 5);
   });
 
 });
