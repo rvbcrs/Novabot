@@ -37,6 +37,8 @@ vi.mock('../../mqtt/broker.js', () => ({
 
 import { deviceCache } from '../../mqtt/sensorData.js';
 import { startAutoMap, getStatus, acceptProposal } from '../../services/autoMap.js';
+import { createSession, updatePhase } from '../../db/repositories/autoMapSessions.js';
+import { db } from '../../db/database.js';
 
 const SN = 'LFIN_TEST_AUTOMAP';
 function setCache(fields: Record<string, string>) {
@@ -108,5 +110,40 @@ describe('autoMap orchestrator', () => {
     expect(cmds).not.toContain('save_map');
     expect(getStatus(SN)?.phase).toBe('aborted');
     expect(getStatus(SN)?.error).toBe('geofence');
+  });
+
+  it('abort tijdens de afrondreeks stuurt geen verdere saves', async () => {
+    const sn = `${SN}_FINISHING_ABORT`;
+    deviceCache.set(sn, new Map(Object.entries({ battery_power: '80', rtk_fix_quality: '4' })));
+    const r = await startAutoMap(sn, { mode: 'record', radiusM: 30 });
+    expect(r.ok).toBe(true);
+    emitDev({ start_scan_map_respond: { result: 0 } });
+    await flush();
+    // rit klaar: LOOP_CLOSED -> finalize() start en stuurt stop_scan_map
+    emitExt({ auto_map_status: { phase: 'result', code: 0, name: 'LOOP_CLOSED' } });
+    await flush();
+    expect(published.map((p) => Object.keys(p)[0])).toContain('stop_scan_map');
+    // aborted-event (geofence) komt VÓÓR de stop_scan_map_respond binnen —
+    // dit mag finalize() niet onderbreken met een abortRecording, alleen de
+    // cancelRequested-vlag zetten.
+    emitExt({ auto_map_status: { phase: 'aborted', error: 'geofence', dist_m: 31.2 } });
+    emitDev({ stop_scan_map_respond: { result: 0 } });
+    await flush();
+    const cmds = published.map((p) => Object.keys(p)[0]);
+    expect(cmds).not.toContain('save_map');
+    expect(getStatus(sn)?.phase).toBe('aborted');
+  });
+
+  it('verweesde sessie na herstart blokkeert nieuwe start niet', async () => {
+    const sn = `${SN}_ORPHAN`;
+    const orphan = createSession(sn, 'record', 30);
+    updatePhase(orphan.id, 'recording'); // niet finished — simuleert crash tijdens run
+    deviceCache.set(sn, new Map(Object.entries({ battery_power: '80', rtk_fix_quality: '4' })));
+    const r = await startAutoMap(sn, { mode: 'test' });
+    expect(r).toMatchObject({ ok: true });
+    const orphanRow = db.prepare('SELECT * FROM auto_map_sessions WHERE id = ?').get(orphan.id) as
+      { phase: string; error: string | null };
+    expect(orphanRow.phase).toBe('error');
+    expect(orphanRow.error).toBe('orphaned_by_restart');
   });
 });
