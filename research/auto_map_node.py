@@ -24,12 +24,14 @@ import json
 import math
 import os
 import re
+import subprocess
 import sys
 import threading
 import time
 
 DEFAULT_RADIUS_M = 30.0     # geofence-straal vanaf startpositie (spec §4)
 DEFAULT_TIMEOUT_S = 1200    # 20 min (spec: result-tabel)
+GPS_STALE_S = 15.0          # vangnet: zonder verse GPS geen geofence, dus stoppen
 ACTION_LOG = "/tmp/auto_map_action.log"
 
 RESULT_NAMES = {
@@ -95,17 +97,23 @@ def _ec():
 
 
 class AutoMapSession:
-    """Eén rit. State + watchdog. Thread-safe via één lock."""
+    """Eén rit. State + watchdog. De lock beschermt alleen schrijven/lezen van
+    last_status (concurrent geraadpleegd door get_auto_map_status); de rest
+    van de sessie draait op de eigen achtergrondthread zonder verdere locking."""
 
     def __init__(self, publish_status, radius_m, timeout_s):
         self.publish_status = publish_status   # dict -> None (MQTT publish)
         self.radius_m = radius_m
         self.timeout_s = timeout_s
         self.lock = threading.Lock()
-        self.last_status = {"phase": "idle"}
+        # Synchroon al op "preparing" zetten (niet pas in de thread) zodat de
+        # already_running-gate in main() geen race heeft met een tweede
+        # start_auto_map_test vlak na elkaar.
+        self.last_status = {"phase": "preparing"}
         self.stop_requested = False
         self.start_gps = None                  # (lat, lng) bij start
         self.last_gps = None
+        self.last_fix_mono = None               # monotone tijd van laatste NavSatFix
         self.started = time.monotonic()
 
     def status(self, phase, **extra):
@@ -113,7 +121,16 @@ class AutoMapSession:
         st.update(extra)
         with self.lock:
             self.last_status = st
-        self.publish_status(st)
+        try:
+            self.publish_status(st)
+        except Exception as ex:
+            # Publiceren mag falen (MQTT-socketbreuk); last_status ligt al
+            # vast onder de lock hierboven, dus de terminale fase blijft
+            # zichtbaar via get_auto_map_status ook als MQTT weg is.
+            try:
+                _ec().log(f"[auto_map] publish_status faalde: {ex}")
+            except Exception:
+                pass
 
 
 def _relay_alive(ec):
@@ -133,17 +150,65 @@ def _set_costmap_topic(ec):
 
 
 def _cancel_follow(ec):
-    """Zelfde stop-pad als stop_boundary_follow in extended_commands:
-    cover_task_stop cancelt BoundaryFollow, plus kill van de CLI-client."""
-    ec.ros2_run(["ros2", "service", "call", "/coverage_planner_server/cover_task_stop",
-                 "std_srvs/srv/SetBool", "'{data: true}'"], timeout=15)
-    # Vaste string, geen user input -> geen command-injection risico.
-    os.system("pkill -f 'ros2 action send_goal /boundary_follow' 2>/dev/null")
+    """Zelfde stop-pad als stop_boundary_follow in extended_commands, maar
+    exception-tolerant en in de juiste volgorde: EERST de kill van de
+    CLI-client (mag nooit falen of blokkeren), DAARNA best-effort de
+    cover_task_stop-servicecall (kan 3-6 s+ duren of timeouten — dat mag de
+    pkill nooit tegenhouden)."""
+    try:
+        # Vaste string, geen user input -> geen command-injection risico.
+        os.system("pkill -f 'ros2 action send_goal /boundary_follow' 2>/dev/null")
+    except Exception:
+        pass
+    try:
+        ec.ros2_run(["ros2", "service", "call", "/coverage_planner_server/cover_task_stop",
+                     "std_srvs/srv/SetBool", "'{data: true}'"], timeout=15)
+    except Exception:
+        pass
+
+
+def _wait_proc(proc):
+    """Best-effort wachten op de CLI-client van de action-goal; bij timeout
+    (proc reageert niet binnen 15 s) hard killen i.p.v. de sessie te laten
+    hangen."""
+    try:
+        proc.wait(timeout=15)
+    except subprocess.TimeoutExpired:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+    except Exception:
+        pass
 
 
 def _run_session(sess, ec):
-    """Prepare → goal → watchdog. Draait in eigen thread."""
-    import subprocess
+    """Prepare → goal → watchdog. Draait in eigen thread.
+
+    Wrapper om _run_session_body: die functie mag intern raisen (ros2_run
+    timeout, proc.wait, of sess.status() bij een MQTT-socketbreuk) zonder dat
+    de geofence-bewaking stilletjes doodgaat — hier vangen we alles af, doen
+    best-effort _cancel_follow en zetten best-effort een terminale status."""
+    try:
+        _run_session_body(sess, ec)
+    except Exception as ex:
+        try:
+            _ec().log(f"[auto_map] sessie crashte: {ex}")
+        except Exception:
+            pass
+        try:
+            _cancel_follow(ec)
+        except Exception:
+            pass
+        try:
+            sess.status("error", error=f"session_crash: {ex}")
+        except Exception:
+            pass
+
+
+def _run_session_body(sess, ec):
+    """Feitelijke prepare → goal → watchdog-logica (zie _run_session voor het
+    crash-vangnet eromheen)."""
     sess.status("preparing")
 
     if not _relay_alive(ec):
@@ -185,20 +250,29 @@ def _run_session(sess, ec):
         elapsed = time.monotonic() - sess.started
         if sess.stop_requested:
             _cancel_follow(ec)
-            proc.wait(timeout=15)
+            _wait_proc(proc)
             sess.status("aborted", error="user_stop")
             return
         if elapsed > sess.timeout_s:
             _cancel_follow(ec)
-            proc.wait(timeout=15)
+            _wait_proc(proc)
             sess.status("aborted", error="timeout")
+            return
+        if sess.start_gps is not None and (
+                sess.last_fix_mono is None or
+                time.monotonic() - sess.last_fix_mono > GPS_STALE_S):
+            # Geen verse GPS meer (topic weg / GPS-thread dood) -> geofence
+            # werkt niet meer, dus stoppen i.p.v. blind doorrijden.
+            _cancel_follow(ec)
+            _wait_proc(proc)
+            sess.status("aborted", error="gps_stale")
             return
         if sess.last_gps and sess.start_gps:
             d = haversine_m(sess.start_gps[0], sess.start_gps[1],
                             sess.last_gps[0], sess.last_gps[1])
             if d > sess.radius_m:
                 _cancel_follow(ec)
-                proc.wait(timeout=15)
+                _wait_proc(proc)
                 sess.status("aborted", error="geofence", dist_m=round(d, 1))
                 return
             if not following_reported and elapsed > 10:
@@ -231,7 +305,10 @@ def _start_gps_watch(sess):
                 rclpy.init()
             except RuntimeError:
                 pass
-            node = Node("auto_map_gps_watch")
+            # Unieke naam per sessie: voorkomt botsing met een nog uitdovende
+            # node van een vorige (net gestopte) sessie-thread.
+            node = Node(f"auto_map_gps_watch_{os.getpid()}_"
+                        f"{int(time.monotonic() * 1000) % 1000000}")
 
             def on_fix(msg):
                 if msg.latitude == 0.0 and msg.longitude == 0.0:
@@ -239,6 +316,7 @@ def _start_gps_watch(sess):
                 if sess.start_gps is None:
                     sess.start_gps = (msg.latitude, msg.longitude)
                 sess.last_gps = (msg.latitude, msg.longitude)
+                sess.last_fix_mono = time.monotonic()
 
             node.create_subscription(NavSatFix, "/gps_raw", on_fix, 5)
             while not sess.stop_requested and sess.last_status.get("phase") not in (
