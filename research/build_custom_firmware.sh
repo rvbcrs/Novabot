@@ -1783,6 +1783,72 @@ else
     echo "  terrain_scan.py of start_terrain.sh niet gevonden — overslaan"
 fi
 
+# === Stap 5h5: Autonoom karteren (route B) toevoegen ===
+echo "[5h5/9] Autonoom karteren (route B): lawn_edge_relay + auto_map_node toevoegen..."
+
+RELAY_SRC="$SCRIPT_DIR/lawn_edge_relay.py"
+AUTOMAP_SRC="$SCRIPT_DIR/auto_map_node.py"
+RELAY_LAUNCHER_SRC="$SCRIPT_DIR/start_lawn_relay.sh"
+AUTOMAP_LAUNCHER_SRC="$SCRIPT_DIR/start_auto_map.sh"
+if [ -f "$RELAY_SRC" ] && [ -f "$AUTOMAP_SRC" ] \
+   && [ -f "$RELAY_LAUNCHER_SRC" ] && [ -f "$AUTOMAP_LAUNCHER_SRC" ]; then
+    cp "$RELAY_SRC" "$NOVABOT_ROOT/scripts/lawn_edge_relay.py"
+    chmod +x "$NOVABOT_ROOT/scripts/lawn_edge_relay.py"
+    cp "$AUTOMAP_SRC" "$NOVABOT_ROOT/scripts/auto_map_node.py"
+    chmod +x "$NOVABOT_ROOT/scripts/auto_map_node.py"
+    cp "$RELAY_LAUNCHER_SRC" "$NOVABOT_ROOT/scripts/start_lawn_relay.sh"
+    chmod +x "$NOVABOT_ROOT/scripts/start_lawn_relay.sh"
+    cp "$AUTOMAP_LAUNCHER_SRC" "$NOVABOT_ROOT/scripts/start_auto_map.sh"
+    chmod +x "$NOVABOT_ROOT/scripts/start_auto_map.sh"
+    echo "  lawn_edge_relay.py + auto_map_node.py + starters gekopieerd naar scripts/"
+
+    # Voeg autonoom-karteren launch toe aan run_novabot.sh start) blok
+    # Beide starters sourcen zelf de ROS-env (NOOIT kaal python3 — rclpy heeft dat
+    # nodig, zelfde les als extended_commands.py/terrain_scan.py). Double-spawn
+    # guard net als terrain_scan: kill stale instance vóór spawn, bracket-notatie
+    # (pkill -f '[x]xx') zodat deze regels nooit zichzelf matchen.
+    if [ -f "$RUN_NOVABOT" ] && ! grep -q "start_lawn_relay.sh" "$RUN_NOVABOT"; then
+        AUTOMAP_START_BLOCK="/tmp/automap_start_block.sh"
+        cat > "$AUTOMAP_START_BLOCK" << 'AUTOMAPEOF'
+
+  # CUSTOM: Autonoom karteren (route B) starten — lawn_edge_relay + auto_map_node
+  # Zie research/lawn_edge_relay.py + research/auto_map_node.py +
+  # docs/superpowers/specs/2026-07-22-autonomous-mapping-design.md
+  if [ -f "/root/novabot/scripts/start_lawn_relay.sh" ]; then
+      pkill -f '[s]tart_lawn_relay.sh' 2>/dev/null
+      pkill -f '[l]awn_edge_relay.py' 2>/dev/null
+      (/root/novabot/scripts/start_lawn_relay.sh >> $LOGS_PATH/lawn_edge_relay.log 2>&1) &
+      echo "lawn_edge_relay started" >> $LOGS_PATH/lawn_edge_relay.log
+  fi
+  if [ -f "/root/novabot/scripts/start_auto_map.sh" ]; then
+      pkill -f '[s]tart_auto_map.sh' 2>/dev/null
+      pkill -f '[a]uto_map_node.py' 2>/dev/null
+      (/root/novabot/scripts/start_auto_map.sh >> $LOGS_PATH/auto_map_node.log 2>&1) &
+      echo "auto_map_node started" >> $LOGS_PATH/auto_map_node.log
+  fi
+AUTOMAPEOF
+        sed -i '' '/start_test.sh/r /tmp/automap_start_block.sh' "$RUN_NOVABOT"
+        rm -f "$AUTOMAP_START_BLOCK"
+        echo "  run_novabot.sh: autonoom-karteren launch toegevoegd aan start)"
+
+        # Voeg autonoom-karteren kill toe aan stop) blok
+        # Zelfde reden als terrain_scan: killall -q -9 raakt de lus-shell niet —
+        # die zou de daemon binnen 15s weer opstarten. Kill beide met bracket-pkills.
+        AUTOMAP_STOP_BLOCK="/tmp/automap_stop_block.sh"
+        cat > "$AUTOMAP_STOP_BLOCK" << 'AUTOMAPEOF'
+  pkill -f '[s]tart_lawn_relay.sh' 2>/dev/null
+  pkill -f '[l]awn_edge_relay.py' 2>/dev/null
+  pkill -f '[s]tart_auto_map.sh' 2>/dev/null
+  pkill -f '[a]uto_map_node.py' 2>/dev/null
+AUTOMAPEOF
+        sed -i '' '/killall -q -9 daemon_monitor.sh/r /tmp/automap_stop_block.sh' "$RUN_NOVABOT"
+        rm -f "$AUTOMAP_STOP_BLOCK"
+        echo "  run_novabot.sh: autonoom-karteren kill toegevoegd aan stop)"
+    fi
+else
+    echo "  lawn_edge_relay/auto_map_node niet compleet — overslaan"
+fi
+
 # === Stap 5i: STM32 MCU firmware — KEEP STOCK v3.6.0 ===
 # DISABLED: v3.6.7 pin_unlock causes motor lock issues (blade calibration broken).
 # The stock v3.6.0 from the source .deb is kept as-is.
@@ -2359,6 +2425,7 @@ echo "    ✓ http_address.txt + json_config.json worden bij elke boot gezet"
 [ -f "$NOVABOT_ROOT/scripts/led_bridge.py" ] && echo "    ✓ LED bridge: MQTT → ROS /led_set (headlight controle)"
 [ -f "$NOVABOT_ROOT/scripts/extended_commands.py" ] && echo "    ✓ Extended commands: reboot, camera snapshot, system info (auto-start na 12s)"
 [ -f "$NOVABOT_ROOT/scripts/terrain_scan.py" ] && echo "    ✓ Terrain-scan daemon: ToF-hoogtegrid tijdens maaien, upload naar server"
+[ -f "$NOVABOT_ROOT/scripts/auto_map_node.py" ] && echo "    ✓ Autonoom karteren (fase 0): lawn_edge_relay + auto_map_node"
 echo "    ✓ STM32 MCU: stock v3.6.0 (pin_unlock patch disabled)"
 grep -q "open_decision" "$RUN_NOVABOT" 2>/dev/null && echo "    ✓ Open robot_decision boot hook (Python vervangt C++ na 20s)"
 [ -f "$NOVABOT_ROOT/scripts/mqtt_bridge.py" ] && echo "    ✓ Open mqtt_node (mqtt_bridge.py vervangt stock mqtt_node — geen domain whitelist)"
