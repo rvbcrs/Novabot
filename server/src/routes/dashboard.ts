@@ -981,7 +981,7 @@ dashboardRouter.post('/terrain-clusters/:sn/add', (req: Request, res: Response) 
     cells: 1, max_h: height,
     class_name: className, confidence: null, crop_file: null,
   });
-  terrainClusterRepo.setOverride(sn, key, className);
+  terrainClusterRepo.setOverride(sn, key, className, key);
   res.json({ ok: true, key });
 });
 
@@ -1004,7 +1004,10 @@ dashboardRouter.post('/terrain-clusters/:sn/:key/override', (req: Request, res: 
   }
   // Correctie geldt voor het hele object: alle tegels van dezelfde groep.
   const keys = groupKeysFor(rows, key);
-  for (const k of keys) terrainClusterRepo.setOverride(sn, k, className ?? null);
+  // Tag alle tegels van deze correctie met dezelfde override_group (de
+  // aangeklikte sleutel): twee losse correcties van dezelfde klasse vlak bij
+  // elkaar (bv. twee bloempotten op 1 m) blijven zo twee objecten.
+  for (const k of keys) terrainClusterRepo.setOverride(sn, k, className ?? null, className != null ? key : null);
   res.json({ ok: true, updated: keys.length });
 });
 

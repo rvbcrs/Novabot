@@ -31,6 +31,10 @@ export interface GroupableRow {
   confidence: number | null;
   crop_file: string | null;
   user_override: string | null;
+  /** Tag van de correctie-actie waarmee de override gezet is; twee clusters
+   *  met VERSCHILLENDE tags zijn door de gebruiker als aparte objecten
+   *  aangewezen en mogen nooit samensmelten. */
+  override_group?: string | null;
   model_file?: string | null;
   size_override?: number | null;
   height_override?: number | null;
@@ -128,8 +132,18 @@ export function groupClusters(rows: GroupableRow[]): ClusterGroup[] {
       // de gebruiker heeft die plek en klasse expliciet gekozen, dus een
       // overlappende (mogelijk foute) detectie mag ze niet opslokken.
       if (a.cluster_key.startsWith('m') || b.cluster_key.startsWith('m')) continue;
+      // Twee verschillende correctie-acties = twee objecten (bv. twee
+      // bloempotten die de gebruiker apart heeft aangewezen op 1 m afstand):
+      // nooit samenvoegen, ook niet bij overlap.
+      const ogA = a.override_group ?? null;
+      const ogB = b.override_group ?? null;
+      if (ogA !== null && ogB !== null && ogA !== ogB) continue;
       const sameClass = effectiveClass(a) !== null && effectiveClass(a) === effectiveClass(b);
-      if (overlaps(a, b) || (sameClass && adjacent(a, b))) {
+      // Gelijke-klasse-nabuurschap geldt alleen binnen dezelfde correctie
+      // (of tussen twee ongecorrigeerde detecties); een gecorrigeerd object
+      // slokt geen losse detectie ernaast op. Overlap mag wel: een nieuwe
+      // detectie bovenop een gecorrigeerd object is hetzelfde object.
+      if (overlaps(a, b) || (sameClass && adjacent(a, b) && ogA === ogB)) {
         union(a.cluster_key, b.cluster_key);
       }
     }

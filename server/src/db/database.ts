@@ -739,6 +739,11 @@ export function initDb(): void {
     try { db.exec(`ALTER TABLE terrain_clusters ADD COLUMN ${col}`); }
     catch { /* kolom bestaat al */ }
   }
+  // override_group (2026-07-22): tag per correctie-actie, zodat twee los
+  // geclassificeerde objecten van dezelfde klasse binnen de groepeer-marge
+  // (bv. twee bloempotten op 1 m) niet tot één reuzenobject samensmelten.
+  try { db.exec(`ALTER TABLE terrain_clusters ADD COLUMN override_group TEXT`); }
+  catch { /* kolom bestaat al */ }
 
   // Feature #51: "every N days" schedule mode. interval_days > 0 takes
   // precedence over weekdays — the schedule fires when

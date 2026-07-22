@@ -15,6 +15,7 @@ export interface TerrainClusterRow {
   confidence: number | null;
   crop_file: string | null;
   user_override: string | null;
+  override_group: string | null;
   model_file: string | null;
   size_override: number | null;
   height_override: number | null;
@@ -43,7 +44,7 @@ export interface TerrainClusterUpsert {
 class TerrainClusterRepository {
   private _findBySn = db.prepare('SELECT * FROM terrain_clusters WHERE mower_sn = ?');
   private _setOverride = db.prepare(`
-    UPDATE terrain_clusters SET user_override = ?, updated_at = datetime('now')
+    UPDATE terrain_clusters SET user_override = ?, override_group = ?, updated_at = datetime('now')
     WHERE mower_sn = ? AND cluster_key = ?
   `);
   // custom 3D-model per object — net als user_override raakt de
@@ -97,8 +98,10 @@ class TerrainClusterRepository {
     return this._findBySn.all(sn) as TerrainClusterRow[];
   }
 
-  setOverride(sn: string, clusterKey: string, className: string | null): void {
-    this._setOverride.run(className, sn, clusterKey);
+  // overrideGroup: tag van de correctie-actie (de aangeklikte sleutel), zodat
+  // groupClusters twee losse correcties nooit tot één object samenvoegt.
+  setOverride(sn: string, clusterKey: string, className: string | null, overrideGroup: string | null = null): void {
+    this._setOverride.run(className, className != null ? overrideGroup : null, sn, clusterKey);
   }
 
   setModelFile(sn: string, clusterKey: string, file: string | null): void {

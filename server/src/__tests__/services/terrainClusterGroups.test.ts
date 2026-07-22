@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { groupClusters, groupKeysFor, type GroupableRow } from '../../services/terrainClusterGroups.js';
 
 /** Tegel van 2x2 m op tegelpositie (tx,ty), met klasse en optionele correctie. */
-function tegel(key: string, tx: number, ty: number, klasse: string | null, override: string | null = null, cells = 100): GroupableRow {
+function tegel(key: string, tx: number, ty: number, klasse: string | null, override: string | null = null, cells = 100, overrideGroup: string | null = null): GroupableRow {
   return {
     cluster_key: key,
     min_x: tx * 2, max_x: tx * 2 + 2,
@@ -12,6 +12,7 @@ function tegel(key: string, tx: number, ty: number, klasse: string | null, overr
     class_name: klasse, confidence: klasse ? 0.4 : null,
     crop_file: klasse ? `${key}.jpg` : null,
     user_override: override,
+    override_group: overrideGroup,
   };
 }
 
@@ -33,6 +34,33 @@ describe('groupClusters', () => {
     const groepen = groupClusters([
       tegel('a', 0, 0, 'swimming pool'),
       tegel('b', 1, 0, 'trampoline'),
+    ]);
+    expect(groepen).toHaveLength(2);
+  });
+
+  it('houdt twee losse correcties van dezelfde klasse naast elkaar gescheiden', () => {
+    // Twee bloempotten op ~1 tegel afstand, elk apart door de gebruiker
+    // aangewezen (eigen override_group): NOOIT samenvoegen tot één reuzenpot.
+    const groepen = groupClusters([
+      tegel('a', 0, 0, null, 'flower pot with plant', 100, 'a'),
+      tegel('b', 1, 0, null, 'flower pot with plant', 100, 'b'),
+    ]);
+    expect(groepen).toHaveLength(2);
+  });
+
+  it('houdt tegels van ÉÉN correctie (zelfde override_group) wel bij elkaar', () => {
+    const groepen = groupClusters([
+      tegel('a', 0, 0, null, 'bush', 100, 'a'),
+      tegel('b', 1, 0, null, 'bush', 100, 'a'),
+    ]);
+    expect(groepen).toHaveLength(1);
+    expect(groepen[0].keys.sort()).toEqual(['a', 'b']);
+  });
+
+  it('gecorrigeerd object slokt geen losse detectie van dezelfde klasse ernaast op', () => {
+    const groepen = groupClusters([
+      tegel('a', 0, 0, null, 'bush', 100, 'a'),
+      tegel('det', 1, 0, 'bush'),
     ]);
     expect(groepen).toHaveLength(2);
   });

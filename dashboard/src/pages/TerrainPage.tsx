@@ -1331,7 +1331,20 @@ export default function TerrainPage({ sn }: { sn: string }) {
               onChange={(e) => {
                 followRef.current = e.target.checked;
                 setFollowMower(e.target.checked);
-                if (e.target.checked) updateMarkerFnRef.current(livePosRef.current);
+                if (e.target.checked) {
+                  // Bij aanzetten meteen naar de maaier toe vliegen; daarna
+                  // houdt de volg-modus de kijkhoek vast en schuift alleen mee.
+                  const pos = livePosRef.current;
+                  const cam = cameraRef.current;
+                  const ctr = controlsRef.current;
+                  if (pos && cam && ctr) {
+                    const gz = groundAtRef.current(pos.x, pos.y);
+                    ctr.target.set(pos.x, pos.y, gz + 0.02);
+                    cam.position.set(pos.x, pos.y - 8, gz + 6);
+                    ctr.update();
+                  }
+                  updateMarkerFnRef.current(livePosRef.current);
+                }
               }}
             />
             <span className="inline-block w-3 h-3 rounded-sm bg-amber-400" />
