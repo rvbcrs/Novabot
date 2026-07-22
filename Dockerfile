@@ -68,26 +68,30 @@ RUN apt-get update && apt-get install -y --no-install-recommends dnsmasq nginx o
 
 WORKDIR /app
 
-# Copy compiled server + lean production dependencies
-COPY --from=build /app/server/dist server/dist
+# LAAG-VOLGORDE = PULL-GROOTTE (les 2026-07-22): alles ná een gewijzigde laag
+# krijgt een nieuwe digest en wordt bij elke update opnieuw geüpload én door
+# elke gebruiker opnieuw gedownload. De 353MB node_modules-laag stond ná de
+# code en kwam daardoor bij ELKE release opnieuw binnen. Daarom: groot en
+# stabiel EERST, de per-release veranderende dist-lagen als LAATSTE.
+
+# Stabiel: production dependencies (verandert alleen met de lockfile)
 COPY --from=deps /app/server/node_modules server/node_modules
 COPY --from=deps /app/server/package.json server/
 
-# Copy built dashboard
-COPY --from=build /app/dashboard/dist dashboard/dist
-
-# Copy static assets (logo, etc.)
-COPY server/public server/public
-
-# Copy factory device database (SN → MAC lookup for BLE provisioning)
+# Stabiel: factory device database (SN → MAC lookup for BLE provisioning)
 COPY server/cloud_devices_anonymous.json server/cloud_devices_anonymous.json
 
-# Copy entrypoint
+# Stabiel: entrypoint + datadirs
 COPY docker-entrypoint.sh /app/docker-entrypoint.sh
 RUN chmod +x /app/docker-entrypoint.sh
-
-# Persistent data directory
 RUN mkdir -p /data/storage /data/firmware
+
+# Semi-stabiel: statische assets
+COPY server/public server/public
+
+# Verandert per release: gecompileerde dashboard + server — LAATSTE
+COPY --from=build /app/dashboard/dist dashboard/dist
+COPY --from=build /app/server/dist server/dist
 
 # Ports: DNS, HTTP, HTTPS (app), MQTT, API+Dashboard
 EXPOSE 53/udp 53/tcp 80 443 1883 3000
