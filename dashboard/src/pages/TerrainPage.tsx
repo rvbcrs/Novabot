@@ -88,8 +88,15 @@ function loadCustomModel(file: string): Promise<THREE.Object3D> {
       holder.add(zUp);
       const box = new THREE.Box3().setFromObject(holder);
       const size = new THREE.Vector3(); box.getSize(size);
-      const schaal = 1 / Math.max(size.x, size.y, size.z, 1e-6);
-      holder.scale.setScalar(schaal);
+      // Per as naar de eenheidskubus (zoals de gebundelde set): een breed-plat
+      // model werd bij uniforme schaling maar 0,2 'hoog' in het eenheidsblok,
+      // waardoor de hoogte-schuif van de gebruiker geen echte meters was
+      // (les 2026-07-22: zwembad op 1 m werd een flinterdunne plank).
+      holder.scale.set(
+        1 / Math.max(size.x, 1e-6),
+        1 / Math.max(size.y, 1e-6),
+        1 / Math.max(size.z, 1e-6),
+      );
       holder.updateMatrixWorld(true);
       const box2 = new THREE.Box3().setFromObject(holder);
       const centrum = new THREE.Vector3(); box2.getCenter(centrum);
