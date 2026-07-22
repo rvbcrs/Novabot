@@ -116,7 +116,7 @@ const POLL_INTERVAL_MS = 20_000;
 const TRAIL_MAX_POINTS = 50;
 // Vooruit-as-correctie voor het Novabot-model: theta=0 is kaart-oosten; als
 // het model met de neus de verkeerde kant op rijdt, hier ±PI/2 of PI bijstellen.
-const MOWER_YAW_OFFSET = 0;
+const MOWER_YAW_OFFSET = Math.PI; // model-neus wees naar -X (reed 'achteruit')
 // dropdown-waarde voor "geen override" — POST {className:null} wist de
 // user_override server-side, waarna de model-classificatie (indien boven de
 // confidence-drempel) weer effectief wordt.
@@ -411,6 +411,8 @@ export default function TerrainPage({ sn }: { sn: string }) {
   const outlinesRef = useRef<Map<string, THREE.Object3D>>(new Map());
   const outlinesVisibleRef = useRef(true);
   const [outlinesVisible, setOutlinesVisible] = useState(true);
+  const followRef = useRef(false);
+  const [followMower, setFollowMower] = useState(false);
   const groundAtRef = useRef<(x: number, y: number) => number>(() => 0);
   const markerRef = useRef<THREE.Object3D | null>(null);
   const trailLineRef = useRef<THREE.Line | null>(null);
@@ -762,6 +764,19 @@ export default function TerrainPage({ sn }: { sn: string }) {
         markerRef.current.position.set(pos.x, pos.y, g + 0.02);
         markerRef.current.rotation.set(0, 0, pos.theta + MOWER_YAW_OFFSET);
         markerRef.current.visible = true;
+
+        // Volg-modus: camera schuift mee (zelfde kijkhoek, doel = maaier).
+        if (followRef.current && cameraRef.current && controlsRef.current) {
+          const ctr = controlsRef.current;
+          const dx = pos.x - ctr.target.x;
+          const dy = pos.y - ctr.target.y;
+          const dz = (g + 0.02) - ctr.target.z;
+          ctr.target.set(pos.x, pos.y, g + 0.02);
+          cameraRef.current.position.x += dx;
+          cameraRef.current.position.y += dy;
+          cameraRef.current.position.z += dz;
+          ctr.update();
+        }
 
         const pts = trailPointsRef.current;
         const last = pts[pts.length - 1];
@@ -1193,6 +1208,19 @@ export default function TerrainPage({ sn }: { sn: string }) {
             />
             <span className="inline-block w-3 h-3 rounded-sm border border-yellow-400" />
             {t('terrain.outlinesLabel')}
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={followMower}
+              onChange={(e) => {
+                followRef.current = e.target.checked;
+                setFollowMower(e.target.checked);
+                if (e.target.checked) updateMarkerFnRef.current(livePosRef.current);
+              }}
+            />
+            <span className="inline-block w-3 h-3 rounded-sm bg-amber-400" />
+            {t('terrain.followLabel')}
           </label>
           <div className="pt-2 mt-1 border-t border-white/10">
             <div className="text-gray-400 mb-1">{t('terrain.minHeightLabel')}: {Math.round(minObjHeight * 100)} cm</div>

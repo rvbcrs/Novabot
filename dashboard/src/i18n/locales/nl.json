@@ -461,7 +461,8 @@
     "modelRename": "Hernoemen",
     "modelRenamePrompt": "Nieuwe naam voor dit model:",
     "moveButton": "Verplaatsen",
-    "moveActive": "Klik op de kaart voor de nieuwe plek…"
+    "moveActive": "Klik op de kaart voor de nieuwe plek…",
+    "followLabel": "Volg de maaier"
   },
   "schedule": {
     "title": "Maaischema's",

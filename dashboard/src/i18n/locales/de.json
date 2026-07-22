@@ -398,7 +398,8 @@
     "modelRename": "Umbenennen",
     "modelRenamePrompt": "Neuer Name für dieses Modell:",
     "moveButton": "Verschieben",
-    "moveActive": "Neue Position auf der Karte anklicken…"
+    "moveActive": "Neue Position auf der Karte anklicken…",
+    "followLabel": "Mäher folgen"
   },
   "schedule": {
     "title": "Mähpläne",

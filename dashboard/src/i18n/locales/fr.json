@@ -398,7 +398,8 @@
     "modelRename": "Renommer",
     "modelRenamePrompt": "Nouveau nom pour ce modèle :",
     "moveButton": "Déplacer",
-    "moveActive": "Cliquez la carte pour le nouvel emplacement…"
+    "moveActive": "Cliquez la carte pour le nouvel emplacement…",
+    "followLabel": "Suivre la tondeuse"
   },
   "schedule": {
     "title": "Planifications de tonte",
