@@ -76,6 +76,248 @@ def parse_action_result(text):
     return status, code
 
 
+# ── Daemon ───────────────────────────────────────────────────────────────────
+# extended_commands.py als bibliotheek: MiniMQTT, read_config, ros2_run, log.
+# Import is bijwerkingsvrij (alles achter __main__-guard), bewezen door
+# research/__tests__/test_extended_helpers.py.
+_EC = None
+
+
+def _ec():
+    global _EC
+    if _EC is None:
+        import importlib.util
+        p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "extended_commands.py")
+        spec = importlib.util.spec_from_file_location("ec_lib", p)
+        _EC = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_EC)
+    return _EC
+
+
+class AutoMapSession:
+    """Eén rit. State + watchdog. Thread-safe via één lock."""
+
+    def __init__(self, publish_status, radius_m, timeout_s):
+        self.publish_status = publish_status   # dict -> None (MQTT publish)
+        self.radius_m = radius_m
+        self.timeout_s = timeout_s
+        self.lock = threading.Lock()
+        self.last_status = {"phase": "idle"}
+        self.stop_requested = False
+        self.start_gps = None                  # (lat, lng) bij start
+        self.last_gps = None
+        self.started = time.monotonic()
+
+    def status(self, phase, **extra):
+        st = {"phase": phase, "elapsed_s": int(time.monotonic() - self.started)}
+        st.update(extra)
+        with self.lock:
+            self.last_status = st
+        self.publish_status(st)
+
+
+def _relay_alive(ec):
+    """Is lawn_edge_relay actief? Check publisher-count op het relay-topic."""
+    r = ec.ros2_run(["ros2", "topic", "info", "/perception/points_relabeled"], timeout=15)
+    return r.returncode == 0 and "Publisher count: 0" not in (r.stdout or "")
+
+
+def _set_costmap_topic(ec):
+    """Runtime costmap-param (NOOIT YAML, maart-les). Verifieer met param get."""
+    ec.ros2_run(["ros2", "param", "set", "/local_costmap/local_costmap",
+                 "obstacle_layer.pointcloud.topic", "/perception/points_relabeled"],
+                timeout=20)
+    r = ec.ros2_run(["ros2", "param", "get", "/local_costmap/local_costmap",
+                     "obstacle_layer.pointcloud.topic"], timeout=20)
+    return "points_relabeled" in (r.stdout or "")
+
+
+def _cancel_follow(ec):
+    """Zelfde stop-pad als stop_boundary_follow in extended_commands:
+    cover_task_stop cancelt BoundaryFollow, plus kill van de CLI-client."""
+    ec.ros2_run(["ros2", "service", "call", "/coverage_planner_server/cover_task_stop",
+                 "std_srvs/srv/SetBool", "'{data: true}'"], timeout=15)
+    # Vaste string, geen user input -> geen command-injection risico.
+    os.system("pkill -f 'ros2 action send_goal /boundary_follow' 2>/dev/null")
+
+
+def _run_session(sess, ec):
+    """Prepare → goal → watchdog. Draait in eigen thread."""
+    import subprocess
+    sess.status("preparing")
+
+    if not _relay_alive(ec):
+        sess.status("error", error="relay_missing")
+        return
+    if not _set_costmap_topic(ec):
+        sess.status("error", error="costmap_param_failed")
+        return
+
+    # Enige perceptie-instelling die wij zetten: SEG_HIGH (mode 3, maart-flow).
+    # coverage_planner_server regelt semantic/detection-mode ZELF bij de goal.
+    ec.ros2_run(["ros2", "service", "call", "/perception/set_infer_model",
+                 "general_msgs/srv/SetUint8", "'{value: 3}'"], timeout=15)
+
+    # GPS-volger voor de geofence: één achtergrond-subscription op NavSatFix.
+    _start_gps_watch(sess)
+    deadline = time.monotonic() + 30
+    while sess.start_gps is None and time.monotonic() < deadline:
+        time.sleep(0.5)
+    if sess.start_gps is None:
+        sess.status("error", error="no_gps_fix")
+        return
+
+    # BoundaryFollow-goal via CLI, output naar ACTION_LOG voor result-parse.
+    try:
+        os.unlink(ACTION_LOG)
+    except OSError:
+        pass
+    with open(ACTION_LOG, "w") as logf:
+        proc = subprocess.Popen(
+            ["ros2", "action", "send_goal", "/boundary_follow",
+             "coverage_planner/action/BoundaryFollow", boundary_goal_yaml()],
+            stdout=logf, stderr=subprocess.STDOUT)
+    sess.status("searching_boundary")
+
+    following_reported = False
+    while True:
+        time.sleep(2.0)
+        elapsed = time.monotonic() - sess.started
+        if sess.stop_requested:
+            _cancel_follow(ec)
+            proc.wait(timeout=15)
+            sess.status("aborted", error="user_stop")
+            return
+        if elapsed > sess.timeout_s:
+            _cancel_follow(ec)
+            proc.wait(timeout=15)
+            sess.status("aborted", error="timeout")
+            return
+        if sess.last_gps and sess.start_gps:
+            d = haversine_m(sess.start_gps[0], sess.start_gps[1],
+                            sess.last_gps[0], sess.last_gps[1])
+            if d > sess.radius_m:
+                _cancel_follow(ec)
+                proc.wait(timeout=15)
+                sess.status("aborted", error="geofence", dist_m=round(d, 1))
+                return
+            if not following_reported and elapsed > 10:
+                following_reported = True
+                sess.status("following", dist_m=round(d, 1))
+        if proc.poll() is not None:
+            try:
+                with open(ACTION_LOG) as f:
+                    text = f.read()
+            except OSError:
+                text = ""
+            status, code = parse_action_result(text)
+            if code is None:
+                sess.status("error", error=f"action_exit_{proc.returncode}_no_result")
+            else:
+                sess.status("result", code=code,
+                            name=RESULT_NAMES.get(code, f"code_{code}"))
+            return
+
+
+def _start_gps_watch(sess):
+    """NavSatFix-subscriber in eigen thread (patroon: calibration-drive in
+    extended_commands). Vult sess.start_gps (eerste fix) en sess.last_gps."""
+    def _spin():
+        try:
+            import rclpy
+            from rclpy.node import Node
+            from sensor_msgs.msg import NavSatFix
+            try:
+                rclpy.init()
+            except RuntimeError:
+                pass
+            node = Node("auto_map_gps_watch")
+
+            def on_fix(msg):
+                if msg.latitude == 0.0 and msg.longitude == 0.0:
+                    return
+                if sess.start_gps is None:
+                    sess.start_gps = (msg.latitude, msg.longitude)
+                sess.last_gps = (msg.latitude, msg.longitude)
+
+            node.create_subscription(NavSatFix, "/gps_raw", on_fix, 5)
+            while not sess.stop_requested and sess.last_status.get("phase") not in (
+                    "result", "error", "aborted"):
+                rclpy.spin_once(node, timeout_sec=1.0)
+            node.destroy_node()
+        except Exception as ex:
+            _ec().log(f"[auto_map] gps watch dood: {ex}")
+    threading.Thread(target=_spin, daemon=True).start()
+
+
+def main():
+    ec = _ec()
+    sn, addr, port = ec.read_config()
+    sub_topic = f"novabot/extended/{sn}"
+    resp_topic = f"novabot/extended_response/{sn}"
+    ec.log(f"[auto_map] SN={sn} MQTT={addr}:{port} sub={sub_topic}")
+
+    state = {"session": None, "client": None}
+
+    def publish_status(st):
+        c = state["client"]
+        if c:
+            c.publish(resp_topic, json.dumps({"auto_map_status": st}))
+
+    def respond(key, payload):
+        c = state["client"]
+        if c:
+            c.publish(resp_topic, json.dumps({key: payload}))
+
+    def on_message(topic, payload):
+        try:
+            cmd = json.loads(payload)
+        except (ValueError, TypeError):
+            return
+        if "start_auto_map_test" in cmd:
+            params = cmd.get("start_auto_map_test") or {}
+            sess = state["session"]
+            if sess and sess.last_status.get("phase") in (
+                    "preparing", "searching_boundary", "following"):
+                respond("start_auto_map_test_respond",
+                        {"result": 1, "error": "already_running"})
+                return
+            try:
+                radius = float(params.get("radiusM", DEFAULT_RADIUS_M))
+                timeout = int(params.get("timeoutS", DEFAULT_TIMEOUT_S))
+            except (TypeError, ValueError) as ex:
+                respond("start_auto_map_test_respond",
+                        {"result": 1, "error": f"param type error: {ex}"})
+                return
+            radius = max(5.0, min(200.0, radius))
+            timeout = max(60, min(3600, timeout))
+            sess = AutoMapSession(publish_status, radius, timeout)
+            state["session"] = sess
+            threading.Thread(target=_run_session, args=(sess, ec), daemon=True).start()
+            respond("start_auto_map_test_respond", {"result": 0})
+        elif "stop_auto_map" in cmd:
+            sess = state["session"]
+            if sess:
+                sess.stop_requested = True
+            respond("stop_auto_map_respond", {"result": 0})
+        elif "get_auto_map_status" in cmd:
+            sess = state["session"]
+            respond("get_auto_map_status_respond",
+                    sess.last_status if sess else {"phase": "idle"})
+        # Alle andere commando's zijn voor extended_commands.py — negeren.
+
+    while True:
+        try:
+            client = ec.MiniMQTT(addr, port, f"auto_map_{sn}", on_message)
+            client.connect()
+            client.subscribe(sub_topic)
+            state["client"] = client
+            ec.log("[auto_map] verbonden, wacht op commando's")
+            client.loop_forever()
+        except Exception as ex:
+            ec.log(f"[auto_map] MQTT-verbinding weg ({ex}), retry in 10 s")
+            time.sleep(10)
+
+
 if __name__ == "__main__":
-    print("auto_map_node: main() komt in de volgende taak", file=sys.stderr)
-    sys.exit(1)
+    sys.exit(main())
