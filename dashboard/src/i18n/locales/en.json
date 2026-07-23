@@ -411,6 +411,7 @@
     "modelUpload": "Upload custom .glb",
     "outlinesLabel": "Outlines",
     "zOffsetLabel": "Z offset",
+    "rotationLabel": "Rotation",
     "modelRename": "Rename",
     "modelRenamePrompt": "New name for this model:",
     "moveButton": "Move",

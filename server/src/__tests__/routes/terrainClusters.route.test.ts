@@ -114,7 +114,7 @@ describe('GET /api/dashboard/terrain-clusters/:sn', () => {
       className: 'trampoline', nl: 'Trampoline', confidence: 0.62,
       userOverride: null, photoUrl: `/api/dashboard/terrain-crops/${SN}/1,2.jpg`,
       modelFile: null, sizeOverride: null, heightOverride: null, zOffset: null,
-      xOffset: null, yOffset: null,
+      xOffset: null, yOffset: null, rotationDeg: null,
     }]);
   });
 
@@ -353,16 +353,19 @@ describe('POST /api/dashboard/terrain-clusters/:sn/:key/override', () => {
       .send({ x: 1, y: 1, className: 'trampoline' });
     const r = await request(app)
       .post(`/api/dashboard/terrain-clusters/${SN9}/m10,10/display`)
-      .send({ size: 3.5, height: 0.9, zOffset: -0.3 });
+      .send({ size: 3.5, height: 0.9, zOffset: -0.3, rotationDeg: -90 });
     expect(r.status).toBe(200);
     let cl = await request(app).get(`/api/dashboard/terrain-clusters/${SN9}`);
     expect(cl.body.clusters[0].sizeOverride).toBeCloseTo(3.5, 5);
     expect(cl.body.clusters[0].zOffset).toBeCloseTo(-0.3, 5);
+    // rotatie genormaliseerd naar [0, 360): -90 wordt 270
+    expect(cl.body.clusters[0].rotationDeg).toBeCloseTo(270, 5);
     // reset
     await request(app).post(`/api/dashboard/terrain-clusters/${SN9}/m10,10/display`)
       .send({ size: null, height: null, zOffset: null });
     cl = await request(app).get(`/api/dashboard/terrain-clusters/${SN9}`);
     expect(cl.body.clusters[0].sizeOverride).toBeNull();
+    expect(cl.body.clusters[0].rotationDeg).toBeNull();
   });
 
   it('model hernoemen: bestand hernoemd en objectverwijzing bijgewerkt', async () => {

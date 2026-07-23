@@ -744,6 +744,9 @@ export function initDb(): void {
   // (bv. twee bloempotten op 1 m) niet tot één reuzenobject samensmelten.
   try { db.exec(`ALTER TABLE terrain_clusters ADD COLUMN override_group TEXT`); }
   catch { /* kolom bestaat al */ }
+  // rotation_deg (2026-07-23): weergave-rotatie (graden om de Z-as) per object
+  try { db.exec(`ALTER TABLE terrain_clusters ADD COLUMN rotation_deg REAL`); }
+  catch { /* kolom bestaat al */ }
 
   // Feature #51: "every N days" schedule mode. interval_days > 0 takes
   // precedence over weekdays — the schedule fires when

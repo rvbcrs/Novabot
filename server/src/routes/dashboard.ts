@@ -835,6 +835,7 @@ dashboardRouter.get('/terrain-clusters/:sn', (req: Request, res: Response) => {
       zOffset: g.zOffset,
       xOffset: g.xOffset,
       yOffset: g.yOffset,
+      rotationDeg: g.rotationDeg,
     };
   });
   res.json({ clusters });
@@ -931,10 +932,13 @@ dashboardRouter.post('/terrain-clusters/:sn/:key/display', (req: Request, res: R
   const by = (b as { yOffset?: unknown }).yOffset;
   const x = clamp(bx, -30, 30);
   const y = clamp(by, -30, 30);
+  // Rotatie om de Z-as in graden; genormaliseerd naar [0, 360).
+  const rotRaw = clamp((b as { rotationDeg?: unknown }).rotationDeg, -360, 360);
+  const rot = rotRaw == null ? null : ((rotRaw % 360) + 360) % 360;
   const rows = terrainClusterRepo.findBySn(sn);
   if (!rows.some((r) => r.cluster_key === key)) { res.status(404).json({ error: 'cluster niet gevonden' }); return; }
   const keys = groupKeysFor(rows, key);
-  for (const k of keys) terrainClusterRepo.setDisplay(sn, k, size, height, z, x, y);
+  for (const k of keys) terrainClusterRepo.setDisplay(sn, k, size, height, z, x, y, rot);
   res.json({ ok: true, updated: keys.length });
 });
 

@@ -41,6 +41,7 @@ export interface GroupableRow {
   z_offset?: number | null;
   x_offset?: number | null;
   y_offset?: number | null;
+  rotation_deg?: number | null;
 }
 
 export interface ClusterGroup {
@@ -64,6 +65,7 @@ export interface ClusterGroup {
   zOffset: number | null;
   xOffset: number | null;
   yOffset: number | null;
+  rotationDeg: number | null;
 }
 
 /**
@@ -194,6 +196,7 @@ export function groupClusters(rows: GroupableRow[]): ClusterGroup[] {
       zOffset: sorted.find((m) => m.z_offset != null)?.z_offset ?? null,
       xOffset: sorted.find((m) => m.x_offset != null)?.x_offset ?? null,
       yOffset: sorted.find((m) => m.y_offset != null)?.y_offset ?? null,
+      rotationDeg: sorted.find((m) => m.rotation_deg != null)?.rotation_deg ?? null,
     });
   }
 

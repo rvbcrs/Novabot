@@ -22,6 +22,7 @@ export interface TerrainClusterRow {
   z_offset: number | null;
   x_offset: number | null;
   y_offset: number | null;
+  rotation_deg: number | null;
   updated_at: string;
 }
 
@@ -110,14 +111,15 @@ class TerrainClusterRepository {
 
   private _setDisplay = db.prepare(`
     UPDATE terrain_clusters
-    SET size_override = ?, height_override = ?, z_offset = ?, x_offset = ?, y_offset = ?, updated_at = datetime('now')
+    SET size_override = ?, height_override = ?, z_offset = ?, x_offset = ?, y_offset = ?, rotation_deg = ?, updated_at = datetime('now')
     WHERE mower_sn = ? AND cluster_key = ?
   `);
 
-  /** Weergave-overrides (alle vijf tegelijk; null = terug naar automatisch). */
+  /** Weergave-overrides (alle zes tegelijk; null = terug naar automatisch). */
   setDisplay(sn: string, clusterKey: string, size: number | null, height: number | null,
-             z: number | null, x: number | null, y: number | null): void {
-    this._setDisplay.run(size, height, z, x, y, sn, clusterKey);
+             z: number | null, x: number | null, y: number | null,
+             rotationDeg: number | null = null): void {
+    this._setDisplay.run(size, height, z, x, y, rotationDeg, sn, clusterKey);
   }
 
   private _renameModel = db.prepare(`

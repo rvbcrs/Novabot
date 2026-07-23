@@ -41,6 +41,7 @@ interface TerrainCluster {
   zOffset?: number | null;
   xOffset?: number | null;
   yOffset?: number | null;
+  rotationDeg?: number | null;
 }
 
 // GLTFLoader-cache op moduleniveau: één keer laden per klasse, daarna alleen
@@ -400,6 +401,7 @@ export default function TerrainPage({ sn }: { sn: string }) {
   const [editSize, setEditSize] = useState(1);
   const [editHeight, setEditHeight] = useState(0.5);
   const [editZ, setEditZ] = useState(0);
+  const [editRot, setEditRot] = useState(0);
   const [moveKey, setMoveKey] = useState<string | null>(null);
   const moveKeyRef = useRef<string | null>(null);
   // lopende verschuiving tijdens pijltjes-verplaatsen + debounce-timer
@@ -676,6 +678,9 @@ export default function TerrainPage({ sn }: { sn: string }) {
           const sz = cl.heightOverride ?? Math.max(gemeten, klasse?.typicalH ?? 0);
           clone.scale.set(sx, sy, sz);
           clone.position.set(bboxCx, bboxCy, g + (cl.zOffset ?? 0));
+          // Gebruikersrotatie om de verticale as (graden, met de klok mee
+          // gezien van boven — negatief in Three's rechtshandige Z-up frame).
+          clone.rotation.z = -((cl.rotationDeg ?? 0) * Math.PI) / 180;
           scene.add(clone);
           modelInstancesRef.current.set(cl.key, clone);
         }).catch((err) => {
@@ -1134,6 +1139,7 @@ export default function TerrainPage({ sn }: { sn: string }) {
         body: JSON.stringify({
           size: c.sizeOverride ?? null, height: c.heightOverride ?? null,
           zOffset: c.zOffset ?? null, xOffset: xOff, yOffset: yOff,
+          rotationDeg: c.rotationDeg ?? null,
         }),
       });
       const res = await apiFetch(`/api/dashboard/terrain-clusters/${encodeURIComponent(sn)}`);
@@ -1161,6 +1167,7 @@ export default function TerrainPage({ sn }: { sn: string }) {
         body: JSON.stringify({
           size: editSize, height: editHeight, zOffset: editZ,
           xOffset: c.xOffset ?? null, yOffset: c.yOffset ?? null,
+          rotationDeg: editRot,
         }),
       });
       const res = await apiFetch(`/api/dashboard/terrain-clusters/${encodeURIComponent(sn)}`);
@@ -1258,6 +1265,7 @@ export default function TerrainPage({ sn }: { sn: string }) {
       setEditHeight(selectedCluster.heightOverride
         ?? Math.max(selectedCluster.maxH, 0.2));
       setEditZ(selectedCluster.zOffset ?? 0);
+      setEditRot(selectedCluster.rotationDeg ?? 0);
     }
   }, [selectedCluster?.key]);  // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1545,6 +1553,10 @@ export default function TerrainPage({ sn }: { sn: string }) {
             <div className="text-gray-400">{t('terrain.zOffsetLabel')}: {editZ >= 0 ? '+' : ''}{editZ.toFixed(2)} m</div>
             <input type="range" min={-1.5} max={1.5} step={0.05} value={editZ} className="w-full"
               onChange={(e) => setEditZ(parseFloat(e.target.value))}
+              onPointerUp={() => { void handleDisplayCommit(); }} />
+            <div className="text-gray-400">{t('terrain.rotationLabel')}: {Math.round(editRot)}°</div>
+            <input type="range" min={0} max={355} step={5} value={editRot} className="w-full"
+              onChange={(e) => setEditRot(parseFloat(e.target.value))}
               onPointerUp={() => { void handleDisplayCommit(); }} />
             <button
               onClick={() => {
