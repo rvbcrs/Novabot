@@ -71,15 +71,19 @@ def should_retry(code, attempt):
 def parse_action_result(text):
     """Parse `ros2 action send_goal`-uitvoer → (status, result_code).
 
-    Zoekt de LAATSTE `result: <n>` (de goal-echo bevat ook velden) en de
+    Zoekt de LAATSTE `result: <n>` OF `status: <n>`-regel (de BoundaryFollow-
+    result heet in de echte firmware `status`, live gezien 2026-07-23:
+    "Result:\n    status: 1\nmsg: No valid boundary need robot!!!") en de
     `Goal finished with status: <STATUS>`-regel. Beide None zolang de action
-    nog loopt of de log onvolledig is.
+    nog loopt of de log onvolledig is. De "Goal finished"-regel zelf matcht
+    de code-regex niet (waarde is een woord, geen cijfer, en de regel begint
+    niet met result:/status:).
     """
     status = None
     m = re.search(r"Goal finished with status:\s*(\w+)", text)
     if m:
         status = m.group(1)
-    codes = re.findall(r"^\s*result:\s*(\d+)\s*$", text, flags=re.MULTILINE)
+    codes = re.findall(r"^\s*(?:result|status):\s*(\d+)\s*$", text, flags=re.MULTILINE)
     code = int(codes[-1]) if codes and status is not None else None
     return status, code
 
@@ -143,6 +147,26 @@ def _relay_alive(ec):
     """Is lawn_edge_relay actief? Check publisher-count op het relay-topic."""
     r = ec.ros2_run(["ros2", "topic", "info", "/perception/points_relabeled"], timeout=15)
     return r.returncode == 0 and "Publisher count: 0" not in (r.stdout or "")
+
+
+def _wait_for_perception_data(ec):
+    """Wacht tot er echt labeled-punten op het relay-topic stromen. `ros2
+    topic echo --once` blokkeert tot het eerste bericht; de buitenste
+    `timeout` begrenst dat per poging. Drie pogingen dekken de camera- en
+    modelspin-up (~10-30 s koud). `--no-arr` onderdrukt de payload-dump;
+    valt die vlag weg op een andere ROS-versie, dan is het criterium
+    (returncode 0) nog steeds correct, alleen de stdout groter."""
+    for _ in range(3):
+        try:
+            r = ec.ros2_run(["timeout", "15", "ros2", "topic", "echo",
+                             "/perception/points_relabeled", "--once", "--no-arr"],
+                            timeout=25)
+            if r.returncode == 0:
+                return True
+        except Exception as ex:
+            ec.log(f"[auto_map] perceptie-datacheck faalde: {ex}")
+        time.sleep(2)
+    return False
 
 
 def _set_costmap_topic(ec):
@@ -273,10 +297,30 @@ def _run_session_body(sess, ec):
         sess.status("error", error="costmap_param_failed")
         return
 
+    # Maart-flow stap 1+2: camera's aan + perceptie aan. Zonder rijdende
+    # maaibeurt staan de camera's UIT en blijft de costmap leeg — dan komt
+    # BoundaryFollow direct terug met "No valid boundary need robot!!!"
+    # (live gezien op .244, 2026-07-23). Alle drie SetBool true; best-effort
+    # (staan ze al aan dan zijn dit no-ops).
+    for srv in ("/camera/preposition/start_camera",
+                "/camera/tof/start_camera",
+                "/perception/do_perception"):
+        try:
+            ec.ros2_run(["ros2", "service", "call", srv,
+                         "std_srvs/srv/SetBool", "'{data: true}'"], timeout=20)
+        except Exception as ex:
+            ec.log(f"[auto_map] {srv} aanzetten faalde (ga door): {ex}")
+
     # Enige perceptie-instelling die wij zetten: SEG_HIGH (mode 3, maart-flow).
     # coverage_planner_server regelt semantic/detection-mode ZELF bij de goal.
     ec.ros2_run(["ros2", "service", "call", "/perception/set_infer_model",
                  "general_msgs/srv/SetUint8", "'{value: 3}'"], timeout=15)
+
+    # Maart-flow stap 3: wachten tot er echt labeled-data stroomt (camera's
+    # hebben spin-up nodig). Drie pogingen van ~15 s elk; geen data → abort.
+    if not _wait_for_perception_data(ec):
+        sess.status("error", error="no_perception_data")
+        return
 
     # GPS-volger voor de geofence: één achtergrond-subscription op NavSatFix.
     _start_gps_watch(sess)

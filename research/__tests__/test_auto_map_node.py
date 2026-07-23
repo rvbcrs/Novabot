@@ -46,6 +46,23 @@ def test_parse_action_result_incomplete():
     assert amn.parse_action_result("Waiting for an action server...") == (None, None)
 
 
+def test_parse_action_result_firmware_status_field():
+    # Echte firmware-uitvoer (live .244, 2026-07-23): resultveld heet `status`,
+    # niet `result`, en de goal-echo bevat andere velden die niet mogen matchen.
+    text = (
+        "Waiting for an action server to become available...\n"
+        "Sending goal:\n     follow_mode: 0\n"
+        "enable_coverage: false\n"
+        "blade_height: 0\n\n"
+        "Goal accepted with ID: 0be8cfa018df43d4a4f04efbca3f6455\n\n"
+        "Result:\n    status: 1\nmsg: No valid boundary need robot!!!\n\n"
+        "Goal finished with status: ABORTED\n")
+    status, code = amn.parse_action_result(text)
+    assert status == "ABORTED"
+    assert code == 1
+    assert amn.RESULT_NAMES[code] == "NO_VALID_BOUNDARY"
+
+
 def test_should_retry_only_code4_once():
     assert amn.should_retry(4, attempt=1) is True    # eerste keer: retry
     assert amn.should_retry(4, attempt=2) is False   # daarna: abort
@@ -59,5 +76,6 @@ if __name__ == "__main__":
     test_parse_action_result_success()
     test_parse_action_result_follow_failed()
     test_parse_action_result_incomplete()
+    test_parse_action_result_firmware_status_field()
     test_should_retry_only_code4_once()
     print("OK - alle auto_map_node helper-tests geslaagd")
