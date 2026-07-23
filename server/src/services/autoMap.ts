@@ -257,6 +257,9 @@ export async function startAutoMap(
   // alsnog af in plaats van eeuwig actief te blijven tot een server-herstart.
   watchdogTimer = setTimeout(() => {
     if (runState === 'closed') return;
+    // Tijdens finishing loopt finalize() nog: alleen cancelRequested zetten
+    // (finalize breekt dan netjes af zonder vervolg-saves op een dode sessie).
+    if (runState === 'finishing') { cancelRequested = true; return; }
     console.warn(`${TAG} ${sn}: sessie ${session.id} watchdog-timeout — daemon reageerde niet binnen ${SESSION_WATCHDOG_MS}ms`);
     if (opts.mode === 'record') {
       publishToDevice(sn, { stop_scan_map: { value: false, cmd_num: getNextCmdNum(sn) } });
