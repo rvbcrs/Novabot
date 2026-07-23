@@ -173,14 +173,16 @@ def _cancel_follow(ec):
         pass
 
 
-def _drive_forward_retry(ec):
+def _drive_forward_retry(sess, ec):
     """~2 m vooruit rijden vóór een retry-poging na SEARCHING_START_FAILED
     (code 4): 8 s lang Twist(linear.x=0.25) op /cmd_vel, dan een nul-Twist
     om netjes te stoppen. Zelfde patroon als drive_backward in de
     calibration-drive van extended_commands.py, maar vooruit i.p.v.
-    achteruit. Best-effort en volledig exception-tolerant: een rijfout hier
-    mag de sessie nooit stil laten sterven — de caller herstart gewoon de
-    goal ook als deze functie faalt."""
+    achteruit. Een stop_auto_map tijdens de rit breekt de rit direct af
+    (stop_requested-check per publish-tik). Best-effort en volledig
+    exception-tolerant: een rijfout hier mag de sessie nooit stil laten
+    sterven — de caller herstart gewoon de goal ook als deze functie
+    faalt."""
     try:
         import rclpy
         from rclpy.node import Node
@@ -195,7 +197,7 @@ def _drive_forward_retry(ec):
         msg = Twist()
         msg.linear.x = 0.25
         end_at = time.monotonic() + 8.0
-        while time.monotonic() < end_at:
+        while time.monotonic() < end_at and not sess.stop_requested:
             pub.publish(msg)
             time.sleep(0.05)
         stop = Twist()
@@ -344,7 +346,15 @@ def _run_session_body(sess, ec):
                 break
 
         if should_retry(result_code, attempt):
-            _drive_forward_retry(ec)
+            # Stop-verzoek wint altijd van een retry: niet meer rijden en
+            # geen tweede goal starten.
+            if sess.stop_requested:
+                sess.status("aborted", error="user_stop")
+                return
+            _drive_forward_retry(sess, ec)
+            if sess.stop_requested:
+                sess.status("aborted", error="user_stop")
+                return
             sess.status("searching_boundary", retry=attempt + 1)
             continue
 
