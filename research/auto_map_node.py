@@ -197,14 +197,24 @@ def _drive_forward_retry(sess, ec):
         msg = Twist()
         msg.linear.x = 0.25
         end_at = time.monotonic() + 8.0
-        while time.monotonic() < end_at and not sess.stop_requested:
-            pub.publish(msg)
-            time.sleep(0.05)
-        stop = Twist()
-        for _ in range(5):
-            pub.publish(stop)
-            time.sleep(0.05)
-        node.destroy_node()
+        try:
+            while time.monotonic() < end_at and not sess.stop_requested:
+                pub.publish(msg)
+                time.sleep(0.05)
+        finally:
+            # Nul-Twist ALTIJD sturen, ook als de rijlus halverwege raist:
+            # anders hangt het stoppen af van de firmware-deadman op /cmd_vel.
+            try:
+                stop = Twist()
+                for _ in range(5):
+                    pub.publish(stop)
+                    time.sleep(0.05)
+            except Exception:
+                pass
+            try:
+                node.destroy_node()
+            except Exception:
+                pass
     except Exception as ex:
         try:
             ec.log(f"[auto_map] retry-rit vooruit mislukte: {ex}")

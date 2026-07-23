@@ -12,7 +12,7 @@ en pas na jouw goedkeuring definitief wordt.
 - De maaier rijdt zelfstandig één ronde langs de buitenrand van het
   gazon, gestuurd door zijn camera's die gras van niet-gras onderscheiden.
 - Er wordt een kaart opgebouwd terwijl de maaier rijdt. Die kaart is pas een
-  **voorstel** — hij wordt niet automatisch actief. Je krijgt hem eerst te
+  **voorstel**: hij wordt niet automatisch actief. Je krijgt hem eerst te
   zien en beslist of je hem accepteert of weggooit.
 - De maaier vermijdt tijdens de rit gewoon obstakels en stopt bij een botsing,
   net als tijdens normaal maaien.
@@ -37,7 +37,7 @@ en pas na jouw goedkeuring definitief wordt.
    karteren".
 2. Stel eventueel de geofence in (zie hieronder) en kies eerst voor
    **Testrit (zonder opname)**. Dit laat de maaier de grasrand volgen zonder
-   dat er een kaart wordt opgeslagen — handig om te controleren of de rit
+   dat er een kaart wordt opgeslagen. Zo controleer je of de rit
    goed verloopt voordat je een echte kaart laat maken.
 3. Bevalt de testrit? Start daarna **Kaart maken**. De maaier rijdt dezelfde
    soort rit, maar legt nu de route vast als kaart.
