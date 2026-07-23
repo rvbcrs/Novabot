@@ -150,22 +150,24 @@ def _relay_alive(ec):
 
 
 def _wait_for_perception_data(ec):
-    """Wacht tot er echt labeled-punten op het relay-topic stromen. `ros2
-    topic echo --once` blokkeert tot het eerste bericht; de buitenste
-    `timeout` begrenst dat per poging. Drie pogingen dekken de camera- en
-    modelspin-up (~10-30 s koud). `--no-arr` onderdrukt de payload-dump;
-    valt die vlag weg op een andere ROS-versie, dan is het criterium
-    (returncode 0) nog steeds correct, alleen de stdout groter."""
+    """Wacht tot er echt labeled-punten op het relay-topic stromen. Galactic's
+    `ros2 topic echo` kent GEEN `--once` (live gezien op .244, 2026-07-23:
+    "error: unrecognized arguments: --once"), dus we streamen een paar
+    seconden met een harde `timeout` en kijken of er berichtvelden in de
+    uitvoer verschenen ("point_step" zit in elk PointCloud2-bericht). De
+    returncode is hier betekenisloos (timeout kilt de stream altijd, rc 124).
+    Drie pogingen dekken de camera- en modelspin-up (~10-30 s koud);
+    `--no-arr` onderdrukt de data-array-dump."""
     for _ in range(3):
         try:
-            r = ec.ros2_run(["timeout", "15", "ros2", "topic", "echo",
-                             "/perception/points_relabeled", "--once", "--no-arr"],
-                            timeout=25)
-            if r.returncode == 0:
+            r = ec.ros2_run(["timeout", "10", "ros2", "topic", "echo",
+                             "/perception/points_relabeled", "--no-arr"],
+                            timeout=20)
+            if "point_step" in (r.stdout or ""):
                 return True
         except Exception as ex:
             ec.log(f"[auto_map] perceptie-datacheck faalde: {ex}")
-        time.sleep(2)
+        time.sleep(3)
     return False
 
 
