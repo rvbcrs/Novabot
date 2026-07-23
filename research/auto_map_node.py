@@ -149,26 +149,39 @@ def _relay_alive(ec):
     return r.returncode == 0 and "Publisher count: 0" not in (r.stdout or "")
 
 
-def _wait_for_perception_data(ec):
-    """Wacht tot er echt labeled-punten op het relay-topic stromen. Galactic's
-    `ros2 topic echo` kent GEEN `--once` (live gezien op .244, 2026-07-23:
-    "error: unrecognized arguments: --once"), dus we streamen een paar
-    seconden met een harde `timeout` en kijken of er berichtvelden in de
-    uitvoer verschenen ("point_step" zit in elk PointCloud2-bericht). De
-    returncode is hier betekenisloos (timeout kilt de stream altijd, rc 124).
-    Drie pogingen dekken de camera- en modelspin-up (~10-30 s koud);
-    `--no-arr` onderdrukt de data-array-dump."""
-    for _ in range(3):
+def _wait_for_perception_data(ec, deadline_s=90.0):
+    """Wacht tot er echt labeled-punten op het relay-topic stromen, via een
+    EIGEN rclpy-subscription (zelfde patroon als terrain_scan). NIET via de
+    ros2-CLI: `topic echo/hz` ziet deze stroom niet eens terwijl de relay
+    aantoonbaar berichten verwerkt (live .244, 2026-07-23 — CLI blind door
+    QoS/daemon-eigenaardigheid van deze firmware), en Galactic kent `--once`
+    niet. Deadline ruim (90 s): camera- en model-spin-up na koud aanzetten
+    duurt tot ~60 s."""
+    got = {"data": False}
+    try:
+        import rclpy
+        from rclpy.node import Node
+        from sensor_msgs.msg import PointCloud2
         try:
-            r = ec.ros2_run(["timeout", "10", "ros2", "topic", "echo",
-                             "/perception/points_relabeled", "--no-arr"],
-                            timeout=20)
-            if "point_step" in (r.stdout or ""):
-                return True
-        except Exception as ex:
-            ec.log(f"[auto_map] perceptie-datacheck faalde: {ex}")
-        time.sleep(3)
-    return False
+            rclpy.init()
+        except RuntimeError:
+            pass
+        node = Node(f"auto_map_datacheck_{os.getpid()}_"
+                    f"{int(time.monotonic() * 1000) % 1000000}")
+
+        def on_msg(msg):
+            if msg.data:
+                got["data"] = True
+
+        node.create_subscription(PointCloud2, "/perception/points_relabeled", on_msg, 5)
+        end_at = time.monotonic() + deadline_s
+        while not got["data"] and time.monotonic() < end_at:
+            rclpy.spin_once(node, timeout_sec=1.0)
+        node.destroy_node()
+    except Exception as ex:
+        ec.log(f"[auto_map] perceptie-datacheck faalde: {ex}")
+        return False
+    return got["data"]
 
 
 def _set_costmap_topic(ec):
