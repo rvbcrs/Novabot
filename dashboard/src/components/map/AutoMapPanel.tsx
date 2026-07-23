@@ -102,6 +102,15 @@ const ERROR_LABEL_KEYS: Record<string, [string, string]> = {
   geofence: ['autoMap.error.geofence', 'Geofence overschreden, rit gestopt'],
   timeout: ['autoMap.error.timeout', 'Tijdslimiet bereikt'],
   relay_missing: ['autoMap.error.relayMissing', 'lawn_edge_relay draait niet op de maaier'],
+  map_exists: ['autoMap.error.mapExists', 'Er staat al een kaart op deze maaier. Autonoom karteren werkt alleen op een maaier zonder kaart.'],
+  user_stop: ['autoMap.error.userStop', 'Gestopt via de stopknop'],
+  gps_stale: ['autoMap.error.gpsStale', 'GPS-signaal weggevallen, rit gestopt'],
+  no_gps_fix: ['autoMap.error.noGpsFix', 'Geen GPS-fix gekregen bij de start'],
+  costmap_param_failed: ['autoMap.error.costmapParamFailed', 'Costmap instellen mislukte op de maaier'],
+  scan_start_timeout: ['autoMap.error.scanStartTimeout', 'De maaier reageerde niet op de start van de opname'],
+  aborted_during_finishing: ['autoMap.error.abortedDuringFinishing', 'Gestopt tijdens het opslaan van de kaart'],
+  orphaned_by_restart: ['autoMap.error.orphanedByRestart', 'Sessie verloren door een serverherstart'],
+  daemon_timeout: ['autoMap.error.daemonTimeout', 'De maaier-daemon reageerde niet'],
 };
 
 /** Bekende foutcodes krijgen een NL-vertaling; onbekende (bv. de letterlijke

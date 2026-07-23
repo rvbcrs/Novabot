@@ -534,7 +534,16 @@
       "alreadyRunning": "A session is already running",
       "geofence": "Geofence exceeded, drive stopped",
       "timeout": "Time limit reached",
-      "relayMissing": "lawn_edge_relay is not running on the mower"
+      "relayMissing": "lawn_edge_relay is not running on the mower",
+      "mapExists": "This mower already has a map. Autonomous mapping only works on a mower without a map.",
+      "userStop": "Stopped via the stop button",
+      "gpsStale": "GPS signal lost, drive stopped",
+      "noGpsFix": "No GPS fix obtained at start",
+      "costmapParamFailed": "Setting the costmap failed on the mower",
+      "scanStartTimeout": "The mower did not respond to the recording start",
+      "abortedDuringFinishing": "Stopped while saving the map",
+      "orphanedByRestart": "Session lost due to a server restart",
+      "daemonTimeout": "The mower daemon did not respond"
     }
   },
   "reanchor": {

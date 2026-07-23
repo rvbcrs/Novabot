@@ -16,7 +16,14 @@ en pas na jouw goedkeuring definitief wordt.
   zien en beslist of je hem accepteert of weggooit.
 - De maaier vermijdt tijdens de rit gewoon obstakels en stopt bij een botsing,
   net als tijdens normaal maaien.
-- Dit vervangt geen bestaande kaart totdat je zelf op "accepteren" drukt.
+- **Testrit** raakt geen kaartdata: die rijdt de rand rond zonder iets op te
+  slaan, ook niet op een maaier die al een kaart heeft.
+- **Kaart maken** werkt alleen op een maaier die nog GEEN bestaande kaart
+  heeft. De gemaakte kaart wordt na de rit meteen op de maaier weggeschreven;
+  er is geen wachtstand die pas bij "accepteren" iets opslaat. Het
+  dashboard-voorstel bepaalt vervolgens of je die kaart definitief houdt.
+  Verwerp je hem, dan verwijder je de kaart daarna zelf via het bestaande
+  kaartbeheer van de maaier.
 
 ## Vereisten voordat je start
 
@@ -30,6 +37,9 @@ en pas na jouw goedkeuring definitief wordt.
   grasrand; als hij op de oprit, tegels of het laadstation staat, vindt hij
   geen rand om te volgen.
 - Er mag nog geen andere autonome kartering bezig zijn voor deze maaier.
+- Voor **Kaart maken** mag de maaier nog geen bestaande kaart hebben. Heeft
+  hij die wel, verwijder je die eerst via het bestaande kaartbeheer, of blijf
+  je bij een testrit.
 
 ## Hoe je het gebruikt (dashboard)
 
@@ -82,6 +92,15 @@ Deze zitten er altijd in, ook tijdens een testrit:
 | Tijdslimiet bereikt | De rit duurde langer dan 20 minuten en is daarom automatisch gestopt. |
 | lawn_edge_relay draait niet op de maaier | De grasrand-herkenning is niet actief op de maaier. Dit wijst meestal op een probleem met de custom firmware; neem contact op als dit blijft optreden. |
 | geen grasrand gevonden op startpunt | De maaier kon vanaf zijn huidige positie geen grasrand vinden, ook niet na de automatische herprobeerpoging. Zet de maaier verder het gazon in, weg van tegels/oprit/laadstation, en probeer opnieuw. |
+| Er staat al een kaart op deze maaier. Autonoom karteren werkt alleen op een maaier zonder kaart. | Je koos "Kaart maken" op een maaier die al een kaart heeft. Verwijder de bestaande kaart eerst via het kaartbeheer, of gebruik een testrit. |
+| Gestopt via de stopknop | Je hebt de rit zelf gestopt met de stopknop in het paneel. |
+| GPS-signaal weggevallen, rit gestopt | De GPS-ontvangst viel weg tijdens de rit; deze is uit voorzorg gestopt. |
+| Geen GPS-fix gekregen bij de start | De maaier kreeg bij de start geen bruikbare GPS-fix. |
+| Costmap instellen mislukte op de maaier | Het instellen van de costmap-parameter op de maaier is mislukt. |
+| De maaier reageerde niet op de start van de opname | De maaier bevestigde het startcommando voor de kaartopname niet binnen de tijdslimiet. |
+| Gestopt tijdens het opslaan van de kaart | De rit werd gestopt terwijl de kaart nog werd opgeslagen. |
+| Sessie verloren door een serverherstart | De server is herstart terwijl deze sessie nog liep; de sessie is daardoor afgebroken. Start een nieuwe poging. |
+| De maaier-daemon reageerde niet | De maaier-daemon voor autonoom karteren reageerde niet binnen de verwachte tijd. Controleer of de daemon op de maaier draait. |
 
 Bij elke gestopte of mislukte rit blijft de maaier gewoon bruikbaar: er is
 niets aan je bestaande kaart of instellingen gewijzigd totdat je zelf een

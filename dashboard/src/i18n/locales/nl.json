@@ -581,7 +581,16 @@
       "alreadyRunning": "Er loopt al een sessie",
       "geofence": "Geofence overschreden, rit gestopt",
       "timeout": "Tijdslimiet bereikt",
-      "relayMissing": "lawn_edge_relay draait niet op de maaier"
+      "relayMissing": "lawn_edge_relay draait niet op de maaier",
+      "mapExists": "Er staat al een kaart op deze maaier. Autonoom karteren werkt alleen op een maaier zonder kaart.",
+      "userStop": "Gestopt via de stopknop",
+      "gpsStale": "GPS-signaal weggevallen, rit gestopt",
+      "noGpsFix": "Geen GPS-fix gekregen bij de start",
+      "costmapParamFailed": "Costmap instellen mislukte op de maaier",
+      "scanStartTimeout": "De maaier reageerde niet op de start van de opname",
+      "abortedDuringFinishing": "Gestopt tijdens het opslaan van de kaart",
+      "orphanedByRestart": "Sessie verloren door een serverherstart",
+      "daemonTimeout": "De maaier-daemon reageerde niet"
     }
   },
   "reanchor": {

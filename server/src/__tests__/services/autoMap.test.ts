@@ -36,7 +36,7 @@ vi.mock('../../mqtt/broker.js', () => ({
 }));
 
 import { deviceCache } from '../../mqtt/sensorData.js';
-import { startAutoMap, getStatus, acceptProposal } from '../../services/autoMap.js';
+import { startAutoMap, stopAutoMap, getStatus, acceptProposal } from '../../services/autoMap.js';
 import { createSession, updatePhase } from '../../db/repositories/autoMapSessions.js';
 import { db } from '../../db/database.js';
 
@@ -132,6 +132,50 @@ describe('autoMap orchestrator', () => {
     const cmds = published.map((p) => Object.keys(p)[0]);
     expect(cmds).not.toContain('save_map');
     expect(getStatus(sn)?.phase).toBe('aborted');
+  });
+
+  it('stop tijdens het scan-start-venster: geen start_auto_map_test, sessie aborted/user_stop', async () => {
+    const sn = `${SN}_STOP_WINDOW`;
+    deviceCache.set(sn, new Map(Object.entries({ battery_power: '80', rtk_fix_quality: '4' })));
+    const r = await startAutoMap(sn, { mode: 'record', radiusM: 30 });
+    expect(r.ok).toBe(true);
+    // start_scan_map is al verstuurd, maar start_scan_map_respond is nog niet
+    // binnen — dit IS het scan-start-venster. Stop hier.
+    stopAutoMap(sn);
+    await flush();
+    // stopAutoMap zelf stuurt stop_auto_map naar de daemon — check specifiek
+    // dat de volgmotor (start_auto_map_test) nooit is verstuurd.
+    expect(extended.some((c) => 'start_auto_map_test' in c)).toBe(false);
+    const cmds = published.map((p) => Object.keys(p)[0]);
+    expect(cmds).toContain('stop_scan_map'); // al gestarte firmware-opname alsnog gestopt
+    expect(getStatus(sn)?.phase).toBe('aborted');
+    expect(getStatus(sn)?.error).toBe('user_stop');
+    // een late start_scan_map_respond mag de al-gesloten sessie niet heropenen
+    emitDev({ start_scan_map_respond: { result: 0 } });
+    await flush();
+    expect(extended.some((c) => 'start_auto_map_test' in c)).toBe(false);
+  });
+
+  it('expliciete {result:1} op start_scan_map_respond geeft sessie-fout, geen extended command', async () => {
+    const sn = `${SN}_RESULT_FAIL`;
+    deviceCache.set(sn, new Map(Object.entries({ battery_power: '80', rtk_fix_quality: '4' })));
+    const r = await startAutoMap(sn, { mode: 'record', radiusM: 30 });
+    expect(r.ok).toBe(true);
+    emitDev({ start_scan_map_respond: { result: 1 } });
+    await flush();
+    expect(extended.length).toBe(0);
+    expect(getStatus(sn)?.phase).toBe('error');
+    expect(getStatus(sn)?.error).toBe('scan_start_failed');
+  });
+
+  it('record-start met bestaande kaart voor de SN geeft map_exists', async () => {
+    const sn = `${SN}_MAP_EXISTS`;
+    deviceCache.set(sn, new Map(Object.entries({ battery_power: '80', rtk_fix_quality: '4' })));
+    db.prepare(
+      `INSERT INTO maps (map_id, mower_sn, map_name, map_area, file_name, map_type) VALUES (?, ?, ?, ?, ?, ?)`
+    ).run(`${sn}-map0`, sn, 'map0', '[]', 'map0', 'work');
+    const r = await startAutoMap(sn, { mode: 'record', radiusM: 30 });
+    expect(r).toEqual({ ok: false, error: 'map_exists' });
   });
 
   it('verweesde sessie na herstart blokkeert nieuwe start niet', async () => {

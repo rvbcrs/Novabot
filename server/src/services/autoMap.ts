@@ -17,11 +17,28 @@ import { deviceCache } from '../mqtt/sensorData.js';
 import {
   AutoMapSession, createSession, updatePhase, getActiveSession, getLatestSession,
 } from '../db/repositories/autoMapSessions.js';
+import { mapRepo } from '../db/repositories/maps.js';
 
 const TAG = '[autoMap]';
 const RESPOND_TIMEOUT_MS = 20_000;
 const RECHARGE_TIMEOUT_MS = 30_000;
 const SAVE_TOTAL_DELAY_MS = 600;   // ≥600 ms tussen save_recharge_pos_respond en save_map type:1
+// Volgmotor-timeout (start_auto_map_test timeoutS) + marge. Als de daemon
+// niet reageert (niet geïnstalleerd/gecrasht) blijft de sessie zonder dit
+// eeuwig 'actief' tot een server-herstart de orphan-reconciliatie triggert.
+const SESSION_WATCHDOG_MS = (1200 + 120) * 1000;
+
+/**
+ * Bewuste conservatieve result-check (result-semantiek is niet 100% zeker in
+ * dit protocol): een respond telt ALLEEN als FOUT wanneer het result-veld
+ * AANWEZIG is én niet 0. Ontbreekt het result-veld (niet elke respond
+ * garandeert een echo ervan), dan blijft dat bewust als succes gelden, zoals
+ * voorheen.
+ */
+function isExplicitFailure(payload: Record<string, unknown> | null): boolean {
+  if (!payload || !('result' in payload)) return false;
+  return Number(payload.result) !== 0;
+}
 
 export interface AutoMapProgress {
   sn: string; sessionId: number; phase: string; detail?: Record<string, unknown>;
@@ -60,7 +77,14 @@ function waitForRespond(
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-interface LiveRun { session: AutoMapSession; extHandler: (d: Record<string, unknown>) => void; }
+interface LiveRun {
+  session: AutoMapSession;
+  extHandler: (d: Record<string, unknown>) => void;
+  /** Door stopAutoMap() aangeroepen om een user-stop nooit te laten verdampen
+   *  (bv. tijdens het scan-start-venster, terwijl de daemon nog niet weet
+   *  van deze sessie). Zie autoMap.ts requestStop-definitie. */
+  requestStop: () => void;
+}
 const liveRuns = new Map<string, LiveRun>();
 
 function preflight(sn: string): string | null {
@@ -86,6 +110,12 @@ export async function startAutoMap(
   if (getActiveSession(sn)) return { ok: false, error: 'already_running' };
   const pf = preflight(sn);
   if (pf) return { ok: false, error: pf };
+  // record-mode schrijft onvoorwaardelijk naar map0 — een maaier met al een
+  // kaart zou die vóór enige review overschreven zien. Testrit raakt geen
+  // kaartdata en mag dus wel op een reeds gekarteerde maaier draaien.
+  if (opts.mode === 'record' && mapRepo.findWorkMaps(sn).length > 0) {
+    return { ok: false, error: 'map_exists' };
+  }
 
   const radiusM = Math.max(5, Math.min(200, opts.radiusM ?? 30));
   const session = createSession(sn, opts.mode, radiusM);
@@ -99,9 +129,20 @@ export async function startAutoMap(
   let runState: 'running' | 'finishing' | 'closed' = 'running';
   let cancelRequested = false;
 
+  // Server-side sessie-watchdog (bevinding 2): reageert de daemon nooit (niet
+  // geïnstalleerd/gecrasht), dan blijft de sessie zonder dit eeuwig actief —
+  // orphan-reconciliatie grijpt pas na een server-herstart. Wordt overal waar
+  // de sessie sluit opgeruimd zodat normale sessies hem nooit raken en geen
+  // timer blijft hangen.
+  let watchdogTimer: ReturnType<typeof setTimeout> | undefined;
+  const clearWatchdog = () => {
+    if (watchdogTimer) { clearTimeout(watchdogTimer); watchdogTimer = undefined; }
+  };
+
   const finish = (phase: string, patch?: Parameters<typeof updatePhase>[2], detail?: Record<string, unknown>) => {
     if (runState === 'closed') return; // dubbele finish (bv. late timeout na abort) mag de eindfase niet overschrijven
     runState = 'closed';
+    clearWatchdog();
     const run = liveRuns.get(sn);
     if (run) { offExtendedResponse(sn, run.extHandler); liveRuns.delete(sn); }
     setPhase(phase, { ...patch, finished: true }, detail);
@@ -115,6 +156,7 @@ export async function startAutoMap(
     const stopResp = await waitForRespond(sn, 'stop_scan_map_respond', RESPOND_TIMEOUT_MS);
     if (cancelRequested) return finish('aborted', { error: 'aborted_during_finishing' });
     if (!stopResp) return finish('error', { error: 'stop_scan_map_timeout' });
+    if (isExplicitFailure(stopResp)) return finish('error', { error: 'stop_scan_map_failed' });
 
     publishToDevice(sn, { save_map: { mapName: 'map0', type: 0, cmd_num: getNextCmdNum(sn) } });
     // type-veld kan ontbreken in de respond (niet gegarandeerd dat de firmware
@@ -124,11 +166,13 @@ export async function startAutoMap(
       (p) => p?.type === undefined || Number(p.type) === 0);
     if (cancelRequested) return finish('aborted', { error: 'aborted_during_finishing' });
     if (!save0) return finish('error', { error: 'save_map0_timeout' });
+    if (isExplicitFailure(save0)) return finish('error', { error: 'save_map0_failed' });
 
     publishToDevice(sn, { save_recharge_pos: { mapName: 'map0', cmd_num: getNextCmdNum(sn) } });
     const recharge = await waitForRespond(sn, 'save_recharge_pos_respond', RECHARGE_TIMEOUT_MS);
     if (cancelRequested) return finish('aborted', { error: 'aborted_during_finishing' });
     if (!recharge) return finish('error', { error: 'save_recharge_pos_timeout' });
+    if (isExplicitFailure(recharge)) return finish('error', { error: 'save_recharge_pos_failed' });
 
     await sleep(SAVE_TOTAL_DELAY_MS);
     if (cancelRequested) return finish('aborted', { error: 'aborted_during_finishing' });
@@ -138,9 +182,11 @@ export async function startAutoMap(
       (p) => p?.type === undefined || Number(p.type) === 1);
     if (cancelRequested) return finish('aborted', { error: 'aborted_during_finishing' });
     if (!save1) return finish('error', { error: 'save_map1_timeout' });
+    if (isExplicitFailure(save1)) return finish('error', { error: 'save_map1_failed' });
 
     setPhase('awaiting_review');
     runState = 'closed';
+    clearWatchdog();
     // sessie blijft "actief" tot accept/reject — bewust geen finish()
     const run = liveRuns.get(sn);
     if (run) { offExtendedResponse(sn, run.extHandler); liveRuns.delete(sn); }
@@ -152,6 +198,20 @@ export async function startAutoMap(
   const abortRecording = (phase: string, patch?: Parameters<typeof updatePhase>[2], detail?: Record<string, unknown>) => {
     publishToDevice(sn, { stop_scan_map: { value: false, cmd_num: getNextCmdNum(sn) } });
     finish(phase, patch, detail);
+  };
+
+  // Bevinding 1: user-stop mag nooit verdampen. Dit dekt zowel het
+  // scan-start-venster (start_scan_map is al verstuurd, de volgmotor nog
+  // niet — de daemon kent deze sessie dan nog niet en publiceert dus nooit
+  // een aborted-event) als de normale rijfase. Tijdens 'finishing' zet dit
+  // alleen cancelRequested: finalize() rondt de al gestarte save-reeks zelf
+  // netjes af (zie de cancelRequested-checks hierboven).
+  const requestStop = () => {
+    cancelRequested = true;
+    if (runState === 'running') {
+      if (opts.mode === 'record') abortRecording('aborted', { error: 'user_stop' });
+      else finish('aborted', { error: 'user_stop' });
+    }
   };
 
   const extHandler = (data: Record<string, unknown>) => {
@@ -191,7 +251,18 @@ export async function startAutoMap(
     }
   };
   onExtendedResponse(sn, extHandler);
-  liveRuns.set(sn, { session, extHandler });
+  liveRuns.set(sn, { session, extHandler, requestStop });
+
+  // Bevinding 2: reageert de daemon nooit, dan sluit deze watchdog de sessie
+  // alsnog af in plaats van eeuwig actief te blijven tot een server-herstart.
+  watchdogTimer = setTimeout(() => {
+    if (runState === 'closed') return;
+    console.warn(`${TAG} ${sn}: sessie ${session.id} watchdog-timeout — daemon reageerde niet binnen ${SESSION_WATCHDOG_MS}ms`);
+    if (opts.mode === 'record') {
+      publishToDevice(sn, { stop_scan_map: { value: false, cmd_num: getNextCmdNum(sn) } });
+    }
+    finish('error', { error: 'daemon_timeout' });
+  }, SESSION_WATCHDOG_MS);
 
   void (async () => {
     if (opts.mode === 'record') {
@@ -201,11 +272,13 @@ export async function startAutoMap(
       });
       const resp = await waitForRespond(sn, 'start_scan_map_respond', RESPOND_TIMEOUT_MS);
       if (!resp) return finish('error', { error: 'scan_start_timeout' });
+      if (isExplicitFailure(resp)) return finish('error', { error: 'scan_start_failed' });
     } else {
       setPhase('preparing');
     }
-    // Sessie kan tijdens het wachten al beëindigd zijn (abort/stale event):
-    // dan geen volgmotor meer starten op een dode sessie.
+    // Sessie kan tijdens het wachten al beëindigd zijn (abort/stale event,
+    // of requestStop tijdens het scan-start-venster): dan geen volgmotor
+    // meer starten op een dode sessie.
     if (runState !== 'running') return;
     publishExtendedCommand(sn, { start_auto_map_test: { radiusM, timeoutS: 1200 } });
   })();
@@ -217,6 +290,11 @@ export async function startAutoMap(
 export function stopAutoMap(sn: string): void {
   publishExtendedCommand(sn, { stop_auto_map: {} });
   // de maaier meldt daarna auto_map_status {phase:'aborted', error:'user_stop'}
+  // — maar tijdens het scan-start-venster (start_scan_map is al verstuurd,
+  // de volgmotor nog niet) kent de daemon deze sessie nog niet en komt dat
+  // event nooit. requestStop() dekt dat venster (en de normale rijfase)
+  // lokaal af zodat een user-stop nooit verdampt.
+  liveRuns.get(sn)?.requestStop();
 }
 
 export function getStatus(sn: string): AutoMapSession | undefined {
