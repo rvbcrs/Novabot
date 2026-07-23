@@ -298,6 +298,15 @@ export function stopAutoMap(sn: string): void {
   // event nooit. requestStop() dekt dat venster (en de normale rijfase)
   // lokaal af zodat een user-stop nooit verdampt.
   liveRuns.get(sn)?.requestStop();
+  // Weessessie (server-process herstart → geen live handler meer): dezelfde
+  // lazy reconciliatie als in startAutoMap, anders blijft de sessie eeuwig
+  // in "preparing" hangen en doet de stopknop zichtbaar niets (live gezien
+  // 2026-07-23 na een geheugen-hang van de host).
+  const orphan = getActiveSession(sn);
+  if (orphan && !liveRuns.has(sn) && orphan.phase !== 'awaiting_review') {
+    updatePhase(orphan.id, 'aborted', { error: 'user_stop', finished: true });
+    emit(sn, orphan.id, 'aborted', { error: 'user_stop' });
+  }
 }
 
 export function getStatus(sn: string): AutoMapSession | undefined {
