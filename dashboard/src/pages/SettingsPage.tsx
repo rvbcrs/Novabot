@@ -13,6 +13,7 @@ import {
 } from '../api/client';
 import { readWeekStart, writeWeekStart, type WeekStart } from '../utils/weekStart';
 import { readTimeFormat, writeTimeFormat, type TimeFormat } from '../utils/timeFormat';
+import { writeMowDefaults } from '../utils/mowDefaults';
 import { MowingDirectionPreview } from '../components/schedule/MowingDirectionPreview';
 import { useToast } from '../components/common/Toast';
 
@@ -280,16 +281,21 @@ function MowerSettingsSection({ mower }: { mower: DeviceState }) {
     if (got) {
       hydrated.current = true;
       const c = committedRef.current;
+      const newCh = ch ?? c.cuttingHeight;
+      const newPd = pd ?? c.pathDirection;
       committedRef.current = {
         ...c,
-        cuttingHeight: ch ?? c.cuttingHeight,
+        cuttingHeight: newCh,
         sensitivity: ob ?? c.sensitivity,
-        pathDirection: pd ?? c.pathDirection,
+        pathDirection: newPd,
         joystickSpeed: jv ?? c.joystickSpeed,
         joystickHandling: jw ?? c.joystickHandling,
         headlight: hl ?? c.headlight,
         sound: so ?? c.sound,
       };
+      // Keep mowDefaults in sync so MowerControls pre-fills with the mower's
+      // actual configured cutting height / direction (fixes issue #105).
+      writeMowDefaults({ cuttingHeight: newCh, pathDirection: newPd });
     }
   }, [mower.sensors]);
 
@@ -321,6 +327,7 @@ function MowerSettingsSection({ mower }: { mower: DeviceState }) {
           headlight, brightness, sound, timezone,
         };
         writeBrightness(brightness);
+        writeMowDefaults({ cuttingHeight, pathDirection });
         setSavedTick(x => x + 1);
       } catch {
         toast(`✗ ${t('settings.mower.saveFailed', 'Could not save settings')}`, 'error');
