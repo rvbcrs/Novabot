@@ -9,7 +9,7 @@
 import { scheduleRepo, mapRepo } from '../db/repositories/index.js';
 import { isDeviceOnline } from '../mqtt/broker.js';
 import { publishToDevice } from '../mqtt/mapSync.js';
-import { startMowing } from './mowingService.js';
+import { startMowing, edgeBladeHeightMm, getMowerPhase, startEdgeCut } from './mowingService.js';
 import { getWeatherForecast, shouldPauseForRain } from './weatherService.js';
 import { emitScheduleEvent, pushMqttLog } from '../dashboard/socketHandler.js';
 import type { ScheduleRow } from '../db/repositories/schedules.js';
@@ -17,6 +17,20 @@ import type { ScheduleRow } from '../db/repositories/schedules.js';
 let intervalId: ReturnType<typeof setInterval> | null = null;
 const CHECK_INTERVAL_MS = 30_000;
 const TRIGGER_WINDOW_MS = 5 * 60_000; // 5 minuten window — ruim genoeg voor restarts
+
+// Levensduur van een rand-dag watcher. Bewust ruim: de firmware pauzeert een
+// lopende maaibeurt zelf voor een low-battery recharge, dockt, laadt tot ongeveer
+// 96% en hervat daarna de gepauzeerde taak (coverContinueDeal, zie
+// research/documents/firmware-auto-continue-after-recharge.md). Eén maaibeurt kan
+// dus legitiem maaien → dokken → laden → hervatten → afronden beslaan en ruim
+// langer duren dan een paar uur. Een korte timeout zou de watcher middenin die
+// cyclus laten verlopen, waardoor de randmaai op een rand-dag stil wordt
+// overgeslagen. Ruim mag hier, want de watcher kan ALLEEN vuren nadat hij een
+// echte maaien-daarna-gedockt overgang heeft gezien: een langere timeout maakt
+// een ongewenste start dus niet waarschijnlijker, hij voorkomt alleen dat een
+// terechte late start verloren gaat.
+const EDGE_WATCH_TIMEOUT_MS = 12 * 60 * 60 * 1000; // 12 uur
+const pendingEdge = new Map<string, EdgeWatchEntry>(); // sn → watcher
 
 // Visible per-schedule decision log: writes to the console (→ proxy log file +
 // stdout) AND the dashboard MQTT-log stream (pushMqttLog), so you can actually
@@ -87,6 +101,28 @@ export function isEdgeDay(edgeDaysJson: string | null, weekday: number): boolean
   } catch { return false; }
 }
 
+export type EdgeWatchEntry = { bladeHeightMm: number; mapName: string; armedAt: number; sawMowing: boolean };
+
+/** State machine per maaier voor de rand-dag. Arm bij trigger (sawMowing=false),
+ *  markeer sawMowing zodra de maaier echt maait, en vuur (fire=true) zodra hij
+ *  daarna gaat laden = maaibeurt klaar. Vervalt na timeoutMs zonder vuren zodat
+ *  een mislukte beurt nooit uren later een losse randsessie start.
+ *
+ *  De 'other'-tak is bewust passief-wachtend: getMowerPhase geeft tijdens een
+ *  mid-mow laadpauze 'other' terug (geen 'charging'), dus zo'n tussenstop laat
+ *  de watcher simpelweg doorwachten tot het echte einde-taak-dock. */
+export function advanceEdgeWatch(
+  entry: EdgeWatchEntry,
+  phase: 'mowing' | 'charging' | 'other',
+  nowMs: number,
+  timeoutMs: number,
+): { next: EdgeWatchEntry | null; fire: boolean } {
+  if (nowMs - entry.armedAt > timeoutMs) return { next: null, fire: false };
+  if (phase === 'mowing') return { next: { ...entry, sawMowing: true }, fire: false };
+  if (phase === 'charging' && entry.sawMowing) return { next: null, fire: true };
+  return { next: entry, fire: false };
+}
+
 /** Kalenderdag (YYYY-MM-DD) van `now` in de tijdzone van het schema. */
 export function scheduleDayKey(row: ScheduleRow, now: Date): string {
   const wc = wallClock(now, row.timezone ?? null);
@@ -128,6 +164,21 @@ export function getScheduleOccurrence(row: ScheduleRow, now: Date): Date | null 
 
 function checkSchedules() {
   const now = new Date();
+
+  // Rand-dag watchers: vuur een losse randmaai zodra een gearmde maaier na het
+  // maaien gaat laden (= maaibeurt klaar). Staat vóór de schema-lus zodat hij
+  // ook loopt op ticks waarop geen enkel schema aan de beurt is. Puur via
+  // advanceEdgeWatch; state in pendingEdge. Kopie van de entries zodat
+  // delete/set tijdens de iteratie veilig is.
+  for (const [sn, entry] of [...pendingEdge]) {
+    const { next, fire } = advanceEdgeWatch(entry, getMowerPhase(sn), now.getTime(), EDGE_WATCH_TIMEOUT_MS);
+    if (fire) {
+      const r = startEdgeCut(sn, entry.mapName, entry.bladeHeightMm);
+      console.log(`[ScheduleRunner] EDGE ${r.ok ? 'STARTED' : 'FAILED'} sn=${sn} map=${entry.mapName} blade=${entry.bladeHeightMm}mm ${r.error ?? ''}`);
+    }
+    if (next === null) pendingEdge.delete(sn);
+    else pendingEdge.set(sn, next);
+  }
 
   // Haal ALLE enabled schedules op — de runner handelt alles af
   const rows = scheduleRepo.findEnabled();
@@ -298,6 +349,24 @@ function triggerSchedule(row: ScheduleRow) {
     // afwijzing mag de volgende richting niet opschuiven.
     scheduleRepo.incrementTriggerCount(row.schedule_id);
     logScheduleDecision(row, true, 'STARTED', `area=${area} height=${row.cutting_height ?? 5}cm dir=${effectiveDirection}°`);
+
+    // Rand-dag? Arm de watcher zodat na de maaibeurt een losse randmaai volgt.
+    // Alleen bij een geslaagde start: een regen-skip of busy-afwijzing mag nooit
+    // iets armen. Weekdag uit de tijdzone van het schema, net als de weekdays-
+    // match in getScheduleOccurrence, anders zou een schema in een andere zone
+    // rond middernacht op de verkeerde dag als rand-dag tellen.
+    const weekday = wallClock(new Date(), row.timezone ?? null).weekday; // 0=zondag
+    if (isEdgeDay(row.edge_days, weekday)) {
+      const selected = row.map_id ? workMaps.find(w => w.map_id === row.map_id) : undefined;
+      const mapName = selected?.canonical_name?.match(/^map\d+/)?.[0] ?? 'map0';
+      pendingEdge.set(row.mower_sn, {
+        bladeHeightMm: edgeBladeHeightMm(row.cutting_height ?? 40),
+        mapName,
+        armedAt: Date.now(),
+        sawMowing: false,
+      });
+      logScheduleDecision(row, true, 'EDGE ARMED', `na maaibeurt randmaai op ${mapName} (dag ${weekday})`);
+    }
   } else {
     // Most common cause: startMowing's isMowerBusy guard rejected the start
     // because the mower is in an active task (or was wrongly parked as "busy").
