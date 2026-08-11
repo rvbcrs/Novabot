@@ -94,6 +94,62 @@ describe('getMowerPhase', () => {
     expect(getMowerPhase('SN1')).toBe('other');
   });
 
+  // Regressie (Task 6 review ronde 2): "Work:CANCELLED" is op deze firmware
+  // GEEN betrouwbaar afbreeksignaal. Dit is de LETTERLIJKE msg die een netjes
+  // afgeronde beurt rapporteert nadat hij gedockt is, twee keer los gemeld door
+  // gebruikers in issue #17 (waltervl) en vastgelegd in
+  // server/src/cloud-api/routes/equipmentState.ts:243-264. Work:FINISHED
+  // ontbreekt hier; de afronding zit in "Prev work:USER_RECHARGE_STOP" en
+  // "Recharge: FINISHED". Wie CANCELLED alsnog als afbreking behandelt, maakt
+  // de hele randmaai-feature stil dood op echte hardware terwijl de suite groen
+  // blijft. NIET "vereenvoudigen" naar een CANCELLED-is-afgebroken regel.
+  it('afgeronde beurt die als Work:CANCELLED rapporteert (issue #17, live) → WEL charging', () => {
+    deviceCache.set('SN1', new Map([
+      ['battery_state', 'CHARGING'],
+      ['msg', 'Mode:COVERAGE Work:CANCELLED Prev work:USER_RECHARGE_STOP Recharge: FINISHED'],
+    ]));
+    expect(getMowerPhase('SN1')).toBe('charging');
+  });
+
+  it('zelfde live msg met work_status 2 (CANCELLED) → WEL charging', () => {
+    deviceCache.set('SN1', new Map([
+      ['battery_state', 'CHARGING'],
+      ['work_status', '2'],
+      ['msg', 'Mode:COVERAGE Work:CANCELLED Prev work:USER_RECHARGE_STOP Recharge: FINISHED'],
+    ]));
+    expect(getMowerPhase('SN1')).toBe('charging');
+  });
+
+  // Tegenhanger: dezelfde doorgerolde vorm, maar met een gebruikersstop als
+  // vorige status. Dat is wél een afgebroken beurt en moet geblokkeerd blijven.
+  // Dit is het enige veld dat de twee gevallen uit elkaar houdt.
+  it("Work:CANCELLED met 'Prev work:USER_STOP' → NIET charging (afgebroken)", () => {
+    deviceCache.set('SN1', new Map([
+      ['battery_state', 'CHARGING'],
+      ['work_status', '0'],
+      ['msg', 'Mode:COVERAGE Work:CANCELLED Prev work:USER_STOP Recharge: FINISHED'],
+    ]));
+    expect(getMowerPhase('SN1')).toBe('other');
+  });
+
+  // GEDOCUMENTEERD GAT, bewust zo gelaten. Als de firmware bij die live
+  // afgeronde beurt work_status 11 (USER_RECHARGE_STOP) meldt in plaats van 2,
+  // dan is die toestand niet te onderscheiden van een mid-mow laadpauze die
+  // toevallig al naar Work:WAIT/CANCELLED is doorgerold: exact dezelfde
+  // msg-velden, exact dezelfde code. Dan kiezen we de veilige kant (niet
+  // vuren), want de andere kant betekent een randmaai starten terwijl de
+  // firmware de gepauzeerde coverage hervat. Kosten: de randmaai blijft stil
+  // achterwege. Zie het rapport: dit is het hardware-verificatiepunt (welke
+  // work_status meldt een AFGERONDE beurt op het dock?).
+  it('GAP: dezelfde live msg met work_status 11 → other (veilige kant, zie rapport)', () => {
+    deviceCache.set('SN1', new Map([
+      ['battery_state', 'CHARGING'],
+      ['work_status', '11'],
+      ['msg', 'Mode:COVERAGE Work:CANCELLED Prev work:USER_RECHARGE_STOP Recharge: FINISHED'],
+    ]));
+    expect(getMowerPhase('SN1')).toBe('other');
+  });
+
   it('afgebroken door tijdslimiet of fout → NIET charging', () => {
     deviceCache.set('SN1', new Map([
       ['battery_state', 'CHARGING'],

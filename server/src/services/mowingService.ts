@@ -215,23 +215,60 @@ export function getMowerPhase(sn: string): 'mowing' | 'charging' | 'other' {
   // isInterruptedCoverage in dashboard/src/utils/mowerActivity.ts wel doet:
   // stop_navigation zet task_mode terug op 0, waardoor geval 2 door die gate
   // heen glipte en een halverwege gestopte beurt binnen 30 seconden alsnog een
-  // randmaai startte. In plaats daarvan toetsen we op de ruwe work_status-code
-  // (blijft staan tot aan het dock) plus de Work-status in de msg. Strenger dan
-  // de dashboard-variant mag hier: die kiest alleen een knop-label, deze gate
-  // laat een echt bewegingscommando toe of niet.
+  // randmaai startte. In plaats daarvan lezen we de msg-velden in een vaste
+  // rangorde. Strenger dan de dashboard-variant mag hier: die kiest alleen een
+  // knop-label, deze gate laat een echt bewegingscommando toe of niet.
+  //
+  // LET OP (issue #17, twee live meldronden, zie
+  // server/src/cloud-api/routes/equipmentState.ts:243-264): "Work:CANCELLED" is
+  // op deze firmware GEEN betrouwbaar afbreeksignaal. De msg van een NETJES
+  // afgeronde beurt die daarna dockt is letterlijk
+  //   "Mode:COVERAGE Work:CANCELLED Prev work:USER_RECHARGE_STOP Recharge: FINISHED"
+  // Work:FINISHED ontbreekt daar; de afronding zit in "Prev work" en in
+  // "Recharge: FINISHED". CANCELLED als afbreeksignaal behandelen maakt deze
+  // hele feature dus stil dood op echte hardware. Daarom mag elk positief
+  // afrondingssignaal CANCELLED overrulen, en is work_status 2 (CANCELLED) uit
+  // de afbreek-codes gehaald.
   const onDock = batteryState === 'CHARGING' || batteryState === 'FINISHED';
   const workStatus = raw.get('work_status') ?? '';
-  // Ruwe work_status-codes van een afgebroken beurt, exact de codes uit
-  // IDLE_WORK_STATUS hierboven: FAILED(1), CANCELLED(2), FAILED_ONCE(7),
-  // USER_STOP(10), USER_RECHARGE_STOP(11), LOWER_POWER_STOP(12),
-  // ERROR_STOP(13), TIME_LIMIT_STOP(14), RECOVER_ERROR_STOP(15). Dit is het
-  // betrouwbaarste signaal, want de code blijft staan terwijl de maaier naar het
-  // dock rijdt en laadt. FINISHED(8/9) en WAIT(0) staan er bewust NIET in: dat
-  // zijn juist de afgeronde beurten waarop de randmaai moet volgen.
-  const abortedWorkStatus = ['1', '2', '7', '10', '11', '12', '13', '14', '15'].includes(workStatus);
-  const pausedForRecharge = /Work:USER_RECHARGE_STOP\b/.test(msg) || /Work:BATTERY_LOW_RECHARGE\b/.test(msg);
-  const stoppedEarly = /Work:(USER_STOP|PAUSED|CANCELLED|TIME_LIMIT_STOP|ERROR_STOP)\b/.test(msg);
-  if (onDock && (abortedWorkStatus || pausedForRecharge || stoppedEarly)) return 'other';
+
+  // Positieve afrondingssignalen, overgenomen uit looksFinished in
+  // equipmentState.ts (die classificatie is op live gebruikersmeldingen
+  // gevalideerd). Let op de spatie in "Recharge: FINISHED": zo staat het in de
+  // firmware-msg.
+  const looksFinished =
+    msg.includes('Work:FINISHED') ||
+    msg.includes('Prev work:FINISHED') ||
+    msg.includes('Prev work:USER_RECHARGE_STOP') ||
+    msg.includes('Recharge: FINISHED') ||
+    msg.includes('Recharge: WAIT');
+
+  // 1. De LIVE Work-status zegt dat de taak nu stilstaat: gepauzeerd voor een
+  //    recharge, door de gebruiker gestopt, of op een limiet/fout geëindigd.
+  //    Dit weegt zwaarder dan welk afrondingssignaal dan ook: tijdens een
+  //    mid-mow laadpauze staat er óók "Recharge: FINISHED" in de msg (de
+  //    dok-cyclus zelf verliep prima), en juist dan mag er niets starten.
+  //    CANCELLED staat hier bewust NIET tussen, zie de toelichting hierboven.
+  const liveStopTag = /Work:(USER_STOP|PAUSED|USER_RECHARGE_STOP|BATTERY_LOW_RECHARGE|TIME_LIMIT_STOP|ERROR_STOP)\b/.test(msg);
+  // 2. De VORIGE Work-status wijst op een afbreking. Bij het dokken is de live
+  //    tag vaak al doorgerold naar WAIT of CANCELLED en blijft de reden alleen
+  //    in "Prev work" staan (kleine w, dus geen overlap met de regex hierboven).
+  //    USER_RECHARGE_STOP hoort hier NIET thuis: dat is per issue #17 juist het
+  //    handtekening-signaal van een normaal afgeronde beurt.
+  const prevWorkAborted = /Prev work:(USER_STOP|PAUSED|TIME_LIMIT_STOP|ERROR_STOP)\b/.test(msg);
+  // 3. Ruwe work_status-code van een afgebroken beurt, de codes uit
+  //    IDLE_WORK_STATUS hierboven: FAILED(1), FAILED_ONCE(7), USER_STOP(10),
+  //    USER_RECHARGE_STOP(11), LOWER_POWER_STOP(12), ERROR_STOP(13),
+  //    TIME_LIMIT_STOP(14), RECOVER_ERROR_STOP(15). Vangnet voor het geval de
+  //    msg al helemaal is doorgerold. CANCELLED(2) staat er bewust niet in
+  //    (zie hierboven), FINISHED(8/9) en WAIT(0) evenmin: dat zijn juist de
+  //    afgeronde beurten waar de randmaai op moet volgen.
+  const abortedWorkStatus = ['1', '7', '10', '11', '12', '13', '14', '15'].includes(workStatus);
+  // 4. Een kale CANCELLED zonder enig afrondingssignaal. Alleen dán telt
+  //    CANCELLED nog als afbreking.
+  const cancelledWithoutFinish = /Work:CANCELLED\b/.test(msg) && !looksFinished;
+
+  if (onDock && (liveStopTag || prevWorkAborted || abortedWorkStatus || cancelledWithoutFinish)) return 'other';
 
   if (batteryState === 'CHARGING') return 'charging';
   const ws = parseInt(workStatus, 10);

@@ -67,6 +67,15 @@ function setDockedAfterFinishedMow(sn: string): void {
     ['msg', 'Mode:COVERAGE Work:WAIT Prev work:FINISHED Recharge: FINISHED'],
   ]));
 }
+/** De ANDERE live vorm van een afgeronde beurt op het dock: met Work:CANCELLED
+ *  als leidende tag, twee keer gemeld in issue #17 en vastgelegd in
+ *  equipmentState.ts:243-264. */
+function setDockedAfterFinishedMowIssue17(sn: string): void {
+  deviceCache.set(sn, new Map([
+    ['battery_state', 'CHARGING'], ['work_status', '2'],
+    ['msg', 'Mode:COVERAGE Work:CANCELLED Prev work:USER_RECHARGE_STOP Recharge: FINISHED'],
+  ]));
+}
 
 /** Alle start_edge_cut-payloads die naar de maaier zijn gegaan. */
 function edgeCutCalls(): Array<Record<string, unknown>> {
@@ -110,6 +119,25 @@ describe('rand-dag watcher bekabeling', () => {
     expect(__getPendingEdgeForTest().has(SN)).toBe(false);
     vi.advanceTimersByTime(TICK_MS * 3);
     expect(edgeCutCalls()).toHaveLength(1);
+  });
+
+  // Dezelfde keten, maar met de andere live afrond-msg (issue #17). Dit is de
+  // vorm waarop de feature in ronde 1 stil dood was: de suite bleef groen op
+  // geïdealiseerde msg-vormen terwijl echte hardware nooit een randmaai kreeg.
+  // Daarom staat hij hier end-to-end, niet alleen als unit-test op getMowerPhase.
+  it('rand-dag: vuurt ook op de live afrond-msg met Work:CANCELLED (issue #17)', () => {
+    const SN = 'WIRE_ISSUE17';
+    createDueSchedule(SN, JSON.stringify([NOW.getDay()]));
+    setIdleOnDock(SN);
+
+    startScheduleRunner();
+    setMowing(SN);
+    vi.advanceTimersByTime(TICK_MS);
+    setDockedAfterFinishedMowIssue17(SN);
+    vi.advanceTimersByTime(TICK_MS);
+
+    expect(edgeCutCalls()).toHaveLength(1);
+    expect(edgeCutCalls()[0]).toMatchObject({ start_edge_cut: { mapName: 'map0', bladeHeight: 50 } });
   });
 
   it('edge_days NULL armt niets en stuurt nooit een randmaai (huidig gedrag)', () => {
