@@ -184,34 +184,57 @@ export function stopMowing(sn: string): MowingResult {
 /** Grove maaier-fase uit de sensor-cache, voor de rand-dag watcher.
  *  charging = battery_state CHARGING ÉN het is een echt einde-taak-dock;
  *  mowing = actieve coverage-status; other = al het overige (undocken, idle,
- *  offline, en ook een mid-mow laadpauze, zie hieronder). */
+ *  offline, en ook een dock ná een mid-mow laadpauze of een afgebroken
+ *  beurt, zie hieronder). */
 export function getMowerPhase(sn: string): 'mowing' | 'charging' | 'other' {
   const raw = deviceCache.get(sn);
   if (!raw) return 'other';
   const batteryState = (raw.get('battery_state') ?? '').toUpperCase();
-  const taskMode = parseInt(raw.get('task_mode') ?? '0', 10);
   const msg = raw.get('msg') ?? '';
 
-  // De firmware pauzeert een lopende coverage-taak zelf voor een low-battery
-  // recharge: hij dockt, laadt op tot ongeveer 96% en hervat dan de
-  // gepauzeerde taak zelf (coverContinueDeal, zie
-  // research/documents/firmware-auto-continue-after-recharge.md). Tijdens die
-  // laadstop staat battery_state al op CHARGING terwijl de taak feitelijk nog
-  // loopt (gepauzeerd, niet klaar). Deze check moet dus VOOR de
-  // battery_state==CHARGING-check komen: anders classificeert de watcher zo'n
-  // mid-mow laadpauze als 'charging', vuurt startEdgeCut (een echt
-  // bewegingscommando) af, en hervat de firmware vrijwel gelijktijdig de
-  // gepauzeerde coverage zelf, wat neerkomt op twee conflicterende
-  // bewegingscommando's op echte hardware. Mirrort isInterruptedCoverage in
-  // dashboard/src/utils/mowerActivity.ts, de al bewezen classificatie van de app.
+  // Een gedockte, ladende maaier telt alleen als 'charging' wanneer het een
+  // ECHT einde-taak-dock is. Twee gevallen waarin hij wel laadt maar de
+  // maaibeurt NIET is afgerond, en die dus vóór de battery_state-check moeten
+  // komen, want beide zouden anders een autonome randmaai uitlokken:
+  //
+  // 1. Mid-mow laadpauze. De firmware pauzeert een lopende coverage-taak zelf
+  //    voor een low-battery recharge, dockt, laadt tot ongeveer 96% en hervat
+  //    dan de gepauzeerde taak zelf (coverContinueDeal, zie
+  //    research/documents/firmware-auto-continue-after-recharge.md).
+  //    battery_state staat dan al op CHARGING terwijl de taak feitelijk nog
+  //    loopt. Zou dit 'charging' opleveren, dan vuurt de rand-dag watcher
+  //    startEdgeCut af terwijl de firmware vrijwel gelijktijdig de coverage
+  //    hervat: twee conflicterende bewegingscommando's op echte hardware.
+  //
+  // 2. Afgebroken beurt. De gebruiker stopt halverwege (stop_navigation) en
+  //    stuurt de maaier naar het dock, of de beurt eindigt op een tijdslimiet
+  //    of een fout. Een bewust of foutief afgebroken beurt is geen afgeronde
+  //    maaibeurt en mag dus nooit alsnog een randmaai uitlokken.
+  //
+  // Deze check leunt bewust NIET (meer) op task_mode === 1, zoals
+  // isInterruptedCoverage in dashboard/src/utils/mowerActivity.ts wel doet:
+  // stop_navigation zet task_mode terug op 0, waardoor geval 2 door die gate
+  // heen glipte en een halverwege gestopte beurt binnen 30 seconden alsnog een
+  // randmaai startte. In plaats daarvan toetsen we op de ruwe work_status-code
+  // (blijft staan tot aan het dock) plus de Work-status in de msg. Strenger dan
+  // de dashboard-variant mag hier: die kiest alleen een knop-label, deze gate
+  // laat een echt bewegingscommando toe of niet.
   const onDock = batteryState === 'CHARGING' || batteryState === 'FINISHED';
+  const workStatus = raw.get('work_status') ?? '';
+  // Ruwe work_status-codes van een afgebroken beurt, exact de codes uit
+  // IDLE_WORK_STATUS hierboven: FAILED(1), CANCELLED(2), FAILED_ONCE(7),
+  // USER_STOP(10), USER_RECHARGE_STOP(11), LOWER_POWER_STOP(12),
+  // ERROR_STOP(13), TIME_LIMIT_STOP(14), RECOVER_ERROR_STOP(15). Dit is het
+  // betrouwbaarste signaal, want de code blijft staan terwijl de maaier naar het
+  // dock rijdt en laadt. FINISHED(8/9) en WAIT(0) staan er bewust NIET in: dat
+  // zijn juist de afgeronde beurten waarop de randmaai moet volgen.
+  const abortedWorkStatus = ['1', '2', '7', '10', '11', '12', '13', '14', '15'].includes(workStatus);
   const pausedForRecharge = /Work:USER_RECHARGE_STOP\b/.test(msg) || /Work:BATTERY_LOW_RECHARGE\b/.test(msg);
-  const pausedByUser = /Work:USER_STOP\b/.test(msg) || /Work:PAUSED\b/.test(msg);
-  const interruptedCoverage = onDock && taskMode === 1 && (pausedForRecharge || pausedByUser);
-  if (interruptedCoverage) return 'other';
+  const stoppedEarly = /Work:(USER_STOP|PAUSED|CANCELLED|TIME_LIMIT_STOP|ERROR_STOP)\b/.test(msg);
+  if (onDock && (abortedWorkStatus || pausedForRecharge || stoppedEarly)) return 'other';
 
   if (batteryState === 'CHARGING') return 'charging';
-  const ws = parseInt(raw.get('work_status') ?? '', 10);
+  const ws = parseInt(workStatus, 10);
   if ([100, 101, 102, 103, 150].includes(ws)) return 'mowing';
   if (/Work:(COVERING|RUNNING|MOVING|BOUNDARY_COVERING)/.test(msg)) return 'mowing';
   return 'other';

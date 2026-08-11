@@ -63,6 +63,74 @@ describe('getMowerPhase', () => {
     ]));
     expect(getMowerPhase('SN1')).toBe('other');
   });
+
+  // Regressie (Task 6 review, finding 2): stop_navigation zet task_mode terug
+  // op 0. De oude gate eiste task_mode === 1, dus een halverwege gestopte
+  // maaibeurt die daarna naar het dock reed werd als 'charging' geclassificeerd
+  // en de rand-dag watcher startte binnen 30 seconden een randmaai op een beurt
+  // die de gebruiker juist bewust had afgebroken. De msg draagt de reden nog
+  // wel, dus daar moet de classificatie op leunen, niet op task_mode.
+  it('gedockt + CHARGING na handmatige stop met task_mode 0 → NIET charging', () => {
+    deviceCache.set('SN1', new Map([
+      ['battery_state', 'CHARGING'],
+      ['task_mode', '0'],
+      ['msg', 'Mode:COVERAGE Work:USER_STOP Recharge: FINISHED'],
+      ['work_status', '0'],
+    ]));
+    expect(getMowerPhase('SN1')).toBe('other');
+  });
+
+  // Realistische vorm ná het dokken: de live Work-status is al doorgerold naar
+  // WAIT en de uitkomst van de afgebroken beurt zit nog in de ruwe
+  // work_status-code (10 = USER_STOP, zie IDLE_WORK_STATUS in mowingService).
+  // Alleen op de msg toetsen zou dit geval missen.
+  it('gedockt + CHARGING met work_status 10 (USER_STOP) na het dokken → NIET charging', () => {
+    deviceCache.set('SN1', new Map([
+      ['battery_state', 'CHARGING'],
+      ['task_mode', '0'],
+      ['msg', 'Mode:COVERAGE Work:WAIT Prev work:USER_STOP Recharge: FINISHED'],
+      ['work_status', '10'],
+    ]));
+    expect(getMowerPhase('SN1')).toBe('other');
+  });
+
+  it('afgebroken door tijdslimiet of fout → NIET charging', () => {
+    deviceCache.set('SN1', new Map([
+      ['battery_state', 'CHARGING'],
+      ['msg', 'Mode:COVERAGE Work:TIME_LIMIT_STOP Recharge: FINISHED'],
+    ]));
+    expect(getMowerPhase('SN1')).toBe('other');
+    deviceCache.set('SN2', new Map([
+      ['battery_state', 'CHARGING'],
+      ['msg', 'Mode:COVERAGE Work:ERROR_STOP Recharge: FINISHED'],
+    ]));
+    expect(getMowerPhase('SN2')).toBe('other');
+  });
+
+  // Tegenhanger van de vorige tests: NIET over-strak afknijpen. Dit is de
+  // letterlijke msg-vorm van een afgeronde beurt op het dock (zie de captures
+  // in research/): huidige status WAIT, uitkomst FINISHED in "Prev work". Zou
+  // dit 'other' opleveren, dan vuurt de rand-dag watcher nooit en is de hele
+  // feature dood. task_mode staat hier nog op 1.
+  it('afgeronde beurt op het dock (Work:WAIT + Prev work:FINISHED) → WEL charging', () => {
+    deviceCache.set('SN1', new Map([
+      ['battery_state', 'CHARGING'],
+      ['task_mode', '1'],
+      ['msg', 'Mode:COVERAGE Work:WAIT Prev work:FINISHED Recharge: FINISHED'],
+      ['work_status', '0'],
+    ]));
+    expect(getMowerPhase('SN1')).toBe('charging');
+  });
+
+  it('afgeronde beurt met Work:FINISHED en task_mode 1 → WEL charging', () => {
+    deviceCache.set('SN1', new Map([
+      ['battery_state', 'CHARGING'],
+      ['task_mode', '1'],
+      ['msg', 'Mode:COVERAGE Work:FINISHED Recharge: FINISHED'],
+      ['work_status', '0'],
+    ]));
+    expect(getMowerPhase('SN1')).toBe('charging');
+  });
 });
 
 describe('startEdgeCut guards', () => {
