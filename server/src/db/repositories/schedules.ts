@@ -40,6 +40,9 @@ export interface ScheduleRow {
   /** YYYY-MM-DD (schema-tijdzone) van de dag die overgeslagen moet worden;
    *  zelf-wissend zodra de runner die dag skipt. NULL = niets overslaan. */
   skip_date: string | null;
+  /** JSON-array weekdagen [0-6] waarop na de maaibeurt een randmaai volgt;
+   *  NULL = huidig gedrag (geen server-gestuurde randmaai). */
+  edge_days: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -183,8 +186,8 @@ export class ScheduleRepository {
         map_id, map_name, cutting_height, path_direction, work_mode, task_mode,
         edge_offset, rain_pause, rain_threshold_mm, rain_threshold_probability,
         rain_check_hours, alternate_direction, alternate_step,
-        interval_days, interval_anchor_date, timezone
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        interval_days, interval_anchor_date, timezone, edge_days
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       data.schedule_id, data.mower_sn, data.schedule_name ?? null,
       data.start_time, data.end_time ?? null, data.weekdays ?? '[]', data.enabled ?? 1,
@@ -194,7 +197,7 @@ export class ScheduleRepository {
       data.rain_threshold_probability ?? 50, data.rain_check_hours ?? 2,
       data.alternate_direction ?? 0, data.alternate_step ?? 90,
       data.interval_days ?? 0, data.interval_anchor_date ?? null,
-      data.timezone ?? null,
+      data.timezone ?? null, data.edge_days ?? null,
     );
   }
 
@@ -225,6 +228,7 @@ export class ScheduleRepository {
       ['interval_anchor_date', data.interval_anchor_date],
       ['timezone', data.timezone],
       ['skip_date', data.skip_date],
+      ['edge_days', data.edge_days],
     ];
 
     for (const [key, value] of updatable) {
@@ -269,6 +273,7 @@ export class ScheduleRepository {
       ['interval_anchor_date', data.interval_anchor_date],
       ['timezone', data.timezone],
       ['skip_date', data.skip_date],
+      ['edge_days', data.edge_days],
     ];
 
     for (const [key, value] of updatable) {
