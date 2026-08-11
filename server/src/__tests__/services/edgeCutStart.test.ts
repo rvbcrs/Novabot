@@ -19,6 +19,26 @@ import { getMowerPhase, startEdgeCut } from '../../services/mowingService.js';
 import { deviceCache } from '../../mqtt/sensorData.js';
 import { publishToDevice } from '../../mqtt/mapSync.js';
 
+// HERKOMST VAN DE MSG-STRINGS IN DIT BESTAND (Task 6 review ronde 3).
+// Ronde 1 en 2 gingen allebei mis op geïdealiseerde msg-vormen die groen bleven
+// terwijl de feature op echte hardware stuk was. Daarom staat bij elke test of
+// de string uit een ECHTE CAPTURE komt of GECONSTRUEERD is; alleen de eerste
+// soort draagt bewijskracht over het gedrag in het veld.
+//
+// ECHTE CAPTURES (research/documents/obstacle-capture-*.jsonl, volledige
+// report_state_robot payloads):
+//   "Mode:COVERAGE Work:FINISHED Prev work:FINISHED_ONCE Recharge: FINISHED"
+//        cov_ratio 1, finished_num 1, work_status 9, task_mode 1, error_status 0
+//        → dit is een AFGERONDE maaibeurt op het dock.
+//   "Mode:COVERAGE Work:WAIT Prev work:WAIT Recharge: FINISHED"
+//        cov_ratio 0, finished_num 0, work_status 0  → idle op het dock.
+//   "Mode:MAPPING Work:MANUAL_MAPPING_OBSTACLE Prev work:REQUEST_START Recharge: WAIT"
+//        cov_ratio 0  → bewijst dat "Recharge: WAIT" geen afrondingssignaal is.
+// GEDOCUMENTEERDE LIVE MELDING (geen capture met velden, wel twee losse
+// gebruikersmeldingen in issue #17, vastgelegd in equipmentState.ts:243-264):
+//   "Mode:COVERAGE Work:CANCELLED Prev work:USER_RECHARGE_STOP Recharge: FINISHED"
+// GECONSTRUEERD (nergens in deze repo vastgelegd, samengesteld uit de
+// gedocumenteerde veldpatronen): alles wat hieronder als zodanig gemarkeerd is.
 describe('getMowerPhase', () => {
   beforeEach(() => deviceCache.clear());
   it('CHARGING battery_state → charging', () => {
@@ -103,48 +123,138 @@ describe('getMowerPhase', () => {
   // "Recharge: FINISHED". Wie CANCELLED alsnog als afbreking behandelt, maakt
   // de hele randmaai-feature stil dood op echte hardware terwijl de suite groen
   // blijft. NIET "vereenvoudigen" naar een CANCELLED-is-afgebroken regel.
-  it('afgeronde beurt die als Work:CANCELLED rapporteert (issue #17, live) → WEL charging', () => {
+  // ECHTE CAPTURE, volledige payload. Dit is de referentievorm van een
+  // afgeronde maaibeurt op het dock en beantwoordt meteen de openstaande
+  // hardware-vraag uit ronde 2: work_status is 9 (FINISHED), niet 11.
+  it('ECHTE CAPTURE: afgeronde beurt op het dock (ws 9, cov_ratio 1) → WEL charging', () => {
     deviceCache.set('SN1', new Map([
-      ['battery_state', 'CHARGING'],
+      ['battery_state', 'CHARGING'], ['work_status', '9'], ['task_mode', '1'],
+      ['cov_ratio', '1'], ['finished_num', '1'], ['error_status', '0'],
+      ['msg', 'Mode:COVERAGE Work:FINISHED Prev work:FINISHED_ONCE Recharge: FINISHED'],
+    ]));
+    expect(getMowerPhase('SN1')).toBe('charging');
+  });
+
+  // GEDOCUMENTEERDE LIVE MELDING (issue #17) + het dekkingsbewijs uit de echte
+  // capture hierboven. Zo ziet een afgeronde beurt eruit die als CANCELLED
+  // rapporteert. NIET "vereenvoudigen" naar een CANCELLED-is-afgebroken regel:
+  // dat maakte in ronde 1 de hele feature stil dood.
+  it('issue #17 CANCELLED-afrondvorm MET dekkingsbewijs → WEL charging', () => {
+    deviceCache.set('SN1', new Map([
+      ['battery_state', 'CHARGING'], ['work_status', '2'],
+      ['cov_ratio', '1'], ['finished_num', '1'],
       ['msg', 'Mode:COVERAGE Work:CANCELLED Prev work:USER_RECHARGE_STOP Recharge: FINISHED'],
     ]));
     expect(getMowerPhase('SN1')).toBe('charging');
   });
 
-  it('zelfde live msg met work_status 2 (CANCELLED) → WEL charging', () => {
+  // Regressie (Task 6 review ronde 3, finding NEW-2). Ná het dokken rollen de
+  // msg-velden door en wordt een halverwege afgebroken beurt BYTE-IDENTIEK aan
+  // de afrondvorm hierboven: elk msg-veld beschrijft de dok-cyclus, niet de
+  // maaibeurt. Alleen cov_ratio gaat over de maaibeurt zelf. Zonder die toets
+  // startte de server een autonome randmaai op een beurt die op 40% was
+  // gestopt, mogelijk terwijl de firmware de coverage weer oppakt.
+  it('zelfde msg maar cov_ratio 0.4 (halverwege gestopt) → NIET charging', () => {
     deviceCache.set('SN1', new Map([
-      ['battery_state', 'CHARGING'],
-      ['work_status', '2'],
+      ['battery_state', 'CHARGING'], ['work_status', '2'],
+      ['cov_ratio', '0.4'], ['finished_num', '0'],
       ['msg', 'Mode:COVERAGE Work:CANCELLED Prev work:USER_RECHARGE_STOP Recharge: FINISHED'],
     ]));
-    expect(getMowerPhase('SN1')).toBe('charging');
+    expect(getMowerPhase('SN1')).toBe('other');
   });
 
-  // Tegenhanger: dezelfde doorgerolde vorm, maar met een gebruikersstop als
-  // vorige status. Dat is wél een afgebroken beurt en moet geblokkeerd blijven.
-  // Dit is het enige veld dat de twee gevallen uit elkaar houdt.
-  it("Work:CANCELLED met 'Prev work:USER_STOP' → NIET charging (afgebroken)", () => {
+  it('zelfde msg zonder cov_ratio/finished_num → NIET charging (geen bewijs = veilige kant)', () => {
     deviceCache.set('SN1', new Map([
-      ['battery_state', 'CHARGING'],
-      ['work_status', '0'],
+      ['battery_state', 'CHARGING'], ['work_status', '2'],
+      ['msg', 'Mode:COVERAGE Work:CANCELLED Prev work:USER_RECHARGE_STOP Recharge: FINISHED'],
+    ]));
+    expect(getMowerPhase('SN1')).toBe('other');
+  });
+
+  it('onleesbare cov_ratio → NIET charging (veilige kant)', () => {
+    deviceCache.set('SN1', new Map([
+      ['battery_state', 'CHARGING'], ['work_status', '2'],
+      ['cov_ratio', 'n/a'], ['finished_num', '0'],
+      ['msg', 'Mode:COVERAGE Work:CANCELLED Prev work:USER_RECHARGE_STOP Recharge: FINISHED'],
+    ]));
+    expect(getMowerPhase('SN1')).toBe('other');
+  });
+
+  // cov_ratio komt als fractie 0..1 binnen; svgMap.ts en de app accepteren ook
+  // een percentage-encoding. Beide moeten hetzelfde oordeel geven, anders zou
+  // een firmware die 98 stuurt als 98% gelezen worden als "ver boven 0.95" en
+  // een die 40 stuurt als "ver boven 0.95" ook.
+  it('cov_ratio als percentage: 98 telt als gedekt, 40 niet', () => {
+    const withRatio = (v: string) => new Map([
+      ['battery_state', 'CHARGING'], ['work_status', '2'], ['cov_ratio', v], ['finished_num', '0'],
+      ['msg', 'Mode:COVERAGE Work:CANCELLED Prev work:USER_RECHARGE_STOP Recharge: FINISHED'],
+    ]);
+    deviceCache.set('SN1', withRatio('98'));
+    expect(getMowerPhase('SN1')).toBe('charging');
+    deviceCache.set('SN2', withRatio('40'));
+    expect(getMowerPhase('SN2')).toBe('other');
+  });
+
+  // GECONSTRUEERD (geen capture): de doorgerolde vorm met een gebruikersstop
+  // als vorige status. Deze test leunt op prevWorkAborted, en dat patroon is
+  // een aanname: de ENE echte capture laat zien dat "Prev work" bij het dokken
+  // doorrolt (naar FINISHED_ONCE), dus mogelijk overleeft USER_STOP dat niet.
+  // De echte bescherming voor dit scenario is daarom de cov_ratio-toets
+  // hierboven, niet deze test.
+  it('GECONSTRUEERD: Work:CANCELLED met Prev work:USER_STOP → NIET charging', () => {
+    deviceCache.set('SN1', new Map([
+      ['battery_state', 'CHARGING'], ['work_status', '0'],
+      ['cov_ratio', '1'], ['finished_num', '1'],
       ['msg', 'Mode:COVERAGE Work:CANCELLED Prev work:USER_STOP Recharge: FINISHED'],
     ]));
     expect(getMowerPhase('SN1')).toBe('other');
   });
 
-  // GEDOCUMENTEERD GAT, bewust zo gelaten. Als de firmware bij die live
-  // afgeronde beurt work_status 11 (USER_RECHARGE_STOP) meldt in plaats van 2,
-  // dan is die toestand niet te onderscheiden van een mid-mow laadpauze die
-  // toevallig al naar Work:WAIT/CANCELLED is doorgerold: exact dezelfde
-  // msg-velden, exact dezelfde code. Dan kiezen we de veilige kant (niet
-  // vuren), want de andere kant betekent een randmaai starten terwijl de
-  // firmware de gepauzeerde coverage hervat. Kosten: de randmaai blijft stil
-  // achterwege. Zie het rapport: dit is het hardware-verificatiepunt (welke
-  // work_status meldt een AFGERONDE beurt op het dock?).
-  it('GAP: dezelfde live msg met work_status 11 → other (veilige kant, zie rapport)', () => {
+  // Finding NEW-3, deel 1: onderbroken coverage laat "Prev work:COVERING"
+  // achter. Bewust met "Recharge: FINISHED" én dekkingsbewijs, zodat alle
+  // andere regels deze msg zouden doorlaten en ALLEEN prevWorkAborted hem nog
+  // tegenhoudt. Zonder COVERING in dat patroon geeft deze test 'charging'.
+  it('GECONSTRUEERD: Prev work:COVERING met afrondstaart → NIET charging', () => {
     deviceCache.set('SN1', new Map([
-      ['battery_state', 'CHARGING'],
-      ['work_status', '11'],
+      ['battery_state', 'CHARGING'], ['work_status', '0'],
+      ['cov_ratio', '1'], ['finished_num', '1'],
+      ['msg', 'Mode:COVERAGE Work:CANCELLED Prev work:COVERING Recharge: FINISHED'],
+    ]));
+    expect(getMowerPhase('SN1')).toBe('other');
+  });
+
+  it('GECONSTRUEERD: Prev work:MOVING / RUNNING → NIET charging', () => {
+    for (const prev of ['MOVING', 'RUNNING']) {
+      deviceCache.set('SN1', new Map([
+        ['battery_state', 'CHARGING'], ['work_status', '0'],
+        ['cov_ratio', '1'], ['finished_num', '1'],
+        ['msg', `Mode:COVERAGE Work:CANCELLED Prev work:${prev} Recharge: FINISHED`],
+      ]));
+      expect(getMowerPhase('SN1')).toBe('other');
+    }
+  });
+
+  // Finding NEW-3, deel 2: "Recharge: WAIT" is GEEN afrondingssignaal. Het
+  // beschrijft de dok-cyclus en komt in de echte captures ook midden in een
+  // mapping-sessie voor ("Mode:MAPPING Work:MANUAL_MAPPING_OBSTACLE ...
+  // Recharge: WAIT", cov_ratio 0). Zou het wél als afronding tellen, dan zou
+  // een kale CANCELLED daarmee worden witgewassen en 'charging' opleveren.
+  it("GECONSTRUEERD: 'Recharge: WAIT' wast een CANCELLED niet wit", () => {
+    deviceCache.set('SN1', new Map([
+      ['battery_state', 'CHARGING'], ['work_status', '0'],
+      ['cov_ratio', '1'], ['finished_num', '1'],
+      ['msg', 'Mode:COVERAGE Work:CANCELLED Prev work:WAIT Recharge: WAIT'],
+    ]));
+    expect(getMowerPhase('SN1')).toBe('other');
+  });
+
+  // GAP, bewust de veilige kant. Meldt een afgeronde beurt onverhoopt tóch
+  // work_status 11, dan blijft de randmaai achterwege. De echte capture zegt
+  // dat het 9 is, dus dit is nu een randgeval in plaats van een open vraag.
+  it('GAP: afrondvorm met work_status 11 → other (veilige kant)', () => {
+    deviceCache.set('SN1', new Map([
+      ['battery_state', 'CHARGING'], ['work_status', '11'],
+      ['cov_ratio', '1'], ['finished_num', '1'],
       ['msg', 'Mode:COVERAGE Work:CANCELLED Prev work:USER_RECHARGE_STOP Recharge: FINISHED'],
     ]));
     expect(getMowerPhase('SN1')).toBe('other');

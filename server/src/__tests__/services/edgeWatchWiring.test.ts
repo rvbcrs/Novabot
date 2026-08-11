@@ -60,19 +60,32 @@ function setMowing(sn: string): void {
     ['msg', 'Mode:COVERAGE Work:COVERING Recharge: WAIT'],
   ]));
 }
-/** Afgeronde beurt op het dock: exact de vorm uit de live captures. */
+/** Afgeronde beurt op het dock. ECHTE CAPTURE, volledige payload uit
+ *  research/documents/obstacle-capture-norelay-20260601-162451.jsonl:
+ *  cov_ratio 1, finished_num 1, work_status 9, task_mode 1. */
 function setDockedAfterFinishedMow(sn: string): void {
   deviceCache.set(sn, new Map([
-    ['battery_state', 'CHARGING'], ['work_status', '0'], ['task_mode', '1'],
-    ['msg', 'Mode:COVERAGE Work:WAIT Prev work:FINISHED Recharge: FINISHED'],
+    ['battery_state', 'CHARGING'], ['work_status', '9'], ['task_mode', '1'],
+    ['cov_ratio', '1'], ['finished_num', '1'], ['error_status', '0'],
+    ['msg', 'Mode:COVERAGE Work:FINISHED Prev work:FINISHED_ONCE Recharge: FINISHED'],
   ]));
 }
-/** De ANDERE live vorm van een afgeronde beurt op het dock: met Work:CANCELLED
- *  als leidende tag, twee keer gemeld in issue #17 en vastgelegd in
- *  equipmentState.ts:243-264. */
+/** De ANDERE vorm van een afgeronde beurt op het dock: met Work:CANCELLED als
+ *  leidende tag. Twee keer los gemeld in issue #17 en vastgelegd in
+ *  equipmentState.ts:243-264; het dekkingsbewijs komt uit de capture hierboven. */
 function setDockedAfterFinishedMowIssue17(sn: string): void {
   deviceCache.set(sn, new Map([
     ['battery_state', 'CHARGING'], ['work_status', '2'],
+    ['cov_ratio', '1'], ['finished_num', '1'],
+    ['msg', 'Mode:COVERAGE Work:CANCELLED Prev work:USER_RECHARGE_STOP Recharge: FINISHED'],
+  ]));
+}
+/** Halverwege afgebroken beurt die daarna dockt: BYTE-IDENTIEKE msg aan de
+ *  afrondvorm hierboven, alleen het dekkingsbewijs verschilt (40% gemaaid). */
+function setDockedAfterAbortedMow(sn: string): void {
+  deviceCache.set(sn, new Map([
+    ['battery_state', 'CHARGING'], ['work_status', '2'],
+    ['cov_ratio', '0.4'], ['finished_num', '0'],
     ['msg', 'Mode:COVERAGE Work:CANCELLED Prev work:USER_RECHARGE_STOP Recharge: FINISHED'],
   ]));
 }
@@ -138,6 +151,27 @@ describe('rand-dag watcher bekabeling', () => {
 
     expect(edgeCutCalls()).toHaveLength(1);
     expect(edgeCutCalls()[0]).toMatchObject({ start_edge_cut: { mapName: 'map0', bladeHeight: 50 } });
+  });
+
+  // Finding NEW-3/NEW-2 end-to-end: de maaier maait, wordt halverwege gestopt
+  // en dockt met een msg die niet te onderscheiden is van een afgeronde beurt.
+  // Alleen het dekkingsbewijs (cov_ratio 0.4) scheidt de twee. Er mag dan geen
+  // bewegingscommando uitgaan, ook niet op latere ticks.
+  it('afgebroken beurt (cov_ratio 0.4) met afrond-vormige msg → GEEN randmaai', () => {
+    const SN = 'WIRE_ABORTED';
+    createDueSchedule(SN, JSON.stringify([NOW.getDay()]));
+    setIdleOnDock(SN);
+
+    startScheduleRunner();
+    setMowing(SN);
+    vi.advanceTimersByTime(TICK_MS);
+    expect(__getPendingEdgeForTest().get(SN)?.sawMowing).toBe(true);
+
+    setDockedAfterAbortedMow(SN);
+    vi.advanceTimersByTime(TICK_MS * 4);
+    expect(edgeCutCalls()).toHaveLength(0);
+    // Watcher blijft netjes wachten (geen vuur, geen verlies) tot de timeout.
+    expect(__getPendingEdgeForTest().has(SN)).toBe(true);
   });
 
   it('edge_days NULL armt niets en stuurt nooit een randmaai (huidig gedrag)', () => {
