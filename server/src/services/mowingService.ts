@@ -182,15 +182,37 @@ export function stopMowing(sn: string): MowingResult {
 }
 
 /** Grove maaier-fase uit de sensor-cache, voor de rand-dag watcher.
- *  charging = battery_state CHARGING (= gedockt/klaar); mowing = actieve
- *  coverage-status; other = al het overige (undocken, idle, offline). */
+ *  charging = battery_state CHARGING ÉN het is een echt einde-taak-dock;
+ *  mowing = actieve coverage-status; other = al het overige (undocken, idle,
+ *  offline, en ook een mid-mow laadpauze, zie hieronder). */
 export function getMowerPhase(sn: string): 'mowing' | 'charging' | 'other' {
   const raw = deviceCache.get(sn);
   if (!raw) return 'other';
-  if ((raw.get('battery_state') ?? '').toUpperCase() === 'CHARGING') return 'charging';
+  const batteryState = (raw.get('battery_state') ?? '').toUpperCase();
+  const taskMode = parseInt(raw.get('task_mode') ?? '0', 10);
+  const msg = raw.get('msg') ?? '';
+
+  // De firmware pauzeert een lopende coverage-taak zelf voor een low-battery
+  // recharge: hij dockt, laadt op tot ongeveer 96% en hervat dan de
+  // gepauzeerde taak zelf (coverContinueDeal, zie
+  // research/documents/firmware-auto-continue-after-recharge.md). Tijdens die
+  // laadstop staat battery_state al op CHARGING terwijl de taak feitelijk nog
+  // loopt (gepauzeerd, niet klaar). Deze check moet dus VOOR de
+  // battery_state==CHARGING-check komen: anders classificeert de watcher zo'n
+  // mid-mow laadpauze als 'charging', vuurt startEdgeCut (een echt
+  // bewegingscommando) af, en hervat de firmware vrijwel gelijktijdig de
+  // gepauzeerde coverage zelf, wat neerkomt op twee conflicterende
+  // bewegingscommando's op echte hardware. Mirrort isInterruptedCoverage in
+  // dashboard/src/utils/mowerActivity.ts, de al bewezen classificatie van de app.
+  const onDock = batteryState === 'CHARGING' || batteryState === 'FINISHED';
+  const pausedForRecharge = /Work:USER_RECHARGE_STOP\b/.test(msg) || /Work:BATTERY_LOW_RECHARGE\b/.test(msg);
+  const pausedByUser = /Work:USER_STOP\b/.test(msg) || /Work:PAUSED\b/.test(msg);
+  const interruptedCoverage = onDock && taskMode === 1 && (pausedForRecharge || pausedByUser);
+  if (interruptedCoverage) return 'other';
+
+  if (batteryState === 'CHARGING') return 'charging';
   const ws = parseInt(raw.get('work_status') ?? '', 10);
   if ([100, 101, 102, 103, 150].includes(ws)) return 'mowing';
-  const msg = raw.get('msg') ?? '';
   if (/Work:(COVERING|RUNNING|MOVING|BOUNDARY_COVERING)/.test(msg)) return 'mowing';
   return 'other';
 }
