@@ -181,6 +181,30 @@ export function stopMowing(sn: string): MowingResult {
   return { ok: true };
 }
 
+/** Grove maaier-fase uit de sensor-cache, voor de rand-dag watcher.
+ *  charging = battery_state CHARGING (= gedockt/klaar); mowing = actieve
+ *  coverage-status; other = al het overige (undocken, idle, offline). */
+export function getMowerPhase(sn: string): 'mowing' | 'charging' | 'other' {
+  const raw = deviceCache.get(sn);
+  if (!raw) return 'other';
+  if ((raw.get('battery_state') ?? '').toUpperCase() === 'CHARGING') return 'charging';
+  const ws = parseInt(raw.get('work_status') ?? '', 10);
+  if ([100, 101, 102, 103, 150].includes(ws)) return 'mowing';
+  const msg = raw.get('msg') ?? '';
+  if (/Work:(COVERING|RUNNING|MOVING|BOUNDARY_COVERING)/.test(msg)) return 'mowing';
+  return 'other';
+}
+
+/** Start een losse randmaai-sessie (zelfde payload als de app). bladeHeightMm
+ *  wordt op de maaier (extended_commands.py) nogmaals 20..90 geclamd. */
+export function startEdgeCut(sn: string, mapName: string, bladeHeightMm: number): MowingResult {
+  if (!sn) return { ok: false, error: 'sn required' };
+  if (!isDeviceOnline(sn)) return { ok: false, error: 'mower offline' };
+  sendCommand(sn, { start_edge_cut: { mapName, bladeHeight: bladeHeightMm } });
+  console.log(`[MowingService] start_edge_cut: sn=${sn} map=${mapName} blade=${bladeHeightMm}mm`);
+  return { ok: true };
+}
+
 /**
  * Stuur de maaier naar het laadstation.
  */
