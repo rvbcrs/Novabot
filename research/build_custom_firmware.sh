@@ -883,9 +883,15 @@ if is_stock_addr:
     log_msg(f"MQTT addr updated: {existing_addr} -> {mqtt_addr}")
 else:
     log_msg(f"MQTT addr KEPT (custom): {existing_addr} (niet overschreven door {mqtt_addr})")
-    # Alleen port updaten als die verschilt
-    if c["mqtt"]["value"].get("port") != mqtt_port:
+    # De poort hoort bij het adres: als BLE-provisioning een custom broker heeft
+    # gezet (bv. :1884 naast een Home Assistant Mosquitto op 1883), dan mag de
+    # build-time default die NIET terugzetten bij elke boot. Alleen invullen als
+    # er helemaal geen poort staat.
+    if not c["mqtt"]["value"].get("port"):
         c["mqtt"]["value"]["port"] = mqtt_port
+        log_msg(f"MQTT port ontbrak -> {mqtt_port}")
+    else:
+        log_msg(f"MQTT port KEPT (custom): {c['mqtt']['value']['port']}")
 
 if "config" not in c:
     c["config"] = {"set": 1, "value": {"tz": "Europe/Amsterdam"}}
@@ -2101,6 +2107,62 @@ if [ -f "$API_YAML" ]; then
     sed -i '' "s/novabot_version_code: ${BASE_VERSION}/novabot_version_code: ${VERSION}/" "$API_YAML"
     echo "  Versie in novabot_api.yaml → ${VERSION}"
 fi
+
+# === Stap 7bis: robot_decision patchen — include_edge default OFF ===
+# De stock robot_decision (C++, package compound_decision) zet in
+# coverStartDeal onvoorwaardelijk include_edge=true op het coverage-goal
+# (instructie strb w3,[sp,#0xae] = bytes e3 bb 02 39, VMA/file-offset
+# 0x921a8). Daardoor draait ELKE gewone maaibeurt automatisch een randfase.
+# We patchen naar strb wzr,[sp,#0xae] (ff bb 02 39) zodat include_edge altijd
+# false start; randmaaien gebeurt voortaan alleen nog via een losse
+# start_edge_cut-commando vanuit de server, op de dagen die de gebruiker
+# instelde (zie docs/superpowers/specs/2026-08-02-edge-cut-schedule-design.md).
+#
+# Patroon-based i.p.v. hardcoded offset: als een toekomstige firmware-revisie
+# de code verschuift, moet de build hard falen i.p.v. de verkeerde bytes te
+# overschrijven en een kapotte maaier te produceren. De telling gebeurt op de
+# RUWE bytes in Python (bytes.count), niet op een hexdump-string-match — dat
+# laatste kan nibble-misaligned false positives geven die geen echte
+# byte-grens representeren.
+echo "  robot_decision patchen (include_edge default OFF)..."
+RD="$NOVABOT_ROOT/install/compound_decision/lib/compound_decision/robot_decision"
+if [ ! -f "$RD" ]; then
+    echo "ERROR: robot_decision niet gevonden op $RD — firmware-structuur gewijzigd?" >&2
+    exit 1
+fi
+python3 - "$RD" <<'PY'
+import sys
+
+path = sys.argv[1]
+pat = bytes.fromhex("e3bb0239")   # strb w3,[sp,#0xae]  (include_edge = true)
+repl = bytes.fromhex("ffbb0239")  # strb wzr,[sp,#0xae] (include_edge = false)
+
+data = open(path, "rb").read()
+hits = data.count(pat)
+
+if hits != 1:
+    print(f"ERROR: verwachtte precies 1x het include_edge-patroon in robot_decision, vond {hits}x.", file=sys.stderr)
+    if hits == 0:
+        already = data.count(repl)
+        print("  Nul hits kan twee dingen betekenen — controleer welke:", file=sys.stderr)
+        print(f"  1) Dit bronbestand is AL gepatcht (bijv. --input wees naar een eerder custom-fw i.p.v. een"
+              f" stock .deb): replacement-patroon komt {already}x voor. {'Bevestigd — ' if already else 'Niet bevestigd — '}"
+              f"gebruik een STOCK .deb als --input, niet een al-gepatchte custom build.", file=sys.stderr)
+        print("  2) De firmware-layout is echt veranderd (nieuwe robot_decision-revisie) — de offset/het patroon"
+              " moet opnieuw geverifieerd worden (disassemble coverStartDeal), niet blind toegepast.", file=sys.stderr)
+    else:
+        print(f"  Patroon niet meer uniek ({hits}x) — firmware-layout gewijzigd, kan de doelinstructie niet"
+              " betrouwbaar aanwijzen. Patch afbreken.", file=sys.stderr)
+    sys.exit(1)
+
+size_before = len(data)
+patched = data.replace(pat, repl)
+if len(patched) != size_before:
+    print("ERROR: bestandsgrootte veranderd door patch — mag niet, afbreken.", file=sys.stderr)
+    sys.exit(1)
+open(path, "wb").write(patched)
+print("  robot_decision gepatcht: include_edge default OFF (1x e3bb0239 -> ffbb0239)")
+PY
 
 # === Stap 8: package_verify.json bijwerken ===
 echo "[8/9] package_verify.json bijwerken..."
