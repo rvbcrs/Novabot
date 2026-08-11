@@ -214,7 +214,7 @@ git commit -m "feat(repo): edge_days lezen/schrijven in scheduleRepo"
 
 - [ ] **Step 1: Schrijf de falende test (pure DTO-mapping)**
 
-De mapper is niet los geëxporteerd; test het rondje via de repo + een geëxporteerde helper. Voeg eerst een exпорteerbare pure helper toe in `dashboard.ts` en test die.
+De DTO-mapper zelf is niet los geëxporteerd. Voeg twee pure, exporteerbare helpers toe in `dashboard.ts` en test die direct.
 
 ```typescript
 // server/src/__tests__/routes/edgeDaysDto.test.ts
@@ -327,12 +327,18 @@ describe('isEdgeDay', () => {
 });
 
 describe('edgeBladeHeightMm', () => {
-  it('mm-invoer (>=20) blijft mm, geclamd 20..90', () => {
+  it('mm-invoer (>=20) blijft mm', () => {
     expect(edgeBladeHeightMm(40)).toBe(40);
-    expect(edgeBladeHeightMm(10)).toBe(100 > 90 ? 90 : 100); // cm-invoer 10 → 100mm → clamp 90
-    expect(edgeBladeHeightMm(4)).toBe(40);   // cm-invoer 4 → 40mm
-    expect(edgeBladeHeightMm(1)).toBe(20);   // cm 1 → 10mm → clamp 20 (ondergrens)
-    expect(edgeBladeHeightMm(200)).toBe(90); // mm 200 → clamp 90
+    expect(edgeBladeHeightMm(90)).toBe(90);
+  });
+  it('cm-invoer (<20) wordt mm', () => {
+    expect(edgeBladeHeightMm(4)).toBe(40);
+    expect(edgeBladeHeightMm(9)).toBe(90);
+  });
+  it('clamt op 20..90', () => {
+    expect(edgeBladeHeightMm(10)).toBe(90);  // cm 10 → 100mm → bovengrens
+    expect(edgeBladeHeightMm(1)).toBe(20);   // cm 1 → 10mm → ondergrens
+    expect(edgeBladeHeightMm(200)).toBe(90); // mm 200 → bovengrens
   });
 });
 ```
