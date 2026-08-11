@@ -32,6 +32,15 @@ const TRIGGER_WINDOW_MS = 5 * 60_000; // 5 minuten window — ruim genoeg voor r
 const EDGE_WATCH_TIMEOUT_MS = 12 * 60 * 60 * 1000; // 12 uur
 const pendingEdge = new Map<string, EdgeWatchEntry>(); // sn → watcher
 
+// Terugval-maaihoogte voor legacy rijen waar dashboard_schedules.cutting_height
+// NULL is. Eenheid is user-cm, dezelfde als de app-editor schrijft; de
+// dashboard-editor schrijft mm. cuttingHeightToWire (maaien) en
+// edgeBladeHeightMm (randmaaien) herkennen allebei cm (<20) en mm (>=20) aan
+// het bereik, dus dezelfde constante bedient beide. Eén gedeelde waarde is
+// noodzakelijk: met een aparte fallback per pad maait zo'n legacy schema op
+// 5 cm en randmaait het op 4 cm.
+const DEFAULT_CUTTING_HEIGHT_CM = 5;
+
 // Visible per-schedule decision log: writes to the console (→ proxy log file +
 // stdout) AND the dashboard MQTT-log stream (pushMqttLog), so you can actually
 // SEE whether a scheduled run started and, if not, exactly why (offline / rain /
@@ -123,6 +132,19 @@ export function advanceEdgeWatch(
   return { next: entry, fire: false };
 }
 
+/** ALLEEN VOOR TESTS: momentopname van de gearmde rand-dag watchers.
+ *
+ *  De bekabeling eromheen (armen bij een geslaagde start, niet armen bij een
+ *  afwijzing, vervallen na de timeout) is de veiligheidskritieke helft van deze
+ *  feature en is van buitenaf niet te zien: `pendingEdge` is module-state en
+ *  `checkSchedules` is niet geëxporteerd. Zonder dit kijkgaatje kan een test
+ *  alleen "er is geen randmaai gestuurd" vaststellen, wat óók waar is als de
+ *  watcher wél verkeerd gearmd staat en pas een tick later vuurt. Bewust een
+ *  kopie: een test kan de echte state hiermee niet muteren. */
+export function __getPendingEdgeForTest(): Map<string, EdgeWatchEntry> {
+  return new Map(pendingEdge);
+}
+
 /** Kalenderdag (YYYY-MM-DD) van `now` in de tijdzone van het schema. */
 export function scheduleDayKey(row: ScheduleRow, now: Date): string {
   const wc = wallClock(now, row.timezone ?? null);
@@ -172,12 +194,15 @@ function checkSchedules() {
   // delete/set tijdens de iteratie veilig is.
   for (const [sn, entry] of [...pendingEdge]) {
     const { next, fire } = advanceEdgeWatch(entry, getMowerPhase(sn), now.getTime(), EDGE_WATCH_TIMEOUT_MS);
+    // State EERST bijwerken, het bewegingscommando als LAATSTE. Gooit de
+    // publish-keten een fout, dan is de watcher al opgeruimd en kan dezelfde
+    // entry op de volgende tick niet nog een keer vuren.
+    if (next === null) pendingEdge.delete(sn);
+    else pendingEdge.set(sn, next);
     if (fire) {
       const r = startEdgeCut(sn, entry.mapName, entry.bladeHeightMm);
       console.log(`[ScheduleRunner] EDGE ${r.ok ? 'STARTED' : 'FAILED'} sn=${sn} map=${entry.mapName} blade=${entry.bladeHeightMm}mm ${r.error ?? ''}`);
     }
-    if (next === null) pendingEdge.delete(sn);
-    else pendingEdge.set(sn, next);
   }
 
   // Haal ALLE enabled schedules op — de runner handelt alles af
@@ -340,7 +365,7 @@ function triggerSchedule(row: ScheduleRow) {
   // Start maaien via centrale mowingService
   const result = startMowing({
     sn: row.mower_sn,
-    cuttingHeight: row.cutting_height ?? 5,
+    cuttingHeight: row.cutting_height ?? DEFAULT_CUTTING_HEIGHT_CM,
     pathDirection: effectiveDirection,
     area,
   });
@@ -348,7 +373,7 @@ function triggerSchedule(row: ScheduleRow) {
     // Alleen bij een geslaagde start doorschuiven — een regen-skip of busy-
     // afwijzing mag de volgende richting niet opschuiven.
     scheduleRepo.incrementTriggerCount(row.schedule_id);
-    logScheduleDecision(row, true, 'STARTED', `area=${area} height=${row.cutting_height ?? 5}cm dir=${effectiveDirection}°`);
+    logScheduleDecision(row, true, 'STARTED', `area=${area} height=${row.cutting_height ?? DEFAULT_CUTTING_HEIGHT_CM}cm dir=${effectiveDirection}°`);
 
     // Rand-dag? Arm de watcher zodat na de maaibeurt een losse randmaai volgt.
     // Alleen bij een geslaagde start: een regen-skip of busy-afwijzing mag nooit
@@ -360,7 +385,7 @@ function triggerSchedule(row: ScheduleRow) {
       const selected = row.map_id ? workMaps.find(w => w.map_id === row.map_id) : undefined;
       const mapName = selected?.canonical_name?.match(/^map\d+/)?.[0] ?? 'map0';
       pendingEdge.set(row.mower_sn, {
-        bladeHeightMm: edgeBladeHeightMm(row.cutting_height ?? 40),
+        bladeHeightMm: edgeBladeHeightMm(row.cutting_height ?? DEFAULT_CUTTING_HEIGHT_CM),
         mapName,
         armedAt: Date.now(),
         sawMowing: false,
@@ -370,7 +395,7 @@ function triggerSchedule(row: ScheduleRow) {
   } else {
     // Most common cause: startMowing's isMowerBusy guard rejected the start
     // because the mower is in an active task (or was wrongly parked as "busy").
-    logScheduleDecision(row, false, 'NOT STARTED', `${result.error} (area=${area} height=${row.cutting_height ?? 5}cm)`);
+    logScheduleDecision(row, false, 'NOT STARTED', `${result.error} (area=${area} height=${row.cutting_height ?? DEFAULT_CUTTING_HEIGHT_CM}cm)`);
   }
 
   // Update last_triggered_at

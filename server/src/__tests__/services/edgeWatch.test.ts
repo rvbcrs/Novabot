@@ -29,6 +29,17 @@ describe('advanceEdgeWatch', () => {
     expect(r.fire).toBe(false);
     expect(r.next).toBeNull();
   });
+  // De timeout-check MOET vóór de vuur-check staan. Zonder die volgorde zou een
+  // watcher die uren geleden is gearmd alsnog vuren zodra de maaier toevallig
+  // gaat laden (bijvoorbeeld na een handmatige beurt 's avonds): een spookstart
+  // van een echt bewegingscommando, uren na de maaibeurt waar hij bij hoorde.
+  it('vuurt NIET als de entry zowel verlopen is als zou vuren (timeout gaat voor)', () => {
+    const seen = { ...base, sawMowing: true };
+    const r = advanceEdgeWatch(seen, 'charging', base.armedAt + TIMEOUT + 1, TIMEOUT);
+    expect(r.fire).toBe(false);
+    expect(r.next).toBeNull();
+  });
+
   it("blijft wachten bij 'other' (laadpauze midden in de maaibeurt) zonder te vuren", () => {
     const seen = { ...base, sawMowing: true };
     const r = advanceEdgeWatch(seen, 'other', 4000, TIMEOUT);
