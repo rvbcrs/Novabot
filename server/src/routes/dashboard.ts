@@ -85,6 +85,24 @@ interface EquipmentRow {
   mower_ip: string | null;
 }
 
+/** edge_days (DB-JSON) → array voor de DTO. Corrupt/NULL → null zodat een
+ *  kapotte waarde nooit de schedule-lijst laat crashen. */
+export function parseEdgeDays(raw: string | null): number[] | null {
+  if (raw == null) return null;
+  try {
+    const v = JSON.parse(raw);
+    return Array.isArray(v) ? v.filter((n): n is number => Number.isInteger(n) && n >= 0 && n <= 6) : null;
+  } catch { return null; }
+}
+
+/** array → DB-JSON. undefined blijft undefined (PATCH: veld niet aanraken);
+ *  null → null (expliciet wissen). */
+export function serializeEdgeDays(days: number[] | null | undefined): string | null | undefined {
+  if (days === undefined) return undefined;
+  if (days === null) return null;
+  return JSON.stringify(days);
+}
+
 export const dashboardRouter = Router();
 
 // Running server version (read once from package.json). Exposed on this OPEN
@@ -3506,6 +3524,7 @@ interface ScheduleRow {
   timezone: string | null;
   trigger_count: number;
   skip_date: string | null;
+  edge_days: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -3537,6 +3556,7 @@ function scheduleRowToDto(r: ScheduleRow) {
     intervalAnchorDate: r.interval_anchor_date,
     timezone: r.timezone ?? null,
     skipDate: r.skip_date ?? null,
+    edgeDays: parseEdgeDays(r.edge_days),
     // Richting die de VOLGENDE run daadwerkelijk gebruikt. Bij alternate
     // rotatie is dat base + trigger_count×step — de kaarten toonden eerst
     // altijd de basisrichting, wat elke dag "60°" liet zien terwijl de
@@ -3634,6 +3654,9 @@ dashboardRouter.post('/schedules/:sn', (req: Request, res: Response) => {
     // IANA zone van de browser/app die het schema aanmaakt. De server-side
     // runner vuurt start_time in DEZE zone; null = container-TZ (legacy).
     timezone?: string;
+    // Dagen (0=zo..6=za) waarop na het maaien een randmaai-beurt volgt.
+    // NULL/undefined = huidig gedrag (geen edge-cut).
+    edgeDays?: number[] | null;
   };
 
   if (!body.startTime) {
@@ -3666,6 +3689,7 @@ dashboardRouter.post('/schedules/:sn', (req: Request, res: Response) => {
     interval_days: body.intervalDays ?? 0,
     interval_anchor_date: body.intervalAnchorDate ?? null,
     timezone: body.timezone ?? null,
+    edge_days: serializeEdgeDays(body.edgeDays) ?? null,
   });
 
   // Stuur timer_task naar maaier als die online is — maar NIET als rain_pause
@@ -3737,6 +3761,7 @@ dashboardRouter.patch('/schedules/:sn/:scheduleId', (req: Request, res: Response
     interval_anchor_date: body.intervalAnchorDate as string | undefined,
     timezone: body.timezone as string | undefined,
     skip_date: body.skipDate !== undefined ? (body.skipDate as string | null) : undefined,
+    edge_days: serializeEdgeDays(body.edgeDays as number[] | null | undefined),
   });
 
   const row = scheduleRepo.findById(scheduleId) as ScheduleRow;
