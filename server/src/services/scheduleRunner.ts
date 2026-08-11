@@ -77,6 +77,16 @@ function wallClock(now: Date, tz: string | null) {
   }
 }
 
+/** Is vandaag (weekday 0=zondag) een rand-dag voor dit schema?
+ *  edge_days NULL/corrupt/leeg → false (huidig gedrag: geen server-randmaai). */
+export function isEdgeDay(edgeDaysJson: string | null, weekday: number): boolean {
+  if (!edgeDaysJson) return false;
+  try {
+    const days = JSON.parse(edgeDaysJson);
+    return Array.isArray(days) && days.includes(weekday);
+  } catch { return false; }
+}
+
 /** Kalenderdag (YYYY-MM-DD) van `now` in de tijdzone van het schema. */
 export function scheduleDayKey(row: ScheduleRow, now: Date): string {
   const wc = wallClock(now, row.timezone ?? null);

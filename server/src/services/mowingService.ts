@@ -101,6 +101,15 @@ export function cuttingHeightToWire(input: number): number {
   return Math.max(0, clampedCm - 2);
 }
 
+/** Randmaai bladehoogte in mm voor start_edge_cut. cutting_height komt als mm
+ *  (dashboard, >=20) of user-cm (app) binnen — zelfde heuristiek als
+ *  cuttingHeightToWire. extended_commands.py clamt óók 20..90 op de maaier;
+ *  we clampen hier alvast zodat de payload nooit buiten bereik valt. */
+export function edgeBladeHeightMm(cuttingHeight: number): number {
+  const mm = cuttingHeight >= 20 ? Math.round(cuttingHeight) : Math.round(cuttingHeight * 10);
+  return Math.max(20, Math.min(90, mm));
+}
+
 /** Publish a command to the mower. Delegates to publishToDevice which
  *  checks isAesCapable() and falls back to plain JSON for stock v5.x
  *  mowers and charger v0.3.x — both silently drop AES payloads, so
