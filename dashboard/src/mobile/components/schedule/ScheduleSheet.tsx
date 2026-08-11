@@ -123,6 +123,9 @@ export function ScheduleSheet({ open, onClose, sn, editSchedule, createDefaults,
       alternateDirection: editSchedule?.alternateDirection ?? DEFAULT_SCHEDULE.alternateDirection,
       alternateStep: editSchedule?.alternateStep ?? DEFAULT_SCHEDULE.alternateStep,
       edgeOffset: editSchedule?.edgeOffset ?? DEFAULT_SCHEDULE.edgeOffset,
+      // Deze sheet heeft geen UI voor randmaai-dagen; bestaande keuze
+      // ongewijzigd meesturen zodat bewerken 'm niet stilletjes wist.
+      edgeDays: editSchedule?.edgeDays ?? null,
       rainPause,
       rainThresholdMm: editSchedule?.rainThresholdMm ?? DEFAULT_SCHEDULE.rainThresholdMm,
       rainThresholdProbability: editSchedule?.rainThresholdProbability ?? DEFAULT_SCHEDULE.rainThresholdProbability,
