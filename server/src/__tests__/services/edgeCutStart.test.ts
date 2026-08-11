@@ -29,14 +29,30 @@ import { publishToDevice } from '../../mqtt/mapSync.js';
 // report_state_robot payloads):
 //   "Mode:COVERAGE Work:FINISHED Prev work:FINISHED_ONCE Recharge: FINISHED"
 //        cov_ratio 1, finished_num 1, work_status 9, task_mode 1, error_status 0
-//        → dit is een AFGERONDE maaibeurt op het dock.
+//        → dit is een AFGERONDE maaibeurt op het dock (LFIN1231000211). De tag
+//        staat URENLANG stabiel (1729 samples over meerdere captures); hij rolt
+//        binnen het capture-venster nooit door naar WAIT of CANCELLED.
 //   "Mode:COVERAGE Work:WAIT Prev work:WAIT Recharge: FINISHED"
 //        cov_ratio 0, finished_num 0, work_status 0  → idle op het dock.
+//        LET OP: dit is een ANDERE maaier (LFIN2230700238) die naast de
+//        afgeronde staat; eerdere rondes lazen die twee als één "alternerende"
+//        maaier. De vorm is dus een echte idle-dock, geen afrond-rollover.
+//   "Mode:MAPPING Work:FINISHED Prev work:REQUEST_START Recharge: FINISHED"
+//        cov_ratio 0.099, work_status 9, task_mode 2  → een MAPPING-sessie
+//        rapporteert óók een live "Work:FINISHED" met "Recharge: FINISHED";
+//        daarom eist het vertrouwde afrond-signaal "Mode:COVERAGE" erbij.
 //   "Mode:MAPPING Work:MANUAL_MAPPING_OBSTACLE Prev work:REQUEST_START Recharge: WAIT"
 //        cov_ratio 0  → bewijst dat "Recharge: WAIT" geen afrondingssignaal is.
+// NIET in de captures aanwezig (ronde 4 geverifieerd): geen enkele vorm met
+// "Prev work:MOVING", "Prev work:RUNNING" of "Prev work:COVERING", geen
+// go-home-rit na een afgeronde beurt, geen gebruikersstop. Uitspraken over die
+// vormen zijn dus aannames, geen bewijs.
 // GEDOCUMENTEERDE LIVE MELDING (geen capture met velden, wel twee losse
 // gebruikersmeldingen in issue #17, vastgelegd in equipmentState.ts:243-264):
 //   "Mode:COVERAGE Work:CANCELLED Prev work:USER_RECHARGE_STOP Recharge: FINISHED"
+// PLAN-DOC FIXTURE (zwak bewijs, geen ruwe capture in de repo):
+//   "Mode:COVERAGE Work:WAIT Prev work:FINISHED Recharge: FINISHED"
+//        alleen in docs/superpowers/plans/2026-04-26-open-mqtt-node.md:3191.
 // GECONSTRUEERD (nergens in deze repo vastgelegd, samengesteld uit de
 // gedocumenteerde veldpatronen): alles wat hieronder als zodanig gemarkeerd is.
 describe('getMowerPhase', () => {
@@ -135,6 +151,33 @@ describe('getMowerPhase', () => {
     expect(getMowerPhase('SN1')).toBe('charging');
   });
 
+  // Ronde 4, finding 1 tegenhanger: het dekkingsbewijs is NIET universeel
+  // verplicht. De live tag "Mode:COVERAGE Work:FINISHED" verschijnt nooit
+  // midden in een maaibeurt (capture: urenlang stabiel op het dock) en blijft
+  // daarom vertrouwd, óók zonder cov_ratio. Zou dit 'other' opleveren, dan is
+  // de feature dood op elke firmware die cov_ratio niet meestuurt.
+  // GECONSTRUEERD: capture-msg, maar met cov_ratio/finished_num weggelaten.
+  it('afgeronde beurt met Work:FINISHED maar ZONDER cov_ratio → toch charging', () => {
+    deviceCache.set('SN1', new Map([
+      ['battery_state', 'CHARGING'], ['work_status', '9'], ['task_mode', '1'],
+      ['msg', 'Mode:COVERAGE Work:FINISHED Prev work:FINISHED_ONCE Recharge: FINISHED'],
+    ]));
+    expect(getMowerPhase('SN1')).toBe('charging');
+  });
+
+  // Ronde 4: een MAPPING-sessie rapporteert óók een live "Work:FINISHED" met
+  // "Recharge: FINISHED" (ECHTE CAPTURE, cov_ratio 0.099, ws 9, task_mode 2).
+  // Zonder de Mode:COVERAGE-eis zou het vertrouwde afrond-signaal hierop
+  // aanslaan en een randmaai starten na een kaartsessie.
+  it('ECHTE CAPTURE: mapping-sessie met live Work:FINISHED → NIET charging', () => {
+    deviceCache.set('SN1', new Map([
+      ['battery_state', 'CHARGING'], ['work_status', '9'], ['task_mode', '2'],
+      ['cov_ratio', '0.099'], ['finished_num', '0'],
+      ['msg', 'Mode:MAPPING Work:FINISHED Prev work:REQUEST_START Recharge: FINISHED'],
+    ]));
+    expect(getMowerPhase('SN1')).toBe('other');
+  });
+
   // GEDOCUMENTEERDE LIVE MELDING (issue #17) + het dekkingsbewijs uit de echte
   // capture hierboven. Zo ziet een afgeronde beurt eruit die als CANCELLED
   // rapporteert. NIET "vereenvoudigen" naar een CANCELLED-is-afgebroken regel:
@@ -158,6 +201,36 @@ describe('getMowerPhase', () => {
     deviceCache.set('SN1', new Map([
       ['battery_state', 'CHARGING'], ['work_status', '2'],
       ['cov_ratio', '0.4'], ['finished_num', '0'],
+      ['msg', 'Mode:COVERAGE Work:CANCELLED Prev work:USER_RECHARGE_STOP Recharge: FINISHED'],
+    ]));
+    expect(getMowerPhase('SN1')).toBe('other');
+  });
+
+  // Ronde 4, finding 1: de WAIT-spelling van dezelfde rollover. De oude gate
+  // hing alleen aan Work:CANCELLED, dus "Work:WAIT Prev work:USER_RECHARGE_STOP"
+  // met cov_ratio 0.4 glipte er als 'charging' doorheen en vuurde een randmaai
+  // op een onafgemaakte beurt. Elke ambigue Work-tag moet het dekkingsbewijs
+  // eisen, niet alleen CANCELLED.
+  // GECONSTRUEERD: WAIT-variant van de issue #17-vorm; ws 0 omdat de ruwe code
+  // dan ook al doorgerold is (anders vangt a3 hem al).
+  it('Work:WAIT Prev work:USER_RECHARGE_STOP met cov_ratio 0.4 → NIET charging', () => {
+    deviceCache.set('SN1', new Map([
+      ['battery_state', 'CHARGING'], ['work_status', '0'],
+      ['cov_ratio', '0.4'], ['finished_num', '0'],
+      ['msg', 'Mode:COVERAGE Work:WAIT Prev work:USER_RECHARGE_STOP Recharge: FINISHED'],
+    ]));
+    expect(getMowerPhase('SN1')).toBe('other');
+  });
+
+  // Ronde 4, finding 2: finished_num telt afgeronde ZONES en zegt niets over
+  // wat er nog openstaat. Meerzone-tuin: map0 klaar (finished_num 1), beurt
+  // tijdens map1 afgebroken (cov_ratio ~0.4). Met finished_num als bewijs zou
+  // dit als afgeronde beurt tellen en een randmaai starten.
+  // GECONSTRUEERD: issue #17-vorm met de velden van dat meerzone-scenario.
+  it('meerzone-afbreking: cov_ratio 0.4 met finished_num 1 → NIET charging', () => {
+    deviceCache.set('SN1', new Map([
+      ['battery_state', 'CHARGING'], ['work_status', '2'],
+      ['cov_ratio', '0.4'], ['finished_num', '1'],
       ['msg', 'Mode:COVERAGE Work:CANCELLED Prev work:USER_RECHARGE_STOP Recharge: FINISHED'],
     ]));
     expect(getMowerPhase('SN1')).toBe('other');
@@ -223,29 +296,55 @@ describe('getMowerPhase', () => {
     expect(getMowerPhase('SN1')).toBe('other');
   });
 
-  it('GECONSTRUEERD: Prev work:MOVING / RUNNING → NIET charging', () => {
+  // Ronde 4, finding 3: MOVING en RUNNING zijn UIT prevWorkAborted gehaald.
+  // Een afgeronde beurt rijdt als laatste "werk" naar het dock, dus
+  // "Prev work:MOVING" kan legitiem bij een afgeronde beurt horen; hard
+  // afwijzen zou de randmaai dan stil en voorgoed overslaan. Geen enkele
+  // capture toont MOVING/RUNNING als "Prev work" (de echte afrond-capture
+  // toont FINISHED_ONCE), dus dit is een aanname in de VEILIG-BLIJVENDE
+  // richting: deze vormen vallen nu onder de ambigue gate, waar cov_ratio
+  // beslist. MET dekkingsbewijs vuren ze dus wel.
+  // GECONSTRUEERD: dok-vorm met MOVING/RUNNING als vorige status.
+  it('GECONSTRUEERD: Prev work:MOVING / RUNNING met dekkingsbewijs → WEL charging', () => {
     for (const prev of ['MOVING', 'RUNNING']) {
       deviceCache.set('SN1', new Map([
         ['battery_state', 'CHARGING'], ['work_status', '0'],
         ['cov_ratio', '1'], ['finished_num', '1'],
         ['msg', `Mode:COVERAGE Work:CANCELLED Prev work:${prev} Recharge: FINISHED`],
       ]));
+      expect(getMowerPhase('SN1')).toBe('charging');
+    }
+  });
+
+  it('GECONSTRUEERD: Prev work:MOVING / RUNNING zonder dekkingsbewijs → NIET charging', () => {
+    for (const prev of ['MOVING', 'RUNNING']) {
+      deviceCache.set('SN1', new Map([
+        ['battery_state', 'CHARGING'], ['work_status', '0'],
+        ['cov_ratio', '0.4'], ['finished_num', '0'],
+        ['msg', `Mode:COVERAGE Work:CANCELLED Prev work:${prev} Recharge: FINISHED`],
+      ]));
       expect(getMowerPhase('SN1')).toBe('other');
     }
   });
 
-  // Finding NEW-3, deel 2: "Recharge: WAIT" is GEEN afrondingssignaal. Het
-  // beschrijft de dok-cyclus en komt in de echte captures ook midden in een
-  // mapping-sessie voor ("Mode:MAPPING Work:MANUAL_MAPPING_OBSTACLE ...
-  // Recharge: WAIT", cov_ratio 0). Zou het wél als afronding tellen, dan zou
-  // een kale CANCELLED daarmee worden witgewassen en 'charging' opleveren.
-  it("GECONSTRUEERD: 'Recharge: WAIT' wast een CANCELLED niet wit", () => {
+  // Ronde 4: msg-tokens zijn GEEN afrondingsbewijs meer, in geen enkele
+  // richting. "Recharge: FINISHED" / "Recharge: WAIT" / "Prev work:..."
+  // beschrijven allemaal de dok-cyclus; voor de ambigue vormen beslist alleen
+  // cov_ratio. Deze twee kanten pinnen dat: dezelfde CANCELLED-vorm is
+  // 'charging' met cov_ratio 1 en 'other' zonder cov_ratio, ongeacht welke
+  // Recharge-tekst erachter staat.
+  it("GECONSTRUEERD: 'Recharge: WAIT' verandert het oordeel niet, cov_ratio wel", () => {
     deviceCache.set('SN1', new Map([
       ['battery_state', 'CHARGING'], ['work_status', '0'],
       ['cov_ratio', '1'], ['finished_num', '1'],
       ['msg', 'Mode:COVERAGE Work:CANCELLED Prev work:WAIT Recharge: WAIT'],
     ]));
-    expect(getMowerPhase('SN1')).toBe('other');
+    expect(getMowerPhase('SN1')).toBe('charging');
+    deviceCache.set('SN2', new Map([
+      ['battery_state', 'CHARGING'], ['work_status', '0'],
+      ['msg', 'Mode:COVERAGE Work:CANCELLED Prev work:WAIT Recharge: WAIT'],
+    ]));
+    expect(getMowerPhase('SN2')).toBe('other');
   });
 
   // GAP, bewust de veilige kant. Meldt een afgeronde beurt onverhoopt tóch
@@ -273,19 +372,46 @@ describe('getMowerPhase', () => {
     expect(getMowerPhase('SN2')).toBe('other');
   });
 
-  // Tegenhanger van de vorige tests: NIET over-strak afknijpen. Dit is de
-  // letterlijke msg-vorm van een afgeronde beurt op het dock (zie de captures
-  // in research/): huidige status WAIT, uitkomst FINISHED in "Prev work". Zou
-  // dit 'other' opleveren, dan vuurt de rand-dag watcher nooit en is de hele
-  // feature dood. task_mode staat hier nog op 1.
-  it('afgeronde beurt op het dock (Work:WAIT + Prev work:FINISHED) → WEL charging', () => {
+  // Ronde 4, finding 1: dit stond eerder gemarkeerd als "letterlijke msg-vorm
+  // uit de captures", maar de captures bevatten hem NIET; hij komt alleen als
+  // PLAN-DOC FIXTURE voor (zie header). Work:WAIT is een ambigue dok-vorm
+  // (de echte idle-dock capture heeft exact dezelfde WAIT-spelling met
+  // cov_ratio 0), dus zonder dekkingsbewijs geldt de veilige kant: 'other'.
+  // De feature gaat daar niet aan dood: de echte afrond-capture houdt de
+  // vertrouwde tag "Work:FINISHED" urenlang vast, dus de watcher (tick per
+  // 30 s) ziet die vorm ruimschoots.
+  it('Work:WAIT + Prev work:FINISHED zonder cov_ratio → other (ambigu, geen bewijs)', () => {
     deviceCache.set('SN1', new Map([
       ['battery_state', 'CHARGING'],
       ['task_mode', '1'],
       ['msg', 'Mode:COVERAGE Work:WAIT Prev work:FINISHED Recharge: FINISHED'],
       ['work_status', '0'],
     ]));
+    expect(getMowerPhase('SN1')).toBe('other');
+  });
+
+  it('Work:WAIT + Prev work:FINISHED MET cov_ratio 1 → WEL charging', () => {
+    deviceCache.set('SN1', new Map([
+      ['battery_state', 'CHARGING'],
+      ['task_mode', '1'],
+      ['cov_ratio', '1'],
+      ['msg', 'Mode:COVERAGE Work:WAIT Prev work:FINISHED Recharge: FINISHED'],
+      ['work_status', '0'],
+    ]));
     expect(getMowerPhase('SN1')).toBe('charging');
+  });
+
+  // ECHTE CAPTURE: de idle-dock vorm (LFIN2230700238, nooit gemaaid, cov 0).
+  // Byte-hetzelfde WAIT-patroon als een doorgerolde afronding; alleen
+  // cov_ratio scheidt ze. Voor de watcher is 'other' hier ook praktisch
+  // gelijk aan het oude gedrag: zonder sawMowing vuurde 'charging' toch niet.
+  it('ECHTE CAPTURE: idle op het dock (Work:WAIT, cov_ratio 0) → other', () => {
+    deviceCache.set('SN1', new Map([
+      ['battery_state', 'CHARGING'], ['work_status', '0'], ['task_mode', '1'],
+      ['cov_ratio', '0'], ['finished_num', '0'],
+      ['msg', 'Mode:COVERAGE Work:WAIT Prev work:WAIT Recharge: FINISHED'],
+    ]));
+    expect(getMowerPhase('SN1')).toBe('other');
   });
 
   it('afgeronde beurt met Work:FINISHED en task_mode 1 → WEL charging', () => {

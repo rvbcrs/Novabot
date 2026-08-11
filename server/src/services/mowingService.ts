@@ -215,100 +215,104 @@ export function getMowerPhase(sn: string): 'mowing' | 'charging' | 'other' {
   // isInterruptedCoverage in dashboard/src/utils/mowerActivity.ts wel doet:
   // stop_navigation zet task_mode terug op 0, waardoor geval 2 door die gate
   // heen glipte en een halverwege gestopte beurt binnen 30 seconden alsnog een
-  // randmaai startte. In plaats daarvan lezen we de msg-velden in een vaste
-  // rangorde. Strenger dan de dashboard-variant mag hier: die kiest alleen een
-  // knop-label, deze gate laat een echt bewegingscommando toe of niet.
+  // randmaai startte. Strenger dan de dashboard-variant mag hier: die kiest
+  // alleen een knop-label, deze gate laat een echt bewegingscommando toe of niet.
   //
-  // LET OP (issue #17, twee live meldronden, zie
-  // server/src/cloud-api/routes/equipmentState.ts:243-264): "Work:CANCELLED" is
-  // op deze firmware GEEN betrouwbaar afbreeksignaal. De msg van een NETJES
-  // afgeronde beurt die daarna dockt is letterlijk
-  //   "Mode:COVERAGE Work:CANCELLED Prev work:USER_RECHARGE_STOP Recharge: FINISHED"
-  // Work:FINISHED ontbreekt daar; de afronding zit in "Prev work" en in
-  // "Recharge: FINISHED". CANCELLED als afbreeksignaal behandelen maakt deze
-  // hele feature dus stil dood op echte hardware. Daarom mag een positief
-  // afrondingssignaal CANCELLED overrulen, en is work_status 2 (CANCELLED) uit
-  // de afbreek-codes gehaald.
+  // De rangorde op het dock, gestoeld op de captures (Task 6 ronde 4,
+  // research/documents/obstacle-capture-*.jsonl):
   //
-  // MAAR: ná het dokken rollen de msg-velden door en worden een afgeronde
-  // beurt, een handmatig gestopte beurt en een mid-mow laadpauze byte-identiek.
-  // Elke msg hierboven beschrijft namelijk de DOK-cyclus, niet de maaibeurt.
-  // Daarom moet een afrond-vormige msg gestaafd worden door DEKKINGSBEWIJS
-  // (cov_ratio / finished_num, zie hieronder): dat is het enige veld dat over
-  // de maaibeurt zelf gaat.
+  //   a. Expliciete stop-/afbreeksignalen (live Work-tag, "Prev work", ruwe
+  //      work_status-code) winnen altijd: 'other'.
+  //   b. De live tag "Mode:COVERAGE ... Work:FINISHED" is het VERTROUWDE
+  //      einde-taak-signaal en heeft GEEN dekkingsbewijs nodig. In de echte
+  //      capture van een afgeronde beurt op het dock staat die tag urenlang
+  //      stabiel (ws 9, cov_ratio 1, finished_num 1, 1729 samples) en hij
+  //      verschijnt nooit midden in een maaibeurt. Zo blijft de feature ook
+  //      leven wanneer cov_ratio ontbreekt. "Mode:COVERAGE" is verplicht:
+  //      mapping-sessies rapporteren OOK een live "Work:FINISHED"
+  //      ("Mode:MAPPING Work:FINISHED ... Recharge: FINISHED", cov_ratio
+  //      0.099 in de capture) en een randmaai na een mapping-sessie is fout.
+  //   c. ELKE andere live Work-tag op het dock (WAIT, CANCELLED, of welke
+  //      doorgerolde spelling dan ook) is AMBIGU en vereist dekkingsbewijs
+  //      (cov_ratio >= 0.95). Ná het dokken rollen de msg-velden namelijk
+  //      door en worden een afgeronde beurt, een handmatig gestopte beurt en
+  //      een laadpauze byte-identiek: elk msg-veld beschrijft de DOK-cyclus,
+  //      alleen cov_ratio gaat over de maaibeurt zelf. Issue #17 (twee live
+  //      meldronden, zie equipmentState.ts:243-264) bewijst dat een NETJES
+  //      afgeronde beurt als "Work:CANCELLED Prev work:USER_RECHARGE_STOP
+  //      Recharge: FINISHED" kan rapporteren; de idle-dock capture bewijst
+  //      dat "Work:WAIT Prev work:WAIT Recharge: FINISHED" met cov_ratio 0
+  //      OOK bestaat. Dezelfde vorm, tegengestelde betekenis: cov_ratio
+  //      beslist.
   const onDock = batteryState === 'CHARGING' || batteryState === 'FINISHED';
   const workStatus = raw.get('work_status') ?? '';
 
-  // Positieve afrondingssignalen, overgenomen uit looksFinished in
-  // equipmentState.ts (die classificatie is op live gebruikersmeldingen
-  // gevalideerd). Let op de spatie in "Recharge: FINISHED": zo staat het in de
-  // firmware-msg.
-  //
-  // "Recharge: WAIT" staat hier bewust NIET bij, anders dan in equipmentState:
-  // dat veld beschrijft de DOK-cyclus, niet de maaibeurt, en komt in de
-  // captures ook midden in een mapping-sessie voor
-  // ("Mode:MAPPING Work:MANUAL_MAPPING_OBSTACLE ... Recharge: WAIT", cov_ratio 0).
-  // In equipmentState kan het wel, want die classificeert achteraf een
-  // werkrecord en AND't het met error_status === '0'.
-  const finishShapedMsg =
-    msg.includes('Work:FINISHED') ||
-    msg.includes('Prev work:FINISHED') ||
-    msg.includes('Prev work:USER_RECHARGE_STOP') ||
-    msg.includes('Recharge: FINISHED');
-
-  // Dekkingsbewijs: de andere helft van looksFinished in equipmentState.ts
-  // (:263-264). Dit is het ENIGE beschikbare veld dat over de MAAIBEURT gaat in
-  // plaats van over de dok-cyclus. Alle msg-velden hierboven beschrijven het
-  // dokken, en juist daarom vallen een afgeronde beurt, een handmatig gestopte
-  // beurt en een laadpauze na het dokken op dezelfde msg samen: pas cov_ratio
-  // scheidt ze (volledig gedekt ligt tegen 1.0, op 40% gestopt leest ~0.4).
+  // Dekkingsbewijs voor de ambigue vormen: cov_ratio >= 0.95, en ALLEEN
+  // cov_ratio. finished_num telt hier bewust NIET mee (Task 6 ronde 4): dat
+  // veld telt afgeronde zones en zegt niets over de zones die nog openstaan.
+  // In een meerzone-tuin waar map0 klaar was en de beurt tijdens map1 werd
+  // afgebroken staat finished_num al op 1 bij cov_ratio ~0.4; met finished_num
+  // als bewijs zou dat als afgeronde beurt tellen en een randmaai starten.
   // Live capture van een afgeronde beurt op het dock (obstacle-capture-norelay
-  // 20260601): cov_ratio 1, finished_num 1, work_status 9.
+  // 20260601): cov_ratio 1 (en finished_num 1, maar dat voegt daar niets toe).
   // cov_ratio komt als fractie 0..1 binnen (zie app HomeScreen.tsx:317); een
   // waarde > 1 wordt als percentage gelezen, net als in render/svgMap.ts.
-  // ONTBREEKT of onleesbaar → GEEN bewijs, en dus de veilige kant: dan telt dit
-  // niet als een echt einde-taak-dock. Liever een randmaai gemist dan een
-  // randmaai gestart op een beurt die halverwege is afgebroken.
+  // ONTBREEKT of onleesbaar: GEEN bewijs, en dus de veilige kant. Liever een
+  // randmaai gemist dan een randmaai gestart op een beurt die halverwege is
+  // afgebroken.
   const covRatioRaw = parseFloat(raw.get('cov_ratio') ?? '');
   const covRatio = Number.isFinite(covRatioRaw)
     ? (covRatioRaw > 1 ? covRatioRaw / 100 : covRatioRaw)
     : null;
-  const finishedNum = parseInt(raw.get('finished_num') ?? '', 10);
-  const coverageEvidence = (covRatio !== null && covRatio >= 0.95)
-    || (Number.isFinite(finishedNum) && finishedNum > 0);
+  const coverageEvidence = covRatio !== null && covRatio >= 0.95;
 
-  // Een afrond-vormige msg telt alleen als afronding wanneer het dekkingsbewijs
-  // hem staaft.
-  const looksFinished = finishShapedMsg && coverageEvidence;
-
-  // 1. De LIVE Work-status zegt dat de taak nu stilstaat: gepauzeerd voor een
-  //    recharge, door de gebruiker gestopt, of op een limiet/fout geëindigd.
-  //    Dit weegt zwaarder dan welk afrondingssignaal dan ook: tijdens een
-  //    mid-mow laadpauze staat er óók "Recharge: FINISHED" in de msg (de
-  //    dok-cyclus zelf verliep prima), en juist dan mag er niets starten.
-  //    CANCELLED staat hier bewust NIET tussen, zie de toelichting hierboven.
+  // a1. De LIVE Work-status zegt dat de taak nu stilstaat: gepauzeerd voor een
+  //     recharge, door de gebruiker gestopt, of op een limiet/fout geëindigd.
+  //     Dit weegt zwaarder dan welk afrondingssignaal dan ook: tijdens een
+  //     mid-mow laadpauze staat er óók "Recharge: FINISHED" in de msg (de
+  //     dok-cyclus zelf verliep prima), en juist dan mag er niets starten.
+  //     CANCELLED staat hier bewust NIET tussen: per issue #17 kan een netjes
+  //     afgeronde beurt als CANCELLED rapporteren (zie rangorde-blok
+  //     hierboven); CANCELLED valt daarom onder de ambigue vormen (c).
   const liveStopTag = /Work:(USER_STOP|PAUSED|USER_RECHARGE_STOP|BATTERY_LOW_RECHARGE|TIME_LIMIT_STOP|ERROR_STOP)\b/.test(msg);
-  // 2. De VORIGE Work-status wijst op een afbreking. Bij het dokken is de live
-  //    tag vaak al doorgerold naar WAIT of CANCELLED en blijft de reden alleen
-  //    in "Prev work" staan (kleine w, dus geen overlap met de regex hierboven).
-  //    USER_RECHARGE_STOP hoort hier NIET thuis: dat is per issue #17 juist het
-  //    handtekening-signaal van een normaal afgeronde beurt. COVERING/MOVING/
-  //    RUNNING wél: staat de vorige status nog op "was aan het maaien/rijden",
-  //    dan is die beweging onderbroken en niet afgerond.
-  const prevWorkAborted = /Prev work:(USER_STOP|PAUSED|TIME_LIMIT_STOP|ERROR_STOP|COVERING|MOVING|RUNNING)\b/.test(msg);
-  // 3. Ruwe work_status-code van een afgebroken beurt, de codes uit
-  //    IDLE_WORK_STATUS hierboven: FAILED(1), FAILED_ONCE(7), USER_STOP(10),
-  //    USER_RECHARGE_STOP(11), LOWER_POWER_STOP(12), ERROR_STOP(13),
-  //    TIME_LIMIT_STOP(14), RECOVER_ERROR_STOP(15). Vangnet voor het geval de
-  //    msg al helemaal is doorgerold. CANCELLED(2) staat er bewust niet in
-  //    (zie hierboven), FINISHED(8/9) en WAIT(0) evenmin: dat zijn juist de
-  //    afgeronde beurten waar de randmaai op moet volgen.
+  // a2. De VORIGE Work-status wijst op een afbreking. Bij het dokken is de live
+  //     tag vaak al doorgerold naar WAIT of CANCELLED en blijft de reden alleen
+  //     in "Prev work" staan (kleine w, dus geen overlap met de regex
+  //     hierboven). USER_RECHARGE_STOP hoort hier NIET thuis: dat is per issue
+  //     #17 juist het handtekening-signaal van een normaal afgeronde beurt.
+  //     MOVING en RUNNING horen hier evenmin (Task 6 ronde 4): een afgeronde
+  //     beurt rijdt als laatste "werk" naar het dock, dus "Prev work:MOVING"
+  //     kan legitiem bij een afgeronde beurt horen; hard afwijzen zou de
+  //     feature dan stil doden. Geen enkele capture toont MOVING/RUNNING als
+  //     "Prev work" (de ene echte afrond-capture toont FINISHED_ONCE), dus dit
+  //     is niet uit bewijs te beslissen; die vormen vallen daarom onder de
+  //     ambigue gate (c), waar cov_ratio het echte afbreek-scenario al afvangt.
+  //     COVERING blijft WEL staan: midden uit de dekking gerukt en gedockt is
+  //     nooit een afgeronde beurt.
+  const prevWorkAborted = /Prev work:(USER_STOP|PAUSED|TIME_LIMIT_STOP|ERROR_STOP|COVERING)\b/.test(msg);
+  // a3. Ruwe work_status-code van een afgebroken beurt, de codes uit
+  //     IDLE_WORK_STATUS hierboven: FAILED(1), FAILED_ONCE(7), USER_STOP(10),
+  //     USER_RECHARGE_STOP(11), LOWER_POWER_STOP(12), ERROR_STOP(13),
+  //     TIME_LIMIT_STOP(14), RECOVER_ERROR_STOP(15). Vangnet voor het geval de
+  //     msg al helemaal is doorgerold. CANCELLED(2) staat er bewust niet in
+  //     (issue #17), FINISHED(8/9) en WAIT(0) evenmin: dat zijn juist de
+  //     afgeronde beurten waar de randmaai op moet volgen.
   const abortedWorkStatus = ['1', '7', '10', '11', '12', '13', '14', '15'].includes(workStatus);
-  // 4. Een kale CANCELLED zonder enig afrondingssignaal. Alleen dán telt
-  //    CANCELLED nog als afbreking.
-  const cancelledWithoutFinish = /Work:CANCELLED\b/.test(msg) && !looksFinished;
 
-  if (onDock && (liveStopTag || prevWorkAborted || abortedWorkStatus || cancelledWithoutFinish)) return 'other';
+  if (onDock && (liveStopTag || prevWorkAborted || abortedWorkStatus)) return 'other';
+
+  // b. Het vertrouwde einde-taak-signaal: live "Work:FINISHED" in Mode:COVERAGE.
+  //    De \b sluit "Work:FINISHED_ONCE" uit (underscore is een woordteken) en
+  //    de hoofdletter W matcht "Prev work:FINISHED" niet.
+  const trustedFinishTag = msg.includes('Mode:COVERAGE') && /Work:FINISHED\b/.test(msg);
+  // c. Elke ANDERE live Work-tag op het dock is ambigu en vereist
+  //    dekkingsbewijs. \bWork: matcht de live tag maar niet "Prev work:"
+  //    (kleine w). Een msg zonder enige Work-tag (leeg, of alleen
+  //    battery-payload gezien) valt hier bewust buiten: dat is afwezigheid van
+  //    data, geen doorgerolde spelling, en het bestaande gedrag (kaal CHARGING
+  //    telt als charging) blijft staan.
+  const ambiguousDockShape = !trustedFinishTag && /\bWork:[A-Z]/.test(msg);
+  if (onDock && ambiguousDockShape && !coverageEvidence) return 'other';
 
   if (batteryState === 'CHARGING') return 'charging';
   const ws = parseInt(workStatus, 10);
