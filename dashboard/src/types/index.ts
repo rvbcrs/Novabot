@@ -96,6 +96,8 @@ export interface Schedule {
   alternateDirection: boolean;
   alternateStep: number;
   edgeOffset: number;
+  /** Weekdagen [0-6] waarop na de maaibeurt een randmaai volgt; null = geen. */
+  edgeDays: number[] | null;
   rainPause: boolean;
   rainThresholdMm: number;
   rainThresholdProbability: number;
