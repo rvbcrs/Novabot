@@ -1303,6 +1303,468 @@ def handle_stop_boundary_follow(params, respond):
     respond("stop_boundary_follow_respond", {"result": 0, "svc": svc_out[:200]})
 
 
+_NAV_NODE = "/nav2_single_node_navigator"
+
+
+def _ros_env():
+    """Shared-mem DDS env so ros2 CLI clients discover the on-mower nodes."""
+    return {
+        **os.environ,
+        "ROS_DOMAIN_ID": "0", "ROS_LOCALHOST_ONLY": "1",
+        "RMW_IMPLEMENTATION": "rmw_cyclonedds_cpp",
+        "CYCLONEDDS_URI": "file:///root/novabot/shm_config/shm_cyclonedds.xml",
+    }
+
+
+def _ros2_param_get(node, name):
+    """Return a float param value from `node`, or None on failure."""
+    cmd = ("source /opt/ros/galactic/setup.bash && "
+           "source /root/novabot/install/setup.bash 2>/dev/null && "
+           f"timeout 8 ros2 param get {node} {name}")
+    try:
+        out = subprocess.run(["bash", "-c", cmd], env=_ros_env(),
+                             capture_output=True, text=True, timeout=14).stdout
+    except Exception:
+        return None
+    m = re.search(r"value is:\s*([-0-9.eE+]+)", out)
+    return float(m.group(1)) if m else None
+
+
+def _ros2_param_set(node, name, value):
+    """Set a param on `node` (best-effort)."""
+    cmd = ("source /opt/ros/galactic/setup.bash && "
+           "source /root/novabot/install/setup.bash 2>/dev/null && "
+           f"timeout 8 ros2 param set {node} {name} {value}")
+    try:
+        subprocess.run(["bash", "-c", cmd], env=_ros_env(),
+                       capture_output=True, text=True, timeout=14)
+    except Exception:
+        pass
+
+
+def _robot_map_xy(timeout_s=6):
+    """Current robot position in the map frame via tf2_echo (map -> base_link).
+
+    Returns (x, y) or None. Doubles as a localization gate: if the TF is not
+    being published (mower not localized), returns None and the caller refuses
+    to move. Reuses the shared-mem DDS env the ROS nodes use.
+    """
+    env = {
+        **os.environ,
+        "ROS_DOMAIN_ID": "0", "ROS_LOCALHOST_ONLY": "1",
+        "RMW_IMPLEMENTATION": "rmw_cyclonedds_cpp",
+        "CYCLONEDDS_URI": "file:///root/novabot/shm_config/shm_cyclonedds.xml",
+    }
+    cmd = (
+        "source /opt/ros/galactic/setup.bash && "
+        "source /root/novabot/install/setup.bash 2>/dev/null && "
+        f"timeout {timeout_s} ros2 run tf2_ros tf2_echo map base_link"
+    )
+    try:
+        out = subprocess.run(["bash", "-c", cmd], env=env, capture_output=True,
+                             text=True, timeout=timeout_s + 4).stdout
+    except Exception:
+        return None
+    m = re.search(r"Translation:\s*\[\s*([-0-9.eE+]+),\s*([-0-9.eE+]+)", out)
+    return (float(m.group(1)), float(m.group(2))) if m else None
+
+
+MAPS_HOME = "/userdata/lfi/maps/home0"
+
+
+def _follow_unicom(from_slot, to_slot, dry_run=False):
+    """Build + (in non-dry-run mode) drive the recorded inter-zone unicom line
+    EXACTLY via nav2 /follow_path. Pure core extracted out of
+    handle_follow_unicom so it is unit-testable and reusable by the mow_zone
+    orchestrator (Task 4): it does NOT call respond(), it returns a dict.
+
+    Fixes the "cuts a corner into the hedge between zones" class of bug. The
+    firmware never follows the unicom itself: zone transit runs through
+    coverage_planner_server which free-plans a goal-based path on the pgm (see
+    research/documents/unicom-follow-transit-design.md + Novabot-aaj). This
+    loads the recorded map<from>tomap<to>_*_unicom.csv, orients it toward the
+    `to`-zone end, and drives it with FollowPathPurePursuit so the mower
+    traces the real opening. After it finishes the robot sits at the target
+    zone entrance and normal coverage can start with no hedge risk.
+
+    Args:
+      from_slot: source slot, e.g. "map0"
+      to_slot:   target slot, e.g. "map3"
+      dry_run:   if true, build + return the path points but DO NOT move (for
+                 the pre-flight plot).
+
+    Returns:
+      {result:0, from, to, points, oriented, dry_run, path}          dry_run
+      {result:0, from, to, points, oriented, dry_run, relaxed_params, join}
+                                                                  non-dry-run
+      {result:1, error: invalid_map_name|no_unicom_X_Y|empty_unicom|not_localized}
+
+    In non-dry-run mode on success, the dict also carries a "join" callable
+    (the dispatched drive-thread's `.join`) so a caller such as the mow_zone
+    orchestrator can block until the drive actually finishes before starting
+    coverage. NOTE: "join" is a callable, not JSON-serializable - a caller
+    that responds with this dict over MQTT must pop it first (see
+    handle_follow_unicom below).
+    """
+    import math
+    map_from = from_slot
+    map_to = to_slot
+    if not re.fullmatch(r"map\d+", map_from) or not re.fullmatch(r"map\d+", map_to):
+        return {"result": 1, "error": "invalid_map_name"}
+
+    csv_dir = f"{MAPS_HOME}/x3_csv_file" if os.path.isdir(f"{MAPS_HOME}/x3_csv_file") else f"{MAPS_HOME}/csv_file"
+    # Filename is "<from>to<to>_<n>_unicom.csv" and the slot names already carry
+    # "map" (map0, map3), so the separator is just "to": map0 + to + map3.
+    pat = re.compile(rf"^{map_from}to{map_to}_(\d+)_unicom\.csv$")
+    seg_files = sorted((f for f in os.listdir(csv_dir) if pat.match(f)),
+                       key=lambda f: int(pat.match(f).group(1)))
+    if not seg_files:
+        return {"result": 1, "error": f"no_unicom_{map_from}_{map_to}"}
+    pts = []
+    for f in seg_files:
+        for p in read_xy_csv(os.path.join(csv_dir, f)):
+            if not pts or (abs(p[0] - pts[-1][0]) + abs(p[1] - pts[-1][1])) > 1e-4:
+                pts.append(p)
+    if len(pts) < 2:
+        return {"result": 1, "error": "empty_unicom"}
+
+    # Localization gate: need a valid pose to move safely.
+    robot = _robot_map_xy()
+    if robot is None and not dry_run:
+        return {"result": 1, "error": "not_localized"}
+    # Orient so the LAST point is the `to`-zone end, so the robot always drives
+    # toward the destination no matter where along the path it currently sits
+    # (it can be mid-transit). Use the `to` work-polygon centroid; fall back to
+    # farthest-from-dock if that CSV is missing.
+    oriented = "as-recorded"
+    to_pts = read_xy_csv(os.path.join(csv_dir, f"{map_to}_work.csv"))
+    if to_pts:
+        cx = sum(p[0] for p in to_pts) / len(to_pts)
+        cy = sum(p[1] for p in to_pts) / len(to_pts)
+        d_first = (pts[0][0] - cx) ** 2 + (pts[0][1] - cy) ** 2
+        d_last = (pts[-1][0] - cx) ** 2 + (pts[-1][1] - cy) ** 2
+        if d_first < d_last:      # pts[0] is nearer the destination -> flip it to the end
+            pts = list(reversed(pts))
+            oriented = "reversed"
+    elif (pts[0][0] ** 2 + pts[0][1] ** 2) > (pts[-1][0] ** 2 + pts[-1][1] ** 2):
+        pts = list(reversed(pts))  # no to-polygon: put the farther-from-dock end last
+        oriented = "reversed-fallback"
+
+    if dry_run:
+        log(f"follow_unicom DRY-RUN {map_from}->{map_to}: {len(pts)} pts, oriented={oriented}")
+        return {
+            "result": 0, "from": map_from, "to": map_to,
+            "points": len(pts), "oriented": oriented, "dry_run": True,
+            "path": [[round(x, 3), round(y, 3)] for x, y in pts],
+        }
+
+    # Build nav_msgs/Path: per-point yaw = heading toward the next point.
+    poses = []
+    prev_qz, prev_qw = 0.0, 1.0
+    for i, (x, y) in enumerate(pts):
+        if i < len(pts) - 1:
+            yaw = math.atan2(pts[i + 1][1] - y, pts[i + 1][0] - x)
+            prev_qz, prev_qw = math.sin(yaw / 2), math.cos(yaw / 2)
+        qz, qw = prev_qz, prev_qw
+        poses.append(
+            "{header: {frame_id: map}, pose: {position: "
+            f"{{x: {x:.4f}, y: {y:.4f}, z: 0.0}}, orientation: "
+            f"{{x: 0.0, y: 0.0, z: {qz:.6f}, w: {qw:.6f}}}}}}}"
+        )
+    # goal_checker_id is REQUIRED - nav2 aborts a FollowPath goal with an empty
+    # current_goal_checker. Available on this mower: general_goal_checker,
+    # try_closer_goal_checker. controller_id FollowPathPurePursuit matches what
+    # coverage_planner_server uses.
+    goal_yaml = (
+        "'{path: {header: {frame_id: map}, poses: ["
+        + ", ".join(poses)
+        + "]}, controller_id: \"FollowPathPurePursuit\", "
+        "goal_checker_id: \"general_goal_checker\"}'"
+    )
+    # Relax the controller for the TRUSTED recorded path: faster, more patient,
+    # and less collision-sensitive. We recorded this unicom ourselves so it is a
+    # known-good line; the stock RegulatedPurePursuit otherwise crawls to a stop
+    # in the narrow gap (collision-ahead + patience abort). max_allowed_time_to_
+    # collision stays > 0 (0.25s ~ 0.15m ahead) so it still HARD-STOPS for
+    # something right in front (a person/pet). Every param is restored after the
+    # FollowPath finishes so coverage / other navigation keeps full sensitivity.
+    # (relaxed value, default-to-restore). Defaults are the yaml values in
+    # novabot_boundary_follow_footprint.yaml; hardcoded so we skip the slow
+    # per-param `ros2 param get` (a restart also reloads these yaml defaults).
+    # (relaxed, default) per param. The relaxed value applies only during the
+    # transit and is ALWAYS restored in the finally block. String bools render
+    # as lowercase for `ros2 param set`; numbers render as-is.
+    # The dominant crawl cause is curvature scaling (use_regulated_linear_
+    # velocity_scaling=True drops the speed toward ~0.17 m/s on the bends in
+    # the gap). We drive a self-recorded, known-safe line, so we turn curvature
+    # scaling OFF for the transit and let desired_linear_vel govern. Obstacle-
+    # cost scaling is already False on this node, so it is not a factor.
+    TRANSIT_PARAMS = {
+        "progress_checker.movement_time_allowance": (45.0, 12.0),
+        "progress_checker.required_movement_radius": (0.08, 0.2),
+        "FollowPathPurePursuit.max_allowed_time_to_collision": (0.25, 0.8),
+        "FollowPathPurePursuit.use_regulated_linear_velocity_scaling": ("false", "true"),
+        "FollowPathPurePursuit.desired_linear_vel": (0.7, 0.5),
+    }
+
+    cmd = (
+        "source /opt/ros/galactic/setup.bash && "
+        "source /root/novabot/install/setup.bash 2>/dev/null && "
+        "stdbuf -oL timeout 600 ros2 action send_goal --feedback "
+        "/follow_path nav2_msgs/action/FollowPath " + goal_yaml
+    )
+
+    # Everything below is slow (ros2 CLI param + action, several seconds each),
+    # so it runs in a background thread to never block the MQTT command loop.
+    # The finally block ALWAYS restores the default controller params, even if
+    # the drive raises or times out.
+    def _drive():
+        for k, (relaxed, _default) in TRANSIT_PARAMS.items():
+            _ros2_param_set(_NAV_NODE, k, relaxed)
+        try:
+            subprocess.run(["bash", "-c", cmd], env=_ros_env(),
+                          capture_output=True, text=True, timeout=660)
+        except Exception as e:
+            log(f"follow_unicom run error: {e}")
+        finally:
+            for k, (_relaxed, default) in TRANSIT_PARAMS.items():
+                _ros2_param_set(_NAV_NODE, k, default)
+            log("follow_unicom: restored controller params to defaults")
+
+    drive_thread = threading.Thread(target=_drive, daemon=True, name="follow-unicom")
+    drive_thread.start()
+    log(f"follow_unicom dispatched {map_from}->{map_to}: {len(pts)} pts "
+        f"oriented={oriented} (threaded, relaxed controller)")
+    return {
+        "result": 0, "from": map_from, "to": map_to,
+        "points": len(pts), "oriented": oriented, "dry_run": False,
+        "relaxed_params": len(TRANSIT_PARAMS),
+        "join": drive_thread.join,
+    }
+
+
+def handle_follow_unicom(params, respond):
+    """MQTT-facing thin wrapper around _follow_unicom(). See that function's
+    docstring for the full behavior; this only unpacks params and responds.
+
+    Params:
+      from:    source slot, default "map0"
+      to:      target slot, e.g. "map3" (REQUIRED)
+      dry_run: if true, build + return the path points but DO NOT move (for the
+               pre-flight plot). Default false.
+
+    Response follow_unicom_respond:
+      {result:0, from, to, points, oriented, dry_run}         accepted / dry-run
+      {result:1, error: invalid_map_name|no_unicom_X_Y|empty_unicom|not_localized}
+    """
+    r = _follow_unicom(str(params.get("from", "map0")), str(params.get("to", "")),
+                       dry_run=bool(params.get("dry_run", False)))
+    # "join" is a thread-join callable, not JSON-serializable; only the direct
+    # in-process orchestrator (mow_zone) uses it. Strip it before responding.
+    r.pop("join", None)
+    respond("follow_unicom_respond", r)
+
+
+def _point_in_poly(x, y, poly):
+    """Ray-casting point-in-polygon test. poly is a list of (x, y) tuples."""
+    n = len(poly); inside = False; j = n - 1
+    for i in range(n):
+        xi, yi = poly[i]; xj, yj = poly[j]
+        if ((yi > y) != (yj > y)) and (x < (xj - xi) * (y - yi) / (yj - yi + 1e-12) + xi):
+            inside = not inside
+        j = i
+    return inside
+
+
+def _current_zone_slot(robot_xy):
+    """Detect which zone slot the robot currently sits in, for the mow_zone
+    orchestrator's transit-needed check (Task 4).
+
+    Returns "mapN" for the first mapN_work.csv polygon (sorted by filename)
+    that contains robot_xy, else "dock" when robot_xy is None or within the
+    1.2 m dock disc around the origin, else "dock" as the safe default.
+    """
+    if robot_xy is None:
+        return "dock"
+    x, y = robot_xy
+    if (x * x + y * y) <= 1.2 ** 2:          # dock disc
+        return "dock"
+    base = f"{MAPS_HOME}/x3_csv_file" if os.path.isdir(f"{MAPS_HOME}/x3_csv_file") else f"{MAPS_HOME}/csv_file"
+    for f in sorted(os.listdir(base)):
+        m = re.match(r"^(map\d+)_work\.csv$", f)
+        if not m:
+            continue
+        poly = read_xy_csv(os.path.join(base, f))
+        if len(poly) >= 3 and _point_in_poly(x, y, poly):
+            return m.group(1)
+    return "dock"
+
+
+def _cov_task_yaml(map_ids, cutterhigh, direction):
+    """Build the decision_msgs/srv/StartCoverageTask request YAML (pure,
+    testable). This mirrors exactly what mqtt_node emits for a normal app mow
+    (research/documents/multi-map-area-bitmask-decode.md):
+      cov_mode:0 = NORMAL (select map(s) by id, NOT the polygon "draw area"
+        mode which is cov_mode:1/SPECIFIED_AREA and needs polygon_area),
+      request_type:11 = normal mqtt/app start,
+      map_ids = the decimal positional bitmask (sum of 10^slot, e.g. map3
+        -> 1000); robot_decision decodes it digit-by-digit into the maps.
+    map_names stays EMPTY on purpose: robot_decision only consults map_names
+    when map_ids==0, and then it resolves /userdata/lfi/maps/home0/<name> as a
+    FILE and fails with Error 118 (the file does not exist under that name).
+    blade_heights carries the 0..7 wire enum (user_cm - 2).
+    specify_direction/cov_direction (0..180) are only set when a direction is
+    given; specify_perception_level stays false to keep the device's setting.
+    """
+    d = "true" if direction is not None else "false"
+    cd = int(direction) if direction is not None else 0
+    return ("'{"
+            "cov_mode: 0, request_type: 11, "
+            f"map_ids: {int(map_ids)}, map_names: [], polygon_area: [], "
+            f"blade_heights: [{int(cutterhigh)}], "
+            f"specify_direction: {d}, cov_direction: {cd}, light: 0, "
+            "specify_perception_level: false, perception_level: 0, "
+            "blade_info_level: 0, night_light: false, "
+            "enable_loc_weak_mapping: false, enable_loc_weak_working: false"
+            "}'")
+
+
+def _start_cov_task(map_ids, cutterhigh, direction):
+    """Start coverage through /robot_decision/start_cov_task (NOT a direct
+    NTCP call), so robot_decision keeps the work_status state machine and
+    auto-recharge behavior. Returns True on an apparent success reply.
+    """
+    cmd = ("source /opt/ros/galactic/setup.bash && "
+           "source /root/novabot/install/setup.bash 2>/dev/null && "
+           "timeout 20 ros2 service call /robot_decision/start_cov_task "
+           "decision_msgs/srv/StartCoverageTask " + _cov_task_yaml(map_ids, cutterhigh, direction))
+    try:
+        out = subprocess.run(["bash", "-c", cmd], env=_ros_env(),
+                             capture_output=True, text=True, timeout=30).stdout
+    except Exception as e:
+        log(f"start_cov_task error: {e}"); return False
+    return "result=True" in out or "result: true" in out.lower()
+
+
+def handle_mow_zone(params, respond):
+    """Orchestrate a normal mow: undock -> (follow_unicom if a transit is needed)
+    -> coverage via /robot_decision/start_cov_task. Streams phase status so the
+    app can show the following_unicom animation. Params: map (e.g. 'map3'),
+    cutterhigh (0..7 wire enum), direction (0..180 or null)."""
+    to_slot = str(params.get("map", ""))
+    if not re.fullmatch(r"map\d+", to_slot):
+        respond("mow_zone_status", {"phase": "error", "error": "invalid_map"}); return
+    cutterhigh = int(params.get("cutterhigh", 2))
+    direction = params.get("direction", None)
+    # Zone selection uses map_ids (the decimal positional bitmask), NOT
+    # map_names (map_names + map_ids:0 -> robot_decision Error 118). The app
+    # already computes the same encoding as `area`; fall back to 10^slot for
+    # the single target zone if it is absent.
+    try:
+        map_ids = int(params.get("area")) if params.get("area") else 10 ** int(re.sub(r"\D", "", to_slot))
+    except (ValueError, TypeError):
+        map_ids = 10 ** int(re.sub(r"\D", "", to_slot))
+
+    # The whole undock -> follow_unicom -> coverage flow runs in ONE rclpy
+    # process (mow_zone_drive.py): one DDS discovery instead of ~15 ros2-CLI
+    # invocations (5-8s discovery each, and the `ros2 param set` calls timed
+    # out so the speed relaxation never applied). That process streams a
+    # "PHASE <name> [msg]" line per stage on stdout; we forward each as a
+    # mow_zone_status so the app still gets the following_unicom animation.
+    drive_script = "/root/novabot/scripts/mow_zone_drive.py"
+    d_arg = str(int(direction)) if direction is not None else "-"
+    # to_slot is already allowlisted (re.fullmatch map\d+ above) and the rest
+    # are int()-coerced, so there is no injection vector. Still, pass every
+    # value as argv (not string-interpolated into the shell) so shell
+    # metacharacters could never escape even if validation regressed.
+    wrapper = (
+        "source /opt/ros/galactic/setup.bash && "
+        "source /root/novabot/install/setup.bash 2>/dev/null && "
+        # SHM transport (inherited from _ros_env): the FollowPath action only
+        # actually drives over shared memory; over the network transport nav2
+        # accepts the goal but its control loop misses rate and aborts with
+        # "Failed to make progress". mow_zone_drive.py keeps its shm footprint
+        # tiny (throwaway tf-probe node, depth-1 pubs) so it no longer exhausts
+        # the iceoryx pool.
+        'exec stdbuf -oL python3 "$1" mow "$2" "$3" "$4" "$5"'
+    )
+    argv = ["bash", "-c", wrapper, "mow_zone", drive_script, to_slot,
+            str(int(map_ids)), str(int(cutterhigh)), d_arg]
+
+    def _run():
+        try:
+            proc = subprocess.Popen(argv, env=_ros_env(),
+                                    stdout=subprocess.PIPE,
+                                    stderr=subprocess.STDOUT,
+                                    text=True, bufsize=1)
+            for line in proc.stdout:
+                line = line.strip()
+                if not line:
+                    continue
+                if line.startswith("PHASE "):
+                    parts = line.split(" ", 2)
+                    ph = parts[1] if len(parts) > 1 else ""
+                    msg = {"phase": ph, "map": to_slot}
+                    if ph == "error" and len(parts) > 2:
+                        msg["error"] = parts[2]
+                    respond("mow_zone_status", msg)
+                else:
+                    log(f"mow_zone_drive: {line}")
+            proc.wait()
+        except Exception as e:
+            log(f"mow_zone error: {e}")
+            respond("mow_zone_status", {"phase": "error", "map": to_slot, "error": str(e)})
+
+    threading.Thread(target=_run, daemon=True, name="mow-zone").start()
+    respond("mow_zone_respond", {"result": 0, "map": to_slot})
+
+
+def handle_return_to_dock(params, respond):
+    """Follow the recorded unicom back to the dock, then dock. Mirror of
+    mow_zone's outbound transit: the firmware's own auto-return (nav_to_recharge)
+    is goal-based and cuts across the hedge, so it fails to bring the mower home
+    from a far zone. mow_zone_drive.py return-mode walks the recorded unicom
+    segments home, then triggers the visual auto_recharge. Runs in ONE rclpy
+    process; streams a PHASE line per stage that we forward as
+    return_to_dock_status."""
+    drive_script = "/root/novabot/scripts/mow_zone_drive.py"
+    wrapper = (
+        "source /opt/ros/galactic/setup.bash && "
+        "source /root/novabot/install/setup.bash 2>/dev/null && "
+        # SHM transport (see handle_mow_zone note); minimal footprint in the
+        # script keeps it from exhausting the iceoryx pool.
+        'exec stdbuf -oL python3 "$1" return'
+    )
+    argv = ["bash", "-c", wrapper, "return_to_dock", drive_script]
+
+    def _run():
+        try:
+            proc = subprocess.Popen(argv, env=_ros_env(),
+                                    stdout=subprocess.PIPE,
+                                    stderr=subprocess.STDOUT,
+                                    text=True, bufsize=1)
+            for line in proc.stdout:
+                line = line.strip()
+                if not line:
+                    continue
+                if line.startswith("PHASE "):
+                    parts = line.split(" ", 2)
+                    ph = parts[1] if len(parts) > 1 else ""
+                    msg = {"phase": ph}
+                    if ph == "error" and len(parts) > 2:
+                        msg["error"] = parts[2]
+                    respond("return_to_dock_status", msg)
+                else:
+                    log(f"return_to_dock: {line}")
+            proc.wait()
+        except Exception as e:
+            log(f"return_to_dock error: {e}")
+            respond("return_to_dock_status", {"phase": "error", "error": str(e)})
+
+    threading.Thread(target=_run, daemon=True, name="return-to-dock").start()
+    respond("return_to_dock_respond", {"result": 0})
+
+
 def handle_start_edge_cut(params, respond):
     """Start edge-cutting via /navigate_through_coverage_paths action.
 
@@ -3826,6 +4288,9 @@ COMMANDS = {
     "get_seam_fix": handle_get_seam_fix,
     "recalibrate_charging_pose": handle_recalibrate_charging_pose,
     "start_edge_cut": handle_start_edge_cut,
+    "follow_unicom": handle_follow_unicom,
+    "mow_zone": handle_mow_zone,
+    "return_to_dock": handle_return_to_dock,
     "stop_boundary_follow": handle_stop_boundary_follow,
     "get_lora_info": handle_get_lora_info,
     "set_lora_info": handle_set_lora_info,
