@@ -114,14 +114,17 @@ describe('getMowerPhase', () => {
     expect(getMowerPhase('SN1')).toBe('other');
   });
 
-  it('gedockt + CHARGING met gepauzeerde coverage door user_stop → NIET charging', () => {
+  // Sinds finding 4: een gebruikersstop is een HARD afbreeksignaal en
+  // classificeert als 'aborted' (de watcher ontwapent erop zodra hij eerder
+  // maaien zag) in plaats van het passieve 'other'. In geen geval 'charging'.
+  it('gedockt + CHARGING met user_stop → aborted (nooit charging)', () => {
     deviceCache.set('SN1', new Map([
       ['battery_state', 'CHARGING'],
       ['task_mode', '1'],
       ['msg', 'Mode:COVERAGE Work:USER_STOP Recharge: WAIT'],
       ['work_status', '10'],
     ]));
-    expect(getMowerPhase('SN1')).toBe('other');
+    expect(getMowerPhase('SN1')).toBe('aborted');
   });
 
   // Regressie (Task 6 review, finding 2): stop_navigation zet task_mode terug
@@ -130,28 +133,28 @@ describe('getMowerPhase', () => {
   // en de rand-dag watcher startte binnen 30 seconden een randmaai op een beurt
   // die de gebruiker juist bewust had afgebroken. De msg draagt de reden nog
   // wel, dus daar moet de classificatie op leunen, niet op task_mode.
-  it('gedockt + CHARGING na handmatige stop met task_mode 0 → NIET charging', () => {
+  it('gedockt + CHARGING na handmatige stop met task_mode 0 → aborted (nooit charging)', () => {
     deviceCache.set('SN1', new Map([
       ['battery_state', 'CHARGING'],
       ['task_mode', '0'],
       ['msg', 'Mode:COVERAGE Work:USER_STOP Recharge: FINISHED'],
       ['work_status', '0'],
     ]));
-    expect(getMowerPhase('SN1')).toBe('other');
+    expect(getMowerPhase('SN1')).toBe('aborted');
   });
 
   // Realistische vorm ná het dokken: de live Work-status is al doorgerold naar
   // WAIT en de uitkomst van de afgebroken beurt zit nog in de ruwe
   // work_status-code (10 = USER_STOP, zie IDLE_WORK_STATUS in mowingService).
   // Alleen op de msg toetsen zou dit geval missen.
-  it('gedockt + CHARGING met work_status 10 (USER_STOP) na het dokken → NIET charging', () => {
+  it('gedockt + CHARGING met work_status 10 (USER_STOP) na het dokken → aborted', () => {
     deviceCache.set('SN1', new Map([
       ['battery_state', 'CHARGING'],
       ['task_mode', '0'],
       ['msg', 'Mode:COVERAGE Work:WAIT Prev work:USER_STOP Recharge: FINISHED'],
       ['work_status', '10'],
     ]));
-    expect(getMowerPhase('SN1')).toBe('other');
+    expect(getMowerPhase('SN1')).toBe('aborted');
   });
 
   // Regressie (Task 6 review ronde 2): "Work:CANCELLED" is op deze firmware
@@ -298,26 +301,26 @@ describe('getMowerPhase', () => {
   // doorrolt (naar FINISHED_ONCE), dus mogelijk overleeft USER_STOP dat niet.
   // De echte bescherming voor dit scenario is daarom de cov_ratio-toets
   // hierboven, niet deze test.
-  it('GECONSTRUEERD: Work:CANCELLED met Prev work:USER_STOP → NIET charging', () => {
+  it('GECONSTRUEERD: Work:CANCELLED met Prev work:USER_STOP → aborted (nooit charging)', () => {
     deviceCache.set('SN1', new Map([
       ['battery_state', 'CHARGING'], ['work_status', '0'],
       ['cov_ratio', '1'], ['finished_num', '1'],
       ['msg', 'Mode:COVERAGE Work:CANCELLED Prev work:USER_STOP Recharge: FINISHED'],
     ]));
-    expect(getMowerPhase('SN1')).toBe('other');
+    expect(getMowerPhase('SN1')).toBe('aborted');
   });
 
   // Finding NEW-3, deel 1: onderbroken coverage laat "Prev work:COVERING"
   // achter. Bewust met "Recharge: FINISHED" én dekkingsbewijs, zodat alle
   // andere regels deze msg zouden doorlaten en ALLEEN prevWorkAborted hem nog
   // tegenhoudt. Zonder COVERING in dat patroon geeft deze test 'charging'.
-  it('GECONSTRUEERD: Prev work:COVERING met afrondstaart → NIET charging', () => {
+  it('GECONSTRUEERD: Prev work:COVERING met afrondstaart → aborted (nooit charging)', () => {
     deviceCache.set('SN1', new Map([
       ['battery_state', 'CHARGING'], ['work_status', '0'],
       ['cov_ratio', '1'], ['finished_num', '1'],
       ['msg', 'Mode:COVERAGE Work:CANCELLED Prev work:COVERING Recharge: FINISHED'],
     ]));
-    expect(getMowerPhase('SN1')).toBe('other');
+    expect(getMowerPhase('SN1')).toBe('aborted');
   });
 
   // Ronde 4, finding 3: MOVING en RUNNING zijn UIT prevWorkAborted gehaald.
@@ -383,17 +386,17 @@ describe('getMowerPhase', () => {
     expect(getMowerPhase('SN1')).toBe('other');
   });
 
-  it('afgebroken door tijdslimiet of fout → NIET charging', () => {
+  it('afgebroken door tijdslimiet of fout → aborted (nooit charging)', () => {
     deviceCache.set('SN1', new Map([
       ['battery_state', 'CHARGING'],
       ['msg', 'Mode:COVERAGE Work:TIME_LIMIT_STOP Recharge: FINISHED'],
     ]));
-    expect(getMowerPhase('SN1')).toBe('other');
+    expect(getMowerPhase('SN1')).toBe('aborted');
     deviceCache.set('SN2', new Map([
       ['battery_state', 'CHARGING'],
       ['msg', 'Mode:COVERAGE Work:ERROR_STOP Recharge: FINISHED'],
     ]));
-    expect(getMowerPhase('SN2')).toBe('other');
+    expect(getMowerPhase('SN2')).toBe('aborted');
   });
 
   // Ronde 4, finding 1: dit stond eerder gemarkeerd als "letterlijke msg-vorm

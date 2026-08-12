@@ -18,19 +18,56 @@ let intervalId: ReturnType<typeof setInterval> | null = null;
 const CHECK_INTERVAL_MS = 30_000;
 const TRIGGER_WINDOW_MS = 5 * 60_000; // 5 minuten window — ruim genoeg voor restarts
 
-// Levensduur van een rand-dag watcher. Bewust ruim: de firmware pauzeert een
-// lopende maaibeurt zelf voor een low-battery recharge, dockt, laadt tot ongeveer
-// 96% en hervat daarna de gepauzeerde taak (coverContinueDeal, zie
-// research/documents/firmware-auto-continue-after-recharge.md). Eén maaibeurt kan
-// dus legitiem maaien → dokken → laden → hervatten → afronden beslaan en ruim
-// langer duren dan een paar uur. Een korte timeout zou de watcher middenin die
-// cyclus laten verlopen, waardoor de randmaai op een rand-dag stil wordt
-// overgeslagen. Ruim mag hier, want de watcher kan ALLEEN vuren nadat hij een
-// echte maaien-daarna-gedockt overgang heeft gezien: een langere timeout maakt
-// een ongewenste start dus niet waarschijnlijker, hij voorkomt alleen dat een
-// terechte late start verloren gaat.
+// Levensduur van een rand-dag watcher. Bewust ruim gehouden op 12 uur, óók na
+// finding 4 uit de whole-branch review: de firmware pauzeert een lopende
+// maaibeurt zelf voor een low-battery recharge, dockt, laadt tot ongeveer 96%
+// en hervat daarna de gepauzeerde taak (coverContinueDeal, zie
+// research/documents/firmware-auto-continue-after-recharge.md). Eén maaibeurt
+// kan dus legitiem maaien → dokken → laden → hervatten → afronden beslaan en
+// ruim langer duren dan een paar uur; het plan-oorspronkelijke 3 uur zou zo'n
+// beurt de randmaai stil ontnemen. De veiligheid tegen "verkeerde beurt
+// adopteren" hangt sinds finding 4 niet meer aan deze timeout maar aan de
+// identiteitschecks: het maai-startvenster (EDGE_MOW_START_WINDOW_MS), de
+// 'aborted'-ontwapening, de expliciete disarms (stopknop, schema uit/weg) en
+// de hercontrole van het schema op het vuurmoment. De timeout is daarmee
+// alleen nog de achtervang die een vergeten watcher ooit opruimt.
 const EDGE_WATCH_TIMEOUT_MS = 12 * 60 * 60 * 1000; // 12 uur
+
+// Maai-startvenster: de gearmde beurt moet binnen dit venster na het armen ook
+// echt als 'mowing' zijn waargenomen. De arm wordt gezet direct nadat
+// start_navigation is geaccepteerd; de maaier ontdockt en rijdt binnen enkele
+// minuten (fase 'mowing' dekt ook het aanrijden via Work:MOVING). Is er binnen
+// het venster géén maaien gezien, dan is de gearmde beurt nooit begonnen en
+// vervalt de arm — anders zou een handmatige beurt uren later de arm
+// "adopteren" en een randmaai op de verkeerde zone/hoogte uitlokken (finding
+// 4). Ruim genomen (30 min) voor trage RTK-init; loopt de init nog langer,
+// dan valt dat in de veilige richting: een gemiste randmaai, geen verkeerde.
+const EDGE_MOW_START_WINDOW_MS = 30 * 60 * 1000; // 30 minuten
+
 const pendingEdge = new Map<string, EdgeWatchEntry>(); // sn → watcher
+
+/** Ontwapen de rand-dag watcher voor een maaier. Aangeroepen bij elke
+ *  handmatige start/stop via de server (dashboard stop-navigation, generieke
+ *  command-route van de app): een handmatige actie betekent dat de gearmde
+ *  geplande beurt niet meer de beurt is die er loopt. Stopt de gebruiker de
+ *  maaier buiten de server om (fysieke knop, stock-app via MQTT), dan vangt de
+ *  'aborted'-fase in advanceEdgeWatch dat op via de firmware-rapportage. */
+export function disarmEdgeWatch(sn: string, reason: string): void {
+  if (pendingEdge.delete(sn)) {
+    console.log(`[ScheduleRunner] EDGE DISARMED sn=${sn}: ${reason}`);
+  }
+}
+
+/** Ontwapen de watcher(s) die bij een specifiek schema horen. Aangeroepen
+ *  wanneer dat schema wordt uitgezet of verwijderd. */
+export function disarmEdgeWatchForSchedule(scheduleId: string, reason: string): void {
+  for (const [sn, entry] of pendingEdge) {
+    if (entry.scheduleId === scheduleId) {
+      pendingEdge.delete(sn);
+      console.log(`[ScheduleRunner] EDGE DISARMED sn=${sn} (schema ${scheduleId}): ${reason}`);
+    }
+  }
+}
 
 // Terugval-maaihoogte voor legacy rijen waar dashboard_schedules.cutting_height
 // NULL is. Eenheid is user-cm, dezelfde als de app-editor schrijft; de
@@ -110,23 +147,48 @@ export function isEdgeDay(edgeDaysJson: string | null, weekday: number): boolean
   } catch { return false; }
 }
 
-export type EdgeWatchEntry = { bladeHeightMm: number; mapName: string; armedAt: number; sawMowing: boolean };
+export type EdgeWatchEntry = {
+  /** Identiteit van de run: het schema dat deze watcher armde. Bij het vuren
+   *  wordt gecontroleerd of dat schema nog bestaat en aan staat. */
+  scheduleId: string;
+  bladeHeightMm: number;
+  mapName: string;
+  /** Moment van armen = starttijd van de maaibeurt waarvoor gearmd is (de arm
+   *  wordt direct na een geaccepteerde start_navigation gezet). */
+  armedAt: number;
+  sawMowing: boolean;
+};
 
 /** State machine per maaier voor de rand-dag. Arm bij trigger (sawMowing=false),
  *  markeer sawMowing zodra de maaier echt maait, en vuur (fire=true) zodra hij
- *  daarna gaat laden = maaibeurt klaar. Vervalt na timeoutMs zonder vuren zodat
- *  een mislukte beurt nooit uren later een losse randsessie start.
+ *  daarna gaat laden = maaibeurt klaar.
+ *
+ *  Identiteitsregels (finding 4, whole-branch review):
+ *  - Startvenster: is er binnen mowStartWindowMs na het armen géén maaien
+ *    gezien, dan is de gearmde beurt nooit begonnen en vervalt de arm — vóór
+ *    er iets geadopteerd kan worden. Dit geldt in ELKE fase, dus ook wanneer
+ *    de eerste 'mowing'-waarneming pas ná het venster komt: dat is dan per
+ *    definitie een andere (handmatige) beurt.
+ *  - 'aborted' ná gezien maaien ontwapent: de beurt waar de arm bij hoorde is
+ *    definitief afgebroken (gebruikersstop, tijdslimiet, fout). Vóór gezien
+ *    maaien wordt 'aborted' genegeerd: dat is dan een verouderde stopcode van
+ *    een eerdere beurt die nog in de sensor-cache hangt; het startvenster
+ *    ruimt zo'n arm vanzelf op als de beurt echt niet loopt.
+ *  - Vervalt na timeoutMs zonder vuren (achtervang).
  *
  *  De 'other'-tak is bewust passief-wachtend: getMowerPhase geeft tijdens een
- *  mid-mow laadpauze 'other' terug (geen 'charging'), dus zo'n tussenstop laat
- *  de watcher simpelweg doorwachten tot het echte einde-taak-dock. */
+ *  mid-mow laadpauze 'other' terug (geen 'charging' en geen 'aborted'), dus
+ *  zo'n tussenstop laat de watcher doorwachten tot het echte einde-taak-dock. */
 export function advanceEdgeWatch(
   entry: EdgeWatchEntry,
-  phase: 'mowing' | 'charging' | 'other',
+  phase: 'mowing' | 'charging' | 'aborted' | 'other',
   nowMs: number,
   timeoutMs: number,
+  mowStartWindowMs: number = EDGE_MOW_START_WINDOW_MS,
 ): { next: EdgeWatchEntry | null; fire: boolean } {
   if (nowMs - entry.armedAt > timeoutMs) return { next: null, fire: false };
+  if (!entry.sawMowing && nowMs - entry.armedAt > mowStartWindowMs) return { next: null, fire: false };
+  if (phase === 'aborted' && entry.sawMowing) return { next: null, fire: false };
   if (phase === 'mowing') return { next: { ...entry, sawMowing: true }, fire: false };
   if (phase === 'charging' && entry.sawMowing) return { next: null, fire: true };
   return { next: entry, fire: false };
@@ -200,6 +262,15 @@ function checkSchedules() {
     if (next === null) pendingEdge.delete(sn);
     else pendingEdge.set(sn, next);
     if (fire) {
+      // Hercontrole op het vuurmoment (finding 4): het schema dat deze watcher
+      // armde moet nog bestaan en aan staan. Dit vangt ALLE verwijder- en
+      // uitzetpaden af (dashboard, app, admin, directe DB-wijziging), niet
+      // alleen de routes die disarmEdgeWatchForSchedule aanroepen.
+      const sched = scheduleRepo.findById(entry.scheduleId);
+      if (!sched || !sched.enabled) {
+        console.log(`[ScheduleRunner] EDGE NIET GESTART sn=${sn}: schema ${entry.scheduleId} bestaat niet meer of staat uit`);
+        continue;
+      }
       // departFromDock: de watcher vuurt per definitie op fase 'charging'
       // (gedockt); zonder deze vlag blijft het chassis magnetisch aan het dock
       // vergrendeld en plant NTCP vanaf een bijna-lethal positie. De app en
@@ -379,6 +450,12 @@ function triggerSchedule(row: ScheduleRow) {
     scheduleRepo.incrementTriggerCount(row.schedule_id);
     logScheduleDecision(row, true, 'STARTED', `area=${area} height=${row.cutting_height ?? DEFAULT_CUTTING_HEIGHT_CM}cm dir=${effectiveDirection}°`);
 
+    // Elke geslaagde geplande start VERVANGT de watcher-state voor deze
+    // maaier: een eventueel nog hangende arm van een eerdere (bv. ambigu
+    // afgebroken) beurt hoort bij die eerdere beurt en mag deze nieuwe beurt
+    // niet adopteren (finding 4).
+    disarmEdgeWatch(row.mower_sn, `nieuwe geplande beurt (${row.schedule_id}) vervangt oude arm`);
+
     // Rand-dag? Arm de watcher zodat na de maaibeurt een losse randmaai volgt.
     // Alleen bij een geslaagde start: een regen-skip of busy-afwijzing mag nooit
     // iets armen. Weekdag uit de tijdzone van het schema, net als de weekdays-
@@ -393,6 +470,7 @@ function triggerSchedule(row: ScheduleRow) {
       // start_edge_cut accepteert maar een mapName per aanroep.
       const mapName = selected?.canonical_name?.match(/^map\d+/)?.[0] ?? 'map0';
       pendingEdge.set(row.mower_sn, {
+        scheduleId: row.schedule_id,
         bladeHeightMm: edgeBladeHeightMm(row.cutting_height ?? DEFAULT_CUTTING_HEIGHT_CM),
         mapName,
         armedAt: Date.now(),

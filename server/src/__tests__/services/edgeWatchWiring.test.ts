@@ -23,7 +23,7 @@ vi.mock('../../dashboard/socketHandler.js', () => ({
 }));
 
 import {
-  startScheduleRunner, stopScheduleRunner, __getPendingEdgeForTest,
+  startScheduleRunner, stopScheduleRunner, __getPendingEdgeForTest, disarmEdgeWatch,
 } from '../../services/scheduleRunner.js';
 import { scheduleRepo } from '../../db/repositories/index.js';
 import { deviceCache } from '../../mqtt/sensorData.js';
@@ -240,6 +240,119 @@ describe('rand-dag watcher bekabeling', () => {
     // En ook daarna niet: dokken mag geen randmaai uitlokken.
     setDockedAfterFinishedMow(SN);
     vi.advanceTimersByTime(TICK_MS);
+    expect(edgeCutCalls()).toHaveLength(0);
+  });
+
+  // ── Identiteit + expliciete disarms (finding 4, whole-branch review) ──────
+
+  // De arm draagt de schedule_id van de beurt waarvoor hij gearmd is; op het
+  // vuurmoment hercontroleert de runner of dat schema nog bestaat en aan
+  // staat. Verwijderen van het schema mag dus nooit meer een randmaai
+  // opleveren, ook al is de maai-en-dok-cyclus verder perfect.
+  it('verwijderd schema → geen randmaai op het vuurmoment', () => {
+    const SN = 'WIRE_DELETED';
+    createDueSchedule(SN, JSON.stringify([NOW.getDay()]));
+    setIdleOnDock(SN);
+
+    startScheduleRunner();
+    expect(__getPendingEdgeForTest().get(SN)?.scheduleId).toBe(`sched-${SN}`);
+    setMowing(SN);
+    vi.advanceTimersByTime(TICK_MS);
+
+    scheduleRepo.deleteByIdAndMower(`sched-${SN}`, SN);
+    setDockedAfterFinishedMow(SN);
+    vi.advanceTimersByTime(TICK_MS * 2);
+
+    expect(edgeCutCalls()).toHaveLength(0);
+    expect(__getPendingEdgeForTest().has(SN)).toBe(false);
+  });
+
+  it('uitgezet schema → geen randmaai op het vuurmoment', () => {
+    const SN = 'WIRE_DISABLED';
+    createDueSchedule(SN, JSON.stringify([NOW.getDay()]));
+    setIdleOnDock(SN);
+
+    startScheduleRunner();
+    setMowing(SN);
+    vi.advanceTimersByTime(TICK_MS);
+
+    scheduleRepo.update(`sched-${SN}`, { enabled: 0 });
+    setDockedAfterFinishedMow(SN);
+    vi.advanceTimersByTime(TICK_MS * 2);
+
+    expect(edgeCutCalls()).toHaveLength(0);
+  });
+
+  // Startvenster: de gearmde beurt is nooit als 'mowing' waargenomen (stil
+  // mislukte start). Een handmatige beurt die pas na het venster begint mag de
+  // arm niet adopteren — anders randmaait de ochtend-arm 's avonds de
+  // verkeerde zone op de verkeerde hoogte, zonder toezicht.
+  it('stille misstart: latere handmatige beurt adopteert de arm niet', () => {
+    const SN = 'WIRE_STALE';
+    createDueSchedule(SN, JSON.stringify([NOW.getDay()]));
+    setIdleOnDock(SN);
+
+    startScheduleRunner();
+    expect(__getPendingEdgeForTest().has(SN)).toBe(true);
+
+    // 31 minuten ticks zonder ooit 'mowing' te zien → arm vervalt.
+    vi.advanceTimersByTime(31 * 60_000);
+    expect(__getPendingEdgeForTest().has(SN)).toBe(false);
+
+    // De handmatige avondbeurt: maaien en netjes dokken. Geen randmaai.
+    setMowing(SN);
+    vi.advanceTimersByTime(TICK_MS);
+    setDockedAfterFinishedMow(SN);
+    vi.advanceTimersByTime(TICK_MS * 2);
+    expect(edgeCutCalls()).toHaveLength(0);
+  });
+
+  // Harde afbreking (hier: gebruikersstop, gedockt met Prev work:USER_STOP en
+  // ws 10) → getMowerPhase 'aborted' → de watcher ontwapent. Een latere
+  // handmatige beurt die WEL netjes afrondt mag daarna geen randmaai van de
+  // ochtend-arm meer uitlokken.
+  it('afgebroken beurt (USER_STOP) ontwapent; latere handmatige beurt vuurt niets', () => {
+    const SN = 'WIRE_USERSTOP';
+    createDueSchedule(SN, JSON.stringify([NOW.getDay()]));
+    setIdleOnDock(SN);
+
+    startScheduleRunner();
+    setMowing(SN);
+    vi.advanceTimersByTime(TICK_MS);
+    expect(__getPendingEdgeForTest().get(SN)?.sawMowing).toBe(true);
+
+    deviceCache.set(SN, new Map([
+      ['battery_state', 'CHARGING'], ['work_status', '10'],
+      ['msg', 'Mode:COVERAGE Work:WAIT Prev work:USER_STOP Recharge: FINISHED'],
+    ]));
+    vi.advanceTimersByTime(TICK_MS);
+    expect(__getPendingEdgeForTest().has(SN)).toBe(false);
+    expect(edgeCutCalls()).toHaveLength(0);
+
+    setMowing(SN);
+    vi.advanceTimersByTime(TICK_MS);
+    setDockedAfterFinishedMow(SN);
+    vi.advanceTimersByTime(TICK_MS * 2);
+    expect(edgeCutCalls()).toHaveLength(0);
+  });
+
+  // disarmEdgeWatch is de haak die de stopknop-routes (dashboard
+  // stop-navigation, generieke command-route van de app) aanroepen.
+  it('disarmEdgeWatch (stopknop) ontwapent; dokken daarna vuurt niets', () => {
+    const SN = 'WIRE_STOPBTN';
+    createDueSchedule(SN, JSON.stringify([NOW.getDay()]));
+    setIdleOnDock(SN);
+
+    startScheduleRunner();
+    setMowing(SN);
+    vi.advanceTimersByTime(TICK_MS);
+    expect(__getPendingEdgeForTest().get(SN)?.sawMowing).toBe(true);
+
+    disarmEdgeWatch(SN, 'stopknop (test)');
+    expect(__getPendingEdgeForTest().has(SN)).toBe(false);
+
+    setDockedAfterFinishedMow(SN);
+    vi.advanceTimersByTime(TICK_MS * 2);
     expect(edgeCutCalls()).toHaveLength(0);
   });
 

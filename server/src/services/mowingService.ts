@@ -183,48 +183,39 @@ export function stopMowing(sn: string): MowingResult {
 }
 
 /** Grove maaier-fase uit de sensor-cache, voor de rand-dag watcher.
+ *  mowing = actieve coverage-status;
  *  charging = battery_state CHARGING ÉN het is een echt einde-taak-dock;
- *  mowing = actieve coverage-status; other = al het overige (undocken, idle,
- *  offline, en ook een dock ná een mid-mow laadpauze of een afgebroken
- *  beurt, zie hieronder). */
-export function getMowerPhase(sn: string): 'mowing' | 'charging' | 'other' {
+ *  aborted = de beurt is DEFINITIEF afgebroken (gebruikersstop, tijdslimiet,
+ *            fout) — de watcher ontwapent hierop zodra hij eerder maaien zag;
+ *  other = al het overige (undocken, idle, offline, mid-mow laadpauze,
+ *          en de ambigue dok-vormen zonder dekkingsbewijs). */
+export function getMowerPhase(sn: string): 'mowing' | 'charging' | 'aborted' | 'other' {
   const raw = deviceCache.get(sn);
   if (!raw) return 'other';
   const batteryState = (raw.get('battery_state') ?? '').toUpperCase();
   const msg = raw.get('msg') ?? '';
+  const workStatus = raw.get('work_status') ?? '';
 
-  // Een gedockte, ladende maaier telt alleen als 'charging' wanneer het een
-  // ECHT einde-taak-dock is. Twee gevallen waarin hij wel laadt maar de
-  // maaibeurt NIET is afgerond, en die dus vóór de battery_state-check moeten
-  // komen, want beide zouden anders een autonome randmaai uitlokken:
+  // Rangorde (gestoeld op de captures uit Task 6 ronde 4,
+  // research/documents/obstacle-capture-*.jsonl, en finding 4 uit de
+  // whole-branch review):
   //
-  // 1. Mid-mow laadpauze. De firmware pauzeert een lopende coverage-taak zelf
-  //    voor een low-battery recharge, dockt, laadt tot ongeveer 96% en hervat
-  //    dan de gepauzeerde taak zelf (coverContinueDeal, zie
-  //    research/documents/firmware-auto-continue-after-recharge.md).
-  //    battery_state staat dan al op CHARGING terwijl de taak feitelijk nog
-  //    loopt. Zou dit 'charging' opleveren, dan vuurt de rand-dag watcher
-  //    startEdgeCut af terwijl de firmware vrijwel gelijktijdig de coverage
-  //    hervat: twee conflicterende bewegingscommando's op echte hardware.
-  //
-  // 2. Afgebroken beurt. De gebruiker stopt halverwege (stop_navigation) en
-  //    stuurt de maaier naar het dock, of de beurt eindigt op een tijdslimiet
-  //    of een fout. Een bewust of foutief afgebroken beurt is geen afgeronde
-  //    maaibeurt en mag dus nooit alsnog een randmaai uitlokken.
-  //
-  // Deze check leunt bewust NIET (meer) op task_mode === 1, zoals
-  // isInterruptedCoverage in dashboard/src/utils/mowerActivity.ts wel doet:
-  // stop_navigation zet task_mode terug op 0, waardoor geval 2 door die gate
-  // heen glipte en een halverwege gestopte beurt binnen 30 seconden alsnog een
-  // randmaai startte. Strenger dan de dashboard-variant mag hier: die kiest
-  // alleen een knop-label, deze gate laat een echt bewegingscommando toe of niet.
-  //
-  // De rangorde op het dock, gestoeld op de captures (Task 6 ronde 4,
-  // research/documents/obstacle-capture-*.jsonl):
-  //
-  //   a. Expliciete stop-/afbreeksignalen (live Work-tag, "Prev work", ruwe
-  //      work_status-code) winnen altijd: 'other'.
-  //   b. De live tag "Mode:COVERAGE ... Work:FINISHED" is het VERTROUWDE
+  //   1. Een LIVE actieve taak wint van alles: wie nu maait is niet gedockt,
+  //      niet afgebroken en niet klaar, wat er verder ook aan doorgerolde of
+  //      verouderde velden in de cache staat.
+  //   2. HARDE afbreeksignalen → 'aborted'. Alleen vormen die een beurt
+  //      definitief beëindigen: gebruikersstop, tijdslimiet, fout. De
+  //      pauzevormen horen hier nadrukkelijk NIET bij (stap 3).
+  //   3. PAUZEVORMEN op het dock → 'other' (passief doorwachten). De firmware
+  //      pauzeert een lopende coverage-taak zelf voor een low-battery
+  //      recharge, dockt, laadt tot ~96% en hervat de taak zelf
+  //      (coverContinueDeal, zie
+  //      research/documents/firmware-auto-continue-after-recharge.md).
+  //      battery_state staat dan al op CHARGING terwijl de taak feitelijk nog
+  //      loopt; 'charging' zou hier een randmaai afvuren die botst met de
+  //      hervatting, 'aborted' zou de watcher middenin een legitieme pauze
+  //      ontwapenen. Allebei fout: doorwachten.
+  //   4. De live tag "Mode:COVERAGE ... Work:FINISHED" is het VERTROUWDE
   //      einde-taak-signaal en heeft GEEN dekkingsbewijs nodig. In de echte
   //      capture van een afgeronde beurt op het dock staat die tag urenlang
   //      stabiel (ws 9, cov_ratio 1, finished_num 1, 1729 samples) en hij
@@ -233,7 +224,7 @@ export function getMowerPhase(sn: string): 'mowing' | 'charging' | 'other' {
   //      mapping-sessies rapporteren OOK een live "Work:FINISHED"
   //      ("Mode:MAPPING Work:FINISHED ... Recharge: FINISHED", cov_ratio
   //      0.099 in de capture) en een randmaai na een mapping-sessie is fout.
-  //   c. ELKE andere live Work-tag op het dock (WAIT, CANCELLED, of welke
+  //   5. ELKE andere live Work-tag op het dock (WAIT, CANCELLED, of welke
   //      doorgerolde spelling dan ook) is AMBIGU en vereist dekkingsbewijs
   //      (cov_ratio >= 0.95). Ná het dokken rollen de msg-velden namelijk
   //      door en worden een afgeronde beurt, een handmatig gestopte beurt en
@@ -245,12 +236,68 @@ export function getMowerPhase(sn: string): 'mowing' | 'charging' | 'other' {
   //      dat "Work:WAIT Prev work:WAIT Recharge: FINISHED" met cov_ratio 0
   //      OOK bestaat. Dezelfde vorm, tegengestelde betekenis: cov_ratio
   //      beslist.
+  //
+  // Deze classificatie leunt bewust NIET op task_mode === 1, zoals
+  // isInterruptedCoverage in dashboard/src/utils/mowerActivity.ts wel doet:
+  // stop_navigation zet task_mode terug op 0, waardoor een halverwege gestopte
+  // beurt door die gate glipte en binnen 30 seconden alsnog een randmaai
+  // startte. Strenger dan de dashboard-variant mag hier: die kiest alleen een
+  // knop-label, deze gate laat een echt bewegingscommando toe of niet.
+
+  // 1. Live actieve taak. Codes uit de AUTORITATIEVE WorkStatus-decode
+  //    (sensorData.ts WORK_STATUS_LABELS, 1:1 uit robot_status::
+  //    WorkStatusString in de firmware): 90 Mowing, 91 Avoiding obstacle,
+  //    92 Driving, 94 Re-covering. 93 (Edge cutting) telt bewust niet als
+  //    maaibeurt: een randmaai mag nooit zelf weer een randmaai armen/voeden.
+  //    De msg-regex matcht alleen de LIVE tag (hoofdletter W), niet
+  //    "Prev work:MOVING" (kleine w).
+  const ws = parseInt(workStatus, 10);
+  if ([90, 91, 92, 94].includes(ws)) return 'mowing';
+  if (/Work:(COVERING|RUNNING|MOVING|BOUNDARY_COVERING)/.test(msg)) return 'mowing';
+
+  // 2. Harde afbreeksignalen → 'aborted'. Drie bronnen, elk zonder de
+  //    pauzevormen:
+  //    - live Work-tag: USER_STOP / TIME_LIMIT_STOP / ERROR_STOP. CANCELLED
+  //      staat hier bewust NIET tussen: per issue #17 kan een netjes afgeronde
+  //      beurt als CANCELLED rapporteren; CANCELLED valt onder de ambigue
+  //      vormen (stap 5). De \b voorkomt dat USER_STOP op USER_RECHARGE_STOP
+  //      zou kunnen aanslaan (underscore is een woordteken).
+  //    - "Prev work": bij het dokken is de live tag vaak al doorgerold naar
+  //      WAIT of CANCELLED en blijft de reden alleen in "Prev work" staan.
+  //      USER_RECHARGE_STOP hoort hier NIET thuis: dat is per issue #17 juist
+  //      het handtekening-signaal van een normaal afgeronde beurt. MOVING en
+  //      RUNNING evenmin (Task 6 ronde 4): een afgeronde beurt rijdt als
+  //      laatste "werk" naar het dock, dus die vallen onder de ambigue gate
+  //      waar cov_ratio beslist. COVERING blijft WEL staan: midden uit de
+  //      dekking gerukt is nooit een afgeronde beurt.
+  //    - ruwe work_status-codes: FAILED(1), FAILED_ONCE(7), USER_STOP(10),
+  //      ERROR_STOP(13), TIME_LIMIT_STOP(14), RECOVER_ERROR_STOP(15).
+  //      CANCELLED(2), FINISHED(8/9) en WAIT(0) horen er niet in (afgeronde
+  //      beurten), en 11/12 zijn pauzecodes (stap 3).
+  //    Anders dan vroeger geldt dit ook ZONDER dock: een gebruikersstop midden
+  //    op het gazon is net zo definitief als een op het dock. De watcher
+  //    negeert 'aborted' vóór hij maaien heeft gezien (advanceEdgeWatch), dus
+  //    een VEROUDERDE stopcode van gisteren in de cache kan een verse arm niet
+  //    per ongeluk ontwapenen.
+  const liveHardStop = /Work:(USER_STOP|TIME_LIMIT_STOP|ERROR_STOP)\b/.test(msg);
+  const prevHardStop = /Prev work:(USER_STOP|TIME_LIMIT_STOP|ERROR_STOP|COVERING)\b/.test(msg);
+  const hardAbortWs = ['1', '7', '10', '13', '14', '15'].includes(workStatus);
+  if (liveHardStop || prevHardStop || hardAbortWs) return 'aborted';
+
   // battery_state kent op deze firmware alleen CHARGING / NOT_CHARGING /
   // DISCHARGING / FULL (zie translateBatteryState in sensorData.ts); een
   // eerdere 'FINISHED'-vergelijking hier was dode code. FULL telt bewust NIET
   // als dock-signaal, consistent met reanchorOnDock.
   const onDock = batteryState === 'CHARGING';
-  const workStatus = raw.get('work_status') ?? '';
+
+  // 3. Pauzevormen op het dock → passief doorwachten. Live tags PAUSED /
+  //    USER_RECHARGE_STOP / BATTERY_LOW_RECHARGE, doorgerolde "Prev
+  //    work:PAUSED", en de ruwe pauzecodes USER_RECHARGE_STOP(11) /
+  //    LOWER_POWER_STOP(12).
+  const livePauseTag = /Work:(PAUSED|USER_RECHARGE_STOP|BATTERY_LOW_RECHARGE)\b/.test(msg);
+  const prevPauseTag = /Prev work:PAUSED\b/.test(msg);
+  const pauseWs = ['11', '12'].includes(workStatus);
+  if (onDock && (livePauseTag || prevPauseTag || pauseWs)) return 'other';
 
   // Dekkingsbewijs voor de ambigue vormen: cov_ratio >= 0.95, en ALLEEN
   // cov_ratio. finished_num telt hier bewust NIET mee (Task 6 ronde 4): dat
@@ -271,46 +318,11 @@ export function getMowerPhase(sn: string): 'mowing' | 'charging' | 'other' {
     : null;
   const coverageEvidence = covRatio !== null && covRatio >= 0.95;
 
-  // a1. De LIVE Work-status zegt dat de taak nu stilstaat: gepauzeerd voor een
-  //     recharge, door de gebruiker gestopt, of op een limiet/fout geëindigd.
-  //     Dit weegt zwaarder dan welk afrondingssignaal dan ook: tijdens een
-  //     mid-mow laadpauze staat er óók "Recharge: FINISHED" in de msg (de
-  //     dok-cyclus zelf verliep prima), en juist dan mag er niets starten.
-  //     CANCELLED staat hier bewust NIET tussen: per issue #17 kan een netjes
-  //     afgeronde beurt als CANCELLED rapporteren (zie rangorde-blok
-  //     hierboven); CANCELLED valt daarom onder de ambigue vormen (c).
-  const liveStopTag = /Work:(USER_STOP|PAUSED|USER_RECHARGE_STOP|BATTERY_LOW_RECHARGE|TIME_LIMIT_STOP|ERROR_STOP)\b/.test(msg);
-  // a2. De VORIGE Work-status wijst op een afbreking. Bij het dokken is de live
-  //     tag vaak al doorgerold naar WAIT of CANCELLED en blijft de reden alleen
-  //     in "Prev work" staan (kleine w, dus geen overlap met de regex
-  //     hierboven). USER_RECHARGE_STOP hoort hier NIET thuis: dat is per issue
-  //     #17 juist het handtekening-signaal van een normaal afgeronde beurt.
-  //     MOVING en RUNNING horen hier evenmin (Task 6 ronde 4): een afgeronde
-  //     beurt rijdt als laatste "werk" naar het dock, dus "Prev work:MOVING"
-  //     kan legitiem bij een afgeronde beurt horen; hard afwijzen zou de
-  //     feature dan stil doden. Geen enkele capture toont MOVING/RUNNING als
-  //     "Prev work" (de ene echte afrond-capture toont FINISHED_ONCE), dus dit
-  //     is niet uit bewijs te beslissen; die vormen vallen daarom onder de
-  //     ambigue gate (c), waar cov_ratio het echte afbreek-scenario al afvangt.
-  //     COVERING blijft WEL staan: midden uit de dekking gerukt en gedockt is
-  //     nooit een afgeronde beurt.
-  const prevWorkAborted = /Prev work:(USER_STOP|PAUSED|TIME_LIMIT_STOP|ERROR_STOP|COVERING)\b/.test(msg);
-  // a3. Ruwe work_status-code van een afgebroken beurt, de codes uit
-  //     IDLE_WORK_STATUS hierboven: FAILED(1), FAILED_ONCE(7), USER_STOP(10),
-  //     USER_RECHARGE_STOP(11), LOWER_POWER_STOP(12), ERROR_STOP(13),
-  //     TIME_LIMIT_STOP(14), RECOVER_ERROR_STOP(15). Vangnet voor het geval de
-  //     msg al helemaal is doorgerold. CANCELLED(2) staat er bewust niet in
-  //     (issue #17), FINISHED(8/9) en WAIT(0) evenmin: dat zijn juist de
-  //     afgeronde beurten waar de randmaai op moet volgen.
-  const abortedWorkStatus = ['1', '7', '10', '11', '12', '13', '14', '15'].includes(workStatus);
-
-  if (onDock && (liveStopTag || prevWorkAborted || abortedWorkStatus)) return 'other';
-
-  // b. Het vertrouwde einde-taak-signaal: live "Work:FINISHED" in Mode:COVERAGE.
-  //    De \b sluit "Work:FINISHED_ONCE" uit (underscore is een woordteken) en
-  //    de hoofdletter W matcht "Prev work:FINISHED" niet.
+  // 4. Het vertrouwde einde-taak-signaal: live "Work:FINISHED" in
+  //    Mode:COVERAGE. De \b sluit "Work:FINISHED_ONCE" uit (underscore is een
+  //    woordteken) en de hoofdletter W matcht "Prev work:FINISHED" niet.
   const trustedFinishTag = msg.includes('Mode:COVERAGE') && /Work:FINISHED\b/.test(msg);
-  // c. Elke ANDERE live Work-tag op het dock is ambigu en vereist
+  // 5. Elke ANDERE live Work-tag op het dock is ambigu en vereist
   //    dekkingsbewijs. \bWork: matcht de live tag maar niet "Prev work:"
   //    (kleine w). Een msg zonder enige Work-tag (leeg, of alleen
   //    battery-payload gezien) valt hier bewust buiten: dat is afwezigheid van
@@ -320,16 +332,6 @@ export function getMowerPhase(sn: string): 'mowing' | 'charging' | 'other' {
   if (onDock && ambiguousDockShape && !coverageEvidence) return 'other';
 
   if (batteryState === 'CHARGING') return 'charging';
-  const ws = parseInt(workStatus, 10);
-  // Actieve maaicodes uit de AUTORITATIEVE WorkStatus-decode (sensorData.ts
-  // WORK_STATUS_LABELS, 1:1 uit robot_status::WorkStatusString in de firmware):
-  // 90 Mowing, 91 Avoiding obstacle, 92 Driving, 94 Re-covering. De oude lijst
-  // [100,101,102,103,150] bestond uit ACTION-feedbackcodes die
-  // report_state_robot nooit stuurt — dode voorwaarden. 93 (Edge cutting) telt
-  // bewust niet als maaibeurt: een randmaai mag nooit zelf weer een randmaai
-  // armen/voeden.
-  if ([90, 91, 92, 94].includes(ws)) return 'mowing';
-  if (/Work:(COVERING|RUNNING|MOVING|BOUNDARY_COVERING)/.test(msg)) return 'mowing';
   return 'other';
 }
 
