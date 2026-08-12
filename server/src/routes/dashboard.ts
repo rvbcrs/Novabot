@@ -4183,6 +4183,12 @@ function syncVirtualWalls(sn: string): void {
 
 // ── Extended Commands (via firmware Python node) ────────────────
 
+// Bewegingsstartende extended-commando's (extended_commands.py handlers).
+// mow_zone is het PRIMAIRE handmatige maaipad van de app; de andere vier
+// starten of sturen eveneens een rit. Elk hiervan via de extended-route is een
+// handmatige interventie die een gearmde rand-dag randmaai ongeldig maakt.
+const EXTENDED_MOVEMENT_KEYS = ['mow_zone', 'follow_unicom', 'start_edge_cut', 'return_to_dock', 'calibration_drive'];
+
 // POST /api/dashboard/extended/:sn — stuur commando naar extended_commands.py
 dashboardRouter.post('/extended/:sn', (req: Request, res: Response) => {
   const sn = req.params.sn;
@@ -4190,6 +4196,17 @@ dashboardRouter.post('/extended/:sn', (req: Request, res: Response) => {
   if (!command || Object.keys(command).length === 0) {
     res.status(400).json({ ok: false, error: 'command required' });
     return;
+  }
+  // Rand-dag watcher: een handmatige zone-maai (mow_zone, het primaire
+  // app-pad) of ander bewegingscommando via deze route mag nooit door een
+  // eerder gearmde watcher worden geadopteerd — anders randmaait de server na
+  // het dokken de SCHEMA-zone op de SCHEMA-hoogte in plaats van wat de
+  // gebruiker net maaide (finding 4, re-review). De watcher zelf vuurt via
+  // publishExtendedCommand rechtstreeks, niet via deze route, dus hij
+  // ontwapent zichzelf hier niet.
+  const movementKey = EXTENDED_MOVEMENT_KEYS.find((k) => k in command);
+  if (movementKey) {
+    disarmEdgeWatch(sn, `handmatig ${movementKey} via extended-route`);
   }
   publishExtendedCommand(sn, command);
   res.json({ ok: true, command: Object.keys(command)[0] });
