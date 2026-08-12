@@ -1194,7 +1194,12 @@ def _depart_pile(seconds: float = 4.0, linear: float = 0.25):
     # cmd_vel watchdog brakes within ~0.5 s of message-loss, so a
     # bigger hold doesn't translate to extra drive distance, just a
     # safety margin.
-    drive_hold = float(seconds) + 16.0   # 4 s drive + 16 s discovery slack
+    # The --once warm-up above already paid DDS discovery, so the streaming
+    # publisher starts emitting almost immediately. A big "slack" here is NOT
+    # a no-op: the mower drives at 0.25 m/s for the WHOLE hold (messages keep
+    # flowing at 10 Hz), so seconds+16 gave ~2.5-3m of reverse instead of 1m.
+    # Hold just past `seconds` so the drive is ~seconds*0.25 m = ~1m.
+    drive_hold = float(seconds) + 2.0
     sequence = (
         "set -x; "
         "source /opt/ros/galactic/setup.bash; "
