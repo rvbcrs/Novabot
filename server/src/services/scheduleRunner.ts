@@ -200,7 +200,11 @@ function checkSchedules() {
     if (next === null) pendingEdge.delete(sn);
     else pendingEdge.set(sn, next);
     if (fire) {
-      const r = startEdgeCut(sn, entry.mapName, entry.bladeHeightMm);
+      // departFromDock: de watcher vuurt per definitie op fase 'charging'
+      // (gedockt); zonder deze vlag blijft het chassis magnetisch aan het dock
+      // vergrendeld en plant NTCP vanaf een bijna-lethal positie. De app en
+      // het dashboard zetten deze vlag in exact dezelfde situatie ook.
+      const r = startEdgeCut(sn, entry.mapName, entry.bladeHeightMm, true);
       console.log(`[ScheduleRunner] EDGE ${r.ok ? 'STARTED' : 'FAILED'} sn=${sn} map=${entry.mapName} blade=${entry.bladeHeightMm}mm ${r.error ?? ''}`);
     }
   }

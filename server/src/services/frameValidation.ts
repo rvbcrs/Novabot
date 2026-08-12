@@ -113,7 +113,13 @@ export function noteDockState(sn: string, docked: boolean): void {
 // volledig autonome aanroeper: die start een randmaai zonder dat er een mens
 // kijkt, dus in een niet-gevalideerd frame zou de maaier zelfstandig een grens
 // gaan rijden die kilometers naast de tuin kan liggen.
-const FRAME_BLOCKED_KEYS = ['go_to_charge', 'start_navigation', 'start_run', 'start_edge_cut'];
+//
+// mow_zone hoort er ook bij: dat commando (extended_commands.py) rijdt de
+// opgenomen unicom-lijn in het map-frame af en start daarna een coverage-taak,
+// dus net zo frame-afhankelijk als start_navigation. Het loopt uitsluitend
+// over het extended-kanaal (publishExtendedCommand), waar dezelfde guard nu
+// ook op zit.
+const FRAME_BLOCKED_KEYS = ['go_to_charge', 'start_navigation', 'start_run', 'start_edge_cut', 'mow_zone'];
 
 /**
  * True when an outbound command must be blocked because the frame is

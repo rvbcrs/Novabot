@@ -11,13 +11,20 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 vi.mock('../../mqtt/broker.js', () => ({
   isDeviceOnline: vi.fn((sn: string) => sn !== 'OFFLINE_SN'),
 }));
+// publishToTopic wordt hier ook gemockt: startEdgeCut loopt via de ECHTE
+// publishExtendedCommand (incl. de echte frame-guard) en die publiceert op
+// het extended-topic via publishToTopic. Zo pint deze suite het kanaal én de
+// guard op het pad dat de randmaai daadwerkelijk neemt, niet alleen het
+// predicaat.
 vi.mock('../../mqtt/mapSync.js', () => ({
   publishToDevice: vi.fn(),
+  publishToTopic: vi.fn(),
 }));
 
 import { getMowerPhase, startEdgeCut } from '../../services/mowingService.js';
 import { deviceCache } from '../../mqtt/sensorData.js';
-import { publishToDevice } from '../../mqtt/mapSync.js';
+import { publishToDevice, publishToTopic } from '../../mqtt/mapSync.js';
+import { markFrameUnvalidated, clearFrameUnvalidated } from '../../services/frameValidation.js';
 
 // HERKOMST VAN DE MSG-STRINGS IN DIT BESTAND (Task 6 review ronde 3).
 // Ronde 1 en 2 gingen allebei mis op geïdealiseerde msg-vormen die groen bleven
@@ -431,36 +438,70 @@ describe('startEdgeCut guards', () => {
   it('offline maaier → ok:false', () => {
     const r = startEdgeCut('OFFLINE_SN', 'map0', 40);
     expect(r.ok).toBe(false);
-    expect(publishToDevice).not.toHaveBeenCalled();
+    expect(publishToTopic).not.toHaveBeenCalled();
   });
 
   it('lege sn → ok:false', () => {
     const r = startEdgeCut('', 'map0', 40);
     expect(r.ok).toBe(false);
-    expect(publishToDevice).not.toHaveBeenCalled();
+    expect(publishToTopic).not.toHaveBeenCalled();
   });
 });
 
 describe('startEdgeCut succespad', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  // Pint de exacte payload-vorm die de app ook stuurt (zie CLAUDE.md): geen
-  // hernoemde velden, bladeHeight blijft in mm. Een toekomstige rename of
-  // eenheid-wijziging breekt deze test in plaats van stil de maaier te laten
-  // negeren of op de verkeerde hoogte te laten maaien.
-  it('stuurt exact { start_edge_cut: { mapName, bladeHeight } } in mm via publishToDevice', () => {
-    const r = startEdgeCut('ONLINE_SN', 'map0', 40);
+  // Pint KANAAL + payload. Kanaal: start_edge_cut wordt alleen door
+  // extended_commands.py afgehandeld, dat uitsluitend op novabot/extended/<SN>
+  // luistert; stock mqtt_node (Dart/Send_mqtt/<SN>) negeert het commando
+  // volledig. Wie dit terugzet naar publishToDevice/sendCommand maakt de hele
+  // rand-dag feature stil dood ("EDGE STARTED" in de log, niets op de maaier).
+  // Payload: dezelfde vorm als de app stuurt — geen hernoemde velden,
+  // bladeHeight blijft in mm.
+  it('stuurt { start_edge_cut: { mapName, bladeHeight, departFromDock } } naar novabot/extended/<SN>', () => {
+    const r = startEdgeCut('ONLINE_SN', 'map0', 40, true);
     expect(r.ok).toBe(true);
-    expect(publishToDevice).toHaveBeenCalledOnce();
-    expect(vi.mocked(publishToDevice).mock.calls[0][1]).toMatchObject({
-      start_edge_cut: { mapName: 'map0', bladeHeight: 40 },
+    expect(publishToTopic).toHaveBeenCalledOnce();
+    expect(vi.mocked(publishToTopic).mock.calls[0][0]).toBe('novabot/extended/ONLINE_SN');
+    expect(vi.mocked(publishToTopic).mock.calls[0][1]).toMatchObject({
+      start_edge_cut: { mapName: 'map0', bladeHeight: 40, departFromDock: true },
     });
+    // En expliciet NIET via het stock-kanaal (publishToDevice → Dart/Send_mqtt).
+    expect(publishToDevice).not.toHaveBeenCalled();
   });
 
-  it('geeft bladeHeightMm ongewijzigd door voor een andere waarde', () => {
+  it('geeft bladeHeightMm ongewijzigd door; departFromDock default false', () => {
     startEdgeCut('ONLINE_SN', 'map1', 65);
-    expect(vi.mocked(publishToDevice).mock.calls[0][1]).toMatchObject({
-      start_edge_cut: { mapName: 'map1', bladeHeight: 65 },
+    expect(vi.mocked(publishToTopic).mock.calls[0][1]).toMatchObject({
+      start_edge_cut: { mapName: 'map1', bladeHeight: 65, departFromDock: false },
     });
+  });
+});
+
+describe('startEdgeCut frame-guard (post bundle-restore)', () => {
+  const SN = 'ONLINE_SN';
+  beforeEach(() => {
+    vi.clearAllMocks();
+    clearFrameUnvalidated(SN);
+  });
+
+  // Finding 3 (whole-branch review): de guard moet op het pad zitten dat de
+  // randmaai daadwerkelijk neemt (publishExtendedCommand), niet alleen als los
+  // predicaat. Deze test draait de ECHTE publishExtendedCommand + de echte
+  // isFrameNavBlocked; alleen de MQTT-rand (publishToTopic) is gemockt. Haalt
+  // iemand de guard uit publishExtendedCommand, dan faalt deze test — het
+  // pure-predicaat-testbestand (publishToDeviceGuard.test.ts) blijft dan groen.
+  it('blokkeert start_edge_cut zolang het frame niet gevalideerd is', () => {
+    markFrameUnvalidated(SN);
+    const r = startEdgeCut(SN, 'map0', 40, true);
+    expect(r.ok).toBe(true); // zelfde semantiek als startMowing: de blokkade logt zelf
+    expect(publishToTopic).not.toHaveBeenCalled();
+  });
+
+  it('laat start_edge_cut weer door zodra het frame gevalideerd is', () => {
+    markFrameUnvalidated(SN);
+    clearFrameUnvalidated(SN);
+    startEdgeCut(SN, 'map0', 40, true);
+    expect(publishToTopic).toHaveBeenCalledOnce();
   });
 });

@@ -11,6 +11,7 @@
  */
 
 import { publishToDevice } from '../mqtt/mapSync.js';
+import { publishExtendedCommand } from '../mqtt/extendedCommands.js';
 import { isDeviceOnline } from '../mqtt/broker.js';
 import { deviceCache } from '../mqtt/sensorData.js';
 import { deviceSettingsRepo } from '../db/repositories/deviceSettings.js';
@@ -322,12 +323,29 @@ export function getMowerPhase(sn: string): 'mowing' | 'charging' | 'other' {
 }
 
 /** Start een losse randmaai-sessie (zelfde payload als de app). bladeHeightMm
- *  wordt op de maaier (extended_commands.py) nogmaals 20..90 geclamd. */
-export function startEdgeCut(sn: string, mapName: string, bladeHeightMm: number): MowingResult {
+ *  wordt op de maaier (extended_commands.py) nogmaals 20..90 geclamd.
+ *
+ *  KANAAL — KRITIEK: start_edge_cut wordt UITSLUITEND afgehandeld door
+ *  extended_commands.py, dat alleen op novabot/extended/<SN> luistert. Stock
+ *  mqtt_node (Dart/Send_mqtt/<SN>) heeft géén handler voor dit commando en er
+ *  is geen bridge of broker-reroute. Dit MOET dus via publishExtendedCommand,
+ *  niet via sendCommand/publishToDevice — anders logt de server "EDGE STARTED"
+ *  terwijl de maaier niets doet. De app (api.sendExtended) en het dashboard
+ *  gebruiken hetzelfde kanaal.
+ *
+ *  departFromDock: laat extended_commands.py eerst het laadslot ontgrendelen
+ *  (/release_charge_lock) en ~1 m achteruit rijden, zodat NTCP niet vanaf een
+ *  bijna-lethal dockpositie hoeft te plannen. Alleen meesturen wanneer de
+ *  maaier ook echt gedockt staat — de app en het dashboard zetten deze vlag
+ *  activity-afhankelijk, en midden op het gazon zou de maaier er blind mee
+ *  achteruit een obstakel in rijden. Default false, gelijk aan de
+ *  firmware-default; de rand-dag watcher (die per definitie op een gedockte
+ *  maaier vuurt) geeft expliciet true mee. */
+export function startEdgeCut(sn: string, mapName: string, bladeHeightMm: number, departFromDock = false): MowingResult {
   if (!sn) return { ok: false, error: 'sn required' };
   if (!isDeviceOnline(sn)) return { ok: false, error: 'mower offline' };
-  sendCommand(sn, { start_edge_cut: { mapName, bladeHeight: bladeHeightMm } });
-  console.log(`[MowingService] start_edge_cut: sn=${sn} map=${mapName} blade=${bladeHeightMm}mm`);
+  publishExtendedCommand(sn, { start_edge_cut: { mapName, bladeHeight: bladeHeightMm, departFromDock } });
+  console.log(`[MowingService] start_edge_cut: sn=${sn} map=${mapName} blade=${bladeHeightMm}mm departFromDock=${departFromDock}`);
   return { ok: true };
 }
 

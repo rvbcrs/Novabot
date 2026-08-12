@@ -10,8 +10,12 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 vi.mock('../../mqtt/broker.js', () => ({
   isDeviceOnline: vi.fn(() => true),
 }));
+// publishToTopic hoort in de mock: startEdgeCut publiceert via de echte
+// publishExtendedCommand op novabot/extended/<SN> (het enige kanaal waar
+// extended_commands.py op luistert), en die keten eindigt in publishToTopic.
 vi.mock('../../mqtt/mapSync.js', () => ({
   publishToDevice: vi.fn(),
+  publishToTopic: vi.fn(),
 }));
 vi.mock('../../dashboard/socketHandler.js', () => ({
   emitScheduleEvent: vi.fn(),
@@ -23,7 +27,7 @@ import {
 } from '../../services/scheduleRunner.js';
 import { scheduleRepo } from '../../db/repositories/index.js';
 import { deviceCache } from '../../mqtt/sensorData.js';
-import { publishToDevice } from '../../mqtt/mapSync.js';
+import { publishToDevice, publishToTopic } from '../../mqtt/mapSync.js';
 
 const TICK_MS = 30_000;             // CHECK_INTERVAL_MS in scheduleRunner
 const TIMEOUT_MS = 12 * 60 * 60 * 1000; // EDGE_WATCH_TIMEOUT_MS
@@ -90,11 +94,26 @@ function setDockedAfterAbortedMow(sn: string): void {
   ]));
 }
 
-/** Alle start_edge_cut-payloads die naar de maaier zijn gegaan. */
+/** Alle start_edge_cut-payloads die naar de maaier zijn gegaan — via het
+ *  extended-kanaal (novabot/extended/<SN>), het enige kanaal waar
+ *  extended_commands.py op luistert. Op het stock-kanaal (publishToDevice)
+ *  mag NOOIT een start_edge_cut verschijnen; edgeCutNooitViaStockKanaal()
+ *  pint dat apart. */
 function edgeCutCalls(): Array<Record<string, unknown>> {
-  return vi.mocked(publishToDevice).mock.calls
+  return vi.mocked(publishToTopic).mock.calls
+    .filter(c => (c[0] as string).startsWith('novabot/extended/'))
     .map(c => c[1] as Record<string, unknown>)
     .filter(cmd => 'start_edge_cut' in cmd);
+}
+
+/** Regressie-wacht op finding 1: een start_edge_cut op Dart/Send_mqtt (stock
+ *  mqtt_node) wordt daar genegeerd — de feature lijkt dan te werken in de logs
+ *  terwijl de maaier niets doet. */
+function edgeCutNooitViaStockKanaal(): void {
+  const stock = vi.mocked(publishToDevice).mock.calls
+    .map(c => c[1] as Record<string, unknown>)
+    .filter(cmd => 'start_edge_cut' in cmd);
+  expect(stock).toHaveLength(0);
 }
 
 describe('rand-dag watcher bekabeling', () => {
@@ -127,7 +146,14 @@ describe('rand-dag watcher bekabeling', () => {
     vi.advanceTimersByTime(TICK_MS);             // tick 3: beurt klaar → randmaai
     expect(edgeCutCalls()).toHaveLength(1);
     // cutting_height 50 (mm uit de dashboard-editor) → 50 mm bladehoogte.
-    expect(edgeCutCalls()[0]).toMatchObject({ start_edge_cut: { mapName: 'map0', bladeHeight: 50 } });
+    // departFromDock true: de watcher vuurt per definitie op een gedockte
+    // maaier; zonder deze vlag blijft het chassis aan het dock vergrendeld
+    // (extended_commands.py slaat _depart_pile() dan over).
+    expect(edgeCutCalls()[0]).toMatchObject({ start_edge_cut: { mapName: 'map0', bladeHeight: 50, departFromDock: true } });
+    // Kanaal-pin: het extended-topic van deze SN, nooit het stock-kanaal.
+    const topics = vi.mocked(publishToTopic).mock.calls.map(c => c[0] as string);
+    expect(topics).toContain(`novabot/extended/${SN}`);
+    edgeCutNooitViaStockKanaal();
     // Watcher is opgeruimd: geen tweede randmaai op de volgende ticks.
     expect(__getPendingEdgeForTest().has(SN)).toBe(false);
     vi.advanceTimersByTime(TICK_MS * 3);
