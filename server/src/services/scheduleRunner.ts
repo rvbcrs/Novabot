@@ -387,6 +387,10 @@ function triggerSchedule(row: ScheduleRow) {
     const weekday = wallClock(new Date(), row.timezone ?? null).weekday; // 0=zondag
     if (isEdgeDay(row.edge_days, weekday)) {
       const selected = row.map_id ? workMaps.find(w => w.map_id === row.map_id) : undefined;
+      // Bekende beperking: bij "Alle werkgebieden" (map_id NULL) of een map
+      // zonder canonieke mapN-naam valt de randmaai terug op map0. Een
+      // meerzone-schema maait dus wel alle zones, maar randmaait alleen map0;
+      // start_edge_cut accepteert maar een mapName per aanroep.
       const mapName = selected?.canonical_name?.match(/^map\d+/)?.[0] ?? 'map0';
       pendingEdge.set(row.mower_sn, {
         bladeHeightMm: edgeBladeHeightMm(row.cutting_height ?? DEFAULT_CUTTING_HEIGHT_CM),

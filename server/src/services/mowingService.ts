@@ -245,7 +245,11 @@ export function getMowerPhase(sn: string): 'mowing' | 'charging' | 'other' {
   //      dat "Work:WAIT Prev work:WAIT Recharge: FINISHED" met cov_ratio 0
   //      OOK bestaat. Dezelfde vorm, tegengestelde betekenis: cov_ratio
   //      beslist.
-  const onDock = batteryState === 'CHARGING' || batteryState === 'FINISHED';
+  // battery_state kent op deze firmware alleen CHARGING / NOT_CHARGING /
+  // DISCHARGING / FULL (zie translateBatteryState in sensorData.ts); een
+  // eerdere 'FINISHED'-vergelijking hier was dode code. FULL telt bewust NIET
+  // als dock-signaal, consistent met reanchorOnDock.
+  const onDock = batteryState === 'CHARGING';
   const workStatus = raw.get('work_status') ?? '';
 
   // Dekkingsbewijs voor de ambigue vormen: cov_ratio >= 0.95, en ALLEEN
@@ -317,7 +321,14 @@ export function getMowerPhase(sn: string): 'mowing' | 'charging' | 'other' {
 
   if (batteryState === 'CHARGING') return 'charging';
   const ws = parseInt(workStatus, 10);
-  if ([100, 101, 102, 103, 150].includes(ws)) return 'mowing';
+  // Actieve maaicodes uit de AUTORITATIEVE WorkStatus-decode (sensorData.ts
+  // WORK_STATUS_LABELS, 1:1 uit robot_status::WorkStatusString in de firmware):
+  // 90 Mowing, 91 Avoiding obstacle, 92 Driving, 94 Re-covering. De oude lijst
+  // [100,101,102,103,150] bestond uit ACTION-feedbackcodes die
+  // report_state_robot nooit stuurt — dode voorwaarden. 93 (Edge cutting) telt
+  // bewust niet als maaibeurt: een randmaai mag nooit zelf weer een randmaai
+  // armen/voeden.
+  if ([90, 91, 92, 94].includes(ws)) return 'mowing';
   if (/Work:(COVERING|RUNNING|MOVING|BOUNDARY_COVERING)/.test(msg)) return 'mowing';
   return 'other';
 }

@@ -72,6 +72,23 @@ describe('getMowerPhase', () => {
     deviceCache.set('SN1', new Map([['work_status', '100'], ['msg', 'Work:COVERING']]));
     expect(getMowerPhase('SN1')).toBe('mowing');
   });
+
+  // De autoritatieve maaicodes uit report_state_robot (sensorData.ts
+  // WORK_STATUS_LABELS): 90 Mowing, 91 Avoiding obstacle, 92 Driving,
+  // 94 Re-covering. Deze pin vangt een terugval naar de oude dode
+  // ACTION-feedbacklijst [100,101,102,103,150], die report_state_robot nooit
+  // stuurt — dan zou sawMowing alleen nog via de msg-regex gezet worden.
+  it('autoritatieve ws-codes 90/91/92/94 → mowing, ook zonder msg', () => {
+    for (const ws of ['90', '91', '92', '94']) {
+      deviceCache.set('SN1', new Map([['work_status', ws]]));
+      expect(getMowerPhase('SN1')).toBe('mowing');
+    }
+  });
+
+  it('dode ACTION-code 150 zonder msg → other (komt in report_state_robot niet voor)', () => {
+    deviceCache.set('SN1', new Map([['work_status', '150']]));
+    expect(getMowerPhase('SN1')).toBe('other');
+  });
   it('onbekend/leeg → other', () => {
     expect(getMowerPhase('SNX')).toBe('other');
   });

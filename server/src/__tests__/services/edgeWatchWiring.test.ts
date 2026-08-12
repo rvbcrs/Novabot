@@ -54,9 +54,11 @@ function createDueSchedule(sn: string, edgeDays: string | null, cuttingHeight = 
   });
 }
 
-/** Sensor-momentopnames die getMowerPhase in de drie fases duwen. */
+/** Sensor-momentopnames die getMowerPhase in de fases duwen. Idle op het dock
+ *  na een volle lading: battery_state FULL (echte firmware-waarde; 'FINISHED'
+ *  bestaat niet in translateBatteryState). */
 function setIdleOnDock(sn: string): void {
-  deviceCache.set(sn, new Map([['battery_state', 'FINISHED'], ['work_status', '0'], ['msg', '']]));
+  deviceCache.set(sn, new Map([['battery_state', 'FULL'], ['work_status', '0'], ['msg', '']]));
 }
 function setMowing(sn: string): void {
   deviceCache.set(sn, new Map([
