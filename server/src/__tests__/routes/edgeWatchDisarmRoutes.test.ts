@@ -172,4 +172,34 @@ describe('rand-dag watcher disarm via dashboard-routes', () => {
     expect(r.status).toBe(200);
     expect(__getPendingEdgeForTest().has(SN)).toBe(false);
   });
+
+  // c70d7488: mow_zone is het PRIMAIRE handmatige maaipad van de app en loopt
+  // via de extended-route, niet via /command/:sn. Zonder deze disarm adopteert
+  // een eerder gearmde schema-watcher de handmatige beurt en randmaait na het
+  // dokken de SCHEMA-zone op de SCHEMA-hoogte in plaats van wat de gebruiker
+  // net maaide (finding 4, eindreview).
+  it('POST /extended/:sn met mow_zone (handmatig app-pad) ontwapent de watcher', async () => {
+    const SN = 'ROUTE_EXTMOWZONE';
+    armViaRunner(SN);
+    const r = await request(app)
+      .post(`/api/dashboard/extended/${SN}`)
+      .send({ mow_zone: { mapName: 'map1', bladeHeight: 40 } });
+    expect(r.status).toBe(200);
+    expect(__getPendingEdgeForTest().has(SN)).toBe(false);
+  });
+
+  // Tegenhanger: een NIET-bewegingscommando op hetzelfde kanaal mag de watcher
+  // niet raken. Over-ontwapenen is even erg als niet ontwapenen: dan verliest
+  // elke normale extended-status-call (bv. system_info-polling) stilzwijgend
+  // de geplande randmaai.
+  it('POST /extended/:sn met een onschuldig commando laat de watcher staan', async () => {
+    const SN = 'ROUTE_EXTOTHER';
+    armViaRunner(SN);
+    const r = await request(app)
+      .post(`/api/dashboard/extended/${SN}`)
+      .send({ system_info: {} });
+    expect(r.status).toBe(200);
+    expect(__getPendingEdgeForTest().has(SN)).toBe(true);
+    disarmEdgeWatch(SN, 'test-opruiming');
+  });
 });
