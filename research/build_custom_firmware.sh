@@ -2118,12 +2118,17 @@ fi
 # start_edge_cut-commando vanuit de server, op de dagen die de gebruiker
 # instelde (zie docs/superpowers/specs/2026-08-02-edge-cut-schedule-design.md).
 #
-# Patroon-based i.p.v. hardcoded offset: als een toekomstige firmware-revisie
-# de code verschuift, moet de build hard falen i.p.v. de verkeerde bytes te
-# overschrijven en een kapotte maaier te produceren. De telling gebeurt op de
-# RUWE bytes in Python (bytes.count), niet op een hexdump-string-match — dat
-# laatste kan nibble-misaligned false positives geven die geen echte
-# byte-grens representeren.
+# Patroon-check ÉN offset-check: het patroon moet precies 1x voorkomen, op
+# exact file-offset 0x921a8, 4-byte uitgelijnd, met de verwachte
+# buurinstructies eromheen. Alleen tellen was niet genoeg (review finding 5):
+# een toekomstige firmware-revisie zou het patroon toevallig 1x op een andere
+# of niet-uitgelijnde plek kunnen bevatten, en dan patcht de build de
+# verkeerde bytes — een maaier die fysiek geflasht moet worden. Elke
+# afwijkende check breekt de build hard; een nieuwe firmware-revisie vereist
+# her-verificatie via disassembly van coverStartDeal, nooit blind toepassen.
+# De telling gebeurt op de RUWE bytes in Python (bytes.count), niet op een
+# hexdump-string-match — dat laatste kan nibble-misaligned false positives
+# geven die geen echte byte-grens representeren.
 echo "  robot_decision patchen (include_edge default OFF)..."
 RD="$NOVABOT_ROOT/install/compound_decision/lib/compound_decision/robot_decision"
 if [ ! -f "$RD" ]; then
@@ -2131,11 +2136,22 @@ if [ ! -f "$RD" ]; then
     exit 1
 fi
 python3 - "$RD" <<'PY'
+import struct
 import sys
 
 path = sys.argv[1]
 pat = bytes.fromhex("e3bb0239")   # strb w3,[sp,#0xae]  (include_edge = true)
 repl = bytes.fromhex("ffbb0239")  # strb wzr,[sp,#0xae] (include_edge = false)
+
+# Geverifieerd op de stock v6.0.2/v6.0.3 robot_decision (md5
+# 374c6f14a0a1c0daec621363c43b3f87, binaries identiek):
+#   0x92188: 52800023  mov  w3,#1          (de include_edge=true bron)
+#   0x921a8: 3902bbe3  strb w3,[sp,#0xae]  (de te patchen store)
+#   0x921ac: 3902c3e3  strb w3,[sp,#0xb0]  (de volgende store, context-anker)
+EXPECTED_OFFSET = 0x921A8
+MOV_W3_1_OFFSET = 0x92188   # EXPECTED_OFFSET - 0x20
+MOV_W3_1_WORD = 0x52800023  # mov w3,#1
+NEXT_STORE_WORD = 0x3902C3E3  # strb w3,[sp,#0xb0] direct na de patch-plek
 
 data = open(path, "rb").read()
 hits = data.count(pat)
@@ -2155,13 +2171,34 @@ if hits != 1:
               " betrouwbaar aanwijzen. Patch afbreken.", file=sys.stderr)
     sys.exit(1)
 
+off = data.index(pat)
+if off != EXPECTED_OFFSET:
+    print(f"ERROR: offset-check gefaald — include_edge-patroon gevonden op 0x{off:x}, verwacht 0x{EXPECTED_OFFSET:x}.", file=sys.stderr)
+    print("  De firmware-layout is verschoven (nieuwe robot_decision-revisie?). NIET blind patchen:", file=sys.stderr)
+    print("  disassembleer coverStartDeal, verifieer de nieuwe instructie-offset en werk dit script bij.", file=sys.stderr)
+    sys.exit(1)
+if off % 4 != 0:
+    print(f"ERROR: uitlijnings-check gefaald — offset 0x{off:x} ligt niet op een 4-byte instructiegrens.", file=sys.stderr)
+    print("  De match is dan geen echte AArch64-instructie maar een toevallige bytereeks. Patch afbreken.", file=sys.stderr)
+    sys.exit(1)
+next_word = struct.unpack_from("<I", data, off + 4)[0]
+if next_word != NEXT_STORE_WORD:
+    print(f"ERROR: context-check gefaald — instructie ná de patch-plek is 0x{next_word:08x}, verwacht 0x{NEXT_STORE_WORD:08x} (strb w3,[sp,#0xb0]).", file=sys.stderr)
+    print("  De omliggende code wijkt af van de geverifieerde coverStartDeal — patch afbreken.", file=sys.stderr)
+    sys.exit(1)
+mov_word = struct.unpack_from("<I", data, MOV_W3_1_OFFSET)[0]
+if mov_word != MOV_W3_1_WORD:
+    print(f"ERROR: context-check gefaald — op 0x{MOV_W3_1_OFFSET:x} staat 0x{mov_word:08x}, verwacht 0x{MOV_W3_1_WORD:08x} (mov w3,#1).", file=sys.stderr)
+    print("  De omliggende code wijkt af van de geverifieerde coverStartDeal — patch afbreken.", file=sys.stderr)
+    sys.exit(1)
+
 size_before = len(data)
 patched = data.replace(pat, repl)
 if len(patched) != size_before:
     print("ERROR: bestandsgrootte veranderd door patch — mag niet, afbreken.", file=sys.stderr)
     sys.exit(1)
 open(path, "wb").write(patched)
-print("  robot_decision gepatcht: include_edge default OFF (1x e3bb0239 -> ffbb0239)")
+print("  robot_decision gepatcht: include_edge default OFF (1x e3bb0239 -> ffbb0239 @ 0x921a8, context geverifieerd)")
 PY
 
 # === Stap 8: package_verify.json bijwerken ===
