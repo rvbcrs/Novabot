@@ -11,6 +11,7 @@
  */
 
 import { publishToDevice } from '../mqtt/mapSync.js';
+import { publishExtendedCommand } from '../mqtt/extendedCommands.js';
 import { isDeviceOnline } from '../mqtt/broker.js';
 import { deviceCache } from '../mqtt/sensorData.js';
 import { deviceSettingsRepo } from '../db/repositories/deviceSettings.js';
@@ -101,6 +102,15 @@ export function cuttingHeightToWire(input: number): number {
   return Math.max(0, clampedCm - 2);
 }
 
+/** Randmaai bladehoogte in mm voor start_edge_cut. cutting_height komt als mm
+ *  (dashboard, >=20) of user-cm (app) binnen — zelfde heuristiek als
+ *  cuttingHeightToWire. extended_commands.py clamt óók 20..90 op de maaier;
+ *  we clampen hier alvast zodat de payload nooit buiten bereik valt. */
+export function edgeBladeHeightMm(cuttingHeight: number): number {
+  const mm = cuttingHeight >= 20 ? Math.round(cuttingHeight) : Math.round(cuttingHeight * 10);
+  return Math.max(20, Math.min(90, mm));
+}
+
 /** Publish a command to the mower. Delegates to publishToDevice which
  *  checks isAesCapable() and falls back to plain JSON for stock v5.x
  *  mowers and charger v0.3.x — both silently drop AES payloads, so
@@ -169,6 +179,186 @@ export function stopMowing(sn: string): MowingResult {
   });
 
   console.log(`[MowingService] Stopped: sn=${sn}`);
+  return { ok: true };
+}
+
+/** Grove maaier-fase uit de sensor-cache, voor de rand-dag watcher.
+ *  mowing = actieve coverage-status;
+ *  charging = battery_state CHARGING ÉN het is een echt einde-taak-dock;
+ *  aborted = de beurt is DEFINITIEF afgebroken (gebruikersstop, tijdslimiet,
+ *            fout) — de watcher ontwapent hierop zodra hij eerder maaien zag;
+ *  other = al het overige (undocken, idle, offline, mid-mow laadpauze,
+ *          en de ambigue dok-vormen zonder dekkingsbewijs). */
+export function getMowerPhase(sn: string): 'mowing' | 'charging' | 'aborted' | 'other' {
+  const raw = deviceCache.get(sn);
+  if (!raw) return 'other';
+  const batteryState = (raw.get('battery_state') ?? '').toUpperCase();
+  const msg = raw.get('msg') ?? '';
+  const workStatus = raw.get('work_status') ?? '';
+
+  // Rangorde (gestoeld op de captures uit Task 6 ronde 4,
+  // research/documents/obstacle-capture-*.jsonl, en finding 4 uit de
+  // whole-branch review):
+  //
+  //   1. Een LIVE actieve taak wint van alles: wie nu maait is niet gedockt,
+  //      niet afgebroken en niet klaar, wat er verder ook aan doorgerolde of
+  //      verouderde velden in de cache staat.
+  //   2. HARDE afbreeksignalen → 'aborted'. Alleen vormen die een beurt
+  //      definitief beëindigen: gebruikersstop, tijdslimiet, fout. De
+  //      pauzevormen horen hier nadrukkelijk NIET bij (stap 3).
+  //   3. PAUZEVORMEN op het dock → 'other' (passief doorwachten). De firmware
+  //      pauzeert een lopende coverage-taak zelf voor een low-battery
+  //      recharge, dockt, laadt tot ~96% en hervat de taak zelf
+  //      (coverContinueDeal, zie
+  //      research/documents/firmware-auto-continue-after-recharge.md).
+  //      battery_state staat dan al op CHARGING terwijl de taak feitelijk nog
+  //      loopt; 'charging' zou hier een randmaai afvuren die botst met de
+  //      hervatting, 'aborted' zou de watcher middenin een legitieme pauze
+  //      ontwapenen. Allebei fout: doorwachten.
+  //   4. De live tag "Mode:COVERAGE ... Work:FINISHED" is het VERTROUWDE
+  //      einde-taak-signaal en heeft GEEN dekkingsbewijs nodig. In de echte
+  //      capture van een afgeronde beurt op het dock staat die tag urenlang
+  //      stabiel (ws 9, cov_ratio 1, finished_num 1, 1729 samples) en hij
+  //      verschijnt nooit midden in een maaibeurt. Zo blijft de feature ook
+  //      leven wanneer cov_ratio ontbreekt. "Mode:COVERAGE" is verplicht:
+  //      mapping-sessies rapporteren OOK een live "Work:FINISHED"
+  //      ("Mode:MAPPING Work:FINISHED ... Recharge: FINISHED", cov_ratio
+  //      0.099 in de capture) en een randmaai na een mapping-sessie is fout.
+  //   5. ELKE andere live Work-tag op het dock (WAIT, CANCELLED, of welke
+  //      doorgerolde spelling dan ook) is AMBIGU en vereist dekkingsbewijs
+  //      (cov_ratio >= 0.95). Ná het dokken rollen de msg-velden namelijk
+  //      door en worden een afgeronde beurt, een handmatig gestopte beurt en
+  //      een laadpauze byte-identiek: elk msg-veld beschrijft de DOK-cyclus,
+  //      alleen cov_ratio gaat over de maaibeurt zelf. Issue #17 (twee live
+  //      meldronden, zie equipmentState.ts:243-264) bewijst dat een NETJES
+  //      afgeronde beurt als "Work:CANCELLED Prev work:USER_RECHARGE_STOP
+  //      Recharge: FINISHED" kan rapporteren; de idle-dock capture bewijst
+  //      dat "Work:WAIT Prev work:WAIT Recharge: FINISHED" met cov_ratio 0
+  //      OOK bestaat. Dezelfde vorm, tegengestelde betekenis: cov_ratio
+  //      beslist.
+  //
+  // Deze classificatie leunt bewust NIET op task_mode === 1, zoals
+  // isInterruptedCoverage in dashboard/src/utils/mowerActivity.ts wel doet:
+  // stop_navigation zet task_mode terug op 0, waardoor een halverwege gestopte
+  // beurt door die gate glipte en binnen 30 seconden alsnog een randmaai
+  // startte. Strenger dan de dashboard-variant mag hier: die kiest alleen een
+  // knop-label, deze gate laat een echt bewegingscommando toe of niet.
+
+  // 1. Live actieve taak. Codes uit de AUTORITATIEVE WorkStatus-decode
+  //    (sensorData.ts WORK_STATUS_LABELS, 1:1 uit robot_status::
+  //    WorkStatusString in de firmware): 90 Mowing, 91 Avoiding obstacle,
+  //    92 Driving, 94 Re-covering. 93 (Edge cutting) telt bewust niet als
+  //    maaibeurt: een randmaai mag nooit zelf weer een randmaai armen/voeden.
+  //    De msg-regex matcht alleen de LIVE tag (hoofdletter W), niet
+  //    "Prev work:MOVING" (kleine w).
+  const ws = parseInt(workStatus, 10);
+  if ([90, 91, 92, 94].includes(ws)) return 'mowing';
+  if (/Work:(COVERING|RUNNING|MOVING|BOUNDARY_COVERING)/.test(msg)) return 'mowing';
+
+  // 2. Harde afbreeksignalen → 'aborted'. Drie bronnen, elk zonder de
+  //    pauzevormen:
+  //    - live Work-tag: USER_STOP / TIME_LIMIT_STOP / ERROR_STOP. CANCELLED
+  //      staat hier bewust NIET tussen: per issue #17 kan een netjes afgeronde
+  //      beurt als CANCELLED rapporteren; CANCELLED valt onder de ambigue
+  //      vormen (stap 5). De \b voorkomt dat USER_STOP op USER_RECHARGE_STOP
+  //      zou kunnen aanslaan (underscore is een woordteken).
+  //    - "Prev work": bij het dokken is de live tag vaak al doorgerold naar
+  //      WAIT of CANCELLED en blijft de reden alleen in "Prev work" staan.
+  //      USER_RECHARGE_STOP hoort hier NIET thuis: dat is per issue #17 juist
+  //      het handtekening-signaal van een normaal afgeronde beurt. MOVING en
+  //      RUNNING evenmin (Task 6 ronde 4): een afgeronde beurt rijdt als
+  //      laatste "werk" naar het dock, dus die vallen onder de ambigue gate
+  //      waar cov_ratio beslist. COVERING blijft WEL staan: midden uit de
+  //      dekking gerukt is nooit een afgeronde beurt.
+  //    - ruwe work_status-codes: FAILED(1), FAILED_ONCE(7), USER_STOP(10),
+  //      ERROR_STOP(13), TIME_LIMIT_STOP(14), RECOVER_ERROR_STOP(15).
+  //      CANCELLED(2), FINISHED(8/9) en WAIT(0) horen er niet in (afgeronde
+  //      beurten), en 11/12 zijn pauzecodes (stap 3).
+  //    Anders dan vroeger geldt dit ook ZONDER dock: een gebruikersstop midden
+  //    op het gazon is net zo definitief als een op het dock. De watcher
+  //    negeert 'aborted' vóór hij maaien heeft gezien (advanceEdgeWatch), dus
+  //    een VEROUDERDE stopcode van gisteren in de cache kan een verse arm niet
+  //    per ongeluk ontwapenen.
+  const liveHardStop = /Work:(USER_STOP|TIME_LIMIT_STOP|ERROR_STOP)\b/.test(msg);
+  const prevHardStop = /Prev work:(USER_STOP|TIME_LIMIT_STOP|ERROR_STOP|COVERING)\b/.test(msg);
+  const hardAbortWs = ['1', '7', '10', '13', '14', '15'].includes(workStatus);
+  if (liveHardStop || prevHardStop || hardAbortWs) return 'aborted';
+
+  // battery_state kent op deze firmware alleen CHARGING / NOT_CHARGING /
+  // DISCHARGING / FULL (zie translateBatteryState in sensorData.ts); een
+  // eerdere 'FINISHED'-vergelijking hier was dode code. FULL telt bewust NIET
+  // als dock-signaal, consistent met reanchorOnDock.
+  const onDock = batteryState === 'CHARGING';
+
+  // 3. Pauzevormen op het dock → passief doorwachten. Live tags PAUSED /
+  //    USER_RECHARGE_STOP / BATTERY_LOW_RECHARGE, doorgerolde "Prev
+  //    work:PAUSED", en de ruwe pauzecodes USER_RECHARGE_STOP(11) /
+  //    LOWER_POWER_STOP(12).
+  const livePauseTag = /Work:(PAUSED|USER_RECHARGE_STOP|BATTERY_LOW_RECHARGE)\b/.test(msg);
+  const prevPauseTag = /Prev work:PAUSED\b/.test(msg);
+  const pauseWs = ['11', '12'].includes(workStatus);
+  if (onDock && (livePauseTag || prevPauseTag || pauseWs)) return 'other';
+
+  // Dekkingsbewijs voor de ambigue vormen: cov_ratio >= 0.95, en ALLEEN
+  // cov_ratio. finished_num telt hier bewust NIET mee (Task 6 ronde 4): dat
+  // veld telt afgeronde zones en zegt niets over de zones die nog openstaan.
+  // In een meerzone-tuin waar map0 klaar was en de beurt tijdens map1 werd
+  // afgebroken staat finished_num al op 1 bij cov_ratio ~0.4; met finished_num
+  // als bewijs zou dat als afgeronde beurt tellen en een randmaai starten.
+  // Live capture van een afgeronde beurt op het dock (obstacle-capture-norelay
+  // 20260601): cov_ratio 1 (en finished_num 1, maar dat voegt daar niets toe).
+  // cov_ratio komt als fractie 0..1 binnen (zie app HomeScreen.tsx:317); een
+  // waarde > 1 wordt als percentage gelezen, net als in render/svgMap.ts.
+  // ONTBREEKT of onleesbaar: GEEN bewijs, en dus de veilige kant. Liever een
+  // randmaai gemist dan een randmaai gestart op een beurt die halverwege is
+  // afgebroken.
+  const covRatioRaw = parseFloat(raw.get('cov_ratio') ?? '');
+  const covRatio = Number.isFinite(covRatioRaw)
+    ? (covRatioRaw > 1 ? covRatioRaw / 100 : covRatioRaw)
+    : null;
+  const coverageEvidence = covRatio !== null && covRatio >= 0.95;
+
+  // 4. Het vertrouwde einde-taak-signaal: live "Work:FINISHED" in
+  //    Mode:COVERAGE. De \b sluit "Work:FINISHED_ONCE" uit (underscore is een
+  //    woordteken) en de hoofdletter W matcht "Prev work:FINISHED" niet.
+  const trustedFinishTag = msg.includes('Mode:COVERAGE') && /Work:FINISHED\b/.test(msg);
+  // 5. Elke ANDERE live Work-tag op het dock is ambigu en vereist
+  //    dekkingsbewijs. \bWork: matcht de live tag maar niet "Prev work:"
+  //    (kleine w). Een msg zonder enige Work-tag (leeg, of alleen
+  //    battery-payload gezien) valt hier bewust buiten: dat is afwezigheid van
+  //    data, geen doorgerolde spelling, en het bestaande gedrag (kaal CHARGING
+  //    telt als charging) blijft staan.
+  const ambiguousDockShape = !trustedFinishTag && /\bWork:[A-Z]/.test(msg);
+  if (onDock && ambiguousDockShape && !coverageEvidence) return 'other';
+
+  if (batteryState === 'CHARGING') return 'charging';
+  return 'other';
+}
+
+/** Start een losse randmaai-sessie (zelfde payload als de app). bladeHeightMm
+ *  wordt op de maaier (extended_commands.py) nogmaals 20..90 geclamd.
+ *
+ *  KANAAL — KRITIEK: start_edge_cut wordt UITSLUITEND afgehandeld door
+ *  extended_commands.py, dat alleen op novabot/extended/<SN> luistert. Stock
+ *  mqtt_node (Dart/Send_mqtt/<SN>) heeft géén handler voor dit commando en er
+ *  is geen bridge of broker-reroute. Dit MOET dus via publishExtendedCommand,
+ *  niet via sendCommand/publishToDevice — anders logt de server "EDGE STARTED"
+ *  terwijl de maaier niets doet. De app (api.sendExtended) en het dashboard
+ *  gebruiken hetzelfde kanaal.
+ *
+ *  departFromDock: laat extended_commands.py eerst het laadslot ontgrendelen
+ *  (/release_charge_lock) en ~1 m achteruit rijden, zodat NTCP niet vanaf een
+ *  bijna-lethal dockpositie hoeft te plannen. Alleen meesturen wanneer de
+ *  maaier ook echt gedockt staat — de app en het dashboard zetten deze vlag
+ *  activity-afhankelijk, en midden op het gazon zou de maaier er blind mee
+ *  achteruit een obstakel in rijden. Default false, gelijk aan de
+ *  firmware-default; de rand-dag watcher (die per definitie op een gedockte
+ *  maaier vuurt) geeft expliciet true mee. */
+export function startEdgeCut(sn: string, mapName: string, bladeHeightMm: number, departFromDock = false): MowingResult {
+  if (!sn) return { ok: false, error: 'sn required' };
+  if (!isDeviceOnline(sn)) return { ok: false, error: 'mower offline' };
+  publishExtendedCommand(sn, { start_edge_cut: { mapName, bladeHeight: bladeHeightMm, departFromDock } });
+  console.log(`[MowingService] start_edge_cut: sn=${sn} map=${mapName} blade=${bladeHeightMm}mm departFromDock=${departFromDock}`);
   return { ok: true };
 }
 

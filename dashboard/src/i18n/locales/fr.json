@@ -445,6 +445,7 @@
     "edgeOffset": "Décalage de bordure",
     "edgeOffsetShrink": "Réduire",
     "edgeOffsetExpand": "Agrandir",
+    "edgeDays": { "label": "Coupe des bords le", "hint": "Uniquement les jours de tonte choisis; vide = jamais." },
     "rainPause": "Pause en cas de pluie",
     "rainThreshold": "Seuil de pluie",
     "rainProbability": "Probabilité de pluie",
@@ -625,6 +626,12 @@
       "ha": "Webhook Home Assistant",
       "email": "E-mail (SMTP)",
       "comingSoon": "Bientôt disponible"
+    },
+    "autoMap": {
+      "title": "Cartographie autonome",
+      "help": "Fonction expérimentale permettant à la tondeuse de cartographier sa propre limite.",
+      "show": "Afficher le panneau sous la carte",
+      "note": "Une session en cours reste visible même si ceci est désactivé."
     }
   },
   "ai": {

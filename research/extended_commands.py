@@ -1124,121 +1124,149 @@ def _clear_costmaps():
 
 
 def _depart_pile(seconds: float = 4.0, linear: float = 0.25):
-    """Drive backward to leave the charging dock before starting a task.
+    """Rijd achteruit van de laadpile voordat een taak start.
 
-    Stock `start_cov_task` performs an automatic ~1m back-off from the
-    pile as part of its preamble. The NTCP edge-cut path bypasses
-    robot_decision and would otherwise try to plan from the dock, where
-    the planner refuses to move (close-to-lethal start pose).
+    Stock `start_cov_task` doet zelf een ~1m back-off van de pile in zijn
+    preamble. Het NTCP edge-cut pad omzeilt robot_decision en zou anders
+    vanaf de dock proberen te plannen, waar de planner weigert te bewegen
+    (start-pose vlak bij lethal cost). Dit is het ENIGE pad waarlangs
+    start_edge_cut de dock verlaat, dus de rij-afstand moet deterministisch
+    zijn.
 
-    Sequence:
-      1. Cancel any active recharge so auto_charging stops driving.
-      2. Publish UInt8(1) to /release_charge_lock — same signal the
-         stock mqtt_node binary sends when handling start_navigation
-         from the dock (decompile mqtt_node:308974). Without this the
-         chassis stays magnet-locked and ignores /cmd_vel commands.
-      3. Wait briefly for the chassis to release.
-      4. Publish a steady-state Twist on /cmd_vel for `seconds` seconds.
-         Default 4s @ 0.25 m/s = ~1.0 m back-off, matching the firmware.
-      5. Send a zero Twist to bring the chassis to a stop before the
-         coverage planner takes over.
+    Waarom rclpy en geen `ros2 topic pub` shell-hold meer: de twee eerdere
+    comment-versies spraken elkaar tegen en hadden ALLEBEI gelijk, elk in
+    een ander DDS-regime.
+      - De oude versie (hold = seconds+16) claimde: "de cmd_vel watchdog
+        remt binnen ~0.5 s bij message-loss, dus een langere hold is
+        effectief een no-op". Dat klopt alleen zolang DDS discovery een
+        groot deel van de hold opeet en er daarna berichten WEGVALLEN.
+      - De nieuwe versie (hold = seconds+2) claimde: "de --once warm-up
+        heeft discovery al betaald, dus berichten blijven de HELE hold
+        stromen en seconds+16 gaf 2.5 tot 3 m achteruit i.p.v. 1 m".
+        Dat klopt zodra discovery snel is.
+      - Meting c8eda313: 106 Twist publishes in een hold van 20 s, dus
+        discovery at daar ~9 s op. In dat regime publiceert een hold van
+        seconds+2 (= 6 s) amper en blijft de maaier gewoon staan.
+    De rij-afstand hing dus af van onvoorspelbare DDS discovery-timing.
+    mow_zone_drive.py undock() loste dit al op met een begrensde rclpy
+    publisher-loop: eerst de publisher opzetten (discovery buiten de klok),
+    dan EXACT `seconds` wall-clock op 10 Hz publiceren. Deze functie doet nu
+    hetzelfde: afstand = seconds * linear, onafhankelijk van discovery.
 
-    Blocking — caller decides when to invoke. Only call this when the
-    mower is confirmed on the dock; backing up off-pile may bump into an
-    obstacle the local costmap hasn't seen.
+    Volgorde (gelijk aan de oude shell-versie):
+      1. Cancel een actieve recharge zodat auto_charging stopt met sturen.
+      2. Publiceer UInt8(1) op /release_charge_lock, hetzelfde signaal dat
+         stock mqtt_node stuurt bij start_navigation vanaf de dock
+         (decompile mqtt_node:308974). Zonder dit blijft het chassis
+         magneet-vergrendeld en negeert het /cmd_vel.
+      3. Wacht kort tot het chassis loslaat.
+      4. Publiceer `seconds` lang (wall-clock, hard begrensd) een reverse
+         Twist op 10 Hz. Default 4 s @ 0.25 m/s = ~1.0 m, zoals de firmware.
+      5. Nul-Twists om te remmen voordat de planner het overneemt.
+
+    Blocking; alleen aanroepen als de maaier bevestigd op de dock staat
+    (achteruit rijden mid-gazon kan een obstakel raken dat de local costmap
+    niet kent).
     """
-    env = {
-        **os.environ,
-        "ROS_DOMAIN_ID": "0",
-        "ROS_LOCALHOST_ONLY": "1",
-        "RMW_IMPLEMENTATION": "rmw_cyclonedds_cpp",
-        "CYCLONEDDS_URI": "file:///root/novabot/shm_config/shm_cyclonedds.xml",
-    }
-
-    log(f"depart_pile: starting {seconds}s reverse @ {linear} m/s")
-
-    # All ros2 CLI calls in one long-running bash so we pay DDS
-    # discovery cost ONCE. Previous design did 4 separate subprocess
-    # calls — each spent 5-8 s rediscovering the graph and the inner
-    # `timeout 2-4` cut them off before they could complete. The full
-    # depart sequence now fits comfortably inside a single 30-second
-    # outer timeout.
-    twist = (
-        f"'{{linear: {{x: -{linear}, y: 0.0, z: 0.0}}, "
-        f"angular: {{x: 0.0, y: 0.0, z: 0.0}}}}'"
-    )
-    stop_twist = "'{linear: {x: 0.0, y: 0.0, z: 0.0}, angular: {x: 0.0, y: 0.0, z: 0.0}}'"
-
-    # Each ros2 CLI invocation re-runs DDS discovery (~3-5 s on this
-    # hardware). We can't avoid that from the shell, but we CAN make
-    # sure the reverse-Twist publisher actually has time to publish
-    # something before we kill it. Live capture 2026-04-28 showed
-    # `sleep 4` killing the publisher mid-discovery → no cmd_vel
-    # messages reached the chassis, mower stayed put.
-    #
-    # Two changes:
-    #   a) Warm the /cmd_vel publisher with a single --once Twist BEFORE
-    #      starting the streaming publisher. The first publish triggers
-    #      DDS to register the writer; subsequent publishers reuse the
-    #      already-discovered topic.
-    #   b) Hold the streaming publisher long enough that even after
-    #      discovery cost there's still real drive time. Bump the
-    #      blocking sleep to 4s + 4s overhead; mower will only DRIVE
-    #      while messages arrive at 10 Hz, so a longer hold is
-    #      effectively a no-op once messages stop.
-    # ros2 topic pub re-runs DDS discovery on every invocation. Live
-    # capture 2026-04-28 showed iceoryx init alone consuming 7-8 s
-    # before a single message hit the wire. We keep the streaming
-    # publisher alive long enough that — even after worst-case
-    # discovery — there's still real publish time at 10 Hz. Mower's
-    # cmd_vel watchdog brakes within ~0.5 s of message-loss, so a
-    # bigger hold doesn't translate to extra drive distance, just a
-    # safety margin.
-    # The --once warm-up above already paid DDS discovery, so the streaming
-    # publisher starts emitting almost immediately. A big "slack" here is NOT
-    # a no-op: the mower drives at 0.25 m/s for the WHOLE hold (messages keep
-    # flowing at 10 Hz), so seconds+16 gave ~2.5-3m of reverse instead of 1m.
-    # Hold just past `seconds` so the drive is ~seconds*0.25 m = ~1m.
-    drive_hold = float(seconds) + 2.0
-    sequence = (
-        "set -x; "
-        "source /opt/ros/galactic/setup.bash; "
-        "source /root/novabot/install/setup.bash 2>/dev/null; "
-        # 1. Best-effort cancel of any active recharge action.
-        "ros2 service call /robot_decision/cancel_recharge "
-        "std_srvs/srv/Trigger '{}' || true; "
-        # 2. Drop the dock magnet (UInt8(1) per stock mqtt_node).
-        "ros2 topic pub --once /release_charge_lock std_msgs/msg/UInt8 "
-        "'{data: 1}' || true; "
-        # 3. Wait for chassis to release (~500 ms).
-        "sleep 0.5; "
-        # 4a. Warm /cmd_vel topic with a single REVERSE Twist so the
-        #     DDS graph already knows about a writer with this exact
-        #     QoS by the time the streaming publisher comes up. Using
-        #     reverse (not zero) also lets the mower's velocity watchdog
-        #     latch on to the signal sooner.
-        f"ros2 topic pub --once /cmd_vel geometry_msgs/msg/Twist {twist} || true; "
-        # 4b. Stream the reverse Twist at 10 Hz.
-        f"ros2 topic pub --rate 10 /cmd_vel geometry_msgs/msg/Twist {twist} & "
-        "TWIST_PID=$!; "
-        f"sleep {drive_hold}; "
-        "kill $TWIST_PID 2>/dev/null; "
-        "wait $TWIST_PID 2>/dev/null; "
-        # 5. Brake — single zero Twist.
-        f"ros2 topic pub --once /cmd_vel geometry_msgs/msg/Twist {stop_twist} || true"
-    )
-
-    bash_cmd = f"({sequence}) >> /tmp/depart_pile.log 2>&1"
-    # Outer timeout: every ros2 CLI invocation can eat ~5-8s on DDS
-    # discovery. Sequence has 5 ros2 calls plus the drive_hold sleep,
-    # so worst-case ~40s of overhead + drive_hold.
-    outer_timeout = max(60.0, 40.0 + drive_hold + 10.0)
     try:
-        rc = subprocess.run(["bash", "-c", bash_cmd], env=env,
-                            timeout=outer_timeout).returncode
-        log(f"depart_pile: sequence rc={rc}")
+        import rclpy  # type: ignore
+        from geometry_msgs.msg import Twist  # type: ignore
+        from std_msgs.msg import UInt8  # type: ignore
+        from std_srvs.srv import Trigger  # type: ignore
+        from rclpy.qos import QoSProfile, QoSHistoryPolicy  # type: ignore
+    except ImportError as ex:
+        # Zonder rclpy kunnen we niet deterministisch rijden; liever luid
+        # falen (edge-cut plant dan zichtbaar mis vanaf de dock) dan
+        # terugvallen op de oude gok-hold.
+        log(f"depart_pile: rclpy onbeschikbaar, back-off overgeslagen: {ex}")
+        return
+
+    # Veiligheidscap: de wall-clock deadline hieronder is de primaire grens,
+    # maar clamp ook de inputs zodat een ontspoorde caller nooit verder dan
+    # ~2.5 m of sneller dan het motor-maximum (0.33 m/s) kan sturen. NaN
+    # eindigt via max(0.0, ...) op 0.0 s, dus dan wordt er niet gereden.
+    try:
+        seconds = max(0.0, min(float(seconds), 10.0))
+        linear = max(0.05, min(abs(float(linear)), 0.33))
+    except (TypeError, ValueError):
+        seconds, linear = 4.0, 0.25
+
+    log(f"depart_pile: {seconds}s achteruit @ {linear} m/s (rclpy wall-clock)")
+
+    try:
+        rclpy.init()
+    except RuntimeError:
+        pass  # context al geinitialiseerd (blade relay)
     except Exception as e:
-        log(f"depart_pile: sequence failed: {e}")
+        log(f"depart_pile: rclpy.init faalde, back-off overgeslagen: {e}")
+        return
+
+    node = None
+    try:
+        node = rclpy.create_node("depart_pile")
+        qos = QoSProfile(depth=1, history=QoSHistoryPolicy.KEEP_LAST)
+        pub_cmd = node.create_publisher(Twist, "/cmd_vel", qos)
+        pub_lock = node.create_publisher(UInt8, "/release_charge_lock", qos)
+
+        # 1. Best-effort cancel van een actieve recharge. wait_for_service
+        # pollt de graph (geen executor nodig) en call_async verstuurt het
+        # request synchroon; het antwoord afwachten zou spinnen vergen
+        # (conflicteert met de shared executor van de blade relay) en de
+        # oude shell-versie negeerde het antwoord ook al (`|| true`).
+        cli = node.create_client(Trigger, "/robot_decision/cancel_recharge")
+        if cli.wait_for_service(timeout_sec=3.0):
+            cli.call_async(Trigger.Request())
+            time.sleep(1.0)
+        else:
+            log("depart_pile: cancel_recharge service niet gevonden (geen actieve recharge?)")
+
+        # Wacht tot de chassis-subscriber op /cmd_vel gematcht is, zodat de
+        # getimede lus pas start als berichten ook echt aankomen. Dit haalt
+        # de discovery-kost BUITEN de rij-klok (de kern van de fix).
+        deadline = time.monotonic() + 8.0
+        while time.monotonic() < deadline and pub_cmd.get_subscription_count() == 0:
+            time.sleep(0.1)
+        if pub_cmd.get_subscription_count() == 0:
+            log("depart_pile: geen /cmd_vel subscriber gematcht binnen 8s, rijden zal niets doen")
+
+        # 2. Dock-magneet loslaten (UInt8(1), zoals stock mqtt_node).
+        for _ in range(5):
+            pub_lock.publish(UInt8(data=1))
+            time.sleep(0.1)
+        # 3. Chassis even laten loslaten.
+        time.sleep(0.5)
+
+        # 4. Exact `seconds` wall-clock reverse op 10 Hz. De deadline is de
+        # harde grens: langer dan `seconds` rijden kan niet, en discovery
+        # is al betaald dus korter (amper publiceren) ook niet.
+        tw = Twist()
+        tw.linear.x = -abs(linear)
+        t_end = time.monotonic() + seconds
+        while time.monotonic() < t_end:
+            pub_cmd.publish(tw)
+            time.sleep(0.1)
+
+        # 5. Remmen: een paar nul-Twists zoals undock() in mow_zone_drive.py.
+        for _ in range(3):
+            pub_cmd.publish(Twist())
+            time.sleep(0.1)
+    except Exception as e:
+        log(f"depart_pile: fout tijdens back-off: {e}")
+        # Best-effort noodrem als de publisher er nog is; het chassis remt
+        # anders zelf via de cmd_vel watchdog (~0.5 s na message-loss).
+        try:
+            if node is not None:
+                pub_cmd.publish(Twist())
+        except Exception:
+            pass
+    finally:
+        # Publisher/node ALTIJD opruimen, ook bij een exception; anders
+        # lekt elke aanroep een node in dit langlevende daemon-proces.
+        if node is not None:
+            try:
+                node.destroy_node()
+            except Exception:
+                pass
 
     log("depart_pile: done")
 
@@ -1651,6 +1679,47 @@ def _start_cov_task(map_ids, cutterhigh, direction):
     return "result=True" in out or "result: true" in out.lower()
 
 
+# Actieve mow_zone_drive.py Popen (mow- of return-modus), zodat stop_mow_zone
+# de transit hard kan afbreken. De pkill-fallback in handle_stop_mow_zone vangt
+# wezen van een eerdere daemon-instantie (na een respawn is de handle weg maar
+# draait het kind gewoon door). _MOW_DRIVE_STOPPED markeert een bewuste stop,
+# zodat de reader-thread "stopped" rapporteert in plaats van een fout.
+_MOW_DRIVE_LOCK = threading.Lock()
+_MOW_DRIVE_PROC = [None]
+_MOW_DRIVE_STOPPED = [False]
+
+# De vijf controllerparams die mow_zone_drive.py (TRANSIT_PARAMS) en
+# _follow_unicom voor de transit relaxen, met hun yaml-defaults
+# (novabot_boundary_follow_footprint.yaml). Normaal zet de finally in
+# mow_zone_drive.py ze terug, maar een kill door stop_mow_zone slaat die
+# finally over; handle_stop_mow_zone herstelt ze daarom expliciet.
+_TRANSIT_PARAM_DEFAULTS = {
+    "progress_checker.movement_time_allowance": 12.0,
+    "progress_checker.required_movement_radius": 0.2,
+    "FollowPathPurePursuit.max_allowed_time_to_collision": 0.8,
+    "FollowPathPurePursuit.use_regulated_linear_velocity_scaling": True,
+    "FollowPathPurePursuit.desired_linear_vel": 0.5,
+}
+
+
+def _register_mow_drive(proc):
+    """Registreer het lopende drive-proces voor stop_mow_zone en reset de
+    stop-markering voor deze nieuwe run."""
+    with _MOW_DRIVE_LOCK:
+        _MOW_DRIVE_PROC[0] = proc
+        _MOW_DRIVE_STOPPED[0] = False
+
+
+def _unregister_mow_drive(proc):
+    """Maak de registratie leeg (alleen als die nog naar dit proces wijst).
+    Retourneert True als deze run bewust via stop_mow_zone is gestopt."""
+    with _MOW_DRIVE_LOCK:
+        stopped = _MOW_DRIVE_STOPPED[0]
+        if _MOW_DRIVE_PROC[0] is proc:
+            _MOW_DRIVE_PROC[0] = None
+    return stopped
+
+
 def handle_mow_zone(params, respond):
     """Orchestrate a normal mow: undock -> (follow_unicom if a transit is needed)
     -> coverage via /robot_decision/start_cov_task. Streams phase status so the
@@ -1677,6 +1746,17 @@ def handle_mow_zone(params, respond):
     # "PHASE <name> [msg]" line per stage on stdout; we forward each as a
     # mow_zone_status so the app still gets the following_unicom animation.
     drive_script = "/root/novabot/scripts/mow_zone_drive.py"
+    if not os.path.isfile(drive_script):
+        # Luid falen: zonder deze check antwoordde de handler result:0 terwijl
+        # er niets kon rijden (het script ontbrak in oudere firmware-builds),
+        # waarna de app na 5s terugviel op vrij geplande navigatie dwars door
+        # de tuin. Nu krijgt de caller direct een duidelijke foutreden.
+        log(f"mow_zone: {drive_script} ontbreekt (firmware-build zonder mow_zone_drive.py?)")
+        respond("mow_zone_status", {"phase": "error", "map": to_slot,
+                                    "error": "drive_script_missing"})
+        respond("mow_zone_respond", {"result": 1, "map": to_slot,
+                                     "error": "drive_script_missing"})
+        return
     d_arg = str(int(direction)) if direction is not None else "-"
     # to_slot is already allowlisted (re.fullmatch map\d+ above) and the rest
     # are int()-coerced, so there is no injection vector. Still, pass every
@@ -1697,11 +1777,14 @@ def handle_mow_zone(params, respond):
             str(int(map_ids)), str(int(cutterhigh)), d_arg]
 
     def _run():
+        terminal_seen = False
+        proc = None
         try:
             proc = subprocess.Popen(argv, env=_ros_env(),
                                     stdout=subprocess.PIPE,
                                     stderr=subprocess.STDOUT,
                                     text=True, bufsize=1)
+            _register_mow_drive(proc)
             for line in proc.stdout:
                 line = line.strip()
                 if not line:
@@ -1709,6 +1792,8 @@ def handle_mow_zone(params, respond):
                 if line.startswith("PHASE "):
                     parts = line.split(" ", 2)
                     ph = parts[1] if len(parts) > 1 else ""
+                    if ph in ("done", "error"):
+                        terminal_seen = True
                     msg = {"phase": ph, "map": to_slot}
                     if ph == "error" and len(parts) > 2:
                         msg["error"] = parts[2]
@@ -1716,9 +1801,26 @@ def handle_mow_zone(params, respond):
                 else:
                     log(f"mow_zone_drive: {line}")
             proc.wait()
+            stopped = _unregister_mow_drive(proc)
+            if proc.returncode != 0 and not terminal_seen:
+                if stopped:
+                    # Bewust afgebroken via stop_mow_zone: geen fout, wel een
+                    # terminale fase zodat de app niet in een timeout hangt.
+                    respond("mow_zone_status", {"phase": "stopped", "map": to_slot})
+                else:
+                    # Het script stierf voordat het een terminale PHASE kon
+                    # printen (importfout, kill, python3 kon het bestand niet
+                    # openen). Zonder deze melding blijft de caller in een
+                    # timeout hangen alsof er gewoon gereden wordt.
+                    log(f"mow_zone: drive-script exit rc={proc.returncode} zonder done/error fase")
+                    respond("mow_zone_status", {"phase": "error", "map": to_slot,
+                                                "error": f"drive_exit_{proc.returncode}"})
         except Exception as e:
             log(f"mow_zone error: {e}")
             respond("mow_zone_status", {"phase": "error", "map": to_slot, "error": str(e)})
+        finally:
+            if proc is not None:
+                _unregister_mow_drive(proc)
 
     threading.Thread(target=_run, daemon=True, name="mow-zone").start()
     respond("mow_zone_respond", {"result": 0, "map": to_slot})
@@ -1743,11 +1845,13 @@ def handle_return_to_dock(params, respond):
     argv = ["bash", "-c", wrapper, "return_to_dock", drive_script]
 
     def _run():
+        proc = None
         try:
             proc = subprocess.Popen(argv, env=_ros_env(),
                                     stdout=subprocess.PIPE,
                                     stderr=subprocess.STDOUT,
                                     text=True, bufsize=1)
+            _register_mow_drive(proc)
             for line in proc.stdout:
                 line = line.strip()
                 if not line:
@@ -1762,12 +1866,171 @@ def handle_return_to_dock(params, respond):
                 else:
                     log(f"return_to_dock: {line}")
             proc.wait()
+            if _unregister_mow_drive(proc) and proc.returncode != 0:
+                # Bewust afgebroken via stop_mow_zone: terminale fase sturen
+                # zodat de app niet in een timeout hangt.
+                respond("return_to_dock_status", {"phase": "stopped"})
         except Exception as e:
             log(f"return_to_dock error: {e}")
             respond("return_to_dock_status", {"phase": "error", "error": str(e)})
+        finally:
+            if proc is not None:
+                _unregister_mow_drive(proc)
 
     threading.Thread(target=_run, daemon=True, name="return-to-dock").start()
     respond("return_to_dock_respond", {"result": 0})
+
+
+def _stop_mow_zone_cleanup_cli():
+    """CLI-fallback voor _stop_mow_zone_cleanup wanneer rclpy niet importeert.
+
+    Detached (zelfde patroon als _call_cover_task_stop): een bash die eerst de
+    FollowPath cancel service aanroept en daarna de vijf transit-params
+    terugzet. Best-effort; output naar /tmp/stop_mow_zone.log.
+    """
+    def _cli_val(v):
+        return str(v).lower() if isinstance(v, bool) else str(v)
+    sets = "; ".join(
+        f"timeout 20 ros2 param set {_NAV_NODE} {k} {_cli_val(v)}"
+        for k, v in _TRANSIT_PARAM_DEFAULTS.items())
+    cmd = (
+        "source /opt/ros/galactic/setup.bash && "
+        "source /root/novabot/install/setup.bash 2>/dev/null && "
+        "( timeout 10 ros2 service call /follow_path/_action/cancel_goal "
+        "action_msgs/srv/CancelGoal '{}'; "
+        + sets +
+        " ) >> /tmp/stop_mow_zone.log 2>&1"
+    )
+    try:
+        subprocess.Popen(["bash", "-c", cmd], env=_ros_env(),
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception as e:
+        log(f"stop_mow_zone cleanup CLI-fallback faalde: {e}")
+
+
+def _stop_mow_zone_cleanup():
+    """Cancel de in-flight nav2 FollowPath goal en herstel de transit-params.
+
+    Een kill van mow_zone_drive.py laat twee dingen achter:
+      1. De FollowPath goal blijft server-side EXECUTING; nav2 blijft cmd_vel
+         publiceren en de maaier rijdt het pad gewoon uit. De action cancel
+         service (/follow_path/_action/cancel_goal) met een LEEG request
+         (nul-UUID plus nul-timestamp) annuleert per ROS2 conventie ALLE
+         actieve goals; de controller server publiceert daarna zelf een
+         nul-Twist zodat de maaier echt remt in plaats van uitrijdt.
+      2. De vijf gerelaxte controllerparams: de finally in mow_zone_drive.py
+         die ze terugzet draait niet bij een kill, dus wij zetten ze hier
+         terug op hun yaml-defaults (_TRANSIT_PARAM_DEFAULTS).
+
+    Draait in een achtergrondthread zodat het MQTT-antwoord niet blokkeert.
+    rclpy-pad: call_async verstuurt het request synchroon over DDS; het
+    antwoord afwachten zou spinnen vergen (conflicteert met de shared
+    executor van de blade relay) en is voor het effect niet nodig. Idempotent:
+    zonder actieve goal cancelt de service niets en zijn de param-sets no-ops.
+    """
+    try:
+        import rclpy  # type: ignore
+        from action_msgs.srv import CancelGoal  # type: ignore
+        from rcl_interfaces.srv import SetParameters  # type: ignore
+        from rcl_interfaces.msg import Parameter, ParameterValue, ParameterType  # type: ignore
+    except ImportError as ex:
+        log(f"stop_mow_zone cleanup: rclpy onbeschikbaar ({ex}), CLI-fallback")
+        _stop_mow_zone_cleanup_cli()
+        return
+    try:
+        try:
+            rclpy.init()
+        except RuntimeError:
+            pass  # context al geinitialiseerd (blade relay)
+        node = rclpy.create_node("stop_mow_zone_cleanup")
+        try:
+            cancel_cli = node.create_client(CancelGoal, "/follow_path/_action/cancel_goal")
+            if cancel_cli.wait_for_service(timeout_sec=5.0):
+                cancel_cli.call_async(CancelGoal.Request())
+                log("stop_mow_zone cleanup: FollowPath cancel verstuurd")
+            else:
+                log("stop_mow_zone cleanup: cancel service niet gevonden (geen actieve nav2?)")
+            param_cli = node.create_client(SetParameters, f"{_NAV_NODE}/set_parameters")
+            if param_cli.wait_for_service(timeout_sec=5.0):
+                req = SetParameters.Request()
+                for name, val in _TRANSIT_PARAM_DEFAULTS.items():
+                    p = Parameter()
+                    p.name = name
+                    pv = ParameterValue()
+                    if isinstance(val, bool):
+                        pv.type = ParameterType.PARAMETER_BOOL
+                        pv.bool_value = val
+                    else:
+                        pv.type = ParameterType.PARAMETER_DOUBLE
+                        pv.double_value = float(val)
+                    p.value = pv
+                    req.parameters.append(p)
+                param_cli.call_async(req)
+                log(f"stop_mow_zone cleanup: herstel van {len(req.parameters)} transit-params verstuurd")
+            else:
+                log("stop_mow_zone cleanup: set_parameters service niet gevonden")
+            # Geef DDS even om beide requests af te leveren voordat de node
+            # (en dus de client-writers) wordt afgebroken.
+            time.sleep(1.0)
+        finally:
+            node.destroy_node()
+    except Exception as ex:
+        log(f"stop_mow_zone cleanup: rclpy-pad faalde ({ex}), CLI-fallback")
+        _stop_mow_zone_cleanup_cli()
+
+
+def handle_stop_mow_zone(params, respond):
+    """Stop een lopende mow_zone / return_to_dock transit.
+
+    stop_boundary_follow dekt dit NIET: diens pkill matcht alleen `ros2
+    action send_goal` CLI-processen (niet het rclpy-proces mow_zone_drive.py)
+    en cover_task_stop richt zich op coverage_planner_server terwijl de
+    transit rechtstreeks op nav2 /follow_path rijdt. Een transit kan tot
+    600 s per hop lopen en return_to_dock ketent tot 6 hops, dus zonder dit
+    commando was er geen software-stop.
+
+    Drie stappen:
+      1. Het geregistreerde drive-proces beeindigen (SIGTERM, na 3 s SIGKILL)
+         plus een pkill-fallback voor een wees van een eerdere
+         daemon-instantie. pkill draait direct via argv, zonder shell er
+         omheen: een bash-wrapper zou het patroon in zijn eigen cmdline
+         dragen en pkill zou dan zijn eigen parent doodschieten.
+      2. De in-flight FollowPath goal cancellen zodat de maaier echt remt
+         (zie _stop_mow_zone_cleanup).
+      3. De vijf gerelaxte controllerparams terugzetten (idem).
+
+    Idempotent: zonder lopende transit doet elke stap niets en komt er
+    gewoon result:0 terug.
+    """
+    killed = False
+    proc = None
+    with _MOW_DRIVE_LOCK:
+        proc = _MOW_DRIVE_PROC[0]
+        if proc is not None and proc.poll() is None:
+            _MOW_DRIVE_STOPPED[0] = True
+            try:
+                proc.terminate()
+                killed = True
+            except Exception:
+                pass
+    if killed:
+        try:
+            proc.wait(timeout=3)
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+    try:
+        subprocess.run(["pkill", "-f", "scripts/mow_zone_drive.py"],
+                       capture_output=True, timeout=5)
+    except Exception:
+        pass
+    threading.Thread(target=_stop_mow_zone_cleanup, daemon=True,
+                     name="stop-mow-zone").start()
+    log(f"stop_mow_zone: killed={killed} (goal-cancel + param-herstel gedispatcht)")
+    respond("stop_mow_zone_respond", {"result": 0, "killed": killed,
+                                      "cleanup": "dispatched"})
 
 
 def handle_start_edge_cut(params, respond):
@@ -4296,6 +4559,7 @@ COMMANDS = {
     "follow_unicom": handle_follow_unicom,
     "mow_zone": handle_mow_zone,
     "return_to_dock": handle_return_to_dock,
+    "stop_mow_zone": handle_stop_mow_zone,
     "stop_boundary_follow": handle_stop_boundary_follow,
     "get_lora_info": handle_get_lora_info,
     "set_lora_info": handle_set_lora_info,

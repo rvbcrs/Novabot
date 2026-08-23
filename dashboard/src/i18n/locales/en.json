@@ -462,6 +462,7 @@
     "edgeOffset": "Edge offset",
     "edgeOffsetShrink": "Shrink",
     "edgeOffsetExpand": "Expand",
+    "edgeDays": { "label": "Edge cut on", "hint": "Only on the selected mowing days; leave empty to never edge-cut." },
     "rainPause": "Pause on rain",
     "rainThreshold": "Rain threshold",
     "rainProbability": "Rain probability",
@@ -754,6 +755,12 @@
       "ha": "Home Assistant webhook",
       "email": "Email (SMTP)",
       "comingSoon": "Coming soon"
+    },
+    "autoMap": {
+      "title": "Autonomous mapping",
+      "help": "Experimental feature for letting the mower map its own boundary.",
+      "show": "Show panel below the map",
+      "note": "A running session stays visible even with this off."
     }
   },
   "ai": {

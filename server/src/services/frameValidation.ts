@@ -106,7 +106,20 @@ export function noteDockState(sn: string, docked: boolean): void {
 // would move relative to a wrong frame and can drive anywhere. go_to_charge =
 // return-to-dock; start_navigation / start_run = start mowing. auto_recharge
 // (pure ArUco, no map nav) and go_pile (blade prep) stay allowed.
-const FRAME_BLOCKED_KEYS = ['go_to_charge', 'start_navigation', 'start_run'];
+//
+// start_edge_cut hoort hier ook: het rijdt de opgeslagen grenspolygoon van een
+// map af (NTCP-coverage met only_edge_mode), dus precies zo frame-afhankelijk
+// als start_navigation. Extra reden sinds de rand-dag watcher: dat is de eerste
+// volledig autonome aanroeper: die start een randmaai zonder dat er een mens
+// kijkt, dus in een niet-gevalideerd frame zou de maaier zelfstandig een grens
+// gaan rijden die kilometers naast de tuin kan liggen.
+//
+// mow_zone hoort er ook bij: dat commando (extended_commands.py) rijdt de
+// opgenomen unicom-lijn in het map-frame af en start daarna een coverage-taak,
+// dus net zo frame-afhankelijk als start_navigation. Het loopt uitsluitend
+// over het extended-kanaal (publishExtendedCommand), waar dezelfde guard nu
+// ook op zit.
+const FRAME_BLOCKED_KEYS = ['go_to_charge', 'start_navigation', 'start_run', 'start_edge_cut', 'mow_zone'];
 
 /**
  * True when an outbound command must be blocked because the frame is

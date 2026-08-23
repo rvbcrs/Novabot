@@ -56,6 +56,7 @@ interface ScheduleForm {
   alternateDirection: boolean;
   alternateStep: number;
   edgeOffset: number;
+  edgeDays: number[];
   rainPause: boolean;
   rainThresholdMm: number;
   rainThresholdProbability: number;
@@ -74,6 +75,7 @@ const defaultForm: ScheduleForm = {
   alternateDirection: false,
   alternateStep: 90,
   edgeOffset: 0,
+  edgeDays: [],
   rainPause: false,
   rainThresholdMm: 0.5,
   rainThresholdProbability: 50,
@@ -146,6 +148,7 @@ export function Scheduler({ sn, online, onPathDirectionChange }: Props) {
         alternateDirection: form.alternateDirection,
         alternateStep: form.alternateStep,
         edgeOffset: form.edgeOffset,
+        edgeDays: form.edgeDays.length > 0 ? form.edgeDays : null,
         rainPause: form.rainPause,
         rainThresholdMm: form.rainThresholdMm,
         rainThresholdProbability: form.rainThresholdProbability,
@@ -202,11 +205,22 @@ export function Scheduler({ sn, online, onPathDirectionChange }: Props) {
   }, [sn]);
 
   const toggleWeekday = (day: number) => {
+    setForm(prev => {
+      const weekdays = prev.weekdays.includes(day)
+        ? prev.weekdays.filter(d => d !== day)
+        : [...prev.weekdays, day].sort();
+      // Rand-dag kan geen niet-maaidag zijn.
+      const edgeDays = prev.edgeDays.filter(d => weekdays.includes(d));
+      return { ...prev, weekdays, edgeDays };
+    });
+  };
+
+  const toggleEdgeDay = (day: number) => {
     setForm(prev => ({
       ...prev,
-      weekdays: prev.weekdays.includes(day)
-        ? prev.weekdays.filter(d => d !== day)
-        : [...prev.weekdays, day].sort(),
+      edgeDays: prev.edgeDays.includes(day)
+        ? prev.edgeDays.filter(d => d !== day)
+        : [...prev.edgeDays, day].sort(),
     }));
   };
 
@@ -282,6 +296,29 @@ export function Scheduler({ sn, online, onPathDirectionChange }: Props) {
               ))}
             </div>
           </div>
+
+          {/* Randmaaien op — subset van de maaidagen. Leeg = nooit randmaaien. */}
+          {form.weekdays.length > 0 && (
+            <div className="mb-3">
+              <label className="text-[10px] text-gray-500 uppercase tracking-wide">{t('schedule.edgeDays.label')}</label>
+              <div className="flex gap-1 mt-1">
+                {order.filter(d => form.weekdays.includes(d)).map(d => (
+                  <button
+                    key={d}
+                    onClick={() => toggleEdgeDay(d)}
+                    className={`flex-1 text-[11px] py-1.5 rounded transition-colors ${
+                      form.edgeDays.includes(d)
+                        ? 'bg-sky-600 text-white font-medium'
+                        : 'bg-gray-900 text-gray-500 hover:text-gray-300 border border-gray-700'
+                    }`}
+                  >
+                    {weekdayLabels[d]}
+                  </button>
+                ))}
+              </div>
+              <p className="text-[10px] text-gray-600 mt-1">{t('schedule.edgeDays.hint')}</p>
+            </div>
+          )}
 
           {/* Map selection */}
           {maps.length > 0 && (

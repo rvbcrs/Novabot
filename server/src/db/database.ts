@@ -761,6 +761,16 @@ export function initDb(): void {
     catch { /* kolom bestaat al */ }
   }
 
+  // Randmaaien per schema (migratie – veilig om te herhalen).
+  // JSON-array weekdagen [0-6], 0=zondag; NULL = huidig gedrag (geen
+  // server-gestuurde randmaai). Zie edge-cut-schedule spec.
+  try {
+    db.exec(`ALTER TABLE dashboard_schedules ADD COLUMN edge_days TEXT`);
+    console.log('[DB] Migrated: added dashboard_schedules.edge_days');
+  } catch {
+    // Kolom bestaat al — geen actie nodig
+  }
+
   // Feature: actieve regenpauze sessies (rain monitor → go_to_charge → herstart na regen)
   db.exec(`
     CREATE TABLE IF NOT EXISTS rain_sessions (

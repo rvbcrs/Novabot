@@ -883,9 +883,15 @@ if is_stock_addr:
     log_msg(f"MQTT addr updated: {existing_addr} -> {mqtt_addr}")
 else:
     log_msg(f"MQTT addr KEPT (custom): {existing_addr} (niet overschreven door {mqtt_addr})")
-    # Alleen port updaten als die verschilt
-    if c["mqtt"]["value"].get("port") != mqtt_port:
+    # De poort hoort bij het adres: als BLE-provisioning een custom broker heeft
+    # gezet (bv. :1884 naast een Home Assistant Mosquitto op 1883), dan mag de
+    # build-time default die NIET terugzetten bij elke boot. Alleen invullen als
+    # er helemaal geen poort staat.
+    if not c["mqtt"]["value"].get("port"):
         c["mqtt"]["value"]["port"] = mqtt_port
+        log_msg(f"MQTT port ontbrak -> {mqtt_port}")
+    else:
+        log_msg(f"MQTT port KEPT (custom): {c['mqtt']['value']['port']}")
 
 if "config" not in c:
     c["config"] = {"set": 1, "value": {"tz": "Europe/Amsterdam"}}
@@ -1598,6 +1604,20 @@ if [ -f "$EXT_SRC" ]; then
         echo "  pin_verify_ros2.py gekopieerd naar scripts/ (on-demand helper, geen daemon)"
     fi
 
+    # mow_zone_drive.py - rclpy drive-orchestrator voor mow_zone / return_to_dock
+    # (aangeroepen door extended_commands.py). Zonder dit bestand shipt de build
+    # de zone-maai commando's terwijl het script dat het rijden doet ontbreekt;
+    # de app valt dan na 5s terug op vrij geplande navigatie dwars door de tuin.
+    MOW_DRIVE_SRC="$SCRIPT_DIR/mow_zone_drive.py"
+    if [ -f "$MOW_DRIVE_SRC" ]; then
+        cp "$MOW_DRIVE_SRC" "$NOVABOT_ROOT/scripts/mow_zone_drive.py"
+        chmod +x "$NOVABOT_ROOT/scripts/mow_zone_drive.py"
+        echo "  mow_zone_drive.py gekopieerd naar scripts/ (on-demand helper, geen daemon)"
+    else
+        echo "  WAARSCHUWING: mow_zone_drive.py NIET gevonden in $SCRIPT_DIR;"
+        echo "  mow_zone / return_to_dock zullen op deze build met een fout weigeren"
+    fi
+
     # Voeg extended commands launch toe aan run_novabot.sh start) blok
     if [ -f "$RUN_NOVABOT" ] && ! grep -q "extended_commands.py" "$RUN_NOVABOT"; then
         EXT_START_BLOCK="/tmp/ext_cmd_start_block.sh"
@@ -2101,6 +2121,99 @@ if [ -f "$API_YAML" ]; then
     sed -i '' "s/novabot_version_code: ${BASE_VERSION}/novabot_version_code: ${VERSION}/" "$API_YAML"
     echo "  Versie in novabot_api.yaml → ${VERSION}"
 fi
+
+# === Stap 7bis: robot_decision patchen — include_edge default OFF ===
+# De stock robot_decision (C++, package compound_decision) zet in
+# coverStartDeal onvoorwaardelijk include_edge=true op het coverage-goal
+# (instructie strb w3,[sp,#0xae] = bytes e3 bb 02 39, VMA/file-offset
+# 0x921a8). Daardoor draait ELKE gewone maaibeurt automatisch een randfase.
+# We patchen naar strb wzr,[sp,#0xae] (ff bb 02 39) zodat include_edge altijd
+# false start; randmaaien gebeurt voortaan alleen nog via een losse
+# start_edge_cut-commando vanuit de server, op de dagen die de gebruiker
+# instelde (zie docs/superpowers/specs/2026-08-02-edge-cut-schedule-design.md).
+#
+# Patroon-check ÉN offset-check: het patroon moet precies 1x voorkomen, op
+# exact file-offset 0x921a8, 4-byte uitgelijnd, met de verwachte
+# buurinstructies eromheen. Alleen tellen was niet genoeg (review finding 5):
+# een toekomstige firmware-revisie zou het patroon toevallig 1x op een andere
+# of niet-uitgelijnde plek kunnen bevatten, en dan patcht de build de
+# verkeerde bytes — een maaier die fysiek geflasht moet worden. Elke
+# afwijkende check breekt de build hard; een nieuwe firmware-revisie vereist
+# her-verificatie via disassembly van coverStartDeal, nooit blind toepassen.
+# De telling gebeurt op de RUWE bytes in Python (bytes.count), niet op een
+# hexdump-string-match — dat laatste kan nibble-misaligned false positives
+# geven die geen echte byte-grens representeren.
+echo "  robot_decision patchen (include_edge default OFF)..."
+RD="$NOVABOT_ROOT/install/compound_decision/lib/compound_decision/robot_decision"
+if [ ! -f "$RD" ]; then
+    echo "ERROR: robot_decision niet gevonden op $RD — firmware-structuur gewijzigd?" >&2
+    exit 1
+fi
+python3 - "$RD" <<'PY'
+import struct
+import sys
+
+path = sys.argv[1]
+pat = bytes.fromhex("e3bb0239")   # strb w3,[sp,#0xae]  (include_edge = true)
+repl = bytes.fromhex("ffbb0239")  # strb wzr,[sp,#0xae] (include_edge = false)
+
+# Geverifieerd op de stock v6.0.2/v6.0.3 robot_decision (md5
+# 374c6f14a0a1c0daec621363c43b3f87, binaries identiek):
+#   0x92188: 52800023  mov  w3,#1          (de include_edge=true bron)
+#   0x921a8: 3902bbe3  strb w3,[sp,#0xae]  (de te patchen store)
+#   0x921ac: 3902c3e3  strb w3,[sp,#0xb0]  (de volgende store, context-anker)
+EXPECTED_OFFSET = 0x921A8
+MOV_W3_1_OFFSET = 0x92188   # EXPECTED_OFFSET - 0x20
+MOV_W3_1_WORD = 0x52800023  # mov w3,#1
+NEXT_STORE_WORD = 0x3902C3E3  # strb w3,[sp,#0xb0] direct na de patch-plek
+
+data = open(path, "rb").read()
+hits = data.count(pat)
+
+if hits != 1:
+    print(f"ERROR: verwachtte precies 1x het include_edge-patroon in robot_decision, vond {hits}x.", file=sys.stderr)
+    if hits == 0:
+        already = data.count(repl)
+        print("  Nul hits kan twee dingen betekenen — controleer welke:", file=sys.stderr)
+        print(f"  1) Dit bronbestand is AL gepatcht (bijv. --input wees naar een eerder custom-fw i.p.v. een"
+              f" stock .deb): replacement-patroon komt {already}x voor. {'Bevestigd — ' if already else 'Niet bevestigd — '}"
+              f"gebruik een STOCK .deb als --input, niet een al-gepatchte custom build.", file=sys.stderr)
+        print("  2) De firmware-layout is echt veranderd (nieuwe robot_decision-revisie) — de offset/het patroon"
+              " moet opnieuw geverifieerd worden (disassemble coverStartDeal), niet blind toegepast.", file=sys.stderr)
+    else:
+        print(f"  Patroon niet meer uniek ({hits}x) — firmware-layout gewijzigd, kan de doelinstructie niet"
+              " betrouwbaar aanwijzen. Patch afbreken.", file=sys.stderr)
+    sys.exit(1)
+
+off = data.index(pat)
+if off != EXPECTED_OFFSET:
+    print(f"ERROR: offset-check gefaald — include_edge-patroon gevonden op 0x{off:x}, verwacht 0x{EXPECTED_OFFSET:x}.", file=sys.stderr)
+    print("  De firmware-layout is verschoven (nieuwe robot_decision-revisie?). NIET blind patchen:", file=sys.stderr)
+    print("  disassembleer coverStartDeal, verifieer de nieuwe instructie-offset en werk dit script bij.", file=sys.stderr)
+    sys.exit(1)
+if off % 4 != 0:
+    print(f"ERROR: uitlijnings-check gefaald — offset 0x{off:x} ligt niet op een 4-byte instructiegrens.", file=sys.stderr)
+    print("  De match is dan geen echte AArch64-instructie maar een toevallige bytereeks. Patch afbreken.", file=sys.stderr)
+    sys.exit(1)
+next_word = struct.unpack_from("<I", data, off + 4)[0]
+if next_word != NEXT_STORE_WORD:
+    print(f"ERROR: context-check gefaald — instructie ná de patch-plek is 0x{next_word:08x}, verwacht 0x{NEXT_STORE_WORD:08x} (strb w3,[sp,#0xb0]).", file=sys.stderr)
+    print("  De omliggende code wijkt af van de geverifieerde coverStartDeal — patch afbreken.", file=sys.stderr)
+    sys.exit(1)
+mov_word = struct.unpack_from("<I", data, MOV_W3_1_OFFSET)[0]
+if mov_word != MOV_W3_1_WORD:
+    print(f"ERROR: context-check gefaald — op 0x{MOV_W3_1_OFFSET:x} staat 0x{mov_word:08x}, verwacht 0x{MOV_W3_1_WORD:08x} (mov w3,#1).", file=sys.stderr)
+    print("  De omliggende code wijkt af van de geverifieerde coverStartDeal — patch afbreken.", file=sys.stderr)
+    sys.exit(1)
+
+size_before = len(data)
+patched = data.replace(pat, repl)
+if len(patched) != size_before:
+    print("ERROR: bestandsgrootte veranderd door patch — mag niet, afbreken.", file=sys.stderr)
+    sys.exit(1)
+open(path, "wb").write(patched)
+print("  robot_decision gepatcht: include_edge default OFF (1x e3bb0239 -> ffbb0239 @ 0x921a8, context geverifieerd)")
+PY
 
 # === Stap 8: package_verify.json bijwerken ===
 echo "[8/9] package_verify.json bijwerken..."

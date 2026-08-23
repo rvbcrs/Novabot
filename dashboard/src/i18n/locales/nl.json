@@ -509,6 +509,7 @@
     "edgeOffset": "Rand-offset",
     "edgeOffsetShrink": "Inkrimpen",
     "edgeOffsetExpand": "Uitbreiden",
+    "edgeDays": { "label": "Randmaaien op", "hint": "Alleen op de gekozen maaidagen; leeg = nooit randmaaien." },
     "rainPause": "Pauzeer bij regen",
     "rainThreshold": "Regendrempel",
     "rainProbability": "Regenkans",
@@ -801,6 +802,12 @@
       "ha": "Home Assistant webhook",
       "email": "E-mail (SMTP)",
       "comingSoon": "Komt eraan"
+    },
+    "autoMap": {
+      "title": "Autonoom karteren",
+      "help": "Experimentele functie waarbij de maaier zelf de grens in kaart brengt.",
+      "show": "Paneel onder de kaart tonen",
+      "note": "Een lopende sessie blijft zichtbaar, ook als dit uit staat."
     }
   },
   "ai": {

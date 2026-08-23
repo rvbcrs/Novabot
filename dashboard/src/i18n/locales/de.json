@@ -445,6 +445,7 @@
     "edgeOffset": "Randversatz",
     "edgeOffsetShrink": "Verkleinern",
     "edgeOffsetExpand": "Vergrößern",
+    "edgeDays": { "label": "Kantenschnitt an", "hint": "Nur an den gewählten Mähtagen; leer = nie Kantenschnitt." },
     "rainPause": "Bei Regen pausieren",
     "rainThreshold": "Regenschwelle",
     "rainProbability": "Regenwahrscheinlichkeit",
@@ -625,6 +626,12 @@
       "ha": "Home Assistant Webhook",
       "email": "E-Mail (SMTP)",
       "comingSoon": "Demnächst verfügbar"
+    },
+    "autoMap": {
+      "title": "Autonome Kartierung",
+      "help": "Experimentelle Funktion, bei der der Mäher seine Grenze selbst kartiert.",
+      "show": "Panel unter der Karte anzeigen",
+      "note": "Eine laufende Sitzung bleibt sichtbar, auch wenn dies aus ist."
     }
   },
   "ai": {

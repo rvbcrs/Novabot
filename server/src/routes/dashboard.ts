@@ -20,6 +20,7 @@ import { isDeviceOnline, writeRawPublish, getBrokerDiagnostics } from '../mqtt/b
 import { getRecentLogs, forwardToDashboard, onLogEntry, emitMapsChanged } from '../dashboard/socketHandler.js';
 import { requestMapList, requestMapOutline, publishToDevice, publishRawToDevice, publishEncryptedOnTopic, publishToTopic, goToChargePayload, getNextCmdNum, patchLatestZipChargingPose, republishObstacleDetection } from '../mqtt/mapSync.js';
 import { publishExtendedCommand } from '../mqtt/extendedCommands.js';
+import { disarmEdgeWatch, disarmEdgeWatchForSchedule } from '../services/scheduleRunner.js';
 import { isFrameUnvalidated, markFrameUnvalidated, clearFrameUnvalidated, setReanchorRelocked, isReanchorRelocked } from '../services/frameValidation.js';
 import { softRestartBlockedReason, sendSoftRestart } from '../services/softRestart.js';
 import { gpsSpreadMeters, medianGps, type LatLng } from '../services/reanchorGps.js';
@@ -83,6 +84,24 @@ interface EquipmentRow {
   mower_version: string | null;
   charger_version: string | null;
   mower_ip: string | null;
+}
+
+/** edge_days (DB-JSON) → array voor de DTO. Corrupt/NULL → null zodat een
+ *  kapotte waarde nooit de schedule-lijst laat crashen. */
+export function parseEdgeDays(raw: string | null): number[] | null {
+  if (raw == null) return null;
+  try {
+    const v = JSON.parse(raw);
+    return Array.isArray(v) ? v.filter((n): n is number => Number.isInteger(n) && n >= 0 && n <= 6) : null;
+  } catch { return null; }
+}
+
+/** array → DB-JSON. undefined blijft undefined (PATCH: veld niet aanraken);
+ *  null → null (expliciet wissen). */
+export function serializeEdgeDays(days: number[] | null | undefined): string | null | undefined {
+  if (days === undefined) return undefined;
+  if (days === null) return null;
+  return JSON.stringify(days);
 }
 
 export const dashboardRouter = Router();
@@ -3191,6 +3210,14 @@ dashboardRouter.post('/command/:sn', (req: Request, res: Response) => {
     return;
   }
 
+  // Rand-dag watcher: elke handmatige start of stop via deze generieke
+  // command-route (de OpenNova-app gebruikt dit pad) maakt een gearmde
+  // randmaai ongeldig — de arm hoort bij de geplande beurt, niet bij wat de
+  // gebruiker daarna zelf start of stopt (finding 4).
+  if ('stop_navigation' in command || 'start_navigation' in command || 'start_run' in command) {
+    disarmEdgeWatch(sn, `handmatig ${Object.keys(command)[0]} via command-route`);
+  }
+
   // Auto-encrypt voor LFI-apparaten — maaier (v6+) en charger (v0.4.0+) verwachten AES
   // Handmatige override: encrypt=true/false in body
   const { encrypt: doEncrypt, qos } = req.body as { encrypt?: boolean; qos?: number };
@@ -3506,6 +3533,7 @@ interface ScheduleRow {
   timezone: string | null;
   trigger_count: number;
   skip_date: string | null;
+  edge_days: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -3537,6 +3565,7 @@ function scheduleRowToDto(r: ScheduleRow) {
     intervalAnchorDate: r.interval_anchor_date,
     timezone: r.timezone ?? null,
     skipDate: r.skip_date ?? null,
+    edgeDays: parseEdgeDays(r.edge_days),
     // Richting die de VOLGENDE run daadwerkelijk gebruikt. Bij alternate
     // rotatie is dat base + trigger_count×step — de kaarten toonden eerst
     // altijd de basisrichting, wat elke dag "60°" liet zien terwijl de
@@ -3634,6 +3663,9 @@ dashboardRouter.post('/schedules/:sn', (req: Request, res: Response) => {
     // IANA zone van de browser/app die het schema aanmaakt. De server-side
     // runner vuurt start_time in DEZE zone; null = container-TZ (legacy).
     timezone?: string;
+    // Dagen (0=zo..6=za) waarop na het maaien een randmaai-beurt volgt.
+    // NULL/undefined = huidig gedrag (geen edge-cut).
+    edgeDays?: number[] | null;
   };
 
   if (!body.startTime) {
@@ -3666,6 +3698,7 @@ dashboardRouter.post('/schedules/:sn', (req: Request, res: Response) => {
     interval_days: body.intervalDays ?? 0,
     interval_anchor_date: body.intervalAnchorDate ?? null,
     timezone: body.timezone ?? null,
+    edge_days: serializeEdgeDays(body.edgeDays) ?? null,
   });
 
   // Stuur timer_task naar maaier als die online is — maar NIET als rain_pause
@@ -3737,7 +3770,17 @@ dashboardRouter.patch('/schedules/:sn/:scheduleId', (req: Request, res: Response
     interval_anchor_date: body.intervalAnchorDate as string | undefined,
     timezone: body.timezone as string | undefined,
     skip_date: body.skipDate !== undefined ? (body.skipDate as string | null) : undefined,
+    edge_days: serializeEdgeDays(body.edgeDays as number[] | null | undefined),
   });
+
+  // Schema uitgezet of rand-dagen gewist → een eventueel gearmde randmaai van
+  // dit schema vervalt direct (finding 4). De runner hercontroleert dit óók op
+  // het vuurmoment, maar hier ontwapenen houdt de state meteen schoon.
+  const edgeDaysCleared = body.edgeDays !== undefined
+    && (body.edgeDays === null || (Array.isArray(body.edgeDays) && body.edgeDays.length === 0));
+  if (body.enabled === false || edgeDaysCleared) {
+    disarmEdgeWatchForSchedule(scheduleId, body.enabled === false ? 'schema uitgezet' : 'rand-dagen gewist');
+  }
 
   const row = scheduleRepo.findById(scheduleId) as ScheduleRow;
   res.json({ ok: true, schedule: scheduleRowToDto(row) });
@@ -3747,6 +3790,8 @@ dashboardRouter.patch('/schedules/:sn/:scheduleId', (req: Request, res: Response
 dashboardRouter.delete('/schedules/:sn/:scheduleId', (req: Request, res: Response) => {
   const { sn, scheduleId } = req.params;
   scheduleRepo.deleteByIdAndMower(scheduleId, sn);
+  // Verwijderd schema → gearmde randmaai van dit schema vervalt (finding 4).
+  disarmEdgeWatchForSchedule(scheduleId, 'schema verwijderd');
   res.json({ ok: true });
 });
 
@@ -4000,6 +4045,9 @@ dashboardRouter.post('/navigate-to/:sn', (req: Request, res: Response) => {
 
 // POST /api/dashboard/stop-navigation/:sn — stop navigatie
 dashboardRouter.post('/stop-navigation/:sn', (req: Request, res: Response) => {
+  // Stopknop = de gearmde rand-dag randmaai vervalt: de beurt waar die arm bij
+  // hoorde wordt hiermee afgebroken (finding 4).
+  disarmEdgeWatch(req.params.sn, 'stop-navigation via dashboard');
   publishToDevice(req.params.sn, { stop_navigation: { cmd_num: getNextCmdNum(req.params.sn) } });
   res.json({ ok: true, command: 'stop_navigation' });
 });
@@ -4135,6 +4183,12 @@ function syncVirtualWalls(sn: string): void {
 
 // ── Extended Commands (via firmware Python node) ────────────────
 
+// Bewegingsstartende extended-commando's (extended_commands.py handlers).
+// mow_zone is het PRIMAIRE handmatige maaipad van de app; de andere vier
+// starten of sturen eveneens een rit. Elk hiervan via de extended-route is een
+// handmatige interventie die een gearmde rand-dag randmaai ongeldig maakt.
+const EXTENDED_MOVEMENT_KEYS = ['mow_zone', 'follow_unicom', 'start_edge_cut', 'return_to_dock', 'calibration_drive'];
+
 // POST /api/dashboard/extended/:sn — stuur commando naar extended_commands.py
 dashboardRouter.post('/extended/:sn', (req: Request, res: Response) => {
   const sn = req.params.sn;
@@ -4142,6 +4196,17 @@ dashboardRouter.post('/extended/:sn', (req: Request, res: Response) => {
   if (!command || Object.keys(command).length === 0) {
     res.status(400).json({ ok: false, error: 'command required' });
     return;
+  }
+  // Rand-dag watcher: een handmatige zone-maai (mow_zone, het primaire
+  // app-pad) of ander bewegingscommando via deze route mag nooit door een
+  // eerder gearmde watcher worden geadopteerd — anders randmaait de server na
+  // het dokken de SCHEMA-zone op de SCHEMA-hoogte in plaats van wat de
+  // gebruiker net maaide (finding 4, re-review). De watcher zelf vuurt via
+  // publishExtendedCommand rechtstreeks, niet via deze route, dus hij
+  // ontwapent zichzelf hier niet.
+  const movementKey = EXTENDED_MOVEMENT_KEYS.find((k) => k in command);
+  if (movementKey) {
+    disarmEdgeWatch(sn, `handmatig ${movementKey} via extended-route`);
   }
   publishExtendedCommand(sn, command);
   res.json({ ok: true, command: Object.keys(command)[0] });
