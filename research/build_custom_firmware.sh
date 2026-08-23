@@ -1604,6 +1604,20 @@ if [ -f "$EXT_SRC" ]; then
         echo "  pin_verify_ros2.py gekopieerd naar scripts/ (on-demand helper, geen daemon)"
     fi
 
+    # mow_zone_drive.py - rclpy drive-orchestrator voor mow_zone / return_to_dock
+    # (aangeroepen door extended_commands.py). Zonder dit bestand shipt de build
+    # de zone-maai commando's terwijl het script dat het rijden doet ontbreekt;
+    # de app valt dan na 5s terug op vrij geplande navigatie dwars door de tuin.
+    MOW_DRIVE_SRC="$SCRIPT_DIR/mow_zone_drive.py"
+    if [ -f "$MOW_DRIVE_SRC" ]; then
+        cp "$MOW_DRIVE_SRC" "$NOVABOT_ROOT/scripts/mow_zone_drive.py"
+        chmod +x "$NOVABOT_ROOT/scripts/mow_zone_drive.py"
+        echo "  mow_zone_drive.py gekopieerd naar scripts/ (on-demand helper, geen daemon)"
+    else
+        echo "  WAARSCHUWING: mow_zone_drive.py NIET gevonden in $SCRIPT_DIR;"
+        echo "  mow_zone / return_to_dock zullen op deze build met een fout weigeren"
+    fi
+
     # Voeg extended commands launch toe aan run_novabot.sh start) blok
     if [ -f "$RUN_NOVABOT" ] && ! grep -q "extended_commands.py" "$RUN_NOVABOT"; then
         EXT_START_BLOCK="/tmp/ext_cmd_start_block.sh"

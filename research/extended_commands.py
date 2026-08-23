@@ -1677,6 +1677,17 @@ def handle_mow_zone(params, respond):
     # "PHASE <name> [msg]" line per stage on stdout; we forward each as a
     # mow_zone_status so the app still gets the following_unicom animation.
     drive_script = "/root/novabot/scripts/mow_zone_drive.py"
+    if not os.path.isfile(drive_script):
+        # Luid falen: zonder deze check antwoordde de handler result:0 terwijl
+        # er niets kon rijden (het script ontbrak in oudere firmware-builds),
+        # waarna de app na 5s terugviel op vrij geplande navigatie dwars door
+        # de tuin. Nu krijgt de caller direct een duidelijke foutreden.
+        log(f"mow_zone: {drive_script} ontbreekt (firmware-build zonder mow_zone_drive.py?)")
+        respond("mow_zone_status", {"phase": "error", "map": to_slot,
+                                    "error": "drive_script_missing"})
+        respond("mow_zone_respond", {"result": 1, "map": to_slot,
+                                     "error": "drive_script_missing"})
+        return
     d_arg = str(int(direction)) if direction is not None else "-"
     # to_slot is already allowlisted (re.fullmatch map\d+ above) and the rest
     # are int()-coerced, so there is no injection vector. Still, pass every
@@ -1697,6 +1708,7 @@ def handle_mow_zone(params, respond):
             str(int(map_ids)), str(int(cutterhigh)), d_arg]
 
     def _run():
+        terminal_seen = False
         try:
             proc = subprocess.Popen(argv, env=_ros_env(),
                                     stdout=subprocess.PIPE,
@@ -1709,6 +1721,8 @@ def handle_mow_zone(params, respond):
                 if line.startswith("PHASE "):
                     parts = line.split(" ", 2)
                     ph = parts[1] if len(parts) > 1 else ""
+                    if ph in ("done", "error"):
+                        terminal_seen = True
                     msg = {"phase": ph, "map": to_slot}
                     if ph == "error" and len(parts) > 2:
                         msg["error"] = parts[2]
@@ -1716,6 +1730,14 @@ def handle_mow_zone(params, respond):
                 else:
                     log(f"mow_zone_drive: {line}")
             proc.wait()
+            if proc.returncode != 0 and not terminal_seen:
+                # Het script stierf voordat het een terminale PHASE kon
+                # printen (importfout, kill, python3 kon het bestand niet
+                # openen). Zonder deze melding blijft de caller in een
+                # timeout hangen alsof er gewoon gereden wordt.
+                log(f"mow_zone: drive-script exit rc={proc.returncode} zonder done/error fase")
+                respond("mow_zone_status", {"phase": "error", "map": to_slot,
+                                            "error": f"drive_exit_{proc.returncode}"})
         except Exception as e:
             log(f"mow_zone error: {e}")
             respond("mow_zone_status", {"phase": "error", "map": to_slot, "error": str(e)})
