@@ -1651,6 +1651,47 @@ def _start_cov_task(map_ids, cutterhigh, direction):
     return "result=True" in out or "result: true" in out.lower()
 
 
+# Actieve mow_zone_drive.py Popen (mow- of return-modus), zodat stop_mow_zone
+# de transit hard kan afbreken. De pkill-fallback in handle_stop_mow_zone vangt
+# wezen van een eerdere daemon-instantie (na een respawn is de handle weg maar
+# draait het kind gewoon door). _MOW_DRIVE_STOPPED markeert een bewuste stop,
+# zodat de reader-thread "stopped" rapporteert in plaats van een fout.
+_MOW_DRIVE_LOCK = threading.Lock()
+_MOW_DRIVE_PROC = [None]
+_MOW_DRIVE_STOPPED = [False]
+
+# De vijf controllerparams die mow_zone_drive.py (TRANSIT_PARAMS) en
+# _follow_unicom voor de transit relaxen, met hun yaml-defaults
+# (novabot_boundary_follow_footprint.yaml). Normaal zet de finally in
+# mow_zone_drive.py ze terug, maar een kill door stop_mow_zone slaat die
+# finally over; handle_stop_mow_zone herstelt ze daarom expliciet.
+_TRANSIT_PARAM_DEFAULTS = {
+    "progress_checker.movement_time_allowance": 12.0,
+    "progress_checker.required_movement_radius": 0.2,
+    "FollowPathPurePursuit.max_allowed_time_to_collision": 0.8,
+    "FollowPathPurePursuit.use_regulated_linear_velocity_scaling": True,
+    "FollowPathPurePursuit.desired_linear_vel": 0.5,
+}
+
+
+def _register_mow_drive(proc):
+    """Registreer het lopende drive-proces voor stop_mow_zone en reset de
+    stop-markering voor deze nieuwe run."""
+    with _MOW_DRIVE_LOCK:
+        _MOW_DRIVE_PROC[0] = proc
+        _MOW_DRIVE_STOPPED[0] = False
+
+
+def _unregister_mow_drive(proc):
+    """Maak de registratie leeg (alleen als die nog naar dit proces wijst).
+    Retourneert True als deze run bewust via stop_mow_zone is gestopt."""
+    with _MOW_DRIVE_LOCK:
+        stopped = _MOW_DRIVE_STOPPED[0]
+        if _MOW_DRIVE_PROC[0] is proc:
+            _MOW_DRIVE_PROC[0] = None
+    return stopped
+
+
 def handle_mow_zone(params, respond):
     """Orchestrate a normal mow: undock -> (follow_unicom if a transit is needed)
     -> coverage via /robot_decision/start_cov_task. Streams phase status so the
@@ -1709,11 +1750,13 @@ def handle_mow_zone(params, respond):
 
     def _run():
         terminal_seen = False
+        proc = None
         try:
             proc = subprocess.Popen(argv, env=_ros_env(),
                                     stdout=subprocess.PIPE,
                                     stderr=subprocess.STDOUT,
                                     text=True, bufsize=1)
+            _register_mow_drive(proc)
             for line in proc.stdout:
                 line = line.strip()
                 if not line:
@@ -1730,17 +1773,26 @@ def handle_mow_zone(params, respond):
                 else:
                     log(f"mow_zone_drive: {line}")
             proc.wait()
+            stopped = _unregister_mow_drive(proc)
             if proc.returncode != 0 and not terminal_seen:
-                # Het script stierf voordat het een terminale PHASE kon
-                # printen (importfout, kill, python3 kon het bestand niet
-                # openen). Zonder deze melding blijft de caller in een
-                # timeout hangen alsof er gewoon gereden wordt.
-                log(f"mow_zone: drive-script exit rc={proc.returncode} zonder done/error fase")
-                respond("mow_zone_status", {"phase": "error", "map": to_slot,
-                                            "error": f"drive_exit_{proc.returncode}"})
+                if stopped:
+                    # Bewust afgebroken via stop_mow_zone: geen fout, wel een
+                    # terminale fase zodat de app niet in een timeout hangt.
+                    respond("mow_zone_status", {"phase": "stopped", "map": to_slot})
+                else:
+                    # Het script stierf voordat het een terminale PHASE kon
+                    # printen (importfout, kill, python3 kon het bestand niet
+                    # openen). Zonder deze melding blijft de caller in een
+                    # timeout hangen alsof er gewoon gereden wordt.
+                    log(f"mow_zone: drive-script exit rc={proc.returncode} zonder done/error fase")
+                    respond("mow_zone_status", {"phase": "error", "map": to_slot,
+                                                "error": f"drive_exit_{proc.returncode}"})
         except Exception as e:
             log(f"mow_zone error: {e}")
             respond("mow_zone_status", {"phase": "error", "map": to_slot, "error": str(e)})
+        finally:
+            if proc is not None:
+                _unregister_mow_drive(proc)
 
     threading.Thread(target=_run, daemon=True, name="mow-zone").start()
     respond("mow_zone_respond", {"result": 0, "map": to_slot})
@@ -1765,11 +1817,13 @@ def handle_return_to_dock(params, respond):
     argv = ["bash", "-c", wrapper, "return_to_dock", drive_script]
 
     def _run():
+        proc = None
         try:
             proc = subprocess.Popen(argv, env=_ros_env(),
                                     stdout=subprocess.PIPE,
                                     stderr=subprocess.STDOUT,
                                     text=True, bufsize=1)
+            _register_mow_drive(proc)
             for line in proc.stdout:
                 line = line.strip()
                 if not line:
@@ -1784,12 +1838,171 @@ def handle_return_to_dock(params, respond):
                 else:
                     log(f"return_to_dock: {line}")
             proc.wait()
+            if _unregister_mow_drive(proc) and proc.returncode != 0:
+                # Bewust afgebroken via stop_mow_zone: terminale fase sturen
+                # zodat de app niet in een timeout hangt.
+                respond("return_to_dock_status", {"phase": "stopped"})
         except Exception as e:
             log(f"return_to_dock error: {e}")
             respond("return_to_dock_status", {"phase": "error", "error": str(e)})
+        finally:
+            if proc is not None:
+                _unregister_mow_drive(proc)
 
     threading.Thread(target=_run, daemon=True, name="return-to-dock").start()
     respond("return_to_dock_respond", {"result": 0})
+
+
+def _stop_mow_zone_cleanup_cli():
+    """CLI-fallback voor _stop_mow_zone_cleanup wanneer rclpy niet importeert.
+
+    Detached (zelfde patroon als _call_cover_task_stop): een bash die eerst de
+    FollowPath cancel service aanroept en daarna de vijf transit-params
+    terugzet. Best-effort; output naar /tmp/stop_mow_zone.log.
+    """
+    def _cli_val(v):
+        return str(v).lower() if isinstance(v, bool) else str(v)
+    sets = "; ".join(
+        f"timeout 20 ros2 param set {_NAV_NODE} {k} {_cli_val(v)}"
+        for k, v in _TRANSIT_PARAM_DEFAULTS.items())
+    cmd = (
+        "source /opt/ros/galactic/setup.bash && "
+        "source /root/novabot/install/setup.bash 2>/dev/null && "
+        "( timeout 10 ros2 service call /follow_path/_action/cancel_goal "
+        "action_msgs/srv/CancelGoal '{}'; "
+        + sets +
+        " ) >> /tmp/stop_mow_zone.log 2>&1"
+    )
+    try:
+        subprocess.Popen(["bash", "-c", cmd], env=_ros_env(),
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception as e:
+        log(f"stop_mow_zone cleanup CLI-fallback faalde: {e}")
+
+
+def _stop_mow_zone_cleanup():
+    """Cancel de in-flight nav2 FollowPath goal en herstel de transit-params.
+
+    Een kill van mow_zone_drive.py laat twee dingen achter:
+      1. De FollowPath goal blijft server-side EXECUTING; nav2 blijft cmd_vel
+         publiceren en de maaier rijdt het pad gewoon uit. De action cancel
+         service (/follow_path/_action/cancel_goal) met een LEEG request
+         (nul-UUID plus nul-timestamp) annuleert per ROS2 conventie ALLE
+         actieve goals; de controller server publiceert daarna zelf een
+         nul-Twist zodat de maaier echt remt in plaats van uitrijdt.
+      2. De vijf gerelaxte controllerparams: de finally in mow_zone_drive.py
+         die ze terugzet draait niet bij een kill, dus wij zetten ze hier
+         terug op hun yaml-defaults (_TRANSIT_PARAM_DEFAULTS).
+
+    Draait in een achtergrondthread zodat het MQTT-antwoord niet blokkeert.
+    rclpy-pad: call_async verstuurt het request synchroon over DDS; het
+    antwoord afwachten zou spinnen vergen (conflicteert met de shared
+    executor van de blade relay) en is voor het effect niet nodig. Idempotent:
+    zonder actieve goal cancelt de service niets en zijn de param-sets no-ops.
+    """
+    try:
+        import rclpy  # type: ignore
+        from action_msgs.srv import CancelGoal  # type: ignore
+        from rcl_interfaces.srv import SetParameters  # type: ignore
+        from rcl_interfaces.msg import Parameter, ParameterValue, ParameterType  # type: ignore
+    except ImportError as ex:
+        log(f"stop_mow_zone cleanup: rclpy onbeschikbaar ({ex}), CLI-fallback")
+        _stop_mow_zone_cleanup_cli()
+        return
+    try:
+        try:
+            rclpy.init()
+        except RuntimeError:
+            pass  # context al geinitialiseerd (blade relay)
+        node = rclpy.create_node("stop_mow_zone_cleanup")
+        try:
+            cancel_cli = node.create_client(CancelGoal, "/follow_path/_action/cancel_goal")
+            if cancel_cli.wait_for_service(timeout_sec=5.0):
+                cancel_cli.call_async(CancelGoal.Request())
+                log("stop_mow_zone cleanup: FollowPath cancel verstuurd")
+            else:
+                log("stop_mow_zone cleanup: cancel service niet gevonden (geen actieve nav2?)")
+            param_cli = node.create_client(SetParameters, f"{_NAV_NODE}/set_parameters")
+            if param_cli.wait_for_service(timeout_sec=5.0):
+                req = SetParameters.Request()
+                for name, val in _TRANSIT_PARAM_DEFAULTS.items():
+                    p = Parameter()
+                    p.name = name
+                    pv = ParameterValue()
+                    if isinstance(val, bool):
+                        pv.type = ParameterType.PARAMETER_BOOL
+                        pv.bool_value = val
+                    else:
+                        pv.type = ParameterType.PARAMETER_DOUBLE
+                        pv.double_value = float(val)
+                    p.value = pv
+                    req.parameters.append(p)
+                param_cli.call_async(req)
+                log(f"stop_mow_zone cleanup: herstel van {len(req.parameters)} transit-params verstuurd")
+            else:
+                log("stop_mow_zone cleanup: set_parameters service niet gevonden")
+            # Geef DDS even om beide requests af te leveren voordat de node
+            # (en dus de client-writers) wordt afgebroken.
+            time.sleep(1.0)
+        finally:
+            node.destroy_node()
+    except Exception as ex:
+        log(f"stop_mow_zone cleanup: rclpy-pad faalde ({ex}), CLI-fallback")
+        _stop_mow_zone_cleanup_cli()
+
+
+def handle_stop_mow_zone(params, respond):
+    """Stop een lopende mow_zone / return_to_dock transit.
+
+    stop_boundary_follow dekt dit NIET: diens pkill matcht alleen `ros2
+    action send_goal` CLI-processen (niet het rclpy-proces mow_zone_drive.py)
+    en cover_task_stop richt zich op coverage_planner_server terwijl de
+    transit rechtstreeks op nav2 /follow_path rijdt. Een transit kan tot
+    600 s per hop lopen en return_to_dock ketent tot 6 hops, dus zonder dit
+    commando was er geen software-stop.
+
+    Drie stappen:
+      1. Het geregistreerde drive-proces beeindigen (SIGTERM, na 3 s SIGKILL)
+         plus een pkill-fallback voor een wees van een eerdere
+         daemon-instantie. pkill draait direct via argv, zonder shell er
+         omheen: een bash-wrapper zou het patroon in zijn eigen cmdline
+         dragen en pkill zou dan zijn eigen parent doodschieten.
+      2. De in-flight FollowPath goal cancellen zodat de maaier echt remt
+         (zie _stop_mow_zone_cleanup).
+      3. De vijf gerelaxte controllerparams terugzetten (idem).
+
+    Idempotent: zonder lopende transit doet elke stap niets en komt er
+    gewoon result:0 terug.
+    """
+    killed = False
+    proc = None
+    with _MOW_DRIVE_LOCK:
+        proc = _MOW_DRIVE_PROC[0]
+        if proc is not None and proc.poll() is None:
+            _MOW_DRIVE_STOPPED[0] = True
+            try:
+                proc.terminate()
+                killed = True
+            except Exception:
+                pass
+    if killed:
+        try:
+            proc.wait(timeout=3)
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+    try:
+        subprocess.run(["pkill", "-f", "scripts/mow_zone_drive.py"],
+                       capture_output=True, timeout=5)
+    except Exception:
+        pass
+    threading.Thread(target=_stop_mow_zone_cleanup, daemon=True,
+                     name="stop-mow-zone").start()
+    log(f"stop_mow_zone: killed={killed} (goal-cancel + param-herstel gedispatcht)")
+    respond("stop_mow_zone_respond", {"result": 0, "killed": killed,
+                                      "cleanup": "dispatched"})
 
 
 def handle_start_edge_cut(params, respond):
@@ -4318,6 +4531,7 @@ COMMANDS = {
     "follow_unicom": handle_follow_unicom,
     "mow_zone": handle_mow_zone,
     "return_to_dock": handle_return_to_dock,
+    "stop_mow_zone": handle_stop_mow_zone,
     "stop_boundary_follow": handle_stop_boundary_follow,
     "get_lora_info": handle_get_lora_info,
     "set_lora_info": handle_set_lora_info,
