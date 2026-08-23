@@ -1124,121 +1124,149 @@ def _clear_costmaps():
 
 
 def _depart_pile(seconds: float = 4.0, linear: float = 0.25):
-    """Drive backward to leave the charging dock before starting a task.
+    """Rijd achteruit van de laadpile voordat een taak start.
 
-    Stock `start_cov_task` performs an automatic ~1m back-off from the
-    pile as part of its preamble. The NTCP edge-cut path bypasses
-    robot_decision and would otherwise try to plan from the dock, where
-    the planner refuses to move (close-to-lethal start pose).
+    Stock `start_cov_task` doet zelf een ~1m back-off van de pile in zijn
+    preamble. Het NTCP edge-cut pad omzeilt robot_decision en zou anders
+    vanaf de dock proberen te plannen, waar de planner weigert te bewegen
+    (start-pose vlak bij lethal cost). Dit is het ENIGE pad waarlangs
+    start_edge_cut de dock verlaat, dus de rij-afstand moet deterministisch
+    zijn.
 
-    Sequence:
-      1. Cancel any active recharge so auto_charging stops driving.
-      2. Publish UInt8(1) to /release_charge_lock — same signal the
-         stock mqtt_node binary sends when handling start_navigation
-         from the dock (decompile mqtt_node:308974). Without this the
-         chassis stays magnet-locked and ignores /cmd_vel commands.
-      3. Wait briefly for the chassis to release.
-      4. Publish a steady-state Twist on /cmd_vel for `seconds` seconds.
-         Default 4s @ 0.25 m/s = ~1.0 m back-off, matching the firmware.
-      5. Send a zero Twist to bring the chassis to a stop before the
-         coverage planner takes over.
+    Waarom rclpy en geen `ros2 topic pub` shell-hold meer: de twee eerdere
+    comment-versies spraken elkaar tegen en hadden ALLEBEI gelijk, elk in
+    een ander DDS-regime.
+      - De oude versie (hold = seconds+16) claimde: "de cmd_vel watchdog
+        remt binnen ~0.5 s bij message-loss, dus een langere hold is
+        effectief een no-op". Dat klopt alleen zolang DDS discovery een
+        groot deel van de hold opeet en er daarna berichten WEGVALLEN.
+      - De nieuwe versie (hold = seconds+2) claimde: "de --once warm-up
+        heeft discovery al betaald, dus berichten blijven de HELE hold
+        stromen en seconds+16 gaf 2.5 tot 3 m achteruit i.p.v. 1 m".
+        Dat klopt zodra discovery snel is.
+      - Meting c8eda313: 106 Twist publishes in een hold van 20 s, dus
+        discovery at daar ~9 s op. In dat regime publiceert een hold van
+        seconds+2 (= 6 s) amper en blijft de maaier gewoon staan.
+    De rij-afstand hing dus af van onvoorspelbare DDS discovery-timing.
+    mow_zone_drive.py undock() loste dit al op met een begrensde rclpy
+    publisher-loop: eerst de publisher opzetten (discovery buiten de klok),
+    dan EXACT `seconds` wall-clock op 10 Hz publiceren. Deze functie doet nu
+    hetzelfde: afstand = seconds * linear, onafhankelijk van discovery.
 
-    Blocking — caller decides when to invoke. Only call this when the
-    mower is confirmed on the dock; backing up off-pile may bump into an
-    obstacle the local costmap hasn't seen.
+    Volgorde (gelijk aan de oude shell-versie):
+      1. Cancel een actieve recharge zodat auto_charging stopt met sturen.
+      2. Publiceer UInt8(1) op /release_charge_lock, hetzelfde signaal dat
+         stock mqtt_node stuurt bij start_navigation vanaf de dock
+         (decompile mqtt_node:308974). Zonder dit blijft het chassis
+         magneet-vergrendeld en negeert het /cmd_vel.
+      3. Wacht kort tot het chassis loslaat.
+      4. Publiceer `seconds` lang (wall-clock, hard begrensd) een reverse
+         Twist op 10 Hz. Default 4 s @ 0.25 m/s = ~1.0 m, zoals de firmware.
+      5. Nul-Twists om te remmen voordat de planner het overneemt.
+
+    Blocking; alleen aanroepen als de maaier bevestigd op de dock staat
+    (achteruit rijden mid-gazon kan een obstakel raken dat de local costmap
+    niet kent).
     """
-    env = {
-        **os.environ,
-        "ROS_DOMAIN_ID": "0",
-        "ROS_LOCALHOST_ONLY": "1",
-        "RMW_IMPLEMENTATION": "rmw_cyclonedds_cpp",
-        "CYCLONEDDS_URI": "file:///root/novabot/shm_config/shm_cyclonedds.xml",
-    }
-
-    log(f"depart_pile: starting {seconds}s reverse @ {linear} m/s")
-
-    # All ros2 CLI calls in one long-running bash so we pay DDS
-    # discovery cost ONCE. Previous design did 4 separate subprocess
-    # calls — each spent 5-8 s rediscovering the graph and the inner
-    # `timeout 2-4` cut them off before they could complete. The full
-    # depart sequence now fits comfortably inside a single 30-second
-    # outer timeout.
-    twist = (
-        f"'{{linear: {{x: -{linear}, y: 0.0, z: 0.0}}, "
-        f"angular: {{x: 0.0, y: 0.0, z: 0.0}}}}'"
-    )
-    stop_twist = "'{linear: {x: 0.0, y: 0.0, z: 0.0}, angular: {x: 0.0, y: 0.0, z: 0.0}}'"
-
-    # Each ros2 CLI invocation re-runs DDS discovery (~3-5 s on this
-    # hardware). We can't avoid that from the shell, but we CAN make
-    # sure the reverse-Twist publisher actually has time to publish
-    # something before we kill it. Live capture 2026-04-28 showed
-    # `sleep 4` killing the publisher mid-discovery → no cmd_vel
-    # messages reached the chassis, mower stayed put.
-    #
-    # Two changes:
-    #   a) Warm the /cmd_vel publisher with a single --once Twist BEFORE
-    #      starting the streaming publisher. The first publish triggers
-    #      DDS to register the writer; subsequent publishers reuse the
-    #      already-discovered topic.
-    #   b) Hold the streaming publisher long enough that even after
-    #      discovery cost there's still real drive time. Bump the
-    #      blocking sleep to 4s + 4s overhead; mower will only DRIVE
-    #      while messages arrive at 10 Hz, so a longer hold is
-    #      effectively a no-op once messages stop.
-    # ros2 topic pub re-runs DDS discovery on every invocation. Live
-    # capture 2026-04-28 showed iceoryx init alone consuming 7-8 s
-    # before a single message hit the wire. We keep the streaming
-    # publisher alive long enough that — even after worst-case
-    # discovery — there's still real publish time at 10 Hz. Mower's
-    # cmd_vel watchdog brakes within ~0.5 s of message-loss, so a
-    # bigger hold doesn't translate to extra drive distance, just a
-    # safety margin.
-    # The --once warm-up above already paid DDS discovery, so the streaming
-    # publisher starts emitting almost immediately. A big "slack" here is NOT
-    # a no-op: the mower drives at 0.25 m/s for the WHOLE hold (messages keep
-    # flowing at 10 Hz), so seconds+16 gave ~2.5-3m of reverse instead of 1m.
-    # Hold just past `seconds` so the drive is ~seconds*0.25 m = ~1m.
-    drive_hold = float(seconds) + 2.0
-    sequence = (
-        "set -x; "
-        "source /opt/ros/galactic/setup.bash; "
-        "source /root/novabot/install/setup.bash 2>/dev/null; "
-        # 1. Best-effort cancel of any active recharge action.
-        "ros2 service call /robot_decision/cancel_recharge "
-        "std_srvs/srv/Trigger '{}' || true; "
-        # 2. Drop the dock magnet (UInt8(1) per stock mqtt_node).
-        "ros2 topic pub --once /release_charge_lock std_msgs/msg/UInt8 "
-        "'{data: 1}' || true; "
-        # 3. Wait for chassis to release (~500 ms).
-        "sleep 0.5; "
-        # 4a. Warm /cmd_vel topic with a single REVERSE Twist so the
-        #     DDS graph already knows about a writer with this exact
-        #     QoS by the time the streaming publisher comes up. Using
-        #     reverse (not zero) also lets the mower's velocity watchdog
-        #     latch on to the signal sooner.
-        f"ros2 topic pub --once /cmd_vel geometry_msgs/msg/Twist {twist} || true; "
-        # 4b. Stream the reverse Twist at 10 Hz.
-        f"ros2 topic pub --rate 10 /cmd_vel geometry_msgs/msg/Twist {twist} & "
-        "TWIST_PID=$!; "
-        f"sleep {drive_hold}; "
-        "kill $TWIST_PID 2>/dev/null; "
-        "wait $TWIST_PID 2>/dev/null; "
-        # 5. Brake — single zero Twist.
-        f"ros2 topic pub --once /cmd_vel geometry_msgs/msg/Twist {stop_twist} || true"
-    )
-
-    bash_cmd = f"({sequence}) >> /tmp/depart_pile.log 2>&1"
-    # Outer timeout: every ros2 CLI invocation can eat ~5-8s on DDS
-    # discovery. Sequence has 5 ros2 calls plus the drive_hold sleep,
-    # so worst-case ~40s of overhead + drive_hold.
-    outer_timeout = max(60.0, 40.0 + drive_hold + 10.0)
     try:
-        rc = subprocess.run(["bash", "-c", bash_cmd], env=env,
-                            timeout=outer_timeout).returncode
-        log(f"depart_pile: sequence rc={rc}")
+        import rclpy  # type: ignore
+        from geometry_msgs.msg import Twist  # type: ignore
+        from std_msgs.msg import UInt8  # type: ignore
+        from std_srvs.srv import Trigger  # type: ignore
+        from rclpy.qos import QoSProfile, QoSHistoryPolicy  # type: ignore
+    except ImportError as ex:
+        # Zonder rclpy kunnen we niet deterministisch rijden; liever luid
+        # falen (edge-cut plant dan zichtbaar mis vanaf de dock) dan
+        # terugvallen op de oude gok-hold.
+        log(f"depart_pile: rclpy onbeschikbaar, back-off overgeslagen: {ex}")
+        return
+
+    # Veiligheidscap: de wall-clock deadline hieronder is de primaire grens,
+    # maar clamp ook de inputs zodat een ontspoorde caller nooit verder dan
+    # ~2.5 m of sneller dan het motor-maximum (0.33 m/s) kan sturen. NaN
+    # eindigt via max(0.0, ...) op 0.0 s, dus dan wordt er niet gereden.
+    try:
+        seconds = max(0.0, min(float(seconds), 10.0))
+        linear = max(0.05, min(abs(float(linear)), 0.33))
+    except (TypeError, ValueError):
+        seconds, linear = 4.0, 0.25
+
+    log(f"depart_pile: {seconds}s achteruit @ {linear} m/s (rclpy wall-clock)")
+
+    try:
+        rclpy.init()
+    except RuntimeError:
+        pass  # context al geinitialiseerd (blade relay)
     except Exception as e:
-        log(f"depart_pile: sequence failed: {e}")
+        log(f"depart_pile: rclpy.init faalde, back-off overgeslagen: {e}")
+        return
+
+    node = None
+    try:
+        node = rclpy.create_node("depart_pile")
+        qos = QoSProfile(depth=1, history=QoSHistoryPolicy.KEEP_LAST)
+        pub_cmd = node.create_publisher(Twist, "/cmd_vel", qos)
+        pub_lock = node.create_publisher(UInt8, "/release_charge_lock", qos)
+
+        # 1. Best-effort cancel van een actieve recharge. wait_for_service
+        # pollt de graph (geen executor nodig) en call_async verstuurt het
+        # request synchroon; het antwoord afwachten zou spinnen vergen
+        # (conflicteert met de shared executor van de blade relay) en de
+        # oude shell-versie negeerde het antwoord ook al (`|| true`).
+        cli = node.create_client(Trigger, "/robot_decision/cancel_recharge")
+        if cli.wait_for_service(timeout_sec=3.0):
+            cli.call_async(Trigger.Request())
+            time.sleep(1.0)
+        else:
+            log("depart_pile: cancel_recharge service niet gevonden (geen actieve recharge?)")
+
+        # Wacht tot de chassis-subscriber op /cmd_vel gematcht is, zodat de
+        # getimede lus pas start als berichten ook echt aankomen. Dit haalt
+        # de discovery-kost BUITEN de rij-klok (de kern van de fix).
+        deadline = time.monotonic() + 8.0
+        while time.monotonic() < deadline and pub_cmd.get_subscription_count() == 0:
+            time.sleep(0.1)
+        if pub_cmd.get_subscription_count() == 0:
+            log("depart_pile: geen /cmd_vel subscriber gematcht binnen 8s, rijden zal niets doen")
+
+        # 2. Dock-magneet loslaten (UInt8(1), zoals stock mqtt_node).
+        for _ in range(5):
+            pub_lock.publish(UInt8(data=1))
+            time.sleep(0.1)
+        # 3. Chassis even laten loslaten.
+        time.sleep(0.5)
+
+        # 4. Exact `seconds` wall-clock reverse op 10 Hz. De deadline is de
+        # harde grens: langer dan `seconds` rijden kan niet, en discovery
+        # is al betaald dus korter (amper publiceren) ook niet.
+        tw = Twist()
+        tw.linear.x = -abs(linear)
+        t_end = time.monotonic() + seconds
+        while time.monotonic() < t_end:
+            pub_cmd.publish(tw)
+            time.sleep(0.1)
+
+        # 5. Remmen: een paar nul-Twists zoals undock() in mow_zone_drive.py.
+        for _ in range(3):
+            pub_cmd.publish(Twist())
+            time.sleep(0.1)
+    except Exception as e:
+        log(f"depart_pile: fout tijdens back-off: {e}")
+        # Best-effort noodrem als de publisher er nog is; het chassis remt
+        # anders zelf via de cmd_vel watchdog (~0.5 s na message-loss).
+        try:
+            if node is not None:
+                pub_cmd.publish(Twist())
+        except Exception:
+            pass
+    finally:
+        # Publisher/node ALTIJD opruimen, ook bij een exception; anders
+        # lekt elke aanroep een node in dit langlevende daemon-proces.
+        if node is not None:
+            try:
+                node.destroy_node()
+            except Exception:
+                pass
 
     log("depart_pile: done")
 
