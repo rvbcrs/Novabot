@@ -19,48 +19,49 @@
 
 Bevestigd: "laadstation verplaatsen" (#6/#7) raakt **nooit** pos.json, alleen dok-pose-bestanden. Het enige dat de live-frame schrijft is #5 (rijdt) en #8 (lockt pos.json, zware import). Een no-drive frame-nudge bestaat niet.
 
-## Kern-inzicht dat het ontwerp stuurt
+## Kern-inzicht dat het ontwerp stuurt (herzien 2026-08-24)
 
-Het dashboard tekent de polygon uit DB-lokale-meters via `localToGps(point, origin)` met de **server-oorsprong** (charger-GPS), die losstaat van de `pos.json utm_origin` op de maaier. Een verschuiving die alleen pos.json aanpast laat het dashboard de oude plek tonen: de preview zou liegen. **De tool moet dezelfde meter-delta op beide oorsprongen toepassen.**
+Tijdens de planvoorbereiding bleek #4 (`POST /api/admin-status/apply-polygon-offset`, `adminStatus.ts:3720-3806`) al precies te doen wat nodig is: het schrijft `polygon_offset_x_m/y_m`, regenereert de kaart met `shiftPoints`, en stuurt het via `sync_map` (wacht op ack) + `save_map type:1` naar de maaier, die de verschoven CSV's op schijf schrijft en de pgm herbouwt. Het verschuift dus de kaart op de maaier en het blijft staan. Het is het mechanisme dat de gebruiker zelf voorstelde ("de CSV's schuiven"), en het is al gebouwd en getest (zelfde patroon als restore-and-realign).
 
-## Gekozen oplossing: één visuele frame-schuif-tool
+De eerder overwogen pos.json-`utm_origin`-nudge is verworpen: netter op papier, maar niet visueel, niet gebouwd, en hoger risico (teken-verificatie, `reanchor_pos` neveneffecten). #4 dekt de antenne-case: de grens +delta schuiven compenseert de -delta positie-fout van de maaier, zodat hij de echte grens weer raakt.
 
-Een dashboard-tool "Maaigebied verschuiven" die:
+## Gekozen oplossing: bestaande visuele UI aan bestaand werkend mechanisme koppelen
 
-1. **Visueel** — de gebruiker sleept de kaart of tikt N/O/Z/W-pijltjes, met live-preview op de satellietfoto. Dit is het visuele dat #4 bood, maar in het dashboard i.p.v. de begraven admin-HTML.
-2. **Delta** — de sleep/pijl levert één `(dx, dy)` in meters (noord/oost).
-3. **Beide oorsprongen** — de delta gaat naar (a) de server-weergave-oorsprong zodat de preview klopt, en (b) de maaier via de bestaande `reanchor_pos`-handler (nieuwe origin = huidige `wgs84_origin` + delta), die pos.json schrijft en `/load_utm_origin_info` live inlaadt. Geen reboot, geen rondrijden.
-4. **Backup + omkeerbaar** — vóór toepassen wordt de huidige pos.json (en de server-oorsprong) gesnapshot, met één knop terug te zetten.
+Twee bestaande stukken combineren i.p.v. nieuw bouwen:
 
-Deze tool **vervangt #4** (zelfde bedoeling, juiste laag, niet meer begraven).
+1. **De visuele UI die er al is** — de N/O/Z/W-pijltjes op de dashboard-kaart (nu #3, `MowerMap.tsx` `nudge`/`startCalibrating`), die vandaag alleen een weergave-offset (`offset_lat/lng`) schrijven.
+2. **Het mechanisme dat werkt** — #4's `apply-polygon-offset` dat de verschuiving als meter-delta naar de maaier synct.
 
-### Waarom pos.json en niet #4's DB-geometrie-schuif
+**Herbedraad de pijltjes zodat ze #4 aanroepen** (dx/dy in meters → `apply-polygon-offset`) i.p.v. de display-only offset. Dan verschuift de knop die de gebruiker al kent écht het maaien. Live-preview op de kaart tijdens het slepen; pas bij "Toepassen" gaat de `sync_map` naar de maaier.
 
-Bij een antenne-verschuiving is het hele GPS-frame verschoven. Eén origin-delta verschuift grens, obstakels, dok en occupancy-grid consistent mee. #4 schoof de geometrie maar **sloot het dok-anker uit**, dus voor dit geval de verkeerde laag. Voor een scheef-opgenomen kaart was #4 juist, maar dat geval dekt de nieuwe tool ook (alles schuift mee, en scheef-opgenomen is zeldzaam).
+### Eerlijk minpunt van #4 (bewust aanvaard)
 
-## Consolidatie (opruiming naast de nieuwe tool)
+#4 sluit het dok-ankerpunt (unicom punt 0) uit de verschuiving. Voor de antenne-case maakt dat niet uit: de grens schuift zodat de maaier de echte grens raakt, en het dokken wordt door ArUco op het laatste stuk gecorrigeerd. Gevolg: de ruwe positie-sense van de maaier blijft 10cm scheef, puur voor het maaien onmerkbaar. Wie het frame écht wil herstellen (positie-sense ook goed) gebruikt re-anchor (#5).
 
+## Consolidatie (opruiming)
+
+- **De dashboard-nudge-pijltjes herbedraden** naar #4 (`apply-polygon-offset`). Dit is de kern-wijziging: de bestaande visuele knop gaat het maaien echt verschuiven.
 - **#2 verwijderen** — dood, onbereikbaar, plus ongebruikte i18n (`chargerMoveTitle`/`chargerRelocated`).
-- **#1 + #3 samenvoegen** tot één "Weergave-uitlijning (alleen satellietkaart)", expliciet gelabeld dat het het maaien niet raakt.
-- **#4 opheffen** ten gunste van de nieuwe tool (admin-HTML-pagina + `apply-polygon-offset` route + `polygon_offset_x_m/y_m` gebruik). Let op: controleer eerst dat geen ander pad (restore-and-realign) de kolommen nog nodig heeft; zo ja, alleen de UI weghalen en het gebruik behouden.
+- **#4's admin-HTML-pagina opheffen** — de dashboard-nudge vervangt 'm. De `apply-polygon-offset` route + `polygon_offset_x_m/y_m` BLIJVEN (restore-and-realign leunt erop; alleen de losse admin-UI verdwijnt).
+- **#1 (charger-pin) en de oude display-only offset (#3)** — de display-only `offset_lat/lng`/`charger_lat/lng` weergave-correctie blijft bestaan maar wordt expliciet gelabeld "alleen satellietkaart, raakt het maaien niet", zodat niemand 'm nog aanziet voor een maai-fix. Niet verwijderen (de render-math gebruikt het), wel herlabelen.
 - **#5 (re-anchor), #6/#7 (dok), #8 (import)** blijven apart — echt andere klussen, alleen duidelijker labelen.
 
-Eindbeeld: één visuele frame-schuif, één weergave-uitlijning, re-anchor, twee dok-fixes, één admin-import. Elk met een naam die de laag benoemt.
+Eindbeeld: één visuele "verschuif het maaigebied" (dashboard-nudge → #4-mechanisme), een duidelijk als "alleen weergave" gelabelde satelliet-uitlijning, re-anchor, twee dok-fixes, één admin-import. Elk met een naam die de laag benoemt.
 
 ## Scope-afbakening
 
-**Binnen:** de nieuwe dashboard-tool + de vier opruimacties hierboven.
-**Buiten:** re-anchor-wizard, dok-pose-fixes en portable-import ongemoeid (alleen labels). App-kant (mobiel) niet in deze ronde.
+**Binnen:** dashboard-nudge herbedraden naar #4, #2 verwijderen, #4-admin-UI opheffen, display-only correctie herlabelen.
+**Buiten:** re-anchor-wizard, dok-pose-fixes en portable-import ongemoeid (alleen labels). App-kant (mobiel) niet in deze ronde. Geen pos.json-mechaniek.
 
 ## Open technische punten (op te lossen in het plan, niet nu aannemen)
 
-1. **Teken (sign) van de delta.** `local = f(GPS, origin)`; een positieve origin-shift verschuift de maaipositie de andere kant op. De richting MOET op een bekend referentiepunt geverifieerd worden vóór livegang, niet geasserteerd. Fase-0 verificatie met gebruikersbevestiging.
-2. **Bron van de server-weergave-oorsprong.** Waarschijnlijk `map_calibration.charger_lat/charger_lng`; bevestigen wie `localToGps` de origin voedt en dáár de delta toepassen zodat dashboard en maaier synchroon blijven.
-3. **`reanchor_pos` neveneffecten.** Bevestigd: geen lock, geen reboot, geen `frame_unvalidated`. Verifiëren dat een directe aanroep buiten de wizard geen verify-latch triggert.
-4. **Meten vs schatten.** De nudge is een eyeball-correctie (jij geeft 10cm + richting). Re-anchor meet het. Overweeg een "meet"-hulp: maaier op bekend punt, gerapporteerde vs verwachte lokale positie → voorgestelde delta. Optioneel, niet blokkerend.
+1. **Richting/teken van de dx/dy-delta.** De pijltjes leveren noord/oost in meters; `shiftPoints` verwacht een `(x,y)`-lokale-meter-delta. De as-oriëntatie en het teken (schuift +dx de grens oost of west) MOETEN op een bekend punt geverifieerd worden vóór livegang, niet geasserteerd. Fase-0 met gebruikersbevestiging (het is een bewegings-/maai-effect).
+2. **Stapelen of absoluut.** `apply-polygon-offset` schrijft `polygon_offset_x_m/y_m`. Bepalen of opeenvolgende nudges stapelen (delta optellen bij de bestaande offset) of de offset absoluut zetten. Kies stapelen zodat herhaald tikken voorspelbaar is; bevestig hoe #4 het nu doet.
+3. **Maaier offline.** #4 meldt al "mower will pick up offset on next reconnect". De dashboard-UI moet dat tonen i.p.v. stil falen.
+4. **Omkeerbaar.** De offset staat in `polygon_offset_x_m/y_m`; op nul zetten + opnieuw syncen draait terug. Een "reset"-knop meenemen.
 5. **Antenne fysiek vastzetten** is de echte fix; software-correctie houdt anders geen stand. Waarschuwing in de UI.
 
 ## Bekende consequenties
 
-- De tool verschuift het hele frame; scheef-opgenomen-kaart-only-gevallen (waar je juist het dok wilde vastzetten) worden nu ook meegeschoven. Aanvaardbaar: die zijn zeldzaam en re-mappen/andere tools dekken ze.
-- Omkeerbaar via de pos.json-backup; een foute richting verdubbelt tijdelijk de fout tot je 'm terugdraait.
+- #4 sluit het dok-anker uit; de maaier zijn ruwe positie-sense blijft scheef (onmerkbaar voor het maaien, wel voor re-anchor/verify die op `map_position` leunen).
+- Omkeerbaar via de offset op nul + resync; een foute richting verschuift tijdelijk de verkeerde kant op tot je 'm terugzet.
