@@ -3456,8 +3456,6 @@ adminStatusRouter.post(
 // touching the underlying GPS calibration.  The offset is persisted in
 // map_calibration and baked into the regenerated _latest.zip on every call.
 
-const MAX_OFFSET_M = 1.0;
-
 // GET /api/admin-status/maps/:sn/polygon-offset
 adminStatusRouter.get('/maps/:sn/polygon-offset', (req: AuthRequest, res: Response) => {
   const off = mapRepo.getPolygonOffset(req.params.sn);
@@ -3717,93 +3715,9 @@ adminStatusRouter.get('/wifi-heatmap/:sn', (req: AuthRequest, res: Response) => 
   });
 });
 
-// POST /api/admin-status/maps/:sn/apply-polygon-offset
-adminStatusRouter.post('/maps/:sn/apply-polygon-offset', async (req: AuthRequest, res: Response) => {
-  const { sn } = req.params;
-  const { dx_m, dy_m } = req.body as { dx_m?: unknown; dy_m?: unknown };
-  const dx = typeof dx_m === 'number' ? dx_m : NaN;
-  const dy = typeof dy_m === 'number' ? dy_m : NaN;
-
-  if (!Number.isFinite(dx) || !Number.isFinite(dy)) {
-    res.status(400).json({ ok: false, error: 'dx_m and dy_m must be finite numbers' });
-    return;
-  }
-  if (Math.abs(dx) > MAX_OFFSET_M || Math.abs(dy) > MAX_OFFSET_M) {
-    res.status(400).json({ ok: false, error: `Offset magnitude must be ≤ ${MAX_OFFSET_M} m per axis` });
-    return;
-  }
-
-  // 1. Persist (idempotent — even when downstream fails the operator can retry).
-  mapRepo.setPolygonOffset(sn, dx, dy);
-
-  // 2. Regenerate ZIP with the new offset baked in.
-  const regenPath = regenerateLatestZipFromBackup(sn);
-  if (!regenPath) {
-    res.status(400).json({ ok: false, error: 'No map data found for this mower — map the area first.', dx_m: dx, dy_m: dy });
-    return;
-  }
-
-  // 3. Online check.
-  if (!isDeviceOnline(sn)) {
-    res.status(404).json({
-      ok: false,
-      partial: true,
-      error: 'Mower offline — sync_map not pushed; mower will pick up offset on next reconnect',
-      dx_m: dx, dy_m: dy,
-    });
-    return;
-  }
-
-  // 4. Fire sync_map and wait up to 8s for ack — same pattern as restore-and-realign.
-  const syncResult = await new Promise<{ ok: boolean; respond?: Record<string, unknown>; timeout?: boolean }>((resolve) => {
-    let settled = false;
-    const handler = (data: Record<string, unknown>) => {
-      const respond = data.sync_map_respond as Record<string, unknown> | undefined;
-      if (!respond) return;
-      if (settled) return;
-      settled = true;
-      offExtendedResponse(sn, handler);
-      resolve({ ok: respond.result === 0, respond });
-    };
-    onExtendedResponse(sn, handler);
-    publishToExtended(sn, { sync_map: {} });
-    setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      offExtendedResponse(sn, handler);
-      resolve({ ok: false, timeout: true });
-    }, 30000);
-  });
-
-  if (syncResult.timeout) {
-    res.status(504).json({
-      ok: false,
-      partial: true,
-      error: 'Mower did not respond within 30s — sync may still complete in background',
-      dx_m: dx, dy_m: dy,
-    });
-    return;
-  }
-
-  // 5. After sync_map applied the CSVs, ask the mower to render
-  // map.yaml/.pgm/.png from those CSVs by triggering save_map type:1.
-  // The DB-only recovery path was leaving these render artifacts missing,
-  // so navigation/coverage planners hit Errors 107/118 even though the
-  // polygons were correctly written. Fire-and-forget — the mower processes
-  // it asynchronously and the response isn't needed for the caller.
-  if (syncResult.ok) {
-    publishToDevice(sn, { save_map: { type: 1, mapName: 'map', totalArea: 0 } });
-    console.log(`[Admin] apply-polygon-offset ${sn}: post-sync save_map type:1 dispatched to render map.yaml/pgm`);
-    // See restore-and-realign for the per-map-mirror rationale.
-    setTimeout(() => {
-      publishToExtended(sn, { regenerate_per_map_files: {} });
-      console.log(`[Admin] apply-polygon-offset ${sn}: regenerate_per_map_files dispatched`);
-    }, 3000);
-  }
-
-  console.log(`[Admin] apply-polygon-offset ${sn}: dx=${dx} dy=${dy} syncOk=${syncResult.ok}`);
-  res.json({ ok: syncResult.ok, dx_m: dx, dy_m: dy, syncResult: syncResult.respond ?? null });
-});
+// POST /api/admin-status/maps/:sn/apply-polygon-offset is verhuisd naar
+// dashboardRouter (POST /api/dashboard/maps/:sn/apply-offset, zie dashboard.ts) —
+// het dashboard roept geen admin-routes aan.
 
 // POST /api/admin-status/maps/:sn/reset-polygon-offset
 adminStatusRouter.post('/maps/:sn/reset-polygon-offset', async (req: AuthRequest, res: Response) => {

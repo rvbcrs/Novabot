@@ -171,8 +171,6 @@ export function adminPageHtml(): string {
     .tab{flex:0 0 auto;white-space:nowrap}
     /* Map canvas: avoid forcing 800px min */
     #mapCanvas{height:auto!important}
-    /* Polygon offset overlay: don't pin to fixed 240px on phone */
-    #polygonCalPanel{width:calc(100% - 24px)!important;left:12px!important;right:12px!important;max-width:280px}
     /* Generic toolbar with labels + button: reduce gap */
     details > div[style*="display:flex"]{gap:6px!important}
     /* Long sync_map / dashboard URLs */
@@ -198,11 +196,6 @@ export function adminPageHtml(): string {
   .menu-item:hover{background:rgba(255,255,255,.08)}
   .ota-progress-bar{width:100%;height:8px;background:rgba(255,255,255,.06);border-radius:4px;overflow:hidden}
   .ota-progress-fill{height:100%;background:#00d4aa;border-radius:4px;transition:width .5s ease}
-  .cal-arrow {
-    background: #374151; border: 0; border-radius: 6px; color: #fff;
-    padding: 8px 0; cursor: pointer; font-size: 14px; line-height: 1;
-  }
-  .cal-arrow:hover { background: #4b5563; }
   .exp-map-shell{position:relative;height:620px;min-height:420px;background:#050816;border:1px solid rgba(255,255,255,.08);border-radius:8px;overflow:hidden}
   .exp-map-shell canvas{outline:none}
   .exp-wifi-heat-raster{display:none}
@@ -642,16 +635,16 @@ window.__ADMIN_I18N__ = ${JSON.stringify(ADMIN_I18N).replace(/</g, '\\u003c')};
   <div id="tab_maps" style="display:none">
     <div class="card">
       <h2>Map Viewer <span class="refresh-btn" onclick="loadMaps()">↻</span></h2>
-      <!-- Above the map: only the mower picker + the polygon-offset entry,
-           since polygon offset is the one calibration that overlays the
-           canvas itself (live preview while nudging). Everything else
-           (Portable Map Bundle, legacy Map Recovery, Debug) lives
-           below the map so the canvas is the visual focal point. -->
+      <!-- Above the map: only the mower picker + native coverage preview.
+           Everything else (Portable Map Bundle, legacy Map Recovery, Debug)
+           lives below the map so the canvas is the visual focal point.
+           NB: het "Calibrate Polygon Offset"-paneel is hier weggehaald —
+           die actie (POST apply-polygon-offset) is verhuisd naar het
+           dashboard (Task 1); zie dashboard/src/components/map/MowerMap.tsx. -->
       <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
         <select id="mapMowerSelect" onchange="resetMaskLayer();clearNativeCoveragePreview(false);loadCoveragePlannerRadius(this.value);loadMaps();loadMapBackups(this.value);startLocalizationPoll(this.value);portableCheckActive(this.value);loadPortableBackups()" style="flex:1;min-width:200px;padding:8px 12px;background:#0d0d20;border:1px solid #333;border-radius:8px;color:#fff;font-size:13px">
           <option value="">Select a mower...</option>
         </select>
-        <button id="calibratePolygonBtn" onclick="enterPolygonCalibration()" title="Nudge the entire polygon by integer-cm offsets and sync to mower" style="padding:8px 16px;background:rgba(59,130,246,.2);color:#93c5fd;border:1px solid rgba(59,130,246,.5);border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap">Calibrate Polygon Offset</button>
         <button id="nativeCoverageBtn" onclick="runNativeCoveragePreview()" title="Mower-generated coverage preview using the stock Novabot preview flow." style="padding:8px 16px;background:rgba(16,185,129,.16);color:#6ee7b7;border:1px solid rgba(16,185,129,.42);border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap">Mower coverage preview</button>
         <input id="nativeCoverageRadius" type="number" min="0.2" max="1.2" step="0.01" value="0.61" title="Coverage planner radius in meters" style="width:72px;padding:8px 8px;background:#0d0d20;border:1px solid rgba(16,185,129,.35);border-radius:8px;color:#d1fae5;font-size:12px;text-align:right">
         <button id="nativeCoverageRadiusSaveBtn" onclick="saveCoveragePlannerRadius()" title="Save coverage planner radius to server and mower" style="padding:8px 10px;background:rgba(16,185,129,.12);color:#a7f3d0;border:1px solid rgba(16,185,129,.35);border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap">Save radius</button>
@@ -696,47 +689,6 @@ window.__ADMIN_I18N__ = ${JSON.stringify(ADMIN_I18N).replace(/</g, '\\u003c')};
       </div>
       <div style="background:#0a0a1a;border:1px solid rgba(255,255,255,.06);border-radius:8px;overflow:hidden;position:relative">
         <canvas id="mapCanvas" width="800" height="600" style="width:100%;display:block;background:#0a0a1a"></canvas>
-        <div id="polygonCalPanel" style="display:none;position:absolute;top:12px;left:12px;z-index:1000;background:rgba(15,15,30,0.95);backdrop-filter:blur(6px);border:1px solid #444;border-radius:10px;padding:14px;width:240px;box-shadow:0 6px 30px rgba(0,0,0,0.45)">
-          <div id="polygonCalHeader" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;cursor:move;user-select:none" title="Drag to move">
-            <span style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#fbbf24;font-weight:600">&#x2725; Polygon Offset</span>
-            <span style="cursor:pointer;color:#888;padding:0 4px" onclick="cancelPolygonCalibration()" title="Cancel">&times;</span>
-          </div>
-          <div style="margin-bottom:10px;padding:6px 8px;background:rgba(15,23,42,.6);border:1px solid #1e293b;border-radius:6px;font-size:10px;color:#cbd5e1;line-height:1.5">
-            <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">
-              <span style="display:inline-block;width:16px;height:8px;background:rgba(255,255,255,.06);border:1.5px dashed rgba(255,255,255,.9);flex-shrink:0"></span>
-              <span><b style="color:#e5e7eb">ORIGINAL</b> — current on mower</span>
-            </div>
-            <div style="display:flex;align-items:center;gap:6px">
-              <span style="display:inline-block;width:16px;height:8px;background:rgba(34,197,94,.2);border:1.5px solid #166534;flex-shrink:0"></span>
-              <span><b style="color:#86efac">PREVIEW</b> — after Apply</span>
-            </div>
-          </div>
-          <div style="display:grid;grid-template-columns:36px 36px 36px;gap:4px;justify-content:center;margin-bottom:10px">
-            <span></span>
-            <button class="cal-arrow" onclick="nudgePolygonOffset(0, 0.01, event)" title="North (Shift = 10 cm)">&uarr;</button>
-            <span></span>
-            <button class="cal-arrow" onclick="nudgePolygonOffset(-0.01, 0, event)" title="West (Shift = 10 cm)">&larr;</button>
-            <div id="polygonCalDisplay" style="background:#0d0d20;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:9px;font-family:'Roboto Mono',ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;color:#9ca3af;padding:2px">+0.00, +0.00 m</div>
-            <button class="cal-arrow" onclick="nudgePolygonOffset(0.01, 0, event)" title="East (Shift = 10 cm)">&rarr;</button>
-            <span></span>
-            <button class="cal-arrow" onclick="nudgePolygonOffset(0, -0.01, event)" title="South (Shift = 10 cm)">&darr;</button>
-            <span></span>
-          </div>
-          <div style="font-size:10px;color:#666;text-align:center;margin-bottom:10px">Shift+klik = 10 cm</div>
-          <div style="display:flex;gap:6px">
-            <button onclick="resetPolygonOffsetUI()" style="flex:1;padding:6px;background:#374151;border:0;border-radius:6px;color:#fff;cursor:pointer">Reset</button>
-            <button onclick="cancelPolygonCalibration()" style="flex:1;padding:6px;background:#374151;border:0;border-radius:6px;color:#fff;cursor:pointer">Cancel</button>
-            <button id="polygonCalApplyBtn" onclick="applyPolygonOffset()" style="flex:1.2;padding:6px;background:#10b981;border:0;border-radius:6px;color:#fff;cursor:pointer;font-weight:600">Apply</button>
-          </div>
-          <a href="javascript:void(0)" onclick="document.getElementById('infoPolygonOffset').style.display=document.getElementById('infoPolygonOffset').style.display==='block'?'none':'block'" style="font-size:10px;color:#94a3b8;text-decoration:underline;cursor:pointer;display:inline-block;margin-top:6px">What does Apply do?</a>
-          <div id="infoPolygonOffset" style="display:none;margin-top:6px;padding:8px 10px;background:rgba(15,23,42,.6);border:1px solid #1e293b;border-radius:6px;font-size:10px;color:#cbd5e1;line-height:1.55">
-            <div><b>Persists the offset in DB and triggers a full sync_map.</b></div>
-            <div style="margin-top:4px">Same files as Restore + Realign — wipes mower's <code>csv_file/</code> + <code>x3_csv_file/</code>, reloads polygon CSVs with shifted coords, regenerates <code>_latest.zip</code>, restarts <code>novabot_mapping</code> + <code>coverage_planner_server</code>.</div>
-            <div style="margin-top:4px"><b style="color:#86efac">charging_pose theta</b> uses the saved DB value, not live IMU drift.</div>
-            <div style="margin-top:4px"><b style="color:#fca5a5">Cannot un-do</b> on the mower without another Apply (or Reset to 0,0 + Apply).</div>
-          </div>
-          <div id="polygonCalStatus" style="margin-top:8px;font-size:11px;color:#9ca3af;min-height:14px"></div>
-        </div>
       </div>
       <div id="mapLegend" style="display:none;margin-top:10px;display:flex;gap:16px;flex-wrap:wrap;font-size:11px;color:#aaa">
         <span><span style="display:inline-block;width:12px;height:12px;background:rgba(34,197,94,.3);border:2px solid #166534;border-radius:2px;vertical-align:middle;margin-right:4px"></span>Work area</span>
@@ -3720,11 +3672,7 @@ async function __pollLivePosOnce(sn) {
     canvas.__mapState.mowerTrail = (data.recentTrail || []).map(function(p) {
       return { x: p.x, y: p.y };
     });
-    if (typeof polygonCal !== 'undefined' && polygonCal) {
-      rerenderWithGhost();
-    } else {
-      renderMapCanvas(canvas, canvas.__mapState.maps, canvas.__mapState.chargingPose || null);
-    }
+    renderMapCanvas(canvas, canvas.__mapState.maps, canvas.__mapState.chargingPose || null);
   } catch (e) { /* swallow — next tick retries */ }
 }
 
@@ -3811,23 +3759,6 @@ function renderValidationPanel(data) {
     + '<button onclick="clearValidationTrail()" style="padding:6px 12px;background:rgba(100,116,139,.15);color:#94a3b8;border:1px solid rgba(100,116,139,.3);border-radius:6px;font-size:11px;cursor:pointer">Clear trail</button>'
     + '</div>'
     + debugHtml(data.debug);
-}
-
-async function applySuggestedOffset(dx, dy) {
-  var sn = document.getElementById('mapMowerSelect').value;
-  if (!sn) return;
-  if (!(await appConfirm('Apply suggested offset dx=' + (dx * 100).toFixed(1) + ' cm, dy=' + (dy * 100).toFixed(1) + ' cm to ' + sn + '?\\n\\nThis runs a full sync_map (same as the manual nudge panel).', { okText: 'Apply' }))) return;
-  try {
-    var r = await fetch('/api/admin-status/maps/' + encodeURIComponent(sn) + '/apply-polygon-offset', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': token },
-      body: JSON.stringify({ dx_m: dx, dy_m: dy })
-    });
-    var json = await r.json();
-    await appAlert(r.ok ? 'Offset applied. Mower will resync.' : ('Failed: ' + (json.error || r.status)), { accent: r.ok ? 'success' : 'danger' });
-  } catch (e) {
-    await appAlert('Apply failed: ' + e.message, { accent: 'danger' });
-  }
 }
 
 async function clearValidationTrail() {
@@ -5257,182 +5188,6 @@ async function restoreAndRealign() {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Polygon offset calibration mode
-// Spec: docs/superpowers/specs/2026-05-03-admin-polygon-offset-calibration.md
-// ─────────────────────────────────────────────────────────────────────────────
-
-var polygonCal = null;  // { dx, dy, ghostMaps } | null
-
-async function enterPolygonCalibration() {
-  if (polygonCal) return;  // already in calibration mode
-  var sn = document.getElementById('mapMowerSelect').value;
-  if (!sn) { await appAlert('Select a mower first.', { accent: 'warning' }); return; }
-
-  var r = await fetch('/api/admin-status/maps/' + encodeURIComponent(sn) + '/polygon-offset', {
-    headers: { 'Authorization': token },
-  });
-  var current = r.ok ? await r.json() : { dx_m: 0, dy_m: 0 };
-
-  var canvas = document.getElementById('mapCanvas');
-  var ghostMaps = canvas.__mapState && canvas.__mapState.maps
-    ? JSON.parse(JSON.stringify(canvas.__mapState.maps))
-    : null;
-
-  polygonCal = {
-    dx: current.dx_m || 0,
-    dy: current.dy_m || 0,
-    ghostMaps: ghostMaps,
-  };
-
-  document.getElementById('polygonCalPanel').style.display = 'block';
-  makePolygonCalPanelDraggable();
-  updatePolygonCalDisplay();
-  rerenderWithGhost();
-  document.addEventListener('keydown', polygonCalKeyHandler);
-}
-
-// Make the polygon-offset panel draggable by its header so it doesn't block
-// the canvas. Idempotent — only binds once per page load. Position persists
-// across cancel/reopen within a single page load (reset on full reload).
-function makePolygonCalPanelDraggable() {
-  var panel = document.getElementById('polygonCalPanel');
-  if (!panel || panel.__draggable) return;
-  panel.__draggable = true;
-  var header = document.getElementById('polygonCalHeader');
-  if (!header) return;
-  var dragging = false;
-  var startX = 0, startY = 0;
-  var panelStartX = 0, panelStartY = 0;
-  header.addEventListener('mousedown', function(e) {
-    // Don't initiate drag if the user clicked the (×) close span — it
-    // carries an onclick handler we must not swallow.
-    if (e.target && e.target.getAttribute && e.target.getAttribute('onclick')) return;
-    dragging = true;
-    startX = e.clientX;
-    startY = e.clientY;
-    var rect = panel.getBoundingClientRect();
-    var parentRect = panel.parentElement.getBoundingClientRect();
-    panelStartX = rect.left - parentRect.left;
-    panelStartY = rect.top - parentRect.top;
-    e.preventDefault();
-  });
-  document.addEventListener('mousemove', function(e) {
-    if (!dragging) return;
-    var parent = panel.parentElement;
-    var parentW = parent.clientWidth;
-    var parentH = parent.clientHeight;
-    var newLeft = panelStartX + (e.clientX - startX);
-    var newTop = panelStartY + (e.clientY - startY);
-    // Keep at least a strip of the panel visible (40px) so the user can
-    // always grab it back into view.
-    newLeft = Math.max(40 - panel.offsetWidth, Math.min(parentW - 40, newLeft));
-    newTop = Math.max(0, Math.min(parentH - 40, newTop));
-    panel.style.left = newLeft + 'px';
-    panel.style.top = newTop + 'px';
-  });
-  document.addEventListener('mouseup', function() {
-    dragging = false;
-  });
-}
-
-function cancelPolygonCalibration() {
-  polygonCal = null;
-  document.getElementById('polygonCalPanel').style.display = 'none';
-  document.removeEventListener('keydown', polygonCalKeyHandler);
-  loadMaps();
-}
-
-function resetPolygonOffsetUI() {
-  if (!polygonCal) return;
-  polygonCal.dx = 0;
-  polygonCal.dy = 0;
-  updatePolygonCalDisplay();
-  rerenderWithGhost();
-}
-
-function nudgePolygonOffset(dx, dy, evt) {
-  if (!polygonCal) return;
-  var mult = (evt && evt.shiftKey) ? 10 : 1;
-  polygonCal.dx = +(polygonCal.dx + dx * mult).toFixed(3);
-  polygonCal.dy = +(polygonCal.dy + dy * mult).toFixed(3);
-  updatePolygonCalDisplay();
-  rerenderWithGhost();
-}
-
-function polygonCalKeyHandler(e) {
-  if (!polygonCal) return;
-  var step = e.shiftKey ? 0.10 : 0.01;
-  switch (e.key) {
-    case 'ArrowUp':    nudgePolygonOffset(0, step, null); e.preventDefault(); break;
-    case 'ArrowDown':  nudgePolygonOffset(0, -step, null); e.preventDefault(); break;
-    case 'ArrowLeft':  nudgePolygonOffset(-step, 0, null); e.preventDefault(); break;
-    case 'ArrowRight': nudgePolygonOffset(step, 0, null); e.preventDefault(); break;
-    case 'Escape':     cancelPolygonCalibration(); break;
-  }
-}
-
-function updatePolygonCalDisplay() {
-  if (!polygonCal) return;
-  var d = document.getElementById('polygonCalDisplay');
-  var sx = (polygonCal.dx >= 0 ? '+' : '') + polygonCal.dx.toFixed(2);
-  var sy = (polygonCal.dy >= 0 ? '+' : '') + polygonCal.dy.toFixed(2);
-  d.textContent = sx + ', ' + sy + ' m';
-}
-
-function rerenderWithGhost() {
-  if (!polygonCal) return;
-  var canvas = document.getElementById('mapCanvas');
-  if (!canvas || !canvas.__mapState) return;
-  var ghostBase = polygonCal.ghostMaps || canvas.__mapState.maps;
-  var live = JSON.parse(JSON.stringify(ghostBase)).map(function(m) {
-    if (!m.mapArea || !Array.isArray(m.mapArea)) return m;
-    var isToCharge = /^map\\d+tocharge_unicom$/.test(m.mapName || '');
-    m.mapArea = m.mapArea.map(function(p, i) {
-      if (isToCharge && i === 0) return p;
-      return { x: p.x + polygonCal.dx, y: p.y + polygonCal.dy };
-    });
-    return m;
-  });
-  renderMapCanvas(canvas, live, canvas.__mapState.chargingPose, ghostBase);
-}
-
-async function applyPolygonOffset() {
-  if (!polygonCal) return;
-  var sn = document.getElementById('mapMowerSelect').value;
-  var btn = document.getElementById('polygonCalApplyBtn');
-  var status = document.getElementById('polygonCalStatus');
-  btn.disabled = true;
-  status.style.color = '#60a5fa';
-  status.textContent = 'Applying...';
-
-  try {
-    var r = await fetch('/api/admin-status/maps/' + encodeURIComponent(sn) + '/apply-polygon-offset', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': token },
-      body: JSON.stringify({ dx_m: polygonCal.dx, dy_m: polygonCal.dy }),
-    });
-    var result = await r.json().catch(function(){ return {}; });
-    console.log('apply-polygon-offset response:', result);
-    if (!r.ok || !result.ok) {
-      var msg = result.error || ('HTTP ' + r.status);
-      if (result.syncResult && result.syncResult.error) msg += ' — mower: ' + result.syncResult.error;
-      else if (result.syncResult) msg += ' — mower respond: ' + JSON.stringify(result.syncResult);
-      if (result.partial) msg += ' (partial: DB updated, mower not yet synced)';
-      throw new Error(msg);
-    }
-    status.style.color = '#10b981';
-    status.textContent = 'Applied (' + polygonCal.dx.toFixed(2) + ', ' + polygonCal.dy.toFixed(2) + ' m). Synced.';
-    setTimeout(cancelPolygonCalibration, 1200);
-  } catch (e) {
-    status.style.color = '#f87171';
-    status.textContent = 'Apply failed: ' + e.message;
-    btn.disabled = false;
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-
 // Attach mouse-wheel zoom + drag pan handlers to the map canvas. Idempotent:
 // only attaches once per canvas (flag set on element). Re-renders by calling
 // renderMapCanvas with the cached maps + chargingPose stored on the element.
@@ -5509,20 +5264,14 @@ function attachMapInteraction(canvas) {
   });
 }
 
-// Named re-render for the map viewer: routes through rerenderWithGhost()
-// while polygon-offset calibration is active (so the ghost layer stays in
-// sync with zoom + pan), plain renderMapCanvas otherwise. The map-edit
+// Named re-render for the map viewer: plain renderMapCanvas. The map-edit
 // overlay is drawn inside renderMapCanvas itself.
 function rerenderMapView() {
   var canvas = document.getElementById('mapCanvas');
   if (!canvas) return;
   var st = canvas.__mapState;
   if (!st || !st.maps) return;
-  if (typeof polygonCal !== 'undefined' && polygonCal) {
-    rerenderWithGhost();
-  } else {
-    renderMapCanvas(canvas, st.maps, st.chargingPose || null);
-  }
+  renderMapCanvas(canvas, st.maps, st.chargingPose || null);
 }
 
 // ── Map edit mode ────────────────────────────────────────────────────────────
@@ -6373,13 +6122,6 @@ function renderMapCanvas(canvas, maps, chargingPose, ghostMaps) {
   // the preview polygon so the user can visually align both together with
   // a reference point on the map.
   var displayGpsTrail = gpsTrail;
-  if (typeof polygonCal !== 'undefined' && polygonCal
-      && (polygonCal.dx !== 0 || polygonCal.dy !== 0)
-      && Array.isArray(gpsTrail) && gpsTrail.length > 0) {
-    displayGpsTrail = gpsTrail.map(function(p) {
-      return { x: p.x + polygonCal.dx, y: p.y + polygonCal.dy };
-    });
-  }
   drawTrail(displayGpsTrail, 'rgba(132,204,22,0.85)');
 
   if (livePose && Number.isFinite(livePose.x) && Number.isFinite(livePose.y)) {

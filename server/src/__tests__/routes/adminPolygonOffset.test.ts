@@ -3,8 +3,11 @@
  *
  * Tests:
  *   GET  /api/admin-status/maps/:sn/polygon-offset
- *   POST /api/admin-status/maps/:sn/apply-polygon-offset
  *   POST /api/admin-status/maps/:sn/reset-polygon-offset
+ *
+ * apply-polygon-offset is verhuisd naar dashboardRouter
+ * (POST /api/dashboard/maps/:sn/apply-offset) — die tests staan nu in
+ * applyOffsetRoute.test.ts.
  *
  * Mock block copied verbatim from adminMapBackupRestore.test.ts so the
  * heavy dependency graph of adminStatus.ts is fully stubbed out.
@@ -143,89 +146,6 @@ describe('GET /api/admin-status/maps/:sn/polygon-offset', () => {
     const r = await request(app).get(`/api/admin-status/maps/${SN}/polygon-offset`);
     expect(r.body.dx_m).toBeCloseTo(0.05);
     expect(r.body.dy_m).toBeCloseTo(-0.03);
-  });
-});
-
-describe('POST /api/admin-status/maps/:sn/apply-polygon-offset', () => {
-  beforeEach(() => {
-    mapRepo.setPolygonOffset(SN, 0, 0);
-    vi.mocked(broker.isDeviceOnline).mockReturnValue(true);
-    vi.mocked(mapBackupModule.regenerateLatestZipFromBackup).mockReturnValue('/fake/_latest.zip');
-    // Mock onExtendedResponse to immediately fire a successful sync_map_respond.
-    vi.mocked(mapSync.onExtendedResponse).mockImplementation((_sn, handler) => {
-      queueMicrotask(() => handler({ sync_map_respond: { result: 0 } } as any));
-    });
-    vi.mocked(mapSync.offExtendedResponse).mockImplementation(() => {});
-  });
-
-  it('persists offset, regenerates, and pushes sync_map on happy path', async () => {
-    const r = await request(app)
-      .post(`/api/admin-status/maps/${SN}/apply-polygon-offset`)
-      .send({ dx_m: 0.05, dy_m: -0.03 });
-    expect(r.status).toBe(200);
-    expect(r.body.ok).toBe(true);
-    expect(r.body.dx_m).toBeCloseTo(0.05);
-    expect(r.body.dy_m).toBeCloseTo(-0.03);
-    expect(mapRepo.getPolygonOffset(SN).x).toBeCloseTo(0.05);
-    expect(mapRepo.getPolygonOffset(SN).y).toBeCloseTo(-0.03);
-    expect(mapBackupModule.regenerateLatestZipFromBackup).toHaveBeenCalledWith(SN);
-    expect(mapSync.publishToExtended).toHaveBeenCalledWith(SN, expect.objectContaining({ sync_map: expect.anything() }));
-  });
-
-  it('rejects non-finite dx with 400 and does not write DB', async () => {
-    const r = await request(app)
-      .post(`/api/admin-status/maps/${SN}/apply-polygon-offset`)
-      .send({ dx_m: 'banana', dy_m: 0 });
-    expect(r.status).toBe(400);
-    expect(mapRepo.getPolygonOffset(SN)).toEqual({ x: 0, y: 0 });
-    expect(mapBackupModule.regenerateLatestZipFromBackup).not.toHaveBeenCalled();
-  });
-
-  it('rejects |dx| > 1.0 with 400 and does not write DB', async () => {
-    const r = await request(app)
-      .post(`/api/admin-status/maps/${SN}/apply-polygon-offset`)
-      .send({ dx_m: 1.5, dy_m: 0 });
-    expect(r.status).toBe(400);
-    expect(mapRepo.getPolygonOffset(SN)).toEqual({ x: 0, y: 0 });
-  });
-
-  it('returns 404 with partial flag when mower offline (DB still updated)', async () => {
-    vi.mocked(broker.isDeviceOnline).mockReturnValue(false);
-    const r = await request(app)
-      .post(`/api/admin-status/maps/${SN}/apply-polygon-offset`)
-      .send({ dx_m: 0.02, dy_m: 0 });
-    expect(r.status).toBe(404);
-    expect(r.body.ok).toBe(false);
-    expect(r.body.partial).toBe(true);
-    expect(mapRepo.getPolygonOffset(SN).x).toBeCloseTo(0.02);
-  });
-
-  it('returns 400 when no map data found (DB still updated)', async () => {
-    vi.mocked(mapBackupModule.regenerateLatestZipFromBackup).mockReturnValue(null);
-    const r = await request(app)
-      .post(`/api/admin-status/maps/${SN}/apply-polygon-offset`)
-      .send({ dx_m: 0.02, dy_m: 0 });
-    expect(r.status).toBe(400);
-    expect(r.body.ok).toBe(false);
-    expect(r.body.error).toMatch(/map the area first/i);
-    expect(mapRepo.getPolygonOffset(SN).x).toBeCloseTo(0.02);
-  });
-
-  // Skipped: vitest fake-timers + supertest don't compose cleanly — advanceTimersByTimeAsync
-  // advances the Promise-based setTimeout in the route, but supertest's internal await
-  // still hangs until vitest's real 5000ms test-timeout fires. The 504 path is implemented
-  // and exercisable via manual/integration test; no unit-test equivalent is feasible here.
-  it.skip('returns 504 when sync_map ack times out', async () => {
-    vi.useFakeTimers();
-    vi.mocked(mapSync.onExtendedResponse).mockImplementation(() => {}); // never fires
-    const req = request(app)
-      .post(`/api/admin-status/maps/${SN}/apply-polygon-offset`)
-      .send({ dx_m: 0.01, dy_m: 0 });
-    await vi.advanceTimersByTimeAsync(8001);
-    const r = await req;
-    expect(r.status).toBe(504);
-    expect(r.body.partial).toBe(true);
-    vi.useRealTimers();
   });
 });
 

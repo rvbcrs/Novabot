@@ -170,14 +170,36 @@ export async function fetchCalibration(sn: string): Promise<MapCalibration> {
 }
 
 export async function saveCalibration(
-  sn: string, cal: MapCalibration, opts?: { relocateCharger?: boolean },
-): Promise<{ mapsRecalculated?: number }> {
+  sn: string, cal: MapCalibration,
+): Promise<{ ok: boolean }> {
   const res = await apiFetch(`${BASE}/calibration/${encodeURIComponent(sn)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...cal, ...(opts?.relocateCharger ? { relocateCharger: true } : {}) }),
+    body: JSON.stringify(cal),
   });
   return res.json();
+}
+
+export async function applyPolygonOffset(sn: string, dxM: number, dyM: number): Promise<{ ok: boolean; error?: string }> {
+  const res = await apiFetch(`${BASE}/maps/${encodeURIComponent(sn)}/apply-offset`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ dx_m: dxM, dy_m: dyM }),
+  });
+  const j = await res.json().catch(() => ({}));
+  return { ok: res.ok && j.ok !== false, error: j.error };
+}
+
+// Huidige absolute offset, om een nudge-sessie vanaf te starten (apply is absoluut).
+// GET /api/dashboard/calibration/:sn geeft { calibration: <map_calibration row> } via
+// mapRepo.getCalibration (SELECT *), dus polygon_offset_x_m/y_m zit erin (bevestigd
+// dashboard.ts:2532, maps.ts:221). Geen DTO-uitbreiding nodig.
+export async function fetchPolygonOffset(sn: string): Promise<{ dxM: number; dyM: number }> {
+  try {
+    const res = await apiFetch(`${BASE}/calibration/${encodeURIComponent(sn)}`);
+    const j = await res.json().catch(() => ({}));
+    const cal = j?.calibration ?? {};
+    return { dxM: Number(cal.polygon_offset_x_m ?? 0) || 0, dyM: Number(cal.polygon_offset_y_m ?? 0) || 0 };
+  } catch { return { dxM: 0, dyM: 0 }; }
 }
 
 export async function renameMap(sn: string, mapId: string, mapName: string): Promise<void> {
