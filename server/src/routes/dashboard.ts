@@ -18,7 +18,7 @@ import {
 import { getAllDeviceSnapshots, getDeviceSnapshot, SENSORS, getGpsTrail, clearGpsTrail, getLocalTrail, clearLocalTrail, deviceCache, translateValue, markPinVerified, getDockPose } from '../mqtt/sensorData.js';
 import { isDeviceOnline, writeRawPublish, getBrokerDiagnostics } from '../mqtt/broker.js';
 import { getRecentLogs, forwardToDashboard, onLogEntry, emitMapsChanged } from '../dashboard/socketHandler.js';
-import { requestMapList, requestMapOutline, publishToDevice, publishRawToDevice, publishEncryptedOnTopic, publishToTopic, goToChargePayload, getNextCmdNum, patchLatestZipChargingPose, republishObstacleDetection } from '../mqtt/mapSync.js';
+import { requestMapList, requestMapOutline, publishToDevice, publishRawToDevice, publishEncryptedOnTopic, publishToTopic, goToChargePayload, getNextCmdNum, patchLatestZipChargingPose, republishObstacleDetection, publishToExtended, onExtendedResponse, offExtendedResponse } from '../mqtt/mapSync.js';
 import { publishExtendedCommand } from '../mqtt/extendedCommands.js';
 import { disarmEdgeWatch, disarmEdgeWatchForSchedule } from '../services/scheduleRunner.js';
 import { isFrameUnvalidated, markFrameUnvalidated, clearFrameUnvalidated, setReanchorRelocked, isReanchorRelocked } from '../services/frameValidation.js';
@@ -2147,6 +2147,109 @@ async function autoPushMapsInBackground(sn: string): Promise<void> {
     console.warn(`[AUTO-PUSH] MQTT trigger fout voor ${sn}:`, err);
   }
 }
+
+// ── Polygon-offset calibratie ───────────────────────────────────────────────
+// Verhuisd van adminStatus.ts (POST /api/admin-status/maps/:sn/apply-polygon-offset)
+// zodat de dashboard-nudge-UI (dashboard-auth, geen admin-auth) hem kan
+// aanroepen. Logica ongewijzigd — alleen router + pad zijn anders.
+const MAX_OFFSET_M = 1.0;
+
+/** Pure validatie van de request body — apart geëxporteerd zodat de route
+ *  zonder MQTT/DB-mocks getest kan worden. */
+export function validateOffsetBody(body: unknown): { ok: true; dx: number; dy: number } | { ok: false } {
+  const b = body as { dx_m?: unknown; dy_m?: unknown };
+  const dx = typeof b.dx_m === 'number' ? b.dx_m : NaN;
+  const dy = typeof b.dy_m === 'number' ? b.dy_m : NaN;
+  if (!Number.isFinite(dx) || !Number.isFinite(dy)) return { ok: false };
+  return { ok: true, dx, dy };
+}
+
+// POST /api/dashboard/maps/:sn/apply-offset
+dashboardRouter.post('/maps/:sn/apply-offset', async (req: Request, res: Response) => {
+  const { sn } = req.params;
+  const parsed = validateOffsetBody(req.body);
+  if (!parsed.ok) {
+    res.status(400).json({ ok: false, error: 'dx_m and dy_m must be finite numbers' });
+    return;
+  }
+  const { dx, dy } = parsed;
+  if (Math.abs(dx) > MAX_OFFSET_M || Math.abs(dy) > MAX_OFFSET_M) {
+    res.status(400).json({ ok: false, error: `Offset magnitude must be ≤ ${MAX_OFFSET_M} m per axis` });
+    return;
+  }
+
+  // 1. Persist (idempotent — even when downstream fails the operator can retry).
+  mapRepo.setPolygonOffset(sn, dx, dy);
+
+  // 2. Regenerate ZIP with the new offset baked in.
+  const { regenerateLatestZipFromBackup } = await import('../services/mapBackup.js');
+  const regenPath = regenerateLatestZipFromBackup(sn);
+  if (!regenPath) {
+    res.status(400).json({ ok: false, error: 'No map data found for this mower — map the area first.', dx_m: dx, dy_m: dy });
+    return;
+  }
+
+  // 3. Online check.
+  if (!isDeviceOnline(sn)) {
+    res.status(404).json({
+      ok: false,
+      partial: true,
+      error: 'Mower offline — sync_map not pushed; mower will pick up offset on next reconnect',
+      dx_m: dx, dy_m: dy,
+    });
+    return;
+  }
+
+  // 4. Fire sync_map and wait up to 8s for ack — same pattern as restore-and-realign.
+  const syncResult = await new Promise<{ ok: boolean; respond?: Record<string, unknown>; timeout?: boolean }>((resolve) => {
+    let settled = false;
+    const handler = (data: Record<string, unknown>) => {
+      const respond = data.sync_map_respond as Record<string, unknown> | undefined;
+      if (!respond) return;
+      if (settled) return;
+      settled = true;
+      offExtendedResponse(sn, handler);
+      resolve({ ok: respond.result === 0, respond });
+    };
+    onExtendedResponse(sn, handler);
+    publishToExtended(sn, { sync_map: {} });
+    setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      offExtendedResponse(sn, handler);
+      resolve({ ok: false, timeout: true });
+    }, 30000);
+  });
+
+  if (syncResult.timeout) {
+    res.status(504).json({
+      ok: false,
+      partial: true,
+      error: 'Mower did not respond within 30s — sync may still complete in background',
+      dx_m: dx, dy_m: dy,
+    });
+    return;
+  }
+
+  // 5. After sync_map applied the CSVs, ask the mower to render
+  // map.yaml/.pgm/.png from those CSVs by triggering save_map type:1.
+  // The DB-only recovery path was leaving these render artifacts missing,
+  // so navigation/coverage planners hit Errors 107/118 even though the
+  // polygons were correctly written. Fire-and-forget — the mower processes
+  // it asynchronously and the response isn't needed for the caller.
+  if (syncResult.ok) {
+    publishToDevice(sn, { save_map: { type: 1, mapName: 'map', totalArea: 0 } });
+    console.log(`[apply-offset] ${sn}: post-sync save_map type:1 dispatched to render map.yaml/pgm`);
+    // See restore-and-realign for the per-map-mirror rationale.
+    setTimeout(() => {
+      publishToExtended(sn, { regenerate_per_map_files: {} });
+      console.log(`[apply-offset] ${sn}: regenerate_per_map_files dispatched`);
+    }, 3000);
+  }
+
+  console.log(`[apply-offset] ${sn}: dx=${dx} dy=${dy} syncOk=${syncResult.ok}`);
+  res.json({ ok: syncResult.ok, dx_m: dx, dy_m: dy, syncResult: syncResult.respond ?? null });
+});
 
 // POST /api/dashboard/maps/:sn/dock-and-save — stuur maaier naar station (go_to_charge + ArUco)
 // en sla charger positie op zodra de maaier gedockt is.
