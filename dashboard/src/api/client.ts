@@ -171,7 +171,7 @@ export async function fetchCalibration(sn: string): Promise<MapCalibration> {
 
 export async function saveCalibration(
   sn: string, cal: MapCalibration, opts?: { relocateCharger?: boolean },
-): Promise<{ mapsRecalculated?: number }> {
+): Promise<{ ok: boolean }> {
   const res = await apiFetch(`${BASE}/calibration/${encodeURIComponent(sn)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },

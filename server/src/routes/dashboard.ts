@@ -2674,8 +2674,6 @@ dashboardRouter.put('/calibration/:sn', (req: Request, res: Response) => {
     gpsChargerLng?: number | null;
   };
 
-  const mapsRecalculated = 0;
-
   mapRepo.setCalibration(sn, {
     offset_lat: offsetLat ?? 0,
     offset_lng: offsetLng ?? 0,
@@ -2687,12 +2685,7 @@ dashboardRouter.put('/calibration/:sn', (req: Request, res: Response) => {
     gps_charger_lng: gpsChargerLng ?? null,
   });
 
-  // Na charger relocatie: push bijgewerkte maps naar maaier
-  if (mapsRecalculated > 0) {
-    autoPushMapsInBackground(sn);
-  }
-
-  res.json({ ok: true, mapsRecalculated });
+  res.json({ ok: true });
 });
 
 // POST /api/dashboard/maps/convert — converteer coördinaten (voor debugging)
