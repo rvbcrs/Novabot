@@ -302,6 +302,8 @@
     "dirWest": "west",
     "rotation": "Rotation",
     "scale": "Scale",
+    "displayCalTitle": "Display alignment (satellite view only)",
+    "displayCalHint": "Does not change where the mower mows.",
     "resetToDefault": "Reset to default",
     "mowing": "Mowing",
     "direction": "Direction: {{deg}}°",

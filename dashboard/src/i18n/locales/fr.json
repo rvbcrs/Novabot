@@ -286,6 +286,8 @@
     "dirWest": "ouest",
     "rotation": "Rotation",
     "scale": "Échelle",
+    "displayCalTitle": "Alignement d'affichage (carte satellite uniquement)",
+    "displayCalHint": "Ne change pas l'endroit où le robot tond.",
     "resetToDefault": "Réinitialiser par défaut",
     "mowing": "Tonte",
     "direction": "Direction : {{deg}}°",

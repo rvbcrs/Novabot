@@ -349,6 +349,8 @@
     "dirWest": "west",
     "rotation": "Rotatie",
     "scale": "Schaal",
+    "displayCalTitle": "Weergave-uitlijning (alleen satellietkaart)",
+    "displayCalHint": "Verandert niet waar de maaier maait.",
     "resetToDefault": "Terugzetten naar standaard",
     "mowing": "Maaien",
     "direction": "Richting: {{deg}}°",

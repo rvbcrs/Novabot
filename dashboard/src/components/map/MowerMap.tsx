@@ -3376,11 +3376,10 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
                 <div className="text-xs">
                   <div className="font-semibold">{t('map.chargingStation')}</div>
                   <div>{(resolvedChargerLat! + activeCal.offsetLat).toFixed(6)}, {(resolvedChargerLng! + activeCal.offsetLng).toFixed(6)}</div>
-                  {(activeCal.offsetLat !== 0 || activeCal.offsetLng !== 0) && (
-                    <div className="mt-1 font-medium text-gray-500">
-                      {t('map.chargerVisualOffset', 'Visuele offset — maaier-data ongemoeid')}
-                    </div>
-                  )}
+                  {/* Slepen verplaatst alleen de weergegeven marker-anker (map_calibration.
+                      charger_lat/lng) — nooit de fysieke laadstation-positie op de maaier. */}
+                  <div className="mt-1 font-medium text-gray-500">{t('map.displayCalTitle')}</div>
+                  <div className="text-gray-500">{t('map.displayCalHint')}</div>
                   <div className="text-gray-400 mt-0.5">{t('map.dragToReposition')}</div>
                 </div>
               </Popup>
@@ -3880,6 +3879,16 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
                   return `dx: ${fmt(shiftOffsetM.dxM, t('map.dirEast'), t('map.dirWest'))}, dy: ${fmt(shiftOffsetM.dyM, t('map.dirNorth'), t('map.dirSouth'))}`;
                 })()}
               </div>
+            </div>
+
+            {/* Rotatie + schaal zijn PUUR weergave-correctie voor de satellietkaart —
+                anders dan Position hierboven (dat de echte maai-offset is en naar
+                de maaier gepusht wordt via applyPolygonOffset), worden rotation/
+                scale alleen opgeslagen in map_calibration voor de rendering
+                (calibratePoints) en nooit naar de maaier gestuurd. */}
+            <div className="mb-2 pt-2 border-t border-gray-700">
+              <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">{t('map.displayCalTitle')}</span>
+              <p className="text-[10px] text-gray-500 leading-tight mt-0.5">{t('map.displayCalHint')}</p>
             </div>
 
             {/* Rotation */}

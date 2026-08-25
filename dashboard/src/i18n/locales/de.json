@@ -286,6 +286,8 @@
     "dirWest": "West",
     "rotation": "Drehung",
     "scale": "Maßstab",
+    "displayCalTitle": "Anzeige-Ausrichtung (nur Satellitenkarte)",
+    "displayCalHint": "Ändert nicht, wo der Mäher mäht.",
     "resetToDefault": "Auf Standard zurücksetzen",
     "mowing": "Mähen",
     "direction": "Richtung: {{deg}}°",
