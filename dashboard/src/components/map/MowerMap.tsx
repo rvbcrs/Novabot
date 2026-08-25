@@ -1410,6 +1410,9 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
   // Charger calibration
   const [confirmCalibrate, setConfirmCalibrate] = useState(false);
   const [confirmShiftReset, setConfirmShiftReset] = useState(false);
+  // True zolang de absolute-offset-seed nog binnenkomt; houdt de nudge-pijltjes
+  // uit zodat een klik niet door de async seed wordt overschreven (race-fix).
+  const [seedLoading, setSeedLoading] = useState(false);
 
   // Virtual walls
   const [walls, setWalls] = useState<VirtualWall[]>([]);
@@ -2919,12 +2922,17 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     setUserInteracted(true); // prevent auto-recenter during calibration
     // apply-offset zet de offset ABSOLUUT. Start de sessie daarom vanaf de reeds
     // toegepaste offset, anders wist een nieuwe nudge-sessie de vorige verschuiving.
+    // De seed komt async binnen (netwerk-round-trip). Om te voorkomen dat een
+    // nudge in dat venster stil wordt overschreven door de `.then` (race), houden
+    // we de pijltjes uit tot de seed er is (seedLoading). Zo kan er geen nudge
+    // gebeuren vóór de seed en gaat er niets verloren; de baseline klopt altijd.
+    setSeedLoading(true);
     fetchPolygonOffset(sn).then(({ dxM, dyM }) => {
       const latDeg = chargerGps?.lat ?? polyCenter.lat;
       if (!Number.isFinite(latDeg)) return;
       const { offsetLat, offsetLng } = metersToOffsetDeg(dxM, dyM, latDeg);
       setEditCal(prev => prev ? { ...prev, offsetLat, offsetLng } : prev);
-    }).catch(() => {});
+    }).catch(() => {}).finally(() => setSeedLoading(false));
   }, [savedCal, sn, chargerGps, polyCenter]);
 
   const cancelCalibrating = useCallback(() => {
@@ -3840,31 +3848,33 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
             <div className="mb-3">
               <label className="text-[10px] text-gray-500 uppercase tracking-wide">{t('map.position')}</label>
               <div className="flex items-center justify-center gap-1 mt-1">
+                {/* Pijltjes uit tijdens het laden van de seed (race-fix): geen klik
+                    kan verloren gaan doordat de async seed hem overschrijft. */}
                 <div className="grid grid-cols-3 gap-0.5 w-fit">
                   <div />
-                  <button onClick={() => nudge(0, NUDGE_STEP_M)} className="bg-gray-700 hover:bg-gray-600 rounded p-1.5 flex items-center justify-center" title={t('map.moveNorth')}>
+                  <button disabled={seedLoading} onClick={() => nudge(0, NUDGE_STEP_M)} className="bg-gray-700 hover:bg-gray-600 rounded p-1.5 flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed" title={t('map.moveNorth')}>
                     <ChevronUp className="w-3.5 h-3.5 text-gray-300" />
                   </button>
                   <div />
-                  <button onClick={() => nudge(-NUDGE_STEP_M, 0)} className="bg-gray-700 hover:bg-gray-600 rounded p-1.5 flex items-center justify-center" title={t('map.moveWest')}>
+                  <button disabled={seedLoading} onClick={() => nudge(-NUDGE_STEP_M, 0)} className="bg-gray-700 hover:bg-gray-600 rounded p-1.5 flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed" title={t('map.moveWest')}>
                     <ChevronLeft className="w-3.5 h-3.5 text-gray-300" />
                   </button>
                   <div className="bg-gray-800 rounded p-1.5 flex items-center justify-center">
                     <span className="text-[9px] text-gray-500 font-mono">5cm</span>
                   </div>
-                  <button onClick={() => nudge(NUDGE_STEP_M, 0)} className="bg-gray-700 hover:bg-gray-600 rounded p-1.5 flex items-center justify-center" title={t('map.moveEast')}>
+                  <button disabled={seedLoading} onClick={() => nudge(NUDGE_STEP_M, 0)} className="bg-gray-700 hover:bg-gray-600 rounded p-1.5 flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed" title={t('map.moveEast')}>
                     <ChevronRight className="w-3.5 h-3.5 text-gray-300" />
                   </button>
                   <div />
-                  <button onClick={() => nudge(0, -NUDGE_STEP_M)} className="bg-gray-700 hover:bg-gray-600 rounded p-1.5 flex items-center justify-center" title={t('map.moveSouth')}>
+                  <button disabled={seedLoading} onClick={() => nudge(0, -NUDGE_STEP_M)} className="bg-gray-700 hover:bg-gray-600 rounded p-1.5 flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed" title={t('map.moveSouth')}>
                     <ChevronDown className="w-3.5 h-3.5 text-gray-300" />
                   </button>
                   <div />
                 </div>
               </div>
-              {/* Huidige totale offset in meters, met windrichting. */}
+              {/* Huidige totale offset in meters, met windrichting (of laad-staat). */}
               <div className="text-[10px] text-gray-400 font-mono text-center mt-1.5">
-                {(() => {
+                {seedLoading ? t('common.loading', 'Laden…') : (() => {
                   const fmt = (v: number, pos: string, neg: string) =>
                     Math.abs(v) < 0.005 ? '0 m' : `${v > 0 ? '+' : '-'}${Math.abs(v).toFixed(2)} m ${v > 0 ? pos : neg}`;
                   return `dx: ${fmt(shiftOffsetM.dxM, t('map.dirEast'), t('map.dirWest'))}, dy: ${fmt(shiftOffsetM.dyM, t('map.dirNorth'), t('map.dirSouth'))}`;
