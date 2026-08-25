@@ -19,6 +19,7 @@ import {
   fetchEditGeometry, saveEditDraft, discardEditDrafts, applyEdits, revertEdits,
   refreshPreviewPath, getPlanPath, refreshPlanPath,
   fetchCoveragePlannerRadius, updateCoveragePlannerRadius,
+  applyPolygonOffset, fetchPolygonOffset,
   type VirtualWall, type EditGeometryDto, type CoveragePathEntry,
 } from '../../api/client';
 import { localToGps, gpsToLocal, isUsableChargerGps } from '../../utils/coords';
@@ -682,12 +683,41 @@ function tileLayerInBounds(def: TileLayerDef, lat: number | null, lng: number | 
 
 // ── Calibration transform ────────────────────────────────────────
 
+// Meters-per-graad, identiek aan utils/coords.ts (gpsToLocal). Zo gebruiken de
+// maai-verschuif-preview en de server-side apply-offset exact dezelfde schaal.
+const DEG_TO_M = 111320;
+
+// Lokaal frame: +x = oost, +y = noord (uit gpsToLocal). Converteer een offset
+// in meters naar de graden-offset die de preview (calibratePoints) gebruikt.
+function metersToOffsetDeg(dxM: number, dyM: number, latDeg: number): { offsetLat: number; offsetLng: number } {
+  const cosLat = Math.cos((latDeg * Math.PI) / 180);
+  return { offsetLat: dyM / DEG_TO_M, offsetLng: dxM / (DEG_TO_M * cosLat) };
+}
+
+// Omgekeerde conversie: graden-offset → meters, voor de apply-offset call.
+function offsetDegToMeters(offsetLat: number, offsetLng: number, latDeg: number): { dxM: number; dyM: number } {
+  const cosLat = Math.cos((latDeg * Math.PI) / 180);
+  return { dxM: offsetLng * DEG_TO_M * cosLat, dyM: offsetLat * DEG_TO_M };
+}
+
+// Mirror van isToChargeUnicomName in server/src/services/polygonOffset.ts: het
+// eerste punt van een `mapNtocharge_unicom` polygoon is het dok-anker en schuift
+// NOOIT mee, zodat de dok-pose / pos.json-origin vast blijft.
+const TO_CHARGE_UNICOM_RE = /^map\d+tocharge_unicom$/;
+function isToChargeUnicomName(name: string | null | undefined): boolean {
+  return !!name && TO_CHARGE_UNICOM_RE.test(name);
+}
+
 /** Apply calibration (manual offset + rotation + scale) to polygon points.
- *  Server converteert lokaal→GPS met charger als origin — anchor offset is niet meer nodig. */
+ *  Server converteert lokaal→GPS met charger als origin — anchor offset is niet meer nodig.
+ *  excludeAnchor0: bij de `mapNtocharge_unicom` polygoon krijgt punt 0 GEEN handmatige
+ *  offset, exact zoals server-side shiftPoints. Zo is de preview WYSIWYG met wat de
+ *  maaier doet (het dok-anker blijft staan). */
 function calibratePoints(
   points: Array<{ lat: number; lng: number }>,
   cal: MapCalibration,
   center: { lat: number; lng: number },
+  excludeAnchor0 = false,
 ): [number, number][] {
   const totalOffLat = cal.offsetLat;
   const totalOffLng = cal.offsetLng;
@@ -700,7 +730,7 @@ function calibratePoints(
   const cos = Math.cos(rad);
   const sin = Math.sin(rad);
 
-  return points.map(p => {
+  return points.map((p, i) => {
     // Translate to center
     let dLat = p.lat - center.lat;
     let dLng = p.lng - center.lng;
@@ -713,8 +743,12 @@ function calibratePoints(
     const rLat = dLat * cos - dLng * sin;
     const rLng = dLat * sin + dLng * cos;
 
-    // Translate back + anchor offset + manual offset
-    return [center.lat + rLat + totalOffLat, center.lng + rLng + totalOffLng] as [number, number];
+    // Dok-anker (unicom punt 0) krijgt geen handmatige offset (zie shiftPoints).
+    const offLat = excludeAnchor0 && i === 0 ? 0 : totalOffLat;
+    const offLng = excludeAnchor0 && i === 0 ? 0 : totalOffLng;
+
+    // Translate back + manual offset
+    return [center.lat + rLat + offLat, center.lng + rLng + offLng] as [number, number];
   });
 }
 
@@ -850,7 +884,9 @@ function ChargerPlacer({ onPlace }: { onPlace: (lat: number, lng: number) => voi
 }
 
 // ── Nudge step: ~0.5m in degrees ─────────────────────────────────
-const NUDGE_STEP = 0.000005; // ~0.55m lat, ~0.35m lng at 52°N
+// Fijne meter-stap voor het verschuiven van het maaigebied. 5 cm zodat een
+// 10 cm-correctie in twee klikken haalbaar is (de oude graden-stap was ~0.5 m).
+const NUDGE_STEP_M = 0.05;
 
 /** Click handler for pattern placement */
 function PatternClickHandler({ onClick }: { onClick: (center: { lat: number; lng: number }) => void }) {
@@ -1373,6 +1409,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
 
   // Charger calibration
   const [confirmCalibrate, setConfirmCalibrate] = useState(false);
+  const [confirmShiftReset, setConfirmShiftReset] = useState(false);
 
   // Virtual walls
   const [walls, setWalls] = useState<VirtualWall[]>([]);
@@ -2873,30 +2910,74 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
   }, [polygonMaps, position]);
 
   // Calibration handlers
+  // De edit-offset houden we in GRADEN aan zodat de bestaande preview
+  // (calibratePoints) ongewijzigd blijft; conversie meters↔graden gebeurt alleen
+  // aan de randen (seed bij openen + apply). Zo vermijden we dubbele conversie in
+  // de render.
   const startCalibrating = useCallback(() => {
     setEditCal({ ...savedCal });
     setUserInteracted(true); // prevent auto-recenter during calibration
-  }, [savedCal]);
+    // apply-offset zet de offset ABSOLUUT. Start de sessie daarom vanaf de reeds
+    // toegepaste offset, anders wist een nieuwe nudge-sessie de vorige verschuiving.
+    fetchPolygonOffset(sn).then(({ dxM, dyM }) => {
+      const latDeg = chargerGps?.lat ?? polyCenter.lat;
+      if (!Number.isFinite(latDeg)) return;
+      const { offsetLat, offsetLng } = metersToOffsetDeg(dxM, dyM, latDeg);
+      setEditCal(prev => prev ? { ...prev, offsetLat, offsetLng } : prev);
+    }).catch(() => {});
+  }, [savedCal, sn, chargerGps, polyCenter]);
 
   const cancelCalibrating = useCallback(() => {
     setEditCal(null);
   }, []);
 
-  const resetCalibrating = useCallback(() => {
-    setEditCal(DEFAULT_CAL);
-  }, []);
+  // Huidige totale offset in meters (voor de readout naast de pijltjes).
+  const shiftOffsetM = useMemo(() => {
+    if (!editCal) return { dxM: 0, dyM: 0 };
+    const latDeg = chargerGps?.lat ?? polyCenter.lat;
+    if (!Number.isFinite(latDeg)) return { dxM: 0, dyM: 0 };
+    return offsetDegToMeters(editCal.offsetLat, editCal.offsetLng, latDeg);
+  }, [editCal, chargerGps, polyCenter]);
 
-  const handleSaveCalibration = useCallback(() => {
+  const applyShift = useCallback(async (dxM: number, dyM: number, calForDisplay: MapCalibration) => {
+    const r = await applyPolygonOffset(sn, dxM, dyM);
+    // Bij maaier offline geeft de server een "pick up on next reconnect"-melding
+    // door; dat is een waarschuwing (offset is opgeslagen), geen echte fout.
+    const offline = !r.ok && /reconnect|offline/i.test(r.error ?? '');
+    if (!r.ok && !offline) { toast(r.error ?? t('map.shiftFailed'), 'error'); return false; }
+    // Display-overlay (offset_lat/lng + rotatie + schaal) in sync houden met de
+    // toegepaste maai-offset zodat de kaart ook na sluiten van het paneel klopt.
+    saveCalibration(sn, calForDisplay).catch(() => {});
+    setSavedCal(calForDisplay);
+    setEditCal(null);
+    toast(offline ? t('map.shiftOffline') : t('map.shiftApplied'), offline ? 'info' : 'success');
+    return true;
+  }, [sn, t, toast]);
+
+  const handleApplyOffset = useCallback(async () => {
     if (!editCal) return;
-    saveCalibration(sn, editCal).then(() => {
-      setSavedCal(editCal);
-      setEditCal(null);
-    }).catch(() => {});
-  }, [sn, editCal]);
+    const latDeg = chargerGps?.lat ?? polyCenter.lat;
+    if (!Number.isFinite(latDeg)) { toast(t('map.shiftFailed'), 'error'); return; }
+    // editCal.offset is in graden; converteer naar meters (+x oost, +y noord —
+    // zelfde frame als shiftPoints). LET OP: teken/richting is nog NIET hardware-
+    // geverifieerd (aparte Fase 0). Mapping bewust recht-toe-recht-aan (noord-pijl
+    // → +dy noord, oost-pijl → +dx oost) zodat de latere check dit op één plek
+    // kan bevestigen of omdraaien.
+    const { dxM, dyM } = offsetDegToMeters(editCal.offsetLat, editCal.offsetLng, latDeg);
+    await applyShift(dxM, dyM, editCal);
+  }, [editCal, chargerGps, polyCenter, applyShift, t, toast]);
 
-  const nudge = useCallback((dLat: number, dLng: number) => {
-    setEditCal(prev => prev ? { ...prev, offsetLat: prev.offsetLat + dLat, offsetLng: prev.offsetLng + dLng } : prev);
-  }, []);
+  const handleResetOffset = useCallback(async () => {
+    const zeroed: MapCalibration = { ...(editCal ?? savedCal), offsetLat: 0, offsetLng: 0 };
+    await applyShift(0, 0, zeroed);
+  }, [editCal, savedCal, applyShift]);
+
+  const nudge = useCallback((dxM: number, dyM: number) => {
+    const latDeg = chargerGps?.lat ?? polyCenter.lat;
+    if (!Number.isFinite(latDeg)) return;
+    const d = metersToOffsetDeg(dxM, dyM, latDeg);
+    setEditCal(prev => prev ? { ...prev, offsetLat: prev.offsetLat + d.offsetLat, offsetLng: prev.offsetLng + d.offsetLng } : prev);
+  }, [chargerGps, polyCenter]);
 
   return (
     <div className="bg-gray-800 rounded-none md:rounded-xl border-0 md:border md:border-gray-700 overflow-hidden flex flex-col flex-1 min-h-0">
@@ -2999,7 +3080,9 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
           <MapInstanceCapture mapRef={leafletMapRef} />
           {/* Saved map polygons with calibration applied */}
           {polygonMaps.map(m => {
-            const positions = calibratePoints(m.mapArea, activeCal, polyCenter);
+            // Dok-route-unicom: punt 0 (het dok-anker) niet meeschuiven — zelfde
+            // uitsluiting als server-side shiftPoints, dus preview == maaier.
+            const positions = calibratePoints(m.mapArea, activeCal, polyCenter, isToChargeUnicomName(m.canonicalName));
             const baseStyle = getAreaStyle(m.mapType, m.mapId, m.mapName);
             const isBeingEdited = editMode === 'edit' && editingMapId === m.mapId;
             const isSelected = selectedMapId === m.mapId;
@@ -3575,7 +3658,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
                       )}
                       {polygonMaps.length > 0 && (
                         <button onClick={() => { startCalibrating(); setRailFlyout(null); }} className={railRow(false)}>
-                          <SlidersHorizontal className="w-4 h-4 opacity-70" />{t('map.calibrateOverlay')}
+                          <SlidersHorizontal className="w-4 h-4 opacity-70" />{t('map.shiftMenu')}
                         </button>
                       )}
                     </div>
@@ -3743,38 +3826,49 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
         {/* Calibration panel — floating on map */}
         {calibrating && (
           <div className="absolute top-3 left-3 z-[1000] bg-gray-900/95 backdrop-blur border border-gray-700 rounded-lg p-3 w-[calc(100vw-1.5rem)] sm:w-64 shadow-xl">
-            <div className="flex items-center justify-between mb-3">
-              <span className="text-xs font-semibold text-amber-400 uppercase tracking-wide">{t('map.calibrationTitle')}</span>
-              <button onClick={cancelCalibrating} className="text-gray-500 hover:text-gray-300" title={t('common.cancel')}>
+            <div className="flex items-start justify-between mb-3">
+              <div>
+                <span className="text-xs font-semibold text-amber-400 uppercase tracking-wide">{t('map.shiftTitle')}</span>
+                <p className="text-[10px] text-gray-400 leading-tight mt-0.5 pr-2">{t('map.shiftSubtext')}</p>
+              </div>
+              <button onClick={cancelCalibrating} className="text-gray-500 hover:text-gray-300 flex-shrink-0" title={t('common.cancel')}>
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            {/* Nudge controls */}
+            {/* Nudge controls — verschuiven het maaigebied in fijne meter-stappen */}
             <div className="mb-3">
               <label className="text-[10px] text-gray-500 uppercase tracking-wide">{t('map.position')}</label>
               <div className="flex items-center justify-center gap-1 mt-1">
                 <div className="grid grid-cols-3 gap-0.5 w-fit">
                   <div />
-                  <button onClick={() => nudge(NUDGE_STEP, 0)} className="bg-gray-700 hover:bg-gray-600 rounded p-1.5 flex items-center justify-center" title={t('map.moveNorth')}>
+                  <button onClick={() => nudge(0, NUDGE_STEP_M)} className="bg-gray-700 hover:bg-gray-600 rounded p-1.5 flex items-center justify-center" title={t('map.moveNorth')}>
                     <ChevronUp className="w-3.5 h-3.5 text-gray-300" />
                   </button>
                   <div />
-                  <button onClick={() => nudge(0, -NUDGE_STEP)} className="bg-gray-700 hover:bg-gray-600 rounded p-1.5 flex items-center justify-center" title={t('map.moveWest')}>
+                  <button onClick={() => nudge(-NUDGE_STEP_M, 0)} className="bg-gray-700 hover:bg-gray-600 rounded p-1.5 flex items-center justify-center" title={t('map.moveWest')}>
                     <ChevronLeft className="w-3.5 h-3.5 text-gray-300" />
                   </button>
                   <div className="bg-gray-800 rounded p-1.5 flex items-center justify-center">
-                    <span className="text-[9px] text-gray-500 font-mono">0.5m</span>
+                    <span className="text-[9px] text-gray-500 font-mono">5cm</span>
                   </div>
-                  <button onClick={() => nudge(0, NUDGE_STEP)} className="bg-gray-700 hover:bg-gray-600 rounded p-1.5 flex items-center justify-center" title={t('map.moveEast')}>
+                  <button onClick={() => nudge(NUDGE_STEP_M, 0)} className="bg-gray-700 hover:bg-gray-600 rounded p-1.5 flex items-center justify-center" title={t('map.moveEast')}>
                     <ChevronRight className="w-3.5 h-3.5 text-gray-300" />
                   </button>
                   <div />
-                  <button onClick={() => nudge(-NUDGE_STEP, 0)} className="bg-gray-700 hover:bg-gray-600 rounded p-1.5 flex items-center justify-center" title={t('map.moveSouth')}>
+                  <button onClick={() => nudge(0, -NUDGE_STEP_M)} className="bg-gray-700 hover:bg-gray-600 rounded p-1.5 flex items-center justify-center" title={t('map.moveSouth')}>
                     <ChevronDown className="w-3.5 h-3.5 text-gray-300" />
                   </button>
                   <div />
                 </div>
+              </div>
+              {/* Huidige totale offset in meters, met windrichting. */}
+              <div className="text-[10px] text-gray-400 font-mono text-center mt-1.5">
+                {(() => {
+                  const fmt = (v: number, pos: string, neg: string) =>
+                    Math.abs(v) < 0.005 ? '0 m' : `${v > 0 ? '+' : '-'}${Math.abs(v).toFixed(2)} m ${v > 0 ? pos : neg}`;
+                  return `dx: ${fmt(shiftOffsetM.dxM, t('map.dirEast'), t('map.dirWest'))}, dy: ${fmt(shiftOffsetM.dyM, t('map.dirNorth'), t('map.dirSouth'))}`;
+                })()}
               </div>
             </div>
 
@@ -3812,22 +3906,23 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
               />
             </div>
 
-            {/* Action buttons */}
+            {/* Action buttons — Toepassen stuurt de offset naar de maaier,
+                Terugzetten zet de maai-offset terug op nul. */}
             <div className="flex items-center gap-2 mt-3 pt-3 border-t border-gray-700">
               <button
-                onClick={resetCalibrating}
+                onClick={() => setConfirmShiftReset(true)}
                 className="flex-1 inline-flex items-center justify-center gap-1 text-xs px-2 py-1.5 rounded bg-gray-700 text-gray-400 hover:text-gray-200 transition-colors"
-                title={t('map.resetToDefault')}
+                title={t('map.shiftReset')}
               >
                 <RotateCcw className="w-3 h-3" />
-                {t('common.reset')}
+                {t('map.shiftReset')}
               </button>
               <button
-                onClick={handleSaveCalibration}
+                onClick={handleApplyOffset}
                 className="flex-1 inline-flex items-center justify-center gap-1 text-xs px-2 py-1.5 rounded bg-amber-600 text-white hover:bg-amber-500 transition-colors"
               >
                 <Save className="w-3 h-3" />
-                {t('common.save')}
+                {t('map.shiftApply')}
               </button>
             </div>
           </div>
@@ -4351,6 +4446,17 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
           }
         }}
         onCancel={() => setConfirmCalibrate(false)}
+      />
+      <ConfirmDialog
+        open={confirmShiftReset}
+        title={t('map.shiftResetConfirm')}
+        confirmLabel={t('map.shiftReset')}
+        cancelLabel={t('common.cancel')}
+        onConfirm={async () => {
+          setConfirmShiftReset(false);
+          await handleResetOffset();
+        }}
+        onCancel={() => setConfirmShiftReset(false)}
       />
 
       {/* Charger placement is now a single unified action (menu click OR marker

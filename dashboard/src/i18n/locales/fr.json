@@ -273,6 +273,19 @@
     "moveSouth": "Déplacer vers le Sud",
     "moveWest": "Déplacer vers l'Ouest",
     "moveEast": "Déplacer vers l'Est",
+    "shiftTitle": "Décaler la zone de tonte",
+    "shiftSubtext": "Déplace l'endroit où le robot tond, pas seulement l'affichage.",
+    "shiftMenu": "Décaler la zone de tonte",
+    "shiftApply": "Appliquer",
+    "shiftReset": "Réinitialiser",
+    "shiftApplied": "Zone de tonte mise à jour et envoyée au robot",
+    "shiftOffline": "Robot hors ligne — décalage enregistré, appliqué à la prochaine connexion",
+    "shiftFailed": "Échec du décalage",
+    "shiftResetConfirm": "Réinitialiser le décalage de la zone de tonte à zéro ?",
+    "dirNorth": "nord",
+    "dirSouth": "sud",
+    "dirEast": "est",
+    "dirWest": "ouest",
     "rotation": "Rotation",
     "scale": "Échelle",
     "resetToDefault": "Réinitialiser par défaut",
@@ -445,7 +458,10 @@
     "edgeOffset": "Décalage de bordure",
     "edgeOffsetShrink": "Réduire",
     "edgeOffsetExpand": "Agrandir",
-    "edgeDays": { "label": "Coupe des bords le", "hint": "Uniquement les jours de tonte choisis; vide = jamais." },
+    "edgeDays": {
+      "label": "Coupe des bords le",
+      "hint": "Uniquement les jours de tonte choisis; vide = jamais."
+    },
     "rainPause": "Pause en cas de pluie",
     "rainThreshold": "Seuil de pluie",
     "rainProbability": "Probabilité de pluie",
@@ -471,7 +487,9 @@
     },
     "skipNext": "Passer la prochaine tonte",
     "skipNextActive": "La prochaine tonte sera passée — cliquer pour annuler",
-    "skipNextBadge": "passe le"
+    "skipNextBadge": "passe le",
+    "edit": "Modifier",
+    "save": "Enregistrer"
   },
   "rain": {
     "since": "Depuis {{time}}",

@@ -273,6 +273,19 @@
     "moveSouth": "Nach Süden verschieben",
     "moveWest": "Nach Westen verschieben",
     "moveEast": "Nach Osten verschieben",
+    "shiftTitle": "Mähbereich verschieben",
+    "shiftSubtext": "Verschiebt, wo der Mäher mäht, nicht nur die Anzeige.",
+    "shiftMenu": "Mähbereich verschieben",
+    "shiftApply": "Anwenden",
+    "shiftReset": "Zurücksetzen",
+    "shiftApplied": "Mähbereich aktualisiert und an den Mäher gesendet",
+    "shiftOffline": "Mäher offline — Offset gespeichert, wird bei nächster Verbindung angewendet",
+    "shiftFailed": "Verschieben fehlgeschlagen",
+    "shiftResetConfirm": "Mähbereich-Verschiebung auf null zurücksetzen?",
+    "dirNorth": "Nord",
+    "dirSouth": "Süd",
+    "dirEast": "Ost",
+    "dirWest": "West",
     "rotation": "Drehung",
     "scale": "Maßstab",
     "resetToDefault": "Auf Standard zurücksetzen",
@@ -445,7 +458,10 @@
     "edgeOffset": "Randversatz",
     "edgeOffsetShrink": "Verkleinern",
     "edgeOffsetExpand": "Vergrößern",
-    "edgeDays": { "label": "Kantenschnitt an", "hint": "Nur an den gewählten Mähtagen; leer = nie Kantenschnitt." },
+    "edgeDays": {
+      "label": "Kantenschnitt an",
+      "hint": "Nur an den gewählten Mähtagen; leer = nie Kantenschnitt."
+    },
     "rainPause": "Bei Regen pausieren",
     "rainThreshold": "Regenschwelle",
     "rainProbability": "Regenwahrscheinlichkeit",
@@ -471,7 +487,9 @@
     },
     "skipNext": "Nächsten Lauf überspringen",
     "skipNextActive": "Nächster Lauf wird übersprungen — klicken zum Abbrechen",
-    "skipNextBadge": "überspringt"
+    "skipNextBadge": "überspringt",
+    "edit": "Bearbeiten",
+    "save": "Speichern"
   },
   "rain": {
     "since": "Seit {{time}}",

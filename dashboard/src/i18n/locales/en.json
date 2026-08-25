@@ -289,6 +289,19 @@
     "moveSouth": "Move South",
     "moveWest": "Move West",
     "moveEast": "Move East",
+    "shiftTitle": "Shift mowing area",
+    "shiftSubtext": "Moves where the mower cuts, not just the display.",
+    "shiftMenu": "Shift mowing area",
+    "shiftApply": "Apply",
+    "shiftReset": "Reset",
+    "shiftApplied": "Mowing area updated and sent to the mower",
+    "shiftOffline": "Mower offline — offset saved, will apply on next reconnect",
+    "shiftFailed": "Shift failed",
+    "shiftResetConfirm": "Reset the mowing-area shift to zero?",
+    "dirNorth": "north",
+    "dirSouth": "south",
+    "dirEast": "east",
+    "dirWest": "west",
     "rotation": "Rotation",
     "scale": "Scale",
     "resetToDefault": "Reset to default",
@@ -462,7 +475,10 @@
     "edgeOffset": "Edge offset",
     "edgeOffsetShrink": "Shrink",
     "edgeOffsetExpand": "Expand",
-    "edgeDays": { "label": "Edge cut on", "hint": "Only on the selected mowing days; leave empty to never edge-cut." },
+    "edgeDays": {
+      "label": "Edge cut on",
+      "hint": "Only on the selected mowing days; leave empty to never edge-cut."
+    },
     "rainPause": "Pause on rain",
     "rainThreshold": "Rain threshold",
     "rainProbability": "Rain probability",
@@ -488,7 +504,9 @@
     },
     "skipNext": "Skip next run",
     "skipNextActive": "Next run will be skipped — click to cancel",
-    "skipNextBadge": "skips"
+    "skipNextBadge": "skips",
+    "edit": "Edit",
+    "save": "Save"
   },
   "rain": {
     "since": "Since {{time}}",

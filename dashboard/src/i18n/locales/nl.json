@@ -336,6 +336,19 @@
     "moveSouth": "Verplaats Zuid",
     "moveWest": "Verplaats West",
     "moveEast": "Verplaats Oost",
+    "shiftTitle": "Maaigebied verschuiven",
+    "shiftSubtext": "Verschuift waar de maaier maait, niet alleen de weergave.",
+    "shiftMenu": "Maaigebied verschuiven",
+    "shiftApply": "Toepassen",
+    "shiftReset": "Terugzetten",
+    "shiftApplied": "Maaigebied bijgewerkt en naar de maaier gestuurd",
+    "shiftOffline": "Maaier offline — offset opgeslagen, wordt bij volgende verbinding toegepast",
+    "shiftFailed": "Verschuiven mislukt",
+    "shiftResetConfirm": "Maaigebied-verschuiving terugzetten naar nul?",
+    "dirNorth": "noord",
+    "dirSouth": "zuid",
+    "dirEast": "oost",
+    "dirWest": "west",
     "rotation": "Rotatie",
     "scale": "Schaal",
     "resetToDefault": "Terugzetten naar standaard",
@@ -509,7 +522,10 @@
     "edgeOffset": "Rand-offset",
     "edgeOffsetShrink": "Inkrimpen",
     "edgeOffsetExpand": "Uitbreiden",
-    "edgeDays": { "label": "Randmaaien op", "hint": "Alleen op de gekozen maaidagen; leeg = nooit randmaaien." },
+    "edgeDays": {
+      "label": "Randmaaien op",
+      "hint": "Alleen op de gekozen maaidagen; leeg = nooit randmaaien."
+    },
     "rainPause": "Pauzeer bij regen",
     "rainThreshold": "Regendrempel",
     "rainProbability": "Regenkans",
@@ -535,7 +551,9 @@
     },
     "skipNext": "Volgende run overslaan",
     "skipNextActive": "Volgende run wordt overgeslagen — klik om te annuleren",
-    "skipNextBadge": "slaat over:"
+    "skipNextBadge": "slaat over:",
+    "edit": "Bewerken",
+    "save": "Opslaan"
   },
   "rain": {
     "since": "Sinds {{time}}",
