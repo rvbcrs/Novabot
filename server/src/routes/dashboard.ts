@@ -2660,11 +2660,10 @@ dashboardRouter.get('/mdns-conflict', (_req: Request, res: Response) => {
 });
 
 // PUT /api/dashboard/calibration/:sn — sla calibratie op
-// relocateCharger=true: charger fysiek verplaatst → herbereken alle map lokale coördinaten
 dashboardRouter.put('/calibration/:sn', (req: Request, res: Response) => {
   const { sn } = req.params;
   const { offsetLat, offsetLng, rotation, scale, chargerLat, chargerLng,
-    gpsChargerLat, gpsChargerLng, relocateCharger } = req.body as {
+    gpsChargerLat, gpsChargerLng } = req.body as {
     offsetLat?: number;
     offsetLng?: number;
     rotation?: number;
@@ -2673,45 +2672,9 @@ dashboardRouter.put('/calibration/:sn', (req: Request, res: Response) => {
     chargerLng?: number | null;
     gpsChargerLat?: number | null;
     gpsChargerLng?: number | null;
-    relocateCharger?: boolean;
   };
 
-  // Als relocateCharger=true EN er is een oude + nieuwe charger positie:
-  // herbereken alle map_area van local(old) → GPS → local(new)
-  let mapsRecalculated = 0;
-  if (relocateCharger && chargerLat != null && chargerLng != null) {
-    const oldChargerGps = mapRepo.getChargerGps(sn);
-
-    if (oldChargerGps) {
-      const oldOrigin: GpsPoint = oldChargerGps;
-      const newOrigin: GpsPoint = { lat: chargerLat, lng: chargerLng };
-
-      const allMaps = mapRepo.findWithArea(sn);
-
-      for (const row of allMaps) {
-        try {
-          const oldLocal: LocalPoint[] = JSON.parse(row.map_area!);
-          if (!Array.isArray(oldLocal) || oldLocal.length < 2) continue;
-
-          // local(old charger) → GPS → local(new charger)
-          const newLocal = oldLocal.map(p => gpsToLocal(localToGps(p, oldOrigin), newOrigin));
-          const bounds = {
-            minX: Math.min(...newLocal.map(p => p.x)),
-            maxX: Math.max(...newLocal.map(p => p.x)),
-            minY: Math.min(...newLocal.map(p => p.y)),
-            maxY: Math.max(...newLocal.map(p => p.y)),
-          };
-          mapRepo.updateAreaAndBoundsById(
-            row.map_id,
-            JSON.stringify(newLocal),
-            JSON.stringify(bounds),
-          );
-          mapsRecalculated++;
-        } catch { /* skip corrupt rows */ }
-      }
-      console.log(`[Calibration] Charger relocated for ${sn}: ${mapsRecalculated} maps recalculated`);
-    }
-  }
+  const mapsRecalculated = 0;
 
   mapRepo.setCalibration(sn, {
     offset_lat: offsetLat ?? 0,
