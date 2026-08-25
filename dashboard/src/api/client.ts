@@ -170,12 +170,12 @@ export async function fetchCalibration(sn: string): Promise<MapCalibration> {
 }
 
 export async function saveCalibration(
-  sn: string, cal: MapCalibration, opts?: { relocateCharger?: boolean },
+  sn: string, cal: MapCalibration,
 ): Promise<{ ok: boolean }> {
   const res = await apiFetch(`${BASE}/calibration/${encodeURIComponent(sn)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...cal, ...(opts?.relocateCharger ? { relocateCharger: true } : {}) }),
+    body: JSON.stringify(cal),
   });
   return res.json();
 }

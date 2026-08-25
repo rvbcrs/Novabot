@@ -3672,11 +3672,7 @@ async function __pollLivePosOnce(sn) {
     canvas.__mapState.mowerTrail = (data.recentTrail || []).map(function(p) {
       return { x: p.x, y: p.y };
     });
-    if (typeof polygonCal !== 'undefined' && polygonCal) {
-      rerenderWithGhost();
-    } else {
-      renderMapCanvas(canvas, canvas.__mapState.maps, canvas.__mapState.chargingPose || null);
-    }
+    renderMapCanvas(canvas, canvas.__mapState.maps, canvas.__mapState.chargingPose || null);
   } catch (e) { /* swallow — next tick retries */ }
 }
 
@@ -3763,23 +3759,6 @@ function renderValidationPanel(data) {
     + '<button onclick="clearValidationTrail()" style="padding:6px 12px;background:rgba(100,116,139,.15);color:#94a3b8;border:1px solid rgba(100,116,139,.3);border-radius:6px;font-size:11px;cursor:pointer">Clear trail</button>'
     + '</div>'
     + debugHtml(data.debug);
-}
-
-async function applySuggestedOffset(dx, dy) {
-  var sn = document.getElementById('mapMowerSelect').value;
-  if (!sn) return;
-  if (!(await appConfirm('Apply suggested offset dx=' + (dx * 100).toFixed(1) + ' cm, dy=' + (dy * 100).toFixed(1) + ' cm to ' + sn + '?\\n\\nThis runs a full sync_map (same as the manual nudge panel).', { okText: 'Apply' }))) return;
-  try {
-    var r = await fetch('/api/admin-status/maps/' + encodeURIComponent(sn) + '/apply-polygon-offset', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': token },
-      body: JSON.stringify({ dx_m: dx, dy_m: dy })
-    });
-    var json = await r.json();
-    await appAlert(r.ok ? 'Offset applied. Mower will resync.' : ('Failed: ' + (json.error || r.status)), { accent: r.ok ? 'success' : 'danger' });
-  } catch (e) {
-    await appAlert('Apply failed: ' + e.message, { accent: 'danger' });
-  }
 }
 
 async function clearValidationTrail() {
@@ -5285,20 +5264,14 @@ function attachMapInteraction(canvas) {
   });
 }
 
-// Named re-render for the map viewer: routes through rerenderWithGhost()
-// while polygon-offset calibration is active (so the ghost layer stays in
-// sync with zoom + pan), plain renderMapCanvas otherwise. The map-edit
+// Named re-render for the map viewer: plain renderMapCanvas. The map-edit
 // overlay is drawn inside renderMapCanvas itself.
 function rerenderMapView() {
   var canvas = document.getElementById('mapCanvas');
   if (!canvas) return;
   var st = canvas.__mapState;
   if (!st || !st.maps) return;
-  if (typeof polygonCal !== 'undefined' && polygonCal) {
-    rerenderWithGhost();
-  } else {
-    renderMapCanvas(canvas, st.maps, st.chargingPose || null);
-  }
+  renderMapCanvas(canvas, st.maps, st.chargingPose || null);
 }
 
 // ── Map edit mode ────────────────────────────────────────────────────────────
@@ -6149,13 +6122,6 @@ function renderMapCanvas(canvas, maps, chargingPose, ghostMaps) {
   // the preview polygon so the user can visually align both together with
   // a reference point on the map.
   var displayGpsTrail = gpsTrail;
-  if (typeof polygonCal !== 'undefined' && polygonCal
-      && (polygonCal.dx !== 0 || polygonCal.dy !== 0)
-      && Array.isArray(gpsTrail) && gpsTrail.length > 0) {
-    displayGpsTrail = gpsTrail.map(function(p) {
-      return { x: p.x + polygonCal.dx, y: p.y + polygonCal.dy };
-    });
-  }
   drawTrail(displayGpsTrail, 'rgba(132,204,22,0.85)');
 
   if (livePose && Number.isFinite(livePose.x) && Number.isFinite(livePose.y)) {
