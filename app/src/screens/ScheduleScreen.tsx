@@ -1036,11 +1036,11 @@ function ScheduleEditor({
           <Text style={editorStyles.label}>{t('cuttingHeight')}</Text>
           <View style={editorStyles.stepperRow}>
             <TouchableOpacity style={editorStyles.stepperBtn} onPress={() => setCuttingHeight(Math.max(2, cuttingHeight - 1))}>
-              <Ionicons name="remove" size={18} color={colors.white} />
+              <Ionicons name="remove" size={18} color={colors.text} />
             </TouchableOpacity>
             <Text style={editorStyles.stepperValue}>{cuttingHeight} cm</Text>
             <TouchableOpacity style={editorStyles.stepperBtn} onPress={() => setCuttingHeight(Math.min(9, cuttingHeight + 1))}>
-              <Ionicons name="add" size={18} color={colors.white} />
+              <Ionicons name="add" size={18} color={colors.text} />
             </TouchableOpacity>
           </View>
 
@@ -1052,11 +1052,11 @@ function ScheduleEditor({
           <View style={editorStyles.stepperRow}>
             {/* 15° step + 0–180 range matches StartMowSheet (issue #23). */}
             <TouchableOpacity style={editorStyles.stepperBtn} onPress={() => setPathDir(Math.max(0, pathDir - 15))}>
-              <Ionicons name="remove" size={18} color={colors.white} />
+              <Ionicons name="remove" size={18} color={colors.text} />
             </TouchableOpacity>
             <Text style={editorStyles.stepperValue}>{pathDir}°</Text>
             <TouchableOpacity style={editorStyles.stepperBtn} onPress={() => setPathDir(Math.min(180, pathDir + 15))}>
-              <Ionicons name="add" size={18} color={colors.white} />
+              <Ionicons name="add" size={18} color={colors.text} />
             </TouchableOpacity>
           </View>
 
@@ -1095,11 +1095,11 @@ function ScheduleEditor({
             <View style={editorStyles.stepperRow}>
               <Text style={[editorStyles.label, { flex: 1, marginBottom: 0 }]}>Rotation step</Text>
               <TouchableOpacity style={editorStyles.stepperBtn} onPress={() => setAlternateStep(Math.max(15, alternateStep - 15))}>
-                <Ionicons name="remove" size={18} color={colors.white} />
+                <Ionicons name="remove" size={18} color={colors.text} />
               </TouchableOpacity>
               <Text style={editorStyles.stepperValue}>{alternateStep}°</Text>
               <TouchableOpacity style={editorStyles.stepperBtn} onPress={() => setAlternateStep(Math.min(180, alternateStep + 15))}>
-                <Ionicons name="add" size={18} color={colors.white} />
+                <Ionicons name="add" size={18} color={colors.text} />
               </TouchableOpacity>
             </View>
           )}
@@ -1288,16 +1288,20 @@ const makeEditorStyles = (c: Colors) => StyleSheet.create({
     paddingHorizontal: 4,
     marginTop: 8,
     borderTopWidth: 1,
-    borderTopColor: 'rgba(255,255,255,0.06)',
+    borderTopColor: c.cardBorder,
   },
   stepperRow: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 16, marginBottom: 8,
   },
+  // c.white is #ffffff in BEIDE thema's, en de light-mode kaart is óók wit —
+  // dus witte tekst/knoppen op een kaart verdwijnen in light mode (GH #109).
+  // Op een GEKLEURDE ondergrond (emerald chip, save-knop) blijft c.white juist.
   stepperBtn: {
-    width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.1)',
+    width: 40, height: 40, borderRadius: 20,
+    backgroundColor: c.inputBg, borderWidth: 1, borderColor: c.cardBorder,
     alignItems: 'center', justifyContent: 'center',
   },
-  stepperValue: { fontSize: 18, fontWeight: '700', color: c.white, minWidth: 60, textAlign: 'center' },
-  rainTitle: { fontSize: 14, fontWeight: '600', color: c.white },
+  stepperValue: { fontSize: 18, fontWeight: '700', color: c.text, minWidth: 60, textAlign: 'center' },
+  rainTitle: { fontSize: 14, fontWeight: '600', color: c.text },
   rainSub: { fontSize: 11, color: c.textMuted, marginTop: 2 },
 });
