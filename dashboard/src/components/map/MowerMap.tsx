@@ -2789,6 +2789,33 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
   })();
   const trailPositions: [number, number][] = trailSegments.flat();
 
+  // Missed points — spots the mower skipped during coverage, from
+  // sensors.missed_points ("x1 y1;x2 y2;..." in the local meter frame, the same
+  // frame as cover_path.covered.missed). Same localToGps + calibration
+  // transform as the GPS trail above, so they land on the same map.
+  //
+  // Memoised on the raw string: it only changes when the mower reports new
+  // misses, but this component re-renders on every telemetry frame, and a long
+  // session's list can run into the hundreds of points.
+  const missedPointsGps: [number, number][] = useMemo(() => {
+    const raw = mowingSensors.missed_points;
+    if (!raw || !isUsableChargerGps(chargerGps)) return [];
+    const offLat = Number.isFinite(activeCal.offsetLat) ? activeCal.offsetLat : 0;
+    const offLng = Number.isFinite(activeCal.offsetLng) ? activeCal.offsetLng : 0;
+    const result: [number, number][] = [];
+    for (const part of raw.split(';')) {
+      const [xs, ys] = part.trim().split(/\s+/);
+      const x = parseFloat(xs);
+      const y = parseFloat(ys);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+      const g = localToGps({ x: x - (chargingPose?.x ?? 0), y: y - (chargingPose?.y ?? 0) }, chargerGps);
+      const lat = g.lat + offLat;
+      const lng = g.lng + offLng;
+      if (Number.isFinite(lat) && Number.isFinite(lng)) result.push([lat, lng]);
+    }
+    return result;
+  }, [mowingSensors.missed_points, chargerGps, chargingPose, activeCal.offsetLat, activeCal.offsetLng]);
+
   // Mower heading icon — `heading` carries the firmware `theta` field in
   // radians using the ENU convention (0 = East, π/2 = North). The icon
   // helper expects compass degrees (0 = North, 90 = East), so we have to
@@ -3300,6 +3327,24 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
                 }}
               />
             ) : null
+          ))}
+          {/* Missed points — orange dots where the mower skipped a spot during
+              coverage. Same gate as the trail (including !showHeatmap) so the
+              session-progress overlay appears and disappears as one thing. */}
+          {showTrail && !showHeatmap && missedPointsGps.map((pos, i) => (
+            <CircleMarker
+              key={`missed-${i}`}
+              center={pos}
+              radius={5}
+              pathOptions={{
+                color: '#f97316',
+                fillColor: '#f97316',
+                fillOpacity: 0.85,
+                weight: 1.5,
+              }}
+            >
+              <Tooltip sticky>{t('map.missedPoint', 'Missed point')}</Tooltip>
+            </CircleMarker>
           ))}
           {/* Heatmap mode: color trail segments by recency */}
           {showHeatmap && trailPositions.length >= 2 && (() => {

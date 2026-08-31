@@ -366,7 +366,8 @@
       "coverageRadiusInvalid": "Radius muss 0.20-1.20 m sein",
       "coverageStart": "Mäher startet hier",
       "coverageRefresh": "Vom Mäher aktualisieren"
-    }
+    },
+    "missedPoint": "Verpasster Punkt"
   },
   "terrain": {
     "title": "Gelände",

@@ -366,7 +366,8 @@
       "coverageRadiusInvalid": "Le rayon doit etre entre 0.20 et 1.20 m",
       "coverageStart": "Le robot démarre ici",
       "coverageRefresh": "Actualiser depuis la tondeuse"
-    }
+    },
+    "missedPoint": "Point manqué"
   },
   "terrain": {
     "title": "Terrain",
