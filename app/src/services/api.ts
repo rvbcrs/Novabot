@@ -298,6 +298,10 @@ function normalizeSchedule(input: ScheduleLike): Schedule {
   };
 }
 
+/** Max wachttijd per HTTP-call. Genoeg voor een trage mobiele verbinding,
+ *  kort genoeg dat een dood adres meteen een foutmelding oplevert. */
+const REQUEST_TIMEOUT_MS = 20_000;
+
 export class ApiClient {
   private baseUrl: string;
 
@@ -325,11 +329,27 @@ export class ApiClient {
       headers['Content-Type'] = 'application/json';
     }
 
-    const res = await fetch(url, {
-      method,
-      headers,
-      body: options?.body != null ? JSON.stringify(options.body) : undefined,
-    });
+    // ponytail: harde timeout, anders blijft een hangende verbinding (server
+    // achter een proxy die niets terugstuurt) eeuwig openstaan en draait de
+    // spinner in het loginscherm door zonder ooit een foutmelding te tonen.
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method,
+        headers,
+        body: options?.body != null ? JSON.stringify(options.body) : undefined,
+        signal: ctrl.signal,
+      });
+    } catch (e) {
+      if ((e as Error)?.name === 'AbortError') {
+        throw new Error(`Server did not respond within ${REQUEST_TIMEOUT_MS / 1000}s (${url})`);
+      }
+      throw e;
+    } finally {
+      clearTimeout(timer);
+    }
 
     if (res.status === 401) {
       throw new AuthError();
