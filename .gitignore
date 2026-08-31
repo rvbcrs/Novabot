@@ -120,3 +120,8 @@ LFIN1231000211-2026-05-07T07-17-portable.novabotmap
 .jwt_secret
 /storage
 *.tsbuildinfo
+
+# Losse 3D-werkbestanden in de repo-root. De modellen die de app echt
+# gebruikt staan in app/assets/models/ en zijn tientallen KB's; dit zijn
+# ongedecimeerde exports van tientallen MB's die niet de historie in moeten.
+/*.glb
