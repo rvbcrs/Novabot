@@ -171,6 +171,7 @@ export default {
   endSessionDesc: 'De gepauzeerde maaisessie wordt beëindigd. De maaier blijft op het laadstation; je kunt daarna een nieuwe sessie starten.',
   stopMowingDesc: 'De maaier stopt waar hij staat, de messen gaan uit en de huidige sessie wordt beëindigd. De maaier rijdt niet terug naar het station. Je kunt daarna een nieuwe maaisessie starten.',
   pinchToZoom: 'Knijp om te zoomen \u00B7 Dubbeltik om te resetten',
+  recenterMap: 'Kaart hercentreren',
 
   // ── Mapping ───────────────────────────────────────────────────
   createMap: 'Kaart maken',

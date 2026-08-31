@@ -66,6 +66,7 @@ export default {
   renameMap: 'Karte umbenennen', renameMower: 'Mäher umbenennen', enterNewName: 'Neuen Namen eingeben:',
   deleteMap: 'Karte löschen?', deleteMapConfirm: 'Kann nicht rückgängig gemacht werden.',
   pinchToZoom: 'Pinch zum Zoomen · Doppeltippen zum Zurücksetzen',
+  recenterMap: 'Karte zentrieren',
   createMap: 'Karte erstellen', mowerOffline: 'Mäher offline',
   channelMissingBanner: 'Zonen nicht verbunden',
   channelMissingHint: 'map{{from}} und map{{to}} haben keinen Kanal, der Mäher kann nicht dazwischen fahren.',

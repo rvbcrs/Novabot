@@ -593,12 +593,19 @@ export default function MapScreen() {
       translateY.value = savedTranslateY.value + e.translationY;
     });
 
+  // Back to the fitted view. Double-tap has done this since the first beta and
+  // the hint under the map says so, but people still zoom in and lose the
+  // garden (GH #43), so it also gets a visible button.
+  const resetView = useCallback(() => {
+    scale.value = withTiming(1, { duration: 300 });
+    translateX.value = withTiming(0, { duration: 300 });
+    translateY.value = withTiming(0, { duration: 300 });
+  }, [scale, translateX, translateY]);
+
   const doubleTapGesture = Gesture.Tap()
     .numberOfTaps(2)
     .onEnd(() => {
-      scale.value = withTiming(1, { duration: 300 });
-      translateX.value = withTiming(0, { duration: 300 });
-      translateY.value = withTiming(0, { duration: 300 });
+      resetView();
     });
 
   const animatedStyle = useAnimatedStyle(() => ({
@@ -1574,6 +1581,16 @@ export default function MapScreen() {
                 </Animated.View>
               </GestureDetector>
 
+              {/* Recenter — same reset as double-tap, but findable. */}
+              <TouchableOpacity
+                style={styles.recenterBtn}
+                onPress={resetView}
+                accessibilityLabel={t('recenterMap')}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Ionicons name="scan-outline" size={18} color={colors.text} />
+              </TouchableOpacity>
+
               {/* Zoom hint / placement hint */}
               {patternCtx.isPlacing ? (
                 <Text style={[styles.zoomHint, { color: colors.purple }]}>
@@ -2022,6 +2039,20 @@ const makeStyles = (c: Colors) => StyleSheet.create({
     elevation: 10,
   },
   mapInner: { width: MAP_SIZE, height: MAP_SIZE },
+  recenterBtn: {
+    position: 'absolute',
+    right: 16,
+    bottom: 16,
+    zIndex: 5,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: c.inputBg,
+    borderWidth: 1,
+    borderColor: c.cardBorder,
+  },
   mapHero: {
     position: 'absolute',
     top: 16,

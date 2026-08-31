@@ -66,6 +66,7 @@ export default {
   renameMap: 'Renommer la carte', renameMower: 'Renommer la tondeuse', enterNewName: 'Entrez un nouveau nom :',
   deleteMap: 'Supprimer la carte ?', deleteMapConfirm: 'Cette action est irréversible.',
   pinchToZoom: 'Pincez pour zoomer · Double-tap pour réinitialiser',
+  recenterMap: 'Recentrer la carte',
   createMap: 'Créer une carte', mowerOffline: 'Tondeuse hors ligne',
   channelMissingBanner: 'Zones non reliées',
   channelMissingHint: "map{{from}} et map{{to}} n'ont pas de canal, la tondeuse ne peut pas circuler entre elles.",

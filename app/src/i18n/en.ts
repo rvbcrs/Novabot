@@ -173,6 +173,7 @@ export default {
   endSessionDesc: 'The paused mowing session will be ended. The mower stays on the dock; you can start a new session afterwards.',
   stopMowingDesc: 'The mower will halt where it is, blades will stop, and the current session ends. The mower won’t return to the dock. You can start a new session afterwards.',
   pinchToZoom: 'Pinch to zoom \u00B7 Double-tap to reset',
+  recenterMap: 'Recenter map',
 
   // ── Mapping ───────────────────────────────────────────────────
   createMap: 'Create Map',
