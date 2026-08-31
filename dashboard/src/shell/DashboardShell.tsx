@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Mountain } from 'lucide-react';
+import { Mountain, Map as MapIcon, CalendarClock, ClipboardList, Settings as SettingsIcon } from 'lucide-react';
 import { Header } from './Header';
 import { Drawer } from './Drawer';
 import { DeviceChips } from './DeviceChips';
@@ -21,6 +21,7 @@ import { LongPauseBanner } from './LongPauseBanner';
 import { MdnsConflictBanner } from './MdnsConflictBanner';
 import { UpdateBanner } from './UpdateBanner';
 import { ErrorDisplay } from '../components/status/ErrorDisplay';
+import { useExperimental } from '../utils/experimental';
 
 // Lazy-loaded so three.js (the 3D terrain viewer) stays out of the main bundle.
 const TerrainPage = lazy(() => import('../pages/TerrainPage'));
@@ -32,14 +33,24 @@ function ShellInner() {
   const { devices, loading, connected, otaProgress, liveOutlines, coveredLanes } = useDevices();
   const { activeMower, activeMowerSn, setActiveMowerSn, knownMowers } = useActiveMower(devices);
   const charger = [...devices.values()].find(d => d.deviceType === 'charger') ?? null;
+  // Terrain is experimental and only appears once the operator opts in under
+  // Settings, mirroring the app's Experimental Features switch.
+  const experimental = useExperimental();
   const TABS: Array<{ id: Tab; label: string; icon?: React.ComponentType<{ className?: string }> }> = [
-    { id: 'map', label: 'Map' },
-    { id: 'schedule', label: 'Schedule' },
-    { id: 'records', label: 'Records' },
-    { id: 'settings', label: 'Settings' },
-    { id: 'terrain', label: t('terrain.title'), icon: Mountain },
+    { id: 'map', label: 'Map', icon: MapIcon },
+    { id: 'schedule', label: 'Schedule', icon: CalendarClock },
+    { id: 'records', label: 'Records', icon: ClipboardList },
+    { id: 'settings', label: 'Settings', icon: SettingsIcon },
+    ...(experimental
+      ? [{ id: 'terrain' as Tab, label: t('terrain.title'), icon: Mountain }]
+      : []),
   ];
   const [tab, setTab] = useState<Tab>('map');
+  // Turning the experimental switch off while standing on Terrain would strand
+  // the operator on a tab that no longer has a button. Fall back to the map.
+  useEffect(() => {
+    if (!experimental && tab === 'terrain') setTab('map');
+  }, [experimental, tab]);
   const [drawerOpen, setDrawerOpen] = useState(false);
   // The enlarged server-log lives here (not in the drawer) so it stays open
   // when the drawer closes; only its own ✕ dismisses it.
@@ -146,13 +157,15 @@ function ShellInner() {
           knownMowers={knownMowers}
           onSelectMower={setActiveMowerSn}
         />
-        {/* Tabs (middle) */}
-        <nav className="flex items-center gap-1 p-0.5 rounded-xl bg-zinc-800/40 border border-zinc-700/60">
+        {/* Tabs (middle). max-w-full + overflow-x-auto: on phone widths the raw
+            nav is wider than the viewport and the app root clips overflow, so
+            without its own scroll the last tab(s) would be unreachable. */}
+        <nav className="flex items-center gap-1 p-0.5 rounded-xl bg-zinc-800/40 border border-zinc-700/60 max-w-full overflow-x-auto">
           {TABS.map(tabDef => (
             <button
               key={tabDef.id}
               onClick={() => setTab(tabDef.id)}
-              className={`px-3.5 py-1.5 text-sm font-medium rounded-lg transition-colors flex items-center gap-1.5 ${
+              className={`shrink-0 whitespace-nowrap px-3.5 py-1.5 text-sm font-medium rounded-lg transition-colors flex items-center gap-1.5 ${
                 tab === tabDef.id
                   ? 'bg-zinc-700 text-zinc-100 shadow-sm'
                   : 'text-zinc-400 hover:text-zinc-100 hover:bg-zinc-700/40'
@@ -163,8 +176,9 @@ function ShellInner() {
             </button>
           ))}
         </nav>
-        {/* Live telemetry (far right) */}
-        <div className="ml-auto">
+        {/* Live telemetry (far right). max-w-full lets the chip strip wrap on
+            phone widths instead of being clipped off-screen. */}
+        <div className="ml-auto max-w-full">
           <DeviceChips
             part="telemetry"
             mower={activeMower}

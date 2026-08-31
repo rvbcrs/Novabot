@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Clock, Plus, Minus, Trash2, Send, X, ChevronRight, Calendar,
-  Compass, AlertTriangle, CloudRain, RefreshCw, Ruler, PauseCircle,
+  Compass, AlertTriangle, CloudRain, RefreshCw, Ruler, PauseCircle, Pencil,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { Schedule, MapData } from '../../types';
@@ -90,6 +90,9 @@ export function Scheduler({ sn, online, onPathDirectionChange }: Props) {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState<ScheduleForm>(defaultForm);
   const [saving, setSaving] = useState(false);
+  // Als gezet, bewerkt het formulier een bestaand schema i.p.v. een nieuw aan te
+  // maken. De save-knop en de koptekst wisselen hierop.
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   const weekdayLabels = t('schedule.weekdays', { returnObjects: true }) as string[];
   const weekStart = useWeekStart();
@@ -129,38 +132,75 @@ export function Scheduler({ sn, online, onPathDirectionChange }: Props) {
     return () => clearInterval(id);
   }, [sn]);
 
-  const handleCreate = useCallback(async () => {
+  const handleSave = useCallback(async () => {
     if (!form.startTime) return;
     setSaving(true);
+    // Velden die zowel create als update deelt (create voegt zelf enabled toe).
+    const payload = {
+      scheduleName: form.scheduleName || null,
+      startTime: form.startTime,
+      endTime: form.endTime || null,
+      weekdays: form.weekdays,
+      mapId: form.mapId || null,
+      mapName: form.mapName || null,
+      cuttingHeight: form.cuttingHeight,
+      pathDirection: form.pathDirection,
+      workMode: 0,
+      taskMode: 0,
+      alternateDirection: form.alternateDirection,
+      alternateStep: form.alternateStep,
+      edgeOffset: form.edgeOffset,
+      edgeDays: form.edgeDays.length > 0 ? form.edgeDays : null,
+      rainPause: form.rainPause,
+      rainThresholdMm: form.rainThresholdMm,
+      rainThresholdProbability: form.rainThresholdProbability,
+      rainCheckHours: form.rainCheckHours,
+    };
     try {
-      const s = await createSchedule(sn, {
-        scheduleName: form.scheduleName || null,
-        startTime: form.startTime,
-        endTime: form.endTime || null,
-        weekdays: form.weekdays,
-        enabled: true,
-        mapId: form.mapId || null,
-        mapName: form.mapName || null,
-        cuttingHeight: form.cuttingHeight,
-        pathDirection: form.pathDirection,
-        workMode: 0,
-        taskMode: 0,
-        alternateDirection: form.alternateDirection,
-        alternateStep: form.alternateStep,
-        edgeOffset: form.edgeOffset,
-        edgeDays: form.edgeDays.length > 0 ? form.edgeDays : null,
-        rainPause: form.rainPause,
-        rainThresholdMm: form.rainThresholdMm,
-        rainThresholdProbability: form.rainThresholdProbability,
-        rainCheckHours: form.rainCheckHours,
-      });
-      setSchedules(prev => [...prev, s]);
+      if (editingId) {
+        const updated = await updateSchedule(sn, editingId, payload);
+        setSchedules(prev => prev.map(s => s.scheduleId === editingId ? updated : s));
+        // Push de gewijzigde waarden meteen naar de maaier, net als bij aanmaken.
+        // Anders draait de maaier na een maaihoogte-wijziging nog op de oude
+        // waarde tot iemand los op "verstuur" drukt. Alleen zinvol als de maaier
+        // online is en het geen regen-schema is (die worden server-side gedreven).
+        if (online && !updated.rainPause) await sendSchedule(sn, editingId).catch(() => {});
+      } else {
+        const s = await createSchedule(sn, { ...payload, enabled: true });
+        setSchedules(prev => [...prev, s]);
+      }
       setShowForm(false);
+      setEditingId(null);
       setForm(defaultForm);
       onPathDirectionChange?.(null);
     } catch { /* ignore */ }
     setSaving(false);
-  }, [sn, form, onPathDirectionChange]);
+  }, [sn, form, editingId, online, onPathDirectionChange]);
+
+  // Open het formulier voorgevuld met een bestaand schema.
+  const handleEdit = useCallback((s: Schedule) => {
+    setForm({
+      scheduleName: s.scheduleName ?? '',
+      startTime: s.startTime,
+      endTime: s.endTime ?? '',
+      weekdays: s.weekdays,
+      mapId: s.mapId ?? '',
+      mapName: s.mapName ?? '',
+      cuttingHeight: s.cuttingHeight,
+      pathDirection: s.pathDirection,
+      alternateDirection: s.alternateDirection,
+      alternateStep: s.alternateStep,
+      edgeOffset: s.edgeOffset,
+      edgeDays: s.edgeDays ?? [],
+      rainPause: s.rainPause,
+      rainThresholdMm: s.rainThresholdMm,
+      rainThresholdProbability: s.rainThresholdProbability,
+      rainCheckHours: s.rainCheckHours,
+    });
+    setEditingId(s.scheduleId);
+    setShowForm(true);
+    onPathDirectionChange?.(s.pathDirection);
+  }, [onPathDirectionChange]);
 
   const handleDelete = useCallback(async (scheduleId: string) => {
     await deleteSchedule(sn, scheduleId).catch(() => {});
@@ -237,6 +277,7 @@ export function Scheduler({ sn, online, onPathDirectionChange }: Props) {
           onClick={() => {
             const next = !showForm;
             setShowForm(next);
+            setEditingId(null);
             setForm(defaultForm);
             onPathDirectionChange?.(next ? defaultForm.pathDirection : null);
           }}
@@ -543,19 +584,19 @@ export function Scheduler({ sn, online, onPathDirectionChange }: Props) {
           {/* Actions */}
           <div className="flex items-center gap-2 pt-3 border-t border-gray-700">
             <button
-              onClick={() => { setShowForm(false); onPathDirectionChange?.(null); }}
+              onClick={() => { setShowForm(false); setEditingId(null); setForm(defaultForm); onPathDirectionChange?.(null); }}
               className="flex-1 inline-flex items-center justify-center gap-1 text-xs px-2 py-1.5 rounded bg-gray-700 text-gray-400 hover:text-gray-200 transition-colors"
             >
               <X className="w-3 h-3" />
               {t('common.cancel')}
             </button>
             <button
-              onClick={handleCreate}
+              onClick={handleSave}
               disabled={saving || !form.startTime || form.weekdays.length === 0}
               className="flex-1 inline-flex items-center justify-center gap-1 text-xs px-2 py-1.5 rounded bg-emerald-600 text-white hover:bg-emerald-500 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              <Plus className="w-3 h-3" />
-              {saving ? t('schedule.saving') : t('schedule.create')}
+              {editingId ? <Pencil className="w-3 h-3" /> : <Plus className="w-3 h-3" />}
+              {saving ? t('schedule.saving') : editingId ? t('schedule.save', 'Opslaan') : t('schedule.create')}
             </button>
           </div>
         </div>
@@ -612,6 +653,13 @@ export function Scheduler({ sn, online, onPathDirectionChange }: Props) {
                 )}
               </div>
               <div className="flex items-center gap-1">
+                <button
+                  onClick={() => handleEdit(s)}
+                  className="text-gray-500 hover:text-emerald-400 p-1 rounded hover:bg-emerald-900/30 transition-colors"
+                  title={t('schedule.edit', 'Bewerken')}
+                >
+                  <Pencil className="w-3.5 h-3.5" />
+                </button>
                 {s.enabled && (
                   <button
                     onClick={() => handleSkipNext(s)}

@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import {
   Tag, Bell, Check, Loader2, Smartphone, Radio, Home as HomeIcon, Mail,
   Scissors, Compass, Minus, Plus, Monitor, Shield, Gamepad2, Gauge, Battery, Power,
-  CloudRain, Lightbulb, Volume2, Clock, Wrench, RotateCw,
+  CloudRain, Lightbulb, Volume2, Clock, Wrench, RotateCw, FlaskConical,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { DeviceState } from '../types';
@@ -13,6 +13,9 @@ import {
 } from '../api/client';
 import { readWeekStart, writeWeekStart, type WeekStart } from '../utils/weekStart';
 import { readTimeFormat, writeTimeFormat, type TimeFormat } from '../utils/timeFormat';
+import { readAutoMapEnabled, writeAutoMapEnabled } from '../utils/autoMapEnabled';
+import { configuredHeightMm } from '../utils/mowDefaults';
+import { readExperimental, writeExperimental } from '../utils/experimental';
 import { MowingDirectionPreview } from '../components/schedule/MowingDirectionPreview';
 import { useToast } from '../components/common/Toast';
 
@@ -33,6 +36,8 @@ export function SettingsPage({ mower }: Props) {
         <NicknameCard key={`nick-${mower.sn}`} mower={mower} />
         <MowerSettingsSection key={`mset-${mower.sn}`} mower={mower} />
         <DisplayCard />
+        <AutoMapCard />
+        <ExperimentalCard />
         <RainAutoPauseCard key={`rain-${mower.sn}`} sn={mower.sn} />
         <NotificationsCard />
       </div>
@@ -252,16 +257,8 @@ function MowerSettingsSection({ mower }: { mower: DeviceState }) {
     const sv = mower.sensors;
     let got = false;
 
-    let ch: number | null = null;
-    const hh = clampInt(sv.defaultCuttingHeight, 0, 90);
-    if (hh != null) {
-      if (hh >= 20) ch = hh;                 // already mm
-      else if (hh <= 7) ch = (hh + 2) * 10;  // wire enum
-      else if (hh <= 9) ch = hh * 10;        // user cm
-    } else {
-      const th = clampInt(sv.target_height, 0, 7);
-      if (th != null) ch = (th + 2) * 10;
-    }
+    // Gedeeld met de Start-sheet zodat de twee niet uit elkaar kunnen lopen.
+    const ch = configuredHeightMm(sv);
     const ob = clampInt(sv.obstacle_avoidance_sensitivity, 1, 3);
     const pd = clampInt(sv.path_direction, 0, 180);
     const jv = clampInt(sv.manual_controller_v, 100, 300);
@@ -769,6 +766,58 @@ function DisplayCard() {
             {seg(tf, '12h', t('settings.timeFormat.h12', '12h'), () => chooseTf('12h'))}
           </div>
         </div>
+      </div>
+    </SettingCard>
+  );
+}
+
+function ExperimentalCard() {
+  const { t } = useTranslation();
+  const [on, setOn] = useState(() => readExperimental());
+  const choose = (v: boolean) => { setOn(v); writeExperimental(v); };
+
+  return (
+    <SettingCard
+      icon={FlaskConical}
+      title={t('settings.experimental.title', 'Experimental features')}
+      help={t('settings.experimental.help', 'Unfinished features that may change or break. Off by default.')}
+    >
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <span className="block text-sm font-semibold text-white">
+            {t('settings.experimental.enable', 'Enable experimental features')}
+          </span>
+          <span className="block text-xs text-gray-500">
+            {t('settings.experimental.note', 'Currently unlocks the Terrain tab.')}
+          </span>
+        </div>
+        <Toggle on={on} onChange={choose} />
+      </div>
+    </SettingCard>
+  );
+}
+
+function AutoMapCard() {
+  const { t } = useTranslation();
+  const [on, setOn] = useState(() => readAutoMapEnabled());
+  const choose = (v: boolean) => { setOn(v); writeAutoMapEnabled(v); };
+
+  return (
+    <SettingCard
+      icon={Compass}
+      title={t('settings.autoMap.title', 'Autonomous mapping')}
+      help={t('settings.autoMap.help', 'Experimental feature for letting the mower map its own boundary.')}
+    >
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <span className="block text-sm font-semibold text-white">
+            {t('settings.autoMap.show', 'Show panel below the map')}
+          </span>
+          <span className="block text-xs text-gray-500">
+            {t('settings.autoMap.note', 'A running session stays visible even with this off.')}
+          </span>
+        </div>
+        <Toggle on={on} onChange={choose} />
       </div>
     </SettingCard>
   );

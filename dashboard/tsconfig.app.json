@@ -24,5 +24,9 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true
   },
-  "include": ["src"]
+  "include": ["src"],
+  // *.check.ts are node:test self-checks run with `node --experimental-strip-types`.
+  // They are not part of the browser bundle and pull in node builtins the app
+  // tsconfig has no types for.
+  "exclude": ["src/**/*.check.ts"]
 }

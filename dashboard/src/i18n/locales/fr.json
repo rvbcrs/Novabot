@@ -647,6 +647,12 @@
       "help": "Fonction expérimentale permettant à la tondeuse de cartographier sa propre limite.",
       "show": "Afficher le panneau sous la carte",
       "note": "Une session en cours reste visible même si ceci est désactivé."
+    },
+    "experimental": {
+      "title": "Fonctions expérimentales",
+      "help": "Fonctions inachevées susceptibles de changer ou de ne pas marcher. Désactivées par défaut.",
+      "enable": "Activer les fonctions expérimentales",
+      "note": "Débloque actuellement l'onglet Terrain."
     }
   },
   "ai": {

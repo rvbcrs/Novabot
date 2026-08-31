@@ -823,6 +823,12 @@
       "help": "Experimentele functie waarbij de maaier zelf de grens in kaart brengt.",
       "show": "Paneel onder de kaart tonen",
       "note": "Een lopende sessie blijft zichtbaar, ook als dit uit staat."
+    },
+    "experimental": {
+      "title": "Experimentele functies",
+      "help": "Onafgemaakte functies die kunnen veranderen of stukgaan. Standaard uit.",
+      "enable": "Experimentele functies inschakelen",
+      "note": "Ontgrendelt op dit moment het tabblad Terrein."
     }
   },
   "ai": {

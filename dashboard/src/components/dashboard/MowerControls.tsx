@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useLayoutEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Play, Pause, Square, ArrowUp, X, ChevronDown, MapPin,
@@ -15,7 +15,7 @@ import {
 } from '../../api/client';
 import { localToGps } from '../../utils/coords';
 import { mmToCutterhigh, workMapsToArea, nextCmdNum } from '../../utils/mqtt';
-import { readMowDefaults } from '../../utils/mowDefaults';
+import { readMowDefaults, configuredHeightMm } from '../../utils/mowDefaults';
 import {
   deriveMowerActivity,
   deriveHasError,
@@ -89,6 +89,19 @@ export function MowerControls({
       dirHydrated.current = true;
     }
   }, [sensors?.path_direction]);
+
+  // Same story for cutting height: the Settings tab writes it to the MOWER, so
+  // the localStorage default (4 cm) used to win here and the Start sheet showed
+  // 4 cm while Settings showed 3 (GH #105). Hydrate once from the device para.
+  const heightHydrated = useRef(false);
+  useEffect(() => {
+    if (heightHydrated.current || !sensors) return;
+    const mm = configuredHeightMm(sensors);
+    if (mm != null) {
+      setCuttingHeight(mm);
+      heightHydrated.current = true;
+    }
+  }, [sensors?.defaultCuttingHeight, sensors?.target_height]);
 
   // Work-map count drives the "no map" gate on the Start button (mirrors the
   // app's serverMapCount === 0). Fetched once per SN; the firmware's map_num
@@ -164,12 +177,45 @@ export function MowerControls({
   const [edgeOffset, setEdgeOffset] = useState(0);
 
   const [showManualControl, setShowManualControl] = useState(false);
+  // Anchor rect for the two dropdown sheets. They used to be absolute inside
+  // the map's floating toolbar, but that container clips them (rounded
+  // overflow-hidden map) and on phone widths the right-anchored sheet ran off
+  // the LEFT edge of the screen. Portaling to <body> with fixed positioning
+  // escapes the clipping; the rect (measured when a sheet opens) keeps the
+  // desktop anchoring, clamped to the viewport for mobile.
+  const toolbarRef = useRef<HTMLDivElement | null>(null);
+  const [sheetAnchor, setSheetAnchor] = useState<{ top: number; right: number } | null>(null);
+  useLayoutEffect(() => {
+    if (!expanded && !mappingExpanded) { setSheetAnchor(null); return; }
+    const r = toolbarRef.current?.getBoundingClientRect();
+    if (!r) return;
+    // Clamp BOTH edges: `right` ≥ 8 keeps the sheet on-screen at the right,
+    // and capping it at vw - width - 8 keeps the LEFT edge on-screen too (on
+    // phones the sheet is viewport-wide while the toolbar sits mid-map, so an
+    // unclamped right-anchor pushes half the sheet off the left edge).
+    const sheetW = window.innerWidth < 640 ? window.innerWidth - 16 : 288;
+    setSheetAnchor({
+      top: r.bottom + 4,
+      right: Math.min(
+        Math.max(8, window.innerWidth - r.right),
+        Math.max(8, window.innerWidth - sheetW - 8),
+      ),
+    });
+  }, [expanded, mappingExpanded]);
   // Manual-control floating window position (px, fixed). Draggable + persistent
   // so it never opens hidden behind the top bar.
+  // Restore-clamp: bring the window FULLY into view — a position saved on a
+  // wide desktop screen would otherwise restore it (mostly) off-screen on a
+  // phone. Width is w-[300px] + border; the drag clamp below stays looser on
+  // purpose so the user can still shove it partially aside while dragging.
+  const clampMcPos = (p: { x: number; y: number }) => ({
+    x: Math.min(Math.max(0, p.x), Math.max(0, window.innerWidth - 308)),
+    y: Math.min(Math.max(0, p.y), Math.max(0, window.innerHeight - 380)),
+  });
   const [mcPos, setMcPos] = useState<{ x: number; y: number }>(() => {
     try {
       const s = localStorage.getItem('novabot.manualPos');
-      if (s) return JSON.parse(s) as { x: number; y: number };
+      if (s) return clampMcPos(JSON.parse(s) as { x: number; y: number });
     } catch { /* ignore */ }
     const w = typeof window !== 'undefined' ? window.innerWidth : 1024;
     return { x: Math.max(8, Math.round(w / 2 - 150)), y: 84 };
@@ -179,7 +225,8 @@ export function MowerControls({
     try { localStorage.setItem('novabot.manualPos', JSON.stringify(mcPos)); } catch { /* ignore */ }
   }, [mcPos]);
   useEffect(() => {
-    const move = (e: MouseEvent) => {
+    // Pointer events (not mouse events) so dragging also works on touch.
+    const move = (e: PointerEvent) => {
       const d = mcDragRef.current;
       if (!d) return;
       const nx = Math.min(Math.max(0, e.clientX - d.ox), window.innerWidth - 80);
@@ -187,9 +234,14 @@ export function MowerControls({
       setMcPos({ x: nx, y: ny });
     };
     const up = () => { mcDragRef.current = null; };
-    window.addEventListener('mousemove', move);
-    window.addEventListener('mouseup', up);
-    return () => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
+    return () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', up);
+    };
   }, []);
 
   // Multi-map mowing is NATIVE in the firmware: one start_navigation with a
@@ -613,7 +665,7 @@ export function MowerControls({
   const patternReady = patternMode && patternId !== null && patternCenter !== null;
 
   return (
-    <div className="relative">
+    <div className="relative" ref={toolbarRef}>
       {/* Re-anchor required banner — shown when the map frame is unvalidated
           (after a bundle restore). Tapping opens the re-anchor wizard. */}
       {frameUnvalidated && (
@@ -783,9 +835,14 @@ export function MowerControls({
 
       </div>
 
-      {/* Expanded start settings dropdown */}
-      {expanded && (
-        <div className="absolute top-full right-0 mt-1 w-[calc(100vw-1rem)] sm:w-72 z-[10000] bg-gray-800 rounded-lg border border-gray-700 shadow-xl max-h-[80vh] overflow-y-auto overflow-x-hidden">
+      {/* Expanded start settings dropdown — portaled to <body> (fixed, clamped
+          to the viewport) so the map container can't clip it and it can never
+          hang off-screen on phone widths. */}
+      {expanded && sheetAnchor && createPortal(
+        <div
+          className="fixed w-[calc(100vw-1rem)] sm:w-72 z-[10000] bg-gray-800 rounded-lg border border-gray-700 shadow-xl max-h-[80vh] overflow-y-auto overflow-x-hidden"
+          style={{ top: sheetAnchor.top, right: sheetAnchor.right }}
+        >
           <div className="p-3 space-y-3">
 
             {/* Mode toggle: Map area / Pattern / Edge cut */}
@@ -1032,11 +1089,14 @@ export function MowerControls({
             </div>
           </div>
         </div>
-      )}
+      , document.body)}
 
-      {/* Mapping dropdown */}
-      {mappingExpanded && !isMappingActive && (
-        <div className="absolute top-full right-0 mt-1 w-[calc(100vw-1rem)] sm:w-64 z-[10000] bg-gray-800 rounded-lg border border-gray-700 shadow-xl p-3 space-y-3">
+      {/* Mapping dropdown — same portal treatment as the start sheet above. */}
+      {mappingExpanded && !isMappingActive && sheetAnchor && createPortal(
+        <div
+          className="fixed w-[calc(100vw-1rem)] sm:w-64 z-[10000] bg-gray-800 rounded-lg border border-gray-700 shadow-xl p-3 space-y-3 max-h-[80vh] overflow-y-auto"
+          style={{ top: sheetAnchor.top, right: sheetAnchor.right }}
+        >
           <div className="space-y-1.5">
             <div className="flex items-center gap-2 text-xs">
               <span className={`w-2 h-2 rounded-full ${gpsEnabled ? 'bg-green-500' : 'bg-red-500'}`} />
@@ -1062,7 +1122,7 @@ export function MowerControls({
             {busy ? t('controls.busy') : t('controls.startAutonomousMapping')}
           </button>
         </div>
-      )}
+      , document.body)}
 
 
       {/* Return-to-home keuze (zoals de OpenNova app): beëindigen of pauzeren + terug. */}
@@ -1130,8 +1190,8 @@ export function MowerControls({
         >
           {/* Drag handle header */}
           <div
-            className="flex items-center gap-2 px-3 py-2 cursor-move select-none border-b border-gray-700/60"
-            onMouseDown={(e) => {
+            className="flex items-center gap-2 px-3 py-2 cursor-move select-none border-b border-gray-700/60 touch-none"
+            onPointerDown={(e) => {
               if ((e.target as HTMLElement).closest('button')) return;
               mcDragRef.current = { ox: e.clientX - mcPos.x, oy: e.clientY - mcPos.y };
               e.preventDefault();

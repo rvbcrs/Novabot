@@ -533,7 +533,7 @@ export function DeviceChips({ mower, charger, knownMowers, onSelectMower, part }
   const telemetryEl = (
     <button
       onClick={openDrawer}
-            className="group inline-flex items-stretch h-8 rounded-xl bg-zinc-900/60 border border-zinc-700/70 hover:border-zinc-600 overflow-hidden transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+            className="group inline-flex flex-wrap items-stretch min-h-8 max-w-full rounded-xl bg-zinc-900/60 border border-zinc-700/70 hover:border-zinc-600 overflow-hidden transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
             aria-label={`${mower.nickname ?? mower.sn} sensor details`}
           >
             {/* Online dot — pulses while actively mowing/edge-cutting */}

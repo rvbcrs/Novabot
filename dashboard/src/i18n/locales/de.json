@@ -647,6 +647,12 @@
       "help": "Experimentelle Funktion, bei der der Mäher seine Grenze selbst kartiert.",
       "show": "Panel unter der Karte anzeigen",
       "note": "Eine laufende Sitzung bleibt sichtbar, auch wenn dies aus ist."
+    },
+    "experimental": {
+      "title": "Experimentelle Funktionen",
+      "help": "Unfertige Funktionen, die sich ändern oder ausfallen können. Standardmäßig aus.",
+      "enable": "Experimentelle Funktionen aktivieren",
+      "note": "Schaltet derzeit den Tab Gelände frei."
     }
   },
   "ai": {

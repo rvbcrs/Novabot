@@ -776,6 +776,12 @@
       "help": "Experimental feature for letting the mower map its own boundary.",
       "show": "Show panel below the map",
       "note": "A running session stays visible even with this off."
+    },
+    "experimental": {
+      "title": "Experimental features",
+      "help": "Unfinished features that may change or break. Off by default.",
+      "enable": "Enable experimental features",
+      "note": "Currently unlocks the Terrain tab."
     }
   },
   "ai": {

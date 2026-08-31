@@ -4,6 +4,7 @@ import type { TFunction } from 'i18next';
 import { Compass, Loader2, CheckCircle2, XCircle, AlertTriangle, Square } from 'lucide-react';
 import { apiFetch } from '../../api/client';
 import { getSocket } from '../../api/socket';
+import { useAutoMapEnabled } from '../../utils/autoMapEnabled';
 
 /**
  * Dashboard-paneel voor "Autonoom karteren" (route B) — start/voortgang/review.
@@ -140,6 +141,7 @@ interface Props {
  */
 export function AutoMapPanel({ sn }: Props) {
   const { t } = useTranslation();
+  const enabled = useAutoMapEnabled();
   const [status, setStatus] = useState<AutoMapStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [mode, setMode] = useState<AutoMapMode>('test');
@@ -183,7 +185,11 @@ export function AutoMapPanel({ sn }: Props) {
     setStatus(null);
     void refresh();
 
-    const timer = setInterval(() => { void refresh(); }, POLL_MS);
+    // Only poll when the feature is switched on. With it off the panel is
+    // hidden, so a 10s heartbeat would be pure noise — but the initial fetch
+    // above and the socket listener below still run, so a session started
+    // elsewhere (another tab, the app) makes the panel reappear on its own.
+    const timer = enabled ? setInterval(() => { void refresh(); }, POLL_MS) : null;
 
     const socket = getSocket();
     const onProgress = (e: AutoMapProgressEvent) => {
@@ -193,10 +199,10 @@ export function AutoMapPanel({ sn }: Props) {
 
     return () => {
       reqSeqRef.current++;
-      clearInterval(timer);
+      if (timer) clearInterval(timer);
       socket.off('auto_map_progress', onProgress);
     };
-  }, [sn, refresh]);
+  }, [sn, refresh, enabled]);
 
   const handleStart = useCallback(async () => {
     // Klem + parse ook vóór het starten van een sessie, niet alleen op blur —
@@ -255,6 +261,12 @@ export function AutoMapPanel({ sn }: Props) {
   const isReview = phase === 'awaiting_review';
   const isTerminal = TERMINAL_PHASES.has(phase) && !dismissed;
   const showForm = phase === 'idle' || (TERMINAL_PHASES.has(phase) && dismissed);
+
+  // Hidden unless switched on in Settings — EXCEPT while a session is running
+  // or waiting to be reviewed. Those states own the stop and accept/reject
+  // buttons; a display preference must never be able to strand a live session
+  // with no way to end it.
+  if (!enabled && !isRunning && !isReview) return null;
 
   return (
     <div className="bg-gray-900 border border-gray-700 rounded-xl p-3 md:p-4 flex flex-col gap-3 flex-shrink-0">
