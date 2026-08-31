@@ -287,9 +287,12 @@ echo "Root password configured for SSH" >> \$path/start_service.log
 # ============================================================
 SSHEOF
 
-# Voeg het SSH blok toe na de dnsmasq install regel in start_service.sh
-if grep -q "sudo apt install -y dnsmasq" "$START_SERVICE"; then
-    sed -i '' '/sudo apt install -y dnsmasq/r /tmp/ssh_install_block.sh' "$START_SERVICE"
+# Voeg het SSH blok toe na de dnsmasq install regel in start_service.sh.
+# ponytail: anker op kolom 0 — "sudo apt install -y dnsmasq" staat OOK in een
+# uitgecommentarieerde regel verderop, en `sed /re/r` voegt na ELKE match in.
+# Zonder de ^ krijg je het blok dus dubbel (GH #82).
+if grep -q "^sudo apt install -y dnsmasq" "$START_SERVICE"; then
+    sed -i '' '/^sudo apt install -y dnsmasq/r /tmp/ssh_install_block.sh' "$START_SERVICE"
     echo "  SSH installatie toegevoegd na dnsmasq install"
 else
     # Fallback: voeg toe voor de laatste echo
@@ -457,8 +460,8 @@ SRVEOF
     if grep -q "Root password configured for SSH" "$START_SERVICE"; then
         sed -i '' '/Root password configured for SSH/r /tmp/novabot_server_install.sh' "$START_SERVICE"
         echo "  Novabot-server installatie toegevoegd na SSH blok"
-    elif grep -q "sudo apt install -y dnsmasq" "$START_SERVICE"; then
-        sed -i '' '/sudo apt install -y dnsmasq/r /tmp/novabot_server_install.sh' "$START_SERVICE"
+    elif grep -q "^sudo apt install -y dnsmasq" "$START_SERVICE"; then
+        sed -i '' '/^sudo apt install -y dnsmasq/r /tmp/novabot_server_install.sh' "$START_SERVICE"
         echo "  Novabot-server installatie toegevoegd na dnsmasq install"
     else
         sed -i '' '/^echo "start service finish"/r /tmp/novabot_server_install.sh' "$START_SERVICE"
@@ -1273,7 +1276,7 @@ OPENNOVA_DISCOVERY_UNIT_EOF
     echo "opennova-discovery.service enabled" >> $path/start_service.log
 fi
 DISCSVC
-        sed -i '' '/sudo apt install -y dnsmasq/r /tmp/opennova_discovery_install.sh' "$START_SERVICE"
+        sed -i '' '/^sudo apt install -y dnsmasq/r /tmp/opennova_discovery_install.sh' "$START_SERVICE"
         rm -f "$DISCOVERY_INSTALL_BLOCK"
         echo "  opennova-discovery systemd unit hook toegevoegd aan start_service.sh"
     fi
