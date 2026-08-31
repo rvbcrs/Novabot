@@ -14,7 +14,8 @@
     "pushed": " (veröffentlicht {{when}})",
     "howTo": "Anleitung",
     "dismiss": "Ausblenden",
-    "instructions": "Container auf dem Host aktualisieren und neu starten:"
+    "instructions": "Container auf dem Host aktualisieren und neu starten:",
+    "openManager": "Container-Verwaltung"
   },
   "header": {
     "dashboard": "Dashboard",
@@ -653,6 +654,11 @@
       "help": "Unfertige Funktionen, die sich ändern oder ausfallen können. Standardmäßig aus.",
       "enable": "Experimentelle Funktionen aktivieren",
       "note": "Schaltet derzeit den Tab Gelände frei."
+    },
+    "containerManager": {
+      "title": "Container-Verwaltung",
+      "help": "Optionaler Link zu Portainer o. Ä. Erscheint als Verknüpfung, sobald ein Update verfügbar ist.",
+      "invalid": "Muss eine vollständige http:// oder https:// Adresse sein."
     }
   },
   "ai": {

@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import {
   Tag, Bell, Check, Loader2, Smartphone, Radio, Home as HomeIcon, Mail,
   Scissors, Compass, Minus, Plus, Monitor, Shield, Gamepad2, Gauge, Battery, Power,
-  CloudRain, Lightbulb, Volume2, Clock, Wrench, RotateCw, FlaskConical,
+  CloudRain, Lightbulb, Volume2, Clock, Wrench, RotateCw, FlaskConical, ExternalLink,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { DeviceState } from '../types';
@@ -16,6 +16,7 @@ import { readTimeFormat, writeTimeFormat, type TimeFormat } from '../utils/timeF
 import { readAutoMapEnabled, writeAutoMapEnabled } from '../utils/autoMapEnabled';
 import { configuredHeightMm } from '../utils/mowDefaults';
 import { readExperimental, writeExperimental } from '../utils/experimental';
+import { readContainerManagerUrl, writeContainerManagerUrl, normalizeManagerUrl } from '../utils/containerManagerUrl';
 import { MowingDirectionPreview } from '../components/schedule/MowingDirectionPreview';
 import { useToast } from '../components/common/Toast';
 
@@ -37,6 +38,7 @@ export function SettingsPage({ mower }: Props) {
         <MowerSettingsSection key={`mset-${mower.sn}`} mower={mower} />
         <DisplayCard />
         <AutoMapCard />
+        <ContainerManagerCard />
         <ExperimentalCard />
         <RainAutoPauseCard key={`rain-${mower.sn}`} sn={mower.sn} />
         <NotificationsCard />
@@ -767,6 +769,46 @@ function DisplayCard() {
           </div>
         </div>
       </div>
+    </SettingCard>
+  );
+}
+
+function ContainerManagerCard() {
+  const { t } = useTranslation();
+  const [draft, setDraft] = useState(() => readContainerManagerUrl());
+  const invalid = draft.trim() !== '' && normalizeManagerUrl(draft) === null;
+
+  // Save on blur — no button for a single optional field.
+  const commit = () => {
+    writeContainerManagerUrl(draft);
+    const stored = readContainerManagerUrl();
+    if (stored) setDraft(stored);
+  };
+
+  return (
+    <SettingCard
+      icon={ExternalLink}
+      title={t('settings.containerManager.title', 'Container manager')}
+      help={t('settings.containerManager.help', 'Optional link to Portainer or similar. Shown as a shortcut when an update is available.')}
+    >
+      <input
+        type="url"
+        inputMode="url"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        placeholder="http://192.168.1.10:9000"
+        className={`w-full bg-gray-900/60 border rounded-lg px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:ring-1 transition-colors ${
+          invalid
+            ? 'border-rose-600 focus:border-rose-500 focus:ring-rose-500/40'
+            : 'border-gray-700 focus:border-emerald-500 focus:ring-emerald-500/40'
+        }`}
+      />
+      {invalid && (
+        <span className="block mt-1 text-xs text-rose-400">
+          {t('settings.containerManager.invalid', 'Must be a full http:// or https:// address.')}
+        </span>
+      )}
     </SettingCard>
   );
 }

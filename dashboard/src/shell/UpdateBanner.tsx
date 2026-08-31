@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import { ArrowUpCircle, X } from 'lucide-react';
+import { ArrowUpCircle, X, ExternalLink } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { getServerUpdate, type ServerUpdateInfo } from '../api/client';
+import { useContainerManagerUrl } from '../utils/containerManagerUrl';
 
 const POLL_MS = 10 * 60 * 1000; // match the admin panel; server caches 5 min
 const DISMISS_KEY = 'novabot.update.dismissed';
@@ -14,6 +15,7 @@ const DISMISS_KEY = 'novabot.update.dismissed';
  */
 export function UpdateBanner() {
   const { t } = useTranslation();
+  const managerUrl = useContainerManagerUrl();
   const [info, setInfo] = useState<ServerUpdateInfo | null>(null);
   const [dismissed, setDismissed] = useState<string>(() => {
     try { return localStorage.getItem(DISMISS_KEY) || ''; } catch { return ''; }
@@ -52,6 +54,17 @@ export function UpdateBanner() {
         <span className="font-semibold">{t('update.title')}</span>
         <span className="text-violet-200/80">{detail}</span>
         <div className="ml-auto flex items-center gap-2">
+          {managerUrl && (
+            <a
+              href={managerUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-2.5 py-1 rounded-md bg-violet-500/40 hover:bg-violet-500/60 text-white text-xs font-medium transition-colors flex items-center gap-1"
+            >
+              <ExternalLink className="w-3 h-3" />
+              {t('update.openManager', 'Container manager')}
+            </a>
+          )}
           <button
             onClick={() => setShowHow(v => !v)}
             className="px-2.5 py-1 rounded-md bg-violet-500/40 hover:bg-violet-500/60 text-white text-xs font-medium transition-colors"
