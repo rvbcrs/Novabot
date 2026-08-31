@@ -14,8 +14,7 @@
     "pushed": " (pushed {{when}})",
     "howTo": "How to update",
     "dismiss": "Dismiss",
-    "instructions": "Pull and restart the OpenNova container on your host:",
-    "openManager": "Container manager"
+    "instructions": "Pull and restart the OpenNova container on your host:"
   },
   "header": {
     "dashboard": "Dashboard",
@@ -783,11 +782,6 @@
       "help": "Unfinished features that may change or break. Off by default.",
       "enable": "Enable experimental features",
       "note": "Currently unlocks the Terrain tab."
-    },
-    "containerManager": {
-      "title": "Container manager",
-      "help": "Optional link to Portainer or similar. Shown as a shortcut when an update is available.",
-      "invalid": "Must be a full http:// or https:// address."
     }
   },
   "ai": {

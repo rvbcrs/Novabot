@@ -14,8 +14,7 @@
     "pushed": " (gepusht {{when}})",
     "howTo": "Hoe updaten",
     "dismiss": "Verbergen",
-    "instructions": "Pull en herstart de OpenNova-container op je host:",
-    "openManager": "Containerbeheer"
+    "instructions": "Pull en herstart de OpenNova-container op je host:"
   },
   "header": {
     "dashboard": "Dashboard",
@@ -830,11 +829,6 @@
       "help": "Onafgemaakte functies die kunnen veranderen of stukgaan. Standaard uit.",
       "enable": "Experimentele functies inschakelen",
       "note": "Ontgrendelt op dit moment het tabblad Terrein."
-    },
-    "containerManager": {
-      "title": "Containerbeheer",
-      "help": "Optionele link naar Portainer of vergelijkbaar. Verschijnt als snelkoppeling zodra er een update klaarstaat.",
-      "invalid": "Moet een volledig http:// of https:// adres zijn."
     }
   },
   "ai": {

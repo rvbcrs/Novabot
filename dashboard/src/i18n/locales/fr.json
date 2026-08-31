@@ -14,8 +14,7 @@
     "pushed": " (publié {{when}})",
     "howTo": "Comment mettre à jour",
     "dismiss": "Masquer",
-    "instructions": "Mettez à jour et redémarrez le conteneur OpenNova sur votre hôte :",
-    "openManager": "Gestionnaire"
+    "instructions": "Mettez à jour et redémarrez le conteneur OpenNova sur votre hôte :"
   },
   "header": {
     "dashboard": "Tableau de bord",
@@ -654,11 +653,6 @@
       "help": "Fonctions inachevées susceptibles de changer ou de ne pas marcher. Désactivées par défaut.",
       "enable": "Activer les fonctions expérimentales",
       "note": "Débloque actuellement l'onglet Terrain."
-    },
-    "containerManager": {
-      "title": "Gestionnaire de conteneurs",
-      "help": "Lien facultatif vers Portainer ou équivalent. Affiché en raccourci lorsqu'une mise à jour est disponible.",
-      "invalid": "Doit être une adresse http:// ou https:// complète."
     }
   },
   "ai": {
