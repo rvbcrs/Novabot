@@ -37,7 +37,18 @@ const NON_BLOCKING_ERRORS = [8, 113, 118, 120, 122, 123, 124, 125, 126, 132, 139
 const IDLE_WORK_STATES = ['0', '9', '70', '72', 'Idle', 'Ready', 'Finished once', 'Cancelled'];
 
 /** Recharge_status values that mean "driving back to the dock". */
-const RETURNING_RECHARGE_STATUS = new Set([1, 2, 191, 192, 193]);
+// 50/53: stock 5.7.1 rapporteert de terugrit NA het afmaken met die codes
+// (#31, live data waltervl); de msg matcht daar geen enkele regex. De
+// numerieke match wordt onderdrukt bij "Recharge: FINISHED" in msg
+// (laden-klaar is geen terugrit) als rem op blijven-hangen-waarden.
+const RETURNING_RECHARGE_STATUS = new Set([1, 2, 50, 53, 191, 192, 193]);
+
+/** recharge_status ruw ("50") of server-vertaald ("Charging (50)" / kaal
+ *  "Charging" voor code 1) naar het nummer. */
+export function parseRechargeStatus(value: string | undefined): number {
+  if (value === 'Charging') return 1;
+  return parseInt(value?.match(/\d+/)?.[0] ?? '0', 10);
+}
 
 /**
  * Derive `hasError` the same way the app does: error_status > 0 AND not one of
@@ -64,7 +75,12 @@ export function isInterruptedCoverage(sensors: Sensors): boolean {
   const pausedForRecharge =
     /Work:USER_RECHARGE_STOP\b/.test(msg) || /Work:BATTERY_LOW_RECHARGE\b/.test(msg);
   const pausedByUser = /Work:USER_STOP\b/.test(msg) || /Work:PAUSED\b/.test(msg);
-  return onDock && taskMode === 1 && (pausedForRecharge || pausedByUser);
+  // Stock 5.7.1 zet bij een accu-laadpauze midden in een beurt geen van de
+  // msg-strings hierboven, maar work_status 12 ("Low power") — de sleutel uit
+  // #30. Zelfde hervatbare pauze, dus zelfde Continue-gedrag.
+  const ws = sensors?.work_status ?? '';
+  const lowPowerPause = ws === '12' || ws === 'Low power';
+  return onDock && taskMode === 1 && (pausedForRecharge || pausedByUser || lowPowerPause);
 }
 
 /**
@@ -104,7 +120,10 @@ export function deriveMowerActivity(
   const workStatus = s.work_status ?? '0';
   const batteryState = (s.battery_state ?? '').toUpperCase();
   const taskMode = parseInt(s.task_mode ?? '0', 10);
-  const rechargeStatus = parseInt(s.recharge_status ?? '0', 10);
+  // recharge_status komt ruw ("50") of vertaald ("Charging (50)", kaal
+  // "Charging" voor code 1) binnen; parseInt op het label gaf NaN waardoor de
+  // numerieke returning-lijst dode code was (#31). Zie parseRechargeStatus.
+  const rechargeStatus = parseRechargeStatus(s.recharge_status);
   const msg = s.msg ?? '';
 
   // On dock = battery_state CHARGING (the app uses CHARGING here, NOT FINISHED,
@@ -131,8 +150,9 @@ export function deriveMowerActivity(
 
   const isDockFailed = msg.includes('Recharge: FAILED');
 
+  const rechargeTerminal = /Recharge:\s*FINISHED/i.test(msg);
   const isReturning =
-    (RETURNING_RECHARGE_STATUS.has(rechargeStatus) ||
+    ((RETURNING_RECHARGE_STATUS.has(rechargeStatus) && !rechargeTerminal) ||
       /Recharge:\s*(GOING|ALIGN_PILE|ALIGNING|MOVING|RUNNING|BACK|DOCKING)/i.test(msg) ||
       msg.includes('Work:GO_PILE') ||
       msg.includes('Work:BACK_CHARGER') ||

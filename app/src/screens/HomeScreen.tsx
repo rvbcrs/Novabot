@@ -198,7 +198,14 @@ function deriveMower(mower: DeviceState | null): MowerDerived | null {
   // - recharge_status: 0=IDLE, 1=GOING, 9=FINISHED
   // - msg: "Mode:COVERAGE Work:RUNNING" etc.
   const taskMode = parseInt(s.task_mode ?? '0', 10);
-  const rechargeStatus = parseInt(s.recharge_status ?? '0', 10);
+  // recharge_status komt afhankelijk van het pad RUW ("50") of VERTAALD
+  // ("Charging (50)", of kaal "Charging" voor code 1) binnen. parseInt op het
+  // label gaf NaN, waardoor de hele numerieke returning-lijst sinds de
+  // vertaling DODE code was (#31). Cijfer-extractie dekt beide vormen.
+  const rechargeRaw = s.recharge_status ?? '0';
+  const rechargeStatus = rechargeRaw === 'Charging'
+    ? 1
+    : parseInt(rechargeRaw.match(/\d+/)?.[0] ?? '0', 10);
   const msg = s.msg ?? '';
   const isOnDock = batteryState === 'CHARGING';
   const isCoverageRunning = msg.includes('Work:RUNNING') || msg.includes('Work:NAVIGATING') || msg.includes('Work:COVERING') || msg.includes('Work:MOVING')
@@ -226,9 +233,16 @@ function deriveMower(mower: DeviceState | null): MowerDerived | null {
   //    0   = NONE (not docking)
   // Anything else with task_mode === 1 (we were running coverage) is a
   // returning state.
-  const RETURNING_RECHARGE_STATUS = new Set([1, 2, 191, 192, 193]);
+  // 50/53 erbij: stock 5.7.1 rapporteert de terugrit NA het afmaken met die
+  // codes (#31, waltervl's live data) — de msg matcht daar geen enkele regex,
+  // dus alleen het nummer verraadt de rit. De numerieke match wordt wel
+  // onderdrukt zodra msg expliciet "Recharge: FINISHED" zegt: laden-klaar is
+  // zeker geen terugrit, en dat vangt een eventueel blijven hangen nummer af
+  // nu de (jarenlang dode) numerieke tak weer echt meedoet.
+  const RETURNING_RECHARGE_STATUS = new Set([1, 2, 50, 53, 191, 192, 193]);
+  const rechargeTerminal = /Recharge:\s*FINISHED/i.test(msg);
   const isReturning = (
-    RETURNING_RECHARGE_STATUS.has(rechargeStatus)
+    (RETURNING_RECHARGE_STATUS.has(rechargeStatus) && !rechargeTerminal)
     || /Recharge:\s*(GOING|ALIGN_PILE|ALIGNING|MOVING|RUNNING|BACK|DOCKING)/i.test(msg)
     || msg.includes('Work:GO_PILE')
     || msg.includes('Work:BACK_CHARGER')
@@ -2464,8 +2478,15 @@ export default function HomeScreen() {
                 const pausedByUser =
                   /Work:USER_STOP\b/.test(busyMsg) ||
                   /Work:PAUSED\b/.test(busyMsg);
+                // Stock 5.7.1 zet bij een accu-laadpauze midden in een beurt
+                // GEEN van bovenstaande msg-strings, maar work_status 12
+                // ("Low power") — de sleutel die beide melders van #30
+                // aanleverden. Gedockt + coverage-taak + Low power = zelfde
+                // hervatbare pauze, dus ook dan Continue i.p.v. verse start.
+                const wsRaw = sensorsForResume?.work_status ?? '';
+                const lowPowerPause = wsRaw === '12' || wsRaw === 'Low power';
                 const isInterruptedCoverage =
-                  onDock && taskMode === 1 && (pausedForRecharge || pausedByUser);
+                  onDock && taskMode === 1 && (pausedForRecharge || pausedByUser || lowPowerPause);
                 const startDisabled = !mower.online || mower.hasError || noMap || mowerBusy || frameUnvalidated;
                 // Keep the chevron (start-modes) reachable even when "Continue"
                 // is shown, so the user can always start a fresh session instead
