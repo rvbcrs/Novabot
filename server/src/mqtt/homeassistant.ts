@@ -6,6 +6,11 @@
  */
 import mqtt, { MqttClient } from 'mqtt';
 import { SENSORS, SensorDef, deviceCache, parseCommand } from './sensorData.js';
+import { deriveMowerActivity, isInterruptedCoverage, type MowerActivity } from './mowerActivity.js';
+// LET OP: mowingService/scheduleRunner/mapSync worden LAZY geïmporteerd in
+// handleLawnMowerCommand. Eager zou een module-cyclus sluiten
+// (broker → homeassistant → mowingService → broker) die afhankelijk van de
+// import-volgorde een TDZ-crash geeft (setDemoModeChecker vóór init).
 
 const TAG = '[HA-MQTT]';
 
@@ -122,6 +127,7 @@ function publishAllDiscoveryConfigs(): void {
   for (const [sn, fields] of deviceCache.entries()) {
     publishOnlineDiscoveryConfig(sn);
     publishMapImageDiscoveryConfig(sn);
+    publishLawnMowerDiscoveryConfig(sn);
     for (const field of fields.keys()) {
       const sensor = SENSORS.find(s => s.field === field);
       if (sensor) publishDiscoveryConfig(sn, sensor);
@@ -194,6 +200,158 @@ function publishMapImageUrl(sn: string): void {
   haClient.publish(`novabot/${sn}/map_url`, url, { retain: true });
 }
 
+// ── Lawn mower entity ────────────────────────────────────────────
+//
+// HA's MQTT lawn_mower platform (HA ≥ 2023.9): one proper mower entity
+// with activity (mowing/paused/docked/error) plus start/pause/dock
+// commands, so the standard lawn-mower dashboard card finds the Novabot.
+// Commands arrive on our own novabot/<sn>/set/* topics on HA's Mosquitto
+// (we are a bridge CLIENT there, so we simply subscribe).
+
+const HA_CMD_TOPIC_RE = /^novabot\/([A-Z0-9]+)\/set\/(start_mowing|pause|dock)$/;
+
+function publishLawnMowerDiscoveryConfig(sn: string): void {
+  if (!haClient || !connected) return;
+  if (!sn.startsWith('LFIN')) return;
+
+  const configKey = `${sn}:lawn_mower`;
+  if (publishedConfigs.has(configKey)) return;
+
+  const objectId = `novabot_${sn}_mower`;
+  const configTopic = `${HA_DISCOVERY_PREFIX}/lawn_mower/${objectId}/config`;
+
+  const config = {
+    name: 'Mower',
+    unique_id: objectId,
+    object_id: objectId,
+    activity_state_topic: `novabot/${sn}/activity`,
+    start_mowing_command_topic: `novabot/${sn}/set/start_mowing`,
+    pause_command_topic: `novabot/${sn}/set/pause`,
+    dock_command_topic: `novabot/${sn}/set/dock`,
+    device: makeDevice(sn),
+    availability: [
+      { topic: `novabot/${sn}/availability`, payload_available: 'online', payload_not_available: 'offline' },
+      { topic: 'novabot/bridge/status', payload_available: 'online', payload_not_available: 'offline' },
+    ],
+    availability_mode: 'all',
+  };
+
+  haClient.publish(configTopic, JSON.stringify(config), { retain: true, qos: 1 }, (err) => {
+    if (!err) publishedConfigs.add(configKey);
+    else console.error(`${TAG} lawn_mower discovery fout voor ${objectId}: ${err.message}`);
+  });
+}
+
+/** Onze 9-staten activiteit → de 4 die HA's lawn_mower kent.
+ *  'none' reset de entiteit naar unknown (idle midden op het gazon —
+ *  geen van de vier HA-staten is dan waar). */
+export function toHaActivity(activity: MowerActivity, sensors: Record<string, string>): string {
+  switch (activity) {
+    case 'error': return 'error';
+    case 'paused': return 'paused';
+    case 'charging': return 'docked';
+    case 'mowing':
+    case 'edge_cutting':
+    case 'returning':
+    case 'mapping':
+      return 'mowing';
+    case 'idle':
+      // Vol en op de dock rapporteert battery_state FINISHED en valt in 'idle'.
+      return (sensors.battery_state ?? '').toUpperCase() === 'FINISHED' ? 'docked' : 'none';
+    default:
+      return 'none';
+  }
+}
+
+const lastHaActivity = new Map<string, string>();
+
+function publishMowerActivity(sn: string): void {
+  if (!haClient || !connected) return;
+  if (!sn.startsWith('LFIN')) return;
+
+  const raw = deviceCache.get(sn);
+  if (!raw) return;
+  const sensors = Object.fromEntries(raw);
+  // Deze functie draait alleen als het apparaat net data stuurde → online.
+  const activity = deriveMowerActivity(sensors, { online: true });
+  const ha = toHaActivity(activity, sensors);
+  if (lastHaActivity.get(sn) === ha) return;
+  lastHaActivity.set(sn, ha);
+  publishLawnMowerDiscoveryConfig(sn);
+  haClient.publish(`novabot/${sn}/activity`, ha, { retain: true });
+}
+
+/** Ingestelde maaihoogte uit device_settings, terug naar cm (2-9).
+ *  Zelfde eenheid-sniffing als de dashboard-Settings: ≥20 = mm,
+ *  ≤7 = wire-enum (cm-2), ≤9 = user-cm. Zie ook GH #112. */
+function sniffHeightCm(value: string | undefined): number | undefined {
+  const n = value != null ? parseInt(value, 10) : NaN;
+  if (!Number.isFinite(n) || n < 0 || n > 90) return undefined;
+  if (n >= 20) return Math.round(n / 10);
+  if (n <= 7) return n + 2;
+  if (n <= 9) return n;
+  return undefined;
+}
+
+/** Verwerk een lawn_mower commando uit HA. VEILIGHEID: dit laat een echte
+ *  maaier rijden — start alleen vanuit paused/docked/idle, nooit blind. */
+export async function handleLawnMowerCommand(sn: string, action: 'start_mowing' | 'pause' | 'dock'): Promise<void> {
+  const raw = deviceCache.get(sn);
+  if (!raw || !sn.startsWith('LFIN')) {
+    console.log(`${TAG} lawn_mower cmd '${action}' voor onbekende sn ${sn} — genegeerd`);
+    return;
+  }
+  const sensors = Object.fromEntries(raw);
+  const activity = deriveMowerActivity(sensors, { online: true });
+  const cmdNum = Date.now() % 100000;
+
+  switch (action) {
+    case 'start_mowing': {
+      if (activity === 'paused' || isInterruptedCoverage(sensors)) {
+        const { publishToDevice } = await import('./mapSync.js');
+        publishToDevice(sn, { resume_navigation: { cmd_num: cmdNum } });
+        console.log(`${TAG} HA start_mowing → resume_navigation (${sn}, activity=${activity})`);
+        return;
+      }
+      if (activity !== 'charging' && activity !== 'idle') {
+        console.log(`${TAG} HA start_mowing geweigerd: ${sn} activity=${activity} (alleen vanuit docked/idle/paused)`);
+        return;
+      }
+      const [{ startMowing }, { computeScheduleArea }, { mapRepo, deviceSettingsRepo }] = await Promise.all([
+        import('../services/mowingService.js'),
+        import('../services/scheduleRunner.js'),
+        import('../db/repositories/index.js'),
+      ]);
+      const workMaps = mapRepo.findByMowerSnAndType(sn, 'work');
+      const area = computeScheduleArea(workMaps, null); // null = alle zones
+      const height = sniffHeightCm(deviceSettingsRepo.findBySn(sn).find(r => r.key === 'defaultCuttingHeight')?.value);
+      const result = startMowing({ sn, cuttingHeight: height, area });
+      console.log(`${TAG} HA start_mowing → startMowing (${sn}, area=${area}): ${result.ok ? 'ok' : result.error}`);
+      return;
+    }
+    case 'pause': {
+      if (activity !== 'mowing' && activity !== 'edge_cutting' && activity !== 'returning') {
+        console.log(`${TAG} HA pause genegeerd: ${sn} activity=${activity}`);
+        return;
+      }
+      const { publishToDevice } = await import('./mapSync.js');
+      publishToDevice(sn, { pause_navigation: { cmd_num: cmdNum } });
+      console.log(`${TAG} HA pause → pause_navigation (${sn})`);
+      return;
+    }
+    case 'dock': {
+      if (activity === 'charging' || activity === 'returning') {
+        console.log(`${TAG} HA dock genegeerd: ${sn} activity=${activity}`);
+        return;
+      }
+      const { goHome } = await import('../services/mowingService.js');
+      const result = goHome(sn);
+      console.log(`${TAG} HA dock → goHome (${sn}): ${result.ok ? 'ok' : result.error}`);
+      return;
+    }
+  }
+}
+
 // ── State publishing ─────────────────────────────────────────────
 
 const lastPublishTime = new Map<string, number>();
@@ -239,6 +397,9 @@ export function forwardToHomeAssistant(
   // Publiceer ook de map-image URL (eigen throttle, zie publishMapImageUrl)
   publishMapImageDiscoveryConfig(sn);
   publishMapImageUrl(sn);
+
+  // En de afgeleide lawn_mower activiteit (publiceert alleen bij verandering)
+  publishMowerActivity(sn);
 }
 
 // ── Online/offline status ────────────────────────────────────────
@@ -287,7 +448,19 @@ export function startHomeAssistantBridge(): void {
     connected = true;
     console.log(`${TAG} Verbonden met HA Mosquitto op ${brokerUrl}`);
     haClient!.publish('novabot/bridge/status', 'online', { retain: true });
+    // Commandokanaal van de lawn_mower entiteit (start/pause/dock uit HA)
+    haClient!.subscribe('novabot/+/set/+', { qos: 1 }, (err) => {
+      if (err) console.error(`${TAG} Subscribe op commandotopics mislukt: ${err.message}`);
+    });
     publishAllDiscoveryConfigs();
+  });
+
+  haClient.on('message', (topic) => {
+    const m = topic.match(HA_CMD_TOPIC_RE);
+    if (!m) return;
+    handleLawnMowerCommand(m[1], m[2] as 'start_mowing' | 'pause' | 'dock').catch((err) => {
+      console.error(`${TAG} lawn_mower cmd fout (${topic}): ${err instanceof Error ? err.message : err}`);
+    });
   });
 
   haClient.on('close', () => {
