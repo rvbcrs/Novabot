@@ -3335,12 +3335,12 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
             <CircleMarker
               key={`missed-${i}`}
               center={pos}
-              radius={5}
+              radius={2.5}
               pathOptions={{
                 color: '#f97316',
                 fillColor: '#f97316',
-                fillOpacity: 0.85,
-                weight: 1.5,
+                fillOpacity: 0.4,
+                weight: 0,
               }}
             >
               <Tooltip sticky>{t('map.missedPoint', 'Missed point')}</Tooltip>
