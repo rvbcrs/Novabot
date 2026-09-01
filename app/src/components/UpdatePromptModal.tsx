@@ -47,7 +47,7 @@ export function UpdatePromptModal({ latest, onClose }: Props) {
     setBusy(true);
     setError(null);
     try {
-      const { uri } = await downloadApk(latest.apkUrl, latest.sha256, setProgress);
+      const { uri } = await downloadApk(latest.apkUrl, setProgress);
       await installApk(uri);
       onClose();
     } catch (e) {

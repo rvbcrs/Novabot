@@ -13,7 +13,6 @@ import * as Application from 'expo-application';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as IntentLauncher from 'expo-intent-launcher';
 import * as SecureStore from 'expo-secure-store';
-import { sha256 } from 'js-sha256';
 
 const SKIP_KEY = 'appUpdate.skippedVersion';
 const URL_KEY = 'appUpdate.manifestUrl';
@@ -165,18 +164,25 @@ export async function checkForUpdate(): Promise<AppLatest | null> {
 }
 
 // ---------------------------------------------------------------------------
-// Download + SHA256 verification
+// Download
 // ---------------------------------------------------------------------------
 
 /**
- * Downloads the APK to the cache directory, verifies the SHA256 hash, and
- * resolves with the local URI.
+ * Downloads the APK to the cache directory and resolves with the local URI.
  *
- * On hash mismatch the downloaded file is deleted and an error is thrown.
+ * GEEN eigen hash-verificatie meer. Die stond hier als chunked SHA256 in
+ * JavaScript en blokkeerde de JS-thread ruim een minuut bij een 112 MB APK,
+ * terwijl de UI "Downloading 100%" bleef tonen — gebruikers zagen een hang
+ * en kilden de app. En hij bewees niets: Android's installer verifieert de
+ * APK-handtekening over het hele bestand (kapotte download = installatie
+ * geweigerd), en een update installeert alleen als hij met hetzelfde
+ * certificaat is ondertekend als de app zelf. De sha256 in het manifest komt
+ * bovendien van dezelfde host over hetzelfde TLS-kanaal als de APK, dus
+ * tegen manipulatie voegde hij niets toe. Het veld blijft in het manifest
+ * staan voor wie handmatig wil verifiëren.
  */
 export async function downloadApk(
   url: string,
-  expectedSha256: string,
   onProgress?: (frac: number) => void,
 ): Promise<{ uri: string }> {
   const target = `${FileSystem.cacheDirectory}opennova-update.apk`;
@@ -195,43 +201,9 @@ export async function downloadApk(
   const result = await dl.downloadAsync();
   if (!result?.uri) throw new Error('APK download failed — no URI returned');
 
-  // Chunked SHA256: load 1 MB at a time so a 95 MB APK doesn't OOM the JS
-  // heap. Reading the whole file as base64 inflates ~33% (95 MB → 127 MB
-  // string) which crashes Android with java.lang.OutOfMemoryError before
-  // we ever get to hash the bytes.
   const info = await FileSystem.getInfoAsync(result.uri);
-  if (!info.exists || info.size == null) {
-    throw new Error('APK download verification failed — file missing or empty');
-  }
-
-  const CHUNK = 1024 * 1024; // 1 MB binary per iteration
-  const hasher = sha256.create();
-
-  for (let offset = 0; offset < info.size; offset += CHUNK) {
-    const length = Math.min(CHUNK, info.size - offset);
-    const base64Chunk = await FileSystem.readAsStringAsync(result.uri, {
-      encoding: FileSystem.EncodingType.Base64,
-      position: offset,
-      length,
-    });
-
-    // Decode base64 → bytes; feed into incremental hasher then drop the
-    // intermediate buffer so GC can reclaim it before the next chunk.
-    const binaryString = atob(base64Chunk);
-    const bytes = new Uint8Array(binaryString.length);
-    for (let i = 0; i < binaryString.length; i++) {
-      bytes[i] = binaryString.charCodeAt(i);
-    }
-    hasher.update(bytes);
-  }
-
-  const actualSha256 = hasher.hex();
-
-  if (actualSha256 !== expectedSha256.toLowerCase()) {
-    await FileSystem.deleteAsync(result.uri, { idempotent: true });
-    throw new Error(
-      `SHA256 mismatch — expected ${expectedSha256.toLowerCase()}, got ${actualSha256}`,
-    );
+  if (!info.exists || info.size == null || info.size === 0) {
+    throw new Error('APK download failed — file missing or empty');
   }
 
   return { uri: result.uri };
