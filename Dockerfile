@@ -36,9 +36,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends python3 make g+
 WORKDIR /app
 
 COPY server/package.json server/package-lock.json* server/
-# Release notes voor de dashboard-popup; * maakt hem optioneel (dev-builds
-# zonder bestand blijven werken, zelfde truc als package-lock hierboven).
-COPY server/release-notes.jso[n] server/
+# Release notes voor de dashboard-popup (gegenereerd door release.sh,
+# gecommit in de repo, dus altijd aanwezig in de build-context).
+COPY server/release-notes.json server/
 
 # Install production deps only (no typescript, tsx, @types, etc.)
 RUN cd server && npm ci --omit=dev
