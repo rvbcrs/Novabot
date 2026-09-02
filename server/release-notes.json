@@ -1,0 +1,95 @@
+{
+  "releases": [
+    {
+      "version": "2026.0831.2245",
+      "date": "2026-08-31",
+      "sections": {
+        "dashboard": [
+          "Gemiste punten als oranje stippen op de kaart",
+          "Start-sheet leest echte maaihoogte, tab-iconen, experimenteel-vlag",
+          "Geen verloren nudge tijdens laden van offset-seed (race dicht via loading-gate)",
+          "Kaart-nudge verschuift nu echt het maaigebied (via apply-offset) i.p.v. alleen de weergave",
+          "Api-client applyPolygonOffset + fetchPolygonOffset",
+          "Randmaaien-op dagenrij in schema-form",
+          "EdgeDays op Schedule-type",
+          "CameraTile toont geen kapot icoon meer bij lege/bezette camera",
+          "3D terrain viewer (three.js heightmap)",
+          "Dag-skip knop + badge (skipDate) + nextPathDirection weergave"
+        ],
+        "app": [
+          "Hercentreer-knop op de kaart",
+          "Unicom-transit animatie + demo-fase voor following_unicom",
+          "Harde timeout op HTTP-calls",
+          "Maaihoogte weer zichtbaar in light mode bij schema bewerken",
+          "3D-viewer fixes — capture-gestures, scroll-lock in 3D, polygon-contouren, begroeiing-groen",
+          "Dag-skip UI + weekweergave + mow_zone-fallback + error-2-demping + richting-chip + coverage-gate (live getest 2026-07-17)",
+          "2D/3D-toggle op MapScreen",
+          "Native TerrainView3D (terrein + voxels + maaier + gestures)",
+          "Three/r3f/expo-gl deps + gedeelde terrain-parsers"
+        ],
+        "firmware": [
+          "Custom blokken niet langer dubbel in start_service.sh",
+          "_depart_pile via begrensde rclpy-publisher i.p.v. DDS-timing gokken",
+          "Stop_mow_zone commando voor het afbreken van een lopende transit",
+          "Mow_zone_drive.py mee in de build en luid falen bij ontbrekend drive-script",
+          "_depart_pile hold van seconds+16 naar seconds+2",
+          "Per zone maaien met echte unicom-transit (mow_zone, follow_unicom, return_to_dock)",
+          "Include_edge-patch asserteert offset 0x921a8 + context (brick-guard)",
+          "Include_edge default UIT in build (randmaai per schema)"
+        ],
+        "server": [
+          "Handmatig bewegingscommando via extended-route ontwapent de rand-dag watcher",
+          "Rand-dag watcher krijgt run-identiteit + expliciete disarms",
+          "Start_edge_cut via extended-kanaal + departFromDock + frame-guard op dat kanaal",
+          "Ambigue dock-vormen vereisen cov_ratio-bewijs, Work:FINISHED blijft vertrouwd",
+          "Dekkingsbewijs (cov_ratio/finished_num) vereist voor einde-taak-dock",
+          "Work:CANCELLED is geen afbreeksignaal (issue #17 afrond-msg maakte randmaai stil dood)",
+          "Afgebroken maaibeurt is geen einde-taak-dock (getMowerPhase zonder task_mode-gate)",
+          "Start_edge_cut achter de frame-guard (autonome randmaai in ongevalideerd frame)",
+          "Rand-dag watcher (arm bij trigger, randmaai na docken)",
+          "GetMowerPhase negeert mid-mow laadpauze + testdekking succespad",
+          "StartEdgeCut + getMowerPhase",
+          "IsEdgeDay + edgeBladeHeightMm pure helpers",
+          "EdgeDays in schedule DTO + POST/PATCH",
+          "Edge_days lezen/schrijven in scheduleRepo",
+          "Edge_days kolom op dashboard_schedules (randmaai per schema)",
+          "Perceptie-datacheck via rclpy-subscription (CLI ziet de stroom niet op deze firmware)",
+          "Stopknop ruimt ook weessessies op (reconciliatie in stopAutoMap)",
+          "Perceptie-datacheck zonder --once (Galactic kent die vlag niet) - outputcheck op point_step",
+          "Firmware gebruikt status-veld in BoundaryFollow-result + camera's/perceptie aan in prepare (live .244 les)",
+          "Rotatie-slider per object (rotation_deg, Z-as, genormaliseerd 0-360)",
+          "… plus 107 kleinere wijzigingen"
+        ]
+      }
+    },
+    {
+      "version": "2026.0714.1242",
+      "date": "2026-07-14",
+      "sections": {}
+    },
+    {
+      "version": "2026.0714.1215",
+      "date": "2026-07-14",
+      "sections": {
+        "app": [
+          "Ignore Work:FAILED in mow-stop state + add WiFi re-provision troubleshooting docs"
+        ],
+        "server": [
+          "Per-schedule timezone + fix alternate-direction rotation"
+        ]
+      }
+    },
+    {
+      "version": "2026.0704.1217",
+      "date": "2026-07-04",
+      "sections": {
+        "app": [
+          "Bump version to 1.1.20 (#98 light-mode map fix)"
+        ],
+        "admin": [
+          "Revert-to-stock firmware card (download + force-flash OEM .deb)"
+        ]
+      }
+    }
+  ]
+}

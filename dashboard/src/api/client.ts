@@ -1046,6 +1046,23 @@ export async function refreshPreviewPath(
 // reply with `{ paths }` (POST also `{ ok, count }`). Same CoveragePathEntry
 // shape (local meters) as the preview path.
 
+/** Release notes per release (Dashboard/App/Admin/Firmware/Server-secties),
+ *  gegenereerd door release.sh en meegebakken in de image. Leeg in dev. */
+export interface ReleaseNotesEntry {
+  version: string;
+  date: string;
+  sections: Partial<Record<'dashboard' | 'app' | 'admin' | 'firmware' | 'server', string[]>>;
+}
+export async function fetchReleaseNotes(): Promise<ReleaseNotesEntry[]> {
+  try {
+    const res = await get(`${BASE}/release-notes`);
+    const data = await res.json() as { releases?: ReleaseNotesEntry[] };
+    return data.releases ?? [];
+  } catch {
+    return [];
+  }
+}
+
 /** Running server version (shown in the dashboard header). Returns '?' on error. */
 export async function getServerVersion(): Promise<string> {
   try {

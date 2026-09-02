@@ -967,5 +967,10 @@
   "reanchorMsgStability": "Checking RTK stability on the dock...",
   "reanchorMsgStarted": "Re-anchor started...",
   "reanchorMsgVerify": "Checking: did it dock in the right spot?",
-  "reanchorMsgWaitRelock": "Waiting for the mower to re-find its position..."
+  "reanchorMsgWaitRelock": "Waiting for the mower to re-find its position...",
+  "releaseNotes": {
+    "title": "Release notes",
+    "empty": "No release notes available.",
+    "noChanges": "Maintenance release."
+  }
 }

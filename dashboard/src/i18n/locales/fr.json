@@ -845,5 +845,10 @@
   "reanchorMsgVerify": "Vérification : amarré sur l’origine ?",
   "reanchorMsgWaitRelock": "Attente du reverrouillage (RUNNING + Fixed)...",
   "reanchorMsgErrUnstable": "RTK trop instable sur la station (oscille de ±{{dist}} m). Attendez un Fixed stable et réessayez.",
-  "reanchorMsgStability": "Vérification de la stabilité RTK sur la station..."
+  "reanchorMsgStability": "Vérification de la stabilité RTK sur la station...",
+  "releaseNotes": {
+    "title": "Notes de version",
+    "empty": "Aucune note de version disponible.",
+    "noChanges": "Version de maintenance."
+  }
 }

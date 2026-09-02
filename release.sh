@@ -45,8 +45,12 @@ echo "Version: $NEW"
 CURRENT=$(node -p "require('./server/package.json').version")
 sed -i '' "s/\"version\": \"$CURRENT\"/\"version\": \"$NEW\"/" server/package.json
 
-# Commit version bump
-git add server/package.json
+# Release notes voor de dashboard-popup: commits sinds de vorige tag,
+# gegroepeerd op Dashboard/App/Admin/Firmware/Server. Bakt mee in de image.
+node scripts/generate-release-notes.mjs --new "$NEW"
+
+# Commit version bump + notes
+git add server/package.json server/release-notes.json
 git commit -m "release: v$NEW"
 git tag "v$NEW"
 git push && git push --tags

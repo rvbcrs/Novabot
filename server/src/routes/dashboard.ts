@@ -116,6 +116,19 @@ dashboardRouter.get('/version', (_req: Request, res: Response) => {
   res.json({ version: DASHBOARD_SERVER_VERSION });
 });
 
+// Release notes per release, gegroepeerd op Dashboard/App/Admin/Firmware/
+// Server. Gegenereerd door scripts/generate-release-notes.mjs (release.sh) en
+// meegebakken in de image. Eén keer gelezen, net als de versie hierboven; in
+// dev zonder bestand een leeg antwoord zodat het dashboard-knopje zichzelf
+// verbergt.
+let RELEASE_NOTES: unknown = null;
+try {
+  RELEASE_NOTES = JSON.parse(readFileSync(path.join(__dirname, '../../release-notes.json'), 'utf8'));
+} catch { /* ontbreekt in dev — knop blijft verborgen */ }
+dashboardRouter.get('/release-notes', (_req: Request, res: Response) => {
+  res.json(RELEASE_NOTES ?? { releases: [] });
+});
+
 // GET /api/dashboard/server-update — is a newer container image on Docker Hub?
 // Mirrors the admin panel's /api/admin-status/check-server-update but is
 // reachable from the dashboard (LAN unauthenticated / external authenticated).

@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
-import { Server, ServerOff, Plus, Activity } from 'lucide-react';
+import { Server, ServerOff, Plus, Activity, ScrollText } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { BleScanner } from '../components/ble/BleScanner';
 import { RainBadge } from './RainBadge';
-import { getServerVersion } from '../api/client';
+import { ReleaseNotesModal } from '../components/common/ReleaseNotesModal';
+import { getServerVersion, fetchReleaseNotes, type ReleaseNotesEntry } from '../api/client';
 
 const LANGS = ['nl', 'en', 'fr', 'de'] as const;
 
@@ -17,7 +18,11 @@ export function Header({ connected, rainState, onOpenDrawer }: Props) {
   const { t, i18n } = useTranslation();
   const [showBle, setShowBle] = useState(false);
   const [version, setVersion] = useState('');
+  const [notes, setNotes] = useState<ReleaseNotesEntry[]>([]);
+  const [showNotes, setShowNotes] = useState(false);
   useEffect(() => { getServerVersion().then(setVersion).catch(() => {}); }, []);
+  // Knopje verschijnt alleen als er echt notes zijn (dev-builds hebben ze niet).
+  useEffect(() => { fetchReleaseNotes().then(setNotes).catch(() => {}); }, []);
 
   const changeLang = (lng: string) => {
     i18n.changeLanguage(lng);
@@ -37,11 +42,23 @@ export function Header({ connected, rainState, onOpenDrawer }: Props) {
             {t('header.dashboard')}
           </span>
           {version && (
-            <span
-              className="text-[10px] font-mono text-zinc-500 mt-1"
-              title={t('header.serverVersion', 'Server version')}
-            >
-              v{version}
+            <span className="inline-flex items-center gap-1 mt-1">
+              <span
+                className="text-[10px] font-mono text-zinc-500"
+                title={t('header.serverVersion', 'Server version')}
+              >
+                v{version}
+              </span>
+              {notes.length > 0 && (
+                <button
+                  onClick={() => setShowNotes(true)}
+                  title={t('releaseNotes.title', 'Release notes')}
+                  aria-label={t('releaseNotes.title', 'Release notes')}
+                  className="p-0.5 rounded text-zinc-600 hover:text-emerald-400 transition-colors"
+                >
+                  <ScrollText className="w-3 h-3" />
+                </button>
+              )}
             </span>
           )}
         </div>
@@ -126,6 +143,7 @@ export function Header({ connected, rainState, onOpenDrawer }: Props) {
       </div>
 
       <BleScanner open={showBle} onClose={() => setShowBle(false)} />
+      {showNotes && <ReleaseNotesModal releases={notes} onClose={() => setShowNotes(false)} />}
     </header>
   );
 }

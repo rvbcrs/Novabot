@@ -845,5 +845,10 @@
   "reanchorMsgVerify": "Prüfung: an der Ursprungsposition angedockt?",
   "reanchorMsgWaitRelock": "Warten auf Neu-Einrasten (RUNNING + Fixed)...",
   "reanchorMsgErrUnstable": "RTK auf der Ladestation zu instabil (schwankt ±{{dist}} m). Warten Sie auf ein ruhiges Fixed und versuchen Sie es erneut.",
-  "reanchorMsgStability": "RTK-Stabilität auf der Ladestation wird geprüft..."
+  "reanchorMsgStability": "RTK-Stabilität auf der Ladestation wird geprüft...",
+  "releaseNotes": {
+    "title": "Versionshinweise",
+    "empty": "Keine Versionshinweise verfügbar.",
+    "noChanges": "Wartungsrelease."
+  }
 }

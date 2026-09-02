@@ -965,5 +965,10 @@
   "reanchorMsgStability": "RTK-stabiliteit controleren op de dock...",
   "reanchorMsgStarted": "Re-anchor gestart...",
   "reanchorMsgVerify": "Controle: staat hij op de juiste plek gedockt?",
-  "reanchorMsgWaitRelock": "Wachten tot de maaier zijn positie terugvindt..."
+  "reanchorMsgWaitRelock": "Wachten tot de maaier zijn positie terugvindt...",
+  "releaseNotes": {
+    "title": "Release notes",
+    "empty": "Geen release notes beschikbaar.",
+    "noChanges": "Onderhoudsrelease."
+  }
 }
