@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom';
 import { X, ScrollText } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { ReleaseNotesEntry } from '../../api/client';
@@ -23,7 +24,10 @@ interface Props {
 export function ReleaseNotesModal({ releases, onClose }: Props) {
   const { t } = useTranslation();
 
-  return (
+  // Portal naar body: genest in de <header> maakt een ancestor met
+  // transform/backdrop-filter van position:fixed een lokaal kader, waardoor
+  // de popup tegen de bovenrand plakte in plaats van gecentreerd te staan.
+  return createPortal(
     <div
       className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm grid place-items-center p-4"
       onClick={onClose}
@@ -85,6 +89,7 @@ export function ReleaseNotesModal({ releases, onClose }: Props) {
           })}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
