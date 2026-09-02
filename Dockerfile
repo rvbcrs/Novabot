@@ -36,9 +36,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends python3 make g+
 WORKDIR /app
 
 COPY server/package.json server/package-lock.json* server/
-# Release notes voor de dashboard-popup (gegenereerd door release.sh,
-# gecommit in de repo, dus altijd aanwezig in de build-context).
-COPY server/release-notes.json server/
 
 # Install production deps only (no typescript, tsx, @types, etc.)
 RUN cd server && npm ci --omit=dev
@@ -91,6 +88,9 @@ RUN mkdir -p /data/storage /data/firmware
 
 # Semi-stabiel: statische assets
 COPY server/public server/public
+
+# Verandert per release: release notes voor de dashboard-popup
+COPY server/release-notes.json server/
 
 # Verandert per release: gecompileerde dashboard + server — LAATSTE
 COPY --from=build /app/dashboard/dist dashboard/dist
