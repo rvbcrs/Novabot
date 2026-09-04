@@ -12,6 +12,7 @@
 
 import { BleManager, Device, Characteristic } from 'react-native-ble-plx';
 import { JoystickWriteQueue } from './joystickWriteQueue';
+import { BleFrameAssembler, parseBleRespond, type BleRespond } from './bleFrameAssembler';
 import { Buffer } from 'buffer';
 import { Platform, PermissionsAndroid } from 'react-native';
 
@@ -561,6 +562,48 @@ export function onBleJoystickDisconnect(cb: () => void): void {
   _joystickDisconnectCallback = cb;
 }
 
+// ── Responds over BLE (mapping session) ─────────────────────────────────────
+//
+// The firmware answers every framed command with a `<cmd>_respond` on the
+// mower's notify characteristic. MappingScreen used to wait for those via the
+// server socket only, which made "BLE mapping" secretly require the mower and
+// the phone to be online. Now the mapping connection subscribes to notify and
+// fans parsed responds out to listeners; the socket stays as a fallback.
+
+type BleRespondListener = (r: BleRespond) => void;
+const _bleRespondListeners = new Set<BleRespondListener>();
+let _joystickNotifySub: { remove: () => void } | null = null;
+
+/** Subscribe to `*_respond` messages arriving over BLE. Returns unsubscribe. */
+export function onBleRespond(cb: BleRespondListener): () => void {
+  _bleRespondListeners.add(cb);
+  return () => { _bleRespondListeners.delete(cb); };
+}
+
+function subscribeJoystickNotify(device: Device): void {
+  _joystickNotifySub?.remove();
+  const assembler = new BleFrameAssembler((frame) => {
+    const r = parseBleRespond(frame);
+    if (!r) return;
+    bleLog(`[BLE-JOY] respond ${r.command}`);
+    for (const cb of _bleRespondListeners) {
+      try { cb(r); } catch (e: any) { bleLog(`[BLE-JOY] respond listener error: ${e?.message}`); }
+    }
+  });
+  _joystickNotifySub = device.monitorCharacteristicForService(
+    MOWER_SERVICE, MOWER_NOTIFY,
+    (err, char) => {
+      if (err || !char?.value) return;
+      assembler.feed(new Uint8Array(Buffer.from(char.value, 'base64')));
+    },
+  );
+}
+
+function unsubscribeJoystickNotify(): void {
+  _joystickNotifySub?.remove();
+  _joystickNotifySub = null;
+}
+
 /**
  * Connect to mower for BLE joystick control.
  * Returns true if connected successfully.
@@ -579,9 +622,15 @@ export async function bleJoystickConnect(deviceId: string): Promise<boolean> {
     _joystickConnected = true;
     bleLog(`[BLE-JOY] Connected!`);
 
+    // Responds (save_map_respond etc.) over BLE — see onBleRespond.
+    try { subscribeJoystickNotify(_joystickDevice); } catch (e: any) {
+      bleLog(`[BLE-JOY] notify subscribe failed (responds fall back to socket): ${e?.message}`);
+    }
+
     // Monitor disconnect — auto-update state and log
     mgr.onDeviceDisconnected(deviceId, (err, dev) => {
       bleLog(`[BLE-JOY] Disconnected${err ? ': ' + err.message : ''}`);
+      unsubscribeJoystickNotify();
       _joystickConnected = false;
       _joystickDevice = null;
       if (_joystickDisconnectCallback) _joystickDisconnectCallback();
@@ -600,6 +649,7 @@ export async function bleJoystickConnect(deviceId: string): Promise<boolean> {
  * Disconnect BLE joystick.
  */
 export async function bleJoystickDisconnect(): Promise<void> {
+  unsubscribeJoystickNotify();
   if (_joystickDevice) {
     try { await _joystickDevice.cancelConnection(); } catch {}
     bleLog(`[BLE-JOY] Disconnected`);

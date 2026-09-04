@@ -48,8 +48,9 @@ import { findMissingChannels, type ChannelMapLike } from '../utils/mapChannels';
 import {
   bleJoystickConnect, bleJoystickDisconnect,
   bleJoystickStart, bleJoystickMove, bleJoystickStop,
-  isBleJoystickConnected, onBleJoystickDisconnect, scanForDevices, sendBleCommand, type ScannedDevice,
+  isBleJoystickConnected, onBleJoystickDisconnect, onBleRespond, scanForDevices, sendBleCommand, type ScannedDevice,
 } from '../services/ble';
+import { readMapsCache, writeMapsCache } from '../services/mapsCache';
 
 // ── Joystick constants (smaller than JoystickScreen) ──
 const { width: SCREEN_W } = Dimensions.get('window');
@@ -295,7 +296,18 @@ export default function MappingScreen() {
           points: m.mapArea,
         }));
       setExistingMaps(loaded);
-    } catch { /* ignore */ }
+      // Remember the list so BLE mapping without a reachable server still
+      // knows which slots exist (naming + overlays) — see mapsCache.ts.
+      void writeMapsCache(sn, loaded);
+    } catch {
+      // Server unreachable: fall back to the last cached list rather than an
+      // empty one (an empty list would make the next session claim "map0").
+      const cached = sn ? await readMapsCache(sn) : null;
+      if (cached) {
+        setExistingMaps(cached);
+        console.log(`[Mapping] Using cached map list (${cached.length}) — server unreachable`);
+      }
+    }
   }, [sn]);
 
   useEffect(() => { refreshExistingMaps(); }, [refreshExistingMaps]);
@@ -481,17 +493,23 @@ export default function MappingScreen() {
   // firmware error code from its payload. save_map_respond carries `value`
   // (0 = ok, non-zero = rejected — e.g. the novabot_mapping overlap check that
   // surfaces as error 120). Most callers only need arrival → use waitForRespond.
+  // Responds arrive over BLE (primary — the mower answers on its notify
+  // characteristic, so this works with no WiFi/server at all) AND via the
+  // server socket (fallback, e.g. when the BLE notify subscription failed).
+  // Whichever comes first wins; both carry the same {command, data} shape.
   const waitForRespondDetailed = useCallback((command: string, timeoutMs: number): Promise<{ received: boolean; errorCode: number | null }> => {
     return new Promise((resolve) => {
-      const socket = getSocket();
-      if (!socket || !sn) {
+      if (!sn) {
         resolve({ received: false, errorCode: null });
         return;
       }
+      const socket = getSocket();
+      let offBle: (() => void) | null = null;
 
       const cleanup = () => {
         clearTimeout(timer);
-        socket.off('command:respond', handler);
+        socket?.off('command:respond', socketHandler);
+        offBle?.();
       };
 
       const timer = setTimeout(() => {
@@ -499,15 +517,20 @@ export default function MappingScreen() {
         resolve({ received: false, errorCode: null });
       }, timeoutMs);
 
-      const handler = (e: { sn: string; command: string; data?: { value?: unknown } }) => {
-        if (e.sn === sn && e.command === command) {
-          cleanup();
-          const v = e.data?.value;
-          resolve({ received: true, errorCode: typeof v === 'number' ? v : null });
-        }
+      const finish = (data: { value?: unknown } | undefined) => {
+        cleanup();
+        const v = data?.value;
+        resolve({ received: true, errorCode: typeof v === 'number' ? v : null });
       };
 
-      socket.on('command:respond', handler);
+      const socketHandler = (e: { sn: string; command: string; data?: { value?: unknown } }) => {
+        if (e.sn === sn && e.command === command) finish(e.data);
+      };
+
+      socket?.on('command:respond', socketHandler);
+      offBle = onBleRespond((r) => {
+        if (r.command === command) finish(r.data as { value?: unknown } | undefined);
+      });
     });
   }, [sn]);
 
@@ -844,18 +867,33 @@ export default function MappingScreen() {
     // Clear server-side GPS trail before starting new recording
     let existingWorkMapCount = 0;
     let nextWorkMapName = 'map0';
+    // The server is OPTIONAL here (BLE mapping far from WiFi). The map list
+    // decides start_scan_map vs add_scan_map AND the next slot name; with no
+    // server we fall back to the last cached list instead of "map0", which
+    // would silently overwrite the existing first map (GH #114).
+    let serverMaps: any[] | null = null;
     try {
       const url = await getServerUrl();
       if (url && sn) {
-        await fetch(`${url}/api/dashboard/trail/${encodeURIComponent(sn)}`, { method: 'DELETE' });
+        await fetch(`${url}/api/dashboard/trail/${encodeURIComponent(sn)}`, { method: 'DELETE' }).catch(() => {});
         console.log('[Mapping] Server trail cleared');
         // Check how many work maps already exist — determines start_scan_map vs add_scan_map
-        const mapsRes = await fetch(`${url}/api/dashboard/maps/${encodeURIComponent(sn)}`).then(r => r.json()).catch(() => ({ maps: [] }));
-        const existingMaps = mapsRes.maps ?? [];
-        existingWorkMapCount = existingMaps.filter((m: any) => m.mapType === 'work').length;
-        nextWorkMapName = getNextWorkMapName(existingMaps);
+        const mapsRes = await fetch(`${url}/api/dashboard/maps/${encodeURIComponent(sn)}`).then(r => r.json());
+        if (Array.isArray(mapsRes?.maps)) {
+          serverMaps = mapsRes.maps;
+          void writeMapsCache(sn, serverMaps as any);
+        }
       }
     } catch {}
+    if (!serverMaps && sn) {
+      serverMaps = await readMapsCache(sn);
+      console.log(`[Mapping] Server unreachable — using cached map list (${serverMaps?.length ?? 'none'})`);
+    }
+    {
+      const existingMaps = serverMaps ?? [];
+      existingWorkMapCount = existingMaps.filter((m: any) => m.mapType === 'work').length;
+      nextWorkMapName = getNextWorkMapName(existingMaps);
+    }
 
     // EXACT Novabot app flow — verified against live BLE mqtt log 2026-04-17 21:45:
     // - First map EVER:  start_scan_map { model: "manual", mapName: "map0", type: 0, cmd_num }
