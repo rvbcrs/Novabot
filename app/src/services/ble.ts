@@ -11,6 +11,7 @@
  */
 
 import { BleManager, Device, Characteristic } from 'react-native-ble-plx';
+import { JoystickWriteQueue } from './joystickWriteQueue';
 import { Buffer } from 'buffer';
 import { Platform, PermissionsAndroid } from 'react-native';
 
@@ -615,39 +616,37 @@ export async function bleJoystickDisconnect(): Promise<void> {
  * This is different from BleTools.writeData() (provisioning) which DOES use framing.
  *
  * Uses a serial queue: commands wait for the previous to finish (like the official app's await).
+ * Velocity frames are COALESCED (latest wins) — see JoystickWriteQueue for why:
+ * a slow BLE link otherwise piles up stale `mst` frames and the mower keeps
+ * driving the backlog for seconds after the stick is released (GH #114).
  */
-let _bleWriteQueue: Promise<void> = Promise.resolve();
-
-async function writeJoystickFrame(json: string): Promise<void> {
+async function writeJoystickChunks(json: string): Promise<void> {
   if (!_joystickDevice || !_joystickConnected) return;
-
-  // Chain onto the queue so writes are sequential, never overlapping
-  _bleWriteQueue = _bleWriteQueue.then(async () => {
-    if (!_joystickDevice || !_joystickConnected) return;
-    const svc = MOWER_SERVICE;
-    const chr = MOWER_WRITE;
-    try {
-      const data = Buffer.from(json, 'utf8');
-      for (let offset = 0; offset < data.length; offset += 20) {
-        const chunk = Buffer.from(data.subarray(offset, Math.min(offset + 20, data.length)));
-        await _joystickDevice!.writeCharacteristicWithoutResponseForService(
-          svc, chr, chunk.toString('base64'));
-      }
-    } catch (err: any) {
-      if (err.message?.includes('disconnect') || err.message?.includes('not connected')) {
-        _joystickConnected = false;
-        _joystickDevice = null;
-      }
+  const svc = MOWER_SERVICE;
+  const chr = MOWER_WRITE;
+  try {
+    const data = Buffer.from(json, 'utf8');
+    for (let offset = 0; offset < data.length; offset += 20) {
+      const chunk = Buffer.from(data.subarray(offset, Math.min(offset + 20, data.length)));
+      await _joystickDevice!.writeCharacteristicWithoutResponseForService(
+        svc, chr, chunk.toString('base64'));
     }
-  });
-  return _bleWriteQueue;
+  } catch (err: any) {
+    if (err.message?.includes('disconnect') || err.message?.includes('not connected')) {
+      _joystickConnected = false;
+      _joystickDevice = null;
+    }
+  }
 }
+
+const _joystickQueue = new JoystickWriteQueue(writeJoystickChunks);
 
 /**
  * Enter manual mode — sent every 300ms together with mst (matches official app).
  */
 export async function bleJoystickStart(holdType: number): Promise<void> {
-  await writeJoystickFrame(JSON.stringify({ start_move: holdType }));
+  if (!_joystickDevice || !_joystickConnected) return;
+  await _joystickQueue.enqueue(JSON.stringify({ start_move: holdType }));
 }
 
 /**
@@ -656,7 +655,8 @@ export async function bleJoystickStart(holdType: number): Promise<void> {
  * Verified in blutter: AllocateArray(6) → [BoxInt64(v), BoxInt64(w), 8], TypeArgs: <int>
  */
 export async function bleJoystickMove(mst: { x_w: number; y_v: number; z_g: number }): Promise<void> {
-  await writeJoystickFrame(JSON.stringify({ mst: [
+  if (!_joystickDevice || !_joystickConnected) return;
+  await _joystickQueue.setLatestMove(JSON.stringify({ mst: [
     Math.round(mst.x_w * 100),
     Math.round(mst.y_v * 100),
     8,
@@ -665,9 +665,13 @@ export async function bleJoystickMove(mst: { x_w: number; y_v: number; z_g: numb
 
 /**
  * Exit manual mode — official app sends stop_move: null (not {}).
+ * Drops any waiting velocity frame first so the stop goes out right after the
+ * in-flight write instead of behind a backlog of stale moves.
  */
 export async function bleJoystickStop(): Promise<void> {
-  await writeJoystickFrame(JSON.stringify({ stop_move: null }));
+  _joystickQueue.dropPendingMove();
+  if (!_joystickDevice || !_joystickConnected) return;
+  await _joystickQueue.enqueue(JSON.stringify({ stop_move: null }));
 }
 
 /**
