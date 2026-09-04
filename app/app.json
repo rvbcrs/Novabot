@@ -2,7 +2,7 @@
   "expo": {
     "name": "OpenNova",
     "slug": "opennovabot-app",
-    "version": "1.1.22",
+    "version": "1.1.23",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
