@@ -44,6 +44,24 @@ describe('Docker entrypoint', () => {
     expect(missingSources).toEqual([]);
   });
 
+  it('installs every CLI binary the server shells out to (zip + unzip)', () => {
+    // The server execs `zip` (bundle creation) and `unzip` (mower ZIP uploads).
+    // unzip was missing from the image from the first beta until 2026-09-04:
+    // every mower map upload failed with "unzip: not found" and nobody noticed
+    // because the DB was still fed via outline reports. Keep both installed in
+    // the RUNTIME stage (the last FROM).
+    const dockerfile = readFileSync(dockerfilePath, 'utf8');
+    const runtimeStage = dockerfile.slice(dockerfile.lastIndexOf('\nFROM '));
+    const aptLine = runtimeStage
+      .split(/\r?\n/)
+      .find((line) => /apt-get install/.test(line));
+
+    expect(aptLine, 'runtime stage has an apt-get install line').toBeTruthy();
+    for (const bin of ['zip', 'unzip']) {
+      expect(aptLine, `runtime apt-get installs ${bin}`).toMatch(new RegExp(`\\b${bin}\\b`));
+    }
+  });
+
   it('does not include the native coverage generator in the default image', () => {
     const dockerfile = readFileSync(dockerfilePath, 'utf8');
 

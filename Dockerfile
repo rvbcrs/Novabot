@@ -64,7 +64,12 @@ RUN cd server/node_modules/better-sqlite3 && \
 # ── Stage 3: Runtime ──────────────────────────────────────────────────────────
 FROM node:20-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends dnsmasq nginx openssl tzdata zip sqlite3 sshpass openssh-client bash ca-certificates && rm -rf /var/lib/apt/lists/*
+# `zip` EN `unzip`: de server shellt naar beide (ZIP maken in mapConverter/
+# mapSync, uitpakken van maaier-uploads in map.ts/mapConverter/mapSync). unzip
+# ontbrak sinds de eerste beta, waardoor ELKE kaart-upload van de maaier in
+# Docker stil faalde ("unzip: not found") — de outlines vulden de DB toch, dus
+# niemand merkte het. Bewaakt door dockerEntrypoint.test.ts.
+RUN apt-get update && apt-get install -y --no-install-recommends dnsmasq nginx openssl tzdata zip unzip sqlite3 sshpass openssh-client bash ca-certificates && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
