@@ -29,7 +29,7 @@ export function ReleaseNotesModal({ releases, onClose }: Props) {
   // de popup tegen de bovenrand plakte in plaats van gecentreerd te staan.
   return createPortal(
     <div
-      className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm grid place-items-center p-4"
+      className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm grid place-items-center p-4"
       onClick={onClose}
     >
       <div
