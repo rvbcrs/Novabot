@@ -34,6 +34,7 @@ import { parseFinishedAreas, prefixedAreaId, parseCoveringPoints } from '../util
 import { MowerPickerChevron } from '../components/MowerPickerChevron';
 import { ApiClient, type MapData, type Schedule } from '../services/api';
 import { getServerUrl, getToken } from '../services/auth';
+import { flushPendingMapSync } from '../services/pendingMapSync';
 import { DemoBanner } from '../components/DemoBanner';
 import { HealthBanner } from '../components/HealthBanner';
 import { FirmwareUpdateBanner } from '../components/FirmwareUpdateBanner';
@@ -959,6 +960,14 @@ export default function HomeScreen() {
         setServerMapCount(0);
         return;
       }
+
+      // A map created over BLE without WiFi is still only on the mower; now
+      // that we can reach the server, ask the mower (via the server) to upload
+      // it. No-op unless MappingScreen left a pending flag. Fire-and-forget so
+      // it never delays the home screen.
+      void flushPendingMapSync(mower.sn).then((r) => {
+        if (r !== 'nothing') console.log(`[Home] pending map sync for ${mower.sn}: ${r}`);
+      });
 
       const mapsRes = await api.fetchMaps(mower.sn).catch(() => ({ maps: [] }));
       const workMaps = (mapsRes.maps ?? []).filter((map: any) => map.mapType === 'work');

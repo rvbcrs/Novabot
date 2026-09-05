@@ -755,17 +755,11 @@ export function onMowerConnected(sn: string): void {
       // in het ota_upgrade_cmd commando.
       console.log(`${TAG} Maaier ${sn} verbonden — kaarten opvragen...`);
       requestMapList(sn);
-
-      // Kaart-bundel alsnog laten uploaden. Bij BLE-karteren buiten WiFi-bereik
-      // mislukt de HTTP-upload die de maaier na save_map doet (één poging,
-      // geen retry in de firmware). `get_map_outline {map_name:"all"}` is
-      // dezelfde trigger die de app na het karteren stuurt en laat de maaier
-      // zijn ZIP pushen zodra hij weer online is — zo synchroniseert een
-      // offline gemaakte kaart vanzelf, zonder cache op de telefoon (GH #114).
-      setTimeout(() => {
-        publishToDevice(sn, { get_map_outline: { map_name: 'all', cmd_num: Date.now() % 100000 } });
-        console.log(`${TAG} ${sn}: get_map_outline all gestuurd (kaart-upload na herverbinden)`);
-      }, 6000);
+      // NB: deze functie wordt sinds de "cloud-identiek" beslissing in
+      // broker.ts (geen proactieve commando's bij connect) nergens meer
+      // aangeroepen. De hersync van een offline gekarteerde kaart loopt via de
+      // app (pendingMapSync.ts), die get_map_outline "all" stuurt zodra ze weer
+      // een server heeft — zoals de officiële app dat ook doet.
 
       // Eerste portable snapshot: heeft deze mower al maps maar bestaat er nog
       // geen backup van, maak er meteen één. Idempotent (skipt als er al een

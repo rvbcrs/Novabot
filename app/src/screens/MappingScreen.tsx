@@ -51,6 +51,7 @@ import {
   isBleJoystickConnected, onBleJoystickDisconnect, onBleRespond, scanForDevices, sendBleCommand, type ScannedDevice,
 } from '../services/ble';
 import { readMapsCache, writeMapsCache } from '../services/mapsCache';
+import { markPendingMapSync } from '../services/pendingMapSync';
 
 // ── Joystick constants (smaller than JoystickScreen) ──
 const { width: SCREEN_W } = Dimensions.get('window');
@@ -1072,6 +1073,10 @@ export default function MappingScreen() {
               return;
             }
 
+            // The mower's own upload only succeeds if it has WiFi right now;
+            // remember to re-trigger it through the server later (see
+            // pendingMapSync.ts) — HomeScreen flushes this on focus.
+            if (sn) void markPendingMapSync(sn);
             sendCommand({ get_map_outline: { map_name: 'all', cmd_num: cmdNumRef.current++ } }, 'get_map_outline');
             console.log('[Mapping] Step 3: get_map_outline sent to trigger mower ZIP upload');
 
@@ -1289,6 +1294,7 @@ sendCommand({ save_recharge_pos: { mapName: 'map0', cmd_num: cmdNumRef.current++
 
       // Ask the mower to push its refreshed ZIP (same trigger the Flutter
       // app uses via uploadMapToServce → get_map_outline request).
+      if (sn) void markPendingMapSync(sn);
       sendCommand(
         { get_map_outline: { map_name: 'all', cmd_num: cmdNumRef.current++ } },
         'get_map_outline (post-recharge)',
@@ -1376,6 +1382,7 @@ sendCommand({ save_recharge_pos: { mapName: 'map0', cmd_num: cmdNumRef.current++
     );
     const savedAgain = await waitForRespond('save_map_respond', 12000);
     console.log(`[Mapping] Manual post-recharge save_map_respond: ${savedAgain ? 'OK' : 'TIMEOUT'}`);
+    if (sn) void markPendingMapSync(sn);
     sendCommand(
       { get_map_outline: { map_name: 'all', cmd_num: cmdNumRef.current++ } },
       'get_map_outline (post-recharge manual)',
