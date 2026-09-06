@@ -21,6 +21,14 @@ import { pushMapToMowerVerbatim } from '../../mqtt/mapSync.js';
 import { isDeviceOnline } from '../../mqtt/broker.js';
 import { deviceCache } from '../../mqtt/sensorData.js';
 
+// Firmware-poort: apply/revert vragen mowerFileCapability of write_map_files
+// überhaupt bestaat op deze maaier. Standaard "custom" zodat de bestaande
+// tests ongewijzigd blijven; de stock-tests zetten de vlag om.
+const fw = vi.hoisted(() => ({ supported: true }));
+vi.mock('../../services/mowerFileCapability.js', () => ({
+  getMowerFileCapability: () => ({ mowerFileApplySupported: fw.supported, isOpenNova: fw.supported }),
+}));
+
 const sn = 'LFIN0001';
 const square = [{ x: 0, y: 0 }, { x: 20, y: 0 }, { x: 20, y: 20 }, { x: 0, y: 20 }];
 const obst = [{ x: 5, y: 5 }, { x: 8, y: 5 }, { x: 8, y: 8 }, { x: 5, y: 8 }];
@@ -132,6 +140,42 @@ describe('mapEdit service: apply + revert', () => {
     expect(mapEditsRepo.listDrafts(sn).length).toBe(0);
     expect(vi.mocked(createBundleFromDb)).toHaveBeenCalledWith(sn, 'map_edit');
     expect(vi.mocked(pushMapToMowerVerbatim)).toHaveBeenCalledWith(sn, 'test.novabotmap');
+  });
+
+  it('apply op STOCK firmware: geweigerd vóór elke DB-mutatie, drafts blijven, geen push', async () => {
+    fw.supported = false;
+    try {
+      const moved = square.map(p => (p.x === 20 ? { x: 20.5, y: p.y } : p));
+      saveDraft(sn, { canonical: 'map0', points: moved });
+      const res = await applyEdits(sn);
+      expect(res.ok).toBe(false);
+      expect(res.reason).toBe('unsupported_firmware');
+      // DB onaangeraakt, draft nog aanwezig, niets naar de maaier
+      expect(JSON.parse(mapRepo.findBySnAndCanonical(sn, 'map0')!.map_area!)[1].x).toBe(20);
+      expect(mapEditsRepo.listDrafts(sn).length).toBe(1);
+      expect(mapEditsRepo.latestVersion(sn)).toBeFalsy();
+      expect(vi.mocked(pushMapToMowerVerbatim)).not.toHaveBeenCalled();
+    } finally {
+      fw.supported = true;
+    }
+  });
+
+  it('revert op STOCK firmware: DB terug naar snapshot, geen push (herstelt app/maaier-scheefstand)', async () => {
+    // Eerst een echte apply (custom) zodat er een versie is …
+    const moved = square.map(p => (p.x === 20 ? { x: 20.5, y: p.y } : p));
+    saveDraft(sn, { canonical: 'map0', points: moved });
+    expect((await applyEdits(sn)).ok).toBe(true);
+    vi.mocked(pushMapToMowerVerbatim).mockClear();
+    // … en dan terugdraaien alsof de maaier stock is.
+    fw.supported = false;
+    try {
+      const res = await revertEdits(sn);
+      expect(res.ok).toBe(true);
+      expect(JSON.parse(mapRepo.findBySnAndCanonical(sn, 'map0')!.map_area!)[1].x).toBe(20);
+      expect(vi.mocked(pushMapToMowerVerbatim)).not.toHaveBeenCalled();
+    } finally {
+      fw.supported = true;
+    }
   });
 
   it('apply: nieuw obstacle → maps-rij aangemaakt; delete → rij weg', async () => {

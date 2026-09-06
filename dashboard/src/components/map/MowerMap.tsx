@@ -2084,6 +2084,10 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
         setEditStatusKind('info');
         await refreshEditGeometry();
         break;
+      case 'unsupported_firmware':
+        setEditStatus(t('map.edit.unsupportedFirmware'));
+        setEditStatusKind('error');
+        break; // drafts blijven — server heeft niets gemuteerd
       case 'push_failed':
       case 'bundle_failed':
         setEditStatus(t('map.edit.pushFailed'));
@@ -4479,6 +4483,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
             canRedo={canRedo}
             onUndo={undo}
             onRedo={redo}
+            firmwareSupported={isOpenNovaFirmware((sensors?.sw_version ?? sensors?.version) ?? undefined)}
           />
         )}
       </div>

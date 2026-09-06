@@ -428,7 +428,9 @@
       "coverageRadiusSaveFailed": "Coverage-radius opslaan mislukt",
       "coverageRadiusInvalid": "Radius moet 0.20-1.20 m zijn",
       "coverageStart": "Maaier start hier",
-      "coverageRefresh": "Ververs vanaf maaier"
+      "coverageRefresh": "Ververs vanaf maaier",
+      "unsupportedFirmware": "Kaartwijzigingen toepassen vereist OpenNova custom firmware. Gebruik op stock firmware “Kaart bewerken” in de app en rij het gewijzigde stuk.",
+      "stockNotice": "Stock firmware: wijzigingen kunnen van hieruit niet naar de maaier. Gebruik “Kaart bewerken” in de OpenNova-app (rij het gewijzigde stuk)."
     },
     "missedPoint": "Gemist punt"
   },

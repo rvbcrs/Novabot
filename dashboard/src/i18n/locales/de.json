@@ -365,7 +365,9 @@
       "coverageRadiusSaveFailed": "Coverage-Radius konnte nicht gespeichert werden",
       "coverageRadiusInvalid": "Radius muss 0.20-1.20 m sein",
       "coverageStart": "Mäher startet hier",
-      "coverageRefresh": "Vom Mäher aktualisieren"
+      "coverageRefresh": "Vom Mäher aktualisieren",
+      "unsupportedFirmware": "Kartenänderungen anwenden erfordert die OpenNova-Custom-Firmware. Auf Stock-Firmware „Karte bearbeiten“ in der App nutzen und den geänderten Abschnitt abfahren.",
+      "stockNotice": "Stock-Firmware: Änderungen können von hier nicht zum Mäher. Nutze „Karte bearbeiten“ in der OpenNova-App (den geänderten Abschnitt abfahren)."
     },
     "missedPoint": "Verpasster Punkt"
   },

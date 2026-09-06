@@ -1878,9 +1878,11 @@ dashboardRouter.post('/maps/:sn/edit/apply', async (req: Request, res: Response)
     if (!result.ok) {
       const status = result.reason === 'validation' ? 422
         : result.reason === 'no_changes' ? 400
-        : result.reason === 'offline' || result.reason === 'busy' || result.reason === 'not_docked' || result.reason === 'locked' ? 409 : 502;
+        : result.reason === 'offline' || result.reason === 'busy' || result.reason === 'not_docked' || result.reason === 'locked' || result.reason === 'unsupported_firmware' ? 409 : 502;
       const body = result.reason === 'not_docked'
         ? { ...result, error: 'Kaart wijzigen kan alleen als de maaier op het dock staat te laden.', msgKey: 'mapEditErrNotDocked' }
+        : result.reason === 'unsupported_firmware'
+        ? { ...result, error: 'Kaartwijzigingen toepassen vereist OpenNova custom firmware. Gebruik op stock firmware "Kaart bewerken" in de app.', msgKey: 'mapEditErrUnsupportedFirmware' }
         : result;
       res.status(status).json(body);
       return;

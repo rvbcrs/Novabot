@@ -15,6 +15,10 @@ export interface MapEditBarProps {
   canRedo: boolean;
   onUndo: () => void;
   onRedo: () => void;
+  /** false on stock LFI firmware: applying needs the OpenNova extended channel
+   *  (write_map_files), so Apply/Re-sync are disabled and a notice explains
+   *  the in-app "Edit map" route instead. Drafting still works. */
+  firmwareSupported: boolean;
 }
 
 const STATUS_COLORS: Record<MapEditBarProps['statusKind'], string> = {
@@ -33,7 +37,7 @@ const STATUS_COLORS: Record<MapEditBarProps['statusKind'], string> = {
  */
 export function MapEditBar({
   pendingCount, pendingSync, hasVersions, status, statusKind, busy,
-  onApply, onRevert, onDiscard, canUndo, canRedo, onUndo, onRedo,
+  onApply, onRevert, onDiscard, canUndo, canRedo, onUndo, onRedo, firmwareSupported,
 }: MapEditBarProps) {
   const { t } = useTranslation();
   // When the only thing outstanding is a failed push (no fresh drafts), the
@@ -74,6 +78,13 @@ export function MapEditBar({
         </div>
       </div>
 
+      {!firmwareSupported && (
+        <p className="text-[11px] mb-2 leading-snug text-amber-400 flex items-start gap-1">
+          <AlertTriangle className="w-3 h-3 mt-0.5 flex-shrink-0" />
+          <span>{t('map.edit.stockNotice')}</span>
+        </p>
+      )}
+
       {status && (
         <p className={`text-[11px] mb-2 leading-snug whitespace-pre-line ${STATUS_COLORS[statusKind]}`}>
           {status}
@@ -83,7 +94,8 @@ export function MapEditBar({
       <div className="flex items-center gap-2">
         <button
           onClick={onApply}
-          disabled={busy}
+          disabled={busy || !firmwareSupported}
+          title={!firmwareSupported ? t('map.edit.stockNotice') : undefined}
           className="flex-1 inline-flex items-center justify-center gap-1 text-xs px-2 py-1.5 rounded bg-emerald-600 text-white hover:bg-emerald-500 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
         >
           {resyncOnly ? <UploadCloud className="w-3 h-3" /> : <Check className="w-3 h-3" />}

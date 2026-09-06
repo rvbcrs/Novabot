@@ -9,6 +9,7 @@ import {
 } from '../maps/editGeometry.js';
 import { deviceCache } from '../mqtt/sensorData.js';
 import { isDeviceOnline } from '../mqtt/broker.js';
+import { getMowerFileCapability } from './mowerFileCapability.js';
 import { db } from '../db/database.js';
 
 const TAG = '[MAP-EDIT]';
@@ -205,7 +206,7 @@ function isMowerDocked(sn: string): boolean {
 
 export interface ApplyResult {
   ok: boolean;
-  reason?: 'offline' | 'busy' | 'not_docked' | 'locked' | 'no_changes' | 'validation' | 'bundle_failed' | 'push_failed' | 'no_version';
+  reason?: 'offline' | 'busy' | 'not_docked' | 'locked' | 'no_changes' | 'validation' | 'bundle_failed' | 'push_failed' | 'no_version' | 'unsupported_firmware';
   validation?: ValidationResult;
   applied?: { canonical: string; action: 'updated' | 'created' | 'deleted' }[];
 }
@@ -258,6 +259,12 @@ export async function applyEdits(sn: string): Promise<ApplyResult> {
     if (!isDeviceOnline(sn)) return { ok: false, reason: 'offline' };
     if (isMowerBusy(sn)) return { ok: false, reason: 'busy' };
     if (!isMowerDocked(sn)) return { ok: false, reason: 'not_docked' };
+    // Toepassen loopt via write_map_files op het extended-kanaal — dat bestaat
+    // alleen in OpenNova custom firmware. Op stock luistert niets: de push
+    // liep in een timeout ("push failed") terwijl de DB al gemuteerd was, en
+    // app en maaier liepen uit elkaar (waltervl, stock 5.7.1). Daarom vóór
+    // elke mutatie weigeren; de drafts blijven staan.
+    if (!getMowerFileCapability(sn).mowerFileApplySupported) return { ok: false, reason: 'unsupported_firmware' };
 
     const drafts = mapEditsRepo.listDrafts(sn);
     if (drafts.length === 0) {
@@ -341,6 +348,9 @@ export async function revertEdits(sn: string): Promise<ApplyResult> {
     if (!isMowerDocked(sn)) return { ok: false, reason: 'not_docked' };
     const version = mapEditsRepo.latestVersion(sn);
     if (!version) return { ok: false, reason: 'no_version' };
+    // Op stock firmware is er nooit iets naar de maaier gegaan; de DB
+    // terugzetten is precies wat app en maaier weer gelijk trekt. Geen push.
+    const pushSupported = getMowerFileCapability(sn).mowerFileApplySupported;
     const snapshot = JSON.parse(version.snapshot) as SnapshotRow[];
 
     db.transaction(() => {
@@ -373,6 +383,10 @@ export async function revertEdits(sn: string): Promise<ApplyResult> {
       deviceSettingsRepo.upsert(sn, PENDING_KEY, '1');
     })();
 
+    if (!pushSupported) {
+      deviceSettingsRepo.upsert(sn, PENDING_KEY, '0');
+      return { ok: true };
+    }
     return bundleAndPush(sn);
   } finally {
     applyLocks.delete(sn);

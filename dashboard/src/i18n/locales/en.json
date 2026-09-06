@@ -381,7 +381,9 @@
       "coverageRadiusSaveFailed": "Could not save coverage radius",
       "coverageRadiusInvalid": "Radius must be 0.20-1.20 m",
       "coverageStart": "Mower starts here",
-      "coverageRefresh": "Refresh from mower"
+      "coverageRefresh": "Refresh from mower",
+      "unsupportedFirmware": "Applying map edits needs OpenNova custom firmware. On stock firmware, use “Edit map” in the app and drive the changed section.",
+      "stockNotice": "Stock firmware: edits can't be sent to the mower from here. Use “Edit map” in the OpenNova app instead (drive the changed section)."
     },
     "missedPoint": "Missed point"
   },

@@ -365,7 +365,9 @@
       "coverageRadiusSaveFailed": "Impossible d'enregistrer le rayon",
       "coverageRadiusInvalid": "Le rayon doit etre entre 0.20 et 1.20 m",
       "coverageStart": "Le robot démarre ici",
-      "coverageRefresh": "Actualiser depuis la tondeuse"
+      "coverageRefresh": "Actualiser depuis la tondeuse",
+      "unsupportedFirmware": "Appliquer des modifications de carte nécessite le firmware OpenNova. Sur le firmware d’origine, utilisez « Modifier la carte » dans l’application et parcourez la section modifiée.",
+      "stockNotice": "Firmware d’origine : les modifications ne peuvent pas être envoyées à la tondeuse d’ici. Utilisez « Modifier la carte » dans l’application OpenNova (parcourez la section modifiée)."
     },
     "missedPoint": "Point manqué"
   },
