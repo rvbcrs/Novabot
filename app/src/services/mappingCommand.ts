@@ -1,5 +1,17 @@
 import type { BleRespond } from './bleFrameAssembler';
 
+/** Explicit firmware rejection: this recording cannot be saved unchanged. */
+export class MapSaveRejectedError extends Error {
+  constructor(code: number) {
+    const reasons: Record<number, string> = {
+      1: 'the recorded boundary overlaps an existing work area. Record the area again without overlapping other work areas.',
+      2: 'the recorded boundary overlaps an existing channel. Record the area again without overlapping the channel.',
+      3: 'the recorded channel crosses more than two work areas. Record a channel connecting only two areas.',
+    };
+    super(`Map not saved: ${reasons[code] ?? 'the mower rejected this recording.'} (Error ${code})`);
+  }
+}
+
 /** Subscribe before writing: a BLE response can arrive before the write resolves. */
 export function sendMappingCommand(
   response: string,
@@ -33,7 +45,9 @@ export function sendMappingCommand(
       if (typeof data?.result !== 'number') {
         finish(new Error(`Invalid mower confirmation (${response}).`));
       } else if (response === 'save_map_respond' && data.value !== 0) {
-        finish(new Error(`Map save not confirmed: ${typeof data.value === 'number' ? `error ${data.value}` : 'invalid save result'}.`));
+        finish(typeof data.value === 'number' && Number.isFinite(data.value)
+          ? new MapSaveRejectedError(data.value)
+          : new Error('Map save not confirmed: invalid save result.'));
       } else if (data.result !== 0 || (typeof data.value === 'number' && data.value !== 0)) {
         finish(new Error(`Mower rejected ${response}: error ${data.result || data.value}.`));
       } else {

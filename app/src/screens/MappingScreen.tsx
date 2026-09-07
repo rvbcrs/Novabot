@@ -51,7 +51,7 @@ import {
 } from '../services/ble';
 import { readMapsCache, writeMapsCache, normalizeCachedMaps, mergePendingMaps, type CachedMap } from '../services/mapsCache';
 import { markPendingMapSync } from '../services/pendingMapSync';
-import { sendMappingCommand } from '../services/mappingCommand';
+import { MapSaveRejectedError, sendMappingCommand } from '../services/mappingCommand';
 import { scanStartPoint, isMappingLoopClosed } from '../utils/mapPoints';
 
 // ── Joystick constants (smaller than JoystickScreen) ──
@@ -78,7 +78,7 @@ function getHoldType(x: number, y: number): number {
   return x < 0 ? 1 : 2; // left(1), right(2)
 }
 
-type MappingState = 'idle' | 'calibrating' | 'preMapping' | 'mapping' | 'stopping' | 'chargerPosition' | 'done' | 'cancelled';
+type MappingState = 'idle' | 'calibrating' | 'preMapping' | 'mapping' | 'stopping' | 'saveRejected' | 'chargerPosition' | 'done' | 'cancelled';
 type MappingMode = 'autonomous' | 'manual';
 // Verified against Flutter v2.4.0 clickStart branches (BuildMapPageLogic L12873):
 //   work          → add_scan_map type:null  (creates map0/map1/map2)
@@ -176,6 +176,7 @@ export default function MappingScreen() {
   const [mapBuildType, setMapBuildType] = useState<MapBuildType>(initialBuildType ?? 'work');
   const [mappingMode, setMappingMode] = useState<MappingMode | null>(null);
   const [busy, setBusy] = useState(false);
+  const [saveRejectedMessage, setSaveRejectedMessage] = useState('');
   const [elapsed, setElapsed] = useState(0);
   const [activeMapName, setActiveMapName] = useState('map0');
   const [chargerAction, setChargerAction] = useState<'autoDock' | 'savePosition' | null>(null);
@@ -460,6 +461,20 @@ export default function MappingScreen() {
     };
   }, []);
 
+  const exitRejectedMapping = useCallback(async () => {
+    setBusy(true);
+    try {
+      // Stock closes a rejected scan with quit_mapping_mode before disconnecting.
+      await sendBleCommand({ quit_mapping_mode: { value: true, cmd_num: cmdNumRef.current++ } });
+      setMappingState('cancelled');
+      navigation.goBack();
+    } catch (error) {
+      appAlertCompat.alert('Could not close mapping', error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  }, [navigation]);
+
   // Every mapping phase waits for its BLE write; save phases also require a
   // successful mower response. Subscribe before writing to catch fast replies.
   const sendCommand = useCallback(async (
@@ -486,12 +501,19 @@ export default function MappingScreen() {
       return true;
     } catch (error) {
       console.warn(`[Mapping] ${label} failed`, error);
-      appAlertCompat.alert('Mapping command failed', error instanceof Error ? error.message : String(error));
+      if (error instanceof MapSaveRejectedError) {
+        // The mower has stopped recording. A rejected polygon cannot resume.
+        setSaveRejectedMessage(error.message);
+        setMappingState('saveRejected');
+        appAlertCompat.alert('Map not saved', error.message, [{ text: 'OK', onPress: exitRejectedMapping }]);
+      } else {
+        appAlertCompat.alert('Mapping command failed', error instanceof Error ? error.message : String(error));
+      }
       return false;
     } finally {
       setBusy(false);
     }
-  }, []);
+  }, [exitRejectedMapping]);
 
   const getNextWorkMapName = useCallback((maps: CachedMap[]): string => {
     const usedNames = new Set<string>();
@@ -945,7 +967,10 @@ export default function MappingScreen() {
                 { save_map: { mapName: saveMapName, type, cmd_num: cmdNumRef.current++ } },
                 `save_map (${type === 0 ? 'sub' : 'total'})`, 12000,
               );
-              if (!saved) { setMappingState('mapping'); return; }
+              if (!saved) {
+                setMappingState(state => state === 'saveRejected' ? state : 'mapping');
+                return;
+              }
               if (type === 0) await new Promise(r => setTimeout(r, 500));
             }
             if (isUnicom) pendingChannelFromRef.current = null;
@@ -1232,7 +1257,8 @@ export default function MappingScreen() {
             reminder (banner persists on the Map tab + idle mapping screen). */}
         <View style={styles.header}>
           <TouchableOpacity
-            onPress={() => navigation.goBack()}
+            onPress={() => mappingState === 'saveRejected' ? void exitRejectedMapping() : navigation.goBack()}
+            disabled={mappingState === 'saveRejected' && busy}
             style={styles.backBtn}
           >
             <Ionicons name="arrow-back" size={24} color={colors.text} />
@@ -1804,6 +1830,23 @@ export default function MappingScreen() {
             <Text style={styles.centerSub}>
               {t('processingBoundary', undefined) || 'Processing boundary data...'}
             </Text>
+          </View>
+
+        /* ── Rejected save: recording has ended; allow reconnecting to close. ── */
+        ) : mappingState === 'saveRejected' ? (
+          <View style={styles.centerBox}>
+            <Ionicons name="alert-circle" size={48} color={colors.red} />
+            <Text style={styles.centerTitle}>Map not saved</Text>
+            <Text style={styles.centerSub}>{saveRejectedMessage}</Text>
+            <TouchableOpacity
+              style={[styles.doneBtn, { marginTop: 16 }]}
+              disabled={busy || bleConnecting}
+              onPress={async () => {
+                if (await connectBleJoystick() === 'connected') await exitRejectedMapping();
+              }}
+            >
+              <Text style={styles.doneBtnText}>{busy || bleConnecting ? 'Closing...' : 'Close mapping'}</Text>
+            </TouchableOpacity>
           </View>
 
         /* ── Charger positioning: drive to ~50cm, then auto-dock ── */

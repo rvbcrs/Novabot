@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { sendMappingCommand } from '../mappingCommand';
+import { MapSaveRejectedError, sendMappingCommand } from '../mappingCommand';
 import type { BleRespond } from '../bleFrameAssembler';
 import { isMappingLoopClosed, scanStartPoint } from '../../utils/mapPoints';
 
@@ -49,6 +49,23 @@ it('cleans up on a disconnected BLE write, without continuing the save sequence'
   }, t.subscribe, 100).then(next);
   await expect(save).rejects.toThrow('not connected');
   expect(next).not.toHaveBeenCalled();
+  expect(t.unsubscribe).toHaveBeenCalledOnce();
+});
+
+it.each([
+  [1, 'overlaps an existing work area'],
+  [2, 'overlaps an existing channel'],
+  [3, 'crosses more than two work areas'],
+])('explains mower rejection %i and does not continue to the total save', async (code, reason) => {
+  const t = transport();
+  const saveTotal = vi.fn();
+  // Firmware rejection shape; error 1 was captured from a closed boundary.
+  const save = sendMappingCommand('save_map_respond', async () => {
+    t.emit({ result: 1, value: code });
+  }, t.subscribe, 100).then(saveTotal);
+  await expect(save).rejects.toThrow(reason);
+  await expect(save).rejects.toBeInstanceOf(MapSaveRejectedError);
+  expect(saveTotal).not.toHaveBeenCalled();
   expect(t.unsubscribe).toHaveBeenCalledOnce();
 });
 
