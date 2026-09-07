@@ -278,10 +278,11 @@ async function sendCommand(
         if (raw.length >= 2 && ((raw[0] === 0x62 && raw[1] === 0x62) || (raw[0] === 0x63 && raw[1] === 0x63))) return;
 
         const str = raw.toString('utf8');
+        const marker = str.replace(/\0+$/, ''); // stock mower sends C-string terminators
         bleLog(`[BLE] NOTIFY ${cmdName}: "${str.substring(0, 40)}${str.length > 40 ? '...' : ''}" (${raw.length}b)`);
 
-        if (str === 'ble_start') { collecting = true; responseBuffer = ''; return; }
-        if (str === 'ble_end' && collecting) {
+        if (marker === 'ble_start') { collecting = true; responseBuffer = ''; return; }
+        if (marker === 'ble_end' && collecting) {
           collecting = false;
           bleLog(`[BLE] RESPONSE ${cmdName}: ${responseBuffer.substring(0, 80)}`);
           if (responseBuffer.includes('_respond')) {
@@ -369,10 +370,11 @@ export async function provisionDevice(
       // Skip mower bb/cc telemetry
       if (raw.length >= 2 && ((raw[0] === 0x62 && raw[1] === 0x62) || (raw[0] === 0x63 && raw[1] === 0x63))) return;
       const str = raw.toString('utf8');
+      const marker = str.replace(/\0+$/, ''); // stock mower sends C-string terminators
       bleLog(`[BLE] NOTIFY ${char.uuid.substring(4,8)}: "${str.substring(0, 40)}" (${raw.length}b)`);
 
-      if (str === 'ble_start') { notifyCollecting = true; notifyBuffer = ''; return; }
-      if (str === 'ble_end' && notifyCollecting) {
+      if (marker === 'ble_start') { notifyCollecting = true; notifyBuffer = ''; return; }
+      if (marker === 'ble_end' && notifyCollecting) {
         notifyCollecting = false;
         if (notifyBuffer.includes('_respond') && notifyResolve) {
           bleLog(`[BLE] RESPONSE: ${notifyBuffer.substring(0, 60)}`);

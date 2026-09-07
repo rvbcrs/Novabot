@@ -9,6 +9,8 @@ import { View, Text, StyleSheet } from 'react-native';
 import Svg, { Polyline, Polygon, Circle, Line, G, Image as SvgImage, Text as SvgText, Rect } from 'react-native-svg';
 import { useStyles, useTheme, type Colors } from '../theme';
 import { isMapPoint, normalizeMapPoints } from '../utils/mapPoints';
+import { placeClosingLabel } from '../utils/liveMapLayout';
+import { MOWER_MAP_IMAGE } from './mower/mowerMapImage';
 
 export interface ExistingMapOverlay {
   mapId: string;
@@ -27,7 +29,7 @@ export interface LiveMapViewProps {
 }
 
 const PADDING_RATIO = 0.20; // 20% padding around bounding box
-const ARROW_LEN = 10;       // direction arrow length in SVG units
+const ARROW_LEN = 20;       // direction arrow length in SVG units
 
 function LiveMapViewInner({ points, orientation, closed, height = 150, width, existingMaps = [], mowerPosition }: LiveMapViewProps) {
   const styles = useStyles(makeStyles);
@@ -188,71 +190,13 @@ function LiveMapViewInner({ points, orientation, closed, height = 150, width, ex
           />
         )}
 
-        {/* Current position glow (trail mode, no mowerPosition) */}
-        {hasTrail && !mowerSvg && (
-          <>
-            <Circle cx={cursorX} cy={cursorY} r={8} fill={lineColor} opacity={0.25} />
-            <Circle cx={cursorX} cy={cursorY} r={5} fill={colors.white} />
-            <G opacity={0.9}>
-              <Line
-                x1={cursorX}
-                y1={cursorY}
-                x2={cursorX + arrowDx}
-                y2={cursorY + arrowDy}
-                stroke={colors.white}
-                strokeWidth={2}
-                strokeLinecap="round"
-              />
-            </G>
-          </>
-        )}
-
-        {/* Mower icon (standalone marker or at end of trail). Icon's "front" faces LEFT
-            in the source PNG, so we use `-heading` with no 180° offset — matches the
-            MapScreen convention. */}
-        {mowerSvg && (() => {
-          const mx = hasTrail ? cursorX : mowerSvg.sx;
-          const my = hasTrail ? cursorY : mowerSvg.sy;
-          const degHeading = -(orientation * 180 / Math.PI);
-          // Standalone (e.g. "Drive to Start Point", no trail yet): the same
-          // Novabot mower icon as the recording screen, but bigger + a faint
-          // glow behind it so it doesn't vanish behind the existing-map
-          // polygons on a small map (Ramon 2026-06-21).
-          const mowerSize = hasTrail ? 20 : 34;
-          return (
-            <G>
-              {!hasTrail && (
-                <Circle cx={mx} cy={my} r={mowerSize * 0.55} fill={colors.emerald} opacity={0.18} />
-              )}
-              <G transform={`translate(${mx}, ${my}) rotate(${degHeading})`}>
-                <SvgImage
-                  x={-mowerSize / 2}
-                  y={-mowerSize * 0.35}
-                  width={mowerSize}
-                  height={mowerSize * 0.68}
-                  href={require('../../assets/lawn_mower.png')}
-                />
-              </G>
-            </G>
-          );
-        })()}
-
-        {/* Closing distance label — rendered LAST so it sits on top of both trail and
-            mower icon. If the midpoint is too close to the mower (end of trail) we nudge
-            the label perpendicular to the first→last line so it stays readable. */}
+        {/* Move the label clear of the marker, including when first == last. */}
         {closingLabel && (() => {
           const labelW = Math.max(closingLabel.text.length * 5.2 + 10, 32);
           const labelH = 15;
-          // Nudge the label away from the mower icon (at trail's last point).
-          // Perpendicular offset so the label sits on the "outside" of the chord.
-          const dxToLast = cursorX - closingLabel.sx;
-          const dyToLast = cursorY - closingLabel.sy;
-          const distLast = Math.sqrt(dxToLast * dxToLast + dyToLast * dyToLast);
-          const nudge = distLast < 16 ? 14 : 0;
-          // Perpendicular vector (rotated 90°): (-dy, dx) normalized
-          const perpLen = Math.sqrt(dxToLast * dxToLast + dyToLast * dyToLast) || 1;
-          const px = closingLabel.sx + (-dyToLast / perpLen) * nudge;
-          const py = closingLabel.sy + (dxToLast / perpLen) * nudge;
+          const { sx: px, sy: py } = placeClosingLabel(
+            closingLabel, { sx: cursorX, sy: cursorY }, labelW, ARROW_LEN, height,
+          );
           return (
             <G>
               <Rect
@@ -276,6 +220,25 @@ function LiveMapViewInner({ points, orientation, closed, height = 150, width, ex
               >
                 {closingLabel.text}
               </SvgText>
+            </G>
+          );
+        })()}
+
+        {/* The inspected PNG points RIGHT at heading 0; invert rotation for SVG's Y axis.
+            Inline image + vector heading stay visible with WiFi off, above every label. */}
+        {(hasTrail || mowerSvg) && (() => {
+          const mx = hasTrail ? cursorX : mowerSvg!.sx;
+          const my = hasTrail ? cursorY : mowerSvg!.sy;
+          const mowerSize = hasTrail ? 28 : 34;
+          return (
+            <G>
+              <Circle cx={mx} cy={my} r={mowerSize * 0.55} fill={lineColor} opacity={0.25} />
+              <Line x1={mx} y1={my} x2={mx + arrowDx} y2={my + arrowDy}
+                stroke={colors.white} strokeWidth={3} strokeLinecap="round" />
+              <G transform={`translate(${mx}, ${my}) rotate(${-orientation * 180 / Math.PI})`}>
+                <SvgImage x={-mowerSize / 2} y={-mowerSize * 0.34}
+                  width={mowerSize} height={mowerSize * 0.68} href={{ uri: MOWER_MAP_IMAGE }} />
+              </G>
             </G>
           );
         })()}

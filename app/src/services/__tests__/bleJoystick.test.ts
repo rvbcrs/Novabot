@@ -57,7 +57,7 @@ describe('BLE mapping connection', () => {
     const notify = (index: number, raw: Uint8Array | string) => notifications[index](null, {
       value: Buffer.from(raw).toString('base64'),
     });
-    notify(0, 'ble_start');
+    notify(0, 'ble_start\0');
     notify(0, '{"type":"save_map_respond",');
     const bb = new Uint8Array(20);
     bb.set([0x62, 0x62]);
@@ -67,7 +67,7 @@ describe('BLE mapping connection', () => {
     cc.set([0x63, 0x63, 1, 1, 57]);
     notify(0, cc); // telemetry also leaves an interleaved JSON frame intact
     notify(0, '"message":{"result":0,"value":0}}');
-    notify(0, 'ble_end');
+    notify(0, 'ble_end\0');
     expect(telemetry.mock.calls[0][0]).toEqual({ position: { x: -12.34, y: -5.67 }, closedCycle: false });
     expect(telemetry.mock.calls[1][0].orientation).toBeCloseTo(-1.57);
     expect(respond).toHaveBeenCalledWith({ command: 'save_map_respond', data: { result: 0, value: 0 } });

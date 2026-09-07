@@ -98,8 +98,8 @@ export default {
   channelRequired: 'Channel Required',
   channelRequiredDesc: 'The distance from your charging station to the lawn exceeds 1.5m, or it is not directly facing the lawn. You need to create a channel.',
   // ── Mapping / schedules ─────────────────────────────────────────────
-  calibratingMotors: 'Calibrating Motors',
-  calibratingHint: 'The mower is running a motor self-test. This takes a few seconds.',
+  calibratingMotors: 'Preparing Recording',
+  calibratingHint: 'The mower is preparing to record. Wait until it is ready.',
   days: 'Days',
   schedule: 'Schedule',
   actions: 'ACTIONS',

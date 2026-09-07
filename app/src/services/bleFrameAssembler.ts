@@ -2,7 +2,8 @@
  * Reassembles the mower's BLE notify stream into complete JSON frames.
  *
  * The firmware chunks every notify payload into ~20-byte writes and wraps a
- * message in the literal markers `ble_start` … `ble_end`. Interleaved with
+ * message in `ble_start\0` … `ble_end\0` (C strings including the terminator).
+ * Unpadded markers from other implementations are accepted too. Interleaved with
  * those come the raw "bb"/"cc" telemetry chunks (first two bytes 0x62 0x62 or
  * 0x63 0x63) which are NOT part of any JSON frame. Decode those separately
  * with parseBleTelemetry before passing chunks to the frame assembler.
@@ -69,8 +70,11 @@ export class BleFrameAssembler {
     )) return;
 
     const str = utf8(raw);
-    if (str === 'ble_start') { this.collecting = true; this.buffer = ''; return; }
-    if (str === 'ble_end') {
+    // bluez_send_message sends all 10/8 bytes of start_tag/end_tag, including
+    // their NUL. Keep JSON chunks unchanged; only normalize marker comparison.
+    const marker = str.replace(/\0+$/, '');
+    if (marker === 'ble_start') { this.collecting = true; this.buffer = ''; return; }
+    if (marker === 'ble_end') {
       if (this.collecting) {
         this.collecting = false;
         const frame = this.buffer;

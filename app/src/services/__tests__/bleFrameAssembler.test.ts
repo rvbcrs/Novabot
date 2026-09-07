@@ -10,6 +10,23 @@ function collect() {
 }
 
 describe('BleFrameAssembler', () => {
+  it('accepts the NUL-terminated markers sent by stock firmware for stop/save acknowledgements', () => {
+    const { a, frames } = collect();
+    // Extracted start_tag/end_tag ELF symbols, v6.0.0/v6.0.2/v6.0.3.
+    const start = new Uint8Array(Buffer.from('626c655f737461727400', 'hex'));
+    const end = new Uint8Array(Buffer.from('626c655f656e6400', 'hex'));
+    for (const command of ['stop_scan_map_respond', 'save_map_respond']) {
+      const json = JSON.stringify({ type: command, message: { result: 0, value: command === 'save_map_respond' ? 0 : null } });
+      a.feed(start);
+      for (let i = 0; i < json.length; i += 20) a.feed(b(json.slice(i, i + 20)));
+      a.feed(end);
+      expect(parseBleRespond(frames[frames.length - 1])).toEqual({
+        command, data: { result: 0, value: command === 'save_map_respond' ? 0 : null },
+      });
+    }
+    expect(frames).toHaveLength(2);
+  });
+
   it('plakt chunks tussen ble_start en ble_end aan elkaar', () => {
     const { a, frames } = collect();
     a.feed(b('ble_start'));

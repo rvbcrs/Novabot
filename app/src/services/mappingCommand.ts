@@ -7,19 +7,19 @@ export function sendMappingCommand(
   subscribe: (listener: (reply: BleRespond) => void) => () => void,
   timeoutMs: number,
   expected: { type?: unknown; cmd_num?: unknown } = {},
-): Promise<void> {
+): Promise<BleRespond> {
   return new Promise((resolve, reject) => {
     let unsubscribe = () => {};
     let settled = false;
     let written = false;
-    let acknowledged = false;
+    let acknowledged: BleRespond | null = null;
     const finish = (error?: Error) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       unsubscribe();
       if (error) reject(error);
-      else resolve();
+      else if (acknowledged) resolve(acknowledged);
     };
     const timer = setTimeout(() => finish(new Error(
       `No confirmation from mower (${response}). Check Bluetooth before continuing; saving has not been confirmed.`,
@@ -37,7 +37,7 @@ export function sendMappingCommand(
       } else if (data.result !== 0 || (typeof data.value === 'number' && data.value !== 0)) {
         finish(new Error(`Mower rejected ${response}: error ${data.result || data.value}.`));
       } else {
-        acknowledged = true;
+        acknowledged = reply;
         if (written) finish();
       }
     });

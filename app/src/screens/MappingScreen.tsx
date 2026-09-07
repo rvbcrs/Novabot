@@ -52,6 +52,7 @@ import {
 import { readMapsCache, writeMapsCache, normalizeCachedMaps, mergePendingMaps, type CachedMap } from '../services/mapsCache';
 import { markPendingMapSync } from '../services/pendingMapSync';
 import { sendMappingCommand } from '../services/mappingCommand';
+import { scanStartPoint, isMappingLoopClosed } from '../utils/mapPoints';
 
 // ── Joystick constants (smaller than JoystickScreen) ──
 const { width: SCREEN_W } = Dimensions.get('window');
@@ -321,17 +322,7 @@ export default function MappingScreen() {
       return;
     }
 
-    // Method 2: detect if trail end is close to trail start (within 1.5m, min 10 points)
-    if (trailPoints.length >= 10) {
-      const first = trailPoints[0];
-      const last = trailPoints[trailPoints.length - 1];
-      const dx = last.x - first.x;
-      const dy = last.y - first.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      if (dist < 1.5) {
-        setClosedCycleSeen(true);
-      }
-    }
+    if (isMappingLoopClosed(trailPoints)) setClosedCycleSeen(true);
   }, [ifClosedCycle, mappingState, closedCycleSeen, trailPoints]);
 
   // ── Mower position from sensor data ──
@@ -450,7 +441,6 @@ export default function MappingScreen() {
   // ── Elapsed timer ──
   useEffect(() => {
     if (mappingState === 'mapping') {
-      setElapsed(0);
       timerRef.current = setInterval(() => setElapsed(e => e + 1), 1000);
     } else {
       if (timerRef.current) clearInterval(timerRef.current);
@@ -478,9 +468,17 @@ export default function MappingScreen() {
     setBusy(true);
     try {
       if (responseTimeout) {
-        await sendMappingCommand(`${Object.keys(command)[0]}_respond`,
+        const reply = await sendMappingCommand(`${Object.keys(command)[0]}_respond`,
           () => sendBleCommand(command),
           onBleRespond, responseTimeout, Object.values(command)[0] as { type?: unknown; cmd_num?: unknown });
+        if (reply.command === 'start_scan_map_respond' || reply.command === 'add_scan_map_respond') {
+          // Use the mower's recording origin, not a pre-localization position.
+          const start = scanStartPoint(reply.data);
+          setTrailPoints(start ? [start] : []);
+          lastTrailRef.current = start;
+          // Do not append the last pre-start telemetry sample on the next render.
+          setBleTelemetry(previous => ({ ...previous, position: start ?? undefined, closedCycle: false }));
+        }
       } else {
         await sendBleCommand(command);
       }
@@ -797,6 +795,7 @@ export default function MappingScreen() {
             if (await connectBleJoystick() !== 'connected') return;
             if (!await sendCommand({ start_assistant_build_map: { type: 2, cmd_num: cmdNumRef.current++ } }, 'start_assistant_build_map')) return;
             setMappingMode('autonomous');
+            setElapsed(0);
             setMappingState('mapping');
             setClosedCycleSeen(false);
             closedCycleDismissedRef.current = false;
@@ -873,27 +872,27 @@ export default function MappingScreen() {
       : mapBuildType === 'modify' ? 'null'
       : mapName;
 
+    if (joystickActiveRef.current) stopJoystick();
+    setMappingState('calibrating');
+    setTrailPoints([]);
+    lastTrailRef.current = null;
+    setElapsed(0);
     const scanType = buildTypeToScanType(mapBuildType);
     if (existingWorkMapCount === 0) {
-      if (!await sendCommand({ start_scan_map: { model: 'manual', mapName: 'map0', type: 0, cmd_num: cmdNumRef.current++ } }, 'start_scan_map')) return;
+      if (!await sendCommand({ start_scan_map: { model: 'manual', mapName: 'map0', type: 0, cmd_num: cmdNumRef.current++ } }, 'start_scan_map', 20000)) { setMappingState('preMapping'); return; }
     } else {
-      if (!await sendCommand({ add_scan_map: { model: 'manual', mapName: wireMapName, type: scanType, cmd_num: cmdNumRef.current++ } }, 'add_scan_map')) return;
+      if (!await sendCommand({ add_scan_map: { model: 'manual', mapName: wireMapName, type: scanType, cmd_num: cmdNumRef.current++ } }, 'add_scan_map', 20000)) { setMappingState('preMapping'); return; }
     }
     console.log(`[Mapping] Recording started (${existingWorkMapCount === 0 ? 'start' : 'add'}_scan_map, map: ${mapName}, type: ${scanType}, buildType: ${mapBuildType}, ${existingWorkMapCount} existing)`);
 
-    setTrailPoints([]);
-    lastTrailRef.current = null;
     setClosedCycleSeen(false);
     closedCycleDismissedRef.current = false;
     // Reset the unicom-visited set — this live counter is only meaningful for
     // the current scan, not accumulated across sessions.
     unicomVisitedMapsRef.current = new Set();
-    // Calibrating screen: the firmware ignores joystick input for ~8s after
-    // entering mapping mode (motors + sensors initialise). Show a clear
-    // "please wait" state so the user doesn't yank the joystick into
-    // a no-op gulf and assume the build is broken.
-    setMappingState('calibrating');
-    setTimeout(() => setMappingState('mapping'), 8000);
+    // add_scan_map took 13 seconds in the captured session. Its response
+    // provides the true start point and means the mower is ready to record.
+    setMappingState('mapping');
   };
 
   // ── Stop & Save (exact flow from official Novabot app) ──
@@ -1499,16 +1498,15 @@ export default function MappingScreen() {
             </View>
           </ScrollView>
 
-        /* ── Calibrating: mower initialising motors + sensors (~8s) ── */
+        /* ── Calibrating: wait for the mower to confirm recording is ready ── */
         ) : mappingState === 'calibrating' ? (
           <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', gap: 16, paddingHorizontal: 32 }}>
             <ActivityIndicator size="large" color={colors.emerald} />
             <Text style={{ color: colors.white, fontSize: 20, fontWeight: '700' }}>
-              {t('calibratingMotors', undefined) || 'Calibrating Motors'}
+              {t('calibratingMotors')}
             </Text>
             <Text style={{ color: colors.textMuted, fontSize: 14, textAlign: 'center', lineHeight: 20 }}>
-              {t('calibratingHint', undefined)
-                || 'The mower is initialising its motors and sensors.\nThis takes about 8 seconds.'}
+              {t('calibratingHint')}
             </Text>
             <View style={styles.statsChips}>
               <Text style={[
@@ -1686,7 +1684,7 @@ export default function MappingScreen() {
                 <Text style={[styles.sensorChip, { color: rtkFix.color, fontWeight: '700' }]}>
                   RTK: {rtkFix.label}
                 </Text>
-                {ifClosedCycle && (
+                {closedCycleSeen && (
                   <Text style={[styles.sensorChip, styles.closedChip]}>
                     Closed
                   </Text>
@@ -1698,7 +1696,7 @@ export default function MappingScreen() {
             <LiveMapView
               points={trailPoints}
               orientation={mapOrientation}
-              closed={ifClosedCycle}
+              closed={closedCycleSeen}
               height={150}
               existingMaps={existingMaps}
               mowerPosition={mowerLocal}

@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { sendMappingCommand } from '../mappingCommand';
 import type { BleRespond } from '../bleFrameAssembler';
+import { isMappingLoopClosed, scanStartPoint } from '../../utils/mapPoints';
 
 afterEach(() => vi.useRealTimers());
 
@@ -70,4 +71,33 @@ it('ignores an explicitly different save phase or command number', async () => {
   const check = expect(save).rejects.toThrow('No confirmation');
   await vi.advanceTimersByTimeAsync(100);
   await check;
+});
+
+it('waits beyond the old 8-second guess and preserves the mower-confirmed recording origin', async () => {
+  vi.useFakeTimers();
+  const t = transport();
+  // Start position and response delay from the reported mower session.
+  const start = { x: 3.4389715299902321, y: 5.21046304784252 };
+  const started = vi.fn();
+  const command = sendMappingCommand('add_scan_map_respond', async () => {}, t.subscribe, 20000).then(reply => {
+    started();
+    return scanStartPoint(reply.data);
+  });
+  await vi.advanceTimersByTimeAsync(8000);
+  expect(started).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(4900);
+  t.emit({ result: 0, value: { map_position: start } }, 'add_scan_map_respond');
+  expect(await command).toEqual(start);
+
+  // Synthetic lap returning to that confirmed start closes; using an old
+  // position two metres away would leave the UI reporting an open boundary.
+  const lap = Array.from({ length: 12 }, (_, i) => ({
+    x: start.x + 3 * Math.sin(i * 2 * Math.PI / 11),
+    y: start.y + 3 * (1 - Math.cos(i * 2 * Math.PI / 11)),
+  }));
+  expect(isMappingLoopClosed(lap)).toBe(true);
+  expect(isMappingLoopClosed([{ x: start.x - 2, y: start.y }, ...lap.slice(1)])).toBe(false);
+  expect(isMappingLoopClosed(Array(12).fill(start))).toBe(false);
+  expect(isMappingLoopClosed(lap.slice(0, 6))).toBe(false);
+  expect(scanStartPoint({ value: { map_position: { x: NaN, y: 1 } } })).toBeNull();
 });
