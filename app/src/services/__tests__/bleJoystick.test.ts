@@ -133,4 +133,141 @@ describe('BLE mapping connection', () => {
     await frame;
     expect(current.writes[0]).toBe('ble_start');
   });
+
+  it('does not finish an old mapping frame after reconnecting during its chunk delay', async () => {
+    const old = fakeDevice();
+    const current = fakeDevice();
+    manager.connectToDevice.mockResolvedValueOnce(old.device).mockResolvedValueOnce(current.device);
+    await ble.bleJoystickConnect(old.device.id);
+    const frame = ble.sendBleCommand({ save_map: { mapName: 'map1', type: 0 } });
+    const outcome = frame.then(() => null, error => error as Error);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(old.writes).toEqual(['ble_start']);
+    await ble.bleJoystickDisconnect();
+    await ble.bleJoystickConnect(current.device.id);
+    await vi.runAllTimersAsync();
+    expect((await outcome)?.message).toContain('not connected');
+    expect(old.writes).toEqual(['ble_start']);
+    expect(current.writes).toEqual([]);
+    expect(ble.isBleJoystickConnected()).toBe(true);
+  });
+
+  it('does not send remaining raw joystick chunks after a connection change', async () => {
+    const old = fakeDevice();
+    const current = fakeDevice();
+    manager.connectToDevice.mockResolvedValueOnce(old.device).mockResolvedValueOnce(current.device);
+    await ble.bleJoystickConnect(old.device.id);
+    let releaseWrite!: () => void;
+    old.device.writeCharacteristicWithoutResponseForService.mockImplementationOnce(() =>
+      new Promise<void>(resolve => { releaseWrite = resolve; }));
+    // Both negative velocities make a 21-byte, two-chunk raw JSON message.
+    const move = ble.bleJoystickMove({ x_w: -1.25, y_v: -1.25, z_g: 0 });
+    await vi.advanceTimersByTimeAsync(0);
+    await ble.bleJoystickDisconnect();
+    await ble.bleJoystickConnect(current.device.id);
+    releaseWrite();
+    await move;
+    expect(old.device.writeCharacteristicWithoutResponseForService).toHaveBeenCalledTimes(1);
+    expect(current.writes).toEqual([]);
+    expect(ble.isBleJoystickConnected()).toBe(true);
+  });
+
+  it.each(['bleJoystickDisconnect', 'bleJoystickStopAndDisconnect'] as const)(
+    '%s cancels a connection that completes after the mapping screen disconnects', async cleanup => {
+    const { device } = fakeDevice();
+    let finishConnect!: (value: typeof device) => void;
+    manager.connectToDevice.mockImplementationOnce(() => new Promise(resolve => { finishConnect = resolve; }));
+    const connecting = ble.bleJoystickConnect(device.id);
+    await vi.advanceTimersByTimeAsync(0);
+    await ble[cleanup]();
+    finishConnect(device);
+    expect(await connecting).toBe(false);
+    expect(ble.isBleJoystickConnected()).toBe(false);
+    expect(device.cancelConnection).toHaveBeenCalledOnce();
+    expect(device.discoverAllServicesAndCharacteristics).not.toHaveBeenCalled();
+  });
+
+  it('does not restore a connection after disconnecting during service discovery', async () => {
+    const { device } = fakeDevice();
+    let finishDiscovery!: (value: typeof device) => void;
+    manager.connectToDevice.mockResolvedValue(device);
+    device.discoverAllServicesAndCharacteristics.mockImplementationOnce(() =>
+      new Promise(resolve => { finishDiscovery = resolve; }));
+    const connecting = ble.bleJoystickConnect(device.id);
+    await vi.advanceTimersByTimeAsync(0);
+    await ble.bleJoystickDisconnect();
+    finishDiscovery(device);
+    expect(await connecting).toBe(false);
+    expect(ble.isBleJoystickConnected()).toBe(false);
+    expect(device.cancelConnection).toHaveBeenCalledOnce();
+    expect(manager.onDeviceDisconnected).not.toHaveBeenCalled();
+  });
+
+  it('an old failed connect cannot disconnect a newer successful connection', async () => {
+    const { device } = fakeDevice();
+    let failOldConnect!: (error: Error) => void;
+    manager.connectToDevice.mockImplementationOnce(() =>
+      new Promise((_resolve, reject) => { failOldConnect = reject; })).mockResolvedValueOnce(device);
+    const oldConnect = ble.bleJoystickConnect('old-mower');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(await ble.bleJoystickConnect(device.id)).toBe(true);
+    failOldConnect(new Error('Connection cancelled'));
+    expect(await oldConnect).toBe(false);
+    expect(ble.isBleJoystickConnected()).toBe(true);
+    expect(device.cancelConnection).not.toHaveBeenCalled();
+  });
+
+  it('a superseded connect cannot cancel the newer connection to the same native device ID', async () => {
+    const old = fakeDevice();
+    const current = fakeDevice();
+    let finishOldConnect!: (value: typeof old.device) => void;
+    manager.connectToDevice.mockImplementationOnce(() =>
+      new Promise(resolve => { finishOldConnect = resolve; })).mockResolvedValueOnce(current.device);
+    const oldConnect = ble.bleJoystickConnect(old.device.id);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(await ble.bleJoystickConnect(current.device.id)).toBe(true);
+    finishOldConnect(old.device);
+    expect(await oldConnect).toBe(false);
+    expect(old.device.cancelConnection).not.toHaveBeenCalled();
+    expect(old.device.discoverAllServicesAndCharacteristics).not.toHaveBeenCalled();
+    expect(ble.isBleJoystickConnected()).toBe(true);
+  });
+
+  it('waits for the queued stop write before disconnecting', async () => {
+    const { device, writes } = fakeDevice();
+    manager.connectToDevice.mockResolvedValue(device);
+    await ble.bleJoystickConnect(device.id);
+    let finishMove!: () => void;
+    device.writeCharacteristicWithoutResponseForService.mockImplementationOnce(() =>
+      new Promise<void>(resolve => { finishMove = () => { writes.push('move'); resolve(); }; }));
+    device.cancelConnection.mockImplementationOnce(async () => { writes.push('disconnect'); });
+    const move = ble.bleJoystickMove({ x_w: 0.1, y_v: 0.2, z_g: 0 });
+    await vi.advanceTimersByTimeAsync(0);
+    const queuedMove = ble.bleJoystickMove({ x_w: 0.9, y_v: 0.9, z_g: 0 });
+    const cleanup = ble.bleJoystickStopAndDisconnect();
+    expect(device.cancelConnection).not.toHaveBeenCalled();
+    finishMove();
+    await Promise.all([move, queuedMove, cleanup]);
+    expect(writes).toEqual(['move', '{"stop_move":null}', 'disconnect']);
+    expect(ble.isBleJoystickConnected()).toBe(false);
+  });
+
+  it.each([false, true])('old cleanup cannot disconnect a newer session (reuse device: %s)', async reuseDevice => {
+    const old = fakeDevice();
+    const current = reuseDevice ? old : fakeDevice();
+    manager.connectToDevice.mockResolvedValueOnce(old.device).mockResolvedValueOnce(current.device);
+    await ble.bleJoystickConnect(old.device.id);
+    let finishMove!: () => void;
+    old.device.writeCharacteristicWithoutResponseForService.mockImplementationOnce(() =>
+      new Promise<void>(resolve => { finishMove = resolve; }));
+    const move = ble.bleJoystickMove({ x_w: 0.1, y_v: 0.2, z_g: 0 });
+    await vi.advanceTimersByTimeAsync(0);
+    const cleanup = ble.bleJoystickStopAndDisconnect();
+    if (!reuseDevice) await ble.bleJoystickDisconnect();
+    expect(await ble.bleJoystickConnect(current.device.id)).toBe(true);
+    finishMove();
+    await Promise.all([move, cleanup]);
+    expect(current.device.cancelConnection).not.toHaveBeenCalled();
+    expect(ble.isBleJoystickConnected()).toBe(true);
+  });
 });

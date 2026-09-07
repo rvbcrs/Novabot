@@ -12,7 +12,8 @@
  */
 import * as FileSystem from 'expo-file-system/legacy';
 import type { MapData } from './api';
-import { normalizeMapPoints } from '../utils/mapPoints';
+import { isMapPoint } from '../utils/mapPoints';
+import { getUnicomPair } from '../utils/mapChannels';
 
 export interface CachedMap {
   mapId: string;
@@ -20,29 +21,41 @@ export interface CachedMap {
   mapName?: string;
   fileName?: string;
   canonicalName?: string;
+  connectedMaps?: [string, string];
   points: Array<{ x: number; y: number }>;
 }
 
 /** Older writes stored API rows (`mapArea`) directly; readers expect `points`. */
 export function normalizeCachedMaps(maps: unknown): CachedMap[] {
   if (!Array.isArray(maps)) return [];
-  return maps.filter(m => m != null && typeof m.mapId === 'string').map(m => ({
-    mapId: m.mapId,
-    mapType: typeof m.mapType === 'string' ? m.mapType : 'work',
-    mapName: typeof m.mapName === 'string' ? m.mapName : undefined,
-    fileName: typeof m.fileName === 'string' ? m.fileName : undefined,
-    canonicalName: typeof m.canonicalName === 'string' ? m.canonicalName : undefined,
-    points: normalizeMapPoints(Array.isArray(m.points) ? m.points : m.mapArea),
-  }));
+  return maps.filter(m => m != null && typeof m.mapId === 'string').map(m => {
+    const points = Array.isArray(m.points) ? m.points : m.mapArea;
+    return {
+      mapId: m.mapId,
+      mapType: typeof m.mapType === 'string' ? m.mapType : 'work',
+      mapName: typeof m.mapName === 'string' ? m.mapName : undefined,
+      fileName: typeof m.fileName === 'string' ? m.fileName : undefined,
+      canonicalName: typeof m.canonicalName === 'string' ? m.canonicalName : undefined,
+      connectedMaps: m.mapType === 'unicom'
+        ? getUnicomPair({ mapType: 'unicom', connectedMaps: m.connectedMaps }) ?? undefined
+        : undefined,
+      // A missing vertex is an unknown edge, not permission to join its neighbours.
+      points: Array.isArray(points) && points.every(isMapPoint) ? points : [],
+    };
+  });
 }
 
 /** Keep confirmed phone-side saves until the mower's ZIP reaches the server. */
 export function mergePendingMaps(loaded: CachedMap[], cached: CachedMap[]): CachedMap[] {
   const key = (map: CachedMap) => {
+    const pair = map.mapType === 'unicom' ? getUnicomPair(map) : null;
+    if (pair) return `unicom:${pair.sort().join(':')}`;
     const name = (map.canonicalName ?? map.fileName ?? map.mapName ?? map.mapId).replace(/\.csv$/i, '');
     return `${map.mapType}:${map.mapType === 'work' ? name.match(/^(map\d+)(?:_|$)/)?.[1] ?? name : name}`;
   };
-  const loadedKeys = new Set(loaded.map(key));
+  const loadedKeys = new Set(loaded
+    .filter(map => map.mapType !== 'unicom' || map.points.length >= 2)
+    .map(key));
   return [...loaded, ...cached.filter(map => map.mapId.startsWith('optimistic-') && !loadedKeys.has(key(map)))];
 }
 

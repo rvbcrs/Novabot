@@ -215,12 +215,14 @@ async function writeFrame(
   charUuid: string,
   json: string,
   withResponse: boolean,
+  checkConnection?: () => void,
 ): Promise<void> {
   bleLog(`[BLE] writeFrame: svc=${serviceUuid.substring(4,8)} char=${charUuid.substring(4,8)} withResp=${withResponse} len=${json.length}`);
 
   // ble_start marker
   const startB64 = Buffer.from('ble_start', 'utf8').toString('base64');
   bleLog(`[BLE]   ble_start b64="${startB64}"`);
+  checkConnection?.();
   await device.writeCharacteristicWithoutResponseForService(serviceUuid, charUuid, startB64);
   bleLog(`[BLE]   ble_start OK`);
   await sleep(INTER_CHUNK_DELAY);
@@ -233,6 +235,7 @@ async function writeFrame(
     // CRITICAL: Buffer.from() wrap needed — subarray returns Uint8Array in RN polyfill
     // and Uint8Array.toString('base64') produces comma-separated numbers, not base64
     const chunk = Buffer.from(data.subarray(offset, Math.min(offset + 20, data.length)));
+    checkConnection?.();
     await device.writeCharacteristicWithoutResponseForService(
       serviceUuid, charUuid, chunk.toString('base64'),
     );
@@ -242,6 +245,7 @@ async function writeFrame(
 
   // ble_end marker
   const endB64 = Buffer.from('ble_end', 'utf8').toString('base64');
+  checkConnection?.();
   await device.writeCharacteristicWithoutResponseForService(serviceUuid, charUuid, endB64);
   bleLog(`[BLE]   ble_end OK`);
   await sleep(INTER_CHUNK_DELAY);
@@ -562,6 +566,7 @@ let _joystickConnected = false;
 let _joystickDisconnectCallback: (() => void) | null = null;
 let _joystickDisconnectSub: { remove: () => void } | null = null;
 let _joystickQueue: JoystickWriteQueue | null = null;
+let _joystickConnectAttempt: { id: string } | null = null;
 
 export function onBleJoystickDisconnect(cb: () => void): () => void {
   _joystickDisconnectCallback = cb;
@@ -641,13 +646,18 @@ function clearJoystickConnection(): void {
 
 function joystickDisconnected(device: Device): void {
   if (_joystickDevice !== device) return;
+  _joystickConnectAttempt = null;
   clearJoystickConnection();
   _joystickDisconnectCallback?.();
 }
 
 // Connection-bound writers never replay old commands/moves after reconnect.
-async function writeJoystickOperation(device: Device, write: () => Promise<void>): Promise<void> {
+function checkJoystickConnection(device: Device): void {
   if (_joystickDevice !== device || !_joystickConnected) throw new Error('Bluetooth mower is not connected');
+}
+
+async function writeJoystickOperation(device: Device, write: () => Promise<void>): Promise<void> {
+  checkJoystickConnection(device);
   try { await write(); } catch (err: any) {
     if (/disconnect|not connected/i.test(err.message ?? '')) joystickDisconnected(device);
     throw err;
@@ -660,18 +670,32 @@ async function writeJoystickOperation(device: Device, write: () => Promise<void>
  */
 export async function bleJoystickConnect(deviceId: string): Promise<boolean> {
   const mgr = getBleManager();
+  const attempt = { id: deviceId };
+  _joystickConnectAttempt = attempt;
   try {
     if (_joystickDevice?.id === deviceId && _joystickConnected) {
       // Check if still connected
       const connected = await mgr.isDeviceConnected(deviceId);
+      if (_joystickConnectAttempt !== attempt) return false;
       if (connected) return true;
     }
-    await bleJoystickDisconnect();
+    await disconnectJoystickDevice();
+    if (_joystickConnectAttempt !== attempt) return false;
     bleLog(`[BLE-JOY] Connecting to ${deviceId}...`);
-    _joystickDevice = await mgr.connectToDevice(deviceId, { timeout: 10000 });
-    _joystickDevice = await _joystickDevice.discoverAllServicesAndCharacteristics();
+    const connectedDevice = await mgr.connectToDevice(deviceId, { timeout: 10000 });
+    if (_joystickConnectAttempt !== attempt) {
+      // Native cancellation uses deviceId; do not cancel a newer attempt to
+      // the same mower when an old connect resolves after screen cleanup.
+      if (_joystickConnectAttempt?.id !== deviceId && _joystickDevice?.id !== deviceId) {
+        try { await connectedDevice.cancelConnection(); } catch {}
+      }
+      return false;
+    }
+    _joystickDevice = connectedDevice;
+    const device = await connectedDevice.discoverAllServicesAndCharacteristics();
+    if (_joystickConnectAttempt !== attempt || _joystickDevice !== connectedDevice) return false;
+    _joystickDevice = device;
     _joystickConnected = true;
-    const device = _joystickDevice;
     _joystickQueue = new JoystickWriteQueue(json => writeJoystickChunks(device, json));
     bleLog(`[BLE-JOY] Connected!`);
 
@@ -683,11 +707,13 @@ export async function bleJoystickConnect(deviceId: string): Promise<boolean> {
 
     await subscribeJoystickNotify(device);
 
-    return true;
+    return _joystickConnectAttempt === attempt && _joystickDevice === device && _joystickConnected;
   } catch (err: any) {
     bleLog(`[BLE-JOY] Connect failed: ${err.message}`);
-    await bleJoystickDisconnect();
+    if (_joystickConnectAttempt === attempt) await bleJoystickDisconnect();
     return false;
+  } finally {
+    if (_joystickConnectAttempt === attempt) _joystickConnectAttempt = null;
   }
 }
 
@@ -695,6 +721,22 @@ export async function bleJoystickConnect(deviceId: string): Promise<boolean> {
  * Disconnect BLE joystick.
  */
 export async function bleJoystickDisconnect(): Promise<void> {
+  _joystickConnectAttempt = null;
+  await disconnectJoystickDevice();
+}
+
+/** Stop the captured session before closing it; never close a newer session. */
+export async function bleJoystickStopAndDisconnect(): Promise<void> {
+  const device = _joystickDevice;
+  const queue = _joystickQueue;
+  const cleanup = { id: device?.id ?? '' };
+  _joystickConnectAttempt = cleanup; // Invalidate any connect/discovery still awaiting native BLE.
+  queue?.dropPendingMove();
+  if (device && queue && _joystickConnected) await queue.enqueue(JSON.stringify({ stop_move: null }));
+  if (_joystickConnectAttempt === cleanup && _joystickDevice === device) await bleJoystickDisconnect();
+}
+
+async function disconnectJoystickDevice(): Promise<void> {
   const device = _joystickDevice;
   clearJoystickConnection();
   if (device) {
@@ -722,6 +764,7 @@ async function writeJoystickChunks(device: Device, json: string): Promise<void> 
     const data = Buffer.from(json, 'utf8');
     for (let offset = 0; offset < data.length; offset += 20) {
       const chunk = Buffer.from(data.subarray(offset, Math.min(offset + 20, data.length)));
+      checkJoystickConnection(device);
       await device.writeCharacteristicWithoutResponseForService(
         svc, chr, chunk.toString('base64'));
     }
@@ -783,5 +826,5 @@ export async function sendBleCommand(command: Record<string, unknown>): Promise<
   console.log(`[BLE] sendBleCommand: ${json}`);
   const device = _joystickDevice;
   await _joystickQueue.enqueueOperation(() => writeJoystickOperation(device,
-    () => writeFrame(device, MOWER_SERVICE, MOWER_WRITE, json, false)));
+    () => writeFrame(device, MOWER_SERVICE, MOWER_WRITE, json, false, () => checkJoystickConnection(device))));
 }

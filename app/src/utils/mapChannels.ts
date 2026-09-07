@@ -19,6 +19,8 @@ export interface ChannelMapLike {
   canonicalName?: string | null;
   mapName?: string | null;
   fileName?: string | null;
+  /** Confirmed offline channel endpoints, before its firmware filename arrives. */
+  connectedMaps?: [string, string];
   /** Number of geometry points. A unicom row with fewer than 2 points (a
    *  0-byte / metadata-only connector, e.g. after a polygon-only restore) is
    *  NOT a navigable channel, so it does not connect its two maps. When
@@ -35,7 +37,7 @@ export interface MissingChannel {
   to: string;
 }
 
-function canonicalOf(m: ChannelMapLike): string | null {
+export function getWorkMapName(m: ChannelMapLike): string | null {
   return (
     m.canonicalName?.match(/^(map\d+)/)?.[1] ??
     m.fileName?.match(/^(map\d+)/)?.[1] ??
@@ -47,7 +49,12 @@ function canonicalOf(m: ChannelMapLike): string | null {
 /** The two work maps a unicom connector joins, e.g.
  *  "map0tomap1_0_unicom" -> ["map0","map1"]. Charge connectors
  *  ("map0tocharge_unicom") return null — they join the charger, not a work map. */
-function unicomPair(m: ChannelMapLike): [string, string] | null {
+export function getUnicomPair(m: ChannelMapLike): [string, string] | null {
+  const pair = m.connectedMaps;
+  if (Array.isArray(pair) && pair.length === 2 && pair[0] !== pair[1]
+      && pair.every(name => typeof name === 'string' && /^map\d+$/.test(name))) {
+    return [pair[0], pair[1]];
+  }
   const name = m.canonicalName ?? m.fileName ?? m.mapName ?? '';
   const match = name.match(/(map\d+)to(map\d+)/);
   return match ? [match[1], match[2]] : null;
@@ -67,7 +74,7 @@ export function findMissingChannels(maps: ChannelMapLike[]): MissingChannel[] {
     new Set(
       maps
         .filter((m) => m.mapType === 'work')
-        .map(canonicalOf)
+        .map(getWorkMapName)
         .filter((v): v is string => !!v),
     ),
   ).sort((a, b) => mapIndex(a) - mapIndex(b));
@@ -81,7 +88,7 @@ export function findMissingChannels(maps: ChannelMapLike[]): MissingChannel[] {
   for (const m of maps) {
     if (m.mapType !== 'unicom') continue;
     if ((m.pointCount ?? Infinity) < 2) continue; // metadata-only connector is not navigable
-    const pair = unicomPair(m);
+    const pair = getUnicomPair(m);
     if (!pair) continue;
     const [a, b] = pair;
     if (workSet.has(a) && workSet.has(b)) {

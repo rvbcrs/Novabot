@@ -1,7 +1,8 @@
 import { expect, it, vi } from 'vitest';
 import * as FileSystem from 'expo-file-system/legacy';
-import { mergePendingMaps, readMapsCache, writeMapsCache } from '../mapsCache';
+import { mergePendingMaps, normalizeCachedMaps, readMapsCache, writeMapsCache } from '../mapsCache';
 import { isMapPoint, normalizeMapPoints } from '../../utils/mapPoints';
+import { findMissingChannels } from '../../utils/mapChannels';
 
 vi.mock('expo-file-system/legacy', () => ({
   documentDirectory: 'file:///test/',
@@ -44,6 +45,17 @@ it('excludes missing and non-finite coordinates from the live map bounds', () =>
   expect(isMapPoint(valid)).toBe(true);
 });
 
+it.each([null, { x: NaN, y: 0 }, { x: 1, y: Infinity }, { x: '1', y: 0 }])(
+  'preserves cache metadata but discards incomplete geometry instead of inventing edges: %j', invalid => {
+    const map = { mapId: 'work-1', mapType: 'work', mapName: 'Garden', canonicalName: 'map1' };
+    const points = [{ x: 0, y: 0 }, invalid, { x: 2, y: 2 }, { x: 0, y: 2 }];
+    for (const geometry of [{ points }, { mapArea: points }]) {
+      const [cached] = normalizeCachedMaps([{ ...map, ...geometry }]);
+      expect(cached).toMatchObject({ ...map, points: [] });
+    }
+  },
+);
+
 it('retains a newly saved work area through stale refreshes until its server row arrives', () => {
   const map0 = { mapId: 'work-0', mapType: 'work', canonicalName: 'map0', points: [] };
   const localMap1 = {
@@ -57,3 +69,32 @@ it('retains a newly saved work area through stale refreshes until its server row
   expect(mergePendingMaps([map0, serverMap1], cached)).toEqual([map0, serverMap1]);
   expect(mergePendingMaps([map0, { ...serverMap1, canonicalName: undefined }], cached)).toHaveLength(2);
 });
+
+it('keeps a confirmed offline channel across stale refreshes and retires it for the native pair', () => {
+  const areas = normalizeCachedMaps(['map0', 'map1'].map(mapName => ({
+    mapId: mapName, mapName, mapType: 'work', points: [],
+  })));
+  const [channel] = normalizeCachedMaps([{
+    mapId: 'optimistic-channel-123', mapType: 'unicom', connectedMaps: ['map1', 'map0'],
+    points: [{ x: 1, y: 1 }, { x: 2, y: 2 }],
+  }]);
+  expect(channel.connectedMaps).toEqual(['map1', 'map0']);
+  expect(channel.fileName).toBeUndefined();
+  const merged = mergePendingMaps(areas, [...areas, channel]);
+  expect(merged).toEqual([...areas, channel]);
+  expect(findMissingChannels(merged.map(map => ({ ...map, pointCount: map.points.length })))).toEqual([]);
+  const [native] = normalizeCachedMaps([{
+    mapId: 'server-channel', mapType: 'unicom', canonicalName: 'map0tomap1_7_unicom', points: channel.points,
+  }]);
+  const metadata = { ...native, points: [] };
+  expect(mergePendingMaps([...areas, metadata], merged)).toEqual([...areas, metadata, channel]);
+  expect(mergePendingMaps([...areas, native], merged)).toEqual([...areas, native]);
+  expect(channel.connectedMaps).toEqual(['map1', 'map0']); // matching must not mutate cached direction
+});
+
+it.each([['map0', 'map0'], ['map0'], ['map0', 'charge'], [0, 'map1'], ['map0', 'map1', 'map2']])(
+  'drops invalid confirmed endpoint metadata: %j', (...connectedMaps) => {
+    const [map] = normalizeCachedMaps([{ mapId: 'channel', mapType: 'unicom', connectedMaps, points: [] }]);
+    expect(map.connectedMaps).toBeUndefined();
+  },
+);

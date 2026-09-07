@@ -9,7 +9,7 @@ import { View, Text, StyleSheet } from 'react-native';
 import Svg, { Polyline, Polygon, Circle, Line, G, Image as SvgImage, Text as SvgText, Rect } from 'react-native-svg';
 import { useStyles, useTheme, type Colors } from '../theme';
 import { isMapPoint, normalizeMapPoints } from '../utils/mapPoints';
-import { placeClosingLabel } from '../utils/liveMapLayout';
+import { liveMapMarkerPosition, placeClosingLabel } from '../utils/liveMapLayout';
 import { MOWER_MAP_IMAGE } from './mower/mowerMapImage';
 
 export interface ExistingMapOverlay {
@@ -158,6 +158,7 @@ function LiveMapViewInner({ points, orientation, closed, height = 150, width, ex
   }
 
   const hasTrail = pointCount > 0;
+  const marker = liveMapMarkerPosition({ sx: cursorX, sy: cursorY }, mowerSvg);
 
   const lineColor = conflictingMapIds.length > 0 ? '#f59e0b' : closed ? colors.emerald : colors.purple;
 
@@ -197,7 +198,7 @@ function LiveMapViewInner({ points, orientation, closed, height = 150, width, ex
           const labelW = Math.max(closingLabel.text.length * 5.2 + 10, 32);
           const labelH = 15;
           const { sx: px, sy: py } = placeClosingLabel(
-            closingLabel, { sx: cursorX, sy: cursorY }, labelW, ARROW_LEN, height,
+            closingLabel, marker, labelW, ARROW_LEN, height,
           );
           return (
             <G>
@@ -229,8 +230,7 @@ function LiveMapViewInner({ points, orientation, closed, height = 150, width, ex
         {/* The inspected PNG points RIGHT at heading 0; invert rotation for SVG's Y axis.
             Inline image + vector heading stay visible with WiFi off, above every label. */}
         {(hasTrail || mowerSvg) && (() => {
-          const mx = hasTrail ? cursorX : mowerSvg!.sx;
-          const my = hasTrail ? cursorY : mowerSvg!.sy;
+          const { sx: mx, sy: my } = marker;
           const mowerSize = hasTrail ? 28 : 34;
           return (
             <G>

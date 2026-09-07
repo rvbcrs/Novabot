@@ -1,3 +1,11 @@
+/** A current position outranks the last trail sample, which may be delayed. */
+export function liveMapMarkerPosition(
+  trailEnd: { sx: number; sy: number },
+  current?: { sx: number; sy: number } | null,
+): { sx: number; sy: number } {
+  return current ?? trailEnd;
+}
+
 /** Keep the closing-distance label outside the mower marker, even at a closed loop. */
 export function placeClosingLabel(
   midpoint: { sx: number; sy: number },

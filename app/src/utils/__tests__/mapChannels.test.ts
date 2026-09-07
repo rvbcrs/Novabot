@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { findMissingChannels, type ChannelMapLike } from '../mapChannels';
+import { findMissingChannels, getWorkMapName, type ChannelMapLike } from '../mapChannels';
 
 const work = (canonicalName: string): ChannelMapLike => ({ mapType: 'work', canonicalName });
 const unicom = (canonicalName: string, pointCount = 10): ChannelMapLike => ({ mapType: 'unicom', canonicalName, pointCount });
@@ -40,5 +40,17 @@ describe('findMissingChannels', () => {
   it('ignores charge connectors (map0tocharge)', () => {
     const maps = [work('map0'), work('map1'), unicom('map0tocharge_unicom'), unicom('map0tomap1_0_unicom')];
     expect(findMissingChannels(maps)).toEqual([]);
+  });
+
+  it('uses confirmed offline endpoints without inventing a firmware filename', () => {
+    const offline: ChannelMapLike = { mapType: 'unicom', connectedMaps: ['map1', 'map0'], pointCount: 2 };
+    expect(findMissingChannels([work('map0'), work('map1'), offline])).toEqual([]);
+    expect(findMissingChannels([work('map0'), work('map1'), { ...offline, pointCount: 1 }]))
+      .toEqual([{ from: 'map1', to: 'map0' }]);
+  });
+
+  it('identifies renamed work areas by stable canonical slot', () => {
+    expect(getWorkMapName({ mapType: 'work', canonicalName: 'map1', mapName: 'Garden' })).toBe('map1');
+    expect(getWorkMapName({ mapType: 'work', fileName: 'map2_work.csv', mapName: 'Garden' })).toBe('map2');
   });
 });

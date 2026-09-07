@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { URL } from 'node:url';
 import { expect, it } from 'vitest';
-import { placeClosingLabel } from '../liveMapLayout';
+import { liveMapMarkerPosition, placeClosingLabel } from '../liveMapLayout';
 import { MOWER_MAP_IMAGE } from '../../components/mower/mowerMapImage';
 
 it('bundles the real mower icon in JS so rendering needs no network asset request', () => {
@@ -21,4 +21,14 @@ it('keeps a closed-loop distance label clear of the mower and inside the map', (
     expect(label.sx).toBeLessThanOrEqual(282);
   }
   expect(placeClosingLabel({ sx: 50, sy: 50 }, { sx: 150, sy: 75 }, 36, 20, 150)).toEqual({ sx: 50, sy: 50 });
+});
+
+it('uses the current mower position and avoids it even when the recorded trail lags', () => {
+  const trailEnd = { sx: 50, sy: 50 };
+  const current = { sx: 150, sy: 75 };
+  const marker = liveMapMarkerPosition(trailEnd, current);
+  expect(marker).toBe(current);
+  expect(liveMapMarkerPosition(trailEnd, null)).toBe(trailEnd);
+  const label = placeClosingLabel(current, marker, 36, 20, 150);
+  expect(Math.abs(label.sy - current.sy)).toBeGreaterThan(27.5);
 });
