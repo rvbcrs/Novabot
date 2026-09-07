@@ -1,5 +1,7 @@
 # OpenNova manuals
 
+[![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/rvbcrs)
+
 End-user manuals (HTML + PDF) and the tooling that generates their screenshots.
 Each manual folder is self-contained — open the `.html` in a browser or the
 `.pdf` directly, or run `build-pdf.sh` to regenerate the PDF from the HTML.

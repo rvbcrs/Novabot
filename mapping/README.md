@@ -1,5 +1,7 @@
 # Open Mapping Node
 
+[![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/rvbcrs)
+
 Open-source drop-in replacement for the stock `novabot_mapping` ROS2 node.
 Python (rclpy), byte-identical fidelity. See the spec:
 `docs/superpowers/specs/2026-06-22-open-mapping-node-design.md`.

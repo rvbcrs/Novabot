@@ -1,5 +1,7 @@
 # OpenNova Installer
 
+[![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/rvbcrs)
+
 A cross-platform Electron desktop app that builds **and writes** a ready-to-run
 OpenNova SD card: it downloads the latest stock Raspberry Pi OS Lite 64-bit,
 bakes an OpenNova first-boot configuration into the image's boot partition,

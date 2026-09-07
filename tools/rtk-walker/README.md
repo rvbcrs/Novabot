@@ -1,5 +1,7 @@
 # RTK Walker
 
+[![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/rvbcrs)
+
 Handheld surveyor for marking the boundary of a lawn at cm-level
 accuracy, then importing the result as a work-map polygon in the
 OpenNova admin.
