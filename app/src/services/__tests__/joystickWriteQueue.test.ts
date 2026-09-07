@@ -76,4 +76,12 @@ describe('JoystickWriteQueue', () => {
     await q.enqueue('stop');
     expect(written).toEqual(['mst0', 'stop']);
   });
+
+  it('framed operation errors reach the caller without blocking later joystick commands', async () => {
+    const written: string[] = [];
+    const q = new JoystickWriteQueue(async f => { written.push(f); });
+    await expect(q.enqueueOperation(async () => { throw new Error('not connected'); })).rejects.toThrow('not connected');
+    await q.enqueue('stop');
+    expect(written).toEqual(['stop']);
+  });
 });

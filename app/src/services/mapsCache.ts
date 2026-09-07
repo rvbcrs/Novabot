@@ -11,6 +11,8 @@
  * per-item limit). Best effort: every call swallows errors.
  */
 import * as FileSystem from 'expo-file-system/legacy';
+import type { MapData } from './api';
+import { normalizeMapPoints } from '../utils/mapPoints';
 
 export interface CachedMap {
   mapId: string;
@@ -21,14 +23,37 @@ export interface CachedMap {
   points: Array<{ x: number; y: number }>;
 }
 
+/** Older writes stored API rows (`mapArea`) directly; readers expect `points`. */
+export function normalizeCachedMaps(maps: unknown): CachedMap[] {
+  if (!Array.isArray(maps)) return [];
+  return maps.filter(m => m != null && typeof m.mapId === 'string').map(m => ({
+    mapId: m.mapId,
+    mapType: typeof m.mapType === 'string' ? m.mapType : 'work',
+    mapName: typeof m.mapName === 'string' ? m.mapName : undefined,
+    fileName: typeof m.fileName === 'string' ? m.fileName : undefined,
+    canonicalName: typeof m.canonicalName === 'string' ? m.canonicalName : undefined,
+    points: normalizeMapPoints(Array.isArray(m.points) ? m.points : m.mapArea),
+  }));
+}
+
+/** Keep confirmed phone-side saves until the mower's ZIP reaches the server. */
+export function mergePendingMaps(loaded: CachedMap[], cached: CachedMap[]): CachedMap[] {
+  const key = (map: CachedMap) => {
+    const name = (map.canonicalName ?? map.fileName ?? map.mapName ?? map.mapId).replace(/\.csv$/i, '');
+    return `${map.mapType}:${map.mapType === 'work' ? name.match(/^(map\d+)(?:_|$)/)?.[1] ?? name : name}`;
+  };
+  const loadedKeys = new Set(loaded.map(key));
+  return [...loaded, ...cached.filter(map => map.mapId.startsWith('optimistic-') && !loadedKeys.has(key(map)))];
+}
+
 function pathFor(sn: string): string {
   const safe = sn.replace(/[^A-Za-z0-9_-]/g, '_');
   return `${FileSystem.documentDirectory}maps-cache-${safe}.json`;
 }
 
-export async function writeMapsCache(sn: string, maps: CachedMap[]): Promise<void> {
+export async function writeMapsCache(sn: string, maps: Array<CachedMap | MapData>): Promise<void> {
   try {
-    await FileSystem.writeAsStringAsync(pathFor(sn), JSON.stringify({ savedAt: Date.now(), maps }));
+    await FileSystem.writeAsStringAsync(pathFor(sn), JSON.stringify({ savedAt: Date.now(), maps: normalizeCachedMaps(maps) }));
   } catch { /* best effort */ }
 }
 
@@ -37,8 +62,8 @@ export async function readMapsCache(sn: string): Promise<CachedMap[] | null> {
     const info = await FileSystem.getInfoAsync(pathFor(sn));
     if (!info.exists) return null;
     const raw = await FileSystem.readAsStringAsync(pathFor(sn));
-    const parsed = JSON.parse(raw) as { maps?: CachedMap[] };
-    return Array.isArray(parsed.maps) ? parsed.maps : null;
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed?.maps) ? normalizeCachedMaps(parsed.maps) : null;
   } catch {
     return null;
   }

@@ -38,7 +38,6 @@ import { useStyles, useTheme, type Colors } from '../theme';
 import { LiveMapView } from '../components/LiveMapView';
 import { useMowerState } from '../hooks/useMowerState';
 import { useActiveMower } from '../hooks/useActiveMower';
-import { getSocket } from '../services/socket';
 import { ApiClient } from '../services/api';
 import { getServerUrl } from '../services/auth';
 import { useExperimental } from '../context/ExperimentalContext';
@@ -48,10 +47,11 @@ import { findMissingChannels, type ChannelMapLike } from '../utils/mapChannels';
 import {
   bleJoystickConnect, bleJoystickDisconnect,
   bleJoystickStart, bleJoystickMove, bleJoystickStop,
-  isBleJoystickConnected, onBleJoystickDisconnect, onBleRespond, scanForDevices, sendBleCommand, type ScannedDevice,
+  isBleJoystickConnected, onBleJoystickDisconnect, onBleRespond, onBleTelemetry, type BleTelemetry, scanForDevices, sendBleCommand, type ScannedDevice,
 } from '../services/ble';
-import { readMapsCache, writeMapsCache } from '../services/mapsCache';
+import { readMapsCache, writeMapsCache, normalizeCachedMaps, mergePendingMaps, type CachedMap } from '../services/mapsCache';
 import { markPendingMapSync } from '../services/pendingMapSync';
+import { sendMappingCommand } from '../services/mappingCommand';
 
 // ── Joystick constants (smaller than JoystickScreen) ──
 const { width: SCREEN_W } = Dimensions.get('window');
@@ -197,6 +197,10 @@ export default function MappingScreen() {
 
   // ── BLE joystick state ──
   const [bleConnected, setBleConnected] = useState(false);
+  const [bleTelemetry, setBleTelemetry] = useState<BleTelemetry>({});
+  useEffect(() => onBleTelemetry(update => {
+    setBleTelemetry(previous => ({ ...previous, ...update }));
+  }), []);
   const [bleConnecting, setBleConnecting] = useState(false);
   const bleIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const currentMstRef = useRef({ x_w: 0, y_v: 0, z_g: 0 });
@@ -211,7 +215,13 @@ export default function MappingScreen() {
   const lastTrailRef = useRef<{x: number; y: number} | null>(null);
 
   // ── Existing maps (shown greyed-out during mapping) ──
-  const [existingMaps, setExistingMaps] = useState<Array<{ mapId: string; mapType: string; mapName?: string; fileName?: string; canonicalName?: string; points: Array<{x: number; y: number}> }>>([]);
+  const [existingMaps, setExistingMaps] = useState<CachedMap[]>([]);
+  const mapsRef = useRef<CachedMap[] | null>(null);
+  const rememberMaps = useCallback((maps: CachedMap[]) => {
+    mapsRef.current = maps;
+    setExistingMaps(maps);
+    if (sn) void writeMapsCache(sn, maps);
+  }, [sn]);
 
   // ── Track last saved map to inform the post-save "create channel" CTA ──
   const [lastSaved, setLastSaved] = useState<{ mapName: string; buildType: MapBuildType } | null>(null);
@@ -276,40 +286,17 @@ export default function MappingScreen() {
   // ── Load existing maps (shown as grey overlay during mapping + used to enable/disable mode options) ──
   const refreshExistingMaps = useCallback(async () => {
     if (!sn) return;
+    const cached = await readMapsCache(sn);
+    if (mapsRef.current === null && cached) rememberMaps(cached);
     try {
       const url = await getServerUrl();
       if (!url) return;
-      const api = new ApiClient(url);
-      const res = await api.fetchMaps(sn);
-      const loaded = (res.maps ?? [])
-        // Work/obstacle are polygons (≥3 pts); a unicom channel is a driven
-        // LINE and can be as few as 2 points. The old flat `>= 3` silently
-        // dropped short channels (e.g. map1tomap2 with 2 pts), so findMissing-
-        // Channels saw map2 as unreachable and demanded a channel that already
-        // existed (Ramon 2026-06-21, LFIN2230700238).
-        .filter((m: any) => (m.mapArea?.length ?? 0) >= (m.mapType === 'unicom' ? 2 : 3))
-        .map((m: any) => ({
-          mapId: m.mapId,
-          mapType: m.mapType ?? 'work',
-          mapName: m.mapName,
-          fileName: m.fileName,
-          canonicalName: m.canonicalName,
-          points: m.mapArea,
-        }));
-      setExistingMaps(loaded);
-      // Remember the list so BLE mapping without a reachable server still
-      // knows which slots exist (naming + overlays) — see mapsCache.ts.
-      void writeMapsCache(sn, loaded);
-    } catch {
-      // Server unreachable: fall back to the last cached list rather than an
-      // empty one (an empty list would make the next session claim "map0").
-      const cached = sn ? await readMapsCache(sn) : null;
-      if (cached) {
-        setExistingMaps(cached);
-        console.log(`[Mapping] Using cached map list (${cached.length}) — server unreachable`);
-      }
-    }
-  }, [sn]);
+      const res = await new ApiClient(url).fetchMaps(sn);
+      // The phone can reach the server over 5G while the mower cannot upload.
+      // Keep confirmed local saves until the server actually has those maps.
+      rememberMaps(mergePendingMaps(normalizeCachedMaps(res.maps), mapsRef.current ?? cached ?? []));
+    } catch { /* The cached list is already visible; BLE needs no server. */ }
+  }, [sn, rememberMaps]);
 
   useEffect(() => { refreshExistingMaps(); }, [refreshExistingMaps]);
 
@@ -320,7 +307,10 @@ export default function MappingScreen() {
   }, [navigation, refreshExistingMaps]);
 
   // ── Detect closed cycle: mower sensor OR proximity of last point to first point ──
-  const ifClosedCycle = sensors.if_closed_cycle === '1';
+  const useBlePosition = bleConnected || mappingMode === 'manual';
+  const ifClosedCycle = useBlePosition
+    ? bleTelemetry.closedCycle === true
+    : sensors.if_closed_cycle === '1';
 
   useEffect(() => {
     if (mappingState !== 'mapping' || closedCycleSeen) return;
@@ -345,29 +335,31 @@ export default function MappingScreen() {
   }, [ifClosedCycle, mappingState, closedCycleSeen, trailPoints]);
 
   // ── Mower position from sensor data ──
-  const mapPosX = sensors.map_position_x;
-  const mapPosY = sensors.map_position_y;
-  const mapOrientation = parseFloat(sensors.map_position_orientation ?? '0') || 0;
+  const mapPosX = useBlePosition ? bleTelemetry.position?.x?.toString() : sensors.map_position_x;
+  const mapPosY = useBlePosition ? bleTelemetry.position?.y?.toString() : sensors.map_position_y;
+  const mapOrientation = useBlePosition
+    ? bleTelemetry.orientation ?? 0
+    : parseFloat(sensors.map_position_orientation ?? '0') || 0;
   const mowerLocal = mapPosX != null && mapPosY != null
     ? { x: parseFloat(mapPosX) || 0, y: parseFloat(mapPosY) || 0 }
     : null;
 
-  // ── Trail: server-side collection polled every 1s ──
-  // Server collects every MQTT map_position update (never misses a point).
-  // App polls the complete trail — no gaps from missed socket events.
-  // Fallback: if server trail is empty, collect client-side from sensor updates.
+  // BLE mapping collects live positions on the phone. Server trail polling
+  // remains available for a resumed session without a Bluetooth connection.
   const trailPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const serverTrailActiveRef = useRef(false);
   useEffect(() => {
     if (mappingState !== 'mapping') {
       if (trailPollRef.current) { clearInterval(trailPollRef.current); trailPollRef.current = null; }
       if (mappingState === 'idle' || mappingState === 'preMapping') {
         setTrailPoints([]);
         lastTrailRef.current = null;
-        serverTrailActiveRef.current = false;
       }
       return;
     }
+    // BLE is the live source while connected. A reachable server can still
+    // hold an old trail when only the mower loses WiFi. Never merge it here.
+    if (useBlePosition) return;
+    let cancelled = false;
     const fetchTrail = async () => {
       try {
         const url = await getServerUrl();
@@ -375,8 +367,7 @@ export default function MappingScreen() {
         const res = await fetch(`${url}/api/dashboard/trail/${encodeURIComponent(sn)}`);
         const json = await res.json();
         const trail = json.trail as Array<{x: number; y: number}> | undefined;
-        if (!trail || trail.length === 0) return;
-        serverTrailActiveRef.current = true;
+        if (cancelled || !trail || trail.length === 0) return;
         // Dedup-merge. Earlier "use longer array" comparison locked the
         // visible trail in place: once the client fallback appended even
         // ONE local point, the server's later additions no longer made
@@ -405,20 +396,20 @@ export default function MappingScreen() {
     };
     fetchTrail();
     trailPollRef.current = setInterval(fetchTrail, 1000);
-    return () => { if (trailPollRef.current) clearInterval(trailPollRef.current); };
-  }, [mappingState, sn]);
+    return () => {
+      cancelled = true;
+      if (trailPollRef.current) clearInterval(trailPollRef.current);
+    };
+  }, [mappingState, sn, useBlePosition]);
 
-  // Fallback: client-side trail collection. Always runs during mapping so a
-  // mid-session server stall (e.g. firmware msg pattern dropping out of the
-  // server's isActive filter) doesn't freeze the live trail. The server poll
-  // overwrites trailPoints with its richer version when it does return data,
-  // and ignores empty responses, so the two paths cooperate cleanly.
+  // Record each local position change in arrival order, including revisits
+  // to the start point so closing the polygon remains visible offline.
   useEffect(() => {
     if (mappingState !== 'mapping') return;
     if (mapPosX === undefined || mapPosY === undefined) return;
     const x = parseFloat(mapPosX);
     const y = parseFloat(mapPosY);
-    if (isNaN(x) || isNaN(y)) return;
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
     const last = lastTrailRef.current;
     if (last && Math.abs(last.x - x) < 0.01 && Math.abs(last.y - y) < 0.01) return;
     lastTrailRef.current = { x, y };
@@ -479,75 +470,37 @@ export default function MappingScreen() {
     };
   }, []);
 
-  // ── MQTT command helper ──
-  // Send mapping commands via BLE (exact Novabot app behavior — all mapping
-  // commands go via BLE writeData with framing, NOT via MQTT)
-  const sendCommand = useCallback(async (command: Record<string, unknown>, label: string) => {
+  // Every mapping phase waits for its BLE write; save phases also require a
+  // successful mower response. Subscribe before writing to catch fast replies.
+  const sendCommand = useCallback(async (
+    command: Record<string, unknown>, label: string, responseTimeout?: number,
+  ): Promise<boolean> => {
     setBusy(true);
-    console.log(`[Mapping] Sending via BLE: ${label}`);
-    await sendBleCommand(command);
-    console.log(`[Mapping] Sent: ${label}`);
-    setTimeout(() => setBusy(false), 1500);
+    try {
+      if (responseTimeout) {
+        await sendMappingCommand(`${Object.keys(command)[0]}_respond`,
+          () => sendBleCommand(command),
+          onBleRespond, responseTimeout, Object.values(command)[0] as { type?: unknown; cmd_num?: unknown });
+      } else {
+        await sendBleCommand(command);
+      }
+      console.log(`[Mapping] Sent: ${label}`);
+      return true;
+    } catch (error) {
+      console.warn(`[Mapping] ${label} failed`, error);
+      appAlertCompat.alert('Mapping command failed', error instanceof Error ? error.message : String(error));
+      return false;
+    } finally {
+      setBusy(false);
+    }
   }, []);
 
-  // Detailed variant: resolves whether the matching _respond arrived AND the
-  // firmware error code from its payload. save_map_respond carries `value`
-  // (0 = ok, non-zero = rejected — e.g. the novabot_mapping overlap check that
-  // surfaces as error 120). Most callers only need arrival → use waitForRespond.
-  // Responds arrive over BLE (primary — the mower answers on its notify
-  // characteristic, so this works with no WiFi/server at all) AND via the
-  // server socket (fallback, e.g. when the BLE notify subscription failed).
-  // Whichever comes first wins; both carry the same {command, data} shape.
-  const waitForRespondDetailed = useCallback((command: string, timeoutMs: number): Promise<{ received: boolean; errorCode: number | null }> => {
-    return new Promise((resolve) => {
-      if (!sn) {
-        resolve({ received: false, errorCode: null });
-        return;
-      }
-      const socket = getSocket();
-      let offBle: (() => void) | null = null;
-
-      const cleanup = () => {
-        clearTimeout(timer);
-        socket?.off('command:respond', socketHandler);
-        offBle?.();
-      };
-
-      const timer = setTimeout(() => {
-        cleanup();
-        resolve({ received: false, errorCode: null });
-      }, timeoutMs);
-
-      const finish = (data: { value?: unknown } | undefined) => {
-        cleanup();
-        const v = data?.value;
-        resolve({ received: true, errorCode: typeof v === 'number' ? v : null });
-      };
-
-      const socketHandler = (e: { sn: string; command: string; data?: { value?: unknown } }) => {
-        if (e.sn === sn && e.command === command) finish(e.data);
-      };
-
-      socket?.on('command:respond', socketHandler);
-      offBle = onBleRespond((r) => {
-        if (r.command === command) finish(r.data as { value?: unknown } | undefined);
-      });
-    });
-  }, [sn]);
-
-  // Boolean wrapper for callers that only care whether the respond arrived.
-  const waitForRespond = useCallback(
-    (command: string, timeoutMs: number): Promise<boolean> =>
-      waitForRespondDetailed(command, timeoutMs).then(r => r.received),
-    [waitForRespondDetailed],
-  );
-
-  const getNextWorkMapName = useCallback((maps: Array<{ mapName?: string | null; mapType?: string | null }>): string => {
+  const getNextWorkMapName = useCallback((maps: CachedMap[]): string => {
     const usedNames = new Set<string>();
 
     for (const map of maps) {
       if (map.mapType !== 'work') continue;
-      const rawName = String(map.mapName ?? '');
+      const rawName = map.canonicalName ?? map.fileName?.replace(/\.csv$/, '') ?? map.mapName ?? '';
       const match = rawName.match(/^map(\d+)(?:$|_work$)/i);
       if (match) usedNames.add(`map${match[1]}`);
     }
@@ -575,9 +528,13 @@ export default function MappingScreen() {
   type BleConnectResult = 'connected' | 'not-found' | 'multi-mower' | 'connect-failed';
 
   const connectBleJoystick = useCallback(async (): Promise<BleConnectResult> => {
-    if (bleConnected) return 'connected';
+    if (isBleJoystickConnected()) {
+      setBleConnected(true);
+      return 'connected';
+    }
     if (bleConnecting) return 'connect-failed';
     setBleConnecting(true);
+    setBleTelemetry({});
     setBleStatus('Scanning for mower...');
 
     const isIos = Platform.OS === 'ios';
@@ -658,11 +615,12 @@ export default function MappingScreen() {
       return 'connect-failed';
     }
     return 'connected';
-  }, [bleConnected, bleConnecting, mower?.sn, targetMac]);
+  }, [bleConnecting, mower?.sn, targetMac]);
 
   // ── BLE disconnect handler: update UI + auto-reconnect ──
   useEffect(() => {
-    onBleJoystickDisconnect(() => {
+    let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+    const unsubscribe = onBleJoystickDisconnect(() => {
       setBleConnected(false);
       // Stop joystick if active
       if (joystickActiveRef.current) {
@@ -672,9 +630,10 @@ export default function MappingScreen() {
       }
       // Auto-reconnect after 2s if still mapping
       if (mappingState === 'mapping') {
-        setTimeout(() => connectBleJoystick(), 2000);
+        reconnectTimer = setTimeout(() => { void connectBleJoystick(); }, 2000);
       }
     });
+    return () => { unsubscribe(); clearTimeout(reconnectTimer); };
   }, [mappingState, connectBleJoystick]);
 
   // ── BLE joystick move (updates ref, interval sends) ──
@@ -769,41 +728,24 @@ export default function MappingScreen() {
   // the file mapXtomapY_N_unicom based on which work maps the path crosses, so
   // the user just drives from `fromMap` into the adjacent map.
   const startChannelFlow = useCallback(async (fromMap: string) => {
-    // GATE: the firmware's unicom recorder polls the base_link->map transform
-    // and the mapping node CRASHES (error 140) when there is no map frame yet.
-    // Require a live map position (mower is localized) before starting.
-    if (!mowerLocal) {
-      appAlertCompat.alert(
-        t('notLocalizedTitle') || 'Mower not localized',
-        t('notLocalizedBody') || 'Drive the mower a few meters until it shows a position on the map, then try again.',
-      );
-      return;
-    }
     // Capture the start map so handleBeginRecording sends the correct mapName
     // even if lastSaved / existingMaps are stale.
     pendingChannelFromRef.current = fromMap;
-    setMapBuildType('unicom');
-    setLastSaved(null);
-    setBleConnecting(true);
-    await connectBleJoystick();
-    setBleConnecting(false);
-    if (!isBleJoystickConnected()) {
-      appAlertCompat.alert('BLE', 'BLE not connected — check Bluetooth and proximity.');
-      setMappingState('idle');
-      return;
-    }
+    if (await connectBleJoystick() !== 'connected') return;
     // Open a MANUAL assistant mapping session on the EXISTING maps BEFORE any
     // add_scan_map. The native app sends start_assistant_build_map to enter the
     // session without wiping maps; `type:0` = manual (type:2 = autonomous, which
     // would drive the mower). Without this the mapping node receives a cold
     // add_scan_map and crashes (error 140, novabot_mapping dies).
-    sendCommand(
+    if (!await sendCommand(
       { start_assistant_build_map: { type: 0, cmd_num: cmdNumRef.current++ } },
       'start_assistant_build_map (manual session)',
-    );
+    )) return;
+    setMapBuildType('unicom');
+    setLastSaved(null);
     setMappingMode('manual');
     setMappingState('preMapping');
-  }, [connectBleJoystick, sendCommand, mowerLocal, t]);
+  }, [connectBleJoystick, sendCommand]);
 
   // ── Start mapping ──
   const handleStartManual = () => {
@@ -831,7 +773,7 @@ export default function MappingScreen() {
             }
 
             // Clean up any stale mapping state from a previous session
-            sendCommand({ quit_mapping_mode: { value: 1, cmd_num: cmdNumRef.current++ } }, 'quit_mapping_mode (cleanup)');
+            if (!await sendCommand({ quit_mapping_mode: { value: 1, cmd_num: cmdNumRef.current++ } }, 'quit_mapping_mode (cleanup)')) return;
             setMappingMode('manual');
             setMappingState('preMapping');
           },
@@ -848,11 +790,12 @@ export default function MappingScreen() {
         { text: t('cancel', undefined) || 'Cancel', style: 'cancel' },
         {
           text: 'Start',
-          onPress: () => {
+          onPress: async () => {
             // Flutter onAotuMappingClick (logic.dart L14653) hardcodes `type: 2` to enter
             // autonomous mode. Without this field the mower keeps the previous mode
             // setting — L14689 shows `mov x16, #2` immediately before StoreField.
-            sendCommand({ start_assistant_build_map: { type: 2, cmd_num: cmdNumRef.current++ } }, 'start_assistant_build_map');
+            if (await connectBleJoystick() !== 'connected') return;
+            if (!await sendCommand({ start_assistant_build_map: { type: 2, cmd_num: cmdNumRef.current++ } }, 'start_assistant_build_map')) return;
             setMappingMode('autonomous');
             setMappingState('mapping');
             setClosedCycleSeen(false);
@@ -865,36 +808,26 @@ export default function MappingScreen() {
 
   // ── Begin Recording: user reached start point, now start actual recording ──
   const handleBeginRecording = async () => {
-    // Clear server-side GPS trail before starting new recording
-    let existingWorkMapCount = 0;
-    let nextWorkMapName = 'map0';
-    // The server is OPTIONAL here (BLE mapping far from WiFi). The map list
-    // decides start_scan_map vs add_scan_map AND the next slot name; with no
-    // server we fall back to the last cached list instead of "map0", which
-    // would silently overwrite the existing first map (GH #114).
-    let serverMaps: any[] | null = null;
-    try {
-      const url = await getServerUrl();
-      if (url && sn) {
-        await fetch(`${url}/api/dashboard/trail/${encodeURIComponent(sn)}`, { method: 'DELETE' }).catch(() => {});
-        console.log('[Mapping] Server trail cleared');
-        // Check how many work maps already exist — determines start_scan_map vs add_scan_map
-        const mapsRes = await fetch(`${url}/api/dashboard/maps/${encodeURIComponent(sn)}`).then(r => r.json());
-        if (Array.isArray(mapsRes?.maps)) {
-          serverMaps = mapsRes.maps;
-          void writeMapsCache(sn, serverMaps as any);
-        }
-      }
-    } catch {}
-    if (!serverMaps && sn) {
-      serverMaps = await readMapsCache(sn);
-      console.log(`[Mapping] Server unreachable — using cached map list (${serverMaps?.length ?? 'none'})`);
+    // GATE: the firmware's unicom recorder polls the base_link->map transform
+    // and the mapping node CRASHES (error 140) when there is no map frame yet.
+    // Require a live map position (mower is localized) before starting.
+    if ((mapBuildType === 'unicom' || mapBuildType === 'charge_unicom') && !mowerLocal) {
+      appAlertCompat.alert(
+        t('notLocalizedTitle') || 'Mower not localized',
+        t('notLocalizedBody') || 'Drive the mower a few meters until it shows a position on the map, then try again.',
+      );
+      return;
     }
-    {
-      const existingMaps = serverMaps ?? [];
-      existingWorkMapCount = existingMaps.filter((m: any) => m.mapType === 'work').length;
-      nextWorkMapName = getNextWorkMapName(existingMaps);
+    // Maps were loaded on entry/focus. Starting a BLE scan must not wait for
+    // HTTP requests, or an unreachable server freezes Begin Recording.
+    if (mapsRef.current === null) await refreshExistingMaps();
+    const knownMaps = mapsRef.current;
+    if (knownMaps === null) {
+      appAlertCompat.alert('Map list unavailable', 'Load your maps once while connected before mapping offline. This prevents overwriting an existing map.');
+      return;
     }
+    const existingWorkMapCount = knownMaps.filter(m => m.mapType === 'work').length;
+    const nextWorkMapName = getNextWorkMapName(knownMaps);
 
     // EXACT Novabot app flow — verified against live BLE mqtt log 2026-04-17 21:45:
     // - First map EVER:  start_scan_map { model: "manual", mapName: "map0", type: 0, cmd_num }
@@ -918,9 +851,9 @@ export default function MappingScreen() {
     //           rely on possibly-stale existingMaps.
     //   other:  fall back to the latest work map.
     const latestWorkMap = (() => {
-      const names = existingMaps
+      const names = knownMaps
         .filter(m => m.mapType === 'work')
-        .map(m => (m.fileName?.match(/^(map\d+)/)?.[1]) ?? (m.mapName?.match(/^(map\d+)/)?.[1]))
+        .map(m => (m.canonicalName?.match(/^(map\d+)/)?.[1]) ?? (m.fileName?.match(/^(map\d+)/)?.[1]) ?? (m.mapName?.match(/^(map\d+)/)?.[1]))
         .filter((v): v is string => !!v)
         .sort();
       return names[names.length - 1] ?? 'map0';
@@ -942,9 +875,9 @@ export default function MappingScreen() {
 
     const scanType = buildTypeToScanType(mapBuildType);
     if (existingWorkMapCount === 0) {
-      sendCommand({ start_scan_map: { model: 'manual', mapName: 'map0', type: 0, cmd_num: cmdNumRef.current++ } }, 'start_scan_map');
+      if (!await sendCommand({ start_scan_map: { model: 'manual', mapName: 'map0', type: 0, cmd_num: cmdNumRef.current++ } }, 'start_scan_map')) return;
     } else {
-      sendCommand({ add_scan_map: { model: 'manual', mapName: wireMapName, type: scanType, cmd_num: cmdNumRef.current++ } }, 'add_scan_map');
+      if (!await sendCommand({ add_scan_map: { model: 'manual', mapName: wireMapName, type: scanType, cmd_num: cmdNumRef.current++ } }, 'add_scan_map')) return;
     }
     console.log(`[Mapping] Recording started (${existingWorkMapCount === 0 ? 'start' : 'add'}_scan_map, map: ${mapName}, type: ${scanType}, buildType: ${mapBuildType}, ${existingWorkMapCount} existing)`);
 
@@ -997,102 +930,45 @@ export default function MappingScreen() {
             const isUnicom = mapBuildType === 'unicom' || mapBuildType === 'charge_unicom';
 
             setMappingState('stopping');
-            sendCommand(
+            const stopped = await sendCommand(
               { stop_scan_map: { value: isUnicom, cmd_num: cmdNumRef.current++ } },
-              'stop_scan_map',
+              'stop_scan_map', 20000,
             );
-            console.log(`[Mapping] Step 1: stop_scan_map {value:${isUnicom}} sent`);
-            const stopOk = await waitForRespond('stop_scan_map_respond', 20000);
-            console.log(`[Mapping] Step 1: stop_scan_map_respond ${stopOk ? 'OK' : 'TIMEOUT'}`);
-
-            // Per docs/reference/MAPPING-FLOW.md the firmware only needs
-            // ~500 ms between stop_scan_map and the first save_map. The
-            // previous 1 s + 3 s pattern was conservative padding that
-            // turned the post-Stop "Saving" spinner into a 50-second wait
-            // (user feedback 2026-04-26). Match the documented minimum.
+            if (!stopped) { setMappingState('mapping'); return; }
             await new Promise(r => setTimeout(r, 500));
 
-            let saveFailed = false;
-            if (isUnicom) {
-              // Unicom gets a single save_map {type:1}
-              sendCommand(
-                { save_map: { mapName: activeMapName, type: 1, cmd_num: cmdNumRef.current++ } },
-                'save_map (unicom total)',
+            // Verified stock protocol: work/obstacle/modify save sub then total;
+            // a channel saves total only. Stop immediately on failed/missing ACK.
+            const saveMapName = mapBuildType === 'obstacle' ? 'map'
+              : mapBuildType === 'modify' ? 'map0' : activeMapName;
+            for (const type of isUnicom ? [1] : [0, 1]) {
+              const saved = await sendCommand(
+                { save_map: { mapName: saveMapName, type, cmd_num: cmdNumRef.current++ } },
+                `save_map (${type === 0 ? 'sub' : 'total'})`, 12000,
               );
-              const saveRes = await waitForRespondDetailed('save_map_respond', 12000);
-              console.log(`[Mapping] Step 2: unicom save_map_respond ${saveRes.received ? 'OK' : 'TIMEOUT'} (err=${saveRes.errorCode})`);
-              saveFailed = !!saveRes.errorCode;
-              // Channel scan complete — next scan is unrelated.
-              pendingChannelFromRef.current = null;
-            } else {
-              // Work / obstacle: sub save FIRST, then total save.
-              // Obstacle uses mapName:"map" (literal) — verified 2026-04-19 via
-              // live Novabot-app capture. Work uses the real map name (map0/map1/...).
-              // Modify saves the literal constant "map0" REGARDLESS of which map
-              // is edited — the official app always sends "map0" here and the
-              // firmware applies the edit to the geometry-selected map (live
-              // capture 2026-06-21: edited map1, wire said "map0"). Do NOT
-              // substitute the selected map name.
-              const saveMapName = mapBuildType === 'obstacle' ? 'map'
-                : mapBuildType === 'modify' ? 'map0'
-                : activeMapName;
-              sendCommand(
-                { save_map: { mapName: saveMapName, type: 0, cmd_num: cmdNumRef.current++ } },
-                'save_map (sub)',
-              );
-              const subRes = await waitForRespondDetailed('save_map_respond', 12000);
-              console.log(`[Mapping] Step 2a: sub save_map_respond ${subRes.received ? 'OK' : 'TIMEOUT'} (err=${subRes.errorCode})`);
-              // 500ms is the documented minimum between type:0 (sub) and
-              // type:1 (total) save_map calls. The earlier 3 s padding was
-              // the dominant contributor to the 50-second post-Stop wait.
-              await new Promise(r => setTimeout(r, 500));
-              sendCommand(
-                { save_map: { mapName: saveMapName, type: 1, cmd_num: cmdNumRef.current++ } },
-                'save_map (total)',
-              );
-              const totalRes = await waitForRespondDetailed('save_map_respond', 12000);
-              console.log(`[Mapping] Step 2b: total save_map_respond ${totalRes.received ? 'OK' : 'TIMEOUT'} (err=${totalRes.errorCode})`);
-              saveFailed = !!subRes.errorCode || !!totalRes.errorCode;
+              if (!saved) { setMappingState('mapping'); return; }
+              if (type === 0) await new Promise(r => setTimeout(r, 500));
             }
+            if (isUnicom) pendingChannelFromRef.current = null;
 
-            // Firmware rejected the save (non-zero error code in
-            // save_map_respond.value). The usual cause is the novabot_mapping
-            // overlap check — a new work map may not overlap an existing map or
-            // a unicom/charge area; it logs "current map is overlaping other
-            // maps" and reports error 120. Surface it instead of silently
-            // showing "saved", and stay on the mapping screen so the user can
-            // discard and remap a non-overlapping area.
-            if (saveFailed) {
-              appAlertCompat.alert(
-                t('mapSaveFailedTitle', undefined) || 'Map not saved',
-                t('mapSaveOverlapMsg', undefined) ||
-                  'The mower rejected this map (error 120). It usually means the new map overlaps an existing map or its connection path. Keep zones separate with a gap between them, then discard this attempt and map again.',
-                [{ text: t('ok', undefined) || 'OK' }],
-              );
-              setMappingState('mapping');
-              return;
-            }
-
-            // The mower's own upload only succeeds if it has WiFi right now;
-            // remember to re-trigger it through the server later (see
-            // pendingMapSync.ts) — HomeScreen flushes this on focus.
+            // Saving on the mower is confirmed; upload can wait until WiFi returns.
             if (sn) void markPendingMapSync(sn);
-            sendCommand({ get_map_outline: { map_name: 'all', cmd_num: cmdNumRef.current++ } }, 'get_map_outline');
-            console.log('[Mapping] Step 3: get_map_outline sent to trigger mower ZIP upload');
+            await sendCommand({ get_map_outline: { map_name: 'all', cmd_num: cmdNumRef.current++ } }, 'get_map_outline');
 
             // Record what we just saved so the done-screen can suggest follow-up channels.
             setLastSaved({ mapName: activeMapName, buildType: mapBuildType });
 
-            // Optimistically add the just-scanned map to existingMaps so the
+            // Remember the confirmed work slot even if telemetry was missing.
+            // Add the just-scanned geometry to existingMaps so the
             // follow-up unicom screen can render both shapes immediately. The
             // real row takes ~5–15 s to reach the server DB (mower ZIP upload
             // → parse).
             // Modify edits an EXISTING work map in place (firmware merges by
             // geometry) — there's no new shape to stub, and the real edited
             // polygon arrives via the refresh below. Skip the optimistic push.
-            if (trailPoints.length >= 3 && mapBuildType !== 'modify') {
+            if (mapBuildType === 'work' || (trailPoints.length >= (isUnicom ? 2 : 3) && mapBuildType !== 'modify')) {
               const optimisticMap = {
-                mapId: `optimistic-${activeMapName}-${Date.now()}`,
+                mapId: `${mapBuildType === 'work' ? 'optimistic' : 'preview'}-${activeMapName}-${Date.now()}`,
                 mapType: mapBuildType === 'obstacle' ? 'obstacle'
                   : isUnicom ? 'unicom'
                   : 'work',
@@ -1100,12 +976,10 @@ export default function MappingScreen() {
                 fileName: `${activeMapName}_${mapBuildType === 'obstacle' ? '0_obstacle' : isUnicom ? 'unicom' : 'work'}.csv`,
                 points: [...trailPoints],
               };
-              setExistingMaps(prev => {
-                const withoutDup = prev.filter(m =>
-                  !(m.mapName === optimisticMap.mapName && m.mapType === optimisticMap.mapType),
-                );
-                return [...withoutDup, optimisticMap];
-              });
+              const withoutDup = (mapsRef.current ?? []).filter(m =>
+                !(m.mapName === optimisticMap.mapName && m.mapType === optimisticMap.mapType),
+              );
+              rememberMaps([...withoutDup, optimisticMap]);
             }
 
             // Delay the refresh so the mower has time to upload its ZIP + the
@@ -1258,51 +1132,7 @@ export default function MappingScreen() {
       `(task_mode=${taskMode}, work_status=${workStatus}, recharge_status=${rechargeStatus}, ` +
       `battery_state=${batteryState}, msg="${rawMowerMsg}") → save_recharge_pos`,
     );
-    // Flutter _saveChargePosition (logic.dart L7236) sends ONLY { mapName: "map0", cmd_num }.
-// The literal "map0" is loaded from pp+0x16430 — it's never dynamic. The extra
-// `map0: ''` field we used to send was NOT in the Flutter payload and the
-// mower firmware silently rejected the whole command, which is why
-// map0tocharge_unicom never appeared on disk.
-sendCommand({ save_recharge_pos: { mapName: 'map0', cmd_num: cmdNumRef.current++ } }, 'save_recharge_pos');
-
-    (async () => {
-      // Flutter _saveChargePosition passes 0x14=20s to _writeDataToDevice (logic.dart 0x8ffa2c).
-      const responded = await waitForRespond('save_recharge_pos_respond', 20000);
-      console.log(`[Mapping] save_recharge_pos_respond ${responded ? 'OK' : 'TIMEOUT'}`);
-
-      // Re-trigger save_map AFTER the charger pose is committed. Flutter's
-      // _getMsgFromDevice handler for save_recharge_pos_respond (logic.dart
-      // L10688) schedules `Future.delayed(Duration(milliseconds: 500))` at
-      // addr 0x906744 (pp+0x4d90 = Duration(500000 µs)) and then calls
-      // _writeSaveMap() at 0x906764. Without this second save_map the mower
-      // never regenerates its ZIP to include map0tocharge_unicom.csv, which
-      // is why charge unicom never appeared on disk earlier.
-      await new Promise(r => setTimeout(r, 500));
-      // type:1 = "total map" — mower generates map.pgm/map.png/map.yaml (the
-      // occupancy grid the C++ robot_decision tries to load at start_navigation).
-      // The first save_map after stop_scan_map is type:0 ("sub map") and only
-      // writes csv_file/x3_csv_file. Confirmed via mower log line:
-      //   "Save map request: 1 map0 — Saving total map!!!"
-      // Sending type:0 here (what we did before) never produced map.yaml →
-      // Error 107 "Load map failed" at start_navigation.
-      sendCommand(
-        { save_map: { mapName: 'map0', type: 1, cmd_num: cmdNumRef.current++ } },
-        'save_map (post-recharge, total)',
-      );
-      const savedAgain = await waitForRespond('save_map_respond', 12000);
-      console.log(`[Mapping] post-recharge save_map_respond ${savedAgain ? 'OK' : 'TIMEOUT'}`);
-
-      // Ask the mower to push its refreshed ZIP (same trigger the Flutter
-      // app uses via uploadMapToServce → get_map_outline request).
-      if (sn) void markPendingMapSync(sn);
-      sendCommand(
-        { get_map_outline: { map_name: 'all', cmd_num: cmdNumRef.current++ } },
-        'get_map_outline (post-recharge)',
-      );
-
-      setChargerAction(null);
-      setMappingState('done');
-    })();
+    void handleSaveChargerPos();
   }, [
     activeMapName,
     batteryState,
@@ -1313,7 +1143,6 @@ sendCommand({ save_recharge_pos: { mapName: 'map0', cmd_num: cmdNumRef.current++
     sawNonDockedSinceEntry,
     sendCommand,
     taskMode,
-    waitForRespond,
     workStatus,
   ]);
 
@@ -1327,16 +1156,13 @@ sendCommand({ save_recharge_pos: { mapName: 'map0', cmd_num: cmdNumRef.current++
         {
           text: t('discardMapping', undefined) || 'Discard',
           style: 'destructive',
-          onPress: () => {
+          onPress: async () => {
             if (joystickActiveRef.current) stopJoystick();
-            // Send the exit pair over BOTH transports. sendBleCommand is a
-            // silent no-op when BLE has dropped (e.g. after the mower crashes
-            // mid-mapping with error 120), which left the mower wedged in
-            // Mode:MAPPING. MQTT (server → broker → mower) is independent of
-            // BLE, so it lands even when the BLE link is gone — proven on
-            // LFIN2230700238 2026-06-21.
-            sendCommand({ stop_erase_map: { cmd_num: cmdNumRef.current++ } }, 'stop_erase_map (cancel)');
-            sendCommand({ quit_mapping_mode: { value: 1, cmd_num: cmdNumRef.current++ } }, 'quit_mapping_mode');
+            // Send the exit pair over both transports.
+            // Await both BLE frames before leaving; unmount disconnects BLE.
+            // MQTT also handles a dropped BLE link when the server is reachable.
+            await sendCommand({ stop_erase_map: { cmd_num: cmdNumRef.current++ } }, 'stop_erase_map (cancel)');
+            await sendCommand({ quit_mapping_mode: { value: 1, cmd_num: cmdNumRef.current++ } }, 'quit_mapping_mode');
             (async () => {
               try {
                 const url = await getServerUrl();
@@ -1362,28 +1188,25 @@ sendCommand({ save_recharge_pos: { mapName: 'map0', cmd_num: cmdNumRef.current++
     autoDockRequestedRef.current = false;
     savingChargerPosRef.current = true;
     setChargerAction('savePosition');
-    // Flutter _saveChargePosition (logic.dart L7236) sends ONLY { mapName: "map0", cmd_num }.
-// The literal "map0" is loaded from pp+0x16430 — it's never dynamic. The extra
-// `map0: ''` field we used to send was NOT in the Flutter payload and the
-// mower firmware silently rejected the whole command, which is why
-// map0tocharge_unicom never appeared on disk.
-sendCommand({ save_recharge_pos: { mapName: 'map0', cmd_num: cmdNumRef.current++ } }, 'save_recharge_pos');
-    const responded = await waitForRespond('save_recharge_pos_respond', 20000);
-    console.log(`[Mapping] Manual save_recharge_pos_respond: ${responded ? 'OK' : 'TIMEOUT'}`);
-
-    // Mirror Flutter's post-response follow-up (see auto-save path above):
-    // wait 500 ms, send save_map again, request outline to trigger the
-    // updated ZIP upload that includes map0tocharge_unicom.
-    await new Promise(r => setTimeout(r, 500));
-    // type:1 = "total map" — see auto-save branch above for rationale.
-    sendCommand(
-      { save_map: { mapName: 'map0', type: 1, cmd_num: cmdNumRef.current++ } },
-      'save_map (post-recharge manual, total)',
+    const positionSaved = await sendCommand(
+      { save_recharge_pos: { mapName: 'map0', cmd_num: cmdNumRef.current++ } },
+      'save_recharge_pos', 20000,
     );
-    const savedAgain = await waitForRespond('save_map_respond', 12000);
-    console.log(`[Mapping] Manual post-recharge save_map_respond: ${savedAgain ? 'OK' : 'TIMEOUT'}`);
+    if (!positionSaved) {
+      setChargerAction(null);
+      return;
+    }
+    await new Promise(r => setTimeout(r, 500));
+    const saved = await sendCommand(
+      { save_map: { mapName: 'map0', type: 1, cmd_num: cmdNumRef.current++ } },
+      'save_map (post-recharge total)', 12000,
+    );
+    if (!saved) {
+      setChargerAction(null);
+      return;
+    }
     if (sn) void markPendingMapSync(sn);
-    sendCommand(
+    await sendCommand(
       { get_map_outline: { map_name: 'all', cmd_num: cmdNumRef.current++ } },
       'get_map_outline (post-recharge manual)',
     );
@@ -1437,7 +1260,7 @@ sendCommand({ save_recharge_pos: { mapName: 'map0', cmd_num: cmdNumRef.current++
         </View>
 
         {/* ── Mower offline ── */}
-        {!mowerOnline ? (
+        {!mower ? (
           <View style={styles.centerBox}>
             <Ionicons name="alert-circle" size={48} color={colors.red} />
             <Text style={styles.centerTitle}>{t('mowerOffline', undefined) || 'Mower Offline'}</Text>
@@ -1464,7 +1287,7 @@ sendCommand({ save_recharge_pos: { mapName: 'map0', cmd_num: cmdNumRef.current++
               </View>
               <View style={styles.checkRow}>
                 <View style={[styles.checkDot, { backgroundColor: mowerOnline ? colors.green : colors.red }]} />
-                <Text style={styles.checkText}>{t('mqtt', undefined) || 'MQTT'}: {t('connected', undefined) || 'Connected'}</Text>
+                <Text style={styles.checkText}>{t('mqtt', undefined) || 'MQTT'}: {mowerOnline ? 'OK' : 'OFF'}</Text>
               </View>
               <View style={styles.checkRow}>
                 <View style={[styles.checkDot, { backgroundColor: battery > 20 ? colors.green : colors.red }]} />
@@ -2095,9 +1918,10 @@ sendCommand({ save_recharge_pos: { mapName: 'map0', cmd_num: cmdNumRef.current++
                   (async () => {
                     const maxAttempts = 6;
                     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-                      sendCommand({ auto_recharge: { cmd_num: cmdNumRef.current++ } }, `auto_recharge (try ${attempt}/${maxAttempts})`);
-                      console.log(`[Mapping] auto_recharge attempt ${attempt} sent`);
-                      await waitForRespond('auto_recharge_respond', 10000);
+                      if (!await sendCommand({ auto_recharge: { cmd_num: cmdNumRef.current++ } }, `auto_recharge (try ${attempt}/${maxAttempts})`, 10000)) {
+                        setChargerAction(null);
+                        return;
+                      }
                       // Watch for error_status 122 (nav2 not ready) within 6 s.
                       const started = Date.now();
                       let gotError122 = false;
@@ -2134,7 +1958,7 @@ sendCommand({ save_recharge_pos: { mapName: 'map0', cmd_num: cmdNumRef.current++
               <TouchableOpacity
                 style={[styles.cancelBtn, { flex: 1 }]}
                 onPress={handleSaveChargerPos}
-                disabled={chargerAction === 'savePosition' || confirmedDocked}
+                disabled={chargerAction === 'savePosition'}
                 activeOpacity={0.7}
               >
                 {chargerAction === 'savePosition' ? (

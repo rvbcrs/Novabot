@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { BleFrameAssembler, parseBleRespond } from '../bleFrameAssembler';
+import { BleFrameAssembler, parseBleRespond, parseBleTelemetry } from '../bleFrameAssembler';
 
 const b = (s: string) => new Uint8Array(Buffer.from(s, 'utf8'));
 
@@ -62,5 +62,42 @@ describe('parseBleRespond', () => {
     expect(parseBleRespond('{"type":"report_state_robot","message":{}}')).toBeNull();
     expect(parseBleRespond('{"foo":1}')).toBeNull();
     expect(parseBleRespond('{niet json')).toBeNull();
+  });
+});
+
+describe('parseBleTelemetry', () => {
+  it('decodes stock bb positions in all quadrants and distinguishes work/channel closure', () => {
+    const raw = new Uint8Array(20);
+    raw.set([0x62, 0x62]);
+    raw.set([12, 34, 0, 56], 16);
+    for (const [sign, x, y] of [[0, 12.34, 0.56], [0x10, -12.34, 0.56], [1, 12.34, -0.56], [0x11, -12.34, -0.56]]) {
+      raw[15] = sign;
+      raw[8] = 0x10; // channel closed alone does not close a work polygon
+      expect(parseBleTelemetry(raw)).toEqual({ position: { x, y }, closedCycle: false });
+      raw[8] = 0x11;
+      expect(parseBleTelemetry(raw)?.closedCycle).toBe(true);
+    }
+  });
+
+  it('decodes cc heading in radians, without inventing a position', () => {
+    const raw = new Uint8Array(20);
+    raw.set([0x63, 0x63, 1, 3, 14]);
+    expect(parseBleTelemetry(raw)).toEqual({ orientation: -3.14 });
+    raw[2] = 0;
+    expect(parseBleTelemetry(raw)).toEqual({ orientation: 3.14 });
+  });
+
+  it('rejects truncated, malformed and non-telemetry packets', () => {
+    expect(parseBleTelemetry(new Uint8Array([0x62, 0x62]))).toBeNull();
+    expect(parseBleTelemetry(b('ble_start'))).toBeNull();
+    const raw = new Uint8Array(20);
+    raw.set([0x62, 0x62]);
+    raw[17] = 100;
+    expect(parseBleTelemetry(raw)).toBeNull();
+    raw[17] = 0;
+    raw[15] = 0x02;
+    expect(parseBleTelemetry(raw)).toBeNull();
+    raw.set([0x63, 0x63, 0, 3, 15]);
+    expect(parseBleTelemetry(raw)).toBeNull();
   });
 });

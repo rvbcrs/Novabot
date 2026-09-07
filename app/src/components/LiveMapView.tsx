@@ -8,6 +8,7 @@ import React, { useMemo } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import Svg, { Polyline, Polygon, Circle, Line, G, Image as SvgImage, Text as SvgText, Rect } from 'react-native-svg';
 import { useStyles, useTheme, type Colors } from '../theme';
+import { isMapPoint, normalizeMapPoints } from '../utils/mapPoints';
 
 export interface ExistingMapOverlay {
   mapId: string;
@@ -38,11 +39,12 @@ function LiveMapViewInner({ points, orientation, closed, height = 150, width, ex
   // to show the user how far they still need to drive to close the loop.
   // Verified from blutter decompile: build_map_painter.dart @ 0xa2187c (distanceTo + "m" label
   // at centerPoint of first/last trail points).
-  const { svgPoints, cursorX, cursorY, arrowDx, arrowDy, hasPoints, existingSvg, mowerSvg, closingLabel } = useMemo(() => {
+  const { svgPoints, cursorX, cursorY, arrowDx, arrowDy, hasPoints, existingSvg, mowerSvg, closingLabel, pointCount } = useMemo(() => {
     // No rotation — mower local frame ≈ ENU.
-    const points_r = points;
-    const existingMaps_r = existingMaps;
-    const mowerPosition_r = mowerPosition;
+    const points_r = normalizeMapPoints(points);
+    const existingMaps_r = existingMaps.map(m => ({ ...m, points: normalizeMapPoints(m.points) }))
+      .filter(m => m.points.length > 0);
+    const mowerPosition_r = isMapPoint(mowerPosition) ? mowerPosition : null;
     const orientation_r = orientation;
 
     const allPoints = [...points_r];
@@ -50,7 +52,7 @@ function LiveMapViewInner({ points, orientation, closed, height = 150, width, ex
     if (mowerPosition_r) allPoints.push(mowerPosition_r);
 
     if (allPoints.length === 0) {
-      return { svgPoints: '', cursorX: 0, cursorY: 0, arrowDx: 0, arrowDy: 0, hasPoints: false, existingSvg: [], closingLabel: null };
+      return { svgPoints: '', cursorX: 0, cursorY: 0, arrowDx: 0, arrowDy: 0, hasPoints: false, existingSvg: [], mowerSvg: null, closingLabel: null, pointCount: 0 };
     }
 
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
@@ -130,10 +132,11 @@ function LiveMapViewInner({ points, orientation, closed, height = 150, width, ex
       cursorY: last.sy,
       arrowDx: dx,
       arrowDy: dy,
-      hasPoints: points.length > 0 || existingMaps.length > 0 || mowerPosition != null,
+      hasPoints: true,
       existingSvg: existProj,
       mowerSvg: mowerProj,
       closingLabel: closing,
+      pointCount: points_r.length,
     };
   }, [points, orientation, height, existingMaps, mowerPosition]);
 
@@ -151,7 +154,7 @@ function LiveMapViewInner({ points, orientation, closed, height = 150, width, ex
     );
   }
 
-  const hasTrail = points.length > 0;
+  const hasTrail = pointCount > 0;
 
   const lineColor = closed ? colors.emerald : colors.purple;
 
@@ -279,7 +282,7 @@ function LiveMapViewInner({ points, orientation, closed, height = 150, width, ex
       </Svg>
 
       {/* Point count label */}
-      <Text style={styles.pointCount}>{points.length} pts</Text>
+      <Text style={styles.pointCount}>{pointCount} pts</Text>
     </View>
   );
 }

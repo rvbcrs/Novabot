@@ -4,7 +4,8 @@
  * The firmware chunks every notify payload into ~20-byte writes and wraps a
  * message in the literal markers `ble_start` … `ble_end`. Interleaved with
  * those come the raw "bb"/"cc" telemetry chunks (first two bytes 0x62 0x62 or
- * 0x63 0x63) which are NOT part of any frame and must be dropped.
+ * 0x63 0x63) which are NOT part of any JSON frame. Decode those separately
+ * with parseBleTelemetry before passing chunks to the frame assembler.
  *
  * This is the same parser the provisioning flow has had inline since day one,
  * lifted out so the mapping session can consume `*_respond` messages over BLE
@@ -22,6 +23,36 @@ export interface BleRespond {
   command: string;
   /** The `message` object: `{ result, value }` */
   data: unknown;
+}
+
+export interface BleTelemetry {
+  position?: { x: number; y: number };
+  orientation?: number;
+  closedCycle?: boolean;
+}
+
+/** Stock mqtt_node api_report{,2}_state_all_by_ble sends 20-byte bb/cc packets.
+ * Positions and heading use whole + hundredths bytes, NOT IEEE floats.
+ * Verified against Flutter BuildMapPage BleDataHandler (0x8ffa60).
+ */
+export function parseBleTelemetry(raw: Uint8Array): BleTelemetry | null {
+  if (raw.length !== 20) return null;
+  if (raw[0] === 0x62 && raw[1] === 0x62) {
+    if ((raw[15] & ~0x11) !== 0 || raw[17] > 99 || raw[19] > 99) return null;
+    return {
+      position: {
+        x: (raw[16] + raw[17] / 100) * (raw[15] & 0x10 ? -1 : 1),
+        y: (raw[18] + raw[19] / 100) * (raw[15] & 0x01 ? -1 : 1),
+      },
+      closedCycle: (raw[8] & 0x01) !== 0,
+    };
+  }
+  if (raw[0] === 0x63 && raw[1] === 0x63) {
+    if (raw[2] > 1 || raw[3] > 3 || raw[4] > 99) return null;
+    const orientation = (raw[3] + raw[4] / 100) * (raw[2] === 1 ? -1 : 1);
+    return Math.abs(orientation) <= Math.PI ? { orientation } : null;
+  }
+  return null;
 }
 
 export class BleFrameAssembler {

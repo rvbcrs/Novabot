@@ -12,6 +12,8 @@
  * Rules:
  *  - `enqueue(frame)`     strict FIFO — used for start_move / stop_move, whose
  *                          order relative to moves must hold.
+ *  - `enqueueOperation(write)` same FIFO for framed mapping commands; propagates
+ *                          failures so the mapping flow cannot advance on failure.
  *  - `setLatestMove(frame)` coalescing — at most ONE move is ever waiting; a
  *                          newer move replaces it. When the link is fast every
  *                          tick still goes out (identical traffic to before).
@@ -33,6 +35,13 @@ export class JoystickWriteQueue {
   enqueue(frame: string): Promise<void> {
     this.chain = this.chain.then(() => this.safeWrite(frame));
     return this.chain;
+  }
+
+  /** Framed commands share the same FIFO, but their caller must see failures. */
+  enqueueOperation(write: () => Promise<void>): Promise<void> {
+    const pending = this.chain.then(write);
+    this.chain = pending.catch(() => {});
+    return pending;
   }
 
   /** Coalescing write for velocity frames: only the newest waits. */
