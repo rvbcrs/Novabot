@@ -1,6 +1,38 @@
 {
   "releases": [
     {
+      "version": "2026.0907.1834",
+      "date": "2026-09-07",
+      "sections": {
+        "dashboard": [
+          "Kaartbewerking op stock firmware eerlijk weigeren",
+          "Release-notes popup boven de Leaflet-kaart (z-50 → z-9999)",
+          "Release-notes popup naar body geportald",
+          "Release notes popup naast het versienummer",
+          "Gemiste punten subtieler (radius 2.5, 40%, geen rand)"
+        ],
+        "app": [
+          "Decode stock BLE acknowledgements and anchor offline mapping",
+          "Restore offline BLE mapping preview and save flow",
+          "BLE frame-assembler crashte op ontbrekende Buffer in Hermes",
+          "Kaart-hersync na offline BLE-karteren via de app, niet via de server",
+          "BLE-karteren werkt zonder WiFi/server; kaart synct vanzelf na herverbinden",
+          "BLE-joystick stapelt geen verouderde moves meer op",
+          "Eigen APK-hashcheck verwijderd — de installer is de verificatie"
+        ],
+        "server": [
+          "Maaier bleef in MAPPING-stand staan na kaart verwijderen",
+          "Kaart verwijderen duwde geen DB-ZIP meer terug naar de maaier",
+          "App-notes-filter matcht ook samengestelde scopes zoals (app+server)",
+          "Unzip ontbrak in de image — elke maaier-kaartupload faalde stil",
+          "Release-notes.json naar de runtime-stage",
+          "Release-notes COPY zonder glob-truc — bestand is gecommit en de Dockerfile-test eist letterlijke paden",
+          "Terugrit na afmaken + Low power laadpauze correct herkend",
+          "Home Assistant lawn_mower entiteit (start/pauze/dock + activity)"
+        ]
+      }
+    },
+    {
       "version": "2026.0831.2245",
       "date": "2026-08-31",
       "sections": {
