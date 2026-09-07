@@ -53,6 +53,8 @@ import { readMapsCache, writeMapsCache, normalizeCachedMaps, mergePendingMaps, t
 import { markPendingMapSync } from '../services/pendingMapSync';
 import { MapSaveRejectedError, sendMappingCommand } from '../services/mappingCommand';
 import { scanStartPoint, isMappingLoopClosed } from '../utils/mapPoints';
+import { findMappingOverlapIds } from '../utils/mappingOverlap';
+import { pointInPolygon } from '../utils/mapEditGeometry';
 
 // ── Joystick constants (smaller than JoystickScreen) ──
 const { width: SCREEN_W } = Dimensions.get('window');
@@ -218,6 +220,10 @@ export default function MappingScreen() {
 
   // ── Existing maps (shown greyed-out during mapping) ──
   const [existingMaps, setExistingMaps] = useState<CachedMap[]>([]);
+  const [overlapMapIds, setOverlapMapIds] = useState<string[]>([]);
+  const overlapProgressRef = useRef<{
+    count: number; origin: typeof trailPoints[number]; maps: CachedMap[];
+  } | null>(null);
   const mapsRef = useRef<CachedMap[] | null>(null);
   const rememberMaps = useCallback((maps: CachedMap[]) => {
     mapsRef.current = maps;
@@ -407,6 +413,33 @@ export default function MappingScreen() {
     lastTrailRef.current = { x, y };
     setTrailPoints(prev => [...prev, { x, y }]);
   }, [mappingState, mapPosX, mapPosY]);
+
+  // Check each new BLE/server segment once. Keep the warning after driving out:
+  // the crossed segment remains in this recording until the user discards it.
+  useEffect(() => {
+    if (mapBuildType !== 'work' || trailPoints.length === 0) {
+      overlapProgressRef.current = null;
+      setOverlapMapIds(previous => previous.length ? [] : previous);
+      return;
+    }
+    if (mappingState !== 'mapping') return;
+    const progress = overlapProgressRef.current;
+    const restart = !progress || progress.origin !== trailPoints[0]
+      || progress.count > trailPoints.length || progress.maps !== existingMaps;
+    const newIds = findMappingOverlapIds(
+      trailPoints.slice(restart ? 0 : Math.max(0, progress.count - 1)), existingMaps,
+    );
+    overlapProgressRef.current = { count: trailPoints.length, origin: trailPoints[0], maps: existingMaps };
+    setOverlapMapIds(previous => {
+      const next = [...new Set([...(restart ? [] : previous), ...newIds])];
+      return next.length === previous.length && next.every(id => previous.includes(id)) ? previous : next;
+    });
+  }, [trailPoints, existingMaps, mapBuildType, mappingState]);
+
+  const hasMapOverlap = mapBuildType === 'work' && overlapMapIds.length > 0;
+  const overlapAreaNames = existingMaps.filter(map => overlapMapIds.includes(map.mapId))
+    .map(map => map.mapName || map.canonicalName?.replace(/_work$/, '')
+      || map.fileName?.replace(/_work\.csv$/, '') || t('workArea')).join(', ');
 
   // Block Android hardware back during the saving-charger-position
   // sequence. The save fires save_recharge_pos + post-recharge save_map
@@ -924,7 +957,9 @@ export default function MappingScreen() {
   const handleStop = () => {
     appAlertCompat.alert(
       t('stopMapping', undefined) || 'Stop Mapping',
-      closedCycleSeen
+      hasMapOverlap
+        ? t('mappingOverlapSaveConfirm', { areas: overlapAreaNames })
+        : closedCycleSeen
         ? 'Boundary is closed. Stop mapping and save?'
         : 'The boundary may not be fully closed yet. Stop anyway?',
       [
@@ -1248,6 +1283,8 @@ export default function MappingScreen() {
 
   const joystickDist = Math.sqrt(thumbX * thumbX + thumbY * thumbY) / radius;
   const speedMs = (joystickDist * SPEED_LEVELS[speedLevel].linear).toFixed(2);
+  const workRecording = mappingState === 'mapping' && mapBuildType === 'work';
+  const showHeaderNotice = workRecording && (hasMapOverlap || closedCycleSeen);
 
   // ── Render ──
   return (
@@ -1255,7 +1292,9 @@ export default function MappingScreen() {
       <View style={[styles.container, { paddingTop: insets.top }]}>
         {/* Header — back always leaves; a pending channel is a non-blocking
             reminder (banner persists on the Map tab + idle mapping screen). */}
-        <View style={styles.header}>
+        <View style={[styles.header,
+          workRecording && { height: 56 * Dimensions.get('window').fontScale },
+          workRecording && hasMapOverlap && { backgroundColor: 'rgba(245,158,11,0.12)' }]}>
           <TouchableOpacity
             onPress={() => mappingState === 'saveRejected' ? void exitRejectedMapping() : navigation.goBack()}
             disabled={mappingState === 'saveRejected' && busy}
@@ -1263,13 +1302,37 @@ export default function MappingScreen() {
           >
             <Ionicons name="arrow-back" size={24} color={colors.text} />
           </TouchableOpacity>
-          <Text style={styles.title}>
+          {showHeaderNotice ? (
+            <TouchableOpacity style={{ flex: 1 }} disabled={!hasMapOverlap}
+              accessibilityRole={hasMapOverlap ? 'button' : 'text'}
+              accessibilityLiveRegion="polite"
+              accessibilityLabel={hasMapOverlap
+                ? `${t('mappingOverlapTitle', { areas: overlapAreaNames })}. ${t('mappingOverlapBody', { discard: t('discardMapping') })}`
+                : t('mappingBoundaryClosedTitle')}
+              onPress={() => {
+                if (joystickActiveRef.current) stopJoystick();
+                appAlertCompat.alert(t('mappingOverlapTitle', { areas: overlapAreaNames }),
+                  t('mappingOverlapBody', { discard: t('discardMapping') }));
+              }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Ionicons name={hasMapOverlap ? 'warning' : 'checkmark-circle'} size={14}
+                  color={hasMapOverlap ? '#f59e0b' : colors.green} />
+                <Text numberOfLines={1} style={{ flex: 1, color: hasMapOverlap ? '#f59e0b' : colors.green,
+                  fontWeight: '700', fontSize: 14, lineHeight: 16 }}>
+                  {hasMapOverlap ? t('mappingOverlapTitle', { areas: overlapAreaNames }) : t('mappingBoundaryClosedTitle')}
+                </Text>
+              </View>
+              <Text numberOfLines={1} style={{ color: colors.text, fontSize: 11, lineHeight: 14 }}>
+                {t(hasMapOverlap ? 'mappingOverlapShort' : 'mappingBoundaryClosedBody')}
+              </Text>
+            </TouchableOpacity>
+          ) : <Text style={styles.title}>
             {mapBuildType === 'modify'
               ? (t('editMap', undefined) || 'Edit Map')
               : (t('createMap', undefined) || 'Create Map')}
-          </Text>
+          </Text>}
           {/* Recording-mode badge — what you're capturing right now. */}
-          {(['calibrating', 'preMapping', 'mapping', 'stopping'] as MappingState[]).includes(mappingState) && (() => {
+          {!showHeaderNotice && (['calibrating', 'preMapping', 'mapping', 'stopping'] as MappingState[]).includes(mappingState) && (() => {
             const meta = BUILD_TYPE_META[mapBuildType];
             return (
               <View style={{
@@ -1624,8 +1687,8 @@ export default function MappingScreen() {
         /* ── Mapping in progress (recording) ── */
         ) : mappingState === 'mapping' ? (
           <View style={styles.mappingContent}>
-            {/* Closed cycle banner */}
-            {closedCycleSeen && !closedCycleDismissedRef.current && (
+            {/* Work notices use the existing header so the held joystick never moves. */}
+            {mapBuildType !== 'work' && closedCycleSeen && !closedCycleDismissedRef.current && (
               <View style={styles.closedBanner}>
                 <Ionicons name="checkmark-circle" size={18} color={colors.green} />
                 <Text style={styles.closedBannerText}>Boundary closed! You can stop mapping.</Text>
@@ -1637,27 +1700,14 @@ export default function MappingScreen() {
                 </TouchableOpacity>
               </View>
             )}
-
             {/* Unicom scan guide — the mower firmware rejects the save with
                 "pass_areas < 2" when the trajectory only touches one work map.
                 Show live which work polygon the mower is currently inside so
                 the user knows when they've crossed into the second map. */}
             {mapBuildType === 'unicom' && (() => {
               const workMaps = existingMaps.filter(m => m.mapType === 'work');
-              const isInside = (pt: { x: number; y: number } | null, poly: Array<{ x: number; y: number }>) => {
-                if (!pt || poly.length < 3) return false;
-                let inside = false;
-                for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-                  const xi = poly[i].x, yi = poly[i].y;
-                  const xj = poly[j].x, yj = poly[j].y;
-                  const intersect = yi > pt.y !== yj > pt.y
-                    && pt.x < ((xj - xi) * (pt.y - yi)) / (yj - yi) + xi;
-                  if (intersect) inside = !inside;
-                }
-                return inside;
-              };
               const currentIn = mowerLocal
-                ? workMaps.find(m => isInside(mowerLocal, m.points))
+                ? workMaps.find(m => m.points.length >= 3 && pointInPolygon(mowerLocal, m.points))
                 : null;
               const currentMapName = currentIn
                 ? (currentIn.fileName?.match(/^(map\d+)/)?.[1]) ?? currentIn.mapName ?? null
@@ -1711,7 +1761,8 @@ export default function MappingScreen() {
                   RTK: {rtkFix.label}
                 </Text>
                 {closedCycleSeen && (
-                  <Text style={[styles.sensorChip, styles.closedChip]}>
+                  <Text style={[styles.sensorChip, styles.closedChip,
+                    hasMapOverlap && { color: '#f59e0b', backgroundColor: 'rgba(245,158,11,0.12)' }]}>
                     Closed
                   </Text>
                 )}
@@ -1725,6 +1776,7 @@ export default function MappingScreen() {
               closed={closedCycleSeen}
               height={150}
               existingMaps={existingMaps}
+              conflictingMapIds={hasMapOverlap ? overlapMapIds : []}
               mowerPosition={mowerLocal}
             />
 
@@ -1808,7 +1860,8 @@ export default function MappingScreen() {
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.stopMapBtn, closedCycleSeen && styles.stopMapBtnReady]}
+                style={[styles.stopMapBtn, !hasMapOverlap && closedCycleSeen && styles.stopMapBtnReady,
+                  hasMapOverlap && { backgroundColor: '#b45309' }]}
                 onPress={handleStop}
                 activeOpacity={0.7}
               >

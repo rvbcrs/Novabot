@@ -25,13 +25,14 @@ export interface LiveMapViewProps {
   height?: number;     // default 150
   width?: number;      // explicit width; defaults to flex/stretch
   existingMaps?: ExistingMapOverlay[];
+  conflictingMapIds?: string[];
   mowerPosition?: { x: number; y: number } | null; // show mower marker (separate from trail)
 }
 
 const PADDING_RATIO = 0.20; // 20% padding around bounding box
 const ARROW_LEN = 20;       // direction arrow length in SVG units
 
-function LiveMapViewInner({ points, orientation, closed, height = 150, width, existingMaps = [], mowerPosition }: LiveMapViewProps) {
+function LiveMapViewInner({ points, orientation, closed, height = 150, width, existingMaps = [], conflictingMapIds = [], mowerPosition }: LiveMapViewProps) {
   const styles = useStyles(makeStyles);
   const { colors } = useTheme();
 
@@ -158,7 +159,7 @@ function LiveMapViewInner({ points, orientation, closed, height = 150, width, ex
 
   const hasTrail = pointCount > 0;
 
-  const lineColor = closed ? colors.emerald : colors.purple;
+  const lineColor = conflictingMapIds.length > 0 ? '#f59e0b' : closed ? colors.emerald : colors.purple;
 
   return (
     <View style={containerStyle}>
@@ -166,13 +167,14 @@ function LiveMapViewInner({ points, orientation, closed, height = 150, width, ex
         {/* Existing maps (greyed-out background) */}
         {existingSvg.map(m => {
           const isObstacle = m.mapType === 'obstacle';
+          const conflicting = conflictingMapIds.includes(m.mapId);
           return (
             <Polygon
               key={m.mapId}
               points={m.svgPoints}
-              fill={isObstacle ? 'rgba(239,68,68,0.08)' : 'rgba(255,255,255,0.06)'}
-              stroke={isObstacle ? 'rgba(239,68,68,0.3)' : 'rgba(255,255,255,0.2)'}
-              strokeWidth={1.5}
+              fill={conflicting ? 'rgba(245,158,11,0.18)' : isObstacle ? 'rgba(239,68,68,0.08)' : 'rgba(255,255,255,0.06)'}
+              stroke={conflicting ? '#f59e0b' : isObstacle ? 'rgba(239,68,68,0.3)' : 'rgba(255,255,255,0.2)'}
+              strokeWidth={conflicting ? 2 : 1.5}
               strokeDasharray={isObstacle ? '4 3' : undefined}
             />
           );
