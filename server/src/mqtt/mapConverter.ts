@@ -284,15 +284,28 @@ export function generateMapZipFromDb(
   const unicomRows = rows.filter(r => r.map_type === 'unicom');
   const obstacleRows = rows.filter(r => r.map_type === 'obstacle');
 
+  // Slot komt uit de canonieke naam ("map3_work"), NOOIT uit de array-index:
+  // rijen staan op UUID-volgorde, dus na het wissen van map1/map2 werd map3
+  // anders als map1_work.csv geschreven (2026-09-07, .244). Alleen rijen zonder
+  // herkenbare naam vallen terug op hun positie.
+  const slotOf = (r: MapRow): number | null => {
+    for (const n of [r.map_name, r.file_name]) {
+      const m = n?.match(/^map(\d+)(_work)?(\.csv)?$/);
+      if (m) return parseInt(m[1], 10);
+    }
+    return null;
+  };
+
   for (let i = 0; i < workRows.length; i++) {
     const row = workRows[i];
     const rawPoints: LocalPoint[] = JSON.parse(row.map_area!);
 
     if (!rawPoints || rawPoints.length < 3) continue;
     const points = shiftPoints(rawPoints, offset.x, offset.y, false);
+    const slot = slotOf(row) ?? i;
 
     areas.push({
-      mapIndex: i,
+      mapIndex: slot,
       type: 'work',
       points,
     });
@@ -303,7 +316,7 @@ export function generateMapZipFromDb(
     // Check both map_name AND file_name — some DB rows have the canonical name
     // ("map0_3_obstacle") in map_name with a ZIP bundle name in file_name. Match
     // whichever holds the "mapN_..._obstacle" pattern.
-    const prefix = `map${i}`;
+    const prefix = `map${slot}`;
     const obstaclePattern = new RegExp(`^${prefix}_\\d+_obstacle`);
     const myObstacles = obstacleRows.filter(r => {
       return (
@@ -321,9 +334,9 @@ export function generateMapZipFromDb(
           ? obs.map_name
           : obs.file_name ?? '';
         const match = canonical.match(/^map\d+_(\d+)_obstacle/);
-        const subIndex = match ? parseInt(match[1], 10) : areas.filter(a => a.type === 'obstacle' && a.mapIndex === i).length;
+        const subIndex = match ? parseInt(match[1], 10) : areas.filter(a => a.type === 'obstacle' && a.mapIndex === slot).length;
         areas.push({
-          mapIndex: i,
+          mapIndex: slot,
           type: 'obstacle',
           subIndex,
           points: obsPoints,
@@ -349,9 +362,14 @@ export function generateMapZipFromDb(
   // placeholders (het pad zat alleen in de originele live-pgm), dus een lege rij mag
   // nooit een echt, gereden kanaal verdringen.
   for (const uRow of unicomRows) {
-    const unicomName = (uRow.file_name ?? uRow.map_name ?? '').replace(/\.csv$/, '');
-    const targetMatch = unicomName.match(/^map(\d+)to(.+?)_?unicom/);
-    if (!targetMatch) continue;
+    // file_name is vaak de ZIP-bundelnaam ("LFIN..._<ts>.zip"), de canonieke naam
+    // staat dan in map_name. Neem het veld dat op "mapNto..._unicom" lijkt; met
+    // alleen file_name vielen ALLE kanalen weg (incl. map0tocharge).
+    const unicomName = [uRow.map_name, uRow.file_name]
+      .map(n => (n ?? '').replace(/\.csv$/, ''))
+      .find(n => /^map\d+to.+unicom/.test(n));
+    const targetMatch = unicomName?.match(/^map(\d+)to(.+?)_?unicom/);
+    if (!unicomName || !targetMatch) continue;
     let rawUnicomPoints: LocalPoint[];
     try {
       rawUnicomPoints = JSON.parse(uRow.map_area ?? '[]');

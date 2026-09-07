@@ -171,4 +171,29 @@ describe('generateMapZipFromDb polygon offset', () => {
 
     fs.rmSync(dir, { recursive: true, force: true });
   });
+  it('keeps canonical slots and unicoms when file_name is the ZIP bundle name (2026-09-07 .244 regression)', () => {
+    // Rows as the mower-upload parser stores them: canonical name in map_name,
+    // the uploaded bundle name in file_name. map1/map2 were deleted; map3 remains.
+    db.prepare('DELETE FROM maps WHERE mower_sn = ?').run(SN);
+    const bundle = `${SN}_1788609847354.zip`;
+    const add = (id: string, name: string, type: string, pts: unknown[]) => mapRepo.create({
+      map_id: `${SN}-${id}`, mower_sn: SN, map_name: name, file_name: bundle,
+      map_area: JSON.stringify(pts), map_type: type, canonical_name: name,
+    });
+    add('a-map0', 'map0', 'work', WORK_PTS);
+    add('b-map3', 'map3', 'work', [{ x: 10, y: 10 }, { x: 12, y: 10 }, { x: 12, y: 12 }, { x: 10, y: 12 }]);
+    add('c-obs', 'map0_1_obstacle', 'obstacle', OBSTACLE_PTS);
+    add('d-uni', 'map0tomap3_0_unicom', 'unicom', [{ x: 5, y: 5 }, { x: 10, y: 10 }]);
+    add('e-uni', 'map0tocharge_unicom', 'unicom', UNICOM_TOCHARGE_PTS);
+
+    const dir = unzipTo(generateMapZipFromDb(SN, 0)!);
+    const files = fs.readdirSync(path.join(dir, 'csv_file')).sort();
+    expect(files).toEqual([
+      'map0_1_obstacle.csv', 'map0_work.csv', 'map0tocharge_unicom.csv',
+      'map0tomap3_0_unicom.csv', 'map3_work.csv', 'map_info.json',
+    ]);
+    const info = JSON.parse(fs.readFileSync(path.join(dir, 'csv_file/map_info.json'), 'utf8'));
+    expect(Object.keys(info).sort()).toEqual(['charging_pose', 'map0_work.csv', 'map3_work.csv']);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
 });

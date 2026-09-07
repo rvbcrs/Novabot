@@ -217,19 +217,6 @@ function _enforceRetention(sn: string): void {
 
 // ── Restore + Realign helpers ────────────────────────────────────────────────
 
-/**
- * Compute the area of a 2D polygon via the shoelace formula.
- * Returns absolute area (sign-independent).
- */
-function polygonArea(points: Array<{ x: number; y: number }>): number {
-  if (!Array.isArray(points) || points.length < 3) return 0;
-  let acc = 0;
-  for (let i = 0; i < points.length; i++) {
-    const j = (i + 1) % points.length;
-    acc += points[i].x * points[j].y - points[j].x * points[i].y;
-  }
-  return Math.abs(acc) / 2;
-}
 
 /**
  * Regenerate the canonical `<SN>_latest.zip` from the just-restored DB rows
@@ -252,17 +239,6 @@ export function regenerateLatestZipFromBackup(sn: string): string | null {
   if (!anchor) {
     console.warn(`${TAG} regenerate skipped — no polygon anchor for ${sn}`);
     return null;
-  }
-
-  // Compute work polygon area (preserve in map_info.json so dashboard's
-  // "X.YZ m²" label keeps working).
-  let mapSize = 0;
-  const workMaps = mapRepo.findByMowerSnAndType(sn, 'work');
-  if (workMaps.length > 0 && workMaps[0].map_area) {
-    try {
-      const pts = JSON.parse(workMaps[0].map_area) as Array<{ x: number; y: number }>;
-      mapSize = polygonArea(pts);
-    } catch { /* ignore — leave 0 */ }
   }
 
   // Build fresh ZIP from current DB state.
@@ -288,13 +264,18 @@ export function regenerateLatestZipFromBackup(sn: string): string | null {
       return null;
     }
     const infoPath = path.join(csvDir, 'map_info.json');
+    // Alleen charging_pose overschrijven; de map_size-entries per werkgebied
+    // (map0_work.csv, map3_work.csv, ...) komen uit generateMapZipFromDb. Een
+    // hardcoded map0-only map_info wiste de andere slots op de maaier.
+    let generated: Record<string, unknown> = {};
+    try { generated = JSON.parse(fs.readFileSync(infoPath, 'utf8')); } catch { /* geen map_info → alleen pose */ }
     const enriched = {
+      ...generated,
       charging_pose: {
         x: anchor.x,
         y: anchor.y,
         orientation: anchor.orientation,
       },
-      'map0_work.csv': { map_size: mapSize },
     };
     fs.writeFileSync(infoPath, JSON.stringify(enriched, null, 3));
 
@@ -309,7 +290,7 @@ export function regenerateLatestZipFromBackup(sn: string): string | null {
     fs.renameSync(tmpFinal, finalZip);
 
     console.log(
-      `${TAG} regenerated ${finalZip} — anchor (${anchor.x}, ${anchor.y}, ${anchor.orientation}) [${anchor.orientationSource}], map_size ${mapSize.toFixed(2)}m²`,
+      `${TAG} regenerated ${finalZip} — anchor (${anchor.x}, ${anchor.y}, ${anchor.orientation}) [${anchor.orientationSource}]`,
     );
     return finalZip;
   } catch (err) {

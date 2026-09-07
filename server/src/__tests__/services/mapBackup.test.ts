@@ -54,7 +54,12 @@ function buildRealZipWithCsvFile(stub: { 'map_info.json'?: string } = {}): strin
   fs.mkdirSync(csvDir, { recursive: true });
   fs.writeFileSync(
     path.join(csvDir, 'map_info.json'),
-    stub['map_info.json'] ?? JSON.stringify({ charging_pose: { x: 0, y: 0, orientation: 0 } }),
+    // Mirror generateMapZipFromDb: charging_pose placeholder + map_size per work slot.
+    stub['map_info.json'] ?? JSON.stringify({
+      charging_pose: { x: 0, y: 0, orientation: 0 },
+      'map0_work.csv': { map_size: 1 },
+      'map3_work.csv': { map_size: 98.64 },
+    }),
   );
   fs.writeFileSync(path.join(csvDir, 'map0_work.csv'), '0,0\n1,0\n1,1\n0,1\n0,0\n');
   const zipOut = path.join(os.tmpdir(), `fakezip-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.zip`);
@@ -290,8 +295,10 @@ describe('regenerateLatestZipFromBackup', () => {
     expect(info.charging_pose.x).toBeCloseTo(-1.21);
     expect(info.charging_pose.y).toBeCloseTo(0.48);
     expect(info.charging_pose.orientation).toBeCloseTo(1.5); // default, no sensor
-    // Work polygon area (10×5 rectangle) = 50 m²
-    expect(info['map0_work.csv'].map_size).toBeCloseTo(50);
+    // map_size entries come from the generated ZIP and are kept for EVERY slot
+    // (a hardcoded map0-only map_info wiped map3 on the mower, 2026-09-07).
+    expect(info['map0_work.csv'].map_size).toBeCloseTo(1);
+    expect(info['map3_work.csv'].map_size).toBeCloseTo(98.64);
   });
 
   it('is idempotent: running twice produces the same map_info.json', () => {
@@ -326,7 +333,7 @@ describe('regenerateLatestZipFromBackup', () => {
     );
     expect(info.charging_pose.x).toBeCloseTo(0.5);
     expect(info.charging_pose.y).toBeCloseTo(0.5);
-    expect(info['map0_work.csv'].map_size).toBeCloseTo(16); // 4×4
+    expect(info['map0_work.csv'].map_size).toBeCloseTo(1);
   });
 
   it('charging_pose in map_info.json stays at unshifted anchor when offset is non-zero', () => {

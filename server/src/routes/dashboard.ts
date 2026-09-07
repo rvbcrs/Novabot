@@ -1827,14 +1827,21 @@ dashboardRouter.delete('/maps/:sn/:mapId', (req: Request, res: Response) => {
     const mapName = row.map_name;
     publishToDevice(sn, { delete_map: { map_name: mapName, cmd_num: getNextCmdNum(sn) } });
     console.log(`[DELETE] ${sn}: delete_map MQTT sent for ${mapName}`);
+    // De maaier is de bron van waarheid: na delete_map laten we hem zijn eigen
+    // ZIP opnieuw uploaden i.p.v. onze DB-ZIP terug te duwen. Die sync_map-push
+    // wiste op 2026-09-07 (.244) alle kanalen en hernummerde map3 → map1.
+    setTimeout(() => {
+      if (!isDeviceOnline(sn)) return;
+      publishToDevice(sn, { get_map_outline: { map_name: 'all', cmd_num: getNextCmdNum(sn) } });
+      console.log(`[DELETE] ${sn}: get_map_outline all gestuurd (her-upload na delete)`);
+    }, 3000);
   }
 
   // Notify connected dashboard/app clients so they can refetch without
   // waiting for the next mower sensor update.
   emitMapsChanged(sn, mapId);
 
-  // Auto-push naar maaier (bijgewerkte kaarten zonder de verwijderde)
-  autoPushMapsInBackground(sn);
+  refreshLatestZip(sn);
 });
 
 // ── Map editing (spec: 2026-06-10-map-obstacle-editing-design.md) ──────────
@@ -2136,10 +2143,7 @@ function generatePosJson(
 // ── Auto-push kaarten naar maaier (fire-and-forget) ─────────────────────────
 // Wordt aangeroepen na map create/update/delete zodat de maaier altijd up-to-date is.
 // Zoekt zelf de charger GPS op via dezelfde fallback chain als de endpoint.
-async function autoPushMapsInBackground(sn: string): Promise<void> {
-  // Update the on-disk "<SN>_latest.zip" and ping the mower over MQTT — the
-  // mower's extended_commands.py handles the actual pull + install. This path
-  // is SSH-free and works regardless of mower IP/mDNS availability.
+function refreshLatestZip(sn: string): void {
   try {
     const zipPath = generateMapZipFromDb(sn, 0);
     if (zipPath) {
@@ -2150,6 +2154,13 @@ async function autoPushMapsInBackground(sn: string): Promise<void> {
   } catch (err) {
     console.warn(`[AUTO-PUSH] ZIP regenerate fout voor ${sn}:`, err);
   }
+}
+
+async function autoPushMapsInBackground(sn: string): Promise<void> {
+  // Update the on-disk "<SN>_latest.zip" and ping the mower over MQTT — the
+  // mower's extended_commands.py handles the actual pull + install. This path
+  // is SSH-free and works regardless of mower IP/mDNS availability.
+  refreshLatestZip(sn);
 
   // MQTT kick: extended_commands.py on the mower subscribes to
   // novabot/extended/<SN> and will pull the new ZIP from our sync-info/sync-zip
