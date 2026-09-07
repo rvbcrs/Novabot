@@ -1827,6 +1827,15 @@ dashboardRouter.delete('/maps/:sn/:mapId', (req: Request, res: Response) => {
     const mapName = row.map_name;
     publishToDevice(sn, { delete_map: { map_name: mapName, cmd_num: getNextCmdNum(sn) } });
     console.log(`[DELETE] ${sn}: delete_map MQTT sent for ${mapName}`);
+    // Stock robot_decision zet bij delete_map de taak op MAPPING/REQUEST_START
+    // (incl. bladhoogte 90) en verlaat die stand niet zelf; de officiële app
+    // laat dat zo staan. quit_mapping_mode brengt hem terug naar COVERAGE/WAIT
+    // (live bevestigd op .244, 2026-09-07).
+    setTimeout(() => {
+      if (!isDeviceOnline(sn)) return;
+      publishToDevice(sn, { quit_mapping_mode: { value: 1, cmd_num: getNextCmdNum(sn) } });
+      console.log(`[DELETE] ${sn}: quit_mapping_mode gestuurd (firmware bleef in MAPPING na delete)`);
+    }, 1500);
     // De maaier is de bron van waarheid: na delete_map laten we hem zijn eigen
     // ZIP opnieuw uploaden i.p.v. onze DB-ZIP terug te duwen. Die sync_map-push
     // wiste op 2026-09-07 (.244) alle kanalen en hernummerde map3 → map1.
