@@ -14,6 +14,8 @@
  *
  * Pure: no BLE dependency, unit-tested in __tests__/bleFrameAssembler.test.ts.
  */
+import { Buffer } from 'buffer';
+
 
 export interface BleRespond {
   /** e.g. "save_map_respond" */
@@ -66,6 +68,8 @@ export function parseBleRespond(frame: string): BleRespond | null {
 }
 
 function utf8(bytes: Uint8Array): string {
-  // Buffer is available in the app (polyfilled) and in node for tests.
+  // Hermes has no global Buffer — the import above is what makes this work on
+  // device (ble.ts does the same). Without it: "Property 'Buffer' doesn't exist"
+  // on the first notify chunk.
   return Buffer.from(bytes).toString('utf8');
 }
