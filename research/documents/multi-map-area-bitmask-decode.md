@@ -171,3 +171,36 @@ Encoding table (firmware-derived):
   membership; a requested map whose file is missing is skipped.
 - Whether the app/server currently EMIT combined values (11/111) is a separate
   question (client-side), not covered here — the firmware ACCEPTS them.
+
+
+## 6. HARD CAP: `map_ids > 60000` → "vision_test" (found 2026-09-08, GH #114)
+
+Right before the digit loop, `coverRequestDataInit` rejects large codes:
+
+```
+84d2c: ldr  w2, [sp,#0x80]      ; map_ids
+84d30: mov  w0, #0xea60         ; 60000
+84d34: cmp  w2, #0xff  / cset w1, eq     ; map_ids == 255
+84d3c: cmp  w2, w0     / cset w0, hi     ; map_ids > 60000 (unsigned)
+84d4c: cbnz w0, 0x85354
+...
+85368: adrp x1, 0x26c000 ; add x1, #0xf80   ; "vision_test"
+8537c: string::assign(task.name, "vision_test")
+```
+
+So the decimal area code only reaches **map0..map4** (11111 max). `map5` = 100000 takes the
+`vision_test` branch: coverage_planner logs `Make plan by file: vision_test 1 90`, finds no
+boundary and robot_decision reports **error 125**. Field confirmation (Petrov-IV, #114): with all
+`map0..map9.{yaml,pgm}` present, map0-4 mow and map5-9 fail; a BLE-mapped map4 works and a
+BLE-mapped map5 fails. Stock and custom firmware alike (robot_decision is untouched by our builds).
+
+### The `map_names` path has no such cap (untested live)
+When `map_ids == 0`, the request's `map_names[]` are used (0x84b44): requires
+`map_names.size() == blade_heights.size()` (else "Map number is different from blade height
+size" → error 118); each name is checked with `access(name)` and, failing that,
+`access(<maps_dir> + "/" + name)` (0x851a8); then the loop at 0x84e74 maps the name to a slot by
+`find("mapN")` for N = 0..29 and synthesizes the per-task id `10^N`. Our earlier attempt
+(`_cov_task_yaml` comment) failed with 118 because it sent `"map5"` with no extension, which does
+not exist as a file; `"map5.yaml"` (or the absolute yaml path) should pass the `access()` check.
+Only reachable through the ROS service (custom firmware); stock `mqtt_node` `start_navigation`
+exposes `area` only.
