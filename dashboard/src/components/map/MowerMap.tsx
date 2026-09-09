@@ -1570,6 +1570,8 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     // corrupted the saved map. PolygonEditor caps the number of *drag handles*
     // and warps the dense ring locally (cosine falloff) so editing stays usable
     // while every un-touched point is preserved on save.
+    // Stock firmware: bewerken kan de maaier nooit bereiken; niet eens de modus in.
+    if (!mapWriteSupported) { setEditStatus(t('map.drawStockNotice')); setEditStatusKind('error'); return; }
     const verts = mapArea.map(p => [p.lat, p.lng] as [number, number]);
     setEditingMapId(mapId);
     setEditVertices(verts);
@@ -1580,10 +1582,11 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     setMoveTargetCanonical(null);
     setMoveWorking(null);
     setUserInteracted(true);
-  }, [chargerGps]);
+  }, [chargerGps, mapWriteSupported, t]);
 
   // Start drawing a new polygon
   const startDrawMap = useCallback(() => {
+    if (!mapWriteSupported) { setEditStatus(t('map.drawStockNotice')); setEditStatusKind('error'); return; }
     setEditingMapId(null);
     setEditVertices([]);
     setDrawName('');
@@ -1593,7 +1596,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     setMoveTargetCanonical(null);
     setMoveWorking(null);
     setUserInteracted(true);
-  }, []);
+  }, [mapWriteSupported, t]);
 
   // Determine editor polygon color based on context
   const editorColor = useMemo(() => {
@@ -1948,6 +1951,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
   // top-level areas is a separate existing feature, not part of edit/draft.
   const handleSavePolygon = useCallback(() => {
     if (editVertices.length < 3 || !chargerGps) return;
+    if (!mapWriteSupported) { setEditStatus(t('map.drawStockNotice')); setEditStatusKind('error'); return; }
     const gpsArea = editVertices.map(([lat, lng]) => ({ lat, lng }));
     // Add the chargingPose offset back. The display projects stored local points
     // as localToGps(p - chargingPose, charger), so the inverse for saving is
@@ -4166,6 +4170,12 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
                 <span className="text-amber-400">{t('map.needMore', { count: 3 - editVertices.length })}</span>
               )}
             </div>
+            {!mapWriteSupported && (
+              <p className="text-[11px] leading-snug text-amber-300/90 mb-3">{t('map.drawStockNotice')}</p>
+            )}
+            {editStatus && editStatusKind === 'error' && mapWriteSupported && (
+              <p className="text-[11px] leading-snug text-red-400 mb-3">{editStatus}</p>
+            )}
             <div className="flex items-center gap-2 pt-2 border-t border-gray-700">
               <button
                 onClick={cancelEditPolygon}
@@ -4176,7 +4186,8 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
               </button>
               <button
                 onClick={handleSavePolygon}
-                disabled={editVertices.length < 3}
+                disabled={editVertices.length < 3 || !mapWriteSupported}
+                title={!mapWriteSupported ? t('map.drawStockNotice') : undefined}
                 className="flex-1 inline-flex items-center justify-center gap-1 text-xs px-2 py-1.5 rounded transition-colors text-white disabled:opacity-40 disabled:cursor-not-allowed"
                 style={{ backgroundColor: editorColor }}
               >
