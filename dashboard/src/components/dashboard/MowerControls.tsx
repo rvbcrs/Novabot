@@ -887,10 +887,6 @@ export function MowerControls({
                 {t('controls.startEdgeCut') ?? 'Edge cut'}
               </button>
             </div>
-            {!firmwareSupported && (
-              <p className="text-[10px] text-amber-300/90 leading-snug">{t('firmware.requiresOpenNova')}</p>
-            )}
-
             {/* ── Edge cut mode ── only height matters (mapName hardcoded 'map0') */}
             {edgeMode && (
               <p className="text-[10px] text-gray-400 leading-snug">
