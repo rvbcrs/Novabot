@@ -178,6 +178,7 @@ export default function MappingScreen() {
       if (mappingState === 'cancelled' || mappingState === 'done') {
         setMappingState('idle');
         setMappingMode(null);
+        setFailedCommand(null);
         setBusy(false);
         setElapsed(0);
       }
@@ -340,6 +341,7 @@ export default function MappingScreen() {
     setActiveMapName('map0');
     setMappingState('idle');
     setMappingMode(null);
+    setFailedCommand(null);
     actionInFlightRef.current = null;
     setBusy(false);
     savingPositionInFlightRef.current = false;
@@ -578,6 +580,7 @@ export default function MappingScreen() {
 
   const exitMapping = useCallback(async (discard = false, returnToSetup = false) => runMappingAction(async () => {
     const operationSn = sn;
+    setFailedCommand(null);
     stopJoystick();
     autoDockRequestedRef.current = false;
     try {
@@ -615,6 +618,7 @@ export default function MappingScreen() {
     command: Record<string, unknown>, label: string, responseTimeout?: number,
   ): Promise<boolean> => {
     if (!screenActiveRef.current || activeSnRef.current !== sn) return false;
+    setFailedCommand(null);
     setBusy(true);
     try {
       if (responseTimeout) {
@@ -2029,22 +2033,20 @@ export default function MappingScreen() {
             <Ionicons name="alert-circle" size={48} color={colors.red} />
             <Text style={styles.centerTitle}>{mappingState === 'saveRejected' ? 'Map not saved' : 'Mapping status not confirmed'}</Text>
             <Text style={styles.centerSub}>{saveRejectedMessage}</Text>
-            {mappingState === 'commandFailed' && (failedCommand === 'stop_scan_map' || failedCommand === 'save_map') && (
+            {mappingState === 'commandFailed' && failedCommand === 'stop_scan_map' && (
               <TouchableOpacity
                 style={[styles.doneBtn, { marginTop: 16 }]}
                 disabled={busy || bleConnecting}
-                onPress={async () => {
-                  // De opname zit nog in de mapping-node; stop_scan_map + save_map
-                  // nogmaals sturen redt de gelopen kaart (zie stopAndSave).
-                  setFailedCommand(null);
-                  if (await connectBleJoystick() === 'connected') await runMappingAction(stopAndSave);
-                }}
+                onPress={() => runMappingAction(async () => {
+                  // Only stop is safe to repeat; a save may already have committed.
+                  if (await connectBleJoystick() === 'connected') await stopAndSave();
+                })}
               >
                 <Text style={styles.doneBtnText}>{busy || bleConnecting ? 'Retrying...' : 'Try again (stop & save)'}</Text>
               </TouchableOpacity>
             )}
             <TouchableOpacity
-              style={[styles.doneBtn, { marginTop: 16 }, mappingState === 'commandFailed' && (failedCommand === 'stop_scan_map' || failedCommand === 'save_map') ? { backgroundColor: colors.inputBg } : null]}
+              style={[styles.doneBtn, { marginTop: 16 }, mappingState === 'commandFailed' && failedCommand === 'stop_scan_map' ? { backgroundColor: colors.inputBg } : null]}
               disabled={busy || bleConnecting}
               onPress={async () => {
                 if (await connectBleJoystick() === 'connected') await exitMapping();
