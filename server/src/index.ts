@@ -81,6 +81,7 @@ import { getOrCreateInstanceToken } from './services/remoteSupport/instanceToken
 import { equipmentRepo } from './db/repositories/equipment.js';
 
 // ── DB is al geïnitialiseerd bij import van database.ts (module-level initDb())
+if (process.env.SIMULATE_STOCK_FIRMWARE) console.warn(`[firmware-gate] SIMULATE_STOCK_FIRMWARE actief voor: ${process.env.SIMULATE_STOCK_FIRMWARE} (deze maaiers worden als stock behandeld)`);
 // zodat module-level db.prepare() calls in sensorData.ts etc. niet falen.
 
 // ── Frame-validation state: laad de persistente frame_unvalidated vlaggen ─────

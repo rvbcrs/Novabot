@@ -13,6 +13,7 @@ import { scheduleRepo } from '../db/repositories/schedules.js';
 import { detectAndDispatch, resetEventState } from '../notifications/eventDetector.js';
 import { isFrameUnvalidated, noteDockState } from '../services/frameValidation.js';
 import { resolveMowerIp } from '../services/mowerIpDiscovery.js';
+import { isSimulatedStock, SIMULATED_STOCK_VERSION } from '../services/mowerFileCapability.js';
 import { emitDebugPosJson } from '../dashboard/socketHandler.js';
 
 // ── Sensor definities ────────────────────────────────────────────
@@ -839,6 +840,9 @@ export function updateDeviceData(sn: string, payload: Buffer): Map<string, strin
     // Map afkortingen naar volledige sensor namen
     const mapped: Record<string, unknown> = { ...raw };
     if (raw.sv !== undefined) { mapped.sw_version = raw.sv; delete mapped.sv; }
+    // Stock-simulatie (SIMULATE_STOCK_FIRMWARE): versie vervangen vóór cache/DB-sync,
+    // zodat dashboard en app deze maaier ook als stock zien.
+    if (mapped.sw_version !== undefined && isSimulatedStock(sn)) mapped.sw_version = SIMULATED_STOCK_VERSION;
     if (raw.hv !== undefined) { mapped.hw_version = raw.hv; delete mapped.hv; }
     if (raw.ov !== undefined) { mapped.os_version = raw.ov; delete mapped.ov; }
     data = mapped;

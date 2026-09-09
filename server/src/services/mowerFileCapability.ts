@@ -11,7 +11,26 @@ export interface MowerFileCapability {
   reason: string | null;
 }
 
+/** Test-knop: `SIMULATE_STOCK_FIRMWARE=LFIN...,LFIN...` laat de server deze
+ *  maaiers als stock behandelen (gate actief) en hun gerapporteerde versie
+ *  vervangen, zodat ook de UI-gates in dashboard en app aangaan. Alleen voor
+ *  het testen van de stock-ervaring op een custom-firmware maaier. */
+export const SIMULATED_STOCK_VERSION = '5.7.1-simulated-stock';
+export function isSimulatedStock(sn: string): boolean {
+  const raw = process.env.SIMULATE_STOCK_FIRMWARE ?? '';
+  if (!raw) return false;
+  return raw.split(',').map((s) => s.trim()).filter(Boolean).includes(sn);
+}
+
 export function getMowerFileCapability(sn: string, fallbackVersion?: string | null): MowerFileCapability {
+  if (isSimulatedStock(sn)) {
+    return {
+      mowerFileApplySupported: false,
+      isOpenNova: false,
+      mowerVersion: SIMULATED_STOCK_VERSION,
+      reason: 'simulated stock firmware (SIMULATE_STOCK_FIRMWARE)',
+    };
+  }
   const row = equipmentRepo.findBySn(sn) as ({ mower_version?: string | null; is_opennova?: unknown } | undefined);
   const firmware = row?.mower_version ?? fallbackVersion ?? null;
   const fwLower = String(firmware ?? '').toLowerCase();

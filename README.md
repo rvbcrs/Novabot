@@ -162,6 +162,7 @@ If the automatic login doesn't work (e.g., Novabot cloud is down), you can use t
 | `UPSTREAM_DNS` | `8.8.8.8` | Fallback DNS server |
 | `ENABLE_TLS` | `false` | Enable HTTPS for iOS Novabot app |
 | `ENABLE_DASHBOARD` | `false` | Enable web dashboard (beta, not for public use yet) |
+| `SIMULATE_STOCK_FIRMWARE` | _(empty)_ | Test switch: comma-separated mower SNs the server treats as **stock** firmware (all custom-only features refused with 409, reported version shown as `5.7.1-simulated-stock`). For testing the stock experience on a custom-firmware mower only. |
 
 ### Optional: Home Assistant Integration
 
