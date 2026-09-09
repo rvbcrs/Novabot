@@ -188,6 +188,8 @@ export default function MappingScreen() {
   const [mappingMode, setMappingMode] = useState<MappingMode | null>(null);
   const [busy, setBusy] = useState(false);
   const [saveRejectedMessage, setSaveRejectedMessage] = useState('');
+  // Laatst gefaalde mapping-commando; bepaalt of 'Try again' zinvol is.
+  const [failedCommand, setFailedCommand] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [activeMapName, setActiveMapName] = useState('map0');
   const [chargerAction, setChargerAction] = useState<'autoDock' | 'savePosition' | null>(null);
@@ -648,6 +650,7 @@ export default function MappingScreen() {
         // Missing ACKs never prove that the mower is still recording. In
         // particular, repeating a partly completed save can overwrite its result.
         stopJoystick();
+        setFailedCommand(Object.keys(command)[0]);
         setSaveRejectedMessage(error instanceof Error ? error.message : String(error));
         setMappingState('commandFailed');
         appAlertCompat.alert('Mapping command failed', error instanceof Error ? error.message : String(error));
@@ -1049,9 +1052,9 @@ export default function MappingScreen() {
     setElapsed(0);
     const scanType = buildTypeToScanType(mapBuildType);
     if (existingWorkMapCount === 0) {
-      if (!await sendCommand({ start_scan_map: { model: 'manual', mapName: 'map0', type: 0, cmd_num: cmdNumRef.current++ } }, 'start_scan_map', 20000)) return;
+      if (!await sendCommand({ start_scan_map: { model: 'manual', mapName: 'map0', type: 0, cmd_num: cmdNumRef.current++ } }, 'start_scan_map', 45000)) return;
     } else {
-      if (!await sendCommand({ add_scan_map: { model: 'manual', mapName: wireMapName, type: scanType, cmd_num: cmdNumRef.current++ } }, 'add_scan_map', 20000)) return;
+      if (!await sendCommand({ add_scan_map: { model: 'manual', mapName: wireMapName, type: scanType, cmd_num: cmdNumRef.current++ } }, 'add_scan_map', 45000)) return;
     }
     console.log(`[Mapping] Recording started (${existingWorkMapCount === 0 ? 'start' : 'add'}_scan_map, map: ${mapName}, type: ${scanType}, buildType: ${mapBuildType}, ${existingWorkMapCount} existing)`);
 
@@ -1069,6 +1072,105 @@ export default function MappingScreen() {
   // Flutter: stop_scan_map → delay → save_map → uploadMapToServer
   //          → user positions mower near charger → auto_recharge
   //          → wait for MQTT dock state → save_recharge_pos → DONE
+  // Stop & Save als losse stap zodat de 'Try again'-knop na een gemiste
+  // bevestiging dezelfde reeks nog eens kan draaien. stop_scan_map twee keer
+  // sturen is veilig: de firmware antwoordt beide keren result:0 (mqtt_node-log
+  // .244, 2026-09-07 14:53:38 en 14:54:02).
+  const stopAndSave = async () => {
+    if (joystickActiveRef.current) stopJoystick();
+
+    // Exact sequence verified against a successful Novabot session that
+    // produced map0tomap1_0_unicom.csv (mqtt_node_20260416_075337_2699.log,
+    // 11:57:28 work save and 11:58:52 unicom save):
+    //
+    //   Work map (map1, map2):
+    //     stop_scan_map {value:false}
+    //     save_map      {type:0}   ← sub
+    //     save_map      {type:1}   ← total, 2-3 s later
+    //     get_map_outline
+    //
+    //   Unicom scan (after work map already saved):
+    //     stop_scan_map {value:true}
+    //     save_map      {type:1}   ← directly, NO type:0 step
+    //     get_map_outline
+    const isUnicom = mapBuildType === 'unicom' || mapBuildType === 'charge_unicom';
+
+    setMappingState('stopping');
+    const stopped = await sendCommand(
+      { stop_scan_map: { value: isUnicom, cmd_num: cmdNumRef.current++ } },
+      'stop_scan_map', 20000,
+    );
+    if (!stopped) return;
+    await new Promise(r => setTimeout(r, 500));
+
+    // Verified stock protocol: work/obstacle/modify save sub then total;
+    // a channel saves total only. Stop immediately on failed/missing ACK.
+    const saveMapName = mapBuildType === 'obstacle' ? 'map'
+      : mapBuildType === 'modify' ? 'map0' : activeMapName;
+    for (const type of isUnicom ? [1] : [0, 1]) {
+      const saved = await sendCommand(
+        { save_map: { mapName: saveMapName, type, cmd_num: cmdNumRef.current++ } },
+        `save_map (${type === 0 ? 'sub' : 'total'})`, 12000,
+      );
+      if (!saved) return;
+      if (type === 0) await new Promise(r => setTimeout(r, 500));
+    }
+    if (isUnicom) pendingChannelFromRef.current = null;
+
+    // Saving on the mower is confirmed; upload can wait until WiFi returns.
+    if (sn) void markPendingMapSync(sn);
+    await sendCommand({ get_map_outline: { map_name: 'all', cmd_num: cmdNumRef.current++ } }, 'get_map_outline');
+    if (!screenActiveRef.current || activeSnRef.current !== sn) return;
+
+    // Record what we just saved so the done-screen can suggest follow-up channels.
+    setLastSaved({ mapName: activeMapName, buildType: mapBuildType });
+
+    // Remember the confirmed work slot even if telemetry was missing.
+    // Add the just-scanned geometry to existingMaps so the
+    // follow-up unicom screen can render both shapes immediately. The
+    // real row takes ~5–15 s to reach the server DB (mower ZIP upload
+    // → parse).
+    // Modify edits an EXISTING work map in place (firmware merges by
+    // geometry) — there's no new shape to stub, and the real edited
+    // polygon arrives via the refresh below. Skip the optimistic push.
+    if (mapBuildType === 'work' || (trailPoints.length >= (isUnicom ? 2 : 3) && mapBuildType !== 'modify')) {
+      const visitedMaps = [...unicomVisitedMapsRef.current];
+      const optimisticMap: CachedMap = {
+        mapId: `${mapBuildType === 'work' || (mapBuildType === 'unicom' && visitedMaps.length === 2) ? 'optimistic' : 'preview'}-${activeMapName}-${Date.now()}`,
+        mapType: mapBuildType === 'obstacle' ? 'obstacle'
+          : isUnicom ? 'unicom'
+          : 'work',
+        mapName: activeMapName,
+        fileName: mapBuildType === 'work' ? `${activeMapName}_work.csv` : undefined,
+        connectedMaps: mapBuildType === 'unicom' && visitedMaps.length === 2
+          ? [visitedMaps[0], visitedMaps[1]] : undefined,
+        points: [...trailPoints],
+      };
+      const withoutDup = (mapsRef.current ?? []).filter(m =>
+        !(mapBuildType === 'work' && m.mapType === 'work' && getWorkMapName(m) === activeMapName));
+      rememberMaps([...withoutDup, optimisticMap]);
+    }
+
+    // Delay the refresh so the mower has time to upload its ZIP + the
+    // server can parse it. Firing refreshExistingMaps immediately here
+    // replaced the optimistic stub with server data that hadn't caught
+    // up yet, causing the new map1 to disappear from the next screen.
+    // 8 s is comfortably longer than the observed ~5 s upload latency.
+    setTimeout(() => { void refreshExistingMaps(); }, 8000);
+
+    // Step 3: charger positioning — only for the FIRST work map (map0).
+    // Additional work maps (map1/map2) share the charging pose saved with map0.
+    // Obstacle/unicom/charge_unicom scans never trigger dock positioning.
+    if (mapBuildType === 'work' && activeMapName === 'map0') {
+      setChargerAction(null);
+      setMappingState('chargerPosition');
+      console.log('[Mapping] Step 3: drive to charger → user controls via joystick');
+    } else {
+      console.log(`[Mapping] Step 3: skipped charger positioning (buildType=${mapBuildType}, activeMap=${activeMapName})`);
+      setMappingState('done');
+    }
+  };
+
   const handleStop = () => {
     stopJoystick();
     const visitedCount = unicomVisitedMapsRef.current.size;
@@ -1091,100 +1193,7 @@ export default function MappingScreen() {
         { text: t('continueMapping', undefined) || 'Continue', style: 'cancel' },
         {
           text: t('stopAndSave', undefined) || 'Stop & Save',
-          onPress: () => runMappingAction(async () => {
-            if (joystickActiveRef.current) stopJoystick();
-
-            // Exact sequence verified against a successful Novabot session that
-            // produced map0tomap1_0_unicom.csv (mqtt_node_20260416_075337_2699.log,
-            // 11:57:28 work save and 11:58:52 unicom save):
-            //
-            //   Work map (map1, map2):
-            //     stop_scan_map {value:false}
-            //     save_map      {type:0}   ← sub
-            //     save_map      {type:1}   ← total, 2-3 s later
-            //     get_map_outline
-            //
-            //   Unicom scan (after work map already saved):
-            //     stop_scan_map {value:true}
-            //     save_map      {type:1}   ← directly, NO type:0 step
-            //     get_map_outline
-            const isUnicom = mapBuildType === 'unicom' || mapBuildType === 'charge_unicom';
-
-            setMappingState('stopping');
-            const stopped = await sendCommand(
-              { stop_scan_map: { value: isUnicom, cmd_num: cmdNumRef.current++ } },
-              'stop_scan_map', 20000,
-            );
-            if (!stopped) return;
-            await new Promise(r => setTimeout(r, 500));
-
-            // Verified stock protocol: work/obstacle/modify save sub then total;
-            // a channel saves total only. Stop immediately on failed/missing ACK.
-            const saveMapName = mapBuildType === 'obstacle' ? 'map'
-              : mapBuildType === 'modify' ? 'map0' : activeMapName;
-            for (const type of isUnicom ? [1] : [0, 1]) {
-              const saved = await sendCommand(
-                { save_map: { mapName: saveMapName, type, cmd_num: cmdNumRef.current++ } },
-                `save_map (${type === 0 ? 'sub' : 'total'})`, 12000,
-              );
-              if (!saved) return;
-              if (type === 0) await new Promise(r => setTimeout(r, 500));
-            }
-            if (isUnicom) pendingChannelFromRef.current = null;
-
-            // Saving on the mower is confirmed; upload can wait until WiFi returns.
-            if (sn) void markPendingMapSync(sn);
-            await sendCommand({ get_map_outline: { map_name: 'all', cmd_num: cmdNumRef.current++ } }, 'get_map_outline');
-            if (!screenActiveRef.current || activeSnRef.current !== sn) return;
-
-            // Record what we just saved so the done-screen can suggest follow-up channels.
-            setLastSaved({ mapName: activeMapName, buildType: mapBuildType });
-
-            // Remember the confirmed work slot even if telemetry was missing.
-            // Add the just-scanned geometry to existingMaps so the
-            // follow-up unicom screen can render both shapes immediately. The
-            // real row takes ~5–15 s to reach the server DB (mower ZIP upload
-            // → parse).
-            // Modify edits an EXISTING work map in place (firmware merges by
-            // geometry) — there's no new shape to stub, and the real edited
-            // polygon arrives via the refresh below. Skip the optimistic push.
-            if (mapBuildType === 'work' || (trailPoints.length >= (isUnicom ? 2 : 3) && mapBuildType !== 'modify')) {
-              const visitedMaps = [...unicomVisitedMapsRef.current];
-              const optimisticMap: CachedMap = {
-                mapId: `${mapBuildType === 'work' || (mapBuildType === 'unicom' && visitedMaps.length === 2) ? 'optimistic' : 'preview'}-${activeMapName}-${Date.now()}`,
-                mapType: mapBuildType === 'obstacle' ? 'obstacle'
-                  : isUnicom ? 'unicom'
-                  : 'work',
-                mapName: activeMapName,
-                fileName: mapBuildType === 'work' ? `${activeMapName}_work.csv` : undefined,
-                connectedMaps: mapBuildType === 'unicom' && visitedMaps.length === 2
-                  ? [visitedMaps[0], visitedMaps[1]] : undefined,
-                points: [...trailPoints],
-              };
-              const withoutDup = (mapsRef.current ?? []).filter(m =>
-                !(mapBuildType === 'work' && m.mapType === 'work' && getWorkMapName(m) === activeMapName));
-              rememberMaps([...withoutDup, optimisticMap]);
-            }
-
-            // Delay the refresh so the mower has time to upload its ZIP + the
-            // server can parse it. Firing refreshExistingMaps immediately here
-            // replaced the optimistic stub with server data that hadn't caught
-            // up yet, causing the new map1 to disappear from the next screen.
-            // 8 s is comfortably longer than the observed ~5 s upload latency.
-            setTimeout(() => { void refreshExistingMaps(); }, 8000);
-
-            // Step 3: charger positioning — only for the FIRST work map (map0).
-            // Additional work maps (map1/map2) share the charging pose saved with map0.
-            // Obstacle/unicom/charge_unicom scans never trigger dock positioning.
-            if (mapBuildType === 'work' && activeMapName === 'map0') {
-              setChargerAction(null);
-              setMappingState('chargerPosition');
-              console.log('[Mapping] Step 3: drive to charger → user controls via joystick');
-            } else {
-              console.log(`[Mapping] Step 3: skipped charger positioning (buildType=${mapBuildType}, activeMap=${activeMapName})`);
-              setMappingState('done');
-            }
-          }),
+          onPress: () => runMappingAction(stopAndSave),
         },
       ],
     );
@@ -2020,8 +2029,22 @@ export default function MappingScreen() {
             <Ionicons name="alert-circle" size={48} color={colors.red} />
             <Text style={styles.centerTitle}>{mappingState === 'saveRejected' ? 'Map not saved' : 'Mapping status not confirmed'}</Text>
             <Text style={styles.centerSub}>{saveRejectedMessage}</Text>
+            {mappingState === 'commandFailed' && (failedCommand === 'stop_scan_map' || failedCommand === 'save_map') && (
+              <TouchableOpacity
+                style={[styles.doneBtn, { marginTop: 16 }]}
+                disabled={busy || bleConnecting}
+                onPress={async () => {
+                  // De opname zit nog in de mapping-node; stop_scan_map + save_map
+                  // nogmaals sturen redt de gelopen kaart (zie stopAndSave).
+                  setFailedCommand(null);
+                  if (await connectBleJoystick() === 'connected') await runMappingAction(stopAndSave);
+                }}
+              >
+                <Text style={styles.doneBtnText}>{busy || bleConnecting ? 'Retrying...' : 'Try again (stop & save)'}</Text>
+              </TouchableOpacity>
+            )}
             <TouchableOpacity
-              style={[styles.doneBtn, { marginTop: 16 }]}
+              style={[styles.doneBtn, { marginTop: 16 }, mappingState === 'commandFailed' && (failedCommand === 'stop_scan_map' || failedCommand === 'save_map') ? { backgroundColor: colors.inputBg } : null]}
               disabled={busy || bleConnecting}
               onPress={async () => {
                 if (await connectBleJoystick() === 'connected') await exitMapping();
