@@ -33,3 +33,14 @@ export function getMowerFileCapability(sn: string, fallbackVersion?: string | nu
 export function supportsMowerFileWrites(sn: string, fallbackVersion?: string | null): boolean {
   return getMowerFileCapability(sn, fallbackVersion).mowerFileApplySupported;
 }
+
+/** Live-versie uit de sensor-cache als fallback op de equipment-rij: een maaier
+ *  die net custom firmware kreeg heeft niet altijd al een bijgewerkte
+ *  mower_version in de DB, maar rapporteert wel zijn sw_version via MQTT. */
+export function isOpenNovaMower(sn: string, cache?: Map<string, string>): boolean {
+  const live = cache?.get('sw_version') ?? cache?.get('version') ?? cache?.get('mower_version') ?? null;
+  return getMowerFileCapability(sn, live).isOpenNova;
+}
+
+export const UNSUPPORTED_FIRMWARE_REASON = 'unsupported_firmware';
+export const UNSUPPORTED_FIRMWARE_MSG_KEY = 'requiresOpenNovaFirmware';

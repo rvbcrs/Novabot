@@ -93,6 +93,10 @@ vi.mock('../../mqtt/sensorData.js', () => ({
 const fw = vi.hoisted(() => ({ supported: false }));
 vi.mock('../../services/mowerFileCapability.js', () => ({
   getMowerFileCapability: () => ({ mowerFileApplySupported: fw.supported, isOpenNova: fw.supported, mowerVersion: null, reason: null }),
+  supportsMowerFileWrites: () => fw.supported,
+  isOpenNovaMower: () => fw.supported,
+  UNSUPPORTED_FIRMWARE_REASON: 'unsupported_firmware',
+  UNSUPPORTED_FIRMWARE_MSG_KEY: 'requiresOpenNovaFirmware',
 }));
 
 import { dashboardRouter } from '../../routes/dashboard.js';

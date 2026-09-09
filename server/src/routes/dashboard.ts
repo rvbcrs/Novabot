@@ -59,7 +59,7 @@ import {
   selectCoveragePlannerRadius,
 } from '../services/coveragePlannerRadius.js';
 import { ensureBetaFlashSafe } from '../services/firmwareSafety.js';
-import { getMowerFileCapability } from '../services/mowerFileCapability.js';
+import { getMowerFileCapability, isOpenNovaMower, UNSUPPORTED_FIRMWARE_REASON, UNSUPPORTED_FIRMWARE_MSG_KEY } from '../services/mowerFileCapability.js';
 import { getPolygonAnchor } from '../services/anchor.js';
 import { selectParaRepush } from '../mqtt/paraRepush.js';
 import { MOW_PARA_SETTLE_MS } from '../services/mowingService.js';
@@ -161,6 +161,7 @@ dashboardRouter.get('/server-update', async (_req: Request, res: Response) => {
 dashboardRouter.post('/soft-restart/:sn', (req: Request, res: Response) => {
   const { sn } = req.params;
   const force = (req.body as { force?: boolean } | undefined)?.force === true;
+  if (rejectUnlessOpenNova(sn, res, 'Soft restart')) return;
   const blocked = softRestartBlockedReason(sn);
   if (blocked && !force) {
     res.status(409).json({ ok: false, error: blocked });
@@ -1161,6 +1162,7 @@ dashboardRouter.put('/coverage-planner-radius/:sn', (req: Request, res: Response
     return;
   }
 
+  if (rejectUnlessOpenNova(sn, res, 'De coverage-planner radius')) return;
   const formatted = formatCoveragePlannerRadius(radius);
   if (!deviceCache.has(sn)) deviceCache.set(sn, new Map());
   deviceCache.get(sn)!.set(COVERAGE_PLANNER_RADIUS_KEY, formatted);
@@ -1627,17 +1629,23 @@ dashboardRouter.post('/maps/:sn/request-outline', (req: Request, res: Response) 
 // POST /api/dashboard/maps/:sn — nieuwe kaart aanmaken (getekend op dashboard)
 // Accepteert lokale meters {x,y} direct (dashboard converteert GPS→lokaal zelf)
 // OF GPS {lat,lng} voor backwards compatibility (wordt geconverteerd)
-// Stock firmware kan geen bestanden van de server ontvangen (geen write_map_files).
-// Een hier getekend of versleept gebied zou dan alleen in de DB bestaan: de app
-// toont het, de maaier kent het niet → Error 118 bij starten (GH #115). Weigeren
-// vóór de DB-schrijf, net als edit/apply. Demo-modus heeft geen maaier en mag wel.
-function rejectMapWriteOnStock(sn: string, res: Response): boolean {
-  if (isDemoMode(sn) || getMowerFileCapability(sn).mowerFileApplySupported) return false;
+// ── Centrale firmware-gate ────────────────────────────────────────────────
+// Alles wat via novabot/extended/<SN> loopt (write_map_files, sync_map,
+// set_*-instellingen, start_edge_cut, reanchor_pos, ...) bestaat alleen op
+// OpenNova custom firmware. Op stock is zo'n commando een stille no-op, en
+// erger: routes die eerst de DB schreven lieten server en maaier uiteenlopen
+// (GH #115: getekend gebied → Error 118; LoRa-cache, seam-fix, planner-radius,
+// kaart-offset idem). Daarom één gate, vóór elke DB-schrijf, met één contract:
+// 409 + reason 'unsupported_firmware' + msgKey 'requiresOpenNovaFirmware'.
+// Demo-modus heeft geen maaier en blijft vrij. Live sw_version telt als fallback
+// zodat een net geflashte maaier niet op een verouderde DB-rij wordt geweigerd.
+function rejectUnlessOpenNova(sn: string, res: Response, what: string): boolean {
+  if (isDemoMode(sn) || isOpenNovaMower(sn, deviceCache.get(sn))) return false;
   res.status(409).json({
     ok: false,
-    reason: 'unsupported_firmware',
-    error: 'Kaarten tekenen of verplaatsen vanuit het dashboard vereist OpenNova custom firmware. Karteer op stock firmware via de OpenNova-app (Bluetooth).',
-    msgKey: 'mapEditErrUnsupportedFirmware',
+    reason: UNSUPPORTED_FIRMWARE_REASON,
+    msgKey: UNSUPPORTED_FIRMWARE_MSG_KEY,
+    error: `${what} vereist OpenNova custom firmware; stock firmware kan dit commando niet ontvangen.`,
   });
   return true;
 }
@@ -1654,7 +1662,7 @@ dashboardRouter.post('/maps/:sn', (req: Request, res: Response) => {
     res.status(400).json({ error: 'mapArea met minimaal 3 punten is vereist' });
     return;
   }
-  if (rejectMapWriteOnStock(sn, res)) return;
+  if (rejectUnlessOpenNova(sn, res, 'Een gebied tekenen')) return;
 
   // Detecteer of input lokale meters of GPS is
   const isLocal = mapArea[0] && 'x' in mapArea[0] && mapArea[0].x !== undefined;
@@ -1724,7 +1732,7 @@ dashboardRouter.patch('/maps/:sn/:mapId', (req: Request, res: Response) => {
   // Update polygon punten als meegegeven
   // Accepteert lokale meters {x,y} direct OF GPS {lat,lng} (backwards compat)
   if (mapArea && Array.isArray(mapArea) && mapArea.length >= 3) {
-    if (rejectMapWriteOnStock(sn, res)) return;
+    if (rejectUnlessOpenNova(sn, res, 'Een gebied verplaatsen')) return;
     const isLocal = 'x' in mapArea[0] && mapArea[0].x !== undefined;
     let localPoints: LocalPoint[];
 
@@ -2230,6 +2238,8 @@ dashboardRouter.post('/maps/:sn/apply-offset', async (req: Request, res: Respons
     return;
   }
 
+  if (rejectUnlessOpenNova(sn, res, 'De kaart verschuiven')) return;
+
   // 1. Persist (idempotent — even when downstream fails the operator can retry).
   mapRepo.setPolygonOffset(sn, dx, dy);
 
@@ -2543,6 +2553,7 @@ async function recalibrateChargingPoseFromCache(
 dashboardRouter.post('/maps/:sn/recalibrate-charging-pose', async (req: Request, res: Response) => {
   const { sn } = req.params;
   const { force } = req.body as { force?: boolean };
+  if (rejectUnlessOpenNova(sn, res, 'De laadpositie herijken')) return;
   const out = await recalibrateChargingPoseFromCache(sn, { force: force === true });
   res.status(out.httpStatus).json(out.body);
 });
@@ -3141,6 +3152,7 @@ dashboardRouter.get('/reanchor/:sn/status', (req: Request, res: Response) => {
 dashboardRouter.post('/reanchor/:sn', (req: Request, res: Response) => {
   const { sn } = req.params;
   const action = ((req.body as { action?: string })?.action) ?? 'auto';
+  if (rejectUnlessOpenNova(sn, res, 'Her-ankeren')) return;
 
   // 'invalidate' — operator-triggered frame invalidation. Marks the frame
   // unvalidated IN-PROCESS (no DB write + restart needed) so the app's re-anchor
@@ -3779,6 +3791,8 @@ dashboardRouter.post('/schedules/:sn', (req: Request, res: Response) => {
     edgeDays?: number[] | null;
   };
 
+  if (Array.isArray(body.edgeDays) && body.edgeDays.length > 0
+    && rejectUnlessOpenNova(sn, res, 'Randmaaien op schemadagen')) return;
   if (!body.startTime) {
     res.status(400).json({ error: 'startTime is vereist' });
     return;
@@ -3857,6 +3871,8 @@ dashboardRouter.patch('/schedules/:sn/:scheduleId', (req: Request, res: Response
     res.status(404).json({ error: 'Schedule niet gevonden' });
     return;
   }
+  if (Array.isArray(body.edgeDays) && (body.edgeDays as unknown[]).length > 0
+    && rejectUnlessOpenNova(sn, res, 'Randmaaien op schemadagen')) return;
 
   scheduleRepo.updateByIdAndMower(scheduleId, sn, {
     schedule_name: body.scheduleName as string | undefined,
@@ -4061,6 +4077,7 @@ dashboardRouter.put('/seam-fix/:sn', async (req: Request, res: Response) => {
   const { seamFixRepo } = await import('../db/repositories/index.js');
   const { republishSeamFix } = await import('../mqtt/mapSync.js');
   const body = req.body as { enabled?: boolean; edgeMarginCm?: number };
+  if (rejectUnlessOpenNova(req.params.sn, res, 'De rand-seam-fix')) return;
   seamFixRepo.set(req.params.sn, {
     enabled: body.enabled,
     edgeMarginCm: body.edgeMarginCm === undefined ? undefined : Math.max(0, Math.min(30, body.edgeMarginCm)),
@@ -4308,6 +4325,7 @@ dashboardRouter.post('/extended/:sn', (req: Request, res: Response) => {
     res.status(400).json({ ok: false, error: 'command required' });
     return;
   }
+  if (rejectUnlessOpenNova(sn, res, `Het extended commando ${Object.keys(command)[0]}`)) return;
   // Rand-dag watcher: een handmatige zone-maai (mow_zone, het primaire
   // app-pad) of ander bewegingscommando via deze route mag nooit door een
   // eerder gearmde watcher worden geadopteerd — anders randmaait de server na
@@ -4329,6 +4347,7 @@ dashboardRouter.post('/extended/:sn', (req: Request, res: Response) => {
 // the app's Create-Map flow (block hard-stops, warn is advisory).
 dashboardRouter.post('/mapping-preflight/:sn', async (req: Request, res: Response) => {
   const { sn } = req.params;
+  if (rejectUnlessOpenNova(sn, res, 'De mapping-preflight')) return;
   if (!isDeviceOnline(sn)) {
     res.status(503).json({ ok: false, error: 'device offline' });
     return;
@@ -5654,6 +5673,7 @@ dashboardRouter.post('/pair-mower', (req: Request, res: Response) => {
 // POST /api/dashboard/lora/query-mower/:mowerSn — ask mower for its LoRa config via MQTT
 dashboardRouter.post('/lora/query-mower/:mowerSn', async (req: Request, res: Response) => {
   const { mowerSn } = req.params;
+  if (rejectUnlessOpenNova(mowerSn, res, 'LoRa-instellingen van de maaier uitlezen')) return;
   const { publishToExtended, onExtendedResponse, offExtendedResponse } = await import('../mqtt/mapSync.js');
 
   let resolved = false;
@@ -5747,6 +5767,7 @@ dashboardRouter.post('/opennova/detect/:mowerSn', async (req: Request, res: Resp
 dashboardRouter.post('/lora/set-mower/:mowerSn', async (req: Request, res: Response) => {
   const { mowerSn } = req.params;
   const { addr, channel, hc, lc } = req.body as { addr: number; channel: number; hc?: number; lc?: number };
+  if (rejectUnlessOpenNova(mowerSn, res, 'LoRa-instellingen van de maaier zetten')) return;
 
   if (addr == null || channel == null) {
     res.status(400).json({ error: 'addr and channel required' });
@@ -5826,6 +5847,7 @@ dashboardRouter.post('/pin/:sn/set', (req: Request, res: Response) => {
 dashboardRouter.post('/pin/:sn/verify', (req: Request, res: Response) => {
   const { sn } = req.params;
   const { code } = req.body as { code?: string };
+  if (rejectUnlessOpenNova(sn, res, 'PIN verifiëren')) return;
   if (!code || code.length !== 4 || !/^\d{4}$/.test(code)) {
     res.status(400).json({ error: 'PIN moet 4 cijfers zijn' });
     return;
@@ -6591,6 +6613,7 @@ dashboardRouter.delete('/remote-debug/logs', (req: Request, res: Response) => {
 // ── Autonoom karteren ────────────────────────────────────────────────────────
 dashboardRouter.post('/auto-map/:sn/start', async (req: Request, res: Response) => {
   const { sn } = req.params;
+  if (rejectUnlessOpenNova(sn, res, 'Autonoom karteren')) return;
   const mode = req.body?.mode === 'record' ? 'record' : 'test';
   const radiusM = Number(req.body?.radiusM) || undefined;
   const result = await startAutoMap(sn, { mode, radiusM });

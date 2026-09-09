@@ -14,6 +14,7 @@ import { publishToDevice } from '../mqtt/mapSync.js';
 import { publishExtendedCommand } from '../mqtt/extendedCommands.js';
 import { isDeviceOnline } from '../mqtt/broker.js';
 import { deviceCache } from '../mqtt/sensorData.js';
+import { isOpenNovaMower } from '../services/mowerFileCapability.js';
 import { deviceSettingsRepo } from '../db/repositories/deviceSettings.js';
 import { selectParaRepush } from '../mqtt/paraRepush.js';
 
@@ -357,6 +358,8 @@ export function getMowerPhase(sn: string): 'mowing' | 'charging' | 'aborted' | '
 export function startEdgeCut(sn: string, mapName: string, bladeHeightMm: number, departFromDock = false): MowingResult {
   if (!sn) return { ok: false, error: 'sn required' };
   if (!isDeviceOnline(sn)) return { ok: false, error: 'mower offline' };
+  // start_edge_cut is een extended commando: op stock firmware hoort niemand het.
+  if (!isOpenNovaMower(sn, deviceCache.get(sn))) return { ok: false, error: 'requires OpenNova custom firmware' };
   publishExtendedCommand(sn, { start_edge_cut: { mapName, bladeHeight: bladeHeightMm, departFromDock } });
   console.log(`[MowingService] start_edge_cut: sn=${sn} map=${mapName} blade=${bladeHeightMm}mm departFromDock=${departFromDock}`);
   return { ok: true };

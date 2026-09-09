@@ -24,6 +24,16 @@ import express from 'express';
 import request from 'supertest';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+// Centrale firmware-gate (2026-09-09): deze tests gaan uit van een OpenNova
+// custom-firmware maaier, anders weigert de server extended-commando's met 409.
+vi.mock('../../services/mowerFileCapability.js', () => ({
+  getMowerFileCapability: () => ({ mowerFileApplySupported: true, isOpenNova: true, mowerVersion: 'v6.0.2-custom-test', reason: null }),
+  supportsMowerFileWrites: () => true,
+  isOpenNovaMower: () => true,
+  UNSUPPORTED_FIRMWARE_REASON: 'unsupported_firmware',
+  UNSUPPORTED_FIRMWARE_MSG_KEY: 'requiresOpenNovaFirmware',
+}));
+
 vi.mock('../../mqtt/broker.js', () => ({
   isDeviceOnline: vi.fn().mockReturnValue(true),
   writeRawPublish: vi.fn().mockReturnValue(false),

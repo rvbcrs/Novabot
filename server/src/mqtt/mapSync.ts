@@ -30,6 +30,8 @@ import { isSnBanned, isDeviceOnline } from './broker.js';
 import { isFrameNavBlocked, noteAutoRecharge } from '../services/frameValidation.js';
 import { hasPendingMapSync, clearPendingMapSync } from '../services/pendingMapSync.js';
 import { validateMapRasters, type BundleValidation } from '../maps/validateGrid.js';
+import { isOpenNovaMower } from '../services/mowerFileCapability.js';
+import { deviceCache } from './sensorData.js';
 
 const TAG = '[MAP-SYNC]';
 
@@ -568,6 +570,7 @@ function republishParaSettings(sn: string): void {
 }
 
 function republishCoveragePlannerRadius(sn: string): void {
+  if (!isOpenNovaMower(sn, deviceCache.get(sn))) return;   // extended-only
   const rows = deviceSettingsRepo.findBySn(sn);
   if (!rows.some((r) => r.key === COVERAGE_PLANNER_RADIUS_KEY)) return;
   const selected = selectCoveragePlannerRadius(rows);
@@ -590,6 +593,7 @@ function republishCoveragePlannerRadius(sn: string): void {
  * heractiveren.)
  */
 export function republishObstacleDetection(sn: string): void {
+  if (!isOpenNovaMower(sn, deviceCache.get(sn))) return;   // extended-only
   console.log(`${TAG} Object-detectie-cadans uit (level 1) naar ${sn} — stock perceptie via set_para_info`);
   publishToExtended(sn, { set_obstacle_detection: { level: 1 } });
 }
@@ -601,6 +605,7 @@ export function republishObstacleDetection(sn: string): void {
  * default (daemon idle), so we never touch mowers that didn't ask for it.
  */
 export async function republishSeamFix(sn: string): Promise<void> {
+  if (!isOpenNovaMower(sn, deviceCache.get(sn))) return;   // extended-only
   const { seamFixRepo } = await import('../db/repositories/index.js');
   if (!seamFixRepo.get(sn)) return;   // never configured -> leave at opt-in default
   const cfg = seamFixRepo.getEffective(sn);

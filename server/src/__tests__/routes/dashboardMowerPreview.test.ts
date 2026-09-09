@@ -86,6 +86,10 @@ vi.mock('../../services/mowerFileCapability.js', () => ({
     mowerVersion: null,
     reason: null,
   }),
+  isOpenNovaMower: () => true,
+  supportsMowerFileWrites: () => true,
+  UNSUPPORTED_FIRMWARE_REASON: 'unsupported_firmware',
+  UNSUPPORTED_FIRMWARE_MSG_KEY: 'requiresOpenNovaFirmware',
 }));
 
 import { deviceSettingsRepo } from '../../db/repositories/index.js';

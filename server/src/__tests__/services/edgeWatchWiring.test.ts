@@ -1,5 +1,15 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
+// Centrale firmware-gate (2026-09-09): deze tests gaan uit van een OpenNova
+// custom-firmware maaier, anders weigert de server extended-commando's met 409.
+vi.mock('../../services/mowerFileCapability.js', () => ({
+  getMowerFileCapability: () => ({ mowerFileApplySupported: true, isOpenNova: true, mowerVersion: 'v6.0.2-custom-test', reason: null }),
+  supportsMowerFileWrites: () => true,
+  isOpenNovaMower: () => true,
+  UNSUPPORTED_FIRMWARE_REASON: 'unsupported_firmware',
+  UNSUPPORTED_FIRMWARE_MSG_KEY: 'requiresOpenNovaFirmware',
+}));
+
 // Zelfde mock-conventie als edgeCutStart.test.ts / mowingService.test.ts: alleen
 // de MQTT-randen en de socket-log worden vervangen, zodat de pre-existente
 // TDZ-crash in de broker/socketHandler/demoSimulator-keten niet meespeelt.
