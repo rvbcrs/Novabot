@@ -296,13 +296,23 @@ export function generateMapZipFromDb(
     return null;
   };
 
+  // Rijen zonder slotnaam (dashboard-getekend: "Werkgebied 4") krijgen het
+  // eerste VRIJE slot, niet hun array-index: die kan botsen met een benoemd slot.
+  const taken = new Set(workRows.map(slotOf).filter((n): n is number => n !== null));
+  let nextFree = 0;
+  const claimFreeSlot = (): number => {
+    while (taken.has(nextFree)) nextFree++;
+    taken.add(nextFree);
+    return nextFree;
+  };
+
   for (let i = 0; i < workRows.length; i++) {
     const row = workRows[i];
     const rawPoints: LocalPoint[] = JSON.parse(row.map_area!);
 
     if (!rawPoints || rawPoints.length < 3) continue;
     const points = shiftPoints(rawPoints, offset.x, offset.y, false);
-    const slot = slotOf(row) ?? i;
+    const slot = slotOf(row) ?? claimFreeSlot();
 
     areas.push({
       mapIndex: slot,

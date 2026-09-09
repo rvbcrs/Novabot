@@ -214,6 +214,7 @@
     "hideTrail": "GPS-Spur ausblenden",
     "showTrail": "GPS-Spur anzeigen",
     "drawNew": "Neuen Arbeitsbereich zeichnen",
+    "drawStockNotice": "Stock-Firmware: hier gezeichnete Bereiche erreichen den Mäher nicht. Lege den Bereich in der OpenNova-App an (per Bluetooth abfahren).",
     "draw": "Zeichnen",
     "calibrate": "Kalibrieren",
     "hideHeatmap": "Heatmap ausblenden",

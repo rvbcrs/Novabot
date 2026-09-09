@@ -1627,6 +1627,21 @@ dashboardRouter.post('/maps/:sn/request-outline', (req: Request, res: Response) 
 // POST /api/dashboard/maps/:sn — nieuwe kaart aanmaken (getekend op dashboard)
 // Accepteert lokale meters {x,y} direct (dashboard converteert GPS→lokaal zelf)
 // OF GPS {lat,lng} voor backwards compatibility (wordt geconverteerd)
+// Stock firmware kan geen bestanden van de server ontvangen (geen write_map_files).
+// Een hier getekend of versleept gebied zou dan alleen in de DB bestaan: de app
+// toont het, de maaier kent het niet → Error 118 bij starten (GH #115). Weigeren
+// vóór de DB-schrijf, net als edit/apply. Demo-modus heeft geen maaier en mag wel.
+function rejectMapWriteOnStock(sn: string, res: Response): boolean {
+  if (isDemoMode(sn) || getMowerFileCapability(sn).mowerFileApplySupported) return false;
+  res.status(409).json({
+    ok: false,
+    reason: 'unsupported_firmware',
+    error: 'Kaarten tekenen of verplaatsen vanuit het dashboard vereist OpenNova custom firmware. Karteer op stock firmware via de OpenNova-app (Bluetooth).',
+    msgKey: 'mapEditErrUnsupportedFirmware',
+  });
+  return true;
+}
+
 dashboardRouter.post('/maps/:sn', (req: Request, res: Response) => {
   const { sn } = req.params;
   const { mapName, mapArea, mapType } = req.body as {
@@ -1639,6 +1654,7 @@ dashboardRouter.post('/maps/:sn', (req: Request, res: Response) => {
     res.status(400).json({ error: 'mapArea met minimaal 3 punten is vereist' });
     return;
   }
+  if (rejectMapWriteOnStock(sn, res)) return;
 
   // Detecteer of input lokale meters of GPS is
   const isLocal = mapArea[0] && 'x' in mapArea[0] && mapArea[0].x !== undefined;
@@ -1708,6 +1724,7 @@ dashboardRouter.patch('/maps/:sn/:mapId', (req: Request, res: Response) => {
   // Update polygon punten als meegegeven
   // Accepteert lokale meters {x,y} direct OF GPS {lat,lng} (backwards compat)
   if (mapArea && Array.isArray(mapArea) && mapArea.length >= 3) {
+    if (rejectMapWriteOnStock(sn, res)) return;
     const isLocal = 'x' in mapArea[0] && mapArea[0].x !== undefined;
     let localPoints: LocalPoint[];
 

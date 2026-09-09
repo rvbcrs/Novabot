@@ -1154,6 +1154,9 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
   const cameraAvailable = isOpenNovaFirmware(
     (sensors?.sw_version ?? sensors?.version) ?? undefined,
   );
+  // Tekenen/verslepen van gebieden vereist write_map_files → alleen OpenNova
+  // firmware. Op stock bestaat zo'n gebied alleen in de DB (GH #115).
+  const mapWriteSupported = cameraAvailable;
   // coverageStatus-waarde wordt niet meer getoond (hint-paneel verwijderd) — alleen
   // de setter blijft voor de bestaande logica-flow. Waarde bewust gediscard.
   const [, setCoverageStatus] = useState<string | null>(null);
@@ -1985,7 +1988,11 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
       updateMapArea(sn, editingMapId, localArea).then(() => {
         setMaps(prev => prev.map(m => m.mapId === editingMapId ? { ...m, mapArea: localArea } : m));
         finishEdit();
-      }).catch(() => { finishEdit(); });
+      }).catch(() => {
+        setEditStatus(mapWriteSupported ? t('map.edit.validationFailed') : t('map.drawStockNotice'));
+        setEditStatusKind('error');
+        finishEdit();
+      });
     } else if (editMode === 'draw') {
       // New OBSTACLE → draft flow (attached to a parent work map).
       if (drawType === 'obstacle') {
@@ -2028,9 +2035,12 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
         setEditMode('none');
         setEditVertices([]);
         setSelectedMapId(newMap.mapId);
-      }).catch(() => {});
+      }).catch(() => {
+        setEditStatus(mapWriteSupported ? t('map.edit.validationFailed') : t('map.drawStockNotice'));
+        setEditStatusKind('error');
+      });
     }
-  }, [editVertices, editMode, editingMapId, sn, maps, selectedMapId, gpsMaps, drawType, drawName, AREA_TYPE_META, chargerGps, chargingPose, reloadMaps, refreshEditGeometry, recordHistory, t]);
+  }, [editVertices, editMode, editingMapId, sn, maps, selectedMapId, gpsMaps, drawType, drawName, AREA_TYPE_META, chargerGps, chargingPose, reloadMaps, refreshEditGeometry, recordHistory, t, mapWriteSupported]);
 
   // Cancel edit/draw
   const cancelEditPolygon = useCallback(() => {
@@ -3680,9 +3690,17 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
                   </button>
                   {railFlyout === 'edit' && (
                     <div className={railPanel}>
-                      <button onClick={() => { startDrawMap(); setRailFlyout(null); }} className={railRow(false)}>
+                      <button
+                        onClick={() => { startDrawMap(); setRailFlyout(null); }}
+                        className={`${railRow(false)} ${!mapWriteSupported ? 'opacity-40 cursor-not-allowed' : ''}`}
+                        disabled={!mapWriteSupported}
+                        title={!mapWriteSupported ? t('map.drawStockNotice') : undefined}
+                      >
                         <Pencil className="w-4 h-4 opacity-70" />{t('map.drawNew')}
                       </button>
+                      {!mapWriteSupported && (
+                        <div className="px-2.5 pb-1.5 text-[11px] leading-snug text-amber-300/90">{t('map.drawStockNotice')}</div>
+                      )}
                       {sn && (
                         <button
                           onClick={() => {
@@ -4483,7 +4501,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
             canRedo={canRedo}
             onUndo={undo}
             onRedo={redo}
-            firmwareSupported={isOpenNovaFirmware((sensors?.sw_version ?? sensors?.version) ?? undefined)}
+            firmwareSupported={mapWriteSupported}
           />
         )}
       </div>

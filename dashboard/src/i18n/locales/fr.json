@@ -214,6 +214,7 @@
     "hideTrail": "Masquer le tracé GPS",
     "showTrail": "Afficher le tracé GPS",
     "drawNew": "Dessiner une nouvelle zone de travail",
+    "drawStockNotice": "Firmware d'origine : les zones dessinées ici n'atteignent pas la tondeuse. Créez la zone dans l'app OpenNova (parcours en Bluetooth).",
     "draw": "Dessiner",
     "calibrate": "Calibrer",
     "hideHeatmap": "Masquer la carte thermique",

@@ -230,6 +230,7 @@
     "hideTrail": "Hide GPS trail",
     "showTrail": "Show GPS trail",
     "drawNew": "Draw a new work area",
+    "drawStockNotice": "Stock firmware: areas drawn here can't reach the mower. Create the area in the OpenNova app (walk it over Bluetooth).",
     "draw": "Draw",
     "calibrate": "Calibrate",
     "hideHeatmap": "Hide heatmap",

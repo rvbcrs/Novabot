@@ -277,6 +277,7 @@
     "hideTrail": "GPS spoor verbergen",
     "showTrail": "GPS spoor tonen",
     "drawNew": "Teken een nieuw werkgebied",
+    "drawStockNotice": "Stock firmware: hier getekende gebieden komen niet op de maaier. Maak het gebied in de OpenNova-app (loop het via Bluetooth).",
     "draw": "Tekenen",
     "calibrate": "Kalibreren",
     "hideHeatmap": "Verberg heatmap",
