@@ -1,6 +1,29 @@
 {
   "releases": [
     {
+      "version": "2026.0909.1946",
+      "date": "2026-09-09",
+      "sections": {
+        "dashboard": [
+          "Firmware-melding niet boven het hele startpaneel",
+          "Tekenen/bewerken op stock ook in de functies zelf blokkeren",
+          "Firmware-gate in het dashboard tegen het centrale 409-contract",
+          "Gebieden tekenen/verslepen op stock firmware weigeren"
+        ],
+        "app": [
+          "Restrict mapping retry to unconfirmed stop commands",
+          "BLE-mapping ruimere scan-timeouts en 'Try again' na gemiste stop-bevestiging",
+          "Firmware-gate in de app tegen het centrale 409-contract"
+        ],
+        "server": [
+          "Update sync.remote",
+          "Harden BLE mapping recovery and preserve map selection identity",
+          "SIMULATE_STOCK_FIRMWARE test-knop voor de firmware-gate",
+          "Centrale firmware-gate voor alle extended-only routes"
+        ]
+      }
+    },
+    {
       "version": "2026.0907.1834",
       "date": "2026-09-07",
       "sections": {
