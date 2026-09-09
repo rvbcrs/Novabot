@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { Compass, Loader2, CheckCircle2, XCircle, AlertTriangle, Square } from 'lucide-react';
-import { apiFetch } from '../../api/client';
+import { apiFetch, isUnsupportedFirmwareError } from '../../api/client';
+import { isOpenNovaFirmware } from '../../utils/firmwareCapability';
 import { getSocket } from '../../api/socket';
 import { useAutoMapEnabled } from '../../utils/autoMapEnabled';
 
@@ -129,6 +130,7 @@ function clampRadius(n: number): number {
 
 interface Props {
   sn: string;
+  sensors?: Record<string, string>;
 }
 
 /**
@@ -139,9 +141,11 @@ interface Props {
  * (koude page-load) wordt bij de eerste fetch meteen weer als setup-formulier
  * getoond i.p.v. een stokoude banner op te voeren.
  */
-export function AutoMapPanel({ sn }: Props) {
+export function AutoMapPanel({ sn, sensors }: Props) {
   const { t } = useTranslation();
   const enabled = useAutoMapEnabled();
+  // Autonoom karteren draait op de lawn_edge_relay-daemon → alleen OpenNova firmware.
+  const firmwareSupported = isOpenNovaFirmware(sensors?.sw_version ?? sensors?.version);
   const [status, setStatus] = useState<AutoMapStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [mode, setMode] = useState<AutoMapMode>('test');
@@ -205,6 +209,7 @@ export function AutoMapPanel({ sn }: Props) {
   }, [sn, refresh, enabled]);
 
   const handleStart = useCallback(async () => {
+    if (!firmwareSupported) { setError(t('firmware.requiresOpenNova')); return; }
     // Klem + parse ook vóór het starten van een sessie, niet alleen op blur —
     // zo kan een niet-geblurde invoer (bv. direct op Start klikken) nooit een
     // ongeklemde waarde naar de API sturen. Ongeldige invoer valt terug op de
@@ -223,10 +228,12 @@ export function AutoMapPanel({ sn }: Props) {
         setDismissed(false);
         void refresh();
       }
+    } catch (e) {
+      setError(isUnsupportedFirmwareError(e) ? t('firmware.requiresOpenNova') : errorLabel(null, t));
     } finally {
       setBusy(false);
     }
-  }, [sn, mode, radiusText, refresh, t]);
+  }, [sn, mode, radiusText, radiusM, refresh, t, firmwareSupported]);
 
   const handleStop = useCallback(async () => {
     setBusy(true);
@@ -313,9 +320,13 @@ export function AutoMapPanel({ sn }: Props) {
             />
           </label>
           {error && <span className="text-xs text-red-400 font-semibold">{error}</span>}
+          {!firmwareSupported && (
+            <span className="text-xs text-amber-300/90">{t('firmware.requiresOpenNova')}</span>
+          )}
           <button
             onClick={handleStart}
-            disabled={busy}
+            disabled={busy || !firmwareSupported}
+            title={!firmwareSupported ? t('firmware.requiresOpenNova') : undefined}
             className="self-start px-4 py-2 rounded-lg text-sm font-medium bg-sky-600 text-white hover:bg-sky-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
             {t('autoMap.start', 'Start')}

@@ -24,6 +24,8 @@ import {
   type MowerActivity,
 } from '../../utils/mowerActivity';
 import { useToast } from '../common/Toast';
+import { isOpenNovaFirmware } from '../../utils/firmwareCapability';
+import { isUnsupportedFirmwareError } from '../../api/client';
 import { PatternPicker } from '../patterns/PatternPicker';
 import { loadPattern, transformToGps, type NormContour } from '../../utils/patternUtils.js';
 import { offsetPolygon } from '../../utils/polygonOffset.js';
@@ -257,6 +259,8 @@ export function MowerControls({
   }, [sn]);
 
   const isMappingActive = sensors?.start_edit_or_assistant_map_flag === '1';
+  // Edge cut + re-anchor zijn extended commands → alleen OpenNova firmware.
+  const firmwareSupported = isOpenNovaFirmware(sensors?.sw_version ?? sensors?.version);
   const gpsEnabled = sensors?.gps_state === 'ENABLE';
   const locInitialized = sensors?.localization_state === 'INITIALIZED' || sensors?.localization_state === 'Initialized';
   const mappingReady = gpsEnabled && locInitialized;
@@ -391,8 +395,12 @@ export function MowerControls({
       setExpanded(false);
       onStarted?.();
     } catch (err) {
-      const detail = err instanceof Error ? `: ${err.message}` : '';
-      toast(`✗ ${t('controls.startEdgeCut') ?? 'Edge cut'}${detail}`, 'error');
+      if (isUnsupportedFirmwareError(err)) {
+        toast(t('firmware.requiresOpenNova'), 'error');
+      } else {
+        const detail = err instanceof Error ? `: ${err.message}` : '';
+        toast(`✗ ${t('controls.startEdgeCut') ?? 'Edge cut'}${detail}`, 'error');
+      }
     }
     setBusy(false);
   }, [sn, sensors, cuttingHeight, t, toast, onStarted]);
@@ -671,7 +679,9 @@ export function MowerControls({
       {frameUnvalidated && (
         <button
           onClick={() => setShowReanchor(true)}
-          className="flex items-center gap-2 w-full mb-1.5 px-2.5 py-2 rounded-lg bg-amber-900/30 ring-1 ring-amber-600/40 hover:bg-amber-900/45 transition-colors text-left"
+          disabled={!firmwareSupported}
+          title={!firmwareSupported ? t('firmware.requiresOpenNova') : undefined}
+          className="flex items-center gap-2 w-full mb-1.5 px-2.5 py-2 rounded-lg bg-amber-900/30 ring-1 ring-amber-600/40 hover:bg-amber-900/45 transition-colors text-left disabled:opacity-40 disabled:cursor-not-allowed"
         >
           <Anchor className="w-4 h-4 text-amber-300 flex-shrink-0" />
           <span className="flex-1 min-w-0">
@@ -867,7 +877,9 @@ export function MowerControls({
               </button>
               <button
                 onClick={() => { setEdgeMode(true); setPatternMode(false); }}
-                className={`flex-1 text-[10px] py-1.5 flex items-center justify-center gap-1 transition-colors ${
+                disabled={!firmwareSupported}
+                title={!firmwareSupported ? t('firmware.requiresOpenNova') : undefined}
+                className={`flex-1 text-[10px] py-1.5 flex items-center justify-center gap-1 transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
                   edgeMode ? 'bg-amber-600 text-white font-medium' : 'bg-gray-900 text-gray-500 hover:text-gray-300'
                 }`}
               >
@@ -875,6 +887,9 @@ export function MowerControls({
                 {t('controls.startEdgeCut') ?? 'Edge cut'}
               </button>
             </div>
+            {!firmwareSupported && (
+              <p className="text-[10px] text-amber-300/90 leading-snug">{t('firmware.requiresOpenNova')}</p>
+            )}
 
             {/* ── Edge cut mode ── only height matters (mapName hardcoded 'map0') */}
             {edgeMode && (
@@ -1167,7 +1182,7 @@ export function MowerControls({
       )}
 
       {/* Re-anchor wizard — post-restore frame re-anchoring (mirrors app). */}
-      {showReanchor && createPortal(
+      {showReanchor && firmwareSupported && createPortal(
         <div className="fixed inset-0 z-[99999] flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowReanchor(false)} />
           <div className="relative bg-gray-900 border border-gray-700/50 rounded-2xl shadow-2xl max-w-sm w-full p-5 max-h-[90vh] overflow-y-auto">

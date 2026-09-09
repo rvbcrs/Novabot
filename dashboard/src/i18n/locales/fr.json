@@ -372,6 +372,10 @@
     },
     "missedPoint": "Point manqué"
   },
+  "firmware": {
+    "requiresOpenNova": "Nécessite le firmware personnalisé OpenNova. Le firmware d'origine ne peut pas recevoir cette commande.",
+    "terrainStockNotice": "Le terrain 3D nécessite le firmware personnalisé OpenNova sur la tondeuse ; rien n'est scanné avec le firmware d'origine."
+  },
   "terrain": {
     "title": "Terrain",
     "objectPanelTitle": "Objet",

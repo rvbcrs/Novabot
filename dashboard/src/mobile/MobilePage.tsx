@@ -8,6 +8,7 @@ import { HomeTab } from './components/HomeTab';
 import { MapTab } from './components/MapTab';
 import { CameraTab } from './components/CameraTab';
 import { SchedulesTab } from './components/SchedulesTab';
+import { isOpenNovaFirmware } from '../utils/firmwareCapability';
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -42,6 +43,8 @@ export interface MowerDerived {
   mowerIp: string | undefined;
   headlightOn: boolean;
   manualSpeedLevel: number;
+  /** Camera stream = camera_stream.py daemon → alleen OpenNova firmware (zelfde gate als de desktop-tegel). */
+  cameraAvailable: boolean;
 }
 
 type CoveredLane = { lat1: number; lng1: number; lat2: number; lng2: number };
@@ -110,6 +113,7 @@ function deriveMower(devices: Map<string, DeviceState>): MowerDerived {
     mowerIp: mower?.mowerIp ?? undefined,
     headlightOn: s.headlight === '2',
     manualSpeedLevel: parseInt(s.manual_controller_v ?? '0', 10) || 0,
+    cameraAvailable: isOpenNovaFirmware(s.sw_version ?? s.version),
   };
 }
 
@@ -120,6 +124,8 @@ export function MobilePage({ devices, loading, liveOutlines, coveredLanes }: Pro
   const [tab, setTab] = useState<Tab>('home');
   const mower = useMemo(() => deriveMower(devices), [devices]);
   const rootRef = useRef<HTMLDivElement>(null);
+  // Camera-tab bestaat niet op stock firmware; val terug op home.
+  const activeTab: Tab = tab === 'camera' && !mower.cameraAvailable ? 'home' : tab;
 
   if (!mower.sn && loading) {
     return (
@@ -146,22 +152,22 @@ export function MobilePage({ devices, loading, liveOutlines, coveredLanes }: Pro
 
         {/* Tab content */}
         <div className="flex-1 overflow-hidden">
-          {tab === 'home' && (
+          {activeTab === 'home' && (
             <HomeTab mower={mower} />
           )}
-          {tab === 'map' && (
+          {activeTab === 'map' && (
             <MapTab mower={mower} liveOutlines={liveOutlines} coveredLanes={coveredLanes.get(mower.sn) ?? null} />
           )}
-          {tab === 'camera' && mower.sn && (
+          {activeTab === 'camera' && mower.sn && mower.cameraAvailable && (
             <CameraTab sn={mower.sn} online={mower.online} mowerIp={mower.mowerIp} headlightOn={mower.headlightOn} />
           )}
-          {tab === 'schedules' && mower.sn && (
+          {activeTab === 'schedules' && mower.sn && (
             <SchedulesTab sn={mower.sn} online={mower.online} />
           )}
         </div>
 
         {/* Bottom tab bar */}
-        <BottomTabBar active={tab} onTabChange={setTab} />
+        <BottomTabBar active={activeTab} onTabChange={setTab} showCamera={mower.cameraAvailable} />
       </div>
     </ThemeProvider>
   );

@@ -372,6 +372,10 @@
     },
     "missedPoint": "Verpasster Punkt"
   },
+  "firmware": {
+    "requiresOpenNova": "Erfordert die OpenNova Custom-Firmware. Stock-Firmware kann diesen Befehl nicht empfangen.",
+    "terrainStockNotice": "3D-Gelände braucht die OpenNova Custom-Firmware auf dem Mäher; mit Stock-Firmware wird nichts gescannt."
+  },
   "terrain": {
     "title": "Gelände",
     "objectPanelTitle": "Objekt",

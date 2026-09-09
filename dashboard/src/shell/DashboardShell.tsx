@@ -228,7 +228,7 @@ function ShellInner() {
         {tab === 'terrain' && (
           activeMower ? (
             <Suspense fallback={<div className="p-8 text-zinc-500">Loading…</div>}>
-              <TerrainPage sn={activeMower.sn} />
+              <TerrainPage sn={activeMower.sn} sensors={activeMower.sensors} />
             </Suspense>
           ) : (
             <div className="p-8 text-zinc-500">{t('pages.selectMower')}</div>

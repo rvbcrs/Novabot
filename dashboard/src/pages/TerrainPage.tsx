@@ -22,6 +22,7 @@ import { parseFinishedAreas, prefixedAreaId } from '../utils/coverPathProgress';
 import { CameraTile } from '../components/map/CameraTile';
 import { getSocket } from '../api/socket';
 import type { DeviceUpdateEvent } from '../types';
+import { isOpenNovaFirmware } from '../utils/firmwareCapability';
 
 /** Eén rij van GET /api/dashboard/terrain-clusters/:sn (Task 7/9). */
 interface TerrainCluster {
@@ -376,8 +377,10 @@ function removeClusterModels(scene: THREE.Scene, instances: Map<string, THREE.Ob
   instances.clear();
 }
 
-export default function TerrainPage({ sn }: { sn: string }) {
+export default function TerrainPage({ sn, sensors }: { sn: string; sensors?: Record<string, string> }) {
   const { t } = useTranslation();
+  // De terrain-scanner is een OpenNova-daemon; op stock wordt er niets gescand.
+  const firmwareSupported = isOpenNovaFirmware(sensors?.sw_version ?? sensors?.version);
   const mountRef = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<'loading' | 'empty' | 'ready' | 'error'>('loading');
   const [hasObjects, setHasObjects] = useState(false);
@@ -1015,7 +1018,7 @@ export default function TerrainPage({ sn }: { sn: string }) {
       if (renderer?.domElement.parentElement) renderer.domElement.parentElement.removeChild(renderer.domElement);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sn]);
+  }, [sn, firmwareSupported]);
 
   // Klik-correctie: POST de override, her-fetch de clusters en herbouw de
   // scene lokaal (rebuildAllRef, zie hierboven) i.p.v. te wachten op de
@@ -1291,6 +1294,14 @@ export default function TerrainPage({ sn }: { sn: string }) {
     ctr.target.set(cx, cy, cz);
     cam.position.set(cx, cy - dist, cz + dist * 0.7);
     ctr.update();
+  }
+
+  if (!firmwareSupported) {
+    return (
+      <div className="h-full w-full flex items-center justify-center text-gray-400 text-center px-8">
+        {t('firmware.terrainStockNotice')}
+      </div>
+    );
   }
 
   return (

@@ -6,7 +6,8 @@ import {
 import { useTranslation } from 'react-i18next';
 import type { Schedule, MapData } from '../../types';
 import type { RainSession } from '../../api/client';
-import { fetchSchedules, createSchedule, updateSchedule, deleteSchedule, sendSchedule, fetchMaps, fetchRainSessions } from '../../api/client';
+import { fetchSchedules, createSchedule, updateSchedule, deleteSchedule, sendSchedule, fetchMaps, fetchRainSessions, isUnsupportedFirmwareError } from '../../api/client';
+import { isOpenNovaFirmware } from '../../utils/firmwareCapability';
 import { TimeWheel } from './TimeWheel';
 import { MowingDirectionPreview } from './MowingDirectionPreview';
 import { useWeekStart, weekdayOrder } from '../../utils/weekStart';
@@ -40,6 +41,7 @@ function findConflicts(
 interface Props {
   sn: string;
   online: boolean;
+  sensors?: Record<string, string>;
   /** Called when the user changes the mowing direction (or null on close) */
   onPathDirectionChange?: (deg: number | null) => void;
 }
@@ -82,7 +84,7 @@ const defaultForm: ScheduleForm = {
   rainCheckHours: 2,
 };
 
-export function Scheduler({ sn, online, onPathDirectionChange }: Props) {
+export function Scheduler({ sn, online, sensors, onPathDirectionChange }: Props) {
   const { t } = useTranslation();
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [maps, setMaps] = useState<MapData[]>([]);
@@ -90,6 +92,9 @@ export function Scheduler({ sn, online, onPathDirectionChange }: Props) {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState<ScheduleForm>(defaultForm);
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  // Randmaaien (edgeDays) is een extended command → alleen OpenNova firmware.
+  const firmwareSupported = isOpenNovaFirmware(sensors?.sw_version ?? sensors?.version);
   // Als gezet, bewerkt het formulier een bestaand schema i.p.v. een nieuw aan te
   // maken. De save-knop en de koptekst wisselen hierop.
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -173,9 +178,13 @@ export function Scheduler({ sn, online, onPathDirectionChange }: Props) {
       setEditingId(null);
       setForm(defaultForm);
       onPathDirectionChange?.(null);
-    } catch { /* ignore */ }
+    } catch (e) {
+      setSaveError(isUnsupportedFirmwareError(e)
+        ? t('firmware.requiresOpenNova')
+        : e instanceof Error ? e.message : String(e));
+    }
     setSaving(false);
-  }, [sn, form, editingId, online, onPathDirectionChange]);
+  }, [sn, form, editingId, online, onPathDirectionChange, t]);
 
   // Open het formulier voorgevuld met een bestaand schema.
   const handleEdit = useCallback((s: Schedule) => {
@@ -347,7 +356,9 @@ export function Scheduler({ sn, online, onPathDirectionChange }: Props) {
                   <button
                     key={d}
                     onClick={() => toggleEdgeDay(d)}
-                    className={`flex-1 text-[11px] py-1.5 rounded transition-colors ${
+                    disabled={!firmwareSupported}
+                    title={!firmwareSupported ? t('firmware.requiresOpenNova') : undefined}
+                    className={`flex-1 text-[11px] py-1.5 rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
                       form.edgeDays.includes(d)
                         ? 'bg-sky-600 text-white font-medium'
                         : 'bg-gray-900 text-gray-500 hover:text-gray-300 border border-gray-700'
@@ -357,7 +368,9 @@ export function Scheduler({ sn, online, onPathDirectionChange }: Props) {
                   </button>
                 ))}
               </div>
-              <p className="text-[10px] text-gray-600 mt-1">{t('schedule.edgeDays.hint')}</p>
+              {firmwareSupported
+                ? <p className="text-[10px] text-gray-600 mt-1">{t('schedule.edgeDays.hint')}</p>
+                : <p className="text-[10px] text-amber-300/90 mt-1">{t('firmware.requiresOpenNova')}</p>}
             </div>
           )}
 
@@ -582,16 +595,17 @@ export function Scheduler({ sn, online, onPathDirectionChange }: Props) {
           )}
 
           {/* Actions */}
+          {saveError && <p className="text-xs text-red-400 mb-2">{saveError}</p>}
           <div className="flex items-center gap-2 pt-3 border-t border-gray-700">
             <button
-              onClick={() => { setShowForm(false); setEditingId(null); setForm(defaultForm); onPathDirectionChange?.(null); }}
+              onClick={() => { setShowForm(false); setEditingId(null); setForm(defaultForm); setSaveError(null); onPathDirectionChange?.(null); }}
               className="flex-1 inline-flex items-center justify-center gap-1 text-xs px-2 py-1.5 rounded bg-gray-700 text-gray-400 hover:text-gray-200 transition-colors"
             >
               <X className="w-3 h-3" />
               {t('common.cancel')}
             </button>
             <button
-              onClick={handleSave}
+              onClick={() => { setSaveError(null); void handleSave(); }}
               disabled={saving || !form.startTime || form.weekdays.length === 0}
               className="flex-1 inline-flex items-center justify-center gap-1 text-xs px-2 py-1.5 rounded bg-emerald-600 text-white hover:bg-emerald-500 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             >

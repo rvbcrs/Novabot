@@ -388,6 +388,10 @@
     },
     "missedPoint": "Missed point"
   },
+  "firmware": {
+    "requiresOpenNova": "Requires OpenNova custom firmware. Stock firmware can't receive this command.",
+    "terrainStockNotice": "3D terrain needs the OpenNova custom firmware on the mower; nothing is scanned on stock firmware."
+  },
   "terrain": {
     "title": "Terrain",
     "objectPanelTitle": "Object",

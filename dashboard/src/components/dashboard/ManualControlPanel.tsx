@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { joystickStart, joystickMove, joystickStop } from '../../api/socket';
 import { sendExtendedCommand } from '../../api/client';
 import { deriveMowerActivity } from '../../utils/mowerActivity';
+import { isOpenNovaFirmware } from '../../utils/firmwareCapability';
 
 /** Saw-blade icon — the MaterialCommunityIcons "saw-blade" the OpenNova app uses. */
 function SawBlade({ className }: { className?: string }) {
@@ -54,6 +55,9 @@ export function ManualControlPanel({ sn, online, sensors }: Props) {
   const activity = deriveMowerActivity(sensors ?? {}, { online });
   const onDock = activity === 'charging';
   const bladeSpeed = parseInt(sensors?.blade_speed ?? '0', 10) || 0;
+  // blade_on/off zijn extended commands → alleen OpenNova firmware. De joystick
+  // zelf blijft ongemoeid (stock-ondersteuning niet geverifieerd).
+  const firmwareSupported = isOpenNovaFirmware(sensors?.sw_version ?? sensors?.version);
 
   // Blade state. When the operator turns the blade on manually we set a local
   // flag; movement is then allowed even though the firmware may briefly report
@@ -85,15 +89,21 @@ export function ManualControlPanel({ sn, online, sensors }: Props) {
     const level = Math.max(0, Math.min(7, userCm - 2));
     bladeOnRef.current = true;
     setBladeOn(true);
-    sendExtendedCommand(sn, { blade_on: { speed: 3000, height: level } }).catch(() => { /* best-effort */ });
+    // Mislukt het commando (bv. stock firmware → 409), dan draait er ook geen mes:
+    // lokale "mes draait"-state weer terugzetten.
+    sendExtendedCommand(sn, { blade_on: { speed: 3000, height: level } }).catch(() => {
+      bladeOnRef.current = false;
+      setBladeOn(false);
+    });
   }, [sn]);
 
   const toggleBlade = useCallback(() => {
     if (onDock) return; // never spin blades against the charging contacts
+    if (!firmwareSupported) return;
     const motorRunning = bladeOnRef.current || bladeSpeed > 0;
     if (motorRunning) { sendBladeOff(); return; }
     setShowBladeSheet(true);
-  }, [onDock, bladeSpeed, sendBladeOff]);
+  }, [onDock, firmwareSupported, bladeSpeed, sendBladeOff]);
 
   // Safety auto-off: kill the blade if the mower goes offline or lands on the
   // dock while the motor is (or thinks it is) running.
@@ -308,18 +318,23 @@ export function ManualControlPanel({ sn, online, sensors }: Props) {
       <div className="flex w-full">
         <button
           onClick={toggleBlade}
-          disabled={!online || onDock || autonomousBusy}
+          disabled={!online || onDock || autonomousBusy || !firmwareSupported}
           className={`flex-1 flex items-center justify-center gap-1.5 text-xs py-2 rounded transition-colors disabled:opacity-30 ${
             motorRunning
               ? 'bg-amber-600/80 text-white hover:bg-amber-600'
               : 'bg-gray-700/60 text-gray-300 hover:bg-gray-700'
           }`}
-          title={onDock ? t('controls.bladeDockedHint', 'Niet beschikbaar op het laadstation') : undefined}
+          title={!firmwareSupported
+            ? t('firmware.requiresOpenNova')
+            : onDock ? t('controls.bladeDockedHint', 'Niet beschikbaar op het laadstation') : undefined}
         >
           <SawBlade className="w-4 h-4" />
           {motorRunning ? t('controls.bladeOff', 'Mes uit') : t('controls.bladeOn', 'Mes aan')}
         </button>
       </div>
+      {!firmwareSupported && (
+        <p className="w-full text-[10px] text-amber-300/90 text-center leading-snug">{t('firmware.requiresOpenNova')}</p>
+      )}
 
       {/* Blade height picker sheet */}
       {showBladeSheet && (

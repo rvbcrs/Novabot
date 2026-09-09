@@ -19,7 +19,7 @@ import {
   fetchEditGeometry, saveEditDraft, discardEditDrafts, applyEdits, revertEdits,
   refreshPreviewPath, getPlanPath, refreshPlanPath,
   fetchCoveragePlannerRadius, updateCoveragePlannerRadius,
-  applyPolygonOffset, fetchPolygonOffset,
+  applyPolygonOffset, fetchPolygonOffset, isUnsupportedFirmwareError,
   type VirtualWall, type EditGeometryDto, type CoveragePathEntry,
 } from '../../api/client';
 import { localToGps, gpsToLocal, isUsableChargerGps } from '../../utils/coords';
@@ -1745,7 +1745,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
   }, [sn, t, fetchPlanOnce, startCoveragePoll]);
 
   const saveCoverageRadius = useCallback(async () => {
-    if (!sn) return;
+    if (!sn || !mapWriteSupported) return;
     const radius = Number(coverageRadiusDraft);
     if (!Number.isFinite(radius) || radius < MIN_COVERAGE_RADIUS || radius > MAX_COVERAGE_RADIUS) {
       toast(t('map.edit.coverageRadiusInvalid'), 'error');
@@ -1757,12 +1757,16 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
       setCoverageRadiusDraft(result.radius.toString());
       toast(t('map.edit.coverageRadiusSaved'), 'success');
     } catch (err) {
-      const detail = err instanceof Error ? err.message : String(err);
-      toast(detail || t('map.edit.coverageRadiusSaveFailed'), 'error');
+      if (isUnsupportedFirmwareError(err)) {
+        toast(t('firmware.requiresOpenNova'), 'error');
+      } else {
+        const detail = err instanceof Error ? err.message : String(err);
+        toast(detail || t('map.edit.coverageRadiusSaveFailed'), 'error');
+      }
     } finally {
       setCoverageRadiusSaving(false);
     }
-  }, [sn, coverageRadiusDraft, toast, t]);
+  }, [sn, mapWriteSupported, coverageRadiusDraft, toast, t]);
 
   // Stock mower coverage preview. This routes through generate_preview_cover_path
   // and get_preview_cover_path, matching the Novabot app's advanced-settings
@@ -2989,7 +2993,13 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
   }, [editCal, chargerGps, polyCenter]);
 
   const applyShift = useCallback(async (dxM: number, dyM: number, calForDisplay: MapCalibration) => {
-    const r = await applyPolygonOffset(sn, dxM, dyM);
+    let r: { ok: boolean; error?: string };
+    try {
+      r = await applyPolygonOffset(sn, dxM, dyM);
+    } catch (err) {
+      toast(isUnsupportedFirmwareError(err) ? t('firmware.requiresOpenNova') : t('map.shiftFailed'), 'error');
+      return false;
+    }
     // Bij maaier offline geeft de server een "pick up on next reconnect"-melding
     // door; dat is een waarschuwing (offset is opgeslagen), geen echte fout.
     const offline = !r.ok && /reconnect|offline/i.test(r.error ?? '');
@@ -3004,7 +3014,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
   }, [sn, t, toast]);
 
   const handleApplyOffset = useCallback(async () => {
-    if (!editCal) return;
+    if (!editCal || !mapWriteSupported) return;
     const latDeg = chargerGps?.lat ?? polyCenter.lat;
     if (!Number.isFinite(latDeg)) { toast(t('map.shiftFailed'), 'error'); return; }
     // editCal.offset is in graden; converteer naar meters (+x oost, +y noord —
@@ -3014,7 +3024,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     // kan bevestigen of omdraaien.
     const { dxM, dyM } = offsetDegToMeters(editCal.offsetLat, editCal.offsetLng, latDeg);
     await applyShift(dxM, dyM, editCal);
-  }, [editCal, chargerGps, polyCenter, applyShift, t, toast]);
+  }, [editCal, mapWriteSupported, chargerGps, polyCenter, applyShift, t, toast]);
 
   const handleResetOffset = useCallback(async () => {
     const zeroed: MapCalibration = { ...(editCal ?? savedCal), offsetLat: 0, offsetLng: 0 };
@@ -3787,18 +3797,22 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
                           step="0.01"
                           value={coverageRadiusDraft}
                           onChange={(e) => setCoverageRadiusDraft(e.target.value)}
-                          className="w-16 bg-gray-800 rounded px-2 py-1 text-right text-xs text-gray-100 outline-none"
+                          disabled={!mapWriteSupported}
+                          className="w-16 bg-gray-800 rounded px-2 py-1 text-right text-xs text-gray-100 outline-none disabled:opacity-40"
                         />
                         <span className="text-[10px] text-gray-500">m</span>
                         <button
                           onClick={saveCoverageRadius}
-                          disabled={coverageRadiusSaving}
-                          className={`ml-auto rounded p-1.5 text-gray-300 hover:text-emerald-300 hover:bg-gray-700/60 ${coverageRadiusSaving ? 'cursor-wait opacity-60' : ''}`}
-                          title={t('map.edit.coverageRadiusSave')}
+                          disabled={coverageRadiusSaving || !mapWriteSupported}
+                          className={`ml-auto rounded p-1.5 text-gray-300 hover:text-emerald-300 hover:bg-gray-700/60 ${coverageRadiusSaving ? 'cursor-wait opacity-60' : ''} ${!mapWriteSupported ? 'opacity-40 cursor-not-allowed' : ''}`}
+                          title={!mapWriteSupported ? t('firmware.requiresOpenNova') : t('map.edit.coverageRadiusSave')}
                         >
                           {coverageRadiusSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
                         </button>
                       </div>
+                      {!mapWriteSupported && (
+                        <div className="px-2.5 pb-1.5 text-[11px] leading-snug text-amber-300/90">{t('firmware.requiresOpenNova')}</div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -4005,12 +4019,17 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
               </button>
               <button
                 onClick={handleApplyOffset}
-                className="flex-1 inline-flex items-center justify-center gap-1 text-xs px-2 py-1.5 rounded bg-amber-600 text-white hover:bg-amber-500 transition-colors"
+                disabled={!mapWriteSupported}
+                title={!mapWriteSupported ? t('firmware.requiresOpenNova') : undefined}
+                className="flex-1 inline-flex items-center justify-center gap-1 text-xs px-2 py-1.5 rounded bg-amber-600 text-white hover:bg-amber-500 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 <Save className="w-3 h-3" />
                 {t('map.shiftApply')}
               </button>
             </div>
+            {!mapWriteSupported && (
+              <p className="mt-2 text-[10px] leading-snug text-amber-300/90">{t('firmware.requiresOpenNova')}</p>
+            )}
           </div>
         )}
 
@@ -4285,8 +4304,9 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
                   {(m.mapType === 'work' || m.mapType === 'obstacle') && m.canonicalName && (
                     <button
                       onClick={(e) => { e.stopPropagation(); enterMoveMode(m.canonicalName!); }}
-                      className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded bg-cyan-900/40 text-cyan-300 hover:bg-cyan-900/70 hover:text-cyan-200 transition-colors"
-                      title={t('map.edit.moveHint')}
+                      disabled={!mapWriteSupported}
+                      className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded bg-cyan-900/40 text-cyan-300 hover:bg-cyan-900/70 hover:text-cyan-200 transition-colors ${!mapWriteSupported ? 'opacity-40 cursor-not-allowed' : ''}`}
+                      title={!mapWriteSupported ? t('map.drawStockNotice') : t('map.edit.moveHint')}
                     >
                       <MoveIcon className="w-3 h-3" />
                       {t('map.edit.move')}
@@ -4294,7 +4314,9 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
                   )}
                   <button
                     onClick={(e) => { e.stopPropagation(); startEditMap(m.mapId, m.mapArea); }}
-                    className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded bg-emerald-900/40 text-emerald-400 hover:bg-emerald-900/70 hover:text-emerald-300 transition-colors"
+                    disabled={!mapWriteSupported}
+                    className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded bg-emerald-900/40 text-emerald-400 hover:bg-emerald-900/70 hover:text-emerald-300 transition-colors ${!mapWriteSupported ? 'opacity-40 cursor-not-allowed' : ''}`}
+                    title={!mapWriteSupported ? t('map.drawStockNotice') : undefined}
                   >
                     <Pencil className="w-3 h-3" />
                     {t('common.edit')}

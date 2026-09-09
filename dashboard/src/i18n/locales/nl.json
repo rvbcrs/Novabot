@@ -435,6 +435,10 @@
     },
     "missedPoint": "Gemist punt"
   },
+  "firmware": {
+    "requiresOpenNova": "Vereist OpenNova custom firmware. Stock firmware kan dit commando niet ontvangen.",
+    "terrainStockNotice": "3D-terrein heeft de OpenNova custom firmware op de maaier nodig; op stock firmware wordt niets gescand."
+  },
   "terrain": {
     "title": "Terrein",
     "objectPanelTitle": "Object",

@@ -78,7 +78,7 @@ export function MapTab({ mower, connected, liveOutlines, coveredLanes, previewRe
         progressSuppressed={progressSuppressed}
         onPreviewLoading={onPreviewLoading}
       />
-      <AutoMapPanel sn={mower.sn} />
+      <AutoMapPanel sn={mower.sn} sensors={mower.sensors} />
     </div>
   );
 }

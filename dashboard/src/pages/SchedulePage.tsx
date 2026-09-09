@@ -20,6 +20,7 @@ export function SchedulePage({ mower }: Props) {
         <Scheduler
           sn={mower.sn}
           online={mower.online}
+          sensors={mower.sensors}
         />
         <ScheduleTimeline sn={mower.sn} />
       </div>

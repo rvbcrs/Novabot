@@ -6,6 +6,8 @@ import { useTheme } from '../ThemeProvider';
 interface Props {
   active: Tab;
   onTabChange: (tab: Tab) => void;
+  /** false op stock firmware: geen camera-daemon, dus geen camera-tab. */
+  showCamera?: boolean;
 }
 
 const TABS: Array<{ key: Tab; icon: typeof Home; labelKey: string }> = [
@@ -15,7 +17,7 @@ const TABS: Array<{ key: Tab; icon: typeof Home; labelKey: string }> = [
   { key: 'schedules', icon: CalendarDays, labelKey: 'mobile.tabs.schedules' },
 ];
 
-export function BottomTabBar({ active, onTabChange }: Props) {
+export function BottomTabBar({ active, onTabChange, showCamera = true }: Props) {
   const { t } = useTranslation();
   const { preference, toggle } = useTheme();
 
@@ -23,7 +25,7 @@ export function BottomTabBar({ active, onTabChange }: Props) {
 
   return (
     <div className="bg-white/95 dark:bg-gray-900/95 backdrop-blur-md border-t border-gray-200 dark:border-gray-800 flex safe-bottom">
-      {TABS.map(({ key, icon: Icon, labelKey }) => {
+      {TABS.filter(tb => showCamera || tb.key !== 'camera').map(({ key, icon: Icon, labelKey }) => {
         const isActive = active === key;
         return (
           <button

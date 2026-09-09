@@ -28,6 +28,29 @@ export class UnauthorizedError extends Error {
   constructor() { super('unauthorized'); this.name = 'UnauthorizedError'; }
 }
 
+/**
+ * Thrown by apiFetch when the server refuses a command the mower's firmware
+ * can't handle: HTTP 409 with `{ reason:'unsupported_firmware', msgKey }`.
+ * Stock firmware only speaks the vanilla mqtt_node surface; every extended
+ * route uses this one shape so callers need a single check.
+ */
+export class ApiError extends Error {
+  status: number;
+  reason?: string;
+  msgKey?: string;
+  constructor(status: number, message: string, reason?: string, msgKey?: string) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.reason = reason;
+    this.msgKey = msgKey;
+  }
+}
+
+export function isUnsupportedFirmwareError(err: unknown): err is ApiError {
+  return err instanceof ApiError && err.reason === 'unsupported_firmware';
+}
+
 function handleUnauthorized(): void {
   clearToken();
   try { window.dispatchEvent(new CustomEvent('novabot:unauthorized')); } catch { /* SSR */ }
@@ -55,10 +78,15 @@ export async function apiFetch(input: string, init?: RequestInit): Promise<Respo
   // Envelope-level 401 carried over an HTTP 200 (shared cloud `fail()` shape).
   const ct = res.headers.get('content-type') || '';
   if (ct.includes('application/json')) {
-    const peek = await res.clone().json().catch(() => null) as { success?: boolean; code?: number } | null;
+    const peek = await res.clone().json().catch(() => null) as
+      { success?: boolean; code?: number; reason?: string; msgKey?: string; error?: string } | null;
     if (peek && peek.success === false && peek.code === 401) {
       handleUnauthorized();
       throw new UnauthorizedError();
+    }
+    // Central firmware gate: stock firmware can't take this command.
+    if (res.status === 409 && peek?.reason === 'unsupported_firmware') {
+      throw new ApiError(409, peek.error || 'unsupported firmware', peek.reason, peek.msgKey);
     }
   }
   return res;
@@ -932,7 +960,15 @@ export async function discardEditDrafts(sn: string): Promise<{ ok: boolean }> {
   return res.json();
 }
 async function postEdit(sn: string, action: 'apply' | 'revert'): Promise<EditApplyDto> {
-  const res = await apiFetch(`${BASE}/maps/${encodeURIComponent(sn)}/edit/${action}`, { method: 'POST' });
+  let res: Response;
+  try {
+    res = await apiFetch(`${BASE}/maps/${encodeURIComponent(sn)}/edit/${action}`, { method: 'POST' });
+  } catch (e) {
+    // Firmware-gate (409) → zelfde reason-pad als de body, zodat MowerMap's
+    // switch op 'unsupported_firmware' blijft werken.
+    if (isUnsupportedFirmwareError(e)) return { ok: false, reason: e.reason };
+    throw e;
+  }
   try { return await res.json(); } catch { return { ok: false, reason: `http_${res.status}` }; }
 }
 export async function applyEdits(sn: string): Promise<EditApplyDto> { return postEdit(sn, 'apply'); }

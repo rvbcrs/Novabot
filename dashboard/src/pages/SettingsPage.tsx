@@ -18,6 +18,8 @@ import { configuredHeightMm } from '../utils/mowDefaults';
 import { readExperimental, writeExperimental } from '../utils/experimental';
 import { MowingDirectionPreview } from '../components/schedule/MowingDirectionPreview';
 import { useToast } from '../components/common/Toast';
+import { isOpenNovaFirmware } from '../utils/firmwareCapability';
+import { isUnsupportedFirmwareError } from '../api/client';
 
 interface Props {
   mower: DeviceState | null;
@@ -219,6 +221,8 @@ function MowerSettingsSection({ mower }: { mower: DeviceState }) {
   const { toast } = useToast();
   const sn = mower.sn;
   const online = mower.online;
+  // Recovery-acties (recalibrate/restart/reboot) zijn extended → alleen OpenNova firmware.
+  const firmwareSupported = isOpenNovaFirmware(mower.sensors?.sw_version ?? mower.sensors?.version);
 
   // Batched (set_para_info) state — all saved together by the Save button.
   const [cuttingHeight, setCuttingHeight] = useState(40); // mm
@@ -369,6 +373,7 @@ function MowerSettingsSection({ mower }: { mower: DeviceState }) {
         toast(`✗ ${resp.error ?? t('settings.mower.recalibrateFailed', 'Recalibrate failed')}`, 'error');
       }
     } catch (e) {
+      if (isUnsupportedFirmwareError(e)) { toast(t('firmware.requiresOpenNova'), 'error'); return; }
       toast(`✗ ${e instanceof Error ? e.message : t('settings.mower.recalibrateFailed', 'Recalibrate failed')}`, 'error');
     }
   };
@@ -384,6 +389,7 @@ function MowerSettingsSection({ mower }: { mower: DeviceState }) {
         toast(`✗ ${body.error ?? t('settings.mower.restartFailed', 'Restart failed')}`, 'error');
       }
     } catch (e) {
+      if (isUnsupportedFirmwareError(e)) { toast(t('firmware.requiresOpenNova'), 'error'); return; }
       toast(`✗ ${e instanceof Error ? e.message : t('settings.mower.restartFailed', 'Restart failed')}`, 'error');
     }
   };
@@ -394,6 +400,7 @@ function MowerSettingsSection({ mower }: { mower: DeviceState }) {
       await rebootMower(sn);
       toast(`✓ ${t('settings.mower.rebooting', 'Reboot sent — the mower is offline for a few minutes')}`, 'success');
     } catch (e) {
+      if (isUnsupportedFirmwareError(e)) { toast(t('firmware.requiresOpenNova'), 'error'); return; }
       toast(`✗ ${e instanceof Error ? e.message : t('settings.mower.rebootFailed', 'Reboot failed')}`, 'error');
     }
   };
@@ -615,9 +622,13 @@ function MowerSettingsSection({ mower }: { mower: DeviceState }) {
       {/* Recovery */}
       <SettingCard icon={Wrench} title={t('settings.mower.recovery', 'Recovery')}>
         <div className="space-y-2">
+          {!firmwareSupported && (
+            <p className="text-xs text-amber-300/90 leading-snug">{t('firmware.requiresOpenNova')}</p>
+          )}
           <button
             onClick={handleRecalibrate}
-            disabled={!online}
+            disabled={!online || !firmwareSupported}
+            title={!firmwareSupported ? t('firmware.requiresOpenNova') : undefined}
             className="w-full flex items-center gap-3 rounded-xl border border-gray-700 bg-gray-800/40 hover:bg-gray-800/70 px-3 py-2.5 text-left transition-colors disabled:opacity-40"
           >
             <Compass className="w-4 h-4 text-rose-400 flex-shrink-0" />
@@ -628,7 +639,8 @@ function MowerSettingsSection({ mower }: { mower: DeviceState }) {
           </button>
           <button
             onClick={handleRestart}
-            disabled={!online}
+            disabled={!online || !firmwareSupported}
+            title={!firmwareSupported ? t('firmware.requiresOpenNova') : undefined}
             className="w-full flex items-center gap-3 rounded-xl border border-gray-700 bg-gray-800/40 hover:bg-gray-800/70 px-3 py-2.5 text-left transition-colors disabled:opacity-40"
           >
             <RotateCw className="w-4 h-4 text-violet-400 flex-shrink-0" />
@@ -639,7 +651,8 @@ function MowerSettingsSection({ mower }: { mower: DeviceState }) {
           </button>
           <button
             onClick={handleReboot}
-            disabled={!online}
+            disabled={!online || !firmwareSupported}
+            title={!firmwareSupported ? t('firmware.requiresOpenNova') : undefined}
             className="w-full flex items-center gap-3 rounded-xl border border-gray-700 bg-gray-800/40 hover:bg-gray-800/70 px-3 py-2.5 text-left transition-colors disabled:opacity-40"
           >
             <Power className="w-4 h-4 text-red-400 flex-shrink-0" />
