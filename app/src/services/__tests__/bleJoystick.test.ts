@@ -68,7 +68,7 @@ describe('BLE mapping connection', () => {
     notify(0, cc); // telemetry also leaves an interleaved JSON frame intact
     notify(0, '"message":{"result":0,"value":0}}');
     notify(0, 'ble_end\0');
-    expect(telemetry.mock.calls[0][0]).toEqual({ position: { x: -12.34, y: -5.67 }, closedCycle: false });
+    expect(telemetry.mock.calls[0][0]).toMatchObject({ position: { x: -12.34, y: -5.67 }, closedCycle: false });
     expect(telemetry.mock.calls[1][0].orientation).toBeCloseTo(-1.57);
     expect(respond).toHaveBeenCalledWith({ command: 'save_map_respond', data: { result: 0, value: 0 } });
     off();
@@ -104,6 +104,70 @@ describe('BLE mapping connection', () => {
     expect(ble.isBleJoystickConnected()).toBe(false);
     expect(disconnected).toHaveBeenCalledOnce();
     for (const remove of removals) expect(remove).toHaveBeenCalledOnce();
+  });
+
+  it('invalidates a connection when notifications stop with an error, even if native BLE still reports connected', async () => {
+    const { device, notifications, removals } = fakeDevice();
+    manager.connectToDevice.mockResolvedValue(device);
+    const disconnected = vi.fn();
+    ble.onBleJoystickDisconnect(disconnected);
+    await ble.bleJoystickConnect(device.id);
+    notifications[0](new Error('Characteristic monitor failed'), null);
+    expect(ble.isBleJoystickConnected()).toBe(false);
+    expect(disconnected).toHaveBeenCalledOnce();
+    for (const remove of removals) expect(remove).toHaveBeenCalledOnce();
+    await Promise.resolve();
+    expect(device.cancelConnection).toHaveBeenCalledOnce();
+    await expect(ble.sendBleCommand({ stop_scan_map: {} })).rejects.toThrow('not connected');
+    expect(await ble.bleJoystickConnect(device.id)).toBe(true);
+    expect(manager.connectToDevice).toHaveBeenCalledTimes(2);
+  });
+
+  it('waits for failed-session native teardown before reconnecting to the same mower', async () => {
+    const { device, notifications } = fakeDevice();
+    manager.connectToDevice.mockResolvedValue(device);
+    await ble.bleJoystickConnect(device.id);
+    let finishDisconnect!: () => void;
+    device.cancelConnection.mockImplementationOnce(() =>
+      new Promise<void>(resolve => { finishDisconnect = resolve; }));
+    let reconnect!: Promise<boolean>;
+    ble.onBleJoystickDisconnect(() => { reconnect = ble.bleJoystickConnect(device.id); });
+    notifications[0](new Error('Characteristic monitor failed'), null);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(device.cancelConnection).toHaveBeenCalledOnce();
+    expect(manager.connectToDevice).toHaveBeenCalledOnce();
+    expect(ble.isBleJoystickConnected()).toBe(false);
+    await expect(ble.sendBleCommand({ stop_scan_map: {} })).rejects.toThrow('not connected');
+
+    finishDisconnect();
+    expect(await reconnect).toBe(true);
+    expect(manager.connectToDevice).toHaveBeenCalledTimes(2);
+    notifications[0](new Error('Late old monitor error'), null);
+    expect(ble.isBleJoystickConnected()).toBe(true);
+    expect(device.cancelConnection).toHaveBeenCalledOnce();
+  });
+
+  it('releases a stalled write queue without sending a late mapping command after its timeout', async () => {
+    const { device, writes } = fakeDevice();
+    manager.connectToDevice.mockResolvedValue(device);
+    await ble.bleJoystickConnect(device.id);
+    let releaseWrite!: () => void;
+    device.writeCharacteristicWithoutResponseForService.mockImplementationOnce(() =>
+      new Promise<void>(resolve => { releaseWrite = resolve; }));
+    const move = ble.bleJoystickMove({ x_w: -1.25, y_v: -1.25, z_g: 0 });
+    await vi.advanceTimersByTimeAsync(0);
+    const stop = ble.sendBleCommand({ stop_scan_map: { value: false } });
+    const failedStop = expect(stop).rejects.toThrow('not connected');
+    const cleanup = ble.bleJoystickStopAndDisconnect();
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(ble.isBleJoystickConnected()).toBe(false);
+    expect(device.cancelConnection).toHaveBeenCalledOnce();
+    await Promise.all([move, failedStop, cleanup]);
+    expect(await ble.bleJoystickConnect(device.id)).toBe(true);
+    releaseWrite();
+    await vi.runAllTimersAsync();
+    expect(writes).toEqual([]);
+    expect(device.writeCharacteristicWithoutResponseForService).toHaveBeenCalledTimes(1);
   });
 
   it('old disconnect/notify callbacks and queued moves cannot affect a reconnected mower', async () => {

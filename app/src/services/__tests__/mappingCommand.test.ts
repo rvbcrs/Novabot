@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { MapSaveRejectedError, sendMappingCommand } from '../mappingCommand';
+import { MapSaveRejectedError, MappingCommandTimeoutError, MAPPING_RESPONSE_TIMEOUT_MS, sendMappingCommand } from '../mappingCommand';
 import type { BleRespond } from '../bleFrameAssembler';
 import { isMappingLoopClosed, scanStartPoint } from '../../utils/mapPoints';
 
@@ -32,6 +32,37 @@ it('does not report a timed-out save as successful or accept another command', a
   const check = expect(save).rejects.toThrow('No confirmation');
   await vi.advanceTimersByTimeAsync(100);
   await check;
+  expect(t.unsubscribe).toHaveBeenCalledOnce();
+});
+
+it.each(['stop_scan_map_respond', 'quit_mapping_mode_respond', 'save_map_respond', 'auto_recharge_respond', 'start_assistant_build_map_respond'])(
+  'allows the firmware service budget before failing %s', async response => {
+    vi.useFakeTimers();
+    const t = transport();
+    const sent = vi.fn(async () => {});
+    const confirmed = vi.fn();
+    const pending = sendMappingCommand(response, sent, t.subscribe).then(confirmed);
+    // Firmware can use 2s service discovery + 30s response wait. Previously
+    // stop/save/quit gave up after 20/12/5s despite a successful queued reply.
+    await vi.advanceTimersByTimeAsync(32000);
+    expect(confirmed).not.toHaveBeenCalled();
+    t.emit({ result: 0, value: response === 'save_map_respond' ? 0 : null }, response);
+    await pending;
+    expect(confirmed).toHaveBeenCalledOnce();
+    expect(sent).toHaveBeenCalledOnce();
+    expect(t.unsubscribe).toHaveBeenCalledOnce();
+  },
+);
+
+it('identifies an exhausted response deadline without resending an unconfirmed save', async () => {
+  vi.useFakeTimers();
+  const t = transport();
+  const sent = vi.fn(async () => {});
+  const save = sendMappingCommand('save_map_respond', sent, t.subscribe);
+  const check = expect(save).rejects.toBeInstanceOf(MappingCommandTimeoutError);
+  await vi.advanceTimersByTimeAsync(MAPPING_RESPONSE_TIMEOUT_MS);
+  await check;
+  expect(sent).toHaveBeenCalledOnce();
   expect(t.unsubscribe).toHaveBeenCalledOnce();
 });
 

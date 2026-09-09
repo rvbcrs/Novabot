@@ -8,6 +8,19 @@ import { ApiClient, ApiError, isUnsupportedFirmwareError } from '../api';
  * een gewone Error.
  */
 describe('ApiClient unsupported_firmware mapping', () => {
+  it('shows the area-limit explanation and does not classify it as a legacy-fallback trigger', async () => {
+    const message = 'Select only map0–map4; later slots trigger firmware error 125.';
+    vi.stubGlobal('fetch', async () => new Response(JSON.stringify({
+      ok: false, reason: 'unsupported_mowing_area', error: message,
+    }), { status: 422 }));
+    const api = new ApiClient('http://server');
+    let caught: unknown;
+    try { await api.sendCommand('SN', { start_navigation: { area: 100001 } }); }
+    catch (err) { caught = err; }
+    expect(caught).toBeInstanceOf(ApiError);
+    expect((caught as Error).message).toBe(message);
+    expect(isUnsupportedFirmwareError(caught)).toBe(false);
+  });
   afterEach(() => {
     vi.restoreAllMocks();
   });

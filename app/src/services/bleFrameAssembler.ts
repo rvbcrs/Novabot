@@ -30,6 +30,9 @@ export interface BleTelemetry {
   position?: { x: number; y: number };
   orientation?: number;
   closedCycle?: boolean;
+  satellites?: number;
+  localized?: boolean;
+  batteryPercent?: number;
 }
 
 /** Stock mqtt_node api_report{,2}_state_all_by_ble sends 20-byte bb/cc packets.
@@ -46,6 +49,10 @@ export function parseBleTelemetry(raw: Uint8Array): BleTelemetry | null {
         y: (raw[18] + raw[19] / 100) * (raw[15] & 0x01 ? -1 : 1),
       },
       closedCycle: (raw[8] & 0x01) !== 0,
+      // api_report_state_all_by_ble. These flags do not encode RTK fix quality.
+      satellites: raw[4],
+      localized: raw[7] <= 1 ? raw[7] === 1 : undefined,
+      batteryPercent: raw[10] <= 100 ? raw[10] : undefined,
     };
   }
   if (raw[0] === 0x63 && raw[1] === 0x63) {

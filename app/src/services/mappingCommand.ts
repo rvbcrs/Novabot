@@ -1,5 +1,15 @@
 import type { BleRespond } from './bleFrameAssembler';
 
+// mqtt_node waits up to 2s for its ROS service and 30s for the result.
+// Leave room for BLE framing; a shorter deadline can race a successful save.
+export const MAPPING_RESPONSE_TIMEOUT_MS = 45000;
+
+export class MappingCommandTimeoutError extends Error {
+  constructor(response: string) {
+    super(`No confirmation from mower (${response}). Check Bluetooth before continuing; saving has not been confirmed.`);
+  }
+}
+
 /** Explicit firmware rejection: this recording cannot be saved unchanged. */
 export class MapSaveRejectedError extends Error {
   constructor(code: number) {
@@ -17,7 +27,7 @@ export function sendMappingCommand(
   response: string,
   send: () => Promise<void>,
   subscribe: (listener: (reply: BleRespond) => void) => () => void,
-  timeoutMs: number,
+  timeoutMs: number = MAPPING_RESPONSE_TIMEOUT_MS,
   expected: { type?: unknown; cmd_num?: unknown } = {},
 ): Promise<BleRespond> {
   return new Promise((resolve, reject) => {
@@ -33,9 +43,7 @@ export function sendMappingCommand(
       if (error) reject(error);
       else if (acknowledged) resolve(acknowledged);
     };
-    const timer = setTimeout(() => finish(new Error(
-      `No confirmation from mower (${response}). Check Bluetooth before continuing; saving has not been confirmed.`,
-    )), timeoutMs);
+    const timer = setTimeout(() => finish(new MappingCommandTimeoutError(response)), timeoutMs);
     unsubscribe = subscribe(reply => {
       if (reply.command !== response) return;
       const data = reply.data as { result?: unknown; value?: unknown; type?: unknown; cmd_num?: unknown } | null;

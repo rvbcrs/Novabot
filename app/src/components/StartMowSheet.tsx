@@ -519,7 +519,10 @@ export function StartMowSheet({
         activeMapId: selectedMap?.mapId ?? null,
       });
       onClose();
-    } catch (err) { console.log('[StartMow] ERROR:', err); }
+    } catch (err) {
+      console.log('[StartMow] ERROR:', err);
+      appAlertCompat.alert(t('error') || 'Error', err instanceof Error ? err.message : 'Could not start mowing.');
+    }
     setStarting(false);
   };
 

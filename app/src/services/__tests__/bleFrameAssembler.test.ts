@@ -90,10 +90,27 @@ describe('parseBleTelemetry', () => {
     for (const [sign, x, y] of [[0, 12.34, 0.56], [0x10, -12.34, 0.56], [1, 12.34, -0.56], [0x11, -12.34, -0.56]]) {
       raw[15] = sign;
       raw[8] = 0x10; // channel closed alone does not close a work polygon
-      expect(parseBleTelemetry(raw)).toEqual({ position: { x, y }, closedCycle: false });
+      expect(parseBleTelemetry(raw)).toMatchObject({ position: { x, y }, closedCycle: false });
       raw[8] = 0x11;
       expect(parseBleTelemetry(raw)?.closedCycle).toBe(true);
     }
+  });
+
+  it('decodes live bb status at the firmware offsets without inventing RTK quality', () => {
+    const raw = new Uint8Array(20);
+    raw.set([0x62, 0x62, 9, 1, 28, 9, 9, 1, 0, 9, 76]);
+    expect(parseBleTelemetry(raw)).toEqual({
+      position: { x: 0, y: 0 }, closedCycle: false,
+      satellites: 28, localized: true, batteryPercent: 76,
+    });
+    raw[7] = 0;
+    raw[10] = 0;
+    expect(parseBleTelemetry(raw)).toMatchObject({ localized: false, batteryPercent: 0 });
+    raw[7] = 2;
+    raw[10] = 255;
+    expect(parseBleTelemetry(raw)).toMatchObject({
+      position: { x: 0, y: 0 }, localized: undefined, batteryPercent: undefined,
+    });
   });
 
   it('decodes cc heading in radians, without inventing a position', () => {

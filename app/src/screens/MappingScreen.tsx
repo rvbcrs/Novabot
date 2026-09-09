@@ -23,6 +23,7 @@ import {
   ScrollView,
   Modal,
   BackHandler,
+  AppState,
 } from 'react-native';
 import { appAlert, appAlertCompat } from '../context/AppAlertContext';
 import { Ionicons } from '@expo/vector-icons';
@@ -48,11 +49,12 @@ import {
   bleJoystickConnect,
   bleJoystickStart, bleJoystickMove, bleJoystickStop,
   isBleJoystickConnected, onBleJoystickDisconnect, onBleRespond, onBleTelemetry, type BleTelemetry, scanForDevices, sendBleCommand, type ScannedDevice,
-  bleJoystickStopAndDisconnect,
+  bleJoystickStopAndDisconnect, bleJoystickDisconnect,
 } from '../services/ble';
 import { readMapsCache, writeMapsCache, normalizeCachedMaps, mergePendingMaps, type CachedMap } from '../services/mapsCache';
 import { markPendingMapSync } from '../services/pendingMapSync';
-import { MapSaveRejectedError, sendMappingCommand } from '../services/mappingCommand';
+import { MAPPING_RESPONSE_TIMEOUT_MS, MappingCommandTimeoutError, MapSaveRejectedError, sendMappingCommand } from '../services/mappingCommand';
+import { stopOnAppBlur } from '../services/mappingAppState';
 import { scanStartPoint, isMappingLoopClosed } from '../utils/mapPoints';
 import { findMappingOverlapIds } from '../utils/mappingOverlap';
 import { pointInPolygon } from '../utils/mapEditGeometry';
@@ -139,6 +141,12 @@ const BUILD_TYPE_META: Record<MapBuildType, { label: string; icon: string; color
 };
 
 export default function MappingScreen() {
+  const { activeMower } = useActiveMower();
+  // A -> B -> A is a new session: old asynchronous commands keep unmounted refs.
+  return <MowerMappingScreen key={activeMower?.sn ?? ''} />;
+}
+
+function MowerMappingScreen() {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
   const { devices } = useMowerState();
@@ -362,6 +370,13 @@ export default function MappingScreen() {
 
   // ── Detect closed cycle: mower sensor OR proximity of last point to first point ──
   const useBlePosition = bleConnected || mappingMode === 'manual';
+  const mappingGps = useBlePosition ? (bleConnected ? bleTelemetry.satellites ?? '?' : '?') : sensors.gps_satellites ?? '?';
+  const mappingLoc = useBlePosition
+    ? (bleConnected && bleTelemetry.localized != null ? (bleTelemetry.localized ? 'OK' : 'WAIT') : '?')
+    : `${locQuality}%`;
+  const mappingBattery = useBlePosition
+    ? (bleConnected && bleTelemetry.batteryPercent != null ? `${bleTelemetry.batteryPercent}%` : '?')
+    : `${battery}%`;
   const ifClosedCycle = useBlePosition
     ? bleTelemetry.closedCycle === true
     : sensors.if_closed_cycle === '1';
@@ -560,6 +575,9 @@ export default function MappingScreen() {
     autoDockRequestedRef.current = false;
   }), [navigation, stopJoystick]);
 
+  // Opening Android quick settings does not blur the navigation screen.
+  useEffect(() => stopOnAppBlur(AppState, stopJoystick, Platform.OS === 'android'), [stopJoystick]);
+
   // A command-level busy flag leaves gaps between phases. Lock the whole action.
   const runMappingAction = useCallback(async (action: () => Promise<void>) => {
     if (actionInFlightRef.current || !screenActiveRef.current || activeSnRef.current !== sn) return;
@@ -588,12 +606,12 @@ export default function MappingScreen() {
         // An erase can be rejected if the mower already stopped; still try quit.
         await sendMappingCommand('stop_erase_map_respond',
           () => sendBleCommand({ stop_erase_map: { cmd_num: cmdNumRef.current++ } }),
-          onBleRespond, 5000).catch(error => console.warn('[Mapping] Discard:', error));
+          onBleRespond, MAPPING_RESPONSE_TIMEOUT_MS).catch(error => console.warn('[Mapping] Discard:', error));
       }
       if (!screenActiveRef.current || activeSnRef.current !== operationSn) return;
       await sendMappingCommand('quit_mapping_mode_respond',
         () => sendBleCommand({ quit_mapping_mode: { value: true, cmd_num: cmdNumRef.current++ } }),
-        onBleRespond, 5000);
+        onBleRespond, MAPPING_RESPONSE_TIMEOUT_MS);
       if (!screenActiveRef.current || activeSnRef.current !== operationSn) return;
       if (returnToSetup) {
         setMappingState('idle');
@@ -605,6 +623,12 @@ export default function MappingScreen() {
       navigation.goBack();
     } catch (error) {
       if (!screenActiveRef.current || activeSnRef.current !== operationSn) return;
+      if (error instanceof MappingCommandTimeoutError) {
+        bleOwnerSnRef.current = null;
+        setBleConnected(false);
+        await bleJoystickDisconnect();
+        if (!screenActiveRef.current || activeSnRef.current !== operationSn) return;
+      }
       const message = 'The mower has not confirmed leaving mapping mode. Reconnect Bluetooth and try Close mapping again.';
       setSaveRejectedMessage(message);
       setMappingState('commandFailed');
@@ -643,6 +667,12 @@ export default function MappingScreen() {
     } catch (error) {
       if (!screenActiveRef.current || activeSnRef.current !== sn) return false;
       console.warn(`[Mapping] ${label} failed`, error);
+      if (error instanceof MappingCommandTimeoutError) {
+        bleOwnerSnRef.current = null;
+        setBleConnected(false);
+        await bleJoystickDisconnect();
+        if (!screenActiveRef.current || activeSnRef.current !== sn) return false;
+      }
       // The save is already confirmed; a deferred upload is not a failed save.
       if ('get_map_outline' in command) return false;
       if (error instanceof MapSaveRejectedError) {
@@ -910,7 +940,7 @@ export default function MappingScreen() {
     // add_scan_map and crashes (error 140, novabot_mapping dies).
     if (!await sendCommand(
       { start_assistant_build_map: { type: 0, cmd_num: cmdNumRef.current++ } },
-      'start_assistant_build_map (manual session)',
+      'start_assistant_build_map (manual session)', MAPPING_RESPONSE_TIMEOUT_MS,
     )) return;
     setMapBuildType('unicom');
     setLastSaved(null);
@@ -944,7 +974,7 @@ export default function MappingScreen() {
             }
 
             // Clean up any stale mapping state from a previous session
-            if (!await sendCommand({ quit_mapping_mode: { value: 1, cmd_num: cmdNumRef.current++ } }, 'quit_mapping_mode (cleanup)', 5000)) return;
+            if (!await sendCommand({ quit_mapping_mode: { value: 1, cmd_num: cmdNumRef.current++ } }, 'quit_mapping_mode (cleanup)', MAPPING_RESPONSE_TIMEOUT_MS)) return;
             setMappingMode('manual');
             setMappingState('preMapping');
           }),
@@ -969,7 +999,7 @@ export default function MappingScreen() {
             setBleTelemetry({});
             setTrailPoints([]);
             lastTrailRef.current = null;
-            if (!await sendCommand({ start_assistant_build_map: { type: 2, cmd_num: cmdNumRef.current++ } }, 'start_assistant_build_map')) return;
+            if (!await sendCommand({ start_assistant_build_map: { type: 2, cmd_num: cmdNumRef.current++ } }, 'start_assistant_build_map', MAPPING_RESPONSE_TIMEOUT_MS)) return;
             setMappingMode('autonomous');
             setElapsed(0);
             setMappingState('mapping');
@@ -1056,9 +1086,9 @@ export default function MappingScreen() {
     setElapsed(0);
     const scanType = buildTypeToScanType(mapBuildType);
     if (existingWorkMapCount === 0) {
-      if (!await sendCommand({ start_scan_map: { model: 'manual', mapName: 'map0', type: 0, cmd_num: cmdNumRef.current++ } }, 'start_scan_map', 45000)) return;
+      if (!await sendCommand({ start_scan_map: { model: 'manual', mapName: 'map0', type: 0, cmd_num: cmdNumRef.current++ } }, 'start_scan_map', MAPPING_RESPONSE_TIMEOUT_MS)) return;
     } else {
-      if (!await sendCommand({ add_scan_map: { model: 'manual', mapName: wireMapName, type: scanType, cmd_num: cmdNumRef.current++ } }, 'add_scan_map', 45000)) return;
+      if (!await sendCommand({ add_scan_map: { model: 'manual', mapName: wireMapName, type: scanType, cmd_num: cmdNumRef.current++ } }, 'add_scan_map', MAPPING_RESPONSE_TIMEOUT_MS)) return;
     }
     console.log(`[Mapping] Recording started (${existingWorkMapCount === 0 ? 'start' : 'add'}_scan_map, map: ${mapName}, type: ${scanType}, buildType: ${mapBuildType}, ${existingWorkMapCount} existing)`);
 
@@ -1102,7 +1132,7 @@ export default function MappingScreen() {
     setMappingState('stopping');
     const stopped = await sendCommand(
       { stop_scan_map: { value: isUnicom, cmd_num: cmdNumRef.current++ } },
-      'stop_scan_map', 20000,
+      'stop_scan_map', MAPPING_RESPONSE_TIMEOUT_MS,
     );
     if (!stopped) return;
     await new Promise(r => setTimeout(r, 500));
@@ -1114,7 +1144,7 @@ export default function MappingScreen() {
     for (const type of isUnicom ? [1] : [0, 1]) {
       const saved = await sendCommand(
         { save_map: { mapName: saveMapName, type, cmd_num: cmdNumRef.current++ } },
-        `save_map (${type === 0 ? 'sub' : 'total'})`, 12000,
+        `save_map (${type === 0 ? 'sub' : 'total'})`, MAPPING_RESPONSE_TIMEOUT_MS,
       );
       if (!saved) return;
       if (type === 0) await new Promise(r => setTimeout(r, 500));
@@ -1383,14 +1413,14 @@ export default function MappingScreen() {
     try {
       const positionSaved = await sendCommand(
         { save_recharge_pos: { mapName: 'map0', cmd_num: cmdNumRef.current++ } },
-        'save_recharge_pos', 20000,
+        'save_recharge_pos', MAPPING_RESPONSE_TIMEOUT_MS,
       );
       if (!positionSaved || !isCurrent()) return;
       await new Promise(r => setTimeout(r, 500));
       if (!isCurrent()) return;
       const saved = await sendCommand(
         { save_map: { mapName: 'map0', type: 1, cmd_num: cmdNumRef.current++ } },
-        'save_map (post-recharge total)', 12000,
+        'save_map (post-recharge total)', MAPPING_RESPONSE_TIMEOUT_MS,
       );
       if (!saved || !isCurrent()) return;
       if (operationSn) void markPendingMapSync(operationSn);
@@ -1536,10 +1566,7 @@ export default function MappingScreen() {
               )}
             </View>
 
-            {/* Resume banner — surfaces only when the mower reports an
-                active mapping/edit flag. Lets users explicitly decide
-                whether to resume vs start a fresh session, instead of
-                being auto-skipped past the chooser. */}
+            {/* An external recording has no known map name/type on this phone. */}
             {isMappingActive && (
               <View style={[styles.card, { borderColor: colors.amber, borderWidth: 1 }]}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
@@ -1549,17 +1576,19 @@ export default function MappingScreen() {
                       {t('mappingSessionDetected', undefined) || 'Mapping session in progress'}
                     </Text>
                     <Text style={[styles.modeBtnSub, { color: colors.textDim }]}>
-                      {t('mappingSessionResumeHint', undefined) ||
-                        'The mower is still in mapping mode. Pick a type below to continue, or cancel from the mower.'}
+                      This phone cannot recover the original recording details. Close the existing session before starting again; its unsaved recording will be discarded.
                     </Text>
                   </View>
                   <TouchableOpacity
-                    onPress={() => setMappingState('mapping')}
+                    disabled={busy || bleConnecting}
+                    onPress={async () => {
+                      if (await connectBleJoystick() === 'connected') await exitMapping(false, true);
+                    }}
                     style={[styles.modeBtn, { paddingHorizontal: 12, paddingVertical: 8 }]}
                     activeOpacity={0.7}
                   >
                     <Text style={[styles.modeBtnTitle, { color: colors.amber, fontSize: 12 }]}>
-                      {t('resume', undefined) || 'Resume'}
+                      Close session
                     </Text>
                   </TouchableOpacity>
                 </View>
@@ -1751,8 +1780,8 @@ export default function MappingScreen() {
               ]}>
                 BLE: {bleConnected ? 'OK' : 'OFF'}
               </Text>
-              <Text style={styles.sensorChip}>Loc: {locQuality}%</Text>
-              <Text style={styles.sensorChip}>Bat: {battery}%</Text>
+              <Text style={styles.sensorChip}>Loc: {mappingLoc}</Text>
+              <Text style={styles.sensorChip}>Bat: {mappingBattery}</Text>
             </View>
           </View>
 
@@ -1890,17 +1919,18 @@ export default function MappingScreen() {
                 <Text style={[styles.sensorChip, { backgroundColor: bleConnected ? 'rgba(0,212,170,0.15)' : 'rgba(239,68,68,0.15)', color: bleConnected ? colors.emerald : colors.red }]}>
                   BLE: {bleConnected ? 'OK' : bleConnecting ? '...' : 'OFF'}
                 </Text>
+                {/* BLE status stays live offline; its GPS flag is not an RTK fix quality. */}
                 <Text style={styles.sensorChip}>
-                  GPS: {sensors.gps_satellites ?? '?'}
+                  GPS: {mappingGps}
                 </Text>
                 <Text style={styles.sensorChip}>
-                  Loc: {locQuality}%
+                  Loc: {mappingLoc}
                 </Text>
                 <Text style={styles.sensorChip}>
-                  Bat: {battery}%
+                  Bat: {mappingBattery}
                 </Text>
-                <Text style={[styles.sensorChip, { color: rtkFix.color, fontWeight: '700' }]}>
-                  RTK: {rtkFix.label}
+                <Text style={[styles.sensorChip, { color: useBlePosition ? colors.textMuted : rtkFix.color, fontWeight: '700' }]}>
+                  RTK: {useBlePosition ? '?' : rtkFix.label}
                 </Text>
                 {closedCycleSeen && (
                   <Text style={[styles.sensorChip, styles.closedChip,
@@ -2069,7 +2099,7 @@ export default function MappingScreen() {
                   MQTT: {mowerOnline ? 'OK' : 'OFF'}
                 </Text>
                 <Text style={styles.sensorChip}>
-                  Bat: {battery}%
+                  Bat: {mappingBattery}
                 </Text>
                 {parseInt(sensors.error_status ?? '0', 10) > 0 && (
                   <Text style={[styles.sensorChip, { backgroundColor: 'rgba(239,68,68,0.15)', color: colors.red }]}>
@@ -2170,7 +2200,7 @@ export default function MappingScreen() {
                   void runAutoDock(
                     () => sendMappingCommand('auto_recharge_respond',
                       () => sendBleCommand({ auto_recharge: { cmd_num: cmdNumRef.current++ } }),
-                      onBleRespond, 10000).then(() => true),
+                      onBleRespond, MAPPING_RESPONSE_TIMEOUT_MS).then(() => true),
                     () => autoDockStatusRef.current, isActive,
                   ).then(result => {
                     if (!isCurrent() || result === 'accepted') return;

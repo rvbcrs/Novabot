@@ -381,11 +381,11 @@ export class ApiClient {
 
     if (!res.ok) {
       const text = await res.text().catch(() => '');
-      // Firmware gate (409 + reason) → typed error; everything else unchanged.
-      if (res.status === 409) {
+      // Command gates expose their user-facing explanation without raw JSON.
+      if (res.status === 409 || res.status === 422) {
         let body: { reason?: string; msgKey?: string; error?: string } | null = null;
         try { body = JSON.parse(text); } catch { /* not JSON */ }
-        if (body?.reason === UNSUPPORTED_FIRMWARE_REASON) {
+        if (body?.reason === UNSUPPORTED_FIRMWARE_REASON || body?.reason === 'unsupported_mowing_area') {
           throw new ApiError(body.error || `HTTP ${res.status}: ${text}`, res.status, body.reason, body.msgKey);
         }
       }

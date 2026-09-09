@@ -77,8 +77,8 @@ export function StartMowSheet({ open, onClose, sn, onStarted, initialMapId = nul
       toast(`${t('mobile.startMowing')} ✓`, 'success');
       onStarted();
       onClose();
-    } catch {
-      toast(`${t('mobile.startMowing')} failed`, 'error');
+    } catch (err) {
+      toast(err instanceof Error ? err.message : `${t('mobile.startMowing')} failed`, 'error');
     }
     setStarting(false);
   };

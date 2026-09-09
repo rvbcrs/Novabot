@@ -9,6 +9,10 @@
 
 import express from 'express';
 import request from 'supertest';
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import { execFileSync } from 'node:child_process';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Centrale firmware-gate (2026-09-09): deze tests gaan uit van een OpenNova
@@ -73,11 +77,11 @@ vi.mock('../../mqtt/mapSync.js', () => ({
   republishObstacleDetection: vi.fn(),
 }));
 
-vi.mock('../../mqtt/mapConverter.js', () => ({
+vi.mock('../../mqtt/mapConverter.js', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../../mqtt/mapConverter.js')>(),
   generateMapZipFromDb: vi.fn(),
   gpsToLocal: vi.fn(),
   localToGps: vi.fn(),
-  parseMapZip: vi.fn(),
 }));
 
 vi.mock('../../services/demoSimulator.js', () => ({
@@ -88,14 +92,122 @@ vi.mock('../../services/demoSimulator.js', () => ({
 }));
 
 import { dashboardRouter } from '../../routes/dashboard.js';
+import { publishRawToDevice, publishToDevice, publishToTopic } from '../../mqtt/mapSync.js';
 import {
   startScheduleRunner, stopScheduleRunner, __getPendingEdgeForTest, disarmEdgeWatch,
 } from '../../services/scheduleRunner.js';
-import { scheduleRepo } from '../../db/repositories/index.js';
+import { mapRepo, scheduleRepo } from '../../db/repositories/index.js';
 
 const app = express();
 app.use(express.json());
 app.use('/api/dashboard', dashboardRouter);
+
+it.each(['import-zip', 'upload-zip'])('%s preserves nonzero slots from a real ZIP and never replaces existing maps', async (endpoint) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'map-identity-'));
+  try {
+    fs.mkdirSync(path.join(dir, 'csv_file'));
+    const csv = '4,4\n9,4\n9,9\n4,4\n';
+    const files = ['map4_work.csv', 'map4_2_obstacle.csv', 'map4_3_obstacle.csv',
+      'map4tomap0_7_unicom.csv', 'map4tocharge_unicom.csv'];
+    for (const file of files) fs.writeFileSync(path.join(dir, 'csv_file', file), csv);
+    const zipPath = path.join(dir, 'maps.zip');
+    execFileSync('zip', ['-q', '-r', zipPath, 'csv_file'], { cwd: dir });
+    const body = endpoint === 'import-zip'
+      ? { zipPath }
+      : { data: fs.readFileSync(zipPath).toString('base64') };
+    const sn = 'LFIN_IMPORT_IDENTITY';
+    const r = await request(app).post(`/api/dashboard/maps/${sn}/${endpoint}`).send(body);
+    expect(r.status).toBe(200);
+    const expectedFiles = endpoint === 'import-zip' ? files.slice(0, 1) : files;
+    expect(r.body.imported).toBe(expectedFiles.length);
+    const rows = mapRepo.findByMowerSn(sn);
+    expect(rows.map(row => row.file_name).sort()).toEqual([...expectedFiles].sort());
+    for (const row of rows) {
+      expect(row.canonical_name).toBe(row.file_name!.replace(/_work\.csv$|\.csv$/g, ''));
+      expect(JSON.parse(row.map_area!)).toEqual([{ x: 4, y: 4 }, { x: 9, y: 4 }, { x: 9, y: 9 }, { x: 4, y: 4 }]);
+    }
+    const work = rows.find(row => row.map_type === 'work')!;
+    expect(work.canonical_name).toBe('map4');
+    mapRepo.updateName(work.map_id, 'My existing alias');
+    const repeated = await request(app).post(`/api/dashboard/maps/${sn}/${endpoint}`).send(body);
+    expect(repeated.status).toBe(200);
+    expect(repeated.body.imported).toBe(0);
+    expect(mapRepo.findById(work.map_id)?.map_name).toBe('My existing alias');
+    expect(mapRepo.findByMowerSn(sn)).toHaveLength(expectedFiles.length);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+describe('mowing area limit at both command entry points (#114)', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it.each([
+    ['start_navigation', 100000, undefined],
+    ['start_navigation', 100001, false], // map0 + map5, raw plaintext override
+    ['start_navigation', 1111111111, undefined], // all ten slots
+    ['start_run', 100000, false], // legacy fallback must not bypass the limit
+    ['start_navigation', 255, undefined], // reserved vision_test code
+  ])('rejects %s area=%s before any publish', async (key, area, encrypt) => {
+    const r = await request(app).post('/api/dashboard/command/LFIN_AREA_LIMIT')
+      .send({ command: { [key]: { area } }, encrypt });
+    expect(r.status).toBe(422);
+    expect(r.body.reason).toBe('unsupported_mowing_area');
+    expect(publishRawToDevice).not.toHaveBeenCalled();
+    expect(publishToDevice).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { map: 'map5' },
+    { map: 'map005' }, // Python derives the numeric slot, including leading zeros
+    { map: 'map5', area: 0 }, // Python handler treats zero as the fallback
+    { map: 'map5', area: '1e0' }, // Number accepts these, Python int falls back to map5
+    { map: 'map5', area: '1.0' },
+    { map: 'map5', area: '0x1' },
+    { map: 'map5', area: ' ' },
+    { map: 'map0', area: 100001 }, // mixed selection, supported first target
+  ])('rejects unsupported custom scalar selection %j before undocking', async (params) => {
+    const r = await request(app).post('/api/dashboard/extended/LFIN_AREA_LIMIT')
+      .send({ mow_zone: params });
+    expect(r.status).toBe(422);
+    expect(publishToTopic).not.toHaveBeenCalled();
+  });
+
+  it('preserves literal string-zero semantics instead of deriving a slot', async () => {
+    const command = { mow_zone: { map: 'map5', area: '0' } };
+    const r = await request(app).post('/api/dashboard/extended/AREA_LIMIT').send(command);
+    expect(r.status).toBe(200);
+    expect(publishToTopic).toHaveBeenCalledWith('novabot/extended/AREA_LIMIT', command);
+  });
+
+  it('preserves all five supported zones in the command and custom routes', async () => {
+    const command = { start_navigation: { area: 11111 } };
+    const normal = await request(app).post('/api/dashboard/command/AREA_LIMIT').send({ command });
+    expect(normal.status).toBe(200);
+    expect(publishToDevice).toHaveBeenCalledWith('AREA_LIMIT', command);
+    const extendedCommand = { mow_zone: { map: 'map0', area: 11111 } };
+    const extended = await request(app).post('/api/dashboard/extended/AREA_LIMIT').send(extendedCommand);
+    expect(extended.status).toBe(200);
+    expect(publishToTopic).toHaveBeenCalledWith('novabot/extended/AREA_LIMIT', extendedCommand);
+  });
+
+  it.each([
+    { add_scan_map: { mapName: 'map5', type: 0 } },
+    { save_map: { mapName: 'map5', type: 1 } },
+    { start_run: { startWay: 1, workArea: [{ latitude: 1, longitude: 1 }, { latitude: 1, longitude: 2 }, { latitude: 2, longitude: 2 }] } },
+  ])('leaves mapping and polygon commands unchanged: %j', async (command) => {
+    const r = await request(app).post('/api/dashboard/command/AREA_LIMIT').send({ command });
+    expect(r.status).toBe(200);
+    expect(publishToDevice).toHaveBeenCalledWith('AREA_LIMIT', command);
+  });
+
+  it('leaves the custom edge route for later map slots available', async () => {
+    const command = { start_edge_cut: { mapName: 'map5', bladeHeight: 40 } };
+    const r = await request(app).post('/api/dashboard/extended/AREA_LIMIT').send(command);
+    expect(r.status).toBe(200);
+    expect(publishToTopic).toHaveBeenCalledWith('novabot/extended/AREA_LIMIT', command);
+  });
+});
 
 /** Maak een schema dat NU aan de beurt is (echte klok) met vandaag als
  *  rand-dag, en laat de runner het armen. */

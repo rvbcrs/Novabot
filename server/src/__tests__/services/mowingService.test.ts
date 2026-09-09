@@ -118,6 +118,20 @@ describe('startMowing busy guard', () => {
     vi.clearAllMocks();
   });
 
+  it.each([100000, 100001, 1111111111, 255, -1, NaN, 1.5])('rejects unsupported area %s before publishing (#114)', (area) => {
+    const result = startMowing({ sn, area });
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/area code/);
+    expect(publishToDevice).not.toHaveBeenCalled();
+  });
+
+  it('preserves the full supported multi-zone selection', () => {
+    expect(startMowing({ sn, area: 11111 }).ok).toBe(true);
+    expect(publishToDevice).toHaveBeenCalledWith(sn, {
+      start_navigation: expect.objectContaining({ area: 11111 }),
+    });
+  });
+
   it('rejects when mower is already mowing', () => {
     setSensors({ work_status: '92', msg: 'Mode:COVERAGE Work:COVERING' });
     const result = startMowing({ sn });

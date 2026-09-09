@@ -17,6 +17,7 @@ import { deviceCache } from '../mqtt/sensorData.js';
 import { isOpenNovaMower } from '../services/mowerFileCapability.js';
 import { deviceSettingsRepo } from '../db/repositories/deviceSettings.js';
 import { selectParaRepush } from '../mqtt/paraRepush.js';
+import { getMowingAreaError } from './mowingArea.js';
 
 /** Settle time (ms) between re-applying the saved para and start_navigation, so
  *  the mower has processed set_para_info before it captures perception_level /
@@ -131,6 +132,8 @@ export function startMowing(params: MowingParams): MowingResult {
   const pathDirection = params.pathDirection;
 
   if (!sn) return { ok: false, error: 'sn required' };
+  const areaError = getMowingAreaError({ start_navigation: { area } });
+  if (areaError) return { ok: false, error: areaError };
   if (!isDeviceOnline(sn)) return { ok: false, error: 'mower offline' };
   if (isMowerBusy(sn)) {
     console.log(`[MowingService] Reject start: ${sn} already busy (work_status/msg active)`);

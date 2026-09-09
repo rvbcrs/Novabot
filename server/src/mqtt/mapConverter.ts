@@ -154,7 +154,7 @@ function pointsToCsv(points: LocalPoint[]): string {
 /**
  * Genereer de bestandsnaam voor een kaartgebied conform Novabot firmware conventie.
  */
-function areaFileName(area: MapArea): string {
+export function areaFileName(area: MapArea): string {
   switch (area.type) {
     case 'work':
       return `map${area.mapIndex}_work.csv`;

@@ -26,7 +26,7 @@ import { softRestartBlockedReason, sendSoftRestart } from '../services/softResta
 import { gpsSpreadMeters, medianGps, type LatLng } from '../services/reanchorGps.js';
 import { compareMapRowsByCanonical } from '../utils/mapOrder.js';
 import crypto from 'crypto';
-import { generateMapZipFromDb, gpsToLocal, localToGps, parseMapZip, type GpsPoint, type LocalPoint } from '../mqtt/mapConverter.js';
+import { areaFileName, generateMapZipFromDb, gpsToLocal, localToGps, parseMapZip, type GpsPoint, type LocalPoint } from '../mqtt/mapConverter.js';
 import { existsSync, unlinkSync, readFileSync, readdirSync, createReadStream, statSync, watch, mkdirSync, copyFileSync } from 'fs';
 import { isDemoMode, setDemoMode as setDemo, getDemoStatus } from '../services/demoSimulator.js';
 import { resolveMowerIp } from '../services/mowerIpDiscovery.js';
@@ -63,6 +63,7 @@ import { getMowerFileCapability, isOpenNovaMower, UNSUPPORTED_FIRMWARE_REASON, U
 import { getPolygonAnchor } from '../services/anchor.js';
 import { selectParaRepush } from '../mqtt/paraRepush.js';
 import { MOW_PARA_SETTLE_MS } from '../services/mowingService.js';
+import { getMowingAreaError } from '../services/mowingArea.js';
 import {
   startAutoMap, stopAutoMap, getStatus as getAutoMapStatus,
   acceptProposal, rejectProposal,
@@ -2591,14 +2592,15 @@ dashboardRouter.post('/maps/:sn/import-zip', (req: Request, res: Response) => {
         maxY: Math.max(...points.map(p => p.y)),
       };
 
-      mapRepo.create({
+      const added = mapRepo.insertIfMissing({
         map_id: mapId,
         mower_sn: sn,
         map_name: `Imported map${area.mapIndex}`,
+        file_name: areaFileName(area),
         map_area: JSON.stringify(points),
         map_max_min: JSON.stringify(bounds),
       });
-      imported++;
+      if (added) imported++;
     }
 
     res.json({
@@ -2647,28 +2649,31 @@ dashboardRouter.post('/maps/:sn/upload-zip', async (req: Request, res: Response)
         maxY: Math.max(...points.map((p: any) => p.y)),
       };
 
-      mapRepo.create({
+      const added = mapRepo.insertIfMissing({
         map_id: mapId,
         mower_sn: sn,
         map_name: `Uploaded map ${area.mapIndex}`,
+        file_name: areaFileName(area),
         map_area: JSON.stringify(points),
         map_max_min: JSON.stringify(bounds),
       });
-      imported++;
+      if (added) imported++;
     }
 
-    // Also import obstacles
+    // Preserve obstacle sub-indices and channel endpoints, including their IDs.
     for (const area of result.areas) {
       if (area.type === 'work') continue;
-      const mapId = `uploaded_${area.type}${area.mapIndex}_${Date.now()}`;
-      mapRepo.create({
+      const fileName = areaFileName(area);
+      const mapId = `uploaded_${fileName}_${Date.now()}`;
+      const added = mapRepo.insertIfMissing({
         map_id: mapId,
         mower_sn: sn,
         map_name: `${area.type} ${area.mapIndex}`,
+        file_name: fileName,
         map_type: area.type,
         map_area: JSON.stringify(area.points),
       });
-      imported++;
+      if (added) imported++;
     }
 
     console.log(`[MAP-IMPORT] Uploaded ZIP for ${sn}: ${imported} areas imported`);
@@ -3324,6 +3329,12 @@ dashboardRouter.post('/command/:sn', (req: Request, res: Response) => {
 
   if (!command || typeof command !== 'object') {
     res.status(400).json({ error: 'command object is vereist' });
+    return;
+  }
+
+  const areaError = getMowingAreaError(command);
+  if (areaError) {
+    res.status(422).json({ ok: false, reason: 'unsupported_mowing_area', error: areaError });
     return;
   }
 
@@ -4323,6 +4334,11 @@ dashboardRouter.post('/extended/:sn', (req: Request, res: Response) => {
   const command = req.body as Record<string, unknown>;
   if (!command || Object.keys(command).length === 0) {
     res.status(400).json({ ok: false, error: 'command required' });
+    return;
+  }
+  const areaError = getMowingAreaError(command);
+  if (areaError) {
+    res.status(422).json({ ok: false, reason: 'unsupported_mowing_area', error: areaError });
     return;
   }
   if (rejectUnlessOpenNova(sn, res, `Het extended commando ${Object.keys(command)[0]}`)) return;
