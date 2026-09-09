@@ -31,6 +31,9 @@ need_modern_node || { echo "ERROR: node >=18 required for vitest." >&2; exit 1; 
 # Tests gate the beta too — a broken beta on a real device wastes more time than
 # it saves. ponytail: comment out for a code-only beta push when you're in a hurry.
 echo "Running server tests..."
+# Flaky-onderzoek (2026-09-09): elke respons >= 400 in de suite wordt met
+# headers en poortpaar gelogd, zodat een 403/400 "uit het niets" traceerbaar is.
+export TEST_HTTP_TRACE=1 TEST_HTTP_TRACE_FILE="/tmp/novabot-test-http-trace-$(date +%Y%m%d-%H%M%S).log"
 ( cd server && npm test --silent )
 
 # Smoke vóór de push: kan de AI-classifier (onnxruntime, glibc) laden in de

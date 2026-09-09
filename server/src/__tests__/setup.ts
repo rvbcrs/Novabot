@@ -42,6 +42,43 @@ afterAll(() => {
   fs.rmSync(testStorageDir, { recursive: true, force: true });
 });
 
+// ── Opt-in HTTP-tracer voor flaky-onderzoek (TEST_HTTP_TRACE=1) ─────────────
+// Logt elke respons ≥ 400 van ELKE testserver in dit proces met url, body en
+// de stack van de handler, naar $TEST_HTTP_TRACE_FILE (default
+// /tmp/novabot-test-http-trace.log). Idempotent over testbestanden heen.
+if (process.env.TEST_HTTP_TRACE === '1') {
+  const proto = http.ServerResponse.prototype as unknown as { end: (...a: unknown[]) => unknown; __traced?: boolean };
+  if (!proto.__traced) {
+    proto.__traced = true;
+    const origEnd = proto.end;
+    const traceFile = process.env.TEST_HTTP_TRACE_FILE || '/tmp/novabot-test-http-trace.log';
+    proto.end = function (this: http.ServerResponse & { req?: http.IncomingMessage }, ...args: unknown[]) {
+      if (this.statusCode >= 400) {
+        const chunk = typeof args[0] === 'string' || Buffer.isBuffer(args[0]) ? String(args[0]).slice(0, 300) : '';
+        const stack = (new Error().stack ?? '').split('\n').slice(2, 9).map(l => l.trim()).join(' | ');
+        const line = `${new Date().toISOString()} ${this.statusCode} ${this.req?.method} ${this.req?.url} body=${JSON.stringify(chunk)} stack=${stack}\n`;
+        try { fs.appendFileSync(traceFile, line); } catch { /* ignore */ }
+      }
+      return origEnd.apply(this, args as []);
+    };
+    // Client-kant: elke respons ≥ 400 die supertest ONTVANGT, met headers en
+    // poortpaar. Een respons van een vreemd proces (403 zonder 403-pad in de
+    // router) verraadt zich hier via server-headers en remotePort.
+    const origRequest = http.request;
+    (http as unknown as { request: typeof http.request }).request = function (this: unknown, ...a: Parameters<typeof http.request>) {
+      const req = origRequest.apply(this, a);
+      req.on('response', (res) => {
+        if ((res.statusCode ?? 0) >= 400) {
+          const sock = res.socket;
+          const line = `${new Date().toISOString()} CLIENT ${res.statusCode} ${req.method} ${req.path} remote=${sock?.remoteAddress}:${sock?.remotePort} local=${sock?.localPort} headers=${JSON.stringify(res.headers)}\n`;
+          try { fs.appendFileSync(traceFile, line); } catch { /* ignore */ }
+        }
+      });
+      return req;
+    } as typeof http.request;
+  }
+}
+
 beforeAll(() => {
   // better-sqlite3 reports ":memory:" unchanged; any real file path is a bug.
   if (db.name !== ':memory:') {
