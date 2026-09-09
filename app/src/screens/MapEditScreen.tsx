@@ -16,8 +16,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { useI18n } from '../i18n';
 import { useTheme } from '../theme';
-import { ApiClient, type MapEditEntryDto } from '../services/api';
+import { ApiClient, isUnsupportedFirmwareError, type MapEditEntryDto } from '../services/api';
 import { getServerUrl } from '../services/auth';
+import { useMowerState } from '../hooks/useMowerState';
+import { isOpenNovaFirmware } from '../utils/firmwareCapability';
 import {
   applyBrush,
   densifyPolygon,
@@ -55,6 +57,11 @@ export default function MapEditScreen() {
 
   const params = route.params as { sn?: string } | undefined;
   const sn = params?.sn ?? '';
+  // Apply pushes the edited bundle through extended_commands.py, which only
+  // exists on OpenNova custom firmware. Drafting stays possible on stock.
+  const { devices } = useMowerState();
+  const mowerDev = devices.get(sn);
+  const stockFw = !!mowerDev && !isOpenNovaFirmware(mowerDev.firmwareVersion);
 
   const { width: winW, height: winH } = useWindowDimensions();
   const viewW = winW;
@@ -497,9 +504,11 @@ export default function MapEditScreen() {
             } else if (r.reason === 'push_failed' || r.reason === 'bundle_failed') {
               setStatus(t('mapEditPushFailed'));
               setPendingSync(true);
-            } else setStatus(r.reason ?? 'error');
+            } else if (r.reason === 'unsupported_firmware') setStatus(t('requiresOpenNovaFirmware'));
+            else setStatus(r.reason ?? 'error');
           } catch (e) {
-            setStatus(e instanceof Error ? e.message : String(e));
+            if (isUnsupportedFirmwareError(e)) setStatus(t('requiresOpenNovaFirmware'));
+            else setStatus(e instanceof Error ? e.message : String(e));
           } finally {
             setBusy(false);
           }
@@ -529,9 +538,11 @@ export default function MapEditScreen() {
             else if (r.reason === 'push_failed' || r.reason === 'bundle_failed') {
               setStatus(t('mapEditPushFailed'));
               setPendingSync(true);
-            } else setStatus(r.reason ?? 'error');
+            } else if (r.reason === 'unsupported_firmware') setStatus(t('requiresOpenNovaFirmware'));
+            else setStatus(r.reason ?? 'error');
           } catch (e) {
-            setStatus(e instanceof Error ? e.message : String(e));
+            if (isUnsupportedFirmwareError(e)) setStatus(t('requiresOpenNovaFirmware'));
+            else setStatus(e instanceof Error ? e.message : String(e));
           } finally {
             setBusy(false);
           }
@@ -784,7 +795,9 @@ export default function MapEditScreen() {
         style={{ color: c.textDim, paddingHorizontal: 12, paddingTop: 6, fontSize: 12, minHeight: 26 }}
         numberOfLines={3}
       >
-        {tool === 'draw' && drawPoints.length === 0 ? t('mapEditDrawHint') : status}
+        {tool === 'draw' && drawPoints.length === 0
+          ? t('mapEditDrawHint')
+          : status || (stockFw ? t('requiresOpenNovaFirmware') : '')}
       </Text>
 
       {/* Bottom action bar */}
@@ -809,7 +822,12 @@ export default function MapEditScreen() {
         >
           <Text style={{ color: c.text, fontWeight: '600' }}>{t('mapEditReset')}</Text>
         </TouchableOpacity>
-        <TouchableOpacity testID="mapedit-apply" onPress={doApply} disabled={busy} style={btn('#16a34a')}>
+        <TouchableOpacity
+          testID="mapedit-apply"
+          onPress={doApply}
+          disabled={busy || stockFw}
+          style={[btn('#16a34a'), stockFw && { opacity: 0.4 }]}
+        >
           <Text style={{ color: '#fff', fontWeight: '700' }}>
             {pendingSync ? t('mapEditResync') : t('mapEditApply')}
           </Text>

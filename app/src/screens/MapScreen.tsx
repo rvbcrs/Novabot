@@ -58,6 +58,7 @@ import { findMissingChannels } from '../utils/mapChannels';
 import { useI18n } from '../i18n';
 import { Linking } from 'react-native';
 import TerrainView3D from '../components/TerrainView3D';
+import { isOpenNovaFirmware } from '../utils/firmwareCapability';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 const MAP_PADDING = 24;
@@ -348,6 +349,11 @@ export default function MapScreen() {
   const visibleMaps = useMemo(() => maps, [maps]);
 
   const { activeMower: mower } = useActiveMower();
+  // Mapping preflight + 3D terrain both need extended_commands.py (OpenNova
+  // custom firmware only). On stock: skip the preflight call (no 8 s stall)
+  // and hide the 3D view.
+  const stockFw = !!mower && !isOpenNovaFirmware(mower.firmwareVersion);
+  const show3d = view3d && !stockFw;
 
   // Read-only mapping preflight gate. Runs BEFORE navigating into any map
   // action (create / edit-redraw / unicom) so a `block` popup shows here on
@@ -356,6 +362,7 @@ export default function MapScreen() {
   // (never blocks non-OpenNova mowers). Returns true when it's OK to proceed.
   const mappingPreflightGate = async (): Promise<boolean> => {
     const sn = mower?.sn;
+    if (stockFw) return true; // stock firmware: nothing to check, don't stall
     let pf: { verdict: 'ok' | 'warn' | 'block'; reasons: string[] } | null = null;
     try {
       const url = await getServerUrl();
@@ -1152,20 +1159,22 @@ export default function MapScreen() {
 
   return (
     <GestureHandlerRootView style={[styles.container, { paddingTop: insets.top }]}>
-      <ScrollView style={styles.content} scrollEnabled={!view3d} contentContainerStyle={{ paddingBottom: Math.max(insets.bottom + 80, 96) }}>
+      <ScrollView style={styles.content} scrollEnabled={!show3d} contentContainerStyle={{ paddingBottom: Math.max(insets.bottom + 80, 96) }}>
 
 
         <View style={styles.header}>
           <Text style={styles.title}>{t('mapTitle')}</Text>
           <View style={styles.headerActions}>
-            <TouchableOpacity
-              onPress={() => setView3d(v => !v)}
-              style={styles.toolbarMenuButton}
-              activeOpacity={0.82}
-              accessibilityLabel={view3d ? (t('map2dView', undefined) || '2D-kaart') : (t('map3dView', undefined) || '3D-weergave')}
-            >
-              <Ionicons name={view3d ? 'map-outline' : 'cube-outline'} size={16} color={colors.text} />
-            </TouchableOpacity>
+            {!stockFw && (
+              <TouchableOpacity
+                onPress={() => setView3d(v => !v)}
+                style={styles.toolbarMenuButton}
+                activeOpacity={0.82}
+                accessibilityLabel={view3d ? (t('map2dView', undefined) || '2D-kaart') : (t('map3dView', undefined) || '3D-weergave')}
+              >
+                <Ionicons name={view3d ? 'map-outline' : 'cube-outline'} size={16} color={colors.text} />
+              </TouchableOpacity>
+            )}
             <TouchableOpacity
               onPress={handleHeaderActionsMenu}
               style={styles.toolbarMenuButton}
@@ -1267,14 +1276,14 @@ export default function MapScreen() {
         )}
 
         {/* 3D terrain view */}
-        {view3d && (
+        {show3d && (
           <View style={{ height: 420 }}>
             <TerrainView3D sn={mower?.sn ?? ''} />
           </View>
         )}
 
         {/* SVG Map with pan + zoom */}
-        {!view3d && bounds && (
+        {!show3d && bounds && (
           <View style={styles.mapExperience}>
             <View style={styles.mapContainer}>
               {selectedWorkMap && (

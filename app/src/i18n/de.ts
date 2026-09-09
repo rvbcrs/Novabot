@@ -12,6 +12,8 @@ export default {
   rainResumeBody: 'Bald wird Regen erwartet. Trotzdem fortsetzen und Regen für diese Sitzung ignorieren? Andernfalls bleibt der Mäher an der Ladestation.',
   rainIgnoreResume: 'Regen ignorieren & fortsetzen',
   bladesNotSpinning: 'Mäher fährt, aber die Messer drehen sich NICHT - prüfe den Schneidkopf / die Höhe, oder starte den Mäher neu',
+  // Shared stock-firmware explanation (server 409 reason 'unsupported_firmware').
+  requiresOpenNovaFirmware: 'Erfordert OpenNova Custom-Firmware. Die Standard-Firmware kann diesen Befehl nicht empfangen.',
   cancel: 'Abbrechen', save: 'Speichern', delete: 'Löschen', confirm: 'Bestätigen',
   error: 'Fehler', ok: 'OK', loading: 'Laden...', offline: 'Offline', online: 'Online',
   connected: 'Verbunden', disconnected: 'Getrennt',

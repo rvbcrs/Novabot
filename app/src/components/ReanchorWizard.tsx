@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Modal, View, Text, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { ApiClient, ReanchorStatus } from '../services/api';
+import { ApiClient, ReanchorStatus, isUnsupportedFirmwareError } from '../services/api';
 import { getServerUrl } from '../services/auth';
 import { fixQualityLabel } from '../utils/fixQuality';
 import ManualJoystick from './ManualJoystick';
@@ -115,7 +115,9 @@ export default function ReanchorWizard({ visible, sn, sensors, onClose }: Props)
       if (!r.ok) { setErr(r.error ?? t('reanchorStartFailed')); return; }
       setRunning(true);
     } catch (e) {
-      setErr(e instanceof Error ? e.message : t('reanchorStartFailed'));
+      // Server firmware gate (409): explain instead of dumping the raw error.
+      if (isUnsupportedFirmwareError(e)) setErr(t('requiresOpenNovaFirmware'));
+      else setErr(e instanceof Error ? e.message : t('reanchorStartFailed'));
     }
   }
 
@@ -132,7 +134,9 @@ export default function ReanchorWizard({ visible, sn, sensors, onClose }: Props)
       if (!r.ok) { setErr(r.error ?? t('reanchorStartFailed')); return; }
       setStatus((s) => (s ? { ...s, phase: 'dock', msgKey: 'reanchorMsgDock', message: '' } : s));
     } catch (e) {
-      setErr(e instanceof Error ? e.message : t('reanchorStartFailed'));
+      // Server firmware gate (409): explain instead of dumping the raw error.
+      if (isUnsupportedFirmwareError(e)) setErr(t('requiresOpenNovaFirmware'));
+      else setErr(e instanceof Error ? e.message : t('reanchorStartFailed'));
     }
   }
 
@@ -145,7 +149,8 @@ export default function ReanchorWizard({ visible, sn, sensors, onClose }: Props)
       if (!r.ok) { setErr(r.error ?? t('reanchorVerifyFailedErr')); return; }
       setRunning(true); // poll the verify result the same way
     } catch (e) {
-      setErr(e instanceof Error ? e.message : t('reanchorVerifyFailedErr'));
+      if (isUnsupportedFirmwareError(e)) setErr(t('requiresOpenNovaFirmware'));
+      else setErr(e instanceof Error ? e.message : t('reanchorVerifyFailedErr'));
     }
   }
 

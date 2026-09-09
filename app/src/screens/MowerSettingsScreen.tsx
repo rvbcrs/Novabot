@@ -36,8 +36,9 @@ import { useHeadlightBrightness } from '../hooks/useHeadlightBrightness';
 import { useI18n } from '../i18n';
 import * as Localization from 'expo-localization';
 import { getSocket } from '../services/socket';
-import { ApiClient } from '../services/api';
+import { ApiClient, isUnsupportedFirmwareError } from '../services/api';
 import { getServerUrl } from '../services/auth';
+import { isOpenNovaFirmware } from '../utils/firmwareCapability';
 
 // Cutting height: 20-90 in steps of 10 (displayed as 2-9 cm, matches Flutter slider)
 const HEIGHT_VALUES = [20, 30, 40, 50, 60, 70, 80, 90];
@@ -133,6 +134,10 @@ export default function MowerSettingsScreen() {
   const { activeMower: mower, activeMowerSn } = useActiveMower();
   const mowerSn = activeMowerSn ?? '';
   const mowerOnline = mower?.online ?? false;
+  // Seam-fix, recalibrate charging pose and frame invalidate all go through
+  // extended_commands.py (OpenNova custom firmware only); the server answers
+  // 409 unsupported_firmware on stock, so disable them up front and explain.
+  const stockFw = !isOpenNovaFirmware(mower?.firmwareVersion);
 
   // Request a fresh para frame so the sync chip can compare against live values.
   useEffect(() => {
@@ -378,18 +383,32 @@ export default function MowerSettingsScreen() {
 
   const saveSeamFix = useCallback(async (patch: Partial<{ enabled: boolean; edgeMarginCm: number }>) => {
     if (!mowerSn) return;
+    if (stockFw) {
+      appAlertCompat.alert(t('msBorderTitle'), t('requiresOpenNovaFirmware'));
+      return;
+    }
+    const prev = { enabled: seamFixEnabled, edgeMarginCm: seamFixMargin };
     if (patch.enabled !== undefined) setSeamFixEnabled(patch.enabled);
     if (patch.edgeMarginCm !== undefined) setSeamFixMargin(patch.edgeMarginCm);
     try {
       const url = await getServerUrl();
       if (!url) return;
-      await fetch(`${url}/api/dashboard/seam-fix/${encodeURIComponent(mowerSn)}`, {
+      const res = await fetch(`${url}/api/dashboard/seam-fix/${encodeURIComponent(mowerSn)}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(patch),
       });
+      if (res.status === 409) {
+        // Server firmware gate: undo the optimistic toggle, no fake success.
+        const body = await res.json().catch(() => null) as { reason?: string } | null;
+        if (body?.reason === 'unsupported_firmware') {
+          setSeamFixEnabled(prev.enabled);
+          setSeamFixMargin(prev.edgeMarginCm);
+          appAlertCompat.alert(t('msBorderTitle'), t('requiresOpenNovaFirmware'));
+        }
+      }
     } catch { /* ignore */ }
-  }, [mowerSn]);
+  }, [mowerSn, stockFw, seamFixEnabled, seamFixMargin, t]);
 
   const saveRain = useCallback(async (patch: Partial<{
     enabled: boolean; thresholdMm: number; thresholdProbability: number; lookaheadHours: number;
@@ -414,6 +433,10 @@ export default function MowerSettingsScreen() {
 
   const handleRecalibrateChargingPose = useCallback(async () => {
     if (!mowerSn) return;
+    if (stockFw) {
+      appAlertCompat.alert(t('msRecalTitle'), t('requiresOpenNovaFirmware'));
+      return;
+    }
     appAlertCompat.alert(
       'Recalibrate Charging Pose?',
       'This overwrites map_info.json (charger x/y/θ) on the mower with the CURRENT pose. The mower MUST be physically on its dock and charging, otherwise the mower will place the charger at the wrong spot and future coverage tasks will drift.',
@@ -462,13 +485,16 @@ export default function MowerSettingsScreen() {
                 appAlertCompat.alert('Recalibrate failed', resp.error ?? 'unknown error');
               }
             } catch (e) {
-              appAlertCompat.alert('Recalibrate failed', e instanceof Error ? e.message : String(e));
+              appAlertCompat.alert(
+                'Recalibrate failed',
+                isUnsupportedFirmwareError(e) ? t('requiresOpenNovaFirmware') : e instanceof Error ? e.message : String(e),
+              );
             }
           },
         },
       ],
     );
-  }, [mowerSn]);
+  }, [mowerSn, stockFw, t]);
 
   const handleSoftRestart = useCallback(async () => {
     if (!mowerSn) return;
@@ -508,6 +534,10 @@ export default function MowerSettingsScreen() {
 
   const handleReanchorInvalidate = useCallback(() => {
     if (!mowerSn) return;
+    if (stockFw) {
+      appAlertCompat.alert(t('msReanchorTitle'), t('requiresOpenNovaFirmware'));
+      return;
+    }
     appAlertCompat.alert(
       'Re-anchor frame?',
       'Marks the localization frame as INVALID so you can re-anchor it. Use only when the mower is mis-localized (its position drifts off the dock). After confirming, open the Home screen and tap the re-anchor prompt to run the wizard.',
@@ -527,13 +557,16 @@ export default function MowerSettingsScreen() {
                 appAlertCompat.alert('Failed', r.error ?? 'unknown error');
               }
             } catch (e) {
-              appAlertCompat.alert('Failed', e instanceof Error ? e.message : String(e));
+              appAlertCompat.alert(
+                'Failed',
+                isUnsupportedFirmwareError(e) ? t('requiresOpenNovaFirmware') : e instanceof Error ? e.message : String(e),
+              );
             }
           },
         },
       ],
     );
-  }, [mowerSn]);
+  }, [mowerSn, stockFw, t]);
 
   if (!mowerSn) {
     return (
@@ -747,24 +780,27 @@ export default function MowerSettingsScreen() {
           <Text style={styles.sectionTitle}>{t('msSectionBorder')}</Text>
           <View style={styles.card}>
             <TouchableOpacity
-              style={styles.optionRow}
+              style={[styles.optionRow, stockFw && { opacity: 0.5 }]}
               onPress={() => void saveSeamFix({ enabled: !seamFixEnabled })}
               activeOpacity={0.7}
+              disabled={stockFw}
             >
               <Ionicons name="grid-outline" size={20} color={seamFixEnabled ? colors.emerald : colors.textMuted} />
               <View style={{ flex: 1, marginLeft: 12 }}>
                 <Text style={styles.optionLabel}>{t('msBorderTitle')}</Text>
                 <Text style={styles.optionSub}>
-                  {seamFixEnabled
-                    ? t('msBorderOnSub', { cm: seamFixMargin | 0 })
-                    : t('msBorderOffSub')}
+                  {stockFw
+                    ? t('requiresOpenNovaFirmware')
+                    : seamFixEnabled
+                      ? t('msBorderOnSub', { cm: seamFixMargin | 0 })
+                      : t('msBorderOffSub')}
                 </Text>
               </View>
               <View style={[styles.toggle, seamFixEnabled && styles.toggleActive]}>
                 <View style={[styles.toggleThumb, seamFixEnabled && styles.toggleThumbActive]} />
               </View>
             </TouchableOpacity>
-            {seamFixEnabled && (
+            {seamFixEnabled && !stockFw && (
               <>
                 <View style={styles.sliderRow}>
                   <Text style={styles.sliderLabel}>{t('msBorderEdgeMargin')}</Text>
@@ -835,14 +871,15 @@ export default function MowerSettingsScreen() {
           <Text style={[styles.sectionTitle, styles.sectionTitleDanger]}>{t('msSectionRecovery')}</Text>
           <View style={[styles.card, styles.cardDanger]}>
             <TouchableOpacity
-              style={styles.optionRow}
+              style={[styles.optionRow, stockFw && { opacity: 0.5 }]}
               onPress={() => handleRecalibrateChargingPose()}
               activeOpacity={0.7}
+              disabled={stockFw}
             >
               <Ionicons name="compass-outline" size={20} color={colors.red} />
               <View style={{ flex: 1, marginLeft: 12 }}>
                 <Text style={styles.optionLabel}>{t('msRecalTitle')}</Text>
-                <Text style={styles.optionSub}>{t('msRecalSub')}</Text>
+                <Text style={styles.optionSub}>{stockFw ? t('requiresOpenNovaFirmware') : t('msRecalSub')}</Text>
               </View>
               <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
             </TouchableOpacity>
@@ -859,14 +896,15 @@ export default function MowerSettingsScreen() {
               <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
             </TouchableOpacity>
             <TouchableOpacity
-              style={styles.optionRow}
+              style={[styles.optionRow, stockFw && { opacity: 0.5 }]}
               onPress={() => handleReanchorInvalidate()}
               activeOpacity={0.7}
+              disabled={stockFw}
             >
               <Ionicons name="navigate-circle-outline" size={20} color={colors.red} />
               <View style={{ flex: 1, marginLeft: 12 }}>
                 <Text style={styles.optionLabel}>{t('msReanchorTitle')}</Text>
-                <Text style={styles.optionSub}>{t('msReanchorSub')}</Text>
+                <Text style={styles.optionSub}>{stockFw ? t('requiresOpenNovaFirmware') : t('msReanchorSub')}</Text>
               </View>
               <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
             </TouchableOpacity>

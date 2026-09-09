@@ -13,6 +13,8 @@ export default {
   rainResumeBody: 'Rain is expected soon. Resume anyway and ignore rain for this session? Otherwise the mower stays on the dock.',
   rainIgnoreResume: 'Ignore rain & resume',
   // ── Common ────────────────────────────────────────────────────
+  // Shared stock-firmware explanation (server 409 reason 'unsupported_firmware').
+  requiresOpenNovaFirmware: "Requires OpenNova custom firmware. Stock firmware can't receive this command.",
   cancel: 'Cancel',
   save: 'Save',
   delete: 'Delete',

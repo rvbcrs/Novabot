@@ -13,6 +13,8 @@ export default {
   rainResumeBody: 'Er wordt binnenkort regen verwacht. Toch hervatten en regen voor deze sessie negeren? Anders blijft de maaier op het laadstation.',
   rainIgnoreResume: 'Regen negeren & hervatten',
   // ── Common ────────────────────────────────────────────────────
+  // Shared stock-firmware explanation (server 409 reason 'unsupported_firmware').
+  requiresOpenNovaFirmware: 'Vereist OpenNova custom firmware. Stock firmware kan dit commando niet ontvangen.',
   cancel: 'Annuleren',
   save: 'Opslaan',
   delete: 'Verwijderen',

@@ -32,7 +32,7 @@ import { isOpenNovaFirmware } from '../utils/firmwareCapability';
 import { fixQualityLabel } from '../utils/fixQuality';
 import { parseFinishedAreas, prefixedAreaId, parseCoveringPoints } from '../utils/coverPathProgress';
 import { MowerPickerChevron } from '../components/MowerPickerChevron';
-import { ApiClient, type MapData, type Schedule } from '../services/api';
+import { ApiClient, isUnsupportedFirmwareError, type MapData, type Schedule } from '../services/api';
 import { getServerUrl, getToken } from '../services/auth';
 import { flushPendingMapSync } from '../services/pendingMapSync';
 import { DemoBanner } from '../components/DemoBanner';
@@ -607,6 +607,9 @@ export default function HomeScreen() {
   // the re-anchor wizard until a successful dock clears the server-side flag.
   const frameUnvalidated =
     (devices.get(mower?.sn ?? '')?.sensors?.frame_unvalidated ?? '0') === '1';
+  // Re-anchor (and the other extended_commands flows) only exist on OpenNova
+  // custom firmware; on stock the server answers 409 unsupported_firmware.
+  const mowerStockFw = !isOpenNovaFirmware(mower?.firmwareVersion);
   // Auto-close the re-anchor wizard once the server clears the flag (a
   // successful dock re-anchored the frame) so the modal does not hang open.
   useEffect(() => {
@@ -1581,6 +1584,14 @@ export default function HomeScreen() {
 
     // If only one charger, pair directly. Otherwise let user pick.
     const doPair = async (chargerSn: string) => {
+      // Stock firmware has no extended_commands.py: the LoRa query would only
+      // time out, the mismatch branch would fire and the server would cache a
+      // pairing that never happened. Be honest instead of pretending.
+      const pairDev = devices.get(mowerSn);
+      if (pairDev && !isOpenNovaFirmware(pairDev.firmwareVersion)) {
+        appAlertCompat.alert(t('loraMismatch'), t('requiresOpenNovaFirmware'));
+        return;
+      }
       try {
         const url = await getServerUrl();
         if (!url) return;
@@ -1623,7 +1634,7 @@ export default function HomeScreen() {
                     setDeviceSets(res.sets ?? []);
                     appAlertCompat.alert(t('paired'), `Mower paired with charger.\nLoRa updated to addr=${chargerLora.address} ch=${mowerChannel}`);
                   } catch (e: any) {
-                    appAlertCompat.alert(t('error'), e.message ?? 'Pairing failed');
+                    appAlertCompat.alert(t('error'), isUnsupportedFirmwareError(e) ? t('requiresOpenNovaFirmware') : (e.message ?? 'Pairing failed'));
                   }
                 },
               },
@@ -1910,7 +1921,7 @@ export default function HomeScreen() {
         {/* Post-restore re-anchor banner (non-blocking): the map frame for THIS
             mower is unvalidated after a bundle restore. Go-home stays locked,
             but the app and other mowers remain usable. Tap to open the wizard. */}
-        {frameUnvalidated && (
+        {frameUnvalidated && !mowerStockFw && (
           <TouchableOpacity
             activeOpacity={0.8}
             onPress={() => setShowReanchor(true)}
@@ -2947,7 +2958,7 @@ export default function HomeScreen() {
           The server clears frame_unvalidated only when the docked position lands
           back on the origin. */}
       <ReanchorWizard
-        visible={showReanchor}
+        visible={showReanchor && !mowerStockFw}
         sn={mower.sn}
         sensors={devices.get(mower.sn)?.sensors}
         onClose={() => setShowReanchor(false)}
@@ -3134,7 +3145,7 @@ export default function HomeScreen() {
         items.push({
           label: 'Edges only',
           subtitle: edgeNeedsCustomFw
-            ? 'Requires OpenNova custom firmware'
+            ? t('requiresOpenNovaFirmware')
             : 'Drive along the boundary once (boundary follow)',
           icon: 'ellipse-outline',
           disabled: edgeNeedsCustomFw,

@@ -23,8 +23,10 @@ import {
   type DeviceType,
   type ProvisionPhase,
 } from '../services/ble';
-import { ApiClient } from '../services/api';
+import { ApiClient, isUnsupportedFirmwareError } from '../services/api';
 import { getServerUrl } from '../services/auth';
+import { useMowerState } from '../hooks/useMowerState';
+import { isOpenNovaFirmware } from '../utils/firmwareCapability';
 
 type Props = NativeStackScreenProps<RootStackParams, 'Provision'>;
 
@@ -70,6 +72,11 @@ export default function ProvisionScreen({ navigation, route }: Props) {
     },
   );
   const [bleLogs, setBleLogs] = useState<string[]>([]);
+  // Live MQTT state, only used to learn the firmware version of a device that
+  // is already online (ref, so the provisioning callback keeps its deps).
+  const { devices: liveDevices } = useMowerState();
+  const liveDevicesRef = useRef(liveDevices);
+  liveDevicesRef.current = liveDevices;
   const [allDone, setAllDone] = useState(false);
   const [allSuccess, setAllSuccess] = useState(false);
   const [otaStatus, setOtaStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
@@ -233,12 +240,22 @@ export default function ProvisionScreen({ navigation, route }: Props) {
             if (!sn) continue;
             const forThis = dev.type === 'charger' ? chargerLoraParams : mowerLoraParams;
             if (!forThis) continue;
+            // Only skip when the firmware is KNOWN to be stock; unknown version
+            // keeps the old best-effort send.
+            const liveFw = liveDevicesRef.current.get(sn)?.firmwareVersion;
+            if (dev.type === 'mower' && liveFw && !isOpenNovaFirmware(liveFw)) {
+              bleLog(`[LoRa] ${sn} runs stock firmware (${liveFw}) — skipping extended set_lora_info, BLE path only`);
+              continue;
+            }
             try {
               await api.sendExtended(sn, {
                 set_lora_info: { addr: forThis.addr, channel: forThis.channel },
               });
               bleLog(`[LoRa] extended_commands set_lora_info sent to ${sn} (ch=${forThis.channel})`);
-            } catch { /* device may be offline, will rely on BLE path */ }
+            } catch (e) {
+              // device may be offline, will rely on BLE path
+              if (isUnsupportedFirmwareError(e)) bleLog(`[LoRa] ${sn}: server refused set_lora_info (stock firmware), BLE path only`);
+            }
           }
         }
       } catch { /* ignore */ }

@@ -21,7 +21,8 @@ import { appAlertCompat } from '../context/AppAlertContext';
 import { Ionicons } from '@expo/vector-icons';
 import Svg, { Polygon, Polyline, Line, G, Defs, ClipPath } from 'react-native-svg';
 import { useStyles, useTheme, type Colors } from '../theme';
-import { ApiClient, type LocalPoint, type MapData } from '../services/api';
+import { ApiClient, isUnsupportedFirmwareError, type LocalPoint, type MapData } from '../services/api';
+import { isOpenNovaFirmware } from '../utils/firmwareCapability';
 import { getServerUrl } from '../services/auth';
 import { useNavigation } from '@react-navigation/native';
 import { useMowerState } from '../hooks/useMowerState';
@@ -460,16 +461,32 @@ export function StartMowSheet({
       // klassiek starten. Dubbelstart kan niet: is de mow_zone tóch bezig
       // (signaal kwijt), dan wijst de firmware de tweede start af met
       // Error 2 "Already in running task".
-      const phaseBefore = devicesRef.current.get(sn)?.sensors?.mow_zone_phase ?? null;
-      const navResult = await api.mowZone(sn, mowZonePayload);
+      // Stock firmware: het server-gate wijst mow_zone toch af (409
+      // unsupported_firmware) en de 5 s wachttijd is dan zinloos. Direct het
+      // klassieke pad nemen; alleen custom firmware probeert de orchestrator.
+      const mowerDev = devicesRef.current.get(sn);
+      const stockFw = !!mowerDev && !isOpenNovaFirmware(mowerDev.firmwareVersion);
       let mowZoneAlive = false;
-      if (navResult.ok) {
-        const deadline = Date.now() + 5000;
-        while (Date.now() < deadline) {
-          const phase = devicesRef.current.get(sn)?.sensors?.mow_zone_phase ?? null;
-          if (phase !== null && phase !== phaseBefore) { mowZoneAlive = true; break; }
-          await new Promise((resolve) => setTimeout(resolve, 500));
+      if (!stockFw) {
+        const phaseBefore = mowerDev?.sensors?.mow_zone_phase ?? null;
+        let navOk = false;
+        try {
+          navOk = (await api.mowZone(sn, mowZonePayload)).ok;
+        } catch (e) {
+          // Gate-afwijzing = zelfde als "geen fase-update": klassiek starten.
+          if (!isUnsupportedFirmwareError(e)) throw e;
+          console.log('[StartMow] mow_zone unsupported on this firmware — fallback');
         }
+        if (navOk) {
+          const deadline = Date.now() + 5000;
+          while (Date.now() < deadline) {
+            const phase = devicesRef.current.get(sn)?.sensors?.mow_zone_phase ?? null;
+            if (phase !== null && phase !== phaseBefore) { mowZoneAlive = true; break; }
+            await new Promise((resolve) => setTimeout(resolve, 500));
+          }
+        }
+      } else {
+        console.log('[StartMow] stock firmware — skipping mow_zone, classic start');
       }
       if (!mowZoneAlive) {
         // Klassiek pad — exact de pre-mow_zone flow (incl. legacy start_run

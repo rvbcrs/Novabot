@@ -12,6 +12,8 @@ export default {
   rainResumeBody: 'De la pluie est attendue bientôt. Reprendre quand même et ignorer la pluie pour cette session ? Sinon la tondeuse reste sur la station de charge.',
   rainIgnoreResume: 'Ignorer la pluie et reprendre',
   bladesNotSpinning: 'La tondeuse roule mais les lames ne tournent PAS - vérifiez la tête de coupe / la hauteur, ou redémarrez la tondeuse',
+  // Shared stock-firmware explanation (server 409 reason 'unsupported_firmware').
+  requiresOpenNovaFirmware: "Nécessite le firmware personnalisé OpenNova. Le firmware d'origine ne peut pas recevoir cette commande.",
   cancel: 'Annuler', save: 'Enregistrer', delete: 'Supprimer', confirm: 'Confirmer',
   error: 'Erreur', ok: 'OK', loading: 'Chargement...', offline: 'Hors ligne', online: 'En ligne',
   connected: 'Connecté', disconnected: 'Déconnecté',

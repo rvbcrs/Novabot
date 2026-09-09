@@ -19,6 +19,30 @@ export class AuthError extends Error {
   }
 }
 
+/** Structured HTTP error. The server's central firmware gate answers every
+ *  custom-firmware-only route on stock firmware with 409 +
+ *  `{ ok:false, reason:'unsupported_firmware', msgKey, error }`; `request()`
+ *  maps that body onto this class so screens can branch on `reason`. */
+export class ApiError extends Error {
+  status: number;
+  reason?: string;
+  msgKey?: string;
+  constructor(message: string, status: number, reason?: string, msgKey?: string) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.reason = reason;
+    this.msgKey = msgKey;
+  }
+}
+
+export const UNSUPPORTED_FIRMWARE_REASON = 'unsupported_firmware';
+
+/** True when `err` is the server's "needs OpenNova custom firmware" refusal. */
+export function isUnsupportedFirmwareError(err: unknown): err is ApiError {
+  return err instanceof ApiError && err.reason === UNSUPPORTED_FIRMWARE_REASON;
+}
+
 export interface CommandResult {
   ok: boolean;
   command: string;
@@ -357,6 +381,14 @@ export class ApiClient {
 
     if (!res.ok) {
       const text = await res.text().catch(() => '');
+      // Firmware gate (409 + reason) → typed error; everything else unchanged.
+      if (res.status === 409) {
+        let body: { reason?: string; msgKey?: string; error?: string } | null = null;
+        try { body = JSON.parse(text); } catch { /* not JSON */ }
+        if (body?.reason === UNSUPPORTED_FIRMWARE_REASON) {
+          throw new ApiError(body.error || `HTTP ${res.status}: ${text}`, res.status, body.reason, body.msgKey);
+        }
+      }
       throw new Error(`HTTP ${res.status}: ${text}`);
     }
 
