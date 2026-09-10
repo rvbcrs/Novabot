@@ -14,6 +14,7 @@ export default {
   bladesNotSpinning: 'Mäher fährt, aber die Messer drehen sich NICHT - prüfe den Schneidkopf / die Höhe, oder starte den Mäher neu',
   // Shared stock-firmware explanation (server 409 reason 'unsupported_firmware').
   requiresOpenNovaFirmware: 'Erfordert OpenNova Custom-Firmware. Die Standard-Firmware kann diesen Befehl nicht empfangen.',
+  mappingLocLost: 'Lokalisierung verloren. Nicht weiterfahren, bis Loc wieder OK ist, sonst schließt sich die Schleife nicht.',
   cancel: 'Abbrechen', save: 'Speichern', delete: 'Löschen', confirm: 'Bestätigen',
   error: 'Fehler', ok: 'OK', loading: 'Laden...', offline: 'Offline', online: 'Online',
   connected: 'Verbunden', disconnected: 'Getrennt',

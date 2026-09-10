@@ -15,6 +15,7 @@ import React, { useState, useCallback, useRef, useEffect } from 'react';
 import {
   View,
   Text,
+  Animated,
   StyleSheet,
   TouchableOpacity,
   ActivityIndicator,
@@ -55,7 +56,7 @@ import { readMapsCache, writeMapsCache, normalizeCachedMaps, mergePendingMaps, t
 import { markPendingMapSync } from '../services/pendingMapSync';
 import { BoundaryNotClosedError, MAPPING_RESPONSE_TIMEOUT_MS, MappingCommandTimeoutError, MapSaveRejectedError, sendMappingCommand } from '../services/mappingCommand';
 import { stopOnAppBlur } from '../services/mappingAppState';
-import { watchMappingPosition } from '../services/mappingTelemetry';
+import { isLocalizationLost, watchMappingPosition } from '../services/mappingTelemetry';
 import { scanStartPoint, isMappingLoopClosed } from '../utils/mapPoints';
 import { findMappingOverlapIds } from '../utils/mappingOverlap';
 import { pointInPolygon } from '../utils/mapEditGeometry';
@@ -400,6 +401,29 @@ function MowerMappingScreen() {
   // ── Mower position from sensor data ──
   const mapPosX = useBlePosition ? bleTelemetry.position?.x?.toString() : sensors.map_position_x;
   const mapPosY = useBlePosition ? bleTelemetry.position?.y?.toString() : sensors.map_position_y;
+
+  // Localisatie-verlies tijdens de opname: opvallend maar niet blokkerend.
+  // Petrov (#114, 2026-09-09): jamming liet Fix/Float/DGPS wisselen, de lus
+  // sloot niet en stop_scan_map werd afgewezen; hij zag het pas bij Stop.
+  // 2 s debounce tegen een enkel vals pakket; knipperende banner via Animated.
+  const locLostNow = (mappingState === 'mapping' || mappingState === 'stopping')
+    && isLocalizationLost({ useBle: useBlePosition, bleLocalized: bleTelemetry.localized, locState, locQuality });
+  const [locLostBanner, setLocLostBanner] = useState(false);
+  useEffect(() => {
+    if (!locLostNow) { setLocLostBanner(false); return; }
+    const t0 = setTimeout(() => { setLocLostBanner(true); console.warn(`[Mapping] ${sn}: localization lost during recording`); }, 2000);
+    return () => clearTimeout(t0);
+  }, [locLostNow, sn]);
+  const locLostPulse = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    if (!locLostBanner) return;
+    const loop = Animated.loop(Animated.sequence([
+      Animated.timing(locLostPulse, { toValue: 0.25, duration: 450, useNativeDriver: true }),
+      Animated.timing(locLostPulse, { toValue: 1, duration: 450, useNativeDriver: true }),
+    ]));
+    loop.start();
+    return () => { loop.stop(); locLostPulse.setValue(1); };
+  }, [locLostBanner, locLostPulse]);
   const mapOrientation = useBlePosition
     ? bleTelemetry.orientation ?? 0
     : parseFloat(sensors.map_position_orientation ?? '0') || 0;
@@ -1499,6 +1523,18 @@ function MowerMappingScreen() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <View style={[styles.container, { paddingTop: insets.top }]}>
         {/* Active sessions leave only after the mower confirms quit. */}
+        {locLostBanner && (
+          <Animated.View pointerEvents="none" accessibilityLiveRegion="assertive" style={{
+            position: 'absolute', top: insets.top + 60, left: 12, right: 12, zIndex: 50, opacity: locLostPulse,
+            flexDirection: 'row', alignItems: 'center', gap: 8, padding: 10, borderRadius: 10,
+            backgroundColor: '#b91c1c', borderWidth: 1, borderColor: '#fca5a5',
+          }}>
+            <Ionicons name="warning" size={18} color="#fff" />
+            <Text style={{ flex: 1, color: '#fff', fontWeight: '700', fontSize: 13, lineHeight: 16 }}>
+              {t('mappingLocLost', undefined) || 'Localization lost. Stop driving until Loc is OK again, or the loop will not close.'}
+            </Text>
+          </Animated.View>
+        )}
         <View style={[styles.header,
           workRecording && { height: 56 * Dimensions.get('window').fontScale },
           workRecording && hasMapOverlap && { backgroundColor: 'rgba(245,158,11,0.12)' }]}>

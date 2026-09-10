@@ -15,6 +15,7 @@ export default {
   // ── Common ────────────────────────────────────────────────────
   // Shared stock-firmware explanation (server 409 reason 'unsupported_firmware').
   requiresOpenNovaFirmware: 'Vereist OpenNova custom firmware. Stock firmware kan dit commando niet ontvangen.',
+  mappingLocLost: 'Localisatie weg. Stop met rijden tot Loc weer OK is, anders sluit de lus niet.',
   cancel: 'Annuleren',
   save: 'Opslaan',
   delete: 'Verwijderen',

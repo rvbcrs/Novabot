@@ -14,6 +14,7 @@ export default {
   bladesNotSpinning: 'La tondeuse roule mais les lames ne tournent PAS - vérifiez la tête de coupe / la hauteur, ou redémarrez la tondeuse',
   // Shared stock-firmware explanation (server 409 reason 'unsupported_firmware').
   requiresOpenNovaFirmware: "Nécessite le firmware personnalisé OpenNova. Le firmware d'origine ne peut pas recevoir cette commande.",
+  mappingLocLost: "Localisation perdue. Arrêtez de rouler jusqu'à ce que Loc soit de nouveau OK, sinon la boucle ne se fermera pas.",
   cancel: 'Annuler', save: 'Enregistrer', delete: 'Supprimer', confirm: 'Confirmer',
   error: 'Erreur', ok: 'OK', loading: 'Chargement...', offline: 'Hors ligne', online: 'En ligne',
   connected: 'Connecté', disconnected: 'Déconnecté',
