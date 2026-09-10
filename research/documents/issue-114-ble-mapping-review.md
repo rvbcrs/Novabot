@@ -4,6 +4,59 @@ Scope: the reported missing `stop_scan_map_respond`, failed close, open-loop
 display after a long offline walk, and the separate map5+ mowing failure.
 Issue: <https://github.com/rvbcrs/Novabot/issues/114>.
 
+## Follow-up: the 1.1.26 capture
+
+[Comment 5618086252](https://github.com/rvbcrs/Novabot/issues/114#issuecomment-5618086252)
+contains older mower logs from September 9 and a new Android capture from
+September 10. They must not be treated as one synchronized recording.
+
+The new capture confirms a successful map0 recording and charger save:
+
+| App event, September 10 | Evidence |
+| --- | --- |
+| 14:26:21.293 | Start acknowledged with the recording origin; recording begins. |
+| 14:27:57.100 to 14:27:58.631 | Stop sent once, then its BLE response arrives with result 0, in 1.531 seconds. |
+| 14:28:01.809 and 14:28:05.005 | Both save phases return result 0 / value 0. |
+| 14:28:47.233 | Charger pose acknowledged, distance 0.325 m and orient_flag true. |
+| 14:28:50.815 | Post-charger total save also returns result 0 / value 0. |
+
+Position receive counts increase from 1 to 159, about 0.95 packets per second.
+One coordinate remains unchanged for 7.286 seconds while packets continue;
+this is not RX silence and does not prove a localization fault without matching
+movement evidence. Near Stop, the reported position is about 0.244 m from the
+acknowledged recording origin. No timeout or six-second recovery occurs in this
+capture. The final disconnect follows the completed save and outline request.
+
+This verifies the normal BLE save path on the affected mower. It does not yet
+exercise the new recovery from missing notifications, establish WiFi-switch
+behavior, or verify the uploaded geometry and subsequent mowing for this map.
+Recording lasted about 96 seconds, so it is not a long-walk validation.
+
+The older failure is now better explained: the new mapping log records
+`if_cycle_=0` at September 9, 17:46:57.039286513, between the previously supplied
+stop command and its result 1 response. In the local v6.0.2 mapping binary,
+`NovabotMapping::recordingControlCallback` checks that flag for a work-area stop
+and returns failure with `the area start pose to end pose dist is to large`.
+The callback executing at that instant supports an open-loop rejection rather
+than command-number deduplication for that attempt. Why its failure response
+was not accepted by the app remains unresolved.
+
+Handler evidence: `research/firmware/mower_firmware_v6.0.2/install/novabot_mapping/lib/novabot_mapping/novabot_mapping`,
+ELF symbol 0x400c0, rejection branch 0x40338-0x40350, embedded source
+`novabot_mapping.cpp:841`; SHA-256
+`f87445973c193d013b1c59bc398de4262dce91963528f1d21b779c7115fb02c7`.
+The affected mower's actual binary hash has not been supplied. The recorder's
+closure calculation is also visible in `savemap_caller_decompiled.c:13745`.
+Retry rereads the closure flag; it does not repair the polygon. The rejection
+leaves the stop-request flag unset, so an active recording may still gain closure
+from subsequent valid positions. That flag alone does not prove it is recording.
+
+Separate warnings in the Android capture concern missing Firebase initialization
+for push registration, edge-to-edge system-bar calls, and duplicate Three.js
+loading. The push error is caught and aborts token registration; this path has no
+BLE calls. These warnings do not establish a cause for mapping failure. The
+repeated push attempts warrant a separate configuration/lifecycle follow-up.
+
 ## Follow-up: the 1.1.25 field test, reviewed 2026-09-10
 
 The new evidence narrows the problem rather than confirming the earlier timing
