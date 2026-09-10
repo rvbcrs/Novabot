@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { MapSaveRejectedError, MappingCommandTimeoutError, MAPPING_RESPONSE_TIMEOUT_MS, sendMappingCommand, BoundaryNotClosedError } from '../mappingCommand';
+import { MapSaveRejectedError, MappingCommandTimeoutError, MAPPING_RESPONSE_TIMEOUT_MS, sendMappingCommand, StopRefusedError } from '../mappingCommand';
 import type { BleRespond } from '../bleFrameAssembler';
 import { isMappingLoopClosed, scanStartPoint } from '../../utils/mapPoints';
 
@@ -89,8 +89,8 @@ it('surfaces the reported immediate stop rejection without timing out or advanci
   const stop = sendMappingCommand('stop_scan_map_respond', async () => {
     t.emit({ result: 1, value: null }, 'stop_scan_map_respond');
   }, t.subscribe).then(save);
-  await expect(stop).rejects.toBeInstanceOf(BoundaryNotClosedError);
-  await expect(stop).rejects.toThrow('not closed');
+  await expect(stop).rejects.toBeInstanceOf(StopRefusedError);
+  await expect(stop).rejects.toThrow('refused to finish');
   expect(save).not.toHaveBeenCalled();
   expect(t.unsubscribe).toHaveBeenCalledOnce();
 });

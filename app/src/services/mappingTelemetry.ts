@@ -28,7 +28,9 @@ export function isLocalizationLost(input: {
   locQuality?: number;
 }): boolean {
   if (input.useBle) return input.bleLocalized === false;
-  const state = input.locState ?? '';
+  // De server levert vertaalde labels ("Not initialized") of ruwe enums
+  // (NOT_INITIALIZED), afhankelijk van het pad; beide normaliseren.
+  const state = (input.locState ?? '').trim().toUpperCase().replace(/[\s-]+/g, '_');
   if (state === 'NOT_INITIALIZED') return true;
   return typeof input.locQuality === 'number' && input.locQuality > 0 && input.locQuality < 50;
 }

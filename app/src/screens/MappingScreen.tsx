@@ -54,7 +54,7 @@ import {
 } from '../services/ble';
 import { readMapsCache, writeMapsCache, normalizeCachedMaps, mergePendingMaps, type CachedMap } from '../services/mapsCache';
 import { markPendingMapSync } from '../services/pendingMapSync';
-import { BoundaryNotClosedError, MAPPING_RESPONSE_TIMEOUT_MS, MappingCommandTimeoutError, MapSaveRejectedError, sendMappingCommand } from '../services/mappingCommand';
+import { StopRefusedError, MAPPING_RESPONSE_TIMEOUT_MS, MappingCommandTimeoutError, MapSaveRejectedError, sendMappingCommand } from '../services/mappingCommand';
 import { stopOnAppBlur } from '../services/mappingAppState';
 import { isLocalizationLost, watchMappingPosition } from '../services/mappingTelemetry';
 import { scanStartPoint, isMappingLoopClosed } from '../utils/mapPoints';
@@ -191,7 +191,7 @@ function MowerMappingScreen() {
       if (mappingState === 'cancelled' || mappingState === 'done') {
         setMappingState('idle');
         setMappingMode(null);
-        setFailedCommand(null);
+        setFailedCommand(null); setStopRefused(false);
         setBusy(false);
         setElapsed(0);
       }
@@ -204,6 +204,8 @@ function MowerMappingScreen() {
   const [saveRejectedMessage, setSaveRejectedMessage] = useState('');
   // Laatst gefaalde mapping-commando; bepaalt of 'Try again' zinvol is.
   const [failedCommand, setFailedCommand] = useState<string | null>(null);
+  // stop_scan_map result:1: maaier neemt waarschijnlijk nog op; gebruiker kiest.
+  const [stopRefused, setStopRefused] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [activeMapName, setActiveMapName] = useState('map0');
   const [chargerAction, setChargerAction] = useState<'autoDock' | 'savePosition' | null>(null);
@@ -354,7 +356,7 @@ function MowerMappingScreen() {
     setActiveMapName('map0');
     setMappingState('idle');
     setMappingMode(null);
-    setFailedCommand(null);
+    setFailedCommand(null); setStopRefused(false);
     actionInFlightRef.current = null;
     setBusy(false);
     savingPositionInFlightRef.current = false;
@@ -385,6 +387,11 @@ function MowerMappingScreen() {
   const ifClosedCycle = useBlePosition
     ? bleTelemetry.closedCycle === true
     : sensors.if_closed_cycle === '1';
+  // Is de eigen vlag van de maaier beschikbaar? Dan telt alleen die: de app's
+  // nabijheidsdrempel (1,5 m) is ruimer dan wat de firmware als gesloten ziet.
+  const mowerClosedFlagKnown = useBlePosition
+    ? bleTelemetry.closedCycle !== undefined
+    : sensors.if_closed_cycle !== undefined;
 
   useEffect(() => {
     if (mappingState !== 'mapping' || closedCycleSeen) return;
@@ -395,8 +402,9 @@ function MowerMappingScreen() {
       return;
     }
 
-    if (isMappingLoopClosed(trailPoints)) setClosedCycleSeen(true);
-  }, [ifClosedCycle, mappingState, closedCycleSeen, trailPoints]);
+    // Method 2 (proximity) only when the mower gives no flag at all.
+    if (!mowerClosedFlagKnown && isMappingLoopClosed(trailPoints)) setClosedCycleSeen(true);
+  }, [ifClosedCycle, mowerClosedFlagKnown, mappingState, closedCycleSeen, trailPoints]);
 
   // ── Mower position from sensor data ──
   const mapPosX = useBlePosition ? bleTelemetry.position?.x?.toString() : sensors.map_position_x;
@@ -629,7 +637,7 @@ function MowerMappingScreen() {
 
   const exitMapping = useCallback(async (discard = false, returnToSetup = false) => runMappingAction(async () => {
     const operationSn = sn;
-    setFailedCommand(null);
+    setFailedCommand(null); setStopRefused(false);
     stopJoystick();
     autoDockRequestedRef.current = false;
     try {
@@ -673,7 +681,7 @@ function MowerMappingScreen() {
     command: Record<string, unknown>, label: string, responseTimeout?: number,
   ): Promise<boolean> => {
     if (!screenActiveRef.current || activeSnRef.current !== sn) return false;
-    setFailedCommand(null);
+    setFailedCommand(null); setStopRefused(false);
     setBusy(true);
     try {
       if (responseTimeout) {
@@ -706,11 +714,18 @@ function MowerMappingScreen() {
       }
       // The save is already confirmed; a deferred upload is not a failed save.
       if ('get_map_outline' in command) return false;
-      if (error instanceof BoundaryNotClosedError) {
-        // Stop refused because the loop is open; the mower is still recording.
-        // Back to the recording so the user can close the loop and stop again.
-        setMappingState('mapping');
-        appAlertCompat.alert('Boundary not closed', error.message);
+      if (error instanceof StopRefusedError) {
+        // Meestal "lus niet gesloten" (maaier neemt nog op), soms een onbereikbare
+        // mapping-service. Niet zelf hervatten: de gebruiker kiest op het
+        // foutscherm (doorgaan / opnieuw stoppen / sluiten). Ring-status reset,
+        // want de maaier vond de lus juist NIET gesloten.
+        stopJoystick();
+        setClosedCycleSeen(false);
+        setStopRefused(true);
+        setFailedCommand('stop_scan_map');
+        setSaveRejectedMessage(error.message);
+        setMappingState('commandFailed');
+        appAlertCompat.alert('Recording not finished', error.message);
       } else if (error instanceof MapSaveRejectedError) {
         // The mower has stopped recording. A rejected polygon cannot resume.
         setSaveRejectedMessage(error.message);
@@ -2139,6 +2154,20 @@ function MowerMappingScreen() {
             <Ionicons name="alert-circle" size={48} color={colors.red} />
             <Text style={styles.centerTitle}>{mappingState === 'saveRejected' ? 'Map not saved' : 'Mapping status not confirmed'}</Text>
             <Text style={styles.centerSub}>{saveRejectedMessage}</Text>
+            {mappingState === 'commandFailed' && stopRefused && (
+              <TouchableOpacity
+                style={[styles.doneBtn, { marginTop: 16 }]}
+                disabled={busy || bleConnecting}
+                onPress={() => runMappingAction(async () => {
+                  // Gebruiker bevestigt dat de maaier nog opneemt; terug de opname in.
+                  if (await connectBleJoystick() !== 'connected') return;
+                  setStopRefused(false);
+                  setMappingState('mapping');
+                })}
+              >
+                <Text style={styles.doneBtnText}>Continue recording</Text>
+              </TouchableOpacity>
+            )}
             {mappingState === 'commandFailed' && failedCommand === 'stop_scan_map' && (
               <TouchableOpacity
                 style={[styles.doneBtn, { marginTop: 16 }]}
