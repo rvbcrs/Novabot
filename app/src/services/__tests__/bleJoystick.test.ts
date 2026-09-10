@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { watchMappingPosition } from '../mappingTelemetry';
 
 const manager = vi.hoisted(() => ({
   connectToDevice: vi.fn(),
@@ -45,6 +46,53 @@ afterEach(async () => {
 });
 
 describe('BLE mapping connection', () => {
+  it('recovers silent position reception despite working writes, stopping before reconnect without replaying a scan or save', async () => {
+    const { device, notifications, writes } = fakeDevice();
+    manager.connectToDevice.mockResolvedValue(device);
+    const logs: string[] = [];
+    ble.setBleLogCallback(line => logs.push(line));
+    await ble.bleJoystickConnect(device.id);
+    const received = vi.fn();
+    const off = ble.onBleTelemetry(received);
+    let recovery: Promise<boolean> | undefined;
+    const recover = vi.fn(() => {
+      recovery = ble.bleJoystickStopAndDisconnect().then(() => ble.bleJoystickConnect(device.id));
+    });
+    const cleanup = watchMappingPosition(ble.onBleTelemetry, recover);
+    const bb = new Uint8Array(20);
+    bb.set([0x62, 0x62]);
+    bb[16] = 10;
+    const notify = (index: number, raw: Uint8Array) => notifications[index](null, {
+      value: Buffer.from(raw).toString('base64'),
+    });
+    notify(0, bb);
+    await vi.advanceTimersByTimeAsync(5000);
+    notify(0, bb); // A stationary mower is still delivering live positions.
+    expect(logs.some(line => line.includes('"packets":2') && line.includes('"unchangedMs":5000'))).toBe(true);
+    await ble.bleJoystickMove({ x_w: 0, y_v: 0.2, z_g: 0 });
+    expect(ble.isBleJoystickConnected()).toBe(true);
+    await vi.advanceTimersByTimeAsync(5000);
+    notify(0, new Uint8Array([0x63, 0x63, ...new Array(18).fill(0)]));
+    expect(recover).not.toHaveBeenCalled();
+    // Heading/working writes/native connected cannot hide missing bb positions.
+    device.cancelConnection.mockImplementation(async () => {
+      expect(writes.at(-1)).toBe('{"stop_move":null}');
+    });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(await recovery).toBe(true);
+    expect(recover).toHaveBeenCalledOnce();
+    expect(manager.connectToDevice).toHaveBeenCalledTimes(2);
+    expect(writes).toHaveLength(2); // Only mst + stop_move, no mapping replay.
+    const before = received.mock.calls.length;
+    notify(0, bb); // An old callback from the same native Device is fenced.
+    expect(received).toHaveBeenCalledTimes(before);
+    bb[16] = 11;
+    notify(2, bb);
+    expect(received.mock.calls.at(-1)?.[0].position).toEqual({ x: 11, y: 0 });
+    cleanup();
+    off();
+  });
+
   it('receives bb/cc and framed responds from both mower characteristics without a server', async () => {
     const { device, notifications } = fakeDevice();
     manager.connectToDevice.mockResolvedValue(device);

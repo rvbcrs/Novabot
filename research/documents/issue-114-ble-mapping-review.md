@@ -4,6 +4,81 @@ Scope: the reported missing `stop_scan_map_respond`, failed close, open-loop
 display after a long offline walk, and the separate map5+ mowing failure.
 Issue: <https://github.com/rvbcrs/Novabot/issues/114>.
 
+## Follow-up: the 1.1.25 field test, reviewed 2026-09-10
+
+The new evidence narrows the problem rather than confirming the earlier timing
+hypothesis. In [the earlier-session log](https://github.com/rvbcrs/Novabot/issues/114#issuecomment-5605958886),
+stop is received at `17:46:57.033995388` and a `result:1,value:null` response is
+generated at `.042716555`, only 8.7 ms later. This is not a 30-second ROS timeout.
+The firmware reports failure; the app showing a timeout means it did not accept
+that reply, rather than proving the command was absent. This snippet belongs to
+the earlier attempt, not the subsequent successful-retry test. GNSS interference
+during the earlier walk is now explicitly confirmed by the reporter.
+
+The [1.1.25 test](https://github.com/rvbcrs/Novabot/issues/114#issuecomment-5607203168)
+contains two outcomes. Manual WiFi reconnection during the first recording was
+followed by a frozen icon/trail while joystick writes continued. The screenshot
+shows BLE OK, 222 points and a 10.4-m gap, then a stop-response timeout. Retry
+saved the map; the reporter then docked and mowed it. The second recording crossed
+an automatic WiFi reconnect, saved immediately, gained a channel, and mowed.
+The retry therefore recovered an actual field session, but uninterrupted live
+positioning remains unreliable.
+
+Checked-in firmware and app source rule out several proposed explanations:
+
+* Manual mapping always reads BLE positions. Normal server reconnect snapshots
+  do not switch it to server trail polling. A changed mower key would erase the
+  trail and recording state, unlike the retained frozen trace in the screenshot.
+* Mapping responses are queued to BLE unconditionally; API `param_2` is payload
+  length, not transport selection (`mqtt_node_decompiled.c:334437–334444`,
+  `334957–334958`, `342408`). The bb/cc timer runs about once per second while
+  BLE is connected, without a WiFi/MQTT gate (`311676–311696`, `311738–311748`).
+* Quick settings triggers the app's joystick stop. Firmware `stop_move` publishes
+  zero velocity and its reply, without disabling telemetry (`324400–324408`).
+* Installed react-native-ble-plx 3.5.1/RxAndroidBle 1.17.2 has no WiFi or native
+  pause/resume branch that intentionally stops notification subscriptions.
+  Duplicating a monitor can reuse its existing stream; a full reconnect recreates
+  the GATT/CCCD subscription. No RX-silence health check is provided.
+
+The confirmed app gap is that working writes and cached/native GATT-connected
+state are accepted indefinitely as BLE health. Missing position notifications
+never triggered recovery until the user attempted Stop, waited 45 seconds and
+retried. Manual recording now watches **position packet arrivals**: after 6 seconds
+without one, it locks other mapping actions, stops joystick motion through the
+existing FIFO, disconnects and reconnects. It keeps the recording state, map name,
+and recorded points, and never resends start/stop-scan/save as part of this
+connection recovery. If reconnect fails, the BLE chip offers a manual reconnect.
+The six seconds are an app recovery threshold, not a firmware delivery guarantee.
+The watcher is armed only while the manual Mapping screen is visible and the
+native app/window has focus. Backgrounding, switching tabs, or opening Android
+quick settings disarms it; returning grants a fresh six seconds. Recovery also
+checks visibility after stopping/disconnecting, and never resumes movement.
+
+Identical coordinates still count as live packets because a stationary mower is
+normal. Firmware bb packets contain cached ROS Pose data with no age/sequence;
+LocOK only checks an available transform (`305330–305342`, `313207–313247`). Thus
+continued bb reception with frozen upstream localization is a different remaining
+possibility. New BLE diagnostic lines include receive count, coordinates,
+unchanged duration, malformed bb payloads, and response result/value. They
+distinguish that case from silence without inventing positions or merging stale
+server history into a BLE recording.
+
+For the earlier `result:1`, obtain the surrounding `novabot_cmd_num`,
+`Received_response`, and `client_Sum` lines too. The API skips its ROS call when
+the global command number matches and reuses `cmd_end_flag` (`342031–342034`);
+a false ROS result also sets failure (`342244–342248`). The two-line grep excerpt
+cannot distinguish those paths. Do not reinterpret result 1 as success.
+
+Validation: 182 app tests and TypeScript pass, including a real BLE-service mock
+scenario with working writes, identical/then absent position packets, stop before
+disconnect, resubscription on the same Device object, and no scan/save replay.
+Android and iOS production Hermes exports pass. The specific Android/peripheral
+trigger of RX silence and this recovery on Petrov's hardware remain unverified.
+Capture Android `adb logcat -v threadtime ReactNativeJS:V '*:S'` during the next
+test alongside the mower's full mqtt_node/mapping logs, rather than only grep
+lines containing command names. No additional long garden walk is needed to
+exercise the manual WiFi-switch scenario; a short controlled recording covers it.
+
 ## Firmware response deadlines and command serialization
 
 `research/ghidra_output/mqtt_node_decompiled.c` is the checked-in firmware

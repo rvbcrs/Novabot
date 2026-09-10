@@ -606,13 +606,17 @@ async function subscribeJoystickNotify(device: Device): Promise<void> {
   const queue = _joystickQueue;
   const chars = await device.characteristicsForService(MOWER_SERVICE);
   if (_joystickDevice !== device || _joystickQueue !== queue) throw new Error('Bluetooth connection changed');
+  let positionPackets = 0;
+  let lastPosition: BleTelemetry['position'];
+  let positionChangedAt = Date.now();
+  let nextPositionLogAt = 0;
   // Stock mower responses can arrive on 0011 (write+notify), telemetry on 0021.
   // Each characteristic has its own frame buffer; their chunks can interleave.
   for (const char of chars.filter(c => c.isNotifiable)) {
     const assembler = new BleFrameAssembler((frame) => {
       const r = parseBleRespond(frame);
       if (!r) return;
-      bleLog(`[BLE-JOY] respond ${r.command}`);
+      bleLog(`[BLE-JOY] respond ${r.command} ${JSON.stringify(r.data ?? null).slice(0, 300)}`);
       for (const cb of _bleRespondListeners) {
         try { cb(r); } catch (e: any) { bleLog(`[BLE-JOY] respond listener error: ${e?.message}`); }
       }
@@ -628,6 +632,23 @@ async function subscribeJoystickNotify(device: Device): Promise<void> {
       if (!value?.value) return;
       const raw = new Uint8Array(Buffer.from(value.value, 'base64'));
       const telemetry = parseBleTelemetry(raw);
+      if (telemetry?.position) {
+        const now = Date.now();
+        positionPackets++;
+        if (lastPosition?.x !== telemetry.position.x || lastPosition?.y !== telemetry.position.y) {
+          positionChangedAt = now;
+          lastPosition = telemetry.position;
+        }
+        // Arrival count distinguishes a silent receiver from live packets whose
+        // upstream localization is unchanged. A stationary mower is valid too.
+        if (now >= nextPositionLogAt) {
+          bleLog(`[BLE-JOY] position ${JSON.stringify({ at: now, packets: positionPackets,
+            ...telemetry.position, unchangedMs: now - positionChangedAt, localized: telemetry.localized })}`);
+          nextPositionLogAt = now + 5000;
+        }
+      } else if (raw[0] === 0x62 && raw[1] === 0x62) {
+        bleLog(`[BLE-JOY] invalid position packet: ${Buffer.from(raw).toString('hex')}`);
+      }
       if (telemetry) {
         for (const cb of _bleTelemetryListeners) {
           try { cb(telemetry); } catch (e: any) { bleLog(`[BLE-JOY] telemetry listener error: ${e?.message}`); }

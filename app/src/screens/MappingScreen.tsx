@@ -28,7 +28,7 @@ import {
 import { appAlert, appAlertCompat } from '../context/AppAlertContext';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useNavigation, usePreventRemove, useRoute } from '@react-navigation/native';
+import { useIsFocused, useNavigation, usePreventRemove, useRoute } from '@react-navigation/native';
 import {
   GestureDetector,
   Gesture,
@@ -55,6 +55,7 @@ import { readMapsCache, writeMapsCache, normalizeCachedMaps, mergePendingMaps, t
 import { markPendingMapSync } from '../services/pendingMapSync';
 import { MAPPING_RESPONSE_TIMEOUT_MS, MappingCommandTimeoutError, MapSaveRejectedError, sendMappingCommand } from '../services/mappingCommand';
 import { stopOnAppBlur } from '../services/mappingAppState';
+import { watchMappingPosition } from '../services/mappingTelemetry';
 import { scanStartPoint, isMappingLoopClosed } from '../utils/mapPoints';
 import { findMappingOverlapIds } from '../utils/mappingOverlap';
 import { pointInPolygon } from '../utils/mapEditGeometry';
@@ -149,6 +150,9 @@ export default function MappingScreen() {
 function MowerMappingScreen() {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
+  const isFocused = useIsFocused();
+  const [appForeground, setAppForeground] = useState(AppState.currentState === 'active');
+  const appForegroundRef = useRef(appForeground);
   const { devices } = useMowerState();
   const experimental = useExperimental();
   const { t } = useI18n();
@@ -576,7 +580,10 @@ function MowerMappingScreen() {
   }), [navigation, stopJoystick]);
 
   // Opening Android quick settings does not blur the navigation screen.
-  useEffect(() => stopOnAppBlur(AppState, stopJoystick, Platform.OS === 'android'), [stopJoystick]);
+  useEffect(() => stopOnAppBlur(AppState, stopJoystick, Platform.OS === 'android', foreground => {
+    appForegroundRef.current = foreground;
+    setAppForeground(foreground);
+  }), [stopJoystick]);
 
   // A command-level busy flag leaves gaps between phases. Lock the whole action.
   const runMappingAction = useCallback(async (action: () => Promise<void>) => {
@@ -825,6 +832,25 @@ function MowerMappingScreen() {
     return 'connected';
   }, [bleConnecting, mower?.sn, sn, targetMac]);
 
+  // A silent notification stream can leave writes working and the trail frozen.
+  useEffect(() => {
+    if (mappingState !== 'mapping' || mappingMode !== 'manual' || !bleConnected || !isFocused || !appForeground) return;
+    return watchMappingPosition(onBleTelemetry, () => {
+      void runMappingAction(async () => {
+        if (!navigation.isFocused() || !appForegroundRef.current) return;
+        console.warn(`[Mapping] ${sn}: no BLE position update for 6s; stopping joystick and reconnecting`);
+        stopJoystick();
+        bleOwnerSnRef.current = null;
+        setBleConnected(false);
+        setBleTelemetry({});
+        setBleStatus('Position updates lost. Reconnecting...');
+        await bleJoystickStopAndDisconnect();
+        if (!screenActiveRef.current || activeSnRef.current !== sn || !navigation.isFocused() || !appForegroundRef.current) return;
+        await connectBleJoystick();
+      });
+    });
+  }, [mappingState, mappingMode, bleConnected, isFocused, appForeground, runMappingAction, stopJoystick, connectBleJoystick, sn, navigation]);
+
   // ── BLE disconnect handler: update UI + auto-reconnect ──
   useEffect(() => {
     let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
@@ -839,12 +865,14 @@ function MowerMappingScreen() {
         if (bleIntervalRef.current) { clearInterval(bleIntervalRef.current); bleIntervalRef.current = null; }
       }
       // Auto-reconnect after 2s if still mapping
-      if (mappingState === 'mapping') {
-        reconnectTimer = setTimeout(() => { void connectBleJoystick(); }, 2000);
+      if (mappingState === 'mapping' && isFocused && appForeground && !actionInFlightRef.current) {
+        reconnectTimer = setTimeout(() => {
+          if (!actionInFlightRef.current && navigation.isFocused() && appForegroundRef.current) void connectBleJoystick();
+        }, 2000);
       }
     });
     return () => { unsubscribe(); clearTimeout(reconnectTimer); };
-  }, [mappingState, connectBleJoystick]);
+  }, [mappingState, connectBleJoystick, isFocused, appForeground, navigation]);
 
   // ── BLE joystick move (updates ref, interval sends) ──
   // x_w = forward/backward speed (from Y axis), y_v = turn speed (from X axis)
@@ -1916,9 +1944,16 @@ function MowerMappingScreen() {
                 <Text style={styles.timerText}>{formatTime(elapsed)}</Text>
               </View>
               <View style={styles.statsChips}>
-                <Text style={[styles.sensorChip, { backgroundColor: bleConnected ? 'rgba(0,212,170,0.15)' : 'rgba(239,68,68,0.15)', color: bleConnected ? colors.emerald : colors.red }]}>
-                  BLE: {bleConnected ? 'OK' : bleConnecting ? '...' : 'OFF'}
-                </Text>
+                <TouchableOpacity
+                  disabled={bleConnected || bleConnecting || busy}
+                  accessibilityRole="button"
+                  accessibilityLabel="Reconnect Bluetooth"
+                  onPress={() => runMappingAction(async () => { await connectBleJoystick(); })}
+                >
+                  <Text style={[styles.sensorChip, { backgroundColor: bleConnected ? 'rgba(0,212,170,0.15)' : 'rgba(239,68,68,0.15)', color: bleConnected ? colors.emerald : colors.red }]}>
+                    {bleConnected ? 'BLE: OK' : bleConnecting ? 'BLE: ...' : 'Reconnect BLE'}
+                  </Text>
+                </TouchableOpacity>
                 {/* BLE status stays live offline; its GPS flag is not an RTK fix quality. */}
                 <Text style={styles.sensorChip}>
                   GPS: {mappingGps}
@@ -1962,7 +1997,7 @@ function MowerMappingScreen() {
                     <Text style={styles.speedText}>{speedMs} m/s</Text>
                   ) : (
                     <Text style={[styles.speedText, { color: colors.textMuted }]}>
-                      Drag to drive
+                      {bleStatus ?? 'Drag to drive'}
                     </Text>
                   )}
                 </View>

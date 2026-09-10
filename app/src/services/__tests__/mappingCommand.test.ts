@@ -83,6 +83,17 @@ it('cleans up on a disconnected BLE write, without continuing the save sequence'
   expect(t.unsubscribe).toHaveBeenCalledOnce();
 });
 
+it('surfaces the reported immediate stop rejection without timing out or advancing to save', async () => {
+  const t = transport();
+  const save = vi.fn();
+  const stop = sendMappingCommand('stop_scan_map_respond', async () => {
+    t.emit({ result: 1, value: null }, 'stop_scan_map_respond');
+  }, t.subscribe).then(save);
+  await expect(stop).rejects.toThrow('Mower rejected stop_scan_map_respond: error 1');
+  expect(save).not.toHaveBeenCalled();
+  expect(t.unsubscribe).toHaveBeenCalledOnce();
+});
+
 it.each([
   [1, 'overlaps an existing work area'],
   [2, 'overlaps an existing channel'],
