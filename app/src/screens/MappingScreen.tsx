@@ -53,7 +53,7 @@ import {
 } from '../services/ble';
 import { readMapsCache, writeMapsCache, normalizeCachedMaps, mergePendingMaps, type CachedMap } from '../services/mapsCache';
 import { markPendingMapSync } from '../services/pendingMapSync';
-import { MAPPING_RESPONSE_TIMEOUT_MS, MappingCommandTimeoutError, MapSaveRejectedError, sendMappingCommand } from '../services/mappingCommand';
+import { BoundaryNotClosedError, MAPPING_RESPONSE_TIMEOUT_MS, MappingCommandTimeoutError, MapSaveRejectedError, sendMappingCommand } from '../services/mappingCommand';
 import { stopOnAppBlur } from '../services/mappingAppState';
 import { watchMappingPosition } from '../services/mappingTelemetry';
 import { scanStartPoint, isMappingLoopClosed } from '../utils/mapPoints';
@@ -682,7 +682,12 @@ function MowerMappingScreen() {
       }
       // The save is already confirmed; a deferred upload is not a failed save.
       if ('get_map_outline' in command) return false;
-      if (error instanceof MapSaveRejectedError) {
+      if (error instanceof BoundaryNotClosedError) {
+        // Stop refused because the loop is open; the mower is still recording.
+        // Back to the recording so the user can close the loop and stop again.
+        setMappingState('mapping');
+        appAlertCompat.alert('Boundary not closed', error.message);
+      } else if (error instanceof MapSaveRejectedError) {
         // The mower has stopped recording. A rejected polygon cannot resume.
         setSaveRejectedMessage(error.message);
         setMappingState('saveRejected');

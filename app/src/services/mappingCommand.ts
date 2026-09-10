@@ -10,6 +10,15 @@ export class MappingCommandTimeoutError extends Error {
   }
 }
 
+/** stop_scan_map refused with result:1. novabot_mapping logs `if_cycle_=0` at
+ *  that moment (GH #114, 2026-09-09 17:46:57): the recorded boundary is not a
+ *  closed loop yet. The mower keeps recording, so the user can drive on. */
+export class BoundaryNotClosedError extends Error {
+  constructor() {
+    super('The mower reports the boundary is not closed yet. Drive back to the start point until the ring turns green, then stop again.');
+  }
+}
+
 /** Explicit firmware rejection: this recording cannot be saved unchanged. */
 export class MapSaveRejectedError extends Error {
   constructor(code: number) {
@@ -56,6 +65,8 @@ export function sendMappingCommand(
         finish(typeof data.value === 'number' && Number.isFinite(data.value)
           ? new MapSaveRejectedError(data.value)
           : new Error('Map save not confirmed: invalid save result.'));
+      } else if (response === 'stop_scan_map_respond' && data.result === 1) {
+        finish(new BoundaryNotClosedError());
       } else if (data.result !== 0 || (typeof data.value === 'number' && data.value !== 0)) {
         finish(new Error(`Mower rejected ${response}: error ${data.result || data.value}.`));
       } else {
