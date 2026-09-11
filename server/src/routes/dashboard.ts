@@ -1852,14 +1852,19 @@ dashboardRouter.delete('/maps/:sn/:mapId', async (req: Request, res: Response) =
       }
     }
 
-    // Payload shape matches the official Novabot app's delete flow
-    // (blutter: lawn_page/logic.dart → {delete_map:{map_name:"map0"}}).
+    // map_type is VERPLICHT. mqtt_node leest dat veld (api_delete_map) en zet
+    // het als `maptype` in de DeleteMap-service; robot_decision kiest daarop
+    // zijn tak: 1 = werkgebied (deleteChildMap), 2 = obstakel, 3 = kanaal.
+    // Zonder het veld komt er 0 binnen, matcht geen enkele tak, en antwoordt de
+    // maaier result:0 zonder iets te wissen: de kaart kwam bij de volgende
+    // upload gewoon terug (live op .244, 2026-09-11).
+    const mapTypeCode = row.map_type === 'obstacle' ? 2 : row.map_type === 'unicom' ? 3 : 1;
     let respond: { result?: number } | null = null;
     try {
       respond = await awaitCommand(
         sn,
         'delete_map',
-        { map_name: mowerMapName, cmd_num: getNextCmdNum(sn) },
+        { map_name: mowerMapName, map_type: mapTypeCode, cmd_num: getNextCmdNum(sn) },
         20000,
       ) as { result?: number };
     } catch (err) {
@@ -1871,11 +1876,16 @@ dashboardRouter.delete('/maps/:sn/:mapId', async (req: Request, res: Response) =
       return;
     }
     if (respond?.result !== 0) {
+      // De maaier zet zijn reden in error_msg (bv. "Process crashed" als
+      // novabot_mapping niet draait). Die tekst is voor de gebruiker het
+      // verschil tussen "stop je maaibeurt" en "je maaier heeft een probleem".
+      const mowerError = deviceCache.get(sn)?.get('error_msg') ?? null;
       res.status(409).json({
         ok: false,
         reason: 'mower_refused_delete',
+        mowerError,
         workStatus: Number.isFinite(workStatus) ? workStatus : null,
-        error: 'De maaier weigerde de kaart te wissen. Stop een lopende of gepauzeerde maaitaak en probeer het opnieuw. Lukt dat niet, dan kan de kaart alleen in het dashboard worden verwijderd (forceren).',
+        error: `De maaier weigerde de kaart te wissen.${mowerError ? ` Maaier meldt: ${mowerError}` : ''} Stop een lopende of gepauzeerde maaitaak en probeer het opnieuw. Lukt dat niet, dan kan de kaart alleen in het dashboard worden verwijderd (forceren).`,
       });
       return;
     }
@@ -1928,7 +1938,8 @@ dashboardRouter.delete('/maps/:sn/:mapId', async (req: Request, res: Response) =
     if (force) {
       // Geforceerd: de bevestiging is overgeslagen, dus het commando gaat hier
       // alsnog los mee zodat de maaier de kaart zo mogelijk toch opruimt.
-      publishToDevice(sn, { delete_map: { map_name: mowerMapName, cmd_num: getNextCmdNum(sn) } });
+      const forcedType = row.map_type === 'obstacle' ? 2 : row.map_type === 'unicom' ? 3 : 1;
+      publishToDevice(sn, { delete_map: { map_name: mowerMapName, map_type: forcedType, cmd_num: getNextCmdNum(sn) } });
       console.log(`[DELETE] ${sn}: delete_map geforceerd verstuurd voor ${mowerMapName}`);
     }
     // Stock robot_decision zet bij delete_map de taak op MAPPING/REQUEST_START

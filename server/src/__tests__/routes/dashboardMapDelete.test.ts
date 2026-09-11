@@ -139,6 +139,13 @@ describe('DELETE map route — follow-up commands to the mower', () => {
       .not.toContain('sync_map');
   });
 
+  it('stuurt map_type mee: zonder dat veld wist de firmware niets', async () => {
+    await request(app).delete(`/api/dashboard/maps/${SN}/del-map1`);
+    const payload = vi.mocked(awaitCommand).mock.calls.find(c => c[1] === 'delete_map')?.[2] as
+      { map_name?: string; map_type?: number };
+    expect(payload).toMatchObject({ map_name: 'map1', map_type: 1 });
+  });
+
   it('houdt de kaart in de database als de maaier het wissen weigert', async () => {
     vi.mocked(awaitCommand).mockResolvedValueOnce({ result: 1, value: null });
     const res = await request(app).delete(`/api/dashboard/maps/${SN}/del-map1`);
