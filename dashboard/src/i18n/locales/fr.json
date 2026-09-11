@@ -376,7 +376,8 @@
     "channelPromptTitle": "Relier {{name}}",
     "channelPromptBody": "La tondeuse n'atteint {{slot}} que si un couloir y mène. Tracez une ligne de {{slot}} vers une zone existante ou vers la station de charge.",
     "channelPromptDraw": "Tracer le couloir",
-    "channelPromptLater": "Plus tard"
+    "channelPromptLater": "Plus tard",
+    "deleteFailed": "La suppression de la carte a échoué."
   },
   "firmware": {
     "requiresOpenNova": "Nécessite le firmware personnalisé OpenNova. Le firmware d'origine ne peut pas recevoir cette commande.",

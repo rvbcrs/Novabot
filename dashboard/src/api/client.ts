@@ -251,10 +251,18 @@ export async function createMap(sn: string, mapName: string, mapArea: LocalPoint
   return data.map;
 }
 
-export async function deleteMap(sn: string, mapId: string): Promise<void> {
-  await apiFetch(`${BASE}/maps/${encodeURIComponent(sn)}/${encodeURIComponent(mapId)}`, {
+export async function deleteMap(sn: string, mapId: string, force = false): Promise<void> {
+  const qs = force ? '?force=1' : '';
+  const res = await apiFetch(`${BASE}/maps/${encodeURIComponent(sn)}/${encodeURIComponent(mapId)}${qs}`, {
     method: 'DELETE',
   });
+  // De server wist pas nadat de maaier het bevestigd heeft; een weigering
+  // (taak bezig of geparkeerd) mag de kaart niet uit de UI laten verdwijnen.
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({})) as { error?: string; reason?: string };
+    const err = new ApiError(res.status, data.error || `${res.status} ${res.statusText}`, data.reason);
+    throw err;
+  }
 }
 
 // ── MQTT Commands ──────────────────────────────────────────────

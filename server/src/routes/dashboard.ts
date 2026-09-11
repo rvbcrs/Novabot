@@ -18,7 +18,7 @@ import {
 import { getAllDeviceSnapshots, getDeviceSnapshot, SENSORS, getGpsTrail, clearGpsTrail, getLocalTrail, clearLocalTrail, deviceCache, translateValue, markPinVerified, getDockPose } from '../mqtt/sensorData.js';
 import { isDeviceOnline, writeRawPublish, getBrokerDiagnostics } from '../mqtt/broker.js';
 import { getRecentLogs, forwardToDashboard, onLogEntry, emitMapsChanged } from '../dashboard/socketHandler.js';
-import { requestMapList, requestMapOutline, publishToDevice, publishRawToDevice, publishEncryptedOnTopic, publishToTopic, goToChargePayload, getNextCmdNum, patchLatestZipChargingPose, republishObstacleDetection, publishToExtended, onExtendedResponse, offExtendedResponse } from '../mqtt/mapSync.js';
+import { requestMapList, requestMapOutline, publishToDevice, awaitCommand, publishRawToDevice, publishEncryptedOnTopic, publishToTopic, goToChargePayload, getNextCmdNum, patchLatestZipChargingPose, republishObstacleDetection, publishToExtended, onExtendedResponse, offExtendedResponse } from '../mqtt/mapSync.js';
 import { publishExtendedCommand } from '../mqtt/extendedCommands.js';
 import { disarmEdgeWatch, disarmEdgeWatchForSchedule } from '../services/scheduleRunner.js';
 import { isFrameUnvalidated, markFrameUnvalidated, clearFrameUnvalidated, setReanchorRelocked, isReanchorRelocked } from '../services/frameValidation.js';
@@ -1791,7 +1791,7 @@ dashboardRouter.patch('/maps/:sn/:mapId', (req: Request, res: Response) => {
 });
 
 // DELETE /api/dashboard/maps/:sn/:mapId — verwijder een kaart (incl. bijbehorende obstakels en unicom-kanalen)
-dashboardRouter.delete('/maps/:sn/:mapId', (req: Request, res: Response) => {
+dashboardRouter.delete('/maps/:sn/:mapId', async (req: Request, res: Response) => {
   const { sn, mapId } = req.params;
 
   const row = mapRepo.findByIdAndMower(mapId, sn);
@@ -1815,6 +1815,71 @@ dashboardRouter.delete('/maps/:sn/:mapId', (req: Request, res: Response) => {
       mowerSn: sn,
     });
     return;
+  }
+
+  // ── De maaier gaat eerst ────────────────────────────────────────────────
+  // deleteMapDeal() in robot_decision weigert het wissen zolang task_mode
+  // COVERAGE is en work_status > 9, dus zodra er een maaitaak geparkeerd staat
+  // (USER_STOP 10 t/m RECOVER_ERROR 15) of er echt gemaaid wordt (49+). Het
+  // antwoord is dan delete_map_respond result:1 plus error 4 in de app
+  // ("Can't not start task in running status", live op .244, 2026-09-11).
+  // Wissen we de DB-rijen toch, dan loopt de server voor op de maaier en zet de
+  // volgende upload de kaart gewoon terug. Daarom: eerst de maaier, en alleen
+  // bij een bevestigde wis ook de database.
+  const mowerOnline = isDeviceOnline(sn);
+  // De maaier kent alleen de canonieke slotnaam; map_name kan een gebruikersalias zijn.
+  const mowerMapName = row.canonical_name ?? row.map_name;
+  if (mowerOnline && mowerMapName && !force) {
+    const workStatus = parseInt(deviceCache.get(sn)?.get('work_status') ?? '', 10);
+    // 49 en hoger = bezig (Resuming, Start requested, init-stappen, maaien).
+    if (Number.isFinite(workStatus) && workStatus >= 49) {
+      res.status(409).json({
+        ok: false,
+        reason: 'mower_busy',
+        workStatus,
+        error: 'De maaier is bezig; stop de taak eerst en probeer het dan opnieuw.',
+      });
+      return;
+    }
+    // 10 t/m 15 = taak geparkeerd op de dock. quit_mapping_mode zet de status
+    // terug op WAIT, waarna het wissen wél mag.
+    if (Number.isFinite(workStatus) && workStatus > 9) {
+      try {
+        await awaitCommand(sn, 'quit_mapping_mode', { value: 1, cmd_num: getNextCmdNum(sn) }, 8000);
+        console.log(`[DELETE] ${sn}: geparkeerde taak (work_status ${workStatus}) opgeruimd vóór delete_map`);
+      } catch (err) {
+        console.warn(`[DELETE] ${sn}: quit_mapping_mode vooraf gaf geen antwoord: ${(err as Error).message}`);
+      }
+    }
+
+    // Payload shape matches the official Novabot app's delete flow
+    // (blutter: lawn_page/logic.dart → {delete_map:{map_name:"map0"}}).
+    let respond: { result?: number } | null = null;
+    try {
+      respond = await awaitCommand(
+        sn,
+        'delete_map',
+        { map_name: mowerMapName, cmd_num: getNextCmdNum(sn) },
+        20000,
+      ) as { result?: number };
+    } catch (err) {
+      res.status(504).json({
+        ok: false,
+        reason: 'mower_no_response',
+        error: `De maaier antwoordde niet op het wiscommando: ${(err as Error).message}`,
+      });
+      return;
+    }
+    if (respond?.result !== 0) {
+      res.status(409).json({
+        ok: false,
+        reason: 'mower_refused_delete',
+        workStatus: Number.isFinite(workStatus) ? workStatus : null,
+        error: 'De maaier weigerde de kaart te wissen. Stop een lopende of gepauzeerde maaitaak en probeer het opnieuw. Lukt dat niet, dan kan de kaart alleen in het dashboard worden verwijderd (forceren).',
+      });
+      return;
+    }
+    console.log(`[DELETE] ${sn}: delete_map bevestigd door maaier voor ${mowerMapName}`);
   }
 
   const deleted = mapRepo.deleteWithCascade(mapId, sn);
@@ -1858,18 +1923,14 @@ dashboardRouter.delete('/maps/:sn/:mapId', (req: Request, res: Response) => {
   console.log(`[DELETE] ${sn}: cascade verwijderd ${deleted.length} row(s) (root: ${row.map_name ?? row.file_name ?? mapId})`);
   res.json({ ok: true, deleted: deleted.length });
 
-  // Tell the mower to drop the map from its own state. Without this the
-  // firmware keeps reporting map_num=1 + current_map_ids=1, the sensor
-  // cache stays stale, and HomeScreen / coverage checks keep behaving as
-  // if the map still exists even though the DB is empty.
-  //
-  // Payload shape matches the official Novabot app's delete flow
-  // (blutter: lawn_page/logic.dart → {delete_map:{map_name:"map0"}}).
-  // We use row.map_name when present, else fall back to 'map0'.
-  if (isDeviceOnline(sn) && row.map_name) {
-    const mapName = row.map_name;
-    publishToDevice(sn, { delete_map: { map_name: mapName, cmd_num: getNextCmdNum(sn) } });
-    console.log(`[DELETE] ${sn}: delete_map MQTT sent for ${mapName}`);
+  // Nazorg op de maaier: de wis zelf is hierboven al bevestigd.
+  if (mowerOnline && mowerMapName) {
+    if (force) {
+      // Geforceerd: de bevestiging is overgeslagen, dus het commando gaat hier
+      // alsnog los mee zodat de maaier de kaart zo mogelijk toch opruimt.
+      publishToDevice(sn, { delete_map: { map_name: mowerMapName, cmd_num: getNextCmdNum(sn) } });
+      console.log(`[DELETE] ${sn}: delete_map geforceerd verstuurd voor ${mowerMapName}`);
+    }
     // Stock robot_decision zet bij delete_map de taak op MAPPING/REQUEST_START
     // (incl. bladhoogte 90) en verlaat die stand niet zelf; de officiële app
     // laat dat zo staan. quit_mapping_mode brengt hem terug naar COVERAGE/WAIT

@@ -376,7 +376,8 @@
     "channelPromptTitle": "{{name}} verbinden",
     "channelPromptBody": "Der Mäher erreicht {{slot}} nur, wenn ein Kanal dorthin führt. Zeichne eine Linie von {{slot}} zu einem bestehenden Bereich oder zur Ladestation.",
     "channelPromptDraw": "Kanal zeichnen",
-    "channelPromptLater": "Später"
+    "channelPromptLater": "Später",
+    "deleteFailed": "Löschen der Karte fehlgeschlagen."
   },
   "firmware": {
     "requiresOpenNova": "Erfordert die OpenNova Custom-Firmware. Stock-Firmware kann diesen Befehl nicht empfangen.",

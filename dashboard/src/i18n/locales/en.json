@@ -392,7 +392,8 @@
     "channelPromptTitle": "Connect {{name}}",
     "channelPromptBody": "The mower only reaches {{slot}} when a channel leads there. Draw a line from {{slot}} to an existing area or to the charging station.",
     "channelPromptDraw": "Draw channel",
-    "channelPromptLater": "Later"
+    "channelPromptLater": "Later",
+    "deleteFailed": "Deleting the map failed."
   },
   "firmware": {
     "requiresOpenNova": "Requires OpenNova custom firmware. Stock firmware can't receive this command.",

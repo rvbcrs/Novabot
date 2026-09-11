@@ -1549,8 +1549,14 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     deleteMap(sn, mapId).then(() => {
       setMaps(prev => prev.filter(m => m.mapId !== mapId));
       setSelectedMapId(null);
-    }).catch(() => {});
-  }, [sn]);
+    }).catch((err: unknown) => {
+      // De maaier weigert het wissen zolang er een maaitaak loopt of
+      // geparkeerd staat; die uitleg moet de gebruiker zien, want de kaart
+      // blijft dan zowel op de maaier als in de database staan.
+      const msg = err instanceof Error ? err.message : '';
+      toast(msg || t('map.deleteFailed'), 'error');
+    });
+  }, [sn, toast, t]);
 
   // Inline rename state
   const [editingName, setEditingName] = useState<string | null>(null);

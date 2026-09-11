@@ -62,6 +62,8 @@ vi.mock('../../mqtt/mapSync.js', () => ({
   notifyRespond: vi.fn(),
   setDemoInterceptor: vi.fn(),
   onMowerConnected: vi.fn(),
+  // De route bevestigt het wissen bij de maaier vóór ze de DB aanraakt.
+  awaitCommand: vi.fn().mockResolvedValue({ result: 0, value: null }),
 }));
 
 vi.mock('../../mqtt/mapConverter.js', () => ({
@@ -94,7 +96,8 @@ vi.mock('../../mqtt/sensorData.js', () => ({
 
 
 import { dashboardRouter } from '../../routes/dashboard.js';
-import { publishToDevice, publishToExtended } from '../../mqtt/mapSync.js';
+import { deviceCache } from '../../mqtt/sensorData.js';
+import { publishToDevice, publishToExtended, awaitCommand } from '../../mqtt/mapSync.js';
 import { mapRepo } from '../../db/repositories/index.js';
 
 const app = express();
@@ -106,6 +109,7 @@ const SN = 'LFIN_DELETE_ROUTE';
 describe('DELETE map route — follow-up commands to the mower', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(awaitCommand).mockResolvedValue({ result: 0, value: null });
     // shouldAdvanceTime keeps supertest's real I/O alive while we fast-forward
     // the route's two delayed follow-up publishes.
     vi.useFakeTimers({ shouldAdvanceTime: true });
@@ -118,18 +122,46 @@ describe('DELETE map route — follow-up commands to the mower', () => {
   });
   afterEach(() => { vi.useRealTimers(); });
 
-  it('sends delete_map, then quit_mapping_mode, then get_map_outline all — and never sync_map', async () => {
+  it('laat de maaier eerst wissen, dan quit_mapping_mode en get_map_outline — en nooit sync_map', async () => {
     const res = await request(app).delete(`/api/dashboard/maps/${SN}/del-map1`);
     expect(res.status).toBe(200);
 
-    const sent = () => vi.mocked(publishToDevice).mock.calls.map(c => Object.keys(c[1] as object)[0]);
-    expect(sent()).toEqual(['delete_map']);
+    // delete_map gaat via awaitCommand zodat het antwoord van de maaier telt.
+    expect(vi.mocked(awaitCommand).mock.calls.map(c => c[1])).toEqual(['delete_map']);
+    expect(mapRepo.findByMowerSn(SN)).toHaveLength(0);
 
+    const sent = () => vi.mocked(publishToDevice).mock.calls.map(c => Object.keys(c[1] as object)[0]);
     await vi.advanceTimersByTimeAsync(5000);
-    expect(sent()).toEqual(['delete_map', 'quit_mapping_mode', 'get_map_outline']);
+    expect(sent()).toEqual(['quit_mapping_mode', 'get_map_outline']);
 
     // The DB-ZIP push is what corrupted the mower's map set — it must be gone.
     expect(vi.mocked(publishToExtended).mock.calls.map(c => Object.keys(c[1] as object)[0]))
       .not.toContain('sync_map');
+  });
+
+  it('houdt de kaart in de database als de maaier het wissen weigert', async () => {
+    vi.mocked(awaitCommand).mockResolvedValueOnce({ result: 1, value: null });
+    const res = await request(app).delete(`/api/dashboard/maps/${SN}/del-map1`);
+    expect(res.status).toBe(409);
+    expect(res.body.reason).toBe('mower_refused_delete');
+    expect(mapRepo.findByMowerSn(SN)).toHaveLength(1);
+  });
+
+  it('weigert meteen als de maaier bezig is, zonder commando te sturen', async () => {
+    deviceCache.set(SN, new Map([['work_status', '100']]));
+    const res = await request(app).delete(`/api/dashboard/maps/${SN}/del-map1`);
+    expect(res.status).toBe(409);
+    expect(res.body.reason).toBe('mower_busy');
+    expect(awaitCommand).not.toHaveBeenCalled();
+    expect(mapRepo.findByMowerSn(SN)).toHaveLength(1);
+    deviceCache.delete(SN);
+  });
+
+  it('ruimt een geparkeerde taak op vóór het wissen', async () => {
+    deviceCache.set(SN, new Map([['work_status', '10']]));
+    const res = await request(app).delete(`/api/dashboard/maps/${SN}/del-map1`);
+    expect(res.status).toBe(200);
+    expect(vi.mocked(awaitCommand).mock.calls.map(c => c[1])).toEqual(['quit_mapping_mode', 'delete_map']);
+    deviceCache.delete(SN);
   });
 });
