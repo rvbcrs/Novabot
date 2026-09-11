@@ -1116,6 +1116,9 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
   const [editingMapId, setEditingMapId] = useState<string | null>(null);
   const [drawType, setDrawType] = useState<'work' | 'obstacle' | 'unicom'>('work');
   const [drawName, setDrawName] = useState('');
+  // Na het tekenen van een werkgebied: welk gebied nog met een kanaal verbonden
+  // moet worden. De maaier kan alleen tussen zones rijden over een unicom-kanaal.
+  const [channelPrompt, setChannelPrompt] = useState<{ canonical: string; name: string } | null>(null);
   const [showHeatmap, setShowHeatmap] = useState(false);
 
   // ── Coverage-path preview ("show mowing path"): idle preview is generated
@@ -1585,6 +1588,25 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
   }, [chargerGps, mapWriteSupported, t]);
 
   // Start drawing a new polygon
+  // Het slot dat de server aan een nieuw werkgebied geeft: het eerste vrije
+  // nummer. De maaier kent alleen deze namen, dus tonen we hem vooraf.
+  const plannedWorkSlot = useMemo(() => {
+    const taken = new Set(
+      maps
+        .filter(m => m.mapType === 'work')
+        .map(m => m.canonicalName?.match(/^map(\d+)$/)?.[1])
+        .filter((v): v is string => !!v)
+        .map(Number),
+    );
+    let n = 0;
+    while (taken.has(n)) n++;
+    return `map${n}`;
+  }, [maps]);
+
+  // Een kanaal is een LIJN tussen twee gebieden (2 punten volstaan); een
+  // werkgebied of obstakel is een vlak en heeft er minstens 3 nodig.
+  const minDrawPoints = editMode === 'draw' && drawType === 'unicom' ? 2 : 3;
+
   const startDrawMap = useCallback(() => {
     if (!mapWriteSupported) { setEditStatus(t('map.drawStockNotice')); setEditStatusKind('error'); return; }
     setEditingMapId(null);
@@ -1950,7 +1972,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
   // or unicom keeps the existing direct-create path (createMap); creating new
   // top-level areas is a separate existing feature, not part of edit/draft.
   const handleSavePolygon = useCallback(() => {
-    if (editVertices.length < 3 || !chargerGps) return;
+    if (editVertices.length < minDrawPoints || !chargerGps) return;
     if (!mapWriteSupported) { setEditStatus(t('map.drawStockNotice')); setEditStatusKind('error'); return; }
     const gpsArea = editVertices.map(([lat, lng]) => ({ lat, lng }));
     // Add the chargingPose offset back. The display projects stored local points
@@ -2043,12 +2065,22 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
         setEditMode('none');
         setEditVertices([]);
         setSelectedMapId(newMap.mapId);
-      }).catch(() => {
-        setEditStatus(mapWriteSupported ? t('map.edit.validationFailed') : t('map.drawStockNotice'));
+        setEditStatus('');
+        // Werkgebied erbij → de maaier komt er alleen als er een kanaal naartoe
+        // loopt. Meteen vragen, zoals de app na het opnemen van een zone doet.
+        if (drawType === 'work' && newMap.canonicalName && newMap.canonicalName !== 'map0') {
+          setChannelPrompt({ canonical: newMap.canonicalName, name });
+        }
+      }).catch((err: unknown) => {
+        // De server weigert een kaart waarvan de canonieke naam niet af te
+        // leiden is (kanaal dat nergens begint/eindigt); die tekst is de
+        // bruikbare uitleg, niet een generieke fout.
+        const msg = err instanceof Error ? err.message : '';
+        setEditStatus(!mapWriteSupported ? t('map.drawStockNotice') : (msg || t('map.edit.validationFailed')));
         setEditStatusKind('error');
       });
     }
-  }, [editVertices, editMode, editingMapId, sn, maps, selectedMapId, gpsMaps, drawType, drawName, AREA_TYPE_META, chargerGps, chargingPose, reloadMaps, refreshEditGeometry, recordHistory, t, mapWriteSupported]);
+  }, [editVertices, editMode, editingMapId, sn, maps, selectedMapId, gpsMaps, drawType, drawName, AREA_TYPE_META, chargerGps, chargingPose, reloadMaps, refreshEditGeometry, recordHistory, t, mapWriteSupported, minDrawPoints]);
 
   // Cancel edit/draw
   const cancelEditPolygon = useCallback(() => {
@@ -4115,6 +4147,37 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
           </div>
         )}
 
+        {/* Na het tekenen van een werkgebied: kanaal erheen vragen */}
+        {channelPrompt && editMode === 'none' && (
+          <div className="absolute top-3 left-3 z-[1000] bg-gray-900/95 backdrop-blur border border-amber-600/60 rounded-lg p-3 shadow-xl w-[calc(100vw-1.5rem)] sm:w-64">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-semibold uppercase tracking-wide text-amber-400">
+                {t('map.channelPromptTitle', { name: channelPrompt.name })}
+              </span>
+              <button onClick={() => setChannelPrompt(null)} className="text-gray-500 hover:text-gray-300" title={t('common.cancel')}>
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <p className="text-[11px] leading-snug text-gray-400 mb-3">
+              {t('map.channelPromptBody', { slot: channelPrompt.canonical })}
+            </p>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => { setChannelPrompt(null); }}
+                className="flex-1 text-xs px-2 py-1.5 rounded bg-gray-700 text-gray-400 hover:text-gray-200 transition-colors"
+              >
+                {t('map.channelPromptLater')}
+              </button>
+              <button
+                onClick={() => { setChannelPrompt(null); setDrawType('unicom'); startDrawMap(); }}
+                className="flex-1 text-xs px-2 py-1.5 rounded bg-amber-600 text-white hover:bg-amber-500 transition-colors"
+              >
+                {t('map.channelPromptDraw')}
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Edit/Draw control panel */}
         {editMode !== 'none' && (
           <div className="absolute top-3 left-3 z-[1000] bg-gray-900/95 backdrop-blur border border-gray-700 rounded-lg p-3 shadow-xl w-[calc(100vw-1.5rem)] sm:w-64">
@@ -4159,6 +4222,13 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
                 className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-emerald-600 transition-colors mb-3"
               />
             )}
+            {editMode === 'draw' && drawType !== 'obstacle' && (
+              <p className="text-[11px] text-gray-500 mb-3 font-mono">
+                {drawType === 'work'
+                  ? t('map.slotHint', { slot: drawName.trim().match(/^map\d+$/) ? drawName.trim() : plannedWorkSlot })
+                  : t('map.channelNameAuto')}
+              </p>
+            )}
             <p className="text-[11px] text-gray-400 mb-3">
               {editMode === 'draw'
                 ? t('map.drawHelp')
@@ -4166,8 +4236,8 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
             </p>
             <div className="flex items-center gap-2 text-[11px] text-gray-500 mb-3">
               <span>{t('map.points', { count: editVertices.length })}</span>
-              {editMode === 'draw' && editVertices.length < 3 && (
-                <span className="text-amber-400">{t('map.needMore', { count: 3 - editVertices.length })}</span>
+              {editMode === 'draw' && editVertices.length < minDrawPoints && (
+                <span className="text-amber-400">{t('map.needMore', { count: minDrawPoints - editVertices.length })}</span>
               )}
             </div>
             {!mapWriteSupported && (
@@ -4186,7 +4256,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
               </button>
               <button
                 onClick={handleSavePolygon}
-                disabled={editVertices.length < 3 || !mapWriteSupported}
+                disabled={editVertices.length < minDrawPoints || !mapWriteSupported}
                 title={!mapWriteSupported ? t('map.drawStockNotice') : undefined}
                 className="flex-1 inline-flex items-center justify-center gap-1 text-xs px-2 py-1.5 rounded transition-colors text-white disabled:opacity-40 disabled:cursor-not-allowed"
                 style={{ backgroundColor: editorColor }}

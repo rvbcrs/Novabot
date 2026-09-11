@@ -241,6 +241,7 @@ interface MapRow {
   map_max_min: string | null;
   file_name: string | null;
   map_type: string;
+  canonical_name?: string | null;
 }
 
 /**
@@ -289,7 +290,9 @@ export function generateMapZipFromDb(
   // anders als map1_work.csv geschreven (2026-09-07, .244). Alleen rijen zonder
   // herkenbare naam vallen terug op hun positie.
   const slotOf = (r: MapRow): number | null => {
-    for (const n of [r.map_name, r.file_name]) {
+    // canonical_name eerst: dashboard-getekende rijen dragen hun slot daar
+    // (map_name blijft de gebruikersnaam, bv. "Werkgebied 4").
+    for (const n of [r.canonical_name, r.map_name, r.file_name]) {
       const m = n?.match(/^map(\d+)(_work)?(\.csv)?$/);
       if (m) return parseInt(m[1], 10);
     }
@@ -330,6 +333,7 @@ export function generateMapZipFromDb(
     const obstaclePattern = new RegExp(`^${prefix}_\\d+_obstacle`);
     const myObstacles = obstacleRows.filter(r => {
       return (
+        (r.canonical_name && obstaclePattern.test(r.canonical_name)) ||
         (r.map_name && obstaclePattern.test(r.map_name)) ||
         (r.file_name && obstaclePattern.test(r.file_name))
       );
@@ -340,9 +344,8 @@ export function generateMapZipFromDb(
         if (!rawObsPoints || rawObsPoints.length < 3) continue;
         const obsPoints = shiftPoints(rawObsPoints, offset.x, offset.y, false);
         // Extract sub-index from whichever field carries the canonical name.
-        const canonical = (obs.map_name && obstaclePattern.test(obs.map_name))
-          ? obs.map_name
-          : obs.file_name ?? '';
+        const canonical = [obs.canonical_name, obs.map_name, obs.file_name]
+          .find(n => n && obstaclePattern.test(n)) ?? obs.file_name ?? '';
         const match = canonical.match(/^map\d+_(\d+)_obstacle/);
         const subIndex = match ? parseInt(match[1], 10) : areas.filter(a => a.type === 'obstacle' && a.mapIndex === slot).length;
         areas.push({
@@ -375,7 +378,7 @@ export function generateMapZipFromDb(
     // file_name is vaak de ZIP-bundelnaam ("LFIN..._<ts>.zip"), de canonieke naam
     // staat dan in map_name. Neem het veld dat op "mapNto..._unicom" lijkt; met
     // alleen file_name vielen ALLE kanalen weg (incl. map0tocharge).
-    const unicomName = [uRow.map_name, uRow.file_name]
+    const unicomName = [uRow.canonical_name, uRow.map_name, uRow.file_name]
       .map(n => (n ?? '').replace(/\.csv$/, ''))
       .find(n => /^map\d+to.+unicom/.test(n));
     const targetMatch = unicomName?.match(/^map(\d+)to(.+?)_?unicom/);

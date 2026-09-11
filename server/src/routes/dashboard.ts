@@ -61,6 +61,7 @@ import {
 import { ensureBetaFlashSafe } from '../services/firmwareSafety.js';
 import { getMowerFileCapability, isOpenNovaMower, UNSUPPORTED_FIRMWARE_REASON, UNSUPPORTED_FIRMWARE_MSG_KEY } from '../services/mowerFileCapability.js';
 import { getPolygonAnchor } from '../services/anchor.js';
+import { canonicalForDrawnMap } from '../services/canonicalNaming.js';
 import { selectParaRepush } from '../mqtt/paraRepush.js';
 import { MOW_PARA_SETTLE_MS } from '../services/mowingService.js';
 import { getMowingAreaError } from '../services/mowingArea.js';
@@ -1659,8 +1660,10 @@ dashboardRouter.post('/maps/:sn', (req: Request, res: Response) => {
     mapType?: string;
   };
 
-  if (!mapArea || !Array.isArray(mapArea) || mapArea.length < 3) {
-    res.status(400).json({ error: 'mapArea met minimaal 3 punten is vereist' });
+  // Een kanaal is een lijn tussen twee gebieden; een vlak heeft 3 punten nodig.
+  const minPoints = mapType === 'unicom' ? 2 : 3;
+  if (!mapArea || !Array.isArray(mapArea) || mapArea.length < minPoints) {
+    res.status(400).json({ error: `mapArea met minimaal ${minPoints} punten is vereist` });
     return;
   }
   if (rejectUnlessOpenNova(sn, res, 'Een gebied tekenen')) return;
@@ -1691,6 +1694,18 @@ dashboardRouter.post('/maps/:sn', (req: Request, res: Response) => {
   const typeSlug = mapType && ['work', 'obstacle', 'unicom'].includes(mapType) ? mapType : 'work';
   const mapId = `dashboard_${typeSlug}_${Date.now()}`;
 
+  // Canonieke firmware-naam meteen vastleggen: zonder `mapN` / `mapAtomapB_K_unicom`
+  // valt een getekend kanaal uit de ZIP (generateMapZipFromDb matcht op die naam)
+  // en krijgt een gebied pas bij ZIP-generatie een slot. Namen volgen uit de
+  // geometrie, dus weigeren als ze niet af te leiden zijn.
+  const naming = canonicalForDrawnMap(sn, typeSlug as 'work' | 'obstacle' | 'unicom', localPoints, mapName);
+  if (!naming.ok) {
+    res.status(422).json({ ok: false, reason: 'canonical_name_underivable', error: naming.error });
+    return;
+  }
+  // Een opnieuw getekend to-charge kanaal vervangt het oude (canonical is uniek).
+  if (naming.replaces) mapRepo.deleteByIdAndMower(naming.replaces, sn);
+
   mapRepo.create({
     map_id: mapId,
     mower_sn: sn,
@@ -1698,6 +1713,7 @@ dashboardRouter.post('/maps/:sn', (req: Request, res: Response) => {
     map_type: typeSlug,
     map_area: JSON.stringify(localPoints),
     map_max_min: JSON.stringify(bounds),
+    canonical_name: naming.canonical,
   });
 
   res.json({
@@ -1705,6 +1721,7 @@ dashboardRouter.post('/maps/:sn', (req: Request, res: Response) => {
     map: {
       mapId,
       mapName: mapName ?? null,
+      canonicalName: naming.canonical,
       mapType: typeSlug,
       mapArea: localPoints,
       mapMaxMin: bounds,

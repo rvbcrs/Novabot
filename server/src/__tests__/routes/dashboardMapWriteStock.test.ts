@@ -139,10 +139,22 @@ describe('map create/update on stock firmware', () => {
     expect(publishToExtended).not.toHaveBeenCalled();
   });
 
-  it('still creates on OpenNova firmware', async () => {
+  it('still creates on OpenNova firmware, met canonieke slotnaam in het antwoord', async () => {
     fw.supported = true;
     const res = await request(app).post(`/api/dashboard/maps/${SN}`).send({ mapName: 'Work area 2', mapArea: tri, mapType: 'work' });
     expect(res.status).toBe(200);
+    expect(res.body.map.canonicalName).toBe('map1');
     expect(mapRepo.findByMowerSn(SN)).toHaveLength(2);
+    expect(mapRepo.findBySnAndCanonical(SN, 'map1')).toBeTruthy();
+  });
+
+  it('weigert een kanaal waarvan de eindpunten geen gebieden raken', async () => {
+    fw.supported = true;
+    const res = await request(app)
+      .post(`/api/dashboard/maps/${SN}`)
+      .send({ mapName: 'Kanaal 1', mapArea: [{ x: 100, y: 100 }, { x: 200, y: 200 }], mapType: 'unicom' });
+    expect(res.status).toBe(422);
+    expect(res.body.reason).toBe('canonical_name_underivable');
+    expect(mapRepo.findByMowerSn(SN)).toHaveLength(1);
   });
 });

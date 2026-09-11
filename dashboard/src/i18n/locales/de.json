@@ -370,7 +370,13 @@
       "unsupportedFirmware": "Kartenänderungen anwenden erfordert die OpenNova-Custom-Firmware. Auf Stock-Firmware „Karte bearbeiten“ in der App nutzen und den geänderten Abschnitt abfahren.",
       "stockNotice": "Stock-Firmware: Änderungen können von hier nicht zum Mäher. Nutze „Karte bearbeiten“ in der OpenNova-App (den geänderten Abschnitt abfahren)."
     },
-    "missedPoint": "Verpasster Punkt"
+    "missedPoint": "Verpasster Punkt",
+    "slotHint": "Wird {{slot}} auf dem Mäher",
+    "channelNameAuto": "Der Name ergibt sich aus den verbundenen Bereichen (z. B. map2tomap1_0_unicom).",
+    "channelPromptTitle": "{{name}} verbinden",
+    "channelPromptBody": "Der Mäher erreicht {{slot}} nur, wenn ein Kanal dorthin führt. Zeichne eine Linie von {{slot}} zu einem bestehenden Bereich oder zur Ladestation.",
+    "channelPromptDraw": "Kanal zeichnen",
+    "channelPromptLater": "Später"
   },
   "firmware": {
     "requiresOpenNova": "Erfordert die OpenNova Custom-Firmware. Stock-Firmware kann diesen Befehl nicht empfangen.",

@@ -433,7 +433,13 @@
       "unsupportedFirmware": "Kaartwijzigingen toepassen vereist OpenNova custom firmware. Gebruik op stock firmware “Kaart bewerken” in de app en rij het gewijzigde stuk.",
       "stockNotice": "Stock firmware: wijzigingen kunnen van hieruit niet naar de maaier. Gebruik “Kaart bewerken” in de OpenNova-app (rij het gewijzigde stuk)."
     },
-    "missedPoint": "Gemist punt"
+    "missedPoint": "Gemist punt",
+    "slotHint": "Wordt {{slot}} op de maaier",
+    "channelNameAuto": "De naam volgt uit de gebieden die je verbindt (bv. map2tomap1_0_unicom).",
+    "channelPromptTitle": "Verbind {{name}}",
+    "channelPromptBody": "De maaier rijdt alleen naar {{slot}} als er een kanaal naartoe loopt. Teken een lijn van {{slot}} naar een bestaand gebied of naar het laadstation.",
+    "channelPromptDraw": "Kanaal tekenen",
+    "channelPromptLater": "Later"
   },
   "firmware": {
     "requiresOpenNova": "Vereist OpenNova custom firmware. Stock firmware kan dit commando niet ontvangen.",

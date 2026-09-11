@@ -370,7 +370,13 @@
       "unsupportedFirmware": "Appliquer des modifications de carte nécessite le firmware OpenNova. Sur le firmware d’origine, utilisez « Modifier la carte » dans l’application et parcourez la section modifiée.",
       "stockNotice": "Firmware d’origine : les modifications ne peuvent pas être envoyées à la tondeuse d’ici. Utilisez « Modifier la carte » dans l’application OpenNova (parcourez la section modifiée)."
     },
-    "missedPoint": "Point manqué"
+    "missedPoint": "Point manqué",
+    "slotHint": "Deviendra {{slot}} sur la tondeuse",
+    "channelNameAuto": "Le nom découle des zones que vous reliez (ex. map2tomap1_0_unicom).",
+    "channelPromptTitle": "Relier {{name}}",
+    "channelPromptBody": "La tondeuse n'atteint {{slot}} que si un couloir y mène. Tracez une ligne de {{slot}} vers une zone existante ou vers la station de charge.",
+    "channelPromptDraw": "Tracer le couloir",
+    "channelPromptLater": "Plus tard"
   },
   "firmware": {
     "requiresOpenNova": "Nécessite le firmware personnalisé OpenNova. Le firmware d'origine ne peut pas recevoir cette commande.",

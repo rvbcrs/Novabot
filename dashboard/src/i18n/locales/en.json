@@ -386,7 +386,13 @@
       "unsupportedFirmware": "Applying map edits needs OpenNova custom firmware. On stock firmware, use “Edit map” in the app and drive the changed section.",
       "stockNotice": "Stock firmware: edits can't be sent to the mower from here. Use “Edit map” in the OpenNova app instead (drive the changed section)."
     },
-    "missedPoint": "Missed point"
+    "missedPoint": "Missed point",
+    "slotHint": "Becomes {{slot}} on the mower",
+    "channelNameAuto": "The name follows from the areas you connect (e.g. map2tomap1_0_unicom).",
+    "channelPromptTitle": "Connect {{name}}",
+    "channelPromptBody": "The mower only reaches {{slot}} when a channel leads there. Draw a line from {{slot}} to an existing area or to the charging station.",
+    "channelPromptDraw": "Draw channel",
+    "channelPromptLater": "Later"
   },
   "firmware": {
     "requiresOpenNova": "Requires OpenNova custom firmware. Stock firmware can't receive this command.",
