@@ -15,7 +15,11 @@ export interface MowerFileCapability {
  *  maaiers als stock behandelen (gate actief) en hun gerapporteerde versie
  *  vervangen, zodat ook de UI-gates in dashboard en app aangaan. Alleen voor
  *  het testen van de stock-ervaring op een custom-firmware maaier. */
-export const SIMULATED_STOCK_VERSION = '5.7.1-simulated-stock';
+// NIET met "5." beginnen: dashboard.ts leidt daaruit af dat het een v5-maaier
+// zonder AES is en stuurt commando's dan onversleuteld, waarop de ECHTE v6-
+// maaier ze stil laat vallen (2026-09-11: stop_navigation kwam niet aan op .244).
+// De simulatie gaat over firmware-FEATURES, niet over het draadformaat.
+export const SIMULATED_STOCK_VERSION = '6.0.2-simulated-stock';
 export function isSimulatedStock(sn: string): boolean {
   const raw = process.env.SIMULATE_STOCK_FIRMWARE ?? '';
   if (!raw) return false;

@@ -13,6 +13,9 @@ describe('SIMULATE_STOCK_FIRMWARE (test-knop voor de firmware-gate)', () => {
     expect(cap.isOpenNova).toBe(false);
     expect(cap.mowerVersion).toBe(SIMULATED_STOCK_VERSION);
     expect(isOpenNovaMower(SN, new Map([['sw_version', 'v6.0.2-custom-38']]))).toBe(false);
+    // Mag NOOIT als v5 lezen: dashboard.ts zou dan AES uitzetten voor een v6-maaier.
+    expect(SIMULATED_STOCK_VERSION.startsWith('5.')).toBe(false);
+    expect(SIMULATED_STOCK_VERSION.startsWith('v5.')).toBe(false);
   });
 
   it('is inert when the variable is unset or lists other mowers', () => {
