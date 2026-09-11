@@ -275,6 +275,13 @@ const lastPublishBySn = new Map<string, number>();
 // noticeably slower (Aedes' own keepalive backstop is 2 minutes).
 const STALE_SN_MS = 90_000;
 
+// Wanneer een device verbond, per SN. Vlak na een serverherstart is er nog geen
+// enkel bericht verwerkt, dus lastPublishBySn is leeg terwijl de maaier wel
+// degelijk verbonden is. isDeviceOnline gaf dan "offline" en een kaart wissen
+// werd geweigerd terwijl het dashboard groen stond (live 2026-09-11: klik 1,4 s
+// na CONNECT). Binnen het stale-venster telt een verse verbinding daarom mee.
+const connectedAtBySn = new Map<string, number>();
+
 // Raw TCP sockets per SN opslaan voor directe PUBLISH bypass
 const rawSocketBySn = new Map<string, net.Socket>();
 
@@ -390,13 +397,27 @@ export function writeRawPublish(sn: string, payload: Buffer, qos: 0 | 1 = 0): bo
  *  `report_state_robot` op `Dart/Receive_mqtt/<SN>`. Voor de UI is dat NIET
  *  online — er komen geen sensor-updates binnen.
  */
+/**
+ * Levensteken-check voor één device: het laatste bericht OF, als dat er nog niet
+ * is, het moment van verbinden. Vlak na een serverherstart is lastPublish leeg
+ * terwijl het device wel verbonden is; zonder de connect-tijd gold het dan als
+ * offline en weigerde bijvoorbeeld het wissen van een kaart (live 2026-09-11,
+ * klik 1,4 s na CONNECT).
+ */
+export function hasFreshSignal(
+  lastPublish: number | undefined,
+  connectedAt: number | undefined,
+  now: number = Date.now(),
+): boolean {
+  const lastSignal = Math.max(lastPublish ?? 0, connectedAt ?? 0);
+  if (lastSignal === 0) return false;
+  return now - lastSignal <= STALE_SN_MS;
+}
+
 export function isDeviceOnline(sn: string): boolean {
   const clients = onlineBySn.get(sn);
   if (clients === undefined || clients.size === 0) return false;
-  const lastPub = lastPublishBySn.get(sn);
-  if (lastPub == null) return false;                          // never seen real telemetry
-  if (Date.now() - lastPub > STALE_SN_MS) return false;       // stale
-  return true;
+  return hasFreshSignal(lastPublishBySn.get(sn), connectedAtBySn.get(sn));
 }
 
 /**
@@ -777,6 +798,7 @@ export async function startMqttBroker(): Promise<void> {
     if (sn && !isAppClient) {
       if (!onlineBySn.has(sn)) onlineBySn.set(sn, new Set());
       onlineBySn.get(sn)!.add(clientId);
+      connectedAtBySn.set(sn, Date.now());
       publishDeviceOnline(sn);
       emitDeviceOnline(sn);
 
@@ -1313,6 +1335,7 @@ export async function startMqttBroker(): Promise<void> {
                 if (!isApp && !isDeviceOnline(deviceSn)) {
                   if (!onlineBySn.has(deviceSn)) onlineBySn.set(deviceSn, new Set());
                   onlineBySn.get(deviceSn)!.add(deviceSn);
+                  connectedAtBySn.set(deviceSn, Date.now());
                   publishDeviceOnline(deviceSn);
                   emitDeviceOnline(deviceSn);
                   console.log(`${rc}[MQTT] Online status hersteld voor ${deviceSn} (via RAW-IN)${C.reset}`);
