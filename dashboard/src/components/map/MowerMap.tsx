@@ -2057,15 +2057,10 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
         return;
       }
       // New WORK area or UNICOM → existing direct-create path (unchanged).
-      const typeMeta = AREA_TYPE_META[drawType];
-      const trimmedName = drawName.trim();
-      const name = trimmedName || (() => {
-        const count = gpsMaps.filter(m => {
-          const s = getAreaStyle(m.mapType, m.mapId, m.mapName);
-          return s.color === typeMeta.color;
-        }).length;
-        return `${typeMeta.label} ${count + 1}`;
-      })();
+      // Geen verzonnen naam meer ("Werkgebied 3"): laat het veld leeg, dan blijft
+      // de canonieke slotnaam van de maaier (map1, map1tomap0_0_unicom) staan.
+      // Dat is de naam waar maaier, ZIP en dashboard het over eens zijn.
+      const name = drawName.trim();
       createMap(sn, name, localArea, drawType).then(newMap => {
         setMaps(prev => [...prev, newMap]);
         setEditMode('none');
@@ -2803,7 +2798,12 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
   const [userInteracted, setUserInteracted] = useState(false);
   const [mapsFitted, setMapsFitted] = useState(false);
 
-  const polygonMaps = gpsMaps.filter(m => m.mapArea.length >= 3);
+  // Een kanaal is een LIJN: in het dashboard getekende unicoms hebben vaak maar
+  // twee punten. Met de oude drempel van 3 verdwenen die stilzwijgend van de
+  // kaart, terwijl ze wel opgeslagen en naar de maaier gestuurd werden.
+  const polygonMaps = gpsMaps.filter(
+    m => m.mapArea.length >= 3 || (m.mapType === 'unicom' && m.mapArea.length >= 2),
+  );
   // Totale zone-oppervlakte = som van de work-map polygon-area's (m², lokale
   // meters). Dit is de "echte" oppervlakte zoals de app toont (bv. 204 m²),
   // i.t.t. de coverage-planner-schatting cov_area+cov_remaining (lager).
@@ -3193,23 +3193,39 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
               : isSelected
                 ? { ...baseStyle, fillOpacity: 0.5, weight: 3, opacity: 1 }
                 : baseStyle;
+            const label = m.mapName || m.canonicalName;
+            const clickHandlers = {
+              // While placing a pattern, the polygon must NOT swallow the click
+              // (stopPropagation) — let it reach the map's PatternClickHandler.
+              click: (editMode === 'none' && !onMapClickForPattern) ? (e: L.LeafletMouseEvent) => {
+                L.DomEvent.stopPropagation(e);
+                setSelectedMapId(prev => prev === m.mapId ? null : m.mapId);
+              } : undefined,
+            };
+            const tooltip = label && editMode === 'none'
+              ? <Tooltip sticky>{label}</Tooltip>
+              : null;
+            // Twee punten is geen vlak maar een verbindingslijn tussen gebieden.
+            if (positions.length < 3) {
+              return (
+                <Polyline
+                  key={m.mapId}
+                  positions={positions}
+                  pathOptions={{ ...style, weight: Math.max(style.weight ?? 2, 4), fillOpacity: 0 }}
+                  eventHandlers={clickHandlers}
+                >
+                  {tooltip}
+                </Polyline>
+              );
+            }
             return (
               <Polygon
                 key={m.mapId}
                 positions={positions}
                 pathOptions={style}
-                eventHandlers={{
-                  // While placing a pattern, the polygon must NOT swallow the click
-                  // (stopPropagation) — let it reach the map's PatternClickHandler.
-                  click: (editMode === 'none' && !onMapClickForPattern) ? (e) => {
-                    L.DomEvent.stopPropagation(e);
-                    setSelectedMapId(prev => prev === m.mapId ? null : m.mapId);
-                  } : undefined,
-                }}
+                eventHandlers={clickHandlers}
               >
-                {m.mapName && editMode === 'none' && (
-                  <Tooltip sticky>{m.mapName}</Tooltip>
-                )}
+                {tooltip}
               </Polygon>
             );
           })}
@@ -4305,7 +4321,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
                 ) : (
                   <>
                     <span className="text-sm font-medium text-gray-200 truncate">
-                      {m.mapName || m.mapId}
+                      {m.mapName || m.canonicalName || m.mapId}
                     </span>
                     <button
                       onClick={() => setEditingName(m.mapName ?? '')}
@@ -4444,7 +4460,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
                   <button
                     onClick={() => {
                       setConfirmDeleteMapId(m.mapId);
-                      setConfirmDeleteMapName(m.mapName || m.mapId);
+                      setConfirmDeleteMapName(m.mapName || m.canonicalName || m.mapId);
                     }}
                     className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded bg-red-900/40 text-red-400 hover:bg-red-900/70 hover:text-red-300 transition-colors"
                   >

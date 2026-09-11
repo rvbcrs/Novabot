@@ -148,6 +148,15 @@ describe('map create/update on stock firmware', () => {
     expect(mapRepo.findBySnAndCanonical(SN, 'map1')).toBeTruthy();
   });
 
+  it('lege naam wordt geen alias: de canonieke slotnaam blijft de weergavenaam', async () => {
+    fw.supported = true;
+    const res = await request(app).post(`/api/dashboard/maps/${SN}`).send({ mapName: '   ', mapArea: tri, mapType: 'work' });
+    expect(res.status).toBe(200);
+    expect(res.body.map.mapName).toBeNull();
+    expect(res.body.map.canonicalName).toBe('map1');
+    expect(mapRepo.findBySnAndCanonical(SN, 'map1')?.map_name).toBeNull();
+  });
+
   it('weigert een kanaal waarvan de eindpunten geen gebieden raken', async () => {
     fw.supported = true;
     const res = await request(app)

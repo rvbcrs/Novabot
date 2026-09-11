@@ -1698,7 +1698,10 @@ dashboardRouter.post('/maps/:sn', (req: Request, res: Response) => {
   // valt een getekend kanaal uit de ZIP (generateMapZipFromDb matcht op die naam)
   // en krijgt een gebied pas bij ZIP-generatie een slot. Namen volgen uit de
   // geometrie, dus weigeren als ze niet af te leiden zijn.
-  const naming = canonicalForDrawnMap(sn, typeSlug as 'work' | 'obstacle' | 'unicom', localPoints, mapName);
+  // Lege naam = geen alias: dan blijft de canonieke slotnaam de weergavenaam,
+  // die maaier, ZIP en dashboard allemaal delen.
+  const alias = (mapName ?? '').trim() || null;
+  const naming = canonicalForDrawnMap(sn, typeSlug as 'work' | 'obstacle' | 'unicom', localPoints, alias);
   if (!naming.ok) {
     res.status(422).json({ ok: false, reason: 'canonical_name_underivable', error: naming.error });
     return;
@@ -1709,7 +1712,7 @@ dashboardRouter.post('/maps/:sn', (req: Request, res: Response) => {
   mapRepo.create({
     map_id: mapId,
     mower_sn: sn,
-    map_name: mapName ?? null,
+    map_name: alias,
     map_type: typeSlug,
     map_area: JSON.stringify(localPoints),
     map_max_min: JSON.stringify(bounds),
@@ -1720,7 +1723,7 @@ dashboardRouter.post('/maps/:sn', (req: Request, res: Response) => {
     ok: true,
     map: {
       mapId,
-      mapName: mapName ?? null,
+      mapName: alias,
       canonicalName: naming.canonical,
       mapType: typeSlug,
       mapArea: localPoints,
