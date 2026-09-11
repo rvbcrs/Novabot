@@ -396,14 +396,28 @@ export function CoverageStripes({ lanes, workPolys }: {
 }
 
 /** Click handler for draw mode — adds points to the polygon */
-function DrawClickHandler({ onPoint }: { onPoint: (latlng: [number, number]) => void }) {
+function DrawClickHandler({ onPoint, onHover }: {
+  onPoint: (latlng: [number, number]) => void;
+  /** Muispositie tijdens het tekenen, voor de elastieklijn naar het volgende punt. */
+  onHover: (latlng: [number, number] | null) => void;
+}) {
   const map = useMap();
   useEffect(() => {
     const handler = (e: L.LeafletMouseEvent) => onPoint([e.latlng.lat, e.latlng.lng]);
+    const hover = (e: L.LeafletMouseEvent) => onHover([e.latlng.lat, e.latlng.lng]);
+    const leave = () => onHover(null);
     map.on('click', handler);
+    map.on('mousemove', hover);
+    map.on('mouseout', leave);
     map.getContainer().style.cursor = 'crosshair';
-    return () => { map.off('click', handler); map.getContainer().style.cursor = ''; };
-  }, [map, onPoint]);
+    return () => {
+      map.off('click', handler);
+      map.off('mousemove', hover);
+      map.off('mouseout', leave);
+      map.getContainer().style.cursor = '';
+      onHover(null);
+    };
+  }, [map, onPoint, onHover]);
   return null;
 }
 
@@ -1116,6 +1130,9 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
   const [editingMapId, setEditingMapId] = useState<string | null>(null);
   const [drawType, setDrawType] = useState<'work' | 'obstacle' | 'unicom'>('work');
   const [drawName, setDrawName] = useState('');
+  // Muispositie tijdens tekenen: het eerste punt was onzichtbaar tot er een
+  // tweede stond, en er was geen voorbeeld van de lijn die je gaat zetten.
+  const [drawCursor, setDrawCursor] = useState<[number, number] | null>(null);
   // Na het tekenen van een werkgebied: welk gebied nog met een kanaal verbonden
   // moet worden. De maaier kan alleen tussen zones rijden over een unicom-kanaal.
   const [channelPrompt, setChannelPrompt] = useState<{ canonical: string; name: string } | null>(null);
@@ -1618,6 +1635,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     setEditingMapId(null);
     setEditVertices([]);
     setDrawName('');
+    setDrawCursor(null);
     setEditMode('draw');
     setSelectedMapId(null);
     setMoveMode(false);
@@ -1998,6 +2016,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
       setEditMode('none');
       setEditVertices([]);
       setEditingMapId(null);
+      setDrawCursor(null);
     };
 
     if (editMode === 'edit' && editingMapId) {
@@ -2065,6 +2084,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
         setMaps(prev => [...prev, newMap]);
         setEditMode('none');
         setEditVertices([]);
+        setDrawCursor(null);
         setSelectedMapId(newMap.mapId);
         setEditStatus('');
         // Werkgebied erbij → de maaier komt er alleen als er een kanaal naartoe
@@ -2088,6 +2108,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     setEditMode('none');
     setEditVertices([]);
     setEditingMapId(null);
+    setDrawCursor(null);
   }, []);
 
   // ── Draft apply / revert / discard (R2) ─────────────────────────
@@ -3348,7 +3369,35 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
           )}
           {/* Draw mode: click handler to add points */}
           {editMode === 'draw' && (
-            <DrawClickHandler onPoint={handleDrawPoint} />
+            <DrawClickHandler onPoint={handleDrawPoint} onHover={setDrawCursor} />
+          )}
+          {/* Gezette punten + elastieklijn naar de muis. PolygonEditor tekent pas
+              vanaf twee punten, dus het eerste punt krijgt hier zijn eigen stip. */}
+          {editMode === 'draw' && editVertices.length > 0 && (
+            <>
+              {editVertices.length < 2 && editVertices.map((v, i) => (
+                <CircleMarker
+                  key={`draw-vertex-${i}`}
+                  center={v}
+                  radius={5}
+                  pathOptions={{ color: editorColor, fillColor: editorColor, fillOpacity: 1, weight: 2 }}
+                />
+              ))}
+              {drawCursor && (
+                <Polyline
+                  positions={[editVertices[editVertices.length - 1], drawCursor]}
+                  pathOptions={{ color: editorColor, weight: 2, dashArray: '6 4', opacity: 0.85 }}
+                />
+              )}
+              {/* Sluitlijn terug naar het beginpunt: laat zien welk vlak ontstaat.
+                  Een kanaal is een lijn en heeft die niet. */}
+              {drawCursor && drawType !== 'unicom' && editVertices.length >= 2 && (
+                <Polyline
+                  positions={[drawCursor, editVertices[0]]}
+                  pathOptions={{ color: editorColor, weight: 1.5, dashArray: '2 6', opacity: 0.45 }}
+                />
+              )}
+            </>
           )}
           {/* Edge offset preview (dashed polygon) */}
           {offsetPreview && offsetPreview.length >= 3 && (
