@@ -4971,10 +4971,10 @@ def _restart_novabot_mapping():
     try:
         # Welke novabot_mapping-processen draaien er NU? Alleen een pid die hier
         # niet in staat bewijst dat de herstart echt gebeurd is.
-        before = set(subprocess.run(
-            ["pgrep", "-x", "novabot_mapping"],
-            capture_output=True, text=True, timeout=5,
+        _pgrep = lambda pat: set(subprocess.run(
+            ["pgrep", "-f", pat], capture_output=True, text=True, timeout=5,
         ).stdout.split())
+        before = _pgrep("lib/novabot_mapping/novabot_mapping")
         cmd = (
             # LET OP: `pkill -f "novabot_mapping_launch.py"` matcht OOK de bash
             # die dit script draait, want die naam staat in zijn eigen argv. De
@@ -4993,8 +4993,16 @@ def _restart_novabot_mapping():
             'for p in $(pgrep -f "coverage_planner_server\\.launch\\.py" 2>/dev/null); do '
             '  [ "$p" = "$$" ] || [ "$p" = "$PPID" ] || kill "$p" 2>/dev/null; done; '
             "sleep 1; "
-            "(pkill -x -9 novabot_mapping || true); "
-            "(pkill -x -9 coverage_planner_server || true); "
+            # NIET op procesnaam killen: Linux kapt /proc/<pid>/comm af op 15
+            # tekens, dus "coverage_planner_server" wordt "coverage_planne" en
+            # `pkill -x coverage_planner_server` matcht NIETS. Elke herstart
+            # startte er daardoor een bij: live .244 op 2026-09-12 draaiden er
+            # zeven tegelijk, iox-roudi ging onderuit en robot_decision weigerde
+            # elke taakstart met fout 136 "Robot driver restart". Killen op het
+            # pad van de binary matcht wel, en staat niet in de commandoregel
+            # van deze shell (die noemt alleen het launch-bestand).
+            'for p in $(pgrep -f "lib/novabot_mapping/novabot_mapping"); do kill -9 "$p" 2>/dev/null; done; '
+            'for p in $(pgrep -f "lib/coverage_planner/coverage_planner_server"); do kill -9 "$p" 2>/dev/null; done; '
             "sleep 1; "
             ". /opt/ros/galactic/setup.bash; "
             ". /root/novabot/install/setup.bash; "
@@ -5040,13 +5048,12 @@ def _restart_novabot_mapping():
         deadline = time.time() + 40
         while time.time() < deadline:
             time.sleep(2)
-            now = set(subprocess.run(
-                ["pgrep", "-x", "novabot_mapping"],
-                capture_output=True, text=True, timeout=5,
-            ).stdout.split())
+            now = _pgrep("lib/novabot_mapping/novabot_mapping")
             fresh = now - before
             if fresh and not (now & before):
-                log("novabot_mapping restart: running (pid %s)" % ",".join(sorted(fresh)))
+                planners = _pgrep("lib/coverage_planner/coverage_planner_server")
+                log("novabot_mapping restart: running (pid %s, %d coverage planner(s))"
+                    % (",".join(sorted(fresh)), len(planners)))
                 return True
         log("novabot_mapping restart: NOT restarted after 40s (before=%s)" % ",".join(sorted(before)))
         return False
