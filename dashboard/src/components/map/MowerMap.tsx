@@ -1575,8 +1575,12 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
 
   const handleDeleteMap = useCallback((mapId: string) => {
     deleteMap(sn, mapId).then(() => {
-      setMaps(prev => prev.filter(m => m.mapId !== mapId));
+      // De server wist in cascade: het werkgebied, zijn obstakels én de kanalen
+      // die erop uitkomen. Alleen de aangeklikte rij lokaal weghalen liet die
+      // kanalen op de kaart staan tot een handmatige verversing, alsof het
+      // wissen half gelukt was. Daarom de lijst opnieuw ophalen.
       setSelectedMapId(null);
+      void reloadMaps();
     }).catch((err: unknown) => {
       // De maaier weigert het wissen zolang er een maaitaak loopt of
       // geparkeerd staat; die uitleg moet de gebruiker zien, want de kaart
@@ -1584,7 +1588,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
       const msg = err instanceof Error ? err.message : '';
       toast(msg || t('map.deleteFailed'), 'error');
     });
-  }, [sn, toast, t]);
+  }, [sn, toast, t, reloadMaps]);
 
   // Inline rename state
   const [editingName, setEditingName] = useState<string | null>(null);
