@@ -4980,29 +4980,24 @@ def _restart_novabot_mapping():
             # die dit script draait, want die naam staat in zijn eigen argv. De
             # shell schoot daarmee zichzelf af halverwege de reeks: de oude node
             # bleef staan, er kwam een tweede bij, en de verificatie zag "draait"
-            # door naar het oude proces te kijken (live .244, 2026-09-12).
-            # De blokhaak breekt de match op de eigen commandoregel; -x matcht op
-            # procesnaam, dus nooit op de wrapper.
-            # pkill -f mag hier NIET: deze commandoregel bevat zelf de naam van
-            # het launch-bestand (verderop, in de setsid-regel), dus pkill schoot
-            # zijn eigen shell af en de rest van de reeks liep nooit. Ook de
-            # blokhaak-truc helpt niet, want de platte naam staat er toch nog in.
-            # Daarom per pid, met het eigen proces en zijn ouder uitgesloten.
-            'for p in $(pgrep -f "novabot_mapping_launch\\.py" 2>/dev/null); do '
-            '  [ "$p" = "$$" ] || [ "$p" = "$PPID" ] || kill "$p" 2>/dev/null; done; '
-            'for p in $(pgrep -f "coverage_planner_server\\.launch\\.py" 2>/dev/null); do '
-            '  [ "$p" = "$$" ] || [ "$p" = "$PPID" ] || kill "$p" 2>/dev/null; done; '
+            # One guarded killer for everything below. EVERY pattern here also
+            # appears in this very command line, so an unguarded pgrep -f (or a
+            # pkill -f) finds THIS shell and kills it halfway: the node dies, the
+            # relaunch never runs, and the mower reports error 140 on the next
+            # map change. Bitten twice, 2026-09-12, once through pkill and once
+            # through a bare loop over the binary path. Hence: skip our own pid
+            # and our parent, always.
+            'k() { s="$1"; shift; for p in $(pgrep -f "$1" 2>/dev/null); do '
+            '  [ "$p" = "$$" ] || [ "$p" = "$PPID" ] || kill "-$s" "$p" 2>/dev/null; done; }; '
+            'k TERM "novabot_mapping_launch\\.py"; '
+            'k TERM "coverage_planner_server\\.launch\\.py"; '
             "sleep 1; "
-            # NIET op procesnaam killen: Linux kapt /proc/<pid>/comm af op 15
-            # tekens, dus "coverage_planner_server" wordt "coverage_planne" en
-            # `pkill -x coverage_planner_server` matcht NIETS. Elke herstart
-            # startte er daardoor een bij: live .244 op 2026-09-12 draaiden er
-            # zeven tegelijk, iox-roudi ging onderuit en robot_decision weigerde
-            # elke taakstart met fout 136 "Robot driver restart". Killen op het
-            # pad van de binary matcht wel, en staat niet in de commandoregel
-            # van deze shell (die noemt alleen het launch-bestand).
-            'for p in $(pgrep -f "lib/novabot_mapping/novabot_mapping"); do kill -9 "$p" 2>/dev/null; done; '
-            'for p in $(pgrep -f "lib/coverage_planner/coverage_planner_server"); do kill -9 "$p" 2>/dev/null; done; '
+            # Kill the binaries by their path, never by process name: Linux caps
+            # /proc/<pid>/comm at 15 characters, so "coverage_planner_server"
+            # reads as "coverage_planne" and pkill -x matches nothing. Seven of
+            # them were running at once on .244 before this was spotted.
+            'k KILL "lib/novabot_mapping/novabot_mapping"; '
+            'k KILL "lib/coverage_planner/coverage_planner_server"; '
             "sleep 1; "
             ". /opt/ros/galactic/setup.bash; "
             ". /root/novabot/install/setup.bash; "
