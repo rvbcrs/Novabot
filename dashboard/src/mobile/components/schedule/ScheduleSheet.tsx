@@ -303,7 +303,7 @@ export function ScheduleSheet({ open, onClose, sn, editSchedule, createDefaults,
                 >
                   <option value="">{t('schedule.allWorkAreas')}</option>
                   {workMaps.map(m => (
-                    <option key={m.mapId} value={m.mapId}>{m.mapName || m.mapId}</option>
+                    <option key={m.mapId} value={m.mapId}>{m.mapName || m.canonicalName || m.mapId}</option>
                   ))}
                 </select>
               </div>

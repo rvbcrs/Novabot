@@ -458,7 +458,10 @@ export function MowerControls({
           const offsetGps = offsetPolygon(gpsPoly, edgeOffset);
           await sendCommand(sn, {
             start_run: {
-              mapNames: [targetMap.mapName || 'home'],
+              // The firmware wants its own slot name here. mapName is a free
+              // alias and is empty for a drawn zone, which used to fall back to
+              // "home" and mow the wrong thing.
+              mapNames: [targetMap.canonicalName || targetMap.mapName || 'home'],
               cutGrassHeight: cuttingHeight,   // mm
               startWay: 1,                     // SPECIFIED_AREA
               workArea: offsetGps.map(p => ({ latitude: p.lat, longitude: p.lng })),
@@ -979,7 +982,7 @@ export function MowerControls({
                     >
                       <option value="">{t('controls.allWorkAreas')}</option>
                       {maps.map(m => (
-                        <option key={m.mapId} value={m.mapId}>{m.mapName || m.mapId}</option>
+                        <option key={m.mapId} value={m.mapId}>{m.mapName || m.canonicalName || m.mapId}</option>
                       ))}
                     </select>
                   </div>
