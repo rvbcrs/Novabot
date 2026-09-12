@@ -208,7 +208,13 @@
     "previewWaiting": "Waiting…",
     "previewPath": "Preview mowing path",
     "previewNoArea": "Select a work area first",
-    "previewSavedOnly": "Preview works for saved work areas only — patterns mow but can't be previewed."
+    "previewSavedOnly": "Preview works for saved work areas only — patterns mow but can't be previewed.",
+    "mowError": {
+      "not_localized": "the mower could not work out where it is; drive it a lap and try again",
+      "invalid_map": "unknown zone",
+      "drive_script_missing": "the drive script is missing on the mower",
+      "no_unicom": "no channel to this zone has been recorded"
+    }
   },
   "camera": {
     "title": "Camera",

@@ -40,7 +40,7 @@ from rcl_interfaces.msg import Parameter, ParameterValue, ParameterType
 from geometry_msgs.msg import Twist, PoseStamped
 from nav_msgs.msg import Path
 from std_msgs.msg import UInt8
-from std_srvs.srv import Trigger
+from std_srvs.srv import Trigger, SetBool
 from nav2_msgs.action import FollowPath
 from decision_msgs.srv import StartCoverageTask
 from rclpy.qos import QoSProfile, QoSHistoryPolicy
@@ -381,6 +381,55 @@ class Driver:
         r = fut.result()
         return bool(r and r.result)
 
+    def stop_task(self):
+        """Stop a running coverage task (SetBool data:true; false means CONTINUE)."""
+        cli = self.node.create_client(SetBool, f"{DECISION}/stop_task")
+        if not cli.wait_for_service(timeout_sec=5.0):
+            return False
+        req = SetBool.Request()
+        req.data = True
+        fut = cli.call_async(req)
+        rclpy.spin_until_future_complete(self.node, fut, timeout_sec=10.0)
+        r = fut.result()
+        return bool(r and r.success)
+
+    def localize_via_firmware(self, map_ids, cutterhigh, direction, timeout=90.0):
+        """Let the STOCK firmware initialise the map frame, then take back over.
+
+        Standing on the dock after a boot the mower has its RTK origin but no
+        map->base_link: that frame only appears once it moves and the firmware
+        seeds a heading from the GPS track. robot_decision does exactly that at
+        the start of every task (SYSTEM_CHECK_INIT -> LOCALIZATION_UTM_INIT ->
+        SENSOR_INIT -> QUIT_PILE_INIT -> INIT_SUCCESS), so we ask it for a task,
+        wait until the frame appears, and stop it again before it free-plans its
+        own way to the zone. The transit below then drives the recorded channel,
+        which is the whole reason this orchestrator exists.
+
+        Driving ourselves does not work: a short open-loop reverse gives no
+        heading, so TF never arrives and the mow stalled on the dock (live .244,
+        2026-09-12, three attempts in a row).
+        """
+        log("not localized: asking the firmware to initialise the frame")
+        phase("localizing")
+        if not self.start_cov(map_ids, cutterhigh, direction):
+            log("firmware refused the init task")
+            return None
+        deadline = time.time() + timeout
+        pos = None
+        while time.time() < deadline:
+            pos = self.robot_xy(timeout=2.0)
+            if pos is not None:
+                break
+        self.stop_task()
+        # The stop lands while it is still leaving the dock; give the chassis a
+        # moment to settle before the transit takes the wheels.
+        time.sleep(2.0)
+        if pos is None:
+            log("firmware init ran but the map frame never appeared")
+        else:
+            log(f"firmware init done: robot={pos}")
+        return pos
+
     def auto_recharge(self):
         """Start the visual (ArUco) dock via /robot_decision/auto_recharge.
         This is the same final approach the reanchor flow uses; it is NOT
@@ -418,20 +467,12 @@ def do_mow(drv, to_slot, map_ids, cutterhigh, direction):
     """Outbound: undock -> follow the unicom to the target zone -> coverage."""
     robot = drv.robot_xy()
     if robot is None:
-        # After a reboot the localization has its RTK origin but the map frame
-        # is "confirmed, but not aligned": map->odom (hence map->base_link) is
-        # only published once the mower MOVES and gives it a heading. A reboot
-        # leaves the mower on the dock, so undock open-loop (no tf needed) to
-        # self-init localization, then re-read the position.
-        log("not localized (map frame not aligned, post-reboot?): undock to self-init")
-        phase("undocking")
-        drv.undock()
-        robot = drv.robot_xy(timeout=20)
+        robot = drv.localize_via_firmware(map_ids, cutterhigh, direction)
         if robot is None:
             phase("error", "not_localized")
             return 1
         from_slot = current_zone_slot(robot)
-        log(f"post-undock (self-init): robot={robot} from={from_slot}")
+        log(f"post-init: robot={robot} from={from_slot}")
     else:
         from_slot = current_zone_slot(robot)
         log(f"mow start: robot={robot} from={from_slot} to={to_slot} map_ids={map_ids}")

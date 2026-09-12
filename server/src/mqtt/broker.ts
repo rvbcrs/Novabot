@@ -1218,6 +1218,11 @@ export async function startMqttBroker(): Promise<void> {
             };
             set('mow_zone_phase', body.phase);
             set('mow_zone_map', body.map);
+            // Keep the reason. Without it a stalled start looked like nothing
+            // happening at all: the orchestrator reported phase "error" with
+            // "not_localized", the dashboard showed a mower standing still
+            // (live .244, 2026-09-12).
+            set('mow_zone_error', body.phase === 'error' ? (body.error || 'unknown') : '');
             forwardToDashboard(extSn, changes);
           }
         }

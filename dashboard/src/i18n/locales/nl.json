@@ -255,7 +255,13 @@
     "previewWaiting": "Wachten…",
     "previewPath": "Maaipad preview",
     "previewNoArea": "Selecteer eerst een werkgebied",
-    "previewSavedOnly": "Preview werkt alleen voor opgeslagen werkgebieden — patronen maaien wel maar zijn niet te previewen."
+    "previewSavedOnly": "Preview werkt alleen voor opgeslagen werkgebieden — patronen maaien wel maar zijn niet te previewen.",
+    "mowError": {
+      "not_localized": "de maaier kon zijn positie niet bepalen; rijd hem een rondje en probeer opnieuw",
+      "invalid_map": "onbekende zone",
+      "drive_script_missing": "het rijscript ontbreekt op de maaier",
+      "no_unicom": "er is geen kanaal naar deze zone opgenomen"
+    }
   },
   "camera": {
     "title": "Camera",

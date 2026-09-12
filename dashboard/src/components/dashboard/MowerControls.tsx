@@ -82,6 +82,20 @@ export function MowerControls({
   // localStorage default (0). Fetch the para once on open and hydrate the slider a
   // single time when it arrives; after that the operator can freely adjust it.
   useEffect(() => { if (online && sn) sendCommand(sn, { get_para_info: {} }).catch(() => {}); }, [sn, online]);
+
+  // A mow start that fails on the mower used to be invisible here: the
+  // orchestrator reported phase "error" with a reason, and all the operator saw
+  // was a mower that drove a little and then stood still (live .244,
+  // 2026-09-12). Surface the reason the moment it arrives.
+  const lastMowPhase = useRef<string | null>(null);
+  useEffect(() => {
+    const phase = sensors?.mow_zone_phase ?? null;
+    if (phase === lastMowPhase.current) return;
+    lastMowPhase.current = phase;
+    if (phase !== 'error') return;
+    const reason = sensors?.mow_zone_error || 'unknown';
+    toast(`✗ ${t('controls.startMowing')}: ${t(`controls.mowError.${reason}`, reason)}`, 'error');
+  }, [sensors?.mow_zone_phase, sensors?.mow_zone_error, t, toast]);
   const dirHydrated = useRef(false);
   useEffect(() => {
     if (dirHydrated.current) return;

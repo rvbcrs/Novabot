@@ -192,7 +192,13 @@
     "preview": "Vorschau",
     "previewWaiting": "Warten…",
     "previewPath": "Mähweg-Vorschau",
-    "previewNoArea": "Wählen Sie zuerst einen Arbeitsbereich"
+    "previewNoArea": "Wählen Sie zuerst einen Arbeitsbereich",
+    "mowError": {
+      "not_localized": "der Mäher konnte seine Position nicht bestimmen; fahre eine Runde und starte erneut",
+      "invalid_map": "unbekannte Zone",
+      "drive_script_missing": "das Fahrskript fehlt auf dem Mäher",
+      "no_unicom": "zu dieser Zone wurde kein Kanal aufgezeichnet"
+    }
   },
   "camera": {
     "title": "Kamera",

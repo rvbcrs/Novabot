@@ -192,7 +192,13 @@
     "preview": "Aperçu",
     "previewWaiting": "Attente…",
     "previewPath": "Aperçu du chemin de tonte",
-    "previewNoArea": "Sélectionnez d'abord une zone de travail"
+    "previewNoArea": "Sélectionnez d'abord une zone de travail",
+    "mowError": {
+      "not_localized": "la tondeuse n'a pas pu déterminer sa position ; faites-lui faire un tour et réessayez",
+      "invalid_map": "zone inconnue",
+      "drive_script_missing": "le script de conduite manque sur la tondeuse",
+      "no_unicom": "aucun couloir vers cette zone n'a été enregistré"
+    }
   },
   "camera": {
     "title": "Caméra",
