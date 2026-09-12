@@ -88,7 +88,13 @@ export function useDevices() {
     setDevices(prev => {
       const next = new Map(prev);
       const existing = next.get(e.sn);
-      if (existing) next.set(e.sn, { ...existing, online: false, sensors: {} });
+      // Keep the last known sensors. Wiping them dropped values that arrive
+      // only once, like the firmware version: it is not in the periodic
+      // telemetry, so after any offline blip the chip fell back to the serial
+      // number until the page was reloaded. The server keeps serving them in
+      // its snapshot, so the wipe only made the live view disagree with a
+      // refresh. `online: false` is what marks the device as stale.
+      if (existing) next.set(e.sn, { ...existing, online: false });
       return next;
     });
     setLiveOutlines(prev => {
