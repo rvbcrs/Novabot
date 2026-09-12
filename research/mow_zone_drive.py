@@ -151,6 +151,31 @@ def current_zone_slot(xy):
     return None
 
 
+# ── Zone selection beyond slot 4 ─────────────────────────────────────────────
+# The zone selection is a decimal positional bitmask: map0 = 1, map1 = 10,
+# map2 = 100 and so on, summed for a multi-zone start. robot_decision refuses
+# any value above 60000 (or exactly 255) before decoding it, which puts every
+# slot from 5 upward out of reach through that input.
+FIRMWARE_MAP_ID_LIMIT = 60000
+
+
+def slots_from_map_ids(map_ids):
+    """Decimal positional bitmask -> slot numbers. 1000 -> [3], 100001 -> [0, 5]."""
+    return [pos for pos, ch in enumerate(reversed(str(int(map_ids)))) if ch != "0"]
+
+
+def map_names_for(map_ids):
+    """The map files to start instead of the number, or [] when the number is fine.
+
+    Empty means: stay on the number input, which is what every zone up to slot 4
+    has always used.
+    """
+    map_ids = int(map_ids)
+    if map_ids <= FIRMWARE_MAP_ID_LIMIT and map_ids != 255:
+        return []
+    return [f"map{slot}.yaml" for slot in slots_from_map_ids(map_ids)]
+
+
 class Driver:
     def __init__(self, node):
         self.node = node
@@ -325,12 +350,29 @@ class Driver:
         cli = self.node.create_client(StartCoverageTask, f"{DECISION}/start_cov_task")
         if not cli.wait_for_service(timeout_sec=8.0):
             return False
+        map_ids = int(map_ids)
+        names = map_names_for(map_ids)
         req = StartCoverageTask.Request()
         req.cov_mode = 0            # NORMAL: select map(s) by id
         req.request_type = 11       # normal mqtt/app start
-        req.map_ids = int(map_ids)  # decimal positional bitmask (map3 -> 1000)
-        req.map_names = []          # empty: map_names + map_ids:0 -> Error 118
-        req.blade_heights = [int(cutterhigh)]
+        if names:
+            # Zone 5 and up cannot be addressed by the number: coverRequestDataInit
+            # swaps any selection above 60000 (or exactly 255) for a leftover test
+            # task called "vision_test", the planner finds no boundary in it and
+            # the mower reports error 125. The same service takes a list of map
+            # files instead, decoded after that check, so it reaches every slot.
+            # Proven live on LFIN2230700238, 2026-09-12: map5 (100000) undocked,
+            # mowed and finished normally. The .yaml extension is required; the
+            # bare name is what produced error 118 in earlier attempts.
+            req.map_ids = 0
+            req.map_names = names
+            req.blade_heights = [int(cutterhigh)] * len(names)
+            log(f"start_cov: map_ids={map_ids} is beyond the firmware limit, "
+                f"using map_names={names}")
+        else:
+            req.map_ids = map_ids   # decimal positional bitmask (map3 -> 1000)
+            req.map_names = []
+            req.blade_heights = [int(cutterhigh)]
         req.specify_direction = direction is not None
         req.cov_direction = int(direction) if direction is not None else 0
         fut = cli.call_async(req)

@@ -3513,7 +3513,9 @@ dashboardRouter.post('/command/:sn', (req: Request, res: Response) => {
     return;
   }
 
-  const areaError = getMowingAreaError(command);
+  const areaError = getMowingAreaError(command, {
+    swVersion: deviceCache.get(sn)?.get('sw_version'),
+  });
   if (areaError) {
     res.status(422).json({ ok: false, reason: 'unsupported_mowing_area', error: areaError });
     return;
@@ -4517,7 +4519,9 @@ dashboardRouter.post('/extended/:sn', (req: Request, res: Response) => {
     res.status(400).json({ ok: false, error: 'command required' });
     return;
   }
-  const areaError = getMowingAreaError(command);
+  const areaError = getMowingAreaError(command, {
+    swVersion: deviceCache.get(sn)?.get('sw_version'),
+  });
   if (areaError) {
     res.status(422).json({ ok: false, reason: 'unsupported_mowing_area', error: areaError });
     return;

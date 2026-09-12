@@ -5,11 +5,34 @@
  * research/documents/multi-map-area-bitmask-decode.md.
  *
  * Validate the outgoing selection, never truncate it to the first five maps.
+ * Mowers running the build that selects by map name are exempt for mow_zone.
  * Recording/importing later slots and commands using polygons/names are
  * independent of this legacy scalar limit.
  */
-export function getMowingAreaError(command: Record<string, unknown>): string | null {
+/**
+ * First OpenNova build whose mow orchestrator selects zones by map file name
+ * instead of the decimal area code. Proven live on LFIN2230700238, 2026-09-12:
+ * map5 (area 100000) undocked, mowed and finished through the normal task flow.
+ */
+export const MAP_NAMES_SELECTION_BUILD = 38;
+
+/** Whether this mower can start a zone above slot 4 (needs the build above). */
+export function supportsMapNamesSelection(swVersion: string | null | undefined): boolean {
+  const build = swVersion?.match(/custom-(\d+)/)?.[1];
+  return build !== undefined && Number(build) >= MAP_NAMES_SELECTION_BUILD;
+}
+
+export function getMowingAreaError(
+  command: Record<string, unknown>,
+  opts: { swVersion?: string | null } = {},
+): string | null {
   for (const key of ['start_navigation', 'start_run', 'mow_zone']) {
+    // mow_zone runs through our own orchestrator on the mower. From the build
+    // in MAP_NAMES_SELECTION_BUILD on it sends map file names for a selection
+    // the number cannot express, so the scalar limit no longer applies there.
+    // The stock commands keep it: their handler in mqtt_node has no field for
+    // names, so above the limit they still end in error 125.
+    if (key === 'mow_zone' && supportsMapNamesSelection(opts.swVersion)) continue;
     const params = command[key];
     if (!params || typeof params !== 'object' || Array.isArray(params)) continue;
     const body = params as Record<string, unknown>;

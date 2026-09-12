@@ -132,7 +132,9 @@ export function startMowing(params: MowingParams): MowingResult {
   const pathDirection = params.pathDirection;
 
   if (!sn) return { ok: false, error: 'sn required' };
-  const areaError = getMowingAreaError({ start_navigation: { area } });
+  const areaError = getMowingAreaError({ start_navigation: { area } }, {
+    swVersion: deviceCache.get(sn)?.get('sw_version'),
+  });
   if (areaError) return { ok: false, error: areaError };
   if (!isDeviceOnline(sn)) return { ok: false, error: 'mower offline' };
   if (isMowerBusy(sn)) {
