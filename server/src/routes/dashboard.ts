@@ -2323,6 +2323,10 @@ function refreshLatestZip(sn: string): void {
   }
 }
 
+// The mower unzips, restarts its mapping node and rasterises every slot; on a
+// big garden that is tens of seconds.
+const REGENERATE_TIMEOUT_MS = 120_000;
+
 async function autoPushMapsInBackground(sn: string): Promise<void> {
   // Update the on-disk "<SN>_latest.zip" and ping the mower over MQTT — the
   // mower's extended_commands.py handles the actual pull + install. This path
@@ -2338,6 +2342,51 @@ async function autoPushMapsInBackground(sn: string): Promise<void> {
     console.log(`[AUTO-PUSH] MQTT sync_map kick sent to ${sn}`);
   } catch (err) {
     console.warn(`[AUTO-PUSH] MQTT trigger fout voor ${sn}:`, err);
+    return;
+  }
+
+  // The CSVs alone are not enough: the mower plans coverage on per-slot
+  // occupancy grids, and those are only written by regenerate_per_map_files.
+  // Without this step a freshly drawn area has no grid at all (error 107), and
+  // an area beyond the scanned terrain has no free cells in the shared raster
+  // (error 125) until that handler grows it. Both needed a manual command
+  // before, so every dashboard-drawn zone looked broken.
+  await regeneratePerMapFiles(sn);
+}
+
+/**
+ * Ask the mower to rebuild its per-slot grids after a map push, and wait for
+ * the answer so the log tells us whether the shared raster had to grow.
+ */
+async function regeneratePerMapFiles(sn: string): Promise<void> {
+  try {
+    const { publishToExtended, onExtendedResponse, offExtendedResponse } = await import('../mqtt/mapSync.js');
+    const result = await new Promise<Record<string, unknown> | null>((resolve) => {
+      let settled = false;
+      const handler = (data: Record<string, unknown>) => {
+        const respond = data.regenerate_per_map_files_respond as Record<string, unknown> | undefined;
+        if (!respond || settled) return;
+        settled = true;
+        offExtendedResponse(sn, handler);
+        resolve(respond);
+      };
+      onExtendedResponse(sn, handler);
+      publishToExtended(sn, { regenerate_per_map_files: {} });
+      setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        offExtendedResponse(sn, handler);
+        resolve(null);
+      }, REGENERATE_TIMEOUT_MS);
+    });
+    if (!result) {
+      console.warn(`[AUTO-PUSH] ${sn}: geen antwoord op regenerate_per_map_files`);
+      return;
+    }
+    const grown = result.canvas_grown as { from?: string; to?: string } | null | undefined;
+    console.log(`[AUTO-PUSH] ${sn}: per-slot grids herbouwd${grown ? ` (raster ${grown.from} → ${grown.to})` : ''}`);
+  } catch (err) {
+    console.warn(`[AUTO-PUSH] regenerate_per_map_files fout voor ${sn}:`, err);
   }
 }
 

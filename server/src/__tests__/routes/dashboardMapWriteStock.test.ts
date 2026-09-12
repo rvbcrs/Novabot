@@ -157,6 +157,17 @@ describe('map create/update on stock firmware', () => {
     expect(mapRepo.findBySnAndCanonical(SN, 'map1')?.map_name).toBeNull();
   });
 
+  it('vraagt na een kaart-push om nieuwe per-slot grids', async () => {
+    fw.supported = true;
+    const res = await request(app).post(`/api/dashboard/maps/${SN}`).send({ mapArea: tri, mapType: 'work' });
+    expect(res.status).toBe(200);
+    // De push loopt in de achtergrond; even de microtaken laten lopen.
+    await new Promise(r => setTimeout(r, 0));
+    const sent = vi.mocked(publishToExtended).mock.calls.map(c => Object.keys(c[1] as object)[0]);
+    expect(sent).toContain('sync_map');
+    expect(sent).toContain('regenerate_per_map_files');
+  });
+
   it('weigert een kanaal waarvan de eindpunten geen gebieden raken', async () => {
     fw.supported = true;
     const res = await request(app)

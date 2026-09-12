@@ -182,6 +182,36 @@ def parse_map_yaml(path):
     return float(rm.group(1)), float(om.group(1)), float(om.group(2)), txt
 
 
+def plan_canvas_growth(ox, oy, res, W, H, pts, margin_m=2.0, max_cells=4_000_000):
+    """How much must a map.pgm grow so every point in `pts` fits, plus a margin?
+
+    Returns None when the current raster already covers them (or when growing
+    would exceed `max_cells`), else a dict with the padding per side, the new
+    size and the new origin.
+
+    Row 0 of a pgm is the HIGHEST y, so padding at the top extends +y and only
+    padding at the bottom moves the origin down. Old pixels keep their world
+    position: y = oy + (H - 1 - row) * res holds before and after.
+    """
+    if not pts:
+        return None
+    ceil = lambda v: int(v) + (1 if v > int(v) else 0)
+    pad_l = max(0, ceil((ox - (min(p[0] for p in pts) - margin_m)) / res))
+    pad_r = max(0, ceil(((max(p[0] for p in pts) + margin_m) - (ox + W * res)) / res))
+    pad_b = max(0, ceil((oy - (min(p[1] for p in pts) - margin_m)) / res))
+    pad_t = max(0, ceil(((max(p[1] for p in pts) + margin_m) - (oy + H * res)) / res))
+    if not (pad_l or pad_r or pad_b or pad_t):
+        return None
+    new_W, new_H = W + pad_l + pad_r, H + pad_t + pad_b
+    if new_W * new_H > max_cells:
+        return None
+    return {
+        "pad_l": pad_l, "pad_r": pad_r, "pad_b": pad_b, "pad_t": pad_t,
+        "W": new_W, "H": new_H,
+        "ox": ox - pad_l * res, "oy": oy - pad_b * res,
+    }
+
+
 def make_to_px(ox, oy, res, height_px):
     """World (x,y) meters -> pixel (col, row) for a map.pgm of the given origin/res."""
     return lambda x, y: (int((x - ox) / res), (height_px - 1) - int((y - oy) / res))
@@ -2881,6 +2911,58 @@ def handle_regenerate_per_map_files(params, respond):
             })
             return
 
+        # ── Grow the canvas when drawn areas fall outside the raster ───────
+        # map.pgm only covers terrain the mower has physically driven. A zone
+        # drawn on the dashboard beyond that edge ended up with ZERO free cells,
+        # so the planner answered "No valid path" no matter how big the polygon
+        # was (live .244, 2026-09-12: map4/5/6 lay 100% outside the raster, map2
+        # for 86%). Every drawing feature was useless outside the scanned patch.
+        #
+        # The raster now grows to fit every work polygon and channel. New ground
+        # starts OCCUPIED; the seam-fix below is what frees it, and only strictly
+        # inside a work polygon and never where an obstacle is mapped. So the
+        # user's drawing is the claim "this is lawn", exactly as it already was
+        # for occupied cells inside a polygon within the old canvas.
+        CANVAS_MARGIN_M = 2.0        # keep this much raster around the outer polygons
+        MAX_CANVAS_CELLS = 4_000_000  # ~100 x 100 m at 5 cm; refuse to grow past this
+        _want = []
+        for _s in slots:
+            _want += read_xy_csv(f"{csv_dir}/{_s}_work.csv")
+        for _uf in unicom_files:
+            _want += read_xy_csv(f"{csv_dir}/{_uf}")
+        grew = None
+        _plan = plan_canvas_growth(ox, oy, res, W, H, _want, CANVAS_MARGIN_M, MAX_CANVAS_CELLS)
+        if _plan:
+            grown = np.full((_plan["H"], _plan["W"]), np.uint8(OCCUPIED), dtype=np.uint8)
+            grown[_plan["pad_t"]:_plan["pad_t"] + H, _plan["pad_l"]:_plan["pad_l"] + W] = whole
+            old_shape = f"{W}x{H}"
+            whole = grown
+            H, W = _plan["H"], _plan["W"]
+            ox, oy = _plan["ox"], _plan["oy"]
+            to_px = make_to_px(ox, oy, res, H)
+            whole_yaml_content = re.sub(
+                r"origin:\s*\[[^\]]*\]",
+                f"origin: [{ox:.6f}, {oy:.6f}, 0.000000]",
+                whole_yaml_content)
+            with open(whole_yaml, "w") as fh:
+                fh.write(whole_yaml_content)
+            with open(whole_pgm, "wb") as fh:
+                fh.write(f"P5\n# CREATOR: map_generator.cpp {res:.3f} m/pix\n{W} {H}\n255\n".encode("ascii"))
+                fh.write(whole.tobytes())
+            try:
+                Image.fromarray(whole, mode="L").save(f"{base}/map.png")
+            except Exception:
+                pass
+            grew = {"from": old_shape, "to": f"{W}x{H}", "origin": [round(ox, 3), round(oy, 3)]}
+            log(f"regenerate_per_map_files: canvas grown {old_shape} -> {W}x{H}, "
+                f"origin ({ox:.2f}, {oy:.2f}) to fit the drawn areas")
+        elif _want:
+            _fits = (min(p[0] for p in _want) >= ox and max(p[0] for p in _want) <= ox + W * res
+                     and min(p[1] for p in _want) >= oy and max(p[1] for p in _want) <= oy + H * res)
+            if not _fits:
+                log("regenerate_per_map_files: drawn areas fall outside the raster but growing "
+                    "it would exceed the cell budget — those zones stay unplannable")
+
         # Seam-fix the in-memory `whole` grid BEFORE masking so every per-slot
         # pgm is born CLEAN even if `whole` on disk still carries the firmware's
         # occupied-inside-lawn stripe. map_generator.cpp re-adds that stripe on
@@ -3036,7 +3118,8 @@ def handle_regenerate_per_map_files(params, respond):
         # resurrect stale on-disk CSVs into the manifest. Per-slot masking above
         # is the actual fix this handler provides.
         log(f"regenerate_per_map_files: per-slot masked grids for {mirrored}")
-        respond("regenerate_per_map_files_respond", {"result": 0, "mirrored": mirrored, "home": home})
+        respond("regenerate_per_map_files_respond",
+                {"result": 0, "mirrored": mirrored, "home": home, "canvas_grown": grew})
     except Exception as e:
         log(f"regenerate_per_map_files error: {e}")
         respond("regenerate_per_map_files_respond", {"result": 1, "error": str(e)})
