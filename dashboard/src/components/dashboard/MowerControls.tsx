@@ -14,7 +14,7 @@ import {
   fetchRainForecast, findIncomingRain, setRainIgnoreSession,
 } from '../../api/client';
 import { localToGps } from '../../utils/coords';
-import { mmToCutterhigh, workMapsToArea, nextCmdNum } from '../../utils/mqtt';
+import { mmToCutterhigh, workMapsToArea, needsMapNameStart, nextCmdNum } from '../../utils/mqtt';
 import { readMowDefaults, configuredHeightMm } from '../../utils/mowDefaults';
 import {
   deriveMowerActivity,
@@ -472,6 +472,28 @@ export function MowerControls({
           toast(`✓ ${t('controls.startMowing')} (${edgeOffset > 0 ? '+' : ''}${edgeOffset.toFixed(1)}m)`, 'success');
         } else {
           const areaParam = workMapsToArea(targetMaps);
+
+          if (needsMapNameStart(areaParam) && firmwareSupported) {
+            // Zone 5 and up cannot travel as a number: the firmware refuses the
+            // code before decoding it. Our own orchestrator on the mower turns
+            // the same selection into map file names, which it accepts. Only
+            // this case takes the detour; everything up to slot 4 keeps the
+            // start_navigation path that has always worked.
+            await sendExtendedCommand(sn, {
+              mow_zone: {
+                map: targetMap?.canonicalName ?? 'map0',
+                cutterhigh: wireHeight,
+                area: areaParam,
+                direction: pathDirection ?? null,
+              },
+            });
+            toast(`✓ ${t('controls.startMowing')}`, 'success');
+            setExpanded(false);
+            onPathDirectionChange?.(null);
+            onPatternPlacementChange?.(null);
+            onStarted?.();
+            return;
+          }
 
           const navPayload: Record<string, unknown> = {
             mapName: 'test',

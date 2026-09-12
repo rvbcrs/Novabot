@@ -58,6 +58,19 @@ export function workMapsToArea(
   return maps.reduce((sum, m, idx) => sum + workMapToArea(m, idx), 0);
 }
 
+/**
+ * Above this the mower's start_navigation cannot address the selection: it
+ * swaps anything over 60000, or exactly 255, for a leftover test task and
+ * reports error 125 (GH #114). Such a selection has to go through our own
+ * mow_zone orchestrator, which sends map file names instead.
+ */
+export const AREA_CODE_LIMIT = 60000;
+
+/** Whether this selection needs the name-based start instead of the number. */
+export function needsMapNameStart(area: number): boolean {
+  return area > AREA_CODE_LIMIT || area === 255;
+}
+
 /** Sequential cmd number used by start/stop_navigation. */
 export function nextCmdNum(): number {
   return Date.now() % 100000;

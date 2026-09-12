@@ -2,8 +2,8 @@ import { useState, useEffect, useRef, type TouchEvent as ReactTouchEvent } from 
 import { Play } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { MapData } from '../../types';
-import { sendCommand, fetchMaps } from '../../api/client';
-import { mmToCutterhigh, workMapToArea, workMapsToArea, nextCmdNum } from '../../utils/mqtt';
+import { sendCommand, sendExtendedCommand, fetchMaps } from '../../api/client';
+import { mmToCutterhigh, workMapToArea, workMapsToArea, needsMapNameStart, nextCmdNum } from '../../utils/mqtt';
 import { useToast } from '../../components/common/Toast';
 
 interface Props {
@@ -55,6 +55,26 @@ export function StartMowSheet({ open, onClose, sn, onStarted, initialMapId = nul
       const areaParam = mapId ? workMapToArea(selectedWorkMap, fallbackIdx) : workMapsToArea(workMaps);
       const selectedMap = mapId ? maps.find(m => m.mapId === mapId) : null;
       const resolvedMapName = selectedMap?.mapName || 'test';
+
+      // Zone 5 and up cannot travel as a number: the firmware swaps anything
+      // over 60000 for a test task and reports error 125. Our own orchestrator
+      // on the mower turns the same selection into map file names. Stock and
+      // older custom builds refuse that command, and then the classic path
+      // below is no better off, so its error is the honest one to show.
+      if (needsMapNameStart(areaParam)) {
+        await sendExtendedCommand(sn, {
+          mow_zone: {
+            map: selectedMap?.canonicalName ?? 'map0',
+            cutterhigh: wireHeight,
+            area: areaParam,
+            direction: pathDirection ?? null,
+          },
+        });
+        toast(`${t('mobile.startMowing')} ✓`, 'success');
+        onStarted();
+        onClose();
+        return;
+      }
 
       // start_navigation primary (mirrors app/src/components/StartMowSheet.tsx:302)
       const cmdNum = nextCmdNum();
