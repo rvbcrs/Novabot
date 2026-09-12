@@ -14,7 +14,7 @@
  * instead of the decimal area code. Proven live on LFIN2230700238, 2026-09-12:
  * map5 (area 100000) undocked, mowed and finished through the normal task flow.
  */
-export const MAP_NAMES_SELECTION_BUILD = 38;
+export const MAP_NAMES_SELECTION_BUILD = 40;
 
 /** Whether this mower can start a zone above slot 4 (needs the build above). */
 export function supportsMapNamesSelection(swVersion: string | null | undefined): boolean {

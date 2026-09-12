@@ -361,7 +361,8 @@ class Driver:
             # task called "vision_test", the planner finds no boundary in it and
             # the mower reports error 125. The same service takes a list of map
             # files instead, decoded after that check, so it reaches every slot.
-            # Proven live on LFIN2230700238, 2026-09-12: map5 (100000) undocked,
+            # First shipped in v6.0.2-custom-40; the server's area gate keys on
+            # that build number. Proven live on LFIN2230700238, 2026-09-12: map5 (100000) undocked,
             # mowed and finished normally. The .yaml extension is required; the
             # bare name is what produced error 118 in earlier attempts.
             req.map_ids = 0

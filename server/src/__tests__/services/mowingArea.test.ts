@@ -30,7 +30,7 @@ describe('getMowingAreaError', () => {
   });
 
   it('laat mow_zone door zodra de maaier op namen kan selecteren', () => {
-    const opts = { swVersion: 'v6.0.2-custom-38' };
+    const opts = { swVersion: 'v6.0.2-custom-40' };
     expect(getMowingAreaError({ mow_zone: { area: 100000 } }, opts)).toBeNull();
     expect(getMowingAreaError({ mow_zone: { map: 'map6' } }, opts)).toBeNull();
   });
@@ -38,7 +38,7 @@ describe('getMowingAreaError', () => {
   it('houdt het stock-commando geblokkeerd, ook op zo een maaier', () => {
     // mqtt_node's start-handler leest alleen hoogte en zonegetal; namen kunnen
     // daar niet in, dus deze weg blijft op error 125 uitkomen.
-    expect(getMowingAreaError({ start_navigation: { area: 100000 } }, { swVersion: 'v6.0.2-custom-38' }))
+    expect(getMowingAreaError({ start_navigation: { area: 100000 } }, { swVersion: 'v6.0.2-custom-40' }))
       .toMatch(/map0–map4/);
   });
 
@@ -50,12 +50,13 @@ describe('getMowingAreaError', () => {
 
 describe('supportsMapNamesSelection', () => {
   it('herkent de build die op namen selecteert', () => {
-    expect(supportsMapNamesSelection('v6.0.2-custom-38')).toBe(true);
+    expect(supportsMapNamesSelection('v6.0.2-custom-40')).toBe(true);
     expect(supportsMapNamesSelection('v6.0.2-custom-41')).toBe(true);
   });
 
   it('wijst oudere builds en stock af', () => {
     expect(supportsMapNamesSelection('v6.0.2-custom-37')).toBe(false);
+    expect(supportsMapNamesSelection('v6.0.2-custom-39')).toBe(false);
     expect(supportsMapNamesSelection('v6.0.2')).toBe(false);
     expect(supportsMapNamesSelection('5.7.1')).toBe(false);
     expect(supportsMapNamesSelection(null)).toBe(false);
