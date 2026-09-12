@@ -2082,33 +2082,13 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
         finishEdit();
       });
     } else if (editMode === 'draw') {
-      // New OBSTACLE → draft flow (attached to a parent work map).
-      if (drawType === 'obstacle') {
-        const selWork = maps.find(m => m.mapId === selectedMapId && m.mapType === 'work');
-        const parent = selWork ?? maps.find(m => m.mapType === 'work');
-        const parentMap = parent?.canonicalName ?? null;
-        if (!parentMap) {
-          setEditStatus(t('map.edit.validationFailed'));
-          setEditStatusKind('error');
-          finishEdit();
-          return;
-        }
-        saveEditDraft(sn, { mapType: 'obstacle', parentMap, points }).then(async r => {
-          if (r.ok) {
-            await reloadMaps();
-            await refreshEditGeometry();
-            recordHistory();
-            setEditStatus('');
-            setEditStatusKind('info');
-          } else {
-            setEditStatus(r.error || t('map.edit.validationFailed'));
-            setEditStatusKind('error');
-          }
-          finishEdit();
-        }).catch(() => { finishEdit(); });
-        return;
-      }
-      // New WORK area or UNICOM → existing direct-create path (unchanged).
+      // Every newly drawn area takes the same route: straight to the mower.
+      // A new obstacle used to land in the draft flow, so it sat waiting behind
+      // "send to mower" while a work area and a channel went out by themselves.
+      // The server derives its canonical name from the polygon (the work area it
+      // sits in, next free index) and refuses one that lies outside every zone,
+      // which is the check the draft flow added here. Editing existing geometry
+      // keeps its drafts, because that is where undo and revert earn their keep.
       // Geen verzonnen naam meer ("Werkgebied 3"): laat het veld leeg, dan blijft
       // de canonieke slotnaam van de maaier (map1, map1tomap0_0_unicom) staan.
       // Dat is de naam waar maaier, ZIP en dashboard het over eens zijn.
