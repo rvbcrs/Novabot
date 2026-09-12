@@ -12,6 +12,16 @@ import { AlertTriangle, X } from 'lucide-react';
 //   151 = PIN lock — handled by PinKeypad overlay, no modal needed
 const HIDDEN_CODES = new Set(['8', '113', '132', '151']);
 
+// Codes that are normal for a few seconds and alarming only if they persist.
+// After saving a map the server restarts the mower's mapping node so it reloads
+// the fresh CSVs. robot_decision notices the missing process within 5 s and
+// reports 140 ("Process crashed") or 120, then clears it by itself once the
+// node is back, roughly 10 to 20 s later. Showing a full-screen modal for that
+// window made a routine save look like a crash. A real crash keeps the error
+// set, so the modal still appears, just later.
+const DEFERRED_CODES = new Set(['140', '120']);
+const DEFERRED_DELAY_MS = 30_000;
+
 interface Props {
   errorCode?: string;
   errorMsg?: string;
@@ -53,6 +63,13 @@ export function ErrorDisplay({ errorCode, errorMsg, errorStatus }: Props) {
 
     const code = rawCode || rawStatus || '?';
     const message = errorMsg || errorStatus || 'Unknown error';
+
+    if (DEFERRED_CODES.has(code)) {
+      const timer = setTimeout(() => setActiveError({ code, message }), DEFERRED_DELAY_MS);
+      // Clears the moment the error goes away or changes: the effect re-runs
+      // and this cleanup cancels the pending modal.
+      return () => clearTimeout(timer);
+    }
 
     setActiveError({ code, message });
   }, [hasError, isBenign, rawCode, rawStatus, errorCode, errorMsg, errorStatus]);
