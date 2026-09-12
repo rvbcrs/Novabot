@@ -358,7 +358,7 @@
     "editMap": "Kaart bewerken",
     "drawNewMap": "Nieuwe kaart tekenen",
     "mapNamePlaceholder": "Naam (optioneel)",
-    "drawHelp": "Klik op de kaart om punten toe te voegen. Minimaal 3 punten nodig.",
+    "drawHelp": "Klik op de kaart om punten toe te voegen. Dubbelklik zet het laatste punt en slaat op.",
     "editHelp": "Versleep hoekpunten om de kaart aan te passen. Klik op grijze punten om hoekpunten toe te voegen. Rechtermuisklik om te verwijderen.",
     "points": "{{count}} punten",
     "needMore": "nog {{count}} nodig",

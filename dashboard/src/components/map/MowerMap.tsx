@@ -396,28 +396,36 @@ export function CoverageStripes({ lanes, workPolys }: {
 }
 
 /** Click handler for draw mode — adds points to the polygon */
-function DrawClickHandler({ onPoint, onHover }: {
+function DrawClickHandler({ onPoint, onHover, onFinish }: {
   onPoint: (latlng: [number, number]) => void;
   /** Muispositie tijdens het tekenen, voor de elastieklijn naar het volgende punt. */
   onHover: (latlng: [number, number] | null) => void;
+  /** Dubbelklik: laatste punt gezet, tekenactie afronden. */
+  onFinish: () => void;
 }) {
   const map = useMap();
   useEffect(() => {
     const handler = (e: L.LeafletMouseEvent) => onPoint([e.latlng.lat, e.latlng.lng]);
     const hover = (e: L.LeafletMouseEvent) => onHover([e.latlng.lat, e.latlng.lng]);
     const leave = () => onHover(null);
+    const finish = (e: L.LeafletMouseEvent) => { L.DomEvent.stop(e); onFinish(); };
     map.on('click', handler);
     map.on('mousemove', hover);
     map.on('mouseout', leave);
+    map.on('dblclick', finish);
+    // Zonder dit zoomt Leaflet in op de dubbelklik waarmee je afrondt.
+    map.doubleClickZoom.disable();
     map.getContainer().style.cursor = 'crosshair';
     return () => {
       map.off('click', handler);
       map.off('mousemove', hover);
       map.off('mouseout', leave);
+      map.off('dblclick', finish);
+      map.doubleClickZoom.enable();
       map.getContainer().style.cursor = '';
       onHover(null);
     };
-  }, [map, onPoint, onHover]);
+  }, [map, onPoint, onHover, onFinish]);
   return null;
 }
 
@@ -1133,6 +1141,9 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
   // Muispositie tijdens tekenen: het eerste punt was onzichtbaar tot er een
   // tweede stond, en er was geen voorbeeld van de lijn die je gaat zetten.
   const [drawCursor, setDrawCursor] = useState<[number, number] | null>(null);
+  // Gezet door de dubbelklik, afgehandeld in een effect zodat het opslaan de
+  // net bijgewerkte puntenlijst ziet in plaats van de oude closure.
+  const [finishRequested, setFinishRequested] = useState(false);
   // Na het tekenen van een werkgebied: welk gebied nog met een kanaal verbonden
   // moet worden. De maaier kan alleen tussen zones rijden over een unicom-kanaal.
   const [channelPrompt, setChannelPrompt] = useState<{ canonical: string; name: string } | null>(null);
@@ -1630,8 +1641,12 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
   // werkgebied of obstakel is een vlak en heeft er minstens 3 nodig.
   const minDrawPoints = editMode === 'draw' && drawType === 'unicom' ? 2 : 3;
 
-  const startDrawMap = useCallback(() => {
+  // Elke nieuwe tekenactie begint op "werkgebied". Zonder deze reset bleef het
+  // type staan op wat je de vorige keer koos (meestal kanaal), en tekende je
+  // ongemerkt het verkeerde soort gebied. De kanaal-prompt geeft zijn type mee.
+  const startDrawMap = useCallback((type: AreaType = 'work') => {
     if (!mapWriteSupported) { setEditStatus(t('map.drawStockNotice')); setEditStatusKind('error'); return; }
+    setDrawType(type);
     setEditingMapId(null);
     setEditVertices([]);
     setDrawName('');
@@ -2102,6 +2117,14 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
       });
     }
   }, [editVertices, editMode, editingMapId, sn, maps, selectedMapId, gpsMaps, drawType, drawName, AREA_TYPE_META, chargerGps, chargingPose, reloadMaps, refreshEditGeometry, recordHistory, t, mapWriteSupported, minDrawPoints]);
+
+  // Afronden na een dubbelklik: pas ná de render met de opgeschoonde punten,
+  // zodat handleSavePolygon precies opslaat wat er op de kaart staat.
+  useEffect(() => {
+    if (!finishRequested) return;
+    setFinishRequested(false);
+    if (editVertices.length >= minDrawPoints) handleSavePolygon();
+  }, [finishRequested, editVertices, minDrawPoints, handleSavePolygon]);
 
   // Cancel edit/draw
   const cancelEditPolygon = useCallback(() => {
@@ -2792,6 +2815,20 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     setEditVertices(prev => [...prev, latlng]);
   }, []);
 
+  // Dubbelklik = laatste punt plus afronden. Leaflet stuurt vóór de dblclick
+  // twee gewone clicks, dus het punt staat er al dubbel; de kopie gaat eraf en
+  // daarna slaat een effect op (handleSavePolygon leest de bijgewerkte state).
+  const handleFinishDraw = useCallback(() => {
+    setEditVertices(prev => {
+      if (prev.length < 2) return prev;
+      const [aLat, aLng] = prev[prev.length - 1];
+      const [bLat, bLng] = prev[prev.length - 2];
+      const sameSpot = Math.abs(aLat - bLat) < 1e-7 && Math.abs(aLng - bLng) < 1e-7;
+      return sameSpot ? prev.slice(0, -1) : prev;
+    });
+    setFinishRequested(true);
+  }, []);
+
   const hasGps = lat && lng && lat !== '0' && lng !== '0';
   const position: [number, number] = (() => {
     const offLat = Number.isFinite(activeCal.offsetLat) ? activeCal.offsetLat : 0;
@@ -3369,7 +3406,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
           )}
           {/* Draw mode: click handler to add points */}
           {editMode === 'draw' && (
-            <DrawClickHandler onPoint={handleDrawPoint} onHover={setDrawCursor} />
+            <DrawClickHandler onPoint={handleDrawPoint} onHover={setDrawCursor} onFinish={handleFinishDraw} />
           )}
           {/* Gezette punten + elastieklijn naar de muis. PolygonEditor tekent pas
               vanaf twee punten, dus het eerste punt krijgt hier zijn eigen stip. */}
@@ -4240,7 +4277,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
                 {t('map.channelPromptLater')}
               </button>
               <button
-                onClick={() => { setChannelPrompt(null); setDrawType('unicom'); startDrawMap(); }}
+                onClick={() => { setChannelPrompt(null); startDrawMap('unicom'); }}
                 className="flex-1 text-xs px-2 py-1.5 rounded bg-amber-600 text-white hover:bg-amber-500 transition-colors"
               >
                 {t('map.channelPromptDraw')}

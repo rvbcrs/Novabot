@@ -295,7 +295,7 @@
     "editMap": "Karte bearbeiten",
     "drawNewMap": "Neue Karte zeichnen",
     "mapNamePlaceholder": "Name (optional)",
-    "drawHelp": "Klicken Sie auf die Karte, um Punkte hinzuzufügen. Mindestens 3 Punkte erforderlich.",
+    "drawHelp": "Klicken Sie auf die Karte, um Punkte hinzuzufügen. Ein Doppelklick setzt den letzten Punkt und speichert.",
     "editHelp": "Ziehen Sie Eckpunkte, um die Karte anzupassen. Klicken Sie auf graue Mittelpunkte, um Eckpunkte hinzuzufügen. Rechtsklick zum Entfernen.",
     "points": "{{count}} Punkte",
     "needMore": "noch {{count}} nötig",
