@@ -1878,11 +1878,45 @@ dashboardRouter.delete('/maps/:sn/:mapId', async (req: Request, res: Response) =
       });
       return;
     }
+    // Het wissen loopt op de maaier via de node novabot_mapping. Ligt die
+    // eruit (Error 140 "Process crashed" / 120), dan weigert elke wispoging en
+    // is er zonder SSH geen weg terug. Onze eigen sync_map herstart die node na
+    // elke kaart-push, en juist daar ging het mis. Eén keer herstarten en
+    // opnieuw proberen maakt dit zelfherstellend (live .244, 2026-09-12).
+    let mowerError = deviceCache.get(sn)?.get('error_msg') ?? null;
+    if (respond?.result !== 0 && /\b(140|120)\b|Process crashed|soft\(mapping\)/i.test(mowerError ?? '')) {
+      const restarted = await new Promise<boolean>((resolve) => {
+        let settled = false;
+        const handler = (data: Record<string, unknown>) => {
+          const r = data.restart_mapping_respond as { result?: number } | undefined;
+          if (!r || settled) return;
+          settled = true;
+          offExtendedResponse(sn, handler);
+          resolve(r.result === 0);
+        };
+        onExtendedResponse(sn, handler);
+        publishToExtended(sn, { restart_mapping: {} });
+        setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          offExtendedResponse(sn, handler);
+          resolve(false);
+        }, 60000);
+      });
+      console.log(`[DELETE] ${sn}: novabot_mapping lag eruit; herstart ${restarted ? 'gelukt' : 'mislukt'}`);
+      if (restarted) {
+        try {
+          respond = await awaitCommand(
+            sn,
+            'delete_map',
+            { map_name: mowerMapName, map_type: mapTypeCode, cmd_num: getNextCmdNum(sn) },
+            20000,
+          ) as { result?: number };
+        } catch { /* val door naar de 409 hieronder */ }
+        mowerError = deviceCache.get(sn)?.get('error_msg') ?? null;
+      }
+    }
     if (respond?.result !== 0) {
-      // De maaier zet zijn reden in error_msg (bv. "Process crashed" als
-      // novabot_mapping niet draait). Die tekst is voor de gebruiker het
-      // verschil tussen "stop je maaibeurt" en "je maaier heeft een probleem".
-      const mowerError = deviceCache.get(sn)?.get('error_msg') ?? null;
       res.status(409).json({
         ok: false,
         reason: 'mower_refused_delete',

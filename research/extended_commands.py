@@ -4529,6 +4529,17 @@ def handle_mapping_preflight(params, respond):
             {"result": 0, "verdict": verdict, "checks": checks, "reasons": reasons})
 
 
+def handle_restart_mapping(params, respond):
+    """Herstart novabot_mapping (en coverage_planner) op afstand.
+
+    Het wissen van een kaart loopt via novabot_mapping. Ligt die node eruit,
+    dan weigert robot_decision met Error 140 en is er zonder SSH geen weg
+    terug. Hiermee kan de server zichzelf herstellen.
+    """
+    ok = _restart_novabot_mapping()
+    respond("restart_mapping_respond", {"result": 0 if ok else 1, "running": ok})
+
+
 COMMANDS = {
     "is_opennova": handle_is_opennova,
     "mapping_preflight": handle_mapping_preflight,
@@ -4551,6 +4562,7 @@ COMMANDS = {
     "read_map_files": handle_read_map_files,
     "write_map_files": handle_write_map_files,
     "regenerate_per_map_files": handle_regenerate_per_map_files,
+    "restart_mapping": handle_restart_mapping,
     "fix_lawn_seams": handle_fix_lawn_seams,
     "set_seam_fix": handle_set_seam_fix,
     "get_seam_fix": handle_get_seam_fix,
@@ -4874,12 +4886,32 @@ def _restart_novabot_mapping():
     import os
     import subprocess
     try:
+        # Welke novabot_mapping-processen draaien er NU? Alleen een pid die hier
+        # niet in staat bewijst dat de herstart echt gebeurd is.
+        before = set(subprocess.run(
+            ["pgrep", "-x", "novabot_mapping"],
+            capture_output=True, text=True, timeout=5,
+        ).stdout.split())
         cmd = (
-            '(pkill -f "novabot_mapping_launch.py" || true); '
-            '(pkill -f "coverage_planner_server.launch.py" || true); '
+            # LET OP: `pkill -f "novabot_mapping_launch.py"` matcht OOK de bash
+            # die dit script draait, want die naam staat in zijn eigen argv. De
+            # shell schoot daarmee zichzelf af halverwege de reeks: de oude node
+            # bleef staan, er kwam een tweede bij, en de verificatie zag "draait"
+            # door naar het oude proces te kijken (live .244, 2026-09-12).
+            # De blokhaak breekt de match op de eigen commandoregel; -x matcht op
+            # procesnaam, dus nooit op de wrapper.
+            # pkill -f mag hier NIET: deze commandoregel bevat zelf de naam van
+            # het launch-bestand (verderop, in de setsid-regel), dus pkill schoot
+            # zijn eigen shell af en de rest van de reeks liep nooit. Ook de
+            # blokhaak-truc helpt niet, want de platte naam staat er toch nog in.
+            # Daarom per pid, met het eigen proces en zijn ouder uitgesloten.
+            'for p in $(pgrep -f "novabot_mapping_launch\\.py" 2>/dev/null); do '
+            '  [ "$p" = "$$" ] || [ "$p" = "$PPID" ] || kill "$p" 2>/dev/null; done; '
+            'for p in $(pgrep -f "coverage_planner_server\\.launch\\.py" 2>/dev/null); do '
+            '  [ "$p" = "$$" ] || [ "$p" = "$PPID" ] || kill "$p" 2>/dev/null; done; '
             "sleep 1; "
-            "(killall -9 novabot_mapping 2>/dev/null || true); "
-            "(killall -9 coverage_planner_server 2>/dev/null || true); "
+            "(pkill -x -9 novabot_mapping || true); "
+            "(pkill -x -9 coverage_planner_server || true); "
             "sleep 1; "
             ". /opt/ros/galactic/setup.bash; "
             ". /root/novabot/install/setup.bash; "
@@ -4902,27 +4934,43 @@ def _restart_novabot_mapping():
             "disown -a; "
             "exit 0"
         )
-        subprocess.Popen(
-            ["bash", "-lc", cmd],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            stdin=subprocess.DEVNULL,
-            start_new_session=True,
-            close_fds=True,
-        )
-        # Give the kills + setsid'd launches time to settle before returning,
-        # but don't wait for the launches themselves (they keep running).
+        # De wrapper zelf logt naar een bestand: met DEVNULL verdween elke fout
+        # ("ros2: command not found", een mislukte source) spoorloos en leek de
+        # herstart simpelweg niets te doen.
+        wrapper_log = "/root/novabot/data/ros2_log/mapping_restart_wrapper.log"
+        with open(wrapper_log, "a") as wl:
+            subprocess.Popen(
+                ["bash", "-lc", cmd],
+                stdout=wl,
+                stderr=wl,
+                stdin=subprocess.DEVNULL,
+                start_new_session=True,
+                close_fds=True,
+            )
+        # `ros2 launch` needs ~8-15 s before the binary itself is up. The old
+        # check waited 3 s and then reported success or failure on a coin flip:
+        # sync_map answered `restart: true` while novabot_mapping was in fact
+        # gone, and the next map delete failed with Error 140 "Process crashed"
+        # (live .244, 2026-09-11 and 2026-09-12). Poll instead, and say so in
+        # the log when it really did not come up.
         import time
-        time.sleep(3)
-        # Verify at least the novabot_mapping binary respawned. coverage_planner
-        # is checked by sync_map's downstream verification.
-        rc = subprocess.run(
-            ["pgrep", "-f", "novabot_mapping/novabot_mapping"],
-            capture_output=True, text=True, timeout=5,
-        )
-        return rc.returncode == 0
-    except Exception:
+        deadline = time.time() + 40
+        while time.time() < deadline:
+            time.sleep(2)
+            now = set(subprocess.run(
+                ["pgrep", "-x", "novabot_mapping"],
+                capture_output=True, text=True, timeout=5,
+            ).stdout.split())
+            fresh = now - before
+            if fresh and not (now & before):
+                log("novabot_mapping restart: running (pid %s)" % ",".join(sorted(fresh)))
+                return True
+        log("novabot_mapping restart: NOT restarted after 40s (before=%s)" % ",".join(sorted(before)))
         return False
+    except Exception as e:
+        log(f"novabot_mapping restart error: {e}")
+        return False
+
 
 
 def _restart_auto_recharge_server():

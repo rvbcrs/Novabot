@@ -97,7 +97,7 @@ vi.mock('../../mqtt/sensorData.js', () => ({
 
 import { dashboardRouter } from '../../routes/dashboard.js';
 import { deviceCache } from '../../mqtt/sensorData.js';
-import { publishToDevice, publishToExtended, awaitCommand } from '../../mqtt/mapSync.js';
+import { publishToDevice, publishToExtended, awaitCommand, onExtendedResponse } from '../../mqtt/mapSync.js';
 import { mapRepo } from '../../db/repositories/index.js';
 
 const app = express();
@@ -152,6 +152,25 @@ describe('DELETE map route — follow-up commands to the mower', () => {
     expect(res.status).toBe(409);
     expect(res.body.reason).toBe('mower_refused_delete');
     expect(mapRepo.findByMowerSn(SN)).toHaveLength(1);
+  });
+
+  it('herstart novabot_mapping en probeert opnieuw als die node eruit ligt', async () => {
+    deviceCache.set(SN, new Map([['error_msg', 'Error_code: 140 Process crashed, please reboot and retry!!!']]));
+    vi.mocked(awaitCommand)
+      .mockResolvedValueOnce({ result: 1, value: null })   // eerste poging: geweigerd
+      .mockResolvedValueOnce({ result: 0, value: null });  // na herstart: gelukt
+    // De maaier bevestigt de herstart via het extended-kanaal.
+    vi.mocked(onExtendedResponse).mockImplementation((_sn: string, handler: (d: Record<string, unknown>) => void) => {
+      setTimeout(() => handler({ restart_mapping_respond: { result: 0, running: true } }), 0);
+    });
+
+    const res = await request(app).delete(`/api/dashboard/maps/${SN}/del-map1`);
+    expect(res.status).toBe(200);
+    expect(vi.mocked(publishToExtended).mock.calls.map(c => Object.keys(c[1] as object)[0])).toContain('restart_mapping');
+    expect(vi.mocked(awaitCommand).mock.calls.filter(c => c[1] === 'delete_map')).toHaveLength(2);
+    expect(mapRepo.findByMowerSn(SN)).toHaveLength(0);
+    vi.mocked(onExtendedResponse).mockReset();
+    deviceCache.delete(SN);
   });
 
   it('weigert meteen als de maaier bezig is, zonder commando te sturen', async () => {
