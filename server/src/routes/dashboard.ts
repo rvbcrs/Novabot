@@ -1883,7 +1883,13 @@ dashboardRouter.delete('/maps/:sn/:mapId', async (req: Request, res: Response) =
     // is er zonder SSH geen weg terug. Onze eigen sync_map herstart die node na
     // elke kaart-push, en juist daar ging het mis. Eén keer herstarten en
     // opnieuw proberen maakt dit zelfherstellend (live .244, 2026-09-12).
-    let mowerError = deviceCache.get(sn)?.get('error_msg') ?? null;
+    // "Error_code: 0 Robot work fine" is geen fout; die tekst in een
+    // foutmelding zetten maakt hem alleen verwarrend.
+    const liveMowerError = (): string | null => {
+      const msg = deviceCache.get(sn)?.get('error_msg') ?? null;
+      return msg && !/Error_code:\s*0\b/.test(msg) ? msg : null;
+    };
+    let mowerError = liveMowerError();
     if (respond?.result !== 0 && /\b(140|120)\b|Process crashed|soft\(mapping\)/i.test(mowerError ?? '')) {
       const restarted = await new Promise<boolean>((resolve) => {
         let settled = false;
@@ -1913,7 +1919,7 @@ dashboardRouter.delete('/maps/:sn/:mapId', async (req: Request, res: Response) =
             20000,
           ) as { result?: number };
         } catch { /* val door naar de 409 hieronder */ }
-        mowerError = deviceCache.get(sn)?.get('error_msg') ?? null;
+        mowerError = liveMowerError();
       }
     }
     if (respond?.result !== 0) {

@@ -42,10 +42,26 @@ let aedesBroker: Aedes | null = null;
 // We track per-SN to avoid collisions between devices.
 const cmdNumCounters = new Map<string, number>();
 
-/** Get the next cmd_num for a device (auto-incrementing, starts at 1). */
+/**
+ * Get the next cmd_num for a device (auto-incrementing).
+ *
+ * mqtt_node op de maaier onthoudt het LAATSTE cmd_num en beantwoordt een
+ * commando met hetzelfde nummer direct met `result:1`, zonder de firmware ook
+ * maar aan te roepen. Begon de teller na een serverherstart weer op 1 en was 1
+ * ook het laatste nummer dat de maaier zag, dan weigerde hij stil (live .244,
+ * 2026-09-12: delete_map map7 kwam binnen, `novabot_cmd_num=1`, antwoord in
+ * 1 ms zonder enig spoor in robot_decision).
+ *
+ * Daarom start de teller per maaier op de huidige tijd in seconden. Na een
+ * herstart ligt het eerste nummer dus altijd hoger dan wat de maaier kent, en
+ * blijft het binnen het bereik dat de firmware accepteert.
+ */
+const CMD_NUM_MODULO = 60000;
+
 export function getNextCmdNum(sn: string): number {
-  const current = cmdNumCounters.get(sn) ?? 0;
-  const next = current + 1;
+  const seed = Math.floor(Date.now() / 1000) % CMD_NUM_MODULO;
+  const current = cmdNumCounters.get(sn) ?? seed;
+  const next = (current % CMD_NUM_MODULO) + 1;
   cmdNumCounters.set(sn, next);
   return next;
 }
