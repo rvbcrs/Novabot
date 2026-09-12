@@ -150,7 +150,9 @@ export default function JoystickScreen() {
     // (sensorData.ts WORK_STATUS_LABELS). Check both raw and translated
     // forms. Idle-like states (mower not actively executing a coverage
     // path): '0'/'Idle', '9'/'Ready', '70'/'Finished once', '72'/'Cancelled'.
-    const IDLE_WORK_STATES = ['0', '9', '70', '72', 'Idle', 'Ready', 'Finished once', 'Cancelled'];
+    // A failed or cancelled task is over: the mower is idle, not mowing.
+    const IDLE_WORK_STATES = ['0', '1', '2', '7', '8', '9', '70', '72',
+      'Idle', 'Ready', 'Failed', 'Failed once', 'Finished once', 'Finished', 'Cancelled'];
     const stickyMowing = !onDock && taskMode === 1 && !returning
       && !IDLE_WORK_STATES.includes(workStatus)
       && !msg.includes('Work:FINISHED') && !msg.includes('Work:CANCELLED');

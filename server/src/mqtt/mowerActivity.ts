@@ -33,8 +33,15 @@ const NON_BLOCKING_ERRORS = [8, 113, 118, 120, 122, 123, 124, 125, 126, 132, 139
 /**
  * Idle-like work_status values (raw int form OR the server's translated
  * human label). Mirrors IDLE_WORK_STATES in the app.
+ *
+ * A task that FAILED or was cancelled is over, so the mower is idle even while
+ * it stands in the garden. Leaving 1/Failed out made the sticky-mowing fallback
+ * report "mowing" after a failed start, which blocked the joystick with "mower
+ * busy - stop the task first" (live .244, 2026-09-12: a coverage start refused
+ * at the dock check, and manual driving was the way out).
  */
-const IDLE_WORK_STATES = ['0', '9', '70', '72', 'Idle', 'Ready', 'Finished once', 'Cancelled'];
+const IDLE_WORK_STATES = ['0', '1', '2', '7', '8', '9', '70', '72',
+  'Idle', 'Ready', 'Failed', 'Failed once', 'Finished once', 'Finished', 'Cancelled'];
 
 /** Recharge_status values that mean "driving back to the dock". */
 // 50/53: stock 5.7.1 rapporteert de terugrit NA het afmaken met die codes

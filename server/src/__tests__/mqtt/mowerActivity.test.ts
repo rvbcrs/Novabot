@@ -80,6 +80,41 @@ describe('deriveMowerActivity — #31: terugrit na afmaken', () => {
   });
 });
 
+describe('deriveMowerActivity — een mislukte taak is geen maaibeurt', () => {
+  // Live .244 op 2026-09-12: een maaistart werd bij de dock-controle geweigerd
+  // (fout 139) en de maaier stond naast het dock met work_status Failed. De
+  // sticky-mowing terugval noemde dat "mowing", waarna het dashboard de joystick
+  // blokkeerde met "maaier is bezig" — precies wanneer je hem handmatig moet
+  // kunnen wegrijden.
+  it('mislukte taak buiten het dock is idle', () => {
+    const a = deriveMowerActivity(
+      {
+        work_status: 'Failed',
+        task_mode: '1',
+        battery_state: 'DISCHARGED',
+        recharge_status: 'Not charging',
+        msg: 'Mode:COVERAGE Work:FAILED Prev work:QUIT_PILE_INIT Recharge: WAIT',
+        error_status: 'Error (139)',
+      },
+      { online: true },
+    );
+    expect(a).toBe('idle');
+  });
+
+  it('een echt lopende maaibeurt blijft maaien', () => {
+    const a = deriveMowerActivity(
+      {
+        work_status: '100',
+        task_mode: '1',
+        battery_state: 'DISCHARGED',
+        msg: 'Mode:COVERAGE Work:COVERING Prev work:RUNNING Recharge: WAIT',
+      },
+      { online: true },
+    );
+    expect(a).toBe('mowing');
+  });
+});
+
 describe('isInterruptedCoverage — #30: Low power laadpauze op stock 5.7.1', () => {
   const docked = { battery_state: 'CHARGING', task_mode: '1' };
 

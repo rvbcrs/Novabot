@@ -258,7 +258,9 @@ function deriveMower(mower: DeviceState | null): MowerDerived | null {
   // works regardless of which side does the translation. Idle-like states
   // (mower not actively executing a coverage path):
   //   '0'/'Idle', '9'/'Ready', '70'/'Finished once', '72'/'Cancelled'
-  const IDLE_WORK_STATES = ['0', '9', '70', '72', 'Idle', 'Ready', 'Finished once', 'Cancelled'];
+  // A failed or cancelled task is over: the mower is idle, not mowing.
+  const IDLE_WORK_STATES = ['0', '1', '2', '7', '8', '9', '70', '72',
+    'Idle', 'Ready', 'Failed', 'Failed once', 'Finished once', 'Finished', 'Cancelled'];
   // Work:FAILED counts as idle too: a mow that failed to START (e.g. Error 124
   // "out of working area") lands in Work:FAILED but the firmware keeps reporting
   // task_mode:1 + work_status:1 (WORKING). Without this the app shows a phantom
