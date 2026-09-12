@@ -5,12 +5,30 @@
  * The route must merge it into the persistent TGM1 file under
  * STORAGE_PATH/terrain/<sn>.tgm and upsert `terrain_grids` metadata.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import request from 'supertest';
+import type { Server } from 'http';
+import type { Express } from 'express';
 import fs from 'fs';
 import path from 'path';
 import { buildTestApp } from '../testHarness.js';
 import { terrainGridRepo } from '../../../db/repositories/index.js';
+
+// supertest opent per request een eigen luisteraar op een vrije poort en sluit
+// hem daarna weer. Tussen dat sluiten en de volgende verbinding kan de kernel
+// hetzelfde poortnummer aan een ANDER proces geven; een request landde dan bij
+// een vreemde server. Vastgelegd op 2026-09-12: een upload kreeg 401 terug met
+// `server: uvicorn` in de headers, terwijl onze app Express is. Eén luisteraar
+// per test, open zolang de test loopt, sluit dat gat.
+const openServers: Server[] = [];
+function api(app: Express) {
+  const server = app.listen(0);
+  openServers.push(server);
+  return request(server);
+}
+afterEach(() => {
+  for (const s of openServers.splice(0)) s.close();
+});
 
 function tgr1Cells(cells: Array<[number, number, number, number]>): Buffer {
   const buf = Buffer.alloc(16 + cells.length * 16);
@@ -43,7 +61,7 @@ function tgo1Cells(cells: Array<[number, number, number, number, number]>): Buff
 describe('POST /api/nova-file-server/terrain/uploadTerrainGrid', () => {
   it('accepteert TGR1, merget en registreert metadata', async () => {
     const app = buildTestApp();
-    const res = await request(app)
+    const res = await api(app)
       .post('/api/nova-file-server/terrain/uploadTerrainGrid?sn=LFIN2230700238')
       .set('Content-Type', 'application/octet-stream')
       .send(tgr1Cells([[0, 0, 0.1, 3], [5, -2, 0.4, 1]]));
@@ -58,7 +76,7 @@ describe('POST /api/nova-file-server/terrain/uploadTerrainGrid', () => {
 
   it('weigert kapotte payload met 400', async () => {
     const app = buildTestApp();
-    const res = await request(app)
+    const res = await api(app)
       .post('/api/nova-file-server/terrain/uploadTerrainGrid?sn=LFIN2230700238')
       .set('Content-Type', 'application/octet-stream')
       .send(Buffer.from('GARBAGE'));
@@ -67,7 +85,7 @@ describe('POST /api/nova-file-server/terrain/uploadTerrainGrid', () => {
 
   it('weigert ontbrekende sn met 400', async () => {
     const app = buildTestApp();
-    const res = await request(app)
+    const res = await api(app)
       .post('/api/nova-file-server/terrain/uploadTerrainGrid')
       .set('Content-Type', 'application/octet-stream')
       .send(tgr1Cells([[0, 0, 0.1, 1]]));
@@ -77,12 +95,12 @@ describe('POST /api/nova-file-server/terrain/uploadTerrainGrid', () => {
   it('live-sessie: final=0 vervangt actieve laag, final=1 vouwt één keer in', async () => {
     const app = buildTestApp();
     const S = 'sn=LFIN2230700238&session=111&final=0';
-    await request(app).post(`/api/nova-file-server/terrain/uploadTerrainGrid?${S}`)
+    await api(app).post(`/api/nova-file-server/terrain/uploadTerrainGrid?${S}`)
       .set('Content-Type', 'application/octet-stream').send(tgr1Cells([[0, 0, 0.1, 5]])).expect(200);
-    await request(app).post(`/api/nova-file-server/terrain/uploadTerrainGrid?${S}`)
+    await api(app).post(`/api/nova-file-server/terrain/uploadTerrainGrid?${S}`)
       .set('Content-Type', 'application/octet-stream').send(tgr1Cells([[0, 0, 0.1, 5], [1, 0, 0.2, 3]])).expect(200);
     const before = terrainGridRepo.findBySn('LFIN2230700238');
-    await request(app).post('/api/nova-file-server/terrain/uploadTerrainGrid?sn=LFIN2230700238&session=111&final=1')
+    await api(app).post('/api/nova-file-server/terrain/uploadTerrainGrid?sn=LFIN2230700238&session=111&final=1')
       .set('Content-Type', 'application/octet-stream').send(tgr1Cells([[0, 0, 0.1, 5], [1, 0, 0.2, 3]])).expect(200);
     const after = terrainGridRepo.findBySn('LFIN2230700238')!;
     expect(after.sessions).toBe((before?.sessions ?? 0) + 1);  // tussentijdse uploads telden NIET
@@ -90,7 +108,7 @@ describe('POST /api/nova-file-server/terrain/uploadTerrainGrid', () => {
 
   it('uploadObjectGrid accepteert TGO1 en registreert obj-metadata', async () => {
     const app = buildTestApp();
-    await request(app).post('/api/nova-file-server/terrain/uploadObjectGrid?sn=LFIN2230700238&final=1')
+    await api(app).post('/api/nova-file-server/terrain/uploadObjectGrid?sn=LFIN2230700238&final=1')
       .set('Content-Type', 'application/octet-stream').send(tgo1Cells([[3, 4, 1, 0.5, 7]])).expect(200);
     expect(terrainGridRepo.findBySn('LFIN2230700238')!.obj_sessions).toBeGreaterThanOrEqual(1);
   });
@@ -99,17 +117,17 @@ describe('POST /api/nova-file-server/terrain/uploadTerrainGrid', () => {
     const app = buildTestApp();
     const sn = 'LFIN2230700239';
     // object-laag start als actieve sessie S1 (final=0)
-    await request(app).post(`/api/nova-file-server/terrain/uploadObjectGrid?sn=${sn}&session=S1&final=0`)
+    await api(app).post(`/api/nova-file-server/terrain/uploadObjectGrid?sn=${sn}&session=S1&final=0`)
       .set('Content-Type', 'application/octet-stream').send(tgo1Cells([[2, 2, 3, 0.4, 2]])).expect(200);
     // een terrain-upload finalt dezelfde sessie — mag de gedeelde .active.json
     // NIET wissen zolang .active.tgo (object-laag, zelfde sessie) nog bestaat
-    await request(app).post(`/api/nova-file-server/terrain/uploadTerrainGrid?sn=${sn}&session=S1&final=1`)
+    await api(app).post(`/api/nova-file-server/terrain/uploadTerrainGrid?sn=${sn}&session=S1&final=1`)
       .set('Content-Type', 'application/octet-stream').send(tgr1Cells([[0, 0, 0.1, 1]])).expect(200);
     const before = terrainGridRepo.findBySn(sn);
     // een NIEUWE sessie start een non-final object-upload — moet eerst de
     // achtergebleven S1-object-laag invouwen (foldActive) in plaats van hem
     // stilletjes te overschrijven
-    await request(app).post(`/api/nova-file-server/terrain/uploadObjectGrid?sn=${sn}&session=S2&final=0`)
+    await api(app).post(`/api/nova-file-server/terrain/uploadObjectGrid?sn=${sn}&session=S2&final=0`)
       .set('Content-Type', 'application/octet-stream').send(tgo1Cells([[9, 9, 5, 0.9, 1]])).expect(200);
     const after = terrainGridRepo.findBySn(sn)!;
     expect(after.obj_sessions).toBe((before?.obj_sessions ?? 0) + 1);
@@ -120,7 +138,7 @@ describe('POST /api/nova-file-server/terrain/uploadSessionFrame', () => {
   it('uploadSessionFrame bewaart jpeg + pose-sidecar en begrenst per sessie', async () => {
     const app = buildTestApp();
     const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 0xff, 0xd9]);
-    const res = await request(app)
+    const res = await api(app)
       .post('/api/nova-file-server/terrain/uploadSessionFrame?sn=LFIN2230700238&session=555&seq=1&x=1.5&y=-2.25&yaw=0.7854')
       .set('Content-Type', 'application/octet-stream').send(jpeg);
     expect(res.status).toBe(200);
@@ -131,9 +149,9 @@ describe('POST /api/nova-file-server/terrain/uploadSessionFrame', () => {
 
   it('uploadSessionFrame weigert ongeldige sn/seq', async () => {
     const app = buildTestApp();
-    await request(app).post('/api/nova-file-server/terrain/uploadSessionFrame?sn=../x&session=1&seq=1&x=0&y=0&yaw=0')
+    await api(app).post('/api/nova-file-server/terrain/uploadSessionFrame?sn=../x&session=1&seq=1&x=0&y=0&yaw=0')
       .set('Content-Type', 'application/octet-stream').send(Buffer.from([0xff, 0xd8])).expect(400);
-    await request(app).post('/api/nova-file-server/terrain/uploadSessionFrame?sn=LFIN2230700238&session=1&seq=999&x=0&y=0&yaw=0')
+    await api(app).post('/api/nova-file-server/terrain/uploadSessionFrame?sn=LFIN2230700238&session=1&seq=999&x=0&y=0&yaw=0')
       .set('Content-Type', 'application/octet-stream').send(Buffer.from([0xff, 0xd8])).expect(400); // seq > 200
   });
 
@@ -142,7 +160,7 @@ describe('POST /api/nova-file-server/terrain/uploadSessionFrame', () => {
     const sn = 'LFIN2230700240';
     const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
     for (const session of ['9', '10', '11', '12', '13', '14']) {
-      await request(app)
+      await api(app)
         .post(`/api/nova-file-server/terrain/uploadSessionFrame?sn=${sn}&session=${session}&seq=1&x=0&y=0&yaw=0`)
         .set('Content-Type', 'application/octet-stream').send(jpeg).expect(200);
     }

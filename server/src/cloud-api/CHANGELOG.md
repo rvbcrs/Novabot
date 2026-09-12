@@ -2,6 +2,16 @@
 
 Format: most-recent first. Each entry is dated and names the endpoint(s) affected.
 
+## 2026-09-12 — terrain: contract test holds its own listener
+
+- No behaviour change to `uploadTerrainGrid` / `uploadObjectGrid` /
+  `uploadSessionFrame`. The contract test now opens one listener per test and
+  closes it afterwards, instead of letting supertest open and close one per
+  request. A release run failed on a 401 whose headers said `server: uvicorn`
+  while our app is Express: the request had reached a recycled port owned by
+  another process. Holding the listener open for the duration of the test
+  removes that window.
+
 ## 2026-07-20 — terrain: live classificeren tijdens het maaien
 
 - `uploadSessionFrame` triggert nu een gethrottelde herkenningsrun
