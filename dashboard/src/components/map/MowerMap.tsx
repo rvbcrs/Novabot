@@ -1622,6 +1622,20 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
   }, [chargerGps, mapWriteSupported, t]);
 
   // Start drawing a new polygon
+  // Maten tijdens het tekenen: de lengte van de lijn die je nu trekt, en het
+  // vlak dat ontstaat als je hier zou sluiten. Zonder die getallen is op een
+  // luchtfoto niet te zien hoe groot een gebied wordt.
+  const drawMetrics = useMemo(() => {
+    if (editMode !== 'draw' || editVertices.length === 0) return null;
+    const verts = editVertices.map(([lat, lng]) => ({ lat, lng }));
+    const cursor = drawCursor ? { lat: drawCursor[0], lng: drawCursor[1] } : null;
+    const segmentM = cursor ? polylineLengthM([verts[verts.length - 1], cursor]) : null;
+    const ring = cursor ? [...verts, cursor] : verts;
+    const perimeterM = polylineLengthM([...ring, ring[0]]);
+    const areaM2 = drawType === 'unicom' ? null : polygonAreaM2(ring);
+    return { segmentM, areaM2, perimeterM, pathM: polylineLengthM(ring) };
+  }, [editMode, editVertices, drawCursor, drawType]);
+
   // Het slot dat de server aan een nieuw werkgebied geeft: het eerste vrije
   // nummer. De maaier kent alleen deze namen, dus tonen we hem vooraf.
   const plannedWorkSlot = useMemo(() => {
@@ -3251,7 +3265,9 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
               : isSelected
                 ? { ...baseStyle, fillOpacity: 0.5, weight: 3, opacity: 1 }
                 : baseStyle;
-            const label = m.mapName || m.canonicalName;
+            const areaM2 = m.mapType === 'unicom' ? null : polygonAreaM2(m.mapArea);
+            const label = [m.mapName || m.canonicalName, areaM2 ? `${areaM2.toFixed(1)} m²` : null]
+              .filter(Boolean).join(' · ');
             const clickHandlers = {
               // While placing a pattern, the polygon must NOT swallow the click
               // (stopPropagation) — let it reach the map's PatternClickHandler.
@@ -3424,7 +3440,13 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
                 <Polyline
                   positions={[editVertices[editVertices.length - 1], drawCursor]}
                   pathOptions={{ color: editorColor, weight: 2, dashArray: '6 4', opacity: 0.85 }}
-                />
+                >
+                  {drawMetrics?.segmentM != null && (
+                    <Tooltip permanent direction="right" offset={[10, 0]} className="draw-measure">
+                      {drawMetrics.segmentM.toFixed(1)} m
+                    </Tooltip>
+                  )}
+                </Polyline>
               )}
               {/* Sluitlijn terug naar het beginpunt: laat zien welk vlak ontstaat.
                   Een kanaal is een lijn en heeft die niet. */}
@@ -4342,8 +4364,16 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
                 ? t('map.drawHelp')
                 : t('map.editHelp')}
             </p>
-            <div className="flex items-center gap-2 text-[11px] text-gray-500 mb-3">
+            <div className="flex items-center gap-2 text-[11px] text-gray-500 mb-3 flex-wrap">
               <span>{t('map.points', { count: editVertices.length })}</span>
+              {drawMetrics && (
+                <span className="font-mono text-gray-300">
+                  {drawMetrics.segmentM != null && `${drawMetrics.segmentM.toFixed(1)} m`}
+                  {drawMetrics.areaM2 != null && drawMetrics.areaM2 > 0
+                    && ` · ${drawMetrics.areaM2.toFixed(1)} m²`}
+                  {drawType === 'unicom' && ` · ${drawMetrics.pathM.toFixed(1)} m totaal`}
+                </span>
+              )}
               {editMode === 'draw' && editVertices.length < minDrawPoints && (
                 <span className="text-amber-400">{t('map.needMore', { count: minDrawPoints - editVertices.length })}</span>
               )}

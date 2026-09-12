@@ -58,3 +58,16 @@ body {
 .tw-wheel-scroll::-webkit-scrollbar {
   display: none;                /* Chrome/Safari */
 }
+
+/* Maatlabel tijdens het tekenen: leest als een meetlint, niet als een tooltip. */
+.leaflet-tooltip.draw-measure {
+  background: rgba(17, 24, 39, 0.9);
+  border: none;
+  box-shadow: none;
+  color: #e5e7eb;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  padding: 2px 6px;
+  white-space: nowrap;
+}
+.leaflet-tooltip.draw-measure::before { display: none; }
