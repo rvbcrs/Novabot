@@ -82,7 +82,56 @@ def test_no_anchor_means_no_dock_zone():
     assert mzd._dock_zone() is None
 
 
-def test_channel_files_match_the_transit_pattern():
+RAMON = [   # de echte kanalen op LFIN2230700238, 2026-09-14
+    "map0tocharge_unicom.csv",
+    "map0tomap3_0_unicom.csv",
+    "map1tomap0_0_unicom.csv",
+    "map2tomap1_0_unicom.csv",
+    "map4tomap1_0_unicom.csv",
+    "map5tomap4_0_unicom.csv",
+    "map6tomap5_0_unicom.csv",
+]
+
+
+def test_a_channel_is_drivable_in_both_directions():
+    g = mzd.channel_graph(["map1tomap0_0_unicom.csv"])
+    assert g == {"map0": {"map1": "map1tomap0_0_unicom.csv"},
+                 "map1": {"map0": "map1tomap0_0_unicom.csv"}}
+    # to-charge en rommel horen er niet in
+    assert mzd.channel_graph(["map0tocharge_unicom.csv", "map0_work.csv"]) == {}
+
+
+def test_route_chains_the_recorded_channels():
+    g = mzd.channel_graph(RAMON)
+    # Geen directe map0->map6, wel een ketting van vier.
+    assert mzd.channel_route("map0", "map6", g) == [
+        "map1tomap0_0_unicom.csv",
+        "map4tomap1_0_unicom.csv",
+        "map5tomap4_0_unicom.csv",
+        "map6tomap5_0_unicom.csv",
+    ]
+    # en andersom net zo lang
+    assert len(mzd.channel_route("map6", "map0", g)) == 4
+    # één hop blijft één hop
+    assert mzd.channel_route("map0", "map1", g) == ["map1tomap0_0_unicom.csv"]
+
+
+def test_route_is_the_shortest_one():
+    g = mzd.channel_graph(RAMON + ["map0tomap5_0_unicom.csv"])
+    # Met een snelweg map0-map5 erbij is map6 in twee hops te doen.
+    assert mzd.channel_route("map0", "map6", g) == [
+        "map0tomap5_0_unicom.csv", "map6tomap5_0_unicom.csv",
+    ]
+
+
+def test_no_route_when_the_zone_is_not_connected():
+    g = mzd.channel_graph(RAMON)
+    assert mzd.channel_route("map0", "map9", g) == []
+    assert mzd.channel_route("map0", "map0", g) == []
+    assert mzd.channel_route(None, "map6", g) == []
+
+
+def test_channel_files_reads_the_route_from_disk():
     with_maps({"map0_work.csv": SQ0, "map6_work.csv": SQ6,
                "map0tomap6_0_unicom.csv": [(9, 5), (31, 5)],
                "map6tomap0_0_unicom.csv": [(31, 5), (9, 5)],

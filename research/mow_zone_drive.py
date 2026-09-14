@@ -544,17 +544,60 @@ def _dock_zone():
     return None
 
 
-def _channel_files(from_slot, to_slot):
-    """Recorded channels from one zone to another, exactly as the transit matches them."""
-    if not from_slot or from_slot == to_slot:
+def channel_graph(names):
+    """Undirected graph of recorded map<->map channels: slot -> {other: filename}.
+
+    A channel is recorded in one direction but drivable either way, so
+    map1tomap0_0_unicom.csv connects map0 and map1 both ways. Between the same
+    pair the lowest-numbered file wins, which keeps the route reproducible.
+    """
+    graph = {}
+    for f in sorted(names):
+        m = re.fullmatch(r"(map\d+)tomap(\d+)_(\d+)_unicom\.csv", f)
+        if not m:
+            continue
+        a, b = m.group(1), f"map{m.group(2)}"
+        if a == b:
+            continue
+        graph.setdefault(a, {}).setdefault(b, f)
+        graph.setdefault(b, {}).setdefault(a, f)
+    return graph
+
+
+def channel_route(from_slot, to_slot, graph):
+    """Shortest chain of channel files from one zone to another, [] if none.
+
+    Zones are rarely all connected to each other: a garden reads as a chain
+    (map0 - map1 - map4 - map5 - map6 on LFIN2230700238), so asking only for a
+    direct mapAtomapB file finds nothing and the mower is left to plan its own
+    way across the garden. Breadth-first gives the fewest recorded channels
+    that get there.
+    """
+    if not from_slot or not to_slot or from_slot == to_slot:
         return []
+    seen = {from_slot}
+    queue = [(from_slot, [])]
+    while queue:
+        node, path = queue.pop(0)
+        for nxt, fname in sorted(graph.get(node, {}).items()):
+            if nxt in seen:
+                continue
+            hop = path + [fname]
+            if nxt == to_slot:
+                return hop
+            seen.add(nxt)
+            queue.append((nxt, hop))
+    return []
+
+
+def _channel_files(from_slot, to_slot):
+    """The recorded channels the transit would drive, in order."""
     base = _csv_base()
     try:
         names = os.listdir(base)
     except OSError:
         names = []
-    return sorted(f for f in names
-                  if re.fullmatch(rf"{from_slot}to{to_slot}_\d+_unicom\.csv", f))
+    return channel_route(from_slot, to_slot, channel_graph(names))
 
 
 def _cover(drv, map_ids, cutterhigh, direction):
@@ -616,37 +659,41 @@ def do_mow(drv, to_slot, map_ids, cutterhigh, direction):
     target_poly = read_xy_csv(os.path.join(base, f"{to_slot}_work.csv"))
     already_in = bool(robot and len(target_poly) >= 3 and
                       point_in_poly(robot[0], robot[1], target_poly))
-    uni = []
-    if from_slot and from_slot != to_slot:
-        uni = [f for f in os.listdir(base)
-               if re.match(rf"^{from_slot}to{to_slot}_\d+_unicom\.csv$", f)]
-    if uni and not already_in:
-        pts = read_xy_csv(os.path.join(base, sorted(uni)[0]))
-        if len(pts) < 2:
-            phase("error", "unicom_empty")
-            return 1
-        if _dist(robot, pts[0]) > _dist(robot, pts[-1]):
-            pts = list(reversed(pts))   # start at the robot's end
-        # Drop the points BEHIND the mower (between it and the dock end). After
-        # the ~1m undock the mower sits ~1m along the line but still near the
-        # dock; without trimming, the controller first heads back to the dock
-        # end, hits the dock (lethal cost 255 in the costmap) and aborts with
-        # "collision ahead". Starting the path at the nearest point makes it
-        # drive forward from where it actually is.
-        pts = _trim_to_nearest(pts, robot)
+    uni = _channel_files(from_slot, to_slot) if not already_in else []
+    if uni:
+        log(f"transit route {from_slot} -> {to_slot}: {' + '.join(uni)}")
         phase("following_unicom")
         drv.set_params([(n, r) for (n, r, _d) in TRANSIT_PARAMS])
         drv.log_applied_params([n for (n, _r, _d) in TRANSIT_PARAMS])
         try:
-            ok, msg = drv.follow_path(pts)
+            for hop, fname in enumerate(uni):
+                pts = read_xy_csv(os.path.join(base, fname))
+                if len(pts) < 2:
+                    phase("error", "unicom_empty")
+                    return 1
+                if _dist(robot, pts[0]) > _dist(robot, pts[-1]):
+                    pts = list(reversed(pts))   # start at the robot's end
+                # Drop the points BEHIND the mower (between it and the dock end).
+                # After the ~1m undock the mower sits ~1m along the line but still
+                # near the dock; without trimming, the controller first heads back
+                # to the dock end, hits the dock (lethal cost 255 in the costmap)
+                # and aborts with "collision ahead". Starting the path at the
+                # nearest point makes it drive forward from where it actually is.
+                # The same holds at every hop: the mower lands somewhere along the
+                # next channel, not at its recorded start.
+                pts = _trim_to_nearest(pts, robot)
+                ok, msg = drv.follow_path(pts)
+                if not ok:
+                    log(f"transit hop {hop + 1}/{len(uni)} ({fname}) failed: {msg}")
+                    phase("error", msg)
+                    return 1
+                robot = drv.robot_xy() or pts[-1]
+                log(f"transit hop {hop + 1}/{len(uni)} done, robot={robot}")
         finally:
             drv.set_params([(n, d) for (n, _r, d) in TRANSIT_PARAMS])
             log("restored controller params")
-        if not ok:
-            phase("error", msg)
-            return 1
     else:
-        log(f"transit skipped (uni={bool(uni)} already_in={already_in})")
+        log(f"transit skipped (route={bool(uni)} already_in={already_in})")
 
     # 3. coverage through robot_decision (keeps the normal state machine)
     return _cover(drv, map_ids, cutterhigh, direction)
