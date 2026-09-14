@@ -2828,8 +2828,14 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     setFinishRequested(true);
   }, []);
 
+  // GPS zegt alleen iets over de GPS-melding van de maaier, en die is bij een
+  // maaier zonder fix leeg. Of we hem kunnen TEKENEN is een andere vraag: de
+  // lokale map_position door de laderoorsprong geeft een positie in hetzelfde
+  // frame als de polygonen, ook zonder enige GPS. Die twee stonden sinds juni
+  // door elkaar, waardoor een maaier met een prima lokale positie toch van de
+  // kaart verdween zodra zijn GPS niets meldde.
   const hasGps = lat && lng && lat !== '0' && lng !== '0';
-  const position: [number, number] = (() => {
+  const resolvedPosition: [number, number] | null = (() => {
     const offLat = Number.isFinite(activeCal.offsetLat) ? activeCal.offsetLat : 0;
     const offLng = Number.isFinite(activeCal.offsetLng) ? activeCal.offsetLng : 0;
     // Prefer the live, cm-accurate local map_position projected through the
@@ -2845,12 +2851,16 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
       const pLng = g.lng + offLng;
       if (Number.isFinite(pLat) && Number.isFinite(pLng)) return [pLat, pLng];
     }
-    if (!hasGps) return DEFAULT_CENTER;
+    if (!hasGps) return null;
     const numLat = parseFloat(lat) + offLat;
     const numLng = parseFloat(lng) + offLng;
-    if (!Number.isFinite(numLat) || !Number.isFinite(numLng)) return DEFAULT_CENTER;
+    if (!Number.isFinite(numLat) || !Number.isFinite(numLng)) return null;
     return [numLat, numLng];
   })();
+
+  /** Tekenbaar zodra we een positie hebben, uit welke bron dan ook. */
+  const hasPosition = resolvedPosition !== null;
+  const position: [number, number] = resolvedPosition ?? DEFAULT_CENTER;
 
   const [userInteracted, setUserInteracted] = useState(false);
   const [mapsFitted, setMapsFitted] = useState(false);
@@ -3576,12 +3586,12 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
             />
           )}
           {/* Mower marker with heading arrow */}
-          {hasGps && (
+          {hasPosition && (
             <Marker position={position} icon={mowerIcon}>
               <Popup>
                 <div className="text-xs">
                   <div className="font-semibold">{t('map.mower')}</div>
-                  <div>{parseFloat(lat).toFixed(6)}, {parseFloat(lng).toFixed(6)}</div>
+                  <div>{position[0].toFixed(6)}, {position[1].toFixed(6)}</div>
                   {heading && <div>{t('map.headingLabel', { deg: parseFloat(heading).toFixed(0) })}</div>}
                 </div>
               </Popup>
