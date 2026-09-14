@@ -253,26 +253,48 @@ class Driver:
         qos = QoSProfile(depth=1, history=QoSHistoryPolicy.KEEP_LAST)
         self.pub_cmd = node.create_publisher(Twist, "/cmd_vel", qos)
         self.pub_lock = node.create_publisher(UInt8, "/release_charge_lock", qos)
+        # Eén hulpnode voor tf en status, lui aangemaakt. Zie _probe().
+        self._probe_node = None
+        self._tf_buf = None
+        self._status = None
+        self._recharge = None
 
     def spin(self, sec):
         rclpy.spin_once(self.node, timeout_sec=sec)
 
+    def _probe(self):
+        """De ENE hulpnode voor tf en status, één keer aangemaakt.
+
+        Hier stond een wegwerp-node per meting, met een TransformListener erop.
+        Twee dingen liepen daarin mis. De listener staat standaard op depth 100
+        voor /tf én /tf_static, en deze applicatie krijgt van iceoryx alleen
+        pools van 4 en 8 MB, dus zelfs een transform van 104 bytes kost een heel
+        blok van 4 MB. En `destroy_node()` geeft die blokken niet meteen terug:
+        roudi ruimt pas op als het PROCES weg is. Eén run doet achttien van die
+        metingen, en dan is een pool van honderd blokken op vóórdat de maaier
+        een meter heeft gereden (live LFIN2230700238, 2026-09-14: de run hing in
+        een MEPOO-lus terwijl de maaier naast het dock stond).
+        Eén node, één listener, één abonnement, vijftien plekken in totaal.
+        """
+        if self._probe_node is None:
+            self._probe_node = rclpy.create_node("mzd_probe")
+            self._tf_buf = tf2_ros.Buffer()
+            tf2_ros.TransformListener(self._tf_buf, self._probe_node,
+                                      qos=TF_QOS, static_qos=TF_STATIC_QOS)
+            self._probe_node.create_subscription(
+                RobotStatus, f"{DECISION}/robot_status", self._on_status,
+                QoSProfile(depth=1, history=QoSHistoryPolicy.KEEP_LAST))
+        return self._probe_node
+
+    def _on_status(self, m):
+        self._status = (int(m.task_mode), int(m.work_status))
+        self._recharge = int(m.recharge_status)
+
     def robot_xy(self, timeout=6.0):
-        """Read map -> base_link ONCE via a throwaway probe node, then destroy
-        it so its /tf subscriptions (and their shm chunks) are released before
-        the drive. Returns (x, y), or None if TF never resolves (which doubles
-        as a not-localized guard: callers refuse to move on None)."""
-        probe = rclpy.create_node("mzd_tf_probe")
-        buf = tf2_ros.Buffer()
-        # TransformListener staat standaard op depth 100 voor /tf ÉN /tf_static.
-        # Deze applicatie heeft maar twee pools, van 4 MB en 8 MB, dus zelfs een
-        # tf-bericht van een paar honderd bytes kost een heel blok van 4 MB.
-        # Tweehonderd wachtrijplekken op een pool van honderd: robot_xy() trok
-        # hem in seconden leeg en alles wat daarna een blok vroeg kreeg
-        # MEPOO__MEMPOOL_GETCHUNK_POOL_IS_RUNNING_OUT_OF_CHUNKS (live
-        # LFIN2230700238, 2026-09-14). Een handvol is ruim genoeg: we lezen één
-        # transform en gooien de node meteen weg.
-        tf2_ros.TransformListener(buf, probe, qos=TF_QOS, static_qos=TF_STATIC_QOS)
+        """Read map -> base_link. Returns (x, y), or None if TF never resolves
+        (which doubles as a not-localized guard: callers refuse to move on None)."""
+        probe = self._probe()
+        buf = self._tf_buf
         pos = None
         deadline = time.time() + timeout
         try:
@@ -285,7 +307,7 @@ class Driver:
                 except Exception:
                     continue
         finally:
-            probe.destroy_node()
+            pass
         return pos
 
     def undock(self, seconds=9.0, linear=0.25):
@@ -493,41 +515,23 @@ class Driver:
         """Block until robot_decision's RobotStatus satisfies pred(task_mode,
         work_status), via a throwaway probe node (released afterwards, like
         robot_xy). Returns the last (task_mode, work_status) seen, or None."""
-        probe = rclpy.create_node("mzd_status_probe")
-        seen = {}
-        # robot_status komt met 50 Hz binnen en elk bericht kost een blok van
-        # 4 MB (zie TF_QOS). We willen alleen de nieuwste stand, dus depth 1.
-        probe.create_subscription(
-            RobotStatus, f"{DECISION}/robot_status",
-            lambda m: seen.__setitem__("v", (int(m.task_mode), int(m.work_status))),
-            QoSProfile(depth=1, history=QoSHistoryPolicy.KEEP_LAST))
+        probe = self._probe()
         deadline = time.time() + timeout
-        try:
-            while time.time() < deadline:
-                rclpy.spin_once(probe, timeout_sec=0.2)
-                v = seen.get("v")
-                if v is not None and pred(*v):
-                    return v
-        finally:
-            probe.destroy_node()
-        return seen.get("v")
+        while time.time() < deadline:
+            rclpy.spin_once(probe, timeout_sec=0.2)
+            v = self._status
+            if v is not None and pred(*v):
+                return v
+        return self._status
 
     def recharge_active(self, timeout=4.0):
         """True while RobotStatus reports the mower is on its way to the dock."""
-        probe = rclpy.create_node("mzd_recharge_probe")
-        seen = {}
-        probe.create_subscription(
-            RobotStatus, f"{DECISION}/robot_status",
-            lambda m: seen.__setitem__("v", int(m.recharge_status)),
-            QoSProfile(depth=1, history=QoSHistoryPolicy.KEEP_LAST))
+        probe = self._probe()
         deadline = time.time() + timeout
-        try:
-            while time.time() < deadline:
-                rclpy.spin_once(probe, timeout_sec=0.2)
-                if "v" in seen:
-                    return seen["v"] in RECHARGE_DRIVING
-        finally:
-            probe.destroy_node()
+        while time.time() < deadline:
+            rclpy.spin_once(probe, timeout_sec=0.2)
+            if self._recharge is not None:
+                return self._recharge in RECHARGE_DRIVING
         return False
 
     def quit_mapping_mode(self):

@@ -51,6 +51,21 @@ def test_the_total_of_all_queues_stays_under_the_pool():
     assert total < POOL_CHUNKS, f"alle wachtrijen samen {total} op een pool van {POOL_CHUNKS}"
 
 
+def test_only_one_helper_node_is_ever_created():
+    # Een wegwerp-node per meting hield zijn blokken vast: destroy_node() geeft
+    # ze niet terug, roudi ruimt pas op als het PROCES weg is. Achttien metingen
+    # per run maakten een pool van honderd blokken leeg voordat de maaier een
+    # meter had gereden (live 2026-09-14).
+    nodes = re.findall(r"rclpy\.create_node\(", SRC)
+    assert len(nodes) <= 2, f"{len(nodes)} nodes; hergebruik er één"
+    assert "self._probe_node is None" in SRC, "de hulpnode wordt niet hergebruikt"
+
+
+def test_no_node_is_destroyed_and_recreated_in_a_loop():
+    assert "probe.destroy_node()" not in SRC, \
+        "wegwerp-nodes geven hun iceoryx-blokken pas bij procesafsluiting terug"
+
+
 def test_the_status_probe_only_wants_the_newest():
     blok = re.search(r"RobotStatus,\s*f\"\{DECISION\}/robot_status\".*?\)\n", SRC, re.S)
     assert blok, "robot_status-abonnement niet gevonden"
