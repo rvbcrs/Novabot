@@ -2995,6 +2995,30 @@ def handle_regenerate_per_map_files(params, respond):
             whole[_seam] = np.uint8(254)
             log(f"regenerate_per_map_files: seam-fix freed {_nseam} occupied cell(s) inside lawn before masking")
 
+        # A DRAWN channel has never been driven, so map.pgm holds it OCCUPIED and
+        # nav2 cannot plan through it: the zone behind it is unreachable however
+        # neatly it is drawn. We already make a drawn work area "driven" (the
+        # seam-fix above frees its interior); the connections between them belong
+        # to that same promise. Without this a drawn layout is only ever
+        # reachable by ground the mower happened to drive itself, which is how
+        # LFIN2230700238 ended up planning through the bushes to reach map6
+        # (2026-09-14). Freed at UNICOM_W_M, well above the 0.451 m
+        # inflation_radius nav2 keeps, and BEFORE the obstacle bake so a drawn
+        # obstacle still wins over a channel crossing it.
+        _uni_img = Image.new("L", (W, H), 0)
+        _ud = ImageDraw.Draw(_uni_img)
+        _uw = max(2, int(round(UNICOM_W_M / res)))
+        for _uf in unicom_files:
+            _up = [to_px(x, y) for (x, y) in read_xy_csv(f"{csv_dir}/{_uf}")]
+            if len(_up) >= 2:
+                _ud.line(_up, fill=255, width=_uw, joint="curve")
+        _uni_mask = (np.array(_uni_img) > 0) & (~_obs_mask)
+        _nuni = int(((whole < 128) & _uni_mask).sum())
+        if _nuni:
+            whole[_uni_mask] = np.uint8(254)
+            log(f"regenerate_per_map_files: opened {_nuni} cell(s) along the recorded "
+                f"channels in the nav map ({UNICOM_W_M:.1f} m wide)")
+
         # An obstacle must ALWAYS be occupied — including in the NAV map
         # (map.pgm), which nav2 loads as its global costmap. The per-slot loop
         # below force-occupies each slot's OWN obstacles into mapN.pgm, but nav2
@@ -3007,6 +3031,7 @@ def handle_regenerate_per_map_files(params, respond):
         _nobs = int(_obs_mask.sum())
         if _nobs:
             whole[_obs_mask] = np.uint8(OCCUPIED)
+        if _nobs or _nuni:
             try:
                 with open(f"{base}/map.pgm", "wb") as fh:
                     fh.write(f"P5\n# CREATOR: map_generator.cpp {res:.3f} m/pix\n{W} {H}\n255\n".encode("ascii"))
