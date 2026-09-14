@@ -117,7 +117,79 @@ describe('canonicalForDrawnMap', () => {
       canonical_name: 'map0tocharge_unicom',
     });
     const res = canonicalForDrawnMap(SN, 'unicom', [{ x: 5, y: 5 }, { x: 50.5, y: 50 }], null);
-    expect(res).toMatchObject({ ok: true, canonical: 'map0tocharge_unicom', replaces: 'row-charge' });
+    // Getekend van het gebied naar het station: opgeslagen met het station als
+    // EERSTE punt (firmware-conventie), exact op het bekende anker gelegd.
+    expect(res).toEqual({
+      ok: true,
+      canonical: 'map0tocharge_unicom',
+      replaces: 'row-charge',
+      points: [{ x: 50, y: 50 }, { x: 5, y: 5 }],
+    });
+  });
+
+  it('laat een to-charge kanaal dat al bij het station begint ongemoeid in volgorde', () => {
+    addWork('map0', square(0, 0));
+    mapRepo.create({
+      map_id: 'row-charge',
+      mower_sn: SN,
+      map_name: 'map0tocharge_unicom',
+      map_type: 'unicom',
+      map_area: JSON.stringify([{ x: 50, y: 50 }, { x: 5, y: 5 }]),
+      canonical_name: 'map0tocharge_unicom',
+    });
+    const res = canonicalForDrawnMap(SN, 'unicom', [{ x: 51, y: 50 }, { x: 30, y: 30 }, { x: 5, y: 5 }], null);
+    expect(res).toEqual({
+      ok: true,
+      canonical: 'map0tocharge_unicom',
+      replaces: 'row-charge',
+      points: [{ x: 50, y: 50 }, { x: 30, y: 30 }, { x: 5, y: 5 }],
+    });
+  });
+
+  it('koppelt een kanaal over een strook aan twee VERSCHILLENDE gebieden', () => {
+    // map0 = 0..10, map1 = 12..22: een strook van 2 m ertussen. Het eindpunt
+    // ligt in de strook, dichter bij map0 dan bij map1 (issue #114).
+    addWork('map0', square(0, 0));
+    addWork('map1', square(12, 0));
+    const res = canonicalForDrawnMap(SN, 'unicom', [{ x: 8, y: 5 }, { x: 10.5, y: 5 }], null);
+    expect(res).toEqual({ ok: true, canonical: 'map0tomap1_0_unicom' });
+  });
+
+  it('honoreert een getypte kanaalnaam naar het laadstation zonder bekend station', () => {
+    addWork('map0', square(0, 0));
+    // Geen anker en geen dock-pose: de getekende volgorde blijft (eerste punt = station).
+    const res = canonicalForDrawnMap(SN, 'unicom', [{ x: 40, y: 40 }, { x: 5, y: 5 }], 'map0tocharge_unicom');
+    expect(res).toEqual({ ok: true, canonical: 'map0tocharge_unicom' });
+    expect(canonicalForDrawnMap(SN, 'unicom', [{ x: 40, y: 40 }, { x: 5, y: 5 }], 'map3tocharge_unicom')).toEqual({
+      ok: false,
+      error: 'map3 does not exist.',
+    });
+  });
+
+  it('honoreert een getypte naam tussen twee gebieden en weigert onzin', () => {
+    addWork('map0', square(0, 0));
+    addWork('map1', square(20, 0));
+    expect(canonicalForDrawnMap(SN, 'unicom', [{ x: 5, y: 5 }, { x: 22, y: 5 }], 'map1tomap0_3_unicom')).toEqual({
+      ok: true,
+      canonical: 'map1tomap0_3_unicom',
+    });
+    expect(canonicalForDrawnMap(SN, 'unicom', [{ x: 5, y: 5 }, { x: 22, y: 5 }], 'map0tomap0_0_unicom').ok).toBe(false);
+    expect(canonicalForDrawnMap(SN, 'unicom', [{ x: 5, y: 5 }, { x: 22, y: 5 }], 'map0tomap7_0_unicom').ok).toBe(false);
+    // Een gewone alias blijft een alias: naam wordt afgeleid.
+    expect(canonicalForDrawnMap(SN, 'unicom', [{ x: 5, y: 5 }, { x: 22, y: 5 }], 'Kanaal 1')).toEqual({
+      ok: true,
+      canonical: 'map0tomap1_0_unicom',
+    });
+  });
+
+  it('honoreert een getypte obstakelnaam', () => {
+    addWork('map0', square(0, 0));
+    addWork('map1', square(20, 0));
+    expect(canonicalForDrawnMap(SN, 'obstacle', square(21, 1, 2), 'map1_7_obstacle')).toEqual({
+      ok: true,
+      canonical: 'map1_7_obstacle',
+    });
+    expect(canonicalForDrawnMap(SN, 'obstacle', square(21, 1, 2), 'map4_0_obstacle').ok).toBe(false);
   });
 
   it('hangt een obstakel aan het gebied waar het in ligt', () => {

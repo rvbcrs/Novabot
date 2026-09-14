@@ -1709,13 +1709,25 @@ dashboardRouter.post('/maps/:sn', (req: Request, res: Response) => {
   // Een opnieuw getekend to-charge kanaal vervangt het oude (canonical is uniek).
   if (naming.replaces) mapRepo.deleteByIdAndMower(naming.replaces, sn);
 
+  // Een to-charge kanaal wordt genormaliseerd opgeslagen (laadstation als eerste
+  // punt, zoals de firmware het schrijft); de naamgeving levert dan de punten.
+  const storedPoints = naming.points ?? localPoints;
+  const storedBounds = naming.points
+    ? {
+        minX: Math.min(...storedPoints.map(p => p.x)),
+        maxX: Math.max(...storedPoints.map(p => p.x)),
+        minY: Math.min(...storedPoints.map(p => p.y)),
+        maxY: Math.max(...storedPoints.map(p => p.y)),
+      }
+    : bounds;
+
   mapRepo.create({
     map_id: mapId,
     mower_sn: sn,
     map_name: alias,
     map_type: typeSlug,
-    map_area: JSON.stringify(localPoints),
-    map_max_min: JSON.stringify(bounds),
+    map_area: JSON.stringify(storedPoints),
+    map_max_min: JSON.stringify(storedBounds),
     canonical_name: naming.canonical,
   });
 
@@ -1726,8 +1738,8 @@ dashboardRouter.post('/maps/:sn', (req: Request, res: Response) => {
       mapName: alias,
       canonicalName: naming.canonical,
       mapType: typeSlug,
-      mapArea: localPoints,
-      mapMaxMin: bounds,
+      mapArea: storedPoints,
+      mapMaxMin: storedBounds,
       createdAt: new Date().toISOString(),
     },
   });

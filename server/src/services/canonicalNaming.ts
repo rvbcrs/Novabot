@@ -11,6 +11,12 @@
 // een kanaal ligt per definitie tussen twee bekende gebieden. Daarom leiden we
 // de canonieke naam hier af uit de GEOMETRIE en schrijven we hem meteen naar
 // maps.canonical_name, zodat dashboard, ZIP en maaier dezelfde identiteit zien.
+// Typt de gebruiker zelf een canonieke naam, dan wint die: expliciet is geen
+// gok (issue #114: een kanaal naar het laadstation moet handmatig te maken zijn
+// als de server het station nog niet kent).
+//
+// Foutteksten zijn Engels: het dashboard is Engelstalig en de melding komt
+// letterlijk in beeld bij gebruikers buiten Nederland.
 import { mapRepo } from '../db/repositories/index.js';
 import type { MapRow } from '../db/repositories/maps.js';
 import { pointInPolygon, type XY } from '../maps/editGeometry.js';
@@ -23,7 +29,14 @@ const DOCK_RADIUS_M = 2.5;
 const SNAP_RADIUS_M = 5;
 
 export type NamingResult =
-  | { ok: true; canonical: string; replaces?: string }
+  | {
+      ok: true;
+      canonical: string;
+      /** Bestaande rij die deze nieuwe vervangt (canonieke naam is uniek). */
+      replaces?: string;
+      /** Punten in de volgorde/positie waarin ze OPGESLAGEN moeten worden, als die afwijkt van het getekende. */
+      points?: XY[];
+    }
   | { ok: false; error: string };
 
 interface WorkSlot {
@@ -112,6 +125,28 @@ function slotAt(p: XY, slots: WorkSlot[]): number | null {
   return best?.slot ?? null;
 }
 
+/**
+ * Twee VERSCHILLENDE gebieden voor de uiteinden van een kanaal, met de kleinste
+ * totale afstand. Een eindpunt in de strook tussen twee gebieden ligt vaak het
+ * dichtst bij het gebied waar het kanaal begint; per eindpunt het dichtstbijzijnde
+ * gebied kiezen leverde dan "begint en eindigt in map1" op voor een kanaal dat
+ * overduidelijk map1 met map2 verbindt (issue #114).
+ */
+function assignChannelEnds(start: XY, end: XY, slots: WorkSlot[]): { from: number; to: number } | null {
+  let best: { from: number; to: number; d: number } | null = null;
+  for (const a of slots) {
+    const da = distanceToPolygon(start, a.poly);
+    if (da > SNAP_RADIUS_M) continue;
+    for (const b of slots) {
+      if (b.slot === a.slot) continue;
+      const db = distanceToPolygon(end, b.poly);
+      if (db > SNAP_RADIUS_M) continue;
+      if (!best || da + db < best.d) best = { from: a.slot, to: b.slot, d: da + db };
+    }
+  }
+  return best ? { from: best.from, to: best.to } : null;
+}
+
 /** Volgende vrije index voor een kanaal tussen twee gebieden (mapAtomapB_K_unicom). */
 function nextChannelIndex(sn: string, from: number, to: number): number {
   const re = new RegExp(`^map${from}tomap${to}_(\\d+)_unicom$`);
@@ -138,6 +173,90 @@ function nextObstacleIndex(sn: string, slot: number): number {
   return next;
 }
 
+function hasSlot(slots: WorkSlot[], n: number): boolean {
+  return slots.some(w => w.slot === n);
+}
+
+/**
+ * Een to-charge kanaal: de firmware zet het LAADSTATION als EERSTE punt
+ * (geverifieerd op LFIN2230700238: map0tocharge_unicom.csv begint op 0.03,0.73,
+ * de dockpositie). getPolygonAnchor en de sync_map van de maaier lezen dat punt
+ * als dock-anker, dus de getekende volgorde moet daarop genormaliseerd worden.
+ * Anders verplaatst een getekend kanaal het anker en daarmee de hele kaart
+ * (issue #114).
+ *
+ * `snapTo`: bij een AFGELEIDE naam wordt het eerste punt exact op het bekende
+ * station gelegd zodat het anker niet met de tekenonnauwkeurigheid meeschuift.
+ * Bij een GETYPTE naam blijft het punt waar de gebruiker het zette: dat is de
+ * manier om het anker bewust te verplaatsen.
+ */
+function toChargeResult(
+  sn: string,
+  slot: number,
+  points: XY[],
+  dockIsLast: boolean,
+  snapTo: XY | null,
+): NamingResult {
+  const canonical = `map${slot}tocharge_unicom`;
+  const ordered = dockIsLast ? [...points].reverse() : points;
+  const stored = snapTo ? [{ x: snapTo.x, y: snapTo.y }, ...ordered.slice(1)] : ordered;
+  const existing = mapRepo.findBySnAndCanonical(sn, canonical);
+  const changed = stored !== points;
+  return {
+    ok: true,
+    canonical,
+    ...(existing ? { replaces: existing.map_id } : {}),
+    ...(changed ? { points: stored } : {}),
+  };
+}
+
+/**
+ * Een zelf getypte canonieke naam voor een kanaal of obstakel. Geeft null als
+ * de tekst geen canonieke naam is (dan is het een gewone alias).
+ */
+function typedCanonical(
+  sn: string,
+  mapType: 'obstacle' | 'unicom',
+  typed: string,
+  points: XY[],
+  slots: WorkSlot[],
+  dock: XY | null,
+): NamingResult | null {
+  if (mapType === 'obstacle') {
+    const m = typed.match(/^map(\d+)_(\d+)_obstacle$/);
+    if (!m) return null;
+    const slot = parseInt(m[1], 10);
+    if (!hasSlot(slots, slot)) return { ok: false, error: `map${slot} does not exist.` };
+    if (mapRepo.findBySnAndCanonical(sn, typed)) return { ok: false, error: `${typed} already exists.` };
+    return { ok: true, canonical: typed };
+  }
+
+  const charge = typed.match(/^map(\d+)tocharge_unicom$/);
+  if (charge) {
+    const slot = parseInt(charge[1], 10);
+    if (!hasSlot(slots, slot)) return { ok: false, error: `map${slot} does not exist.` };
+    // Ligt een uiteinde aantoonbaar bij het station, dan gaat dat voorop; anders
+    // geldt de getekende volgorde (eerste punt = station, zoals de firmware).
+    const start = points[0];
+    const end = points[points.length - 1];
+    const endIsDock = dock !== null && dist(end, dock) <= DOCK_RADIUS_M && dist(start, dock) > DOCK_RADIUS_M;
+    return toChargeResult(sn, slot, points, endIsDock, null);
+  }
+
+  const link = typed.match(/^map(\d+)tomap(\d+)_(\d+)_unicom$/);
+  if (link) {
+    const from = parseInt(link[1], 10);
+    const to = parseInt(link[2], 10);
+    if (from === to) return { ok: false, error: `A channel cannot connect map${from} to itself.` };
+    for (const n of [from, to]) {
+      if (!hasSlot(slots, n)) return { ok: false, error: `map${n} does not exist.` };
+    }
+    if (mapRepo.findBySnAndCanonical(sn, typed)) return { ok: false, error: `${typed} already exists.` };
+    return { ok: true, canonical: typed };
+  }
+  return null;
+}
+
 /**
  * Canonieke naam voor een nieuw getekende kaart.
  *
@@ -146,8 +265,11 @@ function nextObstacleIndex(sn: string, slot: number): number {
  * unicom   — `mapAtomapB_K_unicom` of `mapAtocharge_unicom`, afgeleid uit de
  *            eindpunten van de getekende lijn. De richting volgt de lijn: het
  *            eerste punt is de "van"-kant, net als bij de maaier (die neemt zijn
- *            positie bij add_scan_map als van-kant).
+ *            positie bij add_scan_map als van-kant). Een to-charge kanaal wordt
+ *            opgeslagen met het station als eerste punt (zie toChargeResult).
  * obstacle — `mapN_M_obstacle`, met N het gebied waar het obstakel in ligt.
+ *
+ * Een zelf getypte canonieke naam (voor elk type) wint van de afleiding.
  *
  * Niet af te leiden (kanaal dat nergens begint/eindigt, obstakel buiten elk
  * gebied) geeft een fout: liever weigeren dan een rij wegschrijven die de
@@ -159,12 +281,14 @@ export function canonicalForDrawnMap(
   points: XY[],
   requestedName?: string | null,
 ): NamingResult {
+  const typed = requestedName?.trim() ?? '';
+
   if (mapType === 'work') {
-    const typed = requestedName?.trim().match(/^map(\d+)$/);
-    if (typed) {
-      const slot = parseInt(typed[1], 10);
+    const m = typed.match(/^map(\d+)$/);
+    if (m) {
+      const slot = parseInt(m[1], 10);
       const existing = mapRepo.findBySnAndCanonical(sn, `map${slot}`);
-      if (existing) return { ok: false, error: `map${slot} bestaat al.` };
+      if (existing) return { ok: false, error: `map${slot} already exists.` };
       return { ok: true, canonical: `map${slot}` };
     }
     return { ok: true, canonical: `map${nextFreeWorkSlot(sn)}` };
@@ -172,7 +296,13 @@ export function canonicalForDrawnMap(
 
   const slots = workSlots(sn);
   if (slots.length === 0) {
-    return { ok: false, error: 'Er is nog geen werkgebied om dit aan te koppelen. Teken eerst een werkgebied.' };
+    return { ok: false, error: 'There is no work area to attach this to yet. Draw a work area first.' };
+  }
+  const dock = mapType === 'unicom' ? dockPoint(sn) : null;
+
+  if (typed) {
+    const explicit = typedCanonical(sn, mapType, typed, points, slots, dock);
+    if (explicit) return explicit;
   }
 
   if (mapType === 'obstacle') {
@@ -182,7 +312,7 @@ export function canonicalForDrawnMap(
     };
     const slot = slotAt(centre, slots);
     if (slot === null) {
-      return { ok: false, error: 'Dit obstakel ligt niet in een werkgebied. Teken het binnen een gebied.' };
+      return { ok: false, error: 'This obstacle does not lie inside a work area. Draw it inside an area.' };
     }
     return { ok: true, canonical: `map${slot}_${nextObstacleIndex(sn, slot)}_obstacle` };
   }
@@ -190,36 +320,37 @@ export function canonicalForDrawnMap(
   // unicom: eindpunten bepalen de naam volledig
   const start = points[0];
   const end = points[points.length - 1];
-  const dock = dockPoint(sn);
   const isDock = (p: XY) => dock !== null && dist(p, dock) <= DOCK_RADIUS_M;
 
   const startDock = isDock(start);
   const endDock = isDock(end);
-  const startSlot = startDock ? null : slotAt(start, slots);
-  const endSlot = endDock ? null : slotAt(end, slots);
 
   if (startDock && endDock) {
-    return { ok: false, error: 'Beide uiteinden liggen op het laadstation. Teken het kanaal naar een werkgebied.' };
+    return { ok: false, error: 'Both ends lie on the charging station. Draw the channel to a work area.' };
   }
-  if (endDock || startDock) {
-    const slot = startDock ? endSlot : startSlot;
+  if (startDock || endDock) {
+    const slot = slotAt(startDock ? end : start, slots);
     if (slot === null) {
-      return { ok: false, error: 'Het andere uiteinde ligt niet in een werkgebied. Laat het kanaal in een gebied eindigen.' };
+      return { ok: false, error: 'The other end does not lie in a work area. Let the channel end inside an area.' };
     }
-    const canonical = `map${slot}tocharge_unicom`;
-    const existing = mapRepo.findBySnAndCanonical(sn, canonical);
-    return existing
-      ? { ok: true, canonical, replaces: existing.map_id }
-      : { ok: true, canonical };
+    return toChargeResult(sn, slot, points, endDock, dock);
   }
+
+  const ends = assignChannelEnds(start, end, slots);
+  if (ends) {
+    return { ok: true, canonical: `map${ends.from}tomap${ends.to}_${nextChannelIndex(sn, ends.from, ends.to)}_unicom` };
+  }
+  const startSlot = slotAt(start, slots);
+  const endSlot = slotAt(end, slots);
   if (startSlot === null || endSlot === null) {
     return {
       ok: false,
-      error: 'Een kanaal moet in het ene werkgebied beginnen en in het andere eindigen; een uiteinde ligt nu buiten elk gebied.',
+      error: 'A channel must start in one work area and end in another; one end now lies outside every area.',
     };
   }
-  if (startSlot === endSlot) {
-    return { ok: false, error: `Begin en eind liggen allebei in map${startSlot}; een kanaal verbindt twee verschillende gebieden.` };
-  }
-  return { ok: true, canonical: `map${startSlot}tomap${endSlot}_${nextChannelIndex(sn, startSlot, endSlot)}_unicom` };
+  return {
+    ok: false,
+    error: `Both ends lie in map${startSlot}; a channel connects two different areas. `
+      + 'To connect the charging station, start the channel at the station or type the name (e.g. map0tocharge_unicom).',
+  };
 }

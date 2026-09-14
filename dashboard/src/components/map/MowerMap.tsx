@@ -4355,7 +4355,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
                   {drawMetrics.segmentM != null && `${drawMetrics.segmentM.toFixed(1)} m`}
                   {drawMetrics.areaM2 != null && drawMetrics.areaM2 > 0
                     && ` · ${drawMetrics.areaM2.toFixed(1)} m²`}
-                  {drawType === 'unicom' && ` · ${drawMetrics.pathM.toFixed(1)} m totaal`}
+                  {drawType === 'unicom' && ` · ${t('map.pathTotal', { m: drawMetrics.pathM.toFixed(1) })}`}
                 </span>
               )}
               {editMode === 'draw' && editVertices.length < minDrawPoints && (
