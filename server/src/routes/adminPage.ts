@@ -6427,6 +6427,20 @@ async function deleteMap(sn, mapId, mapName) {
       method: 'DELETE',
       headers: { 'Authorization': token }
     });
+    // 409 = de maaier weigerde. Het dashboard biedt dan forceren aan; deze
+    // pagina liet alleen "HTTP 409" zien en er was geen weg verder (live
+    // 2026-09-14: een kanaal dat de firmware niet kent is nooit te wissen
+    // zonder forceren, want het staat niet in haar eigen index).
+    if (r.status === 409) {
+      var body = {};
+      try { body = await r.json(); } catch (_) {}
+      var reden = body.error || 'De maaier weigerde het wissen.';
+      if (!(await appConfirm(reden + '\n\nAlleen uit de server verwijderen (forceren)?',
+                             { destructive: true, okText: 'Forceren' }))) return;
+      r = await fetch('/api/dashboard/maps/' + encodeURIComponent(sn) + '/'
+                      + encodeURIComponent(mapId) + '?force=1',
+                      { method: 'DELETE', headers: { 'Authorization': token } });
+    }
     if (!r.ok) throw new Error('HTTP ' + r.status);
     loadMaps();
   } catch(e) {

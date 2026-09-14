@@ -2709,6 +2709,14 @@ def handle_write_map_files(params, respond):
         # (2026-06-29; the stock firmware / Novabot app never wipe like this). Keep
         # any connector the caller didn't provide AS LONG AS both maps it links
         # still exist after the write (else it's orphaned -> let it go).
+        # Sinds de server zelf kanalen beheert (canonieke namen, 2026-09) is die
+        # bescherming juist de reden dat een VERWIJDERD kanaal nooit weggaat: de
+        # server stuurt hem niet meer mee en de maaier zet hem trouw terug. Een
+        # server die weet dat hij de complete set levert zet `prune_connectors`
+        # en dan geldt de wipe ook voor connectors. Zonder die vlag blijft het
+        # oude gedrag staan, zodat een oudere server niets kwijtraakt.
+        prune_connectors = bool((params or {}).get("prune_connectors"))
+
         surviving_slots = set()
         for k in csv_files:
             mm = re.match(r"^map(\d+)_work\.csv$", k)
@@ -2716,6 +2724,8 @@ def handle_write_map_files(params, respond):
                 surviving_slots.add(mm.group(1))
 
         def _connector_survives(fname):
+            if prune_connectors:
+                return False        # de server levert de volledige set
             m = re.match(r"^map(\d+)to(?:map(\d+)|charge)", fname)
             if not m or m.group(1) not in surviving_slots:
                 return False

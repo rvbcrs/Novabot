@@ -668,6 +668,13 @@ export function applyVerbatimToMower(
     csv_files: mowerFiles.csvFiles,
     charging_station_yaml: mowerFiles.chargingStationYaml ?? null,
     restart_mapping: false,
+    // Wij leveren de VOLLEDIGE set, kanalen inbegrepen. De mower-kant bewaarde
+    // tot nu toe elk kanaal dat wij niet meestuurden (fix van 2026-06-29, toen
+    // de server ze nog niet beheerde). Sinds de canonieke naamgeving doen we dat
+    // wel, en daardoor werd een VERWIJDERD kanaal trouw teruggezet: wissen had
+    // geen enkel effect, ook niet met forceren (live LFIN2230700238,
+    // 2026-09-14). Met deze vlag ruimt de maaier op wat wij niet sturen.
+    prune_connectors: true,
   };
   if (mowerFiles.mapFilesText && Object.keys(mowerFiles.mapFilesText).length > 0) {
     writePayload.map_files_text = mowerFiles.mapFilesText;
