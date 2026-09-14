@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { db } from '../../db/database.js';
-import { diagnoseConnection } from '../../services/connectionDiagnosis.js';
+import { diagnoseConnection, type DiagnosisProbes } from '../../services/connectionDiagnosis.js';
 import { connectionEventRepo } from '../../db/repositories/index.js';
 import { serverIpv4 } from '../../services/reachability.js';
 import { factoryOuis, scanLan } from '../../services/lanScan.js';
@@ -62,7 +62,7 @@ function probes(over: Partial<{
     }),
     rivalBrokers: async () => over.rivals ?? [],
     lookupMac: async () => over.mac ?? null,
-  } as never;
+  } satisfies DiagnosisProbes;
 }
 
 beforeEach(() => {
@@ -265,7 +265,7 @@ describe('reachability', () => {
 async function live(snapshot: Record<string, string> | null) {
   withIp('192.0.2.10');
   bind('50:41:1C:39:BD:C1');
-  return diagnoseConnection(MOWER, Date.now(), { snapshot });
+  return diagnoseConnection(MOWER, Date.now(), { snapshot, probes: probes() });
 }
 
 describe('connection quality', () => {
@@ -382,7 +382,7 @@ describe('lan scan', () => {
     expect(r.canSeeLan).toBe(false);
     expect(r.reason).toContain('fabriekstabel');
     expect(r.knownOuis).toBe(0);
-  }), 20000;
+  });
 
   it('says it is blind rather than saying nothing is there', async () => {
     // Behind a Docker bridge the neighbour table holds only the gateway. "No
@@ -396,7 +396,7 @@ describe('lan scan', () => {
     } else {
       expect(r.neighbourCount).toBeGreaterThan(0);
     }
-  }), 20000;
+  });
 
   it('skips the network probes when the caller asks it to', async () => {
     const t0 = Date.now();
@@ -484,14 +484,14 @@ describe('server side and blocked states', () => {
     // Two brokers make mowers discover the wrong one over mDNS and flap between
     // them, looking intermittently offline. It happened on this network today.
     withIp('192.0.2.20');
-    const d = await diagnoseConnection(MOWER, Date.now(), { snapshot: { msg: 'x' } });
+    const d = await diagnoseConnection(MOWER, Date.now(), { snapshot: { msg: 'x' }, probes: probes() });
     const step = d.steps.find(s => s.id === 'rival_broker')!;
     if (step.status === 'fail') {
       expect(step.action).toContain('mDNS');
     } else {
       expect(step.evidence).toContain('geen tweede');
     }
-  }), 20000;
+  });
 
   it('skips the probe, and says so, when the caller turns it off', async () => {
     // Probing forty addresses on every call is too heavy for an endpoint that
@@ -514,13 +514,16 @@ describe('server side and blocked states', () => {
     expect(step.action).toContain('mDNS');
   });
 
-  it('caches the probe so a second call does not re-scan', async () => {
+  it('only probes once per call, and the probe itself caches', async () => {
+    // Walking forty addresses on every diagnosis is too heavy for an endpoint
+    // that can be polled; rivalBrokers caches for a minute behind this.
+    let calls = 0;
+    const counting: DiagnosisProbes = { ...probes(), rivalBrokers: async () => { calls++; return []; } };
     withIp('192.0.2.20');
-    await diagnoseConnection(MOWER, Date.now(), { snapshot: { msg: 'x' } });
-    const t0 = Date.now();
-    await diagnoseConnection(MOWER, Date.now(), { snapshot: { msg: 'x' } });
-    expect(Date.now() - t0).toBeLessThan(2000);
-  }), 20000;
+    await diagnoseConnection(MOWER, Date.now(), { snapshot: { msg: 'x' }, probes: counting });
+    await diagnoseConnection(MOWER, Date.now(), { snapshot: { msg: 'x' }, probes: counting });
+    expect(calls).toBe(2);
+  });
 
   it('flags a charger too old for AES', async () => {
     // The server encrypts to every LFI serial. A v0.3.6 charger cannot read
