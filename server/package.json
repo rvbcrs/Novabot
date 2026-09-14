@@ -1,6 +1,6 @@
 {
   "name": "novabot-server",
-  "version": "2026.0912.1247",
+  "version": "2026.0914.2028",
   "type": "module",
   "description": "Local Novabot cloud server replacement",
   "main": "dist/index.js",
