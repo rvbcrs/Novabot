@@ -137,13 +137,13 @@ try {
  * niet online krijgt staat er alleen voor. Dit loopt het bewijs af dat we al
  * hebben en stopt bij de eerste kapotte schakel.
  */
-dashboardRouter.get('/diagnose/:sn', (req: Request, res: Response) => {
+dashboardRouter.get('/diagnose/:sn', async (req: Request, res: Response) => {
   const sn = String(req.params.sn ?? '').trim();
   if (!/^[A-Za-z0-9_-]{4,32}$/.test(sn)) {
     res.status(400).json({ error: 'invalid sn' });
     return;
   }
-  res.json(diagnoseConnection(sn));
+  res.json(await diagnoseConnection(sn));
 });
 
 /** De ruwe verbindingspogingen achter stap `attempts`, voor wie wil doorklikken. */

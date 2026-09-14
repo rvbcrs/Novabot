@@ -1036,6 +1036,8 @@
     "binding": "Koppeling",
     "bleMac": "BLE MAC",
     "counterpart": "Tegenhanger",
-    "lora": "LoRa-paar"
+    "lora": "LoRa-paar",
+    "dns": "Naam wijst hierheen",
+    "network": "Netwerk"
   }
 }

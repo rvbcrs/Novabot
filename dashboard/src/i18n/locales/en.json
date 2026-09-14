@@ -1038,6 +1038,8 @@
     "binding": "Binding",
     "bleMac": "BLE MAC",
     "counterpart": "Counterpart",
-    "lora": "LoRa pair"
+    "lora": "LoRa pair",
+    "dns": "Name points here",
+    "network": "Network"
   }
 }

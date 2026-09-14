@@ -13,6 +13,8 @@ import { useTranslation } from 'react-i18next';
 import { fetchDiagnosis, type Diagnosis, type DiagnosisStep } from '../../api/client';
 
 const STEP_LABEL: Record<string, [string, string]> = {
+  dns: ['diagnose.dns', 'Naam wijst hierheen'],
+  network: ['diagnose.network', 'Netwerk'],
   seen: ['diagnose.seen', 'Ooit verbonden'],
   attempts: ['diagnose.attempts', 'Verbindingspogingen'],
   binding: ['diagnose.binding', 'Koppeling'],

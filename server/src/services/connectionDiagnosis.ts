@@ -16,6 +16,7 @@
  */
 import { deviceRepo, equipmentRepo, connectionEventRepo } from '../db/repositories/index.js';
 import { getLoraPair } from './loraPair.js';
+import { checkReachability } from './reachability.js';
 
 export type StepStatus = 'ok' | 'fail' | 'warn' | 'unknown' | 'skipped';
 
@@ -38,6 +39,8 @@ export interface Diagnosis {
   steps: DiagnosisStep[];
   generatedAt: number;
 }
+
+const DEVICE_HOSTNAMES_LABEL = 'mqtt.lfibot.com';
 
 const MOWER_PREFIX = 'LFIN';
 const CHARGER_PREFIX = 'LFIC';
@@ -70,7 +73,7 @@ function parseLastSeen(row: { last_seen?: string } | undefined): number | null {
   return Number.isFinite(t) ? t : null;
 }
 
-export function diagnoseConnection(sn: string, now = Date.now()): Diagnosis {
+export async function diagnoseConnection(sn: string, now = Date.now()): Promise<Diagnosis> {
   const steps: DiagnosisStep[] = [];
   const deviceType = deviceTypeOf(sn);
   const push = (s: DiagnosisStep) => { steps.push(s); return s; };
@@ -79,8 +82,84 @@ export function diagnoseConnection(sn: string, now = Date.now()): Diagnosis {
   // answered. A check that cannot fail is noise, and importing the broker here
   // to ask it drags in the socketHandler -> broker -> demoSimulator cycle.
 
-  // 1. Has this device EVER been here? The single most informative fact.
-  const reg = deviceRepo.findBySn(sn);
+  // 1. Can the device reach us at all? Without this the chain is blind to its
+  //    own most basic failure: nothing arrives, so we see nothing, so we report
+  //    nothing. Measurements only, no conclusions about what "probably" broke.
+  const regEarly = deviceRepo.findBySn(sn);
+  const reach = await checkReachability(regEarly?.ip_address ?? null);
+  const dnsAnswers = reach.dns.filter(d => d.addresses.length > 0);
+  const dnsPointsHere = dnsAnswers.some(d => d.pointsHere);
+  const dnsElsewhere = dnsAnswers.filter(d => !d.pointsHere);
+
+  // Alleen hard oordelen als DEZE server de omleiding serveert. Draait de DNS
+  // ergens anders, in de router of op een aparte DNS-server, dan zegt wat de
+  // container zelf oplost niets over wat de maaier oplost, en is een afwijking
+  // geen fout maar gewoon een meting.
+  const weServeDns = (process.env.ENABLE_DNS ?? '').toLowerCase() === 'true';
+  if (dnsAnswers.length === 0) {
+    push({
+      id: 'dns',
+      status: 'unknown',
+      evidence: `${DEVICE_HOSTNAMES_LABEL} lost hier niet op`,
+    });
+  } else if (dnsPointsHere) {
+    push({
+      id: 'dns',
+      status: 'ok',
+      evidence: `${dnsAnswers.find(d => d.pointsHere)!.host} wijst naar deze server `
+              + `(${reach.serverIps.join(', ') || 'onbekend adres'})`,
+    });
+  } else if (weServeDns) {
+    push({
+      id: 'dns',
+      status: 'fail',
+      evidence: `deze server serveert de omleiding, maar ${dnsElsewhere[0].host} wijst naar `
+              + `${dnsElsewhere[0].addresses.join(', ')} en niet naar `
+              + `${reach.serverIps.join(', ') || 'onbekend'}`,
+      action: 'zet de omleiding op het huidige serveradres; dit adres is waarschijnlijk '
+            + 'veranderd sinds de installatie',
+    });
+  } else {
+    push({
+      id: 'dns',
+      status: 'unknown',
+      evidence: `${dnsElsewhere[0].host} lost hier op naar ${dnsElsewhere[0].addresses.join(', ')}. `
+              + 'Deze server serveert de omleiding niet, dus dit zegt alleen iets als je '
+              + 'apparaten dezelfde DNS gebruiken als deze container',
+    });
+  }
+
+  if (!reach.deviceIp) {
+    push({
+      id: 'network',
+      status: 'unknown',
+      evidence: 'geen adres van dit apparaat bekend, dus niet te peilen',
+    });
+  } else if (reach.deviceAnswered) {
+    push({
+      id: 'network',
+      status: 'ok',
+      evidence: `${reach.deviceIp} antwoordt, het apparaat staat aan en zit op het netwerk`,
+    });
+  } else if (reach.sameSubnet === false) {
+    push({
+      id: 'network',
+      status: 'fail',
+      evidence: `laatst bekende adres ${reach.deviceIp} zit in een ander subnet dan deze server `
+              + `(${reach.serverIps.join(', ')})`,
+      action: 'zet beide in hetzelfde netwerk, of laat het verkeer ertussen door',
+    });
+  } else {
+    push({
+      id: 'network',
+      status: 'unknown',
+      evidence: `${reach.deviceIp} antwoordt niet op poort 22 of 8000; op stock firmware `
+              + 'staan die dicht, dus dit bewijst niets',
+    });
+  }
+
+  // 2. Has this device EVER been here? The single most informative fact.
+  const reg = regEarly;
   const lastSeen = parseLastSeen(reg);
   const everSeen = !!reg && lastSeen !== null;
   const online = everSeen && (now - (lastSeen as number)) < OFFLINE_AFTER_MS;
@@ -109,7 +188,7 @@ export function diagnoseConnection(sn: string, now = Date.now()): Diagnosis {
     });
   }
 
-  // 2. Is it trying and being refused? Only meaningful when it is not online.
+  // 3. Is it trying and being refused? Only meaningful when it is not online.
   const lastReject = connectionEventRepo.lastOf(sn, 'rejected');
   const lastError = connectionEventRepo.lastOf(sn, 'error');
   const worst = [lastReject, lastError]
@@ -139,7 +218,7 @@ export function diagnoseConnection(sn: string, now = Date.now()): Diagnosis {
     });
   }
 
-  // 3. Bound to a user? An unbound device connects fine and then does nothing.
+  // 4. Bound to a user? An unbound device connects fine and then does nothing.
   const eq = equipmentRepo.findBySn(sn);
   if (!eq) {
     push({
@@ -159,7 +238,7 @@ export function diagnoseConnection(sn: string, now = Date.now()): Diagnosis {
     push({ id: 'binding', status: 'ok', evidence: `gekoppeld aan gebruiker ${eq.user_id}` });
   }
 
-  // 4. The BLE MAC must be the mower's own, not the charger's. When it is the
+  // 5. The BLE MAC must be the mower's own, not the charger's. When it is the
   //    charger's, the app does not recognise the BLE advertisement and the user
   //    sees a device that will not pair, with nothing wrong on this side.
   if (deviceType === 'mower') {
@@ -192,7 +271,7 @@ export function diagnoseConnection(sn: string, now = Date.now()): Diagnosis {
     push({ id: 'ble_mac', status: 'skipped', evidence: 'alleen van toepassing op een maaier' });
   }
 
-  // 5. The charger side. A mower alone is half a system: without the charger
+  // 6. The charger side. A mower alone is half a system: without the charger
   //    there is no RTK correction, so it will mow badly or not at all.
   const counterpartSn = deviceType === 'mower' ? eq?.charger_sn : eq?.mower_sn;
   if (!counterpartSn) {
@@ -224,7 +303,7 @@ export function diagnoseConnection(sn: string, now = Date.now()): Diagnosis {
     }
   }
 
-  // 6. LoRa pair. Reuses the existing comparison rather than re-deriving it.
+  // 7. LoRa pair. Reuses the existing comparison rather than re-deriving it.
   const pair = getLoraPair(sn);
   if (!pair) {
     push({ id: 'lora', status: 'skipped', evidence: 'geen LoRa-paar om te controleren' });

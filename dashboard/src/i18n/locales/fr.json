@@ -916,6 +916,8 @@
     "binding": "Association",
     "bleMac": "MAC BLE",
     "counterpart": "Homologue",
-    "lora": "Paire LoRa"
+    "lora": "Paire LoRa",
+    "dns": "Le nom pointe ici",
+    "network": "Réseau"
   }
 }
