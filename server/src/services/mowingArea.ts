@@ -9,12 +9,37 @@
  * Recording/importing later slots and commands using polygons/names are
  * independent of this legacy scalar limit.
  */
+import { equipmentRepo } from '../db/repositories/index.js';
+
 /**
  * First OpenNova build whose mow orchestrator selects zones by map file name
  * instead of the decimal area code. Proven live on LFIN2230700238, 2026-09-12:
  * map5 (area 100000) undocked, mowed and finished through the normal task flow.
  */
 export const MAP_NAMES_SELECTION_BUILD = 40;
+
+/**
+ * The mower's firmware version, live reading first, stored value as fallback.
+ *
+ * The gate below refuses a zone above slot 4 when it cannot see a build that
+ * supports it, and an unknown version reads as "not supported". Straight after
+ * a server restart the sensor cache is empty until the mower reports again, so
+ * for those first seconds every start of map5 and up was refused on a mower
+ * that handles them perfectly well (live .247, 2026-09-14, right after a
+ * container recreate). The version the mower reported earlier is in the
+ * equipment row, which survives the restart.
+ */
+export function mowerSwVersion(
+  sn: string,
+  live: string | null | undefined,
+): string | null {
+  if (live) return live;
+  try {
+    return equipmentRepo.findByMowerSn(sn)?.mower_version ?? null;
+  } catch {
+    return null;   // geen DB (unit-test zonder schema): val terug op onbekend
+  }
+}
 
 /** Whether this mower can start a zone above slot 4 (needs the build above). */
 export function supportsMapNamesSelection(swVersion: string | null | undefined): boolean {

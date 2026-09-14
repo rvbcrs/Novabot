@@ -64,7 +64,7 @@ import { getPolygonAnchor } from '../services/anchor.js';
 import { canonicalForDrawnMap } from '../services/canonicalNaming.js';
 import { selectParaRepush } from '../mqtt/paraRepush.js';
 import { MOW_PARA_SETTLE_MS } from '../services/mowingService.js';
-import { getMowingAreaError } from '../services/mowingArea.js';
+import { getMowingAreaError, mowerSwVersion } from '../services/mowingArea.js';
 import {
   startAutoMap, stopAutoMap, getStatus as getAutoMapStatus,
   acceptProposal, rejectProposal,
@@ -3526,7 +3526,7 @@ dashboardRouter.post('/command/:sn', (req: Request, res: Response) => {
   }
 
   const areaError = getMowingAreaError(command, {
-    swVersion: deviceCache.get(sn)?.get('sw_version'),
+    swVersion: mowerSwVersion(sn, deviceCache.get(sn)?.get('sw_version')),
   });
   if (areaError) {
     res.status(422).json({ ok: false, reason: 'unsupported_mowing_area', error: areaError });
@@ -4532,7 +4532,7 @@ dashboardRouter.post('/extended/:sn', (req: Request, res: Response) => {
     return;
   }
   const areaError = getMowingAreaError(command, {
-    swVersion: deviceCache.get(sn)?.get('sw_version'),
+    swVersion: mowerSwVersion(sn, deviceCache.get(sn)?.get('sw_version')),
   });
   if (areaError) {
     res.status(422).json({ ok: false, reason: 'unsupported_mowing_area', error: areaError });

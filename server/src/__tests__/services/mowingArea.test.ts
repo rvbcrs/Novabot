@@ -9,7 +9,8 @@
  * mqtt_node has no field for names.
  */
 import { describe, it, expect } from 'vitest';
-import { getMowingAreaError } from '../../services/mowingArea.js';
+import { getMowingAreaError, mowerSwVersion } from '../../services/mowingArea.js';
+import { equipmentRepo } from '../../db/repositories/index.js';
 import { supportsMapNamesSelection } from '../../services/mowingArea.js';
 
 describe('getMowingAreaError', () => {
@@ -61,5 +62,31 @@ describe('supportsMapNamesSelection', () => {
     expect(supportsMapNamesSelection('5.7.1')).toBe(false);
     expect(supportsMapNamesSelection(null)).toBe(false);
     expect(supportsMapNamesSelection(undefined)).toBe(false);
+  });
+});
+
+describe('mowerSwVersion', () => {
+  const SN = 'LFIN_SWVERSION_FALLBACK';
+
+  it('valt terug op de opgeslagen versie als de sensorcache leeg is', () => {
+    equipmentRepo.create({ equipment_id: `eq-${SN}`, mower_sn: SN, mower_version: 'v6.0.2-custom-40' });
+    // Vlak na een serverherstart is de cache leeg tot de maaier weer meldt.
+    expect(mowerSwVersion(SN, undefined)).toBe('v6.0.2-custom-40');
+    expect(mowerSwVersion(SN, null)).toBe('v6.0.2-custom-40');
+    // en daarmee blijft map6 gewoon toegestaan
+    expect(getMowingAreaError({ mow_zone: { map: 'map6' } }, {
+      swVersion: mowerSwVersion(SN, undefined),
+    })).toBeNull();
+  });
+
+  it('de live meting wint van de opgeslagen waarde', () => {
+    expect(mowerSwVersion(SN, 'v6.0.2-custom-41')).toBe('v6.0.2-custom-41');
+  });
+
+  it('onbekende maaier blijft onbekend, dus de grens blijft gelden', () => {
+    expect(mowerSwVersion('LFIN_NIET_BEKEND', undefined)).toBeNull();
+    expect(getMowingAreaError({ mow_zone: { map: 'map6' } }, {
+      swVersion: mowerSwVersion('LFIN_NIET_BEKEND', undefined),
+    })).not.toBeNull();
   });
 });
