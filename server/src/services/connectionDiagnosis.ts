@@ -17,7 +17,7 @@
 import { deviceRepo, equipmentRepo, connectionEventRepo } from '../db/repositories/index.js';
 import { getLoraPair } from './loraPair.js';
 import { checkReachability, serverIpv4, type Reachability } from './reachability.js';
-import { scanLan, lookupMac, rivalBrokers, type LanScanResult } from './lanScan.js';
+import { scanLan, lookupMac, rivalBrokers, bleToWifiMac, type LanScanResult } from './lanScan.js';
 import { statfs } from 'fs/promises';
 import { mapRepo, userRepo } from '../db/repositories/index.js';
 import { deriveHasError } from '../mqtt/mowerActivity.js';
@@ -327,11 +327,19 @@ export async function diagnoseConnection(
   if (!reach.deviceIp) {
     push({ id: 'wifi', group: 'reach', status: 'skipped', evidence: 'geen adres bekend' });
   } else {
-    const wifiMac = await probe.lookupMac(reach.deviceIp);
+    // Eerst de echte uit de buurtabel. Lukt dat niet, dan uit de BLE-MAC die we
+    // hoe dan ook kennen: de fabriekstabel heeft die van elk apparaat. Wel
+    // erbij zetten dat hij afgeleid is, want dat is een ander soort zekerheid.
+    const looked = await probe.lookupMac(reach.deviceIp);
+    const bleKnown = deviceRepo.getFactoryMac(sn) ?? regEarly?.mac_address ?? null;
+    const derived = !looked && bleKnown
+      ? bleToWifiMac(bleKnown, deviceType === 'charger' ? 'charger' : 'mower')
+      : null;
     const rssiRaw = snap?.wifi_rssi ?? snap?.signal_strength ?? null;
     const rssi = rssiRaw !== null ? parseInt(rssiRaw, 10) : NaN;
     const parts = [`verbonden via wifi op ${reach.deviceIp}`];
-    if (wifiMac) parts.push(`MAC ${wifiMac}`);
+    if (looked) parts.push(`MAC ${looked}`);
+    else if (derived) parts.push(`MAC ${derived} (afgeleid uit de BLE-MAC ${bleKnown})`);
     if (Number.isFinite(rssi)) parts.push(`signaal ${rssi} dBm`);
     // Onder de -75 dBm valt de verbinding met enige regelmaat weg, en dat is
     // precies het beeld van "hij is soms online".
@@ -340,7 +348,8 @@ export async function diagnoseConnection(
       id: 'wifi',
       group: 'reach',
       status: weak ? 'warn' : 'ok',
-      evidence: parts.join(', ') + (wifiMac ? '' : ' (MAC niet op te zoeken vanaf deze server)'),
+      evidence: parts.join(', ')
+              + (looked || derived ? '' : ' (MAC nergens bekend)'),
       action: weak ? 'zwak signaal, de verbinding valt daar met regelmaat van weg; '
                    + 'zet een toegangspunt dichterbij' : undefined,
     });

@@ -135,12 +135,28 @@ let rivalCache: { at: number; ips: string[] } | null = null;
 /** Een tweede broker verschijnt niet van seconde tot seconde. */
 const RIVAL_CACHE_MS = 60_000;
 
+/**
+ * Alles wat niet op het thuisnetwerk zit telt niet mee als tweede broker.
+ *
+ * De Docker-gateway (172.17.0.1) is de host zelf, gezien vanuit de container, en
+ * die stuurt poort 1883 gewoon naar ons terug. Die als tweede broker melden
+ * vertelt iemand zijn eigen server uit te zetten. Live gezien op 14-09-2026.
+ */
+function onHomeLan(ip: string, lanSubnet: string | null): boolean {
+  if (looksLikeContainerBridge(ip)) return false;
+  return lanSubnet ? ip.startsWith(lanSubnet + '.') : true;
+}
+
 export async function rivalBrokers(ourIps: string[], port = 1883, max = 40): Promise<string[]> {
   // Zonder cache peilt elke diagnose opnieuw veertig adressen. Dat is te zwaar
   // voor een endpoint dat herhaald wordt aangeroepen, en het liet de testsuite
   // van 70 naar 225 seconden lopen tot hij omviel.
   if (rivalCache && Date.now() - rivalCache.at < RIVAL_CACHE_MS) return rivalCache.ips;
-  const neighbours = (await readNeighbours()).filter(n => !ourIps.includes(n.ip)).slice(0, max);
+  const lanIp = ourIps.find(ip => !looksLikeContainerBridge(ip)) ?? null;
+  const lanSubnet = lanIp ? lanIp.split('.').slice(0, 3).join('.') : null;
+  const neighbours = (await readNeighbours())
+    .filter(n => !ourIps.includes(n.ip) && onHomeLan(n.ip, lanSubnet))
+    .slice(0, max);
   const hits = await Promise.all(neighbours.map(async n => {
     const open = await new Promise<boolean>(resolve => {
       const sock = new net.Socket();
@@ -157,6 +173,30 @@ export async function rivalBrokers(ourIps: string[], port = 1883, max = 40): Pro
   const ips = hits.filter((x): x is string => x !== null);
   rivalCache = { at: Date.now(), ips };
   return ips;
+}
+
+/**
+ * WiFi STA MAC uit de BLE MAC, per hardware.
+ *
+ * De afstand is niet overal gelijk, dus hij wordt per type gerekend en niet
+ * geraden. Chargers zijn ESP32: WiFi STA + 2 = BLE (broker.ts wifiStaToBle).
+ * Maaiers zitten op +1, gemeten op twee toestellen met verschillende
+ * fabrikantprefixen: LFIN2230700238 wifi 50:41:1C:39:BD:C0 tegen BLE ...C1, en
+ * LFIN1231000211 wifi 70:4A:0E:4A:99:CE tegen BLE ...CF.
+ *
+ * Een echte ARP-opzoeking gaat hier altijd voor; dit is de terugval wanneer de
+ * container het thuisnetwerk niet op laag 2 kan zien.
+ */
+export function bleToWifiMac(bleMac: string, kind: 'mower' | 'charger'): string | null {
+  const bytes = bleMac.split(':').map(b => parseInt(b, 16));
+  if (bytes.length !== 6 || bytes.some(b => !Number.isFinite(b))) return null;
+  bytes[5] -= kind === 'charger' ? 2 : 1;
+  for (let i = 5; i > 0 && bytes[i] < 0; i--) {
+    bytes[i] += 256;
+    bytes[i - 1] -= 1;
+  }
+  if (bytes[0] < 0) return null;
+  return bytes.map(b => b.toString(16).toUpperCase().padStart(2, '0')).join(':');
 }
 
 /** True for the ranges Docker hands out to bridged containers. */

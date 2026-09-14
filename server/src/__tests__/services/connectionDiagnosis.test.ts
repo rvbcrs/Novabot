@@ -3,7 +3,7 @@ import { db } from '../../db/database.js';
 import { diagnoseConnection, type DiagnosisProbes } from '../../services/connectionDiagnosis.js';
 import { connectionEventRepo } from '../../db/repositories/index.js';
 import { serverIpv4 } from '../../services/reachability.js';
-import { factoryOuis, scanLan } from '../../services/lanScan.js';
+import { factoryOuis, scanLan, bleToWifiMac, rivalBrokers } from '../../services/lanScan.js';
 
 const MOWER = 'LFIN2230700238';
 const CHARGER = 'LFIC1230700004';
@@ -456,15 +456,16 @@ describe('identity and wifi', () => {
     expect(step.status).toBe('ok');
   });
 
-  it('says the MAC is not lookupable rather than computing a wrong one', async () => {
-    // The wifi-to-BLE offset differs per hardware: ESP32 is +2, LFIN2230700238
-    // measures +1. Deriving one from the other prints a plausible wrong address.
+  it('says the MAC is unknown only when it really is', async () => {
+    // Earlier this said "not lookupable from this server" whenever ARP failed,
+    // which reads as broken while the factory table holds the answer. It should
+    // only say so with nothing to go on at all.
+    db.prepare('DELETE FROM device_factory').run();
     withIp('192.0.2.13');
     const step = (await diagnoseConnection(MOWER, Date.now(), { snapshot: { msg: 'x' }, probes: probes() }))
       .steps.find(s => s.id === 'wifi')!;
-    if (!/MAC [0-9A-F:]{17}/.test(step.evidence)) {
-      expect(step.evidence).toContain('niet op te zoeken');
-    }
+    expect(step.evidence).toContain('nergens bekend');
+    expect(step.evidence).not.toMatch(/MAC [0-9A-F:]{17}/);
   });
 });
 
@@ -565,4 +566,69 @@ describe('server side and blocked states', () => {
       .steps.find(s => s.id === 'parked_task')!;
     expect(step.status).toBe('ok');
   });
+});
+
+describe('wifi MAC and false rivals', () => {
+  it('derives the wifi MAC per hardware, measured not guessed', () => {
+    // Chargers are ESP32: wifi STA + 2 = BLE (broker.ts wifiStaToBle).
+    // Mowers sit at +1, measured on two devices with different vendor
+    // prefixes: LFIN2230700238 wifi 50:41:1C:39:BD:C0 against BLE ...C1, and
+    // LFIN1231000211 wifi 70:4A:0E:4A:99:CE against BLE ...CF.
+    expect(bleToWifiMac('50:41:1C:39:BD:C1', 'mower')).toBe('50:41:1C:39:BD:C0');
+    expect(bleToWifiMac('70:4A:0E:4A:99:CF', 'mower')).toBe('70:4A:0E:4A:99:CE');
+    expect(bleToWifiMac('48:27:E2:1B:A4:0A', 'charger')).toBe('48:27:E2:1B:A4:08');
+  });
+
+  it('borrows across a byte boundary', () => {
+    expect(bleToWifiMac('AA:BB:CC:DD:EE:00', 'mower')).toBe('AA:BB:CC:DD:ED:FF');
+    expect(bleToWifiMac('AA:BB:CC:DD:EE:01', 'charger')).toBe('AA:BB:CC:DD:ED:FF');
+  });
+
+  it('refuses a malformed address instead of inventing one', () => {
+    expect(bleToWifiMac('not-a-mac', 'mower')).toBeNull();
+    expect(bleToWifiMac('00:00:00:00:00:00', 'charger')).toBeNull();
+  });
+
+  it('shows the MAC from the factory table when ARP cannot reach the LAN', async () => {
+    // A bridged container has no layer-2 view of the home network, but the
+    // factory table ships with the MAC of every device. "Not lookupable" while
+    // we hold the answer reads as broken.
+    db.prepare('DELETE FROM device_factory').run();
+    db.prepare('INSERT INTO device_factory (sn, device_type, mac_address) VALUES (?,?,?)')
+      .run(MOWER, 'mower', '50:41:1C:39:BD:C1');
+    withIp('192.0.2.30');
+    const step = (await diagnoseConnection(MOWER, Date.now(),
+      { snapshot: { msg: 'x' }, probes: probes({ mac: null }) })).steps.find(s => s.id === 'wifi')!;
+    expect(step.evidence).toContain('50:41:1C:39:BD:C0');
+    expect(step.evidence).toContain('afgeleid');
+    expect(step.evidence).not.toContain('niet op te zoeken');
+  });
+
+  it('prefers a real lookup over the derived one', async () => {
+    db.prepare('DELETE FROM device_factory').run();
+    db.prepare('INSERT INTO device_factory (sn, device_type, mac_address) VALUES (?,?,?)')
+      .run(MOWER, 'mower', '50:41:1C:39:BD:C1');
+    withIp('192.0.2.30');
+    const step = (await diagnoseConnection(MOWER, Date.now(),
+      { snapshot: { msg: 'x' }, probes: probes({ mac: 'AA:BB:CC:DD:EE:FF' }) })).steps.find(s => s.id === 'wifi')!;
+    expect(step.evidence).toContain('AA:BB:CC:DD:EE:FF');
+    expect(step.evidence).not.toContain('afgeleid');
+  });
+});
+
+describe('the docker gateway is not a second broker', () => {
+  it('never reports an address on the container bridge', async () => {
+    // 172.17.0.1 is the host seen from inside the container, and it forwards
+    // 1883 straight back to us. Reporting it told the user to shut down their
+    // own server. Seen live on 2026-09-14.
+    const found = await rivalBrokers(['172.17.0.2', '192.168.0.5']);
+    expect(found.every(ip => !ip.startsWith('172.1'))).toBe(true);
+  }, 20000);
+
+  it('only counts addresses on the same subnet as the server', async () => {
+    // A genuine second server sits on the home LAN. Anything outside it is
+    // routing, not a rival.
+    const found = await rivalBrokers(['192.168.0.5']);
+    expect(found.every(ip => ip.startsWith('192.168.0.'))).toBe(true);
+  }, 20000);
 });
