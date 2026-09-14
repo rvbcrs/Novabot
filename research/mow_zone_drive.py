@@ -38,16 +38,19 @@ from rclpy.action import ActionClient
 from rcl_interfaces.srv import SetParameters, GetParameters
 from rcl_interfaces.msg import Parameter, ParameterValue, ParameterType
 from geometry_msgs.msg import Twist, PoseStamped
-from nav_msgs.msg import Path
+from nav_msgs.msg import Path, OccupancyGrid
 from std_msgs.msg import UInt8
 from std_srvs.srv import Trigger, SetBool, Empty
 from nav2_msgs.action import FollowPath, NavigateToPose
+from nav2_msgs.srv import LoadMap
 from decision_msgs.srv import StartCoverageTask
 from decision_msgs.msg import RobotStatus
-from rclpy.qos import QoSProfile, QoSHistoryPolicy
+from rclpy.qos import (QoSProfile, QoSHistoryPolicy, QoSReliabilityPolicy,
+                       QoSDurabilityPolicy)
 import tf2_ros
 
 MAPS_HOME = "/userdata/lfi/maps/home0"
+NAV_MAP_YAML = os.path.join(MAPS_HOME, "map.yaml")
 NAV_NODE = "/nav2_single_node_navigator"
 DECISION = "/robot_decision"
 
@@ -398,6 +401,73 @@ class Driver:
             else:
                 out.append(f"{name}=<unset/type{pv.type}>")
         log("applied params: " + " | ".join(out))
+
+    def reload_map(self, map_yaml=NAV_MAP_YAML):
+        """Laat map_server map.pgm opnieuw inlezen voordat we gaan navigeren.
+
+        map_server leest de kaart alleen bij het opstarten van de node. Daarna
+        herschrijft map_generator.cpp map.pgm elke taak opnieuw en zetten wij de
+        unicom-kanalen erin open, maar nav2 plant onverstoorbaar door op de
+        kaart van uren geleden. Live op .244 (2026-09-14): op (3.18, 4.23) lag
+        0,55 m vrij op schijf, /map gaf `0`, en de planner gaf GOAL_COLLIDED
+        omdat zijn static layer daar nog `254` had staan.
+
+        De global costmap staat tussen taken op `unconfigured` en bouwt zichzelf
+        bij de volgende navigatie opnieuw op uit de gelatchte /map, dus
+        map_server bijwerken is genoeg.
+        """
+        cli = self.node.create_client(LoadMap, "/map_server/load_map")
+        try:
+            if not cli.wait_for_service(timeout_sec=8.0):
+                return False, "map_server niet bereikbaar"
+            req = LoadMap.Request()
+            req.map_url = map_yaml
+            fut = cli.call_async(req)
+            rclpy.spin_until_future_complete(self.node, fut, timeout_sec=20.0)
+            res = fut.result()
+            if res is None:
+                return False, "geen antwoord"
+            return res.result == 0, "result=%d" % res.result
+        finally:
+            self.node.destroy_client(cli)
+
+    def map_blocked(self, pts, timeout=15.0):
+        """Welke punten zijn bezet op de kaart die nav2 gaat gebruiken.
+
+        Leest /map, niet map.pgm op schijf. Precies dat verschil kostte map6
+        vijftien pogingen: op schijf vrij, in de planner bezet.
+
+        Geeft None als er geen kaart binnenkomt, anders een lijst van
+        (punt, reden) voor alles wat niet vrij is.
+        """
+        got = {}
+        qos = QoSProfile(depth=1, history=QoSHistoryPolicy.KEEP_LAST,
+                         reliability=QoSReliabilityPolicy.RELIABLE,
+                         durability=QoSDurabilityPolicy.TRANSIENT_LOCAL)
+        sub = self.node.create_subscription(
+            OccupancyGrid, "/map", lambda m: got.setdefault("m", m), qos)
+        try:
+            t0 = time.time()
+            while "m" not in got and time.time() - t0 < timeout:
+                rclpy.spin_once(self.node, timeout_sec=0.3)
+            m = got.get("m")
+            if m is None:
+                return None
+            res = m.info.resolution
+            ox = m.info.origin.position.x
+            oy = m.info.origin.position.y
+            w, h = m.info.width, m.info.height
+            bad = []
+            for (x, y) in pts:
+                cx = int((x - ox) / res)
+                cy = int((y - oy) / res)
+                if not (0 <= cx < w and 0 <= cy < h):
+                    bad.append(((x, y), "buiten de kaart"))
+                elif m.data[cy * w + cx] != 0:
+                    bad.append(((x, y), "waarde %d" % m.data[cy * w + cx]))
+            return bad
+        finally:
+            self.node.destroy_subscription(sub)
 
     def nav_to(self, x, y, yaw=None, timeout=120.0):
         """Let the planner drive the short approach to a point.
@@ -833,6 +903,11 @@ def clear_parked_task(drv):
 
 def do_mow(drv, to_slot, map_ids, cutterhigh, direction):
     """Outbound: undock -> follow the unicom to the target zone -> coverage."""
+    # Eerst de kaart die nav2 gebruikt gelijktrekken met de kaart op schijf.
+    # Elke navigatie hierna (aanloop, terugweg, het dock) plant op wat
+    # map_server nu vasthoudt, en dat was tot nu toe de kaart van het opstarten.
+    ok, detail = drv.reload_map()
+    log(f"map_server reload: {'ok' if ok else 'MISLUKT'} ({detail})")
     clear_parked_task(drv)
     clear_recharge(drv)
     robot = drv.robot_xy()
@@ -1063,12 +1138,30 @@ def check_mow(drv, to_slot):
               else f"geen keten van {vanaf or 'map0'} naar {to_slot}; "
                    "teken een kanaal of laat de firmware plannen")
 
+    proef = []
     for fname in route:
         pts = read_xy_csv(os.path.join(base, fname))
         lengte = sum(_dist(a, b) for a, b in zip(pts, pts[1:]))
         dicht = densify(pts)
         check(f"kanaal {fname}", len(pts) >= 2,
               f"{len(pts)} punten, {lengte:.1f} m, na verdichten {len(dicht)} punten")
+        if len(pts) >= 2:
+            proef += [pts[0], pts[len(pts) // 2], pts[-1]]
+
+    # De controle die vijftien mislukte pogingen had bespaard: is het kanaal
+    # vrij op de kaart die de PLANNER gebruikt, niet op map.pgm op schijf.
+    # map_server leest dat bestand alleen bij het opstarten, dus eerst reloaden
+    # en dan pas kijken, precies zoals do_mow het straks doet.
+    herladen, detail = drv.reload_map()
+    check("map_server heeft de actuele kaart", herladen, detail)
+    if proef:
+        bezet = drv.map_blocked(proef)
+        if bezet is None:
+            check("kanalen vrij voor de planner", False, "geen /map ontvangen")
+        else:
+            check("kanalen vrij voor de planner", not bezet,
+                  "; ".join(f"({x:.2f},{y:.2f}) {reden}" for (x, y), reden in bezet)
+                  or f"{len(proef)} punten gecontroleerd")
 
     ok = all(f[1] for f in findings)
     print(f"CHECK {'ok ' if ok else 'FAIL'} eindoordeel | "

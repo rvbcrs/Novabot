@@ -212,6 +212,30 @@ def plan_canvas_growth(ox, oy, res, W, H, pts, margin_m=2.0, max_cells=4_000_000
     }
 
 
+def extend_line(pts, extra_m):
+    """Trek een polylijn aan beide kanten `extra_m` door.
+
+    Een lijn met breedte heeft een PLATTE kop: precies op het uiteinde is er
+    zijwaarts ruimte zat maar vooruit niets, en nav2 weigert zo'n punt als doel
+    ("Look like goal is occupied by obstacle", live LFIN2230700238 2026-09-14:
+    0,05 m ruimte op het beginpunt van map0tomap1 terwijl de strook 1,4 m breed
+    was). Doortrekken geeft het uiteinde dezelfde ruimte als de rest en hecht de
+    doorgang meteen aan de vrije grond van de zone ernaast.
+    """
+    if len(pts) < 2 or extra_m <= 0:
+        return list(pts)
+
+    def _push(a, b):
+        dx, dy = b[0] - a[0], b[1] - a[1]
+        d = math.hypot(dx, dy)
+        if d < 1e-9:
+            return b
+        return (b[0] + dx / d * extra_m, b[1] + dy / d * extra_m)
+
+    out = list(pts)
+    return [_push(out[1], out[0])] + out + [_push(out[-2], out[-1])]
+
+
 def make_to_px(ox, oy, res, height_px):
     """World (x,y) meters -> pixel (col, row) for a map.pgm of the given origin/res."""
     return lambda x, y: (int((x - ox) / res), (height_px - 1) - int((y - oy) / res))
@@ -3137,7 +3161,10 @@ def handle_regenerate_per_map_files(params, respond):
             img = Image.new("L", (W, H), 0)
             d = ImageDraw.Draw(img)
             for g in geoms:
-                px = [to_px(x, y) for (x, y) in g]
+                # Doortrekken voorbij beide uiteinden: een lijn heeft een platte
+                # kop en dan staat de maaier precies op het beginpunt klem
+                # (nav2: "goal is occupied"). Zie extend_line.
+                px = [to_px(x, y) for (x, y) in extend_line(g, UNICOM_W_M / 2.0)]
                 if len(px) >= 2:
                     d.line(px, fill=255, width=_uw, joint="curve")
             return np.array(img) > 0

@@ -29,6 +29,7 @@ clean grid too.
 Model: unicom_mirror.py — poll loop, atomic write (tmp + os.replace), idempotent
 (no churn when already clean), never lets the loop die.
 """
+import math
 import os
 import re
 import glob
@@ -37,6 +38,8 @@ import json
 import ctypes
 import struct
 import select
+import subprocess
+import sys
 
 POLL_SEC = 1.0               # fallback cadence when inotify is unavailable
 FALLBACK_POLL_SEC = 5.0      # safety sweep cadence while inotify IS active
@@ -246,6 +249,112 @@ def regen_one(base, np, Image, ImageDraw):
     _regenerate_per_slot(base, res, ox, oy, arr, cd, np, Image, ImageDraw)
 
 
+# Breedte van de doorgang die een kanaal vrijhoudt. nav2 houdt
+# inflation_radius 0.451 m aan, dus een strook moet ruim daarboven zitten,
+# anders is het begin van het kanaal onbereikbaar ("goal is occupied").
+UNICOM_W_M = 1.4
+
+
+def extend_line(pts, extra_m):
+    """Trek een polylijn aan beide kanten `extra_m` door.
+
+    Een lijn met breedte heeft een PLATTE kop: precies op het uiteinde is er
+    zijwaarts ruimte zat maar vooruit niets, en nav2 weigert zo'n punt als doel
+    ("Look like goal is occupied by obstacle", live LFIN2230700238 2026-09-14:
+    0,05 m ruimte op het beginpunt van map0tomap1 terwijl de strook 1,4 m breed
+    was). Doortrekken geeft het uiteinde dezelfde ruimte als de rest en hecht de
+    doorgang meteen aan de vrije grond van de zone ernaast.
+    """
+    if len(pts) < 2 or extra_m <= 0:
+        return list(pts)
+
+    def _push(a, b):
+        dx, dy = b[0] - a[0], b[1] - a[1]
+        d = math.hypot(dx, dy)
+        if d < 1e-9:
+            return b
+        return (b[0] + dx / d * extra_m, b[1] + dy / d * extra_m)
+
+    out = list(pts)
+    return [_push(out[1], out[0])] + out + [_push(out[-2], out[-1])]
+
+
+def enforce_unicoms_free(base, np, Image, ImageDraw):
+    """ALWAYS-ON invariant, tegenhanger van enforce_obstacles_occupied: een
+    opgenomen kanaal moet BERIJDBAAR zijn in de nav-kaart.
+
+    Een getekend kanaal is nooit bereden, dus de firmware kent die grond als
+    bezet. regenerate_per_map_files zet de strook open, maar map_generator.cpp
+    schrijft map.pgm terug uit zijn eigen SLAM-data bij elke taak- of
+    monitor-update en gooit dat weg. Gemeten op LFIN2230700238 2026-09-14: de
+    regenerate schreef 880x471, een halfuur later stond er weer 850x440 van de
+    firmware, en langs map0tomap1 was nergens meer dan 0,25 m ruimte. nav2
+    weigerde het kanaal dan ook als doel: "Look like goal is occupied by
+    obstacle". Vandaar hier, in de lus die toch al tegen dat terugschrijven
+    vecht. Obstakels gaan vóór: die worden na ons opnieuw dichtgezet.
+    Idempotent: schrijft alleen als er echt een cel verandert.
+    """
+    yaml_p = f"{base}/map.yaml"
+    csv_dir = f"{base}/csv_file"
+    if not (os.path.exists(yaml_p) and os.path.isdir(csv_dir)):
+        return 0
+    ro = _res_origin(open(yaml_p).read())
+    if not ro:
+        return 0
+    res, ox, oy = ro
+    lines = []
+    for fname in os.listdir(csv_dir):
+        if fname.endswith("_unicom.csv"):
+            p = _read_csv(f"{csv_dir}/{fname}")
+            if len(p) >= 2:
+                lines.append(p)
+    if not lines:
+        return 0
+    uw = max(2, int(round(UNICOM_W_M / res)))
+    pgm = f"{base}/map.pgm"
+    if not os.path.exists(pgm):
+        return 0
+    arr = np.array(Image.open(pgm).convert("L"), dtype=np.uint8)
+    H, W = arr.shape
+
+    def to_px(x, y):
+        return (int((x - ox) / res), (H - 1) - int((y - oy) / res))
+
+    img = Image.new("L", (W, H), 0)
+    d = ImageDraw.Draw(img)
+    for p in lines:
+        p2 = extend_line(p, UNICOM_W_M / 2.0)
+        d.line([to_px(x, y) for (x, y) in p2], fill=255, width=uw, joint="curve")
+
+    # Getekende obstakels uitsluiten. Zonder dit openen wij elke ronde precies
+    # de cellen die enforce_obstacles_occupied er daarna weer dichtzet, en dan
+    # blijven de twee elkaar eeuwig overschrijven (gemeten: 8 cellen heen en
+    # weer, elke cyclus opnieuw). Een obstakel gaat voor, dus het kanaal komt
+    # daar simpelweg niet open.
+    oimg = Image.new("L", (W, H), 0)
+    od = ImageDraw.Draw(oimg)
+    ow = max(1, 2 * int(round(OBSTACLE_INFLATE_M / res)))
+    for fname in os.listdir(csv_dir):
+        if re.match(r"^map\d+_\d+_obstacle\.csv$", fname):
+            op = _read_csv(f"{csv_dir}/{fname}")
+            if len(op) >= 3:
+                pp = [to_px(x, y) for (x, y) in op]
+                od.polygon(pp, fill=255, outline=255)
+                od.line(pp + [pp[0]], fill=255, width=ow, joint="curve")
+
+    need = (np.array(img) > 0) & (np.array(oimg) == 0) & (arr < THRESH)
+    n = int(need.sum())
+    if n == 0:
+        return 0
+    arr[need] = np.uint8(FREE)
+    tmp = pgm + ".unitmp"
+    with open(tmp, "wb") as fh:
+        fh.write(f"P5\n# CREATOR: map_generator.cpp {res:.3f} m/pix\n{W} {H}\n255\n".encode("ascii"))
+        fh.write(arr.tobytes())
+    os.replace(tmp, pgm)
+    return n
+
+
 def enforce_obstacles_occupied(base, np, Image, ImageDraw):
     """ALWAYS-ON invariant, independent of the seam-fix opt-in: a mapped obstacle
     must be OCCUPIED in BOTH the nav map (map.pgm) and the per-slot coverage grids
@@ -362,6 +471,55 @@ class _InotifyWatch:
         return hit
 
 
+RELOAD_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reload_nav_map.py")
+RELOAD_TIMEOUT_S = 30
+# MAPS_GLOB matcht ook home0.bak.*, home0.untangle_bak_* enzovoort. De
+# invarianten mogen daar gerust overheen lopen, dat raakt alleen bestanden, maar
+# een reload met zo'n map laadt een oude kaart in de draaiende navigatie. Precies
+# dat gebeurde live: map_server stond na één daemon-ronde op
+# home0.pre_map5_bak_1789115596. Alleen de actieve kaart mag hier door.
+NAV_MAP_BASE = "/userdata/lfi/maps/home0"
+_reloaded_mtime = {}
+
+
+def reload_nav_map(base):
+    """Vertel map_server dat map.pgm veranderd is.
+
+    map_server leest de kaart alleen bij het opstarten. Alles wat daarna in
+    map.pgm komt (map_generator.cpp die hem herschrijft, wij die de kanalen
+    openzetten) ziet nav2 pas na een herstart. Zonder deze reload plant de
+    planner op een kaart die uren oud kan zijn: live gemeten gaf een cel die op
+    schijf 0,70 m vrij lag in de costmap nog `254` en dus GOAL_COLLIDED.
+
+    Alleen bij een echt gewijzigd bestand, en in een los proces: rclpy hierin
+    trekken maakt deze daemon een permanente iceoryx-deelnemer.
+    """
+    if os.path.normpath(base) != NAV_MAP_BASE:
+        return False
+    pgm = os.path.join(base, "map.pgm")
+    yaml_path = os.path.join(base, "map.yaml")
+    try:
+        mtime = os.path.getmtime(pgm)
+    except OSError:
+        return False
+    if _reloaded_mtime.get(base) == mtime:
+        return False
+    if not os.path.exists(yaml_path):
+        return False
+    _reloaded_mtime[base] = mtime          # ook bij mislukking: niet blijven hameren
+    try:
+        r = subprocess.run([sys.executable, RELOAD_SCRIPT, yaml_path],
+                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                           timeout=RELOAD_TIMEOUT_S)
+        out = (r.stdout or b"").decode("utf-8", "replace").strip().splitlines()
+        print("[seam_fix] map_server reload %s: %s"
+              % (base, out[-1] if out else "rc=%d" % r.returncode), flush=True)
+        return r.returncode == 0
+    except Exception as e:
+        print("[seam_fix] map_server reload %s faalde: %s" % (base, e), flush=True)
+        return False
+
+
 def main():
     global EDGE_MARGIN_M
     try:
@@ -384,7 +542,17 @@ def main():
         total = 0
         for base in glob.glob(MAPS_GLOB):
             try:
+                # Volgorde telt: eerst de kanalen open, daarna de obstakels dicht.
+                # Een getekend obstakel dat over een kanaal ligt hoort te winnen.
+                opened = enforce_unicoms_free(base, np, Image, ImageDraw)
+                if opened:
+                    print("[seam_fix] %s: %d cel(len) kanaal weer opengezet"
+                          % (base, opened), flush=True)
+                total += opened
                 total += enforce_obstacles_occupied(base, np, Image, ImageDraw)
+                # Pas nadat de invarianten erin staan: anders laadt map_server
+                # de kaart van halverwege de bewerking.
+                reload_nav_map(base)
             except Exception as e:
                 print("[seam_fix] enforce %s: %s" % (base, e), flush=True)
         return total
