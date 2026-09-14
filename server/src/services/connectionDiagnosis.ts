@@ -17,6 +17,7 @@
 import { deviceRepo, equipmentRepo, connectionEventRepo } from '../db/repositories/index.js';
 import { getLoraPair } from './loraPair.js';
 import { checkReachability } from './reachability.js';
+import { scanLan } from './lanScan.js';
 import { mapRepo } from '../db/repositories/index.js';
 import { deriveHasError } from '../mqtt/mowerActivity.js';
 import { MAP_NAMES_SELECTION_BUILD } from './mowingArea.js';
@@ -37,6 +38,12 @@ export interface DiagnosisStep {
 }
 
 export interface DiagnosisInput {
+  /**
+   * Sweep the local network for LFI MAC prefixes. Costs about a second and 254
+   * UDP pokes, so it only runs when it can tell us something new: when the
+   * device has no known address. Off by default for callers that poll.
+   */
+  scanLan?: boolean;
   /**
    * Live sensor values, passed in rather than imported.
    *
@@ -156,12 +163,70 @@ export async function diagnoseConnection(
   }
 
   if (!reach.deviceIp) {
-    push({
-      id: 'network',
-      group: 'reach',
-      status: 'unknown',
-      evidence: 'geen adres van dit apparaat bekend, dus niet te peilen',
-    });
+    // Nooit verbonden betekent geen adres, en dan is elke andere stap blind
+    // voor dit apparaat. De hardware verraadt zichzelf wel op laag 2: de eerste
+    // drie bytes van het MAC zeggen wie de fabrikant is, en die set komt uit de
+    // fabriekstabel die bij elke installatie meegaat.
+    const lan = input.scanLan === false ? null : await scanLan();
+    if (!lan) {
+      push({
+        id: 'network',
+        group: 'reach',
+        status: 'unknown',
+        evidence: 'geen adres van dit apparaat bekend, dus niet te peilen',
+      });
+    } else if (!lan.canSeeLan) {
+      push({
+        id: 'network',
+        group: 'reach',
+        status: 'unknown',
+        evidence: `geen adres bekend en ${lan.reason}`,
+        action: lan.reason?.includes('bridge')
+          ? 'draai de container met host-netwerk om het lokale netwerk te kunnen inzien'
+          : undefined,
+      });
+    } else if (lan.found.length === 0) {
+      push({
+        id: 'network',
+        group: 'reach',
+        status: 'fail',
+        evidence: `geen enkel LFI-apparaat gevonden op ${lan.subnet}.0/24 `
+                + `(${lan.neighbourCount} apparaten bekeken)`,
+        action: 'het apparaat hangt niet aan dit netwerk: controleer de stroom en '
+              + 'of de wifi-gegevens goed zijn doorgegeven',
+      });
+    } else {
+      const mine = lan.found.find(f => f.sn === sn);
+      const sameKind = lan.found.filter(f => f.kind === deviceType);
+      if (mine) {
+        push({
+          id: 'network',
+          group: 'reach',
+          status: 'fail',
+          evidence: `gevonden op ${mine.ip} (MAC ${mine.mac}), maar hij praat geen MQTT met ons`,
+          action: 'hij hangt aan het netwerk, dus het probleem zit in de serverinstelling '
+                + 'van het apparaat: naar welk adres wijst het',
+        });
+      } else if (sameKind.length > 0) {
+        push({
+          id: 'network',
+          group: 'reach',
+          status: 'warn',
+          evidence: `${sameKind.length} ${deviceType === 'charger' ? 'laadstation(s)' : 'maaier(s)'} `
+                  + `op het netwerk (${sameKind.map(f => f.ip).join(', ')}), maar niet deze`,
+          action: 'controleer of het serienummer klopt, of dit apparaat staat uit',
+        });
+      } else {
+        push({
+          id: 'network',
+          group: 'reach',
+          status: 'fail',
+          evidence: `wel ${lan.found.length} LFI-apparaat(en) gezien, geen ervan is een `
+                  + `${deviceType === 'charger' ? 'laadstation' : 'maaier'}`,
+          action: 'dit apparaat hangt niet aan het netwerk',
+        });
+      }
+    }
   } else if (reach.deviceAnswered) {
     push({
       id: 'network',

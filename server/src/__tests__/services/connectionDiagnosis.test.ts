@@ -3,6 +3,7 @@ import { db } from '../../db/database.js';
 import { diagnoseConnection } from '../../services/connectionDiagnosis.js';
 import { connectionEventRepo } from '../../db/repositories/index.js';
 import { serverIpv4 } from '../../services/reachability.js';
+import { factoryOuis, scanLan } from '../../services/lanScan.js';
 
 const MOWER = 'LFIN2230700238';
 const CHARGER = 'LFIC1230700004';
@@ -43,7 +44,7 @@ describe('connection diagnosis', () => {
   it('a device that has never connected is stuck at "seen", not at binding', async () => {
     // The chain has to stop at the first broken link: telling someone to bind a
     // device in the app is useless when the device has never reached the server.
-    const d = await diagnoseConnection(MOWER);
+    const d = await diagnoseConnection(MOWER, Date.now(), { scanLan: false });
     expect(d.stuckAt).toBe('seen');
     expect(d.steps.find(s => s.id === 'seen')!.status).toBe('fail');
     expect(d.steps.find(s => s.id === 'seen')!.evidence).toContain('nog nooit');
@@ -52,20 +53,20 @@ describe('connection diagnosis', () => {
   it('separates "never connected" from "was connected until recently"', async () => {
     // These look identical in the dashboard and call for opposite actions.
     seenAt(MOWER, 3 * 24 * 60 * 60 * 1000);
-    const gone = await diagnoseConnection(MOWER);
+    const gone = await diagnoseConnection(MOWER, Date.now(), { scanLan: false });
     const step = gone.steps.find(s => s.id === 'seen')!;
     expect(step.status).toBe('fail');
     expect(step.evidence).toContain('was verbonden');
     expect(step.action).toContain('veranderde');
 
     db.prepare('DELETE FROM device_registry').run();
-    const never = await diagnoseConnection(MOWER);
+    const never = await diagnoseConnection(MOWER, Date.now(), { scanLan: false });
     expect(never.steps.find(s => s.id === 'seen')!.action).toContain('ingericht');
   });
 
   it('a device seen a minute ago counts as online', async () => {
     seenAt(MOWER, 60_000);
-    const d = await diagnoseConnection(MOWER);
+    const d = await diagnoseConnection(MOWER, Date.now(), { scanLan: false });
     expect(d.steps.find(s => s.id === 'seen')!.status).toBe('ok');
     // No point reporting refused attempts for a device that is in.
     expect(d.steps.find(s => s.id === 'attempts')!.status).toBe('skipped');
@@ -76,20 +77,20 @@ describe('connection diagnosis', () => {
     // device that just connected as hours stale, in either direction depending
     // on the server's timezone.
     seenAt(MOWER, 30_000);
-    expect((await diagnoseConnection(MOWER)).steps.find(s => s.id === 'seen')!.status).toBe('ok');
+    expect((await diagnoseConnection(MOWER, Date.now(), { scanLan: false })).steps.find(s => s.id === 'seen')!.status).toBe('ok');
   });
 
   it('surfaces a refused attempt with its reason', async () => {
     seenAt(MOWER, 3 * 24 * 60 * 60 * 1000);
     connectionEventRepo.record({ clientId: `${MOWER}_6688`, sn: MOWER, outcome: 'rejected', reason: 'banned' });
-    const step = (await diagnoseConnection(MOWER)).steps.find(s => s.id === 'attempts')!;
+    const step = (await diagnoseConnection(MOWER, Date.now(), { scanLan: false })).steps.find(s => s.id === 'attempts')!;
     expect(step.status).toBe('fail');
     expect(step.evidence).toContain('banned');
     expect(step.action).toContain('geblokkeerd');
   });
 
   it('says the problem is before the broker when nothing arrives at all', async () => {
-    const step = (await diagnoseConnection(MOWER)).steps.find(s => s.id === 'attempts')!;
+    const step = (await diagnoseConnection(MOWER, Date.now(), { scanLan: false })).steps.find(s => s.id === 'attempts')!;
     expect(step.status).toBe('fail');
     expect(step.action).toContain('DNS');
   });
@@ -99,7 +100,7 @@ describe('connection diagnosis', () => {
     // the mower's BLE advertisement and pairing silently fails.
     seenAt(MOWER, 60_000);
     bind('48:27:E2:1B:A4:0A');
-    const step = (await diagnoseConnection(MOWER)).steps.find(s => s.id === 'ble_mac')!;
+    const step = (await diagnoseConnection(MOWER, Date.now(), { scanLan: false })).steps.find(s => s.id === 'ble_mac')!;
     expect(step.status).toBe('fail');
     expect(step.evidence).toContain('laadstation');
   });
@@ -107,7 +108,7 @@ describe('connection diagnosis', () => {
   it('reports a charger that never showed up', async () => {
     seenAt(MOWER, 60_000);
     bind('50:41:1C:39:BD:C1');
-    const step = (await diagnoseConnection(MOWER)).steps.find(s => s.id === 'counterpart')!;
+    const step = (await diagnoseConnection(MOWER, Date.now(), { scanLan: false })).steps.find(s => s.id === 'counterpart')!;
     expect(step.status).toBe('fail');
     expect(step.evidence).toContain(CHARGER);
     expect(step.action).toContain('laadstation');
@@ -116,7 +117,7 @@ describe('connection diagnosis', () => {
   it('never reports a later step as the sticking point', async () => {
     // stuckAt must be the FIRST failure in chain order, otherwise the advice
     // points past the actual blockage.
-    const d = await diagnoseConnection(MOWER);
+    const d = await diagnoseConnection(MOWER, Date.now(), { scanLan: false });
     const ids = d.steps.map(s => s.id);
     const firstFail = d.steps.findIndex(s => s.status === 'fail');
     expect(ids.indexOf(d.stuckAt!)).toBe(firstFail);
@@ -159,7 +160,7 @@ describe('reachability', () => {
     // the redirect in a router or a separate DNS server, and then what we
     // resolve says nothing about what the mower resolves.
     delete process.env.ENABLE_DNS;
-    const step = (await diagnoseConnection(MOWER)).steps.find(s => s.id === 'dns')!;
+    const step = (await diagnoseConnection(MOWER, Date.now(), { scanLan: false })).steps.find(s => s.id === 'dns')!;
     expect(step.status).not.toBe('fail');
     if (step.status === 'unknown') expect(step.evidence).toContain('dezelfde DNS');
   });
@@ -167,7 +168,7 @@ describe('reachability', () => {
   it('does call it a fault when this server is the one serving it', async () => {
     process.env.ENABLE_DNS = 'true';
     try {
-      const step = (await diagnoseConnection(MOWER)).steps.find(s => s.id === 'dns')!;
+      const step = (await diagnoseConnection(MOWER, Date.now(), { scanLan: false })).steps.find(s => s.id === 'dns')!;
       // In CI the public name resolves to the real cloud, so this is the
       // mismatch branch: server serves the redirect but the name points away.
       if (step.status === 'fail') {
@@ -186,7 +187,7 @@ describe('reachability', () => {
     if (!ours) return;                                  // no LAN interface here
     const sameNet = ours.split('.').slice(0, 3).join('.') + '.253';
     withIp(sameNet);
-    const step = (await diagnoseConnection(MOWER)).steps.find(s => s.id === 'network')!;
+    const step = (await diagnoseConnection(MOWER, Date.now(), { scanLan: false })).steps.find(s => s.id === 'network')!;
     expect(step.status).not.toBe('fail');
     expect(step.evidence).toContain('bewijst niets');
   });
@@ -194,13 +195,13 @@ describe('reachability', () => {
   it('flags an address in another subnet', async () => {
     if (!serverIpv4().length) return;
     withIp('10.99.99.99');
-    const step = (await diagnoseConnection(MOWER)).steps.find(s => s.id === 'network')!;
+    const step = (await diagnoseConnection(MOWER, Date.now(), { scanLan: false })).steps.find(s => s.id === 'network')!;
     expect(step.status).toBe('fail');
     expect(step.evidence).toContain('ander subnet');
   });
 
   it('says so plainly when no address is known', async () => {
-    const step = (await diagnoseConnection(MOWER)).steps.find(s => s.id === 'network')!;
+    const step = (await diagnoseConnection(MOWER, Date.now(), { scanLan: false })).steps.find(s => s.id === 'network')!;
     expect(step.status).toBe('unknown');
     expect(step.evidence).toContain('geen adres');
   });
@@ -243,7 +244,7 @@ describe('connection quality', () => {
 
   it('does not judge readability of a device that is not connected', async () => {
     db.prepare('DELETE FROM device_registry').run();
-    const step = (await diagnoseConnection(MOWER)).steps.find(s => s.id === 'encryption')!;
+    const step = (await diagnoseConnection(MOWER, Date.now(), { scanLan: false })).steps.find(s => s.id === 'encryption')!;
     expect(step.status).toBe('skipped');
   });
 });
@@ -289,5 +290,64 @@ describe('readiness', () => {
   it('every step carries a group, so the UI can order them', async () => {
     const d = await live({ msg: 'x' });
     expect(d.steps.every(s => !!s.group)).toBe(true);
+  });
+});
+
+describe('lan scan', () => {
+  // A device that has never reached the broker has no address, so every other
+  // check is blind to it. The hardware still announces itself at layer 2.
+
+  /** The real table ships with 5851 devices; this is its shape in miniature. */
+  function seedFactory() {
+    db.prepare('DELETE FROM device_factory').run();
+    const ins = db.prepare('INSERT INTO device_factory (sn, device_type, mac_address) VALUES (?,?,?)');
+    for (let i = 0; i < 12; i++) ins.run(`LFIN99${i}`, 'mower', `70:4A:0E:00:00:${String(i).padStart(2, '0')}`);
+    for (let i = 0; i < 12; i++) ins.run(`LFIC99${i}`, 'charger', `48:27:E2:00:00:${String(i).padStart(2, '0')}`);
+    // A one-off: a typo in the source data, not a vendor range.
+    ins.run('LFIN000', 'mower', '68:B6:B3:00:00:01');
+  }
+
+  it('derives the MAC prefixes from the factory table, not a hardcoded list', () => {
+    seedFactory();
+    const ouis = factoryOuis();
+    expect(ouis.get('70:4A:0E')).toBe('mower');
+    expect(ouis.get('48:27:E2')).toBe('charger');
+  });
+
+  it('ignores a prefix that appears once, since that is a typo not a vendor', () => {
+    seedFactory();
+    expect(factoryOuis().has('68:B6:B3')).toBe(false);
+  });
+
+  it('says the prefixes are missing rather than reporting an empty network', async () => {
+    // With no factory table nothing can be recognised, so the scan finds
+    // nothing by construction. Reporting that as "no devices" would send
+    // someone to check power and wifi that are both fine.
+    db.prepare('DELETE FROM device_factory').run();
+    const r = await scanLan();
+    expect(r.canSeeLan).toBe(false);
+    expect(r.reason).toContain('fabriekstabel');
+    expect(r.knownOuis).toBe(0);
+  });
+
+  it('says it is blind rather than saying nothing is there', async () => {
+    // Behind a Docker bridge the neighbour table holds only the gateway. "No
+    // devices found" would be a lie that sends someone to check their mower's
+    // power supply for nothing.
+    seedFactory();
+    const r = await scanLan();
+    if (!r.canSeeLan) {
+      expect(r.reason).toBeTruthy();
+      expect(r.found).toHaveLength(0);
+    } else {
+      expect(r.neighbourCount).toBeGreaterThan(0);
+    }
+  });
+
+  it('skips the scan when the caller asks it to', async () => {
+    const t0 = Date.now();
+    await diagnoseConnection(MOWER, Date.now(), { scanLan: false });
+    // The scan alone costs about a second; without it the whole chain is fast.
+    expect(Date.now() - t0).toBeLessThan(3000);
   });
 });
