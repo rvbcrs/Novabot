@@ -1067,6 +1067,7 @@
     "mowerConfig": "Server address on the mower",
     "serverIpFile": "Stored server address",
     "helpers": "OpenNova scripts",
-    "groupMower": "On the mower itself"
+    "groupMower": "On the mower itself",
+    "mdnsReach": "Discoverable over mDNS"
   }
 }

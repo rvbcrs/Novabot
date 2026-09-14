@@ -945,6 +945,7 @@
     "mowerConfig": "Adresse serveur sur la tondeuse",
     "serverIpFile": "Adresse serveur enregistrée",
     "helpers": "Scripts OpenNova",
-    "groupMower": "Sur la tondeuse elle-même"
+    "groupMower": "Sur la tondeuse elle-même",
+    "mdnsReach": "Détectable via mDNS"
   }
 }

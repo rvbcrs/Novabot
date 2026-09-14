@@ -31,6 +31,7 @@ const STEP_LABEL: Record<string, [string, string]> = {
   fault: ['diagnose.fault', 'Storing'],
   frame: ['diagnose.frame', 'Kaartframe'],
   disk: ['diagnose.disk', 'Schijfruimte'],
+  mdns_reach: ['diagnose.mdnsReach', 'Vindbaar over mDNS'],
   rival_broker: ['diagnose.rivalBroker', 'Tweede MQTT-broker'],
   charger_crypto: ['diagnose.chargerCrypto', 'Laderfirmware'],
   mapping_mode: ['diagnose.mappingMode', 'Karteermodus'],

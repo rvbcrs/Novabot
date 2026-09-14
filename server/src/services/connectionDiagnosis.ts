@@ -18,6 +18,7 @@ import { deviceRepo, equipmentRepo, connectionEventRepo } from '../db/repositori
 import { getLoraPair } from './loraPair.js';
 import { checkReachability, serverIpv4, type Reachability } from './reachability.js';
 import { probeMower, type MowerProbe } from './mowerProbe.js';
+import { inspectContainerNetwork, type ContainerNetwork } from './containerNetwork.js';
 import { scanLan, lookupMac, rivalBrokers, bleToWifiMac, type LanScanResult } from './lanScan.js';
 import { statfs } from 'fs/promises';
 import { mapRepo, userRepo } from '../db/repositories/index.js';
@@ -50,6 +51,7 @@ export interface DiagnosisStep {
 export interface DiagnosisProbes {
   reachability: (deviceIp: string | null) => Promise<Reachability>;
   mower: (ip: string | null) => Promise<MowerProbe>;
+  containerNetwork: () => ContainerNetwork;
   scanLan: () => Promise<LanScanResult>;
   rivalBrokers: (ourIps: string[]) => Promise<string[]>;
   lookupMac: (ip: string) => Promise<string | null>;
@@ -58,6 +60,7 @@ export interface DiagnosisProbes {
 export const realProbes: DiagnosisProbes = {
   reachability: checkReachability,
   mower: probeMower,
+  containerNetwork: inspectContainerNetwork,
   scanLan,
   rivalBrokers,
   lookupMac,
@@ -177,6 +180,42 @@ export async function diagnoseConnection(
       ? 'maaiers ontdekken via mDNS de verkeerde en springen heen en weer; zet er één uit'
       : undefined,
   });
+
+  // Maaiers vinden hun server over mDNS: set_server_urls.sh resolvet
+  // opennova.local bij boot, en opennova_discovery.py pollt die naam elke 60 s
+  // en herschrijft de config zodra het adres verandert. Dat hangt allemaal aan
+  // multicast, en de standaard Docker-bridge laat dat niet door. De advertiser
+  // start zonder fout en wordt simpelweg door niemand gehoord, dus dit is
+  // alleen zichtbaar als je ernaar kijkt.
+  const net = probe.containerNetwork();
+  if (!net.inContainer) {
+    push({
+      id: 'mdns_reach',
+      group: 'server',
+      status: 'ok',
+      evidence: `draait rechtstreeks op ${net.addresses.join(', ') || 'deze machine'}, `
+              + 'multicast kan het netwerk op',
+    });
+  } else if (net.bridged) {
+    push({
+      id: 'mdns_reach',
+      group: 'server',
+      status: 'warn',
+      evidence: `container met bridge-netwerk (${net.addresses.join(', ')}), `
+              + 'multicast bereikt het thuisnetwerk niet',
+      action: 'maaiers kunnen deze server niet zelf vinden over mDNS en leunen volledig '
+            + 'op je DNS-omleiding. Draai de container met host-netwerk om automatisch '
+            + 'ontdekken aan te zetten',
+    });
+  } else {
+    push({
+      id: 'mdns_reach',
+      group: 'server',
+      status: 'ok',
+      evidence: `container met een adres op het thuisnetwerk (${net.addresses.join(', ')}), `
+              + 'dus host-netwerk; multicast kan eruit',
+    });
+  }
 
   // No "is the server up" step: this answer only exists because the server
   // answered. A check that cannot fail is noise, and importing the broker here

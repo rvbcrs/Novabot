@@ -945,6 +945,7 @@
     "mowerConfig": "Serveradresse am Mäher",
     "serverIpFile": "Gespeicherte Serveradresse",
     "helpers": "OpenNova-Skripte",
-    "groupMower": "Auf dem Mäher selbst"
+    "groupMower": "Auf dem Mäher selbst",
+    "mdnsReach": "Über mDNS auffindbar"
   }
 }

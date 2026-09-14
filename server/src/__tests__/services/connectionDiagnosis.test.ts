@@ -4,6 +4,7 @@ import { diagnoseConnection, type DiagnosisProbes } from '../../services/connect
 import { connectionEventRepo } from '../../db/repositories/index.js';
 import { serverIpv4 } from '../../services/reachability.js';
 import { factoryOuis, scanLan, bleToWifiMac, rivalBrokers } from '../../services/lanScan.js';
+import { inspectContainerNetwork } from '../../services/containerNetwork.js';
 
 const MOWER = 'LFIN2230700238';
 const CHARGER = 'LFIC1230700004';
@@ -43,6 +44,7 @@ function probes(over: Partial<{
   deviceAnswered: boolean; sameSubnet: boolean | null;
   rivals: string[]; mac: string | null; lan: Record<string, unknown>;
   mower: Record<string, unknown>;
+  net: Record<string, unknown>;
 }> = {}) {
   return {
     reachability: async (deviceIp: string | null) => ({
@@ -68,6 +70,10 @@ function probes(over: Partial<{
       serverIp: null, mdnsResolves: false, mqttNodeRunning: false, mqttNodeUptimeS: null,
       mqttNodeConnected: false, mqttNetErrors: 0, skippedConfigUpdate: false,
       extendedCommandsRunning: false, ...(over.mower ?? {}),
+    }),
+    containerNetwork: () => ({
+      inContainer: false, bridged: false, addresses: ['192.168.1.2'],
+      ...(over.net ?? {}),
     }),
   } satisfies DiagnosisProbes;
 }
@@ -724,5 +730,78 @@ describe('on the mower itself', () => {
     const step = (await onMower({ reachable: true, extendedCommandsRunning: false }))
       .steps.find(s => s.id === 'helpers')!;
     expect(step.status).toBe('warn');
+  });
+});
+
+describe('can this server be found over mDNS', () => {
+  // Mowers find their server over mDNS: set_server_urls resolves
+  // opennova.local at boot and opennova_discovery polls it every 60s. All of
+  // it needs multicast, which Docker's default bridge blocks. The advertiser
+  // starts without error and nobody hears it, so this is invisible unless you
+  // look for it.
+
+  it('warns inside a bridged container', async () => {
+    withIp('192.0.2.50');
+    const step = (await diagnoseConnection(MOWER, Date.now(), {
+      snapshot: { msg: 'x' },
+      probes: probes({ net: { inContainer: true, bridged: true, addresses: ['172.18.0.4'] } }),
+    })).steps.find(s => s.id === 'mdns_reach')!;
+    expect(step.status).toBe('warn');
+    expect(step.evidence).toContain('172.18.0.4');
+    expect(step.action).toContain('host-netwerk');
+  });
+
+  it('is quiet with host networking, even inside a container', async () => {
+    // Host networking gives the container the machine's own LAN address, so
+    // multicast gets out and discovery works.
+    withIp('192.0.2.50');
+    const step = (await diagnoseConnection(MOWER, Date.now(), {
+      snapshot: { msg: 'x' },
+      probes: probes({ net: { inContainer: true, bridged: false, addresses: ['192.168.1.2'] } }),
+    })).steps.find(s => s.id === 'mdns_reach')!;
+    expect(step.status).toBe('ok');
+    expect(step.evidence).toContain('host-netwerk');
+  });
+
+  it('is quiet when not containerised at all', async () => {
+    withIp('192.0.2.50');
+    const step = (await diagnoseConnection(MOWER, Date.now(), {
+      snapshot: { msg: 'x' }, probes: probes(),
+    })).steps.find(s => s.id === 'mdns_reach')!;
+    expect(step.status).toBe('ok');
+  });
+});
+
+describe('container network detection', () => {
+  const files = (m: Record<string, string>) => (p: string) => m[p] ?? null;
+
+  it('spots a bridged container', () => {
+    const r = inspectContainerNetwork(files({ '/.dockerenv': '' }), ['172.18.0.4']);
+    expect(r.inContainer).toBe(true);
+    expect(r.bridged).toBe(true);
+  });
+
+  it('does not call host networking bridged', () => {
+    const r = inspectContainerNetwork(files({ '/.dockerenv': '' }), ['192.168.1.50']);
+    expect(r.inContainer).toBe(true);
+    expect(r.bridged).toBe(false);
+  });
+
+  it('reads the cgroup when /.dockerenv is absent', () => {
+    const r = inspectContainerNetwork(
+      files({ '/proc/1/cgroup': '0::/system.slice/docker-abc.scope' }), ['172.17.0.2']);
+    expect(r.inContainer).toBe(true);
+  });
+
+  it('a plain machine is neither', () => {
+    const r = inspectContainerNetwork(files({}), ['192.168.1.50']);
+    expect(r.inContainer).toBe(false);
+    expect(r.bridged).toBe(false);
+  });
+
+  it('never calls a machine bridged with no addresses at all', () => {
+    // Nothing to conclude from nothing; saying "bridged" there would send
+    // someone to reconfigure Docker for no reason.
+    expect(inspectContainerNetwork(files({ '/.dockerenv': '' }), []).bridged).toBe(false);
   });
 });
