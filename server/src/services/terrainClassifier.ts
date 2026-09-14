@@ -102,6 +102,15 @@ export const IDLE_UNLOAD_MS = Number(process.env.TERRAIN_MODEL_IDLE_MS ?? 90_000
 export const MIN_FREE_MB = Number(process.env.TERRAIN_MIN_FREE_MB ?? 700);
 
 /**
+ * Hoeveel cores de herkenning mag pakken. Onnxruntime neemt er standaard
+ * zoveel als er zijn; op een machine met vier cores betekende dat 100% CPU en
+ * een server die geen HTTP meer beantwoordde, ook nadat het geheugenprobleem
+ * met q8 was opgelost (live .247, 2026-09-14). De herkenning is een bijzaak en
+ * mag niet de hele machine claimen. `0` = laat onnxruntime zelf kiezen.
+ */
+export const MODEL_THREADS = Number(process.env.TERRAIN_MODEL_THREADS ?? 1);
+
+/**
  * Mag het model geladen worden bij dit vrije geheugen? Onbekend (geen meting)
  * = ja, want een ontbrekende meting is geen reden om de functie uit te zetten.
  */
@@ -227,6 +236,9 @@ async function loadPipeline(): Promise<boolean> {
     const classifier = await pipeline('zero-shot-image-classification', 'Xenova/siglip-base-patch16-224', {
       cache_dir: cacheDir,
       dtype: MODEL_DTYPE as 'q8' | 'fp32',
+      ...(MODEL_THREADS > 0
+        ? { session_options: { intraOpNumThreads: MODEL_THREADS, interOpNumThreads: MODEL_THREADS } }
+        : {}),
     });
     const candidateLabels = [...LABELS.map((l) => l.prompt), ...SINK_PROMPTS];
     currentPipeline = async (jpeg: Buffer) => {

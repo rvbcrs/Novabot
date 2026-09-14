@@ -7,6 +7,7 @@ import {
   _setPipelineForTest,
   IDLE_UNLOAD_MS,
   memoryAllowsLoad,
+  MODEL_THREADS,
   MIN_FREE_MB,
   LABELS,
 } from '../../services/terrainClassifier.js';
@@ -168,5 +169,11 @@ describe('drempels volgen de modelprecisie', () => {
     expect((await load()).MODEL_DTYPE).toBe('q8');
     const raar = await load('q3');
     expect([raar.CONFIDENCE_MIN, raar.MARGIN_RATIO]).toEqual([0.12, 4]);
+  });
+});
+
+describe('de herkenning claimt de machine niet', () => {
+  it('pakt standaard één core, niet alles wat er is', () => {
+    expect(MODEL_THREADS).toBe(1);
   });
 });

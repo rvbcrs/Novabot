@@ -188,6 +188,11 @@ export async function runRecognition(
       const box = cropBox(best.target, best.frame.pose, meta.width ?? 0, meta.height ?? 0);
       const jpeg = await cropFrame(best.frame.jpegPath, box);
 
+      // Tussen twee crops de event-loop teruggeven. Eén batch is tientallen
+      // inferenties achter elkaar; zonder dit adempauze-punt kwam de HTTP-kant
+      // er niet meer tussen en meldde het dashboard de maaier offline terwijl
+      // de server gewoon stond te rekenen (live .247, 2026-09-14).
+      await new Promise<void>((r) => setImmediate(r));
       const result = await classifyCrop(jpeg);
 
       fs.mkdirSync(cropsDir, { recursive: true });
