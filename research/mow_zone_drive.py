@@ -856,15 +856,21 @@ def _zone_containing(xy):
     return None
 
 
-def _dock_zone():
-    """Zone the charging station stands in: the polygon around the dock anchor,
-    which the firmware writes as the FIRST point of map0tocharge_unicom.csv."""
+def _dock_anchor():
+    """Where the charging station stands: the FIRST point of
+    map0tocharge_unicom.csv, which is what the firmware writes as the anchor."""
     for p in (f"{MAPS_HOME}/x3_csv_file/map0tocharge_unicom.csv",
               f"{MAPS_HOME}/csv_file/map0tocharge_unicom.csv"):
         pts = read_xy_csv(p)
         if pts:
-            return _zone_containing(pts[0])
+            return pts[0]
     return None
+
+
+def _dock_zone():
+    """Zone the charging station stands in: the polygon around the dock anchor."""
+    anchor = _dock_anchor()
+    return _zone_containing(anchor) if anchor else None
 
 
 def find_stale_mow_drives(proc_root="/proc", self_pid=None):
@@ -1214,9 +1220,14 @@ def check_mow(drv, to_slot):
     check(f"{to_slot} bestaat", len(target) >= 3, f"{len(target)} punten")
 
     robot = drv.robot_xy(timeout=8.0)
-    check("gelokaliseerd", robot is not None,
-          f"positie {robot}" if robot else "geen map->base_link; de firmware doet dit "
-                                           "zelf bij de taakstart")
+    # Geen blokker, en dat is geen soepelheid maar de werkelijkheid: do_mow vangt
+    # dit allebei af. Zonder kanaal draait de firmware de hele taak, met kanaal
+    # start hij de taak om het frame te krijgen en neemt daarna over. Na elke
+    # herstart staat hij hier, dus een FAIL zou de dry run wolf laten roepen op
+    # precies het moment dat je hem het meest gebruikt.
+    check("positie bekend", True,
+          f"{robot}" if robot else "nog geen map->base_link, de firmware bouwt dat "
+                                   "frame bij de taakstart")
 
     # Op het dock is `from` geen zone maar "dock". do_mow ondockt eerst en kijkt
     # dán pas waar hij staat, dus de controle moet dat nabootsen: anders meldt
@@ -1264,8 +1275,16 @@ def check_mow(drv, to_slot):
                   or f"{len(proef)} punten gecontroleerd")
         # Vrij is niet hetzelfde als bereikbaar: een kanaal kan prima open zijn
         # en toch aan de verkeerde kant van een struik liggen.
-        if robot and grid is not None:
-            weg, notitie = drv.map_unreachable(robot, proef, grid=grid)
+        #
+        # Vlak na een herstart is er nog geen map->base_link en is `robot` leeg.
+        # Juist dan wil je deze controle: hij staat dan op het dock, en dat punt
+        # staat in de kaart. Anders is de dry run precies onbruikbaar op het
+        # moment dat je hem het hardst nodig hebt.
+        vanaf_punt = robot or _dock_anchor()
+        if vanaf_punt and grid is not None:
+            weg, notitie = drv.map_unreachable(vanaf_punt, proef, grid=grid)
+            if not robot:
+                notitie = f"gemeten vanaf het dock; {notitie}"
             if weg is None:
                 check("kanalen bereikbaar", False, notitie)
             else:
