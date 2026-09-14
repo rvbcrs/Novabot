@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterAll } from 'vitest';
 import request from 'supertest';
 import express from 'express';
 import { db } from '../../db/database.js';
@@ -108,6 +108,14 @@ const app = express();
 app.use(express.json());
 app.use('/api/admin-status', adminStatusRouter);
 
+// Eén luisteraar voor dit hele bestand. `request(server)` laat supertest per
+// verzoek een NIEUWE efemere poort openen, en dat botst onder belasting met een
+// andere luisteraar: het antwoord komt dan ergens anders vandaan. Bewezen op
+// 2026-09-14, een 403 op /reanchor zonder x-powered-by en zonder serverkant-
+// regel in de trace, wat drie beta-builds heeft gekost.
+const server = app.listen(0);
+afterAll(() => new Promise<void>(r => { server.close(() => r()); }));
+
 describe('GET /api/admin-status/wifi-heatmap/:sn', () => {
   it('returns positioned WiFi samples with normalized weights', async () => {
     const sn = 'LFIN_HEATMAP_ROUTE';
@@ -119,7 +127,7 @@ describe('GET /api/admin-status/wifi-heatmap/:sn', () => {
         (?, -55, 65, 100, NULL, 4, 52.3, 6.3, datetime('now', '-3 minutes'))
     `).run(sn, sn, sn);
 
-    const res = await request(app).get(`/api/admin-status/wifi-heatmap/${sn}?hours=1`);
+    const res = await request(server).get(`/api/admin-status/wifi-heatmap/${sn}?hours=1`);
 
     expect(res.status).toBe(200);
     expect(res.body.sn).toBe(sn);

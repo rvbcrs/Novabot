@@ -11,7 +11,7 @@
  * Mock-set volgt het huidige dashboard.ts-testpatroon (zie o.a.
  * edgeWatchDisarmRoutes.test.ts / autoMapRoutes.test.ts).
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
 
 // Centrale firmware-gate (2026-09-09): deze tests gaan uit van een OpenNova
 // custom-firmware maaier, anders weigert de server extended-commando's met 409.
@@ -108,6 +108,14 @@ const app = express();
 app.use(express.json());
 app.use('/api/dashboard', dashboardRouter);
 
+// Eén luisteraar voor dit hele bestand. `request(server)` laat supertest per
+// verzoek een NIEUWE efemere poort openen, en dat botst onder belasting met een
+// andere luisteraar: het antwoord komt dan ergens anders vandaan. Bewezen op
+// 2026-09-14, een 403 op /reanchor zonder x-powered-by en zonder serverkant-
+// regel in de trace, wat drie beta-builds heeft gekost.
+const server = app.listen(0);
+afterAll(() => new Promise<void>(r => { server.close(() => r()); }));
+
 const SN = 'LFIN2230700238';
 
 beforeEach(() => {
@@ -135,7 +143,7 @@ describe('POST /api/dashboard/maps/:sn/apply-offset', () => {
   });
 
   it('persists offset, regenerates, and pushes sync_map on happy path', async () => {
-    const r = await request(app)
+    const r = await request(server)
       .post(`/api/dashboard/maps/${SN}/apply-offset`)
       .send({ dx_m: 0.05, dy_m: -0.03 });
     expect(r.status).toBe(200);
@@ -149,7 +157,7 @@ describe('POST /api/dashboard/maps/:sn/apply-offset', () => {
   });
 
   it('rejects non-finite dx with 400 and does not write DB', async () => {
-    const r = await request(app)
+    const r = await request(server)
       .post(`/api/dashboard/maps/${SN}/apply-offset`)
       .send({ dx_m: 'banana', dy_m: 0 });
     expect(r.status).toBe(400);
@@ -158,7 +166,7 @@ describe('POST /api/dashboard/maps/:sn/apply-offset', () => {
   });
 
   it('rejects |dx| > 1.0 with 400 and does not write DB', async () => {
-    const r = await request(app)
+    const r = await request(server)
       .post(`/api/dashboard/maps/${SN}/apply-offset`)
       .send({ dx_m: 1.5, dy_m: 0 });
     expect(r.status).toBe(400);
@@ -167,7 +175,7 @@ describe('POST /api/dashboard/maps/:sn/apply-offset', () => {
 
   it('returns 404 with partial flag when mower offline (DB still updated)', async () => {
     vi.mocked(broker.isDeviceOnline).mockReturnValue(false);
-    const r = await request(app)
+    const r = await request(server)
       .post(`/api/dashboard/maps/${SN}/apply-offset`)
       .send({ dx_m: 0.02, dy_m: 0 });
     expect(r.status).toBe(404);
@@ -178,7 +186,7 @@ describe('POST /api/dashboard/maps/:sn/apply-offset', () => {
 
   it('returns 400 when no map data found (DB still updated)', async () => {
     vi.mocked(mapBackupModule.regenerateLatestZipFromBackup).mockReturnValue(null);
-    const r = await request(app)
+    const r = await request(server)
       .post(`/api/dashboard/maps/${SN}/apply-offset`)
       .send({ dx_m: 0.02, dy_m: 0 });
     expect(r.status).toBe(400);

@@ -22,7 +22,7 @@
 
 import express from 'express';
 import request from 'supertest';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
 
 // Centrale firmware-gate (2026-09-09): deze tests gaan uit van een OpenNova
 // custom-firmware maaier, anders weigert de server extended-commando's met 409.
@@ -115,6 +115,14 @@ const app = express();
 app.use(express.json());
 app.use('/api/dashboard', dashboardRouter);
 
+// Eén luisteraar voor dit hele bestand. `request(server)` laat supertest per
+// verzoek een NIEUWE efemere poort openen, en dat botst onder belasting met een
+// andere luisteraar: het antwoord komt dan ergens anders vandaan. Bewezen op
+// 2026-09-14, een 403 op /reanchor zonder x-powered-by en zonder serverkant-
+// regel in de trace, wat drie beta-builds heeft gekost.
+const server = app.listen(0);
+afterAll(() => new Promise<void>(r => { server.close(() => r()); }));
+
 const SN = 'LFIN2230700238';
 
 function setCache(fields: Record<string, string>): void {
@@ -143,7 +151,7 @@ beforeEach(() => {
 describe('POST /reanchor/:sn action:auto — precondition gates', () => {
   it('409 when the frame is already validated (nothing to re-anchor)', async () => {
     setCache(DOCKED_FIXED);
-    const r = await request(app).post(`/api/dashboard/reanchor/${SN}`).send({ action: 'auto' });
+    const r = await request(server).post(`/api/dashboard/reanchor/${SN}`).send({ action: 'auto' });
     expect(r.status).toBe(409);
     expect(r.body.error).toMatch(/already validated/i);
   });
@@ -151,7 +159,7 @@ describe('POST /reanchor/:sn action:auto — precondition gates', () => {
   it('409 when the mower is not on the dock', async () => {
     markFrameUnvalidated(SN);
     setCache({ ...DOCKED_FIXED, battery_state: 'NORMAL', recharge_status: '0' });
-    const r = await request(app).post(`/api/dashboard/reanchor/${SN}`).send({ action: 'auto' });
+    const r = await request(server).post(`/api/dashboard/reanchor/${SN}`).send({ action: 'auto' });
     expect(r.status).toBe(409);
     expect(r.body.error).toMatch(/on the dock/i);
   });
@@ -162,7 +170,7 @@ describe('POST /reanchor/:sn action:auto — precondition gates', () => {
     // pos.json off the dock (and verify would check the wrong place).
     markFrameUnvalidated(SN);
     setCache({ ...DOCKED_FIXED, battery_state: 'FULL', recharge_status: '0' });
-    const r = await request(app).post(`/api/dashboard/reanchor/${SN}`).send({ action: 'auto' });
+    const r = await request(server).post(`/api/dashboard/reanchor/${SN}`).send({ action: 'auto' });
     expect(r.status).toBe(409);
     expect(r.body.error).toMatch(/on the dock/i);
   });
@@ -170,7 +178,7 @@ describe('POST /reanchor/:sn action:auto — precondition gates', () => {
   it('409 when on the dock but not RTK Fixed (raw code 5 = Float)', async () => {
     markFrameUnvalidated(SN);
     setCache({ ...DOCKED_FIXED, rtk_fix_quality: '5' }); // 5 = RTK Float
-    const r = await request(app).post(`/api/dashboard/reanchor/${SN}`).send({ action: 'auto' });
+    const r = await request(server).post(`/api/dashboard/reanchor/${SN}`).send({ action: 'auto' });
     expect(r.status).toBe(409);
     expect(r.body.error).toMatch(/Fixed/i);
   });
@@ -180,7 +188,7 @@ describe('POST /reanchor/:sn action:auto — precondition gates', () => {
     try {
       markFrameUnvalidated(SN);
       setCache({ ...DOCKED_FIXED, rtk_fix_quality: 'RTK Fixed' });
-      const r = await request(app).post(`/api/dashboard/reanchor/${SN}`).send({ action: 'auto' });
+      const r = await request(server).post(`/api/dashboard/reanchor/${SN}`).send({ action: 'auto' });
       expect(r.status).toBe(200);
       await vi.advanceTimersByTimeAsync(50);
     } finally {
@@ -197,13 +205,13 @@ describe('POST /reanchor/:sn action:auto — precondition gates', () => {
     try {
       markFrameUnvalidated(SN);
       setCache(DOCKED_FIXED);
-      const r = await request(app).post(`/api/dashboard/reanchor/${SN}`).send({ action: 'auto' });
+      const r = await request(server).post(`/api/dashboard/reanchor/${SN}`).send({ action: 'auto' });
       expect(r.status).toBe(200);
       expect(r.body.ok).toBe(true);
       expect(r.body.action).toBe('auto');
 
       await vi.advanceTimersByTimeAsync(50); // let the async flow start
-      const s = await request(app).get(`/api/dashboard/reanchor/${SN}/status`);
+      const s = await request(server).get(`/api/dashboard/reanchor/${SN}/status`);
       expect(s.status).toBe(200);
       expect(['check', 'anchor', 'error']).toContain(s.body.status.phase);
     } finally {
@@ -217,7 +225,7 @@ describe('POST /reanchor/:sn action:auto — precondition gates', () => {
     try {
       markFrameUnvalidated(SN);
       setCache({ battery_state: 'CHARGING', rtk: 'true', latitude: '52.1', longitude: '4.7', map_position_x: '0', map_position_y: '0' });
-      const r = await request(app).post(`/api/dashboard/reanchor/${SN}`).send({ action: 'auto' });
+      const r = await request(server).post(`/api/dashboard/reanchor/${SN}`).send({ action: 'auto' });
       expect(r.status).toBe(200);
       await vi.advanceTimersByTimeAsync(50);
     } finally {
@@ -234,7 +242,7 @@ describe('POST /reanchor/:sn action:verify — manual backup (lifecycle-gated)',
       markFrameUnvalidated(SN);
       setReanchorRelocked(SN, true); // mower left the dock, re-locked, now re-docked
       setCache({ ...DOCKED_FIXED, map_position_x: '0.08', map_position_y: '-0.12' });
-      const r = await request(app).post(`/api/dashboard/reanchor/${SN}`).send({ action: 'verify' });
+      const r = await request(server).post(`/api/dashboard/reanchor/${SN}`).send({ action: 'verify' });
       expect(r.status).toBe(200);
       await vi.advanceTimersByTimeAsync(3500); // past the settle delay
       expect(isFrameUnvalidated(SN)).toBe(false);
@@ -242,7 +250,7 @@ describe('POST /reanchor/:sn action:verify — manual backup (lifecycle-gated)',
       vi.useRealTimers();
     }
 
-    const s = await request(app).get(`/api/dashboard/reanchor/${SN}/status`);
+    const s = await request(server).get(`/api/dashboard/reanchor/${SN}/status`);
     expect(s.body.status.phase).toBe('done');
     expect(s.body.status.ok).toBe(true);
   });
@@ -253,7 +261,7 @@ describe('POST /reanchor/:sn action:verify — manual backup (lifecycle-gated)',
       markFrameUnvalidated(SN);
       setReanchorRelocked(SN, true);
       setCache({ ...DOCKED_FIXED, map_position_x: '2.12', map_position_y: '0.63' });
-      const r = await request(app).post(`/api/dashboard/reanchor/${SN}`).send({ action: 'verify' });
+      const r = await request(server).post(`/api/dashboard/reanchor/${SN}`).send({ action: 'verify' });
       expect(r.status).toBe(200);
       await vi.advanceTimersByTimeAsync(3500);
       expect(isFrameUnvalidated(SN)).toBe(true);
@@ -261,7 +269,7 @@ describe('POST /reanchor/:sn action:verify — manual backup (lifecycle-gated)',
       vi.useRealTimers();
     }
 
-    const s = await request(app).get(`/api/dashboard/reanchor/${SN}/status`);
+    const s = await request(server).get(`/api/dashboard/reanchor/${SN}/status`);
     expect(s.body.status.phase).toBe('error');
     expect(s.body.status.error).toBe('verify_failed');
   });
@@ -289,7 +297,7 @@ describe('POST /reanchor/:sn action:verify — manual backup (lifecycle-gated)',
       deviceCache.set(ASN, new Map(Object.entries({
         ...DOCKED_FIXED, map_position_x: '0.09', map_position_y: '-0.51',
       })));
-      const r = await request(app).post(`/api/dashboard/reanchor/${ASN}`).send({ action: 'verify' });
+      const r = await request(server).post(`/api/dashboard/reanchor/${ASN}`).send({ action: 'verify' });
       expect(r.status).toBe(200);
       await vi.advanceTimersByTimeAsync(3500);
       expect(isFrameUnvalidated(ASN)).toBe(false); // 4cm from anchor → valid
@@ -302,7 +310,7 @@ describe('POST /reanchor/:sn action:verify — manual backup (lifecycle-gated)',
   it('409 when verify is requested but the mower never re-locked (cycle incomplete)', async () => {
     markFrameUnvalidated(SN); // resets the relock latch to false
     setCache(DOCKED_FIXED); // on the dock + Fixed, but no off-dock relock happened
-    const r = await request(app).post(`/api/dashboard/reanchor/${SN}`).send({ action: 'verify' });
+    const r = await request(server).post(`/api/dashboard/reanchor/${SN}`).send({ action: 'verify' });
     expect(r.status).toBe(409);
     expect(r.body.error).toMatch(/re-anchor cycle|left the dock|RUNNING/i);
     expect(isFrameUnvalidated(SN)).toBe(true); // not cleared
@@ -312,7 +320,7 @@ describe('POST /reanchor/:sn action:verify — manual backup (lifecycle-gated)',
     markFrameUnvalidated(SN);
     setReanchorRelocked(SN, true);
     setCache({ ...DOCKED_FIXED, battery_state: 'NORMAL', recharge_status: '0' });
-    const r = await request(app).post(`/api/dashboard/reanchor/${SN}`).send({ action: 'verify' });
+    const r = await request(server).post(`/api/dashboard/reanchor/${SN}`).send({ action: 'verify' });
     expect(r.status).toBe(409);
     expect(r.body.error).toMatch(/on the dock/i);
     expect(isFrameUnvalidated(SN)).toBe(true);
@@ -322,7 +330,7 @@ describe('POST /reanchor/:sn action:verify — manual backup (lifecycle-gated)',
     markFrameUnvalidated(SN);
     setReanchorRelocked(SN, true);
     setCache({ ...DOCKED_FIXED, battery_state: 'FULL', recharge_status: '0' });
-    const r = await request(app).post(`/api/dashboard/reanchor/${SN}`).send({ action: 'verify' });
+    const r = await request(server).post(`/api/dashboard/reanchor/${SN}`).send({ action: 'verify' });
     expect(r.status).toBe(409);
     expect(r.body.error).toMatch(/on the dock/i);
   });
@@ -330,7 +338,7 @@ describe('POST /reanchor/:sn action:verify — manual backup (lifecycle-gated)',
 
 describe('GET /reanchor/:sn/status', () => {
   it('returns an idle status for an unknown SN', async () => {
-    const s = await request(app).get('/api/dashboard/reanchor/UNKNOWNSN/status');
+    const s = await request(server).get('/api/dashboard/reanchor/UNKNOWNSN/status');
     expect(s.status).toBe(200);
     expect(s.body.status.phase).toBe('idle');
   });
@@ -339,7 +347,7 @@ describe('GET /reanchor/:sn/status', () => {
     markFrameUnvalidated(SN);
     setReanchorRelocked(SN, true);
     setCache(DOCKED_FIXED);
-    const s = await request(app).get(`/api/dashboard/reanchor/${SN}/status`);
+    const s = await request(server).get(`/api/dashboard/reanchor/${SN}/status`);
     expect(s.body.status.onDock).toBe(true);
     expect(s.body.status.rtkFixed).toBe(true);
     expect(s.body.status.relocked).toBe(true);
@@ -347,7 +355,7 @@ describe('GET /reanchor/:sn/status', () => {
 
   it('reports onDock=false when only the battery is FULL (off the dock)', async () => {
     setCache({ ...DOCKED_FIXED, battery_state: 'FULL', recharge_status: '0' });
-    const s = await request(app).get(`/api/dashboard/reanchor/${SN}/status`);
+    const s = await request(server).get(`/api/dashboard/reanchor/${SN}/status`);
     expect(s.body.status.onDock).toBe(false);
   });
 });

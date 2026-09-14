@@ -6,7 +6,7 @@
  *
  * Heavy deps are mocked so the test stays fast.
  */
-import { describe, it, expect, vi, beforeAll } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
 import request from 'supertest';
 import express from 'express';
 
@@ -91,13 +91,21 @@ const app = express();
 app.use(express.json());
 app.use('/api/dashboard', dashboardRouter);
 
+// Eén luisteraar voor dit hele bestand. `request(server)` laat supertest per
+// verzoek een NIEUWE efemere poort openen, en dat botst onder belasting met een
+// andere luisteraar: het antwoord komt dan ergens anders vandaan. Bewezen op
+// 2026-09-14, een 403 op /reanchor zonder x-powered-by en zonder serverkant-
+// regel in de trace, wat drie beta-builds heeft gekost.
+const server = app.listen(0);
+afterAll(() => new Promise<void>(r => { server.close(() => r()); }));
+
 describe('GET /api/dashboard/system/logs', () => {
   beforeAll(() => {
     mockLogBuffer.length = 0;
   });
 
   it('returns empty logs when buffer is empty', async () => {
-    const res = await request(app).get('/api/dashboard/system/logs');
+    const res = await request(server).get('/api/dashboard/system/logs');
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ logs: [] });
   });
@@ -140,7 +148,7 @@ describe('GET /api/dashboard/system/logs', () => {
       },
     );
 
-    const res = await request(app).get('/api/dashboard/system/logs?sn=B');
+    const res = await request(server).get('/api/dashboard/system/logs?sn=B');
     expect(res.status).toBe(200);
     expect(res.body.logs).toHaveLength(2);
     expect(res.body.logs.every((l: any) => l.sn === 'B')).toBe(true);
@@ -162,7 +170,7 @@ describe('GET /api/dashboard/system/logs', () => {
       });
     }
 
-    const res = await request(app).get('/api/dashboard/system/logs?tail=10');
+    const res = await request(server).get('/api/dashboard/system/logs?tail=10');
     expect(res.status).toBe(200);
     expect(res.body.logs).toHaveLength(10);
     // Should be the last 10 entries
@@ -230,7 +238,7 @@ describe('GET /api/dashboard/system/logs', () => {
       },
     );
 
-    const res = await request(app).get('/api/dashboard/system/logs?type=connect');
+    const res = await request(server).get('/api/dashboard/system/logs?type=connect');
     expect(res.status).toBe(200);
     expect(res.body.logs).toHaveLength(2);
     expect(res.body.logs.every((l: any) => l.type === 'connect')).toBe(true);
@@ -245,7 +253,7 @@ describe('GET /api/dashboard/system/logs', () => {
       { ts: 4000, type: 'connect', clientId: 'c4', clientType: 'DEV', sn: 'B', direction: '', topic: '', payload: '', encrypted: false },
     );
 
-    const res = await request(app).get('/api/dashboard/system/logs?type=connect&sn=A');
+    const res = await request(server).get('/api/dashboard/system/logs?type=connect&sn=A');
     expect(res.status).toBe(200);
     expect(res.body.logs).toHaveLength(1);
     expect(res.body.logs[0].type).toBe('connect');
@@ -269,22 +277,22 @@ describe('GET /api/dashboard/system/logs', () => {
     }
 
     // Non-numeric tail
-    const res1 = await request(app).get('/api/dashboard/system/logs?tail=abc');
+    const res1 = await request(server).get('/api/dashboard/system/logs?tail=abc');
     expect(res1.status).toBe(200);
     expect(res1.body.logs).toHaveLength(100); // All 100, since 200 > 100
 
     // Negative tail
-    const res2 = await request(app).get('/api/dashboard/system/logs?tail=-5');
+    const res2 = await request(server).get('/api/dashboard/system/logs?tail=-5');
     expect(res2.status).toBe(200);
     expect(res2.body.logs).toHaveLength(100);
 
     // Zero tail
-    const res3 = await request(app).get('/api/dashboard/system/logs?tail=0');
+    const res3 = await request(server).get('/api/dashboard/system/logs?tail=0');
     expect(res3.status).toBe(200);
     expect(res3.body.logs).toHaveLength(100);
 
     // Exceeds max 500
-    const res4 = await request(app).get('/api/dashboard/system/logs?tail=600');
+    const res4 = await request(server).get('/api/dashboard/system/logs?tail=600');
     expect(res4.status).toBe(200);
     expect(res4.body.logs).toHaveLength(100); // Clamped to default 200, which is > 100
   });

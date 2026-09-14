@@ -12,7 +12,7 @@
  * Mock block copied verbatim from adminMapBackupRestore.test.ts so the
  * heavy dependency graph of adminStatus.ts is fully stubbed out.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
 import request from 'supertest';
 import express from 'express';
 
@@ -122,6 +122,14 @@ const app = express();
 app.use(express.json());
 app.use('/api/admin-status', adminStatusRouter);
 
+// Eén luisteraar voor dit hele bestand. `request(server)` laat supertest per
+// verzoek een NIEUWE efemere poort openen, en dat botst onder belasting met een
+// andere luisteraar: het antwoord komt dan ergens anders vandaan. Bewezen op
+// 2026-09-14, een 403 op /reanchor zonder x-powered-by en zonder serverkant-
+// regel in de trace, wat drie beta-builds heeft gekost.
+const server = app.listen(0);
+afterAll(() => new Promise<void>(r => { server.close(() => r()); }));
+
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const SN = 'LFIN2230700238';
@@ -136,14 +144,14 @@ beforeEach(() => {
 
 describe('GET /api/admin-status/maps/:sn/polygon-offset', () => {
   it('returns 0/0 when no offset persisted', async () => {
-    const r = await request(app).get(`/api/admin-status/maps/${SN}/polygon-offset`);
+    const r = await request(server).get(`/api/admin-status/maps/${SN}/polygon-offset`);
     expect(r.status).toBe(200);
     expect(r.body).toEqual({ dx_m: 0, dy_m: 0 });
   });
 
   it('returns the persisted offset', async () => {
     mapRepo.setPolygonOffset(SN, 0.05, -0.03);
-    const r = await request(app).get(`/api/admin-status/maps/${SN}/polygon-offset`);
+    const r = await request(server).get(`/api/admin-status/maps/${SN}/polygon-offset`);
     expect(r.body.dx_m).toBeCloseTo(0.05);
     expect(r.body.dy_m).toBeCloseTo(-0.03);
   });
@@ -161,7 +169,7 @@ describe('POST /api/admin-status/maps/:sn/reset-polygon-offset', () => {
 
   it('writes (0,0), regenerates, and pushes sync_map', async () => {
     mapRepo.setPolygonOffset(SN, 0.05, 0.05);
-    const r = await request(app).post(`/api/admin-status/maps/${SN}/reset-polygon-offset`).send({});
+    const r = await request(server).post(`/api/admin-status/maps/${SN}/reset-polygon-offset`).send({});
     expect(r.status).toBe(200);
     expect(r.body.ok).toBe(true);
     expect(r.body.dx_m).toBe(0);
@@ -171,7 +179,7 @@ describe('POST /api/admin-status/maps/:sn/reset-polygon-offset', () => {
 
   it('reset on a never-calibrated SN still works (no row → row with zeros)', async () => {
     const FRESH = 'LFIN_NEVER_CALIBRATED';
-    const r = await request(app).post(`/api/admin-status/maps/${FRESH}/reset-polygon-offset`).send({});
+    const r = await request(server).post(`/api/admin-status/maps/${FRESH}/reset-polygon-offset`).send({});
     expect(r.status).toBe(200);
     expect(mapRepo.getPolygonOffset(FRESH)).toEqual({ x: 0, y: 0 });
   });

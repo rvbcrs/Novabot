@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
 import request from 'supertest';
 import express from 'express';
 
@@ -109,6 +109,14 @@ const app = express();
 app.use(express.json());
 app.use('/api/dashboard', dashboardRouter);
 
+// Eén luisteraar voor dit hele bestand. `request(server)` laat supertest per
+// verzoek een NIEUWE efemere poort openen, en dat botst onder belasting met een
+// andere luisteraar: het antwoord komt dan ergens anders vandaan. Bewezen op
+// 2026-09-14, een 403 op /reanchor zonder x-powered-by en zonder serverkant-
+// regel in de trace, wat drie beta-builds heeft gekost.
+const server = app.listen(0);
+afterAll(() => new Promise<void>(r => { server.close(() => r()); }));
+
 describe('POST /ota/trigger/:sn beta gate', () => {
   beforeEach(() => {
     vi.spyOn(otaVersionRepo, 'findById').mockReturnValue({
@@ -119,7 +127,7 @@ describe('POST /ota/trigger/:sn beta gate', () => {
 
   it('returns 409 BACKUP_FAILED when the gate blocks', async () => {
     (ensureBetaFlashSafe as any).mockResolvedValue({ allowed: false, error: 'BACKUP_FAILED', detail: 'no backup' });
-    const res = await request(app).post('/api/dashboard/ota/trigger/LFIN2230700238').send({ version_id: 1 });
+    const res = await request(server).post('/api/dashboard/ota/trigger/LFIN2230700238').send({ version_id: 1 });
     expect(res.status).toBe(409);
     expect(res.body.error).toBe('BACKUP_FAILED');
     expect(res.body.detail).toBe('no backup');
@@ -127,7 +135,7 @@ describe('POST /ota/trigger/:sn beta gate', () => {
 
   it('dispatches and returns backup info when allowed', async () => {
     (ensureBetaFlashSafe as any).mockResolvedValue({ allowed: true, reason: 'backup-created', backup: { filename: 'b.novabotmap', bytes: 1, createdAt: 1, reason: 'pre-beta-flash' } });
-    const res = await request(app).post('/api/dashboard/ota/trigger/LFIN2230700238').send({ version_id: 1 });
+    const res = await request(server).post('/api/dashboard/ota/trigger/LFIN2230700238').send({ version_id: 1 });
     expect(res.status).toBe(200);
     expect(res.body.ok).toBe(true);
     expect(res.body.backup.filename).toBe('b.novabotmap');

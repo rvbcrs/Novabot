@@ -9,7 +9,7 @@
  *
  * Same vi.mock bootstrap as dashboardSystemHealth.test.ts — copy verbatim.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
 import request from 'supertest';
 import express from 'express';
 
@@ -90,6 +90,14 @@ const app = express();
 app.use(express.json());
 app.use('/api/dashboard', dashboardRouter);
 
+// Eén luisteraar voor dit hele bestand. `request(server)` laat supertest per
+// verzoek een NIEUWE efemere poort openen, en dat botst onder belasting met een
+// andere luisteraar: het antwoord komt dan ergens anders vandaan. Bewezen op
+// 2026-09-14, een 403 op /reanchor zonder x-powered-by en zonder serverkant-
+// regel in de trace, wat drie beta-builds heeft gekost.
+const server = app.listen(0);
+afterAll(() => new Promise<void>(r => { server.close(() => r()); }));
+
 describe('GET /api/dashboard/system/lora-status/:sn', () => {
   beforeEach(() => {
     // Clean up any LoRa cache rows and equipment rows inserted by tests
@@ -101,7 +109,7 @@ describe('GET /api/dashboard/system/lora-status/:sn', () => {
   });
 
   it('404 when no lora cache row exists for given SN', async () => {
-    const res = await request(app).get('/api/dashboard/system/lora-status/LFIN_NOPE');
+    const res = await request(server).get('/api/dashboard/system/lora-status/LFIN_NOPE');
     expect(res.status).toBe(404);
     expect(res.body).toMatchObject({ error: 'no_lora_cache' });
   });
@@ -109,7 +117,7 @@ describe('GET /api/dashboard/system/lora-status/:sn', () => {
   it('returns pair shape and drift:false when own cache exists but no peer in equipment table', async () => {
     equipmentRepo.setLoraCache('LFIN_TEST_M', '0xABCD', '15');
 
-    const res = await request(app).get('/api/dashboard/system/lora-status/LFIN_TEST_M');
+    const res = await request(server).get('/api/dashboard/system/lora-status/LFIN_TEST_M');
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({
       sn: 'LFIN_TEST_M',
@@ -131,7 +139,7 @@ describe('GET /api/dashboard/system/lora-status/:sn', () => {
     equipmentRepo.setLoraCache('LFIN_TEST_M', '0xABCD', '15');
     equipmentRepo.setLoraCache('LFIC_TEST_C', '0xABCD', '15');
 
-    const res = await request(app).get('/api/dashboard/system/lora-status/LFIN_TEST_M');
+    const res = await request(server).get('/api/dashboard/system/lora-status/LFIN_TEST_M');
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({
       sn: 'LFIN_TEST_M',
@@ -151,7 +159,7 @@ describe('GET /api/dashboard/system/lora-status/:sn', () => {
     equipmentRepo.setLoraCache('LFIN_DRIFT_M', '0x1111', '15');
     equipmentRepo.setLoraCache('LFIC_DRIFT_C', '0x2222', '15'); // different address
 
-    const res = await request(app).get('/api/dashboard/system/lora-status/LFIN_DRIFT_M');
+    const res = await request(server).get('/api/dashboard/system/lora-status/LFIN_DRIFT_M');
     expect(res.status).toBe(200);
     expect(res.body.drift).toBe(true);
   });
@@ -166,7 +174,7 @@ describe('GET /api/dashboard/system/lora-status/:sn', () => {
     equipmentRepo.setLoraCache('LFIN_DRIFT_M', '0xABCD', '15');
     equipmentRepo.setLoraCache('LFIC_DRIFT_C', '0xABCD', '16'); // different channel
 
-    const res = await request(app).get('/api/dashboard/system/lora-status/LFIN_DRIFT_M');
+    const res = await request(server).get('/api/dashboard/system/lora-status/LFIN_DRIFT_M');
     expect(res.status).toBe(200);
     expect(res.body.drift).toBe(true);
   });

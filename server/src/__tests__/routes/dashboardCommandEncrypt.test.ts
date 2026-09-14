@@ -13,7 +13,7 @@
 
 import express from 'express';
 import request from 'supertest';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
 
 vi.mock('../../mqtt/broker.js', () => ({
   isDeviceOnline: vi.fn().mockReturnValue(true),
@@ -89,6 +89,14 @@ const app = express();
 app.use(express.json());
 app.use('/api/dashboard', dashboardRouter);
 
+// Eén luisteraar voor dit hele bestand. `request(server)` laat supertest per
+// verzoek een NIEUWE efemere poort openen, en dat botst onder belasting met een
+// andere luisteraar: het antwoord komt dan ergens anders vandaan. Bewezen op
+// 2026-09-14, een 403 op /reanchor zonder x-powered-by en zonder serverkant-
+// regel in de trace, wat drie beta-builds heeft gekost.
+const server = app.listen(0);
+afterAll(() => new Promise<void>(r => { server.close(() => r()); }));
+
 const LFI_SN = 'LFIN2230700238';
 const PLAIN_SN = 'TESTSN1234';
 
@@ -98,7 +106,7 @@ beforeEach(() => {
 
 describe('POST /api/dashboard/command/:sn — encryption opt-out (#16)', () => {
   it('LFI SN with no encrypt flag → AES bytes via publishRawToDevice', async () => {
-    const r = await request(app)
+    const r = await request(server)
       .post(`/api/dashboard/command/${LFI_SN}`)
       .send({ command: { pause_navigation: { cmd_num: 42 } } });
 
@@ -115,7 +123,7 @@ describe('POST /api/dashboard/command/:sn — encryption opt-out (#16)', () => {
   });
 
   it('LFI SN with encrypt:false → raw JSON bytes (regression #16)', async () => {
-    const r = await request(app)
+    const r = await request(server)
       .post(`/api/dashboard/command/${LFI_SN}`)
       .send({ encrypt: false, command: { pause_navigation: { cmd_num: 42 } } });
 
@@ -132,7 +140,7 @@ describe('POST /api/dashboard/command/:sn — encryption opt-out (#16)', () => {
   });
 
   it('non-LFI SN defaults to raw JSON', async () => {
-    const r = await request(app)
+    const r = await request(server)
       .post(`/api/dashboard/command/${PLAIN_SN}`)
       .send({ command: { pause_navigation: { cmd_num: 7 } } });
 

@@ -9,7 +9,7 @@
  * stays fast and avoids the circular-init issues those modules have at
  * ESM top-level. Mock pattern mirrors dashboardSystemHealth.test.ts exactly.
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterAll } from 'vitest';
 import request from 'supertest';
 import express from 'express';
 import fs from 'fs';
@@ -95,6 +95,12 @@ const app = express();
 app.use(express.json());
 app.use('/api/dashboard', dashboardRouter);
 
+// Eén luisteraar voor dit hele bestand. `request(app)` laat supertest per
+// verzoek een NIEUWE efemere poort openen, en dat botst onder belasting met een
+// andere luisteraar: het antwoord komt dan ergens anders vandaan.
+const server = app.listen(0);
+afterAll(() => new Promise<void>(r => { server.close(() => r()); }));
+
 function tgr1(cells: Array<[number, number, number, number]>): Buffer {
   const buf = Buffer.alloc(16 + cells.length * 16);
   buf.write('TGR1', 0, 'ascii');
@@ -125,7 +131,7 @@ function tgo1(cells: Array<[number, number, number, number, number]>): Buffer {
 
 describe('GET /api/dashboard/terrain/:sn', () => {
   it('404 zonder terrein', async () => {
-    const res = await request(app).get('/api/dashboard/terrain/LFIN0000000001');
+    const res = await request(server).get('/api/dashboard/terrain/LFIN0000000001');
     expect(res.status).toBe(404);
   });
 
@@ -134,7 +140,7 @@ describe('GET /api/dashboard/terrain/:sn', () => {
     // route, dus '..%2f..%2fx' matcht als één path-segment en wordt
     // daarna '../../x' — zonder de sn-regex-guard zou dit buiten
     // STORAGE_PATH/terrain kunnen lezen.
-    const res = await request(app).get('/api/dashboard/terrain/..%2f..%2fx');
+    const res = await request(server).get('/api/dashboard/terrain/..%2f..%2fx');
     expect(res.status).toBe(400);
   });
 
@@ -150,9 +156,9 @@ describe('GET /api/dashboard/terrain/:sn', () => {
     // actually prove the bytes on the wire are gzip-compressed TGR1, this
     // test talks to the app over a real socket with Node's plain `http`
     // client, which does not decompress on its own.
-    const server = app.listen(0);
+    const rawServer = app.listen(0);
     try {
-      const { port } = server.address() as AddressInfo;
+      const { port } = rawServer.address() as AddressInfo;
       const { status, headers, body } = await new Promise<{ status: number; headers: http.IncomingHttpHeaders; body: Buffer }>((resolve, reject) => {
         http.get({ host: '127.0.0.1', port, path: '/api/dashboard/terrain/LFIN2230700238' }, (res) => {
           const chunks: Buffer[] = [];
@@ -167,7 +173,7 @@ describe('GET /api/dashboard/terrain/:sn', () => {
       expect(raw.toString('ascii', 0, 4)).toBe('TGR1');
       expect(raw.readInt32LE(12)).toBe(1);
     } finally {
-      server.close();
+      rawServer.close();
     }
   });
 
@@ -175,7 +181,7 @@ describe('GET /api/dashboard/terrain/:sn', () => {
     const dir = path.resolve(process.env.STORAGE_PATH ?? './storage', 'terrain');
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, 'LFIN9999999999.tgm'), Buffer.from('GARBAGE'));
-    const res = await request(app).get('/api/dashboard/terrain/LFIN9999999999');
+    const res = await request(server).get('/api/dashboard/terrain/LFIN9999999999');
     expect(res.status).toBe(500);
     expect(res.body).toHaveProperty('error');
   });
@@ -187,7 +193,7 @@ describe('GET /api/dashboard/terrain/:sn', () => {
     fs.writeFileSync(path.join(dir, 'LFIN2230700238.tgm'), mergeIntoTgm1(null, tgr1([[0, 0, 0.2, 5]])));
     fs.writeFileSync(path.join(dir, 'LFIN2230700238.active.tgr'), tgr1([[9, 9, 0.9, 1]]));
     fs.writeFileSync(path.join(dir, 'LFIN2230700238.active.json'), JSON.stringify({ session: '42' }));
-    const res = await request(app).get('/api/dashboard/terrain/LFIN2230700238?raw=1')
+    const res = await request(server).get('/api/dashboard/terrain/LFIN2230700238?raw=1')
       .buffer(true).parse((r, cb) => { const c: Buffer[] = []; r.on('data', d => c.push(d)); r.on('end', () => cb(null, Buffer.concat(c))); });
     expect(res.status).toBe(200);
     expect(res.headers['content-encoding']).toBeUndefined();
@@ -202,14 +208,14 @@ describe('GET /api/dashboard/terrain-objects/:sn', () => {
     const dir = path.resolve(process.env.STORAGE_PATH ?? './storage', 'terrain');
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, 'LFIN2230700238.tgmo'), mergeIntoTgmo(null, tgo1([[1, 1, 10, 0.3, 4]])));
-    const res = await request(app).get('/api/dashboard/terrain-objects/LFIN2230700238?raw=1')
+    const res = await request(server).get('/api/dashboard/terrain-objects/LFIN2230700238?raw=1')
       .buffer(true).parse((r, cb) => { const c: Buffer[] = []; r.on('data', d => c.push(d)); r.on('end', () => cb(null, Buffer.concat(c))); });
     expect(res.status).toBe(200);
     expect(parseTgo1(res.body as Buffer).cells.has('1,1,10')).toBe(true);
   });
 
   it('404 zonder objecten', async () => {
-    const res = await request(app).get('/api/dashboard/terrain-objects/LFIN0000000002');
+    const res = await request(server).get('/api/dashboard/terrain-objects/LFIN0000000002');
     expect(res.status).toBe(404);
   });
 });

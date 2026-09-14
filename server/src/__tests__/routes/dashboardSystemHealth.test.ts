@@ -8,7 +8,7 @@
  * stays fast and avoids the circular-init issues those modules have at
  * ESM top-level.
  */
-import { describe, it, expect, vi, beforeAll } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
 import request from 'supertest';
 import express from 'express';
 
@@ -91,9 +91,17 @@ const app = express();
 app.use(express.json());
 app.use('/api/dashboard', dashboardRouter);
 
+// Eén luisteraar voor dit hele bestand. `request(server)` laat supertest per
+// verzoek een NIEUWE efemere poort openen, en dat botst onder belasting met een
+// andere luisteraar: het antwoord komt dan ergens anders vandaan. Bewezen op
+// 2026-09-14, een 403 op /reanchor zonder x-powered-by en zonder serverkant-
+// regel in de trace, wat drie beta-builds heeft gekost.
+const server = app.listen(0);
+afterAll(() => new Promise<void>(r => { server.close(() => r()); }));
+
 describe('GET /api/dashboard/system/health', () => {
   it('returns mDNS state, server uptime, and per-mower online flags', async () => {
-    const res = await request(app).get('/api/dashboard/system/health');
+    const res = await request(server).get('/api/dashboard/system/health');
     expect(res.status).toBe(200);
 
     // mdns block
@@ -121,7 +129,7 @@ describe('GET /api/dashboard/system/health', () => {
 
   it('mowers array is empty when no equipment rows exist', async () => {
     // The in-memory DB is wiped before each test by setup.ts beforeEach
-    const res = await request(app).get('/api/dashboard/system/health');
+    const res = await request(server).get('/api/dashboard/system/health');
     expect(res.status).toBe(200);
     expect(res.body.mowers).toHaveLength(0);
   });

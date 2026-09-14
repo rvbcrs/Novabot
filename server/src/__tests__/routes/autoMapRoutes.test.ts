@@ -8,7 +8,7 @@
  * stays fast and avoids the circular-init issues those modules have at
  * ESM top-level. Mock pattern mirrors terrainGet.test.ts exactly.
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterAll } from 'vitest';
 
 // Centrale firmware-gate (2026-09-09): deze tests gaan uit van een OpenNova
 // custom-firmware maaier, anders weigert de server extended-commando's met 409.
@@ -109,41 +109,49 @@ const app = express();
 app.use(express.json());
 app.use('/api/dashboard', dashboardRouter);
 
+// Eén luisteraar voor dit hele bestand. `request(server)` laat supertest per
+// verzoek een NIEUWE efemere poort openen, en dat botst onder belasting met een
+// andere luisteraar: het antwoord komt dan ergens anders vandaan. Bewezen op
+// 2026-09-14, een 403 op /reanchor zonder x-powered-by en zonder serverkant-
+// regel in de trace, wat drie beta-builds heeft gekost.
+const server = app.listen(0);
+afterAll(() => new Promise<void>(r => { server.close(() => r()); }));
+
 describe('auto-map routes', () => {
   it('start geeft sessionId terug', async () => {
-    const res = await request(app).post('/api/dashboard/auto-map/LFIN_X/start')
+    const res = await request(server).post('/api/dashboard/auto-map/LFIN_X/start')
       .send({ mode: 'record', radiusM: 30 });
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ ok: true, sessionId: 7 });
   });
 
   it('start met preflight-fout geeft 409', async () => {
-    const res = await request(app).post('/api/dashboard/auto-map/LFIN_X/start')
+    const res = await request(server).post('/api/dashboard/auto-map/LFIN_X/start')
       .send({ mode: 'test' });
     expect(res.status).toBe(409);
     expect(res.body.error).toBe('preflight_rtk');
   });
 
   it('stop geeft ok:true', async () => {
-    const res = await request(app).post('/api/dashboard/auto-map/LFIN_X/stop');
+    const res = await request(server).post('/api/dashboard/auto-map/LFIN_X/stop');
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ ok: true });
   });
 
   it('status geeft sessie terug', async () => {
-    const res = await request(app).get('/api/dashboard/auto-map/LFIN_X/status');
+    const res = await request(server).get('/api/dashboard/auto-map/LFIN_X/status');
     expect(res.status).toBe(200);
     expect(res.body.phase).toBe('following');
   });
 
   it('accept geeft ok:true', async () => {
-    const res = await request(app).post('/api/dashboard/auto-map/LFIN_X/accept');
+    const res = await request(server).post('/api/dashboard/auto-map/LFIN_X/accept');
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ ok: true });
   });
 
   it('reject zonder review-sessie geeft ok:false', async () => {
-    const res = await request(app).post('/api/dashboard/auto-map/LFIN_X/reject');
+    const res = await request(server).post('/api/dashboard/auto-map/LFIN_X/reject');
     expect(res.body).toEqual({ ok: false });
   });
 });

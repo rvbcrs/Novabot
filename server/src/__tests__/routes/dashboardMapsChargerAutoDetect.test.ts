@@ -8,7 +8,7 @@
  *
  * Mock pattern mirrors dashboardSystemHealth.test.ts exactly.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
 import request from 'supertest';
 import express from 'express';
 
@@ -109,6 +109,14 @@ const app = express();
 app.use(express.json());
 app.use('/api/dashboard', dashboardRouter);
 
+// Eén luisteraar voor dit hele bestand. `request(server)` laat supertest per
+// verzoek een NIEUWE efemere poort openen, en dat botst onder belasting met een
+// andere luisteraar: het antwoord komt dan ergens anders vandaan. Bewezen op
+// 2026-09-14, een 403 op /reanchor zonder x-powered-by en zonder serverkant-
+// regel in de trace, wat drie beta-builds heeft gekost.
+const server = app.listen(0);
+afterAll(() => new Promise<void>(r => { server.close(() => r()); }));
+
 const TEST_SN = 'LFIN9990000001';
 
 /** Seed a minimal equipment row so the DB FK constraints pass. */
@@ -154,7 +162,7 @@ describe('GET /api/dashboard/maps/:sn — charger GPS auto-detect', () => {
     seedEquipment();
     // deviceCache is empty, no calibration row
 
-    const res = await request(app).get(`/api/dashboard/maps/${TEST_SN}`);
+    const res = await request(server).get(`/api/dashboard/maps/${TEST_SN}`);
     expect(res.status).toBe(200);
     expect(res.body.chargerGps).toBeNull();
   });
@@ -163,7 +171,7 @@ describe('GET /api/dashboard/maps/:sn — charger GPS auto-detect', () => {
     seedEquipment();
     (deviceCache as Map<string, Map<string, string>>).set(TEST_SN, makeDockSensors());
 
-    const res = await request(app).get(`/api/dashboard/maps/${TEST_SN}`);
+    const res = await request(server).get(`/api/dashboard/maps/${TEST_SN}`);
     expect(res.status).toBe(200);
     expect(res.body.chargerGps).not.toBeNull();
     expect(res.body.chargerGps.lat).toBeCloseTo(52.14088833563, 5);
@@ -175,13 +183,13 @@ describe('GET /api/dashboard/maps/:sn — charger GPS auto-detect', () => {
     (deviceCache as Map<string, Map<string, string>>).set(TEST_SN, makeDockSensors());
 
     // First request — triggers auto-detect + persist
-    await request(app).get(`/api/dashboard/maps/${TEST_SN}`);
+    await request(server).get(`/api/dashboard/maps/${TEST_SN}`);
 
     // Clear the deviceCache to simulate mower going offline
     (deviceCache as Map<string, Map<string, string>>).clear();
 
     // Second request — should read from DB calibration row
-    const res = await request(app).get(`/api/dashboard/maps/${TEST_SN}`);
+    const res = await request(server).get(`/api/dashboard/maps/${TEST_SN}`);
     expect(res.status).toBe(200);
     expect(res.body.chargerGps).not.toBeNull();
     expect(res.body.chargerGps.lat).toBeCloseTo(52.14088833563, 5);
@@ -195,7 +203,7 @@ describe('GET /api/dashboard/maps/:sn — charger GPS auto-detect', () => {
       makeDockSensors({ mapX: '-1.23', mapY: '0.50' }),
     );
 
-    const res = await request(app).get(`/api/dashboard/maps/${TEST_SN}`);
+    const res = await request(server).get(`/api/dashboard/maps/${TEST_SN}`);
     expect(res.status).toBe(200);
     expect(res.body.chargerGps).not.toBeNull();
   });
@@ -207,7 +215,7 @@ describe('GET /api/dashboard/maps/:sn — charger GPS auto-detect', () => {
       makeDockSensors({ recharge: '0' }),
     );
 
-    const res = await request(app).get(`/api/dashboard/maps/${TEST_SN}`);
+    const res = await request(server).get(`/api/dashboard/maps/${TEST_SN}`);
     expect(res.status).toBe(200);
     expect(res.body.chargerGps).toBeNull();
   });

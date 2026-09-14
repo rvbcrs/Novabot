@@ -6,7 +6,7 @@
  * 2. Response includes restartedAt timestamp and advertisement details
  * 3. Errors from startMdnsAdvertiser result in 500 response
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
 import request from 'supertest';
 import express from 'express';
 
@@ -109,6 +109,14 @@ const app = express();
 app.use(express.json());
 app.use('/api/admin-status', adminStatusRouter);
 
+// Eén luisteraar voor dit hele bestand. `request(server)` laat supertest per
+// verzoek een NIEUWE efemere poort openen, en dat botst onder belasting met een
+// andere luisteraar: het antwoord komt dan ergens anders vandaan. Bewezen op
+// 2026-09-14, een 403 op /reanchor zonder x-powered-by en zonder serverkant-
+// regel in de trace, wat drie beta-builds heeft gekost.
+const server = app.listen(0);
+afterAll(() => new Promise<void>(r => { server.close(() => r()); }));
+
 describe('POST /api/admin-status/mdns-restart', () => {
   beforeEach(() => {
     mockStop.mockClear();
@@ -125,7 +133,7 @@ describe('POST /api/admin-status/mdns-restart', () => {
   });
 
   it('calls stop then start, returns advertisement and timestamp', async () => {
-    const res = await request(app).post('/api/admin-status/mdns-restart');
+    const res = await request(server).post('/api/admin-status/mdns-restart');
 
     // Check response
     expect(res.status).toBe(200);
@@ -157,7 +165,7 @@ describe('POST /api/admin-status/mdns-restart', () => {
       throw new Error('mDNS port in use');
     });
 
-    const res = await request(app).post('/api/admin-status/mdns-restart');
+    const res = await request(server).post('/api/admin-status/mdns-restart');
 
     expect(res.status).toBe(500);
     expect(res.body.ok).toBe(false);
@@ -173,7 +181,7 @@ describe('POST /api/admin-status/mdns-restart', () => {
       throw new Error('socket cleanup failed');
     });
 
-    const res = await request(app).post('/api/admin-status/mdns-restart');
+    const res = await request(server).post('/api/admin-status/mdns-restart');
 
     expect(res.status).toBe(500);
     expect(res.body.ok).toBe(false);

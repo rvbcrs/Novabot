@@ -6,7 +6,7 @@
  *   - sets Content-Type: application/zip
  *   - streams a non-trivial ZIP body (> 200 bytes)
  */
-import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
+import { describe, it, expect, vi, beforeEach, type MockInstance, afterAll } from 'vitest';
 import request from 'supertest';
 import express from 'express';
 
@@ -120,6 +120,14 @@ import * as sensorDataMock from '../../mqtt/sensorData.js';
 // Inject fake userId to bypass auth middleware
 const app = express();
 app.use(express.json());
+
+// Eén luisteraar voor dit hele bestand. `request(server)` laat supertest per
+// verzoek een NIEUWE efemere poort openen, en dat botst onder belasting met een
+// andere luisteraar: het antwoord komt dan ergens anders vandaan. Bewezen op
+// 2026-09-14, een 403 op /reanchor zonder x-powered-by en zonder serverkant-
+// regel in de trace, wat drie beta-builds heeft gekost.
+const server = app.listen(0);
+afterAll(() => new Promise<void>(r => { server.close(() => r()); }));
 app.use('/api/admin-status', (req, _res, next) => {
   (req as any).userId = 'u';
   next();
@@ -164,7 +172,7 @@ describe('GET /export-portable', () => {
     vi.mocked(mapSyncMock.publishToExtended).mockImplementationOnce(() => {
       setTimeout(() => capturedListener?.({ read_map_files_respond: { result: 1 } }), 5);
     });
-    const res = await request(app)
+    const res = await request(server)
       .get(`/api/admin-status/maps/${SN}/export-portable`)
       .buffer()
       .parse((r, cb) => {
@@ -198,7 +206,7 @@ describe('GET /export-portable', () => {
       setTimeout(() => capturedListener?.({ read_map_files_respond: { result: 1 } }), 5);
     });
 
-    const res = await request(app)
+    const res = await request(server)
       .get(`/api/admin-status/maps/${SN}/export-portable`)
       .buffer()
       .parse((r, cb) => {
@@ -225,7 +233,7 @@ describe('POST /import-portable', () => {
     vi.mocked(mapSyncMock.publishToExtended).mockImplementationOnce(() => {
       setTimeout(() => cap?.({ read_map_files_respond: { result: 1 } }), 5);
     });
-    const expRes = await request(app)
+    const expRes = await request(server)
       .get(`/api/admin-status/maps/${SN}/export-portable`)
       .buffer()
       .parse((r, cb) => {
@@ -236,7 +244,7 @@ describe('POST /import-portable', () => {
     vi.mocked(mapSyncMock.publishToExtended).mockReset();
     vi.mocked(mapSyncMock.onExtendedResponse).mockReset();
     const zip = expRes.body as Buffer;
-    const res = await request(app)
+    const res = await request(server)
       .post(`/api/admin-status/maps/${SN}/import-portable`)
       .attach('bundle', zip, 'fixture.novabotmap');
     expect(res.status).toBe(200);
@@ -247,7 +255,7 @@ describe('POST /import-portable', () => {
 
   it('rejects garbage bundle with 400', async () => {
     // Use a different SN so there is no active session from the previous test
-    const res = await request(app)
+    const res = await request(server)
       .post(`/api/admin-status/maps/LFIN_TEST_GARBAGE/import-portable`)
       .attach('bundle', Buffer.from('not a zip'), 'bad.novabotmap');
     expect(res.status).toBe(400);
@@ -292,7 +300,7 @@ async function makeVerbatimBundle(sourceSn = SN): Promise<Buffer> {
 
 async function stageVerbatimBundle(targetSn: string): Promise<string> {
   const zip = await makeVerbatimBundle(targetSn);
-  const res = await request(app)
+  const res = await request(server)
     .post(`/api/admin-status/maps/${targetSn}/import-portable`)
     .attach('bundle', zip, 'verbatim.novabotmap');
   expect(res.status).toBe(200);
@@ -302,7 +310,7 @@ async function stageVerbatimBundle(targetSn: string): Promise<string> {
 
 /** Export a bundle from SN_ANCHOR then upload it to targetSn; returns stagingId. */
 async function uploadBundle(targetSn: string): Promise<string> {
-  const expRes = await request(app)
+  const expRes = await request(server)
     .get(`/api/admin-status/maps/${SN}/export-portable`)
     .buffer()
     .parse((r, cb) => {
@@ -310,7 +318,7 @@ async function uploadBundle(targetSn: string): Promise<string> {
       r.on('data', (c: Buffer) => chunks.push(c));
       r.on('end', () => cb(null, Buffer.concat(chunks)));
     });
-  const res = await request(app)
+  const res = await request(server)
     .post(`/api/admin-status/maps/${targetSn}/import-portable`)
     .attach('bundle', expRes.body as Buffer, 'b.novabotmap');
   expect(res.status).toBe(200);
@@ -344,7 +352,7 @@ describe('POST /apply-verbatim firmware capability', () => {
     const stagingId = await stageVerbatimBundle(sn);
 
     vi.mocked(mapSyncMock.applyVerbatimToMower).mockClear();
-    const res = await request(app)
+    const res = await request(server)
       .post(`/api/admin-status/maps/${sn}/import-portable/${stagingId}/apply-verbatim`);
 
     expect(res.status).toBe(409);
@@ -366,7 +374,7 @@ describe('POST /apply-verbatim firmware capability', () => {
 
     vi.mocked(mapSyncMock.applyVerbatimToMower).mockClear();
     vi.mocked(mapSyncMock.publishToExtended).mockClear();
-    const res = await request(app)
+    const res = await request(server)
       .post(`/api/admin-status/maps/${sn}/import-portable/${stagingId}/import-server-copy`);
 
     expect(res.status).toBe(200);
@@ -381,7 +389,7 @@ describe('POST /apply-verbatim firmware capability', () => {
 
 /** Drive through set-anchor for a given SN (sensors already seeded). */
 async function runSetAnchor(sn: string, stagingId: string): Promise<void> {
-  const res = await request(app)
+  const res = await request(server)
     .post(`/api/admin-status/maps/${sn}/import-portable/${stagingId}/set-anchor`);
   expect(res.status).toBe(200);
 }
@@ -399,7 +407,7 @@ describe.skip('POST /set-anchor', () => {
     const stagingId = await uploadBundle(sn);
     seedSensorCache(sn, '52.140888', '6.231036');
 
-    const res = await request(app)
+    const res = await request(server)
       .post(`/api/admin-status/maps/${sn}/import-portable/${stagingId}/set-anchor`);
     expect(res.status).toBe(200);
     expect(res.body.state).toBe('ANCHOR_SET');
@@ -414,13 +422,13 @@ describe.skip('POST /set-anchor', () => {
     // No cache entry for this SN
     (sensorDataMock.deviceCache as Map<string, Map<string, string>>).delete(sn);
 
-    const res = await request(app)
+    const res = await request(server)
       .post(`/api/admin-status/maps/${sn}/import-portable/${stagingId}/set-anchor`);
     expect(res.status).toBe(409);
   });
 
   it('returns 404 for unknown stagingId', async () => {
-    const res = await request(app)
+    const res = await request(server)
       .post(`/api/admin-status/maps/LFIN_T11C/import-portable/nonexistent-id/set-anchor`);
     expect(res.status).toBe(404);
   });
@@ -456,7 +464,7 @@ describe.skip('POST /start-drive', () => {
       }, 30);
     });
 
-    const res = await request(app)
+    const res = await request(server)
       .post(`/api/admin-status/maps/${sn}/import-portable/${stagingId}/start-drive`);
 
     vi.mocked(mapSyncMock.publishToExtended).mockReset();
@@ -474,7 +482,7 @@ describe.skip('POST /start-drive', () => {
       .run(sn, 52.14, 6.23);
     const stagingId = await uploadBundle(sn);
     // Still in UPLOADED state, not ANCHOR_SET
-    const res = await request(app)
+    const res = await request(server)
       .post(`/api/admin-status/maps/${sn}/import-portable/${stagingId}/start-drive`);
     expect(res.status).toBe(409);
   });
@@ -502,7 +510,7 @@ async function runThroughDrive(sn: string): Promise<string> {
       capturedListener?.({ calibration_drive_respond: { result: 0, duration_s: 5 } });
     }, 30);
   });
-  const driveRes = await request(app)
+  const driveRes = await request(server)
     .post(`/api/admin-status/maps/${sn}/import-portable/${stagingId}/start-drive`);
   expect(driveRes.status).toBe(200);
   return stagingId;
@@ -513,7 +521,7 @@ describe.skip('GET /preview', () => {
     const sn = 'LFIN_T13A';
     const stagingId = await runThroughDrive(sn);
 
-    const res = await request(app)
+    const res = await request(server)
       .get(`/api/admin-status/maps/${sn}/import-portable/${stagingId}/preview`);
     expect(res.status).toBe(200);
     expect(res.body.type).toBe('FeatureCollection');
@@ -530,7 +538,7 @@ describe.skip('GET /preview', () => {
       .run(sn, 52.14, 6.23);
     const stagingId = await uploadBundle(sn);
     // Still in UPLOADED state
-    const res = await request(app)
+    const res = await request(server)
       .get(`/api/admin-status/maps/${sn}/import-portable/${stagingId}/preview`);
     expect(res.status).toBe(409);
   });
@@ -543,7 +551,7 @@ async function runThroughPreview(sn: string): Promise<string> {
   const stagingId = await runThroughDrive(sn);
   // reset publishToExtended mock so it doesn't fire the drive response again
   vi.mocked(mapSyncMock.publishToExtended).mockReset();
-  const prevRes = await request(app)
+  const prevRes = await request(server)
     .get(`/api/admin-status/maps/${sn}/import-portable/${stagingId}/preview`);
   expect(prevRes.status).toBe(200);
   return stagingId;
@@ -561,7 +569,7 @@ describe.skip('POST /confirm', () => {
       publishCalls.push(cmd);
     });
 
-    const res = await request(app)
+    const res = await request(server)
       .post(`/api/admin-status/maps/${sn}/import-portable/${stagingId}/confirm`);
 
     vi.mocked(mapSyncMock.publishToExtended).mockReset();
@@ -585,7 +593,7 @@ describe.skip('POST /confirm', () => {
       .run(sn, 52.14, 6.23);
     const stagingId = await uploadBundle(sn);
     // Still UPLOADED, not PREVIEW_SHOWN
-    const res = await request(app)
+    const res = await request(server)
       .post(`/api/admin-status/maps/${sn}/import-portable/${stagingId}/confirm`);
     expect(res.status).toBe(409);
   });
@@ -601,20 +609,20 @@ describe.skip('POST /cancel and GET /active', () => {
     const stagingId = await uploadBundle(sn);
 
     // Active should reflect the uploaded session
-    const active1 = await request(app)
+    const active1 = await request(server)
       .get(`/api/admin-status/maps/${sn}/import-portable/active`);
     expect(active1.status).toBe(200);
     expect(active1.body.stagingId).toBe(stagingId);
     expect(active1.body.state).toBe('UPLOADED');
 
     // Cancel the session
-    const cancel = await request(app)
+    const cancel = await request(server)
       .post(`/api/admin-status/maps/${sn}/import-portable/${stagingId}/cancel`);
     expect(cancel.status).toBe(200);
     expect(cancel.body.ok).toBe(true);
 
     // Active should now return null
-    const active2 = await request(app)
+    const active2 = await request(server)
       .get(`/api/admin-status/maps/${sn}/import-portable/active`);
     expect(active2.status).toBe(200);
     expect(active2.body.stagingId).toBeNull();
@@ -622,14 +630,14 @@ describe.skip('POST /cancel and GET /active', () => {
   });
 
   it('cancel is idempotent — returns 200 for unknown stagingId', async () => {
-    const res = await request(app)
+    const res = await request(server)
       .post(`/api/admin-status/maps/LFIN_T15B/import-portable/nonexistent-id/cancel`);
     expect(res.status).toBe(200);
     expect(res.body.ok).toBe(true);
   });
 
   it('/active returns null when no session exists for SN', async () => {
-    const res = await request(app)
+    const res = await request(server)
       .get(`/api/admin-status/maps/LFIN_T15C/import-portable/active`);
     expect(res.status).toBe(200);
     expect(res.body.stagingId).toBeNull();

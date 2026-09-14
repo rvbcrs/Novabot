@@ -1,6 +1,6 @@
 import express from 'express';
 import request from 'supertest';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi, afterAll } from 'vitest';
 
 vi.mock('../../mqtt/broker.js', () => ({
   isDeviceOnline: vi.fn().mockReturnValue(true),
@@ -114,6 +114,14 @@ const app = express();
 app.use(express.json());
 app.use('/api/dashboard', dashboardRouter);
 
+// Eén luisteraar voor dit hele bestand. `request(server)` laat supertest per
+// verzoek een NIEUWE efemere poort openen, en dat botst onder belasting met een
+// andere luisteraar: het antwoord komt dan ergens anders vandaan. Bewezen op
+// 2026-09-14, een 403 op /reanchor zonder x-powered-by en zonder serverkant-
+// regel in de trace, wat drie beta-builds heeft gekost.
+const server = app.listen(0);
+afterAll(() => new Promise<void>(r => { server.close(() => r()); }));
+
 const SN = 'LFINTEST';
 
 beforeEach(() => {
@@ -129,7 +137,7 @@ beforeEach(() => {
 
 describe('POST /api/dashboard/native-preview-path/:sn', () => {
   it('is removed from the standard server so stale clients cannot run native generation', async () => {
-    const res = await request(app)
+    const res = await request(server)
       .post(`/api/dashboard/native-preview-path/${SN}`)
       .send({ canonical: 'map1', startLocal: { x: 11, y: 2 }, cov_direction: 90 });
 
@@ -146,7 +154,7 @@ describe('POST /api/dashboard/native-preview-path/:sn', () => {
 
 describe('coverage planner radius', () => {
   it('persists a coverage planner radius and dispatches the mower extended command', async () => {
-    const res = await request(app)
+    const res = await request(server)
       .put(`/api/dashboard/coverage-planner-radius/${SN}`)
       .send({ radius: 0.35, force: true });
 
@@ -166,7 +174,7 @@ describe('coverage planner radius', () => {
   });
 
   it('rejects unsafe coverage planner radii', async () => {
-    const res = await request(app)
+    const res = await request(server)
       .put(`/api/dashboard/coverage-planner-radius/${SN}`)
       .send({ radius: 0.05 });
 
@@ -209,7 +217,7 @@ describe('POST /api/dashboard/refresh-preview-path/:sn', () => {
       }), 0);
     });
 
-    const res = await request(app)
+    const res = await request(server)
       .post(`/api/dashboard/refresh-preview-path/${SN}`)
       .send({ map_ids: 11, cov_direction: 45 });
 
@@ -254,7 +262,7 @@ describe('POST /api/dashboard/refresh-preview-path/:sn', () => {
       }
     });
 
-    const res = await request(app)
+    const res = await request(server)
       .post(`/api/dashboard/refresh-preview-path/${SN}`)
       .send({ map_ids: 11, cov_direction: 45 });
 
@@ -313,7 +321,7 @@ describe('POST /api/dashboard/refresh-preview-path/:sn', () => {
       }
     });
 
-    const res = await request(app)
+    const res = await request(server)
       .post(`/api/dashboard/refresh-preview-path/${SN}`)
       .send({ map_ids: 11, cov_direction: 60 });
 
@@ -353,7 +361,7 @@ describe('POST /api/dashboard/refresh-preview-path/:sn', () => {
       }
     });
 
-    const res = await request(app)
+    const res = await request(server)
       .post(`/api/dashboard/refresh-preview-path/${SN}`)
       .send({ map_ids: 1, cov_direction: -1 });
 
@@ -400,7 +408,7 @@ describe('POST /api/dashboard/refresh-preview-path/:sn', () => {
       }), 0);
     });
 
-    const res = await request(app)
+    const res = await request(server)
       .post(`/api/dashboard/refresh-preview-path/${SN}`)
       .send({ map_ids: 11, cov_direction: 45 });
 

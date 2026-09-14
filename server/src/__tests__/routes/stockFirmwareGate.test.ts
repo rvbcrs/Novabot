@@ -7,7 +7,7 @@
  */
 import express from 'express';
 import request from 'supertest';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
 
 vi.mock('../../mqtt/broker.js', () => ({
   isDeviceOnline: vi.fn().mockReturnValue(true),
@@ -108,23 +108,31 @@ const app = express();
 app.use(express.json());
 app.use('/api/dashboard', dashboardRouter);
 
+// Eén luisteraar voor dit hele bestand. `request(server)` laat supertest per
+// verzoek een NIEUWE efemere poort openen, en dat botst onder belasting met een
+// andere luisteraar: het antwoord komt dan ergens anders vandaan. Bewezen op
+// 2026-09-14, een 403 op /reanchor zonder x-powered-by en zonder serverkant-
+// regel in de trace, wat drie beta-builds heeft gekost.
+const server = app.listen(0);
+afterAll(() => new Promise<void>(r => { server.close(() => r()); }));
+
 const SN = 'LFIN_STOCK_GATE';
 const B = `/api/dashboard`;
 
 const stockCases: Array<[string, () => request.Test]> = [
-  ['POST /extended (start_edge_cut)', () => request(app).post(`${B}/extended/${SN}`).send({ start_edge_cut: { mapName: 'map0' } })],
-  ['PUT /coverage-planner-radius', () => request(app).put(`${B}/coverage-planner-radius/${SN}`).send({ radius: 0.35 })],
-  ['PUT /seam-fix', () => request(app).put(`${B}/seam-fix/${SN}`).send({ enabled: true, edgeMarginCm: 5 })],
-  ['POST /maps/apply-offset', () => request(app).post(`${B}/maps/${SN}/apply-offset`).send({ dx_m: 0.1, dy_m: 0 })],
-  ['POST /lora/set-mower', () => request(app).post(`${B}/lora/set-mower/${SN}`).send({ addr: 718, channel: 16 })],
-  ['POST /lora/query-mower', () => request(app).post(`${B}/lora/query-mower/${SN}`).send({})],
-  ['POST /reanchor (invalidate)', () => request(app).post(`${B}/reanchor/${SN}`).send({ action: 'invalidate' })],
-  ['POST /soft-restart', () => request(app).post(`${B}/soft-restart/${SN}`).send({})],
-  ['POST /auto-map/start', () => request(app).post(`${B}/auto-map/${SN}/start`).send({ mode: 'record' })],
-  ['POST /mapping-preflight', () => request(app).post(`${B}/mapping-preflight/${SN}`).send({})],
-  ['POST /pin/verify', () => request(app).post(`${B}/pin/${SN}/verify`).send({ code: '1234' })],
-  ['POST /maps/recalibrate-charging-pose', () => request(app).post(`${B}/maps/${SN}/recalibrate-charging-pose`).send({})],
-  ['POST /schedules with edgeDays', () => request(app).post(`${B}/schedules/${SN}`).send({ startTime: '10:00', weekdays: [1], mapName: 'map0', edgeDays: [1] })],
+  ['POST /extended (start_edge_cut)', () => request(server).post(`${B}/extended/${SN}`).send({ start_edge_cut: { mapName: 'map0' } })],
+  ['PUT /coverage-planner-radius', () => request(server).put(`${B}/coverage-planner-radius/${SN}`).send({ radius: 0.35 })],
+  ['PUT /seam-fix', () => request(server).put(`${B}/seam-fix/${SN}`).send({ enabled: true, edgeMarginCm: 5 })],
+  ['POST /maps/apply-offset', () => request(server).post(`${B}/maps/${SN}/apply-offset`).send({ dx_m: 0.1, dy_m: 0 })],
+  ['POST /lora/set-mower', () => request(server).post(`${B}/lora/set-mower/${SN}`).send({ addr: 718, channel: 16 })],
+  ['POST /lora/query-mower', () => request(server).post(`${B}/lora/query-mower/${SN}`).send({})],
+  ['POST /reanchor (invalidate)', () => request(server).post(`${B}/reanchor/${SN}`).send({ action: 'invalidate' })],
+  ['POST /soft-restart', () => request(server).post(`${B}/soft-restart/${SN}`).send({})],
+  ['POST /auto-map/start', () => request(server).post(`${B}/auto-map/${SN}/start`).send({ mode: 'record' })],
+  ['POST /mapping-preflight', () => request(server).post(`${B}/mapping-preflight/${SN}`).send({})],
+  ['POST /pin/verify', () => request(server).post(`${B}/pin/${SN}/verify`).send({ code: '1234' })],
+  ['POST /maps/recalibrate-charging-pose', () => request(server).post(`${B}/maps/${SN}/recalibrate-charging-pose`).send({})],
+  ['POST /schedules with edgeDays', () => request(server).post(`${B}/schedules/${SN}`).send({ startTime: '10:00', weekdays: [1], mapName: 'map0', edgeDays: [1] })],
 ];
 
 describe('central firmware gate on stock firmware', () => {
@@ -148,10 +156,10 @@ describe('central firmware gate on stock firmware', () => {
   }
 
   it('writes nothing to the DB for the settings routes', async () => {
-    await request(app).put(`${B}/seam-fix/${SN}`).send({ enabled: true });
-    await request(app).put(`${B}/coverage-planner-radius/${SN}`).send({ radius: 0.35 });
-    await request(app).post(`${B}/lora/set-mower/${SN}`).send({ addr: 718, channel: 16 });
-    await request(app).post(`${B}/schedules/${SN}`).send({ startTime: '10:00', weekdays: [1], mapName: 'map0', edgeDays: [1] });
+    await request(server).put(`${B}/seam-fix/${SN}`).send({ enabled: true });
+    await request(server).put(`${B}/coverage-planner-radius/${SN}`).send({ radius: 0.35 });
+    await request(server).post(`${B}/lora/set-mower/${SN}`).send({ addr: 718, channel: 16 });
+    await request(server).post(`${B}/schedules/${SN}`).send({ startTime: '10:00', weekdays: [1], mapName: 'map0', edgeDays: [1] });
     expect(seamFixRepo.get(SN)).toBeNull();
     expect(deviceSettingsRepo.findBySn(SN)).toHaveLength(0);
     expect(equipmentRepo.getLoraCache(SN)).toBeFalsy();
@@ -159,14 +167,14 @@ describe('central firmware gate on stock firmware', () => {
   });
 
   it('still accepts a schedule WITHOUT edge days on stock', async () => {
-    const res = await request(app).post(`${B}/schedules/${SN}`).send({ startTime: '10:00', weekdays: [1], mapName: 'map0' });
+    const res = await request(server).post(`${B}/schedules/${SN}`).send({ startTime: '10:00', weekdays: [1], mapName: 'map0' });
     expect(res.status, JSON.stringify(res.body)).toBeLessThan(300);
     expect(scheduleRepo.findByMowerSn(SN)).toHaveLength(1);
   });
 
   it('lets everything through on OpenNova firmware', async () => {
     fw.supported = true;
-    const res = await request(app).post(`${B}/extended/${SN}`).send({ start_edge_cut: { mapName: 'map0' } });
+    const res = await request(server).post(`${B}/extended/${SN}`).send({ start_edge_cut: { mapName: 'map0' } });
     expect(res.status).toBe(200);
     expect(publishExtendedCommand).toHaveBeenCalledTimes(1);
   });

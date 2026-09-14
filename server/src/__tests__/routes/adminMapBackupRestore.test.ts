@@ -11,7 +11,7 @@
  * The mapBackup service and parseMapZip are mocked so we don't need real ZIP
  * files on disk.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
 import request from 'supertest';
 import express from 'express';
 import { v4 as uuidv4 } from 'uuid';
@@ -143,6 +143,14 @@ const app = express();
 app.use(express.json());
 app.use('/api/admin-status', adminStatusRouter);
 
+// Eén luisteraar voor dit hele bestand. `request(server)` laat supertest per
+// verzoek een NIEUWE efemere poort openen, en dat botst onder belasting met een
+// andere luisteraar: het antwoord komt dan ergens anders vandaan. Bewezen op
+// 2026-09-14, een 403 op /reanchor zonder x-powered-by en zonder serverkant-
+// regel in de trace, wat drie beta-builds heeft gekost.
+const server = app.listen(0);
+afterAll(() => new Promise<void>(r => { server.close(() => r()); }));
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 const SN = 'LFIN2230700238';
@@ -187,7 +195,7 @@ describe('GET /map-backups/:sn/:filename/contents', () => {
     const area = makeWorkArea(0);
     mockParseMapZip.mockReturnValueOnce({ areas: [area], chargingPose: { x: 0, y: 0, orientation: 0 } });
 
-    const res = await request(app)
+    const res = await request(server)
       .get(`/api/admin-status/map-backups/${SN}/${FILENAME}/contents`);
 
     expect(res.status).toBe(200);
@@ -203,7 +211,7 @@ describe('GET /map-backups/:sn/:filename/contents', () => {
     const area = makeWorkArea(0);
     mockParseMapZip.mockReturnValueOnce({ areas: [area], chargingPose: { x: 0, y: 0, orientation: 0 } });
 
-    const res = await request(app)
+    const res = await request(server)
       .get(`/api/admin-status/map-backups/${SN}/${FILENAME}/contents`);
 
     expect(res.status).toBe(200);
@@ -222,7 +230,7 @@ describe('POST /map-backups/:sn/:filename/restore', () => {
     const area = makeWorkArea(0);
     mockParseMapZip.mockReturnValueOnce({ areas: [area], chargingPose: { x: 0, y: 0, orientation: 0 } });
 
-    const res = await request(app)
+    const res = await request(server)
       .post(`/api/admin-status/map-backups/${SN}/${FILENAME}/restore`)
       .send({ items: [{ canonicalName: 'map0', type: 'work', overwrite: false }] });
 
@@ -248,7 +256,7 @@ describe('POST /map-backups/:sn/:filename/restore', () => {
     const area = makeWorkArea(0);
     mockParseMapZip.mockReturnValueOnce({ areas: [area], chargingPose: { x: 0, y: 0, orientation: 0 } });
 
-    const res = await request(app)
+    const res = await request(server)
       .post(`/api/admin-status/map-backups/${SN}/${FILENAME}/restore`)
       .send({ items: [{ canonicalName: 'map0', type: 'work', overwrite: false }] });
 
@@ -271,7 +279,7 @@ describe('POST /map-backups/:sn/:filename/restore', () => {
     const area = makeWorkArea(0);
     mockParseMapZip.mockReturnValueOnce({ areas: [area], chargingPose: { x: 0, y: 0, orientation: 0 } });
 
-    const res = await request(app)
+    const res = await request(server)
       .post(`/api/admin-status/map-backups/${SN}/${FILENAME}/restore`)
       .send({ items: [{ canonicalName: 'map0', type: 'work', overwrite: true }] });
 
@@ -291,7 +299,7 @@ describe('POST /map-backups/:sn/:filename/restore', () => {
   it('returns skippedNotInBackup when item is not present in the ZIP', async () => {
     mockParseMapZip.mockReturnValueOnce({ areas: [], chargingPose: { x: 0, y: 0, orientation: 0 } });
 
-    const res = await request(app)
+    const res = await request(server)
       .post(`/api/admin-status/map-backups/${SN}/${FILENAME}/restore`)
       .send({ items: [{ canonicalName: 'map99', type: 'work', overwrite: false }] });
 
@@ -311,7 +319,7 @@ describe('POST /map-backups/:sn/:filename/restore', () => {
     const areas: MapArea[] = [makeWorkArea(0), makeWorkArea(1), makeWorkArea(2)];
     mockParseMapZip.mockReturnValueOnce({ areas, chargingPose: { x: 0, y: 0, orientation: 0 } });
 
-    const res = await request(app)
+    const res = await request(server)
       .post(`/api/admin-status/map-backups/${SN}/${FILENAME}/restore`)
       .send({
         items: [
@@ -363,7 +371,7 @@ describe('POST /map-backups/:sn/:filename/restore-and-realign', () => {
     setupGoodBackup();
     vi.mocked(anchor.getPolygonAnchor).mockReturnValue(null);
 
-    const res = await request(app)
+    const res = await request(server)
       .post(`/api/admin-status/map-backups/${SN}/${FILENAME}/restore-and-realign`);
 
     expect(res.status).toBe(400);
@@ -377,7 +385,7 @@ describe('POST /map-backups/:sn/:filename/restore-and-realign', () => {
     });
     // No sensors set in deviceCache
 
-    const res = await request(app)
+    const res = await request(server)
       .post(`/api/admin-status/map-backups/${SN}/${FILENAME}/restore-and-realign`);
 
     expect(res.status).toBe(400);
@@ -392,7 +400,7 @@ describe('POST /map-backups/:sn/:filename/restore-and-realign', () => {
     setupGps(SN);
     vi.mocked(broker.isDeviceOnline).mockReturnValue(false);
 
-    const res = await request(app)
+    const res = await request(server)
       .post(`/api/admin-status/map-backups/${SN}/${FILENAME}/restore-and-realign`);
 
     expect(res.status).toBe(404);
@@ -425,7 +433,7 @@ describe('POST /map-backups/:sn/:filename/restore-and-realign', () => {
         });
       });
 
-      const res = await request(app)
+      const res = await request(server)
         .post(`/api/admin-status/map-backups/${SN}/${FILENAME}/restore-and-realign`);
 
       expect(res.status).toBe(200);
@@ -445,7 +453,7 @@ describe('POST /map-backups/:sn/:filename/restore-and-realign', () => {
     vi.mocked(broker.isDeviceOnline).mockReturnValue(true);
     vi.mocked(mapBackupModule.regenerateLatestZipFromBackup).mockReturnValue(null);
 
-    const res = await request(app)
+    const res = await request(server)
       .post(`/api/admin-status/map-backups/${SN}/${FILENAME}/restore-and-realign`);
 
     expect(res.status).toBe(500);
@@ -470,7 +478,7 @@ describe('GET /map-backups/:sn/:filename/polygons', () => {
       chargingPose: { x: -1.21, y: 0.48, orientation: 1.498 },
     });
 
-    const res = await request(app)
+    const res = await request(server)
       .get(`/api/admin-status/map-backups/${SN}/${FILENAME}/polygons`);
 
     expect(res.status).toBe(200);
@@ -485,7 +493,7 @@ describe('GET /map-backups/:sn/:filename/polygons', () => {
   it('returns 404 when the backup file is missing', async () => {
     existsSpy.mockReturnValue(false);
 
-    const res = await request(app)
+    const res = await request(server)
       .get(`/api/admin-status/map-backups/${SN}/${FILENAME}/polygons`);
 
     expect(res.status).toBe(404);
@@ -495,7 +503,7 @@ describe('GET /map-backups/:sn/:filename/polygons', () => {
   it('returns 400 when parseMapZip rejects the file', async () => {
     mockParseMapZip.mockReturnValueOnce(null);
 
-    const res = await request(app)
+    const res = await request(server)
       .get(`/api/admin-status/map-backups/${SN}/${FILENAME}/polygons`);
 
     expect(res.status).toBe(400);
@@ -516,7 +524,7 @@ describe('GET /map-backups/:sn/:filename/polygons', () => {
       chargingPose: null as unknown as { x: number; y: number; orientation: number },
     });
 
-    const res = await request(app)
+    const res = await request(server)
       .get(`/api/admin-status/map-backups/${SN}/${FILENAME}/polygons`);
 
     expect(res.status).toBe(200);
@@ -546,7 +554,7 @@ describe.skip('POST /map-backups/:sn/upload', () => {
     const copySpy = vi.spyOn(fs, 'copyFileSync').mockImplementation(() => undefined);
     const mkdirSpy = vi.spyOn(fs, 'mkdirSync').mockImplementation(() => undefined as unknown as string);
 
-    const res = await request(app)
+    const res = await request(server)
       .post(`/api/admin-status/map-backups/${SN}/upload`)
       .attach('zip', Buffer.from('PK\x03\x04fake-zip-bytes'), 'mybackup.zip');
 
@@ -564,7 +572,7 @@ describe.skip('POST /map-backups/:sn/upload', () => {
   it('rejects non-.zip filenames before parseMapZip runs', async () => {
     mockParseMapZip.mockClear();
 
-    const res = await request(app)
+    const res = await request(server)
       .post(`/api/admin-status/map-backups/${SN}/upload`)
       .attach('zip', Buffer.from('whatever'), 'photo.jpg');
 
@@ -578,7 +586,7 @@ describe.skip('POST /map-backups/:sn/upload', () => {
   it('rejects ZIPs that parseMapZip cannot understand', async () => {
     mockParseMapZip.mockReturnValueOnce(null);
 
-    const res = await request(app)
+    const res = await request(server)
       .post(`/api/admin-status/map-backups/${SN}/upload`)
       .attach('zip', Buffer.from('not a real zip'), 'bogus.zip');
 
@@ -597,7 +605,7 @@ describe.skip('POST /map-backups/:sn/upload', () => {
       chargingPose: { x: 0, y: 0, orientation: 0 },
     });
 
-    const res = await request(app)
+    const res = await request(server)
       .post(`/api/admin-status/map-backups/${SN}/upload`)
       .attach('zip', Buffer.from('zip'), 'stub.zip');
 
@@ -616,7 +624,7 @@ describe.skip('POST /map-backups/:sn/upload', () => {
       chargingPose: null as unknown as { x: number; y: number; orientation: number },
     });
 
-    const res = await request(app)
+    const res = await request(server)
       .post(`/api/admin-status/map-backups/${SN}/upload`)
       .attach('zip', Buffer.from('zip'), 'nopose.zip');
 
@@ -635,7 +643,7 @@ describe.skip('POST /map-backups/:sn/upload', () => {
       chargingPose: { x: -1.21, y: 0.48, orientation: 1.498 },
     });
 
-    const res = await request(app)
+    const res = await request(server)
       .post(`/api/admin-status/map-backups/${SN}/upload`)
       .attach('zip', Buffer.from('zip'), 'obstacleonly.zip');
 
@@ -645,7 +653,7 @@ describe.skip('POST /map-backups/:sn/upload', () => {
   });
 
   it('returns 400 when no file is attached', async () => {
-    const res = await request(app)
+    const res = await request(server)
       .post(`/api/admin-status/map-backups/${SN}/upload`)
       .send();
 

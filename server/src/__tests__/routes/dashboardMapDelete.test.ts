@@ -13,7 +13,7 @@
 
 import express from 'express';
 import request from 'supertest';
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vitest';
 
 vi.mock('../../mqtt/broker.js', () => ({
   isDeviceOnline: vi.fn().mockReturnValue(true),
@@ -104,6 +104,14 @@ const app = express();
 app.use(express.json());
 app.use('/api/dashboard', dashboardRouter);
 
+// Eén luisteraar voor dit hele bestand. `request(server)` laat supertest per
+// verzoek een NIEUWE efemere poort openen, en dat botst onder belasting met een
+// andere luisteraar: het antwoord komt dan ergens anders vandaan. Bewezen op
+// 2026-09-14, een 403 op /reanchor zonder x-powered-by en zonder serverkant-
+// regel in de trace, wat drie beta-builds heeft gekost.
+const server = app.listen(0);
+afterAll(() => new Promise<void>(r => { server.close(() => r()); }));
+
 const SN = 'LFIN_DELETE_ROUTE';
 
 describe('DELETE map route — follow-up commands to the mower', () => {
@@ -123,7 +131,7 @@ describe('DELETE map route — follow-up commands to the mower', () => {
   afterEach(() => { vi.useRealTimers(); });
 
   it('laat de maaier eerst wissen, dan quit_mapping_mode en get_map_outline — en nooit sync_map', async () => {
-    const res = await request(app).delete(`/api/dashboard/maps/${SN}/del-map1`);
+    const res = await request(server).delete(`/api/dashboard/maps/${SN}/del-map1`);
     expect(res.status).toBe(200);
 
     // delete_map gaat via awaitCommand zodat het antwoord van de maaier telt.
@@ -140,7 +148,7 @@ describe('DELETE map route — follow-up commands to the mower', () => {
   });
 
   it('stuurt map_type mee: zonder dat veld wist de firmware niets', async () => {
-    await request(app).delete(`/api/dashboard/maps/${SN}/del-map1`);
+    await request(server).delete(`/api/dashboard/maps/${SN}/del-map1`);
     const payload = vi.mocked(awaitCommand).mock.calls.find(c => c[1] === 'delete_map')?.[2] as
       { map_name?: string; map_type?: number };
     expect(payload).toMatchObject({ map_name: 'map1', map_type: 1 });
@@ -148,7 +156,7 @@ describe('DELETE map route — follow-up commands to the mower', () => {
 
   it('houdt de kaart in de database als de maaier het wissen weigert', async () => {
     vi.mocked(awaitCommand).mockResolvedValueOnce({ result: 1, value: null });
-    const res = await request(app).delete(`/api/dashboard/maps/${SN}/del-map1`);
+    const res = await request(server).delete(`/api/dashboard/maps/${SN}/del-map1`);
     expect(res.status).toBe(409);
     expect(res.body.reason).toBe('mower_refused_delete');
     expect(mapRepo.findByMowerSn(SN)).toHaveLength(1);
@@ -164,7 +172,7 @@ describe('DELETE map route — follow-up commands to the mower', () => {
       setTimeout(() => handler({ restart_mapping_respond: { result: 0, running: true } }), 0);
     });
 
-    const res = await request(app).delete(`/api/dashboard/maps/${SN}/del-map1`);
+    const res = await request(server).delete(`/api/dashboard/maps/${SN}/del-map1`);
     expect(res.status).toBe(200);
     expect(vi.mocked(publishToExtended).mock.calls.map(c => Object.keys(c[1] as object)[0])).toContain('restart_mapping');
     expect(vi.mocked(awaitCommand).mock.calls.filter(c => c[1] === 'delete_map')).toHaveLength(2);
@@ -175,7 +183,7 @@ describe('DELETE map route — follow-up commands to the mower', () => {
 
   it('weigert meteen als de maaier bezig is, zonder commando te sturen', async () => {
     deviceCache.set(SN, new Map([['work_status', '100']]));
-    const res = await request(app).delete(`/api/dashboard/maps/${SN}/del-map1`);
+    const res = await request(server).delete(`/api/dashboard/maps/${SN}/del-map1`);
     expect(res.status).toBe(409);
     expect(res.body.reason).toBe('mower_busy');
     expect(awaitCommand).not.toHaveBeenCalled();
@@ -185,7 +193,7 @@ describe('DELETE map route — follow-up commands to the mower', () => {
 
   it('ruimt een geparkeerde taak op vóór het wissen', async () => {
     deviceCache.set(SN, new Map([['work_status', '10']]));
-    const res = await request(app).delete(`/api/dashboard/maps/${SN}/del-map1`);
+    const res = await request(server).delete(`/api/dashboard/maps/${SN}/del-map1`);
     expect(res.status).toBe(200);
     expect(vi.mocked(awaitCommand).mock.calls.map(c => c[1])).toEqual(['quit_mapping_mode', 'delete_map']);
     deviceCache.delete(SN);
@@ -196,7 +204,7 @@ describe('DELETE map route — follow-up commands to the mower', () => {
     // work_status 1 ("Failed"). Die 1 viel onder de oude drempel van 9 door, dus
     // werd er niets opgeruimd en weigerde de firmware het wissen.
     deviceCache.set(SN, new Map([['work_status', '1'], ['task_mode', '2']]));
-    const res = await request(app).delete(`/api/dashboard/maps/${SN}/del-map1`);
+    const res = await request(server).delete(`/api/dashboard/maps/${SN}/del-map1`);
     expect(res.status).toBe(200);
     expect(vi.mocked(awaitCommand).mock.calls.map(c => c[1])).toEqual(['quit_mapping_mode', 'delete_map']);
     deviceCache.delete(SN);
@@ -204,7 +212,7 @@ describe('DELETE map route — follow-up commands to the mower', () => {
 
   it('laat een rustige maaier met rust', async () => {
     deviceCache.set(SN, new Map([['work_status', '0'], ['task_mode', '1']]));
-    const res = await request(app).delete(`/api/dashboard/maps/${SN}/del-map1`);
+    const res = await request(server).delete(`/api/dashboard/maps/${SN}/del-map1`);
     expect(res.status).toBe(200);
     expect(vi.mocked(awaitCommand).mock.calls.map(c => c[1])).toEqual(['delete_map']);
     deviceCache.delete(SN);
@@ -216,7 +224,7 @@ describe('DELETE map route — follow-up commands to the mower', () => {
       ['work_status', '0'],
       ['error_msg', 'Error_code: 8 Lora disconnect for some time,may causing localization not good!!!'],
     ]));
-    const res = await request(app).delete(`/api/dashboard/maps/${SN}/del-map1`);
+    const res = await request(server).delete(`/api/dashboard/maps/${SN}/del-map1`);
     expect(res.status).toBe(409);
     expect(res.body.mowerError).toBeNull();
     expect(res.body.error).not.toContain('Lora');

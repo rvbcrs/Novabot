@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi, afterAll } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 
@@ -26,6 +26,14 @@ import { isFrameUnvalidated } from '../../services/frameValidation.js';
 const app = express();
 app.use(express.json());
 app.use('/api/setup', setupRouter);
+
+// Eén luisteraar voor dit hele bestand. `request(server)` laat supertest per
+// verzoek een NIEUWE efemere poort openen, en dat botst onder belasting met een
+// andere luisteraar: het antwoord komt dan ergens anders vandaan. Bewezen op
+// 2026-09-14, een 403 op /reanchor zonder x-powered-by en zonder serverkant-
+// regel in de trace, wat drie beta-builds heeft gekost.
+const server = app.listen(0);
+afterAll(() => new Promise<void>(r => { server.close(() => r()); }));
 
 describe('POST /cloud-apply map import', () => {
   beforeEach(() => {
@@ -58,7 +66,7 @@ describe('POST /cloud-apply map import', () => {
   });
 
   it('preserves no-URL inter-map unicom rows from the LFI cloud response', async () => {
-    const res = await request(app)
+    const res = await request(server)
       .post('/api/setup/cloud-apply')
       .send({
         email: 'setup@example.com',
@@ -82,7 +90,7 @@ describe('POST /cloud-apply map import', () => {
   // flagged unvalidated to drive the app's re-anchor wizard. Without this the
   // mower won't move and gives no re-anchor prompt (the bug David hit).
   it('sets frame_unvalidated after a non-merge cloud re-import', async () => {
-    const res = await request(app)
+    const res = await request(server)
       .post('/api/setup/cloud-apply')
       .send({
         email: 'setup@example.com',
@@ -100,7 +108,7 @@ describe('POST /cloud-apply map import', () => {
   // A merge re-import (settings sync on an already-anchored, working device)
   // must NOT force a re-anchor.
   it('does NOT set frame_unvalidated in merge mode', async () => {
-    const res = await request(app)
+    const res = await request(server)
       .post('/api/setup/cloud-apply')
       .send({
         email: 'setup@example.com',

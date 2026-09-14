@@ -9,7 +9,7 @@
 
 import express from 'express';
 import request from 'supertest';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
 
 vi.mock('../../mqtt/broker.js', () => ({
   isDeviceOnline: vi.fn().mockReturnValue(true),
@@ -107,6 +107,14 @@ const app = express();
 app.use(express.json());
 app.use('/api/dashboard', dashboardRouter);
 
+// Eén luisteraar voor dit hele bestand. `request(server)` laat supertest per
+// verzoek een NIEUWE efemere poort openen, en dat botst onder belasting met een
+// andere luisteraar: het antwoord komt dan ergens anders vandaan. Bewezen op
+// 2026-09-14, een 403 op /reanchor zonder x-powered-by en zonder serverkant-
+// regel in de trace, wat drie beta-builds heeft gekost.
+const server = app.listen(0);
+afterAll(() => new Promise<void>(r => { server.close(() => r()); }));
+
 const SN = 'LFIN_STOCK_DRAW';
 const tri = [{ x: 0, y: 0 }, { x: 5, y: 0 }, { x: 5, y: 5 }];
 
@@ -122,7 +130,7 @@ describe('map create/update on stock firmware', () => {
   });
 
   it('refuses to draw a new area: 409, nothing written, no push', async () => {
-    const res = await request(app).post(`/api/dashboard/maps/${SN}`).send({ mapName: 'Work area 2', mapArea: tri, mapType: 'work' });
+    const res = await request(server).post(`/api/dashboard/maps/${SN}`).send({ mapName: 'Work area 2', mapArea: tri, mapType: 'work' });
     expect(res.status).toBe(409);
     expect(res.body.reason).toBe('unsupported_firmware');
     expect(mapRepo.findByMowerSn(SN)).toHaveLength(1);
@@ -130,18 +138,18 @@ describe('map create/update on stock firmware', () => {
   });
 
   it('refuses to move an existing polygon, but still allows a rename', async () => {
-    const moved = await request(app).patch(`/api/dashboard/maps/${SN}/stock-map0`).send({ mapArea: [{ x: 1, y: 1 }, { x: 9, y: 1 }, { x: 9, y: 9 }] });
+    const moved = await request(server).patch(`/api/dashboard/maps/${SN}/stock-map0`).send({ mapArea: [{ x: 1, y: 1 }, { x: 9, y: 1 }, { x: 9, y: 9 }] });
     expect(moved.status).toBe(409);
     expect(JSON.parse(mapRepo.findByMowerSn(SN)[0].map_area!)).toEqual(tri);
 
-    const renamed = await request(app).patch(`/api/dashboard/maps/${SN}/stock-map0`).send({ mapName: 'Front lawn' });
+    const renamed = await request(server).patch(`/api/dashboard/maps/${SN}/stock-map0`).send({ mapName: 'Front lawn' });
     expect(renamed.status).toBe(200);
     expect(publishToExtended).not.toHaveBeenCalled();
   });
 
   it('still creates on OpenNova firmware, met canonieke slotnaam in het antwoord', async () => {
     fw.supported = true;
-    const res = await request(app).post(`/api/dashboard/maps/${SN}`).send({ mapName: 'Work area 2', mapArea: tri, mapType: 'work' });
+    const res = await request(server).post(`/api/dashboard/maps/${SN}`).send({ mapName: 'Work area 2', mapArea: tri, mapType: 'work' });
     expect(res.status).toBe(200);
     expect(res.body.map.canonicalName).toBe('map1');
     expect(mapRepo.findByMowerSn(SN)).toHaveLength(2);
@@ -150,7 +158,7 @@ describe('map create/update on stock firmware', () => {
 
   it('lege naam wordt geen alias: de canonieke slotnaam blijft de weergavenaam', async () => {
     fw.supported = true;
-    const res = await request(app).post(`/api/dashboard/maps/${SN}`).send({ mapName: '   ', mapArea: tri, mapType: 'work' });
+    const res = await request(server).post(`/api/dashboard/maps/${SN}`).send({ mapName: '   ', mapArea: tri, mapType: 'work' });
     expect(res.status).toBe(200);
     expect(res.body.map.mapName).toBeNull();
     expect(res.body.map.canonicalName).toBe('map1');
@@ -159,7 +167,7 @@ describe('map create/update on stock firmware', () => {
 
   it('vraagt na een kaart-push om nieuwe per-slot grids', async () => {
     fw.supported = true;
-    const res = await request(app).post(`/api/dashboard/maps/${SN}`).send({ mapArea: tri, mapType: 'work' });
+    const res = await request(server).post(`/api/dashboard/maps/${SN}`).send({ mapArea: tri, mapType: 'work' });
     expect(res.status).toBe(200);
     // De push loopt in de achtergrond; even de microtaken laten lopen.
     await new Promise(r => setTimeout(r, 0));
@@ -170,7 +178,7 @@ describe('map create/update on stock firmware', () => {
 
   it('weigert een kanaal waarvan de eindpunten geen gebieden raken', async () => {
     fw.supported = true;
-    const res = await request(app)
+    const res = await request(server)
       .post(`/api/dashboard/maps/${SN}`)
       .send({ mapName: 'Kanaal 1', mapArea: [{ x: 100, y: 100 }, { x: 200, y: 200 }], mapType: 'unicom' });
     expect(res.status).toBe(422);
