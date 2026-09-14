@@ -190,4 +190,36 @@ describe('DELETE map route — follow-up commands to the mower', () => {
     expect(vi.mocked(awaitCommand).mock.calls.map(c => c[1])).toEqual(['quit_mapping_mode', 'delete_map']);
     deviceCache.delete(SN);
   });
+
+  it('ruimt ook de mapping-modus op, ook al is work_status laag', async () => {
+    // Na een afgebroken maaipoging stond de maaier op task_mode 2 met
+    // work_status 1 ("Failed"). Die 1 viel onder de oude drempel van 9 door, dus
+    // werd er niets opgeruimd en weigerde de firmware het wissen.
+    deviceCache.set(SN, new Map([['work_status', '1'], ['task_mode', '2']]));
+    const res = await request(app).delete(`/api/dashboard/maps/${SN}/del-map1`);
+    expect(res.status).toBe(200);
+    expect(vi.mocked(awaitCommand).mock.calls.map(c => c[1])).toEqual(['quit_mapping_mode', 'delete_map']);
+    deviceCache.delete(SN);
+  });
+
+  it('laat een rustige maaier met rust', async () => {
+    deviceCache.set(SN, new Map([['work_status', '0'], ['task_mode', '1']]));
+    const res = await request(app).delete(`/api/dashboard/maps/${SN}/del-map1`);
+    expect(res.status).toBe(200);
+    expect(vi.mocked(awaitCommand).mock.calls.map(c => c[1])).toEqual(['delete_map']);
+    deviceCache.delete(SN);
+  });
+
+  it('noemt Error 8 niet als reden: dat is LoRa-ruis, geen wis-probleem', async () => {
+    vi.mocked(awaitCommand).mockResolvedValue({ result: 1 });
+    deviceCache.set(SN, new Map([
+      ['work_status', '0'],
+      ['error_msg', 'Error_code: 8 Lora disconnect for some time,may causing localization not good!!!'],
+    ]));
+    const res = await request(app).delete(`/api/dashboard/maps/${SN}/del-map1`);
+    expect(res.status).toBe(409);
+    expect(res.body.mowerError).toBeNull();
+    expect(res.body.error).not.toContain('Lora');
+    deviceCache.delete(SN);
+  });
 });

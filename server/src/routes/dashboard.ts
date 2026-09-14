@@ -64,7 +64,7 @@ import { getPolygonAnchor } from '../services/anchor.js';
 import { canonicalForDrawnMap } from '../services/canonicalNaming.js';
 import { selectParaRepush } from '../mqtt/paraRepush.js';
 import { MOW_PARA_SETTLE_MS } from '../services/mowingService.js';
-import { getMowingAreaError, mowerSwVersion } from '../services/mowingArea.js';
+import { getMowingAreaError, mowerSwVersion, TASK_MODE_MAPPING } from '../services/mowingArea.js';
 import {
   startAutoMap, stopAutoMap, getStatus as getAutoMapStatus,
   acceptProposal, rejectProposal,
@@ -1856,12 +1856,20 @@ dashboardRouter.delete('/maps/:sn/:mapId', async (req: Request, res: Response) =
       });
       return;
     }
-    // 10 t/m 15 = taak geparkeerd op de dock. quit_mapping_mode zet de status
-    // terug op WAIT, waarna het wissen wél mag.
-    if (Number.isFinite(workStatus) && workStatus > 9) {
+    // Twee toestanden waarin deleteMapDeal weigert, allebei op te lossen met
+    // quit_mapping_mode ("exit any mapping state"):
+    //   - een geparkeerde taak (work_status 10 t/m 15), en
+    //   - de mapping-modus zelf (task_mode 2). Die stond er na een afgebroken
+    //     maaipoging, met work_status 1 ("Failed"), dus onder de oude drempel
+    //     van 9 door: het wissen werd geweigerd en de melding wees naar een
+    //     lopende maaitaak die er niet was (live LFIN2230700238, 2026-09-14).
+    const taskMode = parseInt(deviceCache.get(sn)?.get('task_mode') ?? '', 10);
+    const parked = Number.isFinite(workStatus) && workStatus > 9;
+    const mapping = taskMode === TASK_MODE_MAPPING;
+    if (parked || mapping) {
       try {
         await awaitCommand(sn, 'quit_mapping_mode', { value: 1, cmd_num: getNextCmdNum(sn) }, 8000);
-        console.log(`[DELETE] ${sn}: geparkeerde taak (work_status ${workStatus}) opgeruimd vóór delete_map`);
+        console.log(`[DELETE] ${sn}: ${mapping ? `mapping-modus (task_mode ${taskMode})` : `geparkeerde taak (work_status ${workStatus})`} opgeruimd vóór delete_map`);
       } catch (err) {
         console.warn(`[DELETE] ${sn}: quit_mapping_mode vooraf gaf geen antwoord: ${(err as Error).message}`);
       }
@@ -1899,7 +1907,12 @@ dashboardRouter.delete('/maps/:sn/:mapId', async (req: Request, res: Response) =
     // foutmelding zetten maakt hem alleen verwarrend.
     const liveMowerError = (): string | null => {
       const msg = deviceCache.get(sn)?.get('error_msg') ?? null;
-      return msg && !/Error_code:\s*0\b/.test(msg) ? msg : null;
+      if (!msg || /Error_code:\s*0\b/.test(msg)) return null;
+      // Error 8 ("Lora disconnect for some time") is normale ruis en heeft niets
+      // met wissen te maken. Meesturen in de weigering stuurde de gebruiker naar
+      // de LoRa-verbinding terwijl de echte reden de mapping-modus was.
+      if (/Error_code:\s*8\b/.test(msg)) return null;
+      return msg;
     };
     let mowerError = liveMowerError();
     if (respond?.result !== 0 && /\b(140|120)\b|Process crashed|soft\(mapping\)/i.test(mowerError ?? '')) {

@@ -19,6 +19,14 @@ import { equipmentRepo } from '../db/repositories/index.js';
 export const MAP_NAMES_SELECTION_BUILD = 40;
 
 /**
+ * RobotStatus.task_mode: 1 = cover, 2 = mapping ("cover mode/ mapping mode/
+ * patrolling mode/ ..." in decision_msgs/RobotStatus.msg). deleteMapDeal
+ * refuses while the mower sits in mapping mode, and quit_mapping_mode is the
+ * documented way out of it.
+ */
+export const TASK_MODE_MAPPING = 2;
+
+/**
  * The mower's firmware version, live reading first, stored value as fallback.
  *
  * The gate below refuses a zone above slot 4 when it cannot see a build that
