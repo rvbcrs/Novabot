@@ -89,6 +89,23 @@ def _dist(a, b):
     return math.hypot(a[0] - b[0], a[1] - b[1])
 
 
+def _lead_in(pts, robot, min_gap=0.3):
+    """Put the mower's own position in front of the path when it is not on it.
+
+    A recorded channel is the short crossing between two zones, not a route
+    from wherever the mower stands: map1tomap0_0_unicom.csv is two points and
+    started 3.02 m away from the mower after undocking. Handing that straight
+    to FollowPath leaves nothing inside the controller's local window, which
+    reports "Resulting plan has 0 poses in it" and aborts on patience (live
+    LFIN2230700238, 2026-09-14). Starting the path at the mower gives it
+    something to follow into the channel. The collision checker still applies,
+    so an obstacle in that lead-in aborts the hop instead of being driven over.
+    """
+    if not robot or not pts:
+        return pts
+    return pts if _dist(robot, pts[0]) <= min_gap else [tuple(robot)] + list(pts)
+
+
 def _trim_to_nearest(pts, robot):
     """Drop the leading points between the mower and the recorded start, so the
     controller drives forward from where the mower actually is. Without this,
@@ -681,7 +698,7 @@ def do_mow(drv, to_slot, map_ids, cutterhigh, direction):
                 # nearest point makes it drive forward from where it actually is.
                 # The same holds at every hop: the mower lands somewhere along the
                 # next channel, not at its recorded start.
-                pts = _trim_to_nearest(pts, robot)
+                pts = _lead_in(_trim_to_nearest(pts, robot), robot)
                 ok, msg = drv.follow_path(pts)
                 if not ok:
                     log(f"transit hop {hop + 1}/{len(uni)} ({fname}) failed: {msg}")

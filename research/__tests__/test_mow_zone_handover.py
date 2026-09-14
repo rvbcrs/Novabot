@@ -193,6 +193,23 @@ def test_nothing_parked_means_no_quit_call():
     assert drv.calls == [("start_cov", 1000000)]
 
 
+def test_lead_in_starts_the_path_at_the_mower():
+    # Precies de live-situatie: map1tomap0 is twee punten, de maaier stond er
+    # 3,02 m vandaan en nav2 hield 0 poses over (2026-09-14).
+    robot = (-0.19, 2.88)
+    channel = [(2.24, 4.68), (3.93, 5.87)]
+    out = mzd._lead_in(channel, robot)
+    assert out[0] == robot and out[1:] == channel
+
+def test_lead_in_adds_nothing_when_the_mower_is_already_on_the_path():
+    robot = (2.25, 4.68)
+    channel = [(2.24, 4.68), (3.93, 5.87)]
+    assert mzd._lead_in(channel, robot) == channel
+
+def test_lead_in_is_harmless_without_a_position_or_path():
+    assert mzd._lead_in([(1.0, 1.0)], None) == [(1.0, 1.0)]
+    assert mzd._lead_in([], (0.0, 0.0)) == []
+
 def test_executing_gate_matches_the_firmware_rule():
     ex = mzd.task_executing
     assert ex(mzd.TASK_MODE_COVERAGE, mzd.WORK_STATUS_USER_STOP)   # parked = still executing
