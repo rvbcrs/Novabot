@@ -164,6 +164,13 @@ class FakeDriver:
         self._status = (mzd.TASK_MODE_COVERAGE, 0)
         return True
 
+    def recharge_active(self, timeout=4.0):
+        return False
+
+    def cancel_recharge(self):
+        self.calls.append(("cancel_recharge",))
+        return True
+
     def start_cov(self, map_ids, cutterhigh, direction):
         self.calls.append(("start_cov", map_ids))
         return True
@@ -275,6 +282,46 @@ def test_densify_survives_a_degenerate_path():
     assert mzd.densify([]) == []
     assert mzd.densify([(1.0, 2.0)]) == [(1.0, 2.0)]
     assert mzd.densify([(1.0, 2.0), (1.0, 2.0)]) == [(1.0, 2.0), (1.0, 2.0)]
+
+
+def test_a_running_recharge_is_broken_off_first():
+    # Na een mislukte poging stuurt de firmware zichzelf naar huis en die
+    # navigatie heeft de wielen. Een transit die dan start krijgt ze nooit:
+    # nav_to_pose_status_6 terwijl de maaier rustig naar zijn dock rijdt
+    # (live 2026-09-14).
+    with_maps({"map0_work.csv": SQ0, "map6_work.csv": SQ6,
+               "map0tocharge_unicom.csv": [(0.5, 0.7), (2, 3)]})
+
+    class Rijdend(FakeDriver):
+        def __init__(self):
+            super().__init__(localized=None, status=(0, 0))
+            self.actief = True
+
+        def recharge_active(self, timeout=4.0):
+            return self.actief
+
+        def cancel_recharge(self):
+            self.calls.append(("cancel_recharge",))
+            self.actief = False
+            return True
+
+    drv = Rijdend()
+    mzd.clear_recharge(drv)
+    assert ("cancel_recharge",) in drv.calls
+
+
+def test_nothing_to_cancel_stays_quiet():
+    class Stil(FakeDriver):
+        def recharge_active(self, timeout=4.0):
+            return False
+
+        def cancel_recharge(self):
+            self.calls.append(("cancel_recharge",))
+            return True
+
+    drv = Stil(localized=None, status=(0, 0))
+    mzd.clear_recharge(drv)
+    assert drv.calls == []
 
 
 def test_executing_gate_matches_the_firmware_rule():

@@ -512,6 +512,24 @@ class Driver:
             probe.destroy_node()
         return seen.get("v")
 
+    def recharge_active(self, timeout=4.0):
+        """True while RobotStatus reports the mower is on its way to the dock."""
+        probe = rclpy.create_node("mzd_recharge_probe")
+        seen = {}
+        probe.create_subscription(
+            RobotStatus, f"{DECISION}/robot_status",
+            lambda m: seen.__setitem__("v", int(m.recharge_status)),
+            QoSProfile(depth=1, history=QoSHistoryPolicy.KEEP_LAST))
+        deadline = time.time() + timeout
+        try:
+            while time.time() < deadline:
+                rclpy.spin_once(probe, timeout_sec=0.2)
+                if "v" in seen:
+                    return seen["v"] in RECHARGE_DRIVING
+        finally:
+            probe.destroy_node()
+        return False
+
     def quit_mapping_mode(self):
         """Clear a parked task: robot_decision goes back to COVERAGE/WAIT."""
         cli = self.node.create_client(Empty, f"{DECISION}/quit_mapping_mode")
@@ -582,6 +600,24 @@ class Driver:
         else:
             log(f"firmware init done: robot={pos}")
         return pos
+
+    def cancel_recharge(self):
+        """Abort a recharge the firmware started on its own.
+
+        After a failed attempt robot_decision sends itself home
+        (Recharge: RETURN_TO_PILE) and that navigation holds the wheels. A
+        transit started in that window never gets them: the NavigateToPose goal
+        is aborted before nav2 even logs it, and the run ends on
+        nav_to_pose_status_6 while the mower calmly drives to its dock (live
+        LFIN2230700238, 2026-09-14).
+        """
+        cli = self.node.create_client(Trigger, f"{DECISION}/cancel_recharge")
+        if not cli.wait_for_service(timeout_sec=5.0):
+            return False
+        fut = cli.call_async(Trigger.Request())
+        rclpy.spin_until_future_complete(self.node, fut, timeout_sec=10.0)
+        r = fut.result()
+        return bool(r and r.success)
 
     def auto_recharge(self):
         """Start the visual (ArUco) dock via /robot_decision/auto_recharge.
@@ -755,6 +791,30 @@ def _cover(drv, map_ids, cutterhigh, direction):
     return 0 if ok else 1
 
 
+# recharge_status-waarden waarbij de firmware onderweg is naar het dock en dus
+# de wielen heeft. 0 = WAIT, 9 = opgeladen/klaar; daartussen rijdt hij.
+RECHARGE_DRIVING = (1, 2, 3, 4, 5, 6, 7, 8)
+
+
+def clear_recharge(drv):
+    """Break off a recharge the firmware started itself, and wait until it lets go."""
+    st = drv.wait_status(lambda tm, ws: True, timeout=5.0)
+    if st is None:
+        return
+    # wait_status geeft (task_mode, work_status); de recharge-status lezen we
+    # via hetzelfde bericht, dus daarvoor is een eigen peiling nodig.
+    if not drv.recharge_active():
+        return
+    log("firmware is onderweg naar het dock, recharge afbreken")
+    drv.cancel_recharge()
+    for _ in range(15):
+        if not drv.recharge_active():
+            log("recharge afgebroken")
+            return
+        time.sleep(1.0)
+    log("recharge stopte niet binnen 15 s, we gaan toch verder")
+
+
 def clear_parked_task(drv):
     """A task parked by an earlier attempt (USER_STOP) still counts as
     executing, so the next start_cov is refused. Clear it first, the way the
@@ -770,6 +830,7 @@ def clear_parked_task(drv):
 def do_mow(drv, to_slot, map_ids, cutterhigh, direction):
     """Outbound: undock -> follow the unicom to the target zone -> coverage."""
     clear_parked_task(drv)
+    clear_recharge(drv)
     robot = drv.robot_xy()
     if robot is None:
         # Fresh boot on the dock: no map->base_link yet. robot_decision builds
