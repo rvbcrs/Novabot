@@ -53,7 +53,10 @@ CHANNEL = [(0.5, 1.0), (2.5, 1.0)]     # 2 m horizontal
 OTHER = [(0.5, 2.0), (2.5, 2.0)]       # een tweede, een meter hoger
 
 
-def rebuild(prev, cur, lawn=None):
+DOCK_R_M = 0.8
+
+
+def rebuild(prev, cur, lawn=None, dock=None):
     """(nav grid, opened, closed) voor een regenerate met deze kanalen.
 
     Spiegelt handle_regenerate_per_map_files: sluiten wat er niet meer is,
@@ -82,6 +85,12 @@ def rebuild(prev, cur, lawn=None):
     closed = 0
     if prev:
         gone = corridor(prev) & (~cur_mask) & (~lawn_mask)
+        if dock is not None:
+            keep = Image.new("L", (W, H), 0)
+            kr = max(2, int(round(DOCK_R_M / RES)))
+            kx, ky = to_px(*dock)
+            ImageDraw.Draw(keep).ellipse([kx - kr, ky - kr, kx + kr, ky + kr], fill=255)
+            gone &= ~(np.array(keep) > 0)
         sluit = gone & (whole >= 128)
         closed = int(sluit.sum())
         whole[sluit] = np.uint8(OCCUPIED)
@@ -116,6 +125,20 @@ def test_closing_never_touches_a_work_area():
     grid, _, _ = rebuild(prev=[CHANNEL], cur=[], lawn=lawn)
     assert grid[to_px(1.5, 1.0)[1], to_px(1.5, 1.0)[0]] == FREE, \
         "binnen een werkgebied blijft het vrij, anders is de zone onbereikbaar"
+
+
+def test_the_dock_is_never_walled_in():
+    # Het dock hoeft niet in een werkgebied te liggen; bij een ander staat hij
+    # op een pad ernaast. Dichtmetselen sluit de maaier af van zijn eigen lader
+    # en dat krijgt niemand er zelf meer uit.
+    dock = (1.5, 1.0)
+    grid, _, _ = rebuild(prev=[CHANNEL], cur=[], dock=dock)
+    dx, dy = to_px(*dock)
+    assert grid[dy, dx] == FREE
+    # een halve meter ernaast, nog binnen de dock-schijf, ook vrij
+    assert grid[to_px(1.5, 1.4)[1], to_px(1.5, 1.4)[0]] == FREE
+    # maar verderop langs het oude kanaal wel dicht
+    assert grid[to_px(0.6, 1.0)[1], to_px(0.6, 1.0)[0]] == OCCUPIED
 
 
 def test_unchanged_channels_close_nothing():

@@ -3156,10 +3156,26 @@ def handle_regenerate_per_map_files(params, respond):
         # bereden grond of van de firmware, daar blijven we vanaf.
         _nclosed = 0
         if _prev_geoms:
-            # Niet binnen een werkgebied: daar hoort de maaier te kunnen komen,
-            # en het dock ligt er per definitie in (het anker is het eerste punt
-            # van mapNtocharge_unicom, dat in die zone valt).
+            # Nooit binnen een werkgebied: daar hoort de maaier te kunnen komen.
+            # En nooit rond het laadstation, ongeacht polygonen: bij ons ligt het
+            # dock in map0, maar dat is geen gegeven. Het dock dichtmetselen zou
+            # een maaier buitensluiten van zijn eigen lader, en dat is een
+            # storing die niemand zelf meer kan oplossen.
             _gone = _corridor_mask(_prev_geoms) & (~_uni_mask) & (~_lawn_mask)
+            _anchor = None
+            for _cf in unicom_files:
+                if re.match(r"^map\d+tocharge_unicom\.csv$", _cf):
+                    _ap = read_xy_csv(f"{csv_dir}/{_cf}")
+                    if _ap:
+                        _anchor = _ap[0]
+                        break
+            if _anchor is not None:
+                _keep = Image.new("L", (W, H), 0)
+                _kr = max(2, int(round(DOCK_R_M / res)))
+                _kx, _ky = to_px(_anchor[0], _anchor[1])
+                ImageDraw.Draw(_keep).ellipse(
+                    [_kx - _kr, _ky - _kr, _kx + _kr, _ky + _kr], fill=255)
+                _gone &= ~(np.array(_keep) > 0)
             _close = _gone & (whole >= 128)
             _nclosed = int(_close.sum())
             if _nclosed:
