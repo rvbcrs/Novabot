@@ -496,43 +496,73 @@ if [ -f "$RECHARGE_LAUNCH" ]; then
     echo "  automatic_recharge_launch.py: LED brightness 1 → 255 (night-docking)"
 fi
 
-# 5a-ter. iceoryx mempool rebalance: the 4 MB pool starves while the 8 MB pool
-# sits unused. Every image and point cloud on this robot is an Image4m or a
-# PointCloud2 that fits the 4 MB pool; nothing has ever taken an 8 MB chunk.
-# Measured with iox-introspection-client --mempool on LFIN1231000211 after 20
-# days of uptime: 4 MB pool 32/50 in use with a low-water mark of 17 free,
-# 8 MB pool 0/50 with a low-water mark of 50. A mow start pushes the 4 MB pool
-# over the top, camera_307_cap can then not publish
-# (MEPOO__MEMPOOL_GETCHUNK_POOL_IS_RUNNING_OUT_OF_CHUNKS), daemon_monitor kills
-# and relaunches the camera stack, the relaunch dies on the still-initialised
-# video pipeline (HB_VP_Init: VP: have already init) and robot_decision reports
-# error 136/137 until a power cycle. Live on LFIN2230700238, 2026-09-12 and
-# 2026-09-14.
+# 5a-ter. iceoryx mempool ladder: give small messages small chunks again.
 #
-# Moving chunks from the dead pool to the starved one costs LESS memory than
-# the stock layout: 100*4194984 + 10*8389312 = 503 MB against 629 MB.
+# Stock Novabot gives this robot exactly two chunk sizes, 4 MB and 8 MB, so a
+# tf transform of 104 bytes costs a full 4 MB block. ROS ships a sane ladder in
+# /opt/ros/galactic/shm_config/shm_ioxroudi.toml (32 bytes up to 9 MB); Novabot
+# replaced it with the two giant pools.
+#
+# What that costs, measured with iox-introspection-client --mempool on
+# LFIN2230700238 (2026-09-14, 1h50m uptime, idle robot):
+#     4 MB pool   83 / 100 in use, low-water mark 0 free
+#     8 MB pool    0 /  10 in use, low-water mark 10 free
+# So 348 MB is pinned by normal traffic that is mostly a few hundred bytes per
+# message, and a mow run needs ~17 more chunks than are left. The run then
+# stalls on MEPOO__MEMPOOL_GETCHUNK_POOL_IS_RUNNING_OUT_OF_CHUNKS while trying
+# to publish 104 bytes, camera_307_cap cannot publish either, daemon_monitor
+# relaunches the camera stack, the relaunch dies on the still-initialised video
+# pipeline (HB_VP_Init: VP: have already init) and robot_decision reports error
+# 136/137 until a power cycle. That chain has cost every mow attempt today.
+#
+# The two existing pools stay exactly as they are, so nothing that works now can
+# regress; the ladder is added underneath. Total goes from 503 MB to 707 MB, and
+# the mower has 4 GB with a 2 GB /dev/shm holding 537 MB.
 SHM_TOML="$NOVABOT_ROOT/shm_config/shm_ioxroudi.toml"
 if [ -f "$SHM_TOML" ]; then
-    python3 - "$SHM_TOML" << 'SHMEOF'
-import re
-import sys
+    cat > "$SHM_TOML" << 'SHMEOF'
+[general]
+version = 1
 
-path = sys.argv[1]
-src = open(path).read()
-# Each [[segment.mempool]] block is "size = N" followed by "count = M".
-# Rewrite the count that belongs to a given size, leaving the rest untouched.
-WANT = {"4194944": "100", "8389272": "10"}
+[[segment]]
 
+# Klein spul hoort in kleine blokken. Zonder deze pools kost elk bericht,
+# hoe klein ook, een blok van 4 MB.
+[[segment.mempool]]
+size = 128
+count = 10000
 
-def fix(m):
-    size, count = m.group("size"), m.group("count")
-    return m.group(0).replace("count = " + count, "count = " + WANT[size]) if size in WANT else m.group(0)
+[[segment.mempool]]
+size = 1024
+count = 5000
 
+[[segment.mempool]]
+size = 16384
+count = 1000
 
-out = re.sub(r"size\s*=\s*(?P<size>\d+)\s*\ncount\s*=\s*(?P<count>\d+)", fix, src)
-open(path, "w").write(out)
-print("  shm_ioxroudi.toml: 4 MB pool 50 -> 100 chunks, 8 MB pool 50 -> 10")
+[[segment.mempool]]
+size = 131072
+count = 300
+
+# /map en de costmaps zijn ~374 kB, die horen hier en niet in de 4 MB pool.
+[[segment.mempool]]
+size = 524288
+count = 150
+
+[[segment.mempool]]
+size = 1048576
+count = 60
+
+# Ongewijzigd: de beelden en point clouds die hier echt thuishoren.
+[[segment.mempool]]
+size = 4194944
+count = 100
+
+[[segment.mempool]]
+size = 8389272
+count = 10
 SHMEOF
+    echo "  shm_ioxroudi.toml: mempool ladder 128 B .. 8 MB (was alleen 4 MB + 8 MB)"
 fi
 
 # 5b. Voeg script toe dat http_address.txt correct zet bij elke boot

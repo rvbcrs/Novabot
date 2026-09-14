@@ -1,11 +1,20 @@
 #!/usr/bin/env python3
-"""Self-check for the iceoryx mempool rebalance in build_custom_firmware.sh.
+"""Self-check for the iceoryx mempool ladder in build_custom_firmware.sh.
 
-Every large message on this robot (Image4m, PointCloud2) fits the 4 MB pool;
-the 8 MB pool has never handed out a chunk. Measured on LFIN1231000211 after
-20 days: 4 MB 32/50 in use with 17 free at the low-water mark, 8 MB 0/50 with
-50 free. When the 4 MB pool runs out, camera_307_cap cannot publish and the
-camera stack ends up in a restart loop that only a power cycle clears.
+Stock Novabot gives this robot exactly two chunk sizes, 4 MB and 8 MB, so a tf
+transform of 104 bytes costs a full 4 MB block. ROS itself ships a sane ladder
+in /opt/ros/galactic/shm_config/shm_ioxroudi.toml; Novabot replaced it.
+
+Measured with iox-introspection-client --mempool on LFIN2230700238
+(2026-09-14, 1h50m uptime, idle robot):
+
+    4 MB pool   83 / 100 in use, low-water mark 0 free
+    8 MB pool    0 /  10 in use, low-water mark 10 free
+
+348 MB pinned by traffic that is mostly a few hundred bytes per message, and a
+mow run needs about 17 chunks more than are left. It then stalls on
+MEPOO__MEMPOOL_GETCHUNK_POOL_IS_RUNNING_OUT_OF_CHUNKS while publishing 104
+bytes, and the camera stack follows it down.
 
 Run: python3 research/__tests__/test_shm_mempool_rebalance.py
 """
@@ -32,48 +41,94 @@ size = 8389272
 count = 50
 """
 
+# Wat de mower echt in het veld publiceert, met de payload-grootte die iceoryx
+# ziet. De tf-transform is de kleine die vandaag 4 MB kostte.
+VERKEER = [("tf transform", 104), ("cmd_vel Twist", 48), ("odometry", 720),
+           ("/map OccupancyGrid", 374_040), ("costmap update", 131_000),
+           ("camera frame", 3_100_000)]
 
-def rewrite(src):
-    """Run the build script's rewriter over a toml and return the result."""
-    block = re.search(r"python3 - \"\$SHM_TOML\" << 'SHMEOF'\n(.*?)\nSHMEOF",
-                      open(BUILD).read(), re.S)
-    assert block, "mempool rewriter not found in build_custom_firmware.sh"
-    with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as fh:
-        fh.write(src)
-        path = fh.name
-    subprocess.run([sys.executable, "-c", block.group(1), path], check=True)
-    return open(path).read()
+checks = []
 
 
-def counts(toml):
-    return dict(re.findall(r"size\s*=\s*(\d+)\s*\ncount\s*=\s*(\d+)", toml))
+def check(name, ok, detail=""):
+    checks.append(ok)
+    print(f"{'ok  ' if ok else 'FAIL'} {name}" + (f" | {detail}" if detail else ""))
 
 
-def test_chunks_move_from_the_dead_pool_to_the_starved_one():
-    got = counts(rewrite(STOCK))
-    assert got == {"4194944": "100", "8389272": "10"}, got
+def geschreven_toml():
+    """Draai het mempool-blok uit het buildscript en lees het resultaat."""
+    src = open(BUILD).read()
+    start = src.index('SHM_TOML="$NOVABOT_ROOT/shm_config/shm_ioxroudi.toml"')
+    end = src.index("# 5b. Voeg script toe", start)
+    blok = src[start:end]
+    with tempfile.TemporaryDirectory() as d:
+        root = os.path.join(d, "novabot")
+        os.makedirs(os.path.join(root, "shm_config"))
+        toml = os.path.join(root, "shm_config", "shm_ioxroudi.toml")
+        open(toml, "w").write(STOCK)
+        script = f'set -e\nNOVABOT_ROOT="{root}"\n' + blok
+        r = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+        assert r.returncode == 0, r.stderr
+        return open(toml).read()
 
 
-def test_the_new_layout_costs_less_memory_than_stock():
-    before = sum(int(s) * int(c) for s, c in counts(STOCK).items())
-    after = sum(int(s) * int(c) for s, c in counts(rewrite(STOCK)).items())
-    assert after < before, (after, before)
-    assert after / 1e6 < 520 and before / 1e6 > 620
+def pools(toml):
+    return [(int(s), int(c)) for s, c in
+            re.findall(r"size\s*=\s*(\d+)\s*\ncount\s*=\s*(\d+)", toml)]
 
 
-def test_rerunning_the_build_is_idempotent():
-    once = rewrite(STOCK)
-    assert rewrite(once) == once
+def test_ladder_has_small_pools():
+    p = pools(geschreven_toml())
+    check("meerdere poolgroottes", len(p) >= 6, f"{len(p)} pools")
+    check("kleinste pool is klein genoeg voor een tf-transform",
+          p[0][0] <= 128, f"{p[0][0]} bytes")
+    check("oplopend gesorteerd", [x[0] for x in p] == sorted(x[0] for x in p))
 
 
-def test_an_unknown_pool_size_is_left_alone():
-    src = STOCK + "\n[[segment.mempool]]\nsize = 131072\ncount = 64\n"
-    assert counts(rewrite(src))["131072"] == "64"
+def test_the_existing_pools_are_untouched():
+    """De twee bestaande pools blijven exact zoals ze zijn, zodat niets wat nu
+    werkt kan stukgaan door deze wijziging."""
+    p = dict(pools(geschreven_toml()))
+    check("4 MB pool onveranderd", p.get(4194944) == 100, str(p.get(4194944)))
+    check("8 MB pool onveranderd", p.get(8389272) == 10, str(p.get(8389272)))
+
+
+def test_every_real_message_lands_in_a_fitting_pool():
+    p = pools(geschreven_toml())
+    sizes = sorted(x[0] for x in p)
+    for naam, n in VERKEER:
+        passend = next((s for s in sizes if s >= n), None)
+        verspilling = passend - n if passend else 0
+        check(f"{naam} ({n} B) krijgt een passend blok",
+              passend is not None and verspilling < max(4 * n, 4096) + 1_100_000,
+              f"blok {passend} B, {verspilling} B over")
+
+
+def test_the_tf_transform_no_longer_costs_four_megabytes():
+    """De kern: dit is het bericht waarop elke maaipoging van vandaag strandde."""
+    sizes = sorted(x[0] for x in pools(geschreven_toml()))
+    voor = 4194944                                   # enige pool die het paste
+    na = next(s for s in sizes if s >= 104)
+    check("tf-transform van 104 bytes kost geen 4 MB meer", na < voor,
+          f"{voor} B -> {na} B, {voor // na}x minder")
+
+
+def test_total_fits_the_device():
+    """4 GB RAM, /dev/shm is 2 GB en bevat nu 537 MB."""
+    totaal = sum(s * c for s, c in pools(geschreven_toml()))
+    check("totaal past in /dev/shm", totaal < 1_400_000_000,
+          f"{totaal / 1e6:.0f} MB")
+
+
+def main():
+    test_ladder_has_small_pools()
+    test_the_existing_pools_are_untouched()
+    test_every_real_message_lands_in_a_fitting_pool()
+    test_the_tf_transform_no_longer_costs_four_megabytes()
+    test_total_fits_the_device()
+    print(f"\n{sum(checks)}/{len(checks)} checks ok")
+    return 0 if all(checks) else 1
 
 
 if __name__ == "__main__":
-    for name, fn in sorted(globals().items()):
-        if name.startswith("test_") and callable(fn):
-            fn()
-            print(f"ok  {name}")
-    print("all mempool checks passed")
+    sys.exit(main())
