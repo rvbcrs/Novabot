@@ -906,5 +906,16 @@
     "finishedDesc": "La tonte est terminée et la tondeuse est de retour à la station de charge.",
     "errorTitle": "Retour suite à une panne",
     "errorDesc": "La tondeuse est rentrée à cause d'une panne. Corrigez la panne et réessayez."
+  },
+  "diagnose": {
+    "title": "Pourquoi ne se connecte-t-elle pas ?",
+    "refresh": "Vérifier à nouveau",
+    "checking": "Vérification…",
+    "seen": "Déjà connecté",
+    "attempts": "Tentatives de connexion",
+    "binding": "Association",
+    "bleMac": "MAC BLE",
+    "counterpart": "Homologue",
+    "lora": "Paire LoRa"
   }
 }

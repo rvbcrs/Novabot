@@ -144,6 +144,28 @@ export function initDb(): void {
       created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
     );
 
+    -- Verbindingspogingen: WEL of NIET geslaagd.
+    --
+    -- device_registry bewaart alleen het geslaagde geval, want daar komt een rij
+    -- pas als een apparaat binnen is. Precies de meest voorkomende klacht ("hij
+    -- komt niet online") laat dus geen enkel spoor na: de weigering ging naar de
+    -- console en de MQTT-log is een ring van 500 regels die bij elke herstart
+    -- weg is. Tegen de tijd dat iemand om hulp vraagt is het bewijs verdampt.
+    --
+    -- Klein gehouden met opzet: een rij per poging, gesnoeid op leeftijd. Geen
+    -- payloads, alleen wie, wanneer en waarom geweigerd.
+    CREATE TABLE IF NOT EXISTS connection_events (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      ts              INTEGER NOT NULL,          -- ms epoch
+      mqtt_client_id  TEXT    NOT NULL,
+      sn              TEXT,
+      outcome         TEXT    NOT NULL,          -- 'accepted' | 'rejected' | 'error' | 'disconnect'
+      reason          TEXT,                      -- weigergrond of foutmelding
+      remote_addr     TEXT
+    );
+    CREATE INDEX IF NOT EXISTS connection_events_sn_ts ON connection_events(sn, ts DESC);
+    CREATE INDEX IF NOT EXISTS connection_events_ts ON connection_events(ts DESC);
+
     -- Dynamisch apparaatregister: gevuld zodra een apparaat via MQTT verbindt.
     -- sn is het serienummer zoals herkend uit de MQTT client ID of username.
     CREATE TABLE IF NOT EXISTS device_registry (

@@ -1026,5 +1026,16 @@
     "finishedDesc": "Het maaien is voltooid en de maaier staat weer op het laadstation.",
     "errorTitle": "Teruggekeerd door storing",
     "errorDesc": "De maaier is teruggekeerd door een storing. Los de storing op en probeer opnieuw."
+  },
+  "diagnose": {
+    "title": "Waarom komt hij niet online?",
+    "refresh": "Opnieuw nakijken",
+    "checking": "Nakijken…",
+    "seen": "Ooit verbonden",
+    "attempts": "Verbindingspogingen",
+    "binding": "Koppeling",
+    "bleMac": "BLE MAC",
+    "counterpart": "Tegenhanger",
+    "lora": "LoRa-paar"
   }
 }

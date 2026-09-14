@@ -906,5 +906,16 @@
     "finishedDesc": "Das Mähen ist fertig und der Mäher steht wieder an der Ladestation.",
     "errorTitle": "Wegen Störung zurückgekehrt",
     "errorDesc": "Der Mäher ist wegen einer Störung zurückgekehrt. Behebe die Störung und versuche es erneut."
+  },
+  "diagnose": {
+    "title": "Warum kommt er nicht online?",
+    "refresh": "Erneut prüfen",
+    "checking": "Wird geprüft…",
+    "seen": "Jemals verbunden",
+    "attempts": "Verbindungsversuche",
+    "binding": "Kopplung",
+    "bleMac": "BLE MAC",
+    "counterpart": "Gegenstück",
+    "lora": "LoRa-Paar"
   }
 }

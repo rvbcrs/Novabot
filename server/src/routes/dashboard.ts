@@ -106,6 +106,9 @@ export function serializeEdgeDays(days: number[] | null | undefined): string | n
   return JSON.stringify(days);
 }
 
+import { diagnoseConnection } from '../services/connectionDiagnosis.js';
+import { connectionEventRepo } from '../db/repositories/index.js';
+
 export const dashboardRouter = Router();
 
 // Running server version (read once from package.json). Exposed on this OPEN
@@ -127,6 +130,33 @@ let RELEASE_NOTES: unknown = null;
 try {
   RELEASE_NOTES = JSON.parse(readFileSync(path.join(__dirname, '../../release-notes.json'), 'utf8'));
 } catch { /* ontbreekt in dev — knop blijft verborgen */ }
+/**
+ * Waar hangt dit apparaat vast in de keten van opkomen.
+ *
+ * Novabot is failliet en er is geen support, dus wie zijn maaier of laadstation
+ * niet online krijgt staat er alleen voor. Dit loopt het bewijs af dat we al
+ * hebben en stopt bij de eerste kapotte schakel.
+ */
+dashboardRouter.get('/diagnose/:sn', (req: Request, res: Response) => {
+  const sn = String(req.params.sn ?? '').trim();
+  if (!/^[A-Za-z0-9_-]{4,32}$/.test(sn)) {
+    res.status(400).json({ error: 'invalid sn' });
+    return;
+  }
+  res.json(diagnoseConnection(sn));
+});
+
+/** De ruwe verbindingspogingen achter stap `attempts`, voor wie wil doorklikken. */
+dashboardRouter.get('/diagnose/:sn/attempts', (req: Request, res: Response) => {
+  const sn = String(req.params.sn ?? '').trim();
+  if (!/^[A-Za-z0-9_-]{4,32}$/.test(sn)) {
+    res.status(400).json({ error: 'invalid sn' });
+    return;
+  }
+  const limit = Math.max(1, Math.min(200, parseInt(String(req.query.limit ?? '50'), 10) || 50));
+  res.json({ events: connectionEventRepo.recent(sn, limit) });
+});
+
 dashboardRouter.get('/release-notes', (_req: Request, res: Response) => {
   res.json(RELEASE_NOTES ?? { releases: [] });
 });

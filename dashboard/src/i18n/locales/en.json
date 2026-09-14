@@ -1028,5 +1028,16 @@
     "finishedDesc": "Mowing is complete and the mower is back on the charging station.",
     "errorTitle": "Returned due to a fault",
     "errorDesc": "The mower returned because of a fault. Clear the fault and try again."
+  },
+  "diagnose": {
+    "title": "Why is it not coming online?",
+    "refresh": "Check again",
+    "checking": "Checking…",
+    "seen": "Ever connected",
+    "attempts": "Connection attempts",
+    "binding": "Binding",
+    "bleMac": "BLE MAC",
+    "counterpart": "Counterpart",
+    "lora": "LoRa pair"
   }
 }

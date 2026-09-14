@@ -170,6 +170,7 @@ function ShellInner() {
         rainState={rainState}
         onOpenDrawer={() => setDrawerOpen(true)}
         activeSn={activeMower?.sn ?? null}
+        activeOnline={activeMower?.online ?? false}
         mowerEvents={mowerEvents}
         onEventBacklog={addMowerEvents}
       />

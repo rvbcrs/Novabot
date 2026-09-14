@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
-import { Server, ServerOff, Plus, Activity, ScrollText } from 'lucide-react';
+import { Server, ServerOff, Plus, Activity, ScrollText, Stethoscope } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { BleScanner } from '../components/ble/BleScanner';
 import { RainBadge } from './RainBadge';
 import { NotificationBell } from '../components/common/NotificationBell';
+import { DiagnosisPanel } from '../components/dashboard/DiagnosisPanel';
 import { ReleaseNotesModal } from '../components/common/ReleaseNotesModal';
 import { getServerVersion, fetchReleaseNotes, type ReleaseNotesEntry } from '../api/client';
 import type { MowerEvent } from '../types';
@@ -15,16 +16,18 @@ interface Props {
   rainState: 'dry' | 'rain' | 'paused-by-rain' | null;
   onOpenDrawer: () => void;
   activeSn: string | null;
+  activeOnline: boolean;
   mowerEvents: MowerEvent[];
   onEventBacklog: (e: MowerEvent) => void;
 }
 
-export function Header({ connected, rainState, onOpenDrawer, activeSn, mowerEvents, onEventBacklog }: Props) {
+export function Header({ connected, rainState, onOpenDrawer, activeSn, activeOnline, mowerEvents, onEventBacklog }: Props) {
   const { t, i18n } = useTranslation();
   const [showBle, setShowBle] = useState(false);
   const [version, setVersion] = useState('');
   const [notes, setNotes] = useState<ReleaseNotesEntry[]>([]);
   const [showNotes, setShowNotes] = useState(false);
+  const [showDiagnosis, setShowDiagnosis] = useState(false);
   useEffect(() => { getServerVersion().then(setVersion).catch(() => {}); }, []);
   // Knopje verschijnt alleen als er echt notes zijn (dev-builds hebben ze niet).
   useEffect(() => { fetchReleaseNotes().then(setNotes).catch(() => {}); }, []);
@@ -136,6 +139,25 @@ export function Header({ connected, rainState, onOpenDrawer, activeSn, mowerEven
         <RainBadge rainState={rainState} />
 
         <NotificationBell sn={activeSn} events={mowerEvents} onBacklog={onEventBacklog} />
+
+        {/* Diagnose: waar hangt dit apparaat vast in het opkomen. Springt in het
+            oog zodra het apparaat offline is, want dan heb je hem nodig. */}
+        {activeSn && (
+          <button
+            onClick={() => setShowDiagnosis(true)}
+            title={t('diagnose.title', 'Waarom komt hij niet online?')}
+            aria-label={t('diagnose.title', 'Waarom komt hij niet online?')}
+            className={`p-1.5 rounded-lg transition-colors ${
+              activeOnline
+                ? 'text-gray-400 hover:text-gray-100 hover:bg-gray-800'
+                : 'text-amber-300 bg-amber-500/15 hover:bg-amber-500/25'}`}
+          >
+            <Stethoscope className="w-4 h-4" />
+          </button>
+        )}
+        {showDiagnosis && activeSn && (
+          <DiagnosisPanel sn={activeSn} onClose={() => setShowDiagnosis(false)} />
+        )}
 
         {/* Diagnostics drawer — Activity icon (not a gear, which reads as
             "settings"); kept subtle so it doesn't compete with the tabs. */}

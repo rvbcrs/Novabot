@@ -172,6 +172,27 @@ export async function fetchMowerEvents(sn: string, limit = 50): Promise<MowerEve
   return data.events ?? [];
 }
 
+export interface DiagnosisStep {
+  id: string;
+  status: 'ok' | 'fail' | 'warn' | 'unknown' | 'skipped';
+  evidence: string;
+  action?: string;
+}
+
+export interface Diagnosis {
+  sn: string;
+  deviceType: 'mower' | 'charger' | 'unknown';
+  stuckAt: string | null;
+  summary: string;
+  steps: DiagnosisStep[];
+  generatedAt: number;
+}
+
+/** Where in the chain of coming online is this device stuck. */
+export async function fetchDiagnosis(sn: string): Promise<Diagnosis> {
+  return (await get(`${BASE}/diagnose/${encodeURIComponent(sn)}`)).json();
+}
+
 export async function deleteDevice(sn: string): Promise<void> {
   await apiFetch(`${BASE}/devices/${encodeURIComponent(sn)}`, { method: 'DELETE' });
 }

@@ -8,7 +8,7 @@ type AedesBroker = { publish: (packet: AedesPublishPacket, cb: (err?: Error | nu
 type Client = { id: string; conn?: { remoteAddress?: string }; [key: string]: unknown };
 type AedesPublishPacket = { topic: string; payload: Buffer | string; qos: 0 | 1 | 2; retain: boolean; cmd?: string; dup?: boolean };
 import { db } from '../db/database.js';
-import { deviceRepo, equipmentRepo, mapRepo } from '../db/repositories/index.js';
+import { deviceRepo, equipmentRepo, mapRepo, connectionEventRepo } from '../db/repositories/index.js';
 import { DeviceRegistryRow } from '../types/index.js';
 import { startMqttBridge } from '../proxy/mqttBridge.js';
 import { tryDecrypt } from './decrypt.js';
@@ -228,6 +228,30 @@ function extractMac(s: string): string | null {
 function extractSn(s: string): string | null {
   const m = SN_RE.exec(s);
   return m ? m[0] : null;
+}
+
+/**
+ * Persist one connect attempt. Never throws: a diagnostic record must not be
+ * able to refuse a device its connection.
+ */
+function recordConnection(
+  clientId: string,
+  sn: string | null,
+  outcome: 'accepted' | 'rejected' | 'error' | 'disconnect',
+  reason: string | null,
+  client?: Client | null,
+): void {
+  try {
+    connectionEventRepo.record({
+      clientId,
+      sn,
+      outcome,
+      reason,
+      remoteAddr: (client as any)?.conn?.remoteAddress ?? null,
+    });
+  } catch (err) {
+    console.warn('[MQTT] connection event not recorded:', err);
+  }
 }
 
 function upsertDevice(clientId: string, sn: string | null, mac: string | null, username: string | null) {
@@ -733,6 +757,7 @@ export async function startMqttBroker(): Promise<void> {
       const err = new Error('banned');
       (err as any).returnCode = 4; // MQTT 3.1.1: bad username/password
       console.log(`[BAN] Rejected connect from banned ${sn} (clientId=${clientId})`);
+      recordConnection(clientId, sn, 'rejected', 'banned', client);
       callback(err, false);
       return;
     }
@@ -784,6 +809,7 @@ export async function startMqttBroker(): Promise<void> {
     });
 
     upsertDevice(clientId, sn, mac, user || null);
+    recordConnection(clientId, sn, 'accepted', null, client);
 
     // Auto-detect BLE MAC via ARP als we geen MAC uit het clientId konden halen
     // (bijv. maaier clientId = LFIN2230700238_6688, bevat geen MAC)
@@ -851,6 +877,7 @@ export async function startMqttBroker(): Promise<void> {
 
   broker.on('clientError', (client: Client, err: Error) => {
     console.error(`${C.red}[MQTT] ERROR    clientId="${client.id}" err=${err.message}${C.reset}`);
+    recordConnection(client.id ?? '', extractSn(client.id ?? ''), 'error', err.message, client);
     pushMqttLog({
       ts: Date.now(), type: 'error', clientId: client.id, clientType: '?', sn: null,
       direction: '', topic: '', payload: err.message, encrypted: false,
@@ -859,6 +886,11 @@ export async function startMqttBroker(): Promise<void> {
 
   (broker as any).on('connectionError', (client: Client, err: Error) => {
     console.error(`${C.red}[MQTT] CONN-ERR clientId="${client?.id ?? '?'}" err=${err.message}${C.reset}`);
+    // Went to the console only, and the console is not there when someone asks
+    // for help two days later. This is the single most useful line for "it does
+    // not come online", so it belongs in the database.
+    const cid = client?.id ?? '';
+    recordConnection(cid, extractSn(cid), 'error', err.message, client);
   });
 
   broker.on('clientDisconnect', (client: Client) => {

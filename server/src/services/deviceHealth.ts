@@ -9,18 +9,9 @@
  */
 import { equipmentRepo } from '../db/repositories/equipment.js';
 import { translateValue, getMowerErrorState } from '../mqtt/sensorData.js';
+import { getLoraPair, type LoraSide, type LoraPairIssue } from './loraPair.js';
 
-export interface LoraSide {
-  addr: number | null;
-  channel: number | null;
-}
-
-export type LoraPairIssue =
-  | 'missing-charger-cache'
-  | 'missing-mower-cache'
-  | 'addr-mismatch'
-  | 'channel-mismatch'
-  | 'unpaired';
+export type { LoraSide, LoraPairIssue };
 
 export interface DeviceHealth {
   /** SN that was queried (echoed for clients that batch-call). */
@@ -40,16 +31,6 @@ export interface DeviceHealth {
   mowerError: { code: number; label: string } | null;
 }
 
-function parseLora(row: { charger_address: string | null; charger_channel: string | null } | undefined): LoraSide | null {
-  if (!row) return null;
-  const addr = row.charger_address != null && row.charger_address !== '' ? parseInt(row.charger_address, 10) : null;
-  const channel = row.charger_channel != null && row.charger_channel !== '' ? parseInt(row.charger_channel, 10) : null;
-  if (addr == null && channel == null) return null;
-  return {
-    addr: isNaN(addr ?? NaN) ? null : addr,
-    channel: isNaN(channel ?? NaN) ? null : channel,
-  };
-}
 
 function findPairedSn(sn: string): { mower_sn: string | null; charger_sn: string | null } {
   const eq = equipmentRepo.findBySn(sn);
@@ -66,30 +47,7 @@ export function getDeviceHealth(sn: string): DeviceHealth {
 
   const counterpart = isMower ? charger_sn : isCharger ? mower_sn : null;
 
-  // LoRa pair status — only meaningful when both halves of the pair exist.
-  let loraPair: DeviceHealth['loraPair'] = null;
-  const issues: LoraPairIssue[] = [];
-  if (charger_sn || mower_sn) {
-    const chargerLora = charger_sn ? parseLora(equipmentRepo.getLoraCache(charger_sn)) : null;
-    const mowerLora = mower_sn ? parseLora(equipmentRepo.getLoraCache(mower_sn)) : null;
-
-    if (charger_sn && !chargerLora) issues.push('missing-charger-cache');
-    if (mower_sn && !mowerLora) issues.push('missing-mower-cache');
-    if (chargerLora && mowerLora) {
-      if (chargerLora.addr !== mowerLora.addr) issues.push('addr-mismatch');
-      if (chargerLora.channel !== mowerLora.channel) issues.push('channel-mismatch');
-    }
-
-    loraPair = {
-      ok: issues.length === 0 && !!chargerLora && !!mowerLora,
-      issues,
-      charger: chargerLora,
-      mower: mowerLora,
-    };
-  } else if (isMower || isCharger) {
-    issues.push('unpaired');
-    loraPair = { ok: false, issues, charger: null, mower: null };
-  }
+  const loraPair: DeviceHealth['loraPair'] = getLoraPair(sn);
 
   // mower_error — published by the charger inside up_status_info every ~1s.
   // Surface only after MOWER_ERROR_THRESHOLD consecutive identical non-zero
