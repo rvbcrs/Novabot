@@ -200,7 +200,19 @@ def test_the_disk_and_the_planner_can_disagree():
           "precies de situatie van 17:03 op .244")
 
 
+def test_the_reload_script_ships_with_the_firmware():
+    """De daemon roept reload_nav_map.py aan bij elke kaartwijziging. Zit het
+    niet in het pakket, dan wijst die aanroep naar een bestand dat er niet is en
+    plant nav2 stil door op de kaart van het opstarten."""
+    build = open(os.path.join(RESEARCH, "build_custom_firmware.sh")).read()
+    check("buildscript kopieert reload_nav_map.py",
+          'cp "$RELOAD_SRC" "$NOVABOT_ROOT/scripts/reload_nav_map.py"' in build)
+    check("en maakt hem uitvoerbaar",
+          'chmod +x "$NOVABOT_ROOT/scripts/reload_nav_map.py"' in build)
+
+
 def main():
+    test_the_reload_script_ships_with_the_firmware()
     test_reload_fires_once_per_change()
     test_reload_survives_a_dead_map_server()
     test_a_backup_map_never_reaches_map_server()

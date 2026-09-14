@@ -1782,6 +1782,21 @@ fi
 # === Stap 5h3: Seam-fix daemon toevoegen ===
 echo "[5h3/9] Seam-fix daemon toevoegen..."
 
+# map_server leest map.pgm alleen bij het opstarten van de node. De daemon roept
+# dit scriptje aan zodra de kaart verandert, anders plant nav2 tot de volgende
+# herstart door op een verouderde kaart. Los proces met opzet: rclpy in de
+# daemon zou die een permanente iceoryx-deelnemer maken en die chunks komen pas
+# vrij bij procesexit.
+RELOAD_SRC="$SCRIPT_DIR/reload_nav_map.py"
+if [ -f "$RELOAD_SRC" ]; then
+    cp "$RELOAD_SRC" "$NOVABOT_ROOT/scripts/reload_nav_map.py"
+    chmod +x "$NOVABOT_ROOT/scripts/reload_nav_map.py"
+    echo "  reload_nav_map.py gekopieerd naar scripts/"
+else
+    echo "  WAARSCHUWING: reload_nav_map.py niet gevonden — de seam-fix daemon"
+    echo "                kan map_server dan niet laten herladen"
+fi
+
 SEAM_SRC="$SCRIPT_DIR/seam_fix_daemon.py"
 if [ -f "$SEAM_SRC" ]; then
     cp "$SEAM_SRC" "$NOVABOT_ROOT/scripts/seam_fix_daemon.py"
