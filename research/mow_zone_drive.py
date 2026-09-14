@@ -101,6 +101,29 @@ def _dist(a, b):
 # te kunnen raken, daarboven kan er van alles tussen staan.
 LEAD_IN_MAX_M = 0.5
 
+# Afstand tussen opeenvolgende punten in het pad dat naar FollowPath gaat. Een
+# opgenomen kanaal is vaak maar twee punten over een paar meter, en Pure Pursuit
+# heeft daar niets om op te sturen: hij pakt een mikpunt ver vooruit, schiet
+# erlangs en corrigeert terug, links-rechts-links, tot de progress checker het
+# opgeeft met "Failed to make progress" (live LFIN2230700238, 2026-09-14, 62 s
+# op zijn plek staan dansen aan het begin van map1tomap0). Een punt om de 10 cm
+# geeft hem een vloeiend spoor om te volgen.
+PATH_STEP_M = 0.10
+
+
+def densify(pts, step=PATH_STEP_M):
+    """Interpolate a sparse path so consecutive points are at most `step` apart."""
+    if len(pts) < 2:
+        return list(pts)
+    out = [tuple(pts[0])]
+    for a, b in zip(pts, pts[1:]):
+        d = _dist(a, b)
+        n = max(1, int(math.ceil(d / step)))
+        for k in range(1, n):
+            out.append((a[0] + (b[0] - a[0]) * k / n, a[1] + (b[1] - a[1]) * k / n))
+        out.append(tuple(b))        # eindpunt exact, niet via drijvende komma
+    return out
+
 
 def _lead_in(pts, robot, min_gap=0.3):
     """Put the mower's own position in front of the path when it is not on it.
@@ -787,7 +810,9 @@ def do_mow(drv, to_slot, map_ids, cutterhigh, direction):
                 if gap > LEAD_IN_MAX_M:
                     log(f"transit hop {hop + 1}/{len(uni)}: {gap:.1f} m aanloop naar "
                         f"{pts[0]}, laat de planner dat doen")
-                    ok, msg = drv.nav_to(pts[0][0], pts[0][1])
+                    aankomst = (math.atan2(pts[1][1] - pts[0][1], pts[1][0] - pts[0][0])
+                                if len(pts) > 1 else None)
+                    ok, msg = drv.nav_to(pts[0][0], pts[0][1], yaw=aankomst)
                     if not ok:
                         log(f"transit hop {hop + 1}/{len(uni)} aanloop faalde: {msg}")
                         phase("error", msg)
@@ -797,7 +822,7 @@ def do_mow(drv, to_slot, map_ids, cutterhigh, direction):
                     if _dist(robot, pts[0]) > _dist(robot, pts[-1]):
                         pts = list(reversed(pts))
                         pts = _trim_to_nearest(pts, robot)
-                pts = _lead_in(pts, robot)
+                pts = densify(_lead_in(pts, robot))
                 ok, msg = drv.follow_path(pts)
                 if not ok:
                     log(f"transit hop {hop + 1}/{len(uni)} ({fname}) failed: {msg}")

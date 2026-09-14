@@ -255,6 +255,28 @@ def test_a_short_approach_is_just_prepended():
     assert mzd._lead_in(channel, opdepunt) == channel
 
 
+def test_a_two_point_channel_becomes_a_dense_path():
+    # map1tomap0 is twee punten over 2,07 m; Pure Pursuit ging daar staan dansen
+    # tot de progress checker afkapte (live, 2026-09-14).
+    channel = [(2.24, 4.68), (3.93, 5.87)]
+    out = mzd.densify(channel)
+    assert out[0] == channel[0] and out[-1] == channel[-1]
+    gaps = [mzd._dist(a, b) for a, b in zip(out, out[1:])]
+    assert max(gaps) <= mzd.PATH_STEP_M + 1e-9, max(gaps)
+    assert len(out) >= 20, len(out)
+
+
+def test_densify_leaves_a_dense_path_alone():
+    fijn = [(0.0, 0.0), (0.05, 0.0), (0.10, 0.0)]
+    assert mzd.densify(fijn) == fijn
+
+
+def test_densify_survives_a_degenerate_path():
+    assert mzd.densify([]) == []
+    assert mzd.densify([(1.0, 2.0)]) == [(1.0, 2.0)]
+    assert mzd.densify([(1.0, 2.0), (1.0, 2.0)]) == [(1.0, 2.0), (1.0, 2.0)]
+
+
 def test_executing_gate_matches_the_firmware_rule():
     ex = mzd.task_executing
     assert ex(mzd.TASK_MODE_COVERAGE, mzd.WORK_STATUS_USER_STOP)   # parked = still executing
