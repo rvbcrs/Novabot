@@ -658,6 +658,32 @@ def _dock_zone():
     return None
 
 
+def find_stale_mow_drives(proc_root="/proc", self_pid=None):
+    """Other mow_zone_drive processes. A run that hangs keeps its iceoryx chunks
+    and the next one cannot get a single 4 MB block, so it strands where it
+    stands. Read procfs, never pgrep: our own argv carries the script name too."""
+    me = os.getpid() if self_pid is None else self_pid
+    out = []
+    try:
+        entries = os.listdir(proc_root)
+    except OSError:
+        return out
+    for name in entries:
+        if not name.isdigit() or int(name) == me:
+            continue
+        try:
+            with open(f"{proc_root}/{name}/cmdline", "rb") as fh:
+                cmd = fh.read().replace(b"\0", b" ").decode("utf-8", "replace")
+        except OSError:
+            continue
+        # Alleen echte ritten tellen: een droogloop (`check`) rijdt niet en
+        # mag de volgende start niet blokkeren, en onze eigen wrapper-shell
+        # draagt het scriptpad ook in zijn argv.
+        if re.search(r"mow_zone_drive\.py\s+(mow|return)\b", cmd):
+            out.append(int(name))
+    return out
+
+
 def channel_graph(names):
     """Undirected graph of recorded map<->map channels: slot -> {other: filename}.
 
@@ -917,6 +943,60 @@ def do_return(drv):
     return 0 if ok else 1
 
 
+def check_mow(drv, to_slot):
+    """Dry run: say what stands in the way BEFORE the mower drives anywhere.
+
+    Every failure of 2026-09-14 cost a full attempt to discover: a stuck run
+    holding the shared-memory pool, a zone with no recorded route to it, a
+    channel of two points the controller could not steer on, a target polygon
+    the planner had never seen. None of that needs wheels to find out. Prints
+    one CHECK line per item and a final verdict, so the caller can show a list
+    instead of a mower dancing in the garden.
+    """
+    findings = []
+
+    def check(name, ok, detail=""):
+        findings.append((name, ok, detail))
+        print(f"CHECK {'ok ' if ok else 'FAIL'} {name}" + (f" | {detail}" if detail else ""),
+              flush=True)
+
+    stale = find_stale_mow_drives()
+    check("geen vastgelopen run", not stale, f"pids {stale}" if stale else "")
+
+    base = _csv_base()
+    target = read_xy_csv(os.path.join(base, f"{to_slot}_work.csv"))
+    check(f"{to_slot} bestaat", len(target) >= 3, f"{len(target)} punten")
+
+    robot = drv.robot_xy(timeout=8.0)
+    check("gelokaliseerd", robot is not None,
+          f"positie {robot}" if robot else "geen map->base_link; de firmware doet dit "
+                                           "zelf bij de taakstart")
+
+    from_slot = current_zone_slot(robot) if robot else None
+    if robot and from_slot == to_slot:
+        check("route", True, "staat al in de doelzone")
+        route = []
+    else:
+        route = _channel_files(from_slot or "map0", to_slot)
+        check("route over de kanalen", bool(route) or not USE_TRANSIT,
+              " + ".join(route) if route
+              else f"geen keten van {from_slot or 'map0'} naar {to_slot}; "
+                   "teken een kanaal of laat de firmware plannen")
+
+    for fname in route:
+        pts = read_xy_csv(os.path.join(base, fname))
+        lengte = sum(_dist(a, b) for a, b in zip(pts, pts[1:]))
+        dicht = densify(pts)
+        check(f"kanaal {fname}", len(pts) >= 2,
+              f"{len(pts)} punten, {lengte:.1f} m, na verdichten {len(dicht)} punten")
+
+    ok = all(f[1] for f in findings)
+    print(f"CHECK {'ok ' if ok else 'FAIL'} eindoordeel | "
+          f"{sum(1 for f in findings if f[1])}/{len(findings)} in orde", flush=True)
+    phase("done" if ok else "error", "" if ok else "precheck_failed")
+    return 0 if ok else 1
+
+
 def main():
     args = sys.argv[1:]
     mode = args[0] if args else ""
@@ -925,7 +1005,12 @@ def main():
     drv = Driver(node)
     rc = 2
     try:
-        if mode == "return":
+        if mode == "check":
+            if len(args) < 2 or not re.fullmatch(r"map\d+", args[1]):
+                phase("error", "usage: mow_zone_drive.py check <mapN>")
+            else:
+                rc = check_mow(drv, args[1])
+        elif mode == "return":
             rc = do_return(drv)
         elif mode == "mow":
             if len(args) < 5:

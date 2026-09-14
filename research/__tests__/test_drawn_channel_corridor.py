@@ -50,6 +50,77 @@ def build(channel, obstacle=None):
 
 
 CHANNEL = [(0.5, 1.0), (2.5, 1.0)]     # 2 m horizontal
+OTHER = [(0.5, 2.0), (2.5, 2.0)]       # een tweede, een meter hoger
+
+
+def rebuild(prev, cur, lawn=None):
+    """(nav grid, opened, closed) voor een regenerate met deze kanalen.
+
+    Spiegelt handle_regenerate_per_map_files: sluiten wat er niet meer is,
+    daarna openen wat er wel is.
+    """
+    whole = np.full((H, W), np.uint8(OCCUPIED))
+    lawn_mask = np.zeros((H, W), dtype=bool)
+    if lawn:
+        img = Image.new("L", (W, H), 0)
+        ImageDraw.Draw(img).polygon([to_px(*p) for p in lawn], fill=255)
+        lawn_mask = np.array(img) > 0
+
+    def corridor(geoms):
+        img = Image.new("L", (W, H), 0)
+        d = ImageDraw.Draw(img)
+        uw = max(2, int(round(UNICOM_W_M / RES)))
+        for g in geoms:
+            d.line([to_px(*p) for p in g], fill=255, width=uw, joint="curve")
+        return np.array(img) > 0
+
+    # begintoestand: de vorige kanalen stonden open
+    if prev:
+        whole[corridor(prev)] = np.uint8(FREE)
+
+    cur_mask = corridor(cur) if cur else np.zeros((H, W), dtype=bool)
+    closed = 0
+    if prev:
+        gone = corridor(prev) & (~cur_mask) & (~lawn_mask)
+        sluit = gone & (whole >= 128)
+        closed = int(sluit.sum())
+        whole[sluit] = np.uint8(OCCUPIED)
+    opened = int(((whole < 128) & cur_mask).sum())
+    whole[cur_mask] = np.uint8(FREE)
+    return whole, opened, closed
+
+
+def test_a_removed_channel_closes_its_corridor_again():
+    # Zonder dit blijft een weggehaald kanaal voor altijd berijdbaar en heeft
+    # het verwijderen geen effect op de route (gemeld 2026-09-14).
+    grid, opened, closed = rebuild(prev=[CHANNEL, OTHER], cur=[OTHER])
+    assert closed > 0
+    cx, cy = to_px(1.5, 1.0)
+    assert grid[cy, cx] == OCCUPIED, "het oude kanaal moet weer dicht"
+    ox, oy = to_px(1.5, 2.0)
+    assert grid[oy, ox] == FREE, "het overgebleven kanaal blijft open"
+
+
+def test_a_moved_channel_closes_the_old_line():
+    verplaatst = [(0.5, 1.4), (2.5, 1.4)]
+    grid, _, closed = rebuild(prev=[CHANNEL], cur=[verplaatst])
+    assert closed > 0
+    assert grid[to_px(1.5, 1.4)[1], to_px(1.5, 1.4)[0]] == FREE
+    # 1,0 valt deels nog binnen de nieuwe 1,4 m brede strook rond y=1.4;
+    # een halve meter lager ligt er zeker buiten
+    assert grid[to_px(1.5, 0.6)[1], to_px(1.5, 0.6)[0]] == OCCUPIED
+
+
+def test_closing_never_touches_a_work_area():
+    lawn = [(1.0, 0.5), (2.0, 0.5), (2.0, 1.5), (1.0, 1.5)]
+    grid, _, _ = rebuild(prev=[CHANNEL], cur=[], lawn=lawn)
+    assert grid[to_px(1.5, 1.0)[1], to_px(1.5, 1.0)[0]] == FREE, \
+        "binnen een werkgebied blijft het vrij, anders is de zone onbereikbaar"
+
+
+def test_unchanged_channels_close_nothing():
+    _, _, closed = rebuild(prev=[CHANNEL, OTHER], cur=[CHANNEL, OTHER])
+    assert closed == 0
 
 
 def test_a_drawn_channel_opens_a_corridor():

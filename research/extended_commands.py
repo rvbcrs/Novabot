@@ -1740,7 +1740,10 @@ def find_stale_mow_drives(proc_root="/proc", self_pid=None):
                 cmd = fh.read().replace(b"\0", b" ").decode("utf-8", "replace")
         except OSError:
             continue
-        if "mow_zone_drive.py" in cmd:
+        # Alleen echte ritten tellen: een droogloop (`check`) rijdt niet en
+        # mag de volgende start niet blokkeren, en onze eigen wrapper-shell
+        # draagt het scriptpad ook in zijn argv.
+        if re.search(r"mow_zone_drive\.py\s+(mow|return)\b", cmd):
             out.append(int(name))
     return out
 
@@ -2119,6 +2122,60 @@ def handle_stop_mow_zone(params, respond):
     log(f"stop_mow_zone: killed={killed} (goal-cancel + param-herstel gedispatcht)")
     respond("stop_mow_zone_respond", {"result": 0, "killed": killed,
                                       "cleanup": "dispatched"})
+
+
+def handle_mow_zone_check(params, respond):
+    """Dry run for a zone: report what stands in the way without driving.
+
+    Every failure on 2026-09-14 cost a full attempt to discover, and the user
+    paid for that in afternoons: a stuck run holding the shared-memory pool, a
+    zone with no recorded route, a channel of two points the controller could
+    not steer on. None of that needs wheels. Runs mow_zone_drive.py in check
+    mode and relays each CHECK line, so a caller can show a list before the
+    Start button does anything.
+    """
+    to_slot = str(params.get("map") or params.get("map_name") or "").strip()
+    if not re.fullmatch(r"map\d+", to_slot):
+        respond("mow_zone_check_respond", {"result": 1, "error": "invalid_map"})
+        return
+    drive_script = "/root/novabot/scripts/mow_zone_drive.py"
+    if not os.path.isfile(drive_script):
+        respond("mow_zone_check_respond", {"result": 1, "error": "drive_script_missing"})
+        return
+    wrapper = ("source /opt/ros/galactic/setup.bash && "
+               "source /root/novabot/install/setup.bash 2>/dev/null && "
+               'exec stdbuf -oL python3 "$1" check "$2"')
+    argv = ["bash", "-c", wrapper, "mow_zone_check", drive_script, to_slot]
+
+    def _run():
+        checks = []
+        ok = False
+        try:
+            proc = subprocess.Popen(argv, env=_ros_env(), stdout=subprocess.PIPE,
+                                    stderr=subprocess.STDOUT, text=True, bufsize=1)
+            for line in proc.stdout:
+                line = line.strip()
+                if not line.startswith("CHECK "):
+                    continue
+                rest = line[6:]
+                status, _, body = rest.partition(" ")
+                name, _, detail = body.partition(" | ")
+                item = {"name": name.strip(), "ok": status.strip() == "ok",
+                        "detail": detail.strip()}
+                if item["name"] == "eindoordeel":
+                    ok = item["ok"]
+                else:
+                    checks.append(item)
+                log(f"mow_zone_check: {line}")
+            proc.wait()
+        except Exception as ex:
+            respond("mow_zone_check_respond", {"result": 1, "error": str(ex)})
+            return
+        respond("mow_zone_check_respond",
+                {"result": 0 if ok else 1, "map": to_slot, "ok": ok, "checks": checks})
+
+    threading.Thread(target=_run, daemon=True, name="mow-zone-check").start()
+    respond("mow_zone_check_started", {"map": to_slot})
 
 
 def handle_start_edge_cut(params, respond):
@@ -3063,19 +3120,63 @@ def handle_regenerate_per_map_files(params, respond):
         # (2026-09-14). Freed at UNICOM_W_M, well above the 0.451 m
         # inflation_radius nav2 keeps, and BEFORE the obstacle bake so a drawn
         # obstacle still wins over a channel crossing it.
-        _uni_img = Image.new("L", (W, H), 0)
-        _ud = ImageDraw.Draw(_uni_img)
         _uw = max(2, int(round(UNICOM_W_M / res)))
+
+        def _corridor_mask(geoms):
+            """Mask of the strips these channel geometries keep open."""
+            img = Image.new("L", (W, H), 0)
+            d = ImageDraw.Draw(img)
+            for g in geoms:
+                px = [to_px(x, y) for (x, y) in g]
+                if len(px) >= 2:
+                    d.line(px, fill=255, width=_uw, joint="curve")
+            return np.array(img) > 0
+
+        # Wat we de vorige keer hebben opengezet, bewaard als GEOMETRIE (niet als
+        # cellen): het raster kan intussen gegroeid zijn en dan kloppen de
+        # celindexen niet meer, de wereldcoördinaten wel.
+        _opened_file = f"{base}/.opened_channels.json"
+        try:
+            with open(_opened_file) as fh:
+                _prev_geoms = [g for g in json.load(fh).values() if len(g) >= 2]
+        except Exception:
+            _prev_geoms = []
+
+        _cur = {}
         for _uf in unicom_files:
-            _up = [to_px(x, y) for (x, y) in read_xy_csv(f"{csv_dir}/{_uf}")]
-            if len(_up) >= 2:
-                _ud.line(_up, fill=255, width=_uw, joint="curve")
-        _uni_mask = (np.array(_uni_img) > 0) & (~_obs_mask)
+            _pts = read_xy_csv(f"{csv_dir}/{_uf}")
+            if len(_pts) >= 2:
+                _cur[_uf] = [[float(x), float(y)] for (x, y) in _pts]
+        _uni_mask = _corridor_mask(_cur.values()) & (~_obs_mask)
+
+        # Een verwijderd of verplaatst kanaal moet zijn doorgang WEER DICHT
+        # krijgen, anders blijft de planner die weg voor altijd zien en heeft
+        # het weghalen geen effect. Alleen cellen die wij ooit openden en die nu
+        # geen kanaal, geen werkgebied en geen dock meer zijn: de rest is
+        # bereden grond of van de firmware, daar blijven we vanaf.
+        _nclosed = 0
+        if _prev_geoms:
+            # Niet binnen een werkgebied: daar hoort de maaier te kunnen komen,
+            # en het dock ligt er per definitie in (het anker is het eerste punt
+            # van mapNtocharge_unicom, dat in die zone valt).
+            _gone = _corridor_mask(_prev_geoms) & (~_uni_mask) & (~_lawn_mask)
+            _close = _gone & (whole >= 128)
+            _nclosed = int(_close.sum())
+            if _nclosed:
+                whole[_close] = np.uint8(OCCUPIED)
+                log(f"regenerate_per_map_files: closed {_nclosed} cell(s) of channels "
+                    f"that are gone from the nav map")
+
         _nuni = int(((whole < 128) & _uni_mask).sum())
         if _nuni:
             whole[_uni_mask] = np.uint8(254)
             log(f"regenerate_per_map_files: opened {_nuni} cell(s) along the recorded "
                 f"channels in the nav map ({UNICOM_W_M:.1f} m wide)")
+        try:
+            with open(_opened_file, "w") as fh:
+                json.dump(_cur, fh)
+        except Exception as ex:
+            log(f"regenerate_per_map_files: kon {_opened_file} niet schrijven: {ex}")
 
         # An obstacle must ALWAYS be occupied — including in the NAV map
         # (map.pgm), which nav2 loads as its global costmap. The per-slot loop
@@ -3089,7 +3190,7 @@ def handle_regenerate_per_map_files(params, respond):
         _nobs = int(_obs_mask.sum())
         if _nobs:
             whole[_obs_mask] = np.uint8(OCCUPIED)
-        if _nobs or _nuni:
+        if _nobs or _nuni or _nclosed:
             try:
                 with open(f"{base}/map.pgm", "wb") as fh:
                     fh.write(f"P5\n# CREATOR: map_generator.cpp {res:.3f} m/pix\n{W} {H}\n255\n".encode("ascii"))
@@ -4736,6 +4837,7 @@ COMMANDS = {
     "start_edge_cut": handle_start_edge_cut,
     "follow_unicom": handle_follow_unicom,
     "mow_zone": handle_mow_zone,
+    "mow_zone_check": handle_mow_zone_check,
     "return_to_dock": handle_return_to_dock,
     "stop_mow_zone": handle_stop_mow_zone,
     "stop_boundary_follow": handle_stop_boundary_follow,

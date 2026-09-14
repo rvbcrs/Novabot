@@ -44,6 +44,7 @@ except Exception:
     end = src.index("def kill_stale_mow_drives(")
     ec = types.ModuleType("ec")
     ec.os = os
+    ec.re = __import__("re")
     exec(compile(src[start:end], "ec", "exec"), ec.__dict__)
 
 
@@ -64,6 +65,20 @@ def test_it_finds_a_leftover_run():
         111: "python3 /root/novabot/scripts/mow_zone_drive.py mow map6 1000000 6 -",
         222: "/usr/bin/irrelevant",
     })
+    assert ec.find_stale_mow_drives(root, self_pid=999) == [111]
+
+
+def test_a_dry_run_is_not_a_stale_run():
+    # `check` rijdt niet, dus die mag de volgende start niet blokkeren.
+    root = fake_proc({
+        111: "python3 /root/novabot/scripts/mow_zone_drive.py check map6",
+        222: "bash -c ... mow_zone_drive.py check map6",
+    })
+    assert ec.find_stale_mow_drives(root, self_pid=999) == []
+
+
+def test_a_return_run_counts_too():
+    root = fake_proc({111: "python3 /root/novabot/scripts/mow_zone_drive.py return"})
     assert ec.find_stale_mow_drives(root, self_pid=999) == [111]
 
 
