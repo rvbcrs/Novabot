@@ -40,6 +40,7 @@ import { readMowDefaults } from '../../utils/mowDefaults';
 import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png';
 import markerIcon from 'leaflet/dist/images/marker-icon.png';
 import markerShadow from 'leaflet/dist/images/marker-shadow.png';
+import { activeWorkSlots, workMapSlotIndex } from '../../utils/mqtt';
 
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: markerIcon2x,
@@ -2863,12 +2864,25 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
   // Totale zone-oppervlakte = som van de work-map polygon-area's (m², lokale
   // meters). Dit is de "echte" oppervlakte zoals de app toont (bv. 204 m²),
   // i.t.t. de coverage-planner-schatting cov_area+cov_remaining (lager).
+  // Oppervlak van de zones die DEZE taak dekt, niet van de hele tuin. Met één
+  // zone was dat hetzelfde; met zeven stond er 220 m² terwijl de maaier zelf
+  // 21,5 m² voor map6 meldde. De maaier zegt in current_map_ids welke slots
+  // lopen; is dat onbekend, dan tonen we liever niets dan een verkeerd getal.
   const totalWorkAreaM2 = useMemo(() => {
-    const sum = maps
-      .filter(m => m.mapType === 'work' && Array.isArray(m.mapArea) && m.mapArea.length >= 3)
+    const works = maps.filter(m => m.mapType === 'work'
+      && Array.isArray(m.mapArea) && m.mapArea.length >= 3);
+    const slots = activeWorkSlots(
+      mowingSensors?.current_map_ids as string | undefined,
+      mowingSensors?.cov_map_path as string | undefined,
+    );
+    const selected = slots.length > 0
+      ? works.filter((m, idx) => slots.includes(workMapSlotIndex(m, idx)))
+      : [];
+    if (slots.length > 0 && selected.length === 0) return null;
+    const sum = (slots.length > 0 ? selected : works)
       .reduce((acc, m) => acc + polygonArea(m.mapArea as XY[]), 0);
     return sum > 0 ? sum : null;
-  }, [maps]);
+  }, [maps, mowingSensors]);
 
   // Trail (lokale map_position) → GPS via EXACT dezelfde transform als de maaier-
   // icoon: localToGps({x,y} − chargingPose, chargerGps) + calibratie-offset. Zo

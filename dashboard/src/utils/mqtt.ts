@@ -71,6 +71,31 @@ export function needsMapNameStart(area: number): boolean {
   return area > AREA_CODE_LIMIT || area === 255;
 }
 
+/**
+ * Which work slots a running task covers, from the mower's own report.
+ *
+ * `current_map_ids` is the same decimal positional bitmask as `area`
+ * (map0 = 1, map1 = 10, map2 = 100, summed for a multi-zone task), so digit
+ * n counts slot n. `cov_map_path` names the single yaml of a name-based start
+ * and serves as the fallback. Empty array = unknown, and the caller should
+ * then not pretend to know the area.
+ */
+export function activeWorkSlots(
+  currentMapIds: string | number | null | undefined,
+  covMapPath?: string | null,
+): number[] {
+  const raw = typeof currentMapIds === 'number' ? String(currentMapIds) : (currentMapIds ?? '').trim();
+  if (/^\d+$/.test(raw) && Number(raw) > 0) {
+    const digits = raw.split('').reverse();      // index = slotnummer
+    const slots = digits
+      .map((d, slot) => (d === '0' ? -1 : slot))
+      .filter((slot) => slot >= 0);
+    if (slots.length > 0) return slots;
+  }
+  const named = covMapPath?.match(/map(\d+)\.yaml$/);
+  return named ? [parseInt(named[1], 10)] : [];
+}
+
 /** Sequential cmd number used by start/stop_navigation. */
 export function nextCmdNum(): number {
   return Date.now() % 100000;
