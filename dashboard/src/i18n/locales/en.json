@@ -1055,6 +1055,12 @@
     "groupPair": "Charger and LoRa",
     "groupFirmware": "Firmware",
     "groupReady": "Ready to mow",
-    "wifi": "Wi-Fi"
+    "wifi": "Wi-Fi",
+    "disk": "Disk space",
+    "rivalBroker": "Second MQTT broker",
+    "chargerCrypto": "Charger firmware",
+    "mappingMode": "Mapping mode",
+    "parkedTask": "Parked task",
+    "groupServer": "Server"
   }
 }

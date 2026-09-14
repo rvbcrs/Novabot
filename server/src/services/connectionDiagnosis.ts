@@ -16,15 +16,16 @@
  */
 import { deviceRepo, equipmentRepo, connectionEventRepo } from '../db/repositories/index.js';
 import { getLoraPair } from './loraPair.js';
-import { checkReachability } from './reachability.js';
-import { scanLan, lookupMac } from './lanScan.js';
+import { checkReachability, serverIpv4 } from './reachability.js';
+import { scanLan, lookupMac, rivalBrokers } from './lanScan.js';
+import { statfs } from 'fs/promises';
 import { mapRepo, userRepo } from '../db/repositories/index.js';
 import { deriveHasError } from '../mqtt/mowerActivity.js';
 import { MAP_NAMES_SELECTION_BUILD } from './mowingArea.js';
 
 export type StepStatus = 'ok' | 'fail' | 'warn' | 'unknown' | 'skipped';
 
-export type DiagnosisGroup = 'reach' | 'connect' | 'identity' | 'pair' | 'firmware' | 'ready';
+export type DiagnosisGroup = 'server' | 'reach' | 'connect' | 'identity' | 'pair' | 'firmware' | 'ready';
 
 export interface DiagnosisStep {
   /** Stable id, so the UI can translate without parsing prose. */
@@ -106,6 +107,45 @@ export async function diagnoseConnection(
   const steps: DiagnosisStep[] = [];
   const deviceType = deviceTypeOf(sn);
   const push = (s: DiagnosisStep) => { steps.push(s); return s; };
+
+  // ── Server ─────────────────────────────────────────────────────────────
+  //
+  // Een volle schijf breekt alles wat schrijft: kaartuploads, de database, de
+  // logs. Het foutbeeld is diffuus en wijst nergens naar de echte oorzaak.
+  try {
+    const fs = await statfs('.');
+    const freeMb = Math.round((fs.bavail * fs.bsize) / 1048576);
+    const totalMb = Math.round((fs.blocks * fs.bsize) / 1048576);
+    const pct = totalMb > 0 ? Math.round((freeMb / totalMb) * 100) : 100;
+    push({
+      id: 'disk',
+      group: 'server',
+      status: freeMb < 200 ? 'fail' : freeMb < 1024 ? 'warn' : 'ok',
+      evidence: `${freeMb} MB vrij van ${totalMb} MB (${pct}%)`,
+      action: freeMb < 1024
+        ? 'kaartuploads en de database hebben ruimte nodig; maak schijfruimte vrij'
+        : undefined,
+    });
+  } catch {
+    push({ id: 'disk', group: 'server', status: 'unknown', evidence: 'schijfruimte niet op te vragen' });
+  }
+
+  // Twee brokers op één netwerk is een echte en verwarrende storing: maaiers
+  // vinden via mDNS de verkeerde, springen heen en weer en lijken met tussen-
+  // pozen offline. Precies wat hier op 14-09-2026 gebeurde toen een release een
+  // tweede container op 1883 liet staan.
+  const rivals = await rivalBrokers(serverIpv4());
+  push({
+    id: 'rival_broker',
+    group: 'server',
+    status: rivals.length > 0 ? 'fail' : 'ok',
+    evidence: rivals.length > 0
+      ? `nog ${rivals.length} andere MQTT-broker(s) op dit netwerk: ${rivals.join(', ')}`
+      : 'geen tweede MQTT-broker op dit netwerk',
+    action: rivals.length > 0
+      ? 'maaiers ontdekken via mDNS de verkeerde en springen heen en weer; zet er één uit'
+      : undefined,
+  });
 
   // No "is the server up" step: this answer only exists because the server
   // answered. A check that cannot fail is noise, and importing the broker here
@@ -443,6 +483,29 @@ export async function diagnoseConnection(
     }
   }
 
+  // De laderfirmware moet AES kennen: v0.4.0 wel, v0.3.6 niet, en de server
+  // versleutelt naar elk LFI-serienummer. Een oude lader krijgt dus berichten
+  // die hij niet kan lezen, zonder dat er ergens een fout verschijnt.
+  const chargerVer = eq?.charger_version ?? null;
+  if (!counterpartSn) {
+    push({ id: 'charger_crypto', group: 'pair', status: 'skipped', evidence: 'geen lader gekoppeld' });
+  } else if (!chargerVer) {
+    push({ id: 'charger_crypto', group: 'pair', status: 'unknown', evidence: 'laderversie onbekend' });
+  } else {
+    const m = chargerVer.match(/(\d+)\.(\d+)\.(\d+)/);
+    const tooOld = m ? (Number(m[1]) === 0 && Number(m[2]) < 4) : false;
+    push({
+      id: 'charger_crypto',
+      group: 'pair',
+      status: tooOld ? 'fail' : 'ok',
+      evidence: `laderfirmware ${chargerVer}${tooOld ? ', kent nog geen AES' : ''}`,
+      action: tooOld
+        ? 'de server versleutelt alles naar LFI-apparaten en deze lader kan dat niet lezen; '
+        + 'werk hem bij naar v0.4.0'
+        : undefined,
+    });
+  }
+
   // 7. LoRa pair. Reuses the existing comparison rather than re-deriving it.
   const pair = getLoraPair(sn);
   if (!pair) {
@@ -608,6 +671,35 @@ export async function diagnoseConnection(
         evidence: code === 0 ? 'geen storing'
                 : blocking ? `storing ${code} actief` : `melding ${code}, niet blokkerend`,
         action: blocking ? 'los de storing op of wis hem, anders start er geen taak' : undefined,
+      });
+
+      // Mapping-modus blokkeert het starten van een taak én het verwijderen van
+      // kaarten. Hij komt er niet vanzelf uit.
+      const mapping = snap.task_mode === '2' || snap.start_edit_or_assistant_map_flag === '1';
+      push({
+        id: 'mapping_mode',
+        group: 'ready',
+        status: mapping ? 'fail' : 'ok',
+        evidence: mapping ? 'de maaier staat in karteermodus' : 'niet in karteermodus',
+        action: mapping
+          ? 'in deze stand start geen maaitaak en kun je geen kaart verwijderen; '
+          + 'sluit het karteren af'
+          : undefined,
+      });
+
+      // Een gestopte maaibeurt blijft geparkeerd staan, en dan weigert de
+      // firmware een nieuwe start met "last task is executing".
+      const ws = parseInt(snap.work_status ?? '0', 10) || 0;
+      const parked = snap.task_mode === '1' && ws > 9;
+      push({
+        id: 'parked_task',
+        group: 'ready',
+        status: parked ? 'warn' : 'ok',
+        evidence: parked ? `een onderbroken maaibeurt staat geparkeerd (status ${ws})`
+                         : 'geen geparkeerde taak',
+        action: parked
+          ? 'de firmware weigert een nieuwe start zolang deze er staat; hervat hem of beëindig de sessie'
+          : undefined,
       });
 
       const unvalidated = (snap.frame_unvalidated ?? '0') === '1';

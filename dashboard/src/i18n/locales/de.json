@@ -933,6 +933,12 @@
     "groupPair": "Ladestation und LoRa",
     "groupFirmware": "Firmware",
     "groupReady": "Bereit zum Mähen",
-    "wifi": "WLAN"
+    "wifi": "WLAN",
+    "disk": "Speicherplatz",
+    "rivalBroker": "Zweiter MQTT-Broker",
+    "chargerCrypto": "Ladestation-Firmware",
+    "mappingMode": "Kartierungsmodus",
+    "parkedTask": "Geparkte Aufgabe",
+    "groupServer": "Server"
   }
 }

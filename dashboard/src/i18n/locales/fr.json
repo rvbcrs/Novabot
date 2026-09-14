@@ -933,6 +933,12 @@
     "groupPair": "Station et LoRa",
     "groupFirmware": "Micrologiciel",
     "groupReady": "Prêt à tondre",
-    "wifi": "Wi-Fi"
+    "wifi": "Wi-Fi",
+    "disk": "Espace disque",
+    "rivalBroker": "Second broker MQTT",
+    "chargerCrypto": "Micrologiciel station",
+    "mappingMode": "Mode cartographie",
+    "parkedTask": "Tâche en pause",
+    "groupServer": "Serveur"
   }
 }

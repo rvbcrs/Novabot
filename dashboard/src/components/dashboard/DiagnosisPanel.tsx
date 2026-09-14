@@ -30,9 +30,15 @@ const STEP_LABEL: Record<string, [string, string]> = {
   rtk: ['diagnose.rtk', 'RTK-positie'],
   fault: ['diagnose.fault', 'Storing'],
   frame: ['diagnose.frame', 'Kaartframe'],
+  disk: ['diagnose.disk', 'Schijfruimte'],
+  rival_broker: ['diagnose.rivalBroker', 'Tweede MQTT-broker'],
+  charger_crypto: ['diagnose.chargerCrypto', 'Laderfirmware'],
+  mapping_mode: ['diagnose.mappingMode', 'Karteermodus'],
+  parked_task: ['diagnose.parkedTask', 'Geparkeerde taak'],
 };
 
 const GROUP_LABEL: Record<string, [string, string]> = {
+  server: ['diagnose.groupServer', 'Server'],
   reach: ['diagnose.groupReach', 'Bereikbaarheid'],
   connect: ['diagnose.groupConnect', 'Verbinding'],
   identity: ['diagnose.groupIdentity', 'Identiteit'],
@@ -41,7 +47,7 @@ const GROUP_LABEL: Record<string, [string, string]> = {
   ready: ['diagnose.groupReady', 'Klaar om te maaien'],
 };
 
-const GROUP_ORDER = ['reach', 'connect', 'identity', 'pair', 'firmware', 'ready'];
+const GROUP_ORDER = ['server', 'reach', 'connect', 'identity', 'pair', 'firmware', 'ready'];
 
 function Icon({ status }: { status: DiagnosisStep['status'] }) {
   if (status === 'ok') return <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />;

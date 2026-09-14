@@ -1053,6 +1053,12 @@
     "groupPair": "Lader en LoRa",
     "groupFirmware": "Firmware",
     "groupReady": "Klaar om te maaien",
-    "wifi": "Wifi"
+    "wifi": "Wifi",
+    "disk": "Schijfruimte",
+    "rivalBroker": "Tweede MQTT-broker",
+    "chargerCrypto": "Laderfirmware",
+    "mappingMode": "Karteermodus",
+    "parkedTask": "Geparkeerde taak",
+    "groupServer": "Server"
   }
 }

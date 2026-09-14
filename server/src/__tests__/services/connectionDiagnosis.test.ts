@@ -413,3 +413,68 @@ describe('identity and wifi', () => {
     }
   });
 });
+
+describe('server side and blocked states', () => {
+  async function chain(snapshot: Record<string, string> | null = { msg: 'x' }) {
+    withIp('192.0.2.20');
+    return diagnoseConnection(MOWER, Date.now(), { snapshot, scanLan: false });
+  }
+
+  it('reports disk space, because a full disk breaks everything that writes', async () => {
+    const step = (await chain()).steps.find(s => s.id === 'disk')!;
+    expect(['ok', 'warn', 'fail', 'unknown']).toContain(step.status);
+    if (step.status !== 'unknown') expect(step.evidence).toMatch(/MB vrij/);
+  });
+
+  it('looks for a second MQTT broker on the network', async () => {
+    // Two brokers make mowers discover the wrong one over mDNS and flap between
+    // them, looking intermittently offline. It happened on this network today.
+    const step = (await chain()).steps.find(s => s.id === 'rival_broker')!;
+    if (step.status === 'fail') {
+      expect(step.action).toContain('mDNS');
+    } else {
+      expect(step.evidence).toContain('geen tweede');
+    }
+  });
+
+  it('flags a charger too old for AES', async () => {
+    // The server encrypts to every LFI serial. A v0.3.6 charger cannot read
+    // that, and nothing anywhere reports an error.
+    db.prepare(`INSERT OR IGNORE INTO users (id, app_user_id, email, password)
+                VALUES (?,?,?,?)`).run(4, 'u4', 'a@b.c', 'x');
+    db.prepare(`INSERT INTO equipment (equipment_id, mower_sn, charger_sn, mac_address, user_id, charger_version)
+                VALUES (?,?,?,?,?,?)`).run(`eq-${MOWER}`, MOWER, CHARGER, '50:41:1C:39:BD:C1', 'u4', 'v0.3.6');
+    const step = (await chain()).steps.find(s => s.id === 'charger_crypto')!;
+    expect(step.status).toBe('fail');
+    expect(step.action).toContain('v0.4.0');
+  });
+
+  it('accepts a charger on v0.4.0', async () => {
+    db.prepare(`INSERT OR IGNORE INTO users (id, app_user_id, email, password)
+                VALUES (?,?,?,?)`).run(5, 'u5', 'c@d.e', 'x');
+    db.prepare(`INSERT INTO equipment (equipment_id, mower_sn, charger_sn, mac_address, user_id, charger_version)
+                VALUES (?,?,?,?,?,?)`).run(`eq-${MOWER}`, MOWER, CHARGER, '50:41:1C:39:BD:C1', 'u5', 'v0.4.0');
+    expect((await chain()).steps.find(s => s.id === 'charger_crypto')!.status).toBe('ok');
+  });
+
+  it('spots the mower stuck in mapping mode', async () => {
+    const step = (await chain({ msg: 'x', task_mode: '2' })).steps.find(s => s.id === 'mapping_mode')!;
+    expect(step.status).toBe('fail');
+    expect(step.action).toContain('karteren');
+  });
+
+  it('spots a parked run that blocks a fresh start', async () => {
+    // The firmware refuses a new task with "last task is executing" while one
+    // sits parked, which reads as a start that simply does nothing.
+    const step = (await chain({ msg: 'x', task_mode: '1', work_status: '10' }))
+      .steps.find(s => s.id === 'parked_task')!;
+    expect(step.status).toBe('warn');
+    expect(step.action).toContain('nieuwe start');
+  });
+
+  it('is quiet when nothing is parked', async () => {
+    const step = (await chain({ msg: 'x', task_mode: '1', work_status: '0' }))
+      .steps.find(s => s.id === 'parked_task')!;
+    expect(step.status).toBe('ok');
+  });
+});

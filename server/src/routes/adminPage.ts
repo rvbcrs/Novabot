@@ -2245,6 +2245,12 @@ function devRow(dev) {
     actions += '<button class="btn btn-sm btn-green" style="min-width:64px;' + btnBase + '" onclick="bindDevice(\\'' + dev.sn + '\\')">Bind</button>' +
       '<button class="btn btn-sm btn-red" style="min-width:64px;' + btnBase + '" onclick="removeDevice(\\'' + dev.sn + '\\')">Remove</button>';
   }
+  // Diagnose: waar hangt dit apparaat vast in het opkomen. Staat bij elk
+  // apparaat, want juist bij een offline apparaat wil je hem hebben.
+  actions += '<button class="btn btn-sm" style="min-width:64px;' + btnBase
+    + 'background:rgba(99,102,241,.15);color:#a5b4fc;border:1px solid rgba(99,102,241,.35)" '
+    + 'title="Waarom komt hij niet online?" onclick="diagnoseDevice(\\'' + dev.sn + '\\')">Diagnose</button>';
+
   var loraCell = '';
   if (dev.lora_address) {
     var chPart = dev.lora_channel ? ' · ch' + dev.lora_channel : '';
@@ -2298,6 +2304,71 @@ async function queryLora(sn, deviceType) {
     loadMyDevices();
   } catch (e) {
     modalAlert('LoRa Query Failed', e.message);
+  }
+}
+
+/**
+ * HTML-escape. De diagnose zet apparaatdata in de tekst (serienummers, MAC's,
+ * foutmeldingen uit de firmware), en die gaat hier via innerHTML naar het
+ * scherm. Zonder escapen is dat een injectiepad.
+ */
+function escapeHtml(v) {
+  return String(v == null ? '' : v)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+/**
+ * Diagnose: loop de keten van opkomen af en toon waar het vastloopt.
+ *
+ * Zelfde endpoint als het dashboard, zodat er maar één waarheid is over wat er
+ * mis kan zijn en waarom.
+ */
+async function diagnoseDevice(sn) {
+  var overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px';
+  overlay.innerHTML = '<div style="background:#16213e;border:1px solid rgba(255,255,255,.12);border-radius:12px;max-width:560px;width:100%;max-height:85vh;overflow:auto;padding:18px">'
+    + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">'
+    + '<strong style="color:#e5e7eb">Diagnose ' + sn + '</strong>'
+    + '<span id="diagClose" style="cursor:pointer;color:#888;font-size:20px;line-height:1">&times;</span></div>'
+    + '<div id="diagBody" style="color:#aaa;font-size:13px">Nakijken\u2026</div></div>';
+  document.body.appendChild(overlay);
+  var cleanup = function() { overlay.remove(); };
+  overlay.querySelector('#diagClose').onclick = cleanup;
+  overlay.onclick = function(e) { if (e.target === overlay) cleanup(); };
+
+  var GROUPS = { server: 'Server', reach: 'Bereikbaarheid', connect: 'Verbinding',
+                 identity: 'Identiteit', pair: 'Lader en LoRa', firmware: 'Firmware',
+                 ready: 'Klaar om te maaien' };
+  var ORDER = ['server', 'reach', 'connect', 'identity', 'pair', 'firmware', 'ready'];
+  var ICON = { ok: ['\u2713', '#22c55e'], fail: ['\u2715', '#ef4444'],
+               warn: ['!', '#f59e0b'], unknown: ['?', '#6b7280'], skipped: ['\u2013', '#4b5563'] };
+
+  try {
+    var r = await fetchJsonAuth('/api/dashboard/diagnose/' + encodeURIComponent(sn),
+      token ? { headers: { 'Authorization': token } } : {});
+    var body = overlay.querySelector('#diagBody');
+    var html = '<div style="padding:8px 10px;border-radius:8px;margin-bottom:12px;background:'
+      + (r.stuckAt ? 'rgba(239,68,68,.12);color:#fca5a5' : 'rgba(34,197,94,.12);color:#86efac')
+      + '">' + escapeHtml(r.summary) + '</div>';
+    ORDER.forEach(function(g) {
+      var steps = (r.steps || []).filter(function(s) { return s.group === g; });
+      if (!steps.length) return;
+      html += '<div style="font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:#6b7280;margin:10px 0 4px">'
+        + GROUPS[g] + '</div>';
+      steps.forEach(function(s) {
+        var ic = ICON[s.status] || ICON.unknown;
+        html += '<div style="display:flex;gap:8px;padding:4px 0">'
+          + '<span style="color:' + ic[1] + ';font-weight:700;width:14px;flex:none">' + ic[0] + '</span>'
+          + '<div><div style="color:#d1d5db;font-size:12px;font-weight:600">' + escapeHtml(s.id) + '</div>'
+          + '<div style="color:#9ca3af;font-size:11px">' + escapeHtml(s.evidence) + '</div>'
+          + (s.action ? '<div style="color:#fbbf24;font-size:11px;margin-top:2px">\u2192 ' + escapeHtml(s.action) + '</div>' : '')
+          + '</div></div>';
+      });
+    });
+    body.innerHTML = html;
+  } catch (e) {
+    overlay.querySelector('#diagBody').textContent = 'Diagnose mislukt: ' + (e && e.message ? e.message : e);
   }
 }
 

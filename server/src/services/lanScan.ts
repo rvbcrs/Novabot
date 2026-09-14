@@ -13,6 +13,7 @@
  */
 import { execFile } from 'child_process';
 import dgram from 'dgram';
+import net from 'net';
 import { db } from '../db/database.js';
 import { serverIpv4 } from './reachability.js';
 
@@ -118,6 +119,34 @@ export async function lookupMac(ip: string): Promise<string | null> {
   const clean = ip.replace(/^::ffff:/, '');
   const hit = (await readNeighbours()).find(n => n.ip === clean);
   return hit?.mac ?? null;
+}
+
+/**
+ * Other hosts on the LAN that answer on the MQTT port.
+ *
+ * Two brokers on one network is a real failure and a confusing one: mowers
+ * discover the wrong one over mDNS, flap between the two and look intermittently
+ * offline. It happened on this very network on 2026-09-14, when a release left
+ * a second container listening on 1883.
+ *
+ * Reads the neighbour table as it stands, without the sweep, so this is cheap.
+ */
+export async function rivalBrokers(ourIps: string[], port = 1883, max = 40): Promise<string[]> {
+  const neighbours = (await readNeighbours()).filter(n => !ourIps.includes(n.ip)).slice(0, max);
+  const hits = await Promise.all(neighbours.map(async n => {
+    const open = await new Promise<boolean>(resolve => {
+      const sock = new net.Socket();
+      let done = false;
+      const finish = (ok: boolean) => { if (!done) { done = true; sock.destroy(); resolve(ok); } };
+      sock.setTimeout(600);
+      sock.once('connect', () => finish(true));
+      sock.once('timeout', () => finish(false));
+      sock.once('error', () => finish(false));
+      sock.connect(port, n.ip);
+    });
+    return open ? n.ip : null;
+  }));
+  return hits.filter((x): x is string => x !== null);
 }
 
 /** True for the ranges Docker hands out to bridged containers. */
