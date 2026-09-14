@@ -109,9 +109,6 @@ export async function runRecognition(
   sn: string,
   opts?: { onlyUnclassified?: boolean },
 ): Promise<number> {
-  const ready = await initClassifier();
-  if (!ready) return 0;
-
   const merged = loadMergedTgmo(sn);
   if (!merged) return 0;
 
@@ -127,6 +124,19 @@ export async function runRecognition(
   if (clusters.length === 0) return 0;
 
   const existingByKey = new Map(terrainClusterRepo.findBySn(sn).map((r) => [r.cluster_key, r]));
+
+  // Het model laadt PAS als er echt iets te classificeren valt. Het stond hier
+  // eerst bovenaan, dus iedere upload trok honderden MB het geheugen in, ook
+  // een live-run die alleen bekende clusters ververste. Daarmee stond de
+  // inactiviteitsklok ook telkens terug en ging het model nooit meer weg
+  // (live .247, 2026-09-14: server onbereikbaar bij elke maaibeurt).
+  const pending = clusters.filter((c) => {
+    const row = existingByKey.get(c.key);
+    if (row?.user_override) return false;            // override wint sowieso
+    return !(opts?.onlyUnclassified && row?.class_name);
+  });
+  if (pending.length > 0 && !(await initClassifier())) return 0;
+
   const frames = loadFrameCandidates(sn);
   const cropsDir = path.join(TERRAIN_DIR, 'crops', sn);
 

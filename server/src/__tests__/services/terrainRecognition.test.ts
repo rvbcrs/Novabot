@@ -96,6 +96,33 @@ describe('runRecognition', () => {
     expect(terrainClusterRepo.findBySn(sn)).toHaveLength(0);
   });
 
+  it('alles al geclassificeerd: het model wordt niet meer aangeraakt', async () => {
+    // Bewijs dat het laden van het model achter de "valt er iets te doen"-vraag
+    // zit: met TERRAIN_CLASSIFY=0 zou initClassifier falen en de hele run
+    // afbreken. Een override-cluster hoeft niets geclassificeerd te krijgen,
+    // dus de geometrie moet gewoon ververst worden. Zonder die volgorde trok
+    // elke upload tijdens het maaien honderden MB het geheugen in (.247,
+    // 2026-09-14).
+    const sn = 'LFIN9990000007';
+    writeTgmo(sn, nineCellCluster());
+    await writeFrame(sn, 1, 1, AIMED_POSE);
+    const pipeline = vi.fn(async () => LABELS.map((l) => ({ label: l.prompt, score: l.prompt === 'trampoline' ? 0.62 : 0.01 })));
+    _setPipelineForTest(pipeline);
+    await runRecognition(sn);
+    const key = terrainClusterRepo.findBySn(sn)[0].cluster_key;
+    terrainClusterRepo.setOverride(sn, key, 'tree');
+
+    process.env.TERRAIN_CLASSIFY = '0';
+    pipeline.mockClear();
+    const count = await runRecognition(sn);
+
+    expect(count).toBe(0);
+    expect(pipeline).not.toHaveBeenCalled();
+    // De rij staat er nog: de run is niet bij de classifier afgebroken.
+    expect(terrainClusterRepo.findBySn(sn)).toHaveLength(1);
+    expect(terrainClusterRepo.findBySn(sn)[0].user_override).toBe('tree');
+  });
+
   it('geen terreindata voor deze sn → 0, geen crash', async () => {
     _setPipelineForTest(async () => []);
     expect(await runRecognition('LFIN9990000003')).toBe(0);

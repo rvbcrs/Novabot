@@ -9,6 +9,8 @@
  * Testbaarheid: het pipeline-object is injecteerbaar via
  * `_setPipelineForTest()` zodat de test-suite NOOIT een model downloadt.
  */
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 /** EN prompt → NL naam → GLB-bestand (null = geen model, blijft voxels). */
@@ -37,14 +39,45 @@ export const LABELS: Array<{ prompt: string; nl: string; glb: string | null }> =
 export const SINK_PROMPTS = ['lawn'] as const;
 
 /**
+ * Q8 in plaats van fp32. Hetzelfde model, gekwantiseerd: `model_quantized.onnx`
+ * is 201 MB waar `model.onnx` er 813 is. Op een server die de herkenning naast
+ * van alles draait is dat het verschil tussen passen en de machine de swap in
+ * trekken (live .247, 2026-09-14: fp32 laden bij 137 MB vrij legde de hele NAS
+ * plat). `TERRAIN_MODEL_DTYPE=fp32` zet het terug voor wie geheugen over heeft;
+ * de drempels hieronder volgen die keuze. Fp16 is geen optie: onnxruntime-node
+ * struikelt op CPU over de fusion in dat model (getest 2026-09-14).
+ */
+export const MODEL_DTYPE = process.env.TERRAIN_MODEL_DTYPE ?? 'q8';
+
+/**
  * SigLIP scoort met sigmoids (niet softmax): absolute scores blijven laag,
  * zelfs bij een overduidelijke winnaar (praktijkmeting 2026-07-20: struik
  * 0.31, nummer 2 op 0.003). Daarom een marge-regel i.p.v. een hoge kale
  * drempel: top-1 moet minimaal CONFIDENCE_MIN scoren ÉN MARGIN_RATIO keer
  * boven de nummer 2 zitten.
+ *
+ * De drempels horen bij de precisie van het model. Q8 kiest hetzelfde label
+ * als fp32 maar scoort er ongeveer twee tot drie keer lager op, dus de
+ * fp32-drempels zouden er een derde van de vondsten door de vingers laten
+ * glippen. Nagemeten op de 86 crops van LFIN2230700238 met de fp32-uitspraken
+ * uit de database als referentie (2026-09-14):
+ *
+ *   drempels          gevonden   vals positief
+ *   0.12 / 4  (fp32)   9 van 16       0
+ *   0.10 / 2  (q8)    11 van 16       0
+ *   0.08 / 1.5        14 van 16       1
+ *
+ * 0.10 / 2 is het laatste punt zonder vals positief. De vijf die q8 mist zijn
+ * allemaal struiken die hij wél als struik bovenaan zet, maar te zwak.
  */
-export const CONFIDENCE_MIN = 0.12;
-export const MARGIN_RATIO = 4;
+const THRESHOLDS: Record<string, { confidence: number; margin: number }> = {
+  fp32: { confidence: 0.12, margin: 4 },
+  q8: { confidence: 0.10, margin: 2 },
+};
+
+const ACTIVE = THRESHOLDS[MODEL_DTYPE] ?? THRESHOLDS.fp32;
+export const CONFIDENCE_MIN = ACTIVE.confidence;
+export const MARGIN_RATIO = ACTIVE.margin;
 
 /** SigLIP is getraind met dit prompt-sjabloon; zonder blijven scores ~3x lager. */
 export const PROMPT_TEMPLATE = 'a photo of a {}';
@@ -54,10 +87,46 @@ type PipelineFn = (jpeg: Buffer) => Promise<Array<{ label: string; score: number
 
 /**
  * Hoe lang het model in het geheugen blijft nadat de laatste crop is
- * geclassificeerd. SigLIP kost ~700 MB resident; zonder deze klok blijft dat
- * na één maaisessie voorgoed staan. `0` = nooit lossen.
+ * geclassificeerd. `0` = nooit lossen. Kort gehouden omdat de uploads tijdens
+ * een maaibeurt om de paar minuten binnenkomen: bij vijf minuten stond de klok
+ * altijd weer terug en ging het model in de praktijk nooit meer weg.
  */
-export const IDLE_UNLOAD_MS = Number(process.env.TERRAIN_MODEL_IDLE_MS ?? 5 * 60_000);
+export const IDLE_UNLOAD_MS = Number(process.env.TERRAIN_MODEL_IDLE_MS ?? 90_000);
+
+/**
+ * Ondergrens vrij werkgeheugen waaronder het model NIET geladen wordt. De
+ * herkenning is een bijzaak; hem laten laden op een machine die al niets meer
+ * over heeft kost de maaier zijn verbinding met de server. Onder de grens
+ * slaat de batch over en probeert de volgende sessie het gewoon opnieuw.
+ */
+export const MIN_FREE_MB = Number(process.env.TERRAIN_MIN_FREE_MB ?? 700);
+
+/**
+ * Mag het model geladen worden bij dit vrije geheugen? Onbekend (geen meting)
+ * = ja, want een ontbrekende meting is geen reden om de functie uit te zetten.
+ */
+export function memoryAllowsLoad(freeMb: number | null, minFreeMb: number = MIN_FREE_MB): boolean {
+  return freeMb === null || freeMb >= minFreeMb;
+}
+
+/**
+ * Vrij geheugen van de HOST in MB. In een container toont /proc/meminfo de
+ * host, en dat is precies wat telt: het is de host die gaat swappen.
+ * `MemAvailable` (niet `MemFree`) is de kernel-schatting van wat een proces
+ * echt kan krijgen zonder te swappen. Geen procfs (macOS) → os.freemem().
+ */
+export function availableMemoryMb(meminfo?: string): number | null {
+  try {
+    const raw = meminfo ?? fs.readFileSync('/proc/meminfo', 'utf8');
+    const m = raw.match(/^MemAvailable:\s+(\d+) kB$/m);
+    if (m) return Math.floor(Number(m[1]) / 1024);
+  } catch {
+    // geen procfs: val terug op de node-meting hieronder
+  }
+  if (meminfo !== undefined) return null;   // test gaf expliciet iets mee
+  const free = os.freemem();
+  return Number.isFinite(free) && free > 0 ? Math.floor(free / 1024 / 1024) : null;
+}
 
 let currentPipeline: PipelineFn | null = null;
 let disposeCurrent: (() => Promise<unknown>) | null = null;
@@ -133,6 +202,16 @@ export async function initClassifier(): Promise<boolean> {
     touchIdleTimer();
     return true;
   }
+  // Geheugenpoort vóór de laadpoging, niet erin: een te volle machine is geen
+  // mislukte download en mag niet in `loading` blijven hangen.
+  const freeMb = availableMemoryMb();
+  if (!memoryAllowsLoad(freeMb)) {
+    console.warn(
+      `[terrainClassifier] ${freeMb} MB vrij, onder de ondergrens van ${MIN_FREE_MB} MB — `
+      + 'model niet geladen, batch wordt overgeslagen',
+    );
+    return false;
+  }
   // Eén laadpoging tegelijk: twee maaiers die tegelijk binnenkomen mogen niet
   // allebei hun eigen kopie van het model inladen.
   loading ??= loadPipeline().finally(() => {
@@ -147,6 +226,7 @@ async function loadPipeline(): Promise<boolean> {
     const cacheDir = path.resolve(process.env.STORAGE_PATH ?? './storage', 'models');
     const classifier = await pipeline('zero-shot-image-classification', 'Xenova/siglip-base-patch16-224', {
       cache_dir: cacheDir,
+      dtype: MODEL_DTYPE as 'q8' | 'fp32',
     });
     const candidateLabels = [...LABELS.map((l) => l.prompt), ...SINK_PROMPTS];
     currentPipeline = async (jpeg: Buffer) => {

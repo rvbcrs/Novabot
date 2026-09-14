@@ -2,8 +2,12 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   classifyCrop,
   unloadClassifier,
+  initClassifier,
+  availableMemoryMb,
   _setPipelineForTest,
   IDLE_UNLOAD_MS,
+  memoryAllowsLoad,
+  MIN_FREE_MB,
   LABELS,
 } from '../../services/terrainClassifier.js';
 
@@ -92,5 +96,77 @@ describe('terrainClassifier idle-unload', () => {
 
     await unloadClassifier();
     expect(dispose).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('terrainClassifier geheugenpoort', () => {
+  afterEach(() => {
+    _setPipelineForTest(null);
+    delete process.env.TERRAIN_MIN_FREE_MB;
+  });
+
+  it('leest MemAvailable uit /proc/meminfo, niet MemFree', () => {
+    const meminfo = [
+      'MemTotal:        7853568 kB',
+      'MemFree:          140416 kB',
+      'MemAvailable:    2226176 kB',
+      'Buffers:           12345 kB',
+    ].join('\n');
+    expect(availableMemoryMb(meminfo)).toBe(2174);   // 2226176 / 1024, afgerond
+  });
+
+  it('geeft null als /proc/meminfo geen MemAvailable heeft', () => {
+    expect(availableMemoryMb('MemTotal: 7853568 kB\nMemFree: 140416 kB')).toBeNull();
+  });
+
+  it('houdt de poort dicht onder de ondergrens en open erboven', () => {
+    expect(memoryAllowsLoad(137, 700)).toBe(false);    // .247 op 2026-09-14
+    expect(memoryAllowsLoad(699, 700)).toBe(false);
+    expect(memoryAllowsLoad(700, 700)).toBe(true);
+    expect(memoryAllowsLoad(2174, 700)).toBe(true);
+  });
+
+  it('zonder meting blijft de poort open (geen meting is geen reden om uit te zetten)', () => {
+    expect(memoryAllowsLoad(null, 700)).toBe(true);
+  });
+
+  it('de standaard-ondergrens laat ruimte voor het q8-model', () => {
+    expect(MIN_FREE_MB).toBeGreaterThanOrEqual(400);
+  });
+
+  it('een al geladen model gaat niet opnieuw door de poort', async () => {
+    _setPipelineForTest(async () => scoresWith({ bush: 0.31 }));
+    await expect(initClassifier()).resolves.toBe(true);
+  });
+});
+
+describe('drempels volgen de modelprecisie', () => {
+  afterEach(() => {
+    delete process.env.TERRAIN_MODEL_DTYPE;
+    vi.resetModules();
+  });
+
+  async function load(dtype?: string) {
+    if (dtype) process.env.TERRAIN_MODEL_DTYPE = dtype;
+    else delete process.env.TERRAIN_MODEL_DTYPE;
+    vi.resetModules();
+    return import('../../services/terrainClassifier.js');
+  }
+
+  it('q8 scoort lager, dus lagere drempels dan fp32', async () => {
+    const q8 = await load('q8');
+    const fp32 = await load('fp32');
+    expect(q8.CONFIDENCE_MIN).toBeLessThan(fp32.CONFIDENCE_MIN);
+    expect(q8.MARGIN_RATIO).toBeLessThan(fp32.MARGIN_RATIO);
+    // Nagemeten op 86 crops van LFIN2230700238 (2026-09-14): dit is het
+    // laatste punt zonder vals positief.
+    expect([q8.CONFIDENCE_MIN, q8.MARGIN_RATIO]).toEqual([0.10, 2]);
+    expect([fp32.CONFIDENCE_MIN, fp32.MARGIN_RATIO]).toEqual([0.12, 4]);
+  });
+
+  it('standaard is q8, en een onbekende precisie valt terug op fp32', async () => {
+    expect((await load()).MODEL_DTYPE).toBe('q8');
+    const raar = await load('q3');
+    expect([raar.CONFIDENCE_MIN, raar.MARGIN_RATIO]).toEqual([0.12, 4]);
   });
 });
