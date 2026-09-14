@@ -8,7 +8,7 @@ vi.mock('../../mqtt/mapSync.js', () => ({
 }));
 
 import { detectAndDispatch, resetEventState } from '../../notifications/eventDetector.js';
-import { dispatchEvent, getRecentEvents } from '../../notifications/dispatcher.js';
+import { dispatchEvent, getRecentEvents, setDashboardEventEmitter } from '../../notifications/dispatcher.js';
 import { publishToTopic } from '../../mqtt/mapSync.js';
 
 const SN = 'LFIN1231000211';
@@ -143,5 +143,48 @@ describe('dispatcher', () => {
     const calls = vi.mocked(publishToTopic).mock.calls;
     expect(calls[0][0]).toBe(`novabot/events/${SN}`);
     expect(calls[1][0]).toBe(`novabot/events/${SN}/docked`);
+  });
+});
+
+describe('dashboard fan-out', () => {
+  // The detector and the dispatcher have always produced these events, but the
+  // only real-time delivery was an Expo push to the mobile app. A dashboard
+  // user never saw "docked" or "mowing finished"; its Settings panel said
+  // "coming soon" while the events flowed past it.
+  it('hands every dispatched event to the dashboard emitter', () => {
+    const seen: Array<{ type: string; sn: string }> = [];
+    setDashboardEventEmitter(ev => seen.push({ type: ev.type, sn: ev.sn }));
+    try {
+      dispatchEvent({
+        sn: SN, type: 'docked', ts: Date.now(),
+        title: 'Mower docked', message: 'on the dock', data: {},
+      });
+      expect(seen).toEqual([{ type: 'docked', sn: SN }]);
+    } finally {
+      setDashboardEventEmitter(null);
+    }
+  });
+
+  it('a throwing dashboard emitter does not break the other channels', () => {
+    setDashboardEventEmitter(() => { throw new Error('socket gone'); });
+    try {
+      expect(() => dispatchEvent({
+        sn: SN, type: 'mowing_finished', ts: Date.now(),
+        title: 'Mowing finished', message: 'done', data: {},
+      })).not.toThrow();
+      // MQTT still got it: one publish for the SN topic, one for the typed topic.
+      expect(vi.mocked(publishToTopic).mock.calls.length).toBeGreaterThanOrEqual(2);
+      expect(getRecentEvents(SN, 1)[0].type).toBe('mowing_finished');
+    } finally {
+      setDashboardEventEmitter(null);
+    }
+  });
+
+  it('no emitter registered is not an error', () => {
+    setDashboardEventEmitter(null);
+    expect(() => dispatchEvent({
+      sn: SN, type: 'low_battery', ts: Date.now(),
+      title: 'Low battery', message: '15%', data: {},
+    })).not.toThrow();
   });
 });

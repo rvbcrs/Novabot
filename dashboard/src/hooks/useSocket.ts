@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Socket } from 'socket.io-client';
 import { getSocket } from '../api/socket';
-import type { DeviceUpdateEvent, DeviceOnlineEvent, MqttLogEntry, BleLogEntry } from '../types';
+import type { DeviceUpdateEvent, DeviceOnlineEvent, MqttLogEntry, BleLogEntry, MowerEvent } from '../types';
 
 export interface OtaEventPayload {
   sn: string;
@@ -29,6 +29,7 @@ interface SocketHandlers {
   onMapOutline?: (e: MapOutlineEvent) => void;
   onTrailClear?: (e: { sn: string }) => void;
   onMowLanes?: (e: { sn: string; lanes: Array<{ lat1: number; lng1: number; lat2: number; lng2: number }> }) => void;
+  onMowerEvent?: (e: MowerEvent) => void;
 }
 
 export function useSocket(handlers: SocketHandlers) {
@@ -92,6 +93,12 @@ export function useSocket(handlers: SocketHandlers) {
       handlersRef.current.onMowLanes?.(e);
     });
 
+    // docked / mowing_finished / low_battery / stuck / … — the same events the
+    // app gets as a push. The dashboard used to get none of them.
+    socket.on('mower:event', (e: MowerEvent) => {
+      handlersRef.current.onMowerEvent?.(e);
+    });
+
     // Shared socket — only remove listeners this hook registered, don't disconnect
     return () => {
       socket.off('connect');
@@ -108,6 +115,7 @@ export function useSocket(handlers: SocketHandlers) {
       socket.off('map:outline');
       socket.off('trail:clear');
       socket.off('mow:lanes');
+      socket.off('mower:event');
     };
   }, []);
 

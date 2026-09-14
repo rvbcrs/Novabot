@@ -5,6 +5,7 @@ import {
   Map as MapIcon, Sparkles, RotateCw,
   Eye, Slice,
   Home, SkipForward, CloudRain, Gamepad2, Anchor, Move,
+  AlertTriangle, type LucideIcon,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { MapData, GpsPoint, LocalPoint } from '../../types';
@@ -25,6 +26,8 @@ import {
 } from '../../utils/mowerActivity';
 import { useToast } from '../common/Toast';
 import { isOpenNovaFirmware } from '../../utils/firmwareCapability';
+import { ReturnReasonModal } from './ReturnReasonModal';
+import { useReturnReason, RETURN_REASON_META } from './returnReason';
 import { isUnsupportedFirmwareError } from '../../api/client';
 import { PatternPicker } from '../patterns/PatternPicker';
 import { loadPattern, transformToGps, type NormContour } from '../../utils/patternUtils.js';
@@ -151,6 +154,28 @@ export function MowerControls({
   const [rainPrompt, setRainPrompt] = useState<{ mm: number; prob: number; atMs: number } | null>(null);
   const [rainIgnoreToggle, setRainIgnoreToggle] = useState(false);
   const rainResolveRef = useRef<((proceed: boolean) => void) | null>(null);
+
+  // In-app confirm, same shape as the app's alerts. window.confirm was doing
+  // this job for Stop and for the long-pause Resume: a browser system dialog
+  // with an English string baked into the source, next to a styled and
+  // translated modal for every other decision.
+  const [confirmSpec, setConfirmSpec] = useState<{
+    icon: LucideIcon; tone: 'danger' | 'warn'; title: string; body: string; confirmLabel: string;
+  } | null>(null);
+  const confirmResolveRef = useRef<((ok: boolean) => void) | null>(null);
+  const askConfirm = useCallback(
+    (spec: { icon: LucideIcon; tone: 'danger' | 'warn'; title: string; body: string; confirmLabel: string }) =>
+      new Promise<boolean>(resolve => {
+        confirmResolveRef.current = resolve;
+        setConfirmSpec(spec);
+      }),
+    [],
+  );
+  const settleConfirm = useCallback((ok: boolean) => {
+    setConfirmSpec(null);
+    confirmResolveRef.current?.(ok);
+    confirmResolveRef.current = null;
+  }, []);
 
   // Returns true if it is safe to proceed now (no rain, or user confirmed). A
   // forecast error never blocks mowing — fail open, like the app.
@@ -371,8 +396,9 @@ export function MowerControls({
       const cmdName = label || Object.keys(cmd)[0];
       const detail = err instanceof Error ? `: ${err.message}` : '';
       toast(`✗ ${cmdName}${detail}`, 'error');
+    } finally {
+      setBusy(false);
     }
-    setBusy(false);
   }, [sn, t, toast]);
 
   /**
@@ -415,8 +441,9 @@ export function MowerControls({
         const detail = err instanceof Error ? `: ${err.message}` : '';
         toast(`✗ ${t('controls.startEdgeCut') ?? 'Edge cut'}${detail}`, 'error');
       }
+    } finally {
+      setBusy(false);
     }
-    setBusy(false);
   }, [sn, sensors, cuttingHeight, t, toast, onStarted]);
 
   const handleStart = useCallback(async () => {
@@ -536,8 +563,14 @@ export function MowerControls({
     } catch (err) {
       const detail = err instanceof Error ? `: ${err.message}` : '';
       toast(`✗ ${t('controls.startMowing')}${detail}`, 'error');
+    } finally {
+      // Zonder finally blijft `busy` hangen zodra een pad in de try met return
+      // naar buiten springt, en dan staat de HELE knoppenbalk op disabled tot
+      // de component opnieuw laadt. Dat gebeurde live: een start via
+      // start_navigation (regel ~509) eindigt in een return, en daarna waren
+      // pauze, stop, dock, joystick en kaart allemaal dood.
+      setBusy(false);
     }
-    setBusy(false);
   }, [sn, cuttingHeight, pathDirection, edgeOffset, mapId, mapName, maps, pendingPolygon,
     patternMode, patternId, patternContours, patternCenter, patternSize, patternRotation,
     onPathDirectionChange, onPatternPlacementChange, onStarted, chargerGps, checkRainGate,
@@ -559,6 +592,74 @@ export function MowerControls({
   // map frame is re-anchored on the dock (mirrors app HomeScreen frameUnvalidated).
   const frameUnvalidated = (sensors?.frame_unvalidated ?? '0') === '1';
   const [showReanchor, setShowReanchor] = useState(false);
+
+  // Why the mower is on the dock. Without this a run cut short by rain, a low
+  // battery or the time limit looked exactly like one the user stopped by hand:
+  // a bare Resume button and no explanation.
+  const returnReason = useReturnReason(activity, sensors, hasError);
+
+  // ── Safety stop after a long-pause resume ──────────────────────────────
+  //
+  // A resume after a long pause can hand the firmware a stale pose; it then
+  // reports ROBOT_OUT_OF_MAP_HANDLE and keeps driving. The app stops the mower
+  // itself and says so. The dashboard did neither, so the same resume just let
+  // it drive on off the map.
+  const lastResumeAt = useRef<number | null>(null);
+  const safetyFired = useRef(false);
+  const [safetyNotice, setSafetyNotice] = useState(false);
+  useEffect(() => {
+    const msg = sensors?.msg ?? '';
+    if (activity === 'idle' || activity === 'charging') {
+      lastResumeAt.current = null;
+      safetyFired.current = false;
+      return;
+    }
+    if (safetyFired.current || lastResumeAt.current == null) return;
+    if (Date.now() - lastResumeAt.current > 2 * 60 * 1000) return;
+    if (!msg.includes('ROBOT_OUT_OF_MAP_HANDLE')) return;
+    safetyFired.current = true;
+    void (async () => {
+      try {
+        await sendCommand(sn, { stop_navigation: { cmd_num: nextCmdNum() } });
+        await new Promise(r => setTimeout(r, 300));
+        await sendCommand(sn, { clear_error: {} });
+      } catch { /* the notice matters more than the command result */ }
+      setSafetyNotice(true);
+    })();
+  }, [sensors?.msg, activity, sn]);
+
+  // ── Cutting height mismatch ────────────────────────────────────────────
+  //
+  // The firmware silently rejects an out-of-range cutterhigh and keeps the old
+  // height, so a run can quietly mow at the wrong length. target_height echoes
+  // what it accepted. Both values are wire units (cm - 2); one unit of
+  // tolerance covers firmware rounding, and the value must hold still for 6 s
+  // because the firmware takes seconds to apply it and echoes the previous one
+  // meanwhile.
+  const heightCheckDone = useRef(false);
+  const heightFirstSeen = useRef<{ value: number; ts: number } | null>(null);
+  const [heightMismatch, setHeightMismatch] = useState<{ expected: number; actual: number } | null>(null);
+  useEffect(() => {
+    if (activity !== 'mowing') {
+      heightCheckDone.current = false;
+      heightFirstSeen.current = null;
+      return;
+    }
+    const reported = parseInt(sensors?.target_height ?? '0', 10);
+    if (!reported || heightCheckDone.current) return;
+    const now = Date.now();
+    const seen = heightFirstSeen.current;
+    if (!seen || seen.value !== reported) {
+      heightFirstSeen.current = { value: reported, ts: now };
+      return;
+    }
+    if (now - seen.ts < 6000) return;
+    heightCheckDone.current = true;
+    const wanted = mmToCutterhigh(cuttingHeight);
+    if (Math.abs(reported - wanted) > 1) {
+      setHeightMismatch({ expected: wanted + 2, actual: reported + 2 });
+    }
+  }, [sensors?.target_height, activity, cuttingHeight]);
   useEffect(() => { if (!frameUnvalidated) setShowReanchor(false); }, [frameUnvalidated]);
 
   // Long-pause timer — start when activity becomes 'paused', clear otherwise.
@@ -602,8 +703,9 @@ export function MowerControls({
     } catch (err) {
       const detail = err instanceof Error ? `: ${err.message}` : '';
       toast(`✗ ${t('controls.goToCharge')}${detail}`, 'error');
+    } finally {
+      setBusy(false);
     }
-    setBusy(false);
   }, [sn, t, toast]);
 
   // Pause an active coverage session.
@@ -614,22 +716,37 @@ export function MowerControls({
   // Resume a paused coverage session. Long pauses (>15 min) carry localization-
   // drift risk, so confirm first (mirrors app long-pause confirm).
   const handleResume = useCallback(async () => {
-    if (isLongPause && !window.confirm(
-      `Paused for ${Math.floor(pausedForMs / 60000)} min. Long pauses can cause localization drift and the mower may drive off the map. Resume anyway?`,
-    )) return;
+    if (isLongPause && !(await askConfirm({
+      icon: AlertTriangle,
+      tone: 'warn',
+      title: t('controls.pausedForTitle', 'Gepauzeerd voor {{label}}')
+        .replace('{{label}}', `${Math.floor(pausedForMs / 60000)} min`),
+      body: t('controls.longPauseResumeBody',
+        'Na een lange pauze kan de lokalisatie zijn weggelopen en rijdt de maaier mogelijk van de kaart af. Toch hervatten?'),
+      confirmLabel: t('controls.resumeAnyway', 'Toch hervatten'),
+    }))) return;
     if (!(await checkRainGate())) return;
+    lastResumeAt.current = Date.now();
+    safetyFired.current = false;
     void send({ resume_navigation: { cmd_num: nextCmdNum() } }, t('controls.resume'));
-  }, [send, t, isLongPause, pausedForMs, checkRainGate]);
+  }, [send, t, isLongPause, pausedForMs, checkRainGate, askConfirm]);
 
   // Stop an active mowing/edge session: confirm, then stop_navigation (+
   // stop_boundary_follow for edge, best-effort).
   const handleStopMowing = useCallback(async (edge: boolean) => {
-    if (!window.confirm('Stop mowing? The mower will halt where it is and the current session ends. It will NOT return to the dock.')) return;
+    if (!(await askConfirm({
+      icon: Square,
+      tone: 'danger',
+      title: t('controls.stopMowingTitle', 'Maaien stoppen?'),
+      body: t('controls.stopMowingDesc',
+        'De maaier stopt waar hij staat en de sessie eindigt. Hij rijdt NIET terug naar het laadstation.'),
+      confirmLabel: t('controls.stop', 'Stoppen'),
+    }))) return;
     await send({ stop_navigation: { cmd_num: nextCmdNum() } }, t('controls.stop'));
     if (edge) {
       try { await sendExtendedCommand(sn, { stop_boundary_follow: {} }); } catch { /* best-effort */ }
     }
-  }, [send, sn, t]);
+  }, [send, sn, t, askConfirm]);
 
   // Stop a return-to-dock: stop_to_charge cancels the auto_recharge action;
   // stop_navigation + stop_boundary_follow clear any lingering goals.
@@ -742,6 +859,35 @@ export function MowerControls({
             start dropdown; when an interrupted coverage is parked on the dock
             it resumes instead (label "Resume"). Disabled on error/offline/
             no-map/busy. */}
+        {/* Her-ankeren nodig: een tooltip op een uitgeschakelde knop vindt
+            niemand. Deze chip zegt het en opent meteen de wizard. */}
+        {frameUnvalidated && (
+          <button
+            onClick={() => setShowReanchor(true)}
+            title={t('controls.reanchorRequiredBody',
+              'De kaart is teruggezet maar het frame is nog niet gecontroleerd. Anker de maaier opnieuw op het laadstation voordat je gaat maaien.')}
+            className={`${btnBase} bg-amber-600/20 text-amber-300 hover:bg-amber-600/40`}
+          >
+            <Anchor className="w-3.5 h-3.5" />
+          </button>
+        )}
+
+        {/* Waarom hij op het dock staat, na het sluiten van de uitleg nog
+            terug te halen. Zelfde chip als in de app. */}
+        {returnReason.liveReturn && returnReason.reason && !returnReason.visible && (() => {
+          const meta = RETURN_REASON_META[returnReason.reason];
+          const Icon = meta.icon;
+          return (
+            <button
+              onClick={returnReason.open}
+              title={t('returnReason.why', 'Waarom staat hij op het dock?')}
+              className={`${btnBase} bg-gray-700/60 ${meta.tone} hover:bg-gray-600/60`}
+            >
+              <Icon className="w-3.5 h-3.5" />
+            </button>
+          );
+        })()}
+
         {(activity === 'idle' || activity === 'charging' || activity === 'error' || activity === 'offline') && (
           <button
             onClick={() => {
@@ -763,6 +909,9 @@ export function MowerControls({
             title={
               hasError ? (t('controls.clearErrorFirst') ?? 'Clear error first')
               : noMap ? (t('controls.noMapCreateFirst') ?? 'Create a map first')
+              // Stond hier niet, terwijl frameUnvalidated de knop wél uitzet:
+              // de startknop was grijs zonder dat iets vertelde waarom.
+              : frameUnvalidated ? t('controls.reanchorRequiredTitle', 'Her-ankeren nodig')
               : mowerBusy ? t('controls.busy')
               : (online || demoActive) ? t('controls.startMowing')
               : t('controls.mowerOffline')
@@ -782,7 +931,21 @@ export function MowerControls({
             parked session entirely instead of resuming it. */}
         {interruptedCoverage && (activity === 'idle' || activity === 'charging' || activity === 'error' || activity === 'offline') && (
           <button
-            onClick={() => { void send({ stop_navigation: { cmd_num: nextCmdNum() } }, t('controls.stop')); }}
+            onClick={() => {
+              // De app vraagt hier om bevestiging (endSessionDesc); het
+              // dashboard gooide de onderbroken maaibeurt zonder vragen weg.
+              void (async () => {
+                if (!(await askConfirm({
+                  icon: Square,
+                  tone: 'danger',
+                  title: t('controls.endSession', 'Sessie beëindigen'),
+                  body: t('controls.endSessionDesc',
+                    'De onderbroken maaibeurt wordt weggegooid. Hervatten kan daarna niet meer, een volgende start begint weer op 0%.'),
+                  confirmLabel: t('controls.endSession', 'Sessie beëindigen'),
+                }))) return;
+                await send({ stop_navigation: { cmd_num: nextCmdNum() } }, t('controls.stop'));
+              })();
+            }}
             disabled={disabled}
             className={`${btnBase} bg-gray-700/60 text-red-400 hover:bg-red-700/40`}
             title={t('controls.endSession', 'Sessie beëindigen')}
@@ -1176,6 +1339,127 @@ export function MowerControls({
 
 
       {/* Return-to-home keuze (zoals de OpenNova app): beëindigen of pauzeren + terug. */}
+      {/* Veiligheidsstop: de maaier is al gestopt, dit vertelt alleen waarom. */}
+      {safetyNotice && createPortal(
+        <div className="fixed inset-0 z-[99999] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setSafetyNotice(false)} />
+          <div className="relative bg-gray-900 border border-gray-700/50 rounded-2xl shadow-2xl max-w-sm w-full p-6">
+            <div className="flex justify-center mb-4">
+              <div className="w-14 h-14 rounded-full flex items-center justify-center bg-red-500/15">
+                <AlertTriangle className="w-7 h-7 text-red-400" />
+              </div>
+            </div>
+            <p className="text-center text-white font-medium text-lg leading-snug mb-2">
+              {t('controls.safetyStopTitle', 'Automatisch gestopt')}
+            </p>
+            <p className="text-center text-gray-400 text-sm mb-6">
+              {t('controls.safetyStopBody',
+                'De maaier meldde na het hervatten dat hij buiten de kaart reed. Hij is gestopt en de storing is gewist. Zet hem terug in het maaigebied en start opnieuw.')}
+            </p>
+            <button
+              onClick={() => setSafetyNotice(false)}
+              className="w-full py-2.5 bg-white/10 hover:bg-white/15 text-gray-300 text-sm font-medium rounded-xl transition-colors"
+            >
+              {t('common.close', 'Sluiten')}
+            </button>
+          </div>
+        </div>,
+        document.body,
+      )}
+
+      {/* Maaihoogte wijkt af van wat je hebt ingesteld: doorgaan of stoppen. */}
+      {heightMismatch && createPortal(
+        <div className="fixed inset-0 z-[99999] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setHeightMismatch(null)} />
+          <div className="relative bg-gray-900 border border-gray-700/50 rounded-2xl shadow-2xl max-w-sm w-full p-6">
+            <div className="flex justify-center mb-4">
+              <div className="w-14 h-14 rounded-full flex items-center justify-center bg-amber-500/15">
+                <AlertTriangle className="w-7 h-7 text-amber-300" />
+              </div>
+            </div>
+            <p className="text-center text-white font-medium text-lg leading-snug mb-2">
+              {t('controls.heightMismatchTitle', 'Maaihoogte wijkt af')}
+            </p>
+            <p className="text-center text-gray-400 text-sm mb-6">
+              {t('controls.heightMismatchBody',
+                'Je hebt {{expected}} cm ingesteld, maar de maaier maait op {{actual}} cm.')
+                .replace('{{expected}}', String(heightMismatch.expected))
+                .replace('{{actual}}', String(heightMismatch.actual))}
+            </p>
+            <div className="flex flex-col gap-3">
+              <button
+                onClick={() => {
+                  setHeightMismatch(null);
+                  void send({ stop_navigation: { cmd_num: nextCmdNum() } }, t('controls.stop'));
+                }}
+                className="py-2.5 bg-red-600 hover:bg-red-500 text-white text-sm font-medium rounded-xl transition-colors"
+              >
+                {t('controls.stop', 'Stoppen')}
+              </button>
+              <button
+                onClick={() => setHeightMismatch(null)}
+                className="py-2.5 bg-white/10 hover:bg-white/15 text-gray-300 text-sm font-medium rounded-xl transition-colors"
+              >
+                {t('controls.continueAnyway', 'Toch doorgaan')}
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
+
+      {returnReason.visible && (
+        <ReturnReasonModal
+          reason={returnReason.reason}
+          online={online || demoActive}
+          busy={busy}
+          onResume={() => { returnReason.close(); void handleResume(); }}
+          onClose={returnReason.close}
+        />
+      )}
+
+      {/* Confirm — één opmaak voor Stop, lange-pauze Hervat en Sessie beëindigen.
+          Vervangt window.confirm, dat een systeemdialoog van de browser toonde
+          met de tekst hardcoded in het Engels. */}
+      {confirmSpec && createPortal(
+        <div className="fixed inset-0 z-[99999] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => settleConfirm(false)} />
+          <div className="relative bg-gray-900 border border-gray-700/50 rounded-2xl shadow-2xl max-w-sm w-full p-6">
+            <div className="flex justify-center mb-4">
+              <div className={`w-14 h-14 rounded-full flex items-center justify-center ${
+                confirmSpec.tone === 'danger' ? 'bg-red-500/15' : 'bg-amber-500/15'}`}>
+                <confirmSpec.icon className={`w-7 h-7 ${
+                  confirmSpec.tone === 'danger' ? 'text-red-400' : 'text-amber-300'}`} />
+              </div>
+            </div>
+            <p className="text-center text-white font-medium text-lg leading-snug mb-2">
+              {confirmSpec.title}
+            </p>
+            <p className="text-center text-gray-400 text-sm mb-6">
+              {confirmSpec.body}
+            </p>
+            <div className="flex flex-col gap-3">
+              <button
+                onClick={() => settleConfirm(true)}
+                className={`py-2.5 text-white text-sm font-medium rounded-xl transition-colors ${
+                  confirmSpec.tone === 'danger'
+                    ? 'bg-red-600 hover:bg-red-500'
+                    : 'bg-amber-600 hover:bg-amber-500'}`}
+              >
+                {confirmSpec.confirmLabel}
+              </button>
+              <button
+                onClick={() => settleConfirm(false)}
+                className="py-2.5 bg-white/10 hover:bg-white/15 text-gray-300 text-sm font-medium rounded-xl transition-colors"
+              >
+                {t('common.cancel', 'Annuleren')}
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
+
       {showReturnDialog && createPortal(
         <div className="fixed inset-0 z-[99999] flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowReturnDialog(false)} />

@@ -198,7 +198,20 @@
       "invalid_map": "zone inconnue",
       "drive_script_missing": "le script de conduite manque sur la tondeuse",
       "no_unicom": "aucun couloir vers cette zone n'a été enregistré"
-    }
+    },
+    "stopMowingTitle": "Arrêter la tonte ?",
+    "stopMowingDesc": "La tondeuse s'arrête sur place et la session se termine. Elle ne retournera PAS à la station de charge.",
+    "endSessionDesc": "La session interrompue est abandonnée. Elle ne pourra plus être reprise et le prochain départ recommencera à 0%.",
+    "pausedForTitle": "En pause depuis {{label}}",
+    "longPauseResumeBody": "Après une longue pause, la localisation peut avoir dérivé et la tondeuse risque de sortir de la carte. Reprendre quand même ?",
+    "resumeAnyway": "Reprendre quand même",
+    "safetyStopTitle": "Arrêt automatique",
+    "safetyStopBody": "Après la reprise, la tondeuse a signalé qu'elle roulait hors de la carte. Elle a été arrêtée et la panne effacée. Remettez-la dans la zone de tonte et redémarrez.",
+    "heightMismatchTitle": "Hauteur de coupe différente",
+    "heightMismatchBody": "Vous avez réglé {{expected}} cm, mais la tondeuse coupe à {{actual}} cm.",
+    "continueAnyway": "Continuer quand même",
+    "reanchorRequiredTitle": "Réancrage requis",
+    "reanchorRequiredBody": "La carte a été restaurée mais le référentiel n'a pas été validé. Réancrez la tondeuse sur la station de charge avant de tondre."
   },
   "camera": {
     "title": "Caméra",
@@ -871,5 +884,27 @@
     "title": "Notes de version",
     "empty": "Aucune note de version disponible.",
     "noChanges": "Version de maintenance."
+  },
+  "events": {
+    "title": "Notifications",
+    "empty": "Aucune notification",
+    "justNow": "à l'instant"
+  },
+  "returnReason": {
+    "why": "Pourquoi est-elle à la station ?",
+    "resume": "Reprendre",
+    "rainTitle": "Retour : pluie",
+    "rainDesc": "La tondeuse est rentrée à la station de charge car de la pluie a été détectée. Reprendre ignore la pause pluie.",
+    "rainResume": "Ignorer la pluie & reprendre",
+    "batteryTitle": "En charge, batterie faible",
+    "batteryDesc": "La tondeuse se recharge et reprendra automatiquement une fois la batterie pleine.",
+    "timeTitle": "Limite de temps atteinte",
+    "timeDesc": "La durée de tonte configurée est écoulée. Vous pouvez reprendre la tonte.",
+    "manualTitle": "Renvoyée manuellement",
+    "manualDesc": "La tondeuse a été renvoyée à la station manuellement. Vous pouvez reprendre la tonte.",
+    "finishedTitle": "Tonte terminée",
+    "finishedDesc": "La tonte est terminée et la tondeuse est de retour à la station de charge.",
+    "errorTitle": "Retour suite à une panne",
+    "errorDesc": "La tondeuse est rentrée à cause d'une panne. Corrigez la panne et réessayez."
   }
 }

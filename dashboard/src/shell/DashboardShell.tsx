@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
+import { useToast } from '../components/common/Toast';
 import { useTranslation } from 'react-i18next';
 import { Mountain, Map as MapIcon, CalendarClock, ClipboardList, Settings as SettingsIcon } from 'lucide-react';
 import { Header } from './Header';
@@ -30,7 +31,8 @@ type Tab = 'map' | 'schedule' | 'records' | 'settings' | 'terrain';
 
 function ShellInner() {
   const { t } = useTranslation();
-  const { devices, loading, connected, otaProgress, liveOutlines, coveredLanes } = useDevices();
+  const { devices, loading, connected, otaProgress, liveOutlines, coveredLanes,
+    mowerEvents, addMowerEvents } = useDevices();
   const { activeMower, activeMowerSn, setActiveMowerSn, knownMowers } = useActiveMower(devices);
   const charger = [...devices.values()].find(d => d.deviceType === 'charger') ?? null;
   // Terrain is experimental and only appears once the operator opts in under
@@ -98,6 +100,28 @@ function ShellInner() {
     }
   }, [freshSession, activeFingerprint, activeActivity]);
   useEffect(() => () => { if (freshSessionTimer.current) clearTimeout(freshSessionTimer.current); }, []);
+
+  // Toast every event that arrives while the page is open. The bell keeps the
+  // history; this is what makes a dock or a finished mow actually noticeable.
+  // Only events newer than mount: the backlog fetch would otherwise fire a
+  // dozen toasts on every page load.
+  const { toast: showToast } = useToast();
+  // Lazily, not useRef(Date.now()): that runs during render and the purity
+  // rule rightly objects.
+  const eventsSeenAt = useRef<number | null>(null);
+  const toastedEvents = useRef(new Set<string>());
+  useEffect(() => {
+    if (eventsSeenAt.current === null) eventsSeenAt.current = Date.now();
+    for (const e of mowerEvents) {
+      const key = `${e.sn}-${e.type}-${e.ts}`;
+      if (e.ts < eventsSeenAt.current || toastedEvents.current.has(key)) continue;
+      toastedEvents.current.add(key);
+      const kind = e.type === 'docked' || e.type === 'mowing_finished' || e.type === 'error_cleared'
+        ? 'success'
+        : (e.type === 'mowing_started' || e.type === 'low_battery' || e.type === 'gps_weak' ? 'info' : 'error');
+      showToast(`${e.title}: ${e.message}`, kind);
+    }
+  }, [mowerEvents, showToast]);
   const armFreshSession = () => {
     freshSessionFingerprint.current = activeFingerprint;
     setFreshSession(true);
@@ -145,6 +169,9 @@ function ShellInner() {
         connected={connected}
         rainState={rainState}
         onOpenDrawer={() => setDrawerOpen(true)}
+        activeSn={activeMower?.sn ?? null}
+        mowerEvents={mowerEvents}
+        onEventBacklog={addMowerEvents}
       />
 
       {/* Single row: device identity + live telemetry (left) and the tab nav

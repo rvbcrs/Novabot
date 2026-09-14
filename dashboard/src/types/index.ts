@@ -155,3 +155,25 @@ export interface BleLogEntry {
   data?: string;
   direction?: '\u2192DEV' | '\u2190DEV' | '';
 }
+
+/**
+ * A mower event as the server's notification dispatcher produces it.
+ *
+ * Identical shape to what the mobile app receives as an Expo push and what
+ * Home Assistant gets on `novabot/events/<SN>`; the event types are stable
+ * identifiers that external automations subscribe to, so they are not renamed.
+ */
+export type MowerEventType =
+  | 'error' | 'error_cleared' | 'mowing_started' | 'mowing_finished' | 'docked'
+  | 'low_battery' | 'stuck' | 'safety' | 'pin_locked' | 'connection_lost'
+  | 'gps_weak' | 'map_error' | 'initialization_error' | 'hardware_fault'
+  | 'dock_failed';
+
+export interface MowerEvent {
+  sn: string;
+  type: MowerEventType;
+  ts: number;
+  title: string;
+  message: string;
+  data: Record<string, unknown>;
+}

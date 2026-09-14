@@ -12,6 +12,7 @@ import { verifyAuthToken } from '../middleware/auth.js';
 import { pickGateClientIp, gateAllowsWithoutAuth } from '../middleware/externalAuthGate.js';
 import { userRepo } from '../db/repositories/index.js';
 import { setOutlineEmitter, publishToDevice } from '../mqtt/mapSync.js';
+import { setDashboardEventEmitter } from '../notifications/dispatcher.js';
 
 // Callback om demo mode status te checken (geregistreerd door demoSimulator)
 let demoModeChecker: ((sn: string) => boolean) | null = null;
@@ -113,6 +114,9 @@ export function initDashboardSocket(httpServer: HttpServer): void {
 
   // Stuur live kaart-outlines naar dashboard tijdens actief mappen
   setOutlineEmitter((sn, points, localPoints) => io!.emit('map:outline', { sn, points, localPoints, timestamp: Date.now() }));
+  // Mower events (docked, mowing_finished, low_battery, …) reached the mobile
+  // app as a push and Home Assistant over MQTT, but never the dashboard.
+  setDashboardEventEmitter(ev => io?.emit('mower:event', ev));
 
   // Start BLE logger — uses io.emit for broadcasting
   initBleLogger((event, data) => io!.emit(event, data));

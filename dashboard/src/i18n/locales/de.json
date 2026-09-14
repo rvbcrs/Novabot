@@ -198,7 +198,20 @@
       "invalid_map": "unbekannte Zone",
       "drive_script_missing": "das Fahrskript fehlt auf dem Mäher",
       "no_unicom": "zu dieser Zone wurde kein Kanal aufgezeichnet"
-    }
+    },
+    "stopMowingTitle": "Mähen stoppen?",
+    "stopMowingDesc": "Der Mäher hält an Ort und Stelle an und die Sitzung endet. Er fährt NICHT zur Ladestation zurück.",
+    "endSessionDesc": "Der unterbrochene Lauf wird verworfen. Fortsetzen ist danach nicht mehr möglich, der nächste Start beginnt bei 0%.",
+    "pausedForTitle": "Pausiert seit {{label}}",
+    "longPauseResumeBody": "Nach einer langen Pause kann die Lokalisierung abgedriftet sein und der Mäher könnte die Karte verlassen. Trotzdem fortsetzen?",
+    "resumeAnyway": "Trotzdem fortsetzen",
+    "safetyStopTitle": "Automatisch gestoppt",
+    "safetyStopBody": "Nach dem Fortsetzen meldete der Mäher, dass er außerhalb der Karte fuhr. Er wurde gestoppt und die Störung gelöscht. Setze ihn zurück in den Mähbereich und starte erneut.",
+    "heightMismatchTitle": "Schnitthöhe weicht ab",
+    "heightMismatchBody": "Du hast {{expected}} cm eingestellt, der Mäher schneidet aber auf {{actual}} cm.",
+    "continueAnyway": "Trotzdem fortfahren",
+    "reanchorRequiredTitle": "Neu verankern erforderlich",
+    "reanchorRequiredBody": "Die Karte wurde wiederhergestellt, der Rahmen ist aber noch nicht geprüft. Verankere den Mäher erneut an der Ladestation, bevor du mähst."
   },
   "camera": {
     "title": "Kamera",
@@ -871,5 +884,27 @@
     "title": "Versionshinweise",
     "empty": "Keine Versionshinweise verfügbar.",
     "noChanges": "Wartungsrelease."
+  },
+  "events": {
+    "title": "Meldungen",
+    "empty": "Noch keine Meldungen",
+    "justNow": "gerade eben"
+  },
+  "returnReason": {
+    "why": "Warum steht er an der Station?",
+    "resume": "Fortsetzen",
+    "rainTitle": "Zurückgekehrt: Regen",
+    "rainDesc": "Der Mäher ist zur Ladestation gefahren, weil Regen erkannt wurde. Fortsetzen überschreibt die Regenpause.",
+    "rainResume": "Regen ignorieren & fortsetzen",
+    "batteryTitle": "Lädt, Akku schwach",
+    "batteryDesc": "Der Mäher lädt und setzt automatisch fort, sobald der Akku voll ist.",
+    "timeTitle": "Zeitlimit erreicht",
+    "timeDesc": "Die eingestellte Mähzeit ist erreicht. Du kannst das Mähen fortsetzen.",
+    "manualTitle": "Manuell zurückgeschickt",
+    "manualDesc": "Der Mäher wurde von Hand zur Ladestation geschickt. Du kannst das Mähen fortsetzen.",
+    "finishedTitle": "Mähen abgeschlossen",
+    "finishedDesc": "Das Mähen ist fertig und der Mäher steht wieder an der Ladestation.",
+    "errorTitle": "Wegen Störung zurückgekehrt",
+    "errorDesc": "Der Mäher ist wegen einer Störung zurückgekehrt. Behebe die Störung und versuche es erneut."
   }
 }

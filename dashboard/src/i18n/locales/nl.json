@@ -261,7 +261,20 @@
       "invalid_map": "onbekende zone",
       "drive_script_missing": "het rijscript ontbreekt op de maaier",
       "no_unicom": "er is geen kanaal naar deze zone opgenomen"
-    }
+    },
+    "stopMowingTitle": "Maaien stoppen?",
+    "stopMowingDesc": "De maaier stopt waar hij staat en de sessie eindigt. Hij rijdt NIET terug naar het laadstation.",
+    "endSessionDesc": "De onderbroken maaibeurt wordt weggegooid. Hervatten kan daarna niet meer, een volgende start begint weer op 0%.",
+    "pausedForTitle": "Gepauzeerd voor {{label}}",
+    "longPauseResumeBody": "Na een lange pauze kan de lokalisatie zijn weggelopen en rijdt de maaier mogelijk van de kaart af. Toch hervatten?",
+    "resumeAnyway": "Toch hervatten",
+    "safetyStopTitle": "Automatisch gestopt",
+    "safetyStopBody": "De maaier meldde na het hervatten dat hij buiten de kaart reed. Hij is gestopt en de storing is gewist. Zet hem terug in het maaigebied en start opnieuw.",
+    "heightMismatchTitle": "Maaihoogte wijkt af",
+    "heightMismatchBody": "Je hebt {{expected}} cm ingesteld, maar de maaier maait op {{actual}} cm.",
+    "continueAnyway": "Toch doorgaan",
+    "reanchorRequiredTitle": "Her-ankeren nodig",
+    "reanchorRequiredBody": "De kaart is teruggezet maar het frame is nog niet gecontroleerd. Anker de maaier opnieuw op het laadstation voordat je gaat maaien."
   },
   "camera": {
     "title": "Camera",
@@ -991,5 +1004,27 @@
     "title": "Release notes",
     "empty": "Geen release notes beschikbaar.",
     "noChanges": "Onderhoudsrelease."
+  },
+  "events": {
+    "title": "Meldingen",
+    "empty": "Nog geen meldingen",
+    "justNow": "zojuist"
+  },
+  "returnReason": {
+    "why": "Waarom staat hij op het dock?",
+    "resume": "Hervat",
+    "rainTitle": "Teruggekeerd: regen",
+    "rainDesc": "De maaier is naar het laadstation gereden omdat er regen werd gedetecteerd. Hervat om de regenpauze te negeren.",
+    "rainResume": "Negeer regen & hervat",
+    "batteryTitle": "Opladen, lage accu",
+    "batteryDesc": "De maaier laadt op en hervat automatisch zodra de accu vol is.",
+    "timeTitle": "Tijdslimiet bereikt",
+    "timeDesc": "De ingestelde maaitijd is bereikt. Je kunt het maaien hervatten.",
+    "manualTitle": "Handmatig teruggestuurd",
+    "manualDesc": "De maaier is handmatig naar het laadstation gestuurd. Je kunt het maaien hervatten.",
+    "finishedTitle": "Maaien voltooid",
+    "finishedDesc": "Het maaien is voltooid en de maaier staat weer op het laadstation.",
+    "errorTitle": "Teruggekeerd door storing",
+    "errorDesc": "De maaier is teruggekeerd door een storing. Los de storing op en probeer opnieuw."
   }
 }

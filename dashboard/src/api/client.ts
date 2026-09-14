@@ -1,4 +1,4 @@
-import type { DeviceState, SensorDef, MapData, MapsResponse, TrailPoint, MapCalibration, Schedule, WorkRecord, SignalHistoryPoint, LocalPoint } from '../types';
+import type { DeviceState, SensorDef, MapData, MapsResponse, TrailPoint, MapCalibration, Schedule, WorkRecord, SignalHistoryPoint, LocalPoint, MowerEvent } from '../types';
 import { selfIntersects } from '../utils/editGeometry';
 import { makeValidPolygon } from '../utils/brushPaint';
 
@@ -157,6 +157,19 @@ export async function fetchDevices(): Promise<DeviceState[]> {
     ...d,
     lastUpdate: Date.now(),
   }));
+}
+
+/**
+ * Recent mower events from the server's in-memory ring.
+ *
+ * Lives under /api/events, not /api/dashboard: the same endpoint already serves
+ * Home Assistant and cURL polling, so the dashboard reuses it instead of
+ * growing a second one. Live updates arrive over socket.io as `mower:event`;
+ * this call is only for the backlog on page load.
+ */
+export async function fetchMowerEvents(sn: string, limit = 50): Promise<MowerEvent[]> {
+  const data = await (await get(`/api/events/${encodeURIComponent(sn)}?limit=${limit}`)).json();
+  return data.events ?? [];
 }
 
 export async function deleteDevice(sn: string): Promise<void> {

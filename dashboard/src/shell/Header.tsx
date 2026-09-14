@@ -3,8 +3,10 @@ import { Server, ServerOff, Plus, Activity, ScrollText } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { BleScanner } from '../components/ble/BleScanner';
 import { RainBadge } from './RainBadge';
+import { NotificationBell } from '../components/common/NotificationBell';
 import { ReleaseNotesModal } from '../components/common/ReleaseNotesModal';
 import { getServerVersion, fetchReleaseNotes, type ReleaseNotesEntry } from '../api/client';
+import type { MowerEvent } from '../types';
 
 const LANGS = ['nl', 'en', 'fr', 'de'] as const;
 
@@ -12,9 +14,12 @@ interface Props {
   connected: boolean;
   rainState: 'dry' | 'rain' | 'paused-by-rain' | null;
   onOpenDrawer: () => void;
+  activeSn: string | null;
+  mowerEvents: MowerEvent[];
+  onEventBacklog: (e: MowerEvent) => void;
 }
 
-export function Header({ connected, rainState, onOpenDrawer }: Props) {
+export function Header({ connected, rainState, onOpenDrawer, activeSn, mowerEvents, onEventBacklog }: Props) {
   const { t, i18n } = useTranslation();
   const [showBle, setShowBle] = useState(false);
   const [version, setVersion] = useState('');
@@ -129,6 +134,8 @@ export function Header({ connected, rainState, onOpenDrawer }: Props) {
 
         {/* Rain badge */}
         <RainBadge rainState={rainState} />
+
+        <NotificationBell sn={activeSn} events={mowerEvents} onBacklog={onEventBacklog} />
 
         {/* Diagnostics drawer — Activity icon (not a gear, which reads as
             "settings"); kept subtle so it doesn't compete with the tabs. */}

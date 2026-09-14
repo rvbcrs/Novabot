@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import type { DeviceState, DeviceUpdateEvent, DeviceOnlineEvent, MqttLogEntry, BleLogEntry } from '../types';
+import type { DeviceState, DeviceUpdateEvent, DeviceOnlineEvent, MqttLogEntry, BleLogEntry, MowerEvent } from '../types';
 import { useSocket, type OtaEventPayload, type MapOutlineEvent } from './useSocket';
 import { fetchDevices } from '../api/client';
 
 const MAX_LOG_ENTRIES = 500;
+const MAX_EVENTS = 100;
 
 export interface OtaProgress {
   status: string;
@@ -19,6 +20,7 @@ export function useDevices() {
   const [otaProgress, setOtaProgress] = useState<Map<string, OtaProgress>>(new Map());
   const [liveOutlines, setLiveOutlines] = useState<Map<string, Array<{ lat: number; lng: number }>>>(new Map());
   const [coveredLanes, setCoveredLanes] = useState<Map<string, Array<{ lat1: number; lng1: number; lat2: number; lng2: number }>>>(new Map());
+  const [mowerEvents, setMowerEvents] = useState<MowerEvent[]>([]);
   const logsRef = useRef(logs);
   logsRef.current = logs;
 
@@ -161,11 +163,21 @@ export function useDevices() {
     }
   }, []);
 
+  // Newest first, deduped on (sn, type, ts): the backlog fetch and a live event
+  // can describe the same thing when the page loads while one is dispatched.
+  const onMowerEvent = useCallback((e: MowerEvent) => {
+    setMowerEvents(prev => {
+      if (prev.some(p => p.sn === e.sn && p.type === e.type && p.ts === e.ts)) return prev;
+      return [e, ...prev].slice(0, MAX_EVENTS);
+    });
+  }, []);
+
   const { connected } = useSocket({
     onDeviceUpdate, onDeviceOnline, onDeviceOffline, onSnapshot,
     onMqttLog, onMqttLogHistory, onBleLog, onBleLogHistory, onOtaEvent,
-    onMapOutline, onMowLanes,
+    onMapOutline, onMowLanes, onMowerEvent,
   });
 
-  return { devices, loading, connected, logs, bleLogs, otaProgress, liveOutlines, coveredLanes };
+  return { devices, loading, connected, logs, bleLogs, otaProgress, liveOutlines,
+    coveredLanes, mowerEvents, addMowerEvents: onMowerEvent };
 }

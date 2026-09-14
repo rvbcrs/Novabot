@@ -1,7 +1,8 @@
 /**
  * Notification dispatcher — fans events out to ntfy.sh, an optional HA
- * webhook, the local MQTT broker (`novabot/events/<SN>`), and an in-memory
- * ring buffer that the HTTP `GET /api/events/:sn` endpoint serves.
+ * webhook, the local MQTT broker (`novabot/events/<SN>`), the connected
+ * dashboards over socket.io, and an in-memory ring buffer that the HTTP
+ * `GET /api/events/:sn` endpoint serves.
  *
  * Channels are independently configured via env vars and silently skipped
  * when not set, so a fresh install with only an MQTT broker still emits
@@ -20,6 +21,21 @@ const NTFY_TOPIC = process.env.NTFY_TOPIC ?? '';
 const NTFY_PRIORITY = process.env.NTFY_PRIORITY ?? '';   // 1..5 or '' for default
 const HA_WEBHOOK_URL = process.env.HA_WEBHOOK_URL ?? '';
 const EVENTS_MQTT_PREFIX = process.env.EVENTS_MQTT_TOPIC_PREFIX ?? 'novabot/events';
+
+/**
+ * Socket.io fan-out, injected by initDashboardSocket.
+ *
+ * Injected rather than imported: dispatcher -> socketHandler -> broker ->
+ * demoSimulator -> socketHandler is a cycle, and ESM resolves it as a
+ * "Cannot access 'demoModeChecker' before initialization" TDZ error at import
+ * time. mapSync/setOutlineEmitter solves the same problem the same way.
+ */
+type EventEmitterFn = (ev: MowerEvent) => void;
+let dashboardEmitter: EventEmitterFn | null = null;
+
+export function setDashboardEventEmitter(fn: EventEmitterFn | null): void {
+  dashboardEmitter = fn;
+}
 
 const RING_SIZE = 200;
 const ringPerSn = new Map<string, MowerEvent[]>();
@@ -97,6 +113,14 @@ function publishMqttEvent(ev: MowerEvent): void {
 export function dispatchEvent(ev: MowerEvent): void {
   pushRing(ev);
   publishMqttEvent(ev);
+  // Dashboards get the same event, live. Without this the only real-time
+  // delivery was the Expo push to the mobile app, so a dashboard user never
+  // saw "docked" or "mowing finished" at all.
+  try {
+    dashboardEmitter?.(ev);
+  } catch (err) {
+    console.warn(`${TAG} dashboard emit failed:`, err);
+  }
   // robot_messages write is synchronous (single SQLite insert) —
   // matters because stock-app polls the table immediately on open and
   // we want events visible without waiting for the async HTTP fan-out.

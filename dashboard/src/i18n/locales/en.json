@@ -214,7 +214,20 @@
       "invalid_map": "unknown zone",
       "drive_script_missing": "the drive script is missing on the mower",
       "no_unicom": "no channel to this zone has been recorded"
-    }
+    },
+    "stopMowingTitle": "Stop mowing?",
+    "stopMowingDesc": "The mower halts where it is and the session ends. It will NOT return to the charging station.",
+    "endSessionDesc": "The interrupted run is discarded. It can no longer be resumed and the next start begins at 0%.",
+    "pausedForTitle": "Paused for {{label}}",
+    "longPauseResumeBody": "After a long pause localization may have drifted and the mower could drive off the map. Resume anyway?",
+    "resumeAnyway": "Resume anyway",
+    "safetyStopTitle": "Stopped automatically",
+    "safetyStopBody": "After resuming, the mower reported that it was driving outside the map. It has been stopped and the fault cleared. Put it back inside the mowing area and start again.",
+    "heightMismatchTitle": "Cutting height differs",
+    "heightMismatchBody": "You set {{expected}} cm, but the mower is cutting at {{actual}} cm.",
+    "continueAnyway": "Continue anyway",
+    "reanchorRequiredTitle": "Re-anchoring required",
+    "reanchorRequiredBody": "The map was restored but the frame has not been validated. Re-anchor the mower on the charging station before mowing."
   },
   "camera": {
     "title": "Camera",
@@ -993,5 +1006,27 @@
     "title": "Release notes",
     "empty": "No release notes available.",
     "noChanges": "Maintenance release."
+  },
+  "events": {
+    "title": "Notifications",
+    "empty": "No notifications yet",
+    "justNow": "just now"
+  },
+  "returnReason": {
+    "why": "Why is it on the dock?",
+    "resume": "Resume",
+    "rainTitle": "Returned: rain",
+    "rainDesc": "The mower returned to the charging station because rain was detected. Resume to override the rain pause.",
+    "rainResume": "Ignore rain & resume",
+    "batteryTitle": "Charging, low battery",
+    "batteryDesc": "The mower is charging and resumes automatically once the battery is full.",
+    "timeTitle": "Time limit reached",
+    "timeDesc": "The configured mowing time is up. You can resume mowing.",
+    "manualTitle": "Sent home manually",
+    "manualDesc": "The mower was sent to the charging station by hand. You can resume mowing.",
+    "finishedTitle": "Mowing finished",
+    "finishedDesc": "Mowing is complete and the mower is back on the charging station.",
+    "errorTitle": "Returned due to a fault",
+    "errorDesc": "The mower returned because of a fault. Clear the fault and try again."
   }
 }
