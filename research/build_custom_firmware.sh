@@ -1782,6 +1782,22 @@ fi
 # === Stap 5h3: Seam-fix daemon toevoegen ===
 echo "[5h3/9] Seam-fix daemon toevoegen..."
 
+# Handmatige herstartroute voor extended_commands.py, met ROS-omgeving. Zonder
+# die omgeving praat het script tegen een andere DDS dan de firmware en valt de
+# RtkRelay stil zonder foutmelding, dus een kale `python3 extended_commands.py`
+# is een val. Stond tot nu toe alleen op de maaiers waar hij ooit met de hand is
+# neergezet; na een verse flash bestond hij niet.
+# In scripts/ en niet in /root: data.tar.xz heeft een vlakke structuur die in
+# /root/novabot uitpakt, dus het pakket kan daarbuiten niets neerzetten. De
+# postinst legt /root/start_ext.sh aan als symlink, want dat is het pad dat
+# overal gedocumenteerd staat.
+EXT_START_SRC="$SCRIPT_DIR/start_ext.sh"
+if [ -f "$EXT_START_SRC" ]; then
+    cp "$EXT_START_SRC" "$NOVABOT_ROOT/scripts/start_ext.sh"
+    chmod +x "$NOVABOT_ROOT/scripts/start_ext.sh"
+    echo "  start_ext.sh gekopieerd naar scripts/"
+fi
+
 # map_server leest map.pgm alleen bij het opstarten van de node. De daemon roept
 # dit scriptje aan zodra de kaart verandert, anders plant nav2 tot de volgende
 # herstart door op een verouderde kaart. Los proces met opzet: rclpy in de
@@ -2451,6 +2467,26 @@ fi
 exit 0
 PREINST
 chmod 755 "$WORK_DIR/DEBIAN/preinst"
+
+# postinst: /root/start_ext.sh aanleggen. Het pakket zelf kan buiten
+# /root/novabot niets schrijven, maar dit is het pad dat in de projectkennis en
+# in elke herstartinstructie staat.
+cat > "$WORK_DIR/DEBIAN/postinst" << 'POSTINST'
+#!/bin/sh
+set -e
+TARGET=/root/novabot/scripts/start_ext.sh
+LINK=/root/start_ext.sh
+if [ -f "$TARGET" ]; then
+  # Alleen vervangen als er nog geen eigen versie staat die geen symlink is:
+  # een handmatig aangepaste start_ext.sh overschrijven zou stil gedrag wijzigen.
+  if [ ! -e "$LINK" ] || [ -L "$LINK" ]; then
+    ln -sf "$TARGET" "$LINK"
+    echo "start_ext.sh: $LINK wijst naar $TARGET"
+  fi
+fi
+exit 0
+POSTINST
+chmod 755 "$WORK_DIR/DEBIAN/postinst"
 
 # Bouw .deb (ar archief: debian-binary + control.tar.xz + data.tar.xz)
 echo "2.0" > "$WORK_DIR/debian-binary"
