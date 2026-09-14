@@ -40,15 +40,27 @@ from rcl_interfaces.msg import Parameter, ParameterValue, ParameterType
 from geometry_msgs.msg import Twist, PoseStamped
 from nav_msgs.msg import Path
 from std_msgs.msg import UInt8
-from std_srvs.srv import Trigger, SetBool
+from std_srvs.srv import Trigger, SetBool, Empty
 from nav2_msgs.action import FollowPath
 from decision_msgs.srv import StartCoverageTask
+from decision_msgs.msg import RobotStatus
 from rclpy.qos import QoSProfile, QoSHistoryPolicy
 import tf2_ros
 
 MAPS_HOME = "/userdata/lfi/maps/home0"
 NAV_NODE = "/nav2_single_node_navigator"
 DECISION = "/robot_decision"
+# RobotStatus.task_mode / work_status values the orchestrator has to reason
+# about. A coverage task counts as executing (start_cov_task refuses a new
+# start, delete_map refuses) while task_mode is COVERAGE and work_status is
+# above 9; USER_STOP is the parked state a stop lands in (docs/reference/MQTT.md).
+TASK_MODE_COVERAGE = 1
+WORK_STATUS_USER_STOP = 10
+
+
+def task_executing(task_mode, work_status):
+    """True while robot_decision would refuse a new coverage start."""
+    return task_mode == TASK_MODE_COVERAGE and work_status > 9
 DOCK_RADIUS = 1.2   # within this of the map origin counts as "on the dock"
 
 # (name, relaxed, default) controller params applied only for the transit and
@@ -381,6 +393,35 @@ class Driver:
         r = fut.result()
         return bool(r and r.result)
 
+    def wait_status(self, pred, timeout=30.0):
+        """Block until robot_decision's RobotStatus satisfies pred(task_mode,
+        work_status), via a throwaway probe node (released afterwards, like
+        robot_xy). Returns the last (task_mode, work_status) seen, or None."""
+        probe = rclpy.create_node("mzd_status_probe")
+        seen = {}
+        probe.create_subscription(
+            RobotStatus, f"{DECISION}/robot_status",
+            lambda m: seen.__setitem__("v", (int(m.task_mode), int(m.work_status))), 10)
+        deadline = time.time() + timeout
+        try:
+            while time.time() < deadline:
+                rclpy.spin_once(probe, timeout_sec=0.2)
+                v = seen.get("v")
+                if v is not None and pred(*v):
+                    return v
+        finally:
+            probe.destroy_node()
+        return seen.get("v")
+
+    def quit_mapping_mode(self):
+        """Clear a parked task: robot_decision goes back to COVERAGE/WAIT."""
+        cli = self.node.create_client(Empty, f"{DECISION}/quit_mapping_mode")
+        if not cli.wait_for_service(timeout_sec=5.0):
+            return False
+        fut = cli.call_async(Empty.Request())
+        rclpy.spin_until_future_complete(self.node, fut, timeout_sec=10.0)
+        return fut.done()
+
     def stop_task(self):
         """Stop a running coverage task (SetBool data:true; false means CONTINUE)."""
         cli = self.node.create_client(SetBool, f"{DECISION}/stop_task")
@@ -421,8 +462,21 @@ class Driver:
             if pos is not None:
                 break
         self.stop_task()
-        # The stop lands while it is still leaving the dock; give the chassis a
-        # moment to settle before the transit takes the wheels.
+        # The stop is queued behind the init states and only lands once the
+        # task reaches MOVING, as USER_STOP. A parked task still counts as
+        # executing, so a start_cov right after the stop was refused with
+        # "Cannot start a new task when last task is executing" (live .244,
+        # 2026-09-14). Wait for the stop to land, then clear the parked task
+        # the way the delete flow does, and only then hand over the wheels.
+        st = self.wait_status(
+            lambda tm, ws: ws == WORK_STATUS_USER_STOP or not task_executing(tm, ws),
+            timeout=30.0)
+        log(f"after stop: status={st}")
+        if st is not None and task_executing(*st):
+            self.quit_mapping_mode()
+            st = self.wait_status(lambda tm, ws: not task_executing(tm, ws), timeout=15.0)
+            log(f"after quit_mapping_mode: status={st}")
+        # Give the chassis a moment to settle before the transit takes the wheels.
         time.sleep(2.0)
         if pos is None:
             log("firmware init ran but the map frame never appeared")
@@ -463,10 +517,82 @@ def _transit_unicoms():
     return out
 
 
+def _zone_containing(xy):
+    """'mapN' whose work polygon contains xy (no dock radius), else None."""
+    if xy is None:
+        return None
+    base = _csv_base()
+    try:
+        names = os.listdir(base)
+    except OSError:
+        names = []
+    for f in sorted(names):
+        m = re.fullmatch(r"(map\d+)_work\.csv", f)
+        if m and point_in_poly(xy[0], xy[1], read_xy_csv(os.path.join(base, f))):
+            return m.group(1)
+    return None
+
+
+def _dock_zone():
+    """Zone the charging station stands in: the polygon around the dock anchor,
+    which the firmware writes as the FIRST point of map0tocharge_unicom.csv."""
+    for p in (f"{MAPS_HOME}/x3_csv_file/map0tocharge_unicom.csv",
+              f"{MAPS_HOME}/csv_file/map0tocharge_unicom.csv"):
+        pts = read_xy_csv(p)
+        if pts:
+            return _zone_containing(pts[0])
+    return None
+
+
+def _channel_files(from_slot, to_slot):
+    """Recorded channels from one zone to another, exactly as the transit matches them."""
+    if not from_slot or from_slot == to_slot:
+        return []
+    base = _csv_base()
+    try:
+        names = os.listdir(base)
+    except OSError:
+        names = []
+    return sorted(f for f in names
+                  if re.fullmatch(rf"{from_slot}to{to_slot}_\d+_unicom\.csv", f))
+
+
+def _cover(drv, map_ids, cutterhigh, direction):
+    """Coverage through robot_decision (keeps the normal state machine)."""
+    phase("covering")
+    ok = drv.start_cov(map_ids, cutterhigh, direction)
+    phase("done" if ok else "error", "" if ok else "start_cov_task_failed")
+    return 0 if ok else 1
+
+
+def clear_parked_task(drv):
+    """A task parked by an earlier attempt (USER_STOP) still counts as
+    executing, so the next start_cov is refused. Clear it first, the way the
+    delete flow does. No-op when nothing is parked."""
+    st = drv.wait_status(lambda tm, ws: True, timeout=5.0)
+    if st is None or not task_executing(*st):
+        return
+    log(f"parked task found (status={st}): clearing it first")
+    drv.quit_mapping_mode()
+    log(f"after quit_mapping_mode: status={drv.wait_status(lambda tm, ws: not task_executing(tm, ws), timeout=15.0)}")
+
+
 def do_mow(drv, to_slot, map_ids, cutterhigh, direction):
     """Outbound: undock -> follow the unicom to the target zone -> coverage."""
+    clear_parked_task(drv)
     robot = drv.robot_xy()
     if robot is None:
+        # Fresh boot on the dock: no map->base_link yet. robot_decision builds
+        # that frame at the start of every task, so the only question is whether
+        # we need to take back over afterwards to drive a recorded channel.
+        # Without a channel from the dock's zone to the target, the firmware
+        # task IS the mow: hand it over in one go. Starting it only to stop and
+        # start it again is what produced "Cannot start a new task when last
+        # task is executing" (live .244, 2026-09-14).
+        home = _dock_zone()
+        if not _channel_files(home, to_slot):
+            log(f"not localized, no channel {home}->{to_slot}: the firmware runs the whole task")
+            return _cover(drv, map_ids, cutterhigh, direction)
         robot = drv.localize_via_firmware(map_ids, cutterhigh, direction)
         if robot is None:
             phase("error", "not_localized")
@@ -523,10 +649,7 @@ def do_mow(drv, to_slot, map_ids, cutterhigh, direction):
         log(f"transit skipped (uni={bool(uni)} already_in={already_in})")
 
     # 3. coverage through robot_decision (keeps the normal state machine)
-    phase("covering")
-    ok = drv.start_cov(map_ids, cutterhigh, direction)
-    phase("done" if ok else "error", "" if ok else "start_cov_task_failed")
-    return 0 if ok else 1
+    return _cover(drv, map_ids, cutterhigh, direction)
 
 
 def pick_homeward_segment(robot, origin, segs, used):
