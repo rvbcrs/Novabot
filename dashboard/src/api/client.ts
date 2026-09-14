@@ -174,6 +174,7 @@ export async function fetchMowerEvents(sn: string, limit = 50): Promise<MowerEve
 
 export interface DiagnosisStep {
   id: string;
+  group: 'reach' | 'connect' | 'identity' | 'pair' | 'firmware' | 'ready';
   status: 'ok' | 'fail' | 'warn' | 'unknown' | 'skipped';
   evidence: string;
   action?: string;

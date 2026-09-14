@@ -21,7 +21,26 @@ const STEP_LABEL: Record<string, [string, string]> = {
   ble_mac: ['diagnose.bleMac', 'BLE MAC'],
   counterpart: ['diagnose.counterpart', 'Tegenhanger'],
   lora: ['diagnose.lora', 'LoRa-paar'],
+  client_conflict: ['diagnose.clientConflict', 'Dubbel client_id'],
+  encryption: ['diagnose.encryption', 'Leesbare berichten'],
+  firmware: ['diagnose.firmware', 'Firmware'],
+  zone_limit: ['diagnose.zoneLimit', 'Aantal zones'],
+  maps: ['diagnose.maps', 'Werkgebieden'],
+  rtk: ['diagnose.rtk', 'RTK-positie'],
+  fault: ['diagnose.fault', 'Storing'],
+  frame: ['diagnose.frame', 'Kaartframe'],
 };
+
+const GROUP_LABEL: Record<string, [string, string]> = {
+  reach: ['diagnose.groupReach', 'Bereikbaarheid'],
+  connect: ['diagnose.groupConnect', 'Verbinding'],
+  identity: ['diagnose.groupIdentity', 'Identiteit'],
+  pair: ['diagnose.groupPair', 'Lader en LoRa'],
+  firmware: ['diagnose.groupFirmware', 'Firmware'],
+  ready: ['diagnose.groupReady', 'Klaar om te maaien'],
+};
+
+const GROUP_ORDER = ['reach', 'connect', 'identity', 'pair', 'firmware', 'ready'];
 
 function Icon({ status }: { status: DiagnosisStep['status'] }) {
   if (status === 'ok') return <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />;
@@ -75,24 +94,31 @@ export function DiagnosisPanel({ sn, onClose }: { sn: string; onClose: () => voi
               data.stuckAt ? 'bg-red-500/10 text-red-300' : 'bg-emerald-500/10 text-emerald-300'}`}>
               {data.summary}
             </div>
-            <ol className="space-y-2">
-              {data.steps.map(s => (
-                <li key={s.id} className="flex gap-2.5">
-                  <Icon status={s.status} />
-                  <div className="min-w-0">
-                    <div className="text-xs font-medium text-zinc-200">
-                      {t(STEP_LABEL[s.id]?.[0] ?? s.id, STEP_LABEL[s.id]?.[1] ?? s.id)}
-                    </div>
-                    <div className="text-[11px] text-zinc-400 break-words">{s.evidence}</div>
-                    {s.action && (
-                      <div className="text-[11px] text-amber-300/90 mt-0.5 break-words">
-                        → {s.action}
+            {GROUP_ORDER.filter(g => data.steps.some(s => s.group === g)).map(g => (
+              <div key={g} className="mb-3 last:mb-0">
+                <div className="text-[10px] uppercase tracking-wide text-zinc-500 mb-1.5">
+                  {t(GROUP_LABEL[g][0], GROUP_LABEL[g][1])}
+                </div>
+                <ol className="space-y-2">
+                  {data.steps.filter(s => s.group === g).map(s => (
+                    <li key={s.id} className="flex gap-2.5">
+                      <Icon status={s.status} />
+                      <div className="min-w-0">
+                        <div className="text-xs font-medium text-zinc-200">
+                          {t(STEP_LABEL[s.id]?.[0] ?? s.id, STEP_LABEL[s.id]?.[1] ?? s.id)}
+                        </div>
+                        <div className="text-[11px] text-zinc-400 break-words">{s.evidence}</div>
+                        {s.action && (
+                          <div className="text-[11px] text-amber-300/90 mt-0.5 break-words">
+                            → {s.action}
+                          </div>
+                        )}
                       </div>
-                    )}
-                  </div>
-                </li>
-              ))}
-            </ol>
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            ))}
           </>
         )}
 

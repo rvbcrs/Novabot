@@ -17,17 +17,34 @@
 import { deviceRepo, equipmentRepo, connectionEventRepo } from '../db/repositories/index.js';
 import { getLoraPair } from './loraPair.js';
 import { checkReachability } from './reachability.js';
+import { mapRepo } from '../db/repositories/index.js';
+import { deriveHasError } from '../mqtt/mowerActivity.js';
+import { MAP_NAMES_SELECTION_BUILD } from './mowingArea.js';
 
 export type StepStatus = 'ok' | 'fail' | 'warn' | 'unknown' | 'skipped';
+
+export type DiagnosisGroup = 'reach' | 'connect' | 'identity' | 'pair' | 'firmware' | 'ready';
 
 export interface DiagnosisStep {
   /** Stable id, so the UI can translate without parsing prose. */
   id: string;
+  group: DiagnosisGroup;
   status: StepStatus;
   /** What was actually observed. Facts, no advice. */
   evidence: string;
   /** The one next thing to do. Only set when status is fail or warn. */
   action?: string;
+}
+
+export interface DiagnosisInput {
+  /**
+   * Live sensor values, passed in rather than imported.
+   *
+   * sensorData pulls in socketHandler -> broker -> demoSimulator, a cycle that
+   * ESM resolves as a TDZ error at import time. Injecting it also makes every
+   * state below reachable from a test without a running broker.
+   */
+  snapshot?: Record<string, string> | null;
 }
 
 export interface Diagnosis {
@@ -73,7 +90,12 @@ function parseLastSeen(row: { last_seen?: string } | undefined): number | null {
   return Number.isFinite(t) ? t : null;
 }
 
-export async function diagnoseConnection(sn: string, now = Date.now()): Promise<Diagnosis> {
+export async function diagnoseConnection(
+  sn: string,
+  now = Date.now(),
+  input: DiagnosisInput = {},
+): Promise<Diagnosis> {
+  const snap = input.snapshot ?? null;
   const steps: DiagnosisStep[] = [];
   const deviceType = deviceTypeOf(sn);
   const push = (s: DiagnosisStep) => { steps.push(s); return s; };
@@ -99,12 +121,14 @@ export async function diagnoseConnection(sn: string, now = Date.now()): Promise<
   if (dnsAnswers.length === 0) {
     push({
       id: 'dns',
+      group: 'reach',
       status: 'unknown',
       evidence: `${DEVICE_HOSTNAMES_LABEL} lost hier niet op`,
     });
   } else if (dnsPointsHere) {
     push({
       id: 'dns',
+      group: 'reach',
       status: 'ok',
       evidence: `${dnsAnswers.find(d => d.pointsHere)!.host} wijst naar deze server `
               + `(${reach.serverIps.join(', ') || 'onbekend adres'})`,
@@ -112,6 +136,7 @@ export async function diagnoseConnection(sn: string, now = Date.now()): Promise<
   } else if (weServeDns) {
     push({
       id: 'dns',
+      group: 'reach',
       status: 'fail',
       evidence: `deze server serveert de omleiding, maar ${dnsElsewhere[0].host} wijst naar `
               + `${dnsElsewhere[0].addresses.join(', ')} en niet naar `
@@ -122,6 +147,7 @@ export async function diagnoseConnection(sn: string, now = Date.now()): Promise<
   } else {
     push({
       id: 'dns',
+      group: 'reach',
       status: 'unknown',
       evidence: `${dnsElsewhere[0].host} lost hier op naar ${dnsElsewhere[0].addresses.join(', ')}. `
               + 'Deze server serveert de omleiding niet, dus dit zegt alleen iets als je '
@@ -132,18 +158,21 @@ export async function diagnoseConnection(sn: string, now = Date.now()): Promise<
   if (!reach.deviceIp) {
     push({
       id: 'network',
+      group: 'reach',
       status: 'unknown',
       evidence: 'geen adres van dit apparaat bekend, dus niet te peilen',
     });
   } else if (reach.deviceAnswered) {
     push({
       id: 'network',
+      group: 'reach',
       status: 'ok',
       evidence: `${reach.deviceIp} antwoordt, het apparaat staat aan en zit op het netwerk`,
     });
   } else if (reach.sameSubnet === false) {
     push({
       id: 'network',
+      group: 'reach',
       status: 'fail',
       evidence: `laatst bekende adres ${reach.deviceIp} zit in een ander subnet dan deze server `
               + `(${reach.serverIps.join(', ')})`,
@@ -152,6 +181,7 @@ export async function diagnoseConnection(sn: string, now = Date.now()): Promise<
   } else {
     push({
       id: 'network',
+      group: 'reach',
       status: 'unknown',
       evidence: `${reach.deviceIp} antwoordt niet op poort 22 of 8000; op stock firmware `
               + 'staan die dicht, dus dit bewijst niets',
@@ -167,6 +197,7 @@ export async function diagnoseConnection(sn: string, now = Date.now()): Promise<
   if (!everSeen) {
     push({
       id: 'seen',
+      group: 'connect',
       status: 'fail',
       evidence: `${sn} heeft zich nog nooit bij deze server gemeld`,
       action: 'het apparaat is nog niet ingericht of wijst naar een andere server: '
@@ -175,12 +206,14 @@ export async function diagnoseConnection(sn: string, now = Date.now()): Promise<
   } else if (online) {
     push({
       id: 'seen',
+      group: 'connect',
       status: 'ok',
       evidence: `laatst gezien ${ago(lastSeen as number, now)} als ${reg!.mqtt_client_id}`,
     });
   } else {
     push({
       id: 'seen',
+      group: 'connect',
       status: 'fail',
       evidence: `was verbonden, maar laatst gezien ${ago(lastSeen as number, now)}`,
       action: 'hij wérkte eerder, dus zoek wat er rond dat moment veranderde: '
@@ -196,10 +229,12 @@ export async function diagnoseConnection(sn: string, now = Date.now()): Promise<
     .sort((a, b) => (b!.ts - a!.ts))[0] ?? null;
 
   if (online) {
-    push({ id: 'attempts', status: 'skipped', evidence: 'niet nodig, hij is binnen' });
+    push({ id: 'attempts',
+      group: 'connect', status: 'skipped', evidence: 'niet nodig, hij is binnen' });
   } else if (worst && now - worst.ts < 24 * 60 * 60 * 1000) {
     push({
       id: 'attempts',
+      group: 'connect',
       status: 'fail',
       evidence: `laatste poging ${ago(worst.ts, now)} geweigerd: ${worst.reason ?? 'onbekende reden'}`,
       action: worst.reason === 'banned'
@@ -211,6 +246,7 @@ export async function diagnoseConnection(sn: string, now = Date.now()): Promise<
   } else {
     push({
       id: 'attempts',
+      group: 'connect',
       status: everSeen ? 'warn' : 'fail',
       evidence: 'geen enkele verbindingspoging geregistreerd in de laatste 24 uur',
       action: 'er komt niets binnen, dus het probleem zit vóór de broker: '
@@ -223,6 +259,7 @@ export async function diagnoseConnection(sn: string, now = Date.now()): Promise<
   if (!eq) {
     push({
       id: 'binding',
+      group: 'identity',
       status: 'fail',
       evidence: 'geen koppeling in equipment',
       action: 'koppel het apparaat via de app, dat schrijft de equipment-rij',
@@ -230,12 +267,14 @@ export async function diagnoseConnection(sn: string, now = Date.now()): Promise<
   } else if (!eq.user_id) {
     push({
       id: 'binding',
+      group: 'identity',
       status: 'warn',
       evidence: 'gekoppeld maar zonder gebruiker (user_id leeg)',
       action: 'de app doet dan BLE-provisioning; rond die stap af in de app',
     });
   } else {
-    push({ id: 'binding', status: 'ok', evidence: `gekoppeld aan gebruiker ${eq.user_id}` });
+    push({ id: 'binding',
+      group: 'identity', status: 'ok', evidence: `gekoppeld aan gebruiker ${eq.user_id}` });
   }
 
   // 5. The BLE MAC must be the mower's own, not the charger's. When it is the
@@ -247,6 +286,7 @@ export async function diagnoseConnection(sn: string, now = Date.now()): Promise<
     if (!bound) {
       push({
         id: 'ble_mac',
+      group: 'identity',
         status: 'warn',
         evidence: 'geen BLE MAC bekend bij de koppeling',
         action: 'zonder MAC herkent de app de maaier niet in een BLE-scan',
@@ -254,6 +294,7 @@ export async function diagnoseConnection(sn: string, now = Date.now()): Promise<
     } else if (bound.toUpperCase().startsWith('48:27:E2')) {
       push({
         id: 'ble_mac',
+      group: 'identity',
         status: 'fail',
         evidence: `de opgeslagen MAC ${bound} is die van een laadstation, niet van de maaier`,
         action: 'laat de MAC opnieuw afleiden uit device_factory',
@@ -261,14 +302,17 @@ export async function diagnoseConnection(sn: string, now = Date.now()): Promise<
     } else if (factory && bound.toUpperCase() !== factory.toUpperCase()) {
       push({
         id: 'ble_mac',
+      group: 'identity',
         status: 'warn',
         evidence: `MAC ${bound} wijkt af van de fabriekswaarde ${factory}`,
       });
     } else {
-      push({ id: 'ble_mac', status: 'ok', evidence: `BLE MAC ${bound}` });
+      push({ id: 'ble_mac',
+      group: 'identity', status: 'ok', evidence: `BLE MAC ${bound}` });
     }
   } else {
-    push({ id: 'ble_mac', status: 'skipped', evidence: 'alleen van toepassing op een maaier' });
+    push({ id: 'ble_mac',
+      group: 'identity', status: 'skipped', evidence: 'alleen van toepassing op een maaier' });
   }
 
   // 6. The charger side. A mower alone is half a system: without the charger
@@ -277,6 +321,7 @@ export async function diagnoseConnection(sn: string, now = Date.now()): Promise<
   if (!counterpartSn) {
     push({
       id: 'counterpart',
+      group: 'pair',
       status: 'warn',
       evidence: deviceType === 'mower' ? 'geen laadstation gekoppeld' : 'geen maaier gekoppeld',
       action: 'zonder laadstation is er geen RTK-correctie en dus geen nauwkeurige positie',
@@ -287,6 +332,7 @@ export async function diagnoseConnection(sn: string, now = Date.now()): Promise<
     if (cSeen === null) {
       push({
         id: 'counterpart',
+      group: 'pair',
         status: 'fail',
         evidence: `${counterpartSn} heeft zich nog nooit gemeld`,
         action: 'richt ook het laadstation in; het heeft een eigen wifi- en MQTT-verbinding',
@@ -294,23 +340,27 @@ export async function diagnoseConnection(sn: string, now = Date.now()): Promise<
     } else if (now - cSeen > OFFLINE_AFTER_MS) {
       push({
         id: 'counterpart',
+      group: 'pair',
         status: 'fail',
         evidence: `${counterpartSn} laatst gezien ${ago(cSeen, now)}`,
         action: 'controleer de stroom en het wifi-bereik van het laadstation',
       });
     } else {
-      push({ id: 'counterpart', status: 'ok', evidence: `${counterpartSn} gezien ${ago(cSeen, now)}` });
+      push({ id: 'counterpart',
+      group: 'pair', status: 'ok', evidence: `${counterpartSn} gezien ${ago(cSeen, now)}` });
     }
   }
 
   // 7. LoRa pair. Reuses the existing comparison rather than re-deriving it.
   const pair = getLoraPair(sn);
   if (!pair) {
-    push({ id: 'lora', status: 'skipped', evidence: 'geen LoRa-paar om te controleren' });
+    push({ id: 'lora',
+      group: 'pair', status: 'skipped', evidence: 'geen LoRa-paar om te controleren' });
   } else if (pair.ok) {
     const c = pair.charger;
     push({
       id: 'lora',
+      group: 'pair',
       status: 'ok',
       evidence: `adres ${c?.addr ?? '?'} kanaal ${c?.channel ?? '?'} aan beide kanten gelijk`,
     });
@@ -319,6 +369,7 @@ export async function diagnoseConnection(sn: string, now = Date.now()): Promise<
     const mismatch = issues.includes('addr-mismatch') || issues.includes('channel-mismatch');
     push({
       id: 'lora',
+      group: 'pair',
       status: 'fail',
       evidence: mismatch
         ? `maaier ${pair.mower?.addr ?? '?'}/${pair.mower?.channel ?? '?'} `
@@ -328,6 +379,156 @@ export async function diagnoseConnection(sn: string, now = Date.now()): Promise<
         ? 'adres en kanaal moeten IDENTIEK zijn aan beide kanten; koppel opnieuw via de app'
         : 'de LoRa-instellingen zijn nog niet van beide apparaten gelezen',
     });
+  }
+
+  // ── Verbinding: botsende client-id's ───────────────────────────────────
+  //
+  // Twee clients met hetzelfde client_id vechten om de verbinding: de broker
+  // gooit de ene eruit zodra de andere binnenkomt, eindeloos. Dat ziet eruit als
+  // "hij is soms online", en run_novabot.sh heeft er niet voor niets een
+  // dubbel-start-guard voor (GH #60). Zichtbaar in de pogingen: hetzelfde
+  // client_id vanaf twee adressen.
+  const attempts = connectionEventRepo.recent(sn, 100);
+  const addrsPerClient = new Map<string, Set<string>>();
+  for (const a of attempts) {
+    if (!a.remote_addr) continue;
+    const set = addrsPerClient.get(a.mqtt_client_id) ?? new Set<string>();
+    set.add(a.remote_addr);
+    addrsPerClient.set(a.mqtt_client_id, set);
+  }
+  const clashing = [...addrsPerClient.entries()].find(([, set]) => set.size > 1);
+  if (clashing) {
+    push({
+      id: 'client_conflict',
+      group: 'connect',
+      status: 'fail',
+      evidence: `client_id ${clashing[0]} komt van ${[...clashing[1]].join(' en ')}`,
+      action: "twee apparaten of processen gebruiken hetzelfde client_id en gooien "
+            + 'elkaar er om beurten uit; zet er één uit',
+    });
+  } else {
+    push({
+      id: 'client_conflict',
+      group: 'connect',
+      status: 'ok',
+      evidence: 'geen dubbel gebruikt client_id gezien',
+    });
+  }
+
+  // ── Verbinding: komen de berichten leesbaar binnen ─────────────────────
+  //
+  // De AES-sleutel wordt afgeleid uit het serienummer. Klopt die niet, dan
+  // verbindt het apparaat prima en komt er verder niets bruikbaars door: geen
+  // foutmelding, alleen stilte. Verbonden zonder enige sensorwaarde is precies
+  // dat beeld.
+  if (!online) {
+    push({ id: 'encryption', group: 'connect', status: 'skipped', evidence: 'hij is niet verbonden' });
+  } else if (!snap || Object.keys(snap).length === 0) {
+    push({
+      id: 'encryption',
+      group: 'connect',
+      status: 'fail',
+      evidence: 'verbonden, maar er is geen enkele meetwaarde binnengekomen',
+      action: 'de berichten zijn niet te ontcijferen of hebben een ander formaat; '
+            + 'controleer of het serienummer klopt, daar wordt de sleutel uit afgeleid',
+    });
+  } else {
+    push({
+      id: 'encryption',
+      group: 'connect',
+      status: 'ok',
+      evidence: `${Object.keys(snap).length} meetwaarden ontvangen`,
+    });
+  }
+
+  // ── Firmware ───────────────────────────────────────────────────────────
+  const version = snap?.sw_version ?? eq?.mower_version ?? null;
+  if (!version) {
+    push({
+      id: 'firmware',
+      group: 'firmware',
+      status: 'unknown',
+      evidence: 'firmwareversie nog niet gemeld',
+    });
+  } else {
+    const custom = /custom|opennova/i.test(version);
+    const buildNum = Number(version.match(/custom-(\d+)/)?.[1] ?? NaN);
+    push({
+      id: 'firmware',
+      group: 'firmware',
+      status: 'ok',
+      evidence: custom ? `${version} (OpenNova)` : `${version} (stock)`,
+    });
+    // De firmware stuurt map_ids boven 60000 naar zijn vision_test-taak, die
+    // faalt met fout 125. Builds vanaf MAP_NAMES_SELECTION_BUILD kiezen zones op
+    // naam en hebben er geen last van (GH #114).
+    const workMaps = mapRepo.findByMowerSnAndType(sn, 'work').length;
+    if (workMaps > 5 && !(custom && buildNum >= MAP_NAMES_SELECTION_BUILD)) {
+      push({
+        id: 'zone_limit',
+        group: 'firmware',
+        status: 'warn',
+        evidence: `${workMaps} werkzones op firmware die er maximaal 5 aankan`,
+        action: 'zones boven de vijfde eindigen in fout 125; werk de firmware bij '
+              + `naar custom-${MAP_NAMES_SELECTION_BUILD} of hoger`,
+      });
+    }
+  }
+
+  // ── Klaar om te maaien ─────────────────────────────────────────────────
+  if (deviceType === 'mower') {
+    const workMaps = mapRepo.findByMowerSnAndType(sn, 'work').length;
+    push({
+      id: 'maps',
+      group: 'ready',
+      status: workMaps > 0 ? 'ok' : 'fail',
+      evidence: workMaps > 0 ? `${workMaps} werkgebied(en)` : 'geen enkel werkgebied bekend',
+      action: workMaps > 0 ? undefined : 'karteer eerst een gebied, zonder kaart start er niets',
+    });
+
+    if (!snap) {
+      push({ id: 'rtk', group: 'ready', status: 'skipped', evidence: 'geen meetwaarden' });
+      push({ id: 'fault', group: 'ready', status: 'skipped', evidence: 'geen meetwaarden' });
+      push({ id: 'frame', group: 'ready', status: 'skipped', evidence: 'geen meetwaarden' });
+    } else {
+      // Zonder RTK-fix is de positie metersgroot onnauwkeurig en rijdt hij de
+      // tuin uit. De correctie komt van het laadstation over LoRa, dus dit hangt
+      // aan de stappen hierboven.
+      const q = snap.rtk_fix_quality ?? snap.rtk_ok ?? '';
+      const fixed = /fix/i.test(q) || q === '4';
+      push({
+        id: 'rtk',
+        group: 'ready',
+        status: fixed ? 'ok' : 'warn',
+        evidence: q ? `RTK-status ${q}${snap.rtk_sat ? `, ${snap.rtk_sat} satellieten` : ''}`
+                    : 'geen RTK-status gemeld',
+        action: fixed ? undefined
+          : 'zonder RTK-fix is de positie te onnauwkeurig om te maaien; '
+          + 'controleer het laadstation en of het zicht op de hemel heeft',
+      });
+
+      const code = parseInt(snap.error_status ?? '0', 10) || 0;
+      const blocking = deriveHasError(snap);
+      push({
+        id: 'fault',
+        group: 'ready',
+        status: blocking ? 'fail' : 'ok',
+        evidence: code === 0 ? 'geen storing'
+                : blocking ? `storing ${code} actief` : `melding ${code}, niet blokkerend`,
+        action: blocking ? 'los de storing op of wis hem, anders start er geen taak' : undefined,
+      });
+
+      const unvalidated = (snap.frame_unvalidated ?? '0') === '1';
+      push({
+        id: 'frame',
+        group: 'ready',
+        status: unvalidated ? 'fail' : 'ok',
+        evidence: unvalidated ? 'het kaartframe is nog niet gecontroleerd na een herstel'
+                              : 'kaartframe gecontroleerd',
+        action: unvalidated ? 'anker de maaier opnieuw op het laadstation voor je gaat maaien'
+                            : undefined,
+      });
+    }
   }
 
   const firstBad = steps.find(s => s.status === 'fail') ?? steps.find(s => s.status === 'warn');

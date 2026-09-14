@@ -29,8 +29,8 @@ export const RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 /**
  * A device that cannot connect retries in a tight loop, so an unfiltered log
  * would be thousands of identical rows an hour and the interesting older ones
- * would age out of any cap. One row per (client, outcome, reason) per minute is
- * enough to reconstruct what happened.
+ * would age out of any cap. One row per (client, address, outcome, reason) per
+ * minute is enough to reconstruct what happened.
  */
 export const DEDUP_WINDOW_MS = 60_000;
 
@@ -44,12 +44,15 @@ export const connectionEventRepo = {
     ts?: number;
   }): void {
     const ts = e.ts ?? Date.now();
+    // remote_addr hoort in de sleutel: hetzelfde client_id vanaf TWEE adressen
+    // is precies het signaal dat twee apparaten elkaar er om beurten uitgooien,
+    // en zonder het adres in de vergelijking vouwt de dedup dat weg.
     const recent = db.prepare(`
       SELECT id FROM connection_events
       WHERE mqtt_client_id = ? AND outcome = ? AND IFNULL(reason,'') = IFNULL(?,'')
-        AND ts > ?
+        AND IFNULL(remote_addr,'') = IFNULL(?,'') AND ts > ?
       LIMIT 1
-    `).get(e.clientId, e.outcome, e.reason ?? null, ts - DEDUP_WINDOW_MS);
+    `).get(e.clientId, e.outcome, e.reason ?? null, e.remoteAddr ?? null, ts - DEDUP_WINDOW_MS);
     if (recent) return;
 
     db.prepare(`

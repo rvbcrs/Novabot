@@ -143,7 +143,7 @@ dashboardRouter.get('/diagnose/:sn', async (req: Request, res: Response) => {
     res.status(400).json({ error: 'invalid sn' });
     return;
   }
-  res.json(await diagnoseConnection(sn));
+  res.json(await diagnoseConnection(sn, Date.now(), { snapshot: getDeviceSnapshot(sn) }));
 });
 
 /** De ruwe verbindingspogingen achter stap `attempts`, voor wie wil doorklikken. */

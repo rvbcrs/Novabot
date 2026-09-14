@@ -205,3 +205,89 @@ describe('reachability', () => {
     expect(step.evidence).toContain('geen adres');
   });
 });
+
+/** Online, bound, with whatever sensor values the case needs. */
+async function live(snapshot: Record<string, string> | null) {
+  withIp('192.0.2.10');
+  bind('50:41:1C:39:BD:C1');
+  return diagnoseConnection(MOWER, Date.now(), { snapshot });
+}
+
+describe('connection quality', () => {
+  it('spots two devices fighting over one client_id', async () => {
+    // The broker kicks one out whenever the other connects, forever. It looks
+    // like "sometimes online" and run_novabot.sh carries a double-start guard
+    // for exactly this (GH #60).
+    const now = Date.now();
+    connectionEventRepo.record({ clientId: `${MOWER}_6688`, sn: MOWER, outcome: 'accepted', remoteAddr: '192.168.1.5', ts: now - 5000 });
+    connectionEventRepo.record({ clientId: `${MOWER}_6688`, sn: MOWER, outcome: 'accepted', remoteAddr: '192.168.1.9', ts: now });
+    const step = (await live({ msg: 'x' })).steps.find(s => s.id === 'client_conflict')!;
+    expect(step.status).toBe('fail');
+    expect(step.evidence).toContain('192.168.1.5');
+    expect(step.action).toContain('client_id');
+  });
+
+  it('is quiet when one client_id comes from one address', async () => {
+    const now = Date.now();
+    connectionEventRepo.record({ clientId: `${MOWER}_6688`, sn: MOWER, outcome: 'accepted', remoteAddr: '192.168.1.5', ts: now });
+    expect((await live({ msg: 'x' })).steps.find(s => s.id === 'client_conflict')!.status).toBe('ok');
+  });
+
+  it('calls out connected-but-unreadable', async () => {
+    // The AES key is derived from the serial. Get it wrong and the device
+    // connects fine and then says nothing usable: no error, just silence.
+    const step = (await live({})).steps.find(s => s.id === 'encryption')!;
+    expect(step.status).toBe('fail');
+    expect(step.action).toContain('serienummer');
+  });
+
+  it('does not judge readability of a device that is not connected', async () => {
+    db.prepare('DELETE FROM device_registry').run();
+    const step = (await diagnoseConnection(MOWER)).steps.find(s => s.id === 'encryption')!;
+    expect(step.status).toBe('skipped');
+  });
+});
+
+describe('readiness', () => {
+  it('reports no work area as a hard stop', async () => {
+    const step = (await live({ msg: 'x' })).steps.find(s => s.id === 'maps')!;
+    expect(step.status).toBe('fail');
+    expect(step.action).toContain('karteer');
+  });
+
+  it('warns without an RTK fix, since the position is metres out', async () => {
+    const step = (await live({ msg: 'x', rtk_fix_quality: 'Single' })).steps.find(s => s.id === 'rtk')!;
+    expect(step.status).toBe('warn');
+    expect(step.action).toContain('laadstation');
+  });
+
+  it('accepts an RTK fix', async () => {
+    expect((await live({ msg: 'x', rtk_fix_quality: 'RTK Fixed', rtk_sat: '28' }))
+      .steps.find(s => s.id === 'rtk')!.status).toBe('ok');
+  });
+
+  it('ignores a non-blocking fault code', async () => {
+    // 8 is the LoRa disconnect blip and is normal noise; flagging it would send
+    // people chasing a problem that is not there.
+    const step = (await live({ msg: 'x', error_status: '8' })).steps.find(s => s.id === 'fault')!;
+    expect(step.status).toBe('ok');
+    expect(step.evidence).toContain('niet blokkerend');
+  });
+
+  it('reports a blocking fault', async () => {
+    const step = (await live({ msg: 'x', error_status: '141' })).steps.find(s => s.id === 'fault')!;
+    expect(step.status).toBe('fail');
+    expect(step.evidence).toContain('141');
+  });
+
+  it('reports an unvalidated map frame', async () => {
+    const step = (await live({ msg: 'x', frame_unvalidated: '1' })).steps.find(s => s.id === 'frame')!;
+    expect(step.status).toBe('fail');
+    expect(step.action).toContain('anker');
+  });
+
+  it('every step carries a group, so the UI can order them', async () => {
+    const d = await live({ msg: 'x' });
+    expect(d.steps.every(s => !!s.group)).toBe(true);
+  });
+});

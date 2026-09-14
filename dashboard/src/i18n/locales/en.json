@@ -1040,6 +1040,20 @@
     "counterpart": "Counterpart",
     "lora": "LoRa pair",
     "dns": "Name points here",
-    "network": "Network"
+    "network": "Network",
+    "clientConflict": "Duplicate client_id",
+    "encryption": "Readable messages",
+    "firmware": "Firmware",
+    "zoneLimit": "Zone count",
+    "maps": "Work areas",
+    "rtk": "RTK position",
+    "fault": "Fault",
+    "frame": "Map frame",
+    "groupReach": "Reachability",
+    "groupConnect": "Connection",
+    "groupIdentity": "Identity",
+    "groupPair": "Charger and LoRa",
+    "groupFirmware": "Firmware",
+    "groupReady": "Ready to mow"
   }
 }

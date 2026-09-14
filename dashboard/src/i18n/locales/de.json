@@ -918,6 +918,20 @@
     "counterpart": "Gegenstück",
     "lora": "LoRa-Paar",
     "dns": "Name zeigt hierher",
-    "network": "Netzwerk"
+    "network": "Netzwerk",
+    "clientConflict": "Doppelte client_id",
+    "encryption": "Lesbare Nachrichten",
+    "firmware": "Firmware",
+    "zoneLimit": "Anzahl Zonen",
+    "maps": "Arbeitsbereiche",
+    "rtk": "RTK-Position",
+    "fault": "Störung",
+    "frame": "Kartenrahmen",
+    "groupReach": "Erreichbarkeit",
+    "groupConnect": "Verbindung",
+    "groupIdentity": "Identität",
+    "groupPair": "Ladestation und LoRa",
+    "groupFirmware": "Firmware",
+    "groupReady": "Bereit zum Mähen"
   }
 }

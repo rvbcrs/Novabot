@@ -918,6 +918,20 @@
     "counterpart": "Homologue",
     "lora": "Paire LoRa",
     "dns": "Le nom pointe ici",
-    "network": "Réseau"
+    "network": "Réseau",
+    "clientConflict": "client_id en double",
+    "encryption": "Messages lisibles",
+    "firmware": "Micrologiciel",
+    "zoneLimit": "Nombre de zones",
+    "maps": "Zones de travail",
+    "rtk": "Position RTK",
+    "fault": "Panne",
+    "frame": "Référentiel de carte",
+    "groupReach": "Accessibilité",
+    "groupConnect": "Connexion",
+    "groupIdentity": "Identité",
+    "groupPair": "Station et LoRa",
+    "groupFirmware": "Micrologiciel",
+    "groupReady": "Prêt à tondre"
   }
 }
