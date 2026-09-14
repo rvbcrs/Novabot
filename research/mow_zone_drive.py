@@ -50,6 +50,13 @@ import tf2_ros
 MAPS_HOME = "/userdata/lfi/maps/home0"
 NAV_NODE = "/nav2_single_node_navigator"
 DECISION = "/robot_decision"
+
+# Iceoryx deelt deze applicatie maar twee pools toe, van 4 MB en 8 MB, dus élk
+# bericht kost een heel blok van 4 MB, ook een tf-transform van 104 bytes. Diepe
+# wachtrijen zijn hier dus niet "een beetje geheugen" maar tientallen megabytes
+# per abonnement. Een paar plekken is genoeg om één transform te lezen.
+TF_QOS = QoSProfile(depth=5, history=QoSHistoryPolicy.KEEP_LAST)
+TF_STATIC_QOS = QoSProfile(depth=10, history=QoSHistoryPolicy.KEEP_LAST)
 # RobotStatus.task_mode / work_status values the orchestrator has to reason
 # about. A coverage task counts as executing (start_cov_task refuses a new
 # start, delete_map refuses) while task_mode is COVERAGE and work_status is
@@ -228,7 +235,15 @@ class Driver:
         as a not-localized guard: callers refuse to move on None)."""
         probe = rclpy.create_node("mzd_tf_probe")
         buf = tf2_ros.Buffer()
-        tf2_ros.TransformListener(buf, probe)
+        # TransformListener staat standaard op depth 100 voor /tf ÉN /tf_static.
+        # Deze applicatie heeft maar twee pools, van 4 MB en 8 MB, dus zelfs een
+        # tf-bericht van een paar honderd bytes kost een heel blok van 4 MB.
+        # Tweehonderd wachtrijplekken op een pool van honderd: robot_xy() trok
+        # hem in seconden leeg en alles wat daarna een blok vroeg kreeg
+        # MEPOO__MEMPOOL_GETCHUNK_POOL_IS_RUNNING_OUT_OF_CHUNKS (live
+        # LFIN2230700238, 2026-09-14). Een handvol is ruim genoeg: we lezen één
+        # transform en gooien de node meteen weg.
+        tf2_ros.TransformListener(buf, probe, qos=TF_QOS, static_qos=TF_STATIC_QOS)
         pos = None
         deadline = time.time() + timeout
         try:
@@ -416,9 +431,12 @@ class Driver:
         robot_xy). Returns the last (task_mode, work_status) seen, or None."""
         probe = rclpy.create_node("mzd_status_probe")
         seen = {}
+        # robot_status komt met 50 Hz binnen en elk bericht kost een blok van
+        # 4 MB (zie TF_QOS). We willen alleen de nieuwste stand, dus depth 1.
         probe.create_subscription(
             RobotStatus, f"{DECISION}/robot_status",
-            lambda m: seen.__setitem__("v", (int(m.task_mode), int(m.work_status))), 10)
+            lambda m: seen.__setitem__("v", (int(m.task_mode), int(m.work_status))),
+            QoSProfile(depth=1, history=QoSHistoryPolicy.KEEP_LAST))
         deadline = time.time() + timeout
         try:
             while time.time() < deadline:
