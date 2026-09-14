@@ -40,11 +40,12 @@ export interface DiagnosisStep {
 
 export interface DiagnosisInput {
   /**
-   * Sweep the local network for LFI MAC prefixes. Costs about a second and 254
-   * UDP pokes, so it only runs when it can tell us something new: when the
-   * device has no known address. Off by default for callers that poll.
+   * Probe the local network: sweep for LFI MAC prefixes when no address is
+   * known, and look for a second MQTT broker. Both cost real time and packets,
+   * so a caller that polls should turn them off. On by default, because a
+   * person pressing Diagnose wants the full answer.
    */
-  scanLan?: boolean;
+  probeNetwork?: boolean;
   /**
    * Live sensor values, passed in rather than imported.
    *
@@ -134,12 +135,14 @@ export async function diagnoseConnection(
   // vinden via mDNS de verkeerde, springen heen en weer en lijken met tussen-
   // pozen offline. Precies wat hier op 14-09-2026 gebeurde toen een release een
   // tweede container op 1883 liet staan.
-  const rivals = await rivalBrokers(serverIpv4());
+  const rivals = input.probeNetwork === false ? [] : await rivalBrokers(serverIpv4());
   push({
     id: 'rival_broker',
     group: 'server',
-    status: rivals.length > 0 ? 'fail' : 'ok',
-    evidence: rivals.length > 0
+    status: input.probeNetwork === false ? 'skipped' : rivals.length > 0 ? 'fail' : 'ok',
+    evidence: input.probeNetwork === false
+      ? 'niet gepeild'
+      : rivals.length > 0
       ? `nog ${rivals.length} andere MQTT-broker(s) op dit netwerk: ${rivals.join(', ')}`
       : 'geen tweede MQTT-broker op dit netwerk',
     action: rivals.length > 0
@@ -207,7 +210,7 @@ export async function diagnoseConnection(
     // voor dit apparaat. De hardware verraadt zichzelf wel op laag 2: de eerste
     // drie bytes van het MAC zeggen wie de fabrikant is, en die set komt uit de
     // fabriekstabel die bij elke installatie meegaat.
-    const lan = input.scanLan === false ? null : await scanLan();
+    const lan = input.probeNetwork === false ? null : await scanLan();
     if (!lan) {
       push({
         id: 'network',

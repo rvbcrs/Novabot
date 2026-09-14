@@ -131,7 +131,15 @@ export async function lookupMac(ip: string): Promise<string | null> {
  *
  * Reads the neighbour table as it stands, without the sweep, so this is cheap.
  */
+let rivalCache: { at: number; ips: string[] } | null = null;
+/** Een tweede broker verschijnt niet van seconde tot seconde. */
+const RIVAL_CACHE_MS = 60_000;
+
 export async function rivalBrokers(ourIps: string[], port = 1883, max = 40): Promise<string[]> {
+  // Zonder cache peilt elke diagnose opnieuw veertig adressen. Dat is te zwaar
+  // voor een endpoint dat herhaald wordt aangeroepen, en het liet de testsuite
+  // van 70 naar 225 seconden lopen tot hij omviel.
+  if (rivalCache && Date.now() - rivalCache.at < RIVAL_CACHE_MS) return rivalCache.ips;
   const neighbours = (await readNeighbours()).filter(n => !ourIps.includes(n.ip)).slice(0, max);
   const hits = await Promise.all(neighbours.map(async n => {
     const open = await new Promise<boolean>(resolve => {
@@ -146,7 +154,9 @@ export async function rivalBrokers(ourIps: string[], port = 1883, max = 40): Pro
     });
     return open ? n.ip : null;
   }));
-  return hits.filter((x): x is string => x !== null);
+  const ips = hits.filter((x): x is string => x !== null);
+  rivalCache = { at: Date.now(), ips };
+  return ips;
 }
 
 /** True for the ranges Docker hands out to bridged containers. */
