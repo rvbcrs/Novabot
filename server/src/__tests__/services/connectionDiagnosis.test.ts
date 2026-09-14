@@ -33,6 +33,38 @@ function bind(mac: string) {
               VALUES (?,?,?,?,?)`).run(`eq-${MOWER}`, MOWER, CHARGER, mac, 'u1');
 }
 
+/**
+ * Stub probes. No test reaches the real network: that made them depend on what
+ * happened to be plugged in and how loaded the machine was, and they passed
+ * alone while failing inside the release gate.
+ */
+function probes(over: Partial<{
+  serverIps: string[]; dnsPointsHere: boolean; dnsAddresses: string[];
+  deviceAnswered: boolean; sameSubnet: boolean | null;
+  rivals: string[]; mac: string | null; lan: Record<string, unknown>;
+}> = {}) {
+  return {
+    reachability: async (deviceIp: string | null) => ({
+      serverIps: over.serverIps ?? ['192.168.1.2'],
+      dns: [{
+        host: 'mqtt.lfibot.com',
+        addresses: over.dnsAddresses ?? ['192.168.1.2'],
+        error: null,
+        pointsHere: over.dnsPointsHere ?? true,
+      }],
+      deviceIp,
+      deviceAnswered: over.deviceAnswered ?? false,
+      sameSubnet: over.sameSubnet ?? null,
+    }),
+    scanLan: async () => ({
+      canSeeLan: true, reason: null, subnet: '192.168.1',
+      found: [], neighbourCount: 5, knownOuis: 6, ...(over.lan ?? {}),
+    }),
+    rivalBrokers: async () => over.rivals ?? [],
+    lookupMac: async () => over.mac ?? null,
+  } as never;
+}
+
 beforeEach(() => {
   db.prepare('DELETE FROM device_registry').run();
   db.prepare('DELETE FROM connection_events').run();
@@ -41,32 +73,50 @@ beforeEach(() => {
 });
 
 describe('connection diagnosis', () => {
-  it('a device that has never connected is stuck at "seen", not at binding', async () => {
-    // The chain has to stop at the first broken link: telling someone to bind a
-    // device in the app is useless when the device has never reached the server.
-    const d = await diagnoseConnection(MOWER, Date.now(), { probeNetwork: false });
-    expect(d.stuckAt).toBe('seen');
+  it('never points at binding for a device that has never reached the server', async () => {
+    // Telling someone to bind a device in the app is useless when the device has
+    // never got here. The blockage has to be earlier in the chain.
+    const d = await diagnoseConnection(MOWER, Date.now(), { probes: probes() });
+    expect(d.stuckAt).not.toBe('binding');
     expect(d.steps.find(s => s.id === 'seen')!.status).toBe('fail');
     expect(d.steps.find(s => s.id === 'seen')!.evidence).toContain('nog nooit');
+  });
+
+  it('found on the LAN but silent gets its own answer', async () => {
+    // The most useful thing we can say: it is on the network, so this is a
+    // server-address problem on the device and not power or wifi.
+    const d = await diagnoseConnection(MOWER, Date.now(), {
+      probes: probes({ lan: { found: [{ ip: '192.168.1.42', mac: '70:4A:0E:00:00:01', kind: 'mower', sn: MOWER }] } }),
+    });
+    const step = d.steps.find(s => s.id === 'network')!;
+    expect(step.evidence).toContain('192.168.1.42');
+    expect(step.action).toContain('serverinstelling');
+  });
+
+  it('puts "not on the network" before "never connected"', async () => {
+    // A device that is not on the LAN at all is a more fundamental failure than
+    // one that never reached us, and the advice differs.
+    const d = await diagnoseConnection(MOWER, Date.now(), { probes: probes() });
+    expect(d.stuckAt).toBe('network');
   });
 
   it('separates "never connected" from "was connected until recently"', async () => {
     // These look identical in the dashboard and call for opposite actions.
     seenAt(MOWER, 3 * 24 * 60 * 60 * 1000);
-    const gone = await diagnoseConnection(MOWER, Date.now(), { probeNetwork: false });
+    const gone = await diagnoseConnection(MOWER, Date.now(), { probes: probes() });
     const step = gone.steps.find(s => s.id === 'seen')!;
     expect(step.status).toBe('fail');
     expect(step.evidence).toContain('was verbonden');
     expect(step.action).toContain('veranderde');
 
     db.prepare('DELETE FROM device_registry').run();
-    const never = await diagnoseConnection(MOWER, Date.now(), { probeNetwork: false });
+    const never = await diagnoseConnection(MOWER, Date.now(), { probes: probes() });
     expect(never.steps.find(s => s.id === 'seen')!.action).toContain('ingericht');
   });
 
   it('a device seen a minute ago counts as online', async () => {
     seenAt(MOWER, 60_000);
-    const d = await diagnoseConnection(MOWER, Date.now(), { probeNetwork: false });
+    const d = await diagnoseConnection(MOWER, Date.now(), { probes: probes() });
     expect(d.steps.find(s => s.id === 'seen')!.status).toBe('ok');
     // No point reporting refused attempts for a device that is in.
     expect(d.steps.find(s => s.id === 'attempts')!.status).toBe('skipped');
@@ -77,20 +127,20 @@ describe('connection diagnosis', () => {
     // device that just connected as hours stale, in either direction depending
     // on the server's timezone.
     seenAt(MOWER, 30_000);
-    expect((await diagnoseConnection(MOWER, Date.now(), { probeNetwork: false })).steps.find(s => s.id === 'seen')!.status).toBe('ok');
+    expect((await diagnoseConnection(MOWER, Date.now(), { probes: probes() })).steps.find(s => s.id === 'seen')!.status).toBe('ok');
   });
 
   it('surfaces a refused attempt with its reason', async () => {
     seenAt(MOWER, 3 * 24 * 60 * 60 * 1000);
     connectionEventRepo.record({ clientId: `${MOWER}_6688`, sn: MOWER, outcome: 'rejected', reason: 'banned' });
-    const step = (await diagnoseConnection(MOWER, Date.now(), { probeNetwork: false })).steps.find(s => s.id === 'attempts')!;
+    const step = (await diagnoseConnection(MOWER, Date.now(), { probes: probes() })).steps.find(s => s.id === 'attempts')!;
     expect(step.status).toBe('fail');
     expect(step.evidence).toContain('banned');
     expect(step.action).toContain('geblokkeerd');
   });
 
   it('says the problem is before the broker when nothing arrives at all', async () => {
-    const step = (await diagnoseConnection(MOWER, Date.now(), { probeNetwork: false })).steps.find(s => s.id === 'attempts')!;
+    const step = (await diagnoseConnection(MOWER, Date.now(), { probes: probes() })).steps.find(s => s.id === 'attempts')!;
     expect(step.status).toBe('fail');
     expect(step.action).toContain('DNS');
   });
@@ -100,7 +150,7 @@ describe('connection diagnosis', () => {
     // the mower's BLE advertisement and pairing silently fails.
     seenAt(MOWER, 60_000);
     bind('48:27:E2:1B:A4:0A');
-    const step = (await diagnoseConnection(MOWER, Date.now(), { probeNetwork: false })).steps.find(s => s.id === 'ble_mac')!;
+    const step = (await diagnoseConnection(MOWER, Date.now(), { probes: probes() })).steps.find(s => s.id === 'ble_mac')!;
     expect(step.status).toBe('fail');
     expect(step.evidence).toContain('laadstation');
   });
@@ -108,7 +158,7 @@ describe('connection diagnosis', () => {
   it('reports a charger that never showed up', async () => {
     seenAt(MOWER, 60_000);
     bind('50:41:1C:39:BD:C1');
-    const step = (await diagnoseConnection(MOWER, Date.now(), { probeNetwork: false })).steps.find(s => s.id === 'counterpart')!;
+    const step = (await diagnoseConnection(MOWER, Date.now(), { probes: probes() })).steps.find(s => s.id === 'counterpart')!;
     expect(step.status).toBe('fail');
     expect(step.evidence).toContain(CHARGER);
     expect(step.action).toContain('laadstation');
@@ -117,7 +167,7 @@ describe('connection diagnosis', () => {
   it('never reports a later step as the sticking point', async () => {
     // stuckAt must be the FIRST failure in chain order, otherwise the advice
     // points past the actual blockage.
-    const d = await diagnoseConnection(MOWER, Date.now(), { probeNetwork: false });
+    const d = await diagnoseConnection(MOWER, Date.now(), { probes: probes() });
     const ids = d.steps.map(s => s.id);
     const firstFail = d.steps.findIndex(s => s.status === 'fail');
     expect(ids.indexOf(d.stuckAt!)).toBe(firstFail);
@@ -160,7 +210,7 @@ describe('reachability', () => {
     // the redirect in a router or a separate DNS server, and then what we
     // resolve says nothing about what the mower resolves.
     delete process.env.ENABLE_DNS;
-    const step = (await diagnoseConnection(MOWER, Date.now(), { probeNetwork: false })).steps.find(s => s.id === 'dns')!;
+    const step = (await diagnoseConnection(MOWER, Date.now(), { probes: probes() })).steps.find(s => s.id === 'dns')!;
     expect(step.status).not.toBe('fail');
     if (step.status === 'unknown') expect(step.evidence).toContain('dezelfde DNS');
   });
@@ -168,7 +218,7 @@ describe('reachability', () => {
   it('does call it a fault when this server is the one serving it', async () => {
     process.env.ENABLE_DNS = 'true';
     try {
-      const step = (await diagnoseConnection(MOWER, Date.now(), { probeNetwork: false })).steps.find(s => s.id === 'dns')!;
+      const step = (await diagnoseConnection(MOWER, Date.now(), { probes: probes() })).steps.find(s => s.id === 'dns')!;
       // In CI the public name resolves to the real cloud, so this is the
       // mismatch branch: server serves the redirect but the name points away.
       if (step.status === 'fail') {
@@ -187,23 +237,27 @@ describe('reachability', () => {
     if (!ours) return;                                  // no LAN interface here
     const sameNet = ours.split('.').slice(0, 3).join('.') + '.253';
     withIp(sameNet);
-    const step = (await diagnoseConnection(MOWER, Date.now(), { probeNetwork: false })).steps.find(s => s.id === 'network')!;
+    const step = (await diagnoseConnection(MOWER, Date.now(), { probes: probes() })).steps.find(s => s.id === 'network')!;
     expect(step.status).not.toBe('fail');
     expect(step.evidence).toContain('bewijst niets');
   });
 
   it('flags an address in another subnet', async () => {
-    if (!serverIpv4().length) return;
     withIp('10.99.99.99');
-    const step = (await diagnoseConnection(MOWER, Date.now(), { probeNetwork: false })).steps.find(s => s.id === 'network')!;
+    const step = (await diagnoseConnection(MOWER, Date.now(),
+      { probes: probes({ sameSubnet: false }) })).steps.find(s => s.id === 'network')!;
     expect(step.status).toBe('fail');
     expect(step.evidence).toContain('ander subnet');
   });
 
-  it('says so plainly when no address is known', async () => {
-    const step = (await diagnoseConnection(MOWER, Date.now(), { probeNetwork: false })).steps.find(s => s.id === 'network')!;
+  it('says it is blind rather than empty when it cannot see the network', async () => {
+    // Behind a Docker bridge the neighbour table holds only the gateway.
+    // "No devices found" would send someone to check a mower that is fine.
+    const step = (await diagnoseConnection(MOWER, Date.now(), {
+      probes: probes({ lan: { canSeeLan: false, reason: 'deze container zit achter een Docker-bridge' } }),
+    })).steps.find(s => s.id === 'network')!;
     expect(step.status).toBe('unknown');
-    expect(step.evidence).toContain('geen adres');
+    expect(step.action).toContain('host-netwerk');
   });
 });
 
@@ -244,7 +298,7 @@ describe('connection quality', () => {
 
   it('does not judge readability of a device that is not connected', async () => {
     db.prepare('DELETE FROM device_registry').run();
-    const step = (await diagnoseConnection(MOWER, Date.now(), { probeNetwork: false })).steps.find(s => s.id === 'encryption')!;
+    const step = (await diagnoseConnection(MOWER, Date.now(), { probes: probes() })).steps.find(s => s.id === 'encryption')!;
     expect(step.status).toBe('skipped');
   });
 });
@@ -346,7 +400,7 @@ describe('lan scan', () => {
 
   it('skips the network probes when the caller asks it to', async () => {
     const t0 = Date.now();
-    await diagnoseConnection(MOWER, Date.now(), { probeNetwork: false });
+    await diagnoseConnection(MOWER, Date.now(), { probes: probes() });
     // The scan alone costs about a second; without it the whole chain is fast.
     expect(Date.now() - t0).toBeLessThan(3000);
   });
@@ -361,7 +415,7 @@ describe('identity and wifi', () => {
     db.prepare(`INSERT INTO equipment (equipment_id, mower_sn, charger_sn, mac_address, user_id)
                 VALUES (?,?,?,?,?)`).run(`eq-${MOWER}`, MOWER, CHARGER, '50:41:1C:39:BD:C1', 'guid-abc');
     withIp('192.0.2.11');
-    const step = (await diagnoseConnection(MOWER, Date.now(), { snapshot: { msg: 'x' }, probeNetwork: false }))
+    const step = (await diagnoseConnection(MOWER, Date.now(), { snapshot: { msg: 'x' }, probes: probes() }))
       .steps.find(s => s.id === 'binding')!;
     expect(step.evidence).toContain('Ramon');
     expect(step.evidence).not.toContain('guid-abc');
@@ -373,14 +427,14 @@ describe('identity and wifi', () => {
     db.prepare(`INSERT INTO equipment (equipment_id, mower_sn, charger_sn, mac_address, user_id)
                 VALUES (?,?,?,?,?)`).run(`eq-${MOWER}`, MOWER, CHARGER, '50:41:1C:39:BD:C1', 'guid-def');
     withIp('192.0.2.11');
-    const step = (await diagnoseConnection(MOWER, Date.now(), { snapshot: { msg: 'x' }, probeNetwork: false }))
+    const step = (await diagnoseConnection(MOWER, Date.now(), { snapshot: { msg: 'x' }, probes: probes() }))
       .steps.find(s => s.id === 'binding')!;
     expect(step.evidence).toContain('jan@example.com');
   });
 
   it('reports the wifi connection with its address', async () => {
     withIp('192.0.2.12');
-    const step = (await diagnoseConnection(MOWER, Date.now(), { snapshot: { msg: 'x' }, probeNetwork: false }))
+    const step = (await diagnoseConnection(MOWER, Date.now(), { snapshot: { msg: 'x' }, probes: probes() }))
       .steps.find(s => s.id === 'wifi')!;
     expect(step.evidence).toContain('192.0.2.12');
     expect(step.evidence).toContain('wifi');
@@ -389,7 +443,7 @@ describe('identity and wifi', () => {
   it('warns on a weak signal, which is what "sometimes online" looks like', async () => {
     withIp('192.0.2.12');
     const step = (await diagnoseConnection(MOWER, Date.now(),
-      { snapshot: { msg: 'x', wifi_rssi: '-82' }, probeNetwork: false })).steps.find(s => s.id === 'wifi')!;
+      { snapshot: { msg: 'x', wifi_rssi: '-82' }, probes: probes() })).steps.find(s => s.id === 'wifi')!;
     expect(step.status).toBe('warn');
     expect(step.evidence).toContain('-82 dBm');
     expect(step.action).toContain('toegangspunt');
@@ -398,7 +452,7 @@ describe('identity and wifi', () => {
   it('accepts a healthy signal', async () => {
     withIp('192.0.2.12');
     const step = (await diagnoseConnection(MOWER, Date.now(),
-      { snapshot: { msg: 'x', wifi_rssi: '-58' }, probeNetwork: false })).steps.find(s => s.id === 'wifi')!;
+      { snapshot: { msg: 'x', wifi_rssi: '-58' }, probes: probes() })).steps.find(s => s.id === 'wifi')!;
     expect(step.status).toBe('ok');
   });
 
@@ -406,7 +460,7 @@ describe('identity and wifi', () => {
     // The wifi-to-BLE offset differs per hardware: ESP32 is +2, LFIN2230700238
     // measures +1. Deriving one from the other prints a plausible wrong address.
     withIp('192.0.2.13');
-    const step = (await diagnoseConnection(MOWER, Date.now(), { snapshot: { msg: 'x' }, probeNetwork: false }))
+    const step = (await diagnoseConnection(MOWER, Date.now(), { snapshot: { msg: 'x' }, probes: probes() }))
       .steps.find(s => s.id === 'wifi')!;
     if (!/MAC [0-9A-F:]{17}/.test(step.evidence)) {
       expect(step.evidence).toContain('niet op te zoeken');
@@ -417,7 +471,7 @@ describe('identity and wifi', () => {
 describe('server side and blocked states', () => {
   async function chain(snapshot: Record<string, string> | null = { msg: 'x' }) {
     withIp('192.0.2.20');
-    return diagnoseConnection(MOWER, Date.now(), { snapshot, probeNetwork: false });
+    return diagnoseConnection(MOWER, Date.now(), { snapshot, probes: probes() });
   }
 
   it('reports disk space, because a full disk breaks everything that writes', async () => {
@@ -441,11 +495,23 @@ describe('server side and blocked states', () => {
 
   it('skips the probe, and says so, when the caller turns it off', async () => {
     // Probing forty addresses on every call is too heavy for an endpoint that
-    // can be polled; without this the suite went from 70 to 225 seconds and
-    // fell over on timeouts.
-    const step = (await chain()).steps.find(s => s.id === 'rival_broker')!;
+    // can be polled. Saying "none found" there would be a lie.
+    withIp('192.0.2.20');
+    const step = (await diagnoseConnection(MOWER, Date.now(),
+      { snapshot: { msg: 'x' }, probeNetwork: false, probes: probes() }))
+      .steps.find(s => s.id === 'rival_broker')!;
     expect(step.status).toBe('skipped');
     expect(step.evidence).toBe('niet gepeild');
+  });
+
+  it('reports a second broker when the probe finds one', async () => {
+    withIp('192.0.2.20');
+    const step = (await diagnoseConnection(MOWER, Date.now(),
+      { snapshot: { msg: 'x' }, probes: probes({ rivals: ['192.168.1.9'] }) }))
+      .steps.find(s => s.id === 'rival_broker')!;
+    expect(step.status).toBe('fail');
+    expect(step.evidence).toContain('192.168.1.9');
+    expect(step.action).toContain('mDNS');
   });
 
   it('caches the probe so a second call does not re-scan', async () => {

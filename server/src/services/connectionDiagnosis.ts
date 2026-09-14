@@ -16,8 +16,8 @@
  */
 import { deviceRepo, equipmentRepo, connectionEventRepo } from '../db/repositories/index.js';
 import { getLoraPair } from './loraPair.js';
-import { checkReachability, serverIpv4 } from './reachability.js';
-import { scanLan, lookupMac, rivalBrokers } from './lanScan.js';
+import { checkReachability, serverIpv4, type Reachability } from './reachability.js';
+import { scanLan, lookupMac, rivalBrokers, type LanScanResult } from './lanScan.js';
 import { statfs } from 'fs/promises';
 import { mapRepo, userRepo } from '../db/repositories/index.js';
 import { deriveHasError } from '../mqtt/mowerActivity.js';
@@ -38,7 +38,31 @@ export interface DiagnosisStep {
   action?: string;
 }
 
+/**
+ * The three things that go out on the network, injectable.
+ *
+ * Without this the tests reached the real LAN, which made them depend on what
+ * happened to be plugged in and how loaded the machine was. They passed alone
+ * and failed inside the release gate, twice. Injected, the service is pure and
+ * both branches of every network answer are reachable from a test.
+ */
+export interface DiagnosisProbes {
+  reachability: (deviceIp: string | null) => Promise<Reachability>;
+  scanLan: () => Promise<LanScanResult>;
+  rivalBrokers: (ourIps: string[]) => Promise<string[]>;
+  lookupMac: (ip: string) => Promise<string | null>;
+}
+
+export const realProbes: DiagnosisProbes = {
+  reachability: checkReachability,
+  scanLan,
+  rivalBrokers,
+  lookupMac,
+};
+
 export interface DiagnosisInput {
+  /** Defaults to the real network probes. */
+  probes?: Partial<DiagnosisProbes>;
   /**
    * Probe the local network: sweep for LFI MAC prefixes when no address is
    * known, and look for a second MQTT broker. Both cost real time and packets,
@@ -105,6 +129,7 @@ export async function diagnoseConnection(
   input: DiagnosisInput = {},
 ): Promise<Diagnosis> {
   const snap = input.snapshot ?? null;
+  const probe: DiagnosisProbes = { ...realProbes, ...(input.probes ?? {}) };
   const steps: DiagnosisStep[] = [];
   const deviceType = deviceTypeOf(sn);
   const push = (s: DiagnosisStep) => { steps.push(s); return s; };
@@ -135,7 +160,7 @@ export async function diagnoseConnection(
   // vinden via mDNS de verkeerde, springen heen en weer en lijken met tussen-
   // pozen offline. Precies wat hier op 14-09-2026 gebeurde toen een release een
   // tweede container op 1883 liet staan.
-  const rivals = input.probeNetwork === false ? [] : await rivalBrokers(serverIpv4());
+  const rivals = input.probeNetwork === false ? [] : await probe.rivalBrokers(serverIpv4());
   push({
     id: 'rival_broker',
     group: 'server',
@@ -158,7 +183,7 @@ export async function diagnoseConnection(
   //    own most basic failure: nothing arrives, so we see nothing, so we report
   //    nothing. Measurements only, no conclusions about what "probably" broke.
   const regEarly = deviceRepo.findBySn(sn);
-  const reach = await checkReachability(regEarly?.ip_address ?? null);
+  const reach = await probe.reachability(regEarly?.ip_address ?? null);
   const dnsAnswers = reach.dns.filter(d => d.addresses.length > 0);
   const dnsPointsHere = dnsAnswers.some(d => d.pointsHere);
   const dnsElsewhere = dnsAnswers.filter(d => !d.pointsHere);
@@ -210,7 +235,7 @@ export async function diagnoseConnection(
     // voor dit apparaat. De hardware verraadt zichzelf wel op laag 2: de eerste
     // drie bytes van het MAC zeggen wie de fabrikant is, en die set komt uit de
     // fabriekstabel die bij elke installatie meegaat.
-    const lan = input.probeNetwork === false ? null : await scanLan();
+    const lan = input.probeNetwork === false ? null : await probe.scanLan();
     if (!lan) {
       push({
         id: 'network',
@@ -302,7 +327,7 @@ export async function diagnoseConnection(
   if (!reach.deviceIp) {
     push({ id: 'wifi', group: 'reach', status: 'skipped', evidence: 'geen adres bekend' });
   } else {
-    const wifiMac = await lookupMac(reach.deviceIp);
+    const wifiMac = await probe.lookupMac(reach.deviceIp);
     const rssiRaw = snap?.wifi_rssi ?? snap?.signal_strength ?? null;
     const rssi = rssiRaw !== null ? parseInt(rssiRaw, 10) : NaN;
     const parts = [`verbonden via wifi op ${reach.deviceIp}`];
