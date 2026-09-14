@@ -132,7 +132,6 @@ def test_no_route_when_the_zone_is_not_connected():
 
 
 def test_channel_files_reads_the_route_from_disk():
-    mzd.USE_TRANSIT = True                       # met de schakelaar aan
     with_maps({"map0_work.csv": SQ0, "map6_work.csv": SQ6,
                "map0tomap6_0_unicom.csv": [(9, 5), (31, 5)],
                "map6tomap0_0_unicom.csv": [(31, 5), (9, 5)],
@@ -141,7 +140,6 @@ def test_channel_files_reads_the_route_from_disk():
     assert mzd._channel_files("map0", "map0") == []
     assert mzd._channel_files(None, "map6") == []
     assert mzd._channel_files("dock", "map6") == []
-    mzd.USE_TRANSIT = False
 
 
 class FakeDriver:
@@ -212,22 +210,22 @@ def test_lead_in_is_harmless_without_a_position_or_path():
     assert mzd._lead_in([(1.0, 1.0)], None) == [(1.0, 1.0)]
     assert mzd._lead_in([], (0.0, 0.0)) == []
 
-def test_the_transit_is_off_by_default():
-    # De firmware plant zelf tussen zones; onze transit staat klaar maar uit.
-    assert mzd.USE_TRANSIT is False
+def test_the_transit_is_on_by_default():
+    # Een kanaal bestaat om gevolgd te worden; de firmware kent ze niet.
+    assert mzd.USE_TRANSIT is True
     with_maps({"map0_work.csv": SQ0, "map6_work.csv": SQ6,
                "map0tomap6_0_unicom.csv": [(9, 5), (31, 5)]})
-    assert mzd._channel_files("map0", "map6") == []
+    assert mzd._channel_files("map0", "map6") == ["map0tomap6_0_unicom.csv"]
 
 
-def test_the_switch_brings_the_transit_back():
+def test_the_switch_hands_routing_back_to_the_firmware():
     with_maps({"map0_work.csv": SQ0, "map6_work.csv": SQ6,
                "map0tomap6_0_unicom.csv": [(9, 5), (31, 5)]})
-    mzd.USE_TRANSIT = True
+    mzd.USE_TRANSIT = False
     try:
-        assert mzd._channel_files("map0", "map6") == ["map0tomap6_0_unicom.csv"]
+        assert mzd._channel_files("map0", "map6") == []
     finally:
-        mzd.USE_TRANSIT = False
+        mzd.USE_TRANSIT = True
 
 
 def test_executing_gate_matches_the_firmware_rule():

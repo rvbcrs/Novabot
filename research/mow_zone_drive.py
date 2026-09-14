@@ -518,13 +518,19 @@ class Driver:
 DOCK_HOME_RADIUS = 1.2   # within this of the map origin counts as "home"
 
 # Rijden we zelf over de opgenomen kanalen, of laat de firmware zijn eigen weg
-# plannen? UIT sinds 2026-09-14: de firmware deed dit jarenlang zelf en doet het
-# voor alles behalve deze orkestrator nog steeds. Onze transit bleek bovendien
-# niet af te dwingen wat we dachten: de kanalen zijn tweepunts-markeringen, in
-# map.pgm loopt de vrije doorgang 1 tot 3,6 m ernaast, dus "over het kanaal" is
-# geen eigenschap van de kaart maar alleen van onze code.
-# `MOW_ZONE_TRANSIT=1` zet hem terug aan; de code eronder blijft intact.
-USE_TRANSIT = os.environ.get("MOW_ZONE_TRANSIT", "0").strip().lower() in ("1", "true", "on", "yes")
+# plannen? AAN, want dat is waar een kanaal voor bestaat. De firmware kent ze
+# niet: coverage_planner_server noemt "unicom" geen enkele keer, en
+# robot_decision alleen in de opname-paden. Zijn reis naar een zone is een
+# NavigateToPose over de globale costmap, en die kiest het kortste vrije pad,
+# desnoods dwars over gras waar de maaier ooit per ongeluk doorheen is gereden
+# (live LFIN2230700238, 2026-09-14: twee keer de struiken in, twee keer
+# afgebroken door de perceptie, daarna naar huis).
+#
+# In map.pgm valt "via het kanaal" niet af te dwingen: de vrije doorgang is
+# breed en loopt meters naast de opgenomen lijn. Hier wel, want deze code rijdt
+# het pad zelf met FollowPath. Kortste route naar het doelgebied, maar over de
+# kanalen. `MOW_ZONE_TRANSIT=0` laat het weer aan de firmware over.
+USE_TRANSIT = os.environ.get("MOW_ZONE_TRANSIT", "1").strip().lower() not in ("0", "false", "off", "no")
 
 
 def _transit_unicoms():
