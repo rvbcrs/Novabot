@@ -173,7 +173,11 @@ def _wait_for_perception_data(ec, deadline_s=90.0):
             if msg.data:
                 got["data"] = True
 
-        node.create_subscription(PointCloud2, "/perception/points_relabeled", on_msg, 5)
+        # Queue depth 1 on every big-message topic: a queued sample holds a 4 MB
+        # iceoryx chunk out of a pool of 50 that the stock stack already fills to
+        # ~32. These callbacks only ever use the newest frame (they throttle on
+        # time), so a deeper queue bought nothing and starved camera_307_cap.
+        node.create_subscription(PointCloud2, "/perception/points_relabeled", on_msg, 1)
         end_at = time.monotonic() + deadline_s
         while not got["data"] and time.monotonic() < end_at:
             rclpy.spin_once(node, timeout_sec=1.0)

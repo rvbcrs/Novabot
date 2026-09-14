@@ -71,7 +71,11 @@ def main():
             log(f"relay: in={stats['in']} out={stats['out']} bad_stride={stats['bad']}")
             stats["last_log"] = now
 
-    node.create_subscription(PointCloud2, SUB_TOPIC, on_labeled, 5)
+    # Queue depth 1 on every big-message topic: a queued sample holds a 4 MB
+    # iceoryx chunk out of a pool of 50 that the stock stack already fills to
+    # ~32. These callbacks only ever use the newest frame (they throttle on
+    # time), so a deeper queue bought nothing and starved camera_307_cap.
+    node.create_subscription(PointCloud2, SUB_TOPIC, on_labeled, 1)
     log(f"lawn_edge_relay actief: {SUB_TOPIC} -> {PUB_TOPIC}")
     try:
         rclpy.spin(node)

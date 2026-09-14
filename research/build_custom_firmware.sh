@@ -496,6 +496,45 @@ if [ -f "$RECHARGE_LAUNCH" ]; then
     echo "  automatic_recharge_launch.py: LED brightness 1 → 255 (night-docking)"
 fi
 
+# 5a-ter. iceoryx mempool rebalance: the 4 MB pool starves while the 8 MB pool
+# sits unused. Every image and point cloud on this robot is an Image4m or a
+# PointCloud2 that fits the 4 MB pool; nothing has ever taken an 8 MB chunk.
+# Measured with iox-introspection-client --mempool on LFIN1231000211 after 20
+# days of uptime: 4 MB pool 32/50 in use with a low-water mark of 17 free,
+# 8 MB pool 0/50 with a low-water mark of 50. A mow start pushes the 4 MB pool
+# over the top, camera_307_cap can then not publish
+# (MEPOO__MEMPOOL_GETCHUNK_POOL_IS_RUNNING_OUT_OF_CHUNKS), daemon_monitor kills
+# and relaunches the camera stack, the relaunch dies on the still-initialised
+# video pipeline (HB_VP_Init: VP: have already init) and robot_decision reports
+# error 136/137 until a power cycle. Live on LFIN2230700238, 2026-09-12 and
+# 2026-09-14.
+#
+# Moving chunks from the dead pool to the starved one costs LESS memory than
+# the stock layout: 100*4194984 + 10*8389312 = 503 MB against 629 MB.
+SHM_TOML="$NOVABOT_ROOT/shm_config/shm_ioxroudi.toml"
+if [ -f "$SHM_TOML" ]; then
+    python3 - "$SHM_TOML" << 'SHMEOF'
+import re
+import sys
+
+path = sys.argv[1]
+src = open(path).read()
+# Each [[segment.mempool]] block is "size = N" followed by "count = M".
+# Rewrite the count that belongs to a given size, leaving the rest untouched.
+WANT = {"4194944": "100", "8389272": "10"}
+
+
+def fix(m):
+    size, count = m.group("size"), m.group("count")
+    return m.group(0).replace("count = " + count, "count = " + WANT[size]) if size in WANT else m.group(0)
+
+
+out = re.sub(r"size\s*=\s*(?P<size>\d+)\s*\ncount\s*=\s*(?P<count>\d+)", fix, src)
+open(path, "w").write(out)
+print("  shm_ioxroudi.toml: 4 MB pool 50 -> 100 chunks, 8 MB pool 50 -> 10")
+SHMEOF
+fi
+
 # 5b. Voeg script toe dat http_address.txt correct zet bij elke boot
 # Dit overrulet de hardcoded app.lfibot.com fallback in mqtt_node
 # NB: Firmware prepends "http://" zelf, dus ALLEEN host:port opslaan (geen http:// prefix!)

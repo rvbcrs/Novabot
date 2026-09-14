@@ -584,9 +584,13 @@ def main():
                 break
 
     node.create_subscription(Odometry, "/robot_combination_localization/odom", on_odom, 10)
-    node.create_subscription(PointCloud2, "/camera/tof/point_cloud", on_cloud, 5)
-    node.create_subscription(PointCloud2, "/perception/points_labeled", on_labeled, 5)
-    node.create_subscription(CompressedImage, "/camera/preposition/image_half/compressed", on_rgb, 2)
+    # Queue depth 1 on every big-message topic: a queued sample holds a 4 MB
+    # iceoryx chunk out of a pool of 50 that the stock stack already fills to
+    # ~32. These callbacks only ever use the newest frame (they throttle on
+    # time), so a deeper queue bought nothing and starved camera_307_cap.
+    node.create_subscription(PointCloud2, "/camera/tof/point_cloud", on_cloud, 1)
+    node.create_subscription(PointCloud2, "/perception/points_labeled", on_labeled, 1)
+    node.create_subscription(CompressedImage, "/camera/preposition/image_half/compressed", on_rgb, 1)
 
     while rclpy.ok():
         rclpy.spin_once(node, timeout_sec=2.0)
