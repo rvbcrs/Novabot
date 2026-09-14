@@ -2410,6 +2410,33 @@ Description: Novabot mower firmware ${VERSION}
  Custom build with SSH and local server URLs.
 CTRL
 
+# preinst: draag de seam-fix instelling over vóór de bestanden vervangen worden.
+#
+# Maaiers met de oude altijd-aan seam-fix daemon hebben geen seam_fix.json: die
+# build is ouder dan de schakelaar in de app. Dit pakket levert de opt-in versie,
+# die standaard UIT staat. Zonder deze migratie zet de upgrade hun seam-fix dus
+# stilletjes uit, wordt de bezette streep die de firmware binnen het gazon
+# tekent niet meer weggepoetst, en antwoordt nav2 op elk doel met
+# "GridBased_AStar failed to generate a valid path" tot de maaier het opgeeft en
+# terugrijdt naar het dock. Live gemeten op LFIN2231000633, 2026-06-22.
+#
+# preinst en niet postinst: hierna is het oude script overschreven en valt niet
+# meer te zien welke variant er stond.
+cat > "$WORK_DIR/DEBIAN/preinst" << 'PREINST'
+#!/bin/sh
+set -e
+CFG=/userdata/lfi/seam_fix.json
+OLD=/root/novabot/scripts/seam_fix_daemon.py
+# De altijd-aan variant heeft geen _read_config; de opt-in variant wel.
+if [ ! -f "$CFG" ] && [ -f "$OLD" ] && ! grep -q '_read_config' "$OLD"; then
+  mkdir -p /userdata/lfi
+  printf '{"enabled": true, "edge_margin_cm": 0}\n' > "$CFG"
+  echo "seam-fix: altijd-aan instelling overgenomen in $CFG"
+fi
+exit 0
+PREINST
+chmod 755 "$WORK_DIR/DEBIAN/preinst"
+
 # Bouw .deb (ar archief: debian-binary + control.tar.xz + data.tar.xz)
 echo "2.0" > "$WORK_DIR/debian-binary"
 cd "$WORK_DIR/DEBIAN"
