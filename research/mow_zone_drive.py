@@ -1024,6 +1024,13 @@ def check_mow(drv, to_slot):
     stale = find_stale_mow_drives()
     check("geen vastgelopen run", not stale, f"pids {stale}" if stale else "")
 
+    # De firmware stuurt zichzelf na een mislukte poging naar het dock, en die
+    # navigatie houdt de wielen vast. do_mow breekt dat af, maar hier melden we
+    # het alvast: dan weet je waarom de start even duurt.
+    rijdt_naar_dock = drv.recharge_active()
+    check("firmware rijdt niet zelf", not rijdt_naar_dock,
+          "onderweg naar het dock; wordt bij de start afgebroken" if rijdt_naar_dock else "")
+
     base = _csv_base()
     target = read_xy_csv(os.path.join(base, f"{to_slot}_work.csv"))
     check(f"{to_slot} bestaat", len(target) >= 3, f"{len(target)} punten")
@@ -1033,15 +1040,23 @@ def check_mow(drv, to_slot):
           f"positie {robot}" if robot else "geen map->base_link; de firmware doet dit "
                                            "zelf bij de taakstart")
 
+    # Op het dock is `from` geen zone maar "dock". do_mow ondockt eerst en kijkt
+    # dán pas waar hij staat, dus de controle moet dat nabootsen: anders meldt
+    # hij "geen route" in precies het normale geval, de maaier op zijn lader.
     from_slot = current_zone_slot(robot) if robot else None
+    vanaf = from_slot
+    if vanaf in (None, "dock"):
+        vanaf = _dock_zone()
+        if vanaf:
+            check("startzone", True, f"op het dock, dat ligt in {vanaf}")
     if robot and from_slot == to_slot:
         check("route", True, "staat al in de doelzone")
         route = []
     else:
-        route = _channel_files(from_slot or "map0", to_slot)
+        route = _channel_files(vanaf or "map0", to_slot)
         check("route over de kanalen", bool(route) or not USE_TRANSIT,
               " + ".join(route) if route
-              else f"geen keten van {from_slot or 'map0'} naar {to_slot}; "
+              else f"geen keten van {vanaf or 'map0'} naar {to_slot}; "
                    "teken een kanaal of laat de firmware plannen")
 
     for fname in route:
