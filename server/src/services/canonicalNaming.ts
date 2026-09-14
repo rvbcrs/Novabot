@@ -147,6 +147,16 @@ function assignChannelEnds(start: XY, end: XY, slots: WorkSlot[]): { from: numbe
   return best ? { from: best.from, to: best.to } : null;
 }
 
+/** Het dichtstbijzijnde werkgebied, ongeacht afstand. Null als er geen is. */
+function nearestSlot(p: XY, slots: WorkSlot[]): number | null {
+  let best: { slot: number; d: number } | null = null;
+  for (const w of slots) {
+    const d = distanceToPolygon(p, w.poly);
+    if (!best || d < best.d) best = { slot: w.slot, d };
+  }
+  return best?.slot ?? null;
+}
+
 /** Volgende vrije index voor een kanaal tussen twee gebieden (mapAtomapB_K_unicom). */
 function nextChannelIndex(sn: string, from: number, to: number): number {
   const re = new RegExp(`^map${from}tomap${to}_(\\d+)_unicom$`);
@@ -310,9 +320,18 @@ export function canonicalForDrawnMap(
       x: points.reduce((s, p) => s + p.x, 0) / points.length,
       y: points.reduce((s, p) => s + p.y, 0) / points.length,
     };
-    const slot = slotAt(centre, slots);
+    // Een obstakel hoort bij een slot omdat de firmware-naam dat eist, maar het
+    // hoeft er niet IN te liggen. De grond tussen twee zones is juist waar je er
+    // een wilt zetten: die strook staat in map.pgm als vrij zodra de maaier er
+    // ooit doorheen is gereden, en dan plant nav2 daar zijn reis doorheen
+    // (live LFIN2230700238, 2026-09-14: 46,6 m2 aangeleerde doorgang door de
+    // struiken). Een getekend obstakel wordt bij elke regenerate hard op bezet
+    // gezet, ook in de navigatiekaart, en dat is de enige manier om zo'n
+    // aangeleerde doorgang weer dicht te krijgen. Ligt het obstakel nergens in,
+    // dan hangen we het aan het dichtstbijzijnde gebied.
+    const slot = slotAt(centre, slots) ?? nearestSlot(centre, slots);
     if (slot === null) {
-      return { ok: false, error: 'This obstacle does not lie inside a work area. Draw it inside an area.' };
+      return { ok: false, error: 'There is no work area to attach this obstacle to.' };
     }
     return { ok: true, canonical: `map${slot}_${nextObstacleIndex(sn, slot)}_obstacle` };
   }

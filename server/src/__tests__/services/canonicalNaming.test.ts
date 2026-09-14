@@ -192,6 +192,30 @@ describe('canonicalForDrawnMap', () => {
     expect(canonicalForDrawnMap(SN, 'obstacle', square(21, 1, 2), 'map4_0_obstacle').ok).toBe(false);
   });
 
+  it('hangt een obstakel tussen twee gebieden aan het dichtstbijzijnde', () => {
+    // De strook tussen twee zones is precies waar je een obstakel wilt kunnen
+    // zetten: staat die in map.pgm als vrij (de maaier reed er ooit doorheen),
+    // dan plant nav2 er zijn reis doorheen. Een getekend obstakel is het enige
+    // dat die aangeleerde doorgang weer dichtzet.
+    addWork('map0', square(0, 0));          // 0..10
+    addWork('map1', square(40, 0));         // 40..50
+    // Midden in het gat, ruim buiten SNAP_RADIUS van allebei, maar dichter bij map1.
+    expect(canonicalForDrawnMap(SN, 'obstacle', square(29, 4, 2), null)).toEqual({
+      ok: true,
+      canonical: 'map1_0_obstacle',
+    });
+    // en andersom, dichter bij map0
+    expect(canonicalForDrawnMap(SN, 'obstacle', square(19, 4, 2), null)).toEqual({
+      ok: true,
+      canonical: 'map0_0_obstacle',
+    });
+  });
+
+  it('weigert een obstakel pas als er helemaal geen werkgebied is', () => {
+    const res = canonicalForDrawnMap(SN, 'obstacle', square(0, 0, 2), null);
+    expect(res.ok).toBe(false);
+  });
+
   it('hangt een obstakel aan het gebied waar het in ligt', () => {
     addWork('map0', square(0, 0));
     addWork('map1', square(20, 0));
