@@ -233,6 +233,28 @@ def test_the_switch_hands_routing_back_to_the_firmware():
         mzd.USE_TRANSIT = True
 
 
+def test_a_long_approach_goes_through_the_planner():
+    # Een rechte lijn vanaf een willekeurige plek loopt tegen het dock: de
+    # controller meldde "detected collision ahead" en gaf het binnen een tiende
+    # seconde op (live, 2026-09-14). Boven LEAD_IN_MAX_M plant nav2 het.
+    assert mzd.LEAD_IN_MAX_M <= 1.0
+    assert mzd._dist((-0.41, 1.32), (2.24, 4.68)) > mzd.LEAD_IN_MAX_M
+
+
+def test_a_short_approach_is_just_prepended():
+    # Vlak bij het kanaal is een rechte lijn prima en scheelt een planner-ronde.
+    # Tussen min_gap (0,3 m) en LEAD_IN_MAX_M: zelf doen, wel met aanloop.
+    robot = (1.84, 4.68)
+    channel = [(2.24, 4.68), (3.93, 5.87)]
+    gap = mzd._dist(robot, channel[0])
+    assert 0.3 < gap < mzd.LEAD_IN_MAX_M, gap
+    assert mzd._lead_in(channel, robot)[0] == robot
+
+    # Staat hij er al bovenop, dan voegen we niets toe.
+    opdepunt = (2.25, 4.68)
+    assert mzd._lead_in(channel, opdepunt) == channel
+
+
 def test_executing_gate_matches_the_firmware_rule():
     ex = mzd.task_executing
     assert ex(mzd.TASK_MODE_COVERAGE, mzd.WORK_STATUS_USER_STOP)   # parked = still executing

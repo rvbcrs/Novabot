@@ -41,7 +41,7 @@ from geometry_msgs.msg import Twist, PoseStamped
 from nav_msgs.msg import Path
 from std_msgs.msg import UInt8
 from std_srvs.srv import Trigger, SetBool, Empty
-from nav2_msgs.action import FollowPath
+from nav2_msgs.action import FollowPath, NavigateToPose
 from decision_msgs.srv import StartCoverageTask
 from decision_msgs.msg import RobotStatus
 from rclpy.qos import QoSProfile, QoSHistoryPolicy
@@ -94,6 +94,12 @@ def log(*a):
 
 def _dist(a, b):
     return math.hypot(a[0] - b[0], a[1] - b[1])
+
+
+# Tot hier trekken we zelf een rechte lijn naar het begin van een kanaal; verder
+# weg laten we de planner het doen. Een halve meter haalt de maaier zonder iets
+# te kunnen raken, daarboven kan er van alles tussen staan.
+LEAD_IN_MAX_M = 0.5
 
 
 def _lead_in(pts, robot, min_gap=0.3):
@@ -347,6 +353,41 @@ class Driver:
             else:
                 out.append(f"{name}=<unset/type{pv.type}>")
         log("applied params: " + " | ".join(out))
+
+    def nav_to(self, x, y, yaw=None, timeout=120.0):
+        """Let the planner drive the short approach to a point.
+
+        A recorded channel starts where the mower once crossed between two
+        zones, not where it happens to stand, so something has to cover the gap.
+        Drawing a straight line over it and handing that to Pure Pursuit fails
+        as soon as anything is in the way: standing next to the dock the
+        controller reported "detected collision ahead" three times and gave up
+        within a tenth of a second, because the dock itself is lethal in the
+        costmap (live LFIN2230700238, 2026-09-14). Planning is exactly what the
+        global planner is for, and over a few metres inside one zone it has no
+        room to invent a route across the garden.
+        """
+        ac = ActionClient(self.node, NavigateToPose, "/navigate_to_pose")
+        if not ac.wait_for_server(timeout_sec=8.0):
+            return False, "no navigate_to_pose server"
+        goal = NavigateToPose.Goal()
+        goal.pose.header.frame_id = "map"
+        goal.pose.pose.position.x = float(x)
+        goal.pose.pose.position.y = float(y)
+        th = 0.0 if yaw is None else float(yaw)
+        goal.pose.pose.orientation.z = math.sin(th / 2.0)
+        goal.pose.pose.orientation.w = math.cos(th / 2.0)
+        send_fut = ac.send_goal_async(goal)
+        rclpy.spin_until_future_complete(self.node, send_fut, timeout_sec=10.0)
+        gh = send_fut.result()
+        if gh is None or not gh.accepted:
+            return False, "nav_to_pose goal rejected"
+        res_fut = gh.get_result_async()
+        rclpy.spin_until_future_complete(self.node, res_fut, timeout_sec=timeout)
+        r = res_fut.result()
+        if r is None:
+            return False, "nav_to_pose timeout"
+        return (r.status == 4), f"nav_to_pose_status_{r.status}"
 
     def follow_path(self, pts):
         path = Path()
@@ -738,7 +779,25 @@ def do_mow(drv, to_slot, map_ids, cutterhigh, direction):
                 # nearest point makes it drive forward from where it actually is.
                 # The same holds at every hop: the mower lands somewhere along the
                 # next channel, not at its recorded start.
-                pts = _lead_in(_trim_to_nearest(pts, robot), robot)
+                pts = _trim_to_nearest(pts, robot)
+                # Aanloop naar het begin van het kanaal door de planner, niet
+                # door ons: een rechte lijn vanaf een willekeurige plek loopt
+                # zo tegen het dock of een struik. Zie Driver.nav_to.
+                gap = _dist(robot, pts[0])
+                if gap > LEAD_IN_MAX_M:
+                    log(f"transit hop {hop + 1}/{len(uni)}: {gap:.1f} m aanloop naar "
+                        f"{pts[0]}, laat de planner dat doen")
+                    ok, msg = drv.nav_to(pts[0][0], pts[0][1])
+                    if not ok:
+                        log(f"transit hop {hop + 1}/{len(uni)} aanloop faalde: {msg}")
+                        phase("error", msg)
+                        return 1
+                    robot = drv.robot_xy() or robot
+                    pts = _trim_to_nearest(read_xy_csv(os.path.join(base, fname)), robot)
+                    if _dist(robot, pts[0]) > _dist(robot, pts[-1]):
+                        pts = list(reversed(pts))
+                        pts = _trim_to_nearest(pts, robot)
+                pts = _lead_in(pts, robot)
                 ok, msg = drv.follow_path(pts)
                 if not ok:
                     log(f"transit hop {hop + 1}/{len(uni)} ({fname}) failed: {msg}")
