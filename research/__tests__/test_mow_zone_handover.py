@@ -39,11 +39,16 @@ for mod, attrs in {
     "rcl_interfaces.srv": ["SetParameters", "GetParameters"],
     "rcl_interfaces.msg": ["Parameter", "ParameterValue", "ParameterType"],
     "std_msgs.msg": ["UInt8"],
-    "rclpy.qos": ["QoSProfile", "QoSHistoryPolicy"],
+    "rclpy.qos": ["QoSProfile"],
     "rclpy.action": ["ActionClient"],
 }.items():
     for a in attrs:
         setattr(sys.modules[mod], a, type(a, (), {}))
+
+# QoSProfile/QoSHistoryPolicy worden op moduleniveau gebruikt (TF_QOS), dus de
+# stub moet echte attributen hebben in plaats van een kale klasse.
+sys.modules["rclpy.qos"].QoSHistoryPolicy = type("QoSHistoryPolicy", (), {"KEEP_LAST": 1, "KEEP_ALL": 0})
+sys.modules["rclpy.qos"].QoSProfile = lambda **kw: kw
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 spec = importlib.util.spec_from_file_location(
