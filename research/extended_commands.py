@@ -2989,24 +2989,11 @@ def handle_regenerate_per_map_files(params, respond):
                 _od.polygon(_op, fill=255, outline=255)
                 _od.line(_op + [_op[0]], fill=255, width=_obw, joint="curve")
         _obs_mask = np.array(_obs_img) > 0
-        #
-        # The seam-fix may ONLY touch the coverage grids, never the nav map.
-        # It used to run on `whole` itself, which is written back to map.pgm a
-        # few lines down, so every occupied cell inside ANY work polygon was
-        # erased from the map nav2 plans on. With one small zone that was the
-        # firmware's own stripe; with seven zones covering most of the garden
-        # (map3 alone is 102.8 m2) it freed 7004 cells, 17.5 m2 of real
-        # vegetation, and the mower then planned straight through the bushes on
-        # its way to a far zone (live LFIN2230700238, 2026-09-14). Coverage
-        # wants the stripe gone, navigation wants the obstacles kept, so they
-        # get their own grid.
-        whole_cov = whole.copy()
         _seam = (whole < 128) & _lawn_mask & (~_obs_mask)
         _nseam = int(_seam.sum())
         if _nseam:
-            whole_cov[_seam] = np.uint8(254)
-            log(f"regenerate_per_map_files: seam-fix freed {_nseam} occupied cell(s) inside lawn "
-                f"in the coverage grids (nav map keeps them)")
+            whole[_seam] = np.uint8(254)
+            log(f"regenerate_per_map_files: seam-fix freed {_nseam} occupied cell(s) inside lawn before masking")
 
         # An obstacle must ALWAYS be occupied — including in the NAV map
         # (map.pgm), which nav2 loads as its global costmap. The per-slot loop
@@ -3020,7 +3007,6 @@ def handle_regenerate_per_map_files(params, respond):
         _nobs = int(_obs_mask.sum())
         if _nobs:
             whole[_obs_mask] = np.uint8(OCCUPIED)
-            whole_cov[_obs_mask] = np.uint8(OCCUPIED)
             try:
                 with open(f"{base}/map.pgm", "wb") as fh:
                     fh.write(f"P5\n# CREATOR: map_generator.cpp {res:.3f} m/pix\n{W} {H}\n255\n".encode("ascii"))
@@ -3099,7 +3085,7 @@ def handle_regenerate_per_map_files(params, respond):
                 d.ellipse([dock_px[0] - dock_r, dock_px[1] - dock_r,
                            dock_px[0] + dock_r, dock_px[1] + dock_r], fill=255)
             marr = np.array(mask, dtype=np.uint8)
-            out = np.where(marr > 0, whole_cov, np.uint8(OCCUPIED)).astype(np.uint8)
+            out = np.where(marr > 0, whole, np.uint8(OCCUPIED)).astype(np.uint8)
 
             # Force this slot's mapped obstacles OCCUPIED (the planner plans on
             # this pgm; masking alone can leave an obstacle free if map.pgm never
