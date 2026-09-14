@@ -51,6 +51,9 @@ import tf2_ros
 
 MAPS_HOME = "/userdata/lfi/maps/home0"
 NAV_MAP_YAML = os.path.join(MAPS_HOME, "map.yaml")
+# navfn ziet alles vanaf kosten 253 als onbegaanbaar, en dat is exact de
+# inscribed radius van de global costmap (robot_radius, live 0.1 m).
+INSCRIBED_RADIUS_M = 0.1
 NAV_NODE = "/nav2_single_node_navigator"
 DECISION = "/robot_decision"
 
@@ -431,15 +434,9 @@ class Driver:
         finally:
             self.node.destroy_client(cli)
 
-    def map_blocked(self, pts, timeout=15.0):
-        """Welke punten zijn bezet op de kaart die nav2 gaat gebruiken.
-
-        Leest /map, niet map.pgm op schijf. Precies dat verschil kostte map6
-        vijftien pogingen: op schijf vrij, in de planner bezet.
-
-        Geeft None als er geen kaart binnenkomt, anders een lijst van
-        (punt, reden) voor alles wat niet vrij is.
-        """
+    def map_grid(self, timeout=15.0):
+        """De kaart die nav2 gaat gebruiken, van /map. Niet map.pgm op schijf:
+        precies dat verschil kostte map6 vijftien pogingen."""
         got = {}
         qos = QoSProfile(depth=1, history=QoSHistoryPolicy.KEEP_LAST,
                          reliability=QoSReliabilityPolicy.RELIABLE,
@@ -450,24 +447,126 @@ class Driver:
             t0 = time.time()
             while "m" not in got and time.time() - t0 < timeout:
                 rclpy.spin_once(self.node, timeout_sec=0.3)
-            m = got.get("m")
-            if m is None:
-                return None
-            res = m.info.resolution
-            ox = m.info.origin.position.x
-            oy = m.info.origin.position.y
-            w, h = m.info.width, m.info.height
-            bad = []
-            for (x, y) in pts:
-                cx = int((x - ox) / res)
-                cy = int((y - oy) / res)
-                if not (0 <= cx < w and 0 <= cy < h):
-                    bad.append(((x, y), "buiten de kaart"))
-                elif m.data[cy * w + cx] != 0:
-                    bad.append(((x, y), "waarde %d" % m.data[cy * w + cx]))
-            return bad
+            return got.get("m")
         finally:
             self.node.destroy_subscription(sub)
+
+    def map_blocked(self, pts, grid=None, timeout=15.0):
+        """Welke punten zijn bezet op de kaart die nav2 gaat gebruiken.
+
+        Geeft None als er geen kaart binnenkomt, anders een lijst van
+        (punt, reden) voor alles wat niet vrij is.
+        """
+        m = grid if grid is not None else self.map_grid(timeout)
+        if m is None:
+            return None
+        res = m.info.resolution
+        ox = m.info.origin.position.x
+        oy = m.info.origin.position.y
+        w, h = m.info.width, m.info.height
+        bad = []
+        for (x, y) in pts:
+            cx = int((x - ox) / res)
+            cy = int((y - oy) / res)
+            if not (0 <= cx < w and 0 <= cy < h):
+                bad.append(((x, y), "buiten de kaart"))
+            elif m.data[cy * w + cx] != 0:
+                bad.append(((x, y), "waarde %d" % m.data[cy * w + cx]))
+        return bad
+
+    def map_unreachable(self, start, pts, grid=None, timeout=15.0):
+        """Welke punten kan de planner niet bereiken vanaf `start`.
+
+        Vrij zijn is niet genoeg, het punt moet ook verbonden zijn met waar de
+        maaier staat. navfn blokkeert alles vanaf kosten 253, en dat is precies
+        alles binnen de inscribed radius van een obstakel, dus de bezette ruimte
+        wordt hier met die straal opgeblazen en daarna doorzocht.
+
+        Geeft (None, reden) als het niet te bepalen is, anders (lijst, notitie).
+        """
+        m = grid if grid is not None else self.map_grid(timeout)
+        if m is None:
+            return None, "geen /map ontvangen"
+        res = m.info.resolution
+        ox = m.info.origin.position.x
+        oy = m.info.origin.position.y
+        w, h = m.info.width, m.info.height
+        r = max(1, int(math.ceil(INSCRIBED_RADIUS_M / res)))
+
+        # Opblazen in twee gescheiden doorgangen: per rij en dan per kolom is
+        # O(w*h), een vierkant per bezette cel zou hier miljoenen schrijfacties
+        # kosten omdat de kaart vooral uit bezet gebied bestaat.
+        def _dilate(src):
+            out = bytearray(w * h)
+            for y in range(h):
+                base = y * w
+                acc = [0] * (w + 1)
+                for x in range(w):
+                    acc[x + 1] = acc[x] + src[base + x]
+                for x in range(w):
+                    lo, hi = max(0, x - r), min(w - 1, x + r)
+                    out[base + x] = 1 if acc[hi + 1] - acc[lo] else 0
+            col = bytearray(w * h)
+            for x in range(w):
+                acc = [0] * (h + 1)
+                for y in range(h):
+                    acc[y + 1] = acc[y] + out[y * w + x]
+                for y in range(h):
+                    lo, hi = max(0, y - r), min(h - 1, y + r)
+                    col[y * w + x] = 1 if acc[hi + 1] - acc[lo] else 0
+            return col
+
+        occ = bytearray(1 if v != 0 else 0 for v in m.data)
+        blocked = _dilate(occ)
+
+        def free(cx, cy):
+            return 0 <= cx < w and 0 <= cy < h and not blocked[cy * w + cx]
+
+        sx = int((start[0] - ox) / res)
+        sy = int((start[1] - oy) / res)
+        notitie = ""
+        if not free(sx, sy):
+            # Op het dock staat de maaier per definitie in bezet gebied: het
+            # laadstation is een obstakel. do_mow ondockt eerst, dus de vraag is
+            # of het kanaal bereikbaar is vanaf net naast het dock.
+            gevonden = None
+            for ring in range(1, int(2.0 / res)):
+                for dx in range(-ring, ring + 1):
+                    for cx, cy in ((sx + dx, sy - ring), (sx + dx, sy + ring),
+                                   (sx - ring, sy + dx), (sx + ring, sy + dx)):
+                        if free(cx, cy):
+                            gevonden = (cx, cy)
+                            break
+                    if gevonden:
+                        break
+                if gevonden:
+                    break
+            if gevonden is None:
+                return None, "geen vrije cel bij de startpositie"
+            sx, sy = gevonden
+            notitie = "start lag in bezet gebied (dock), gemeten vanaf (%.2f, %.2f)" % (
+                ox + sx * res, oy + sy * res)
+
+        seen = bytearray(w * h)
+        seen[sy * w + sx] = 1
+        q = [(sx, sy)]
+        head = 0
+        while head < len(q):
+            cx, cy = q[head]
+            head += 1
+            for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                nx, ny = cx + dx, cy + dy
+                if free(nx, ny) and not seen[ny * w + nx]:
+                    seen[ny * w + nx] = 1
+                    q.append((nx, ny))
+
+        weg = []
+        for (x, y) in pts:
+            cx = int((x - ox) / res)
+            cy = int((y - oy) / res)
+            if not (0 <= cx < w and 0 <= cy < h) or not seen[cy * w + cx]:
+                weg.append((x, y))
+        return weg, notitie or "%d cellen bereikbaar" % sum(seen)
 
     def nav_to(self, x, y, yaw=None, timeout=120.0):
         """Let the planner drive the short approach to a point.
@@ -1155,13 +1254,23 @@ def check_mow(drv, to_slot):
     herladen, detail = drv.reload_map()
     check("map_server heeft de actuele kaart", herladen, detail)
     if proef:
-        bezet = drv.map_blocked(proef)
+        grid = drv.map_grid()
+        bezet = drv.map_blocked(proef, grid=grid)
         if bezet is None:
             check("kanalen vrij voor de planner", False, "geen /map ontvangen")
         else:
             check("kanalen vrij voor de planner", not bezet,
                   "; ".join(f"({x:.2f},{y:.2f}) {reden}" for (x, y), reden in bezet)
                   or f"{len(proef)} punten gecontroleerd")
+        # Vrij is niet hetzelfde als bereikbaar: een kanaal kan prima open zijn
+        # en toch aan de verkeerde kant van een struik liggen.
+        if robot and grid is not None:
+            weg, notitie = drv.map_unreachable(robot, proef, grid=grid)
+            if weg is None:
+                check("kanalen bereikbaar", False, notitie)
+            else:
+                check("kanalen bereikbaar", not weg,
+                      "; ".join(f"({x:.2f},{y:.2f})" for x, y in weg) or notitie)
 
     ok = all(f[1] for f in findings)
     print(f"CHECK {'ok ' if ok else 'FAIL'} eindoordeel | "

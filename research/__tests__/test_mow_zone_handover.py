@@ -22,6 +22,7 @@ for name in ["rclpy", "rclpy.node", "rclpy.action", "rclpy.qos", "rclpy.time",
              "std_msgs", "std_msgs.msg", "std_srvs", "std_srvs.srv",
              "geometry_msgs", "geometry_msgs.msg",
              "nav_msgs", "nav_msgs.msg", "nav2_msgs", "nav2_msgs.action",
+             "nav2_msgs.srv",
              "coverage_planner", "coverage_planner.action", "action_msgs",
              "action_msgs.msg", "tf2_ros", "builtin_interfaces",
              "builtin_interfaces.msg"]:
@@ -31,8 +32,9 @@ for mod, attrs in {
     "decision_msgs.msg": ["RobotStatus"],
     "std_srvs.srv": ["Trigger", "SetBool", "Empty"],
     "geometry_msgs.msg": ["PoseStamped", "Point", "Twist"],
-    "nav_msgs.msg": ["Path", "Odometry"],
+    "nav_msgs.msg": ["Path", "Odometry", "OccupancyGrid"],
     "nav2_msgs.action": ["FollowPath", "NavigateToPose"],
+    "nav2_msgs.srv": ["LoadMap"],
     "coverage_planner.action": ["NavigateThroughCoveragePaths"],
     "action_msgs.msg": ["GoalStatus"],
     "builtin_interfaces.msg": ["Duration"],
@@ -49,6 +51,10 @@ for mod, attrs in {
 # stub moet echte attributen hebben in plaats van een kale klasse.
 sys.modules["rclpy.qos"].QoSHistoryPolicy = type("QoSHistoryPolicy", (), {"KEEP_LAST": 1, "KEEP_ALL": 0})
 sys.modules["rclpy.qos"].QoSProfile = lambda **kw: kw
+sys.modules["rclpy.qos"].QoSReliabilityPolicy = type(
+    "QoSReliabilityPolicy", (), {"RELIABLE": 1, "BEST_EFFORT": 2})
+sys.modules["rclpy.qos"].QoSDurabilityPolicy = type(
+    "QoSDurabilityPolicy", (), {"TRANSIENT_LOCAL": 1, "VOLATILE": 2})
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 spec = importlib.util.spec_from_file_location(
@@ -156,6 +162,12 @@ class FakeDriver:
     def robot_xy(self, timeout=6.0):
         return self._loc
 
+    def reload_map(self, map_yaml=None):
+        # map_server leest map.pgm alleen bij het opstarten, dus do_mow moet dit
+        # aftrappen voor het eerste navigatiebevel. Zie test_map_server_reload.
+        self.calls.append(("reload_map",))
+        return True, "result=0"
+
     def wait_status(self, pred, timeout=30.0):
         return self._status
 
@@ -185,7 +197,9 @@ def test_without_channel_the_firmware_runs_the_whole_task():
                "map0tocharge_unicom.csv": [(0.5, 0.7), (2, 3)]})
     drv = FakeDriver(localized=None)
     assert mzd.do_mow(drv, "map6", 1000000, 6, None) == 0
-    assert drv.calls == [("start_cov", 1000000)]      # one start, no init dance
+    # De reload hoort erbij: zonder die stap plant nav2 op de kaart van toen de
+    # node startte. Zie test_map_server_reload.py.
+    assert drv.calls == [("reload_map",), ("start_cov", 1000000)]  # one start, no init dance
 
 
 def test_a_parked_task_is_cleared_before_the_start():
@@ -194,7 +208,7 @@ def test_a_parked_task_is_cleared_before_the_start():
     # USER_STOP left behind by an earlier attempt: start_cov would be refused.
     drv = FakeDriver(localized=None, status=(mzd.TASK_MODE_COVERAGE, mzd.WORK_STATUS_USER_STOP))
     assert mzd.do_mow(drv, "map6", 1000000, 6, None) == 0
-    assert drv.calls == [("quit_mapping_mode",), ("start_cov", 1000000)]
+    assert drv.calls == [("reload_map",), ("quit_mapping_mode",), ("start_cov", 1000000)]
 
 
 def test_nothing_parked_means_no_quit_call():
@@ -202,7 +216,7 @@ def test_nothing_parked_means_no_quit_call():
                "map0tocharge_unicom.csv": [(0.5, 0.7), (2, 3)]})
     drv = FakeDriver(localized=None, status=(mzd.TASK_MODE_COVERAGE, 9))
     assert mzd.do_mow(drv, "map6", 1000000, 6, None) == 0
-    assert drv.calls == [("start_cov", 1000000)]
+    assert drv.calls == [("reload_map",), ("start_cov", 1000000)]
 
 
 def test_lead_in_starts_the_path_at_the_mower():
