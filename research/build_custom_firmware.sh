@@ -1234,17 +1234,62 @@ fi
 # eindeloos → verbinding instabiel. Deze monitor killt het dubbele proces.
 cat > "$NOVABOT_ROOT/scripts/mqtt_node_monitor.sh" << 'MQTTMON'
 #!/bin/bash
-# CUSTOM: Monitor voor dubbele mqtt_node processen
-# Draait elke 10 seconden. Als er meer dan 1 mqtt_node draait:
-# - Bewaar degene met een actieve MQTT verbinding (poort 1883)
-# - Kill de rest
-# Als geen van beide een verbinding heeft, bewaar de nieuwste (hoogste PID)
+# CUSTOM: Monitor voor mqtt_node.
+#
+# 1. Dubbele processen: bewaar degene met een actieve MQTT verbinding, kill de rest.
+# 2. Eén proces dat draait maar NOOIT verbindt: herstart hem.
+#
+# Dat tweede geval was voor elke waakhond onzichtbaar. Live op LFIN1231000009
+# (14-09-2026): één mqtt_node, zeventien uur oud, geen enkele verbinding, en
+# onafgebroken MQTT_EVENT_INIT_NET_ERROR in zijn log. Terwijl op datzelfde
+# moment een verbinding vanaf diezelfde maaier naar diezelfde broker in 0,05 s
+# lukte. Hij was bij het opstarten blijven hangen en kwam daar niet zelf uit.
+# De maaier meldde zich wel online, want extended_commands.py heeft een eigen
+# MQTT-client, en stuurde alleen RTK-telemetrie. Geen positie, geen versie, geen
+# maaier op de kaart.
+#
+# Een gezonde mqtt_node houdt ALTIJD een ESTABLISHED socket naar 1883
+# (gemeten op LFIN2230700238), dus het ontbreken daarvan is een betrouwbaar
+# signaal. Twee minuten geduld voor de normale opstarttijd, en daarna hoogstens
+# eens per tien minuten een herstart zodat een server die echt weg is geen
+# herstartlus oplevert.
+#
+# Raakt bewust NIETS aan de configuratie. Het vinden van een server blijft het
+# werk van opennova_discovery.py, dat mDNS elke 60 s pollt en bij een wijziging
+# zelf de config herschrijft en mqtt_node herstart.
 
 LOG="/userdata/ota/custom_firmware.log"
+STALE_CHECKS=12          # 12 x 10s = 2 minuten zonder verbinding
+RESTART_BACKOFF_S=600
+no_conn=0
+last_restart=0
+
+mqtt_connected() {
+    ss -tn 2>/dev/null | grep -q ':1883 .*ESTAB' && \
+      ss -tnp 2>/dev/null | grep ':1883' | grep -q mqtt_node
+}
 
 while true; do
     PIDS=$(pgrep -f "/mqtt_node " 2>/dev/null)
     COUNT=$(echo "$PIDS" | grep -c .)
+
+    # Vastgelopen: draait wel, verbindt niet.
+    if [ "$COUNT" -eq 1 ]; then
+        if mqtt_connected; then
+            no_conn=0
+        else
+            no_conn=$((no_conn + 1))
+            now=$(date +%s)
+            if [ "$no_conn" -ge "$STALE_CHECKS" ] && [ $((now - last_restart)) -ge "$RESTART_BACKOFF_S" ]; then
+                echo "[$(date)] mqtt_node_monitor: draait maar geen verbinding na $((no_conn * 10))s — herstart" >> "$LOG"
+                kill -9 $PIDS 2>/dev/null
+                last_restart=$now
+                no_conn=0
+            fi
+        fi
+    else
+        no_conn=0
+    fi
 
     if [ "$COUNT" -gt 1 ]; then
         # Vind PID met actieve MQTT verbinding
