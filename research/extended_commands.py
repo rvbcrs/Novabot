@@ -1718,6 +1718,58 @@ _MOW_DRIVE_LOCK = threading.Lock()
 _MOW_DRIVE_PROC = [None]
 _MOW_DRIVE_STOPPED = [False]
 
+
+def find_stale_mow_drives(proc_root="/proc", self_pid=None):
+    """PIDs of mow_zone_drive.py processes other than ourselves.
+
+    Read straight from procfs instead of pgrep: our own argv carries the script
+    name in several places, and a shell-based match shoots its own parent (the
+    lesson from _restart_novabot_mapping).
+    """
+    me = os.getpid() if self_pid is None else self_pid
+    out = []
+    try:
+        entries = os.listdir(proc_root)
+    except OSError:
+        return out
+    for name in entries:
+        if not name.isdigit() or int(name) == me:
+            continue
+        try:
+            with open(f"{proc_root}/{name}/cmdline", "rb") as fh:
+                cmd = fh.read().replace(b"\0", b" ").decode("utf-8", "replace")
+        except OSError:
+            continue
+        if "mow_zone_drive.py" in cmd:
+            out.append(int(name))
+    return out
+
+
+def kill_stale_mow_drives(timeout=5.0):
+    """Terminate any leftover mow_zone_drive. Returns the pids it killed.
+
+    A run that hangs keeps its iceoryx chunks, and this application only has
+    4 MB chunks, so the next run cannot get a single one and strands on the
+    spot. Live on LFIN2230700238, 2026-09-14: the 15:13 attempt sat in a
+    MEPOO__MEMPOOL_GETCHUNK_POOL_IS_RUNNING_OUT_OF_CHUNKS loop for ten minutes
+    and every later attempt failed a metre off the dock until it was cleared.
+    """
+    pids = find_stale_mow_drives()
+    for pid in pids:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            pass
+    deadline = time.time() + timeout
+    while time.time() < deadline and find_stale_mow_drives():
+        time.sleep(0.2)
+    for pid in find_stale_mow_drives():
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
+    return pids
+
 # De vijf controllerparams die mow_zone_drive.py (TRANSIT_PARAMS) en
 # _follow_unicom voor de transit relaxen, met hun yaml-defaults
 # (novabot_boundary_follow_footprint.yaml). Normaal zet de finally in
@@ -1787,6 +1839,12 @@ def handle_mow_zone(params, respond):
         respond("mow_zone_respond", {"result": 1, "map": to_slot,
                                      "error": "drive_script_missing"})
         return
+    # Preflight: een vorige run die nog leeft houdt zijn blokken vast en laat
+    # deze meteen stranden. Altijd eerst opruimen; zie kill_stale_mow_drives.
+    _stale = kill_stale_mow_drives()
+    if _stale:
+        log(f"mow_zone: {len(_stale)} vastgelopen run(s) opgeruimd voor de start: {_stale}")
+
     d_arg = str(int(direction)) if direction is not None else "-"
     # to_slot is already allowlisted (re.fullmatch map\d+ above) and the rest
     # are int()-coerced, so there is no injection vector. Still, pass every
