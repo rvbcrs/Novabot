@@ -517,6 +517,15 @@ class Driver:
 
 DOCK_HOME_RADIUS = 1.2   # within this of the map origin counts as "home"
 
+# Rijden we zelf over de opgenomen kanalen, of laat de firmware zijn eigen weg
+# plannen? UIT sinds 2026-09-14: de firmware deed dit jarenlang zelf en doet het
+# voor alles behalve deze orkestrator nog steeds. Onze transit bleek bovendien
+# niet af te dwingen wat we dachten: de kanalen zijn tweepunts-markeringen, in
+# map.pgm loopt de vrije doorgang 1 tot 3,6 m ernaast, dus "over het kanaal" is
+# geen eigenschap van de kaart maar alleen van onze code.
+# `MOW_ZONE_TRANSIT=1` zet hem terug aan; de code eronder blijft intact.
+USE_TRANSIT = os.environ.get("MOW_ZONE_TRANSIT", "0").strip().lower() in ("1", "true", "on", "yes")
+
 
 def _transit_unicoms():
     """Every map<->map unicom segment as (points, filename)."""
@@ -608,7 +617,14 @@ def channel_route(from_slot, to_slot, graph):
 
 
 def _channel_files(from_slot, to_slot):
-    """The recorded channels the transit would drive, in order."""
+    """The recorded channels the transit would drive, in order.
+
+    Empty while the transit is off, which is the single gate for both callers:
+    do_mow then neither takes the wheels nor does the init dance, and hands the
+    whole task to robot_decision in one start.
+    """
+    if not USE_TRANSIT:
+        return []
     base = _csv_base()
     try:
         names = os.listdir(base)
@@ -761,7 +777,7 @@ def do_return(drv):
     log(f"return: robot={robot} dist_home={_dist(robot, origin):.2f}")
 
     if _dist(robot, origin) > DOCK_HOME_RADIUS:
-        segs = _transit_unicoms()
+        segs = _transit_unicoms() if USE_TRANSIT else []
         used = set()
         phase("returning")
         drv.set_params([(n, r) for (n, r, _d) in TRANSIT_PARAMS])

@@ -132,6 +132,7 @@ def test_no_route_when_the_zone_is_not_connected():
 
 
 def test_channel_files_reads_the_route_from_disk():
+    mzd.USE_TRANSIT = True                       # met de schakelaar aan
     with_maps({"map0_work.csv": SQ0, "map6_work.csv": SQ6,
                "map0tomap6_0_unicom.csv": [(9, 5), (31, 5)],
                "map6tomap0_0_unicom.csv": [(31, 5), (9, 5)],
@@ -140,6 +141,7 @@ def test_channel_files_reads_the_route_from_disk():
     assert mzd._channel_files("map0", "map0") == []
     assert mzd._channel_files(None, "map6") == []
     assert mzd._channel_files("dock", "map6") == []
+    mzd.USE_TRANSIT = False
 
 
 class FakeDriver:
@@ -209,6 +211,24 @@ def test_lead_in_adds_nothing_when_the_mower_is_already_on_the_path():
 def test_lead_in_is_harmless_without_a_position_or_path():
     assert mzd._lead_in([(1.0, 1.0)], None) == [(1.0, 1.0)]
     assert mzd._lead_in([], (0.0, 0.0)) == []
+
+def test_the_transit_is_off_by_default():
+    # De firmware plant zelf tussen zones; onze transit staat klaar maar uit.
+    assert mzd.USE_TRANSIT is False
+    with_maps({"map0_work.csv": SQ0, "map6_work.csv": SQ6,
+               "map0tomap6_0_unicom.csv": [(9, 5), (31, 5)]})
+    assert mzd._channel_files("map0", "map6") == []
+
+
+def test_the_switch_brings_the_transit_back():
+    with_maps({"map0_work.csv": SQ0, "map6_work.csv": SQ6,
+               "map0tomap6_0_unicom.csv": [(9, 5), (31, 5)]})
+    mzd.USE_TRANSIT = True
+    try:
+        assert mzd._channel_files("map0", "map6") == ["map0tomap6_0_unicom.csv"]
+    finally:
+        mzd.USE_TRANSIT = False
+
 
 def test_executing_gate_matches_the_firmware_rule():
     ex = mzd.task_executing
