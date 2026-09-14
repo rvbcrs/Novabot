@@ -939,6 +939,12 @@
     "chargerCrypto": "Ladestation-Firmware",
     "mappingMode": "Kartierungsmodus",
     "parkedTask": "Geparkte Aufgabe",
-    "groupServer": "Server"
+    "groupServer": "Server",
+    "mowerLogin": "Zugriff auf den Mäher",
+    "mqttNode": "mqtt_node",
+    "mowerConfig": "Serveradresse am Mäher",
+    "serverIpFile": "Gespeicherte Serveradresse",
+    "helpers": "OpenNova-Skripte",
+    "groupMower": "Auf dem Mäher selbst"
   }
 }

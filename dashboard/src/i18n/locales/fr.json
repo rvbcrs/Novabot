@@ -939,6 +939,12 @@
     "chargerCrypto": "Micrologiciel station",
     "mappingMode": "Mode cartographie",
     "parkedTask": "Tâche en pause",
-    "groupServer": "Serveur"
+    "groupServer": "Serveur",
+    "mowerLogin": "Accès à la tondeuse",
+    "mqttNode": "mqtt_node",
+    "mowerConfig": "Adresse serveur sur la tondeuse",
+    "serverIpFile": "Adresse serveur enregistrée",
+    "helpers": "Scripts OpenNova",
+    "groupMower": "Sur la tondeuse elle-même"
   }
 }

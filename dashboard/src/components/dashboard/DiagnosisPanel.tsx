@@ -35,6 +35,11 @@ const STEP_LABEL: Record<string, [string, string]> = {
   charger_crypto: ['diagnose.chargerCrypto', 'Laderfirmware'],
   mapping_mode: ['diagnose.mappingMode', 'Karteermodus'],
   parked_task: ['diagnose.parkedTask', 'Geparkeerde taak'],
+  mower_login: ['diagnose.mowerLogin', 'Toegang tot de maaier'],
+  mqtt_node: ['diagnose.mqttNode', 'mqtt_node'],
+  mower_config: ['diagnose.mowerConfig', 'Serveradres op de maaier'],
+  server_ip_file: ['diagnose.serverIpFile', 'Bewaard serveradres'],
+  helpers: ['diagnose.helpers', 'OpenNova-scripts'],
 };
 
 const GROUP_LABEL: Record<string, [string, string]> = {
@@ -45,9 +50,10 @@ const GROUP_LABEL: Record<string, [string, string]> = {
   pair: ['diagnose.groupPair', 'Lader en LoRa'],
   firmware: ['diagnose.groupFirmware', 'Firmware'],
   ready: ['diagnose.groupReady', 'Klaar om te maaien'],
+  mower: ['diagnose.groupMower', 'Op de maaier zelf'],
 };
 
-const GROUP_ORDER = ['server', 'reach', 'connect', 'identity', 'pair', 'firmware', 'ready'];
+const GROUP_ORDER = ['server', 'reach', 'connect', 'identity', 'pair', 'firmware', 'mower', 'ready'];
 
 function Icon({ status }: { status: DiagnosisStep['status'] }) {
   if (status === 'ok') return <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />;

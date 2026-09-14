@@ -42,6 +42,7 @@ function probes(over: Partial<{
   serverIps: string[]; dnsPointsHere: boolean; dnsAddresses: string[];
   deviceAnswered: boolean; sameSubnet: boolean | null;
   rivals: string[]; mac: string | null; lan: Record<string, unknown>;
+  mower: Record<string, unknown>;
 }> = {}) {
   return {
     reachability: async (deviceIp: string | null) => ({
@@ -62,6 +63,12 @@ function probes(over: Partial<{
     }),
     rivalBrokers: async () => over.rivals ?? [],
     lookupMac: async () => over.mac ?? null,
+    mower: async () => ({
+      reachable: false, error: 'niet gepeild in de test', mqttAddr: null, hasSn: false,
+      serverIp: null, mdnsResolves: false, mqttNodeRunning: false, mqttNodeUptimeS: null,
+      mqttNodeConnected: false, mqttNetErrors: 0, skippedConfigUpdate: false,
+      extendedCommandsRunning: false, ...(over.mower ?? {}),
+    }),
   } satisfies DiagnosisProbes;
 }
 
@@ -631,4 +638,91 @@ describe('the docker gateway is not a second broker', () => {
     const found = await rivalBrokers(['192.168.0.5']);
     expect(found.every(ip => ip.startsWith('192.168.0.'))).toBe(true);
   }, 20000);
+});
+
+describe('on the mower itself', () => {
+  /** Online, custom firmware, with an address, so the mower group runs. */
+  async function onMower(mower: Record<string, unknown>, sw = 'v6.0.2-custom-40') {
+    withIp('192.0.2.40');
+    return diagnoseConnection(MOWER, Date.now(), {
+      snapshot: { msg: 'x', sw_version: sw },
+      probes: probes({ mower }),
+    });
+  }
+
+  it('does not try to log into stock firmware', async () => {
+    // SSH is something our build enables. On stock there is nothing to log into.
+    const step = (await onMower({}, 'v6.0.2')).steps.find(s => s.id === 'mower_login')!;
+    expect(step.status).toBe('skipped');
+    expect(step.evidence).toContain('stock');
+  });
+
+  it('reproduces the case that started this: running, silent, stuck for hours', async () => {
+    // LFIN1231000009 on 2026-09-14: online, publishing RTK telemetry, absent
+    // from the map. mqtt_node had been up seventeen hours with no broker
+    // connection while a connection from that same mower succeeded in 0.05s.
+    const d = await onMower({
+      reachable: true, mqttNodeRunning: true, mqttNodeConnected: false,
+      mqttNodeUptimeS: 61317, mqttNetErrors: 12, extendedCommandsRunning: true,
+      mqttAddr: 'mqtt.lfibot.com', hasSn: true, skippedConfigUpdate: true, mdnsResolves: false,
+    });
+    const node = d.steps.find(s => s.id === 'mqtt_node')!;
+    expect(node.status).toBe('fail');
+    expect(node.evidence).toContain('17 uur');
+    expect(node.action).toContain('restart-mqtt');
+
+    // And the reason it was pointed at the cloud in the first place.
+    const cfgFile = d.steps.find(s => s.id === 'server_ip_file')!;
+    expect(cfgFile.status).toBe('warn');
+    expect(cfgFile.evidence).toContain('opennova.local');
+    expect(cfgFile.action).toContain('server_ip.txt');
+  });
+
+  it('flags a config still pointed at the cloud', async () => {
+    const step = (await onMower({ reachable: true, hasSn: true, mqttAddr: 'mqtt.lfibot.com' }))
+      .steps.find(s => s.id === 'mower_config')!;
+    expect(step.status).toBe('warn');
+    expect(step.action).toContain('DNS');
+  });
+
+  it('accepts a config with a plain address', async () => {
+    const step = (await onMower({ reachable: true, hasSn: true, mqttAddr: '192.168.1.100' }))
+      .steps.find(s => s.id === 'mower_config')!;
+    expect(step.status).toBe('ok');
+  });
+
+  it('calls a missing serial a hard failure', async () => {
+    // mqtt_node cannot announce itself without one.
+    const step = (await onMower({ reachable: true, hasSn: false, mqttAddr: '192.168.1.100' }))
+      .steps.find(s => s.id === 'mower_config')!;
+    expect(step.status).toBe('fail');
+  });
+
+  it('reports mqtt_node not running at all', async () => {
+    const step = (await onMower({ reachable: true, mqttNodeRunning: false }))
+      .steps.find(s => s.id === 'mqtt_node')!;
+    expect(step.status).toBe('fail');
+    expect(step.evidence).toContain('draait niet');
+  });
+
+  it('is quiet when mqtt_node is connected', async () => {
+    const step = (await onMower({ reachable: true, mqttNodeRunning: true, mqttNodeConnected: true }))
+      .steps.find(s => s.id === 'mqtt_node')!;
+    expect(step.status).toBe('ok');
+  });
+
+  it('keeps going when it cannot log in', async () => {
+    // No access is a limit on the diagnosis, not a fault of the mower.
+    const d = await onMower({ reachable: false, error: 'Connection refused' });
+    const step = d.steps.find(s => s.id === 'mower_login')!;
+    expect(step.status).toBe('warn');
+    expect(step.evidence).toContain('Connection refused');
+    expect(d.steps.some(s => s.id === 'mqtt_node')).toBe(false);
+  });
+
+  it('notices our own helper being down', async () => {
+    const step = (await onMower({ reachable: true, extendedCommandsRunning: false }))
+      .steps.find(s => s.id === 'helpers')!;
+    expect(step.status).toBe('warn');
+  });
 });

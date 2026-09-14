@@ -2339,8 +2339,8 @@ async function diagnoseDevice(sn) {
 
   var GROUPS = { server: 'Server', reach: 'Bereikbaarheid', connect: 'Verbinding',
                  identity: 'Identiteit', pair: 'Lader en LoRa', firmware: 'Firmware',
-                 ready: 'Klaar om te maaien' };
-  var ORDER = ['server', 'reach', 'connect', 'identity', 'pair', 'firmware', 'ready'];
+                 mower: 'Op de maaier zelf', ready: 'Klaar om te maaien' };
+  var ORDER = ['server', 'reach', 'connect', 'identity', 'pair', 'firmware', 'mower', 'ready'];
   var ICON = { ok: ['\u2713', '#22c55e'], fail: ['\u2715', '#ef4444'],
                warn: ['!', '#f59e0b'], unknown: ['?', '#6b7280'], skipped: ['\u2013', '#4b5563'] };
 

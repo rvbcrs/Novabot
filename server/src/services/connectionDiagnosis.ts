@@ -17,6 +17,7 @@
 import { deviceRepo, equipmentRepo, connectionEventRepo } from '../db/repositories/index.js';
 import { getLoraPair } from './loraPair.js';
 import { checkReachability, serverIpv4, type Reachability } from './reachability.js';
+import { probeMower, type MowerProbe } from './mowerProbe.js';
 import { scanLan, lookupMac, rivalBrokers, bleToWifiMac, type LanScanResult } from './lanScan.js';
 import { statfs } from 'fs/promises';
 import { mapRepo, userRepo } from '../db/repositories/index.js';
@@ -25,7 +26,7 @@ import { MAP_NAMES_SELECTION_BUILD } from './mowingArea.js';
 
 export type StepStatus = 'ok' | 'fail' | 'warn' | 'unknown' | 'skipped';
 
-export type DiagnosisGroup = 'server' | 'reach' | 'connect' | 'identity' | 'pair' | 'firmware' | 'ready';
+export type DiagnosisGroup = 'server' | 'reach' | 'mower' | 'connect' | 'identity' | 'pair' | 'firmware' | 'ready';
 
 export interface DiagnosisStep {
   /** Stable id, so the UI can translate without parsing prose. */
@@ -48,6 +49,7 @@ export interface DiagnosisStep {
  */
 export interface DiagnosisProbes {
   reachability: (deviceIp: string | null) => Promise<Reachability>;
+  mower: (ip: string | null) => Promise<MowerProbe>;
   scanLan: () => Promise<LanScanResult>;
   rivalBrokers: (ourIps: string[]) => Promise<string[]>;
   lookupMac: (ip: string) => Promise<string | null>;
@@ -55,6 +57,7 @@ export interface DiagnosisProbes {
 
 export const realProbes: DiagnosisProbes = {
   reachability: checkReachability,
+  mower: probeMower,
   scanLan,
   rivalBrokers,
   lookupMac,
@@ -748,6 +751,120 @@ export async function diagnoseConnection(
                               : 'kaartframe gecontroleerd',
         action: unvalidated ? 'anker de maaier opnieuw op het laadstation voor je gaat maaien'
                             : undefined,
+      });
+    }
+  }
+
+  // ── Op de maaier zelf ──────────────────────────────────────────────────
+  //
+  // Alles hierboven kijkt van buitenaf. Dat was niet genoeg: een maaier kan
+  // online zijn, telemetrie sturen en toch volledig van de kaart verdwenen.
+  // Van buiten ziet dat er gezond uit, van binnen stond mqtt_node zeventien uur
+  // vast in een verbindingslus terwijl een verbinding vanaf diezelfde maaier op
+  // datzelfde moment in 0,05 s lukte.
+  const customFirmware = /custom|opennova/i.test(version ?? '');
+  if (deviceType !== 'mower') {
+    // niets: de groep gaat over de maaier
+  } else if (!customFirmware) {
+    push({
+      id: 'mower_login',
+      group: 'mower',
+      status: 'skipped',
+      evidence: 'stock firmware heeft geen SSH, dus hier valt niets te lezen',
+    });
+  } else if (input.probeNetwork === false || !reach.deviceIp) {
+    push({
+      id: 'mower_login',
+      group: 'mower',
+      status: 'skipped',
+      evidence: reach.deviceIp ? 'niet gepeild' : 'geen adres bekend',
+    });
+  } else {
+    const m = await probe.mower(reach.deviceIp);
+    if (!m.reachable) {
+      push({
+        id: 'mower_login',
+        group: 'mower',
+        status: 'warn',
+        evidence: `kan niet inloggen op ${reach.deviceIp}: ${m.error ?? 'onbekende reden'}`,
+        action: 'zonder toegang tot de maaier zelf blijft de diagnose bij wat van '
+              + 'buitenaf te zien is',
+      });
+    } else {
+      push({ id: 'mower_login', group: 'mower', status: 'ok', evidence: `ingelogd op ${reach.deviceIp}` });
+
+      // mqtt_node is de firmware-stack. Onze eigen scripts kunnen prima draaien
+      // terwijl deze zwijgt, en dan lijkt alles in orde terwijl er niets werkt.
+      if (!m.mqttNodeRunning) {
+        push({
+          id: 'mqtt_node',
+          group: 'mower',
+          status: 'fail',
+          evidence: 'mqtt_node draait niet',
+          action: 'zonder dit proces stuurt de maaier geen enkele status; '
+                + 'herstart hem met set_server_urls.sh --restart-mqtt',
+        });
+      } else if (!m.mqttNodeConnected) {
+        const uren = m.mqttNodeUptimeS != null ? Math.round(m.mqttNodeUptimeS / 3600) : null;
+        push({
+          id: 'mqtt_node',
+          group: 'mower',
+          status: 'fail',
+          evidence: `mqtt_node draait${uren != null ? ` al ${uren} uur` : ''} maar heeft geen `
+                  + `verbinding met de broker${m.mqttNetErrors > 0 ? `, ${m.mqttNetErrors} netwerkfouten in zijn log` : ''}`,
+          action: 'hij is bij het opstarten blijven hangen en komt daar niet zelf uit; '
+                + 'herstart hem met set_server_urls.sh --restart-mqtt',
+        });
+      } else {
+        push({ id: 'mqtt_node', group: 'mower', status: 'ok', evidence: 'mqtt_node verbonden met de broker' });
+      }
+
+      // Het serveradres waar mqtt_node op afgaat. Een cloudnaam werkt alleen
+      // zolang de DNS-omleiding staat; een IP is onafhankelijk.
+      const cloudName = /lfibot\.com/i.test(m.mqttAddr ?? '');
+      push({
+        id: 'mower_config',
+        group: 'mower',
+        status: !m.hasSn ? 'fail' : cloudName ? 'warn' : 'ok',
+        evidence: !m.hasSn
+          ? 'json_config.json mist het serienummer'
+          : `mqtt-adres in json_config.json: ${m.mqttAddr ?? 'leeg'}`,
+        action: !m.hasSn
+          ? 'zonder serienummer kan mqtt_node zich niet aanmelden'
+          : cloudName
+          ? 'dit is het cloudadres; het werkt alleen zolang je DNS het omleidt naar '
+          + 'je eigen server. Een IP is betrouwbaarder'
+          : undefined,
+      });
+
+      if (m.skippedConfigUpdate) {
+        push({
+          id: 'server_ip_file',
+          group: 'mower',
+          status: 'warn',
+          evidence: `set_server_urls sloeg de config-update over${m.mdnsResolves ? '' : ', opennova.local lost op de maaier niet op'}`
+                  + `${m.serverIp ? '' : ' en /userdata/lfi/server_ip.txt bestaat niet'}`,
+          action: 'zet het serveradres in /userdata/lfi/server_ip.txt, dan vult het '
+                + 'script json_config.json bij de volgende boot alsnog',
+        });
+      } else {
+        push({
+          id: 'server_ip_file',
+          group: 'mower',
+          status: 'ok',
+          evidence: m.serverIp ? `laatst bekende server ${m.serverIp}` : 'config-update liep door',
+        });
+      }
+
+      push({
+        id: 'helpers',
+        group: 'mower',
+        status: m.extendedCommandsRunning ? 'ok' : 'warn',
+        evidence: m.extendedCommandsRunning
+          ? 'extended_commands draait'
+          : 'extended_commands draait niet',
+        action: m.extendedCommandsRunning ? undefined
+          : 'zonder dit script werken de OpenNova-commando\'s en de RTK-telemetrie niet',
       });
     }
   }

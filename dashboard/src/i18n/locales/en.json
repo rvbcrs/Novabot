@@ -1061,6 +1061,12 @@
     "chargerCrypto": "Charger firmware",
     "mappingMode": "Mapping mode",
     "parkedTask": "Parked task",
-    "groupServer": "Server"
+    "groupServer": "Server",
+    "mowerLogin": "Access to the mower",
+    "mqttNode": "mqtt_node",
+    "mowerConfig": "Server address on the mower",
+    "serverIpFile": "Stored server address",
+    "helpers": "OpenNova scripts",
+    "groupMower": "On the mower itself"
   }
 }

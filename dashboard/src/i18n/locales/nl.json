@@ -1059,6 +1059,12 @@
     "chargerCrypto": "Laderfirmware",
     "mappingMode": "Karteermodus",
     "parkedTask": "Geparkeerde taak",
-    "groupServer": "Server"
+    "groupServer": "Server",
+    "mowerLogin": "Toegang tot de maaier",
+    "mqttNode": "mqtt_node",
+    "mowerConfig": "Serveradres op de maaier",
+    "serverIpFile": "Bewaard serveradres",
+    "helpers": "OpenNova-scripts",
+    "groupMower": "Op de maaier zelf"
   }
 }
