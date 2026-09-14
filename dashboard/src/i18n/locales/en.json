@@ -1054,6 +1054,7 @@
     "groupIdentity": "Identity",
     "groupPair": "Charger and LoRa",
     "groupFirmware": "Firmware",
-    "groupReady": "Ready to mow"
+    "groupReady": "Ready to mow",
+    "wifi": "Wi-Fi"
   }
 }

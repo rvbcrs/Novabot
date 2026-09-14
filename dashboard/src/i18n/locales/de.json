@@ -932,6 +932,7 @@
     "groupIdentity": "Identität",
     "groupPair": "Ladestation und LoRa",
     "groupFirmware": "Firmware",
-    "groupReady": "Bereit zum Mähen"
+    "groupReady": "Bereit zum Mähen",
+    "wifi": "WLAN"
   }
 }

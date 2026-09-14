@@ -1052,6 +1052,7 @@
     "groupIdentity": "Identiteit",
     "groupPair": "Lader en LoRa",
     "groupFirmware": "Firmware",
-    "groupReady": "Klaar om te maaien"
+    "groupReady": "Klaar om te maaien",
+    "wifi": "Wifi"
   }
 }

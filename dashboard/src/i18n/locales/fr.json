@@ -932,6 +932,7 @@
     "groupIdentity": "Identité",
     "groupPair": "Station et LoRa",
     "groupFirmware": "Micrologiciel",
-    "groupReady": "Prêt à tondre"
+    "groupReady": "Prêt à tondre",
+    "wifi": "Wi-Fi"
   }
 }

@@ -17,8 +17,8 @@
 import { deviceRepo, equipmentRepo, connectionEventRepo } from '../db/repositories/index.js';
 import { getLoraPair } from './loraPair.js';
 import { checkReachability } from './reachability.js';
-import { scanLan } from './lanScan.js';
-import { mapRepo } from '../db/repositories/index.js';
+import { scanLan, lookupMac } from './lanScan.js';
+import { mapRepo, userRepo } from '../db/repositories/index.js';
 import { deriveHasError } from '../mqtt/mowerActivity.js';
 import { MAP_NAMES_SELECTION_BUILD } from './mowingArea.js';
 
@@ -253,6 +253,31 @@ export async function diagnoseConnection(
     });
   }
 
+  // Wifi: deze apparaten hebben geen ethernet, dus een adres op het netwerk
+  // betekent dat de wifi staat. Het MAC wordt opgezocht en niet uitgerekend: de
+  // afstand tussen wifi en BLE verschilt per hardware (ESP32 +2, LFIN +1).
+  if (!reach.deviceIp) {
+    push({ id: 'wifi', group: 'reach', status: 'skipped', evidence: 'geen adres bekend' });
+  } else {
+    const wifiMac = await lookupMac(reach.deviceIp);
+    const rssiRaw = snap?.wifi_rssi ?? snap?.signal_strength ?? null;
+    const rssi = rssiRaw !== null ? parseInt(rssiRaw, 10) : NaN;
+    const parts = [`verbonden via wifi op ${reach.deviceIp}`];
+    if (wifiMac) parts.push(`MAC ${wifiMac}`);
+    if (Number.isFinite(rssi)) parts.push(`signaal ${rssi} dBm`);
+    // Onder de -75 dBm valt de verbinding met enige regelmaat weg, en dat is
+    // precies het beeld van "hij is soms online".
+    const weak = Number.isFinite(rssi) && rssi < -75;
+    push({
+      id: 'wifi',
+      group: 'reach',
+      status: weak ? 'warn' : 'ok',
+      evidence: parts.join(', ') + (wifiMac ? '' : ' (MAC niet op te zoeken vanaf deze server)'),
+      action: weak ? 'zwak signaal, de verbinding valt daar met regelmaat van weg; '
+                   + 'zet een toegangspunt dichterbij' : undefined,
+    });
+  }
+
   // 2. Has this device EVER been here? The single most informative fact.
   const reg = regEarly;
   const lastSeen = parseLastSeen(reg);
@@ -338,8 +363,10 @@ export async function diagnoseConnection(
       action: 'de app doet dan BLE-provisioning; rond die stap af in de app',
     });
   } else {
-    push({ id: 'binding',
-      group: 'identity', status: 'ok', evidence: `gekoppeld aan gebruiker ${eq.user_id}` });
+    // De guid zegt niemand iets. De naam of het e-mailadres wel.
+    const user = userRepo.findById(eq.user_id);
+    const who = user?.username || user?.email || eq.user_id;
+    push({ id: 'binding', group: 'identity', status: 'ok', evidence: `gekoppeld aan ${who}` });
   }
 
   // 5. The BLE MAC must be the mower's own, not the charger's. When it is the

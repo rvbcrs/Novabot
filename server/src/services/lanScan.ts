@@ -106,6 +106,20 @@ function readNeighbours(): Promise<Array<{ ip: string; mac: string }>> {
   });
 }
 
+/**
+ * The real MAC behind one address, straight from the neighbour table.
+ *
+ * Looked up, never computed. The WiFi-to-BLE offset differs per hardware: an
+ * ESP32 charger is +2, and LFIN2230700238 measures +1 (wifi 50:41:1C:39:BD:C0
+ * against BLE ...C1). Deriving one from the other would print a plausible,
+ * wrong address.
+ */
+export async function lookupMac(ip: string): Promise<string | null> {
+  const clean = ip.replace(/^::ffff:/, '');
+  const hit = (await readNeighbours()).find(n => n.ip === clean);
+  return hit?.mac ?? null;
+}
+
 /** True for the ranges Docker hands out to bridged containers. */
 function looksLikeContainerBridge(ip: string): boolean {
   const [a, b] = ip.split('.').map(Number);

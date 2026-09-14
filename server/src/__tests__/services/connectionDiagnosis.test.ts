@@ -351,3 +351,65 @@ describe('lan scan', () => {
     expect(Date.now() - t0).toBeLessThan(3000);
   });
 });
+
+describe('identity and wifi', () => {
+  it('shows a name instead of the account guid', async () => {
+    // "gekoppeld aan gebruiker f2ce0a28-1ebd-4dbe-92d7-31fa7a76fe62" tells
+    // nobody anything.
+    db.prepare(`INSERT OR IGNORE INTO users (id, app_user_id, email, password, username)
+                VALUES (?,?,?,?,?)`).run(2, 'guid-abc', 'ramon@example.com', 'x', 'Ramon');
+    db.prepare(`INSERT INTO equipment (equipment_id, mower_sn, charger_sn, mac_address, user_id)
+                VALUES (?,?,?,?,?)`).run(`eq-${MOWER}`, MOWER, CHARGER, '50:41:1C:39:BD:C1', 'guid-abc');
+    withIp('192.0.2.11');
+    const step = (await diagnoseConnection(MOWER, Date.now(), { snapshot: { msg: 'x' }, scanLan: false }))
+      .steps.find(s => s.id === 'binding')!;
+    expect(step.evidence).toContain('Ramon');
+    expect(step.evidence).not.toContain('guid-abc');
+  });
+
+  it('falls back to the e-mail address when there is no username', async () => {
+    db.prepare(`INSERT OR IGNORE INTO users (id, app_user_id, email, password, username)
+                VALUES (?,?,?,?,?)`).run(3, 'guid-def', 'jan@example.com', 'x', null);
+    db.prepare(`INSERT INTO equipment (equipment_id, mower_sn, charger_sn, mac_address, user_id)
+                VALUES (?,?,?,?,?)`).run(`eq-${MOWER}`, MOWER, CHARGER, '50:41:1C:39:BD:C1', 'guid-def');
+    withIp('192.0.2.11');
+    const step = (await diagnoseConnection(MOWER, Date.now(), { snapshot: { msg: 'x' }, scanLan: false }))
+      .steps.find(s => s.id === 'binding')!;
+    expect(step.evidence).toContain('jan@example.com');
+  });
+
+  it('reports the wifi connection with its address', async () => {
+    withIp('192.0.2.12');
+    const step = (await diagnoseConnection(MOWER, Date.now(), { snapshot: { msg: 'x' }, scanLan: false }))
+      .steps.find(s => s.id === 'wifi')!;
+    expect(step.evidence).toContain('192.0.2.12');
+    expect(step.evidence).toContain('wifi');
+  });
+
+  it('warns on a weak signal, which is what "sometimes online" looks like', async () => {
+    withIp('192.0.2.12');
+    const step = (await diagnoseConnection(MOWER, Date.now(),
+      { snapshot: { msg: 'x', wifi_rssi: '-82' }, scanLan: false })).steps.find(s => s.id === 'wifi')!;
+    expect(step.status).toBe('warn');
+    expect(step.evidence).toContain('-82 dBm');
+    expect(step.action).toContain('toegangspunt');
+  });
+
+  it('accepts a healthy signal', async () => {
+    withIp('192.0.2.12');
+    const step = (await diagnoseConnection(MOWER, Date.now(),
+      { snapshot: { msg: 'x', wifi_rssi: '-58' }, scanLan: false })).steps.find(s => s.id === 'wifi')!;
+    expect(step.status).toBe('ok');
+  });
+
+  it('says the MAC is not lookupable rather than computing a wrong one', async () => {
+    // The wifi-to-BLE offset differs per hardware: ESP32 is +2, LFIN2230700238
+    // measures +1. Deriving one from the other prints a plausible wrong address.
+    withIp('192.0.2.13');
+    const step = (await diagnoseConnection(MOWER, Date.now(), { snapshot: { msg: 'x' }, scanLan: false }))
+      .steps.find(s => s.id === 'wifi')!;
+    if (!/MAC [0-9A-F:]{17}/.test(step.evidence)) {
+      expect(step.evidence).toContain('niet op te zoeken');
+    }
+  });
+});
