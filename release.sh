@@ -84,7 +84,11 @@ docker buildx build --platform linux/amd64,linux/arm64 \
   --builder multiplatform-builder \
   -t "rvbcrs/opennova:latest" \
   -t "rvbcrs/opennova:$NEW" \
+  -t "rvbcrs/opennova:beta" \
   --push "${CACHE_ARGS[@]}" .
+# :beta rides along on the same build: a release is by definition newer than
+# whatever the beta channel had, and a beta device that lags behind production
+# only ever produced confusing bug reports. Same bytes, no separate retag.
 
 # Restart local container with new image.
 # NOTE: `docker buildx build --push` (multiplatform) pushes to the registry but
@@ -102,5 +106,5 @@ docker compose up -d 2>/dev/null
 
 echo ""
 echo "Released v$NEW"
-echo "  Docker: rvbcrs/opennova:latest + rvbcrs/opennova:$NEW"
+echo "  Docker: rvbcrs/opennova:latest + rvbcrs/opennova:$NEW + rvbcrs/opennova:beta"
 echo "  Local container restarted"
