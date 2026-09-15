@@ -42,7 +42,8 @@ function bind(mac: string) {
 function probes(over: Partial<{
   serverIps: string[]; lanIps: string[]; dnsPointsHere: boolean | null; dnsAddresses: string[];
   deviceAnswered: boolean; sameSubnet: boolean | null;
-  rivals: string[]; rivalsBlind: boolean; mac: string | null; lan: Record<string, unknown>;
+  rivals: string[]; rivalsBlind: boolean; opennovaAt: Record<string, string>;
+  mac: string | null; lan: Record<string, unknown>;
   mower: Record<string, unknown>;
   net: Record<string, unknown>;
   mdns: Record<string, unknown>; mdnsAnswers: string[];
@@ -68,6 +69,10 @@ function probes(over: Partial<{
     rivalBrokers: async () => over.rivalsBlind
       ? { looked: false, reason: 'no_lan_address' as const, ips: [] }
       : { looked: true, reason: null, ips: over.rivals ?? [] },
+    // Wie is de broker: alleen adressen in opennovaAt antwoorden als OpenNova.
+    identifyBroker: async (ip: string) => ({
+      ip, opennova: !!over.opennovaAt?.[ip], version: over.opennovaAt?.[ip] ?? null,
+    }),
     lookupMac: async () => over.mac ?? null,
     mower: async () => ({
       reachable: false, error: 'niet gepeild in de test', mqttAddr: null, hasSn: false,
@@ -531,11 +536,11 @@ describe('server side and blocked states', () => {
   it('reports a second broker when the probe finds one', async () => {
     withIp('192.0.2.20');
     const step = (await diagnoseConnection(MOWER, Date.now(),
-      { snapshot: { msg: 'x' }, probes: probes({ rivals: ['192.168.1.9'] }) }))
+      { snapshot: { msg: 'x' }, probes: probes({ rivals: ['192.168.1.9'], opennovaAt: { '192.168.1.9': '2026.0914.2044' } }) }))
       .steps.find(s => s.id === 'rival_broker')!;
     expect(step.status).toBe('fail');
     expect(step.evidence).toContain('192.168.1.9');
-    expect(step.action).toContain('mDNS');
+    expect(step.action).toContain('opennova.local');
   });
 
   it('only probes once per call, and the probe itself caches', async () => {
@@ -678,10 +683,10 @@ describe('a second broker it could not look for', () => {
     withIp('192.168.1.9');
     const step = (await diagnoseConnection(MOWER, Date.now(), {
       snapshot: { msg: 'x' },
-      probes: probes({ rivals: ['192.168.0.233'] }),
+      probes: probes({ rivals: ['192.168.0.233'], opennovaAt: { '192.168.0.233': '2026.0915.1240' } }),
     })).steps.find(s => s.id === 'rival_broker')!;
     expect(step.status).toBe('fail');
-    expect(step.evidence).toContain('192.168.0.233');
+    expect(step.evidence).toContain('192.168.0.233 (v2026.0915.1240)');
     expect(step.action).toContain('zet er één uit');
   });
 
@@ -692,6 +697,45 @@ describe('a second broker it could not look for', () => {
       probes: probes({ rivalsBlind: true }),
     })).steps.find(s => s.id === 'rival_broker')!;
     expect(step.evidence).toContain('cannot probe');
+  });
+});
+
+describe('a broker is only a rival when it is an OpenNova server', () => {
+  // Een gebruiker met drie eigen Mosquitto's kreeg een rood kruis met "zet er
+  // één uit" (2026-09-15). Een maaier komt daar nooit terecht; alleen een tweede
+  // OpenNova-server claimt ze. Dus vragen we het de broker zelf.
+  const run = (over: Parameters<typeof probes>[0]) => {
+    withIp('192.168.0.100');
+    return diagnoseConnection(MOWER, Date.now(), { snapshot: { msg: 'x' }, probes: probes(over) })
+      .then(d => d.steps.find(s => s.id === 'rival_broker')!);
+  };
+
+  it('leaves foreign brokers alone, but names them', async () => {
+    const step = await run({ rivals: ['192.168.0.8', '192.168.0.200', '192.168.0.202'] });
+    expect(step.status).toBe('ok');
+    expect(step.evidence).toContain('3 andere MQTT-broker(s)');
+    expect(step.evidence).toContain('192.168.0.200');
+    expect(step.evidence).toContain('geen ervan is OpenNova');
+    expect(step.action).toBeUndefined();
+  });
+
+  it('fails on a second OpenNova server, and names only that one', async () => {
+    const step = await run({
+      rivals: ['192.168.0.8', '192.168.0.50'],
+      opennovaAt: { '192.168.0.50': '2026.0914.2044' },
+    });
+    expect(step.status).toBe('fail');
+    expect(step.evidence).toContain('192.168.0.50 (v2026.0914.2044)');
+    expect(step.evidence).not.toContain('192.168.0.8');
+    expect(step.action).toContain('opennova.local');
+  });
+
+  it('says so in English', async () => {
+    withIp('192.168.0.100');
+    const d = await diagnoseConnection(MOWER, Date.now(), {
+      snapshot: { msg: 'x' }, lang: 'en', probes: probes({ rivals: ['192.168.0.8'] }),
+    });
+    expect(d.steps.find(s => s.id === 'rival_broker')!.evidence).toContain('none of them is OpenNova');
   });
 });
 

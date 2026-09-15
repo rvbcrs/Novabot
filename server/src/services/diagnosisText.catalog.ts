@@ -56,25 +56,30 @@ export const CATALOG: Catalog = {
     fr: "non sondé",
     de: "nicht geprüft",
   },
-  "nog {0} andere MQTT-broker(s) op dit netwerk: {1}": {
-    en: "{0} other MQTT broker(s) on this network: {1}",
-    fr: "{0} autre(s) courtier(s) MQTT sur ce réseau : {1}",
-    de: "{0} weitere(r) MQTT-Broker in diesem Netzwerk: {1}",
-  },
   "niet te peilen: geen adres van deze server op het thuisnetwerk bekend": {
     en: "cannot probe: no address of this server on the home network is known",
     fr: "impossible de sonder : aucune adresse de ce serveur sur le réseau domestique n'est connue",
     de: "nicht prüfbar: keine Adresse dieses Servers im Heimnetz bekannt",
   },
+  "nog een OpenNova-server op dit netwerk: {0}": {
+    en: "another OpenNova server on this network: {0}",
+    fr: "un autre serveur OpenNova sur ce réseau : {0}",
+    de: "ein weiterer OpenNova-Server in diesem Netzwerk: {0}",
+  },
+  "{0} andere MQTT-broker(s) op dit netwerk ({1}); geen ervan is OpenNova, ze concurreren niet om de maaiers": {
+    en: "{0} other MQTT broker(s) on this network ({1}); none of them is OpenNova, they do not compete for the mowers",
+    fr: "{0} autre(s) courtier(s) MQTT sur ce réseau ({1}) ; aucun n'est OpenNova, ils ne se disputent pas les tondeuses",
+    de: "{0} weitere(r) MQTT-Broker in diesem Netzwerk ({1}); keiner davon ist OpenNova, sie konkurrieren nicht um die Mäher",
+  },
+  "twee OpenNova-servers claimen dezelfde maaiers via opennova.local en mqtt.lfibot.com; zet er één uit": {
+    en: "two OpenNova servers claim the same mowers through opennova.local and mqtt.lfibot.com; switch one off",
+    fr: "deux serveurs OpenNova revendiquent les mêmes tondeuses via opennova.local et mqtt.lfibot.com ; éteignez-en un",
+    de: "zwei OpenNova-Server beanspruchen dieselben Mäher über opennova.local und mqtt.lfibot.com; schalten Sie einen aus",
+  },
   "geen tweede MQTT-broker op dit netwerk": {
     en: "no second MQTT broker on this network",
     fr: "aucun second courtier MQTT sur ce réseau",
     de: "kein zweiter MQTT-Broker in diesem Netzwerk",
-  },
-  "maaiers ontdekken via mDNS de verkeerde en springen heen en weer; zet er één uit": {
-    en: "mowers discover the wrong one over mDNS and bounce between them; switch one off",
-    fr: "les tondeuses découvrent le mauvais par mDNS et sautent de l'un à l'autre ; éteignez-en un",
-    de: "Mäher finden über mDNS den falschen und springen hin und her; schalten Sie einen aus",
   },
   "deze machine": {
     en: "this machine",

@@ -14,6 +14,7 @@
 import { execFile } from 'child_process';
 import dgram from 'dgram';
 import net from 'net';
+import http from 'http';
 import { db } from '../db/database.js';
 import { serverIpv4, lanIpv4 } from './reachability.js';
 
@@ -297,4 +298,43 @@ export async function scanLan(): Promise<LanScanResult> {
   }
   return { canSeeLan: true, reason: null, subnet, found,
     neighbourCount: neighbours.length, knownOuis: ouis.size };
+}
+
+/**
+ * Is this broker an OpenNova server, or just something that speaks MQTT?
+ *
+ * A Mosquitto for Home Assistant on the same LAN is not a rival: a mower only
+ * ends up there if it is pointed there. A second OpenNova server is, because
+ * it advertises opennova.local and answers as mqtt.lfibot.com. The two are told
+ * apart the way a person would: ask it who it is. Every OpenNova server has
+ * answered GET /api/dashboard/version on its HTTP port since 2026-06-15,
+ * unauthenticated from the LAN, so this also recognises old servers, such as
+ * the stray container that hijacked the mowers on 2026-09-14. Port 80 is the
+ * compose default, 8080 the other mapping in use.
+ */
+export interface BrokerIdentity {
+  ip: string;
+  opennova: boolean;
+  version: string | null;
+}
+
+export async function identifyBroker(ip: string, timeoutMs = 1500): Promise<BrokerIdentity> {
+  const ask = (port: number) => new Promise<string | null>(resolve => {
+    const req = http.get({ host: ip, port, path: '/api/dashboard/version', timeout: timeoutMs }, res => {
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', c => { if (body.length < 4096) body += c; });
+      res.on('end', () => {
+        try {
+          const v = JSON.parse(body)?.version;
+          resolve(typeof v === 'string' && v ? v : null);
+        } catch { resolve(null); }
+      });
+    });
+    req.on('timeout', () => { req.destroy(); resolve(null); });
+    req.on('error', () => resolve(null));
+  });
+  const versions = await Promise.all([80, 8080].map(ask));
+  const version = versions.find(v => v !== null) ?? null;
+  return { ip, opennova: version !== null, version };
 }

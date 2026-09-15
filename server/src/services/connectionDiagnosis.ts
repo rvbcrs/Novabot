@@ -20,8 +20,8 @@ import { checkReachability, serverIpv4, type Reachability } from './reachability
 import { probeMower, type MowerProbe } from './mowerProbe.js';
 import { inspectContainerNetwork, type ContainerNetwork } from './containerNetwork.js';
 import { mdnsStatus, selfQuery, type MdnsStatus } from './mdnsAdvertiser.js';
-import { scanLan, lookupMac, rivalBrokers, bleToWifiMac,
-         type LanScanResult, type RivalBrokers } from './lanScan.js';
+import { scanLan, lookupMac, rivalBrokers, identifyBroker, bleToWifiMac,
+         type LanScanResult, type RivalBrokers, type BrokerIdentity } from './lanScan.js';
 import { statfs } from 'fs/promises';
 import { mapRepo, userRepo } from '../db/repositories/index.js';
 import { deriveHasError } from '../mqtt/mowerActivity.js';
@@ -57,6 +57,7 @@ export interface DiagnosisProbes {
   containerNetwork: () => ContainerNetwork;
   scanLan: () => Promise<LanScanResult>;
   rivalBrokers: (ourIps: string[]) => Promise<RivalBrokers>;
+  identifyBroker: (ip: string) => Promise<BrokerIdentity>;
   lookupMac: (ip: string) => Promise<string | null>;
   mdnsStatus: () => MdnsStatus;
   mdnsSelfQuery: () => Promise<string[]>;
@@ -68,6 +69,7 @@ export const realProbes: DiagnosisProbes = {
   containerNetwork: inspectContainerNetwork,
   scanLan,
   rivalBrokers,
+  identifyBroker,
   lookupMac,
   mdnsStatus,
   mdnsSelfQuery: selfQuery,
@@ -185,19 +187,32 @@ export async function diagnoseConnection(
   const rivals = input.probeNetwork === false ? null : await probe.rivalBrokers(serverIpv4());
   // Groen melden vanaf een plek waar niets te zien valt is erger dan zwijgen:
   // binnen een bridged container kent de buurtabel alleen de docker-gateway.
+  //
+  // En een broker op 1883 is nog geen concurrent. Een Mosquitto voor Home
+  // Assistant deelt het netwerk zonder ooit een maaier te zien; alleen een
+  // tweede OpenNova-server claimt ze, via opennova.local en mqtt.lfibot.com.
+  // Dus vragen we het elke broker: antwoordt dezelfde host als OpenNova, dan
+  // is het er een. Een gebruiker met drie eigen brokers kreeg hier een rood
+  // kruis met "zet er één uit" (2026-09-15); dat was de check, niet zijn netwerk.
+  const identities = rivals?.looked ? await Promise.all(rivals.ips.map(ip => probe.identifyBroker(ip))) : [];
+  const opennovaRivals = identities.filter(i => i.opennova);
+  const foreign = identities.filter(i => !i.opennova);
+  const describe = (i: BrokerIdentity) => i.version ? `${i.ip} (v${i.version})` : i.ip;
   push({
     id: 'rival_broker',
     group: 'server',
-    status: rivals === null ? 'skipped' : !rivals.looked ? 'unknown' : rivals.ips.length > 0 ? 'fail' : 'ok',
+    status: rivals === null ? 'skipped' : !rivals.looked ? 'unknown' : opennovaRivals.length > 0 ? 'fail' : 'ok',
     evidence: rivals === null
       ? T`niet gepeild`
       : !rivals.looked
       ? T`niet te peilen: geen adres van deze server op het thuisnetwerk bekend`
-      : rivals.ips.length > 0
-      ? T`nog ${rivals.ips.length} andere MQTT-broker(s) op dit netwerk: ${rivals.ips.join(', ')}`
+      : opennovaRivals.length > 0
+      ? T`nog een OpenNova-server op dit netwerk: ${opennovaRivals.map(describe).join(', ')}`
+      : foreign.length > 0
+      ? T`${foreign.length} andere MQTT-broker(s) op dit netwerk (${foreign.map(i => i.ip).join(', ')}); geen ervan is OpenNova, ze concurreren niet om de maaiers`
       : T`geen tweede MQTT-broker op dit netwerk`,
-    action: rivals?.looked && rivals.ips.length > 0
-      ? T`maaiers ontdekken via mDNS de verkeerde en springen heen en weer; zet er één uit`
+    action: opennovaRivals.length > 0
+      ? T`twee OpenNova-servers claimen dezelfde maaiers via opennova.local en mqtt.lfibot.com; zet er één uit`
       : undefined,
   });
 
