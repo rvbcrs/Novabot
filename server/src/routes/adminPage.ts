@@ -6686,18 +6686,21 @@ async function startOtaUpdate() {
     if (String(_fwVersions[i].id || _fwVersions[i].ID) === String(versionId)) { vName = _fwVersions[i].version; break; }
   }
 
-  // For BETA/custom firmware show the EXACT same warning as the app's OTA confirm
-  // modal (mirrors betaFirmware.ts / firmwareSafety BETA_FIRMWARE_WARNING). The
-  // admin panel is an internal Dutch tool, so the Dutch copy is the canonical one.
+  // Same warning as the app's OTA confirm modal (mirrors betaFirmware.ts /
+  // firmwareSafety BETA_FIRMWARE_WARNING), in English like the rest of this
+  // panel: the source copy was Dutch while the panel has a language switcher,
+  // so a user on EN got a Dutch warning about bricking their mower. Each
+  // sentence is its own text node so the i18n layer can swap it.
   var isBeta = /custom|opennova/i.test(vName);
   var ok;
   if (isBeta) {
     ok = await modalConfirm('⚠️ BETA CUSTOM FIRMWARE',
-      '&bull; Dit is BETA / experimentele custom firmware.<br>'
-      + '&bull; De installatie kan de maaier onbruikbaar maken (bricken).<br>'
-      + '&bull; Je kunt AL je kaarten verliezen.<br><br>'
-      + 'Er wordt automatisch een verse backup gemaakt voordat we flashen.<br><br>'
-      + 'Update <b>' + sn + '</b> naar <b>' + (vName || 'gekozen versie') + '</b>? Het apparaat herstart tijdens de update.');
+      '&bull; This is BETA / experimental custom firmware.<br>'
+      + '&bull; Installing it can render the mower unusable (brick it).<br>'
+      + '&bull; You may lose ALL your maps.<br><br>'
+      + 'A fresh backup is made automatically before we flash.<br><br>'
+      + 'Update <b>' + sn + '</b> to <b>' + (vName || 'selected version') + '</b>?<br>'
+      + 'The device will reboot during the update.');
   } else {
     ok = await modalConfirm('Start OTA Update', 'Update <b>' + sn + '</b> to <b>' + (vName || 'selected version') + '</b>?<br><br>The device will reboot during the update.');
   }

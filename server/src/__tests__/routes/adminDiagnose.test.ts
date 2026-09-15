@@ -8,6 +8,35 @@ import { fileURLToPath } from 'url';
  * The admin panel is one server-rendered page with inline JS, so the only way
  * to keep the diagnosis wired up is to assert on the emitted source.
  */
+describe('the beta firmware warning speaks the panel language', () => {
+  // De waarschuwing stond hardgecodeerd in het Nederlands terwijl het paneel
+  // een taalschakelaar heeft, dus een gebruiker op EN kreeg een Nederlandse
+  // waarschuwing over het bricken van zijn maaier (2026-09-15).
+  const page = adminPageHtml();
+  const SENTENCES = [
+    'This is BETA / experimental custom firmware.',
+    'Installing it can render the mower unusable (brick it).',
+    'You may lose ALL your maps.',
+    'A fresh backup is made automatically before we flash.',
+    'The device will reboot during the update.',
+  ];
+
+  it('is written in English, like the rest of the panel', () => {
+    expect(SENTENCES.filter(s => !page.includes(s))).toEqual([]);
+    expect(page).not.toContain('onbruikbaar maken (bricken).<br>');
+  });
+
+  it('has every sentence in the dictionary, in every language', () => {
+    const missing: string[] = [];
+    for (const s of SENTENCES) {
+      for (const lang of ['nl', 'fr', 'de'] as const) {
+        if (!ADMIN_I18N[s]?.[lang]) missing.push(`${lang}: ${s}`);
+      }
+    }
+    expect(missing).toEqual([]);
+  });
+});
+
 describe('the admin panel names its steps', () => {
   // Het paneel drukte de ruwe stap-id af ("charger_crypto", "ble_mac"), wat als
   // logregels las terwijl het dashboard er nette namen voor had (2026-09-15).
