@@ -15,7 +15,7 @@ import { execFile } from 'child_process';
 import dgram from 'dgram';
 import net from 'net';
 import { db } from '../db/database.js';
-import { serverIpv4 } from './reachability.js';
+import { serverIpv4, lanIpv4 } from './reachability.js';
 
 const MAC_RE = /([0-9a-f]{1,2}:){5}[0-9a-f]{1,2}/i;
 const NEIGH_LINE = /^\s*\(?([\d.]+)\)?\s.*?(([0-9a-f]{1,2}:){5}[0-9a-f]{1,2})/i;
@@ -130,8 +130,24 @@ export async function lookupMac(ip: string): Promise<string | null> {
  * a second container listening on 1883.
  *
  * Reads the neighbour table as it stands, without the sweep, so this is cheap.
+ * Inside a bridged container that table holds only the docker gateway, so when
+ * it yields nothing the subnet is walked directly: outbound TCP to the LAN
+ * works fine through NAT, it is only the layer-2 view that is missing. Without
+ * that fallback this check reported "no second broker" from a position where it
+ * could not have seen one, which is worse than saying nothing. Measured on
+ * 2026-09-15: a second broker on 192.168.0.233 was reachable from the mower and
+ * invisible here.
  */
-let rivalCache: { at: number; ips: string[] } | null = null;
+export interface RivalBrokers {
+  /** False when we had nothing to probe, so "none found" would be a lie. */
+  looked: boolean;
+  /** Why we could not look. A code, not prose: the diagnosis writes the
+   *  sentence, in the language the reader asked for. */
+  reason: 'no_lan_address' | null;
+  ips: string[];
+}
+
+let rivalCache: { at: number; result: RivalBrokers } | null = null;
 /** Een tweede broker verschijnt niet van seconde tot seconde. */
 const RIVAL_CACHE_MS = 60_000;
 
@@ -147,17 +163,37 @@ function onHomeLan(ip: string, lanSubnet: string | null): boolean {
   return lanSubnet ? ip.startsWith(lanSubnet + '.') : true;
 }
 
-export async function rivalBrokers(ourIps: string[], port = 1883, max = 40): Promise<string[]> {
-  // Zonder cache peilt elke diagnose opnieuw veertig adressen. Dat is te zwaar
+export async function rivalBrokers(ourIps: string[], port = 1883, max = 254): Promise<RivalBrokers> {
+  // Zonder cache peilt elke diagnose opnieuw het hele subnet. Dat is te zwaar
   // voor een endpoint dat herhaald wordt aangeroepen, en het liet de testsuite
   // van 70 naar 225 seconden lopen tot hij omviel.
-  if (rivalCache && Date.now() - rivalCache.at < RIVAL_CACHE_MS) return rivalCache.ips;
-  const lanIp = ourIps.find(ip => !looksLikeContainerBridge(ip)) ?? null;
+  if (rivalCache && Date.now() - rivalCache.at < RIVAL_CACHE_MS) return rivalCache.result;
+
+  // lanIpv4 valt binnen een container terug op het adres dat we adverteren, en
+  // dat is precies het adres waar de maaiers op afgaan. serverIpv4 geeft daar
+  // alleen 172.17.0.x, en daarmee viel er niets te vergelijken.
+  const ours = [...new Set([...ourIps, ...lanIpv4()])];
+  const lanIp = ours.find(ip => !looksLikeContainerBridge(ip)) ?? null;
   const lanSubnet = lanIp ? lanIp.split('.').slice(0, 3).join('.') : null;
+
   const neighbours = (await readNeighbours())
-    .filter(n => !ourIps.includes(n.ip) && onHomeLan(n.ip, lanSubnet))
-    .slice(0, max);
-  const hits = await Promise.all(neighbours.map(async n => {
+    .map(n => n.ip)
+    .filter(ip => !ours.includes(ip) && onHomeLan(ip, lanSubnet));
+
+  let candidates = neighbours;
+  if (candidates.length === 0) {
+    if (!lanSubnet) {
+      const result: RivalBrokers = { looked: false, reason: 'no_lan_address', ips: [] };
+      rivalCache = { at: Date.now(), result };
+      return result;
+    }
+    // Buurtabel leeg: zelf het subnet aflopen in plaats van "niets gevonden"
+    // melden vanaf een plek waar niets te zien valt.
+    candidates = Array.from({ length: 254 }, (_, i) => `${lanSubnet}.${i + 1}`)
+      .filter(ip => !ours.includes(ip));
+  }
+
+  const hits = await Promise.all(candidates.slice(0, max).map(async ip => {
     const open = await new Promise<boolean>(resolve => {
       const sock = new net.Socket();
       let done = false;
@@ -166,13 +202,14 @@ export async function rivalBrokers(ourIps: string[], port = 1883, max = 40): Pro
       sock.once('connect', () => finish(true));
       sock.once('timeout', () => finish(false));
       sock.once('error', () => finish(false));
-      sock.connect(port, n.ip);
+      sock.connect(port, ip);
     });
-    return open ? n.ip : null;
+    return open ? ip : null;
   }));
-  const ips = hits.filter((x): x is string => x !== null);
-  rivalCache = { at: Date.now(), ips };
-  return ips;
+
+  const result = { looked: true, reason: null, ips: hits.filter((x): x is string => x !== null) };
+  rivalCache = { at: Date.now(), result };
+  return result;
 }
 
 /**

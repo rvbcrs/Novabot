@@ -20,7 +20,8 @@ import { checkReachability, serverIpv4, type Reachability } from './reachability
 import { probeMower, type MowerProbe } from './mowerProbe.js';
 import { inspectContainerNetwork, type ContainerNetwork } from './containerNetwork.js';
 import { mdnsStatus, selfQuery, type MdnsStatus } from './mdnsAdvertiser.js';
-import { scanLan, lookupMac, rivalBrokers, bleToWifiMac, type LanScanResult } from './lanScan.js';
+import { scanLan, lookupMac, rivalBrokers, bleToWifiMac,
+         type LanScanResult, type RivalBrokers } from './lanScan.js';
 import { statfs } from 'fs/promises';
 import { mapRepo, userRepo } from '../db/repositories/index.js';
 import { deriveHasError } from '../mqtt/mowerActivity.js';
@@ -55,7 +56,7 @@ export interface DiagnosisProbes {
   mower: (ip: string | null) => Promise<MowerProbe>;
   containerNetwork: () => ContainerNetwork;
   scanLan: () => Promise<LanScanResult>;
-  rivalBrokers: (ourIps: string[]) => Promise<string[]>;
+  rivalBrokers: (ourIps: string[]) => Promise<RivalBrokers>;
   lookupMac: (ip: string) => Promise<string | null>;
   mdnsStatus: () => MdnsStatus;
   mdnsSelfQuery: () => Promise<string[]>;
@@ -181,17 +182,21 @@ export async function diagnoseConnection(
   // vinden via mDNS de verkeerde, springen heen en weer en lijken met tussen-
   // pozen offline. Precies wat hier op 14-09-2026 gebeurde toen een release een
   // tweede container op 1883 liet staan.
-  const rivals = input.probeNetwork === false ? [] : await probe.rivalBrokers(serverIpv4());
+  const rivals = input.probeNetwork === false ? null : await probe.rivalBrokers(serverIpv4());
+  // Groen melden vanaf een plek waar niets te zien valt is erger dan zwijgen:
+  // binnen een bridged container kent de buurtabel alleen de docker-gateway.
   push({
     id: 'rival_broker',
     group: 'server',
-    status: input.probeNetwork === false ? 'skipped' : rivals.length > 0 ? 'fail' : 'ok',
-    evidence: input.probeNetwork === false
+    status: rivals === null ? 'skipped' : !rivals.looked ? 'unknown' : rivals.ips.length > 0 ? 'fail' : 'ok',
+    evidence: rivals === null
       ? T`niet gepeild`
-      : rivals.length > 0
-      ? T`nog ${rivals.length} andere MQTT-broker(s) op dit netwerk: ${rivals.join(', ')}`
+      : !rivals.looked
+      ? T`niet te peilen: geen adres van deze server op het thuisnetwerk bekend`
+      : rivals.ips.length > 0
+      ? T`nog ${rivals.ips.length} andere MQTT-broker(s) op dit netwerk: ${rivals.ips.join(', ')}`
       : T`geen tweede MQTT-broker op dit netwerk`,
-    action: rivals.length > 0
+    action: rivals?.looked && rivals.ips.length > 0
       ? T`maaiers ontdekken via mDNS de verkeerde en springen heen en weer; zet er één uit`
       : undefined,
   });

@@ -42,7 +42,7 @@ function bind(mac: string) {
 function probes(over: Partial<{
   serverIps: string[]; lanIps: string[]; dnsPointsHere: boolean | null; dnsAddresses: string[];
   deviceAnswered: boolean; sameSubnet: boolean | null;
-  rivals: string[]; mac: string | null; lan: Record<string, unknown>;
+  rivals: string[]; rivalsBlind: boolean; mac: string | null; lan: Record<string, unknown>;
   mower: Record<string, unknown>;
   net: Record<string, unknown>;
   mdns: Record<string, unknown>; mdnsAnswers: string[];
@@ -65,7 +65,9 @@ function probes(over: Partial<{
       canSeeLan: true, reason: null, subnet: '192.168.1',
       found: [], neighbourCount: 5, knownOuis: 6, ...(over.lan ?? {}),
     }),
-    rivalBrokers: async () => over.rivals ?? [],
+    rivalBrokers: async () => over.rivalsBlind
+      ? { looked: false, reason: 'no_lan_address' as const, ips: [] }
+      : { looked: true, reason: null, ips: over.rivals ?? [] },
     lookupMac: async () => over.mac ?? null,
     mower: async () => ({
       reachable: false, error: 'niet gepeild in de test', mqttAddr: null, hasSn: false,
@@ -540,7 +542,7 @@ describe('server side and blocked states', () => {
     // Walking forty addresses on every diagnosis is too heavy for an endpoint
     // that can be polled; rivalBrokers caches for a minute behind this.
     let calls = 0;
-    const counting: DiagnosisProbes = { ...probes(), rivalBrokers: async () => { calls++; return []; } };
+    const counting: DiagnosisProbes = { ...probes(), rivalBrokers: async () => { calls++; return { looked: true, reason: null, ips: [] }; } };
     withIp('192.0.2.20');
     await diagnoseConnection(MOWER, Date.now(), { snapshot: { msg: 'x' }, probes: counting });
     await diagnoseConnection(MOWER, Date.now(), { snapshot: { msg: 'x' }, probes: counting });
@@ -643,15 +645,54 @@ describe('the docker gateway is not a second broker', () => {
     // 1883 straight back to us. Reporting it told the user to shut down their
     // own server. Seen live on 2026-09-14.
     const found = await rivalBrokers(['172.17.0.2', '192.168.0.5']);
-    expect(found.every(ip => !ip.startsWith('172.1'))).toBe(true);
+    expect(found.ips.every(ip => !ip.startsWith('172.1'))).toBe(true);
   }, 20000);
 
   it('only counts addresses on the same subnet as the server', async () => {
     // A genuine second server sits on the home LAN. Anything outside it is
     // routing, not a rival.
     const found = await rivalBrokers(['192.168.0.5']);
-    expect(found.every(ip => ip.startsWith('192.168.0.'))).toBe(true);
+    expect(found.ips.every(ip => ip.startsWith('192.168.0.'))).toBe(true);
   }, 20000);
+});
+
+describe('a second broker it could not look for', () => {
+  // Live op 2026-09-15: een tweede broker op 192.168.0.233 was vanaf de maaier
+  // bereikbaar en stond hier groen als "geen tweede MQTT-broker op dit
+  // netwerk". De buurtabel binnen een bridged container kent alleen de
+  // docker-gateway, dus er viel niets te peilen, en dat werd gemeld als
+  // niets gevonden.
+
+  it('does not call it clean when it had nothing to probe', async () => {
+    withIp('192.168.1.9');
+    const step = (await diagnoseConnection(MOWER, Date.now(), {
+      snapshot: { msg: 'x' },
+      probes: probes({ rivalsBlind: true }),
+    })).steps.find(s => s.id === 'rival_broker')!;
+    expect(step.status).toBe('unknown');
+    expect(step.evidence).toContain('niet te peilen');
+    expect(step.action).toBeUndefined();
+  });
+
+  it('still reports a broker it did find', async () => {
+    withIp('192.168.1.9');
+    const step = (await diagnoseConnection(MOWER, Date.now(), {
+      snapshot: { msg: 'x' },
+      probes: probes({ rivals: ['192.168.0.233'] }),
+    })).steps.find(s => s.id === 'rival_broker')!;
+    expect(step.status).toBe('fail');
+    expect(step.evidence).toContain('192.168.0.233');
+    expect(step.action).toContain('zet er één uit');
+  });
+
+  it('says so in English too', async () => {
+    withIp('192.168.1.9');
+    const step = (await diagnoseConnection(MOWER, Date.now(), {
+      snapshot: { msg: 'x' }, lang: 'en',
+      probes: probes({ rivalsBlind: true }),
+    })).steps.find(s => s.id === 'rival_broker')!;
+    expect(step.evidence).toContain('cannot probe');
+  });
 });
 
 describe('on the mower itself', () => {

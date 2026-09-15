@@ -61,6 +61,11 @@ export const CATALOG: Catalog = {
     fr: "{0} autre(s) courtier(s) MQTT sur ce réseau : {1}",
     de: "{0} weitere(r) MQTT-Broker in diesem Netzwerk: {1}",
   },
+  "niet te peilen: geen adres van deze server op het thuisnetwerk bekend": {
+    en: "cannot probe: no address of this server on the home network is known",
+    fr: "impossible de sonder : aucune adresse de ce serveur sur le réseau domestique n'est connue",
+    de: "nicht prüfbar: keine Adresse dieses Servers im Heimnetz bekannt",
+  },
   "geen tweede MQTT-broker op dit netwerk": {
     en: "no second MQTT broker on this network",
     fr: "aucun second courtier MQTT sur ce réseau",
