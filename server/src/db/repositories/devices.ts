@@ -64,7 +64,15 @@ export class DeviceRepository {
     INSERT OR REPLACE INTO device_registry (mqtt_client_id, sn, mac_address, mqtt_username, last_seen)
     VALUES (?, ?, ?, ?, datetime('now'))
   `);
-  private _findBySn = db.prepare('SELECT * FROM device_registry WHERE sn = ?');
+  // Eén serienummer kan meerdere rijen hebben: de sleutel is mqtt_client_id, en
+  // die verandert als een apparaat opnieuw wordt ingericht of onder een andere
+  // naam verbindt. Zonder ORDER BY loopt SQLite de sn-index af en geeft de
+  // laagste rowid terug, dus stelselmatig de OUDSTE rij. Een lader die net
+  // verbonden was las daardoor als "laatst gezien 118 dagen geleden" terwijl hij
+  // gewoon draaide (2026-09-15). De buurqueries hieronder deden dit al goed.
+  private _findBySn = db.prepare(
+    'SELECT * FROM device_registry WHERE sn = ? ORDER BY last_seen DESC LIMIT 1'
+  );
   private _findByClientId = db.prepare('SELECT * FROM device_registry WHERE mqtt_client_id = ?');
   private _insertIfMissing = db.prepare(`
     INSERT OR IGNORE INTO device_registry (mqtt_client_id, sn, mac_address, mqtt_username, last_seen)

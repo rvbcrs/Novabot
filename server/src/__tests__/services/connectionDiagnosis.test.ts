@@ -680,6 +680,27 @@ describe('a second broker it could not look for', () => {
   });
 });
 
+describe('a device that reconnected under a new client_id', () => {
+  // device_registry heeft mqtt_client_id als sleutel, dus een apparaat dat
+  // opnieuw ingericht wordt laat zijn oude rij staan. findBySn had geen
+  // ORDER BY en gaf daardoor stelselmatig de oudste rij: een lader die net
+  // verbonden was las als "laatst gezien 118 dagen geleden" (2026-09-15).
+  it('is judged on its newest connection, not its first', async () => {
+    const old = new Date(Date.now() - 118 * 24 * 3600_000).toISOString().slice(0, 19).replace('T', ' ');
+    db.prepare(`INSERT OR REPLACE INTO device_registry
+      (mqtt_client_id, sn, mac_address, mqtt_username, last_seen, ip_address)
+      VALUES (?,?,?,?,?,?)`).run('ESP32_OLD', CHARGER, null, null, old, '192.168.0.94');
+    db.prepare(`INSERT OR REPLACE INTO device_registry
+      (mqtt_client_id, sn, mac_address, mqtt_username, last_seen, ip_address)
+      VALUES (?,?,?,?,?,?)`).run('ESP32_NEW', CHARGER, null, null, utc(30_000), '192.168.0.94');
+    const step = (await diagnoseConnection(CHARGER, Date.now(), { snapshot: { msg: 'x' }, probes: probes() }))
+      .steps.find(s => s.id === 'seen')!;
+    expect(step.status).toBe('ok');
+    expect(step.evidence).toContain('ESP32_NEW');
+    expect(step.evidence).not.toContain('dagen geleden');
+  });
+});
+
 describe('a charger is not a mower with closed ports', () => {
   // Poort 22 en 8000 zijn maaierpoorten. Bij elke lader stond er daardoor
   // "antwoordt niet op poort 22 of 8000; op stock firmware staan die dicht",
