@@ -807,9 +807,9 @@ describe('the explanation follows the requested language', () => {
     expect(d.steps.find(s => s.id === 'encryption')!.evidence).toContain('readings received');
   });
 
-  it('falls back to English for a language with no translations of its own', async () => {
-    expect(ev(await run('de'), 'binding')).toBe('no pairing in equipment');
-    expect(ev(await run('fr'), 'binding')).toBe('no pairing in equipment');
+  it('writes German and French too', async () => {
+    expect(ev(await run('de'), 'binding')).toBe('keine Kopplung in equipment');
+    expect(ev(await run('fr'), 'binding')).toBe('aucun appairage dans equipment');
   });
 
   it('takes a browser tag, and an unknown one stays Dutch', async () => {

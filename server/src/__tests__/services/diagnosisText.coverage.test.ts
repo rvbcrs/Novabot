@@ -4,7 +4,7 @@
  * Adding a sentence to connectionDiagnosis.ts and forgetting the translation
  * is silent: the fallback prints the Dutch original, which is exactly the bug
  * this whole layer exists to remove. So the source is read and every sentence
- * it can produce is required to have an English entry.
+ * it can produce is required to exist in every language.
  */
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
@@ -71,8 +71,8 @@ describe('diagnosis catalog', () => {
     expect(sourceKeys).toContain('{0} wijst naar deze server ({1})');
   });
 
-  it('translates every sentence the service can produce', () => {
-    const missing = sourceKeys.filter(k => !CATALOG[k]?.en);
+  it.each(['en', 'fr', 'de'] as const)('translates every sentence the service can produce into %s', lang => {
+    const missing = sourceKeys.filter(k => !CATALOG[k]?.[lang]);
     expect(missing).toEqual([]);
   });
 
@@ -105,9 +105,9 @@ describe('translate', () => {
       .toBe('10 MB free of 20 MB (50%)');
   });
 
-  it('falls back to English for a language without its own entry', () => {
-    expect(translate('de', ['geen storing'], [])).toBe('no fault');
-    expect(translate('fr', ['geen storing'], [])).toBe('no fault');
+  it('speaks French and German, not English with an accent', () => {
+    expect(translate('de', ['geen storing'], [])).toBe('keine Störung');
+    expect(translate('fr', ['geen storing'], [])).toBe('aucune panne');
   });
 
   it('falls back to the Dutch original for an unknown sentence', () => {

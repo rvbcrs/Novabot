@@ -16,10 +16,9 @@
  * Numbered placeholders, not positional, because word order moves between
  * languages and a translation must be free to reorder them.
  *
- * Missing translation falls back to English, and English falls back to the
- * Dutch original. diagnosisText.coverage.test.ts fails the build when a
- * sentence in the service has no English entry, so the fallback covers
- * mistakes rather than absent work.
+ * A sentence without an entry falls back to the Dutch original. That is a
+ * safety net, not a feature: diagnosisText.coverage.test.ts fails the build
+ * when a sentence in the service is missing in any language.
  */
 import { CATALOG } from './diagnosisText.catalog.js';
 
@@ -30,7 +29,7 @@ export const LANGS: readonly Lang[] = ['nl', 'en', 'fr', 'de'];
 /** Source language: the key IS the Dutch sentence, so it needs no entry. */
 export const SOURCE_LANG: Lang = 'nl';
 
-export type CatalogEntry = { en: string; fr?: string; de?: string };
+export type CatalogEntry = { en: string; fr: string; de: string };
 export type Catalog = Record<string, CatalogEntry>;
 
 export interface Translate {
@@ -62,7 +61,7 @@ export function translate(lang: Lang, parts: readonly string[], values: readonly
   const key = keyOf(parts);
   if (lang === SOURCE_LANG) return fill(key, values);
   const entry = CATALOG[key] as Partial<Record<Lang, string>> | undefined;
-  return fill(entry?.[lang] ?? entry?.en ?? key, values);
+  return fill(entry?.[lang] ?? key, values);
 }
 
 export function translator(lang: Lang): Translate {
