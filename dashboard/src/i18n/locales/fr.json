@@ -39,7 +39,8 @@
     "edit": "Modifier",
     "loading": "Chargement…",
     "failed": "Échec",
-    "failedToLoad": "Échec du chargement"
+    "failedToLoad": "Échec du chargement",
+    "close": "Fermer"
   },
   "time": {
     "justNow": "à l'instant",

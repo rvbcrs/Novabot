@@ -88,7 +88,8 @@
     "edit": "Bewerken",
     "loading": "Laden…",
     "failed": "Mislukt",
-    "failedToLoad": "Laden mislukt"
+    "failedToLoad": "Laden mislukt",
+    "close": "Sluiten"
   },
   "pages": {
     "selectMower": "Selecteer een maaier.",

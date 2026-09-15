@@ -39,7 +39,8 @@
     "edit": "Edit",
     "loading": "Loading…",
     "failed": "Failed",
-    "failedToLoad": "Failed to load"
+    "failedToLoad": "Failed to load",
+    "close": "Close"
   },
   "pages": {
     "selectMower": "Select a mower.",

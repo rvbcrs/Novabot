@@ -39,7 +39,8 @@
     "edit": "Bearbeiten",
     "loading": "Lade…",
     "failed": "Fehlgeschlagen",
-    "failedToLoad": "Laden fehlgeschlagen"
+    "failedToLoad": "Laden fehlgeschlagen",
+    "close": "Schließen"
   },
   "time": {
     "justNow": "gerade eben",
