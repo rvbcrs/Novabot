@@ -31,7 +31,6 @@ const STEP_LABEL: Record<string, [string, string]> = {
   fault: ['diagnose.fault', 'Storing'],
   frame: ['diagnose.frame', 'Kaartframe'],
   disk: ['diagnose.disk', 'Schijfruimte'],
-  mdns_reach: ['diagnose.mdnsReach', 'Vindbaar over mDNS'],
   rival_broker: ['diagnose.rivalBroker', 'Tweede MQTT-broker'],
   charger_crypto: ['diagnose.chargerCrypto', 'Laderfirmware'],
   mapping_mode: ['diagnose.mappingMode', 'Karteermodus'],
@@ -41,6 +40,7 @@ const STEP_LABEL: Record<string, [string, string]> = {
   mower_config: ['diagnose.mowerConfig', 'Serveradres op de maaier'],
   server_ip_file: ['diagnose.serverIpFile', 'Bewaard serveradres'],
   helpers: ['diagnose.helpers', 'OpenNova-scripts'],
+  mdns_reach: ['diagnose.mdnsReach', 'Vindt de server zelf'],
 };
 
 const GROUP_LABEL: Record<string, [string, string]> = {
@@ -104,8 +104,15 @@ export function DiagnosisPanel({ sn, onClose }: { sn: string; onClose: () => voi
 
         {data && (
           <>
+            {/* Rood alleen bij een echte blokkade. Een waarschuwing in het rood
+                onder de kop "Waarom komt hij niet online?" leest als de oorzaak,
+                ook als de maaier gewoon online is. */}
             <div className={`text-sm rounded-lg px-3 py-2 mb-3 ${
-              data.stuckAt ? 'bg-red-500/10 text-red-300' : 'bg-emerald-500/10 text-emerald-300'}`}>
+              data.blocked
+                ? 'bg-red-500/10 text-red-300'
+                : data.warningCount > 0
+                ? 'bg-amber-500/10 text-amber-200'
+                : 'bg-emerald-500/10 text-emerald-300'}`}>
               {data.summary}
             </div>
             {GROUP_ORDER.filter(g => data.steps.some(s => s.group === g)).map(g => (

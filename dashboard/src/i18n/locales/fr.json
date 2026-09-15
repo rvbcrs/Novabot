@@ -946,6 +946,6 @@
     "serverIpFile": "Adresse serveur enregistrée",
     "helpers": "Scripts OpenNova",
     "groupMower": "Sur la tondeuse elle-même",
-    "mdnsReach": "Détectable via mDNS"
+    "mdnsReach": "Trouve le serveur seule"
   }
 }

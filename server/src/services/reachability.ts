@@ -27,8 +27,12 @@ export interface DnsResult {
   host: string;
   addresses: string[];
   error: string | null;
-  /** True when at least one answer is an address of this server. */
-  pointsHere: boolean;
+  /**
+   * True when an answer is an address of this server, false when it is not,
+   * null when we cannot tell: inside a bridged container our only address is a
+   * docker-internal one, and comparing a LAN answer against that says nothing.
+   */
+  pointsHere: boolean | null;
 }
 
 export interface Reachability {
@@ -41,6 +45,22 @@ export interface Reachability {
   deviceAnswered: boolean;
   /** Whether the device's last known address shares a /24 with one of ours. */
   sameSubnet: boolean | null;
+}
+
+/** Docker's bridge pool. An address in it tells us nothing about the LAN. */
+function isContainerBridge(ip: string): boolean {
+  const [a, b] = ip.split('.').map(Number);
+  return a === 172 && b >= 16 && b <= 31;
+}
+
+/**
+ * Our addresses on the home network, which is the only set worth comparing
+ * against. Inside a bridged container this is empty: we simply do not know
+ * what the LAN sees us as, and guessing from 172.17.0.9 turned a mower on the
+ * same network into "zit in een ander subnet dan deze server".
+ */
+export function lanIpv4(): string[] {
+  return serverIpv4().filter(ip => !isContainerBridge(ip));
 }
 
 export function serverIpv4(): string[] {
@@ -65,13 +85,16 @@ async function resolve(host: string, ours: string[]): Promise<DnsResult> {
         err ? rej(err) : res(a);
       });
     });
-    return { host, addresses, error: null, pointsHere: addresses.some(a => ours.includes(a)) };
+    return {
+      host, addresses, error: null,
+      pointsHere: ours.length === 0 ? null : addresses.some(a => ours.includes(a)),
+    };
   } catch (err) {
     return {
       host,
       addresses: [],
       error: err instanceof Error ? err.message : String(err),
-      pointsHere: false,
+      pointsHere: null,
     };
   }
 }
@@ -100,8 +123,10 @@ function sameSlash24(a: string, b: string): boolean {
 
 export async function checkReachability(deviceIp: string | null): Promise<Reachability> {
   const serverIps = serverIpv4();
+  // Alleen adressen op het thuisnetwerk zijn een zinnige vergelijkingsbasis.
+  const lanIps = serverIps.filter(ip => !isContainerBridge(ip));
   const [dnsResults, answered] = await Promise.all([
-    Promise.all(DEVICE_HOSTNAMES.map(h => resolve(h, serverIps))),
+    Promise.all(DEVICE_HOSTNAMES.map(h => resolve(h, lanIps))),
     deviceIp
       ? Promise.all(DEVICE_PROBE_PORTS.map(p => tcpProbe(deviceIp, p))).then(r => r.some(Boolean))
       : Promise.resolve(false),
@@ -111,8 +136,8 @@ export async function checkReachability(deviceIp: string | null): Promise<Reacha
     dns: dnsResults,
     deviceIp,
     deviceAnswered: answered,
-    sameSubnet: deviceIp && serverIps.length
-      ? serverIps.some(ip => sameSlash24(ip, deviceIp))
+    sameSubnet: deviceIp && lanIps.length
+      ? lanIps.some(ip => sameSlash24(ip, deviceIp))
       : null,
   };
 }

@@ -2349,7 +2349,9 @@ async function diagnoseDevice(sn) {
       token ? { headers: { 'Authorization': token } } : {});
     var body = overlay.querySelector('#diagBody');
     var html = '<div style="padding:8px 10px;border-radius:8px;margin-bottom:12px;background:'
-      + (r.stuckAt ? 'rgba(239,68,68,.12);color:#fca5a5' : 'rgba(34,197,94,.12);color:#86efac')
+      + (r.blocked ? 'rgba(239,68,68,.12);color:#fca5a5'
+         : r.warningCount > 0 ? 'rgba(245,158,11,.12);color:#fcd34d'
+         : 'rgba(34,197,94,.12);color:#86efac')
       + '">' + escapeHtml(r.summary) + '</div>';
     ORDER.forEach(function(g) {
       var steps = (r.steps || []).filter(function(s) { return s.group === g; });

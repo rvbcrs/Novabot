@@ -40,7 +40,7 @@ function bind(mac: string) {
  * alone while failing inside the release gate.
  */
 function probes(over: Partial<{
-  serverIps: string[]; dnsPointsHere: boolean; dnsAddresses: string[];
+  serverIps: string[]; dnsPointsHere: boolean | null; dnsAddresses: string[];
   deviceAnswered: boolean; sameSubnet: boolean | null;
   rivals: string[]; mac: string | null; lan: Record<string, unknown>;
   mower: Record<string, unknown>;
@@ -53,7 +53,7 @@ function probes(over: Partial<{
         host: 'mqtt.lfibot.com',
         addresses: over.dnsAddresses ?? ['192.168.1.2'],
         error: null,
-        pointsHere: over.dnsPointsHere ?? true,
+        pointsHere: over.dnsPointsHere === undefined ? true : over.dnsPointsHere,
       }],
       deviceIp,
       deviceAnswered: over.deviceAnswered ?? false,
@@ -733,42 +733,79 @@ describe('on the mower itself', () => {
   });
 });
 
-describe('can this server be found over mDNS', () => {
-  // Mowers find their server over mDNS: set_server_urls resolves
-  // opennova.local at boot and opennova_discovery polls it every 60s. All of
-  // it needs multicast, which Docker's default bridge blocks. The advertiser
-  // starts without error and nobody hears it, so this is invisible unless you
-  // look for it.
+describe('mDNS is measured at the mower, never inferred from the container', () => {
+  // A server in a bridged container (172.17.0.9) with, on the mower next to it,
+  // `getent hosts opennova.local -> 192.168.0.247`. Measured 2026-09-15. So
+  // "bridged therefore no multicast" is not a safe inference, and the advice it
+  // produced told someone to rebuild a setup that works.
+  async function onMower(mower: Record<string, unknown>, net: Record<string, unknown> = {}) {
+    withIp('192.0.2.40');
+    return diagnoseConnection(MOWER, Date.now(), {
+      snapshot: { msg: 'x', sw_version: 'v6.0.2-custom-40' },
+      probes: probes({ mower: { reachable: true, ...mower }, net }),
+    });
+  }
 
-  it('warns inside a bridged container', async () => {
-    withIp('192.0.2.50');
-    const step = (await diagnoseConnection(MOWER, Date.now(), {
-      snapshot: { msg: 'x' },
-      probes: probes({ net: { inContainer: true, bridged: true, addresses: ['172.18.0.4'] } }),
-    })).steps.find(s => s.id === 'mdns_reach')!;
+  it('says mDNS is fine when the mower resolves it, bridged or not', async () => {
+    const step = (await onMower({ mdnsResolves: true },
+      { inContainer: true, bridged: true, addresses: ['172.17.0.9'] }))
+      .steps.find(s => s.id === 'mdns_reach')!;
+    expect(step.status).toBe('ok');
+    expect(step.evidence).toContain('vindt de server zelf');
+  });
+
+  it('only warns when the mower actually cannot resolve it', async () => {
+    const step = (await onMower({ mdnsResolves: false },
+      { inContainer: true, bridged: true, addresses: ['172.17.0.9'] }))
+      .steps.find(s => s.id === 'mdns_reach')!;
     expect(step.status).toBe('warn');
-    expect(step.evidence).toContain('172.18.0.4');
-    expect(step.action).toContain('host-netwerk');
+    expect(step.action).toContain('DNS-omleiding');
   });
 
-  it('is quiet with host networking, even inside a container', async () => {
-    // Host networking gives the container the machine's own LAN address, so
-    // multicast gets out and discovery works.
-    withIp('192.0.2.50');
+  it('makes no mDNS claim at all without access to the mower', async () => {
+    withIp('192.0.2.40');
+    const d = await diagnoseConnection(MOWER, Date.now(), {
+      snapshot: { msg: 'x', sw_version: 'v6.0.2-custom-40' },
+      probes: probes({ mower: { reachable: false, error: 'no route' },
+                       net: { inContainer: true, bridged: true, addresses: ['172.17.0.9'] } }),
+    });
+    expect(d.steps.some(s => s.id === 'mdns_reach')).toBe(false);
+  });
+});
+
+describe('a container address is not a basis for comparison', () => {
+  // Inside a bridged container our only address is docker-internal. Comparing a
+  // mower on the home network against it turned "same network" into
+  // "zit in een ander subnet dan deze server", a hard failure on a healthy setup.
+
+  it('does not call a mower in another subnet when we do not know ours', async () => {
+    withIp('192.168.0.244');
     const step = (await diagnoseConnection(MOWER, Date.now(), {
       snapshot: { msg: 'x' },
-      probes: probes({ net: { inContainer: true, bridged: false, addresses: ['192.168.1.2'] } }),
-    })).steps.find(s => s.id === 'mdns_reach')!;
-    expect(step.status).toBe('ok');
-    expect(step.evidence).toContain('host-netwerk');
+      probes: probes({ sameSubnet: null, serverIps: ['172.17.0.9'] }),
+    })).steps.find(s => s.id === 'network')!;
+    expect(step.status).not.toBe('fail');
+    expect(step.evidence).not.toContain('ander subnet');
   });
 
-  it('is quiet when not containerised at all', async () => {
-    withIp('192.0.2.50');
+  it('still flags a real subnet mismatch when we do know ours', async () => {
+    withIp('10.99.99.99');
     const step = (await diagnoseConnection(MOWER, Date.now(), {
-      snapshot: { msg: 'x' }, probes: probes(),
-    })).steps.find(s => s.id === 'mdns_reach')!;
-    expect(step.status).toBe('ok');
+      snapshot: { msg: 'x' },
+      probes: probes({ sameSubnet: false, serverIps: ['192.168.0.5'] }),
+    })).steps.find(s => s.id === 'network')!;
+    expect(step.status).toBe('fail');
+    expect(step.evidence).toContain('ander subnet');
+  });
+
+  it('makes no DNS claim when it cannot know its own LAN address', async () => {
+    withIp('192.0.2.60');
+    const step = (await diagnoseConnection(MOWER, Date.now(), {
+      snapshot: { msg: 'x' },
+      probes: probes({ dnsPointsHere: null, dnsAddresses: ['192.168.0.247'] }),
+    })).steps.find(s => s.id === 'dns')!;
+    expect(step.status).toBe('unknown');
+    expect(step.evidence).toContain('kent zijn eigen adres');
   });
 });
 

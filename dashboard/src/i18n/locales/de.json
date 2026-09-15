@@ -946,6 +946,6 @@
     "serverIpFile": "Gespeicherte Serveradresse",
     "helpers": "OpenNova-Skripte",
     "groupMower": "Auf dem Mäher selbst",
-    "mdnsReach": "Über mDNS auffindbar"
+    "mdnsReach": "Findet den Server selbst"
   }
 }

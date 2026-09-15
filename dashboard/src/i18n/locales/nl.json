@@ -1066,6 +1066,6 @@
     "serverIpFile": "Bewaard serveradres",
     "helpers": "OpenNova-scripts",
     "groupMower": "Op de maaier zelf",
-    "mdnsReach": "Vindbaar over mDNS"
+    "mdnsReach": "Vindt de server zelf"
   }
 }

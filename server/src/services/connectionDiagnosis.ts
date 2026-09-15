@@ -89,8 +89,11 @@ export interface DiagnosisInput {
 export interface Diagnosis {
   sn: string;
   deviceType: 'mower' | 'charger' | 'unknown';
-  /** First step that is not ok, or null when the chain is clean. */
+  /** First hard failure, or null. A warning is not a blockage. */
   stuckAt: string | null;
+  /** True only when something actually blocks. Drives the colour in the UI. */
+  blocked: boolean;
+  warningCount: number;
   summary: string;
   steps: DiagnosisStep[];
   generatedAt: number;
@@ -181,41 +184,18 @@ export async function diagnoseConnection(
       : undefined,
   });
 
-  // Maaiers vinden hun server over mDNS: set_server_urls.sh resolvet
-  // opennova.local bij boot, en opennova_discovery.py pollt die naam elke 60 s
-  // en herschrijft de config zodra het adres verandert. Dat hangt allemaal aan
-  // multicast, en de standaard Docker-bridge laat dat niet door. De advertiser
-  // start zonder fout en wordt simpelweg door niemand gehoord, dus dit is
-  // alleen zichtbaar als je ernaar kijkt.
+  // Of mDNS werkt is NIET af te leiden uit de netwerkmodus van de container.
+  // Gemeten op 15-09-2026: een server in een bridged container (172.17.0.9) en
+  // toch `getent hosts opennova.local -> 192.168.0.247` op de maaier ernaast.
+  // De enige plek waar dit te meten valt is het apparaat dat de server moet
+  // vinden, en dat doen we verderop met de SSH-peiling. Hier alleen de context,
+  // zonder oordeel.
   const net = probe.containerNetwork();
-  if (!net.inContainer) {
-    push({
-      id: 'mdns_reach',
-      group: 'server',
-      status: 'ok',
-      evidence: `draait rechtstreeks op ${net.addresses.join(', ') || 'deze machine'}, `
-              + 'multicast kan het netwerk op',
-    });
-  } else if (net.bridged) {
-    push({
-      id: 'mdns_reach',
-      group: 'server',
-      status: 'warn',
-      evidence: `container met bridge-netwerk (${net.addresses.join(', ')}), `
-              + 'multicast bereikt het thuisnetwerk niet',
-      action: 'maaiers kunnen deze server niet zelf vinden over mDNS en leunen volledig '
-            + 'op je DNS-omleiding. Draai de container met host-netwerk om automatisch '
-            + 'ontdekken aan te zetten',
-    });
-  } else {
-    push({
-      id: 'mdns_reach',
-      group: 'server',
-      status: 'ok',
-      evidence: `container met een adres op het thuisnetwerk (${net.addresses.join(', ')}), `
-              + 'dus host-netwerk; multicast kan eruit',
-    });
-  }
+  const netDesc = !net.inContainer
+    ? `draait rechtstreeks op ${net.addresses.join(', ') || 'deze machine'}`
+    : net.bridged
+    ? `container met bridge-netwerk (${net.addresses.join(', ')})`
+    : `container met host-netwerk (${net.addresses.join(', ')})`;
 
   // No "is the server up" step: this answer only exists because the server
   // answered. A check that cannot fail is noise, and importing the broker here
@@ -227,8 +207,11 @@ export async function diagnoseConnection(
   const regEarly = deviceRepo.findBySn(sn);
   const reach = await probe.reachability(regEarly?.ip_address ?? null);
   const dnsAnswers = reach.dns.filter(d => d.addresses.length > 0);
-  const dnsPointsHere = dnsAnswers.some(d => d.pointsHere);
-  const dnsElsewhere = dnsAnswers.filter(d => !d.pointsHere);
+  // null = niet te beoordelen: binnen een bridged container kennen we ons eigen
+  // adres op het thuisnetwerk niet, en dan zegt een vergelijking niets.
+  const dnsUnknown = dnsAnswers.length > 0 && dnsAnswers.every(d => d.pointsHere === null);
+  const dnsPointsHere = dnsAnswers.some(d => d.pointsHere === true);
+  const dnsElsewhere = dnsAnswers.filter(d => d.pointsHere === false);
 
   // Alleen hard oordelen als DEZE server de omleiding serveert. Draait de DNS
   // ergens anders, in de router of op een aparte DNS-server, dan zegt wat de
@@ -241,6 +224,15 @@ export async function diagnoseConnection(
       group: 'reach',
       status: 'unknown',
       evidence: `${DEVICE_HOSTNAMES_LABEL} lost hier niet op`,
+    });
+  } else if (dnsUnknown) {
+    push({
+      id: 'dns',
+      group: 'reach',
+      status: 'unknown',
+      evidence: `${dnsAnswers[0].host} lost op naar ${dnsAnswers[0].addresses.join(', ')}; `
+              + 'deze server draait in een container en kent zijn eigen adres op het '
+              + 'thuisnetwerk niet, dus daar valt niets uit af te leiden',
     });
   } else if (dnsPointsHere) {
     push({
@@ -343,6 +335,14 @@ export async function diagnoseConnection(
       group: 'reach',
       status: 'ok',
       evidence: `${reach.deviceIp} antwoordt, het apparaat staat aan en zit op het netwerk`,
+    });
+  } else if (reach.sameSubnet === null) {
+    push({
+      id: 'network',
+      group: 'reach',
+      status: 'unknown',
+      evidence: `${reach.deviceIp} antwoordt niet op poort 22 of 8000; op stock firmware `
+              + 'staan die dicht, dus dit bewijst niets',
     });
   } else if (reach.sameSubnet === false) {
     push({
@@ -876,6 +876,24 @@ export async function diagnoseConnection(
           : undefined,
       });
 
+      // Hier valt het pas te meten: vindt het apparaat dat de server moet
+      // vinden hem daadwerkelijk. De netwerkmodus van de container is hooguit
+      // een verklaring achteraf, geen bewijs vooraf.
+      push({
+        id: 'mdns_reach',
+        group: 'mower',
+        status: m.mdnsResolves ? 'ok' : 'warn',
+        evidence: m.mdnsResolves
+          ? 'de maaier vindt de server zelf via opennova.local'
+          : `de maaier vindt opennova.local niet (server: ${netDesc})`,
+        action: m.mdnsResolves ? undefined
+          : 'hij leunt nu volledig op je DNS-omleiding. Automatisch ontdekken werkt '
+          + (net.bridged
+             ? 'niet omdat de container multicast niet naar het thuisnetwerk krijgt; '
+             + 'host-netwerk of een mDNS-reflector lost dat op'
+             : 'pas als de server zich op het netwerk adverteert'),
+      });
+
       if (m.skippedConfigUpdate) {
         push({
           id: 'server_ip_file',
@@ -908,12 +926,28 @@ export async function diagnoseConnection(
     }
   }
 
-  const firstBad = steps.find(s => s.status === 'fail') ?? steps.find(s => s.status === 'warn');
+  // Vastlopen is iets anders dan een aandachtspunt. Eerder werd de eerste
+  // waarschuwing als samenvatting getoond, in het rood, onder de kop "Waarom
+  // komt hij niet online?". Bij een maaier die gewoon online is las dat als de
+  // oorzaak: "container met bridge-netwerk" stond bovenaan terwijl er niets
+  // kapot was. Alleen een echte fout blokkeert.
+  const blocking = steps.find(s => s.status === 'fail') ?? null;
+  const warnings = steps.filter(s => s.status === 'warn');
+  const summary = blocking
+    ? blocking.evidence
+    : warnings.length === 0
+    ? 'geen blokkade gevonden, alles staat goed'
+    : `geen blokkade gevonden, wel ${warnings.length} aandachtspunt`
+      + `${warnings.length === 1 ? '' : 'en'}: ${warnings.map(w => w.id).join(', ')}`;
+
   return {
     sn,
     deviceType,
-    stuckAt: firstBad?.id ?? null,
-    summary: firstBad ? firstBad.evidence : 'alles in orde tot en met het LoRa-paar',
+    stuckAt: blocking?.id ?? null,
+    /** Alleen gevuld als er ook echt iets vastzit. */
+    blocked: blocking !== null,
+    warningCount: warnings.length,
+    summary,
     steps,
     generatedAt: now,
   };

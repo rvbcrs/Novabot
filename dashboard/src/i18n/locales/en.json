@@ -1068,6 +1068,6 @@
     "serverIpFile": "Stored server address",
     "helpers": "OpenNova scripts",
     "groupMower": "On the mower itself",
-    "mdnsReach": "Discoverable over mDNS"
+    "mdnsReach": "Finds the server on its own"
   }
 }

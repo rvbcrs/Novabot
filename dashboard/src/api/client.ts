@@ -184,6 +184,8 @@ export interface Diagnosis {
   sn: string;
   deviceType: 'mower' | 'charger' | 'unknown';
   stuckAt: string | null;
+  blocked: boolean;
+  warningCount: number;
   summary: string;
   steps: DiagnosisStep[];
   generatedAt: number;
