@@ -143,7 +143,14 @@ dashboardRouter.get('/diagnose/:sn', async (req: Request, res: Response) => {
     res.status(400).json({ error: 'invalid sn' });
     return;
   }
-  res.json(await diagnoseConnection(sn, Date.now(), { snapshot: getDeviceSnapshot(sn) }));
+  // De uitleg komt uit de server, dus die moet weten in welke taal. ?lang
+  // wint van de browserkop: het dashboard heeft een eigen taalkeuze die niet
+  // hoeft te kloppen met de taal van de browser.
+  const lang = String(req.query.lang ?? '') || req.headers['accept-language'] || '';
+  res.json(await diagnoseConnection(sn, Date.now(), {
+    snapshot: getDeviceSnapshot(sn),
+    lang: String(lang),
+  }));
 });
 
 /** De ruwe verbindingspogingen achter stap `attempts`, voor wie wil doorklikken. */

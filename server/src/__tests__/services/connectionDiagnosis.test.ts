@@ -781,6 +781,43 @@ describe('mDNS is measured at the mower, never inferred from the container', () 
   });
 });
 
+describe('the explanation follows the requested language', () => {
+  // De kopjes stonden in i18n, de zinnen eronder niet: een Duitse gebruiker
+  // kreeg Duitse labels boven Nederlandse uitleg, en juist die uitleg draagt
+  // het antwoord.
+  const run = (lang?: string) => {
+    withIp('192.168.1.9');
+    return diagnoseConnection(MOWER, Date.now(), { snapshot: { msg: 'x' }, probes: probes(), lang });
+  };
+  const ev = (d: Awaited<ReturnType<typeof run>>, id: string) =>
+    d.steps.find(s => s.id === id)!.evidence;
+
+  it('writes Dutch by default', async () => {
+    const d = await run();
+    expect(ev(d, 'dns')).toContain('wijst naar deze server');
+    expect(ev(d, 'binding')).toBe('geen koppeling in equipment');
+  });
+
+  it('writes English when asked', async () => {
+    const d = await run('en');
+    expect(ev(d, 'dns')).toContain('points at this server');
+    expect(ev(d, 'binding')).toBe('no pairing in equipment');
+    expect(d.summary).toBe('no pairing in equipment');
+    // De samenvatting is de blokkerende stap, dus die moet meeverhuizen.
+    expect(d.steps.find(s => s.id === 'encryption')!.evidence).toContain('readings received');
+  });
+
+  it('falls back to English for a language with no translations of its own', async () => {
+    expect(ev(await run('de'), 'binding')).toBe('no pairing in equipment');
+    expect(ev(await run('fr'), 'binding')).toBe('no pairing in equipment');
+  });
+
+  it('takes a browser tag, and an unknown one stays Dutch', async () => {
+    expect(ev(await run('en-GB'), 'binding')).toBe('no pairing in equipment');
+    expect(ev(await run('klingon'), 'binding')).toBe('geen koppeling in equipment');
+  });
+});
+
 describe('a container address is not a basis for comparison', () => {
   // Inside a bridged container our only address is docker-internal. Comparing a
   // mower on the home network against it turned "same network" into

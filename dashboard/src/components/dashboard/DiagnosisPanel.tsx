@@ -65,7 +65,7 @@ function Icon({ status }: { status: DiagnosisStep['status'] }) {
 }
 
 export function DiagnosisPanel({ sn, onClose }: { sn: string; onClose: () => void }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [data, setData] = useState<Diagnosis | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -73,12 +73,12 @@ export function DiagnosisPanel({ sn, onClose }: { sn: string; onClose: () => voi
   const load = () => {
     setLoading(true);
     setError('');
-    fetchDiagnosis(sn)
+    fetchDiagnosis(sn, i18n.language)
       .then(setData)
       .catch(e => setError(e instanceof Error ? e.message : String(e)))
       .finally(() => setLoading(false));
   };
-  useEffect(load, [sn]);
+  useEffect(load, [sn, i18n.language]);
 
   return createPortal(
     <div className="fixed inset-0 z-[99999] flex items-center justify-center p-4">

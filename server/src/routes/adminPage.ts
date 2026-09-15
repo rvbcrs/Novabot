@@ -2331,28 +2331,30 @@ async function diagnoseDevice(sn) {
     + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">'
     + '<strong style="color:#e5e7eb">Diagnose ' + sn + '</strong>'
     + '<span id="diagClose" style="cursor:pointer;color:#888;font-size:20px;line-height:1">&times;</span></div>'
-    + '<div id="diagBody" style="color:#aaa;font-size:13px">Nakijken\u2026</div></div>';
+    + '<div id="diagBody" style="color:#aaa;font-size:13px">Checking\u2026</div></div>';
   document.body.appendChild(overlay);
   var cleanup = function() { overlay.remove(); };
   overlay.querySelector('#diagClose').onclick = cleanup;
   overlay.onclick = function(e) { if (e.target === overlay) cleanup(); };
 
-  var GROUPS = { server: 'Server', reach: 'Bereikbaarheid', connect: 'Verbinding',
-                 identity: 'Identiteit', pair: 'Lader en LoRa', firmware: 'Firmware',
-                 mower: 'Op de maaier zelf', ready: 'Klaar om te maaien' };
+  var GROUPS = { server: 'Server', reach: 'Reachability', connect: 'Connection',
+                 identity: 'Identity', pair: 'Charger and LoRa', firmware: 'Firmware',
+                 mower: 'On the mower itself', ready: 'Ready to mow' };
   var ORDER = ['server', 'reach', 'connect', 'identity', 'pair', 'firmware', 'mower', 'ready'];
   var ICON = { ok: ['\u2713', '#22c55e'], fail: ['\u2715', '#ef4444'],
                warn: ['!', '#f59e0b'], unknown: ['?', '#6b7280'], skipped: ['\u2013', '#4b5563'] };
 
   try {
-    var r = await fetchJsonAuth('/api/dashboard/diagnose/' + encodeURIComponent(sn),
+    var lang = 'en';
+    try { lang = localStorage.getItem('adminLang') || (navigator.language || 'en').slice(0, 2); } catch (e) {}
+    var r = await fetchJsonAuth('/api/dashboard/diagnose/' + encodeURIComponent(sn) + '?lang=' + encodeURIComponent(lang),
       token ? { headers: { 'Authorization': token } } : {});
     var body = overlay.querySelector('#diagBody');
     var html = '<div style="padding:8px 10px;border-radius:8px;margin-bottom:12px;background:'
       + (r.blocked ? 'rgba(239,68,68,.12);color:#fca5a5'
          : r.warningCount > 0 ? 'rgba(245,158,11,.12);color:#fcd34d'
          : 'rgba(34,197,94,.12);color:#86efac')
-      + '">' + escapeHtml(r.summary) + '</div>';
+      + '" data-no-i18n>' + escapeHtml(r.summary) + '</div>';
     ORDER.forEach(function(g) {
       var steps = (r.steps || []).filter(function(s) { return s.group === g; });
       if (!steps.length) return;
@@ -2363,14 +2365,14 @@ async function diagnoseDevice(sn) {
         html += '<div style="display:flex;gap:8px;padding:4px 0">'
           + '<span style="color:' + ic[1] + ';font-weight:700;width:14px;flex:none">' + ic[0] + '</span>'
           + '<div><div style="color:#d1d5db;font-size:12px;font-weight:600">' + escapeHtml(s.id) + '</div>'
-          + '<div style="color:#9ca3af;font-size:11px">' + escapeHtml(s.evidence) + '</div>'
-          + (s.action ? '<div style="color:#fbbf24;font-size:11px;margin-top:2px">\u2192 ' + escapeHtml(s.action) + '</div>' : '')
+          + '<div style="color:#9ca3af;font-size:11px" data-no-i18n>' + escapeHtml(s.evidence) + '</div>'
+          + (s.action ? '<div style="color:#fbbf24;font-size:11px;margin-top:2px" data-no-i18n>\u2192 ' + escapeHtml(s.action) + '</div>' : '')
           + '</div></div>';
       });
     });
     body.innerHTML = html;
   } catch (e) {
-    overlay.querySelector('#diagBody').textContent = 'Diagnose mislukt: ' + (e && e.message ? e.message : e);
+    overlay.querySelector('#diagBody').textContent = 'Diagnosis failed: ' + (e && e.message ? e.message : e);
   }
 }
 

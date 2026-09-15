@@ -192,8 +192,11 @@ export interface Diagnosis {
 }
 
 /** Where in the chain of coming online is this device stuck. */
-export async function fetchDiagnosis(sn: string): Promise<Diagnosis> {
-  return (await get(`${BASE}/diagnose/${encodeURIComponent(sn)}`)).json();
+export async function fetchDiagnosis(sn: string, lang?: string): Promise<Diagnosis> {
+  // De stappen dragen hun eigen uitleg, die de server schrijft. Zonder taal
+  // erbij krijgt een Duitse gebruiker Duitse kopjes boven Nederlandse zinnen.
+  const q = lang ? `?lang=${encodeURIComponent(lang)}` : '';
+  return (await get(`${BASE}/diagnose/${encodeURIComponent(sn)}${q}`)).json();
 }
 
 export async function deleteDevice(sn: string): Promise<void> {

@@ -25,6 +25,7 @@ import { statfs } from 'fs/promises';
 import { mapRepo, userRepo } from '../db/repositories/index.js';
 import { deriveHasError } from '../mqtt/mowerActivity.js';
 import { MAP_NAMES_SELECTION_BUILD } from './mowingArea.js';
+import { translator, normalizeLang, type Lang, type Translate } from './diagnosisText.js';
 
 export type StepStatus = 'ok' | 'fail' | 'warn' | 'unknown' | 'skipped';
 
@@ -89,6 +90,11 @@ export interface DiagnosisInput {
    * state below reachable from a test without a running broker.
    */
   snapshot?: Record<string, string> | null;
+  /**
+   * Taal van de uitleg. Alleen de labels stonden in i18n; de zinnen eronder
+   * kwamen altijd in het Nederlands binnen, ook bij een Duitse gebruiker.
+   */
+  lang?: Lang | string;
 }
 
 export interface Diagnosis {
@@ -118,14 +124,14 @@ function deviceTypeOf(sn: string): Diagnosis['deviceType'] {
   return 'unknown';
 }
 
-function ago(ts: number, now: number): string {
+function ago(ts: number, now: number, T: Translate): string {
   const s = Math.max(0, Math.round((now - ts) / 1000));
-  if (s < 90) return `${s} s geleden`;
+  if (s < 90) return T`${s} s geleden`;
   const m = Math.round(s / 60);
-  if (m < 90) return `${m} min geleden`;
+  if (m < 90) return T`${m} min geleden`;
   const h = Math.round(m / 60);
-  if (h < 48) return `${h} uur geleden`;
-  return `${Math.round(h / 24)} dagen geleden`;
+  if (h < 48) return T`${h} uur geleden`;
+  return T`${Math.round(h / 24)} dagen geleden`;
 }
 
 function parseLastSeen(row: { last_seen?: string } | undefined): number | null {
@@ -142,6 +148,7 @@ export async function diagnoseConnection(
   now = Date.now(),
   input: DiagnosisInput = {},
 ): Promise<Diagnosis> {
+  const T = translator(normalizeLang(input.lang));
   const snap = input.snapshot ?? null;
   const probe: DiagnosisProbes = { ...realProbes, ...(input.probes ?? {}) };
   const steps: DiagnosisStep[] = [];
@@ -161,13 +168,13 @@ export async function diagnoseConnection(
       id: 'disk',
       group: 'server',
       status: freeMb < 200 ? 'fail' : freeMb < 1024 ? 'warn' : 'ok',
-      evidence: `${freeMb} MB vrij van ${totalMb} MB (${pct}%)`,
+      evidence: T`${freeMb} MB vrij van ${totalMb} MB (${pct}%)`,
       action: freeMb < 1024
-        ? 'kaartuploads en de database hebben ruimte nodig; maak schijfruimte vrij'
+        ? T`kaartuploads en de database hebben ruimte nodig; maak schijfruimte vrij`
         : undefined,
     });
   } catch {
-    push({ id: 'disk', group: 'server', status: 'unknown', evidence: 'schijfruimte niet op te vragen' });
+    push({ id: 'disk', group: 'server', status: 'unknown', evidence: T`schijfruimte niet op te vragen` });
   }
 
   // Twee brokers op één netwerk is een echte en verwarrende storing: maaiers
@@ -180,12 +187,12 @@ export async function diagnoseConnection(
     group: 'server',
     status: input.probeNetwork === false ? 'skipped' : rivals.length > 0 ? 'fail' : 'ok',
     evidence: input.probeNetwork === false
-      ? 'niet gepeild'
+      ? T`niet gepeild`
       : rivals.length > 0
-      ? `nog ${rivals.length} andere MQTT-broker(s) op dit netwerk: ${rivals.join(', ')}`
-      : 'geen tweede MQTT-broker op dit netwerk',
+      ? T`nog ${rivals.length} andere MQTT-broker(s) op dit netwerk: ${rivals.join(', ')}`
+      : T`geen tweede MQTT-broker op dit netwerk`,
     action: rivals.length > 0
-      ? 'maaiers ontdekken via mDNS de verkeerde en springen heen en weer; zet er één uit'
+      ? T`maaiers ontdekken via mDNS de verkeerde en springen heen en weer; zet er één uit`
       : undefined,
   });
 
@@ -196,11 +203,12 @@ export async function diagnoseConnection(
   // vinden, en dat doen we verderop met de SSH-peiling. Hier alleen de context,
   // zonder oordeel.
   const net = probe.containerNetwork();
+  const here = net.addresses.join(', ') || T`deze machine`;
   const netDesc = !net.inContainer
-    ? `draait rechtstreeks op ${net.addresses.join(', ') || 'deze machine'}`
+    ? T`draait rechtstreeks op ${here}`
     : net.bridged
-    ? `container met bridge-netwerk (${net.addresses.join(', ')})`
-    : `container met host-netwerk (${net.addresses.join(', ')})`;
+    ? T`container met bridge-netwerk (${net.addresses.join(', ')})`
+    : T`container met host-netwerk (${net.addresses.join(', ')})`;
 
   // ── mDNS op 5353: gemeten, en bij falen de oorzaak en de remedie ─────────
   //
@@ -213,62 +221,57 @@ export async function diagnoseConnection(
   if (md.notStartedReason === 'disabled') {
     push({
       id: 'mdns_service', group: 'server', status: 'warn',
-      evidence: 'mDNS is uitgezet (ENABLE_MDNS)',
-      action: 'maaiers kunnen deze server dan niet zelf vinden en hebben je DNS-omleiding '
-            + 'nodig; zet ENABLE_MDNS niet op false als je automatisch ontdekken wilt',
+      evidence: T`mDNS is uitgezet (ENABLE_MDNS)`,
+      action: T`maaiers kunnen deze server dan niet zelf vinden en hebben je DNS-omleiding nodig; zet ENABLE_MDNS niet op false als je automatisch ontdekken wilt`,
     });
   } else if (md.notStartedReason === 'no_ip') {
     push({
       id: 'mdns_service', group: 'server', status: 'fail',
-      evidence: 'de advertiser is niet gestart: geen LAN-adres bekend',
-      action: 'zet TARGET_IP op het adres van deze server op je thuisnetwerk, '
-            + 'binnen een container is dat niet zelf te bepalen',
+      evidence: T`de advertiser is niet gestart: geen LAN-adres bekend`,
+      action: T`zet TARGET_IP op het adres van deze server op je thuisnetwerk, binnen een container is dat niet zelf te bepalen`,
     });
   } else if (!md.running) {
     push({
       id: 'mdns_service', group: 'server', status: 'fail',
-      evidence: `de advertiser draait niet${md.lastError ? `: ${md.lastError}` : ''}`,
-      action: 'herstart de server en kijk in het log naar [MDNS]',
+      evidence: md.lastError
+        ? T`de advertiser draait niet: ${md.lastError}`
+        : T`de advertiser draait niet`,
+      action: T`herstart de server en kijk in het log naar [MDNS]`,
     });
   } else {
     const answers = input.probeNetwork === false ? null : await probe.mdnsSelfQuery();
     const others = (answers ?? []).filter(a => a !== md.ip);
     if (answers === null) {
-      push({ id: 'mdns_service', group: 'server', status: 'skipped', evidence: 'niet gepeild' });
+      push({ id: 'mdns_service', group: 'server', status: 'skipped', evidence: T`niet gepeild` });
     } else if (md.lastError && answers.length === 0) {
       push({
         id: 'mdns_service', group: 'server', status: 'fail',
-        evidence: `poort ${md.port} geeft een fout: ${md.lastError}`,
+        evidence: T`poort ${md.port} geeft een fout: ${md.lastError}`,
         action: /EADDRINUSE|in use/i.test(md.lastError)
-          ? 'iets anders heeft 5353 al, meestal avahi op de host bij host-netwerk; '
-          + 'stop dat of zet MDNS_PORT anders (de maaiers verwachten wel 5353)'
+          ? T`iets anders heeft 5353 al, meestal avahi op de host bij host-netwerk; stop dat of zet MDNS_PORT anders (de maaiers verwachten wel 5353)`
           : /EPERM|EACCES/i.test(md.lastError)
-          ? 'de container mag geen multicast versturen; geef hem host-netwerk of '
-          + 'de juiste rechten'
-          : 'kijk in het serverlog naar [MDNS] voor de volledige fout',
+          ? T`de container mag geen multicast versturen; geef hem host-netwerk of de juiste rechten`
+          : T`kijk in het serverlog naar [MDNS] voor de volledige fout`,
       });
     } else if (others.length > 0) {
       push({
         id: 'mdns_service', group: 'server', status: 'fail',
-        evidence: `${md.hostname} wordt óók beantwoord door ${others.join(', ')}`,
-        action: 'twee servers claimen dezelfde naam en maaiers kiezen willekeurig; '
-              + 'zet de andere uit of geef hem ENABLE_MDNS=false',
+        evidence: T`${md.hostname} wordt óók beantwoord door ${others.join(', ')}`,
+        action: T`twee servers claimen dezelfde naam en maaiers kiezen willekeurig; zet de andere uit of geef hem ENABLE_MDNS=false`,
       });
     } else if (answers.includes(md.ip ?? '')) {
       push({
         id: 'mdns_service', group: 'server', status: 'ok',
-        evidence: `${md.hostname} wordt op 5353 beantwoord met ${md.ip}`,
+        evidence: T`${md.hostname} wordt op 5353 beantwoord met ${md.ip}`,
       });
     } else {
       const net = probe.containerNetwork();
       push({
         id: 'mdns_service', group: 'server', status: 'fail',
-        evidence: `${md.hostname} wordt op 224.0.0.251:5353 door niemand beantwoord, `
-                + 'ook niet door deze server zelf',
+        evidence: T`${md.hostname} wordt op 224.0.0.251:5353 door niemand beantwoord, ook niet door deze server zelf`,
         action: net.bridged
-          ? 'multicast komt de container niet in of uit; zet "5353:5353/udp" in de '
-          + 'compose-ports of draai met network_mode: host'
-          : 'controleer of een firewall multicast op 224.0.0.251 blokkeert',
+          ? T`multicast komt de container niet in of uit; zet "5353:5353/udp" in de compose-ports of draai met network_mode: host`
+          : T`controleer of een firewall multicast op 224.0.0.251 blokkeert`,
       });
     }
   }
@@ -303,44 +306,36 @@ export async function diagnoseConnection(
       id: 'dns',
       group: 'reach',
       status: 'unknown',
-      evidence: `${DEVICE_HOSTNAMES_LABEL} lost hier niet op`,
+      evidence: T`${DEVICE_HOSTNAMES_LABEL} lost hier niet op`,
     });
   } else if (dnsUnknown) {
     push({
       id: 'dns',
       group: 'reach',
       status: 'unknown',
-      evidence: `${dnsAnswers[0].host} lost op naar ${dnsAnswers[0].addresses.join(', ')}; `
-              + 'deze server draait in een container en kent zijn eigen adres op het '
-              + 'thuisnetwerk niet, dus daar valt niets uit af te leiden',
+      evidence: T`${dnsAnswers[0].host} lost op naar ${dnsAnswers[0].addresses.join(', ')}; deze server draait in een container en kent zijn eigen adres op het thuisnetwerk niet, dus daar valt niets uit af te leiden`,
     });
   } else if (dnsPointsHere) {
     push({
       id: 'dns',
       group: 'reach',
       status: 'ok',
-      evidence: `${dnsAnswers.find(d => d.pointsHere)!.host} wijst naar deze server `
-              + `(${ourAddr || 'onbekend adres'})`,
+      evidence: T`${dnsAnswers.find(d => d.pointsHere)!.host} wijst naar deze server (${ourAddr || 'onbekend adres'})`,
     });
   } else if (weServeDns) {
     push({
       id: 'dns',
       group: 'reach',
       status: 'fail',
-      evidence: `deze server serveert de omleiding, maar ${dnsElsewhere[0].host} wijst naar `
-              + `${dnsElsewhere[0].addresses.join(', ')} en niet naar `
-              + `${ourAddr || 'onbekend'}`,
-      action: 'zet de omleiding op het huidige serveradres; dit adres is waarschijnlijk '
-            + 'veranderd sinds de installatie',
+      evidence: T`deze server serveert de omleiding, maar ${dnsElsewhere[0].host} wijst naar ${dnsElsewhere[0].addresses.join(', ')} en niet naar ${ourAddr || 'onbekend'}`,
+      action: T`zet de omleiding op het huidige serveradres; dit adres is waarschijnlijk veranderd sinds de installatie`,
     });
   } else {
     push({
       id: 'dns',
       group: 'reach',
       status: 'unknown',
-      evidence: `${dnsElsewhere[0].host} lost hier op naar ${dnsElsewhere[0].addresses.join(', ')}. `
-              + 'Deze server serveert de omleiding niet, dus dit zegt alleen iets als je '
-              + 'apparaten dezelfde DNS gebruiken als deze container',
+      evidence: T`${dnsElsewhere[0].host} lost hier op naar ${dnsElsewhere[0].addresses.join(', ')}. Deze server serveert de omleiding niet, dus dit zegt alleen iets als je apparaten dezelfde DNS gebruiken als deze container`,
     });
   }
 
@@ -355,16 +350,16 @@ export async function diagnoseConnection(
         id: 'network',
         group: 'reach',
         status: 'unknown',
-        evidence: 'geen adres van dit apparaat bekend, dus niet te peilen',
+        evidence: T`geen adres van dit apparaat bekend, dus niet te peilen`,
       });
     } else if (!lan.canSeeLan) {
       push({
         id: 'network',
         group: 'reach',
         status: 'unknown',
-        evidence: `geen adres bekend en ${lan.reason}`,
+        evidence: T`geen adres bekend en ${lan.reason}`,
         action: lan.reason?.includes('bridge')
-          ? 'draai de container met host-netwerk om het lokale netwerk te kunnen inzien'
+          ? T`draai de container met host-netwerk om het lokale netwerk te kunnen inzien`
           : undefined,
       });
     } else if (lan.found.length === 0) {
@@ -372,10 +367,8 @@ export async function diagnoseConnection(
         id: 'network',
         group: 'reach',
         status: 'fail',
-        evidence: `geen enkel LFI-apparaat gevonden op ${lan.subnet}.0/24 `
-                + `(${lan.neighbourCount} apparaten bekeken)`,
-        action: 'het apparaat hangt niet aan dit netwerk: controleer de stroom en '
-              + 'of de wifi-gegevens goed zijn doorgegeven',
+        evidence: T`geen enkel LFI-apparaat gevonden op ${lan.subnet}.0/24 (${lan.neighbourCount} apparaten bekeken)`,
+        action: T`het apparaat hangt niet aan dit netwerk: controleer de stroom en of de wifi-gegevens goed zijn doorgegeven`,
       });
     } else {
       const mine = lan.found.find(f => f.sn === sn);
@@ -385,27 +378,28 @@ export async function diagnoseConnection(
           id: 'network',
           group: 'reach',
           status: 'fail',
-          evidence: `gevonden op ${mine.ip} (MAC ${mine.mac}), maar hij praat geen MQTT met ons`,
-          action: 'hij hangt aan het netwerk, dus het probleem zit in de serverinstelling '
-                + 'van het apparaat: naar welk adres wijst het',
+          evidence: T`gevonden op ${mine.ip} (MAC ${mine.mac}), maar hij praat geen MQTT met ons`,
+          action: T`hij hangt aan het netwerk, dus het probleem zit in de serverinstelling van het apparaat: naar welk adres wijst het`,
         });
       } else if (sameKind.length > 0) {
         push({
           id: 'network',
           group: 'reach',
           status: 'warn',
-          evidence: `${sameKind.length} ${deviceType === 'charger' ? 'laadstation(s)' : 'maaier(s)'} `
-                  + `op het netwerk (${sameKind.map(f => f.ip).join(', ')}), maar niet deze`,
-          action: 'controleer of het serienummer klopt, of dit apparaat staat uit',
+          evidence: deviceType === 'charger'
+            ? T`${sameKind.length} laadstation(s) op het netwerk (${sameKind.map(f => f.ip).join(', ')}), maar niet deze`
+            : T`${sameKind.length} maaier(s) op het netwerk (${sameKind.map(f => f.ip).join(', ')}), maar niet deze`,
+          action: T`controleer of het serienummer klopt, of dit apparaat staat uit`,
         });
       } else {
         push({
           id: 'network',
           group: 'reach',
           status: 'fail',
-          evidence: `wel ${lan.found.length} LFI-apparaat(en) gezien, geen ervan is een `
-                  + `${deviceType === 'charger' ? 'laadstation' : 'maaier'}`,
-          action: 'dit apparaat hangt niet aan het netwerk',
+          evidence: deviceType === 'charger'
+            ? T`wel ${lan.found.length} LFI-apparaat(en) gezien, geen ervan is een laadstation`
+            : T`wel ${lan.found.length} LFI-apparaat(en) gezien, geen ervan is een maaier`,
+          action: T`dit apparaat hangt niet aan het netwerk`,
         });
       }
     }
@@ -414,32 +408,29 @@ export async function diagnoseConnection(
       id: 'network',
       group: 'reach',
       status: 'ok',
-      evidence: `${reach.deviceIp} antwoordt, het apparaat staat aan en zit op het netwerk`,
+      evidence: T`${reach.deviceIp} antwoordt, het apparaat staat aan en zit op het netwerk`,
     });
   } else if (reach.sameSubnet === null) {
     push({
       id: 'network',
       group: 'reach',
       status: 'unknown',
-      evidence: `${reach.deviceIp} antwoordt niet op poort 22 of 8000; op stock firmware `
-              + 'staan die dicht, dus dit bewijst niets',
+      evidence: T`${reach.deviceIp} antwoordt niet op poort 22 of 8000; op stock firmware staan die dicht, dus dit bewijst niets`,
     });
   } else if (reach.sameSubnet === false) {
     push({
       id: 'network',
       group: 'reach',
       status: 'fail',
-      evidence: `laatst bekende adres ${reach.deviceIp} zit in een ander subnet dan deze server `
-              + `(${ourAddr || 'onbekend'})`,
-      action: 'zet beide in hetzelfde netwerk, of laat het verkeer ertussen door',
+      evidence: T`laatst bekende adres ${reach.deviceIp} zit in een ander subnet dan deze server (${ourAddr || 'onbekend'})`,
+      action: T`zet beide in hetzelfde netwerk, of laat het verkeer ertussen door`,
     });
   } else {
     push({
       id: 'network',
       group: 'reach',
       status: 'unknown',
-      evidence: `${reach.deviceIp} antwoordt niet op poort 22 of 8000; op stock firmware `
-              + 'staan die dicht, dus dit bewijst niets',
+      evidence: T`${reach.deviceIp} antwoordt niet op poort 22 of 8000; op stock firmware staan die dicht, dus dit bewijst niets`,
     });
   }
 
@@ -447,7 +438,7 @@ export async function diagnoseConnection(
   // betekent dat de wifi staat. Het MAC wordt opgezocht en niet uitgerekend: de
   // afstand tussen wifi en BLE verschilt per hardware (ESP32 +2, LFIN +1).
   if (!reach.deviceIp) {
-    push({ id: 'wifi', group: 'reach', status: 'skipped', evidence: 'geen adres bekend' });
+    push({ id: 'wifi', group: 'reach', status: 'skipped', evidence: T`geen adres bekend` });
   } else {
     // Eerst de echte uit de buurtabel. Lukt dat niet, dan uit de BLE-MAC die we
     // hoe dan ook kennen: de fabriekstabel heeft die van elk apparaat. Wel
@@ -459,10 +450,10 @@ export async function diagnoseConnection(
       : null;
     const rssiRaw = snap?.wifi_rssi ?? snap?.signal_strength ?? null;
     const rssi = rssiRaw !== null ? parseInt(rssiRaw, 10) : NaN;
-    const parts = [`verbonden via wifi op ${reach.deviceIp}`];
-    if (looked) parts.push(`MAC ${looked}`);
-    else if (derived) parts.push(`MAC ${derived} (afgeleid uit de BLE-MAC ${bleKnown})`);
-    if (Number.isFinite(rssi)) parts.push(`signaal ${rssi} dBm`);
+    const parts = [T`verbonden via wifi op ${reach.deviceIp}`];
+    if (looked) parts.push(T`MAC ${looked}`);
+    else if (derived) parts.push(T`MAC ${derived} (afgeleid uit de BLE-MAC ${bleKnown})`);
+    if (Number.isFinite(rssi)) parts.push(T`signaal ${rssi} dBm`);
     // Onder de -75 dBm valt de verbinding met enige regelmaat weg, en dat is
     // precies het beeld van "hij is soms online".
     const weak = Number.isFinite(rssi) && rssi < -75;
@@ -471,9 +462,8 @@ export async function diagnoseConnection(
       group: 'reach',
       status: weak ? 'warn' : 'ok',
       evidence: parts.join(', ')
-              + (looked || derived ? '' : ' (MAC nergens bekend)'),
-      action: weak ? 'zwak signaal, de verbinding valt daar met regelmaat van weg; '
-                   + 'zet een toegangspunt dichterbij' : undefined,
+              + (looked || derived ? '' : T` (MAC nergens bekend)`),
+      action: weak ? T`zwak signaal, de verbinding valt daar met regelmaat van weg; zet een toegangspunt dichterbij` : undefined,
     });
   }
 
@@ -488,25 +478,23 @@ export async function diagnoseConnection(
       id: 'seen',
       group: 'connect',
       status: 'fail',
-      evidence: `${sn} heeft zich nog nooit bij deze server gemeld`,
-      action: 'het apparaat is nog niet ingericht of wijst naar een andere server: '
-            + 'controleer wifi, de BLE-provisioning en of mqtt.lfibot.com naar dit adres verwijst',
+      evidence: T`${sn} heeft zich nog nooit bij deze server gemeld`,
+      action: T`het apparaat is nog niet ingericht of wijst naar een andere server: controleer wifi, de BLE-provisioning en of mqtt.lfibot.com naar dit adres verwijst`,
     });
   } else if (online) {
     push({
       id: 'seen',
       group: 'connect',
       status: 'ok',
-      evidence: `laatst gezien ${ago(lastSeen as number, now)} als ${reg!.mqtt_client_id}`,
+      evidence: T`laatst gezien ${ago(lastSeen as number, now, T)} als ${reg!.mqtt_client_id}`,
     });
   } else {
     push({
       id: 'seen',
       group: 'connect',
       status: 'fail',
-      evidence: `was verbonden, maar laatst gezien ${ago(lastSeen as number, now)}`,
-      action: 'hij wérkte eerder, dus zoek wat er rond dat moment veranderde: '
-            + 'stroom, wifi, DNS of een serverherstart',
+      evidence: T`was verbonden, maar laatst gezien ${ago(lastSeen as number, now, T)}`,
+      action: T`hij wérkte eerder, dus zoek wat er rond dat moment veranderde: stroom, wifi, DNS of een serverherstart`,
     });
   }
 
@@ -519,27 +507,24 @@ export async function diagnoseConnection(
 
   if (online) {
     push({ id: 'attempts',
-      group: 'connect', status: 'skipped', evidence: 'niet nodig, hij is binnen' });
+      group: 'connect', status: 'skipped', evidence: T`niet nodig, hij is binnen` });
   } else if (worst && now - worst.ts < 24 * 60 * 60 * 1000) {
     push({
       id: 'attempts',
       group: 'connect',
       status: 'fail',
-      evidence: `laatste poging ${ago(worst.ts, now)} geweigerd: ${worst.reason ?? 'onbekende reden'}`,
+      evidence: T`laatste poging ${ago(worst.ts, now, T)} geweigerd: ${worst.reason ?? 'onbekende reden'}`,
       action: worst.reason === 'banned'
-        ? 'dit serienummer staat geblokkeerd na een "verwijder en verban": '
-          + 'koppel het apparaat opnieuw via de app'
-        : 'het apparaat bereikt de server wel maar komt niet door: '
-          + 'controleer de inloggegevens en het serienummer',
+        ? T`dit serienummer staat geblokkeerd na een "verwijder en verban": koppel het apparaat opnieuw via de app`
+        : T`het apparaat bereikt de server wel maar komt niet door: controleer de inloggegevens en het serienummer`,
     });
   } else {
     push({
       id: 'attempts',
       group: 'connect',
       status: everSeen ? 'warn' : 'fail',
-      evidence: 'geen enkele verbindingspoging geregistreerd in de laatste 24 uur',
-      action: 'er komt niets binnen, dus het probleem zit vóór de broker: '
-            + 'netwerk, DNS of het apparaat staat uit',
+      evidence: T`geen enkele verbindingspoging geregistreerd in de laatste 24 uur`,
+      action: T`er komt niets binnen, dus het probleem zit vóór de broker: netwerk, DNS of het apparaat staat uit`,
     });
   }
 
@@ -550,22 +535,22 @@ export async function diagnoseConnection(
       id: 'binding',
       group: 'identity',
       status: 'fail',
-      evidence: 'geen koppeling in equipment',
-      action: 'koppel het apparaat via de app, dat schrijft de equipment-rij',
+      evidence: T`geen koppeling in equipment`,
+      action: T`koppel het apparaat via de app, dat schrijft de equipment-rij`,
     });
   } else if (!eq.user_id) {
     push({
       id: 'binding',
       group: 'identity',
       status: 'warn',
-      evidence: 'gekoppeld maar zonder gebruiker (user_id leeg)',
-      action: 'de app doet dan BLE-provisioning; rond die stap af in de app',
+      evidence: T`gekoppeld maar zonder gebruiker (user_id leeg)`,
+      action: T`de app doet dan BLE-provisioning; rond die stap af in de app`,
     });
   } else {
     // De guid zegt niemand iets. De naam of het e-mailadres wel.
     const user = userRepo.findById(eq.user_id);
     const who = user?.username || user?.email || eq.user_id;
-    push({ id: 'binding', group: 'identity', status: 'ok', evidence: `gekoppeld aan ${who}` });
+    push({ id: 'binding', group: 'identity', status: 'ok', evidence: T`gekoppeld aan ${who}` });
   }
 
   // 5. The BLE MAC must be the mower's own, not the charger's. When it is the
@@ -579,31 +564,31 @@ export async function diagnoseConnection(
         id: 'ble_mac',
       group: 'identity',
         status: 'warn',
-        evidence: 'geen BLE MAC bekend bij de koppeling',
-        action: 'zonder MAC herkent de app de maaier niet in een BLE-scan',
+        evidence: T`geen BLE MAC bekend bij de koppeling`,
+        action: T`zonder MAC herkent de app de maaier niet in een BLE-scan`,
       });
     } else if (bound.toUpperCase().startsWith('48:27:E2')) {
       push({
         id: 'ble_mac',
       group: 'identity',
         status: 'fail',
-        evidence: `de opgeslagen MAC ${bound} is die van een laadstation, niet van de maaier`,
-        action: 'laat de MAC opnieuw afleiden uit device_factory',
+        evidence: T`de opgeslagen MAC ${bound} is die van een laadstation, niet van de maaier`,
+        action: T`laat de MAC opnieuw afleiden uit device_factory`,
       });
     } else if (factory && bound.toUpperCase() !== factory.toUpperCase()) {
       push({
         id: 'ble_mac',
       group: 'identity',
         status: 'warn',
-        evidence: `MAC ${bound} wijkt af van de fabriekswaarde ${factory}`,
+        evidence: T`MAC ${bound} wijkt af van de fabriekswaarde ${factory}`,
       });
     } else {
       push({ id: 'ble_mac',
-      group: 'identity', status: 'ok', evidence: `BLE MAC ${bound}` });
+      group: 'identity', status: 'ok', evidence: T`BLE MAC ${bound}` });
     }
   } else {
     push({ id: 'ble_mac',
-      group: 'identity', status: 'skipped', evidence: 'alleen van toepassing op een maaier' });
+      group: 'identity', status: 'skipped', evidence: T`alleen van toepassing op een maaier` });
   }
 
   // 6. The charger side. A mower alone is half a system: without the charger
@@ -614,8 +599,8 @@ export async function diagnoseConnection(
       id: 'counterpart',
       group: 'pair',
       status: 'warn',
-      evidence: deviceType === 'mower' ? 'geen laadstation gekoppeld' : 'geen maaier gekoppeld',
-      action: 'zonder laadstation is er geen RTK-correctie en dus geen nauwkeurige positie',
+      evidence: deviceType === 'mower' ? T`geen laadstation gekoppeld` : T`geen maaier gekoppeld`,
+      action: T`zonder laadstation is er geen RTK-correctie en dus geen nauwkeurige positie`,
     });
   } else {
     const cReg = deviceRepo.findBySn(counterpartSn);
@@ -625,20 +610,20 @@ export async function diagnoseConnection(
         id: 'counterpart',
       group: 'pair',
         status: 'fail',
-        evidence: `${counterpartSn} heeft zich nog nooit gemeld`,
-        action: 'richt ook het laadstation in; het heeft een eigen wifi- en MQTT-verbinding',
+        evidence: T`${counterpartSn} heeft zich nog nooit gemeld`,
+        action: T`richt ook het laadstation in; het heeft een eigen wifi- en MQTT-verbinding`,
       });
     } else if (now - cSeen > OFFLINE_AFTER_MS) {
       push({
         id: 'counterpart',
       group: 'pair',
         status: 'fail',
-        evidence: `${counterpartSn} laatst gezien ${ago(cSeen, now)}`,
-        action: 'controleer de stroom en het wifi-bereik van het laadstation',
+        evidence: T`${counterpartSn} laatst gezien ${ago(cSeen, now, T)}`,
+        action: T`controleer de stroom en het wifi-bereik van het laadstation`,
       });
     } else {
       push({ id: 'counterpart',
-      group: 'pair', status: 'ok', evidence: `${counterpartSn} gezien ${ago(cSeen, now)}` });
+      group: 'pair', status: 'ok', evidence: T`${counterpartSn} gezien ${ago(cSeen, now, T)}` });
     }
   }
 
@@ -647,9 +632,9 @@ export async function diagnoseConnection(
   // die hij niet kan lezen, zonder dat er ergens een fout verschijnt.
   const chargerVer = eq?.charger_version ?? null;
   if (!counterpartSn) {
-    push({ id: 'charger_crypto', group: 'pair', status: 'skipped', evidence: 'geen lader gekoppeld' });
+    push({ id: 'charger_crypto', group: 'pair', status: 'skipped', evidence: T`geen lader gekoppeld` });
   } else if (!chargerVer) {
-    push({ id: 'charger_crypto', group: 'pair', status: 'unknown', evidence: 'laderversie onbekend' });
+    push({ id: 'charger_crypto', group: 'pair', status: 'unknown', evidence: T`laderversie onbekend` });
   } else {
     const m = chargerVer.match(/(\d+)\.(\d+)\.(\d+)/);
     const tooOld = m ? (Number(m[1]) === 0 && Number(m[2]) < 4) : false;
@@ -657,10 +642,11 @@ export async function diagnoseConnection(
       id: 'charger_crypto',
       group: 'pair',
       status: tooOld ? 'fail' : 'ok',
-      evidence: `laderfirmware ${chargerVer}${tooOld ? ', kent nog geen AES' : ''}`,
+      evidence: tooOld
+        ? T`laderfirmware ${chargerVer}, kent nog geen AES`
+        : T`laderfirmware ${chargerVer}`,
       action: tooOld
-        ? 'de server versleutelt alles naar LFI-apparaten en deze lader kan dat niet lezen; '
-        + 'werk hem bij naar v0.4.0'
+        ? T`de server versleutelt alles naar LFI-apparaten en deze lader kan dat niet lezen; werk hem bij naar v0.4.0`
         : undefined,
     });
   }
@@ -669,14 +655,14 @@ export async function diagnoseConnection(
   const pair = getLoraPair(sn);
   if (!pair) {
     push({ id: 'lora',
-      group: 'pair', status: 'skipped', evidence: 'geen LoRa-paar om te controleren' });
+      group: 'pair', status: 'skipped', evidence: T`geen LoRa-paar om te controleren` });
   } else if (pair.ok) {
     const c = pair.charger;
     push({
       id: 'lora',
       group: 'pair',
       status: 'ok',
-      evidence: `adres ${c?.addr ?? '?'} kanaal ${c?.channel ?? '?'} aan beide kanten gelijk`,
+      evidence: T`adres ${c?.addr ?? '?'} kanaal ${c?.channel ?? '?'} aan beide kanten gelijk`,
     });
   } else {
     const issues = pair.issues;
@@ -686,12 +672,11 @@ export async function diagnoseConnection(
       group: 'pair',
       status: 'fail',
       evidence: mismatch
-        ? `maaier ${pair.mower?.addr ?? '?'}/${pair.mower?.channel ?? '?'} `
-          + `tegen lader ${pair.charger?.addr ?? '?'}/${pair.charger?.channel ?? '?'}`
+        ? T`maaier ${pair.mower?.addr ?? '?'}/${pair.mower?.channel ?? '?'} tegen lader ${pair.charger?.addr ?? '?'}/${pair.charger?.channel ?? '?'}`
         : issues.join(', '),
       action: mismatch
-        ? 'adres en kanaal moeten IDENTIEK zijn aan beide kanten; koppel opnieuw via de app'
-        : 'de LoRa-instellingen zijn nog niet van beide apparaten gelezen',
+        ? T`adres en kanaal moeten IDENTIEK zijn aan beide kanten; koppel opnieuw via de app`
+        : T`de LoRa-instellingen zijn nog niet van beide apparaten gelezen`,
     });
   }
 
@@ -716,16 +701,15 @@ export async function diagnoseConnection(
       id: 'client_conflict',
       group: 'connect',
       status: 'fail',
-      evidence: `client_id ${clashing[0]} komt van ${[...clashing[1]].join(' en ')}`,
-      action: "twee apparaten of processen gebruiken hetzelfde client_id en gooien "
-            + 'elkaar er om beurten uit; zet er één uit',
+      evidence: T`client_id ${clashing[0]} komt van ${[...clashing[1]].join(' en ')}`,
+      action: T`twee apparaten of processen gebruiken hetzelfde client_id en gooien elkaar er om beurten uit; zet er één uit`,
     });
   } else {
     push({
       id: 'client_conflict',
       group: 'connect',
       status: 'ok',
-      evidence: 'geen dubbel gebruikt client_id gezien',
+      evidence: T`geen dubbel gebruikt client_id gezien`,
     });
   }
 
@@ -736,22 +720,21 @@ export async function diagnoseConnection(
   // foutmelding, alleen stilte. Verbonden zonder enige sensorwaarde is precies
   // dat beeld.
   if (!online) {
-    push({ id: 'encryption', group: 'connect', status: 'skipped', evidence: 'hij is niet verbonden' });
+    push({ id: 'encryption', group: 'connect', status: 'skipped', evidence: T`hij is niet verbonden` });
   } else if (!snap || Object.keys(snap).length === 0) {
     push({
       id: 'encryption',
       group: 'connect',
       status: 'fail',
-      evidence: 'verbonden, maar er is geen enkele meetwaarde binnengekomen',
-      action: 'de berichten zijn niet te ontcijferen of hebben een ander formaat; '
-            + 'controleer of het serienummer klopt, daar wordt de sleutel uit afgeleid',
+      evidence: T`verbonden, maar er is geen enkele meetwaarde binnengekomen`,
+      action: T`de berichten zijn niet te ontcijferen of hebben een ander formaat; controleer of het serienummer klopt, daar wordt de sleutel uit afgeleid`,
     });
   } else {
     push({
       id: 'encryption',
       group: 'connect',
       status: 'ok',
-      evidence: `${Object.keys(snap).length} meetwaarden ontvangen`,
+      evidence: T`${Object.keys(snap).length} meetwaarden ontvangen`,
     });
   }
 
@@ -762,7 +745,7 @@ export async function diagnoseConnection(
       id: 'firmware',
       group: 'firmware',
       status: 'unknown',
-      evidence: 'firmwareversie nog niet gemeld',
+      evidence: T`firmwareversie nog niet gemeld`,
     });
   } else {
     const custom = /custom|opennova/i.test(version);
@@ -771,7 +754,7 @@ export async function diagnoseConnection(
       id: 'firmware',
       group: 'firmware',
       status: 'ok',
-      evidence: custom ? `${version} (OpenNova)` : `${version} (stock)`,
+      evidence: custom ? T`${version} (OpenNova)` : T`${version} (stock)`,
     });
     // De firmware stuurt map_ids boven 60000 naar zijn vision_test-taak, die
     // faalt met fout 125. Builds vanaf MAP_NAMES_SELECTION_BUILD kiezen zones op
@@ -782,9 +765,8 @@ export async function diagnoseConnection(
         id: 'zone_limit',
         group: 'firmware',
         status: 'warn',
-        evidence: `${workMaps} werkzones op firmware die er maximaal 5 aankan`,
-        action: 'zones boven de vijfde eindigen in fout 125; werk de firmware bij '
-              + `naar custom-${MAP_NAMES_SELECTION_BUILD} of hoger`,
+        evidence: T`${workMaps} werkzones op firmware die er maximaal 5 aankan`,
+        action: T`zones boven de vijfde eindigen in fout 125; werk de firmware bij naar custom-${MAP_NAMES_SELECTION_BUILD} of hoger`,
       });
     }
   }
@@ -796,14 +778,14 @@ export async function diagnoseConnection(
       id: 'maps',
       group: 'ready',
       status: workMaps > 0 ? 'ok' : 'fail',
-      evidence: workMaps > 0 ? `${workMaps} werkgebied(en)` : 'geen enkel werkgebied bekend',
-      action: workMaps > 0 ? undefined : 'karteer eerst een gebied, zonder kaart start er niets',
+      evidence: workMaps > 0 ? T`${workMaps} werkgebied(en)` : T`geen enkel werkgebied bekend`,
+      action: workMaps > 0 ? undefined : T`karteer eerst een gebied, zonder kaart start er niets`,
     });
 
     if (!snap) {
-      push({ id: 'rtk', group: 'ready', status: 'skipped', evidence: 'geen meetwaarden' });
-      push({ id: 'fault', group: 'ready', status: 'skipped', evidence: 'geen meetwaarden' });
-      push({ id: 'frame', group: 'ready', status: 'skipped', evidence: 'geen meetwaarden' });
+      push({ id: 'rtk', group: 'ready', status: 'skipped', evidence: T`geen meetwaarden` });
+      push({ id: 'fault', group: 'ready', status: 'skipped', evidence: T`geen meetwaarden` });
+      push({ id: 'frame', group: 'ready', status: 'skipped', evidence: T`geen meetwaarden` });
     } else {
       // Zonder RTK-fix is de positie metersgroot onnauwkeurig en rijdt hij de
       // tuin uit. De correctie komt van het laadstation over LoRa, dus dit hangt
@@ -814,11 +796,11 @@ export async function diagnoseConnection(
         id: 'rtk',
         group: 'ready',
         status: fixed ? 'ok' : 'warn',
-        evidence: q ? `RTK-status ${q}${snap.rtk_sat ? `, ${snap.rtk_sat} satellieten` : ''}`
-                    : 'geen RTK-status gemeld',
+        evidence: !q ? T`geen RTK-status gemeld`
+                : snap.rtk_sat ? T`RTK-status ${q}, ${snap.rtk_sat} satellieten`
+                : T`RTK-status ${q}`,
         action: fixed ? undefined
-          : 'zonder RTK-fix is de positie te onnauwkeurig om te maaien; '
-          + 'controleer het laadstation en of het zicht op de hemel heeft',
+          : T`zonder RTK-fix is de positie te onnauwkeurig om te maaien; controleer het laadstation en of het zicht op de hemel heeft`,
       });
 
       const code = parseInt(snap.error_status ?? '0', 10) || 0;
@@ -827,9 +809,9 @@ export async function diagnoseConnection(
         id: 'fault',
         group: 'ready',
         status: blocking ? 'fail' : 'ok',
-        evidence: code === 0 ? 'geen storing'
-                : blocking ? `storing ${code} actief` : `melding ${code}, niet blokkerend`,
-        action: blocking ? 'los de storing op of wis hem, anders start er geen taak' : undefined,
+        evidence: code === 0 ? T`geen storing`
+                : blocking ? T`storing ${code} actief` : T`melding ${code}, niet blokkerend`,
+        action: blocking ? T`los de storing op of wis hem, anders start er geen taak` : undefined,
       });
 
       // Mapping-modus blokkeert het starten van een taak én het verwijderen van
@@ -839,10 +821,9 @@ export async function diagnoseConnection(
         id: 'mapping_mode',
         group: 'ready',
         status: mapping ? 'fail' : 'ok',
-        evidence: mapping ? 'de maaier staat in karteermodus' : 'niet in karteermodus',
+        evidence: mapping ? T`de maaier staat in karteermodus` : T`niet in karteermodus`,
         action: mapping
-          ? 'in deze stand start geen maaitaak en kun je geen kaart verwijderen; '
-          + 'sluit het karteren af'
+          ? T`in deze stand start geen maaitaak en kun je geen kaart verwijderen; sluit het karteren af`
           : undefined,
       });
 
@@ -854,10 +835,10 @@ export async function diagnoseConnection(
         id: 'parked_task',
         group: 'ready',
         status: parked ? 'warn' : 'ok',
-        evidence: parked ? `een onderbroken maaibeurt staat geparkeerd (status ${ws})`
-                         : 'geen geparkeerde taak',
+        evidence: parked ? T`een onderbroken maaibeurt staat geparkeerd (status ${ws})`
+                         : T`geen geparkeerde taak`,
         action: parked
-          ? 'de firmware weigert een nieuwe start zolang deze er staat; hervat hem of beëindig de sessie'
+          ? T`de firmware weigert een nieuwe start zolang deze er staat; hervat hem of beëindig de sessie`
           : undefined,
       });
 
@@ -866,9 +847,9 @@ export async function diagnoseConnection(
         id: 'frame',
         group: 'ready',
         status: unvalidated ? 'fail' : 'ok',
-        evidence: unvalidated ? 'het kaartframe is nog niet gecontroleerd na een herstel'
-                              : 'kaartframe gecontroleerd',
-        action: unvalidated ? 'anker de maaier opnieuw op het laadstation voor je gaat maaien'
+        evidence: unvalidated ? T`het kaartframe is nog niet gecontroleerd na een herstel`
+                              : T`kaartframe gecontroleerd`,
+        action: unvalidated ? T`anker de maaier opnieuw op het laadstation voor je gaat maaien`
                             : undefined,
       });
     }
@@ -889,14 +870,14 @@ export async function diagnoseConnection(
       id: 'mower_login',
       group: 'mower',
       status: 'skipped',
-      evidence: 'stock firmware heeft geen SSH, dus hier valt niets te lezen',
+      evidence: T`stock firmware heeft geen SSH, dus hier valt niets te lezen`,
     });
   } else if (input.probeNetwork === false || !reach.deviceIp) {
     push({
       id: 'mower_login',
       group: 'mower',
       status: 'skipped',
-      evidence: reach.deviceIp ? 'niet gepeild' : 'geen adres bekend',
+      evidence: reach.deviceIp ? T`niet gepeild` : T`geen adres bekend`,
     });
   } else {
     const m = await probe.mower(reach.deviceIp);
@@ -905,12 +886,11 @@ export async function diagnoseConnection(
         id: 'mower_login',
         group: 'mower',
         status: 'warn',
-        evidence: `kan niet inloggen op ${reach.deviceIp}: ${m.error ?? 'onbekende reden'}`,
-        action: 'zonder toegang tot de maaier zelf blijft de diagnose bij wat van '
-              + 'buitenaf te zien is',
+        evidence: T`kan niet inloggen op ${reach.deviceIp}: ${m.error ?? 'onbekende reden'}`,
+        action: T`zonder toegang tot de maaier zelf blijft de diagnose bij wat van buitenaf te zien is`,
       });
     } else {
-      push({ id: 'mower_login', group: 'mower', status: 'ok', evidence: `ingelogd op ${reach.deviceIp}` });
+      push({ id: 'mower_login', group: 'mower', status: 'ok', evidence: T`ingelogd op ${reach.deviceIp}` });
 
       // mqtt_node is de firmware-stack. Onze eigen scripts kunnen prima draaien
       // terwijl deze zwijgt, en dan lijkt alles in orde terwijl er niets werkt.
@@ -919,9 +899,8 @@ export async function diagnoseConnection(
           id: 'mqtt_node',
           group: 'mower',
           status: 'fail',
-          evidence: 'mqtt_node draait niet',
-          action: 'zonder dit proces stuurt de maaier geen enkele status; '
-                + 'herstart hem met set_server_urls.sh --restart-mqtt',
+          evidence: T`mqtt_node draait niet`,
+          action: T`zonder dit proces stuurt de maaier geen enkele status; herstart hem met set_server_urls.sh --restart-mqtt`,
         });
       } else if (!m.mqttNodeConnected) {
         const uren = m.mqttNodeUptimeS != null ? Math.round(m.mqttNodeUptimeS / 3600) : null;
@@ -929,13 +908,17 @@ export async function diagnoseConnection(
           id: 'mqtt_node',
           group: 'mower',
           status: 'fail',
-          evidence: `mqtt_node draait${uren != null ? ` al ${uren} uur` : ''} maar heeft geen `
-                  + `verbinding met de broker${m.mqttNetErrors > 0 ? `, ${m.mqttNetErrors} netwerkfouten in zijn log` : ''}`,
-          action: 'hij is bij het opstarten blijven hangen en komt daar niet zelf uit; '
-                + 'herstart hem met set_server_urls.sh --restart-mqtt',
+          evidence: uren != null
+            ? m.mqttNetErrors > 0
+              ? T`mqtt_node draait al ${uren} uur maar heeft geen verbinding met de broker, ${m.mqttNetErrors} netwerkfouten in zijn log`
+              : T`mqtt_node draait al ${uren} uur maar heeft geen verbinding met de broker`
+            : m.mqttNetErrors > 0
+              ? T`mqtt_node draait maar heeft geen verbinding met de broker, ${m.mqttNetErrors} netwerkfouten in zijn log`
+              : T`mqtt_node draait maar heeft geen verbinding met de broker`,
+          action: T`hij is bij het opstarten blijven hangen en komt daar niet zelf uit; herstart hem met set_server_urls.sh --restart-mqtt`,
         });
       } else {
-        push({ id: 'mqtt_node', group: 'mower', status: 'ok', evidence: 'mqtt_node verbonden met de broker' });
+        push({ id: 'mqtt_node', group: 'mower', status: 'ok', evidence: T`mqtt_node verbonden met de broker` });
       }
 
       // Het serveradres waar mqtt_node op afgaat. Een cloudnaam werkt alleen
@@ -946,13 +929,12 @@ export async function diagnoseConnection(
         group: 'mower',
         status: !m.hasSn ? 'fail' : cloudName ? 'warn' : 'ok',
         evidence: !m.hasSn
-          ? 'json_config.json mist het serienummer'
-          : `mqtt-adres in json_config.json: ${m.mqttAddr ?? 'leeg'}`,
+          ? T`json_config.json mist het serienummer`
+          : T`mqtt-adres in json_config.json: ${m.mqttAddr ?? 'leeg'}`,
         action: !m.hasSn
-          ? 'zonder serienummer kan mqtt_node zich niet aanmelden'
+          ? T`zonder serienummer kan mqtt_node zich niet aanmelden`
           : cloudName
-          ? 'dit is het cloudadres; het werkt alleen zolang je DNS het omleidt naar '
-          + 'je eigen server. Een IP is betrouwbaarder'
+          ? T`dit is het cloudadres; het werkt alleen zolang je DNS het omleidt naar je eigen server. Een IP is betrouwbaarder`
           : undefined,
       });
 
@@ -964,14 +946,12 @@ export async function diagnoseConnection(
         group: 'mower',
         status: m.mdnsResolves ? 'ok' : 'warn',
         evidence: m.mdnsResolves
-          ? 'de maaier vindt de server zelf via opennova.local'
-          : `de maaier vindt opennova.local niet (server: ${netDesc})`,
+          ? T`de maaier vindt de server zelf via opennova.local`
+          : T`de maaier vindt opennova.local niet (server: ${netDesc})`,
         action: m.mdnsResolves ? undefined
-          : 'hij leunt nu volledig op je DNS-omleiding. Automatisch ontdekken werkt '
-          + (net.bridged
-             ? 'niet omdat de container multicast niet naar het thuisnetwerk krijgt; '
-             + 'host-netwerk of een mDNS-reflector lost dat op'
-             : 'pas als de server zich op het netwerk adverteert'),
+          : net.bridged
+          ? T`hij leunt nu volledig op je DNS-omleiding. Automatisch ontdekken werkt niet omdat de container multicast niet naar het thuisnetwerk krijgt; host-netwerk of een mDNS-reflector lost dat op`
+          : T`hij leunt nu volledig op je DNS-omleiding. Automatisch ontdekken werkt pas als de server zich op het netwerk adverteert`,
       });
 
       if (m.skippedConfigUpdate) {
@@ -979,17 +959,21 @@ export async function diagnoseConnection(
           id: 'server_ip_file',
           group: 'mower',
           status: 'warn',
-          evidence: `set_server_urls sloeg de config-update over${m.mdnsResolves ? '' : ', opennova.local lost op de maaier niet op'}`
-                  + `${m.serverIp ? '' : ' en /userdata/lfi/server_ip.txt bestaat niet'}`,
-          action: 'zet het serveradres in /userdata/lfi/server_ip.txt, dan vult het '
-                + 'script json_config.json bij de volgende boot alsnog',
+          evidence: !m.mdnsResolves
+            ? m.serverIp
+              ? T`set_server_urls sloeg de config-update over, opennova.local lost op de maaier niet op`
+              : T`set_server_urls sloeg de config-update over, opennova.local lost op de maaier niet op en /userdata/lfi/server_ip.txt bestaat niet`
+            : m.serverIp
+              ? T`set_server_urls sloeg de config-update over`
+              : T`set_server_urls sloeg de config-update over en /userdata/lfi/server_ip.txt bestaat niet`,
+          action: T`zet het serveradres in /userdata/lfi/server_ip.txt, dan vult het script json_config.json bij de volgende boot alsnog`,
         });
       } else {
         push({
           id: 'server_ip_file',
           group: 'mower',
           status: 'ok',
-          evidence: m.serverIp ? `laatst bekende server ${m.serverIp}` : 'config-update liep door',
+          evidence: m.serverIp ? T`laatst bekende server ${m.serverIp}` : T`config-update liep door`,
         });
       }
 
@@ -998,10 +982,10 @@ export async function diagnoseConnection(
         group: 'mower',
         status: m.extendedCommandsRunning ? 'ok' : 'warn',
         evidence: m.extendedCommandsRunning
-          ? 'extended_commands draait'
-          : 'extended_commands draait niet',
+          ? T`extended_commands draait`
+          : T`extended_commands draait niet`,
         action: m.extendedCommandsRunning ? undefined
-          : 'zonder dit script werken de OpenNova-commando\'s en de RTK-telemetrie niet',
+          : T`zonder dit script werken de OpenNova-commando's en de RTK-telemetrie niet`,
       });
     }
   }
@@ -1016,9 +1000,10 @@ export async function diagnoseConnection(
   const summary = blocking
     ? blocking.evidence
     : warnings.length === 0
-    ? 'geen blokkade gevonden, alles staat goed'
-    : `geen blokkade gevonden, wel ${warnings.length} aandachtspunt`
-      + `${warnings.length === 1 ? '' : 'en'}: ${warnings.map(w => w.id).join(', ')}`;
+    ? T`geen blokkade gevonden, alles staat goed`
+    : warnings.length === 1
+    ? T`geen blokkade gevonden, wel 1 aandachtspunt: ${warnings.map(w => w.id).join(', ')}`
+    : T`geen blokkade gevonden, wel ${warnings.length} aandachtspunten: ${warnings.map(w => w.id).join(', ')}`;
 
   return {
     sn,
