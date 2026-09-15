@@ -21,6 +21,7 @@ import { userRepo, equipmentRepo, deviceRepo, mapRepo } from '../db/repositories
 import { isSetupComplete, invalidateSetupCache } from '../middleware/setupGuard.js';
 import { importCloudWorkRecords } from '../services/cloudWorkRecordsImport.js';
 import { markFrameUnvalidated } from '../services/frameValidation.js';
+import { SERVER_VERSION } from '../services/serverVersion.js';
 // LFI cloud helpers were extracted to `src/services/lfiCloud.ts` on 2026-04-23
 // so cloud-api routes can import them without reaching into `routes/setup.ts`
 // (the cloud-api freeze forbids that direction). Re-export here so existing
@@ -934,9 +935,7 @@ setupRouter.get('/health', async (_req: Request, res: Response) => {
     });
   } catch { /* not RPi or no leases yet */ }
 
-  // Read version
-  let version = '?';
-  try { const { readFileSync } = await import('fs'); version = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).version; } catch { /* ignore */ }
+  const version = SERVER_VERSION;
 
   res.json({
     server: 'running',

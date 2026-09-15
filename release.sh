@@ -44,16 +44,20 @@ export TEST_HTTP_TRACE=1 TEST_HTTP_TRACE_FILE="/tmp/novabot-test-http-trace-$(da
 NEW=$(date +"%Y.%m%d.%H%M")
 echo "Version: $NEW"
 
-# Update package.json
-CURRENT=$(node -p "require('./server/package.json').version")
-sed -i '' "s/\"version\": \"$CURRENT\"/\"version\": \"$NEW\"/" server/package.json
-
 # Release notes voor de dashboard-popup: commits sinds de vorige tag,
-# gegroepeerd op Dashboard/App/Admin/Firmware/Server. Bakt mee in de image.
+# gegroepeerd op Dashboard/App/Admin/Firmware/Server. Bakt mee in de image, en
+# draagt ook het versienummer: de server leest het daaruit.
+#
+# server/package.json wordt NIET meer gebumpt. Dat is het bestand dat de
+# Dockerfile vlak vóór `npm ci` kopieert, in twee stages, dus een versiebump
+# gooide bij elke release de dependency-cache weg voor beide platforms. Gemeten
+# op 15-09-2026: de beta's ervóór bouwden in vier minuten met npm ci zes van de
+# zes keer gecached, de release erna miste en `npm ci` alleen al kostte 863 s
+# onder arm64-emulatie.
 node scripts/generate-release-notes.mjs --new "$NEW"
 
-# Commit version bump + notes
-git add server/package.json server/release-notes.json
+# Commit notes
+git add server/release-notes.json
 git commit -m "release: v$NEW"
 git tag "v$NEW"
 git push && git push --tags

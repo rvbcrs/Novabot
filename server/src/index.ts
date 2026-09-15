@@ -9,21 +9,8 @@ import { initProxyLogger } from './proxy/proxyLogger.js';
 // Start proxy logger VOOR alle andere imports — vangt alle console output op
 initProxyLogger();
 
-// Read version from package.json so the docker container log advertises which
-// release is running. Resolved relative to this file so it works whether the
-// server runs from src/ (ts-node), dist/ (compiled), or /app/server in Docker.
-const SERVER_VERSION = (() => {
-  for (const candidate of [
-    resolvePath(__dirname, '../package.json'),
-    resolvePath(__dirname, '../../package.json'),
-  ]) {
-    try {
-      const pkg = JSON.parse(readFileSync(candidate, 'utf8')) as { version?: string };
-      if (pkg.version) return pkg.version;
-    } catch { /* try next */ }
-  }
-  return 'unknown';
-})();
+// Which release is running, so the container log says what it is serving.
+import { SERVER_VERSION } from './services/serverVersion.js';
 
 console.log('');
 console.log('═══════════════════════════════════════════════════════════');

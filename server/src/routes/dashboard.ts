@@ -111,14 +111,10 @@ import { connectionEventRepo } from '../db/repositories/index.js';
 
 export const dashboardRouter = Router();
 
-// Running server version (read once from package.json). Exposed on this OPEN
-// router so the dashboard header can show which build is live without admin auth.
-let DASHBOARD_SERVER_VERSION = '?';
-try {
-  DASHBOARD_SERVER_VERSION = JSON.parse(readFileSync(path.join(__dirname, '../../package.json'), 'utf8')).version;
-} catch { /* ignore */ }
+// Exposed on this OPEN router so the dashboard header can show which build is
+// live without admin auth.
 dashboardRouter.get('/version', (_req: Request, res: Response) => {
-  res.json({ version: DASHBOARD_SERVER_VERSION });
+  res.json({ version: SERVER_VERSION });
 });
 
 // Release notes per release, gegroepeerd op Dashboard/App/Admin/Firmware/
@@ -6211,6 +6207,7 @@ dashboardRouter.post('/error/:sn/clear', (req: Request, res: Response) => {
 // ── Camera proxy ──────────────────────────────────────────────────────────────
 
 import http from 'http';
+import { SERVER_VERSION } from '../services/serverVersion.js';
 
 // GET /api/dashboard/camera/:sn/info — retourneert directe maaier camera URLs
 // App gebruikt dit om direct met de maaier te verbinden (geen proxy/Cloudflare).

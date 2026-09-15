@@ -127,12 +127,7 @@ const walkerBundlesDir = process.env.WALKER_BUNDLES_PATH ?? path.resolve(
 try { fs.mkdirSync(walkerBundlesDir, { recursive: true }); } catch { /* ignore — handler will throw on write */ }
 
 
-// Read version once at startup
-import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
-const __dirname_admin = dirname(fileURLToPath(import.meta.url));
-let SERVER_VERSION = '?';
-try { SERVER_VERSION = JSON.parse(fs.readFileSync(join(__dirname_admin, '../../package.json'), 'utf8')).version; } catch { /* ignore */ }
+import { SERVER_VERSION } from '../services/serverVersion.js';
 
 // GET /api/admin-status/overview
 adminStatusRouter.get('/overview', (_req: AuthRequest, res: Response) => {
