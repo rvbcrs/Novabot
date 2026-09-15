@@ -6508,7 +6508,10 @@ async function deleteMap(sn, mapId, mapName) {
       var body = {};
       try { body = await r.json(); } catch (_) {}
       var reden = body.error || 'De maaier weigerde het wissen.';
-      if (!(await appConfirm(reden + '\n\nAlleen uit de server verwijderen (forceren)?',
+      // Dubbel escapen: deze pagina is één TS-templateliteral, en een enkele \n
+      // wordt al bij het genereren een echte regelovergang midden in de
+      // JS-string. Dat brak het hele script en gaf een zwart admin panel.
+      if (!(await appConfirm(reden + '\\n\\nAlleen uit de server verwijderen (forceren)?',
                              { destructive: true, okText: 'Forceren' }))) return;
       r = await fetch('/api/dashboard/maps/' + encodeURIComponent(sn) + '/'
                       + encodeURIComponent(mapId) + '?force=1',
