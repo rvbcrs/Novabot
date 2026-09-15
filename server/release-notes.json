@@ -1,6 +1,25 @@
 {
   "releases": [
     {
+      "version": "2026.0915.2240",
+      "date": "2026-09-15",
+      "sections": {
+        "dashboard": [
+          "The diagnosis keeps its title and close button in view"
+        ],
+        "admin": [
+          "No Dutch left in the panel outside its help popup",
+          "The beta firmware warning follows the panel language",
+          "The diagnosis panel names its steps instead of printing ids"
+        ],
+        "server": [
+          "A device is judged on its newest connection, not its first",
+          "Stop diagnosing a charging station as if it were a mower",
+          "The diagnosis stops crying wolf on a healthy stock setup"
+        ]
+      }
+    },
+    {
       "version": "2026.0915.1856",
       "date": "2026-09-15",
       "sections": {
@@ -191,38 +210,6 @@
           "Harden BLE mapping recovery and preserve map selection identity",
           "SIMULATE_STOCK_FIRMWARE test-knop voor de firmware-gate",
           "Centrale firmware-gate voor alle extended-only routes"
-        ]
-      }
-    },
-    {
-      "version": "2026.0907.1834",
-      "date": "2026-09-07",
-      "sections": {
-        "dashboard": [
-          "Kaartbewerking op stock firmware eerlijk weigeren",
-          "Release-notes popup boven de Leaflet-kaart (z-50 → z-9999)",
-          "Release-notes popup naar body geportald",
-          "Release notes popup naast het versienummer",
-          "Gemiste punten subtieler (radius 2.5, 40%, geen rand)"
-        ],
-        "app": [
-          "Decode stock BLE acknowledgements and anchor offline mapping",
-          "Restore offline BLE mapping preview and save flow",
-          "BLE frame-assembler crashte op ontbrekende Buffer in Hermes",
-          "Kaart-hersync na offline BLE-karteren via de app, niet via de server",
-          "BLE-karteren werkt zonder WiFi/server; kaart synct vanzelf na herverbinden",
-          "BLE-joystick stapelt geen verouderde moves meer op",
-          "Eigen APK-hashcheck verwijderd — de installer is de verificatie"
-        ],
-        "server": [
-          "Maaier bleef in MAPPING-stand staan na kaart verwijderen",
-          "Kaart verwijderen duwde geen DB-ZIP meer terug naar de maaier",
-          "App-notes-filter matcht ook samengestelde scopes zoals (app+server)",
-          "Unzip ontbrak in de image — elke maaier-kaartupload faalde stil",
-          "Release-notes.json naar de runtime-stage",
-          "Release-notes COPY zonder glob-truc — bestand is gecommit en de Dockerfile-test eist letterlijke paden",
-          "Terugrit na afmaken + Low power laadpauze correct herkend",
-          "Home Assistant lawn_mower entiteit (start/pauze/dock + activity)"
         ]
       }
     }
