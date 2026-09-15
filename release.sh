@@ -105,6 +105,18 @@ docker compose down 2>/dev/null
 docker compose up -d 2>/dev/null
 
 echo ""
+
+# Buildkit bewaart elke laag die ooit gebouwd is, ook de allang vervangen. Op
+# 15-09-2026 stond er 26,85 GB waarvan 21,62 GB opruimbaar, en dat is dezelfde
+# opgelopen builder die eerder het geheugen opat. Dus een plafond, geen
+# leegmaakactie: de npm ci-lagen zijn juist wat een build snel houdt en kosten
+# onder arm64-emulatie veertien minuten om opnieuw te maken. Buildkit gooit bij
+# een ruimtedoel de minst recent gebruikte records eerst weg.
+# Achteraf, zodat het nooit de build vertraagt waar je op staat te wachten.
+echo "Build-cache begrenzen tot ${BUILD_CACHE_MAX:-12GB}..."
+docker buildx prune --builder multiplatform-builder -f \
+  --max-used-space "${BUILD_CACHE_MAX:-12GB}" >/dev/null 2>&1 || true
+
 echo "Released v$NEW"
 echo "  Docker: rvbcrs/opennova:latest + rvbcrs/opennova:$NEW + rvbcrs/opennova:beta"
 echo "  Local container restarted"
