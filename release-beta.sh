@@ -46,10 +46,16 @@ docker run --rm --platform "linux/$(uname -m | sed 's/x86_64/amd64/;s/aarch64/ar
   -e "import('@huggingface/transformers').then(()=>{console.log('smoke OK');process.exit(0)}).catch(e=>{console.error('smoke FAALT:',e.message);process.exit(1)})"
 
 echo "Building + pushing rvbcrs/opennova:beta (amd64 + arm64)..."
+# Tijdstempels in de gebouwde lagen normaliseren (buildkit: rewrite-timestamp
+# op de image-output, gestuurd door SOURCE_DATE_EPOCH). Zonder dit kreeg de
+# node_modules-laag bij elke npm ci een nieuwe digest en haalde iedere
+# gebruiker bij iedere release 353 MB opnieuw op, ook als er niets in
+# veranderd was. Zie de deps-stage in de Dockerfile voor de andere helft.
+export SOURCE_DATE_EPOCH=0
 docker buildx build --platform linux/amd64,linux/arm64 \
   --builder multiplatform-builder \
   -t "rvbcrs/opennova:beta" \
-  --push .
+  --output type=image,push=true,rewrite-timestamp=true .
 
 echo ""
 echo "Pushed rvbcrs/opennova:beta"

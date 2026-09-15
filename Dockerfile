@@ -31,14 +31,24 @@ RUN cd dashboard && npm run build
 # ── Stage 2: Production dependencies (lean) ──────────────────────────────────
 FROM node:20-slim AS deps
 
-RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ && rm -rf /var/lib/apt/lists/*
+# Logs en de ldconfig-cache verschillen per run; alles verder is identiek.
+RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ && rm -rf /var/lib/apt/lists/* /var/log/* /var/cache/ldconfig/aux-cache
 
 WORKDIR /app
 
 COPY server/package.json server/package-lock.json* server/
 
 # Install production deps only (no typescript, tsx, @types, etc.)
-RUN cd server && npm ci --omit=dev
+# Reproduceerbaar: de laag die iedere gebruiker bij elke release binnenhaalt.
+# Twee installs uit dezelfde lockfile verschilden in precies zeven bestanden
+# (testfixtures van help-me, een node-gyp-Makefile van node-pty) plus npm's
+# eigen cache en logs. Opruimen moet in DEZE RUN: een latere rm verandert de
+# digest van een eerdere laag niet. Samen met rewrite-timestamp in release.sh
+# is de laag byte-identiek, ook als npm ci opnieuw draait. Bewezen 15-09-2026:
+# twee builds vanaf nul, dezelfde digest.
+RUN cd server && npm ci --omit=dev && \
+    rm -rf node_modules/help-me/fixture /root/.npm && \
+    find node_modules -path '*/build/*' \( -name Makefile -o -name '*.mk' -o -name config.gypi \) -delete
 
 # Remove packages not needed in Docker:
 # - @stoprocent/noble + usb + @serialport = BLE (no adapter in Docker)
