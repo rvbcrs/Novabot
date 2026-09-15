@@ -2,11 +2,17 @@
 """Een upgrade mag de seam-fix van een bestaande maaier niet uitzetten.
 
 De daemon in de repo is opt-in en staat standaard UIT. De variant die op
-LFIN2231000633 draait is ouder dan de schakelaar in de app en staat altijd aan;
-die maaier heeft dus geen seam_fix.json. Zonder migratie zet een release zijn
-seam-fix uit, blijft de bezette streep die de firmware binnen het gazon tekent
-staan, en antwoordt nav2 op elk doel met "GridBased_AStar failed to generate a
-valid path" tot de maaier terugrijdt naar het dock. Live gebeurd 2026-06-22.
+LFIN2231000633 draait is ouder dan de schakelaar in de app en staat altijd aan,
+met de randmarge hardcoded als EDGE_MARGIN_M; die maaier heeft dus geen
+seam_fix.json. Zonder migratie zet een release zijn seam-fix uit, blijft de
+bezette streep die de firmware binnen het gazon tekent staan, en antwoordt nav2
+op elk doel met "GridBased_AStar failed to generate a valid path" tot de maaier
+terugrijdt naar het dock. Live gebeurd 2026-06-22.
+
+De migratie zit in het seam-fix startblok van run_novabot.sh, niet in een
+DEBIAN/preinst: de OTA doet `dpkg -x` en draait geen dpkg-scripts. Na een OTA
+staat de vorige firmware in /root/novabot.bak, daar wordt de oude variant
+herkend.
 
 Run: python3 research/__tests__/test_seam_fix_migration.py
 """
@@ -22,6 +28,8 @@ DAEMON = os.path.join(HERE, "..", "seam_fix_daemon.py")
 
 ALTIJD_AAN = '''#!/usr/bin/env python3
 """De oude variant: geen schakelaar, seam-fix loopt altijd."""
+OBSTACLE_INFLATE_M = 0.10
+EDGE_MARGIN_M = 0.15         # erode each work polygon inward this much
 def fix_one(base):
     pass
 def main():
@@ -37,42 +45,57 @@ def check(name, ok, detail=""):
     print(f"{'ok  ' if ok else 'FAIL'} {name}" + (f" | {detail}" if detail else ""))
 
 
-def preinst_script():
+def start_block():
     src = open(BUILD).read()
-    m = re.search(r"cat > \"\$WORK_DIR/DEBIAN/preinst\" << 'PREINST'\n(.*?)\nPREINST\n", src, re.S)
-    assert m, "preinst niet gevonden in build_custom_firmware.sh"
+    m = re.search(r"cat > \"\$SEAM_START_BLOCK\" << 'SEAMEOF'\n(.*?)\nSEAMEOF\n", src, re.S)
+    assert m, "seam-fix startblok niet gevonden in build_custom_firmware.sh"
     return m.group(1)
 
 
 def draai(root, oude_daemon: str | None, bestaande_cfg: str | None):
-    """Draai het preinst-script tegen een nagebootste maaier."""
-    script = preinst_script()
-    # De paden in het script zijn absoluut; hier onder een tijdelijke root zetten.
+    """Draai het startblok tegen een nagebootste maaier ná een OTA: de vorige
+    firmware staat in /root/novabot.bak, de nieuwe daemon staat er (nog) niet,
+    zodat het blok alleen migreert en niets start."""
+    script = start_block()
+    # De paden in het blok zijn absoluut; hier onder een tijdelijke root zetten.
     script = script.replace("/userdata/lfi", f"{root}/userdata/lfi")
-    script = script.replace("/root/novabot/scripts", f"{root}/root/novabot/scripts")
-    os.makedirs(f"{root}/root/novabot/scripts", exist_ok=True)
+    script = script.replace("/root/novabot", f"{root}/root/novabot")
+    os.makedirs(f"{root}/root/novabot.bak/scripts", exist_ok=True)
+    os.makedirs(f"{root}/log", exist_ok=True)
     if oude_daemon is not None:
-        open(f"{root}/root/novabot/scripts/seam_fix_daemon.py", "w").write(oude_daemon)
+        open(f"{root}/root/novabot.bak/scripts/seam_fix_daemon.py", "w").write(oude_daemon)
     if bestaande_cfg is not None:
         os.makedirs(f"{root}/userdata/lfi", exist_ok=True)
         open(f"{root}/userdata/lfi/seam_fix.json", "w").write(bestaande_cfg)
-    r = subprocess.run(["sh", "-c", script], capture_output=True, text=True)
+    r = subprocess.run(["sh", "-c", script], capture_output=True, text=True,
+                       env={**os.environ, "LOGS_PATH": f"{root}/log"})
     assert r.returncode == 0, r.stderr
     cfg = f"{root}/userdata/lfi/seam_fix.json"
-    return (open(cfg).read() if os.path.exists(cfg) else None), r.stdout
+    log = f"{root}/log/seam_fix_daemon.log"
+    return ((open(cfg).read() if os.path.exists(cfg) else None),
+            (open(log).read() if os.path.exists(log) else ""))
 
 
 def test_always_on_mower_keeps_its_seam_fix():
     with tempfile.TemporaryDirectory() as root:
-        cfg, out = draai(root, ALTIJD_AAN, None)
+        cfg, log = draai(root, ALTIJD_AAN, None)
         check("altijd-aan maaier krijgt een config", cfg is not None)
         check("en die staat aan", bool(cfg) and '"enabled": true' in cfg, (cfg or "").strip())
-        check("en zegt wat hij deed", "overgenomen" in out, out.strip())
+        check("en neemt de hardcoded randmarge over (0.15 m -> 15 cm)",
+              bool(cfg) and '"edge_margin_cm": 15' in cfg, (cfg or "").strip())
+        check("en zegt wat hij deed", "overgenomen" in log, log.strip())
+
+
+def test_an_old_daemon_without_margin_gets_zero():
+    with tempfile.TemporaryDirectory() as root:
+        cfg, _ = draai(root, ALTIJD_AAN.replace("EDGE_MARGIN_M = 0.15", "X = 1"), None)
+        check("oude daemon zonder EDGE_MARGIN_M -> marge 0",
+              cfg is not None and '"edge_margin_cm": 0' in cfg, (cfg or "").strip())
 
 
 def test_a_fresh_mower_stays_default_off():
-    """Een maaier zonder seam-fix daemon hoort niets te krijgen: de schakelaar
-    staat standaard uit en dat blijft zo."""
+    """Een maaier zonder vorige firmware (verse flash) hoort niets te krijgen:
+    de schakelaar staat standaard uit en dat blijft zo."""
     with tempfile.TemporaryDirectory() as root:
         cfg, _ = draai(root, None, None)
         check("verse maaier krijgt geen config", cfg is None)
@@ -86,8 +109,8 @@ def test_an_existing_choice_is_never_overwritten():
 
 
 def test_a_mower_already_on_the_opt_in_daemon_is_left_alone():
-    """Draait de opt-in versie al, dan is de schakelaar al in gebruik en mag de
-    upgrade er niet alsnog een aan-stand in schrijven."""
+    """Was de vorige firmware al de opt-in versie, dan is de schakelaar al in
+    gebruik en mag de upgrade er niet alsnog een aan-stand in schrijven."""
     with tempfile.TemporaryDirectory() as root:
         cfg, _ = draai(root, open(DAEMON).read(), None)
         check("opt-in maaier krijgt geen config", cfg is None)
@@ -103,12 +126,21 @@ def test_the_repo_daemon_really_is_the_opt_in_one():
           'c.get("enabled", False)' in src)
 
 
+def test_no_dpkg_maintainer_scripts():
+    """Die draaien via OTA niet; wie ze terugzet, denkt dat ze werken."""
+    src = open(BUILD).read()
+    check("geen DEBIAN/preinst in het pakket", 'DEBIAN/preinst" <<' not in src)
+    check("geen DEBIAN/postinst in het pakket", 'DEBIAN/postinst" <<' not in src)
+
+
 def main():
     test_always_on_mower_keeps_its_seam_fix()
+    test_an_old_daemon_without_margin_gets_zero()
     test_a_fresh_mower_stays_default_off()
     test_an_existing_choice_is_never_overwritten()
     test_a_mower_already_on_the_opt_in_daemon_is_left_alone()
     test_the_repo_daemon_really_is_the_opt_in_one()
+    test_no_dpkg_maintainer_scripts()
     print(f"\n{sum(checks)}/{len(checks)} checks ok")
     return 0 if all(checks) else 1
 

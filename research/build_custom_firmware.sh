@@ -1750,6 +1750,15 @@ if [ -f "$EXT_SRC" ]; then
   # `run_novabot.sh start` (e.g. apt upgrade restarting systemd units) does
   # not leave two MQTT clients with the same client_id fighting for the
   # connection (issue #60 root-cause prevention).
+  # /root/start_ext.sh is de gedocumenteerde handmatige herstartroute (met ROS-env).
+  # Het pakket kan buiten /root/novabot niets neerzetten en de OTA (dpkg -x) draait
+  # geen dpkg-scripts, dus de symlink wordt hier bij elke start aangelegd. Een eigen,
+  # handmatig aangepaste start_ext.sh (geen symlink) blijft staan.
+  if [ -f "/root/novabot/scripts/start_ext.sh" ]; then
+      if [ ! -e /root/start_ext.sh ] || [ -L /root/start_ext.sh ]; then
+          ln -sf /root/novabot/scripts/start_ext.sh /root/start_ext.sh
+      fi
+  fi
   if [ -f "/root/novabot/scripts/extended_commands.py" ]; then
       pkill -f "/root/novabot/scripts/extended_commands.py" 2>/dev/null
       (sleep 12 && \
@@ -1833,9 +1842,9 @@ echo "[5h3/9] Seam-fix daemon toevoegen..."
 # is een val. Stond tot nu toe alleen op de maaiers waar hij ooit met de hand is
 # neergezet; na een verse flash bestond hij niet.
 # In scripts/ en niet in /root: data.tar.xz heeft een vlakke structuur die in
-# /root/novabot uitpakt, dus het pakket kan daarbuiten niets neerzetten. De
-# postinst legt /root/start_ext.sh aan als symlink, want dat is het pad dat
-# overal gedocumenteerd staat.
+# /root/novabot uitpakt, dus het pakket kan daarbuiten niets neerzetten. Het
+# startblok van extended_commands in run_novabot.sh legt /root/start_ext.sh aan
+# als symlink, want dat is het pad dat overal gedocumenteerd staat.
 EXT_START_SRC="$SCRIPT_DIR/start_ext.sh"
 if [ -f "$EXT_START_SRC" ]; then
     cp "$EXT_START_SRC" "$NOVABOT_ROOT/scripts/start_ext.sh"
@@ -1874,6 +1883,28 @@ if [ -f "$SEAM_SRC" ]; then
   # (occupied & inside work-polygon & geen obstakel -> free) + regenereert per-slot.
   # Voorkomt geblokkeerde return-home + onvolledig maaien tot de onzichtbare streep.
   # Zie research/documents/per-map-pgm-coverage-bug.md
+  #
+  # Migratie van de altijd-aan daemon. Die variant (ouder dan de schakelaar in de
+  # app, geen _read_config, marge hardcoded als EDGE_MARGIN_M) heeft geen
+  # seam_fix.json. De daemon hieronder is opt-in en staat standaard UIT, dus zonder
+  # migratie zet de upgrade de seam-fix stil uit: de bezette streep in het gazon
+  # blijft staan en nav2 antwoordt op elk doel met "GridBased_AStar failed to
+  # generate a valid path" tot de maaier terugrijdt naar het dock. Live gemeten op
+  # LFIN2231000633, 2026-06-22.
+  # Hier en niet in DEBIAN/preinst: de OTA doet `dpkg -x` en kopieert mappen, dpkg-
+  # scripts draaien dus nooit. Na een OTA staat de vorige firmware in
+  # /root/novabot.bak, daar is de oude variant nog te herkennen. Een verse maaier
+  # heeft die niet en blijft standaard uit; een bestaande keuze wordt nooit
+  # overschreven.
+  SEAM_CFG=/userdata/lfi/seam_fix.json
+  SEAM_OLD=/root/novabot.bak/scripts/seam_fix_daemon.py
+  if [ ! -f "$SEAM_CFG" ] && [ -f "$SEAM_OLD" ] && ! grep -q '_read_config' "$SEAM_OLD"; then
+      SEAM_MARGIN_M=$(sed -n 's/^EDGE_MARGIN_M *= *\([0-9.][0-9.]*\).*/\1/p' "$SEAM_OLD" | head -1)
+      SEAM_MARGIN_CM=$(awk -v m="${SEAM_MARGIN_M:-0}" 'BEGIN { printf "%d", m * 100 + 0.5 }')
+      mkdir -p /userdata/lfi
+      printf '{"enabled": true, "edge_margin_cm": %s}\n' "$SEAM_MARGIN_CM" > "$SEAM_CFG"
+      echo "seam-fix: altijd-aan instelling overgenomen in $SEAM_CFG (marge ${SEAM_MARGIN_CM} cm)" >> $LOGS_PATH/seam_fix_daemon.log
+  fi
   if [ -f "/root/novabot/scripts/seam_fix_daemon.py" ]; then
       pkill -f "/root/novabot/scripts/seam_fix_daemon.py" 2>/dev/null
       (python3 /root/novabot/scripts/seam_fix_daemon.py >> $LOGS_PATH/seam_fix_daemon.log 2>&1) &
@@ -2486,52 +2517,11 @@ Description: Novabot mower firmware ${VERSION}
  Custom build with SSH and local server URLs.
 CTRL
 
-# preinst: draag de seam-fix instelling over vóór de bestanden vervangen worden.
-#
-# Maaiers met de oude altijd-aan seam-fix daemon hebben geen seam_fix.json: die
-# build is ouder dan de schakelaar in de app. Dit pakket levert de opt-in versie,
-# die standaard UIT staat. Zonder deze migratie zet de upgrade hun seam-fix dus
-# stilletjes uit, wordt de bezette streep die de firmware binnen het gazon
-# tekent niet meer weggepoetst, en antwoordt nav2 op elk doel met
-# "GridBased_AStar failed to generate a valid path" tot de maaier het opgeeft en
-# terugrijdt naar het dock. Live gemeten op LFIN2231000633, 2026-06-22.
-#
-# preinst en niet postinst: hierna is het oude script overschreven en valt niet
-# meer te zien welke variant er stond.
-cat > "$WORK_DIR/DEBIAN/preinst" << 'PREINST'
-#!/bin/sh
-set -e
-CFG=/userdata/lfi/seam_fix.json
-OLD=/root/novabot/scripts/seam_fix_daemon.py
-# De altijd-aan variant heeft geen _read_config; de opt-in variant wel.
-if [ ! -f "$CFG" ] && [ -f "$OLD" ] && ! grep -q '_read_config' "$OLD"; then
-  mkdir -p /userdata/lfi
-  printf '{"enabled": true, "edge_margin_cm": 0}\n' > "$CFG"
-  echo "seam-fix: altijd-aan instelling overgenomen in $CFG"
-fi
-exit 0
-PREINST
-chmod 755 "$WORK_DIR/DEBIAN/preinst"
-
-# postinst: /root/start_ext.sh aanleggen. Het pakket zelf kan buiten
-# /root/novabot niets schrijven, maar dit is het pad dat in de projectkennis en
-# in elke herstartinstructie staat.
-cat > "$WORK_DIR/DEBIAN/postinst" << 'POSTINST'
-#!/bin/sh
-set -e
-TARGET=/root/novabot/scripts/start_ext.sh
-LINK=/root/start_ext.sh
-if [ -f "$TARGET" ]; then
-  # Alleen vervangen als er nog geen eigen versie staat die geen symlink is:
-  # een handmatig aangepaste start_ext.sh overschrijven zou stil gedrag wijzigen.
-  if [ ! -e "$LINK" ] || [ -L "$LINK" ]; then
-    ln -sf "$TARGET" "$LINK"
-    echo "start_ext.sh: $LINK wijst naar $TARGET"
-  fi
-fi
-exit 0
-POSTINST
-chmod 755 "$WORK_DIR/DEBIAN/postinst"
+# Geen DEBIAN/preinst of postinst: de maaier-OTA (ota_client_node) doet `dpkg -x`
+# en run_ota.sh kopieert daarna mappen om. dpkg-scripts draaien dus nooit via OTA
+# (dpkg -s mvp zegt op elke OTA-maaier "not installed"). Alles wat bij een
+# upgrade moet gebeuren staat in het start) blok van run_novabot.sh, met
+# /root/novabot.bak als de vorige firmware.
 
 # Bouw .deb (ar archief: debian-binary + control.tar.xz + data.tar.xz)
 echo "2.0" > "$WORK_DIR/debian-binary"
@@ -2607,6 +2597,8 @@ FW_PATHS=(
     "research/led_bridge.py"
     "research/firmware/STM32"
     "research/set_server_urls.sh"
+    "research/seam_fix_daemon.py"
+    "research/build_custom_firmware.sh"
 )
 
 if [ -n "${PREV_MTIME:-}" ]; then

@@ -54,10 +54,11 @@ def main():
         check("met een pool klein genoeg voor een tf-transform",
               bool(sizes) and min(sizes) <= 128, f"kleinste {min(sizes) if sizes else '?'}")
 
-    # De migratiehaken.
-    check("preinst zit in het pakket", 'DEBIAN/preinst' in build)
-    check("postinst zit in het pakket", 'DEBIAN/postinst' in build)
-    check("postinst legt /root/start_ext.sh aan", 'LINK=/root/start_ext.sh' in build)
+    # De migratiehaken zitten in run_novabot.sh; dpkg-scripts draaien via OTA niet.
+    check("startblok legt /root/start_ext.sh aan",
+          'ln -sf /root/novabot/scripts/start_ext.sh /root/start_ext.sh' in build)
+    check("startblok migreert de altijd-aan seam-fix",
+          'SEAM_OLD=/root/novabot.bak/scripts/seam_fix_daemon.py' in build)
 
     print(f"\n{sum(checks)}/{len(checks)} checks ok")
     return 0 if all(checks) else 1
