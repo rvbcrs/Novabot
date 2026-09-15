@@ -2327,11 +2327,13 @@ function escapeHtml(v) {
 async function diagnoseDevice(sn) {
   var overlay = document.createElement('div');
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px';
-  overlay.innerHTML = '<div style="background:#16213e;border:1px solid rgba(255,255,255,.12);border-radius:12px;max-width:560px;width:100%;max-height:85vh;overflow:auto;padding:18px">'
-    + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">'
+  // De doos scrollde in zijn geheel, dus bij een lange lijst verdwenen de titel
+  // en het kruisje naar boven. Kolom met een vaste kop en een scrollend lijf.
+  overlay.innerHTML = '<div style="background:#16213e;border:1px solid rgba(255,255,255,.12);border-radius:12px;max-width:560px;width:100%;max-height:85vh;display:flex;flex-direction:column;overflow:hidden">'
+    + '<div style="flex:none;display:flex;justify-content:space-between;align-items:center;padding:18px 18px 10px;border-bottom:1px solid rgba(255,255,255,.08)">'
     + '<strong style="color:#e5e7eb">Diagnose ' + sn + '</strong>'
     + '<span id="diagClose" style="cursor:pointer;color:#888;font-size:20px;line-height:1">&times;</span></div>'
-    + '<div id="diagBody" style="color:#aaa;font-size:13px">Checking\u2026</div></div>';
+    + '<div id="diagBody" style="flex:1;min-height:0;overflow:auto;color:#aaa;font-size:13px;padding:12px 18px 18px">Checking\u2026</div></div>';
   document.body.appendChild(overlay);
   var cleanup = function() { overlay.remove(); };
   overlay.querySelector('#diagClose').onclick = cleanup;

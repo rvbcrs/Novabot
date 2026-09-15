@@ -82,9 +82,11 @@ export function DiagnosisPanel({ sn, onClose }: { sn: string; onClose: () => voi
   return createPortal(
     <div className="fixed inset-0 z-[99999] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
+      {/* Kolom: de titel en de sluitknop blijven staan, alleen de lijst ertussen
+          scrollt. Eerder scrollde de hele doos en verdween de kop naar boven. */}
       <div className="relative bg-gray-900 border border-gray-700/50 rounded-2xl shadow-2xl
-                      max-w-lg w-full p-5 max-h-[85vh] overflow-y-auto">
-        <div className="flex items-center justify-between mb-3">
+                      max-w-lg w-full max-h-[85vh] flex flex-col overflow-hidden">
+        <div className="flex-none flex items-center justify-between px-5 pt-5 pb-3">
           <h2 className="text-white font-medium">
             {t('diagnose.title', 'Waarom komt hij niet online?')}
           </h2>
@@ -95,6 +97,7 @@ export function DiagnosisPanel({ sn, onClose }: { sn: string; onClose: () => voi
           </button>
         </div>
 
+        <div className="flex-1 min-h-0 overflow-y-auto px-5">
         {loading && !data && (
           <div className="flex items-center gap-2 text-sm text-zinc-400 py-6 justify-center">
             <Loader2 className="w-4 h-4 animate-spin" /> {t('diagnose.checking', 'Nakijken…')}
@@ -143,8 +146,10 @@ export function DiagnosisPanel({ sn, onClose }: { sn: string; onClose: () => voi
           </>
         )}
 
+        </div>
+
         <button onClick={onClose}
-                className="w-full mt-4 py-2 bg-white/10 hover:bg-white/15 text-gray-300 text-sm rounded-xl">
+                className="flex-none m-5 mt-3 py-2 bg-white/10 hover:bg-white/15 text-gray-300 text-sm rounded-xl">
           {t('common.close', 'Sluiten')}
         </button>
       </div>
