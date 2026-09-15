@@ -2337,6 +2337,39 @@ async function diagnoseDevice(sn) {
   overlay.querySelector('#diagClose').onclick = cleanup;
   overlay.onclick = function(e) { if (e.target === overlay) cleanup(); };
 
+  // Ruwe stap-id's als kop ("charger_crypto", "ble_mac") lezen als logregels.
+  // Zelfde namen als het dashboard, uit dezelfde i18n-bron overgenomen; de
+  // vertaallaag hieronder zet ze om naar de taal van het paneel.
+  var STEPS = {
+                 dns: "Name points here",
+                 network: "Network",
+                 wifi: "Wi-Fi",
+                 seen: "Ever connected",
+                 attempts: "Connection attempts",
+                 binding: "Binding",
+                 ble_mac: "BLE MAC",
+                 counterpart: "Counterpart",
+                 lora: "LoRa pair",
+                 client_conflict: "Duplicate client_id",
+                 encryption: "Readable messages",
+                 firmware: "Firmware",
+                 zone_limit: "Zone count",
+                 maps: "Work areas",
+                 rtk: "RTK position",
+                 fault: "Fault",
+                 frame: "Map frame",
+                 disk: "Disk space",
+                 mdns_service: "mDNS on port 5353",
+                 rival_broker: "Second MQTT broker",
+                 mapping_mode: "Mapping mode",
+                 parked_task: "Parked task",
+                 mower_login: "Access to the mower",
+                 mqtt_node: "mqtt_node",
+                 mower_config: "Server address on the mower",
+                 server_ip_file: "Stored server address",
+                 helpers: "OpenNova scripts",
+                 mdns_reach: "Finds the server on its own"
+  };
   var GROUPS = { server: 'Server', reach: 'Reachability', connect: 'Connection',
                  identity: 'Identity', pair: 'Charger and LoRa', firmware: 'Firmware',
                  mower: 'On the mower itself', ready: 'Ready to mow' };
@@ -2364,7 +2397,7 @@ async function diagnoseDevice(sn) {
         var ic = ICON[s.status] || ICON.unknown;
         html += '<div style="display:flex;gap:8px;padding:4px 0">'
           + '<span style="color:' + ic[1] + ';font-weight:700;width:14px;flex:none">' + ic[0] + '</span>'
-          + '<div><div style="color:#d1d5db;font-size:12px;font-weight:600">' + escapeHtml(s.id) + '</div>'
+          + '<div><div style="color:#d1d5db;font-size:12px;font-weight:600">' + escapeHtml(STEPS[s.id] || s.id) + '</div>'
           + '<div style="color:#9ca3af;font-size:11px" data-no-i18n>' + escapeHtml(s.evidence) + '</div>'
           + (s.action ? '<div style="color:#fbbf24;font-size:11px;margin-top:2px" data-no-i18n>\u2192 ' + escapeHtml(s.action) + '</div>' : '')
           + '</div></div>';
