@@ -33,7 +33,6 @@ const STEP_LABEL: Record<string, [string, string]> = {
   disk: ['diagnose.disk', 'Schijfruimte'],
   mdns_service: ['diagnose.mdnsService', 'mDNS op poort 5353'],
   rival_broker: ['diagnose.rivalBroker', 'Tweede MQTT-broker'],
-  charger_crypto: ['diagnose.chargerCrypto', 'Laderfirmware'],
   mapping_mode: ['diagnose.mappingMode', 'Karteermodus'],
   parked_task: ['diagnose.parkedTask', 'Geparkeerde taak'],
   mower_login: ['diagnose.mowerLogin', 'Toegang tot de maaier'],

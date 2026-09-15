@@ -647,35 +647,27 @@ export async function diagnoseConnection(
     }
   }
 
-  // De laderfirmware moet AES kennen: v0.4.0 wel, v0.3.6 niet, en de server
-  // versleutelt naar elk LFI-serienummer. Een oude lader krijgt dus berichten
-  // die hij niet kan lezen, zonder dat er ergens een fout verschijnt.
-  const chargerVer = eq?.charger_version ?? null;
-  if (!counterpartSn) {
-    push({ id: 'charger_crypto', group: 'pair', status: 'skipped', evidence: T`geen lader gekoppeld` });
-  } else if (!chargerVer) {
-    push({ id: 'charger_crypto', group: 'pair', status: 'unknown', evidence: T`laderversie onbekend` });
-  } else {
-    const m = chargerVer.match(/(\d+)\.(\d+)\.(\d+)/);
-    const tooOld = m ? (Number(m[1]) === 0 && Number(m[2]) < 4) : false;
-    push({
-      id: 'charger_crypto',
-      group: 'pair',
-      status: tooOld ? 'fail' : 'ok',
-      evidence: tooOld
-        ? T`laderfirmware ${chargerVer}, kent nog geen AES`
-        : T`laderfirmware ${chargerVer}`,
-      action: tooOld
-        ? T`de server versleutelt alles naar LFI-apparaten en deze lader kan dat niet lezen; werk hem bij naar v0.4.0`
-        : undefined,
-    });
-  }
-
   // 7. LoRa pair. Reuses the existing comparison rather than re-deriving it.
+  //
+  // Alleen te controleren op OpenNova-firmware: de maaierkant wordt opgevraagd
+  // over novabot/extended/<SN>, en dat topic bestaat op stock niet. Daar bleef
+  // het antwoord dus altijd uit en stond er een rood kruis met
+  // "missing-mower-cache" bij een lader die gewoon werkte.
+  const mowerVersionForLora = snap?.sw_version ?? eq?.mower_version ?? null;
+  const canReadLora = /custom|opennova/i.test(mowerVersionForLora ?? '');
   const pair = getLoraPair(sn);
+  const unreadOnly = pair !== null && !pair.ok
+    && pair.issues.every(i => i === 'missing-mower-cache' || i === 'missing-charger-cache');
   if (!pair) {
     push({ id: 'lora',
       group: 'pair', status: 'skipped', evidence: T`geen LoRa-paar om te controleren` });
+  } else if (!canReadLora) {
+    push({
+      id: 'lora',
+      group: 'pair',
+      status: 'skipped',
+      evidence: T`de LoRa-instellingen van de maaier zijn alleen op OpenNova-firmware uit te lezen`,
+    });
   } else if (pair.ok) {
     const c = pair.charger;
     push({
@@ -684,19 +676,21 @@ export async function diagnoseConnection(
       status: 'ok',
       evidence: T`adres ${c?.addr ?? '?'} kanaal ${c?.channel ?? '?'} aan beide kanten gelijk`,
     });
+  } else if (unreadOnly) {
+    // Nog niet gelezen is geen ongelijk paar.
+    push({
+      id: 'lora',
+      group: 'pair',
+      status: 'unknown',
+      evidence: T`de LoRa-instellingen zijn nog niet van beide apparaten gelezen`,
+    });
   } else {
-    const issues = pair.issues;
-    const mismatch = issues.includes('addr-mismatch') || issues.includes('channel-mismatch');
     push({
       id: 'lora',
       group: 'pair',
       status: 'fail',
-      evidence: mismatch
-        ? T`maaier ${pair.mower?.addr ?? '?'}/${pair.mower?.channel ?? '?'} tegen lader ${pair.charger?.addr ?? '?'}/${pair.charger?.channel ?? '?'}`
-        : issues.join(', '),
-      action: mismatch
-        ? T`adres en kanaal moeten IDENTIEK zijn aan beide kanten; koppel opnieuw via de app`
-        : T`de LoRa-instellingen zijn nog niet van beide apparaten gelezen`,
+      evidence: T`maaier ${pair.mower?.addr ?? '?'}/${pair.mower?.channel ?? '?'} tegen lader ${pair.charger?.addr ?? '?'}/${pair.charger?.channel ?? '?'}`,
+      action: T`adres en kanaal moeten IDENTIEK zijn aan beide kanten; koppel opnieuw via de app`,
     });
   }
 
@@ -759,7 +753,12 @@ export async function diagnoseConnection(
   }
 
   // ── Firmware ───────────────────────────────────────────────────────────
-  const version = snap?.sw_version ?? eq?.mower_version ?? null;
+  // Bij een lader stond hier de versie van de GEKOPPELDE MAAIER: eq draagt
+  // beide kanten, en mower_version was de enige bron. In het admin panel las
+  // dat als "deze lader draait v5.7.1 stock" (2026-09-15).
+  const version = deviceType === 'charger'
+    ? eq?.charger_version ?? null
+    : snap?.sw_version ?? eq?.mower_version ?? null;
   if (!version) {
     push({
       id: 'firmware',
@@ -812,14 +811,17 @@ export async function diagnoseConnection(
       // aan de stappen hierboven.
       const q = snap.rtk_fix_quality ?? snap.rtk_ok ?? '';
       const fixed = /fix/i.test(q) || q === '4';
+      // Niets ontvangen is niet hetzelfde als geen fix. Advies over vrij zicht
+      // op de hemel onder "geen RTK-status gemeld" leest als een diagnose van
+      // de ontvangst, terwijl er alleen nog geen meting binnen is.
       push({
         id: 'rtk',
         group: 'ready',
-        status: fixed ? 'ok' : 'warn',
-        evidence: !q ? T`geen RTK-status gemeld`
+        status: !q ? 'unknown' : fixed ? 'ok' : 'warn',
+        evidence: !q ? T`nog geen RTK-status ontvangen`
                 : snap.rtk_sat ? T`RTK-status ${q}, ${snap.rtk_sat} satellieten`
                 : T`RTK-status ${q}`,
-        action: fixed ? undefined
+        action: !q || fixed ? undefined
           : T`zonder RTK-fix is de positie te onnauwkeurig om te maaien; controleer het laadstation en of het zicht op de hemel heeft`,
       });
 
@@ -882,7 +884,7 @@ export async function diagnoseConnection(
   // Van buiten ziet dat er gezond uit, van binnen stond mqtt_node zeventien uur
   // vast in een verbindingslus terwijl een verbinding vanaf diezelfde maaier op
   // datzelfde moment in 0,05 s lukte.
-  const customFirmware = /custom|opennova/i.test(version ?? '');
+  const customFirmware = deviceType === 'mower' && /custom|opennova/i.test(version ?? '');
   if (deviceType !== 'mower') {
     // niets: de groep gaat over de maaier
   } else if (!customFirmware) {

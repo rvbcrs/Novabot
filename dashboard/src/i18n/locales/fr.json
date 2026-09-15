@@ -937,7 +937,6 @@
     "wifi": "Wi-Fi",
     "disk": "Espace disque",
     "rivalBroker": "Second broker MQTT",
-    "chargerCrypto": "Micrologiciel station",
     "mappingMode": "Mode cartographie",
     "parkedTask": "Tâche en pause",
     "groupServer": "Serveur",

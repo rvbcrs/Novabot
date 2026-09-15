@@ -554,26 +554,6 @@ describe('server side and blocked states', () => {
     expect(calls).toBe(2);
   });
 
-  it('flags a charger too old for AES', async () => {
-    // The server encrypts to every LFI serial. A v0.3.6 charger cannot read
-    // that, and nothing anywhere reports an error.
-    db.prepare(`INSERT OR IGNORE INTO users (id, app_user_id, email, password)
-                VALUES (?,?,?,?)`).run(4, 'u4', 'a@b.c', 'x');
-    db.prepare(`INSERT INTO equipment (equipment_id, mower_sn, charger_sn, mac_address, user_id, charger_version)
-                VALUES (?,?,?,?,?,?)`).run(`eq-${MOWER}`, MOWER, CHARGER, '50:41:1C:39:BD:C1', 'u4', 'v0.3.6');
-    const step = (await chain()).steps.find(s => s.id === 'charger_crypto')!;
-    expect(step.status).toBe('fail');
-    expect(step.action).toContain('v0.4.0');
-  });
-
-  it('accepts a charger on v0.4.0', async () => {
-    db.prepare(`INSERT OR IGNORE INTO users (id, app_user_id, email, password)
-                VALUES (?,?,?,?)`).run(5, 'u5', 'c@d.e', 'x');
-    db.prepare(`INSERT INTO equipment (equipment_id, mower_sn, charger_sn, mac_address, user_id, charger_version)
-                VALUES (?,?,?,?,?,?)`).run(`eq-${MOWER}`, MOWER, CHARGER, '50:41:1C:39:BD:C1', 'u5', 'v0.4.0');
-    expect((await chain()).steps.find(s => s.id === 'charger_crypto')!.status).toBe('ok');
-  });
-
   it('spots the mower stuck in mapping mode', async () => {
     const step = (await chain({ msg: 'x', task_mode: '2' })).steps.find(s => s.id === 'mapping_mode')!;
     expect(step.status).toBe('fail');
@@ -697,6 +677,54 @@ describe('a second broker it could not look for', () => {
       probes: probes({ rivalsBlind: true }),
     })).steps.find(s => s.id === 'rival_broker')!;
     expect(step.evidence).toContain('cannot probe');
+  });
+});
+
+describe('a charger reports its own firmware', () => {
+  // equipment draagt beide kanten. De firmware-stap nam altijd mower_version,
+  // dus een diagnose op de lader meldde de versie van de maaier ernaast: in het
+  // admin panel las dat als "deze lader draait v5.7.1 stock" (2026-09-15).
+  it('shows the charger version, not the paired mower version', async () => {
+    db.prepare(`INSERT OR IGNORE INTO users (id, app_user_id, email, password)
+                VALUES (?,?,?,?)`).run(11, 'u11', 'c@b.c', 'x');
+    db.prepare(`INSERT OR REPLACE INTO equipment
+                (equipment_id, mower_sn, charger_sn, mac_address, user_id, mower_version, charger_version)
+                VALUES (?,?,?,?,?,?,?)`)
+      .run(`eq-${MOWER}`, MOWER, CHARGER, '50:41:1C:39:BD:C1', 'u11', 'v5.7.1', 'v0.3.6');
+    withIp('192.168.1.9');
+    const step = (await diagnoseConnection(CHARGER, Date.now(), { snapshot: { msg: 'x' }, probes: probes() }))
+      .steps.find(s => s.id === 'firmware')!;
+    expect(step.evidence).toContain('v0.3.6');
+    expect(step.evidence).not.toContain('v5.7.1');
+  });
+});
+
+describe('LoRa is only readable on OpenNova firmware', () => {
+  // De maaierkant komt over novabot/extended/<SN>, een topic dat stock niet
+  // heeft. Een stock maaier gaf daardoor altijd een rood kruis met
+  // "missing-mower-cache" naast een lader die het gewoon deed (2026-09-15).
+  const withFirmware = (version: string | null) => {
+    db.prepare(`INSERT OR IGNORE INTO users (id, app_user_id, email, password)
+                VALUES (?,?,?,?)`).run(9, 'u9', 'l@b.c', 'x');
+    db.prepare(`INSERT OR REPLACE INTO equipment
+                (equipment_id, mower_sn, charger_sn, mac_address, user_id, mower_version)
+                VALUES (?,?,?,?,?,?)`).run(`eq-${MOWER}`, MOWER, CHARGER, '50:41:1C:39:BD:C1', 'u9', version);
+    withIp('192.168.1.9');
+    return diagnoseConnection(MOWER, Date.now(), { snapshot: { msg: 'x' }, probes: probes() })
+      .then(d => d.steps.find(s => s.id === 'lora')!);
+  };
+
+  it('does not judge the pair on stock firmware', async () => {
+    const step = await withFirmware('v5.7.1');
+    expect(step.status).toBe('skipped');
+    expect(step.evidence).toContain('alleen op OpenNova-firmware');
+    expect(step.action).toBeUndefined();
+  });
+
+  it('calls an unread pair unknown, not a mismatch', async () => {
+    const step = await withFirmware('v6.0.2-custom-42');
+    expect(step.status).not.toBe('fail');
+    if (step.status === 'unknown') expect(step.evidence).toContain('nog niet van beide apparaten gelezen');
   });
 });
 

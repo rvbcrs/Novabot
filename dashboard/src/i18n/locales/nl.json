@@ -1057,7 +1057,6 @@
     "wifi": "Wifi",
     "disk": "Schijfruimte",
     "rivalBroker": "Tweede MQTT-broker",
-    "chargerCrypto": "Laderfirmware",
     "mappingMode": "Karteermodus",
     "parkedTask": "Geparkeerde taak",
     "groupServer": "Server",

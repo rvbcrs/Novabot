@@ -540,30 +540,10 @@ export const CATALOG: Catalog = {
     fr: "{0} vu {1}",
     de: "{0} gesehen {1}",
   },
-  "geen lader gekoppeld": {
-    en: "no charger paired",
-    fr: "aucun chargeur appairé",
-    de: "keine Ladestation gekoppelt",
-  },
-  "laderversie onbekend": {
-    en: "charger version unknown",
-    fr: "version du chargeur inconnue",
-    de: "Version der Ladestation unbekannt",
-  },
-  "laderfirmware {0}, kent nog geen AES": {
-    en: "charger firmware {0}, does not know AES yet",
-    fr: "firmware du chargeur {0}, ne connaît pas encore AES",
-    de: "Ladestation-Firmware {0}, kennt noch kein AES",
-  },
-  "laderfirmware {0}": {
-    en: "charger firmware {0}",
-    fr: "firmware du chargeur {0}",
-    de: "Ladestation-Firmware {0}",
-  },
-  "de server versleutelt alles naar LFI-apparaten en deze lader kan dat niet lezen; werk hem bij naar v0.4.0": {
-    en: "the server encrypts everything it sends to LFI devices and this charger cannot read that; update it to v0.4.0",
-    fr: "le serveur chiffre tout ce qu'il envoie aux appareils LFI et ce chargeur ne peut pas le lire ; mettez-le à jour vers v0.4.0",
-    de: "der Server verschlüsselt alles an LFI-Geräte und diese Ladestation kann das nicht lesen; aktualisieren Sie sie auf v0.4.0",
+  "de LoRa-instellingen van de maaier zijn alleen op OpenNova-firmware uit te lezen": {
+    en: "the mower's LoRa settings can only be read on OpenNova firmware",
+    fr: "les réglages LoRa de la tondeuse ne sont lisibles que sur le firmware OpenNova",
+    de: "die LoRa-Einstellungen des Mähers sind nur auf OpenNova-Firmware auslesbar",
   },
   "geen LoRa-paar om te controleren": {
     en: "no LoRa pair to check",
@@ -639,10 +619,10 @@ export const CATALOG: Catalog = {
     fr: "aucune mesure",
     de: "keine Messwerte",
   },
-  "geen RTK-status gemeld": {
-    en: "no RTK status reported",
-    fr: "aucun état RTK signalé",
-    de: "kein RTK-Status gemeldet",
+  "nog geen RTK-status ontvangen": {
+    en: "no RTK status received yet",
+    fr: "aucun état RTK reçu pour le moment",
+    de: "noch kein RTK-Status empfangen",
   },
   "RTK-status {0}, {1} satellieten": {
     en: "RTK status {0}, {1} satellites",
