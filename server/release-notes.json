@@ -1,6 +1,19 @@
 {
   "releases": [
     {
+      "version": "2026.0915.0919",
+      "date": "2026-09-15",
+      "sections": {
+        "admin": [
+          "Black screen, one unescaped newline in the inline script"
+        ],
+        "server": [
+          "Measure mDNS on 5353, and when it fails say why and what to do",
+          "A container address is not a basis for comparison"
+        ]
+      }
+    },
+    {
       "version": "2026.0915.0009",
       "date": "2026-09-14",
       "sections": {
@@ -250,18 +263,6 @@
         ],
         "server": [
           "Per-schedule timezone + fix alternate-direction rotation"
-        ]
-      }
-    },
-    {
-      "version": "2026.0704.1217",
-      "date": "2026-07-04",
-      "sections": {
-        "app": [
-          "Bump version to 1.1.20 (#98 light-mode map fix)"
-        ],
-        "admin": [
-          "Revert-to-stock firmware card (download + force-flash OEM .deb)"
         ]
       }
     }
