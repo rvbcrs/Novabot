@@ -1,6 +1,16 @@
 {
   "releases": [
     {
+      "version": "2026.0915.1400",
+      "date": "2026-09-15",
+      "sections": {
+        "server": [
+          "Stop invalidating the dependency cache on every release",
+          "The second-broker check no longer reports clean while blind"
+        ]
+      }
+    },
+    {
       "version": "2026.0915.1240",
       "date": "2026-09-15",
       "sections": {
@@ -262,11 +272,6 @@
           "… plus 107 kleinere wijzigingen"
         ]
       }
-    },
-    {
-      "version": "2026.0714.1242",
-      "date": "2026-07-14",
-      "sections": {}
     }
   ]
 }
