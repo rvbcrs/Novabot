@@ -430,6 +430,20 @@ export async function diagnoseConnection(
       status: 'ok',
       evidence: T`${reach.deviceIp} antwoordt, het apparaat staat aan en zit op het netwerk`,
     });
+  } else if (deviceType === 'charger') {
+    // 22 en 8000 zijn maaierpoorten. Een laadstation is een ESP32 en heeft
+    // geen van beide, dus "antwoordt niet op poort 22 of 8000" zei bij elke
+    // lader hetzelfde en betekende niets. Wat we wel weten: of hij zich meldt.
+    const seenAt = parseLastSeen(regEarly);
+    const chargerOnline = seenAt !== null && (now - seenAt) < OFFLINE_AFTER_MS;
+    push({
+      id: 'network',
+      group: 'reach',
+      status: chargerOnline ? 'ok' : 'unknown',
+      evidence: chargerOnline
+        ? T`${reach.deviceIp} is via MQTT verbonden, dus hij zit op het netwerk`
+        : T`een laadstation heeft geen poorten om te peilen, dus van buitenaf valt niet te zien of ${reach.deviceIp} er nog is`,
+    });
   } else if (reach.sameSubnet === null) {
     push({
       id: 'network',
@@ -606,9 +620,20 @@ export async function diagnoseConnection(
       push({ id: 'ble_mac',
       group: 'identity', status: 'ok', evidence: T`BLE MAC ${bound}` });
     }
+  } else if (deviceType === 'charger') {
+    // Een laadstation heeft net zo goed BLE, en de fabriekstabel kent zijn MAC:
+    // de wifi-stap hierboven leidt het wifi-adres er al uit af. equipment
+    // .mac_address is hier NIET de bron, die hoort per ontwerp bij de maaier.
+    const factory = deviceRepo.getFactoryMac(sn);
+    push({
+      id: 'ble_mac',
+      group: 'identity',
+      status: factory ? 'ok' : 'unknown',
+      evidence: factory ? T`BLE MAC ${factory}` : T`geen BLE MAC bekend voor dit laadstation`,
+    });
   } else {
     push({ id: 'ble_mac',
-      group: 'identity', status: 'skipped', evidence: T`alleen van toepassing op een maaier` });
+      group: 'identity', status: 'skipped', evidence: T`alleen van toepassing op een maaier of laadstation` });
   }
 
   // 6. The charger side. A mower alone is half a system: without the charger

@@ -493,10 +493,25 @@ export const CATALOG: Catalog = {
     fr: "MAC BLE {0}",
     de: "BLE-MAC {0}",
   },
-  "alleen van toepassing op een maaier": {
-    en: "only applies to a mower",
-    fr: "ne s'applique qu'à une tondeuse",
-    de: "gilt nur für einen Mäher",
+  "alleen van toepassing op een maaier of laadstation": {
+    en: "only applies to a mower or charging station",
+    fr: "ne s'applique qu'à une tondeuse ou une station de charge",
+    de: "gilt nur für einen Mäher oder eine Ladestation",
+  },
+  "geen BLE MAC bekend voor dit laadstation": {
+    en: "no BLE MAC known for this charging station",
+    fr: "aucune MAC BLE connue pour cette station de charge",
+    de: "keine BLE-MAC für diese Ladestation bekannt",
+  },
+  "{0} is via MQTT verbonden, dus hij zit op het netwerk": {
+    en: "{0} is connected over MQTT, so it is on the network",
+    fr: "{0} est connecté en MQTT, il est donc sur le réseau",
+    de: "{0} ist über MQTT verbunden, also im Netzwerk",
+  },
+  "een laadstation heeft geen poorten om te peilen, dus van buitenaf valt niet te zien of {0} er nog is": {
+    en: "a charging station has no ports to probe, so there is no way to see from the outside whether {0} is still there",
+    fr: "une station de charge n'a aucun port à sonder ; impossible de voir de l'extérieur si {0} est toujours là",
+    de: "eine Ladestation hat keine Ports zum Prüfen, von außen ist also nicht zu sehen, ob {0} noch da ist",
   },
 
   // ── lader en LoRa ───────────────────────────────────────────────────────

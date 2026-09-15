@@ -680,6 +680,60 @@ describe('a second broker it could not look for', () => {
   });
 });
 
+describe('a charger is not a mower with closed ports', () => {
+  // Poort 22 en 8000 zijn maaierpoorten. Bij elke lader stond er daardoor
+  // "antwoordt niet op poort 22 of 8000; op stock firmware staan die dicht",
+  // wat niets zei, en de BLE MAC werd overgeslagen als "alleen voor een
+  // maaier" terwijl de wifi-stap zijn MAC er al uit afleidde (2026-09-15).
+  const bindCharger = () => {
+    db.prepare(`INSERT OR IGNORE INTO users (id, app_user_id, email, password)
+                VALUES (?,?,?,?)`).run(12, 'u12', 'ch@b.c', 'x');
+    db.prepare(`INSERT OR REPLACE INTO equipment
+                (equipment_id, mower_sn, charger_sn, mac_address, user_id)
+                VALUES (?,?,?,?,?)`).run(`eq-${MOWER}`, MOWER, CHARGER, '50:41:1C:39:BD:C1', 'u12');
+  };
+  // withIp registreert de MAAIER; een lader heeft zijn eigen registry-rij.
+  const chargerAt = (ip: string, seenMsAgo = 60_000) => {
+    db.prepare(`INSERT OR REPLACE INTO device_registry
+      (mqtt_client_id, sn, mac_address, mqtt_username, last_seen, ip_address)
+      VALUES (?,?,?,?,?,?)`).run('ESP32_2EEFD4', CHARGER, null, null, utc(seenMsAgo), ip);
+  };
+  const diagnose = () => diagnoseConnection(CHARGER, Date.now(), { snapshot: { msg: 'x' }, probes: probes() });
+
+  it('does not probe mower ports on a charger', async () => {
+    bindCharger();
+    chargerAt('192.168.0.112');
+    const step = (await diagnose()).steps.find(s => s.id === 'network')!;
+    expect(step.evidence).not.toContain('poort 22');
+    expect(step.status).not.toBe('fail');
+  });
+
+  it('shows the charger BLE MAC from the factory table', async () => {
+    bindCharger();
+    chargerAt('192.168.0.112');
+    db.prepare(`INSERT OR REPLACE INTO device_factory (sn, device_type, mac_address)
+                VALUES (?,?,?)`).run(CHARGER, 'charger', '48:27:E2:2E:EF:D2');
+    const step = (await diagnose()).steps.find(s => s.id === 'ble_mac')!;
+    expect(step.status).toBe('ok');
+    expect(step.evidence).toContain('48:27:E2:2E:EF:D2');
+  });
+
+  it('says plainly that a silent charger cannot be probed', async () => {
+    bindCharger();
+    chargerAt('192.168.0.112', 3 * 60 * 60 * 1000);   // ruim buiten OFFLINE_AFTER_MS
+    const step = (await diagnose()).steps.find(s => s.id === 'network')!;
+    expect(step.status).toBe('unknown');
+    expect(step.evidence).toContain('geen poorten om te peilen');
+  });
+
+  it('never claims the BLE MAC only applies to a mower', async () => {
+    bindCharger();
+    chargerAt('192.168.0.112');
+    const step = (await diagnose()).steps.find(s => s.id === 'ble_mac')!;
+    expect(step.status).not.toBe('skipped');
+  });
+});
+
 describe('a charger reports its own firmware', () => {
   // equipment draagt beide kanten. De firmware-stap nam altijd mower_version,
   // dus een diagnose op de lader meldde de versie van de maaier ernaast: in het
