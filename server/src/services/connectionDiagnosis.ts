@@ -283,6 +283,10 @@ export async function diagnoseConnection(
   const regEarly = deviceRepo.findBySn(sn);
   const reach = await probe.reachability(regEarly?.ip_address ?? null);
   const dnsAnswers = reach.dns.filter(d => d.addresses.length > 0);
+  // Toon het adres waartegen we vergeleken hebben. serverIps bevat in een
+  // bridged container 172.17.0.x, en dat stond onder een match die op het
+  // LAN-adres gemaakt was.
+  const ourAddr = (reach.lanIps.length ? reach.lanIps : reach.serverIps).join(', ');
   // null = niet te beoordelen: binnen een bridged container kennen we ons eigen
   // adres op het thuisnetwerk niet, en dan zegt een vergelijking niets.
   const dnsUnknown = dnsAnswers.length > 0 && dnsAnswers.every(d => d.pointsHere === null);
@@ -316,7 +320,7 @@ export async function diagnoseConnection(
       group: 'reach',
       status: 'ok',
       evidence: `${dnsAnswers.find(d => d.pointsHere)!.host} wijst naar deze server `
-              + `(${reach.serverIps.join(', ') || 'onbekend adres'})`,
+              + `(${ourAddr || 'onbekend adres'})`,
     });
   } else if (weServeDns) {
     push({
@@ -325,7 +329,7 @@ export async function diagnoseConnection(
       status: 'fail',
       evidence: `deze server serveert de omleiding, maar ${dnsElsewhere[0].host} wijst naar `
               + `${dnsElsewhere[0].addresses.join(', ')} en niet naar `
-              + `${reach.serverIps.join(', ') || 'onbekend'}`,
+              + `${ourAddr || 'onbekend'}`,
       action: 'zet de omleiding op het huidige serveradres; dit adres is waarschijnlijk '
             + 'veranderd sinds de installatie',
     });
@@ -426,7 +430,7 @@ export async function diagnoseConnection(
       group: 'reach',
       status: 'fail',
       evidence: `laatst bekende adres ${reach.deviceIp} zit in een ander subnet dan deze server `
-              + `(${reach.serverIps.join(', ')})`,
+              + `(${ourAddr || 'onbekend'})`,
       action: 'zet beide in hetzelfde netwerk, of laat het verkeer ertussen door',
     });
   } else {

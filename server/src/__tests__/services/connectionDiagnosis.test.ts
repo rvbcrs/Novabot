@@ -40,7 +40,7 @@ function bind(mac: string) {
  * alone while failing inside the release gate.
  */
 function probes(over: Partial<{
-  serverIps: string[]; dnsPointsHere: boolean | null; dnsAddresses: string[];
+  serverIps: string[]; lanIps: string[]; dnsPointsHere: boolean | null; dnsAddresses: string[];
   deviceAnswered: boolean; sameSubnet: boolean | null;
   rivals: string[]; mac: string | null; lan: Record<string, unknown>;
   mower: Record<string, unknown>;
@@ -50,6 +50,7 @@ function probes(over: Partial<{
   return {
     reachability: async (deviceIp: string | null) => ({
       serverIps: over.serverIps ?? ['192.168.1.2'],
+      lanIps: over.lanIps ?? over.serverIps ?? ['192.168.1.2'],
       dns: [{
         host: 'mqtt.lfibot.com',
         addresses: over.dnsAddresses ?? ['192.168.1.2'],
@@ -803,6 +804,25 @@ describe('a container address is not a basis for comparison', () => {
     })).steps.find(s => s.id === 'network')!;
     expect(step.status).toBe('fail');
     expect(step.evidence).toContain('ander subnet');
+  });
+
+  it('names the address it actually matched, not the docker one', async () => {
+    // De match wordt op het LAN-adres gemaakt (lanIpv4 valt terug op het
+    // geadverteerde adres), maar de melding printte serverIps. Dan staat er
+    // "wijst naar deze server (172.17.0.9)" onder een groen vinkje.
+    withIp('192.168.0.100');
+    const step = (await diagnoseConnection(MOWER, Date.now(), {
+      snapshot: { msg: 'x' },
+      probes: probes({
+        serverIps: ['172.17.0.9'],
+        lanIps: ['192.168.0.247'],
+        dnsPointsHere: true,
+        dnsAddresses: ['192.168.0.247'],
+      }),
+    })).steps.find(s => s.id === 'dns')!;
+    expect(step.status).toBe('ok');
+    expect(step.evidence).toContain('192.168.0.247');
+    expect(step.evidence).not.toContain('172.17.0.9');
   });
 
   it('makes no DNS claim when it cannot know its own LAN address', async () => {

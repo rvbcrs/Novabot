@@ -39,6 +39,13 @@ export interface DnsResult {
 export interface Reachability {
   /** Our own IPv4 addresses, excluding loopback and docker bridges. */
   serverIps: string[];
+  /**
+   * De adressen waartegen pointsHere en sameSubnet daadwerkelijk vergeleken
+   * zijn: alleen thuisnetwerk. Leeg als we dat niet weten. Meldingen moeten
+   * dit tonen, niet serverIps, anders staat er 172.17.0.9 onder een match die
+   * op 192.168.0.247 gemaakt is.
+   */
+  lanIps: string[];
   dns: DnsResult[];
   /** Null when no address is known for the device. */
   deviceIp: string | null;
@@ -141,6 +148,7 @@ export async function checkReachability(deviceIp: string | null): Promise<Reacha
   ]);
   return {
     serverIps,
+    lanIps,
     dns: dnsResults,
     deviceIp,
     deviceAnswered: answered,
