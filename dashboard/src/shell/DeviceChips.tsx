@@ -418,7 +418,7 @@ export function DeviceChips({ mower, charger, knownMowers, onSelectMower, part }
                 <ChevronDown className={`w-3 h-3 text-zinc-500 transition-transform ${switcherOpen ? 'rotate-180' : ''}`} />
               </button>
               {switcherOpen && (
-                <div className="absolute top-full left-0 mt-1.5 z-[2000] bg-zinc-900 border border-zinc-700 rounded-xl shadow-xl min-w-[200px] p-1">
+                <div className="absolute top-full left-0 mt-1.5 z-[2100] bg-zinc-900 border border-zinc-700 rounded-xl shadow-xl min-w-[200px] p-1">
                   {knownMowers.map(m => (
                     <button
                       key={m.sn}
@@ -510,7 +510,7 @@ export function DeviceChips({ mower, charger, knownMowers, onSelectMower, part }
                 <ChevronDown className={`w-3 h-3 text-zinc-500 transition-transform ${switcherOpen ? 'rotate-180' : ''}`} />
               </button>
               {switcherOpen && (
-                <div className="absolute top-full left-0 mt-1.5 z-[2000] bg-zinc-900 border border-zinc-700 rounded-xl shadow-xl min-w-[200px] p-1">
+                <div className="absolute top-full left-0 mt-1.5 z-[2100] bg-zinc-900 border border-zinc-700 rounded-xl shadow-xl min-w-[200px] p-1">
                   {knownMowers.map(m => (
                     <button
                       key={m.sn}

@@ -98,8 +98,10 @@ export function NotificationBell({ sn, events, onBacklog }: Props) {
 
       {open && (
         <>
-          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 mt-2 w-80 max-h-96 overflow-y-auto z-50
+          {/* De kaartwrapper staat op z-[2000] in dezelfde stacking context; alles
+              wat hieronder blijft verdwijnt achter de kaart zodra het eroverheen valt. */}
+          <div className="fixed inset-0 z-[2050]" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 mt-2 w-80 max-h-96 overflow-y-auto z-[2100]
                           rounded-xl bg-zinc-900 border border-zinc-700 shadow-2xl">
             <div className="px-3 py-2 border-b border-zinc-800 text-xs font-semibold text-zinc-400">
               {t('events.title', 'Meldingen')}
