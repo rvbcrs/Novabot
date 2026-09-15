@@ -653,7 +653,7 @@ window.__ADMIN_I18N__ = ${JSON.stringify(ADMIN_I18N).replace(/</g, '\\u003c')};
       <div id="mapInfo" style="font-size:12px;color:#aaa;margin-bottom:8px"></div>
       <div id="nativeCoverageStatus" style="font-size:11px;color:#9ca3af;margin:-3px 0 8px;min-height:14px"></div>
       <div style="display:flex;gap:10px;align-items:center;margin-bottom:8px;flex-wrap:wrap;font-size:12px;color:#cbd5e1">
-        <label style="display:flex;align-items:center;gap:6px;cursor:pointer" title="Toon de occupancy-grid die de maaier gebruikt: groen = bereikbaar vanaf de dock, blauw = afgesneden, rood = bezet">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer" title="Show the occupancy grid the mower uses: green = reachable from the dock, blue = cut off, red = occupied">
           <input type="checkbox" id="maskToggle" onchange="onMaskToggle()" style="width:15px;height:15px;cursor:pointer">
           <span>Show what the mower "sees"</span>
         </label>
@@ -674,16 +674,16 @@ window.__ADMIN_I18N__ = ${JSON.stringify(ADMIN_I18N).replace(/</g, '\\u003c')};
         <button class="btn" id="mapEditToggle" onclick="enterMapEdit()" style="background:rgba(245,158,11,.2);color:#fbbf24;border:1px solid rgba(245,158,11,.4)">&#9998; Edit</button>
         <span id="mapEditTools" style="display:none;gap:8px;align-items:center;flex-wrap:wrap;flex:1">
           <button class="btn" id="toolVertex" onclick="setEditTool('vertex')" style="background:#374151;color:#fff">Vertex</button>
-          <button class="btn" id="toolBrush" onclick="setEditTool('brush')" style="background:#374151;color:#fff">Duwen/trekken</button>
-          <button class="btn" id="toolDraw" onclick="setEditTool('draw')" style="background:#374151;color:#fff">Nieuw obstacle</button>
+          <button class="btn" id="toolBrush" onclick="setEditTool('brush')" style="background:#374151;color:#fff">Push/pull</button>
+          <button class="btn" id="toolDraw" onclick="setEditTool('draw')" style="background:#374151;color:#fff">New obstacle</button>
           <label style="font-size:12px;color:#cbd5e1">Radius <input type="range" id="brushRadius" min="0.3" max="2" step="0.1" value="0.8" oninput="onBrushRadius(this.value)" style="vertical-align:middle;width:90px">
             <span id="brushRadiusVal">0.8m</span></label>
-          <button class="btn" id="deleteObstacleBtn" onclick="deleteSelectedObstacle()" disabled style="background:rgba(239,68,68,.2);color:#f87171;border:1px solid rgba(239,68,68,.3)">Obstacle verwijderen</button>
+          <button class="btn" id="deleteObstacleBtn" onclick="deleteSelectedObstacle()" disabled style="background:rgba(239,68,68,.2);color:#f87171;border:1px solid rgba(239,68,68,.3)">Delete obstacle</button>
           <span style="flex:1"></span>
           <button class="btn" onclick="resetMapEdit()" style="background:#374151;color:#fff">Reset</button>
-          <button class="btn" id="applyMapEdit" onclick="applyMapEdit()" style="background:#16a34a;color:#fff">Toepassen op maaier</button>
-          <button class="btn" id="revertMapEdit" onclick="revertMapEdit()" style="display:none;background:rgba(239,68,68,.2);color:#f87171;border:1px solid rgba(239,68,68,.3)">Terugdraaien</button>
-          <button class="btn" onclick="exitMapEdit()" style="background:#374151;color:#fff">Sluiten</button>
+          <button class="btn" id="applyMapEdit" onclick="applyMapEdit()" style="background:#16a34a;color:#fff">Apply to mower</button>
+          <button class="btn" id="revertMapEdit" onclick="revertMapEdit()" style="display:none;background:rgba(239,68,68,.2);color:#f87171;border:1px solid rgba(239,68,68,.3)">Revert</button>
+          <button class="btn" onclick="exitMapEdit()" style="background:#374151;color:#fff">Close</button>
         </span>
         <span id="mapEditStatus" style="font-size:12px;color:#9ca3af"></span>
       </div>
@@ -4624,14 +4624,15 @@ function renderPortableImportWizard(sn, state) {
         // untouched. Writing maps to the mower WIPES + overwrites its map files,
         // so it is an explicit opt-in (checkbox), guarded by a loud warning.
         html += '<div style="flex-basis:100%;padding:9px;background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.45);border-radius:6px;font-size:11px;color:#fbbf24;margin-bottom:6px;line-height:1.6">'
-          + '<b>BETA — dit kan je maaier-kaarten overschrijven.</b> Standaard wordt alleen de server/app-kopie hersteld (database); de <b>maaier blijft ongemoeid</b>. '
-          + 'Vink hieronder aan om de kaarten OOK naar de maaier te schrijven: dat <b>WIST</b> de huidige kaartbestanden op de maaier en vervangt ze door (opnieuw-gegenereerde, nog experimentele) bestanden. '
-          + 'Doe dat alleen als de maaier zijn kaart kwijt of kapot is. Werken de kaarten op de maaier nog? Laat dit dan uit.'
-          + (xsn ? ' <br><b>Let op:</b> bundel-bron ' + portableSourceSn + ' wijkt af van de doel-maaier (pos.json blijft ongemoeid; her-anker daarna in de app).' : '')
+          + '<b>BETA: this can overwrite the maps on your mower.</b><br>'
+          + 'By default only the server/app copy is restored (database); the mower is left untouched.<br>'
+          + 'Tick the box below to write the maps to the mower as well: that ERASES the current map files on the mower and replaces them with (regenerated) files from this bundle.<br>'
+          + 'Only do that if the mower has lost its map or it is broken. Do the maps on the mower still work? Then leave this off.'
+          + (xsn ? ' <br>' + 'Note: bundle source ' + portableSourceSn + ' differs from the target mower (pos.json is left untouched; re-anchor afterwards in the app).' : '')
           + '</div>';
         html += '<label style="flex-basis:100%;display:flex;align-items:center;gap:8px;font-size:11px;color:#fca5a5;margin-bottom:8px;cursor:pointer">'
           + '<input type="checkbox" id="portablePushToMower" style="width:16px;height:16px;cursor:pointer"> '
-          + '<span>Kaarten <b>ook naar de maaier</b> schrijven (overschrijft maaier-bestanden)</span></label>';
+          + '<span>Write the maps to the mower as well (overwrites the mower files)</span></label>';
         html += '<button onclick="portableDoImport()" style="padding:6px 14px;background:rgba(16,185,129,.3);color:#bbf7d0;border:1px solid rgba(16,185,129,.7);border-radius:6px;font-size:11px;font-weight:700;cursor:pointer">Importeren</button>';
       } else {
         html += '<div style="flex-basis:100%;font-size:10px;color:#fbbf24;margin-bottom:4px">' + portableServerCopyWarningText() + '</div>';
@@ -6544,12 +6545,12 @@ async function deleteMap(sn, mapId, mapName) {
     if (r.status === 409) {
       var body = {};
       try { body = await r.json(); } catch (_) {}
-      var reden = body.error || 'De maaier weigerde het wissen.';
+      var reden = body.error || 'The mower refused the delete.';
       // Dubbel escapen: deze pagina is één TS-templateliteral, en een enkele \n
       // wordt al bij het genereren een echte regelovergang midden in de
       // JS-string. Dat brak het hele script en gaf een zwart admin panel.
-      if (!(await appConfirm(reden + '\\n\\nAlleen uit de server verwijderen (forceren)?',
-                             { destructive: true, okText: 'Forceren' }))) return;
+      if (!(await appConfirm(reden + '\\n\\nRemove it from the server only (force)?',
+                             { destructive: true, okText: 'Force' }))) return;
       r = await fetch('/api/dashboard/maps/' + encodeURIComponent(sn) + '/'
                       + encodeURIComponent(mapId) + '?force=1',
                       { method: 'DELETE', headers: { 'Authorization': token } });

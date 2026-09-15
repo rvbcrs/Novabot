@@ -8,6 +8,33 @@ import { fileURLToPath } from 'url';
  * The admin panel is one server-rendered page with inline JS, so the only way
  * to keep the diagnosis wired up is to assert on the emitted source.
  */
+describe('the admin panel has no Dutch left outside its help popup', () => {
+  // Het paneel heeft een taalschakelaar maar bevatte hardgecodeerde Nederlandse
+  // knoppen en waarschuwingen, zodat een gebruiker op EN Nederlands kreeg
+  // (2026-09-15). De help-popup is bewust Nederlands en blijft buiten schot.
+  const source = readFileSync(
+    fileURLToPath(new URL('../../routes/adminPage.ts', import.meta.url)), 'utf8');
+  const DUTCH = /\b(de|het|een|niet|wordt|kan|kun|je|maaier|kaarten|verwijderen|alleen|zodat|toepassen|terugdraaien|ongemoeid)\b/i;
+
+  it('has no Dutch in buttons, labels or confirms', () => {
+    const offenders: string[] = [];
+    for (const line of source.split('\n')) {
+      if (line.includes('help-item') || line.includes('help-note')) continue;
+      if (line.trimStart().startsWith('//') || line.trimStart().startsWith('*')) continue;
+      const found = [...line.matchAll(
+        />([^<>{}]{4,120})<\/(?:button|label|span|div|b|strong|option|h[1-4]|a)>|title="([^"]{4,120})"/g)];
+      for (const m of found) {
+        const text = (m[1] ?? m[2]).trim();
+        if (!/[A-Za-z]{3}/.test(text)) continue;
+        if ((text.match(DUTCH) ? text.split(/\s+/).filter(w => DUTCH.test(w)).length : 0) >= 2) {
+          offenders.push(text.slice(0, 80));
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+});
+
 describe('the beta firmware warning speaks the panel language', () => {
   // De waarschuwing stond hardgecodeerd in het Nederlands terwijl het paneel
   // een taalschakelaar heeft, dus een gebruiker op EN kreeg een Nederlandse
