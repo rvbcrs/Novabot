@@ -1,6 +1,20 @@
 {
   "releases": [
     {
+      "version": "2026.0915.1240",
+      "date": "2026-09-15",
+      "sections": {
+        "dashboard": [
+          "Common.close existed in no locale"
+        ],
+        "server": [
+          "Diagnosis catalog in French and German",
+          "Diagnosis explains itself in the reader's language",
+          "Diagnosis names the address it actually compared against"
+        ]
+      }
+    },
+    {
       "version": "2026.0915.0919",
       "date": "2026-09-15",
       "sections": {
@@ -253,18 +267,6 @@
       "version": "2026.0714.1242",
       "date": "2026-07-14",
       "sections": {}
-    },
-    {
-      "version": "2026.0714.1215",
-      "date": "2026-07-14",
-      "sections": {
-        "app": [
-          "Ignore Work:FAILED in mow-stop state + add WiFi re-provision troubleshooting docs"
-        ],
-        "server": [
-          "Per-schedule timezone + fix alternate-direction rotation"
-        ]
-      }
     }
   ]
 }
