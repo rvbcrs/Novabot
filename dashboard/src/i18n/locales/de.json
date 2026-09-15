@@ -946,6 +946,7 @@
     "serverIpFile": "Gespeicherte Serveradresse",
     "helpers": "OpenNova-Skripte",
     "groupMower": "Auf dem Mäher selbst",
-    "mdnsReach": "Findet den Server selbst"
+    "mdnsReach": "Findet den Server selbst",
+    "mdnsService": "mDNS auf Port 5353"
   }
 }

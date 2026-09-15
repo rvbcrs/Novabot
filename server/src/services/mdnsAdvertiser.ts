@@ -34,6 +34,10 @@ interface AdvertiserOptions {
 
 let socket: ReturnType<typeof mdns> | null = null;
 let active: AdvertiserOptions | null = null;
+/** Why the advertiser is not running, when it is not. */
+let notStartedReason: 'disabled' | 'no_ip' | null = null;
+/** Last socket error, kept so the diagnosis can show it instead of only the log. */
+let lastError: string | null = null;
 
 // ── Competing-server detection ────────────────────────────────────────────
 // A local dev server (`npm run dev`) or a second instance advertising the same
@@ -75,6 +79,7 @@ function detectLanIp(): string | null {
 export function startMdnsAdvertiser(opts?: Partial<AdvertiserOptions>): void {
   if (process.env.ENABLE_MDNS === 'false' || process.env.ENABLE_MDNS === '0') {
     console.log(`${TAG} disabled by ENABLE_MDNS env`);
+    notStartedReason = 'disabled';
     return;
   }
   if (socket) {
@@ -85,8 +90,11 @@ export function startMdnsAdvertiser(opts?: Partial<AdvertiserOptions>): void {
   const ip = opts?.ip ?? process.env.TARGET_IP ?? detectLanIp();
   if (!ip) {
     console.warn(`${TAG} no LAN IP detected and TARGET_IP unset — advertiser not started`);
+    notStartedReason = 'no_ip';
     return;
   }
+  notStartedReason = null;
+  lastError = null;
 
   const hostnames =
     opts?.hostnames ??
@@ -111,6 +119,7 @@ export function startMdnsAdvertiser(opts?: Partial<AdvertiserOptions>): void {
   // throw and break the whole advertiser (so it stops answering queries). Log
   // and keep running.
   socket.on('error', (err: Error) => {
+    lastError = err.message;
     console.warn(`${TAG} socket error: ${err.message}`);
   });
 
@@ -207,4 +216,64 @@ export function stopMdnsAdvertiser(): void {
 
 export function getActiveAdvertisement(): AdvertiserOptions | null {
   return active;
+}
+
+export interface MdnsStatus {
+  running: boolean;
+  notStartedReason: 'disabled' | 'no_ip' | null;
+  lastError: string | null;
+  ip: string | null;
+  hostname: string | null;
+  port: number | null;
+}
+
+export function mdnsStatus(): MdnsStatus {
+  return {
+    running: socket !== null,
+    notStartedReason,
+    lastError,
+    ip: active?.ip ?? null,
+    hostname: active?.hostnames[0] ?? null,
+    port: active?.port ?? null,
+  };
+}
+
+/**
+ * Ask the network who answers for our own hostname, and wait for it.
+ *
+ * The advertiser probes itself every 45 s but throws its own answers away by
+ * design, so nothing ever confirmed that the question and the answer make it
+ * across 224.0.0.251:5353 at all. This is that confirmation, one shot: the
+ * addresses that answered, ours among them if it works, someone else's if a
+ * second server is on the network, nobody's if multicast is not going anywhere.
+ *
+ * It proves the path to ourselves, not to the mowers; that half is measured
+ * on the mower over SSH. Together they separate "the server is silent" from
+ * "the server speaks but the network does not carry it".
+ */
+export function selfQuery(timeoutMs = 1200): Promise<string[]> {
+  return new Promise(resolve => {
+    if (!socket || !active) return resolve([]);
+    const name = active.hostnames[0];
+    const seen = new Set<string>();
+    const onResponse = (response: { answers?: Answer[] }) => {
+      for (const ans of response.answers ?? []) {
+        if (ans.type === 'A' && ans.name === name) seen.add(String(ans.data));
+      }
+    };
+    socket.on('response', onResponse);
+    const done = () => {
+      socket?.removeListener('response', onResponse);
+      resolve([...seen]);
+    };
+    const t = setTimeout(done, timeoutMs);
+    if (typeof t.unref === 'function') t.unref();
+    try {
+      socket.query({ questions: [{ name, type: 'A' }] });
+    } catch (err) {
+      lastError = err instanceof Error ? err.message : String(err);
+      clearTimeout(t);
+      done();
+    }
+  });
 }

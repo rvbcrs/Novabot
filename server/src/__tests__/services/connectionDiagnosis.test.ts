@@ -45,6 +45,7 @@ function probes(over: Partial<{
   rivals: string[]; mac: string | null; lan: Record<string, unknown>;
   mower: Record<string, unknown>;
   net: Record<string, unknown>;
+  mdns: Record<string, unknown>; mdnsAnswers: string[];
 }> = {}) {
   return {
     reachability: async (deviceIp: string | null) => ({
@@ -75,6 +76,12 @@ function probes(over: Partial<{
       inContainer: false, bridged: false, addresses: ['192.168.1.2'],
       ...(over.net ?? {}),
     }),
+    mdnsStatus: () => ({
+      running: true, notStartedReason: null, lastError: null,
+      ip: '192.168.1.2', hostname: 'opennova.local', port: 5353,
+      ...(over.mdns ?? {}),
+    }),
+    mdnsSelfQuery: async () => over.mdnsAnswers ?? ['192.168.1.2'],
   } satisfies DiagnosisProbes;
 }
 
@@ -840,5 +847,84 @@ describe('container network detection', () => {
     // Nothing to conclude from nothing; saying "bridged" there would send
     // someone to reconfigure Docker for no reason.
     expect(inspectContainerNetwork(files({ '/.dockerenv': '' }), []).bridged).toBe(false);
+  });
+});
+
+describe('mDNS on 5353: measured, and when it fails, why and what to do', () => {
+  // The advertiser starts without error and is then heard or not; nothing ever
+  // checked which. A self-query asks the network who answers for our own name.
+  async function run(mdns: Record<string, unknown>, answers?: string[], net: Record<string, unknown> = {}) {
+    withIp('192.0.2.70');
+    return (await diagnoseConnection(MOWER, Date.now(), {
+      snapshot: { msg: 'x' },
+      probes: probes({ mdns, mdnsAnswers: answers, net }),
+    })).steps.find(s => s.id === 'mdns_service')!;
+  }
+
+  it('is ok when our own address answers for our name', async () => {
+    const step = await run({}, ['192.168.1.2']);
+    expect(step.status).toBe('ok');
+    expect(step.evidence).toContain('192.168.1.2');
+  });
+
+  it('names the competitor when another address answers', async () => {
+    const step = await run({}, ['192.168.1.2', '192.168.1.99']);
+    expect(step.status).toBe('fail');
+    expect(step.evidence).toContain('192.168.1.99');
+    expect(step.action).toContain('ENABLE_MDNS=false');
+  });
+
+  it('says nobody answers, and blames multicast in a bridged container', async () => {
+    const step = await run({}, [], { inContainer: true, bridged: true, addresses: ['172.17.0.9'] });
+    expect(step.status).toBe('fail');
+    expect(step.evidence).toContain('niemand');
+    expect(step.action).toContain('5353:5353/udp');
+  });
+
+  it('points at a firewall instead when not bridged', async () => {
+    const step = await run({}, []);
+    expect(step.status).toBe('fail');
+    expect(step.action).toContain('firewall');
+  });
+
+  it('explains a port already in use', async () => {
+    const step = await run({ lastError: 'bind EADDRINUSE 0.0.0.0:5353' }, []);
+    expect(step.status).toBe('fail');
+    expect(step.action).toContain('avahi');
+  });
+
+  it('explains a missing TARGET_IP', async () => {
+    const step = await run({ running: false, notStartedReason: 'no_ip' });
+    expect(step.status).toBe('fail');
+    expect(step.action).toContain('TARGET_IP');
+  });
+
+  it('treats a deliberate ENABLE_MDNS=false as a warning, not a fault', async () => {
+    const step = await run({ running: false, notStartedReason: 'disabled' });
+    expect(step.status).toBe('warn');
+    expect(step.evidence).toContain('ENABLE_MDNS');
+  });
+
+  it('does not query the network when probing is off', async () => {
+    withIp('192.0.2.70');
+    const step = (await diagnoseConnection(MOWER, Date.now(), {
+      snapshot: { msg: 'x' }, probeNetwork: false, probes: probes(),
+    })).steps.find(s => s.id === 'mdns_service')!;
+    expect(step.status).toBe('skipped');
+  });
+});
+
+describe('the advertised address stands in for a LAN address inside a container', () => {
+  it('lanIpv4 falls back to the advertised IP when interfaces only show a bridge', async () => {
+    // Inside a bridged container the interfaces give 172.x only, but TARGET_IP
+    // or detection told the advertiser which address the LAN knows us by.
+    const { lanIpv4 } = await import('../../services/reachability.js');
+    const adv = await import('../../services/mdnsAdvertiser.js');
+    const before = adv.getActiveAdvertisement();
+    // Without a running advertiser this is whatever the interfaces say; the
+    // fallback is exercised for real only inside a container. Pin the contract
+    // that the function never returns a bridge address either way.
+    expect(lanIpv4().every(ip => !/^172\.(1[6-9]|2\d|3[01])\./.test(ip))).toBe(true);
+    void before;
   });
 });

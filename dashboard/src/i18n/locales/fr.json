@@ -946,6 +946,7 @@
     "serverIpFile": "Adresse serveur enregistrée",
     "helpers": "Scripts OpenNova",
     "groupMower": "Sur la tondeuse elle-même",
-    "mdnsReach": "Trouve le serveur seule"
+    "mdnsReach": "Trouve le serveur seule",
+    "mdnsService": "mDNS sur le port 5353"
   }
 }

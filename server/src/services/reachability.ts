@@ -13,6 +13,7 @@
 import dns from 'dns';
 import net from 'net';
 import os from 'os';
+import { getActiveAdvertisement } from './mdnsAdvertiser.js';
 
 /** Hard cap per probe. The diagnosis must answer quickly or nobody uses it. */
 const PROBE_TIMEOUT_MS = 800;
@@ -60,7 +61,14 @@ function isContainerBridge(ip: string): boolean {
  * same network into "zit in een ander subnet dan deze server".
  */
 export function lanIpv4(): string[] {
-  return serverIpv4().filter(ip => !isContainerBridge(ip));
+  const fromIfaces = serverIpv4().filter(ip => !isContainerBridge(ip));
+  if (fromIfaces.length) return fromIfaces;
+  // Inside a bridged container the interfaces say nothing, but the advertiser
+  // was told (TARGET_IP) or worked out which address the LAN knows us by. That
+  // is the address the mowers are actually pointed at, so it is the right one
+  // to compare against.
+  const advertised = getActiveAdvertisement()?.ip;
+  return advertised && !isContainerBridge(advertised) ? [advertised] : [];
 }
 
 export function serverIpv4(): string[] {
@@ -124,7 +132,7 @@ function sameSlash24(a: string, b: string): boolean {
 export async function checkReachability(deviceIp: string | null): Promise<Reachability> {
   const serverIps = serverIpv4();
   // Alleen adressen op het thuisnetwerk zijn een zinnige vergelijkingsbasis.
-  const lanIps = serverIps.filter(ip => !isContainerBridge(ip));
+  const lanIps = lanIpv4();
   const [dnsResults, answered] = await Promise.all([
     Promise.all(DEVICE_HOSTNAMES.map(h => resolve(h, lanIps))),
     deviceIp

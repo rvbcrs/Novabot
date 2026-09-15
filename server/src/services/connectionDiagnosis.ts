@@ -19,6 +19,7 @@ import { getLoraPair } from './loraPair.js';
 import { checkReachability, serverIpv4, type Reachability } from './reachability.js';
 import { probeMower, type MowerProbe } from './mowerProbe.js';
 import { inspectContainerNetwork, type ContainerNetwork } from './containerNetwork.js';
+import { mdnsStatus, selfQuery, type MdnsStatus } from './mdnsAdvertiser.js';
 import { scanLan, lookupMac, rivalBrokers, bleToWifiMac, type LanScanResult } from './lanScan.js';
 import { statfs } from 'fs/promises';
 import { mapRepo, userRepo } from '../db/repositories/index.js';
@@ -55,6 +56,8 @@ export interface DiagnosisProbes {
   scanLan: () => Promise<LanScanResult>;
   rivalBrokers: (ourIps: string[]) => Promise<string[]>;
   lookupMac: (ip: string) => Promise<string | null>;
+  mdnsStatus: () => MdnsStatus;
+  mdnsSelfQuery: () => Promise<string[]>;
 }
 
 export const realProbes: DiagnosisProbes = {
@@ -64,6 +67,8 @@ export const realProbes: DiagnosisProbes = {
   scanLan,
   rivalBrokers,
   lookupMac,
+  mdnsStatus,
+  mdnsSelfQuery: selfQuery,
 };
 
 export interface DiagnosisInput {
@@ -196,6 +201,77 @@ export async function diagnoseConnection(
     : net.bridged
     ? `container met bridge-netwerk (${net.addresses.join(', ')})`
     : `container met host-netwerk (${net.addresses.join(', ')})`;
+
+  // ── mDNS op 5353: gemeten, en bij falen de oorzaak en de remedie ─────────
+  //
+  // Maaiers vinden de server via opennova.local. De advertiser start zonder
+  // fout en wordt dan al dan niet gehoord; tot nu toe controleerde niets dat.
+  // De zelftest vraagt het netwerk wie er voor onze naam antwoordt. Onszelf:
+  // de weg over 224.0.0.251:5353 werkt. Iemand anders: een tweede server.
+  // Niemand: multicast komt nergens. Wat de MAAIER hoort staat verderop.
+  const md = probe.mdnsStatus();
+  if (md.notStartedReason === 'disabled') {
+    push({
+      id: 'mdns_service', group: 'server', status: 'warn',
+      evidence: 'mDNS is uitgezet (ENABLE_MDNS)',
+      action: 'maaiers kunnen deze server dan niet zelf vinden en hebben je DNS-omleiding '
+            + 'nodig; zet ENABLE_MDNS niet op false als je automatisch ontdekken wilt',
+    });
+  } else if (md.notStartedReason === 'no_ip') {
+    push({
+      id: 'mdns_service', group: 'server', status: 'fail',
+      evidence: 'de advertiser is niet gestart: geen LAN-adres bekend',
+      action: 'zet TARGET_IP op het adres van deze server op je thuisnetwerk, '
+            + 'binnen een container is dat niet zelf te bepalen',
+    });
+  } else if (!md.running) {
+    push({
+      id: 'mdns_service', group: 'server', status: 'fail',
+      evidence: `de advertiser draait niet${md.lastError ? `: ${md.lastError}` : ''}`,
+      action: 'herstart de server en kijk in het log naar [MDNS]',
+    });
+  } else {
+    const answers = input.probeNetwork === false ? null : await probe.mdnsSelfQuery();
+    const others = (answers ?? []).filter(a => a !== md.ip);
+    if (answers === null) {
+      push({ id: 'mdns_service', group: 'server', status: 'skipped', evidence: 'niet gepeild' });
+    } else if (md.lastError && answers.length === 0) {
+      push({
+        id: 'mdns_service', group: 'server', status: 'fail',
+        evidence: `poort ${md.port} geeft een fout: ${md.lastError}`,
+        action: /EADDRINUSE|in use/i.test(md.lastError)
+          ? 'iets anders heeft 5353 al, meestal avahi op de host bij host-netwerk; '
+          + 'stop dat of zet MDNS_PORT anders (de maaiers verwachten wel 5353)'
+          : /EPERM|EACCES/i.test(md.lastError)
+          ? 'de container mag geen multicast versturen; geef hem host-netwerk of '
+          + 'de juiste rechten'
+          : 'kijk in het serverlog naar [MDNS] voor de volledige fout',
+      });
+    } else if (others.length > 0) {
+      push({
+        id: 'mdns_service', group: 'server', status: 'fail',
+        evidence: `${md.hostname} wordt óók beantwoord door ${others.join(', ')}`,
+        action: 'twee servers claimen dezelfde naam en maaiers kiezen willekeurig; '
+              + 'zet de andere uit of geef hem ENABLE_MDNS=false',
+      });
+    } else if (answers.includes(md.ip ?? '')) {
+      push({
+        id: 'mdns_service', group: 'server', status: 'ok',
+        evidence: `${md.hostname} wordt op 5353 beantwoord met ${md.ip}`,
+      });
+    } else {
+      const net = probe.containerNetwork();
+      push({
+        id: 'mdns_service', group: 'server', status: 'fail',
+        evidence: `${md.hostname} wordt op 224.0.0.251:5353 door niemand beantwoord, `
+                + 'ook niet door deze server zelf',
+        action: net.bridged
+          ? 'multicast komt de container niet in of uit; zet "5353:5353/udp" in de '
+          + 'compose-ports of draai met network_mode: host'
+          : 'controleer of een firewall multicast op 224.0.0.251 blokkeert',
+      });
+    }
+  }
 
   // No "is the server up" step: this answer only exists because the server
   // answered. A check that cannot fail is noise, and importing the broker here

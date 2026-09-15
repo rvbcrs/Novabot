@@ -1066,6 +1066,7 @@
     "serverIpFile": "Bewaard serveradres",
     "helpers": "OpenNova-scripts",
     "groupMower": "Op de maaier zelf",
-    "mdnsReach": "Vindt de server zelf"
+    "mdnsReach": "Vindt de server zelf",
+    "mdnsService": "mDNS op poort 5353"
   }
 }
