@@ -107,19 +107,43 @@ if (!opts.email || !opts.output) {
  */
 function promptPassword(question) {
   return new Promise((resolve, reject) => {
-    if (!process.stdin.isTTY) {
-      reject(new Error('No terminal to ask for a password — pass --password'));
+    const input = process.stdin;
+    if (!input.isTTY) {
+      reject(new Error('No terminal to ask for a password — pass --password or set NOVABOT_PASSWORD'));
       return;
     }
-    const i = rl();
-    const echo = i._writeToOutput;
-    i._writeToOutput = () => {};                     // keep the password off the screen
+    // Read the keys ourselves instead of muting readline. A muted readline
+    // still redraws its line on every keystroke (ESC[1G ESC[0J), and that
+    // redraw wipes the prompt off the screen: the question was invisible and
+    // the tool looked like it had hung. Nothing is echoed, so the password
+    // never reaches the screen either way.
+    closePrompts();
+    const wasRaw = input.isRaw;
+    input.setRawMode(true);
+    input.resume();
     process.stdout.write(question);
-    i.question('', (answer) => {
-      i._writeToOutput = echo;
-      process.stdout.write('\n');
-      resolve(answer);
-    });
+    let pw = '';
+    const onData = (chunk) => {
+      for (const ch of chunk.toString('utf8')) {
+        if (ch === '\r' || ch === '\n') {
+          input.removeListener('data', onData);
+          input.setRawMode(!!wasRaw);
+          input.pause();
+          process.stdout.write('\n');
+          resolve(pw);
+          return;
+        }
+        if (ch === '\u0003') {                       // Ctrl+C
+          input.removeListener('data', onData);
+          input.setRawMode(!!wasRaw);
+          process.stdout.write('\n');
+          process.exit(130);
+        }
+        if (ch === '\u007f' || ch === '\b') { pw = pw.slice(0, -1); continue; }
+        if (ch >= ' ') pw += ch;
+      }
+    };
+    input.on('data', onData);
   });
 }
 
@@ -360,10 +384,8 @@ function downloadFile(url, destPath, token, redirectCount = 0) {
 // ── Login helper ────────────────────────────────────────────────────────────
 
 async function doLogin() {
-  // NOVABOT_PASSWORD lets the shell ask (`read -s`), which keeps the password
-  // out of the argument list and works where our own prompt cannot: a debug
-  // console, a wrapper that owns stdin, an editor terminal that does not pass
-  // input through.
+  // NOVABOT_PASSWORD keeps the password out of the argument list where a
+  // prompt is no use: a cron job, a CI step, any run without a terminal.
   if (!opts.password && process.env.NOVABOT_PASSWORD) opts.password = process.env.NOVABOT_PASSWORD;
   if (!opts.password) opts.password = await promptPassword(`  Password for ${opts.email}: `);
   const encryptedPw = encryptCloudPassword(opts.password);
