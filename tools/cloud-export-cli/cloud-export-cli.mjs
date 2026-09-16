@@ -110,14 +110,15 @@ function promptPassword(question) {
       reject(new Error('No terminal to ask for a password — pass --password'));
       return;
     }
-    // readline.close() leaves stdin paused, so a prompt that follows an
-    // earlier one (the overwrite confirmation) would wait forever on input
-    // that never arrives. Resume it first.
-    process.stdin.resume();
+    const i = rl();
+    const echo = i._writeToOutput;
+    i._writeToOutput = () => {};                     // keep the password off the screen
     process.stdout.write(question);
-    const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: true });
-    rl._writeToOutput = () => {};                    // keep the password off the screen
-    rl.question('', (answer) => { rl.close(); process.stdout.write('\n'); resolve(answer); });
+    i.question('', (answer) => {
+      i._writeToOutput = echo;
+      process.stdout.write('\n');
+      resolve(answer);
+    });
   });
 }
 
@@ -140,11 +141,27 @@ function printWarnings() {
 
 // ── Interactive prompt ──────────────────────────────────────────────────────
 
+// One readline interface for the whole run. Creating one per question and
+// closing it leaves stdin paused and half-owned, and the next question then
+// waits on input that never arrives — which is exactly how the password
+// prompt after the overwrite confirmation hung. Open it once, close it when
+// the tool is done asking.
+let rlShared = null;
+function rl() {
+  if (!rlShared) {
+    rlShared = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: process.stdin.isTTY });
+    rlShared.on('close', () => { rlShared = null; });
+  }
+  process.stdin.resume();
+  return rlShared;
+}
+function closePrompts() {
+  if (rlShared) { rlShared.close(); rlShared = null; }
+}
+
 function confirm(question) {
   return new Promise((resolve) => {
-    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-    rl.question(`${question} [y/N] `, (answer) => {
-      rl.close();
+    rl().question(`${question} [y/N] `, (answer) => {
       resolve(answer.trim().toLowerCase() === 'y');
     });
   });
@@ -1167,7 +1184,8 @@ function describeError(err) {
 }
 
 const run = opts.command === 'restore-maps' ? restoreMaps : main;
-run().catch(err => {
+run().then(closePrompts).catch(err => {
+  closePrompts();
   console.error(`\nError: ${describeError(err)}`);
   printWarnings();
   process.exit(1);
