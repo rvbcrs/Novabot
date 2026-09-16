@@ -22,6 +22,7 @@ import { useEffect, useRef } from 'react';
 import L from 'leaflet';
 import { useMap } from 'react-leaflet';
 import type { DroneOverlayPlacement } from '../../api/client';
+import { overlayBounds } from '../../utils/droneOverlayMath';
 
 const PANE = 'droneOverlay';
 
@@ -43,15 +44,7 @@ const RotatedImageOverlay = L.ImageOverlay.extend({
 type RotatedOverlay = InstanceType<typeof RotatedImageOverlay>;
 /** Between tilePane (200) and overlayPane (400): under polygons, over the map. */
 const PANE_Z = '350';
-const M_PER_DEG_LAT = 111_320;
-
-/** Axis-aligned bounds of the unrotated image for this placement and aspect. */
-export function overlayBounds(p: DroneOverlayPlacement, aspect: number): L.LatLngBoundsLiteral {
-  const heightM = p.widthM / aspect;
-  const dLat = heightM / 2 / M_PER_DEG_LAT;
-  const dLng = p.widthM / 2 / (M_PER_DEG_LAT * Math.cos(p.lat * Math.PI / 180));
-  return [[p.lat - dLat, p.lng - dLng], [p.lat + dLat, p.lng + dLng]];
-}
+export { overlayBounds };
 
 interface Props {
   url: string;
@@ -61,13 +54,18 @@ interface Props {
   /** While placing: the photo is draggable and the map underneath is not. */
   editing: boolean;
   onMove?: (center: { lat: number; lng: number }) => void;
+  /** Two-point placement: every click, on the photo or beside it, as a map point. */
+  onPick?: (ll: { lat: number; lng: number }) => void;
 }
 
-export function DroneOverlayLayer({ url, aspect, placement, editing, onMove }: Props) {
+export function DroneOverlayLayer({ url, aspect, placement, editing, onMove, onPick }: Props) {
   const map = useMap();
   const layerRef = useRef<RotatedOverlay | null>(null);
   const onMoveRef = useRef(onMove);
   onMoveRef.current = onMove;
+  const onPickRef = useRef(onPick);
+  onPickRef.current = onPick;
+  const picking = !!onPick;
 
   // The layer lives as long as the URL does; placement changes adjust it in place.
   useEffect(() => {
@@ -113,7 +111,8 @@ export function DroneOverlayLayer({ url, aspect, placement, editing, onMove }: P
     };
     const up = () => { startMouse = null; startCenter = null; map.dragging.enable(); map.off('mousemove', move); };
     const down = (e: L.LeafletMouseEvent) => {
-      L.DomEvent.stop(e.originalEvent);
+      e.originalEvent.preventDefault();   // no native image drag or text selection
+      L.DomEvent.stop(e);                 // and no map mousedown on top of ours
       startMouse = e.latlng;
       startCenter = layer.getBounds().getCenter();
       map.dragging.disable();
@@ -123,6 +122,22 @@ export function DroneOverlayLayer({ url, aspect, placement, editing, onMove }: P
     layer.on('mousedown', down);
     return () => { layer.off('mousedown', down); map.off('mousemove', move); map.dragging.enable(); };
   }, [map, editing, url]);
+
+  // Picking points: a click on the photo and a click beside it both arrive as
+  // one map point. Leaflet dispatches layer and map clicks from one container
+  // listener and only stops at the map when the LEAFLET event is stopped
+  // (that sets originalEvent._stopped); stopping the DOM event instead let the
+  // map fire as well and every pick landed twice. Measured: a shift of exactly
+  // 2x the intended distance.
+  useEffect(() => {
+    const layer = layerRef.current;
+    if (!layer || !picking) return;
+    const onLayer = (e: L.LeafletMouseEvent) => { L.DomEvent.stop(e); onPickRef.current?.(e.latlng); };
+    const onMap = (e: L.LeafletMouseEvent) => onPickRef.current?.(e.latlng);
+    layer.on('click', onLayer);
+    map.on('click', onMap);
+    return () => { layer.off('click', onLayer); map.off('click', onMap); };
+  }, [map, picking, url]);
 
   return null;
 }

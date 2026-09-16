@@ -476,7 +476,13 @@
     "droneSave": "Plaatsing opslaan",
     "droneCancel": "Annuleren",
     "droneHint": "Sleep de foto tot hij past. Hij is alleen een hulp bij het tekenen; de maaier gebruikt hem niet.",
-    "droneUploadFailed": "Uploaden mislukt"
+    "droneUploadFailed": "Uploaden mislukt",
+    "droneDragPanel": "sleep",
+    "droneTwoPoint": "Twee punten aanwijzen",
+    "droneStep1": "Klik in de foto op het laadstation.",
+    "droneStep2": "Klik in de foto op een tweede herkenbaar punt, bijvoorbeeld een obstakel.",
+    "droneStep3": "Klik nu op de kaart waar dat punt echt is.",
+    "droneNeedsDock": "Hiervoor moet de positie van het laadstation bekend zijn."
   },
   "firmware": {
     "requiresOpenNova": "Vereist OpenNova custom firmware. Stock firmware kan dit commando niet ontvangen.",

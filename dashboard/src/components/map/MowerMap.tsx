@@ -11,6 +11,7 @@ import {
 import { useTranslation } from 'react-i18next';
 import type { MapData, MapCalibration, GpsPoint } from '../../types';
 import { DroneOverlayLayer } from './DroneOverlay';
+import { photoPixelFromLatLng, solveTwoPoint, insidePhoto, type PhotoPixel } from '../../utils/droneOverlayMath';
 import {
   fetchDroneOverlay, uploadDroneOverlay, saveDroneOverlayPlacement, deleteDroneOverlay, droneOverlayImageUrl,
   type DroneOverlayMeta, type DroneOverlayPlacement,
@@ -1519,6 +1520,53 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     setDroneMeta(null); setDroneDraft(null); setRailFlyout(null);
   }, [sn, t]);
   const dronePlacement = droneDraft ?? droneMeta?.placement ?? null;
+  // Tweepuntsplaatsing: twee pixels in de foto en waar die op de kaart horen.
+  // Stap 1 = laadstation in de foto (doel = dock, bekend), 2 = tweede punt in
+  // de foto, 3 = datzelfde punt op de kaart. Daarna liggen alle vier de
+  // vrijheidsgraden vast en zijn de schuiven alleen nog voor bijsturen.
+  const [twoPoint, setTwoPoint] = useState<null | { step: 1 | 2 | 3; a?: PhotoPixel; b?: PhotoPixel }>(null);
+  // Het paneel is versleepbaar: vast bovenin lag het precies over de foto.
+  const [panelPos, setPanelPos] = useState<{ x: number; y: number } | null>(null);
+  const panelDrag = useRef<{ sx: number; sy: number; ox: number; oy: number } | null>(null);
+  const onPanelPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const el = e.currentTarget.parentElement as HTMLElement;
+    const r = el.getBoundingClientRect(), pr = el.offsetParent?.getBoundingClientRect() ?? { left: 0, top: 0 };
+    panelDrag.current = { sx: e.clientX, sy: e.clientY, ox: r.left - pr.left, oy: r.top - pr.top };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  }, []);
+  const onPanelPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const d = panelDrag.current; if (!d) return;
+    setPanelPos({ x: Math.max(0, d.ox + e.clientX - d.sx), y: Math.max(0, d.oy + e.clientY - d.sy) });
+  }, []);
+  const onPanelPointerUp = useCallback(() => { panelDrag.current = null; }, []);
+  const dockLatLng = chargerGps ? { lat: chargerGps.lat, lng: chargerGps.lng } : null;
+  const onDronePick = useCallback((ll: { lat: number; lng: number }) => {
+    if (!twoPoint || !droneDraft || !droneMeta) return;
+    const size = { width: droneMeta.width, height: droneMeta.height };
+    if (twoPoint.step === 1 || twoPoint.step === 2) {
+      const px = photoPixelFromLatLng(droneDraft, size, ll);
+      if (!insidePhoto(px, size)) return;                   // naast de foto geklikt
+      if (twoPoint.step === 1) {
+        if (dockLatLng) {
+          // Laadstation onder het dock schuiven: verschuiving ligt nu vast.
+          const now = photoPixelFromLatLng(droneDraft, size, dockLatLng);
+          const dLat = ll.lat - dockLatLng.lat, dLng = ll.lng - dockLatLng.lng;
+          void now;
+          setDroneDraft(d => (d ? { ...d, lat: d.lat - dLat, lng: d.lng - dLng } : d));
+        }
+        setTwoPoint({ step: 2, a: px });
+      } else {
+        setTwoPoint({ ...twoPoint, step: 3, b: px });
+      }
+      return;
+    }
+    // stap 3: waar punt b echt ligt; a ligt per constructie op het dock
+    if (twoPoint.a && twoPoint.b && dockLatLng) {
+      const solved = solveTwoPoint(size, twoPoint.a, dockLatLng, twoPoint.b, ll, droneDraft.opacity);
+      if (solved) setDroneDraft(solved);
+      setTwoPoint(null);
+    }
+  }, [twoPoint, droneDraft, droneMeta, dockLatLng]);
   // Charger pose in local meter frame (from map_info.json charging_pose).
   // Used to shift all local coords so that the physical charger position
   // projects onto chargerGps instead of the local origin (0,0).
@@ -3329,6 +3377,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
               placement={dronePlacement}
               editing={droneDraft !== null}
               onMove={c => setDroneDraft(d => (d ? { ...d, ...c } : d))}
+              onPick={twoPoint ? onDronePick : undefined}
             />
           )}
           {/* Saved map polygons with calibration applied */}
@@ -4181,8 +4230,30 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
         })()}
 
         {droneDraft && (
-          <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[1100] w-[min(22rem,calc(100vw-1.5rem))] bg-gray-900/95 backdrop-blur border border-gray-700 rounded-2xl p-3 shadow-xl text-[12px] text-gray-200 space-y-2">
-            <div className="flex items-center gap-2 font-medium"><MoveIcon className="w-4 h-4 text-emerald-400" />{t('map.dronePlace', 'Dronefoto plaatsen')}</div>
+          <div className={`absolute z-[1100] w-[min(22rem,calc(100vw-1.5rem))] bg-gray-900/95 backdrop-blur border border-gray-700 rounded-2xl p-3 shadow-xl text-[12px] text-gray-200 space-y-2 ${panelPos ? '' : 'top-3 left-1/2 -translate-x-1/2'}`}
+               style={panelPos ? { left: panelPos.x, top: panelPos.y } : undefined}>
+            <div className="flex items-center gap-2 font-medium cursor-move select-none touch-none"
+                 onPointerDown={onPanelPointerDown} onPointerMove={onPanelPointerMove} onPointerUp={onPanelPointerUp}>
+              <MoveIcon className="w-4 h-4 text-emerald-400" />{t('map.dronePlace', 'Dronefoto plaatsen')}
+              <span className="ml-auto text-[10px] text-gray-500">{t('map.droneDragPanel', 'sleep')}</span>
+            </div>
+            {twoPoint ? (
+              <div className="rounded-lg bg-emerald-500/10 border border-emerald-500/30 p-2 space-y-1">
+                <div className="text-emerald-300 font-medium">{twoPoint.step}/3</div>
+                <p className="text-[11px] text-gray-200">
+                  {twoPoint.step === 1 && t('map.droneStep1', 'Klik in de foto op het laadstation.')}
+                  {twoPoint.step === 2 && t('map.droneStep2', 'Klik in de foto op een tweede herkenbaar punt, bijvoorbeeld een obstakel.')}
+                  {twoPoint.step === 3 && t('map.droneStep3', 'Klik nu op de kaart waar dat punt echt is.')}
+                </p>
+                <button onClick={() => setTwoPoint(null)} className="text-[11px] text-gray-400 hover:text-gray-200 underline">{t('map.droneCancel', 'Annuleren')}</button>
+              </div>
+            ) : (
+              <button onClick={() => setTwoPoint({ step: 1 })} disabled={!dockLatLng}
+                      title={dockLatLng ? '' : t('map.droneNeedsDock', 'Hiervoor moet de positie van het laadstation bekend zijn.')}
+                      className="w-full py-1.5 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-200 font-medium disabled:opacity-40">
+                {t('map.droneTwoPoint', 'Twee punten aanwijzen')}
+              </button>
+            )}
             <p className="text-gray-400 text-[11px]">{t('map.droneHint')}</p>
             <label className="block">
               <span className="flex justify-between"><span>{t('map.droneRotation', 'Draaiing')}</span><span className="font-mono text-gray-400">{Math.round(droneDraft.rotationDeg)}°</span></span>

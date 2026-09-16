@@ -14,14 +14,16 @@
     "resolvePackageJsonExports": false
   },
   "include": ["src/**/*"],
-  // These tests import a pure util from ../../app (outside this project's
-  // rootDir) so they can run under the server's vitest — the app has no test
-  // runner. tsc would reject the cross-rootDir import; vitest runs them fine
-  // and the utils themselves are type-checked by the app's tsc.
+  // These tests import a pure util from ../../app or ../../dashboard (outside
+  // this project's rootDir) so they can run under the server's vitest; neither
+  // has a test runner. tsc would reject the cross-rootDir import, and in the
+  // Docker build stage the other tree is not even present yet; vitest runs
+  // them fine and the utils themselves are type-checked by their own tsc.
   "exclude": [
     "node_modules",
     "dist",
     "src/__tests__/utils/mowingMapSelection.test.ts",
-    "src/__tests__/utils/mapChannels.test.ts"
+    "src/__tests__/utils/mapChannels.test.ts",
+    "src/__tests__/services/droneOverlayMath.test.ts"
   ]
 }

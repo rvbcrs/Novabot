@@ -429,7 +429,13 @@
     "droneSave": "Save placement",
     "droneCancel": "Cancel",
     "droneHint": "Drag the photo until it lines up. It is a tracing aid only; the mower never uses it.",
-    "droneUploadFailed": "Upload failed"
+    "droneUploadFailed": "Upload failed",
+    "droneDragPanel": "drag",
+    "droneTwoPoint": "Pick two points",
+    "droneStep1": "Click the charging station in the photo.",
+    "droneStep2": "Click a second recognisable point in the photo, an obstacle for example.",
+    "droneStep3": "Now click on the map where that point really is.",
+    "droneNeedsDock": "This needs a known charging station position."
   },
   "firmware": {
     "requiresOpenNova": "Requires OpenNova custom firmware. Stock firmware can't receive this command.",

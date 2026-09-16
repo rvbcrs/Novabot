@@ -413,7 +413,13 @@
     "droneSave": "Enregistrer la position",
     "droneCancel": "Annuler",
     "droneHint": "Faites glisser la photo jusqu'à ce qu'elle s'aligne. Ce n'est qu'une aide au tracé ; la tondeuse ne l'utilise jamais.",
-    "droneUploadFailed": "Échec de l'import"
+    "droneUploadFailed": "Échec de l'import",
+    "droneDragPanel": "glisser",
+    "droneTwoPoint": "Désigner deux points",
+    "droneStep1": "Cliquez sur la station de charge dans la photo.",
+    "droneStep2": "Cliquez sur un deuxième point reconnaissable dans la photo, un obstacle par exemple.",
+    "droneStep3": "Cliquez maintenant sur la carte à l'endroit réel de ce point.",
+    "droneNeedsDock": "Il faut connaître la position de la station de charge."
   },
   "firmware": {
     "requiresOpenNova": "Nécessite le firmware personnalisé OpenNova. Le firmware d'origine ne peut pas recevoir cette commande.",
