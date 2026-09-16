@@ -28,7 +28,7 @@ Commands:
 
 Required:
   --email, -e         Novabot account email
-  --password, -p      Novabot account password
+  --password, -p      Novabot account password (asked for if omitted)
   --output, -o        Export directory (output for export, input for restore)
 
 Export options:
@@ -93,10 +93,28 @@ function parseArgs(args) {
 
 const opts = parseArgs(args);
 
-if (!opts.email || !opts.password || !opts.output) {
-  console.error('Error: --email, --password, and --output are required.');
+if (!opts.email || !opts.output) {
+  console.error('Error: --email and --output are required.');
   printUsage();
   process.exit(1);
+}
+
+/**
+ * Ask for the password when it was not passed on the command line. A password
+ * in an argument ends up in the shell history and in `ps` for every user on
+ * the machine, so the prompt is the better way in, and the echo stays off.
+ */
+function promptPassword(question) {
+  return new Promise((resolve, reject) => {
+    if (!process.stdin.isTTY) {
+      reject(new Error('No terminal to ask for a password — pass --password'));
+      return;
+    }
+    process.stdout.write(question);
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: true });
+    rl._writeToOutput = () => {};                    // keep the password off the screen
+    rl.question('', (answer) => { rl.close(); process.stdout.write('\n'); resolve(answer); });
+  });
 }
 
 // ── Warning tracker ─────────────────────────────────────────────────────────
@@ -320,6 +338,7 @@ function downloadFile(url, destPath, token, redirectCount = 0) {
 // ── Login helper ────────────────────────────────────────────────────────────
 
 async function doLogin() {
+  if (!opts.password) opts.password = await promptPassword(`  Password for ${opts.email}: `);
   const encryptedPw = encryptCloudPassword(opts.password);
   const resp = await callLfiCloud('POST', '/api/nova-user/appUser/login', {
     email: opts.email, password: encryptedPw, imei: 'imei',
