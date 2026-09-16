@@ -87,19 +87,20 @@ export function DroneOverlayLayer({ url, aspect, placement, editing, onMove, onP
     layer.setRotation(placement.rotationDeg);
     const el = layer.getElement();
     if (el) {
-      el.style.cursor = editing ? 'move' : '';
+      el.style.cursor = picking ? 'crosshair' : editing ? 'move' : '';
       el.style.pointerEvents = editing ? 'auto' : 'none';
     }
-  }, [placement, aspect, editing]);
+  }, [placement, aspect, editing, picking]);
 
   // Drag to move, through Leaflet's own events so zoom and projection stay
   // consistent. Anchored on the start: the new centre is the centre at
   // mousedown plus the total mouse displacement, so a React update that has
   // not landed yet cannot swallow part of the movement. The map's own drag
-  // handler is paused for the duration.
+  // handler is paused for the duration. Not while picking: a press is then a
+  // pick, and the map pans as usual to reach the next point.
   useEffect(() => {
     const layer = layerRef.current;
-    if (!layer || !editing) return;
+    if (!layer || !editing || picking) return;
     let startMouse: L.LatLng | null = null;
     let startCenter: L.LatLng | null = null;
     const move = (e: L.LeafletMouseEvent) => {
@@ -121,22 +122,27 @@ export function DroneOverlayLayer({ url, aspect, placement, editing, onMove, onP
     };
     layer.on('mousedown', down);
     return () => { layer.off('mousedown', down); map.off('mousemove', move); map.dragging.enable(); };
-  }, [map, editing, url]);
+  }, [map, editing, picking, url]);
 
   // Picking points: a click on the photo and a click beside it both arrive as
   // one map point. Leaflet dispatches layer and map clicks from one container
   // listener and only stops at the map when the LEAFLET event is stopped
   // (that sets originalEvent._stopped); stopping the DOM event instead let the
   // map fire as well and every pick landed twice. Measured: a shift of exactly
-  // 2x the intended distance.
+  // 2x the intended distance. The zones, obstacles and markers drawn over the
+  // photo let the click through meanwhile (index.css, .drone-picking); before
+  // that, a click on an obstacle selected the obstacle instead of picking the
+  // photo point under it.
   useEffect(() => {
     const layer = layerRef.current;
     if (!layer || !picking) return;
+    const container = map.getContainer();
+    container.classList.add('drone-picking');
     const onLayer = (e: L.LeafletMouseEvent) => { L.DomEvent.stop(e); onPickRef.current?.(e.latlng); };
     const onMap = (e: L.LeafletMouseEvent) => onPickRef.current?.(e.latlng);
     layer.on('click', onLayer);
     map.on('click', onMap);
-    return () => { layer.off('click', onLayer); map.off('click', onMap); };
+    return () => { container.classList.remove('drone-picking'); layer.off('click', onLayer); map.off('click', onMap); };
   }, [map, picking, url]);
 
   return null;

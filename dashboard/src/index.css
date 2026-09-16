@@ -12,6 +12,18 @@ body {
   outline: none;
 }
 
+/* Two-point drone placement (#124): the zones, obstacles and markers sit on
+   top of the photo, but the click is meant for the photo underneath, so while
+   picking they let it through. Leaflet's own rule for these is
+   `.leaflet-pane > svg path.leaflet-interactive`; this one is more specific. */
+.leaflet-container.drone-picking .leaflet-pane > svg path.leaflet-interactive,
+.leaflet-container.drone-picking .leaflet-marker-icon.leaflet-interactive {
+  pointer-events: none;
+}
+.leaflet-container.drone-picking {
+  cursor: crosshair;
+}
+
 /* (Verwijderd) De oude 256.5px !important tile-hack (issue #42, grijze naden)
    forceerde élke tegel naar een vaste maat — ook opgeschaalde tegels bij
    over-zoom — waardoor de 0.5px-overlap juist faint grid-lijnen tekende en
