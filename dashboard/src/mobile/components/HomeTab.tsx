@@ -288,7 +288,7 @@ export function HomeTab({ mower }: Props) {
         <div className="flex items-center gap-4 mb-6">
           <div className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
             <Wifi className="w-3.5 h-3.5" />
-            <span className="tabular-nums">{m.wifiRssi ?? '—'}</span>
+            <span className="tabular-nums">{m.wifiRssi != null ? `${m.wifiRssi}%` : '—'}</span>
           </div>
           <div className="w-px h-4 bg-gray-200 dark:bg-gray-700" />
           <div className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">

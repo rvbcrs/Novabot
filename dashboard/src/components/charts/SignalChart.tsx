@@ -15,12 +15,12 @@ interface ChartConfig {
   unit: string;
   color: string;
   thresholds: [number, number]; // [good→warn, warn→bad]
-  invert?: boolean; // higher = worse (e.g. wifi_rssi is negative, but stored positive)
+  invert?: boolean; // higher = worse
 }
 
 const CHARTS: ChartConfig[] = [
   { key: 'battery', labelKey: 'charts.battery', unit: '%', color: '#34d399', thresholds: [20, 10] },
-  { key: 'wifiRssi', labelKey: 'charts.wifi', unit: 'dBm', color: '#60a5fa', thresholds: [-65, -80], invert: true },
+  { key: 'wifiRssi', labelKey: 'charts.wifi', unit: '%', color: '#60a5fa', thresholds: [60, 35] },
   { key: 'rtkSat', labelKey: 'charts.rtkSat', unit: '', color: '#a78bfa', thresholds: [10, 5] },
   { key: 'cpuTemp', labelKey: 'charts.cpuTemp', unit: '°C', color: '#fb923c', thresholds: [60, 75], invert: true },
 ];

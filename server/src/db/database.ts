@@ -339,6 +339,8 @@ export function initDb(): void {
       WHERE wifi_rssi IS NOT NULL AND map_x IS NOT NULL AND map_y IS NOT NULL
     `);
   } catch { /* ignore index migration errors */ }
+  // wifi_rssi is een percentage; oude samples werden negatief opgeslagen.
+  db.exec(`UPDATE signal_history SET wifi_rssi = -wifi_rssi WHERE wifi_rssi < 0`);
 
   // Voeg mac_address kolom toe aan equipment (migratie – veilig om te herhalen)
   try {

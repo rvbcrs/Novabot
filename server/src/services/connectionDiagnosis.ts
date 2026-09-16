@@ -487,10 +487,10 @@ export async function diagnoseConnection(
     const parts = [T`verbonden via wifi op ${reach.deviceIp}`];
     if (looked) parts.push(T`MAC ${looked}`);
     else if (derived) parts.push(T`MAC ${derived} (afgeleid uit de BLE-MAC ${bleKnown})`);
-    if (Number.isFinite(rssi)) parts.push(T`signaal ${rssi} dBm`);
-    // Onder de -75 dBm valt de verbinding met enige regelmaat weg, en dat is
+    if (Number.isFinite(rssi)) parts.push(T`signaal ${rssi}%`);
+    // Onder de 40% valt de verbinding met enige regelmaat weg, en dat is
     // precies het beeld van "hij is soms online".
-    const weak = Number.isFinite(rssi) && rssi < -75;
+    const weak = Number.isFinite(rssi) && rssi < 40;
     push({
       id: 'wifi',
       group: 'reach',

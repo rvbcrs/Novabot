@@ -329,10 +329,10 @@ export const CATALOG: Catalog = {
     fr: "MAC {0} (dérivée de la MAC BLE {1})",
     de: "MAC {0} (abgeleitet aus der BLE-MAC {1})",
   },
-  "signaal {0} dBm": {
-    en: "signal {0} dBm",
-    fr: "signal {0} dBm",
-    de: "Signal {0} dBm",
+  "signaal {0}%": {
+    en: "signal {0}%",
+    fr: "signal {0}%",
+    de: "Signal {0}%",
   },
   " (MAC nergens bekend)": {
     en: " (MAC not known anywhere)",
