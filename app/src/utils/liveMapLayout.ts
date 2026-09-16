@@ -22,3 +22,33 @@ export function placeClosingLabel(
   }
   return { sx, sy };
 }
+
+export interface MapWindow { minX: number; minY: number; width: number; height: number }
+
+/**
+ * The patch of ground the live map draws.
+ *
+ * Fitting every existing zone plus the new trail is the right thing when you
+ * want an overview, but while driving a boundary it shrinks the new trail to a
+ * few pixels and you cannot tell how close you are to the neighbouring edge
+ * (issue #116). Given a radius it returns a window of that many metres across,
+ * centred on the mower and stretched to the canvas aspect so a metre across is
+ * a metre down. Without a radius, or without a mower to centre on, it returns
+ * the bounds it was given.
+ */
+export function mapWindow(
+  bounds: { minX: number; minY: number; maxX: number; maxY: number },
+  canvas: { width: number; height: number },
+  mower: { x: number; y: number } | null,
+  radiusM: number | null,
+): MapWindow {
+  const fit = {
+    minX: bounds.minX, minY: bounds.minY,
+    width: bounds.maxX - bounds.minX, height: bounds.maxY - bounds.minY,
+  };
+  if (!radiusM || radiusM <= 0 || !mower) return fit;
+  const aspect = canvas.width / Math.max(canvas.height, 1);
+  const halfW = (radiusM / 2) * (aspect >= 1 ? aspect : 1);
+  const halfH = (radiusM / 2) * (aspect >= 1 ? 1 : 1 / aspect);
+  return { minX: mower.x - halfW, minY: mower.y - halfH, width: halfW * 2, height: halfH * 2 };
+}

@@ -9,7 +9,7 @@ import { View, Text, StyleSheet } from 'react-native';
 import Svg, { Polyline, Polygon, Circle, Line, G, Image as SvgImage, Text as SvgText, Rect } from 'react-native-svg';
 import { useStyles, useTheme, type Colors } from '../theme';
 import { isMapPoint, normalizeMapPoints } from '../utils/mapPoints';
-import { liveMapMarkerPosition, placeClosingLabel } from '../utils/liveMapLayout';
+import { liveMapMarkerPosition, placeClosingLabel, mapWindow } from '../utils/liveMapLayout';
 import { MOWER_MAP_IMAGE } from './mower/mowerMapImage';
 
 export interface ExistingMapOverlay {
@@ -27,14 +27,25 @@ export interface LiveMapViewProps {
   existingMaps?: ExistingMapOverlay[];
   conflictingMapIds?: string[];
   mowerPosition?: { x: number; y: number } | null; // show mower marker (separate from trail)
+  /**
+   * Metres across, centred on the mower, instead of fitting everything.
+   * While driving a boundary you need to see how close you are to the edge,
+   * and fitting every existing zone shrinks the new trail to a few pixels
+   * (issue #116). null keeps the fit-everything behaviour.
+   */
+  zoomRadiusM?: number | null;
 }
 
 const PADDING_RATIO = 0.20; // 20% padding around bounding box
 const ARROW_LEN = 20;       // direction arrow length in SVG units
 
-function LiveMapViewInner({ points, orientation, closed, height = 150, width, existingMaps = [], conflictingMapIds = [], mowerPosition }: LiveMapViewProps) {
+function LiveMapViewInner({ points, orientation, closed, height = 150, width, existingMaps = [], conflictingMapIds = [], mowerPosition, zoomRadiusM = null }: LiveMapViewProps) {
   const styles = useStyles(makeStyles);
   const { colors } = useTheme();
+  // The viewBox used to be a fixed 300 wide while the element stretches to the
+  // screen: preserveAspectRatio then letterboxed the drawing and left a margin
+  // down both sides. Measuring gives the canvas the full width it occupies.
+  const [viewW, setViewW] = React.useState(300);
 
   // Compute bounding box (including existing maps + mower position), scale, and projected points.
   // Also computes a closing-distance label matching the Novabot app: straight-line distance
@@ -76,19 +87,22 @@ function LiveMapViewInner({ points, orientation, closed, height = 150, width, ex
     const bMinY = minY - padY;
     const bMaxY = maxY + padY;
 
-    const bW = bMaxX - bMinX;
-    const bH = bMaxY - bMinY;
-
-    const viewW = 300;
     const viewH = height;
+    const win = mapWindow(
+      { minX: bMinX, minY: bMinY, maxX: bMaxX, maxY: bMaxY },
+      { width: viewW, height: viewH },
+      mowerPosition_r,
+      zoomRadiusM,
+    );
+    const { minX: zMinX, minY: zMinY, width: bW, height: bH } = win;
     const scale = Math.min(viewW / bW, viewH / bH);
 
     const offsetX = (viewW - bW * scale) / 2;
     const offsetY = (viewH - bH * scale) / 2;
 
     const project = (px: number, py: number) => ({
-      sx: offsetX + (px - bMinX) * scale,
-      sy: viewH - (offsetY + (py - bMinY) * scale),
+      sx: offsetX + (px - zMinX) * scale,
+      sy: viewH - (offsetY + (py - zMinY) * scale),
     });
 
     // Project existing maps
@@ -141,7 +155,7 @@ function LiveMapViewInner({ points, orientation, closed, height = 150, width, ex
       closingLabel: closing,
       pointCount: points_r.length,
     };
-  }, [points, orientation, height, existingMaps, mowerPosition]);
+  }, [points, orientation, height, existingMaps, mowerPosition, zoomRadiusM, viewW]);
 
   const containerStyle = [
     styles.container,
@@ -151,7 +165,13 @@ function LiveMapViewInner({ points, orientation, closed, height = 150, width, ex
 
   if (!hasPoints) {
     return (
-      <View style={containerStyle}>
+      <View
+        style={containerStyle}
+        onLayout={e => {
+          const w = Math.round(e.nativeEvent.layout.width);
+          if (w > 0 && w !== viewW) setViewW(w);
+        }}
+      >
         <Text style={styles.waitingText}>Waiting for position data...</Text>
       </View>
     );
@@ -163,8 +183,14 @@ function LiveMapViewInner({ points, orientation, closed, height = 150, width, ex
   const lineColor = conflictingMapIds.length > 0 ? '#f59e0b' : closed ? colors.emerald : colors.purple;
 
   return (
-    <View style={containerStyle}>
-      <Svg width="100%" height={height} viewBox={`0 0 300 ${height}`}>
+    <View
+      style={containerStyle}
+      onLayout={e => {
+        const w = Math.round(e.nativeEvent.layout.width);
+        if (w > 0 && w !== viewW) setViewW(w);
+      }}
+    >
+      <Svg width="100%" height={height} viewBox={`0 0 ${viewW} ${height}`}>
         {/* Existing maps (greyed-out background) */}
         {existingSvg.map(m => {
           const isObstacle = m.mapType === 'obstacle';

@@ -63,7 +63,13 @@ import { pointInPolygon } from '../utils/mapEditGeometry';
 import { runAutoDock } from '../services/autoDock';
 
 // ── Joystick constants (smaller than JoystickScreen) ──
-const { width: SCREEN_W } = Dimensions.get('window');
+const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
+// The live map used to be a 150 px strip with a few hundred pixels of empty
+// space under it, so a new boundary drawn next to seven existing zones came
+// out a few pixels wide (issue #116). It gets that space now.
+const LIVE_MAP_H = Math.round(Math.max(220, Math.min(SCREEN_H * 0.34, 380)));
+/** Metres across in the zoomed view: wide enough to see the neighbouring edge, tight enough to judge a gap. */
+const MAP_ZOOM_M = 8;
 const JOYSTICK_SIZE = Math.min(SCREEN_W * 0.50, 200);
 const THUMB_SIZE = 52;
 const DEAD_ZONE = 0.15;
@@ -243,6 +249,10 @@ function MowerMappingScreen() {
   // ── Closed cycle detection ──
   const [closedCycleSeen, setClosedCycleSeen] = useState(false);
   const closedCycleDismissedRef = useRef(false);
+
+  // Zoom van de live kaart: uit = alles passend (overzicht), aan = een vast
+  // venster rond de maaier (detail tijdens het rijden).
+  const [mapZoomed, setMapZoomed] = useState(true);
 
   // ── Trail points for LiveMapView ──
   const [trailPoints, setTrailPoints] = useState<Array<{x: number; y: number}>>([]);
@@ -1884,7 +1894,18 @@ function MowerMappingScreen() {
                 width={Math.min(SCREEN_W - 32, 240)}
                 existingMaps={existingMaps}
                 mowerPosition={mowerLocal}
+                zoomRadiusM={mapZoomed ? MAP_ZOOM_M : null}
               />
+              <TouchableOpacity
+                onPress={() => setMapZoomed(z => !z)}
+                disabled={!mowerLocal}
+                style={styles.mapZoomBtn}
+                accessibilityRole="button"
+                accessibilityLabel={mapZoomed ? 'Show the whole garden' : `Zoom to ${MAP_ZOOM_M} metres around the mower`}
+              >
+                <Ionicons name={mapZoomed ? 'scan-outline' : 'search-outline'} size={14} color="#fff" />
+                <Text style={styles.mapZoomBtnText}>{mapZoomed ? 'Fit all' : `${MAP_ZOOM_M} m`}</Text>
+              </TouchableOpacity>
             </View>
 
             {/* Joystick overlay — title + speed selector now stack vertically
@@ -2033,15 +2054,28 @@ function MowerMappingScreen() {
             </View>
 
             {/* Live trail map */}
-            <LiveMapView
-              points={trailPoints}
-              orientation={mapOrientation}
-              closed={closedCycleSeen}
-              height={150}
-              existingMaps={existingMaps}
-              conflictingMapIds={hasMapOverlap ? overlapMapIds : []}
-              mowerPosition={mowerLocal}
-            />
+            <View>
+              <LiveMapView
+                points={trailPoints}
+                orientation={mapOrientation}
+                closed={closedCycleSeen}
+                height={LIVE_MAP_H}
+                existingMaps={existingMaps}
+                conflictingMapIds={hasMapOverlap ? overlapMapIds : []}
+                mowerPosition={mowerLocal}
+                zoomRadiusM={mapZoomed ? MAP_ZOOM_M : null}
+              />
+              <TouchableOpacity
+                onPress={() => setMapZoomed(z => !z)}
+                disabled={!mowerLocal}
+                style={styles.mapZoomBtn}
+                accessibilityRole="button"
+                accessibilityLabel={mapZoomed ? 'Show the whole garden' : `Zoom to ${MAP_ZOOM_M} metres around the mower`}
+              >
+                <Ionicons name={mapZoomed ? 'scan-outline' : 'search-outline'} size={14} color="#fff" />
+                <Text style={styles.mapZoomBtnText}>{mapZoomed ? 'Fit all' : `${MAP_ZOOM_M} m`}</Text>
+              </TouchableOpacity>
+            </View>
 
             {/* Mode-specific content */}
             {mappingMode === 'manual' ? (
@@ -2569,6 +2603,14 @@ const makeStyles = (c: Colors) => StyleSheet.create({
   },
 
   // ── Mode selection ──
+  // Zoomknop: klein, rechtsonder in de kaart, zodat hij niets van de kaart afdekt.
+  mapZoomBtn: {
+    position: 'absolute', right: 10, bottom: 10,
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+  },
+  mapZoomBtnText: { color: '#fff', fontSize: 12, fontWeight: '600' },
   modeBtn: {
     flexDirection: 'row',
     alignItems: 'center',
