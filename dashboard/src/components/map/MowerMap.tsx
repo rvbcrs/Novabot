@@ -4261,6 +4261,12 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
               </button>
             )}
             <p className="text-gray-400 text-[11px]">{t('map.droneHint')}</p>
+            {droneMeta?.camera?.placedFromPhoto && (
+              <p className="text-gray-400 text-[11px]">{t('map.droneFromPhoto', 'Eerste plaatsing uit de foto zelf: GPS, hoogte en koers van de drone.')}</p>
+            )}
+            {droneMeta?.camera?.pitchDeg !== undefined && droneMeta.camera.pitchDeg > -80 && (
+              <p className="text-amber-300 text-[11px]">{t('map.droneOblique', 'De camera keek {{deg}}° onder de horizon, niet recht naar beneden. Gebruik vier of meer punten.', { deg: Math.round(-droneMeta.camera.pitchDeg) })}</p>
+            )}
             {(() => { const dd = derivedPlacement(droneDraft.corners); return (<>
             <label className="block">
               <span className="flex justify-between"><span>{t('map.droneRotation', 'Draaiing')}</span><span className="font-mono text-gray-400">{Math.round(dd.rotationDeg)}°</span></span>

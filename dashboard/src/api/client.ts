@@ -1202,6 +1202,8 @@ export interface DroneOverlayPlacement { corners: DroneCorners; opacity: number 
 export interface DroneOverlayMeta {
   sn: string; width: number; height: number; mime: string; size: number;
   updatedAt: string; placement: DroneOverlayPlacement | null;
+  /** What the drone wrote into the photo, when it did. pitchDeg: -90 is straight down. */
+  camera?: { altitudeM?: number; yawDeg?: number; pitchDeg?: number; focal35?: number; placedFromPhoto: boolean };
 }
 
 /** null when this mower has no photo. */

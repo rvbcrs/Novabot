@@ -13,6 +13,7 @@ import path from 'path';
 import { droneOverlayRouter, parsePlacement, similarityCorners } from '../../routes/droneOverlay.js';
 import { imageDimensions } from '../../services/imageDimensions.js';
 import { db } from '../../db/database.js';
+import { droneJpeg } from '../services/photoMetadata.test.js';
 
 const SN = 'LFIN2230700238';
 const storage = mkdtempSync(path.join(tmpdir(), 'overlay-'));
@@ -105,6 +106,19 @@ describe('the overlay routes', () => {
     const img = await request(app).get(`/overlay/${SN}/image`);
     expect(img.status).toBe(200);
     expect(img.headers['content-type']).toContain('image/jpeg');
+  });
+
+  it('places a drone photo from its own metadata, and says so', async () => {
+    const up = await request(app).put(`/overlay/${SN}/image?lat=1&lng=1`).set('Content-Type', 'image/jpeg').send(droneJpeg(4000, 3000));
+    expect(up.status).toBe(200);
+    const c = up.body.placement.corners;
+    expect((c[0].lat + c[2].lat) / 2).toBeCloseTo(52.140889, 7);        // the photo's GPS wins over the map centre
+    expect((c[0].lng + c[2].lng) / 2).toBeCloseTo(6.231036, 7);
+    expect(up.body.camera).toEqual({ lat: 52.140889, lng: 6.231036, altitudeM: 40, yawDeg: 17.3, pitchDeg: -90, focal35: 24, placedFromPhoto: true });
+    // a replacement keeps the placement, so it no longer counts as placed from the photo
+    const again = await request(app).put(`/overlay/${SN}/image`).set('Content-Type', 'image/jpeg').send(droneJpeg(4000, 3000));
+    expect(again.body.placement).toEqual(up.body.placement);
+    expect(again.body.camera.placedFromPhoto).toBe(false);
   });
 
   it('keeps the placement when the photo is replaced', async () => {

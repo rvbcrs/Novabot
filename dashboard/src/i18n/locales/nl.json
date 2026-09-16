@@ -485,7 +485,9 @@
     "dronePointMap": "Klik nu op de kaart waar dat punt echt ligt.",
     "dronePointsInfo": "Twee of drie punten: schuiven, draaien en schalen. Vanaf vier wordt ook een schuine opname rechtgetrokken. Kies ze ver uit elkaar.",
     "dronePointUndo": "Laatste punt weg",
-    "dronePointsDone": "Klaar"
+    "dronePointsDone": "Klaar",
+    "droneFromPhoto": "Eerste plaatsing uit de foto zelf: GPS, hoogte en koers van de drone.",
+    "droneOblique": "De camera keek {{deg}}° onder de horizon, niet recht naar beneden. Gebruik vier of meer punten."
   },
   "firmware": {
     "requiresOpenNova": "Vereist OpenNova custom firmware. Stock firmware kan dit commando niet ontvangen.",

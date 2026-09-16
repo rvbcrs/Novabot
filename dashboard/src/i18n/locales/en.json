@@ -438,7 +438,9 @@
     "dronePointMap": "Now click on the map where that point really is.",
     "dronePointsInfo": "Two or three points: shift, rotate and scale. From four on, a photo taken at an angle is straightened too. Pick them far apart.",
     "dronePointUndo": "Remove last point",
-    "dronePointsDone": "Done"
+    "dronePointsDone": "Done",
+    "droneFromPhoto": "First placement from the photo itself: the drone's GPS, height and heading.",
+    "droneOblique": "The camera looked {{deg}}° below the horizon, not straight down. Use four or more points."
   },
   "firmware": {
     "requiresOpenNova": "Requires OpenNova custom firmware. Stock firmware can't receive this command.",

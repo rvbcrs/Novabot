@@ -422,7 +422,9 @@
     "dronePointMap": "Klicken Sie jetzt auf der Karte dorthin, wo dieser Punkt wirklich liegt.",
     "dronePointsInfo": "Zwei oder drei Punkte: verschieben, drehen und skalieren. Ab vier wird auch ein schräg aufgenommenes Foto entzerrt. Wählen Sie sie weit auseinander.",
     "dronePointUndo": "Letzten Punkt entfernen",
-    "dronePointsDone": "Fertig"
+    "dronePointsDone": "Fertig",
+    "droneFromPhoto": "Erste Platzierung aus dem Foto selbst: GPS, Höhe und Kurs der Drohne.",
+    "droneOblique": "Die Kamera blickte {{deg}}° unter den Horizont, nicht senkrecht nach unten. Verwenden Sie vier oder mehr Punkte."
   },
   "firmware": {
     "requiresOpenNova": "Erfordert die OpenNova Custom-Firmware. Stock-Firmware kann diesen Befehl nicht empfangen.",

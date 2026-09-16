@@ -18,6 +18,7 @@ import path from 'path';
 import { existsSync, mkdirSync, unlinkSync, writeFileSync } from 'fs';
 import { deviceSettingsRepo } from '../db/repositories/index.js';
 import { imageDimensions } from '../services/imageDimensions.js';
+import { photoMetadata, type PhotoMetadata } from '../services/photoMetadata.js';
 
 export const droneOverlayRouter = Router();
 
@@ -62,6 +63,29 @@ export interface OverlayMeta {
   size: number;
   updatedAt: string;
   placement: OverlayPlacement | null;
+  /** What the drone wrote into the photo, when it did; placedFromPhoto says the placement came from it. */
+  camera?: PhotoMetadata & { placedFromPhoto: boolean };
+}
+
+/**
+ * The first placement of a fresh photo. With a drone's metadata: centre at
+ * its GPS position, ground width from height above take-off and the lens
+ * (the 35 mm equivalent focal length is defined on the 36x24 frame's
+ * diagonal, 43.27 mm), heading from the gimbal. Without: the map centre the
+ * client sent, 60 m wide, north up. Either way the points do the rest.
+ */
+export function firstPlacement(m: PhotoMetadata, dims: { width: number; height: number }, fallback: LatLng | null): OverlayPlacement | null {
+  const hasGps = m.lat !== undefined && m.lng !== undefined && Math.abs(m.lat) <= 90 && Math.abs(m.lng) <= 180 && !(m.lat === 0 && m.lng === 0);
+  const centre = hasGps ? { lat: m.lat as number, lng: m.lng as number } : fallback;
+  if (!centre) return null;
+  let widthM = 60;
+  if (m.altitudeM !== undefined && m.altitudeM > 2 && m.focal35 !== undefined && m.focal35 > 0) {
+    const halfDiag = Math.atan(43.27 / (2 * m.focal35));
+    const halfHorizontal = Math.atan(Math.tan(halfDiag) * dims.width / Math.hypot(dims.width, dims.height));
+    widthM = Math.min(EXTENT_M.max / 2, Math.max(EXTENT_M.min, 2 * m.altitudeM * Math.tan(halfHorizontal)));
+  }
+  const rotationDeg = m.yawDeg !== undefined ? m.yawDeg : 0;
+  return { corners: similarityCorners(centre, widthM, rotationDeg, dims.width / dims.height), opacity: 0.8 };
 }
 
 function storageDir(): string {
@@ -146,9 +170,11 @@ droneOverlayRouter.get('/:sn/image', (req, res) => {
   res.sendFile(file);
 });
 
-// PUT /overlay/:sn/image — raw JPEG or PNG body. Optional ?lat=&lng= gives the
-// first placement (map centre at upload time, 60 m wide) so the photo is
-// visible before anyone has dragged it.
+// PUT /overlay/:sn/image — raw JPEG or PNG body. The first placement comes
+// from the photo's own metadata when a drone wrote it; otherwise the optional
+// ?lat=&lng= (map centre at upload time) with 60 m width, so the photo is
+// visible before anyone has dragged it. An existing placement is kept: a
+// re-upload of an edited crop must not undo careful work.
 droneOverlayRouter.put('/:sn/image',
   express.raw({ type: ['image/jpeg', 'image/png', 'application/octet-stream'], limit: '50mb' }),
   (req, res) => {
@@ -172,13 +198,15 @@ droneOverlayRouter.put('/:sn/image',
 
     const previous = readMeta(sn);
     const lat = Number(req.query.lat), lng = Number(req.query.lng);
-    const placement: OverlayPlacement | null = previous?.placement
-      ?? (Number.isFinite(lat) && Number.isFinite(lng)
-        ? { corners: similarityCorners({ lat, lng }, 60, 0, dims.width / dims.height), opacity: 0.8 }
-        : null);
+    const photo = dims.mime === 'image/jpeg' ? photoMetadata(buf) : {};
+    const fallback = Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null;
+    const placement: OverlayPlacement | null = previous?.placement ?? firstPlacement(photo, dims, fallback);
+    const camera = Object.keys(photo).length
+      ? { ...photo, placedFromPhoto: !previous?.placement && photo.lat !== undefined }
+      : undefined;
     const meta: OverlayMeta = {
       file, width: dims.width, height: dims.height, mime: dims.mime, size: buf.length,
-      updatedAt: new Date().toISOString(), placement,
+      updatedAt: new Date().toISOString(), placement, camera,
     };
     writeMeta(sn, meta);
     const { file: _f, ...pub } = meta;
