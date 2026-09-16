@@ -1876,7 +1876,7 @@ dashboardRouter.delete('/maps/:sn/:mapId', async (req: Request, res: Response) =
   // bij een bevestigde wis ook de database.
   const mowerOnline = isDeviceOnline(sn);
   // De maaier kent alleen de canonieke slotnaam; map_name kan een gebruikersalias zijn.
-  const mowerMapName = row.canonical_name ?? row.map_name;
+  const mowerMapName = row.map_type !== 'work' && row.canonical_name ? `${row.canonical_name}.csv` : row.canonical_name ?? row.map_name;
   if (mowerOnline && mowerMapName && !force) {
     const workStatus = parseInt(deviceCache.get(sn)?.get('work_status') ?? '', 10);
     // 49 en hoger = bezig (Resuming, Start requested, init-stappen, maaien).
