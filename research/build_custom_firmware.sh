@@ -40,7 +40,7 @@ OUTPUT_DIR="$SCRIPT_DIR/firmware"
 
 # === Configuratie (aanpasbaar via CLI args) ===
 SERVER_HOST="novabot.local"
-SERVER_HTTP_PORT="8080"  # OpenNova server poort (Docker draait standaard op 8080, dev server op 3000 → gebruik --http-port 3000)
+SERVER_HTTP_PORT="80"  # OpenNova server poort (Docker draait op 80; Ramons .247 op 8080, dev op 3000 → --http-port)
 MQTT_HOST=""  # Leeg = zelfde als SERVER_HOST
 MQTT_PORT="1883"
 SSH_PASSWORD="novabot"
@@ -584,8 +584,8 @@ cat > "$NOVABOT_ROOT/scripts/set_server_urls.sh" << URLSCRIPT
 #   Port discovery prioriteit (eerste die werkt wint):
 #     1. /userdata/lfi/server_port_override.txt   (manual override)
 #     2. mDNS SRV \`_opennova-http._tcp.local\`     (strict target filter)
-#     3. TCP probe op opennova.local: 8080 → 80 → 443
-#     4. Hardcoded FALLBACK_HTTP_PORT (8080)
+#     3. TCP probe op opennova.local (of IP): 80 → 8080 → 443
+#     4. Hardcoded FALLBACK_HTTP_PORT (80, --http-port)
 #
 #   De target filter op stap 2 weigert rogue responders (Chromecast,
 #   neighbour-containers met \`_opennova-http._tcp.local\` collisions). Hij
@@ -611,6 +611,24 @@ mkdir -p /userdata/lfi /userdata/ota
 log() {
     echo "[\$(date)] set_server_urls: \$1" >> "\$LOG_FILE"
 }
+
+# ── Host voor http_address.txt ───────────────────────────────────
+# Resolvet opennova.local (mDNS), dan is de hostname de beste keuze:
+# libcurl volgt de server bij een IP-wissel. Resolvet hij NIET (server in
+# Docker bridge, multicast komt het LAN niet op), dan is een hostname in
+# http_address.txt een gegarandeerde INIT_NET_ERROR-lus in mqtt_node.
+# Dan het IP: uit de DNS-omleiding van app.lfibot.com of last-known.
+HTTP_HOST="\$FALLBACK_HOSTNAME"
+if ! getent hosts "\$FALLBACK_HOSTNAME" >/dev/null 2>&1; then
+    HTTP_HOST="\$(getent hosts app.lfibot.com 2>/dev/null | awk '{print \$1}' | head -1)"
+    [ -z "\$HTTP_HOST" ] && [ -f "\$LAST_KNOWN_FILE" ] && HTTP_HOST="\$(tr -d '[:space:]' < "\$LAST_KNOWN_FILE")"
+    if [ -n "\$HTTP_HOST" ]; then
+        log "opennova.local lost niet op — http_address op IP \$HTTP_HOST"
+    else
+        HTTP_HOST="\$FALLBACK_HOSTNAME"
+        log "WARN: opennova.local lost niet op en geen IP bekend — hostname blijft (mqtt_node komt niet online)"
+    fi
+fi
 
 # ── --restart-mqtt: drop mqtt_node so ros2 launch respawns it ────
 # Used after a manual run when http_address.txt / json_config has
@@ -781,7 +799,7 @@ PROBE_EOF
 # ── Port discovery cascade ───────────────────────────────────────
 # 1) override file (power-users met afwijkende port)
 # 2) mDNS SRV met strict target filter
-# 3) TCP probe op opennova.local: 8080 → 80 → 443
+# 3) TCP probe op opennova.local (of het IP): 80 → 8080 → 443
 # 4) FALLBACK_HTTP_PORT
 PORT=""
 PORT_SOURCE=""
@@ -805,10 +823,10 @@ if [ -z "\$PORT" ]; then
 fi
 
 if [ -z "\$PORT" ]; then
-    for p in 8080 80 443; do
-        if probe_http "\$FALLBACK_HOSTNAME" "\$p"; then
+    for p in 80 8080 443; do
+        if probe_http "\$HTTP_HOST" "\$p"; then
             PORT="\$p"
-            PORT_SOURCE="probe \$FALLBACK_HOSTNAME:\$p"
+            PORT_SOURCE="probe \$HTTP_HOST:\$p"
             break
         fi
     done
@@ -826,7 +844,7 @@ fi
 # de server naar een ander IP (of vervang door andere host die ook
 # opennova.local adverteert) → mower switched automatisch zonder polling
 # of script-rerun.
-NEW_ADDRESS="\${FALLBACK_HOSTNAME}:\${PORT}"
+NEW_ADDRESS="\${HTTP_HOST}:\${PORT}"
 CURRENT_ADDRESS=""
 [ -f "\$HTTP_ADDR_FILE" ] && CURRENT_ADDRESS="\$(cat "\$HTTP_ADDR_FILE")"
 if [ "\$NEW_ADDRESS" != "\$CURRENT_ADDRESS" ]; then
@@ -843,6 +861,7 @@ HTTP_ADDRESS="\$NEW_ADDRESS"
 # en updaten alleen bij wijziging. \`getent hosts\` consulteert dezelfde
 # resolver-chain (files → mdns4_minimal → dns) als libcurl.
 MQTT_ADDRESS="\$(getent hosts \$FALLBACK_HOSTNAME 2>/dev/null | awk '{print \$1}' | head -1)"
+[ -z "\$MQTT_ADDRESS" ] && [ "\$HTTP_HOST" != "\$FALLBACK_HOSTNAME" ] && MQTT_ADDRESS="\$HTTP_HOST"
 if [ -z "\$MQTT_ADDRESS" ] && [ -f "\$LAST_KNOWN_FILE" ]; then
     MQTT_ADDRESS="\$(cat "\$LAST_KNOWN_FILE")"
     log "getent miste — MQTT addr uit last-known: \$MQTT_ADDRESS"
