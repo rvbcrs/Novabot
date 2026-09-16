@@ -78,7 +78,8 @@ function probes(over: Partial<{
       reachable: false, error: 'niet gepeild in de test', mqttAddr: null, hasSn: false,
       serverIp: null, mdnsResolves: false, mqttNodeRunning: false, mqttNodeUptimeS: null,
       mqttNodeConnected: false, mqttNetErrors: 0, skippedConfigUpdate: false,
-      extendedCommandsRunning: false, ...(over.mower ?? {}),
+      extendedCommandsRunning: false, version: null, httpAddr: null, httpCheck: null,
+      ...(over.mower ?? {}),
     }),
     containerNetwork: () => ({
       inContainer: false, bridged: false, addresses: ['192.168.1.2'],
@@ -852,11 +853,45 @@ describe('on the mower itself', () => {
     });
   }
 
-  it('does not try to log into stock firmware', async () => {
+  it('does not blame stock firmware when logging in fails', async () => {
     // SSH is something our build enables. On stock there is nothing to log into.
     const step = (await onMower({}, 'v6.0.2')).steps.find(s => s.id === 'mower_login')!;
     expect(step.status).toBe('skipped');
     expect(step.evidence).toContain('stock');
+  });
+
+  it('a working login proves OpenNova, whatever the server has on record', async () => {
+    // LFIN1231000009 on 2026-09-16: custom-38 on disk, v5.7.1 in the database,
+    // because mqtt_node had never connected to report the real one. The old
+    // gate skipped the whole mower group and the diagnosis came out all green.
+    const d = await onMower({
+      reachable: true, version: 'v6.0.2-custom-38', mqttNodeRunning: true, mqttNodeConnected: false,
+      httpAddr: 'opennova.local:8080', httpCheck: 0,
+    }, 'v5.7.1');
+    const fw = d.steps.find(s => s.id === 'firmware')!;
+    expect(fw.status).toBe('warn');
+    expect(fw.evidence).toContain('v5.7.1');
+    expect(fw.evidence).toContain('custom-38');
+    expect(d.steps.find(s => s.id === 'mower_login')!.status).toBe('ok');
+    expect(d.steps.find(s => s.id === 'mqtt_node')!.status).toBe('fail');
+    const http = d.steps.find(s => s.id === 'http_address')!;
+    expect(http.status).toBe('fail');
+    expect(http.evidence).toContain('opennova.local:8080');
+    expect(http.evidence).toContain('geen antwoord');
+    expect(http.action).toContain('http_address.txt');
+  });
+
+  it('is quiet about the net check when it answers 200', async () => {
+    const step = (await onMower({ reachable: true, mqttNodeRunning: true, mqttNodeConnected: true, httpAddr: '192.168.1.100:80', httpCheck: 200 }))
+      .steps.find(s => s.id === 'http_address')!;
+    expect(step.status).toBe('ok');
+  });
+
+  it('names a wrong port by its status code', async () => {
+    const step = (await onMower({ reachable: true, mqttNodeRunning: true, httpAddr: '192.168.1.100:8080', httpCheck: 404 }))
+      .steps.find(s => s.id === 'http_address')!;
+    expect(step.status).toBe('fail');
+    expect(step.evidence).toContain('404');
   });
 
   it('reproduces the case that started this: running, silent, stuck for hours', async () => {
@@ -941,6 +976,19 @@ describe('mDNS is measured at the mower, never inferred from the container', () 
       probes: probes({ mower: { reachable: true, ...mower }, net }),
     });
   }
+
+  it('shows the container network mode as its own row', async () => {
+    const bridged = (await onMower({}, { inContainer: true, bridged: true, addresses: ['172.19.0.2'] }))
+      .steps.find(s => s.id === 'container_network')!;
+    expect(bridged.status).toBe('ok');
+    expect(bridged.evidence).toContain('bridge');
+    expect(bridged.evidence).toContain('172.19.0.2');
+    expect(bridged.action).toContain('multicast');
+    const host = (await onMower({}, { inContainer: true, bridged: false, addresses: ['192.168.1.100'] }))
+      .steps.find(s => s.id === 'container_network')!;
+    expect(host.evidence).toContain('host-netwerk');
+    expect(host.action).toBeUndefined();
+  });
 
   it('says mDNS is fine when the mower resolves it, bridged or not', async () => {
     const step = (await onMower({ mdnsResolves: true },

@@ -888,4 +888,55 @@ export const CATALOG: Catalog = {
     fr: "aucun blocage trouvé, mais {0} points d'attention : {1}",
     de: "keine Blockade gefunden, aber {0} Hinweise: {1}",
   },
+  // ── netwerkmodus, SSH-bewijs en de netcheck van mqtt_node (2026-09-16) ──
+  "in bridge-modus komt multicast meestal niet op het thuisnetwerk; of de maaier de server zo vindt staat verderop bij de maaier zelf": {
+    en: "in bridge mode multicast usually does not reach the home network; whether the mower finds the server that way is shown further down, at the mower itself",
+    fr: "en mode bridge, le multicast n'atteint généralement pas le réseau domestique ; si la tondeuse trouve le serveur ainsi est indiqué plus bas, chez la tondeuse elle-même",
+    de: "im Bridge-Modus erreicht Multicast das Heimnetz meist nicht; ob der Mäher den Server so findet, steht weiter unten beim Mäher selbst",
+  },
+  "de server kent {0} (stock), maar inloggen via SSH lukt en dat kan alleen op OpenNova-firmware; op de maaier staat {1}": {
+    en: "the server has {0} (stock) on record, but logging in over SSH works and that is only possible on OpenNova firmware; the mower itself says {1}",
+    fr: "le serveur connaît {0} (stock), mais la connexion SSH fonctionne et ce n'est possible que sur le firmware OpenNova ; la tondeuse elle-même indique {1}",
+    de: "der Server kennt {0} (Stock), aber die SSH-Anmeldung klappt und das geht nur mit OpenNova-Firmware; auf dem Mäher steht {1}",
+  },
+  "de server kent geen versie, maar inloggen via SSH lukt en dat kan alleen op OpenNova-firmware; op de maaier staat {0}": {
+    en: "the server has no version on record, but logging in over SSH works and that is only possible on OpenNova firmware; the mower itself says {0}",
+    fr: "le serveur ne connaît aucune version, mais la connexion SSH fonctionne et ce n'est possible que sur le firmware OpenNova ; la tondeuse elle-même indique {0}",
+    de: "der Server kennt keine Version, aber die SSH-Anmeldung klappt und das geht nur mit OpenNova-Firmware; auf dem Mäher steht {0}",
+  },
+  "de versie in de server komt van mqtt_node; zolang die niet verbindt blijft de oude staan, zie de maaier-groep hieronder": {
+    en: "the version in the server comes from mqtt_node; as long as it does not connect the old one stays, see the mower group below",
+    fr: "la version dans le serveur vient de mqtt_node ; tant qu'il ne se connecte pas, l'ancienne reste, voir le groupe tondeuse ci-dessous",
+    de: "die Version im Server kommt von mqtt_node; solange der nicht verbindet, bleibt die alte stehen, siehe die Mäher-Gruppe unten",
+  },
+  "de netcheck van mqtt_node naar http://{0} slaagt": {
+    en: "mqtt_node's network check to http://{0} succeeds",
+    fr: "le contrôle réseau de mqtt_node vers http://{0} réussit",
+    de: "der Netzwerkcheck von mqtt_node nach http://{0} gelingt",
+  },
+  "de netcheck van mqtt_node naar http://{0} geeft {1}": {
+    en: "mqtt_node's network check to http://{0} returns {1}",
+    fr: "le contrôle réseau de mqtt_node vers http://{0} renvoie {1}",
+    de: "der Netzwerkcheck von mqtt_node nach http://{0} liefert {1}",
+  },
+  "de netcheck van mqtt_node naar http://{0} krijgt geen antwoord": {
+    en: "mqtt_node's network check to http://{0} gets no answer",
+    fr: "le contrôle réseau de mqtt_node vers http://{0} ne reçoit aucune réponse",
+    de: "der Netzwerkcheck von mqtt_node nach http://{0} bekommt keine Antwort",
+  },
+  "zolang dit faalt verbindt mqtt_node nooit; zet in /userdata/lfi/http_address.txt het adres van deze server met de juiste poort (bv. {0}:{1}) en herstart met set_server_urls.sh --restart-mqtt": {
+    en: "as long as this fails mqtt_node never connects; put this server's address with the right port in /userdata/lfi/http_address.txt (e.g. {0}:{1}) and restart with set_server_urls.sh --restart-mqtt",
+    fr: "tant que cela échoue, mqtt_node ne se connecte jamais ; mettez l'adresse de ce serveur avec le bon port dans /userdata/lfi/http_address.txt (p. ex. {0}:{1}) et redémarrez avec set_server_urls.sh --restart-mqtt",
+    de: "solange das fehlschlägt, verbindet mqtt_node nie; trage in /userdata/lfi/http_address.txt die Adresse dieses Servers mit dem richtigen Port ein (z. B. {0}:{1}) und starte mit set_server_urls.sh --restart-mqtt neu",
+  },
+  "/userdata/lfi/http_address.txt ontbreekt of is leeg": {
+    en: "/userdata/lfi/http_address.txt is missing or empty",
+    fr: "/userdata/lfi/http_address.txt est absent ou vide",
+    de: "/userdata/lfi/http_address.txt fehlt oder ist leer",
+  },
+  "zonder dit adres slaat de netcheck van mqtt_node nergens op; draai set_server_urls.sh --restart-mqtt": {
+    en: "without this address mqtt_node's network check has nowhere to go; run set_server_urls.sh --restart-mqtt",
+    fr: "sans cette adresse, le contrôle réseau de mqtt_node n'a nulle part où aller ; exécutez set_server_urls.sh --restart-mqtt",
+    de: "ohne diese Adresse hat der Netzwerkcheck von mqtt_node kein Ziel; führe set_server_urls.sh --restart-mqtt aus",
+  },
 };

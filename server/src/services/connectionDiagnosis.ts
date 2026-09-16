@@ -229,6 +229,13 @@ export async function diagnoseConnection(
     : net.bridged
     ? T`container met bridge-netwerk (${net.addresses.join(', ')})`
     : T`container met host-netwerk (${net.addresses.join(', ')})`;
+  push({
+    id: 'container_network', group: 'server', status: 'ok',
+    evidence: netDesc,
+    action: net.bridged
+      ? T`in bridge-modus komt multicast meestal niet op het thuisnetwerk; of de maaier de server zo vindt staat verderop bij de maaier zelf`
+      : undefined,
+  });
 
   // ── mDNS op 5353: gemeten, en bij falen de oorzaak en de remedie ─────────
   //
@@ -777,6 +784,17 @@ export async function diagnoseConnection(
     });
   }
 
+  // ── Op de maaier inloggen, vóór het firmware-oordeel ───────────────────
+  // SSH is iets wat onze build aanzet. Lukt inloggen, dan IS het OpenNova,
+  // wat de server ook geregistreerd heeft. Op 2026-09-16 draaide
+  // LFIN1231000009 custom-38 terwijl de database v5.7.1 zei: mqtt_node had
+  // nooit verbonden en dus nooit een versie gemeld. De peiling op de gemelde
+  // versie laten afhangen verborg precies het geval waar hij voor was.
+  const m = deviceType === 'mower' && input.probeNetwork !== false && reach.deviceIp
+    ? await probe.mower(reach.deviceIp)
+    : null;
+  const sshWorks = m?.reachable === true;
+
   // ── Firmware ───────────────────────────────────────────────────────────
   // Bij een lader stond hier de versie van de GEKOPPELDE MAAIER: eq draagt
   // beide kanten, en mower_version was de enige bron. In het admin panel las
@@ -784,7 +802,18 @@ export async function diagnoseConnection(
   const version = deviceType === 'charger'
     ? eq?.charger_version ?? null
     : snap?.sw_version ?? eq?.mower_version ?? null;
-  if (!version) {
+  const recordedCustom = /custom|opennova/i.test(version ?? '');
+  if (sshWorks && !recordedCustom) {
+    push({
+      id: 'firmware',
+      group: 'firmware',
+      status: 'warn',
+      evidence: version
+        ? T`de server kent ${version} (stock), maar inloggen via SSH lukt en dat kan alleen op OpenNova-firmware; op de maaier staat ${m!.version ?? 'geen leesbare versie'}`
+        : T`de server kent geen versie, maar inloggen via SSH lukt en dat kan alleen op OpenNova-firmware; op de maaier staat ${m!.version ?? 'geen leesbare versie'}`,
+      action: T`de versie in de server komt van mqtt_node; zolang die niet verbindt blijft de oude staan, zie de maaier-groep hieronder`,
+    });
+  } else if (!version) {
     push({
       id: 'firmware',
       group: 'firmware',
@@ -792,14 +821,16 @@ export async function diagnoseConnection(
       evidence: T`firmwareversie nog niet gemeld`,
     });
   } else {
-    const custom = /custom|opennova/i.test(version);
-    const buildNum = Number(version.match(/custom-(\d+)/)?.[1] ?? NaN);
     push({
       id: 'firmware',
       group: 'firmware',
       status: 'ok',
-      evidence: custom ? T`${version} (OpenNova)` : T`${version} (stock)`,
+      evidence: recordedCustom ? T`${version} (OpenNova)` : T`${version} (stock)`,
     });
+  }
+  {
+    const custom = sshWorks || recordedCustom;
+    const buildNum = Number((m?.version ?? version ?? '').match(/custom-(\d+)/)?.[1] ?? NaN);
     // De firmware stuurt map_ids boven 60000 naar zijn vision_test-taak, die
     // faalt met fout 125. Builds vanaf MAP_NAMES_SELECTION_BUILD kiezen zones op
     // naam en hebben er geen last van (GH #114).
@@ -909,25 +940,23 @@ export async function diagnoseConnection(
   // Van buiten ziet dat er gezond uit, van binnen stond mqtt_node zeventien uur
   // vast in een verbindingslus terwijl een verbinding vanaf diezelfde maaier op
   // datzelfde moment in 0,05 s lukte.
-  const customFirmware = deviceType === 'mower' && /custom|opennova/i.test(version ?? '');
   if (deviceType !== 'mower') {
     // niets: de groep gaat over de maaier
-  } else if (!customFirmware) {
-    push({
-      id: 'mower_login',
-      group: 'mower',
-      status: 'skipped',
-      evidence: T`stock firmware heeft geen SSH, dus hier valt niets te lezen`,
-    });
-  } else if (input.probeNetwork === false || !reach.deviceIp) {
+  } else if (m === null) {
     push({
       id: 'mower_login',
       group: 'mower',
       status: 'skipped',
       evidence: reach.deviceIp ? T`niet gepeild` : T`geen adres bekend`,
     });
+  } else if (!m.reachable && !recordedCustom) {
+    push({
+      id: 'mower_login',
+      group: 'mower',
+      status: 'skipped',
+      evidence: T`stock firmware heeft geen SSH, dus hier valt niets te lezen`,
+    });
   } else {
-    const m = await probe.mower(reach.deviceIp);
     if (!m.reachable) {
       push({
         id: 'mower_login',
@@ -966,6 +995,34 @@ export async function diagnoseConnection(
         });
       } else {
         push({ id: 'mqtt_node', group: 'mower', status: 'ok', evidence: T`mqtt_node verbonden met de broker` });
+      }
+
+      // De netcheck van mqtt_node zelf: een POST naar http_address.txt. Faalt
+      // die, dan komt hij nooit uit MQTT_EVENT_INIT_NET_ERROR en verbindt hij
+      // nooit. Op 2026-09-16 stond daar opennova.local:8080: een naam die op
+      // de maaier niet oploste, en een poort die de server niet had.
+      if (m.httpAddr) {
+        const ok = m.httpCheck === 200;
+        push({
+          id: 'http_address',
+          group: 'mower',
+          status: ok ? 'ok' : 'fail',
+          evidence: ok
+            ? T`de netcheck van mqtt_node naar http://${m.httpAddr} slaagt`
+            : m.httpCheck
+            ? T`de netcheck van mqtt_node naar http://${m.httpAddr} geeft ${m.httpCheck}`
+            : T`de netcheck van mqtt_node naar http://${m.httpAddr} krijgt geen antwoord`,
+          action: ok ? undefined
+            : T`zolang dit faalt verbindt mqtt_node nooit; zet in /userdata/lfi/http_address.txt het adres van deze server met de juiste poort (bv. ${md.ip ?? 'server-ip'}:${process.env.PORT ?? '80'}) en herstart met set_server_urls.sh --restart-mqtt`,
+        });
+      } else {
+        push({
+          id: 'http_address',
+          group: 'mower',
+          status: 'fail',
+          evidence: T`/userdata/lfi/http_address.txt ontbreekt of is leeg`,
+          action: T`zonder dit adres slaat de netcheck van mqtt_node nergens op; draai set_server_urls.sh --restart-mqtt`,
+        });
       }
 
       // Het serveradres waar mqtt_node op afgaat. Een cloudnaam werkt alleen

@@ -8,8 +8,11 @@
  * connect-retry loop while, at that same moment, a connection from that very
  * mower to the broker succeeded in 0.05 s.
  *
- * Custom firmware only: it is the build that enables SSH. On stock there is
- * nothing to log into and the whole group is skipped.
+ * Tried on every mower with an address. SSH is something our build enables,
+ * so a login that WORKS proves custom firmware, whatever the server has on
+ * record: on 2026-09-16 LFIN1231000009 ran custom-38 while the database still
+ * said v5.7.1, because mqtt_node had never connected to report otherwise.
+ * Gating the probe on the recorded version hid exactly the case it was for.
  *
  * One SSH round trip collecting key=value lines, because a diagnosis that takes
  * ten round trips is a diagnosis nobody waits for.
@@ -45,6 +48,12 @@ export interface MowerProbe {
   skippedConfigUpdate: boolean;
   /** Our own helpers, which can be fine while the firmware stack is not. */
   extendedCommandsRunning: boolean;
+  /** novabot_version_code from the firmware's own params file, the truth on disk. */
+  version: string | null;
+  /** host:port from http_address.txt, where mqtt_node posts its net check. */
+  httpAddr: string | null;
+  /** HTTP status of that net check done from the mower, 0 = no answer, null = not tried. */
+  httpCheck: number | null;
 }
 
 /**
@@ -69,6 +78,12 @@ if [ -n "$pid" ]; then
 fi
 echo "skipped_cfg=$(tail -40 /userdata/ota/custom_firmware.log 2>/dev/null | grep -c 'SKIP json_config.json update')"
 echo "ext_cmd=$(ps aux 2>/dev/null | grep -c "[e]xtended_commands.py")"
+echo "version=$(sed -n 's/^ *novabot_version_code: *//p' /root/novabot/install/novabot_api/share/novabot_api/config/novabot_api.yaml 2>/dev/null | head -1)"
+haddr=$(cat /userdata/lfi/http_address.txt 2>/dev/null | tr -d '[:space:]')
+echo "http_addr=$haddr"
+if [ -n "$haddr" ]; then
+  echo "http_check=$(curl -s -m 5 -o /dev/null -w '%{http_code}' -X POST "http://$haddr/api/nova-network/network/connection" 2>/dev/null)"
+fi
 `;
 
 function run(ip: string): Promise<string> {
@@ -99,7 +114,7 @@ export async function probeMower(ip: string | null): Promise<MowerProbe> {
     reachable: false, error: null, mqttAddr: null, hasSn: false, serverIp: null,
     mdnsResolves: false, mqttNodeRunning: false, mqttNodeUptimeS: null,
     mqttNodeConnected: false, mqttNetErrors: 0, skippedConfigUpdate: false,
-    extendedCommandsRunning: false,
+    extendedCommandsRunning: false, version: null, httpAddr: null, httpCheck: null,
   };
   if (!ip) return { ...empty, error: 'geen adres bekend' };
 
@@ -125,5 +140,8 @@ export async function probeMower(ip: string | null): Promise<MowerProbe> {
     mqttNetErrors: parseInt(kv.mqtt_errs ?? '0', 10) || 0,
     skippedConfigUpdate: (parseInt(kv.skipped_cfg ?? '0', 10) || 0) > 0,
     extendedCommandsRunning: (parseInt(kv.ext_cmd ?? '0', 10) || 0) > 0,
+    version: kv.version || null,
+    httpAddr: kv.http_addr || null,
+    httpCheck: kv.http_check === undefined ? null : (parseInt(kv.http_check, 10) || 0),
   };
 }
