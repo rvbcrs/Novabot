@@ -28,7 +28,8 @@ Commands:
 
 Required:
   --email, -e         Novabot account email
-  --password, -p      Novabot account password (asked for if omitted)
+  --password, -p      Novabot account password (asked for if omitted;
+                      NOVABOT_PASSWORD is used when set)
   --output, -o        Export directory (output for export, input for restore)
 
 Export options:
@@ -359,6 +360,11 @@ function downloadFile(url, destPath, token, redirectCount = 0) {
 // ── Login helper ────────────────────────────────────────────────────────────
 
 async function doLogin() {
+  // NOVABOT_PASSWORD lets the shell ask (`read -s`), which keeps the password
+  // out of the argument list and works where our own prompt cannot: a debug
+  // console, a wrapper that owns stdin, an editor terminal that does not pass
+  // input through.
+  if (!opts.password && process.env.NOVABOT_PASSWORD) opts.password = process.env.NOVABOT_PASSWORD;
   if (!opts.password) opts.password = await promptPassword(`  Password for ${opts.email}: `);
   const encryptedPw = encryptCloudPassword(opts.password);
   const resp = await callLfiCloud('POST', '/api/nova-user/appUser/login', {
