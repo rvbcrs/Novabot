@@ -428,7 +428,7 @@
     "droneWidth": "Width on the ground",
     "droneSave": "Save placement",
     "droneCancel": "Cancel",
-    "droneHint": "Drag the photo until it lines up. It is a tracing aid only; the mower never uses it.",
+    "droneHint": "Drag the photo until it lines up; rotation and width pivot on the charging station when it lies in the photo. It is a tracing aid only; the mower never uses it.",
     "droneUploadFailed": "Upload failed",
     "droneDragPanel": "drag",
     "dronePoints": "Pick points",
@@ -440,7 +440,13 @@
     "dronePointUndo": "Remove last point",
     "dronePointsDone": "Done",
     "droneFromPhoto": "First placement from the photo itself: the drone's GPS, height and heading.",
-    "droneOblique": "The camera looked {{deg}}° below the horizon, not straight down. Use four or more points."
+    "droneOblique": "The camera looked {{deg}}° below the horizon, not straight down. Use four or more points.",
+    "droneDockPoint": "charging station",
+    "dronePointLabel": "point",
+    "droneRemovePoint": "Remove point",
+    "droneResidualInfo": "Deviation: how far that photo point still is from its map point. With 2 or 4 points it is always 0; with more you see how well the photo fits as a whole. A large number is usually a misclicked point, or a roof or treetop.",
+    "droneMeanResidual": "average {{cm}} cm",
+    "dronePointsSliders": "While picking, the points define the placement; the sliders work again afterwards."
   },
   "firmware": {
     "requiresOpenNova": "Requires OpenNova custom firmware. Stock firmware can't receive this command.",

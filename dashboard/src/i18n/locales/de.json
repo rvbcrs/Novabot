@@ -412,7 +412,7 @@
     "droneWidth": "Breite am Boden",
     "droneSave": "Platzierung speichern",
     "droneCancel": "Abbrechen",
-    "droneHint": "Ziehen Sie das Foto, bis es passt. Es ist nur eine Zeichenhilfe; der Mäher nutzt es nie.",
+    "droneHint": "Ziehen Sie das Foto, bis es passt; Drehen und Skalieren geschieht um die Ladestation, wenn sie im Foto liegt. Es ist nur eine Zeichenhilfe; der Mäher nutzt es nie.",
     "droneUploadFailed": "Hochladen fehlgeschlagen",
     "droneDragPanel": "ziehen",
     "dronePoints": "Punkte anklicken",
@@ -424,7 +424,13 @@
     "dronePointUndo": "Letzten Punkt entfernen",
     "dronePointsDone": "Fertig",
     "droneFromPhoto": "Erste Platzierung aus dem Foto selbst: GPS, Höhe und Kurs der Drohne.",
-    "droneOblique": "Die Kamera blickte {{deg}}° unter den Horizont, nicht senkrecht nach unten. Verwenden Sie vier oder mehr Punkte."
+    "droneOblique": "Die Kamera blickte {{deg}}° unter den Horizont, nicht senkrecht nach unten. Verwenden Sie vier oder mehr Punkte.",
+    "droneDockPoint": "Ladestation",
+    "dronePointLabel": "Punkt",
+    "droneRemovePoint": "Punkt entfernen",
+    "droneResidualInfo": "Abweichung: so weit liegt dieser Fotopunkt noch von seinem Kartenpunkt entfernt. Bei 2 oder 4 Punkten ist sie immer 0; bei mehr sehen Sie, wie gut das Foto als Ganzes passt. Ein großer Wert ist meist ein falsch angeklickter Punkt oder ein Dach oder eine Baumkrone.",
+    "droneMeanResidual": "im Mittel {{cm}} cm",
+    "dronePointsSliders": "Während des Anklickens bestimmen die Punkte die Platzierung; die Regler funktionieren danach wieder."
   },
   "firmware": {
     "requiresOpenNova": "Erfordert die OpenNova Custom-Firmware. Stock-Firmware kann diesen Befehl nicht empfangen.",

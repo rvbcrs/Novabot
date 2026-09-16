@@ -412,7 +412,7 @@
     "droneWidth": "Largeur au sol",
     "droneSave": "Enregistrer la position",
     "droneCancel": "Annuler",
-    "droneHint": "Faites glisser la photo jusqu'à ce qu'elle s'aligne. Ce n'est qu'une aide au tracé ; la tondeuse ne l'utilise jamais.",
+    "droneHint": "Faites glisser la photo jusqu'à ce qu'elle s'aligne ; rotation et largeur pivotent autour de la station de charge lorsqu'elle est dans la photo. Ce n'est qu'une aide au tracé ; la tondeuse ne l'utilise jamais.",
     "droneUploadFailed": "Échec de l'import",
     "droneDragPanel": "glisser",
     "dronePoints": "Pointer des repères",
@@ -424,7 +424,13 @@
     "dronePointUndo": "Retirer le dernier repère",
     "dronePointsDone": "Terminé",
     "droneFromPhoto": "Premier placement d'après la photo elle-même : GPS, hauteur et cap du drone.",
-    "droneOblique": "La caméra visait {{deg}}° sous l'horizon, pas à la verticale. Utilisez quatre repères ou plus."
+    "droneOblique": "La caméra visait {{deg}}° sous l'horizon, pas à la verticale. Utilisez quatre repères ou plus.",
+    "droneDockPoint": "station de charge",
+    "dronePointLabel": "repère",
+    "droneRemovePoint": "Retirer le repère",
+    "droneResidualInfo": "Écart : distance entre ce point de la photo et son point sur la carte. Avec 2 ou 4 repères il est toujours nul ; avec davantage, il montre si la photo s'ajuste dans son ensemble. Un grand écart vient le plus souvent d'un clic erroné, d'un toit ou d'une cime d'arbre.",
+    "droneMeanResidual": "en moyenne {{cm}} cm",
+    "dronePointsSliders": "Pendant le pointage, les repères déterminent le placement ; les curseurs fonctionnent à nouveau ensuite."
   },
   "firmware": {
     "requiresOpenNova": "Nécessite le firmware personnalisé OpenNova. Le firmware d'origine ne peut pas recevoir cette commande.",

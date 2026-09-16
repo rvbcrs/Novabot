@@ -11,7 +11,7 @@ import {
 import { useTranslation } from 'react-i18next';
 import type { MapData, MapCalibration, GpsPoint } from '../../types';
 import { DroneOverlayLayer } from './DroneOverlay';
-import { latLngToPhoto, solvePlacement, insidePhoto, similarityCorners, derivedPlacement, rotateCorners, scaleCorners, type PhotoPixel, type PointPair } from '../../utils/droneOverlayMath';
+import { latLngToPhoto, photoToLatLng, distanceM, solvePlacement, insidePhoto, similarityCorners, derivedPlacement, rotateCorners, scaleCorners, type PhotoPixel, type PointPair } from '../../utils/droneOverlayMath';
 import {
   fetchDroneOverlay, uploadDroneOverlay, saveDroneOverlayPlacement, deleteDroneOverlay, droneOverlayImageUrl,
   type DroneOverlayMeta, type DroneOverlayPlacement, type DroneCorners,
@@ -1560,12 +1560,21 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
       const px = latLngToPhoto(droneDraft.corners, droneSize, ll);
       if (!insidePhoto(px, droneSize)) return;              // naast de foto geklikt
       // Eerste punt is het laadstation; waar dat op de kaart ligt weten we al.
-      if (pointMode.pairs.length === 0 && dockLatLng) { applyPairs([{ px, ll: dockLatLng }]); return; }
+      if (pointMode.pairs.length === 0 && dockLatLng) { applyPairs([{ px, ll: dockLatLng, dock: true }]); return; }
       setPointMode({ ...pointMode, pending: px });
       return;
     }
     applyPairs([...pointMode.pairs, { px: pointMode.pending, ll }]);
   }, [pointMode, droneDraft, droneSize, dockLatLng, applyPairs]);
+  // Hoe ver elk fotopunt nog van zijn kaartpunt ligt: bij 2 of 4 punten nul,
+  // daarbuiten de maat van het compromis, en de vinger naar een verkeerd punt.
+  const droneResiduals = pointMode && droneDraft && droneSize
+    ? pointMode.pairs.map(p => distanceM(photoToLatLng(droneDraft.corners, droneSize, p.px), p.ll))
+    : [];
+  // Draaien en schalen om het laadstation als dat in de foto ligt: dat punt
+  // ligt vast, de rest zwaait eromheen. Anders om het midden.
+  const dronePivot = (corners: DroneCorners) =>
+    (dockLatLng && droneSize && insidePhoto(latLngToPhoto(corners, droneSize, dockLatLng), droneSize) ? dockLatLng : undefined);
   // Charger pose in local meter frame (from map_info.json charging_pose).
   // Used to shift all local coords so that the physical charger position
   // projects onto chargerGps instead of the local origin (0,0).
@@ -3378,6 +3387,25 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
               onPick={pointMode ? onDronePick : undefined}
             />
           )}
+          {/* De aangewezen punten: waar het fotopunt nu ligt (amber) en waar het hoort (groen). */}
+          {pointMode && droneDraft && droneSize && (
+            <>
+              {pointMode.pairs.map((p, i) => {
+                const at = photoToLatLng(droneDraft.corners, droneSize, p.px);
+                return (
+                  <Fragment key={`dp-${i}`}>
+                    <Polyline positions={[[at.lat, at.lng], [p.ll.lat, p.ll.lng]]} pathOptions={{ color: '#fbbf24', weight: 2, opacity: 0.9 }} interactive={false} />
+                    <CircleMarker center={[p.ll.lat, p.ll.lng]} radius={5} pathOptions={{ color: '#ffffff', fillColor: '#10b981', fillOpacity: 1, weight: 1.5 }} interactive={false} />
+                    <CircleMarker center={[at.lat, at.lng]} radius={4} pathOptions={{ color: '#ffffff', fillColor: '#fbbf24', fillOpacity: 1, weight: 1.5 }} interactive={false} />
+                  </Fragment>
+                );
+              })}
+              {pointMode.pending && (() => {
+                const at = photoToLatLng(droneDraft.corners, droneSize, pointMode.pending);
+                return <CircleMarker center={[at.lat, at.lng]} radius={7} pathOptions={{ color: '#fbbf24', fillColor: '#fbbf24', fillOpacity: 0.25, weight: 2 }} interactive={false} />;
+              })()}
+            </>
+          )}
           {/* Saved map polygons with calibration applied */}
           {polygonMaps.map(m => {
             // Dok-route-unicom: punt 0 (het dok-anker) niet meeschuiven — zelfde
@@ -4237,7 +4265,12 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
             </div>
             {pointMode ? (
               <div className="rounded-lg bg-emerald-500/10 border border-emerald-500/30 p-2 space-y-1">
-                <div className="text-emerald-300 font-medium">{t('map.dronePointsCount', 'Punten: {{count}}', { count: pointMode.pairs.length })}</div>
+                <div className="text-emerald-300 font-medium">
+                  {t('map.dronePointsCount', 'Punten: {{count}}', { count: pointMode.pairs.length })}
+                  {droneResiduals.length >= 3 && (
+                    <span className="text-gray-400 font-normal"> · {t('map.droneMeanResidual', 'gemiddeld {{cm}} cm', { cm: Math.round(droneResiduals.reduce((a, r) => a + r, 0) / droneResiduals.length * 100) })}</span>
+                  )}
+                </div>
                 <p className="text-[11px] text-gray-200">
                   {pointMode.pending
                     ? t('map.dronePointMap', 'Klik nu op de kaart waar dat punt echt ligt.')
@@ -4246,6 +4279,24 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
                       : t('map.dronePointPhoto', 'Klik in de foto op een herkenbare plek: een obstakel, een hoek van het terras, een put.')}
                 </p>
                 <p className="text-[11px] text-gray-400">{t('map.dronePointsInfo', 'Twee of drie punten: schuiven, draaien en schalen. Vanaf vier wordt ook een schuine opname rechtgetrokken. Kies ze ver uit elkaar.')}</p>
+                {pointMode.pairs.length > 0 && (
+                  <ul className="space-y-0.5">
+                    {pointMode.pairs.map((p, i) => {
+                      const r = droneResiduals[i] ?? 0;
+                      return (
+                        <li key={i} className="flex items-center gap-2 text-[11px]">
+                          <span className="text-gray-500 w-3 text-right">{i + 1}</span>
+                          <span className="flex-1 text-gray-300">{p.dock ? t('map.droneDockPoint', 'laadstation') : t('map.dronePointLabel', 'punt')}</span>
+                          <span className={`font-mono ${r > 0.3 ? 'text-amber-300' : 'text-gray-400'}`}>{r < 1 ? `${Math.round(r * 100)} cm` : `${r.toFixed(1)} m`}</span>
+                          <button onClick={() => applyPairs(pointMode.pairs.filter((_, j) => j !== i))} className="text-gray-500 hover:text-red-300 px-1 leading-none" title={t('map.droneRemovePoint', 'Punt weghalen')}>×</button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+                {pointMode.pairs.length >= 3 && (
+                  <p className="text-[11px] text-gray-500">{t('map.droneResidualInfo', 'Afwijking: zo ver ligt dat fotopunt nog van zijn kaartpunt. Bij 2 of 4 punten is dat altijd 0; met meer punten zie je hoe goed de foto in zijn geheel past. Een groot getal is meestal een verkeerd aangeklikt punt, of een dak of boomtop.')}</p>
+                )}
                 <div className="flex gap-3 text-[11px]">
                   <button onClick={undoPoint} disabled={!pointMode.pending && pointMode.pairs.length === 0}
                           className="text-gray-400 hover:text-gray-200 underline disabled:opacity-40">{t('map.dronePointUndo', 'Laatste punt weg')}</button>
@@ -4267,16 +4318,17 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
             {droneMeta?.camera?.pitchDeg !== undefined && droneMeta.camera.pitchDeg > -80 && (
               <p className="text-amber-300 text-[11px]">{t('map.droneOblique', 'De camera keek {{deg}}° onder de horizon, niet recht naar beneden. Gebruik vier of meer punten.', { deg: Math.round(-droneMeta.camera.pitchDeg) })}</p>
             )}
+            {pointMode && <p className="text-gray-500 text-[11px]">{t('map.dronePointsSliders', 'Tijdens het aanwijzen bepalen de punten de plaatsing; de schuifjes werken daarna weer.')}</p>}
             {(() => { const dd = derivedPlacement(droneDraft.corners); return (<>
-            <label className="block">
+            <label className={`block ${pointMode ? 'opacity-40' : ''}`}>
               <span className="flex justify-between"><span>{t('map.droneRotation', 'Draaiing')}</span><span className="font-mono text-gray-400">{Math.round(dd.rotationDeg)}°</span></span>
-              <input type="range" min={-180} max={180} step={0.5} value={dd.rotationDeg} className="w-full"
-                     onChange={e => { const v = Number(e.target.value); setDroneDraft(d => (d ? { ...d, corners: rotateCorners(d.corners, v - derivedPlacement(d.corners).rotationDeg) } : d)); }} />
+              <input type="range" min={-180} max={180} step={0.5} value={dd.rotationDeg} className="w-full" disabled={!!pointMode}
+                     onChange={e => { const v = Number(e.target.value); setDroneDraft(d => (d ? { ...d, corners: rotateCorners(d.corners, v - derivedPlacement(d.corners).rotationDeg, dronePivot(d.corners)) } : d)); }} />
             </label>
-            <label className="block">
+            <label className={`block ${pointMode ? 'opacity-40' : ''}`}>
               <span className="flex justify-between"><span>{t('map.droneWidth', 'Breedte op de grond')}</span><span className="font-mono text-gray-400">{dd.widthM.toFixed(1)} m</span></span>
-              <input type="range" min={5} max={300} step={0.5} value={dd.widthM} className="w-full"
-                     onChange={e => { const v = Number(e.target.value); setDroneDraft(d => (d ? { ...d, corners: scaleCorners(d.corners, v / derivedPlacement(d.corners).widthM) } : d)); }} />
+              <input type="range" min={5} max={300} step={0.5} value={dd.widthM} className="w-full" disabled={!!pointMode}
+                     onChange={e => { const v = Number(e.target.value); setDroneDraft(d => (d ? { ...d, corners: scaleCorners(d.corners, v / derivedPlacement(d.corners).widthM, dronePivot(d.corners)) } : d)); }} />
             </label>
             </>); })()}
             <label className="block">

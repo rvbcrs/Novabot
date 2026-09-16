@@ -9,7 +9,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   similarityCorners, derivedPlacement, photoToLatLng, latLngToPhoto, solvePlacement, insidePhoto,
-  rotateCorners, scaleCorners, translateCorners, isConvex, centroid, M_PER_DEG_LAT,
+  rotateCorners, scaleCorners, translateCorners, isConvex, centroid, distanceM, M_PER_DEG_LAT,
 } from '../../../../dashboard/src/utils/droneOverlayMath.js';
 import type { DroneCorners, LatLng } from '../../../../dashboard/src/api/client.js';
 
@@ -135,6 +135,18 @@ describe('drone photo geometry', () => {
     expect(isConvex(keystoned())).toBe(true);
     expect(isConvex([rect[0], rect[2], rect[1], rect[3]])).toBe(false);   // bow tie
     expect(isConvex([rect[1], rect[0], rect[3], rect[2]])).toBe(false);   // mirrored
+  });
+
+  it('rotates and scales about a given pivot, which stays where it is', () => {
+    const pivotPx = { u: 1000, v: 2000 };
+    const pivot = photoToLatLng(rect, size, pivotPx);
+    const turned = rotateCorners(rect, 30, pivot), bigger = scaleCorners(rect, 1.3, pivot);
+    expect(metres(photoToLatLng(turned, size, pivotPx), pivot)).toBeLessThan(1e-3);
+    expect(metres(photoToLatLng(bigger, size, pivotPx), pivot)).toBeLessThan(1e-3);
+    expect(derivedPlacement(turned).rotationDeg).toBeCloseTo(7, 3);   // frames 11 m apart: a ten-thousandth of a degree
+    expect(derivedPlacement(bigger).widthM).toBeCloseTo(83.2, 3);
+    expect(metres(centroid(turned), centroid(rect))).toBeGreaterThan(1);   // the centre moved, the pivot did not
+    expect(distanceM(rect[0], rect[1])).toBeCloseTo(64, 3);
   });
 
   it('rotates and scales about the centre and shifts as told', () => {

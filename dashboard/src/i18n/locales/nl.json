@@ -475,7 +475,7 @@
     "droneWidth": "Breedte op de grond",
     "droneSave": "Plaatsing opslaan",
     "droneCancel": "Annuleren",
-    "droneHint": "Sleep de foto tot hij past. Hij is alleen een hulp bij het tekenen; de maaier gebruikt hem niet.",
+    "droneHint": "Sleep de foto tot hij past; draaien en schalen gaat om het laadstation als dat in de foto ligt. Hij is alleen een hulp bij het tekenen; de maaier gebruikt hem niet.",
     "droneUploadFailed": "Uploaden mislukt",
     "droneDragPanel": "sleep",
     "dronePoints": "Punten aanwijzen",
@@ -487,7 +487,13 @@
     "dronePointUndo": "Laatste punt weg",
     "dronePointsDone": "Klaar",
     "droneFromPhoto": "Eerste plaatsing uit de foto zelf: GPS, hoogte en koers van de drone.",
-    "droneOblique": "De camera keek {{deg}}° onder de horizon, niet recht naar beneden. Gebruik vier of meer punten."
+    "droneOblique": "De camera keek {{deg}}° onder de horizon, niet recht naar beneden. Gebruik vier of meer punten.",
+    "droneDockPoint": "laadstation",
+    "dronePointLabel": "punt",
+    "droneRemovePoint": "Punt weghalen",
+    "droneResidualInfo": "Afwijking: zo ver ligt dat fotopunt nog van zijn kaartpunt. Bij 2 of 4 punten is dat altijd 0; met meer punten zie je hoe goed de foto in zijn geheel past. Een groot getal is meestal een verkeerd aangeklikt punt, of een dak of boomtop.",
+    "droneMeanResidual": "gemiddeld {{cm}} cm",
+    "dronePointsSliders": "Tijdens het aanwijzen bepalen de punten de plaatsing; de schuifjes werken daarna weer."
   },
   "firmware": {
     "requiresOpenNova": "Vereist OpenNova custom firmware. Stock firmware kan dit commando niet ontvangen.",

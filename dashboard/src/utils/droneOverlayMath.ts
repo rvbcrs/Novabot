@@ -9,7 +9,8 @@
  * points and drifts away from them; four points pin it everywhere on the
  * ground. Centre, width and rotation are the special case of a rectangle,
  * and the sliders still work on any corner set by rotating and scaling all
- * four about the centre.
+ * four about a pivot: the charging station when it lies in the photo, so the
+ * one point that is known to be right stays put, else the centre.
  *
  * All arithmetic is in a local flat frame around the garden, x = east and
  * y = south in metres, so photo pixels (y down) and ground share their
@@ -25,8 +26,8 @@ export const M_PER_DEG_LAT = 111_320;
 export interface PhotoSize { width: number; height: number; }
 export interface PhotoPixel { u: number; v: number; }
 export interface XY { x: number; y: number; }
-/** A photo pixel and the map point it belongs on. */
-export interface PointPair { px: PhotoPixel; ll: LatLng; }
+/** A photo pixel and the map point it belongs on; dock marks the charging station, whose map point was known. */
+export interface PointPair { px: PhotoPixel; ll: LatLng; dock?: boolean; }
 /** 3x3, row-major: [a b c; d e f; g h i], (x, y) -> ((ax+by+c)/(gx+hy+i), (dx+ey+f)/(gx+hy+i)). */
 export type Homography = number[];
 
@@ -42,6 +43,11 @@ export function toXY(f: Frame, ll: LatLng): XY {
 }
 export function toLatLng(f: Frame, p: XY): LatLng {
   return { lat: f.origin.lat - p.y / M_PER_DEG_LAT, lng: f.origin.lng + p.x / f.mPerDegLng };
+}
+/** Ground distance between two map points, metres. */
+export function distanceM(a: LatLng, b: LatLng): number {
+  const p = toXY(frameAt(a), b);
+  return Math.hypot(p.x, p.y);
 }
 export function centroid(pts: LatLng[]): LatLng {
   return {
@@ -197,16 +203,18 @@ export function derivedPlacement(corners: DroneCorners): { widthM: number; rotat
   return { widthM: Math.hypot(tr.x - tl.x, tr.y - tl.y), rotationDeg: Math.atan2(tr.y - tl.y, tr.x - tl.x) * 180 / Math.PI, centre };
 }
 
-function mapAboutCentre(corners: DroneCorners, fn: (p: XY) => XY): DroneCorners {
-  const f = frameAt(centroid(corners));
+function mapAbout(corners: DroneCorners, pivot: LatLng, fn: (p: XY) => XY): DroneCorners {
+  const f = frameAt(pivot);
   return corners.map(c => toLatLng(f, fn(toXY(f, c)))) as DroneCorners;
 }
-export function rotateCorners(corners: DroneCorners, deg: number): DroneCorners {
+/** Rotate about the pivot (default: the centre), which stays where it is; positive is clockwise on screen. */
+export function rotateCorners(corners: DroneCorners, deg: number, pivot?: LatLng): DroneCorners {
   const t = rad(deg), c = Math.cos(t), s = Math.sin(t);
-  return mapAboutCentre(corners, p => ({ x: p.x * c - p.y * s, y: p.x * s + p.y * c }));
+  return mapAbout(corners, pivot ?? centroid(corners), p => ({ x: p.x * c - p.y * s, y: p.x * s + p.y * c }));
 }
-export function scaleCorners(corners: DroneCorners, k: number): DroneCorners {
-  return mapAboutCentre(corners, p => ({ x: p.x * k, y: p.y * k }));
+/** Scale about the pivot (default: the centre), which stays where it is. */
+export function scaleCorners(corners: DroneCorners, k: number, pivot?: LatLng): DroneCorners {
+  return mapAbout(corners, pivot ?? centroid(corners), p => ({ x: p.x * k, y: p.y * k }));
 }
 export function translateCorners(corners: DroneCorners, dLat: number, dLng: number): DroneCorners {
   return corners.map(c => ({ lat: c.lat + dLat, lng: c.lng + dLng })) as DroneCorners;
