@@ -1,6 +1,45 @@
 {
   "releases": [
     {
+      "version": "2026.0916.2325",
+      "date": "2026-09-16",
+      "sections": {
+        "dashboard": [
+          "Pivot the drone photo on the dock, and show what each picked point does",
+          "First placement of a drone photo from its own metadata",
+          "Place the drone photo by four or more points, as a homography",
+          "Drawn zones and obstacles let the pick through to the drone photo",
+          "Place the drone photo with two clicks, and a panel you can move",
+          "Rotate the drone photo inside Leaflet's own transform",
+          "Your own drone photo as the map backdrop"
+        ],
+        "app": [
+          "A live map you can actually read while mapping"
+        ],
+        "admin": [
+          "Name the container_network and http_address diagnosis rows"
+        ],
+        "firmware": [
+          "Set_server_urls writes the server IP when opennova.local does not resolve, fallback port 80",
+          "Keep channels out of the per-zone coverage grids",
+          "Import math in extended_commands.py"
+        ],
+        "server": [
+          "A working SSH login proves OpenNova firmware; check mqtt_node's own net check; show container network mode",
+          "The password prompt was wiped off the screen by readline",
+          "Take the password from NOVABOT_PASSWORD",
+          "One readline interface for the whole run",
+          "The password prompt hung after the overwrite question",
+          "Ask for the password instead of demanding it on the command line",
+          "Restore maps through the route that takes a whole map set",
+          "Add standalone CLI for cloud data export and map restore",
+          "Let the wifi_rssi migration fail like its neighbours",
+          "Show the mower's WiFi signal as a percentage",
+          "Send the file name with .csv when deleting an obstacle or a channel"
+        ]
+      }
+    },
+    {
       "version": "2026.0915.2240",
       "date": "2026-09-15",
       "sections": {
@@ -187,29 +226,6 @@
           "Net verbonden device gold als offline vlak na een herstart",
           "Delete_map zonder map_type wiste niets op de maaier",
           "Stock-simulatie mag AES niet uitzetten voor een echte v6-maaier"
-        ]
-      }
-    },
-    {
-      "version": "2026.0909.1946",
-      "date": "2026-09-09",
-      "sections": {
-        "dashboard": [
-          "Firmware-melding niet boven het hele startpaneel",
-          "Tekenen/bewerken op stock ook in de functies zelf blokkeren",
-          "Firmware-gate in het dashboard tegen het centrale 409-contract",
-          "Gebieden tekenen/verslepen op stock firmware weigeren"
-        ],
-        "app": [
-          "Restrict mapping retry to unconfirmed stop commands",
-          "BLE-mapping ruimere scan-timeouts en 'Try again' na gemiste stop-bevestiging",
-          "Firmware-gate in de app tegen het centrale 409-contract"
-        ],
-        "server": [
-          "Update sync.remote",
-          "Harden BLE mapping recovery and preserve map selection identity",
-          "SIMULATE_STOCK_FIRMWARE test-knop voor de firmware-gate",
-          "Centrale firmware-gate voor alle extended-only routes"
         ]
       }
     }
