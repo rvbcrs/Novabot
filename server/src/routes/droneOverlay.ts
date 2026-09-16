@@ -5,9 +5,10 @@
  * with height leans away from the nadir point, and the hedge someone traces
  * sits a metre from where it stands. A consumer drone shoots straight down at
  * a centimetre or two per pixel. This lets a user put that photo under the
- * map: one image per mower, stored on disk, placed by hand (centre, width in
- * metres, rotation), drawn below the polygons as a tracing aid and nothing
- * more. It never feeds a coordinate into a map.
+ * map: one image per mower, stored on disk, placed by its four corners on the
+ * map (a homography, so a photo from a tilted camera can still be laid flat),
+ * drawn below the polygons as a tracing aid and nothing more. It never feeds
+ * a coordinate into a map.
  *
  * Mounted on dashboardRouter, so it sits behind the same LAN/auth gate.
  */
@@ -23,15 +24,34 @@ export const droneOverlayRouter = Router();
 const SN_RE = /^[A-Za-z0-9_-]{4,32}$/;
 const SETTING_KEY = 'drone_overlay';
 /** One garden fits in a few metres to a few hundred; anything else is a typo. */
-const WIDTH_M = { min: 1, max: 2000 };
+const EXTENT_M = { min: 1, max: 3000 };
+const M_PER_DEG_LAT = 111_320;
 
+export interface LatLng { lat: number; lng: number }
+/** Top-left, top-right, bottom-right, bottom-left of the photo, on the map. */
+export type Corners = [LatLng, LatLng, LatLng, LatLng];
 export interface OverlayPlacement {
-  lat: number;
-  lng: number;
-  /** Ground width of the image in metres; height follows the pixel aspect. */
-  widthM: number;
-  rotationDeg: number;
+  corners: Corners;
   opacity: number;
+}
+/** What the first betas stored: a rectangle by centre, ground width and rotation. */
+interface LegacyPlacement { lat: number; lng: number; widthM: number; rotationDeg?: number; opacity?: number }
+
+/**
+ * Corners of a photo laid flat: centre, ground width in metres, rotation
+ * clockwise on screen. The same arithmetic as the dashboard's
+ * similarityCorners (x east, y south, flat frame); it lives here as well
+ * because the server cannot import from the dashboard tree.
+ */
+export function similarityCorners(centre: LatLng, widthM: number, rotationDeg: number, aspect: number): Corners {
+  const mPerDegLng = M_PER_DEG_LAT * Math.cos(centre.lat * Math.PI / 180);
+  const w = widthM / 2, h = widthM / aspect / 2;
+  const t = rotationDeg * Math.PI / 180, c = Math.cos(t), s = Math.sin(t);
+  const at = (x: number, y: number): LatLng => {
+    const rx = x * c - y * s, ry = x * s + y * c;
+    return { lat: centre.lat - ry / M_PER_DEG_LAT, lng: centre.lng + rx / mPerDegLng };
+  };
+  return [at(-w, -h), at(w, -h), at(w, h), at(-w, h)];
 }
 
 export interface OverlayMeta {
@@ -51,7 +71,18 @@ function storageDir(): string {
 export function readMeta(sn: string): OverlayMeta | null {
   const row = deviceSettingsRepo.findBySn(sn).find(r => r.key === SETTING_KEY);
   if (!row?.value) return null;
-  try { return JSON.parse(row.value) as OverlayMeta; } catch { return null; }
+  let meta: OverlayMeta;
+  try { meta = JSON.parse(row.value) as OverlayMeta; } catch { return null; }
+  // A placement from before the corners model: the rectangle it described.
+  const p = meta.placement as unknown;
+  if (p && typeof p === 'object' && !('corners' in p)) {
+    const l = p as LegacyPlacement;
+    meta.placement = {
+      corners: similarityCorners({ lat: l.lat, lng: l.lng }, l.widthM, l.rotationDeg ?? 0, meta.width / meta.height),
+      opacity: l.opacity ?? 0.8,
+    };
+  }
+  return meta;
 }
 
 function writeMeta(sn: string, meta: OverlayMeta): void {
@@ -63,16 +94,26 @@ export function parsePlacement(body: unknown): OverlayPlacement | null {
   if (!body || typeof body !== 'object') return null;
   const b = body as Record<string, unknown>;
   const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : NaN);
-  const lat = num(b.lat), lng = num(b.lng), widthM = num(b.widthM);
-  const rotationDeg = b.rotationDeg === undefined ? 0 : num(b.rotationDeg);
   const opacity = b.opacity === undefined ? 0.8 : num(b.opacity);
-  if ([lat, lng, widthM, rotationDeg, opacity].some(Number.isNaN)) return null;
-  if (Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
-  if (widthM < WIDTH_M.min || widthM > WIDTH_M.max) return null;
-  if (opacity < 0 || opacity > 1) return null;
-  // Normalise the angle so the slider and the stored value agree.
-  const rot = ((rotationDeg + 180) % 360 + 360) % 360 - 180;
-  return { lat, lng, widthM, rotationDeg: rot, opacity };
+  if (Number.isNaN(opacity) || opacity < 0 || opacity > 1) return null;
+  if (!Array.isArray(b.corners) || b.corners.length !== 4) return null;
+  const corners: LatLng[] = [];
+  for (const c of b.corners) {
+    if (!c || typeof c !== 'object') return null;
+    const lat = num((c as Record<string, unknown>).lat), lng = num((c as Record<string, unknown>).lng);
+    if (Number.isNaN(lat) || Number.isNaN(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
+    corners.push({ lat, lng });
+  }
+  // The photo's extent on the ground, as the longest distance between corners.
+  const mPerDegLng = M_PER_DEG_LAT * Math.cos(corners[0].lat * Math.PI / 180);
+  let extent = 0;
+  for (let i = 0; i < 4; i++) {
+    for (let j = i + 1; j < 4; j++) {
+      extent = Math.max(extent, Math.hypot((corners[i].lat - corners[j].lat) * M_PER_DEG_LAT, (corners[i].lng - corners[j].lng) * mPerDegLng));
+    }
+  }
+  if (extent < EXTENT_M.min || extent > EXTENT_M.max) return null;
+  return { corners: corners as Corners, opacity };
 }
 
 function snOr400(req: Request, res: Response): string | null {
@@ -131,9 +172,9 @@ droneOverlayRouter.put('/:sn/image',
 
     const previous = readMeta(sn);
     const lat = Number(req.query.lat), lng = Number(req.query.lng);
-    const placement = previous?.placement
+    const placement: OverlayPlacement | null = previous?.placement
       ?? (Number.isFinite(lat) && Number.isFinite(lng)
-        ? parsePlacement({ lat, lng, widthM: 60, rotationDeg: 0, opacity: 0.8 })
+        ? { corners: similarityCorners({ lat, lng }, 60, 0, dims.width / dims.height), opacity: 0.8 }
         : null);
     const meta: OverlayMeta = {
       file, width: dims.width, height: dims.height, mime: dims.mime, size: buf.length,
@@ -150,7 +191,7 @@ droneOverlayRouter.put('/:sn', (req, res) => {
   const meta = readMeta(sn);
   if (!meta) { res.status(404).json({ error: 'upload a photo first' }); return; }
   const placement = parsePlacement(req.body);
-  if (!placement) { res.status(400).json({ error: 'placement needs lat, lng, widthM (1..2000 m), rotationDeg, opacity (0..1)' }); return; }
+  if (!placement) { res.status(400).json({ error: 'placement needs corners (4 x {lat, lng}, 1..3000 m apart) and opacity (0..1)' }); return; }
   writeMeta(sn, { ...meta, placement });
   res.json({ sn, placement });
 });

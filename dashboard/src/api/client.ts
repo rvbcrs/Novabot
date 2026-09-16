@@ -1195,9 +1195,10 @@ export async function refreshPlanPath(sn: string): Promise<CoveragePathEntry[]> 
 
 
 // ── Drone photo as map backdrop (#124) ──────────────────────────────────────
-export interface DroneOverlayPlacement {
-  lat: number; lng: number; widthM: number; rotationDeg: number; opacity: number;
-}
+export interface LatLng { lat: number; lng: number }
+/** The photo's corners on the map: top-left, top-right, bottom-right, bottom-left of the photo. */
+export type DroneCorners = [LatLng, LatLng, LatLng, LatLng];
+export interface DroneOverlayPlacement { corners: DroneCorners; opacity: number }
 export interface DroneOverlayMeta {
   sn: string; width: number; height: number; mime: string; size: number;
   updatedAt: string; placement: DroneOverlayPlacement | null;

@@ -415,11 +415,14 @@
     "droneHint": "Ziehen Sie das Foto, bis es passt. Es ist nur eine Zeichenhilfe; der Mäher nutzt es nie.",
     "droneUploadFailed": "Hochladen fehlgeschlagen",
     "droneDragPanel": "ziehen",
-    "droneTwoPoint": "Zwei Punkte setzen",
-    "droneStep1": "Klicken Sie im Foto auf die Ladestation.",
-    "droneStep2": "Klicken Sie im Foto auf einen zweiten erkennbaren Punkt, zum Beispiel ein Hindernis.",
-    "droneStep3": "Klicken Sie jetzt auf der Karte dorthin, wo dieser Punkt wirklich ist.",
-    "droneNeedsDock": "Dafür muss die Position der Ladestation bekannt sein."
+    "dronePoints": "Punkte anklicken",
+    "dronePointsCount": "Punkte: {{count}}",
+    "dronePointFirst": "Klicken Sie im Foto auf die Ladestation.",
+    "dronePointPhoto": "Klicken Sie im Foto auf eine erkennbare Stelle: ein Hindernis, eine Terrassenecke, einen Gully.",
+    "dronePointMap": "Klicken Sie jetzt auf der Karte dorthin, wo dieser Punkt wirklich liegt.",
+    "dronePointsInfo": "Zwei oder drei Punkte: verschieben, drehen und skalieren. Ab vier wird auch ein schräg aufgenommenes Foto entzerrt. Wählen Sie sie weit auseinander.",
+    "dronePointUndo": "Letzten Punkt entfernen",
+    "dronePointsDone": "Fertig"
   },
   "firmware": {
     "requiresOpenNova": "Erfordert die OpenNova Custom-Firmware. Stock-Firmware kann diesen Befehl nicht empfangen.",

@@ -478,11 +478,14 @@
     "droneHint": "Sleep de foto tot hij past. Hij is alleen een hulp bij het tekenen; de maaier gebruikt hem niet.",
     "droneUploadFailed": "Uploaden mislukt",
     "droneDragPanel": "sleep",
-    "droneTwoPoint": "Twee punten aanwijzen",
-    "droneStep1": "Klik in de foto op het laadstation.",
-    "droneStep2": "Klik in de foto op een tweede herkenbaar punt, bijvoorbeeld een obstakel.",
-    "droneStep3": "Klik nu op de kaart waar dat punt echt is.",
-    "droneNeedsDock": "Hiervoor moet de positie van het laadstation bekend zijn."
+    "dronePoints": "Punten aanwijzen",
+    "dronePointsCount": "Punten: {{count}}",
+    "dronePointFirst": "Klik in de foto op het laadstation.",
+    "dronePointPhoto": "Klik in de foto op een herkenbare plek: een obstakel, een hoek van het terras, een put.",
+    "dronePointMap": "Klik nu op de kaart waar dat punt echt ligt.",
+    "dronePointsInfo": "Twee of drie punten: schuiven, draaien en schalen. Vanaf vier wordt ook een schuine opname rechtgetrokken. Kies ze ver uit elkaar.",
+    "dronePointUndo": "Laatste punt weg",
+    "dronePointsDone": "Klaar"
   },
   "firmware": {
     "requiresOpenNova": "Vereist OpenNova custom firmware. Stock firmware kan dit commando niet ontvangen.",

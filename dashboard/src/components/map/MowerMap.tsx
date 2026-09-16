@@ -11,10 +11,10 @@ import {
 import { useTranslation } from 'react-i18next';
 import type { MapData, MapCalibration, GpsPoint } from '../../types';
 import { DroneOverlayLayer } from './DroneOverlay';
-import { photoPixelFromLatLng, solveTwoPoint, insidePhoto, type PhotoPixel } from '../../utils/droneOverlayMath';
+import { latLngToPhoto, solvePlacement, insidePhoto, similarityCorners, derivedPlacement, rotateCorners, scaleCorners, type PhotoPixel, type PointPair } from '../../utils/droneOverlayMath';
 import {
   fetchDroneOverlay, uploadDroneOverlay, saveDroneOverlayPlacement, deleteDroneOverlay, droneOverlayImageUrl,
-  type DroneOverlayMeta, type DroneOverlayPlacement,
+  type DroneOverlayMeta, type DroneOverlayPlacement, type DroneCorners,
 } from '../../api/client';
 import {
   fetchMaps, fetchAllMaps, fetchTrail, clearTrail, fetchCalibration, saveCalibration,
@@ -1520,11 +1520,14 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     setDroneMeta(null); setDroneDraft(null); setRailFlyout(null);
   }, [sn, t]);
   const dronePlacement = droneDraft ?? droneMeta?.placement ?? null;
-  // Tweepuntsplaatsing: twee pixels in de foto en waar die op de kaart horen.
-  // Stap 1 = laadstation in de foto (doel = dock, bekend), 2 = tweede punt in
-  // de foto, 3 = datzelfde punt op de kaart. Daarna liggen alle vier de
-  // vrijheidsgraden vast en zijn de schuiven alleen nog voor bijsturen.
-  const [twoPoint, setTwoPoint] = useState<null | { step: 1 | 2 | 3; a?: PhotoPixel; b?: PhotoPixel }>(null);
+  // Punten aanwijzen: pixels in de foto en waar die op de kaart horen. Het
+  // eerste punt is het laadstation (doel = dock, bekend), daarna steeds een
+  // punt in de foto en dan op de kaart. Na elk paar wordt de foto opnieuw
+  // gepast: 2 of 3 paren schuiven, draaien en schalen (kleinste kwadraten),
+  // vanaf 4 de volledige homografie die een schuine opname rechttrekt. De
+  // uitkomst hangt alleen af van de paren en de uitgangspositie (base), dus
+  // een punt weghalen is gewoon opnieuw passen met één paar minder.
+  const [pointMode, setPointMode] = useState<null | { pairs: PointPair[]; pending: PhotoPixel | null; base: DroneCorners }>(null);
   // Het paneel is versleepbaar: vast bovenin lag het precies over de foto.
   const [panelPos, setPanelPos] = useState<{ x: number; y: number } | null>(null);
   const panelDrag = useRef<{ sx: number; sy: number; ox: number; oy: number } | null>(null);
@@ -1540,33 +1543,29 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
   }, []);
   const onPanelPointerUp = useCallback(() => { panelDrag.current = null; }, []);
   const dockLatLng = chargerGps ? { lat: chargerGps.lat, lng: chargerGps.lng } : null;
+  const droneSize = droneMeta ? { width: droneMeta.width, height: droneMeta.height } : null;
+  const applyPairs = useCallback((pairs: PointPair[]) => {
+    if (!pointMode || !droneSize) return;
+    setPointMode({ ...pointMode, pairs, pending: null });
+    setDroneDraft(d => (d ? { ...d, corners: solvePlacement(droneSize, pairs, pointMode.base) } : d));
+  }, [pointMode, droneSize]);
+  const undoPoint = useCallback(() => {
+    if (!pointMode) return;
+    if (pointMode.pending) { setPointMode({ ...pointMode, pending: null }); return; }
+    applyPairs(pointMode.pairs.slice(0, -1));
+  }, [pointMode, applyPairs]);
   const onDronePick = useCallback((ll: { lat: number; lng: number }) => {
-    if (!twoPoint || !droneDraft || !droneMeta) return;
-    const size = { width: droneMeta.width, height: droneMeta.height };
-    if (twoPoint.step === 1 || twoPoint.step === 2) {
-      const px = photoPixelFromLatLng(droneDraft, size, ll);
-      if (!insidePhoto(px, size)) return;                   // naast de foto geklikt
-      if (twoPoint.step === 1) {
-        if (dockLatLng) {
-          // Laadstation onder het dock schuiven: verschuiving ligt nu vast.
-          const now = photoPixelFromLatLng(droneDraft, size, dockLatLng);
-          const dLat = ll.lat - dockLatLng.lat, dLng = ll.lng - dockLatLng.lng;
-          void now;
-          setDroneDraft(d => (d ? { ...d, lat: d.lat - dLat, lng: d.lng - dLng } : d));
-        }
-        setTwoPoint({ step: 2, a: px });
-      } else {
-        setTwoPoint({ ...twoPoint, step: 3, b: px });
-      }
+    if (!pointMode || !droneDraft || !droneSize) return;
+    if (!pointMode.pending) {
+      const px = latLngToPhoto(droneDraft.corners, droneSize, ll);
+      if (!insidePhoto(px, droneSize)) return;              // naast de foto geklikt
+      // Eerste punt is het laadstation; waar dat op de kaart ligt weten we al.
+      if (pointMode.pairs.length === 0 && dockLatLng) { applyPairs([{ px, ll: dockLatLng }]); return; }
+      setPointMode({ ...pointMode, pending: px });
       return;
     }
-    // stap 3: waar punt b echt ligt; a ligt per constructie op het dock
-    if (twoPoint.a && twoPoint.b && dockLatLng) {
-      const solved = solveTwoPoint(size, twoPoint.a, dockLatLng, twoPoint.b, ll, droneDraft.opacity);
-      if (solved) setDroneDraft(solved);
-      setTwoPoint(null);
-    }
-  }, [twoPoint, droneDraft, droneMeta, dockLatLng]);
+    applyPairs([...pointMode.pairs, { px: pointMode.pending, ll }]);
+  }, [pointMode, droneDraft, droneSize, dockLatLng, applyPairs]);
   // Charger pose in local meter frame (from map_info.json charging_pose).
   // Used to shift all local coords so that the physical charger position
   // projects onto chargerGps instead of the local origin (0,0).
@@ -3373,11 +3372,10 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
           {droneMeta && droneVisible && dronePlacement && sn && (
             <DroneOverlayLayer
               url={droneOverlayImageUrl(sn, droneMeta.updatedAt)}
-              aspect={droneMeta.width / droneMeta.height}
               placement={dronePlacement}
               editing={droneDraft !== null}
-              onMove={c => setDroneDraft(d => (d ? { ...d, ...c } : d))}
-              onPick={twoPoint ? onDronePick : undefined}
+              onMove={c => setDroneDraft(d => (d ? { ...d, corners: c } : d))}
+              onPick={pointMode ? onDronePick : undefined}
             />
           )}
           {/* Saved map polygons with calibration applied */}
@@ -3989,7 +3987,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
                             <ImageIcon className="w-4 h-4 opacity-70" />
                             {droneVisible ? t('map.droneHide', 'Dronefoto verbergen') : t('map.droneShow', 'Dronefoto tonen')}
                           </button>
-                          <button onClick={() => { setDroneVisible(true); setDroneDraft(droneMeta.placement ?? { ...(droneCenterGuess() ?? { lat: 0, lng: 0 }), widthM: 60, rotationDeg: 0, opacity: 0.8 }); setRailFlyout(null); }} className={railRow(false)}>
+                          <button onClick={() => { setDroneVisible(true); setDroneDraft(droneMeta.placement ?? { corners: similarityCorners(droneCenterGuess() ?? { lat: 0, lng: 0 }, 60, 0, droneMeta.width / droneMeta.height), opacity: 0.8 }); setRailFlyout(null); }} className={railRow(false)}>
                             <MoveIcon className="w-4 h-4 opacity-70" />{t('map.dronePlace', 'Dronefoto plaatsen')}
                           </button>
                           <button onClick={() => droneFileRef.current?.click()} disabled={droneBusy} className={railRow(false)}>
@@ -4237,34 +4235,44 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
               <MoveIcon className="w-4 h-4 text-emerald-400" />{t('map.dronePlace', 'Dronefoto plaatsen')}
               <span className="ml-auto text-[10px] text-gray-500">{t('map.droneDragPanel', 'sleep')}</span>
             </div>
-            {twoPoint ? (
+            {pointMode ? (
               <div className="rounded-lg bg-emerald-500/10 border border-emerald-500/30 p-2 space-y-1">
-                <div className="text-emerald-300 font-medium">{twoPoint.step}/3</div>
+                <div className="text-emerald-300 font-medium">{t('map.dronePointsCount', 'Punten: {{count}}', { count: pointMode.pairs.length })}</div>
                 <p className="text-[11px] text-gray-200">
-                  {twoPoint.step === 1 && t('map.droneStep1', 'Klik in de foto op het laadstation.')}
-                  {twoPoint.step === 2 && t('map.droneStep2', 'Klik in de foto op een tweede herkenbaar punt, bijvoorbeeld een obstakel.')}
-                  {twoPoint.step === 3 && t('map.droneStep3', 'Klik nu op de kaart waar dat punt echt is.')}
+                  {pointMode.pending
+                    ? t('map.dronePointMap', 'Klik nu op de kaart waar dat punt echt ligt.')
+                    : pointMode.pairs.length === 0 && dockLatLng
+                      ? t('map.dronePointFirst', 'Klik in de foto op het laadstation.')
+                      : t('map.dronePointPhoto', 'Klik in de foto op een herkenbare plek: een obstakel, een hoek van het terras, een put.')}
                 </p>
-                <button onClick={() => setTwoPoint(null)} className="text-[11px] text-gray-400 hover:text-gray-200 underline">{t('map.droneCancel', 'Annuleren')}</button>
+                <p className="text-[11px] text-gray-400">{t('map.dronePointsInfo', 'Twee of drie punten: schuiven, draaien en schalen. Vanaf vier wordt ook een schuine opname rechtgetrokken. Kies ze ver uit elkaar.')}</p>
+                <div className="flex gap-3 text-[11px]">
+                  <button onClick={undoPoint} disabled={!pointMode.pending && pointMode.pairs.length === 0}
+                          className="text-gray-400 hover:text-gray-200 underline disabled:opacity-40">{t('map.dronePointUndo', 'Laatste punt weg')}</button>
+                  <button onClick={() => setPointMode(null)} className="text-emerald-300 hover:text-emerald-200 underline">{t('map.dronePointsDone', 'Klaar')}</button>
+                  <button onClick={() => { const base = pointMode.base; setDroneDraft(d => (d ? { ...d, corners: base } : d)); setPointMode(null); }}
+                          className="text-gray-400 hover:text-gray-200 underline">{t('map.droneCancel', 'Annuleren')}</button>
+                </div>
               </div>
             ) : (
-              <button onClick={() => setTwoPoint({ step: 1 })} disabled={!dockLatLng}
-                      title={dockLatLng ? '' : t('map.droneNeedsDock', 'Hiervoor moet de positie van het laadstation bekend zijn.')}
-                      className="w-full py-1.5 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-200 font-medium disabled:opacity-40">
-                {t('map.droneTwoPoint', 'Twee punten aanwijzen')}
+              <button onClick={() => setPointMode({ pairs: [], pending: null, base: droneDraft.corners })}
+                      className="w-full py-1.5 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-200 font-medium">
+                {t('map.dronePoints', 'Punten aanwijzen')}
               </button>
             )}
             <p className="text-gray-400 text-[11px]">{t('map.droneHint')}</p>
+            {(() => { const dd = derivedPlacement(droneDraft.corners); return (<>
             <label className="block">
-              <span className="flex justify-between"><span>{t('map.droneRotation', 'Draaiing')}</span><span className="font-mono text-gray-400">{Math.round(droneDraft.rotationDeg)}°</span></span>
-              <input type="range" min={-180} max={180} step={0.5} value={droneDraft.rotationDeg} className="w-full"
-                     onChange={e => setDroneDraft(d => (d ? { ...d, rotationDeg: Number(e.target.value) } : d))} />
+              <span className="flex justify-between"><span>{t('map.droneRotation', 'Draaiing')}</span><span className="font-mono text-gray-400">{Math.round(dd.rotationDeg)}°</span></span>
+              <input type="range" min={-180} max={180} step={0.5} value={dd.rotationDeg} className="w-full"
+                     onChange={e => { const v = Number(e.target.value); setDroneDraft(d => (d ? { ...d, corners: rotateCorners(d.corners, v - derivedPlacement(d.corners).rotationDeg) } : d)); }} />
             </label>
             <label className="block">
-              <span className="flex justify-between"><span>{t('map.droneWidth', 'Breedte op de grond')}</span><span className="font-mono text-gray-400">{droneDraft.widthM.toFixed(1)} m</span></span>
-              <input type="range" min={5} max={300} step={0.5} value={droneDraft.widthM} className="w-full"
-                     onChange={e => setDroneDraft(d => (d ? { ...d, widthM: Number(e.target.value) } : d))} />
+              <span className="flex justify-between"><span>{t('map.droneWidth', 'Breedte op de grond')}</span><span className="font-mono text-gray-400">{dd.widthM.toFixed(1)} m</span></span>
+              <input type="range" min={5} max={300} step={0.5} value={dd.widthM} className="w-full"
+                     onChange={e => { const v = Number(e.target.value); setDroneDraft(d => (d ? { ...d, corners: scaleCorners(d.corners, v / derivedPlacement(d.corners).widthM) } : d)); }} />
             </label>
+            </>); })()}
             <label className="block">
               <span className="flex justify-between"><span>{t('map.droneOpacity', 'Doorzichtigheid')}</span><span className="font-mono text-gray-400">{Math.round(droneDraft.opacity * 100)}%</span></span>
               <input type="range" min={0.1} max={1} step={0.05} value={droneDraft.opacity} className="w-full"

@@ -415,11 +415,14 @@
     "droneHint": "Faites glisser la photo jusqu'à ce qu'elle s'aligne. Ce n'est qu'une aide au tracé ; la tondeuse ne l'utilise jamais.",
     "droneUploadFailed": "Échec de l'import",
     "droneDragPanel": "glisser",
-    "droneTwoPoint": "Désigner deux points",
-    "droneStep1": "Cliquez sur la station de charge dans la photo.",
-    "droneStep2": "Cliquez sur un deuxième point reconnaissable dans la photo, un obstacle par exemple.",
-    "droneStep3": "Cliquez maintenant sur la carte à l'endroit réel de ce point.",
-    "droneNeedsDock": "Il faut connaître la position de la station de charge."
+    "dronePoints": "Pointer des repères",
+    "dronePointsCount": "Repères : {{count}}",
+    "dronePointFirst": "Cliquez sur la station de charge dans la photo.",
+    "dronePointPhoto": "Cliquez sur un repère reconnaissable dans la photo : un obstacle, un coin de la terrasse, un regard.",
+    "dronePointMap": "Cliquez maintenant sur la carte à l'endroit réel de ce repère.",
+    "dronePointsInfo": "Deux ou trois repères : déplacement, rotation et échelle. À partir de quatre, une photo prise de biais est aussi redressée. Choisissez-les éloignés les uns des autres.",
+    "dronePointUndo": "Retirer le dernier repère",
+    "dronePointsDone": "Terminé"
   },
   "firmware": {
     "requiresOpenNova": "Nécessite le firmware personnalisé OpenNova. Le firmware d'origine ne peut pas recevoir cette commande.",

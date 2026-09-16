@@ -431,11 +431,14 @@
     "droneHint": "Drag the photo until it lines up. It is a tracing aid only; the mower never uses it.",
     "droneUploadFailed": "Upload failed",
     "droneDragPanel": "drag",
-    "droneTwoPoint": "Pick two points",
-    "droneStep1": "Click the charging station in the photo.",
-    "droneStep2": "Click a second recognisable point in the photo, an obstacle for example.",
-    "droneStep3": "Now click on the map where that point really is.",
-    "droneNeedsDock": "This needs a known charging station position."
+    "dronePoints": "Pick points",
+    "dronePointsCount": "Points: {{count}}",
+    "dronePointFirst": "Click the charging station in the photo.",
+    "dronePointPhoto": "Click a recognisable spot in the photo: an obstacle, a corner of the patio, a drain.",
+    "dronePointMap": "Now click on the map where that point really is.",
+    "dronePointsInfo": "Two or three points: shift, rotate and scale. From four on, a photo taken at an angle is straightened too. Pick them far apart.",
+    "dronePointUndo": "Remove last point",
+    "dronePointsDone": "Done"
   },
   "firmware": {
     "requiresOpenNova": "Requires OpenNova custom firmware. Stock firmware can't receive this command.",
