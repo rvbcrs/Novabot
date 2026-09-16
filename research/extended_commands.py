@@ -3253,22 +3253,6 @@ def handle_regenerate_per_map_files(params, respond):
             except Exception as ex:
                 log(f"regenerate_per_map_files: map.pgm obstacle-bake write failed: {ex}")
 
-        # Which unicoms connect to a given slot? `map<X>to<Y>_..._unicom`: the two
-        # endpoints are map<X> and <Y> (<Y> = "map<M>" or "charge"). A slot owns a
-        # unicom when it is either endpoint, so the slot keeps its own corridor(s)
-        # free (connectivity) without inheriting other zones' dock strips.
-        def unicoms_for(slot):
-            out = []
-            for uf in unicom_files:
-                mm = re.match(r"^(map\d+)to(map\d+|charge)", uf)
-                if not mm:
-                    continue
-                if mm.group(1) == slot or mm.group(2) == slot:
-                    up = [to_px(x, y) for (x, y) in read_xy_csv(f"{csv_dir}/{uf}")]
-                    if len(up) >= 2:
-                        out.append(up)
-            return out
-
         # This slot's mapped obstacles (`map<N>_<M>_obstacle.csv`). They MUST be
         # forced OCCUPIED in the per-map pgm: the coverage planner plans on this
         # grid, and masking only preserves whatever the whole-area map.pgm had.
@@ -3316,13 +3300,25 @@ def handle_regenerate_per_map_files(params, respond):
                     d.line(poly + [poly[0]], fill=0, width=2 * _edge_px, joint="curve")  # erode inward (edge margin)
             else:
                 d.line(poly + [poly[0]], fill=255, width=2 * infl_px, joint="curve")  # legacy outside halo
-            for up in unicoms_for(slot):                               # keep this slot's corridor(s) navigable
-                d.line(up, fill=255, width=uni_w, joint="curve")
             if dock_px is not None:                                    # keep the dock start cell free
                 d.ellipse([dock_px[0] - dock_r, dock_px[1] - dock_r,
                            dock_px[0] + dock_r, dock_px[1] + dock_r], fill=255)
             marr = np.array(mask, dtype=np.uint8)
             out = np.where(marr > 0, whole, np.uint8(OCCUPIED)).astype(np.uint8)
+
+            # Channels are open in map.pgm. Outside the zone they must not leak in
+            # through the halo above, or coverage mows along them past the edge.
+            umask = Image.new("L", (W, H), 0)
+            ud = ImageDraw.Draw(umask)
+            for uf in unicom_files:
+                up = [to_px(x, y) for (x, y) in read_xy_csv(f"{csv_dir}/{uf}")]
+                if len(up) >= 2:
+                    ud.line(up, fill=255, width=uni_w, joint="curve")
+            ud.polygon(poly, fill=0)
+            if dock_px is not None:
+                ud.ellipse([dock_px[0] - dock_r, dock_px[1] - dock_r,
+                            dock_px[0] + dock_r, dock_px[1] + dock_r], fill=0)
+            out = np.where(np.array(umask, dtype=np.uint8) > 0, np.uint8(OCCUPIED), out).astype(np.uint8)
 
             # Force this slot's mapped obstacles OCCUPIED (the planner plans on
             # this pgm; masking alone can leave an obstacle free if map.pgm never
