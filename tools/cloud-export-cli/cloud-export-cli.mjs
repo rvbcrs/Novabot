@@ -42,6 +42,8 @@ Restore options:
 
 General:
   --force             Overwrite (export: existing directory; restore: existing cloud maps)
+  --server <url>      Talk to an OpenNova server instead of the LFI cloud
+                      (e.g. http://novabot.local:8080)
   --version, -v       Show version
   --help, -h          Show this help message
 `);
@@ -71,6 +73,8 @@ function parseArgs(args) {
         opts.includeSecrets = true; break;
       case '--force':
         opts.force = true; break;
+      case '--server':
+        opts.server = args[++i]; break;
       case '--dry-run':
         opts.dryRun = true; break;
       case '--yes': case '-y':
@@ -136,6 +140,31 @@ function confirm(question) {
 
 const LFI_CLOUD_HOST = '47.253.145.99';
 const LFI_CLOUD_SERVERNAME = 'app.lfibot.com';
+
+// Where the requests go. Without --server that is the LFI cloud, exactly as
+// before. With it, an OpenNova server that speaks the same API, which is also
+// how the restore path is tested: it is the only cloud anyone can still stand
+// up from scratch.
+const TARGET = (() => {
+  if (!opts.server) {
+    return { hostname: LFI_CLOUD_HOST, servername: LFI_CLOUD_SERVERNAME, https: true, rejectUnauthorized: false };
+  }
+  const u = new URL(opts.server.includes('://') ? opts.server : `http://${opts.server}`);
+  return {
+    hostname: u.hostname,
+    port: u.port ? Number(u.port) : (u.protocol === 'https:' ? 443 : 80),
+    servername: u.hostname,
+    https: u.protocol === 'https:',
+    rejectUnauthorized: u.protocol === 'https:',
+  };
+})();
+const httpLib = () => (TARGET.https ? https : http);
+const requestOptions = (extra) => ({
+  hostname: TARGET.hostname,
+  ...(TARGET.port ? { port: TARGET.port } : {}),
+  ...(TARGET.https ? { servername: TARGET.servername, rejectUnauthorized: TARGET.rejectUnauthorized } : {}),
+  ...extra,
+});
 const APP_PW_KEY_IV = Buffer.from('1234123412ABCDEF', 'utf8');
 
 function encryptCloudPassword(plainPassword) {
@@ -170,14 +199,7 @@ function callLfiCloud(method, urlPath, body, token = '') {
       ...makeLfiHeaders(token),
       ...(bodyStr ? { 'Content-Length': String(Buffer.byteLength(bodyStr)) } : {}),
     };
-    const req = https.request({
-      hostname: LFI_CLOUD_HOST,
-      servername: LFI_CLOUD_SERVERNAME,
-      path: urlPath,
-      method,
-      headers,
-      rejectUnauthorized: false,
-    }, (res) => {
+    const req = httpLib().request(requestOptions({ path: urlPath, method, headers }), (res) => {
       let data = '';
       res.on('data', (chunk) => { data += chunk; });
       res.on('end', () => {
@@ -395,14 +417,7 @@ function uploadMultipart(urlPath, fields, fileField, token) {
       'Content-Length': String(body.length),
     };
 
-    const req = https.request({
-      hostname: LFI_CLOUD_HOST,
-      servername: LFI_CLOUD_SERVERNAME,
-      path: urlPath,
-      method: 'POST',
-      headers,
-      rejectUnauthorized: false,
-    }, (res) => {
+    const req = httpLib().request(requestOptions({ path: urlPath, method: 'POST', headers }), (res) => {
       let data = '';
       res.on('data', (chunk) => { data += chunk; });
       res.on('end', () => {
@@ -753,15 +768,23 @@ async function restoreMaps() {
       const zipSize = fs.statSync(zipPath).size;
       done(`${(zipSize / 1024).toFixed(1)} KB`);
 
-      // Upload the ZIP via the app's upload endpoint (just sn + file, matching the real app)
+      // A whole map set goes to the endpoint that takes a whole map set. This
+      // is the one the mower itself uploads to: it unpacks the ZIP and turns
+      // csv_file/ into the separate work areas and channels. The app's
+      // fragmentUploadEquipmentMap is a chunked, one-map-at-a-time route and
+      // wants uploadId, mapName and the polygon along with each chunk, so a
+      // single ZIP with everything in it is the wrong shape of request there.
       step(`Uploading ${plan.sn} map ZIP`);
 
+      const zipMd5 = crypto.createHash('md5').update(fs.readFileSync(zipPath)).digest('hex');
       const resp = await uploadMultipart(
-        '/api/nova-file-server/map/fragmentUploadEquipmentMap',
+        '/api/nova-file-server/map/uploadEquipmentMap',
         {
           sn: plan.sn,
+          local_file_name: `${plan.sn}.zip`,
+          zipMd5,
         },
-        { field: 'file', filename: 'maps.zip', path: zipPath },
+        { field: 'local_file', filename: `${plan.sn}.zip`, path: zipPath },
         token,
       );
 
@@ -790,14 +813,26 @@ async function restoreMaps() {
       const check = await callLfiCloud('GET',
         `/api/nova-file-server/map/queryEquipmentMap?sn=${plan.sn}&appUserId=${appUserId}`,
         null, token);
+      // Count what came back, but check the names: an account that already had
+      // maps would otherwise "confirm" an upload that changed nothing.
       const data = check.value?.data;
-      const workCount = data?.work?.length ?? 0;
-      const unicomCount = data?.unicom?.length ?? 0;
-      if (workCount > 0 || unicomCount > 0) {
-        done(`${workCount} work area(s), ${unicomCount} channel(s) confirmed`);
-      } else {
-        done('no maps found — upload may not have taken effect');
+      // Obstacles are not listed on their own: they hang off their work area
+      // in `obstacle[]`, so counting only work + unicom marks every obstacle
+      // as missing.
+      const entries = [...(data?.work ?? []), ...(data?.unicom ?? [])];
+      const back = new Set(entries
+        .flatMap(m => [m.fileName, ...((m.obstacle ?? []).map(o => o.fileName))])
+        .filter(Boolean));
+      const sent = plan.csvFiles.map(f => f.fileName);
+      const missing = sent.filter(fn => !back.has(fn));
+      if (back.size === 0) {
+        done('no maps found — upload did not take effect');
         warn(`Verification: no maps found for ${plan.sn} after upload`);
+      } else if (missing.length) {
+        done(`${back.size} back, ${missing.length} missing`);
+        warn(`Verification: ${plan.sn} is missing ${missing.join(', ')} after upload`);
+      } else {
+        done(`all ${sent.length} file(s) back`);
       }
     } catch {
       done('could not verify');

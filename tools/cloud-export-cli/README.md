@@ -61,6 +61,16 @@ Options:
 - `--dry-run` — show what would be uploaded without doing it
 - `--yes` / `-y` — skip the confirmation prompt
 - `--force` — overwrite existing cloud maps (by default, restore skips mowers that already have maps)
+- `--server http://novabot.local:8080` — talk to an OpenNova server instead of the LFI cloud
+
+Restore uploads the whole map set as one ZIP to `uploadEquipmentMap`, the route
+the mower itself uses, which unpacks it into the separate work areas, obstacles
+and channels. Afterwards it reads the map list back and names any file that did
+not return.
+
+Verified end to end against an OpenNova server with a real seven-zone map: all
+18 files came back with the same point count and the same coordinates, the
+939-point work area included.
 
 ## Base Station Swap Workflow
 
