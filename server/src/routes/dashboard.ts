@@ -1842,6 +1842,17 @@ dashboardRouter.patch('/maps/:sn/:mapId', (req: Request, res: Response) => {
   if (mapArea) autoPushMapsInBackground(sn);
 });
 
+/**
+ * De naam waaronder de maaier deze kaart kent bij delete_map: kaal voor een
+ * werkgebied, met `.csv` voor een obstakel of kanaal. Zie de uitleg in de route.
+ */
+export function mowerFileName(row: { canonical_name?: string | null; map_name?: string | null; map_type?: string | null }): string | null {
+  const base = row.canonical_name ?? row.map_name;
+  if (!base) return null;
+  if (row.map_type !== 'obstacle' && row.map_type !== 'unicom') return base;
+  return base.endsWith('.csv') ? base : `${base}.csv`;
+}
+
 // DELETE /api/dashboard/maps/:sn/:mapId — verwijder een kaart (incl. bijbehorende obstakels en unicom-kanalen)
 dashboardRouter.delete('/maps/:sn/:mapId', async (req: Request, res: Response) => {
   const { sn, mapId } = req.params;
@@ -1880,7 +1891,20 @@ dashboardRouter.delete('/maps/:sn/:mapId', async (req: Request, res: Response) =
   // bij een bevestigde wis ook de database.
   const mowerOnline = isDeviceOnline(sn);
   // De maaier kent alleen de canonieke slotnaam; map_name kan een gebruikersalias zijn.
-  const mowerMapName = row.canonical_name ?? row.map_name;
+  // En de drie soorten willen een ANDERE naam, want novabot_mapping behandelt ze
+  // niet gelijk (mapControlCallback, firmware v6.0.2):
+  //   work     — "get delete child map name": de node plakt zelf `.csv` achter de
+  //              slotnaam en ruimt map0_work.csv plus de bijbehorende obstakels op,
+  //              dus daar hoort de kale naam ("map0").
+  //   obstacle — "get delete obstacle name": de node doet letterlijk
+  //   unicom     remove(<dir> + "/" + map_name) op csv_file/ én x3_csv_file/, zonder
+  //              iets toe te voegen. Zonder `.csv` bestaat dat pad niet, remove()
+  //              geeft -1 en de node antwoordt "delete obstacle failed" → result 0.
+  // Dat laatste was jarenlang zo: elke obstakel- of kanaalwis faalde, en de melding
+  // wees naar een lopende maaitaak die er niet was (live LFIN1231000211, 2026-09-16:
+  // "Start to delete obstacle : map0_5_obstacle" gevolgd door "Mapping_control
+  // result： 0 delete obstacle failed", met de maaier gewoon op zijn dock).
+  const mowerMapName = mowerFileName(row);
   if (mowerOnline && mowerMapName && !force) {
     const workStatus = parseInt(deviceCache.get(sn)?.get('work_status') ?? '', 10);
     // 49 en hoger = bezig (Resuming, Start requested, init-stappen, maaien).
@@ -1990,7 +2014,17 @@ dashboardRouter.delete('/maps/:sn/:mapId', async (req: Request, res: Response) =
         reason: 'mower_refused_delete',
         mowerError,
         workStatus: Number.isFinite(workStatus) ? workStatus : null,
-        error: `De maaier weigerde de kaart te wissen.${mowerError ? ` Maaier meldt: ${mowerError}` : ''} Stop een lopende of gepauzeerde maaitaak en probeer het opnieuw. Lukt dat niet, dan kan de kaart alleen in het dashboard worden verwijderd (forceren).`,
+        // De tekst mag alleen naar een maaitaak wijzen als er ook echt een taak
+        // stond: Ramon zag "stop een lopende of gepauzeerde maaitaak" terwijl de
+        // maaier op zijn dock stond te laden, en dat stuurde hem de verkeerde kant op.
+        error: [
+          'De maaier weigerde de kaart te wissen.',
+          mowerError ? `Maaier meldt: ${mowerError}` : null,
+          Number.isFinite(workStatus) && workStatus > 9
+            ? 'Stop de lopende of gepauzeerde maaitaak en probeer het opnieuw.'
+            : 'Er stond geen maaitaak in de weg, dus dit komt van de maaier zelf.',
+          'Lukt het niet, dan kan de kaart alleen in het dashboard worden verwijderd (forceren).',
+        ].filter(Boolean).join(' '),
       });
       return;
     }

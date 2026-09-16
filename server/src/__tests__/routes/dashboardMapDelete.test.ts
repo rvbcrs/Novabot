@@ -95,7 +95,7 @@ vi.mock('../../mqtt/sensorData.js', () => ({
 }));
 
 
-import { dashboardRouter } from '../../routes/dashboard.js';
+import { dashboardRouter, mowerFileName } from '../../routes/dashboard.js';
 import { deviceCache } from '../../mqtt/sensorData.js';
 import { publishToDevice, publishToExtended, awaitCommand, onExtendedResponse } from '../../mqtt/mapSync.js';
 import { mapRepo } from '../../db/repositories/index.js';
@@ -152,6 +152,41 @@ describe('DELETE map route — follow-up commands to the mower', () => {
     const payload = vi.mocked(awaitCommand).mock.calls.find(c => c[1] === 'delete_map')?.[2] as
       { map_name?: string; map_type?: number };
     expect(payload).toMatchObject({ map_name: 'map1', map_type: 1 });
+  });
+
+  // novabot_mapping (firmware v6.0.2, mapControlCallback) behandelt de drie
+  // soorten verschillend. Een werkgebied gaat via "get delete child map name" en
+  // daar plakt de node zelf `.csv` achter de slotnaam. Een obstakel en een kanaal
+  // gaan via "get delete obstacle name" / "get delete unicom name" en daar doet de
+  // node letterlijk remove(<dir> + "/" + map_name) op csv_file/ én x3_csv_file/.
+  // Zonder `.csv` bestaat dat pad niet en antwoordt hij "delete obstacle failed".
+  it('stuurt de bestandsnaam met .csv voor een obstakel, kaal voor een werkgebied', async () => {
+    mapRepo.create({
+      map_id: 'del-obs', mower_sn: SN, map_name: 'map1_0_obstacle', file_name: 'bundle.zip',
+      map_area: JSON.stringify([{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }]),
+      map_type: 'obstacle', canonical_name: 'map1_0_obstacle',
+    });
+    await request(server).delete(`/api/dashboard/maps/${SN}/del-obs`);
+    expect(vi.mocked(awaitCommand).mock.calls.find(c => c[1] === 'delete_map')?.[2])
+      .toMatchObject({ map_name: 'map1_0_obstacle.csv', map_type: 2 });
+  });
+
+  it('stuurt de bestandsnaam met .csv voor een kanaal', async () => {
+    mapRepo.create({
+      map_id: 'del-uni', mower_sn: SN, map_name: 'map1tocharge_unicom', file_name: 'bundle.zip',
+      map_area: JSON.stringify([{ x: 0, y: 0 }, { x: 1, y: 0 }]),
+      map_type: 'unicom', canonical_name: 'map1tocharge_unicom',
+    });
+    await request(server).delete(`/api/dashboard/maps/${SN}/del-uni`);
+    expect(vi.mocked(awaitCommand).mock.calls.find(c => c[1] === 'delete_map')?.[2])
+      .toMatchObject({ map_name: 'map1tocharge_unicom.csv', map_type: 3 });
+  });
+
+  it('plakt er geen tweede .csv achter als de naam die al heeft', () => {
+    expect(mowerFileName({ canonical_name: 'map0_1_obstacle.csv', map_type: 'obstacle' })).toBe('map0_1_obstacle.csv');
+    expect(mowerFileName({ canonical_name: 'map0', map_type: 'work' })).toBe('map0');
+    expect(mowerFileName({ map_name: 'Achtertuin', map_type: 'work' })).toBe('Achtertuin');
+    expect(mowerFileName({ map_type: 'work' })).toBeNull();
   });
 
   it('houdt de kaart in de database als de maaier het wissen weigert', async () => {
