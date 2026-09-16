@@ -414,7 +414,22 @@
     "channelPromptBody": "The mower only reaches {{slot}} when a channel leads there. Draw a line from {{slot}} to an existing area or to the charging station.",
     "channelPromptDraw": "Draw channel",
     "channelPromptLater": "Later",
-    "deleteFailed": "Deleting the map failed."
+    "deleteFailed": "Deleting the map failed.",
+    "droneOverlay": "Drone photo",
+    "droneUpload": "Upload drone photo…",
+    "droneReplace": "Replace drone photo…",
+    "dronePlace": "Place drone photo",
+    "droneShow": "Show drone photo",
+    "droneHide": "Hide drone photo",
+    "droneRemove": "Remove drone photo",
+    "droneRemoveConfirm": "Remove the drone photo for this mower?",
+    "droneOpacity": "Opacity",
+    "droneRotation": "Rotation",
+    "droneWidth": "Width on the ground",
+    "droneSave": "Save placement",
+    "droneCancel": "Cancel",
+    "droneHint": "Drag the photo until it lines up. It is a tracing aid only; the mower never uses it.",
+    "droneUploadFailed": "Upload failed"
   },
   "firmware": {
     "requiresOpenNova": "Requires OpenNova custom firmware. Stock firmware can't receive this command.",

@@ -107,9 +107,13 @@ export function serializeEdgeDays(days: number[] | null | undefined): string | n
 }
 
 import { diagnoseConnection } from '../services/connectionDiagnosis.js';
+import { droneOverlayRouter } from './droneOverlay.js';
 import { connectionEventRepo } from '../db/repositories/index.js';
 
 export const dashboardRouter = Router();
+
+// Dronefoto als kaartachtergrond (#124): eigen module, zelfde gate.
+dashboardRouter.use('/overlay', droneOverlayRouter);
 
 // Exposed on this OPEN router so the dashboard header can show which build is
 // live without admin auth.

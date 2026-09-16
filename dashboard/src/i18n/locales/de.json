@@ -398,7 +398,22 @@
     "channelPromptBody": "Der Mäher erreicht {{slot}} nur, wenn ein Kanal dorthin führt. Zeichne eine Linie von {{slot}} zu einem bestehenden Bereich oder zur Ladestation.",
     "channelPromptDraw": "Kanal zeichnen",
     "channelPromptLater": "Später",
-    "deleteFailed": "Löschen der Karte fehlgeschlagen."
+    "deleteFailed": "Löschen der Karte fehlgeschlagen.",
+    "droneOverlay": "Drohnenfoto",
+    "droneUpload": "Drohnenfoto hochladen…",
+    "droneReplace": "Drohnenfoto ersetzen…",
+    "dronePlace": "Drohnenfoto platzieren",
+    "droneShow": "Drohnenfoto anzeigen",
+    "droneHide": "Drohnenfoto ausblenden",
+    "droneRemove": "Drohnenfoto entfernen",
+    "droneRemoveConfirm": "Das Drohnenfoto dieses Mähers entfernen?",
+    "droneOpacity": "Deckkraft",
+    "droneRotation": "Drehung",
+    "droneWidth": "Breite am Boden",
+    "droneSave": "Platzierung speichern",
+    "droneCancel": "Abbrechen",
+    "droneHint": "Ziehen Sie das Foto, bis es passt. Es ist nur eine Zeichenhilfe; der Mäher nutzt es nie.",
+    "droneUploadFailed": "Hochladen fehlgeschlagen"
   },
   "firmware": {
     "requiresOpenNova": "Erfordert die OpenNova Custom-Firmware. Stock-Firmware kann diesen Befehl nicht empfangen.",

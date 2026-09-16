@@ -6,10 +6,15 @@ import {
   SlidersHorizontal, Save, X, RotateCcw, Pencil, Check, Scissors, Navigation,
   ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Flame,
   Fence, Target, XCircle, CheckCircle2, Plus, Minus, Brush, Paintbrush, Eraser,
-  Copy, ClipboardPaste, Spline, RefreshCw, Loader2, Move as MoveIcon, Camera, Eye,
+  Copy, ClipboardPaste, Spline, RefreshCw, Loader2, Move as MoveIcon, Camera, Eye, Image as ImageIcon,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { MapData, MapCalibration, GpsPoint } from '../../types';
+import { DroneOverlayLayer } from './DroneOverlay';
+import {
+  fetchDroneOverlay, uploadDroneOverlay, saveDroneOverlayPlacement, deleteDroneOverlay, droneOverlayImageUrl,
+  type DroneOverlayMeta, type DroneOverlayPlacement,
+} from '../../api/client';
 import {
   fetchMaps, fetchAllMaps, fetchTrail, clearTrail, fetchCalibration, saveCalibration,
   deleteMap, renameMap, updateMapArea, createMap,
@@ -1265,6 +1270,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
   // read the current view CENTER for placement without living inside MapContainer.
   const leafletMapRef = useRef<L.Map | null>(null);
 
+
   // ── Obstacle copy/paste (R6) ────────────────────────────────────
   // Clipboard holds an obstacle's LOCAL points (charger-relative meters). It
   // PERSISTS across mower switches and reloads via localStorage, so a copy on
@@ -1456,6 +1462,63 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
 
   // Charger GPS — used for local meter → GPS conversion for Leaflet display
   const [chargerGps, setChargerGps] = useState<GpsPoint | null>(null);
+
+  // ── Dronefoto als achtergrond (#124) ──────────────────────────────────────
+  // Eén foto per maaier op de server; hier alleen tonen, plaatsen en beheren.
+  const [droneMeta, setDroneMeta] = useState<DroneOverlayMeta | null>(null);
+  const [droneVisible, setDroneVisible] = useState(true);
+  /** Plaatsing die nog niet opgeslagen is; null = niet aan het plaatsen. */
+  const [droneDraft, setDroneDraft] = useState<DroneOverlayPlacement | null>(null);
+  const [droneBusy, setDroneBusy] = useState(false);
+  const droneFileRef = useRef<HTMLInputElement | null>(null);
+  useEffect(() => {
+    let alive = true;
+    setDroneMeta(null); setDroneDraft(null);
+    if (!sn) return;
+    fetchDroneOverlay(sn).then(m => { if (alive) setDroneMeta(m); }).catch(() => { /* geen foto is geen fout */ });
+    return () => { alive = false; };
+  }, [sn]);
+  const droneCenterGuess = useCallback((): { lat: number; lng: number } | null => {
+    const c = leafletMapRef.current?.getCenter();
+    if (c) return { lat: c.lat, lng: c.lng };
+    if (chargerGps) return { lat: chargerGps.lat, lng: chargerGps.lng };
+    const la = lat ? parseFloat(lat) : NaN, ln = lng ? parseFloat(lng) : NaN;
+    return Number.isFinite(la) && Number.isFinite(ln) ? { lat: la, lng: ln } : null;
+  }, [chargerGps, lat, lng]);
+  const onDroneFile = useCallback(async (file: File | undefined) => {
+    if (!file || !sn) return;
+    setDroneBusy(true);
+    try {
+      const meta = await uploadDroneOverlay(sn, file, droneCenterGuess());
+      setDroneMeta(meta);
+      setDroneVisible(true);
+      setRailFlyout(null);
+      // Meteen plaatsen: een foto die ergens in de buurt ligt nodigt uit om hem goed te slepen.
+      if (meta.placement) setDroneDraft(meta.placement);
+    } catch (e) {
+      window.alert(`${t('map.droneUploadFailed', 'Uploaden mislukt')}: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setDroneBusy(false);
+      if (droneFileRef.current) droneFileRef.current.value = '';
+    }
+  }, [sn, droneCenterGuess, t]);
+  const saveDronePlacement = useCallback(async () => {
+    if (!sn || !droneDraft) return;
+    setDroneBusy(true);
+    try {
+      await saveDroneOverlayPlacement(sn, droneDraft);
+      setDroneMeta(m => (m ? { ...m, placement: droneDraft } : m));
+      setDroneDraft(null);
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : String(e));
+    } finally { setDroneBusy(false); }
+  }, [sn, droneDraft]);
+  const removeDrone = useCallback(async () => {
+    if (!sn || !window.confirm(t('map.droneRemoveConfirm', 'De dronefoto van deze maaier verwijderen?'))) return;
+    await deleteDroneOverlay(sn).catch(() => { /* weg is weg */ });
+    setDroneMeta(null); setDroneDraft(null); setRailFlyout(null);
+  }, [sn, t]);
+  const dronePlacement = droneDraft ?? droneMeta?.placement ?? null;
   // Charger pose in local meter frame (from map_info.json charging_pose).
   // Used to shift all local coords so that the physical charger position
   // projects onto chargerGps instead of the local origin (0,0).
@@ -3259,6 +3322,15 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
           />
           {/* Capture the Leaflet instance so paste can read the view center (R6) */}
           <MapInstanceCapture mapRef={leafletMapRef} />
+          {droneMeta && droneVisible && dronePlacement && sn && (
+            <DroneOverlayLayer
+              url={droneOverlayImageUrl(sn, droneMeta.updatedAt)}
+              aspect={droneMeta.width / droneMeta.height}
+              placement={dronePlacement}
+              editing={droneDraft !== null}
+              onMove={c => setDroneDraft(d => (d ? { ...d, ...c } : d))}
+            />
+          )}
           {/* Saved map polygons with calibration applied */}
           {polygonMaps.map(m => {
             // Dok-route-unicom: punt 0 (het dok-anker) niet meeschuiven — zelfde
@@ -3853,9 +3925,39 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
                       <Camera className="w-4 h-4 opacity-70" />{t('camera.camera')}
                     </button>
                   )}
+                  {/* Dronefoto als achtergrond (#124) */}
+                  {sn && (
+                    <>
+                      <div className={railHdr}>{t('map.droneOverlay', 'Dronefoto')}</div>
+                      {!droneMeta ? (
+                        <button onClick={() => droneFileRef.current?.click()} disabled={droneBusy} className={railRow(false)}>
+                          {droneBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <ImageIcon className="w-4 h-4 opacity-70" />}
+                          {t('map.droneUpload', 'Dronefoto uploaden…')}
+                        </button>
+                      ) : (
+                        <>
+                          <button onClick={() => setDroneVisible(v => !v)} className={railRow(droneVisible)}>
+                            <ImageIcon className="w-4 h-4 opacity-70" />
+                            {droneVisible ? t('map.droneHide', 'Dronefoto verbergen') : t('map.droneShow', 'Dronefoto tonen')}
+                          </button>
+                          <button onClick={() => { setDroneVisible(true); setDroneDraft(droneMeta.placement ?? { ...(droneCenterGuess() ?? { lat: 0, lng: 0 }), widthM: 60, rotationDeg: 0, opacity: 0.8 }); setRailFlyout(null); }} className={railRow(false)}>
+                            <MoveIcon className="w-4 h-4 opacity-70" />{t('map.dronePlace', 'Dronefoto plaatsen')}
+                          </button>
+                          <button onClick={() => droneFileRef.current?.click()} disabled={droneBusy} className={railRow(false)}>
+                            <RefreshCw className="w-4 h-4 opacity-70" />{t('map.droneReplace', 'Dronefoto vervangen…')}
+                          </button>
+                          <button onClick={removeDrone} className={railRow(false)}>
+                            <Trash2 className="w-4 h-4 opacity-70" />{t('map.droneRemove', 'Dronefoto verwijderen')}
+                          </button>
+                        </>
+                      )}
+                    </>
+                  )}
                 </div>
               )}
             </div>
+            <input ref={droneFileRef} type="file" accept="image/jpeg,image/png" className="hidden"
+                   onChange={e => { void onDroneFile(e.target.files?.[0]); }} />
 
             {/* BEWERKEN — draw / navigate / no-go / calibrate */}
             {editMode === 'none' && (
@@ -4078,6 +4180,37 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
           );
         })()}
 
+        {droneDraft && (
+          <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[1100] w-[min(22rem,calc(100vw-1.5rem))] bg-gray-900/95 backdrop-blur border border-gray-700 rounded-2xl p-3 shadow-xl text-[12px] text-gray-200 space-y-2">
+            <div className="flex items-center gap-2 font-medium"><MoveIcon className="w-4 h-4 text-emerald-400" />{t('map.dronePlace', 'Dronefoto plaatsen')}</div>
+            <p className="text-gray-400 text-[11px]">{t('map.droneHint')}</p>
+            <label className="block">
+              <span className="flex justify-between"><span>{t('map.droneRotation', 'Draaiing')}</span><span className="font-mono text-gray-400">{Math.round(droneDraft.rotationDeg)}°</span></span>
+              <input type="range" min={-180} max={180} step={0.5} value={droneDraft.rotationDeg} className="w-full"
+                     onChange={e => setDroneDraft(d => (d ? { ...d, rotationDeg: Number(e.target.value) } : d))} />
+            </label>
+            <label className="block">
+              <span className="flex justify-between"><span>{t('map.droneWidth', 'Breedte op de grond')}</span><span className="font-mono text-gray-400">{droneDraft.widthM.toFixed(1)} m</span></span>
+              <input type="range" min={5} max={300} step={0.5} value={droneDraft.widthM} className="w-full"
+                     onChange={e => setDroneDraft(d => (d ? { ...d, widthM: Number(e.target.value) } : d))} />
+            </label>
+            <label className="block">
+              <span className="flex justify-between"><span>{t('map.droneOpacity', 'Doorzichtigheid')}</span><span className="font-mono text-gray-400">{Math.round(droneDraft.opacity * 100)}%</span></span>
+              <input type="range" min={0.1} max={1} step={0.05} value={droneDraft.opacity} className="w-full"
+                     onChange={e => setDroneDraft(d => (d ? { ...d, opacity: Number(e.target.value) } : d))} />
+            </label>
+            <div className="flex gap-2 pt-1">
+              <button onClick={() => void saveDronePlacement()} disabled={droneBusy}
+                      className="flex-1 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-medium disabled:opacity-50">
+                {t('map.droneSave', 'Plaatsing opslaan')}
+              </button>
+              <button onClick={() => setDroneDraft(null)} disabled={droneBusy}
+                      className="flex-1 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-gray-200">
+                {t('map.droneCancel', 'Annuleren')}
+              </button>
+            </div>
+          </div>
+        )}
         {/* Live camera tile — floating top-right, OpenNova custom firmware only. */}
         {showCamera && cameraAvailable && sn && (
           <div className="absolute top-3 right-3 z-[1000] max-w-[calc(100vw-1.5rem)]">

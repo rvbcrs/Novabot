@@ -461,7 +461,22 @@
     "channelPromptBody": "De maaier rijdt alleen naar {{slot}} als er een kanaal naartoe loopt. Teken een lijn van {{slot}} naar een bestaand gebied of naar het laadstation.",
     "channelPromptDraw": "Kanaal tekenen",
     "channelPromptLater": "Later",
-    "deleteFailed": "Kaart verwijderen is niet gelukt."
+    "deleteFailed": "Kaart verwijderen is niet gelukt.",
+    "droneOverlay": "Dronefoto",
+    "droneUpload": "Dronefoto uploaden…",
+    "droneReplace": "Dronefoto vervangen…",
+    "dronePlace": "Dronefoto plaatsen",
+    "droneShow": "Dronefoto tonen",
+    "droneHide": "Dronefoto verbergen",
+    "droneRemove": "Dronefoto verwijderen",
+    "droneRemoveConfirm": "De dronefoto van deze maaier verwijderen?",
+    "droneOpacity": "Doorzichtigheid",
+    "droneRotation": "Draaiing",
+    "droneWidth": "Breedte op de grond",
+    "droneSave": "Plaatsing opslaan",
+    "droneCancel": "Annuleren",
+    "droneHint": "Sleep de foto tot hij past. Hij is alleen een hulp bij het tekenen; de maaier gebruikt hem niet.",
+    "droneUploadFailed": "Uploaden mislukt"
   },
   "firmware": {
     "requiresOpenNova": "Vereist OpenNova custom firmware. Stock firmware kan dit commando niet ontvangen.",

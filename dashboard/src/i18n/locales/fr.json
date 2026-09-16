@@ -398,7 +398,22 @@
     "channelPromptBody": "La tondeuse n'atteint {{slot}} que si un couloir y mène. Tracez une ligne de {{slot}} vers une zone existante ou vers la station de charge.",
     "channelPromptDraw": "Tracer le couloir",
     "channelPromptLater": "Plus tard",
-    "deleteFailed": "La suppression de la carte a échoué."
+    "deleteFailed": "La suppression de la carte a échoué.",
+    "droneOverlay": "Photo de drone",
+    "droneUpload": "Importer une photo de drone…",
+    "droneReplace": "Remplacer la photo de drone…",
+    "dronePlace": "Positionner la photo de drone",
+    "droneShow": "Afficher la photo de drone",
+    "droneHide": "Masquer la photo de drone",
+    "droneRemove": "Supprimer la photo de drone",
+    "droneRemoveConfirm": "Supprimer la photo de drone de cette tondeuse ?",
+    "droneOpacity": "Opacité",
+    "droneRotation": "Rotation",
+    "droneWidth": "Largeur au sol",
+    "droneSave": "Enregistrer la position",
+    "droneCancel": "Annuler",
+    "droneHint": "Faites glisser la photo jusqu'à ce qu'elle s'aligne. Ce n'est qu'une aide au tracé ; la tondeuse ne l'utilise jamais.",
+    "droneUploadFailed": "Échec de l'import"
   },
   "firmware": {
     "requiresOpenNova": "Nécessite le firmware personnalisé OpenNova. Le firmware d'origine ne peut pas recevoir cette commande.",

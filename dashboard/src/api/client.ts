@@ -1192,3 +1192,56 @@ export async function refreshPlanPath(sn: string): Promise<CoveragePathEntry[]> 
   if (data.ok === false) throw new Error(data.error || 'refresh-plan-path failed');
   return data.paths ?? [];
 }
+
+
+// ── Drone photo as map backdrop (#124) ──────────────────────────────────────
+export interface DroneOverlayPlacement {
+  lat: number; lng: number; widthM: number; rotationDeg: number; opacity: number;
+}
+export interface DroneOverlayMeta {
+  sn: string; width: number; height: number; mime: string; size: number;
+  updatedAt: string; placement: DroneOverlayPlacement | null;
+}
+
+/** null when this mower has no photo. */
+export async function fetchDroneOverlay(sn: string): Promise<DroneOverlayMeta | null> {
+  const res = await apiFetch(`${BASE}/overlay/${encodeURIComponent(sn)}`);
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  return res.json();
+}
+
+export function droneOverlayImageUrl(sn: string, updatedAt: string): string {
+  // updatedAt in the URL: a re-upload must not come out of the browser cache.
+  return `${BASE}/overlay/${encodeURIComponent(sn)}/image?v=${encodeURIComponent(updatedAt)}`;
+}
+
+export async function uploadDroneOverlay(
+  sn: string, file: File, at: { lat: number; lng: number } | null,
+): Promise<DroneOverlayMeta> {
+  const q = at ? `?lat=${at.lat}&lng=${at.lng}` : '';
+  const res = await apiFetch(`${BASE}/overlay/${encodeURIComponent(sn)}/image${q}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': file.type === 'image/png' ? 'image/png' : 'image/jpeg' },
+    body: file,
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({})) as { error?: string };
+    throw new Error(data.error || `${res.status} ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function saveDroneOverlayPlacement(sn: string, placement: DroneOverlayPlacement): Promise<void> {
+  const res = await apiFetch(`${BASE}/overlay/${encodeURIComponent(sn)}`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(placement),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({})) as { error?: string };
+    throw new Error(data.error || `${res.status} ${res.statusText}`);
+  }
+}
+
+export async function deleteDroneOverlay(sn: string): Promise<void> {
+  await apiFetch(`${BASE}/overlay/${encodeURIComponent(sn)}`, { method: 'DELETE' });
+}
