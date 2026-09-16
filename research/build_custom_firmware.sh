@@ -50,7 +50,7 @@ INCLUDE_SERVER="false"
 BUNDLE_NODE="false"
 BUNDLE_NODE_IP=""
 SERVER_PORT="3000"
-VERSION_SUFFIX="custom-1"
+VERSION_SUFFIX="custom-44"
 
 echo -e "\033[1;31m=============================================================\033[0m"
 echo -e "\033[1;31m  ⚠  BETA CUSTOM FIRMWARE — experimenteel. Kan de maaier\033[0m"
