@@ -2362,6 +2362,7 @@ async function diagnoseDevice(sn) {
                  frame: "Map frame",
                  disk: "Disk space",
                  mdns_service: "mDNS on port 5353",
+                 container_network: "Container network",
                  rival_broker: "Second MQTT broker",
                  mapping_mode: "Mapping mode",
                  parked_task: "Parked task",
@@ -2370,7 +2371,8 @@ async function diagnoseDevice(sn) {
                  mower_config: "Server address on the mower",
                  server_ip_file: "Stored server address",
                  helpers: "OpenNova scripts",
-                 mdns_reach: "Finds the server on its own"
+                 mdns_reach: "Finds the server on its own",
+                 http_address: "mqtt_node network check"
   };
   var GROUPS = { server: 'Server', reach: 'Reachability', connect: 'Connection',
                  identity: 'Identity', pair: 'Charger and LoRa', firmware: 'Firmware',
