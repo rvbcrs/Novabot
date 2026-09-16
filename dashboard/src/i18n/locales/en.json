@@ -102,7 +102,7 @@
     "batteryLabel": "Battery: {{pct}}%",
     "batteryCharging": "Battery: {{pct}}% (charging)",
     "batteryNoData": "Battery: no data",
-    "wifiLabel": "WiFi: {{rssi}} dBm",
+    "wifiLabel": "WiFi: {{rssi}}%",
     "wifiNoData": "WiFi: no data",
     "rtkLabel": "RTK Satellites: {{sats}}",
     "rtkNoData": "RTK: no data",

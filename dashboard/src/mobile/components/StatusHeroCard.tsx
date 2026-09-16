@@ -144,7 +144,7 @@ export function StatusHeroCard({ mower }: Props) {
       <div className="flex items-center gap-3 mt-3">
         <div className="flex items-center gap-1 text-[11px] text-gray-400 dark:text-gray-500">
           <Wifi className="w-3 h-3" />
-          <span className="tabular-nums">{mower.wifiRssi ? `${mower.wifiRssi}` : '—'}</span>
+          <span className="tabular-nums">{mower.wifiRssi ? `${mower.wifiRssi}%` : '—'}</span>
         </div>
         <div className="flex items-center gap-1 text-[11px] text-gray-400 dark:text-gray-500">
           <Satellite className="w-3 h-3" />

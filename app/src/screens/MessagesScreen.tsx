@@ -147,12 +147,12 @@ export default function MessagesScreen() {
 
       // WiFi signal warning
       const rssi = parseInt(mower.sensors.wifi_rssi ?? '0', 10);
-      if (rssi < -80 && rssi !== 0 && mower.online) {
+      if (rssi < 35 && rssi !== 0 && mower.online) {
         items.push({
           id: 'mower-weak-wifi',
           severity: 'info',
           title: 'Weak WiFi signal',
-          detail: `WiFi RSSI: ${rssi} dBm. Coverage may be unreliable.`,
+          detail: `WiFi signal: ${rssi}%. Coverage may be unreliable.`,
           device: 'Mower',
         });
       }

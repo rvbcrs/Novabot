@@ -3085,15 +3085,14 @@ function expCentroid(points) {
 
 function expHeatmapColor(rssi, alpha) {
   var stops = [
-    { r: -85, c: [239, 68, 68] },
-    { r: -75, c: [245, 158, 11] },
-    { r: -67, c: [234, 179, 8] },
-    { r: -60, c: [34, 197, 94] },
-    { r: -50, c: [20, 184, 166] }
+    { r: 25, c: [239, 68, 68] },
+    { r: 40, c: [245, 158, 11] },
+    { r: 55, c: [234, 179, 8] },
+    { r: 67, c: [34, 197, 94] },
+    { r: 83, c: [20, 184, 166] }
   ];
   var v = Number(rssi);
-  if (!Number.isFinite(v)) v = -90;
-  if (v > 0) v = -v;
+  if (!Number.isFinite(v)) v = 0;
   if (v <= stops[0].r) return [stops[0].c[0], stops[0].c[1], stops[0].c[2], alpha];
   for (var i = 1; i < stops.length; i++) {
     if (v <= stops[i].r) {
@@ -3295,7 +3294,7 @@ function expEnsureDeck(container) {
       if (!o) return null;
       if (o.__kind === 'charger') return 'Charger\\nx=' + o.x.toFixed(2) + ' y=' + o.y.toFixed(2);
       if (o.__kind === 'mower') return 'Mower\\nx=' + o.x.toFixed(2) + ' y=' + o.y.toFixed(2);
-      if (o.wifiRssi != null) return 'WiFi ' + o.wifiRssi + ' dBm\\nx=' + o.mapX.toFixed(2) + ' y=' + o.mapY.toFixed(2);
+      if (o.wifiRssi != null) return 'WiFi ' + o.wifiRssi + '%\\nx=' + o.mapX.toFixed(2) + ' y=' + o.mapY.toFixed(2);
       return expMapName(o);
     },
     onViewStateChange: function(ev) {

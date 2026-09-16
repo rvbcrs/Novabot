@@ -8,16 +8,16 @@ interface Props {
 }
 
 function rssiLabelKey(rssi: number): string {
-  if (rssi >= -50) return 'signal.excellent';
-  if (rssi >= -60) return 'signal.good';
-  if (rssi >= -70) return 'signal.fair';
+  if (rssi >= 80) return 'signal.excellent';
+  if (rssi >= 65) return 'signal.good';
+  if (rssi >= 50) return 'signal.fair';
   return 'signal.weak';
 }
 
 function rssiBars(rssi: number): number {
-  if (rssi >= -50) return 4;
-  if (rssi >= -60) return 3;
-  if (rssi >= -70) return 2;
+  if (rssi >= 80) return 4;
+  if (rssi >= 65) return 3;
+  if (rssi >= 50) return 2;
   return 1;
 }
 
@@ -48,7 +48,7 @@ export function SignalStrength({ wifiRssi, rtkSat, locQuality }: Props) {
               </div>
               <span className="text-sm text-white">{t('signal.wifi')}</span>
             </div>
-            <span className="text-xs text-gray-400">{rssi} dBm ({t(rssiLabelKey(rssi))})</span>
+            <span className="text-xs text-gray-400">{rssi}% ({t(rssiLabelKey(rssi))})</span>
           </div>
         )}
         {sats !== null && (

@@ -151,7 +151,7 @@
     "batteryLabel": "Batterij: {{pct}}%",
     "batteryCharging": "Batterij: {{pct}}% (laden)",
     "batteryNoData": "Batterij: geen data",
-    "wifiLabel": "WiFi: {{rssi}} dBm",
+    "wifiLabel": "WiFi: {{rssi}}%",
     "wifiNoData": "WiFi: geen data",
     "rtkLabel": "RTK Satellieten: {{sats}}",
     "rtkNoData": "RTK: geen data",

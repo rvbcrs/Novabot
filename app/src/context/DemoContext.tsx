@@ -68,7 +68,7 @@ function makeDemoDevices(activity: MowerActivity, mowZonePhase: MowZoneDemoPhase
       error_msg: activity === 'error' ? 'Obstacle detected — mower stuck' : '',
       mowing_progress: activity === 'mowing' ? '63' : activity === 'mapping' ? '41' : unicomProgress,
       path_direction: '45',
-      wifi_rssi: '-52',
+      wifi_rssi: '70',
       rtk_sat: '14',
       sw_version: '6.0.2',
       mower_version: '6.0.2',

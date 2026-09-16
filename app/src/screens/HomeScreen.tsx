@@ -2226,7 +2226,7 @@ export default function HomeScreen() {
               {mower.wifiRssi != null && (
                 <View style={styles.chip}>
                   <Ionicons name="wifi" size={11} color={colors.textDim} />
-                  <Text style={styles.chipText}>{mower.wifiRssi}</Text>
+                  <Text style={styles.chipText}>{mower.wifiRssi}%</Text>
                 </View>
               )}
               {mower.rtkSat != null && (

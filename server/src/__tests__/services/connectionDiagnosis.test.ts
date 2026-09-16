@@ -471,16 +471,16 @@ describe('identity and wifi', () => {
   it('warns on a weak signal, which is what "sometimes online" looks like', async () => {
     withIp('192.0.2.12');
     const step = (await diagnoseConnection(MOWER, Date.now(),
-      { snapshot: { msg: 'x', wifi_rssi: '-82' }, probes: probes() })).steps.find(s => s.id === 'wifi')!;
+      { snapshot: { msg: 'x', wifi_rssi: '30' }, probes: probes() })).steps.find(s => s.id === 'wifi')!;
     expect(step.status).toBe('warn');
-    expect(step.evidence).toContain('-82 dBm');
+    expect(step.evidence).toContain('30%');
     expect(step.action).toContain('toegangspunt');
   });
 
   it('accepts a healthy signal', async () => {
     withIp('192.0.2.12');
     const step = (await diagnoseConnection(MOWER, Date.now(),
-      { snapshot: { msg: 'x', wifi_rssi: '-58' }, probes: probes() })).steps.find(s => s.id === 'wifi')!;
+      { snapshot: { msg: 'x', wifi_rssi: '70' }, probes: probes() })).steps.find(s => s.id === 'wifi')!;
     expect(step.status).toBe('ok');
   });
 

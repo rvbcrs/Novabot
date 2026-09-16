@@ -106,7 +106,7 @@ export function CompactStatusBar({ mower }: Props) {
       <div className="flex items-center gap-3 mt-1">
         <div className="flex items-center gap-1 text-[11px] text-gray-400 dark:text-gray-500">
           <Wifi className="w-3 h-3" />
-          <span className="tabular-nums">{mower.wifiRssi ?? '—'}</span>
+          <span className="tabular-nums">{mower.wifiRssi != null ? `${mower.wifiRssi}%` : '—'}</span>
         </div>
         <div className="flex items-center gap-1 text-[11px] text-gray-400 dark:text-gray-500">
           <Satellite className="w-3 h-3" />

@@ -236,7 +236,7 @@ img{max-width:100%;max-height:100%;object-fit:contain}
               {wifiRssi != null && (
                 <View style={styles.overlayChip}>
                   <Ionicons name="wifi" size={12} color="#fff" />
-                  <Text style={styles.overlayChipText}>{wifiRssi}</Text>
+                  <Text style={styles.overlayChipText}>{wifiRssi}%</Text>
                 </View>
               )}
               {rtkSat != null && (

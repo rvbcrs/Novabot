@@ -57,7 +57,7 @@ describe('signal_history positioned samples', () => {
     } | undefined;
 
     expect(row).toBeDefined();
-    expect(row!.wifi_rssi).toBe(-52);
+    expect(row!.wifi_rssi).toBe(52);
     expect(row!.map_x).toBeCloseTo(1.25);
     expect(row!.map_y).toBeCloseTo(-2.5);
     expect(row!.latitude).toBeCloseTo(52.1234567);

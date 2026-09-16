@@ -106,7 +106,7 @@ export const SENSORS: SensorDef[] = [
   { field: 'button_stop',      name: 'Emergency Stop',    component: 'binary_sensor', device_class: 'safety', icon: 'mdi:stop-circle' },
   { field: 'chassis_err',      name: 'Chassis Error',     component: 'sensor', icon: 'mdi:car-wrench',           entity_category: 'diagnostic' },
   { field: 'rtk_sat',          name: 'RTK Satellites',    component: 'sensor', icon: 'mdi:satellite-variant', state_class: 'measurement' },
-  { field: 'wifi_rssi',        name: 'WiFi Signal',       component: 'sensor', icon: 'mdi:wifi', device_class: 'signal_strength', state_class: 'measurement', unit: 'dBm' },
+  { field: 'wifi_rssi',        name: 'WiFi Signal',       component: 'sensor', icon: 'mdi:wifi', state_class: 'measurement', unit: '%' },
 
   // report_state_timer_data
   { field: 'localization_state', name: 'Localization',    component: 'sensor', icon: 'mdi:crosshairs-question' },
@@ -366,10 +366,6 @@ export function translateValue(field: string, rawValue: string): string {
       return translateLocalization(rawValue);
     case 'button_stop':
       return rawValue === 'true' ? 'ON' : 'OFF';
-    case 'wifi_rssi': {
-      const n = parseInt(rawValue, 10);
-      return isNaN(n) ? rawValue : String(n > 0 ? -n : n);
-    }
     case 'rtk_fix_quality':
       switch (rawValue) {
         case '0': return 'No fix';
@@ -566,10 +562,6 @@ const signalHistoryInsert = db.prepare(`
   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `);
 
-function normaliseWifiRssi(n: number): number {
-  return n > 0 ? -n : n;
-}
-
 function sampleSignalHistory(sn: string, snValues: Map<string, string>, meta: SignalSampleMeta): void {
   const now = Date.now();
   const lastSignal = lastSignalSampleTime.get(sn) ?? 0;
@@ -606,7 +598,7 @@ function sampleSignalHistory(sn: string, snValues: Map<string, string>, meta: Si
     signalHistoryInsert.run(
       sn,
       isNaN(battery) ? null : battery,
-      isNaN(wifiRssi) ? null : normaliseWifiRssi(wifiRssi),
+      isNaN(wifiRssi) ? null : wifiRssi,
       isNaN(rtkSat) ? null : rtkSat,
       isNaN(locQuality) ? null : locQuality,
       isNaN(cpuTemp) ? null : cpuTemp,

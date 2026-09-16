@@ -581,10 +581,10 @@ export function DeviceChips({ mower, charger, knownMowers, onSelectMower, part }
                 {hasWifi && (
                   <TeleCell
                     icon={Wifi}
-                    value={`${wifiRssi}`}
-                    color={Math.abs(wifiRssi) < 60 ? 'text-emerald-300' : Math.abs(wifiRssi) < 75 ? 'text-yellow-300' : 'text-red-400'}
-                    iconColor={Math.abs(wifiRssi) < 60 ? 'text-emerald-400/80' : Math.abs(wifiRssi) < 75 ? 'text-yellow-400/80' : 'text-red-400'}
-                    label={`WiFi RSSI: ${wifiRssi} dBm`}
+                    value={`${wifiRssi}%`}
+                    color={wifiRssi >= 65 ? 'text-emerald-300' : wifiRssi >= 40 ? 'text-yellow-300' : 'text-red-400'}
+                    iconColor={wifiRssi >= 65 ? 'text-emerald-400/80' : wifiRssi >= 40 ? 'text-yellow-400/80' : 'text-red-400'}
+                    label={`WiFi: ${wifiRssi}%`}
                   />
                 )}
 

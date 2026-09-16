@@ -122,9 +122,9 @@ describe('GET /api/admin-status/wifi-heatmap/:sn', () => {
     db.prepare(`
       INSERT INTO signal_history (sn, wifi_rssi, battery, loc_quality, map_x, map_y, latitude, longitude, ts)
       VALUES
-        (?, -45, 90, 100, 0, 0, 52.1, 6.1, datetime('now', '-5 minutes')),
-        (?, -80, 70, 80, 5, 2, 52.2, 6.2, datetime('now', '-4 minutes')),
-        (?, -55, 65, 100, NULL, 4, 52.3, 6.3, datetime('now', '-3 minutes'))
+        (?, 100, 90, 100, 0, 0, 52.1, 6.1, datetime('now', '-5 minutes')),
+        (?, 30, 70, 80, 5, 2, 52.2, 6.2, datetime('now', '-4 minutes')),
+        (?, 83, 65, 100, NULL, 4, 52.3, 6.3, datetime('now', '-3 minutes'))
     `).run(sn, sn, sn);
 
     const res = await request(server).get(`/api/admin-status/wifi-heatmap/${sn}?hours=1`);
@@ -133,8 +133,8 @@ describe('GET /api/admin-status/wifi-heatmap/:sn', () => {
     expect(res.body.sn).toBe(sn);
     expect(res.body.hours).toBe(1);
     expect(res.body.points).toEqual([
-      expect.objectContaining({ wifiRssi: -45, mapX: 0, mapY: 0, weight: 1 }),
-      expect.objectContaining({ wifiRssi: -80, mapX: 5, mapY: 2, weight: 0.3 }),
+      expect.objectContaining({ wifiRssi: 100, mapX: 0, mapY: 0, weight: 1 }),
+      expect.objectContaining({ wifiRssi: 30, mapX: 5, mapY: 2, weight: 0.3 }),
     ]);
   });
 });

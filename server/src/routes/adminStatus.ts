@@ -3674,10 +3674,8 @@ adminStatusRouter.get('/live-position/:sn', (req: AuthRequest, res: Response) =>
   });
 });
 
-function wifiHeatmapWeight(rssi: number): number {
-  const normalized = rssi > 0 ? -rssi : rssi;
-  const weight = 1 - ((Math.abs(normalized) - 45) / 50);
-  return Math.max(0.05, Math.min(1, Math.round(weight * 100) / 100));
+function wifiHeatmapWeight(signal: number): number {
+  return Math.max(0.05, Math.min(1, Math.round(signal) / 100));
 }
 
 /**
@@ -3698,7 +3696,7 @@ adminStatusRouter.get('/wifi-heatmap/:sn', (req: AuthRequest, res: Response) => 
     hours,
     points: rows.map((r) => ({
       ts: r.ts,
-      wifiRssi: r.wifi_rssi > 0 ? -r.wifi_rssi : r.wifi_rssi,
+      wifiRssi: r.wifi_rssi,
       weight: wifiHeatmapWeight(r.wifi_rssi),
       battery: r.battery,
       locQuality: r.loc_quality,
