@@ -110,6 +110,10 @@ function promptPassword(question) {
       reject(new Error('No terminal to ask for a password — pass --password'));
       return;
     }
+    // readline.close() leaves stdin paused, so a prompt that follows an
+    // earlier one (the overwrite confirmation) would wait forever on input
+    // that never arrives. Resume it first.
+    process.stdin.resume();
     process.stdout.write(question);
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: true });
     rl._writeToOutput = () => {};                    // keep the password off the screen
@@ -1148,9 +1152,23 @@ async function main() {
   printWarnings();
 }
 
+/**
+ * Node reports a refused connection to a host with both an A and an AAAA
+ * record as an AggregateError whose own `message` is empty, so printing just
+ * that leaves the user with a bare "Error:" exactly when they need to know
+ * what went wrong. Fall back to the causes, then the code.
+ */
+function describeError(err) {
+  if (err?.message) return err.message;
+  if (Array.isArray(err?.errors) && err.errors.length) {
+    return err.errors.map(e => e.message || e.code).filter(Boolean).join('; ');
+  }
+  return err?.code ?? String(err);
+}
+
 const run = opts.command === 'restore-maps' ? restoreMaps : main;
 run().catch(err => {
-  console.error(`\nError: ${err.message}`);
+  console.error(`\nError: ${describeError(err)}`);
   printWarnings();
   process.exit(1);
 });
