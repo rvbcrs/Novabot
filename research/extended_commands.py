@@ -17,6 +17,7 @@ Vereist: Python 3.8+
 """
 
 import json
+import math
 import os
 import re
 import signal
