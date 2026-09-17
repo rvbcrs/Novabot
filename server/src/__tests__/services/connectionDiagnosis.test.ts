@@ -46,7 +46,7 @@ function probes(over: Partial<{
   mac: string | null; lan: Record<string, unknown>;
   mower: Record<string, unknown>;
   net: Record<string, unknown>;
-  mdns: Record<string, unknown>; mdnsAnswers: string[];
+  mdns: Record<string, unknown>; mdnsAnswers: string[]; sidecar: boolean;
 }> = {}) {
   return {
     reachability: async (deviceIp: string | null) => ({
@@ -91,6 +91,7 @@ function probes(over: Partial<{
       ...(over.mdns ?? {}),
     }),
     mdnsSelfQuery: async () => over.mdnsAnswers ?? ['192.168.1.2'],
+    mdnsSidecar: () => over.sidecar ?? false,
   } satisfies DiagnosisProbes;
 }
 
@@ -1158,6 +1159,28 @@ describe('mDNS on 5353: measured, and when it fails, why and what to do', () => 
     const step = await run({}, ['192.168.1.2']);
     expect(step.status).toBe('ok');
     expect(step.evidence).toContain('192.168.1.2');
+  });
+
+  it('gives no green tick when only we ourselves answer inside a bridged container', async () => {
+    // Multicast loops back on docker0, so our own answer always arrives there
+    // and proves nothing about the home network.
+    const step = await run({}, ['192.168.1.2'], { inContainer: true, bridged: true, addresses: ['172.17.0.9'] });
+    expect(step.status).toBe('unknown');
+    expect(step.evidence).toContain('alleen door deze container zelf');
+    expect(step.action).toContain('opennova-mdns');
+    expect(step.action).toContain('bij de maaier');
+  });
+
+  it('is ok when the sidecar does the advertising, and points at the mower for proof', async () => {
+    withIp('192.0.2.70');
+    const step = (await diagnoseConnection(MOWER, Date.now(), {
+      snapshot: { msg: 'x' },
+      probes: probes({ mdns: { running: false, notStartedReason: 'disabled' }, sidecar: true,
+        net: { inContainer: true, bridged: true, addresses: ['172.17.0.9'] } }),
+    })).steps.find(s => s.id === 'mdns_service')!;
+    expect(step.status).toBe('ok');
+    expect(step.evidence).toContain('opennova-mdns');
+    expect(step.action).toContain('bij de maaier');
   });
 
   it('names the competitor when another address answers', async () => {

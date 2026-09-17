@@ -811,11 +811,6 @@ export const CATALOG: Catalog = {
     fr: "la tondeuse ne trouve pas opennova.local (serveur : {0})",
     de: "der Mäher findet opennova.local nicht (Server: {0})",
   },
-  "hij leunt nu volledig op je DNS-omleiding. Automatisch ontdekken werkt niet omdat de container multicast niet naar het thuisnetwerk krijgt; host-netwerk of een mDNS-reflector lost dat op": {
-    en: "it now leans entirely on your DNS redirect. Automatic discovery does not work because the container cannot get multicast onto the home network; host networking or an mDNS reflector solves that",
-    fr: "il repose maintenant entièrement sur votre redirection DNS. La découverte automatique ne fonctionne pas car le conteneur ne fait pas passer le multicast vers le réseau domestique ; le réseau host ou un réflecteur mDNS résout cela",
-    de: "er stützt sich jetzt vollständig auf Ihre DNS-Umleitung. Automatische Erkennung funktioniert nicht, weil der Container Multicast nicht ins Heimnetz bekommt; Host-Netzwerk oder ein mDNS-Reflektor löst das",
-  },
   "hij leunt nu volledig op je DNS-omleiding. Automatisch ontdekken werkt pas als de server zich op het netwerk adverteert": {
     en: "it now leans entirely on your DNS redirect. Automatic discovery only works once the server advertises itself on the network",
     fr: "il repose maintenant entièrement sur votre redirection DNS. La découverte automatique ne fonctionne que lorsque le serveur s'annonce sur le réseau",
@@ -938,5 +933,35 @@ export const CATALOG: Catalog = {
     en: "without this address mqtt_node's network check has nowhere to go; run set_server_urls.sh --restart-mqtt",
     fr: "sans cette adresse, le contrôle réseau de mqtt_node n'a nulle part où aller ; exécutez set_server_urls.sh --restart-mqtt",
     de: "ohne diese Adresse hat der Netzwerkcheck von mqtt_node kein Ziel; führe set_server_urls.sh --restart-mqtt aus",
+  },
+  "hij leunt nu volledig op je DNS-omleiding. Automatisch ontdekken werkt niet omdat de container multicast niet naar het thuisnetwerk krijgt; zet de opennova-mdns sidecar aan (docker-compose.yml) of draai met host-netwerk": {
+    en: "it now leans entirely on your DNS redirect. Automatic discovery does not work because the container cannot get multicast onto the home network; enable the opennova-mdns sidecar (docker-compose.yml) or run with host networking",
+    fr: "il repose maintenant entièrement sur votre redirection DNS. La découverte automatique ne fonctionne pas car le conteneur ne fait pas passer le multicast vers le réseau domestique ; activez le sidecar opennova-mdns (docker-compose.yml) ou utilisez le réseau host",
+    de: "er stützt sich jetzt vollständig auf Ihre DNS-Umleitung. Automatische Erkennung funktioniert nicht, weil der Container Multicast nicht ins Heimnetz bekommt; aktivieren Sie den opennova-mdns-Sidecar (docker-compose.yml) oder nutzen Sie das Host-Netzwerk",
+  },
+  "hij leunt nu volledig op je DNS-omleiding. De opennova-mdns sidecar hoort dit te doen: kijk of die container draait (docker logs opennova-mdns) en of TARGET_IP daar het adres van deze server is": {
+    en: "it now leans entirely on your DNS redirect. The opennova-mdns sidecar should be doing this: check that that container is running (docker logs opennova-mdns) and that TARGET_IP there is this server's address",
+    fr: "il repose maintenant entièrement sur votre redirection DNS. Le sidecar opennova-mdns devrait s'en charger : vérifiez que ce conteneur tourne (docker logs opennova-mdns) et que TARGET_IP y est l'adresse de ce serveur",
+    de: "er stützt sich jetzt vollständig auf Ihre DNS-Umleitung. Der opennova-mdns-Sidecar sollte das übernehmen: prüfen Sie, ob dieser Container läuft (docker logs opennova-mdns) und ob TARGET_IP dort die Adresse dieses Servers ist",
+  },
+  "mDNS wordt geadverteerd door de opennova-mdns sidecar op het host-netwerk": {
+    en: "mDNS is advertised by the opennova-mdns sidecar on the host network",
+    fr: "le mDNS est annoncé par le sidecar opennova-mdns sur le réseau host",
+    de: "mDNS wird vom opennova-mdns-Sidecar im Host-Netzwerk angekündigt",
+  },
+  "of de maaier de naam hoort staat verderop bij de maaier zelf": {
+    en: "whether the mower hears the name is shown further down, at the mower itself",
+    fr: "si la tondeuse entend le nom est indiqué plus bas, à la tondeuse elle-même",
+    de: "ob der Mäher den Namen hört, steht weiter unten beim Mäher selbst",
+  },
+  "{0} wordt op 5353 alleen door deze container zelf beantwoord; in bridge-modus zegt dat niets over je thuisnetwerk": {
+    en: "{0} is answered on 5353 only by this container itself; in bridge mode that says nothing about your home network",
+    fr: "{0} n'est répondu sur 5353 que par ce conteneur lui-même ; en mode bridge cela ne dit rien de votre réseau domestique",
+    de: "{0} wird auf 5353 nur von diesem Container selbst beantwortet; im Bridge-Modus sagt das nichts über Ihr Heimnetz",
+  },
+  "of de maaier de naam hoort staat verderop bij de maaier zelf. Wil je automatisch ontdekken, zet de opennova-mdns sidecar aan (staat in docker-compose.yml) of draai met host-netwerk": {
+    en: "whether the mower hears the name is shown further down, at the mower itself. For automatic discovery, enable the opennova-mdns sidecar (it is in docker-compose.yml) or run with host networking",
+    fr: "si la tondeuse entend le nom est indiqué plus bas, à la tondeuse elle-même. Pour la découverte automatique, activez le sidecar opennova-mdns (il est dans docker-compose.yml) ou utilisez le réseau host",
+    de: "ob der Mäher den Namen hört, steht weiter unten beim Mäher selbst. Für automatische Erkennung aktivieren Sie den opennova-mdns-Sidecar (steht in docker-compose.yml) oder nutzen Sie das Host-Netzwerk",
   },
 };

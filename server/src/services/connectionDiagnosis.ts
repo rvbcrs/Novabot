@@ -61,6 +61,8 @@ export interface DiagnosisProbes {
   lookupMac: (ip: string) => Promise<string | null>;
   mdnsStatus: () => MdnsStatus;
   mdnsSelfQuery: () => Promise<string[]>;
+  /** MDNS_SIDECAR=true: the opennova-mdns service advertises from the host network on our behalf. */
+  mdnsSidecar: () => boolean;
 }
 
 export const realProbes: DiagnosisProbes = {
@@ -73,6 +75,7 @@ export const realProbes: DiagnosisProbes = {
   lookupMac,
   mdnsStatus,
   mdnsSelfQuery: selfQuery,
+  mdnsSidecar: () => process.env.MDNS_SIDECAR === 'true' || process.env.MDNS_SIDECAR === '1',
 };
 
 export interface DiagnosisInput {
@@ -245,7 +248,16 @@ export async function diagnoseConnection(
   // de weg over 224.0.0.251:5353 werkt. Iemand anders: een tweede server.
   // Niemand: multicast komt nergens. Wat de MAAIER hoort staat verderop.
   const md = probe.mdnsStatus();
-  if (md.notStartedReason === 'disabled') {
+  const sidecar = probe.mdnsSidecar();
+  if (sidecar) {
+    // The advertising happens in opennova-mdns, on the host network, where
+    // this container cannot see it. The proof is at the mower (mdns_reach).
+    push({
+      id: 'mdns_service', group: 'server', status: 'ok',
+      evidence: T`mDNS wordt geadverteerd door de opennova-mdns sidecar op het host-netwerk`,
+      action: T`of de maaier de naam hoort staat verderop bij de maaier zelf`,
+    });
+  } else if (md.notStartedReason === 'disabled') {
     push({
       id: 'mdns_service', group: 'server', status: 'warn',
       evidence: T`mDNS is uitgezet (ENABLE_MDNS)`,
@@ -285,6 +297,17 @@ export async function diagnoseConnection(
         id: 'mdns_service', group: 'server', status: 'fail',
         evidence: T`${md.hostname} wordt óók beantwoord door ${others.join(', ')}`,
         action: T`twee servers claimen dezelfde naam en maaiers kiezen willekeurig; zet de andere uit of geef hem ENABLE_MDNS=false`,
+      });
+    } else if (answers.includes(md.ip ?? '') && probe.containerNetwork().bridged) {
+      // On docker's bridge our own answer always arrives: multicast loops back
+      // to the sender on docker0. That proves the socket works, not that the
+      // home network hears us, which is what the question was. So no green
+      // tick. Ramon: "als mDNS alleen door de server zelf wordt beantwoord heb
+      // je niks aan de test". The proof is at the mower (mdns_reach).
+      push({
+        id: 'mdns_service', group: 'server', status: 'unknown',
+        evidence: T`${md.hostname} wordt op 5353 alleen door deze container zelf beantwoord; in bridge-modus zegt dat niets over je thuisnetwerk`,
+        action: T`of de maaier de naam hoort staat verderop bij de maaier zelf. Wil je automatisch ontdekken, zet de opennova-mdns sidecar aan (staat in docker-compose.yml) of draai met host-netwerk`,
       });
     } else if (answers.includes(md.ip ?? '')) {
       push({
@@ -1053,8 +1076,10 @@ export async function diagnoseConnection(
           ? T`de maaier vindt de server zelf via opennova.local`
           : T`de maaier vindt opennova.local niet (server: ${netDesc})`,
         action: m.mdnsResolves ? undefined
+          : probe.mdnsSidecar()
+          ? T`hij leunt nu volledig op je DNS-omleiding. De opennova-mdns sidecar hoort dit te doen: kijk of die container draait (docker logs opennova-mdns) en of TARGET_IP daar het adres van deze server is`
           : net.bridged
-          ? T`hij leunt nu volledig op je DNS-omleiding. Automatisch ontdekken werkt niet omdat de container multicast niet naar het thuisnetwerk krijgt; host-netwerk of een mDNS-reflector lost dat op`
+          ? T`hij leunt nu volledig op je DNS-omleiding. Automatisch ontdekken werkt niet omdat de container multicast niet naar het thuisnetwerk krijgt; zet de opennova-mdns sidecar aan (docker-compose.yml) of draai met host-netwerk`
           : T`hij leunt nu volledig op je DNS-omleiding. Automatisch ontdekken werkt pas als de server zich op het netwerk adverteert`,
       });
 

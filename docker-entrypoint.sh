@@ -4,6 +4,16 @@ set -e
 PORT="${PORT:-80}"
 TARGET_IP="${TARGET_IP:-0.0.0.0}"
 
+# ── mDNS sidecar ─────────────────────────────────────────────────────────────
+# Same image, host network, advertises opennova.local and nothing else. See
+# server/src/mdnsOnly.ts for why a bridged container cannot do this itself.
+if [ "${MDNS_ONLY}" = "true" ]; then
+  echo "=== OpenNova mDNS sidecar ==="
+  echo "  advertising for ${TARGET_IP:-<first LAN address>} on 5353/udp"
+  cd /app/server
+  exec node dist/mdnsOnly.js
+fi
+
 echo "=== OpenNova Server ==="
 echo "  HTTP:  port ${PORT}"
 echo "  MQTT:  port 1883"
