@@ -221,12 +221,14 @@ Uses **bridge networking**. Ports are mapped via Docker. Suitable for macOS, Syn
     the host's own address. So `docker-compose.yml` runs a second, tiny service,
     `opennova-mdns`, with `network_mode: host`. It is the same image, it claims
     only `5353/udp`, and it shares that port with avahi if your host runs one.
-    It advertises `opennova.local -> TARGET_IP`, so set `TARGET_IP` to the LAN
-    address of the host. The main container keeps its bridge and port mappings.
+    There is nothing to configure: on the host network it sees the LAN address
+    of the host itself and advertises `opennova.local` for it. The main
+    container keeps its bridge and port mappings.
 
-    Linux hosts only (NAS, Raspberry Pi, ZimaOS). On Docker Desktop for macOS
-    or Windows a host-network container still sits inside a VM and never
-    reaches your LAN; there, discovery works through the bootstrap tool.
+    It only helps on Linux hosts (NAS, Raspberry Pi, ZimaOS). On Docker Desktop
+    for macOS or Windows a host-network container still sits inside a VM and
+    never reaches your LAN; the sidecar notices that and exits quietly, and
+    discovery there works through the bootstrap tool.
 
     Whether a mower actually hears the name is measured on the mower, in the
     connection diagnosis under **Mower → mDNS**. The server-side mDNS row cannot

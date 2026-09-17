@@ -15,18 +15,23 @@
  * bridge and its port mappings; the mower learns the host address from here
  * and reaches the broker through the mapped 1883.
  *
+ * Nothing to configure: on a host network the LAN address is right there in
+ * the interface list, which is the one thing the bridged main container can
+ * never see. TARGET_IP still wins when set.
+ *
  * Its own entry point on purpose: importing index.ts would open the database
  * and bind every port before we could decline.
  */
-import { startMdnsAdvertiser, mdnsStatus } from './services/mdnsAdvertiser.js';
+import { startMdnsAdvertiser, mdnsStatus, detectLanIp, isDockerDesktopVm } from './services/mdnsAdvertiser.js';
 
 const TAG = '[MDNS-ONLY]';
 
-if (!process.env.TARGET_IP) {
-  // Inside a host-network container the LAN address is detectable, but the
-  // sidecar exists to advertise the address the MAIN container is reached on,
-  // and that is only ever known from outside. Be loud about it.
-  console.warn(`${TAG} TARGET_IP is not set; falling back to the first LAN address of this host`);
+if (isDockerDesktopVm()) {
+  // Docker Desktop (macOS, Windows): "host network" is the VM's own, the LAN
+  // never hears it. Say so once and stop; compose has restart: on-failure,
+  // so a clean exit stays stopped instead of looping.
+  console.log(`${TAG} Docker Desktop detected (${detectLanIp() ?? 'no address'} is the VM, not your LAN); mDNS cannot reach the LAN from a container here, nothing to do`);
+  process.exit(0);
 }
 
 startMdnsAdvertiser();
@@ -35,11 +40,8 @@ if (!st.running) {
   console.error(`${TAG} advertiser did not start: ${st.notStartedReason ?? st.lastError ?? 'unknown'}`);
   process.exit(1);
 }
-console.log(`${TAG} advertising ${st.hostname} -> ${st.ip} on ${st.port}/udp (host network)`);
+console.log(`${TAG} advertising ${st.hostname} -> ${st.ip} on ${st.port}/udp (host network${process.env.TARGET_IP ? ', TARGET_IP' : ', detected'})`);
 
-const stop = (sig: string) => {
-  console.log(`${TAG} ${sig}, stopping`);
-  process.exit(0);
-};
+const stop = (sig: string) => { console.log(`${TAG} ${sig}, stopping`); process.exit(0); };
 process.on('SIGTERM', () => stop('SIGTERM'));
 process.on('SIGINT', () => stop('SIGINT'));

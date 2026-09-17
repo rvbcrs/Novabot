@@ -1122,6 +1122,10 @@ export function handlePlannedPathRespond(sn: string, data: Record<string, unknow
 // Response cached from get_preview_cover_path_respond (via our broker intercept)
 const previewPathCache = new Map<string, Array<{ id: string; points: Array<{ x: number; y: number }> }>>();
 const previewPathMetaCache = new Map<string, { source: 'mower'; cachedAt: number }>();
+// What the cached preview was generated FOR (map_ids / direction / polygon), so
+// a refresh for a different zone can tell "the mower gave me the old file" from
+// "the same zone plans the same way again".
+const previewPathRequestCache = new Map<string, string>();
 
 dashboardRouter.get('/preview-path/:sn', (req: Request, res: Response) => {
   const { sn } = req.params;
@@ -1426,7 +1430,7 @@ dashboardRouter.post('/refresh-preview-path/:sn', async (req: Request, res: Resp
     // that triggers on very large preview files (>~8 KB serialised byte-by-byte).
     const fetchStartedAt = Date.now();
     const isOpenNova = getMowerFileCapability(sn).isOpenNova;
-    const content = await new Promise<Record<string, unknown> | null>((resolve) => {
+    const fetchPreviewContent = () => new Promise<Record<string, unknown> | null>((resolve) => {
       const timer = setTimeout(() => {
         offExtendedResponse(sn, extHandler);
         offDeviceResponse(sn, devHandler);
@@ -1467,7 +1471,32 @@ dashboardRouter.post('/refresh-preview-path/:sn', async (req: Request, res: Resp
         publishToDevice(sn, { get_preview_cover_path: { map_name: 'all' } });
       }
     });
+
+    // The generate ack says "accepted", not "written": the planner is still
+    // producing the file when the ack lands, and a get right behind it hands
+    // back the PREVIOUS preview. Seen as "half the time the old zone's path
+    // shows up" (#128). So: while the fetched file equals what we already had,
+    // give the planner a moment and read again. A genuinely identical plan
+    // (same zone, same direction, deterministic planner) just costs the retries.
+    const requestKey = JSON.stringify(genBase);
+    const sameRequestAsCached = previewPathRequestCache.get(sn) === requestKey;
+    const previousKey = sameRequestAsCached ? null : JSON.stringify(previewPathCache.get(sn) ?? []);
+    const MAX_FETCH_ATTEMPTS = 4;
+    const FETCH_RETRY_MS = Number(process.env.PREVIEW_FETCH_RETRY_MS ?? 1500);
+    let content: Record<string, unknown> | null = null;
+    for (let attempt = 1; attempt <= MAX_FETCH_ATTEMPTS; attempt++) {
+      content = await fetchPreviewContent();
+      if (!content) break;
+      handlePreviewPathRespond(sn, content);
+      const gotKey = JSON.stringify(previewPathCache.get(sn) ?? []);
+      if (previousKey === null || gotKey !== previousKey || previousKey === '[]') break;
+      if (attempt < MAX_FETCH_ATTEMPTS) {
+        console.log(`[PREVIEW-REFRESH] ${sn}: preview file unchanged after generate (attempt ${attempt}/${MAX_FETCH_ATTEMPTS}), planner probably still writing; re-reading in ${FETCH_RETRY_MS}ms`);
+        await new Promise((r) => setTimeout(r, FETCH_RETRY_MS));
+      }
+    }
     const fetchMs = Date.now() - fetchStartedAt;
+    if (content) previewPathRequestCache.set(sn, requestKey);
     if (!content) {
       res.status(504).json({
         ok: false,
@@ -1482,7 +1511,6 @@ dashboardRouter.post('/refresh-preview-path/:sn', async (req: Request, res: Resp
       return;
     }
 
-    handlePreviewPathRespond(sn, content);
     const paths = previewPathCache.get(sn) ?? [];
     const meta = previewPathMetaCache.get(sn);
     if (paths.length === 0) {

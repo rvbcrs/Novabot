@@ -64,16 +64,34 @@ export function getCompetingServers(): CompetingServer[] {
  * Pick the first non-loopback IPv4 address as a fallback when TARGET_IP is
  * unset. We deliberately do not advertise loopback or link-local addresses.
  */
-function detectLanIp(): string | null {
+/**
+ * The address the LAN knows this machine by, or null when there is none.
+ *
+ * Docker's own bridges (docker0, br-xxxx, veth*) come first in the interface
+ * list on many hosts, and 172.17.0.1 is exactly the address a mower must NOT
+ * be sent to. So they are skipped by name and by range, and the mDNS sidecar
+ * on a host network can rely on this instead of being told TARGET_IP.
+ */
+export function detectLanIp(): string | null {
   const ifaces = os.networkInterfaces();
-  for (const list of Object.values(ifaces)) {
+  const isDockerName = (n: string) => /^(docker|br-|veth|virbr)/.test(n);
+  const isDockerRange = (ip: string) => { const [a, b] = ip.split('.').map(Number); return a === 172 && b >= 16 && b <= 31; };
+  let fallback: string | null = null;
+  for (const [name, list] of Object.entries(ifaces)) {
     for (const iface of list ?? []) {
-      if (iface.family === 'IPv4' && !iface.internal && iface.address) {
-        return iface.address;
-      }
+      if (iface.family !== 'IPv4' || iface.internal || !iface.address) continue;
+      if (isDockerName(name)) continue;
+      if (isDockerRange(iface.address)) { fallback ??= iface.address; continue; }
+      return iface.address;
     }
   }
-  return null;
+  // A LAN that really lives in 172.16/12 is rare but legal; better than nothing.
+  return fallback;
+}
+
+/** Docker Desktop runs containers in a LinuxKit VM; its "host network" is the VM's, not the LAN's. */
+export function isDockerDesktopVm(): boolean {
+  return /linuxkit/i.test(os.release()) || os.hostname() === 'docker-desktop';
 }
 
 export function startMdnsAdvertiser(opts?: Partial<AdvertiserOptions>): void {
@@ -87,7 +105,8 @@ export function startMdnsAdvertiser(opts?: Partial<AdvertiserOptions>): void {
     return;
   }
 
-  const ip = opts?.ip ?? process.env.TARGET_IP ?? detectLanIp();
+  // An empty TARGET_IP (compose's `${TARGET_IP:-}`) means unset, not "".
+  const ip = opts?.ip ?? (process.env.TARGET_IP?.trim() || detectLanIp());
   if (!ip) {
     console.warn(`${TAG} no LAN IP detected and TARGET_IP unset — advertiser not started`);
     notStartedReason = 'no_ip';

@@ -1162,6 +1162,8 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
   const [coveragePath, setCoveragePath] = useState<CoveragePathEntry[] | null>(null);
   const [coverageLoading, setCoverageLoading] = useState(false);
   const [showCoverage, setShowCoverage] = useState(false);
+  // The zone the idle preview was last generated for (#128).
+  const previewedMapIdRef = useRef<string | null>(null);
   const [coverageRadiusDraft, setCoverageRadiusDraft] = useState(() => {
     const fromSensors = Number(sensors?.coverage_planner_radius);
     return Number.isFinite(fromSensors) ? fromSensors.toString() : DEFAULT_COVERAGE_RADIUS.toString();
@@ -1982,6 +1984,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     setCoveragePath(null);
     setCoverageLoading(true);
     setCoverageStatus(t('map.edit.coverageLoading'));
+    previewedMapIdRef.current = selectedMapId;
     try {
       const selectedStoredMap = selectedMapId
         ? maps.find(m => m.mapId === selectedMapId && m.mapType === 'work')
@@ -2058,6 +2061,18 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inLiveCoverage, showCoverage]);
+
+  // Tik je een andere zone aan terwijl het maaipad aan staat, dan wil je het
+  // pad van DIE zone zien (#128). Voorheen: pad uit, zone aantikken, pad aan.
+  // Deselecteren (null) laat het huidige pad staan; tijdens een live sessie
+  // hoort het pad bij de taak, niet bij de selectie.
+  useEffect(() => {
+    if (!showCoverage || inLiveCoverage || coverageLoading) return;
+    if (!selectedMapId || selectedMapId === previewedMapIdRef.current) return;
+    previewedMapIdRef.current = selectedMapId;
+    void refreshCoverage();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedMapId, showCoverage]);
 
   // Auto-toon het maaipad zodra de maaier gaat maaien — geen knop-druk nodig.
   // Vuurt op de start van een live sessie; sluit de gebruiker de overlay

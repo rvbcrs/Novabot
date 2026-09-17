@@ -9,8 +9,13 @@ TARGET_IP="${TARGET_IP:-0.0.0.0}"
 # server/src/mdnsOnly.ts for why a bridged container cannot do this itself.
 if [ "${MDNS_ONLY}" = "true" ]; then
   echo "=== OpenNova mDNS sidecar ==="
-  echo "  advertising for ${TARGET_IP:-<first LAN address>} on 5353/udp"
   cd /app/server
+  if [ ! -f dist/mdnsOnly.js ]; then
+    # A newer compose with an older image. Say so and stop cleanly; with
+    # restart: on-failure a clean exit stays stopped instead of looping.
+    echo "  this image predates the sidecar; pull rvbcrs/opennova:latest and run 'docker compose up -d' again"
+    exit 0
+  fi
   exec node dist/mdnsOnly.js
 fi
 

@@ -293,6 +293,43 @@ describe('POST /api/dashboard/refresh-preview-path/:sn', () => {
     expect(mapSync.publishToExtended).not.toHaveBeenCalled();
   });
 
+  it('re-reads the preview while the mower still hands back the previous file (#128)', async () => {
+    // The generate ack means "accepted", not "written". Half the time the get
+    // right behind it returned the previous zone's path. First request fills
+    // the cache with zone A; the second asks for zone B and the mower serves A
+    // twice before B is on disk.
+    process.env.PREVIEW_FETCH_RETRY_MS = '5';
+    let deviceHandler: ((data: Record<string, unknown>) => void) | null = null;
+    vi.mocked(mapSync.onDeviceResponse).mockImplementation((_sn, handler) => { deviceHandler = handler; });
+    vi.mocked(mapSync.offDeviceResponse).mockImplementation((_sn, handler) => { if (deviceHandler === handler) deviceHandler = null; });
+    const zoneA = nativePreviewRespond({ '1': { '0': '5.00 5.00,6.00 6.00' } });
+    const zoneB = nativePreviewRespond({ '1': { '0': '9.00 9.00,8.00 8.00' } });
+    let gets = 0;
+    let serve = [zoneA];
+    vi.mocked(mapSync.publishToDevice).mockImplementation((_sn, command) => {
+      if ('generate_preview_cover_path' in command) {
+        setTimeout(() => deviceHandler?.({ type: 'generate_preview_cover_path_respond', message: { result: 0 } }), 0);
+      } else if ('get_preview_cover_path' in command) {
+        const file = serve[Math.min(gets, serve.length - 1)];
+        gets++;
+        setTimeout(() => deviceHandler?.(file), 0);
+      }
+    });
+
+    const first = await request(server).post(`/api/dashboard/refresh-preview-path/${SN}`).send({ map_ids: 1 });
+    expect(first.status).toBe(200);
+    expect(first.body.paths[0].points[0]).toEqual({ x: 5, y: 5 });
+    expect(gets).toBe(1);
+
+    gets = 0;
+    serve = [zoneA, zoneA, zoneB];
+    const second = await request(server).post(`/api/dashboard/refresh-preview-path/${SN}`).send({ map_ids: 10 });
+    expect(second.status).toBe(200);
+    expect(second.body.paths[0].points[0]).toEqual({ x: 9, y: 9 });
+    expect(gets).toBe(3);
+    delete process.env.PREVIEW_FETCH_RETRY_MS;
+  });
+
   it('retries generate_preview_cover_path with a fresh cmd_num when the planner returns result:1 (busy)', async () => {
     // The coverage planner is single-threaded; a generate fired while one is still
     // planning returns result:1 ("couldn't compute"). The server must retry with a

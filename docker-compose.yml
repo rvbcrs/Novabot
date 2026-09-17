@@ -95,18 +95,19 @@ services:
       - ./data:/data
 
   # ── mDNS sidecar ─────────────────────────────────────────────────────────
-  # Advertises opennova.local -> TARGET_IP from the host network, so mowers
-  # can discover the server by name while the main container keeps its
-  # bridge and port mappings (80/443 stay free for whatever the host runs).
-  # Same image; claims only 5353/udp and shares it with avahi if present.
-  # Linux only: on Docker Desktop (macOS/Windows) host networking still sits
-  # inside a VM and never reaches the LAN.
+  # Advertises opennova.local from the host network, so mowers can discover
+  # the server by name while the main container keeps its bridge and port
+  # mappings (80/443 stay free for whatever else the host runs). Same image;
+  # claims only 5353/udp and shares it with avahi if present. Nothing to set:
+  # on the host network it sees the LAN address itself. On Docker Desktop
+  # (macOS/Windows) it notices it is inside the VM and exits quietly.
   opennova-mdns:
     image: rvbcrs/opennova:latest
     container_name: opennova-mdns
-    restart: unless-stopped
+    restart: on-failure
     network_mode: host
     environment:
       MDNS_ONLY: "true"
-      TARGET_IP: ${TARGET_IP:-192.168.0.222}
+      # Optional overrides; leave unset.
+      TARGET_IP: ${TARGET_IP:-}
       MDNS_HOSTNAMES: ${MDNS_HOSTNAMES:-opennova.local,opennovabot.local}

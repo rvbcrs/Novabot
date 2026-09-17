@@ -11,6 +11,8 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
 import path from 'path';
+import os from 'os';
+import { detectLanIp } from '../services/mdnsAdvertiser.js';
 
 const src = readFileSync(path.resolve(__dirname, '../mdnsOnly.ts'), 'utf8');
 const imports = [...src.matchAll(/^import\s.*?from\s+'([^']+)'/gm)].map(m => m[1]);
@@ -45,8 +47,34 @@ describe('mdnsOnly entry', () => {
     expect(svc).toContain('network_mode: host');
     expect(svc).toContain('MDNS_ONLY: "true"');
     expect(svc).toContain('image: rvbcrs/opennova:latest');
+    // nothing to configure: no TARGET_IP default, and a clean exit on Docker Desktop must stay stopped
+    expect(svc).toMatch(/TARGET_IP: \$\{TARGET_IP:-\}/);
+    expect(svc).toContain('restart: on-failure');
     // and the main container hands mDNS over to it
     expect(compose).toMatch(/ENABLE_MDNS: "false"/);
     expect(compose).toMatch(/MDNS_SIDECAR: "true"/);
+  });
+});
+
+describe('detectLanIp', () => {
+  const withIfaces = (ifaces: Record<string, { address: string; family: string; internal: boolean }[]>, fn: () => void) => {
+    const orig = os.networkInterfaces;
+    (os as { networkInterfaces: unknown }).networkInterfaces = () => ifaces;
+    try { fn(); } finally { (os as { networkInterfaces: unknown }).networkInterfaces = orig; }
+  };
+  const v4 = (address: string, internal = false) => ({ address, family: 'IPv4', internal });
+
+  it('skips docker bridges even when they come first, by name and by range', () => {
+    withIfaces({
+      lo: [v4('127.0.0.1', true)],
+      docker0: [v4('172.17.0.1')],
+      'br-3f2a1c': [v4('172.18.0.1')],
+      eth0: [v4('192.168.0.247')],
+    }, () => expect(detectLanIp()).toBe('192.168.0.247'));
+  });
+
+  it('falls back to a 172.16/12 address only when nothing else is there', () => {
+    withIfaces({ eth0: [v4('172.20.5.9')] }, () => expect(detectLanIp()).toBe('172.20.5.9'));
+    withIfaces({ lo: [v4('127.0.0.1', true)] }, () => expect(detectLanIp()).toBeNull());
   });
 });
