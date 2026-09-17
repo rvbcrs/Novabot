@@ -212,7 +212,25 @@ Entities will auto-appear in Home Assistant under the device name matching the m
 docker compose up -d
 ```
 
-Uses **bridge networking**. Ports are mapped via Docker. Suitable for macOS, Synology, QNAP.
+Uses **bridge networking**. Ports are mapped via Docker. Suitable for macOS, Synology, QNAP, ZimaOS.
+
+!!! note "mDNS on a bridge: the `opennova-mdns` sidecar"
+    A container on docker's bridge cannot be discovered by mDNS on its own. The
+    mower asks `224.0.0.251:5353`, a multicast address, and that never reaches
+    `docker0`; the `5353:5353/udp` port mapping only catches packets sent to
+    the host's own address. So `docker-compose.yml` runs a second, tiny service,
+    `opennova-mdns`, with `network_mode: host`. It is the same image, it claims
+    only `5353/udp`, and it shares that port with avahi if your host runs one.
+    It advertises `opennova.local -> TARGET_IP`, so set `TARGET_IP` to the LAN
+    address of the host. The main container keeps its bridge and port mappings.
+
+    Linux hosts only (NAS, Raspberry Pi, ZimaOS). On Docker Desktop for macOS
+    or Windows a host-network container still sits inside a VM and never
+    reaches your LAN; there, discovery works through the bootstrap tool.
+
+    Whether a mower actually hears the name is measured on the mower, in the
+    connection diagnosis under **Mower → mDNS**. The server-side mDNS row cannot
+    prove it from inside a bridged container.
 
 ### Linux (host networking)
 
