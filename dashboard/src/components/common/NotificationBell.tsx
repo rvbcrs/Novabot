@@ -33,6 +33,8 @@ const META: Record<MowerEventType, { icon: LucideIcon; tone: string }> = {
   initialization_error: { icon: Cpu, tone: 'text-red-400' },
   hardware_fault: { icon: Cpu, tone: 'text-red-400' },
   error: { icon: AlertTriangle, tone: 'text-red-400' },
+  dock_drift: { icon: Home, tone: 'text-amber-400' },
+  firmware_required: { icon: ShieldAlert, tone: 'text-red-400' },
 };
 
 function relative(ts: number, t: (k: string, d: string) => string): string {
