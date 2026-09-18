@@ -1287,9 +1287,14 @@ RESTART_BACKOFF_S=600
 no_conn=0
 last_restart=0
 
+# `ss` prints the state BEFORE the addresses ("ESTAB 0 0 host:port peer:1883"),
+# so ':1883 .*ESTAB' never matched and every healthy mqtt_node was declared
+# dead after ten minutes and killed. Each kill made the stock daemon_node add
+# another respawning launcher; on LFIN1231000211 (18-09-2026) that grew to
+# 80 launchers and a load of 149 with no mqtt_node ever connecting. Filter
+# on the state first, then the port, then the process.
 mqtt_connected() {
-    ss -tn 2>/dev/null | grep -q ':1883 .*ESTAB' && \
-      ss -tnp 2>/dev/null | grep ':1883' | grep -q mqtt_node
+    ss -tnp state established 2>/dev/null | grep ':1883 ' | grep -q mqtt_node
 }
 
 while true; do
@@ -1325,8 +1330,16 @@ while true; do
 
         for PID in $PIDS; do
             if [ "$PID" != "$ACTIVE_PID" ]; then
+                # The duplicate's own `ros2 launch` would respawn it in 5 s;
+                # take that launcher down with it, never the kept one's.
+                LAUNCHER=$(awk '/^PPid/{print $2}' /proc/$PID/status 2>/dev/null)
+                KEPT_LAUNCHER=$(awk '/^PPid/{print $2}' /proc/$ACTIVE_PID/status 2>/dev/null)
                 kill -9 "$PID" 2>/dev/null
-                echo "[$(date)] mqtt_node_monitor: killed duplicate PID $PID (kept $ACTIVE_PID)" >> "$LOG"
+                if [ -n "$LAUNCHER" ] && [ "$LAUNCHER" != "$KEPT_LAUNCHER" ] && [ "$LAUNCHER" != "1" ] \
+                   && grep -q "novabot_api_node.py" /proc/$LAUNCHER/cmdline 2>/dev/null; then
+                    kill -9 "$LAUNCHER" 2>/dev/null
+                fi
+                echo "[$(date)] mqtt_node_monitor: killed duplicate PID $PID (launcher ${LAUNCHER:-?}, kept $ACTIVE_PID)" >> "$LOG"
             fi
         done
     fi
