@@ -1,6 +1,8 @@
 # OpenNova App
 
-The OpenNova app is the community-built replacement for the stock Novabot app. It connects to your OpenNova server (not the LFI cloud) and gives you everything the original app does — pairing, mapping, mowing, schedules, history — plus a handful of features the stock app doesn't (Home Assistant push, multi-mower picker, joystick mode, demo mode).
+The OpenNova app is the community-built replacement for the stock Novabot app. It connects to your OpenNova server (not the LFI cloud) and gives you everything the original app does — pairing, mapping, mowing, schedules, history — plus what the stock app does not: it points your devices straight at your server over Bluetooth, so you need no DNS tricks; map editing on the phone; a multi-mower picker; joystick and camera; rain pause; push notifications.
+
+Where a feature needs custom firmware on the mower, the app says so with *Requires OpenNova custom firmware* instead of sending a command the mower would ignore. The split is on [Stock vs. Custom Firmware](stock-vs-custom-firmware.md).
 
 Install on Android: download the APK from [Releases](https://github.com/rvbcrs/Novabot/releases). Install on iOS: TestFlight invite from the maintainer — Apple doesn't allow direct APK-style installs.
 
@@ -20,6 +22,25 @@ If login fails with "network connection abnormal":
 Tap the chevron next to your mower's name to switch between paired mowers. The picker shows online state with a dot — green = receiving status, grey = offline.
 
 If you only have one mower, the picker shows that mower's name as a static title.
+
+## Provisioning: pointing a device at your server
+
+Settings → **Provision Devices**. This is what makes DNS rewrites unnecessary
+with this app: over Bluetooth it writes your server's address into the
+charger and the mower, the same way the factory app wrote the cloud's.
+
+1. **Scan** for nearby devices. The charger and the mower advertise over BLE
+   when powered on; stand next to them.
+2. **Charger first**, then the mower. The app insists: the mower's LoRa link
+   is paired to the charger, and a mower provisioned before its charger ends
+   up with a LoRa mismatch.
+3. Per device: Wi-Fi network and password, then the server. The steps show
+   as they run: connecting, discovering services, configuring Wi-Fi, setting
+   MQTT, saving. *Server not reachable* at the end means the device joined
+   Wi-Fi but cannot reach the address you gave; check `TARGET_IP` and port
+   1883.
+
+The protocol behind it, for the curious: [BLE Provisioning](../ble/overview.md).
 
 ## Home
 
@@ -67,7 +88,41 @@ Walks you through creating a new map (or editing an existing one). Steps:
 5. **Set charger position** — drive the mower onto the charger and confirm; this becomes the reference point for the map's GPS-to-local coordinate transform.
 6. **Save** — sends two `save_map` calls (sub map + total map) and uploads the resulting CSV to the server. Don't close the app between the two sends.
 
+While you drive, the live map shows the boundary so far next to your
+existing areas. It is zoomed to about eight metres around the mower by
+default, which is the view you need to judge the gap to a neighbouring
+area; the button in its corner switches to *fit all*. The app warns when
+localization is lost (stop driving until it is back, or the loop will not
+close), when the boundary touches an existing area (the mower may refuse to
+save it), and it tells you when the boundary is closed and you can stop.
+
 The full BLE protocol details (for debugging) live at [BLE → Mower Provisioning](../ble/mower-provisioning.md), but you don't need to read it for normal use.
+
+## Editing a map
+
+Map → **Edit map** (custom firmware). Points, **push/pull** the boundary with
+a brush, **new obstacle** (tap points, close it), **delete obstacle**. **Apply
+to mower** rewrites the map files on the mower; **Undo last apply** restores
+the previous version; **Re-sync** pushes again after a failed push. The app
+refuses while the mower is busy or offline.
+
+## Re-anchor after a restore
+
+After a map restore the mower has to re-learn where its dock is, and the app
+blocks *go home* until it has: a banner says *Frame not anchored*. Put the
+mower on the dock, wait for RTK Fixed, tap **Re-anchor**. The mower saves the
+dock position, drives back about a metre to re-lock, and pauses; sometimes it
+asks you to drive it half a metre in front of the dock and tap *Start
+docking*, or to dock by hand and tap *Verify*. Background in
+[Map Backup & Restore](map-backup-restore.md).
+
+## Rain
+
+Settings → **Rain detection**: pause mowing when rain is forecast and resume
+when it is dry, with a threshold. When you start a mow with rain expected
+within a few hours the app asks first, and lets you ignore rain for that
+session. A mower that came home for rain shows why, with *Ignore rain &
+resume*.
 
 ## Schedule
 

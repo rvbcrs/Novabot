@@ -2,6 +2,19 @@
 
 Common problems and how to fix them. If your symptom isn't here, search [GitHub issues](https://github.com/rvbcrs/Novabot/issues?q=is%3Aissue) before filing a new one — there's a good chance someone hit the same thing.
 
+## Start here: "Why is it not coming online?"
+
+Every device in the [admin panel](admin-panel.md) (and on the dashboard) has
+this button. It runs the checks below for you: the server (disk, a competing
+MQTT broker, the container's network, whether `opennova.local` is answered by
+the `opennova-mdns` helper), reachability (does `mqtt.lfibot.com` point at
+your server, does the device answer on its ports, Wi-Fi), the connection
+history, and on custom firmware it logs into the mower and checks from that
+side. It names the first blocking step and what to do. Paste its output into
+any issue you open.
+
+The rest of this page is for when you want to check by hand.
+
 ## My mower shows up as "offline" in the app
 
 Most common cause by far. The mower's `mqtt_node` can't reach your MQTT broker.
@@ -12,7 +25,7 @@ Most common cause by far. The mower's `mqtt_node` can't reach your MQTT broker.
    ```
    docker ps | grep opennova
    ```
-   Should show one container, status `Up`. If it says `Restarting`, run `docker logs opennova 2>&1 | tail -50` to see why.
+   Should show `opennova` with status `Up` (on Linux also `opennova-mdns`, the discovery helper; it is fine for that one to be stopped on Docker Desktop). If it says `Restarting`, run `docker logs opennova 2>&1 | tail -50` to see why.
 
 2. **Can the mower reach the server on port 1883?**
    ```
@@ -54,9 +67,9 @@ Use this when the mower lost its WiFi (shows offline, changed router/password, o
 **Steps**
 
 1. Open the **OpenNova app**.
-2. Go to **Settings** → **Add device**.
+2. Go to **Settings** → **Provision Devices**.
 3. Confirm your OpenNova **server address** if it is asked (usually already filled in), then continue.
-4. On "What would you like to provision?", choose **Mower**.
+4. Choose the **mower** (a charger that is already online does not need to be done again).
 5. Enter your **WiFi network name (SSID)** and **WiFi password**, then tap **Next**.
      - Use the 2.4 GHz network. Double-check the password. A wrong password is the most common cause of a failed reconnect.
 6. The app scans over Bluetooth and finds the mower. Select it and tap **Start Provisioning**.
@@ -69,7 +82,7 @@ Use this when the mower lost its WiFi (shows offline, changed router/password, o
 
 The map upload completed on the mower side, but `queryEquipmentMap` returned an empty array.
 
-- Check the admin page → Devices → click the mower. The "Maps" section there reads straight from the database. If the dashboard sees maps but the app doesn't, it's an app-side filter — usually because the work map has a `mapArea` of zero or canonical_name is missing. Map again with the mower idle on flat ground.
+- Check the admin panel → **Maps** tab and pick the mower. It reads straight from the database. If the dashboard sees maps but the app doesn't, it's an app-side filter — usually because the work map has a `mapArea` of zero or canonical_name is missing. Map again with the mower idle on flat ground.
 - If the dashboard also shows no maps: the mower never finished the upload. Look at the mower log around the moment you finished mapping — search for `uploadEquipmentMap`. If you don't see that POST hitting the server, the mower didn't try; if you see it but the response was non-2xx, the server rejected it — file a bug with the log.
 
 ## Mower won't accept the cutting height I set
@@ -154,7 +167,12 @@ If neither works: open an issue with the symptoms and `dmesg | tail -100`. Don't
 
 ## How to gather logs to attach to a bug report
 
-The fastest way is the **Remote Debug** card in the admin page → "Start Sharing" → paste the relay URL the person helping you provided. That streams your live MQTT log to them without giving up control of the container.
+First the output of **Why is it not coming online?** (above). Then, if
+someone is helping you live, the **Remote Debug** card in the admin panel →
+"Start Sharing" → paste the relay URL they gave you. That streams your live
+MQTT log to them without giving up control of the container. Mower-side logs
+on custom firmware are in the admin panel's **Mower Debug** tab, no SSH
+needed.
 
 For a static snapshot:
 ```

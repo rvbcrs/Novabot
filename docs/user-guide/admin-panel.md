@@ -1,84 +1,125 @@
 # Admin Panel
 
-The admin panel is the OpenNova server's built-in web UI. It lives at `http://<your-server-ip>/` (default port 80) or at whatever hostname you put behind a reverse proxy (e.g. `opennova.example.com`). Log in with the email + password you set during first-time setup.
+The admin panel is the server's own management page, at
+**http://TARGET_IP/admin** (the dashboard is at `/`). Log in with the
+account from first-time setup. Where the [dashboard](dashboard.md) is for
+mowing, the admin panel is for the server: devices, firmware, maps as files,
+diagnostics, and the settings that only the person running the server should
+touch.
 
-It has six tabs across the top. This page walks through what each tab is for and which cards you'll actually use day-to-day vs. the ones you can ignore unless something's wrong.
-
-## Top bar (always visible)
-
-- **Connection chips** — three little pills next to the OpenNova logo. They show the server version, uptime, and current memory use. If uptime suddenly resets to seconds, the container restarted — something to investigate if you didn't trigger it.
-- **Tabs** — Devices / Console / Mower Debug / Maps / Firmware / Settings.
-- **Refresh arrows** (↻) on every card title — manual reload, in case auto-refresh is paused.
+Seven tabs: **Devices**, **Console**, **Mower Debug**, **Maps**, **Firmware**,
+**Experimental**, **Settings**. The **? Help** button on the top right explains
+every button on the page in Dutch.
 
 ## Devices
 
-The default landing tab. Shows every mower and charger paired with your account, with:
+Every mower and charger the server knows, with an online pill (driven by
+MQTT), serial number, nickname, firmware, and last seen. Per device:
 
-- Online/offline pill (driven by MQTT — green = receiving status reports).
-- Serial number, nickname, firmware version, last seen.
-- Quick actions per device: "Open dashboard" (full dashboard view), "OTA update", "Settings".
-
-Click a device card to drill into per-device controls: live map, battery, RTK status, manual joystick, schedules, work history, sensors.
-
-This is the only tab most users ever need.
+- **Why is it not coming online?** The connection diagnosis: server checks
+  (disk, a competing MQTT broker, the container's network, mDNS),
+  reachability (does `mqtt.lfibot.com` point here, does the device answer,
+  Wi-Fi), the connection history, and on custom firmware a login into the
+  mower itself to check its configuration, `mqtt_node`, and whether it hears
+  `opennova.local`. The first blocking step is named, with what to do. Its
+  language follows the panel's. Paste it into a bug report.
+- **Edit** the nickname; **Bind** a charger to a mower; **Remove** a device
+  from the server.
+- **Connect & Import from Cloud** if your Novabot account still has your
+  devices. Adding one by hand (serial number and BLE MAC) is done in the
+  [dashboard](dashboard.md#adding-a-device).
 
 ## Console
 
-Live server console — same lines you'd see in `docker logs opennova -f`. Useful when something goes wrong and you want to watch the request flow in real time. Filter buttons across the top toggle severity (info / warn / error) and a pause button stops the auto-scroll so you can copy-paste lines.
-
-If you're going to file a bug, opening this tab and reproducing the problem gives you exact log lines to paste into the issue.
+The live server log, the same lines as `docker logs opennova -f`, with a
+filter and a pause for copying. Reproduce a problem with this open and you
+have the exact lines for an issue.
 
 ## Mower Debug
 
-Sends low-level `extended_commands` MQTT payloads to the mower for diagnosis. Buttons here include:
+Reads from a mower on custom firmware, without SSH. Pick the mower, then:
 
-- **Reboot mqtt_node** — soft-restart the on-mower bridge that talks to the MQTT broker. Use this if the mower goes offline after the server restarts but SSH still works (the classic `MQTT_EVENT_INIT_NET_ERROR` stuck state).
-- **Re-run set_server_urls.sh** — forces the mower to re-discover the server via mDNS / DNS and rewrite `http_address.txt` + `json_config.json`. The cure for "mower offline after I moved my server's IP".
-- **Restart navigation** — reloads the ROS navigation stack without rebooting the whole mower. Useful when localization is stuck.
-- **Reboot mower** — full hardware reboot. Treat as last resort — see [Troubleshooting](troubleshooting.md#i-bricked-something-and-the-mower-wont-boot) for the limitations.
-
-Each button shows the exact MQTT payload it'll send before firing — read it first, especially the destructive ones.
+- **System info** and **Path files info**: what is on the mower's disk and
+  which map files it currently has.
+- **Fetch log lines** from a chosen source: `mqtt_node` (info, or the
+  stderr/crash log), `robot_decision`, `chassis_control`,
+  `coverage_planner`, `nav2`, `timer_record`, `novabot_mapping`,
+  `localization`; filtered by level. This is where "why did it stop" is
+  answered when the dashboard's return reason is not enough.
 
 ## Maps
 
-Visual viewer for every map stored on the server: work boundaries, obstacles, unicom (zone-to-charger) channels. Hover over a polygon to see its area and canonical name; click to download the underlying CSV.
+The maps as the server stores them, per mower: work areas, obstacles and
+channels, with area and canonical name, and the coverage preview the mower
+planned.
 
-You can rename maps here (alias) — the change reflects in the Novabot app the next time it calls `queryEquipmentMap`. If renames seem to randomly shuffle between sessions, [issue #66](https://github.com/rvbcrs/Novabot/issues/66) tracks it; the workaround in the meantime is to rename in pairs.
+- **Map viewer** with **Edit**: new obstacle, delete obstacle, move a vertex,
+  **Push/pull** the boundary, **Apply to mower**, **Revert**. The same editing
+  as the dashboard, here as a fallback.
+- **Portable bundle**: **Export bundle** writes everything the mower needs
+  (CSV files, occupancy grids, the charging pose) as one file; **Import
+  bundle** puts it back on the same or another mower, and starts the
+  dock-anchor refresh that a restore needs. **Import CSV zip** takes a plain
+  set of CSVs. **Rebuild bundle (DB)** regenerates the mower files from what
+  the server has. The full flow, with what each step checks, is in
+  [Map Backup & Restore](map-backup-restore.md) and
+  [Portable Map Export / Import](../portable-map-export-import.md).
+- **Coverage radius**: the mower's own setting for how far apart its passes
+  are; **Snapshot now** asks for a fresh coverage preview.
+- **Walker maps**: maps recorded with the RTK walker, see
+  [RTK Walker Mapping](rtk-walker-mapping.md).
 
 ## Firmware
 
-OTA management — both for your own mowers and for community-built custom firmware:
+Over-the-air updates for mowers, and for the RTK walker.
 
-- **Available Firmware** — list of versions the server knows about, with download URL, MD5, and changelog. New firmware drops in `/data/firmware/` are picked up automatically.
-- **Update Device** — pick a target mower, pick a version, click "Trigger OTA". The progress bar updates from MQTT status reports.
+- **Available firmware**: what the server has in `/data/firmware/`. **Refresh
+  from manifest** fetches the list of released custom builds from the
+  OpenNova download server; **Check for updates** compares with what your
+  mowers run.
+- **Update device**: pick a mower and a version, **Start update**. Progress
+  comes from the mower over MQTT: 0 to 62% is the download, 62 to 68%
+  unpacking, 68 to 100% installing. Custom builds show a warning first, in
+  the panel's language: they can brick the mower or lose maps, and a fresh
+  backup is taken before flashing.
+- **Revert to stock firmware**: flash the factory image back. You lose SSH
+  and everything else custom; see [Revert to Stock](../firmware/revert-to-stock.md).
+- **Walker firmware**: the same for the walker, see [Walker Firmware Updates](walker-ota.md).
 
-The `0 → 62%` range is download, `62 → 68%` is unpacking, `68 → 100%` is installing. If you see the percentage stuck at one of those boundaries, see [Troubleshooting → OTA failures](troubleshooting.md#ota-update-fails-download-failed-percentage-stuck-below-62).
+## Experimental
+
+A deck.gl rendering of the selected mower's maps with extra layers, such as
+the Wi-Fi signal heat map from positioned samples. Nothing here changes the
+mower.
 
 ## Settings
 
-Catch-all for everything that isn't a per-device operation. Cards in order of how often you'll touch them:
+- **Account**: your email, role, password, and the server version.
+- **Resources & Help**: the wiki, GitHub, Docker Hub, releases.
+- **Network & DNS**: whether `app.lfibot.com` and `mqtt.lfibot.com` resolve
+  to this server, with **Re-check DNS**, and the built-in dnsmasq toggle if
+  your router cannot do DNS rewrites.
+- **System Tools → mDNS advertiser**: restart the discovery service without
+  restarting the container. With the standard compose the advertising is done
+  by the `opennova-mdns` helper instead; the card says so and the button is
+  off, because there is nothing in this container to restart.
+- **Certificate setup**: **Download iOS profile** (`.mobileconfig`, with the
+  DNS settings) or the **Android certificate**. Required for the Novabot
+  app on iOS.
+- **Cloud import**: pull your devices from your Novabot account. One-shot.
+- **Remote debug**: send your live MQTT log to someone helping you, or
+  receive theirs.
+- **Remote support**: opt in to let the maintainer open a shell into your
+  container for one approved session; every keystroke is logged to your disk.
+  **Approve**, **Decline**, **End session now**.
+- **Support OpenNova**: donation links.
+- **Danger zone**: wipe the database, force re-pair, **Factory reset**. Each
+  asks twice.
 
-- **Account** — your email, role, password change. The chips at the top of the card show the server release version (you can compare against [the changelog](https://github.com/rvbcrs/Novabot/releases) to see what's new).
-- **Resources & Help** — link tiles to the wiki, GitHub, Docker Hub, releases, discussions. Bookmark these — the LFI support hotline is gone, so this is how problems get solved.
-- **Network & DNS** — checks that `app.lfibot.com` and `mqtt.lfibot.com` resolve to your server. If both rows say ✓, your app and mower can find you. Built-in dnsmasq toggle here too — turn it on if your router can't do DNS rewrites and you want to point the mower's resolver straight at this server.
-- **System Tools → mDNS Advertiser** — soft-restart the auto-discovery service if `opennova.local` stops resolving. Doesn't restart the container.
-- **Certificate Setup** — install the OpenNova CA on your phone. Required for iOS (the Novabot stock app refuses self-signed certs). Optional but convenient for Android too.
-- **Cloud Import** — pull your existing mower / charger pairs from the real Novabot cloud using your LFI account. One-shot — after the import you can leave the LFI cloud forever.
-- **Remote Debug → Send Logs** — start streaming your live MQTT log to someone else's server (used when someone is helping you debug). You enter their relay URL and they see your traffic. Stop sharing any time.
-- **Remote Support → Allow Ramon to assist** — opt-in toggle that lets Ramon (project maintainer) open a one-session, approved shell into your container. Every keystroke logs to your disk for review. Toggle off when done.
-- **Remote Support → Operator** — only visible on Ramon's own central instance. Lists connected agents and opens a browser terminal for the selected one.
-- **Remote Debug → Receive Logs** — only relevant if you're helping someone else; surfaces the live stream from their container in your console.
-- **Support OpenNova** — donation links if you want to throw a few euros at the project. Optional.
-- **Danger Zone** — destructive operations: wipe DB, force re-pair, factory reset. Each one prompts twice. Don't touch unless you mean it.
+## When the admin panel itself does not load
 
-## Keyboard shortcuts
-
-- `R` — refresh the active tab
-- `D` — jump to Devices
-- `C` — jump to Console
-- `S` — jump to Settings
-- `Esc` — close any open modal
-
-## When the admin panel itself won't load
-
-Nine times out of ten the OpenNova server itself crashed. Check `docker ps` to confirm the container is running; if it's not, `docker compose up -d` brings it back. If the container is up but the page returns 502, your reverse proxy (NGINX Proxy Manager / Caddy / Traefik) lost the route — check its log.
+Check that the container runs (`docker ps`); `docker compose up -d` brings it
+back. Container up but the page gives 502: your reverse proxy lost the route.
+Page loads but every login fails after a restore or a `factory_reset`: the
+JWT secret was regenerated; log in again and, on the phone, log out of the
+app and back in.

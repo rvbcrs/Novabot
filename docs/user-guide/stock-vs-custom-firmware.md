@@ -6,7 +6,7 @@ Short answer: the OpenNova app works for everyday mowing on a stock-firmware mow
 
 ## Three flavours of "stock"
 
-When this page says "stock" it means the **factory LFI firmware** the mower shipped with. Stock main firmware versions look like `v6.0.2` (no suffix); custom builds add a `-custom-NN` suffix (currently `v6.0.2-custom-24`). The factory image is typically `mower_firmware_v6.0.2.deb` (or `v5.7.1` for older units). The factory image talks to `mqtt.lfibot.com` and `app.lfibot.com`. For the app to reach the mower at all, you also need DNS rewrites on your LAN so those hostnames resolve to your OpenNova server.
+When this page says "stock" it means the **factory LFI firmware** the mower shipped with. Stock main firmware versions look like `v6.0.2` (no suffix); custom builds add a `-custom-NN` suffix (`v6.0.2-custom-44` as of September 2026; the admin panel's Firmware tab lists the current one under *Refresh from manifest*). The factory image is typically `mower_firmware_v6.0.2.deb` (or `v5.7.1` for older units). The factory image talks to `mqtt.lfibot.com` and `app.lfibot.com`. For the app to reach the mower at all, you also need DNS rewrites on your LAN so those hostnames resolve to your OpenNova server.
 
 Two other firmware layers come up:
 
@@ -31,6 +31,11 @@ Two other firmware layers come up:
 | Push notifications | Server-side dispatcher (Expo / NTFY / HA webhook) |
 | Stock-style OTA flow | Standard `ota_upgrade_cmd` MQTT — works as long as the firmware download URL is reachable |
 | App self-update | App polls `downloads.ramonvanbruggen.nl` directly; no mower involvement |
+| Pattern mowing (dashboard) | A placed pattern is sent as a plain polygon with the standard `start_run` |
+| Edge offset (shrink / expand the cut border) | Same mechanism: the adjusted polygon goes with the standard start command |
+| Drone photo under the map | Entirely server-side; a tracing aid the mower never sees |
+| Connection diagnosis, server side | Disk, brokers, DNS, mDNS, reachability: all measured from the server. Only the mower-side steps need custom firmware |
+| Rain pause, return reason, schedules with alternate direction | Server-side logic on top of standard commands |
 
 These are the daily-use features. If all you want is "use my mower without LFI's cloud", stock firmware + DNS rewrites covers it.
 
@@ -61,6 +66,14 @@ The custom firmware build installs `/root/novabot/scripts/extended_commands.py`,
 | **Calibration drive** | Initial setup helper | Slow drive-by for heading calibration |
 | **Set pos origin** | Map fix tooling | Forces `pos.json` origin to a known point |
 | **Reboot mower** | Admin → reboot | `handle_reboot` reboots cleanly through the daemon-node hook |
+| **Drawing and editing zones, obstacles and channels in the dashboard** | Dashboard → Edit | The result is written into the mower's map files (`csv_file/`, the per-zone occupancy grids); stock only takes maps driven with the app |
+| **More than five work areas** | Dashboard | Stock firmware routes map ids above 60000 into a test task and fails with error 125; from `custom-42` zones are selected by name instead |
+| **Autonomous mapping** | Dashboard → Mapping | The mower follows the lawn edge itself and records the boundary, orchestrated through extended commands |
+| **Coverage preview and live coverage overlay** | Dashboard → Coverage | Reads the planned path back through the extended channel (the stock path overruns a buffer) |
+| **Re-anchor after a map restore** | Dashboard banner / Admin → Maps | Rewrites the map origin from the docked RTK fix |
+| **Portable map bundles (export / import)** | Admin → Maps | Direct file IO on the mower |
+| **Mower-side connection diagnosis** | Admin → Why is it not coming online? | Logs into the mower to check its config, `mqtt_node` and whether it hears `opennova.local` |
+| **Terrain objects** | Dashboard → Terrain | Built from the camera's object detections |
 
 ### Legacy STM32 lockup notes
 
@@ -93,7 +106,7 @@ From the dashboard:
 
 > Devices → click your mower → check the Firmware row.
 
-`v6.0.2` (no `-custom-N` suffix) = stock main firmware. `v6.0.2-custom-24` (or similar) = custom. The STM32 version is on the same panel; current stock builds report `v3.6.0` and work fine. If you see a 3.6.x build older than that on an unflashed unit, that is the legacy PIN-lock window described above.
+`v6.0.2` (no `-custom-N` suffix) = stock main firmware. `v6.0.2-custom-44` (or similar) = custom. The STM32 version is on the same panel; current stock builds report `v3.6.0` and work fine. If you see a 3.6.x build older than that on an unflashed unit, that is the legacy PIN-lock window described above.
 
 From the mower itself:
 

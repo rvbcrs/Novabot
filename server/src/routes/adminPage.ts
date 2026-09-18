@@ -963,9 +963,11 @@ window.__ADMIN_I18N__ = ${JSON.stringify(ADMIN_I18N).replace(/</g, '\\u003c')};
         <h3 style="margin:0 0 8px 0;font-size:13px;color:#fbbf24">mDNS Advertiser</h3>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
           <div style="font-size:11px;color:#aaa;flex:1;min-width:240px">
-            Soft-restart the mDNS advertiser if the dashboard's auto-discovery name (<code>opennova.local</code>) becomes unreachable. Does not restart the docker container.
+            ${process.env.MDNS_SIDECAR === 'true' || process.env.MDNS_SIDECAR === '1'
+              ? 'Advertising of <code>opennova.local</code> is done by the <code>opennova-mdns</code> container on the host network, not by this one. To restart it: <code>docker restart opennova-mdns</code>.'
+              : 'Soft-restart the mDNS advertiser if the dashboard\'s auto-discovery name (<code>opennova.local</code>) becomes unreachable. Does not restart the docker container.'}
           </div>
-          <button onclick="restartMdns()" style="padding:8px 16px;background:rgba(245,158,11,.15);color:#fde68a;border:1px solid rgba(245,158,11,.4);border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap">Restart mDNS</button>
+          <button onclick="restartMdns()" ${process.env.MDNS_SIDECAR === 'true' || process.env.MDNS_SIDECAR === '1' ? 'disabled title="Handled by opennova-mdns"' : ''} style="padding:8px 16px;background:rgba(245,158,11,.15);color:#fde68a;border:1px solid rgba(245,158,11,.4);border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap">Restart mDNS</button>
         </div>
         <div id="mdnsStatus" style="font-size:11px;margin-top:8px;display:none;padding:6px 8px;border-radius:6px"></div>
       </div>
