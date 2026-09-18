@@ -42,7 +42,7 @@ charger and the mower, the same way the factory app wrote the cloud's.
 
 Changed router or Wi-Fi password? Run exactly this again, charger first;
 nothing is deleted and the map stays. Step by step in
-[Troubleshooting](troubleshooting.md#new-wi-fi-network-or-router-reconnect-the-mower-and-charger).
+[Reconnect to Wi-Fi](reconnect-wifi.md).
 
 The protocol behind it, for the curious: [BLE Provisioning](../ble/overview.md).
 

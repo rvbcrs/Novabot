@@ -52,41 +52,10 @@ Most common cause by far. The mower's `mqtt_node` can't reach your MQTT broker.
    ```
    Re-running the script clears the stuck state without rebooting.
 
-## New Wi-Fi network or router: reconnect the mower and charger
+## The mower or charger lost its Wi-Fi, or I have a new router
 
-Use this when you changed router, network name or Wi-Fi password, or when the
-mower lost its Wi-Fi and shows offline. The settings are sent again over
-Bluetooth with the OpenNova app; that is all.
-
-**Do NOT delete the mower or the station.** Deleting wipes the saved map and
-forces a full remap. The map lives on the mower itself and does not depend on
-Wi-Fi, so re-sending the Wi-Fi settings brings it back with everything
-intact. No reset, no remap.
-
-**Before you start**
-
-1. Use the **2.4 GHz** network; the mower and charger cannot see 5 GHz.
-2. If it is a new router: check the OpenNova server's IP. A new router often
-   hands out a different range, and `TARGET_IP` in the compose has to match
-   the server's new address (then `docker compose up -d`). Set the DNS server
-   in the new router too ([DNS Setup](../guide/dns-setup.md)).
-3. Stand next to the devices with Bluetooth on and the OpenNova app allowed
-   to use it.
-
-**Steps**
-
-1. Open the **OpenNova app**, **Settings → Provision Devices**.
-2. Confirm the **server address** (usually already filled in).
-3. **Charger first.** Choose the charging station, enter the new network name
-   and password, let the app scan, pick the charger, **Start provisioning**.
-   Wait until it reports done.
-4. **Then the mower**, same steps. The app insists on this order: the mower's
-   LoRa link is paired to the charger.
-5. Both come back online in the app and the admin panel within a minute.
-   Your map, schedules and settings are still there.
-
-**If the app does not find a device:** get closer (next to the dock), then
-power-cycle that device and scan again.
+Send the Wi-Fi settings again with the OpenNova app, charger first; do not
+delete the devices. See [Reconnect to Wi-Fi](reconnect-wifi.md).
 
 ## The app shows "No map!" even though I made a map
 

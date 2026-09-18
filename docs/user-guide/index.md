@@ -43,6 +43,7 @@ You do **not** need a powerful machine. The mower does the hard work — the ser
 | Update walker firmware over the air | [Walker OTA](walker-ota.md) |
 | Use the OpenNova app on your phone | [OpenNova App](opennova-app.md) |
 | Pair a fresh mower or charger | [Mower Provisioning Flow](../flows/mower-provisioning.md) |
+| New router or Wi-Fi password | [Reconnect to Wi-Fi](reconnect-wifi.md) |
 | Update mower firmware | [OTA Update Flow](../flows/ota-update.md) |
 | Fix common problems | [Troubleshooting](troubleshooting.md) |
 | Read the original LFI manuals + FAQ | [LFI Knowledge Base (archived)](../reference/NOVABOT-ZENDESK-WIKI.md) |
