@@ -1138,5 +1138,17 @@
     "groupMower": "On the mower itself",
     "mdnsReach": "Finds the server on its own",
     "mdnsService": "mDNS on port 5353"
+  },
+  "otaPhase": {
+    "downloading": "Downloading firmware…",
+    "unpacking": "Unpacking…",
+    "installing": "Installing…",
+    "awaiting-reboot": "Installed, waiting for the reboot…",
+    "rebooting": "Rebooting…",
+    "back": "Back online, checking version…",
+    "done": "Updated to {{version}}",
+    "rolled-back": "Rolled back to {{version}}",
+    "failed": "Update failed",
+    "stalled": "The reboot is not happening, check the OTA log"
   }
 }

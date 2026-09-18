@@ -1016,5 +1016,17 @@
     "groupMower": "Auf dem Mäher selbst",
     "mdnsReach": "Findet den Server selbst",
     "mdnsService": "mDNS auf Port 5353"
+  },
+  "otaPhase": {
+    "downloading": "Firmware wird heruntergeladen…",
+    "unpacking": "Entpacken…",
+    "installing": "Installieren…",
+    "awaiting-reboot": "Installiert, warte auf den Neustart…",
+    "rebooting": "Neustart…",
+    "back": "Wieder online, Version wird geprüft…",
+    "done": "Aktualisiert auf {{version}}",
+    "rolled-back": "Zurückgesetzt auf {{version}}",
+    "failed": "Update fehlgeschlagen",
+    "stalled": "Der Neustart bleibt aus, OTA-Log prüfen"
   }
 }

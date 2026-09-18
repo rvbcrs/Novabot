@@ -357,7 +357,7 @@ export function emitCoveredLanes(sn: string, lanes: Array<{ lat1: number; lng1: 
   io?.emit('mow:lanes', { sn, lanes, timestamp: Date.now() });
 }
 
-export function emitOtaEvent(sn: string, eventType: 'state' | 'version', data: unknown): void {
+export function emitOtaEvent(sn: string, eventType: 'state' | 'version' | 'phase', data: unknown): void {
   io?.emit('ota:event', { sn, eventType, data, timestamp: Date.now() });
 }
 

@@ -1136,5 +1136,17 @@
     "groupMower": "Op de maaier zelf",
     "mdnsReach": "Vindt de server zelf",
     "mdnsService": "mDNS op poort 5353"
+  },
+  "otaPhase": {
+    "downloading": "Firmware downloaden…",
+    "unpacking": "Uitpakken…",
+    "installing": "Installeren…",
+    "awaiting-reboot": "Geïnstalleerd, wachten op de herstart…",
+    "rebooting": "Herstarten…",
+    "back": "Weer online, versie controleren…",
+    "done": "Bijgewerkt naar {{version}}",
+    "rolled-back": "Teruggezet naar {{version}}",
+    "failed": "Update mislukt",
+    "stalled": "De herstart komt niet, controleer het OTA-log"
   }
 }

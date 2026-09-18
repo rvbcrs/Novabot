@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { HardDrive, Zap, Trash2, RefreshCw, Check, AlertCircle, AlertTriangle, X, Pencil } from 'lucide-react';
 import type { DeviceState } from '../../types';
-import type { OtaProgress } from '../../hooks/useDevices';
+import { otaFinished, type OtaProgress } from '../../hooks/useDevices';
+import { useNow, otaElapsed, useOtaPhaseLabel } from '../../utils/otaPhase';
 import {
   fetchOtaVersions, fetchFirmwareFiles, updateOtaVersion, deleteOtaVersion, triggerOta,
   type OtaVersion, type FirmwareFile,
@@ -287,28 +288,7 @@ export function OtaManager({ devices, otaProgress }: Props) {
                     <span className="text-[10px] font-mono text-gray-300">{version ?? '—'}</span>
                   </div>
                   {/* OTA progress bar */}
-                  {progress && (Date.now() - progress.timestamp < 120_000) && (() => {
-                    const isDone = progress.status === 'success';
-                    const isFail = progress.status === 'failed' || progress.status === 'error';
-                    return (
-                      <div className="mt-0.5">
-                        <div className="flex items-center justify-between text-[9px] mb-0.5">
-                          <span className={isDone ? 'text-emerald-400' : isFail ? 'text-red-400' : 'text-orange-300'}>
-                            {progress.status === 'upgrade' ? 'Downloading…' : isDone ? 'Update voltooid' : isFail ? 'Update mislukt' : progress.status}
-                          </span>
-                          {progress.percentage != null && <span className={isDone ? 'text-emerald-400' : 'text-orange-300'}>{progress.percentage.toFixed(0)}%</span>}
-                        </div>
-                        {progress.percentage != null && (
-                          <div className="w-full bg-gray-700 rounded-full h-1.5">
-                            <div
-                              className={`h-1.5 rounded-full transition-all duration-500 ${isDone ? 'bg-emerald-500' : isFail ? 'bg-red-500' : 'bg-orange-500'}`}
-                              style={{ width: `${Math.min(100, progress.percentage)}%` }}
-                            />
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })()}
+                  <OtaProgressRow progress={progress} />
                 </div>
               );
             })}
@@ -504,6 +484,50 @@ export function OtaManager({ devices, otaProgress }: Props) {
         </div>
 
       </div>
+    </div>
+  );
+}
+
+/**
+ * One device's OTA line. Without a server phase (old server) this is the
+ * plain percentage bar that hides two minutes after the last event. With a
+ * phase (#130) it stays until the update is done / rolled back / stalled,
+ * showing the phase and how long it has been in it.
+ */
+function OtaProgressRow({ progress }: { progress: OtaProgress | undefined }) {
+  const session = progress?.session;
+  const phaseLabel = useOtaPhaseLabel(session);
+  const now = useNow(!!progress);
+  const elapsed = otaElapsed(now, session?.since);
+  if (!progress) return null;
+  const age = now - progress.timestamp;
+  if (session ? (otaFinished(progress) && age > 600_000) : age > 120_000) return null;
+  const phase = session?.phase;
+  const isDone = phase ? phase === 'done' : progress.status === 'success';
+  const isFail = phase ? phase === 'failed' || phase === 'rolled-back' || phase === 'stalled'
+    : progress.status === 'failed' || progress.status === 'error';
+  const label = phaseLabel || (progress.status === 'upgrade' ? 'Downloading…' : isDone ? 'Update voltooid' : isFail ? 'Update mislukt' : progress.status);
+  const showPct = progress.percentage != null && (!phase || phase === 'downloading' || phase === 'unpacking' || phase === 'installing');
+  const pulse = phase === 'awaiting-reboot' || phase === 'rebooting' || phase === 'back';
+  return (
+    <div className="mt-0.5">
+      <div className="flex items-center justify-between text-[9px] mb-0.5">
+        <span className={isDone ? 'text-emerald-400' : isFail ? 'text-red-400' : 'text-orange-300'}>
+          {label}{pulse && elapsed ? ` ${elapsed}` : ''}
+        </span>
+        {showPct && <span className="text-orange-300">{progress.percentage!.toFixed(0)}%</span>}
+      </div>
+      {(showPct || pulse) && (
+        <div className="w-full bg-gray-700 rounded-full h-1.5">
+          <div
+            className={`h-1.5 rounded-full transition-all duration-500 ${pulse ? 'bg-orange-500 animate-pulse' : 'bg-orange-500'}`}
+            style={{ width: `${pulse ? 100 : Math.min(100, progress.percentage ?? 0)}%` }}
+          />
+        </div>
+      )}
+      {phase === 'stalled' && session?.lastState != null && (
+        <div className="text-[9px] text-gray-500 font-mono truncate">{JSON.stringify(session.lastState)}</div>
+      )}
     </div>
   );
 }

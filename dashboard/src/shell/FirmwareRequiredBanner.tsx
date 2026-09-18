@@ -4,7 +4,8 @@ import { useTranslation } from 'react-i18next';
 import { fetchFirmwareAdvisory, triggerOta, type FirmwareAdvisoryDto } from '../api/client';
 import { ConfirmDialog } from '../components/common/ConfirmDialog';
 import { BETA_FIRMWARE_WARNING_LINES } from '../utils/betaFirmware';
-import type { OtaProgress } from '../hooks/useDevices';
+import { otaFinished, type OtaProgress } from '../hooks/useDevices';
+import { useNow, otaElapsed, useOtaPhaseLabel } from '../utils/otaPhase';
 
 const POLL_MS = 10 * 60_000;
 
@@ -40,11 +41,17 @@ export function FirmwareRequiredBanner({ sn, charging, otaProgress }: {
     return () => { alive = false; clearInterval(id); };
   }, [sn]);
   useEffect(() => { setState('idle'); setError(null); }, [sn]);
+  const session = otaProgress?.session;
+  const phaseLabel = useOtaPhaseLabel(session);
+  const elapsed = otaElapsed(useNow(!!session), session?.since);
 
   if (!sn || !adv?.required || !adv.target) return null;
   const target = adv.target;
   const pct = otaProgress?.percentage ?? null;
-  const flashing = state === 'started' || (otaProgress != null && pct != null && pct < 100);
+  const flashing = session
+    ? !otaFinished(otaProgress)
+    : state === 'started' || (otaProgress != null && pct != null && pct < 100);
+  const pulse = session && (session.phase === 'awaiting-reboot' || session.phase === 'rebooting' || session.phase === 'back');
 
   const start = async () => {
     setConfirm(false);
@@ -62,8 +69,9 @@ export function FirmwareRequiredBanner({ sn, charging, otaProgress }: {
         <span className="flex-1 min-w-0">
           <strong>{t('firmwareRequired.title', { current: adv.current })}</strong>{' '}
           {t('firmwareRequired.body', { reason: adv.reason, target: target.version })}
-          {flashing && pct != null && ` ${t('firmwareRequired.progress', { pct: Math.round(pct) })}`}
-          {flashing && pct == null && ` ${t('firmwareRequired.started')}`}
+          {session && ` ${phaseLabel}${pulse ? ` ${elapsed}` : ''}`}
+          {!session && flashing && pct != null && ` ${t('firmwareRequired.progress', { pct: Math.round(pct) })}`}
+          {!session && flashing && pct == null && ` ${t('firmwareRequired.started')}`}
           {state === 'error' && error && <span className="block text-red-300 text-xs mt-0.5">{error}</span>}
           {!target.downloaded && <span className="block text-red-300 text-xs mt-0.5">{t('firmwareRequired.downloading')}</span>}
         </span>

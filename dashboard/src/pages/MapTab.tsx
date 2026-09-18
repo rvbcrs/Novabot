@@ -5,7 +5,7 @@ import { MowerMap } from '../components/map/MowerMap';
 import { AutoMapPanel } from '../components/map/AutoMapPanel';
 import type { PatternPlacement } from '../components/patterns/PatternOverlay';
 
-type OtaProgressEntry = { status: string; percentage: number | null; timestamp: number };
+type OtaProgressEntry = { status: string; percentage: number | null; timestamp: number; session?: unknown };
 
 interface Props {
   mower: DeviceState | null;

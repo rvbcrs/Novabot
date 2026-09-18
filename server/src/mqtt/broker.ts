@@ -13,12 +13,13 @@ import { DeviceRegistryRow } from '../types/index.js';
 import { startMqttBridge } from '../proxy/mqttBridge.js';
 import { tryDecrypt } from './decrypt.js';
 import { startHomeAssistantBridge, forwardToHomeAssistant, publishDeviceOnline, publishDeviceOffline } from './homeassistant.js';
-import { updateDeviceData, clearDeviceData, deviceCache, consumeWifiRssiRefreshRequest } from './sensorData.js';
+import { updateDeviceData, clearDeviceData, deviceCache, consumeWifiRssiRefreshRequest, getDeviceSnapshot } from './sensorData.js';
 import { isDemoMode } from '../services/demoSimulator.js';
 import { forwardToDashboard, emitDeviceOnline, emitDeviceOffline, pushMqttLog, emitOtaEvent, emitPinEvent, emitExtendedEvent, emitCommandRespond } from '../dashboard/socketHandler.js';
 import { initMapSync, handleMapMessage, handleExtendedResponse, handleDeviceResponse, publishToExtended, onExtendedResponse, offExtendedResponse, publishEncryptedOnTopic, notifyRespond, publishToDevice } from './mapSync.js';
 import { allowBetaFlashOrSnapshot } from '../services/firmwareSafety.js';
 import { getMowerFileCapability } from '../services/mowerFileCapability.js';
+import { otaSessionStarted, otaSessionState, otaSessionDisconnect, otaSessionConnect } from './otaSession.js';
 
 const PROXY_MODE = process.env.PROXY_MODE ?? 'local';
 
@@ -572,6 +573,9 @@ export async function startMqttBroker(): Promise<void> {
               // Verwijder tz en forceer type:"full"
               delete parsed.ota_upgrade_cmd.tz;
               parsed.ota_upgrade_cmd.type = 'full';
+              if (parsed.ota_upgrade_cmd.version) {
+                otaSessionStarted(sn, String(parsed.ota_upgrade_cmd.version), getDeviceSnapshot(sn)?.sw_version ?? null);
+              }
               const modified = JSON.stringify(parsed);
               console.log(`\x1b[38;5;208m[OTA-FIX] INTERCEPTED! tz="${originalTz}"→removed, type="${originalType}"→"full"\x1b[0m`);
               console.log(`\x1b[38;5;208m[OTA-FIX] Modified payload: ${modified}\x1b[0m`);
@@ -827,6 +831,7 @@ export async function startMqttBroker(): Promise<void> {
       connectedAtBySn.set(sn, Date.now());
       publishDeviceOnline(sn);
       emitDeviceOnline(sn);
+      otaSessionConnect(sn);
 
       // Pending-provisioning claim: als er een PENDING_* entry in de LoRa
       // cache staat voor dit device-type, vervang die entry door de echte
@@ -906,6 +911,7 @@ export async function startMqttBroker(): Promise<void> {
         clearDeviceData(disconnSn);
         publishDeviceOffline(disconnSn);
         emitDeviceOffline(disconnSn);
+        otaSessionDisconnect(disconnSn);
       }
       console.log(`${clientColor(client.id)}[MQTT] DISCONNECT clientId="${client.id}" sn=${disconnSn}${C.reset}`);
     } else {
@@ -1060,6 +1066,7 @@ export async function startMqttBroker(): Promise<void> {
         if (otaState) {
           console.log(`\x1b[38;5;208m[OTA] ⚡ ota_upgrade_state van ${forwardSn}: ${JSON.stringify(otaState)}\x1b[0m`);
           emitOtaEvent(forwardSn, 'state', otaState);
+          otaSessionState(forwardSn, otaState);
         }
 
         // Firmware versie response

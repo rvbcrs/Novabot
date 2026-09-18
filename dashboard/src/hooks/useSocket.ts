@@ -5,7 +5,7 @@ import type { DeviceUpdateEvent, DeviceOnlineEvent, MqttLogEntry, BleLogEntry, M
 
 export interface OtaEventPayload {
   sn: string;
-  eventType: 'state' | 'version';
+  eventType: 'state' | 'version' | 'phase';
   data: Record<string, unknown>;
   timestamp: number;
 }

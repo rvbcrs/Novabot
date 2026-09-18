@@ -181,6 +181,22 @@ export interface FirmwareAdvisory {
   target: { version: string; description: string; downloaded: boolean } | null;
 }
 
+export type OtaPhase =
+  | 'downloading' | 'unpacking' | 'installing'
+  | 'awaiting-reboot' | 'rebooting' | 'back'
+  | 'done' | 'rolled-back' | 'failed' | 'stalled';
+
+export interface OtaSession {
+  sn: string;
+  phase: OtaPhase;
+  since: number;
+  startedAt: number;
+  target: string;
+  from: string | null;
+  reported?: string;
+  lastState?: unknown;
+}
+
 export interface OtaVersion {
   id: number;
   version: string;
@@ -1022,6 +1038,15 @@ export class ApiClient {
 
   async getFirmwareFiles(): Promise<FirmwareFile[]> {
     return this.request<FirmwareFile[]>('GET', '/api/dashboard/firmware-list');
+  }
+
+  /** Server-side OTA phase (#130); null when nothing is in flight or on an old server. */
+  async getOtaSession(sn: string): Promise<OtaSession | null> {
+    try {
+      return await this.request<OtaSession | null>('GET', `/api/dashboard/ota/session/${enc(sn)}`);
+    } catch {
+      return null;
+    }
   }
 
   async triggerOta(

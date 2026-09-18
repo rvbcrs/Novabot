@@ -20,7 +20,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useStyles, useTheme, type Colors } from '../theme';
 import { useMowerState } from '../hooks/useMowerState';
 import { useActiveMower } from '../hooks/useActiveMower';
-import { ApiClient, type OtaVersion } from '../services/api';
+import { ApiClient, type OtaVersion, type OtaSession } from '../services/api';
 import { getServerUrl } from '../services/auth';
 import { getSocket } from '../services/socket';
 import { formatDate } from '../lib/format';
@@ -33,6 +33,33 @@ interface OtaProgressEntry {
   timestamp: number;
   targetVersion?: string;
   deviceLabel?: string;
+  /** Server-side phase (#130); absent on servers that predate it. */
+  session?: OtaSession;
+}
+
+const OTA_TERMINAL_PHASES = new Set(['done', 'rolled-back', 'failed', 'stalled']);
+const OTA_WAITING_PHASES = new Set(['awaiting-reboot', 'rebooting', 'back']);
+
+function otaElapsed(now: number, since: number): string {
+  const s = Math.max(0, Math.floor((now - since) / 1000));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
+function otaPhaseLabel(p: OtaProgressEntry): string {
+  const s = p.session!;
+  const back = s.reported ?? s.from ?? '';
+  switch (s.phase) {
+    case 'downloading': return 'Downloading firmware…';
+    case 'unpacking': return 'Unpacking…';
+    case 'installing': return 'Installing…';
+    case 'awaiting-reboot': return 'Installed, waiting for the reboot…';
+    case 'rebooting': return 'Rebooting…';
+    case 'back': return 'Back online, checking version…';
+    case 'done': return `Updated to ${s.target}. The device is back online.`;
+    case 'rolled-back': return `The update did not stick: the device came back on ${back}.`;
+    case 'failed': return 'The device could not apply the update. You can retry in a few minutes.';
+    case 'stalled': return 'The reboot is not happening. Check the OTA log on the dashboard.';
+  }
 }
 
 export default function OtaScreen() {
@@ -85,7 +112,31 @@ export default function OtaScreen() {
   useEffect(() => {
     const socket = getSocket();
     if (!socket) return;
+    const applySession = (session: OtaSession) => setOtaProgress(prev => {
+      const next = new Map(prev);
+      const cur = next.get(session.sn);
+      const ref = targetVersionRef.current[session.sn];
+      next.set(session.sn, {
+        status: cur?.status ?? session.phase,
+        percentage: cur?.percentage ?? null,
+        timestamp: Date.now(),
+        targetVersion: ref?.version ?? session.target,
+        deviceLabel: ref?.label ?? cur?.deviceLabel,
+        session,
+      });
+      return next;
+    });
+    // An update that is still in flight survives closing the app: pick it up
+    // from the server when the screen opens.
+    getServerUrl().then(url => {
+      if (!url) return;
+      const api = new ApiClient(url);
+      for (const sn of [mower?.sn, charger?.sn]) {
+        if (sn) api.getOtaSession(sn).then(sess => { if (sess) applySession(sess); });
+      }
+    });
     const handler = (e: { sn: string; eventType: string; data: Record<string, unknown>; timestamp: number }) => {
+      if (e.eventType === 'phase') { applySession(e.data as unknown as OtaSession); return; }
       if (e.eventType !== 'state') return;
       const data = e.data ?? {};
       const rawPct = (data.percentage ?? data.progress ?? data.percent) as number | string | undefined;
@@ -101,30 +152,43 @@ export default function OtaScreen() {
           status: String(data.status ?? data.state ?? 'updating'),
           percentage: pct,
           timestamp: e.timestamp,
-          targetVersion: ref?.version,
-          deviceLabel: ref?.label,
+          targetVersion: ref?.version ?? prev.get(e.sn)?.targetVersion,
+          deviceLabel: ref?.label ?? prev.get(e.sn)?.deviceLabel,
+          session: prev.get(e.sn)?.session,
         });
         return next;
       });
     };
     socket.on('ota:event', handler);
     return () => { socket.off('ota:event', handler); };
-  }, []);
+  }, [mower?.sn, charger?.sn]);
 
   // Determine which device (if any) has an active, recent OTA session to
   // render as a modal. "Active" = status not success/failed/error AND within
   // 2 minutes; "terminal" states stay visible 10s so the user sees "OK" /
   // "FAIL" before the modal auto-closes.
+  // With a server phase (#130) the modal stays open through the reboot and
+  // until the user closes it; the server forgets a finished session after
+  // 10 minutes, so that is the cap here too.
+  const [now, setNow] = useState(() => Date.now());
   const activeOta = useMemo(() => {
-    const now = Date.now();
     for (const [sn, p] of otaProgress) {
       const age = now - p.timestamp;
+      if (p.session) {
+        if (!OTA_TERMINAL_PHASES.has(p.session.phase) || age < 600_000) return { sn, progress: p };
+        continue;
+      }
       const terminal = p.status === 'success' || p.status === 'failed' || p.status === 'error';
       if (terminal && age < 10_000) return { sn, progress: p };
       if (!terminal && age < 120_000) return { sn, progress: p };
     }
     return null;
-  }, [otaProgress]);
+  }, [otaProgress, now]);
+  useEffect(() => {
+    if (!activeOta) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [activeOta]);
 
   const dismissOta = useCallback((sn: string) => {
     setOtaProgress(prev => {
@@ -448,15 +512,24 @@ export default function OtaScreen() {
       >
         {activeOta && (() => {
           const p = activeOta.progress;
-          const isDone = p.status === 'success';
-          const isFail = p.status === 'failed' || p.status === 'error';
+          const phase = p.session?.phase;
+          const isDone = phase ? phase === 'done' : p.status === 'success';
+          const isFail = phase ? OTA_TERMINAL_PHASES.has(phase) && phase !== 'done' : p.status === 'failed' || p.status === 'error';
           const isActive = !isDone && !isFail;
-          const title = isDone ? 'Update complete' : isFail ? 'Update failed' : 'Updating firmware';
+          const waiting = !!phase && OTA_WAITING_PHASES.has(phase);
+          const title = isDone ? 'Update complete'
+            : phase === 'rolled-back' ? 'Update rolled back'
+            : phase === 'stalled' ? 'Reboot not happening'
+            : isFail ? 'Update failed'
+            : waiting ? 'Restarting device' : 'Updating firmware';
           const subtitle = p.deviceLabel && p.targetVersion
             ? (isDone ? `${p.deviceLabel} → ${p.targetVersion}` : `${p.deviceLabel} → ${p.targetVersion}`)
             : activeOta.sn;
-          const pctLabel = p.percentage != null ? `${p.percentage.toFixed(0)}%` : (isActive ? 'Preparing…' : '');
+          const pctLabel = waiting && p.session ? otaElapsed(now, p.session.since)
+            : (isDone || isFail) && phase ? ''
+            : p.percentage != null ? `${p.percentage.toFixed(0)}%` : (isActive ? 'Preparing…' : '');
           const phaseLabel = (() => {
+            if (p.session) return otaPhaseLabel(p);
             if (isDone) return 'Device will reboot and come back online shortly.';
             if (isFail) return 'The device could not apply the update. You can retry in a few minutes.';
             if (p.percentage == null) return 'Waiting for the device to start the download…';
@@ -487,17 +560,25 @@ export default function OtaScreen() {
                     style={[
                       styles.otaModalBarFill,
                       {
-                        width: `${Math.max(0, Math.min(100, p.percentage ?? (isActive ? 4 : 100)))}%` as any,
+                        width: `${waiting ? 100 : Math.max(0, Math.min(100, p.percentage ?? (isActive ? 4 : 100)))}%` as any,
                         backgroundColor: barColor,
                       },
                     ]}
                   />
                 </View>
 
-                {isActive && (
+                {isActive && !waiting && (
                   <Text style={styles.otaModalHint}>
                     Don't close the app or turn off the device. This can take 15-30 minutes.
                   </Text>
+                )}
+                {waiting && (
+                  <Text style={styles.otaModalHint}>
+                    The device copies the new firmware and restarts. This can take a minute or two; the app reconnects by itself.
+                  </Text>
+                )}
+                {phase === 'stalled' && p.session?.lastState != null && (
+                  <Text style={styles.otaModalHint}>Last report: {JSON.stringify(p.session.lastState)}</Text>
                 )}
 
                 {(isDone || isFail) && (

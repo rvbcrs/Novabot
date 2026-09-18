@@ -789,6 +789,29 @@ export async function triggerOta(
   return { ok: res.ok, ...body };
 }
 
+export type OtaPhase =
+  | 'downloading' | 'unpacking' | 'installing'
+  | 'awaiting-reboot' | 'rebooting' | 'back'
+  | 'done' | 'rolled-back' | 'failed' | 'stalled';
+
+export interface OtaSession {
+  sn: string;
+  phase: OtaPhase;
+  since: number;
+  startedAt: number;
+  target: string;
+  from: string | null;
+  reported?: string;
+  lastState?: unknown;
+}
+
+/** Server-side OTA phase (#130); null when no update is in flight. */
+export async function fetchOtaSession(sn: string): Promise<OtaSession | null> {
+  const res = await apiFetch(`${BASE}/ota/session/${encodeURIComponent(sn)}`);
+  if (!res.ok) return null;
+  return res.json().catch(() => null);
+}
+
 export async function fetchFirmwareFiles(): Promise<FirmwareFile[]> {
   const data = await (await get(`${BASE}/firmware-list`)).json();
   return data.files ?? [];

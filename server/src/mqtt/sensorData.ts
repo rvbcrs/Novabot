@@ -21,6 +21,7 @@ import { isFrameUnvalidated, noteDockState } from '../services/frameValidation.j
 import { resolveMowerIp } from '../services/mowerIpDiscovery.js';
 import { isSimulatedStock, SIMULATED_STOCK_VERSION } from '../services/mowerFileCapability.js';
 import { emitDebugPosJson } from '../dashboard/socketHandler.js';
+import { otaSessionVersion } from './otaSession.js';
 
 // ── Sensor definities ────────────────────────────────────────────
 
@@ -1320,6 +1321,12 @@ export function updateDeviceData(sn: string, payload: Buffer): Map<string, strin
   // Zonder dit blijft de admin panel + firmware screen een oude versie tonen
   // na OTA (observed 2026-04-21 na upgrade naar custom-24). We schrijven alleen
   // bij échte wijzigingen zodat we geen continue DB writes krijgen.
+  // OTA phase tracking (#130): after the post-OTA reconnect the first
+  // report_state tells us whether the update stuck or rolled back.
+  {
+    const v = snValues.get('sw_version') || snValues.get('mqtt_version') || snValues.get('version');
+    if (v) otaSessionVersion(sn, v);
+  }
   if (changes.has('sw_version') || changes.has('mqtt_version')) {
     const v = snValues.get('sw_version') || snValues.get('mqtt_version');
     if (v) {

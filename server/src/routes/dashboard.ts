@@ -18,6 +18,7 @@ import {
 import { getAllDeviceSnapshots, getDeviceSnapshot, SENSORS, getGpsTrail, clearGpsTrail, getLocalTrail, clearLocalTrail, deviceCache, translateValue, markPinVerified, getDockPose } from '../mqtt/sensorData.js';
 import { isDeviceOnline, writeRawPublish, getBrokerDiagnostics } from '../mqtt/broker.js';
 import { getRecentLogs, forwardToDashboard, onLogEntry, emitMapsChanged } from '../dashboard/socketHandler.js';
+import { otaSessionStarted, getOtaSession } from '../mqtt/otaSession.js';
 import { requestMapList, requestMapOutline, publishToDevice, awaitCommand, publishRawToDevice, publishEncryptedOnTopic, publishToTopic, goToChargePayload, getNextCmdNum, patchLatestZipChargingPose, republishObstacleDetection, publishToExtended, onExtendedResponse, offExtendedResponse } from '../mqtt/mapSync.js';
 import { publishExtendedCommand } from '../mqtt/extendedCommands.js';
 import { disarmEdgeWatch, disarmEdgeWatchForSchedule } from '../services/scheduleRunner.js';
@@ -5637,6 +5638,8 @@ dashboardRouter.post('/ota/trigger/:sn', async (req: Request, res: Response) => 
     }
   }
 
+  otaSessionStarted(sn, otaVersion.version, fwVersion || null);
+
   res.json({
     ok: true,
     command: 'ota_upgrade_cmd',
@@ -5644,6 +5647,12 @@ dashboardRouter.post('/ota/trigger/:sn', async (req: Request, res: Response) => 
     target: sn,
     backup: gate && gate.allowed ? gate.backup : null,
   });
+});
+
+// GET /api/dashboard/ota/session/:sn — current OTA phase (#130), so a reloaded
+// dashboard / reopened app can pick up an update that is still in flight.
+dashboardRouter.get('/ota/session/:sn', (req: Request, res: Response) => {
+  res.json(getOtaSession(req.params.sn) ?? null);
 });
 
 // ── LoRa address allocation ──────────────────────────────────────

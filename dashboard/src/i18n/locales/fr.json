@@ -1016,5 +1016,17 @@
     "groupMower": "Sur la tondeuse elle-même",
     "mdnsReach": "Trouve le serveur seule",
     "mdnsService": "mDNS sur le port 5353"
+  },
+  "otaPhase": {
+    "downloading": "Téléchargement du firmware…",
+    "unpacking": "Décompression…",
+    "installing": "Installation…",
+    "awaiting-reboot": "Installé, en attente du redémarrage…",
+    "rebooting": "Redémarrage…",
+    "back": "De retour en ligne, vérification de la version…",
+    "done": "Mis à jour vers {{version}}",
+    "rolled-back": "Retour à {{version}}",
+    "failed": "Échec de la mise à jour",
+    "stalled": "Le redémarrage ne vient pas, vérifiez le journal OTA"
   }
 }
