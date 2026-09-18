@@ -429,8 +429,25 @@ export default function MapScreen() {
   const isMapping = (taskModeRaw === '3' || msg.includes('Mode:MAPPING'))
     && !msg.includes('Work:FINISHED')
     && !msg.includes('Work:WAIT');
+  // A coverage task parked on the dock (low-battery recharge, "pause & return")
+  // is still the same session: keep its covered lanes on screen and offer
+  // Resume instead of a fresh Start (GH #30). Same detection as HomeScreen:
+  // docked + task_mode 1 + the current Work field says recharge/user-stop, or
+  // stock 5.7.1's work_status 12 "Low power" which sets none of those.
+  const interruptedSensors = mower?.sensors;
+  const isInterruptedCoverage = (() => {
+    if (!interruptedSensors) return false;
+    const bs = (interruptedSensors.battery_state ?? '').toUpperCase();
+    const onDock = bs === 'CHARGING' || bs === 'FINISHED';
+    const taskMode = parseInt(interruptedSensors.task_mode ?? '0', 10);
+    const cur = msg.replace(/Prev work:\S*/g, '');
+    const ws = interruptedSensors.work_status ?? '';
+    return onDock && taskMode === 1 && (
+      /Work:(USER_RECHARGE_STOP|BATTERY_LOW_RECHARGE|USER_STOP|PAUSED)\b/.test(cur)
+      || ws === '12' || ws === 'Low power');
+  })();
   const showTrail = isMowing || isMapping;
-  const showCoverPath = isMowing;
+  const showCoverPath = isMowing || isInterruptedCoverage;
   // Voortgangs-state uit report_state_timer_data.cover_path.covered — elke
   // MQTT tick door server geforward als sensor-velden. finished_area is een
   // space-separated lijst van voltooide planned_path sub-gebied indices,
@@ -558,7 +575,7 @@ export default function MapScreen() {
   // zijn — dat komt uit finishedAreaSet/sensors), dus een rustige 20s-poll volstaat
   // om het pad te laden en bij een map-wissel actueel te houden.
   useEffect(() => {
-    if (!isMowing || !mower?.sn || demo.enabled) return;
+    if (!(isMowing || isInterruptedCoverage) || !mower?.sn || demo.enabled) return;
     let cancelled = false;
     const pullPath = async () => {
       try {
@@ -572,7 +589,7 @@ export default function MapScreen() {
     pullPath();
     const interval = setInterval(pullPath, 20000);
     return () => { cancelled = true; clearInterval(interval); };
-  }, [isMowing, mower?.sn, demo.enabled]);
+  }, [isMowing, isInterruptedCoverage, mower?.sn, demo.enabled]);
 
   // ── Pan + Zoom state ─────────────────────────────────────────────
   const scale = useSharedValue(1);
@@ -609,10 +626,17 @@ export default function MapScreen() {
     translateY.value = withTiming(0, { duration: 300 });
   }, [scale, translateX, translateY]);
 
+  // Gesture callbacks run as worklets on the UI thread; resetView is a plain
+  // JS function and calling it there crashes with "Tried to synchronously
+  // call a non-worklet function on the UI thread" (GH #117). Write the shared
+  // values directly, as MowingProgressMap does.
   const doubleTapGesture = Gesture.Tap()
     .numberOfTaps(2)
     .onEnd(() => {
-      resetView();
+      'worklet';
+      scale.value = withTiming(1, { duration: 300 });
+      translateX.value = withTiming(0, { duration: 300 });
+      translateY.value = withTiming(0, { duration: 300 });
     });
 
   const animatedStyle = useAnimatedStyle(() => ({
@@ -1738,7 +1762,7 @@ export default function MapScreen() {
                                   else if (isPaused) disabledLabel = t('paused', undefined) || 'Paused';
                                   else if (dockGoing) disabledLabel = t('dockReturnInProgress', undefined) || 'Returning to dock';
                                   const startDisabled = disabledLabel !== null;
-                                  const primaryLabel = disabledLabel ?? t('startMowing');
+                                  const primaryLabel = disabledLabel ?? (isInterruptedCoverage ? t('resume') : t('startMowing'));
                                   return (
                                     <View style={styles.zoneButtonRow}>
                                       <TouchableOpacity
@@ -1749,10 +1773,11 @@ export default function MapScreen() {
                                         ]}
                                         onPress={() => {
                                           if (startDisabled) return;
-                                          (navigation as any).navigate('Home', {
-                                            openStartMow: true,
-                                            preselectedMapId: map.mapId,
-                                          });
+                                          // Resume goes through Home: it owns the
+                                          // rain check and the long-pause warning.
+                                          (navigation as any).navigate('Home', isInterruptedCoverage
+                                            ? { resumeCoverage: true }
+                                            : { openStartMow: true, preselectedMapId: map.mapId });
                                         }}
                                         disabled={startDisabled}
                                         activeOpacity={0.8}

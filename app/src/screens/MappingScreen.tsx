@@ -1130,6 +1130,18 @@ function MowerMappingScreen() {
       );
       return;
     }
+    // The firmware addresses zones by a decimal mask (map0=1 … map4=10000) and
+    // sends anything above 60000 to its vision_test task: a sixth zone (map5)
+    // maps fine but never mows (error 125) and, worse, the planner drives
+    // through it as if it were open ground (GH #115, #114). Five is the limit.
+    const nextSlot = Number(nextWorkMapName.replace(/^map/, ''));
+    if (mapBuildType === 'work' && nextSlot >= 5) {
+      appAlertCompat.alert(
+        'Maximum of 5 work areas',
+        'The mower firmware can mow at most five work areas (map0 to map4). Delete or merge a work area before mapping a new one.',
+      );
+      return;
+    }
 
     // `mapName` tells the mower the START map for this scan. Rules:
     //   work:   the next free slot (map0/map1/map2)

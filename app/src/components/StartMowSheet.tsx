@@ -59,10 +59,9 @@ function previewMapIdsFromMaps(maps: MapData[]): number {
     const source = map.canonicalName ?? map.mapId;
     const match = source.match(/^map(\d+)$/);
     if (!match) continue;
-    const idx = Number(match[1]);
-    if (idx === 0) weights.add(1);
-    else if (idx === 1) weights.add(10);
-    else if (idx === 2) weights.add(100);
+    // Decimal positional mask, slot N → 10^N (map3 = 1000). Slots 0-2 were
+    // hardcoded, so map3+ previewed map0 (same bug as dashboard #128).
+    weights.add(Math.pow(10, Number(match[1])));
   }
   const mask = Array.from(weights).reduce((sum, value) => sum + value, 0);
   return mask || 1;
@@ -706,10 +705,15 @@ export function StartMowSheet({
                 polygon now so the preview always reflects the actual
                 user choice. */}
             {(() => {
-              const selectedPolys = maps
-                .filter(m => selectedMapIds.has(m.mapId))
-                .map(m => m.mapArea)
-                .filter(p => p && p.length >= 3);
+              const selectedEntries = maps
+                .filter(m => selectedMapIds.has(m.mapId) && m.mapArea && m.mapArea.length >= 3);
+              const selectedPolys = selectedEntries.map(m => m.mapArea);
+              // react-native-svg keeps a <ClipPath> by its id and does not
+              // redraw it when the polygon inside changes. With index-based
+              // ids, adding map1 after map0 left map0's clip on slot 0 and
+              // the stripes of the previous selection on screen (GH #46).
+              // The id carries the map id, so a different zone is a new clip.
+              const clipId = (i: number) => `previewClip-${String(selectedEntries[i]?.mapId ?? i).replace(/[^a-zA-Z0-9_-]/g, '')}`;
               // Issue #46.3: when nothing is selected we used to fall back
               // to maps[0] so the preview frame stayed visible — but that
               // showed a polygon the user hadn't picked, with stripes
@@ -848,7 +852,7 @@ export function StartMowSheet({
                     <Svg width={SIZE} height={SIZE} viewBox={`0 0 ${SIZE} ${SIZE}`}>
                       <Defs>
                         {origPolys.map((pts, i) => (
-                          <ClipPath key={`clip-${i}`} id={`previewClip-${i}`}>
+                          <ClipPath key={clipId(i)} id={clipId(i)}>
                             <Polygon points={pts} />
                           </ClipPath>
                         ))}
@@ -861,7 +865,7 @@ export function StartMowSheet({
                       {/* Direction stripes — drawn once per polygon so each
                           selected zone shows its own clipped pattern. */}
                       {previewPolylineStrings.length === 0 && origPolys.map((_pts, i) => (
-                        <G key={`stripes-${i}`} clipPath={`url(#previewClip-${i})`}>
+                        <G key={`stripes-${clipId(i)}`} clipPath={`url(#${clipId(i)})`}>
                           {stripes.map((s, j) => (
                             <Line key={j} x1={s.x1} y1={s.y1} x2={s.x2} y2={s.y2}
                               stroke={s.alt ? 'rgba(52,211,153,0.22)' : 'rgba(16,185,129,0.12)'}

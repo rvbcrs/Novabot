@@ -1132,6 +1132,15 @@ export default function HomeScreen() {
     });
   }, [navigation, route.params?.openStartMow, route.params?.preselectedMapId]);
 
+  // Map screen zone button on a parked task → the same resume as our own
+  // Continue button (rain check + long-pause warning included), GH #30.
+  useEffect(() => {
+    if (!route.params?.resumeCoverage || !mower?.sn) return;
+    (navigation as any).setParams({ resumeCoverage: false });
+    void resumeCoverage(mower.sn);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [route.params?.resumeCoverage, mower?.sn]);
+
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
     try {

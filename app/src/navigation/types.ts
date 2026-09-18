@@ -46,6 +46,8 @@ export type MainTabParams = {
   Home: {
     openStartMow?: boolean;
     preselectedMapId?: string | null;
+    /** Continue the coverage task parked on the dock (Map screen zone button, #30). */
+    resumeCoverage?: boolean;
   } | undefined;
   Map: undefined;
   Control: undefined;
