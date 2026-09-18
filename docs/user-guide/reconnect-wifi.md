@@ -17,16 +17,16 @@ OpenNova app. A few minutes, and nothing is lost.
 
 ## Charger first
 
-1. Open the **OpenNova app** → **Settings** → **Provision Devices**.
+1. Open the **OpenNova app** → **Settings** → **Add Device**.
 2. Confirm the **server address** (usually already filled in).
-3. Choose the **charging station**.
+3. Choose the **Charger**.
 4. Enter the network name and password, **Next**.
 5. The app scans and finds the charger. Select it, **Start provisioning**,
    and wait until it reports done.
 
 ## Then the mower
 
-Same steps, now for the **mower**. The app insists on this order: the mower's
+Same steps, now for the **Mower**. The app insists on this order: the mower's
 LoRa link is paired to the charger, and a mower done before its charger ends
 up with a LoRa mismatch.
 
