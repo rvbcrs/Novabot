@@ -1286,7 +1286,7 @@ export interface FirmwareAdvisoryDto {
   required: boolean;
   current: string | null;
   reason: string | null;
-  target: { version: string; description: string; downloaded: boolean } | null;
+  target: { version: string; description: string; downloaded: boolean; versionId: number | null } | null;
 }
 export async function fetchFirmwareAdvisory(sn: string): Promise<FirmwareAdvisoryDto> {
   return (await get(`${BASE}/firmware-advisory/${encodeURIComponent(sn)}`)).json() as Promise<FirmwareAdvisoryDto>;

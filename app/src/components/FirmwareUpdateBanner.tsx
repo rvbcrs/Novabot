@@ -34,10 +34,10 @@ export function FirmwareUpdateBanner() {
         <TouchableOpacity style={styles.main} onPress={openOta} activeOpacity={0.75} testID="firmware-required-open">
           <Ionicons name="warning-outline" size={20} color={c.red} />
           <View style={styles.textCol}>
-            <Text style={[styles.title, { color: c.red }]} numberOfLines={1}>
+            <Text style={[styles.title, { color: c.red }]} numberOfLines={2}>
               {t('firmwareRequiredTitle', { version: stripV(advisory.current ?? '') })}
             </Text>
-            <Text style={styles.sub} numberOfLines={2}>
+            <Text style={styles.sub} numberOfLines={4}>
               {t('firmwareRequiredSubtitle', { reason: advisory.reason ?? '', version: stripV(advisory.target.version) })}
             </Text>
           </View>

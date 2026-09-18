@@ -851,6 +851,12 @@
     "mapObjects": "Kartenobjekte"
   },
   "firmwareRequired": {
+    "progress": "Aktualisierung: {{pct}}%.",
+    "started": "Update gestartet; der Mäher startet am Ende neu.",
+    "confirmTitle": "Auf {{target}} aktualisieren",
+    "confirmBody": "Zuerst wird ein frisches Backup der Karten erstellt. Download und Installation dauern 20 bis 30 Minuten; der Mäher startet am Ende neu.",
+    "confirmDock": "Der Download beginnt erst, wenn der Mäher auf der Ladestation lädt.",
+    "confirmLabel": "Update starten",
     "title": "Firmware {{current}} wurde zurückgezogen.",
     "body": "{{reason}}. Auf {{target}} aktualisieren; sie liegt bereits auf diesem Server.",
     "downloading": "(Update wird heruntergeladen…)",

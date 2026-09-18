@@ -29,6 +29,12 @@
     "noDevices": "Geen apparaten gevonden"
   },
   "firmwareRequired": {
+    "progress": "Bezig met updaten: {{pct}}%.",
+    "started": "Update gestart; de maaier herstart als hij klaar is.",
+    "confirmTitle": "Updaten naar {{target}}",
+    "confirmBody": "Er wordt eerst een verse back-up van de kaarten gemaakt. Downloaden en installeren duurt 20 tot 30 minuten; de maaier herstart aan het eind.",
+    "confirmDock": "De download start pas als de maaier op het laadstation staat te laden.",
+    "confirmLabel": "Update starten",
     "title": "Firmware {{current}} is ingetrokken.",
     "body": "{{reason}}. Update naar {{target}}; die staat al op deze server.",
     "downloading": "(update wordt gedownload…)",

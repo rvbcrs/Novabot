@@ -118,6 +118,8 @@ function ShellInner() {
       const key = `${e.sn}-${e.type}-${e.ts}`;
       if (e.ts < eventsSeenAt.current || toastedEvents.current.has(key)) continue;
       toastedEvents.current.add(key);
+      // The red banner already says this, in one place; the bell keeps the event.
+      if (e.type === 'firmware_required') continue;
       const kind = e.type === 'docked' || e.type === 'mowing_finished' || e.type === 'error_cleared'
         ? 'success'
         : (e.type === 'mowing_started' || e.type === 'low_battery' || e.type === 'gps_weak' ? 'info' : 'error');
@@ -220,7 +222,11 @@ function ShellInner() {
       </div>
 
       <UpdateBanner />
-      <FirmwareRequiredBanner sn={activeMowerSn} />
+      <FirmwareRequiredBanner
+        sn={activeMowerSn}
+        charging={String(activeMower?.sensors?.recharge_status ?? '') === '1' || /charging/i.test(String(activeMower?.sensors?.battery_state ?? ''))}
+        otaProgress={activeMowerSn ? otaProgress.get(activeMowerSn) : undefined}
+      />
       <MdnsConflictBanner />
       <LongPauseBanner mower={activeMower} />
 

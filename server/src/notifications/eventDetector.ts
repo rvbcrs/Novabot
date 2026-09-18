@@ -238,12 +238,12 @@ export function dispatchDockDriftEvent(sn: string, driftCm: number, sinceIso: st
 }
 
 /** The custom build the mower runs was withdrawn (firmware advisory). */
-export function dispatchFirmwareRequiredEvent(sn: string, current: string, target: string, reason: string): void {
+export function dispatchFirmwareRequiredEvent(sn: string, current: string, target: string, reason: string, name?: string | null): void {
   dispatchEvent(makeEvent(
     sn,
     'firmware_required',
     TITLE_BY_TYPE.firmware_required,
-    `${current} was withdrawn: ${reason}. Update to ${target} from the admin panel (Firmware tab); it is already downloaded.`,
+    `${name || sn} runs ${current}, which was withdrawn: ${reason}. Update to ${target}; it is on your server, one tap from the dashboard or the app.`,
     { current, target, reason },
   ));
 }

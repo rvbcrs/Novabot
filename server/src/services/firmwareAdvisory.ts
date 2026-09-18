@@ -41,8 +41,8 @@ export interface FirmwareAdvisory {
   /** what the mower runs */
   current: string | null;
   reason: string | null;
-  /** newest custom build in the manifest */
-  target: { version: string; description: string; downloaded: boolean } | null;
+  /** newest custom build in the manifest; versionId once it is on this server */
+  target: { version: string; description: string; downloaded: boolean; versionId: number | null } | null;
 }
 
 let cache: { manifest: Manifest; at: number } | null = null;
@@ -94,8 +94,8 @@ export function adviseVersion(version: string | null, manifest: Manifest | null)
   const reason = manifest.withdrawn?.[version] ?? null;
   const target = newestMower(manifest);
   if (!reason || !target || target.version === version) return none;
-  const downloaded = otaVersionRepo.listAll().some(v => v.version === target.version && v.device_type === 'mower');
-  return { required: true, current: version, reason, target: { version: target.version, description: target.description ?? '', downloaded } };
+  const local = otaVersionRepo.listAll().find(v => v.version === target.version && v.device_type === 'mower');
+  return { required: true, current: version, reason, target: { version: target.version, description: target.description ?? '', downloaded: !!local, versionId: local?.id ?? null } };
 }
 
 // sensorData pulls the whole broker chain in at import time; the pure parts
@@ -156,7 +156,7 @@ export async function runFirmwareAdvisorySweep(): Promise<void> {
   const manifest = await getManifest();
   if (!manifest || !manifest.withdrawn || Object.keys(manifest.withdrawn).length === 0) return;
   const target = newestMower(manifest);
-  for (const eq of equipmentRepo.listAll() as Array<{ mower_sn: string | null }>) {
+  for (const eq of equipmentRepo.listAll() as Array<{ mower_sn: string | null; nick_name?: string | null }>) {
     const sn = eq.mower_sn;
     if (!sn) continue;
     const adv = adviseVersion(await mowerVersion(sn), manifest);
@@ -167,7 +167,7 @@ export async function runFirmwareAdvisorySweep(): Promise<void> {
       notified.add(key);
       // Same reason as sensorData above: the notifier drags the broker in.
       const { dispatchFirmwareRequiredEvent } = await import('../notifications/eventDetector.js');
-      dispatchFirmwareRequiredEvent(sn, adv.current ?? '', target.version, adv.reason ?? '');
+      dispatchFirmwareRequiredEvent(sn, adv.current ?? '', target.version, adv.reason ?? '', eq.nick_name ?? null);
     }
   }
 }

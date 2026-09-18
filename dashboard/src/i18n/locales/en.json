@@ -948,6 +948,12 @@
     "close": "Close"
   },
   "firmwareRequired": {
+    "progress": "Updating: {{pct}}%.",
+    "started": "Update started; the mower reboots when it is done.",
+    "confirmTitle": "Update to {{target}}",
+    "confirmBody": "A fresh backup of the maps is made first. The download and install take 20 to 30 minutes; the mower reboots at the end.",
+    "confirmDock": "The download only starts once the mower is charging on the dock.",
+    "confirmLabel": "Start the update",
     "title": "Firmware {{current}} has been withdrawn.",
     "body": "{{reason}}. Update to {{target}}; it is already on this server.",
     "downloading": "(downloading the update…)",

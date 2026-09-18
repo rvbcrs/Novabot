@@ -834,7 +834,10 @@ dashboardRouter.get('/firmware-advisory/:sn', async (req: Request, res: Response
   if (adv.required && adv.target && !adv.target.downloaded) {
     const manifest = await getManifest();
     const entry = manifest?.firmwares.find(f => f.version === adv.target!.version);
-    if (entry) adv.target.downloaded = await ensureTargetDownloaded(entry);
+    if (entry && await ensureTargetDownloaded(entry)) {
+      adv.target.downloaded = true;
+      adv.target.versionId = otaVersionRepo.listAll().find(v => v.version === entry.version && v.device_type === 'mower')?.id ?? null;
+    }
   }
   res.json({ ok: true, ...adv });
 });
