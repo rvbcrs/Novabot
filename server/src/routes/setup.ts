@@ -352,6 +352,7 @@ setupRouter.post('/cloud-apply', async (req: Request, res: Response) => {
                   const rawAlias = typeof item.alias === 'string' ? item.alias.trim() : '';
                   const alias = rawAlias === '' ? null : rawAlias;
                   const mapData = {
+                    source: 'mower' as const,
                     map_id: mapId,
                     mower_sn: mower.sn,
                     map_name: alias,
@@ -409,6 +410,7 @@ setupRouter.post('/cloud-apply', async (req: Request, res: Response) => {
                   mapType === 'obstacle' && /^obstacle[\s_]?\d*(\.csv)?$/i.test(rawAlias);
                 const alias = rawAlias === '' || isDefaultObstacleAlias ? null : rawAlias;
                 const mapData = {
+                  source: 'mower' as const,
                   map_id: mapId,
                   mower_sn: mower.sn,
                   map_name: alias,
@@ -437,6 +439,7 @@ setupRouter.post('/cloud-apply', async (req: Request, res: Response) => {
                   const rawAlias = typeof item.alias === 'string' ? item.alias.trim() : '';
                   const alias = rawAlias === '' ? null : rawAlias;
                   const mapData = {
+                    source: 'mower' as const,
                     map_id: mapId, mower_sn: mower.sn, map_name: alias,
                     map_area: null, file_name: fileName!, file_size: null, map_type: 'unicom',
                   };

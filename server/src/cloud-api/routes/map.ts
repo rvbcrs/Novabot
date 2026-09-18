@@ -561,6 +561,7 @@ mapRouter.post('/fragmentUploadEquipmentMap', authMiddleware, upload.single('fil
     mapRepo.upsert({
       map_id: mapId,
       mower_sn: sn,
+      source: 'mower',
       map_name: mapName ?? null,
       map_area: localMapArea,
       map_max_min: localMapMaxMin,
@@ -642,6 +643,7 @@ mapRouter.post('/fragmentUploadEquipmentMap', authMiddleware, upload.single('fil
     mapRepo.upsert({
       map_id: mapId,
       mower_sn: sn,
+      source: 'mower',
       map_name: mapName ?? null,
       map_area: localMapArea,
       map_max_min: localMapMaxMin,
@@ -838,6 +840,7 @@ mapRouter.post('/uploadEquipmentMap', upload.any(), (req: Request, res: Response
         mapRepo.upsert({
           map_id: nextMapId,
           mower_sn: sn,
+          source: 'mower',
           map_name: nextName,
           canonical_name: stableCanonical,
           map_area: JSON.stringify(area.points),
@@ -873,6 +876,7 @@ mapRouter.post('/uploadEquipmentMap', upload.any(), (req: Request, res: Response
       mapRepo.upsert({
         map_id: mapId,
         mower_sn: sn,
+        source: 'mower',
         map_name: mapName,
         map_area: null,
         map_max_min: null,

@@ -2,6 +2,13 @@
 
 Format: most-recent first. Each entry is dated and names the endpoint(s) affected.
 
+## 2026-09-18 — map uploads record their origin (#120)
+
+- `fragmentUploadEquipmentMap` / `uploadEquipmentMap`: every `maps` row these
+  create gets `source = 'mower'` (a boundary the mower drove). A row that
+  already exists keeps the origin it has, so a zone drawn in the dashboard
+  and uploaded back after an apply stays `drawn`. Responses unchanged.
+
 ## 2026-09-18 — schedules: the Novabot app and the dashboard share one scheduler (#108)
 
 - `saveCutGrassPlan` / `updateCutGrassPlan` / `deleteCutGrassPlan` now mirror

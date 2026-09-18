@@ -15,6 +15,8 @@ export interface MapRow {
   file_name: string | null;
   file_size: number | null;
   map_type: string;
+  /** Where the zone came from: 'mower' | 'drawn' | 'import'; null = unknown (#120). */
+  source?: string | null;
   /**
    * Firmware-canonical slot identifier: `map0`, `map1`, `map0_0_obstacle`,
    * `map0tomap1_0_unicom`, `map0tocharge_unicom`, etc. Combined with `mower_sn`
@@ -52,7 +54,12 @@ export interface CreateMapData {
   map_type?: string;
   /** Caller-supplied canonical name; derived from file_name/map_name when null. */
   canonical_name?: string | null;
+  /** Origin of a NEW row. An existing row keeps the origin it has: a drawn
+   *  zone the mower uploads back is still a drawn zone (#120). */
+  source?: MapSource | null;
 }
+
+export type MapSource = 'mower' | 'drawn' | 'import';
 
 export interface SetCalibrationData {
   offset_lat?: number;
@@ -180,21 +187,21 @@ export class MapRepository {
 
   // Map mutations
   private _create = db.prepare(`
-    INSERT INTO maps (map_id, mower_sn, map_name, map_area, map_max_min, file_name, file_size, map_type, canonical_name)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO maps (map_id, mower_sn, map_name, map_area, map_max_min, file_name, file_size, map_type, canonical_name, source)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   // INSERT OR IGNORE variant — used for merge-mode cloud imports so we
   // don't clobber locally-edited polygons or freshly-saved maps that
   // happen to share a (mower_sn, canonical_name) with a cloud record.
   private _insertIfMissing = db.prepare(`
     INSERT OR IGNORE INTO maps
-      (map_id, mower_sn, map_name, map_area, map_max_min, file_name, file_size, map_type, canonical_name, updated_at)
-    VALUES (?,?,?,?,?,?,?,?,?, datetime('now'))
+      (map_id, mower_sn, map_name, map_area, map_max_min, file_name, file_size, map_type, canonical_name, source, updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?, datetime('now'))
   `);
 
   private _upsert = db.prepare(`
-    INSERT OR REPLACE INTO maps (map_id, mower_sn, map_name, map_area, map_max_min, file_name, file_size, map_type, canonical_name, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    INSERT OR REPLACE INTO maps (map_id, mower_sn, map_name, map_area, map_max_min, file_name, file_size, map_type, canonical_name, source, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
   `);
   private _updateName = db.prepare("UPDATE maps SET map_name = ?, updated_at = datetime('now') WHERE map_id = ?");
   private _updateNameByIdAndMower = db.prepare(
@@ -321,6 +328,7 @@ export class MapRepository {
       data.file_size ?? null,
       mapType,
       canonical,
+      data.source ?? null,
     );
     scheduleSnapshot(data.mower_sn);
   }
@@ -334,6 +342,10 @@ export class MapRepository {
           map_name: data.map_name ?? null,
           map_type: mapType,
         });
+    // REPLACE writes the whole row, so carry the origin of the row it
+    // replaces, unknown included: a row from before the column is not
+    // relabelled by whoever uploads it next (#120).
+    const prev = this.findById(data.map_id) ?? (canonical ? this.findBySnAndCanonical(data.mower_sn, canonical) : undefined);
     this._upsert.run(
       data.map_id,
       data.mower_sn,
@@ -344,6 +356,7 @@ export class MapRepository {
       data.file_size ?? null,
       mapType,
       canonical,
+      prev ? (prev.source ?? null) : (data.source ?? null),
     );
     scheduleSnapshot(data.mower_sn);
   }
@@ -370,6 +383,7 @@ export class MapRepository {
       data.file_size ?? null,
       mapType,
       canonical,
+      data.source ?? null,
     );
     if (info.changes > 0) scheduleSnapshot(data.mower_sn);
     return info.changes > 0;

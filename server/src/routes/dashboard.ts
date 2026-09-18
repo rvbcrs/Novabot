@@ -618,6 +618,7 @@ interface MapRow {
   map_max_min: string | null;
   file_name: string | null;
   file_size: number | null;
+  source?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -648,6 +649,7 @@ dashboardRouter.get('/maps', (_req: Request, res: Response) => {
       mapArea,
       mapMaxMin,
       createdAt: r.created_at,
+      source: r.source ?? null,
     };
   });
 
@@ -732,6 +734,9 @@ dashboardRouter.get('/maps/:sn', (req: Request, res: Response) => {
       mapArea,
       mapMaxMin,
       createdAt: r.created_at,
+      // Where the zone came from (#120): mower (driven), drawn, import, or
+      // null for rows older than the column.
+      source: r.source ?? null,
     };
   });
 
@@ -1808,6 +1813,7 @@ dashboardRouter.post('/maps/:sn', (req: Request, res: Response) => {
     : bounds;
 
   mapRepo.create({
+    source: 'drawn',
     map_id: mapId,
     mower_sn: sn,
     map_name: alias,
@@ -2919,6 +2925,7 @@ dashboardRouter.post('/maps/:sn/import-zip', (req: Request, res: Response) => {
       };
 
       const added = mapRepo.insertIfMissing({
+        source: 'import',
         map_id: mapId,
         mower_sn: sn,
         map_name: `Imported map${area.mapIndex}`,
@@ -2976,6 +2983,7 @@ dashboardRouter.post('/maps/:sn/upload-zip', async (req: Request, res: Response)
       };
 
       const added = mapRepo.insertIfMissing({
+        source: 'import',
         map_id: mapId,
         mower_sn: sn,
         map_name: `Uploaded map ${area.mapIndex}`,
@@ -2992,6 +3000,7 @@ dashboardRouter.post('/maps/:sn/upload-zip', async (req: Request, res: Response)
       const fileName = areaFileName(area);
       const mapId = `uploaded_${fileName}_${Date.now()}`;
       const added = mapRepo.insertIfMissing({
+        source: 'import',
         map_id: mapId,
         mower_sn: sn,
         map_name: `${area.type} ${area.mapIndex}`,

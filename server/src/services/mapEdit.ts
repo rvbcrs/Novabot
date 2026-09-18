@@ -216,14 +216,14 @@ const applyLocks = new Set<string>();
 interface SnapshotRow {
   map_id: string; canonical_name: string | null; map_type: string;
   map_name: string | null; map_area: string | null; map_max_min: string | null; file_name: string | null;
-  file_size: number | null;
+  file_size: number | null; source?: string | null;
 }
 
 function snapshotMaps(sn: string): string {
   const rows = mapRepo.findByMowerSn(sn).map((r): SnapshotRow => ({
     map_id: r.map_id, canonical_name: r.canonical_name, map_type: r.map_type,
     map_name: r.map_name, map_area: r.map_area, map_max_min: r.map_max_min, file_name: r.file_name,
-    file_size: r.file_size,
+    file_size: r.file_size, source: r.source ?? null,
   }));
   return JSON.stringify(rows);
 }
@@ -319,6 +319,7 @@ export async function applyEdits(sn: string): Promise<ApplyResult> {
         } else {
           const pts = parseDraftArea(d.draft_area);
           mapRepo.create({
+            source: 'drawn',
             map_id: `edit_${d.canonical_name}_${Date.now()}`, mower_sn: sn,
             map_type: 'obstacle', file_name: `${d.canonical_name}.csv`,
             map_area: JSON.stringify(pts), map_max_min: boundsOf(pts),
@@ -375,7 +376,8 @@ export async function revertEdits(sn: string): Promise<ApplyResult> {
         } else {
           mapRepo.create({ map_id: r.map_id, mower_sn: sn, map_name: r.map_name,
             map_type: r.map_type, file_name: r.file_name, file_size: r.file_size,
-            canonical_name: r.canonical_name, map_area: r.map_area, map_max_min: r.map_max_min });
+            canonical_name: r.canonical_name, map_area: r.map_area, map_max_min: r.map_max_min,
+            source: (r.source as 'mower' | 'drawn' | 'import' | null | undefined) ?? null });
         }
       }
       mapEditsRepo.deleteVersion(version.id);

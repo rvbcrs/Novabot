@@ -50,6 +50,9 @@ export interface MapData {
    *  file_name; needed by the dashboard to distinguish charge-route
    *  unicoms from inter-map channels in the count badge (issue #28). */
   canonicalName: string | null;
+  /** Where the zone came from (#120): driven by the mower, drawn in the
+   *  dashboard, or imported; null for zones older than the record. */
+  source?: 'mower' | 'drawn' | 'import' | null;
   /** Original CSV filename as stored on disk. Useful as a fallback when
    *  canonicalName couldn't be derived (legacy rows pre-auto-derive). */
   fileName: string | null;

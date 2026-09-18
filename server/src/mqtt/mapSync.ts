@@ -1078,6 +1078,7 @@ function handleMapOutlineResponse(sn: string, data: unknown): void {
   mapRepo.upsert({
     map_id: mapId,
     mower_sn: sn,
+    source: 'mower',
     map_name: displayName,
     map_area: _newArea,
     map_max_min: JSON.stringify(bounds),
@@ -1135,7 +1136,7 @@ function upsertMapMetadata(sn: string, mapId: string, meta: Record<string, unkno
   // Alleen inserteren als de kaart nog niet bestaat (create uses INSERT, not INSERT OR REPLACE)
   const existing = mapRepo.findById(mapId);
   if (!existing) {
-    mapRepo.create({ map_id: mapId, mower_sn: sn, map_name: mapName || null });
+    mapRepo.create({ map_id: mapId, mower_sn: sn, map_name: mapName || null, source: 'mower' });
   }
 }
 

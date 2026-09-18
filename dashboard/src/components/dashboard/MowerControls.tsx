@@ -16,6 +16,7 @@ import {
   getMowProgress, type MowProgressDto,
 } from '../../api/client';
 import { remainingPolygon, sweepCoordinate, sweepExtent, polygonArea } from '../../utils/remainingArea';
+import { sourceMark } from '../../utils/mapSource';
 import { localToGps } from '../../utils/coords';
 import { mmToCutterhigh, workMapsToArea, needsMapNameStart, nextCmdNum } from '../../utils/mqtt';
 import { readMowDefaults, configuredHeightMm } from '../../utils/mowDefaults';
@@ -1267,7 +1268,7 @@ export function MowerControls({
                     >
                       <option value="">{t('controls.allWorkAreas')}</option>
                       {maps.map(m => (
-                        <option key={m.mapId} value={m.mapId}>{m.mapName || m.canonicalName || m.mapId}</option>
+                        <option key={m.mapId} value={m.mapId}>{[m.mapName || m.canonicalName || m.mapId, sourceMark(m.source)].filter(Boolean).join(' ')}</option>
                       ))}
                     </select>
                   </div>

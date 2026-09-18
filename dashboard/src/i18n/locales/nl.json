@@ -460,6 +460,9 @@
       "stockNotice": "Stock firmware: wijzigingen kunnen van hieruit niet naar de maaier. Gebruik “Kaart bewerken” in de OpenNova-app (rij het gewijzigde stuk)."
     },
     "missedPoint": "Gemist punt",
+    "sourceMower": "gereden door de maaier",
+    "sourceDrawn": "getekend in het dashboard",
+    "sourceImport": "geïmporteerd",
     "slotHint": "Wordt {{slot}} op de maaier",
     "channelNameAuto": "De naam volgt uit de gebieden die je verbindt (bv. map2tomap1_0_unicom). Een kanaal naar het laadstation begint bij het station, of typ de naam (bv. map0tocharge_unicom).",
     "pathTotal": "{{m}} m totaal",

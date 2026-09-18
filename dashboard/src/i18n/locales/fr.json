@@ -396,6 +396,9 @@
       "stockNotice": "Firmware d’origine : les modifications ne peuvent pas être envoyées à la tondeuse d’ici. Utilisez « Modifier la carte » dans l’application OpenNova (parcourez la section modifiée)."
     },
     "missedPoint": "Point manqué",
+    "sourceMower": "parcouru par la tondeuse",
+    "sourceDrawn": "dessiné dans le tableau de bord",
+    "sourceImport": "importé",
     "slotHint": "Deviendra {{slot}} sur la tondeuse",
     "channelNameAuto": "Le nom découle des zones que vous reliez (ex. map2tomap1_0_unicom). Un canal vers la station de charge commence à la station, ou saisissez son nom (ex. map0tocharge_unicom).",
     "pathTotal": "{{m}} m au total",

@@ -524,6 +524,14 @@ export function initDb(): void {
     CREATE INDEX IF NOT EXISTS idx_walker_bundles_uploaded_at ON walker_bundles(uploaded_at DESC);
   `);
 
+  // Where a zone came from (#120): 'mower' (driven and uploaded by the
+  // mower), 'drawn' (dashboard editor), 'import' (bundle or CSV). NULL for
+  // rows from before this column: unknown, not guessed.
+  try {
+    db.exec(`ALTER TABLE maps ADD COLUMN source TEXT`);
+    console.log('[DB] Migrated: added maps.source');
+  } catch { /* column exists */ }
+
   // Voeg map_type kolom toe aan maps (migratie – work/obstacle/unicom)
   try {
     db.exec(`ALTER TABLE maps ADD COLUMN map_type TEXT NOT NULL DEFAULT 'work'`);

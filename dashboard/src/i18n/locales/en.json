@@ -412,6 +412,9 @@
       "stockNotice": "Stock firmware: edits can't be sent to the mower from here. Use “Edit map” in the OpenNova app instead (drive the changed section)."
     },
     "missedPoint": "Missed point",
+    "sourceMower": "driven by the mower",
+    "sourceDrawn": "drawn in the dashboard",
+    "sourceImport": "imported",
     "slotHint": "Becomes {{slot}} on the mower",
     "channelNameAuto": "The name follows from the areas you connect (e.g. map2tomap1_0_unicom). A channel to the charging station starts at the station, or type its name (e.g. map0tocharge_unicom).",
     "pathTotal": "{{m}} m total",

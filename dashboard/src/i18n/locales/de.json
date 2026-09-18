@@ -396,6 +396,9 @@
       "stockNotice": "Stock-Firmware: Änderungen können von hier nicht zum Mäher. Nutze „Karte bearbeiten“ in der OpenNova-App (den geänderten Abschnitt abfahren)."
     },
     "missedPoint": "Verpasster Punkt",
+    "sourceMower": "vom Mäher gefahren",
+    "sourceDrawn": "im Dashboard gezeichnet",
+    "sourceImport": "importiert",
     "slotHint": "Wird {{slot}} auf dem Mäher",
     "channelNameAuto": "Der Name ergibt sich aus den verbundenen Bereichen (z. B. map2tomap1_0_unicom). Ein Kanal zur Ladestation beginnt an der Station, oder gib den Namen ein (z. B. map0tocharge_unicom).",
     "pathTotal": "{{m}} m gesamt",

@@ -33,6 +33,7 @@ import { applyBrush, densifyPolygon, hitTestEdge, offsetPolygon, pointInPolygon 
 import { paintCircle, eraseCircle, makeValidPolygon } from '../../utils/brushPaint';
 import { useToast } from '../common/Toast';
 import { isInterruptedCoverage } from '../../utils/mowerActivity';
+import { sourceKey } from '../../utils/mapSource';
 import { ConfirmDialog } from '../common/ConfirmDialog';
 import { PolygonEditor } from './PolygonEditor';
 import { MapEditBar } from './MapEditBar';
@@ -3488,7 +3489,8 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
                 ? { ...baseStyle, fillOpacity: 0.5, weight: 3, opacity: 1 }
                 : baseStyle;
             const areaM2 = m.mapType === 'unicom' ? null : polygonAreaM2(m.mapArea);
-            const label = [m.mapName || m.canonicalName, areaM2 ? `${areaM2.toFixed(1)} m²` : null]
+            const srcKey = m.mapType === 'work' ? sourceKey(m.source) : null;
+            const label = [m.mapName || m.canonicalName, areaM2 ? `${areaM2.toFixed(1)} m²` : null, srcKey ? t(srcKey) : null]
               .filter(Boolean).join(' · ');
             const clickHandlers = {
               // While placing a pattern, the polygon must NOT swallow the click

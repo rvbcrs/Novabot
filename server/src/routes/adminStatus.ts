@@ -1345,6 +1345,7 @@ adminStatusRouter.post('/map-backups/:sn/:filename/restore', (req: AuthRequest, 
       const ys = area.points.map(pt => pt.y);
 
       mapRepo.create({
+        source: 'import',
         map_id: mapId,
         mower_sn: sn,
         map_name: want.canonicalName,
@@ -1416,6 +1417,7 @@ adminStatusRouter.post('/map-backups/:sn/:filename/restore-and-realign', async (
     const xs = area.points.map(pt => pt.x);
     const ys = area.points.map(pt => pt.y);
     mapRepo.create({
+      source: 'import',
       map_id: uuidv4(),
       mower_sn: sn,
       map_name: canonical,
