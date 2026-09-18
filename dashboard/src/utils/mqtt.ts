@@ -32,6 +32,23 @@ export function workIndexToArea(idx: number): number {
   return Math.pow(10, Math.max(0, idx));
 }
 
+/**
+ * Coverage-preview `map_ids` uses the same decimal positional bitmask as
+ * start_navigation.area: map0 = 1, map1 = 10, map2 = 100, map3 = 1000, etc.
+ * Keep the legacy fallback to map0 (1) when no canonical work map could be
+ * derived, so a plain refresh still behaves like the mower/app default.
+ */
+export function previewMapIdsFromCanonicals(canonicals: string[]): number {
+  const weights = new Set<number>();
+  for (const canonical of canonicals) {
+    const match = canonical.match(/^map(\d+)(?:$|[_t])/);
+    if (!match) continue;
+    weights.add(workIndexToArea(parseInt(match[1], 10)));
+  }
+  const mask = Array.from(weights).reduce((sum, value) => sum + value, 0);
+  return mask || 1;
+}
+
 export function workMapSlotIndex(
   map: { canonicalName?: string | null } | null | undefined,
   fallbackIdx: number,
