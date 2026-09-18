@@ -1,103 +1,64 @@
-# OpenNova Server — self-hosted Novabot cloud replacement
+# OpenNova: self-hosted replacement for the Novabot cloud.
 #
-# Quick start:
-#   docker compose up -d
-#
-# Admin: http://localhost/admin
-# Provision devices: use the OpenNova app (iOS/Android) or bootstrap tool
+# One line to change: TARGET_IP. Then `docker compose up -d`.
+# Admin panel: http://TARGET_IP/admin
+# Everything else is on the wiki: https://wiki.ramonvanbruggen.nl/guide/docker/
 
 services:
   opennova:
     image: rvbcrs/opennova:latest
-    build: .
     container_name: opennova
     restart: unless-stopped
-    # Run tini as PID 1 so orphaned children (e.g. a killed dnsmasq started from
-    # the admin DNS toggle) get reaped instead of lingering as <defunct> zombies.
-    # Without this, node is PID 1 and never reaps inherited orphans.
     init: true
     ports:
-      - "80:80"       # HTTP (API + admin panel + mower connectivity check)
-      - "443:443"     # HTTPS (required for Novabot app)
-      - "1883:1883"   # MQTT broker
-      # No 5353/udp here on purpose: on a bridge that mapping cannot carry
-      # mDNS (the mower asks 224.0.0.251, multicast, which never reaches
-      # docker0). The opennova-mdns service below advertises from the host
-      # network instead. See docs/guide/auto-discovery.md.
-      # - "53:53/udp" # DNS (optional — requires ENABLE_DNS + TARGET_IP)
+      - "80:80"       # HTTP: API, admin panel, dashboard
+      - "443:443"     # HTTPS: required by the official Novabot app
+      - "1883:1883"   # MQTT: mower and charger connect here
+      - "53:53/udp"   # built-in DNS: answers *.lfibot.com with TARGET_IP
     environment:
-      # Timezone — must match the timezone used by the app when creating schedules
-      TZ: ${TZ:-Europe/Amsterdam}
+      TZ: Europe/Amsterdam           # must match the app, or schedules shift
       PORT: 80
       DB_PATH: /data/novabot.db
       STORAGE_PATH: /data/storage
       FIRMWARE_PATH: /data/firmware
       ENABLE_TLS: "true"
-
-      # Tijdelijk: log iedere succesvolle JWT auth zodat we wisselende tokens kunnen tracen
-      AUTH_DEBUG: "1"
-
-      # Optional: enable web dashboard (default: disabled)
       ENABLE_DASHBOARD: "true"
+      TARGET_IP: 192.168.1.50        # <-- CHANGE THIS to this machine's LAN IP
 
-      # Your server's LAN IP (for firmware download URLs, TLS cert SAN + DNS)
-      TARGET_IP: ${TARGET_IP:-192.168.0.222}
+      # Built-in DNS: set TARGET_IP as the DNS server in your router and the
+      # mower finds the server. Port 53 must be free on this machine. Doing
+      # the rewrite in your router or Pi-hole instead? Set this to "false"
+      # and drop the 53:53/udp port above.
+      ENABLE_DNS: "true"
+      UPSTREAM_DNS: 8.8.8.8          # where every other name is forwarded
 
-      # mDNS is done by the opennova-mdns sidecar below (host network); an
-      # advertiser inside this bridged container only ever hears itself.
-      # MDNS_SIDECAR tells the connection diagnosis where to look instead.
+      # mDNS is done by opennova-mdns below
       ENABLE_MDNS: "false"
       MDNS_SIDECAR: "true"
 
-      # Optional: DNS redirect for Novabot app (requires TARGET_IP)
-      # ENABLE_DNS: "true"
-      # UPSTREAM_DNS: 8.8.8.8
+      # ── Optional: Home Assistant ──────────────────────────────────────
+      # Remove the # and fill in your own values. Sensors and the map image
+      # appear in HA through MQTT discovery.
+      # HA_MQTT_HOST: 192.168.1.10     # your Home Assistant MQTT broker
+      # HA_MQTT_PORT: 1883
+      # HA_MQTT_USER: mqtt             # broker user
+      # HA_MQTT_PASS: secret           # broker password
+      # RENDER_BASE_URL: http://192.168.1.50   # this server, so HA can fetch the map image
+      # HA_WEBHOOK_URL: http://192.168.1.10:8123/api/webhook/opennova   # every event as JSON
 
-      # Home Assistant MQTT bridge — auto-discover mowers + map images
-      HA_MQTT_HOST: ${HA_MQTT_HOST:-}
-      HA_MQTT_PORT: ${HA_MQTT_PORT:-1883}
-      HA_MQTT_USER: ${HA_MQTT_USER:-}
-      HA_MQTT_PASS: ${HA_MQTT_PASS:-}
+      # ── Optional: push notifications via ntfy.sh ──────────────────────
+      # NTFY_TOPIC: opennova-a-long-random-string   # topics are public, pick a random one
+      # NTFY_URL: https://ntfy.sh
+      # LOW_BATTERY_THRESHOLD: 20      # battery % for the low-battery notification
 
-      # Public base URL of the OpenNova server — needed so HA can fetch
-      # the rendered map SVG via image entity. Without this the bridge
-      # still publishes sensors but no image entity is discovered.
-      RENDER_BASE_URL: ${RENDER_BASE_URL:-http://192.168.0.222}
-
-      # Min interval (ms) between map image republishes. Default 15s
-      # keeps HA responsive without spamming the broker.
-      HA_MAP_THROTTLE_MS: ${HA_MAP_THROTTLE_MS:-15000}
-
-      # ntfy.sh push notifications — set NTFY_TOPIC in .env to enable.
-      # Topics are unauthenticated; pick something long and random.
-      NTFY_TOPIC: ${NTFY_TOPIC:-}
-      NTFY_URL: ${NTFY_URL:-https://ntfy.sh}
-      NTFY_PRIORITY: ${NTFY_PRIORITY:-}
-
-      # Optional: HA webhook trigger URL (full event JSON POSTed)
-      HA_WEBHOOK_URL: ${HA_WEBHOOK_URL:-}
-
-      # Battery % crossing point for the low_battery event
-      LOW_BATTERY_THRESHOLD: ${LOW_BATTERY_THRESHOLD:-20}
-
-      # Remote support tunnel — built-in. Agent dials wss://opennova.ramonvanbruggen.nl
-      # automatically when the user toggles support ON via the admin UI (writes
-      # /data/.remote_support_enabled). First connect for a given SN records the
-      # agent's auto-generated token fingerprint (TOFU); reconnects must match.
-      # Ramon's relay instance is the only place that sets RELAY_ENABLED=true.
-      REMOTE_SUPPORT_RELAY_ENABLED: "${REMOTE_SUPPORT_RELAY_ENABLED:-false}"
-      # Optional: override the relay URL (dev / staging only).
-      REMOTE_SUPPORT_RELAY_URL: "${REMOTE_SUPPORT_RELAY_URL:-}"
+      # ── Optional: firmware downloads through a proxy or other port ───
+      # OTA_BASE_URL: http://192.168.1.50:8080
     volumes:
       - ./data:/data
 
-  # ── mDNS sidecar ─────────────────────────────────────────────────────────
-  # Advertises opennova.local from the host network, so mowers can discover
-  # the server by name while the main container keeps its bridge and port
-  # mappings (80/443 stay free for whatever else the host runs). Same image;
-  # claims only 5353/udp and shares it with avahi if present. Nothing to set:
-  # on the host network it sees the LAN address itself. On Docker Desktop
-  # (macOS/Windows) it notices it is inside the VM and exits quietly.
+  # Advertises opennova.local on your LAN so mowers with custom firmware find
+  # the server by name. Nothing to configure. On Docker Desktop it exits by
+  # itself (see the wiki, "Where will it run?").
   opennova-mdns:
     image: rvbcrs/opennova:latest
     container_name: opennova-mdns
@@ -105,6 +66,4 @@ services:
     network_mode: host
     environment:
       MDNS_ONLY: "true"
-      # Optional overrides; leave unset.
-      TARGET_IP: ${TARGET_IP:-}
-      MDNS_HOSTNAMES: ${MDNS_HOSTNAMES:-opennova.local,opennovabot.local}
+      TZ: Europe/Amsterdam

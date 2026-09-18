@@ -245,7 +245,7 @@ nano docker-compose.yml
 Paste this, and change the `TARGET_IP` line to your Raspberry Pi's IP address:
 
 ```yaml
---8<-- "docs/.snippets/docker-compose.yml"
+--8<-- "docker-compose.yml"
 ```
 
 Save in nano:

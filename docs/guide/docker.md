@@ -41,7 +41,7 @@ of the machine you are installing on (find it with `ip a` on Linux or in
 System Settings → Network on a Mac).
 
 ```yaml
---8<-- "docs/.snippets/docker-compose.yml"
+--8<-- "docker-compose.yml"
 ```
 
 !!! note "Port 80 or 443 already in use?"
@@ -50,10 +50,10 @@ System Settings → Network on a Mac).
     affected: it uses no ports but `5353/udp`, and shares that with avahi if
     your host runs it.
 
-The full compose in the repository, [`docker-compose.yml`](https://github.com/rvbcrs/Novabot/blob/master/docker-compose.yml),
-has every optional setting (Home Assistant, push notifications, remote
-support) with comments. Start from the one above; add options from there when
-you need them.
+This is the same file as [`docker-compose.yml`](https://github.com/rvbcrs/Novabot/blob/master/docker-compose.yml)
+in the repository. The optional parts (Home Assistant, push notifications) are
+in it, commented out with example values: remove the `#` and fill in your
+own.
 
 ### 2. Start it
 
