@@ -112,15 +112,32 @@ minute.
 
 ### 5. Log in with the app
 
-Open the official Novabot app (or the OpenNova app) and log in with your
-normal account. The first login creates your local account from the cloud and
-imports your devices; from then on the app talks to your server only.
+The official Novabot app talks HTTPS to `app.lfibot.com`, which is now your
+server with a self-signed certificate. The phone has to trust that
+certificate first, on **Android as well as iOS**:
 
-!!! tip "iOS and the self-signed certificate"
-    The iOS Novabot app requires HTTPS. Open **http://TARGET_IP/api/setup/profile**
-    on the iPhone to install a profile with the certificate and the DNS
-    settings, then trust the certificate under Settings → General → About →
-    Certificate Trust Settings.
+=== "iOS"
+
+    On the iPhone open **http://TARGET_IP/admin** → Settings → Certificate
+    setup → **Download iOS profile**, install it under Settings → General →
+    VPN & Device Management, then enable it under Settings → General → About
+    → Certificate Trust Settings.
+
+=== "Android"
+
+    On the phone open **http://TARGET_IP/admin** → Settings → Certificate
+    setup → **Android certificate**, then Settings → Security → Install a
+    certificate → **CA certificate**, pick the downloaded file.
+
+Then in the Novabot app: **log out, close the app completely, open it and
+log in again** with your normal account. The app still holds a token from the
+Novabot cloud; only a fresh login gets one from your server. The first login
+creates your local account from the cloud and imports your devices; from then
+on the app talks to your server only. The step by step is
+on [First Run](getting-started.md).
+
+The [OpenNova app](../user-guide/opennova-app.md) needs none of this: it is
+given your server's address and does not use the certificate.
 
 ## Checking that it works
 

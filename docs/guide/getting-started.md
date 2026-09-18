@@ -49,7 +49,7 @@ If you skipped the setup wizard, you can import from the admin **Settings** tab 
 
 ## Step 3: Connect the Novabot app
 
-### Install the SSL certificate (iOS required, Android optional)
+### Install the SSL certificate (iOS and Android)
 
 The official Novabot app connects to `app.lfibot.com` via HTTPS. Since your DNS now redirects this to your local server, the app needs to trust your server's SSL certificate. Without it, iOS will refuse to connect.
 
@@ -71,7 +71,7 @@ You can download the certificate from the admin panel: **Settings > Certificate 
 3. Select the downloaded file and confirm
 
 !!! note "Why is this needed?"
-    Your OpenNova server generates a self-signed certificate for `app.lfibot.com`. The Novabot app uses HTTPS to communicate with the server. Without the certificate installed, iOS blocks the connection entirely and Android may show SSL errors.
+    Your OpenNova server generates a self-signed certificate for `app.lfibot.com`. The Novabot app uses HTTPS to communicate with the server, on both platforms. Without the certificate installed the app cannot log in: iOS blocks the connection, Android fails with an SSL error.
 
 ### Log out and log back in
 
@@ -81,8 +81,9 @@ You can download the certificate from the admin panel: **Settings > Certificate 
 1. **Open** the Novabot app
 2. Go to **Settings** (or Profile)
 3. **Log out** of your current account
-4. **Log back in** with the same email and password
-5. The app now connects to your local OpenNova server instead of the cloud
+4. **Close the app completely** (swipe it away from the recent apps)
+5. Open it again and **log back in** with the same email and password
+6. The app now connects to your local OpenNova server instead of the cloud
 
 ### Verify connection
 
