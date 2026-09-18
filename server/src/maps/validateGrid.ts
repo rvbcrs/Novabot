@@ -26,6 +26,10 @@ export const PER_MAP_MIN_FRACTION = 0.85;
 /** Whole-map fragmentation warning threshold (not a hard block — legitimately
  * disconnected zones without a unicom can lower this). */
 export const WHOLE_MAP_WARN_FRACTION = 0.90;
+/** Cells in the free dock-approach circle, fillCircle(..., 16, FREE) in
+ * occupancyGrid.ts, which the firmware stamps into EVERY per-zone grid. In a zone
+ * away from the dock it is a separate island; that is not a wall through the zone. */
+const DOCK_CIRCLE_CELLS = 845;
 
 /** Parse a binary P5 (PGM) buffer. Tolerates a single `#` comment line in the
  * header (map_generator.cpp writes one). Returns null on malformed input. */
@@ -59,8 +63,9 @@ export function parsePgm(buf: Buffer): PgmGrid | null {
 }
 
 /** Largest connected free component as a fraction of total free cells
- * (4-connectivity). frac = 1 means all free cells are one blob. */
-export function largestFreeFraction(g: PgmGrid): {
+ * (4-connectivity). frac = 1 means all free cells are one blob. With
+ * `ignoreDockCircle`, an isolated dock-approach circle is left out. */
+export function largestFreeFraction(g: PgmGrid, ignoreDockCircle = false): {
   frac: number; largest: number; total: number; components: number;
 } {
   const { W, H, data } = g;
@@ -73,7 +78,7 @@ export function largestFreeFraction(g: PgmGrid): {
   if (total === 0) return { frac: 0, largest: 0, total: 0, components: 0 };
   const seen = new Uint8Array(n);
   const stack: number[] = [];
-  let largest = 0, components = 0;
+  let largest = 0, components = 0, ignored = 0;
   for (let start = 0; start < n; start++) {
     if (!free[start] || seen[start]) continue;
     components++;
@@ -89,9 +94,10 @@ export function largestFreeFraction(g: PgmGrid): {
       if (y + 1 < H) { const q = p + W; if (free[q] && !seen[q]) { seen[q] = 1; stack.push(q); } }
       if (y - 1 >= 0) { const q = p - W; if (free[q] && !seen[q]) { seen[q] = 1; stack.push(q); } }
     }
+    if (ignoreDockCircle && size === DOCK_CIRCLE_CELLS) { ignored += size; continue; }
     if (size > largest) largest = size;
   }
-  return { frac: largest / total, largest, total, components };
+  return { frac: largest / Math.max(1, total - ignored), largest, total, components };
 }
 
 export interface BundleValidation {
@@ -137,9 +143,10 @@ export function validateMapRasters(
 
   // 2) Per-zone + whole-map connectivity.
   for (const { name, g } of grids) {
-    const { frac, total } = largestFreeFraction(g);
+    const isZone = /^map\d+\.pgm$/.test(name);
+    const { frac, total } = largestFreeFraction(g, isZone);
     stats[name] = { W: g.W, H: g.H, frac, total };
-    if (/^map\d+\.pgm$/.test(name)) {
+    if (isZone) {
       if (total > 0 && frac < perMapMin) {
         hardFailures.push(`${name}: zone free-space fragmented (largest component ${(frac * 100).toFixed(0)}% < ${(perMapMin * 100).toFixed(0)}%)`);
       }
