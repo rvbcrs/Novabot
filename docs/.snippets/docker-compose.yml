@@ -1,0 +1,36 @@
+services:
+  opennova:
+    image: rvbcrs/opennova:latest
+    container_name: opennova
+    restart: unless-stopped
+    init: true
+    ports:
+      - "80:80"       # HTTP: API, admin panel, dashboard
+      - "443:443"     # HTTPS: required by the official Novabot app
+      - "1883:1883"   # MQTT: mower and charger connect here
+    environment:
+      TZ: Europe/Amsterdam
+      PORT: 80
+      DB_PATH: /data/novabot.db
+      STORAGE_PATH: /data/storage
+      FIRMWARE_PATH: /data/firmware
+      ENABLE_TLS: "true"
+      ENABLE_DASHBOARD: "true"
+      TARGET_IP: 192.168.1.50        # <-- CHANGE THIS to this machine's LAN IP
+      # mDNS is done by opennova-mdns below
+      ENABLE_MDNS: "false"
+      MDNS_SIDECAR: "true"
+    volumes:
+      - ./data:/data
+
+  # Advertises opennova.local on your LAN so mowers with custom firmware find
+  # the server by name. Nothing to configure. On Docker Desktop it exits by
+  # itself (see "Where will it run?").
+  opennova-mdns:
+    image: rvbcrs/opennova:latest
+    container_name: opennova-mdns
+    restart: on-failure
+    network_mode: host
+    environment:
+      MDNS_ONLY: "true"
+      TZ: Europe/Amsterdam

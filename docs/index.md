@@ -1,66 +1,56 @@
 # OpenNova Wiki
 
-Welcome to the complete technical documentation for the **OpenNova** project -- an open-source local server replacement for Novabot robot mowers.
+**OpenNova** replaces the Novabot cloud with a server on your own network, so
+your Novabot mower and charging station keep working now that the company
+behind them is gone. This wiki is the documentation for it: how to install and
+use it, and, further down, how the mower, the charger and their protocols
+actually work.
 
-This project replaces the Novabot cloud (`app.lfibot.com` / `mqtt.lfibot.com`) with a local Node.js/TypeScript server, enabling the robot mower and charging station to operate fully offline. Devices are provisioned via **BLE with direct IP addresses**, so DNS rewrites and custom firmware are optional.
+!!! success "Start here"
+    **[Installing OpenNova](guide/docker.md)**: one page, one `docker-compose.yml`,
+    one line to change. Then **[DNS Setup](guide/dns-setup.md)** to point the
+    mower at it, and **[First Run](guide/getting-started.md)** for the app.
 
-!!! success "Getting started"
-    The recommended setup uses the **OpenNova mobile app** + **BLE provisioning** to point devices directly at your local server IP. No DNS rewrites or custom mower firmware required for basic operation.
+    No Docker experience? The **[Raspberry Pi Installer](guide/raspberry-pi-installer.md)**
+    writes a ready-made SD card.
 
-!!! warning "Novabot Cloud Unreliable"
-    The Novabot cloud (`app.lfibot.com` / `mqtt.lfibot.com`) has been experiencing frequent outages since March 2026. When the cloud is down, the official app and devices stop working. OpenNova keeps your mower operational **regardless of cloud status**.
+## Using OpenNova
 
-## Project Components
+- **[Admin Panel](user-guide/admin-panel.md)**: devices, maps, firmware, diagnostics
+- **[OpenNova App](user-guide/opennova-app.md)**: the mobile app that needs no DNS tricks
+- **[Stock vs. Custom Firmware](user-guide/stock-vs-custom-firmware.md)**: what custom firmware adds, and what it costs
+- **[Troubleshooting](user-guide/troubleshooting.md)**: start with *Why is it not coming online?* in the admin panel
 
-| Component | Directory | Technology | Purpose |
-|-----------|-----------|-----------|---------|
-| **Server** | `server/` | Express + Aedes MQTT + Socket.io | Local cloud replacement |
-| **OpenNova App** | `app/` | React Native + Expo | Mobile app (iOS/Android) |
-| **ESP32 OTA Tool** | `firmware/esp32-tool/` | PlatformIO + LVGL | Standalone provisioning + OTA device |
-| **Mower** | `mower/` | Python + ROS 2 | Open robot_decision replacement |
-| **Bootstrap wizard** | `bootstrap/` | Node.js + noble BLE | Desktop provisioning tool |
-| **Docker container** | — | Node.js + dnsmasq | Production deployment |
+## What is optional?
 
-## Current Firmware Versions
+| Feature | Needed? | When |
+|---|---|---|
+| OpenNova server | Yes | Always. Docker on Linux is the place for it. |
+| DNS redirect of `*.lfibot.com` | Usually | Needed for the official Novabot app and for stock firmware. |
+| BLE provisioning | Once | Points a device at your server directly, through the OpenNova app or the bootstrap tool. |
+| Custom mower firmware | No | Adds discovery by name, SSH, camera stream, and the map editing the dashboard builds on. |
 
-| Device | Firmware | MCU | Key Features |
-|--------|----------|-----|--------------|
-| Mower | `v6.0.2-custom-16` | STM32 v3.6.6 | SSH, mDNS discovery, camera stream, PIN lock fix |
-| Charger | `v0.4.0` (patched) | — | MQTT host patched to local server |
+## How it works
 
-## Known Devices
+- **[Architecture](architecture/overview.md)**: system design, hardware, network topology
+- **[HTTP API](api/overview.md)**: every REST endpoint (cloud API, dashboard, mower to server)
+- **[MQTT Protocol](mqtt/overview.md)**: the command reference with payloads
+- **[BLE Protocol](ble/overview.md)**: Bluetooth provisioning
+- **[LoRa Protocol](firmware/lora-protocol.md)**: charger to mower radio
+- **[Firmware](firmware/charger.md)**: charger (ESP32-S3) and mower (Horizon X3) analysis
+- **[Custom Firmware](firmware/custom-firmware.md)**: the build, the patches, the extended commands
+- **[Flow Diagrams](flows/charger-provisioning.md)**: the key workflows as diagrams
 
-| Device | Serial Number | Type | MQTT Client ID |
-|--------|--------------|------|----------------|
-| Charger (Base Station) | `LFIC1230700XXX` | ESP32-S3 | `ESP32_XXXXXX` |
-| Mower | `LFIN2230700XXX` | Horizon X3 (ARM64) | `LFIN2230700XXX_6688` |
+## The project
 
-## What's Optional?
+| Component | Directory | Technology |
+|---|---|---|
+| Server | `server/` | Express, Aedes MQTT, Socket.io |
+| OpenNova app | `app/` | React Native, Expo |
+| Dashboard | `dashboard/` | React, Vite, Leaflet |
+| Bootstrap tool | `bootstrap/` | Node.js, noble BLE |
+| ESP32 OTA tool | `firmware/esp32-tool/` | PlatformIO, LVGL |
+| Mower modules | `mower/` | Python, ROS 2 |
 
-| Feature | Required? | Details |
-|---------|-----------|---------|
-| **OpenNova server** | Yes | Local cloud replacement (Docker or native) |
-| **BLE provisioning** | Yes | Configures devices with direct server IP |
-| **DNS rewrites** | No | Only needed if using the official Novabot app instead of OpenNova app |
-| **Custom mower firmware** | No | Only needed for mDNS discovery, SSH access, camera streaming |
-
-## Documentation Sections
-
-- **[Architecture](architecture/overview.md)** -- System design, hardware, network topology, distribution model
-- **[HTTP API](api/overview.md)** -- All REST endpoints (cloud API, dashboard, mower-to-server)
-- **[MQTT Protocol](mqtt/overview.md)** -- Complete MQTT command reference with payloads
-- **[BLE Protocol](ble/overview.md)** -- Bluetooth Low Energy provisioning commands
-- **[LoRa Protocol](firmware/lora-protocol.md)** -- Charger <-> Mower radio communication
-- **[Firmware](firmware/charger.md)** -- Charger (ESP32-S3) and Mower (Horizon X3) firmware analysis
-- **[Custom Firmware](firmware/custom-firmware.md)** -- Build script, STM32 patches, extended commands (OPTIONAL)
-- **[Flow Diagrams](flows/charger-provisioning.md)** -- Mermaid diagrams for all key workflows
-
-## Quick Start
-
-```bash
-# Start the wiki
-docker compose -f docker-compose.wiki.yml up
-
-# Open in browser
-open http://localhost:8100
-```
+Source: [github.com/rvbcrs/Novabot](https://github.com/rvbcrs/Novabot). Bugs and
+wishes go to [GitHub Issues](https://github.com/rvbcrs/Novabot/issues).

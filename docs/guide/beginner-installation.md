@@ -229,21 +229,23 @@ has not refreshed your Docker group membership yet.
 Create one folder that will hold the configuration and data:
 
 ```bash
-mkdir -p ~/opennova/data
+mkdir -p ~/opennova
 cd ~/opennova
 ```
 
-Create an `.env` file:
+## Step 8: Create docker-compose.yml
+
+This is the same compose file as on [Installing OpenNova](docker.md); it is
+kept in one place so the two never drift apart. Create it:
 
 ```bash
-nano .env
+nano docker-compose.yml
 ```
 
-Paste this, replacing the IP address with your Raspberry Pi IP:
+Paste this, and change the `TARGET_IP` line to your Raspberry Pi's IP address:
 
-```env
-TZ=Europe/Amsterdam
-TARGET_IP=192.168.1.50
+```yaml
+--8<-- "docs/.snippets/docker-compose.yml"
 ```
 
 Save in nano:
@@ -252,49 +254,9 @@ Save in nano:
 2. Press `Enter`
 3. Press `Ctrl+X`
 
-## Step 8: Create docker-compose.yml
-
-Create the compose file:
-
-```bash
-nano docker-compose.yml
-```
-
-Paste:
-
-```yaml
-services:
-  opennova:
-    image: rvbcrs/opennova:latest
-    container_name: opennova
-    restart: unless-stopped
-    network_mode: host
-    environment:
-      TZ: ${TZ:-Europe/Amsterdam}
-      PORT: 80
-      DB_PATH: /data/novabot.db
-      STORAGE_PATH: /data/storage
-      FIRMWARE_PATH: /data/firmware
-      ENABLE_TLS: "true"
-      ENABLE_DASHBOARD: "true"
-      TARGET_IP: ${TARGET_IP:?set TARGET_IP in .env}
-      RENDER_BASE_URL: "http://${TARGET_IP}"
-
-      # Only enable this when you use the original Novabot app and want
-      # OpenNova itself to answer DNS for app.lfibot.com and mqtt.lfibot.com.
-      # ENABLE_DNS: "true"
-      # UPSTREAM_DNS: "1.1.1.1"
-    volumes:
-      - ./data:/data
-```
-
-Save with `Ctrl+O`, `Enter`, `Ctrl+X`.
-
-!!! note "Why host networking?"
-    This guide is for Raspberry Pi, which runs Linux directly. Host networking
-    lets OpenNova bind the normal ports directly on the Pi and makes local
-    discovery simpler. Do not use this same compose file on Docker Desktop for
-    macOS or Windows.
+!!! note "What is opennova-mdns?"
+    A second, tiny container that lets a mower on custom firmware find the Pi
+    by name. It needs no settings. You can ignore it; it takes care of itself.
 
 ## Step 9: Start OpenNova
 
@@ -526,11 +488,11 @@ OpenNova token.
 
 ### The Raspberry Pi IP changed
 
-Update the `.env` file:
+Change the `TARGET_IP` line in `docker-compose.yml` and restart:
 
 ```bash
 cd ~/opennova
-nano .env
+nano docker-compose.yml
 docker compose up -d
 ```
 

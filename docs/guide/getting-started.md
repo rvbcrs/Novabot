@@ -1,58 +1,16 @@
-# Getting Started
+# First Run: Connecting the App
 
-This guide walks you through setting up OpenNova with your Novabot mower and the official Novabot app.
+You have the container running and DNS pointed at it. This page is what comes
+next: the admin panel, the certificate on your phone, the first login, the
+first map. If you have not installed yet, start at [Installing OpenNova](docker.md).
 
-## Prerequisites
+## Before you start
 
-- OpenNova Docker container running (see [Docker Guide](docker.md))
-- DNS configured so `*.lfibot.com` resolves to your local network (see [DNS Setup](dns-setup.md))
-- Official Novabot app installed on your phone (iOS or Android)
+- OpenNova is running (see [Installing OpenNova](docker.md))
+- `*.lfibot.com` resolves to your server on your network (see [DNS Setup](dns-setup.md))
+- The official Novabot app, or the [OpenNova app](../user-guide/opennova-app.md), on your phone
 
-## Step 1: Start the Container
-
-Make sure your `docker-compose.yml` includes **port 443** and **ENABLE_TLS**. The official Novabot app connects via HTTPS, without this the app will show "network connection is abnormal":
-
-```yaml
-services:
-  opennova:
-    image: rvbcrs/opennova:latest
-    container_name: opennova
-    restart: unless-stopped
-    ports:
-      - "80:80"       # HTTP (API + admin panel + mower connectivity check)
-      - "443:443"     # HTTPS (required for Novabot app)
-      - "1883:1883"   # MQTT broker
-    environment:
-      TZ: "Europe/Amsterdam"
-      PORT: 80
-      DB_PATH: /data/novabot.db
-      STORAGE_PATH: /data/storage
-      FIRMWARE_PATH: /data/firmware
-      ENABLE_TLS: "true"
-      ENABLE_DASHBOARD: "true"
-      # MUST be your server's LAN IP. Without TARGET_IP the entrypoint skips
-      # TLS cert generation entirely (see docker-entrypoint.sh).
-      TARGET_IP: "192.168.0.50"
-    volumes:
-      - ./data:/data
-```
-
-See the [Docker Guide](docker.md) for the full environment-variable reference (DNS, Home Assistant bridge, ntfy, remote support).
-
-Start the container:
-
-```bash
-docker compose up -d
-```
-
-Verify it's running:
-```bash
-docker compose logs -f
-```
-
-You should see the MQTT broker starting and TLS enabled on port 443.
-
-## Step 2: Access the Admin Page
+## Step 1: Open the admin panel
 
 Open your browser and go to:
 
@@ -81,7 +39,7 @@ If DNS is not configured, either:
 - Use the built-in **dnsmasq** (click Start) and point your router's DNS to the container IP
 - Or configure DNS rewrites in AdGuard Home / Pi-hole
 
-## Step 3: Import Your Devices (if you skipped the wizard)
+## Step 2: Import your devices (if you skipped the wizard)
 
 If you skipped the setup wizard, you can import from the admin **Settings** tab > **Cloud Import**:
 
@@ -89,7 +47,7 @@ If you skipped the setup wizard, you can import from the admin **Settings** tab 
 2. Click **Connect & Import**
 3. Your mower and charger will be imported with their serial numbers and credentials
 
-## Step 4: Connect the Novabot App
+## Step 3: Connect the Novabot app
 
 ### Install the SSL certificate (iOS required, Android optional)
 
@@ -135,7 +93,7 @@ After logging in, you should see:
 
 In the admin **Console** tab, you should see MQTT traffic from the app (blue) and devices (green/yellow).
 
-## Step 5: Create a Map
+## Step 4: Create a map
 
 Using the **official Novabot app**:
 
@@ -147,7 +105,7 @@ Using the **official Novabot app**:
 
 The map will be synced to your OpenNova server automatically.
 
-## Step 6: Start Mowing
+## Step 5: Start mowing
 
 From the official Novabot app or the OpenNova app:
 

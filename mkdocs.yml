@@ -71,6 +71,13 @@ markdown_extensions:
   - toc:
       permalink: true
 
+# Not part of the published wiki: internal plans and specs, the tester
+# checklist, and the text that goes on Docker Hub. They only confused search.
+exclude_docs: |
+  superpowers/
+  TESTER-GUIDE.md
+  dockerhub-overview.md
+
 plugins:
   - search
   - tags
@@ -85,10 +92,12 @@ nav:
     - Troubleshooting: user-guide/troubleshooting.md
     - LFI Knowledge Base (archived): reference/NOVABOT-ZENDESK-WIKI.md
   - Getting Started:
-    - Raspberry Pi Installer: guide/raspberry-pi-installer.md
-    - Beginner Installation: guide/beginner-installation.md
-    - Docker Container: guide/docker.md
+    - Installing OpenNova: guide/docker.md
     - DNS Setup: guide/dns-setup.md
+    - First Run (the app): guide/getting-started.md
+    - Raspberry Pi Installer: guide/raspberry-pi-installer.md
+    - Raspberry Pi by Hand: guide/beginner-installation.md
+    - Discovery by Name (mDNS): guide/auto-discovery.md
     - Bootstrap Tool: guide/bootstrap.md
     - ESP32 OTA Tool: guide/esp32-tool.md
     - Notifications & Push: guide/notifications.md

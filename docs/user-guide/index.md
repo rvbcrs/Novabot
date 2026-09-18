@@ -24,8 +24,8 @@ A small always-on computer to run the server. Anything works as long as it has D
 | Synology / QNAP / ZimaOS / TrueNAS | Easiest — install Docker, run one container |
 | Raspberry Pi 4 or 5 | Cheap, low power, sits in a drawer |
 | Old laptop or PC running Linux | Free if you already have one |
-| Mac mini / Mac with Docker Desktop | Works for testing, but [mDNS is limited](#known-limitations) — better to run on Linux |
-| Windows PC running Docker | Same mDNS caveat as Mac |
+| Mac mini / Mac with Docker Desktop | Works, with one limitation: no discovery by name from inside Docker Desktop; the mower comes in through the DNS redirect. And the Mac has to stay awake. |
+| Windows PC running Docker | Not recommended. Same limitation as the Mac plus port and firewall quirks; a Raspberry Pi is cheaper than the debugging. |
 
 You do **not** need a powerful machine. The mower does the hard work — the server just stores data and routes messages.
 
@@ -33,9 +33,9 @@ You do **not** need a powerful machine. The mower does the hard work — the ser
 
 | If you want to… | Read |
 |-----------------|------|
-| Start from zero with a Raspberry Pi | [Beginner Installation](../guide/beginner-installation.md) |
-| Get OpenNova running for the first time | [First-time setup](../guide/getting-started.md) |
-| Set up Docker on a NAS / Raspberry Pi | [Docker Guide](../guide/docker.md) |
+| Install OpenNova (any Linux box, NAS, Mac) | [Installing OpenNova](../guide/docker.md) |
+| Start from zero with a Raspberry Pi | [Raspberry Pi Installer](../guide/raspberry-pi-installer.md), or [by hand](../guide/beginner-installation.md) |
+| Connect the app after installing | [First Run](../guide/getting-started.md) |
 | Configure DNS so the app finds your server | [DNS Setup](../guide/dns-setup.md) |
 | Find your way around the server's admin web UI | [Admin Panel](admin-panel.md) |
 | Back up + restore your maps | [Map Backup & Restore](map-backup-restore.md) |

@@ -249,27 +249,22 @@ The OpenNova Docker container includes a built-in DNS server. This is the easies
 
 ### Enable in docker-compose.yml
 
+Take the compose from [Installing OpenNova](docker.md) and add three lines to
+the `opennova` service: one port and two environment variables.
+
 ```yaml
-# Minimal subset for DNS setup, see docker.md for the full compose file
-services:
-  opennova:
     ports:
-      - "80:80"
-      - "443:443"       # HTTPS (required for Novabot app)
-      - "1883:1883"     # MQTT broker
-      - "53:53/udp"     # Add this for built-in DNS
+      - "53:53/udp"                    # add this
     environment:
-      PORT: 80
-      ENABLE_TLS: "true"               # Required for Novabot app
-      ENABLE_DNS: "true"               # Add this
-      TARGET_IP: "192.168.0.50"        # Your server IP
-      UPSTREAM_DNS: "8.8.8.8"          # Fallback DNS (Google)
+      ENABLE_DNS: "true"               # add this
+      UPSTREAM_DNS: "8.8.8.8"          # add this: where everything else goes
 ```
 
-Then restart:
+`TARGET_IP` is already set in that compose; the built-in DNS answers
+`*.lfibot.com` with it. Then:
 
 ```bash
-docker compose down && docker compose up -d
+docker compose up -d
 ```
 
 ### Point Your Router to OpenNova

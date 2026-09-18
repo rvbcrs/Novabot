@@ -20,13 +20,10 @@ services:
       - "80:80"       # HTTP (API + admin panel + mower connectivity check)
       - "443:443"     # HTTPS (required for Novabot app)
       - "1883:1883"   # MQTT broker
-      # mDNS — used by custom-firmware mowers to auto-discover this server
-      # on the LAN. Mind: on a bridge this mapping alone is NOT enough. The
-      # mower asks 224.0.0.251 (multicast) and that never reaches docker0;
-      # the opennova-mdns service below does the advertising from the host
-      # network instead. Without either, mowers fall back to the DNS rewrite
-      # of mqtt.lfibot.com. See docs/guide/auto-discovery.md.
-      - "5353:5353/udp"
+      # No 5353/udp here on purpose: on a bridge that mapping cannot carry
+      # mDNS (the mower asks 224.0.0.251, multicast, which never reaches
+      # docker0). The opennova-mdns service below advertises from the host
+      # network instead. See docs/guide/auto-discovery.md.
       # - "53:53/udp" # DNS (optional — requires ENABLE_DNS + TARGET_IP)
     environment:
       # Timezone — must match the timezone used by the app when creating schedules

@@ -1,367 +1,269 @@
-# Docker Container Guide
+# Installing OpenNova
 
-The OpenNova server runs as a single Docker container that replaces the Novabot cloud. It includes an MQTT broker, REST API, real-time dashboard, and optional DNS/TLS services.
+OpenNova runs as a Docker container and replaces the Novabot cloud on your own
+network. This page is the one place for the `docker-compose.yml`: every other
+page links here instead of showing its own copy.
 
-## What's Inside
+## Where will it run?
 
-| Component | Port | Purpose |
-|-----------|------|---------|
-| **Express Server** | 80/3000 | REST API + WebSocket (Socket.io) |
-| **MQTT Broker** | 1883 | Device communication (Aedes) |
-| **dnsmasq** | 53 | DNS redirect for Novabot app (optional) |
-| **nginx** | 443 | TLS termination for iOS app (optional) |
-| **SQLite** | — | Persistent database |
+Pick your situation. It decides everything below.
 
-## Prerequisites
+=== "Linux (recommended)"
 
-- **Docker** 20.10+ and Docker Compose v2
-- A device on the same **local network** as your mower and charger
-- Supported platforms: macOS, Linux, Windows (WSL2), NAS (Synology, QNAP)
+    A NAS (Synology, QNAP, ZimaOS, UGREEN), a Raspberry Pi, a Proxmox VM, or
+    any Linux box with Docker. **This is the setup that needs nothing extra**:
+    the compose below includes a small mDNS helper, so mowers with custom
+    firmware find the server by name on their own. Continue with
+    [Quick start](#quick-start).
 
-!!! note "No cloud dependency"
-    OpenNova runs entirely on your local network. No internet connection required after initial setup.
+=== "macOS (Docker Desktop)"
 
-## Quick Start
+    Works, with one limitation: Docker Desktop runs containers inside a VM, and
+    nothing inside that VM can be discovered by mDNS on your LAN. The compose
+    below still works unchanged (the mDNS helper notices the VM and exits
+    quietly); your mower reaches the server through the [DNS redirect](dns-setup.md)
+    instead, which you need for the stock app anyway. A Mac also has to stay
+    on and awake for the mower to keep working.
 
-### 1. Pull the Docker image
+=== "Windows"
 
-```bash
-docker pull rvbcrs/opennova:latest
-```
+    Not recommended. Docker on Windows has the same VM limitation as macOS,
+    plus port and firewall quirks that are hard to support. A Raspberry Pi 4
+    or 5 costs less than an afternoon of debugging: see the
+    [Raspberry Pi Installer](raspberry-pi-installer.md).
 
-### 2. Create docker-compose.yml
+## Quick start
 
-Create a new directory and a `docker-compose.yml` file:
+### 1. Create `docker-compose.yml`
 
-```bash
-mkdir opennova && cd opennova
-```
+Put this in an empty folder. **Change one line: `TARGET_IP`**, the LAN address
+of the machine you are installing on (find it with `ip a` on Linux or in
+System Settings → Network on a Mac).
 
 ```yaml
-services:
-  opennova:
-    image: rvbcrs/opennova:latest
-    container_name: opennova
-    restart: unless-stopped
-    ports:
-      - "80:80"       # HTTP (API + admin panel + mower connectivity check)
-      - "443:443"     # HTTPS (required for Novabot app)
-      - "1883:1883"   # MQTT broker
-    environment:
-      PORT: 80
-      ENABLE_TLS: "true"  # Required for the official Novabot app (HTTPS)
-    volumes:
-      - novabot-data:/data
-
-volumes:
-  novabot-data:
+--8<-- "docs/.snippets/docker-compose.yml"
 ```
 
-### 3. Start the container
+!!! note "Port 80 or 443 already in use?"
+    Change only the left-hand number, for example `"8080:80"`. Keep `PORT: 80`
+    as it is; that is the port *inside* the container. The mDNS helper is not
+    affected: it uses no ports but `5353/udp`, and shares that with avahi if
+    your host runs it.
+
+The full compose in the repository, [`docker-compose.yml`](https://github.com/rvbcrs/Novabot/blob/master/docker-compose.yml),
+has every optional setting (Home Assistant, push notifications, remote
+support) with comments. Start from the one above; add options from there when
+you need them.
+
+### 2. Start it
 
 ```bash
 docker compose up -d
+docker compose logs -f --tail 50
 ```
 
-!!! note "No git clone needed"
-    You do NOT need to clone the repository. The Docker image from Docker Hub contains everything. The `docker-compose.yml` above is all you need.
+You should see `HTTP + WebSocket listening on port 80` and `[MQTT] Broker
+luistert op port 1883`. On Linux, `docker logs opennova-mdns` shows one line:
+`advertising opennova.local -> <your IP> on 5353/udp (host network, detected)`.
 
-### 4. Verify it's running
+### 3. Open the admin panel
+
+Go to **http://TARGET_IP/admin** (or `:8080/admin` if you changed the port).
+With an empty database you get the setup page:
+
+- Enter your Novabot cloud credentials to import your account and devices, or
+- **Skip cloud import — create local account** (`admin@local`, password `admin`).
+
+### 4. Point the mower at your server
+
+The mower and charger look for `mqtt.lfibot.com` and `app.lfibot.com`. Those
+names have to resolve to `TARGET_IP` on your network. The
+[DNS Setup](dns-setup.md) page covers the two ways to do that (your router or
+Pi-hole, or OpenNova's built-in DNS). Then power-cycle the mower so it picks
+up the new address.
+
+Mowers on [custom firmware](../firmware/custom-firmware.md) also find the
+server by name through mDNS, which is what `opennova-mdns` is for. On Linux
+that works out of the box; it is a second way in, not a replacement for the
+DNS redirect.
+
+### 5. Log in with the app
+
+Open the official Novabot app (or the OpenNova app) and log in with your
+normal account. The first login creates your local account from the cloud and
+imports your devices; from then on the app talks to your server only.
+
+!!! tip "iOS and the self-signed certificate"
+    The iOS Novabot app requires HTTPS. Open **http://TARGET_IP/api/setup/profile**
+    on the iPhone to install a profile with the certificate and the DNS
+    settings, then trust the certificate under Settings → General → About →
+    Certificate Trust Settings.
+
+## Checking that it works
+
+The admin panel has **Why is it not coming online?** on every device. It
+checks the server (disk, a competing MQTT broker, container network, mDNS),
+reachability (DNS, the device's address, Wi-Fi) and the connection itself, and
+names the first thing that blocks. Use it before reading any of the sections
+below.
+
+## Configuration reference
+
+Everything is set through `environment:` in the compose file.
+
+### Core
+
+| Variable | Default | Description |
+|---|---|---|
+| `TARGET_IP` | — | **Required.** This machine's LAN IP. Used in firmware download URLs, the TLS certificate and the built-in DNS. |
+| `PORT` | `80` | HTTP port inside the container. Change the port mapping, not this. |
+| `TZ` | `Europe/Amsterdam` | Timezone. Must match the app, or schedules shift. |
+| `ENABLE_TLS` | `false` | HTTPS on 443 with a self-signed certificate. Required by the official app. |
+| `ENABLE_DASHBOARD` | `false` | The web dashboard at `/`. |
+| `DB_PATH`, `STORAGE_PATH`, `FIRMWARE_PATH` | `/data/...` | Where data lives inside the container. Leave as is. |
+
+### mDNS (mower discovery by name)
+
+| Variable | Default | Description |
+|---|---|---|
+| `ENABLE_MDNS` | `true` | Advertise `opennova.local` from this container. Set to `false` when `opennova-mdns` runs; inside a bridged container the advertiser only ever hears itself. |
+| `MDNS_SIDECAR` | — | `true` tells the diagnosis that `opennova-mdns` does the advertising. |
+| `MDNS_ONLY` | — | `true` turns a container into the mDNS helper and nothing else. |
+| `MDNS_HOSTNAMES` | `opennova.local,opennovabot.local` | Names to advertise. |
+
+### Built-in DNS (optional)
+
+Only if you cannot add DNS rewrites on your router or Pi-hole. See [DNS Setup](dns-setup.md).
+
+| Variable | Default | Description |
+|---|---|---|
+| `ENABLE_DNS` | `false` | Run dnsmasq that answers `*.lfibot.com` with `TARGET_IP`. Needs `"53:53/udp"` in `ports:`. |
+| `UPSTREAM_DNS` | `8.8.8.8` | Where everything else is forwarded. |
+
+### Home Assistant (optional)
+
+| Variable | Default | Description |
+|---|---|---|
+| `HA_MQTT_HOST` | — | Your HA MQTT broker. Setting this turns the bridge on. |
+| `HA_MQTT_PORT` | `1883` | |
+| `HA_MQTT_USER`, `HA_MQTT_PASS` | — | Broker credentials. |
+| `HA_DISCOVERY_PREFIX` | `homeassistant` | MQTT discovery prefix. |
+| `HA_MAP_THROTTLE_MS` | `15000` | Minimum interval between map image republishes. |
+| `HA_WEBHOOK_URL` | — | Full event JSON is POSTed here. |
+| `RENDER_BASE_URL` | — | Public base URL of this server, so HA can fetch the map image. |
+
+### Notifications (optional)
+
+See [Notifications & Push](notifications.md).
+
+| Variable | Default | Description |
+|---|---|---|
+| `NTFY_TOPIC` | — | ntfy.sh topic. Setting this turns push on. |
+| `NTFY_URL` | `https://ntfy.sh` | |
+| `NTFY_PRIORITY` | — | 1 to 5. |
+| `LOW_BATTERY_THRESHOLD` | `20` | Battery % for the low-battery event. |
+
+### Other
+
+| Variable | Default | Description |
+|---|---|---|
+| `OTA_BASE_URL` | `http://TARGET_IP[:PORT]` | Base URL the mower downloads firmware from. Set it when the server sits behind a proxy or a changed port mapping, e.g. `http://192.168.1.50:8080`. |
+| `REMOTE_SUPPORT_RELAY_ENABLED` | `false` | Allow the remote support tunnel to be switched on from the admin panel. |
+| `LOG_LEVEL` | — | `verbose` logs every request and response. |
+
+## Advanced: host networking
+
+`docker-compose.linux.yml` in the repository runs the main container with
+`network_mode: host` instead of a bridge. You do not need it for mDNS any more;
+`opennova-mdns` covers that. What it still gives you:
+
+- the mower's real IP in the server logs and the device registry (on a bridge
+  the server sees docker's gateway instead),
+- direct access to the mower's camera stream without a proxy hop.
+
+The price: ports 80, 443 and 1883 must be free on the host, so it rarely fits
+on a NAS. Use it on a Raspberry Pi or a dedicated box, and then leave
+`opennova-mdns` out; the main container advertises itself.
+
+## Ports and firewall
+
+| Port | Purpose |
+|---|---|
+| **80/tcp** | HTTP: API, admin panel, dashboard, and the mower's own connectivity check |
+| **443/tcp** | HTTPS, only with `ENABLE_TLS=true` |
+| **1883/tcp** | MQTT: mower and charger |
+| **5353/udp** | mDNS, used by `opennova-mdns` on the host network |
+| **53/udp** | Built-in DNS, only with `ENABLE_DNS=true` |
+
+The mower's Wi-Fi is **2.4 GHz only**.
+
+## Data
+
+Everything lives in `./data` next to your compose file:
+
+```
+data/
+  novabot.db      # SQLite: users, devices, maps, schedules
+  storage/        # uploaded files: map bundles, overlays
+  firmware/       # OTA firmware files
+  certs/          # TLS certificate, generated on first start
+```
+
+**Backup**: stop nothing, just copy the folder.
 
 ```bash
-# Check container status
-docker compose ps
-
-# Check health endpoint
-curl http://localhost/api/setup/health
+tar czf opennova-backup-$(date +%F).tgz data/
 ```
 
-You should see:
-```json
-{"server":"ok","mqtt":"ok","version":"..."}
-```
-
-### 5. Set up DNS redirect
-
-Your mower and charger need to find your server when they look up `mqtt.lfibot.com`. See the [DNS Setup Guide](dns-setup.md) for detailed instructions.
-
-### 6. Log in with the Novabot app
-
-Open the official Novabot app and log in with your normal account. The server automatically:
-
-1. **Detects you're a new user** (not in the local database)
-2. **Verifies your credentials** with the Novabot cloud
-3. **Creates your local account** (first user becomes admin)
-4. **Imports your devices** from the cloud
-
-From this point on, the app talks to your local server — no cloud needed.
-
-!!! tip "Restart your mower"
-    After setting up DNS, restart the mower (power off, wait 10s, power on) so it picks up the new DNS settings and connects to your server.
-
-### Fallback: Admin Panel
-
-If the Novabot cloud is down or automatic login doesn't work:
-
-1. Open **http://your-server-ip/admin**
-2. With an empty database, you'll see a **"Welcome to OpenNova"** setup page
-3. Enter your Novabot cloud credentials to import your account + devices
-4. Or click **"Skip — Create Local Account"** (creates admin@local with password admin)
-
-## Configuration Reference
-
-### Required Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PORT` | `80` | Internal HTTP port (mapped to 3000 externally) |
-| `DB_PATH` | `/data/novabot.db` | SQLite database location |
-| `STORAGE_PATH` | `/data/storage` | Upload storage (maps, firmware) |
-| `FIRMWARE_PATH` | `/data/firmware` | OTA firmware directory |
-
-### Optional: DNS Redirect
-
-Only needed if you use the **original Novabot app** (not the OpenNova app).
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `ENABLE_DNS` | `false` | Enable integrated dnsmasq |
-| `TARGET_IP` | — | Your server's LAN IP address |
-| `UPSTREAM_DNS` | `8.8.8.8` | Fallback DNS server |
-
-```yaml
-# docker-compose.yml — uncomment DNS port + env vars:
-ports:
-  - "53:53/udp"
-environment:
-  ENABLE_DNS: "true"
-  TARGET_IP: "192.168.0.100"
-```
-
-### Optional: TLS/HTTPS
-
-Only needed for the **Novabot iOS app** which requires HTTPS.
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `ENABLE_TLS` | `false` | Enable nginx with self-signed certificate |
-| `TARGET_IP` | — | Your server's LAN IP (included in cert SAN) |
-
-```yaml
-ports:
-  - "443:443"
-environment:
-  ENABLE_TLS: "true"
-  TARGET_IP: "192.168.0.100"
-```
-
-A self-signed certificate is auto-generated on first start. For iOS, install the CA profile — see [iOS TLS Setup](#ios-tls-setup).
-
-### Optional: Home Assistant
-
-Bridge mower sensor data to Home Assistant via MQTT auto-discovery.
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `HA_MQTT_HOST` | — | Home Assistant MQTT broker IP |
-| `HA_MQTT_PORT` | `1883` | MQTT broker port |
-| `HA_MQTT_USER` | — | MQTT username |
-| `HA_MQTT_PASS` | — | MQTT password |
-| `HA_DISCOVERY_PREFIX` | `homeassistant` | MQTT discovery prefix |
-| `HA_THROTTLE_MS` | `1000` | Sensor update throttle (ms) |
-
-```yaml
-environment:
-  HA_MQTT_HOST: "192.168.0.248"
-  HA_MQTT_USER: "mqtt"
-  HA_MQTT_PASS: "mqtt"
-```
-
-Entities will auto-appear in Home Assistant under the device name matching the mower/charger serial number.
-
-### All Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PORT` | `80` | Internal HTTP port |
-| `DB_PATH` | `/data/novabot.db` | Database path |
-| `STORAGE_PATH` | `/data/storage` | File storage path |
-| `FIRMWARE_PATH` | `/data/firmware` | OTA firmware path |
-| `TARGET_IP` | — | Server LAN IP (for TLS/DNS) |
-| `ENABLE_TLS` | `false` | Enable HTTPS via nginx |
-| `ENABLE_DNS` | `false` | Enable DNS redirect |
-| `UPSTREAM_DNS` | `8.8.8.8` | Fallback DNS |
-| `HA_MQTT_HOST` | — | Home Assistant MQTT host |
-| `HA_MQTT_PORT` | `1883` | Home Assistant MQTT port |
-| `HA_MQTT_USER` | — | MQTT username |
-| `HA_MQTT_PASS` | — | MQTT password |
-| `HA_DISCOVERY_PREFIX` | `homeassistant` | HA MQTT prefix |
-| `HA_THROTTLE_MS` | `1000` | HA sensor throttle |
-| `ADMIN_EMAIL` | — | Auto-promote user to admin |
-| `LOG_LEVEL` | `verbose` | Logging verbosity |
-| `ENABLE_DASHBOARD` | `false` | Enable web dashboard UI |
-| `CORS_ORIGIN` | — | CORS allowed origin |
-| `PROXY_MODE` | `local` | `local` or `cloud` (proxy to upstream) |
-| `OTA_BASE_URL` | — | Firmware download base URL |
-
-## Docker Compose Variants
-
-### macOS / NAS (default)
+**Restore**: stop the container, put the folder back, start it.
 
 ```bash
+docker compose down
+tar xzf opennova-backup-2026-09-18.tgz
 docker compose up -d
-```
-
-Uses **bridge networking**. Ports are mapped via Docker. Suitable for macOS, Synology, QNAP, ZimaOS.
-
-!!! note "mDNS on a bridge: the `opennova-mdns` sidecar"
-    A container on docker's bridge cannot be discovered by mDNS on its own. The
-    mower asks `224.0.0.251:5353`, a multicast address, and that never reaches
-    `docker0`; the `5353:5353/udp` port mapping only catches packets sent to
-    the host's own address. So `docker-compose.yml` runs a second, tiny service,
-    `opennova-mdns`, with `network_mode: host`. It is the same image, it claims
-    only `5353/udp`, and it shares that port with avahi if your host runs one.
-    There is nothing to configure: on the host network it sees the LAN address
-    of the host itself and advertises `opennova.local` for it. The main
-    container keeps its bridge and port mappings.
-
-    It only helps on Linux hosts (NAS, Raspberry Pi, ZimaOS). On Docker Desktop
-    for macOS or Windows a host-network container still sits inside a VM and
-    never reaches your LAN; the sidecar notices that and exits quietly, and
-    discovery there works through the bootstrap tool.
-
-    Whether a mower actually hears the name is measured on the mower, in the
-    connection diagnosis under **Mower → mDNS**. The server-side mDNS row cannot
-    prove it from inside a bridged container.
-
-### Linux (host networking)
-
-```bash
-docker compose -f docker-compose.linux.yml up -d
-```
-
-Uses **host networking** for direct LAN access. Required if you need:
-
-- Real client IP detection (for SSH map uploads)
-- mDNS discovery
-- Direct port binding without NAT
-
-## Ports & Firewall
-
-Ensure these ports are accessible on your server:
-
-| Port | Direction | Purpose |
-|------|-----------|---------|
-| **3000** | Inbound | API + App connection (or 80 on Linux) |
-| **1883** | Inbound | MQTT — mower and charger connect here |
-| **443** | Inbound | HTTPS — only if `ENABLE_TLS=true` |
-| **53/udp** | Inbound | DNS — only if `ENABLE_DNS=true` |
-
-## Data Persistence
-
-All data is stored in the `novabot-data` Docker volume:
-
-```
-/data/
-  novabot.db          # SQLite database (users, equipment, maps, schedules)
-  storage/            # Uploaded files (map ZIPs, firmware)
-  firmware/           # OTA firmware files
-  certs/              # TLS certificates (auto-generated)
-```
-
-### Backup
-
-```bash
-# Backup database
-docker compose exec opennova cp /data/novabot.db /data/novabot-backup.db
-docker compose cp opennova:/data/novabot-backup.db ./novabot-backup.db
-
-# Backup everything
-docker compose cp opennova:/data ./opennova-backup
-```
-
-### Restore
-
-```bash
-docker compose cp ./novabot-backup.db opennova:/data/novabot.db
-docker compose restart opennova
 ```
 
 ## Upgrading
 
 ```bash
-# Pull latest image
 docker compose pull
-
-# Restart with new version
-docker compose down && docker compose up -d
-
-# Check logs
+docker compose up -d
 docker compose logs -f --tail 50
 ```
 
-Database migrations run automatically on startup.
+`up -d` recreates only what changed. The database is migrated on start.
 
 ## Troubleshooting
 
-### Container won't start
+Start with **Why is it not coming online?** in the admin panel. Then:
 
-```bash
-# Check logs
-docker compose logs opennova
+**The container does not start.** `docker compose logs opennova`. The usual
+suspects: port 1883 taken by another MQTT broker, port 80 taken by the NAS
+itself (change the mapping, see above), port 53 taken by `systemd-resolved`
+(only with `ENABLE_DNS`; stop that service or use your router's DNS instead).
 
-# Common issues:
-# - Port 1883 already in use (another MQTT broker)
-# - Port 53 in use (systemd-resolved on Linux)
-```
+**`opennova-mdns` keeps restarting.** `docker logs opennova-mdns`. If it says
+the image predates the sidecar, pull again. On Docker Desktop it exits once and
+stays stopped; that is intended.
 
-### Port 53 conflict (Linux)
+**The mower does not connect.** In this order: does `mqtt.lfibot.com` resolve
+to `TARGET_IP` from another device on the LAN; is 1883 reachable
+(`nc -zv TARGET_IP 1883`); is the mower on 2.4 GHz; did you power-cycle it after
+changing DNS.
 
-If `ENABLE_DNS=true` and port 53 is taken by systemd-resolved:
+**Start over.** `docker compose down`, delete `data/`, `docker compose up -d`.
+This removes all users, devices, maps and schedules.
 
-```bash
-sudo systemctl stop systemd-resolved
-sudo systemctl disable systemd-resolved
-```
-
-Or use a different DNS approach (Pi-hole, AdGuard).
-
-### Mower not connecting
-
-1. Check that DNS `mqtt.lfibot.com` resolves to your server IP
-2. Verify port 1883 is reachable: `nc -zv your-server-ip 1883`
-3. Check MQTT logs: `docker compose logs opennova | grep MQTT`
-4. Mower WiFi must be on **2.4 GHz** (5 GHz not supported)
-
-### Database reset
-
-```bash
-docker compose down
-docker volume rm novabot_novabot-data
-docker compose up -d
-```
-
-!!! warning
-    This deletes ALL data (users, devices, maps, schedules).
-
-## iOS TLS Setup
-
-If using the original Novabot iOS app with `ENABLE_TLS=true`:
-
-1. Open **http://your-server-ip/api/setup/ios-profile** on your iPhone
-2. Install the configuration profile (Settings → General → VPN & Device Management)
-3. Trust the certificate (Settings → General → About → Certificate Trust Settings)
-4. The app will now accept the self-signed certificate
-
-## Network Diagram
+## How it fits together
 
 ```mermaid
 graph TB
-    subgraph Your Network
-        M[Mower] -->|MQTT 1883| S[OpenNova Docker]
+    subgraph Your network
+        M[Mower] -->|MQTT 1883| S[opennova]
         C[Charger] -->|MQTT 1883| S
-        P[OpenNova App] -->|HTTP 3000| S
+        M -.->|opennova.local?| X[opennova-mdns]
+        P[Novabot / OpenNova app] -->|HTTPS 443| S
         HA[Home Assistant] <-->|MQTT| S
     end
-    S -->|SQLite| DB[(Database)]
+    S --> D[(data/)]
 ```

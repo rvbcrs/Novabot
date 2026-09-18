@@ -235,7 +235,7 @@ flowchart TD
     H --> J
 ```
 
-The mDNS discovery is implemented as a raw Python socket query (no external dependencies). It queries for `opennovabot.local`, which is advertised by the bootstrap wizard running on the host machine.
+The mDNS discovery is implemented as a raw Python socket query (no external dependencies). It queries for `opennovabot.local` (and `opennova.local`), which the OpenNova server advertises: on Linux through the `opennova-mdns` helper in the standard compose, on a Mac through the bootstrap tool. With the standard compose there is nothing to enable for this; see [Discovery by Name](../guide/auto-discovery.md).
 
 !!! warning "Critical: `http_address.txt` format"
     The firmware prepends `http://` when building URLs. The file must contain ONLY `host:port` (e.g. `192.168.0.222`), with **NO** `http://` prefix and **NO** trailing newline. The build script uses `printf "%s"` instead of `echo` for this reason.

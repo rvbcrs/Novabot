@@ -24,9 +24,10 @@ within ~3 minutes it has followed you over.
 
 ## Migrating laptop → NAS
 
-1. Install OpenNova on the NAS (CasaOS / docker compose / `docker run`).
-   Make sure the container has `5353/udp` exposed and `ENABLE_MDNS=true`
-   (default).
+1. Install OpenNova on the NAS with the compose from
+   [Installing OpenNova](docker.md). It includes `opennova-mdns`, the helper
+   that does the advertising from the host network; the main container on
+   docker's bridge cannot be heard on the LAN by itself.
 2. Copy the `data/` directory off the laptop container to the NAS so the
    account, devices, and maps follow:
    ```bash
@@ -54,8 +55,11 @@ flat home LANs (single subnet, single SSID, no VLAN bridge). It does
   enabled (Unifi has this in network settings; eero / Google WiFi
   generally do not).
 - Some "guest network" SSIDs that isolate clients.
-- Docker bridge networking without `--network host` or a published
-  `5353/udp` mapping.
+- A container on docker's bridge, on its own. Multicast never reaches
+  `docker0`, and a published `5353/udp` mapping does not change that (it
+  only catches packets sent to the host's own address). That is what the
+  `opennova-mdns` helper in the standard compose is for: it runs on the host
+  network and advertises for the main container.
 
 If mDNS is blocked on your network, fall back to the original DNS
 rewrite path: point `mqtt.lfibot.com` at the OpenNova IP via Pi-hole,
@@ -88,7 +92,7 @@ reconnects to a new broker. You'll see it in three places:
 - `GET /api/events/<SN>?limit=10` — the most recent event includes
   `event_type: server_migrated` with `from_ip` / `to_ip`.
 
-If you set `NTFY_TOPIC` in `.env`, the migration also pushes a
+If you set `NTFY_TOPIC` in your compose, the migration also pushes a
 notification to your phone.
 
 ## Configuration knobs
@@ -128,117 +132,27 @@ hostname at the server via your network's DNS (Pi-hole, AdGuard,
 router DNS rewrite, or the container's built-in `ENABLE_DNS=true`
 dnsmasq).
 
-## Port 5353 already in use on the host (ZimaOS / CasaOS / Synology)
+## avahi already on the host (ZimaOS, CasaOS, Synology)
 
-If your NAS already runs an `avahi-daemon` (ZimaOS, CasaOS, Synology,
-most Linux distros with desktop bits), the OpenNova container can't
-bind UDP port 5353 — it's already taken. The container start will fail
-or silently skip the advertiser.
+Most NAS systems run `avahi-daemon`, which also listens on `5353/udp`. That
+is fine: mDNS responders are built to share that port (`SO_REUSEADDR` plus the
+multicast group), and `opennova-mdns` does. Both answer; avahi for the NAS's
+own name, `opennova-mdns` for `opennova.local`. Nothing to configure.
 
-Diagnosis from a shell on the NAS:
-
-```bash
-sudo ss -ulnp | grep :5353
-# UNCONN  ...  *:5353  ...  users:(("avahi-daemon",pid=...,fd=...))
-```
-
-The fix is to disable the in-container advertiser and use the host's
-existing avahi-daemon to publish the same A-records. avahi already
-listens on 5353; we just give it two extra hostnames to answer for.
-
-### Step 1 — Tell the container to stop trying to advertise
-
-In `docker-compose.yml`:
-
-```yaml
-environment:
-  - ENABLE_MDNS=false
-ports:
-  # remove the 5353/udp line entirely; nothing inside the container
-  # uses that port now
-  - "80:80"
-  - "443:443"
-  - "1883:1883"
-```
-
-Restart the container so the env change takes effect.
-
-### Step 2 — Publish the hostnames via host avahi
-
-Verify the helper is installed:
+Check from a shell on the NAS:
 
 ```bash
-which avahi-publish-address
-# /usr/bin/avahi-publish-address
+docker logs opennova-mdns
+# [MDNS-ONLY] advertising opennova.local -> 192.168.0.247 on 5353/udp (host network, detected)
 ```
 
-If missing: `sudo apt install avahi-utils` (Debian/Ubuntu) or your
-distro's equivalent.
-
-Create two persistent systemd units (substitute your NAS LAN IP):
+And the proof that matters, on the mower or in the admin panel's
+*Why is it not coming online?* under **Mower → mDNS**:
 
 ```bash
-sudo tee /etc/systemd/system/opennova-mdns.service > /dev/null <<'EOF'
-[Unit]
-Description=mDNS A-record alias for OpenNova (opennova.local)
-After=avahi-daemon.service network-online.target
-Wants=avahi-daemon.service
-
-[Service]
-Type=simple
-ExecStart=/usr/bin/avahi-publish-address -R opennova.local 192.168.0.247
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-sudo tee /etc/systemd/system/opennova-mdns-legacy.service > /dev/null <<'EOF'
-[Unit]
-Description=mDNS A-record alias for legacy opennovabot.local
-After=avahi-daemon.service network-online.target
-Wants=avahi-daemon.service
-
-[Service]
-Type=simple
-ExecStart=/usr/bin/avahi-publish-address -R opennovabot.local 192.168.0.247
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-sudo systemctl daemon-reload
-sudo systemctl enable --now opennova-mdns opennova-mdns-legacy
+getent hosts opennova.local
+# 192.168.0.247   opennova.local
 ```
-
-Verify both units are running:
-
-```bash
-sudo systemctl status opennova-mdns opennova-mdns-legacy --no-pager
-```
-
-And that the names resolve from anywhere on the LAN:
-
-```bash
-dns-sd -G v4 opennova.local      # macOS
-avahi-resolve -n opennova.local  # Linux
-```
-
-You should see your NAS IP back in under a second.
-
-### Why this works
-
-The host avahi already owns 5353 — fighting it is wasteful. We hand the
-two hostnames to it and disable the container's advertiser. The mower
-side doesn't care which process answers the mDNS query, only that
-`opennova.local` resolves to a working IP.
-
-`avahi-publish-address -R` keeps the entry alive as long as the
-service runs; `Restart=always` makes the unit survive avahi-daemon
-restarts (which kick the publishers off).
 
 ## Switching a *running* mower to a new server without rebooting
 
