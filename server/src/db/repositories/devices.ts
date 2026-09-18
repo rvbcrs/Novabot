@@ -286,4 +286,30 @@ export class DeviceRepository {
   }
 }
 
+/**
+ * The factory table was seeded from a one-off scan of the LFI cloud, which
+ * may have missed serial numbers. Every cloud login returns the user's own
+ * devices with the same fields, so learn any that are missing. Returns the
+ * serial numbers that were new.
+ */
+export function learnFactoryDevicesFromCloud(entries: Array<Record<string, unknown>>): string[] {
+  const unknown = entries.filter(e => typeof e.sn === 'string' && e.sn && !deviceRepo.getFactoryDevice(e.sn as string));
+  if (unknown.length === 0) return [];
+  const num = (v: unknown) => (typeof v === 'number' ? v : null);
+  const str = (v: unknown) => (typeof v === 'string' && v ? v : null);
+  deviceRepo.importFactoryDevices(unknown.map(e => ({
+    sn: e.sn as string,
+    device_type: str(e.deviceType) ?? ((e.sn as string).startsWith('LFIC') ? 'charger' : 'mower'),
+    mac_address: str(e.macAddress),
+    equipment_type: str(e.equipmentType) ?? (e.sn as string).slice(0, 5),
+    sys_version: str(e.sysVersion),
+    charger_address: num(e.chargerAddress),
+    charger_channel: num(e.chargerChannel),
+    mqtt_account: str(e.account),
+    mqtt_password: str(e.password),
+    model: str(e.model),
+  })));
+  return unknown.map(e => e.sn as string);
+}
+
 export const deviceRepo = new DeviceRepository();

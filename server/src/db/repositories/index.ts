@@ -12,7 +12,7 @@
 export { UserRepository, userRepo } from './users.js';
 export { EquipmentRepository, equipmentRepo } from './equipment.js';
 export { MapRepository, mapRepo } from './maps.js';
-export { DeviceRepository, deviceRepo } from './devices.js';
+export { DeviceRepository, deviceRepo, learnFactoryDevicesFromCloud } from './devices.js';
 export { connectionEventRepo } from './connectionEvents.js';
 export type { ConnectionEventRow, ConnectionOutcome } from './connectionEvents.js';
 export { MessageRepository, messageRepo } from './messages.js';

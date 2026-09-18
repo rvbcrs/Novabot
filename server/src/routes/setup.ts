@@ -17,7 +17,7 @@ import { Router, Request, Response } from 'express';
 import https from 'https';
 import fs from 'fs';
 import path from 'path';
-import { userRepo, equipmentRepo, deviceRepo, mapRepo } from '../db/repositories/index.js';
+import { userRepo, equipmentRepo, deviceRepo, mapRepo, learnFactoryDevicesFromCloud } from '../db/repositories/index.js';
 import { isSetupComplete, invalidateSetupCache } from '../middleware/setupGuard.js';
 import { importCloudWorkRecords } from '../services/cloudWorkRecordsImport.js';
 import { markFrameUnvalidated } from '../services/frameValidation.js';
@@ -97,6 +97,12 @@ setupRouter.post('/cloud-login', async (req: Request, res: Response) => {
       const sn = String(e.mowerSn ?? e.sn ?? '');
       return sn.startsWith('LFIN');
     });
+
+    // A serial the factory table does not have would later fail in the
+    // official app with "Device is missing mac address"; the cloud just told
+    // us everything about it, so keep it.
+    const learned = learnFactoryDevicesFromCloud(pageList);
+    if (learned.length) console.warn(`[Setup] Serial numbers missing from the factory table, learned from the cloud: ${learned.join(', ')}`);
 
     res.json({ ok: true, email, appUserId, chargers, mowers, rawList: pageList });
   } catch (err) {
