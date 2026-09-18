@@ -8,6 +8,8 @@ import { useTimeFormat, formatTime, formatHour } from '../../utils/timeFormat';
 
 interface Props {
   sn: string;
+  /** A block was clicked: open that schedule for editing (Scheduler above). */
+  onSelect?: (scheduleId: string) => void;
 }
 
 // Stored weekday convention is 0=Sunday (JS getDay, server scheduleRunner). The
@@ -40,7 +42,7 @@ function accentForId(id: string): Accent {
 
 const pad2 = (n: number) => String(n).padStart(2, '0');
 
-export function ScheduleTimeline({ sn }: Props) {
+export function ScheduleTimeline({ sn, onSelect }: Props) {
   const { t } = useTranslation();
   const weekStart = useWeekStart();
   const order = weekdayOrder(weekStart);
@@ -195,8 +197,10 @@ export function ScheduleTimeline({ sn }: Props) {
                   return [
                     <div
                       key={s.scheduleId}
-                      title={`${s.scheduleName ?? 'Schedule'} ${timeRange}`}
-                      className="absolute rounded-lg overflow-hidden border transition-transform hover:-translate-y-px"
+                      role={onSelect ? 'button' : undefined}
+                      onClick={onSelect ? () => onSelect(s.scheduleId) : undefined}
+                      title={`${s.scheduleName ?? 'Schedule'} ${timeRange}${s.mapName ? ` · ${s.mapName}` : ''} · ${s.cuttingHeight >= 20 ? s.cuttingHeight / 10 : s.cuttingHeight} cm`}
+                      className={`absolute rounded-lg overflow-hidden border transition-transform hover:-translate-y-px ${onSelect ? 'cursor-pointer' : ''}`}
                       style={{ top: top + 1, height: height - 2, left: 4, right: 4, background: a.bg, borderColor: a.border, color: a.text }}
                     >
                       <div className="absolute left-0 top-0 bottom-0 w-[3px] rounded-l-lg" style={{ background: a.bar }} />

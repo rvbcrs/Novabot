@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   Clock, Plus, Minus, Trash2, Send, X, ChevronRight, Calendar,
   Compass, AlertTriangle, CloudRain, RefreshCw, Ruler, PauseCircle, Pencil,
@@ -44,6 +44,8 @@ interface Props {
   sensors?: Record<string, string>;
   /** Called when the user changes the mowing direction (or null on close) */
   onPathDirectionChange?: (deg: number | null) => void;
+  /** Open this schedule in the edit form (a click on the timeline below). */
+  editRequest?: { scheduleId: string; nonce: number } | null;
 }
 
 interface ScheduleForm {
@@ -84,7 +86,7 @@ const defaultForm: ScheduleForm = {
   rainCheckHours: 2,
 };
 
-export function Scheduler({ sn, online, sensors, onPathDirectionChange }: Props) {
+export function Scheduler({ sn, online, sensors, onPathDirectionChange, editRequest }: Props) {
   const { t } = useTranslation();
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [maps, setMaps] = useState<MapData[]>([]);
@@ -211,6 +213,17 @@ export function Scheduler({ sn, online, sensors, onPathDirectionChange }: Props)
     onPathDirectionChange?.(s.pathDirection);
   }, [onPathDirectionChange]);
 
+  // Timeline click → same form as the pencil in the list, scrolled into view.
+  const formRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!editRequest) return;
+    const s = schedules.find(x => x.scheduleId === editRequest.scheduleId);
+    if (!s) return;
+    handleEdit(s);
+    setTimeout(() => formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editRequest?.nonce]);
+
   const handleDelete = useCallback(async (scheduleId: string) => {
     await deleteSchedule(sn, scheduleId).catch(() => {});
     setSchedules(prev => prev.filter(s => s.scheduleId !== scheduleId));
@@ -299,7 +312,7 @@ export function Scheduler({ sn, online, sensors, onPathDirectionChange }: Props)
 
       {/* New schedule form */}
       {showForm && (
-        <div className="p-4 border-b border-gray-700/60 bg-gray-900/40">
+        <div ref={formRef} className="p-4 border-b border-gray-700/60 bg-gray-900/40">
           {/* Name */}
           <div className="mb-3">
             <label className="text-[10px] text-gray-500 uppercase tracking-wide">{t('schedule.name')}</label>
