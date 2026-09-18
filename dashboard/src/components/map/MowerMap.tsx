@@ -32,6 +32,7 @@ import { localToGps, gpsToLocal, isUsableChargerGps } from '../../utils/coords';
 import { applyBrush, densifyPolygon, hitTestEdge, offsetPolygon, pointInPolygon as pointInPolygonXY, polygonArea, simplifyPolygon, type XY } from '../../utils/editGeometry';
 import { paintCircle, eraseCircle, makeValidPolygon } from '../../utils/brushPaint';
 import { useToast } from '../common/Toast';
+import { isInterruptedCoverage } from '../../utils/mowerActivity';
 import { ConfirmDialog } from '../common/ConfirmDialog';
 import { PolygonEditor } from './PolygonEditor';
 import { MapEditBar } from './MapEditBar';
@@ -1087,13 +1088,19 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
   // the cyan idle preview. We read `msg` directly because task_mode is not
   // reliably reported during a pause. It ends only on Work:CANCELLED/FINISHED
   // (true stop / completion) — then the overlay falls back to the idle preview.
+  // A task parked on the dock for a recharge is the same session too (#30):
+  // `isInterruptedCoverage` covers USER_RECHARGE_STOP / BATTERY_LOW_RECHARGE
+  // and stock 5.7.1's work_status 12 "Low power", which sets none of the msg
+  // states above. Without it the covered lanes vanished the moment the mower
+  // docked at 20% and the map showed a fresh Start.
   const coverageSessionActive = (() => {
     const m = mowingSensors.msg ?? '';
     if (/Work:(CANCELLED|FINISHED)/.test(m)) return false;
     return (
       /Work:(RUNNING|COVERING|NAVIGATING|BOUNDARY_COVERING|AVOIDING|MOVING|USER_STOP|PAUSED)/.test(m) ||
       /Recharge:\s*(GOING|ALIGN|ALIGNING|MOVING|RUNNING|BACK|DOCKING)/i.test(m) ||
-      /Work:(GO_PILE|BACK_CHARGER|DOCKING)/.test(m)
+      /Work:(GO_PILE|BACK_CHARGER|DOCKING)/.test(m) ||
+      isInterruptedCoverage(mowingSensors)
     );
   })();
   // Treat the sticky live-mowing flag OR a paused/returning coverage session as
