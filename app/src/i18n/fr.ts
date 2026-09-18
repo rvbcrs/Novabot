@@ -178,6 +178,9 @@ export default {
   firmwareUpdateTitle: 'Nouveau firmware disponible',
   firmwareUpdateSubtitle: 'Version {{version}} — touchez pour mettre à jour',
   firmwareUpdateAction: 'Voir',
+  firmwareRequiredTitle: 'Le firmware {{version}} a été retiré',
+  firmwareRequiredSubtitle: '{{reason}}. Mettez à jour vers {{version}} ; il est sur votre serveur.',
+  firmwareRequiredAction: 'Mettre à jour',
 
   rrRainTitle: 'Retour : pluie',
   rrRainDesc: 'La tondeuse est revenue à la station car de la pluie a été détectée. Reprenez pour ignorer la pause pluie.',

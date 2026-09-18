@@ -319,6 +319,9 @@ export default {
   firmwareUpdateTitle: 'Nieuwe maaier-firmware beschikbaar',
   firmwareUpdateSubtitle: 'Versie {{version}} — tik om te updaten',
   firmwareUpdateAction: 'Bekijk',
+  firmwareRequiredTitle: 'Firmware {{version}} is ingetrokken',
+  firmwareRequiredSubtitle: '{{reason}}. Update naar {{version}}; die staat op je server.',
+  firmwareRequiredAction: 'Update',
 
   // ── Device Pairing ────────────────────────────────────────────
   selectCharger: 'Kies laadstation',

@@ -174,6 +174,13 @@ export interface TrailPoint {
   ts: number;
 }
 
+export interface FirmwareAdvisory {
+  required: boolean;
+  current: string | null;
+  reason: string | null;
+  target: { version: string; description: string; downloaded: boolean } | null;
+}
+
 export interface OtaVersion {
   id: number;
   version: string;
@@ -971,6 +978,11 @@ export class ApiClient {
   }
 
   // ── OTA ──────────────────────────────────────────────────────────────
+
+  /** The mower's custom build was withdrawn: the newest build is required. */
+  async getFirmwareAdvisory(sn: string): Promise<FirmwareAdvisory> {
+    return this.request<FirmwareAdvisory>('GET', `/api/dashboard/firmware-advisory/${encodeURIComponent(sn)}`);
+  }
 
   async getOtaVersions(): Promise<OtaVersion[]> {
     // Server retourneert { ok: true, versions: [...] } sinds de auto-sync

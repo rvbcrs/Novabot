@@ -321,6 +321,9 @@ export default {
   firmwareUpdateTitle: 'New mower firmware available',
   firmwareUpdateSubtitle: 'Version {{version}} — tap to update',
   firmwareUpdateAction: 'View',
+  firmwareRequiredTitle: 'Firmware {{version}} has been withdrawn',
+  firmwareRequiredSubtitle: '{{reason}}. Update to {{version}}; it is on your server.',
+  firmwareRequiredAction: 'Update',
 
   // ── Device Pairing ────────────────────────────────────────────
   selectCharger: 'Select Charger',

@@ -16,15 +16,38 @@ import { useFirmwareUpdate } from '../context/FirmwareUpdateContext';
 const stripV = (v: string): string => v.replace(/^v/i, '');
 
 export function FirmwareUpdateBanner() {
-  const { bannerVisible, available, dismiss } = useFirmwareUpdate();
+  const { bannerVisible, available, advisory, dismiss } = useFirmwareUpdate();
   const { colors: c } = useTheme();
   const { t } = useI18n();
   const navigation = useNavigation<any>();
 
-  if (!bannerVisible || !available) return null;
+  if (!bannerVisible || (!available && !advisory)) return null;
 
   const styles = makeStyles(c);
   const openOta = () => navigation.navigate('AppSettings', { screen: 'OTA' });
+
+  // The build the mower runs was withdrawn: red, with the reason, and no ×.
+  // It stays until the mower reports another version.
+  if (advisory?.required && advisory.target) {
+    return (
+      <View style={[styles.bar, styles.barRequired]} testID="firmware-required-banner">
+        <TouchableOpacity style={styles.main} onPress={openOta} activeOpacity={0.75} testID="firmware-required-open">
+          <Ionicons name="warning-outline" size={20} color={c.red} />
+          <View style={styles.textCol}>
+            <Text style={[styles.title, { color: c.red }]} numberOfLines={1}>
+              {t('firmwareRequiredTitle', { version: stripV(advisory.current ?? '') })}
+            </Text>
+            <Text style={styles.sub} numberOfLines={2}>
+              {t('firmwareRequiredSubtitle', { reason: advisory.reason ?? '', version: stripV(advisory.target.version) })}
+            </Text>
+          </View>
+          <Text style={[styles.action, { color: c.red }]}>{t('firmwareRequiredAction')}</Text>
+          <Ionicons name="chevron-forward" size={18} color={c.red} />
+        </TouchableOpacity>
+      </View>
+    );
+  }
+  if (!available) return null;
 
   return (
     <View style={styles.bar} testID="firmware-update-banner">
@@ -66,6 +89,10 @@ function makeStyles(c: Colors) {
       borderWidth: 1,
       borderColor: 'rgba(59,130,246,0.35)',
       gap: 8,
+    },
+    barRequired: {
+      borderColor: c.red,
+      backgroundColor: c.red + '14',
     },
     main: { flexDirection: 'row', alignItems: 'center', flex: 1, gap: 10 },
     textCol: { flex: 1 },

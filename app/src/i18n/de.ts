@@ -178,6 +178,9 @@ export default {
   firmwareUpdateTitle: 'Neue Mäher-Firmware verfügbar',
   firmwareUpdateSubtitle: 'Version {{version}} — zum Aktualisieren tippen',
   firmwareUpdateAction: 'Ansehen',
+  firmwareRequiredTitle: 'Firmware {{version}} wurde zurückgezogen',
+  firmwareRequiredSubtitle: '{{reason}}. Auf {{version}} aktualisieren; sie liegt auf deinem Server.',
+  firmwareRequiredAction: 'Update',
 
   rrRainTitle: 'Zurückgekehrt: Regen',
   rrRainDesc: 'Der Mäher ist wegen erkanntem Regen zur Ladestation zurückgefahren. Fortsetzen, um die Regenpause zu ignorieren.',

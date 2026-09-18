@@ -11,6 +11,8 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { AppState, type AppStateStatus } from 'react-native';
 import { useActiveMower } from '../hooks/useActiveMower';
+import { ApiClient, type FirmwareAdvisory } from '../services/api';
+import { getServerUrl } from '../services/auth';
 import {
   checkMowerFirmwareUpdate,
   getDismissedFirmwareVersion,
@@ -23,6 +25,9 @@ const TWELVE_HOURS_MS = 12 * 60 * 60 * 1000;
 interface FirmwareUpdateState {
   /** Raw availability — drives the persistent badges (tab icon + OTA row). */
   available: MowerFirmwareUpdate | null;
+  /** The mower's custom build was withdrawn (manifest): update required,
+   *  banner not dismissible. Null when fine or unknown. */
+  advisory: FirmwareAdvisory | null;
   /** Available AND not dismissed for this version — drives the Home banner. */
   bannerVisible: boolean;
   /** Hide the banner for the current version (persisted). Badges stay on. */
@@ -31,6 +36,7 @@ interface FirmwareUpdateState {
 
 const FirmwareUpdateContext = createContext<FirmwareUpdateState>({
   available: null,
+  advisory: null,
   bannerVisible: false,
   dismiss: () => {},
 });
@@ -44,7 +50,9 @@ export function FirmwareUpdateProvider({ children }: { children: React.ReactNode
     null;
 
   const [available, setAvailable] = useState<MowerFirmwareUpdate | null>(null);
+  const [advisory, setAdvisory] = useState<FirmwareAdvisory | null>(null);
   const [dismissedVersion, setDismissedVersion] = useState<string | null>(null);
+  const activeSn = activeMower?.sn ?? null;
 
   // Hydrate the persisted dismissed version once.
   useEffect(() => {
@@ -68,6 +76,14 @@ export function FirmwareUpdateProvider({ children }: { children: React.ReactNode
       } catch {
         // Network/server failures are silent — never crash the app.
       }
+      try {
+        const url = activeSn ? await getServerUrl() : null;
+        const adv = url ? await new ApiClient(url).getFirmwareAdvisory(activeSn as string) : null;
+        if (!cancelled) setAdvisory(adv?.required ? adv : null);
+      } catch {
+        // Older server without the endpoint: no advisory.
+        if (!cancelled) setAdvisory(null);
+      }
     }
     run();
 
@@ -82,7 +98,7 @@ export function FirmwareUpdateProvider({ children }: { children: React.ReactNode
       sub.remove();
       clearInterval(interval);
     };
-  }, [currentVersion]);
+  }, [currentVersion, activeSn]);
 
   const dismiss = useCallback(() => {
     if (!available) return;
@@ -90,10 +106,12 @@ export function FirmwareUpdateProvider({ children }: { children: React.ReactNode
     void setDismissedFirmwareVersion(available.version);
   }, [available]);
 
-  const bannerVisible = !!available && available.version !== dismissedVersion;
+  // A required update ignores the dismissal: the banner stays until the
+  // mower reports another version.
+  const bannerVisible = !!advisory || (!!available && available.version !== dismissedVersion);
 
   return (
-    <FirmwareUpdateContext.Provider value={{ available, bannerVisible, dismiss }}>
+    <FirmwareUpdateContext.Provider value={{ available, advisory, bannerVisible, dismiss }}>
       {children}
     </FirmwareUpdateContext.Provider>
   );
