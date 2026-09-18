@@ -161,6 +161,7 @@ adminStatusRouter.get('/overview', (_req: AuthRequest, res: Response) => {
       memoryMB: Math.round(mem.rss / 1024 / 1024),
       heapUsedMB: Math.round(mem.heapUsed / 1024 / 1024),
       dbSizeMB: Math.round(dbSize / 1024 / 1024 * 10) / 10,
+      dashboardEnabled: process.env.ENABLE_DASHBOARD === 'true',
     },
     counts: {
       users: userCount,

@@ -364,6 +364,7 @@ window.__ADMIN_I18N__ = ${JSON.stringify(ADMIN_I18N).replace(/</g, '\\u003c')};
         <button class="langbtn" data-lang="fr" onclick="window.__setLang('fr')">FR</button>
         <button class="langbtn" data-lang="de" onclick="window.__setLang('de')">DE</button>
       </div>
+      <a class="btn" id="dashboardLink" href="/" style="background:#065f46;display:none;text-decoration:none">Dashboard</a>
       <button class="btn" style="background:#2563eb" onclick="openHelp()" title="Wat doet elke knop?">? Help</button>
       <button class="btn" style="background:#333" onclick="logout()">Logout</button>
       <button class="btn btn-purple" onclick="loadAll()">↻</button>
@@ -2156,6 +2157,9 @@ async function loadAccount() {
     const d = await api('/overview');
     const s = d.server;
     document.getElementById('serverInfo').innerHTML = renderServerChips(s);
+    // The dashboard is the other half of the UI; only offer it when it is served.
+    var dl = document.getElementById('dashboardLink');
+    if (dl && s.dashboardEnabled) dl.style.display = '';
     var resPill = document.getElementById('resVersionPill');
     if (resPill) resPill.textContent = 'v' + (s.version || '?');
     const u = d.currentUser || {};

@@ -31,7 +31,8 @@
   "drawer": {
     "title": {
       "sensors": "Sensoren",
-      "diagnostics": "Diagnose"
+      "diagnostics": "Diagnose",
+      "adminPanel": "Admin-paneel"
     },
     "summary": {
       "lastSeen": "Laatst gezien",

@@ -840,7 +840,8 @@
   "drawer": {
     "title": {
       "sensors": "Sensoren",
-      "diagnostics": "Diagnose"
+      "diagnostics": "Diagnose",
+      "adminPanel": "Admin-Panel"
     },
     "summary": {
       "lastSeen": "Zuletzt gesehen",

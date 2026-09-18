@@ -937,7 +937,8 @@
   "drawer": {
     "title": {
       "sensors": "Sensors",
-      "diagnostics": "Diagnostics"
+      "diagnostics": "Diagnostics",
+      "adminPanel": "Admin panel"
     },
     "summary": {
       "lastSeen": "Last seen",

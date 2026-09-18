@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Server, ServerOff, Plus, Activity, ScrollText, Stethoscope } from 'lucide-react';
+import { Server, ServerOff, Plus, Activity, ScrollText, Stethoscope, ShieldCheck } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { BleScanner } from '../components/ble/BleScanner';
 import { RainBadge } from './RainBadge';
@@ -169,6 +169,16 @@ export function Header({ connected, rainState, onOpenDrawer, activeSn, activeOnl
         >
           <Activity className="w-4 h-4" />
         </button>
+
+        {/* The admin panel is the other half of the UI; one click each way. */}
+        <a
+          href="/admin"
+          title={t('header.adminPanel', 'Admin panel')}
+          aria-label={t('header.adminPanel', 'Admin panel')}
+          className="grid place-items-center w-8 h-8 rounded-lg text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800/60 transition-colors"
+        >
+          <ShieldCheck className="w-4 h-4" />
+        </a>
       </div>
 
       <BleScanner open={showBle} onClose={() => setShowBle(false)} />
