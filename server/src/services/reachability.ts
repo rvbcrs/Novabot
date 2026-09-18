@@ -114,20 +114,35 @@ async function resolve(host: string, ours: string[]): Promise<DnsResult> {
   }
 }
 
-function tcpProbe(ip: string, port: number): Promise<boolean> {
+/**
+ * One TCP handshake within PROBE_TIMEOUT_MS, and one more if the first one
+ * timed out. The first SYN to a mower pays for ARP resolution and for the
+ * mower's Wi-Fi radio waking from power save, and right after a container
+ * (re)start the bridge's ARP table is empty on top of that; live on .247,
+ * 2026-09-18, that read as "192.168.0.244 does not answer on port 22 or 8000"
+ * two minutes after a compose up, while three runs later it answered in 20 ms.
+ * A refused connection is an answer and is not retried.
+ */
+export async function tcpProbe(ip: string, port: number): Promise<boolean> {
+  const first = await tcpProbeOnce(ip, port);
+  if (first !== 'timeout') return first === 'open';
+  return (await tcpProbeOnce(ip, port)) === 'open';
+}
+
+function tcpProbeOnce(ip: string, port: number): Promise<'open' | 'closed' | 'timeout'> {
   return new Promise(resolve => {
     const sock = new net.Socket();
     let done = false;
-    const finish = (ok: boolean) => {
+    const finish = (r: 'open' | 'closed' | 'timeout') => {
       if (done) return;
       done = true;
       sock.destroy();
-      resolve(ok);
+      resolve(r);
     };
     sock.setTimeout(PROBE_TIMEOUT_MS);
-    sock.once('connect', () => finish(true));
-    sock.once('timeout', () => finish(false));
-    sock.once('error', () => finish(false));
+    sock.once('connect', () => finish('open'));
+    sock.once('timeout', () => finish('timeout'));
+    sock.once('error', () => finish('closed'));
     sock.connect(port, ip);
   });
 }

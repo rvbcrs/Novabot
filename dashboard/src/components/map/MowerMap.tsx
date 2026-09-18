@@ -5065,9 +5065,11 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
             een pill: de spinner in de toolbar alleen viel niet op wanneer je een
             zone aantikt en er 5-10 s niets lijkt te gebeuren (#128). */}
         {coverageLoading && (
-          <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[1000] flex items-center gap-2 bg-gray-900/95 backdrop-blur border border-cyan-600/60 rounded-full px-3 py-1.5 shadow-xl text-xs text-cyan-200 pointer-events-none">
-            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            {t('map.edit.coverageLoading')}
+          <div className="absolute inset-0 z-[1000] flex items-center justify-center pointer-events-none">
+            <div className="flex flex-col items-center gap-3 bg-gray-900/95 backdrop-blur border border-cyan-600/60 rounded-xl px-6 py-5 shadow-2xl text-sm text-cyan-200">
+              <Loader2 className="w-7 h-7 animate-spin" />
+              {t('map.edit.coverageLoading')}
+            </div>
           </div>
         )}
 
