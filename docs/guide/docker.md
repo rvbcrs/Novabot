@@ -195,6 +195,11 @@ on a NAS. Use it on a Raspberry Pi or a dedicated box, and then leave
 | **5353/udp** | mDNS, used by `opennova-mdns` on the host network |
 | **53/udp** | Built-in DNS, only with `ENABLE_DNS=true` |
 
+Port 53 is not in the compose above. If an older compose of yours still has
+`"53:53/udp"` under `ports:`, remove that line: Docker claims the port even
+with `ENABLE_DNS` off, and then collides with `systemd-resolved`, Pi-hole or
+AdGuard on the same machine.
+
 The mower's Wi-Fi is **2.4 GHz only**.
 
 ## Data

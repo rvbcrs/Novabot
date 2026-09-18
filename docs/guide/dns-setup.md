@@ -1,11 +1,14 @@
 # DNS Setup Guide
 
-> Have a custom-firmware mower? You can skip DNS rewrite entirely — see
-> [auto-discovery](auto-discovery.md). DNS rewrite is required only for
-> stock-firmware devices.
-
 !!! info "Who needs this?"
-    DNS setup is **only needed if you use the original Novabot app** (iOS/Android). If you use the **OpenNova app**, you can skip this entirely — the app connects directly to your server IP.
+    A mower or charger on **stock firmware** always looks up `mqtt.lfibot.com`,
+    whichever app you use, so it needs the DNS redirect. The **original Novabot
+    app** needs it too (`app.lfibot.com`). You can skip it only when the mower
+    runs [custom firmware](auto-discovery.md) (it finds `opennova.local` by
+    itself) *and* you use the OpenNova app, which talks to your server's IP.
+
+    Port 53 is only involved with **Option D** below. The other options change
+    nothing on the OpenNova machine.
 
 ## What is DNS and Why Do I Need It?
 
