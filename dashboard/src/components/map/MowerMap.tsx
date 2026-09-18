@@ -33,7 +33,7 @@ import { applyBrush, densifyPolygon, hitTestEdge, offsetPolygon, pointInPolygon 
 import { paintCircle, eraseCircle, makeValidPolygon } from '../../utils/brushPaint';
 import { useToast } from '../common/Toast';
 import { isInterruptedCoverage } from '../../utils/mowerActivity';
-import { sourceKey, sourceDash } from '../../utils/mapSource';
+import { sourceKey, sourceColor } from '../../utils/mapSource';
 import { ConfirmDialog } from '../common/ConfirmDialog';
 import { PolygonEditor } from './PolygonEditor';
 import { MapEditBar } from './MapEditBar';
@@ -3479,8 +3479,8 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
             // Dok-route-unicom: punt 0 (het dok-anker) niet meeschuiven — zelfde
             // uitsluiting als server-side shiftPoints, dus preview == maaier.
             const positions = calibratePoints(m.mapArea, activeCal, polyCenter, isToChargeUnicomName(m.canonicalName));
-            const dash = m.mapType === 'work' ? sourceDash(m.source) : undefined;
-            const baseStyle = { ...getAreaStyle(m.mapType, m.mapId, m.mapName), ...(dash ? { dashArray: dash } : {}) };
+            const outline = m.mapType === 'work' ? sourceColor(m.source) : undefined;
+            const baseStyle = { ...getAreaStyle(m.mapType, m.mapId, m.mapName), ...(outline ? { color: outline } : {}) };
             const isBeingEdited = editMode === 'edit' && editingMapId === m.mapId;
             const isSelected = selectedMapId === m.mapId;
             // Dim the polygon being edited (the editor shows its own)

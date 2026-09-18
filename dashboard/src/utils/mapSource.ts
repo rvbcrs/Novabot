@@ -20,12 +20,10 @@ export function sourceMark(source: MapSource | null | undefined): string {
 }
 
 /**
- * Outline for the map: a driven boundary is solid, a drawn one a long dash,
- * an import dotted. Distinct from the short dash of a zone being edited and
- * the medium dash of a pending draft.
+ * Outline colour for the map: a driven boundary keeps the work-area green, a
+ * drawn or imported one shifts a step towards the channel blue. Not a dash:
+ * a dashed outline read as "not saved yet".
  */
-export function sourceDash(source: MapSource | null | undefined): string | undefined {
-  if (source === 'drawn') return '10 6';
-  if (source === 'import') return '2 6';
-  return undefined;
+export function sourceColor(source: MapSource | null | undefined): string | undefined {
+  return source === 'drawn' || source === 'import' ? '#14b8a6' : undefined;
 }
