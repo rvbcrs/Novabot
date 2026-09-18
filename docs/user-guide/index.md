@@ -39,8 +39,6 @@ You do **not** need a powerful machine. The mower does the hard work — the ser
 | Configure DNS so the app finds your server | [DNS Setup](../guide/dns-setup.md) |
 | Find your way around the server's admin web UI | [Admin Panel](admin-panel.md) |
 | Back up + restore your maps | [Map Backup & Restore](map-backup-restore.md) |
-| Map an area by walking instead of driving | [RTK Walker mapping](rtk-walker-mapping.md) |
-| Update walker firmware over the air | [Walker OTA](walker-ota.md) |
 | Use the OpenNova app on your phone | [OpenNova App](opennova-app.md) |
 | Pair a fresh mower or charger | [Mower Provisioning Flow](../flows/mower-provisioning.md) |
 | New router or Wi-Fi password | [Reconnect to Wi-Fi](reconnect-wifi.md) |

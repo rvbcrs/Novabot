@@ -72,7 +72,8 @@ markdown_extensions:
       permalink: true
 
 # Not part of the published wiki: internal plans and specs, the tester
-# checklist, and the text that goes on Docker Hub. They only confused search.
+# checklist, the text that goes on Docker Hub, the retired bootstrap tool and
+# the RTK walker (not released). They only confused search.
 exclude_docs: |
   superpowers/
   runbooks/
@@ -80,6 +81,8 @@ exclude_docs: |
   TESTER-GUIDE.md
   dockerhub-overview.md
   guide/bootstrap.md
+  user-guide/rtk-walker-mapping.md
+  user-guide/walker-ota.md
 
 plugins:
   - search
@@ -98,8 +101,6 @@ nav:
     - Map Backup & Restore: user-guide/map-backup-restore.md
     - Portable Map Export / Import: portable-map-export-import.md
     - Autonomous Mapping: user-guide/autonomous-mapping.md
-    - RTK Walker Mapping: user-guide/rtk-walker-mapping.md
-    - Walker Firmware Updates: user-guide/walker-ota.md
     - App Updates (Android): guide/app-updates.md
     - LFI Knowledge Base (archived): reference/NOVABOT-ZENDESK-WIKI.md
   - Getting Started:

@@ -28,7 +28,7 @@ These endpoints serve the **React web dashboard** and are not part of the origin
 |------------|------|-----------|
 | [`/api/dashboard/`](dashboard-api.md) | Mixed | ~100+ endpoints |
 | [`/api/admin/`](dashboard-api.md#admin-endpoints) | None | 2 |
-| `/api/admin-status/` | JWT + admin | Admin status, walker firmware management |
+| `/api/admin-status/` | JWT + admin | Admin status |
 | `/api/setup/` | None (setup wizard) | First-run wizard endpoints |
 | `/api/remote-support/` | JWT + admin | Remote support tunnel (relay + agent) |
 | `/api/events/` | None | Notification event ring (HTTP polling) |

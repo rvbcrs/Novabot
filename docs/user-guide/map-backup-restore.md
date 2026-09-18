@@ -251,12 +251,6 @@ curl -s http://<server>/api/dashboard/devices | jq '.[] | select(.sn=="<SN>") | 
 # map_position should be within ~10cm of charging_station.yaml charging_pose
 ```
 
-### Alternative: build a fresh map without driving the mower
-
-If you have an RTK walker handheld, see [RTK Walker mapping](rtk-walker-mapping.md)
-for how to record a map by walking the perimeter and importing through the
-same restore flow this page describes.
-
 ## Files touched on the mower
 
 After a successful verbatim restore + dock cycle:

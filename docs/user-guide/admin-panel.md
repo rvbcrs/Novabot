@@ -66,12 +66,10 @@ planned.
   [Portable Map Export / Import](../portable-map-export-import.md).
 - **Coverage radius**: the mower's own setting for how far apart its passes
   are; **Snapshot now** asks for a fresh coverage preview.
-- **Walker maps**: maps recorded with the RTK walker, see
-  [RTK Walker Mapping](rtk-walker-mapping.md).
 
 ## Firmware
 
-Over-the-air updates for mowers, and for the RTK walker.
+Over-the-air updates for mowers.
 
 - **Available firmware**: what the server has in `/data/firmware/`. **Refresh
   from manifest** fetches the list of released custom builds from the
@@ -84,7 +82,6 @@ Over-the-air updates for mowers, and for the RTK walker.
   backup is taken before flashing.
 - **Revert to stock firmware**: flash the factory image back. You lose SSH
   and everything else custom; see [Revert to Stock](../firmware/revert-to-stock.md).
-- **Walker firmware**: the same for the walker, see [Walker Firmware Updates](walker-ota.md).
 
 ## Experimental
 
