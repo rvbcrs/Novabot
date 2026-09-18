@@ -98,7 +98,9 @@ lb = np.array([1, 1, 1, 2, 7], dtype=np.uint8)  # lawn(2) en dynamic(7) vallen a
 ts.accumulate_objects(og, pm, lb)
 assert set(og.keys()) == {(0, 0, 1)}, og.keys()          # 0.05m < OBJ_HEIGHT_MIN valt af
 assert abs(og[(0, 0, 1)][0] - 0.50) < 1e-6               # max, niet mean
-assert og[(0, 0, 1)][1] == 2                              # cnt telt beide punten >0.10
+assert og[(0, 0, 1)][1] == 1                              # cnt telt FRAMES (1 per aanroep), niet punten (sinds 2026-07-21)
+ts.accumulate_objects(og, pm, lb)
+assert og[(0, 0, 1)][1] == 2                              # tweede frame → 2
 
 # serialize_objects round-trip
 blob_o = ts.serialize_objects(og, ts.CELL)
@@ -135,9 +137,9 @@ assert ts.flush_basename(1784300000, 1784300500.7) == "session_1784300000"
 assert ts.flush_basename(None, 1784300500.7) == "session_1784300500"
 
 # ── RGB frame-capture helpers (objectherkenning-plan Task 1) ──
-assert ts.should_capture_frame(100.0, 80.0, 0, 500) is True      # >15s, obj in beeld
-assert ts.should_capture_frame(100.0, 90.0, 0, 500) is False     # te snel
-assert ts.should_capture_frame(100.0, 80.0, 20, 500) is False    # vol
+assert ts.should_capture_frame(100.0, 100.0 - ts.FRAME_MIN_INTERVAL - 1, 0, 500) is True      # interval voorbij, obj in beeld
+assert ts.should_capture_frame(100.0, 100.0 - ts.FRAME_MIN_INTERVAL + 0.5, 0, 500) is False   # te snel
+assert ts.should_capture_frame(100.0, 80.0, ts.FRAME_MAX_PER_SESSION, 500) is False    # vol
 assert ts.should_capture_frame(100.0, 80.0, 0, 0) is False       # geen objecten in beeld
 u3 = ts.frame_url("host:8080", "LFIN0001", 123, 4, (1.23456, -7.8, 0.78539))
 assert u3 == "http://host:8080/api/nova-file-server/terrain/uploadSessionFrame?sn=LFIN0001&session=123&seq=4&x=1.235&y=-7.800&yaw=0.7854", u3
