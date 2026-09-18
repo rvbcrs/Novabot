@@ -268,7 +268,10 @@ Start with **Why is it not coming online?** in the admin panel. Then:
 **The container does not start.** `docker compose logs opennova`. The usual
 suspects: port 1883 taken by another MQTT broker, port 80 taken by the NAS
 itself (change the mapping, see above), port 53 taken by `systemd-resolved`
-(only with `ENABLE_DNS`; stop that service or use your router's DNS instead).
+or another DNS server on the host (free it, see
+[DNS Setup](dns-setup.md#port-53-is-already-in-use), or set
+`ENABLE_DNS: "false"` and drop the port if that other server does your
+rewrite).
 
 **`opennova-mdns` keeps restarting.** `docker logs opennova-mdns`. If it says
 the image predates the sidecar, pull again. On Docker Desktop it exits once and

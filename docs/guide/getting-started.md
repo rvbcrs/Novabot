@@ -35,9 +35,9 @@ Go to the **Settings** tab. The **Network & DNS** section automatically checks i
 - Green checkmark = domain resolves to a local IP (correctly redirected)
 - Red X = domain still points to the Novabot cloud (DNS not configured)
 
-If DNS is not configured, either:
-- Use the built-in **dnsmasq** (on in the standard compose) and point your router's DNS to `TARGET_IP`
-- Or configure DNS rewrites in AdGuard Home / Pi-hole
+Red? Go through [DNS Setup](dns-setup.md), and do not skip its
+[restart step](dns-setup.md#restart-everything): mower, charger and phone
+only pick up the new DNS server when they reconnect.
 
 ## Step 2: Import your devices (if you skipped the wizard)
 
