@@ -46,7 +46,7 @@ You do **not** need a powerful machine. The mower does the hard work — the ser
 | Update mower firmware | [OTA Update Flow](../flows/ota-update.md) |
 | Fix common problems | [Troubleshooting](troubleshooting.md) |
 | Read the original LFI manuals + FAQ | [LFI Knowledge Base (archived)](../reference/NOVABOT-ZENDESK-WIKI.md) |
-| Send logs to someone helping you | [Remote Support](../guide/remote-support.md) |
+| Let someone help you remotely | Admin panel → **Remote Support** toggle (see [Admin Panel](admin-panel.md)) |
 | Update the OpenNova app itself | [App Updates](../guide/app-updates.md) |
 
 ## LFI Knowledge Base archive
