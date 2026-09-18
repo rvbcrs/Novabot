@@ -87,16 +87,12 @@ names have to resolve to `TARGET_IP` on your network. Two ways; pick one.
 
 === "OpenNova's built-in DNS"
 
-    For when your router cannot do rewrites. Add three lines to the `opennova`
-    service and make the router hand out `TARGET_IP` as the DNS server:
-
-    ```yaml
-        ports:
-          - "53:53/udp"
-        environment:
-          ENABLE_DNS: "true"
-          UPSTREAM_DNS: "8.8.8.8"    # where every other name is forwarded
-    ```
+    For when your router cannot do rewrites. The compose above already has
+    the three lines, commented out: `"53:53/udp"` under `ports:`, and
+    `ENABLE_DNS` and `UPSTREAM_DNS` under `environment:`. Remove the `#` from
+    those three, `docker compose up -d`, and set `TARGET_IP` as the DNS
+    server in your router's DHCP settings. Every other name is forwarded to
+    `UPSTREAM_DNS`.
 
     Port 53 must be free on the host. On Ubuntu and Debian it is usually taken
     by `systemd-resolved`; the [DNS Setup](dns-setup.md#port-53-is-already-in-use)

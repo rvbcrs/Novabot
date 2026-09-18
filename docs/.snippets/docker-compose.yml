@@ -8,6 +8,7 @@ services:
       - "80:80"       # HTTP: API, admin panel, dashboard
       - "443:443"     # HTTPS: required by the official Novabot app
       - "1883:1883"   # MQTT: mower and charger connect here
+      # - "53:53/udp" # built-in DNS: uncomment together with ENABLE_DNS below
     environment:
       TZ: Europe/Amsterdam
       PORT: 80
@@ -17,6 +18,11 @@ services:
       ENABLE_TLS: "true"
       ENABLE_DASHBOARD: "true"
       TARGET_IP: 192.168.1.50        # <-- CHANGE THIS to this machine's LAN IP
+      # Built-in DNS: if your router cannot rewrite *.lfibot.com, uncomment
+      # these two lines and the 53:53/udp port above, then set TARGET_IP as
+      # the DNS server in your router. Port 53 must be free on this machine.
+      # ENABLE_DNS: "true"
+      # UPSTREAM_DNS: "8.8.8.8"
       # mDNS is done by opennova-mdns below
       ENABLE_MDNS: "false"
       MDNS_SIDECAR: "true"
