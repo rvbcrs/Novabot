@@ -1171,6 +1171,19 @@ describe('mDNS on 5353: measured, and when it fails, why and what to do', () => 
     expect(step.action).toContain('bij de maaier');
   });
 
+  it('drops the bridge hint on container_network once the sidecar does the advertising', async () => {
+    withIp('192.0.2.70');
+    const steps = (await diagnoseConnection(MOWER, Date.now(), {
+      snapshot: { msg: 'x' },
+      probes: probes({ mdns: { running: false, notStartedReason: 'disabled' }, sidecar: true,
+        net: { inContainer: true, bridged: true, addresses: ['172.17.0.10'] } }),
+    })).steps;
+    const net = steps.find(s => s.id === 'container_network')!;
+    expect(net.status).toBe('ok');
+    expect(net.evidence).toContain('172.17.0.10');
+    expect(net.action).toBeUndefined();
+  });
+
   it('is ok when the sidecar does the advertising, and points at the mower for proof', async () => {
     withIp('192.0.2.70');
     const step = (await diagnoseConnection(MOWER, Date.now(), {

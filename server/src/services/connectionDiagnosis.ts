@@ -232,10 +232,15 @@ export async function diagnoseConnection(
     : net.bridged
     ? T`container met bridge-netwerk (${net.addresses.join(', ')})`
     : T`container met host-netwerk (${net.addresses.join(', ')})`;
+  // With the sidecar doing the advertising from the host network, the
+  // bridge is no longer the thing standing between the mower and the name,
+  // so the hint would only send someone looking for a problem that is not
+  // there. Ramon: "die warnings zijn wat vreemd want dat is dan niet relevant
+  // want je hebt sidecar".
   push({
     id: 'container_network', group: 'server', status: 'ok',
     evidence: netDesc,
-    action: net.bridged
+    action: net.bridged && !probe.mdnsSidecar()
       ? T`in bridge-modus komt multicast meestal niet op het thuisnetwerk; of de maaier de server zo vindt staat verderop bij de maaier zelf`
       : undefined,
   });
