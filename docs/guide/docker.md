@@ -21,12 +21,17 @@ Pick your situation. It decides everything below.
     the `docker compose` plugin):
 
     ```bash
-    curl -fsSL https://get.docker.com | sudo sh
+    sudo apt-get update && sudo apt-get upgrade -y
+    curl -fsSL https://get.docker.com -o get-docker.sh && sudo sh get-docker.sh
     sudo usermod -aG docker $USER
+    sudo systemctl enable docker
+    sudo reboot
     ```
 
-    Log out and back in (or reboot) so the group change takes effect, then
-    check with `docker compose version`. On a NAS install "Container
+    The `usermod` line matters: without it every `docker` command needs
+    `sudo` and the files the container writes end up owned by root. The
+    reboot makes the group change take effect. Afterwards check with
+    `docker compose version`. On a NAS install "Container
     Manager" (Synology), "Container Station" (QNAP) or the Docker app from
     the NAS's own app store instead; they give you the same `docker
     compose` you need below. Step-by-step for a Pi, including the
