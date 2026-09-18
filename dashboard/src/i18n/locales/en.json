@@ -948,6 +948,14 @@
     "close": "Close"
   },
   "drawer": {
+    "dockDrift": {
+      "title": "Position on the dock",
+      "tooFew": "Not enough dockings yet. After three dockings with RTK Fixed the position is compared day by day.",
+      "since": "reference {{date}}",
+      "ok": "The mower parks where it used to; the station and the map frame have not moved.",
+      "moved": "The mower parks {{cm}} cm from where it used to. Check whether the charging station or its antenna has moved; if it stands right, re-anchor.",
+      "gps": "The RTK position itself moved {{cm}} cm, which points at the station's antenna."
+    },
     "title": {
       "sensors": "Sensors",
       "diagnostics": "Diagnostics",

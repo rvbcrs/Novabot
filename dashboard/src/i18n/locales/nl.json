@@ -29,6 +29,14 @@
     "noDevices": "Geen apparaten gevonden"
   },
   "drawer": {
+    "dockDrift": {
+      "title": "Positie op het laadstation",
+      "tooFew": "Nog te weinig dockingen. Na drie dockingen met RTK Fixed wordt de positie per dag vergeleken.",
+      "since": "referentie {{date}}",
+      "ok": "De maaier parkeert waar hij altijd stond; station en kaartframe zijn niet verschoven.",
+      "moved": "De maaier parkeert {{cm}} cm van waar hij stond. Controleer of het laadstation of zijn antenne is verschoven; staat het goed, anker dan opnieuw.",
+      "gps": "De RTK-positie zelf is {{cm}} cm verschoven, dat wijst op de antenne van het station."
+    },
     "title": {
       "sensors": "Sensoren",
       "diagnostics": "Diagnose",

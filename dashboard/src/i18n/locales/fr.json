@@ -851,6 +851,14 @@
     "mapObjects": "Objets de la carte"
   },
   "drawer": {
+    "dockDrift": {
+      "title": "Position sur la station",
+      "tooFew": "Pas encore assez d'accostages. Après trois accostages en RTK Fixed, la position est comparée jour par jour.",
+      "since": "référence {{date}}",
+      "ok": "La tondeuse se gare là où elle l'a toujours fait ; la station et le repère de carte n'ont pas bougé.",
+      "moved": "La tondeuse se gare à {{cm}} cm de sa position habituelle. Vérifiez si la station de charge ou son antenne a bougé ; si elle est bien placée, ré-ancrez.",
+      "gps": "La position RTK elle-même a bougé de {{cm}} cm, ce qui désigne l'antenne de la station."
+    },
     "title": {
       "sensors": "Capteurs",
       "diagnostics": "Diagnostic",

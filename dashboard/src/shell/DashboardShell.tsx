@@ -15,6 +15,7 @@ import { WorkRecordsPage } from '../pages/WorkRecordsPage';
 import { SettingsPage } from '../pages/SettingsPage';
 import { NetworkHealthCard } from '../components/drawer/NetworkHealthCard';
 import { LiveStatusCard } from '../components/drawer/LiveStatusCard';
+import { DockDriftCard } from '../components/drawer/DockDriftCard';
 import { ServerLogTail, FloatingServerLog } from '../components/drawer/ServerLogTail';
 import { MowerControls } from '../components/dashboard/MowerControls';
 import type { PatternPlacement } from '../components/patterns/PatternOverlay';
@@ -267,6 +268,7 @@ function ShellInner() {
       <Drawer open={drawerOpen} onClose={() => setDrawerOpen(false)}>
         <NetworkHealthCard />
         <LiveStatusCard sn={activeMowerSn} />
+        <DockDriftCard sn={activeMowerSn} />
         <ServerLogTail enlarged={logFloating} onEnlarge={() => setLogFloating(true)} />
       </Drawer>
 

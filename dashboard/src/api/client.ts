@@ -1267,3 +1267,16 @@ export async function getMowProgress(sn: string): Promise<MowProgressDto | null>
 export async function clearMowProgress(sn: string): Promise<void> {
   await apiFetch(`${BASE}/mow-progress/${encodeURIComponent(sn)}`, { method: 'DELETE' });
 }
+
+// ── Dock drift: does the mower park where it used to? ──────────────────
+export interface DockDriftPoint { ts: string; dx: number; dy: number; dist: number; gpsDist: number | null }
+export interface DockDriftDto {
+  referenceAt: string | null;
+  reference: { x: number; y: number } | null;
+  latest: DockDriftPoint | null;
+  daily: DockDriftPoint[];
+  status: 'ok' | 'warn' | 'fail' | 'unknown';
+}
+export async function fetchDockDrift(sn: string, days = 90): Promise<DockDriftDto> {
+  return (await get(`${BASE}/dock-drift/${encodeURIComponent(sn)}?days=${days}`)).json() as Promise<DockDriftDto>;
+}

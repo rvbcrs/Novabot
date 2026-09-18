@@ -851,6 +851,14 @@
     "mapObjects": "Kartenobjekte"
   },
   "drawer": {
+    "dockDrift": {
+      "title": "Position auf der Ladestation",
+      "tooFew": "Noch zu wenige Andockvorgänge. Nach drei Andockvorgängen mit RTK Fixed wird die Position täglich verglichen.",
+      "since": "Referenz {{date}}",
+      "ok": "Der Mäher parkt, wo er immer stand; Station und Kartenrahmen haben sich nicht bewegt.",
+      "moved": "Der Mäher parkt {{cm}} cm von seiner bisherigen Stelle entfernt. Prüfen Sie, ob die Ladestation oder ihre Antenne verschoben wurde; steht sie richtig, neu verankern.",
+      "gps": "Die RTK-Position selbst hat sich um {{cm}} cm verschoben, das deutet auf die Antenne der Station."
+    },
     "title": {
       "sensors": "Sensoren",
       "diagnostics": "Diagnose",
