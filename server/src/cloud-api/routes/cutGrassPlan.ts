@@ -4,6 +4,8 @@ import { v4 as uuidv4 } from 'uuid';
 import { cutGrassPlanRepo, equipmentRepo, mapRepo } from '../../db/repositories/index.js';
 import { authMiddleware } from '../../middleware/auth.js';
 import { AuthRequest, ok, fail, PlanRow } from '../../types/index.js';
+import { mirrorPlanToSchedule, removeScheduleForPlan } from '../../services/scheduleMirror.js';
+import type { CutGrassPlanRow } from '../../db/repositories/cutGrassPlans.js';
 
 export const cutGrassPlanRouter = Router();
 
@@ -231,6 +233,9 @@ cutGrassPlanRouter.post('/saveCutGrassPlan', authMiddleware, (req: AuthRequest, 
     area: body.area ?? null,
     timezone: body.timezone ?? null,
   });
+  // Mirror into dashboard_schedules: that is the table scheduleRunner fires (#108).
+  const created = cutGrassPlanRepo.findById(planId);
+  if (created) mirrorPlanToSchedule(created);
 
   res.json(ok({ planId }));
 });
@@ -261,6 +266,8 @@ cutGrassPlanRouter.post('/updateCutGrassPlan', authMiddleware, (req: AuthRequest
     area: (body.area as number) ?? null,
     timezone: (body.timezone as string) ?? null,
   });
+  const updated = cutGrassPlanRepo.findById(body.planId);
+  if (updated) mirrorPlanToSchedule(updated);
   res.json(ok());
 });
 
@@ -277,10 +284,13 @@ cutGrassPlanRouter.post('/deleteCutGrassPlan', authMiddleware, (req: AuthRequest
     // Verwijder alle plans voor deze user
     const allPlans = cutGrassPlanRepo.findByUser(req.userId!);
     for (const p of allPlans) {
+      removeScheduleForPlan(p as CutGrassPlanRow);
       cutGrassPlanRepo.delete((p as any).plan_id, req.userId!);
     }
     res.json(ok());
   } else {
+    const existing = cutGrassPlanRepo.findById(resolvedPlanId);
+    if (existing) removeScheduleForPlan(existing);
     cutGrassPlanRepo.delete(resolvedPlanId, req.userId!);
     res.json(ok());
   }

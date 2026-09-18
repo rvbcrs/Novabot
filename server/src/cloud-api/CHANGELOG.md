@@ -2,6 +2,23 @@
 
 Format: most-recent first. Each entry is dated and names the endpoint(s) affected.
 
+## 2026-09-18 — schedules: the Novabot app and the dashboard share one scheduler (#108)
+
+- `saveCutGrassPlan` / `updateCutGrassPlan` / `deleteCutGrassPlan` now mirror
+  the plan into `dashboard_schedules` (`schedule_id = app:<planId>`), the
+  table `scheduleRunner` fires. Until now a plan made in the Novabot app was
+  stored and never executed: the LFI cloud ran those server-side
+  (`start_time_navigation` at the hour) and nothing on the mower asks for
+  plans by itself (STM32 v3.6.0 has no sender for `CMD_SCHEDULE_GET`).
+- The dashboard's `POST/PATCH/DELETE /api/dashboard/schedules` mirror the
+  other way into `cut_grass_plans`, so `queryCutGrassPlan` lists them in the
+  Novabot app. Mapping: `weeks` Mon..Sun ↔ `weekdays` 0..6, cutting height
+  mm ↔ cm, first `areaMapFileNames` ↔ `map_id` (+ `area` = 10^slot).
+- Interval mode, rain pause and edge days remain dashboard-only; an app-side
+  edit only touches the fields the app knows.
+- Service: `services/scheduleMirror.ts`; test
+  `__tests__/routes/scheduleMirror.test.ts`.
+
 ## 2026-09-18 — queryPlanFromMachine: parse the multipart poll, zones as array (#108)
 
 - `POST /api/nova-data/cutGrassPlan/queryPlanFromMachine` now runs through

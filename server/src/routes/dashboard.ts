@@ -45,6 +45,7 @@ import { dirname } from 'path';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 import { v4 as uuidv4 } from 'uuid';
+import { mirrorScheduleToPlan, removePlanForSchedule } from '../services/scheduleMirror.js';
 import { getActiveAdvertisement, getCompetingServers } from '../services/mdnsAdvertiser.js';
 import { getDeviceHealth } from '../services/deviceHealth.js';
 import { getEditGeometry, saveDraft, discardDrafts, applyEdits, revertEdits } from '../services/mapEdit.js';
@@ -4176,6 +4177,7 @@ dashboardRouter.post('/schedules/:sn', (req: Request, res: Response) => {
   }
 
   const row = scheduleRepo.findById(scheduleId) as ScheduleRow;
+  mirrorScheduleToPlan(scheduleId);  // visible in the Novabot app too (#108)
   res.json({ ok: true, schedule: scheduleRowToDto(row) });
 });
 
@@ -4228,6 +4230,7 @@ dashboardRouter.patch('/schedules/:sn/:scheduleId', (req: Request, res: Response
   }
 
   const row = scheduleRepo.findById(scheduleId) as ScheduleRow;
+  mirrorScheduleToPlan(scheduleId);
   res.json({ ok: true, schedule: scheduleRowToDto(row) });
 });
 
@@ -4235,6 +4238,7 @@ dashboardRouter.patch('/schedules/:sn/:scheduleId', (req: Request, res: Response
 dashboardRouter.delete('/schedules/:sn/:scheduleId', (req: Request, res: Response) => {
   const { sn, scheduleId } = req.params;
   scheduleRepo.deleteByIdAndMower(scheduleId, sn);
+  removePlanForSchedule(scheduleId);
   // Verwijderd schema → gearmde randmaai van dit schema vervalt (finding 4).
   disarmEdgeWatchForSchedule(scheduleId, 'schema verwijderd');
   res.json({ ok: true });
