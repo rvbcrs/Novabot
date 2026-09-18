@@ -75,6 +75,8 @@ markdown_extensions:
 # checklist, and the text that goes on Docker Hub. They only confused search.
 exclude_docs: |
   superpowers/
+  runbooks/
+  guide/remote-support.md
   TESTER-GUIDE.md
   dockerhub-overview.md
 
@@ -90,6 +92,12 @@ nav:
     - OpenNova App: user-guide/opennova-app.md
     - Stock vs. Custom Firmware: user-guide/stock-vs-custom-firmware.md
     - Troubleshooting: user-guide/troubleshooting.md
+    - Map Backup & Restore: user-guide/map-backup-restore.md
+    - Portable Map Export / Import: portable-map-export-import.md
+    - Autonomous Mapping: user-guide/autonomous-mapping.md
+    - RTK Walker Mapping: user-guide/rtk-walker-mapping.md
+    - Walker Firmware Updates: user-guide/walker-ota.md
+    - App Updates (Android): guide/app-updates.md
     - LFI Knowledge Base (archived): reference/NOVABOT-ZENDESK-WIKI.md
   - Getting Started:
     - Installing OpenNova: guide/docker.md
@@ -108,7 +116,7 @@ nav:
   - HTTP API:
     - Overview: api/overview.md
     - Cloud API (App → Server): api/cloud-api.md
-    # - Dashboard API (Local): api/dashboard-api.md  # Hidden — dashboard not public yet
+    - Dashboard API (Local): api/dashboard-api.md
     - Mower → Server API: api/mower-api.md
     - Authentication: api/authentication.md
   - MQTT Protocol:

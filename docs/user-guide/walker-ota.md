@@ -29,8 +29,8 @@ firmware updates can be pushed without touching the cable.
    is a walker build; without it the file is registered as charger
    firmware and the walker will never see the update:
    ```bash
-   scp walker_firmware_*.bin walker_firmware_*.json rvbcrs@192.168.0.247:/tmp/
-   ssh rvbcrs@192.168.0.247 'sudo docker cp /tmp/walker_firmware_*.bin opennova:/data/firmware/ && sudo docker cp /tmp/walker_firmware_*.json opennova:/data/firmware/'
+   scp walker_firmware_*.bin walker_firmware_*.json <user>@<server>:/tmp/
+   ssh <user>@<server> 'sudo docker cp /tmp/walker_firmware_*.bin opennova:/data/firmware/ && sudo docker cp /tmp/walker_firmware_*.json opennova:/data/firmware/'
    ```
    The `release.sh` script emits both files and prints the exact scp
    command tailored to that build's version.

@@ -51,9 +51,9 @@ have to do this once per walker.
      directly via the web UI at `http://<walker-ip>/`).
 3. Open the walker's web UI in a browser: `http://<walker-ip>/`.
 4. On the Server section of the settings page set:
-   - **Server URL**: the OpenNova server, including port. Example:
-     `http://192.168.0.247:8080`. No trailing slash needed (the walker
-     strips it).
+   - **Server URL**: the OpenNova server, for example `http://192.168.1.50`
+     (add the port only if you changed the port mapping, e.g. `:8080`). No
+     trailing slash needed (the walker strips it).
 5. Save. This does not require a reboot.
 
 The walker can now POST bundles to:
@@ -249,7 +249,7 @@ preserve.
 On the mower:
 
 ```
-sshpass -p 'novabot' ssh root@192.168.0.244 \
+sshpass -p 'novabot' ssh root@<mower-ip> \
   "mv /userdata/lfi/maps/home0 /userdata/lfi/maps/home0.bak.\$(date +%s); \
    mkdir -p /userdata/lfi/maps/home0/csv_file; \
    mkdir -p /userdata/lfi/maps/home0/x3_csv_file"
@@ -325,7 +325,7 @@ ssh <server> "sqlite3 /opt/novabot/novabot.db \
 
 - Check the mower's robot_decision log for error codes:
   ```
-  sshpass -p 'novabot' ssh root@192.168.0.244 \
+  sshpass -p 'novabot' ssh root@<mower-ip> \
     "ls -t /userdata/ros2_log/robot_decision_*.log | head -1 \
      | xargs tail -200"
   ```

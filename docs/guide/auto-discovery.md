@@ -79,7 +79,7 @@ the OpenNova container:
 
 ```bash
 docker logs opennova | grep MDNS
-# [MDNS] advertising opennova.local, opennovabot.local → 192.168.0.247 (ttl=120s)
+# [MDNS] advertising opennova.local, opennovabot.local → 192.168.1.50 (ttl=120s)
 ```
 
 ## Verifying the mower picked up the new IP
@@ -110,7 +110,7 @@ Mower (`/userdata/lfi/json_config.json`, `mqtt.discovery` section):
 ```json
 {
   "mqtt": {
-    "value": { "addr": "192.168.0.247", "port": 1883 },
+    "value": { "addr": "192.168.1.50", "port": 1883 },
     "discovery": {
       "enabled": true,
       "interval_s": 60,
@@ -143,7 +143,7 @@ Check from a shell on the NAS:
 
 ```bash
 docker logs opennova-mdns
-# [MDNS-ONLY] advertising opennova.local -> 192.168.0.247 on 5353/udp (host network, detected)
+# [MDNS-ONLY] advertising opennova.local -> 192.168.1.50 on 5353/udp (host network, detected)
 ```
 
 And the proof that matters, on the mower or in the admin panel's
@@ -151,7 +151,7 @@ And the proof that matters, on the mower or in the admin panel's
 
 ```bash
 getent hosts opennova.local
-# 192.168.0.247   opennova.local
+# 192.168.1.50   opennova.local
 ```
 
 ## Switching a *running* mower to a new server without rebooting
@@ -173,10 +173,10 @@ python3 -c "
 import json
 p = '/userdata/lfi/json_config.json'
 d = json.load(open(p))
-d['mqtt']['value']['addr'] = '192.168.0.247'   # new server IP
+d['mqtt']['value']['addr'] = '192.168.1.50'   # new server IP
 open(p, 'w').write(json.dumps(d, indent=2))
 "
-printf '%s' '192.168.0.247:80' > /userdata/lfi/http_address.txt
+printf '%s' '192.168.1.50:80' > /userdata/lfi/http_address.txt
 
 # 2. Kill mqtt_node — mqtt_node_monitor.sh respawns it within ~3s,
 #    re-reading the config we just wrote.

@@ -139,16 +139,15 @@ A build script (`research/build_custom_firmware.sh`) automates the process of cr
 # Specify server and version
 ./research/build_custom_firmware.sh \
     --server 192.168.1.50 \
-    --http-port 3000 \
     --ssh-password novabot \
-    --version custom-16
+    --version custom-45
 
 # Bundle the server inside the firmware (runs on the mower itself)
 ./research/build_custom_firmware.sh \
     --include-server \
     --bundle-node \
-    --bundle-node-ip 192.168.0.244 \
-    --version custom-16-server
+    --bundle-node-ip <mower-ip> \
+    --version custom-45-server
 ```
 
 #### Build Script Options
@@ -538,7 +537,7 @@ For NVS-stored MQTT settings, use BLE:
 
 ```bash
 # Set MQTT host via BLE NVS
-node research/ble_set_mqtt.js --host <server-ip>   # e.g. 192.168.0.247 (production server)
+node research/ble_set_mqtt.js --host <server-ip>   # e.g. 192.168.1.50 (your server server)
 ```
 
 Available patched binaries:

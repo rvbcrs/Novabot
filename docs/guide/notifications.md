@@ -94,7 +94,7 @@ environment:
   HA_MQTT_PORT: 1883
   HA_MQTT_USER: "mqtt"
   HA_MQTT_PASS: "mqtt"
-  RENDER_BASE_URL: "http://192.168.0.222"   # your OpenNova LAN URL — required for the map image
+  RENDER_BASE_URL: "http://192.168.1.50"    # http://TARGET_IP, required for the map image
 ```
 
 Use as automation trigger:
@@ -172,6 +172,6 @@ Channels are independent. If you set `NTFY_TOPIC` AND `HA_MQTT_HOST` AND `HA_WEB
 | `HA_DISCOVERY_PREFIX` | `homeassistant` | HA discovery topic prefix; rarely changed |
 | `HA_THROTTLE_MS` | `2000` | Min ms between sensor publishes per mower |
 | `HA_MAP_THROTTLE_MS` | `15000` | Min ms between map-image URL republishes (forces HA refresh) |
-| `RENDER_BASE_URL` | — | Public URL of your OpenNova server (e.g. `http://192.168.0.222`); required for the HA image entity |
+| `RENDER_BASE_URL` | — | Public URL of your OpenNova server (e.g. `http://192.168.1.50`); required for the HA image entity |
 | `EVENTS_MQTT_TOPIC_PREFIX` | `novabot/events` | Prefix for local MQTT event publishes |
 | `LOW_BATTERY_THRESHOLD` | `20` | Battery % crossing point for `low_battery` events |

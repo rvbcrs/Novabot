@@ -381,7 +381,7 @@ To flash a patched firmware to a charger:
     "content": {
       "upgradeApp": {
         "version": "v0.3.6-local",
-        "downloadUrl": "http://<server>:8080/charger_v0.3.6_patched.bin",
+        "downloadUrl": "http://<server>/charger_v0.3.6_patched.bin",
         "md5": "fb7427789bf0e164ed00ef9ea8f9dbf0"
       }
     }

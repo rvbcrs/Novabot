@@ -59,7 +59,7 @@ On the first screen, enter:
 
 - **Home WiFi SSID** — your 2.4 GHz network name
 - **Home WiFi Password**
-- **MQTT Server Address** — your OpenNova server IP (e.g., `192.168.0.100`)
+- **MQTT Server Address** — your OpenNova server IP (e.g., `192.168.1.50`)
 - **MQTT Port** — usually `1883`
 
 !!! warning "2.4 GHz only"
@@ -211,7 +211,7 @@ The Bootstrap Tool accepts command-line arguments:
 ./novabot-bootstrap-macos-arm64 --port 8080
 
 # Specify MQTT address
-./novabot-bootstrap-macos-arm64 --mqtt-addr 192.168.0.100
+./novabot-bootstrap-macos-arm64 --mqtt-addr 192.168.1.50
 ```
 
 ## File Locations
