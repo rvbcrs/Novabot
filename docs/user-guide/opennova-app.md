@@ -14,8 +14,11 @@ Email + password (the same account you created on the OpenNova server admin page
 
 If login fails with "network connection abnormal":
 - The server's URL in app settings is wrong, or
-- DNS isn't routing `app.lfibot.com` (or your custom hostname) to your server, or
-- iOS-only: the server's TLS cert isn't trusted — install the OpenNova CA from the admin panel's Certificate Setup card.
+- DNS isn't routing `app.lfibot.com` (or your custom hostname) to your server.
+
+The OpenNova app talks plain HTTP to your server, so it needs no certificate
+on Android or iOS. The certificate steps on the [Docker page](../guide/docker.md#5-log-in-with-the-app)
+are for the original Novabot app only.
 
 ## Device picker (top of Home)
 
@@ -215,8 +218,12 @@ iOS users get the same prompt but it links to TestFlight / the GitHub release pa
 In order from "most common" to "least":
 
 1. Server URL or DNS isn't pointing at your OpenNova instance. Open Settings → Server URL and check.
-2. (iOS only) TLS cert not trusted. Install the OpenNova CA from the admin Certificate Setup card.
-3. Your phone is on a different VLAN than the server (guest WiFi often does this).
-4. Server container is down (`docker ps` on the host).
+2. Your phone is on a different VLAN than the server (guest WiFi often does this).
+3. Server container is down (`docker ps` on the host).
+
+No certificate is involved: the OpenNova app uses plain HTTP. If it is the
+**original Novabot app** that cannot connect, that one does need your
+server's certificate trusted on the phone, Android and iOS alike; the steps
+are under [Log in with the app](../guide/docker.md#5-log-in-with-the-app).
 
 The [Troubleshooting page](troubleshooting.md) has a deeper dive into each.
