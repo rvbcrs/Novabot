@@ -1,6 +1,47 @@
 {
   "releases": [
     {
+      "version": "2026.0918.2309",
+      "date": "2026-09-18",
+      "sections": {
+        "dashboard": [
+          "A drawn zone gets a teal outline instead of a dash",
+          "A drawn zone has a dashed outline on the map",
+          "Bell icons for dock_drift and firmware_required",
+          "Event types know dock_drift and firmware_required",
+          "Position-on-the-dock card in the diagnostics drawer",
+          "Keep the covered lanes on screen while a task is parked on the dock"
+        ],
+        "app": [
+          "A withdrawn build shows a red, non-dismissible update banner",
+          "Double-tap crash, five-zone cap, preview stripes, resume on the Map tab"
+        ],
+        "admin": [
+          "Translate the Factory list step name"
+        ],
+        "firmware": [
+          "Mqtt_node_monitor killed every healthy mqtt_node after ten minutes",
+          "The port probe must find OpenNova, not just an open port"
+        ],
+        "server": [
+          "Regenerate per-slot grids only after sync_map has finished",
+          "Track the update through the reboot and show each phase",
+          "A withdrawn custom build becomes a required update",
+          "Detect a charging station or map frame that moved, from the docked position",
+          "Record and show where a zone came from",
+          "Resume a lost mowing task from the lane it stopped in",
+          "One mowing session instead of the last 5000 points",
+          "Say why a scheduled run did not happen",
+          "STM32 decompile output and its Ghidra script",
+          "One click between the dashboard and the admin panel",
+          "Say when a serial is missing from the factory list",
+          "Learn serial numbers the factory table misses from the user's cloud login",
+          "Timezone comment",
+          "Plain values, no env substitution, built-in DNS on, options commented with examples"
+        ]
+      }
+    },
+    {
       "version": "2026.0918.1210",
       "date": "2026-09-18",
       "sections": {
@@ -167,56 +208,6 @@
       "version": "2026.0914.2044",
       "date": "2026-09-14",
       "sections": {}
-    },
-    {
-      "version": "2026.0914.2028",
-      "date": "2026-09-14",
-      "sections": {
-        "dashboard": [
-          "Bring notifications and dialogs in line with the app",
-          "Show the area of the zone being mowed, not the whole garden",
-          "Store a channel to the dock with the station first",
-          "Let the stock firmware align the map frame, keep the transit",
-          "Start zones above slot 4 through the mower's own orchestrator",
-          "Show the mower's own zone names in the pickers",
-          "A newly drawn obstacle goes to the mower like everything else",
-          "Keep the firmware version visible after an offline blip"
-        ],
-        "firmware": [
-          "Ship start_ext.sh, and keep the package honest",
-          "Ship reload_nav_map.py in the package",
-          "Carry an always-on seam fix through the upgrade",
-          "Give iceoryx small chunks again",
-          "One helper node, not one per measurement",
-          "The dry run has to undock in its head like do_mow does",
-          "Break off the firmware's own drive home before taking the wheels",
-          "A deleted channel now actually leaves the mower",
-          "Never wall in the charging station when closing a channel",
-          "A dry run before the wheels turn, and channels you can undo",
-          "Give Pure Pursuit a path it can steer on",
-          "Let the planner drive the approach to a channel",
-          "Clear a stuck mow_zone_drive before starting the next one",
-          "Stop the orchestrator from draining the shared-memory pool",
-          "Route between zones over the channels by default",
-          "A drawn channel becomes a real corridor in the navigation map",
-          "Let the firmware route between zones again, transit behind a switch",
-          "Start each transit hop at the mower, not three metres away",
-          "Drive the recorded channels in a chain, not just a direct one",
-          "Stop starving the 4 MB iceoryx pool",
-          "… plus 2 kleinere wijzigingen"
-        ],
-        "server": [
-          "Make the reload and the dry run work right after a boot",
-          "Dry run checks reachability, not just a free cell",
-          "Reload map_server so nav2 plans on the current map",
-          "Clear mapping mode before deleting, and stop blaming LoRa",
-          "Allow an obstacle between two work areas",
-          "Do not refuse zone 5 and up while the version is still unknown",
-          "Keep terrain recognition off all four cores",
-          "Keep terrain recognition from taking the machine down",
-          "Release the terrain model from memory when idle"
-        ]
-      }
     }
   ]
 }
