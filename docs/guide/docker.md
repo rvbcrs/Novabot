@@ -79,24 +79,26 @@ With an empty database you get the setup page:
 The mower and charger look for `mqtt.lfibot.com` and `app.lfibot.com`. Those
 names have to resolve to `TARGET_IP` on your network. Two ways; pick one.
 
-=== "Your router, Pi-hole or AdGuard"
+=== "OpenNova's built-in DNS (default)"
 
-    Add a DNS rewrite for `*.lfibot.com` → `TARGET_IP` where your network
-    already does DNS. Step by step per router and per tool on
-    [DNS Setup](dns-setup.md). Nothing changes in the compose.
-
-=== "OpenNova's built-in DNS"
-
-    For when your router cannot do rewrites. The compose above already has
-    the three lines, commented out: `"53:53/udp"` under `ports:`, and
-    `ENABLE_DNS` and `UPSTREAM_DNS` under `environment:`. Remove the `#` from
-    those three, `docker compose up -d`, and set `TARGET_IP` as the DNS
-    server in your router's DHCP settings. Every other name is forwarded to
-    `UPSTREAM_DNS`.
+    The compose above runs a small DNS server on port 53 that answers
+    `*.lfibot.com` with `TARGET_IP` and forwards everything else to
+    `UPSTREAM_DNS`. One thing to do: in your router's DHCP settings, set
+    `TARGET_IP` as the DNS server, so every device on the network (the mower
+    included) asks OpenNova first. Devices pick it up when their DHCP lease
+    renews; power-cycle the mower to make it immediate.
 
     Port 53 must be free on the host. On Ubuntu and Debian it is usually taken
     by `systemd-resolved`; the [DNS Setup](dns-setup.md#port-53-is-already-in-use)
     page shows how to free it.
+
+=== "Your router, Pi-hole or AdGuard"
+
+    If your network already has a place for DNS rewrites, add one for
+    `*.lfibot.com` → `TARGET_IP` there (step by step per router and per tool
+    on [DNS Setup](dns-setup.md)), and in the compose set `ENABLE_DNS: "false"`
+    and remove the `"53:53/udp"` line, so the port stays free for what you
+    have.
 
 Then power-cycle the mower so it picks up the new address.
 
@@ -149,13 +151,13 @@ Everything is set through `environment:` in the compose file.
 | `MDNS_ONLY` | — | `true` turns a container into the mDNS helper and nothing else. |
 | `MDNS_HOSTNAMES` | `opennova.local,opennovabot.local` | Names to advertise. |
 
-### Built-in DNS (optional)
+### Built-in DNS
 
-Only if you cannot add DNS rewrites on your router or Pi-hole. See [DNS Setup](dns-setup.md).
+On in the standard compose. Turn it off if you do the rewrite in your router or Pi-hole. See [DNS Setup](dns-setup.md).
 
 | Variable | Default | Description |
 |---|---|---|
-| `ENABLE_DNS` | `false` | Run dnsmasq that answers `*.lfibot.com` with `TARGET_IP`. Needs `"53:53/udp"` in `ports:`. |
+| `ENABLE_DNS` | `false` (the standard compose sets `true`) | Run dnsmasq that answers `*.lfibot.com` with `TARGET_IP`. Needs `"53:53/udp"` in `ports:`. |
 | `UPSTREAM_DNS` | `8.8.8.8` | Where everything else is forwarded. |
 
 ### Home Assistant (optional)
@@ -211,12 +213,12 @@ on a NAS. Use it on a Raspberry Pi or a dedicated box, and then leave
 | **443/tcp** | HTTPS, only with `ENABLE_TLS=true` |
 | **1883/tcp** | MQTT: mower and charger |
 | **5353/udp** | mDNS, used by `opennova-mdns` on the host network |
-| **53/udp** | Built-in DNS, only with `ENABLE_DNS=true` |
+| **53/udp** | Built-in DNS (`ENABLE_DNS=true`, on in the standard compose) |
 
-Port 53 is only in your compose if you chose the built-in DNS in step 4. If
-you do not use it, leave that line out: Docker claims the port even with
-`ENABLE_DNS` off, and then collides with `systemd-resolved`, Pi-hole or AdGuard
-on the same machine.
+If you do the rewrite in your router or Pi-hole instead of the built-in DNS,
+remove the `"53:53/udp"` line: Docker claims the port even with `ENABLE_DNS`
+off, and then collides with `systemd-resolved`, Pi-hole or AdGuard on the same
+machine.
 
 The mower's Wi-Fi is **2.4 GHz only**.
 

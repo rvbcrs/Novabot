@@ -7,8 +7,10 @@
     runs [custom firmware](auto-discovery.md) (it finds `opennova.local` by
     itself) *and* you use the OpenNova app, which talks to your server's IP.
 
-    Port 53 is only involved with **Option D** below. The other options change
-    nothing on the OpenNova machine.
+    The standard compose already runs OpenNova's own DNS (**Option D**
+    below); most people only have to point their router at it. The other
+    options are for networks that already have Pi-hole, AdGuard or a router
+    that can rewrite names.
 
 ## What is DNS and Why Do I Need It?
 
@@ -252,23 +254,19 @@ The OpenNova Docker container includes a built-in DNS server. This is the easies
 
 ### Enable in docker-compose.yml
 
-Take the compose from [Installing OpenNova](docker.md) and add three lines to
-the `opennova` service: one port and two environment variables.
+The compose from [Installing OpenNova](docker.md) already has it on:
 
 ```yaml
     ports:
-      - "53:53/udp"                    # add this
+      - "53:53/udp"
     environment:
-      ENABLE_DNS: "true"               # add this
-      UPSTREAM_DNS: "8.8.8.8"          # add this: where everything else goes
+      ENABLE_DNS: "true"
+      UPSTREAM_DNS: "8.8.8.8"          # where everything else goes
 ```
 
-`TARGET_IP` is already set in that compose; the built-in DNS answers
-`*.lfibot.com` with it. Then:
-
-```bash
-docker compose up -d
-```
+`TARGET_IP` is set in that compose; the built-in DNS answers `*.lfibot.com`
+with it. Nothing to add; if you turned it off earlier, put these back and
+`docker compose up -d`.
 
 ### Point Your Router to OpenNova
 

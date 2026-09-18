@@ -8,8 +8,8 @@ actually work.
 
 !!! success "Start here"
     **[Installing OpenNova](guide/docker.md)**: one page, one `docker-compose.yml`,
-    one line to change. Then **[DNS Setup](guide/dns-setup.md)** to point the
-    mower at it, and **[First Run](guide/getting-started.md)** for the app.
+    one line to change, and your router's DNS pointed at it. Then
+    **[First Run](guide/getting-started.md)** for the app.
 
     No Docker experience? The **[Raspberry Pi Installer](guide/raspberry-pi-installer.md)**
     writes a ready-made SD card.
@@ -26,7 +26,7 @@ actually work.
 | Feature | Needed? | When |
 |---|---|---|
 | OpenNova server | Yes | Always. Docker on Linux is the place for it. |
-| DNS redirect of `*.lfibot.com` | Usually | Needed for the official Novabot app and for stock firmware. |
+| DNS redirect of `*.lfibot.com` | Usually | Needed for the official Novabot app and for stock firmware. The standard compose brings its own DNS server; point your router at it. |
 | BLE provisioning | Once | Points a device at your server directly, through the OpenNova app or the bootstrap tool. |
 | Custom mower firmware | No | Adds discovery by name, SSH, camera stream, and the map editing the dashboard builds on. |
 

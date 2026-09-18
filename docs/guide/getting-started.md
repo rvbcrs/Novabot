@@ -36,7 +36,7 @@ Go to the **Settings** tab. The **Network & DNS** section automatically checks i
 - Red X = domain still points to the Novabot cloud (DNS not configured)
 
 If DNS is not configured, either:
-- Use the built-in **dnsmasq** (click Start) and point your router's DNS to the container IP
+- Use the built-in **dnsmasq** (on in the standard compose) and point your router's DNS to `TARGET_IP`
 - Or configure DNS rewrites in AdGuard Home / Pi-hole
 
 ## Step 2: Import your devices (if you skipped the wizard)
