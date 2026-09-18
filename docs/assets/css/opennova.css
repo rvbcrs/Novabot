@@ -114,6 +114,14 @@ body, .md-typeset {
   background: #ffffff;
   border-bottom: 1px solid rgba(0, 168, 136, 0.18);
 }
+[data-md-color-scheme="default"] .md-tabs__link {
+  color: var(--md-default-fg-color);
+}
+[data-md-color-scheme="default"] .md-tabs__link:hover,
+[data-md-color-scheme="default"] .md-tabs__link--active,
+[data-md-color-scheme="default"] .md-tabs__link:focus {
+  color: var(--on-emerald-strong) !important;
+}
 .md-tabs__link {
   opacity: 0.78;
   transition: opacity 120ms ease, color 120ms ease;
