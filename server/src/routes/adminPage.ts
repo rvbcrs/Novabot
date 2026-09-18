@@ -6398,10 +6398,7 @@ function previewMapIdsFromCanonicals(canonicals) {
   for (var i = 0; i < canonicals.length; i++) {
     var match = String(canonicals[i] || '').match(/^map(\\d+)$/);
     if (!match) continue;
-    var idx = Number(match[1]);
-    if (idx === 0) weights[1] = true;
-    else if (idx === 1) weights[10] = true;
-    else if (idx === 2) weights[100] = true;
+    weights[Math.pow(10, Number(match[1]))] = true;  // map3 = 1000, not map0 (#128)
   }
   var sum = 0;
   Object.keys(weights).forEach(function(k) { sum += Number(k); });
