@@ -2,6 +2,14 @@
 
 The Bootstrap Tool is a standalone desktop application that provisions Novabot chargers and mowers via Bluetooth Low Energy (BLE). It configures WiFi, MQTT, and LoRa settings so devices connect to your local OpenNova server.
 
+!!! note "You probably do not need it"
+    The [OpenNova app](../user-guide/opennova-app.md) does the same
+    provisioning from your phone (Settings → Provision Devices), and that is
+    the normal way. The bootstrap tool predates the app; keep it for a
+    computer without a phone nearby, or for provisioning several devices at
+    once. Both work on stock firmware: it is the same Bluetooth protocol the
+    official Novabot app uses, only with your server's address.
+
 ## When to Use
 
 | Scenario | Use Bootstrap Tool | Use OpenNova App |
