@@ -47,8 +47,9 @@ describe('mdnsOnly entry', () => {
     expect(svc).toContain('network_mode: host');
     expect(svc).toContain('MDNS_ONLY: "true"');
     expect(svc).toContain('image: rvbcrs/opennova:latest');
-    // nothing to configure: no TARGET_IP default, and a clean exit on Docker Desktop must stay stopped
-    expect(svc).toMatch(/TARGET_IP: \$\{TARGET_IP:-\}/);
+    // nothing to configure: no TARGET_IP at all (it detects the LAN address
+    // itself), and a clean exit on Docker Desktop must stay stopped
+    expect(svc).not.toContain('TARGET_IP');
     expect(svc).toContain('restart: on-failure');
     // and the main container hands mDNS over to it
     expect(compose).toMatch(/ENABLE_MDNS: "false"/);
