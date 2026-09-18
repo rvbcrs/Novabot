@@ -5039,8 +5039,12 @@ def handle_sync_map(params, respond):
         #
         # Backwards compat: old server (no charging_pose in sync-info payload)
         # → block is skipped, behaviour unchanged.
+        # A map push must not replace the dock pose the mower measured itself.
+        # Only restore-and-realign asks for it, or when the yaml is missing/broken.
         cp = info.get("charging_pose")
-        if isinstance(cp, dict):
+        write_cp = bool((params or {}).get("write_charging_pose")) or not _charging_pose_yaml_ok(
+            "/userdata/lfi/charging_station_file/charging_station.yaml")
+        if isinstance(cp, dict) and write_cp:
             try:
                 cx = float(cp.get("x"))
                 cy = float(cp.get("y"))

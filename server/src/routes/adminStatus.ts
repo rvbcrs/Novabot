@@ -1499,7 +1499,7 @@ adminStatusRouter.post('/map-backups/:sn/:filename/restore-and-realign', async (
       resolve({ ok: respond.result === 0, respond });
     };
     onExtendedResponse(sn, handler);
-    publishToExtended(sn, { sync_map: {} });
+    publishToExtended(sn, { sync_map: { write_charging_pose: true } });
     setTimeout(() => {
       if (settled) return;
       settled = true;
