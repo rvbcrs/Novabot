@@ -141,6 +141,8 @@ nav:
     - Mowing Session: flows/mowing-session.md
     - Map Building: flows/map-building.md
     - OTA Update: flows/ota-update.md
+    - Re-anchor (post-restore): reference/REANCHOR.md
+    - Costmap, Unicom & Multi-zone Nav: reference/COSTMAP-UNICOM-NAV.md
 
 extra_javascript:
   - assets/js/mermaid-zoom.js
