@@ -2514,14 +2514,22 @@ async function autoPushMapsInBackground(sn: string): Promise<void> {
   // MQTT kick: extended_commands.py on the mower subscribes to
   // novabot/extended/<SN> and will pull the new ZIP from our sync-info/sync-zip
   // endpoints. No SSH, no mower-IP lookup needed.
-  try {
-    const { publishToExtended } = await import('../mqtt/mapSync.js');
-    publishToExtended(sn, { sync_map: {} });
-    console.log(`[AUTO-PUSH] MQTT sync_map kick sent to ${sn}`);
-  } catch (err) {
-    console.warn(`[AUTO-PUSH] MQTT trigger fout voor ${sn}:`, err);
+  //
+  // WAIT for its answer before regenerating (#118). The mower runs every
+  // extended command in its own thread, so a regenerate sent right behind the
+  // kick listed csv_file/ before sync_map had downloaded and unpacked the new
+  // ZIP: the freshly drawn zone got no map<N>.yaml until the NEXT push, and
+  // starting it failed with error 118 (Petrov's map10, 2026-09-16).
+  const sync = await awaitExtended(sn, 'sync_map', {}, SYNC_MAP_TIMEOUT_MS);
+  if (!sync) {
+    console.warn(`[AUTO-PUSH] ${sn}: geen antwoord op sync_map`);
     return;
   }
+  if (sync.result !== 0) {
+    console.warn(`[AUTO-PUSH] ${sn}: sync_map faalde: ${String(sync.error ?? '')}`);
+    return;
+  }
+  console.log(`[AUTO-PUSH] ${sn}: sync_map ok${sync.unchanged ? ' (unchanged)' : ''}`);
 
   // The CSVs alone are not enough: the mower plans coverage on per-slot
   // occupancy grids, and those are only written by regenerate_per_map_files.
@@ -2532,31 +2540,41 @@ async function autoPushMapsInBackground(sn: string): Promise<void> {
   await regeneratePerMapFiles(sn);
 }
 
+// The mower downloads the ZIP, unpacks it and restarts its mapping node.
+const SYNC_MAP_TIMEOUT_MS = 120_000;
+
+/** Send one extended command and resolve with its `<cmd>_respond`, or null on timeout. */
+async function awaitExtended(
+  sn: string, cmd: string, params: Record<string, unknown>, timeoutMs: number,
+): Promise<Record<string, unknown> | null> {
+  const { publishToExtended, onExtendedResponse, offExtendedResponse } = await import('../mqtt/mapSync.js');
+  return new Promise((resolve) => {
+    let settled = false;
+    const handler = (data: Record<string, unknown>) => {
+      const respond = data[`${cmd}_respond`] as Record<string, unknown> | undefined;
+      if (!respond || settled) return;
+      settled = true;
+      offExtendedResponse(sn, handler);
+      resolve(respond);
+    };
+    onExtendedResponse(sn, handler);
+    publishToExtended(sn, { [cmd]: params });
+    setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      offExtendedResponse(sn, handler);
+      resolve(null);
+    }, timeoutMs);
+  });
+}
+
 /**
  * Ask the mower to rebuild its per-slot grids after a map push, and wait for
  * the answer so the log tells us whether the shared raster had to grow.
  */
 async function regeneratePerMapFiles(sn: string): Promise<void> {
   try {
-    const { publishToExtended, onExtendedResponse, offExtendedResponse } = await import('../mqtt/mapSync.js');
-    const result = await new Promise<Record<string, unknown> | null>((resolve) => {
-      let settled = false;
-      const handler = (data: Record<string, unknown>) => {
-        const respond = data.regenerate_per_map_files_respond as Record<string, unknown> | undefined;
-        if (!respond || settled) return;
-        settled = true;
-        offExtendedResponse(sn, handler);
-        resolve(respond);
-      };
-      onExtendedResponse(sn, handler);
-      publishToExtended(sn, { regenerate_per_map_files: {} });
-      setTimeout(() => {
-        if (settled) return;
-        settled = true;
-        offExtendedResponse(sn, handler);
-        resolve(null);
-      }, REGENERATE_TIMEOUT_MS);
-    });
+    const result = await awaitExtended(sn, 'regenerate_per_map_files', {}, REGENERATE_TIMEOUT_MS);
     if (!result) {
       console.warn(`[AUTO-PUSH] ${sn}: geen antwoord op regenerate_per_map_files`);
       return;
