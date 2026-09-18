@@ -1,6 +1,31 @@
 {
   "releases": [
     {
+      "version": "2026.0918.1210",
+      "date": "2026-09-18",
+      "sections": {
+        "dashboard": [
+          "Click a timeline block to edit that schedule",
+          "Say so while the mower path is being fetched"
+        ],
+        "admin": [
+          "Preview map_ids for every slot, not only map0-2"
+        ],
+        "firmware": [
+          "Don't overwrite the dock pose on every map push"
+        ],
+        "server": [
+          "The Novabot app and the dashboard share one scheduler",
+          "Answer the mower's schedule poll the way it is asked",
+          "Try the device ports once more after a timeout",
+          "No bridge warning on container_network once the sidecar advertises",
+          "Don't count the dock approach circle as a split zone",
+          "The mDNS sidecar needs nothing configured",
+          "An mDNS sidecar, so a bridged container can be discovered"
+        ]
+      }
+    },
+    {
       "version": "2026.0916.2325",
       "date": "2026-09-16",
       "sections": {
@@ -190,42 +215,6 @@
           "Keep terrain recognition off all four cores",
           "Keep terrain recognition from taking the machine down",
           "Release the terrain model from memory when idle"
-        ]
-      }
-    },
-    {
-      "version": "2026.0912.1247",
-      "date": "2026-09-12",
-      "sections": {
-        "dashboard": [
-          "A failed task no longer counts as mowing",
-          "Stop showing a crash modal for the mapping node restart",
-          "Drop dependent channels from the map right after a delete",
-          "Maten tijdens het tekenen en oppervlakte op de kaart",
-          "Dubbelklik rondt het tekenen af, nieuw gebied begint op werkgebied",
-          "Eerste punt en elastieklijn tijdens het tekenen",
-          "Getekend kanaal bleef onzichtbaar en kreeg een verzonnen naam",
-          "Wis een kaart pas nadat de maaier het bevestigt",
-          "Canonieke namen voor getekende kaarten en kanalen"
-        ],
-        "app": [
-          "Codex-review op 044963a9/da27eb8c verwerkt",
-          "Knipperende, niet-blokkerende waarschuwing bij localisatieverlies tijdens karteren",
-          "Afgewezen stop_scan_map (lus niet gesloten) terug naar de opname",
-          "Recover silent BLE mapping notifications"
-        ],
-        "firmware": [
-          "Mow zones beyond slot 4 by map name instead of area code",
-          "Kill the coverage planner by path, not by truncated name",
-          "Grow the navigation raster to fit areas drawn on the dashboard",
-          "Herstart van novabot_mapping werkte niet, wissen liep daarop vast"
-        ],
-        "server": [
-          "Key the map-name selection on build 40, the next unused number",
-          "Commando met hetzelfde volgnummer werd stil geweigerd",
-          "Net verbonden device gold als offline vlak na een herstart",
-          "Delete_map zonder map_type wiste niets op de maaier",
-          "Stock-simulatie mag AES niet uitzetten voor een echte v6-maaier"
         ]
       }
     }
