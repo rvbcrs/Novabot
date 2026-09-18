@@ -1,7 +1,7 @@
 # Network Topology
 
-!!! info "DNS rewrites are OPTIONAL since v1.0.0"
-    Since v1.0.0, DNS rewrites are OPTIONAL. The OpenNova app and bootstrap tool provision devices with direct IP addresses via BLE. DNS rewrites are only needed if you want to use the official Novabot app.
+!!! info "Two ways in"
+    Stock firmware and the official Novabot app look up `mqtt.lfibot.com` and `app.lfibot.com`, so the [DNS redirect](../guide/dns-setup.md) is where everyone starts. A device provisioned with the OpenNova app has the server's IP written into it over BLE and no longer needs the redirect; a mower on custom firmware finds `opennova.local` by itself.
 
 ## DNS Redirect
 

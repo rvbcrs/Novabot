@@ -227,5 +227,4 @@ Sidebar → **Add device**: the serial number and the BLE MAC address. The
 dashboard can scan for nearby devices over Bluetooth when the server has a
 Bluetooth adapter (a Raspberry Pi does; a container on a NAS usually does
 not), or you enter the MAC by hand. Provisioning itself, telling the device
-where the server is, is done with the [OpenNova app](opennova-app.md) or the
-[bootstrap tool](../guide/bootstrap.md).
+where the server is, is done with the [OpenNova app](opennova-app.md).

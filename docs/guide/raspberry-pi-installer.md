@@ -154,9 +154,9 @@ and can import your mower, charger, and existing maps.
 
 ## Next steps
 
-- **Pair your mower and charger.** Open the OpenNova phone app (or the
-  [Bootstrap Tool](bootstrap.md)) and follow the pairing flow. It sends your
-  Wi-Fi and server details to the devices over Bluetooth.
+- **Pair your mower and charger.** Open the OpenNova phone app, Settings →
+  Provision Devices, charger first. It sends your Wi-Fi and server details to
+  the devices over Bluetooth.
 - **Original Novabot app users:** finish the [DNS Setup](dns-setup.md) so the
   app reaches your Pi.
 - **Learn the admin page:** see the [Admin Panel guide](../user-guide/admin-panel.md).

@@ -27,7 +27,7 @@ actually work.
 |---|---|---|
 | OpenNova server | Yes | Always. Docker on Linux is the place for it. |
 | DNS redirect of `*.lfibot.com` | Yes, to start | Stock firmware and the official app look for the Novabot cloud by name; the redirect makes that name your server. The standard compose brings its own DNS server; point your router at it. |
-| BLE provisioning | No | The Bluetooth setup every Novabot went through with the official app, on stock firmware. The OpenNova app does the same and fills in your server's address instead of the cloud's, so a device set up this way needs no DNS. You need it when the Wi-Fi changes ([Reconnect to Wi-Fi](user-guide/reconnect-wifi.md)); otherwise DNS is enough. The [bootstrap tool](guide/bootstrap.md) is the older desktop version of the same thing, for when there is no phone. |
+| BLE provisioning | No | The Bluetooth setup every Novabot went through with the official app, on stock firmware. The OpenNova app does the same and fills in your server's address instead of the cloud's, so a device set up this way needs no DNS. You need it when the Wi-Fi changes ([Reconnect to Wi-Fi](user-guide/reconnect-wifi.md)); otherwise DNS is enough. |
 | Custom mower firmware | No | Adds discovery by name, SSH, camera stream, and the map editing the dashboard builds on. |
 
 ## How it works
@@ -48,7 +48,6 @@ actually work.
 | Server | `server/` | Express, Aedes MQTT, Socket.io |
 | OpenNova app | `app/` | React Native, Expo |
 | Dashboard | `dashboard/` | React, Vite, Leaflet |
-| Bootstrap tool | `bootstrap/` | Node.js, noble BLE |
 | ESP32 OTA tool | `firmware/esp32-tool/` | PlatformIO, LVGL |
 | Mower modules | `mower/` | Python, ROS 2 |
 

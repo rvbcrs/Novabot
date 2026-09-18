@@ -79,6 +79,7 @@ exclude_docs: |
   guide/remote-support.md
   TESTER-GUIDE.md
   dockerhub-overview.md
+  guide/bootstrap.md
 
 plugins:
   - search
@@ -108,7 +109,6 @@ nav:
     - Raspberry Pi Installer: guide/raspberry-pi-installer.md
     - Raspberry Pi by Hand: guide/beginner-installation.md
     - Discovery by Name (mDNS): guide/auto-discovery.md
-    - Bootstrap Tool: guide/bootstrap.md
     - ESP32 OTA Tool: guide/esp32-tool.md
     - Notifications & Push: guide/notifications.md
   - Architecture:

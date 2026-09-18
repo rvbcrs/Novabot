@@ -234,7 +234,7 @@ flowchart TD
     H --> J
 ```
 
-The mDNS discovery is implemented as a raw Python socket query (no external dependencies). It queries for `opennovabot.local` (and `opennova.local`), which the OpenNova server advertises: on Linux through the `opennova-mdns` helper in the standard compose, on a Mac through the bootstrap tool. With the standard compose there is nothing to enable for this; see [Discovery by Name](../guide/auto-discovery.md).
+The mDNS discovery is implemented as a raw Python socket query (no external dependencies). It queries for `opennovabot.local` (and `opennova.local`), which the OpenNova server advertises: on Linux through the `opennova-mdns` helper in the standard compose (on Docker Desktop mDNS cannot leave the VM, and the mower falls through to DNS). With the standard compose there is nothing to enable for this; see [Discovery by Name](../guide/auto-discovery.md).
 
 !!! warning "Critical: `http_address.txt` format"
     The firmware prepends `http://` when building URLs. The file must contain ONLY `host:port` (e.g. `192.168.0.222`), with **NO** `http://` prefix and **NO** trailing newline. The build script uses `printf "%s"` instead of `echo` for this reason.
@@ -614,7 +614,7 @@ Custom firmware overrides this file at every boot to ensure it always points to 
 flowchart LR
     subgraph Host["Host Machine (Mac/NAS/RPi)"]
         Docker["Docker Container<br/>server + dashboard<br/>+ Aedes MQTT broker"]
-        Bootstrap["Bootstrap Wizard<br/>(native, not Docker)<br/>+ mDNS opennovabot.local"]
+        MDNS["opennova-mdns<br/>(host network)<br/>advertises opennova.local"]
     end
 
     subgraph Mower["Mower (custom firmware)"]
@@ -625,7 +625,7 @@ flowchart LR
         Flutter["Flutter v2.3.8+<br/>DNS redirect via<br/>app.lfibot.com"]
     end
 
-    Firmware -->|mDNS query| Bootstrap
+    Firmware -->|mDNS query| MDNS
     Firmware -->|MQTT + HTTP| Docker
     App -->|HTTPS + MQTT| Docker
 ```
@@ -636,8 +636,7 @@ flowchart LR
 |----------|-----------|
 | **No Novabot binaries distributed** | Legal risk. Only patch tools shipped; user downloads firmware from cloud |
 | **Charger patching** | Binary patching for MQTT URLs (`patch_firmware.js`) + BLE NVS set (`ble_set_mqtt.js`) |
-| **Bootstrap wizard** | `bootstrap/` --- standalone tool for initial firmware flash + mDNS advertising of `opennovabot.local` |
-| **mDNS in bootstrap, not Docker** | Docker bridge networking blocks multicast on macOS. Bootstrap runs native on host |
+| **mDNS in a host-network sidecar** | A bridged container cannot be heard on the LAN; `opennova-mdns` runs with `network_mode: host` and nothing else |
 
 !!! warning "Novabot Cloud Unreliable"
     The Novabot cloud has been experiencing frequent outages since March 2026. Firmware downloads from the cloud may not be available during outages.

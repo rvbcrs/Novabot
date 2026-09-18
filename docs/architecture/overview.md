@@ -17,9 +17,7 @@ graph TB
         Server[server<br/>Express + Aedes MQTT]
     end
 
-    subgraph "Host Machine (native)"
-        Bootstrap[Bootstrap Wizard<br/>BLE provisioning + mDNS]
-    end
+    MDNS[opennova-mdns<br/>host network, advertises opennova.local]
 
     subgraph Devices
         Charger[Charging Station<br/>ESP32-S3 / LFIC1230700XXX]
@@ -33,8 +31,7 @@ graph TB
     App -->|HTTP REST + Socket.io| Server
     App <-->|BLE GATT| Charger
     App <-->|BLE GATT| Mower
-    Bootstrap <-->|BLE provisioning| Charger
-    Bootstrap <-->|BLE provisioning| Mower
+    Mower -.->|mDNS opennova.local| MDNS
     Charger -->|MQTT plain JSON| Server
     Mower -->|MQTT AES-128-CBC| Server
     Charger <-->|LoRa 433MHz| Mower
@@ -99,15 +96,6 @@ graph LR
 | Maps | SVG-based with GPS conversion |
 | Real-time | Socket.io client |
 
-### Bootstrap Wizard (`bootstrap/`)
-
-| Layer | Technology |
-|-------|-----------|
-| Runtime | Node.js + TypeScript |
-| BLE | @stoprocent/noble (native) + Web BLE (browser fallback) |
-| mDNS | Bonjour/Avahi advertisement |
-| Purpose | First-time firmware patching, BLE provisioning, mDNS `opennovabot.local` |
-
 ### DNS redirect (optional)
 
 The container bundles `dnsmasq` but it is **OFF by default** (only started when `ENABLE_DNS=true` and `TARGET_IP` are set in `docker-compose.yml`). Most deployments use an external resolver instead.
@@ -137,7 +125,7 @@ The project uses a Docker-based distribution where the server runs on the user's
 | Component | Runs On | Purpose |
 |-----------|---------|---------|
 | **Docker container** | Mac/NAS/RPi | server + dnsmasq |
-| **Bootstrap wizard** | Host machine (native) | Initial setup, firmware patching, mDNS advertising |
+| **opennova-mdns** | Same host, host network | Advertises `opennova.local` for custom-firmware mowers |
 | **Custom mower firmware** | Mower | SSH, URL patches, camera, mDNS discovery |
 
 ### Server Discovery
@@ -151,8 +139,8 @@ The mower finds the local server via a fallback cascade (custom firmware v6.0.2-
 5. **Fallback host** (hardcoded during firmware build)
 6. **Skip** -- mower continues without server connection
 
-!!! info "mDNS runs on the host, not in Docker"
-    The bootstrap wizard advertises `opennovabot.local` via mDNS on the host machine. Docker bridge networking blocks multicast on macOS, so mDNS runs natively in the bootstrap tool, not inside Docker.
+!!! info "mDNS runs in its own container on the host network"
+    A bridged container only ever hears its own multicast, so the standard compose runs a second, tiny container `opennova-mdns` with `network_mode: host` that advertises `opennova.local`. On Docker Desktop (macOS, Windows) even that sits inside a VM and cannot be heard; the mower then falls through to the DNS step. See [Discovery by Name](../guide/auto-discovery.md).
 
 ## Database Schema
 

@@ -119,6 +119,10 @@ cat > "${OUT_DIR}/manifest.json" <<EOF
 }
 EOF
 
+# The wiki links the exact APK (the download folder is not browsable and has
+# no "latest" alias), so point it at this build.
+sed -i '' -E "s#downloads\.ramonvanbruggen\.nl/app/opennova-v[0-9.]+\.apk#downloads.ramonvanbruggen.nl/app/opennova-v${VERSION}.apk#" docs/user-guide/opennova-app.md
+
 echo ""
 echo "Built v${VERSION}:"
 echo "  APK:      ${APK_OUT} ($(du -h "${APK_OUT}" | awk '{print $1}'))"
