@@ -19,6 +19,7 @@ const STEP_LABEL: Record<string, [string, string]> = {
   seen: ['diagnose.seen', 'Ooit verbonden'],
   attempts: ['diagnose.attempts', 'Verbindingspogingen'],
   binding: ['diagnose.binding', 'Koppeling'],
+  factory: ['diagnose.factory', 'Fabriekslijst'],
   ble_mac: ['diagnose.bleMac', 'BLE MAC'],
   counterpart: ['diagnose.counterpart', 'Tegenhanger'],
   lora: ['diagnose.lora', 'LoRa-paar'],

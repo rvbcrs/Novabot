@@ -622,6 +622,25 @@ export async function diagnoseConnection(
     push({ id: 'binding', group: 'identity', status: 'ok', evidence: T`gekoppeld aan ${who}` });
   }
 
+  // 4b. The factory table came from a one-off scan of the LFI cloud and can
+  //     miss a serial. Then the official app fails at pairing with "Device is
+  //     missing mac address" and nothing on this server explains why. The
+  //     cloud login during setup learns missing serials; someone who skipped
+  //     it only finds out here.
+  if (deviceType === 'mower' || deviceType === 'charger') {
+    if (deviceRepo.getFactoryDevice(sn)) {
+      push({ id: 'factory', group: 'identity', status: 'ok', evidence: T`serienummer staat in de fabriekslijst` });
+    } else {
+      push({
+        id: 'factory',
+        group: 'identity',
+        status: 'warn',
+        evidence: T`serienummer ${sn} staat niet in OpenNova's fabriekslijst`,
+        action: T`de officiële Novabot-app kan dit apparaat dan niet koppelen ("Device is missing mac address"); gebruik de OpenNova-app, die vindt het apparaat via Bluetooth, of log in het admin-paneel eenmalig in bij de cloud (Settings → Cloud import), en meld het serienummer op GitHub zodat het aan de lijst wordt toegevoegd`,
+      });
+    }
+  }
+
   // 5. The BLE MAC must be the mower's own, not the charger's. When it is the
   //    charger's, the app does not recognise the BLE advertisement and the user
   //    sees a device that will not pair, with nothing wrong on this side.

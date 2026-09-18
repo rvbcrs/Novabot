@@ -1069,6 +1069,7 @@
     "seen": "Ever connected",
     "attempts": "Connection attempts",
     "binding": "Binding",
+    "factory": "Factory list",
     "bleMac": "BLE MAC",
     "counterpart": "Counterpart",
     "lora": "LoRa pair",

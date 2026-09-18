@@ -947,6 +947,7 @@
     "seen": "Jemals verbunden",
     "attempts": "Verbindungsversuche",
     "binding": "Kopplung",
+    "factory": "Werksliste",
     "bleMac": "BLE MAC",
     "counterpart": "Gegenstück",
     "lora": "LoRa-Paar",

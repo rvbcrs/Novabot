@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { db } from '../../db/database.js';
 import { diagnoseConnection, type DiagnosisProbes } from '../../services/connectionDiagnosis.js';
-import { connectionEventRepo } from '../../db/repositories/index.js';
+import { connectionEventRepo, deviceRepo } from '../../db/repositories/index.js';
 import { serverIpv4 } from '../../services/reachability.js';
 import { factoryOuis, scanLan, bleToWifiMac, rivalBrokers } from '../../services/lanScan.js';
 import { inspectContainerNetwork } from '../../services/containerNetwork.js';
@@ -183,6 +183,21 @@ describe('connection diagnosis', () => {
     const step = (await diagnoseConnection(MOWER, Date.now(), { probes: probes() })).steps.find(s => s.id === 'ble_mac')!;
     expect(step.status).toBe('fail');
     expect(step.evidence).toContain('laadstation');
+  });
+
+  it('warns when the serial is missing from the factory list, with the way out', async () => {
+    // The official app then fails at pairing with "Device is missing mac
+    // address"; this is the only place a user who skipped the cloud login
+    // learns why.
+    seenAt(MOWER, 60_000);
+    bind('50:41:1C:39:BD:C1');
+    let step = (await diagnoseConnection(MOWER, Date.now(), { probes: probes() })).steps.find(s => s.id === 'factory')!;
+    expect(step.status).toBe('warn');
+    expect(step.evidence).toContain(MOWER);
+    expect(step.action).toContain('OpenNova-app');
+    deviceRepo.importFactoryDevices([{ sn: MOWER, mac_address: '50:41:1C:39:BD:C1' }]);
+    step = (await diagnoseConnection(MOWER, Date.now(), { probes: probes() })).steps.find(s => s.id === 'factory')!;
+    expect(step.status).toBe('ok');
   });
 
   it('reports a charger that never showed up', async () => {

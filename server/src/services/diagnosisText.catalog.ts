@@ -468,6 +468,21 @@ export const CATALOG: Catalog = {
     fr: "aucune MAC BLE connue pour l'appairage",
     de: "keine BLE-MAC für die Kopplung bekannt",
   },
+  "serienummer staat in de fabriekslijst": {
+    en: "serial number is in the factory list",
+    fr: "le numéro de série figure dans la liste d'usine",
+    de: "Seriennummer steht in der Werksliste",
+  },
+  "serienummer {0} staat niet in OpenNova's fabriekslijst": {
+    en: "serial number {0} is not in OpenNova's factory list",
+    fr: "le numéro de série {0} ne figure pas dans la liste d'usine d'OpenNova",
+    de: "Seriennummer {0} steht nicht in der Werksliste von OpenNova",
+  },
+  "de officiële Novabot-app kan dit apparaat dan niet koppelen (\"Device is missing mac address\"); gebruik de OpenNova-app, die vindt het apparaat via Bluetooth, of log in het admin-paneel eenmalig in bij de cloud (Settings → Cloud import), en meld het serienummer op GitHub zodat het aan de lijst wordt toegevoegd": {
+    en: "the official Novabot app cannot pair this device then (\"Device is missing mac address\"); use the OpenNova app, which finds the device over Bluetooth, or log in to the cloud once from the admin panel (Settings → Cloud import), and report the serial number on GitHub so it gets added to the list",
+    fr: "l'application Novabot officielle ne peut alors pas appairer cet appareil (\"Device is missing mac address\") ; utilisez l'application OpenNova, qui trouve l'appareil en Bluetooth, ou connectez-vous une fois au cloud depuis le panneau admin (Settings → Cloud import), et signalez le numéro de série sur GitHub pour qu'il soit ajouté à la liste",
+    de: "die offizielle Novabot-App kann dieses Gerät dann nicht koppeln (\"Device is missing mac address\"); nutzen Sie die OpenNova-App, die das Gerät per Bluetooth findet, oder melden Sie sich im Admin-Panel einmal bei der Cloud an (Settings → Cloud import), und melden Sie die Seriennummer auf GitHub, damit sie in die Liste aufgenommen wird",
+  },
   "zonder MAC herkent de app de maaier niet in een BLE-scan": {
     en: "without a MAC the app will not recognise the mower in a BLE scan",
     fr: "sans MAC l'application ne reconnaît pas la tondeuse dans un scan BLE",

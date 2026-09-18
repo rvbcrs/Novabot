@@ -2351,6 +2351,7 @@ async function diagnoseDevice(sn) {
                  seen: "Ever connected",
                  attempts: "Connection attempts",
                  binding: "Binding",
+                 factory: "Factory list",
                  ble_mac: "BLE MAC",
                  counterpart: "Counterpart",
                  lora: "LoRa pair",
