@@ -5060,9 +5060,16 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
           </div>
         )}
 
-        {/* Geen floating hint-paneel meer — alleen de toolbar-toggle + refresh-icon
-            bovenin (met live-stip + spinner) is genoeg. coverageStatus wordt nog
-            in de logica gezet maar bewust niet als paneel getoond. */}
+        {/* Geen floating hint-paneel meer; coverageStatus wordt nog in de logica
+            gezet maar bewust niet als paneel getoond. Alleen tijdens het ophalen
+            een pill: de spinner in de toolbar alleen viel niet op wanneer je een
+            zone aantikt en er 5-10 s niets lijkt te gebeuren (#128). */}
+        {coverageLoading && (
+          <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[1000] flex items-center gap-2 bg-gray-900/95 backdrop-blur border border-cyan-600/60 rounded-full px-3 py-1.5 shadow-xl text-xs text-cyan-200 pointer-events-none">
+            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            {t('map.edit.coverageLoading')}
+          </div>
+        )}
 
         {/* Draft → apply-to-mower bar (R2) */}
         {showEditBar && (
