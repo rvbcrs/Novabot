@@ -6,7 +6,7 @@ Short answer: the OpenNova app works for everyday mowing on a stock-firmware mow
 
 ## Three flavours of "stock"
 
-When this page says "stock" it means the **factory LFI firmware** the mower shipped with. Stock main firmware versions look like `v6.0.2` (no suffix); custom builds add a `-custom-NN` suffix (`v6.0.2-custom-44` as of September 2026; the admin panel's Firmware tab lists the current one under *Refresh from manifest*). The factory image is typically `mower_firmware_v6.0.2.deb` (or `v5.7.1` for older units). The factory image talks to `mqtt.lfibot.com` and `app.lfibot.com`. For the app to reach the mower at all, you also need DNS rewrites on your LAN so those hostnames resolve to your OpenNova server.
+When this page says "stock" it means the **factory LFI firmware** the mower shipped with. Stock main firmware versions look like `v6.0.2` (no suffix); custom builds add a `-custom-NN` suffix (`v6.0.2-custom-44` as of September 2026; the admin panel's Firmware tab lists the current one under *Refresh from manifest*). The factory image is typically `mower_firmware_v5.7.1.deb`; units that took LFI's last beta run `v6.0.2`. The custom builds are all based on `v6.0.2`. The factory image talks to `mqtt.lfibot.com` and `app.lfibot.com`. For the app to reach the mower at all, you also need DNS rewrites on your LAN so those hostnames resolve to your OpenNova server.
 
 Two other firmware layers come up:
 
