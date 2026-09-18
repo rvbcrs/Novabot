@@ -3975,6 +3975,9 @@ interface ScheduleRow {
   timezone: string | null;
   trigger_count: number;
   skip_date: string | null;
+  last_result_at?: string | null;
+  last_result?: string | null;
+  last_result_reason?: string | null;
   edge_days: string | null;
   created_at: string;
   updated_at: string;
@@ -4007,6 +4010,9 @@ function scheduleRowToDto(r: ScheduleRow) {
     intervalAnchorDate: r.interval_anchor_date,
     timezone: r.timezone ?? null,
     skipDate: r.skip_date ?? null,
+    lastResultAt: r.last_result_at ?? null,
+    lastResult: r.last_result ?? null,
+    lastResultReason: r.last_result_reason ?? null,
     edgeDays: parseEdgeDays(r.edge_days),
     // Richting die de VOLGENDE run daadwerkelijk gebruikt. Bij alternate
     // rotatie is dat base + trigger_count×step — de kaarten toonden eerst

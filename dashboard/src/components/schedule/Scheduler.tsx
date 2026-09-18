@@ -778,6 +778,15 @@ export function Scheduler({ sn, online, sensors, onPathDirectionChange, editRequ
                 </>
               )}
             </div>
+            {/* Waarom de laatste beurt wel/niet liep. Alleen tonen als er
+                iets te melden is; een gestarte beurt spreekt voor zich. */}
+            {s.lastResult && s.lastResult !== 'started' && s.lastResultAt && (
+              <div className={`mt-1 text-[11px] ${s.lastResult === 'missed' || s.lastResult === 'failed' ? 'text-red-400' : 'text-amber-400'}`}>
+                {new Date(s.lastResultAt).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' })}
+                {' · '}{t(`schedule.lastResult.${s.lastResult}`)}
+                {s.lastResultReason && <span className="text-gray-400"> · {s.lastResultReason}</span>}
+              </div>
+            )}
           </div>
         ))}
       </div>

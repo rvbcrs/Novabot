@@ -43,6 +43,10 @@ export interface ScheduleRow {
   /** JSON-array weekdagen [0-6] waarop na de maaibeurt een randmaai volgt;
    *  NULL = huidig gedrag (geen server-gestuurde randmaai). */
   edge_days: string | null;
+  /** Laatste runner-beslissing: ISO-tijd, 'started' | 'skipped' | 'failed' | 'missed', en de reden. */
+  last_result_at: string | null;
+  last_result: string | null;
+  last_result_reason: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -228,6 +232,9 @@ export class ScheduleRepository {
       ['interval_anchor_date', data.interval_anchor_date],
       ['timezone', data.timezone],
       ['skip_date', data.skip_date],
+      ['last_result_at', data.last_result_at],
+      ['last_result', data.last_result],
+      ['last_result_reason', data.last_result_reason],
       ['edge_days', data.edge_days],
     ];
 
@@ -273,6 +280,9 @@ export class ScheduleRepository {
       ['interval_anchor_date', data.interval_anchor_date],
       ['timezone', data.timezone],
       ['skip_date', data.skip_date],
+      ['last_result_at', data.last_result_at],
+      ['last_result', data.last_result],
+      ['last_result_reason', data.last_result_reason],
       ['edge_days', data.edge_days],
     ];
 

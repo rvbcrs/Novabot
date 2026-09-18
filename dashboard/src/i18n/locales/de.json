@@ -554,7 +554,12 @@
     "skipNextActive": "Nächster Lauf wird übersprungen — klicken zum Abbrechen",
     "skipNextBadge": "überspringt",
     "edit": "Bearbeiten",
-    "save": "Speichern"
+    "save": "Speichern",
+    "lastResult": {
+      "skipped": "nicht gestartet",
+      "failed": "Start fehlgeschlagen",
+      "missed": "verpasst"
+    }
   },
   "rain": {
     "since": "Seit {{time}}",

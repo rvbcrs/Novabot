@@ -103,6 +103,10 @@ export interface Schedule {
   rainThresholdProbability: number;
   rainCheckHours: number;
   lastTriggeredAt: string | null;
+  /** Laatste runner-beslissing: wanneer, started/skipped/failed/missed, en waarom. */
+  lastResultAt?: string | null;
+  lastResult?: 'started' | 'skipped' | 'failed' | 'missed' | null;
+  lastResultReason?: string | null;
   /** YYYY-MM-DD van de dag die overgeslagen wordt; zelf-wissend na de skip. */
   skipDate?: string | null;
   /** Richting die de volgende run echt gebruikt (base + rotatie). */

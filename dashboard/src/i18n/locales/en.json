@@ -571,7 +571,12 @@
     "skipNextActive": "Next run will be skipped — click to cancel",
     "skipNextBadge": "skips",
     "edit": "Edit",
-    "save": "Save"
+    "save": "Save",
+    "lastResult": {
+      "skipped": "not started",
+      "failed": "start failed",
+      "missed": "missed"
+    }
   },
   "rain": {
     "since": "Since {{time}}",

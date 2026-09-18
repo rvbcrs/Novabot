@@ -135,6 +135,10 @@ export interface Schedule {
   rainPausedAt?: string | null;
   /** YYYY-MM-DD van de dag die overgeslagen wordt; zelf-wissend na de skip. */
   skipDate?: string | null;
+  /** Laatste runner-beslissing: wanneer, started/skipped/failed/missed, waarom. */
+  lastResultAt?: string | null;
+  lastResult?: 'started' | 'skipped' | 'failed' | 'missed' | null;
+  lastResultReason?: string | null;
   /** Richting die de volgende run echt gebruikt (base + alternate rotatie). */
   nextPathDirection?: number;
   created_at: string;

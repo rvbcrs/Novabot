@@ -14,6 +14,7 @@ function row(overrides: Partial<ScheduleRow>): ScheduleRow {
     id: 1, schedule_id: 's1', mower_sn: 'LFIN1231000241',
     schedule_name: null, start_time: '09:00', end_time: null,
     weekdays: '[0,1,2,3,4,5,6]', enabled: 1, map_id: null, map_name: null,
+    last_result_at: null, last_result: null, last_result_reason: null,
     cutting_height: 40, path_direction: 0, work_mode: 0, task_mode: 0,
     edge_offset: 0, rain_pause: 0, rain_threshold_mm: 0.5,
     rain_threshold_probability: 50, rain_check_hours: 2,

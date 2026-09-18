@@ -550,6 +550,17 @@ export default function ScheduleScreen() {
                         </View>
                       )}
                     </View>
+                    {/* Why the last run did not happen (server-recorded). */}
+                    {s.lastResult && s.lastResult !== 'started' && s.lastResultAt && (
+                      <Text style={[styles.lastResult, (s.lastResult === 'missed' || s.lastResult === 'failed') && styles.lastResultBad]}>
+                        {new Date(s.lastResultAt).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' })}
+                        {' · '}
+                        {s.lastResult === 'missed' ? (t('scheduleResultMissed', undefined) || 'missed')
+                          : s.lastResult === 'failed' ? (t('scheduleResultFailed', undefined) || 'start failed')
+                          : (t('scheduleResultSkipped', undefined) || 'not started')}
+                        {s.lastResultReason ? ` · ${s.lastResultReason}` : ''}
+                      </Text>
+                    )}
                   </View>
                   {s.enabled && !cardPassed && (
                     <TouchableOpacity
@@ -1226,6 +1237,8 @@ const makeStyles = (c: Colors) => StyleSheet.create({
   statusBadgeRainText: {
     fontSize: 11, fontWeight: '600', color: '#fbbf24', letterSpacing: 0.3,
   },
+  lastResult: { marginTop: 4, fontSize: 11, color: '#fbbf24' },
+  lastResultBad: { color: '#f87171' },
   textDisabled: { color: c.textMuted },
 });
 

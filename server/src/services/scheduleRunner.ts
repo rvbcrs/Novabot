@@ -84,12 +84,23 @@ const DEFAULT_CUTTING_HEIGHT_CM = 5;
 // mower busy / start error). Deduped per (day, outcome) so the 30s retry ticks
 // inside the 5-minute window log each distinct outcome ONCE, not every tick.
 const lastLoggedDecision = new Map<string, string>();
+const RESULT_FOR_OUTCOME: Record<string, string> = {
+  'STARTED': 'started', 'SKIPPED': 'skipped', 'NOT STARTED': 'failed', 'MISSED': 'missed',
+};
 function logScheduleDecision(row: ScheduleRow, ok: boolean, outcome: string, detail?: string): void {
   const dayKey = new Date().toISOString().slice(0, 10);
   const dedupeKey = `${dayKey}:${outcome}:${detail ?? ''}`;
   if (lastLoggedDecision.get(row.schedule_id) === dedupeKey) return;
   lastLoggedDecision.set(row.schedule_id, dedupeKey);
   const text = `${outcome}${detail ? ` — ${detail}` : ''}`;
+  // Op het schema zelf, zodat dashboard en app kunnen tonen waarom een
+  // beurt niet liep. EDGE ARMED is een vervolg op een start, geen beslissing.
+  const result = RESULT_FOR_OUTCOME[outcome];
+  if (result) {
+    scheduleRepo.update(row.schedule_id, {
+      last_result_at: new Date().toISOString(), last_result: result, last_result_reason: detail ?? null,
+    });
+  }
   console.log(`[ScheduleRunner] ${row.schedule_id} (${row.mower_sn}) @${row.start_time}: ${text}`);
   pushMqttLog({
     ts: Date.now(),
@@ -114,7 +125,19 @@ function getChargerGps(mowerSn: string): { lat: number; lng: number } | null {
 // ongeldig (bv. "Canada/Toronto" — bestaat niet) valt terug op de
 // server-lokale tijd (container TZ), het gedrag van vóór de kolom.
 const warnedInvalidTz = new Set<string>();
+/** De Novabot-app stuurt "GMT+2:00" i.p.v. een IANA-naam. Hele uren zijn als
+ *  Etc/GMT-2 uit te drukken (teken omgekeerd, POSIX); halve uren niet. */
+export function normalizeTimezone(tz: string | null): string | null {
+  if (!tz) return null;
+  const m = tz.match(/^(?:GMT|UTC)\s*([+-])(\d{1,2})(?::?(\d{2}))?$/i);
+  if (!m) return tz;
+  if (m[3] && m[3] !== '00') return tz;
+  const hours = Number(m[2]);
+  if (hours === 0) return 'Etc/GMT';
+  return `Etc/GMT${m[1] === '+' ? '-' : '+'}${hours}`;
+}
 function wallClock(now: Date, tz: string | null) {
+  tz = normalizeTimezone(tz);
   try {
     const parts = new Intl.DateTimeFormat('en-US', {
       timeZone: tz ?? undefined,
@@ -296,7 +319,21 @@ function checkSchedules() {
     }
     const sinceScheduledMs = now.getTime() - scheduledAt.getTime();
     if (sinceScheduledMs < 0 || sinceScheduledMs > TRIGGER_WINDOW_MS) {
-      // Buiten trigger window
+      // Buiten trigger window. Is het venster voorbij zonder dat er ooit een
+      // beslissing over deze occurrence viel, dan draaide de server niet op
+      // dat moment (herstart, update, uit). Eén keer vastleggen als 'missed',
+      // zodat het niet lijkt alsof er niets gebeurd is.
+      if (sinceScheduledMs > TRIGGER_WINDOW_MS) {
+        const lastResultAt = row.last_result_at ? Date.parse(row.last_result_at) : NaN;
+        const lastTriggered = row.last_triggered_at ? Date.parse(row.last_triggered_at.replace(' ', 'T') + 'Z') : NaN;
+        const createdAt = row.created_at ? Date.parse(row.created_at.replace(' ', 'T') + 'Z') : NaN;
+        const decided = (Number.isFinite(lastResultAt) && lastResultAt >= scheduledAt.getTime())
+          || (Number.isFinite(lastTriggered) && lastTriggered >= scheduledAt.getTime());
+        const existedThen = !Number.isFinite(createdAt) || createdAt <= scheduledAt.getTime();
+        if (!decided && existedThen) {
+          logScheduleDecision(row, false, 'MISSED', `server was not running at ${row.start_time}`);
+        }
+      }
       continue;
     }
 

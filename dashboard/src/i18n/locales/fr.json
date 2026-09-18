@@ -554,7 +554,12 @@
     "skipNextActive": "La prochaine tonte sera passée — cliquer pour annuler",
     "skipNextBadge": "passe le",
     "edit": "Modifier",
-    "save": "Enregistrer"
+    "save": "Enregistrer",
+    "lastResult": {
+      "skipped": "non démarré",
+      "failed": "démarrage échoué",
+      "missed": "manqué"
+    }
   },
   "rain": {
     "since": "Depuis {{time}}",

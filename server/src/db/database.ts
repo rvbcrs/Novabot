@@ -705,6 +705,14 @@ export function initDb(): void {
   try { db.exec(`ALTER TABLE dashboard_schedules ADD COLUMN skip_date TEXT`); }
   catch { /* kolom bestaat al */ }
 
+  // Laatste beslissing van de runner per schema: wanneer, wat (started /
+  // skipped / failed / missed) en waarom. Het antwoord op "hij is om 13:00
+  // niet gaan maaien, hoezo?" zonder in het serverlog te hoeven graven.
+  for (const col of ['last_result_at TEXT', 'last_result TEXT', 'last_result_reason TEXT']) {
+    try { db.exec(`ALTER TABLE dashboard_schedules ADD COLUMN ${col}`); }
+    catch { /* kolom bestaat al */ }
+  }
+
   // 3D-terreinkaart: metadata per maaier; het grid zelf staat als TGM1-
   // bestand op disk (STORAGE_PATH/terrain/<sn>.tgm).
   db.exec(`

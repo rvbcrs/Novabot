@@ -619,7 +619,12 @@
     "skipNextActive": "Volgende run wordt overgeslagen — klik om te annuleren",
     "skipNextBadge": "slaat over:",
     "edit": "Bewerken",
-    "save": "Opslaan"
+    "save": "Opslaan",
+    "lastResult": {
+      "skipped": "niet gestart",
+      "failed": "start mislukt",
+      "missed": "gemist"
+    }
   },
   "rain": {
     "since": "Sinds {{time}}",
