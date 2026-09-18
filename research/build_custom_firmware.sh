@@ -584,7 +584,8 @@ cat > "$NOVABOT_ROOT/scripts/set_server_urls.sh" << URLSCRIPT
 #   Port discovery prioriteit (eerste die werkt wint):
 #     1. /userdata/lfi/server_port_override.txt   (manual override)
 #     2. mDNS SRV \`_opennova-http._tcp.local\`     (strict target filter)
-#     3. TCP probe op opennova.local (of IP): 80 → 8080 → 443
+#     3. HTTP probe op opennova.local (of IP): 80 → 8080 → 443, alleen een
+#        poort die /api/setup/health als OpenNova beantwoordt telt
 #     4. Hardcoded FALLBACK_HTTP_PORT (80, --http-port)
 #
 #   De target filter op stap 2 weigert rogue responders (Chromecast,
@@ -780,17 +781,20 @@ srv()
 SRV_EOF
 }
 
-# ── TCP probe helper ─────────────────────────────────────────────
+# ── HTTP probe helper ────────────────────────────────────────────
+# "Port open" is not enough: a NAS runs its own web UI on 80 (ZimaOS on
+# Ramon's .247), so a bare TCP connect picked 80 and mqtt_node's network
+# check then hit that UI and got a 404 forever. Ask the port whether it is
+# OpenNova: /api/setup/health answers with a small JSON that names the
+# server and the broker; nothing else on a LAN does.
 probe_http() {
     python3 - "\$1" "\$2" << 'PROBE_EOF' 2>/dev/null
-import socket, sys
+import sys, urllib.request
 host = sys.argv[1]; port = int(sys.argv[2])
-s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-s.settimeout(2.0)
 try:
-    s.connect((host, port))
-    s.close()
-    sys.exit(0)
+    with urllib.request.urlopen('http://%s:%d/api/setup/health' % (host, port), timeout=3) as r:
+        body = r.read(2000).decode('utf-8', 'ignore')
+    sys.exit(0 if ('"server"' in body and '"mqtt"' in body) else 1)
 except Exception:
     sys.exit(1)
 PROBE_EOF
@@ -799,7 +803,7 @@ PROBE_EOF
 # ── Port discovery cascade ───────────────────────────────────────
 # 1) override file (power-users met afwijkende port)
 # 2) mDNS SRV met strict target filter
-# 3) TCP probe op opennova.local (of het IP): 80 → 8080 → 443
+# 3) HTTP probe op opennova.local (of het IP): 80 → 8080 → 443 (moet OpenNova zijn)
 # 4) FALLBACK_HTTP_PORT
 PORT=""
 PORT_SOURCE=""
