@@ -174,7 +174,7 @@ export type MowerEventType =
   | 'error' | 'error_cleared' | 'mowing_started' | 'mowing_finished' | 'docked'
   | 'low_battery' | 'stuck' | 'safety' | 'pin_locked' | 'connection_lost'
   | 'gps_weak' | 'map_error' | 'initialization_error' | 'hardware_fault'
-  | 'dock_failed';
+  | 'dock_failed' | 'dock_drift' | 'firmware_required';
 
 export interface MowerEvent {
   sn: string;
