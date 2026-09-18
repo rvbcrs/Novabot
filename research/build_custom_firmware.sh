@@ -50,7 +50,7 @@ INCLUDE_SERVER="false"
 BUNDLE_NODE="false"
 BUNDLE_NODE_IP=""
 SERVER_PORT="3000"
-VERSION_SUFFIX="custom-44"
+VERSION_SUFFIX="custom-45"
 
 echo -e "\033[1;31m=============================================================\033[0m"
 echo -e "\033[1;31m  ⚠  BETA CUSTOM FIRMWARE — experimenteel. Kan de maaier\033[0m"
@@ -2657,33 +2657,37 @@ else
     RELEASE_NOTES="$GIT_LOG_BULLETS"
 fi
 
-# Replace newlines with literal \n so the JSON below stays one-line valid.
-RELEASE_NOTES=$(printf '%s' "$RELEASE_NOTES" | awk 'BEGIN{ORS="\\n"}1' | sed 's/\\n$//')
-
-cat > "$JSON_META" << METAEOF
-{
-  "version": "${VERSION}",
-  "device_type": "mower",
-  "filename": "${DEB_BASENAME}",
-  "md5": "${MD5}",
-  "description": "${RELEASE_NOTES}"
-}
-METAEOF
-echo "  Metadata: $(basename "$JSON_META")"
-
-# Update opennova-manifest.json (voeg toe of update bestaande entry)
+# The notes come from commit messages, so they can hold apostrophes, quotes
+# and backslashes. Only json.dumps gets that right; a heredoc or a Python
+# literal broke on "Don't ..." (custom-45, 18-09-2026). Both the sidecar and
+# the manifest entry are therefore written by Python from an env var.
 MANIFEST_FILE="${OUTPUT_DIR}/opennova-manifest.json"
-python3 -c "
-import json, sys, os
+RELEASE_NOTES="$RELEASE_NOTES" VERSION="$VERSION" DEB_BASENAME="$DEB_BASENAME" MD5="$MD5" \
+DOWNLOAD_BASE_URL="$DOWNLOAD_BASE_URL" JSON_META="$JSON_META" MANIFEST_FILE="$MANIFEST_FILE" \
+python3 - << 'METAPY'
+import json, os
 
-manifest_path = '${MANIFEST_FILE}'
-entry = {
-    'version': '${VERSION}',
+env = os.environ
+meta = {
+    'version': env['VERSION'],
     'device_type': 'mower',
-    'url': '${DOWNLOAD_BASE_URL}/${DEB_BASENAME}',
-    'filename': '${DEB_BASENAME}',
-    'md5': '${MD5}',
-    'description': '${RELEASE_NOTES}'
+    'filename': env['DEB_BASENAME'],
+    'md5': env['MD5'],
+    'description': env['RELEASE_NOTES'],
+}
+with open(env['JSON_META'], 'w') as f:
+    json.dump(meta, f, indent=2, ensure_ascii=False)
+    f.write('\n')
+print(f"  Metadata: {os.path.basename(env['JSON_META'])}")
+
+manifest_path = env['MANIFEST_FILE']
+entry = {
+    'version': env['VERSION'],
+    'device_type': 'mower',
+    'url': f"{env['DOWNLOAD_BASE_URL']}/{env['DEB_BASENAME']}",
+    'filename': env['DEB_BASENAME'],
+    'md5': env['MD5'],
+    'description': env['RELEASE_NOTES'],
 }
 
 # Lees bestaand manifest of maak nieuw
@@ -2737,7 +2741,7 @@ with open(manifest_path, 'w') as f:
     json.dump(manifest, f, indent=2, ensure_ascii=False)
 
 print(f'  Manifest updated: {manifest_path} ({len(pruned)} firmware(s), pruned to {KEEP} newest custom-N per type)')
-"
+METAPY
 
 echo ""
 echo "============================================"
