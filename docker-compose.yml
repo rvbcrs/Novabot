@@ -16,7 +16,9 @@ services:
       - "1883:1883"   # MQTT: mower and charger connect here
       - "53:53/udp"   # built-in DNS: answers *.lfibot.com with TARGET_IP
     environment:
-      TZ: Europe/Amsterdam           # must match the app, or schedules shift
+      # Timezone: must match the timezone used by the app when creating
+      # schedules, otherwise they run at the wrong hour.
+      TZ: Europe/Amsterdam
       PORT: 80
       DB_PATH: /data/novabot.db
       STORAGE_PATH: /data/storage
