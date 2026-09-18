@@ -85,8 +85,8 @@ names have to resolve to `TARGET_IP` on your network. Two ways; pick one.
     `*.lfibot.com` with `TARGET_IP` and forwards everything else to
     `UPSTREAM_DNS`. One thing to do: in your router's DHCP settings, set
     `TARGET_IP` as the DNS server, so every device on the network (the mower
-    included) asks OpenNova first. Devices pick it up when their DHCP lease
-    renews; power-cycle the mower to make it immediate.
+    included) asks OpenNova first. Where that field is per router:
+    [DNS Setup, Option A](dns-setup.md#option-a-opennovas-built-in-dns-default).
 
     Port 53 must be free on the host. On Ubuntu and Debian it is usually taken
     by `systemd-resolved`; the [DNS Setup](dns-setup.md#port-53-is-already-in-use)
@@ -104,12 +104,11 @@ names have to resolve to `TARGET_IP` on your network. Two ways; pick one.
     and remove the `"53:53/udp"` line, so the port stays free for what you
     have.
 
-Then power-cycle the mower so it picks up the new address.
-
-Mowers on [custom firmware](../firmware/custom-firmware.md) also find the
-server by name through mDNS, which is what `opennova-mdns` is for. On Linux
-that works out of the box; it is a second way in, not a replacement for the
-DNS redirect.
+Then **restart the router** if you changed its DHCP settings, and
+**power-cycle both the mower and the charging station** (off, ten seconds,
+on). They only ask for the address when they reconnect; without this step
+nothing happens. Both should show as online in the admin panel within a
+minute.
 
 ### 5. Log in with the app
 

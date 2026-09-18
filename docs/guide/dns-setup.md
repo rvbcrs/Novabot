@@ -1,16 +1,14 @@
 # DNS Setup Guide
 
 !!! info "Who needs this?"
-    A mower or charger on **stock firmware** always looks up `mqtt.lfibot.com`,
-    whichever app you use, so it needs the DNS redirect. The **original Novabot
-    app** needs it too (`app.lfibot.com`). You can skip it only when the mower
-    runs [custom firmware](auto-discovery.md) (it finds `opennova.local` by
-    itself) *and* you use the OpenNova app, which talks to your server's IP.
-
-    The standard compose already runs OpenNova's own DNS (**Option D**
-    below); most people only have to point their router at it. The other
-    options are for networks that already have Pi-hole, AdGuard or a router
-    that can rewrite names.
+    Everyone who starts. The mower and the charger come with stock firmware
+    that always looks up `mqtt.lfibot.com`, whichever app you use, and the
+    official Novabot app looks up `app.lfibot.com`. The standard compose
+    already runs OpenNova's own DNS (**Option A** below); most people only
+    have to point their router at it. Options B and C are for networks that
+    already have a router that can rewrite names, or Pi-hole or AdGuard. What
+    changes once the mower runs custom firmware is at the
+    [end of this page](#after-custom-firmware).
 
 ## What is DNS and Why Do I Need It?
 
@@ -68,193 +66,13 @@ The username/password is often on a sticker on the bottom of your router.
 
 ---
 
-## Option A: Router DNS Override
+## Option A: OpenNova's built-in DNS (default)
 
-The simplest method — change your router settings so ALL devices on your network resolve `mqtt.lfibot.com` to your server. No extra software needed.
-
-### Fritz!Box
-
-1. Open **http://fritz.box** in your browser
-2. Go to **Home Network → Network → Network Settings**
-3. Scroll to **DNS Rebind Protection**
-4. Add an exception: `lfibot.com`
-5. Go to **Internet → DNS Server**
-6. Under **Local DNS entries**, add:
-   - Host: `mqtt.lfibot.com` → IP: `192.168.0.50` (your server)
-   - Host: `app.lfibot.com` → IP: `192.168.0.50` (your server)
-7. Click **Apply**
-
-### Ubiquiti UniFi (UDM / USG)
-
-1. Open the **UniFi Network** app or **https://unifi.ui.com**
-2. Go to **Settings → Networks → Default**
-3. Under **DHCP Name Server**: set to **Manual**
-4. Enter your Pi-hole/AdGuard IP as DNS server
-5. **Apply Changes**
-
-Or use the built-in DNS features:
-
-1. SSH into your UDM: `ssh root@192.168.1.1`
-2. Edit `/run/dnsmasq.conf.d/custom.conf`:
-   ```
-   address=/lfibot.com/192.168.0.50
-   ```
-3. Restart dnsmasq: `killall dnsmasq`
-
-!!! warning
-    UniFi UDM custom DNS entries may reset after firmware updates.
-
-### TP-Link
-
-1. Open **http://192.168.0.1** (or http://tplinkwifi.net)
-2. Go to **Advanced → Network → DHCP Server**
-3. Set **Primary DNS** to your Pi-hole/AdGuard IP
-4. **Save**
-
-TP-Link routers typically don't support custom DNS records. Use **Option B** (Pi-hole/AdGuard) instead.
-
-### Netgear
-
-1. Open **http://routerlogin.net** or **http://192.168.1.1**
-2. Go to **Advanced → Setup → Internet Setup**
-3. Under **DNS Address**: set to your Pi-hole/AdGuard IP
-4. **Apply**
-
-Like TP-Link, most Netgear routers need Pi-hole/AdGuard for custom DNS records.
-
-### ASUS
-
-1. Open **http://router.asus.com** or **http://192.168.1.1**
-2. Go to **LAN → DNS Director**
-3. Add a rule:
-   - Domain: `mqtt.lfibot.com` → IP: `192.168.0.50`
-   - Domain: `app.lfibot.com` → IP: `192.168.0.50`
-4. **Apply**
-
-!!! tip "Not all routers support custom DNS"
-    If your router doesn't have DNS override options, use **Option B** (Pi-hole or AdGuard).
-
----
-
-## Option B: Pi-hole
-
-[Pi-hole](https://pi-hole.net) is a free DNS server that runs on a Raspberry Pi or in Docker. It blocks ads AND lets you create custom DNS records.
-
-### Install Pi-hole
-
-=== "Raspberry Pi"
-    ```bash
-    curl -sSL https://install.pi-hole.net | bash
-    ```
-    Follow the installer. Note the admin password at the end.
-
-=== "Docker"
-    ```yaml
-    # docker-compose.yml
-    services:
-      pihole:
-        image: pihole/pihole:latest
-        ports:
-          - "53:53/tcp"
-          - "53:53/udp"
-          - "8080:80/tcp"
-        environment:
-          WEBPASSWORD: 'your-password'
-        volumes:
-          - pihole-data:/etc/pihole
-          - dnsmasq-data:/etc/dnsmasq.d
-        restart: unless-stopped
-
-    volumes:
-      pihole-data:
-      dnsmasq-data:
-    ```
-
-### Add DNS Records
-
-1. Open Pi-hole admin: **http://pi-hole-ip/admin**
-2. Log in with your password
-3. Go to **Local DNS → DNS Records**
-4. Add two records:
-
-    | Domain | IP Address |
-    |--------|-----------|
-    | `mqtt.lfibot.com` | `192.168.0.50` |
-    | `app.lfibot.com` | `192.168.0.50` |
-
-    (Replace `192.168.0.50` with YOUR server IP)
-
-5. Click **Add** for each
-
-### Point Your Router to Pi-hole
-
-1. Open your router admin page
-2. Go to **DHCP Settings**
-3. Change the **DNS server** to your Pi-hole's IP address
-4. Save and reboot your router
-
-Now all devices on your network use Pi-hole for DNS, and `mqtt.lfibot.com` resolves to your OpenNova server.
-
----
-
-## Option C: AdGuard Home
-
-[AdGuard Home](https://adguard.com/adguard-home/overview.html) is similar to Pi-hole but with a more modern interface.
-
-### Install AdGuard Home
-
-=== "Any platform"
-    ```bash
-    curl -s -S -L https://raw.githubusercontent.com/AdguardTeam/AdGuardHome/master/scripts/install.sh | sh -s -- -v
-    ```
-
-=== "Docker"
-    ```yaml
-    services:
-      adguard:
-        image: adguard/adguardhome:latest
-        ports:
-          - "53:53/tcp"
-          - "53:53/udp"
-          - "3001:3000/tcp"
-          - "8080:80/tcp"
-        volumes:
-          - adguard-work:/opt/adguardhome/work
-          - adguard-conf:/opt/adguardhome/conf
-        restart: unless-stopped
-
-    volumes:
-      adguard-work:
-      adguard-conf:
-    ```
-
-### Add DNS Rewrites
-
-1. Open AdGuard Home: **http://adguard-ip:3001** (first time) or **http://adguard-ip:8080**
-2. Go to **Filters → DNS Rewrites**
-3. Click **Add DNS Rewrite**
-4. Add two entries:
-
-    | Domain | Answer |
-    |--------|--------|
-    | `mqtt.lfibot.com` | `192.168.0.50` |
-    | `app.lfibot.com` | `192.168.0.50` |
-
-5. Click **Save** for each
-
-### Point Your Router to AdGuard
-
-Same as Pi-hole — change your router's DHCP DNS server to AdGuard's IP.
-
----
-
-## Option D: OpenNova Docker Built-in DNS
-
-The OpenNova Docker container includes a built-in DNS server. This is the easiest option if you don't already have Pi-hole or AdGuard.
-
-### Enable in docker-compose.yml
-
-The compose from [Installing OpenNova](docker.md) already has it on:
+The standard compose from [Installing OpenNova](docker.md) already runs a
+small DNS server on the OpenNova machine (port 53). It answers `*.lfibot.com`
+with `TARGET_IP` and forwards every other name to `UPSTREAM_DNS`. There is
+nothing to install; you only tell your router to hand out the OpenNova
+machine as the DNS server, so every device on the network asks it first.
 
 ```yaml
     ports:
@@ -264,16 +82,118 @@ The compose from [Installing OpenNova](docker.md) already has it on:
       UPSTREAM_DNS: "8.8.8.8"          # where everything else goes
 ```
 
-`TARGET_IP` is set in that compose; the built-in DNS answers `*.lfibot.com`
-with it. Nothing to add; if you turned it off earlier, put these back and
-`docker compose up -d`.
+If you turned this off earlier, put these lines back and `docker compose up -d`.
+Port 53 has to be free on the machine; see
+[Port 53 is already in use](#port-53-is-already-in-use).
 
-### Point Your Router to OpenNova
+### Set the DNS server in your router
 
-Change your router's DHCP DNS server to your OpenNova server IP (`192.168.0.50`).
+Look for the **DHCP** or **LAN** settings and the field called DNS server.
+Enter your OpenNova server IP (`192.168.0.50` in the examples).
+
+=== "Fritz!Box"
+    **Home Network → Network → Network Settings → IPv4 settings**: under
+    *Local DNS server* enter `192.168.0.50`. **Apply**.
+
+=== "UniFi (UDM / USG)"
+    **Settings → Networks → your LAN → DHCP → DNS Server**: set to *Manual*,
+    enter `192.168.0.50`. **Apply Changes**.
+
+=== "TP-Link"
+    **Advanced → Network → DHCP Server → Primary DNS**: `192.168.0.50`. **Save**.
+
+=== "Netgear"
+    **Advanced → Setup → LAN Setup** (or *Internet Setup → DNS Address*):
+    *Use these DNS servers*, primary `192.168.0.50`. **Apply**.
+
+=== "ASUS"
+    **LAN → DHCP Server → DNS Server 1**: `192.168.0.50`. **Apply**.
+
+=== "Other"
+    The field is in the DHCP settings of practically every router. Set only
+    the primary DNS: a secondary "backup" DNS is used at random by some
+    devices, and those would then still reach the Novabot cloud.
 
 !!! note
-    This means ALL DNS queries from your network go through OpenNova. Only `*.lfibot.com` is redirected — everything else is forwarded to Google DNS (or your configured upstream).
+    All DNS queries from your network now go through OpenNova. Only
+    `*.lfibot.com` is redirected; everything else is forwarded to
+    `UPSTREAM_DNS`. Keep this DNS on your LAN: never forward port 53 from the
+    internet to it.
+
+Then go to [Restart everything](#restart-everything).
+
+---
+
+## Option B: Your router rewrites the names itself
+
+Some routers can answer a name with an address of your choosing. Then you
+do not need OpenNova's DNS: set `ENABLE_DNS: "false"` in the compose and
+remove the `"53:53/udp"` line. Only a few routers can do this; if yours is
+not below, use Option A.
+
+=== "Fritz!Box"
+    1. **Home Network → Network → Network Settings**, scroll to **DNS Rebind
+       Protection**, add an exception for `lfibot.com`.
+    2. **Internet → DNS Server → Local DNS entries**: add
+       `mqtt.lfibot.com` → `192.168.0.50` and `app.lfibot.com` → `192.168.0.50`.
+    3. **Apply**.
+
+=== "ASUS"
+    **LAN → DNS Director**: add `mqtt.lfibot.com` → `192.168.0.50` and
+    `app.lfibot.com` → `192.168.0.50`. **Apply**.
+
+=== "UniFi (UDM, SSH)"
+    ```
+    ssh root@192.168.1.1
+    echo 'address=/lfibot.com/192.168.0.50' > /run/dnsmasq.conf.d/custom.conf
+    killall dnsmasq
+    ```
+    This file is lost on a UniFi firmware update; Option A survives updates.
+
+Then go to [Restart everything](#restart-everything).
+
+---
+
+## Option C: Pi-hole or AdGuard Home you already run
+
+Only for networks that already have one of these. If you do not, do not
+install one for OpenNova: Option A does the same thing with nothing extra.
+Set `ENABLE_DNS: "false"` in the compose and remove the `"53:53/udp"` line,
+so the two do not fight over port 53 when they share a machine.
+
+=== "Pi-hole"
+    **Local DNS → DNS Records**: add `mqtt.lfibot.com` → `192.168.0.50` and
+    `app.lfibot.com` → `192.168.0.50`, **Add** for each.
+
+=== "AdGuard Home"
+    **Filters → DNS Rewrites → Add DNS Rewrite**: `mqtt.lfibot.com` →
+    `192.168.0.50` and `app.lfibot.com` → `192.168.0.50`, **Save** for each.
+
+Your router already hands out the Pi-hole or AdGuard address as DNS server;
+if not, that is the same DHCP field as in Option A.
+
+Then go to [Restart everything](#restart-everything).
+
+---
+
+## Restart everything
+
+Whatever option you chose, this step is not optional. Every device keeps the
+old answer until it asks again, and the mower and charger only ask when they
+(re)connect.
+
+1. **Router**: reboot it if you changed its DHCP settings, so the new DNS
+   server is handed out.
+2. **Mower**: power off, wait ten seconds, power on.
+3. **Charging station**: pull the plug, wait ten seconds, plug in. The
+   charger has its own Wi-Fi connection and its own MQTT link to the server;
+   it is easy to forget.
+4. **Phone**: Wi-Fi off and on. On a computer, `ipconfig /flushdns`
+   (Windows) or `sudo dscacheutil -flushcache` (macOS).
+
+Then [verify](#how-to-verify), and check the admin panel: both devices should
+show as online within a minute. If not, **Why is it not coming online?** on
+the device tells you where it stops.
 
 ---
 
@@ -304,21 +224,10 @@ If you see `47.253.145.99` or a timeout, DNS is not working yet.
 
 ### "DNS works on my computer but not on the mower"
 
-The mower gets its DNS from the router's DHCP settings, not from your computer. Make sure you changed the **router's** DNS server setting.
-
-After changing router DNS:
-
-1. Restart your mower (power off, wait 10 seconds, power on)
-2. The mower reconnects to WiFi and gets the new DNS server from DHCP
-
-### "I changed the DNS but nothing happened"
-
-DNS changes take time to propagate. Try:
-
-1. On your computer: `ipconfig /flushdns` (Windows) or `sudo dscacheutil -flushcache` (macOS)
-2. On your phone: toggle WiFi off and on
-3. On the mower: restart it
-4. On the router: reboot it
+The mower and charger get their DNS server from the router's DHCP, not from
+your computer. Check that you changed the **router's** setting, and that
+there is no secondary DNS server next to it. Then
+[restart everything](#restart-everything).
 
 ### "Port 53 is already in use"
 
@@ -335,16 +244,17 @@ sudo systemctl disable systemd-resolved
 
 ### "My router doesn't support custom DNS records"
 
-Use **Option B** (Pi-hole) or **Option C** (AdGuard Home). These work with ANY router — you just point your router's DHCP DNS setting to the Pi-hole/AdGuard IP.
+It does not have to: Option A only needs the DHCP DNS-server field, which
+every router has.
 
 ### "I don't want to change my DNS for the whole network"
 
-You can set DNS per device instead:
-
-- **Mower**: Change the mower's DNS by re-provisioning it (the mower uses DHCP, so it gets DNS from the router)
-- **Phone**: Set DNS manually in WiFi settings (Settings → WiFi → your network → Configure DNS → Manual)
-
-But the easiest approach is to change it network-wide via the router.
+Then the mower and charger cannot be redirected: they take their DNS from
+DHCP and offer no way to set it by hand. The only way around it is to
+provision them with the [OpenNova app](../user-guide/opennova-app.md#provisioning-pointing-a-device-at-your-server),
+which writes your server's address into them directly. Your phone can still
+use its own DNS (Settings → Wi-Fi → your network → DNS → manual) for the
+official app.
 
 ---
 
@@ -352,18 +262,25 @@ But the easiest approach is to change it network-wide via the router.
 
 ```mermaid
 graph TD
-    A[Do you use the OpenNova app?] -->|Yes| B[No DNS needed!]
-    A -->|No, I use the Novabot app| C[Do you have Pi-hole or AdGuard?]
-    C -->|Yes| D[Add DNS rewrite for *.lfibot.com]
-    C -->|No| E[Does your router support custom DNS?]
-    E -->|Yes| F[Add DNS record in router]
-    E -->|No| G[Enable built-in DNS in Docker]
+    A[Do you already run Pi-hole or AdGuard Home?] -->|Yes| C[Option C: add the rewrite there]
+    A -->|No| E[Can your router rewrite names? Fritz!Box, ASUS]
+    E -->|Yes| B[Option B: rewrite in the router]
+    E -->|No, or not sure| D[Option A: OpenNova's DNS, router points at it]
 ```
 
-| Option | Difficulty | Requires | Best For |
-|--------|-----------|----------|----------|
-| **OpenNova app** | None | OpenNova app installed | Everyone |
-| **Router DNS** | Easy | Router with DNS override | Fritz!Box, ASUS users |
-| **Pi-hole** | Medium | Raspberry Pi or Docker | Tech-savvy users, ad blocking |
-| **AdGuard Home** | Medium | Docker or any OS | Modern UI, easy setup |
-| **Docker built-in** | Easy | Docker port 53 available | Simplest self-contained setup |
+| Option | What you change | Best for |
+|--------|-----------------|----------|
+| **A: OpenNova's built-in DNS** | One field in your router | Most people; nothing to install |
+| **B: Router rewrites** | Two records in the router | Fritz!Box, ASUS |
+| **C: Pi-hole / AdGuard** | Two records in the tool you already run | Networks that already have one |
+
+## After custom firmware
+
+A mower on [custom firmware](../firmware/custom-firmware.md) finds the server
+by itself through `opennova.local`, and the OpenNova app talks to your
+server's IP. Once you are there, the mower no longer needs the DNS redirect.
+Two things still do: the **official Novabot app** (`app.lfibot.com`), and the
+**charging station** if it was provisioned with the official app, because it
+then keeps `mqtt.lfibot.com` as its server. A charger provisioned with the
+OpenNova app has your server's IP written into it and does not need DNS.
+Leaving Option A on costs nothing, so most people simply keep it.
