@@ -850,6 +850,12 @@
     "sessionEnds": "Mähsitzung endet um",
     "mapObjects": "Kartenobjekte"
   },
+  "firmwareRequired": {
+    "title": "Firmware {{current}} wurde zurückgezogen.",
+    "body": "{{reason}}. Auf {{target}} aktualisieren; sie liegt bereits auf diesem Server.",
+    "downloading": "(Update wird heruntergeladen…)",
+    "action": "Jetzt aktualisieren"
+  },
   "drawer": {
     "dockDrift": {
       "title": "Position auf der Ladestation",

@@ -16,6 +16,7 @@
  */
 import { dockSamplesRepo } from '../db/repositories/dockSamples.js';
 import { computeDockDrift } from './dockDrift.js';
+import { adviseVersion, getManifest } from './firmwareAdvisory.js';
 import { deviceRepo, equipmentRepo, connectionEventRepo } from '../db/repositories/index.js';
 import { getLoraPair } from './loraPair.js';
 import { checkReachability, serverIpv4, type Reachability } from './reachability.js';
@@ -851,6 +852,7 @@ export async function diagnoseConnection(
   const version = deviceType === 'charger'
     ? eq?.charger_version ?? null
     : snap?.sw_version ?? eq?.mower_version ?? null;
+  const manifest = await getManifest();
   const recordedCustom = /custom|opennova/i.test(version ?? '');
   if (sshWorks && !recordedCustom) {
     push({
@@ -870,12 +872,25 @@ export async function diagnoseConnection(
       evidence: T`firmwareversie nog niet gemeld`,
     });
   } else {
-    push({
-      id: 'firmware',
-      group: 'firmware',
-      status: 'ok',
-      evidence: recordedCustom ? T`${version} (OpenNova)` : T`${version} (stock)`,
-    });
+    // Een ingetrokken custom-build (manifest `withdrawn`) is een fout, geen
+    // versienummer: custom-43/44 killden hun eigen mqtt_node elke tien minuten.
+    const adv = adviseVersion(version, manifest);
+    if (adv.required && adv.target) {
+      push({
+        id: 'firmware',
+        group: 'firmware',
+        status: 'fail',
+        evidence: T`${version} is ingetrokken: ${adv.reason ?? ''}`,
+        action: T`update naar ${adv.target.version} via het admin-paneel, tab Firmware`,
+      });
+    } else {
+      push({
+        id: 'firmware',
+        group: 'firmware',
+        status: 'ok',
+        evidence: recordedCustom ? T`${version} (OpenNova)` : T`${version} (stock)`,
+      });
+    }
   }
   {
     const custom = sshWorks || recordedCustom;

@@ -503,6 +503,16 @@ export const CATALOG: Catalog = {
     fr: "vérifiez si la station de charge ou son antenne a bougé ; si elle est bien placée, ré-ancrez",
     de: "prüfen Sie, ob die Ladestation oder ihre Antenne verschoben wurde; steht sie richtig, neu verankern",
   },
+  "{0} is ingetrokken: {1}": {
+    en: "{0} was withdrawn: {1}",
+    fr: "{0} a été retiré : {1}",
+    de: "{0} wurde zurückgezogen: {1}",
+  },
+  "update naar {0} via het admin-paneel, tab Firmware": {
+    en: "update to {0} from the admin panel, Firmware tab",
+    fr: "mettez à jour vers {0} depuis le panneau admin, onglet Firmware",
+    de: "auf {0} aktualisieren über das Admin-Panel, Reiter Firmware",
+  },
   "zonder MAC herkent de app de maaier niet in een BLE-scan": {
     en: "without a MAC the app will not recognise the mower in a BLE scan",
     fr: "sans MAC l'application ne reconnaît pas la tondeuse dans un scan BLE",

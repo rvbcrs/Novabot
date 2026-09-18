@@ -947,6 +947,12 @@
     "tryAgain": "Try again",
     "close": "Close"
   },
+  "firmwareRequired": {
+    "title": "Firmware {{current}} has been withdrawn.",
+    "body": "{{reason}}. Update to {{target}}; it is already on this server.",
+    "downloading": "(downloading the update…)",
+    "action": "Update now"
+  },
   "drawer": {
     "dockDrift": {
       "title": "Position on the dock",

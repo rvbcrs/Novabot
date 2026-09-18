@@ -111,6 +111,7 @@ import { diagnoseConnection } from '../services/connectionDiagnosis.js';
 import { droneOverlayRouter } from './droneOverlay.js';
 import { connectionEventRepo, mowProgressRepo, dockSamplesRepo } from '../db/repositories/index.js';
 import { computeDockDrift } from '../services/dockDrift.js';
+import { firmwareAdvisory, getManifest, ensureTargetDownloaded } from '../services/firmwareAdvisory.js';
 
 export const dashboardRouter = Router();
 
@@ -823,6 +824,19 @@ dashboardRouter.get('/mow-progress/:sn', (req: Request, res: Response) => {
 dashboardRouter.delete('/mow-progress/:sn', (req: Request, res: Response) => {
   mowProgressRepo.delete(req.params.sn);
   res.json({ ok: true });
+});
+
+// GET /api/dashboard/firmware-advisory/:sn — is the mower's custom build
+// withdrawn? Then the newest build is the required update and is fetched
+// into this server so the OTA can start right away.
+dashboardRouter.get('/firmware-advisory/:sn', async (req: Request, res: Response) => {
+  const adv = await firmwareAdvisory(req.params.sn);
+  if (adv.required && adv.target && !adv.target.downloaded) {
+    const manifest = await getManifest();
+    const entry = manifest?.firmwares.find(f => f.version === adv.target!.version);
+    if (entry) adv.target.downloaded = await ensureTargetDownloaded(entry);
+  }
+  res.json({ ok: true, ...adv });
 });
 
 // GET /api/dashboard/dock-drift/:sn — does the mower park where it used to?

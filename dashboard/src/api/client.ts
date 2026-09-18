@@ -1280,3 +1280,14 @@ export interface DockDriftDto {
 export async function fetchDockDrift(sn: string, days = 90): Promise<DockDriftDto> {
   return (await get(`${BASE}/dock-drift/${encodeURIComponent(sn)}?days=${days}`)).json() as Promise<DockDriftDto>;
 }
+
+// ── Firmware advisory: the mower's custom build was withdrawn ──────────
+export interface FirmwareAdvisoryDto {
+  required: boolean;
+  current: string | null;
+  reason: string | null;
+  target: { version: string; description: string; downloaded: boolean } | null;
+}
+export async function fetchFirmwareAdvisory(sn: string): Promise<FirmwareAdvisoryDto> {
+  return (await get(`${BASE}/firmware-advisory/${encodeURIComponent(sn)}`)).json() as Promise<FirmwareAdvisoryDto>;
+}

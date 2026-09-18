@@ -1988,6 +1988,9 @@ async function showApp() {
   document.getElementById('firstTimeSetup').style.display = 'none';
   document.getElementById('app').style.display = 'block';
   loadAll();
+  // /admin#firmware opens that tab: the dashboard's "update now" lands here.
+  var hashTab = (location.hash || '').replace('#', '');
+  if (['devices','console','mowerdebug','maps','experimental','firmware','settings'].indexOf(hashTab) >= 0) switchTab(hashTab);
 }
 
 var _refreshInterval = null;
@@ -6668,6 +6671,15 @@ function onOtaDeviceChange() {
       : (curVer !== 'unknown' ? ' <span style="font-size:9px;background:rgba(245,158,11,.15);color:#f59e0b;padding:1px 5px;border-radius:3px;font-weight:600">Stock</span>' : '');
     curDiv.innerHTML = 'Current firmware: <span style="color:#fff;font-weight:600">' + curVer + '</span>' + badge +
       (dev.is_online ? ' <span class="on" style="font-size:11px">(online)</span>' : ' <span class="off" style="font-size:11px">(offline)</span>');
+    // A withdrawn build: say so where the update is started.
+    if (devType === 'mower' && isON) {
+      fetchJsonAuth('/api/dashboard/firmware-advisory/' + encodeURIComponent(sel.value)).then(function(a) {
+        if (!a || !a.required || !a.target || sel.value !== dev.sn) return;
+        curDiv.innerHTML += '<div style="margin-top:6px;padding:8px 10px;border-radius:6px;background:rgba(239,68,68,.12);color:#fca5a5;font-size:12px" data-no-i18n>'
+          + '<b>' + escapeHtml(curVer) + ' has been withdrawn:</b> ' + escapeHtml(a.reason || '') + '. Update to <b>' + escapeHtml(a.target.version) + '</b>'
+          + (a.target.downloaded ? ' (already on this server, pick it below).' : ' (downloading…).') + '</div>';
+      }).catch(function() {});
+    }
   }
 
   // Filter versions by device type

@@ -81,7 +81,11 @@ initFirmwareSync();
 
 // ── Signal history cleanup (verwijder records ouder dan 7 dagen) ──────────────
 import { cleanupSignalHistory } from './mqtt/sensorData.js';
+import { startFirmwareAdvisory, _setFirmwareAdvisoryIo } from './services/firmwareAdvisory.js';
+import { downloadFile } from './routes/adminStatus.js';
 cleanupSignalHistory();
+_setFirmwareAdvisoryIo({ downloadFile });
+startFirmwareAdvisory();
 
 // ── MQTT Broker ───────────────────────────────────────────────────────────────
 startMqttBroker().catch(err => {

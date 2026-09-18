@@ -850,6 +850,12 @@
     "sessionEnds": "Session de tonte se termine à",
     "mapObjects": "Objets de la carte"
   },
+  "firmwareRequired": {
+    "title": "Le firmware {{current}} a été retiré.",
+    "body": "{{reason}}. Mettez à jour vers {{target}} ; il est déjà sur ce serveur.",
+    "downloading": "(téléchargement de la mise à jour…)",
+    "action": "Mettre à jour"
+  },
   "drawer": {
     "dockDrift": {
       "title": "Position sur la station",

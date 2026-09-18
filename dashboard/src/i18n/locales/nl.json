@@ -28,6 +28,12 @@
     "mower": "Maaier",
     "noDevices": "Geen apparaten gevonden"
   },
+  "firmwareRequired": {
+    "title": "Firmware {{current}} is ingetrokken.",
+    "body": "{{reason}}. Update naar {{target}}; die staat al op deze server.",
+    "downloading": "(update wordt gedownload…)",
+    "action": "Nu updaten"
+  },
   "drawer": {
     "dockDrift": {
       "title": "Positie op het laadstation",

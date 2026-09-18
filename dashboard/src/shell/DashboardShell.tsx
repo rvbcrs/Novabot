@@ -22,6 +22,7 @@ import type { PatternPlacement } from '../components/patterns/PatternOverlay';
 import { LongPauseBanner } from './LongPauseBanner';
 import { MdnsConflictBanner } from './MdnsConflictBanner';
 import { UpdateBanner } from './UpdateBanner';
+import { FirmwareRequiredBanner } from './FirmwareRequiredBanner';
 import { ErrorDisplay } from '../components/status/ErrorDisplay';
 import { useExperimental } from '../utils/experimental';
 
@@ -219,6 +220,7 @@ function ShellInner() {
       </div>
 
       <UpdateBanner />
+      <FirmwareRequiredBanner sn={activeMowerSn} />
       <MdnsConflictBanner />
       <LongPauseBanner mower={activeMower} />
 

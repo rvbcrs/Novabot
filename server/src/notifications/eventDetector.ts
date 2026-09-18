@@ -31,6 +31,7 @@ const TITLE_BY_TYPE: Record<EventType, string> = {
   hardware_fault:       'Hardware fault',
   dock_failed:          'Mower could not dock',
   dock_drift:           'Charging station may have moved',
+  firmware_required:    'Firmware update required',
 };
 
 interface SnapshotState {
@@ -233,6 +234,17 @@ export function dispatchDockDriftEvent(sn: string, driftCm: number, sinceIso: st
     TITLE_BY_TYPE.dock_drift,
     `The mower parks ${driftCm} cm away from where it did on ${sinceIso.slice(0, 10)}. The station's antenna or the map frame moved; check the station and the zone edges.`,
     { drift_cm: driftCm, since: sinceIso },
+  ));
+}
+
+/** The custom build the mower runs was withdrawn (firmware advisory). */
+export function dispatchFirmwareRequiredEvent(sn: string, current: string, target: string, reason: string): void {
+  dispatchEvent(makeEvent(
+    sn,
+    'firmware_required',
+    TITLE_BY_TYPE.firmware_required,
+    `${current} was withdrawn: ${reason}. Update to ${target} from the admin panel (Firmware tab); it is already downloaded.`,
+    { current, target, reason },
   ));
 }
 
