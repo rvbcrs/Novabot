@@ -16,6 +16,22 @@ Pick your situation. It decides everything below.
     firmware find the server by name on their own. Continue with
     [Quick start](#quick-start).
 
+    **No Docker yet?** On Debian, Ubuntu, Raspberry Pi OS and most other
+    distributions Docker's own install script does everything (Engine plus
+    the `docker compose` plugin):
+
+    ```bash
+    curl -fsSL https://get.docker.com | sudo sh
+    sudo usermod -aG docker $USER
+    ```
+
+    Log out and back in (or reboot) so the group change takes effect, then
+    check with `docker compose version`. On a NAS install "Container
+    Manager" (Synology), "Container Station" (QNAP) or the Docker app from
+    the NAS's own app store instead; they give you the same `docker
+    compose` you need below. Step-by-step for a Pi, including the
+    installation itself: [Beginner installation](beginner-installation.md#step-6-install-docker).
+
 === "macOS (Docker Desktop)"
 
     Works, with one limitation: Docker Desktop runs containers inside a VM, and
