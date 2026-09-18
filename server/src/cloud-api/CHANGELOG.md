@@ -2,6 +2,25 @@
 
 Format: most-recent first. Each entry is dated and names the endpoint(s) affected.
 
+## 2026-09-18 — queryPlanFromMachine: parse the multipart poll, zones as array (#108)
+
+- `POST /api/nova-data/cutGrassPlan/queryPlanFromMachine` now runs through
+  `multer().none()`. The mower asks for its plans with mqtt_node
+  `http_post_upload` mode 5: a multipart form with `sn` and `week`
+  (`curl_formadd`), never JSON. Without a multipart parser `req.body` stayed
+  empty and every poll got `sn required`; a schedule made in the Novabot app
+  never reached a stock mower (the STM32 polls this on `CMD_SCHEDULE_GET`).
+  JSON bodies still work.
+- The machine response carries `areaFileAlias` as an ARRAY, one alias per
+  work area. `chassis_control` (5.7.1 and 6.0.2, `chassis_publisher.cpp:3385`)
+  reads `startTime`, `endTime` and `areaFileAlias.size()` as the zone count;
+  on a string that size is 0. App-facing `queryCutGrassPlan` /
+  `queryRecentCutGrassPlan` keep the string.
+- `week` is logged (plain and hex) and used as a filter only when it is a
+  day name (`Mon`..`Sun`). The raw STM32 byte is passed through unfiltered
+  until a stock mower has shown what it sends.
+- Test: `__tests__/routes/queryPlanFromMachine.test.ts`.
+
 ## 2026-09-12 — terrain: contract test holds its own listener
 
 - No behaviour change to `uploadTerrainGrid` / `uploadObjectGrid` /

@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import multer from 'multer';
 import { v4 as uuidv4 } from 'uuid';
 import { cutGrassPlanRepo, equipmentRepo, mapRepo } from '../../db/repositories/index.js';
 import { authMiddleware } from '../../middleware/auth.js';
@@ -293,14 +294,39 @@ cutGrassPlanRouter.post('/queryNewVersion', (_req, res: Response) => {
 // ── Maaier firmware endpoint (geen JWT auth) ──────────────────────────────────
 
 // POST /api/nova-data/cutGrassPlan/queryPlanFromMachine
-// De maaier vraagt maaischema's op via SN (geen JWT).
-cutGrassPlanRouter.post('/queryPlanFromMachine', (req: Request, res: Response) => {
-  const { sn } = req.body as { sn?: string };
+// De maaier vraagt maaischema's op via SN (geen JWT). Hij POST als
+// multipart/form-data (mqtt_node http_post_upload mode 5: curl_formadd
+// `sn` + `week`), net als saveCutGrassRecord. Zonder multer bleef req.body
+// leeg, kreeg de maaier "sn required" en liep geen enkel schema uit de
+// Novabot-app ooit (#108). De STM32 vraagt dit op via CMD_SCHEDULE_GET.
+const formFields = multer();
+cutGrassPlanRouter.post('/queryPlanFromMachine', formFields.none(), (req: Request, res: Response) => {
+  const { sn, week } = (req.body ?? {}) as { sn?: string; week?: string };
   if (!sn) { res.json(fail('sn required', 400)); return; }
 
-  console.log(`[PLAN] queryPlanFromMachine: sn=${sn}`);
+  // `week` is what the STM32 asked for (CMD_SCHEDULE_GET). Logged as hex as
+  // well: chassis_control builds it from a raw byte, and until a stock mower
+  // has shown us the value we only filter on a plain day name.
+  const weekHex = week ? Buffer.from(week).toString('hex') : '';
+  console.log(`[PLAN] queryPlanFromMachine: sn=${sn} week=${JSON.stringify(week ?? null)} (hex ${weekHex || '-'})`);
 
-  const rows = cutGrassPlanRepo.findBySnForMachine(sn);
+  const dayName = typeof week === 'string' && /^(Sun|Mon|Tue|Wed|Thu|Fri|Sat)$/i.test(week.trim())
+    ? week.trim().slice(0, 1).toUpperCase() + week.trim().slice(1, 3).toLowerCase()
+    : null;
+  const rows = cutGrassPlanRepo.findBySnForMachine(sn).filter((row) => {
+    if (!dayName) return true;
+    const days = row.weekday ? (JSON.parse(row.weekday) as unknown[]) : [];
+    return days.length === 0 || days.some((d) => String(d).slice(0, 3).toLowerCase() === dayName.toLowerCase());
+  });
 
-  res.json(ok((rows as PlanRow[]).map((row) => rowToDto(row))));
+  // chassis_control (5.7.1 and 6.0.2 alike, chassis_publisher.cpp:3385-3404)
+  // reads per plan: startTime.asString(), endTime.asString() and
+  // areaFileAlias.size(), the number of zones handed to the STM32. On a
+  // string Json::Value::size() is 0, so the app-facing alias string meant
+  // "zero zones". The mower gets one alias per work area, as an array.
+  res.json(ok((rows as PlanRow[]).map((row) => {
+    const dto = rowToDto(row);
+    const areas = Array.isArray(dto.workArea) ? dto.workArea : [];
+    return { ...dto, areaFileAlias: areas.map((a) => resolveAreaAlias(a, dto.sn) ?? String(a)) };
+  })));
 });
