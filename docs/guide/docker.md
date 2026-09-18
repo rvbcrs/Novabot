@@ -92,6 +92,10 @@ names have to resolve to `TARGET_IP` on your network. Two ways; pick one.
     by `systemd-resolved`; the [DNS Setup](dns-setup.md#port-53-is-already-in-use)
     page shows how to free it.
 
+    This DNS is meant for your LAN only. Never forward port 53 from the
+    internet to it, and on a machine with a public address (a VPS) turn it
+    off: it would answer DNS for the whole world.
+
 === "Your router, Pi-hole or AdGuard"
 
     If your network already has a place for DNS rewrites, add one for
