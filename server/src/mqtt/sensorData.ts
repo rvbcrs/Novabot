@@ -387,9 +387,40 @@ export interface TrailPoint {
   lng: number;
   ts: number;
 }
+export interface LocalTrailPoint { x: number; y: number; ts: number }
+const localTrails = new Map<string, LocalTrailPoint[]>();
 
-const MAX_TRAIL_POINTS = 5000;
+// The trail is one mowing session (#111): it is cleared when a NEW task
+// starts, not by a rolling cap. A pause, a rain pause, a recharge stop on the
+// dock and the resume after it are the same session and keep the trail. The
+// cap is only a safety net against a stream that never ends.
+// ponytail: 50k points is a full day at 1 Hz; ring-buffer if it ever matters.
+const MAX_TRAIL_POINTS = 50_000;
 const gpsTrails = new Map<string, TrailPoint[]>();
+
+// True once the mower has reported a finished/cancelled task (or idle with no
+// task) since the trail was last started. The next active sample then starts
+// a fresh trail. Starts true so the first session after a server start is
+// clean.
+const trailSessionClosed = new Map<string, boolean>();
+
+function isTaskClosed(msg: string, taskMode: string, active: boolean): boolean {
+  if (active) return false;
+  if (/Work:(FINISHED|CANCELLED)\b/.test(msg.replace(/Prev work:\S*/g, ''))) return true;
+  return taskMode === '0';
+}
+
+/** Called for every sensor batch. Closes the session on a terminal state and
+ *  clears both trails on the first active sample after that. Exported for
+ *  tests. */
+export function _trackTrailSession(sn: string, msg: string, taskMode: string, active: boolean): void {
+  if (isTaskClosed(msg, taskMode, active)) { trailSessionClosed.set(sn, true); return; }
+  if (active && (trailSessionClosed.get(sn) ?? true)) {
+    gpsTrails.delete(sn);
+    localTrails.delete(sn);
+    trailSessionClosed.set(sn, false);
+  }
+}
 
 function appendTrailPoint(sn: string, rawLat: string, rawLng: string): void {
   const lat = parseFloat(rawLat);
@@ -418,10 +449,6 @@ export function clearGpsTrail(sn: string): void {
 }
 
 // ── Local meter trail (from map_position_x/y, much more accurate than GPS) ──
-
-export interface LocalTrailPoint { x: number; y: number; ts: number }
-
-const localTrails = new Map<string, LocalTrailPoint[]>();
 
 function appendLocalTrailPoint(sn: string, x: number, y: number): void {
   if (isNaN(x) || isNaN(y)) return;
@@ -1079,6 +1106,8 @@ export function updateDeviceData(sn: string, payload: Buffer): Map<string, strin
     || currentMsg.includes('Work:NAVIGATING')
     || currentMsg.includes('Work:COVERING')
     || currentMsg.includes('Work:MOVING');
+
+  _trackTrailSession(sn, currentMsg, taskMode, isActive);
 
   if (isActive) {
     // GPS trail
