@@ -125,3 +125,5 @@ LFIN1231000211-2026-05-07T07-17-portable.novabotmap
 # gebruikt staan in app/assets/models/ en zijn tientallen KB's; dit zijn
 # ongedecimeerde exports van tientallen MB's die niet de historie in moeten.
 /*.glb
+research/decompile_stm32_all.java
+research/ghidra_output/stm32_v360_decompiled.c
