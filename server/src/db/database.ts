@@ -246,6 +246,21 @@ export function initDb(): void {
     CREATE INDEX IF NOT EXISTS signal_history_sn_ts ON signal_history(sn, ts);
 
     -- Map calibratie: handmatige offset/rotatie/schaal per maaier
+    -- Last known position inside a coverage task, so a task the mower lost
+    -- (power cut, reboot) can be picked up from where it was (#86). One row
+    -- per mower, overwritten while it mows; percent ~100 means it finished.
+    CREATE TABLE IF NOT EXISTS mow_progress (
+      mower_sn       TEXT    NOT NULL PRIMARY KEY,
+      map_id         TEXT,
+      canonical_name TEXT,
+      direction_deg  REAL    NOT NULL,
+      last_x         REAL    NOT NULL,
+      last_y         REAL    NOT NULL,
+      mowed_sign     INTEGER NOT NULL DEFAULT 0,
+      percent        REAL    NOT NULL DEFAULT 0,
+      updated_at     TEXT    NOT NULL DEFAULT (datetime('now'))
+    );
+
     CREATE TABLE IF NOT EXISTS map_calibration (
       mower_sn    TEXT    NOT NULL PRIMARY KEY,
       offset_lat  REAL    NOT NULL DEFAULT 0,

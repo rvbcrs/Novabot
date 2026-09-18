@@ -1248,3 +1248,22 @@ export async function saveDroneOverlayPlacement(sn: string, placement: DroneOver
 export async function deleteDroneOverlay(sn: string): Promise<void> {
   await apiFetch(`${BASE}/overlay/${encodeURIComponent(sn)}`, { method: 'DELETE' });
 }
+
+// ── Mow progress (#86): where the last coverage task got to ─────────────
+export interface MowProgressDto {
+  mapId: string | null;
+  canonicalName: string | null;
+  directionDeg: number;
+  lastX: number;
+  lastY: number;
+  mowedSign: number;
+  percent: number;
+  updatedAt: string;
+}
+export async function getMowProgress(sn: string): Promise<MowProgressDto | null> {
+  const data = await (await get(`${BASE}/mow-progress/${encodeURIComponent(sn)}`)).json() as { progress: MowProgressDto | null };
+  return data.progress;
+}
+export async function clearMowProgress(sn: string): Promise<void> {
+  await apiFetch(`${BASE}/mow-progress/${encodeURIComponent(sn)}`, { method: 'DELETE' });
+}

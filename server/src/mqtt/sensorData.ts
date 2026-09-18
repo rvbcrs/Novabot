@@ -10,6 +10,9 @@ import { spawn } from 'node:child_process';
 import { db } from '../db/database.js';
 import { equipmentRepo } from '../db/repositories/equipment.js';
 import { scheduleRepo } from '../db/repositories/schedules.js';
+import { mapRepo } from '../db/repositories/maps.js';
+import { mowProgressRepo } from '../db/repositories/mowProgress.js';
+import { pointInPolygon } from '../maps/editGeometry.js';
 import { detectAndDispatch, resetEventState } from '../notifications/eventDetector.js';
 import { isFrameUnvalidated, noteDockState } from '../services/frameValidation.js';
 import { resolveMowerIp } from '../services/mowerIpDiscovery.js';
@@ -408,6 +411,65 @@ function isTaskClosed(msg: string, taskMode: string, active: boolean): boolean {
   if (active) return false;
   if (/Work:(FINISHED|CANCELLED)\b/.test(msg.replace(/Prev work:\S*/g, ''))) return true;
   return taskMode === '0';
+}
+
+// ── Mow progress on disk (#86) ───────────────────────────────────────────
+// While a coverage task runs, remember every ~10 s where the mower is, which
+// work map that is in, the lane direction and which side of the current lane
+// the trail (= the mowed part) lies. A task the mower loses to a power cut
+// can then be resumed from that lane with a SPECIFIED_AREA start of the
+// remaining part. A cancelled task drops the row; a finished one simply ends
+// at ~100 %, which the dashboard does not offer to resume.
+const MOW_PROGRESS_INTERVAL_MS = 10_000;
+const mowProgressWrittenAt = new Map<string, number>();
+
+/** Sweep-axis coordinate of (x, y) for lanes running along `deg` from north:
+ *  the axis perpendicular to the lanes. Exported for tests. */
+export function sweepCoordinate(x: number, y: number, deg: number): number {
+  const rad = (deg * Math.PI) / 180;
+  // lane direction d = (sin, cos) in (east, north); sweep axis p = (cos, -sin)
+  return x * Math.cos(rad) - y * Math.sin(rad);
+}
+
+export function _trackMowProgress(sn: string, snValues: Map<string, string>, active: boolean, now = Date.now()): void {
+  const msg = snValues.get('msg') ?? '';
+  if (/Work:CANCELLED\b/.test(msg.replace(/Prev work:\S*/g, ''))) {
+    if (mowProgressWrittenAt.delete(sn)) mowProgressRepo.delete(sn);
+    return;
+  }
+  // Only a coverage task (task_mode 1); mapping and edge cut have no lanes to resume.
+  if (!active || snValues.get('task_mode') !== '1' || snValues.get('edge_active') === '1') return;
+  const last = mowProgressWrittenAt.get(sn) ?? 0;
+  if (now - last < MOW_PROGRESS_INTERVAL_MS) return;
+  const x = parseFloat(snValues.get('map_position_x') ?? '');
+  const y = parseFloat(snValues.get('map_position_y') ?? '');
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+  const dir = parseFloat(snValues.get('cov_direction') ?? snValues.get('path_direction') ?? '');
+  if (!Number.isFinite(dir)) return;
+  const percent = parseFloat(snValues.get('mowing_progress') ?? '0') || 0;
+
+  // Which work map: the one the mower is standing in.
+  let mapId: string | null = null;
+  let canonical: string | null = null;
+  try {
+    for (const m of mapRepo.findWorkMaps(sn)) {
+      if (!m.map_area) continue;
+      const poly = JSON.parse(m.map_area) as Array<{ x: number; y: number }>;
+      if (Array.isArray(poly) && poly.length >= 3 && pointInPolygon({ x, y }, poly)) {
+        mapId = m.map_id; canonical = m.canonical_name ?? null; break;
+      }
+    }
+  } catch { /* a bad polygon row is not this feature's problem */ }
+
+  // Which side is mowed: where the trail of this session lies relative to
+  // the lane through the current position.
+  const s0 = sweepCoordinate(x, y, dir);
+  let sum = 0;
+  for (const p of getLocalTrail(sn)) sum += sweepCoordinate(p.x, p.y, dir) - s0;
+  const mowedSign = sum > 0.05 ? 1 : sum < -0.05 ? -1 : 0;
+
+  mowProgressRepo.upsert({ mower_sn: sn, map_id: mapId, canonical_name: canonical, direction_deg: dir, last_x: x, last_y: y, mowed_sign: mowedSign, percent });
+  mowProgressWrittenAt.set(sn, now);
 }
 
 /** Called for every sensor batch. Closes the session on a terminal state and
@@ -1108,6 +1170,7 @@ export function updateDeviceData(sn: string, payload: Buffer): Map<string, strin
     || currentMsg.includes('Work:MOVING');
 
   _trackTrailSession(sn, currentMsg, taskMode, isActive);
+  _trackMowProgress(sn, snValues, isActive);
 
   if (isActive) {
     // GPS trail

@@ -141,6 +141,11 @@
       "NO–SE"
     ],
     "edgeOffset": "Décalage de bordure",
+    "resumeFrom": "Reprendre à partir de",
+    "resumeHint": "La tondeuse a perdu sa tâche vers {{pct}}% ({{when}}). Ne tond que la partie après cette bande ; avec des obstacles, l'écart peut être de quelques bandes.",
+    "resumeOff": "Non",
+    "resumeStart": "Reprendre à {{pct}}%",
+    "resumeLeft": "{{pct}}% de la zone restante",
     "edgeOffsetShrink": "Réduire",
     "edgeOffsetExpand": "Agrandir",
     "startEdgeCut": "Coupe de bordure",

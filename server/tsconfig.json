@@ -25,6 +25,7 @@
     "src/__tests__/utils/mowingMapSelection.test.ts",
     "src/__tests__/utils/mapChannels.test.ts",
     "src/__tests__/utils/liveMapWindow.test.ts",
+    "src/__tests__/utils/remainingArea.test.ts",
     "src/__tests__/services/droneOverlayMath.test.ts"
   ]
 }

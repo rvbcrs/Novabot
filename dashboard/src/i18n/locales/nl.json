@@ -204,6 +204,11 @@
       "NW–ZO"
     ],
     "edgeOffset": "Rand-offset",
+    "resumeFrom": "Hervatten vanaf",
+    "resumeHint": "De maaier raakte zijn taak kwijt bij ongeveer {{pct}}% ({{when}}). Maait alleen het deel na deze baan; bij obstakels kan het een paar banen schelen.",
+    "resumeOff": "Uit",
+    "resumeStart": "Hervatten vanaf {{pct}}%",
+    "resumeLeft": "{{pct}}% van het gebied over",
     "edgeOffsetShrink": "Inkrimpen",
     "edgeOffsetExpand": "Uitbreiden",
     "startEdgeCut": "Randmaaien",

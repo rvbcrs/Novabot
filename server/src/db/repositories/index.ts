@@ -33,3 +33,5 @@ export { WalkerBundleRepository, walkerBundleRepo } from './walkerBundles.js';
 export type { WalkerBundleRow, CreateWalkerBundleData } from './walkerBundles.js';
 export { MapEditsRepository, mapEditsRepo } from './mapEdits.js';
 export type { MapEditDraftRow, MapVersionRow } from './mapEdits.js';
+export { mowProgressRepo } from './mowProgress.js';
+export type { MowProgressRow } from './mowProgress.js';

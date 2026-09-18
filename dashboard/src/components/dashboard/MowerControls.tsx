@@ -13,7 +13,9 @@ import {
   sendCommand, sendExtendedCommand, fetchMaps,
   getDemoMode, reapplyPara,
   fetchRainForecast, findIncomingRain, setRainIgnoreSession,
+  getMowProgress, type MowProgressDto,
 } from '../../api/client';
+import { remainingPolygon, sweepCoordinate, sweepExtent, polygonArea } from '../../utils/remainingArea';
 import { localToGps } from '../../utils/coords';
 import { mmToCutterhigh, workMapsToArea, needsMapNameStart, nextCmdNum } from '../../utils/mqtt';
 import { readMowDefaults, configuredHeightMm } from '../../utils/mowDefaults';
@@ -216,6 +218,11 @@ export function MowerControls({
   const [patternSize, setPatternSize] = useState(15);
   const [patternRotation, setPatternRotation] = useState(0);
   const [edgeOffset, setEdgeOffset] = useState(0);
+  // Resume a lost task from a lane (#86): what the server remembers of the
+  // last coverage task, and the slider position (percent across the sweep).
+  const [mowProgress, setMowProgress] = useState<MowProgressDto | null>(null);
+  const [resumeOn, setResumeOn] = useState(false);
+  const [resumePercent, setResumePercent] = useState(0);
 
   const [showManualControl, setShowManualControl] = useState(false);
   // Anchor rect for the two dropdown sheets. They used to be absolute inside
@@ -365,8 +372,71 @@ export function MowerControls({
     }
   }, [expanded]);
 
+  // What the server knows of a task the mower lost. Only offered for the
+  // selected map, when that task was neither just started nor finished, and
+  // not older than a week.
+  useEffect(() => {
+    if (!expanded) return;
+    let cancelled = false;
+    getMowProgress(sn).then(p => { if (!cancelled) setMowProgress(p); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [expanded, sn]);
+  const resumeCandidate = (() => {
+    if (!mowProgress || !mapId || mowProgress.mapId !== mapId) return null;
+    if (mowProgress.percent < 1 || mowProgress.percent >= 99 || mowProgress.mowedSign === 0) return null;
+    if (Date.now() - new Date(mowProgress.updatedAt.replace(' ', 'T') + 'Z').getTime() > 7 * 86_400_000) return null;
+    return mowProgress;
+  })();
+  useEffect(() => {
+    setResumeOn(false);
+    setResumePercent(resumeCandidate ? Math.round(resumeCandidate.percent) : 0);
+  }, [resumeCandidate?.updatedAt, mapId]);
+
+  // The remaining part of the selected map at the slider position, in local
+  // metres. The slider maps 0..100 onto the sweep extent of the polygon, in
+  // the direction the mowed part lies, so the default (the stored percent)
+  // starts near the lane the mower stopped in.
+  const remainingLocal = (() => {
+    if (!resumeOn || !resumeCandidate) return null;
+    const poly = maps.find(m => m.mapId === mapId)?.mapArea;
+    if (!poly || poly.length < 3) return null;
+    const dir = resumeCandidate.directionDeg;
+    const sign = resumeCandidate.mowedSign > 0 ? 1 : -1;
+    const { min, max } = sweepExtent(poly, dir);
+    // 0 % = the end where mowing began (far mowed side), 100 % = the other end
+    const start = sign > 0 ? max : min;
+    const end = sign > 0 ? min : max;
+    const s0 = start + (end - start) * (resumePercent / 100);
+    const rest = remainingPolygon(poly, dir, s0, sign as 1 | -1);
+    return rest.length >= 3 ? rest : null;
+  })();
+  const resumeLeftPct = (() => {
+    if (!remainingLocal) return null;
+    const poly = maps.find(m => m.mapId === mapId)?.mapArea;
+    if (!poly) return null;
+    return Math.round((polygonArea(remainingLocal) / Math.max(polygonArea(poly), 1e-6)) * 100);
+  })();
+  // When the sheet opens, put the slider where the mower actually stopped.
+  useEffect(() => {
+    if (!resumeCandidate) return;
+    const poly = maps.find(m => m.mapId === mapId)?.mapArea;
+    if (!poly || poly.length < 3) return;
+    const dir = resumeCandidate.directionDeg;
+    const sign = resumeCandidate.mowedSign > 0 ? 1 : -1;
+    const { min, max } = sweepExtent(poly, dir);
+    const start = sign > 0 ? max : min;
+    const end = sign > 0 ? min : max;
+    const s = sweepCoordinate({ x: resumeCandidate.lastX, y: resumeCandidate.lastY }, dir);
+    const pct = end === start ? 0 : ((s - start) / (end - start)) * 100;
+    setResumePercent(Math.max(0, Math.min(100, Math.round(pct))));
+  }, [resumeCandidate?.updatedAt, mapId, maps]);
+
   // Update offset preview on map
   useEffect(() => {
+    if (expanded && remainingLocal && chargerGps) {
+      onOffsetPreviewChange?.(remainingLocal.map(p => localToGps(p, chargerGps)));
+      return;
+    }
     if (!expanded || edgeOffset === 0 || patternMode) {
       onOffsetPreviewChange?.(null);
       return;
@@ -381,7 +451,7 @@ export function MowerControls({
     } else {
       onOffsetPreviewChange?.(null);
     }
-  }, [expanded, edgeOffset, mapId, patternMode, pendingPolygon, maps, chargerGps]);
+  }, [expanded, edgeOffset, mapId, patternMode, pendingPolygon, maps, chargerGps, remainingLocal]);
 
   const send = useCallback(async (cmd: Record<string, unknown>, label?: string, refreshPara?: boolean) => {
     setBusy(true);
@@ -494,7 +564,23 @@ export function MowerControls({
         // path, the same one the Preview uses). The planner still plans on the
         // obstacle-constrained grid, so red zones stay avoided. Only a single map
         // can carry an offset, so this path is single-map only.
-        if (edgeOffset !== 0 && targetMaps.length === 1 && targetMap && Array.isArray(targetMap.mapArea) && targetMap.mapArea.length >= 3 && chargerGps) {
+        if (remainingLocal && targetMap && chargerGps) {
+          // Resume a lost task (#86): the part after the lane the mower stopped
+          // in, as a SPECIFIED_AREA start of that polygon. The planner does the
+          // rest as for any area. No edge pass: one edge is a line in the grass.
+          const restGps = remainingLocal.map(p => localToGps(p, chargerGps!));
+          await sendCommand(sn, {
+            start_run: {
+              mapNames: [targetMap.canonicalName || targetMap.mapName || 'home'],
+              cutGrassHeight: cuttingHeight,
+              startWay: 1,
+              workArea: restGps.map(p => ({ latitude: p.lat, longitude: p.lng })),
+              schedule: false,
+              scheduleId: '',
+            },
+          });
+          toast(`✓ ${t('controls.resumeStart', { pct: resumePercent })}`, 'success');
+        } else if (edgeOffset !== 0 && targetMaps.length === 1 && targetMap && Array.isArray(targetMap.mapArea) && targetMap.mapArea.length >= 3 && chargerGps) {
           const gpsPoly = (targetMap.mapArea as Array<{ x: number; y: number }>).map(p => localToGps(p, chargerGps!));
           const offsetGps = offsetPolygon(gpsPoly, edgeOffset);
           await sendCommand(sn, {
@@ -574,7 +660,7 @@ export function MowerControls({
   }, [sn, cuttingHeight, pathDirection, edgeOffset, mapId, mapName, maps, pendingPolygon,
     patternMode, patternId, patternContours, patternCenter, patternSize, patternRotation,
     onPathDirectionChange, onPatternPlacementChange, onStarted, chargerGps, checkRainGate,
-    t, toast]);
+    remainingLocal, resumePercent, t, toast]);
 
   // ── Activity-driven control state (mirrors app HomeScreen) ──────────────
   // The mower's derived activity decides which control buttons are shown,
@@ -1233,6 +1319,37 @@ export function MowerControls({
               </div>
             )}
 
+            {/* Resume a lost task from a lane (#86); only when the server has one for this map */}
+            {!patternMode && !edgeMode && resumeCandidate && (
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-[9px] text-gray-500 uppercase tracking-wide">{t('controls.resumeFrom')}</label>
+                  <button
+                    onClick={() => setResumeOn(v => !v)}
+                    className={`text-[10px] px-2 py-0.5 rounded border ${resumeOn ? 'border-emerald-500 text-emerald-300 bg-emerald-500/10' : 'border-gray-700 text-gray-400'}`}
+                  >
+                    {resumeOn ? `${resumePercent}%` : t('controls.resumeOff')}
+                  </button>
+                </div>
+                {resumeOn && (
+                  <>
+                    <input
+                      type="range" min={0} max={100} step={1} value={resumePercent}
+                      onChange={e => setResumePercent(parseInt(e.target.value, 10))}
+                      className="w-full accent-emerald-500"
+                    />
+                    <div className="text-[9px] text-gray-500 mt-1">
+                      {t('controls.resumeHint', {
+                        pct: Math.round(resumeCandidate.percent),
+                        when: new Date(resumeCandidate.updatedAt.replace(' ', 'T') + 'Z').toLocaleString(),
+                      })}
+                      {resumeLeftPct != null && ` ${t('controls.resumeLeft', { pct: resumeLeftPct })}`}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
             {/* Path direction stepper (both modes) — matches app StartMowSheet: 0–180° in 15° steps */}
             <div>
               <label className="text-[9px] text-gray-500 uppercase tracking-wide block mb-1">{t('controls.pathDirection')}</label>
@@ -1297,6 +1414,7 @@ export function MowerControls({
                 {busy ? t('controls.busy')
                   : edgeMode ? (t('controls.startEdgeCut') ?? 'Edge cut')
                   : patternMode ? t('pattern.startPattern')
+                  : remainingLocal ? t('controls.resumeStart', { pct: resumePercent })
                   : t('controls.startMowing')}
               </button>
             </div>

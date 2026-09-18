@@ -156,6 +156,11 @@
       "NW–SE"
     ],
     "edgeOffset": "Edge offset",
+    "resumeFrom": "Resume from",
+    "resumeHint": "The mower lost its task at about {{pct}}% ({{when}}). Mow only the part after this lane; obstacles may make it a few lanes off.",
+    "resumeOff": "Off",
+    "resumeStart": "Resume from {{pct}}%",
+    "resumeLeft": "{{pct}}% of the area left",
     "edgeOffsetShrink": "Shrink",
     "edgeOffsetExpand": "Expand",
     "startEdgeCut": "Start edge cut",

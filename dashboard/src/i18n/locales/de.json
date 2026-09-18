@@ -141,6 +141,11 @@
       "NW–SO"
     ],
     "edgeOffset": "Randversatz",
+    "resumeFrom": "Fortsetzen ab",
+    "resumeHint": "Der Mäher hat seine Aufgabe bei etwa {{pct}}% verloren ({{when}}). Mäht nur den Teil nach dieser Bahn; bei Hindernissen kann es ein paar Bahnen abweichen.",
+    "resumeOff": "Aus",
+    "resumeStart": "Fortsetzen ab {{pct}}%",
+    "resumeLeft": "{{pct}}% der Fläche übrig",
     "edgeOffsetShrink": "Verkleinern",
     "edgeOffsetExpand": "Vergrößern",
     "startEdgeCut": "Kantenmähen",

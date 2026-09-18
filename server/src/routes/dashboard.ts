@@ -109,7 +109,7 @@ export function serializeEdgeDays(days: number[] | null | undefined): string | n
 
 import { diagnoseConnection } from '../services/connectionDiagnosis.js';
 import { droneOverlayRouter } from './droneOverlay.js';
-import { connectionEventRepo } from '../db/repositories/index.js';
+import { connectionEventRepo, mowProgressRepo } from '../db/repositories/index.js';
 
 export const dashboardRouter = Router();
 
@@ -797,6 +797,26 @@ dashboardRouter.get('/trail/:sn', (req: Request, res: Response) => {
   } else {
     res.json({ trail: getLocalTrail(sn) });
   }
+});
+
+// GET /api/dashboard/mow-progress/:sn — where the last coverage task got to
+// (#86). The dashboard offers "resume from N%" when it is not finished.
+dashboardRouter.get('/mow-progress/:sn', (req: Request, res: Response) => {
+  const row = mowProgressRepo.get(req.params.sn);
+  if (!row) { res.json({ ok: true, progress: null }); return; }
+  res.json({
+    ok: true,
+    progress: {
+      mapId: row.map_id, canonicalName: row.canonical_name, directionDeg: row.direction_deg,
+      lastX: row.last_x, lastY: row.last_y, mowedSign: row.mowed_sign, percent: row.percent,
+      updatedAt: row.updated_at,
+    },
+  });
+});
+
+dashboardRouter.delete('/mow-progress/:sn', (req: Request, res: Response) => {
+  mowProgressRepo.delete(req.params.sn);
+  res.json({ ok: true });
 });
 
 // DELETE /api/dashboard/trail/:sn — wis trail
