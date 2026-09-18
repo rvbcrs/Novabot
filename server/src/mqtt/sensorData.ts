@@ -12,6 +12,9 @@ import { equipmentRepo } from '../db/repositories/equipment.js';
 import { scheduleRepo } from '../db/repositories/schedules.js';
 import { mapRepo } from '../db/repositories/maps.js';
 import { mowProgressRepo } from '../db/repositories/mowProgress.js';
+import { dockSamplesRepo } from '../db/repositories/dockSamples.js';
+import { computeDockDrift, median, DOCK_DRIFT_WARN_M } from '../services/dockDrift.js';
+import { dispatchDockDriftEvent } from '../notifications/eventDetector.js';
 import { pointInPolygon } from '../maps/editGeometry.js';
 import { detectAndDispatch, resetEventState } from '../notifications/eventDetector.js';
 import { isFrameUnvalidated, noteDockState } from '../services/frameValidation.js';
@@ -705,6 +708,7 @@ function sampleSignalHistory(sn: string, snValues: Map<string, string>, meta: Si
 
 /** Verwijder signal_history records ouder dan 7 dagen. Roep aan bij server start. */
 export function cleanupSignalHistory(): void {
+  try { dockSamplesRepo.prune(); } catch { /* ignore */ }
   try {
     const result = db.prepare("DELETE FROM signal_history WHERE ts < datetime('now', '-7 days')").run();
     if (result.changes > 0) {
@@ -760,6 +764,53 @@ export function getMowerErrorState(sn: string): { value: string; count: number }
 // snapshot and renders the charger icon there.
 export interface DockPose { x: number; y: number; orientation: number; capturedAt: number }
 const dockPoseBySn = new Map<string, DockPose>();
+
+// ── Dock samples for the drift check ─────────────────────────────────────
+// While the mower stands on the charger with RTK Fixed, collect its map
+// position; when it leaves (or once a day while it stays), store the median
+// of the stint as one sample. The dock does not move, so the samples must
+// repeat; see services/dockDrift.ts.
+interface DockStint { xs: number[]; ys: number[]; lats: number[]; lngs: number[]; startedAt: number }
+const dockStintBySn = new Map<string, DockStint>();
+const dockDriftNotifiedAt = new Map<string, number>();
+const DOCK_STINT_MAX_MS = 24 * 3_600_000;
+const DOCK_STINT_MIN_SAMPLES = 5;
+
+function commitDockStint(sn: string, now = Date.now()): void {
+  const st = dockStintBySn.get(sn);
+  dockStintBySn.delete(sn);
+  if (!st || st.xs.length < DOCK_STINT_MIN_SAMPLES) return;
+  const lat = st.lats.length ? median(st.lats) : null;
+  const lng = st.lngs.length ? median(st.lngs) : null;
+  try {
+    dockSamplesRepo.insert(sn, median(st.xs), median(st.ys), lat, lng, st.xs.length);
+    const drift = computeDockDrift(dockSamplesRepo.listSince(sn, 90));
+    if (drift.latest && drift.latest.dist >= DOCK_DRIFT_WARN_M && drift.referenceAt
+        && now - (dockDriftNotifiedAt.get(sn) ?? 0) > DOCK_STINT_MAX_MS) {
+      dockDriftNotifiedAt.set(sn, now);
+      dispatchDockDriftEvent(sn, Math.round(drift.latest.dist * 100), drift.referenceAt);
+    }
+  } catch (e) {
+    console.warn(`[DOCK-DRIFT] ${sn}: sample not stored:`, e instanceof Error ? e.message : e);
+  }
+}
+
+/** Exported for tests: feed one docked report. */
+export function _trackDockStint(sn: string, snValues: Map<string, string>, docked: boolean, now = Date.now()): void {
+  if (!docked) { commitDockStint(sn, now); return; }
+  const q = snValues.get('rtk_fix_quality') ?? '';
+  if (!(q === '4' || /fixed/i.test(q))) return;
+  const x = parseFloat(snValues.get('map_position_x') ?? '');
+  const y = parseFloat(snValues.get('map_position_y') ?? '');
+  if (!Number.isFinite(x) || !Number.isFinite(y) || (x === 0 && y === 0)) return;
+  let st = dockStintBySn.get(sn);
+  if (st && now - st.startedAt > DOCK_STINT_MAX_MS) { commitDockStint(sn, now); st = undefined; }
+  if (!st) { st = { xs: [], ys: [], lats: [], lngs: [], startedAt: now }; dockStintBySn.set(sn, st); }
+  st.xs.push(x); st.ys.push(y);
+  const lat = parseFloat(snValues.get('latitude') ?? '');
+  const lng = parseFloat(snValues.get('longitude') ?? '');
+  if (Number.isFinite(lat) && Number.isFinite(lng) && lat !== 0 && lng !== 0) { st.lats.push(lat); st.lngs.push(lng); }
+}
 
 // Tracks which mowers are currently in the docked state. Used to detect
 // the leading edge of a docking event (not-docked → docked) so we trigger
@@ -1259,6 +1310,7 @@ export function updateDeviceData(sn: string, payload: Buffer): Map<string, strin
   } else if (!docked && dockedSns.has(sn)) {
     dockedSns.delete(sn);
   }
+  _trackDockStint(sn, snValues, docked);
 
   // Charger GPS positie wordt NIET automatisch bijgewerkt — GPS jitter (2-3m) verschuift
   // de conversie-origin en daarmee alle kaartpolygonen. Charger positie wordt eenmalig

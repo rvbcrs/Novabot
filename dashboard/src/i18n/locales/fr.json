@@ -975,6 +975,7 @@
     "rtk": "Position RTK",
     "fault": "Panne",
     "frame": "Référentiel de carte",
+    "dockDrift": "Position sur la station",
     "groupReach": "Accessibilité",
     "groupConnect": "Connexion",
     "groupIdentity": "Identité",

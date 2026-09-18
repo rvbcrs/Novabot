@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { db } from '../../db/database.js';
 import { diagnoseConnection, type DiagnosisProbes } from '../../services/connectionDiagnosis.js';
-import { connectionEventRepo, deviceRepo } from '../../db/repositories/index.js';
+import { connectionEventRepo, deviceRepo, dockSamplesRepo } from '../../db/repositories/index.js';
 import { serverIpv4 } from '../../services/reachability.js';
 import { factoryOuis, scanLan, bleToWifiMac, rivalBrokers } from '../../services/lanScan.js';
 import { inspectContainerNetwork } from '../../services/containerNetwork.js';
@@ -378,6 +378,30 @@ describe('readiness', () => {
     const step = (await live({ msg: 'x', error_status: '141' })).steps.find(s => s.id === 'fault')!;
     expect(step.status).toBe('fail');
     expect(step.evidence).toContain('141');
+  });
+
+  it('stays quiet about the dock position with too few dockings', async () => {
+    const step = (await live({ msg: 'x' })).steps.find(s => s.id === 'dock_drift')!;
+    expect(step.status).toBe('unknown');
+  });
+
+  it('a stable dock position is ok', async () => {
+    dockSamplesRepo.insert(MOWER, 0.50, 0.10, null, null, 8);
+    dockSamplesRepo.insert(MOWER, 0.51, 0.10, null, null, 8);
+    dockSamplesRepo.insert(MOWER, 0.50, 0.11, null, null, 8);
+    const step = (await live({ msg: 'x' })).steps.find(s => s.id === 'dock_drift')!;
+    expect(step.status).toBe('ok');
+  });
+
+  it('reports a dock position that walked away', async () => {
+    dockSamplesRepo.insert(MOWER, 0.50, 0.10, null, null, 8);
+    dockSamplesRepo.insert(MOWER, 0.51, 0.10, null, null, 8);
+    dockSamplesRepo.insert(MOWER, 0.50, 0.11, null, null, 8);
+    // same day as the reference rows: the day median includes them, so push far
+    for (let i = 0; i < 4; i++) dockSamplesRepo.insert(MOWER, 0.90, 0.10, null, null, 8);
+    const step = (await live({ msg: 'x' })).steps.find(s => s.id === 'dock_drift')!;
+    expect(step.status).toBe('fail');
+    expect(step.action).toContain('laadstation');
   });
 
   it('reports an unvalidated map frame', async () => {

@@ -1097,6 +1097,7 @@
     "rtk": "RTK position",
     "fault": "Fault",
     "frame": "Map frame",
+    "dockDrift": "Position on the dock",
     "groupReach": "Reachability",
     "groupConnect": "Connection",
     "groupIdentity": "Identity",

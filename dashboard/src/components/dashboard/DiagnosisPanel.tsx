@@ -31,6 +31,7 @@ const STEP_LABEL: Record<string, [string, string]> = {
   rtk: ['diagnose.rtk', 'RTK-positie'],
   fault: ['diagnose.fault', 'Storing'],
   frame: ['diagnose.frame', 'Kaartframe'],
+  dock_drift: ['diagnose.dockDrift', 'Positie op het laadstation'],
   disk: ['diagnose.disk', 'Schijfruimte'],
   mdns_service: ['diagnose.mdnsService', 'mDNS op poort 5353'],
   rival_broker: ['diagnose.rivalBroker', 'Tweede MQTT-broker'],

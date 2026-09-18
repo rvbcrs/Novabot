@@ -14,6 +14,8 @@
  * Deliberately no model. Whether a device sent a CONNECT is a fact, not
  * something to infer.
  */
+import { dockSamplesRepo } from '../db/repositories/dockSamples.js';
+import { computeDockDrift } from './dockDrift.js';
 import { deviceRepo, equipmentRepo, connectionEventRepo } from '../db/repositories/index.js';
 import { getLoraPair } from './loraPair.js';
 import { checkReachability, serverIpv4, type Reachability } from './reachability.js';
@@ -977,6 +979,28 @@ export async function diagnoseConnection(
         action: unvalidated ? T`anker de maaier opnieuw op het laadstation voor je gaat maaien`
                             : undefined,
       });
+
+      // Het laadstation staat stil, dus de gedockte positie (RTK Fixed) moet
+      // elke dag dezelfde zijn. Loopt die weg, dan is de antenne van het
+      // station of het kaartframe verschoven en liggen de zones niet meer
+      // waar ze gereden zijn.
+      const drift = computeDockDrift(dockSamplesRepo.listSince(sn, 90));
+      if (drift.status === 'unknown' || !drift.latest || !drift.referenceAt) {
+        push({ id: 'dock_drift', group: 'ready', status: 'unknown', evidence: T`nog te weinig dockingen gezien om de positie te vergelijken` });
+      } else {
+        const cm = Math.round(drift.latest.dist * 100);
+        const since = drift.referenceAt.slice(0, 10);
+        push({
+          id: 'dock_drift',
+          group: 'ready',
+          status: drift.status,
+          evidence: drift.status === 'ok'
+            ? T`gedockte positie stabiel (${cm} cm t.o.v. ${since})`
+            : T`de maaier parkeert ${cm} cm van waar hij op ${since} stond`,
+          action: drift.status === 'ok' ? undefined
+            : T`controleer of het laadstation of zijn antenne is verschoven; staat het goed, anker dan opnieuw`,
+        });
+      }
     }
   }
 

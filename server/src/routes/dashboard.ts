@@ -109,7 +109,8 @@ export function serializeEdgeDays(days: number[] | null | undefined): string | n
 
 import { diagnoseConnection } from '../services/connectionDiagnosis.js';
 import { droneOverlayRouter } from './droneOverlay.js';
-import { connectionEventRepo, mowProgressRepo } from '../db/repositories/index.js';
+import { connectionEventRepo, mowProgressRepo, dockSamplesRepo } from '../db/repositories/index.js';
+import { computeDockDrift } from '../services/dockDrift.js';
 
 export const dashboardRouter = Router();
 
@@ -822,6 +823,14 @@ dashboardRouter.get('/mow-progress/:sn', (req: Request, res: Response) => {
 dashboardRouter.delete('/mow-progress/:sn', (req: Request, res: Response) => {
   mowProgressRepo.delete(req.params.sn);
   res.json({ ok: true });
+});
+
+// GET /api/dashboard/dock-drift/:sn — does the mower park where it used to?
+// Daily median offset of the docked (RTK Fixed) position from the first
+// dockings; a walk means the station's antenna or the map frame moved.
+dashboardRouter.get('/dock-drift/:sn', (req: Request, res: Response) => {
+  const days = Math.min(365, Math.max(1, parseInt(String(req.query.days ?? '90'), 10) || 90));
+  res.json({ ok: true, ...computeDockDrift(dockSamplesRepo.listSince(req.params.sn, days)) });
 });
 
 // DELETE /api/dashboard/trail/:sn — wis trail

@@ -21,7 +21,8 @@ export type EventType =
   | 'map_error'              // 0x70..0x72 charging signal, 0x7A..0x7D mapping/boundary
   | 'initialization_error'   // 0x85 — mower not initialised
   | 'hardware_fault'         // 0x86/0x88/0x89/0xAA/0xDD/0x1BC — camera, lora, chassis
-  | 'dock_failed';           // msg includes 'Recharge: FAILED' — mower returned but couldn't dock (issue #30)
+  | 'dock_failed'            // msg includes 'Recharge: FAILED' — mower returned but couldn't dock (issue #30)
+  | 'dock_drift';            // the docked position walked away from where it used to be: station antenna or map frame moved
 
 export interface MowerEvent {
   sn: string;

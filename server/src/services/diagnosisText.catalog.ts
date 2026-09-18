@@ -483,6 +483,26 @@ export const CATALOG: Catalog = {
     fr: "l'application Novabot officielle ne peut alors pas appairer cet appareil (\"Device is missing mac address\") ; utilisez l'application OpenNova, qui trouve l'appareil en Bluetooth, ou connectez-vous une fois au cloud depuis le panneau admin (Settings → Cloud import), et signalez le numéro de série sur GitHub pour qu'il soit ajouté à la liste",
     de: "die offizielle Novabot-App kann dieses Gerät dann nicht koppeln (\"Device is missing mac address\"); nutzen Sie die OpenNova-App, die das Gerät per Bluetooth findet, oder melden Sie sich im Admin-Panel einmal bei der Cloud an (Settings → Cloud import), und melden Sie die Seriennummer auf GitHub, damit sie in die Liste aufgenommen wird",
   },
+  "nog te weinig dockingen gezien om de positie te vergelijken": {
+    en: "not enough dockings seen yet to compare the position",
+    fr: "pas encore assez d'accostages pour comparer la position",
+    de: "noch zu wenige Andockvorgänge, um die Position zu vergleichen",
+  },
+  "gedockte positie stabiel ({0} cm t.o.v. {1})": {
+    en: "docked position stable ({0} cm since {1})",
+    fr: "position à quai stable ({0} cm depuis {1})",
+    de: "Andockposition stabil ({0} cm seit {1})",
+  },
+  "de maaier parkeert {0} cm van waar hij op {1} stond": {
+    en: "the mower parks {0} cm away from where it stood on {1}",
+    fr: "la tondeuse se gare à {0} cm de l'endroit où elle était le {1}",
+    de: "der Mäher parkt {0} cm von der Stelle entfernt, an der er am {1} stand",
+  },
+  "controleer of het laadstation of zijn antenne is verschoven; staat het goed, anker dan opnieuw": {
+    en: "check whether the charging station or its antenna has moved; if it stands right, re-anchor",
+    fr: "vérifiez si la station de charge ou son antenne a bougé ; si elle est bien placée, ré-ancrez",
+    de: "prüfen Sie, ob die Ladestation oder ihre Antenne verschoben wurde; steht sie richtig, neu verankern",
+  },
   "zonder MAC herkent de app de maaier niet in een BLE-scan": {
     en: "without a MAC the app will not recognise the mower in a BLE scan",
     fr: "sans MAC l'application ne reconnaît pas la tondeuse dans un scan BLE",

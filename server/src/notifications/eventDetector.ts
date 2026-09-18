@@ -30,6 +30,7 @@ const TITLE_BY_TYPE: Record<EventType, string> = {
   initialization_error: 'Mower starting up',
   hardware_fault:       'Hardware fault',
   dock_failed:          'Mower could not dock',
+  dock_drift:           'Charging station may have moved',
 };
 
 interface SnapshotState {
@@ -220,6 +221,21 @@ export function detectAndDispatch(sn: string, snValues: Map<string, string>): vo
  * Reset the cached snapshot for `sn`. Called when a device is unbound /
  * factory-reset so the next frame doesn't fire spurious clear events.
  */
+/**
+ * The docked position drifted past the warning threshold (dock-drift
+ * check). Not a transition in the sensor stream, so it is raised from the
+ * place that records dock samples; that caller keeps it to once a day.
+ */
+export function dispatchDockDriftEvent(sn: string, driftCm: number, sinceIso: string): void {
+  dispatchEvent(makeEvent(
+    sn,
+    'dock_drift',
+    TITLE_BY_TYPE.dock_drift,
+    `The mower parks ${driftCm} cm away from where it did on ${sinceIso.slice(0, 10)}. The station's antenna or the map frame moved; check the station and the zone edges.`,
+    { drift_cm: driftCm, since: sinceIso },
+  ));
+}
+
 export function resetEventState(sn: string): void {
   stateBySn.delete(sn);
 }

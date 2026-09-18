@@ -8,6 +8,7 @@
  * does not silently unlock go_to_charge.
  */
 import { deviceSettingsRepo } from '../db/repositories/deviceSettings.js';
+import { dockSamplesRepo } from '../db/repositories/dockSamples.js';
 
 const KEY = 'frame_unvalidated';
 const AUTO_RECHARGE_KEY = 'frame_auto_recharge_seen';
@@ -41,6 +42,9 @@ export function loadFrameValidationFromDb(): void {
 
 export function markFrameUnvalidated(sn: string): void {
   unvalidated.add(sn);
+  // A restored or re-anchored frame is a new origin: the dock position
+  // before it says nothing about the one after.
+  dockSamplesRepo.deleteBySn(sn);
   autoRechargeSeen.delete(sn);
   relocked.delete(sn); // new restore => new origin pending, prior relock void
   deviceSettingsRepo.upsert(sn, KEY, '1');

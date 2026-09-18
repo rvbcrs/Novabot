@@ -246,6 +246,22 @@ export function initDb(): void {
     CREATE INDEX IF NOT EXISTS signal_history_sn_ts ON signal_history(sn, ts);
 
     -- Map calibratie: handmatige offset/rotatie/schaal per maaier
+    -- One row per docking stint: the mower's position on the charger with
+    -- RTK Fixed (median over the stint). The dock does not move, so this
+    -- must repeat; when it walks, the station's antenna or the map frame
+    -- moved. Read by the dock-drift check.
+    CREATE TABLE IF NOT EXISTS dock_samples (
+      id      INTEGER PRIMARY KEY AUTOINCREMENT,
+      sn      TEXT    NOT NULL,
+      ts      TEXT    NOT NULL DEFAULT (datetime('now')),
+      map_x   REAL    NOT NULL,
+      map_y   REAL    NOT NULL,
+      lat     REAL,
+      lng     REAL,
+      n       INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_dock_samples_sn_ts ON dock_samples(sn, ts);
+
     -- Last known position inside a coverage task, so a task the mower lost
     -- (power cut, reboot) can be picked up from where it was (#86). One row
     -- per mower, overwritten while it mows; percent ~100 means it finished.

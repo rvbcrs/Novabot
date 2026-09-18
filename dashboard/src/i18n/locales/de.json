@@ -975,6 +975,7 @@
     "rtk": "RTK-Position",
     "fault": "Störung",
     "frame": "Kartenrahmen",
+    "dockDrift": "Position auf der Ladestation",
     "groupReach": "Erreichbarkeit",
     "groupConnect": "Verbindung",
     "groupIdentity": "Identität",

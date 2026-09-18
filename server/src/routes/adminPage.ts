@@ -2367,6 +2367,7 @@ async function diagnoseDevice(sn) {
                  rtk: "RTK position",
                  fault: "Fault",
                  frame: "Map frame",
+                 dock_drift: "Position on the dock",
                  disk: "Disk space",
                  mdns_service: "mDNS on port 5353",
                  container_network: "Container network",

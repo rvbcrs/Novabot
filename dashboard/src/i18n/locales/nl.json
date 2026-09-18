@@ -1095,6 +1095,7 @@
     "rtk": "RTK-positie",
     "fault": "Storing",
     "frame": "Kaartframe",
+    "dockDrift": "Positie op het laadstation",
     "groupReach": "Bereikbaarheid",
     "groupConnect": "Verbinding",
     "groupIdentity": "Identiteit",
