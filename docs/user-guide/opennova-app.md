@@ -40,6 +40,10 @@ charger and the mower, the same way the factory app wrote the cloud's.
    Wi-Fi but cannot reach the address you gave; check `TARGET_IP` and port
    1883.
 
+Changed router or Wi-Fi password? Run exactly this again, charger first;
+nothing is deleted and the map stays. Step by step in
+[Troubleshooting](troubleshooting.md#new-wi-fi-network-or-router-reconnect-the-mower-and-charger).
+
 The protocol behind it, for the curious: [BLE Provisioning](../ble/overview.md).
 
 ## Home
