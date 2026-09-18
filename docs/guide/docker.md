@@ -77,10 +77,32 @@ With an empty database you get the setup page:
 ### 4. Point the mower at your server
 
 The mower and charger look for `mqtt.lfibot.com` and `app.lfibot.com`. Those
-names have to resolve to `TARGET_IP` on your network. The
-[DNS Setup](dns-setup.md) page covers the two ways to do that (your router or
-Pi-hole, or OpenNova's built-in DNS). Then power-cycle the mower so it picks
-up the new address.
+names have to resolve to `TARGET_IP` on your network. Two ways; pick one.
+
+=== "Your router, Pi-hole or AdGuard"
+
+    Add a DNS rewrite for `*.lfibot.com` → `TARGET_IP` where your network
+    already does DNS. Step by step per router and per tool on
+    [DNS Setup](dns-setup.md). Nothing changes in the compose.
+
+=== "OpenNova's built-in DNS"
+
+    For when your router cannot do rewrites. Add three lines to the `opennova`
+    service and make the router hand out `TARGET_IP` as the DNS server:
+
+    ```yaml
+        ports:
+          - "53:53/udp"
+        environment:
+          ENABLE_DNS: "true"
+          UPSTREAM_DNS: "8.8.8.8"    # where every other name is forwarded
+    ```
+
+    Port 53 must be free on the host. On Ubuntu and Debian it is usually taken
+    by `systemd-resolved`; the [DNS Setup](dns-setup.md#port-53-is-already-in-use)
+    page shows how to free it.
+
+Then power-cycle the mower so it picks up the new address.
 
 Mowers on [custom firmware](../firmware/custom-firmware.md) also find the
 server by name through mDNS, which is what `opennova-mdns` is for. On Linux
@@ -195,10 +217,10 @@ on a NAS. Use it on a Raspberry Pi or a dedicated box, and then leave
 | **5353/udp** | mDNS, used by `opennova-mdns` on the host network |
 | **53/udp** | Built-in DNS, only with `ENABLE_DNS=true` |
 
-Port 53 is not in the compose above. If an older compose of yours still has
-`"53:53/udp"` under `ports:`, remove that line: Docker claims the port even
-with `ENABLE_DNS` off, and then collides with `systemd-resolved`, Pi-hole or
-AdGuard on the same machine.
+Port 53 is only in your compose if you chose the built-in DNS in step 4. If
+you do not use it, leave that line out: Docker claims the port even with
+`ENABLE_DNS` off, and then collides with `systemd-resolved`, Pi-hole or AdGuard
+on the same machine.
 
 The mower's Wi-Fi is **2.4 GHz only**.
 
