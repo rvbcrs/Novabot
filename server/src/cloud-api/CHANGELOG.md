@@ -2,6 +2,12 @@
 
 Format: most-recent first. Each entry is dated and names the endpoint(s) affected.
 
+## 2026-09-19 — uploadEquipmentMap: an obstacle keeps its name
+
+- `matchesParsedArea` matched obstacles and unicoms by `map_name`, so a named
+  obstacle no longer matched its own slot on the next ZIP upload and its name
+  was reset. They now match on `canonical_name`, as work maps do since #66.
+
 ## 2026-09-19 — blade maintenance check after every work record
 
 - `saveCutGrassRecord`: after the row is stored the server runs the blade

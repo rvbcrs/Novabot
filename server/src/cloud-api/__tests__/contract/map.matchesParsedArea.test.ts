@@ -39,3 +39,15 @@ describe('matchesParsedArea — work maps resolve by canonical slot (#66)', () =
     expect(matchesParsedArea(obstacleRow, workArea)).toBe(false);
   });
 });
+
+describe('matchesParsedArea — obstacles and unicoms resolve by canonical slot', () => {
+  it('matches a NAMED obstacle to its area via canonical_name', () => {
+    const named = { map_type: 'obstacle', map_name: 'motherInLaw', canonical_name: 'map0_3_obstacle' };
+    expect(matchesParsedArea(named, { mapIndex: 0, type: 'obstacle', subIndex: 3 })).toBe(true);
+  });
+
+  it('matches a NAMED unicom to its area via canonical_name', () => {
+    const named = { map_type: 'unicom', map_name: 'Channel 2', canonical_name: 'map0tomap1_0_unicom' };
+    expect(matchesParsedArea(named, { mapIndex: 0, type: 'unicom', target: 'map1_0' })).toBe(true);
+  });
+});
