@@ -4244,16 +4244,13 @@ dashboardRouter.post('/schedules/:sn', (req: Request, res: Response) => {
         path_direction: body.pathDirection ?? 0,
       },
     });
-
-    // Stuur set_para_info voor path direction. Geen hoogte-keys (#112):
-    // mqtt_node's api_set_para_info leest alleen sound / headlight /
-    // path_direction / obstacle_avoidance_sensitivity / manual_controller_*;
-    // de maaihoogte gaat uitsluitend via start_navigation.cutterhigh.
-    publishToDevice(sn, {
-      set_para_info: {
-        path_direction: body.pathDirection ?? 0,
-      },
-    });
+    // Geen set_para_info hier (#112). mqtt_node's api_set_para_info doet
+    // asInt() op alle zes keys (sound, headlight, path_direction,
+    // obstacle_avoidance_sensitivity, manual_controller_v/w) en schrijft ze
+    // weg: een blok met alleen path_direction zet de rest op 0, dus ook de
+    // camera-obstakeldetectie. De richting gaat mee bij de start zelf
+    // (startMowing stuurt dan het volledige opgeslagen blok); de hoogte
+    // alleen via start_navigation.cutterhigh.
   }
 
   const row = scheduleRepo.findById(scheduleId) as ScheduleRow;
@@ -4365,12 +4362,8 @@ dashboardRouter.post('/schedules/:sn/:scheduleId/send', (req: Request, res: Resp
     },
   });
 
-  // Geen hoogte-keys in set_para_info (#112), zie de schedule-create route.
-  publishToDevice(sn, {
-    set_para_info: {
-      path_direction: effectiveDirection,
-    },
-  });
+  // Geen set_para_info hier (#112), zie de schedule-create route: een
+  // gedeeltelijk blok zet de overige para-waarden op de maaier op 0.
 
   res.json({ ok: true, message: 'Schedule en parameters verstuurd naar maaier', effectiveDirection });
 });
