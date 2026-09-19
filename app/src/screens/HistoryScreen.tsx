@@ -21,6 +21,7 @@ import { getServerUrl } from '../services/auth';
 import { useDemo } from '../context/DemoContext';
 import { DemoBanner } from '../components/DemoBanner';
 import { formatTime as fmtTime, formatDate as fmtDate } from '../lib/format';
+import { parseServerUtc } from '../utils/serverTime';
 
 export default function HistoryScreen() {
   const styles = useStyles(makeStyles);
@@ -168,9 +169,10 @@ export default function HistoryScreen() {
 
         {records.map((r) => {
           // Mower POSTs dateTime as 'MM/DD HH:MM' (no year), server stores
-          // workRecordDate as 'YYYY-MM-DD HH:MM:SS' wall-clock. Prefer the
-          // server timestamp because Date() parses it deterministically; fall
-          // back to mower-supplied dateTime for legacy rows.
+          // workRecordDate as 'YYYY-MM-DD HH:MM:SS' in UTC (SQLite datetime('now')).
+          // Prefer the server timestamp; parseServerUtc marks it as UTC so it
+          // shows in the phone's zone (#137). Fall back to mower-supplied
+          // dateTime for legacy rows.
           const tsRaw = r.workRecordDate ?? r.dateTime ?? '';
           const minutes = r.workTime ?? 0;
           const areaM2 = r.workArea ?? 0;
@@ -269,7 +271,7 @@ function statusColor(status: string | null | undefined, c: Colors): string {
 }
 
 function formatDate(iso: string): string {
-  const d = new Date(iso);
+  const d = parseServerUtc(iso);
   const today = new Date();
   const yesterday = new Date(today);
   yesterday.setDate(yesterday.getDate() - 1);
@@ -280,7 +282,7 @@ function formatDate(iso: string): string {
 }
 
 function formatTime(iso: string): string {
-  return fmtTime(iso);
+  return fmtTime(parseServerUtc(iso));
 }
 
 function formatDuration(seconds: number): string {
