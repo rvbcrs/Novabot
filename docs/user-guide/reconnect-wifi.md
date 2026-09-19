@@ -17,7 +17,7 @@ OpenNova app. A few minutes, and nothing is lost.
 
 ## Charger first
 
-1. Open the **OpenNova app** → **Settings** → **Add Device**.
+1. Open the **OpenNova app** → **Settings** → **Add device**.
 2. Confirm the **server address** (usually already filled in).
 3. Choose the **Charger**.
 4. Enter the network name and password, **Next**.
