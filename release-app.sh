@@ -91,7 +91,8 @@ RELEASE_NOTES=$(
   git log --pretty=format:'%s' ${COMMIT_RANGE} 2>/dev/null \
     | grep -vE '^(release|chore|test|docs|ci|build|style|refactor)(\(|:)' \
     | grep -vE '^Merge ' \
-    | grep -E '\([^)]*(app|i18n|admin|firmware)[^)]*\)|^(fix|feat):' \
+    | grep -E '\([^)]*(app|i18n|admin|firmware)[^)]*\)|^(fix|feat):|^[a-z+]*(app|i18n)[a-z+]*:' \
+    | sed -E 's/^[a-z+]*(app|i18n)[a-z+]*:[[:space:]]+//' \
     | sed -E 's/^(fix|feat|perf)\([^)]+\):[[:space:]]+//' \
     | sed -E 's/^(fix|feat|perf):[[:space:]]+//' \
     | sed -E 's/[[:space:]]*\(#[0-9]+\)[[:space:]]*$//' \
