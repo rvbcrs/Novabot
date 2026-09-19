@@ -192,7 +192,8 @@ export function matchesParsedArea(
     return canonical === expected;
   }
 
-  return row.map_name === parsedAreaName(area);
+  // Obstacles and unicoms match on the stable slot too, not the user alias.
+  return (row.canonical_name ?? row.map_name) === parsedAreaName(area);
 }
 
 // GET /api/nova-file-server/map/queryEquipmentMap?sn=
