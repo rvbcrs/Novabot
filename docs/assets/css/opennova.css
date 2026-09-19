@@ -114,10 +114,13 @@ body, .md-typeset {
   background: #ffffff;
   border-bottom: 1px solid rgba(0, 168, 136, 0.18);
 }
-/* Material colours the tab links with the primary *background* (white);
-   on our white strip that made the menu invisible in light mode (#133). */
 [data-md-color-scheme="default"] .md-tabs__link {
-  color: #2a2620;
+  color: var(--md-default-fg-color);
+}
+[data-md-color-scheme="default"] .md-tabs__link:hover,
+[data-md-color-scheme="default"] .md-tabs__link--active,
+[data-md-color-scheme="default"] .md-tabs__link:focus {
+  color: var(--on-emerald-strong) !important;
 }
 .md-tabs__link {
   opacity: 0.78;
