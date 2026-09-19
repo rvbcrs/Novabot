@@ -125,6 +125,7 @@ export default {
   previewNoArea: 'Select a work area to preview',
   tapToPlacePattern: 'Tap to place pattern',
   mowPattern: 'Mow Pattern',
+  advancedOptions: 'Advanced: direction, edge offset, pattern',
   patternSize: 'Size',
   patternRotation: 'Rot',
   tapPreviewToPlace: 'Tap the preview map above to place the pattern',

@@ -62,6 +62,7 @@ The default screen after login. Shows everything happening with the active mower
   - **Edge cut** — boundary-only mowing pass (uses the NTCP action behind the scenes; "start_patrol" in the stock app does *not* do this — that's a no-op).
 - **Schedule chip** — shows the next scheduled mow. Tap to jump to the Schedule screen.
 - **Live updates** — battery, position, work status all refresh from MQTT every couple of seconds while the screen is open.
+- **Time left** — a chip while mowing (`~23m left`) from the firmware's own estimate (`cov_estimate_time`), next to the elapsed time. Hidden while returning, docking or idle because the estimate is stale there.
 
 Pull down to manually refresh the whole screen.
 
@@ -71,6 +72,7 @@ Slides up from the bottom when you tap **Start mowing**. Choose:
 
 - **Map** — pick one of your work maps or "All maps" (selects every work area on the mower).
 - **Cutting height** — slider in cm. Valid range 2-9 cm. Values outside this range are silently rejected by the firmware, so the slider clamps for you.
+- **Advanced** — tap to reveal path direction, edge offset and the mow pattern. Collapsed by default; the app remembers your choice.
 - **Edge first** — toggle to mow the boundary before filling the interior.
 - **Rain delay** — if enabled, the mower won't start while the rain sensor is wet.
 
@@ -196,6 +198,7 @@ App-level settings (different from mower settings):
 - **Notifications** — opt-in for push notifications via Expo (mowing started/finished, low battery, errors). Requires the server's notification dispatcher to be configured ([Notifications setup](../guide/notifications.md)).
 - **Demo mode** — fake mower + map for screenshots / testing. Does not touch real hardware.
 - **About / Logout** — version info, log out, support links.
+- **Help → Report a problem** — opens a GitHub bug report with the app version, server version, mower SN, mower and charger firmware and the last error already filled in. Add what happened and submit.
 
 ## Mower Settings (per-device)
 

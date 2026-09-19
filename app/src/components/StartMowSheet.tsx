@@ -27,6 +27,9 @@ import { getServerUrl } from '../services/auth';
 import { useNavigation } from '@react-navigation/native';
 import { useMowerState } from '../hooks/useMowerState';
 import { PatternPicker } from './PatternPicker';
+import * as SecureStore from 'expo-secure-store';
+
+const ADVANCED_KEY = 'startMow.advanced';
 import { usePattern } from '../context/PatternContext';
 import { transformToGps } from '../utils/patternUtils';
 import { offsetLocalPolygon } from '../utils/polygonOffset';
@@ -118,6 +121,17 @@ export function StartMowSheet({
   // Switch ("Negeer regen deze sessie") inside the prompt itself.
   const [rainPrompt, setRainPrompt] = useState<{ mm: number; prob: number; atMs: number } | null>(null);
   const [rainIgnoreToggle, setRainIgnoreToggle] = useState(false);
+  // Simpel/geavanceerd: standaard alleen zone + maaihoogte; richting,
+  // randoffset en patroon achter één schakelaar. Keuze wordt onthouden.
+  const [advanced, setAdvanced] = useState(false);
+  useEffect(() => {
+    SecureStore.getItemAsync(ADVANCED_KEY).then(v => { if (v === '1') setAdvanced(true); }).catch(() => {});
+  }, []);
+  const toggleAdvanced = () => {
+    const next = !advanced;
+    setAdvanced(next);
+    SecureStore.setItemAsync(ADVANCED_KEY, next ? '1' : '0').catch(() => {});
+  };
 
   const styles = useStyles(makeStyles);
   const { colors } = useTheme();
@@ -630,6 +644,14 @@ export function StartMowSheet({
               </View>
             </View>
 
+            {/* Geavanceerd: richting, randoffset, patroon */}
+            <TouchableOpacity style={styles.advancedRow} onPress={toggleAdvanced} activeOpacity={0.7}>
+              <Ionicons name="options-outline" size={16} color={colors.textMuted} />
+              <Text style={styles.advancedText}>{t('advancedOptions')}</Text>
+              <Ionicons name={advanced ? 'chevron-up' : 'chevron-down'} size={16} color={colors.textMuted} />
+            </TouchableOpacity>
+
+            {advanced && (<>
             {/* Path direction */}
             <View style={styles.section}>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -697,6 +719,7 @@ export function StartMowSheet({
                 </TouchableOpacity>
               </View>
             </View>
+            </>)}
 
             {/* Inline map preview — issue #18: previously rendered ONLY
                 the first selected polygon (in work-map array order), so
@@ -903,6 +926,7 @@ export function StartMowSheet({
             })()}
 
             {/* Pattern picker */}
+            {advanced && (
             <View style={styles.section}>
               <PatternPicker selected={patternId} onSelect={(id) => { setPatternId(id); setPatternCenter(null); }} />
               {patternId && (
@@ -947,6 +971,7 @@ export function StartMowSheet({
                 </View>
               )}
             </View>
+            )}
 
             {/* Action buttons */}
             <View style={styles.actionRow}>
@@ -1079,6 +1104,8 @@ const makeStyles = (c: Colors) => StyleSheet.create({
   title: { fontSize: 20, fontWeight: '700', color: c.text },
   section: { gap: 8 },
   label: { fontSize: 13, fontWeight: '700', color: c.textMuted, textTransform: 'uppercase', letterSpacing: 0.5 },
+  advancedRow: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 8, marginBottom: 4 },
+  advancedText: { flex: 1, fontSize: 13, fontWeight: '600', color: c.textMuted },
   labelRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   labelValue: { fontSize: 14, fontWeight: '700', color: c.text },
   mapGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },

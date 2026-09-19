@@ -123,6 +123,7 @@ export default {
   previewNoArea: 'Selecteer een werkgebied om te previewen',
   tapToPlacePattern: 'Tik om patroon te plaatsen',
   mowPattern: 'Maaipatroon',
+  advancedOptions: 'Geavanceerd: richting, randoffset, patroon',
   patternSize: 'Grootte',
   patternRotation: 'Rot',
   tapPreviewToPlace: 'Tik op de voorbeeldkaart hierboven om het patroon te plaatsen',

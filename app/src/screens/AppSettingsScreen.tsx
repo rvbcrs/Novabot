@@ -1,7 +1,7 @@
 /**
  * App settings screen — server info, account, device controls, logout.
  */
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   View,
   Text,
@@ -84,6 +84,34 @@ export default function AppSettingsScreen({
   const charger = useMemo(() => {
     return [...devices.values()].find((d) => d.deviceType === 'charger') ?? null;
   }, [devices]);
+
+  // "Report a problem": opens the GitHub bug template with the fields we can
+  // fill in ourselves (versions, SN, last error). Saves the triage round-trip
+  // that most issues start with. Query keys = the template's field ids.
+  const handleReportProblem = useCallback(async () => {
+    let serverVersion = '';
+    try {
+      const url = await getServerUrl();
+      if (url) {
+        const r = await fetch(`${url}/api/dashboard/version`);
+        serverVersion = ((await r.json()) as { version?: string }).version ?? '';
+      }
+    } catch { /* offline: leave empty */ }
+    const mowerSn = activeMower?.sn ?? mower?.sn ?? '';
+    const dev = mowerSn ? devices.get(mowerSn) : undefined;
+    const err = dev?.sensors?.error_status;
+    const q = new URLSearchParams({
+      template: 'bug_report.yml',
+      app: Platform.OS === 'ios' ? 'OpenNova — iOS' : 'OpenNova — Android',
+      app_version: `v${Application.nativeApplicationVersion ?? '?'}${Application.nativeBuildVersion ? ` (build ${Application.nativeBuildVersion})` : ''}`,
+      server_version: serverVersion,
+      mower_sn: mowerSn,
+      mower_firmware: dev?.firmwareVersion ?? '',
+      charger_firmware: charger?.firmwareVersion ?? '',
+      what_happened: err && err !== '0' ? `Last error_status: ${err}\nLast msg: ${dev?.sensors?.msg ?? ''}\n\n` : '',
+    });
+    await Linking.openURL(`https://github.com/rvbcrs/Novabot/issues/new?${q.toString()}`);
+  }, [activeMower?.sn, mower?.sn, devices, charger?.firmwareVersion]);
 
   useEffect(() => {
     (async () => {
@@ -541,6 +569,19 @@ export default function AppSettingsScreen({
         {/* Support / donate — three external links. OpenNova is free + open
             source; tips keep the lights on. Each row opens its respective
             payment platform in the browser via Linking.openURL. */}
+        <Section title="Help">
+          <TouchableOpacity style={styles.rowContainer} onPress={() => void handleReportProblem()} activeOpacity={0.7}>
+            <Ionicons name="bug-outline" size={20} color={colors.textDim} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.rowLabel}>Report a problem</Text>
+              <Text style={[styles.rowValue, { fontSize: 12, opacity: 0.75 }]}>
+                Opens a GitHub issue with your app, server and firmware versions filled in
+              </Text>
+            </View>
+            <Ionicons name="open-outline" size={18} color={colors.textMuted} />
+          </TouchableOpacity>
+        </Section>
+
         <Section title="Support OpenNova">
           <Text style={styles.donateBlurb}>
             OpenNova is free and open-source. If it saved you a Novabot
