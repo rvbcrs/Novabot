@@ -147,6 +147,19 @@ describe('DELETE map route — follow-up commands to the mower', () => {
       .not.toContain('sync_map');
   });
 
+  it('weigert het dok-kanaal (mapNtocharge_unicom): dat is het anker van de hele kaart (#119)', async () => {
+    mapRepo.create({
+      map_id: 'del-dock', mower_sn: SN, map_name: 'map0tocharge_unicom', canonical_name: 'map0tocharge_unicom',
+      file_name: 'map0tocharge_unicom.csv', map_area: JSON.stringify([{ x: 0.1, y: -0.5 }, { x: 1, y: 1 }]),
+      map_type: 'unicom',
+    });
+    const res = await request(server).delete(`/api/dashboard/maps/${SN}/del-dock`);
+    expect(res.status).toBe(409);
+    expect(res.body.reason).toBe('dock_channel');
+    expect(vi.mocked(awaitCommand)).not.toHaveBeenCalled();
+    expect(mapRepo.findByMowerSn(SN).map(m => m.map_id)).toContain('del-dock');
+  });
+
   it('stuurt map_type mee: zonder dat veld wist de firmware niets', async () => {
     await request(server).delete(`/api/dashboard/maps/${SN}/del-map1`);
     const payload = vi.mocked(awaitCommand).mock.calls.find(c => c[1] === 'delete_map')?.[2] as
@@ -173,13 +186,13 @@ describe('DELETE map route — follow-up commands to the mower', () => {
 
   it('stuurt de bestandsnaam met .csv voor een kanaal', async () => {
     mapRepo.create({
-      map_id: 'del-uni', mower_sn: SN, map_name: 'map1tocharge_unicom', file_name: 'bundle.zip',
+      map_id: 'del-uni', mower_sn: SN, map_name: 'map1tomap2_0_unicom', file_name: 'bundle.zip',
       map_area: JSON.stringify([{ x: 0, y: 0 }, { x: 1, y: 0 }]),
-      map_type: 'unicom', canonical_name: 'map1tocharge_unicom',
+      map_type: 'unicom', canonical_name: 'map1tomap2_0_unicom',
     });
     await request(server).delete(`/api/dashboard/maps/${SN}/del-uni`);
     expect(vi.mocked(awaitCommand).mock.calls.find(c => c[1] === 'delete_map')?.[2])
-      .toMatchObject({ map_name: 'map1tocharge_unicom.csv', map_type: 3 });
+      .toMatchObject({ map_name: 'map1tomap2_0_unicom.csv', map_type: 3 });
   });
 
   it('plakt er geen tweede .csv achter als de naam die al heeft', () => {

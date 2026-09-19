@@ -724,7 +724,10 @@ export default function MapScreen() {
               const bodyText = await res.text().catch(() => '<no body>');
               console.log(`[deleteMap] HTTP ${res.status} body=${bodyText.slice(0, 200)}`);
               if (!res.ok) {
-                appAlertCompat.alert(t('error'), `Delete failed: HTTP ${res.status}\n${bodyText.slice(0, 200)}`);
+                // Server refusals carry a readable `error` (busy, dock channel, ...).
+                let reason = '';
+                try { reason = (JSON.parse(bodyText) as { error?: string }).error ?? ''; } catch { /* not JSON */ }
+                appAlertCompat.alert(t('error'), reason || `Delete failed: HTTP ${res.status}\n${bodyText.slice(0, 200)}`);
                 return;
               }
               fetchData();

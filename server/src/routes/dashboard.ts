@@ -1945,6 +1945,21 @@ dashboardRouter.delete('/maps/:sn/:mapId', async (req: Request, res: Response) =
     return;
   }
 
+  // The dock channel is not a user map: the firmware writes it at
+  // save_recharge_pos and its first point is the anchor every other polygon
+  // hangs off (getPolygonAnchor, pos.json origin, charging pose in the yaml).
+  // Deleting it detaches the whole map from the dock (#119). A moved dock is
+  // fixed with Recalibrate charging pose / Re-anchor, not by deleting this.
+  if (row.map_type === 'unicom' && /^map\d+tocharge_unicom$/.test(row.canonical_name ?? row.map_name ?? '')) {
+    res.status(409).json({
+      ok: false,
+      reason: 'dock_channel',
+      error: 'This is the channel from the zone to the charging station. The mower writes it itself when the charge position is saved and every other polygon is anchored to its first point, so it cannot be deleted. If the charging station moved, use Recalibrate charging pose or Re-anchor instead.',
+      msgKey: 'mapDeleteErrDockChannel',
+    });
+    return;
+  }
+
   // Block delete when mower offline: otherwise the server-side DB row is
   // gone but the mower's csv_file/ still holds the map, so the next
   // sync_map upload silently re-creates it ("ghost map" reappearing

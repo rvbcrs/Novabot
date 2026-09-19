@@ -119,14 +119,16 @@ export function getPolygonAnchor(
   const unicomMaps = mapRepo.findAllByMowerSnAndType(sn, 'unicom');
   if (unicomMaps.length === 0) return null;
 
-  // Prefer the canonical `mapNtocharge_unicom` over `mapNtomapM_K_unicom`.
-  // The to-charge unicom anchors at the dock; map-to-map unicoms anchor
-  // at adjacent map borders, which is not what we want.
-  const toCharge = unicomMaps.find((m) =>
+  // ONLY the canonical `mapNtocharge_unicom` can anchor: its first point is
+  // the dock. A map-to-map unicom starts at a zone border, and using that as
+  // "the dock" is exactly what shifted a whole garden after a user deleted
+  // map0tocharge_unicom (#119): the charging pose landed on a channel point,
+  // the zip/pos.json/yaml followed, and the map moved metres. No anchor is
+  // better than a wrong one; callers fall back to the live docked pose or skip.
+  const chosen = unicomMaps.find((m) =>
     /^map\d+tocharge_unicom$/.test(m.canonical_name ?? m.map_name ?? ''),
   );
-  const chosen = toCharge ?? unicomMaps[0];
-  if (!chosen.map_area) return null;
+  if (!chosen?.map_area) return null;
 
   let pts: Array<{ x: number; y: number }>;
   try {

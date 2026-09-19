@@ -59,6 +59,13 @@ describe('getPolygonAnchor', () => {
     expect(a!.orientationSource).toBe('default');
   });
 
+  it('never anchors on a map-to-map unicom (#119: deleted dock channel shifted the map)', () => {
+    vi.mocked(mapRepo.findAllByMowerSnAndType).mockReturnValue([
+      unicomRow('map0tomap1_0_unicom', [{ x: 99, y: 99 }]),
+    ]);
+    expect(getPolygonAnchor(SN)).toBeNull();
+  });
+
   it('prefers tocharge_unicom over map-to-map unicom', () => {
     vi.mocked(mapRepo.findAllByMowerSnAndType).mockReturnValue([
       unicomRow('map0tomap1_0_unicom', [{ x: 99, y: 99 }]),
