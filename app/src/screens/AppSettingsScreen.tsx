@@ -26,7 +26,11 @@ import {
   getReleaseManifestUrl,
   setReleaseManifestUrl,
   getDefaultReleaseManifestUrl,
+  fetchLatest,
+  compareSemver,
+  type AppLatest,
 } from '../services/appUpdate';
+import { UpdatePromptModal } from '../components/UpdatePromptModal';
 import { useMowerState } from '../hooks/useMowerState';
 import { useActiveMower } from '../hooks/useActiveMower';
 import { ApiClient } from '../services/api';
@@ -66,6 +70,10 @@ export default function AppSettingsScreen({
   const [isEditingUpdateUrl, setIsEditingUpdateUrl] = useState(false);
   const defaultUpdateUrl = getDefaultReleaseManifestUrl();
   const isCustomUpdateUrl = updateUrl !== defaultUpdateUrl;
+  // Manual "Check for updates" (#135). Ignores the skipped-version flag on
+  // purpose: the user explicitly asked, so a skipped release must show again.
+  const [updateCheck, setUpdateCheck] = useState<'idle' | 'checking' | 'latest' | 'error'>('idle');
+  const [manualLatest, setManualLatest] = useState<AppLatest | null>(null);
   const experimental = useExperimental();
   const mapLabels = useMapLabels();
   const { language, setLanguage, t } = useI18n();
@@ -97,6 +105,22 @@ export default function AppSettingsScreen({
       }
     })();
   }, []);
+
+  const handleCheckForUpdates = async () => {
+    setUpdateCheck('checking');
+    const latest = await fetchLatest();
+    if (!latest) {
+      setUpdateCheck('error');
+      return;
+    }
+    const installed = Application.nativeApplicationVersion ?? '0.0.0';
+    if (compareSemver(latest.version, installed) > 0) {
+      setManualLatest(latest);
+      setUpdateCheck('idle');
+    } else {
+      setUpdateCheck('latest');
+    }
+  };
 
   const handleSaveUpdateUrl = async (raw: string) => {
     const trimmed = raw.trim();
@@ -304,6 +328,37 @@ export default function AppSettingsScreen({
               Application.nativeBuildVersion ? ` (build ${Application.nativeBuildVersion})` : ''
             }`}
           />
+          <View style={styles.rowContainer}>
+            <Ionicons name="refresh-outline" size={20} color={colors.textDim} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.rowLabel}>Check for updates</Text>
+              {updateCheck === 'latest' && (
+                <Text style={[styles.rowValue, { fontSize: 12, color: colors.green }]}>
+                  You're on the latest version
+                </Text>
+              )}
+              {updateCheck === 'error' && (
+                <Text style={[styles.rowValue, { fontSize: 12, color: colors.red }]}>
+                  Could not reach the update server
+                </Text>
+              )}
+            </View>
+            <TouchableOpacity
+              style={styles.changeBtn}
+              onPress={handleCheckForUpdates}
+              disabled={updateCheck === 'checking'}
+              activeOpacity={0.7}
+            >
+              {updateCheck === 'checking' ? (
+                <ActivityIndicator size="small" color={colors.emerald} />
+              ) : (
+                <Text style={styles.changeText}>Check</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+          {manualLatest && (
+            <UpdatePromptModal latest={manualLatest} onClose={() => setManualLatest(null)} />
+          )}
           {Platform.OS === 'android' && !isEditingUpdateUrl && (
             <View style={styles.rowContainer}>
               <Ionicons name="cloud-download-outline" size={20} color={colors.textDim} />
