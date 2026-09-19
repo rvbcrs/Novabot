@@ -205,7 +205,7 @@ function pauseForRain(mowerSn: string, schedule: ScheduleRow | null | undefined)
   // landt de maaier in dezelfde resumebare Work:USER_STOP-staat als een
   // handmatige pauze, waardoor de Continue-knop + resume_navigation in de app
   // ook na een regen-pauze identiek werken. De auto-resume bij opgeklaarde
-  // regen blijft via start_run in resumeSession (robuust na lang wachten).
+  // regen stuurt dezelfde resume_navigation, zie _resumeSession (#112).
   publishToDevice(mowerSn, { pause_navigation: { cmd_num: getNextCmdNum(mowerSn) } });
   setTimeout(() => publishToDevice(mowerSn, goToChargePayload(mowerSn)), 500);
   pendingGoCharge.add(mowerSn);
@@ -271,7 +271,7 @@ async function checkPausedSessions(): Promise<void> {
     const gps = getChargerGps(session.mower_sn);
     if (!gps) {
       // Geen GPS meer? Herstart gewoon (beter maaien dan wachten)
-      resumeSession(session);
+      _resumeSession(session);
       continue;
     }
 
@@ -286,7 +286,7 @@ async function checkPausedSessions(): Promise<void> {
 
       if (!stillRaining) {
         console.log(`[RainMonitor] Regen voorbij voor ${session.mower_sn}, herstart`);
-        resumeSession(session);
+        _resumeSession(session);
       }
     } catch (err) {
       console.error(`[RainMonitor] Weather check failed for paused session ${session.session_id}:`, err);
@@ -300,27 +300,31 @@ async function checkPausedSessions(): Promise<void> {
   }
 }
 
-/** Herstart een gepauzeerde maaisessie */
-function resumeSession(session: RainSessionRow): void {
-  // Stuur set_para_info met opgeslagen parameters
-  publishToDevice(session.mower_sn, {
-    set_para_info: {
-      cutGrassHeight: session.cutting_height,
-      defaultCuttingHeight: session.cutting_height,
-      target_height: session.cutting_height,
-      path_direction: session.path_direction,
-    },
-  });
+/**
+ * Hervat een gepauzeerde maaisessie (#112).
+ *
+ * pauseForRain parkeert de taak precies zoals de app-knop "Pause task &
+ * return" (pause_navigation + go_to_charge → Work:USER_STOP), dus hervatten
+ * is precies de app-knop "Continue": resume_navigation. De taak houdt zijn
+ * eigen cutterhigh en gaat verder waar hij was. Een verse start_navigation
+ * zou bij 0% beginnen en wordt door robot_decision bij work_status > 9
+ * geweigerd ("Can't not start task in running status"); de oude start_run
+ * bestaat in v6-mqtt_node niet eens.
+ *
+ * Staat er geen geparkeerde taak meer (herstart tijdens de pauze), dan is er
+ * niets om te hervatten: sessie annuleren, niets naar de maaier.
+ */
+export function _resumeSession(session: RainSessionRow): void {
+  const sensors = deviceCache.get(session.mower_sn);
+  const parked = sensors?.get('work_status') === '10'
+    || /Work:USER_STOP\b/.test(sensors?.get('msg') ?? '');
+  if (!parked) {
+    cancelSession(session, 'no_parked_task');
+    return;
+  }
 
-  // Stuur start_run
   publishToDevice(session.mower_sn, {
-    start_run: {
-      map_id: session.map_id ?? '',
-      map_name: session.map_name ?? '',
-      work_mode: session.work_mode,
-      task_mode: session.task_mode,
-      path_direction: session.path_direction,
-    },
+    resume_navigation: { cmd_num: getNextCmdNum(session.mower_sn) },
   });
 
   // Update sessie in DB

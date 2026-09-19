@@ -4245,12 +4245,12 @@ dashboardRouter.post('/schedules/:sn', (req: Request, res: Response) => {
       },
     });
 
-    // Stuur set_para_info voor cutting height en path direction
+    // Stuur set_para_info voor path direction. Geen hoogte-keys (#112):
+    // mqtt_node's api_set_para_info leest alleen sound / headlight /
+    // path_direction / obstacle_avoidance_sensitivity / manual_controller_*;
+    // de maaihoogte gaat uitsluitend via start_navigation.cutterhigh.
     publishToDevice(sn, {
       set_para_info: {
-        cutGrassHeight: body.cuttingHeight ?? 40,
-        defaultCuttingHeight: body.cuttingHeight ?? 40,
-        target_height: body.cuttingHeight ?? 40,
         path_direction: body.pathDirection ?? 0,
       },
     });
@@ -4365,11 +4365,9 @@ dashboardRouter.post('/schedules/:sn/:scheduleId/send', (req: Request, res: Resp
     },
   });
 
+  // Geen hoogte-keys in set_para_info (#112), zie de schedule-create route.
   publishToDevice(sn, {
     set_para_info: {
-      cutGrassHeight: row.cutting_height,
-      defaultCuttingHeight: row.cutting_height,
-      target_height: row.cutting_height,
       path_direction: effectiveDirection,
     },
   });
