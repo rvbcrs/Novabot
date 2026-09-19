@@ -870,12 +870,19 @@
         "medium": "Gemiddeld",
         "high": "Hoog"
       },
-      "rain": "Automatisch pauzeren bij regen",
+      "rain": "Weer & tijden",
       "rainPause": "Pauzeren bij regen",
       "rainSummary": "≥ {{mm}} mm of ≥ {{prob}}% binnen {{h}}",
       "rainMm": "Min. neerslag",
       "rainProb": "Min. kans",
       "rainHours": "Vooruitkijken",
+      "nightGuard": "Niet maaien in het donker",
+      "nightGuardOn": "Geplande beurten tussen zonsondergang en zonsopkomst worden overgeslagen (beschermt egels)",
+      "nightGuardOff": "Geplande beurten mogen 's nachts maaien",
+      "frostGuard": "Niet maaien bij vorst",
+      "frostGuardOn": "Geplande beurten worden overgeslagen onder {{c}} °C",
+      "frostGuardOff": "Geplande beurten negeren de temperatuur",
+      "frostThreshold": "Overslaan onder",
       "other": "Overig",
       "headlight": "Koplamp",
       "brightness": "Helderheid",
@@ -910,6 +917,11 @@
       "rebootConfirm": "De maaier rebooten (volledige OS-herstart)? Hij is een paar minuten offline. Gebruik eerst Herstarten bij vastgelopen toestanden.",
       "rebooting": "Reboot verstuurd — de maaier is een paar minuten offline",
       "rebootFailed": "Reboot mislukt"
+    },
+    "help": {
+      "title": "Help",
+      "report": "Meld een probleem",
+      "reportDesc": "Opent een GitHub-issue met je server- en firmwareversie al ingevuld"
     },
     "notifications": {
       "title": "Notificaties",
@@ -968,6 +980,15 @@
     "statusUnlocked": "Maaier is ontgrendeld"
   },
   "history": {
+    "summary": {
+      "week": "Deze week",
+      "month": "Deze maand",
+      "year": "Dit jaar",
+      "blades": "Messen",
+      "bladesSince": "Maai-uren sinds vervanging op {{date}}",
+      "bladesNever": "Nog geen vervanging geregistreerd; alle maai-uren tellen mee",
+      "markReplaced": "Vervangen"
+    },
     "title": "Maaigeschiedenis",
     "empty": "Nog geen maaisessies opgeslagen",
     "duration": "{{min}} min",

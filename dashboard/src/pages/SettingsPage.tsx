@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import {
   Tag, Bell, Check, Loader2, Smartphone, Radio, Home as HomeIcon, Mail,
   Scissors, Compass, Minus, Plus, Monitor, Shield, Gamepad2, Gauge, Battery, Power,
-  CloudRain, Lightbulb, Volume2, Clock, Wrench, RotateCw, FlaskConical,
+  CloudRain, Lightbulb, Volume2, Clock, Wrench, RotateCw, FlaskConical, Bug, ExternalLink,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { DeviceState } from '../types';
@@ -19,7 +19,7 @@ import { readExperimental, writeExperimental } from '../utils/experimental';
 import { MowingDirectionPreview } from '../components/schedule/MowingDirectionPreview';
 import { useToast } from '../components/common/Toast';
 import { isOpenNovaFirmware } from '../utils/firmwareCapability';
-import { isUnsupportedFirmwareError } from '../api/client';
+import { isUnsupportedFirmwareError, getServerVersion } from '../api/client';
 
 interface Props {
   mower: DeviceState | null;
@@ -42,6 +42,7 @@ export function SettingsPage({ mower }: Props) {
         <ExperimentalCard />
         <RainAutoPauseCard key={`rain-${mower.sn}`} sn={mower.sn} />
         <NotificationsCard />
+        <HelpCard mower={mower} />
       </div>
     </div>
   );
@@ -671,6 +672,7 @@ function RainAutoPauseCard({ sn }: { sn: string }) {
   const { t } = useTranslation();
   const [rain, setRain] = useState<RainSettings>({
     enabled: true, thresholdMm: 0.1, thresholdProbability: 50, lookaheadHours: 0.5,
+    nightGuard: false, frostGuard: false, frostThresholdC: 3,
   });
 
   useEffect(() => { fetchRainSettings(sn).then(setRain).catch(() => {}); }, [sn]);
@@ -682,7 +684,7 @@ function RainAutoPauseCard({ sn }: { sn: string }) {
   };
 
   return (
-    <SettingCard icon={CloudRain} title={t('settings.mower.rain', 'Rain auto-pause')}>
+    <SettingCard icon={CloudRain} title={t('settings.mower.rain', 'Weather & time')}>
       <div className="flex items-center justify-between mb-3">
         <div>
           <span className="block text-sm font-semibold text-white">{t('settings.mower.rainPause', 'Pause when raining')}</span>
@@ -729,6 +731,43 @@ function RainAutoPauseCard({ sn }: { sn: string }) {
                 <button key={o.value} onClick={() => patchRain({ lookaheadHours: o.value })} className={chipClass(rain.lookaheadHours === o.value)}>{o.label}</button>
               ))}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Nacht-/vorstbewaking: alleen geplande beurten, handmatig start altijd. */}
+      <div className="flex items-center justify-between mt-4 pt-3 border-t border-gray-800">
+        <div>
+          <span className="block text-sm font-semibold text-white">{t('settings.mower.nightGuard', 'No mowing after dark')}</span>
+          <span className="block text-xs text-gray-500">
+            {rain.nightGuard
+              ? t('settings.mower.nightGuardOn', 'Scheduled runs between sunset and sunrise are skipped (protects hedgehogs)')
+              : t('settings.mower.nightGuardOff', 'Scheduled runs may mow at night')}
+          </span>
+        </div>
+        <Toggle on={rain.nightGuard} onChange={v => patchRain({ nightGuard: v })} />
+      </div>
+      <div className="flex items-center justify-between mt-3">
+        <div>
+          <span className="block text-sm font-semibold text-white">{t('settings.mower.frostGuard', 'No mowing in frost')}</span>
+          <span className="block text-xs text-gray-500">
+            {rain.frostGuard
+              ? t('settings.mower.frostGuardOn', { defaultValue: 'Scheduled runs are skipped below {{c}} °C', c: rain.frostThresholdC })
+              : t('settings.mower.frostGuardOff', 'Scheduled runs ignore the temperature')}
+          </span>
+        </div>
+        <Toggle on={rain.frostGuard} onChange={v => patchRain({ frostGuard: v })} />
+      </div>
+      {rain.frostGuard && (
+        <div className="mt-2">
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-[10px] uppercase tracking-wide text-gray-500">{t('settings.mower.frostThreshold', 'Skip below')}</span>
+            <span className="text-xs font-mono text-gray-300">{rain.frostThresholdC} °C</span>
+          </div>
+          <div className="flex gap-1.5">
+            {[0, 1, 3, 5].map(v => (
+              <button key={v} onClick={() => patchRain({ frostThresholdC: v })} className={chipClass(rain.frostThresholdC === v)}>{v} °C</button>
+            ))}
           </div>
         </div>
       )}
@@ -832,6 +871,40 @@ function AutoMapCard() {
         </div>
         <Toggle on={on} onChange={choose} />
       </div>
+    </SettingCard>
+  );
+}
+
+/** "Report a problem": GitHub bug-template met versies, SN en laatste fout
+ *  voorgevuld. Query-keys = veld-ids van .github/ISSUE_TEMPLATE/bug_report.yml.
+ *  Zelfde als Settings → Help in de app. */
+function HelpCard({ mower }: { mower: DeviceState }) {
+  const { t } = useTranslation();
+  const report = async () => {
+    const serverVersion = await getServerVersion();
+    const err = mower.sensors?.error_status;
+    const q = new URLSearchParams({
+      template: 'bug_report.yml',
+      app: 'Web dashboard only',
+      server_version: serverVersion,
+      mower_sn: mower.sn,
+      mower_firmware: mower.sensors?.sw_version ?? '',
+      what_happened: err && err !== '0' ? `Last error_status: ${err}\nLast msg: ${mower.sensors?.msg ?? ''}\n\n` : '',
+    });
+    window.open(`https://github.com/rvbcrs/Novabot/issues/new?${q.toString()}`, '_blank', 'noopener');
+  };
+  return (
+    <SettingCard icon={Bug} title={t('settings.help.title', 'Help')}>
+      <button
+        onClick={() => void report()}
+        className="w-full flex items-center gap-3 rounded-xl border border-gray-700 bg-gray-800/40 hover:bg-gray-800/70 px-3 py-2.5 text-left transition-colors"
+      >
+        <span className="flex-1">
+          <span className="block text-sm font-semibold text-white">{t('settings.help.report', 'Report a problem')}</span>
+          <span className="block text-xs text-gray-500">{t('settings.help.reportDesc', 'Opens a GitHub issue with your server and firmware versions filled in')}</span>
+        </span>
+        <ExternalLink className="w-4 h-4 text-gray-500 flex-shrink-0" />
+      </button>
     </SettingCard>
   );
 }

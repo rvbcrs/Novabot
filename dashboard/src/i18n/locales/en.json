@@ -802,7 +802,7 @@
         "medium": "Medium",
         "high": "High"
       },
-      "rain": "Rain auto-pause",
+      "rain": "Weather & time",
       "rainPause": "Pause when raining",
       "rainSummary": "≥ {{mm}} mm or ≥ {{prob}}% within {{h}}",
       "rainMm": "Min rainfall",

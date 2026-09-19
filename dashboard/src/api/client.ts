@@ -410,6 +410,24 @@ export async function fetchWorkRecords(sn: string, limit = 50, offset = 0): Prom
   return { records: data.records ?? [], total: data.total ?? 0 };
 }
 
+// ── Work summary + blade maintenance ───────────────────────────
+export interface WorkTotals { runs: number; minutes: number; m2: number }
+export interface BladeStatus { replacedAt: string | null; intervalHours: number; hoursSince: number; due: boolean }
+export interface WorkSummary { week: WorkTotals; month: WorkTotals; year: WorkTotals; allTime: WorkTotals; blade: BladeStatus }
+
+export async function fetchWorkSummary(sn: string): Promise<WorkSummary> {
+  return (await get(`${BASE}/work-records/${encodeURIComponent(sn)}/summary`)).json();
+}
+
+export async function updateBladeMaintenance(sn: string, body: { bladeReplaced?: boolean; bladeIntervalHours?: number }): Promise<BladeStatus> {
+  const res = await apiFetch(`${BASE}/maintenance/${encodeURIComponent(sn)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  return (await res.json()).blade;
+}
+
 // ── Signal History ──────────────────────────────────────────────
 
 export async function fetchSignalHistory(sn: string, hours = 24): Promise<SignalHistoryPoint[]> {
@@ -499,6 +517,11 @@ export interface RainSettings {
   thresholdMm: number;
   thresholdProbability: number;
   lookaheadHours: number;
+  /** Skip scheduled runs between sunset and sunrise. */
+  nightGuard: boolean;
+  /** Skip scheduled runs below frostThresholdC. */
+  frostGuard: boolean;
+  frostThresholdC: number;
 }
 
 export async function fetchRainSettings(sn: string): Promise<RainSettings> {

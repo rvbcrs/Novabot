@@ -188,6 +188,13 @@ schedules shift), rain auto-pause thresholds, week start, 24-hour clock,
 the mower's nickname, and the anti-theft **PIN** (query, set, verify).
 *Save to mower* writes the mower-side settings; the rest is server-side.
 
+**Weather & time** also holds two guards for scheduled runs, both off by
+default: *No mowing after dark* skips a run between sunset and sunrise
+(hedgehogs), *No mowing in frost* skips it when the forecast for the current
+or next hour is below the chosen temperature. Manual starts are never
+blocked. **Help → Report a problem** opens a GitHub bug report with the
+server version, mower SN, firmware and last error filled in.
+
 **AI perception** (custom firmware): the camera model's mode. *Segment*
 classifies every pixel (lawn, path, obstacle) and is the default; *Detect*
 looks for people, animals and objects; the high and low sensitivity variants
@@ -206,7 +213,9 @@ camera can follow the mower.
 ## History and diagnostics
 
 - **Work records**: every mowing session with date, duration, area and
-  cutting height.
+  cutting height. Above the list: totals for this week, month and year, and
+  a **Blades** card counting mowing hours since the last blade change
+  against a reminder interval (default 60 h); *Mark replaced* resets it.
 - **Signal history**: battery, Wi-Fi, RTK satellites and CPU temperature
   over hours or days.
 - **Notifications**: what the server pushed (the bell in the header).
