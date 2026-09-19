@@ -303,6 +303,17 @@ export default {
 
   // ── Settings ──────────────────────────────────────────────────
   settings: 'Settings',
+  notifications: 'Notifications',
+  notify_activity: 'Activity',
+  notify_activity_sub: 'Mowing started, finished, docked',
+  notify_errors: 'Errors',
+  notify_errors_sub: 'Stuck, dock failed, GPS, map, hardware',
+  notify_safety: 'Safety',
+  notify_safety_sub: 'Lift, tilt, stall, PIN lock',
+  notify_battery: 'Battery',
+  notify_battery_sub: 'Low battery',
+  notify_maintenance: 'Maintenance',
+  notify_maintenance_sub: 'Blades, dock drift, firmware',
   experimentalFeatures: 'Experimental Features',
   experimentalSub: 'Enable beta features like autonomous mapping',
   signOut: 'Sign Out',

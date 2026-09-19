@@ -549,6 +549,8 @@ export class ApiClient {
     token: string;
     sn: string;
     platform: 'ios' | 'android';
+    /** Muted notification categories for this installation. */
+    muted?: string[];
   }): Promise<{ success: boolean }> {
     return this.request<{ success: boolean }>(
       'POST',

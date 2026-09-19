@@ -26,6 +26,19 @@ export type EventType =
   | 'firmware_required'      // the custom build the mower runs was withdrawn; update to the newest one
   | 'blade_maintenance';     // mowing hours since the last blade change passed the configured interval
 
+/** Coarse groups the app lets a user mute per device (push_tokens.muted). */
+export type EventCategory = 'activity' | 'errors' | 'safety' | 'battery' | 'maintenance';
+
+export const CATEGORY_BY_TYPE: Record<EventType, EventCategory> = {
+  mowing_started: 'activity', mowing_finished: 'activity', docked: 'activity',
+  error: 'errors', error_cleared: 'errors', stuck: 'errors', dock_failed: 'errors',
+  map_error: 'errors', initialization_error: 'errors', hardware_fault: 'errors',
+  gps_weak: 'errors', connection_lost: 'errors',
+  safety: 'safety', pin_locked: 'safety',
+  low_battery: 'battery',
+  dock_drift: 'maintenance', firmware_required: 'maintenance', blade_maintenance: 'maintenance',
+};
+
 export interface MowerEvent {
   sn: string;
   type: EventType;

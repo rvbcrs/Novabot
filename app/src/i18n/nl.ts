@@ -301,6 +301,17 @@ export default {
 
   // ── Settings ──────────────────────────────────────────────────
   settings: 'Instellingen',
+  notifications: 'Meldingen',
+  notify_activity: 'Activiteit',
+  notify_activity_sub: 'Maaien gestart, klaar, gedockt',
+  notify_errors: 'Fouten',
+  notify_errors_sub: 'Vast, docken mislukt, GPS, kaart, hardware',
+  notify_safety: 'Veiligheid',
+  notify_safety_sub: 'Optillen, kantelen, blokkade, PIN-slot',
+  notify_battery: 'Accu',
+  notify_battery_sub: 'Accu bijna leeg',
+  notify_maintenance: 'Onderhoud',
+  notify_maintenance_sub: 'Messen, dock-verschuiving, firmware',
   experimentalFeatures: 'Experimentele functies',
   experimentalSub: 'Schakel bètafuncties in zoals automatisch kaart maken',
   signOut: 'Uitloggen',

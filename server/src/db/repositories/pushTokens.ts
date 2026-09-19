@@ -10,17 +10,20 @@ export interface PushTokenRow {
   sn: string;
   user_id: string;
   platform: string;
+  /** JSON-array van gedempte categorieën, of NULL. */
+  muted: string | null;
   created_at: string;
   updated_at: string;
 }
 
 class PushTokensRepository {
   private _upsert = db.prepare(`
-    INSERT INTO push_tokens (token, sn, user_id, platform, updated_at)
-    VALUES (?, ?, ?, ?, datetime('now'))
+    INSERT INTO push_tokens (token, sn, user_id, platform, muted, updated_at)
+    VALUES (?, ?, ?, ?, ?, datetime('now'))
     ON CONFLICT(token, sn) DO UPDATE SET
       user_id    = excluded.user_id,
       platform   = excluded.platform,
+      muted      = excluded.muted,
       updated_at = datetime('now')
   `);
 
@@ -36,8 +39,8 @@ class PushTokensRepository {
     'DELETE FROM push_tokens WHERE user_id = ?'
   );
 
-  upsert(token: string, sn: string, userId: string, platform: string): void {
-    this._upsert.run(token, sn, userId, platform);
+  upsert(token: string, sn: string, userId: string, platform: string, muted: string[] = []): void {
+    this._upsert.run(token, sn, userId, platform, muted.length ? JSON.stringify(muted) : null);
   }
 
   findBySn(sn: string): PushTokenRow[] {

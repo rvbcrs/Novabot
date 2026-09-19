@@ -19,8 +19,27 @@
 import { Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
+import * as SecureStore from 'expo-secure-store';
 import { ApiClient } from './api';
 import { getServerUrl } from './auth';
+
+/** Mirrors EventCategory in server/src/notifications/types.ts. */
+export type PushCategory = 'activity' | 'errors' | 'safety' | 'battery' | 'maintenance';
+export const PUSH_CATEGORIES: PushCategory[] = ['activity', 'errors', 'safety', 'battery', 'maintenance'];
+const MUTED_KEY = 'push.muted';
+
+export async function getMutedCategories(): Promise<PushCategory[]> {
+  try {
+    const raw = await SecureStore.getItemAsync(MUTED_KEY);
+    return raw ? (JSON.parse(raw) as PushCategory[]) : [];
+  } catch { return []; }
+}
+
+/** Persist and push the new set to the server for every bound mower. */
+export async function setMutedCategories(muted: PushCategory[], mowerSns: string[]): Promise<void> {
+  await SecureStore.setItemAsync(MUTED_KEY, JSON.stringify(muted));
+  await registerPushTokenForMowers(mowerSns);
+}
 
 const TAG = '[Push]';
 
@@ -108,9 +127,10 @@ export async function registerPushTokenForMowers(mowerSns: string[]): Promise<vo
   const api = new ApiClient(url);
 
   const platform: 'ios' | 'android' = Platform.OS === 'ios' ? 'ios' : 'android';
+  const muted = await getMutedCategories();
   for (const sn of mowerSns) {
     try {
-      await api.registerPushToken({ token, sn, platform });
+      await api.registerPushToken({ token, sn, platform, muted });
       console.log(`${TAG} registered ${sn} (${platform})`);
     } catch (err) {
       console.warn(`${TAG} register failed for ${sn}:`, err);

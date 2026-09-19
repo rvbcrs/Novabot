@@ -896,6 +896,11 @@ export function initDb(): void {
     catch { /* kolom bestaat al */ }
   }
 
+  // Feature: notificatie-categorieën dempen per app-installatie (JSON-array
+  // van EventCategory, zie notifications/types.ts). NULL = alles aan.
+  try { db.exec(`ALTER TABLE push_tokens ADD COLUMN muted TEXT`); }
+  catch { /* kolom bestaat al */ }
+
   // Feature: mes-onderhoud. Wanneer de messen voor het laatst vervangen zijn en
   // na hoeveel maai-uren de app/notificaties eraan herinneren.
   db.exec(`

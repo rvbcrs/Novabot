@@ -39,6 +39,7 @@ import { useMapLabels } from '../context/MapLabelsContext';
 import { useFirmwareUpdate } from '../context/FirmwareUpdateContext';
 import { useI18n, LANGUAGES } from '../i18n';
 import * as Application from 'expo-application';
+import { PUSH_CATEGORIES, getMutedCategories, setMutedCategories, type PushCategory } from '../services/pushNotifications';
 
 interface AppSettingsScreenProps {
   onLogout: () => void;
@@ -84,6 +85,15 @@ export default function AppSettingsScreen({
   const charger = useMemo(() => {
     return [...devices.values()].find((d) => d.deviceType === 'charger') ?? null;
   }, [devices]);
+
+  // Notificatie-categorieën (per installatie; server filtert de Expo-push).
+  const [muted, setMuted] = useState<PushCategory[]>([]);
+  useEffect(() => { getMutedCategories().then(setMuted).catch(() => {}); }, []);
+  const toggleCategory = (cat: PushCategory) => {
+    const next = muted.includes(cat) ? muted.filter(c => c !== cat) : [...muted, cat];
+    setMuted(next);
+    void setMutedCategories(next, [...devices.keys()]);
+  };
 
   // "Report a problem": opens the GitHub bug template with the fields we can
   // fill in ourselves (versions, SN, last error). Saves the triage round-trip
@@ -569,6 +579,24 @@ export default function AppSettingsScreen({
         {/* Support / donate — three external links. OpenNova is free + open
             source; tips keep the lights on. Each row opens its respective
             payment platform in the browser via Linking.openURL. */}
+        {/* Push-notificaties per categorie. Uit = server stuurt die events
+            niet naar dit toestel; ntfy/HA-kanalen blijven ongemoeid. */}
+        <Section title={t('notifications')}>
+          {PUSH_CATEGORIES.map(cat => {
+            const on = !muted.includes(cat);
+            return (
+              <View key={cat} style={styles.rowContainer}>
+                <Ionicons name={NOTIFY_ICON[cat]} size={20} color={on ? colors.emerald : colors.textMuted} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.rowLabel}>{t(`notify_${cat}`)}</Text>
+                  <Text style={[styles.rowValue, { fontSize: 12, opacity: 0.75 }]}>{t(`notify_${cat}_sub`)}</Text>
+                </View>
+                <Switch value={on} onValueChange={() => toggleCategory(cat)} trackColor={{ true: colors.emerald }} />
+              </View>
+            );
+          })}
+        </Section>
+
         <Section title="Help">
           <TouchableOpacity style={styles.rowContainer} onPress={() => void handleReportProblem()} activeOpacity={0.7}>
             <Ionicons name="bug-outline" size={20} color={colors.textDim} />
@@ -672,6 +700,11 @@ function DonateRow({
     </TouchableOpacity>
   );
 }
+
+const NOTIFY_ICON: Record<PushCategory, React.ComponentProps<typeof Ionicons>['name']> = {
+  activity: 'play-circle-outline', errors: 'alert-circle-outline', safety: 'shield-outline',
+  battery: 'battery-half-outline', maintenance: 'construct-outline',
+};
 
 function SettingsRow({
   icon,

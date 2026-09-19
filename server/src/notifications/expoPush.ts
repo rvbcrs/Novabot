@@ -12,7 +12,7 @@
  * don't stop the rest of the channels (ntfy, HA webhook).
  */
 import { pushTokensRepo } from '../db/repositories/pushTokens.js';
-import { MowerEvent } from './types.js';
+import { MowerEvent, CATEGORY_BY_TYPE, type EventCategory } from './types.js';
 import { getDeviceLabel } from './deviceLabel.js';
 
 const TAG = '[NOTIFY:EXPO]';
@@ -57,8 +57,15 @@ function toMessage(token: string, ev: MowerEvent): ExpoPushMessage {
   };
 }
 
+export function isMuted(mutedJson: string | null, category: EventCategory): boolean {
+  if (!mutedJson) return false;
+  try { return (JSON.parse(mutedJson) as unknown[]).includes(category); } catch { return false; }
+}
+
 export async function sendExpoPush(ev: MowerEvent): Promise<void> {
-  const tokens = pushTokensRepo.findBySn(ev.sn);
+  // Per-installatie gedempte categorieën (app: Settings → Notifications).
+  const category = CATEGORY_BY_TYPE[ev.type];
+  const tokens = pushTokensRepo.findBySn(ev.sn).filter(t => !isMuted(t.muted, category));
   if (tokens.length === 0) return;
 
   const messages: ExpoPushMessage[] = tokens.map(t => toMessage(t.token, ev));

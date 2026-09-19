@@ -146,6 +146,8 @@ Native iOS/Android push via Expo's free relay. **Auto-enabled** when you install
 
 The app registers its push token with the server via `POST /api/push/register` on launch. Server stores per `(token, sn)` and fans out via `https://exp.host/--/api/v2/push/send` on every event. Stale tokens are GC'd automatically (Expo returns `DeviceNotRegistered` on next push, server deletes the row).
 
+**Per-category muting.** In the app, Settings → Notifications has a switch per category: Activity (`mowing_started`, `mowing_finished`, `docked`), Errors (`error`, `error_cleared`, `stuck`, `dock_failed`, `map_error`, `initialization_error`, `hardware_fault`, `gps_weak`, `connection_lost`), Safety (`safety`, `pin_locked`), Battery (`low_battery`) and Maintenance (`dock_drift`, `firmware_required`, `blade_maintenance`). The app sends the muted list as `muted` in `POST /api/push/register`; the server stores it per `(token, sn)` and skips those events for that installation only. ntfy and Home Assistant are not affected.
+
 Expo Push limit: 600 notifications/sec/project worldwide. With realistic mower-event rates (~5/day/mower) you'd need 10M concurrent users to saturate. Non-issue at any sensible scale.
 
 ## Channel 4 — Stock Novabot app's Messages tab
