@@ -224,12 +224,16 @@ export function renderMowerMapSvg(sn: string): string {
   // recharge state + battery so the picture-entity is never empty even when
   // no work map / trail / mower-pose data is available.
   const status = readStatusBadge(mowerSn);
+  // The text is anchored at its END, so its x is the badge's right inner
+  // edge, not its left one (#131: the text used to start at the left edge
+  // and stick out of the badge).
+  const badgeWidth = Math.max(120, Math.ceil((status ?? "").length * 7.5) + 16);
   const statusBadge = status
     ? `<g>
-         <rect x="${SVG_W - Math.max(120, status.length * 7) - 12}" y="10"
-               width="${Math.max(120, status.length * 7)}" height="22" rx="4"
+         <rect x="${SVG_W - badgeWidth - 12}" y="10"
+               width="${badgeWidth}" height="22" rx="4"
                fill="#0f172a" opacity="0.78" />
-         <text class="badge" x="${SVG_W - Math.max(120, status.length * 7) - 4}" y="25"
+         <text class="badge" x="${SVG_W - 20}" y="25"
                text-anchor="end">${status}</text>
        </g>`
     : '';

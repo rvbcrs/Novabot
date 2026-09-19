@@ -11,6 +11,7 @@ vi.mock('../../db/repositories/maps.js', () => ({
 vi.mock('../../mqtt/sensorData.js', () => ({
   deviceCache: new Map<string, Map<string, string>>(),
   getLocalTrail: vi.fn().mockReturnValue([]),
+  translateValue: (field: string, v: string) => (field === 'work_status' && v === '0' ? 'Finished' : v),
 }));
 
 import { renderMowerMapSvg } from '../../render/svgMap.js';
@@ -125,6 +126,22 @@ describe('renderMowerMapSvg', () => {
     const out = renderMowerMapSvg(SN);
     expect(out).toContain('42%');
     expect(out).toContain('12.5 m²');
+  });
+
+  it('keeps the status text inside its badge, whatever its length (#131)', () => {
+    deviceCache.set(SN, new Map([['work_status', '0'], ['battery_capacity', '100']]));
+    const out = renderMowerMapSvg(SN);
+    const rect = out.match(/<rect x="([\d.]+)" y="10"\s+width="([\d.]+)"/);
+    const text = out.match(/<text class="badge" x="([\d.]+)" y="25"\s+text-anchor="end">([^<]+)</);
+    expect(rect && text).toBeTruthy();
+    const left = Number(rect![1]);
+    const right = left + Number(rect![2]);
+    const textRight = Number(text![1]);
+    // end-anchored text: its right edge must sit just inside the rect
+    expect(textRight).toBeLessThan(right);
+    expect(textRight).toBeGreaterThan(right - 12);
+    // and the rect must be wide enough for it (13px/600 is at most ~7.5px per char)
+    expect(right - left).toBeGreaterThanOrEqual(text![2].length * 7.5);
   });
 
   it('handles a totally empty mower (no maps, no pose, no trail)', () => {
