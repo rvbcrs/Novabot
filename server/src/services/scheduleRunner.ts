@@ -6,11 +6,11 @@
  * controleert het weer via Open-Meteo, en stuurt start_run als het droog is.
  */
 
-import { scheduleRepo, mapRepo } from '../db/repositories/index.js';
+import { scheduleRepo, mapRepo, rainSettingsRepo } from '../db/repositories/index.js';
 import { isDeviceOnline } from '../mqtt/broker.js';
 import { publishToDevice } from '../mqtt/mapSync.js';
 import { startMowing, edgeBladeHeightMm, getMowerPhase, startEdgeCut } from './mowingService.js';
-import { getWeatherForecast, shouldPauseForRain } from './weatherService.js';
+import { getWeatherForecast, shouldPauseForRain, isNight, isFrostExpected } from './weatherService.js';
 import { emitScheduleEvent, pushMqttLog } from '../dashboard/socketHandler.js';
 import type { ScheduleRow } from '../db/repositories/schedules.js';
 
@@ -374,15 +374,17 @@ function checkSchedules() {
       continue;
     }
 
-    // Rain pause: check weer als ingeschakeld, anders direct starten
-    if (row.rain_pause) {
+    // Weercheck als regen (per schema), nacht of vorst (per maaier) aan staat;
+    // anders direct starten.
+    const guards = rainSettingsRepo.getEffective(row.mower_sn);
+    if (row.rain_pause || guards.nightGuard || guards.frostGuard) {
       const gps = getChargerGps(row.mower_sn);
       if (!gps) {
         console.log(`[ScheduleRunner] ${row.schedule_id}: geen GPS coördinaten, start zonder weercheck`);
         triggerSchedule(row);
         continue;
       }
-      checkWeatherAndTrigger(row, gps).catch(err => {
+      checkWeatherAndTrigger(row, gps, guards).catch(err => {
         console.error(`[ScheduleRunner] Weather check failed for ${row.schedule_id}:`, err);
         triggerSchedule(row);
       });
@@ -395,21 +397,28 @@ function checkSchedules() {
 async function checkWeatherAndTrigger(
   row: ScheduleRow,
   gps: { lat: number; lng: number },
+  guards: { nightGuard: boolean; frostGuard: boolean; frostThresholdC: number },
 ) {
   const forecast = await getWeatherForecast(gps.lat, gps.lng);
-  const shouldPause = shouldPauseForRain(
-    forecast,
-    row.rain_threshold_mm,
-    row.rain_threshold_probability,
-    row.rain_check_hours,
-  );
+  const now = Date.now();
 
-  if (shouldPause) {
-    logScheduleDecision(row, false, 'SKIPPED', 'rain expected (pre-start weather check)');
+  let skip: { reason: 'night' | 'frost' | 'rain'; detail: string } | null = null;
+  if (guards.nightGuard && isNight(forecast, now)) {
+    skip = { reason: 'night', detail: 'night guard: between sunset and sunrise' };
+  } else if (guards.frostGuard && isFrostExpected(forecast, guards.frostThresholdC, now)) {
+    skip = { reason: 'frost', detail: `frost guard: below ${guards.frostThresholdC}°C` };
+  } else if (row.rain_pause && shouldPauseForRain(
+    forecast, row.rain_threshold_mm, row.rain_threshold_probability, row.rain_check_hours,
+  )) {
+    skip = { reason: 'rain', detail: 'rain expected (pre-start weather check)' };
+  }
+
+  if (skip) {
+    logScheduleDecision(row, false, 'SKIPPED', skip.detail);
     emitScheduleEvent('weather:paused', {
       scheduleId: row.schedule_id,
       mowerSn: row.mower_sn,
-      reason: 'rain',
+      reason: skip.reason,
     });
     // Update last_triggered_at zodat we niet elke seconde opnieuw checken
     scheduleRepo.updateLastTriggered(row.schedule_id);

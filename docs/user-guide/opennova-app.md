@@ -202,6 +202,8 @@ Reached from the device picker or the gear icon on the device card. Per-device k
 - **Nickname** — what the mower shows up as in the app.
 - **Auto-recharge threshold** — battery % at which the mower returns to base.
 - **Rain delay** — how long to wait after rain before resuming.
+- **No mowing after dark** (Weather & time) — scheduled runs between sunset and sunrise are skipped, so hedgehogs and other nocturnal animals stay safe. Off by default; manual starts are never blocked.
+- **No mowing in frost** (Weather & time) — scheduled runs are skipped when the forecast for the current or next hour is below the chosen temperature (default 3 °C).
 - **Mowing speed** — slider (clamped by firmware).
 - **Blade calibration** — if your blades drift left/right, nudge here.
 

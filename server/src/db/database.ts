@@ -885,6 +885,17 @@ export function initDb(): void {
     );
   `);
 
+  // Feature: nacht- en vorstbewaking voor geplande beurten (zelfde tabel als
+  // de regeninstellingen: één per-maaier "weer & tijden"-record). Default UIT.
+  for (const col of [
+    'night_guard INTEGER NOT NULL DEFAULT 0',
+    'frost_guard INTEGER NOT NULL DEFAULT 0',
+    'frost_threshold_c REAL NOT NULL DEFAULT 3',
+  ]) {
+    try { db.exec(`ALTER TABLE rain_settings ADD COLUMN ${col}`); }
+    catch { /* kolom bestaat al */ }
+  }
+
   // Feature: border seam-fix (per-mower, app-controlled). enabled + inward edge
   // margin (cm). Default OFF = opt-in, so existing mowers stay untouched.
   db.exec(`

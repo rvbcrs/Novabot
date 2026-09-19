@@ -4446,6 +4446,9 @@ dashboardRouter.put('/rain-settings/:sn', async (req: Request, res: Response) =>
     thresholdMm?: number;
     thresholdProbability?: number;
     lookaheadHours?: number;
+    nightGuard?: boolean;
+    frostGuard?: boolean;
+    frostThresholdC?: number;
   };
   // Clamp to sane ranges so a fat-fingered input can't disable detection.
   const clamp = (v: number | undefined, lo: number, hi: number) =>
@@ -4455,6 +4458,9 @@ dashboardRouter.put('/rain-settings/:sn', async (req: Request, res: Response) =>
     thresholdMm: clamp(body.thresholdMm, 0, 10),
     thresholdProbability: clamp(body.thresholdProbability, 0, 100),
     lookaheadHours: clamp(body.lookaheadHours, 0.25, 6),
+    nightGuard: body.nightGuard,
+    frostGuard: body.frostGuard,
+    frostThresholdC: clamp(body.frostThresholdC, -5, 10),
   });
   res.json(rainSettingsRepo.getEffective(req.params.sn));
 });
@@ -4524,12 +4530,11 @@ dashboardRouter.get('/rain-forecast/:sn', async (req: Request, res: Response) =>
   }
   try {
     const forecast = await getWeatherForecast(lat, lng);
-    const now = new Date();
+    const now = Date.now();
     // Zoek het eerste droge uur (neerslag < 0.1mm EN kans < 30%)
     let clearAt: string | null = null;
     for (const h of forecast.hourly) {
-      const t = new Date(h.time);
-      if (t <= now) continue;
+      if (h.epochMs <= now) continue;
       if (h.precipitation < 0.1 && h.precipitationProbability < 30) {
         clearAt = h.time;
         break;
@@ -4537,7 +4542,7 @@ dashboardRouter.get('/rain-forecast/:sn', async (req: Request, res: Response) =>
     }
     // Komende uren met regen
     const upcoming = forecast.hourly
-      .filter(h => new Date(h.time) > now)
+      .filter(h => h.epochMs > now)
       .slice(0, 6)
       .map(h => ({
         time: h.time,

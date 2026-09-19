@@ -127,6 +127,10 @@ export default function MowerSettingsScreen() {
   const [rainMm, setRainMm] = useState(0.1);
   const [rainProb, setRainProb] = useState(50);
   const [rainHours, setRainHours] = useState(0.5);
+  // Nacht-/vorstbewaking voor geplande beurten — zelfde endpoint als rain-settings.
+  const [nightGuard, setNightGuard] = useState(false);
+  const [frostGuard, setFrostGuard] = useState(false);
+  const [frostC, setFrostC] = useState(3);
   // Border seam-fix — loaded from /api/dashboard/seam-fix/:sn, per-mower (opt-in).
   const [seamFixEnabled, setSeamFixEnabled] = useState(false);
   const [seamFixMargin, setSeamFixMargin] = useState(15);
@@ -357,11 +361,15 @@ export default function MowerSettingsScreen() {
         const res = await fetch(`${url}/api/dashboard/rain-settings/${encodeURIComponent(mowerSn)}`);
         const data = await res.json() as {
           enabled: boolean; thresholdMm: number; thresholdProbability: number; lookaheadHours: number;
+          nightGuard?: boolean; frostGuard?: boolean; frostThresholdC?: number;
         };
         setRainEnabled(data.enabled);
         setRainMm(data.thresholdMm);
         setRainProb(data.thresholdProbability);
         setRainHours(data.lookaheadHours);
+        setNightGuard(!!data.nightGuard);
+        setFrostGuard(!!data.frostGuard);
+        setFrostC(data.frostThresholdC ?? 3);
       } catch { /* ignore */ }
     })();
   }, [mowerSn]);
@@ -412,12 +420,16 @@ export default function MowerSettingsScreen() {
 
   const saveRain = useCallback(async (patch: Partial<{
     enabled: boolean; thresholdMm: number; thresholdProbability: number; lookaheadHours: number;
+    nightGuard: boolean; frostGuard: boolean; frostThresholdC: number;
   }>) => {
     if (!mowerSn) return;
     if (patch.enabled !== undefined) setRainEnabled(patch.enabled);
     if (patch.thresholdMm !== undefined) setRainMm(patch.thresholdMm);
     if (patch.thresholdProbability !== undefined) setRainProb(patch.thresholdProbability);
     if (patch.lookaheadHours !== undefined) setRainHours(patch.lookaheadHours);
+    if (patch.nightGuard !== undefined) setNightGuard(patch.nightGuard);
+    if (patch.frostGuard !== undefined) setFrostGuard(patch.frostGuard);
+    if (patch.frostThresholdC !== undefined) setFrostC(patch.frostThresholdC);
     try {
       const url = await getServerUrl();
       if (!url) return;
@@ -767,6 +779,57 @@ export default function MowerSettingsScreen() {
                       <Text style={[styles.chipText, Math.abs(rainHours - v) < 0.05 && styles.chipTextActive]}>
                         {v < 1 ? `${(v * 60) | 0}m` : `${v}h`}
                       </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </>
+            )}
+            {/* Nachtbewaking: geplande beurten tussen zonsondergang en -opkomst overslaan */}
+            <TouchableOpacity
+              style={styles.optionRow}
+              onPress={() => void saveRain({ nightGuard: !nightGuard })}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="moon-outline" size={20} color={nightGuard ? colors.emerald : colors.textMuted} />
+              <View style={{ flex: 1, marginLeft: 12 }}>
+                <Text style={styles.optionLabel}>{t('msNightGuardTitle')}</Text>
+                <Text style={styles.optionSub}>{nightGuard ? t('msNightGuardOnSub') : t('msNightGuardOffSub')}</Text>
+              </View>
+              <View style={[styles.toggle, nightGuard && styles.toggleActive]}>
+                <View style={[styles.toggleThumb, nightGuard && styles.toggleThumbActive]} />
+              </View>
+            </TouchableOpacity>
+            {/* Vorstbewaking: geplande beurten overslaan onder de drempeltemperatuur */}
+            <TouchableOpacity
+              style={styles.optionRow}
+              onPress={() => void saveRain({ frostGuard: !frostGuard })}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="snow-outline" size={20} color={frostGuard ? colors.emerald : colors.textMuted} />
+              <View style={{ flex: 1, marginLeft: 12 }}>
+                <Text style={styles.optionLabel}>{t('msFrostGuardTitle')}</Text>
+                <Text style={styles.optionSub}>
+                  {frostGuard ? t('msFrostGuardOnSub', { c: frostC }) : t('msFrostGuardOffSub')}
+                </Text>
+              </View>
+              <View style={[styles.toggle, frostGuard && styles.toggleActive]}>
+                <View style={[styles.toggleThumb, frostGuard && styles.toggleThumbActive]} />
+              </View>
+            </TouchableOpacity>
+            {frostGuard && (
+              <>
+                <View style={styles.sliderRow}>
+                  <Text style={styles.sliderLabel}>{t('msFrostThreshold')}</Text>
+                  <Text style={styles.sliderValue}>{frostC} °C</Text>
+                </View>
+                <View style={styles.chipGrid}>
+                  {[0, 1, 3, 5].map(v => (
+                    <TouchableOpacity
+                      key={v}
+                      style={[styles.chip, frostC === v && styles.chipActive]}
+                      onPress={() => void saveRain({ frostThresholdC: v })}
+                    >
+                      <Text style={[styles.chipText, frostC === v && styles.chipTextActive]}>{v} °C</Text>
                     </TouchableOpacity>
                   ))}
                 </View>

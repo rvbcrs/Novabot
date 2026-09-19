@@ -376,6 +376,9 @@ export interface RainSettingsRow {
   threshold_mm: number;
   threshold_probability: number;
   lookahead_hours: number;
+  night_guard: number;
+  frost_guard: number;
+  frost_threshold_c: number;
   updated_at: string;
 }
 
@@ -384,18 +387,37 @@ export interface RainSettingsUpdate {
   thresholdMm?: number;
   thresholdProbability?: number;
   lookaheadHours?: number;
+  /** Geplande beurten overslaan tussen zonsondergang en zonsopkomst (egels). */
+  nightGuard?: boolean;
+  /** Geplande beurten overslaan als het rond de starttijd kouder is dan frostThresholdC. */
+  frostGuard?: boolean;
+  frostThresholdC?: number;
+}
+
+export interface RainSettingsEffective {
+  enabled: boolean;
+  thresholdMm: number;
+  thresholdProbability: number;
+  lookaheadHours: number;
+  nightGuard: boolean;
+  frostGuard: boolean;
+  frostThresholdC: number;
 }
 
 class RainSettingsRepository {
   private _get = db.prepare('SELECT * FROM rain_settings WHERE mower_sn = ?');
   private _upsert = db.prepare(`
-    INSERT INTO rain_settings (mower_sn, enabled, threshold_mm, threshold_probability, lookahead_hours, updated_at)
-    VALUES (?, ?, ?, ?, ?, datetime('now'))
+    INSERT INTO rain_settings (mower_sn, enabled, threshold_mm, threshold_probability, lookahead_hours,
+      night_guard, frost_guard, frost_threshold_c, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
     ON CONFLICT(mower_sn) DO UPDATE SET
       enabled = excluded.enabled,
       threshold_mm = excluded.threshold_mm,
       threshold_probability = excluded.threshold_probability,
       lookahead_hours = excluded.lookahead_hours,
+      night_guard = excluded.night_guard,
+      frost_guard = excluded.frost_guard,
+      frost_threshold_c = excluded.frost_threshold_c,
       updated_at = datetime('now')
   `);
 
@@ -404,23 +426,31 @@ class RainSettingsRepository {
   }
 
   /** Return the effective settings, falling back to sane defaults per mower. */
-  getEffective(mowerSn: string): { enabled: boolean; thresholdMm: number; thresholdProbability: number; lookaheadHours: number } {
+  getEffective(mowerSn: string): RainSettingsEffective {
     const row = this.get(mowerSn);
     return {
       enabled: row ? row.enabled === 1 : true,
       thresholdMm: row?.threshold_mm ?? 0.1,
       thresholdProbability: row?.threshold_probability ?? 50,
       lookaheadHours: row?.lookahead_hours ?? 0.5,
+      nightGuard: row?.night_guard === 1,
+      frostGuard: row?.frost_guard === 1,
+      frostThresholdC: row?.frost_threshold_c ?? 3,
     };
   }
 
   set(mowerSn: string, update: RainSettingsUpdate): void {
-    const current = this.getEffective(mowerSn);
-    const enabled = update.enabled ?? current.enabled;
-    const mm = update.thresholdMm ?? current.thresholdMm;
-    const prob = update.thresholdProbability ?? current.thresholdProbability;
-    const hours = update.lookaheadHours ?? current.lookaheadHours;
-    this._upsert.run(mowerSn, enabled ? 1 : 0, mm, prob, hours);
+    const c = this.getEffective(mowerSn);
+    this._upsert.run(
+      mowerSn,
+      (update.enabled ?? c.enabled) ? 1 : 0,
+      update.thresholdMm ?? c.thresholdMm,
+      update.thresholdProbability ?? c.thresholdProbability,
+      update.lookaheadHours ?? c.lookaheadHours,
+      (update.nightGuard ?? c.nightGuard) ? 1 : 0,
+      (update.frostGuard ?? c.frostGuard) ? 1 : 0,
+      update.frostThresholdC ?? c.frostThresholdC,
+    );
   }
 }
 
