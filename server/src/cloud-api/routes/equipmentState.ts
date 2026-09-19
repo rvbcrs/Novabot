@@ -5,6 +5,7 @@ import { equipmentRepo, messageRepo } from '../../db/repositories/index.js';
 import { deviceSettingsRepo } from '../../db/repositories/deviceSettings.js';
 import { deviceCache, getMowingSession, clearMowingSession } from '../../mqtt/sensorData.js';
 import { ok } from '../../types/index.js';
+import { checkBladeReminder } from '../../services/bladeMaintenance.js';
 
 export const equipmentStateRouter = Router();
 
@@ -301,6 +302,7 @@ equipmentStateRouter.post('/saveCutGrassRecord', upload.none(), (req: Request, r
   );
 
   console.log(`[STATE] Werkrecord opgeslagen: ${recordId} voor ${sn}`);
+  checkBladeReminder(sn).catch(e => console.warn('[STATE] blade reminder check failed:', e));
 
   // Issue #17: drop the in-memory mowing-session timer so the next
   // coverage task starts fresh. Without this, a follow-up task would

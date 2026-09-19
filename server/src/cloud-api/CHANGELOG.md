@@ -2,6 +2,13 @@
 
 Format: most-recent first. Each entry is dated and names the endpoint(s) affected.
 
+## 2026-09-19 — blade maintenance check after every work record
+
+- `saveCutGrassRecord`: after the row is stored the server runs the blade
+  reminder check (mowing hours since the last recorded blade change vs the
+  per-mower interval) and sends a `blade_maintenance` notification once per
+  change. Response unchanged (`ok(null)`).
+
 ## 2026-09-18 — map uploads record their origin (#120)
 
 - `fragmentUploadEquipmentMap` / `uploadEquipmentMap`: every `maps` row these

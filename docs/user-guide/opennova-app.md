@@ -146,6 +146,8 @@ Add, edit, delete from the same screen. Schedules execute server-side — the mo
 
 ## History (Work records)
 
+At the top: totals for this week, this month and this year (runs, hours, m²), and a **Blades** card that counts mowing hours since the last blade change against a reminder interval (default 60 h, pick 30/60/90/120). Tap **Mark replaced** after changing the blades. When the interval is reached the card turns amber and a `blade_maintenance` notification is sent once (see [Notifications](../guide/notifications.md)).
+
 Past mowing sessions. Each row:
 
 - Date & time (in your phone's timezone).

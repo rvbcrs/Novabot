@@ -97,6 +97,10 @@ export class MessageRepository {
   private _countWorkRecordsByEquipmentId = db.prepare(
     'SELECT COUNT(*) as cnt FROM work_records WHERE equipment_id = ?'
   );
+  private _sumWorkByEquipmentIdSince = db.prepare(
+    `SELECT COUNT(*) as runs, COALESCE(SUM(work_time), 0) as minutes, COALESCE(SUM(work_area_m2), 0) as m2
+       FROM work_records WHERE equipment_id = ? AND work_record_date >= ?`
+  );
 
   // ── Robot messages — methods ──
 
@@ -186,6 +190,11 @@ export class MessageRepository {
       workStatus, scheduleId, week,
       pathDirection,
     );
+  }
+
+  /** Totalen sinds `sinceIso` ('YYYY-MM-DD HH:MM:SS' UTC, zoals work_record_date; '' = alles). */
+  sumWorkByEquipmentIdSince(equipmentId: string, sinceIso: string): { runs: number; minutes: number; m2: number } {
+    return this._sumWorkByEquipmentIdSince.get(equipmentId, sinceIso) as { runs: number; minutes: number; m2: number };
   }
 
   findWorkRecordsByEquipmentId(equipmentId: string, limit: number, offset: number): WorkRecordRow[] {

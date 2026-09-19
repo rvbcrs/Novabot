@@ -9,13 +9,14 @@ import {
   ScrollView,
   ActivityIndicator,
   RefreshControl,
+  TouchableOpacity,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useStyles, useTheme, type Colors } from '../theme';
 import { useI18n } from '../i18n';
 import { useActiveMower } from '../hooks/useActiveMower';
-import { ApiClient, type WorkRecord } from '../services/api';
+import { ApiClient, type WorkRecord, type WorkSummary } from '../services/api';
 import { getServerUrl } from '../services/auth';
 import { useDemo } from '../context/DemoContext';
 import { DemoBanner } from '../components/DemoBanner';
@@ -30,6 +31,7 @@ export default function HistoryScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
+  const [summary, setSummary] = useState<WorkSummary | null>(null);
 
   const { activeMowerSn } = useActiveMower();
   const mowerSn = activeMowerSn ?? '';
@@ -52,6 +54,7 @@ export default function HistoryScreen() {
       const api = new ApiClient(url);
       const data = await api.getWorkRecords(mowerSn);
       setRecords(Array.isArray(data) ? data : []);
+      api.getWorkSummary(mowerSn).then(setSummary).catch(() => setSummary(null));
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load history');
     } finally {
@@ -63,6 +66,16 @@ export default function HistoryScreen() {
   useEffect(() => {
     fetchRecords();
   }, [fetchRecords]);
+
+  const setBlade = useCallback(async (body: { bladeReplaced?: boolean; bladeIntervalHours?: number }) => {
+    if (!mowerSn) return;
+    try {
+      const url = await getServerUrl();
+      if (!url) return;
+      const blade = await new ApiClient(url).setBladeMaintenance(mowerSn, body);
+      setSummary(prev => (prev ? { ...prev, blade } : prev));
+    } catch { /* ignore */ }
+  }, [mowerSn]);
 
   if (!mowerSn) {
     return (
@@ -98,6 +111,52 @@ export default function HistoryScreen() {
             <Ionicons name="alert-circle" size={18} color={colors.red} />
             <Text style={styles.errorText}>{error}</Text>
           </View>
+        )}
+
+        {summary && (
+          <>
+            {/* Totalen per periode (server-side som over ALLE records) */}
+            <View style={styles.statsRow}>
+              {([['week', t('wsWeek')], ['month', t('wsMonth')], ['year', t('wsYear')]] as const).map(([k, label]) => (
+                <View key={k} style={styles.statTile}>
+                  <Text style={styles.statLabel}>{label}</Text>
+                  <Text style={styles.statValue}>{summary[k].runs}×</Text>
+                  <Text style={styles.statSub}>{(summary[k].minutes / 60).toFixed(1)} h · {Math.round(summary[k].m2)} m²</Text>
+                </View>
+              ))}
+            </View>
+            {/* Mes-onderhoud: maai-uren sinds laatste wissel t.o.v. interval */}
+            <View style={[styles.bladeCard, summary.blade.due && styles.bladeCardDue]}>
+              <View style={styles.bladeHeader}>
+                <Ionicons name="cut-outline" size={18} color={summary.blade.due ? colors.amber : colors.textDim} />
+                <Text style={styles.bladeTitle}>{t('wsBlades')}</Text>
+                <Text style={[styles.bladeHours, summary.blade.due && { color: colors.amber }]}>
+                  {Math.round(summary.blade.hoursSince)} / {summary.blade.intervalHours} h
+                </Text>
+              </View>
+              <View style={styles.bladeBar}>
+                <View style={[styles.bladeBarFill, summary.blade.due && { backgroundColor: colors.amber },
+                  { width: `${Math.min(100, (summary.blade.hoursSince / summary.blade.intervalHours) * 100)}%` }]} />
+              </View>
+              <Text style={styles.bladeSub}>
+                {summary.blade.replacedAt
+                  ? t('wsBladesSince', { date: fmtDate(summary.blade.replacedAt) })
+                  : t('wsBladesNever')}
+              </Text>
+              <View style={styles.bladeActions}>
+                {[30, 60, 90, 120].map(h => (
+                  <TouchableOpacity key={h} style={[styles.chip, summary.blade.intervalHours === h && styles.chipActive]}
+                    onPress={() => void setBlade({ bladeIntervalHours: h })}>
+                    <Text style={[styles.chipText, summary.blade.intervalHours === h && styles.chipTextActive]}>{h} h</Text>
+                  </TouchableOpacity>
+                ))}
+                <View style={{ flex: 1 }} />
+                <TouchableOpacity style={styles.replacedBtn} onPress={() => void setBlade({ bladeReplaced: true })}>
+                  <Text style={styles.replacedText}>{t('wsBladesReplaced')}</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </>
         )}
 
         {!loading && records.length === 0 && (
@@ -262,6 +321,31 @@ const makeStyles = (c: Colors) => StyleSheet.create({
   recordStatus: { fontSize: 12, fontWeight: '600', textTransform: 'capitalize' },
   recordStats: { flexDirection: 'row', gap: 10, flexWrap: 'wrap', marginBottom: 8 },
   recordTimeRange: { fontSize: 12, color: c.textMuted, fontVariant: ['tabular-nums'] },
+  // Totalen + mes-onderhoud
+  statsRow: { flexDirection: 'row', gap: 10, marginBottom: 12 },
+  statTile: {
+    flex: 1, backgroundColor: c.card, borderRadius: 16, borderWidth: 1, borderColor: c.cardBorder, padding: 12,
+  },
+  statLabel: { fontSize: 11, color: c.textMuted, textTransform: 'uppercase', letterSpacing: 0.5 },
+  statValue: { fontSize: 20, fontWeight: '700', color: c.text, marginTop: 4 },
+  statSub: { fontSize: 11, color: c.textDim, marginTop: 2 },
+  bladeCard: {
+    backgroundColor: c.card, borderRadius: 16, borderWidth: 1, borderColor: c.cardBorder, padding: 14, marginBottom: 16,
+  },
+  bladeCardDue: { borderColor: c.amber },
+  bladeHeader: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  bladeTitle: { flex: 1, fontSize: 15, fontWeight: '600', color: c.text },
+  bladeHours: { fontSize: 13, fontWeight: '600', color: c.textDim, fontVariant: ['tabular-nums'] },
+  bladeBar: { height: 6, borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.08)', marginTop: 10, overflow: 'hidden' },
+  bladeBarFill: { height: 6, borderRadius: 3, backgroundColor: c.emerald },
+  bladeSub: { fontSize: 12, color: c.textMuted, marginTop: 8 },
+  bladeActions: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 10 },
+  chip: { paddingHorizontal: 9, paddingVertical: 4, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.05)' },
+  chipActive: { backgroundColor: 'rgba(0,212,170,0.15)' },
+  chipText: { fontSize: 12, color: c.textDim },
+  chipTextActive: { color: c.emerald, fontWeight: '600' },
+  replacedBtn: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 10, backgroundColor: 'rgba(0,212,170,0.15)' },
+  replacedText: { fontSize: 12, fontWeight: '600', color: c.emerald },
 });
 
 const makeChipStyles = (c: Colors) => StyleSheet.create({

@@ -896,6 +896,18 @@ export function initDb(): void {
     catch { /* kolom bestaat al */ }
   }
 
+  // Feature: mes-onderhoud. Wanneer de messen voor het laatst vervangen zijn en
+  // na hoeveel maai-uren de app/notificaties eraan herinneren.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS mower_maintenance (
+      mower_sn              TEXT PRIMARY KEY,
+      blade_replaced_at     TEXT,
+      blade_interval_hours  REAL NOT NULL DEFAULT 60,
+      blade_reminded_at     TEXT,
+      updated_at            TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+
   // Feature: border seam-fix (per-mower, app-controlled). enabled + inward edge
   // margin (cm). Default OFF = opt-in, so existing mowers stay untouched.
   db.exec(`

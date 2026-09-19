@@ -22,6 +22,7 @@ The notification dispatcher watches your mower's MQTT reports and emits a typed 
 | `map_error` | charging signal / boundary / mapping issues (112–114, 122, 123, 125) | curated stock-app text |
 | `initialization_error` | code 133 | "Mower not yet initialized. Wait one minute and retry." |
 | `hardware_fault` | TOF / camera / chassis (134, 136, 137, 170, 221, 444) | curated stock-app text |
+| `blade_maintenance` | mowing hours since the last blade change reach the interval set in the app (History → Blades); once per change | hours since + interval |
 
 The body for mapped error codes uses the **same English text the official Novabot v2.4.0 app shows** — extracted from the stock app's `mower_error_text.dart`. Unmapped codes fall through to the generic `error` event with the firmware's own `error_msg` as body, so nothing is lost.
 

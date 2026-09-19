@@ -3907,6 +3907,31 @@ interface WorkRecordRow {
   path_direction: number | null;
 }
 
+// GET /api/dashboard/work-records/:sn/summary — totalen (week/maand/jaar/alles)
+// + mes-onderhoud. Kalendergrenzen in de server-TZ (container TZ).
+dashboardRouter.get('/work-records/:sn/summary', async (req: Request, res: Response) => {
+  const { sn } = req.params;
+  const { getBladeStatus, toRecordDate } = await import('../services/bladeMaintenance.js');
+  const equipmentId = equipmentRepo.findByMowerSn(sn)?.equipment_id ?? sn;
+  const now = new Date();
+  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const week = new Date(startOfDay); week.setDate(week.getDate() - ((week.getDay() + 6) % 7)); // maandag
+  const month = new Date(now.getFullYear(), now.getMonth(), 1);
+  const year = new Date(now.getFullYear(), 0, 1);
+  const sum = (since: Date | null) => messageRepo.sumWorkByEquipmentIdSince(equipmentId, since ? toRecordDate(since) : '');
+  res.json({
+    week: sum(week), month: sum(month), year: sum(year), allTime: sum(null),
+    blade: getBladeStatus(sn),
+  });
+});
+
+// PUT /api/dashboard/maintenance/:sn — { bladeReplaced?: true, bladeIntervalHours?: number }
+dashboardRouter.put('/maintenance/:sn', async (req: Request, res: Response) => {
+  const { setBladeMaintenance } = await import('../services/bladeMaintenance.js');
+  const body = req.body as { bladeReplaced?: boolean; bladeIntervalHours?: number };
+  res.json({ blade: setBladeMaintenance(req.params.sn, { replaced: body.bladeReplaced === true, intervalHours: body.bladeIntervalHours }) });
+});
+
 // GET /api/dashboard/work-records/:sn — maaigeschiedenis
 dashboardRouter.get('/work-records/:sn', (req: Request, res: Response) => {
   const { sn } = req.params;

@@ -32,6 +32,7 @@ const TITLE_BY_TYPE: Record<EventType, string> = {
   dock_failed:          'Mower could not dock',
   dock_drift:           'Charging station may have moved',
   firmware_required:    'Firmware update required',
+  blade_maintenance:    'Time to check the blades',
 };
 
 interface SnapshotState {
@@ -245,6 +246,17 @@ export function dispatchFirmwareRequiredEvent(sn: string, current: string, targe
     TITLE_BY_TYPE.firmware_required,
     `${name || sn} runs ${current}, which was withdrawn: ${reason}. Update to ${target}; it is on your server, one tap from the dashboard or the app.`,
     { current, target, reason },
+  ));
+}
+
+/** Maai-uren sinds de laatste meswissel zijn over het interval; één keer per wissel. */
+export function dispatchBladeMaintenanceEvent(sn: string, hoursSince: number, intervalHours: number): void {
+  dispatchEvent(makeEvent(
+    sn,
+    'blade_maintenance',
+    TITLE_BY_TYPE.blade_maintenance,
+    `${Math.round(hoursSince)} mowing hours since the last blade change (reminder set at ${intervalHours} h). Check or replace the blades, then mark them as replaced in the app under History.`,
+    { hours_since: hoursSince, interval_hours: intervalHours },
   ));
 }
 

@@ -168,6 +168,18 @@ export interface WorkRecord {
   workRecordDate: string | null;
 }
 
+export interface WorkTotals { runs: number; minutes: number; m2: number }
+export interface BladeStatus {
+  replacedAt: string | null;
+  intervalHours: number;
+  hoursSince: number;
+  due: boolean;
+}
+export interface WorkSummary {
+  week: WorkTotals; month: WorkTotals; year: WorkTotals; allTime: WorkTotals;
+  blade: BladeStatus;
+}
+
 export interface TrailPoint {
   lat: number;
   lng: number;
@@ -362,7 +374,7 @@ export class ApiClient {
   }
 
   private async request<T>(
-    method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
+    method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
     path: string,
     options?: {
       body?: Record<string, unknown>;
@@ -625,6 +637,16 @@ export class ApiClient {
     );
     if (Array.isArray(body)) return body;
     return Array.isArray(body?.records) ? body.records : [];
+  }
+
+  /** Totals per period + blade maintenance (`GET /work-records/:sn/summary`). */
+  async getWorkSummary(sn: string): Promise<WorkSummary> {
+    return this.request<WorkSummary>('GET', `/api/dashboard/work-records/${enc(sn)}/summary`);
+  }
+
+  async setBladeMaintenance(sn: string, body: { bladeReplaced?: boolean; bladeIntervalHours?: number }): Promise<BladeStatus> {
+    const r = await this.request<{ blade: BladeStatus }>('PUT', `/api/dashboard/maintenance/${enc(sn)}`, { body });
+    return r.blade;
   }
 
   // ── GPS Trail ────────────────────────────────────────────────────────
