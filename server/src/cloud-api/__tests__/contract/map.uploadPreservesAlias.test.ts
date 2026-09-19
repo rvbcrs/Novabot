@@ -44,6 +44,7 @@ function buildMapZip(): string {
   fs.writeFileSync(path.join(csvDir, 'map1_work.csv'), SQUARE);
   fs.writeFileSync(path.join(csvDir, 'map2_work.csv'), SQUARE);
   fs.writeFileSync(path.join(csvDir, 'map0tocharge_unicom.csv'), '0,0\n0,1\n');
+  fs.writeFileSync(path.join(csvDir, 'map0_0_obstacle.csv'), SQUARE);
   fs.writeFileSync(path.join(csvDir, 'map_info.json'),
     JSON.stringify({ charging_pose: { x: 0, y: 0, orientation: 0 } }));
   const zipPath = path.join(dir, `${SN}.zip`);
@@ -79,11 +80,17 @@ describe('map rename survives repeated mowing / re-upload (#66)', () => {
     seed('map0', 'achter');
     seed('map1', 'zij');
     seed('map2', 'testje');
+    mapRepo.upsert({
+      map_id: 'obstacle-id', mower_sn: SN, map_name: 'motherInLaw', canonical_name: 'map0_0_obstacle',
+      map_area: null, map_max_min: null, file_name: 'map0_0_obstacle.csv', file_size: 0, map_type: 'obstacle',
+    });
   });
 
   it('keeps aliases + canonical slots after the FIRST re-upload', async () => {
     await reuploadFromMower();
     expect(workAliasesBySlot()).toEqual({ map0: 'achter', map1: 'zij', map2: 'testje' });
+    const obstacles = mapRepo.findByMowerSn(SN).filter(r => r.map_type === 'obstacle');
+    expect(obstacles.map(r => [r.map_id, r.map_name])).toEqual([['obstacle-id', 'motherInLaw']]);
   });
 
   it('keeps them after a SECOND re-upload (the real repro — mow twice)', async () => {
