@@ -4,7 +4,7 @@ The OpenNova app is the community-built replacement for the stock Novabot app. I
 
 Where a feature needs custom firmware on the mower, the app says so with *Requires OpenNova custom firmware* instead of sending a command the mower would ignore. The split is on [Stock vs. Custom Firmware](stock-vs-custom-firmware.md).
 
-Install on Android: download the APK from [downloads.ramonvanbruggen.nl/app](https://downloads.ramonvanbruggen.nl/app/opennova-v1.1.28.apk) (the app updates itself from there afterwards). Install on iOS: TestFlight invite from the maintainer; Apple does not allow direct installs.
+Install on Android: download the APK from [downloads.ramonvanbruggen.nl/app](https://downloads.ramonvanbruggen.nl/app/opennova-v1.1.29.apk) (the app updates itself from there afterwards). Install on iOS: TestFlight invite from the maintainer; Apple does not allow direct installs.
 
 This page walks through what each screen does. Screens appear in the order you'd typically use them.
 
