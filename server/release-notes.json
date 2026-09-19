@@ -1,6 +1,16 @@
 {
   "releases": [
     {
+      "version": "2026.0919.1559",
+      "date": "2026-09-19",
+      "sections": {
+        "server": [
+          "Error 130 (localization collapsed) is a gps_weak event with a readable message",
+          "The dock anchor is only ever map0tocharge_unicom; deleting that channel is refused"
+        ]
+      }
+    },
+    {
       "version": "2026.0919.1353",
       "date": "2026-09-19",
       "sections": {
@@ -195,34 +205,6 @@
         "server": [
           "Measure mDNS on 5353, and when it fails say why and what to do",
           "A container address is not a basis for comparison"
-        ]
-      }
-    },
-    {
-      "version": "2026.0915.0009",
-      "date": "2026-09-14",
-      "sections": {
-        "dashboard": [
-          "Draw the mower whenever we have a position, not only with GPS"
-        ],
-        "firmware": [
-          "Restart mqtt_node when it runs but never connects"
-        ],
-        "server": [
-          "The last file with a listener per request",
-          "Tell people when mDNS cannot leave the container",
-          "Read the mower's own state over SSH",
-          "The wifi MAC is knowable, and the docker gateway is not a rival",
-          "The diagnosis tests really do stay off the network now",
-          "One listener per file, not one per request",
-          "Keep the network out of the unit tests",
-          "Stop probing the whole network on every call",
-          "Admin panel, plus five more ways this breaks",
-          "Show who it is bound to, and the wifi link",
-          "Find devices on the LAN by their vendor MAC prefix",
-          "Cover the rest of the ways this goes wrong",
-          "Check whether the device can reach the server at all",
-          "Diagnose why a mower or charger will not come online"
         ]
       }
     }
