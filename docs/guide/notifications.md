@@ -18,7 +18,7 @@ The notification dispatcher watches your mower's MQTT reports and emits a typed 
 | `safety` | PIN-protected hardstops (152, 154–160) — lift, tilt, motor stall, turn-over | curated stock-app text |
 | `pin_locked` | code 151 | "Please enter the PIN code on the device." |
 | `connection_lost` | LoRa data loss (codes 131, 132) | curated stock-app text |
-| `gps_weak` | poor location quality (101, 105, 106, 202) | curated stock-app text |
+| `gps_weak` | poor location quality (101, 105, 106, 130, 202) | curated stock-app text |
 | `map_error` | charging signal / boundary / mapping issues (112–114, 122, 123, 125) | curated stock-app text |
 | `initialization_error` | code 133 | "Mower not yet initialized. Wait one minute and retry." |
 | `hardware_fault` | TOF / camera / chassis (134, 136, 137, 170, 221, 444) | curated stock-app text |
