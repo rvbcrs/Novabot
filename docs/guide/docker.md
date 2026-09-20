@@ -53,6 +53,43 @@ Pick your situation. It decides everything below.
     or 5 costs less than an afternoon of debugging: see the
     [Raspberry Pi Installer](raspberry-pi-installer.md).
 
+## What it needs (and cheaper boards than a Pi)
+
+The container is small; the numbers below come from the maintainer's own
+installs (September 2026).
+
+| | Minimum | Notes |
+|---|---|---|
+| CPU architecture | **amd64 or arm64** | Those are the only two images. No 32-bit ARM: a Pi 2, a Pi 3 on the 32-bit OS, a Banana Pi M2 and similar boards cannot run it. |
+| CPU | anything | 1–2 % of one core in daily use. |
+| RAM | **1 GB** without terrain recognition, **2 GB** with | The server idles at about 170 MB and settles around 550 MB after a day. The terrain classifier (the 3D "Terrain" page) loads a ~700 MB model on demand and unloads it 90 s later; on a machine with less than 700 MB free it simply does not load. Set `TERRAIN_CLASSIFY=0` to switch it off entirely. |
+| Disk | 16 GB, **64 GB recommended** | Image ~1 GB plus OS and Docker. The recommendation is about SD-card wear, not space. |
+| Network | Ethernet preferred | The mower already talks to the server over Wi-Fi; a server on Wi-Fi too stacks two weak links. |
+
+A Raspberry Pi 4 or 5 is the documented path because the
+[Raspberry Pi Installer](raspberry-pi-installer.md) prepares its card. If a
+Pi is too expensive right now, these run the same image after a manual
+Docker install (the commands under **Linux** below):
+
+- **A refurbished thin client or mini PC** (Dell Wyse 5070, HP t630/t640,
+  Fujitsu Futro S740, Lenovo Tiny and the like): x86-64, 4–8 GB RAM, a real
+  SSD, Ethernet, typically €30–60 second-hand. The best value and the most
+  robust option, since there is no SD card to wear out.
+- **A second-hand Pi 3B/3B+** on the 64-bit Raspberry Pi OS: 1 GB, so leave
+  terrain recognition off. Expected to work, not yet verified by us.
+- **Orange Pi Zero 3 (2 GB) and similar arm64 boards** running Armbian or
+  Debian: same expectation, same caveat. Stick to boards with a maintained
+  Debian image.
+- **A Pi Zero 2 W**: 512 MB and Wi-Fi only. Not recommended and not
+  supported; if you try it, add swap and set `TERRAIN_CLASSIFY=0`.
+- **Whatever you already have**: a NAS with Docker, an old laptop, a Proxmox
+  VM.
+
+If you run it on one of the unverified boards, a note in
+[GitHub Issues](https://github.com/rvbcrs/Novabot/issues) with the board,
+RAM and `docker stats` output turns "expected" into "confirmed" for the
+next person.
+
 ## Quick start
 
 ### 1. Create `docker-compose.yml`
@@ -231,6 +268,10 @@ See [Notifications & Push](notifications.md).
 | `OTA_BASE_URL` | `http://TARGET_IP[:PORT]` | Base URL the mower downloads firmware from. Set it when the server sits behind a proxy or a changed port mapping, e.g. `http://192.168.1.50:8080`. |
 | `REMOTE_SUPPORT_RELAY_ENABLED` | `false` | Allow the remote support tunnel to be switched on from the admin panel. |
 | `LOG_LEVEL` | — | `verbose` logs every request and response. |
+| `TERRAIN_CLASSIFY` | `1` | `0` disables terrain recognition (the on-demand ~700 MB SigLIP model). Use it on boards with 1 GB or less. |
+| `TERRAIN_MIN_FREE_MB` | `700` | The model is not loaded when the host has less than this much memory available; the batch is skipped and retried next session. |
+| `TERRAIN_MODEL_IDLE_MS` | `90000` | How long the model stays in memory after the last classification. `0` = never unload. |
+| `TERRAIN_MODEL_THREADS` | `1` | CPU threads the classifier may use. `0` = let onnxruntime decide (it takes every core). |
 
 ## Advanced: host networking
 
