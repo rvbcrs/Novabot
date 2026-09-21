@@ -437,6 +437,13 @@ export default function ProvisionScreen({ navigation, route }: Props) {
 
   // Check server reachability + device MQTT status when provisioning completes
   const [deviceOnline, setDeviceOnline] = useState<Record<string, boolean>>({});
+  // "Done!" used to appear as soon as every BLE command was acknowledged. The
+  // dock only checks that the SSID/password have a plausible length before it
+  // answers OK, so a typo gave Done! and a red blinking LED (Alain, 2026-09).
+  // The banner now says Configured until the server has actually seen the
+  // device, and after the 60 s poll it says so when that never happened.
+  const [connectTimedOut, setConnectTimedOut] = useState(false);
+  const deviceOnlineRef = useRef(false);
 
   useEffect(() => {
     if (!allDone || !allSuccess) return;
@@ -499,6 +506,7 @@ export default function ProvisionScreen({ navigation, route }: Props) {
               const status: Record<string, boolean> = {};
               for (const dev of devices) status[dev.id] = true;
               setDeviceOnline(status);
+              deviceOnlineRef.current = true;
               bleLog(`[MQTT-POLL] New device online: ${lastSn} (${Math.round(age/1000)}s ago)`);
 
               // Drain pending LoRa registration queue — we weten nu eindelijk
@@ -537,7 +545,13 @@ export default function ProvisionScreen({ navigation, route }: Props) {
 
     // Poll device status every 5s for 60s
     const interval = setInterval(pollDeviceStatus, 5000);
-    const stopAfter = setTimeout(() => clearInterval(interval), 60000);
+    const stopAfter = setTimeout(() => {
+      clearInterval(interval);
+      if (!deviceOnlineRef.current) {
+        setConnectTimedOut(true);
+        bleLog('[MQTT-POLL] No device came online within 60s — credentials/2.4 GHz/WPA2 to check');
+      }
+    }, 60000);
 
     return () => {
       clearInterval(interval);
@@ -565,6 +579,9 @@ export default function ProvisionScreen({ navigation, route }: Props) {
   }, [allDone, allSuccess, successScale, successOpacity]);
 
   const handleProvisionAnother = () => {
+    setConnectTimedOut(false);
+    setDeviceOnline({});
+    deviceOnlineRef.current = false;
     navigation.navigate('DeviceChoice', { mqttAddr, mqttPort });
   };
 
@@ -639,6 +656,9 @@ export default function ProvisionScreen({ navigation, route }: Props) {
   };
 
   const handleRetry = () => {
+    setConnectTimedOut(false);
+    setDeviceOnline({});
+    deviceOnlineRef.current = false;
     startedRef.current = false;
     setAllDone(false);
     setAllSuccess(false);
@@ -704,14 +724,27 @@ export default function ProvisionScreen({ navigation, route }: Props) {
               },
             ]}
           >
-            <View style={styles.successIconCircle}>
-              <Ionicons name="checkmark-circle" size={56} color={colors.green} />
-            </View>
-            <Text style={styles.successTitle}>Done!</Text>
-            <Text style={styles.successSubtitle}>
-              Your {devices.length > 1 ? 'devices are' : 'device is'} now configured
-              and will reconnect to your network.
-            </Text>
+            {(() => {
+              const connected = Object.keys(deviceOnline).length > 0;
+              const icon = connected ? 'checkmark-circle' : connectTimedOut ? 'alert-circle' : 'time-outline';
+              const color = connected ? colors.green : connectTimedOut ? colors.amber : colors.textDim;
+              const title = connected ? 'Connected!' : connectTimedOut ? 'Not connected yet' : 'Configured';
+              return (
+                <>
+                  <View style={[styles.successIconCircle, !connected && { backgroundColor: 'rgba(255,255,255,0.06)' }]}>
+                    <Ionicons name={icon} size={56} color={color} />
+                  </View>
+                  <Text style={[styles.successTitle, { color }]}>{title}</Text>
+                  <Text style={styles.successSubtitle}>
+                    {connected
+                      ? `Your ${devices.length > 1 ? 'devices are' : 'device is'} online on your server.`
+                      : connectTimedOut
+                        ? 'The settings were accepted over Bluetooth, but the device has not joined your WiFi. The device cannot check the password itself, so "accepted" is not "connected". Check: network name exactly as on the router (case matters), password (tap the eye icon to see it), a 2.4 GHz network with WPA2, then tap Retry. While it blinks red it has no network.'
+                        : `Settings accepted over Bluetooth. Waiting for your ${devices.length > 1 ? 'devices' : 'device'} to join the WiFi and reach the server; this can take a minute.`}
+                  </Text>
+                </>
+              );
+            })()}
 
             {/* Device MQTT status */}
             {Object.keys(deviceOnline).length > 0 && (
@@ -992,7 +1025,7 @@ export default function ProvisionScreen({ navigation, route }: Props) {
           die hoeft hier niet meer te staan. */}
       {allDone && (
         <View style={styles.bottomBar}>
-          {!allSuccess && (
+          {(!allSuccess || connectTimedOut) && (
             <TouchableOpacity
               style={styles.retryButton}
               onPress={handleRetry}
@@ -1003,7 +1036,7 @@ export default function ProvisionScreen({ navigation, route }: Props) {
             </TouchableOpacity>
           )}
           <TouchableOpacity
-            style={[styles.doneButton, !allSuccess && { flex: 1 }]}
+            style={[styles.doneButton, (!allSuccess || connectTimedOut) && { flex: 1 }]}
             onPress={allSuccess ? handleProvisionAnother : handleBackToSettings}
             activeOpacity={0.7}
           >

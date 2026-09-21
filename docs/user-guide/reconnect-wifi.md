@@ -22,7 +22,13 @@ OpenNova app. A few minutes, and nothing is lost.
 3. Choose the **Charger**.
 4. Enter the network name and password, **Next**.
 5. The app scans and finds the charger. Select it, **Start provisioning**,
-   and wait until it reports done.
+   and wait. **Configured** means the charger accepted the settings over
+   Bluetooth; **Connected!** means your server has seen it. Only the second
+   one counts: the charger cannot check the WiFi password itself, so a typo
+   still gives Configured, followed by a red blinking LED. If it says
+   **Not connected yet** after a minute, check the network name (case
+   matters), the password (eye icon), and that it is a 2.4 GHz WPA2
+   network, then **Retry**.
 
 ## Then the mower
 
