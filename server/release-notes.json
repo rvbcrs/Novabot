@@ -1,6 +1,22 @@
 {
   "releases": [
     {
+      "version": "2026.0921.0922",
+      "date": "2026-09-21",
+      "sections": {
+        "dashboard": [
+          "Copy a drone photo from the other mower"
+        ],
+        "app": [
+          "Mowing history shows server timestamps in the phone's timezone"
+        ],
+        "server": [
+          "Finished_area is one text sensor, not a measurement",
+          "An obstacle keeps its name when the mower re-uploads"
+        ]
+      }
+    },
+    {
       "version": "2026.0919.1559",
       "date": "2026-09-19",
       "sections": {
@@ -192,19 +208,6 @@
           "Diagnosis catalog in French and German",
           "Diagnosis explains itself in the reader's language",
           "Diagnosis names the address it actually compared against"
-        ]
-      }
-    },
-    {
-      "version": "2026.0915.0919",
-      "date": "2026-09-15",
-      "sections": {
-        "admin": [
-          "Black screen, one unescaped newline in the inline script"
-        ],
-        "server": [
-          "Measure mDNS on 5353, and when it fails say why and what to do",
-          "A container address is not a basis for comparison"
         ]
       }
     }
