@@ -96,6 +96,21 @@ function readProgressLabel(sn: string): string | null {
   return [pct, m2].filter(Boolean).join(' • ') || null;
 }
 
+function readMissedPoints(sn: string): Pt[] {
+  const cache = deviceCache.get(sn);
+  const raw = cache?.get('missed_points');
+  if (!raw) return [];
+  const points: Pt[] = [];
+  for (const part of raw.split(';')) {
+    const [xs, ys] = part.trim().split(/\s+/);
+    const x = parseFloat(xs ?? '');
+    const y = parseFloat(ys ?? '');
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    points.push({ x, y });
+  }
+  return points;
+}
+
 function computeBounds(parts: Pt[][]): { minX: number; maxX: number; minY: number; maxY: number } {
   let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
   for (const arr of parts) {
@@ -141,6 +156,7 @@ const STYLE = `
   .obstacle-fill { fill: rgba(239,68,68,0.20); stroke: #ef4444; stroke-width: 2; stroke-dasharray: 6 4; stroke-linejoin: round; }
   .unicom-fill { fill: none; stroke: #3b82f6; stroke-width: 2; stroke-dasharray: 4 3; }
   .trail { fill: none; stroke: rgba(34,197,94,0.7); stroke-width: 4; stroke-linecap: round; stroke-linejoin: round; }
+  .missed-point { fill: #f97316; fill-opacity: 0.4; stroke: none; }
   .charger-base { fill: rgba(245,158,11,0.25); stroke: #f59e0b; stroke-width: 2; }
   .charger-bolt { fill: #f59e0b; }
   .mower { fill: #ffffff; stroke: #0f172a; stroke-width: 1.5; }
@@ -159,12 +175,14 @@ export function renderMowerMapSvg(sn: string): string {
   const mowerSn = sn.toUpperCase();
   const maps = readMaps(mowerSn);
   const trail = getLocalTrail(mowerSn).map(p => ({ x: p.x, y: p.y }));
+  const missedPoints = readMissedPoints(mowerSn);
   const { pose, theta } = readMowerPose(mowerSn);
   const charger: Pt = { x: 0, y: 0 };
 
   const allPts: Pt[][] = [];
   for (const m of maps) allPts.push(m.pts);
   allPts.push(trail);
+  allPts.push(missedPoints);
   allPts.push([charger]);
   if (pose) allPts.push([pose]);
 
@@ -186,6 +204,10 @@ export function renderMowerMapSvg(sn: string): string {
   const trailSvg = trail.length >= 2
     ? `<polyline class="trail" points="${polyAttr(trail, project)}" />`
     : '';
+  const missedPointsSvg = missedPoints.map(p => {
+    const q = project(p);
+    return `<circle class="missed-point" cx="${q.x.toFixed(2)}" cy="${q.y.toFixed(2)}" r="2.5" />`;
+  }).join('\n');
 
   const cp = project(charger);
   const chargerSvg = `
@@ -258,6 +280,7 @@ export function renderMowerMapSvg(sn: string): string {
   <rect class="bg" x="0" y="0" width="${SVG_W}" height="${SVG_H}" />
   ${polys}
   ${trailSvg}
+  ${missedPointsSvg}
   ${chargerSvg}
   ${mowerSvg}
   ${badge}
