@@ -165,6 +165,22 @@ describe('the overlay routes', () => {
     expect((await request(app).delete(`/overlay/${SN}`)).body.removed).toBe(false);
   });
 
+  it('copies photo and placement from another mower', async () => {
+    await request(app).put(`/overlay/${SN}/image?lat=52.14&lng=6.23`).set('Content-Type', 'image/png').send(png(3, 2));
+    const other = 'LFIN1231000211';
+    const r = await request(app).post(`/overlay/${other}/copy-from/${SN}`);
+    expect(r.status).toBe(200);
+    expect(r.body.sn).toBe(other);
+    expect(r.body.placement).toEqual((await request(app).get(`/overlay/${SN}`)).body.placement);
+    expect(existsSync(path.join(storage, 'overlays', `${other}.png`))).toBe(true);
+    // Source untouched, target independent from here on.
+    await request(app).delete(`/overlay/${SN}`);
+    expect((await request(app).get(`/overlay/${other}/image`)).status).toBe(200);
+    // Nothing to copy, or copying onto itself.
+    expect((await request(app).post(`/overlay/${other}/copy-from/LFIN9999999999`)).status).toBe(404);
+    expect((await request(app).post(`/overlay/${other}/copy-from/${other}`)).status).toBe(400);
+  });
+
   it('rejects a bad serial', async () => {
     expect((await request(app).get('/overlay/x')).status).toBe(400);
   });

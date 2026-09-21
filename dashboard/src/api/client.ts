@@ -1291,6 +1291,16 @@ export async function saveDroneOverlayPlacement(sn: string, placement: DroneOver
   }
 }
 
+/** The other mower's photo and placement, onto this one; replaces what was there. */
+export async function copyDroneOverlay(sn: string, from: string): Promise<DroneOverlayMeta> {
+  const res = await apiFetch(`${BASE}/overlay/${encodeURIComponent(sn)}/copy-from/${encodeURIComponent(from)}`, { method: 'POST' });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({})) as { error?: string };
+    throw new Error(data.error || `${res.status} ${res.statusText}`);
+  }
+  return res.json();
+}
+
 export async function deleteDroneOverlay(sn: string): Promise<void> {
   await apiFetch(`${BASE}/overlay/${encodeURIComponent(sn)}`, { method: 'DELETE' });
 }

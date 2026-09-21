@@ -13,7 +13,7 @@ import type { MapData, MapCalibration, GpsPoint } from '../../types';
 import { DroneOverlayLayer } from './DroneOverlay';
 import { latLngToPhoto, photoToLatLng, distanceM, solvePlacement, insidePhoto, similarityCorners, derivedPlacement, rotateCorners, scaleCorners, type PhotoPixel, type PointPair } from '../../utils/droneOverlayMath';
 import {
-  fetchDroneOverlay, uploadDroneOverlay, saveDroneOverlayPlacement, deleteDroneOverlay, droneOverlayImageUrl,
+  fetchDroneOverlay, uploadDroneOverlay, saveDroneOverlayPlacement, deleteDroneOverlay, copyDroneOverlay, droneOverlayImageUrl, fetchDevices,
   type DroneOverlayMeta, type DroneOverlayPlacement, type DroneCorners,
 } from '../../api/client';
 import {
@@ -1190,6 +1190,9 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
   // compact instead of listing every layer inline). Auto-closes with Weergave.
   const [railTileSub, setRailTileSub] = useState(false);
   useEffect(() => { if (railFlyout !== 'view') setRailTileSub(false); }, [railFlyout]);
+  // Dronefoto (#124) zit ook in een zijmenu; de rijen ervan maakten Weergave te lang.
+  const [railDroneSub, setRailDroneSub] = useState(false);
+  useEffect(() => { if (railFlyout !== 'view') setRailDroneSub(false); }, [railFlyout]);
   // Tile labels are shown without their parenthetical suffix (e.g. "PDOK
   // luchtfoto (NL, ~8 cm)" → "PDOK luchtfoto"); the full label stays as the
   // hover title so the resolution/region hint isn't lost.
@@ -1532,6 +1535,30 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     await deleteDroneOverlay(sn).catch(() => { /* weg is weg */ });
     setDroneMeta(null); setDroneDraft(null); setRailFlyout(null);
   }, [sn, t]);
+  // Andere maaiers met een foto: zelfde tuin, zelfde foto, dus overnemen
+  // (plaatsing incl.) in plaats van opnieuw uploaden en plaatsen.
+  const [droneSources, setDroneSources] = useState<Array<{ sn: string; label: string }>>([]);
+  useEffect(() => {
+    if (!railDroneSub || !sn) return;
+    let alive = true;
+    fetchDevices().then(async devs => {
+      const others = devs.filter(d => d.deviceType === 'mower' && d.sn !== sn);
+      const withPhoto = await Promise.all(others.map(async d => ((await fetchDroneOverlay(d.sn).catch(() => null)) ? d : null)));
+      if (alive) setDroneSources(withPhoto.flatMap(d => (d ? [{ sn: d.sn, label: d.nickname || d.sn }] : [])));
+    }).catch(() => { /* geen lijst, geen rijen */ });
+    return () => { alive = false; };
+  }, [railDroneSub, sn]);
+  const copyDrone = useCallback(async (from: string) => {
+    if (!sn) return;
+    if (droneMeta && !window.confirm(t('map.droneCopyConfirm', 'De huidige dronefoto van deze maaier wordt vervangen. Doorgaan?'))) return;
+    setDroneBusy(true);
+    try {
+      const meta = await copyDroneOverlay(sn, from);
+      setDroneMeta(meta); setDroneDraft(null); setDroneVisible(true); setRailFlyout(null);
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : String(e));
+    } finally { setDroneBusy(false); }
+  }, [sn, droneMeta, t]);
   const dronePlacement = droneDraft ?? droneMeta?.placement ?? null;
   // Punten aanwijzen: pixels in de foto en waar die op de kaart horen. Het
   // eerste punt is het laadstation (doel = dock, bekend), daarna steeds een
@@ -4070,33 +4097,51 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
                       <Camera className="w-4 h-4 opacity-70" />{t('camera.camera')}
                     </button>
                   )}
-                  {/* Dronefoto als achtergrond (#124) */}
+                  {/* Dronefoto als achtergrond (#124): zijmenu, net als de kaartlaag */}
                   {sn && (
-                    <>
-                      <div className={railHdr}>{t('map.droneOverlay', 'Dronefoto')}</div>
-                      {!droneMeta ? (
-                        <button onClick={() => droneFileRef.current?.click()} disabled={droneBusy} className={railRow(false)}>
-                          {droneBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <ImageIcon className="w-4 h-4 opacity-70" />}
-                          {t('map.droneUpload', 'Dronefoto uploaden…')}
-                        </button>
-                      ) : (
-                        <>
-                          <button onClick={() => setDroneVisible(v => !v)} className={railRow(droneVisible)}>
-                            <ImageIcon className="w-4 h-4 opacity-70" />
-                            {droneVisible ? t('map.droneHide', 'Dronefoto verbergen') : t('map.droneShow', 'Dronefoto tonen')}
-                          </button>
-                          <button onClick={() => { setDroneVisible(true); setDroneDraft(droneMeta.placement ?? { corners: similarityCorners(droneCenterGuess() ?? { lat: 0, lng: 0 }, 60, 0, droneMeta.width / droneMeta.height), opacity: 0.8 }); setRailFlyout(null); }} className={railRow(false)}>
-                            <MoveIcon className="w-4 h-4 opacity-70" />{t('map.dronePlace', 'Dronefoto plaatsen')}
-                          </button>
-                          <button onClick={() => droneFileRef.current?.click()} disabled={droneBusy} className={railRow(false)}>
-                            <RefreshCw className="w-4 h-4 opacity-70" />{t('map.droneReplace', 'Dronefoto vervangen…')}
-                          </button>
-                          <button onClick={removeDrone} className={railRow(false)}>
-                            <Trash2 className="w-4 h-4 opacity-70" />{t('map.droneRemove', 'Dronefoto verwijderen')}
-                          </button>
-                        </>
+                    <div className="relative">
+                      <button onClick={() => setRailDroneSub(v => !v)} className={railRow(!!droneMeta && droneVisible)}>
+                        {droneBusy ? <Loader2 className="w-4 h-4 animate-spin shrink-0" /> : <ImageIcon className="w-4 h-4 opacity-70 shrink-0" />}
+                        <span className="flex-1 text-left truncate">{t('map.droneOverlay', 'Dronefoto')}</span>
+                        <ChevronRight className={`w-3.5 h-3.5 text-gray-500 transition-transform ${railDroneSub ? 'rotate-90' : ''}`} />
+                      </button>
+                      {railDroneSub && (
+                        <div className="absolute left-full top-0 ml-2 z-[960] bg-gray-900/95 backdrop-blur border border-gray-700 rounded-xl p-1 shadow-xl min-w-[220px]">
+                          <div className={railHdr}>{t('map.droneOverlay', 'Dronefoto')}</div>
+                          {!droneMeta ? (
+                            <button onClick={() => droneFileRef.current?.click()} disabled={droneBusy} className={railRow(false)}>
+                              <ImageIcon className="w-4 h-4 opacity-70" />{t('map.droneUpload', 'Dronefoto uploaden…')}
+                            </button>
+                          ) : (
+                            <>
+                              <button onClick={() => setDroneVisible(v => !v)} className={railRow(droneVisible)}>
+                                <ImageIcon className="w-4 h-4 opacity-70" />
+                                {droneVisible ? t('map.droneHide', 'Dronefoto verbergen') : t('map.droneShow', 'Dronefoto tonen')}
+                              </button>
+                              <button onClick={() => { setDroneVisible(true); setDroneDraft(droneMeta.placement ?? { corners: similarityCorners(droneCenterGuess() ?? { lat: 0, lng: 0 }, 60, 0, droneMeta.width / droneMeta.height), opacity: 0.8 }); setRailFlyout(null); }} className={railRow(false)}>
+                                <MoveIcon className="w-4 h-4 opacity-70" />{t('map.dronePlace', 'Dronefoto plaatsen')}
+                              </button>
+                              <button onClick={() => droneFileRef.current?.click()} disabled={droneBusy} className={railRow(false)}>
+                                <RefreshCw className="w-4 h-4 opacity-70" />{t('map.droneReplace', 'Dronefoto vervangen…')}
+                              </button>
+                              <button onClick={removeDrone} className={railRow(false)}>
+                                <Trash2 className="w-4 h-4 opacity-70" />{t('map.droneRemove', 'Dronefoto verwijderen')}
+                              </button>
+                            </>
+                          )}
+                          {droneSources.length > 0 && (
+                            <>
+                              <div className={railHdr}>{t('map.droneCopyFrom', 'Overnemen van')}</div>
+                              {droneSources.map(d => (
+                                <button key={d.sn} onClick={() => { void copyDrone(d.sn); }} disabled={droneBusy} className={railRow(false)} title={d.sn}>
+                                  <Copy className="w-4 h-4 opacity-70" /><span className="truncate">{d.label}</span>
+                                </button>
+                              ))}
+                            </>
+                          )}
+                        </div>
                       )}
-                    </>
+                    </div>
                   )}
                 </div>
               )}

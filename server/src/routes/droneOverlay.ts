@@ -15,7 +15,7 @@
 import { Router, type Request, type Response } from 'express';
 import express from 'express';
 import path from 'path';
-import { existsSync, mkdirSync, unlinkSync, writeFileSync } from 'fs';
+import { copyFileSync, existsSync, mkdirSync, unlinkSync, writeFileSync } from 'fs';
 import { deviceSettingsRepo } from '../db/repositories/index.js';
 import { imageDimensions } from '../services/imageDimensions.js';
 import { photoMetadata, type PhotoMetadata } from '../services/photoMetadata.js';
@@ -222,6 +222,27 @@ droneOverlayRouter.put('/:sn', (req, res) => {
   if (!placement) { res.status(400).json({ error: 'placement needs corners (4 x {lat, lng}, 1..3000 m apart) and opacity (0..1)' }); return; }
   writeMeta(sn, { ...meta, placement });
   res.json({ sn, placement });
+});
+
+// POST /overlay/:sn/copy-from/:source — the other mower's photo, placement
+// included: two mowers in one garden share the same picture of it. The
+// target's own photo, if any, is replaced.
+droneOverlayRouter.post('/:sn/copy-from/:source', (req, res) => {
+  const sn = snOr400(req, res); if (!sn) return;
+  const source = String(req.params.source ?? '').trim();
+  if (!SN_RE.test(source) || source === sn) { res.status(400).json({ error: 'invalid source sn' }); return; }
+  const src = readMeta(source);
+  const dir = storageDir();
+  if (!src || !existsSync(path.join(dir, src.file))) { res.status(404).json({ error: 'no overlay on the source mower' }); return; }
+  const file = `${sn}${path.extname(src.file)}`;
+  for (const stale of [`${sn}.jpg`, `${sn}.png`]) {
+    if (stale !== file && existsSync(path.join(dir, stale))) { try { unlinkSync(path.join(dir, stale)); } catch { /* best effort */ } }
+  }
+  copyFileSync(path.join(dir, src.file), path.join(dir, file));
+  const meta: OverlayMeta = { ...src, file, updatedAt: new Date().toISOString() };
+  writeMeta(sn, meta);
+  const { file: _f, ...pub } = meta;
+  res.json({ sn, ...pub });
 });
 
 // DELETE /overlay/:sn — photo and placement.

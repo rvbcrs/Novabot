@@ -499,6 +499,8 @@
     "droneHide": "Dronefoto verbergen",
     "droneRemove": "Dronefoto verwijderen",
     "droneRemoveConfirm": "De dronefoto van deze maaier verwijderen?",
+    "droneCopyFrom": "Overnemen van",
+    "droneCopyConfirm": "De huidige dronefoto van deze maaier wordt vervangen. Doorgaan?",
     "droneOpacity": "Doorzichtigheid",
     "droneRotation": "Draaiing",
     "droneWidth": "Breedte op de grond",

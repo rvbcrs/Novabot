@@ -415,6 +415,8 @@
     "droneHide": "Masquer la photo de drone",
     "droneRemove": "Supprimer la photo de drone",
     "droneRemoveConfirm": "Supprimer la photo de drone de cette tondeuse ?",
+    "droneCopyFrom": "Reprendre depuis",
+    "droneCopyConfirm": "La photo de drone actuelle de cette tondeuse sera remplacée. Continuer ?",
     "droneOpacity": "Opacité",
     "droneRotation": "Rotation",
     "droneWidth": "Largeur au sol",

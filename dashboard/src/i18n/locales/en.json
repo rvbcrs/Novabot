@@ -431,6 +431,8 @@
     "droneHide": "Hide drone photo",
     "droneRemove": "Remove drone photo",
     "droneRemoveConfirm": "Remove the drone photo for this mower?",
+    "droneCopyFrom": "Copy from",
+    "droneCopyConfirm": "This mower's current drone photo will be replaced. Continue?",
     "droneOpacity": "Opacity",
     "droneRotation": "Rotation",
     "droneWidth": "Width on the ground",

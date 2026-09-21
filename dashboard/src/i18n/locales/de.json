@@ -415,6 +415,8 @@
     "droneHide": "Drohnenfoto ausblenden",
     "droneRemove": "Drohnenfoto entfernen",
     "droneRemoveConfirm": "Das Drohnenfoto dieses Mähers entfernen?",
+    "droneCopyFrom": "Übernehmen von",
+    "droneCopyConfirm": "Das aktuelle Drohnenfoto dieses Mähers wird ersetzt. Fortfahren?",
     "droneOpacity": "Deckkraft",
     "droneRotation": "Drehung",
     "droneWidth": "Breite am Boden",
