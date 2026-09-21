@@ -92,7 +92,6 @@ export const SENSORS: SensorDef[] = [
   { field: 'mow_speed',        name: 'Mow Speed',         component: 'sensor', icon: 'mdi:speedometer', state_class: 'measurement' },
   { field: 'working_hours',    name: 'Working Hours',     component: 'sensor', icon: 'mdi:timer', device_class: 'duration', state_class: 'total_increasing', unit: 'h' },
   { field: 'covering_area',    name: 'Covering Area',     component: 'sensor', icon: 'mdi:texture-box', state_class: 'measurement' },
-  { field: 'finished_area',    name: 'Finished Area',     component: 'sensor', icon: 'mdi:check-decagram', state_class: 'measurement' },
   { field: 'cov_direction',    name: 'Mow Direction',     component: 'sensor', icon: 'mdi:compass', state_class: 'measurement', unit: '°' },
   { field: 'path_direction',   name: 'Path Direction',    component: 'sensor', icon: 'mdi:compass-outline', state_class: 'measurement', unit: '°' },
   { field: 'x',                name: 'Position X',        component: 'sensor', icon: 'mdi:map-marker',           entity_category: 'diagnostic' },
@@ -124,7 +123,10 @@ export const SENSORS: SensorDef[] = [
   // Deze state leeft op de maaier en overleeft app-restart: elke MQTT tick
   // bevat de actuele stand.
   { field: 'cover_map_id',          name: 'Cover Map ID',          component: 'sensor', icon: 'mdi:map-marker', entity_category: 'diagnostic' },
-  { field: 'finished_area',         name: 'Finished Sub-Areas',    component: 'sensor', icon: 'mdi:check-all', entity_category: 'diagnostic' },
+  // Eén definitie voor finished_area: de waarde is tekst ("0 1 2 …"), dus
+  // nooit state_class measurement. Een tweede entry bij report_state_robot
+  // won de discovery en HA weigerde de tekst als meetwaarde.
+  { field: 'finished_area',         name: 'Finished Area',         component: 'sensor', icon: 'mdi:check-all', entity_category: 'diagnostic' },
   { field: 'covering_area_id',      name: 'Current Sub-Area',      component: 'sensor', icon: 'mdi:target', entity_category: 'diagnostic' },
   { field: 'covering_area_points',  name: 'Current Sub-Area Pts',  component: 'sensor', icon: 'mdi:dots-horizontal', entity_category: 'diagnostic' },
   { field: 'covering_points',       name: 'Recent Cover Segment',  component: 'sensor', icon: 'mdi:vector-polyline', entity_category: 'diagnostic' },

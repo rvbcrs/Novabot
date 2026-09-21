@@ -11,7 +11,7 @@ vi.mock('../../mqtt/broker.js', () => ({
   lookupMac: vi.fn(),
 }));
 
-import { translateValue, updateDeviceData } from '../../mqtt/sensorData.js';
+import { SENSORS, translateValue, updateDeviceData } from '../../mqtt/sensorData.js';
 import {
   markFrameUnvalidated, clearFrameUnvalidated, isFrameUnvalidated, noteAutoRecharge,
 } from '../../services/frameValidation.js';
@@ -109,5 +109,21 @@ describe('frame_unvalidated lifecycle in updateDeviceData', () => {
     markFrameUnvalidated(SN);
     const changes = updateDeviceData(SN, Buffer.from(JSON.stringify({ report_state_robot: { battery_power: 80 } })));
     expect(changes?.get('frame_unvalidated')).toBe('1');
+  });
+});
+
+// SENSORS.find() takes the first match for discovery, so a second entry for
+// the same field is silently dead, and once contradicted it: finished_area was
+// published as a measurement while its value is a list of sub-area indices,
+// which HA refuses (user report 2026-09-19).
+describe('sensor definitions', () => {
+  it('defines every field once', () => {
+    const seen = new Set<string>();
+    const dupes = SENSORS.map(s => s.field).filter(f => seen.size === seen.add(f).size);
+    expect(dupes).toEqual([]);
+  });
+
+  it('does not call the finished sub-area list a measurement', () => {
+    expect(SENSORS.find(s => s.field === 'finished_area')?.state_class).toBeUndefined();
   });
 });
