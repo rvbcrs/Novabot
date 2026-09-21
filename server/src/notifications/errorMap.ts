@@ -48,10 +48,13 @@ export const ERROR_MAP: Record<number, ErrorEntry> = {
   132: { type: 'connection_lost', message: 'LoRa disconnect. Localization may be degraded.' }, // 0x84
 
   // ── Localization collapse (0x82) ────────────────────────────────
-  // robot_decision aborts the running task ("Localization quality is very
-  // bad!!!"). Seen live on a GNSS-jammed day (#118, 2026-09-19): DGPS fix,
-  // loc_quality ~20 %. Stock behaviour, unchanged by the custom builds.
-  130: { type: 'gps_weak', message: 'Localization quality collapsed and the task was stopped. Wait for RTK Fixed (open sky, no GNSS interference) and start again.' }, // 0x82
+  // Stock robot_decision (checkLocalizationStatus / monitorErrorHandle, v6.0.2
+  // disassembly, untouched by the custom builds): loc confidence < 40 while
+  // mowing → work status 61 "Loc-error recover" + LocRecoverMoving action; back
+  // to ≥ 89 in time → coverContinueDeal resumes by itself. 130 is only raised
+  // when that fails: confidence ≤ 10, or the recover action ends below 89.
+  // Seen live on a GNSS-jammed day (#118, 2026-09-19).
+  130: { type: 'gps_weak', message: 'Localization quality collapsed and the mower could not recover it, so the task was stopped. Move it under open sky, wait for RTK Fixed and start again.' }, // 0x82
 
   // ── Initialization (0x85) ───────────────────────────────────────
   133: { type: 'initialization_error', message: 'Mower not yet initialized. Wait one minute and retry.' }, // 0x85
