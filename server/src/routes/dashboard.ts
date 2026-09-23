@@ -21,7 +21,7 @@ import { getRecentLogs, forwardToDashboard, onLogEntry, emitMapsChanged } from '
 import { otaSessionStarted, getOtaSession } from '../mqtt/otaSession.js';
 import { requestMapList, requestMapOutline, publishToDevice, awaitCommand, publishRawToDevice, publishEncryptedOnTopic, publishToTopic, goToChargePayload, getNextCmdNum, patchLatestZipChargingPose, republishObstacleDetection, publishToExtended, onExtendedResponse, offExtendedResponse } from '../mqtt/mapSync.js';
 import { publishExtendedCommand } from '../mqtt/extendedCommands.js';
-import { disarmEdgeWatch, disarmEdgeWatchForSchedule } from '../services/scheduleRunner.js';
+import { disarmEdgeWatch, disarmEdgeWatchForSchedule, renderScheduleReason } from '../services/scheduleRunner.js';
 import { isFrameUnvalidated, markFrameUnvalidated, clearFrameUnvalidated, setReanchorRelocked, isReanchorRelocked } from '../services/frameValidation.js';
 import { softRestartBlockedReason, sendSoftRestart } from '../services/softRestart.js';
 import { gpsSpreadMeters, medianGps, type LatLng } from '../services/reanchorGps.js';
@@ -109,6 +109,7 @@ export function serializeEdgeDays(days: number[] | null | undefined): string | n
 }
 
 import { diagnoseConnection } from '../services/connectionDiagnosis.js';
+import { langOf, reqT, M, renderMsg, translator, type Msg, type Translate, type Lang } from '../services/serverText.js';
 import { droneOverlayRouter } from './droneOverlay.js';
 import { connectionEventRepo, mowProgressRepo, dockSamplesRepo } from '../db/repositories/index.js';
 import { computeDockDrift } from '../services/dockDrift.js';
@@ -147,13 +148,10 @@ dashboardRouter.get('/diagnose/:sn', async (req: Request, res: Response) => {
     res.status(400).json({ error: 'invalid sn' });
     return;
   }
-  // De uitleg komt uit de server, dus die moet weten in welke taal. ?lang
-  // wint van de browserkop: het dashboard heeft een eigen taalkeuze die niet
-  // hoeft te kloppen met de taal van de browser.
-  const lang = String(req.query.lang ?? '') || req.headers['accept-language'] || '';
+  // De uitleg komt uit de server, dus die moet weten in welke taal.
   res.json(await diagnoseConnection(sn, Date.now(), {
     snapshot: getDeviceSnapshot(sn),
-    lang: String(lang),
+    lang: langOf(req),
   }));
 });
 
@@ -176,12 +174,13 @@ dashboardRouter.get('/release-notes', (_req: Request, res: Response) => {
 // Mirrors the admin panel's /api/admin-status/check-server-update but is
 // reachable from the dashboard (LAN unauthenticated / external authenticated).
 // Reuses the admin module's checker (and its 5-minute Docker Hub cache).
-dashboardRouter.get('/server-update', async (_req: Request, res: Response) => {
+dashboardRouter.get('/server-update', async (req: Request, res: Response) => {
+  const T = reqT(req);
   try {
     const { checkServerUpdate } = await import('./adminStatus.js');
     res.json(await checkServerUpdate());
   } catch (err) {
-    res.status(500).json({ error: err instanceof Error ? err.message : 'update check failed' });
+    res.status(500).json({ error: err instanceof Error ? err.message : T`Updatecontrole mislukt` });
   }
 });
 
@@ -202,17 +201,18 @@ dashboardRouter.get('/server-update', async (_req: Request, res: Response) => {
 // Error 140) and keeps mqtt_node alive so the mower stays online. Refused with
 // 409 while the mower is actively mowing/working unless `{ force: true }`.
 dashboardRouter.post('/soft-restart/:sn', (req: Request, res: Response) => {
+  const T = reqT(req);
   const { sn } = req.params;
   const force = (req.body as { force?: boolean } | undefined)?.force === true;
-  if (rejectUnlessOpenNova(sn, res, 'Soft restart')) return;
-  const blocked = softRestartBlockedReason(sn);
+  if (rejectUnlessOpenNova(sn, req, res, M`Soft restart`)) return;
+  const blocked = softRestartBlockedReason(sn, T);
   if (blocked && !force) {
     res.status(409).json({ ok: false, error: blocked });
     return;
   }
   sendSoftRestart(sn);
   console.log(`[soft-restart] ${sn}: soft_restart dispatched (force=${force}, ${blocked ?? 'idle/charging'})`);
-  res.json({ ok: true, message: 'soft restart dispatched; the mower goes offline ~30-60s then returns' });
+  res.json({ ok: true, message: T`Soft restart verstuurd; de maaier gaat ~30-60 s offline en komt dan terug` });
 });
 
 // GET /api/dashboard/system/health — mDNS advertiser state, server uptime, per-mower cache status
@@ -439,6 +439,7 @@ dashboardRouter.get('/unbound-devices', (_req: Request, res: Response) => {
 
 // POST /api/dashboard/bind-device — koppel een device aan het account (enkelvoudige gebruiker)
 dashboardRouter.post('/bind-device', async (req: Request, res: Response) => {
+  const T = reqT(req);
   const { sn, name } = req.body as { sn?: string; name?: string };
   if (!sn) { res.status(400).json({ ok: false, error: 'sn required' }); return; }
 
@@ -450,7 +451,7 @@ dashboardRouter.post('/bind-device', async (req: Request, res: Response) => {
     const hash = await bcrypt.hash('admin', 10);
     userRepo.createIfMissing(appUserId, 'admin@local', hash, 'admin');
     user = userRepo.findFirst();
-    if (!user) { res.status(500).json({ ok: false, error: 'Could not create user' }); return; }
+    if (!user) { res.status(500).json({ ok: false, error: T`Kon gebruiker niet aanmaken` }); return; }
     // Same is_admin gap as setup.ts /skip — createIfMissing skips the
     // is_admin column. Flip it on the actual stored row so the admin
     // page works on the very first login after a factory reset.
@@ -574,22 +575,24 @@ dashboardRouter.delete('/devices/:sn', (req: Request, res: Response) => {
 // dashboard-API en werkt direct na een rebuild zonder re-login. Returns 404
 // als de SN niet bestaat in equipment.
 dashboardRouter.patch('/equipment/:sn/nickname', (req: Request, res: Response) => {
+  const T = reqT(req);
   const { sn } = req.params;
   const { nickname } = req.body as { nickname?: string };
   const eq = equipmentRepo.findByMowerSn(sn);
-  if (!eq) { res.status(404).json({ error: 'Equipment not found' }); return; }
-  if (!eq.user_id) { res.status(409).json({ error: 'Equipment has no owner' }); return; }
+  if (!eq) { res.status(404).json({ error: T`Apparaat niet gevonden` }); return; }
+  if (!eq.user_id) { res.status(409).json({ error: T`Apparaat heeft geen eigenaar` }); return; }
   equipmentRepo.updateNickNameByMowerSnAndUser(sn, eq.user_id, (nickname ?? '').trim() || null);
   res.json({ ok: true });
 });
 
 // PATCH /api/dashboard/equipment/:sn/mower-ip — sla maaier IP op voor SSH upload
 dashboardRouter.patch('/equipment/:sn/mower-ip', (req: Request, res: Response) => {
+  const T = reqT(req);
   const { sn } = req.params;
   const { ip } = req.body as { ip: string };
   if (!ip || typeof ip !== 'string') { res.status(400).json({ error: 'ip required' }); return; }
   const changes = equipmentRepo.updateMowerIp(sn, ip.trim());
-  if (changes === 0) { res.status(404).json({ error: 'Maaier niet gevonden in equipment' }); return; }
+  if (changes === 0) { res.status(404).json({ error: T`Maaier niet gevonden in equipment` }); return; }
   res.json({ ok: true });
 });
 
@@ -872,6 +875,7 @@ function sendGrid(res: Response, display: Buffer, raw: boolean): void {
 // een eventuele actieve (nog niet gefinaliseerde) live-sessie-laag, zodat de
 // viewer tijdens het scannen al bijwerkt. 404 pas als bèide lagen ontbreken.
 dashboardRouter.get('/terrain/:sn', (req: Request, res: Response) => {
+  const T = reqT(req);
   const { sn } = req.params;
   if (!/^LFI[A-Z]\d+$/.test(sn)) { res.status(400).json({ error: 'invalid sn' }); return; }
   const dir = path.resolve(process.env.STORAGE_PATH ?? './storage', 'terrain');
@@ -879,19 +883,20 @@ dashboardRouter.get('/terrain/:sn', (req: Request, res: Response) => {
   const activePath = path.join(dir, `${sn}.active.tgr`);
   const base = fs.existsSync(tgmPath) ? fs.readFileSync(tgmPath) : null;
   const active = fs.existsSync(activePath) ? fs.readFileSync(activePath) : null;
-  if (!base && !active) { res.status(404).json({ error: 'geen terrein voor deze maaier' }); return; }
+  if (!base && !active) { res.status(404).json({ error: T`geen terrein voor deze maaier` }); return; }
   try {
     const merged = active ? mergeIntoTgm1(base, active) : base!;
     sendGrid(res, tgm1ToDisplayTgr1(merged), req.query.raw === '1');
   } catch (err) {
     console.error(`[TERRAIN] display ${sn} faalde:`, err);
-    res.status(500).json({ error: 'terreindata corrupt' });
+    res.status(500).json({ error: T`terreindata corrupt` });
   }
 });
 
 // GET /api/dashboard/terrain-objects/:sn — display-objectgrid (TGO1), zelfde
 // merge/raw/404-semantiek als /terrain/:sn maar dan voor de TGMO-laag.
 dashboardRouter.get('/terrain-objects/:sn', (req: Request, res: Response) => {
+  const T = reqT(req);
   const { sn } = req.params;
   if (!/^LFI[A-Z]\d+$/.test(sn)) { res.status(400).json({ error: 'invalid sn' }); return; }
   try {
@@ -899,11 +904,11 @@ dashboardRouter.get('/terrain-objects/:sn', (req: Request, res: Response) => {
     // runRecognition (Task 7) gebruikt — geen kopie-implementatie die kan
     // divergeren tussen viewer en batch-job.
     const merged = loadMergedTgmo(sn);
-    if (!merged) { res.status(404).json({ error: 'geen objecten voor deze maaier' }); return; }
+    if (!merged) { res.status(404).json({ error: T`geen objecten voor deze maaier` }); return; }
     sendGrid(res, tgmoToDisplayTgo1(merged), req.query.raw === '1');
   } catch (err) {
     console.error(`[TERRAIN] object-display ${sn} faalde:`, err);
-    res.status(500).json({ error: 'objectdata corrupt' });
+    res.status(500).json({ error: T`objectdata corrupt` });
   }
 });
 
@@ -970,6 +975,7 @@ dashboardRouter.get('/terrain-clusters/:sn', (req: Request, res: Response) => {
 // bestandsnaam-whitelist (alleen cijfers/komma's/mintekens + ".jpg") is de
 // path-traversal-guard — geen DB-lookup nodig om de bytes te serveren.
 dashboardRouter.get('/terrain-crops/:sn/:file', (req: Request, res: Response) => {
+  const T = reqT(req);
   const { sn, file } = req.params;
   // 't'-prefix hoort bij tegel-sleutels (clusterObjects knipt grote
   // componenten op); zonder die letter kregen alle tegelfoto's een 400.
@@ -978,7 +984,7 @@ dashboardRouter.get('/terrain-crops/:sn/:file', (req: Request, res: Response) =>
   }
   const dir = path.resolve(process.env.STORAGE_PATH ?? './storage', 'terrain');
   const filePath = path.join(dir, 'crops', sn, file);
-  if (!fs.existsSync(filePath)) { res.status(404).json({ error: 'foto niet gevonden' }); return; }
+  if (!fs.existsSync(filePath)) { res.status(404).json({ error: T`foto niet gevonden` }); return; }
   res.type('image/jpeg').send(fs.readFileSync(filePath));
 });
 
@@ -994,10 +1000,11 @@ dashboardRouter.get('/terrain-models', (_req: Request, res: Response) => {
 });
 
 dashboardRouter.get('/terrain-models/:file', (req: Request, res: Response) => {
+  const T = reqT(req);
   const { file } = req.params;
   if (!/^[a-z0-9_-]{1,40}\.glb$/.test(file)) { res.status(400).json({ error: 'invalid name' }); return; }
   const fp = path.join(CUSTOM_MODELS_DIR(), file);
-  if (!fs.existsSync(fp)) { res.status(404).json({ error: 'model niet gevonden' }); return; }
+  if (!fs.existsSync(fp)) { res.status(404).json({ error: T`model niet gevonden` }); return; }
   res.type('model/gltf-binary').send(fs.readFileSync(fp));
 });
 
@@ -1005,13 +1012,14 @@ dashboardRouter.post(
   '/terrain-models/upload',
   express.raw({ type: 'application/octet-stream', limit: '15mb' }),
   (req: Request, res: Response) => {
+    const T = reqT(req);
     const naamRaw = String(req.query.name ?? '');
     const naam = naamRaw.toLowerCase().replace(/\.glb$/, '').replace(/[^a-z0-9_-]/g, '-').slice(0, 40);
-    if (!naam) { res.status(400).json({ error: 'naam vereist' }); return; }
+    if (!naam) { res.status(400).json({ error: T`naam vereist` }); return; }
     const body = req.body as Buffer;
     // GLB magic: 'glTF' (0x676c5446)
     if (!Buffer.isBuffer(body) || body.length < 12 || body.toString('ascii', 0, 4) !== 'glTF') {
-      res.status(400).json({ error: 'geen geldig GLB-bestand' }); return;
+      res.status(400).json({ error: T`geen geldig GLB-bestand` }); return;
     }
     const dir = CUSTOM_MODELS_DIR();
     fs.mkdirSync(dir, { recursive: true });
@@ -1024,16 +1032,17 @@ dashboardRouter.post(
 // POST /api/dashboard/terrain-clusters/:sn/:key/model — kies (of wis) het
 // custom 3D-model voor het hele object (alle tegels van de groep).
 dashboardRouter.post('/terrain-clusters/:sn/:key/model', (req: Request, res: Response) => {
+  const T = reqT(req);
   const { sn, key } = req.params;
   if (!/^LFI[A-Z]\d+$/.test(sn)) { res.status(400).json({ error: 'invalid sn' }); return; }
   const file = (req.body ?? {}).file as string | null | undefined;
   if (file != null) {
     if (!/^[a-z0-9_-]{1,40}\.glb$/.test(file) || !fs.existsSync(path.join(CUSTOM_MODELS_DIR(), file))) {
-      res.status(400).json({ error: 'onbekend model' }); return;
+      res.status(400).json({ error: T`onbekend model` }); return;
     }
   }
   const rows = terrainClusterRepo.findBySn(sn);
-  if (!rows.some((r) => r.cluster_key === key)) { res.status(404).json({ error: 'cluster niet gevonden' }); return; }
+  if (!rows.some((r) => r.cluster_key === key)) { res.status(404).json({ error: T`cluster niet gevonden` }); return; }
   const keys = groupKeysFor(rows, key);
   for (const k of keys) terrainClusterRepo.setModelFile(sn, k, file ?? null);
   res.json({ ok: true, updated: keys.length });
@@ -1042,6 +1051,7 @@ dashboardRouter.post('/terrain-clusters/:sn/:key/model', (req: Request, res: Res
 // POST /api/dashboard/terrain-clusters/:sn/:key/display — weergave-overrides
 // (voetafdruk/hoogte/z-verschuiving) voor het hele object; null = automatisch.
 dashboardRouter.post('/terrain-clusters/:sn/:key/display', (req: Request, res: Response) => {
+  const T = reqT(req);
   const { sn, key } = req.params;
   if (!/^LFI[A-Z]\d+$/.test(sn)) { res.status(400).json({ error: 'invalid sn' }); return; }
   const b = (req.body ?? {}) as { size?: unknown; height?: unknown; zOffset?: unknown };
@@ -1061,7 +1071,7 @@ dashboardRouter.post('/terrain-clusters/:sn/:key/display', (req: Request, res: R
   const rotRaw = clamp((b as { rotationDeg?: unknown }).rotationDeg, -360, 360);
   const rot = rotRaw == null ? null : ((rotRaw % 360) + 360) % 360;
   const rows = terrainClusterRepo.findBySn(sn);
-  if (!rows.some((r) => r.cluster_key === key)) { res.status(404).json({ error: 'cluster niet gevonden' }); return; }
+  if (!rows.some((r) => r.cluster_key === key)) { res.status(404).json({ error: T`cluster niet gevonden` }); return; }
   const keys = groupKeysFor(rows, key);
   for (const k of keys) terrainClusterRepo.setDisplay(sn, k, size, height, z, x, y, rot);
   res.json({ ok: true, updated: keys.length });
@@ -1070,17 +1080,18 @@ dashboardRouter.post('/terrain-clusters/:sn/:key/display', (req: Request, res: R
 // POST /api/dashboard/terrain-models/:file/rename — geüpload model hernoemen;
 // alle objecten die het gebruiken verwijzen daarna naar de nieuwe naam.
 dashboardRouter.post('/terrain-models/:file/rename', (req: Request, res: Response) => {
+  const T = reqT(req);
   const { file } = req.params;
   if (!/^[a-z0-9_-]{1,40}\.glb$/.test(file)) { res.status(400).json({ error: 'invalid name' }); return; }
   const naamRaw = String((req.body ?? {}).name ?? '');
   const naam = naamRaw.toLowerCase().replace(/\.glb$/, '').replace(/[^a-z0-9_-]/g, '-').slice(0, 40);
-  if (!naam) { res.status(400).json({ error: 'naam vereist' }); return; }
+  if (!naam) { res.status(400).json({ error: T`naam vereist` }); return; }
   const dir = CUSTOM_MODELS_DIR();
   const oudPad = path.join(dir, file);
-  if (!fs.existsSync(oudPad)) { res.status(404).json({ error: 'model niet gevonden' }); return; }
+  if (!fs.existsSync(oudPad)) { res.status(404).json({ error: T`model niet gevonden` }); return; }
   const nieuwFile = `${naam}.glb`;
   if (nieuwFile !== file && fs.existsSync(path.join(dir, nieuwFile))) {
-    res.status(409).json({ error: 'naam bestaat al' }); return;
+    res.status(409).json({ error: T`naam bestaat al` }); return;
   }
   fs.renameSync(oudPad, path.join(dir, nieuwFile));
   terrainClusterRepo.renameModelFile(file, nieuwFile);
@@ -1092,6 +1103,7 @@ dashboardRouter.post('/terrain-models/:file/rename', (req: Request, res: Respons
 // opruiming spaart die (handmatige objecten hebben geen voxel-cluster als
 // bestaansbewijs) en de herkenning classificeert ze nooit (user_override).
 dashboardRouter.post('/terrain-clusters/:sn/add', (req: Request, res: Response) => {
+  const T = reqT(req);
   const { sn } = req.params;
   if (!/^LFI[A-Z]\d+$/.test(sn)) { res.status(400).json({ error: 'invalid sn' }); return; }
   const body = (req.body ?? {}) as { x?: unknown; y?: unknown; className?: unknown; size?: unknown };
@@ -1103,7 +1115,7 @@ dashboardRouter.post('/terrain-clusters/:sn/add', (req: Request, res: Response) 
     res.status(400).json({ error: 'invalid coords' }); return;
   }
   if (!LABELS.some((l) => l.prompt === className)) {
-    res.status(400).json({ error: 'onbekende className' }); return;
+    res.status(400).json({ error: T`onbekende className` }); return;
   }
   // sleutel raster-stabiel op 10cm zodat dubbel klikken op dezelfde plek
   // hetzelfde object bijwerkt i.p.v. een tweede toe te voegen
@@ -1122,6 +1134,7 @@ dashboardRouter.post('/terrain-clusters/:sn/add', (req: Request, res: Response) 
 // correctie van de classificatie. className moet in LABELS voorkomen, of
 // null om de override weer te wissen (model-classificatie herneemt het dan).
 dashboardRouter.post('/terrain-clusters/:sn/:key/override', (req: Request, res: Response) => {
+  const T = reqT(req);
   const { sn, key } = req.params;
   if (!/^LFI[A-Z]\d+$/.test(sn)) { res.status(400).json({ error: 'invalid sn' }); return; }
   const className = (req.body ?? {}).className as string | null | undefined;
@@ -1129,11 +1142,11 @@ dashboardRouter.post('/terrain-clusters/:sn/:key/override', (req: Request, res: 
   // de DB staan (zodat her-classificatie hem niet laat herleven) maar wordt
   // uit elke weergave gefilterd.
   if (className !== null && className !== '__none__' && !LABELS.some((l) => l.prompt === className)) {
-    res.status(400).json({ error: 'onbekende className' }); return;
+    res.status(400).json({ error: T`onbekende className` }); return;
   }
   const rows = terrainClusterRepo.findBySn(sn);
   if (!rows.some((r) => r.cluster_key === key)) {
-    res.status(404).json({ error: 'cluster niet gevonden' }); return;
+    res.status(404).json({ error: T`cluster niet gevonden` }); return;
   }
   // Correctie geldt voor het hele object: alle tegels van dezelfde groep.
   const keys = groupKeysFor(rows, key);
@@ -1254,11 +1267,11 @@ dashboardRouter.put('/coverage-planner-radius/:sn', (req: Request, res: Response
   const body = (req.body ?? {}) as { radius?: unknown; force?: unknown; applyToMower?: unknown; apply_to_mower?: unknown };
   const radius = parseCoveragePlannerRadius(body.radius);
   if (radius === null) {
-    res.status(400).json({ ok: false, error: coveragePlannerRadiusError() });
+    res.status(400).json({ ok: false, error: coveragePlannerRadiusError(reqT(req)) });
     return;
   }
 
-  if (rejectUnlessOpenNova(sn, res, 'De coverage-planner radius')) return;
+  if (rejectUnlessOpenNova(sn, req, res, M`De coverage-planner radius`)) return;
   const formatted = formatCoveragePlannerRadius(radius);
   if (!deviceCache.has(sn)) deviceCache.set(sn, new Map());
   deviceCache.get(sn)!.set(COVERAGE_PLANNER_RADIUS_KEY, formatted);
@@ -1329,6 +1342,7 @@ function isCoverageActive(sn: string): boolean {
 // voorbereidt, zodat de echte preview lijntjes getoond worden i.p.v. de
 // default rechte strepen in de richting van path_direction.
 dashboardRouter.post('/refresh-preview-path/:sn', async (req: Request, res: Response) => {
+  const T = reqT(req);
   const { sn } = req.params;
   const body = (req.body ?? {}) as {
     map_ids?: number | number[];
@@ -1361,7 +1375,7 @@ dashboardRouter.post('/refresh-preview-path/:sn', async (req: Request, res: Resp
   }
 
   if (!isDeviceOnline(sn)) {
-    res.status(503).json({ ok: false, error: 'device offline' });
+    res.status(503).json({ ok: false, error: T`apparaat offline` });
     return;
   }
 
@@ -1374,7 +1388,7 @@ dashboardRouter.post('/refresh-preview-path/:sn', async (req: Request, res: Resp
     res.status(409).json({
       ok: false,
       source: 'cache',
-      error: 'coverage task active — generate_preview would error-128 the mower',
+      error: T`Er loopt een maaitaak: generate_preview zou de maaier error 128 geven`,
       paths,
       count: paths.length,
       cachedAt: meta?.cachedAt,
@@ -1460,7 +1474,7 @@ dashboardRouter.post('/refresh-preview-path/:sn', async (req: Request, res: Resp
       res.status(502).json({
         ok: false,
         source: 'mower',
-        error: ack.error ?? 'preview generation failed',
+        error: ack.error ?? T`Genereren van de preview mislukt`,
         cmd_num: cmdNum,
         generateAckMs,
         durationMs: Date.now() - startedAt,
@@ -1554,7 +1568,7 @@ dashboardRouter.post('/refresh-preview-path/:sn', async (req: Request, res: Resp
       res.status(504).json({
         ok: false,
         source: 'mower',
-        error: 'preview path fetch timed out (15s) — the map may be large/slow to serialise, or the mower did not return the path in time',
+        error: T`Ophalen van het preview-pad duurde te lang (15 s): de kaart is misschien groot of traag, of de maaier gaf het pad niet op tijd terug`,
         cmd_num: cmdNum,
         ackTimeout: ack.timeout === true,
         generateAckMs,
@@ -1571,7 +1585,7 @@ dashboardRouter.post('/refresh-preview-path/:sn', async (req: Request, res: Resp
       res.status(502).json({
         ok: false,
         source: 'mower',
-        error: 'mower returned an empty preview path',
+        error: T`De maaier gaf een leeg preview-pad terug`,
         paths,
         count: paths.length,
         cmd_num: cmdNum,
@@ -1604,9 +1618,10 @@ dashboardRouter.post('/refresh-preview-path/:sn', async (req: Request, res: Resp
 // POST /api/dashboard/refresh-plan-path/:sn — zelfde patroon voor live plan path.
 // Gebruik tijdens mowing als je de echte paden (niet de preview) wil ophalen.
 dashboardRouter.post('/refresh-plan-path/:sn', async (req: Request, res: Response) => {
+  const T = reqT(req);
   const { sn } = req.params;
   if (!isDeviceOnline(sn)) {
-    res.status(503).json({ ok: false, error: 'device offline' });
+    res.status(503).json({ ok: false, error: T`apparaat offline` });
     return;
   }
   try {
@@ -1651,7 +1666,7 @@ dashboardRouter.post('/refresh-plan-path/:sn', async (req: Request, res: Respons
       }
     });
     if (!content) {
-      res.status(504).json({ ok: false, error: 'no plan path response within timeout' });
+      res.status(504).json({ ok: false, error: T`Geen antwoord met het maaipad binnen de tijd` });
       return;
     }
     handlePlannedPathRespond(sn, content);
@@ -1721,29 +1736,31 @@ dashboardRouter.get('/logs', (_req: Request, res: Response) => {
 
 // POST /api/dashboard/maps/:sn/request — handmatig kaarten opvragen van maaier via MQTT
 dashboardRouter.post('/maps/:sn/request', (req: Request, res: Response) => {
+  const T = reqT(req);
   const { sn } = req.params;
   if (!isDeviceOnline(sn)) {
-    res.status(404).json({ error: 'Device is offline' });
+    res.status(404).json({ error: T`Apparaat is offline` });
     return;
   }
   requestMapList(sn);
-  res.json({ ok: true, message: `get_map_list gestuurd naar ${sn}` });
+  res.json({ ok: true, message: T`get_map_list gestuurd naar ${sn}` });
 });
 
 // POST /api/dashboard/maps/:sn/request-outline — handmatig kaart outline opvragen
 dashboardRouter.post('/maps/:sn/request-outline', (req: Request, res: Response) => {
+  const T = reqT(req);
   const { sn } = req.params;
   const { mapId } = req.body as { mapId?: string };
   if (!mapId) {
-    res.status(400).json({ error: 'mapId is vereist' });
+    res.status(400).json({ error: T`mapId is vereist` });
     return;
   }
   if (!isDeviceOnline(sn)) {
-    res.status(404).json({ error: 'Device is offline' });
+    res.status(404).json({ error: T`Apparaat is offline` });
     return;
   }
   requestMapOutline(sn, mapId);
-  res.json({ ok: true, message: `get_map_outline gestuurd naar ${sn} voor kaart ${mapId}` });
+  res.json({ ok: true, message: T`get_map_outline gestuurd naar ${sn} voor kaart ${mapId}` });
 });
 
 // POST /api/dashboard/maps/:sn — nieuwe kaart aanmaken (getekend op dashboard)
@@ -1759,18 +1776,22 @@ dashboardRouter.post('/maps/:sn/request-outline', (req: Request, res: Response) 
 // 409 + reason 'unsupported_firmware' + msgKey 'requiresOpenNovaFirmware'.
 // Demo-modus heeft geen maaier en blijft vrij. Live sw_version telt als fallback
 // zodat een net geflashte maaier niet op een verouderde DB-rij wordt geweigerd.
-function rejectUnlessOpenNova(sn: string, res: Response, what: string): boolean {
+// `what` is a Msg so each reader gets the refused action in their own language.
+function rejectUnlessOpenNova(sn: string, req: Request, res: Response, what: Msg): boolean {
   if (isDemoMode(sn) || isOpenNovaMower(sn, deviceCache.get(sn))) return false;
+  const T = reqT(req);
+  const action = renderMsg(langOf(req), what);
   res.status(409).json({
     ok: false,
     reason: UNSUPPORTED_FIRMWARE_REASON,
     msgKey: UNSUPPORTED_FIRMWARE_MSG_KEY,
-    error: `${what} vereist OpenNova custom firmware; stock firmware kan dit commando niet ontvangen.`,
+    error: T`${action} vereist OpenNova custom firmware; stock firmware kan dit commando niet ontvangen.`,
   });
   return true;
 }
 
 dashboardRouter.post('/maps/:sn', (req: Request, res: Response) => {
+  const T = reqT(req);
   const { sn } = req.params;
   const { mapName, mapArea, mapType } = req.body as {
     mapName?: string;
@@ -1781,10 +1802,10 @@ dashboardRouter.post('/maps/:sn', (req: Request, res: Response) => {
   // Een kanaal is een lijn tussen twee gebieden; een vlak heeft 3 punten nodig.
   const minPoints = mapType === 'unicom' ? 2 : 3;
   if (!mapArea || !Array.isArray(mapArea) || mapArea.length < minPoints) {
-    res.status(400).json({ error: `mapArea met minimaal ${minPoints} punten is vereist` });
+    res.status(400).json({ error: T`mapArea met minimaal ${minPoints} punten is vereist` });
     return;
   }
-  if (rejectUnlessOpenNova(sn, res, 'Een gebied tekenen')) return;
+  if (rejectUnlessOpenNova(sn, req, res, M`Een gebied tekenen`)) return;
 
   // Detecteer of input lokale meters of GPS is
   const isLocal = mapArea[0] && 'x' in mapArea[0] && mapArea[0].x !== undefined;
@@ -1796,7 +1817,7 @@ dashboardRouter.post('/maps/:sn', (req: Request, res: Response) => {
     // GPS input — converteer naar lokaal
     const chargerGps = mapRepo.getChargerGps(sn);
     if (!chargerGps) {
-      res.status(400).json({ error: 'Charger positie onbekend — plaats eerst de charger op de kaart' });
+      res.status(400).json({ error: T`Positie van het laadstation onbekend: plaats eerst het laadstation op de kaart` });
       return;
     }
     localPoints = mapArea.map(p => gpsToLocal({ lat: p.lat!, lng: p.lng! }, chargerGps));
@@ -1819,7 +1840,7 @@ dashboardRouter.post('/maps/:sn', (req: Request, res: Response) => {
   // Lege naam = geen alias: dan blijft de canonieke slotnaam de weergavenaam,
   // die maaier, ZIP en dashboard allemaal delen.
   const alias = (mapName ?? '').trim() || null;
-  const naming = canonicalForDrawnMap(sn, typeSlug as 'work' | 'obstacle' | 'unicom', localPoints, alias);
+  const naming = canonicalForDrawnMap(sn, typeSlug as 'work' | 'obstacle' | 'unicom', localPoints, alias, T);
   if (!naming.ok) {
     res.status(422).json({ ok: false, reason: 'canonical_name_underivable', error: naming.error });
     return;
@@ -1869,6 +1890,7 @@ dashboardRouter.post('/maps/:sn', (req: Request, res: Response) => {
 
 // PATCH /api/dashboard/maps/:sn/:mapId — hernoem of bewerk een kaart
 dashboardRouter.patch('/maps/:sn/:mapId', (req: Request, res: Response) => {
+  const T = reqT(req);
   const { sn, mapId } = req.params;
   const { mapName, mapArea } = req.body as {
     mapName?: string;
@@ -1877,14 +1899,14 @@ dashboardRouter.patch('/maps/:sn/:mapId', (req: Request, res: Response) => {
 
   const row = mapRepo.findByIdAndMower(mapId, sn);
   if (!row) {
-    res.status(404).json({ error: 'Kaart niet gevonden' });
+    res.status(404).json({ error: T`Kaart niet gevonden` });
     return;
   }
 
   // Update polygon punten als meegegeven
   // Accepteert lokale meters {x,y} direct OF GPS {lat,lng} (backwards compat)
   if (mapArea && Array.isArray(mapArea) && mapArea.length >= 3) {
-    if (rejectUnlessOpenNova(sn, res, 'Een gebied verplaatsen')) return;
+    if (rejectUnlessOpenNova(sn, req, res, M`Een gebied verplaatsen`)) return;
     const isLocal = 'x' in mapArea[0] && mapArea[0].x !== undefined;
     let localPoints: LocalPoint[];
 
@@ -1893,7 +1915,7 @@ dashboardRouter.patch('/maps/:sn/:mapId', (req: Request, res: Response) => {
     } else {
       const chargerGps = mapRepo.getChargerGps(sn);
       if (!chargerGps) {
-        res.status(400).json({ error: 'Charger positie onbekend' });
+        res.status(400).json({ error: T`Positie van het laadstation onbekend` });
         return;
       }
       localPoints = mapArea.map(p => gpsToLocal({ lat: p.lat!, lng: p.lng! }, chargerGps));
@@ -1937,11 +1959,12 @@ export function mowerFileName(row: { canonical_name?: string | null; map_name?: 
 
 // DELETE /api/dashboard/maps/:sn/:mapId — verwijder een kaart (incl. bijbehorende obstakels en unicom-kanalen)
 dashboardRouter.delete('/maps/:sn/:mapId', async (req: Request, res: Response) => {
+  const T = reqT(req);
   const { sn, mapId } = req.params;
 
   const row = mapRepo.findByIdAndMower(mapId, sn);
   if (!row) {
-    res.status(404).json({ error: 'Kaart niet gevonden' });
+    res.status(404).json({ error: T`Kaart niet gevonden` });
     return;
   }
 
@@ -1954,7 +1977,7 @@ dashboardRouter.delete('/maps/:sn/:mapId', async (req: Request, res: Response) =
     res.status(409).json({
       ok: false,
       reason: 'dock_channel',
-      error: 'This is the channel from the zone to the charging station. The mower writes it itself when the charge position is saved and every other polygon is anchored to its first point, so it cannot be deleted. If the charging station moved, use Recalibrate charging pose or Re-anchor instead.',
+      error: T`Dit is het kanaal van de zone naar het laadstation. De maaier schrijft het zelf wanneer de laadpositie wordt opgeslagen en elke andere polygoon is aan het eerste punt ervan verankerd, dus het kan niet worden verwijderd. Is het laadstation verplaatst, gebruik dan Laadpositie herijken of Her-ankeren.`,
       msgKey: 'mapDeleteErrDockChannel',
     });
     return;
@@ -1970,7 +1993,7 @@ dashboardRouter.delete('/maps/:sn/:mapId', async (req: Request, res: Response) =
   const force = req.query.force === '1' || (req.body as { force?: boolean })?.force === true;
   if (!isDeviceOnline(sn) && !force) {
     res.status(409).json({
-      error: 'mower offline — delete needs an online mower so it can wipe the map from disk',
+      error: T`Maaier offline: verwijderen vereist een online maaier, zodat die de kaart van zijn schijf kan wissen`,
       offline: true,
       mowerSn: sn,
     });
@@ -2010,7 +2033,7 @@ dashboardRouter.delete('/maps/:sn/:mapId', async (req: Request, res: Response) =
         ok: false,
         reason: 'mower_busy',
         workStatus,
-        error: 'De maaier is bezig; stop de taak eerst en probeer het dan opnieuw.',
+        error: T`De maaier is bezig; stop de taak eerst en probeer het dan opnieuw.`,
       });
       return;
     }
@@ -2052,7 +2075,7 @@ dashboardRouter.delete('/maps/:sn/:mapId', async (req: Request, res: Response) =
       res.status(504).json({
         ok: false,
         reason: 'mower_no_response',
-        error: `De maaier antwoordde niet op het wiscommando: ${(err as Error).message}`,
+        error: T`De maaier antwoordde niet op het wiscommando: ${(err as Error).message}`,
       });
       return;
     }
@@ -2115,12 +2138,12 @@ dashboardRouter.delete('/maps/:sn/:mapId', async (req: Request, res: Response) =
         // stond: Ramon zag "stop een lopende of gepauzeerde maaitaak" terwijl de
         // maaier op zijn dock stond te laden, en dat stuurde hem de verkeerde kant op.
         error: [
-          'De maaier weigerde de kaart te wissen.',
-          mowerError ? `Maaier meldt: ${mowerError}` : null,
+          T`De maaier weigerde de kaart te wissen.`,
+          mowerError ? T`Maaier meldt: ${mowerError}` : null,
           Number.isFinite(workStatus) && workStatus > 9
-            ? 'Stop de lopende of gepauzeerde maaitaak en probeer het opnieuw.'
-            : 'Er stond geen maaitaak in de weg, dus dit komt van de maaier zelf.',
-          'Lukt het niet, dan kan de kaart alleen in het dashboard worden verwijderd (forceren).',
+            ? T`Stop de lopende of gepauzeerde maaitaak en probeer het opnieuw.`
+            : T`Er stond geen maaitaak in de weg, dus dit komt van de maaier zelf.`,
+          T`Lukt het niet, dan kan de kaart alleen in het dashboard worden verwijderd (forceren).`,
         ].filter(Boolean).join(' '),
       });
       return;
@@ -2220,7 +2243,7 @@ dashboardRouter.put('/maps/:sn/edit/draft', (req: Request, res: Response) => {
       canonical?: string; mapType?: 'work' | 'obstacle'; parentMap?: string;
       points?: { x: number; y: number }[]; deleted?: boolean;
     };
-    const result = saveDraft(req.params.sn, { canonical, mapType, parentMap, points, deleted });
+    const result = saveDraft(req.params.sn, { canonical, mapType, parentMap, points, deleted }, reqT(req));
     if (!result.ok) { res.status(400).json({ ok: false, error: result.error }); return; }
     res.json({ ok: true, canonical: result.canonical });
   } catch (err) {
@@ -2240,16 +2263,17 @@ dashboardRouter.delete('/maps/:sn/edit/drafts', (req: Request, res: Response) =>
 });
 
 dashboardRouter.post('/maps/:sn/edit/apply', async (req: Request, res: Response) => {
+  const T = reqT(req);
   try {
-    const result = await applyEdits(req.params.sn);
+    const result = await applyEdits(req.params.sn, T);
     if (!result.ok) {
       const status = result.reason === 'validation' ? 422
         : result.reason === 'no_changes' ? 400
         : result.reason === 'offline' || result.reason === 'busy' || result.reason === 'not_docked' || result.reason === 'locked' || result.reason === 'unsupported_firmware' ? 409 : 502;
       const body = result.reason === 'not_docked'
-        ? { ...result, error: 'Kaart wijzigen kan alleen als de maaier op het dock staat te laden.', msgKey: 'mapEditErrNotDocked' }
+        ? { ...result, error: T`Kaart wijzigen kan alleen als de maaier op het dock staat te laden.`, msgKey: 'mapEditErrNotDocked' }
         : result.reason === 'unsupported_firmware'
-        ? { ...result, error: 'Kaartwijzigingen toepassen vereist OpenNova custom firmware. Gebruik op stock firmware "Kaart bewerken" in de app.', msgKey: 'mapEditErrUnsupportedFirmware' }
+        ? { ...result, error: T`Kaartwijzigingen toepassen vereist OpenNova custom firmware. Gebruik op stock firmware "Kaart bewerken" in de app.`, msgKey: 'mapEditErrUnsupportedFirmware' }
         : result;
       res.status(status).json(body);
       return;
@@ -2262,13 +2286,14 @@ dashboardRouter.post('/maps/:sn/edit/apply', async (req: Request, res: Response)
 });
 
 dashboardRouter.post('/maps/:sn/edit/revert', async (req: Request, res: Response) => {
+  const T = reqT(req);
   try {
     const result = await revertEdits(req.params.sn);
     if (!result.ok) {
       const status = result.reason === 'no_version' ? 404
         : result.reason === 'offline' || result.reason === 'busy' || result.reason === 'not_docked' || result.reason === 'locked' ? 409 : 502;
       const body = result.reason === 'not_docked'
-        ? { ...result, error: 'Kaart terugzetten kan alleen als de maaier op het dock staat te laden.', msgKey: 'mapEditErrNotDocked' }
+        ? { ...result, error: T`Kaart terugzetten kan alleen als de maaier op het dock staat te laden.`, msgKey: 'mapEditErrNotDocked' }
         : result;
       res.status(status).json(body);
       return;
@@ -2284,6 +2309,7 @@ dashboardRouter.post('/maps/:sn/edit/revert', async (req: Request, res: Response
 
 // POST /api/dashboard/maps/:sn/export-zip — genereer Novabot-compatibel ZIP van kaarten
 dashboardRouter.post('/maps/:sn/export-zip', (req: Request, res: Response) => {
+  const T = reqT(req);
   const { sn } = req.params;
   const body = req.body as {
     chargingOrientation?: number;
@@ -2296,7 +2322,7 @@ dashboardRouter.post('/maps/:sn/export-zip', (req: Request, res: Response) => {
     );
 
     if (!zipPath) {
-      res.status(404).json({ error: 'Geen kaarten gevonden voor dit apparaat' });
+      res.status(404).json({ error: T`Geen kaarten gevonden voor dit apparaat` });
       return;
     }
 
@@ -2306,12 +2332,13 @@ dashboardRouter.post('/maps/:sn/export-zip', (req: Request, res: Response) => {
       downloadUrl: `/api/dashboard/maps/${sn}/download-zip`,
     });
   } catch (err) {
-    res.status(500).json({ error: 'ZIP generatie mislukt', details: String(err) });
+    res.status(500).json({ error: T`ZIP-generatie mislukt`, details: String(err) });
   }
 });
 
 // GET /api/dashboard/maps/:sn/download-zip — download ZIP (auto-genereer als nodig)
 dashboardRouter.get('/maps/:sn/download-zip', (req: Request, res: Response) => {
+  const T = reqT(req);
   const { sn } = req.params;
   let zipPath = path.resolve(`storage/maps/${sn}.zip`);
 
@@ -2320,12 +2347,12 @@ dashboardRouter.get('/maps/:sn/download-zip', (req: Request, res: Response) => {
     try {
       const generated = generateMapZipFromDb(sn, 0);
       if (!generated) {
-        res.status(404).json({ error: 'Geen kaarten gevonden voor dit apparaat' });
+        res.status(404).json({ error: T`Geen kaarten gevonden voor dit apparaat` });
         return;
       }
       zipPath = generated;
     } catch (err) {
-      res.status(500).json({ error: 'ZIP generatie mislukt', details: String(err) });
+      res.status(500).json({ error: T`ZIP-generatie mislukt`, details: String(err) });
       return;
     }
   }
@@ -2346,6 +2373,7 @@ dashboardRouter.get('/maps/:sn/download-zip', (req: Request, res: Response) => {
 // charging_station.yaml after restore-and-realign. Old mowers ignore unknown
 // fields, so this is backwards-compatible.
 dashboardRouter.get('/maps/:sn/sync-info', async (req: Request, res: Response) => {
+  const T = reqT(req);
   const { sn } = req.params;
   try {
     // Match /sync-zip: prefer the enriched ZIP so the md5 we advertise here
@@ -2354,7 +2382,7 @@ dashboardRouter.get('/maps/:sn/sync-info', async (req: Request, res: Response) =
     // when content actually changed).
     const { regenerateLatestZipFromBackup } = await import('../services/mapBackup.js');
     const zipPath = regenerateLatestZipFromBackup(sn) ?? generateMapZipFromDb(sn, 0);
-    if (!zipPath) { res.status(404).json({ error: 'no maps' }); return; }
+    if (!zipPath) { res.status(404).json({ error: T`geen kaarten` }); return; }
 
     const { createHash } = await import('crypto');
     const { readFileSync } = await import('fs');
@@ -2408,12 +2436,13 @@ dashboardRouter.get('/maps/:sn/sync-info', async (req: Request, res: Response) =
 // origin" assumption that breaks novabot_mapping when the actual dock pose
 // is non-zero, e.g. -1.21, 0.48 on LFIN1231000211).
 dashboardRouter.get('/maps/:sn/sync-zip', async (req: Request, res: Response) => {
+  const T = reqT(req);
   const { sn } = req.params;
   try {
     const { regenerateLatestZipFromBackup } = await import('../services/mapBackup.js');
     const enrichedPath = regenerateLatestZipFromBackup(sn);
     const zipPath = enrichedPath ?? generateMapZipFromDb(sn, 0);
-    if (!zipPath) { res.status(404).json({ error: 'no maps' }); return; }
+    if (!zipPath) { res.status(404).json({ error: T`geen kaarten` }); return; }
 
     const { createHash } = await import('crypto');
     const { readFileSync } = await import('fs');
@@ -2619,6 +2648,7 @@ export function validateOffsetBody(body: unknown): { ok: true; dx: number; dy: n
 
 // POST /api/dashboard/maps/:sn/apply-offset
 dashboardRouter.post('/maps/:sn/apply-offset', async (req: Request, res: Response) => {
+  const T = reqT(req);
   const { sn } = req.params;
   const parsed = validateOffsetBody(req.body);
   if (!parsed.ok) {
@@ -2627,11 +2657,11 @@ dashboardRouter.post('/maps/:sn/apply-offset', async (req: Request, res: Respons
   }
   const { dx, dy } = parsed;
   if (Math.abs(dx) > MAX_OFFSET_M || Math.abs(dy) > MAX_OFFSET_M) {
-    res.status(400).json({ ok: false, error: `Offset magnitude must be ≤ ${MAX_OFFSET_M} m per axis` });
+    res.status(400).json({ ok: false, error: T`De verschuiving mag per as hoogstens ${MAX_OFFSET_M} m zijn` });
     return;
   }
 
-  if (rejectUnlessOpenNova(sn, res, 'De kaart verschuiven')) return;
+  if (rejectUnlessOpenNova(sn, req, res, M`De kaart verschuiven`)) return;
 
   // 1. Persist (idempotent — even when downstream fails the operator can retry).
   mapRepo.setPolygonOffset(sn, dx, dy);
@@ -2640,7 +2670,7 @@ dashboardRouter.post('/maps/:sn/apply-offset', async (req: Request, res: Respons
   const { regenerateLatestZipFromBackup } = await import('../services/mapBackup.js');
   const regenPath = regenerateLatestZipFromBackup(sn);
   if (!regenPath) {
-    res.status(400).json({ ok: false, error: 'No map data found for this mower — map the area first.', dx_m: dx, dy_m: dy });
+    res.status(400).json({ ok: false, error: T`Geen kaartgegevens gevonden voor deze maaier: breng het gebied eerst in kaart.`, dx_m: dx, dy_m: dy });
     return;
   }
 
@@ -2649,7 +2679,7 @@ dashboardRouter.post('/maps/:sn/apply-offset', async (req: Request, res: Respons
     res.status(404).json({
       ok: false,
       partial: true,
-      error: 'Mower offline — sync_map not pushed; mower will pick up offset on next reconnect',
+      error: T`Maaier offline: sync_map niet verstuurd; de maaier neemt de verschuiving over bij de volgende verbinding`,
       dx_m: dx, dy_m: dy,
     });
     return;
@@ -2680,7 +2710,7 @@ dashboardRouter.post('/maps/:sn/apply-offset', async (req: Request, res: Respons
     res.status(504).json({
       ok: false,
       partial: true,
-      error: 'Mower did not respond within 30s — sync may still complete in background',
+      error: T`De maaier antwoordde niet binnen 30 s; de synchronisatie kan op de achtergrond nog afronden`,
       dx_m: dx, dy_m: dy,
     });
     return;
@@ -2802,14 +2832,15 @@ dashboardRouter.post('/maps/:sn/calibrate-charger', (req: Request, res: Response
 async function recalibrateChargingPoseFromCache(
   sn: string,
   opts: { force?: boolean },
+  T: Translate = translator('en'),
 ): Promise<{ ok: boolean; httpStatus: number; body: Record<string, unknown>; pose?: { x: number; y: number; theta: number } }> {
   if (!isDeviceOnline(sn)) {
-    return { ok: false, httpStatus: 404, body: { ok: false, error: 'Device is offline' } };
+    return { ok: false, httpStatus: 404, body: { ok: false, error: T`Apparaat is offline` } };
   }
 
   const sensors = deviceCache.get(sn);
   if (!sensors) {
-    return { ok: false, httpStatus: 404, body: { ok: false, error: 'No sensor data cached for this mower' } };
+    return { ok: false, httpStatus: 404, body: { ok: false, error: T`Geen sensordata in de cache voor deze maaier` } };
   }
 
   // CRITICAL — use `map_position_*` from report_state_timer_data, NOT
@@ -2824,14 +2855,14 @@ async function recalibrateChargingPoseFromCache(
   if (xRaw == null || yRaw == null || thetaRaw == null) {
     return { ok: false, httpStatus: 400, body: {
       ok: false,
-      error: 'Mower map_position not yet reported — need a report_state_timer_data message first. Try again in ~5s.',
+      error: T`De maaier heeft map_position nog niet gemeld: er is eerst een report_state_timer_data-bericht nodig. Probeer het over ~5 s opnieuw.`,
     } };
   }
   const x = Number(xRaw);
   const y = Number(yRaw);
   const theta = Number(thetaRaw);
   if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(theta)) {
-    return { ok: false, httpStatus: 400, body: { ok: false, error: `Invalid pose: x=${xRaw} y=${yRaw} theta=${thetaRaw}` } };
+    return { ok: false, httpStatus: 400, body: { ok: false, error: T`Ongeldige pose: x=${xRaw} y=${yRaw} theta=${thetaRaw}` } };
   }
 
   // Critical — refuse (0, 0, 0). Stock firmware reports map_position as
@@ -2843,8 +2874,8 @@ async function recalibrateChargingPoseFromCache(
   if (x === 0 && y === 0 && theta === 0) {
     return { ok: false, httpStatus: 400, body: {
       ok: false,
-      error: 'Mower reported (0, 0, 0) — placeholder for uninitialized localization. Drive the mower a short distance off the dock so localization initializes (heading discovery), let it return to dock, then retry.',
-      hint: 'Stock firmware needs a drive-back cycle before localization is valid. While docked at boot, map_position is always zero.',
+      error: T`De maaier meldde (0, 0, 0): een plaatshouder voor niet-geïnitialiseerde lokalisatie. Rij de maaier een klein stukje van het dock zodat de lokalisatie initialiseert (koersbepaling), laat hem terugkeren naar het dock en probeer het opnieuw.`,
+      hint: T`Stock firmware heeft een rit van het dock en terug nodig voordat de lokalisatie geldig is. Zolang de maaier bij het opstarten gedockt staat, is map_position altijd nul.`,
     } };
   }
 
@@ -2860,7 +2891,7 @@ async function recalibrateChargingPoseFromCache(
   if (locBad) {
     return { ok: false, httpStatus: 400, body: {
       ok: false,
-      error: `Mower localization is "${locState || 'unknown'}". Pose values are not trustworthy yet. Drive the mower briefly off the dock, return, then retry.`,
+      error: T`De lokalisatie van de maaier is "${locState || 'unknown'}". De posewaarden zijn nog niet betrouwbaar. Rij de maaier kort van het dock, laat hem terugkeren en probeer het opnieuw.`,
       localization_state: locState,
     } };
   }
@@ -2870,7 +2901,7 @@ async function recalibrateChargingPoseFromCache(
   if (xRaw === yRaw && x !== 0) {
     return { ok: false, httpStatus: 400, body: {
       ok: false,
-      error: `Suspicious pose — x and y are exactly equal (${x}). Mower firmware is reporting bogus localization. Wait for a fresh timer_data update and retry.`,
+      error: T`Verdachte pose: x en y zijn exact gelijk (${x}). De firmware van de maaier meldt een onjuiste lokalisatie. Wacht op een verse timer_data-update en probeer het opnieuw.`,
     } };
   }
 
@@ -2880,7 +2911,7 @@ async function recalibrateChargingPoseFromCache(
   if (!onDockNow && !opts.force) {
     return { ok: false, httpStatus: 400, body: {
       ok: false,
-      error: `Battery state is '${batteryState}', not CHARGING. Put mower on dock first, or POST with {"force": true} to override.`,
+      error: T`Batterijstatus is '${batteryState}', niet CHARGING. Zet de maaier eerst op het dock, of POST met {"force": true} om dit te negeren.`,
       batteryState,
     } };
   }
@@ -2910,7 +2941,7 @@ async function recalibrateChargingPoseFromCache(
 
   console.log(`[CALIBRATE-POSE] ${sn}: x=${x} y=${y} theta=${theta} result=${JSON.stringify(result)}`);
   if (result.timeout) {
-    return { ok: false, httpStatus: 504, body: { ok: false, error: 'Mower did not respond within 8s', pose: { x, y, theta } }, pose: { x, y, theta } };
+    return { ok: false, httpStatus: 504, body: { ok: false, error: T`De maaier antwoordde niet binnen 8 s`, pose: { x, y, theta } }, pose: { x, y, theta } };
   }
 
   let zipPatched = false;
@@ -2946,27 +2977,28 @@ async function recalibrateChargingPoseFromCache(
 dashboardRouter.post('/maps/:sn/recalibrate-charging-pose', async (req: Request, res: Response) => {
   const { sn } = req.params;
   const { force } = req.body as { force?: boolean };
-  if (rejectUnlessOpenNova(sn, res, 'De laadpositie herijken')) return;
-  const out = await recalibrateChargingPoseFromCache(sn, { force: force === true });
+  if (rejectUnlessOpenNova(sn, req, res, M`De laadpositie herijken`)) return;
+  const out = await recalibrateChargingPoseFromCache(sn, { force: force === true }, reqT(req));
   res.status(out.httpStatus).json(out.body);
 });
 
 // POST /api/dashboard/maps/:sn/import-zip — importeer kaarten uit een Novabot ZIP
 dashboardRouter.post('/maps/:sn/import-zip', (req: Request, res: Response) => {
+  const T = reqT(req);
   const { sn } = req.params;
   const body = req.body as {
     zipPath?: string;
   };
 
   if (!body.zipPath) {
-    res.status(400).json({ error: 'zipPath is vereist' });
+    res.status(400).json({ error: T`zipPath is vereist` });
     return;
   }
 
   try {
     const result = parseMapZip(body.zipPath);
     if (!result) {
-      res.status(400).json({ error: 'Kon ZIP niet parsen' });
+      res.status(400).json({ error: T`Kon ZIP niet parsen` });
       return;
     }
 
@@ -3003,17 +3035,18 @@ dashboardRouter.post('/maps/:sn/import-zip', (req: Request, res: Response) => {
       chargingPose: result.chargingPose,
     });
   } catch (err) {
-    res.status(500).json({ error: 'Import mislukt', details: String(err) });
+    res.status(500).json({ error: T`Import mislukt`, details: String(err) });
   }
 });
 
 // POST /api/dashboard/maps/:sn/upload-zip — upload + import kaarten uit base64 ZIP
 dashboardRouter.post('/maps/:sn/upload-zip', async (req: Request, res: Response) => {
+  const T = reqT(req);
   const { sn } = req.params;
   const { data } = req.body as { data?: string }; // base64 encoded ZIP
 
   if (!data) {
-    res.status(400).json({ error: 'data (base64 ZIP) is vereist' });
+    res.status(400).json({ error: T`data (base64 ZIP) is vereist` });
     return;
   }
 
@@ -3026,7 +3059,7 @@ dashboardRouter.post('/maps/:sn/upload-zip', async (req: Request, res: Response)
     unlinkSync(tmpPath); // cleanup
 
     if (!result) {
-      res.status(400).json({ error: 'Kon ZIP niet parsen' });
+      res.status(400).json({ error: T`Kon ZIP niet parsen` });
       return;
     }
 
@@ -3074,7 +3107,7 @@ dashboardRouter.post('/maps/:sn/upload-zip', async (req: Request, res: Response)
     console.log(`[MAP-IMPORT] Uploaded ZIP for ${sn}: ${imported} areas imported`);
     res.json({ ok: true, imported, totalAreas: result.areas.length, chargingPose: result.chargingPose });
   } catch (err) {
-    res.status(500).json({ error: 'Upload import mislukt', details: String(err) });
+    res.status(500).json({ error: T`Upload import mislukt`, details: String(err) });
   }
 });
 
@@ -3153,6 +3186,7 @@ dashboardRouter.put('/calibration/:sn', (req: Request, res: Response) => {
 
 // POST /api/dashboard/maps/convert — converteer coördinaten (voor debugging)
 dashboardRouter.post('/maps/convert', (req: Request, res: Response) => {
+  const T = reqT(req);
   const body = req.body as {
     direction: 'gps-to-local' | 'local-to-gps';
     origin: GpsPoint;
@@ -3160,7 +3194,7 @@ dashboardRouter.post('/maps/convert', (req: Request, res: Response) => {
   };
 
   if (!body.direction || !body.origin || !body.points) {
-    res.status(400).json({ error: 'direction, origin, en points zijn vereist' });
+    res.status(400).json({ error: T`direction, origin, en points zijn vereist` });
     return;
   }
 
@@ -3229,16 +3263,17 @@ dashboardRouter.get('/demo/:sn', (req: Request, res: Response) => {
 
 // ── auto re-anchor progress (polled by the wizard) ──────────────
 type ReanchorPhase = 'idle' | 'check' | 'anchor' | 'relock' | 'wait' | 'needs_drive' | 'needs_position' | 'dock' | 'verify' | 'done' | 'error';
-// `message` stays Dutch (the dashboard + back-compat with apps that predate
-// msgKey). `msgKey` is a stable i18n key the app translates (en/nl/de/fr),
+// `message` is stored as a Msg and rendered in the reader's language by
+// GET /reanchor/:sn/status (the dashboard + apps that predate msgKey show it
+// as-is). `msgKey` is a stable i18n key the app translates (en/nl/de/fr),
 // interpolated with pose ({{x}},{{y}}) and dist ({{dist}}).
-interface ReanchorStat { phase: ReanchorPhase; message: string; msgKey?: string; ok?: boolean; error?: string; pose?: { x: number; y: number }; dist?: number; ts: number; }
+interface ReanchorStat { phase: ReanchorPhase; message: Msg; msgKey?: string; ok?: boolean; error?: string; pose?: { x: number; y: number }; dist?: number; ts: number; }
 const reanchorStatus = new Map<string, ReanchorStat>();
 // The "has re-locked since the re-anchor began" lifecycle latch lives in
 // frameValidation (persisted, shared) via setReanchorRelocked / isReanchorRelocked.
-function setReanchor(sn: string, phase: ReanchorPhase, message: string, extra: Partial<ReanchorStat> = {}): void {
+function setReanchor(sn: string, phase: ReanchorPhase, message: Msg, extra: Partial<ReanchorStat> = {}): void {
   reanchorStatus.set(sn, { phase, message, ts: Date.now(), ...extra });
-  console.log(`[reanchor-auto] ${sn}: [${phase}] ${message}${extra.error ? ` (err=${extra.error})` : ''}`);
+  console.log(`[reanchor-auto] ${sn}: [${phase}] ${renderMsg('nl', message)}${extra.error ? ` (err=${extra.error})` : ''}`);
 }
 
 // Live readers off the device cache used by both the auto flow and verify.
@@ -3323,10 +3358,10 @@ async function reanchorStableGps(
       if (win.length > REANCHOR_STABLE_WINDOW) win.shift();
       if (win.length === REANCHOR_STABLE_WINDOW) {
         lastSpread = gpsSpreadMeters(win);
-        setReanchor(sn, 'anchor', `Stabiliteit controleren op de dock (±${(lastSpread * 100).toFixed(0)} cm)...`, { msgKey: 'reanchorMsgStability', dist: lastSpread });
+        setReanchor(sn, 'anchor', M`Stabiliteit controleren op de dock (±${(lastSpread * 100).toFixed(0)} cm)...`, { msgKey: 'reanchorMsgStability', dist: lastSpread });
         if (lastSpread <= REANCHOR_STABLE_SPREAD_M) return medianGps(win);
       } else {
-        setReanchor(sn, 'anchor', 'Stabiliteit controleren op de dock...', { msgKey: 'reanchorMsgStability' });
+        setReanchor(sn, 'anchor', M`Stabiliteit controleren op de dock...`, { msgKey: 'reanchorMsgStability' });
       }
     } else {
       win.length = 0; // fix dropped or not Fixed — don't average across the gap
@@ -3348,13 +3383,13 @@ async function runAutoReanchor(sn: string): Promise<void> {
   };
   try {
     // 1. precheck — on the dock + a real RTK Fixed
-    setReanchor(sn, 'check', 'Controle: maaier op de dock en RTK Fixed?', { msgKey: 'reanchorMsgCheck' });
+    setReanchor(sn, 'check', M`Controle: maaier op de dock en RTK Fixed?`, { msgKey: 'reanchorMsgCheck' });
     if (!reanchorOnDock(sn)) {
-      setReanchor(sn, 'error', 'Maaier staat niet op de dock (laden). Dok hem eerst, dan opnieuw.', { error: 'not_docked', msgKey: 'reanchorMsgErrNotDocked' });
+      setReanchor(sn, 'error', M`Maaier staat niet op de dock (laden). Dok hem eerst, dan opnieuw.`, { error: 'not_docked', msgKey: 'reanchorMsgErrNotDocked' });
       return;
     }
     if (!reanchorRtkFixed(sn)) {
-      setReanchor(sn, 'error', 'Nog geen RTK Fixed. Wacht tot de fix Fixed is en probeer opnieuw.', { error: 'not_fixed', msgKey: 'reanchorMsgErrNotFixed' });
+      setReanchor(sn, 'error', M`Nog geen RTK Fixed. Wacht tot de fix Fixed is en probeer opnieuw.`, { error: 'not_fixed', msgKey: 'reanchorMsgErrNotFixed' });
       return;
     }
 
@@ -3367,19 +3402,19 @@ async function runAutoReanchor(sn: string): Promise<void> {
     // anchor on the median of a stable window. The live RTK position is cached
     // under 'latitude'/'longitude' (from the mower's location report); the
     // mower-side reanchor_pos converts the WGS84 origin to UTM.
-    setReanchor(sn, 'anchor', 'Stabiliteit controleren op de dock...', { msgKey: 'reanchorMsgStability' });
+    setReanchor(sn, 'anchor', M`Stabiliteit controleren op de dock...`, { msgKey: 'reanchorMsgStability' });
     const stable = await reanchorStableGps(sn, sleep);
     if ('error' in stable) {
       if (stable.error === 'no_gps') {
-        setReanchor(sn, 'error', 'Geen geldige GPS-coordinaten van de maaier.', { error: 'no_gps', msgKey: 'reanchorMsgErrNoGps' });
+        setReanchor(sn, 'error', M`Geen geldige GPS-coordinaten van de maaier.`, { error: 'no_gps', msgKey: 'reanchorMsgErrNoGps' });
       } else {
         const cm = Number.isFinite(stable.spread) ? (stable.spread * 100).toFixed(0) : '?';
-        setReanchor(sn, 'error', `RTK te onrustig op de dock (zwabbert ±${cm} cm). Wacht op een rustige Fixed en probeer opnieuw.`, { error: 'rtk_unstable', dist: stable.spread, msgKey: 'reanchorMsgErrUnstable' });
+        setReanchor(sn, 'error', M`RTK te onrustig op de dock (zwabbert ±${cm} cm). Wacht op een rustige Fixed en probeer opnieuw.`, { error: 'rtk_unstable', dist: stable.spread, msgKey: 'reanchorMsgErrUnstable' });
       }
       return;
     }
     const { lat, lng } = stable;
-    setReanchor(sn, 'anchor', 'Dockpositie opslaan...', { msgKey: 'reanchorMsgAnchor' });
+    setReanchor(sn, 'anchor', M`Dockpositie opslaan...`, { msgKey: 'reanchorMsgAnchor' });
     const { publishToExtended, onExtendedResponse, offExtendedResponse } = await import('../mqtt/mapSync.js');
     // Resend on a failed/timed-out load: pos.json is (re)written each attempt with
     // the SAME stable origin, only the load_utm_origin_info reload is flaky. The
@@ -3400,12 +3435,12 @@ async function runAutoReanchor(sn: string): Promise<void> {
         setTimeout(() => { if (!settled) { settled = true; offExtendedResponse(sn, handler); resolve(false); } }, 15000);
       });
       if (!anchored && attempt < REANCHOR_ANCHOR_RETRIES) {
-        setReanchor(sn, 'anchor', `Dockpositie opslaan (poging ${attempt + 1})...`, { msgKey: 'reanchorMsgAnchor' });
+        setReanchor(sn, 'anchor', M`Dockpositie opslaan (poging ${attempt + 1})...`, { msgKey: 'reanchorMsgAnchor' });
         await sleep(2000);
       }
     }
     if (!anchored) {
-      setReanchor(sn, 'error', 'De maaier bevestigde de nieuwe dockpositie niet op tijd. Probeer opnieuw.', { error: 'reanchor_failed', msgKey: 'reanchorMsgErrAnchorFailed' });
+      setReanchor(sn, 'error', M`De maaier bevestigde de nieuwe dockpositie niet op tijd. Probeer opnieuw.`, { error: 'reanchor_failed', msgKey: 'reanchorMsgErrAnchorFailed' });
       return;
     }
 
@@ -3437,22 +3472,22 @@ async function runAutoReanchor(sn: string): Promise<void> {
       publishToDevice(sn, { stop_move: null });
     };
 
-    setReanchor(sn, 'relock', 'Achteruit rijden om te re-locken...', { msgKey: 'reanchorMsgRelockBack' });
+    setReanchor(sn, 'relock', M`Achteruit rijden om te re-locken...`, { msgKey: 'reanchorMsgRelockBack' });
     publishToDevice(sn, { quit_mapping_mode: { value: 1, cmd_num: getNextCmdNum(sn) } });
     await sleep(500);
     await driveBack(12000, true);
 
-    setReanchor(sn, 'wait', 'Wachten op re-lock (RUNNING + Fixed)...', { msgKey: 'reanchorMsgWaitRelock' });
+    setReanchor(sn, 'wait', M`Wachten op re-lock (RUNNING + Fixed)...`, { msgKey: 'reanchorMsgWaitRelock' });
     let isRelocked = await pollRelock(15000);
     if (!isRelocked) {
       // Not locked after the auto drive-back. Hand control to the user: ask them
       // to drive ~1m further straight back with the joystick. Keep polling for a
       // long window and continue automatically as soon as the localization locks.
-      setReanchor(sn, 'needs_drive', 'Nog niet gelockt. Rij met de joystick nog ~1 m recht achteruit; ik ga automatisch verder zodra de localisatie lockt.', { msgKey: 'reanchorMsgNeedsDrive' });
+      setReanchor(sn, 'needs_drive', M`Nog niet gelockt. Rij met de joystick nog ~1 m recht achteruit; ik ga automatisch verder zodra de localisatie lockt.`, { msgKey: 'reanchorMsgNeedsDrive' });
       isRelocked = await pollRelock(90000);
     }
     if (!isRelocked) {
-      setReanchor(sn, 'error', 'Nog steeds geen lock na extra achteruit rijden. Rij handmatig met de joystick terug naar de dock en start de automatische re-anchor opnieuw.', { error: 'relock_timeout', msgKey: 'reanchorMsgErrRelockTimeout' });
+      setReanchor(sn, 'error', M`Nog steeds geen lock na extra achteruit rijden. Rij handmatig met de joystick terug naar de dock en start de automatische re-anchor opnieuw.`, { error: 'relock_timeout', msgKey: 'reanchorMsgErrRelockTimeout' });
       return;
     }
     // Relock confirmed: the mower left the dock and reached RUNNING + Fixed, so the
@@ -3466,9 +3501,9 @@ async function runAutoReanchor(sn: string): Promise<void> {
     // hand control to the user: drive the mower to ~50 cm directly in front of the
     // dock, then press "Start docken" (POST action:'continue_dock' -> runReanchorDock
     // below). We do NOT auto-attempt the dock here.
-    setReanchor(sn, 'needs_position', 'Re-lock gelukt. Rij de maaier nu zelf recht voor de dock, op ~50 cm afstand. Druk daarna op "Start docken".', { msgKey: 'reanchorMsgNeedsPosition' });
+    setReanchor(sn, 'needs_position', M`Re-lock gelukt. Rij de maaier nu zelf recht voor de dock, op ~50 cm afstand. Druk daarna op "Start docken".`, { msgKey: 'reanchorMsgNeedsPosition' });
   } catch (err) {
-    setReanchor(sn, 'error', `Onverwachte fout: ${err instanceof Error ? err.message : String(err)}`, { error: 'exception', msgKey: 'reanchorMsgErrException' });
+    setReanchor(sn, 'error', M`Onverwachte fout: ${err instanceof Error ? err.message : String(err)}`, { error: 'exception', msgKey: 'reanchorMsgErrException' });
   }
 }
 
@@ -3487,7 +3522,7 @@ async function runReanchorDock(sn: string): Promise<void> {
     // 5. dock — visual ArUco dock (no map-frame guide pose). suppressReanchorArm:
     // the passive docked-report clear must not fire here — step 6's self-verify
     // (docked map_position must land on the origin) is the sole authority.
-    setReanchor(sn, 'dock', 'Docken (visuele ArUco)...', { msgKey: 'reanchorMsgDock' });
+    setReanchor(sn, 'dock', M`Docken (visuele ArUco)...`, { msgKey: 'reanchorMsgDock' });
     publishToDevice(sn, { quit_mapping_mode: { value: 1, cmd_num: getNextCmdNum(sn) } });
     await sleep(500);
     // Record the charge pose FIRST, exactly like the Novabot app's post-mapping
@@ -3511,21 +3546,21 @@ async function runReanchorDock(sn: string): Promise<void> {
     publishToDevice(sn, { auto_recharge: { cmd_num: getNextCmdNum(sn) } }, { suppressReanchorArm: true });
     const docked = await poll(() => reanchorOnDock(sn), 150000, 3000);
     if (!docked) {
-      setReanchor(sn, 'error', 'Docken duurde te lang. Dok handmatig met de joystick en druk Verifieer.', { error: 'dock_timeout', msgKey: 'reanchorMsgErrDockTimeout' });
+      setReanchor(sn, 'error', M`Docken duurde te lang. Dok handmatig met de joystick en druk Verifieer.`, { error: 'dock_timeout', msgKey: 'reanchorMsgErrDockTimeout' });
       return;
     }
 
     // 6. verify — docked map_position must land on the origin, else keep the flag
     await sleep(4000); // let map_position settle after docking
-    setReanchor(sn, 'verify', 'Controle: gedockt op de origin?', { msgKey: 'reanchorMsgVerify' });
+    setReanchor(sn, 'verify', M`Controle: gedockt op de origin?`, { msgKey: 'reanchorMsgVerify' });
     const v = reanchorVerifyAndClear(sn); // clears frame_unvalidated + relock latch on ok
     if (v.ok) {
-      setReanchor(sn, 'done', `Geslaagd. Gedockt op (${v.pose.x.toFixed(2)}, ${v.pose.y.toFixed(2)}) m.`, { ok: true, pose: v.pose, msgKey: 'reanchorMsgDone' });
+      setReanchor(sn, 'done', M`Geslaagd. Gedockt op (${v.pose.x.toFixed(2)}, ${v.pose.y.toFixed(2)}) m.`, { ok: true, pose: v.pose, msgKey: 'reanchorMsgDone' });
     } else {
-      setReanchor(sn, 'error', `Buiten tolerantie: dock op (${v.pose.x.toFixed(2)}, ${v.pose.y.toFixed(2)}) m, ${Number.isFinite(v.dist) ? v.dist.toFixed(2) : '?'} m van origin. Probeer opnieuw.`, { error: 'verify_failed', pose: v.pose, dist: v.dist, msgKey: 'reanchorMsgErrVerifyFailed' });
+      setReanchor(sn, 'error', M`Buiten tolerantie: dock op (${v.pose.x.toFixed(2)}, ${v.pose.y.toFixed(2)}) m, ${Number.isFinite(v.dist) ? v.dist.toFixed(2) : '?'} m van origin. Probeer opnieuw.`, { error: 'verify_failed', pose: v.pose, dist: v.dist, msgKey: 'reanchorMsgErrVerifyFailed' });
     }
   } catch (err) {
-    setReanchor(sn, 'error', `Onverwachte fout: ${err instanceof Error ? err.message : String(err)}`, { error: 'exception', msgKey: 'reanchorMsgErrException' });
+    setReanchor(sn, 'error', M`Onverwachte fout: ${err instanceof Error ? err.message : String(err)}`, { error: 'exception', msgKey: 'reanchorMsgErrException' });
   }
 }
 
@@ -3537,11 +3572,12 @@ async function runReanchorDock(sn: string): Promise<void> {
 // (verify requires relocked && onDock; retry-auto requires onDock && rtkFixed).
 dashboardRouter.get('/reanchor/:sn/status', (req: Request, res: Response) => {
   const { sn } = req.params;
-  const stored = reanchorStatus.get(sn) ?? { phase: 'idle' as ReanchorPhase, message: '', ts: 0 };
+  const stored = reanchorStatus.get(sn);
   res.json({
     ok: true,
     status: {
-      ...stored,
+      ...(stored ?? { phase: 'idle' as ReanchorPhase, ts: 0 }),
+      message: stored ? renderMsg(langOf(req), stored.message) : '',
       onDock: reanchorOnDock(sn),
       rtkFixed: reanchorRtkFixed(sn),
       relocked: isReanchorRelocked(sn),
@@ -3550,9 +3586,10 @@ dashboardRouter.get('/reanchor/:sn/status', (req: Request, res: Response) => {
 });
 
 dashboardRouter.post('/reanchor/:sn', (req: Request, res: Response) => {
+  const T = reqT(req);
   const { sn } = req.params;
   const action = ((req.body as { action?: string })?.action) ?? 'auto';
-  if (rejectUnlessOpenNova(sn, res, 'Her-ankeren')) return;
+  if (rejectUnlessOpenNova(sn, req, res, M`Her-ankeren`)) return;
 
   // 'invalidate' — operator-triggered frame invalidation. Marks the frame
   // unvalidated IN-PROCESS (no DB write + restart needed) so the app's re-anchor
@@ -3568,7 +3605,7 @@ dashboardRouter.post('/reanchor/:sn', (req: Request, res: Response) => {
   }
 
   if (!isFrameUnvalidated(sn)) {
-    res.status(409).json({ ok: false, error: 'frame is already validated; no re-anchor needed' });
+    res.status(409).json({ ok: false, error: T`Het frame is al gevalideerd; her-ankeren is niet nodig` });
     return;
   }
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -3580,14 +3617,14 @@ dashboardRouter.post('/reanchor/:sn', (req: Request, res: Response) => {
   // GET /reanchor/:sn/status for progress (see runAutoReanchor above).
   if (action === 'auto') {
     if (!onDock()) {
-      res.status(409).json({ ok: false, error: 'auto re-anchor must start with the mower on the dock (charging).' });
+      res.status(409).json({ ok: false, error: T`Automatisch her-ankeren moet beginnen met de maaier op het dock (laden).` });
       return;
     }
     if (!reanchorRtkFixed(sn)) {
-      res.status(409).json({ ok: false, error: 'auto re-anchor needs a real RTK Fixed; wait for the fix to go Fixed.' });
+      res.status(409).json({ ok: false, error: T`Automatisch her-ankeren vereist een echte RTK Fixed; wacht tot de fix Fixed is.` });
       return;
     }
-    setReanchor(sn, 'check', 'Re-anchor gestart...', { msgKey: 'reanchorMsgStarted' });
+    setReanchor(sn, 'check', M`Re-anchor gestart...`, { msgKey: 'reanchorMsgStarted' });
     res.json({ ok: true, action, message: 'auto re-anchor started; poll GET /reanchor/:sn/status' });
     void runAutoReanchor(sn);
     return;
@@ -3602,26 +3639,26 @@ dashboardRouter.post('/reanchor/:sn', (req: Request, res: Response) => {
   // checks the wrong position entirely.
   if (action === 'verify') {
     if (!isReanchorRelocked(sn)) {
-      res.status(409).json({ ok: false, error: 'verify needs the re-anchor cycle first: the mower must have left the dock, reached RUNNING + RTK Fixed, then re-docked.' });
+      res.status(409).json({ ok: false, error: T`Verifiëren vereist eerst de her-ankercyclus: de maaier moet het dock hebben verlaten, RUNNING + RTK Fixed hebben bereikt en daarna opnieuw gedockt zijn.` });
       return;
     }
     if (!onDock()) {
-      res.status(409).json({ ok: false, error: 'verify must run with the mower back on the dock.' });
+      res.status(409).json({ ok: false, error: T`Verifiëren moet gebeuren met de maaier terug op het dock.` });
       return;
     }
     res.json({ ok: true, action, message: 'verifying docked position against origin' });
     (async () => {
-      setReanchor(sn, 'verify', 'Controle: gedockt op de origin?', { msgKey: 'reanchorMsgVerify' });
+      setReanchor(sn, 'verify', M`Controle: gedockt op de origin?`, { msgKey: 'reanchorMsgVerify' });
       if (!onDock()) {
-        setReanchor(sn, 'error', 'Maaier staat niet op de dock. Dok hem eerst.', { error: 'not_docked', msgKey: 'reanchorMsgErrNotDocked' });
+        setReanchor(sn, 'error', M`Maaier staat niet op de dock. Dok hem eerst.`, { error: 'not_docked', msgKey: 'reanchorMsgErrNotDocked' });
         return;
       }
       await sleep(3000); // let map_position settle
       const v = reanchorVerifyAndClear(sn);
       if (v.ok) {
-        setReanchor(sn, 'done', `Geslaagd. Gedockt op (${v.pose.x.toFixed(2)}, ${v.pose.y.toFixed(2)}) m.`, { ok: true, pose: v.pose, msgKey: 'reanchorMsgDone' });
+        setReanchor(sn, 'done', M`Geslaagd. Gedockt op (${v.pose.x.toFixed(2)}, ${v.pose.y.toFixed(2)}) m.`, { ok: true, pose: v.pose, msgKey: 'reanchorMsgDone' });
       } else {
-        setReanchor(sn, 'error', `Buiten tolerantie: dock op (${v.pose.x.toFixed(2)}, ${v.pose.y.toFixed(2)}) m, ${Number.isFinite(v.dist) ? v.dist.toFixed(2) : '?'} m van origin.`, { error: 'verify_failed', pose: v.pose, dist: v.dist, msgKey: 'reanchorMsgErrVerifyFailed' });
+        setReanchor(sn, 'error', M`Buiten tolerantie: dock op (${v.pose.x.toFixed(2)}, ${v.pose.y.toFixed(2)}) m, ${Number.isFinite(v.dist) ? v.dist.toFixed(2) : '?'} m van origin.`, { error: 'verify_failed', pose: v.pose, dist: v.dist, msgKey: 'reanchorMsgErrVerifyFailed' });
       }
     })();
     return;
@@ -3629,7 +3666,7 @@ dashboardRouter.post('/reanchor/:sn', (req: Request, res: Response) => {
 
   if (action === 'drive') {
     if (!onDock()) {
-      res.status(409).json({ ok: false, error: 'drive must start with the mower on the dock (charging). Drive it onto the dock first.' });
+      res.status(409).json({ ok: false, error: T`Rijden moet beginnen met de maaier op het dock (laden). Rij hem eerst op het dock.` });
       return;
     }
     res.json({ ok: true, action, message: 'driving ~1m off the dock; wait for RTK Fixed then POST action:dock' });
@@ -3719,17 +3756,18 @@ dashboardRouter.post('/reanchor/:sn', (req: Request, res: Response) => {
 });
 
 dashboardRouter.post('/command/:sn', (req: Request, res: Response) => {
+  const T = reqT(req);
   const { sn } = req.params;
   const { command } = req.body as { command?: Record<string, unknown> };
 
   if (!command || typeof command !== 'object') {
-    res.status(400).json({ error: 'command object is vereist' });
+    res.status(400).json({ error: T`command object is vereist` });
     return;
   }
 
   const areaError = getMowingAreaError(command, {
     swVersion: mowerSwVersion(sn, deviceCache.get(sn)?.get('sw_version')),
-  });
+  }, reqT(req));
   if (areaError) {
     res.status(422).json({ ok: false, reason: 'unsupported_mowing_area', error: areaError });
     return;
@@ -3737,7 +3775,7 @@ dashboardRouter.post('/command/:sn', (req: Request, res: Response) => {
 
   const { force } = req.query as { force?: string };
   if (!force && !isDemoMode(sn) && !isDeviceOnline(sn)) {
-    res.status(404).json({ error: 'Device is offline' });
+    res.status(404).json({ error: T`Apparaat is offline` });
     return;
   }
 
@@ -3854,9 +3892,10 @@ dashboardRouter.post('/command/:sn', (req: Request, res: Response) => {
 // omitted fields to 0), then waits MOW_PARA_SETTLE_MS so the mower has processed
 // it before the caller fires start_navigation. No-op when nothing is saved.
 dashboardRouter.post('/reapply-para/:sn', async (req: Request, res: Response) => {
+  const T = reqT(req);
   const { sn } = req.params;
   if (!isDemoMode(sn) && !isDeviceOnline(sn)) {
-    res.status(404).json({ ok: false, error: 'Device is offline' });
+    res.status(404).json({ ok: false, error: T`Apparaat is offline` });
     return;
   }
   const para = selectParaRepush(deviceSettingsRepo.findBySn(sn));
@@ -3873,11 +3912,12 @@ dashboardRouter.post('/reapply-para/:sn', async (req: Request, res: Response) =>
 
 // POST /api/dashboard/raw-tcp/:sn — stuur encrypted commando direct via TCP (bypass aedes)
 dashboardRouter.post('/raw-tcp/:sn', (req: Request, res: Response) => {
+  const T = reqT(req);
   const { sn } = req.params;
   const { command, qos } = req.body as { command?: Record<string, unknown>; qos?: number };
 
   if (!command) {
-    res.status(400).json({ error: 'command is vereist' });
+    res.status(400).json({ error: T`command is vereist` });
     return;
   }
 
@@ -3899,7 +3939,7 @@ dashboardRouter.post('/raw-tcp/:sn', (req: Request, res: Response) => {
   if (sent) {
     res.json({ ok: true, command: Object.keys(command)[0], encrypted: true, size: encrypted.length, method: 'raw-tcp' });
   } else {
-    res.status(404).json({ error: `Geen TCP socket voor ${sn}` });
+    res.status(404).json({ error: T`Geen TCP socket voor ${sn}` });
   }
 });
 
@@ -4189,7 +4229,7 @@ interface ScheduleRow {
   updated_at: string;
 }
 
-function scheduleRowToDto(r: ScheduleRow) {
+function scheduleRowToDto(r: ScheduleRow, lang: Lang) {
   return {
     scheduleId: r.schedule_id,
     mowerSn: r.mower_sn,
@@ -4218,7 +4258,7 @@ function scheduleRowToDto(r: ScheduleRow) {
     skipDate: r.skip_date ?? null,
     lastResultAt: r.last_result_at ?? null,
     lastResult: r.last_result ?? null,
-    lastResultReason: r.last_result_reason ?? null,
+    lastResultReason: renderScheduleReason(lang, r.last_result_reason),
     edgeDays: parseEdgeDays(r.edge_days),
     // Richting die de VOLGENDE run daadwerkelijk gebruikt. Bij alternate
     // rotatie is dat base + trigger_count×step — de kaarten toonden eerst
@@ -4276,7 +4316,7 @@ dashboardRouter.get('/schedules/:sn', (req: Request, res: Response) => {
   }
 
   const enriched = rows.map(r => {
-    const dto = scheduleRowToDto(r);
+    const dto = scheduleRowToDto(r, langOf(req));
     return {
       ...dto,
       currentlyRunning: r.schedule_id === activeScheduleId,
@@ -4288,6 +4328,7 @@ dashboardRouter.get('/schedules/:sn', (req: Request, res: Response) => {
 
 // POST /api/dashboard/schedules/:sn — nieuw schedule aanmaken
 dashboardRouter.post('/schedules/:sn', (req: Request, res: Response) => {
+  const T = reqT(req);
   const { sn } = req.params;
   const body = req.body as {
     scheduleName?: string;
@@ -4323,9 +4364,9 @@ dashboardRouter.post('/schedules/:sn', (req: Request, res: Response) => {
   };
 
   if (Array.isArray(body.edgeDays) && body.edgeDays.length > 0
-    && rejectUnlessOpenNova(sn, res, 'Randmaaien op schemadagen')) return;
+    && rejectUnlessOpenNova(sn, req, res, M`Randmaaien op schemadagen`)) return;
   if (!body.startTime) {
-    res.status(400).json({ error: 'startTime is vereist' });
+    res.status(400).json({ error: T`startTime is vereist` });
     return;
   }
 
@@ -4387,21 +4428,22 @@ dashboardRouter.post('/schedules/:sn', (req: Request, res: Response) => {
 
   const row = scheduleRepo.findById(scheduleId) as ScheduleRow;
   mirrorScheduleToPlan(scheduleId);  // visible in the Novabot app too (#108)
-  res.json({ ok: true, schedule: scheduleRowToDto(row) });
+  res.json({ ok: true, schedule: scheduleRowToDto(row, langOf(req)) });
 });
 
 // PATCH /api/dashboard/schedules/:sn/:scheduleId — update schedule
 dashboardRouter.patch('/schedules/:sn/:scheduleId', (req: Request, res: Response) => {
+  const T = reqT(req);
   const { sn, scheduleId } = req.params;
   const body = req.body as Record<string, unknown>;
 
   const existing = scheduleRepo.findByIdAndMower(scheduleId, sn);
   if (!existing) {
-    res.status(404).json({ error: 'Schedule niet gevonden' });
+    res.status(404).json({ error: T`Schedule niet gevonden` });
     return;
   }
   if (Array.isArray(body.edgeDays) && (body.edgeDays as unknown[]).length > 0
-    && rejectUnlessOpenNova(sn, res, 'Randmaaien op schemadagen')) return;
+    && rejectUnlessOpenNova(sn, req, res, M`Randmaaien op schemadagen`)) return;
 
   scheduleRepo.updateByIdAndMower(scheduleId, sn, {
     schedule_name: body.scheduleName as string | undefined,
@@ -4440,7 +4482,7 @@ dashboardRouter.patch('/schedules/:sn/:scheduleId', (req: Request, res: Response
 
   const row = scheduleRepo.findById(scheduleId) as ScheduleRow;
   mirrorScheduleToPlan(scheduleId);
-  res.json({ ok: true, schedule: scheduleRowToDto(row) });
+  res.json({ ok: true, schedule: scheduleRowToDto(row, langOf(req)) });
 });
 
 // DELETE /api/dashboard/schedules/:sn/:scheduleId — verwijder schedule
@@ -4455,16 +4497,17 @@ dashboardRouter.delete('/schedules/:sn/:scheduleId', (req: Request, res: Respons
 
 // POST /api/dashboard/schedules/:sn/:scheduleId/send — push schedule naar maaier via MQTT
 dashboardRouter.post('/schedules/:sn/:scheduleId/send', (req: Request, res: Response) => {
+  const T = reqT(req);
   const { sn, scheduleId } = req.params;
 
   if (!isDeviceOnline(sn)) {
-    res.status(404).json({ error: 'Device is offline' });
+    res.status(404).json({ error: T`Apparaat is offline` });
     return;
   }
 
   const row = scheduleRepo.findByIdAndMower(scheduleId, sn) as ScheduleRow | undefined;
   if (!row) {
-    res.status(404).json({ error: 'Schedule niet gevonden' });
+    res.status(404).json({ error: T`Schedule niet gevonden` });
     return;
   }
 
@@ -4497,7 +4540,7 @@ dashboardRouter.post('/schedules/:sn/:scheduleId/send', (req: Request, res: Resp
   // Geen set_para_info hier (#112), zie de schedule-create route: een
   // gedeeltelijk blok zet de overige para-waarden op de maaier op 0.
 
-  res.json({ ok: true, message: 'Schedule en parameters verstuurd naar maaier', effectiveDirection });
+  res.json({ ok: true, message: T`Schedule en parameters verstuurd naar maaier`, effectiveDirection });
 });
 
 // ── Weather forecast (proxy for Open-Meteo) ────────────────────
@@ -4506,6 +4549,7 @@ const weatherCache = new Map<string, { data: unknown; cachedAt: number }>();
 const WEATHER_CACHE_TTL = 15 * 60 * 1000; // 15 minuten
 
 dashboardRouter.get('/weather/:lat/:lng', async (req: Request, res: Response) => {
+  const T = reqT(req);
   const { lat, lng } = req.params;
   const cacheKey = `${parseFloat(lat).toFixed(2)}_${parseFloat(lng).toFixed(2)}`;
   const cached = weatherCache.get(cacheKey);
@@ -4518,14 +4562,14 @@ dashboardRouter.get('/weather/:lat/:lng', async (req: Request, res: Response) =>
     const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&hourly=precipitation,precipitation_probability&forecast_days=1&timezone=auto`;
     const resp = await fetch(url);
     if (!resp.ok) {
-      res.status(502).json({ error: 'Weather API error' });
+      res.status(502).json({ error: T`Fout van de weer-API` });
       return;
     }
     const data = await resp.json();
     weatherCache.set(cacheKey, { data, cachedAt: Date.now() });
     res.json(data);
   } catch (err) {
-    res.status(502).json({ error: 'Weather fetch failed' });
+    res.status(502).json({ error: T`Weerdata ophalen mislukt` });
   }
 });
 
@@ -4608,7 +4652,7 @@ dashboardRouter.put('/seam-fix/:sn', async (req: Request, res: Response) => {
   const { seamFixRepo } = await import('../db/repositories/index.js');
   const { republishSeamFix } = await import('../mqtt/mapSync.js');
   const body = req.body as { enabled?: boolean; edgeMarginCm?: number };
-  if (rejectUnlessOpenNova(req.params.sn, res, 'De rand-seam-fix')) return;
+  if (rejectUnlessOpenNova(req.params.sn, req, res, M`De rand-seam-fix`)) return;
   seamFixRepo.set(req.params.sn, {
     enabled: body.enabled,
     edgeMarginCm: body.edgeMarginCm === undefined ? undefined : Math.max(0, Math.min(30, body.edgeMarginCm)),
@@ -4857,12 +4901,12 @@ dashboardRouter.post('/extended/:sn', (req: Request, res: Response) => {
   }
   const areaError = getMowingAreaError(command, {
     swVersion: mowerSwVersion(sn, deviceCache.get(sn)?.get('sw_version')),
-  });
+  }, reqT(req));
   if (areaError) {
     res.status(422).json({ ok: false, reason: 'unsupported_mowing_area', error: areaError });
     return;
   }
-  if (rejectUnlessOpenNova(sn, res, `Het extended commando ${Object.keys(command)[0]}`)) return;
+  if (rejectUnlessOpenNova(sn, req, res, M`Het extended commando ${Object.keys(command)[0]}`)) return;
   // Rand-dag watcher: een handmatige zone-maai (mow_zone, het primaire
   // app-pad) of ander bewegingscommando via deze route mag nooit door een
   // eerder gearmde watcher worden geadopteerd — anders randmaait de server na
@@ -4883,10 +4927,11 @@ dashboardRouter.post('/extended/:sn', (req: Request, res: Response) => {
 // respond, returning { verdict: ok|warn|block, checks, reasons }. Consumed by
 // the app's Create-Map flow (block hard-stops, warn is advisory).
 dashboardRouter.post('/mapping-preflight/:sn', async (req: Request, res: Response) => {
+  const T = reqT(req);
   const { sn } = req.params;
-  if (rejectUnlessOpenNova(sn, res, 'De mapping-preflight')) return;
+  if (rejectUnlessOpenNova(sn, req, res, M`De mapping-preflight`)) return;
   if (!isDeviceOnline(sn)) {
-    res.status(503).json({ ok: false, error: 'device offline' });
+    res.status(503).json({ ok: false, error: T`apparaat offline` });
     return;
   }
   try {
@@ -4902,7 +4947,7 @@ dashboardRouter.post('/mapping-preflight/:sn', async (req: Request, res: Respons
       };
       const timer = setTimeout(() => {
         offExtendedResponse(sn, onResp);
-        reject(new Error('timeout waiting for mapping_preflight_respond (stock firmware?)'));
+        reject(new Error(T`Geen antwoord op mapping_preflight binnen 8 s (stock firmware?)`));
       }, 8000);
       onExtendedResponse(sn, onResp);
       publishToExtended(sn, { mapping_preflight: {} });
@@ -5173,7 +5218,8 @@ dashboardRouter.get('/firmware-list', (_req: Request, res: Response) => {
 // Open path (no admin gate) so the mobile app can show the same panel as
 // the dashboard's Firmware tab — both poll the same logic via this single
 // helper exported from adminStatus.ts.
-dashboardRouter.get('/firmware-check-updates', async (_req: Request, res: Response) => {
+dashboardRouter.get('/firmware-check-updates', async (req: Request, res: Response) => {
+  const T = reqT(req);
   try {
     const { MANIFEST_URL, fetchJson, normaliseFirmwareDownloadUrl } = await import('./adminStatus.js');
     const manifest = await fetchJson(MANIFEST_URL) as { firmwares?: Array<FirmwareMeta & { version: string; device_type: string; url: string; filename?: string }> };
@@ -5213,7 +5259,7 @@ dashboardRouter.get('/firmware-check-updates', async (_req: Request, res: Respon
     });
   } catch (err) {
     console.error('[Dashboard] check-firmware-updates failed:', err);
-    res.status(500).json({ error: err instanceof Error ? err.message : 'Failed to fetch manifest' });
+    res.status(500).json({ error: err instanceof Error ? err.message : T`Manifest ophalen mislukt` });
   }
 });
 
@@ -5221,6 +5267,7 @@ dashboardRouter.get('/firmware-check-updates', async (_req: Request, res: Respon
 // manifest into the local firmware/ directory and register it in the OTA
 // versions table so the OTA flow can pick it up.
 dashboardRouter.post('/firmware-download', async (req: Request, res: Response) => {
+  const T = reqT(req);
   const { url: rawUrl, filename, version, device_type, md5, sha256, size, signature, description } = req.body as {
     url?: string;
     filename?: string;
@@ -5252,17 +5299,17 @@ dashboardRouter.post('/firmware-download', async (req: Request, res: Response) =
     const fileSize = fileBuffer.length;
     if (md5 && fileMd5 !== md5) {
       try { unlinkSync(filePath); } catch { /* ignore */ }
-      res.status(400).json({ error: `MD5 mismatch: expected ${md5}, got ${fileMd5}` });
+      res.status(400).json({ error: T`MD5 komt niet overeen: verwacht ${md5}, gekregen ${fileMd5}` });
       return;
     }
     if (sha256 && fileSha256 !== sha256) {
       try { unlinkSync(filePath); } catch { /* ignore */ }
-      res.status(400).json({ error: `SHA256 mismatch: expected ${sha256}, got ${fileSha256}` });
+      res.status(400).json({ error: T`SHA256 komt niet overeen: verwacht ${sha256}, gekregen ${fileSha256}` });
       return;
     }
     if (size && fileSize !== size) {
       try { unlinkSync(filePath); } catch { /* ignore */ }
-      res.status(400).json({ error: `Size mismatch: expected ${size}, got ${fileSize}` });
+      res.status(400).json({ error: T`Grootte komt niet overeen: verwacht ${size}, gekregen ${fileSize}` });
       return;
     }
     const metaPath = filePath.replace(/\.(deb|bin)$/, '.json');
@@ -5315,7 +5362,7 @@ dashboardRouter.post('/firmware-download', async (req: Request, res: Response) =
     });
   } catch (err) {
     console.error('[Dashboard] firmware download failed:', err);
-    res.status(500).json({ error: err instanceof Error ? err.message : 'Download failed' });
+    res.status(500).json({ error: err instanceof Error ? err.message : T`Download mislukt` });
   }
 });
 
@@ -5474,6 +5521,7 @@ dashboardRouter.get('/ota/versions', (_req: Request, res: Response) => {
 
 // POST /api/dashboard/ota/versions — voeg een OTA versie toe
 dashboardRouter.post('/ota/versions', (req: Request, res: Response) => {
+  const T = reqT(req);
   const { version, device_type, download_url, release_notes, md5, sha256, size, signature } = req.body as {
     version: string;
     device_type?: string;
@@ -5528,7 +5576,7 @@ dashboardRouter.post('/ota/versions', (req: Request, res: Response) => {
   }
 
   if (!resolvedVersion) {
-    res.status(400).json({ error: 'version is vereist (of upload een firmware bestand met versie-info)' });
+    res.status(400).json({ error: T`version is vereist (of upload een firmware bestand met versie-info)` });
     return;
   }
 
@@ -5560,6 +5608,7 @@ dashboardRouter.post('/ota/versions', (req: Request, res: Response) => {
 
 // PATCH /api/dashboard/ota/versions/:id — bewerk een OTA versie
 dashboardRouter.patch('/ota/versions/:id', (req: Request, res: Response) => {
+  const T = reqT(req);
   const id = parseInt(req.params.id);
   const { version, device_type, download_url, release_notes, md5, sha256, size, signature } = req.body as {
     version?: string;
@@ -5577,7 +5626,7 @@ dashboardRouter.patch('/ota/versions/:id', (req: Request, res: Response) => {
 
   const existing = otaVersionRepo.findById(id);
   if (!existing) {
-    res.status(404).json({ error: 'OTA versie niet gevonden' });
+    res.status(404).json({ error: T`OTA versie niet gevonden` });
     return;
   }
 
@@ -5638,23 +5687,24 @@ dashboardRouter.delete('/ota/versions/:id', (req: Request, res: Response) => {
 
 // POST /api/dashboard/ota/trigger/:sn — stuur ota_upgrade_cmd naar apparaat
 dashboardRouter.post('/ota/trigger/:sn', async (req: Request, res: Response) => {
+  const T = reqT(req);
   const { sn } = req.params;
   let gate: Awaited<ReturnType<typeof ensureBetaFlashSafe>> | undefined;
   const { version_id } = req.body as { version_id?: number };
 
   if (!version_id) {
-    res.status(400).json({ error: 'version_id is vereist' });
+    res.status(400).json({ error: T`version_id is vereist` });
     return;
   }
 
   const otaVersion = otaVersionRepo.findById(version_id) as OtaVersionRow | undefined;
   if (!otaVersion) {
-    res.status(404).json({ error: 'OTA versie niet gevonden' });
+    res.status(404).json({ error: T`OTA versie niet gevonden` });
     return;
   }
 
   if (!otaVersion.download_url) {
-    res.status(400).json({ error: 'Geen download URL geconfigureerd voor deze versie' });
+    res.status(400).json({ error: T`Geen download URL geconfigureerd voor deze versie` });
     return;
   }
 
@@ -5746,10 +5796,10 @@ dashboardRouter.post('/ota/trigger/:sn', async (req: Request, res: Response) => 
   } else {
     // ── BETA gate: custom/opennova firmware must have a fresh backup first ──
     try {
-      gate = await ensureBetaFlashSafe(sn, otaVersion.version, { force: forceOta });
+      gate = await ensureBetaFlashSafe(sn, otaVersion.version, { force: forceOta }, T);
     } catch (err) {
       console.error(`\x1b[31m[OTA] BETA gate error voor ${sn}:\x1b[0m`, err);
-      res.status(500).json({ error: 'BETA_GATE_ERROR', detail: 'Kon backup-gate niet uitvoeren' });
+      res.status(500).json({ error: 'BETA_GATE_ERROR', detail: T`Kon backup-gate niet uitvoeren` });
       return;
     }
     if (!gate.allowed) {
@@ -6161,6 +6211,7 @@ dashboardRouter.get('/device-sets', (_req: Request, res: Response) => {
 
 // POST /api/dashboard/pair-mower — pair an unpaired mower with an existing charger
 dashboardRouter.post('/pair-mower', (req: Request, res: Response) => {
+  const T = reqT(req);
   const { mowerSn, chargerSn } = req.body as { mowerSn?: string; chargerSn?: string };
   if (!mowerSn || !chargerSn) {
     res.status(400).json({ error: 'mowerSn and chargerSn required' });
@@ -6171,7 +6222,7 @@ dashboardRouter.post('/pair-mower', (req: Request, res: Response) => {
   const loraRow = equipmentRepo.getLoraCache(chargerSn);
 
   if (!loraRow) {
-    res.status(404).json({ error: 'Charger not found in LoRa cache — provision charger first' });
+    res.status(404).json({ error: T`Laadstation niet gevonden in de LoRa-cache: richt eerst het laadstation in` });
     return;
   }
 
@@ -6217,8 +6268,9 @@ dashboardRouter.post('/pair-mower', (req: Request, res: Response) => {
 
 // POST /api/dashboard/lora/query-mower/:mowerSn — ask mower for its LoRa config via MQTT
 dashboardRouter.post('/lora/query-mower/:mowerSn', async (req: Request, res: Response) => {
+  const T = reqT(req);
   const { mowerSn } = req.params;
-  if (rejectUnlessOpenNova(mowerSn, res, 'LoRa-instellingen van de maaier uitlezen')) return;
+  if (rejectUnlessOpenNova(mowerSn, req, res, M`LoRa-instellingen van de maaier uitlezen`)) return;
   const { publishToExtended, onExtendedResponse, offExtendedResponse } = await import('../mqtt/mapSync.js');
 
   let resolved = false;
@@ -6226,7 +6278,7 @@ dashboardRouter.post('/lora/query-mower/:mowerSn', async (req: Request, res: Res
     if (!resolved) {
       resolved = true;
       offExtendedResponse(mowerSn, handler);
-      res.status(504).json({ error: 'Mower did not respond (timeout)' });
+      res.status(504).json({ error: T`De maaier antwoordde niet (time-out)` });
     }
   }, 10000);
 
@@ -6251,6 +6303,7 @@ dashboardRouter.post('/lora/query-mower/:mowerSn', async (req: Request, res: Res
 
 // POST /api/dashboard/lora/query-charger/:chargerSn — ask charger for its LoRa config via MQTT
 dashboardRouter.post('/lora/query-charger/:chargerSn', async (req: Request, res: Response) => {
+  const T = reqT(req);
   const { chargerSn } = req.params;
   const { publishToDevice, onDeviceResponse, offDeviceResponse } = await import('../mqtt/mapSync.js');
 
@@ -6259,7 +6312,7 @@ dashboardRouter.post('/lora/query-charger/:chargerSn', async (req: Request, res:
     if (!resolved) {
       resolved = true;
       offDeviceResponse(chargerSn, handler);
-      res.status(504).json({ error: 'Charger did not respond (timeout)' });
+      res.status(504).json({ error: T`Het laadstation antwoordde niet (time-out)` });
     }
   }, 10000);
 
@@ -6312,7 +6365,7 @@ dashboardRouter.post('/opennova/detect/:mowerSn', async (req: Request, res: Resp
 dashboardRouter.post('/lora/set-mower/:mowerSn', async (req: Request, res: Response) => {
   const { mowerSn } = req.params;
   const { addr, channel, hc, lc } = req.body as { addr: number; channel: number; hc?: number; lc?: number };
-  if (rejectUnlessOpenNova(mowerSn, res, 'LoRa-instellingen van de maaier zetten')) return;
+  if (rejectUnlessOpenNova(mowerSn, req, res, M`LoRa-instellingen van de maaier zetten`)) return;
 
   if (addr == null || channel == null) {
     res.status(400).json({ error: 'addr and channel required' });
@@ -6331,13 +6384,14 @@ dashboardRouter.post('/lora/set-mower/:mowerSn', async (req: Request, res: Respo
 
 // GET /api/dashboard/lora/for-charger/:chargerSn — get LoRa params for a specific charger
 dashboardRouter.get('/lora/for-charger/:chargerSn', (req: Request, res: Response) => {
+  const T = reqT(req);
   const { chargerSn } = req.params;
   const row = equipmentRepo.getLoraCache(chargerSn);
 
   if (row) {
     res.json({ address: row.charger_address, channel: row.charger_channel, hc: 20, lc: 14 });
   } else {
-    res.status(404).json({ error: 'Charger not found in LoRa cache' });
+    res.status(404).json({ error: T`Laadstation niet gevonden in de LoRa-cache` });
   }
 });
 
@@ -6357,9 +6411,10 @@ dashboardRouter.post('/lora/register', (req: Request, res: Response) => {
 
 // POST /api/dashboard/pin/:sn/query — vraag huidige PIN op (cfg_value=0)
 dashboardRouter.post('/pin/:sn/query', (req: Request, res: Response) => {
+  const T = reqT(req);
   const { sn } = req.params;
   if (!isDeviceOnline(sn)) {
-    res.status(404).json({ error: 'Device is offline' });
+    res.status(404).json({ error: T`Apparaat is offline` });
     return;
   }
   publishToDevice(sn, { dev_pin_info: { cfg_value: 0, code: '0000' } });
@@ -6369,14 +6424,15 @@ dashboardRouter.post('/pin/:sn/query', (req: Request, res: Response) => {
 
 // POST /api/dashboard/pin/:sn/set — stel nieuwe PIN in (cfg_value=1)
 dashboardRouter.post('/pin/:sn/set', (req: Request, res: Response) => {
+  const T = reqT(req);
   const { sn } = req.params;
   const { code } = req.body as { code?: string };
   if (!code || code.length !== 4 || !/^\d{4}$/.test(code)) {
-    res.status(400).json({ error: 'PIN moet 4 cijfers zijn' });
+    res.status(400).json({ error: T`PIN moet 4 cijfers zijn` });
     return;
   }
   if (!isDeviceOnline(sn)) {
-    res.status(404).json({ error: 'Device is offline' });
+    res.status(404).json({ error: T`Apparaat is offline` });
     return;
   }
   publishToDevice(sn, { dev_pin_info: { cfg_value: 1, code } });
@@ -6390,15 +6446,16 @@ dashboardRouter.post('/pin/:sn/set', (req: Request, res: Response) => {
 // extended_commands.py stuurt automatisch type=3 clear_error commands na succesvolle verify
 // om te voorkomen dat tilt/lift detectie het error scherm opnieuw toont.
 dashboardRouter.post('/pin/:sn/verify', (req: Request, res: Response) => {
+  const T = reqT(req);
   const { sn } = req.params;
   const { code } = req.body as { code?: string };
-  if (rejectUnlessOpenNova(sn, res, 'PIN verifiëren')) return;
+  if (rejectUnlessOpenNova(sn, req, res, M`PIN verifiëren`)) return;
   if (!code || code.length !== 4 || !/^\d{4}$/.test(code)) {
-    res.status(400).json({ error: 'PIN moet 4 cijfers zijn' });
+    res.status(400).json({ error: T`PIN moet 4 cijfers zijn` });
     return;
   }
   if (!isDeviceOnline(sn)) {
-    res.status(404).json({ error: 'Device is offline' });
+    res.status(404).json({ error: T`Apparaat is offline` });
     return;
   }
   // NIET via MQTT dev_pin_info! mqtt_node's C++ ChassisPinCodeSet action client
@@ -6437,18 +6494,19 @@ dashboardRouter.post('/pin/:sn/verify', (req: Request, res: Response) => {
 
 // POST /api/dashboard/pin/:sn/raw — stuur raw cfg_value (voor testing)
 dashboardRouter.post('/pin/:sn/raw', (req: Request, res: Response) => {
+  const T = reqT(req);
   const { sn } = req.params;
   const { cfg_value, code } = req.body as { cfg_value?: number; code?: string };
   if (cfg_value === undefined || typeof cfg_value !== 'number') {
-    res.status(400).json({ error: 'cfg_value (number) is vereist' });
+    res.status(400).json({ error: T`cfg_value (number) is vereist` });
     return;
   }
   if (!code || code.length !== 4 || !/^\d{4}$/.test(code)) {
-    res.status(400).json({ error: 'PIN moet 4 cijfers zijn' });
+    res.status(400).json({ error: T`PIN moet 4 cijfers zijn` });
     return;
   }
   if (!isDeviceOnline(sn)) {
-    res.status(404).json({ error: 'Device is offline' });
+    res.status(404).json({ error: T`Apparaat is offline` });
     return;
   }
   publishToDevice(sn, { dev_pin_info: { cfg_value, code } });
@@ -6462,9 +6520,10 @@ dashboardRouter.post('/pin/:sn/raw', (req: Request, res: Response) => {
 // the recharge-failed latch. We also send `clear_error: {}` for custom-firmware paths
 // and optimistically wipe error fields in sensor cache so UI updates immediately.
 dashboardRouter.post('/error/:sn/clear', (req: Request, res: Response) => {
+  const T = reqT(req);
   const { sn } = req.params;
   if (!isDeviceOnline(sn)) {
-    res.status(404).json({ error: 'Device is offline' });
+    res.status(404).json({ error: T`Apparaat is offline` });
     return;
   }
 
@@ -6500,12 +6559,13 @@ import { SERVER_VERSION } from '../services/serverVersion.js';
 // Trigger mDNS discovery bij eerste call zodat een onbekende mower zichzelf
 // kan vinden zonder dat de gebruiker handmatig een IP moet invoeren.
 dashboardRouter.get('/camera/:sn/info', async (req: Request, res: Response) => {
+  const T = reqT(req);
   const sn = req.params.sn;
   const port = parseInt(req.query.port as string) || 8000;
   const queryIp = req.query.ip as string | undefined;
   const ip = queryIp ?? (await resolveMowerIp(sn, { awaitDiscovery: true }));
   if (!ip) {
-    res.status(404).json({ error: 'Maaier IP onbekend' });
+    res.status(404).json({ error: T`Maaier IP onbekend` });
     return;
   }
   res.json({
@@ -6518,13 +6578,14 @@ dashboardRouter.get('/camera/:sn/info', async (req: Request, res: Response) => {
 
 // GET /api/dashboard/camera/:sn/stream — proxy MJPEG stream van de maaier
 dashboardRouter.get('/camera/:sn/stream', async (req: Request, res: Response) => {
+  const T = reqT(req);
   let ip = req.query.ip as string | undefined;
   const port = parseInt(req.query.port as string) || 8000;
 
   if (!ip) {
     ip = (await resolveMowerIp(req.params.sn, { awaitDiscovery: true })) ?? undefined;
     if (!ip) {
-      res.status(404).json({ error: 'Maaier IP onbekend' });
+      res.status(404).json({ error: T`Maaier IP onbekend` });
       return;
     }
   }
@@ -6547,7 +6608,7 @@ dashboardRouter.get('/camera/:sn/stream', async (req: Request, res: Response) =>
   proxyReq.on('error', (err) => {
     console.log(`[CAMERA] Proxy error voor ${ip}:${port}: ${err.message}`);
     if (!res.headersSent) {
-      res.status(502).json({ error: 'Camera niet bereikbaar', details: err.message });
+      res.status(502).json({ error: T`Camera niet bereikbaar`, details: err.message });
     }
   });
 
@@ -6558,13 +6619,14 @@ dashboardRouter.get('/camera/:sn/stream', async (req: Request, res: Response) =>
 
 // GET /api/dashboard/camera/:sn/snapshot — single JPEG snapshot
 dashboardRouter.get('/camera/:sn/snapshot', async (req: Request, res: Response) => {
+  const T = reqT(req);
   let ip = req.query.ip as string | undefined;
   const port = parseInt(req.query.port as string) || 8000;
 
   if (!ip) {
     ip = (await resolveMowerIp(req.params.sn, { awaitDiscovery: true })) ?? undefined;
     if (!ip) {
-      res.status(404).json({ error: 'Maaier IP onbekend' });
+      res.status(404).json({ error: T`Maaier IP onbekend` });
       return;
     }
   }
@@ -6582,7 +6644,7 @@ dashboardRouter.get('/camera/:sn/snapshot', async (req: Request, res: Response) 
     if (!isImage) {
       proxyRes.resume(); // drain
       if (!res.headersSent) {
-        res.status(502).json({ error: 'Camera niet gereed', upstreamStatus: proxyRes.statusCode ?? 0, upstreamType: ctype });
+        res.status(502).json({ error: T`Camera niet gereed`, upstreamStatus: proxyRes.statusCode ?? 0, upstreamType: ctype });
       }
       return;
     }
@@ -6592,7 +6654,7 @@ dashboardRouter.get('/camera/:sn/snapshot', async (req: Request, res: Response) 
       const body = Buffer.concat(chunks);
       // Guard against a 200 with an empty/garbage body (also breaks <img>).
       if (body.length < 100 && !res.headersSent) {
-        res.status(502).json({ error: 'Camera lege frame' });
+        res.status(502).json({ error: T`Camera gaf een leeg frame` });
         return;
       }
       res.writeHead(200, {
@@ -6608,7 +6670,7 @@ dashboardRouter.get('/camera/:sn/snapshot', async (req: Request, res: Response) 
   });
   upstream.on('error', (err) => {
     if (!res.headersSent) {
-      res.status(502).json({ error: 'Camera niet bereikbaar', details: err.message });
+      res.status(502).json({ error: T`Camera niet bereikbaar`, details: err.message });
     }
   });
 });
@@ -6657,10 +6719,11 @@ dashboardRouter.get('/setup/info', (_req: Request, res: Response) => {
 });
 
 // GET /api/dashboard/setup/ca-cert — download het lokale CA certificaat (voor Novabot app)
-dashboardRouter.get('/setup/ca-cert', (_req: Request, res: Response) => {
+dashboardRouter.get('/setup/ca-cert', (req: Request, res: Response) => {
+  const T = reqT(req);
   const certPath = '/data/certs/server.crt';
   if (!existsSync(certPath)) {
-    res.status(404).json({ error: 'Cert nog niet gegenereerd — herstart de container' });
+    res.status(404).json({ error: T`Certificaat nog niet gegenereerd: herstart de container` });
     return;
   }
   res.setHeader('Content-Type', 'application/x-x509-ca-cert');
@@ -6706,16 +6769,17 @@ dashboardRouter.get('/setup/status', (_req: Request, res: Response) => {
 
 // POST /api/dashboard/setup/create-user — maak de eerste gebruiker aan (alleen als DB leeg is)
 dashboardRouter.post('/setup/create-user', async (req: Request, res: Response) => {
+  const T = reqT(req);
   const { email, password, username } = req.body as { email?: string; password?: string; username?: string };
 
   if (!email || !password) {
-    res.status(400).json({ ok: false, error: 'Email en wachtwoord zijn verplicht' });
+    res.status(400).json({ ok: false, error: T`Email en wachtwoord zijn verplicht` });
     return;
   }
 
   const count = userRepo.count();
   if (count > 0) {
-    res.status(409).json({ ok: false, error: 'Er bestaat al een gebruiker. Gebruik de inlogpagina.' });
+    res.status(409).json({ ok: false, error: T`Er bestaat al een gebruiker. Gebruik de inlogpagina.` });
     return;
   }
 
@@ -6733,6 +6797,7 @@ dashboardRouter.post('/setup/create-user', async (req: Request, res: Response) =
 // Geen JWT auth: alleen bedoeld voor lokaal netwerk (bootstrap wizard).
 // Maakt een lokale gebruiker aan en registreert de maaier + laadstation in de DB.
 dashboardRouter.post('/admin/import', async (req: Request, res: Response) => {
+  const T = reqT(req);
   const { email, password, deviceName, charger, mower } = req.body as {
     email?: string;
     password?: string;
@@ -6742,7 +6807,7 @@ dashboardRouter.post('/admin/import', async (req: Request, res: Response) => {
   };
 
   if (!email || !password || !charger?.sn) {
-    res.status(400).json({ ok: false, error: 'email, password en charger.sn zijn verplicht' });
+    res.status(400).json({ ok: false, error: T`email, password en charger.sn zijn verplicht` });
     return;
   }
 
@@ -6883,6 +6948,7 @@ dashboardRouter.post('/admin/import', async (req: Request, res: Response) => {
 // Body: { email, password, mowerSn? }   (mowerSn defaults to the first
 //   mower bound to the matching local user)
 dashboardRouter.post('/admin/cloud-resync', async (req: Request, res: Response) => {
+  const T = reqT(req);
   const { email, password, mowerSn } = req.body as {
     email?: string;
     password?: string;
@@ -6896,7 +6962,7 @@ dashboardRouter.post('/admin/cloud-resync', async (req: Request, res: Response) 
   const normalizedEmail = email.trim().toLowerCase();
   const localUser = userRepo.findByEmail(normalizedEmail);
   if (!localUser) {
-    res.status(404).json({ ok: false, error: 'No local user with that email — run /admin/import first.' });
+    res.status(404).json({ ok: false, error: T`Geen lokale gebruiker met dat e-mailadres: voer eerst /admin/import uit.` });
     return;
   }
 
@@ -6907,7 +6973,7 @@ dashboardRouter.post('/admin/cloud-resync', async (req: Request, res: Response) 
     ?? owned[0]?.mower_sn
     ?? null;
   if (!mowerSnResolved) {
-    res.status(400).json({ ok: false, error: 'No mower bound to this account.' });
+    res.status(400).json({ ok: false, error: T`Geen maaier gekoppeld aan dit account.` });
     return;
   }
 
@@ -6924,7 +6990,7 @@ dashboardRouter.post('/admin/cloud-resync', async (req: Request, res: Response) 
     const cloudToken = loginVal?.accessToken as string | undefined;
     const cloudAppUserId = loginVal?.appUserId as number | string | undefined;
     if (!cloudToken || cloudAppUserId == null) {
-      res.status(401).json({ ok: false, error: 'Cloud login failed.' });
+      res.status(401).json({ ok: false, error: T`Inloggen bij de cloud mislukt.` });
       return;
     }
     const equip = equipmentRepo.findByMowerSn(mowerSnResolved);
@@ -6938,7 +7004,7 @@ dashboardRouter.post('/admin/cloud-resync', async (req: Request, res: Response) 
     console.error('[admin/cloud-resync] failed:', err);
     res.status(500).json({
       ok: false,
-      error: err instanceof Error ? err.message : 'cloud-resync failed',
+      error: err instanceof Error ? err.message : T`Cloud-resync mislukt`,
     });
     return;
   }
@@ -7159,7 +7225,7 @@ dashboardRouter.delete('/remote-debug/logs', (req: Request, res: Response) => {
 // ── Autonoom karteren ────────────────────────────────────────────────────────
 dashboardRouter.post('/auto-map/:sn/start', async (req: Request, res: Response) => {
   const { sn } = req.params;
-  if (rejectUnlessOpenNova(sn, res, 'Autonoom karteren')) return;
+  if (rejectUnlessOpenNova(sn, req, res, M`Autonoom karteren`)) return;
   const mode = req.body?.mode === 'record' ? 'record' : 'test';
   const radiusM = Number(req.body?.radiusM) || undefined;
   const result = await startAutoMap(sn, { mode, radiusM });
@@ -7173,7 +7239,7 @@ dashboardRouter.post('/auto-map/:sn/stop', (req: Request, res: Response) => {
 });
 
 dashboardRouter.get('/auto-map/:sn/status', (req: Request, res: Response) => {
-  res.json(getAutoMapStatus(req.params.sn) ?? { phase: 'idle' });
+  res.json(getAutoMapStatus(req.params.sn, reqT(req)) ?? { phase: 'idle' });
 });
 
 dashboardRouter.post('/auto-map/:sn/accept', (req: Request, res: Response) => {

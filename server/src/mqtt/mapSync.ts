@@ -324,7 +324,9 @@ export function awaitCommand(
         if (idx >= 0) list.splice(idx, 1);
         if (list.length === 0) pendingResolvers.delete(key);
       }
-      reject(new Error(`Timeout na ${timeoutMs}ms wachtend op ${respondType} van ${sn}`));
+      // English: this text ends up inside user-facing errors, and a thrown
+      // Error has no reader language. Technical detail, kept neutral.
+      reject(new Error(`timeout after ${timeoutMs}ms waiting for ${respondType} from ${sn}`));
     }, timeoutMs);
 
     const resolver: PendingResolver = (data) => {

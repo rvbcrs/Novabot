@@ -10,6 +10,7 @@
  * independent of this legacy scalar limit.
  */
 import { equipmentRepo } from '../db/repositories/index.js';
+import { M, translator, type Msg, type Translate } from './serverText.js';
 
 /**
  * First OpenNova build whose mow orchestrator selects zones by map file name
@@ -55,10 +56,11 @@ export function supportsMapNamesSelection(swVersion: string | null | undefined):
   return build !== undefined && Number(build) >= MAP_NAMES_SELECTION_BUILD;
 }
 
-export function getMowingAreaError(
+/** The refusal as a stored-later message (the schedule runner keeps it). */
+export function getMowingAreaErrorMsg(
   command: Record<string, unknown>,
   opts: { swVersion?: string | null } = {},
-): string | null {
+): Msg | null {
   for (const key of ['start_navigation', 'start_run', 'mow_zone']) {
     // mow_zone runs through our own orchestrator on the mower. From the build
     // in MAP_NAMES_SELECTION_BUILD on it sends map file names for a selection
@@ -80,10 +82,22 @@ export function getMowingAreaError(
     // Number() would accept those strings and let an unsupported slot through.
     const value = typeof area === 'number' ? area
       : typeof area === 'string' && /^[+-]?\d+$/.test(area.trim()) ? Number(area) : NaN;
-    if (!Number.isSafeInteger(value) || value < 0) return 'Invalid mowing area code.';
+    if (!Number.isSafeInteger(value) || value < 0) return M`Ongeldige maaigebiedcode.`;
     if (value > 60000 || value === 255) {
-      return 'This firmware cannot mow the selected area code. Select only map0–map4 (zones 1–5); later slots trigger firmware error 125. Your saved maps are unchanged.';
+      return M`Deze firmware kan de gekozen gebiedscode niet maaien. Kies alleen map0–map4 (zones 1–5); latere slots geven firmwarefout 125. Je opgeslagen kaarten blijven ongewijzigd.`;
     }
   }
   return null;
+}
+
+/** The refusal in the reader's language, or null when the area is fine. */
+export function getMowingAreaError(
+  command: Record<string, unknown>,
+  opts: { swVersion?: string | null } = {},
+  T: Translate = translator('en'),
+): string | null {
+  const msg = getMowingAreaErrorMsg(command, opts);
+  // Both messages are plain sentences without placeholders, so the key alone
+  // translates them.
+  return msg ? T(msg.key) : null;
 }

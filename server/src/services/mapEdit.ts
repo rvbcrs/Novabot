@@ -11,6 +11,7 @@ import { deviceCache } from '../mqtt/sensorData.js';
 import { isDeviceOnline } from '../mqtt/broker.js';
 import { getMowerFileCapability } from './mowerFileCapability.js';
 import { db } from '../db/database.js';
+import { translator, type Translate } from './serverText.js';
 
 const TAG = '[MAP-EDIT]';
 // 5mm RDP: removes duplicates + straight-run redundancy but keeps every real
@@ -100,18 +101,18 @@ export interface SaveDraftInput {
 }
 export interface SaveDraftResult { ok: boolean; canonical?: string; error?: string }
 
-export function saveDraft(sn: string, input: SaveDraftInput): SaveDraftResult {
+export function saveDraft(sn: string, input: SaveDraftInput, T: Translate = translator('en')): SaveDraftResult {
   if (input.canonical) {
     const row = mapRepo.findBySnAndCanonical(sn, input.canonical);
     if (row) {
-      if (row.map_type === 'unicom') return { ok: false, error: 'Unicom-paden zijn niet bewerkbaar' };
+      if (row.map_type === 'unicom') return { ok: false, error: T`Unicom-paden zijn niet bewerkbaar` };
       if (input.deleted) {
-        if (row.map_type !== 'obstacle') return { ok: false, error: 'Alleen obstacles kunnen verwijderd worden' };
+        if (row.map_type !== 'obstacle') return { ok: false, error: T`Alleen obstakels kunnen verwijderd worden` };
         mapEditsRepo.upsertDraft({ mower_sn: sn, canonical_name: input.canonical, map_id: row.map_id,
           map_type: 'obstacle', parent_map: parentMapOf(input.canonical), draft_area: null, deleted: 1 });
         return { ok: true, canonical: input.canonical };
       }
-      if (!input.points || input.points.length < 3) return { ok: false, error: 'Minimaal 3 punten nodig' };
+      if (!input.points || input.points.length < 3) return { ok: false, error: T`Minimaal 3 punten nodig` };
       mapEditsRepo.upsertDraft({ mower_sn: sn, canonical_name: input.canonical, map_id: row.map_id,
         map_type: row.map_type as 'work' | 'obstacle', parent_map: parentMapOf(input.canonical),
         draft_area: JSON.stringify(input.points), deleted: 0 });
@@ -122,7 +123,7 @@ export function saveDraft(sn: string, input: SaveDraftInput): SaveDraftResult {
     // canonical). Bewerken/verplaatsen/verwijderen daarvan moet gewoon werken.
     const draft = mapEditsRepo.listDrafts(sn).find(d => d.canonical_name === input.canonical);
     if (draft) {
-      if (draft.map_type === 'unicom') return { ok: false, error: 'Unicom-paden zijn niet bewerkbaar' };
+      if (draft.map_type === 'unicom') return { ok: false, error: T`Unicom-paden zijn niet bewerkbaar` };
       if (input.deleted) {
         // Een nog niet-gecommit nieuw obstakel verwijderen = de draft droppen.
         if (!draft.map_id) { mapEditsRepo.deleteDraft(sn, input.canonical); return { ok: true, canonical: input.canonical }; }
@@ -130,19 +131,19 @@ export function saveDraft(sn: string, input: SaveDraftInput): SaveDraftResult {
           map_type: 'obstacle', parent_map: draft.parent_map, draft_area: null, deleted: 1 });
         return { ok: true, canonical: input.canonical };
       }
-      if (!input.points || input.points.length < 3) return { ok: false, error: 'Minimaal 3 punten nodig' };
+      if (!input.points || input.points.length < 3) return { ok: false, error: T`Minimaal 3 punten nodig` };
       mapEditsRepo.upsertDraft({ mower_sn: sn, canonical_name: input.canonical, map_id: draft.map_id,
         map_type: draft.map_type as 'work' | 'obstacle', parent_map: draft.parent_map,
         draft_area: JSON.stringify(input.points), deleted: 0 });
       return { ok: true, canonical: input.canonical };
     }
-    return { ok: false, error: `Onbekende kaart ${input.canonical}` };
+    return { ok: false, error: T`Onbekende kaart ${input.canonical}` };
   }
 
   if (input.mapType !== 'obstacle' || !input.parentMap) {
-    return { ok: false, error: 'Nieuw tekenen kan alleen als obstacle met parentMap' };
+    return { ok: false, error: T`Nieuw tekenen kan alleen als obstakel met parentMap` };
   }
-  if (!input.points || input.points.length < 3) return { ok: false, error: 'Minimaal 3 punten nodig' };
+  if (!input.points || input.points.length < 3) return { ok: false, error: T`Minimaal 3 punten nodig` };
   const taken = new Set<string>([
     ...mapRepo.findByMowerSn(sn).map(r => r.canonical_name ?? ''),
     ...mapEditsRepo.listDrafts(sn).map(d => d.canonical_name),
@@ -252,7 +253,7 @@ async function bundleAndPush(sn: string): Promise<ApplyResult> {
   return { ok: true };
 }
 
-export async function applyEdits(sn: string): Promise<ApplyResult> {
+export async function applyEdits(sn: string, T: Translate = translator('en')): Promise<ApplyResult> {
   if (applyLocks.has(sn)) return { ok: false, reason: 'locked' };
   applyLocks.add(sn);
   try {
@@ -300,7 +301,7 @@ export async function applyEdits(sn: string): Promise<ApplyResult> {
     // onaangeraakte mower-maps (vaak licht zelf-kruisend door GPS-ruis) mogen een
     // edit niet blokkeren. De drafts-set bevat alle bewerkte canonicals.
     const editedCanonicals = new Set(drafts.map(d => d.canonical_name));
-    const validation = validateMapSet({ work, obstacles }, originals, editedCanonicals);
+    const validation = validateMapSet({ work, obstacles }, originals, editedCanonicals, T);
     if (!validation.ok) return { ok: false, reason: 'validation', validation };
 
     // Snapshot + mutaties in één transactie

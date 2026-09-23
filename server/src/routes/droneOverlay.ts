@@ -19,6 +19,7 @@ import { copyFileSync, existsSync, mkdirSync, unlinkSync, writeFileSync } from '
 import { deviceSettingsRepo } from '../db/repositories/index.js';
 import { imageDimensions } from '../services/imageDimensions.js';
 import { photoMetadata, type PhotoMetadata } from '../services/photoMetadata.js';
+import { reqT } from '../services/serverText.js';
 
 export const droneOverlayRouter = Router();
 
@@ -151,7 +152,8 @@ droneOverlayRouter.get('/:sn', (req, res) => {
   const sn = snOr400(req, res); if (!sn) return;
   const meta = readMeta(sn);
   if (!meta || !existsSync(path.join(storageDir(), meta.file))) {
-    res.status(404).json({ error: 'no overlay for this mower' });
+    const T = reqT(req);
+    res.status(404).json({ error: T`geen luchtfoto voor deze maaier` });
     return;
   }
   const { file: _file, ...pub } = meta;
@@ -164,7 +166,7 @@ droneOverlayRouter.get('/:sn/image', (req, res) => {
   const sn = snOr400(req, res); if (!sn) return;
   const meta = readMeta(sn);
   const file = meta ? path.join(storageDir(), meta.file) : null;
-  if (!meta || !file || !existsSync(file)) { res.status(404).json({ error: 'no overlay for this mower' }); return; }
+  if (!meta || !file || !existsSync(file)) { const T = reqT(req); res.status(404).json({ error: T`geen luchtfoto voor deze maaier` }); return; }
   res.setHeader('Cache-Control', 'private, max-age=31536000, immutable');
   res.type(meta.mime);
   res.sendFile(file);
@@ -179,13 +181,14 @@ droneOverlayRouter.put('/:sn/image',
   express.raw({ type: ['image/jpeg', 'image/png', 'application/octet-stream'], limit: '50mb' }),
   (req, res) => {
     const sn = snOr400(req, res); if (!sn) return;
+    const T = reqT(req);
     const buf = req.body as Buffer | undefined;
     if (!buf || !Buffer.isBuffer(buf) || buf.length === 0) {
-      res.status(400).json({ error: 'send the image as the raw request body' });
+      res.status(400).json({ error: T`stuur de afbeelding als ruwe request-body` });
       return;
     }
     const dims = imageDimensions(buf);
-    if (!dims) { res.status(415).json({ error: 'not a JPEG or PNG' }); return; }
+    if (!dims) { res.status(415).json({ error: T`geen JPEG of PNG` }); return; }
 
     const dir = storageDir();
     mkdirSync(dir, { recursive: true });
@@ -216,10 +219,11 @@ droneOverlayRouter.put('/:sn/image',
 // PUT /overlay/:sn — placement only.
 droneOverlayRouter.put('/:sn', (req, res) => {
   const sn = snOr400(req, res); if (!sn) return;
+  const T = reqT(req);
   const meta = readMeta(sn);
-  if (!meta) { res.status(404).json({ error: 'upload a photo first' }); return; }
+  if (!meta) { res.status(404).json({ error: T`upload eerst een foto` }); return; }
   const placement = parsePlacement(req.body);
-  if (!placement) { res.status(400).json({ error: 'placement needs corners (4 x {lat, lng}, 1..3000 m apart) and opacity (0..1)' }); return; }
+  if (!placement) { res.status(400).json({ error: T`plaatsing vereist hoeken (4 x lat/lng, 1 tot 3000 m uit elkaar) en dekking (0 tot 1)` }); return; }
   writeMeta(sn, { ...meta, placement });
   res.json({ sn, placement });
 });
@@ -233,7 +237,7 @@ droneOverlayRouter.post('/:sn/copy-from/:source', (req, res) => {
   if (!SN_RE.test(source) || source === sn) { res.status(400).json({ error: 'invalid source sn' }); return; }
   const src = readMeta(source);
   const dir = storageDir();
-  if (!src || !existsSync(path.join(dir, src.file))) { res.status(404).json({ error: 'no overlay on the source mower' }); return; }
+  if (!src || !existsSync(path.join(dir, src.file))) { const T = reqT(req); res.status(404).json({ error: T`geen luchtfoto op de bronmaaier` }); return; }
   const file = `${sn}${path.extname(src.file)}`;
   for (const stale of [`${sn}.jpg`, `${sn}.png`]) {
     if (stale !== file && existsSync(path.join(dir, stale))) { try { unlinkSync(path.join(dir, stale)); } catch { /* best effort */ } }

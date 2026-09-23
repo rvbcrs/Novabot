@@ -17,7 +17,8 @@ import { deviceCache } from '../mqtt/sensorData.js';
 import { isOpenNovaMower } from '../services/mowerFileCapability.js';
 import { deviceSettingsRepo } from '../db/repositories/deviceSettings.js';
 import { selectParaRepush } from '../mqtt/paraRepush.js';
-import { getMowingAreaError, mowerSwVersion } from './mowingArea.js';
+import { getMowingAreaErrorMsg, mowerSwVersion } from './mowingArea.js';
+import { M, renderMsg, type Msg } from './serverText.js';
 
 /** Settle time (ms) between re-applying the saved para and start_navigation, so
  *  the mower has processed set_para_info before it captures perception_level /
@@ -81,7 +82,15 @@ export interface MowingParams {
 
 export interface MowingResult {
   ok: boolean;
+  /** English, for logs and callers without a reader. */
   error?: string;
+  /** The same refusal, untranslated, for callers that store it and show it
+   *  later in the reader's language (the schedule runner). */
+  errorMsg?: Msg;
+}
+
+function refuse(msg: Msg): MowingResult {
+  return { ok: false, error: renderMsg('en', msg), errorMsg: msg };
 }
 
 /**
@@ -132,14 +141,14 @@ export function startMowing(params: MowingParams): MowingResult {
   const pathDirection = params.pathDirection;
 
   if (!sn) return { ok: false, error: 'sn required' };
-  const areaError = getMowingAreaError({ start_navigation: { area } }, {
+  const areaError = getMowingAreaErrorMsg({ start_navigation: { area } }, {
     swVersion: mowerSwVersion(sn, deviceCache.get(sn)?.get('sw_version')),
   });
-  if (areaError) return { ok: false, error: areaError };
-  if (!isDeviceOnline(sn)) return { ok: false, error: 'mower offline' };
+  if (areaError) return refuse(areaError);
+  if (!isDeviceOnline(sn)) return refuse(M`maaier offline`);
   if (isMowerBusy(sn)) {
     console.log(`[MowingService] Reject start: ${sn} already busy (work_status/msg active)`);
-    return { ok: false, error: 'mower busy — already in a task' };
+    return refuse(M`maaier bezig: er loopt al een taak`);
   }
 
   // Normalise the stored cutting height (cm from the app, mm from the dashboard)
@@ -362,9 +371,9 @@ export function getMowerPhase(sn: string): 'mowing' | 'charging' | 'aborted' | '
  *  maaier vuurt) geeft expliciet true mee. */
 export function startEdgeCut(sn: string, mapName: string, bladeHeightMm: number, departFromDock = false): MowingResult {
   if (!sn) return { ok: false, error: 'sn required' };
-  if (!isDeviceOnline(sn)) return { ok: false, error: 'mower offline' };
+  if (!isDeviceOnline(sn)) return refuse(M`maaier offline`);
   // start_edge_cut is een extended commando: op stock firmware hoort niemand het.
-  if (!isOpenNovaMower(sn, deviceCache.get(sn))) return { ok: false, error: 'requires OpenNova custom firmware' };
+  if (!isOpenNovaMower(sn, deviceCache.get(sn))) return refuse(M`vereist OpenNova custom firmware`);
   publishExtendedCommand(sn, { start_edge_cut: { mapName, bladeHeight: bladeHeightMm, departFromDock } });
   console.log(`[MowingService] start_edge_cut: sn=${sn} map=${mapName} blade=${bladeHeightMm}mm departFromDock=${departFromDock}`);
   return { ok: true };

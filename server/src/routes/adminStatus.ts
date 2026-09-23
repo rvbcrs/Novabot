@@ -34,8 +34,8 @@ import { deriveHeading } from '../services/driveCalibration.js';
 import {
   getMowerFileCapability,
   MOWER_FILE_WRITE_UNSUPPORTED_CODE,
-  MOWER_FILE_WRITE_UNSUPPORTED_MESSAGE,
 } from '../services/mowerFileCapability.js';
+import { reqT, translator, type Translate } from '../services/serverText.js';
 import {
   deviceCache,
   getValidationTrail,
@@ -97,12 +97,14 @@ const importStaging = new ImportStagingStore(
 );
 const bundleUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
-function mowerFileUnsupportedPayload(sn: string) {
+function mowerFileUnsupportedPayload(sn: string, T: Translate = translator('en')) {
   const capability = getMowerFileCapability(sn);
   return {
     ok: false,
     code: MOWER_FILE_WRITE_UNSUPPORTED_CODE,
-    error: capability.reason ?? MOWER_FILE_WRITE_UNSUPPORTED_MESSAGE,
+    // capability.reason stays as it is (English, part of the capability shape);
+    // the sentence a person reads is translated.
+    error: T`Kaartbestanden terugzetten op de maaier vereist OpenNova custom firmware. Stock firmware ondersteunt write_map_files niet; gebruik alleen de import in de server-kopie, tenzij dezelfde kaarten al op de maaier staan.`,
     targetSn: sn,
     ...capability,
   };
@@ -265,6 +267,7 @@ adminStatusRouter.post('/bind-device', (_req: AuthRequest, res: Response) => {
 //   noWait?: boolean            // true = fire-and-forget
 // }
 adminStatusRouter.post('/send-command', async (req: AuthRequest, res: Response) => {
+  const T = reqT(req);
   const { sn, command, payload, timeoutMs, noWait } = req.body as {
     sn?: string;
     command?: string;
@@ -278,7 +281,7 @@ adminStatusRouter.post('/send-command', async (req: AuthRequest, res: Response) 
     return;
   }
   if (!isDeviceOnline(sn)) {
-    res.status(409).json({ error: 'device not online', sn });
+    res.status(409).json({ error: T`apparaat niet online`, sn });
     return;
   }
 
@@ -534,12 +537,13 @@ adminStatusRouter.get('/equipment', (_req: AuthRequest, res: Response) => {
 
 // POST /api/admin-status/set-role — update user roles
 adminStatusRouter.post('/set-role', (req: AuthRequest, res: Response) => {
+  const T = reqT(req);
   const { userId, role, enabled } = req.body as { userId: string; role: string; enabled: boolean };
   if (!userId || !role) { res.status(400).json({ error: 'userId and role required' }); return; }
 
   const validRoles = ['is_admin', 'dashboard_access'];
   if (!validRoles.includes(role)) {
-    res.status(400).json({ error: `Invalid role. Valid: ${validRoles.join(', ')}` });
+    res.status(400).json({ error: T`Ongeldige rol. Geldig: ${validRoles.join(', ')}` });
     return;
   }
 
@@ -551,9 +555,10 @@ adminStatusRouter.post('/set-role', (req: AuthRequest, res: Response) => {
 
 // POST /api/admin-status/delete-user — admin can delete a user
 adminStatusRouter.post('/delete-user', (req: AuthRequest, res: Response) => {
+  const T = reqT(req);
   const { userId } = req.body as { userId: string };
   if (!userId) { res.status(400).json({ error: 'userId required' }); return; }
-  if (userId === req.userId) { res.status(400).json({ error: 'Cannot delete yourself' }); return; }
+  if (userId === req.userId) { res.status(400).json({ error: T`Je kunt jezelf niet verwijderen` }); return; }
 
   userRepo.deleteById(userId);
   equipmentRepo.clearUserIdByUserId(userId);
@@ -564,9 +569,10 @@ adminStatusRouter.post('/delete-user', (req: AuthRequest, res: Response) => {
 
 // POST /api/admin-status/reset-password — admin can reset a user's password
 adminStatusRouter.post('/reset-password', (req: AuthRequest, res: Response) => {
+  const T = reqT(req);
   const { userId, newPassword } = req.body as { userId: string; newPassword: string };
   if (!userId || !newPassword) { res.status(400).json({ error: 'userId and newPassword required' }); return; }
-  if (newPassword.length < 6) { res.status(400).json({ error: 'Password must be at least 6 characters' }); return; }
+  if (newPassword.length < 6) { res.status(400).json({ error: T`Het wachtwoord moet minstens 6 tekens hebben` }); return; }
 
   const hash = bcrypt.hashSync(newPassword, 10);
   userRepo.updatePassword(userId, hash);
@@ -632,6 +638,7 @@ adminStatusRouter.get('/dnsmasq', (_req: AuthRequest, res: Response) => {
 
 // POST /api/admin-status/dnsmasq — start or stop dnsmasq
 adminStatusRouter.post('/dnsmasq', (req: AuthRequest, res: Response) => {
+  const T = reqT(req);
   const { enable } = req.body as { enable?: boolean };
   const serverIp = process.env.TARGET_IP ?? getLocalIp();
   const upstreamDns = process.env.UPSTREAM_DNS ?? '8.8.8.8';
@@ -686,7 +693,7 @@ adminStatusRouter.post('/dnsmasq', (req: AuthRequest, res: Response) => {
     }
     if (dnsmasqLivePids().length > 0) {
       console.error('[DNS] dnsmasq still running after SIGTERM + SIGKILL');
-      res.json({ ok: false, running: true, error: 'dnsmasq did not stop (still running after SIGKILL).' });
+      res.json({ ok: false, running: true, error: T`dnsmasq stopte niet (draait nog na SIGKILL).` });
     } else {
       console.log('[DNS] dnsmasq stopped');
       res.json({ ok: true, running: false });
@@ -773,6 +780,7 @@ adminStatusRouter.get('/check-firmware-updates', async (_req: AuthRequest, res: 
 
 // POST /api/admin-status/download-firmware — download firmware from remote URL and register locally
 adminStatusRouter.post('/download-firmware', async (req: AuthRequest, res: Response) => {
+  const T = reqT(req);
   const {
     url: rawUrl,
     filename,
@@ -827,17 +835,17 @@ adminStatusRouter.post('/download-firmware', async (req: AuthRequest, res: Respo
     if (md5 && fileMd5 !== md5) {
       // Clean up failed download
       try { fs.unlinkSync(filePath); } catch { /* ignore */ }
-      res.status(400).json({ error: `MD5 mismatch: expected ${md5}, got ${fileMd5}` });
+      res.status(400).json({ error: T`MD5 komt niet overeen: verwacht ${md5}, gekregen ${fileMd5}` });
       return;
     }
     if (sha256 && fileSha256 !== sha256) {
       try { fs.unlinkSync(filePath); } catch { /* ignore */ }
-      res.status(400).json({ error: `SHA256 mismatch: expected ${sha256}, got ${fileSha256}` });
+      res.status(400).json({ error: T`SHA256 komt niet overeen: verwacht ${sha256}, gekregen ${fileSha256}` });
       return;
     }
     if (size && fileSize !== size) {
       try { fs.unlinkSync(filePath); } catch { /* ignore */ }
-      res.status(400).json({ error: `Size mismatch: expected ${size}, got ${fileSize}` });
+      res.status(400).json({ error: T`Grootte komt niet overeen: verwacht ${size}, gekregen ${fileSize}` });
       return;
     }
 
@@ -1077,11 +1085,12 @@ adminStatusRouter.get('/map-backups/:sn', (req: AuthRequest, res: Response) => {
 
 // GET /api/admin-status/map-backups/:sn/:filename — download ZIP
 adminStatusRouter.get('/map-backups/:sn/:filename', (req: AuthRequest, res: Response) => {
+  const T = reqT(req);
   const { sn, filename } = req.params;
   try {
     const p = backupPath(sn, filename);
     if (!fs.existsSync(p)) {
-      res.status(404).json({ error: 'backup not found' });
+      res.status(404).json({ error: T`backup niet gevonden` });
       return;
     }
     res.setHeader('Content-Type', 'application/zip');
@@ -1094,16 +1103,17 @@ adminStatusRouter.get('/map-backups/:sn/:filename', (req: AuthRequest, res: Resp
 
 // GET /api/admin-status/map-backups/:sn/:filename/contents — inspect backup
 adminStatusRouter.get('/map-backups/:sn/:filename/contents', (req: AuthRequest, res: Response) => {
+  const T = reqT(req);
   const { sn, filename } = req.params;
   try {
     const p = backupPath(sn, filename);
     if (!fs.existsSync(p)) {
-      res.status(404).json({ error: 'backup not found' });
+      res.status(404).json({ error: T`backup niet gevonden` });
       return;
     }
     const parsed = parseMapZip(p);
     if (!parsed) {
-      res.status(400).json({ error: 'failed to parse backup ZIP' });
+      res.status(400).json({ error: T`backup-ZIP kon niet worden gelezen` });
       return;
     }
 
@@ -1144,16 +1154,17 @@ adminStatusRouter.get('/map-backups/:sn/:filename/contents', (req: AuthRequest, 
 // metadata (point counts) so the dropdown UX stays cheap; this endpoint
 // is hit on demand when a snapshot is selected for preview.
 adminStatusRouter.get('/map-backups/:sn/:filename/polygons', (req: AuthRequest, res: Response) => {
+  const T = reqT(req);
   const { sn, filename } = req.params;
   try {
     const p = backupPath(sn, filename);
     if (!fs.existsSync(p)) {
-      res.status(404).json({ error: 'backup not found' });
+      res.status(404).json({ error: T`backup niet gevonden` });
       return;
     }
     const parsed = parseMapZip(p);
     if (!parsed) {
-      res.status(400).json({ error: 'failed to parse backup ZIP' });
+      res.status(400).json({ error: T`backup-ZIP kon niet worden gelezen` });
       return;
     }
 
@@ -1184,6 +1195,7 @@ adminStatusRouter.get('/map-backups/:sn/:filename/polygons', (req: AuthRequest, 
 // coverage grid. The overlay is what Nav2 can actually route, so a blue patch
 // means a zone the mower CANNOT reach.
 adminStatusRouter.get('/maps/:sn/mask-overlay', async (req: AuthRequest, res: Response) => {
+  const T = reqT(req);
   const { sn } = req.params;
   const layer = String(req.query.layer ?? 'whole');
   if (!/^(whole|map\d+)$/.test(layer)) {
@@ -1191,7 +1203,7 @@ adminStatusRouter.get('/maps/:sn/mask-overlay', async (req: AuthRequest, res: Re
     return;
   }
   if (!isDeviceOnline(sn)) {
-    res.status(409).json({ ok: false, error: 'mower offline — the mask is read live from the mower' });
+    res.status(409).json({ ok: false, error: T`maaier offline: het masker wordt live van de maaier gelezen` });
     return;
   }
   const pgmName = layer === 'whole' ? 'map.pgm' : `${layer}.pgm`;
@@ -1292,6 +1304,7 @@ adminStatusRouter.get('/maps/:sn/mask-overlay', async (req: AuthRequest, res: Re
 //   - In ZIP, has DB row, overwrite=true  → DELETE + INSERT → overwritten++
 //   - In ZIP, has DB row, overwrite falsy → skip            → skippedExisting++
 adminStatusRouter.post('/map-backups/:sn/:filename/restore', (req: AuthRequest, res: Response) => {
+  const T = reqT(req);
   const { sn, filename } = req.params;
   const items = (req.body?.items ?? []) as Array<{ canonicalName: string; type: string; overwrite?: boolean }>;
 
@@ -1303,12 +1316,12 @@ adminStatusRouter.post('/map-backups/:sn/:filename/restore', (req: AuthRequest, 
   try {
     const p = backupPath(sn, filename);
     if (!fs.existsSync(p)) {
-      res.status(404).json({ error: 'backup not found' });
+      res.status(404).json({ error: T`backup niet gevonden` });
       return;
     }
     const parsed = parseMapZip(p);
     if (!parsed) {
-      res.status(400).json({ error: 'failed to parse backup ZIP' });
+      res.status(400).json({ error: T`backup-ZIP kon niet worden gelezen` });
       return;
     }
 
@@ -1384,6 +1397,7 @@ adminStatusRouter.post('/map-backups/:sn/:filename/restore', (req: AuthRequest, 
 //
 // Spec: docs/superpowers/specs/2026-05-03-restore-and-realign-mower-from-zip.md
 adminStatusRouter.post('/map-backups/:sn/:filename/restore-and-realign', async (req: AuthRequest, res: Response) => {
+  const T = reqT(req);
   const { sn, filename } = req.params;
 
   // ── 1. Validate backup + parse ──────────────────────────────────────────
@@ -1395,12 +1409,12 @@ adminStatusRouter.post('/map-backups/:sn/:filename/restore-and-realign', async (
     return;
   }
   if (!fs.existsSync(backupAbsPath)) {
-    res.status(404).json({ ok: false, error: 'backup not found' });
+    res.status(404).json({ ok: false, error: T`backup niet gevonden` });
     return;
   }
   const parsed = parseMapZip(backupAbsPath);
   if (!parsed) {
-    res.status(400).json({ ok: false, error: 'failed to parse backup ZIP' });
+    res.status(400).json({ ok: false, error: T`backup-ZIP kon niet worden gelezen` });
     return;
   }
 
@@ -1445,7 +1459,7 @@ adminStatusRouter.post('/map-backups/:sn/:filename/restore-and-realign', async (
   if (!anchor) {
     res.status(400).json({
       ok: false,
-      error: 'Backup has no mapNtocharge_unicom — cannot anchor charger pose',
+      error: T`Backup heeft geen mapNtocharge_unicom, dus de laadpositie kan niet verankerd worden`,
       restoredItems: restored,
     });
     return;
@@ -1457,7 +1471,7 @@ adminStatusRouter.post('/map-backups/:sn/:filename/restore-and-realign', async (
   if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat === 0 || lng === 0) {
     res.status(400).json({
       ok: false,
-      error: 'Mower GPS not reported — wait for mower to be online + on dock + RTK FIX',
+      error: T`Maaier-GPS niet gemeld: wacht tot de maaier online is, op het dock staat en RTK FIX heeft`,
       restoredItems: restored,
     });
     return;
@@ -1471,7 +1485,7 @@ adminStatusRouter.post('/map-backups/:sn/:filename/restore-and-realign', async (
   if (!regenPath) {
     res.status(500).json({
       ok: false,
-      error: 'Failed to regenerate <SN>_latest.zip',
+      error: T`Kon <SN>_latest.zip niet opnieuw genereren`,
       restoredItems: restored,
       anchor,
     });
@@ -1482,11 +1496,11 @@ adminStatusRouter.post('/map-backups/:sn/:filename/restore-and-realign', async (
   if (!isDeviceOnline(sn)) {
     res.status(404).json({
       ok: false,
-      error: 'Mower offline — sync_map cannot run',
+      error: T`Maaier offline: sync_map kan niet draaien`,
       restoredItems: restored,
       anchor,
       gps: { lat, lng },
-      note: 'Server-side state already restored; mower will pick up on next sync_map trigger',
+      note: T`De serverstatus is al hersteld; de maaier neemt het over bij de volgende sync_map`,
     });
     return;
   }
@@ -1514,7 +1528,7 @@ adminStatusRouter.post('/map-backups/:sn/:filename/restore-and-realign', async (
   if (syncResult.timeout) {
     res.status(504).json({
       ok: false,
-      error: 'Mower did not respond within 8s',
+      error: T`Maaier reageerde niet binnen 8 s`,
       restoredItems: restored,
       anchor,
       gps: { lat, lng },
@@ -1600,11 +1614,12 @@ adminStatusRouter.post('/maps/:sn/portable-backups', async (req: AuthRequest, re
 // the faithful occupancy-grid generator. Powers the "Rebuild bundle" button and
 // the auto-trigger after cloud re-import.
 adminStatusRouter.post('/maps/:sn/portable-backups/rebuild', async (req: AuthRequest, res: Response) => {
+  const T = reqT(req);
   const { createBundleFromDb } = await import('../services/portableBackup.js');
   try {
     const entry = await createBundleFromDb(req.params.sn, 'rebuild-db');
     if (!entry) {
-      res.status(409).json({ ok: false, error: 'rebuild failed (no work polygon or charger anchor in DB)' });
+      res.status(409).json({ ok: false, error: T`opnieuw opbouwen mislukt (geen werkpolygoon of laadstation-anker in de database)` });
       return;
     }
     res.json({ ok: true, backup: entry });
@@ -1620,6 +1635,7 @@ adminStatusRouter.post(
   '/maps/:sn/portable-backups/from-csv-zip',
   bundleUpload.single('bundle'),
   async (req: AuthRequest, res: Response) => {
+    const T = reqT(req);
     if (!req.file) { res.status(400).json({ ok: false, error: 'zip file required (field "bundle")' }); return; }
     try {
       const dir = await unzipper.Open.buffer(req.file.buffer);
@@ -1631,12 +1647,12 @@ adminStatusRouter.post(
         csvFiles[base] = (await f.buffer()).toString('utf8');
       }
       if (Object.keys(csvFiles).length === 0) {
-        res.status(400).json({ ok: false, error: 'zip contains no .csv / map_info.json files' });
+        res.status(400).json({ ok: false, error: T`de zip bevat geen .csv- of map_info.json-bestanden` });
         return;
       }
       const { createBundleFromCsvFiles } = await import('../services/portableBackup.js');
       const entry = await createBundleFromCsvFiles(req.params.sn, csvFiles, 'csv-import');
-      if (!entry) { res.status(409).json({ ok: false, error: 'no map*_work.csv found in zip' }); return; }
+      if (!entry) { res.status(409).json({ ok: false, error: T`geen map*_work.csv gevonden in de zip` }); return; }
       res.json({ ok: true, backup: entry });
     } catch (e) {
       res.status(500).json({ ok: false, error: (e as Error).message });
@@ -1663,10 +1679,11 @@ adminStatusRouter.delete('/maps/:sn/portable-backups/:filename', async (req: Aut
 // staging + apply-verbatim path (the single restore path). Server-side fan-out
 // keeps the wizard logic single-sourced.
 adminStatusRouter.post('/maps/:sn/portable-backups/:filename/restore', async (req: AuthRequest, res: Response) => {
+  const T = reqT(req);
   const { sn, filename } = req.params;
   const { readBackup } = await import('../services/portableBackup.js');
   const buf = readBackup(sn, filename);
-  if (!buf) { res.status(404).json({ ok: false, error: 'backup not found' }); return; }
+  if (!buf) { res.status(404).json({ ok: false, error: T`backup niet gevonden` }); return; }
 
   // Use parseBundle directly + spin up a staging session so /apply-verbatim
   // can run unchanged. Avoids duplicating the restore pipeline.
@@ -1678,7 +1695,7 @@ adminStatusRouter.post('/maps/:sn/portable-backups/:filename/restore', async (re
   }
   const existing = importStaging.getActive(sn);
   if (existing) {
-    res.status(409).json({ ok: false, error: `active import already in progress (${existing.stagingId})` });
+    res.status(409).json({ ok: false, error: T`er loopt al een import (${existing.stagingId})` });
     return;
   }
   const session = importStaging.create(sn, {
@@ -1704,14 +1721,15 @@ adminStatusRouter.post('/maps/:sn/portable-backups/:filename/restore', async (re
 
 // GET /api/admin-status/maps/:sn/export-portable
 adminStatusRouter.get('/maps/:sn/export-portable', async (req: AuthRequest, res: Response) => {
+  const T = reqT(req);
   const sn = req.params.sn;
   const cal = mapRepo.getCalibration(sn);
   if (!cal?.charger_lat || !cal?.charger_lng) {
-    res.status(409).json({ ok: false, error: 'no charger anchor in DB — sync_map first' });
+    res.status(409).json({ ok: false, error: T`geen laadstation-anker in de database: eerst sync_map` });
     return;
   }
   const workRows = mapRepo.findAllByMowerSnAndType(sn, 'work').filter((w) => w.map_area);
-  if (workRows.length === 0) { res.status(404).json({ ok: false, error: 'no work polygon' }); return; }
+  if (workRows.length === 0) { res.status(404).json({ ok: false, error: T`geen werkpolygoon` }); return; }
   const obstacles = mapRepo.findAllByMowerSnAndType(sn, 'obstacle');
   const unicom = mapRepo.findAllByMowerSnAndType(sn, 'unicom');
 
@@ -1937,11 +1955,12 @@ adminStatusRouter.post(
   '/maps/:sn/import-portable',
   bundleUpload.single('bundle'),
   async (req: AuthRequest, res: Response) => {
+    const T = reqT(req);
     const sn = req.params.sn;
     if (!req.file) { res.status(400).json({ ok: false, error: 'bundle file required' }); return; }
     const active = importStaging.getActive(sn);
     if (active) {
-      res.status(409).json({ ok: false, error: 'active import already in progress', stagingId: active.stagingId });
+      res.status(409).json({ ok: false, error: T`er loopt al een import`, stagingId: active.stagingId });
       return;
     }
 
@@ -1959,7 +1978,7 @@ adminStatusRouter.post(
       if (!Number.isFinite(mx) || !Number.isFinite(my) || !Number.isFinite(mo)) {
         res.status(409).json({
           ok: false,
-          error: 'walker bundle requires a live map_position from the mower (online + docked)',
+          error: T`een walker-bundel vereist een live map_position van de maaier (online en gedockt)`,
         });
         return;
       }
@@ -1972,7 +1991,7 @@ adminStatusRouter.post(
         bufferToParse = synth.portableZip;
         walkerSynth = true;
       } catch (err) {
-        res.status(400).json({ ok: false, error: `walker bundle synth failed: ${(err as Error).message}` });
+        res.status(400).json({ ok: false, error: T`walker-bundel omzetten mislukt: ${(err as Error).message}` });
         return;
       }
     }
@@ -2035,6 +2054,7 @@ adminStatusRouter.post(
   '/maps/:sn/import-walker-bundle',
   bundleUpload.single('bundle'),
   async (req: AuthRequest, res: Response) => {
+    const T = reqT(req);
     const sn = req.params.sn;
     if (!req.file) {
       res.status(400).json({ ok: false, error: 'bundle file required' });
@@ -2044,7 +2064,7 @@ adminStatusRouter.post(
     if (active) {
       res.status(409).json({
         ok: false,
-        error: 'active import already in progress',
+        error: T`er loopt al een import`,
         stagingId: active.stagingId,
       });
       return;
@@ -2058,7 +2078,7 @@ adminStatusRouter.post(
     if (!Number.isFinite(mx) || !Number.isFinite(my) || !Number.isFinite(mo)) {
       res.status(409).json({
         ok: false,
-        error: 'no live map_position in sensor cache; is the mower online and docked?',
+        error: T`geen live map_position in de sensorcache; is de maaier online en gedockt?`,
       });
       return;
     }
@@ -2296,6 +2316,7 @@ adminStatusRouter.get('/walker-bundles', (_req: AuthRequest, res: Response) => {
 
 // GET /api/admin-status/walker-bundles/:id — stream the raw .novabundle.
 adminStatusRouter.get('/walker-bundles/:id', (req: AuthRequest, res: Response) => {
+  const T = reqT(req);
   const id = Number(req.params.id);
   if (!Number.isFinite(id) || id <= 0) {
     res.status(400).json({ ok: false, error: 'invalid id' });
@@ -2303,13 +2324,13 @@ adminStatusRouter.get('/walker-bundles/:id', (req: AuthRequest, res: Response) =
   }
   const row = walkerBundleRepo.findById(id);
   if (!row) {
-    res.status(404).json({ ok: false, error: 'bundle not found' });
+    res.status(404).json({ ok: false, error: T`bundel niet gevonden` });
     return;
   }
   const safe = path.basename(row.filename);
   const filePath = path.join(walkerBundlesDir, safe);
   if (!fs.existsSync(filePath)) {
-    res.status(404).json({ ok: false, error: 'bundle file missing on disk' });
+    res.status(404).json({ ok: false, error: T`bundelbestand ontbreekt op schijf` });
     return;
   }
   res.setHeader('Content-Type', 'application/zip');
@@ -2319,6 +2340,7 @@ adminStatusRouter.get('/walker-bundles/:id', (req: AuthRequest, res: Response) =
 
 // DELETE /api/admin-status/walker-bundles/:id — remove disk file + DB row.
 adminStatusRouter.delete('/walker-bundles/:id', (req: AuthRequest, res: Response) => {
+  const T = reqT(req);
   const id = Number(req.params.id);
   if (!Number.isFinite(id) || id <= 0) {
     res.status(400).json({ ok: false, error: 'invalid id' });
@@ -2326,7 +2348,7 @@ adminStatusRouter.delete('/walker-bundles/:id', (req: AuthRequest, res: Response
   }
   const row = walkerBundleRepo.findById(id);
   if (!row) {
-    res.status(404).json({ ok: false, error: 'bundle not found' });
+    res.status(404).json({ ok: false, error: T`bundel niet gevonden` });
     return;
   }
   const safe = path.basename(row.filename);
@@ -2344,6 +2366,7 @@ adminStatusRouter.delete('/walker-bundles/:id', (req: AuthRequest, res: Response
 adminStatusRouter.post(
   '/walker-bundles/:id/apply',
   async (req: AuthRequest, res: Response) => {
+    const T = reqT(req);
     const id = Number(req.params.id);
     if (!Number.isFinite(id) || id <= 0) {
       res.status(400).json({ ok: false, error: 'invalid id' });
@@ -2356,14 +2379,14 @@ adminStatusRouter.post(
     }
     const row = walkerBundleRepo.findById(id);
     if (!row) {
-      res.status(404).json({ ok: false, error: 'bundle not found' });
+      res.status(404).json({ ok: false, error: T`bundel niet gevonden` });
       return;
     }
 
     // Target mower must be a real device on this server.
     const equipment = equipmentRepo.findBySn(sn);
     if (!equipment) {
-      res.status(404).json({ ok: false, error: `mower ${sn} not bound on this server` });
+      res.status(404).json({ ok: false, error: T`maaier ${sn} is niet gekoppeld op deze server` });
       return;
     }
 
@@ -2371,7 +2394,7 @@ adminStatusRouter.post(
     if (active) {
       res.status(409).json({
         ok: false,
-        error: 'active import already in progress for that mower',
+        error: T`er loopt al een import voor die maaier`,
         stagingId: active.stagingId,
       });
       return;
@@ -2384,7 +2407,7 @@ adminStatusRouter.post(
     if (!Number.isFinite(mx) || !Number.isFinite(my) || !Number.isFinite(mo)) {
       res.status(409).json({
         ok: false,
-        error: 'no live map_position in sensor cache; is the mower online and docked?',
+        error: T`geen live map_position in de sensorcache; is de maaier online en gedockt?`,
       });
       return;
     }
@@ -2396,7 +2419,7 @@ adminStatusRouter.post(
     try {
       buf = fs.readFileSync(filePath);
     } catch {
-      res.status(404).json({ ok: false, error: 'bundle file missing on disk' });
+      res.status(404).json({ ok: false, error: T`bundelbestand ontbreekt op schijf` });
       return;
     }
 
@@ -2511,10 +2534,11 @@ adminStatusRouter.get('/maps/:sn/import-portable/active', (req: AuthRequest, res
 adminStatusRouter.get(
   '/maps/:sn/import-portable/:stagingId/inventory',
   async (req: AuthRequest, res: Response) => {
+    const T = reqT(req);
     const { sn, stagingId } = req.params;
     const session = importStaging.get(stagingId);
     if (!session || session.sn !== sn) {
-      res.status(404).json({ ok: false, error: 'unknown staging session' });
+      res.status(404).json({ ok: false, error: T`onbekende staging-sessie` });
       return;
     }
 
@@ -2527,7 +2551,7 @@ adminStatusRouter.get(
         chargingStationYaml: (parsed.mowerFiles?.chargingStationYaml as string | null | undefined) ?? null,
       };
     } catch (err) {
-      res.status(500).json({ ok: false, error: `failed to read staging bundle: ${(err as Error).message}` });
+      res.status(500).json({ ok: false, error: T`staging-bundel lezen mislukt: ${(err as Error).message}` });
       return;
     }
 
@@ -2588,14 +2612,15 @@ adminStatusRouter.get(
 adminStatusRouter.post(
   '/maps/:sn/import-portable/:stagingId/start-drive',
   async (req: AuthRequest, res: Response) => {
+    const T = reqT(req);
     const { sn, stagingId } = req.params;
     const session = importStaging.get(stagingId);
     if (!session || session.sn !== sn) {
-      res.status(404).json({ ok: false, error: 'unknown staging session' });
+      res.status(404).json({ ok: false, error: T`onbekende staging-sessie` });
       return;
     }
     if (session.state !== 'UPLOADED') {
-      res.status(409).json({ ok: false, error: `wrong state ${session.state}` });
+      res.status(409).json({ ok: false, error: T`verkeerde status ${session.state}` });
       return;
     }
 
@@ -2603,7 +2628,7 @@ adminStatusRouter.post(
     const startLat = parseFloat(sensors?.get('latitude') ?? '');
     const startLng = parseFloat(sensors?.get('longitude') ?? '');
     if (!Number.isFinite(startLat) || !Number.isFinite(startLng)) {
-      res.status(409).json({ ok: false, error: 'no GPS for start_pose' });
+      res.status(409).json({ ok: false, error: T`geen GPS voor start_pose` });
       return;
     }
 
@@ -2653,7 +2678,10 @@ adminStatusRouter.post(
         ? `drive distance ${heading.distanceM.toFixed(2)}m below 0.3m threshold`
         : `RTK FIX never reached after ${waitedMs / 1000}s wait (loc_quality=${endLocQ})`;
       importAuditRepo.append({ sn, staging_id: stagingId, from_state: 'UPLOADED', to_state: 'UPLOADED', reason });
-      res.status(409).json({ ok: false, error: reason, recoverable: true });
+      const error = heading.shortDistance
+        ? T`gereden afstand ${heading.distanceM.toFixed(2)} m ligt onder de drempel van 0,3 m`
+        : T`RTK FIX niet bereikt na ${waitedMs / 1000} s wachten (loc_quality=${endLocQ})`;
+      res.status(409).json({ ok: false, error, recoverable: true });
       return;
     }
 
@@ -2691,17 +2719,18 @@ adminStatusRouter.post(
 adminStatusRouter.post(
   '/maps/:sn/import-portable/:stagingId/auto-dock',
   async (req: AuthRequest, res: Response) => {
+    const T = reqT(req);
     const { sn, stagingId } = req.params;
     const session = importStaging.get(stagingId);
     if (!session || session.sn !== sn) {
-      res.status(404).json({ ok: false, error: 'unknown staging session' });
+      res.status(404).json({ ok: false, error: T`onbekende staging-sessie` });
       return;
     }
     // Allow direct UPLOADED→ANCHOR_SET for exact-restore bundles (Δ rotation
     // from stored vs current charging_pose makes the drive-back step
     // unnecessary). Legacy bundles still go UPLOADED→AUTO_DOCK→ANCHOR_SET.
     if (session.state !== 'AUTO_DOCK' && session.state !== 'UPLOADED') {
-      res.status(409).json({ ok: false, error: `wrong state ${session.state}` });
+      res.status(409).json({ ok: false, error: T`verkeerde status ${session.state}` });
       return;
     }
 
@@ -2714,19 +2743,19 @@ adminStatusRouter.post(
     if (!batt.includes('CHARGING') && !batt.includes('FINISHED')) {
       res.status(409).json({
         ok: false, recoverable: true,
-        error: `mower not on dock — battery_state=${batt || 'unknown'} (need CHARGING)`,
+        error: T`maaier staat niet op het dock: battery_state=${batt || 'unknown'} (CHARGING nodig)`,
       });
       return;
     }
     if (locQ !== 100) {
       res.status(409).json({
         ok: false, recoverable: true,
-        error: `RTK FIX required at dock — loc_quality=${locQ}`,
+        error: T`RTK FIX vereist op het dock: loc_quality=${locQ}`,
       });
       return;
     }
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-      res.status(409).json({ ok: false, recoverable: true, error: 'no GPS in sensor cache' });
+      res.status(409).json({ ok: false, recoverable: true, error: T`geen GPS in de sensorcache` });
       return;
     }
 
@@ -2739,7 +2768,7 @@ adminStatusRouter.post(
     const my = parseFloat(sensors?.get('map_position_y') ?? '');
     const mo = parseFloat(sensors?.get('map_position_orientation') ?? '');
     if (!Number.isFinite(mx) || !Number.isFinite(my)) {
-      res.status(409).json({ ok: false, recoverable: true, error: 'no map_position in sensor cache' });
+      res.status(409).json({ ok: false, recoverable: true, error: T`geen map_position in de sensorcache` });
       return;
     }
 
@@ -2760,6 +2789,7 @@ adminStatusRouter.post(
 adminStatusRouter.get(
   '/maps/:sn/import-portable/:stagingId/preview',
   (req: AuthRequest, res: Response) => {
+    const T = reqT(req);
     const { sn, stagingId } = req.params;
     const session = importStaging.get(stagingId);
     if (!session || session.sn !== sn) {
@@ -2767,7 +2797,7 @@ adminStatusRouter.get(
       return;
     }
     if (session.state !== 'ANCHOR_SET' && session.state !== 'PREVIEW_SHOWN') {
-      res.status(409).json({ ok: false, error: `wrong state ${session.state}` });
+      res.status(409).json({ ok: false, error: T`verkeerde status ${session.state}` });
       return;
     }
     const dir = path.join(process.env.STORAGE_PATH ?? './storage', 'imports', sn, stagingId);
@@ -2846,6 +2876,7 @@ adminStatusRouter.get(
 adminStatusRouter.post(
   '/maps/:sn/import-portable/:stagingId/confirm',
   async (req: AuthRequest, res: Response) => {
+    const T = reqT(req);
     const { sn, stagingId } = req.params;
     const session = importStaging.get(stagingId);
     if (!session || session.sn !== sn) {
@@ -2853,11 +2884,11 @@ adminStatusRouter.post(
       return;
     }
     if (session.state !== 'PREVIEW_SHOWN') {
-      res.status(409).json({ ok: false, error: `wrong state ${session.state}` });
+      res.status(409).json({ ok: false, error: T`verkeerde status ${session.state}` });
       return;
     }
     if (!getMowerFileCapability(sn).mowerFileApplySupported) {
-      res.status(409).json(mowerFileUnsupportedPayload(sn));
+      res.status(409).json(mowerFileUnsupportedPayload(sn, T));
       return;
     }
 
@@ -3058,14 +3089,15 @@ adminStatusRouter.post(
 adminStatusRouter.post(
   '/maps/:sn/import-portable/:stagingId/import-server-copy',
   async (req: AuthRequest, res: Response) => {
+    const T = reqT(req);
     const { sn, stagingId } = req.params;
     const session = importStaging.get(stagingId);
     if (!session || session.sn !== sn) {
-      res.status(404).json({ ok: false, error: 'unknown staging session' });
+      res.status(404).json({ ok: false, error: T`onbekende staging-sessie` });
       return;
     }
     if (session.state !== 'UPLOADED') {
-      res.status(409).json({ ok: false, error: `wrong state ${session.state}` });
+      res.status(409).json({ ok: false, error: T`verkeerde status ${session.state}` });
       return;
     }
 
@@ -3074,7 +3106,7 @@ adminStatusRouter.post(
     try {
       parsed = JSON.parse(fs.readFileSync(path.join(dir, 'bundle.json'), 'utf8')) as ParsedBundle;
     } catch (err) {
-      res.status(500).json({ ok: false, error: `failed to read bundle: ${(err as Error).message}` });
+      res.status(500).json({ ok: false, error: T`bundel lezen mislukt: ${(err as Error).message}` });
       return;
     }
 
@@ -3119,10 +3151,10 @@ adminStatusRouter.post(
         restored,
         latestZipBytes,
         ...getMowerFileCapability(sn),
-        message: 'Imported into the server/app copy only. Mower files were not written; mowing works only if these maps already exist on the mower.',
+        message: T`Alleen in de server/app-kopie geïmporteerd. De maaierbestanden zijn niet geschreven; maaien werkt alleen als deze kaarten al op de maaier staan.`,
       });
     } catch (err) {
-      res.status(500).json({ ok: false, error: `server-copy import failed: ${(err as Error).message}` });
+      res.status(500).json({ ok: false, error: T`import in de server-kopie mislukt: ${(err as Error).message}` });
     }
   },
 );
@@ -3144,15 +3176,16 @@ adminStatusRouter.post(
 adminStatusRouter.post(
   '/maps/:sn/import-portable/:stagingId/apply-verbatim',
   async (req: AuthRequest, res: Response) => {
+    const T = reqT(req);
     const { sn, stagingId } = req.params;
     const force = req.query.force === '1' || req.body?.force === true;
     const session = importStaging.get(stagingId);
     if (!session || session.sn !== sn) {
-      res.status(404).json({ ok: false, error: 'unknown staging session' });
+      res.status(404).json({ ok: false, error: T`onbekende staging-sessie` });
       return;
     }
     if (session.state !== 'UPLOADED') {
-      res.status(409).json({ ok: false, error: `wrong state ${session.state}` });
+      res.status(409).json({ ok: false, error: T`verkeerde status ${session.state}` });
       return;
     }
 
@@ -3177,19 +3210,19 @@ adminStatusRouter.post(
     try {
       parsed = JSON.parse(fs.readFileSync(path.join(dir, 'bundle.json'), 'utf8'));
     } catch (err) {
-      res.status(500).json({ ok: false, error: `failed to read bundle: ${(err as Error).message}` });
+      res.status(500).json({ ok: false, error: T`bundel lezen mislukt: ${(err as Error).message}` });
       return;
     }
     const mowerFiles = parsed.mowerFiles;
     if (!mowerFiles || !mowerFiles.csvFiles || Object.keys(mowerFiles.csvFiles).length === 0) {
       res.status(400).json({
         ok: false,
-        error: 'bundle has no mowerFiles — was exported before the verbatim feature shipped',
+        error: T`de bundel heeft geen mowerFiles: hij is geëxporteerd voordat de verbatim-functie bestond`,
       });
       return;
     }
     if (!getMowerFileCapability(sn).mowerFileApplySupported) {
-      res.status(409).json(mowerFileUnsupportedPayload(sn));
+      res.status(409).json(mowerFileUnsupportedPayload(sn, T));
       return;
     }
 
@@ -3200,7 +3233,7 @@ adminStatusRouter.post(
     if (sourceSn && sourceSn !== sn && !force) {
       res.status(409).json({
         ok: false,
-        error: `bundle was exported from ${sourceSn}, not ${sn}. The map is charger-relative and pos.json is left untouched, so this is generally safe (the dock-cycle re-anchors the frame). Pass force=1 to confirm.`,
+        error: T`de bundel is geëxporteerd van ${sourceSn}, niet van ${sn}. De kaart is relatief aan het laadstation en pos.json blijft ongemoeid, dus dit is meestal veilig (de dock-cyclus verankert het frame opnieuw). Geef force=1 mee om te bevestigen.`,
         sourceSn,
         targetSn: sn,
       });
@@ -3255,7 +3288,7 @@ adminStatusRouter.post(
         ok: false,
         state: 'BLOCKED',
         error: 'map_validation_failed',
-        message: 'Geweigerd: de te herstellen kaart is structureel kapot (losgekoppelde zones of inconsistente afmetingen). De maaier is NIET aangeraakt.',
+        message: T`Geweigerd: de te herstellen kaart is structureel kapot (losgekoppelde zones of inconsistente afmetingen). De maaier is NIET aangeraakt.`,
         failures: applyRes.validation.hardFailures,
         warnings: applyRes.validation.warnings,
       });
@@ -3352,6 +3385,7 @@ adminStatusRouter.post(
 adminStatusRouter.post(
   '/maps/:sn/refresh-dock-anchor',
   (req: AuthRequest, res: Response) => {
+    const T = reqT(req);
     const sn = req.params.sn;
     const mode = (req.body?.mode ?? '') as string;
 
@@ -3378,7 +3412,7 @@ adminStatusRouter.post(
     if (!onDock) {
       res.status(409).json({
         ok: false,
-        error: `auto mode requires mower currently on dock (charging). battery_state='${battery}', recharge_status='${rs}'`,
+        error: T`de automatische modus vereist dat de maaier nu op het dock staat (laden). battery_state='${battery}', recharge_status='${rs}'`,
       });
       return;
     }
@@ -3387,7 +3421,7 @@ adminStatusRouter.post(
     res.json({
       ok: true,
       mode: 'auto',
-      message: 'auto-redock sequence started: back 1m → stop → go_to_charge. Poll /devices for battery_state → Charging.',
+      message: T`automatische her-dockreeks gestart: 1 m achteruit → stop → go_to_charge. Volg battery_state in /devices tot Charging.`,
       estimated_duration_s: 45,
     });
 
@@ -3717,18 +3751,19 @@ adminStatusRouter.get('/wifi-heatmap/:sn', (req: AuthRequest, res: Response) => 
 
 // POST /api/admin-status/maps/:sn/reset-polygon-offset
 adminStatusRouter.post('/maps/:sn/reset-polygon-offset', async (req: AuthRequest, res: Response) => {
+  const T = reqT(req);
   const { sn } = req.params;
 
   mapRepo.setPolygonOffset(sn, 0, 0);
   const regenPath = regenerateLatestZipFromBackup(sn);
   if (!regenPath) {
-    res.status(400).json({ ok: false, error: 'No map data found for this mower — map the area first.', dx_m: 0, dy_m: 0 });
+    res.status(400).json({ ok: false, error: T`Geen kaartgegevens gevonden voor deze maaier: breng het gebied eerst in kaart.`, dx_m: 0, dy_m: 0 });
     return;
   }
   if (!isDeviceOnline(sn)) {
     res.status(404).json({
       ok: false, partial: true,
-      error: 'Mower offline — sync_map not pushed; mower will pick up offset on next reconnect',
+      error: T`Maaier offline: sync_map niet verstuurd; de maaier neemt de verschuiving over bij de volgende verbinding`,
       dx_m: 0, dy_m: 0,
     });
     return;
@@ -3757,7 +3792,7 @@ adminStatusRouter.post('/maps/:sn/reset-polygon-offset', async (req: AuthRequest
   if (syncResult.timeout) {
     res.status(504).json({
       ok: false, partial: true,
-      error: 'Mower did not respond within 30s — sync may still complete in background',
+      error: T`Maaier reageerde niet binnen 30 s; de synchronisatie kan op de achtergrond nog afronden`,
       dx_m: 0, dy_m: 0,
     });
     return;

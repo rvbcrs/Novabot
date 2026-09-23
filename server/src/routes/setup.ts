@@ -22,6 +22,7 @@ import { isSetupComplete, invalidateSetupCache } from '../middleware/setupGuard.
 import { importCloudWorkRecords } from '../services/cloudWorkRecordsImport.js';
 import { markFrameUnvalidated } from '../services/frameValidation.js';
 import { SERVER_VERSION } from '../services/serverVersion.js';
+import { reqT } from '../services/serverText.js';
 // LFI cloud helpers were extracted to `src/services/lfiCloud.ts` on 2026-04-23
 // so cloud-api routes can import them without reaching into `routes/setup.ts`
 // (the cloud-api freeze forbids that direction). Re-export here so existing
@@ -58,7 +59,8 @@ setupRouter.get('/status', (_req, res) => {
 setupRouter.post('/cloud-login', async (req: Request, res: Response) => {
   const { email, password } = req.body as { email?: string; password?: string };
   if (!email || !password) {
-    res.status(400).json({ ok: false, error: 'Email and password required' });
+    const T = reqT(req);
+    res.status(400).json({ ok: false, error: T`E-mail en wachtwoord zijn verplicht` });
     return;
   }
 
@@ -72,7 +74,8 @@ setupRouter.post('/cloud-login', async (req: Request, res: Response) => {
 
     const loginVal = (loginResp as Record<string, unknown>).value as Record<string, unknown> | undefined;
     if (!loginResp || !(loginResp as { success?: boolean }).success || !loginVal?.accessToken) {
-      const msg = (loginResp as { message?: string }).message ?? 'Login failed';
+      const T = reqT(req);
+      const msg = (loginResp as { message?: string }).message ?? T`Inloggen mislukt`;
       res.status(401).json({ ok: false, error: msg });
       return;
     }
@@ -131,7 +134,8 @@ setupRouter.post('/cloud-apply', async (req: Request, res: Response) => {
   };
 
   if (!email || !password) {
-    res.status(400).json({ ok: false, error: 'Email and password required' });
+    const T = reqT(req);
+    res.status(400).json({ ok: false, error: T`E-mail en wachtwoord zijn verplicht` });
     return;
   }
 
@@ -641,7 +645,8 @@ setupRouter.post('/cloud-apply', async (req: Request, res: Response) => {
 
 // ── POST /skip — create local account without cloud import ───────────────────
 
-setupRouter.post('/skip', async (_req: Request, res: Response) => {
+setupRouter.post('/skip', async (req: Request, res: Response) => {
+  const T = reqT(req);
   try {
     const bcrypt = await import('bcrypt');
     const hashedPwd = await bcrypt.hash('admin', 10);
@@ -661,7 +666,7 @@ setupRouter.post('/skip', async (_req: Request, res: Response) => {
     }
 
     invalidateSetupCache();
-    res.json({ ok: true, message: 'Local account created. Bind your mower via the Novabot app.' });
+    res.json({ ok: true, message: T`Lokaal account aangemaakt. Koppel je maaier via de Novabot-app.` });
   } catch (err) {
     res.status(500).json({ ok: false, error: String(err) });
   }
@@ -786,7 +791,7 @@ setupRouter.get('/profile', async (_req, res) => {
 
 // ── GET /cert — download TLS certificate separately ──────────────────────────
 
-setupRouter.get('/cert', async (_req, res) => {
+setupRouter.get('/cert', async (req, res) => {
   const fs = await import('fs');
   try {
     const cert = fs.readFileSync('/data/certs/server.crt');
@@ -794,7 +799,8 @@ setupRouter.get('/cert', async (_req, res) => {
     res.setHeader('Content-Disposition', 'attachment; filename="OpenNova-CA.crt"');
     res.send(cert);
   } catch {
-    res.status(404).json({ error: 'No certificate found. Start the container first.' });
+    const T = reqT(req);
+    res.status(404).json({ error: T`Geen certificaat gevonden. Start eerst de container.` });
   }
 });
 

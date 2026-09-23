@@ -29,7 +29,7 @@ import { statfs } from 'fs/promises';
 import { mapRepo, userRepo } from '../db/repositories/index.js';
 import { deriveHasError } from '../mqtt/mowerActivity.js';
 import { MAP_NAMES_SELECTION_BUILD } from './mowingArea.js';
-import { translator, normalizeLang, type Lang, type Translate } from './diagnosisText.js';
+import { translator, normalizeLang, type Lang, type Translate } from './serverText.js';
 
 export type StepStatus = 'ok' | 'fail' | 'warn' | 'unknown' | 'skipped';
 
@@ -58,7 +58,7 @@ export interface DiagnosisProbes {
   reachability: (deviceIp: string | null) => Promise<Reachability>;
   mower: (ip: string | null) => Promise<MowerProbe>;
   containerNetwork: () => ContainerNetwork;
-  scanLan: () => Promise<LanScanResult>;
+  scanLan: (T?: Translate) => Promise<LanScanResult>;
   rivalBrokers: (ourIps: string[]) => Promise<RivalBrokers>;
   identifyBroker: (ip: string) => Promise<BrokerIdentity>;
   lookupMac: (ip: string) => Promise<string | null>;
@@ -402,7 +402,7 @@ export async function diagnoseConnection(
     // voor dit apparaat. De hardware verraadt zichzelf wel op laag 2: de eerste
     // drie bytes van het MAC zeggen wie de fabrikant is, en die set komt uit de
     // fabriekstabel die bij elke installatie meegaat.
-    const lan = input.probeNetwork === false ? null : await probe.scanLan();
+    const lan = input.probeNetwork === false ? null : await probe.scanLan(T);
     if (!lan) {
       push({
         id: 'network',

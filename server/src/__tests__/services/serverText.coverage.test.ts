@@ -1,18 +1,30 @@
 /**
- * The catalog must not drift behind the code.
+ * The catalogs must not drift behind the code.
  *
- * Adding a sentence to connectionDiagnosis.ts and forgetting the translation
+ * Adding a sentence anywhere in the server and forgetting the translation
  * is silent: the fallback prints the Dutch original, which is exactly the bug
  * this whole layer exists to remove. So the source is read and every sentence
  * it can produce is required to exist in every language.
  */
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'fs';
+import { readFileSync, readdirSync } from 'fs';
+import { join } from 'path';
 import { fileURLToPath } from 'url';
-import { CATALOG } from '../../services/diagnosisText.catalog.js';
-import { translate, keyOf, normalizeLang } from '../../services/diagnosisText.js';
+import { CATALOG as DIAGNOSIS_CATALOG } from '../../services/diagnosisText.catalog.js';
+import { CATALOG as API_CATALOG } from '../../services/apiText.catalog.js';
+import { translate, keyOf, normalizeLang, langOf, M, renderMsg } from '../../services/serverText.js';
 
-const SERVICE = fileURLToPath(new URL('../../services/connectionDiagnosis.ts', import.meta.url));
+const SRC = fileURLToPath(new URL('../../', import.meta.url));
+const CATALOG = { ...DIAGNOSIS_CATALOG, ...API_CATALOG };
+
+/** Every server source file, tests and the translator itself (its docs show examples) excluded. */
+function sourceFiles(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap(e => {
+    const p = join(dir, e.name);
+    if (e.isDirectory()) return e.name === '__tests__' ? [] : sourceFiles(p);
+    return /\.ts$/.test(e.name) && !/\.test\.ts$/.test(e.name) && e.name !== 'serverText.ts' ? [p] : [];
+  });
+}
 
 /**
  * Every T`…` in the source, as the catalog key it produces: the static halves
@@ -23,7 +35,9 @@ const SERVICE = fileURLToPath(new URL('../../services/connectionDiagnosis.ts', i
 function keysInSource(src: string): string[] {
   const keys: string[] = [];
   for (let i = 0; i < src.length; ) {
-    const at = src.indexOf('T`', i);
+    const tAt = src.indexOf('T`', i);
+    const mAt = src.indexOf('M`', i);
+    const at = tAt < 0 ? mAt : mAt < 0 ? tAt : Math.min(tAt, mAt);
     if (at < 0) break;
     const before = at > 0 ? src[at - 1] : ' ';
     if (/[\w$.]/.test(before)) { i = at + 2; continue; }
@@ -61,10 +75,17 @@ function keysInSource(src: string): string[] {
   return keys;
 }
 
-const sourceKeys = [...new Set(keysInSource(readFileSync(SERVICE, 'utf8')))];
+/** T('…') and M('…') with a plain string: the string is the key. */
+function plainKeysInSource(src: string): string[] {
+  return [...src.matchAll(/(?<![\w$.])[TM]\(\s*'((?:[^'\\]|\\.)*)'\s*\)/g)].map(m => m[1].replace(/\\'/g, "'"));
+}
 
-describe('diagnosis catalog', () => {
-  it('finds the sentences in the service', () => {
+const sources = sourceFiles(SRC).map(f => readFileSync(f, 'utf8'));
+const sourceKeys = [...new Set(sources.flatMap(src => [...keysInSource(src), ...plainKeysInSource(src)]))];
+const DUPLICATES = Object.keys(API_CATALOG).filter(k => k in DIAGNOSIS_CATALOG);
+
+describe('server text catalog', () => {
+  it('finds the sentences in the source', () => {
     // A broken scanner would make every assertion below pass on an empty set.
     expect(sourceKeys.length).toBeGreaterThan(150);
     expect(sourceKeys).toContain('mqtt_node verbonden met de broker');
@@ -74,6 +95,10 @@ describe('diagnosis catalog', () => {
   it.each(['en', 'fr', 'de'] as const)('translates every sentence the service can produce into %s', lang => {
     const missing = sourceKeys.filter(k => !CATALOG[k]?.[lang]);
     expect(missing).toEqual([]);
+  });
+
+  it('keeps each sentence in one catalog only', () => {
+    expect(DUPLICATES).toEqual([]);
   });
 
   it('has no entries for sentences that no longer exist', () => {
@@ -110,6 +135,13 @@ describe('translate', () => {
     expect(translate('fr', ['geen storing'], [])).toBe('aucune panne');
   });
 
+  it('renders a stored message in each reader\'s language', () => {
+    const msg = M`storing ${7} actief`;
+    expect(JSON.parse(JSON.stringify(msg))).toEqual({ key: 'storing {0} actief', values: [7] });
+    expect(renderMsg('nl', msg)).toBe('storing 7 actief');
+    expect(renderMsg('en', undefined)).toBeUndefined();
+  });
+
   it('falls back to the Dutch original for an unknown sentence', () => {
     expect(translate('en', ['deze zin staat nergens'], [])).toBe('deze zin staat nergens');
   });
@@ -117,7 +149,17 @@ describe('translate', () => {
   it('reads a browser language tag', () => {
     expect(normalizeLang('en-GB')).toBe('en');
     expect(normalizeLang('EN')).toBe('en');
-    expect(normalizeLang('klingon')).toBe('nl');
-    expect(normalizeLang(undefined)).toBe('nl');
+    expect(normalizeLang('nl-NL,nl;q=0.9,en;q=0.8')).toBe('nl');
+    // Dutch only when asked for: an unknown or missing language is English.
+    expect(normalizeLang('klingon')).toBe('en');
+    expect(normalizeLang('sv-SE')).toBe('en');
+    expect(normalizeLang(undefined)).toBe('en');
+  });
+
+  it('prefers ?lang, then X-Lang, then Accept-Language', () => {
+    expect(langOf({ query: { lang: 'de' }, headers: { 'x-lang': 'fr', 'accept-language': 'nl' } })).toBe('de');
+    expect(langOf({ query: {}, headers: { 'x-lang': 'fr', 'accept-language': 'nl' } })).toBe('fr');
+    expect(langOf({ headers: { 'accept-language': 'nl-NL,nl;q=0.9' } })).toBe('nl');
+    expect(langOf({ headers: {} })).toBe('en');
   });
 });

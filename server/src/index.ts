@@ -11,6 +11,7 @@ initProxyLogger();
 
 // Which release is running, so the container log says what it is serving.
 import { SERVER_VERSION } from './services/serverVersion.js';
+import { reqT, langOf } from './services/serverText.js';
 
 console.log('');
 console.log('═══════════════════════════════════════════════════════════');
@@ -384,7 +385,8 @@ if (PROXY_MODE === 'cloud') {
         if (err) res.status(404).json({ code: 404, msg: 'Not found', data: null });
       });
     } else {
-      res.status(200).send('<html><body style="background:#111;color:#fff;font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0"><div style="text-align:center"><h1>OpenNova</h1><p>Server is running. Use the OpenNova app to connect.</p></div></body></html>');
+      const T = reqT(req);
+      res.status(200).send(`<html lang="${langOf(req)}"><body style="background:#111;color:#fff;font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0"><div style="text-align:center"><h1>OpenNova</h1><p>${T`De server draait. Verbind met de OpenNova-app.`}</p></div></body></html>`);
     }
   });
 }

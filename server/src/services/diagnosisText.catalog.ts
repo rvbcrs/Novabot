@@ -6,11 +6,11 @@
  * rather than positional, so a translation may reorder them. Dutch needs no
  * entry: it is the key.
  *
- * diagnosisText.coverage.test.ts fails when a sentence in the service is
+ * serverText.coverage.test.ts fails when a sentence in the service is
  * missing here, in any of the three languages, so this file cannot silently
  * drift behind the code.
  */
-import type { Catalog } from './diagnosisText.js';
+import type { Catalog } from './serverText.js';
 
 export const CATALOG: Catalog = {
   // ── tijdsaanduiding ─────────────────────────────────────────────────────

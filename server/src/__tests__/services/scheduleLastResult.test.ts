@@ -14,7 +14,7 @@ vi.mock('../../mqtt/broker.js', () => ({ isDeviceOnline: vi.fn(() => false) }));
 vi.mock('../../mqtt/mapSync.js', () => ({ publishToDevice: vi.fn(), publishToTopic: vi.fn() }));
 vi.mock('../../dashboard/socketHandler.js', () => ({ emitScheduleEvent: vi.fn(), pushMqttLog: vi.fn() }));
 
-import { startScheduleRunner, stopScheduleRunner, normalizeTimezone } from '../../services/scheduleRunner.js';
+import { startScheduleRunner, stopScheduleRunner, normalizeTimezone, renderScheduleReason } from '../../services/scheduleRunner.js';
 import { scheduleRepo } from '../../db/repositories/index.js';
 import { db } from '../../db/database.js';
 
@@ -41,7 +41,9 @@ describe('last result on the schedule', () => {
     startScheduleRunner();
     const row = scheduleRepo.findById('s-13:00')!;
     expect(row.last_result).toBe('skipped');
-    expect(row.last_result_reason).toBe('mower offline');
+    // Stored untranslated; each reader gets their own language.
+    expect(renderScheduleReason('en', row.last_result_reason)).toBe('mower offline');
+    expect(renderScheduleReason('nl', row.last_result_reason)).toBe('maaier offline');
     expect(row.last_result_at).toBeTruthy();
   });
 
@@ -52,7 +54,7 @@ describe('last result on the schedule', () => {
     startScheduleRunner();
     const row = scheduleRepo.findById('s-11:00')!;
     expect(row.last_result).toBe('missed');
-    expect(row.last_result_reason).toContain('11:00');
+    expect(renderScheduleReason('en', row.last_result_reason)).toContain('11:00');
     // a schedule created after its own start time today is not "missed"
     schedule('09:00');
     vi.advanceTimersByTime(30_000);

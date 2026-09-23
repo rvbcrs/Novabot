@@ -1,3 +1,5 @@
+import { translator, type Translate } from './serverText.js';
+
 export const COVERAGE_PLANNER_RADIUS_KEY = 'coverage_planner_radius';
 export const DEFAULT_COVERAGE_PLANNER_RADIUS = 0.61;
 export const MIN_COVERAGE_PLANNER_RADIUS = 0.2;
@@ -30,6 +32,6 @@ export function selectCoveragePlannerRadius(
   return { radius: DEFAULT_COVERAGE_PLANNER_RADIUS, source: 'default' };
 }
 
-export function coveragePlannerRadiusError(): string {
-  return `radius must be a number between ${MIN_COVERAGE_PLANNER_RADIUS} and ${MAX_COVERAGE_PLANNER_RADIUS} meters`;
+export function coveragePlannerRadiusError(T: Translate = translator('en')): string {
+  return T`de straal moet een getal tussen ${MIN_COVERAGE_PLANNER_RADIUS} en ${MAX_COVERAGE_PLANNER_RADIUS} meter zijn`;
 }

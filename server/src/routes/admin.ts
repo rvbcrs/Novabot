@@ -8,6 +8,7 @@ import { DeviceRegistryRow } from '../types/index.js';
 import { scanForDevices, isBleAvailable } from '../ble/scanner.js';
 import { provisionDevice, provisionBatch, type ProvisionParams } from '../ble/provisioner.js';
 import { getAllRecentBleDevices, isBackgroundScanActive } from '../ble/bleLogger.js';
+import { reqT } from '../services/serverText.js';
 
 export const adminRouter = Router();
 
@@ -19,8 +20,9 @@ adminRouter.get('/ble-nearby', (_req: Request, res: Response) => {
 // GET /api/admin/ble-scan  — scan for nearby Novabot BLE devices
 // Returns devices with BLE MAC extracted from manufacturer data (0x5566)
 adminRouter.get('/ble-scan', async (req: Request, res: Response) => {
+  const T = reqT(req);
   if (!isBleAvailable()) {
-    res.status(503).json({ error: 'Bluetooth not available on this server' });
+    res.status(503).json({ error: T`Bluetooth is niet beschikbaar op deze server` });
     return;
   }
 
@@ -41,25 +43,26 @@ adminRouter.get('/ble-scan', async (req: Request, res: Response) => {
 let bleProvJob: { id: string; status: 'running' | 'done' | 'error'; result?: unknown; startedAt: number } | null = null;
 
 adminRouter.post('/ble-provision', async (req: Request, res: Response) => {
+  const T = reqT(req);
   if (!isBleAvailable()) {
-    res.status(503).json({ error: 'Bluetooth not available on this server' });
+    res.status(503).json({ error: T`Bluetooth is niet beschikbaar op deze server` });
     return;
   }
 
   if (bleProvJob?.status === 'running') {
-    res.status(409).json({ error: 'Provisioning already in progress' });
+    res.status(409).json({ error: T`Provisioning is al bezig` });
     return;
   }
 
   const { targetMac, wifiSsid, wifiPassword, mqttAddr, mqttPort, loraAddr, loraChannel, loraHc, loraLc, timezone, deviceType } = req.body as Partial<ProvisionParams>;
 
   if (!targetMac || !wifiSsid || !wifiPassword) {
-    res.status(400).json({ error: 'targetMac, wifiSsid, and wifiPassword are required' });
+    res.status(400).json({ error: T`targetMac, wifiSsid en wifiPassword zijn verplicht` });
     return;
   }
 
   if (!/^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/.test(targetMac)) {
-    res.status(400).json({ error: 'targetMac must be in format AA:BB:CC:DD:EE:FF' });
+    res.status(400).json({ error: T`targetMac moet het formaat AA:BB:CC:DD:EE:FF hebben` });
     return;
   }
 
@@ -93,12 +96,13 @@ adminRouter.get('/ble-provision/status', (_req: Request, res: Response) => {
 
 // POST /api/admin/ble-provision-batch — provision multiple devices, WiFi off/on once
 adminRouter.post('/ble-provision-batch', async (req: Request, res: Response) => {
+  const T = reqT(req);
   if (!isBleAvailable()) {
-    res.status(503).json({ error: 'Bluetooth not available on this server' });
+    res.status(503).json({ error: T`Bluetooth is niet beschikbaar op deze server` });
     return;
   }
   if (bleProvJob?.status === 'running') {
-    res.status(409).json({ error: 'Provisioning already in progress' });
+    res.status(409).json({ error: T`Provisioning is al bezig` });
     return;
   }
 
@@ -127,8 +131,9 @@ adminRouter.post('/ble-provision-batch', async (req: Request, res: Response) => 
 // POST /api/admin/ble-raw  — raw BLE diagnostic: connect, write data, capture responses
 // Body: { targetMac, charUuid?, data?, writeToAll?, durationMs? }
 adminRouter.post('/ble-raw', async (req: Request, res: Response) => {
+  const T = reqT(req);
   if (!isBleAvailable()) {
-    res.status(503).json({ error: 'Bluetooth not available on this server' });
+    res.status(503).json({ error: T`Bluetooth is niet beschikbaar op deze server` });
     return;
   }
 
@@ -172,11 +177,12 @@ adminRouter.get('/devices', (_req: Request, res: Response) => {
 // POST /api/admin/devices/:sn/mac  — registreer MAC handmatig na airport-scan
 // Body: { macAddress: "AA:BB:CC:DD:EE:FF" }
 adminRouter.post('/devices/:sn/mac', (req: Request, res: Response) => {
+  const T = reqT(req);
   const { sn } = req.params;
   const { macAddress } = req.body as { macAddress?: string };
 
   if (!macAddress || !/^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/.test(macAddress)) {
-    res.status(400).json({ error: 'macAddress vereist in formaat AA:BB:CC:DD:EE:FF' });
+    res.status(400).json({ error: T`macAddress moet het formaat AA:BB:CC:DD:EE:FF hebben` });
     return;
   }
 

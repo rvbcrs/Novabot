@@ -5,6 +5,7 @@
  */
 import { listBackups, createBundleFromDb, createBackup, type BackupEntry } from './portableBackup.js';
 import { mapRepo } from '../db/repositories/index.js';
+import { translator, type Translate } from './serverText.js';
 
 /** Reuse a backup younger than this; otherwise make a fresh one. */
 export const BACKUP_MAX_AGE_MS = 24 * 60 * 60 * 1000;
@@ -111,6 +112,7 @@ export async function ensureBetaFlashSafe(
   sn: string,
   version: string | null | undefined,
   opts: { force?: boolean } = {},
+  T: Translate = translator('en'),
 ): Promise<BetaFlashGate> {
   if (!isBetaFirmware(version)) return { allowed: true, backup: null, reason: 'not-beta' };
 
@@ -136,7 +138,7 @@ export async function ensureBetaFlashSafe(
     return {
       allowed: false,
       error: 'BACKUP_FAILED',
-      detail: `Kon geen backup maken voor ${sn} terwijl er kaarten zijn — flash geblokkeerd. Forceer alleen als je accepteert dat de kaarten niet geback-upt zijn.`,
+      detail: T`Kon geen backup maken voor ${sn} terwijl er kaarten zijn, dus het flashen is geblokkeerd. Forceer alleen als je accepteert dat de kaarten niet geback-upt zijn.`,
     };
   }
   return { allowed: true, backup: null, reason: 'no-maps' };

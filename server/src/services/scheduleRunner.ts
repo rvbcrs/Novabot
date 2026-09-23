@@ -13,6 +13,7 @@ import { startMowing, edgeBladeHeightMm, getMowerPhase, startEdgeCut } from './m
 import { getWeatherForecast, shouldPauseForRain, isNight, isFrostExpected } from './weatherService.js';
 import { emitScheduleEvent, pushMqttLog } from '../dashboard/socketHandler.js';
 import type { ScheduleRow } from '../db/repositories/schedules.js';
+import { M, renderMsg, type Lang, type Msg } from './serverText.js';
 
 let intervalId: ReturnType<typeof setInterval> | null = null;
 const CHECK_INTERVAL_MS = 30_000;
@@ -87,7 +88,35 @@ const lastLoggedDecision = new Map<string, string>();
 const RESULT_FOR_OUTCOME: Record<string, string> = {
   'STARTED': 'started', 'SKIPPED': 'skipped', 'NOT STARTED': 'failed', 'MISSED': 'missed',
 };
-function logScheduleDecision(row: ScheduleRow, ok: boolean, outcome: string, detail?: string): void {
+function isMsg(v: unknown): v is Msg {
+  return !!v && typeof v === 'object' && typeof (v as Msg).key === 'string' && Array.isArray((v as Msg).values);
+}
+
+/** A stored message whose values may themselves be messages (a refusal
+ *  from mowingService inside "… (area=… height=…)"). */
+function renderNested(lang: Lang, msg: Msg): string {
+  return renderMsg(lang, { key: msg.key, values: msg.values.map(v => (isMsg(v) ? renderNested(lang, v) : v)) });
+}
+
+/**
+ * last_result_reason in the reader's language. A human reason is stored as a
+ * Msg in JSON (the runner has no reader); older rows and the technical
+ * STARTED detail are plain text and come back unchanged.
+ */
+export function renderScheduleReason(lang: Lang, stored: string | null | undefined): string | null {
+  if (!stored) return stored ?? null;
+  if (!stored.startsWith('{')) return stored;
+  try {
+    const parsed: unknown = JSON.parse(stored);
+    return isMsg(parsed) ? renderNested(lang, parsed) : stored;
+  } catch {
+    return stored;
+  }
+}
+
+function logScheduleDecision(row: ScheduleRow, ok: boolean, outcome: string, reason?: string | Msg): void {
+  const detail = reason === undefined ? undefined : isMsg(reason) ? renderNested('en', reason) : reason;
+  const stored = reason === undefined ? null : isMsg(reason) ? JSON.stringify(reason) : reason;
   const dayKey = new Date().toISOString().slice(0, 10);
   const dedupeKey = `${dayKey}:${outcome}:${detail ?? ''}`;
   if (lastLoggedDecision.get(row.schedule_id) === dedupeKey) return;
@@ -98,7 +127,7 @@ function logScheduleDecision(row: ScheduleRow, ok: boolean, outcome: string, det
   const result = RESULT_FOR_OUTCOME[outcome];
   if (result) {
     scheduleRepo.update(row.schedule_id, {
-      last_result_at: new Date().toISOString(), last_result: result, last_result_reason: detail ?? null,
+      last_result_at: new Date().toISOString(), last_result: result, last_result_reason: stored,
     });
   }
   console.log(`[ScheduleRunner] ${row.schedule_id} (${row.mower_sn}) @${row.start_time}: ${text}`);
@@ -331,7 +360,7 @@ function checkSchedules() {
           || (Number.isFinite(lastTriggered) && lastTriggered >= scheduledAt.getTime());
         const existedThen = !Number.isFinite(createdAt) || createdAt <= scheduledAt.getTime();
         if (!decided && existedThen) {
-          logScheduleDecision(row, false, 'MISSED', `server was not running at ${row.start_time}`);
+          logScheduleDecision(row, false, 'MISSED', M`de server draaide niet om ${row.start_time}`);
         }
       }
       continue;
@@ -360,7 +389,7 @@ function checkSchedules() {
       if (row.skip_date === todayKey) {
         scheduleRepo.update(row.schedule_id, { skip_date: null });
         scheduleRepo.updateLastTriggered(row.schedule_id);
-        logScheduleDecision(row, false, 'SKIPPED', `user skipped ${todayKey}`);
+        logScheduleDecision(row, false, 'SKIPPED', M`overgeslagen door de gebruiker (${todayKey})`);
         continue;
       }
       if (row.skip_date < todayKey) {
@@ -370,7 +399,7 @@ function checkSchedules() {
 
     // Check of maaier online is
     if (!isDeviceOnline(row.mower_sn)) {
-      logScheduleDecision(row, false, 'SKIPPED', 'mower offline');
+      logScheduleDecision(row, false, 'SKIPPED', M`maaier offline`);
       continue;
     }
 
@@ -402,15 +431,15 @@ async function checkWeatherAndTrigger(
   const forecast = await getWeatherForecast(gps.lat, gps.lng);
   const now = Date.now();
 
-  let skip: { reason: 'night' | 'frost' | 'rain'; detail: string } | null = null;
+  let skip: { reason: 'night' | 'frost' | 'rain'; detail: Msg } | null = null;
   if (guards.nightGuard && isNight(forecast, now)) {
-    skip = { reason: 'night', detail: 'night guard: between sunset and sunrise' };
+    skip = { reason: 'night', detail: M`nachtbewaking: tussen zonsondergang en zonsopgang` };
   } else if (guards.frostGuard && isFrostExpected(forecast, guards.frostThresholdC, now)) {
-    skip = { reason: 'frost', detail: `frost guard: below ${guards.frostThresholdC}°C` };
+    skip = { reason: 'frost', detail: M`vorstbewaking: onder ${guards.frostThresholdC}°C` };
   } else if (row.rain_pause && shouldPauseForRain(
     forecast, row.rain_threshold_mm, row.rain_threshold_probability, row.rain_check_hours,
   )) {
-    skip = { reason: 'rain', detail: 'rain expected (pre-start weather check)' };
+    skip = { reason: 'rain', detail: M`regen verwacht (weercheck voor de start)` };
   }
 
   if (skip) {
@@ -527,7 +556,8 @@ function triggerSchedule(row: ScheduleRow) {
   } else {
     // Most common cause: startMowing's isMowerBusy guard rejected the start
     // because the mower is in an active task (or was wrongly parked as "busy").
-    logScheduleDecision(row, false, 'NOT STARTED', `${result.error} (area=${area} height=${row.cutting_height ?? DEFAULT_CUTTING_HEIGHT_CM}cm)`);
+    logScheduleDecision(row, false, 'NOT STARTED',
+      M`${result.errorMsg ?? result.error} (gebied=${area} hoogte=${row.cutting_height ?? DEFAULT_CUTTING_HEIGHT_CM} cm)`);
   }
 
   // Update last_triggered_at

@@ -116,7 +116,7 @@ export async function probeMower(ip: string | null): Promise<MowerProbe> {
     mqttNodeConnected: false, mqttNetErrors: 0, skippedConfigUpdate: false,
     extendedCommandsRunning: false, version: null, httpAddr: null, httpCheck: null,
   };
-  if (!ip) return { ...empty, error: 'geen adres bekend' };
+  if (!ip) return { ...empty, error: 'no address known' };
 
   let out: string;
   try {

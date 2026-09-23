@@ -218,16 +218,86 @@ window.__ADMIN_I18N__ = ${JSON.stringify(ADMIN_I18N).replace(/</g, '\\u003c')};
   var LANGS = ['en','nl','fr','de'];
   var origText = new WeakMap();
   var origAttr = new WeakMap();
-  var curLang = 'en';
+  var origBlock = new WeakMap();
   function pickLang(){
     try { var s = localStorage.getItem('adminLang'); if (s && LANGS.indexOf(s) >= 0) return s; } catch(e){}
     var n = (navigator.language || 'en').slice(0,2).toLowerCase();
     return LANGS.indexOf(n) >= 0 ? n : 'en';
   }
+  // Resolved immediately so window.__t() and the fetch wrapper already use the
+  // right language while the main script is still starting up.
+  var curLang = pickLang();
   function tr(src, lang){ var e = T[src]; if (!e) return null; var v = e[lang]; return (typeof v === 'string' && v) ? v : null; }
-  var SKIP = { SCRIPT:1, STYLE:1, TEXTAREA:1, CODE:1, PRE:1, OPTION:1 };
+  function fill(s, vars){
+    if (!vars) return s;
+    return s.replace(/[{]([A-Za-z0-9_]+)[}]/g, function(m, k){ return (vars[k] !== undefined && vars[k] !== null) ? String(vars[k]) : m; });
+  }
+  // Strings built with window.__t() are remembered (output -> source + vars),
+  // so a later language switch can re-render them in the new language even
+  // though the DOM only holds the already-translated text.
+  var MADE = {}; var madeN = 0;
+  // Reverse index (translated text -> source key), so text that code copied
+  // out of the DOM in one language and wrote back later still re-translates.
+  var REV = null;
+  function rev(s){
+    if (REV === null){
+      REV = {};
+      for (var k in T){ var e = T[k]; for (var li = 1; li < LANGS.length; li++){ var v = e[LANGS[li]]; if (v && v !== k && !T[v] && !REV[v]) REV[v] = k; } }
+    }
+    return REV[s];
+  }
+  function lookup(src, lang){
+    var t = tr(src, lang); if (t !== null) return t;
+    var m = MADE[src]; if (m) return fill(tr(m[0], lang) || m[0], m[1]);
+    var r = rev(src); if (r) return tr(r, lang) || r;
+    return null;
+  }
+  // Translate a built string: __t('Reset failed: {msg}', { msg: e.message }).
+  // Falls back to the (English) source text when there is no translation.
+  window.__t = function(src, vars, lang){
+    var s = fill(tr(src, lang || curLang) || src, vars);
+    if (s !== src || vars){
+      if (madeN > 5000){ MADE = {}; madeN = 0; }
+      if (!MADE[s]){ MADE[s] = [src, vars || null]; madeN++; }
+    }
+    return s;
+  };
+  window.__lang = function(){ return curLang; };
+  // Locale for dates/times rendered by the page, following the admin language.
+  window.__locale = function(){ return ({ en: 'en-GB', nl: 'nl-NL', fr: 'fr-FR', de: 'de-DE' })[curLang] || 'en-GB'; };
+  // Every same-origin /api/ call carries the admin language, so server-side
+  // error texts (services/serverText.ts langOf) come back translated.
+  (function(){
+    var of = window.fetch; if (!of) return;
+    window.fetch = function(input, init){
+      try {
+        var url = typeof input === 'string' ? input : (input && input.url) || '';
+        if (url.indexOf('/api/') === 0 || url.indexOf(location.origin + '/api/') === 0){
+          var h = new Headers((init && init.headers) || (typeof input !== 'string' && input && input.headers) || {});
+          if (!h.has('X-Lang')) h.set('X-Lang', curLang);
+          init = Object.assign({}, init || {}, { headers: h });
+        }
+      } catch(e){}
+      return of.call(this, input, init);
+    };
+  })();
+  // OPTION text is only translated when the option carries an explicit value
+  // attribute (otherwise select.value would change with the language).
+  var SKIP = { SCRIPT:1, STYLE:1, TEXTAREA:1, CODE:1, PRE:1 };
+  var BLOCK_SEL = '.help-item,.help-note';
+  function isBlock(p){ return p.classList && (p.classList.contains('help-item') || p.classList.contains('help-note')); }
+  function isHtmlBlock(p){ return p && p.nodeType === 1 && p.hasAttribute && p.hasAttribute('data-i18n-html'); }
   function skipNode(p){
-    while (p){ if (p.nodeType === 1 && (SKIP[p.tagName] || (p.getAttribute && p.getAttribute('data-no-i18n') !== null))) return true; p = p.parentNode; }
+    // Direct text children of a data-i18n-html block belong to that block.
+    if (isHtmlBlock(p)) return true;
+    while (p){
+      if (p.nodeType === 1){
+        if (SKIP[p.tagName] || (p.getAttribute && p.getAttribute('data-no-i18n') !== null)) return true;
+        if (p.tagName === 'OPTION' && !p.hasAttribute('value')) return true;
+        if (isBlock(p)) return true;
+      }
+      p = p.parentNode;
+    }
     return false;
   }
   function translateText(node, lang){
@@ -235,14 +305,14 @@ window.__ADMIN_I18N__ = ${JSON.stringify(ADMIN_I18N).replace(/</g, '\\u003c')};
     var trimmed = raw.trim(); if (!trimmed) return;
     var src = origText.get(node);
     if (src === undefined){ src = trimmed; origText.set(node, src); }
-    var t = tr(src, lang);
+    var t = lookup(src, lang);
     var prefix = '';
     if (t === null){
       // Fallback: strip a leading run of non-letters (emoji/icons/symbols/space)
       // and translate the remaining core, so "⚡ Charger" -> "⚡ Laadstation",
       // "🔗 Paired Set" -> "🔗 Gekoppelde set", "🤖 Mower" -> "🤖 Maaier".
       var m = src.match(/^([^\\p{L}]+)(\\p{L}[\\s\\S]*)$/u);
-      if (m){ var ct = tr(m[2], lang); if (ct !== null){ t = ct; prefix = m[1]; } }
+      if (m){ var ct = lookup(m[2], lang); if (ct !== null){ t = ct; prefix = m[1]; } }
     }
     if (t !== null){
       var lead = raw.match(/^\\s*/)[0]; var tail = raw.match(/\\s*$/)[0];
@@ -258,20 +328,75 @@ window.__ADMIN_I18N__ = ${JSON.stringify(ADMIN_I18N).replace(/</g, '\\u003c')};
     for (var i=0;i<ATTRS.length;i++){
       var a = ATTRS[i]; var cur = el.getAttribute(a); if (cur == null) continue;
       var src = store[a]; if (src === undefined){ src = cur.trim(); store[a] = src; }
-      var t = tr(src, lang); if (t !== null && el.getAttribute(a) !== t) el.setAttribute(a, t);
+      var t = lookup(src, lang); if (t !== null && el.getAttribute(a) !== t) el.setAttribute(a, t);
+    }
+  }
+  function escH(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+  // Help entries mix a bold button name with an explanation ("<b>X</b> — ...").
+  // They are keyed on the whole sentence, so they are translated as one block:
+  // the part before the first " — " is re-bolded in the translation.
+  function translateBlock(el, lang){
+    var st = origBlock.get(el);
+    if (st === undefined){ st = { html: el.innerHTML, key: el.textContent.replace(/[ \\t\\r\\n]+/g, ' ').trim() }; origBlock.set(el, st); }
+    var t = tr(st.key, lang);
+    var html;
+    if (t === null || t === st.key){ html = st.html; }
+    else {
+      var lead = ''; var body = t;
+      if (body.indexOf('↳ ') === 0){ lead = '↳ '; body = body.slice(2); }
+      var cut = body.indexOf(' — ');
+      if (st.html.indexOf('<b>') >= 0 && cut > 0) html = escH(lead) + '<b>' + escH(body.slice(0, cut)) + '</b>' + escH(body.slice(cut));
+      else html = escH(t);
+    }
+    if (el.innerHTML !== html) el.innerHTML = html;
+  }
+  // Paragraphs that mix text with inline markup (<b>, <code>, <a>, <br>) carry
+  // data-i18n-html. Their dict key is the text with every child element
+  // replaced by {0}, {1}, ... in order; the translation places the SAME child
+  // elements back at its own {n} positions (their inner text is translated by
+  // the normal walk).
+  var origHtmlBlock = new WeakMap();
+  function translateHtmlBlock(el, lang){
+    var st = origHtmlBlock.get(el);
+    if (st === undefined){
+      var nodes = []; var els = []; var key = '';
+      for (var c = el.firstChild; c; c = c.nextSibling){
+        nodes.push(c);
+        if (c.nodeType === 1){ key += '{' + els.length + '}'; els.push(c); }
+        else if (c.nodeType === 3) key += c.nodeValue;
+      }
+      st = { nodes: nodes, els: els, key: key.replace(/[ \\t\\r\\n]+/g, ' ').trim(), lang: null };
+      origHtmlBlock.set(el, st);
+    }
+    if (st.lang === lang) return;
+    st.lang = lang;
+    var t = tr(st.key, lang);
+    while (el.firstChild) el.removeChild(el.firstChild);
+    if (t === null || t === st.key){
+      for (var i = 0; i < st.nodes.length; i++) el.appendChild(st.nodes[i]);
+      return;
+    }
+    var parts = t.split(/[{]([0-9]+)[}]/);
+    for (var p = 0; p < parts.length; p++){
+      if (p % 2 === 1){ var ch = st.els[+parts[p]]; if (ch) el.appendChild(ch); }
+      else if (parts[p]) el.appendChild(document.createTextNode(parts[p]));
     }
   }
   function walk(root, lang){
     if (root.nodeType === 1){
       translateAttrs(root, lang);
       if (root.querySelectorAll){ var els = root.querySelectorAll('[placeholder],[title],[aria-label]'); for (var i=0;i<els.length;i++) translateAttrs(els[i], lang); }
+      if (isBlock(root)) translateBlock(root, lang);
+      if (root.querySelectorAll){ var bl = root.querySelectorAll(BLOCK_SEL); for (var b=0;b<bl.length;b++) translateBlock(bl[b], lang); }
+      if (isHtmlBlock(root)) translateHtmlBlock(root, lang);
+      if (root.querySelectorAll){ var hb = root.querySelectorAll('[data-i18n-html]'); for (var h=0;h<hb.length;h++) translateHtmlBlock(hb[h], lang); }
     }
     var w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
     var nodes = []; var n;
     while ((n = w.nextNode())){ if (!skipNode(n.parentNode)) nodes.push(n); }
     for (var j=0;j<nodes.length;j++) translateText(nodes[j], lang);
   }
-  function applyAll(lang){ curLang = lang; try { walk(document.body, lang); } catch(e){} }
+  function applyAll(lang){ curLang = lang; try { document.documentElement.setAttribute('lang', lang); walk(document.body, lang); } catch(e){} }
   function setLangBtn(lang){
     var btns = document.querySelectorAll('#langSwitch .langbtn');
     for (var i=0;i<btns.length;i++) btns[i].classList.toggle('active', btns[i].getAttribute('data-lang') === lang);
@@ -327,7 +452,7 @@ window.__ADMIN_I18N__ = ${JSON.stringify(ADMIN_I18N).replace(/</g, '\\u003c')};
 
     <div style="background:rgba(0,212,170,.06);border:1px solid rgba(0,212,170,.15);border-radius:8px;padding:14px;margin-bottom:20px">
       <p style="font-size:12px;color:#aaa;margin:0 0 8px 0;font-weight:600;color:#00d4aa">First-time setup</p>
-      <p style="font-size:12px;color:#999;margin:0;line-height:1.5">Sign in with your <b style="color:#ccc">Novabot app</b> account. This will:</p>
+      <p data-i18n-html style="font-size:12px;color:#999;margin:0;line-height:1.5">Sign in with your <b style="color:#ccc">Novabot app</b> account. This will:</p>
       <ul style="font-size:12px;color:#999;margin:8px 0 0 0;padding-left:18px;line-height:1.8">
         <li>Create your local admin account</li>
         <li>Import your devices (charger + mower)</li>
@@ -665,9 +790,9 @@ window.__ADMIN_I18N__ = ${JSON.stringify(ADMIN_I18N).replace(/</g, '\\u003c')};
           <input type="range" id="maskOpacity" min="0.2" max="1" step="0.05" value="0.8" oninput="onMaskOpacity()" disabled style="width:90px">
         </label>
         <span id="maskLegend" style="display:none;gap:12px;align-items:center">
-          <span style="color:#28b43c">&#9632; bereikbaar</span>
-          <span style="color:#2a6eeb">&#9632; afgesneden</span>
-          <span style="color:#d22d2d">&#9632; bezet</span>
+          <span style="color:#28b43c">&#9632; reachable</span>
+          <span style="color:#2a6eeb">&#9632; cut off</span>
+          <span style="color:#d22d2d">&#9632; occupied</span>
         </span>
         <span id="maskStatus" style="color:#9ca3af;font-size:11px"></span>
       </div>
@@ -730,7 +855,7 @@ window.__ADMIN_I18N__ = ${JSON.stringify(ADMIN_I18N).replace(/</g, '\\u003c')};
 
     <div class="card">
       <h2>Walker Maps <span class="refresh-btn" onclick="loadWalkerBundles()">&#x21BB;</span></h2>
-      <div style="font-size:12px;color:#94a3b8;margin-bottom:10px;line-height:1.55">
+      <div data-i18n-html style="font-size:12px;color:#94a3b8;margin-bottom:10px;line-height:1.55">
         Library of <code>.novabundle</code> files uploaded by the RTK walker. Each row is one survey session. Pick "Assign to mower..." to run the apply-verbatim pipeline against that mower's live charging pose. Uploads are SN-agnostic, so you can walk once and decide which mower gets the map later.
       </div>
       <div id="walkerBundleList" style="font-size:12px;color:#cbd5e1">Loading...</div>
@@ -832,7 +957,7 @@ window.__ADMIN_I18N__ = ${JSON.stringify(ADMIN_I18N).replace(/</g, '\\u003c')};
 
     <div class="card">
       <h2>Revert to Stock Firmware</h2>
-      <div style="margin-bottom:12px;padding:8px 12px;background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.3);border-radius:8px;font-size:12px;color:#fbbf24">
+      <div data-i18n-html style="margin-bottom:12px;padding:8px 12px;background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.3);border-radius:8px;font-size:12px;color:#fbbf24">
         Flashes the OEM stock firmware back onto the mower. <b>You will lose SSH access</b> and all custom features (edge-cut, camera stream, mapping preflight). Maps are kept; WiFi may need BLE re-provisioning. Select the mower above in <b>Update Device</b>, then pick a stock version. The mower must be on the charger.
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
@@ -930,7 +1055,7 @@ window.__ADMIN_I18N__ = ${JSON.stringify(ADMIN_I18N).replace(/</g, '\\u003c')};
           </div>
         </a>
       </div>
-      <div style="margin-top:14px;padding:10px 12px;background:rgba(255,255,255,.03);border-radius:6px;font-size:11px;color:#888">
+      <div data-i18n-html style="margin-top:14px;padding:10px 12px;background:rgba(255,255,255,.03);border-radius:6px;font-size:11px;color:#888">
         Server release: <span id="resVersionPill" style="color:#86efac;font-weight:600">loading…</span>
         — see the wiki <a href="https://wiki.ramonvanbruggen.nl/" target="_blank" rel="noopener" style="color:#86efac">User Guide</a> section for non-technical instructions (pairing your mower, scheduling, troubleshooting common errors).
       </div>
@@ -963,7 +1088,7 @@ window.__ADMIN_I18N__ = ${JSON.stringify(ADMIN_I18N).replace(/</g, '\\u003c')};
       <div style="margin-bottom:16px;padding:12px;background:rgba(245,158,11,.05);border:1px solid rgba(245,158,11,.2);border-radius:8px">
         <h3 style="margin:0 0 8px 0;font-size:13px;color:#fbbf24">mDNS Advertiser</h3>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-          <div style="font-size:11px;color:#aaa;flex:1;min-width:240px">
+          <div data-i18n-html style="font-size:11px;color:#aaa;flex:1;min-width:240px">
             ${process.env.MDNS_SIDECAR === 'true' || process.env.MDNS_SIDECAR === '1'
               ? 'Advertising of <code>opennova.local</code> is done by the <code>opennova-mdns</code> container on the host network, not by this one. To restart it: <code>docker restart opennova-mdns</code>.'
               : 'Soft-restart the mDNS advertiser if the dashboard\'s auto-discovery name (<code>opennova.local</code>) becomes unreachable. Does not restart the docker container.'}
@@ -983,10 +1108,10 @@ window.__ADMIN_I18N__ = ${JSON.stringify(ADMIN_I18N).replace(/</g, '\\u003c')};
         <p style="font-size:13px;color:#c4b5fd;margin:0 0 8px 0;font-weight:600">How to install:</p>
         <ol style="font-size:12px;color:#a0a0a0;margin:0;padding-left:20px;line-height:1.8">
           <li>Tap the download button below on your iPhone/iPad</li>
-          <li>Go to <b style="color:#e0e0e0">Settings → General → VPN & Device Management</b></li>
-          <li>Tap the <b style="color:#e0e0e0">OpenNova</b> profile → <b style="color:#e0e0e0">Install</b></li>
-          <li>Go to <b style="color:#e0e0e0">Settings → General → About → Certificate Trust Settings</b></li>
-          <li>Enable <b style="color:#e0e0e0">OpenNova CA Certificate</b></li>
+          <li data-i18n-html>Go to <b style="color:#e0e0e0">Settings → General → VPN & Device Management</b></li>
+          <li data-i18n-html>Tap the <b style="color:#e0e0e0">OpenNova</b> profile → <b style="color:#e0e0e0">Install</b></li>
+          <li data-i18n-html>Go to <b style="color:#e0e0e0">Settings → General → About → Certificate Trust Settings</b></li>
+          <li data-i18n-html>Enable <b style="color:#e0e0e0">OpenNova CA Certificate</b></li>
         </ol>
       </div>
       <a href="/api/setup/profile" class="btn btn-purple" style="display:block;text-align:center;text-decoration:none;margin-bottom:8px">Download iOS Profile (.mobileconfig)</a>
@@ -999,7 +1124,7 @@ window.__ADMIN_I18N__ = ${JSON.stringify(ADMIN_I18N).replace(/</g, '\\u003c')};
     <div class="card">
       <h2>Cloud Import</h2>
       <p style="font-size:12px;color:#aaa;margin-bottom:12px">Import devices from the Novabot cloud using your Novabot app credentials.</p>
-      <div style="font-size:12px;line-height:1.5;color:#f0b860;background:rgba(240,184,96,.08);border:1px solid rgba(240,184,96,.3);border-radius:8px;padding:10px 12px;margin-bottom:12px">
+      <div data-i18n-html style="font-size:12px;line-height:1.5;color:#f0b860;background:rgba(240,184,96,.08);border:1px solid rgba(240,184,96,.3);border-radius:8px;padding:10px 12px;margin-bottom:12px">
         ⚠️ <b>Cloud import does not include inter-map channels.</b> The cloud stores the channel connectors between work areas as empty (0-byte) files, so there is nothing to restore. If you have multiple zones connected by channels, do <b>not</b> overwrite your mower with a cloud restore, or you will lose the channels. To preserve channels across a wipe/restore, use a <b>portable snapshot</b> (Map Backups) instead.
       </div>
       <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap">
@@ -1116,15 +1241,15 @@ window.__ADMIN_I18N__ = ${JSON.stringify(ADMIN_I18N).replace(/</g, '\\u003c')};
         <div style="padding:10px 12px;background:rgba(239,68,68,.05);border:1px solid rgba(239,68,68,.2);border-radius:8px;margin-top:8px">
           <div style="font-size:11px;color:#aaa;margin-bottom:10px;line-height:1.5">
             <b style="color:#fca5a5">Recovery: wrong charger pose causes mower to drive off target.</b><br>
-            Stock firmware needs a drive-back cycle to initialize localization
+            <span data-i18n-html>Stock firmware needs a drive-back cycle to initialize localization
             before the reported pose is trustworthy. While docked at boot,
-            <code>map_position</code> is always <code>(0, 0, 0)</code> placeholder.<br>
+            <code>map_position</code> is always <code>(0, 0, 0)</code> placeholder.</span><br>
             <b>Workflow:</b>
             <ol style="margin:6px 0 0 18px;padding:0;color:#aaa;font-size:11px">
               <li>Drive the mower a short distance off the dock (e.g. start a 10s mowing task or push it manually 1-2 m)</li>
-              <li>Let it return to dock so battery state shows <code>CHARGING</code></li>
-              <li>Wait until <code>localization_state</code> below shows <b>Localized</b> and <code>map_position</code> is non-zero</li>
-              <li>Then press <b>Recalibrate Charging Pose</b></li>
+              <li data-i18n-html>Let it return to dock so battery state shows <code>CHARGING</code></li>
+              <li data-i18n-html>Wait until <code>localization_state</code> below shows <b>Localized</b> and <code>map_position</code> is non-zero</li>
+              <li data-i18n-html>Then press <b>Recalibrate Charging Pose</b></li>
             </ol>
           </div>
           <div id="mapLocalizationStatus" style="font-size:11px;color:#ccc;background:#0d0d20;border:1px solid #2a2a3a;border-radius:6px;padding:8px 12px;margin-bottom:10px;font-family:'Roboto Mono',ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace">
@@ -1136,16 +1261,16 @@ window.__ADMIN_I18N__ = ${JSON.stringify(ADMIN_I18N).replace(/</g, '\\u003c')};
           </div>
           <div id="infoRecal" style="display:none;margin-top:8px;padding:10px 12px;background:rgba(15,23,42,.6);border:1px solid #1e293b;border-radius:6px;font-size:11px;color:#cbd5e1;line-height:1.55">
             <div><b>Snaps the dock pose to where the mower currently sits.</b></div>
-            <div style="margin-top:6px"><b style="color:#86efac">Updates:</b> <code>charging_station.yaml</code> + <code>map_info.json</code> in <code>csv_file/</code> and <code>x3_csv_file/</code> on the mower (3 files). Saves the new theta in DB so subsequent <code>sync_map</code> calls reuse it.</div>
-            <div style="margin-top:6px"><b style="color:#fca5a5">Does NOT touch:</b> polygon CSVs, the <code>_latest.zip</code>, charger GPS, or the mower's coverage planner state.</div>
-            <div style="margin-top:6px"><b style="color:#93c5fd">Use when:</b> mower drifted after heading discovery or theta is wrong but the polygon shape itself is fine.</div>
-            <div style="margin-top:6px"><b style="color:#fbbf24">Required:</b> mower on dock + <code>battery_state == CHARGING</code> + RTK FIX + non-zero <code>map_position</code>.</div>
+            <div data-i18n-html style="margin-top:6px"><b style="color:#86efac">Updates:</b> <code>charging_station.yaml</code> + <code>map_info.json</code> in <code>csv_file/</code> and <code>x3_csv_file/</code> on the mower (3 files). Saves the new theta in DB so subsequent <code>sync_map</code> calls reuse it.</div>
+            <div data-i18n-html style="margin-top:6px"><b style="color:#fca5a5">Does NOT touch:</b> polygon CSVs, the <code>_latest.zip</code>, charger GPS, or the mower's coverage planner state.</div>
+            <div data-i18n-html style="margin-top:6px"><b style="color:#93c5fd">Use when:</b> mower drifted after heading discovery or theta is wrong but the polygon shape itself is fine.</div>
+            <div data-i18n-html style="margin-top:6px"><b style="color:#fbbf24">Required:</b> mower on dock + <code>battery_state == CHARGING</code> + RTK FIX + non-zero <code>map_position</code>.</div>
           </div>
           <div id="mapRecalStatus" style="font-size:12px;margin-top:8px;display:none"></div>
         </div>
         <div style="margin-top:10px;padding:10px 12px;background:rgba(34,211,238,.05);border:1px solid rgba(34,211,238,.18);border-radius:8px">
           <div style="font-size:11px;font-weight:600;color:#67e8f9;margin-bottom:6px">Position Validation (RTK FIX only)</div>
-          <div style="font-size:10px;color:#94a3b8;margin-bottom:6px">Live dual-trail diagnose during mow: cyan = firmware <code>map_position</code>, lime = RTK GPS via charger anchor. Delta between them flags drift or frame-rotation issues. Read-only (use Portable Map Bundle exact-restore instead).</div>
+          <div data-i18n-html style="font-size:10px;color:#94a3b8;margin-bottom:6px">Live dual-trail diagnose during mow: cyan = firmware <code>map_position</code>, lime = RTK GPS via charger anchor. Delta between them flags drift or frame-rotation issues. Read-only (use Portable Map Bundle exact-restore instead).</div>
           <div id="positionValidationPanel" style="font-size:11px;color:#ccc;font-family:'Roboto Mono',ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace">
             <span style="color:#888">Select a mower to start validation polling.</span>
           </div>
@@ -1515,7 +1640,7 @@ function mdSendCommand(cmdName, params) {
 
   if (mdPendingTimeout) clearTimeout(mdPendingTimeout);
   mdPendingCommand = cmdName;
-  mdSetStatus('Sending ' + cmdName + '...', '#fbbf24');
+  mdSetStatus(__t('Sending {cmd}...', { cmd: cmdName }), '#fbbf24');
 
   var body = {};
   body[cmdName] = params || {};
@@ -1525,17 +1650,17 @@ function mdSendCommand(cmdName, params) {
     body: JSON.stringify(body),
   }).then(function(r){ return r.json(); }).then(function(d){
     if (d.ok) {
-      mdSetStatus('Waiting for ' + cmdName + '_respond...', '#fbbf24');
+      mdSetStatus(__t('Waiting for {cmd}...', { cmd: cmdName + '_respond' }), '#fbbf24');
       mdPendingTimeout = setTimeout(function(){
         mdSetStatus('Timeout — no response within 15s', '#f87171');
         mdPendingCommand = null;
       }, 15000);
     } else {
-      mdSetStatus('Error: ' + (d.error || 'unknown'), '#f87171');
+      mdSetStatus(__t('Error: {msg}', { msg: d.error || __t('unknown') }), '#f87171');
       mdPendingCommand = null;
     }
   }).catch(function(e){
-    mdSetStatus('HTTP error: ' + e.message, '#f87171');
+    mdSetStatus(__t('HTTP error: {msg}', { msg: e.message }), '#f87171');
     mdPendingCommand = null;
   });
   return true;
@@ -1587,7 +1712,7 @@ function mdHandleExtendedResponse(ev) {
   }
 
   if (mdPendingTimeout) { clearTimeout(mdPendingTimeout); mdPendingTimeout = null; }
-  mdSetStatus('Received ' + ev.command, '#4ade80');
+  mdSetStatus(__t('Received {cmd}', { cmd: ev.command }), '#4ade80');
 
   var data = ev.data || {};
   if (data.result !== 0 && data.result !== true) {
@@ -1729,7 +1854,7 @@ function mdCopyOutput() {
     lines.push(ln);
   }
   navigator.clipboard.writeText(lines.join('\\n')).then(function(){
-    mdSetStatus('Copied ' + lines.length + ' lines', '#4ade80');
+    mdSetStatus(__t('Copied {n} lines', { n: lines.length }), '#4ade80');
   });
 }
 
@@ -1744,7 +1869,7 @@ function setupSocketListeners(sock) {
     if (token) loadMyDevices();
     var now = Date.now();
     if (!_lastOnline[d.sn] || now - _lastOnline[d.sn] > 60000) {
-      showToast(d.sn + ' came online', 'green');
+      showToast(__t('{sn} came online', { sn: d.sn }), 'green');
     }
     _lastOnline[d.sn] = now;
   });
@@ -1753,13 +1878,13 @@ function setupSocketListeners(sock) {
   });
   sock.on('device:bound', function(d) {
     if (token) loadMyDevices();
-    showActivity('binding ' + d.sn + '...', 3000);
-    showToast('Auto-bound ' + d.sn + ' to your account', 'green');
+    showActivity(__t('binding {sn}...', { sn: d.sn }), 3000);
+    showToast(__t('Auto-bound {sn} to your account', { sn: d.sn }), 'green');
   });
   sock.on('device:paired', function(d) {
     if (token) loadMyDevices();
-    showActivity('pairing devices...', 3000);
-    showToast('Auto-paired ' + (d.mowerSn || '?') + ' + ' + (d.chargerSn || '?'), 'green');
+    showActivity(__t('pairing devices...'), 3000);
+    showToast(__t('Auto-paired {mower} + {charger}', { mower: d.mowerSn || '?', charger: d.chargerSn || '?' }), 'green');
   });
   sock.on('ota:event', function(evt) {
     if (!evt) return;
@@ -1786,13 +1911,13 @@ function setupSocketListeners(sock) {
       fill.style.background = '#22c55e';
       pctText.textContent = '100%';
       fill.style.width = '100%';
-      showToast('OTA update completed for ' + (evt.sn || selDev.value), 'green');
+      showToast(__t('OTA update completed for {sn}', { sn: evt.sn || selDev.value }), 'green');
     } else if (evtStatus === 'error' || evtStatus === 'failed') {
-      label = 'Failed: ' + (rawData.message || evt.message || 'unknown error');
+      label = __t('Failed: {msg}', { msg: rawData.message || evt.message || __t('unknown error') });
       fill.style.background = '#ef4444';
       pctText.style.color = '#ef4444';
     } else if (pct <= 62) {
-      label = 'Downloading firmware... (' + pct + '%)';
+      label = __t('Downloading firmware... ({pct}%)', { pct: pct });
     } else if (pct <= 68) {
       label = 'Unpacking firmware...';
     } else {
@@ -1911,7 +2036,7 @@ async function fetchJsonAuth(url, opts) {
     endAdminSession('Session expired — please log in again');
     throw authExpiredError();
   }
-  if (!r.ok) throw new Error((d && (d.error || d.message)) || 'Server error: ' + r.status);
+  if (!r.ok) throw new Error((d && (d.error || d.message)) || __t('Server error: {status}', { status: r.status }));
   return d || {};
 }
 
@@ -1929,7 +2054,7 @@ async function api(path, method='GET', body=null) {
     var preStart = txt.indexOf(String.fromCharCode(60) + 'pre>');
     var preEnd = txt.indexOf(String.fromCharCode(60) + '/pre>');
     var inner = (preStart >= 0 && preEnd > preStart) ? txt.substring(preStart + 5, preEnd) : '';
-    var errMsg = inner ? inner.split('&nbsp;').join(' ').split('&lt;').join('').split('&gt;').join('').split(String.fromCharCode(60) + 'br>').join(' ').substring(0, 200) : 'Server error: ' + r.status;
+    var errMsg = inner ? inner.split('&nbsp;').join(' ').split('&lt;').join('').split('&gt;').join('').split(String.fromCharCode(60) + 'br>').join(' ').substring(0, 200) : __t('Server error: {status}', { status: r.status });
     throw new Error(errMsg);
   }
   var d = await r.json();
@@ -1937,7 +2062,7 @@ async function api(path, method='GET', body=null) {
     endAdminSession('Session expired — please log in again');
     throw authExpiredError();
   }
-  if (!r.ok) throw new Error(d.error || d.message || 'Server error: ' + r.status);
+  if (!r.ok) throw new Error(d.error || d.message || __t('Server error: {status}', { status: r.status }));
   return d;
 }
 
@@ -1977,10 +2102,10 @@ function ago(ts) {
   if (!ts) return '-';
   const d = new Date(ts+'Z');
   const s = Math.round((Date.now()-d.getTime())/1000);
-  if (s<60) return s+'s ago';
-  if (s<3600) return Math.round(s/60)+'m ago';
-  if (s<86400) return Math.round(s/3600)+'h ago';
-  return Math.round(s/86400)+'d ago';
+  if (s<60) return __t('{n}s ago', { n: s });
+  if (s<3600) return __t('{n}m ago', { n: Math.round(s/60) });
+  if (s<86400) return __t('{n}h ago', { n: Math.round(s/3600) });
+  return __t('{n}d ago', { n: Math.round(s/86400) });
 }
 
 async function showApp() {
@@ -2010,6 +2135,7 @@ async function loadAll() {
 
 var _serverUpdateInterval = null;
 var _serverUpdateDismissed = '';
+var _serverUpdateLatest = '';
 
 async function checkServerUpdate() {
   try {
@@ -2018,8 +2144,10 @@ async function checkServerUpdate() {
       document.getElementById('serverUpdateBanner').style.display = 'none';
       return;
     }
-    const txt = 'Running v' + d.current + ' — Docker Hub has v' + d.latest +
-      (d.lastUpdatedAt ? ' (pushed ' + new Date(d.lastUpdatedAt).toLocaleString() + ')' : '');
+    const txt = (d.lastUpdatedAt
+      ? __t('Running v{current}, Docker Hub has v{latest} (pushed {date})', { current: d.current, latest: d.latest, date: new Date(d.lastUpdatedAt).toLocaleString() })
+      : __t('Running v{current}, Docker Hub has v{latest}', { current: d.current, latest: d.latest }));
+    _serverUpdateLatest = d.latest;
     document.getElementById('serverUpdateText').textContent = txt;
     document.getElementById('serverUpdateBanner').style.display = 'block';
   } catch (e) {
@@ -2030,9 +2158,8 @@ async function checkServerUpdate() {
 
 function dismissServerUpdate() {
   // Hide until a NEWER version than the one shown appears.
-  const txt = document.getElementById('serverUpdateText').textContent || '';
-  const m = txt.match(/Hub has v(\\S+)/);
-  if (m) _serverUpdateDismissed = m[1];
+  // The banner text is translated, so remember the version itself.
+  if (_serverUpdateLatest) _serverUpdateDismissed = _serverUpdateLatest;
   document.getElementById('serverUpdateBanner').style.display = 'none';
 }
 
@@ -2169,7 +2296,7 @@ async function loadAccount() {
     document.getElementById('account').innerHTML =
       '<div class="row"><span class="label">Email</span><span class="value">' + (u.email || '-') + '</span></div>' +
       '<div class="row"><span class="label">Role</span><span class="value"><span class="badge badge-admin">' + (u.is_admin ? 'admin' : 'user') + '</span></span></div>' +
-      '<div class="row"><span class="label">Devices</span><span class="value">' + d.counts.equipment + ' registered · ' + d.counts.devices + ' seen</span></div>' +
+      '<div class="row"><span class="label">Devices</span><span class="value">' + __t('{registered} registered · {seen} seen', { registered: d.counts.equipment, seen: d.counts.devices }) + '</span></div>' +
       '<div class="row"><span class="label">Maps</span><span class="value">' + d.counts.maps + '</span></div>';
   } catch { document.getElementById('account').textContent = 'Failed to load'; }
 }
@@ -2218,9 +2345,9 @@ function devRow(dev) {
     if (h.loraPair.issues.indexOf('addr-mismatch') >= 0) fields.push('addr');
     if (h.loraPair.issues.indexOf('channel-mismatch') >= 0) fields.push('channel');
     if (fields.length > 0) {
-      var pairTitle = 'LoRa pair mismatch (' + fields.join(' + ') + ')'
-        + ' — charger ' + h.loraPair.charger.addr + '/ch' + h.loraPair.charger.channel
-        + ' vs mower ' + h.loraPair.mower.addr + '/ch' + h.loraPair.mower.channel;
+      var pairTitle = __t('LoRa pair mismatch ({fields}): charger {caddr}/ch{cch} vs mower {maddr}/ch{mch}', {
+        fields: fields.join(" + "), caddr: h.loraPair.charger.addr, cch: h.loraPair.charger.channel,
+        maddr: h.loraPair.mower.addr, mch: h.loraPair.mower.channel });
       healthBadges += '<span title="' + pairTitle + '" style="font-size:9px;background:rgba(239,68,68,.18);color:#fca5a5;padding:1px 6px;border-radius:3px;font-weight:600;margin-left:4px;cursor:help">⚠ LoRa ' + fields.join('+') + '</span>';
     }
   }
@@ -2258,7 +2385,7 @@ function devRow(dev) {
   // apparaat, want juist bij een offline apparaat wil je hem hebben.
   actions += '<button class="btn btn-sm" style="min-width:64px;' + btnBase
     + 'background:rgba(99,102,241,.15);color:#a5b4fc;border:1px solid rgba(99,102,241,.35)" '
-    + 'title="Waarom komt hij niet online?" onclick="diagnoseDevice(\\'' + dev.sn + '\\')">Diagnose</button>';
+    + 'title="Why is it not coming online?" onclick="diagnoseDevice(\\'' + dev.sn + '\\')">Diagnose</button>';
 
   var loraCell = '';
   if (dev.lora_address) {
@@ -2303,7 +2430,7 @@ function devRow(dev) {
 async function queryLora(sn, deviceType) {
   try {
     var path = deviceType === 'charger' ? '/lora/query-charger/' + sn : '/lora/query-mower/' + sn;
-    showToast('Querying LoRa config from ' + sn + '...', 'blue');
+    showToast(__t('Querying LoRa config from {sn}...', { sn: sn }), 'blue');
     var r = await fetch('/api/dashboard' + path, { method: 'POST', headers: { 'Authorization': token } });
     if (!r.ok) {
       var err = await r.json().catch(function() { return { error: 'Query failed' }; });
@@ -2420,7 +2547,7 @@ async function diagnoseDevice(sn) {
     });
     body.innerHTML = html;
   } catch (e) {
-    overlay.querySelector('#diagBody').textContent = 'Diagnosis failed: ' + (e && e.message ? e.message : e);
+    overlay.querySelector('#diagBody').textContent = __t('Diagnosis failed: {msg}', { msg: (e && e.message ? e.message : e) });
   }
 }
 
@@ -2454,7 +2581,7 @@ async function loadMyDevices() {
     if (banned.length > 0) {
       html += '<div style="margin-bottom:12px;padding:12px;background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.3);border-radius:10px">';
       html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">';
-      html += '<span style="font-size:12px;font-weight:600;color:#ef4444">\u26D4 Banned (MQTT reconnect geblokkeerd)</span>';
+      html += '<span style="font-size:12px;font-weight:600;color:#ef4444">\u26D4 Banned (MQTT reconnect blocked)</span>';
       html += '<span style="font-size:11px;color:#888">Use this window to re-provision via the Novabot app</span>';
       html += '</div>';
       for (var bi = 0; bi < banned.length; bi++) {
@@ -2464,7 +2591,7 @@ async function loadMyDevices() {
         html += '<span style="font-size:18px">\uD83D\uDEAB</span>';
         html += '<div style="flex:1">';
         html += '<div style="color:#fecaca;font-weight:600;font-size:14px">' + b.sn + '</div>';
-        html += '<div style="color:#888;font-size:11px">ban expires in ' + minsLeft + ' min (' + new Date(b.expiresAt).toLocaleTimeString() + ')</div>';
+        html += '<div style="color:#888;font-size:11px">' + __t('ban expires in {min} min ({time})', { min: minsLeft, time: new Date(b.expiresAt).toLocaleTimeString() }) + '</div>';
         html += '</div>';
         html += '<button onclick="unbanishDevice(\\'' + b.sn + '\\')" style="background:rgba(34,197,94,.15);border:1px solid rgba(34,197,94,.4);color:#22c55e;font-size:11px;padding:4px 10px;border-radius:6px;cursor:pointer;font-weight:600">Unban now</button>';
         html += '</div>';
@@ -2485,7 +2612,7 @@ async function loadMyDevices() {
       for (var i = 0; i < pending.length; i++) {
         var p = pending[i];
         var ageText = p.ageSeconds != null
-          ? (p.ageSeconds < 60 ? p.ageSeconds + 's ago' : Math.floor(p.ageSeconds / 60) + 'm ago')
+          ? (p.ageSeconds < 60 ? __t('{n}s ago', { n: p.ageSeconds }) : __t('{n}m ago', { n: Math.floor(p.ageSeconds / 60) }))
           : '';
         var icon = p.type === 'charger' ? '\u26A1' : '\uD83D\uDD27';
         var typeLabel = p.type === 'charger' ? 'Charger' : 'Mower';
@@ -2493,7 +2620,7 @@ async function loadMyDevices() {
         html += '<span style="font-size:18px">' + icon + '</span>';
         html += '<div style="flex:1">';
         html += '<div style="color:#e2d1ff;font-weight:600;font-size:14px">' + typeLabel + '</div>';
-        html += '<div style="color:#888;font-size:11px">LoRa ' + p.address + '/ch' + p.channel + ' · reserved ' + ageText + '</div>';
+        html += '<div style="color:#888;font-size:11px">' + __t('LoRa {addr}/ch{ch} · reserved {age}', { addr: p.address, ch: p.channel, age: ageText }) + '</div>';
         html += '</div>';
         html += '<button onclick="cancelPending(\\'' + p.pendingSn + '\\')" style="background:transparent;border:1px solid rgba(239,68,68,.4);color:#ef4444;font-size:11px;padding:4px 10px;border-radius:6px;cursor:pointer">Cancel</button>';
         html += '</div>';
@@ -2538,8 +2665,8 @@ async function loadMyDevices() {
       var loraSummary = '';
       if (chargerLora || mowerLora) {
         var parts = [];
-        if (chargerLora) parts.push('Charger ' + chargerLora);
-        if (mowerLora) parts.push('Mower ' + mowerLora);
+        if (chargerLora) parts.push(__t('Charger {lora}', { lora: chargerLora }));
+        if (mowerLora) parts.push(__t('Mower {lora}', { lora: mowerLora }));
         loraSummary = '\uD83D\uDCE1 ' + parts.join(' · ');
       } else {
         loraSummary = 'LoRa pending...';
@@ -2629,7 +2756,7 @@ async function bindDevice(sn) {
 }
 
 async function cancelPending(pendingSn) {
-  var ok = await modalConfirm('Cancel Provisioning', 'Release the reserved LoRa address for <b>' + pendingSn + '</b>?<br><br>The device will not auto-pair when it comes online.');
+  var ok = await modalConfirm('Cancel Provisioning', __t('Release the reserved LoRa address for <b>{sn}</b>?<br><br>The device will not auto-pair when it comes online.', { sn: pendingSn }));
   if (!ok) return;
   try {
     await fetch('/api/dashboard/lora/pending/' + encodeURIComponent(pendingSn), {
@@ -2664,7 +2791,7 @@ if (!window.__devMenuOutsideClick) {
 async function setActiveDevice(sn) {
   try {
     await api('/set-active-device', 'POST', { sn });
-    showToast(sn + ' set as active device', 'green');
+    showToast(__t('{sn} set as active device', { sn: sn }), 'green');
     loadMyDevices();
   } catch(e) { modalAlert('Failed', e.message); }
 }
@@ -2688,8 +2815,8 @@ async function openLoraEditor(sn, currentAddr, currentChannel) {
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:10000;padding:20px';
   overlay.innerHTML =
     '<div style="background:#1a1a2e;border:1px solid rgba(255,255,255,.1);border-radius:12px;padding:20px;max-width:420px;width:100%;font-size:13px;color:#e2e2e2">' +
-      '<div style="font-size:16px;font-weight:700;margin-bottom:4px">Edit LoRa — ' + sn + '</div>' +
-      '<div style="color:#888;font-size:12px;margin-bottom:16px">Current: <b>' + currentAddr + '</b> / ch<b>' + (currentChannel || '?') + '</b></div>' +
+      '<div style="font-size:16px;font-weight:700;margin-bottom:4px">' + __t('Edit LoRa: {sn}', { sn: sn }) + '</div>' +
+      '<div style="color:#888;font-size:12px;margin-bottom:16px">' + __t('Current: <b>{addr}</b> / ch<b>{ch}</b>', { addr: currentAddr, ch: (currentChannel || '?') }) + '</div>' +
       '<div style="margin-bottom:12px">' +
         '<label style="display:block;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">New address</label>' +
         '<input id="lora-edit-addr" type="number" value="' + currentAddr + '" style="width:100%;padding:8px 12px;border-radius:8px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);color:#fff;font-size:14px">' +
@@ -2755,10 +2882,10 @@ async function openLoraEditor(sn, currentAddr, currentChannel) {
           setStatus('Set OK. Querying back for verification...', '#a78bfa');
           window._loraEditPending.phase = 'verify';
           postCmd(getPayload).catch(function(e) {
-            setStatus('Readback send failed: ' + e.message, '#ef4444');
+            setStatus(__t('Readback send failed: {msg}', { msg: e.message }), '#ef4444');
           });
         } else {
-          setStatus('set_lora_info rejected (result=' + (body && body.result) + ')', '#ef4444');
+          setStatus(__t('set_lora_info rejected (result={result})', { result: (body && body.result) }), '#ef4444');
           window._loraEditPending = null;
         }
       },
@@ -2767,13 +2894,13 @@ async function openLoraEditor(sn, currentAddr, currentChannel) {
         // Mower   body: {result:0, addr, channel, hc, lc}
         var actual = body && (body.value || body);
         if (!body || body.result !== 0 || !actual || actual.addr == null) {
-          setStatus('get_lora_info failed (result=' + (body && body.result) + ')', '#ef4444');
+          setStatus(__t('get_lora_info failed (result={result})', { result: (body && body.result) }), '#ef4444');
         } else if (Number(actual.addr) === newAddr && Number(actual.channel) === newCh) {
-          setStatus('✅ Verified on device: addr=' + actual.addr + ' ch=' + actual.channel, '#22c55e');
+          setStatus('✅ ' + __t('Verified on device: addr={addr} ch={ch}', { addr: actual.addr, ch: actual.channel }), '#22c55e');
           setTimeout(function() { cleanup(); loadMyDevices(); }, 1500);
           return;
         } else {
-          setStatus('⚠ Mismatch — device reports addr=' + actual.addr + ' ch=' + actual.channel, '#f59e0b');
+          setStatus('⚠ ' + __t('Mismatch: device reports addr={addr} ch={ch}', { addr: actual.addr, ch: actual.channel }), '#f59e0b');
           setTimeout(function() { cleanup(); loadMyDevices(); }, 2500);
           return;
         }
@@ -2781,12 +2908,12 @@ async function openLoraEditor(sn, currentAddr, currentChannel) {
       },
     };
 
-    setStatus('Sending set_lora_info addr=' + newAddr + ' ch=' + newCh + '...', '#a78bfa');
+    setStatus(__t('Sending set_lora_info addr={addr} ch={ch}...', { addr: newAddr, ch: newCh }), '#a78bfa');
     try {
       var res = await postCmd(setPayload);
       if (!res.ok) throw new Error('HTTP ' + res.status);
     } catch (e) {
-      setStatus('Send failed: ' + e.message, '#ef4444');
+      setStatus(__t('Send failed: {msg}', { msg: e.message }), '#ef4444');
       window._loraEditPending = null;
     }
 
@@ -2817,7 +2944,7 @@ function mdHandleCommandRespond(ev) {
 async function deactivateDevice(sn) {
   try {
     await api('/deactivate-device', 'POST', { sn });
-    showToast(sn + ' deactivated', 'amber');
+    showToast(__t('{sn} deactivated', { sn: sn }), 'amber');
     loadMyDevices();
   } catch(e) { modalAlert('Failed', e.message); }
 }
@@ -2825,15 +2952,15 @@ async function deactivateDevice(sn) {
 async function banishDevice(sn) {
   var ok = await modalConfirm(
     'Delete + Banish device',
-    'Delete <b>' + sn + '</b> from the dashboard <u>and</u> block MQTT reconnects + auto-bind for 2 hours?<br><br>' +
+    __t('Delete <b>{sn}</b> from the dashboard <u>and</u> block MQTT reconnects + auto-bind for 2 hours?<br><br>' +
     'Use this if you want to re-provision the device via the official Novabot app. ' +
     'Maps and schedules stay in the DB. The device will be rejected by the broker until the ban expires ' +
-    '(or you unbanish via the banned bar at the top).'
+    '(or you unbanish via the banned bar at the top).', { sn: sn })
   );
   if (!ok) return;
   try {
     await api('/banish-device', 'POST', { sn, minutes: 120 });
-    showToast(sn + ' deleted + banned for 2h', 'amber');
+    showToast(__t('{sn} deleted + banned for 2h', { sn: sn }), 'amber');
     loadMyDevices();
   } catch(e) { modalAlert('Banish Failed', e.message || String(e)); }
 }
@@ -2841,13 +2968,13 @@ async function banishDevice(sn) {
 async function unbanishDevice(sn) {
   try {
     await api('/unbanish-device', 'POST', { sn });
-    showToast(sn + ' unbanned', 'green');
+    showToast(__t('{sn} unbanned', { sn: sn }), 'green');
     loadMyDevices();
   } catch(e) { modalAlert('Unban Failed', e.message || String(e)); }
 }
 
 async function unbindDevice(sn) {
-  var ok = await modalConfirm('Unbind Device', 'Unbind <b>' + sn + '</b> from your account?');
+  var ok = await modalConfirm('Unbind Device', __t('Unbind <b>{sn}</b> from your account?', { sn: sn }));
   if (!ok) return;
   try {
     await api('/unbind-device', 'POST', { sn });
@@ -2856,7 +2983,7 @@ async function unbindDevice(sn) {
 }
 
 async function removeDevice(sn) {
-  var ok = await modalConfirm('Remove Device', 'Remove <b>' + sn + '</b>? This deletes it from the database.');
+  var ok = await modalConfirm('Remove Device', __t('Remove <b>{sn}</b>? This deletes it from the database.', { sn: sn }));
   if (!ok) return;
   try {
     await api('/remove-device', 'POST', { sn });
@@ -2867,7 +2994,7 @@ async function removeDevice(sn) {
 async function pairMowerCharger(mowerSn, chargerSn) {
   try {
     await api('/pair-devices', 'POST', { mowerSn, chargerSn });
-    await modalAlert('Paired!', 'Mower <b>' + mowerSn + '</b> paired with charger <b>' + chargerSn + '</b>.');
+    await modalAlert('Paired!', __t('Mower <b>{mower}</b> paired with charger <b>{charger}</b>.', { mower: mowerSn, charger: chargerSn }));
     loadMyDevices();
   } catch(e) { modalAlert('Pair Failed', e.message); }
 }
@@ -2942,18 +3069,18 @@ async function restartMdns() {
     if (!r.ok || !data.ok) {
       status.style.background = 'rgba(239,68,68,.15)';
       status.style.color = '#fca5a5';
-      status.textContent = 'Failed: ' + (data.error || ('HTTP ' + r.status));
+      status.textContent = __t('Failed: {msg}', { msg: (data.error || ('HTTP ' + r.status)) });
       return;
     }
     status.style.background = 'rgba(34,197,94,.15)';
     status.style.color = '#86efac';
     var ad = data.advertisement || {};
-    var hostInfo = ad.host ? ad.host : '(no advertisement)';
-    status.textContent = 'Restarted at ' + new Date(data.restartedAt).toLocaleTimeString() + ' — ' + hostInfo;
+    var hostInfo = ad.host ? ad.host : __t('(no advertisement)');
+    status.textContent = __t('Restarted at {time}: {host}', { time: new Date(data.restartedAt).toLocaleTimeString(), host: hostInfo });
   } catch (err) {
     status.style.background = 'rgba(239,68,68,.15)';
     status.style.color = '#fca5a5';
-    status.textContent = 'Network error: ' + (err && err.message ? err.message : err);
+    status.textContent = __t('Network error: {msg}', { msg: (err && err.message ? err.message : err) });
   }
 }
 
@@ -3057,7 +3184,7 @@ async function populateExperimentalMowerDropdown() {
     if (sel.value) loadExperimentalMap(true);
   } catch(e) {
     var info = document.getElementById('expMapInfo');
-    if (info) info.textContent = 'Failed to load devices: ' + e.message;
+    if (info) info.textContent = __t('Failed to load devices: {msg}', { msg: e.message });
   }
 }
 
@@ -3305,8 +3432,8 @@ function expEnsureDeck(container) {
     getTooltip: function(info) {
       var o = info && info.object;
       if (!o) return null;
-      if (o.__kind === 'charger') return 'Charger\\nx=' + o.x.toFixed(2) + ' y=' + o.y.toFixed(2);
-      if (o.__kind === 'mower') return 'Mower\\nx=' + o.x.toFixed(2) + ' y=' + o.y.toFixed(2);
+      if (o.__kind === 'charger') return __t('Charger') + '\\nx=' + o.x.toFixed(2) + ' y=' + o.y.toFixed(2);
+      if (o.__kind === 'mower') return __t('Mower') + '\\nx=' + o.x.toFixed(2) + ' y=' + o.y.toFixed(2);
       if (o.wifiRssi != null) return 'WiFi ' + o.wifiRssi + '%\\nx=' + o.mapX.toFixed(2) + ' y=' + o.mapY.toFixed(2);
       return expMapName(o);
     },
@@ -3519,10 +3646,10 @@ function experimentalInfoText() {
     else work++;
   }
   var pose = _expState.livePose;
-  var poseText = 'Mower position: not reported';
+  var poseText = __t('Mower position: not reported');
   if (pose && Number.isFinite(Number(pose.x)) && Number.isFinite(Number(pose.y))) {
     var theta = Number(pose.orientation || 0);
-    poseText = 'Mower position: x=' + Number(pose.x).toFixed(2) + ' y=' + Number(pose.y).toFixed(2) + ' θ=' + (Number.isFinite(theta) ? theta.toFixed(2) : '0.00');
+    poseText = __t('Mower position: x={x} y={y} θ={theta}', { x: Number(pose.x).toFixed(2), y: Number(pose.y).toFixed(2), theta: (Number.isFinite(theta) ? theta.toFixed(2) : '0.00') });
   }
   // The count is positioned WiFi samples within a ROLLING time window (default
   // 24h), not a cumulative total — so it plateaus at steady state, which looks
@@ -3530,19 +3657,19 @@ function experimentalInfoText() {
   // still sampling (only map-positioned samples count, i.e. while it's mowing).
   var hoursEl = document.getElementById('expHeatmapHours');
   var winH = hoursEl ? (hoursEl.value || '24') : '24';
-  var wifiTxt = _expState.heatmap.length + ' WiFi samples (last ' + winH + 'h';
+  var wifiTxt = __t('{n} WiFi samples (last {h}h)', { n: _expState.heatmap.length, h: winH });
   if (_expState.heatmap.length > 0) {
     var newestTs = _expState.heatmap[_expState.heatmap.length - 1].ts;
     var ms = Date.parse(String(newestTs).replace(' ', 'T') + 'Z');
     if (Number.isFinite(ms)) {
       var ago = Math.max(0, Math.round((Date.now() - ms) / 1000));
       var agoTxt = ago < 90 ? (ago + 's') : (ago < 5400 ? Math.round(ago / 60) + 'm' : Math.round(ago / 3600) + 'h');
-      wifiTxt += ', newest ' + agoTxt + ' ago';
+      wifiTxt = __t('{n} WiFi samples (last {h}h, newest {age} ago)', { n: _expState.heatmap.length, h: winH, age: agoTxt });
     }
   }
-  wifiTxt += ')';
-  return work + ' work, ' + obstacles + ' obstacles, ' + channels + ' channels, '
-    + wifiTxt + ', ' + _expState.mowerTrail.length + ' trail points · ' + poseText;
+  return __t('{work} work, {obstacles} obstacles, {channels} channels, {wifi}, {trail} trail points', {
+    work: work, obstacles: obstacles, channels: channels, wifi: wifiTxt, trail: _expState.mowerTrail.length
+  }) + ' · ' + poseText;
 }
 
 async function loadExperimentalMap(resetView) {
@@ -3566,7 +3693,7 @@ async function loadExperimentalMap(resetView) {
     renderExperimentalDeck();
     return;
   }
-  if (info) info.textContent = 'Loading experimental map for ' + sn + '...';
+  if (info) info.textContent = __t('Loading experimental map for {sn}...', { sn: sn });
   try {
     var data = await fetchJsonAuth('/api/dashboard/maps/' + encodeURIComponent(sn), {
       headers: { 'Authorization': token }
@@ -3580,7 +3707,7 @@ async function loadExperimentalMap(resetView) {
     renderExperimentalDeck();
   } catch(e) {
     if (isAuthExpiredError(e)) return;
-    if (info) info.textContent = 'Experimental map failed: ' + e.message;
+    if (info) info.textContent = __t('Experimental map failed: {msg}', { msg: e.message });
     if (empty) {
       empty.style.display = 'flex';
       empty.textContent = 'Failed to load experimental map.';
@@ -3603,7 +3730,7 @@ async function loadExperimentalHeatmap(shouldRender) {
   } catch(e) {
     if (!isAuthExpiredError(e)) {
       var info = document.getElementById('expMapInfo');
-      if (info) info.textContent = 'WiFi heatmap failed: ' + e.message;
+      if (info) info.textContent = __t('WiFi heatmap failed: {msg}', { msg: e.message });
     }
   }
 }
@@ -3625,7 +3752,7 @@ async function loadExperimentalLive(shouldRender) {
   } catch(e) {
     if (!isAuthExpiredError(e)) {
       var info = document.getElementById('expMapInfo');
-      if (info) info.textContent = 'Live trail failed: ' + e.message;
+      if (info) info.textContent = __t('Live trail failed: {msg}', { msg: e.message });
     }
   }
 }
@@ -3667,7 +3794,7 @@ async function populateMowerDropdown() {
       loadPortableBackups();
     }
   } catch(e) {
-    document.getElementById('mapInfo').textContent = 'Failed to load devices: ' + e.message;
+    document.getElementById('mapInfo').textContent = __t('Failed to load devices: {msg}', { msg: e.message });
   }
 }
 
@@ -3723,11 +3850,11 @@ function __renderLocStatus(sensors) {
       btn.disabled = true;
       btn.style.opacity = '0.5';
       btn.style.cursor = 'not-allowed';
-      btn.title = 'Cannot recalibrate: ' +
-        (allZero ? 'pose is (0,0,0) placeholder. ' : '') +
-        (!locOk ? 'localization_state="' + locState + '" (need Localized). ' : '') +
-        (String(battery).toUpperCase() !== 'CHARGING' ? 'battery_state="' + battery + '" (need CHARGING). ' : '') +
-        'Drive mower briefly off dock so localization initializes, then return to dock.';
+      btn.title = __t('Cannot recalibrate:') + ' ' +
+        (allZero ? __t('pose is (0,0,0) placeholder.') + ' ' : '') +
+        (!locOk ? __t('localization_state="{state}" (need Localized).', { state: locState }) + ' ' : '') +
+        (String(battery).toUpperCase() !== 'CHARGING' ? __t('battery_state="{state}" (need CHARGING).', { state: battery }) + ' ' : '') +
+        __t('Drive mower briefly off dock so localization initializes, then return to dock.');
     }
   }
   return true;
@@ -3756,7 +3883,7 @@ function startLocalizationPoll(sn) {
     if (btn0) { btn0.disabled = true; btn0.style.opacity = '0.5'; btn0.style.cursor = 'not-allowed'; }
     return;
   }
-  if (el) el.innerHTML = '<span style="color:#888">Loading localization status for ' + sn + '...</span>';
+  if (el) el.innerHTML = '<span style="color:#888">' + __t('Loading localization status for {sn}...', { sn: sn }) + '</span>';
   __pollLocOnce(sn);
   __mapLocPollTimer = setInterval(function() { __pollLocOnce(sn); }, 2000);
   startPositionTrailPoll(sn);
@@ -3832,27 +3959,27 @@ function renderValidationPanel(data) {
     var sourceColor = d.thetaSource === 'data-fit' ? '#86efac' : d.thetaSource === 'saved' ? '#fbbf24' : '#fca5a5';
     var latest = d.latestSample
       ? '(' + d.latestSample.lat.toFixed(7) + ', ' + d.latestSample.lng.toFixed(7) + ') → map(' + d.latestSample.mx.toFixed(2) + ',' + d.latestSample.my.toFixed(2) + ')'
-      : '<span style="color:#888">none yet</span>';
+      : '<span style="color:#888">' + __t('none yet') + '</span>';
     return '<details style="margin-top:8px;font-size:10px;color:#94a3b8">'
       + '<summary style="cursor:pointer;color:#cbd5e1">Debug info</summary>'
       + '<div style="margin-top:6px;padding:6px 8px;background:#0a0a14;border-radius:4px;line-height:1.6">'
-      + '<div>Charger GPS: ' + anchor + '</div>'
-      + '<div>Charger in map frame: ' + chargerMap + '</div>'
-      + '<div>Saved θ (dock heading): ' + savedTheta + '</div>'
+      + '<div><span>Charger GPS:</span> ' + anchor + '</div>'
+      + '<div><span>Charger in map frame:</span> ' + chargerMap + '</div>'
+      + '<div><span>Saved θ (dock heading):</span> ' + savedTheta + '</div>'
       + '<div>Derived θ (from data): <b style="color:' + sourceColor + '">' + derived + '</b></div>'
       + '<div>Active rotation source: <b style="color:' + sourceColor + '">' + (d.thetaSource || '?') + '</b></div>'
-      + '<div>Total RTK samples: ' + d.totalSamples + '</div>'
-      + '<div>Latest sample: ' + latest + '</div>'
+      + '<div><span>Total RTK samples:</span> ' + d.totalSamples + '</div>'
+      + '<div><span>Latest sample:</span> ' + latest + '</div>'
       + '</div></details>';
   }
   if (!data.haveAnchor) {
-    el.innerHTML = '<span style="color:#fca5a5">No charger anchor in DB — sync_map first to populate <code>map_calibration.charger_lat/lng</code>.</span>'
+    el.innerHTML = '<span data-i18n-html style="color:#fca5a5">No charger anchor in DB — sync_map first to populate <code>map_calibration.charger_lat/lng</code>.</span>'
       + debugHtml(data.debug);
     return;
   }
   if (!data.suggestion) {
     var n = (data.gpsLocal || []).length;
-    el.innerHTML = '<span style="color:#888">Waiting for RTK FIX samples while mowing... (' + n + '/5)</span>'
+    el.innerHTML = '<span style="color:#888">' + __t('Waiting for RTK FIX samples while mowing... ({n}/5)', { n: n }) + '</span>'
       + debugHtml(data.debug);
     return;
   }
@@ -3866,7 +3993,7 @@ function renderValidationPanel(data) {
   var totalOffsetCm = Math.sqrt(s.dx * s.dx + s.dy * s.dy) * 100;
   var suspectAnchor = stdMax > 0.15 || totalOffsetCm > 50;
   var warning = suspectAnchor
-    ? '<div style="margin-top:6px;padding:6px 8px;background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:4px;color:#fca5a5;font-size:10px;line-height:1.5">'
+    ? '<div data-i18n-html style="margin-top:6px;padding:6px 8px;background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:4px;color:#fca5a5;font-size:10px;line-height:1.5">'
       + '<b>Suspect: anchor or orientation wrong.</b> Real RTK noise is &lt;5 cm and polygon drift &lt;50 cm. '
       + 'Verify <code>charger_lat/lng</code> matches the physical charger GPS and <code>polygon_charging_orientation</code> matches the heading at mapping time before applying.'
       + '</div>'
@@ -3874,7 +4001,7 @@ function renderValidationPanel(data) {
   el.innerHTML =
     '<div style="font-size:11px;color:#cbd5e1;line-height:1.6">'
     + '<div style="margin-top:6px"><b>Δ offset:</b> dx=<b>' + dxCm + ' cm</b>, dy=<b>' + dyCm + ' cm</b> (|d|=' + totalOffsetCm.toFixed(1) + ' cm)</div>'
-    + '<div style="color:' + stdColor + '">noise σ: x=' + (s.stdevX * 100).toFixed(1) + ' cm, y=' + (s.stdevY * 100).toFixed(1) + ' cm  (n=' + s.samples + ')</div>'
+    + '<div style="color:' + stdColor + '">' + __t('noise') + ' σ: x=' + (s.stdevX * 100).toFixed(1) + ' cm, y=' + (s.stdevY * 100).toFixed(1) + ' cm  (n=' + s.samples + ')</div>'
     + '</div>'
     + warning
     + '<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">'
@@ -3912,14 +4039,14 @@ async function recalibrateChargingPose() {
     return;
   }
 
-  var confirmMsg = 'Overwrite charging pose on ' + sn + ' with current mower pose?\\n\\n' +
+  var confirmMsg = __t('Overwrite charging pose on {sn} with current mower pose?\\n\\n' +
     'Physical mower MUST be on its dock with battery_state=CHARGING\\n' +
     'AND localization_state must be Localized (drive-back done).\\n\\n' +
-    'This writes map_info.json in both csv_file/ and x3_csv_file/ and charging_station.yaml.';
+    'This writes map_info.json in both csv_file/ and x3_csv_file/ and charging_station.yaml.', { sn: sn });
   if (!(await appConfirm(confirmMsg, { okText: 'Recalibrate' }))) return;
 
   status.style.color = '#60a5fa';
-  status.textContent = 'Sending recalibrate command to ' + sn + '...';
+  status.textContent = __t('Sending recalibrate command to {sn}...', { sn: sn });
 
   try {
     var r = await fetch('/api/dashboard/maps/' + encodeURIComponent(sn) + '/recalibrate-charging-pose', {
@@ -3931,8 +4058,7 @@ async function recalibrateChargingPose() {
 
     if (r.status === 400 && (result.batteryState || '').toUpperCase() !== 'CHARGING') {
       // Safety gate fired — ask once more with force
-      var forceConfirm = 'Mower battery_state is "' + (result.batteryState || 'unknown') + '" (expected CHARGING).\\n\\n' +
-        'Override the safety check and recalibrate anyway?';
+      var forceConfirm = __t('Mower battery_state is "{state}" (expected CHARGING).\\n\\nOverride the safety check and recalibrate anyway?', { state: (result.batteryState || 'unknown') });
       if (!(await appConfirm(forceConfirm, { destructive: true, okText: 'Override' }))) {
         status.style.color = '#f87171';
         status.textContent = 'Cancelled. Place mower on dock first.';
@@ -3951,10 +4077,10 @@ async function recalibrateChargingPose() {
     }
     var p = result.pose || {};
     status.style.color = '#00d4aa';
-    status.textContent = 'Recalibrated — x=' + p.x + ' y=' + p.y + ' theta=' + p.theta;
+    status.textContent = __t('Recalibrated: x={x} y={y} theta={theta}', { x: p.x, y: p.y, theta: p.theta });
   } catch(e) {
     status.style.color = '#f87171';
-    status.textContent = 'Recalibrate failed: ' + e.message;
+    status.textContent = __t('Recalibrate failed: {msg}', { msg: e.message });
   }
 }
 
@@ -3965,7 +4091,7 @@ async function exportPortableBundle() {
   if (!sn) { await appAlert('Select a mower first', { accent: 'warning' }); return; }
   var url = '/api/admin-status/maps/' + encodeURIComponent(sn) + '/export-portable';
   var r = await fetch(url, { headers: { 'Authorization': token } });
-  if (!r.ok) { await appAlert('Export failed: HTTP ' + r.status, { accent: 'danger' }); return; }
+  if (!r.ok) { await appAlert(__t('Export failed: HTTP {status}', { status: r.status }), { accent: 'danger' }); return; }
   var blob = await r.blob();
   var a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
@@ -3998,8 +4124,8 @@ function portableStartRtkPoll(sn) {
         var battCol = batt.indexOf('CHARGING') >= 0 || batt.indexOf('FINISHED') >= 0 ? '#86efac' : '#fbbf24';
         badge.innerHTML =
           '<span style="color:' + col + '"><b>' + lockTxt + '</b></span>' +
-          ' · sat ' + (isNaN(rtkSat) ? '?' : rtkSat) +
-          ' · battery <span style="color:' + battCol + '">' + (batt || '?') + '</span>';
+          ' · ' + __t('sat') + ' ' + (isNaN(rtkSat) ? '?' : rtkSat) +
+          ' · ' + __t('battery') + ' <span style="color:' + battCol + '">' + (batt || '?') + '</span>';
         var snapBtn = document.getElementById('portableSnapshotBtn');
         if (snapBtn) {
           var charging = batt.indexOf('CHARGING') >= 0;
@@ -4017,7 +4143,7 @@ function portableStartRtkPoll(sn) {
             var missing = [];
             if (!charging) missing.push('battery=CHARGING');
             if (!rtkFix) missing.push('RTK FIX');
-            snapBtn.textContent = '2. Snapshot anchor (waiting: ' + missing.join(' + ') + ')';
+            snapBtn.textContent = __t('2. Snapshot anchor (waiting: {missing})', { missing: missing.join(" + ") });
             snapBtn.style.background = 'rgba(99,102,241,.1)';
             snapBtn.style.color = '#6b7280';
             snapBtn.style.borderColor = 'rgba(99,102,241,.25)';
@@ -4047,7 +4173,7 @@ function portableSyncCapability(j) {
 }
 
 function portableServerCopyWarningText() {
-  return 'Stock/unknown firmware detected. Importing this bundle restores only the server/app copy; it does not write map files to the mower. Mowing will only work if these maps already exist on the mower.';
+  return __t('Stock/unknown firmware detected. Importing this bundle restores only the server/app copy; it does not write map files to the mower. Mowing will only work if these maps already exist on the mower.');
 }
 
 async function manualPortableBackup(btn) {
@@ -4062,9 +4188,9 @@ async function manualPortableBackup(btn) {
       method: 'POST', headers: { 'Authorization': token, 'Content-Type': 'application/json' },
     });
     var j = await r.json();
-    if (!j.ok) { await appAlert('Snapshot failed: ' + j.error, { accent: 'danger' }); return; }
+    if (!j.ok) { await appAlert(__t('Snapshot failed: {msg}', { msg: j.error }), { accent: 'danger' }); return; }
     var kb = ((j.backup.bytes || j.backup.sizeBytes || 0) / 1024).toFixed(1);
-    await appAlert('Snapshot saved: ' + j.backup.filename + ' (' + kb + ' KB)', { accent: 'success' });
+    await appAlert(__t('Snapshot saved: {file} ({kb} KB)', { file: j.backup.filename, kb: kb }), { accent: 'success' });
     loadPortableBackups();
   } finally {
     if (btn) { btn.disabled = false; btn.style.opacity = ''; btn.style.cursor = 'pointer'; btn.textContent = origText; }
@@ -4078,8 +4204,8 @@ async function rebuildBundleFromDb() {
     method: 'POST', headers: { 'Authorization': token, 'Content-Type': 'application/json' },
   });
   var j = await r.json();
-  if (!j.ok) { await appAlert('Rebuild failed: ' + j.error, { accent: 'danger' }); return; }
-  await appAlert('Bundle rebuilt from DB: ' + j.backup.filename + ' (' + (j.backup.bytes / 1024).toFixed(1) + ' KB)', { accent: 'success' });
+  if (!j.ok) { await appAlert(__t('Rebuild failed: {msg}', { msg: j.error }), { accent: 'danger' }); return; }
+  await appAlert(__t('Bundle rebuilt from DB: {file} ({kb} KB)', { file: j.backup.filename, kb: (j.backup.bytes / 1024).toFixed(1) }), { accent: 'success' });
   loadPortableBackups();
 }
 
@@ -4096,8 +4222,8 @@ async function importCsvZip() {
       method: 'POST', headers: { 'Authorization': token }, body: fd,
     });
     var j = await r.json();
-    if (!j.ok) { await appAlert('CSV import failed: ' + j.error, { accent: 'danger' }); return; }
-    await appAlert('Bundle generated from CSV zip: ' + j.backup.filename + ' (' + (j.backup.bytes / 1024).toFixed(1) + ' KB)', { accent: 'success' });
+    if (!j.ok) { await appAlert(__t('CSV import failed: {msg}', { msg: j.error }), { accent: 'danger' }); return; }
+    await appAlert(__t('Bundle generated from CSV zip: {file} ({kb} KB)', { file: j.backup.filename, kb: (j.backup.bytes / 1024).toFixed(1) }), { accent: 'success' });
     loadPortableBackups();
   } finally {
     input.value = '';
@@ -4124,7 +4250,7 @@ async function loadPortableBackups() {
     var html = '<div style="display:flex;flex-direction:column;gap:4px">';
     for (var i = 0; i < backups.length; i++) {
       var b = backups[i];
-      var dt = new Date(b.createdAt).toLocaleString('nl-NL');
+      var dt = new Date(b.createdAt).toLocaleString(__locale());
       var kb = (b.bytes / 1024).toFixed(1);
       html += '<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 10px;background:rgba(255,255,255,.03);border-radius:4px;font-family:&quot;Roboto Mono&quot;,ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:11px">';
       html += '<span><span style="color:#cbd5e1">' + dt + '</span> · <span style="color:#67e8f9">' + b.reason + '</span> · <span style="color:#888">' + kb + ' KB</span></span>';
@@ -4164,7 +4290,7 @@ async function downloadPortableBackup(filename) {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
   } catch(e) {
-    await appAlert('Download failed: ' + e.message, { accent: 'danger' });
+    await appAlert(__t('Download failed: {msg}', { msg: e.message }), { accent: 'danger' });
   }
 }
 
@@ -4175,7 +4301,7 @@ async function restorePortableBackup(filename) {
     method: 'POST', headers: { 'Authorization': token },
   });
   var j = await r.json();
-  if (!j.ok) { await appAlert('Restore failed: ' + j.error, { accent: 'danger' }); return; }
+  if (!j.ok) { await appAlert(__t('Restore failed: {msg}', { msg: j.error }), { accent: 'danger' }); return; }
   portableStagingId = j.stagingId;
   portableExactRestore = !!j.exactRestore;
   portableVerbatimRestore = !!j.verbatimRestore;
@@ -4198,7 +4324,7 @@ async function restorePortableBackup(filename) {
 
 async function deletePortableBackup(filename) {
   var sn = document.getElementById('mapMowerSelect').value;
-  if (!(await appConfirm('Delete snapshot ' + filename + '?', { destructive: true, okText: 'Delete' }))) return;
+  if (!(await appConfirm(__t('Delete snapshot {file}?', { file: filename }), { destructive: true, okText: 'Delete' }))) return;
   await fetch('/api/admin-status/maps/' + encodeURIComponent(sn) + '/portable-backups/' + encodeURIComponent(filename), {
     method: 'DELETE', headers: { 'Authorization': token },
   });
@@ -4245,7 +4371,7 @@ async function startPortableImport() {
     method: 'POST', headers: { 'Authorization': token }, body: fd,
   });
   var j = await r.json();
-  if (!j.ok) { await appAlert('Import failed: ' + j.error, { accent: 'danger' }); return; }
+  if (!j.ok) { await appAlert(__t('Import failed: {msg}', { msg: j.error }), { accent: 'danger' }); return; }
   portableStagingId = j.stagingId;
   portableExactRestore = !!j.exactRestore;
   portableVerbatimRestore = !!j.verbatimRestore;
@@ -4279,7 +4405,7 @@ function fmtWalkerDate(iso) {
   try {
     var d = new Date(iso);
     if (isNaN(d.getTime())) return iso;
-    return d.toLocaleString();
+    return d.toLocaleString(__locale());
   } catch (e) { return iso; }
 }
 
@@ -4303,7 +4429,7 @@ async function loadWalkerBundles() {
       host.appendChild(renderWalkerBundleRow(bundles[i]));
     }
   } catch (e) {
-    host.textContent = 'Failed to load: ' + e.message;
+    host.textContent = __t('Failed to load: {msg}', { msg: e.message });
   }
 }
 
@@ -4337,12 +4463,12 @@ function renderWalkerBundleRow(b) {
   meta.style.color = '#94a3b8';
   meta.style.marginTop = '4px';
   var parts = [
-    'Uploaded ' + fmtWalkerDate(b.uploadedAt),
-    'Walker ' + (b.walkerId || 'unknown'),
+    __t('Uploaded {date}', { date: fmtWalkerDate(b.uploadedAt) }),
+    __t('Walker {id}', { id: (b.walkerId || __t('unknown')) }),
     fmtBytes(b.sizeBytes),
-    (b.polygons || 0) + ' polygon(s)',
-    (b.obstacles || 0) + ' obstacle(s)',
-    (b.unicom || 0) + ' channel(s)',
+    __t('{n} polygon(s)', { n: (b.polygons || 0) }),
+    __t('{n} obstacle(s)', { n: (b.obstacles || 0) }),
+    __t('{n} channel(s)', { n: (b.unicom || 0) }),
   ];
   meta.textContent = parts.join(' · ');
   left.appendChild(meta);
@@ -4352,7 +4478,7 @@ function renderWalkerBundleRow(b) {
     assigned.style.fontSize = '11px';
     assigned.style.color = '#86efac';
     assigned.style.marginTop = '4px';
-    assigned.textContent = 'Last assigned to ' + b.lastAssignedSn + ' at ' + fmtWalkerDate(b.lastAssignedAt);
+    assigned.textContent = __t('Last assigned to {sn} at {date}', { sn: b.lastAssignedSn, date: fmtWalkerDate(b.lastAssignedAt) });
     left.appendChild(assigned);
   }
 
@@ -4424,12 +4550,12 @@ async function downloadWalkerBundle(b) {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
   } catch (e) {
-    await appAlert('Download failed: ' + e.message, { accent: 'danger' });
+    await appAlert(__t('Download failed: {msg}', { msg: e.message }), { accent: 'danger' });
   }
 }
 
 async function deleteWalkerBundle(b) {
-  if (!(await appConfirm('Delete walker bundle ' + b.filename + '?', { okText: 'Delete', accent: 'danger' }))) return;
+  if (!(await appConfirm(__t('Delete walker bundle {file}?', { file: b.filename }), { okText: 'Delete', accent: 'danger' }))) return;
   try {
     var r = await fetch('/api/admin-status/walker-bundles/' + b.id, {
       method: 'DELETE',
@@ -4439,7 +4565,7 @@ async function deleteWalkerBundle(b) {
     if (!j.ok) throw new Error(j.error || 'delete failed');
     loadWalkerBundles();
   } catch (e) {
-    await appAlert('Delete failed: ' + e.message, { accent: 'danger' });
+    await appAlert(__t('Delete failed: {msg}', { msg: e.message }), { accent: 'danger' });
   }
 }
 
@@ -4451,7 +4577,7 @@ async function assignWalkerBundle(b) {
     var jd = await r.json();
     devices = (jd.devices || []).filter(function(d) { return d.device_type === 'mower'; });
   } catch (e) {
-    await appAlert('Failed to load mowers: ' + e.message, { accent: 'danger' });
+    await appAlert(__t('Failed to load mowers: {msg}', { msg: e.message }), { accent: 'danger' });
     return;
   }
   if (!devices.length) {
@@ -4472,11 +4598,11 @@ async function assignWalkerBundle(b) {
     });
     resp = await r2.json();
   } catch (e) {
-    await appAlert('Apply request failed: ' + e.message, { accent: 'danger' });
+    await appAlert(__t('Apply request failed: {msg}', { msg: e.message }), { accent: 'danger' });
     return;
   }
   if (!resp.ok) {
-    await appAlert('Apply failed: ' + (resp.error || 'unknown'), { accent: 'danger' });
+    await appAlert(__t('Apply failed: {msg}', { msg: (resp.error || 'unknown') }), { accent: 'danger' });
     return;
   }
 
@@ -4502,16 +4628,16 @@ async function assignWalkerBundle(b) {
   renderPortableImportWizard(picked, resp.state || 'UPLOADED');
 
   var polygonSummary = (resp.polygons || [])
-    .map(function(p) { return '· ' + (p.alias || p.name) + ' (' + p.pointCount + ' pts)'; })
+    .map(function(p) { return '· ' + (p.alias || p.name) + ' (' + __t('{n} pts', { n: p.pointCount }) + ')'; })
     .join('\\n');
   if (!portableMowerFileApplySupported) {
-    await appAlert('Walker bundle staged for ' + picked + '.\\n\\n' + portableServerCopyWarningText(), { accent: 'warning' });
+    await appAlert(__t('Walker bundle staged for {sn}.', { sn: picked }) + '\\n\\n' + portableServerCopyWarningText(), { accent: 'warning' });
     loadWalkerBundles();
     return;
   }
-  var msg = 'Walker bundle staged for ' + picked + '.\\n\\n' +
-            (polygonSummary || '(no polygon details returned)') + '\\n\\n' +
-            'Apply verbatim now? The dock-anchor refresh modal will follow.';
+  var msg = __t('Walker bundle staged for {sn}.', { sn: picked }) + '\\n\\n' +
+            (polygonSummary || __t('(no polygon details returned)')) + '\\n\\n' +
+            __t('Apply verbatim now? The dock-anchor refresh modal will follow.');
   if (!(await appConfirm(msg, { okText: 'Apply' }))) {
     loadWalkerBundles();
     return;
@@ -4640,12 +4766,12 @@ function renderPortableImportWizard(sn, state) {
           + 'By default only the server/app copy is restored (database); the mower is left untouched.<br>'
           + 'Tick the box below to write the maps to the mower as well: that ERASES the current map files on the mower and replaces them with (regenerated) files from this bundle.<br>'
           + 'Only do that if the mower has lost its map or it is broken. Do the maps on the mower still work? Then leave this off.'
-          + (xsn ? ' <br>' + 'Note: bundle source ' + portableSourceSn + ' differs from the target mower (pos.json is left untouched; re-anchor afterwards in the app).' : '')
+          + (xsn ? ' <br>' + __t('Note: bundle source {sn} differs from the target mower (pos.json is left untouched; re-anchor afterwards in the app).', { sn: portableSourceSn }) : '')
           + '</div>';
         html += '<label style="flex-basis:100%;display:flex;align-items:center;gap:8px;font-size:11px;color:#fca5a5;margin-bottom:8px;cursor:pointer">'
           + '<input type="checkbox" id="portablePushToMower" style="width:16px;height:16px;cursor:pointer"> '
           + '<span>Write the maps to the mower as well (overwrites the mower files)</span></label>';
-        html += '<button onclick="portableDoImport()" style="padding:6px 14px;background:rgba(16,185,129,.3);color:#bbf7d0;border:1px solid rgba(16,185,129,.7);border-radius:6px;font-size:11px;font-weight:700;cursor:pointer">Importeren</button>';
+        html += '<button onclick="portableDoImport()" style="padding:6px 14px;background:rgba(16,185,129,.3);color:#bbf7d0;border:1px solid rgba(16,185,129,.7);border-radius:6px;font-size:11px;font-weight:700;cursor:pointer">Import</button>';
       } else {
         html += '<div style="flex-basis:100%;font-size:10px;color:#fbbf24;margin-bottom:4px">' + portableServerCopyWarningText() + '</div>';
         html += '<button onclick="portableImportServerCopy()" style="padding:6px 12px;background:rgba(245,158,11,.2);color:#fbbf24;border:1px solid rgba(245,158,11,.5);border-radius:6px;font-size:11px;font-weight:700;cursor:pointer">Import server copy only</button>';
@@ -4704,24 +4830,21 @@ async function portableDoImport() {
 
 async function portableImportServerCopy() {
   var sn = document.getElementById('mapMowerSelect').value;
-  if (!(await appConfirm(portableServerCopyWarningText() + '\\n\\nContinue with server/app copy only?', { okText: 'Import server copy' }))) return;
+  if (!(await appConfirm(portableServerCopyWarningText() + '\\n\\n' + __t('Continue with server/app copy only?'), { okText: 'Import server copy' }))) return;
   var r = await fetch('/api/admin-status/maps/' + encodeURIComponent(sn) + '/import-portable/' + portableStagingId + '/import-server-copy', {
     method: 'POST',
     headers: { 'Authorization': token, 'Content-Type': 'application/json' },
   });
   var j = await r.json();
   if (!j.ok) {
-    await appAlert('Server-copy import failed: ' + (j.error || 'unknown'), { accent: 'danger' });
+    await appAlert(__t('Server-copy import failed: {msg}', { msg: (j.error || 'unknown') }), { accent: 'danger' });
     portableCheckActive(sn);
     return;
   }
   var restored = j.restored || {};
   await appAlert(
-    'Server/app copy imported.\\n\\n' +
-    'work maps: ' + (restored.work || 0) + '\\n' +
-    'obstacles: ' + (restored.obstacles || 0) + '\\n' +
-    'channels: ' + (restored.unicom || 0) + '\\n\\n' +
-    'Mower files were not written.',
+    __t('Server/app copy imported.\\n\\nwork maps: {work}\\nobstacles: {obstacles}\\nchannels: {channels}\\n\\nMower files were not written.', {
+      work: (restored.work || 0), obstacles: (restored.obstacles || 0), channels: (restored.unicom || 0) }),
     { accent: 'warning' }
   );
   document.getElementById('portableImportPanel').style.display = 'none';
@@ -4756,7 +4879,7 @@ async function portableApplyVerbatim() {
     }
     // Cross-SN block — let the operator force if they really know what they're doing.
     if (j.sourceSn && j.targetSn && j.sourceSn !== j.targetSn) {
-      var forceMsg = "Bundle was made on " + j.sourceSn + ", not " + j.targetSn + ". The map is charger-relative and pos.json is left untouched, so this is generally safe; re-anchor in the app afterward. Continue?";
+      var forceMsg = __t('Bundle was made on {source}, not {target}. The map is charger-relative and pos.json is left untouched, so this is generally safe; re-anchor in the app afterward. Continue?', { source: j.sourceSn, target: j.targetSn });
       if (!(await appConfirm(forceMsg, { destructive: true, okText: 'Force verbatim' }))) {
         portableCheckActive(sn);
         return;
@@ -4765,21 +4888,18 @@ async function portableApplyVerbatim() {
         method: 'POST', headers: { 'Authorization': token, 'Content-Type': 'application/json' },
       });
       j = await r.json();
-      if (!j.ok) { await appAlert('Apply (forced) failed: ' + j.error, { accent: 'danger' }); portableCheckActive(sn); return; }
+      if (!j.ok) { await appAlert(__t('Apply (forced) failed: {msg}', { msg: j.error }), { accent: 'danger' }); portableCheckActive(sn); return; }
     } else {
-      await appAlert('Apply failed: ' + j.error, { accent: 'danger' });
+      await appAlert(__t('Apply failed: {msg}', { msg: j.error }), { accent: 'danger' });
       portableCheckActive(sn);
       return;
     }
   }
   var w = j.written || {};
   await appAlert(
-    'Verbatim restore applied.\\n\\n' +
-    'CSVs: ' + (w.csvFiles || 0) + '\\n' +
-    'pos.json: ' + (w.posJson ? 'yes' : 'no') + '\\n' +
-    'map text files: ' + (w.mapFilesText || 0) + '\\n' +
-    'map binary files: ' + (w.mapFilesB64 || 0) + '\\n' +
-    'charging_station.yaml: ' + (w.chargingStationYaml ? 'yes' : 'no'),
+    __t('Verbatim restore applied.\\n\\nCSVs: {csv}\\npos.json: {pos}\\nmap text files: {txt}\\nmap binary files: {bin}\\ncharging_station.yaml: {yaml}', {
+      csv: (w.csvFiles || 0), pos: (w.posJson ? __t('yes') : __t('no')), txt: (w.mapFilesText || 0),
+      bin: (w.mapFilesB64 || 0), yaml: (w.chargingStationYaml ? __t('yes') : __t('no')) }),
     { accent: 'success' }
   );
   document.getElementById('portableImportPanel').style.display = 'none';
@@ -4801,11 +4921,11 @@ async function portableApplyVerbatim() {
 // and stock firmware does NOT save_utm_origin on docking. See
 // docs/reference/REANCHOR.md.
 async function promptDockAnchorRefresh(sn) {
-  var explanation =
+  var explanation = __t(
     'Polygons restored, but the mower\\'s UTM anchor is stale until you re-anchor. ' +
     'Without it the local frame may be 1-2m off and polygons land in the wrong spot. ' +
     'The app\\'s Re-anchor wizard is the recommended path (it re-derives pos.json from ' +
-    'the dock RTK-Fixed GPS). Or pick one here:';
+    'the dock RTK-Fixed GPS). Or pick one here:');
   var choice = await appModal({
     title: 'Dock anchor refresh required',
     body: explanation,
@@ -4824,7 +4944,7 @@ async function promptDockAnchorRefresh(sn) {
     body: JSON.stringify({ mode: choice }),
   });
   var j = await r.json();
-  if (!j.ok) { await appAlert('Dock-anchor refresh failed: ' + (j.error || 'unknown'), { accent: 'danger' }); return; }
+  if (!j.ok) { await appAlert(__t('Dock-anchor refresh failed: {msg}', { msg: (j.error || 'unknown') }), { accent: 'danger' }); return; }
   if (choice === 'manual') {
     await appAlert(j.instruction || 'Move mower off dock briefly then dock again.', { accent: 'info', title: 'Refresh instruction' });
     return;
@@ -4861,20 +4981,20 @@ async function pollDockAnchorAuto(sn) {
       var bodyEl = document.querySelector('.modal-box .modal-msg');
       if (bodyEl) {
         bodyEl.textContent =
-          'Elapsed: ' + elapsed + 's\\n' +
+          __t('Elapsed: {s}s', { s: elapsed }) + '\\n' +
           'work_status: ' + (work || '?') + '\\n' +
           'battery_state: ' + (battery || '?');
         bodyEl.style.whiteSpace = 'pre-line';
       }
       if (batteryNorm === 'CHARGING' && elapsed > 10) {
-        if (bodyEl) bodyEl.textContent += '\\n\\nDocked. The drive should have re-derived the UTM origin from GPS. If the frame is still off, re-anchor in the app (Re-anchor wizard).';
+        if (bodyEl) bodyEl.textContent += '\\n\\n' + __t('Docked. The drive should have re-derived the UTM origin from GPS. If the frame is still off, re-anchor in the app (Re-anchor wizard).');
         return;
       }
     } catch (e) { /* keep polling */ }
   }
   var bodyEl2 = document.querySelector('.modal-box .modal-msg');
   if (bodyEl2 && !cancelled) {
-    bodyEl2.textContent += '\\n\\nTimeout - check mower state manually.';
+    bodyEl2.textContent += '\\n\\n' + __t('Timeout - check mower state manually.');
   }
 }
 
@@ -4890,12 +5010,12 @@ async function portableStartDrive() {
   });
   var j = await r.json();
   if (!j.ok) {
-    await appAlert('Drive failed: ' + j.error + (j.recoverable ? '\\n\\nClick "Start drive" again to retry - bundle is preserved.' : ''), { accent: 'danger' });
+    await appAlert(__t('Drive failed: {msg}', { msg: j.error }) + (j.recoverable ? '\\n\\n' + __t('Click "Start drive" again to retry - bundle is preserved.') : ''), { accent: 'danger' });
     // Re-fetch active state so the UI reflects whether we can retry.
     portableCheckActive(sn);
     return;
   }
-  await appAlert('Drive complete. Heading derived: ' + (j.derivedHeadingRad * 180 / Math.PI).toFixed(2) + ' deg, distance ' + j.distanceM.toFixed(2) + ' m', { accent: 'success' });
+  await appAlert(__t('Drive complete. Heading derived: {deg} deg, distance {m} m', { deg: (j.derivedHeadingRad * 180 / Math.PI).toFixed(2), m: j.distanceM.toFixed(2) }), { accent: 'success' });
   renderPortableImportWizard(sn, j.state);
 }
 
@@ -4906,11 +5026,11 @@ async function portableAutoDock() {
   });
   var j = await r.json();
   if (!j.ok) {
-    await appAlert('Snapshot failed: ' + j.error + (j.recoverable ? '\\n\\nFix the condition then click again.' : ''), { accent: 'danger' });
+    await appAlert(__t('Snapshot failed: {msg}', { msg: j.error }) + (j.recoverable ? '\\n\\n' + __t('Fix the condition then click again.') : ''), { accent: 'danger' });
     portableCheckActive(sn);
     return;
   }
-  await appAlert('Anchor saved. lat=' + j.newCharger.lat.toFixed(7) + ', lng=' + j.newCharger.lng.toFixed(7), { accent: 'success' });
+  await appAlert(__t('Anchor saved. lat={lat}, lng={lng}', { lat: j.newCharger.lat.toFixed(7), lng: j.newCharger.lng.toFixed(7) }), { accent: 'success' });
   renderPortableImportWizard(sn, j.state);
 }
 
@@ -4988,7 +5108,7 @@ async function portableConfirm() {
     body: JSON.stringify(body),
   });
   var j = await r.json();
-  if (!j.ok) { await appAlert('Confirm failed: ' + j.error, { accent: 'danger' }); return; }
+  if (!j.ok) { await appAlert(__t('Confirm failed: {msg}', { msg: j.error }), { accent: 'danger' }); return; }
   await appAlert('Applied. Sync_map triggered.', { accent: 'success' });
   document.getElementById('portableImportPanel').style.display = 'none';
   portableStagingId = null;
@@ -5038,14 +5158,14 @@ async function loadMapBackups(sn) {
       var opt = document.createElement('option');
       opt.value = b.filename;
       var dt = new Date(b.ts);
-      var label = dt.toLocaleString() + '  (' + (b.sizeBytes > 1024 ? Math.round(b.sizeBytes / 1024) + ' KB' : b.sizeBytes + ' B') + ')';
+      var label = dt.toLocaleString(__locale()) + '  (' + (b.sizeBytes > 1024 ? Math.round(b.sizeBytes / 1024) + ' KB' : b.sizeBytes + ' B') + ')';
       opt.textContent = label;
       sel.appendChild(opt);
     }
   } catch(e) {
     status.style.display = 'block';
     status.style.color = '#f87171';
-    status.textContent = 'Failed to load backups: ' + e.message;
+    status.textContent = __t('Failed to load backups: {msg}', { msg: e.message });
   }
 }
 
@@ -5111,7 +5231,7 @@ async function loadBackupContents() {
       if (!items || items.length === 0) return '';
       var h = '<div style="margin-bottom:8px">';
       h += '<label style="font-size:11px;font-weight:600;color:' + color + ';cursor:pointer;display:flex;align-items:center;gap:4px">';
-      h += '<input type="checkbox" class="backup-grp-all" data-type="' + type + '" onchange="toggleBackupGroup(this)" style="cursor:pointer"> ' + label + ' (' + items.length + ')';
+      h += '<input type="checkbox" class="backup-grp-all" data-type="' + type + '" onchange="toggleBackupGroup(this)" style="cursor:pointer"> <span>' + label + '</span> (' + items.length + ')';
       h += '</label>';
       h += '<div style="margin-left:16px;margin-top:4px">';
       for (var item of items) {
@@ -5120,7 +5240,7 @@ async function loadBackupContents() {
         h += '<div style="display:flex;align-items:center;gap:6px;padding:2px 0;flex-wrap:wrap">';
         h += '<label style="font-size:11px;color:#ccc;cursor:pointer;display:flex;align-items:center;gap:4px">';
         h += '<input type="checkbox" class="backup-item-chk" data-type="' + type + '" data-canonical="' + safeCanon + '" onchange="onBackupItemChange(this)" style="cursor:pointer"> ';
-        h += safeCanon + ' <span style="color:#666;margin-left:4px">' + item.pointCount + ' pts</span>';
+        h += safeCanon + ' <span style="color:#666;margin-left:4px">' + __t('{n} pts', { n: item.pointCount }) + '</span>';
         h += '</label>';
         if (item.existsInDb) {
           h += '<span style="font-size:10px;font-weight:600;color:#f59e0b;background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.3);border-radius:4px;padding:1px 6px">Exists in DB</span>';
@@ -5141,7 +5261,7 @@ async function loadBackupContents() {
 
     if (data.chargingPose) {
       var cp = data.chargingPose;
-      html += '<div style="font-size:11px;color:#aaa;margin-top:4px">Charging pose in backup: x=' + cp.x + ' y=' + cp.y + ' θ=' + cp.orientation + '</div>';
+      html += '<div style="font-size:11px;color:#aaa;margin-top:4px">' + __t('Charging pose in backup: x={x} y={y} θ={theta}', { x: cp.x, y: cp.y, theta: cp.orientation }) + '</div>';
     }
 
     if (!html) html = '<div style="font-size:11px;color:#666">No areas found in this backup.</div>';
@@ -5150,7 +5270,7 @@ async function loadBackupContents() {
   } catch(e) {
     status.style.display = 'block';
     status.style.color = '#f87171';
-    status.textContent = 'Failed to load backup contents: ' + e.message;
+    status.textContent = __t('Failed to load backup contents: {msg}', { msg: e.message });
   }
 }
 
@@ -5230,7 +5350,7 @@ async function restoreSelection() {
   });
 
   status.style.color = '#60a5fa';
-  status.textContent = 'Restoring ' + items.length + ' item(s)...';
+  status.textContent = __t('Restoring {n} item(s)...', { n: items.length });
 
   try {
     var r = await fetch('/api/admin-status/map-backups/' + encodeURIComponent(sn) + '/' + encodeURIComponent(filename) + '/restore', {
@@ -5242,16 +5362,16 @@ async function restoreSelection() {
     if (!r.ok || !result.ok) throw new Error(result.error || 'HTTP ' + r.status);
 
     var parts = [];
-    if (result.restored > 0) parts.push('Restored ' + result.restored);
-    if (result.overwritten > 0) parts.push('overwritten ' + result.overwritten);
-    if (result.skippedExisting > 0) parts.push('skipped ' + result.skippedExisting + ' (already existed)');
-    if (result.skippedNotInBackup > 0) parts.push('skipped ' + result.skippedNotInBackup + ' (not in backup)');
+    if (result.restored > 0) parts.push(__t('Restored {n}', { n: result.restored }));
+    if (result.overwritten > 0) parts.push(__t('overwritten {n}', { n: result.overwritten }));
+    if (result.skippedExisting > 0) parts.push(__t('skipped {n} (already existed)', { n: result.skippedExisting }));
+    if (result.skippedNotInBackup > 0) parts.push(__t('skipped {n} (not in backup)', { n: result.skippedNotInBackup }));
     status.style.color = '#00d4aa';
     status.textContent = parts.join(', ') + '.';
     loadMaps();
   } catch(e) {
     status.style.color = '#f87171';
-    status.textContent = 'Restore failed: ' + e.message;
+    status.textContent = __t('Restore failed: {msg}', { msg: e.message });
   }
 }
 
@@ -5271,7 +5391,7 @@ async function restoreAndRealign() {
   if (!sn) { status.style.color='#f87171'; status.textContent='Please select a mower first.'; return; }
   if (!filename) { status.style.color='#f87171'; status.textContent='Please select a backup snapshot first.'; return; }
 
-  var ok = await appConfirm(
+  var ok = await appConfirm(__t(
     'Restore + Realign Mower will:\\n\\n' +
     '  1. Restore ALL polygons + obstacles + unicom from the selected backup ZIP (overwrites existing rows)\\n' +
     '  2. Re-anchor charger pose from the polygon mapNtocharge_unicom first point\\n' +
@@ -5279,7 +5399,7 @@ async function restoreAndRealign() {
     '  4. Regenerate <SN>_latest.zip with embedded charger pose\\n' +
     '  5. Push everything to mower via sync_map MQTT\\n' +
     '  6. Mower restarts novabot_mapping + auto_recharge_server\\n\\n' +
-    'Preconditions: mower must be online + on dock + RTK FIX.',
+    'Preconditions: mower must be online + on dock + RTK FIX.'),
     { destructive: true, okText: 'Restore + Realign' }
   );
   if (!ok) return;
@@ -5295,7 +5415,7 @@ async function restoreAndRealign() {
     var result = await r.json().catch(function(){ return {}; });
     if (!r.ok || !result.ok) {
       var errMsg = result.error || ('HTTP ' + r.status);
-      if (result.partial) errMsg += ' (partial: server-side state already restored — re-run after mower recovers)';
+      if (result.partial) errMsg += ' ' + __t('(partial: server-side state already restored, re-run after mower recovers)');
       throw new Error(errMsg);
     }
 
@@ -5303,11 +5423,11 @@ async function restoreAndRealign() {
       ? '(' + result.anchor.x.toFixed(2) + ', ' + result.anchor.y.toFixed(2) + ', ' + result.anchor.orientation.toFixed(2) + ')'
       : '?';
     status.style.color = '#00d4aa';
-    status.textContent = 'Restore + Realign complete — restored ' + (result.restoredItems || 0) + ' items, anchor ' + anchorStr;
+    status.textContent = __t('Restore + Realign complete: restored {n} items, anchor {anchor}', { n: (result.restoredItems || 0), anchor: anchorStr });
     loadMaps();
   } catch(e) {
     status.style.color = '#f87171';
-    status.textContent = 'Restore + Realign failed: ' + e.message;
+    status.textContent = __t('Restore + Realign failed: {msg}', { msg: e.message });
   }
 }
 
@@ -5456,11 +5576,11 @@ async function enterMapEdit() {
   window.__mapEditLoading = true;
   try {
   var sn = document.getElementById('mapMowerSelect').value;
-  if (!sn) { await appAlert('Selecteer eerst een maaier.', { accent: 'warning' }); return; }
+  if (!sn) { await appAlert(__t('Select a mower first.'), { accent: 'warning' }); return; }
   var r = await fetch('/api/dashboard/maps/' + encodeURIComponent(sn) + '/edit/geometry', {
     headers: { 'Authorization': token }
   });
-  if (!r.ok) { await appAlert('Geometry laden mislukt (HTTP ' + r.status + ')', { accent: 'danger' }); return; }
+  if (!r.ok) { await appAlert(__t('Loading geometry failed (HTTP {status})', { status: r.status }), { accent: 'danger' }); return; }
   var g = await r.json();
   var polys = g.maps.filter(function(m) { return m.mapType !== 'unicom'; }).map(function(m) {
     return {
@@ -5480,11 +5600,11 @@ async function enterMapEdit() {
   document.getElementById('mapEditTools').style.display = 'inline-flex';
   document.getElementById('mapEditToggle').style.display = 'none';
   document.getElementById('revertMapEdit').style.display = g.hasVersions ? '' : 'none';
-  document.getElementById('applyMapEdit').textContent = g.pendingSync ? 'Opnieuw synchroniseren' : 'Toepassen op maaier';
+  document.getElementById('applyMapEdit').textContent = g.pendingSync ? __t('Sync again') : __t('Apply to mower');
   document.getElementById('deleteObstacleBtn').disabled = true;
   setEditTool('vertex');
   } catch(e) {
-    editStatus('Editor laden mislukt');
+    editStatus(__t('Loading editor failed'));
   } finally {
     window.__mapEditLoading = false;
   }
@@ -5573,12 +5693,12 @@ function saveDraftNow(poly) {
       body: JSON.stringify(body)
     }).then(function(r) {
       return r.json().then(function(j) {
-        if (!r.ok) { editStatus('Draft fout: ' + (j.error || r.status)); return; }
+        if (!r.ok) { editStatus(__t('Draft error: {msg}', { msg: (j.error || r.status) })); return; }
         if (!poly.canonical) poly.canonical = j.canonical;
-        editStatus('Draft opgeslagen (' + poly.canonical + ')');
+        editStatus(__t('Draft saved ({name})', { name: poly.canonical }));
       });
     }).catch(function(e) {
-      editStatus('Draft fout: ' + e.message);
+      editStatus(__t('Draft error: {msg}', { msg: e.message }));
     });
   });
   return st.savePromise;
@@ -5586,7 +5706,7 @@ function saveDraftNow(poly) {
 
 async function resetMapEdit() {
   var st = window.__mapEdit; if (!st) return;
-  var ok = await appConfirm('Alle niet-toegepaste wijzigingen weggooien?', { okText: 'Weggooien', destructive: true });
+  var ok = await appConfirm(__t('Discard all unapplied changes?'), { okText: __t('Discard'), destructive: true });
   if (!ok) return;
   // Drop any pending debounce WITHOUT firing it — we're discarding anyway.
   if (st.saveTimer) { clearTimeout(st.saveTimer); st.saveTimer = null; st.savePoly = null; }
@@ -5597,26 +5717,26 @@ async function resetMapEdit() {
     var r = await fetch('/api/dashboard/maps/' + encodeURIComponent(sn) + '/edit/drafts', {
       method: 'DELETE', headers: { 'Authorization': token }
     });
-    if (!r.ok) { editStatus('Reset mislukt: ' + r.status); return; }
+    if (!r.ok) { editStatus(__t('Reset failed: {msg}', { msg: r.status })); return; }
   } catch(e) {
-    editStatus('Reset mislukt: ' + e.message);
+    editStatus(__t('Reset failed: {msg}', { msg: e.message }));
     return;
   }
   exitMapEdit();
   await enterMapEdit();
-  editStatus('Drafts gewist');
+  editStatus(__t('Drafts cleared'));
 }
 
 async function applyMapEdit() {
   var st = window.__mapEdit; if (!st) return;
-  var ok = await appConfirm('Wijzigingen toepassen op de maaier? Dit wist de map-bestanden op de maaier en pusht de bewerkte geometrie.', { okText: 'Toepassen' });
+  var ok = await appConfirm(__t('Apply the changes to the mower? This erases the map files on the mower and pushes the edited geometry.'), { okText: __t('Apply') });
   if (!ok) return;
   // Make sure every draft (pending debounce + in-flight PUT) has landed
   // before the server snapshots the drafts for apply.
   await flushDraftSave();
   var btn = document.getElementById('applyMapEdit');
   btn.disabled = true;
-  editStatus('Toepassen...');
+  editStatus(__t('Applying...'));
   try {
     var r = await fetch('/api/dashboard/maps/' + encodeURIComponent(st.sn) + '/edit/apply', {
       method: 'POST', headers: { 'Authorization': token, 'Content-Type': 'application/json' },
@@ -5626,32 +5746,32 @@ async function applyMapEdit() {
     if (!j.ok) {
       var reason = j.reason || ('HTTP ' + r.status);
       if (reason === 'validation' && j.validation) {
-        editStatus('Validatie mislukt: ' + (j.validation.errors || []).map(function(er) {
+        editStatus(__t('Validation failed: {msg}', { msg: (j.validation.errors || []).map(function(er) {
           return (er.canonical ? er.canonical + ': ' : '') + er.message;
-        }).join('; '));
+        }).join('; ') }));
       } else if (reason === 'busy') {
-        editStatus('Maaier is bezig \\u2014 stop eerst de taak.');
+        editStatus(__t('Mower is busy. Stop the task first.'));
       } else if (reason === 'offline') {
-        editStatus('Maaier offline.');
+        editStatus(__t('Mower offline.'));
       } else if (reason === 'push_failed' || reason === 'bundle_failed') {
-        editStatus('Push mislukt \\u2014 status: pending sync. Probeer "Opnieuw synchroniseren".');
-        btn.textContent = 'Opnieuw synchroniseren';
+        editStatus(__t('Push failed. Status: pending sync. Try "Sync again".'));
+        btn.textContent = __t('Sync again');
       } else if (reason === 'no_changes') {
-        editStatus('Geen wijzigingen om toe te passen.');
+        editStatus(__t('No changes to apply.'));
       } else {
-        editStatus('Fout: ' + reason);
+        editStatus(__t('Error: {msg}', { msg: reason }));
       }
       return;
     }
     var warn = (j.validation && j.validation.warnings && j.validation.warnings.length > 0)
-      ? ' \\u2014 waarschuwingen: ' + j.validation.warnings.map(function(w) { return w.message; }).join('; ')
+      ? ' ' + __t('(warnings: {list})', { list: j.validation.warnings.map(function(w) { return w.message; }).join('; ') })
       : '';
     exitMapEdit();
     await loadMaps();
     await enterMapEdit();
-    editStatus('Toegepast \\u2713' + warn);
+    editStatus(__t('Applied') + ' \\u2713' + warn);
   } catch(e) {
-    editStatus('Fout: ' + e.message);
+    editStatus(__t('Error: {msg}', { msg: e.message }));
   } finally {
     btn.disabled = false;
   }
@@ -5659,9 +5779,9 @@ async function applyMapEdit() {
 
 async function revertMapEdit() {
   var st = window.__mapEdit; if (!st) return;
-  var ok = await appConfirm('Terugdraaien naar de vorige toegepaste versie op de maaier?', { okText: 'Terugdraaien', destructive: true });
+  var ok = await appConfirm(__t('Revert to the previously applied version on the mower?'), { okText: __t('Revert'), destructive: true });
   if (!ok) return;
-  editStatus('Terugdraaien...');
+  editStatus(__t('Reverting...'));
   try {
     var r = await fetch('/api/dashboard/maps/' + encodeURIComponent(st.sn) + '/edit/revert', {
       method: 'POST', headers: { 'Authorization': token, 'Content-Type': 'application/json' },
@@ -5670,18 +5790,18 @@ async function revertMapEdit() {
     var j = await r.json().catch(function() { return {}; });
     if (!j.ok) {
       var reason = j.reason || ('HTTP ' + r.status);
-      if (reason === 'busy') editStatus('Maaier is bezig \\u2014 stop eerst de taak.');
-      else if (reason === 'offline') editStatus('Maaier offline.');
-      else if (reason === 'no_version') editStatus('Geen vorige versie om naar terug te draaien.');
-      else editStatus('Terugdraaien mislukt: ' + reason);
+      if (reason === 'busy') editStatus(__t('Mower is busy. Stop the task first.'));
+      else if (reason === 'offline') editStatus(__t('Mower offline.'));
+      else if (reason === 'no_version') editStatus(__t('No previous version to revert to.'));
+      else editStatus(__t('Revert failed: {msg}', { msg: reason }));
       return;
     }
     exitMapEdit();
     await loadMaps();
     await enterMapEdit();
-    editStatus('Teruggedraaid \\u2713');
+    editStatus(__t('Reverted') + ' \\u2713');
   } catch(e) {
-    editStatus('Fout: ' + e.message);
+    editStatus(__t('Error: {msg}', { msg: e.message }));
   }
 }
 
@@ -5901,7 +6021,7 @@ async function loadMaps() {
     return;
   }
 
-  info.textContent = 'Loading maps for ' + sn + '...';
+  info.textContent = __t('Loading maps for {sn}...', { sn: sn });
 
   try {
     var r = await fetch('/api/dashboard/maps/' + encodeURIComponent(sn), {
@@ -5912,7 +6032,7 @@ async function loadMaps() {
     var maps = data.maps || [];
 
     if (maps.length === 0) {
-      info.textContent = 'No maps found for ' + sn;
+      info.textContent = __t('No maps found for {sn}', { sn: sn });
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       legend.style.display = 'none';
       mapList.innerHTML = '';
@@ -5920,13 +6040,13 @@ async function loadMaps() {
     }
 
     var workCount = maps.filter(function(m) { return m.mapType === 'work'; }).length;
-    info.textContent = workCount + ' work area(s), ' + maps.length + ' total for ' + sn;
+    info.textContent = __t('{work} work area(s), {total} total for {sn}', { work: workCount, total: maps.length, sn: sn });
     legend.style.display = 'flex';
     renderMapCanvas(canvas, maps, data.chargingPose || null);
     renderMapList(mapList, maps, sn);
     attachMapInteraction(canvas);
   } catch(e) {
-    info.textContent = 'Failed to load maps: ' + e.message;
+    info.textContent = __t('Failed to load maps: {msg}', { msg: e.message });
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     legend.style.display = 'none';
     mapList.innerHTML = '';
@@ -6351,9 +6471,9 @@ async function saveCoveragePlannerRadius() {
     if (!r.ok || data.ok === false) throw new Error(data.error || ('HTTP ' + r.status));
     var el = document.getElementById('nativeCoverageRadius');
     if (el && Number.isFinite(Number(data.radius))) el.value = String(data.radius);
-    setNativeCoverageStatus('Coverage planner radius saved: ' + data.radius + 'm', '#86efac');
+    setNativeCoverageStatus(__t('Coverage planner radius saved: {r}m', { r: data.radius }), '#86efac');
   } catch (e) {
-    setNativeCoverageStatus('Coverage planner radius failed: ' + (e && e.message ? e.message : e), '#fca5a5');
+    setNativeCoverageStatus(__t('Coverage planner radius failed: {msg}', { msg: (e && e.message ? e.message : e) }), '#fca5a5');
   } finally {
     if (btn) btn.disabled = false;
   }
@@ -6395,10 +6515,11 @@ async function runNativeCoveragePreview() {
     c.__mapState.coverageSource = 'mower';
     if (c.__mapState.maps) renderMapCanvas(c, c.__mapState.maps, c.__mapState.chargingPose || null);
 
-    var busy = data.busy ? ' (cached while mower is busy)' : '';
-    setNativeCoverageStatus('Mower coverage preview: ' + paths.length + ' path(s)' + busy, '#86efac');
+    setNativeCoverageStatus(data.busy
+      ? __t('Mower coverage preview: {n} path(s) (cached while mower is busy)', { n: paths.length })
+      : __t('Mower coverage preview: {n} path(s)', { n: paths.length }), '#86efac');
   } catch (e) {
-    setNativeCoverageStatus('Mower coverage preview failed: ' + (e && e.message ? e.message : e), '#fca5a5');
+    setNativeCoverageStatus(__t('Mower coverage preview failed: {msg}', { msg: (e && e.message ? e.message : e) }), '#fca5a5');
   } finally {
     if (btn) btn.disabled = false;
   }
@@ -6467,7 +6588,7 @@ function _populateMaskLayers(layers, keep) {
     var v = String(layers[i]);
     var opt = document.createElement('option');
     opt.value = v;
-    opt.textContent = (v === 'whole') ? 'Whole map (navigation)' : (v + ' (zone)');
+    opt.textContent = (v === 'whole') ? __t('Whole map (navigation)') : __t('{name} (zone)', { name: v });
     sel.appendChild(opt);
   }
   if (keep && layers.indexOf(keep) >= 0) sel.value = keep;
@@ -6480,12 +6601,12 @@ async function refreshMaskOverlay() {
   var c = _maskCanvas();
   if (!sn || !c) return;
   var layer = sel ? sel.value : 'whole';
-  if (stt) stt.textContent = 'laden...';
+  if (stt) stt.textContent = __t('loading...');
   try {
     var r = await fetch('/api/admin-status/maps/' + encodeURIComponent(sn) + '/mask-overlay?layer=' + encodeURIComponent(layer), { headers: { 'Authorization': token } });
     var j = await r.json();
     if (j.availableLayers) _populateMaskLayers(j.availableLayers, layer);
-    if (!j.ok) { if (stt) stt.textContent = j.error || 'mislukt'; return; }
+    if (!j.ok) { if (stt) stt.textContent = j.error || __t('failed'); return; }
     var img = new Image();
     img.onload = function() {
       c.__mapState = c.__mapState || { userScale: 1, userPanX: 0, userPanY: 0 };
@@ -6499,13 +6620,13 @@ async function refreshMaskOverlay() {
     img.src = 'data:image/png;base64,' + j.pngBase64;
     var lg = document.getElementById('maskLegend'); if (lg) lg.style.display = 'inline-flex';
     var pct = (j.stats && typeof j.stats.reachableFrac === 'number') ? Math.round(j.stats.reachableFrac * 100) : null;
-    if (stt) stt.textContent = (pct !== null ? ('bereikbaar: ' + pct + '% van vrij') : '');
-  } catch (e) { if (stt) stt.textContent = 'fout: ' + (e && e.message ? e.message : e); }
+    if (stt) stt.textContent = (pct !== null ? __t('reachable: {pct}% of free space', { pct: pct }) : '');
+  } catch (e) { if (stt) stt.textContent = __t('error: {msg}', { msg: (e && e.message ? e.message : e) }); }
 }
 
 function renderMapList(container, maps, sn) {
   var typeIcons = { work: '\\u{1F7E9}', obstacle: '\\u{1F7E5}', unicom: '\\u{1F535}' };
-  var html = '<div style="font-size:12px;color:#aaa;margin-bottom:6px;font-weight:600">Maps (' + maps.length + ')</div>';
+  var html = '<div style="font-size:12px;color:#aaa;margin-bottom:6px;font-weight:600">' + __t('Maps ({n})', { n: maps.length }) + '</div>';
   for (var i = 0; i < maps.length; i++) {
     var m = maps[i];
     var type = (m.mapType || 'work').toLowerCase();
@@ -6527,7 +6648,7 @@ function renderMapList(container, maps, sn) {
         var udx = m.mapArea[j].x - m.mapArea[j - 1].x, udy = m.mapArea[j].y - m.mapArea[j - 1].y;
         ulen += Math.sqrt(udx * udx + udy * udy);
       }
-      areaStr = ' (' + ulen.toFixed(1) + ' m, ' + m.mapArea.length + ' pts)';
+      areaStr = ' (' + ulen.toFixed(1) + ' m, ' + __t('{n} pts', { n: m.mapArea.length }) + ')';
     }
     html += '<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 10px;'
       + 'background:rgba(255,255,255,.03);border-radius:6px;margin-bottom:4px">'
@@ -6541,7 +6662,7 @@ function renderMapList(container, maps, sn) {
 }
 
 async function deleteMap(sn, mapId, mapName) {
-  if (!(await appConfirm('Delete map "' + mapName + '"? This cannot be undone.', { destructive: true, okText: 'Delete' }))) return;
+  if (!(await appConfirm(__t('Delete map "{name}"? This cannot be undone.', { name: mapName }), { destructive: true, okText: 'Delete' }))) return;
   try {
     var r = await fetch('/api/dashboard/maps/' + encodeURIComponent(sn) + '/' + encodeURIComponent(mapId), {
       method: 'DELETE',
@@ -6558,7 +6679,7 @@ async function deleteMap(sn, mapId, mapName) {
       // Dubbel escapen: deze pagina is één TS-templateliteral, en een enkele \n
       // wordt al bij het genereren een echte regelovergang midden in de
       // JS-string. Dat brak het hele script en gaf een zwart admin panel.
-      if (!(await appConfirm(reden + '\\n\\nRemove it from the server only (force)?',
+      if (!(await appConfirm(reden + '\\n\\n' + __t('Remove it from the server only (force)?'),
                              { destructive: true, okText: 'Force' }))) return;
       r = await fetch('/api/dashboard/maps/' + encodeURIComponent(sn) + '/'
                       + encodeURIComponent(mapId) + '?force=1',
@@ -6567,7 +6688,7 @@ async function deleteMap(sn, mapId, mapName) {
     if (!r.ok) throw new Error('HTTP ' + r.status);
     loadMaps();
   } catch(e) {
-    await appAlert('Delete failed: ' + e.message, { accent: 'danger' });
+    await appAlert(__t('Delete failed: {msg}', { msg: e.message }), { accent: 'danger' });
   }
 }
 
@@ -6610,7 +6731,7 @@ async function loadFirmwareVersions() {
     // Also update version dropdown if a device is selected
     onOtaDeviceChange();
   } catch(e) {
-    document.getElementById('fwTableBody').innerHTML = '<tr><td colspan="5" style="color:#ef4444">Failed: ' + e.message + '</td></tr>';
+    document.getElementById('fwTableBody').innerHTML = '<tr><td colspan="5" style="color:#ef4444">' + __t('Failed: {msg}', { msg: e.message }) + '</td></tr>';
   }
 }
 
@@ -6676,8 +6797,10 @@ function onOtaDeviceChange() {
       fetchJsonAuth('/api/dashboard/firmware-advisory/' + encodeURIComponent(sel.value)).then(function(a) {
         if (!a || !a.required || !a.target || sel.value !== dev.sn) return;
         curDiv.innerHTML += '<div style="margin-top:6px;padding:8px 10px;border-radius:6px;background:rgba(239,68,68,.12);color:#fca5a5;font-size:12px" data-no-i18n>'
-          + '<b>' + escapeHtml(curVer) + ' has been withdrawn:</b> ' + escapeHtml(a.reason || '') + '. Update to <b>' + escapeHtml(a.target.version) + '</b>'
-          + (a.target.downloaded ? ' (already on this server, pick it below).' : ' (downloading…).') + '</div>';
+          + __t(a.target.downloaded
+            ? '<b>{cur} has been withdrawn:</b> {reason}. Update to <b>{target}</b> (already on this server, pick it below).'
+            : '<b>{cur} has been withdrawn:</b> {reason}. Update to <b>{target}</b> (downloading…).',
+            { cur: escapeHtml(curVer), reason: escapeHtml(a.reason || ''), target: escapeHtml(a.target.version) }) + '</div>';
       }).catch(function() {});
     }
   }
@@ -6718,10 +6841,10 @@ async function startOtaUpdate() {
       + '&bull; Installing it can render the mower unusable (brick it).<br>'
       + '&bull; You may lose ALL your maps.<br><br>'
       + 'A fresh backup is made automatically before we flash.<br><br>'
-      + 'Update <b>' + sn + '</b> to <b>' + (vName || 'selected version') + '</b>?<br>'
+      + __t('Update <b>{sn}</b> to <b>{version}</b>?', { sn: sn, version: (vName || __t('selected version')) }) + '<br>'
       + 'The device will reboot during the update.');
   } else {
-    ok = await modalConfirm('Start OTA Update', 'Update <b>' + sn + '</b> to <b>' + (vName || 'selected version') + '</b>?<br><br>The device will reboot during the update.');
+    ok = await modalConfirm('Start OTA Update', __t('Update <b>{sn}</b> to <b>{version}</b>?', { sn: sn, version: (vName || __t('selected version')) }) + '<br><br>The device will reboot during the update.');
   }
   if (!ok) return;
 
@@ -6750,7 +6873,7 @@ async function startOtaUpdate() {
     }
     statusText.textContent = 'Update command sent. Waiting for device...';
   } catch(e) {
-    statusText.textContent = 'Failed: ' + e.message;
+    statusText.textContent = __t('Failed: {msg}', { msg: e.message });
     statusText.style.color = '#ef4444';
     fill.style.background = '#ef4444';
   }
@@ -6774,8 +6897,8 @@ async function revertToStock() {
   if (!fw) { modalAlert('No Version', 'Select a stock version.'); return; }
 
   var ok = await modalConfirm('Revert to stock firmware',
-    'Flash <b>' + sn + '</b> back to <b>stock ' + ver + '</b>?<br><br>'
-    + '&bull; You will <b>lose SSH access</b> (stock firmware has no SSH).<br>'
+    __t('Flash <b>{sn}</b> back to <b>stock {version}</b>?', { sn: sn, version: ver }) + '<br><br>'
+    + '<span data-i18n-html>&bull; You will <b>lose SSH access</b> (stock firmware has no SSH).</span><br>'
     + '&bull; Custom features (edge-cut, camera, mapping preflight) are removed.<br>'
     + '&bull; Maps are kept; WiFi may need re-provisioning via BLE.<br>'
     + '&bull; The mower must be on the charger. It reboots during the update.');
@@ -6783,7 +6906,7 @@ async function revertToStock() {
 
   var st = document.getElementById('stockRevertStatus');
   st.style.display = 'block'; st.style.color = '#aaa';
-  st.textContent = 'Downloading stock ' + ver + ' to the server...';
+  st.textContent = __t('Downloading stock {version} to the server...', { version: ver });
   try {
     var dl = await fetch('/api/dashboard/firmware-download', {
       method: 'POST', headers: { 'Authorization': token, 'Content-Type': 'application/json' },
@@ -6797,7 +6920,7 @@ async function revertToStock() {
     var rows = (vd && vd.versions) || [];
     var row = null;
     for (var i = 0; i < rows.length; i++) { if (rows[i].version === ver && rows[i].device_type === 'mower') { row = rows[i]; break; } }
-    if (!row) throw new Error('Stock version not registered after download');
+    if (!row) throw new Error(__t('Stock version not registered after download'));
 
     st.textContent = 'Sending flash command...';
     var tr = await fetch('/api/dashboard/ota/trigger/' + encodeURIComponent(sn), {
@@ -6807,10 +6930,10 @@ async function revertToStock() {
     if (!tr.ok) { var e2 = await tr.json().catch(function() { return {}; }); throw new Error(e2.error || ('trigger HTTP ' + tr.status)); }
 
     st.style.color = '#00d4aa';
-    st.textContent = 'Stock ' + ver + ' flash command sent. The mower will download, verify (MD5), and reboot. SSH is gone after this.';
+    st.textContent = __t('Stock {version} flash command sent. The mower will download, verify (MD5), and reboot. SSH is gone after this.', { version: ver });
   } catch (err) {
     st.style.color = '#ef4444';
-    st.textContent = 'Failed: ' + (err && err.message ? err.message : err);
+    st.textContent = __t('Failed: {msg}', { msg: (err && err.message ? err.message : err) });
   }
 }
 
@@ -6835,7 +6958,7 @@ async function checkFirmwareUpdates() {
       status.style.color = '#00d4aa';
       container.style.display = 'none';
     } else {
-      status.textContent = available.length + ' update(s) available';
+      status.textContent = __t('{n} update(s) available', { n: available.length });
       status.style.color = '#f59e0b';
       var html = '';
       for (var i = 0; i < available.length; i++) {
@@ -6856,10 +6979,10 @@ async function checkFirmwareUpdates() {
     // Also show already-installed remote firmwares
     var installed = (d.available || []).filter(function(fw) { return fw.installed; });
     if (installed.length > 0 && available.length > 0) {
-      status.textContent += ' (' + installed.length + ' already installed)';
+      status.textContent += ' ' + __t('({n} already installed)', { n: installed.length });
     }
   } catch(e) {
-    status.textContent = 'Failed: ' + e.message;
+    status.textContent = __t('Failed: {msg}', { msg: e.message });
     status.style.color = '#ef4444';
   }
   btn.disabled = false;
@@ -6889,7 +7012,7 @@ async function downloadFirmware(fw, btnIdx) {
       description: fw.description || ''
     });
     if (d.ok) {
-      showToast('Firmware ' + fw.version + ' downloaded (' + ((d.size || 0) / 1024 / 1024).toFixed(1) + ' MB)', 'green');
+      showToast(__t('Firmware {version} downloaded ({size} MB)', { version: fw.version, size: ((d.size || 0) / 1024 / 1024).toFixed(1) }), 'green');
       if (btn) { btn.innerHTML = '&#10003; Downloaded'; btn.style.color = '#00d4aa'; }
       loadFirmwareVersions();
       checkFirmwareUpdates();
@@ -6923,7 +7046,7 @@ async function checkWalkerFirmware() {
     var err = document.createElement('span');
     err.style.color = '#ef4444';
     err.style.fontSize = '11px';
-    err.textContent = 'Failed to fetch manifest: ' + (e && e.message ? e.message : 'unknown error');
+    err.textContent = __t('Failed to fetch manifest: {msg}', { msg: (e && e.message ? e.message : __t('unknown error')) });
     list.appendChild(err);
     return;
   }
@@ -7044,7 +7167,7 @@ async function checkWalkerFirmware() {
 }
 
 async function downloadWalkerFw(fw, btn) {
-  var ok = await modalConfirm('Download walker firmware', 'Download walker firmware ' + fw.version + ' to the server? This fetches the .bin from the manifest URL and registers it locally.');
+  var ok = await modalConfirm('Download walker firmware', __t('Download walker firmware {version} to the server? This fetches the .bin from the manifest URL and registers it locally.', { version: fw.version }));
   if (!ok) return;
   if (btn) {
     btn.disabled = true;
@@ -7065,7 +7188,7 @@ async function downloadWalkerFw(fw, btn) {
       description: fw.description || '',
     });
     if (d && d.ok) {
-      showToast('Walker firmware ' + fw.version + ' downloaded (' + ((d.size || 0) / 1024).toFixed(1) + ' KB)', 'green');
+      showToast(__t('Walker firmware {version} downloaded ({size} KB)', { version: fw.version, size: ((d.size || 0) / 1024).toFixed(1) }), 'green');
       loadFirmwareVersions();
       checkWalkerFirmware();
     } else {
@@ -7105,7 +7228,7 @@ async function cloudImport() {
 
     // Show devices found
     const all = loginData.rawList || [];
-    let devHtml = '<div style="font-size:12px;color:#00d4aa;margin-bottom:8px">Found ' + all.length + ' device(s)</div>';
+    let devHtml = '<div style="font-size:12px;color:#00d4aa;margin-bottom:8px">' + __t('Found {n} device(s)', { n: all.length }) + '</div>';
     all.forEach(function(d) {
       const sn = d.mowerSn || d.chargerSn || d.sn || '?';
       const type = sn.startsWith('LFIC') ? 'Charger' : sn.startsWith('LFIN') ? 'Mower' : '?';
@@ -7169,18 +7292,18 @@ async function cloudImport() {
         if (rj.mapsImported) totalMaps += rj.mapsImported;
         if (rj.workRecordsImported) totalRecords += rj.workRecordsImported;
       }
-      else { failed++; result.innerHTML += '<div style="color:#ef4444;font-size:12px">Failed: ' + (rj.error || 'unknown') + '</div>'; }
+      else { failed++; result.innerHTML += '<div style="color:#ef4444;font-size:12px">' + __t('Failed: {msg}', { msg: (rj.error || __t('unknown')) }) + '</div>'; }
     }
 
     var pairCount = Object.keys(pairs).length - failed;
-    var msg = 'Imported ' + pairCount + ' device set(s)!';
-    if (totalMaps > 0) msg += ' (' + totalMaps + ' new map(s))';
-    if (totalRecords > 0) msg += ' (' + totalRecords + ' new record(s))';
+    var msg = __t('Imported {n} device set(s)!', { n: pairCount });
+    if (totalMaps > 0) msg += ' ' + __t('({n} new map(s))', { n: totalMaps });
+    if (totalRecords > 0) msg += ' ' + __t('({n} new record(s))', { n: totalRecords });
     result.innerHTML += '<div style="color:#00d4aa;font-size:13px;margin-top:8px;font-weight:600">' + msg + '</div>';
     result.innerHTML += '<div style="margin-top:8px;padding:8px 12px;background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.2);border-radius:6px;font-size:12px;color:#f59e0b">If the Novabot app is open, log out and log back in to see your devices.</div>';
     loadMyDevices();
   } catch(e) {
-    result.innerHTML = '<div style="color:#ef4444;font-size:13px">Failed: ' + e.message + '</div>';
+    result.innerHTML = '<div style="color:#ef4444;font-size:13px">' + __t('Failed: {msg}', { msg: e.message }) + '</div>';
   }
   btn.disabled = false;
   btn.textContent = 'Connect & Import';
@@ -7209,7 +7332,7 @@ async function firstTimeCloudImport() {
     }
 
     const all = loginData.rawList || [];
-    result.innerHTML = '<p style="color:#00d4aa;font-size:12px">Found ' + all.length + ' device(s). Creating account...</p>';
+    result.innerHTML = '<p style="color:#00d4aa;font-size:12px">' + __t('Found {n} device(s). Creating account...', { n: all.length }) + '</p>';
     btn.textContent = 'Importing...';
 
     // Always create user account (even if no devices found)
@@ -7224,7 +7347,7 @@ async function firstTimeCloudImport() {
       }
     } catch(accountErr) {
       console.error('Account create failed:', accountErr);
-      result.innerHTML += '<p style="color:#ef4444;font-size:11px">Account creation error: ' + accountErr.message + '</p>';
+      result.innerHTML += '<p style="color:#ef4444;font-size:11px">' + __t('Account creation error: {msg}', { msg: accountErr.message }) + '</p>';
     }
 
     var totalMapsSetup = 0;
@@ -7261,15 +7384,16 @@ async function firstTimeCloudImport() {
       if (applyData.chargerGpsImported) chargerGps = true;
     }
 
-    var mapInfo = '';
+    var doneMsg;
     if (totalMapsSetup > 0) {
-      mapInfo = ' + ' + totalMapsSetup + ' map area(s)';
-      if (chargerGps) mapInfo += ' + charger GPS';
+      doneMsg = chargerGps
+        ? __t('Setup complete! {n} device(s) + {maps} map area(s) + charger GPS imported.', { n: all.length, maps: totalMapsSetup })
+        : __t('Setup complete! {n} device(s) + {maps} map area(s) imported.', { n: all.length, maps: totalMapsSetup });
     } else {
-      mapInfo = ' (no maps found on cloud)';
+      doneMsg = __t('Setup complete! {n} device(s) (no maps found on cloud) imported.', { n: all.length });
     }
-    result.innerHTML += '<p style="color:#00d4aa;font-size:13px;font-weight:600">Setup complete! ' + all.length + ' device(s)' + mapInfo + ' imported.</p>';
-    result.innerHTML += '<div style="margin-top:8px;padding:8px 12px;background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.2);border-radius:6px;font-size:12px;color:#f59e0b">Open the Novabot app and log in with <b>' + email + '</b> to see your devices.</div>';
+    result.innerHTML += '<p style="color:#00d4aa;font-size:13px;font-weight:600">' + doneMsg + '</p>';
+    result.innerHTML += '<div style="margin-top:8px;padding:8px 12px;background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.2);border-radius:6px;font-size:12px;color:#f59e0b">' + __t('Open the Novabot app and log in with <b>{email}</b> to see your devices.', { email: email }) + '</div>';
     btn.textContent = 'Done!';
 
     // Auto-login met de zojuist aangemaakte credentials
@@ -7292,7 +7416,7 @@ async function firstTimeCloudImport() {
     // Fallback: reload naar login scherm
     setTimeout(() => location.reload(), 2000);
   } catch(e) {
-    result.innerHTML = '<p style="color:#ef4444;font-size:12px">Failed: ' + e.message + '</p>';
+    result.innerHTML = '<p style="color:#ef4444;font-size:12px">' + __t('Failed: {msg}', { msg: e.message }) + '</p>';
     btn.disabled = false; btn.textContent = 'Connect & Import from Cloud';
   }
 }
@@ -7300,7 +7424,7 @@ async function firstTimeCloudImport() {
 async function skipSetup() {
   try {
     await fetch('/api/setup/skip', {method:'POST'});
-    await modalAlert('Account Created', 'Email: <b>admin@local</b><br>Password: <b>admin</b>');
+    await modalAlert('Account Created', __t('Email: <b>{email}</b><br>Password: <b>{pass}</b>', { email: 'admin@local', pass: 'admin' }));
     location.reload();
   } catch(e) { modalAlert('Failed', e.message); }
 }
@@ -7316,7 +7440,7 @@ function loadRelayStatus() {
       document.getElementById('relayUrl').value = d.url;
       document.getElementById('relayToggle').textContent = 'Stop Sharing';
       document.getElementById('relayToggle').style.background = '#ef4444';
-      document.getElementById('relayStatus').textContent = 'Sharing active — logs are being sent to ' + d.url;
+      document.getElementById('relayStatus').textContent = __t('Sharing active: logs are being sent to {url}', { url: d.url });
       document.getElementById('relayStatus').style.color = '#22c55e';
     }
   }).catch(function(){});
@@ -7472,8 +7596,8 @@ async function rsOpRefresh() {
     var bg = isActive ? "rgba(34,197,94,.08)" : "rgba(168,85,247,.06)";
     var nameColor = isActive ? "#bbf7d0" : "#e9d5ff";
     var subline = isActive
-      ? ("Session active since " + new Date(activeSet[snEsc].startedAt).toLocaleTimeString())
-      : ("Waiting since " + t);
+      ? __t("Session active since {time}", { time: new Date(activeSet[snEsc].startedAt).toLocaleTimeString() })
+      : __t("Waiting since {time}", { time: t });
     var badge = isActive
       ? "<span style=\\"display:inline-block;padding:2px 8px;margin-left:8px;border-radius:999px;background:#16a34a;color:#fff;font-size:10px;font-weight:700;letter-spacing:.05em\\">CONNECTED</span>"
       : "";
@@ -7513,17 +7637,17 @@ async function rsOpConnect() {
   // the approval. Track it to tell "declined/timed out" apart from a normal
   // session close.
   var approved = false;
-  term.write("\\x1b[33m\\u23f3 Waiting for the user to approve this session\\u2026\\x1b[0m\\r\\n");
+  term.write("\\x1b[33m\\u23f3 " + __t("Waiting for the user to approve this session") + "\\u2026\\x1b[0m\\r\\n");
   ws.onopen = function() { rsOpRefresh(); };
   ws.onmessage = function(ev) {
-    if (!approved) { approved = true; term.write("\\x1b[32m\\u2713 Approved \\u2014 session is live.\\x1b[0m\\r\\n"); }
+    if (!approved) { approved = true; term.write("\\x1b[32m\\u2713 " + __t("Approved: session is live.") + "\\x1b[0m\\r\\n"); }
     if (typeof ev.data === "string") term.write(ev.data);
     else term.write(new Uint8Array(ev.data));
   };
   ws.onclose = function() {
     term.write(approved
-      ? "\\r\\n[session closed]"
-      : "\\r\\n\\x1b[31m\\u2717 No approval received \\u2014 the user declined or the request timed out.\\x1b[0m");
+      ? "\\r\\n[" + __t("session closed") + "]"
+      : "\\r\\n\\x1b[31m\\u2717 " + __t("No approval received: the user declined or the request timed out.") + "\\x1b[0m");
     rsOpCurrentSn = null; rsOpRefresh();
   };
   term.onData(function(d) { if (ws.readyState === 1) ws.send(d); });
@@ -7558,10 +7682,10 @@ function toggleRelay() {
           _relayActive = true;
           btn.textContent = 'Stop Sharing';
           btn.style.background = '#ef4444';
-          status.textContent = 'Sharing active — logs are being sent to ' + url;
+          status.textContent = __t('Sharing active: logs are being sent to {url}', { url: url });
           status.style.color = '#22c55e';
         } else {
-          status.textContent = 'Failed: ' + (r.error || 'unknown');
+          status.textContent = __t('Failed: {msg}', { msg: (r.error || __t('unknown')) });
           status.style.color = '#ef4444';
         }
       });
@@ -7590,7 +7714,7 @@ function refreshRemoteDevices() {
       container.innerHTML = '';
       return;
     }
-    devInfo.innerHTML = '<span style="color:#22c55e;font-size:12px">' + devices.length + ' device(s) sharing logs</span>';
+    devInfo.innerHTML = '<span style="color:#22c55e;font-size:12px">' + __t('{n} device(s) sharing logs', { n: devices.length }) + '</span>';
     container.innerHTML = '';
     devices.forEach(function(dev) {
       var btn = document.createElement('button');
@@ -7711,7 +7835,7 @@ function clearRemoteLogs() {
 }
 
 async function factoryReset() {
-  var ok = await modalConfirm('Factory Reset', 'This will <b>permanently delete</b> all data:<br><br>&#8226; Your account<br>&#8226; All devices &amp; pairings<br>&#8226; All maps<br>&#8226; Schedules &amp; settings<br><br>This action <b>cannot be undone</b>.');
+  var ok = await modalConfirm('Factory Reset', __t('This will <b>permanently delete</b> all data:<br><br>&#8226; Your account<br>&#8226; All devices &amp; pairings<br>&#8226; All maps<br>&#8226; Schedules &amp; settings<br><br>This action <b>cannot be undone</b>.'));
   if (!ok) return;
   try {
     const r = await api('/factory-reset', 'POST');

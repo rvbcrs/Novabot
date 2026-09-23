@@ -7,6 +7,7 @@
 // auto-recovery monitor below. The safety classification + decision logic lives
 // (dependency-free + unit-tested) in softRestartPolicy.ts.
 import { deviceCache } from '../mqtt/sensorData.js';
+import { translator, type Translate } from './serverText.js';
 import { publishToDevice, getNextCmdNum } from '../mqtt/mapSync.js';
 import {
   isBusyWorkStatus,
@@ -18,10 +19,10 @@ import {
 /** Null when a soft restart is safe (idle/charging/stopped); otherwise a human
  *  reason string. The hard "never while mowing" gate, shared by the user
  *  endpoint and the auto-recovery monitor. */
-export function softRestartBlockedReason(sn: string): string | null {
+export function softRestartBlockedReason(sn: string, T: Translate = translator('en')): string | null {
   const raw = deviceCache.get(sn)?.get('work_status');
   if (isBusyWorkStatus(raw)) {
-    return `mower is busy (work_status ${raw}); soft restart is only allowed when idle or charging`;
+    return T`de maaier is bezig (work_status ${raw}); een soft restart mag alleen als hij stilstaat of laadt`;
   }
   return null;
 }

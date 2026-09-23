@@ -3,7 +3,12 @@
  * 1-op-1 gespiegeld naar app/src/utils/mapEditGeometry.ts (geen imports!).
  * Alle afstanden in meters, lokale frame (charger = 0,0).
  * Polygonen zijn OPEN ringen (sluitend segment impliciet; geen gedupliceerd sluitpunt).
+ *
+ * Uitzondering op "geen imports": de validatieteksten gaan via de
+ * server-vertaallaag, want de server stuurt ze naar dashboard en app.
  */
+import { translator, type Translate } from '../services/serverText.js';
+
 export interface XY { x: number; y: number }
 
 /** Shoelace-oppervlak, altijd positief (winding-onafhankelijk). */
@@ -193,17 +198,22 @@ export const DISPLACEMENT_WARN_M = 1.0;
  * wél beschikbaar als containment-context voor obstacles. `undefined` = valideer
  * alles (backwards-compat).
  */
-export function validateMapSet(input: MapSetInput, originals: Map<string, XY[]>, editedCanonicals?: Set<string>): ValidationResult {
+export function validateMapSet(
+  input: MapSetInput,
+  originals: Map<string, XY[]>,
+  editedCanonicals?: Set<string>,
+  T: Translate = translator('en'),
+): ValidationResult {
   const errors: ValidationIssue[] = [];
   const warnings: ValidationIssue[] = [];
   const isEdited = (canonical: string) => !editedCanonicals || editedCanonicals.has(canonical);
   const checkCommon = (canonical: string, pts: XY[], minArea: number) => {
-    if (pts.length < 3) { errors.push({ canonical, code: 'too_few_points', message: 'Minimaal 3 punten nodig' }); return false; }
-    if (selfIntersects(pts)) { errors.push({ canonical, code: 'self_intersect', message: 'Lijn kruist zichzelf' }); return false; }
-    if (polygonArea(pts) < minArea) { errors.push({ canonical, code: 'too_small', message: `Oppervlak kleiner dan ${minArea} m²` }); return false; }
+    if (pts.length < 3) { errors.push({ canonical, code: 'too_few_points', message: T`Minimaal 3 punten nodig` }); return false; }
+    if (selfIntersects(pts)) { errors.push({ canonical, code: 'self_intersect', message: T`Lijn kruist zichzelf` }); return false; }
+    if (polygonArea(pts) < minArea) { errors.push({ canonical, code: 'too_small', message: T`Oppervlak kleiner dan ${minArea} m²` }); return false; }
     const orig = originals.get(canonical);
     if (orig && maxDisplacement(pts, orig) > DISPLACEMENT_WARN_M) {
-      warnings.push({ canonical, code: 'large_displacement', message: `Verschuiving groter dan ${DISPLACEMENT_WARN_M} m — buiten ooit-gescand gebied is nav-gedrag onbewezen` });
+      warnings.push({ canonical, code: 'large_displacement', message: T`Verschuiving groter dan ${DISPLACEMENT_WARN_M} m: buiten ooit gescand gebied is het navigatiegedrag onbewezen` });
     }
     return true;
   };
@@ -215,9 +225,9 @@ export function validateMapSet(input: MapSetInput, originals: Map<string, XY[]>,
     if (!checkCommon(o.canonical, o.points, MIN_OBSTACLE_AREA_M2)) continue;
     const parent = input.work.find(w => w.canonical === o.parentMap);
     if (parent === undefined) {
-      errors.push({ canonical: o.canonical, code: 'unknown_parent', message: `Onbekende werkkaart ${o.parentMap}` });
+      errors.push({ canonical: o.canonical, code: 'unknown_parent', message: T`Onbekende werkkaart ${o.parentMap}` });
     } else if (!polygonContains(parent.points, o.points)) {
-      errors.push({ canonical: o.canonical, code: 'outside_work', message: `Obstacle steekt buiten ${o.parentMap}` });
+      errors.push({ canonical: o.canonical, code: 'outside_work', message: T`Obstakel steekt buiten ${o.parentMap}` });
     }
   }
   return { ok: errors.length === 0, errors, warnings };

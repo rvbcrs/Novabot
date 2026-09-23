@@ -18,8 +18,12 @@ import {
   AutoMapSession, createSession, updatePhase, getActiveSession, getLatestSession,
 } from '../db/repositories/autoMapSessions.js';
 import { mapRepo } from '../db/repositories/maps.js';
+import { translator, type Translate } from './serverText.js';
 
 const TAG = '[autoMap]';
+/** Opgeslagen als sessie-foutcode (de kolom houdt codes), maar dit is de
+ *  enige die als zin wordt getoond: getStatus() vertaalt hem voor de lezer. */
+const NO_EDGE_AT_START = 'geen grasrand gevonden op startpunt';
 const RESPOND_TIMEOUT_MS = 20_000;
 const RECHARGE_TIMEOUT_MS = 30_000;
 const SAVE_TOTAL_DELAY_MS = 600;   // ≥600 ms tussen save_recharge_pos_respond en save_map type:1
@@ -233,7 +237,7 @@ export async function startAutoMap(
         return;
       }
       if (code === 0) { finish('done', { result_code: 0 }); return; }
-      const error = code === 1 ? 'geen grasrand gevonden op startpunt'
+      const error = code === 1 ? NO_EDGE_AT_START
         : String(st.name ?? `code_${code}`);
       if (opts.mode === 'record') {
         if (runState === 'finishing') { cancelRequested = true; return; }
@@ -309,8 +313,10 @@ export function stopAutoMap(sn: string): void {
   }
 }
 
-export function getStatus(sn: string): AutoMapSession | undefined {
-  return getActiveSession(sn) ?? getLatestSession(sn);
+export function getStatus(sn: string, T: Translate = translator('en')): AutoMapSession | undefined {
+  const s = getActiveSession(sn) ?? getLatestSession(sn);
+  if (s?.error === NO_EDGE_AT_START) return { ...s, error: T('geen grasrand gevonden op startpunt') };
+  return s;
 }
 
 export function acceptProposal(sn: string): boolean {

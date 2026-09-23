@@ -1,10 +1,14 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { db } from '../../db/database.js';
-import { diagnoseConnection, type DiagnosisProbes } from '../../services/connectionDiagnosis.js';
+import { diagnoseConnection as diagnoseIn, type DiagnosisProbes } from '../../services/connectionDiagnosis.js';
+
+// These tests read the Dutch wording; without a language the server now answers in English.
+const diagnoseConnection: typeof diagnoseIn = (sn, now, input) => diagnoseIn(sn, now, { lang: 'nl', ...input });
 import { connectionEventRepo, deviceRepo, dockSamplesRepo } from '../../db/repositories/index.js';
 import { serverIpv4 } from '../../services/reachability.js';
 import { factoryOuis, scanLan, bleToWifiMac, rivalBrokers } from '../../services/lanScan.js';
 import { inspectContainerNetwork } from '../../services/containerNetwork.js';
+import { translator } from '../../services/serverText.js';
 
 const MOWER = 'LFIN2230700238';
 const CHARGER = 'LFIC1230700004';
@@ -447,9 +451,10 @@ describe('lan scan', () => {
     // nothing by construction. Reporting that as "no devices" would send
     // someone to check power and wifi that are both fine.
     db.prepare('DELETE FROM device_factory').run();
-    const r = await scanLan();
+    const r = await scanLan(translator('nl'));
     expect(r.canSeeLan).toBe(false);
     expect(r.reason).toContain('fabriekstabel');
+    expect((await scanLan()).reason).toContain('factory table');
     expect(r.knownOuis).toBe(0);
   });
 
@@ -1068,8 +1073,14 @@ describe('the explanation follows the requested language', () => {
   const ev = (d: Awaited<ReturnType<typeof run>>, id: string) =>
     d.steps.find(s => s.id === id)!.evidence;
 
-  it('writes Dutch by default', async () => {
+  it('writes English when no language is given', async () => {
     const d = await run();
+    expect(ev(d, 'dns')).toContain('points at this server');
+    expect(ev(d, 'binding')).toBe('no pairing in equipment');
+  });
+
+  it('writes Dutch only when asked', async () => {
+    const d = await run('nl');
     expect(ev(d, 'dns')).toContain('wijst naar deze server');
     expect(ev(d, 'binding')).toBe('geen koppeling in equipment');
   });
@@ -1088,9 +1099,9 @@ describe('the explanation follows the requested language', () => {
     expect(ev(await run('fr'), 'binding')).toBe('aucun appairage dans equipment');
   });
 
-  it('takes a browser tag, and an unknown one stays Dutch', async () => {
-    expect(ev(await run('en-GB'), 'binding')).toBe('no pairing in equipment');
-    expect(ev(await run('klingon'), 'binding')).toBe('geen koppeling in equipment');
+  it('takes a browser tag, and an unknown one becomes English', async () => {
+    expect(ev(await run('nl-NL,nl;q=0.9'), 'binding')).toBe('geen koppeling in equipment');
+    expect(ev(await run('klingon'), 'binding')).toBe('no pairing in equipment');
   });
 });
 

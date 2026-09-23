@@ -17,6 +17,7 @@ import net from 'net';
 import http from 'http';
 import { db } from '../db/database.js';
 import { serverIpv4, lanIpv4 } from './reachability.js';
+import { translator, type Translate } from './serverText.js';
 
 const MAC_RE = /([0-9a-f]{1,2}:){5}[0-9a-f]{1,2}/i;
 const NEIGH_LINE = /^\s*\(?([\d.]+)\)?\s.*?(([0-9a-f]{1,2}:){5}[0-9a-f]{1,2})/i;
@@ -243,12 +244,13 @@ function looksLikeContainerBridge(ip: string): boolean {
   return a === 172 && b >= 16 && b <= 31;
 }
 
-export async function scanLan(): Promise<LanScanResult> {
+/** `reason` is a phrase in the reader's language (T); the diagnosis embeds it. */
+export async function scanLan(T: Translate = translator('en')): Promise<LanScanResult> {
   const ips = serverIpv4();
   const lan = ips.find(ip => !looksLikeContainerBridge(ip)) ?? ips[0] ?? null;
   if (!lan) {
     return {
-      canSeeLan: false, reason: 'geen netwerkadres op deze server',
+      canSeeLan: false, reason: T`geen netwerkadres op deze server`,
       subnet: null, found: [], neighbourCount: 0, knownOuis: 0,
     };
   }
@@ -260,7 +262,7 @@ export async function scanLan(): Promise<LanScanResult> {
   if (ouis.size === 0) {
     return {
       canSeeLan: false,
-      reason: 'de fabriekstabel met MAC-prefixen is leeg, dus apparaten zijn niet te herkennen',
+      reason: T`de fabriekstabel met MAC-prefixen is leeg, dus apparaten zijn niet te herkennen`,
       subnet: lan.split('.').slice(0, 3).join('.'),
       found: [], neighbourCount: 0, knownOuis: 0,
     };
@@ -274,8 +276,8 @@ export async function scanLan(): Promise<LanScanResult> {
     return {
       canSeeLan: false,
       reason: looksLikeContainerBridge(lan)
-        ? 'deze container zit achter een Docker-bridge en kan het thuisnetwerk niet inzien'
-        : 'geen enkel apparaat zichtbaar op het lokale netwerk',
+        ? T`deze container zit achter een Docker-bridge en kan het thuisnetwerk niet inzien`
+        : T`geen enkel apparaat zichtbaar op het lokale netwerk`,
       subnet,
       found: [],
       neighbourCount: 0,

@@ -22,6 +22,7 @@ import type { MapRow } from '../db/repositories/maps.js';
 import { pointInPolygon, type XY } from '../maps/editGeometry.js';
 import { getPolygonAnchor } from './anchor.js';
 import { getDockPose } from '../mqtt/sensorData.js';
+import { translator, type Translate } from './serverText.js';
 
 /** Een eindpunt dat hier vlakbij ligt hoort bij het laadstation, niet bij een gebied. */
 const DOCK_RADIUS_M = 2.5;
@@ -231,20 +232,21 @@ function typedCanonical(
   points: XY[],
   slots: WorkSlot[],
   dock: XY | null,
+  T: Translate,
 ): NamingResult | null {
   if (mapType === 'obstacle') {
     const m = typed.match(/^map(\d+)_(\d+)_obstacle$/);
     if (!m) return null;
     const slot = parseInt(m[1], 10);
-    if (!hasSlot(slots, slot)) return { ok: false, error: `map${slot} does not exist.` };
-    if (mapRepo.findBySnAndCanonical(sn, typed)) return { ok: false, error: `${typed} already exists.` };
+    if (!hasSlot(slots, slot)) return { ok: false, error: T`map${slot} bestaat niet.` };
+    if (mapRepo.findBySnAndCanonical(sn, typed)) return { ok: false, error: T`${typed} bestaat al.` };
     return { ok: true, canonical: typed };
   }
 
   const charge = typed.match(/^map(\d+)tocharge_unicom$/);
   if (charge) {
     const slot = parseInt(charge[1], 10);
-    if (!hasSlot(slots, slot)) return { ok: false, error: `map${slot} does not exist.` };
+    if (!hasSlot(slots, slot)) return { ok: false, error: T`map${slot} bestaat niet.` };
     // Ligt een uiteinde aantoonbaar bij het station, dan gaat dat voorop; anders
     // geldt de getekende volgorde (eerste punt = station, zoals de firmware).
     const start = points[0];
@@ -257,11 +259,11 @@ function typedCanonical(
   if (link) {
     const from = parseInt(link[1], 10);
     const to = parseInt(link[2], 10);
-    if (from === to) return { ok: false, error: `A channel cannot connect map${from} to itself.` };
+    if (from === to) return { ok: false, error: T`Een kanaal kan map${from} niet met zichzelf verbinden.` };
     for (const n of [from, to]) {
-      if (!hasSlot(slots, n)) return { ok: false, error: `map${n} does not exist.` };
+      if (!hasSlot(slots, n)) return { ok: false, error: T`map${n} bestaat niet.` };
     }
-    if (mapRepo.findBySnAndCanonical(sn, typed)) return { ok: false, error: `${typed} already exists.` };
+    if (mapRepo.findBySnAndCanonical(sn, typed)) return { ok: false, error: T`${typed} bestaat al.` };
     return { ok: true, canonical: typed };
   }
   return null;
@@ -290,6 +292,7 @@ export function canonicalForDrawnMap(
   mapType: 'work' | 'obstacle' | 'unicom',
   points: XY[],
   requestedName?: string | null,
+  T: Translate = translator('en'),
 ): NamingResult {
   const typed = requestedName?.trim() ?? '';
 
@@ -298,7 +301,7 @@ export function canonicalForDrawnMap(
     if (m) {
       const slot = parseInt(m[1], 10);
       const existing = mapRepo.findBySnAndCanonical(sn, `map${slot}`);
-      if (existing) return { ok: false, error: `map${slot} already exists.` };
+      if (existing) return { ok: false, error: T`map${slot} bestaat al.` };
       return { ok: true, canonical: `map${slot}` };
     }
     return { ok: true, canonical: `map${nextFreeWorkSlot(sn)}` };
@@ -306,12 +309,12 @@ export function canonicalForDrawnMap(
 
   const slots = workSlots(sn);
   if (slots.length === 0) {
-    return { ok: false, error: 'There is no work area to attach this to yet. Draw a work area first.' };
+    return { ok: false, error: T`Er is nog geen werkgebied om dit aan te koppelen. Teken eerst een werkgebied.` };
   }
   const dock = mapType === 'unicom' ? dockPoint(sn) : null;
 
   if (typed) {
-    const explicit = typedCanonical(sn, mapType, typed, points, slots, dock);
+    const explicit = typedCanonical(sn, mapType, typed, points, slots, dock, T);
     if (explicit) return explicit;
   }
 
@@ -331,7 +334,7 @@ export function canonicalForDrawnMap(
     // dan hangen we het aan het dichtstbijzijnde gebied.
     const slot = slotAt(centre, slots) ?? nearestSlot(centre, slots);
     if (slot === null) {
-      return { ok: false, error: 'There is no work area to attach this obstacle to.' };
+      return { ok: false, error: T`Er is geen werkgebied om dit obstakel aan te koppelen.` };
     }
     return { ok: true, canonical: `map${slot}_${nextObstacleIndex(sn, slot)}_obstacle` };
   }
@@ -345,12 +348,12 @@ export function canonicalForDrawnMap(
   const endDock = isDock(end);
 
   if (startDock && endDock) {
-    return { ok: false, error: 'Both ends lie on the charging station. Draw the channel to a work area.' };
+    return { ok: false, error: T`Beide uiteinden liggen op het laadstation. Teken het kanaal naar een werkgebied.` };
   }
   if (startDock || endDock) {
     const slot = slotAt(startDock ? end : start, slots);
     if (slot === null) {
-      return { ok: false, error: 'The other end does not lie in a work area. Let the channel end inside an area.' };
+      return { ok: false, error: T`Het andere uiteinde ligt niet in een werkgebied. Laat het kanaal binnen een gebied eindigen.` };
     }
     return toChargeResult(sn, slot, points, endDock, dock);
   }
@@ -364,12 +367,11 @@ export function canonicalForDrawnMap(
   if (startSlot === null || endSlot === null) {
     return {
       ok: false,
-      error: 'A channel must start in one work area and end in another; one end now lies outside every area.',
+      error: T`Een kanaal moet in het ene werkgebied beginnen en in een ander eindigen; een uiteinde ligt nu buiten elk gebied.`,
     };
   }
   return {
     ok: false,
-    error: `Both ends lie in map${startSlot}; a channel connects two different areas. `
-      + 'To connect the charging station, start the channel at the station or type the name (e.g. map0tocharge_unicom).',
+    error: T`Beide uiteinden liggen in map${startSlot}; een kanaal verbindt twee verschillende gebieden. Om het laadstation te verbinden: begin het kanaal bij het station of typ de naam (bv. map0tocharge_unicom).`,
   };
 }

@@ -272,6 +272,11 @@ describe('POST /reanchor/:sn action:verify — manual backup (lifecycle-gated)',
     const s = await request(server).get(`/api/dashboard/reanchor/${SN}/status`);
     expect(s.body.status.phase).toBe('error');
     expect(s.body.status.error).toBe('verify_failed');
+    // The stored message is rendered per reader: English by default, Dutch on request.
+    expect(s.body.status.message).toMatch(/^Out of tolerance/);
+    const nl = await request(server).get(`/api/dashboard/reanchor/${SN}/status?lang=nl`);
+    expect(nl.body.status.message).toMatch(/^Buiten tolerantie/);
+    expect(nl.body.status.msgKey).toBe('reanchorMsgErrVerifyFailed');
   });
 
   it('verifies against the DOCK ANCHOR, not (0,0) — known-good LFIN1231000211 frame', async () => {
