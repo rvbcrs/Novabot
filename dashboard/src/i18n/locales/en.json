@@ -897,7 +897,8 @@
       "token": "Credit token (via OpenNova)",
       "save": "Save",
       "clear": "Remove",
-      "privacy": "Note: a render sends an aerial photo of your garden to OpenAI. Only do this if you are comfortable with that."
+      "privacy": "Note: a render sends an aerial photo of your garden to OpenAI. Only do this if you are comfortable with that.",
+      "credits": "{{n}} renders left"
     }
   },
   "ai": {

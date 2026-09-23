@@ -1294,7 +1294,7 @@ export async function generateGardenRender(sn: string, source?: 'aerial' | 'dron
   return { ok: res.ok && body.ok !== false, error: body.error };
 }
 
-export async function fetchRenderSettings(): Promise<{ mode: string; model: string }> {
+export async function fetchRenderSettings(): Promise<{ mode: string; model: string; credits: { credits: number; used: number } | null }> {
   return (await get(`${BASE}/render-settings`)).json();
 }
 

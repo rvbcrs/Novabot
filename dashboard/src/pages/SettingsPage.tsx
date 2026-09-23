@@ -882,11 +882,12 @@ function GardenRenderCard() {
   const { t } = useTranslation();
   const [mode, setMode] = useState<string>('none');
   const [model, setModel] = useState('');
+  const [credits, setCredits] = useState<number | null>(null);
   const [key, setKey] = useState('');
   const [token, setToken] = useState('');
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => { fetchRenderSettings().then(r => { setMode(r.mode); setModel(r.model); }).catch(() => {}); }, []);
+  useEffect(() => { fetchRenderSettings().then(r => { setMode(r.mode); setModel(r.model); setCredits(r.credits?.credits ?? null); }).catch(() => {}); }, []);
 
   const save = async (body: { openaiKey?: string | null; relayToken?: string | null }) => {
     setSaving(true);
@@ -904,6 +905,7 @@ function GardenRenderCard() {
       help={t('settings.render.help', 'Maakt een 3D-plaatje van je eigen tuin uit de kaart van de maaier. Kost per render ongeveer 20 cent bij OpenAI.')}>
       <div className="text-xs text-gray-400 mb-3">
         {label}{model ? ` · ${model}` : ''}
+        {credits != null && ` · ${t('settings.render.credits', '{{n}} renders over', { n: credits })}`}
       </div>
       <div className="space-y-3">
         <div>

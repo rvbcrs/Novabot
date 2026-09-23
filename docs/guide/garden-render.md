@@ -44,7 +44,12 @@ Under **Settings → 3D render** you provide one of:
   account with a small prepaid balance is enough. Expect roughly 20 cents per
   picture, so about 40 cents per run.
 - **A credit token.** A token from the OpenNova project, for people who would
-  rather not create an API account.
+  rather not create an API account. Your server then posts the composite to the
+  project's relay, which spends one credit per picture and forwards the call
+  with its own key. Settings shows how many renders the token has left. Tokens
+  are handed out by the maintainer (sponsors and donors); see
+  [`render-relay/`](https://github.com/rvbcrs/Novabot/tree/master/render-relay)
+  if you want to run a relay of your own.
 
 The key is stored on your own server and is never shown again after you save it.
 `RENDER_OPENAI_KEY` (or `RENDER_RELAY_TOKEN`) in the environment takes

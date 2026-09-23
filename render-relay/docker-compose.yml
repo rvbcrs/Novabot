@@ -1,0 +1,13 @@
+services:
+  render-relay:
+    build: .
+    image: rvbcrs/opennova-render-relay:latest
+    container_name: opennova-render-relay
+    restart: unless-stopped
+    ports: ["3334:3334"]
+    volumes: ["/DATA/AppData/opennova-render-relay:/data"]
+    environment:
+      OPENAI_API_KEY: "${OPENAI_API_KEY:?set it in .env}"
+      ADMIN_KEY: "${ADMIN_KEY:?set it in .env}"
+      RENDER_MODEL: "gpt-image-2.5-sunburst"
+      DAILY_TOTAL_CAP: "200"

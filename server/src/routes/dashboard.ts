@@ -4000,7 +4000,11 @@ dashboardRouter.post('/render/:sn', async (req: Request, res: Response) => {
 // GET/PUT /api/dashboard/render-settings — the key or relay token (never echoed).
 dashboardRouter.get('/render-settings', async (_req: Request, res: Response) => {
   const gr = await import('../services/gardenRender.js');
-  res.json({ mode: gr.getCredentials().mode, model: process.env.RENDER_MODEL ?? 'gpt-image-2.5-sunburst' });
+  res.json({
+    mode: gr.getCredentials().mode,
+    model: process.env.RENDER_MODEL ?? 'gpt-image-2.5-sunburst',
+    credits: await gr.relayCredits(),
+  });
 });
 dashboardRouter.put('/render-settings', async (req: Request, res: Response) => {
   const gr = await import('../services/gardenRender.js');

@@ -415,6 +415,25 @@ async function callImageModel(png: Buffer, prompt: string, creds: RenderCredenti
   return Buffer.from(b64, 'base64');
 }
 
+/** How many renders the relay token still has. null when not on a token, or
+ *  when the relay cannot be reached — never a reason to block anything. */
+export async function relayCredits(): Promise<{ credits: number; used: number } | null> {
+  const creds = getCredentials();
+  if (creds.mode !== 'relay') return null;
+  try {
+    const base = RELAY_URL.replace(/\/render\/?$/, '');
+    const r = await fetch(`${base}/credits`, {
+      headers: { Authorization: `Bearer ${creds.token}` },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!r.ok) return null;
+    const b = await r.json() as { credits?: number; used?: number };
+    return Number.isFinite(b.credits) ? { credits: b.credits!, used: b.used ?? 0 } : null;
+  } catch {
+    return null;
+  }
+}
+
 export interface GenerateResult { ok: true; meta: RenderMeta }
 
 /** Build the composite and render both variants. Throws with a readable reason. */

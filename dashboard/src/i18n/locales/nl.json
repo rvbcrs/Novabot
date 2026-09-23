@@ -977,7 +977,8 @@
       "token": "Tegoed-token (via OpenNova)",
       "save": "Opslaan",
       "clear": "Verwijderen",
-      "privacy": "Let op: bij een render gaat een luchtfoto van je tuin naar OpenAI. Doe dit alleen als je dat goed vindt."
+      "privacy": "Let op: bij een render gaat een luchtfoto van je tuin naar OpenAI. Doe dit alleen als je dat goed vindt.",
+      "credits": "{{n}} renders over"
     }
   },
   "ai": {
