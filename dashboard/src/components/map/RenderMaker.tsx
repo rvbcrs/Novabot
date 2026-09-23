@@ -62,7 +62,7 @@ export function RenderMaker({ open, hasDronePhoto, existing, initialFraming, onC
         <div className="flex gap-2 mb-5">
           <Choice active={framing === 'flat'} onClick={() => setFraming('flat')} icon={Navigation}
             title={t('map.render.flat', 'Bovenaf')}
-            desc={t('map.render.flatDesc', 'Ligt op de kaart. Zones, maaier en banen erbovenop.')} />
+            desc={t('map.render.flatDesc', 'Beslaat wat je nu op de kaart ziet. Zones, maaier en banen erbovenop.')} />
           <Choice active={framing === 'iso'} onClick={() => setFraming('iso')} icon={Box}
             title={t('map.render.iso', 'Schuin')}
             desc={t('map.render.isoDesc', '3D-plaatje van opzij, met maaier en banen erop.')} />

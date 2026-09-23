@@ -12,7 +12,7 @@ import path from 'node:path';
 vi.mock('../../routes/droneOverlay.js', () => ({ readMeta: () => null }));
 
 import {
-  applyHomography, compositeImage, compositePath, framingStatus, gardenBounds, invertHomography, isValidSn, readRenderMeta,
+  applyHomography, checkView, compositeImage, compositePath, framingStatus, gardenBounds, invertHomography, isValidSn, readRenderMeta,
   renderFile, renderPath, solveHomography, stitchAndCrop, tiltCamera, warpComposite, TILT_W, TILT_H, type BaseImage,
 } from '../../services/gardenRender.js';
 import fs from 'node:fs';
@@ -97,6 +97,23 @@ describe('gardenBounds', () => {
     // And the corners agree with it: north-east is maxX/maxY.
     expect(b.ne.lat).toBeGreaterThan(b.sw.lat);
     expect(b.ne.lng).toBeGreaterThan(b.sw.lng);
+  });
+
+  it('takes a requested view as the rectangle, with a matching local box', () => {
+    const view = { south: CHARGER.lat - 0.0002, west: CHARGER.lng - 0.0004, north: CHARGER.lat + 0.0002, east: CHARGER.lng + 0.0004 };
+    const b = gardenBounds(SN, 9, view)!;
+    expect(b.sw).toEqual({ lat: view.south, lng: view.west });
+    // The dock pose of the seed is (0,0), so the box is symmetric around it.
+    expect(b.localBox.minX).toBeCloseTo(-b.localBox.maxX, 6);
+    expect(b.localBox.maxY).toBeCloseTo(0.0002 * 111_260, -1);
+  });
+
+  it('refuses a view that does not hold the garden or is too big', () => {
+    const ok = { south: CHARGER.lat - 0.0002, west: CHARGER.lng - 0.0004, north: CHARGER.lat + 0.0002, east: CHARGER.lng + 0.0004 };
+    expect(checkView(SN, ok)).toEqual(ok);
+    expect(checkView(SN, { ...ok, south: CHARGER.lat + 0.0001 })).toBeUndefined();   // dock outside
+    expect(checkView(SN, { ...ok, north: CHARGER.lat + 0.01 })).toBeUndefined();      // > 250 m
+    expect(checkView(SN, { south: 'x' })).toBeUndefined();
   });
 
   it('returns null without a charger position', () => {

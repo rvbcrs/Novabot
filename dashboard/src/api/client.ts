@@ -1303,9 +1303,11 @@ export function gardenRenderImageUrl(sn: string, v: string, framing: GardenRende
 
 export async function generateGardenRender(
   sn: string, source?: 'aerial' | 'drone', framing?: 'iso' | 'flat',
+  /** The rectangle to render; the server falls back to the garden plus a margin. */
+  view?: { south: number; west: number; north: number; east: number },
 ): Promise<{ ok: boolean; error?: string }> {
   const res = await apiFetch(`${BASE}/render/${encodeURIComponent(sn)}`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source, framing }),
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source, framing, view }),
   });
   const body = await res.json().catch(() => ({})) as { ok?: boolean; error?: string };
   return { ok: res.ok && body.ok !== false, error: body.error };

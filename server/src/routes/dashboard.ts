@@ -3986,8 +3986,8 @@ dashboardRouter.post('/render/:sn', async (req: Request, res: Response) => {
   renderLocks.add(sn);
   try {
     const gr = await import('../services/gardenRender.js');
-    const body = req.body as { source?: 'aerial' | 'drone'; framing?: 'iso' | 'flat' };
-    const out = await gr.generateRenders(sn, { source: body?.source, framing: body?.framing });
+    const body = req.body as { source?: 'aerial' | 'drone'; framing?: 'iso' | 'flat'; view?: unknown };
+    const out = await gr.generateRenders(sn, { source: body?.source, framing: body?.framing, view: gr.checkView(sn, body?.view) });
     res.json(out);
   } catch (err) {
     const msg = (err as Error).message;

@@ -220,12 +220,46 @@ function pickTileSource(lat: number, lng: number): [string, TileSource] {
  *  of neighbour's garden in the render, and the zone is what people came for. */
 export interface LocalBox { minX: number; maxX: number; minY: number; maxY: number }
 
+/** A lat/lng rectangle the client asks for, e.g. what the map shows. */
+export interface ViewBounds { south: number; west: number; north: number; east: number }
+
+/** Largest view we render, per side: tiles, the model's resolution and the
+ *  point of a garden render all run out long before this. */
+const MAX_VIEW_M = 250;
+
+/** The view if it is a sane rectangle around this garden, else undefined. */
+export function checkView(sn: string, v: unknown): ViewBounds | undefined {
+  const o = v as Partial<ViewBounds> | null;
+  if (!o || ![o.south, o.west, o.north, o.east].every(n => typeof n === 'number' && Number.isFinite(n))) return undefined;
+  const view = o as ViewBounds;
+  const gps = mapRepo.getChargerGps(sn);
+  if (!gps || view.north <= view.south || view.east <= view.west) return undefined;
+  const hM = (view.north - view.south) * metersPerDegLat(gps.lat);
+  const wM = (view.east - view.west) * metersPerDegLng(gps.lat);
+  if (hM > MAX_VIEW_M || wM > MAX_VIEW_M) return undefined;
+  // It has to show the garden: the dock inside the rectangle.
+  if (gps.lat < view.south || gps.lat > view.north || gps.lng < view.west || gps.lng > view.east) return undefined;
+  return view;
+}
+
 export function gardenBounds(
-  sn: string, marginM = 9,
+  sn: string, marginM = 9, view?: ViewBounds,
 ): { sw: LatLng; ne: LatLng; origin: LatLng; pose: XY; localBox: LocalBox } | null {
   const gps = mapRepo.getChargerGps(sn);
   if (!gps) return null;
   const pose = dockPose(sn);
+  if (view) {
+    // The inverse of localToLatLng, so localBox and the corners stay one rectangle.
+    const toLocal = (lat: number, lng: number): XY => ({
+      x: (lng - gps.lng) * metersPerDegLng(gps.lat) + pose.x,
+      y: (lat - gps.lat) * metersPerDegLat(gps.lat) + pose.y,
+    });
+    const a = toLocal(view.south, view.west); const b = toLocal(view.north, view.east);
+    return {
+      sw: { lat: view.south, lng: view.west }, ne: { lat: view.north, lng: view.east }, origin: gps, pose,
+      localBox: { minX: a.x, minY: a.y, maxX: b.x, maxY: b.y },
+    };
+  }
   const pts: XY[] = [];
   for (const row of mapRepo.findByMowerSn(sn)) {
     if (!row.map_area) continue;
@@ -280,8 +314,8 @@ export async function stitchAndCrop(
 }
 
 /** Stitch satellite tiles covering the garden into one north-up image. */
-async function aerialBase(sn: string): Promise<BaseImage | null> {
-  const b = gardenBounds(sn);
+async function aerialBase(sn: string, view?: ViewBounds): Promise<BaseImage | null> {
+  const b = gardenBounds(sn, undefined, view);
   if (!b) return null;
   const [, src] = pickTileSource(b.origin.lat, b.origin.lng);
 
@@ -349,8 +383,8 @@ async function droneBase(sn: string): Promise<BaseImage | null> {
 }
 
 /** Everything a client needs to put a ground point on an angled render. */
-function tiltMeta(sn: string, base: BaseImage, h: Homography): NonNullable<RenderMeta['tilt']> {
-  const b = gardenBounds(sn)!;
+function tiltMeta(sn: string, base: BaseImage, h: Homography, view?: ViewBounds): NonNullable<RenderMeta['tilt']> {
+  const b = gardenBounds(sn, undefined, view)!;
   const local: Pt[] = [[b.localBox.minX, b.localBox.maxY], [b.localBox.maxX, b.localBox.maxY], [b.localBox.maxX, b.localBox.minY], [b.localBox.minX, b.localBox.minY]];
   const render = local.map(([x, y]) => {
     const [u, v] = base.project(localToLatLng({ x, y }, b.origin, b.pose));
@@ -364,12 +398,12 @@ function tiltMeta(sn: string, base: BaseImage, h: Homography): NonNullable<Rende
 
 /** The four ground corners of a base image, in the drone-overlay order. For a
  *  tile crop that is the bbox; for a drone photo it is its stored placement. */
-function baseCorners(sn: string, base: BaseImage): LatLng[] | null {
+function baseCorners(sn: string, base: BaseImage, view?: ViewBounds): LatLng[] | null {
   if (base.source === 'drone') {
     const meta = readMeta(sn);
     return meta?.placement?.corners ?? null;
   }
-  const b = gardenBounds(sn);
+  const b = gardenBounds(sn, undefined, view);
   if (!b) return null;
   return [
     { lat: b.ne.lat, lng: b.sw.lng },   // top-left
@@ -379,9 +413,9 @@ function baseCorners(sn: string, base: BaseImage): LatLng[] | null {
   ];
 }
 
-export async function baseImage(sn: string, prefer: BaseSource): Promise<BaseImage | null> {
-  if (prefer === 'drone') return (await droneBase(sn)) ?? (await aerialBase(sn));
-  return (await aerialBase(sn)) ?? (await droneBase(sn));
+export async function baseImage(sn: string, prefer: BaseSource, view?: ViewBounds): Promise<BaseImage | null> {
+  if (prefer === 'drone') return (await droneBase(sn)) ?? (await aerialBase(sn, view));
+  return (await aerialBase(sn, view)) ?? (await droneBase(sn));
 }
 
 // ── Composite ───────────────────────────────────────────────────────────────
@@ -694,7 +728,7 @@ export interface GenerateResult { ok: true; meta: RenderMeta }
 /** Build the composite and render both variants. Throws with a readable reason. */
 export async function generateRenders(
   sn: string,
-  opts: { source?: BaseSource; framing?: Framing } = {},
+  opts: { source?: BaseSource; framing?: Framing; view?: ViewBounds } = {},
 ): Promise<GenerateResult> {
   const framing: Framing = opts.framing ?? 'iso';
   const { emitRenderProgress } = await import('../dashboard/socketHandler.js');
@@ -707,7 +741,9 @@ export async function generateRenders(
   const creds = getCredentials();
   if (creds.mode === 'none') fail('failed', 'no_credentials');
   emitRenderProgress({ sn, phase: 'base', step: 0, steps });
-  const base = await baseImage(sn, opts.source ?? 'aerial');
+  const base = await baseImage(sn, opts.source ?? 'aerial', opts.view);
+  // A drone photo has its own extent; the view only shapes an aerial crop.
+  const view = base?.source === 'aerial' ? opts.view : undefined;
   if (!base) fail('failed', 'no_base_image');
   emitRenderProgress({ sn, phase: 'composite', step: 1, steps });
   const composite = await compositeImage(sn, base!);
@@ -751,9 +787,9 @@ export async function generateRenders(
     framing,
     // Only a flat render keeps the aerial's framing, so only then do the
     // bbox corners describe where the picture lies on the ground.
-    corners: framing === 'flat' ? baseCorners(sn, base!) : null,
-    localBox: framing === 'flat' && base!.source === 'aerial' ? (gardenBounds(sn)?.localBox ?? null) : null,
-    tilt: tiltH ? tiltMeta(sn, base!, tiltH) : null,
+    corners: framing === 'flat' ? baseCorners(sn, base!, view) : null,
+    localBox: framing === 'flat' && base!.source === 'aerial' ? (gardenBounds(sn, undefined, view)?.localBox ?? null) : null,
+    tilt: tiltH ? tiltMeta(sn, base!, tiltH, view) : null,
   };
   fs.writeFileSync(path.join(renderDir(sn), `meta-${framing}.json`), JSON.stringify(meta, null, 2));
   // A pre-framing render of this same framing is superseded now; the other

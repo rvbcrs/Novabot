@@ -1607,7 +1607,11 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     if (!sn || renderBusy) return;
     setRenderBusy(true);
     setRenderPhase({ phase: 'base', step: 0, steps: 3 });
-    const r = await generateGardenRender(sn, source, framing);
+    // A top-down render lies on the map, so it covers what the map shows
+    // now, not only the garden: no hard edge where the render stops.
+    const b = framing === 'flat' ? leafletMapRef.current?.getBounds() : undefined;
+    const view = b ? { south: b.getSouth(), west: b.getWest(), north: b.getNorth(), east: b.getEast() } : undefined;
+    const r = await generateGardenRender(sn, source, framing, view);
     setRenderBusy(false);
     setRenderPhase(null);
     if (!r.ok) {
