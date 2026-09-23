@@ -9,6 +9,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useStyles, useTheme, type Colors } from '../theme';
+import { useI18n } from '../i18n';
 
 export type AppActionSheetItem = {
   label: string;
@@ -33,12 +34,13 @@ export function AppActionSheet({
   title,
   message,
   actions,
-  cancelLabel = 'Cancel',
+  cancelLabel,
   onClose,
 }: Props) {
   const insets = useSafeAreaInsets();
   const styles = useStyles(makeStyles);
   const { colors } = useTheme();
+  const { t } = useI18n();
 
   const handleAction = (action: AppActionSheetItem) => {
     if (action.disabled) return;
@@ -88,7 +90,7 @@ export function AppActionSheet({
           ))}
 
           <TouchableOpacity style={styles.cancel} onPress={onClose} activeOpacity={0.82}>
-            <Text style={styles.cancelText}>{cancelLabel}</Text>
+            <Text style={styles.cancelText}>{cancelLabel ?? t('cancel')}</Text>
           </TouchableOpacity>
         </View>
       </View>

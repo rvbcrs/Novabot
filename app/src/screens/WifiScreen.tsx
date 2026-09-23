@@ -13,12 +13,14 @@ import { Ionicons } from '@expo/vector-icons';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useStyles, useTheme, type Colors } from '../theme';
 import type { RootStackParams } from '../navigation/types';
+import { useI18n } from '../i18n';
 
 type Props = NativeStackScreenProps<RootStackParams, 'Wifi'>;
 
 export default function WifiScreen({ navigation, route }: Props) {
   const styles = useStyles(makeStyles);
   const { colors } = useTheme();
+  const { t } = useI18n();
   const { mqttAddr, mqttPort, deviceMode } = route.params;
   const [ssid, setSsid] = useState('');
   const [password, setPassword] = useState('');
@@ -51,23 +53,22 @@ export default function WifiScreen({ navigation, route }: Props) {
           <View style={styles.iconCircle}>
             <Ionicons name="wifi" size={32} color={colors.emerald} />
           </View>
-          <Text style={styles.title}>WiFi Configuration</Text>
+          <Text style={styles.title}>{t('pvWifiTitle')}</Text>
           <Text style={styles.subtitle}>
-            Enter the WiFi credentials for your{' '}
-            {deviceMode === 'both' ? 'devices' : deviceMode}.
+            {t(deviceMode === 'both' ? 'pvWifiSubDevices' : deviceMode === 'charger' ? 'pvWifiSubCharger' : 'pvWifiSubMower')}
           </Text>
         </View>
 
         {/* Card */}
         <View style={styles.card}>
-          <Text style={styles.label}>WiFi SSID</Text>
+          <Text style={styles.label}>{t('pvWifiSsid')}</Text>
           <View style={styles.inputRow}>
             <Ionicons name="wifi-outline" size={20} color={colors.textDim} style={styles.inputIcon} />
             <TextInput
               style={styles.input}
               value={ssid}
               onChangeText={setSsid}
-              placeholder="Network name"
+              placeholder={t('pvWifiSsidPlaceholder')}
               placeholderTextColor={colors.textMuted}
               autoCapitalize="none"
               autoCorrect={false}
@@ -75,14 +76,14 @@ export default function WifiScreen({ navigation, route }: Props) {
             />
           </View>
 
-          <Text style={[styles.label, { marginTop: 20 }]}>Password</Text>
+          <Text style={[styles.label, { marginTop: 20 }]}>{t('pvPassword')}</Text>
           <View style={styles.inputRow}>
             <Ionicons name="lock-closed-outline" size={20} color={colors.textDim} style={styles.inputIcon} />
             <TextInput
               style={styles.input}
               value={password}
               onChangeText={setPassword}
-              placeholder="WiFi password"
+              placeholder={t('pvWifiPasswordPlaceholder')}
               placeholderTextColor={colors.textMuted}
               secureTextEntry={!showPassword}
               autoCapitalize="none"
@@ -106,8 +107,7 @@ export default function WifiScreen({ navigation, route }: Props) {
         <View style={styles.infoCard}>
           <Ionicons name="information-circle-outline" size={20} color={colors.amber} />
           <Text style={styles.infoText}>
-            Both the charger and mower only support 2.4 GHz WiFi networks.
-            Make sure you are not using a 5 GHz-only network.
+            {t('pvWifi24Note')}
           </Text>
         </View>
 
@@ -118,7 +118,7 @@ export default function WifiScreen({ navigation, route }: Props) {
           disabled={!isValid}
           activeOpacity={0.7}
         >
-          <Text style={styles.buttonText}>Next</Text>
+          <Text style={styles.buttonText}>{t('pvNext')}</Text>
           <Ionicons name="arrow-forward" size={20} color={colors.white} />
         </TouchableOpacity>
       </ScrollView>

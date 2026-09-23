@@ -180,12 +180,12 @@ export function RainOverlay({ mowerSn }: Props) {
         <View style={{ flex: 1 }}>
           <Text style={styles.title}>
             {isWarning
-              ? (t('rainExpected') || 'Rain expected')
+              ? t('rainExpected')
               : t('rainDetected')}
           </Text>
           <Text style={styles.subtitle}>
             {isWarning
-              ? (t('rainArrivesAt', { time: warningAt }) || `Around ${warningAt} · ${incomingRain?.mm.toFixed(1)}mm · ${incomingRain?.prob}%`)
+              ? t('rainArrivesAt', { time: warningAt })
               : `${t('pausedSince')} ${pausedAt}`}
           </Text>
         </View>

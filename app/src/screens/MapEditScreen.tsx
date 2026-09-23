@@ -48,6 +48,8 @@ const PADDING = 24;
 // bottom action bar (~70). The rest is the drawing canvas.
 const CHROME_HEIGHT = 220;
 
+type IssueLike = { message: string; messageKey?: string; messageParams?: Record<string, string | number> };
+
 export default function MapEditScreen() {
   const route = useRoute();
   const navigation = useNavigation();
@@ -107,6 +109,13 @@ export default function MapEditScreen() {
   // Construct an ApiClient fresh each call (mirrors MapScreen — there is no
   // useApi() context).
   const getApi = useCallback(async () => new ApiClient((await getServerUrl()) ?? ''), []);
+
+  // Validation issues from the server arrive already localized (X-Lang) in
+  // `message`; a local issue carries an i18n key instead.
+  const issueText = useCallback(
+    (i: IssueLike) => (i.messageKey ? t(i.messageKey, i.messageParams) : i.message),
+    [t],
+  );
 
   const load = useCallback(async () => {
     if (!sn) { setStatus(t('mapEditOffline')); setLoading(false); return; }
@@ -475,9 +484,9 @@ export default function MapEditScreen() {
   // ── Actions ──
   const doApply = useCallback(() => {
     appAlertCompat.alert(t('mapEditTitle'), t('mapEditConfirmApply'), [
-      { text: t('cancel') || 'Cancel', style: 'cancel' },
+      { text: t('cancel'), style: 'cancel' },
       {
-        text: 'OK',
+        text: t('ok'),
         onPress: async () => {
           setBusy(true);
           setStatus('…');
@@ -487,7 +496,7 @@ export default function MapEditScreen() {
             const r = await api.applyMapEdits(sn);
             if (r.ok) {
               const warns = (r.validation?.warnings ?? [])
-                .map((w) => `⚠ ${w.message}`)
+                .map((w) => `⚠ ${issueText(w)}`)
                 .join('\n');
               setStatus(warns ? `${t('mapEditApplied')}\n${warns}` : t('mapEditApplied'));
               await load();
@@ -498,14 +507,14 @@ export default function MapEditScreen() {
             else if (r.reason === 'validation') {
               setStatus(
                 (r.validation?.errors ?? [])
-                  .map((e) => `${e.canonical}: ${e.message}`)
-                  .join('\n') || 'Validation failed',
+                  .map((e) => `${e.canonical}: ${issueText(e)}`)
+                  .join('\n') || t('stValidationFailed'),
               );
             } else if (r.reason === 'push_failed' || r.reason === 'bundle_failed') {
               setStatus(t('mapEditPushFailed'));
               setPendingSync(true);
             } else if (r.reason === 'unsupported_firmware') setStatus(t('requiresOpenNovaFirmware'));
-            else setStatus(r.reason ?? 'error');
+            else setStatus(r.reason ?? t('error'));
           } catch (e) {
             if (isUnsupportedFirmwareError(e)) setStatus(t('requiresOpenNovaFirmware'));
             else setStatus(e instanceof Error ? e.message : String(e));
@@ -515,13 +524,13 @@ export default function MapEditScreen() {
         },
       },
     ]);
-  }, [getApi, sn, t, load, flushSaves]);
+  }, [getApi, sn, t, load, flushSaves, issueText]);
 
   const doRevert = useCallback(() => {
     appAlertCompat.alert(t('mapEditRevert'), t('mapEditConfirmRevert'), [
-      { text: t('cancel') || 'Cancel', style: 'cancel' },
+      { text: t('cancel'), style: 'cancel' },
       {
-        text: 'OK',
+        text: t('ok'),
         onPress: async () => {
           setBusy(true);
           try {
@@ -539,7 +548,7 @@ export default function MapEditScreen() {
               setStatus(t('mapEditPushFailed'));
               setPendingSync(true);
             } else if (r.reason === 'unsupported_firmware') setStatus(t('requiresOpenNovaFirmware'));
-            else setStatus(r.reason ?? 'error');
+            else setStatus(r.reason ?? t('error'));
           } catch (e) {
             if (isUnsupportedFirmwareError(e)) setStatus(t('requiresOpenNovaFirmware'));
             else setStatus(e instanceof Error ? e.message : String(e));
@@ -553,9 +562,9 @@ export default function MapEditScreen() {
 
   const doReset = useCallback(() => {
     appAlertCompat.alert(t('mapEditReset'), t('mapEditConfirmRevert'), [
-      { text: t('cancel') || 'Cancel', style: 'cancel' },
+      { text: t('cancel'), style: 'cancel' },
       {
-        text: 'OK',
+        text: t('ok'),
         onPress: async () => {
           setBusy(true);
           try {
@@ -583,9 +592,9 @@ export default function MapEditScreen() {
   const doDeleteObstacle = useCallback(() => {
     if (selected < 0 || polys[selected]?.mapType !== 'obstacle') return;
     appAlertCompat.alert(t('mapEditDeleteObstacle'), t('mapEditDeleteObstacle'), [
-      { text: t('cancel') || 'Cancel', style: 'cancel' },
+      { text: t('cancel'), style: 'cancel' },
       {
-        text: 'OK',
+        text: t('ok'),
         style: 'destructive',
         onPress: () => {
           const target = polys[selected];

@@ -93,7 +93,7 @@ export default function CuttingHeightPickerModal({
               onPress={onCancel}
               activeOpacity={0.7}
             >
-              <Text style={styles.cancelText}>{t('cancel') || 'Cancel'}</Text>
+              <Text style={styles.cancelText}>{t('cancel')}</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.button, styles.confirmButton]}
@@ -101,7 +101,7 @@ export default function CuttingHeightPickerModal({
               activeOpacity={0.7}
             >
               <Ionicons name="play" size={16} color={colors.white} />
-              <Text style={styles.confirmText}>{confirmLabel ?? 'Start'}</Text>
+              <Text style={styles.confirmText}>{confirmLabel ?? t('start')}</Text>
             </TouchableOpacity>
           </View>
         </View>

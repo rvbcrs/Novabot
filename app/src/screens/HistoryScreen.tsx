@@ -57,12 +57,12 @@ export default function HistoryScreen() {
       setRecords(Array.isArray(data) ? data : []);
       api.getWorkSummary(mowerSn).then(setSummary).catch(() => setSummary(null));
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load history');
+      setError(e instanceof Error ? e.message : t('stHistoryLoadFailed'));
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [mowerSn, demo.enabled]);
+  }, [mowerSn, demo.enabled, t]);
 
   useEffect(() => {
     fetchRecords();
@@ -83,8 +83,8 @@ export default function HistoryScreen() {
       <View style={[styles.container, { paddingTop: insets.top }]}>
         <View style={styles.emptyState}>
           <Ionicons name="time-outline" size={48} color={colors.textMuted} />
-          <Text style={styles.emptyTitle}>No Mower Connected</Text>
-          <Text style={styles.emptySubtitle}>Connect a mower to view history.</Text>
+          <Text style={styles.emptyTitle}>{t('msNoMower')}</Text>
+          <Text style={styles.emptySubtitle}>{t('stHistoryConnectMower')}</Text>
         </View>
       </View>
     );
@@ -163,7 +163,7 @@ export default function HistoryScreen() {
         {!loading && records.length === 0 && (
           <View style={styles.emptyCard}>
             <Ionicons name="leaf-outline" size={32} color={colors.textMuted} />
-            <Text style={styles.emptyCardText}>No mowing sessions yet</Text>
+            <Text style={styles.emptyCardText}>{t('stHistoryEmpty')}</Text>
           </View>
         )}
 
@@ -188,7 +188,7 @@ export default function HistoryScreen() {
             <View key={r.recordId} style={styles.recordCard}>
               <View style={styles.recordHeader}>
                 <View style={[styles.statusDot, { backgroundColor: statusColor(status, colors) }]} />
-                <Text style={styles.recordDate}>{formatDate(tsRaw)}</Text>
+                <Text style={styles.recordDate}>{formatDate(tsRaw, t)}</Text>
                 <Text style={[styles.recordStatus, { color: statusColor(status, colors) }]}>
                   {statusLabel(t, status, areaM2)}
                 </Text>
@@ -270,14 +270,14 @@ function statusColor(status: string | null | undefined, c: Colors): string {
   }
 }
 
-function formatDate(iso: string): string {
+function formatDate(iso: string, t: (k: string) => string): string {
   const d = parseServerUtc(iso);
   const today = new Date();
   const yesterday = new Date(today);
   yesterday.setDate(yesterday.getDate() - 1);
 
-  if (d.toDateString() === today.toDateString()) return 'Today';
-  if (d.toDateString() === yesterday.toDateString()) return 'Yesterday';
+  if (d.toDateString() === today.toDateString()) return t('stToday');
+  if (d.toDateString() === yesterday.toDateString()) return t('stYesterday');
   return fmtDate(d);
 }
 

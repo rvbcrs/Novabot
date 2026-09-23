@@ -7,11 +7,13 @@ import { View, Text, TouchableOpacity, Switch, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useStyles, useTheme, type Colors } from '../theme';
 import { useDemo } from '../context/DemoContext';
+import { useI18n } from '../i18n';
 
 export function DemoBanner() {
   const { enabled, toggle, activity, cycleActivity } = useDemo();
   const styles = useStyles(makeStyles);
   const { colors } = useTheme();
+  const { t } = useI18n();
 
   return (
     <View style={[styles.container, enabled && styles.containerActive]}>
@@ -21,7 +23,7 @@ export function DemoBanner() {
         color={enabled ? '#c084fc' : colors.textMuted}
       />
       <Text style={[styles.label, enabled && styles.labelActive]}>
-        {enabled ? `Demo: ${activity}` : 'Demo'}
+        {enabled ? t('hmDemoActivity', { activity }) : t('hmDemo')}
       </Text>
 
       {enabled && (
@@ -30,7 +32,7 @@ export function DemoBanner() {
           onPress={cycleActivity}
           activeOpacity={0.7}
         >
-          <Text style={styles.cycleText}>Next</Text>
+          <Text style={styles.cycleText}>{t('hmNext')}</Text>
           <Ionicons name="arrow-forward" size={12} color="#c084fc" />
         </TouchableOpacity>
       )}

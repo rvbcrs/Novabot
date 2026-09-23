@@ -7,18 +7,27 @@
 export interface FixQualityDisplay {
   label: string;
   color: string;
+  /** i18n key for labels that are words (not technical terms like "RTK Fixed"). */
+  labelKey?: string;
 }
 
 const FIXED: FixQualityDisplay = { label: 'RTK Fixed', color: '#22c55e' };
 const FLOAT: FixQualityDisplay = { label: 'RTK Float', color: '#f59e0b' };
 const DGPS: FixQualityDisplay = { label: 'DGPS', color: '#eab308' };
 const GPS: FixQualityDisplay = { label: 'GPS', color: '#9ca3af' };
-const NOFIX: FixQualityDisplay = { label: 'No fix', color: '#ef4444' };
-const NO_DATA: FixQualityDisplay = { label: 'No data', color: '#6b7280' };
+const NOFIX: FixQualityDisplay = { label: 'No fix', color: '#ef4444', labelKey: 'fixQualityNoFix' };
+const NO_DATA: FixQualityDisplay = { label: 'No data', color: '#6b7280', labelKey: 'fixQualityNoData' };
 
+/** Pass `t` to get the label in the user's language (without it: English). */
 export function fixQualityLabel(
   q: number | string | null | undefined,
+  t?: (key: string) => string,
 ): FixQualityDisplay {
+  const d = resolveFixQuality(q);
+  return t && d.labelKey ? { ...d, label: t(d.labelKey) } : d;
+}
+
+function resolveFixQuality(q: number | string | null | undefined): FixQualityDisplay {
   if (q == null) return NO_DATA;
   const raw = typeof q === 'string' ? q.trim() : q;
 

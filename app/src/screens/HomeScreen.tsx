@@ -387,19 +387,8 @@ const ACTIVITY_KEYS: Record<MowerActivity, string> = {
   idle: 'idle',
 };
 
-function getActivityLabel(activity: MowerActivity, t?: (key: string) => string): string {
-  if (t) return t(ACTIVITY_KEYS[activity] ?? 'idle');
-  switch (activity) {
-    case 'mowing': return 'Mowing';
-    case 'edge_cutting': return 'Edge cutting';
-    case 'following_unicom': return 'Moving between zones';
-    case 'charging': return 'Charging';
-    case 'returning': return 'Returning';
-    case 'paused': return 'Paused';
-    case 'error': return 'Error';
-    case 'mapping': return 'Mapping';
-    case 'idle': default: return 'Idle';
-  }
+function getActivityLabel(activity: MowerActivity, t: (key: string) => string): string {
+  return t(ACTIVITY_KEYS[activity] ?? 'idle');
 }
 
 function getActivityColor(activity: MowerActivity, c: Colors): string {
@@ -439,7 +428,8 @@ function getNextScheduleDisplay(
   const enabled = schedules.filter((schedule) => schedule.enabled);
   if (enabled.length === 0) return null;
 
-  const daysShort = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  // i18n keys, translated at render time.
+  const daysShort = ['hmDaySun', 'hmDayMon', 'hmDayTue', 'hmDayWed', 'hmDayThu', 'hmDayFri', 'hmDaySat'];
   const currentDay = now.getDay();
   const currentMinutes = now.getHours() * 60 + now.getMinutes();
   let bestDelta = Number.POSITIVE_INFINITY;
@@ -684,12 +674,12 @@ export default function HomeScreen() {
   const renameActiveMower = useCallback(() => {
     if (!mower) return;
     Alert.prompt(
-      t('renameMower', undefined) || 'Rename Mower',
-      t('enterNewName', undefined) || 'Enter a new name:',
+      t('renameMower'),
+      t('enterNewName'),
       [
-        { text: t('cancel', undefined) || 'Cancel', style: 'cancel' },
+        { text: t('cancel'), style: 'cancel' },
         {
-          text: t('rename', undefined) || 'Rename',
+          text: t('rename'),
           onPress: async (newName?: string) => {
             const trimmed = (newName ?? '').trim();
             if (!trimmed) return;
@@ -1201,7 +1191,7 @@ export default function HomeScreen() {
           currentMapIds: telemetryFresh ? liveCurrentMapIds : undefined,
         });
         const activeWork = selection.activeMap;
-        const mapLabel = (m: any) => m?.mapName ?? m?.canonicalName ?? m?.mapId ?? 'unknown map';
+        const mapLabel = (m: any) => m?.mapName ?? m?.canonicalName ?? m?.mapId ?? t('hmUnknownMap');
         // Mismatch = the mower reports a map the user did NOT select. Moving
         // between selected zones (native firmware multi-map) is expected, so the
         // set-membership check in resolveMowingMapSelection already handles it.
@@ -1284,7 +1274,7 @@ export default function HomeScreen() {
             sendCommand(mower.sn, { stop_navigation: { cmd_num: ++cmdNumRef.current } }, 'stop');
             setOptimisticActivity('idle');
           }},
-          { text: 'Continue', style: 'cancel' },
+          { text: t('hmContinue'), style: 'cancel' },
         ],
       );
     } else {
@@ -1456,16 +1446,16 @@ export default function HomeScreen() {
     try {
       const url = await getServerUrl();
       if (!url) {
-        setCommandError('No server configured');
+        setCommandError(t('reanchorNoServer'));
         return;
       }
       const api = new ApiClient(url);
       const result = await api.sendCommand(sn, command);
       if (!result.ok) {
-        setCommandError(result.error ?? 'Command failed');
+        setCommandError(result.error ?? t('hmCommandFailed'));
       }
     } catch (e) {
-      setCommandError(e instanceof Error ? e.message : 'Command failed');
+      setCommandError(e instanceof Error ? e.message : t('hmCommandFailed'));
     } finally {
       setCommandLoading(null);
     }
@@ -1484,7 +1474,7 @@ export default function HomeScreen() {
     setCommandError('');
     try {
       const url = await getServerUrl();
-      if (!url) { setCommandError('No server configured'); return; }
+      if (!url) { setCommandError(t('reanchorNoServer')); return; }
       const api = new ApiClient(url);
       // Step 1: go_pile
       await api.sendCommand(sn, { go_pile: {} });
@@ -1493,9 +1483,9 @@ export default function HomeScreen() {
       const result = await api.sendCommand(sn, {
         go_to_charge: { cmd_num: ++cmdNumRef.current, chargerpile: { latitude: 200, longitude: 200 } },
       });
-      if (!result.ok) setCommandError(result.error ?? 'Command failed');
+      if (!result.ok) setCommandError(result.error ?? t('hmCommandFailed'));
     } catch (e) {
-      setCommandError(e instanceof Error ? e.message : 'Command failed');
+      setCommandError(e instanceof Error ? e.message : t('hmCommandFailed'));
     } finally {
       setCommandLoading(null);
     }
@@ -1548,11 +1538,11 @@ export default function HomeScreen() {
 
     if (rain) {
       appAlertCompat.alert(
-        t('rainWarningTitle') || 'Rain forecast',
-        t('rainResumeBody') || 'Rain is expected soon. Resume anyway and ignore rain for this session? Otherwise the mower stays on the dock.',
+        t('rainWarningTitle'),
+        t('rainResumeBody'),
         [
-          { text: t('cancel') || 'Cancel', style: 'cancel' },
-          { text: t('rainIgnoreResume') || 'Ignore rain & resume', onPress: () => { void send(true); } },
+          { text: t('cancel'), style: 'cancel' },
+          { text: t('rainIgnoreResume'), onPress: () => { void send(true); } },
         ],
       );
     } else {
@@ -1611,7 +1601,7 @@ export default function HomeScreen() {
         // 1. Get charger's LoRa config
         const chargerLora = await api.getChargerLora(chargerSn);
         if (!chargerLora) {
-          appAlertCompat.alert(t('error'), 'Could not read charger LoRa config');
+          appAlertCompat.alert(t('error'), t('hmChargerLoraReadFailed'));
           return;
         }
 
@@ -1630,9 +1620,14 @@ export default function HomeScreen() {
         if (mowerLora.addr !== chargerLora.address || mowerLora.channel !== mowerChannel) {
           appAlertCompat.alert(
             t('loraMismatch'),
-            `Mower LoRa: addr=${mowerLora.addr ?? '?'} ch=${mowerLora.channel ?? '?'}\n` +
-            `Charger LoRa: addr=${chargerLora.address} ch=${chargerLora.channel}\n\n` +
-            `Update mower to addr=${chargerLora.address} ch=${mowerChannel}?`,
+            t('hmLoraMismatchBody', {
+              mowerAddr: mowerLora.addr ?? '?',
+              mowerCh: mowerLora.channel ?? '?',
+              chargerAddr: chargerLora.address,
+              chargerCh: chargerLora.channel,
+              newAddr: chargerLora.address,
+              newCh: mowerChannel,
+            }),
             [
               { text: t('cancel'), style: 'cancel' },
               {
@@ -1643,9 +1638,9 @@ export default function HomeScreen() {
                     await api.pairMower(mowerSn, chargerSn);
                     const res = await api.getDeviceSets();
                     setDeviceSets(res.sets ?? []);
-                    appAlertCompat.alert(t('paired'), `Mower paired with charger.\nLoRa updated to addr=${chargerLora.address} ch=${mowerChannel}`);
+                    appAlertCompat.alert(t('paired'), t('hmPairedLoraUpdated', { addr: chargerLora.address, ch: mowerChannel }));
                   } catch (e: any) {
-                    appAlertCompat.alert(t('error'), isUnsupportedFirmwareError(e) ? t('requiresOpenNovaFirmware') : (e.message ?? 'Pairing failed'));
+                    appAlertCompat.alert(t('error'), isUnsupportedFirmwareError(e) ? t('requiresOpenNovaFirmware') : (e.message ?? t('hmPairingFailed')));
                   }
                 },
               },
@@ -1658,9 +1653,9 @@ export default function HomeScreen() {
         await api.pairMower(mowerSn, chargerSn);
         const res = await api.getDeviceSets();
         setDeviceSets(res.sets ?? []);
-        appAlertCompat.alert(t('paired'), `Mower paired with charger (LoRa addr=${chargerLora.address})`);
+        appAlertCompat.alert(t('paired'), t('hmPairedWithCharger', { addr: chargerLora.address }));
       } catch (e: any) {
-        appAlertCompat.alert(t('error'), e.message ?? 'Pairing failed');
+        appAlertCompat.alert(t('error'), e.message ?? t('hmPairingFailed'));
       }
     };
 
@@ -1744,14 +1739,14 @@ export default function HomeScreen() {
                         <Ionicons name="flash" size={16} color={set.charger.online ? colors.amber : colors.textMuted} />
                       </View>
                       <View style={{ flex: 1 }}>
-                        <Text style={[styles.deviceName, !set.charger.online && { color: colors.textMuted }]}>Charging Station</Text>
+                        <Text style={[styles.deviceName, !set.charger.online && { color: colors.textMuted }]}>{t('hmChargingStation')}</Text>
                         <Text style={styles.deviceSn}>{set.charger.sn}</Text>
                       </View>
                       <Text style={[styles.deviceStatus, { color: set.charger.online ? colors.green : colors.red }]}>
                         {set.charger.online ? t('online') : t('offline')}
                       </Text>
                       {!set.charger.online && (
-                        <TouchableOpacity onPress={() => handleDeleteDevice(set.charger!.sn, 'Charger')} style={styles.deleteBtn} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                        <TouchableOpacity onPress={() => handleDeleteDevice(set.charger!.sn, t('charger'))} style={styles.deleteBtn} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
                           <Ionicons name="trash-outline" size={16} color={colors.textMuted} />
                         </TouchableOpacity>
                       )}
@@ -1765,14 +1760,14 @@ export default function HomeScreen() {
                         <Ionicons name="construct" size={16} color={set.mower.online ? colors.emerald : colors.textMuted} />
                       </View>
                       <View style={{ flex: 1 }}>
-                        <Text style={[styles.deviceName, !set.mower.online && { color: colors.textMuted }]}>Mower</Text>
+                        <Text style={[styles.deviceName, !set.mower.online && { color: colors.textMuted }]}>{t('mower')}</Text>
                         <Text style={styles.deviceSn}>{set.mower.sn}</Text>
                       </View>
                       <Text style={[styles.deviceStatus, { color: set.mower.online ? colors.green : colors.red }]}>
                         {set.mower.online ? t('online') : t('offline')}
                       </Text>
                       {!set.mower.online && (
-                        <TouchableOpacity onPress={() => handleDeleteDevice(set.mower!.sn, 'Mower')} style={styles.deleteBtn} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                        <TouchableOpacity onPress={() => handleDeleteDevice(set.mower!.sn, t('mower'))} style={styles.deleteBtn} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
                           <Ionicons name="trash-outline" size={16} color={colors.textMuted} />
                         </TouchableOpacity>
                       )}
@@ -1793,7 +1788,7 @@ export default function HomeScreen() {
                         <Ionicons name="power" size={16} color={colors.emerald} />
                       </View>
                       <Text style={[styles.addDeviceText, { color: colors.emerald, fontWeight: '700' }]}>
-                        Activate this set
+                        {t('hmActivateSet')}
                       </Text>
                       <Ionicons name="chevron-forward" size={16} color={colors.emerald} />
                     </TouchableOpacity>
@@ -1804,7 +1799,7 @@ export default function HomeScreen() {
                       <View style={[styles.deviceIcon, { backgroundColor: 'rgba(0,212,170,0.1)' }]}>
                         <Ionicons name="checkmark-circle" size={16} color={colors.emerald} />
                       </View>
-                      <Text style={[styles.addDeviceText, { color: colors.emerald }]}>Active</Text>
+                      <Text style={[styles.addDeviceText, { color: colors.emerald }]}>{t('hmActive')}</Text>
                     </View>
                   )}
 
@@ -2028,7 +2023,7 @@ export default function HomeScreen() {
                   color={RETURN_REASON_META[returnReason].color}
                 />
                 <Text style={[styles.returnReasonChipText, { color: RETURN_REASON_META[returnReason].color }]}>
-                  {t('rrReturnedShort') || 'Waarom teruggekeerd?'}
+                  {t('rrReturnedShort')}
                 </Text>
                 <Ionicons name="chevron-forward" size={14} color={colors.textDim} />
               </TouchableOpacity>
@@ -2057,7 +2052,7 @@ export default function HomeScreen() {
                 <View style={styles.mapMismatchBanner}>
                   <Ionicons name="warning-outline" size={16} color="#f59e0b" />
                   <Text style={styles.mapMismatchText}>
-                    Started {mapSelectionMismatch.expected}, mower reports {mapSelectionMismatch.actual}
+                    {t('hmMapMismatch', { expected: mapSelectionMismatch.expected, actual: mapSelectionMismatch.actual })}
                   </Text>
                 </View>
               )}
@@ -2195,7 +2190,7 @@ export default function HomeScreen() {
                   {etaLabel && (
                     <View style={[styles.chip, styles.chipHighlight]}>
                       <Ionicons name="timer-outline" size={13} color="#4ade80" />
-                      <Text style={styles.chipHighlightText}>~{etaLabel} left</Text>
+                      <Text style={styles.chipHighlightText}>{t('hmTimeLeft', { time: etaLabel })}</Text>
                     </View>
                   )}
                   {elapsedLabel && (
@@ -2241,7 +2236,7 @@ export default function HomeScreen() {
               {mower.rtkSat != null && (
                 <View style={styles.chip}>
                   <Ionicons name="navigate" size={11} color={colors.textDim} />
-                  <Text style={styles.chipText}>{mower.rtkSat} sat</Text>
+                  <Text style={styles.chipText}>{t('hmSatCount', { count: mower.rtkSat })}</Text>
                 </View>
               )}
               {mower.driveSpeed > 0.05 && (
@@ -2280,7 +2275,7 @@ export default function HomeScreen() {
               <View style={styles.nextScheduleRow}>
                 <View style={[styles.chip, styles.nextScheduleChip]}>
                   <MowerIcon size={14} color={colors.emerald} />
-                  <Text style={[styles.chipText, { color: colors.emerald }]}>Next mow: {nextSchedule.day} {nextSchedule.time}</Text>
+                  <Text style={[styles.chipText, { color: colors.emerald }]}>{t('hmNextMow', { day: t(nextSchedule.day), time: nextSchedule.time })}</Text>
                 </View>
               </View>
             )}
@@ -2306,11 +2301,11 @@ export default function HomeScreen() {
             <Ionicons name="alert-circle" size={22} color={colors.red} />
             <View style={styles.errorContent}>
               <Text style={styles.errorTitle}>
-                Error {String(mower.errorStatus ?? mower.errorCode ?? '').match(/\d+/)?.[0] ?? ''}
+                {t('hmErrorCode', { code: String(mower.errorStatus ?? mower.errorCode ?? '').match(/\d+/)?.[0] ?? '' })}
               </Text>
               {String(mower.errorStatus ?? mower.errorCode ?? '').match(/\d+/)?.[0] === '155' ? (
                 <Text style={styles.errorMessage}>
-                  {t('error155Pin', undefined) || 'Enter the PIN code directly on the mower to unlock it.'}
+                  {t('error155Pin')}
                 </Text>
               ) : mower.errorMsg ? (
                 <Text style={styles.errorMessage}>{mower.errorMsg}</Text>
@@ -2347,7 +2342,7 @@ export default function HomeScreen() {
                 } catch {}
               }}
             >
-              <Text style={{ color: colors.red, fontSize: 12, fontWeight: '600' }}>Clear</Text>
+              <Text style={{ color: colors.red, fontSize: 12, fontWeight: '600' }}>{t('hmClear')}</Text>
             </TouchableOpacity>
           </View>
         )}
@@ -2363,10 +2358,10 @@ export default function HomeScreen() {
             <Ionicons name="home-outline" size={22} color="#f59e0b" />
             <View style={styles.errorContent}>
               <Text style={[styles.errorTitle, { color: '#f59e0b' }]}>
-                Return to charger failed
+                {t('hmDockFailedTitle')}
               </Text>
               <Text style={styles.errorMessage}>
-                The mower couldn't dock. Retry, or move it back to the charger manually.
+                {t('hmDockFailedBody')}
               </Text>
             </View>
             <View style={{ flexDirection: 'row', gap: 6 }}>
@@ -2384,7 +2379,7 @@ export default function HomeScreen() {
                   } catch {}
                 }}
               >
-                <Text style={{ color: '#3b82f6', fontSize: 12, fontWeight: '600' }}>Retry</Text>
+                <Text style={{ color: '#3b82f6', fontSize: 12, fontWeight: '600' }}>{t('retry')}</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={{ backgroundColor: 'rgba(239,68,68,0.18)', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}
@@ -2401,7 +2396,7 @@ export default function HomeScreen() {
                   } catch {}
                 }}
               >
-                <Text style={{ color: colors.red, fontSize: 12, fontWeight: '600' }}>Cancel</Text>
+                <Text style={{ color: colors.red, fontSize: 12, fontWeight: '600' }}>{t('cancel')}</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -2418,10 +2413,10 @@ export default function HomeScreen() {
               <Ionicons name="warning-outline" size={22} color="#f59e0b" />
               <View style={styles.errorContent}>
                 <Text style={[styles.errorTitle, { color: '#f59e0b' }]}>
-                  Warning {String(mower.errorStatus ?? '').match(/\d+/)?.[0] ?? ''}
+                  {t('hmWarningCode', { code: String(mower.errorStatus ?? '').match(/\d+/)?.[0] ?? '' })}
                 </Text>
                 <Text style={styles.errorMessage}>
-                  {mower.errorMsg || 'Software not initialized. Please wait a moment and try again.'}
+                  {mower.errorMsg || t('hmSoftwareNotInitialized')}
                 </Text>
               </View>
               <TouchableOpacity
@@ -2440,7 +2435,7 @@ export default function HomeScreen() {
                   } catch {}
                 }}
               >
-                <Text style={{ color: '#f59e0b', fontSize: 12, fontWeight: '600' }}>Dismiss</Text>
+                <Text style={{ color: '#f59e0b', fontSize: 12, fontWeight: '600' }}>{t('hmDismiss')}</Text>
               </TouchableOpacity>
             </View>
           );
@@ -2586,7 +2581,7 @@ export default function HomeScreen() {
                           onPress={() => setShowStartModeSheet(true)}
                           disabled={commandLoading !== null || startDisabled}
                           activeOpacity={0.7}
-                          accessibilityLabel="Show more start options"
+                          accessibilityLabel={t('hmMoreStartOptions')}
                         >
                           <Ionicons name="chevron-down" size={18} color={colors.white} />
                         </TouchableOpacity>
@@ -2600,12 +2595,12 @@ export default function HomeScreen() {
                       style={[styles.actionButton, styles.actionButtonRed]}
                       onPress={() => {
                         appAlertCompat.alert(
-                          t('endSession') || 'End session?',
-                          t('endSessionDesc') || 'The paused mowing session will be ended. The mower stays on the dock; you can start a new session afterwards.',
+                          t('endSession'),
+                          t('endSessionDesc'),
                           [
-                            { text: t('cancel') || 'Cancel', style: 'cancel' },
+                            { text: t('cancel'), style: 'cancel' },
                             {
-                              text: t('endSession') || 'End session',
+                              text: t('endSession'),
                               style: 'destructive',
                               onPress: () => {
                                 sendCommand(mower.sn, { stop_navigation: { cmd_num: ++cmdNumRef.current } }, 'stop');
@@ -2671,12 +2666,12 @@ export default function HomeScreen() {
                 style={[styles.actionButton, styles.actionButtonRed]}
                 onPress={() => {
                   appAlertCompat.alert(
-                    t('stopMowing') || 'Stop mowing?',
-                    t('stopMowingDesc') || 'The mower will halt where it is, blades will stop, and the current session ends. The mower won’t return to the dock. You can start a new session afterwards.',
+                    t('stopMowing'),
+                    t('stopMowingDesc'),
                     [
-                      { text: t('cancel') || 'Cancel', style: 'cancel' },
+                      { text: t('cancel'), style: 'cancel' },
                       {
-                        text: t('stop') || 'Stop',
+                        text: t('stop'),
                         style: 'destructive',
                         onPress: () => {
                           sendCommand(mower.sn, { stop_navigation: { cmd_num: ++cmdNumRef.current } }, 'stop');
@@ -2707,11 +2702,11 @@ export default function HomeScreen() {
                 style={[styles.actionButton, styles.actionButtonBlue]}
                 onPress={() => {
                   appAlertCompat.alert(
-                    t('returnHome') || 'Return Home',
-                    t('returnHomeDesc') || 'How should the mower return to the charging station?',
+                    t('returnHome'),
+                    t('returnHomeDesc'),
                     [
                       {
-                        text: t('endTaskReturn') || 'End task & return',
+                        text: t('endTaskReturn'),
                         onPress: () => {
                           sendCommand(mower.sn, { stop_navigation: { cmd_num: ++cmdNumRef.current } }, 'stop');
                           // Idempotent: clears any lingering boundary-follow goal.
@@ -2728,14 +2723,14 @@ export default function HomeScreen() {
                         },
                       },
                       {
-                        text: t('pauseTaskReturn') || 'Pause task & return',
+                        text: t('pauseTaskReturn'),
                         onPress: () => {
                           sendCommand(mower.sn, { pause_navigation: { cmd_num: ++cmdNumRef.current } }, 'pause');
                           setTimeout(() => { sendGoHome(mower.sn); }, 500);
                           setOptimisticActivity('returning');
                         },
                       },
-                      { text: t('cancel') || 'Cancel', style: 'cancel' },
+                      { text: t('cancel'), style: 'cancel' },
                     ],
                   );
                 }}
@@ -2816,17 +2811,17 @@ export default function HomeScreen() {
                     <Ionicons name="warning-outline" size={22} color="#f59e0b" />
                     <View style={styles.errorContent}>
                       <Text style={[styles.errorTitle, { color: '#f59e0b' }]}>
-                        Paused for {pausedLabel}
+                        {t('pausedForTitle', { label: pausedLabel })}
                       </Text>
                       <Text style={styles.errorMessage}>
-                        Long pauses can cause localization drift. Resume may drive the mower off the map (firmware error 140). Consider stopping and starting a fresh session from the dock.
+                        {t('hmLongPauseWarning')}
                       </Text>
                     </View>
                     <TouchableOpacity
                       style={{ backgroundColor: 'rgba(245,158,11,0.18)', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}
                       onPress={() => setDismissedLongPauseWarning(true)}
                     >
-                      <Text style={{ color: '#f59e0b', fontSize: 12, fontWeight: '600' }}>Dismiss</Text>
+                      <Text style={{ color: '#f59e0b', fontSize: 12, fontWeight: '600' }}>{t('hmDismiss')}</Text>
                     </TouchableOpacity>
                   </View>
                 )}
@@ -2981,7 +2976,7 @@ export default function HomeScreen() {
           <TouchableOpacity onPress={() => setShowHistory(false)} style={styles.modalClose}>
             <Ionicons name="arrow-back" size={28} color={colors.text} />
           </TouchableOpacity>
-          <Text style={styles.modalTitle}>{t('mowingHistory') || 'Mowing History'}</Text>
+          <Text style={styles.modalTitle}>{t('mowingHistory')}</Text>
         </View>
         <HistoryScreen />
       </Modal>
@@ -3120,8 +3115,8 @@ export default function HomeScreen() {
 
         const items: AppActionSheetItem[] = [
           {
-            label: 'Full mow',
-            subtitle: 'Cover the entire work area with your chosen pattern',
+            label: t('hmFullMow'),
+            subtitle: t('hmFullMowSub'),
             icon: 'play-circle-outline',
             onPress: () => {
               setStartMowInitialMapId(null);
@@ -3136,8 +3131,8 @@ export default function HomeScreen() {
         // just duplicate it.
         if (workZoneCount > 1) {
           items.push({
-            label: 'Specific zone',
-            subtitle: 'Pick one zone to mow (skip the others)',
+            label: t('hmSpecificZone'),
+            subtitle: t('hmSpecificZoneSub'),
             icon: 'layers-outline',
             onPress: () => {
               setStartMowInitialMapId(null);
@@ -3154,10 +3149,10 @@ export default function HomeScreen() {
         // tap silently do nothing.
         const edgeNeedsCustomFw = !isOpenNovaFirmware(mower?.firmwareVersion);
         items.push({
-          label: 'Edges only',
+          label: t('hmEdgesOnly'),
           subtitle: edgeNeedsCustomFw
             ? t('requiresOpenNovaFirmware')
-            : 'Drive along the boundary once (boundary follow)',
+            : t('hmEdgesOnlySub'),
           icon: 'ellipse-outline',
           disabled: edgeNeedsCustomFw,
           onPress: () => {
@@ -3165,9 +3160,9 @@ export default function HomeScreen() {
             // User-spec: ook edge-mow vraagt om bevestiging + maaihoogte.
             setHeightPicker({
               mode: 'edge',
-              title: 'Edge mowing',
-              message: 'The mower will drive along the boundary of your work area — good for a quick edge trim. Pick the cutting height, then Start.',
-              confirmLabel: 'Start edges',
+              title: t('hmEdgeMowTitle'),
+              message: t('hmEdgeMowMessage'),
+              confirmLabel: t('hmStartEdges'),
             });
           },
         });
@@ -3178,10 +3173,10 @@ export default function HomeScreen() {
         // the Control joystick, then tap this option. Firmware interprets
         // this as SPECIFIED_AREA (cov_mode=1) and does a mini coverage pass.
         items.push({
-          label: 'Spot mow',
+          label: t('hmSpotMow'),
           subtitle: hasMowerGps
-            ? 'Mow a small 2m circle at the mower\'s current position'
-            : 'Needs GPS fix — waiting for mower position',
+            ? t('hmSpotMowSub')
+            : t('hmSpotMowNeedsGps'),
           icon: 'locate-outline',
           disabled: !hasMowerGps,
           onPress: () => {
@@ -3205,9 +3200,9 @@ export default function HomeScreen() {
             // User-spec: ook spot-mow vraagt om bevestiging + maaihoogte.
             setHeightPicker({
               mode: 'spot',
-              title: 'Spot mow',
-              message: 'The mower will mow a 2m radius circle at its current position. Make sure it\'s already at the spot you want trimmed (use the Control joystick first if needed).',
-              confirmLabel: 'Start here',
+              title: t('hmSpotMow'),
+              message: t('hmSpotMowMessage'),
+              confirmLabel: t('hmStartHere'),
               spotPolygon: polygon,
             });
           },
@@ -3217,7 +3212,7 @@ export default function HomeScreen() {
           <AppActionSheet
             visible={showStartModeSheet}
             title={t('startMowing')}
-            message="Choose a mowing mode"
+            message={t('hmChooseMowMode')}
             onClose={() => setShowStartModeSheet(false)}
             actions={items}
           />
@@ -3229,7 +3224,7 @@ export default function HomeScreen() {
           <TouchableOpacity onPress={() => setShowAlerts(false)} style={styles.modalClose}>
             <Ionicons name="arrow-back" size={28} color={colors.text} />
           </TouchableOpacity>
-          <Text style={styles.modalTitle}>{t('messages') || 'Messages'}</Text>
+          <Text style={styles.modalTitle}>{t('messages')}</Text>
         </View>
         <MessagesScreen />
       </Modal>

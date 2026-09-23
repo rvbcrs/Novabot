@@ -31,8 +31,9 @@ import { MowingDirectionPreview } from '../components/MowingDirectionPreview';
 import { useI18n } from '../i18n';
 import type { MainTabParams } from '../navigation/types';
 
-const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-const DAYS_FULL = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+// i18n keys, resolved with t() at render time (index = JS getDay()).
+const DAYS = ['pvDaySun', 'pvDayMon', 'pvDayTue', 'pvDayWed', 'pvDayThu', 'pvDayFri', 'pvDaySat'];
+const DAYS_FULL = ['pvDayFullSun', 'pvDayFullMon', 'pvDayFullTue', 'pvDayFullWed', 'pvDayFullThu', 'pvDayFullFri', 'pvDayFullSat'];
 const HEIGHT_OPTIONS = [2, 3, 4, 5, 6, 7, 8, 9]; // cm (matches Novabot app slider)
 
 export default function ScheduleScreen() {
@@ -90,11 +91,11 @@ export default function ScheduleScreen() {
       const list = Array.isArray(data) ? data : (data as any)?.schedules ?? [];
       setSchedules(list);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load schedules');
+      setError(e instanceof Error ? e.message : t('pvFailedLoadSchedules'));
     } finally {
       setLoading(false);
     }
-  }, [mowerSn, demo.enabled]);
+  }, [mowerSn, demo.enabled, t]);
 
   useEffect(() => {
     fetchSchedules();
@@ -234,11 +235,11 @@ export default function ScheduleScreen() {
     if (weekdays.length > 1 && dayIdx != null) {
       appAlertCompat.alert(
         t('delete'),
-        `Delete ${time} schedule for ${DAYS_FULL[dayIdx]} only, or all days?`,
+        t('pvDeleteDayOrAll', { time, day: t(DAYS_FULL[dayIdx]) }),
         [
           { text: t('cancel'), style: 'cancel' },
           {
-            text: `${DAYS[dayIdx]} only`,
+            text: t('pvDayOnly', { day: t(DAYS[dayIdx]) }),
             onPress: async () => {
               try {
                 const url = await getServerUrl();
@@ -251,7 +252,7 @@ export default function ScheduleScreen() {
             },
           },
           {
-            text: 'All days',
+            text: t('pvAllDays'),
             style: 'destructive',
             onPress: async () => {
               try {
@@ -270,7 +271,7 @@ export default function ScheduleScreen() {
 
     appAlertCompat.alert(
       t('delete'),
-      `Delete ${time} schedule?`,
+      t('pvDeleteScheduleConfirm', { time }),
       [
         { text: t('cancel'), style: 'cancel' },
         {
@@ -449,7 +450,7 @@ export default function ScheduleScreen() {
           if (!daySchedules || daySchedules.length === 0) return null;
           return (
             <View key={dayIdx} style={styles.dayGroup}>
-              <Text style={styles.dayLabel}>{DAYS_FULL[dayIdx]}</Text>
+              <Text style={styles.dayLabel}>{t(DAYS_FULL[dayIdx])}</Text>
               {daySchedules.map((s) => {
                 // Week-overzicht: de kaart hoort bij de kalenderdag van DEZE
                 // week; een gepasseerde dag dimt en toont wat er toen draaide.
@@ -653,10 +654,10 @@ export default function ScheduleScreen() {
                     </View>
                     <View style={styles.scheduleChips}>
                       <Text style={styles.scheduleChip}>
-                        Every {s.intervalDays} day{s.intervalDays === 1 ? '' : 's'}
+                        {s.intervalDays === 1 ? t('pvEveryDaysOne') : t('pvEveryDaysOther', { count: s.intervalDays ?? 0 })}
                       </Text>
                       {s.intervalAnchorDate && (
-                        <Text style={styles.scheduleChip}>from {s.intervalAnchorDate}</Text>
+                        <Text style={styles.scheduleChip}>{t('pvFromDate', { date: s.intervalAnchorDate })}</Text>
                       )}
                       {(s.cuttingHeight ?? s.cutting_height) != null && (
                         <Text style={styles.scheduleChip}>
@@ -866,11 +867,11 @@ function ScheduleEditor({
       if (mode === 'interval') {
         const n = parseInt(intervalDays, 10);
         if (!Number.isFinite(n) || n < 1) {
-          appAlertCompat.alert('Error', 'Interval must be at least 1 day');
+          appAlertCompat.alert(t('error'), t('pvIntervalMin1'));
           return;
         }
         if (!/^\d{4}-\d{2}-\d{2}$/.test(intervalAnchorDate)) {
-          appAlertCompat.alert('Error', 'Start date must look like YYYY-MM-DD');
+          appAlertCompat.alert(t('error'), t('pvStartDateFormat'));
           return;
         }
         extra = {
@@ -880,7 +881,7 @@ function ScheduleEditor({
         };
       } else {
         if (selectedDays.length === 0) {
-          appAlertCompat.alert('Error', 'Select at least one day');
+          appAlertCompat.alert(t('error'), t('pvSelectOneDay'));
           return;
         }
         const sortedDays = [...selectedDays].sort((a, b) => a - b);
@@ -895,7 +896,7 @@ function ScheduleEditor({
       onSaved();
     } catch (e) {
       console.error('[Schedule] Save failed:', e);
-      appAlertCompat.alert('Error', e instanceof Error ? e.message : 'Save failed');
+      appAlertCompat.alert(t('error'), e instanceof Error ? e.message : t('pvSaveFailed'));
     } finally {
       setSaving(false);
     }
@@ -944,14 +945,14 @@ function ScheduleEditor({
             ))}
           </ScrollView>
 
-          <Text style={editorStyles.label}>Repeat</Text>
+          <Text style={editorStyles.label}>{t('pvRepeat')}</Text>
           <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
             <TouchableOpacity
               style={[editorStyles.dayChip, mode === 'weekly' && editorStyles.dayChipActive, { flex: 1, alignItems: 'center' }]}
               onPress={() => setMode('weekly')}
             >
               <Text style={[editorStyles.dayChipText, mode === 'weekly' && editorStyles.dayChipTextActive]}>
-                Weekdays
+                {t('pvWeekdays')}
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
@@ -959,7 +960,7 @@ function ScheduleEditor({
               onPress={() => setMode('interval')}
             >
               <Text style={[editorStyles.dayChipText, mode === 'interval' && editorStyles.dayChipTextActive]}>
-                Every N days
+                {t('intervalSchedules')}
               </Text>
             </TouchableOpacity>
           </View>
@@ -975,7 +976,7 @@ function ScheduleEditor({
                     onPress={() => toggleDay(i)}
                   >
                     <Text style={[editorStyles.dayChipText, selectedDays.includes(i) && editorStyles.dayChipTextActive]}>
-                      {d}
+                      {t(d)}
                     </Text>
                   </TouchableOpacity>
                 ))}
@@ -983,7 +984,7 @@ function ScheduleEditor({
             </>
           ) : (
             <>
-              <Text style={editorStyles.label}>Every</Text>
+              <Text style={editorStyles.label}>{t('pvEvery')}</Text>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 }}>
                 <TextInput
                   style={[editorStyles.input, { flex: 1 }]}
@@ -993,14 +994,14 @@ function ScheduleEditor({
                   placeholder="2"
                   placeholderTextColor={colors.textMuted}
                 />
-                <Text style={{ color: colors.text, fontSize: 14 }}>days</Text>
+                <Text style={{ color: colors.text, fontSize: 14 }}>{t('pvDaysUnit')}</Text>
               </View>
-              <Text style={editorStyles.label}>Starting from</Text>
+              <Text style={editorStyles.label}>{t('pvStartingFrom')}</Text>
               <TextInput
                 style={editorStyles.input}
                 value={intervalAnchorDate}
                 onChangeText={setIntervalAnchorDate}
-                placeholder="YYYY-MM-DD"
+                placeholder={t('pvDatePlaceholder')}
                 placeholderTextColor={colors.textMuted}
                 autoCapitalize="none"
                 autoCorrect={false}
@@ -1017,7 +1018,7 @@ function ScheduleEditor({
               onChangeText={setHour}
               keyboardType="number-pad"
               maxLength={2}
-              placeholder="HH"
+              placeholder={t('pvHourPlaceholder')}
               placeholderTextColor={colors.textMuted}
             />
             <Text style={editorStyles.timeSeparator}>:</Text>
@@ -1027,7 +1028,7 @@ function ScheduleEditor({
               onChangeText={setMinute}
               keyboardType="number-pad"
               maxLength={2}
-              placeholder="MM"
+              placeholder={t('pvMinutePlaceholder')}
               placeholderTextColor={colors.textMuted}
             />
           </View>
@@ -1090,9 +1091,9 @@ function ScheduleEditor({
               + adds (count × step) mod 360 to the base path_direction. */}
           <View style={editorStyles.rainRow}>
             <View style={{ flex: 1 }}>
-              <Text style={editorStyles.rainTitle}>Rotate direction each run</Text>
+              <Text style={editorStyles.rainTitle}>{t('pvRotateEachRun')}</Text>
               <Text style={editorStyles.rainSub}>
-                Adds {alternateStep}° to the path direction every time this schedule fires
+                {t('pvRotateEachRunSub', { step: alternateStep })}
               </Text>
             </View>
             <Switch
@@ -1104,7 +1105,7 @@ function ScheduleEditor({
           </View>
           {alternateDirection && (
             <View style={editorStyles.stepperRow}>
-              <Text style={[editorStyles.label, { flex: 1, marginBottom: 0 }]}>Rotation step</Text>
+              <Text style={[editorStyles.label, { flex: 1, marginBottom: 0 }]}>{t('pvRotationStep')}</Text>
               <TouchableOpacity style={editorStyles.stepperBtn} onPress={() => setAlternateStep(Math.max(15, alternateStep - 15))}>
                 <Ionicons name="remove" size={18} color={colors.text} />
               </TouchableOpacity>

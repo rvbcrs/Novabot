@@ -4,14 +4,15 @@ import { Ionicons } from '@expo/vector-icons';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useStyles, useTheme, type Colors } from '../theme';
 import type { RootStackParams } from '../navigation/types';
+import { useI18n } from '../i18n';
 
 type Props = NativeStackScreenProps<RootStackParams, 'DeviceChoice'>;
 
 type DeviceOption = {
   mode: 'charger' | 'mower' | 'both';
   icon: keyof typeof Ionicons.glyphMap;
-  title: string;
-  subtitle: string;
+  titleKey: string;
+  subtitleKey: string;
   color: string;
 };
 
@@ -20,22 +21,22 @@ function getDeviceOptions(c: Colors): DeviceOption[] {
     {
       mode: 'charger',
       icon: 'flash',
-      title: 'Charger',
-      subtitle: 'Provision the charging station (ESP32)',
+      titleKey: 'charger',
+      subtitleKey: 'pvChoiceChargerSub',
       color: c.amber,
     },
     {
       mode: 'mower',
       icon: 'construct',
-      title: 'Mower',
-      subtitle: 'Provision the robot mower',
+      titleKey: 'mower',
+      subtitleKey: 'pvChoiceMowerSub',
       color: c.emerald,
     },
     {
       mode: 'both',
       icon: 'build',
-      title: 'Both',
-      subtitle: 'Provision charger and mower sequentially',
+      titleKey: 'pvChoiceBoth',
+      subtitleKey: 'pvChoiceBothSub',
       color: c.purple,
     },
   ];
@@ -44,6 +45,7 @@ function getDeviceOptions(c: Colors): DeviceOption[] {
 export default function DeviceChoiceScreen({ navigation, route }: Props) {
   const styles = useStyles(makeStyles);
   const { colors } = useTheme();
+  const { t } = useI18n();
   const deviceOptions = getDeviceOptions(colors);
   const { mqttAddr, mqttPort } = route.params;
 
@@ -58,9 +60,9 @@ export default function DeviceChoiceScreen({ navigation, route }: Props) {
     >
       {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.title}>Choose Device</Text>
+        <Text style={styles.title}>{t('pvChooseDevice')}</Text>
         <Text style={styles.subtitle}>
-          What would you like to provision?
+          {t('pvChooseDeviceSub')}
         </Text>
       </View>
 
@@ -76,8 +78,8 @@ export default function DeviceChoiceScreen({ navigation, route }: Props) {
             <Ionicons name={opt.icon} size={28} color={opt.color} />
           </View>
           <View style={styles.cardContent}>
-            <Text style={styles.cardTitle}>{opt.title}</Text>
-            <Text style={styles.cardSubtitle}>{opt.subtitle}</Text>
+            <Text style={styles.cardTitle}>{t(opt.titleKey)}</Text>
+            <Text style={styles.cardSubtitle}>{t(opt.subtitleKey)}</Text>
           </View>
           <Ionicons name="chevron-forward" size={20} color={colors.textDim} />
         </TouchableOpacity>

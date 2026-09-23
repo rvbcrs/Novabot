@@ -18,6 +18,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useStyles, useTheme, type Colors } from '../theme';
 import { ApiClient } from '../services/api';
 import { getServerUrl } from '../services/auth';
+import { useI18n } from '../i18n';
 
 interface Props {
   sn: string;
@@ -54,6 +55,7 @@ export function JoystickControl({ sn, onClose }: Props) {
   const apiRef = useRef<ApiClient | null>(null);
   const styles = useStyles(makeStyles);
   const { colors } = useTheme();
+  const { t } = useI18n();
 
   useEffect(() => {
     (async () => {
@@ -160,22 +162,22 @@ export function JoystickControl({ sn, onClose }: Props) {
         <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={styles.backBtn}>
           <Ionicons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
-        <Text style={styles.title}>Manual Control</Text>
+        <Text style={styles.title}>{t('manualControl')}</Text>
       </View>
 
       {/* Speed selector */}
       <TouchableOpacity style={styles.speedChip} onPress={cycleSpeed} activeOpacity={0.7}>
         <Ionicons name="speedometer-outline" size={16} color={colors.emerald} />
-        <Text style={styles.speedText}>{speedLevel.toUpperCase()}</Text>
+        <Text style={styles.speedText}>{t(speedLevel === 'low' ? 'hmSpeedLow' : speedLevel === 'med' ? 'hmSpeedMed' : 'hmSpeedHigh')}</Text>
       </TouchableOpacity>
 
       {/* Joystick */}
       <View style={styles.joystickContainer}>
         {/* Direction labels */}
-        <Text style={[styles.dirLabel, styles.dirTop]}>F</Text>
-        <Text style={[styles.dirLabel, styles.dirBottom]}>B</Text>
-        <Text style={[styles.dirLabel, styles.dirLeft]}>L</Text>
-        <Text style={[styles.dirLabel, styles.dirRight]}>R</Text>
+        <Text style={[styles.dirLabel, styles.dirTop]}>{t('hmDirForward')}</Text>
+        <Text style={[styles.dirLabel, styles.dirBottom]}>{t('hmDirBack')}</Text>
+        <Text style={[styles.dirLabel, styles.dirLeft]}>{t('hmDirLeft')}</Text>
+        <Text style={[styles.dirLabel, styles.dirRight]}>{t('hmDirRight')}</Text>
 
         {/* Joystick ring */}
         <View style={styles.joystickRing} {...panResponder.panHandlers}>
@@ -206,7 +208,7 @@ export function JoystickControl({ sn, onClose }: Props) {
         activeOpacity={0.7}
       >
         <Ionicons name="stop-circle" size={24} color={colors.white} />
-        <Text style={styles.stopText}>STOP</Text>
+        <Text style={styles.stopText}>{t('hmStopUpper')}</Text>
       </TouchableOpacity>
     </View>
   );

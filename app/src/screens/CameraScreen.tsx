@@ -28,10 +28,10 @@ import { useI18n } from '../i18n';
 import { isOpenNovaFirmware } from '../utils/firmwareCapability';
 
 const CAMERA_TOPICS = [
-  { key: 'front', label: 'Front' },
-  { key: 'tof_gray', label: 'ToF Gray' },
-  { key: 'tof_depth', label: 'ToF Depth' },
-  { key: 'aruco', label: 'ArUco' },
+  { key: 'front', labelKey: 'stCamFront' },
+  { key: 'tof_gray', labelKey: 'stCamTofGray' },
+  { key: 'tof_depth', labelKey: 'stCamTofDepth' },
+  { key: 'aruco', labelKey: 'stCamAruco' },
 ];
 
 export default function CameraScreen() {
@@ -92,21 +92,21 @@ export default function CameraScreen() {
     (async () => {
       try {
         const serverUrl = await getServerUrl();
-        if (!serverUrl) { setErrorMsg('No server URL'); setHasError(true); return; }
+        if (!serverUrl) { setErrorMsg(t('stNoServerUrl')); setHasError(true); return; }
         const res = await fetch(`${serverUrl}/api/dashboard/camera/${encodeURIComponent(sn)}/info`);
         const json = await res.json();
         if (json.streamUrl) {
           setStreamUrl(`${json.streamUrl}?topic=${selectedTopic}`);
         } else {
-          setErrorMsg(json.error ?? 'No stream URL');
+          setErrorMsg(json.error ?? t('stNoStreamUrl'));
           setHasError(true);
         }
       } catch (e) {
-        setErrorMsg(e instanceof Error ? e.message : 'Fetch failed');
+        setErrorMsg(e instanceof Error ? e.message : t('stFetchFailed'));
         setHasError(true);
       }
     })();
-  }, [mower?.online, sn, selectedTopic, streamKey]);
+  }, [mower?.online, sn, selectedTopic, streamKey, t]);
 
   const handleTopicChange = (key: string) => {
     setSelectedTopic(key);
@@ -155,12 +155,10 @@ img{max-width:100%;max-height:100%;object-fit:contain}
           {t('tabCamera')}
         </Text>
         <Text style={{ marginTop: 12, color: colors.textDim ?? '#888', textAlign: 'center', fontSize: 14, lineHeight: 20, maxWidth: 360 }}>
-          The camera stream is provided by a daemon that only runs on
-          OpenNova custom firmware. Stock LFI firmware doesn&apos;t ship
-          this service, so there&apos;s nothing to display.
+          {t('stCamStockFw')}
         </Text>
         <Text style={{ marginTop: 16, color: colors.textMuted ?? '#999', textAlign: 'center', fontSize: 12, fontStyle: 'italic' }}>
-          Active mower firmware: {activeMower.firmwareVersion ?? 'unknown'}
+          {t('stActiveFirmware', { version: activeMower.firmwareVersion ?? t('stUnknown') })}
         </Text>
       </View>
     );
@@ -171,7 +169,7 @@ img{max-width:100%;max-height:100%;object-fit:contain}
       {!isLandscape && (
         <View style={styles.topBar}>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.topicRow}>
-            {CAMERA_TOPICS.map(({ key, label }) => (
+            {CAMERA_TOPICS.map(({ key, labelKey }) => (
               <TouchableOpacity
                 key={key}
                 style={[styles.topicBtn, selectedTopic === key && styles.topicBtnActive]}
@@ -179,7 +177,7 @@ img{max-width:100%;max-height:100%;object-fit:contain}
                 activeOpacity={0.7}
               >
                 <Text style={[styles.topicText, selectedTopic === key && styles.topicTextActive]}>
-                  {label}
+                  {t(labelKey)}
                 </Text>
               </TouchableOpacity>
             ))}
@@ -242,7 +240,7 @@ img{max-width:100%;max-height:100%;object-fit:contain}
               {rtkSat != null && (
                 <View style={styles.overlayChip}>
                   <Ionicons name="navigate" size={12} color="#fff" />
-                  <Text style={styles.overlayChipText}>{rtkSat} sat</Text>
+                  <Text style={styles.overlayChipText}>{rtkSat} {t('sats')}</Text>
                 </View>
               )}
               {cpuTemp != null && (

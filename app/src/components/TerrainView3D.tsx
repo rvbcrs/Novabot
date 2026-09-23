@@ -318,7 +318,7 @@ type ViewStatus = 'loading' | 'empty' | 'error' | 'ready';
  * maaier-positie als gele conus bovenop het terrein.
  */
 export default function TerrainView3D({ sn }: { sn: string }) {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   const { colors } = useTheme();
   const { devices } = useMowerState();
 
@@ -633,13 +633,13 @@ export default function TerrainView3D({ sn }: { sn: string }) {
       )}
       {status === 'error' && (
         <View style={styles.center}>
-          <Text style={[styles.statusText, { color: colors.red }]}>{t('error', undefined) || 'Fout'}</Text>
+          <Text style={[styles.statusText, { color: colors.red }]}>{t('error')}</Text>
         </View>
       )}
       {status === 'empty' && (
         <View style={styles.center}>
           <Text style={[styles.statusText, { color: colors.textMuted }]}>
-            {t('terrain3dEmpty', undefined) || 'De kaart groeit tijdens het maaien…'}
+            {t('terrain3dEmpty')}
           </Text>
         </View>
       )}
@@ -668,10 +668,10 @@ export default function TerrainView3D({ sn }: { sn: string }) {
         <View style={styles.infoPanel}>
           <View style={styles.infoPanelHeader}>
             <Text style={styles.infoPanelTitle} numberOfLines={1}>
-              {selectedCluster.nl ?? selectedCluster.className ?? 'Onbekend object'}
+              {(language === 'nl' ? selectedCluster.nl : null) ?? selectedCluster.className ?? selectedCluster.nl ?? t('hmUnknownObject')}
             </Text>
             <TouchableOpacity onPress={() => setSelectedKey(null)} hitSlop={8}>
-              <Text style={styles.infoPanelClose}>{t('close', undefined) || 'Sluiten'}</Text>
+              <Text style={styles.infoPanelClose}>{t('close')}</Text>
             </TouchableOpacity>
           </View>
           {photoUri && (

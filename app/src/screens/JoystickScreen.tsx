@@ -402,13 +402,10 @@ export default function JoystickScreen() {
         <MaterialCommunityIcons name="lock-outline" size={64} color={colors.textMuted ?? '#999'} />
         <Text style={[styles.title, { marginTop: 16, textAlign: 'center' }]}>{t('manualControl')}</Text>
         <Text style={{ marginTop: 12, color: colors.textDim ?? '#888', textAlign: 'center', fontSize: 14, lineHeight: 20, maxWidth: 360 }}>
-          Manual control needs OpenNova custom firmware. The MQTT commands
-          for driving the mower and toggling the blade aren&apos;t part of
-          the stock LFI firmware, so the joystick would have nothing to
-          talk to here.
+          {t('stJoyStockFw')}
         </Text>
         <Text style={{ marginTop: 16, color: colors.textMuted ?? '#999', textAlign: 'center', fontSize: 12, fontStyle: 'italic' }}>
-          Active mower firmware: {activeMower.firmwareVersion ?? 'unknown'}
+          {t('stActiveFirmware', { version: activeMower.firmwareVersion ?? t('stUnknown') })}
         </Text>
       </View>
     );
@@ -512,8 +509,8 @@ export default function JoystickScreen() {
             <BladeSpinIcon size={28} color={bladeSpeed > 0 ? colors.red : colors.amber} spinning={bladeSpeed > 0} />
             <Text style={{ color: bladeSpeed > 0 ? colors.red : colors.amber, fontWeight: '700', fontSize: 13, flex: 1 }}>
               {bladeSpeed > 0
-                ? `Blade spinning at ${bladeSpeed} rpm. Tap to stop.`
-                : 'Blade requested, waiting for motor. Tap to cancel.'}
+                ? t('stBladeSpinning', { rpm: bladeSpeed })
+                : t('stBladeRequested')}
             </Text>
             <Ionicons name="stop-circle" size={20} color={bladeSpeed > 0 ? colors.red : colors.amber} />
           </TouchableOpacity>
@@ -529,10 +526,10 @@ export default function JoystickScreen() {
           <View style={styles.offlineBox}>
             <Ionicons name="lock-closed" size={32} color={colors.amber} />
             <Text style={[styles.offlineText, { color: colors.amber }]}>
-              {t('manualControlLocked') || 'Manual control locked'}
+              {t('manualControlLocked')}
             </Text>
             <Text style={styles.offlineSubtext}>
-              {t('manualControlLockedDesc') || 'Stop the current task before driving the mower manually.'}
+              {t('manualControlLockedDesc')}
             </Text>
           </View>
         ) : (
@@ -577,10 +574,10 @@ export default function JoystickScreen() {
                   <View style={styles.crossH} />
 
                   {/* Direction labels */}
-                  <Text style={[styles.dirLabel, styles.dirTop]}>F</Text>
-                  <Text style={[styles.dirLabel, styles.dirBottom]}>B</Text>
-                  <Text style={[styles.dirLabel, styles.dirLeft]}>L</Text>
-                  <Text style={[styles.dirLabel, styles.dirRight]}>R</Text>
+                  <Text style={[styles.dirLabel, styles.dirTop]}>{t('stDirForward')}</Text>
+                  <Text style={[styles.dirLabel, styles.dirBottom]}>{t('stDirBack')}</Text>
+                  <Text style={[styles.dirLabel, styles.dirLeft]}>{t('stDirLeft')}</Text>
+                  <Text style={[styles.dirLabel, styles.dirRight]}>{t('stDirRight')}</Text>
 
                   {/* Thumb */}
                   <View
@@ -649,14 +646,12 @@ export default function JoystickScreen() {
             <View style={{ alignItems: 'center', marginBottom: 8 }}>
               <Ionicons name="warning" size={28} color={colors.red} />
             </View>
-            <Text style={styles.bladeSheetTitle}>Start blade</Text>
+            <Text style={styles.bladeSheetTitle}>{t('stStartBlade')}</Text>
             <Text style={styles.bladeSheetSubtitle}>
-              Choose cutting height. The blades will extend and spin up —
-              keep hands and feet clear. Auto-stops if the app closes or the
-              mower goes offline.
+              {t('stStartBladeBody')}
             </Text>
 
-            <Text style={styles.bladeSheetLabel}>Cutting height</Text>
+            <Text style={styles.bladeSheetLabel}>{t('msCuttingHeight')}</Text>
             <View style={styles.bladeSheetHeightRow}>
               {[2, 3, 4, 5, 6, 7, 8, 9].map((cm) => (
                 <TouchableOpacity
@@ -686,7 +681,7 @@ export default function JoystickScreen() {
                 onPress={() => setShowBladeSheet(false)}
                 activeOpacity={0.7}
               >
-                <Text style={[styles.bladeSheetBtnText, { color: colors.textDim }]}>Cancel</Text>
+                <Text style={[styles.bladeSheetBtnText, { color: colors.textDim }]}>{t('cancel')}</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.bladeSheetBtn, { backgroundColor: colors.red }]}
@@ -694,7 +689,7 @@ export default function JoystickScreen() {
                 activeOpacity={0.7}
               >
                 <Ionicons name="cut" size={18} color={colors.white} />
-                <Text style={styles.bladeSheetBtnText}>Start blade</Text>
+                <Text style={styles.bladeSheetBtnText}>{t('stStartBlade')}</Text>
               </TouchableOpacity>
             </View>
           </View>

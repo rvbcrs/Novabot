@@ -224,7 +224,7 @@ export function StartMowSheet({
     if (!sn || selectedMapIds.size === 0) return;
     const selectedMaps = maps.filter(m => selectedMapIds.has(m.mapId));
     if (selectedMaps.length === 0) {
-      appAlertCompat.alert(t('noMap') || 'No Map', t('previewNoArea') || 'Select a work area to preview');
+      appAlertCompat.alert(t('noMap'), t('previewNoArea'));
       return;
     }
     setPreviewing(true);
@@ -240,7 +240,7 @@ export function StartMowSheet({
       onPreviewPaths?.(paths);
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
-      appAlertCompat.alert(t('error') || 'Error', detail || 'Could not load preview path');
+      appAlertCompat.alert(t('error'), detail || t('hmPreviewPathFailed'));
     } finally {
       setPreviewing(false);
     }
@@ -252,8 +252,8 @@ export function StartMowSheet({
     // 1. lowBatteryIntercept: battery < 20%
     if (battery != null && battery < 20) {
       appAlertCompat.alert(
-        t('lowBattery') || 'Low Battery',
-        `${t('lowBatteryDesc') || 'Battery is at'} ${battery}%. ${t('pleaseCharge') || 'Please wait for charging to complete.'}`,
+        t('lowBattery'),
+        t('hmLowBatteryBody', { pct: battery }),
       );
       return;
     }
@@ -261,14 +261,14 @@ export function StartMowSheet({
     // 2. noMap0Intercept: no work map
     if (maps.length === 0) {
       appAlertCompat.alert(
-        t('noMap') || 'No Map',
-        t('noMapDesc') || 'No work area found. Please create a map first.',
+        t('noMap'),
+        t('noMapDesc'),
         [
           {
-            text: t('create') || 'Create',
+            text: t('create'),
             onPress: () => { onClose(); (navigation as any).navigate('Map', { screen: 'Mapping' }); },
           },
-          { text: t('cancel') || 'Cancel', style: 'cancel' },
+          { text: t('cancel'), style: 'cancel' },
         ],
       );
       return;
@@ -277,15 +277,15 @@ export function StartMowSheet({
     // 3. noCharingUnicomIntercept: no channel (warning, not blocking)
     if (!hasUnicom) {
       appAlertCompat.alert(
-        t('channelRequired') || 'Channel Required',
-        t('channelRequiredDesc') || 'The distance from your charging station to the lawn exceeds 1.5m, or it is not directly facing the lawn. You need to create a channel.',
+        t('channelRequired'),
+        t('channelRequiredDesc'),
         [
           {
-            text: t('create') || 'Create',
+            text: t('create'),
             onPress: () => { onClose(); (navigation as any).navigate('Map', { screen: 'Mapping', params: { mode: 'channel' } }); },
           },
-          { text: t('cancel') || 'Cancel', style: 'cancel' },
-          { text: t('startAnyway') || 'Start Anyway', style: 'destructive', onPress: () => doStart() },
+          { text: t('cancel'), style: 'cancel' },
+          { text: t('startAnyway'), style: 'destructive', onPress: () => doStart() },
         ],
       );
       return;
@@ -293,7 +293,7 @@ export function StartMowSheet({
 
     // 4. workingIntercept: mower already working
     if (isWorking) {
-      appAlertCompat.alert(t('mowerBusy') || 'Mower Busy', t('mowerBusyDesc') || 'The mower is currently working.');
+      appAlertCompat.alert(t('mowerBusy'), t('mowerBusyDesc'));
       return;
     }
 
@@ -368,7 +368,7 @@ export function StartMowSheet({
       // mowing blind.
       const freshRes = await api.fetchMaps(sn).catch(() => null);
       if (!freshRes) {
-        appAlertCompat.alert(t('error') || 'Error', t('mapRefreshFailed') || 'Could not refresh the maps. Check the connection and try again.');
+        appAlertCompat.alert(t('error'), t('mapRefreshFailed'));
         return;
       }
       const freshWork = (freshRes.maps ?? []).filter(m => m.mapType === 'work' && (m.mapArea?.length ?? 0) >= 3);
@@ -387,7 +387,7 @@ export function StartMowSheet({
         setAllMaps(freshRes.maps ?? []);
         setMaps(freshWork);
         setSelectedMapIds(new Set(orderedMapIds));
-        appAlertCompat.alert(t('error') || 'Error', t('mapsChanged') || 'The map list changed (e.g. after a restore). Re-check your selection and start again.');
+        appAlertCompat.alert(t('error'), t('mapsChanged'));
         return;
       }
 
@@ -534,7 +534,7 @@ export function StartMowSheet({
       onClose();
     } catch (err) {
       console.log('[StartMow] ERROR:', err);
-      appAlertCompat.alert(t('error') || 'Error', err instanceof Error ? err.message : 'Could not start mowing.');
+      appAlertCompat.alert(t('error'), err instanceof Error ? err.message : t('hmStartMowFailed'));
     }
     setStarting(false);
   };
@@ -752,7 +752,7 @@ export function StartMowSheet({
                         padding: 24, minHeight: 120 }}
                     >
                       <Text style={{ color: colors.textMuted, fontSize: 13 }}>
-                        {t('previewNoArea') ?? 'Select a work area to preview'}
+                        {t('previewNoArea')}
                       </Text>
                     </View>
                   </View>
@@ -1031,7 +1031,7 @@ export function StartMowSheet({
           <View style={styles.rainModalCard}>
             <View style={styles.rainModalIconRow}>
               <Ionicons name="rainy" size={28} color="#60a5fa" />
-              <Text style={styles.rainModalTitle}>{t('rainWarningTitle') || 'Regen voorspeld'}</Text>
+              <Text style={styles.rainModalTitle}>{t('rainWarningTitle')}</Text>
             </View>
 
             {rainPrompt && (
@@ -1040,18 +1040,17 @@ export function StartMowSheet({
                   time: new Date(rainPrompt.atMs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
                   mm: rainPrompt.mm.toFixed(1),
                   prob: String(rainPrompt.prob),
-                }) || `Regen voorspeld om ${new Date(rainPrompt.atMs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} (${rainPrompt.mm.toFixed(1)}mm · ${rainPrompt.prob}%). Toch maaien?`)}
+                }))}
               </Text>
             )}
 
             <View style={styles.rainModalToggleRow}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.rainModalToggleLabel}>
-                  {t('ignoreRainSession') || 'Negeer regen deze sessie'}
+                  {t('ignoreRainSession')}
                 </Text>
                 <Text style={styles.rainModalToggleHint}>
-                  {t('ignoreRainSessionHint') ||
-                    'Aan: regen-pauze blijft uit tot deze maai-sessie eindigt. Uit: maaier pauzeert zodra regen valt.'}
+                  {t('ignoreRainSessionHint')}
                 </Text>
               </View>
               <Switch
@@ -1067,13 +1066,13 @@ export function StartMowSheet({
                 style={[styles.rainModalBtn, styles.rainModalBtnCancel]}
                 onPress={() => setRainPrompt(null)}
               >
-                <Text style={styles.rainModalBtnCancelText}>{t('cancel') || 'Annuleren'}</Text>
+                <Text style={styles.rainModalBtnCancelText}>{t('cancel')}</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.rainModalBtn, styles.rainModalBtnGo]}
                 onPress={confirmRainStart}
               >
-                <Text style={styles.rainModalBtnGoText}>{t('startMowing') || 'Start maaien'}</Text>
+                <Text style={styles.rainModalBtnGoText}>{t('startMowing')}</Text>
               </TouchableOpacity>
             </View>
           </View>

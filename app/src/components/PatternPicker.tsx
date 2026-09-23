@@ -7,6 +7,7 @@ import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
 import { useStyles, type Colors } from '../theme';
 import { loadAllPatterns, contourToSvgPath } from '../utils/patternUtils';
+import { useI18n } from '../i18n';
 
 interface Props {
   selected: number | null;
@@ -18,6 +19,7 @@ const PAD = 3;
 
 export function PatternPicker({ selected, onSelect }: Props) {
   const styles = useStyles(makeStyles);
+  const { t } = useI18n();
   const patterns = useMemo(() => loadAllPatterns(), []);
 
   const thumbPaths = useMemo(() => {
@@ -31,10 +33,10 @@ export function PatternPicker({ selected, onSelect }: Props) {
   return (
     <View>
       <View style={styles.header}>
-        <Text style={styles.label}>Mow Pattern</Text>
+        <Text style={styles.label}>{t('mowPattern')}</Text>
         {selected && (
           <TouchableOpacity onPress={() => onSelect(null)} activeOpacity={0.7}>
-            <Text style={styles.clearBtn}>Clear</Text>
+            <Text style={styles.clearBtn}>{t('hmClear')}</Text>
           </TouchableOpacity>
         )}
       </View>

@@ -57,49 +57,32 @@ export const RETURN_REASON_META: Record<Exclude<ReturnReason, null>, ReasonMeta>
   error: { icon: 'warning', color: '#ef4444', offersResume: false },
 };
 
-const TITLE_FALLBACK: Record<Exclude<ReturnReason, null>, { key: string; fb: string }> = {
-  rain: { key: 'rrRainTitle', fb: 'Teruggekeerd: regen' },
-  low_battery: { key: 'rrBatteryTitle', fb: 'Opladen — lage batterij' },
-  time_limit: { key: 'rrTimeTitle', fb: 'Tijdslimiet bereikt' },
-  manual: { key: 'rrManualTitle', fb: 'Handmatig teruggestuurd' },
-  finished: { key: 'rrFinishedTitle', fb: 'Maaien voltooid' },
-  error: { key: 'rrErrorTitle', fb: 'Teruggekeerd door storing' },
+// Keys exist in en/nl/de/fr; t() falls back to English, so no inline fallback text.
+const TITLE_KEY: Record<Exclude<ReturnReason, null>, string> = {
+  rain: 'rrRainTitle',
+  low_battery: 'rrBatteryTitle',
+  time_limit: 'rrTimeTitle',
+  manual: 'rrManualTitle',
+  finished: 'rrFinishedTitle',
+  error: 'rrErrorTitle',
 };
 
-const DESC_FALLBACK: Record<Exclude<ReturnReason, null>, { key: string; fb: string }> = {
-  rain: {
-    key: 'rrRainDesc',
-    fb: 'De maaier is naar het laadstation gereden omdat er regen werd gedetecteerd. Hervat om de regenpauze te negeren.',
-  },
-  low_battery: {
-    key: 'rrBatteryDesc',
-    fb: 'De maaier laadt op en hervat automatisch zodra de accu vol is.',
-  },
-  time_limit: {
-    key: 'rrTimeDesc',
-    fb: 'De ingestelde maaitijd is bereikt. Je kunt het maaien hervatten.',
-  },
-  manual: {
-    key: 'rrManualDesc',
-    fb: 'De maaier is handmatig naar het laadstation gestuurd. Je kunt het maaien hervatten.',
-  },
-  finished: {
-    key: 'rrFinishedDesc',
-    fb: 'Het maaien is voltooid en de maaier staat weer op het laadstation.',
-  },
-  error: {
-    key: 'rrErrorDesc',
-    fb: 'De maaier is teruggekeerd door een storing. Los de storing op en probeer opnieuw.',
-  },
+const DESC_KEY: Record<Exclude<ReturnReason, null>, string> = {
+  rain: 'rrRainDesc',
+  low_battery: 'rrBatteryDesc',
+  time_limit: 'rrTimeDesc',
+  manual: 'rrManualDesc',
+  finished: 'rrFinishedDesc',
+  error: 'rrErrorDesc',
 };
 
-const RESUME_LABEL: Record<Exclude<ReturnReason, null>, { key: string; fb: string }> = {
-  rain: { key: 'rrRainResume', fb: 'Negeer regen & hervat' },
-  low_battery: { key: 'rrResume', fb: 'Hervat' },
-  time_limit: { key: 'rrResume', fb: 'Hervat' },
-  manual: { key: 'rrResume', fb: 'Hervat' },
-  finished: { key: 'rrResume', fb: 'Hervat' },
-  error: { key: 'rrResume', fb: 'Hervat' },
+const RESUME_KEY: Record<Exclude<ReturnReason, null>, string> = {
+  rain: 'rrRainResume',
+  low_battery: 'rrResume',
+  time_limit: 'rrResume',
+  manual: 'rrResume',
+  finished: 'rrResume',
+  error: 'rrResume',
 };
 
 interface Props {
@@ -123,8 +106,8 @@ export function ReturnReasonModal({ visible, reason, online, loading, onResume, 
   // overlay that freezes the entire app. So the <Modal> is always rendered and
   // we only gate `visible` + the inner content on `reason`.
   const meta = reason ? RETURN_REASON_META[reason] : null;
-  const title = reason ? (t(TITLE_FALLBACK[reason].key) || TITLE_FALLBACK[reason].fb) : '';
-  const desc = reason ? (t(DESC_FALLBACK[reason].key) || DESC_FALLBACK[reason].fb) : '';
+  const title = reason ? t(TITLE_KEY[reason]) : '';
+  const desc = reason ? t(DESC_KEY[reason]) : '';
   const showResume = !!meta && meta.offersResume && online;
 
   return (
@@ -141,7 +124,7 @@ export function ReturnReasonModal({ visible, reason, online, loading, onResume, 
 
             <View style={styles.buttons}>
               <TouchableOpacity style={[styles.btn, styles.btnDismiss]} onPress={onDismiss}>
-                <Text style={styles.btnDismissText}>{t('rrDismiss') || t('close') || 'Sluiten'}</Text>
+                <Text style={styles.btnDismissText}>{t('rrDismiss')}</Text>
               </TouchableOpacity>
               {showResume && (
                 <TouchableOpacity
@@ -153,7 +136,7 @@ export function ReturnReasonModal({ visible, reason, online, loading, onResume, 
                     <ActivityIndicator size="small" color="#fff" />
                   ) : (
                     <Text style={styles.btnResumeText}>
-                      {t(RESUME_LABEL[reason].key) || RESUME_LABEL[reason].fb}
+                      {t(RESUME_KEY[reason])}
                     </Text>
                   )}
                 </TouchableOpacity>

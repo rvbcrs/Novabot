@@ -11,6 +11,7 @@ import { useStyles, useTheme, type Colors } from '../theme';
 import { isMapPoint, normalizeMapPoints } from '../utils/mapPoints';
 import { liveMapMarkerPosition, placeClosingLabel, mapWindow } from '../utils/liveMapLayout';
 import { MOWER_MAP_IMAGE } from './mower/mowerMapImage';
+import { useI18n } from '../i18n';
 
 export interface ExistingMapOverlay {
   mapId: string;
@@ -42,6 +43,7 @@ const ARROW_LEN = 20;       // direction arrow length in SVG units
 function LiveMapViewInner({ points, orientation, closed, height = 150, width, existingMaps = [], conflictingMapIds = [], mowerPosition, zoomRadiusM = null }: LiveMapViewProps) {
   const styles = useStyles(makeStyles);
   const { colors } = useTheme();
+  const { t } = useI18n();
   // The viewBox used to be a fixed 300 wide while the element stretches to the
   // screen: preserveAspectRatio then letterboxed the drawing and left a margin
   // down both sides. Measuring gives the canvas the full width it occupies.
@@ -172,7 +174,7 @@ function LiveMapViewInner({ points, orientation, closed, height = 150, width, ex
           if (w > 0 && w !== viewW) setViewW(w);
         }}
       >
-        <Text style={styles.waitingText}>Waiting for position data...</Text>
+        <Text style={styles.waitingText}>{t('hmWaitingForPosition')}</Text>
       </View>
     );
   }
@@ -273,7 +275,7 @@ function LiveMapViewInner({ points, orientation, closed, height = 150, width, ex
       </Svg>
 
       {/* Point count label */}
-      <Text style={styles.pointCount}>{pointCount} pts</Text>
+      <Text style={styles.pointCount}>{t('hmPointCount', { count: pointCount })}</Text>
     </View>
   );
 }

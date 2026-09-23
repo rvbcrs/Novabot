@@ -13,6 +13,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useStyles, useTheme, type Colors } from '../theme';
 import type { RootStackParams } from '../navigation/types';
 import { scanForDevices, type ScannedDevice, type DeviceType } from '../services/ble';
+import { useI18n } from '../i18n';
 
 type Props = NativeStackScreenProps<RootStackParams, 'BleScan'>;
 
@@ -30,10 +31,10 @@ function getTypeBadgeColor(type: DeviceType | 'unknown', c: Colors): string {
   return c.textDim;
 }
 
-function getTypeBadgeLabel(type: DeviceType | 'unknown'): string {
-  if (type === 'charger') return 'Charger';
-  if (type === 'mower') return 'Mower';
-  return 'Unknown';
+function getTypeBadgeLabel(type: DeviceType | 'unknown', t: (key: string) => string): string {
+  if (type === 'charger') return t('charger');
+  if (type === 'mower') return t('mower');
+  return t('pvUnknown');
 }
 
 function getRssiIcon(rssi: number): keyof typeof Ionicons.glyphMap {
@@ -45,6 +46,7 @@ function getRssiIcon(rssi: number): keyof typeof Ionicons.glyphMap {
 export default function BleScanScreen({ navigation, route }: Props) {
   const styles = useStyles(makeStyles);
   const { colors } = useTheme();
+  const { t } = useI18n();
   const { mqttAddr, mqttPort, deviceMode, wifiSsid, wifiPassword } = route.params;
   const [devices, setDevices] = useState<ScannedDevice[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -160,7 +162,7 @@ export default function BleScanScreen({ navigation, route }: Props) {
         <View style={styles.deviceRight}>
           <View style={[styles.badge, { backgroundColor: badgeColor + '1A' }]}>
             <Text style={[styles.badgeText, { color: badgeColor }]}>
-              {getTypeBadgeLabel(item.type)}
+              {getTypeBadgeLabel(item.type, t)}
             </Text>
           </View>
           <View style={styles.rssiRow}>
@@ -176,16 +178,16 @@ export default function BleScanScreen({ navigation, route }: Props) {
     <View style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.title}>BLE Scan</Text>
+        <Text style={styles.title}>{t('pvBleScanTitle')}</Text>
         <Text style={styles.subtitle}>
           {scanning
-            ? 'Scanning for nearby devices...'
+            ? t('pvBleScanningNearby')
             : (() => {
                 const visibleCount = matchingDevices.length + otherDevices.length;
                 const hidden = devices.length - visibleCount;
                 return hidden > 0
-                  ? `Found ${visibleCount} Novabot device${visibleCount !== 1 ? 's' : ''} (${hidden} other hidden)`
-                  : `Found ${visibleCount} device${visibleCount !== 1 ? 's' : ''}`;
+                  ? t(visibleCount === 1 ? 'pvBleFoundNovabotOne' : 'pvBleFoundNovabotOther', { count: visibleCount, hidden })
+                  : t(visibleCount === 1 ? 'pvBleFoundOne' : 'pvBleFoundOther', { count: visibleCount });
               })()}
         </Text>
       </View>
@@ -194,7 +196,7 @@ export default function BleScanScreen({ navigation, route }: Props) {
       {scanning && (
         <View style={styles.scanningRow}>
           <ActivityIndicator size="small" color={colors.emerald} />
-          <Text style={styles.scanningText}>Scanning...</Text>
+          <Text style={styles.scanningText}>{t('pvScanning')}</Text>
         </View>
       )}
 
@@ -208,9 +210,9 @@ export default function BleScanScreen({ navigation, route }: Props) {
           !scanning ? (
             <View style={styles.emptyState}>
               <Ionicons name="bluetooth-outline" size={48} color={colors.textDim} />
-              <Text style={styles.emptyText}>No devices found</Text>
+              <Text style={styles.emptyText}>{t('pvNoDevicesFound')}</Text>
               <Text style={styles.emptySubtext}>
-                Make sure your device is powered on and in range.
+                {t('pvNoDevicesHint')}
               </Text>
             </View>
           ) : null
@@ -222,7 +224,7 @@ export default function BleScanScreen({ navigation, route }: Props) {
       {matchingDevices.length > 0 && otherDevices.length > 0 && (
         <View style={styles.sectionNote}>
           <Text style={styles.sectionNoteText}>
-            Non-matching devices are shown but cannot be selected.
+            {t('pvNonMatchingNote')}
           </Text>
         </View>
       )}
@@ -237,7 +239,7 @@ export default function BleScanScreen({ navigation, route }: Props) {
         >
           <Ionicons name="refresh" size={18} color={scanning ? colors.textMuted : colors.text} />
           <Text style={[styles.rescanText, scanning && { color: colors.textMuted }]}>
-            Rescan
+            {t('pvRescan')}
           </Text>
         </TouchableOpacity>
 
@@ -247,7 +249,7 @@ export default function BleScanScreen({ navigation, route }: Props) {
           disabled={!hasSelection}
           activeOpacity={0.7}
         >
-          <Text style={styles.provisionButtonText}>Start Provisioning</Text>
+          <Text style={styles.provisionButtonText}>{t('pvStartProvisioningTitle')}</Text>
           <Ionicons name="arrow-forward" size={18} color={colors.white} />
         </TouchableOpacity>
       </View>

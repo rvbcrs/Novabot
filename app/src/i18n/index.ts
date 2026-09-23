@@ -22,6 +22,20 @@ export const LANGUAGES: Array<{ code: Language; label: string; flag: string }> =
 
 const translations: Record<Language, Record<string, string>> = { en, nl, de, fr };
 
+// The server writes its messages (errors, status) in the reader's language and
+// reads it from X-Lang. Screens call fetch() directly all over the app, so the
+// header is added here, once, for every request to an OpenNova /api/ path.
+// ponytail: global fetch wrapper; fine in React Native (no CORS preflight).
+let currentLanguage: Language = 'en';
+const nativeFetch = globalThis.fetch;
+globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+  const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+  if (!url.includes('/api/')) return nativeFetch(input, init);
+  const headers = new Headers(init?.headers);
+  if (!headers.has('X-Lang')) headers.set('X-Lang', currentLanguage);
+  return nativeFetch(input, { ...init, headers });
+}) as typeof fetch;
+
 interface I18nState {
   language: Language;
   setLanguage: (lang: Language) => void;
@@ -36,6 +50,7 @@ const I18nContext = createContext<I18nState>({
 
 export function I18nProvider({ children }: { children: React.ReactNode }) {
   const [language, setLang] = useState<Language>('en');
+  currentLanguage = language;
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {

@@ -230,7 +230,7 @@ export default function AppSettingsScreen({
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <ScrollView contentContainerStyle={styles.scroll}>
-        <Text style={styles.title}>Settings</Text>
+        <Text style={styles.title}>{t('settings')}</Text>
 
         {/* Appearance */}
         <View style={styles.appearanceSection}>
@@ -274,18 +274,18 @@ export default function AppSettingsScreen({
         )}
 
         {/* Server info */}
-        <Section title="SERVER">
+        <Section title={t('stServer')}>
           {!isEditingServer && (
             <View style={styles.rowContainer}>
               <Ionicons name="server-outline" size={20} color={colors.textDim} />
-              <Text style={styles.rowLabel}>Server URL</Text>
-              <Text style={[styles.rowValue, { fontSize: 13 }]} numberOfLines={1}>{serverUrl || 'Not configured'}</Text>
+              <Text style={styles.rowLabel}>{t('serverUrl')}</Text>
+              <Text style={[styles.rowValue, { fontSize: 13 }]} numberOfLines={1}>{serverUrl || t('stNotConfigured')}</Text>
               <TouchableOpacity
                 style={styles.changeBtn}
                 onPress={() => { setEditingUrl(serverUrl); setIsEditingServer(true); }}
                 activeOpacity={0.7}
               >
-                <Text style={styles.changeText}>Change</Text>
+                <Text style={styles.changeText}>{t('stChange')}</Text>
               </TouchableOpacity>
             </View>
           )}
@@ -313,7 +313,7 @@ export default function AppSettingsScreen({
                   <Ionicons name="search" size={16} color={colors.emerald} />
                 )}
                 <Text style={styles.discoverText}>
-                  {scanning ? 'Scanning...' : 'Find servers on network'}
+                  {scanning ? t('stScanning') : t('stFindServers')}
                 </Text>
               </TouchableOpacity>
               {discoveredServers.map((entry) => {
@@ -340,44 +340,44 @@ export default function AppSettingsScreen({
               {/* Cancel / Save */}
               <View style={styles.buttonRow}>
                 <TouchableOpacity style={styles.cancelBtn} onPress={() => setIsEditingServer(false)} activeOpacity={0.7}>
-                  <Text style={styles.cancelText}>Cancel</Text>
+                  <Text style={styles.cancelText}>{t('cancel')}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.saveBtn} onPress={() => handleChangeServer(editingUrl)} activeOpacity={0.7}>
-                  <Text style={styles.saveText}>Connect</Text>
+                  <Text style={styles.saveText}>{t('stConnect')}</Text>
                 </TouchableOpacity>
               </View>
             </View>
           )}
           <SettingsRow
             icon="pulse"
-            label="Connection"
-            value={connected ? 'Connected' : 'Disconnected'}
+            label={t('stConnection')}
+            value={connected ? t('connected') : t('disconnected')}
             valueColor={connected ? colors.green : colors.red}
           />
         </Section>
 
         {/* App update — current version (always) + manifest URL override
             (Android only — iOS can't sideload APKs). */}
-        <Section title="APP UPDATES">
+        <Section title={t('stAppUpdates')}>
           <SettingsRow
             icon="information-circle-outline"
-            label="Installed version"
+            label={t('stInstalledVersion')}
             value={`v${Application.nativeApplicationVersion ?? '?'}${
-              Application.nativeBuildVersion ? ` (build ${Application.nativeBuildVersion})` : ''
+              Application.nativeBuildVersion ? ` ${t('stBuild', { n: Application.nativeBuildVersion })}` : ''
             }`}
           />
           <View style={styles.rowContainer}>
             <Ionicons name="refresh-outline" size={20} color={colors.textDim} />
             <View style={{ flex: 1 }}>
-              <Text style={styles.rowLabel}>Check for updates</Text>
+              <Text style={styles.rowLabel}>{t('stCheckForUpdates')}</Text>
               {updateCheck === 'latest' && (
                 <Text style={[styles.rowValue, { fontSize: 12, color: colors.green }]}>
-                  You're on the latest version
+                  {t('stLatestVersion')}
                 </Text>
               )}
               {updateCheck === 'error' && (
                 <Text style={[styles.rowValue, { fontSize: 12, color: colors.red }]}>
-                  Could not reach the update server
+                  {t('stUpdateServerUnreachable')}
                 </Text>
               )}
             </View>
@@ -390,7 +390,7 @@ export default function AppSettingsScreen({
               {updateCheck === 'checking' ? (
                 <ActivityIndicator size="small" color={colors.emerald} />
               ) : (
-                <Text style={styles.changeText}>Check</Text>
+                <Text style={styles.changeText}>{t('stCheck')}</Text>
               )}
             </TouchableOpacity>
           </View>
@@ -401,16 +401,16 @@ export default function AppSettingsScreen({
             <View style={styles.rowContainer}>
               <Ionicons name="cloud-download-outline" size={20} color={colors.textDim} />
               <View style={{ flex: 1 }}>
-                <Text style={styles.rowLabel}>Update URL</Text>
+                <Text style={styles.rowLabel}>{t('stUpdateUrl')}</Text>
                 <Text
                   style={[styles.rowValue, { fontSize: 12, opacity: 0.75 }]}
                   numberOfLines={2}
                 >
-                  {updateUrl || 'Loading...'}
+                  {updateUrl || t('loading')}
                 </Text>
                 {isCustomUpdateUrl && (
                   <Text style={[styles.rowValue, { fontSize: 11, color: colors.amber }]}>
-                    Custom (default: {defaultUpdateUrl})
+                    {t('stCustomDefault', { url: defaultUpdateUrl })}
                   </Text>
                 )}
               </View>
@@ -422,7 +422,7 @@ export default function AppSettingsScreen({
                 }}
                 activeOpacity={0.7}
               >
-                <Text style={styles.changeText}>Change</Text>
+                <Text style={styles.changeText}>{t('stChange')}</Text>
               </TouchableOpacity>
             </View>
           )}
@@ -443,7 +443,7 @@ export default function AppSettingsScreen({
                 />
               </View>
               <Text style={[styles.rowValue, { fontSize: 11, opacity: 0.7, marginTop: 6 }]}>
-                Full URL to manifest.json. Leave blank to revert to default.
+                {t('stUpdateUrlHint')}
               </Text>
               <View style={styles.buttonRow}>
                 <TouchableOpacity
@@ -451,21 +451,21 @@ export default function AppSettingsScreen({
                   onPress={() => setIsEditingUpdateUrl(false)}
                   activeOpacity={0.7}
                 >
-                  <Text style={styles.cancelText}>Cancel</Text>
+                  <Text style={styles.cancelText}>{t('cancel')}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[styles.cancelBtn, { flex: 0, paddingHorizontal: 14 }]}
                   onPress={handleResetUpdateUrl}
                   activeOpacity={0.7}
                 >
-                  <Text style={styles.cancelText}>Default</Text>
+                  <Text style={styles.cancelText}>{t('stDefault')}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={styles.saveBtn}
                   onPress={() => handleSaveUpdateUrl(editingUpdateUrl)}
                   activeOpacity={0.7}
                 >
-                  <Text style={styles.saveText}>Save</Text>
+                  <Text style={styles.saveText}>{t('save')}</Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -473,15 +473,15 @@ export default function AppSettingsScreen({
         </Section>
 
         {/* Account */}
-        <Section title="ACCOUNT">
-          <SettingsRow icon="mail-outline" label="Email" value={email || 'Unknown'} />
+        <Section title={t('stAccount')}>
+          <SettingsRow icon="mail-outline" label={t('stEmail')} value={email || t('stUnknown')} />
         </Section>
 
         {/* Headlight toggle + brightness slider leven in Mower Settings
             (één plek, met 0-255 brightness control). Hier geen duplicaat. */}
 
         {/* Actions */}
-        <Section title="ACTIONS">
+        <Section title={t('actions')}>
           {onGoToMowerSettings && (
             <TouchableOpacity
               testID="settings-mower"
@@ -490,7 +490,7 @@ export default function AppSettingsScreen({
               activeOpacity={0.7}
             >
               <Ionicons name="options-outline" size={20} color={colors.amber} />
-              <Text style={styles.actionLabel}>Mower Settings</Text>
+              <Text style={styles.actionLabel}>{t('mowerSettings')}</Text>
               <Ionicons name="chevron-forward" size={18} color={colors.textDim} />
             </TouchableOpacity>
           )}
@@ -502,7 +502,7 @@ export default function AppSettingsScreen({
               activeOpacity={0.7}
             >
               <Ionicons name="cloud-download-outline" size={20} color={colors.blue} />
-              <Text style={styles.actionLabel}>Firmware Updates</Text>
+              <Text style={styles.actionLabel}>{t('stFirmwareUpdates')}</Text>
               {fwUpdate && (
                 <View style={{ width: 9, height: 9, borderRadius: 5, backgroundColor: colors.red, marginRight: 8 }} />
               )}
@@ -515,7 +515,7 @@ export default function AppSettingsScreen({
             activeOpacity={0.7}
           >
             <Ionicons name="add-circle-outline" size={20} color={colors.emerald} />
-            <Text style={styles.actionLabel}>Add device</Text>
+            <Text style={styles.actionLabel}>{t('stAddDevice')}</Text>
             <Ionicons name="chevron-forward" size={18} color={colors.textDim} />
           </TouchableOpacity>
         </Section>
@@ -547,12 +547,12 @@ export default function AppSettingsScreen({
         </Section>
 
         {/* Experimental features */}
-        <Section title="Features">
+        <Section title={t('stFeatures')}>
           <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 4 }}>
             <Ionicons name="flask" size={22} color={experimental.enabled ? '#a855f7' : colors.textMuted} style={{ marginRight: 12 }} />
             <View style={{ flex: 1 }}>
-              <Text style={{ color: colors.white, fontSize: 15, fontWeight: '600' }}>Experimental Features</Text>
-              <Text style={{ color: colors.textMuted, fontSize: 12, marginTop: 4, lineHeight: 16 }}>Enable beta features like autonomous mapping</Text>
+              <Text style={{ color: colors.white, fontSize: 15, fontWeight: '600' }}>{t('experimentalFeatures')}</Text>
+              <Text style={{ color: colors.textMuted, fontSize: 12, marginTop: 4, lineHeight: 16 }}>{t('experimentalSub')}</Text>
             </View>
             <Switch
               value={experimental.enabled}
@@ -564,8 +564,8 @@ export default function AppSettingsScreen({
           <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 4 }}>
             <Ionicons name="text" size={22} color={mapLabels.enabled ? colors.emerald : colors.textMuted} style={{ marginRight: 12 }} />
             <View style={{ flex: 1 }}>
-              <Text style={{ color: colors.white, fontSize: 15, fontWeight: '600' }}>Map labels</Text>
-              <Text style={{ color: colors.textMuted, fontSize: 12, marginTop: 4, lineHeight: 16 }}>Show zone + obstacle names and area on the home map</Text>
+              <Text style={{ color: colors.white, fontSize: 15, fontWeight: '600' }}>{t('stMapLabels')}</Text>
+              <Text style={{ color: colors.textMuted, fontSize: 12, marginTop: 4, lineHeight: 16 }}>{t('stMapLabelsSub')}</Text>
             </View>
             <Switch
               value={mapLabels.enabled}
@@ -597,42 +597,41 @@ export default function AppSettingsScreen({
           })}
         </Section>
 
-        <Section title="Help">
+        <Section title={t('stHelp')}>
           <TouchableOpacity style={styles.rowContainer} onPress={() => void handleReportProblem()} activeOpacity={0.7}>
             <Ionicons name="bug-outline" size={20} color={colors.textDim} />
             <View style={{ flex: 1 }}>
-              <Text style={styles.rowLabel}>Report a problem</Text>
+              <Text style={styles.rowLabel}>{t('stReportProblem')}</Text>
               <Text style={[styles.rowValue, { fontSize: 12, opacity: 0.75 }]}>
-                Opens a GitHub issue with your app, server and firmware versions filled in
+                {t('stReportProblemSub')}
               </Text>
             </View>
             <Ionicons name="open-outline" size={18} color={colors.textMuted} />
           </TouchableOpacity>
         </Section>
 
-        <Section title="Support OpenNova">
+        <Section title={t('stSupportOpenNova')}>
           <Text style={styles.donateBlurb}>
-            OpenNova is free and open-source. If it saved you a Novabot
-            subscription or a binned mower, a small tip is appreciated 🌱
+            {t('stDonateBlurb')}
           </Text>
           <DonateRow
             icon="cafe-outline"
             label="Buy Me a Coffee"
-            sub="One-off tip"
+            sub={t('stDonateOneOff')}
             color={colors.amber}
             url="https://buymeacoffee.com/rvbcrs"
           />
           <DonateRow
             icon="logo-paypal"
             label="PayPal"
-            sub="Any amount, any currency"
+            sub={t('stDonateAnyAmount')}
             color="#0070ba"
             url="https://paypal.me/rvbcrs"
           />
           <DonateRow
             icon="logo-github"
             label="GitHub Sponsors"
-            sub="Recurring monthly support"
+            sub={t('stDonateMonthly')}
             color={colors.white}
             url="https://github.com/sponsors/rvbcrs"
           />
@@ -645,12 +644,12 @@ export default function AppSettingsScreen({
           activeOpacity={0.7}
         >
           <Ionicons name="log-out-outline" size={20} color={colors.red} />
-          <Text style={styles.logoutText}>Sign Out</Text>
+          <Text style={styles.logoutText}>{t('signOut')}</Text>
         </TouchableOpacity>
 
         <Text style={styles.versionText}>
           OpenNova App v{Application.nativeApplicationVersion ?? '?'}
-          {Application.nativeBuildVersion ? ` (build ${Application.nativeBuildVersion})` : ''}
+          {Application.nativeBuildVersion ? ` ${t('stBuild', { n: Application.nativeBuildVersion })}` : ''}
         </Text>
       </ScrollView>
 

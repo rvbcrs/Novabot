@@ -21,6 +21,7 @@ import type { AuthStackParams } from '../navigation/types';
 import { getServerUrl, setServerUrl, setToken } from '../services/auth';
 import { ApiClient, AuthError } from '../services/api';
 import { discoverServers } from '../services/discovery';
+import { useI18n } from '../i18n';
 
 type Props = NativeStackScreenProps<AuthStackParams, 'Login'> & {
   onLoginSuccess: (token: string, serverUrl: string) => void;
@@ -29,6 +30,7 @@ type Props = NativeStackScreenProps<AuthStackParams, 'Login'> & {
 export default function LoginScreen({ navigation, onLoginSuccess }: Props) {
   const styles = useStyles(makeStyles);
   const { colors } = useTheme();
+  const { t } = useI18n();
   const [serverUrl, setServerUrlState] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -78,15 +80,15 @@ export default function LoginScreen({ navigation, onLoginSuccess }: Props) {
   const handleLogin = async () => {
     setError('');
     if (!serverUrl.trim()) {
-      setError('Server URL is required');
+      setError(t('pvServerUrlRequired'));
       return;
     }
     if (!email.trim()) {
-      setError('Email is required');
+      setError(t('pvEmailRequired'));
       return;
     }
     if (!password) {
-      setError('Password is required');
+      setError(t('pvPasswordRequired'));
       return;
     }
 
@@ -99,7 +101,7 @@ export default function LoginScreen({ navigation, onLoginSuccess }: Props) {
       try {
         await api.healthCheck();
       } catch {
-        setError('Cannot reach server. Check the URL and try again.');
+        setError(t('pvCannotReachServer'));
         setLoading(false);
         return;
       }
@@ -111,15 +113,15 @@ export default function LoginScreen({ navigation, onLoginSuccess }: Props) {
         await setToken(response.value.accessToken);
         onLoginSuccess(response.value.accessToken, normalizedUrl);
       } else {
-        setError(response.message ?? 'Invalid email or password');
+        setError(response.message ?? t('pvInvalidCredentials'));
       }
     } catch (e) {
       if (e instanceof AuthError) {
-        setError('Invalid email or password');
+        setError(t('pvInvalidCredentials'));
       } else if (e instanceof Error) {
         setError(e.message);
       } else {
-        setError('An unexpected error occurred');
+        setError(t('pvUnexpectedError'));
       }
     } finally {
       setLoading(false);
@@ -144,13 +146,13 @@ export default function LoginScreen({ navigation, onLoginSuccess }: Props) {
           </View>
           <Text style={styles.title}>OpenNova</Text>
           <Text style={styles.subtitle}>
-            Sign in to your local server to control your mower.
+            {t('pvLoginSubtitle')}
           </Text>
         </View>
 
         {/* Server URL */}
         <View style={styles.card}>
-          <Text style={styles.label}>SERVER URL</Text>
+          <Text style={styles.label}>{t('serverUrl')}</Text>
           <View style={styles.inputRow}>
             <Ionicons
               name="server-outline"
@@ -187,7 +189,7 @@ export default function LoginScreen({ navigation, onLoginSuccess }: Props) {
               <Ionicons name="search" size={16} color={colors.emerald} />
             )}
             <Text style={styles.discoverText}>
-              {scanning ? 'Scanning...' : 'Find servers on network'}
+              {scanning ? t('pvScanning') : t('pvFindServers')}
             </Text>
           </TouchableOpacity>
 
@@ -214,7 +216,7 @@ export default function LoginScreen({ navigation, onLoginSuccess }: Props) {
             );
           })}
 
-          <Text style={[styles.label, { marginTop: 20 }]}>EMAIL</Text>
+          <Text style={[styles.label, { marginTop: 20 }]}>{t('pvEmail')}</Text>
           <View style={styles.inputRow}>
             <Ionicons
               name="mail-outline"
@@ -238,7 +240,7 @@ export default function LoginScreen({ navigation, onLoginSuccess }: Props) {
             />
           </View>
 
-          <Text style={[styles.label, { marginTop: 20 }]}>PASSWORD</Text>
+          <Text style={[styles.label, { marginTop: 20 }]}>{t('pvPassword')}</Text>
           <View style={styles.inputRow}>
             <Ionicons
               name="lock-closed-outline"
@@ -253,7 +255,7 @@ export default function LoginScreen({ navigation, onLoginSuccess }: Props) {
                 setPassword(text);
                 setError('');
               }}
-              placeholder="Password"
+              placeholder={t('pvPassword')}
               placeholderTextColor={colors.textMuted}
               secureTextEntry={!showPassword}
               autoCapitalize="none"
@@ -293,7 +295,7 @@ export default function LoginScreen({ navigation, onLoginSuccess }: Props) {
             <ActivityIndicator size="small" color={colors.white} />
           ) : (
             <>
-              <Text style={styles.buttonText}>Sign In</Text>
+              <Text style={styles.buttonText}>{t('pvSignIn')}</Text>
               <Ionicons name="arrow-forward" size={20} color={colors.white} />
             </>
           )}
@@ -309,7 +311,7 @@ export default function LoginScreen({ navigation, onLoginSuccess }: Props) {
           activeOpacity={0.7}
         >
           <Ionicons name="person-add-outline" size={18} color={colors.emerald} />
-          <Text style={styles.registerButtonText}>Create a new account</Text>
+          <Text style={styles.registerButtonText}>{t('pvCreateNewAccount')}</Text>
         </TouchableOpacity>
       </ScrollView>
     </KeyboardAvoidingView>

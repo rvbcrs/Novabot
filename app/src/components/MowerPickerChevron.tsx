@@ -23,6 +23,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useStyles, useTheme, type Colors } from '../theme';
 import { useActiveMower } from '../hooks/useActiveMower';
 import { mowerDisplayName } from '../utils/mowerDisplay';
+import { useI18n } from '../i18n';
 import type { DeviceState } from '../types';
 
 interface MowerPickerChevronProps {
@@ -40,6 +41,7 @@ export function MowerPickerChevron({ onAddMower, onRename }: MowerPickerChevronP
   const [open, setOpen] = useState(false);
   const styles = useStyles(makeStyles);
   const { colors } = useTheme();
+  const { t } = useI18n();
 
   const count = mowers.length;
   // Dropdown opens when there are multiple mowers OR when we have an "Add mower" action to show.
@@ -59,8 +61,8 @@ export function MowerPickerChevron({ onAddMower, onRename }: MowerPickerChevronP
         accessibilityRole="button"
         accessibilityLabel={
           canOpen
-            ? `Active mower ${mowerDisplayName(activeMower)}. Tap to switch or add.`
-            : `Active mower ${mowerDisplayName(activeMower)}.`
+            ? t('hmActiveMowerA11ySwitch', { name: mowerDisplayName(activeMower) })
+            : t('hmActiveMowerA11y', { name: mowerDisplayName(activeMower) })
         }
       >
         <StatusDot online={activeMower.online} styles={styles} />
@@ -84,7 +86,7 @@ export function MowerPickerChevron({ onAddMower, onRename }: MowerPickerChevronP
             hitSlop={10}
             style={styles.editBtn}
             accessibilityRole="button"
-            accessibilityLabel="Rename active mower"
+            accessibilityLabel={t('hmRenameActiveMower')}
           >
             <Ionicons name="pencil" size={15} color={colors.textMuted} />
           </Pressable>
@@ -105,7 +107,7 @@ export function MowerPickerChevron({ onAddMower, onRename }: MowerPickerChevronP
             style={styles.backdrop}
             onPress={() => setOpen(false)}
             accessibilityRole="button"
-            accessibilityLabel="Close mower picker"
+            accessibilityLabel={t('hmCloseMowerPicker')}
           />
           <View style={styles.dropdown}>
             {mowers.map((m) => {
@@ -123,7 +125,7 @@ export function MowerPickerChevron({ onAddMower, onRename }: MowerPickerChevronP
                     setOpen(false);
                   }}
                   accessibilityRole="button"
-                  accessibilityLabel={`Switch to ${mowerDisplayName(m)}`}
+                  accessibilityLabel={t('hmSwitchToMower', { name: mowerDisplayName(m) })}
                 >
                   <StatusDot online={m.online} styles={styles} />
                   <View style={styles.labelColumnRow}>
@@ -161,7 +163,7 @@ export function MowerPickerChevron({ onAddMower, onRename }: MowerPickerChevronP
                   }}
                   hitSlop={8}
                   accessibilityRole="button"
-                  accessibilityLabel="Add a new mower"
+                  accessibilityLabel={t('hmAddNewMower')}
                 >
                   <Ionicons
                     name="add-circle-outline"
@@ -170,7 +172,7 @@ export function MowerPickerChevron({ onAddMower, onRename }: MowerPickerChevronP
                     style={styles.addIcon}
                   />
                   <Text style={styles.addLabel} numberOfLines={1} ellipsizeMode="tail">
-                    Add device
+                    {t('hmAddDevice')}
                   </Text>
                 </Pressable>
               </>

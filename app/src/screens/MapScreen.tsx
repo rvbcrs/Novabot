@@ -463,18 +463,18 @@ export default function MapScreen() {
     const reasons = (pf.reasons ?? []).map(r => `• ${r}`).join('\n');
     if (pf.verdict === 'block') {
       appAlertCompat.alert(
-        t('preflightBlockTitle') || 'Mower not ready to map',
-        (t('preflightBlockBody') || 'A known mapping blocker is present. Resolve it and try again:') + '\n\n' + reasons,
+        t('preflightBlockTitle'),
+        (t('preflightBlockBody')) + '\n\n' + reasons,
       );
       return false;
     }
     return await new Promise<boolean>((resolve) => {
       appAlertCompat.alert(
-        t('preflightWarnTitle') || 'Mapping health warning',
-        (t('preflightWarnBody') || 'The mower reported issues that may affect mapping:') + '\n\n' + reasons,
+        t('preflightWarnTitle'),
+        (t('preflightWarnBody')) + '\n\n' + reasons,
         [
-          { text: t('cancel') || 'Cancel', style: 'cancel', onPress: () => resolve(false) },
-          { text: t('proceedAnyway') || 'Proceed anyway', onPress: () => resolve(true) },
+          { text: t('cancel'), style: 'cancel', onPress: () => resolve(false) },
+          { text: t('proceedAnyway'), onPress: () => resolve(true) },
         ],
       );
     });
@@ -774,7 +774,7 @@ export default function MapScreen() {
     if (!mower?.sn || maps.length === 0) return;
 
     if (demo.enabled) {
-      appAlertCompat.alert('Demo Mode', 'Export is not available in demo mode.');
+      appAlertCompat.alert(t('hmDemoMode'), t('hmExportDemoUnavailable'));
       return;
     }
 
@@ -784,18 +784,18 @@ export default function MapScreen() {
       const downloadUrl = `${serverUrl}/api/dashboard/maps/${encodeURIComponent(mower.sn)}/download-zip`;
       await Linking.openURL(downloadUrl);
     } catch (e) {
-      appAlertCompat.alert(t('error'), e instanceof Error ? e.message : 'Export failed');
+      appAlertCompat.alert(t('error'), e instanceof Error ? e.message : t('hmExportFailed'));
     }
   };
 
   // ── Import ZIP ───────────────────────────────────────────────────
   const handleDeleteMap = useCallback((map: MapData) => {
-    const typeLabel = map.mapType === 'obstacle' ? (t('obstacle') || 'Obstacle')
-      : map.mapType === 'unicom' ? (t('channel') || 'Channel')
-      : (t('map') || 'Map');
+    const typeLabel = map.mapType === 'obstacle' ? (t('obstacle'))
+      : map.mapType === 'unicom' ? (t('channel'))
+      : (t('map'));
     setSheetState({
       visible: true,
-      title: `${t('delete') || 'Delete'} ${typeLabel}?`,
+      title: t('hmDeleteTypeTitle', { type: typeLabel }),
       message: t('deleteMapConfirm'),
       actions: [
         {
@@ -815,14 +815,14 @@ export default function MapScreen() {
                 // Server refusals carry a readable `error` (busy, dock channel, ...).
                 let reason = '';
                 try { reason = (JSON.parse(bodyText) as { error?: string }).error ?? ''; } catch { /* not JSON */ }
-                appAlertCompat.alert(t('error'), reason || `Delete failed: HTTP ${res.status}\n${bodyText.slice(0, 200)}`);
+                appAlertCompat.alert(t('error'), reason || t('hmDeleteFailedHttp', { status: res.status, body: bodyText.slice(0, 200) }));
                 return;
               }
               fetchData();
             } catch (e) {
               const msg = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
               console.warn('[deleteMap] threw:', msg);
-              appAlertCompat.alert(t('error'), `Delete failed: ${msg}`);
+              appAlertCompat.alert(t('error'), t('hmDeleteFailedMsg', { msg }));
             }
           },
         },
@@ -831,10 +831,10 @@ export default function MapScreen() {
   }, [fetchData, mower, t]);
 
   const handleMapAction = (map: MapData) => {
-    const typeLabel = map.mapType === 'obstacle' ? (t('obstacle') || 'Obstacle')
-      : map.mapType === 'unicom' ? (t('channel') || 'Channel')
-      : (t('map') || 'Map');
-    const renameLabel = `${t('rename') || 'Rename'} ${typeLabel}`;
+    const typeLabel = map.mapType === 'obstacle' ? (t('obstacle'))
+      : map.mapType === 'unicom' ? (t('channel'))
+      : (t('map'));
+    const renameLabel = t('hmRenameType', { type: typeLabel });
     setSheetState({
       visible: true,
       title: map.mapName || typeLabel,
@@ -857,7 +857,7 @@ export default function MapScreen() {
                     body: JSON.stringify({ mapName: newName.trim() }),
                   });
                   fetchData();
-                } catch { appAlertCompat.alert(t('error'), 'Rename failed'); }
+                } catch { appAlertCompat.alert(t('error'), t('hmRenameFailed')); }
               },
               'plain-text',
               map.mapName || '',
@@ -882,7 +882,7 @@ export default function MapScreen() {
       const serverUrl = await getServerUrl();
       const token = await (await import('../services/auth')).getToken();
       if (!serverUrl || !token) {
-        appAlertCompat.alert(t('error'), 'Not authenticated');
+        appAlertCompat.alert(t('error'), t('hmNotAuthenticated'));
         setCloudImporting(false);
         return;
       }
@@ -958,13 +958,13 @@ export default function MapScreen() {
           });
         } catch { /* ignore push failure */ }
 
-        appAlertCompat.alert(t('cloudImport'), `${imported} map(s) imported from cloud.`);
+        appAlertCompat.alert(t('cloudImport'), t('hmCloudImportedCount', { count: imported }));
         fetchData();
       } else {
-        appAlertCompat.alert(t('importFailed'), 'Could not import any maps from cloud data.');
+        appAlertCompat.alert(t('importFailed'), t('hmCloudImportNone'));
       }
     } catch (e) {
-      appAlertCompat.alert(t('error'), e instanceof Error ? e.message : 'Cloud import failed');
+      appAlertCompat.alert(t('error'), e instanceof Error ? e.message : t('hmCloudImportFailed'));
     }
     setCloudImporting(false);
   };
@@ -977,7 +977,7 @@ export default function MapScreen() {
 
     // Demo mode: just show a success message and add a fake imported map
     if (demo.enabled) {
-      appAlertCompat.alert('Demo Mode', 'In demo mode, a sample imported map has been added.');
+      appAlertCompat.alert(t('hmDemoMode'), t('hmDemoImportAdded'));
       setMaps((prev) => [
         ...prev,
         {
@@ -1081,10 +1081,10 @@ export default function MapScreen() {
         );
         fetchData(); // refresh map
       } else {
-        appAlertCompat.alert(t('importFailed'), json.error ?? 'Unknown error');
+        appAlertCompat.alert(t('importFailed'), json.error ?? t('hmUnknownError'));
       }
     } catch (e) {
-      appAlertCompat.alert(t('error'), e instanceof Error ? e.message : 'Import failed');
+      appAlertCompat.alert(t('error'), e instanceof Error ? e.message : t('hmImportFailedGeneric'));
     } finally {
       setImporting(false);
     }
@@ -1101,24 +1101,24 @@ export default function MapScreen() {
   const handleHeaderActionsMenu = useCallback(() => {
     setSheetState({
       visible: true,
-      title: 'Map actions',
+      title: t('hmMapActions'),
       actions: [
         {
           label: t('import'),
-          subtitle: 'Import from file or cloud backup',
+          subtitle: t('hmMapActionsImportSub'),
           icon: 'cloud-upload-outline',
           onPress: showImportOptions,
         },
         {
           label: t('export'),
-          subtitle: 'Download the current map package',
+          subtitle: t('hmMapActionsExportSub'),
           icon: 'download-outline',
           disabled: maps.length === 0,
           onPress: handleExport,
         },
         {
-          label: 'Refresh',
-          subtitle: 'Reload zones and map overlays',
+          label: t('hmRefresh'),
+          subtitle: t('hmMapActionsRefreshSub'),
           icon: 'refresh-outline',
           onPress: fetchData,
         },
@@ -1296,7 +1296,7 @@ export default function MapScreen() {
                 onPress={() => setView3d(v => !v)}
                 style={styles.toolbarMenuButton}
                 activeOpacity={0.82}
-                accessibilityLabel={view3d ? (t('map2dView', undefined) || '2D-kaart') : (t('map3dView', undefined) || '3D-weergave')}
+                accessibilityLabel={view3d ? (t('map2dView')) : (t('map3dView'))}
               >
                 <Ionicons name={view3d ? 'map-outline' : 'cube-outline'} size={16} color={colors.text} />
               </TouchableOpacity>
@@ -1327,15 +1327,15 @@ export default function MapScreen() {
               <TouchableOpacity
                 onPress={() => setSheetState({
                   visible: true,
-                  title: t('editMap') || 'Edit Map',
+                  title: t('editMap'),
                   actions: [
                     {
-                      label: t('redrawBoundary') || 'Redraw boundary (drive)',
+                      label: t('redrawBoundary'),
                       icon: 'navigate-outline',
                       onPress: () => gateThenNavigate({ buildType: 'modify' }),
                     },
                     {
-                      label: t('advancedEdit') || 'Advanced edit (in-app)',
+                      label: t('advancedEdit'),
                       icon: 'create-outline',
                       onPress: () => (navigation as any).navigate('MapEdit', { sn: mower?.sn }),
                     },
@@ -1567,19 +1567,19 @@ export default function MapScreen() {
                 <View pointerEvents="none" style={styles.mapHero}>
                   <View>
                     <Text style={styles.mapHeroEyebrow}>
-                      {workMaps.length > 1 ? `Map ${selectedWorkIndex + 1} of ${workMaps.length}` : 'Active map'}
+                      {workMaps.length > 1 ? t('hmMapNofM', { n: selectedWorkIndex + 1, total: workMaps.length }) : t('hmActiveMap')}
                     </Text>
                     <Text style={styles.mapHeroTitle}>
-                      {selectedWorkMap.mapName || `Zone ${selectedWorkIndex + 1}`}
+                      {selectedWorkMap.mapName || t('hmZoneN', { n: selectedWorkIndex + 1 })}
                     </Text>
                     <Text style={styles.mapHeroMeta}>
                       {formatAreaLabel(selectedAreaSqMeters)}
-                      {relatedObstacleCount > 0 ? ` · ${relatedObstacleCount} obstacle${relatedObstacleCount === 1 ? '' : 's'}` : ''}
-                      {relatedChannelCount > 0 ? ` · ${relatedChannelCount} channel${relatedChannelCount === 1 ? '' : 's'}` : ''}
+                      {relatedObstacleCount > 0 ? ` · ${t(relatedObstacleCount === 1 ? 'hmObstacleCountOne' : 'hmObstacleCountOther', { count: relatedObstacleCount })}` : ''}
+                      {relatedChannelCount > 0 ? ` · ${t(relatedChannelCount === 1 ? 'hmChannelCountOne' : 'hmChannelCountOther', { count: relatedChannelCount })}` : ''}
                     </Text>
                   </View>
                   {workMaps.length > 1 && (
-                    <Text style={styles.mapHeroHint}>Swipe below</Text>
+                    <Text style={styles.mapHeroHint}>{t('hmSwipeBelow')}</Text>
                   )}
                 </View>
               )}
@@ -1889,7 +1889,7 @@ export default function MapScreen() {
               {/* Zoom hint / placement hint */}
               {patternCtx.isPlacing ? (
                 <Text style={[styles.zoomHint, { color: colors.purple }]}>
-                  {patternCtx.placement?.center ? 'Tap to reposition · Adjust size below' : 'Tap on the map to place the pattern'}
+                  {patternCtx.placement?.center ? t('hmPatternRepositionHint') : t('hmPatternPlaceHint')}
                 </Text>
               ) : (
                 <Text style={styles.zoomHint}>{t('pinchToZoom')}</Text>
@@ -1922,7 +1922,7 @@ export default function MapScreen() {
                                 {/* Header: title + actions */}
                                 <View style={styles.zonePanelHeader}>
                                   <View style={styles.zonePanelTitleWrap}>
-                                    <Text style={styles.zonePanelTitle}>{map.mapName || `Zone ${index + 1}`}</Text>
+                                    <Text style={styles.zonePanelTitle}>{map.mapName || t('hmZoneN', { n: index + 1 })}</Text>
                                   </View>
                                   <View style={styles.zonePanelActions}>
                                     <TouchableOpacity style={styles.zonePanelIconButton} onPress={() => handleMapAction(map)} activeOpacity={0.7}>
@@ -1940,11 +1940,11 @@ export default function MapScreen() {
                                     (obstacles/channels/charger/mower) sit underneath. */}
                                 <View style={styles.zoneMetricRow}>
                                   <View style={styles.zoneMetricCard}>
-                                    <Text style={styles.zoneMetricLabel}>{t('size', undefined) || 'Size'}</Text>
+                                    <Text style={styles.zoneMetricLabel}>{t('size')}</Text>
                                     <Text style={styles.zoneMetricValue}>{formatAreaLabel(areaSqMeters)}</Text>
                                   </View>
                                   <View style={styles.zoneMetricCard}>
-                                    <Text style={styles.zoneMetricLabel}>{t('estMow', undefined) || 'Est. mow'}</Text>
+                                    <Text style={styles.zoneMetricLabel}>{t('estMow')}</Text>
                                     <Text style={styles.zoneMetricValue}>{formatEtaLabel(areaSqMeters)}</Text>
                                   </View>
                                 </View>
@@ -1959,7 +1959,7 @@ export default function MapScreen() {
                                       <View style={styles.zoneInfoChip}>
                                         <Ionicons name="scan-outline" size={12} color={colors.textDim} />
                                         <Text style={styles.zoneInfoText}>
-                                          {`${obstacleCount} ${obstacleCount === 1 ? (t('obstacle', undefined) || 'obstacle') : (t('obstacles', undefined) || 'obstacles')}`}
+                                          {t(obstacleCount === 1 ? 'hmObstacleCountOne' : 'hmObstacleCountOther', { count: obstacleCount })}
                                         </Text>
                                       </View>
                                     )}
@@ -1967,7 +1967,7 @@ export default function MapScreen() {
                                       <View style={styles.zoneInfoChip}>
                                         <Ionicons name="git-branch-outline" size={12} color={colors.textDim} />
                                         <Text style={styles.zoneInfoText}>
-                                          {`${channelCount} ${channelCount === 1 ? (t('channel', undefined) || 'channel') : (t('channels', undefined) || 'channels')}`}
+                                          {t(channelCount === 1 ? 'hmChannelCountOne' : 'hmChannelCountOther', { count: channelCount })}
                                         </Text>
                                       </View>
                                     )}
@@ -2018,11 +2018,11 @@ export default function MapScreen() {
                                   let disabledLabel: string | null = null;
                                   if (!mower?.online) disabledLabel = t('mowerOffline');
                                   else if (hasHardError) disabledLabel = t('clearErrorFirst');
-                                  else if (dockFailed) disabledLabel = t('dockReturnFailed', undefined) || 'Dock failed — fix first';
-                                  else if (isMowing) disabledLabel = t('alreadyMowing', undefined) || 'Already mowing';
-                                  else if (isMapping) disabledLabel = t('mappingInProgress', undefined) || 'Mapping in progress';
-                                  else if (isPaused) disabledLabel = t('paused', undefined) || 'Paused';
-                                  else if (dockGoing) disabledLabel = t('dockReturnInProgress', undefined) || 'Returning to dock';
+                                  else if (dockFailed) disabledLabel = t('dockReturnFailed');
+                                  else if (isMowing) disabledLabel = t('alreadyMowing');
+                                  else if (isMapping) disabledLabel = t('mappingInProgress');
+                                  else if (isPaused) disabledLabel = t('paused');
+                                  else if (dockGoing) disabledLabel = t('dockReturnInProgress');
                                   const startDisabled = disabledLabel !== null;
                                   const primaryLabel = disabledLabel ?? (isInterruptedCoverage ? t('resume') : t('startMowing'));
                                   return (
@@ -2082,7 +2082,7 @@ export default function MapScreen() {
                 {workMaps.length > 1 && (
                   <View style={styles.zonePagerWrap}>
                     <Text style={styles.zonePagerLabel}>
-                      {selectedWorkIndex + 1} / {workMaps.length} zones — swipe to switch
+                      {t('hmZonePager', { n: selectedWorkIndex + 1, total: workMaps.length })}
                     </Text>
                     <View style={styles.zonePagerDots}>
                       {workMaps.map((map, index) => (
@@ -2111,10 +2111,10 @@ export default function MapScreen() {
             borderWidth: 1, borderColor: 'rgba(168,85,247,0.3)', gap: 12,
           }}>
             <Text style={{ color: colors.purple, fontWeight: '700', fontSize: 14 }}>
-              Pattern {patternCtx.placement.patternId} — {patternCtx.placement.center ? 'Placed' : 'Tap map to place'}
+              {t('hmPatternStatus', { id: patternCtx.placement.patternId, state: patternCtx.placement.center ? t('hmPatternPlaced') : t('hmPatternTapToPlace') })}
             </Text>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-              <Text style={{ color: colors.textMuted, fontSize: 12 }}>Size:</Text>
+              <Text style={{ color: colors.textMuted, fontSize: 12 }}>{t('size')}:</Text>
               <TouchableOpacity
                 style={{ padding: 6, backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 6 }}
                 onPress={() => patternCtx.setSize(Math.max(1, patternCtx.placement!.sizeMeter - 1))}
@@ -2131,7 +2131,7 @@ export default function MapScreen() {
                 <Ionicons name="add" size={16} color={colors.white} />
               </TouchableOpacity>
 
-              <Text style={{ color: colors.textMuted, fontSize: 12, marginLeft: 12 }}>Rotation:</Text>
+              <Text style={{ color: colors.textMuted, fontSize: 12, marginLeft: 12 }}>{t('hmRotation')}:</Text>
               <TouchableOpacity
                 style={{ padding: 6, backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 6 }}
                 onPress={() => patternCtx.setRotation((patternCtx.placement!.rotation + 345) % 360)}
@@ -2196,13 +2196,13 @@ export default function MapScreen() {
             {mower.sensors.loc_quality && (
               <View style={styles.chip}>
                 <Ionicons name="navigate" size={14} color={colors.textDim} />
-                <Text style={styles.chipText}>Loc: {mower.sensors.loc_quality}%</Text>
+                <Text style={styles.chipText}>{t('hmLocQuality', { pct: mower.sensors.loc_quality })}</Text>
               </View>
             )}
             {isMowing && covRatio > 0 && (
               <View style={[styles.chip, { backgroundColor: 'rgba(34,197,94,0.15)' }]}>
                 <Ionicons name="checkmark-circle" size={14} color={colors.emerald} />
-                <Text style={[styles.chipText, { color: colors.emerald }]}>{Math.round(covRatio)}% done</Text>
+                <Text style={[styles.chipText, { color: colors.emerald }]}>{t('hmPercentDone', { pct: Math.round(covRatio) })}</Text>
               </View>
             )}
           </View>
@@ -2214,7 +2214,7 @@ export default function MapScreen() {
           <TouchableOpacity style={styles.actionsSheetBackdrop} activeOpacity={1} onPress={() => setActionsMenuVisible(false)} />
           <View style={styles.actionsSheet}>
             <View style={styles.actionsSheetHandle} />
-            <Text style={styles.actionsSheetTitle}>Map actions</Text>
+            <Text style={styles.actionsSheetTitle}>{t('hmMapActions')}</Text>
 
             <TouchableOpacity
               style={styles.actionsSheetItem}
@@ -2226,7 +2226,7 @@ export default function MapScreen() {
               </View>
               <View style={styles.actionsSheetTextWrap}>
                 <Text style={styles.actionsSheetItemTitle}>{t('import')}</Text>
-                <Text style={styles.actionsSheetItemSub}>Import from file or cloud backup</Text>
+                <Text style={styles.actionsSheetItemSub}>{t('hmMapActionsImportSub')}</Text>
               </View>
             </TouchableOpacity>
 
@@ -2241,7 +2241,7 @@ export default function MapScreen() {
               </View>
               <View style={styles.actionsSheetTextWrap}>
                 <Text style={[styles.actionsSheetItemTitle, maps.length === 0 && styles.actionsSheetItemTitleDisabled]}>{t('export')}</Text>
-                <Text style={styles.actionsSheetItemSub}>Download the current map package</Text>
+                <Text style={styles.actionsSheetItemSub}>{t('hmMapActionsExportSub')}</Text>
               </View>
             </TouchableOpacity>
 
@@ -2254,8 +2254,8 @@ export default function MapScreen() {
                 <Ionicons name="refresh-outline" size={18} color={colors.white} />
               </View>
               <View style={styles.actionsSheetTextWrap}>
-                <Text style={styles.actionsSheetItemTitle}>Refresh</Text>
-                <Text style={styles.actionsSheetItemSub}>Reload zones and map overlays</Text>
+                <Text style={styles.actionsSheetItemTitle}>{t('hmRefresh')}</Text>
+                <Text style={styles.actionsSheetItemSub}>{t('hmMapActionsRefreshSub')}</Text>
               </View>
             </TouchableOpacity>
 

@@ -19,6 +19,7 @@ import { useStyles, useTheme, type Colors } from '../theme';
 import type { AuthStackParams } from '../navigation/types';
 import { getServerUrl, setToken, setServerUrl } from '../services/auth';
 import { ApiClient } from '../services/api';
+import { useI18n } from '../i18n';
 
 type Props = NativeStackScreenProps<AuthStackParams, 'Register'> & {
   onLoginSuccess: (token: string, serverUrl: string) => void;
@@ -27,6 +28,7 @@ type Props = NativeStackScreenProps<AuthStackParams, 'Register'> & {
 export default function RegisterScreen({ navigation, onLoginSuccess }: Props) {
   const styles = useStyles(makeStyles);
   const { colors } = useTheme();
+  const { t } = useI18n();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -38,19 +40,19 @@ export default function RegisterScreen({ navigation, onLoginSuccess }: Props) {
     setError('');
 
     if (!email.trim()) {
-      setError('Email is required');
+      setError(t('pvEmailRequired'));
       return;
     }
     if (!password) {
-      setError('Password is required');
+      setError(t('pvPasswordRequired'));
       return;
     }
     if (password.length < 4) {
-      setError('Password must be at least 4 characters');
+      setError(t('pvPasswordMinLength'));
       return;
     }
     if (password !== confirmPassword) {
-      setError('Passwords do not match');
+      setError(t('pvPasswordsNoMatch'));
       return;
     }
 
@@ -58,7 +60,7 @@ export default function RegisterScreen({ navigation, onLoginSuccess }: Props) {
     try {
       const savedUrl = await getServerUrl();
       if (!savedUrl) {
-        setError('No server URL configured. Go back to login and set it.');
+        setError(t('pvNoServerUrl'));
         setLoading(false);
         return;
       }
@@ -75,16 +77,16 @@ export default function RegisterScreen({ navigation, onLoginSuccess }: Props) {
           onLoginSuccess(loginResponse.value.accessToken, savedUrl);
         } else {
           // Registration succeeded but auto-login failed -- go back to login
-          setError('Account created! Please sign in.');
+          setError(t('pvAccountCreatedSignIn'));
         }
       } else {
-        setError(response.message ?? 'Registration failed');
+        setError(response.message ?? t('pvRegistrationFailed'));
       }
     } catch (e) {
       if (e instanceof Error) {
         setError(e.message);
       } else {
-        setError('An unexpected error occurred');
+        setError(t('pvUnexpectedError'));
       }
     } finally {
       setLoading(false);
@@ -105,15 +107,15 @@ export default function RegisterScreen({ navigation, onLoginSuccess }: Props) {
           <View style={styles.iconCircle}>
             <Ionicons name="person-add" size={32} color={colors.emerald} />
           </View>
-          <Text style={styles.title}>Create Account</Text>
+          <Text style={styles.title}>{t('pvCreateAccount')}</Text>
           <Text style={styles.subtitle}>
-            Register a new account on your OpenNova server.
+            {t('pvRegisterSubtitle')}
           </Text>
         </View>
 
         {/* Form */}
         <View style={styles.card}>
-          <Text style={styles.label}>EMAIL</Text>
+          <Text style={styles.label}>{t('pvEmail')}</Text>
           <View style={styles.inputRow}>
             <Ionicons
               name="mail-outline"
@@ -137,7 +139,7 @@ export default function RegisterScreen({ navigation, onLoginSuccess }: Props) {
             />
           </View>
 
-          <Text style={[styles.label, { marginTop: 20 }]}>PASSWORD</Text>
+          <Text style={[styles.label, { marginTop: 20 }]}>{t('pvPassword')}</Text>
           <View style={styles.inputRow}>
             <Ionicons
               name="lock-closed-outline"
@@ -152,7 +154,7 @@ export default function RegisterScreen({ navigation, onLoginSuccess }: Props) {
                 setPassword(text);
                 setError('');
               }}
-              placeholder="Password"
+              placeholder={t('pvPassword')}
               placeholderTextColor={colors.textMuted}
               secureTextEntry={!showPassword}
               autoCapitalize="none"
@@ -171,7 +173,7 @@ export default function RegisterScreen({ navigation, onLoginSuccess }: Props) {
             </TouchableOpacity>
           </View>
 
-          <Text style={[styles.label, { marginTop: 20 }]}>CONFIRM PASSWORD</Text>
+          <Text style={[styles.label, { marginTop: 20 }]}>{t('pvConfirmPassword')}</Text>
           <View style={styles.inputRow}>
             <Ionicons
               name="lock-closed-outline"
@@ -186,7 +188,7 @@ export default function RegisterScreen({ navigation, onLoginSuccess }: Props) {
                 setConfirmPassword(text);
                 setError('');
               }}
-              placeholder="Confirm password"
+              placeholder={t('pvConfirmPassword')}
               placeholderTextColor={colors.textMuted}
               secureTextEntry={!showPassword}
               autoCapitalize="none"
@@ -216,7 +218,7 @@ export default function RegisterScreen({ navigation, onLoginSuccess }: Props) {
             <ActivityIndicator size="small" color={colors.white} />
           ) : (
             <>
-              <Text style={styles.buttonText}>Create Account</Text>
+              <Text style={styles.buttonText}>{t('pvCreateAccount')}</Text>
               <Ionicons name="arrow-forward" size={20} color={colors.white} />
             </>
           )}
@@ -229,8 +231,8 @@ export default function RegisterScreen({ navigation, onLoginSuccess }: Props) {
           activeOpacity={0.7}
         >
           <Text style={styles.loginText}>
-            Already have an account?{' '}
-            <Text style={styles.loginTextHighlight}>Sign in</Text>
+            {t('pvAlreadyHaveAccount')}{' '}
+            <Text style={styles.loginTextHighlight}>{t('pvSignInLink')}</Text>
           </Text>
         </TouchableOpacity>
       </ScrollView>

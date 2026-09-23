@@ -17,6 +17,7 @@ import { useStyles, useTheme, type Colors } from '../theme';
 import type { RootStackParams } from '../navigation/types';
 import { discoverServers, type DiscoveredServer } from '../services/discovery';
 import { getServerUrl } from '../services/auth';
+import { useI18n } from '../i18n';
 
 type Props = NativeStackScreenProps<RootStackParams, 'Settings'>;
 
@@ -26,6 +27,7 @@ const STORE_KEY_PORT = 'mqtt_port';
 export default function SettingsScreen({ navigation }: Props) {
   const styles = useStyles(makeStyles);
   const { colors } = useTheme();
+  const { t } = useI18n();
   const [mqttAddr, setMqttAddr] = useState('192.168.0.177');
   const [mqttPort, setMqttPort] = useState('1883');
   const [loaded, setLoaded] = useState(false);
@@ -110,9 +112,9 @@ export default function SettingsScreen({ navigation }: Props) {
           <View style={styles.iconCircle}>
             <Ionicons name="server-outline" size={32} color={colors.emerald} />
           </View>
-          <Text style={styles.title}>Server Settings</Text>
+          <Text style={styles.title}>{t('pvServerSettings')}</Text>
           <Text style={styles.subtitle}>
-            Select your OpenNova server or enter the address manually.
+            {t('pvServerSettingsSub')}
           </Text>
         </View>
 
@@ -121,7 +123,7 @@ export default function SettingsScreen({ navigation }: Props) {
           <View style={styles.discoveryCard}>
             <View style={styles.discoveryHeader}>
               <Text style={styles.discoveryTitle}>
-                {scanning ? 'Searching for servers...' : `Found ${servers.length} server${servers.length !== 1 ? 's' : ''}`}
+                {scanning ? t('pvSearchingServers') : servers.length === 1 ? t('pvFoundServersOne') : t('pvFoundServersOther', { count: servers.length })}
               </Text>
               {scanning ? (
                 <ActivityIndicator size="small" color={colors.emerald} />
@@ -152,7 +154,7 @@ export default function SettingsScreen({ navigation }: Props) {
                       styles.serverIp,
                       mqttAddr === s.ip.split(':')[0] && styles.serverIpSelected,
                     ]}>{s.ip}</Text>
-                    <Text style={styles.serverLabel}>OpenNova Server</Text>
+                    <Text style={styles.serverLabel}>{t('pvOpenNovaServer')}</Text>
                   </View>
                 </View>
                 {mqttAddr === s.ip.split(':')[0] && (
@@ -162,14 +164,14 @@ export default function SettingsScreen({ navigation }: Props) {
             ))}
 
             {!scanning && servers.length === 0 && (
-              <Text style={styles.noServers}>No servers found on your network.</Text>
+              <Text style={styles.noServers}>{t('pvNoServersFound')}</Text>
             )}
           </View>
         )}
 
         {/* Manual input card */}
         <View style={styles.card}>
-          <Text style={styles.label}>MQTT Address</Text>
+          <Text style={styles.label}>{t('pvMqttAddress')}</Text>
           <View style={styles.inputRow}>
             <Ionicons name="globe-outline" size={20} color={colors.textDim} style={styles.inputIcon} />
             <TextInput
@@ -185,7 +187,7 @@ export default function SettingsScreen({ navigation }: Props) {
             />
           </View>
 
-          <Text style={[styles.label, { marginTop: 20 }]}>MQTT Port</Text>
+          <Text style={[styles.label, { marginTop: 20 }]}>{t('pvMqttPort')}</Text>
           <View style={styles.inputRow}>
             <Ionicons name="swap-horizontal-outline" size={20} color={colors.textDim} style={styles.inputIcon} />
             <TextInput
@@ -207,7 +209,7 @@ export default function SettingsScreen({ navigation }: Props) {
           disabled={!isValid}
           activeOpacity={0.7}
         >
-          <Text style={styles.buttonText}>Next</Text>
+          <Text style={styles.buttonText}>{t('pvNext')}</Text>
           <Ionicons name="arrow-forward" size={20} color={colors.white} />
         </TouchableOpacity>
       </ScrollView>

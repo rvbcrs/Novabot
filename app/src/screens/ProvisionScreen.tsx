@@ -27,17 +27,18 @@ import { ApiClient, isUnsupportedFirmwareError } from '../services/api';
 import { getServerUrl } from '../services/auth';
 import { useMowerState } from '../hooks/useMowerState';
 import { isOpenNovaFirmware } from '../utils/firmwareCapability';
+import { useI18n } from '../i18n';
 
 type Props = NativeStackScreenProps<RootStackParams, 'Provision'>;
 
 // Ordered steps — each step can match multiple BLE phases
 const PROVISION_STEPS = [
-  { key: 'connecting', phases: ['connecting'], label: 'Connecting' },
-  { key: 'discovering', phases: ['discovering'], label: 'Discovering Services' },
-  { key: 'wifi', phases: ['wifi'], label: 'Configuring WiFi' },
-  { key: 'config', phases: ['rtk', 'lora'], label: 'Configuring Device' },
-  { key: 'mqtt', phases: ['mqtt'], label: 'Setting MQTT' },
-  { key: 'commit', phases: ['commit'], label: 'Saving Settings' },
+  { key: 'connecting', phases: ['connecting'], labelKey: 'pvStepConnecting' },
+  { key: 'discovering', phases: ['discovering'], labelKey: 'pvStepDiscovering' },
+  { key: 'wifi', phases: ['wifi'], labelKey: 'pvStepWifi' },
+  { key: 'config', phases: ['rtk', 'lora'], labelKey: 'pvStepConfig' },
+  { key: 'mqtt', phases: ['mqtt'], labelKey: 'pvStepMqtt' },
+  { key: 'commit', phases: ['commit'], labelKey: 'pvStepCommit' },
 ];
 
 const STEP_KEYS = PROVISION_STEPS.map(s => s.key);
@@ -54,6 +55,7 @@ type DeviceState = {
 export default function ProvisionScreen({ navigation, route }: Props) {
   const styles = useStyles(makeStyles);
   const { colors } = useTheme();
+  const { t } = useI18n();
   const { mqttAddr, mqttPort, wifiSsid, wifiPassword, devices } = route.params;
   const [deviceStates, setDeviceStates] = useState<Map<string, DeviceState>>(
     () => {
@@ -62,7 +64,7 @@ export default function ProvisionScreen({ navigation, route }: Props) {
         map.set(d.id, {
           device: d,
           currentPhase: 'idle',
-          message: 'Waiting...',
+          message: t('pvWaiting'),
           completedPhases: new Set(),
           success: false,
           error: false,
@@ -134,7 +136,7 @@ export default function ProvisionScreen({ navigation, route }: Props) {
     const addr = parseInt(addrStr, 10);
     if (!Number.isFinite(addr) || addr < 0) { setLoraConflict(null); return; }
     const channel = loraChannelOverride.trim() ? parseInt(loraChannelOverride.trim(), 10) : undefined;
-    const t = setTimeout(async () => {
+    const timer = setTimeout(async () => {
       try {
         const url = await getServerUrl();
         if (!url) return;
@@ -143,7 +145,7 @@ export default function ProvisionScreen({ navigation, route }: Props) {
         setLoraConflict(r.conflicts.length > 0 ? r.conflicts : null);
       } catch { /* ignore */ }
     }, 350);
-    return () => clearTimeout(t);
+    return () => clearTimeout(timer);
   }, [loraAddrOverride, loraChannelOverride]);
 
   const updateDeviceState = useCallback(
@@ -191,8 +193,10 @@ export default function ProvisionScreen({ navigation, route }: Props) {
     );
     if (manualAddr != null && loraConflict && loraConflict.length > 0 && !acknowledgedConflict) {
       appAlertCompat.alert(
-        'LoRa address already in use',
-        `Address ${manualAddr}${manualChannel != null ? ` / channel ${manualChannel}` : ''} is assigned to: ${loraConflict.map(c => c.sn).join(', ')}\n\nProvisioning will overwrite the LoRa parameters on the target device and break its existing pair. Tap the warning badge to acknowledge and continue.`,
+        t('pvLoraInUseTitle'),
+        manualChannel != null
+          ? t('pvLoraInUseMsgChannel', { addr: manualAddr, channel: manualChannel, sns: loraConflict.map(c => c.sn).join(', ') })
+          : t('pvLoraInUseMsg', { addr: manualAddr, sns: loraConflict.map(c => c.sn).join(', ') }),
       );
       return;
     }
@@ -310,7 +314,7 @@ export default function ProvisionScreen({ navigation, route }: Props) {
       updateDeviceState(dev.id, (s) => ({
         ...s,
         currentPhase: 'connecting',
-        message: 'Starting...',
+        message: t('starting'),
       }));
 
       const provResult = await provisionDevice(
@@ -422,7 +426,7 @@ export default function ProvisionScreen({ navigation, route }: Props) {
     // loraAddrOverride/channel worden NIET uit state gelezen maar uit refs
     // (zie hierboven), dus niet nodig in deps. loraConflict +
     // acknowledgedConflict blijven wel state-reads → in deps.
-    loraConflict, acknowledgedConflict,
+    loraConflict, acknowledgedConflict, t,
   ]);
 
   useEffect(() => {
@@ -612,16 +616,16 @@ export default function ProvisionScreen({ navigation, route }: Props) {
 
   const handleOtaTrigger = async () => {
     setOtaStatus('sending');
-    setOtaMessage('Checking for firmware updates...');
+    setOtaMessage(t('pvOtaChecking'));
     try {
       // Check OTA versions available on the server
       const checkRes = await fetch(`http://${mqttAddr}/api/dashboard/ota/versions`);
-      if (!checkRes.ok) throw new Error('Server not reachable');
+      if (!checkRes.ok) throw new Error(t('pvServerNotReachable'));
       const versions = await checkRes.json();
 
       if (!versions?.data?.length) {
         setOtaStatus('idle');
-        setOtaMessage('No firmware updates available on server.');
+        setOtaMessage(t('pvOtaNoneAvailable'));
         return;
       }
 
@@ -633,7 +637,7 @@ export default function ProvisionScreen({ navigation, route }: Props) {
 
         // Try triggering with the latest version
         const latest = versions.data[0];
-        setOtaMessage(`Sending firmware ${latest.version} to ${dev.name}...`);
+        setOtaMessage(t('pvOtaSending', { version: latest.version, name: dev.name }));
 
         const triggerRes = await fetch(`http://${mqttAddr}/api/dashboard/ota/trigger/${dev.name}`, {
           method: 'POST',
@@ -642,16 +646,16 @@ export default function ProvisionScreen({ navigation, route }: Props) {
         });
 
         if (triggerRes.ok) {
-          setOtaMessage(`Firmware update sent to ${dev.name}!`);
+          setOtaMessage(t('pvOtaSent', { name: dev.name }));
         } else {
           const err = await triggerRes.json().catch(() => ({}));
-          setOtaMessage(`OTA trigger failed: ${(err as any).error || 'Unknown error'}`);
+          setOtaMessage(t('pvOtaTriggerFailed', { error: (err as any).error || t('pvUnknownError') }));
         }
       }
       setOtaStatus('sent');
     } catch (err: any) {
       setOtaStatus('error');
-      setOtaMessage(`Could not reach server: ${err.message}`);
+      setOtaMessage(t('pvCouldNotReachServer', { error: err.message }));
     }
   };
 
@@ -667,7 +671,7 @@ export default function ProvisionScreen({ navigation, route }: Props) {
       map.set(d.id, {
         device: d,
         currentPhase: 'idle',
-        message: 'Waiting...',
+        message: t('pvWaiting'),
         completedPhases: new Set(),
         success: false,
         error: false,
@@ -696,20 +700,20 @@ export default function ProvisionScreen({ navigation, route }: Props) {
               onPress={handleBackToSettings}
               activeOpacity={0.7}
               style={styles.backButton}
-              accessibilityLabel="Back to Settings"
+              accessibilityLabel={t('pvBackToSettings')}
             >
               <Ionicons name="arrow-back" size={22} color={colors.text} />
             </TouchableOpacity>
-            <Text style={styles.title}>Provisioning</Text>
+            <Text style={styles.title}>{t('pvProvisioningTitle')}</Text>
           </View>
           <Text style={styles.subtitle}>
             {allDone
               ? allSuccess
-                ? 'All devices provisioned successfully!'
-                : 'Provisioning completed with errors.'
+                ? t('pvAllProvisioned')
+                : t('pvCompletedWithErrors')
               : hasStarted
-                ? 'Configuring your devices via BLE...'
-                : 'Review the LoRa settings below, then tap Start.'}
+                ? t('pvConfiguringViaBle')
+                : t('pvReviewLoraThenStart')}
           </Text>
         </View>
 
@@ -728,7 +732,7 @@ export default function ProvisionScreen({ navigation, route }: Props) {
               const connected = Object.keys(deviceOnline).length > 0;
               const icon = connected ? 'checkmark-circle' : connectTimedOut ? 'alert-circle' : 'time-outline';
               const color = connected ? colors.green : connectTimedOut ? colors.amber : colors.textDim;
-              const title = connected ? 'Connected!' : connectTimedOut ? 'Not connected yet' : 'Configured';
+              const title = connected ? t('pvConnectedExcl') : connectTimedOut ? t('pvNotConnectedYet') : t('pvConfigured');
               return (
                 <>
                   <View style={[styles.successIconCircle, !connected && { backgroundColor: 'rgba(255,255,255,0.06)' }]}>
@@ -737,10 +741,10 @@ export default function ProvisionScreen({ navigation, route }: Props) {
                   <Text style={[styles.successTitle, { color }]}>{title}</Text>
                   <Text style={styles.successSubtitle}>
                     {connected
-                      ? `Your ${devices.length > 1 ? 'devices are' : 'device is'} online on your server.`
+                      ? t(devices.length > 1 ? 'pvOnlineOther' : 'pvOnlineOne')
                       : connectTimedOut
-                        ? 'The settings were accepted over Bluetooth, but the device has not joined your WiFi. The device cannot check the password itself, so "accepted" is not "connected". Check: network name exactly as on the router (case matters), password (tap the eye icon to see it), a 2.4 GHz network with WPA2, then tap Retry. While it blinks red it has no network.'
-                        : `Settings accepted over Bluetooth. Waiting for your ${devices.length > 1 ? 'devices' : 'device'} to join the WiFi and reach the server; this can take a minute.`}
+                        ? t('pvNotJoinedWifi')
+                        : t(devices.length > 1 ? 'pvWaitingJoinOther' : 'pvWaitingJoinOne')}
                   </Text>
                 </>
               );
@@ -751,7 +755,7 @@ export default function ProvisionScreen({ navigation, route }: Props) {
               <View style={styles.onlineStatus}>
                 <Ionicons name="pulse" size={16} color={colors.green} />
                 <Text style={[styles.otaStatusText, { color: colors.green }]}>
-                  Device connected to server via MQTT!
+                  {t('pvDeviceConnectedMqtt')}
                 </Text>
               </View>
             )}
@@ -759,7 +763,7 @@ export default function ProvisionScreen({ navigation, route }: Props) {
               <View style={styles.onlineStatus}>
                 <ActivityIndicator size="small" color={colors.textDim} />
                 <Text style={styles.otaStatusText}>
-                  Waiting for device to connect to MQTT...
+                  {t('pvWaitingMqtt')}
                 </Text>
               </View>
             )}
@@ -772,19 +776,19 @@ export default function ProvisionScreen({ navigation, route }: Props) {
                 activeOpacity={0.7}
               >
                 <Ionicons name="cloud-download-outline" size={18} color={colors.white} />
-                <Text style={styles.otaButtonText}>Check for Firmware Updates</Text>
+                <Text style={styles.otaButtonText}>{t('pvCheckFirmwareUpdates')}</Text>
               </TouchableOpacity>
             )}
             {otaStatus === 'idle' && serverReachable === false && (
               <View style={styles.otaStatus}>
                 <Ionicons name="cloud-offline-outline" size={16} color={colors.textMuted} />
-                <Text style={styles.otaStatusText}>Server not reachable — firmware updates unavailable</Text>
+                <Text style={styles.otaStatusText}>{t('pvServerUnreachableNoOta')}</Text>
               </View>
             )}
             {otaStatus === 'idle' && serverReachable === null && (
               <View style={styles.otaStatus}>
                 <Ionicons name="hourglass-outline" size={16} color={colors.textDim} />
-                <Text style={styles.otaStatusText}>Checking server...</Text>
+                <Text style={styles.otaStatusText}>{t('pvCheckingServer')}</Text>
               </View>
             )}
             {otaStatus === 'sending' && (
@@ -817,14 +821,13 @@ export default function ProvisionScreen({ navigation, route }: Props) {
             verborgen zodat de voortgang vrij staat. */}
         {!hasStarted && !allDone && (
           <View style={styles.loraCard}>
-            <Text style={styles.loraTitle}>LoRa parameters (optional)</Text>
+            <Text style={styles.loraTitle}>{t('pvLoraOptionalTitle')}</Text>
             <Text style={styles.loraSubtitle}>
-              Leave empty for auto-assign. Fill in when you need to match a
-              specific charger/mower pair.
+              {t('pvLoraOptionalSub')}
             </Text>
             <View style={styles.loraInputRow}>
               <View style={{ flex: 1 }}>
-                <Text style={styles.loraInputLabel}>Address</Text>
+                <Text style={styles.loraInputLabel}>{t('pvAddress')}</Text>
                 <TextInput
                   style={styles.loraInput}
                   value={loraAddrOverride}
@@ -843,14 +846,14 @@ export default function ProvisionScreen({ navigation, route }: Props) {
                     loraAddrOverrideRef.current = v;
                     setLoraAddrOverride(v);
                   }}
-                  placeholder="e.g. 718"
+                  placeholder={t('pvAddrPlaceholder')}
                   placeholderTextColor={colors.textMuted}
                   keyboardType="number-pad"
                   maxLength={6}
                 />
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={styles.loraInputLabel}>Channel</Text>
+                <Text style={styles.loraInputLabel}>{t('pvChannel')}</Text>
                 <TextInput
                   style={styles.loraInput}
                   value={loraChannelOverride}
@@ -883,8 +886,8 @@ export default function ProvisionScreen({ navigation, route }: Props) {
                 />
                 <Text style={[styles.loraWarningText, acknowledgedConflict && { color: colors.textDim }]}>
                   {acknowledgedConflict
-                    ? `Acknowledged — provisioning will overwrite ${loraConflict.map(c => c.sn).join(', ')}`
-                    : `This LoRa is already used by: ${loraConflict.map(c => c.sn).join(', ')} — tap to acknowledge`}
+                    ? t('pvLoraAcknowledged', { sns: loraConflict.map(c => c.sn).join(', ') })
+                    : t('pvLoraUsedBy', { sns: loraConflict.map(c => c.sn).join(', ') })}
                 </Text>
               </TouchableOpacity>
             )}
@@ -902,8 +905,8 @@ export default function ProvisionScreen({ navigation, route }: Props) {
                 );
                 if (manualAddrStr && loraConflict && loraConflict.length > 0 && !acknowledgedConflict) {
                   appAlertCompat.alert(
-                    'LoRa address already in use',
-                    `Tap the warning above to acknowledge before starting provisioning.`,
+                    t('pvLoraInUseTitle'),
+                    t('pvAcknowledgeFirst'),
                   );
                   return;
                 }
@@ -914,7 +917,7 @@ export default function ProvisionScreen({ navigation, route }: Props) {
               activeOpacity={0.8}
             >
               <Ionicons name="play-circle" size={20} color={colors.white} />
-              <Text style={styles.startProvisionText}>Start provisioning</Text>
+              <Text style={styles.startProvisionText}>{t('pvStartProvisioning')}</Text>
             </TouchableOpacity>
           </View>
         )}
@@ -933,13 +936,13 @@ export default function ProvisionScreen({ navigation, route }: Props) {
               {ds.success && (
                 <View style={styles.successBadge}>
                   <Ionicons name="checkmark" size={14} color={colors.green} />
-                  <Text style={styles.successBadgeText}>Done</Text>
+                  <Text style={styles.successBadgeText}>{t('pvDone')}</Text>
                 </View>
               )}
               {ds.error && (
                 <View style={[styles.successBadge, { backgroundColor: 'rgba(239,68,68,0.15)' }]}>
                   <Ionicons name="close" size={14} color={colors.red} />
-                  <Text style={[styles.successBadgeText, { color: colors.red }]}>Error</Text>
+                  <Text style={[styles.successBadgeText, { color: colors.red }]}>{t('error')}</Text>
                 </View>
               )}
             </View>
@@ -991,7 +994,7 @@ export default function ProvisionScreen({ navigation, route }: Props) {
                           isPending && styles.stepLabelPending,
                         ]}
                       >
-                        {stepDef.label}
+                        {t(stepDef.labelKey)}
                       </Text>
                     </View>
                   </View>
@@ -1010,7 +1013,7 @@ export default function ProvisionScreen({ navigation, route }: Props) {
         {/* Debug console */}
         {bleLogs.length > 0 && (
           <View style={styles.debugCard}>
-            <Text style={styles.debugTitle}>BLE Debug Log</Text>
+            <Text style={styles.debugTitle}>{t('pvBleDebugLog')}</Text>
             <ScrollView style={styles.debugScroll} nestedScrollEnabled>
               {bleLogs.map((log, i) => (
                 <Text key={i} style={styles.debugLine}>{log}</Text>
@@ -1032,7 +1035,7 @@ export default function ProvisionScreen({ navigation, route }: Props) {
               activeOpacity={0.7}
             >
               <Ionicons name="refresh" size={18} color={colors.text} />
-              <Text style={styles.retryButtonText}>Retry</Text>
+              <Text style={styles.retryButtonText}>{t('retry')}</Text>
             </TouchableOpacity>
           )}
           <TouchableOpacity
@@ -1041,7 +1044,7 @@ export default function ProvisionScreen({ navigation, route }: Props) {
             activeOpacity={0.7}
           >
             <Text style={styles.doneButtonText}>
-              {allSuccess ? 'Provision Another' : 'Back to Settings'}
+              {allSuccess ? t('pvProvisionAnother') : t('pvBackToSettings')}
             </Text>
             <Ionicons name="arrow-forward" size={18} color={colors.white} />
           </TouchableOpacity>

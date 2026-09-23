@@ -329,7 +329,7 @@ export default function MowerSettingsScreen() {
         t('msUnsavedTitle'),
         t('msUnsavedBody'),
         [
-          { text: t('cancel') || 'Cancel', style: 'cancel' },
+          { text: t('cancel'), style: 'cancel' },
           {
             text: t('msDiscard'),
             style: 'destructive',
@@ -450,12 +450,12 @@ export default function MowerSettingsScreen() {
       return;
     }
     appAlertCompat.alert(
-      'Recalibrate Charging Pose?',
-      'This overwrites map_info.json (charger x/y/θ) on the mower with the CURRENT pose. The mower MUST be physically on its dock and charging, otherwise the mower will place the charger at the wrong spot and future coverage tasks will drift.',
+      t('stRecalConfirmTitle'),
+      t('stRecalConfirmBody'),
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: t('cancel'), style: 'cancel' },
         {
-          text: 'Recalibrate',
+          text: t('stRecalibrate'),
           style: 'destructive',
           onPress: async () => {
             const url = await getServerUrl();
@@ -465,22 +465,22 @@ export default function MowerSettingsScreen() {
               let resp = await api.recalibrateChargingPose(mowerSn);
               if (!resp.ok && (resp.batteryState ?? '').toUpperCase() !== 'CHARGING') {
                 appAlertCompat.alert(
-                  'Mower not charging',
-                  `Battery state is "${resp.batteryState ?? 'unknown'}" — expected CHARGING. Put the mower on its dock and try again, or override the safety check?`,
+                  t('stNotChargingTitle'),
+                  t('stNotChargingBody', { state: resp.batteryState ?? t('stUnknown') }),
                   [
-                    { text: 'Cancel', style: 'cancel' },
+                    { text: t('cancel'), style: 'cancel' },
                     {
-                      text: 'Override',
+                      text: t('stOverride'),
                       style: 'destructive',
                       onPress: async () => {
                         const forced = await api.recalibrateChargingPose(mowerSn, { force: true });
                         if (forced.ok && forced.pose) {
                           appAlertCompat.alert(
-                            'Recalibrated',
-                            `New charging pose:\nx=${forced.pose.x.toFixed(3)} y=${forced.pose.y.toFixed(3)} θ=${forced.pose.theta.toFixed(3)}`,
+                            t('stRecalibrated'),
+                            t('stNewChargingPose', { x: forced.pose.x.toFixed(3), y: forced.pose.y.toFixed(3), theta: forced.pose.theta.toFixed(3) }),
                           );
                         } else {
-                          appAlertCompat.alert('Recalibrate failed', forced.error ?? 'unknown error');
+                          appAlertCompat.alert(t('stRecalFailed'), forced.error ?? t('stUnknownError'));
                         }
                       },
                     },
@@ -490,15 +490,15 @@ export default function MowerSettingsScreen() {
               }
               if (resp.ok && resp.pose) {
                 appAlertCompat.alert(
-                  'Recalibrated',
-                  `New charging pose:\nx=${resp.pose.x.toFixed(3)} y=${resp.pose.y.toFixed(3)} θ=${resp.pose.theta.toFixed(3)}`,
+                  t('stRecalibrated'),
+                  t('stNewChargingPose', { x: resp.pose.x.toFixed(3), y: resp.pose.y.toFixed(3), theta: resp.pose.theta.toFixed(3) }),
                 );
               } else {
-                appAlertCompat.alert('Recalibrate failed', resp.error ?? 'unknown error');
+                appAlertCompat.alert(t('stRecalFailed'), resp.error ?? t('stUnknownError'));
               }
             } catch (e) {
               appAlertCompat.alert(
-                'Recalibrate failed',
+                t('stRecalFailed'),
                 isUnsupportedFirmwareError(e) ? t('requiresOpenNovaFirmware') : e instanceof Error ? e.message : String(e),
               );
             }
@@ -511,12 +511,12 @@ export default function MowerSettingsScreen() {
   const handleSoftRestart = useCallback(async () => {
     if (!mowerSn) return;
     appAlertCompat.alert(
-      'Restart mower?',
-      'Restarts the mower software (not a full reboot). It clears stuck states such as Error 140 and comes back online in about a minute. Only allowed when the mower is idle or charging, not while mowing.',
+      t('stRestartConfirmTitle'),
+      t('stRestartConfirmBody'),
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: t('cancel'), style: 'cancel' },
         {
-          text: 'Restart',
+          text: t('stRestart'),
           style: 'destructive',
           onPress: async () => {
             const url = await getServerUrl();
@@ -529,20 +529,20 @@ export default function MowerSettingsScreen() {
               });
               const body = await res.json().catch(() => ({} as { ok?: boolean; error?: string }));
               if (res.ok && body.ok) {
-                appAlertCompat.alert('Restarting', 'The mower is restarting and will be back online in about a minute.');
+                appAlertCompat.alert(t('stRestarting'), t('stRestartingBody'));
               } else if (res.status === 409) {
-                appAlertCompat.alert('Cannot restart now', body.error ?? 'The mower is busy. Try again when it is idle or charging.');
+                appAlertCompat.alert(t('stCannotRestart'), body.error ?? t('stRestartBusyBody'));
               } else {
-                appAlertCompat.alert('Restart failed', body.error ?? `HTTP ${res.status}`);
+                appAlertCompat.alert(t('stRestartFailed'), body.error ?? `HTTP ${res.status}`);
               }
             } catch (e) {
-              appAlertCompat.alert('Restart failed', e instanceof Error ? e.message : String(e));
+              appAlertCompat.alert(t('stRestartFailed'), e instanceof Error ? e.message : String(e));
             }
           },
         },
       ],
     );
-  }, [mowerSn]);
+  }, [mowerSn, t]);
 
   const handleReanchorInvalidate = useCallback(() => {
     if (!mowerSn) return;
@@ -551,12 +551,12 @@ export default function MowerSettingsScreen() {
       return;
     }
     appAlertCompat.alert(
-      'Re-anchor frame?',
-      'Marks the localization frame as INVALID so you can re-anchor it. Use only when the mower is mis-localized (its position drifts off the dock). After confirming, open the Home screen and tap the re-anchor prompt to run the wizard.',
+      t('stReanchorConfirmTitle'),
+      t('stReanchorConfirmBody'),
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: t('cancel'), style: 'cancel' },
         {
-          text: 'Invalidate',
+          text: t('stInvalidate'),
           style: 'destructive',
           onPress: async () => {
             const url = await getServerUrl();
@@ -564,13 +564,13 @@ export default function MowerSettingsScreen() {
             try {
               const r = await new ApiClient(url).reanchor(mowerSn, 'invalidate');
               if (r.ok) {
-                appAlertCompat.alert('Frame invalidated', 'Open the Home screen and tap the re-anchor prompt to re-anchor.');
+                appAlertCompat.alert(t('stFrameInvalidated'), t('stFrameInvalidatedBody'));
               } else {
-                appAlertCompat.alert('Failed', r.error ?? 'unknown error');
+                appAlertCompat.alert(t('stFailed'), r.error ?? t('stUnknownError'));
               }
             } catch (e) {
               appAlertCompat.alert(
-                'Failed',
+                t('stFailed'),
                 isUnsupportedFirmwareError(e) ? t('requiresOpenNovaFirmware') : e instanceof Error ? e.message : String(e),
               );
             }

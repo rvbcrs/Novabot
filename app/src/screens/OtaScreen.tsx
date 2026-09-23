@@ -45,20 +45,20 @@ function otaElapsed(now: number, since: number): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 
-function otaPhaseLabel(p: OtaProgressEntry): string {
+function otaPhaseLabel(p: OtaProgressEntry, t: (key: string, params?: Record<string, string | number>) => string): string {
   const s = p.session!;
   const back = s.reported ?? s.from ?? '';
   switch (s.phase) {
-    case 'downloading': return 'Downloading firmware…';
-    case 'unpacking': return 'Unpacking…';
-    case 'installing': return 'Installing…';
-    case 'awaiting-reboot': return 'Installed, waiting for the reboot…';
-    case 'rebooting': return 'Rebooting…';
-    case 'back': return 'Back online, checking version…';
-    case 'done': return `Updated to ${s.target}. The device is back online.`;
-    case 'rolled-back': return `The update did not stick: the device came back on ${back}.`;
-    case 'failed': return 'The device could not apply the update. You can retry in a few minutes.';
-    case 'stalled': return 'The reboot is not happening. Check the OTA log on the dashboard.';
+    case 'downloading': return t('stOtaDownloading');
+    case 'unpacking': return t('stOtaUnpacking');
+    case 'installing': return t('stOtaInstalling');
+    case 'awaiting-reboot': return t('stOtaAwaitingReboot');
+    case 'rebooting': return t('stOtaRebooting');
+    case 'back': return t('stOtaBackChecking');
+    case 'done': return t('stOtaDone', { version: s.target });
+    case 'rolled-back': return t('stOtaRolledBackBody', { version: back });
+    case 'failed': return t('stOtaFailedBody');
+    case 'stalled': return t('stOtaStalledBody');
   }
 }
 
@@ -226,19 +226,19 @@ export default function OtaScreen() {
       const api = new ApiClient(url);
       const res = await api.triggerOta(sn, version.id);
       if (res.ok) {
-        const backupNote = res.backup ? ` · Backup ✓ ${res.backup.filename}` : '';
+        const backupNote = res.backup ? ` · ${t('stOtaBackupDone', { file: res.backup.filename })}` : '';
         setTriggerResult((prev) => ({
           ...prev,
-          [sn]: `Command sent${backupNote}`,
+          [sn]: `${t('stOtaCommandSent')}${backupNote}`,
         }));
       } else {
-        const reason = res.detail ?? res.error ?? 'Failed';
+        const reason = res.detail ?? res.error ?? t('stFailed');
         setTriggerResult((prev) => ({ ...prev, [sn]: reason }));
       }
     } catch (e) {
       setTriggerResult((prev) => ({
         ...prev,
-        [sn]: e instanceof Error ? e.message : 'Error',
+        [sn]: e instanceof Error ? e.message : t('error'),
       }));
     } finally {
       setTriggeringSn(null);
@@ -271,12 +271,12 @@ export default function OtaScreen() {
     }
 
     appAlertCompat.alert(
-      'Firmware Update',
-      `Update ${deviceLabel} ${target} from ${fromLabel} to ${toLabel}?\n\nThis will restart the device.`,
+      t('stOtaConfirmTitle'),
+      t('stOtaConfirmBody', { device: deviceLabel, target, from: fromLabel, to: toLabel }),
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: t('cancel'), style: 'cancel' },
         {
-          text: 'Update',
+          text: t('update.update'),
           onPress: () => { void doFlash(sn, version, deviceLabel); },
         },
       ],
@@ -347,7 +347,7 @@ export default function OtaScreen() {
           >
             <Ionicons name="arrow-back" size={24} color={colors.text} />
           </TouchableOpacity>
-          <Text style={[styles.title, { flex: 1 }]}>Firmware Updates</Text>
+          <Text style={[styles.title, { flex: 1 }]}>{t('stFirmwareUpdates')}</Text>
           <TouchableOpacity
             onPress={refreshFromCloud}
             disabled={loading}
@@ -361,12 +361,12 @@ export default function OtaScreen() {
 
         {/* Current device versions */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>CURRENT VERSIONS</Text>
+          <Text style={styles.sectionTitle}>{t('stOtaCurrentVersions')}</Text>
           <View style={styles.card}>
             {mower && (
               <DeviceVersionRow
                 iconAsset={require('../../assets/lawn_mower.png')}
-                label="Mower"
+                label={t('mower')}
                 sn={mower.sn}
                 version={mower.sensors.sw_version ?? mower.sensors.mower_version ?? mower.firmwareVersion ?? null}
                 online={mower.online}
@@ -375,14 +375,14 @@ export default function OtaScreen() {
             {charger && (
               <DeviceVersionRow
                 icon="flash-outline"
-                label="Charger"
+                label={t('charger')}
                 sn={charger.sn}
                 version={charger.sensors.charger_version ?? charger.sensors.sw_version ?? charger.firmwareVersion ?? null}
                 online={charger.online}
               />
             )}
             {!mower && !charger && (
-              <Text style={styles.emptyText}>No devices connected</Text>
+              <Text style={styles.emptyText}>{t('stOtaNoDevices')}</Text>
             )}
           </View>
         </View>
@@ -405,13 +405,13 @@ export default function OtaScreen() {
             <>
               {mowerVersions.length > 0 && (
                 <View style={styles.section}>
-                  <Text style={styles.sectionTitle}>MOWER FIRMWARE</Text>
+                  <Text style={styles.sectionTitle}>{t('stOtaMowerFirmware')}</Text>
                   {mowerVersions.map((v) => (
                     <VersionCard
                       key={v.id}
                       version={v}
                       device={mower}
-                      deviceLabel="Mower"
+                      deviceLabel={t('mower')}
                       currentVersion={mowerCurrent}
                       onTrigger={handleTrigger}
                       triggering={triggeringSn === mower?.sn}
@@ -423,13 +423,13 @@ export default function OtaScreen() {
 
               {chargerVersions.length > 0 && (
                 <View style={styles.section}>
-                  <Text style={styles.sectionTitle}>CHARGER FIRMWARE</Text>
+                  <Text style={styles.sectionTitle}>{t('stOtaChargerFirmware')}</Text>
                   {chargerVersions.map((v) => (
                     <VersionCard
                       key={v.id}
                       version={v}
                       device={charger}
-                      deviceLabel="Charger"
+                      deviceLabel={t('charger')}
                       currentVersion={chargerCurrent}
                       onTrigger={handleTrigger}
                       triggering={triggeringSn === charger?.sn}
@@ -445,9 +445,9 @@ export default function OtaScreen() {
         {!loading && versions.length === 0 && (
           <View style={styles.emptyCard}>
             <Ionicons name="cloud-download-outline" size={32} color={colors.textMuted} />
-            <Text style={styles.emptyCardText}>No firmware versions registered</Text>
+            <Text style={styles.emptyCardText}>{t('stOtaNoVersions')}</Text>
             <Text style={styles.emptyCardSubtext}>
-              Upload firmware files to the server's firmware/ directory.
+              {t('stOtaNoVersionsHint')}
             </Text>
           </View>
         )}
@@ -517,25 +517,25 @@ export default function OtaScreen() {
           const isFail = phase ? OTA_TERMINAL_PHASES.has(phase) && phase !== 'done' : p.status === 'failed' || p.status === 'error';
           const isActive = !isDone && !isFail;
           const waiting = !!phase && OTA_WAITING_PHASES.has(phase);
-          const title = isDone ? 'Update complete'
-            : phase === 'rolled-back' ? 'Update rolled back'
-            : phase === 'stalled' ? 'Reboot not happening'
-            : isFail ? 'Update failed'
-            : waiting ? 'Restarting device' : 'Updating firmware';
+          const title = isDone ? t('stOtaTitleDone')
+            : phase === 'rolled-back' ? t('stOtaTitleRolledBack')
+            : phase === 'stalled' ? t('stOtaTitleStalled')
+            : isFail ? t('stOtaTitleFailed')
+            : waiting ? t('stOtaTitleRestarting') : t('stOtaTitleUpdating');
           const subtitle = p.deviceLabel && p.targetVersion
             ? (isDone ? `${p.deviceLabel} → ${p.targetVersion}` : `${p.deviceLabel} → ${p.targetVersion}`)
             : activeOta.sn;
           const pctLabel = waiting && p.session ? otaElapsed(now, p.session.since)
             : (isDone || isFail) && phase ? ''
-            : p.percentage != null ? `${p.percentage.toFixed(0)}%` : (isActive ? 'Preparing…' : '');
+            : p.percentage != null ? `${p.percentage.toFixed(0)}%` : (isActive ? t('stOtaPreparing') : '');
           const phaseLabel = (() => {
-            if (p.session) return otaPhaseLabel(p);
-            if (isDone) return 'Device will reboot and come back online shortly.';
-            if (isFail) return 'The device could not apply the update. You can retry in a few minutes.';
-            if (p.percentage == null) return 'Waiting for the device to start the download…';
-            if (p.percentage < 62) return 'Downloading firmware…';
-            if (p.percentage < 68) return 'Unpacking…';
-            return 'Installing + restarting…';
+            if (p.session) return otaPhaseLabel(p, t);
+            if (isDone) return t('stOtaDoneLegacy');
+            if (isFail) return t('stOtaFailedBody');
+            if (p.percentage == null) return t('stOtaWaitingDownload');
+            if (p.percentage < 62) return t('stOtaDownloading');
+            if (p.percentage < 68) return t('stOtaUnpacking');
+            return t('stOtaInstallingRestarting');
           })();
           const barColor = isDone ? colors.emerald : isFail ? colors.red : colors.amber;
           return (
@@ -569,16 +569,16 @@ export default function OtaScreen() {
 
                 {isActive && !waiting && (
                   <Text style={styles.otaModalHint}>
-                    Don't close the app or turn off the device. This can take 15-30 minutes.
+                    {t('stOtaDontClose')}
                   </Text>
                 )}
                 {waiting && (
                   <Text style={styles.otaModalHint}>
-                    The device copies the new firmware and restarts. This can take a minute or two; the app reconnects by itself.
+                    {t('stOtaWaitingHint')}
                   </Text>
                 )}
                 {phase === 'stalled' && p.session?.lastState != null && (
-                  <Text style={styles.otaModalHint}>Last report: {JSON.stringify(p.session.lastState)}</Text>
+                  <Text style={styles.otaModalHint}>{t('stOtaLastReport', { report: JSON.stringify(p.session.lastState) })}</Text>
                 )}
 
                 {(isDone || isFail) && (
@@ -587,7 +587,7 @@ export default function OtaScreen() {
                     onPress={() => dismissOta(activeOta.sn)}
                     activeOpacity={0.7}
                   >
-                    <Text style={styles.otaModalBtnText}>{isDone ? 'Close' : 'Dismiss'}</Text>
+                    <Text style={styles.otaModalBtnText}>{isDone ? t('close') : t('stDismiss')}</Text>
                   </TouchableOpacity>
                 )}
               </View>
@@ -616,12 +616,14 @@ function DeviceVersionRow({
 }) {
   const rowStyles = useStyles(makeRowStyles);
   const { colors } = useTheme();
-  const tint = label === 'Mower' ? colors.emerald : colors.amber;
+  const { t } = useI18n();
+  // Only the mower row passes an image asset; the charger uses an Ionicon.
+  const tint = iconAsset ? colors.emerald : colors.amber;
   // Firmware strings already start with "v" (e.g. "v6.0.2-custom-21").
   // Only prepend "v" when it's a bare semver to avoid "vv..." double prefix.
   const versionLabel = version
     ? (/^v/i.test(version) ? version : `v${version}`)
-    : 'Unknown';
+    : t('stUnknown');
   return (
     <View style={rowStyles.container}>
       {iconAsset ? (
@@ -658,6 +660,7 @@ function VersionCard({
 }) {
   const versionStyles = useStyles(makeVersionStyles);
   const { colors } = useTheme();
+  const { t } = useI18n();
   // Compare requested firmware version with what is actually running on the
   // device. Accepts with/without leading "v" and trims whitespace — some
   // firmware reports "6.0.2-custom-24", the DB keeps the "v" prefix. When
@@ -682,7 +685,7 @@ function VersionCard({
       {isInstalled && (
         <View style={versionStyles.installedRow}>
           <Ionicons name="checkmark-circle" size={16} color={colors.emerald} />
-          <Text style={versionStyles.installedText}>Installed on {deviceLabel}</Text>
+          <Text style={versionStyles.installedText}>{t('stOtaInstalledOn', { device: deviceLabel })}</Text>
         </View>
       )}
 
@@ -699,7 +702,7 @@ function VersionCard({
             <>
               <Ionicons name="cloud-download-outline" size={16} color={colors.white} />
               <Text style={versionStyles.triggerText}>
-                Update {deviceLabel}
+                {t('stOtaUpdateDevice', { device: deviceLabel })}
               </Text>
             </>
           )}
@@ -707,11 +710,11 @@ function VersionCard({
       )}
 
       {!isInstalled && device && !device.online && (
-        <Text style={versionStyles.offlineNote}>{deviceLabel} is offline</Text>
+        <Text style={versionStyles.offlineNote}>{t('stOtaDeviceOffline', { device: deviceLabel })}</Text>
       )}
 
       {result && result !== 'sending' && (
-        <Text style={[versionStyles.result, { color: result === 'Command sent' ? colors.green : colors.red }]}>
+        <Text style={[versionStyles.result, { color: result.startsWith(t('stOtaCommandSent')) ? colors.green : colors.red }]}>
           {result}
         </Text>
       )}

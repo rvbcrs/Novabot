@@ -8,6 +8,7 @@ import React from 'react';
 import { Modal, View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme, useStyles, type Colors } from '../theme';
+import { useI18n } from '../i18n';
 
 export type AppAlertButtonStyle = 'default' | 'cancel' | 'destructive';
 
@@ -50,6 +51,7 @@ const DEFAULT_ICON: Record<NonNullable<AppAlertOptions['accent']>, React.Compone
 export function AppAlertModal({ visible, options, onDismiss }: Props) {
   const { colors } = useTheme();
   const styles = useStyles(makeStyles);
+  const { t } = useI18n();
   if (!options) return null;
 
   const accent = options.accent ?? 'info';
@@ -57,7 +59,7 @@ export function AppAlertModal({ visible, options, onDismiss }: Props) {
   const iconName = options.icon ?? DEFAULT_ICON[accent];
   const buttons: AppAlertButton[] = options.buttons && options.buttons.length > 0
     ? options.buttons
-    : [{ text: 'OK', style: 'default' }];
+    : [{ text: t('ok'), style: 'default' }];
 
   return (
     <Modal

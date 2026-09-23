@@ -140,12 +140,12 @@ function buildTypeToScanType(t: MapBuildType): number {
 // no hint whether you picked Work / Obstacle / Channel — so an obstacle scan
 // silently recorded as a work map (Ramon 2026-06-21). Labels/icons mirror the
 // idle mode selector so the two screens agree.
-const BUILD_TYPE_META: Record<MapBuildType, { label: string; icon: string; color: string }> = {
-  work: { label: 'Work Area', icon: 'map', color: '#10b981' },
-  obstacle: { label: 'Obstacle', icon: 'warning', color: '#f59e0b' },
-  unicom: { label: 'Map Channel', icon: 'swap-horizontal', color: '#3b82f6' },
-  charge_unicom: { label: 'Charger Channel', icon: 'battery-charging', color: '#3b82f6' },
-  modify: { label: 'Modify Map', icon: 'create', color: '#a855f7' },
+const BUILD_TYPE_META: Record<MapBuildType, { labelKey: string; icon: string; color: string }> = {
+  work: { labelKey: 'workArea', icon: 'map', color: '#10b981' },
+  obstacle: { labelKey: 'obstacle', icon: 'warning', color: '#f59e0b' },
+  unicom: { labelKey: 'mpMapChannel', icon: 'swap-horizontal', color: '#3b82f6' },
+  charge_unicom: { labelKey: 'mpChargerChannel', icon: 'battery-charging', color: '#3b82f6' },
+  modify: { labelKey: 'mpModifyMap', icon: 'create', color: '#a855f7' },
 };
 
 export default function MappingScreen() {
@@ -636,14 +636,14 @@ function MowerMappingScreen() {
     try {
       await action();
     } catch (error) {
-      if (screenActiveRef.current && activeSnRef.current === sn) appAlertCompat.alert('Mapping command failed', String(error));
+      if (screenActiveRef.current && activeSnRef.current === sn) appAlertCompat.alert(t('mpCommandFailedTitle'), String(error));
     } finally {
       if (actionInFlightRef.current === actionOwner) {
         actionInFlightRef.current = null;
         if (screenActiveRef.current && activeSnRef.current === sn) setBusy(false);
       }
     }
-  }, [sn]);
+  }, [sn, t]);
 
   const exitMapping = useCallback(async (discard = false, returnToSetup = false) => runMappingAction(async () => {
     const operationSn = sn;
@@ -678,12 +678,12 @@ function MowerMappingScreen() {
         await bleJoystickDisconnect();
         if (!screenActiveRef.current || activeSnRef.current !== operationSn) return;
       }
-      const message = 'The mower has not confirmed leaving mapping mode. Reconnect Bluetooth and try Close mapping again.';
+      const message = t('mpQuitNotConfirmed');
       setSaveRejectedMessage(message);
       setMappingState('commandFailed');
-      appAlertCompat.alert('Could not close mapping', message);
+      appAlertCompat.alert(t('mpCouldNotCloseTitle'), message);
     }
-  }), [navigation, runMappingAction, sn, stopJoystick]);
+  }), [navigation, runMappingAction, sn, stopJoystick, t]);
 
   // Every mapping phase waits for its BLE write; save phases also require a
   // successful mower response. Subscribe before writing to catch fast replies.
@@ -735,12 +735,12 @@ function MowerMappingScreen() {
         setFailedCommand('stop_scan_map');
         setSaveRejectedMessage(error.message);
         setMappingState('commandFailed');
-        appAlertCompat.alert('Recording not finished', error.message);
+        appAlertCompat.alert(t('mpRecordingNotFinishedTitle'), error.message);
       } else if (error instanceof MapSaveRejectedError) {
         // The mower has stopped recording. A rejected polygon cannot resume.
         setSaveRejectedMessage(error.message);
         setMappingState('saveRejected');
-        appAlertCompat.alert('Map not saved', error.message, [{ text: 'OK', onPress: () => { void exitMapping(); } }]);
+        appAlertCompat.alert(t('mpMapNotSaved'), error.message, [{ text: t('ok'), onPress: () => { void exitMapping(); } }]);
       } else {
         // Missing ACKs never prove that the mower is still recording. In
         // particular, repeating a partly completed save can overwrite its result.
@@ -748,13 +748,13 @@ function MowerMappingScreen() {
         setFailedCommand(Object.keys(command)[0]);
         setSaveRejectedMessage(error instanceof Error ? error.message : String(error));
         setMappingState('commandFailed');
-        appAlertCompat.alert('Mapping command failed', error instanceof Error ? error.message : String(error));
+        appAlertCompat.alert(t('mpCommandFailedTitle'), error instanceof Error ? error.message : String(error));
       }
       return false;
     } finally {
       if (screenActiveRef.current && activeSnRef.current === sn) setBusy(!!actionInFlightRef.current);
     }
-  }, [exitMapping, sn, stopJoystick]);
+  }, [exitMapping, sn, stopJoystick, t]);
 
   const getNextWorkMapName = useCallback((maps: CachedMap[]): string => {
     const usedNames = new Set<string>();
@@ -800,7 +800,7 @@ function MowerMappingScreen() {
     if (isBleJoystickConnected()) await bleJoystickStopAndDisconnect();
     if (!screenActiveRef.current || activeSnRef.current !== sn) return 'connect-failed';
     setBleTelemetry({});
-    setBleStatus('Scanning for mower...');
+    setBleStatus(t('mpScanningForMower'));
 
     const isIos = Platform.OS === 'ios';
     const candidates: ScannedDevice[] = [];
@@ -827,11 +827,10 @@ function MowerMappingScreen() {
       setBleConnecting(false);
       setBleStatus(null);
       appAlertCompat.alert(
-        'BLE — mower not found',
+        t('mpBleNotFoundTitle'),
         targetMac
-          ? `Active mower (${mower?.sn ?? '?'}) not found via BLE. Make sure Bluetooth is enabled and the correct mower is nearby. ` +
-            `Searched MAC: ${targetMac}.`
-          : 'No Novabot mower found via BLE. Make sure Bluetooth is enabled and the mower is nearby.',
+          ? t('mpBleActiveNotFound', { sn: mower?.sn ?? '?', mac: targetMac })
+          : t('mpBleNoMowerFound'),
       );
       return 'not-found';
     }
@@ -847,11 +846,8 @@ function MowerMappingScreen() {
       candidates.sort((a, b) => b.rssi - a.rssi);
       const picked = await new Promise<ScannedDevice | null>(resolvePick => {
         appAlert({
-          title: 'Multiple mowers detected',
-          message:
-            `Found ${candidates.length} Novabot mowers within Bluetooth range. ` +
-            'iOS does not expose MAC addresses, so pick the one you want to use ' +
-            '(strongest signal first — usually the closest).',
+          title: t('mpMultipleMowersTitle'),
+          message: t('mpMultipleMowersBody', { count: candidates.length }),
           accent: 'info',
           buttons: [
             ...candidates.map((c, i) => ({
@@ -859,7 +855,7 @@ function MowerMappingScreen() {
               style: 'default' as const,
               onPress: () => resolvePick(c),
             })),
-            { text: 'Cancel', style: 'cancel' as const, onPress: () => resolvePick(null) },
+            { text: t('cancel'), style: 'cancel' as const, onPress: () => resolvePick(null) },
           ],
         });
       });
@@ -871,7 +867,7 @@ function MowerMappingScreen() {
       chosen = picked;
     }
 
-    setBleStatus(`Connecting to ${chosen.name}...`);
+    setBleStatus(t('mpConnectingTo', { name: chosen.name }));
     if (!screenActiveRef.current || activeSnRef.current !== sn) return 'connect-failed';
     const ok = await bleJoystickConnect(chosen.id);
     if (!screenActiveRef.current || activeSnRef.current !== sn) return 'connect-failed';
@@ -880,11 +876,11 @@ function MowerMappingScreen() {
     setBleConnecting(false);
     setBleStatus(null);
     if (!ok) {
-      appAlertCompat.alert('BLE', 'Failed to connect to mower via BLE.');
+      appAlertCompat.alert('BLE', t('mpBleConnectFailed'));
       return 'connect-failed';
     }
     return 'connected';
-  }, [bleConnecting, mower?.sn, sn, targetMac]);
+  }, [bleConnecting, mower?.sn, sn, targetMac, t]);
 
   // A silent notification stream can leave writes working and the trail frozen.
   useEffect(() => {
@@ -897,7 +893,7 @@ function MowerMappingScreen() {
         bleOwnerSnRef.current = null;
         setBleConnected(false);
         setBleTelemetry({});
-        setBleStatus('Position updates lost. Reconnecting...');
+        setBleStatus(t('mpPositionLostReconnecting'));
         await bleJoystickStopAndDisconnect();
         if (!screenActiveRef.current || activeSnRef.current !== sn || !navigation.isFocused() || !appForegroundRef.current) return;
         await connectBleJoystick();
@@ -1034,11 +1030,11 @@ function MowerMappingScreen() {
   const handleStartManual = () => {
     appAlertCompat.alert(
       t('manualMapping', undefined) || 'Manual Mapping',
-      'Step 1: Drive OFF the charger to the starting point of your boundary.\n\nStep 2: Drive along the entire perimeter of your garden until you return to the start.\n\nStep 3: Tap "Stop & Save" when done. The mower will return to the charger automatically.',
+      t('mpManualMappingSteps'),
       [
         { text: t('cancel', undefined) || 'Cancel', style: 'cancel' },
         {
-          text: 'Start',
+          text: t('start'),
           onPress: () => runMappingAction(async () => {
             // Connect BLE joystick first. connectBleJoystick now manages the
             // visible bleStatus + bleConnecting state itself, so DON'T flip
@@ -1068,11 +1064,11 @@ function MowerMappingScreen() {
   const handleStartAutonomous = () => {
     appAlertCompat.alert(
       t('autoMapping', undefined) || 'Autonomous Mapping',
-      'The mower will drive around autonomously to create a map of your garden. Make sure the area is clear of obstacles.',
+      t('mpAutoMappingIntro'),
       [
         { text: t('cancel', undefined) || 'Cancel', style: 'cancel' },
         {
-          text: 'Start',
+          text: t('start'),
           onPress: () => runMappingAction(async () => {
             // Flutter onAotuMappingClick (logic.dart L14653) hardcodes `type: 2` to enter
             // autonomous mode. Without this field the mower keeps the previous mode
@@ -1111,7 +1107,7 @@ function MowerMappingScreen() {
     if (!screenActiveRef.current || activeSnRef.current !== sn) return;
     const knownMaps = mapsRef.current;
     if (knownMaps === null) {
-      appAlertCompat.alert('Map list unavailable', 'Load your maps once while connected before mapping offline. This prevents overwriting an existing map.');
+      appAlertCompat.alert(t('mpMapListUnavailableTitle'), t('mpMapListUnavailableBody'));
       return;
     }
     const existingWorkMapCount = knownMaps.filter(m => m.mapType === 'work').length;
@@ -1125,8 +1121,8 @@ function MowerMappingScreen() {
     // Non-work modes require at least one existing work map.
     if (existingWorkMapCount === 0 && mapBuildType !== 'work') {
       appAlertCompat.alert(
-        'First map must be a work area',
-        'Create a work map first before drawing obstacles or channels.',
+        t('mpFirstMapWorkTitle'),
+        t('mpFirstMapWorkBody'),
       );
       return;
     }
@@ -1137,8 +1133,8 @@ function MowerMappingScreen() {
     const nextSlot = Number(nextWorkMapName.replace(/^map/, ''));
     if (mapBuildType === 'work' && nextSlot >= 5) {
       appAlertCompat.alert(
-        'Maximum of 5 work areas',
-        'The mower firmware can mow at most five work areas (map0 to map4). Delete or merge a work area before mapping a new one.',
+        t('mpMaxWorkAreasTitle'),
+        t('mpMaxWorkAreasBody'),
       );
       return;
     }
@@ -1306,17 +1302,17 @@ function MowerMappingScreen() {
       t('stopMapping', undefined) || 'Stop Mapping',
       mapBuildType === 'unicom'
         ? visitedCount > 2
-          ? 'Dit pad kruist meer dan twee werkgebieden. De maaier kan dit afwijzen. Gooi deze opname weg en teken een pad tussen precies twee gebieden.'
+          ? t('mpStopChannelTooManyAreas')
           : visitedCount === 2
-            ? 'Het pad verbindt twee werkgebieden. Stoppen en opslaan?'
-            : 'Het pad heeft nog geen twee werkgebieden bereikt. Rij eerst tot in het tweede gebied. Toch opslaan?'
+            ? t('mpStopChannelConnected')
+            : t('mpStopChannelNotReached')
         : mapBuildType === 'charge_unicom'
-        ? 'Stop recording and save the charger channel?'
+        ? t('mpStopChargerChannel')
         : hasMapOverlap
         ? t('mappingOverlapSaveConfirm', { areas: overlapAreaNames })
         : closedCycleSeen
-        ? 'Boundary is closed. Stop mapping and save?'
-        : 'The boundary may not be fully closed yet. Stop anyway?',
+        ? t('mpStopBoundaryClosed')
+        : t('mpStopBoundaryOpen'),
       [
         { text: t('continueMapping', undefined) || 'Continue', style: 'cancel' },
         {
@@ -1418,10 +1414,7 @@ function MowerMappingScreen() {
       `(task_mode=${taskMode}, work_status=${workStatus}, recharge_status=${rechargeStatus}, ` +
       `error_status=${errorStatus}, battery_state=${batteryState}, msg="${rawMowerMsg}")`,
     );
-    appAlertCompat.alert(
-      'Auto Dock Failed',
-      'Returning to the charging station failed. Retry Auto Dock or save the charger position manually.',
-    );
+    appAlertCompat.alert(t('mpAutoDockFailedTitle'), t('mpAutoDockReturnFailed'));
   }, [
     autoDockFailed,
     batteryState,
@@ -1621,7 +1614,7 @@ function MowerMappingScreen() {
                 backgroundColor: meta.color + '22', borderWidth: 1, borderColor: meta.color,
               }}>
                 <Ionicons name={meta.icon as any} size={14} color={meta.color} />
-                <Text style={{ color: meta.color, fontSize: 12, fontWeight: '700' }}>{meta.label}</Text>
+                <Text style={{ color: meta.color, fontSize: 12, fontWeight: '700' }}>{t(meta.labelKey)}</Text>
               </View>
             );
           })()}
@@ -1644,7 +1637,7 @@ function MowerMappingScreen() {
               <View style={styles.checkRow}>
                 <View style={[styles.checkDot, { backgroundColor: gpsValid ? colors.green : colors.red }]} />
                 <Text style={styles.checkText}>
-                  {t('gps', undefined) || 'GPS'}: {gpsValid ? `${t('gpsOk', undefined) || 'OK'}${sensors.gps_satellites ? ` (${sensors.gps_satellites} sats)` : ''}` : (t('noSignal', undefined) || 'No signal')}
+                  {t('gps', undefined) || 'GPS'}: {gpsValid ? `${t('gpsOk', undefined) || 'OK'}${sensors.gps_satellites ? ` (${t('mpSats', { count: sensors.gps_satellites })})` : ''}` : (t('noSignal', undefined) || 'No signal')}
                 </Text>
               </View>
               <View style={styles.checkRow}>
@@ -1655,11 +1648,11 @@ function MowerMappingScreen() {
               </View>
               <View style={styles.checkRow}>
                 <View style={[styles.checkDot, { backgroundColor: mowerOnline ? colors.green : colors.red }]} />
-                <Text style={styles.checkText}>{t('mqtt', undefined) || 'MQTT'}: {mowerOnline ? 'OK' : 'OFF'}</Text>
+                <Text style={styles.checkText}>{t('mqtt', undefined) || 'MQTT'}: {mowerOnline ? t('gpsOk') : t('mpOff')}</Text>
               </View>
               <View style={styles.checkRow}>
                 <View style={[styles.checkDot, { backgroundColor: battery > 20 ? colors.green : colors.red }]} />
-                <Text style={styles.checkText}>Battery: {battery}%</Text>
+                <Text style={styles.checkText}>{t('battery')}: {battery}%</Text>
               </View>
               <View style={styles.checkRow}>
                 <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: rtkFix.color }} />
@@ -1682,7 +1675,7 @@ function MowerMappingScreen() {
                       {t('mappingSessionDetected', undefined) || 'Mapping session in progress'}
                     </Text>
                     <Text style={[styles.modeBtnSub, { color: colors.textDim }]}>
-                      This phone cannot recover the original recording details. Close the existing session before starting again; its unsaved recording will be discarded.
+                      {t('mpSessionUnrecoverable')}
                     </Text>
                   </View>
                   <TouchableOpacity
@@ -1694,7 +1687,7 @@ function MowerMappingScreen() {
                     activeOpacity={0.7}
                   >
                     <Text style={[styles.modeBtnTitle, { color: colors.amber, fontSize: 12 }]}>
-                      Close session
+                      {t('mpCloseSession')}
                     </Text>
                   </TouchableOpacity>
                 </View>
@@ -1758,9 +1751,9 @@ function MowerMappingScreen() {
               <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
                 {(
                   [
-                    { key: 'work' as MapBuildType, label: 'Work Area', icon: 'map', color: colors.emerald, needsWork: false },
-                    { key: 'obstacle' as MapBuildType, label: 'Obstacle', icon: 'warning', color: '#f59e0b', needsWork: true },
-                    { key: 'unicom' as MapBuildType, label: 'Map Channel', icon: 'swap-horizontal', color: '#3b82f6', needsWork: true },
+                    { key: 'work' as MapBuildType, labelKey: 'workArea', icon: 'map', color: colors.emerald, needsWork: false },
+                    { key: 'obstacle' as MapBuildType, labelKey: 'obstacle', icon: 'warning', color: '#f59e0b', needsWork: true },
+                    { key: 'unicom' as MapBuildType, labelKey: 'mpMapChannel', icon: 'swap-horizontal', color: '#3b82f6', needsWork: true },
                     // 'modify' is intentionally NOT a create-map option — editing
                     // an existing map is reached from the Map tab's edit menu
                     // ("Redraw boundary"), which deep-links here with
@@ -1797,7 +1790,7 @@ function MowerMappingScreen() {
                         ]}
                         numberOfLines={2}
                       >
-                        {opt.label}
+                        {t(opt.labelKey)}
                       </Text>
                     </TouchableOpacity>
                   );
@@ -1806,12 +1799,12 @@ function MowerMappingScreen() {
               )}
               {mapBuildType === 'unicom' && (
                 <Text style={[styles.modeBtnSub, { marginBottom: 12, color: colors.textMuted }]}>
-                  Drive from one work map to another. The mower records the path and names it mapXtomapY_N_unicom.
+                  {t('mpUnicomModeHint')}
                 </Text>
               )}
               {mapBuildType === 'modify' && (
                 <Text style={[styles.modeBtnSub, { marginBottom: 12, color: colors.textMuted }]}>
-                  Drive a new boundary along the edge you want to change. Drive outward to enlarge the area, or inward to cut it away — the mower updates the map it belongs to.
+                  {t('mpModifyModeHint')}
                 </Text>
               )}
 
@@ -1884,10 +1877,10 @@ function MowerMappingScreen() {
                   color: bleConnected ? colors.emerald : colors.red,
                 },
               ]}>
-                BLE: {bleConnected ? 'OK' : 'OFF'}
+                BLE: {bleConnected ? t('gpsOk') : t('mpOff')}
               </Text>
-              <Text style={styles.sensorChip}>Loc: {mappingLoc}</Text>
-              <Text style={styles.sensorChip}>Bat: {mappingBattery}</Text>
+              <Text style={styles.sensorChip}>{t('mpLocShort')}: {mappingLoc}</Text>
+              <Text style={styles.sensorChip}>{t('mpBatShort')}: {mappingBattery}</Text>
             </View>
           </View>
 
@@ -1913,10 +1906,10 @@ function MowerMappingScreen() {
                 disabled={!mowerLocal}
                 style={styles.mapZoomBtn}
                 accessibilityRole="button"
-                accessibilityLabel={mapZoomed ? 'Show the whole garden' : `Zoom to ${MAP_ZOOM_M} metres around the mower`}
+                accessibilityLabel={mapZoomed ? t('mpShowWholeGarden') : t('mpZoomAroundMower', { m: MAP_ZOOM_M })}
               >
                 <Ionicons name={mapZoomed ? 'scan-outline' : 'search-outline'} size={14} color="#fff" />
-                <Text style={styles.mapZoomBtnText}>{mapZoomed ? 'Fit all' : `${MAP_ZOOM_M} m`}</Text>
+                <Text style={styles.mapZoomBtnText}>{mapZoomed ? t('mpFitAll') : `${MAP_ZOOM_M} m`}</Text>
               </TouchableOpacity>
             </View>
 
@@ -1926,7 +1919,7 @@ function MowerMappingScreen() {
                 het map panel"). */}
             <View style={styles.preMappingOverlay}>
               <View style={styles.preMappingHeader}>
-                <Text style={styles.preMappingTitle}>Drive to Start Point</Text>
+                <Text style={styles.preMappingTitle}>{t('mpDriveToStartPoint')}</Text>
               </View>
               <View style={styles.speedRow}>
                 {SPEED_LEVELS.map((lvl, i) => (
@@ -1945,10 +1938,10 @@ function MowerMappingScreen() {
                   <View style={[styles.joystickBase, { width: JOYSTICK_SIZE, height: JOYSTICK_SIZE }]}>
                     <View style={styles.crossV} />
                     <View style={styles.crossH} />
-                    <Text style={[styles.dirLabel, styles.dirTop]}>F</Text>
-                    <Text style={[styles.dirLabel, styles.dirBottom]}>B</Text>
-                    <Text style={[styles.dirLabel, styles.dirLeft]}>L</Text>
-                    <Text style={[styles.dirLabel, styles.dirRight]}>R</Text>
+                    <Text style={[styles.dirLabel, styles.dirTop]}>{t('mpDirForward')}</Text>
+                    <Text style={[styles.dirLabel, styles.dirBottom]}>{t('mpDirBack')}</Text>
+                    <Text style={[styles.dirLabel, styles.dirLeft]}>{t('mpDirLeft')}</Text>
+                    <Text style={[styles.dirLabel, styles.dirRight]}>{t('mpDirRight')}</Text>
                     <View style={[styles.thumb, joystickActive && styles.thumbActive,
                       { transform: [{ translateX: thumbX }, { translateY: thumbY }] }]} />
                   </View>
@@ -1959,14 +1952,14 @@ function MowerMappingScreen() {
                 <TouchableOpacity style={styles.cancelBtn} disabled={busy}
                   onPress={() => exitMapping(false, true)} activeOpacity={0.7}>
                   <Ionicons name="close-circle" size={20} color={colors.red} />
-                  <Text style={[styles.actionText, { color: colors.red }]}>Cancel</Text>
+                  <Text style={[styles.actionText, { color: colors.red }]}>{t('cancel')}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[styles.stopMapBtn, { backgroundColor: colors.emerald }]}
                   disabled={busy || bleConnecting}
                   onPress={handleBeginRecording} activeOpacity={0.7}>
                   <Ionicons name="radio-button-on" size={20} color={colors.white} />
-                  <Text style={styles.actionText}>Begin Recording</Text>
+                  <Text style={styles.actionText}>{t('mpBeginRecording')}</Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -1979,7 +1972,7 @@ function MowerMappingScreen() {
             {(mapBuildType === 'obstacle' || mapBuildType === 'modify') && closedCycleSeen && !closedCycleDismissedRef.current && (
               <View style={styles.closedBanner}>
                 <Ionicons name="checkmark-circle" size={18} color={colors.green} />
-                <Text style={styles.closedBannerText}>Boundary closed! You can stop mapping.</Text>
+                <Text style={styles.closedBannerText}>{t('mpBoundaryClosedBanner')}</Text>
                 <TouchableOpacity
                   onPress={() => { closedCycleDismissedRef.current = true; setClosedCycleSeen(false); }}
                   hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
@@ -2011,12 +2004,12 @@ function MowerMappingScreen() {
                   />
                   <Text style={[styles.closedBannerText, { flex: 1 }]}>
                     {visitedCount > 2
-                      ? 'Dit pad kruist meer dan twee werkgebieden. Gooi de opname weg en teken het pad opnieuw.'
+                      ? t('mpChannelTooManyAreas')
                       : visitedCount === 2
-                      ? `✓ Door beide maps gereden — je kan stoppen en opslaan`
+                      ? t('mpChannelBothVisited')
                       : currentMapName
-                        ? `In ${currentMapName}. Rij door de gap tot IN de andere map.`
-                        : `Niet in een work-map. Rij tot binnen ${pendingChannelFromRef.current ?? 'map1'} om te beginnen.`}
+                        ? t('mpChannelInMap', { map: currentMapName })
+                        : t('mpChannelNotInMap', { map: pendingChannelFromRef.current ?? 'map1' })}
                   </Text>
                 </View>
               );
@@ -2036,11 +2029,11 @@ function MowerMappingScreen() {
                 <TouchableOpacity
                   disabled={bleConnected || bleConnecting || busy}
                   accessibilityRole="button"
-                  accessibilityLabel="Reconnect Bluetooth"
+                  accessibilityLabel={t('mpReconnectBluetooth')}
                   onPress={() => runMappingAction(async () => { await connectBleJoystick(); })}
                 >
                   <Text style={[styles.sensorChip, { backgroundColor: bleConnected ? 'rgba(0,212,170,0.15)' : 'rgba(239,68,68,0.15)', color: bleConnected ? colors.emerald : colors.red }]}>
-                    {bleConnected ? 'BLE: OK' : bleConnecting ? 'BLE: ...' : 'Reconnect BLE'}
+                    {bleConnected ? `BLE: ${t('gpsOk')}` : bleConnecting ? 'BLE: ...' : t('mpReconnectBle')}
                   </Text>
                 </TouchableOpacity>
                 {/* BLE status stays live offline; its GPS flag is not an RTK fix quality. */}
@@ -2048,10 +2041,10 @@ function MowerMappingScreen() {
                   GPS: {mappingGps}
                 </Text>
                 <Text style={styles.sensorChip}>
-                  Loc: {mappingLoc}
+                  {t('mpLocShort')}: {mappingLoc}
                 </Text>
                 <Text style={styles.sensorChip}>
-                  Bat: {mappingBattery}
+                  {t('mpBatShort')}: {mappingBattery}
                 </Text>
                 <Text style={[styles.sensorChip, { color: useBlePosition ? colors.textMuted : rtkFix.color, fontWeight: '700' }]}>
                   RTK: {useBlePosition ? '?' : rtkFix.label}
@@ -2059,7 +2052,7 @@ function MowerMappingScreen() {
                 {closedCycleSeen && (
                   <Text style={[styles.sensorChip, styles.closedChip,
                     hasMapOverlap && { color: '#f59e0b', backgroundColor: 'rgba(245,158,11,0.12)' }]}>
-                    Closed
+                    {t('mpClosedChip')}
                   </Text>
                 )}
               </View>
@@ -2082,10 +2075,10 @@ function MowerMappingScreen() {
                 disabled={!mowerLocal}
                 style={styles.mapZoomBtn}
                 accessibilityRole="button"
-                accessibilityLabel={mapZoomed ? 'Show the whole garden' : `Zoom to ${MAP_ZOOM_M} metres around the mower`}
+                accessibilityLabel={mapZoomed ? t('mpShowWholeGarden') : t('mpZoomAroundMower', { m: MAP_ZOOM_M })}
               >
                 <Ionicons name={mapZoomed ? 'scan-outline' : 'search-outline'} size={14} color="#fff" />
-                <Text style={styles.mapZoomBtnText}>{mapZoomed ? 'Fit all' : `${MAP_ZOOM_M} m`}</Text>
+                <Text style={styles.mapZoomBtnText}>{mapZoomed ? t('mpFitAll') : `${MAP_ZOOM_M} m`}</Text>
               </TouchableOpacity>
             </View>
 
@@ -2099,7 +2092,7 @@ function MowerMappingScreen() {
                     <Text style={styles.speedText}>{speedMs} m/s</Text>
                   ) : (
                     <Text style={[styles.speedText, { color: colors.textMuted }]}>
-                      {bleStatus ?? 'Drag to drive'}
+                      {bleStatus ?? t('mpDragToDrive')}
                     </Text>
                   )}
                 </View>
@@ -2110,10 +2103,10 @@ function MowerMappingScreen() {
                     <View style={[styles.joystickBase, { width: JOYSTICK_SIZE, height: JOYSTICK_SIZE }]}>
                       <View style={styles.crossV} />
                       <View style={styles.crossH} />
-                      <Text style={[styles.dirLabel, styles.dirTop]}>F</Text>
-                      <Text style={[styles.dirLabel, styles.dirBottom]}>B</Text>
-                      <Text style={[styles.dirLabel, styles.dirLeft]}>L</Text>
-                      <Text style={[styles.dirLabel, styles.dirRight]}>R</Text>
+                      <Text style={[styles.dirLabel, styles.dirTop]}>{t('mpDirForward')}</Text>
+                      <Text style={[styles.dirLabel, styles.dirBottom]}>{t('mpDirBack')}</Text>
+                      <Text style={[styles.dirLabel, styles.dirLeft]}>{t('mpDirLeft')}</Text>
+                      <Text style={[styles.dirLabel, styles.dirRight]}>{t('mpDirRight')}</Text>
                       <View
                         style={[
                           styles.thumb,
@@ -2154,7 +2147,7 @@ function MowerMappingScreen() {
                   {t('autoMapping', undefined) || 'Autonomous Mapping'}
                 </Text>
                 <Text style={styles.autonomousSub}>
-                  The mower is driving autonomously. It will trace the boundary of your garden. You can stop at any time.
+                  {t('mpAutoMappingRunning')}
                 </Text>
                 <ActivityIndicator size="small" color={colors.purple} style={{ marginTop: 12 }} />
               </View>
@@ -2198,7 +2191,7 @@ function MowerMappingScreen() {
         ) : mappingState === 'saveRejected' || mappingState === 'commandFailed' ? (
           <View style={styles.centerBox}>
             <Ionicons name="alert-circle" size={48} color={colors.red} />
-            <Text style={styles.centerTitle}>{mappingState === 'saveRejected' ? 'Map not saved' : 'Mapping status not confirmed'}</Text>
+            <Text style={styles.centerTitle}>{mappingState === 'saveRejected' ? t('mpMapNotSaved') : t('mpStatusNotConfirmed')}</Text>
             <Text style={styles.centerSub}>{saveRejectedMessage}</Text>
             {mappingState === 'commandFailed' && stopRefused && (
               <TouchableOpacity
@@ -2211,7 +2204,7 @@ function MowerMappingScreen() {
                   setMappingState('mapping');
                 })}
               >
-                <Text style={styles.doneBtnText}>Continue recording</Text>
+                <Text style={styles.doneBtnText}>{t('mpContinueRecording')}</Text>
               </TouchableOpacity>
             )}
             {mappingState === 'commandFailed' && failedCommand === 'stop_scan_map' && (
@@ -2223,7 +2216,7 @@ function MowerMappingScreen() {
                   if (await connectBleJoystick() === 'connected') await stopAndSave();
                 })}
               >
-                <Text style={styles.doneBtnText}>{busy || bleConnecting ? 'Retrying...' : 'Try again (stop & save)'}</Text>
+                <Text style={styles.doneBtnText}>{busy || bleConnecting ? t('mpRetrying') : t('mpTryAgainStopSave')}</Text>
               </TouchableOpacity>
             )}
             <TouchableOpacity
@@ -2233,7 +2226,7 @@ function MowerMappingScreen() {
                 if (await connectBleJoystick() === 'connected') await exitMapping();
               }}
             >
-              <Text style={styles.doneBtnText}>{busy || bleConnecting ? 'Closing...' : 'Close mapping'}</Text>
+              <Text style={styles.doneBtnText}>{busy || bleConnecting ? t('mpClosing') : t('mpCloseMapping')}</Text>
             </TouchableOpacity>
           </View>
 
@@ -2244,17 +2237,17 @@ function MowerMappingScreen() {
             <View style={styles.statsBar}>
               <View style={styles.statsChips}>
                 <Text style={[styles.sensorChip, { backgroundColor: bleConnected ? 'rgba(0,212,170,0.15)' : 'rgba(239,68,68,0.15)', color: bleConnected ? colors.emerald : colors.red }]}>
-                  BLE: {bleConnected ? 'OK' : bleConnecting ? '...' : 'OFF'}
+                  BLE: {bleConnected ? t('gpsOk') : bleConnecting ? '...' : t('mpOff')}
                 </Text>
                 <Text style={[styles.sensorChip, { backgroundColor: mowerOnline ? 'rgba(0,212,170,0.15)' : 'rgba(239,68,68,0.15)', color: mowerOnline ? colors.emerald : colors.red }]}>
-                  MQTT: {mowerOnline ? 'OK' : 'OFF'}
+                  MQTT: {mowerOnline ? t('gpsOk') : t('mpOff')}
                 </Text>
                 <Text style={styles.sensorChip}>
-                  Bat: {mappingBattery}
+                  {t('mpBatShort')}: {mappingBattery}
                 </Text>
                 {parseInt(sensors.error_status ?? '0', 10) > 0 && (
                   <Text style={[styles.sensorChip, { backgroundColor: 'rgba(239,68,68,0.15)', color: colors.red }]}>
-                    Error: {sensors.error_status}
+                    {t('error')}: {sensors.error_status}
                   </Text>
                 )}
               </View>
@@ -2265,7 +2258,7 @@ function MowerMappingScreen() {
               <View style={{ backgroundColor: 'rgba(239,68,68,0.1)', borderRadius: 12, padding: 12, marginBottom: 4, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                 <Ionicons name="warning" size={18} color={colors.red} />
                 <Text style={{ color: colors.red, fontSize: 13, flex: 1 }}>
-                  {sensors.error_msg ?? `Error ${sensors.error_status}`}
+                  {sensors.error_msg ?? `${t('error')} ${sensors.error_status}`}
                 </Text>
               </View>
             )}
@@ -2275,14 +2268,14 @@ function MowerMappingScreen() {
                 <Ionicons name="battery-charging" size={32} color={colors.emerald} />
               </View>
               <Text style={styles.chargerTitle}>
-                {confirmedDocked ? 'Docked!' : autoDockFailed ? 'Docking Failed' : 'Drive to Charger'}
+                {confirmedDocked ? t('mpDocked') : autoDockFailed ? t('mpDockingFailed') : t('mpDriveToCharger')}
               </Text>
               <Text style={styles.chargerDesc}>
                 {confirmedDocked
-                  ? 'Mower is on the charger. Saving charger position...'
+                  ? t('mpDockedDesc')
                   : autoDockFailed
-                    ? 'NOVABOT could not finish docking. Drive it back near the charger and retry, or "Save Position Here" if it is already correctly positioned.'
-                  : 'Drive the mower to ~50cm in front of the charger, facing it directly. Then tap "Auto Dock".'}
+                    ? t('mpDockingFailedDesc')
+                  : t('mpDriveToChargerDesc')}
               </Text>
 
               {/* Dock status */}
@@ -2291,14 +2284,14 @@ function MowerMappingScreen() {
                   backgroundColor: confirmedDocked ? colors.emerald : autoDockFailed ? colors.red : colors.amber }} />
                 <Text style={{ color: confirmedDocked ? colors.emerald : autoDockFailed ? colors.red : colors.text, fontSize: 14, fontWeight: '600' }}>
                   {confirmedDocked
-                    ? 'Docked — saving position...'
+                    ? t('mpDockedSaving')
                     : autoDockFailed
-                      ? 'Auto docking failed — retry or save manually'
+                      ? t('mpAutoDockFailedStatus')
                       : chargerAction === 'savePosition'
-                        ? 'Saving charger position...'
+                        ? t('mpSavingChargerPosition')
                         : chargerAction === 'autoDock' || autoDockInProgress
-                          ? 'Auto docking in progress...'
-                          : 'Position the mower near the charger'}
+                          ? t('mpAutoDockInProgress')
+                          : t('mpPositionNearCharger')}
                 </Text>
               </View>
             </View>
@@ -2358,14 +2351,13 @@ function MowerMappingScreen() {
                     autoDockRequestedRef.current = false;
                     setChargerAction(null);
                     if (result === 'exhausted') {
-                      appAlertCompat.alert('Auto Dock Failed',
-                        'The mower is not ready to dock yet. Retry Auto Dock or save the charger position manually.');
+                      appAlertCompat.alert(t('mpAutoDockFailedTitle'), t('mpAutoDockNotReady'));
                     }
                   }).catch(error => {
                     if (!isActive()) return;
                     autoDockRequestedRef.current = false;
                     setChargerAction(null);
-                    appAlertCompat.alert('Auto Dock Failed', error instanceof Error ? error.message : String(error));
+                    appAlertCompat.alert(t('mpAutoDockFailedTitle'), error instanceof Error ? error.message : String(error));
                   });
                 })}
                 disabled={chargerAction === 'autoDock' || chargerAction === 'savePosition' || confirmedDocked}
@@ -2374,12 +2366,12 @@ function MowerMappingScreen() {
                 {chargerAction === 'autoDock' && !confirmedDocked ? (
                   <>
                     <ActivityIndicator size="small" color={colors.white} />
-                    <Text style={styles.actionText}>Auto Docking...</Text>
+                    <Text style={styles.actionText}>{t('mpAutoDocking')}</Text>
                   </>
                 ) : (
                   <>
                     <Ionicons name="navigate" size={20} color={colors.white} />
-                    <Text style={styles.actionText}>Auto Dock</Text>
+                    <Text style={styles.actionText}>{t('mpAutoDock')}</Text>
                   </>
                 )}
               </TouchableOpacity>
@@ -2392,12 +2384,12 @@ function MowerMappingScreen() {
                 {chargerAction === 'savePosition' ? (
                   <>
                     <ActivityIndicator size="small" color={colors.emerald} />
-                    <Text style={[styles.actionText, { color: colors.emerald }]}>Saving...</Text>
+                    <Text style={[styles.actionText, { color: colors.emerald }]}>{t('msSaving')}</Text>
                   </>
                 ) : (
                   <>
                     <Ionicons name="checkmark-circle" size={20} color={colors.emerald} />
-                    <Text style={[styles.actionText, { color: colors.emerald }]}>Save Position Here</Text>
+                    <Text style={[styles.actionText, { color: colors.emerald }]}>{t('mpSavePositionHere')}</Text>
                   </>
                 )}
               </TouchableOpacity>
@@ -2411,12 +2403,12 @@ function MowerMappingScreen() {
             // / `mustCreateChannel` values so the header back-button can enforce
             // the same rule.
             const savedLabel = lastSaved?.buildType === 'unicom'
-              ? 'Channel saved'
+              ? t('mpChannelSaved')
               : lastSaved?.buildType === 'obstacle'
-                ? 'Obstacle saved'
+                ? t('mpObstacleSaved')
                 : lastSaved?.buildType === 'modify'
-                  ? 'Map updated'
-                  : 'Map saved';
+                  ? t('mpMapUpdated')
+                  : t('mpMapSaved');
             return (
               <View style={styles.centerBox}>
                 <Ionicons
@@ -2427,12 +2419,12 @@ function MowerMappingScreen() {
                 <Text style={styles.centerTitle}>{savedLabel}</Text>
                 <Text style={styles.centerSub}>
                   {mustCreateChannel
-                    ? `You now have multiple work maps. Draw a channel from ${missingMapChannels[0].from} to ${missingMapChannels[0].to} so the mower can move between them — or do it later (the reminder stays on the Map tab).`
+                    ? t('mpMustCreateChannel', { from: missingMapChannels[0].from, to: missingMapChannels[0].to })
                     : lastSaved?.buildType === 'work'
-                      ? 'Your map has been uploaded.'
+                      ? t('mpMapUploaded')
                       : lastSaved?.buildType === 'modify'
-                        ? 'The mower updated the map boundary.'
-                        : 'The mower stored the path.'}
+                        ? t('mpBoundaryUpdated')
+                        : t('mpPathStored')}
                 </Text>
 
                 {mustCreateChannel ? (
@@ -2473,7 +2465,7 @@ function MowerMappingScreen() {
         ) : (
           <View style={styles.centerBox}>
             <Ionicons name="close-circle" size={48} color={colors.red} />
-            <Text style={styles.centerTitle}>Mapping Cancelled</Text>
+            <Text style={styles.centerTitle}>{t('mpMappingCancelled')}</Text>
           </View>
         )}
 
@@ -2486,10 +2478,10 @@ function MowerMappingScreen() {
             <View style={styles.bleOverlayCard}>
               <ActivityIndicator size="large" color={colors.emerald} />
               <Text style={styles.bleOverlayTitle}>
-                {bleStatus ?? 'Connecting via Bluetooth...'}
+                {bleStatus ?? t('mpConnectingBluetooth')}
               </Text>
               <Text style={styles.bleOverlayHint}>
-                Hold the phone close to the mower. Scanning may take up to 6s.
+                {t('mpBleScanHint')}
               </Text>
             </View>
           </View>
@@ -2513,11 +2505,10 @@ function MowerMappingScreen() {
             <View style={styles.bleOverlayCard}>
               <ActivityIndicator size="large" color={colors.emerald} />
               <Text style={styles.bleOverlayTitle}>
-                Saving charger position...
+                {t('mpSavingChargerPosition')}
               </Text>
               <Text style={styles.bleOverlayHint}>
-                Do not move the mower or close the app. Finalising the map
-                takes ~10 seconds.
+                {t('mpFinalisingHint')}
               </Text>
             </View>
           </View>

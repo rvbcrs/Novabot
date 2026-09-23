@@ -14,39 +14,43 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useStyles, useTheme, type Colors } from '../theme';
 import { useMowerState } from '../hooks/useMowerState';
 import { useActiveMower } from '../hooks/useActiveMower';
+import { useI18n } from '../i18n';
 
-// Error code → human-readable message (from Novabot app mower_error_text.dart)
-const ERROR_MESSAGES: Record<string, string> = {
-  '1': 'Blade motor stalled',
-  '2': 'Blade motor overcurrent',
-  '3': 'Left wheel motor stalled',
-  '4': 'Left wheel motor overcurrent',
-  '5': 'Right wheel motor stalled',
-  '6': 'Right wheel motor overcurrent',
-  '7': 'Left wheel motor blocked',
-  '8': 'Right wheel motor blocked',
-  '10': 'Emergency button pressed',
-  '11': 'Mower lifted',
-  '12': 'Mower tilted',
-  '13': 'Mower turned over',
-  '20': 'TOF sensor malfunction',
-  '21': 'Front camera malfunction',
-  '30': 'Chassis communication error',
-  '31': 'IMU sensor error',
-  '40': 'Low battery',
-  '41': 'Charging error',
-  '50': 'GPS signal lost',
-  '51': 'RTK signal lost',
-  '100': 'WiFi connection lost',
-  '101': 'MQTT connection lost',
-  '150': 'Unknown error',
-  '151': 'Localization error',
-  '155': 'Enter the PIN code on the mower',
-  '200': 'PIN lock active',
+// Error code → i18n key (texts from Novabot app mower_error_text.dart)
+const ERROR_MESSAGE_KEYS: Record<string, string> = {
+  '1': 'stErr1',
+  '2': 'stErr2',
+  '3': 'stErr3',
+  '4': 'stErr4',
+  '5': 'stErr5',
+  '6': 'stErr6',
+  '7': 'stErr7',
+  '8': 'stErr8',
+  '10': 'stErr10',
+  '11': 'stErr11',
+  '12': 'stErr12',
+  '13': 'stErr13',
+  '20': 'stErr20',
+  '21': 'stErr21',
+  '30': 'stErr30',
+  '31': 'stErr31',
+  '40': 'stErr40',
+  '41': 'stErr41',
+  '50': 'stErr50',
+  '51': 'stErr51',
+  '100': 'stErr100',
+  '101': 'stErr101',
+  '150': 'stErr150',
+  '151': 'stErr151',
+  '155': 'stErr155',
+  '200': 'stErr200',
 };
 
-function getErrorMessage(code: string): string {
-  return ERROR_MESSAGES[code] ?? `Error code ${code}`;
+type TFn = (key: string, params?: Record<string, string | number>) => string;
+
+function getErrorMessage(code: string, t: TFn): string {
+  const key = ERROR_MESSAGE_KEYS[code];
+  return key ? t(key) : t('stErrorCode', { code });
 }
 
 function getErrorSeverity(code: string): 'critical' | 'warning' | 'info' {
@@ -78,6 +82,7 @@ export default function MessagesScreen() {
   const SEVERITY_COLORS = getSeverityColors(colors);
   const insets = useSafeAreaInsets();
   const { devices, connected } = useMowerState();
+  const { t } = useI18n();
 
   const { activeMower: mower } = useActiveMower();
 
@@ -103,9 +108,9 @@ export default function MessagesScreen() {
         items.push({
           id: `mower-error-${errStatus}`,
           severity,
-          title: getErrorMessage(errStatus),
-          detail: mower.sensors.error_msg || `Status code: ${errStatus}`,
-          device: 'Mower',
+          title: getErrorMessage(errStatus, t),
+          detail: mower.sensors.error_msg || t('stStatusCode', { code: errStatus }),
+          device: t('mower'),
         });
       }
 
@@ -116,9 +121,9 @@ export default function MessagesScreen() {
         items.push({
           id: `mower-code-${errCode}`,
           severity,
-          title: getErrorMessage(errCode),
-          detail: `Error code: ${errCode}`,
-          device: 'Mower',
+          title: getErrorMessage(errCode, t),
+          detail: t('stErrorCode', { code: errCode }),
+          device: t('mower'),
         });
       }
 
@@ -128,9 +133,9 @@ export default function MessagesScreen() {
         items.push({
           id: 'mower-low-battery',
           severity: 'warning',
-          title: 'Low battery',
-          detail: `Battery at ${battery}%. Mower should return to charger.`,
-          device: 'Mower',
+          title: t('stLowBattery'),
+          detail: t('stLowBatteryDetail', { pct: battery }),
+          device: t('mower'),
         });
       }
 
@@ -139,9 +144,9 @@ export default function MessagesScreen() {
         items.push({
           id: 'mower-offline',
           severity: 'info',
-          title: 'Mower offline',
-          detail: 'Mower is not connected to the server.',
-          device: 'Mower',
+          title: t('stMowerOffline'),
+          detail: t('stMowerOfflineDetail'),
+          device: t('mower'),
         });
       }
 
@@ -151,9 +156,9 @@ export default function MessagesScreen() {
         items.push({
           id: 'mower-weak-wifi',
           severity: 'info',
-          title: 'Weak WiFi signal',
-          detail: `WiFi signal: ${rssi}%. Coverage may be unreliable.`,
-          device: 'Mower',
+          title: t('stWeakWifi'),
+          detail: t('stWeakWifiDetail', { pct: rssi }),
+          device: t('mower'),
         });
       }
     }
@@ -162,9 +167,9 @@ export default function MessagesScreen() {
       items.push({
         id: 'charger-offline',
         severity: 'info',
-        title: 'Charger offline',
-        detail: 'Charging station is not connected.',
-        device: 'Charger',
+        title: t('stChargerOffline'),
+        detail: t('stChargerOfflineDetail'),
+        device: t('charger'),
       });
     }
 
@@ -173,7 +178,7 @@ export default function MessagesScreen() {
     items.sort((a, b) => order[a.severity] - order[b.severity]);
 
     return items;
-  }, [mower, charger]);
+  }, [mower, charger, t]);
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -181,7 +186,7 @@ export default function MessagesScreen() {
         {!connected && (
           <View style={styles.disconnectedBanner}>
             <Ionicons name="cloud-offline" size={16} color={colors.red} />
-            <Text style={styles.disconnectedText}>Not connected to server</Text>
+            <Text style={styles.disconnectedText}>{t('stNotConnectedServer')}</Text>
           </View>
         )}
 
@@ -190,8 +195,8 @@ export default function MessagesScreen() {
             <View style={styles.allClearIcon}>
               <Ionicons name="checkmark-circle" size={48} color={colors.green} />
             </View>
-            <Text style={styles.allClearTitle}>All Clear</Text>
-            <Text style={styles.allClearSubtitle}>No active alerts or warnings.</Text>
+            <Text style={styles.allClearTitle}>{t('stAllClear')}</Text>
+            <Text style={styles.allClearSubtitle}>{t('stAllClearSub')}</Text>
           </View>
         )}
 

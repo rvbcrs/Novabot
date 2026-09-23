@@ -152,7 +152,17 @@ export interface MapSetInput {
   obstacles: { canonical: string; parentMap: string; points: XY[] }[];
 }
 export type ValidationCode = 'too_few_points' | 'self_intersect' | 'too_small' | 'outside_work' | 'unknown_parent' | 'large_displacement';
-export interface ValidationIssue { canonical: string; code: ValidationCode; message: string }
+/**
+ * `message` is plain English (logs/tests); UI renders `messageKey` + `messageParams`
+ * through i18n t().
+ */
+export interface ValidationIssue {
+  canonical: string;
+  code: ValidationCode;
+  message: string;
+  messageKey: string;
+  messageParams?: Record<string, string | number>;
+}
 export interface ValidationResult { ok: boolean; errors: ValidationIssue[]; warnings: ValidationIssue[] }
 
 export const MIN_OBSTACLE_AREA_M2 = 0.05; // kleine obstakels (paaltje/sproeier, ~0.2 m2) zijn legitiem
@@ -168,12 +178,12 @@ export function validateMapSet(input: MapSetInput, originals: Map<string, XY[]>,
   const warnings: ValidationIssue[] = [];
   const isEdited = (canonical: string) => !editedCanonicals || editedCanonicals.has(canonical);
   const checkCommon = (canonical: string, pts: XY[], minArea: number) => {
-    if (pts.length < 3) { errors.push({ canonical, code: 'too_few_points', message: 'Minimaal 3 punten nodig' }); return false; }
-    if (selfIntersects(pts)) { errors.push({ canonical, code: 'self_intersect', message: 'Lijn kruist zichzelf' }); return false; }
-    if (polygonArea(pts) < minArea) { errors.push({ canonical, code: 'too_small', message: `Oppervlak kleiner dan ${minArea} m²` }); return false; }
+    if (pts.length < 3) { errors.push({ canonical, code: 'too_few_points', message: 'At least 3 points needed', messageKey: 'stValTooFewPoints' }); return false; }
+    if (selfIntersects(pts)) { errors.push({ canonical, code: 'self_intersect', message: 'Line crosses itself', messageKey: 'stValSelfIntersect' }); return false; }
+    if (polygonArea(pts) < minArea) { errors.push({ canonical, code: 'too_small', message: `Area smaller than ${minArea} m²`, messageKey: 'stValTooSmall', messageParams: { min: minArea } }); return false; }
     const orig = originals.get(canonical);
     if (orig && maxDisplacement(pts, orig) > DISPLACEMENT_WARN_M) {
-      warnings.push({ canonical, code: 'large_displacement', message: `Verschuiving groter dan ${DISPLACEMENT_WARN_M} m — buiten ooit-gescand gebied is nav-gedrag onbewezen` });
+      warnings.push({ canonical, code: 'large_displacement', message: `Moved more than ${DISPLACEMENT_WARN_M} m: outside the area ever scanned, navigation behaviour is unproven`, messageKey: 'stValLargeDisplacement', messageParams: { m: DISPLACEMENT_WARN_M } });
     }
     return true;
   };
@@ -185,9 +195,9 @@ export function validateMapSet(input: MapSetInput, originals: Map<string, XY[]>,
     if (!checkCommon(o.canonical, o.points, MIN_OBSTACLE_AREA_M2)) continue;
     const parent = input.work.find(w => w.canonical === o.parentMap);
     if (parent === undefined) {
-      errors.push({ canonical: o.canonical, code: 'unknown_parent', message: `Onbekende werkkaart ${o.parentMap}` });
+      errors.push({ canonical: o.canonical, code: 'unknown_parent', message: `Unknown work map ${o.parentMap}`, messageKey: 'stValUnknownParent', messageParams: { map: o.parentMap } });
     } else if (!polygonContains(parent.points, o.points)) {
-      errors.push({ canonical: o.canonical, code: 'outside_work', message: `Obstacle steekt buiten ${o.parentMap}` });
+      errors.push({ canonical: o.canonical, code: 'outside_work', message: `Obstacle extends outside ${o.parentMap}`, messageKey: 'stValOutsideWork', messageParams: { map: o.parentMap } });
     }
   }
   return { ok: errors.length === 0, errors, warnings };
