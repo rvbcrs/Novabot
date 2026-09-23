@@ -123,11 +123,23 @@ describe('gardenBounds', () => {
 });
 
 describe('compositeImage', () => {
-  it('paints the work polygon green and the obstacle as a red disc', async () => {
+  it('paints the work polygon green and the obstacle red', async () => {
     const png = await compositeImage(SN, await fakeBase());
     // Green fill over white: the 0.58-alpha #6ebe50 lands near (166, 208, 150).
     expect(await countNear(png, [166, 208, 150])).toBeGreaterThan(500);
     expect(await countNear(png, [224, 30, 30])).toBeGreaterThan(50);
+  });
+
+  it('paints an obstacle in its own shape, not as a disc around it', async () => {
+    // Big enough canvas that the 3x3 m square is drawn as itself. A disc of
+    // half its side would leave the corners white.
+    const base = await fakeBase(1600, 1600);
+    const png = await compositeImage(SN, base);
+    const { data, info } = await sharp(png).raw().toBuffer({ resolveWithObject: true });
+    const corner = base.project({ lat: CHARGER.lat + 4.8 / 111_320, lng: CHARGER.lng + 4.8 / (111_320 * Math.cos((CHARGER.lat * Math.PI) / 180)) });
+    const i = (Math.round(corner[1]) * info.width + Math.round(corner[0])) * info.channels;
+    expect(data[i]).toBeGreaterThan(150);
+    expect(data[i + 1]).toBeLessThan(80);
   });
 
   it('puts the zone where the projection says, not in the corner', async () => {

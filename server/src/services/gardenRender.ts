@@ -7,7 +7,7 @@
  *      (placed by its four corners) or satellite tiles stitched for the bbox of
  *      the polygons. Both end up as "image + known corner coordinates".
  *   2. COMPOSITE. The work polygons are painted on it in green, the obstacles as
- *      flat red discs and the dock as a small black/white square. That picture
+ *      flat red shapes and the dock as a small black/white square. That picture
  *      is what fixes the geometry: whatever the image model does afterwards, the
  *      mown area is the area the mower actually mows.
  *   3. RENDER. An image model restyles the composite into a 3D visualisation,
@@ -422,7 +422,7 @@ export async function baseImage(sn: string, prefer: BaseSource, view?: ViewBound
 
 /**
  * Paint the mower's own geometry onto the base image. Deliberately blunt
- * shapes: the image model copies what it can recognise, and a flat red disc
+ * shapes: the image model copies what it can recognise, and a flat red patch
  * survives the restyle where a drawn bush would become a real bush.
  */
 export async function compositeImage(sn: string, base: BaseImage): Promise<Buffer> {
@@ -446,14 +446,23 @@ export async function compositeImage(sn: string, base: BaseImage): Promise<Buffe
     const d = pts.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(' ');
     parts.push(`<polygon points="${d}" fill="#6ebe50" fill-opacity="0.58" stroke="#23702c" stroke-width="${stroke}" stroke-linejoin="round"/>`);
   }
+  // Obstacles in their own shape, so the render's red patch and the map's
+  // obstacle outline drawn over it are one thing, not a disc around a shape.
+  // Only one too small for the model to keep becomes a disc of minimum size.
   for (const r of rows.filter(r => r.map_type === 'obstacle')) {
     const pts = parse(r).map(px);
     if (pts.length < 3) continue;
     const xs = pts.map(p => p[0]); const ys = pts.map(p => p[1]);
-    const cx = (Math.min(...xs) + Math.max(...xs)) / 2;
-    const cy = (Math.min(...ys) + Math.max(...ys)) / 2;
-    const rr = Math.max(stroke * 3, Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) / 2);
-    parts.push(`<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="${rr.toFixed(1)}" fill="#e01e1e" stroke="#8c0000" stroke-width="${(stroke * 0.7).toFixed(1)}"/>`);
+    const span = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys));
+    const edge = `fill="#e01e1e" stroke="#8c0000" stroke-width="${(stroke * 0.7).toFixed(1)}"`;
+    if (span >= stroke * 6) {
+      const d = pts.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(' ');
+      parts.push(`<polygon points="${d}" ${edge} stroke-linejoin="round"/>`);
+    } else {
+      const cx = (Math.min(...xs) + Math.max(...xs)) / 2;
+      const cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+      parts.push(`<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="${(stroke * 3).toFixed(1)}" ${edge}/>`);
+    }
   }
   const [dx, dy] = px(pose);
   const s = Math.max(stroke * 2.5, base.width / 150);
@@ -615,7 +624,7 @@ Content comes only from the input image: the same house with its roof shape, the
 
 Camera: elevated three-quarter bird's-eye view, roughly 45 degrees, the plot rendered as a neat tilted island of ground on a plain empty background, the whole property inside the frame with margin on all sides.
 
-The semi-transparent green area with the dark green outline is the robot mower's mowing zone: render it as a vivid, freshly mown striped lawn, crisply following that outline, as the visual focus. The flat solid RED discs are obstacle markers, not objects: keep them as flat, opaque red circles lying on the grass, clean-edged, with no texture, plants or shadow. The small black-and-white square is the charging dock: put a small white robot mower on it. No people, no text, no labels.`;
+The semi-transparent green area with the dark green outline is the robot mower's mowing zone: render it as a vivid, freshly mown striped lawn, crisply following that outline, as the visual focus. The flat solid RED shapes are obstacle markers, not objects: keep them as flat, opaque red shapes lying on the grass, exactly their outline, clean-edged, with no texture, plants or shadow. The small black-and-white square is the charging dock: put a small white robot mower on it. No people, no text, no labels.`;
 
 const PROMPT_NIGHT = `${PROMPT_BASE}
 
@@ -625,7 +634,7 @@ const PROMPT_TILT = `This is an aerial photo of a property that has already been
 
 CAMERA, NON-NEGOTIABLE: keep the exact framing and perspective of the input. Every point on the ground stays at exactly the same position on the canvas: the lawn outline, paths, driveway, terrace and the edges of the plot. Do not re-tilt, rotate, zoom or crop.
 
-The semi-transparent green area with the dark green outline is the robot mower's mowing zone: render it as a vivid, freshly mown striped lawn, its outline exactly where it is now. The flat solid RED discs are obstacle markers, not objects: keep them as flat, opaque red discs lying on the grass exactly where they are, clean-edged, no texture, plants or shadow. The small black-and-white square is the charging dock: put a small white robot mower on it. No people, no text, no labels.`;
+The semi-transparent green area with the dark green outline is the robot mower's mowing zone: render it as a vivid, freshly mown striped lawn, its outline exactly where it is now. The flat solid RED shapes are obstacle markers, not objects: keep them as flat, opaque red shapes lying on the grass exactly where they are, exactly their outline, clean-edged, no texture, plants or shadow. The small black-and-white square is the charging dock: put a small white robot mower on it. No people, no text, no labels.`;
 
 const PROMPT_TILT_NIGHT = `${PROMPT_TILT}
 
@@ -635,7 +644,7 @@ const PROMPT_FLAT = `Turn this aerial photo into a clean 3D architectural visual
 
 CAMERA, NON-NEGOTIABLE: keep the exact straight-down (nadir) viewpoint and framing of the input. Do not tilt, do not rotate, do not crop or zoom: every roof, hedge and path must stay on the same spot on the canvas as in the input, edge to edge. The output is the same rectangle of ground, redrawn.
 
-The semi-transparent green area with the dark green outline is the robot mower's mowing zone: render it as a freshly mown striped lawn exactly inside that outline. The flat solid RED discs are obstacle markers, not objects: keep them flat, opaque and clean-edged, with no plants or shadow. Leave the small black-and-white dock square as it is. No people, no text, no labels.`;
+The semi-transparent green area with the dark green outline is the robot mower's mowing zone: render it as a freshly mown striped lawn exactly inside that outline. The flat solid RED shapes are obstacle markers, not objects: keep them flat, opaque and clean-edged, with no plants or shadow. Leave the small black-and-white dock square as it is. No people, no text, no labels.`;
 
 const PROMPT_FLAT_NIGHT = `${PROMPT_FLAT}
 

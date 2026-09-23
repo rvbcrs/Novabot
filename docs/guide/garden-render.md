@@ -49,7 +49,7 @@ are asked first, because a render costs a credit or API usage.
    usually more recent, a drone photo is sharper and shows the garden as you
    photographed it. The badge under the picture says which one was used.
 2. **Your geometry painted on it.** Work zones in green with a dark outline,
-   obstacles as flat red discs, the dock as a small marker. This step is what
+   obstacles as flat red shapes in their own outline (a disc only when too small to keep), the dock as a small marker. This step is what
    keeps the render honest: the image model copies these shapes.
 3. **One restyle per variant.** An image model turns that composite into a 3D
    render, once for daytime and once for evening.
