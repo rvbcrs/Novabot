@@ -1023,6 +1023,8 @@ export interface EditGeometryDto { maps: EditMapEntry[]; pendingSync: boolean; h
 export interface EditValidationIssue { canonical: string; code: string; message: string }
 export interface EditApplyDto {
   ok: boolean; reason?: string;
+  /** Server-side explanation for push_failed / bundle_failed (shown as-is). */
+  error?: string;
   validation?: { ok: boolean; errors: EditValidationIssue[]; warnings: EditValidationIssue[] };
   applied?: { canonical: string; action: string }[];
 }

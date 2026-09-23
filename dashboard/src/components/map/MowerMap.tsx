@@ -2398,7 +2398,9 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
         break; // drafts blijven — server heeft niets gemuteerd
       case 'push_failed':
       case 'bundle_failed':
-        setEditStatus(t('map.edit.pushFailed'));
+        // The server says why (e.g. no resolvable charging pose); the generic
+        // line alone sent users to a Re-sync that fails the same way.
+        setEditStatus(r.error ? `${t('map.edit.pushFailed')}: ${r.error}` : t('map.edit.pushFailed'));
         setEditStatusKind('error');
         await refreshEditGeometry();
         break;

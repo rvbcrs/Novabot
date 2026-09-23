@@ -17,6 +17,7 @@ import path from 'node:path';
 // anchor check (before any MQTT call) for the empty in-memory test DB, so the
 // stubs are never actually invoked.
 vi.mock('../../mqtt/mapSync.js', () => ({
+  readLatestZipChargingPose: () => null,
   publishToExtended: vi.fn(),
   onExtendedResponse: vi.fn(),
   offExtendedResponse: vi.fn(),

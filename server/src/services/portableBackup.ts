@@ -19,10 +19,28 @@ import { synthesizeMowerFiles } from '../maps/synthMowerFiles.js';
 import { mapRepo } from '../db/repositories/maps.js';
 import { getPolygonAnchor } from './anchor.js';
 import { getDockPose } from '../mqtt/sensorData.js';
-import { publishToExtended, onExtendedResponse, offExtendedResponse } from '../mqtt/mapSync.js';
+import { publishToExtended, onExtendedResponse, offExtendedResponse, readLatestZipChargingPose } from '../mqtt/mapSync.js';
 
 const BACKUP_ROOT = path.join(process.env.STORAGE_PATH ?? './storage', 'portable_backups');
 const RETENTION = 20;
+
+/**
+ * Dock orientation for a synthesized pose when the mower cannot give a live
+ * one. Order: the operator-confirmed DB value (recalibrate / re-anchor), then
+ * the orientation the mower itself last uploaded in its map_info.json. That
+ * second source is what the mower is already docking with today, so reusing
+ * it cannot make things worse; it is exactly what was missing for a docked
+ * mower with localization "Not initialized" (map_position 0,0,0 → no live
+ * pose) on a server that never ran a recalibration (David, 2026-09-22).
+ * Returns null when neither exists; callers then refuse to write {0,0,0}.
+ */
+function resolveDockOrientation(sn: string): number | null {
+  const saved = mapRepo.getPolygonChargingOrientation(sn);
+  if (saved != null && Number.isFinite(saved)) return saved;
+  const zip = readLatestZipChargingPose(sn);
+  if (zip && Number.isFinite(zip.orientation) && !(zip.x === 0 && zip.y === 0 && zip.orientation === 0)) return zip.orientation;
+  return null;
+}
 
 export interface BackupEntry {
   filename: string;
@@ -300,7 +318,7 @@ export async function createBundleFromDb(sn: string, reason: string): Promise<Ba
   }
   if (!chargingPose) {
     const anchor = getPolygonAnchor(sn);
-    const savedOrient = mapRepo.getPolygonChargingOrientation(sn);
+    const savedOrient = resolveDockOrientation(sn);
     if (!anchor || savedOrient == null || !Number.isFinite(savedOrient)) {
       throw new Error(
         `[portable-backup] ${sn}: cannot synthesize bundle — no resolvable charging pose ` +
@@ -406,7 +424,7 @@ export async function createBackup(sn: string, reason: string): Promise<BackupEn
   let chargingPose = mowerData.chargingPose;
   if (!chargingPose) {
     const anchor = getPolygonAnchor(sn);
-    const savedOrient = mapRepo.getPolygonChargingOrientation(sn);
+    const savedOrient = resolveDockOrientation(sn);
     if (anchor && savedOrient != null && Number.isFinite(savedOrient)) {
       chargingPose = { x: anchor.x, y: anchor.y, orientation: savedOrient };
     } else {

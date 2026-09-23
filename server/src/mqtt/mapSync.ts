@@ -1151,6 +1151,34 @@ const MAPS_STORAGE = path.resolve(process.env.STORAGE_PATH ?? './storage', 'maps
  * Updates both csv_file/ and x3_csv_file/ copies when present. Returns true if
  * the ZIP existed and at least one map_info.json entry was patched.
  */
+/**
+ * The charging pose the mower itself last uploaded: `csv_file/map_info.json`
+ * inside `<sn>_latest.zip`. Read-only sibling of patchLatestZipChargingPose.
+ * Returns null when there is no ZIP, no entry, or the pose is not finite.
+ */
+export function readLatestZipChargingPose(sn: string): { x: number; y: number; orientation: number } | null {
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(sn)) return null;
+  const zipPath = path.join(MAPS_STORAGE, `${sn}_latest.zip`);
+  if (!fs.existsSync(zipPath)) return null;
+  const tmpDir = path.join(MAPS_STORAGE, `tmp_readpose_${sn}_${process.pid}`);
+  try {
+    fs.mkdirSync(tmpDir, { recursive: true });
+    for (const entry of ['csv_file/map_info.json', 'x3_csv_file/map_info.json']) {
+      try { execFileSync('unzip', ['-o', '-q', zipPath, entry, '-d', tmpDir], { stdio: 'ignore' }); } catch { continue; }
+      const infoPath = path.join(tmpDir, entry);
+      if (!fs.existsSync(infoPath)) continue;
+      const cp = (JSON.parse(fs.readFileSync(infoPath, 'utf8')) as { charging_pose?: { x?: unknown; y?: unknown; orientation?: unknown } }).charging_pose;
+      const x = Number(cp?.x), y = Number(cp?.y), orientation = Number(cp?.orientation);
+      if ([x, y, orientation].every(Number.isFinite)) return { x, y, orientation };
+    }
+    return null;
+  } catch {
+    return null;
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
 export function patchLatestZipChargingPose(
   sn: string,
   pose: { x: number; y: number; orientation: number },

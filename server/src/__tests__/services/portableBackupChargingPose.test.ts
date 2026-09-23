@@ -24,6 +24,7 @@ import path from 'node:path';
 // Shared, hoisted state so the getDockPose mock can be steered per test.
 const live = vi.hoisted(() => ({
   dockPose: null as { x: number; y: number; orientation: number; capturedAt: number } | null,
+  zipPose: null as { x: number; y: number; orientation: number } | null,
 }));
 
 // Avoid pulling the broker → socketHandler chain into the test runtime.
@@ -31,6 +32,7 @@ vi.mock('../../mqtt/mapSync.js', () => ({
   publishToExtended: vi.fn(),
   onExtendedResponse: vi.fn(),
   offExtendedResponse: vi.fn(),
+  readLatestZipChargingPose: () => live.zipPose,
 }));
 vi.mock('../../mqtt/sensorData.js', () => ({
   deviceCache: new Map<string, Map<string, string>>(),
@@ -66,6 +68,7 @@ beforeEach(() => {
   // Default: no live dock pose (offline-rebuild path → anchor fallback). Tests
   // that exercise the docked map-edit path set live.dockPose explicitly.
   live.dockPose = null;
+  live.zipPose = null;
   // Clean DB rows + any prior backup files for all fixtures.
   for (const sn of [SN_NO_POSE, SN_WITH_POSE, SN_CSV]) {
     db.prepare('DELETE FROM maps WHERE mower_sn = ?').run(sn);
@@ -267,5 +270,36 @@ describe('createBundleFromCsvFiles — charging-pose fail-closed guard', () => {
     expect(entry).not.toBeNull();
     expect(entry!.filename).toMatch(/\.novabotmap$/);
     expect(listBackups(SN_CSV)).toHaveLength(1);
+  });
+});
+
+describe('orientation fallback: the mower\'s own last uploaded map_info.json', () => {
+  const SN = 'LFIN_POSE_ZIP';
+  beforeEach(() => {
+    db.prepare('DELETE FROM maps WHERE mower_sn = ?').run(SN);
+    db.prepare('DELETE FROM map_calibration WHERE mower_sn = ?').run(SN);
+    fs.rmSync(path.join(BACKUP_ROOT, SN), { recursive: true, force: true });
+    seedAnchorAndWork(SN);
+    mapRepo.create({
+      map_id: `${SN}-unicom`, mower_sn: SN, map_name: 'map0tocharge_unicom',
+      file_name: 'map0tocharge_unicom.csv', canonical_name: 'map0tocharge_unicom',
+      map_type: 'unicom', map_area: JSON.stringify([{ x: 0.09, y: -0.67 }, { x: -0.5, y: 0.2 }]),
+    });
+  });
+
+  it('docked with localization not initialized + never recalibrated → anchor xy + zip orientation', async () => {
+    live.dockPose = null;                                  // map_position 0,0,0 is never captured
+    live.zipPose = { x: 0, y: 0, orientation: 1.6227 };    // what the mower runs with today
+    const entry = await createBundleFromDb(SN, 'map_edit');
+    expect(entry).not.toBeNull();
+    const cp = await readBundleCharging(SN, entry!.filename);
+    expect(cp.x).toBeCloseTo(0.09);
+    expect(cp.y).toBeCloseTo(-0.67);
+    expect(cp.orientation).toBeCloseTo(1.6227);
+  });
+
+  it('still refuses a zeroed zip pose', async () => {
+    live.zipPose = { x: 0, y: 0, orientation: 0 };
+    await expect(createBundleFromDb(SN, 'map_edit')).rejects.toThrow(/no resolvable charging pose/);
   });
 });

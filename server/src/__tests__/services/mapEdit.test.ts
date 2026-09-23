@@ -8,6 +8,7 @@ vi.mock('../../services/portableBackup.js', () => ({
   createBundleFromDb: vi.fn(async () => ({ filename: 'test.novabotmap', bytes: 1, createdAt: 0, reason: 'map_edit' })),
 }));
 vi.mock('../../mqtt/mapSync.js', () => ({
+  readLatestZipChargingPose: () => null,
   pushMapToMowerVerbatim: vi.fn(async () => ({ ok: true })),
 }));
 vi.mock('../../mqtt/broker.js', () => ({
