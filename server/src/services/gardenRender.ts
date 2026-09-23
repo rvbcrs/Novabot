@@ -305,7 +305,14 @@ export interface RenderMeta {
   variants: Variant[];
 }
 
+/** Same shape droneOverlay.ts accepts. The SN reaches the filesystem below, so
+ *  anything with a slash or a dot in it is refused rather than resolved. */
+const SN_RE = /^[A-Za-z0-9_-]{4,32}$/;
+
+export function isValidSn(sn: string): boolean { return SN_RE.test(sn); }
+
 function renderDir(sn: string): string {
+  if (!SN_RE.test(sn)) throw new Error(`invalid sn: ${sn.slice(0, 32)}`);
   const dir = path.resolve(process.env.STORAGE_PATH ?? './storage', 'renders', sn);
   fs.mkdirSync(dir, { recursive: true });
   return dir;
@@ -315,7 +322,13 @@ export function renderPath(sn: string, v: Variant): string {
   return path.join(renderDir(sn), `${v}.png`);
 }
 
+/** Path of the composite we sent to the model. Same guard as the renders. */
+export function compositePath(sn: string): string {
+  return path.join(renderDir(sn), 'composite.png');
+}
+
 export function readRenderMeta(sn: string): RenderMeta | null {
+  if (!SN_RE.test(sn)) return null;
   const f = path.join(renderDir(sn), 'meta.json');
   if (!fs.existsSync(f)) return null;
   try { return JSON.parse(fs.readFileSync(f, 'utf8')) as RenderMeta; } catch { return null; }

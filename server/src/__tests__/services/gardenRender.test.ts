@@ -7,10 +7,11 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import sharp from 'sharp';
+import path from 'node:path';
 
 vi.mock('../../routes/droneOverlay.js', () => ({ readMeta: () => null }));
 
-import { compositeImage, gardenBounds, type BaseImage } from '../../services/gardenRender.js';
+import { compositeImage, compositePath, gardenBounds, isValidSn, readRenderMeta, renderPath, type BaseImage } from '../../services/gardenRender.js';
 import { mapRepo } from '../../db/repositories/index.js';
 import { db } from '../../db/database.js';
 
@@ -110,5 +111,20 @@ describe('compositeImage', () => {
   it('refuses without a charger position rather than drawing at (0,0)', async () => {
     db.prepare('DELETE FROM map_calibration WHERE mower_sn = ?').run(SN);
     await expect(compositeImage(SN, await fakeBase())).rejects.toThrow(/charger GPS/);
+  });
+});
+
+describe('serial numbers reaching the filesystem', () => {
+  it('refuses anything that could escape the storage directory', () => {
+    for (const bad of ['../../etc', 'a/b', '..', 'sn.with.dots', '', 'x'.repeat(33)]) {
+      expect(isValidSn(bad)).toBe(false);
+      expect(readRenderMeta(bad)).toBeNull();
+      expect(() => renderPath(bad, 'day')).toThrow(/invalid sn/);
+      expect(() => compositePath(bad)).toThrow(/invalid sn/);
+    }
+    expect(isValidSn('LFIN1231000211')).toBe(true);
+    // And a good one stays inside the renders directory.
+    const root = path.resolve(process.env.STORAGE_PATH ?? './storage', 'renders');
+    expect(compositePath('LFIN1231000211').startsWith(root + path.sep)).toBe(true);
   });
 });

@@ -3930,6 +3930,7 @@ interface WorkRecordRow {
 dashboardRouter.get('/render/:sn', async (req: Request, res: Response) => {
   const { sn } = req.params;
   const gr = await import('../services/gardenRender.js');
+  if (!gr.isValidSn(sn)) { res.status(400).json({ error: 'invalid sn' }); return; }
   const meta = gr.readRenderMeta(sn);
   res.json({
     available: !!meta,
@@ -3945,6 +3946,7 @@ dashboardRouter.get('/render/:sn', async (req: Request, res: Response) => {
 dashboardRouter.get('/render/:sn/image', async (req: Request, res: Response) => {
   const { sn } = req.params;
   const gr = await import('../services/gardenRender.js');
+  if (!gr.isValidSn(sn)) { res.status(400).json({ error: 'invalid sn' }); return; }
   const asked = String(req.query.variant ?? 'auto');
   const variant = asked === 'day' || asked === 'night' ? asked : await gr.variantForNow(sn);
   const file = gr.renderPath(sn, variant);
@@ -3960,7 +3962,8 @@ dashboardRouter.get('/render/:sn/image', async (req: Request, res: Response) => 
 dashboardRouter.get('/render/:sn/composite', async (req: Request, res: Response) => {
   const { sn } = req.params;
   const gr = await import('../services/gardenRender.js');
-  const file = path.resolve(process.env.STORAGE_PATH ?? './storage', 'renders', sn, 'composite.png');
+  if (!gr.isValidSn(sn)) { res.status(400).json({ error: 'invalid sn' }); return; }
+  const file = gr.compositePath(sn);  // built inside the service, behind the same SN guard
   if (fs.existsSync(file)) { res.setHeader('Content-Type', 'image/png'); res.send(fs.readFileSync(file)); return; }
   try {
     const base = await gr.baseImage(sn, req.query.source === 'drone' ? 'drone' : 'aerial');
@@ -3976,6 +3979,8 @@ dashboardRouter.get('/render/:sn/composite', async (req: Request, res: Response)
 const renderLocks = new Set<string>();
 dashboardRouter.post('/render/:sn', async (req: Request, res: Response) => {
   const { sn } = req.params;
+  const { isValidSn } = await import('../services/gardenRender.js');
+  if (!isValidSn(sn)) { res.status(400).json({ error: 'invalid sn' }); return; }
   if (renderLocks.has(sn)) { res.status(409).json({ error: 'busy' }); return; }
   renderLocks.add(sn);
   try {
