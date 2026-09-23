@@ -64,12 +64,15 @@ interface Props {
   /** True while the map is actually fetching the mower preview — keeps the
    *  Preview button disabled and spinning until the real path is back. */
   previewLoading?: boolean;
+  /** The work area chosen in the Start sheet, while the sheet is open, so the
+   *  map can light it up; null once the sheet closes or "all" is chosen. */
+  onZoneHighlight?: (mapId: string | null) => void;
 }
 
 export function MowerControls({
   sn, online, sensors, onPathDirectionChange, pendingPolygon, onStarted,
   onPatternPlacementChange, onPatternModeChange, onOffsetPreviewChange, patternCenter, onPreview,
-  previewLoading,
+  previewLoading, onZoneHighlight,
 }: Props) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
@@ -80,6 +83,7 @@ export function MowerControls({
   const [pathDirection, setPathDirection] = useState(() => readMowDefaults().pathDirection);
   const [mapId, setMapId] = useState('');
   const [mapName, setMapName] = useState('');
+  useEffect(() => { onZoneHighlight?.(expanded && mapId ? mapId : null); }, [expanded, mapId, onZoneHighlight]);
   const [busy, setBusy] = useState(false);
   const { toast } = useToast();
 

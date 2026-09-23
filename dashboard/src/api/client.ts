@@ -1271,9 +1271,24 @@ export function droneOverlayImageUrl(sn: string, updatedAt: string): string {
 
 export interface GardenRenderMeta {
   createdAt: string; source: 'aerial' | 'drone'; attribution: string; mapRows: number; variants: string[];
+  /** 'flat' keeps the aerial's framing, so the picture can lie on the map with
+   *  the mower and its lanes on top; 'iso' is the standalone picture. */
+  framing?: 'iso' | 'flat';
+  corners?: DroneCorners | null;
+  /** Angled renders: the camera the server chose, so the ground can be drawn
+   *  on the picture. localToRender maps local metres (charger-relative map
+   *  frame) to render pixels; origin and pose turn lat/lng into those metres. */
+  tilt?: {
+    localToRender: number[]; origin: { lat: number; lng: number }; pose: { x: number; y: number };
+    width: number; height: number;
+  } | null;
 }
+export type GardenRenderFraming = 'flat' | 'iso';
+export interface GardenRenderFramingState { meta: GardenRenderMeta; stale: boolean }
 export interface GardenRenderState {
-  available: boolean; meta: GardenRenderMeta | null; stale: boolean;
+  available: boolean;
+  /** Each framing is kept on its own; null when it was never made. */
+  framings: Record<GardenRenderFraming, GardenRenderFramingState | null>;
   variant: 'day' | 'night' | null; credentials: 'own-key' | 'relay' | 'none'; hasDronePhoto: boolean;
 }
 
@@ -1282,13 +1297,15 @@ export async function fetchGardenRender(sn: string): Promise<GardenRenderState> 
 }
 
 /** The picture itself; `v` busts the cache after a regenerate. */
-export function gardenRenderImageUrl(sn: string, v: string, variant: 'auto' | 'day' | 'night' = 'auto'): string {
-  return `${BASE}/render/${encodeURIComponent(sn)}/image?variant=${variant}&v=${encodeURIComponent(v)}`;
+export function gardenRenderImageUrl(sn: string, v: string, framing: GardenRenderFraming, variant: 'auto' | 'day' | 'night' = 'auto'): string {
+  return `${BASE}/render/${encodeURIComponent(sn)}/image?framing=${framing}&variant=${variant}&v=${encodeURIComponent(v)}`;
 }
 
-export async function generateGardenRender(sn: string, source?: 'aerial' | 'drone'): Promise<{ ok: boolean; error?: string }> {
+export async function generateGardenRender(
+  sn: string, source?: 'aerial' | 'drone', framing?: 'iso' | 'flat',
+): Promise<{ ok: boolean; error?: string }> {
   const res = await apiFetch(`${BASE}/render/${encodeURIComponent(sn)}`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source }),
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source, framing }),
   });
   const body = await res.json().catch(() => ({})) as { ok?: boolean; error?: string };
   return { ok: res.ok && body.ok !== false, error: body.error };

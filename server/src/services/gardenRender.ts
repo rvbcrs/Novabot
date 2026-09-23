@@ -55,12 +55,12 @@ function latToTileY(lat: number, z: number): number {
  * (the drone overlay). Solved as a plane homography; the corner order is
  * top-left, top-right, bottom-right, bottom-left, matching droneOverlay.ts.
  */
-function cornerProjection(corners: LatLng[], w: number, h: number): (p: LatLng) => [number, number] {
-  const lng0 = corners.reduce((s, c) => s + c.lng, 0) / 4;
-  const lat0 = corners.reduce((s, c) => s + c.lat, 0) / 4;
-  const S = 1e4; // conditioning: degrees are tiny numbers
-  const src = corners.map(c => [(c.lng - lng0) * S, (c.lat - lat0) * S] as const);
-  const dst: Array<readonly [number, number]> = [[0, 0], [w, 0], [w, h], [0, h]];
+type Pt = readonly [number, number];
+/** A plane homography as 9 numbers, row-major, h33 = 1. */
+export type Homography = number[];
+
+/** The homography taking src[i] to dst[i], from four point pairs (DLT). */
+export function solveHomography(src: Pt[], dst: Pt[]): Homography {
   const A: number[][] = []; const b: number[] = [];
   for (let i = 0; i < 4; i++) {
     const [x, y] = src[i]; const [u, v] = dst[i];
@@ -80,12 +80,95 @@ function cornerProjection(corners: LatLng[], w: number, h: number): (p: LatLng) 
       b[r] -= f * b[i];
     }
   }
-  const hm = A.map((row, i) => b[i] / row[i]);
-  return (p: LatLng) => {
-    const x = (p.lng - lng0) * S; const y = (p.lat - lat0) * S;
-    const d = hm[6] * x + hm[7] * y + 1;
-    return [(hm[0] * x + hm[1] * y + hm[2]) / d, (hm[3] * x + hm[4] * y + hm[5]) / d];
+  return [...A.map((row, i) => b[i] / row[i]), 1];
+}
+
+export function applyHomography(h: Homography, x: number, y: number): [number, number] {
+  const d = h[6] * x + h[7] * y + h[8];
+  return [(h[0] * x + h[1] * y + h[2]) / d, (h[3] * x + h[4] * y + h[5]) / d];
+}
+
+export function invertHomography(h: Homography): Homography {
+  const [a, b, c, d, e, f, g, k, i] = h;
+  const A = e * i - f * k, B = -(d * i - f * g), C = d * k - e * g;
+  const det = a * A + b * B + c * C;
+  const m = [
+    A, -(b * i - c * k), b * f - c * e,
+    B, a * i - c * g, -(a * f - c * d),
+    C, -(a * k - b * g), a * e - b * d,
+  ].map(v => v / det);
+  return m.map(v => v / m[8]);
+}
+
+function cornerProjection(corners: LatLng[], w: number, h: number): (p: LatLng) => [number, number] {
+  const lng0 = corners.reduce((s, c) => s + c.lng, 0) / 4;
+  const lat0 = corners.reduce((s, c) => s + c.lat, 0) / 4;
+  const S = 1e4; // conditioning: degrees are tiny numbers
+  const src = corners.map(c => [(c.lng - lng0) * S, (c.lat - lat0) * S] as const);
+  const hm = solveHomography(src, [[0, 0], [w, 0], [w, h], [0, h]]);
+  return (p: LatLng) => applyHomography(hm, (p.lng - lng0) * S, (p.lat - lat0) * S);
+}
+
+// ── Tilt ────────────────────────────────────────────────────────────────────
+// The angled render is made from a composite WE have already put in
+// perspective, with a camera we chose. The model is asked to keep that framing
+// and add height, so the ground plane's mapping into the picture is known
+// exactly, and the mower and its lanes can be drawn on it afterwards.
+
+/** Output shape of every angled render. */
+export const TILT_W = 1536; export const TILT_H = 1024;
+
+/**
+ * Pinhole camera south of the plot, `elevationDeg` above the ground, looking
+ * at its centre: the homography from composite pixels to output pixels, with
+ * the plot filling `fill` of the output. Far enough away that the perspective
+ * stays mild, which is the isometric look people know from the Navimow app.
+ */
+export function tiltCamera(W: number, H: number, elevationDeg = 55, fill = 0.84): Homography {
+  const th = (elevationDeg * Math.PI) / 180;
+  const dist = 2.2 * Math.max(W, H);
+  const C = [W / 2, H / 2 + dist * Math.cos(th), dist * Math.sin(th)];
+  const F = [0, -Math.cos(th), -Math.sin(th)];   // forward: north and down
+  const R = [1, 0, 0];                            // right: east
+  const U = [0, -Math.sin(th), Math.cos(th)];     // up = F x R
+  const proj = (u: number, v: number, f: number): [number, number] => {
+    const dx = u - C[0], dy = v - C[1], dz = -C[2];
+    const Xc = dx * R[0] + dy * R[1] + dz * R[2];
+    const Yc = dx * U[0] + dy * U[1] + dz * U[2];
+    const Zc = dx * F[0] + dy * F[1] + dz * F[2];
+    return [(f * Xc) / Zc, (-f * Yc) / Zc];
   };
+  const corners: Pt[] = [[0, 0], [W, 0], [W, H], [0, H]];
+  const unit = corners.map(c => proj(c[0], c[1], 1));
+  const xs = unit.map(p => p[0]); const ys = unit.map(p => p[1]);
+  const f = Math.min((fill * TILT_W) / (Math.max(...xs) - Math.min(...xs)), (fill * TILT_H) / (Math.max(...ys) - Math.min(...ys)));
+  const cx = TILT_W / 2 - (f * (Math.min(...xs) + Math.max(...xs))) / 2;
+  const cy = TILT_H / 2 - (f * (Math.min(...ys) + Math.max(...ys))) / 2;
+  const dst = corners.map(c => { const [x, y] = proj(c[0], c[1], f); return [x + cx, y + cy] as const; });
+  return solveHomography(corners, dst);
+}
+
+/** Warp the composite through `h` onto a TILT_W x TILT_H canvas of colour `bg`. */
+export async function warpComposite(png: Buffer, W: number, H: number, h: Homography, bg: [number, number, number]): Promise<Buffer> {
+  const { data } = await sharp(png).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  const inv = invertHomography(h);
+  const out = Buffer.alloc(TILT_W * TILT_H * 3);
+  for (let y = 0; y < TILT_H; y++) {
+    for (let x = 0; x < TILT_W; x++) {
+      const [u, v] = applyHomography(inv, x + 0.5, y + 0.5);
+      const o = (y * TILT_W + x) * 3;
+      const su = u - 0.5, sv = v - 0.5;
+      if (su < 0 || sv < 0 || su > W - 1 || sv > H - 1) { out[o] = bg[0]; out[o + 1] = bg[1]; out[o + 2] = bg[2]; continue; }
+      const x0 = Math.floor(su), y0 = Math.floor(sv), fx = su - x0, fy = sv - y0;
+      const x1 = Math.min(x0 + 1, W - 1), y1 = Math.min(y0 + 1, H - 1);
+      for (let c = 0; c < 3; c++) {
+        const p00 = data[(y0 * W + x0) * 4 + c], p10 = data[(y0 * W + x1) * 4 + c];
+        const p01 = data[(y1 * W + x0) * 4 + c], p11 = data[(y1 * W + x1) * 4 + c];
+        out[o + c] = Math.round((p00 * (1 - fx) + p10 * fx) * (1 - fy) + (p01 * (1 - fx) + p11 * fx) * fy);
+      }
+    }
+  }
+  return sharp(out, { raw: { width: TILT_W, height: TILT_H, channels: 3 } }).png().toBuffer();
 }
 
 // ── Base image ──────────────────────────────────────────────────────────────
@@ -135,7 +218,11 @@ function pickTileSource(lat: number, lng: number): [string, TileSource] {
 /** The garden's bounding box in lat/lng, plus a margin so the plot has some
  *  context around it. Kept tight on purpose: every metre of margin is a metre
  *  of neighbour's garden in the render, and the zone is what people came for. */
-export function gardenBounds(sn: string, marginM = 9): { sw: LatLng; ne: LatLng; origin: LatLng; pose: XY } | null {
+export interface LocalBox { minX: number; maxX: number; minY: number; maxY: number }
+
+export function gardenBounds(
+  sn: string, marginM = 9,
+): { sw: LatLng; ne: LatLng; origin: LatLng; pose: XY; localBox: LocalBox } | null {
   const gps = mapRepo.getChargerGps(sn);
   if (!gps) return null;
   const pose = dockPose(sn);
@@ -150,9 +237,13 @@ export function gardenBounds(sn: string, marginM = 9): { sw: LatLng; ne: LatLng;
   }
   if (pts.length < 3) return null;
   const xs = pts.map(p => p.x); const ys = pts.map(p => p.y);
-  const sw = localToLatLng({ x: Math.min(...xs) - marginM, y: Math.min(...ys) - marginM }, gps, pose);
-  const ne = localToLatLng({ x: Math.max(...xs) + marginM, y: Math.max(...ys) + marginM }, gps, pose);
-  return { sw, ne, origin: gps, pose };
+  const localBox: LocalBox = {
+    minX: Math.min(...xs) - marginM, maxX: Math.max(...xs) + marginM,
+    minY: Math.min(...ys) - marginM, maxY: Math.max(...ys) + marginM,
+  };
+  const sw = localToLatLng({ x: localBox.minX, y: localBox.minY }, gps, pose);
+  const ne = localToLatLng({ x: localBox.maxX, y: localBox.maxY }, gps, pose);
+  return { sw, ne, origin: gps, pose, localBox };
 }
 
 /** The charging pose the polygons are drawn around; (0,0) when unknown. */
@@ -169,6 +260,24 @@ function dockPose(sn: string): XY {
 }
 
 const MAX_PX = 2048;
+
+/**
+ * Paste tiles onto a blank sheet, then cut the requested box out of it.
+ *
+ * Two pipelines on purpose. sharp orders operations by kind, not by call
+ * order: on one pipeline `extract` runs BEFORE `composite`, so the tiles land
+ * on the already-cut canvas at their sheet offsets and the whole picture
+ * shifts by (left, top). That put a garden's zone on the neighbour's roof
+ * (2026-09-23) while the zone maths was right all along.
+ */
+export async function stitchAndCrop(
+  tiles: OverlayOptions[], canvasW: number, canvasH: number,
+  box: { left: number; top: number; width: number; height: number },
+): Promise<Buffer> {
+  const sheet = await sharp({ create: { width: canvasW, height: canvasH, channels: 3, background: '#000' } })
+    .composite(tiles).png().toBuffer();
+  return sharp(sheet).extract(box).png().toBuffer();
+}
 
 /** Stitch satellite tiles covering the garden into one north-up image. */
 async function aerialBase(sn: string): Promise<BaseImage | null> {
@@ -210,10 +319,8 @@ async function aerialBase(sn: string): Promise<BaseImage | null> {
   // Crop the stitched sheet back to the requested bbox.
   const left = Math.round((x0 - tx0) * 256); const top = Math.round((y0 - ty0) * 256);
   const width = Math.max(64, Math.round((x1 - x0) * 256)); const height = Math.max(64, Math.round((y1 - y0) * 256));
-  const png = await sharp({ create: { width: canvasW, height: canvasH, channels: 3, background: '#000' } })
-    .composite(composites)
-    .extract({ left, top, width: Math.min(width, canvasW - left), height: Math.min(height, canvasH - top) })
-    .png().toBuffer();
+  const png = await stitchAndCrop(composites, canvasW, canvasH,
+    { left, top, width: Math.min(width, canvasW - left), height: Math.min(height, canvasH - top) });
   const meta = await sharp(png).metadata();
   const W = meta.width ?? width; const H = meta.height ?? height;
 
@@ -239,6 +346,37 @@ async function droneBase(sn: string): Promise<BaseImage | null> {
     png, width: W, height: H, source: 'drone', attribution: 'eigen dronefoto',
     project: cornerProjection(meta.placement.corners, W, H),
   };
+}
+
+/** Everything a client needs to put a ground point on an angled render. */
+function tiltMeta(sn: string, base: BaseImage, h: Homography): NonNullable<RenderMeta['tilt']> {
+  const b = gardenBounds(sn)!;
+  const local: Pt[] = [[b.localBox.minX, b.localBox.maxY], [b.localBox.maxX, b.localBox.maxY], [b.localBox.maxX, b.localBox.minY], [b.localBox.minX, b.localBox.minY]];
+  const render = local.map(([x, y]) => {
+    const [u, v] = base.project(localToLatLng({ x, y }, b.origin, b.pose));
+    return applyHomography(h, u, v);
+  });
+  return {
+    homography: h, localToRender: solveHomography(local, render), origin: b.origin, pose: b.pose,
+    compositeWidth: base.width, compositeHeight: base.height, width: TILT_W, height: TILT_H,
+  };
+}
+
+/** The four ground corners of a base image, in the drone-overlay order. For a
+ *  tile crop that is the bbox; for a drone photo it is its stored placement. */
+function baseCorners(sn: string, base: BaseImage): LatLng[] | null {
+  if (base.source === 'drone') {
+    const meta = readMeta(sn);
+    return meta?.placement?.corners ?? null;
+  }
+  const b = gardenBounds(sn);
+  if (!b) return null;
+  return [
+    { lat: b.ne.lat, lng: b.sw.lng },   // top-left
+    { lat: b.ne.lat, lng: b.ne.lng },   // top-right
+    { lat: b.sw.lat, lng: b.ne.lng },   // bottom-right
+    { lat: b.sw.lat, lng: b.sw.lng },   // bottom-left
+  ];
 }
 
 export async function baseImage(sn: string, prefer: BaseSource): Promise<BaseImage | null> {
@@ -296,6 +434,9 @@ export async function compositeImage(sn: string, base: BaseImage): Promise<Buffe
 // ── Storage ─────────────────────────────────────────────────────────────────
 
 export type Variant = 'day' | 'night';
+/** 'iso' is the picture; 'flat' keeps the aerial's framing so it can be laid
+ *  on the map with the mower, its trail and the covered lanes on top. */
+export type Framing = 'iso' | 'flat';
 const VARIANTS: Variant[] = ['day', 'night'];
 
 export interface RenderMeta {
@@ -305,6 +446,26 @@ export interface RenderMeta {
   /** Number of map rows at render time, so we can spot a changed map. */
   mapRows: number;
   variants: Variant[];
+  framing: Framing;
+  /** Corner coordinates of a flat render, in the drone-overlay order
+   *  (top-left, top-right, bottom-right, bottom-left). Null for 'iso'. */
+  corners: LatLng[] | null;
+  /** The same extent in local metres, for clients that draw in that frame.
+   *  Only for a tile crop: a drone photo can be rotated, which a box cannot say. */
+  localBox: LocalBox | null;
+  /** Angled renders only: the camera we chose, so the ground plane's place in
+   *  the picture is known exactly and the mower can be drawn on it. */
+  tilt: {
+    /** Composite pixels → render pixels. */
+    homography: Homography;
+    /** Local metres (the map frame, charger-relative) → render pixels. */
+    localToRender: Homography;
+    /** Local metres = ((lng − origin.lng)·mPerDegLng + pose.x, (lat − origin.lat)·mPerDegLat + pose.y). */
+    origin: LatLng;
+    pose: XY;
+    compositeWidth: number; compositeHeight: number;
+    width: number; height: number;
+  } | null;
 }
 
 /** Same shape droneOverlay.ts accepts. The SN reaches the filesystem below, so
@@ -320,8 +481,29 @@ function renderDir(sn: string): string {
   return dir;
 }
 
-export function renderPath(sn: string, v: Variant): string {
-  return path.join(renderDir(sn), `${v}.png`);
+/** Each framing keeps its own pair of pictures, so making one never costs the
+ *  other. JPEG: the model returns a 2-3 MB PNG, a slow load over a VPN for no
+ *  visible gain in a photo-like picture. */
+export function renderPath(sn: string, v: Variant, framing: Framing): string {
+  return path.join(renderDir(sn), `${v}-${framing}.jpg`);
+}
+/** Renders from before framings existed: one pair, `day.jpg`/`day.png`, plus
+ *  a single `meta.json`. They stay readable under the framing that meta names. */
+function legacyMeta(sn: string): RenderMeta | null {
+  const f = path.join(renderDir(sn), 'meta.json');
+  if (!fs.existsSync(f)) return null;
+  try { return JSON.parse(fs.readFileSync(f, 'utf8')) as RenderMeta; } catch { return null; }
+}
+function legacyFiles(sn: string, v: Variant): string[] {
+  return [path.join(renderDir(sn), `${v}.jpg`), path.join(renderDir(sn), `${v}.png`)];
+}
+/** The picture to serve, or null when this framing was never made. */
+export function renderFile(sn: string, v: Variant, framing: Framing): string | null {
+  if (!SN_RE.test(sn)) return null;
+  const own = renderPath(sn, v, framing);
+  if (fs.existsSync(own)) return own;
+  if ((legacyMeta(sn)?.framing ?? 'iso') !== framing) return null;
+  return legacyFiles(sn, v).find(f => fs.existsSync(f)) ?? null;
 }
 
 /** Path of the composite we sent to the model. Same guard as the renders. */
@@ -329,11 +511,24 @@ export function compositePath(sn: string): string {
   return path.join(renderDir(sn), 'composite.png');
 }
 
-export function readRenderMeta(sn: string): RenderMeta | null {
+export function readRenderMeta(sn: string, framing: Framing): RenderMeta | null {
   if (!SN_RE.test(sn)) return null;
-  const f = path.join(renderDir(sn), 'meta.json');
-  if (!fs.existsSync(f)) return null;
-  try { return JSON.parse(fs.readFileSync(f, 'utf8')) as RenderMeta; } catch { return null; }
+  const f = path.join(renderDir(sn), `meta-${framing}.json`);
+  if (fs.existsSync(f)) {
+    try { return JSON.parse(fs.readFileSync(f, 'utf8')) as RenderMeta; } catch { return null; }
+  }
+  const legacy = legacyMeta(sn);
+  return legacy && (legacy.framing ?? 'iso') === framing ? { ...legacy, framing } : null;
+}
+
+export interface FramingStatus { meta: RenderMeta; stale: boolean }
+/** What exists for each framing; null when it was never made. */
+export function framingStatus(sn: string): Record<Framing, FramingStatus | null> {
+  const one = (framing: Framing): FramingStatus | null => {
+    const meta = readRenderMeta(sn, framing);
+    return meta ? { meta, stale: isStale(sn, meta) } : null;
+  };
+  return { iso: one('iso'), flat: one('flat') };
 }
 
 /** True when the map changed after the render was made. */
@@ -392,10 +587,68 @@ const PROMPT_NIGHT = `${PROMPT_BASE}
 
 Lighting and mood: evening. Deep dark blue-grey empty background, the house glowing warm through its windows, soft warm garden and terrace lighting with subtle light spill on paving and planting. The lawn stays clearly readable in cool moonlight with its mowing stripes, and the red obstacle markers stay flat, opaque and bright. Cinematic but clean, no lens flares.`;
 
-async function callImageModel(png: Buffer, prompt: string, creds: RenderCredentials): Promise<Buffer> {
+const PROMPT_TILT = `This is an aerial photo of a property that has already been placed in perspective, seen from a raised three-quarter viewpoint, on a plain background. Turn it into a high-quality 3D CGI render of the same property seen from exactly this camera: clean stylised computer graphics, simplified smooth materials, slightly stylised trees and shrubs, soft ambient occlusion and gentle contact shadows, crisp edges, no photographic grain. Give everything its real height: walls rising from the building footprints with roofs on top, hedges, trees, fences and sheds standing up from the ground. The plot is a neat island of ground; the plain background stays plain and empty.
+
+CAMERA, NON-NEGOTIABLE: keep the exact framing and perspective of the input. Every point on the ground stays at exactly the same position on the canvas: the lawn outline, paths, driveway, terrace and the edges of the plot. Do not re-tilt, rotate, zoom or crop.
+
+The semi-transparent green area with the dark green outline is the robot mower's mowing zone: render it as a vivid, freshly mown striped lawn, its outline exactly where it is now. The flat solid RED discs are obstacle markers, not objects: keep them as flat, opaque red discs lying on the grass exactly where they are, clean-edged, no texture, plants or shadow. The small black-and-white square is the charging dock: put a small white robot mower on it. No people, no text, no labels.`;
+
+const PROMPT_TILT_NIGHT = `${PROMPT_TILT}
+
+Lighting and mood: evening. Deep dark blue-grey empty background, the house glowing warm through its windows, soft warm garden and terrace lighting with subtle light spill on paving and planting. The lawn stays clearly readable in cool moonlight with its mowing stripes, and the red obstacle markers stay flat, opaque and bright. Cinematic but clean, no lens flares.`;
+
+const PROMPT_FLAT = `Turn this aerial photo into a clean 3D architectural visualisation of the same property: simplified smooth materials, slightly stylised trees and shrubs, crisp edges, soft even daylight, no photographic grain. It must look rendered, not photographed, but stay faithful to what is there: the same house and roofs, terrace, sheds, driveway with cars, hedges, trees, paths and roads, each in its exact position.
+
+CAMERA, NON-NEGOTIABLE: keep the exact straight-down (nadir) viewpoint and framing of the input. Do not tilt, do not rotate, do not crop or zoom: every roof, hedge and path must stay on the same spot on the canvas as in the input, edge to edge. The output is the same rectangle of ground, redrawn.
+
+The semi-transparent green area with the dark green outline is the robot mower's mowing zone: render it as a freshly mown striped lawn exactly inside that outline. The flat solid RED discs are obstacle markers, not objects: keep them flat, opaque and clean-edged, with no plants or shadow. Leave the small black-and-white dock square as it is. No people, no text, no labels.`;
+
+const PROMPT_FLAT_NIGHT = `${PROMPT_FLAT}
+
+Lighting: evening. Warm light from the house windows, soft garden and street lighting, the lawn readable in cool moonlight. The red markers stay flat and bright.`;
+
+/** The only output shapes the image API offers. */
+const OUT_SIZES: Array<[number, number]> = [[1536, 1024], [1024, 1024], [1024, 1536]];
+
+/**
+ * A flat render has to come back covering exactly the ground that went in, and
+ * the model only draws in the three shapes above. So the composite is padded
+ * to the nearest one, and the result is cropped back by the same proportions.
+ * Whatever the model invents in the padding is thrown away with it.
+ */
+async function padToAspect(png: Buffer, w: number, h: number): Promise<{
+  png: Buffer; size: [number, number]; crop: { left: number; top: number; width: number; height: number };
+}> {
+  const want = OUT_SIZES.reduce((best, s) =>
+    Math.abs(s[0] / s[1] - w / h) < Math.abs(best[0] / best[1] - w / h) ? s : best);
+  const target = want[0] / want[1];
+  const padW = w / h < target ? Math.round(h * target) - w : 0;
+  const padH = w / h > target ? Math.round(w / target) - h : 0;
+  const left = Math.floor(padW / 2); const top = Math.floor(padH / 2);
+  const padded = padW || padH
+    ? await sharp(png).extend({
+        left, top, right: padW - left, bottom: padH - top,
+        background: { r: 20, g: 24, b: 28, alpha: 1 },
+      }).png().toBuffer()
+    : png;
+  // The same rectangle, expressed in the output's pixels.
+  const k = want[0] / (w + padW);
+  return {
+    png: padded,
+    size: want,
+    crop: {
+      left: Math.round(left * k), top: Math.round(top * k),
+      width: Math.round(w * k), height: Math.round(h * k),
+    },
+  };
+}
+
+async function callImageModel(
+  png: Buffer, prompt: string, creds: RenderCredentials, size: [number, number] = [1536, 1024],
+): Promise<Buffer> {
   const form = new FormData();
   form.append('prompt', prompt);
-  form.append('size', '1536x1024');
+  form.append('size', `${size[0]}x${size[1]}`);
   form.append('quality', 'high');
   form.append('image[]', new Blob([new Uint8Array(png)], { type: 'image/png' }), 'garden.png');
 
@@ -439,7 +692,11 @@ export async function relayCredits(): Promise<{ credits: number; used: number } 
 export interface GenerateResult { ok: true; meta: RenderMeta }
 
 /** Build the composite and render both variants. Throws with a readable reason. */
-export async function generateRenders(sn: string, opts: { source?: BaseSource } = {}): Promise<GenerateResult> {
+export async function generateRenders(
+  sn: string,
+  opts: { source?: BaseSource; framing?: Framing } = {},
+): Promise<GenerateResult> {
+  const framing: Framing = opts.framing ?? 'iso';
   const { emitRenderProgress } = await import('../dashboard/socketHandler.js');
   const steps = VARIANTS.length + 1;
   const fail = (phase: string, error: string): never => {
@@ -455,19 +712,33 @@ export async function generateRenders(sn: string, opts: { source?: BaseSource } 
   emitRenderProgress({ sn, phase: 'composite', step: 1, steps });
   const composite = await compositeImage(sn, base!);
   fs.writeFileSync(path.join(renderDir(sn), 'composite.png'), composite);
+  // A flat render is a map layer, so it must cover the same ground as the
+  // composite. An angled one is made from the composite put in perspective by
+  // a camera we chose, which the model is told to keep, so the ground plane's
+  // place in the picture is known exactly (see tiltCamera).
+  const padded = framing === 'flat' ? await padToAspect(composite, base!.width, base!.height) : null;
+  const tiltH = framing === 'iso' ? tiltCamera(base!.width, base!.height) : null;
 
   let step = 1;
   for (const v of VARIANTS) {
     emitRenderProgress({ sn, phase: v === 'night' ? 'night' : 'day', step, steps });
     let png: Buffer;
     try {
-      png = await callImageModel(composite, v === 'night' ? PROMPT_NIGHT : PROMPT_BASE, creds);
+      const prompt = framing === 'flat'
+        ? (v === 'night' ? PROMPT_FLAT_NIGHT : PROMPT_FLAT)
+        : (v === 'night' ? PROMPT_TILT_NIGHT : PROMPT_TILT);
+      const input = tiltH
+        ? await warpComposite(composite, base!.width, base!.height, tiltH, v === 'night' ? [15, 24, 38] : [236, 239, 241])
+        : padded?.png ?? composite;
+      png = await callImageModel(input, prompt, creds, tiltH ? [TILT_W, TILT_H] : padded?.size);
+      if (padded) png = await sharp(png).extract(padded.crop).png().toBuffer();
     } catch (err) {
       return fail('failed', (err as Error).message);
     }
-    fs.writeFileSync(renderPath(sn, v), png);
+    const jpg = await sharp(png).jpeg({ quality: 92 }).toBuffer();
+    fs.writeFileSync(renderPath(sn, v, framing), jpg);
     step += 1;
-    console.log(`${TAG} ${sn}: ${v} render written (${png.length} bytes, source=${base!.source})`);
+    console.log(`${TAG} ${sn}: ${v} render written (${jpg.length} bytes, ${framing}, source=${base!.source})`);
   }
   emitRenderProgress({ sn, phase: 'done', step: steps, steps });
 
@@ -477,8 +748,19 @@ export async function generateRenders(sn: string, opts: { source?: BaseSource } 
     attribution: base!.attribution,
     mapRows: mapRepo.findByMowerSn(sn).length,
     variants: VARIANTS,
+    framing,
+    // Only a flat render keeps the aerial's framing, so only then do the
+    // bbox corners describe where the picture lies on the ground.
+    corners: framing === 'flat' ? baseCorners(sn, base!) : null,
+    localBox: framing === 'flat' && base!.source === 'aerial' ? (gardenBounds(sn)?.localBox ?? null) : null,
+    tilt: tiltH ? tiltMeta(sn, base!, tiltH) : null,
   };
-  fs.writeFileSync(path.join(renderDir(sn), 'meta.json'), JSON.stringify(meta, null, 2));
+  fs.writeFileSync(path.join(renderDir(sn), `meta-${framing}.json`), JSON.stringify(meta, null, 2));
+  // A pre-framing render of this same framing is superseded now; the other
+  // framing's legacy files, if that is what they are, stay.
+  if ((legacyMeta(sn)?.framing ?? 'iso') === framing) {
+    for (const f of [path.join(renderDir(sn), 'meta.json'), ...VARIANTS.flatMap(v => legacyFiles(sn, v))]) fs.rmSync(f, { force: true });
+  }
   return { ok: true, meta };
 }
 

@@ -62,6 +62,7 @@ function ShellInner() {
   // Bridge: the Start-sheet Preview button (in the header MowerControls) signals
   // the MowerMap (in MapTab) to show a fresh coverage preview at the chosen
   // direction. Nonce makes repeated clicks re-fire even with the same direction.
+  const [zoneHighlight, setZoneHighlight] = useState<string | null>(null);
   const [previewRequest, setPreviewRequest] = useState<{ nonce: number; covDirection: number; canonicals: string[]; polygonArea?: Array<{ latitude: number; longitude: number }> } | null>(null);
   // Pattern placement bridge: the Start-sheet Pattern tab (header MowerControls)
   // and the MowerMap (MapTab) are far apart in the tree. patternMode tells the
@@ -160,6 +161,7 @@ function ShellInner() {
       onPatternModeChange={(active) => { setPatternMode(active); if (active) setTab('map'); if (!active) setPatternCenter(null); }}
       onPatternPlacementChange={setPatternPlacement}
       previewLoading={previewLoading}
+      onZoneHighlight={setZoneHighlight}
     />
   ) : null;
 
@@ -257,6 +259,7 @@ function ShellInner() {
             controlsSlot={mowerControls}
             progressSuppressed={freshSession}
             onPreviewLoading={setPreviewLoading}
+            highlightMapId={zoneHighlight}
           />
         )}
         {tab === 'schedule' && <SchedulePage mower={activeMower} />}

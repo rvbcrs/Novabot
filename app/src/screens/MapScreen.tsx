@@ -48,7 +48,7 @@ import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { useStyles, useTheme, type Colors } from '../theme';
 import { useMowerState } from '../hooks/useMowerState';
 import { useActiveMower } from '../hooks/useActiveMower';
-import { ApiClient, type MapData, type TrailPoint, type LocalPoint, type ChargerGps, type GardenRenderState } from '../services/api';
+import { ApiClient, type MapData, type TrailPoint, type LocalPoint, type ChargerGps, type GardenRenderState, type GardenRenderFraming } from '../services/api';
 import { getServerUrl } from '../services/auth';
 import { DemoBanner } from '../components/DemoBanner';
 import { AppActionSheet, type AppActionSheetItem } from '../components/AppActionSheet';
@@ -357,40 +357,48 @@ export default function MapScreen() {
   const show3d = view3d && !stockFw;
 
   // Which picture of the garden is on screen: the drawn map (default), the
-  // drone photo, or the 3D render. The render is not georeferenced, so it
-  // replaces the map instead of layering on it; day or evening is chosen by
-  // the server from sunrise/sunset at the mower.
+  // drone photo, or the 3D render. A 'flat' render kept the aerial's framing,
+  // so it knows its own extent in local metres and goes under the map's own
+  // layers, with the mower and its lanes still on top. An 'iso' render is a
+  // picture from an unknown camera, so nothing can be drawn on it and it
+  // replaces the map. Day or evening is chosen by the server from sunrise and
+  // sunset at the mower.
   type BaseView = 'map' | 'drone' | 'render';
   const [baseView, setBaseView] = useState<BaseView>('map');
   const [renderState, setRenderState] = useState<GardenRenderState | null>(null);
   const [renderBusy, setRenderBusy] = useState(false);
   const [renderNonce, setRenderNonce] = useState(() => String(Date.now()));
-  const [renderUrl, setRenderUrl] = useState<string | null>(null);
+  // Which framing is on screen; both are kept. A framing that was never made
+  // is still listed, and says so when tapped, instead of silently doing nothing.
+  const [renderFraming, setRenderFraming] = useState<GardenRenderFraming>('flat');
+  const [serverUrl, setServerUrl] = useState<string | null>(null);
+  const shownRender = renderState?.framings[renderFraming] ?? null;
+  const renderUrl = serverUrl && shownRender && mower?.sn
+    ? new ApiClient(serverUrl).gardenRenderImageUrl(mower.sn, renderNonce, renderFraming) : null;
 
   useEffect(() => {
     const sn = mower?.sn;
-    if (!sn) { setRenderState(null); setRenderUrl(null); return; }
+    if (!sn) { setRenderState(null); return; }
     (async () => {
       try {
         const url = await getServerUrl();
         if (!url) return;
-        const api = new ApiClient(url);
-        const st = await api.getGardenRender(sn);
-        setRenderState(st);
-        setRenderUrl(st.available ? api.gardenRenderImageUrl(sn, renderNonce) : null);
+        setServerUrl(url);
+        setRenderState(await new ApiClient(url).getGardenRender(sn));
       } catch { setRenderState(null); }
     })();
   }, [mower?.sn, renderNonce]);
 
-  const makeRender = useCallback(async (source: 'aerial' | 'drone') => {
+  const runRender = useCallback(async (source: 'aerial' | 'drone', framing: GardenRenderFraming) => {
     const sn = mower?.sn;
     if (!sn || renderBusy) return;
     setRenderBusy(true);
     try {
       const url = await getServerUrl();
       if (!url) return;
-      await new ApiClient(url).generateGardenRender(sn, source);
+      await new ApiClient(url).generateGardenRender(sn, source, framing);
       setRenderNonce(String(Date.now()));
+      setRenderFraming(framing);
       setBaseView('render');
     } catch (e) {
       appAlertCompat.alert(t('error'), e instanceof Error ? e.message : String(e));
@@ -399,31 +407,42 @@ export default function MapScreen() {
     }
   }, [mower?.sn, renderBusy, t]);
 
+  // A render costs money, so one that already exists is worth a question.
+  const makeRender = useCallback((source: 'aerial' | 'drone', framing: GardenRenderFraming) => {
+    if (!renderState?.framings[framing]) { void runRender(source, framing); return; }
+    appAlertCompat.alert(t('baseViewRenderExistsTitle'), t('baseViewRenderExistsMsg'), [
+      { text: t('baseViewRenderUseExisting'), style: 'cancel', onPress: () => { setRenderFraming(framing); setBaseView('render'); } },
+      { text: t('baseViewRenderMakeNew'), onPress: () => { void runRender(source, framing); } },
+    ]);
+  }, [renderState, runRender, t]);
+
+  const showRender = useCallback((framing: GardenRenderFraming) => {
+    if (!renderState?.framings[framing]) {
+      appAlertCompat.alert(t('baseViewRender'), t('baseViewRenderMissingMsg'));
+      return;
+    }
+    setRenderFraming(framing);
+    setBaseView('render');
+  }, [renderState, t]);
+
   const openBaseViewMenu = useCallback(() => {
+    const day = renderState?.variant === 'night' ? t('baseViewNight') : t('baseViewDay');
+    const tag = (f: GardenRenderFraming) => (renderState?.framings[f] ? ` (${day})` : ` (${t('baseViewRenderNotMade')})`);
     const items: AppActionSheetItem[] = [
       { label: t('baseViewMap'), icon: 'map-outline', onPress: () => setBaseView('map') },
+      { label: t('baseViewRenderFlat') + tag('flat'), icon: 'navigate-outline', onPress: () => showRender('flat') },
+      { label: t('baseViewRenderIso') + tag('iso'), icon: 'cube-outline', onPress: () => showRender('iso') },
+      { label: t('baseViewRenderNewFlatAerial'), icon: 'earth-outline', onPress: () => makeRender('aerial', 'flat') },
+      { label: t('baseViewRenderNewIsoAerial'), icon: 'earth-outline', onPress: () => makeRender('aerial', 'iso') },
     ];
-    if (renderState?.available) {
-      items.push({
-        label: `${t('baseViewRender')} (${renderState.variant === 'night' ? t('baseViewNight') : t('baseViewDay')})`,
-        icon: 'cube-outline',
-        onPress: () => setBaseView('render'),
-      });
-    }
-    items.push({
-      label: t('baseViewRenderFromAerial'),
-      icon: 'earth-outline',
-      onPress: () => void makeRender('aerial'),
-    });
     if (renderState?.hasDronePhoto) {
-      items.push({
-        label: t('baseViewRenderFromDrone'),
-        icon: 'image-outline',
-        onPress: () => void makeRender('drone'),
-      });
+      items.push(
+        { label: t('baseViewRenderNewFlatDrone'), icon: 'image-outline', onPress: () => makeRender('drone', 'flat') },
+        { label: t('baseViewRenderNewIsoDrone'), icon: 'image-outline', onPress: () => makeRender('drone', 'iso') },
+      );
     }
     setSheetState({ visible: true, title: t('baseViewTitle'), actions: items });
-  }, [renderState, makeRender, t]);
+  }, [renderState, makeRender, showRender, t]);
 
   // Read-only mapping preflight gate. Runs BEFORE navigating into any map
   // action (create / edit-redraw / unicom) so a `block` popup shows here on
@@ -1144,6 +1163,17 @@ export default function MapScreen() {
     return b;
   }, [visibleMaps, trailLocal, mowerLocal]);
 
+  /** The flat render as a rectangle on this canvas, or null when it cannot be
+   *  placed (an iso render, or one made from a drone photo that may be rotated
+   *  — that needs a homography, and an SVG image is a box). */
+  const renderLayer = useMemo(() => {
+    const box = renderFraming === 'flat' ? renderState?.framings.flat?.meta.localBox : null;
+    if (baseView !== 'render' || !renderUrl || !box || !bounds) return null;
+    const tl = localToSvg({ x: box.minX, y: box.maxY }, bounds, MAP_SIZE, INNER_PADDING);
+    const br = localToSvg({ x: box.maxX, y: box.minY }, bounds, MAP_SIZE, INNER_PADDING);
+    return { url: renderUrl, x: tl.x, y: tl.y, width: br.x - tl.x, height: br.y - tl.y };
+  }, [baseView, renderFraming, renderUrl, renderState, bounds]);
+
   // Pattern placement: convert tap position to local meters, then to GPS for pattern context
   const handleMapTap = useCallback((evt: { nativeEvent: { locationX: number; locationY: number } }) => {
     if (!patternCtx.isPlacing || !bounds) return;
@@ -1393,15 +1423,45 @@ export default function MapScreen() {
         )}
 
         {/* 3D garden render — a picture, not a map, so it replaces the map */}
-        {baseView === 'render' && renderUrl && (
+        {baseView === 'render' && renderUrl && !renderLayer && (
           <View style={styles.renderCard}>
-            <RNImage source={{ uri: renderUrl }} style={styles.renderImage} resizeMode="contain" />
+            <View>
+              <RNImage source={{ uri: renderUrl }} style={styles.renderImage} resizeMode="contain" />
+              {/* The angled render came from a camera we chose, so the ground
+                  plane's place in it is known: mower and trail go through
+                  that homography. Same viewBox and 'meet' fit as the image. */}
+              {(() => {
+                const tilt = shownRender?.meta.tilt;
+                if (!tilt) return null;
+                const toPx = (p: LocalPoint) => {
+                  const h = tilt.localToRender;
+                  const w = h[6] * p.x + h[7] * p.y + h[8];
+                  return { x: (h[0] * p.x + h[1] * p.y + h[2]) / w, y: (h[3] * p.x + h[4] * p.y + h[5]) / w };
+                };
+                const m = mowerLocal ? toPx(mowerLocal) : null;
+                const nose = mowerLocal ? toPx({ x: mowerLocal.x + 0.9 * Math.cos(heading), y: mowerLocal.y + 0.9 * Math.sin(heading) }) : null;
+                return (
+                  <Svg style={StyleSheet.absoluteFill} viewBox={`0 0 ${tilt.width} ${tilt.height}`} preserveAspectRatio="xMidYMid meet" pointerEvents="none">
+                    {trailLocal.length > 1 && (
+                      <Polyline points={trailLocal.map(p => { const q = toPx(p); return `${q.x.toFixed(1)},${q.y.toFixed(1)}`; }).join(' ')}
+                        fill="none" stroke="#38bdf8" strokeWidth={4} strokeOpacity={0.85} strokeLinejoin="round" strokeLinecap="round" />
+                    )}
+                    {m && nose && (
+                      <G>
+                        <Line x1={m.x} y1={m.y} x2={nose.x} y2={nose.y} stroke="#0f172a" strokeWidth={5} strokeLinecap="round" />
+                        <Circle cx={m.x} cy={m.y} r={11} fill="#ffffff" stroke="#0f172a" strokeWidth={3} />
+                      </G>
+                    )}
+                  </Svg>
+                );
+              })()}
+            </View>
             <View style={styles.renderBadge}>
               <Ionicons name={renderState?.variant === 'night' ? 'moon-outline' : 'sunny-outline'} size={13} color={colors.textDim} />
               <Text style={styles.renderBadgeText}>
                 {renderState?.variant === 'night' ? t('baseViewNight') : t('baseViewDay')}
-                {renderState?.meta ? ` · ${renderState.meta.source === 'drone' ? t('baseViewRenderFromDrone') : renderState.meta.attribution}` : ''}
-                {renderState?.stale ? ` · ${t('baseViewStale')}` : ''}
+                {shownRender ? ` · ${shownRender.meta.source === 'drone' ? t('baseViewRenderFromDrone') : shownRender.meta.attribution}` : ''}
+                {shownRender?.stale ? ` · ${t('baseViewStale')}` : ''}
               </Text>
             </View>
           </View>
@@ -1415,7 +1475,7 @@ export default function MapScreen() {
         )}
 
         {/* SVG Map with pan + zoom */}
-        {!show3d && baseView !== 'render' && bounds && (
+        {!show3d && (baseView !== 'render' || renderLayer) && bounds && (
           <View style={styles.mapExperience}>
             <View style={styles.mapContainer}>
               {selectedWorkMap && (
@@ -1442,6 +1502,15 @@ export default function MapScreen() {
               <GestureDetector gesture={composedGesture}>
                 <Animated.View style={[styles.mapInner, animatedStyle]}>
                   <Svg width={MAP_SIZE} height={MAP_SIZE} viewBox={`0 0 ${MAP_SIZE} ${MAP_SIZE}`}>
+                  {/* The 3D render, under everything else: it is the ground. */}
+                  {renderLayer && (
+                    <SvgImage
+                      href={{ uri: renderLayer.url }}
+                      x={renderLayer.x} y={renderLayer.y}
+                      width={renderLayer.width} height={renderLayer.height}
+                      preserveAspectRatio="none"
+                    />
+                  )}
                   {/* Grid */}
                   {Array.from({ length: 5 }, (_, i) => {
                     const pos = INNER_PADDING + ((MAP_SIZE - INNER_PADDING * 2) / 4) * i;

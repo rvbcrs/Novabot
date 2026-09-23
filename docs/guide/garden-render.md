@@ -16,7 +16,29 @@ Map tab (app) with three choices:
 |---|---|
 | **Satellite** | The map as it always was: satellite tiles with your zones drawn on them. The default. |
 | **Drone photo** | The same map with your uploaded drone photo underneath. Only offered once a photo is uploaded. |
-| **3D render** | The generated picture. Day or evening is picked automatically from sunrise and sunset at your mower. Scroll to zoom, drag to pan, double-click to fit. |
+| **3D render** | The generated picture. Day or evening is picked automatically from sunrise and sunset at your mower. |
+
+### Two framings
+
+A render comes in one of two framings, and both are kept, so making one never
+replaces the other. The base-layer menu lists them as two rows; a row you have
+not made yet says *not made yet*, and tapping it tells you where to make one.
+
+- **Top-down**. The render keeps the aerial photo's straight-down framing, so
+  OpenNova knows exactly which piece of ground it covers and lays it on the map
+  by its corners. Your zones, the obstacles, the live mower and the lanes it
+  has already cut are drawn on top of it, and you zoom and pan as on any other
+  map.
+- **Angled**. The render is made from a raised, three-quarter viewpoint, the
+  Navimow look. OpenNova puts the aerial picture in perspective itself, with a
+  camera it chooses, and asks the model to keep that framing and add height.
+  Because the camera is known, the live mower, its trail and the lanes it has
+  cut are drawn on the picture too. Zones cannot be edited there; it replaces
+  the map, with its own scroll to zoom, drag to pan, double-click to fit.
+
+Under *Top-down from* and *Angled from* you pick the source (aerial imagery,
+or your drone photo once one is uploaded). If that framing already exists you
+are asked first, because a render costs a credit or API usage.
 
 ## How it is made
 

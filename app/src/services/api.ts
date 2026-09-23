@@ -168,10 +168,22 @@ export interface WorkRecord {
   workRecordDate: string | null;
 }
 
+export type GardenRenderFraming = 'flat' | 'iso';
+export interface GardenRenderMeta {
+  createdAt: string; source: 'aerial' | 'drone'; attribution: string; mapRows: number;
+  framing?: GardenRenderFraming;
+  corners?: Array<{ lat: number; lng: number }> | null;
+  /** The extent in local metres, which is the frame this map draws in. */
+  localBox?: { minX: number; maxX: number; minY: number; maxY: number } | null;
+  /** Angled renders: the camera the server chose, so the ground can be drawn
+   *  on the picture. localToRender maps local metres to render pixels. */
+  tilt?: { localToRender: number[]; width: number; height: number } | null;
+}
 export interface GardenRenderState {
   available: boolean;
-  meta: { createdAt: string; source: 'aerial' | 'drone'; attribution: string; mapRows: number } | null;
-  stale: boolean;
+  /** 'flat' lies under the map's own layers; 'iso' is a picture from an
+   *  unknown camera and replaces them. Null when that framing was never made. */
+  framings: Record<GardenRenderFraming, { meta: GardenRenderMeta; stale: boolean } | null>;
   variant: 'day' | 'night' | null;
   credentials: 'own-key' | 'relay' | 'none';
   hasDronePhoto: boolean;
@@ -656,12 +668,14 @@ export class ApiClient {
   }
 
   /** The picture itself; `v` busts the cache after a regenerate. */
-  gardenRenderImageUrl(sn: string, v: string, variant: 'auto' | 'day' | 'night' = 'auto'): string {
-    return `${this.baseUrl}/api/dashboard/render/${enc(sn)}/image?variant=${variant}&v=${encodeURIComponent(v)}`;
+  gardenRenderImageUrl(sn: string, v: string, framing: GardenRenderFraming, variant: 'auto' | 'day' | 'night' = 'auto'): string {
+    return `${this.baseUrl}/api/dashboard/render/${enc(sn)}/image?framing=${framing}&variant=${variant}&v=${encodeURIComponent(v)}`;
   }
 
-  async generateGardenRender(sn: string, source?: 'aerial' | 'drone'): Promise<{ ok: boolean }> {
-    return this.request<{ ok: boolean }>('POST', `/api/dashboard/render/${enc(sn)}`, { body: { source } });
+  async generateGardenRender(
+    sn: string, source: 'aerial' | 'drone', framing: GardenRenderFraming,
+  ): Promise<{ ok: boolean }> {
+    return this.request<{ ok: boolean }>('POST', `/api/dashboard/render/${enc(sn)}`, { body: { source, framing } });
   }
 
   /** Totals per period + blade maintenance (`GET /work-records/:sn/summary`). */

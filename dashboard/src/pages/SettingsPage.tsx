@@ -3,6 +3,7 @@ import {
   Tag, Bell, Check, Loader2, Smartphone, Radio, Home as HomeIcon, Mail,
   Scissors, Compass, Minus, Plus, Monitor, Shield, Gamepad2, Gauge, Battery, Power,
   CloudRain, Lightbulb, Volume2, Clock, Wrench, RotateCw, FlaskConical, Bug, ExternalLink, Box,
+  Image as ImageIcon, Upload, Trash2, Copy,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { DeviceState } from '../types';
@@ -19,7 +20,11 @@ import { readExperimental, writeExperimental } from '../utils/experimental';
 import { MowingDirectionPreview } from '../components/schedule/MowingDirectionPreview';
 import { useToast } from '../components/common/Toast';
 import { isOpenNovaFirmware } from '../utils/firmwareCapability';
-import { isUnsupportedFirmwareError, getServerVersion, fetchRenderSettings, saveRenderSettings } from '../api/client';
+import {
+  isUnsupportedFirmwareError, getServerVersion, fetchRenderSettings, saveRenderSettings,
+  fetchDroneOverlay, uploadDroneOverlay, deleteDroneOverlay, copyDroneOverlay, droneOverlayImageUrl, fetchDevices,
+  type DroneOverlayMeta,
+} from '../api/client';
 
 interface Props {
   mower: DeviceState | null;
@@ -42,6 +47,7 @@ export function SettingsPage({ mower }: Props) {
         <ExperimentalCard />
         <RainAutoPauseCard key={`rain-${mower.sn}`} sn={mower.sn} />
         <NotificationsCard />
+        <DronePhotoCard key={`drone-${mower.sn}`} sn={mower.sn} />
         <GardenRenderCard />
         <HelpCard mower={mower} />
       </div>
@@ -878,6 +884,91 @@ function AutoMapCard() {
 
 /** Credentials for the 3D garden render. The key is write-only: the server
  *  reports which mode is active, never the value. */
+// ── Drone photo (#124) ───────────────────────────────────────────────────────
+// Upload, replace, remove, or take over another mower's photo. Placing it and
+// showing it are map work and stay on the map (View › Drone photo).
+
+const DRONE_BTN = 'inline-flex items-center gap-2 rounded-xl border border-gray-700 bg-gray-800/40 hover:bg-gray-800/70 px-3 py-2 text-sm text-gray-200 transition-colors disabled:opacity-50';
+
+function DronePhotoCard({ sn }: { sn: string }) {
+  const { t } = useTranslation();
+  const [meta, setMeta] = useState<DroneOverlayMeta | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [sources, setSources] = useState<Array<{ sn: string; label: string }>>([]);
+  const fileRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    fetchDroneOverlay(sn).then(m => { if (alive) setMeta(m); }).catch(() => { /* no photo is not an error */ });
+    // Other mowers with a photo: same garden, same photo, so offer to take it
+    // over (placement included) instead of uploading and placing again.
+    fetchDevices().then(async devs => {
+      const others = devs.filter(d => d.deviceType === 'mower' && d.sn !== sn);
+      const withPhoto = await Promise.all(others.map(async d => ((await fetchDroneOverlay(d.sn).catch(() => null)) ? d : null)));
+      if (alive) setSources(withPhoto.flatMap(d => (d ? [{ sn: d.sn, label: d.nickname || d.sn }] : [])));
+    }).catch(() => { /* no list, no rows */ });
+    return () => { alive = false; };
+  }, [sn]);
+
+  const run = async (work: () => Promise<DroneOverlayMeta | null>) => {
+    setBusy(true);
+    try { setMeta(await work()); }
+    catch (e) { window.alert(e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(false); if (fileRef.current) fileRef.current.value = ''; }
+  };
+  const onFile = (file?: File) => { if (file) void run(() => uploadDroneOverlay(sn, file, null)); };
+  const remove = () => {
+    if (!window.confirm(t('map.droneRemoveConfirm', 'De dronefoto van deze maaier verwijderen?'))) return;
+    void run(async () => { await deleteDroneOverlay(sn); return null; });
+  };
+  const copyFrom = (from: string) => {
+    if (meta && !window.confirm(t('map.droneCopyConfirm', 'De huidige dronefoto van deze maaier wordt vervangen. Doorgaan?'))) return;
+    void run(() => copyDroneOverlay(sn, from));
+  };
+
+  return (
+    <SettingCard
+      icon={ImageIcon}
+      title={t('settings.drone.title', 'Dronefoto')}
+      help={t('settings.drone.help', 'Een eigen foto recht van boven, onder de kaart: scherper dan de luchtfoto, handig om zones op te tekenen en als bron voor de 3D-render. Plaatsen en tonen doe je op de kaart, via Weergave › Dronefoto.')}
+    >
+      {meta ? (
+        <div className="flex items-center gap-3">
+          <img src={droneOverlayImageUrl(sn, meta.updatedAt)} alt="" className="w-24 h-16 object-cover rounded-lg border border-gray-700 bg-gray-800" />
+          <div className="flex-1 min-w-0 text-xs text-gray-400 space-y-0.5">
+            <div className="text-sm text-white">{meta.width} × {meta.height}</div>
+            <div>{new Date(meta.updatedAt).toLocaleString()}</div>
+            <div className={meta.placement ? 'text-emerald-400' : 'text-amber-400'}>
+              {meta.placement
+                ? t('settings.drone.placed', 'Geplaatst op de kaart')
+                : t('settings.drone.notPlaced', 'Nog niet geplaatst: Kaart › Weergave › Dronefoto › Plaatsen')}
+            </div>
+          </div>
+        </div>
+      ) : (
+        <p className="text-sm text-gray-400">{t('settings.drone.none', 'Nog geen dronefoto voor deze maaier.')}</p>
+      )}
+      <div className="flex flex-wrap gap-2 mt-3">
+        <button onClick={() => fileRef.current?.click()} disabled={busy} className={DRONE_BTN}>
+          {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+          {meta ? t('map.droneReplace', 'Dronefoto vervangen…') : t('map.droneUpload', 'Dronefoto uploaden…')}
+        </button>
+        {meta && (
+          <button onClick={remove} disabled={busy} className={DRONE_BTN}>
+            <Trash2 className="w-4 h-4" />{t('map.droneRemove', 'Dronefoto verwijderen')}
+          </button>
+        )}
+        {sources.map(src => (
+          <button key={src.sn} onClick={() => copyFrom(src.sn)} disabled={busy} className={DRONE_BTN} title={src.sn}>
+            <Copy className="w-4 h-4" />{t('settings.drone.copyFrom', 'Overnemen van {{name}}', { name: src.label })}
+          </button>
+        ))}
+      </div>
+      <input ref={fileRef} type="file" accept="image/jpeg,image/png" className="hidden" onChange={e => onFile(e.target.files?.[0])} />
+    </SettingCard>
+  );
+}
+
 function GardenRenderCard() {
   const { t } = useTranslation();
   const [mode, setMode] = useState<string>('none');

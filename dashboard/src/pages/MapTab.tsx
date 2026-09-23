@@ -25,9 +25,11 @@ interface Props {
   progressSuppressed?: boolean;
   /** Reports when the map is actually fetching the mower coverage preview. */
   onPreviewLoading?: (loading: boolean) => void;
+  /** Work area chosen in the Start sheet: drawn highlighted, like a clicked one. */
+  highlightMapId?: string | null;
 }
 
-export function MapTab({ mower, connected, liveOutlines, coveredLanes, previewRequest, patternPlacement, onMapClickForPattern, controlsSlot, progressSuppressed, onPreviewLoading }: Props) {
+export function MapTab({ mower, connected, liveOutlines, coveredLanes, previewRequest, patternPlacement, onMapClickForPattern, controlsSlot, progressSuppressed, onPreviewLoading, highlightMapId }: Props) {
   const { t } = useTranslation();
   if (!mower) {
     return <div className="p-8 text-zinc-500">{t('pages.selectMowerForMap')}</div>;
@@ -77,6 +79,7 @@ export function MapTab({ mower, connected, liveOutlines, coveredLanes, previewRe
         controlsSlot={controlsSlot}
         progressSuppressed={progressSuppressed}
         onPreviewLoading={onPreviewLoading}
+        highlightMapId={highlightMapId}
       />
       <AutoMapPanel sn={mower.sn} sensors={mower.sensors} />
     </div>

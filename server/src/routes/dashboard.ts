@@ -3926,32 +3926,33 @@ interface WorkRecordRow {
 // The model call costs money and leaves the machine, so it only ever runs from
 // this explicit POST; everything else just serves what was generated.
 
-// GET /api/dashboard/render/:sn — what exists, and which variant fits now.
+// GET /api/dashboard/render/:sn — what exists per framing, and which variant fits now.
 dashboardRouter.get('/render/:sn', async (req: Request, res: Response) => {
   const { sn } = req.params;
   const gr = await import('../services/gardenRender.js');
   if (!gr.isValidSn(sn)) { res.status(400).json({ error: 'invalid sn' }); return; }
-  const meta = gr.readRenderMeta(sn);
+  const framings = gr.framingStatus(sn);
+  const available = !!(framings.flat || framings.iso);
   res.json({
-    available: !!meta,
-    meta,
-    stale: gr.isStale(sn, meta),
-    variant: meta ? await gr.variantForNow(sn) : null,
+    available,
+    framings,
+    variant: available ? await gr.variantForNow(sn) : null,
     credentials: gr.getCredentials().mode,
     hasDronePhoto: !!(await import('./droneOverlay.js')).readMeta(sn),
   });
 });
 
-// GET /api/dashboard/render/:sn/image?variant=auto|day|night — the picture.
+// GET /api/dashboard/render/:sn/image?framing=flat|iso&variant=auto|day|night — the picture.
 dashboardRouter.get('/render/:sn/image', async (req: Request, res: Response) => {
   const { sn } = req.params;
   const gr = await import('../services/gardenRender.js');
   if (!gr.isValidSn(sn)) { res.status(400).json({ error: 'invalid sn' }); return; }
+  const framing = req.query.framing === 'iso' ? 'iso' : 'flat';
   const asked = String(req.query.variant ?? 'auto');
   const variant = asked === 'day' || asked === 'night' ? asked : await gr.variantForNow(sn);
-  const file = gr.renderPath(sn, variant);
-  if (!fs.existsSync(file)) { res.status(404).json({ error: 'no render' }); return; }
-  res.setHeader('Content-Type', 'image/png');
+  const file = gr.renderFile(sn, variant, framing);
+  if (!file) { res.status(404).json({ error: 'no render' }); return; }
+  res.setHeader('Content-Type', file.endsWith('.png') ? 'image/png' : 'image/jpeg');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('X-Render-Variant', variant);
   res.send(fs.readFileSync(file));
@@ -3985,8 +3986,8 @@ dashboardRouter.post('/render/:sn', async (req: Request, res: Response) => {
   renderLocks.add(sn);
   try {
     const gr = await import('../services/gardenRender.js');
-    const body = req.body as { source?: 'aerial' | 'drone' };
-    const out = await gr.generateRenders(sn, { source: body?.source });
+    const body = req.body as { source?: 'aerial' | 'drone'; framing?: 'iso' | 'flat' };
+    const out = await gr.generateRenders(sn, { source: body?.source, framing: body?.framing });
     res.json(out);
   } catch (err) {
     const msg = (err as Error).message;

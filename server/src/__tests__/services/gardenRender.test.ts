@@ -5,13 +5,17 @@
  * mapping from local metres to pixels, and that every map type ends up on the
  * canvas — without touching the network or any image model.
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import sharp from 'sharp';
 import path from 'node:path';
 
 vi.mock('../../routes/droneOverlay.js', () => ({ readMeta: () => null }));
 
-import { compositeImage, compositePath, gardenBounds, isValidSn, readRenderMeta, renderPath, type BaseImage } from '../../services/gardenRender.js';
+import {
+  applyHomography, compositeImage, compositePath, framingStatus, gardenBounds, invertHomography, isValidSn, readRenderMeta,
+  renderFile, renderPath, solveHomography, stitchAndCrop, tiltCamera, warpComposite, TILT_W, TILT_H, type BaseImage,
+} from '../../services/gardenRender.js';
+import fs from 'node:fs';
 import { mapRepo } from '../../db/repositories/index.js';
 import { db } from '../../db/database.js';
 
@@ -86,6 +90,15 @@ describe('gardenBounds', () => {
     expect((tight.ne.lat - CHARGER.lat) * 111132).toBeGreaterThan(15);
   });
 
+  it('reports the same extent in local metres, for clients that draw in that frame', () => {
+    const b = gardenBounds(SN, 5)!;
+    // The seeded work polygon spans -10..10 in both axes.
+    expect(b.localBox).toEqual({ minX: -15, maxX: 15, minY: -15, maxY: 15 });
+    // And the corners agree with it: north-east is maxX/maxY.
+    expect(b.ne.lat).toBeGreaterThan(b.sw.lat);
+    expect(b.ne.lng).toBeGreaterThan(b.sw.lng);
+  });
+
   it('returns null without a charger position', () => {
     db.prepare('DELETE FROM map_calibration WHERE mower_sn = ?').run(SN);
     expect(gardenBounds(SN)).toBeNull();
@@ -122,12 +135,107 @@ describe('compositeImage', () => {
   });
 });
 
+describe('stitchAndCrop', () => {
+  it('cuts the box out of the pasted sheet, not the sheet out of the box', async () => {
+    // Four 64 px tiles in distinct colours, then a box starting inside the
+    // top-left tile. Its origin must show that tile, and its far corner the
+    // bottom-right one; with the operations reordered, both come out wrong.
+    const tile = (bg: string) => sharp({ create: { width: 64, height: 64, channels: 3, background: bg } }).png().toBuffer();
+    const tiles = [
+      { input: await tile('#ff0000'), left: 0, top: 0 }, { input: await tile('#00ff00'), left: 64, top: 0 },
+      { input: await tile('#0000ff'), left: 0, top: 64 }, { input: await tile('#ffff00'), left: 64, top: 64 },
+    ];
+    const png = await stitchAndCrop(tiles, 128, 128, { left: 40, top: 40, width: 80, height: 80 });
+    const { data, info } = await sharp(png).raw().toBuffer({ resolveWithObject: true });
+    expect([info.width, info.height]).toEqual([80, 80]);
+    const at = (x: number, y: number) => Array.from(data.slice((y * 80 + x) * info.channels, (y * 80 + x) * info.channels + 3));
+    expect(at(0, 0)).toEqual([255, 0, 0]);       // sheet (40,40): red
+    expect(at(79, 79)).toEqual([255, 255, 0]);   // sheet (119,119): yellow
+    expect(at(79, 0)).toEqual([0, 255, 0]);      // sheet (119,40): green
+  });
+});
+
+describe('tilt', () => {
+  it('solves, applies and inverts a homography consistently', () => {
+    const src = [[0, 0], [10, 0], [10, 8], [0, 8]] as const;
+    const dst = [[2, 1], [13, 2], [12, 10], [1, 9]] as const;
+    const h = solveHomography([...src], [...dst]);
+    src.forEach((p, i) => {
+      const [x, y] = applyHomography(h, p[0], p[1]);
+      expect(x).toBeCloseTo(dst[i][0], 6); expect(y).toBeCloseTo(dst[i][1], 6);
+    });
+    const [u, v] = applyHomography(invertHomography(h), 7, 5.5);
+    const [x, y] = applyHomography(h, u, v);
+    expect(x).toBeCloseTo(7, 6); expect(y).toBeCloseTo(5.5, 6);
+  });
+
+  it('puts the far edge at the top, the plot inside the canvas, and a mark where it says', async () => {
+    const W = 200, H = 160;
+    const h = tiltCamera(W, H);
+    const top = applyHomography(h, W / 2, 0); const bottom = applyHomography(h, W / 2, H);
+    expect(top[1]).toBeLessThan(bottom[1]);
+    // Perspective: the far (north) edge is shorter than the near one.
+    const farW = applyHomography(h, W, 0)[0] - applyHomography(h, 0, 0)[0];
+    const nearW = applyHomography(h, W, H)[0] - applyHomography(h, 0, H)[0];
+    expect(farW).toBeLessThan(nearW);
+    for (const [u, v] of [[0, 0], [W, 0], [W, H], [0, H]] as const) {
+      const [x, y] = applyHomography(h, u, v);
+      expect(x).toBeGreaterThan(0); expect(x).toBeLessThan(TILT_W); expect(y).toBeGreaterThan(0); expect(y).toBeLessThan(TILT_H);
+    }
+    // A red square on a white composite lands where the homography says.
+    const src = await sharp({ create: { width: W, height: H, channels: 3, background: '#ffffff' } })
+      .composite([{ input: await sharp({ create: { width: 20, height: 20, channels: 3, background: '#ff0000' } }).png().toBuffer(), left: 60, top: 40 }])
+      .png().toBuffer();
+    const out = await warpComposite(src, W, H, h, [0, 0, 0]);
+    const { data, info } = await sharp(out).raw().toBuffer({ resolveWithObject: true });
+    const px = (x: number, y: number) => Array.from(data.slice((Math.round(y) * info.width + Math.round(x)) * 3, (Math.round(y) * info.width + Math.round(x)) * 3 + 3));
+    const [cx, cy] = applyHomography(h, 70, 50);   // centre of the square
+    expect(px(cx, cy)).toEqual([255, 0, 0]);
+    const [wx, wy] = applyHomography(h, 150, 120);  // plain composite
+    expect(px(wx, wy)).toEqual([255, 255, 255]);
+    expect(px(2, 2)).toEqual([0, 0, 0]);            // outside the plot: background
+  });
+});
+
+describe('renders made before framings existed', () => {
+  // One pair of pictures and a single meta.json, from before each framing had
+  // its own files. They must stay visible under the framing that meta names
+  // (angled, when it names none), and never show up as the other framing.
+  // compositePath() creates the directory, so it is asked for per test: the
+  // clean-up after each test removes it again.
+  const rdir = () => path.dirname(compositePath(SN));
+  afterEach(() => { fs.rmSync(rdir(), { recursive: true, force: true }); });
+
+  it('keeps serving a legacy render as the framing it was', () => {
+    const dir = rdir();
+    // mapRows 2 while the seed has 3: the map changed since, so it is stale.
+    fs.writeFileSync(path.join(dir, 'meta.json'), JSON.stringify({ createdAt: 'x', source: 'aerial', attribution: 'a', mapRows: 2, variants: ['day', 'night'] }));
+    fs.writeFileSync(path.join(dir, 'day.png'), 'png');
+    expect(readRenderMeta(SN, 'iso')?.framing).toBe('iso');
+    expect(readRenderMeta(SN, 'flat')).toBeNull();
+    expect(renderFile(SN, 'day', 'iso')).toBe(path.join(dir, 'day.png'));
+    expect(renderFile(SN, 'day', 'flat')).toBeNull();
+    const st = framingStatus(SN);
+    expect(st.iso?.stale).toBe(true);
+    expect(st.flat).toBeNull();
+  });
+
+  it('prefers a framing\'s own files over the legacy pair', () => {
+    const dir = rdir();
+    fs.writeFileSync(path.join(dir, 'meta.json'), JSON.stringify({ framing: 'flat', mapRows: 3, variants: ['day'] }));
+    fs.writeFileSync(path.join(dir, 'day.png'), 'old');
+    fs.writeFileSync(path.join(dir, 'day-flat.jpg'), 'new');
+    expect(renderFile(SN, 'day', 'flat')).toBe(path.join(dir, 'day-flat.jpg'));
+    expect(readRenderMeta(SN, 'iso')).toBeNull();
+  });
+});
+
 describe('serial numbers reaching the filesystem', () => {
   it('refuses anything that could escape the storage directory', () => {
     for (const bad of ['../../etc', 'a/b', '..', 'sn.with.dots', '', 'x'.repeat(33)]) {
       expect(isValidSn(bad)).toBe(false);
-      expect(readRenderMeta(bad)).toBeNull();
-      expect(() => renderPath(bad, 'day')).toThrow(/invalid sn/);
+      expect(readRenderMeta(bad, 'iso')).toBeNull();
+      expect(() => renderPath(bad, 'day', 'flat')).toThrow(/invalid sn/);
       expect(() => compositePath(bad)).toThrow(/invalid sn/);
     }
     expect(isValidSn('LFIN1231000211')).toBe(true);
