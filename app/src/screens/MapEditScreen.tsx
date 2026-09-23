@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   ScrollView,
   Text,
   TouchableOpacity,
@@ -28,6 +27,7 @@ import {
   pointInPolygon,
   type XY,
 } from '../utils/mapEditGeometry';
+import { appAlertCompat } from '../context/AppAlertContext';
 
 type Tool = 'vertex' | 'brush' | 'draw';
 
@@ -474,7 +474,7 @@ export default function MapEditScreen() {
 
   // ── Actions ──
   const doApply = useCallback(() => {
-    Alert.alert(t('mapEditTitle'), t('mapEditConfirmApply'), [
+    appAlertCompat.alert(t('mapEditTitle'), t('mapEditConfirmApply'), [
       { text: t('cancel') || 'Cancel', style: 'cancel' },
       {
         text: 'OK',
@@ -518,7 +518,7 @@ export default function MapEditScreen() {
   }, [getApi, sn, t, load, flushSaves]);
 
   const doRevert = useCallback(() => {
-    Alert.alert(t('mapEditRevert'), t('mapEditConfirmRevert'), [
+    appAlertCompat.alert(t('mapEditRevert'), t('mapEditConfirmRevert'), [
       { text: t('cancel') || 'Cancel', style: 'cancel' },
       {
         text: 'OK',
@@ -552,7 +552,7 @@ export default function MapEditScreen() {
   }, [getApi, sn, t, load, flushSaves]);
 
   const doReset = useCallback(() => {
-    Alert.alert(t('mapEditReset'), t('mapEditConfirmRevert'), [
+    appAlertCompat.alert(t('mapEditReset'), t('mapEditConfirmRevert'), [
       { text: t('cancel') || 'Cancel', style: 'cancel' },
       {
         text: 'OK',
@@ -582,7 +582,7 @@ export default function MapEditScreen() {
 
   const doDeleteObstacle = useCallback(() => {
     if (selected < 0 || polys[selected]?.mapType !== 'obstacle') return;
-    Alert.alert(t('mapEditDeleteObstacle'), t('mapEditDeleteObstacle'), [
+    appAlertCompat.alert(t('mapEditDeleteObstacle'), t('mapEditDeleteObstacle'), [
       { text: t('cancel') || 'Cancel', style: 'cancel' },
       {
         text: 'OK',

@@ -38,6 +38,7 @@ import Svg, {
   Path,
   Defs,
   ClipPath,
+  Rect,
   Image as SvgImage,
   Text as SvgText,
 } from 'react-native-svg';
@@ -373,8 +374,14 @@ export default function MapScreen() {
   const [renderFraming, setRenderFraming] = useState<GardenRenderFraming>('flat');
   const [serverUrl, setServerUrl] = useState<string | null>(null);
   const shownRender = renderState?.framings[renderFraming] ?? null;
+  // Day or evening: automatic from sunrise/sunset at the mower, or pinned.
+  const [renderLight, setRenderLight] = useState<'auto' | 'day' | 'night'>('auto');
+  const renderVariant: 'day' | 'night' = renderLight === 'auto' ? (renderState?.variant ?? 'day') : renderLight;
+  const [makerOpen, setMakerOpen] = useState(false);
+  const [makerFraming, setMakerFraming] = useState<GardenRenderFraming>('flat');
+  const [makerSource, setMakerSource] = useState<'aerial' | 'drone'>('aerial');
   const renderUrl = serverUrl && shownRender && mower?.sn
-    ? new ApiClient(serverUrl).gardenRenderImageUrl(mower.sn, renderNonce, renderFraming) : null;
+    ? new ApiClient(serverUrl).gardenRenderImageUrl(mower.sn, renderNonce, renderFraming, renderVariant) : null;
 
   useEffect(() => {
     const sn = mower?.sn;
@@ -407,15 +414,6 @@ export default function MapScreen() {
     }
   }, [mower?.sn, renderBusy, t]);
 
-  // A render costs money, so one that already exists is worth a question.
-  const makeRender = useCallback((source: 'aerial' | 'drone', framing: GardenRenderFraming) => {
-    if (!renderState?.framings[framing]) { void runRender(source, framing); return; }
-    appAlertCompat.alert(t('baseViewRenderExistsTitle'), t('baseViewRenderExistsMsg'), [
-      { text: t('baseViewRenderUseExisting'), style: 'cancel', onPress: () => { setRenderFraming(framing); setBaseView('render'); } },
-      { text: t('baseViewRenderMakeNew'), onPress: () => { void runRender(source, framing); } },
-    ]);
-  }, [renderState, runRender, t]);
-
   const showRender = useCallback((framing: GardenRenderFraming) => {
     if (!renderState?.framings[framing]) {
       appAlertCompat.alert(t('baseViewRender'), t('baseViewRenderMissingMsg'));
@@ -425,24 +423,25 @@ export default function MapScreen() {
     setBaseView('render');
   }, [renderState, t]);
 
+  const openMaker = useCallback(() => {
+    setMakerFraming(renderFraming); setMakerSource('aerial'); setMakerOpen(true);
+  }, [renderFraming]);
+
   const openBaseViewMenu = useCallback(() => {
-    const day = renderState?.variant === 'night' ? t('baseViewNight') : t('baseViewDay');
-    const tag = (f: GardenRenderFraming) => (renderState?.framings[f] ? ` (${day})` : ` (${t('baseViewRenderNotMade')})`);
     const items: AppActionSheetItem[] = [
       { label: t('baseViewMap'), icon: 'map-outline', onPress: () => setBaseView('map') },
-      { label: t('baseViewRenderFlat') + tag('flat'), icon: 'navigate-outline', onPress: () => showRender('flat') },
-      { label: t('baseViewRenderIso') + tag('iso'), icon: 'cube-outline', onPress: () => showRender('iso') },
-      { label: t('baseViewRenderNewFlatAerial'), icon: 'earth-outline', onPress: () => makeRender('aerial', 'flat') },
-      { label: t('baseViewRenderNewIsoAerial'), icon: 'earth-outline', onPress: () => makeRender('aerial', 'iso') },
+      {
+        label: renderState?.available ? t('baseViewRender') : `${t('baseViewRender')} (${t('baseViewRenderNotMade')})`,
+        icon: 'cube-outline',
+        onPress: () => {
+          if (!renderState?.available) { openMaker(); return; }
+          showRender(renderState.framings[renderFraming] ? renderFraming : renderFraming === 'flat' ? 'iso' : 'flat');
+        },
+      },
+      { label: `${t('renderNewTitle')}…`, icon: 'sparkles-outline', onPress: openMaker },
     ];
-    if (renderState?.hasDronePhoto) {
-      items.push(
-        { label: t('baseViewRenderNewFlatDrone'), icon: 'image-outline', onPress: () => makeRender('drone', 'flat') },
-        { label: t('baseViewRenderNewIsoDrone'), icon: 'image-outline', onPress: () => makeRender('drone', 'iso') },
-      );
-    }
     setSheetState({ visible: true, title: t('baseViewTitle'), actions: items });
-  }, [renderState, makeRender, showRender, t]);
+  }, [renderState, renderFraming, showRender, openMaker, t]);
 
   // Read-only mapping preflight gate. Runs BEFORE navigating into any map
   // action (create / edit-redraw / unicom) so a `block` popup shows here on
@@ -1412,6 +1411,77 @@ export default function MapScreen() {
           </View>
         )}
 
+        {/* Render settings while it is on screen: two plain switches. */}
+        {baseView === 'render' && renderState?.available && (
+          <View style={styles.renderCtl}>
+            <View style={styles.renderCtlRow}>
+              <Text style={styles.renderCtlLabel}>{t('renderFraming')}</Text>
+              <View style={styles.seg}>
+                {(['flat', 'iso'] as const).map(f => (
+                  <TouchableOpacity key={f} onPress={() => showRender(f)}
+                    style={[styles.segBtn, renderFraming === f && styles.segBtnOn]}>
+                    <Text style={[styles.segTxt, renderFraming === f && styles.segTxtOn, !renderState.framings[f] && styles.segTxtOff]}>
+                      {f === 'flat' ? t('renderFlat') : t('renderIso')}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+            <View style={styles.renderCtlRow}>
+              <Text style={styles.renderCtlLabel}>{t('renderLight')}</Text>
+              <View style={styles.seg}>
+                {(['auto', 'day', 'night'] as const).map(v => (
+                  <TouchableOpacity key={v} onPress={() => setRenderLight(v)}
+                    style={[styles.segBtn, renderLight === v && styles.segBtnOn]}>
+                    <Text style={[styles.segTxt, renderLight === v && styles.segTxtOn]}>
+                      {v === 'auto' ? t('renderAuto') : v === 'day' ? t('baseViewDay') : t('baseViewNight')}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+          </View>
+        )}
+
+        {/* New 3D render: one window with two plain choices. */}
+        <Modal visible={makerOpen} transparent animationType="fade" onRequestClose={() => setMakerOpen(false)}>
+          <View style={styles.makerBackdrop}>
+            <View style={styles.makerCard}>
+              <Text style={styles.makerTitle}>{t('renderNewTitle')}</Text>
+              <Text style={styles.makerLabel}>{t('renderFraming')}</Text>
+              <View style={styles.makerRow}>
+                {(['flat', 'iso'] as const).map(f => (
+                  <TouchableOpacity key={f} onPress={() => setMakerFraming(f)} style={[styles.makerChoice, makerFraming === f && styles.makerChoiceOn]}>
+                    <Ionicons name={f === 'flat' ? 'navigate-outline' : 'cube-outline'} size={16} color={makerFraming === f ? colors.emerald : colors.textDim} />
+                    <Text style={styles.makerChoiceTitle}>{f === 'flat' ? t('renderFlat') : t('renderIso')}</Text>
+                    <Text style={styles.makerChoiceDesc}>{f === 'flat' ? t('renderFlatDesc') : t('renderIsoDesc')}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              <Text style={styles.makerLabel}>{t('renderSource')}</Text>
+              <View style={styles.makerRow}>
+                {(renderState?.hasDronePhoto ? (['aerial', 'drone'] as const) : (['aerial'] as const)).map(src => (
+                  <TouchableOpacity key={src} onPress={() => setMakerSource(src)} style={[styles.makerChoice, makerSource === src && styles.makerChoiceOn]}>
+                    <Ionicons name={src === 'aerial' ? 'earth-outline' : 'image-outline'} size={16} color={makerSource === src ? colors.emerald : colors.textDim} />
+                    <Text style={styles.makerChoiceTitle}>{src === 'aerial' ? t('renderAerial') : t('renderDrone')}</Text>
+                    <Text style={styles.makerChoiceDesc}>{src === 'aerial' ? t('renderAerialDesc') : t('renderDroneDesc')}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              <Text style={styles.makerNote}>{t('renderCostNote')}</Text>
+              {renderState?.framings[makerFraming] && <Text style={styles.makerWarn}>{t('renderReplaceNote')}</Text>}
+              <View style={styles.makerButtons}>
+                <TouchableOpacity onPress={() => setMakerOpen(false)} style={[styles.makerBtn, styles.makerBtnCancel]}>
+                  <Text style={styles.makerBtnCancelTxt}>{t('cancel')}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => { setMakerOpen(false); void runRender(makerSource, makerFraming); }} style={[styles.makerBtn, styles.makerBtnOk]}>
+                  <Text style={styles.makerBtnOkTxt}>{t('renderMake')}</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
         {renderBusy && (
           <View style={styles.renderBusyCard}>
             <ActivityIndicator size="small" color={colors.emerald} />
@@ -1440,16 +1510,31 @@ export default function MapScreen() {
                 };
                 const m = mowerLocal ? toPx(mowerLocal) : null;
                 const nose = mowerLocal ? toPx({ x: mowerLocal.x + 0.9 * Math.cos(heading), y: mowerLocal.y + 0.9 * Math.sin(heading) }) : null;
+                const dock = toPx(chargerLocal);
+                const pts = (ps: LocalPoint[]) => ps.map(p => { const q = toPx(p); return `${q.x.toFixed(1)},${q.y.toFixed(1)}`; }).join(' ');
                 return (
                   <Svg style={StyleSheet.absoluteFill} viewBox={`0 0 ${tilt.width} ${tilt.height}`} preserveAspectRatio="xMidYMid meet" pointerEvents="none">
+                    {/* Planned mow path, same data and condition as the map: plan in blue, done in green. */}
+                    {showCoverPath && plannedPaths.map(path => (
+                      <Polyline key={`rp-${path.id}`} points={pts(path.points)} fill="none"
+                        stroke={finishedAreaSet.has(path.id) ? 'rgba(34,197,94,0.85)' : 'rgba(96,165,250,0.9)'}
+                        strokeWidth={finishedAreaSet.has(path.id) ? 5 : 2} strokeLinejoin="round" strokeLinecap="round" />
+                    ))}
                     {trailLocal.length > 1 && (
-                      <Polyline points={trailLocal.map(p => { const q = toPx(p); return `${q.x.toFixed(1)},${q.y.toFixed(1)}`; }).join(' ')}
+                      <Polyline points={pts(trailLocal)}
                         fill="none" stroke="#38bdf8" strokeWidth={4} strokeOpacity={0.85} strokeLinejoin="round" strokeLinecap="round" />
                     )}
+                    {/* Dock: orange charger pin with a bolt, standing on its spot. */}
+                    <G transform={`translate(${dock.x} ${dock.y})`}>
+                      <Path d="M0 0 L-9 -14 A14 14 0 1 1 9 -14 Z" fill="#f59e0b" stroke="#ffffff" strokeWidth={2.5} />
+                      <Path d="M2 -33 L-5 -21 L0 -21 L-2 -12 L6 -25 L1 -25 Z" fill="#ffffff" />
+                    </G>
+                    {/* Mower: body pointing along its heading. */}
                     {m && nose && (
-                      <G>
-                        <Line x1={m.x} y1={m.y} x2={nose.x} y2={nose.y} stroke="#0f172a" strokeWidth={5} strokeLinecap="round" />
-                        <Circle cx={m.x} cy={m.y} r={11} fill="#ffffff" stroke="#0f172a" strokeWidth={3} />
+                      <G transform={`translate(${m.x} ${m.y}) rotate(${(Math.atan2(nose.y - m.y, nose.x - m.x) * 180) / Math.PI})`}>
+                        <Rect x={-16} y={-11} width={32} height={22} rx={8} fill="#ffffff" stroke="#0f172a" strokeWidth={2.5} />
+                        <Rect x={-4} y={-7} width={14} height={14} rx={3} fill="#10b981" />
+                        <Path d="M16 -6 L25 0 L16 6 Z" fill="#0f172a" />
                       </G>
                     )}
                   </Svg>
@@ -1457,9 +1542,9 @@ export default function MapScreen() {
               })()}
             </View>
             <View style={styles.renderBadge}>
-              <Ionicons name={renderState?.variant === 'night' ? 'moon-outline' : 'sunny-outline'} size={13} color={colors.textDim} />
+              <Ionicons name={renderVariant === 'night' ? 'moon-outline' : 'sunny-outline'} size={13} color={colors.textDim} />
               <Text style={styles.renderBadgeText}>
-                {renderState?.variant === 'night' ? t('baseViewNight') : t('baseViewDay')}
+                {renderVariant === 'night' ? t('baseViewNight') : t('baseViewDay')}
                 {shownRender ? ` · ${shownRender.meta.source === 'drone' ? t('baseViewRenderFromDrone') : shownRender.meta.attribution}` : ''}
                 {shownRender?.stale ? ` · ${t('baseViewStale')}` : ''}
               </Text>
@@ -2235,6 +2320,38 @@ const makeStyles = (c: Colors) => StyleSheet.create({
     backgroundColor: c.emerald, borderRadius: 12,
   },
   importButtonText: { fontSize: 15, fontWeight: '600', color: c.white },
+  renderCtl: {
+    backgroundColor: c.card, borderRadius: 14, borderWidth: 1, borderColor: c.cardBorder,
+    padding: 10, marginBottom: 12, gap: 8,
+  },
+  renderCtlRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  renderCtlLabel: { width: 64, fontSize: 12, color: c.textDim },
+  seg: { flex: 1, flexDirection: 'row', backgroundColor: 'rgba(0,0,0,0.25)', borderRadius: 10, padding: 3, gap: 3 },
+  segBtn: { flex: 1, paddingVertical: 6, borderRadius: 8, alignItems: 'center' },
+  segBtnOn: { backgroundColor: '#059669' },
+  segTxt: { fontSize: 12, fontWeight: '600', color: c.text },
+  segTxtOn: { color: '#ffffff' },
+  segTxtOff: { opacity: 0.4 },
+  makerBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', padding: 20 },
+  makerCard: { backgroundColor: c.card, borderRadius: 20, borderWidth: 1, borderColor: c.cardBorder, padding: 20 },
+  makerTitle: { fontSize: 18, fontWeight: '700', color: c.text, marginBottom: 14 },
+  makerLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 1.2, textTransform: 'uppercase', color: c.textDim, marginBottom: 8 },
+  makerRow: { flexDirection: 'row', gap: 8, marginBottom: 16 },
+  makerChoice: {
+    flex: 1, borderRadius: 12, borderWidth: 1, borderColor: c.cardBorder, padding: 10, gap: 4,
+    backgroundColor: 'rgba(255,255,255,0.03)',
+  },
+  makerChoiceOn: { borderColor: '#10b981', backgroundColor: 'rgba(16,185,129,0.1)' },
+  makerChoiceTitle: { fontSize: 14, fontWeight: '700', color: c.text },
+  makerChoiceDesc: { fontSize: 11, color: c.textDim, lineHeight: 15 },
+  makerNote: { fontSize: 12, color: c.textDim, lineHeight: 17 },
+  makerWarn: { fontSize: 12, color: '#f59e0b', marginTop: 4 },
+  makerButtons: { flexDirection: 'row', gap: 10, marginTop: 18 },
+  makerBtn: { flex: 1, paddingVertical: 12, borderRadius: 12, alignItems: 'center' },
+  makerBtnCancel: { backgroundColor: 'rgba(255,255,255,0.08)' },
+  makerBtnCancelTxt: { color: c.text, fontWeight: '600' },
+  makerBtnOk: { backgroundColor: '#059669' },
+  makerBtnOkTxt: { color: '#ffffff', fontWeight: '700' },
   renderBusyCard: {
     flexDirection: 'row', alignItems: 'center', gap: 12,
     backgroundColor: c.card, borderRadius: 16, borderWidth: 1, borderColor: c.cardBorder,

@@ -19,6 +19,7 @@ import { configuredHeightMm } from '../utils/mowDefaults';
 import { readExperimental, writeExperimental } from '../utils/experimental';
 import { MowingDirectionPreview } from '../components/schedule/MowingDirectionPreview';
 import { useToast } from '../components/common/Toast';
+import { useDialog } from '../components/common/Dialog';
 import { isOpenNovaFirmware } from '../utils/firmwareCapability';
 import {
   isUnsupportedFirmwareError, getServerVersion, fetchRenderSettings, saveRenderSettings,
@@ -226,6 +227,7 @@ interface Snapshot {
 
 function MowerSettingsSection({ mower }: { mower: DeviceState }) {
   const { t } = useTranslation();
+  const dialog = useDialog();
   const { toast } = useToast();
   const sn = mower.sn;
   const online = mower.online;
@@ -364,14 +366,21 @@ function MowerSettingsSection({ mower }: { mower: DeviceState }) {
   }, [maxSpeedVal, chargeThresholdVal, online, sn, t, toast]);
 
   const handleRecalibrate = async () => {
-    if (!window.confirm(t('settings.mower.recalibrateConfirm',
-      'Overwrite the charging pose with the mower\'s CURRENT pose? The mower must be physically on its dock and charging, or future coverage will drift.'))) return;
+    if (!(await dialog.confirm({
+      title: t('settings.mower.recalibrateTitle', 'Recalibrate charging pose'),
+      message: t('settings.mower.recalibrateConfirm',
+        'Overwrite the charging pose with the mower\'s CURRENT pose? The mower must be physically on its dock and charging, or future coverage will drift.'),
+    }))) return;
     try {
       let resp = await recalibrateChargingPose(sn);
       if (!resp.ok && (resp.batteryState ?? '').toUpperCase() !== 'CHARGING') {
-        if (!window.confirm(t('settings.mower.recalibrateForce', {
-          defaultValue: 'Battery state is "{{state}}" — expected CHARGING. Override the safety check anyway?',
-          state: resp.batteryState ?? 'unknown',
+        if (!(await dialog.confirm({
+          title: t('settings.mower.recalibrateForceTitle', 'Not charging'),
+          message: t('settings.mower.recalibrateForce', {
+            defaultValue: 'Battery state is "{{state}}" — expected CHARGING. Override the safety check anyway?',
+            state: resp.batteryState ?? 'unknown',
+          }),
+          variant: 'danger',
         }))) return;
         resp = await recalibrateChargingPose(sn, { force: true });
       }
@@ -387,8 +396,11 @@ function MowerSettingsSection({ mower }: { mower: DeviceState }) {
   };
 
   const handleRestart = async () => {
-    if (!window.confirm(t('settings.mower.restartConfirm',
-      'Restart the mower software (not a full reboot)? It clears stuck states and comes back online in about a minute. Only works when idle or charging.'))) return;
+    if (!(await dialog.confirm({
+      title: t('settings.mower.restartTitle', 'Restart mower software'),
+      message: t('settings.mower.restartConfirm',
+        'Restart the mower software (not a full reboot)? It clears stuck states and comes back online in about a minute. Only works when idle or charging.'),
+    }))) return;
     try {
       const body = await softRestartMower(sn);
       if (body.ok) {
@@ -403,7 +415,11 @@ function MowerSettingsSection({ mower }: { mower: DeviceState }) {
   };
 
   const handleReboot = async () => {
-    if (!window.confirm(t('settings.mower.rebootConfirm', 'Reboot the mower (full OS restart)? It goes offline for a few minutes. Use Restart first for stuck states.'))) return;
+    if (!(await dialog.confirm({
+      title: t('settings.mower.rebootTitle', 'Reboot mower'),
+      message: t('settings.mower.rebootConfirm', 'Reboot the mower (full OS restart)? It goes offline for a few minutes. Use Restart first for stuck states.'),
+      variant: 'danger',
+    }))) return;
     try {
       await rebootMower(sn);
       toast(`✓ ${t('settings.mower.rebooting', 'Reboot sent — the mower is offline for a few minutes')}`, 'success');
@@ -892,6 +908,7 @@ const DRONE_BTN = 'inline-flex items-center gap-2 rounded-xl border border-gray-
 
 function DronePhotoCard({ sn }: { sn: string }) {
   const { t } = useTranslation();
+  const dialog = useDialog();
   const [meta, setMeta] = useState<DroneOverlayMeta | null>(null);
   const [busy, setBusy] = useState(false);
   const [sources, setSources] = useState<Array<{ sn: string; label: string }>>([]);
@@ -913,16 +930,16 @@ function DronePhotoCard({ sn }: { sn: string }) {
   const run = async (work: () => Promise<DroneOverlayMeta | null>) => {
     setBusy(true);
     try { setMeta(await work()); }
-    catch (e) { window.alert(e instanceof Error ? e.message : String(e)); }
+    catch (e) { void dialog.alert({ title: t('settings.drone.failed', 'Dat lukte niet'), message: e instanceof Error ? e.message : String(e), variant: 'danger' }); }
     finally { setBusy(false); if (fileRef.current) fileRef.current.value = ''; }
   };
   const onFile = (file?: File) => { if (file) void run(() => uploadDroneOverlay(sn, file, null)); };
-  const remove = () => {
-    if (!window.confirm(t('map.droneRemoveConfirm', 'De dronefoto van deze maaier verwijderen?'))) return;
+  const remove = async () => {
+    if (!(await dialog.confirm({ title: t('map.droneRemove', 'Dronefoto verwijderen'), message: t('map.droneRemoveConfirm', 'De dronefoto van deze maaier verwijderen?'), variant: 'danger' }))) return;
     void run(async () => { await deleteDroneOverlay(sn); return null; });
   };
-  const copyFrom = (from: string) => {
-    if (meta && !window.confirm(t('map.droneCopyConfirm', 'De huidige dronefoto van deze maaier wordt vervangen. Doorgaan?'))) return;
+  const copyFrom = async (from: string) => {
+    if (meta && !(await dialog.confirm({ title: t('settings.drone.copyTitle', 'Dronefoto overnemen'), message: t('map.droneCopyConfirm', 'De huidige dronefoto van deze maaier wordt vervangen. Doorgaan?') }))) return;
     void run(() => copyDroneOverlay(sn, from));
   };
 
@@ -954,12 +971,12 @@ function DronePhotoCard({ sn }: { sn: string }) {
           {meta ? t('map.droneReplace', 'Dronefoto vervangen…') : t('map.droneUpload', 'Dronefoto uploaden…')}
         </button>
         {meta && (
-          <button onClick={remove} disabled={busy} className={DRONE_BTN}>
+          <button onClick={() => void remove()} disabled={busy} className={DRONE_BTN}>
             <Trash2 className="w-4 h-4" />{t('map.droneRemove', 'Dronefoto verwijderen')}
           </button>
         )}
         {sources.map(src => (
-          <button key={src.sn} onClick={() => copyFrom(src.sn)} disabled={busy} className={DRONE_BTN} title={src.sn}>
+          <button key={src.sn} onClick={() => void copyFrom(src.sn)} disabled={busy} className={DRONE_BTN} title={src.sn}>
             <Copy className="w-4 h-4" />{t('settings.drone.copyFrom', 'Overnemen van {{name}}', { name: src.label })}
           </button>
         ))}

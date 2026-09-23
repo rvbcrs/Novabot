@@ -23,6 +23,7 @@ import { CameraTile } from '../components/map/CameraTile';
 import { getSocket } from '../api/socket';
 import type { DeviceUpdateEvent } from '../types';
 import { isOpenNovaFirmware } from '../utils/firmwareCapability';
+import { useDialog } from '../components/common/Dialog';
 
 /** Eén rij van GET /api/dashboard/terrain-clusters/:sn (Task 7/9). */
 interface TerrainCluster {
@@ -378,6 +379,7 @@ function removeClusterModels(scene: THREE.Scene, instances: Map<string, THREE.Ob
 }
 
 export default function TerrainPage({ sn, sensors }: { sn: string; sensors?: Record<string, string> }) {
+  const dialog = useDialog();
   const { t } = useTranslation();
   // De terrain-scanner is een OpenNova-daemon; op stock wordt er niets gescand.
   const firmwareSupported = isOpenNovaFirmware(sensors?.sw_version ?? sensors?.version);
@@ -1544,9 +1546,10 @@ export default function TerrainPage({ sn, sensors }: { sn: string; sensors?: Rec
               {selectedCluster.modelFile && (
                 <button
                   className="text-[11px] text-blue-400 hover:text-blue-300"
-                  onClick={() => {
-                    const naam = window.prompt(t('terrain.modelRenamePrompt'), selectedCluster.modelFile!.replace(/\.glb$/, ''));
-                    if (naam) void handleModelRename(selectedCluster.modelFile!, naam);
+                  onClick={async () => {
+                    const file = selectedCluster.modelFile!;
+                    const naam = await dialog.prompt({ title: t('terrain.modelRename'), message: t('terrain.modelRenamePrompt'), defaultValue: file.replace(/\.glb$/, ''), variant: 'info' });
+                    if (naam) void handleModelRename(file, naam);
                   }}
                 >
                   {t('terrain.modelRename')}

@@ -3,6 +3,7 @@ import { DashboardShell } from './shell/DashboardShell';
 import { OnboardingWizard } from './components/setup/OnboardingWizard';
 import { LoginScreen } from './components/auth/LoginScreen';
 import { ToastProvider } from './components/common/Toast';
+import { DialogProvider } from './components/common/Dialog';
 import { useDevices } from './hooks/useDevices';
 import { checkSetupStatus, checkCertTrusted, UnauthorizedError } from './api/client';
 import { MobilePage } from './mobile/MobilePage';
@@ -69,32 +70,32 @@ export default function App() {
 
   if (appState === 'login') {
     return (
-      <ToastProvider>
+      <ToastProvider><DialogProvider>
         <LoginScreen onSuccess={() => setAppState('ready')} />
-      </ToastProvider>
+      </DialogProvider></ToastProvider>
     );
   }
 
   if (appState === 'onboarding') {
     return (
-      <ToastProvider>
+      <ToastProvider><DialogProvider>
         <OnboardingWizard onComplete={() => setAppState('ready')} />
-      </ToastProvider>
+      </DialogProvider></ToastProvider>
     );
   }
 
   if (appState === 'onboarding-cert-only') {
     return (
-      <ToastProvider>
+      <ToastProvider><DialogProvider>
         <OnboardingWizard skipAccount onComplete={() => setAppState('ready')} />
-      </ToastProvider>
+      </DialogProvider></ToastProvider>
     );
   }
 
   const isMobile = window.location.pathname.startsWith('/mobile');
 
   return (
-    <ToastProvider>
+    <ToastProvider><DialogProvider>
       {isMobile ? (
         <MobileApp />
       ) : (
@@ -102,6 +103,6 @@ export default function App() {
           <DashboardShell />
         </div>
       )}
-    </ToastProvider>
+    </DialogProvider></ToastProvider>
   );
 }

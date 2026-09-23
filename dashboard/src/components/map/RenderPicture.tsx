@@ -14,6 +14,9 @@ import { Plus, Minus, Crosshair } from 'lucide-react';
 export interface RenderOverlay {
   width: number; height: number;
   lanes: Array<[[number, number], [number, number]]>;
+  /** Planned mow path (the Coverage preview), as polylines. */
+  coverage: Array<Array<[number, number]>>;
+  dock: [number, number] | null;
   trail: Array<Array<[number, number]>>;
   mower: { x: number; y: number; nose: [number, number] } | null;
 }
@@ -96,6 +99,10 @@ export function RenderPicture({ src, alt, night, fitTitle, overlay, children }: 
         <img src={src} alt={alt} draggable={false} className="max-h-full max-w-full object-contain" />
         {overlay && (
           <svg className="absolute inset-0 w-full h-full pointer-events-none" viewBox={`0 0 ${overlay.width} ${overlay.height}`} preserveAspectRatio="xMidYMid meet">
+            {overlay.coverage.map((seg, i) => (
+              <polyline key={`c${i}`} points={seg.map(p => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ')}
+                fill="none" stroke="rgba(96,165,250,0.9)" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+            ))}
             {overlay.lanes.map(([a, b], i) => (
               <line key={`l${i}`} x1={a[0]} y1={a[1]} x2={b[0]} y2={b[1]} stroke="rgba(34,197,94,0.85)" strokeWidth={6} strokeLinecap="round" />
             ))}
@@ -103,12 +110,26 @@ export function RenderPicture({ src, alt, night, fitTitle, overlay, children }: 
               <polyline key={`t${i}`} points={seg.map(p => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ')}
                 fill="none" stroke="#38bdf8" strokeWidth={3.5} strokeOpacity={0.9} strokeLinejoin="round" strokeLinecap="round" />
             ))}
-            {overlay.mower && (
-              <g>
-                <line x1={overlay.mower.x} y1={overlay.mower.y} x2={overlay.mower.nose[0]} y2={overlay.mower.nose[1]} stroke="#0f172a" strokeWidth={5} strokeLinecap="round" />
-                <circle cx={overlay.mower.x} cy={overlay.mower.y} r={11} fill="#ffffff" stroke="#0f172a" strokeWidth={3} />
+            {/* Dock: the map's orange charger pin, standing on its spot. */}
+            {overlay.dock && (
+              <g transform={`translate(${overlay.dock[0]} ${overlay.dock[1]})`}>
+                <path d="M0 0 L-9 -14 A14 14 0 1 1 9 -14 Z" fill="#f59e0b" stroke="#ffffff" strokeWidth={2.5} />
+                <path d="M2 -33 L-5 -21 L0 -21 L-2 -12 L6 -25 L1 -25 Z" fill="#ffffff" />
               </g>
             )}
+            {/* Mower: body pointing along its heading, like the map icon. */}
+            {overlay.mower && (() => {
+              const { x, y, nose } = overlay.mower;
+              const deg = (Math.atan2(nose[1] - y, nose[0] - x) * 180) / Math.PI;
+              return (
+                <g transform={`translate(${x} ${y}) rotate(${deg})`}>
+                  <ellipse cx={0} cy={3} rx={17} ry={12} fill="rgba(0,0,0,0.25)" />
+                  <rect x={-16} y={-11} width={32} height={22} rx={8} fill="#ffffff" stroke="#0f172a" strokeWidth={2.5} />
+                  <rect x={-4} y={-7} width={14} height={14} rx={3} fill="#10b981" />
+                  <path d="M16 -6 L25 0 L16 6 Z" fill="#0f172a" />
+                </g>
+              );
+            })()}
           </svg>
         )}
       </div>
