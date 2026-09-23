@@ -227,6 +227,12 @@ function ChipRow({ chips }: { chips: ChipDef[] }) {
   );
 }
 
+// CPU temperature bands. A week of 1-minute samples from two mowers (Sept 2026):
+// median 45-50 °C, 99th percentile 51-67 °C. Below WARM is ordinary running.
+const WARM_TEMP_C = 65;
+const HOT_TEMP_C = 75;
+const DANGER_TEMP_C = 85;
+
 function mowerChips(m: DeviceState, t: TFunction): ChipDef[] {
   const s = m.sensors;
   const out: ChipDef[] = [
@@ -243,7 +249,7 @@ function mowerChips(m: DeviceState, t: TFunction): ChipDef[] {
   const wifi = parseInt(s.wifi_rssi ?? '', 10);
   if (isFinite(wifi) && wifi !== 0) out.push({ icon: Wifi, label: t('sensors.wifi'), value: `${wifi}%`, tone: wifi >= 65 ? 'emerald' : wifi >= 40 ? 'amber' : 'red' });
   const temp = parseInt(s.cpu_temperature ?? '', 10);
-  if (isFinite(temp) && temp > 0) out.push({ icon: Thermometer, label: t('chips.temp'), value: `${temp}°`, tone: temp >= 85 ? 'red' : 'zinc' });
+  if (isFinite(temp) && temp > 0) out.push({ icon: Thermometer, label: t('chips.temp'), value: `${temp}°`, tone: temp >= HOT_TEMP_C ? 'red' : temp >= WARM_TEMP_C ? 'amber' : 'zinc' });
   return out;
 }
 
@@ -464,7 +470,6 @@ export function DeviceChips({ mower, charger, knownMowers, onSelectMower, part }
 
   // Mower SoC danger threshold (user-confirmed). At/above this the temp chip
   // turns red and pulses to draw attention.
-  const DANGER_TEMP_C = 85;
   const cpuTemp = parseInt(s.cpu_temperature ?? '', 10);
   const hasCpu = isFinite(cpuTemp) && cpuTemp > 0;
 
@@ -597,8 +602,8 @@ export function DeviceChips({ mower, charger, knownMowers, onSelectMower, part }
                   <TeleCell
                     icon={Thermometer}
                     value={`${cpuTemp}°`}
-                    color={cpuTemp >= DANGER_TEMP_C ? 'text-red-400' : cpuTemp < 50 ? 'text-zinc-200' : cpuTemp < 65 ? 'text-yellow-300' : 'text-red-400'}
-                    iconColor={cpuTemp >= DANGER_TEMP_C ? 'text-red-400' : cpuTemp < 50 ? 'text-zinc-500' : cpuTemp < 65 ? 'text-yellow-400/80' : 'text-red-400'}
+                    color={cpuTemp < WARM_TEMP_C ? 'text-zinc-200' : cpuTemp < HOT_TEMP_C ? 'text-yellow-300' : cpuTemp < DANGER_TEMP_C ? 'text-orange-400' : 'text-red-400'}
+                    iconColor={cpuTemp < WARM_TEMP_C ? 'text-zinc-500' : cpuTemp < HOT_TEMP_C ? 'text-yellow-400/80' : cpuTemp < DANGER_TEMP_C ? 'text-orange-400' : 'text-red-400'}
                     label={cpuTemp >= DANGER_TEMP_C ? t('chips.cpuTempDanger', { temp: cpuTemp, limit: DANGER_TEMP_C }) : t('chips.cpuTemp', { temp: cpuTemp })}
                     blink={cpuTemp >= DANGER_TEMP_C}
                   />

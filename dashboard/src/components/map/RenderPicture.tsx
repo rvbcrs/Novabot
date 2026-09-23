@@ -149,9 +149,10 @@ export function RenderPicture({ src, alt, night, fitTitle, overlay, children }: 
       ref={box}
       className="absolute inset-0 z-[800] overflow-hidden flex items-center justify-center select-none"
       style={{ background: night ? '#0f1826' : '#eceff1' }}
-      onDoubleClick={reset}
+      onDoubleClick={e => { if (!(e.target as Element).closest('button')) reset(); }}
       onPointerDown={e => {
-        if (view.current.zoom <= 1) return;
+        // Never grab the pointer for a button: the click would land on this box.
+        if (view.current.zoom <= 1 || (e.target as Element).closest('button')) return;
         e.currentTarget.setPointerCapture(e.pointerId);
         drag.current = { x: e.clientX, y: e.clientY, px: view.current.x, py: view.current.y };
         apply();
