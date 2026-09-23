@@ -438,23 +438,41 @@ export interface GenerateResult { ok: true; meta: RenderMeta }
 
 /** Build the composite and render both variants. Throws with a readable reason. */
 export async function generateRenders(sn: string, opts: { source?: BaseSource } = {}): Promise<GenerateResult> {
+  const { emitRenderProgress } = await import('../dashboard/socketHandler.js');
+  const steps = VARIANTS.length + 1;
+  const fail = (phase: string, error: string): never => {
+    emitRenderProgress({ sn, phase, error });
+    throw new Error(error);
+  };
+
   const creds = getCredentials();
-  if (creds.mode === 'none') throw new Error('no_credentials');
+  if (creds.mode === 'none') fail('failed', 'no_credentials');
+  emitRenderProgress({ sn, phase: 'base', step: 0, steps });
   const base = await baseImage(sn, opts.source ?? 'aerial');
-  if (!base) throw new Error('no_base_image');
-  const composite = await compositeImage(sn, base);
+  if (!base) fail('failed', 'no_base_image');
+  emitRenderProgress({ sn, phase: 'composite', step: 1, steps });
+  const composite = await compositeImage(sn, base!);
   fs.writeFileSync(path.join(renderDir(sn), 'composite.png'), composite);
 
+  let step = 1;
   for (const v of VARIANTS) {
-    const png = await callImageModel(composite, v === 'night' ? PROMPT_NIGHT : PROMPT_BASE, creds);
+    emitRenderProgress({ sn, phase: v === 'night' ? 'night' : 'day', step, steps });
+    let png: Buffer;
+    try {
+      png = await callImageModel(composite, v === 'night' ? PROMPT_NIGHT : PROMPT_BASE, creds);
+    } catch (err) {
+      return fail('failed', (err as Error).message);
+    }
     fs.writeFileSync(renderPath(sn, v), png);
-    console.log(`${TAG} ${sn}: ${v} render written (${png.length} bytes, source=${base.source})`);
+    step += 1;
+    console.log(`${TAG} ${sn}: ${v} render written (${png.length} bytes, source=${base!.source})`);
   }
+  emitRenderProgress({ sn, phase: 'done', step: steps, steps });
 
   const meta: RenderMeta = {
     createdAt: new Date().toISOString(),
-    source: base.source,
-    attribution: base.attribution,
+    source: base!.source,
+    attribution: base!.attribution,
     mapRows: mapRepo.findByMowerSn(sn).length,
     variants: VARIANTS,
   };

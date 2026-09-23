@@ -538,7 +538,17 @@
       "renderStale": "Kaart is gewijzigd na deze render.",
       "noKey": "Stel eerst een sleutel in bij Instellingen → 3D-render.",
       "noBase": "Geen luchtfoto beschikbaar voor deze locatie; upload een dronefoto.",
-      "failed": "Render mislukt"
+      "failed": "Render mislukt",
+      "renderBusy": "3D-render maken…",
+      "renderStepBase": "Luchtfoto ophalen…",
+      "renderStepComposite": "Kaart op de luchtfoto zetten…",
+      "renderStepDay": "Dagversie tekenen…",
+      "renderStepNight": "Avondversie tekenen…",
+      "renderWait": "Dit duurt meestal 1 tot 3 minuten; het venster sluit vanzelf.",
+      "renderFrom": "3D-render maken van",
+      "renderFromAerial": "Luchtfoto (satelliet)",
+      "renderFromDrone": "Eigen dronefoto",
+      "renderMadeFrom": "Huidige render: {{src}}"
     },
     "render": {
       "noKey": "Stel eerst een sleutel in bij Instellingen → 3D-render.",

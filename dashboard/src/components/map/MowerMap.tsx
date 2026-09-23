@@ -33,6 +33,7 @@ import {
 import { localToGps, gpsToLocal, isUsableChargerGps } from '../../utils/coords';
 import { applyBrush, densifyPolygon, hitTestEdge, offsetPolygon, pointInPolygon as pointInPolygonXY, polygonArea, simplifyPolygon, type XY } from '../../utils/editGeometry';
 import { paintCircle, eraseCircle, makeValidPolygon } from '../../utils/brushPaint';
+import { getSocket } from '../../api/socket';
 import { useToast } from '../common/Toast';
 import { isInterruptedCoverage } from '../../utils/mowerActivity';
 import { sourceKey, sourceColor } from '../../utils/mapSource';
@@ -1506,11 +1507,26 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     if (!sn) return;
     fetchGardenRender(sn).then(setRenderState).catch(() => setRenderState(null));
   }, [sn, renderNonce]);
-  const startRender = useCallback(async () => {
+  const [renderPhase, setRenderPhase] = useState<{ phase: string; step: number; steps: number } | null>(null);
+  useEffect(() => {
+    if (!sn) return;
+    const socket = getSocket();
+    const onProgress = (e: { sn: string; phase: string; step?: number; steps?: number; error?: string }) => {
+      if (e.sn !== sn) return;
+      if (e.phase === 'done' || e.phase === 'failed') { setRenderPhase(null); return; }
+      setRenderPhase({ phase: e.phase, step: e.step ?? 0, steps: e.steps ?? 3 });
+    };
+    socket.on('render_progress', onProgress);
+    return () => { socket.off('render_progress', onProgress); };
+  }, [sn]);
+
+  const startRender = useCallback(async (source: 'aerial' | 'drone') => {
     if (!sn || renderBusy) return;
     setRenderBusy(true);
-    const r = await generateGardenRender(sn, renderState?.hasDronePhoto ? 'drone' : 'aerial');
+    setRenderPhase({ phase: 'base', step: 0, steps: 3 });
+    const r = await generateGardenRender(sn, source);
     setRenderBusy(false);
+    setRenderPhase(null);
     if (!r.ok) {
       window.alert(r.error === 'no_credentials'
         ? t('map.render.noKey', 'Stel eerst een sleutel in bij Instellingen → 3D-render.')
@@ -1521,7 +1537,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     }
     setRenderNonce(String(Date.now()));
     chooseBaseView('render');
-  }, [sn, renderBusy, renderState, chooseBaseView, t]);
+  }, [sn, renderBusy, chooseBaseView, t]);
   /** Plaatsing die nog niet opgeslagen is; null = niet aan het plaatsen. */
   const [droneDraft, setDroneDraft] = useState<DroneOverlayPlacement | null>(null);
   const [droneBusy, setDroneBusy] = useState(false);
@@ -3495,6 +3511,25 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
         </div>
       </div>
       <div className="relative flex-1 min-h-0">
+        {renderBusy && (
+          <div className="absolute inset-0 z-[1000] bg-gray-950/70 backdrop-blur-sm flex items-center justify-center">
+            <div className="bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl px-6 py-5 w-[min(92%,26rem)] text-center">
+              <Loader2 className="w-7 h-7 text-emerald-400 animate-spin mx-auto mb-3" />
+              <div className="text-sm font-semibold text-white">{t('map.base.renderBusy', '3D-render maken…')}</div>
+              <div className="text-xs text-gray-400 mt-1">
+                {renderPhase?.phase === 'day' ? t('map.base.renderStepDay', 'Dagversie tekenen…')
+                  : renderPhase?.phase === 'night' ? t('map.base.renderStepNight', 'Avondversie tekenen…')
+                  : renderPhase?.phase === 'composite' ? t('map.base.renderStepComposite', 'Kaart op de luchtfoto zetten…')
+                  : t('map.base.renderStepBase', 'Luchtfoto ophalen…')}
+              </div>
+              <div className="mt-3 h-1.5 rounded-full bg-gray-800 overflow-hidden">
+                <div className="h-full bg-emerald-500 transition-all duration-500"
+                  style={{ width: `${Math.round(((renderPhase?.step ?? 0) / (renderPhase?.steps ?? 3)) * 100)}%` }} />
+              </div>
+              <div className="text-[11px] text-gray-500 mt-3">{t('map.base.renderWait', 'Dit duurt meestal 1 tot 3 minuten; het venster sluit vanzelf.')}</div>
+            </div>
+          </div>
+        )}
         {baseView === 'render' && sn && renderState?.available && (
           <div className="absolute inset-0 z-[800] bg-gray-950 flex items-center justify-center">
             <img
@@ -3506,7 +3541,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
               {renderState.variant === 'night' ? <Moon className="w-3.5 h-3.5" /> : <Sun className="w-3.5 h-3.5" />}
               <span>{renderState.variant === 'night' ? t('map.base.night', 'avond') : t('map.base.day', 'dag')}</span>
               <span className="text-gray-600">·</span>
-              <span>{renderState.meta?.attribution}</span>
+              <span>{renderState.meta?.source === 'drone' ? t('map.base.renderFromDrone', 'Eigen dronefoto') : renderState.meta?.attribution}</span>
               {renderState.stale && <span className="text-amber-400">· {t('map.base.renderStale', 'Kaart is gewijzigd na deze render.')}</span>}
             </div>
           </div>
@@ -4131,13 +4166,29 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
                       </span>
                     )}
                   </button>
-                  <div className={railHdr}>{t('map.base.render', '3D-render')}</div>
-                  <button onClick={() => { void startRender(); setRailFlyout(null); }} disabled={renderBusy} className={railRow(false)}>
-                    <RefreshCw className={`w-4 h-4 opacity-70 ${renderBusy ? 'animate-spin' : ''}`} />
-                    {renderState?.available
-                      ? t('map.base.renderAgain', 'Opnieuw genereren…')
-                      : t('map.base.renderMake', '3D-render maken…')}
+                  <div className={railHdr}>{t('map.base.renderFrom', '3D-render maken van')}</div>
+                  <button onClick={() => { void startRender('aerial'); setRailFlyout(null); }} disabled={renderBusy} className={railRow(false)}>
+                    <Layers className={`w-4 h-4 opacity-70 ${renderBusy ? 'animate-pulse' : ''}`} />
+                    {t('map.base.renderFromAerial', 'Luchtfoto (satelliet)')}
                   </button>
+                  <button
+                    onClick={() => { if (renderState?.hasDronePhoto) { void startRender('drone'); setRailFlyout(null); } }}
+                    disabled={renderBusy || !renderState?.hasDronePhoto}
+                    className={`${railRow(false)} ${renderState?.hasDronePhoto ? '' : 'opacity-40 cursor-not-allowed'}`}
+                    title={renderState?.hasDronePhoto ? undefined : t('map.base.droneMissing', 'Nog geen dronefoto geüpload')}
+                  >
+                    <ImageIcon className={`w-4 h-4 opacity-70 ${renderBusy ? 'animate-pulse' : ''}`} />
+                    {t('map.base.renderFromDrone', 'Eigen dronefoto')}
+                  </button>
+                  {renderState?.meta && (
+                    <div className="px-2.5 pb-1.5 text-[11px] text-gray-500">
+                      {t('map.base.renderMadeFrom', 'Huidige render: {{src}}', {
+                        src: renderState.meta.source === 'drone'
+                          ? t('map.base.renderFromDrone', 'Eigen dronefoto')
+                          : renderState.meta.attribution,
+                      })}
+                    </div>
+                  )}
                   {renderState?.stale && (
                     <div className="px-2.5 pb-1.5 text-[11px] text-amber-400">{t('map.base.renderStale', 'Kaart is gewijzigd na deze render.')}</div>
                   )}

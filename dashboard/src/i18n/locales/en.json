@@ -470,7 +470,17 @@
       "renderStale": "The map changed after this render.",
       "noKey": "Set a key first under Settings → 3D render.",
       "noBase": "No aerial imagery for this location; upload a drone photo.",
-      "failed": "Render failed"
+      "failed": "Render failed",
+      "renderBusy": "Creating 3D render…",
+      "renderStepBase": "Fetching aerial imagery…",
+      "renderStepComposite": "Painting your map onto it…",
+      "renderStepDay": "Drawing the day version…",
+      "renderStepNight": "Drawing the evening version…",
+      "renderWait": "This usually takes 1 to 3 minutes; the window closes by itself.",
+      "renderFrom": "Create 3D render from",
+      "renderFromAerial": "Aerial imagery (satellite)",
+      "renderFromDrone": "Your drone photo",
+      "renderMadeFrom": "Current render: {{src}}"
     },
     "render": {
       "noKey": "Set a key first under Settings → 3D render.",

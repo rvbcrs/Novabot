@@ -327,6 +327,12 @@ export function emitAutoMapProgress(p: { sn: string; sessionId: number; phase: s
   io?.emit('auto_map_progress', p);
 }
 
+/** Progress of a garden render: two image-model calls take minutes, so the
+ *  dashboard needs to see where it is instead of a frozen button. */
+export function emitRenderProgress(p: { sn: string; phase: string; step?: number; steps?: number; error?: string }): void {
+  io?.emit('render_progress', { ...p, ts: Date.now() });
+}
+
 export function emitDeviceOffline(sn: string): void {
   io?.emit('device:offline', { sn, timestamp: Date.now() });
 }

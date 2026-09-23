@@ -20,10 +20,12 @@ Map tab (app) with three choices:
 
 ## How it is made
 
-1. **A base image.** Satellite tiles for the bounding box of your zones, or your
-   own drone photo placed by its four corners. In the Netherlands the open PDOK
-   aerial imagery (about 8 cm) is used automatically, in the US the USGS one,
-   elsewhere Esri's global imagery.
+1. **A base image**, and you choose which: **aerial imagery** (in the
+   Netherlands the open PDOK photo at about 8 cm, in the US the USGS one,
+   elsewhere Esri's global imagery) or **your own drone photo**, placed by its
+   four corners. They differ, so the render differs too: aerial imagery is
+   usually more recent, a drone photo is sharper and shows the garden as you
+   photographed it. The badge under the picture says which one was used.
 2. **Your geometry painted on it.** Work zones in green with a dark outline,
    obstacles as flat red discs, the dock as a small marker. This step is what
    keeps the render honest: the image model copies these shapes.
@@ -36,7 +38,8 @@ your network.
 ## What it costs, and what you need
 
 Generating never happens on its own: it only runs when you press the button.
-Each run produces two pictures (day and evening).
+Each run produces two pictures (day and evening) and takes one to three
+minutes; the dashboard shows the progress while it works.
 
 Under **Settings → 3D render** you provide one of:
 

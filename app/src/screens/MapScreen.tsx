@@ -382,14 +382,14 @@ export default function MapScreen() {
     })();
   }, [mower?.sn, renderNonce]);
 
-  const makeRender = useCallback(async () => {
+  const makeRender = useCallback(async (source: 'aerial' | 'drone') => {
     const sn = mower?.sn;
     if (!sn || renderBusy) return;
     setRenderBusy(true);
     try {
       const url = await getServerUrl();
       if (!url) return;
-      await new ApiClient(url).generateGardenRender(sn, renderState?.hasDronePhoto ? 'drone' : 'aerial');
+      await new ApiClient(url).generateGardenRender(sn, source);
       setRenderNonce(String(Date.now()));
       setBaseView('render');
     } catch (e) {
@@ -397,21 +397,30 @@ export default function MapScreen() {
     } finally {
       setRenderBusy(false);
     }
-  }, [mower?.sn, renderBusy, renderState, t]);
+  }, [mower?.sn, renderBusy, t]);
 
   const openBaseViewMenu = useCallback(() => {
     const items: AppActionSheetItem[] = [
       { label: t('baseViewMap'), icon: 'map-outline', onPress: () => setBaseView('map') },
-      {
-        label: renderState?.available
-          ? `${t('baseViewRender')} (${renderState.variant === 'night' ? t('baseViewNight') : t('baseViewDay')})`
-          : t('baseViewRenderMake'),
-        icon: 'cube-outline',
-        onPress: () => { if (renderState?.available) setBaseView('render'); else void makeRender(); },
-      },
     ];
     if (renderState?.available) {
-      items.push({ label: t('baseViewRenderAgain'), icon: 'refresh-outline', onPress: () => void makeRender() });
+      items.push({
+        label: `${t('baseViewRender')} (${renderState.variant === 'night' ? t('baseViewNight') : t('baseViewDay')})`,
+        icon: 'cube-outline',
+        onPress: () => setBaseView('render'),
+      });
+    }
+    items.push({
+      label: t('baseViewRenderFromAerial'),
+      icon: 'earth-outline',
+      onPress: () => void makeRender('aerial'),
+    });
+    if (renderState?.hasDronePhoto) {
+      items.push({
+        label: t('baseViewRenderFromDrone'),
+        icon: 'image-outline',
+        onPress: () => void makeRender('drone'),
+      });
     }
     setSheetState({ visible: true, title: t('baseViewTitle'), actions: items });
   }, [renderState, makeRender, t]);
@@ -1373,6 +1382,16 @@ export default function MapScreen() {
           </View>
         )}
 
+        {renderBusy && (
+          <View style={styles.renderBusyCard}>
+            <ActivityIndicator size="small" color={colors.emerald} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.renderBusyTitle}>{t('baseViewRenderBusy')}</Text>
+              <Text style={styles.renderBusySub}>{t('baseViewRenderWait')}</Text>
+            </View>
+          </View>
+        )}
+
         {/* 3D garden render — a picture, not a map, so it replaces the map */}
         {baseView === 'render' && renderUrl && (
           <View style={styles.renderCard}>
@@ -1381,6 +1400,7 @@ export default function MapScreen() {
               <Ionicons name={renderState?.variant === 'night' ? 'moon-outline' : 'sunny-outline'} size={13} color={colors.textDim} />
               <Text style={styles.renderBadgeText}>
                 {renderState?.variant === 'night' ? t('baseViewNight') : t('baseViewDay')}
+                {renderState?.meta ? ` · ${renderState.meta.source === 'drone' ? t('baseViewRenderFromDrone') : renderState.meta.attribution}` : ''}
                 {renderState?.stale ? ` · ${t('baseViewStale')}` : ''}
               </Text>
             </View>
@@ -2146,6 +2166,13 @@ const makeStyles = (c: Colors) => StyleSheet.create({
     backgroundColor: c.emerald, borderRadius: 12,
   },
   importButtonText: { fontSize: 15, fontWeight: '600', color: c.white },
+  renderBusyCard: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    backgroundColor: c.card, borderRadius: 16, borderWidth: 1, borderColor: c.cardBorder,
+    padding: 14, marginBottom: 16,
+  },
+  renderBusyTitle: { fontSize: 14, fontWeight: '600', color: c.text },
+  renderBusySub: { fontSize: 12, color: c.textDim, marginTop: 2 },
   renderCard: {
     backgroundColor: c.card, borderRadius: 18, borderWidth: 1, borderColor: c.cardBorder,
     overflow: 'hidden', marginBottom: 16,
