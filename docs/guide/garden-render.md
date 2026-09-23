@@ -16,7 +16,7 @@ Map tab (app) with three choices:
 |---|---|
 | **Satellite** | The map as it always was: satellite tiles with your zones drawn on them. The default. |
 | **Drone photo** | The same map with your uploaded drone photo underneath. Only offered once a photo is uploaded. |
-| **3D render** | The generated picture. Day or evening is picked automatically from sunrise and sunset at your mower. |
+| **3D render** | The generated picture. Day or evening is picked automatically from sunrise and sunset at your mower. Scroll to zoom, drag to pan, double-click to fit. |
 
 ## How it is made
 

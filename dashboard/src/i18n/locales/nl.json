@@ -548,7 +548,8 @@
       "renderFrom": "3D-render maken van",
       "renderFromAerial": "Luchtfoto (satelliet)",
       "renderFromDrone": "Eigen dronefoto",
-      "renderMadeFrom": "Huidige render: {{src}}"
+      "renderMadeFrom": "Huidige render: {{src}}",
+      "renderFit": "Passend maken"
     },
     "render": {
       "noKey": "Stel eerst een sleutel in bij Instellingen → 3D-render.",

@@ -480,7 +480,8 @@
       "renderFrom": "Create 3D render from",
       "renderFromAerial": "Aerial imagery (satellite)",
       "renderFromDrone": "Your drone photo",
-      "renderMadeFrom": "Current render: {{src}}"
+      "renderMadeFrom": "Current render: {{src}}",
+      "renderFit": "Fit to view"
     },
     "render": {
       "noKey": "Set a key first under Settings → 3D render.",

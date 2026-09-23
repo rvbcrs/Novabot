@@ -1508,6 +1508,28 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     fetchGardenRender(sn).then(setRenderState).catch(() => setRenderState(null));
   }, [sn, renderNonce]);
   const [renderPhase, setRenderPhase] = useState<{ phase: string; step: number; steps: number } | null>(null);
+  // The render is a picture, not a map, so it gets its own pan/zoom instead of
+  // Leaflet's. Wheel zooms at the cursor, drag pans, double-click fits again.
+  const [renderZoom, setRenderZoom] = useState(1);
+  const [renderPan, setRenderPan] = useState({ x: 0, y: 0 });
+  const renderDragRef = useRef<{ x: number; y: number; px: number; py: number } | null>(null);
+  const resetRenderView = useCallback(() => { setRenderZoom(1); setRenderPan({ x: 0, y: 0 }); }, []);
+  useEffect(() => { resetRenderView(); }, [baseView, renderNonce, resetRenderView]);
+  const onRenderWheel = useCallback((e: React.WheelEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const rect = e.currentTarget.getBoundingClientRect();
+    const cx = e.clientX - rect.left - rect.width / 2;
+    const cy = e.clientY - rect.top - rect.height / 2;
+    setRenderZoom(z => {
+      const next = Math.min(8, Math.max(1, z * (e.deltaY < 0 ? 1.15 : 1 / 1.15)));
+      // Keep the point under the cursor in place while scaling.
+      setRenderPan(p => ({
+        x: cx - ((cx - p.x) * next) / z,
+        y: cy - ((cy - p.y) * next) / z,
+      }));
+      return next;
+    });
+  }, []);
   useEffect(() => {
     if (!sn) return;
     const socket = getSocket();
@@ -3531,12 +3553,49 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
           </div>
         )}
         {baseView === 'render' && sn && renderState?.available && (
-          <div className="absolute inset-0 z-[800] bg-gray-950 flex items-center justify-center">
+          <div
+            className="absolute inset-0 z-[800] overflow-hidden flex items-center justify-center select-none"
+            // Match the render's own backdrop so a portrait screen shows a
+            // matching border instead of black bars.
+            style={{ background: renderState.variant === 'night' ? '#0f1826' : '#eceff1',
+                     cursor: renderZoom > 1 ? (renderDragRef.current ? 'grabbing' : 'grab') : 'default' }}
+            onWheel={onRenderWheel}
+            onDoubleClick={resetRenderView}
+            onPointerDown={e => {
+              if (renderZoom <= 1) return;
+              e.currentTarget.setPointerCapture(e.pointerId);
+              renderDragRef.current = { x: e.clientX, y: e.clientY, px: renderPan.x, py: renderPan.y };
+            }}
+            onPointerMove={e => {
+              const d = renderDragRef.current;
+              if (!d) return;
+              setRenderPan({ x: d.px + (e.clientX - d.x), y: d.py + (e.clientY - d.y) });
+            }}
+            onPointerUp={() => { renderDragRef.current = null; }}
+            onPointerCancel={() => { renderDragRef.current = null; }}
+          >
             <img
               src={gardenRenderImageUrl(sn, renderNonce)}
               alt={t('map.base.render', '3D-render')}
-              className="max-h-full max-w-full object-contain"
+              draggable={false}
+              className="max-h-full max-w-full object-contain will-change-transform"
+              style={{ transform: `translate(${renderPan.x}px, ${renderPan.y}px) scale(${renderZoom})` }}
             />
+            {/* Zoom controls, mirroring Leaflet's so the two views feel alike. */}
+            <div className="absolute top-3 right-3 flex flex-col gap-1">
+              <button onClick={() => setRenderZoom(z => Math.min(8, z * 1.3))}
+                className="w-8 h-8 rounded-lg bg-gray-900/85 border border-gray-700 text-gray-200 hover:bg-gray-800 flex items-center justify-center">
+                <Plus className="w-4 h-4" />
+              </button>
+              <button onClick={() => setRenderZoom(z => Math.max(1, z / 1.3))}
+                className="w-8 h-8 rounded-lg bg-gray-900/85 border border-gray-700 text-gray-200 hover:bg-gray-800 flex items-center justify-center">
+                <Minus className="w-4 h-4" />
+              </button>
+              <button onClick={resetRenderView} title={t('map.base.renderFit', 'Passend maken')}
+                className="w-8 h-8 rounded-lg bg-gray-900/85 border border-gray-700 text-gray-200 hover:bg-gray-800 flex items-center justify-center">
+                <Crosshair className="w-4 h-4" />
+              </button>
+            </div>
             <div className="absolute bottom-3 left-3 flex items-center gap-2 text-[11px] text-gray-400 bg-gray-900/80 border border-gray-700 rounded-lg px-2.5 py-1.5">
               {renderState.variant === 'night' ? <Moon className="w-3.5 h-3.5" /> : <Sun className="w-3.5 h-3.5" />}
               <span>{renderState.variant === 'night' ? t('map.base.night', 'avond') : t('map.base.day', 'dag')}</span>

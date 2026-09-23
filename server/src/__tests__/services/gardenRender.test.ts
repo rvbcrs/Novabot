@@ -68,7 +68,7 @@ beforeEach(() => {
 
 describe('gardenBounds', () => {
   it('covers every polygon plus the margin, around the charger', () => {
-    const b = gardenBounds(SN, 18)!;
+    const b = gardenBounds(SN, 18)!;   // explicit margin; the default is tighter
     expect(b).not.toBeNull();
     // 10 m of polygon + 18 m of margin ≈ 28 m each way, well under 0.001 deg lat (~111 m).
     expect(b.ne.lat).toBeGreaterThan(CHARGER.lat);
@@ -76,6 +76,14 @@ describe('gardenBounds', () => {
     const northM = (b.ne.lat - CHARGER.lat) * 111132;
     expect(northM).toBeGreaterThan(25);
     expect(northM).toBeLessThan(35);
+  });
+
+  it('keeps the default margin tight, so the plot fills the render', () => {
+    const wide = gardenBounds(SN, 18)!;
+    const tight = gardenBounds(SN)!;
+    expect(tight.ne.lat).toBeLessThan(wide.ne.lat);
+    // Still some context around the 10 m polygon, just not a neighbourhood.
+    expect((tight.ne.lat - CHARGER.lat) * 111132).toBeGreaterThan(15);
   });
 
   it('returns null without a charger position', () => {

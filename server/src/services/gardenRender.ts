@@ -132,8 +132,10 @@ function pickTileSource(lat: number, lng: number): [string, TileSource] {
   return ['satellite', TILE_SOURCES.satellite];
 }
 
-/** The garden's bounding box in lat/lng, with a margin so the plot has context. */
-export function gardenBounds(sn: string, marginM = 18): { sw: LatLng; ne: LatLng; origin: LatLng; pose: XY } | null {
+/** The garden's bounding box in lat/lng, plus a margin so the plot has some
+ *  context around it. Kept tight on purpose: every metre of margin is a metre
+ *  of neighbour's garden in the render, and the zone is what people came for. */
+export function gardenBounds(sn: string, marginM = 9): { sw: LatLng; ne: LatLng; origin: LatLng; pose: XY } | null {
   const gps = mapRepo.getChargerGps(sn);
   if (!gps) return null;
   const pose = dockPose(sn);
