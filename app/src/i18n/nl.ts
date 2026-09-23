@@ -133,6 +133,14 @@ export default {
 
   // ── Map ───────────────────────────────────────────────────────
   mapTitle: 'Kaart',
+  baseViewTitle: 'Kaartweergave',
+  baseViewMap: 'Kaart',
+  baseViewRender: '3D-render',
+  baseViewRenderMake: '3D-render maken…',
+  baseViewRenderAgain: 'Opnieuw genereren…',
+  baseViewDay: 'dag',
+  baseViewNight: 'avond',
+  baseViewStale: 'kaart daarna gewijzigd',
   map3dView: '3D-weergave',
   map2dView: '2D-kaart',
   create: 'Aanmaken',

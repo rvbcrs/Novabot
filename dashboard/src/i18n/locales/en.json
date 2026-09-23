@@ -885,6 +885,19 @@
       "help": "Unfinished features that may change or break. Off by default.",
       "enable": "Enable experimental features",
       "note": "Currently unlocks the Terrain tab."
+    },
+    "render": {
+      "title": "3D render",
+      "help": "Builds a 3D picture of your own garden from the mower's map. About 20 cents per render at OpenAI.",
+      "modeOwn": "Own key set",
+      "modeRelay": "Credit token set",
+      "modeNone": "Nothing set yet",
+      "ownKey": "Your OpenAI key",
+      "ownKeyHint": "No ChatGPT subscription needed: an API account with a small prepaid balance is enough.",
+      "token": "Credit token (via OpenNova)",
+      "save": "Save",
+      "clear": "Remove",
+      "privacy": "Note: a render sends an aerial photo of your garden to OpenAI. Only do this if you are comfortable with that."
     }
   },
   "ai": {

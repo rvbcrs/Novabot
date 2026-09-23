@@ -86,6 +86,11 @@ Live position view. Your mower's last known location is plotted on top of the wo
 - **Manual control** — opens the Joystick screen (see below).
 - **Mapping** — opens the Mapping flow to add / edit a map.
 
+**Map view** (the layers icon in the header): switch between the drawn map and
+a **3D render** of your actual garden, generated from the mower's map and an
+aerial photo. The render shows a day or an evening version depending on the
+time at your mower. See [3D Garden Render](../guide/garden-render.md).
+
 ## Mapping
 
 Walks you through creating a new map (or editing an existing one). Steps:

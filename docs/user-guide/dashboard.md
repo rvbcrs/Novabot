@@ -101,6 +101,11 @@ The control panel for the selected mower.
 While it mows, the status card shows progress, area covered, blade speed,
 elapsed time and the estimate for what is left.
 
+**Base layer** (button in the map toolbar): satellite (default), your uploaded
+drone photo, or a **3D render** of the real garden built from the mower's map,
+with a day and an evening version picked by the clock. See
+[3D Garden Render](../guide/garden-render.md).
+
 ## Editing maps
 
 !!! warning "Custom firmware"

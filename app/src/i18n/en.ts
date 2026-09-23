@@ -135,6 +135,14 @@ export default {
 
   // ── Map ───────────────────────────────────────────────────────
   mapTitle: 'Map',
+  baseViewTitle: 'Map view',
+  baseViewMap: 'Map',
+  baseViewRender: '3D render',
+  baseViewRenderMake: 'Create 3D render…',
+  baseViewRenderAgain: 'Generate again…',
+  baseViewDay: 'day',
+  baseViewNight: 'evening',
+  baseViewStale: 'map changed since',
   map3dView: '3D view',
   map2dView: '2D map',
   create: 'Create',

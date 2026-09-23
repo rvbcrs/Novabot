@@ -112,6 +112,7 @@ nav:
     - Discovery by Name (mDNS): guide/auto-discovery.md
     - ESP32 OTA Tool: guide/esp32-tool.md
     - Notifications & Push: guide/notifications.md
+    - 3D Garden Render: guide/garden-render.md
   - Architecture:
     - Overview: architecture/overview.md
     - Hardware: architecture/hardware.md

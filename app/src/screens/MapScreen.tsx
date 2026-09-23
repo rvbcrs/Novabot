@@ -14,6 +14,7 @@ import {
   Alert,
   Modal,
   ScrollView,
+  Image as RNImage,
 } from 'react-native';
 import { appAlertCompat } from '../context/AppAlertContext';
 import Animated, {
@@ -47,7 +48,7 @@ import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { useStyles, useTheme, type Colors } from '../theme';
 import { useMowerState } from '../hooks/useMowerState';
 import { useActiveMower } from '../hooks/useActiveMower';
-import { ApiClient, type MapData, type TrailPoint, type LocalPoint, type ChargerGps } from '../services/api';
+import { ApiClient, type MapData, type TrailPoint, type LocalPoint, type ChargerGps, type GardenRenderState } from '../services/api';
 import { getServerUrl } from '../services/auth';
 import { DemoBanner } from '../components/DemoBanner';
 import { AppActionSheet, type AppActionSheetItem } from '../components/AppActionSheet';
@@ -354,6 +355,66 @@ export default function MapScreen() {
   // and hide the 3D view.
   const stockFw = !!mower && !isOpenNovaFirmware(mower.firmwareVersion);
   const show3d = view3d && !stockFw;
+
+  // Which picture of the garden is on screen: the drawn map (default), the
+  // drone photo, or the 3D render. The render is not georeferenced, so it
+  // replaces the map instead of layering on it; day or evening is chosen by
+  // the server from sunrise/sunset at the mower.
+  type BaseView = 'map' | 'drone' | 'render';
+  const [baseView, setBaseView] = useState<BaseView>('map');
+  const [renderState, setRenderState] = useState<GardenRenderState | null>(null);
+  const [renderBusy, setRenderBusy] = useState(false);
+  const [renderNonce, setRenderNonce] = useState(() => String(Date.now()));
+  const [renderUrl, setRenderUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    const sn = mower?.sn;
+    if (!sn) { setRenderState(null); setRenderUrl(null); return; }
+    (async () => {
+      try {
+        const url = await getServerUrl();
+        if (!url) return;
+        const api = new ApiClient(url);
+        const st = await api.getGardenRender(sn);
+        setRenderState(st);
+        setRenderUrl(st.available ? api.gardenRenderImageUrl(sn, renderNonce) : null);
+      } catch { setRenderState(null); }
+    })();
+  }, [mower?.sn, renderNonce]);
+
+  const makeRender = useCallback(async () => {
+    const sn = mower?.sn;
+    if (!sn || renderBusy) return;
+    setRenderBusy(true);
+    try {
+      const url = await getServerUrl();
+      if (!url) return;
+      await new ApiClient(url).generateGardenRender(sn, renderState?.hasDronePhoto ? 'drone' : 'aerial');
+      setRenderNonce(String(Date.now()));
+      setBaseView('render');
+    } catch (e) {
+      appAlertCompat.alert(t('error'), e instanceof Error ? e.message : String(e));
+    } finally {
+      setRenderBusy(false);
+    }
+  }, [mower?.sn, renderBusy, renderState, t]);
+
+  const openBaseViewMenu = useCallback(() => {
+    const items: AppActionSheetItem[] = [
+      { label: t('baseViewMap'), icon: 'map-outline', onPress: () => setBaseView('map') },
+      {
+        label: renderState?.available
+          ? `${t('baseViewRender')} (${renderState.variant === 'night' ? t('baseViewNight') : t('baseViewDay')})`
+          : t('baseViewRenderMake'),
+        icon: 'cube-outline',
+        onPress: () => { if (renderState?.available) setBaseView('render'); else void makeRender(); },
+      },
+    ];
+    if (renderState?.available) {
+      items.push({ label: t('baseViewRenderAgain'), icon: 'refresh-outline', onPress: () => void makeRender() });
+    }
+    setSheetState({ visible: true, title: t('baseViewTitle'), actions: items });
+  }, [renderState, makeRender, t]);
 
   // Read-only mapping preflight gate. Runs BEFORE navigating into any map
   // action (create / edit-redraw / unicom) so a `block` popup shows here on
@@ -1203,6 +1264,16 @@ export default function MapScreen() {
               </TouchableOpacity>
             )}
             <TouchableOpacity
+              onPress={openBaseViewMenu}
+              style={styles.toolbarMenuButton}
+              activeOpacity={0.82}
+              accessibilityLabel={t('baseViewTitle')}
+            >
+              {renderBusy
+                ? <ActivityIndicator size="small" color={colors.text} />
+                : <Ionicons name={baseView === 'render' ? 'cube' : 'layers-outline'} size={16} color={colors.text} />}
+            </TouchableOpacity>
+            <TouchableOpacity
               onPress={handleHeaderActionsMenu}
               style={styles.toolbarMenuButton}
               activeOpacity={0.82}
@@ -1302,15 +1373,29 @@ export default function MapScreen() {
           </View>
         )}
 
+        {/* 3D garden render — a picture, not a map, so it replaces the map */}
+        {baseView === 'render' && renderUrl && (
+          <View style={styles.renderCard}>
+            <RNImage source={{ uri: renderUrl }} style={styles.renderImage} resizeMode="contain" />
+            <View style={styles.renderBadge}>
+              <Ionicons name={renderState?.variant === 'night' ? 'moon-outline' : 'sunny-outline'} size={13} color={colors.textDim} />
+              <Text style={styles.renderBadgeText}>
+                {renderState?.variant === 'night' ? t('baseViewNight') : t('baseViewDay')}
+                {renderState?.stale ? ` · ${t('baseViewStale')}` : ''}
+              </Text>
+            </View>
+          </View>
+        )}
+
         {/* 3D terrain view */}
-        {show3d && (
+        {show3d && baseView !== 'render' && (
           <View style={{ height: 420 }}>
             <TerrainView3D sn={mower?.sn ?? ''} />
           </View>
         )}
 
         {/* SVG Map with pan + zoom */}
-        {!show3d && bounds && (
+        {!show3d && baseView !== 'render' && bounds && (
           <View style={styles.mapExperience}>
             <View style={styles.mapContainer}>
               {selectedWorkMap && (
@@ -2061,6 +2146,16 @@ const makeStyles = (c: Colors) => StyleSheet.create({
     backgroundColor: c.emerald, borderRadius: 12,
   },
   importButtonText: { fontSize: 15, fontWeight: '600', color: c.white },
+  renderCard: {
+    backgroundColor: c.card, borderRadius: 18, borderWidth: 1, borderColor: c.cardBorder,
+    overflow: 'hidden', marginBottom: 16,
+  },
+  renderImage: { width: '100%', aspectRatio: 1.5, backgroundColor: '#0b0f14' },
+  renderBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingHorizontal: 12, paddingVertical: 8,
+  },
+  renderBadgeText: { fontSize: 12, color: c.textDim },
   mapExperience: { marginTop: 4, marginBottom: 12 },
   mapContainer: {
     backgroundColor: c.card,

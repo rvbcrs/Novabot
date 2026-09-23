@@ -965,6 +965,19 @@
       "help": "Onafgemaakte functies die kunnen veranderen of stukgaan. Standaard uit.",
       "enable": "Experimentele functies inschakelen",
       "note": "Ontgrendelt op dit moment het tabblad Terrein."
+    },
+    "render": {
+      "title": "3D-render",
+      "help": "Maakt een 3D-plaatje van je eigen tuin uit de kaart van de maaier. Kost per render ongeveer 20 cent bij OpenAI.",
+      "modeOwn": "Eigen sleutel ingesteld",
+      "modeRelay": "Tegoed-token ingesteld",
+      "modeNone": "Nog niets ingesteld",
+      "ownKey": "Eigen OpenAI-sleutel",
+      "ownKeyHint": "Geen ChatGPT-abonnement nodig: een API-account met een klein prepaid tegoed volstaat.",
+      "token": "Tegoed-token (via OpenNova)",
+      "save": "Opslaan",
+      "clear": "Verwijderen",
+      "privacy": "Let op: bij een render gaat een luchtfoto van je tuin naar OpenAI. Doe dit alleen als je dat goed vindt."
     }
   },
   "ai": {

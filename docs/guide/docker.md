@@ -272,6 +272,9 @@ See [Notifications & Push](notifications.md).
 | `TERRAIN_MIN_FREE_MB` | `700` | The model is not loaded when the host has less than this much memory available; the batch is skipped and retried next session. |
 | `TERRAIN_MODEL_IDLE_MS` | `90000` | How long the model stays in memory after the last classification. `0` = never unload. |
 | `TERRAIN_MODEL_THREADS` | `1` | CPU threads the classifier may use. `0` = let onnxruntime decide (it takes every core). |
+| `RENDER_OPENAI_KEY` | — | OpenAI key for the [3D garden render](garden-render.md). Takes precedence over the key stored via the dashboard, so you can keep it out of the database. |
+| `RENDER_RELAY_TOKEN` | — | Credit token for the render relay, as an alternative to your own key. |
+| `RENDER_MODEL` | `gpt-image-2.5-sunburst` | Image model used for the render. |
 
 ## Advanced: host networking
 

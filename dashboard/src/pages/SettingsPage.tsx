@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import {
   Tag, Bell, Check, Loader2, Smartphone, Radio, Home as HomeIcon, Mail,
   Scissors, Compass, Minus, Plus, Monitor, Shield, Gamepad2, Gauge, Battery, Power,
-  CloudRain, Lightbulb, Volume2, Clock, Wrench, RotateCw, FlaskConical, Bug, ExternalLink,
+  CloudRain, Lightbulb, Volume2, Clock, Wrench, RotateCw, FlaskConical, Bug, ExternalLink, Box,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { DeviceState } from '../types';
@@ -19,7 +19,7 @@ import { readExperimental, writeExperimental } from '../utils/experimental';
 import { MowingDirectionPreview } from '../components/schedule/MowingDirectionPreview';
 import { useToast } from '../components/common/Toast';
 import { isOpenNovaFirmware } from '../utils/firmwareCapability';
-import { isUnsupportedFirmwareError, getServerVersion } from '../api/client';
+import { isUnsupportedFirmwareError, getServerVersion, fetchRenderSettings, saveRenderSettings } from '../api/client';
 
 interface Props {
   mower: DeviceState | null;
@@ -42,6 +42,7 @@ export function SettingsPage({ mower }: Props) {
         <ExperimentalCard />
         <RainAutoPauseCard key={`rain-${mower.sn}`} sn={mower.sn} />
         <NotificationsCard />
+        <GardenRenderCard />
         <HelpCard mower={mower} />
       </div>
     </div>
@@ -870,6 +871,67 @@ function AutoMapCard() {
           </span>
         </div>
         <Toggle on={on} onChange={choose} />
+      </div>
+    </SettingCard>
+  );
+}
+
+/** Credentials for the 3D garden render. The key is write-only: the server
+ *  reports which mode is active, never the value. */
+function GardenRenderCard() {
+  const { t } = useTranslation();
+  const [mode, setMode] = useState<string>('none');
+  const [model, setModel] = useState('');
+  const [key, setKey] = useState('');
+  const [token, setToken] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => { fetchRenderSettings().then(r => { setMode(r.mode); setModel(r.model); }).catch(() => {}); }, []);
+
+  const save = async (body: { openaiKey?: string | null; relayToken?: string | null }) => {
+    setSaving(true);
+    try { setMode((await saveRenderSettings(body)).mode); setKey(''); setToken(''); }
+    catch { /* ignore */ }
+    setSaving(false);
+  };
+
+  const label = mode === 'own-key' ? t('settings.render.modeOwn', 'Eigen sleutel ingesteld')
+    : mode === 'relay' ? t('settings.render.modeRelay', 'Tegoed-token ingesteld')
+    : t('settings.render.modeNone', 'Nog niets ingesteld');
+
+  return (
+    <SettingCard icon={Box} title={t('settings.render.title', '3D-render')}
+      help={t('settings.render.help', 'Maakt een 3D-plaatje van je eigen tuin uit de kaart van de maaier. Kost per render ongeveer 20 cent bij OpenAI.')}>
+      <div className="text-xs text-gray-400 mb-3">
+        {label}{model ? ` · ${model}` : ''}
+      </div>
+      <div className="space-y-3">
+        <div>
+          <div className="text-[10px] uppercase tracking-wide text-gray-500 mb-1">{t('settings.render.ownKey', 'Eigen OpenAI-sleutel')}</div>
+          <div className="flex gap-2">
+            <input type="password" value={key} onChange={e => setKey(e.target.value)} placeholder="sk-…" autoComplete="off"
+              className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600" />
+            <button onClick={() => void save({ openaiKey: key })} disabled={!key || saving}
+              className="px-3 py-2 rounded-lg text-sm font-semibold bg-emerald-600 text-white disabled:opacity-40">{t('settings.render.save', 'Opslaan')}</button>
+          </div>
+          <p className="text-[11px] text-gray-500 mt-1">{t('settings.render.ownKeyHint', 'Geen ChatGPT-abonnement nodig: een API-account met een klein prepaid tegoed volstaat.')}</p>
+        </div>
+        <div>
+          <div className="text-[10px] uppercase tracking-wide text-gray-500 mb-1">{t('settings.render.token', 'Tegoed-token (via OpenNova)')}</div>
+          <div className="flex gap-2">
+            <input type="password" value={token} onChange={e => setToken(e.target.value)} placeholder="opennova-…" autoComplete="off"
+              className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600" />
+            <button onClick={() => void save({ relayToken: token })} disabled={!token || saving}
+              className="px-3 py-2 rounded-lg text-sm font-semibold bg-gray-700 text-white disabled:opacity-40">{t('settings.render.save', 'Opslaan')}</button>
+          </div>
+        </div>
+        {mode !== 'none' && (
+          <button onClick={() => void save({ openaiKey: null, relayToken: null })} disabled={saving}
+            className="text-xs text-red-400 hover:text-red-300">{t('settings.render.clear', 'Verwijderen')}</button>
+        )}
+        <p className="text-[11px] text-amber-400/90">
+          {t('settings.render.privacy', 'Let op: bij een render gaat een luchtfoto van je tuin naar OpenAI. Doe dit alleen als je dat goed vindt.')}
+        </p>
       </div>
     </SettingCard>
   );

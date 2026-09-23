@@ -168,6 +168,15 @@ export interface WorkRecord {
   workRecordDate: string | null;
 }
 
+export interface GardenRenderState {
+  available: boolean;
+  meta: { createdAt: string; source: 'aerial' | 'drone'; attribution: string; mapRows: number } | null;
+  stale: boolean;
+  variant: 'day' | 'night' | null;
+  credentials: 'own-key' | 'relay' | 'none';
+  hasDronePhoto: boolean;
+}
+
 export interface WorkTotals { runs: number; minutes: number; m2: number }
 export interface BladeStatus {
   replacedAt: string | null;
@@ -639,6 +648,20 @@ export class ApiClient {
     );
     if (Array.isArray(body)) return body;
     return Array.isArray(body?.records) ? body.records : [];
+  }
+
+  // ── Garden render (3D visualisation of the real garden) ──────────────
+  async getGardenRender(sn: string): Promise<GardenRenderState> {
+    return this.request<GardenRenderState>('GET', `/api/dashboard/render/${enc(sn)}`);
+  }
+
+  /** The picture itself; `v` busts the cache after a regenerate. */
+  gardenRenderImageUrl(sn: string, v: string, variant: 'auto' | 'day' | 'night' = 'auto'): string {
+    return `${this.baseUrl}/api/dashboard/render/${enc(sn)}/image?variant=${variant}&v=${encodeURIComponent(v)}`;
+  }
+
+  async generateGardenRender(sn: string, source?: 'aerial' | 'drone'): Promise<{ ok: boolean }> {
+    return this.request<{ ok: boolean }>('POST', `/api/dashboard/render/${enc(sn)}`, { body: { source } });
   }
 
   /** Totals per period + blade maintenance (`GET /work-records/:sn/summary`). */
