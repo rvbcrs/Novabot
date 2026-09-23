@@ -1,6 +1,36 @@
 {
   "releases": [
     {
+      "version": "2026.0923.2300",
+      "date": "2026-09-23",
+      "sections": {
+        "dashboard": [
+          "\"New in OpenNova\" panel to announce features",
+          "Render zoom buttons work every click, calmer temperature scale",
+          "No hardcoded Dutch, working toggles, WiFi in the sensor panel",
+          "Render view zooms and pans, and the garden fills more of it",
+          "Show what the render is doing, and let you pick its source",
+          "Pick the map view, and a settings card for the render key",
+          "3D garden render, and a base-layer picker on the map",
+          "Map edit apply works on a docked mower that was never recalibrated"
+        ],
+        "app": [
+          "Translate the remaining hardcoded text, send the app language",
+          "Provisioning says Configured, Connected or Not connected yet instead of Done"
+        ],
+        "server": [
+          "Paint obstacles in their own shape, not as a disc",
+          "Lift the angled render off its backdrop, draw the real mower",
+          "Answer in the reader's language, English unless asked for Dutch",
+          "Top-down render covers the current map view",
+          "Clearer base-layer menu, day/evening override, in-app dialogs",
+          "Angled 3D render from a known camera, with the mower drawn on it",
+          "Credit tokens so a render works without your own OpenAI key",
+          "Validate the serial number before it reaches the filesystem"
+        ]
+      }
+    },
+    {
       "version": "2026.0921.0922",
       "date": "2026-09-21",
       "sections": {
@@ -194,20 +224,6 @@
         "server": [
           "Stop invalidating the dependency cache on every release",
           "The second-broker check no longer reports clean while blind"
-        ]
-      }
-    },
-    {
-      "version": "2026.0915.1240",
-      "date": "2026-09-15",
-      "sections": {
-        "dashboard": [
-          "Common.close existed in no locale"
-        ],
-        "server": [
-          "Diagnosis catalog in French and German",
-          "Diagnosis explains itself in the reader's language",
-          "Diagnosis names the address it actually compared against"
         ]
       }
     }
